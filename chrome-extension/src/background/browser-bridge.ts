@@ -3,6 +3,7 @@
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { fetchImageAsBase64, promoteFetchSrc, sanitizeImageDim } from "./image-extract-utils"
 import { selectorJsLiteral } from "./selector-js-literal"
+import { browserSiteTarget } from "./browser-site-target"
 import { TabQueue, coerceTabId } from "./tab-queue"
 import { runBrowserDownload } from "./browser-download-handler"
 import { runWithDownloadBusyBeforeQueue } from "./download-busy-entry"
@@ -94,6 +95,13 @@ export class BrowserBridge {
       switch (toolName) {
         // Tab tools
         case "list_tabs":
+          if (params.__site_context_tab_id !== undefined) {
+            const id = params.__site_context_tab_id
+            if (!Number.isSafeInteger(id) || id < 0) return { success: false, error: "Invalid context tab id" }
+            const tab = await chrome.tabs.get(id)
+            const target = await browserSiteTarget(id, tab.url)
+            return target ? { success: true, data: { site_target: target } } : { success: false, error: "SITE_TARGET_UNAVAILABLE" }
+          }
           return await this.listTabs()
         case "create_tab":
           return await this.createTab(params)

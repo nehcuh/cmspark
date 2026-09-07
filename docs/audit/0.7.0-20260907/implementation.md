@@ -56,3 +56,7 @@ GitHub: [#445](https://github.com/nehcuh/cmspark/issues/445)
 最新完整回归：4933 tests / 4910 pass / 23 skipped / 0 fail，settings 20/20，进程 exit 0。该运行包含 W1 最终历史兼容修复与 W2 的 5 个目标/服务测试；不是两个企业业务场景的验收结果。
 
 W1 收口：见 [逐项复审处置](w1-review-disposition.md)。a10addf1 / 3d5bee15 / 14dae2dc / a78236e2。核心业务契约已修订为 R4，仍待独立复审，不把 W1 通过扩张为后续节点通过。
+
+## Issue 闭环补正
+
+此前只有总设计 #445，W1 未先拆实施票，现如实补建 #446–#449；后续 #450–#457 已先建票。PR #458 经 Grok/Claude 双路门禁及 GitHub CI build、Linux/macOS/Windows smoke 全绿后合并，merge commit 53d13b9c1f9e4d915624e698426ccae7904b0c0d；#446–#449 已由 PR 自动关闭。该状态取代上文历史阶段的“仅本地提交”。#451 正在接入实际聊天与经验生命周期，未完成票保持打开。

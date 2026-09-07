@@ -1,0 +1,40 @@
+{
+  "base": "f1aeced9",
+  "files": {
+    "chrome-extension/src/background/active-tab-hostname.ts": "826845324b61fb530acda7e6af48cb1bc13a14d0e0db5dc713bc8c4d9df7598c",
+    "chrome-extension/src/background/index.ts": "61d0d1b152929f17b5141504ddebbcec62e7a42f3b54e0621d85ac2e71a35fb3",
+    "chrome-extension/src/background/browser-bridge.ts": "1bb8cd63b6c4bf110864a6b72adb6a812688e61fd66d7e08980f657b10c3df4f",
+    "companion/src/llm/adapter.ts": "2d91c4a286f26e90a49e519bc057f7aec78d544454edbd34da316ba0e99f7a28",
+    "companion/src/message-router.ts": "a94a1fa6009782bec0fd64f9ad11eabf7163139eb4288e21e85af68443927db5",
+    "companion/src/skills/skill-engine.ts": "37db7037951cdf1bedbe4ea6666588d03ad3719c0500a0ffa2f6cbb2bf80f318",
+    "companion/src/tool/site-op-memory.ts": "23d54ec8744deca0b77770f428605e7c45112499662d3b1fdb55f4871256bcb8",
+    "companion/src/ws/validate.ts": "29d8de17b953bfcbeadc8db10f73d80afe5fe232f22998d4a3c545aa79fc6a0e",
+    "companion/tests/site-op-memory.test.ts": "6b4b0030919f3efff28cb768d15940fa03a1e776a360cef15f57b30bcf7783a5",
+    "companion/tests/run-progress.test.ts": "d6428a2b52d2da64a9a70dcfd7ae226727db9576f24f276e36d0274f60557b86",
+    "chrome-extension/src/background/browser-site-target.ts": "8c698a8be77e264ba6797b327f9e922259428e62220808288a0e7333434f2951",
+    "chrome-extension/tests/active-tab-context.test.ts": "700cfc7f8a298de4835a45458a111f596aa361e1b3b1fff333721bd71b2e23f6",
+    "companion/src/site-context/browser-resolver.ts": "1e5f65bb7058453616c75eabd2c143cbaf272f671077909e565768e469b9ea57",
+    "companion/src/site-context/service.ts": "9d0dbd8d8ae49b15947e411e1044567376a82c1647580f9be4d5d60c62c8c9dc",
+    "companion/src/site-context/target.ts": "2f65f9e47dbab3f94db5dcd3369a68b8efa513e53a6a25a45842030485d13f1e",
+    "companion/tests/site-context-chat.test.ts": "4a222cd8a1d7a4e3f3bbd3880dcfbed0763a9de4f8aaf7912277af7387c2f702",
+    "companion/tests/site-context-lifecycle.test.ts": "66693a00553d9646b1e29ef8b893a360f8623ad5bd4f16e733ed5d501871a814",
+    "companion/tests/site-context-service.test.ts": "7038d9a055a9ef940846b64a9cbd345e6abb4e9af5d7ee04a5c5164deec4767e",
+    "companion/tests/site-context-target.test.ts": "5d398bba2b26a88774f3dba4ccba23da42b6fa198ddf5495b11f8d2cdaf1f938",
+    "companion/src/site-context/admission.ts": "1b75b8925b570abd2f0ba6a829b20f2872735443d131a9354d696cddc8c9e131",
+    "companion/src/server.ts": "acda5c0bfdbff65dd37a8ef83fa893fb490d81de53d13c8b1d87623f15c79986",
+    "companion/tests/integration/outbound-mcp-executor.test.ts": "741c7a804297a4640855ac23569c56dd90f546c49d1cfbf6f5ec22b8ff4ace24"
+  },
+  "judges": {
+    "grok": {
+      "model": "grok-4.6",
+      "cli": "0.2.111",
+      "verdict": "APPROVE"
+    },
+    "deepseek": {
+      "model": "deepseek-v4-pro",
+      "cli": "Claude Code 2.1.153",
+      "verdict": "APPROVE_WITH_NITS"
+    }
+  },
+  "authorization": "2026-09-07 user explicitly accepted Grok + DeepSeek independent review, correcting prior CLI/model confusion."
+}

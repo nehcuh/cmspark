@@ -103,10 +103,13 @@ export function locatorKeyForTool(toolName: string, params: Record<string, unkno
   return "none"
 }
 
-/** Strip www so https://www.zhihu.com and https://zhihu.com share a key. */
+/** Exact browser origin: preserve www/subdomains and non-default ports. */
 export function canonicalizeSiteOrigin(origin: string): string {
   if (!origin || origin === "origin:unknown") return origin || "origin:unknown"
-  return origin.replace(/^(https?:\/\/)www\./i, "$1")
+  try {
+    const url = new URL(origin)
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : "origin:unknown"
+  } catch { return "origin:unknown" }
 }
 
 /**
@@ -206,6 +209,7 @@ type ThreadMem = {
   /** #358: origins already auto-persisted this process (once per thread+origin). */
   persistedOrigins: Set<string>
   hydratedOrigins: Set<string>
+  restoredLocators: Record<string, { lastCode: string; expiresAt: number }>
 }
 
 const mem = new Map<string, ThreadMem>()
@@ -223,12 +227,14 @@ function stateFor(threadId: string): ThreadMem {
       originFails: {},
       persistedOrigins: new Set(),
       hydratedOrigins: new Set(),
+      restoredLocators: {},
     }
     mem.set(threadId, s)
   } else {
     if (!s.originFails) s.originFails = {}
     if (!s.persistedOrigins) s.persistedOrigins = new Set()
     if (!s.hydratedOrigins) s.hydratedOrigins = new Set()
+    if (!s.restoredLocators) s.restoredLocators = {}
   }
   return s
 }
@@ -314,6 +320,10 @@ export function peekSiteOpBan(
     }
   }
   const locator = locatorKeyForTool(toolName, params)
+  const restored = s.restoredLocators[locatorMapKey(origin, "*", locator)]
+  if (restored && restored.expiresAt > Date.now()) {
+    return { banned: true, error_code: "SITE_OP_BANNED", locator }
+  }
   const st = s.locators[locatorMapKey(origin, toolName, locator)]
   if (st && st.fails >= SITE_LOCATOR_FAIL_BAN) {
     return { banned: true, error_code: "SITE_OP_BANNED", locator }
@@ -496,6 +506,43 @@ export function hydratePersistedSiteOpExperience(
   return restored
 }
 
+export const SITE_EXPERIENCE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Replace only historical bans for the actual authorized origin. Runtime
+ * counters stay separate: deleting/staling knowledge cannot clear real failures.
+ * The caller supplies entries only from its currently selected documents. */
+export function refreshPersistedSiteOpExperience(
+  scopeId: string, actualOrigin: string,
+  entries: ReadonlyArray<{ content: string; stale?: boolean; recorded_at?: string; schema_version?: number }>,
+  now = Date.now(),
+): number {
+  const origin = canonicalizeSiteOrigin(actualOrigin)
+  if (!isAggregatableSiteOrigin(origin) || !Number.isFinite(now)) return 0
+  const state = stateFor(scopeId)
+  for (const key of Object.keys(state.restoredLocators)) {
+    if (key.startsWith(`${origin}|`)) delete state.restoredLocators[key]
+  }
+  let restored = 0
+  for (const entry of entries) {
+    if (entry.stale || (entry.schema_version !== undefined && entry.schema_version !== 1)) continue
+    const recordedAt = typeof entry.recorded_at === "string" ? Date.parse(entry.recorded_at) : NaN
+    if (!Number.isFinite(recordedAt) || recordedAt > now || now - recordedAt >= SITE_EXPERIENCE_TTL_MS) continue
+    const parsed = parsePersistedSiteOpLine(entry.content)
+    if (!parsed || canonicalizeSiteOrigin(parsed.origin) !== origin || !isSafeSiteOpLocatorText(parsed.locator)) continue
+    const parsedUrl = new URL(parsed.origin)
+    if (parsedUrl.pathname !== "/" || parsedUrl.search || parsedUrl.hash || parsedUrl.username || parsedUrl.password) continue
+    if (!isCdpInteractiveTool(parsed.tool) || parsed.locator === "none" || parsed.locator === "attach") continue
+    const key = locatorMapKey(origin, "*", parsed.locator)
+    if (state.restoredLocators[key]) continue
+    state.restoredLocators[key] = { lastCode: parsed.code, expiresAt: recordedAt + SITE_EXPERIENCE_TTL_MS }
+    if (++restored >= SITE_ORIGIN_HYDRATE_MAX) break
+  }
+  return restored
+}
+
+/** Scope teardown for authenticated external sessions; never another scope. */
+export function forgetSiteOpScope(scopeId: string): void { mem.delete(scopeId) }
+
 /** Only navigate/set_tab_url on this tabId may thaw (debugger might work again). list_tabs/create_tab must not. */
 export function thawTabIfPresent(threadId: string, tabId: number | undefined): void {
   if (typeof tabId !== "number") return
@@ -653,17 +700,27 @@ export function formatSiteOpMemoryPrompt(
         `Do NOT call click/type/evaluate/get_element_info/press_key on them. list_tabs first.`,
     )
   }
-  const hostHint = hostname ? hostname.replace(/^www\./, "") : ""
+  const matchesTarget = (origin: string): boolean => {
+    if (!hostname) return true
+    if (/^https?:\/\//i.test(hostname)) return canonicalizeSiteOrigin(origin) === canonicalizeSiteOrigin(hostname)
+    try { return new URL(origin).hostname === hostname.toLowerCase() } catch { return false }
+  }
   const banned: string[] = []
   for (const [k, st] of Object.entries(s.locators)) {
     if (st.fails < SITE_LOCATOR_FAIL_BAN) continue
     const [origin, tool, locator] = k.split("|")
-    if (hostHint && origin && !origin.includes(hostHint) && !hostHint.includes(origin.replace(/^https?:\/\//, ""))) {
+    if (!matchesTarget(origin)) {
       continue
     }
     banned.push(
       `- ${tool} ${locator} on ${origin} (${st.lastCode}${st.persisted ? ", persisted" : ""}, ${st.fails}×)`,
     )
+  }
+  for (const [key, state] of Object.entries(s.restoredLocators)) {
+    if (state.expiresAt <= Date.now()) continue
+    const [origin, tool, locator] = key.split("|")
+    if (!matchesTarget(origin)) continue
+    banned.push(`- ${tool === "*" ? "all page tools" : tool} ${locator} on ${origin} (${state.lastCode}, persisted, expires ${new Date(state.expiresAt).toISOString()})`)
   }
   if (banned.length) {
     lines.push(
@@ -677,7 +734,7 @@ export function formatSiteOpMemoryPrompt(
   for (const [origin, st] of Object.entries(s.originFails || {})) {
     if (st.fails < SITE_ORIGIN_FAIL_ESCALATE) continue
     if (!isAggregatableSiteOrigin(origin)) continue
-    if (hostHint && origin && !origin.includes(hostHint) && !hostHint.includes(origin.replace(/^https?:\/\//, ""))) {
+    if (!matchesTarget(origin)) {
       continue
     }
     originEsc.push(

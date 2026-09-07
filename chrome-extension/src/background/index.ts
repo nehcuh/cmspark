@@ -50,7 +50,7 @@ import {
   noteSecurityConfirmationGone,
   noteSecurityConfirmationRequest,
 } from "./computer-task-mirror"
-import { getActiveTabHostname, withHostnameBudget } from "./active-tab-hostname"
+import { getActiveTabContext, withHostnameBudget, type ActiveTabContext } from "./active-tab-hostname"
 import { pickSidePanelWindow } from "./pick-sidepanel-window"
 import { runUiCommand } from "./ui-command"
 import {
@@ -479,12 +479,12 @@ async function handleCompanionMessage(msg: any) {
       const { thread_id, prompt } = msg
       if (thread_id && prompt) {
         // Quick action with sidepanel closed: still pass active-tab hostname for site knowledge.
-        getActiveTabHostname().then((hostname) => {
+        getActiveTabContext().then((context) => {
           wsClient.send({
             type: "chat.create",
             thread_id,
             message: prompt,
-            ...(hostname ? { hostname } : {}),
+            ...(context || {}),
           })
         }).catch(() => {
           wsClient.send({
@@ -708,7 +708,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
               /* panel/cockpit may be closed */
             })
         }
-        const sendCreate = (hostname?: string) => {
+        const sendCreate = (context?: ActiveTabContext) => {
           const frame =
             message.steer === true
               ? {
@@ -723,7 +723,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
                   skill_ids: message.skillIds,
                   clientMessageId,
                   ...(message.enqueue === true ? { enqueue: true } : {}),
-                  ...(hostname ? { hostname } : {}),
+                  ...(context || {}),
                   ...(Array.isArray(message.context_refs) ? { context_refs: message.context_refs } : {}),
                 }
           const sent = wsClient.send(frame)
@@ -735,7 +735,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
           sendResponse({ ok: sent })
         }
         // Site-knowledge hostname is best-effort; never stall chat.create on tabs.query.
-        withHostnameBudget(() => getActiveTabHostname())
+        withHostnameBudget(() => getActiveTabContext())
           .then((hostname) => sendCreate(hostname))
           .catch(() => sendCreate())
         return true
@@ -769,7 +769,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         }
         logToCompanion("info", "extension.file_upload.sw_received", diagBase)
 
-        const doSend = (hostname?: string) => {
+        const doSend = (context?: ActiveTabContext) => {
           const payload = {
             type: "file.upload",
             thread_id: message.threadId,
@@ -781,7 +781,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             ...(typeof message.clientMessageId === "string" && message.clientMessageId
               ? { clientMessageId: message.clientMessageId }
               : {}),
-            ...(hostname ? { hostname } : {}),
+            ...(context || {}),
           }
           let jsonBytes = 0
           try {
@@ -804,7 +804,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
           logToCompanion(sent ? "info" : "warn", "extension.file_upload.ws_send", {
             ...diagBase,
             sent,
-            hostname: hostname || null,
+            hostname: context?.hostname || null,
             json_bytes: jsonBytes,
             json_mb: jsonBytes > 0 ? Math.round((jsonBytes / (1024 * 1024)) * 1000) / 1000 : null,
             ws_before: before,
@@ -838,7 +838,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
           })
         }
 
-        withHostnameBudget(() => getActiveTabHostname())
+        withHostnameBudget(() => getActiveTabContext())
           .then((hostname) => {
             doSend(hostname || undefined)
           })
@@ -872,20 +872,20 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       }
 
       case "chat.regenerate": {
-        const sendRegen = (hostname?: string) => {
+        const sendRegen = (context?: ActiveTabContext) => {
           const sent = wsClient.send({
             type: "chat.regenerate",
             thread_id: message.thread_id,
             message_id: message.message_id,
             message: message.message,
-            ...(hostname ? { hostname } : {}),
+            ...(context || {}),
           })
           if (!sent) {
             chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，无法重新生成" })
           }
           sendResponse({ ok: sent })
         }
-        withHostnameBudget(() => getActiveTabHostname())
+        withHostnameBudget(() => getActiveTabContext())
           .then((hostname) => sendRegen(hostname))
           .catch(() => sendRegen())
         return true

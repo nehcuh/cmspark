@@ -7,6 +7,7 @@
 // Deferred: full family split for chat/thread/skill/pack/mcp/…
 
 import os from "os"
+import { resolveBrowserSiteTarget } from "./site-context/browser-resolver"
 import * as fs from "fs"
 import path from "path"
 import { URL } from "url"
@@ -1345,6 +1346,9 @@ export async function handleMessage(
           signal: controller.signal,
           contextRefsSegment,
           hostname: currentHostname,
+          siteContextTabId: rest.context_tab_id,
+          contextSelection: { kind: "thread", skillMode, knowledgeMode, extraSkillIds: rest.skill_ids || [], cachedMatchedSkillIds: allSkillIds },
+          resolveSiteTarget: (tabId, signal) => resolveBrowserSiteTarget(session.executeTool, rest.thread_id, tabId, signal),
           runStats,
         })
       } catch (e: any) {
@@ -1920,6 +1924,9 @@ export async function handleMessage(
           executeTool: session.executeTool,
           signal: uploadController.signal,
           hostname: uploadHostname,
+          siteContextTabId: rest.context_tab_id,
+          contextSelection: { kind: "thread", skillMode, knowledgeMode, extraSkillIds: rest.skill_ids || [], cachedMatchedSkillIds: allSkillIds },
+          resolveSiteTarget: (tabId, signal) => resolveBrowserSiteTarget(session.executeTool, rest.thread_id, tabId, signal),
         })
         logger.info("file.upload.chat_done", { thread_id })
       } catch (e: any) {
@@ -2314,6 +2321,9 @@ export async function handleMessage(
           signal: controller.signal,
           skipUserMessage: true,
           hostname: currentHostname,
+          siteContextTabId: rest.context_tab_id,
+          contextSelection: { kind: "thread", skillMode, knowledgeMode, extraSkillIds: rest.skill_ids || [], cachedMatchedSkillIds: allSkillIds },
+          resolveSiteTarget: (tabId, signal) => resolveBrowserSiteTarget(session.executeTool, rest.thread_id, tabId, signal),
         })
       } catch (e: any) {
         if (llmLoopGeneration.get(thread_id) === myGeneration) {
@@ -5625,5 +5635,4 @@ export async function handleMessage(
       return { type: "error", error: `Unknown message type: ${type}` }
   }
 }
-
 

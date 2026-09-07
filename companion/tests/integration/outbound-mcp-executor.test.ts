@@ -198,6 +198,19 @@ function armAutoToolResult(data: unknown = { tabs: [{ id: 1, url: "https://examp
 // B1 hazard documentation + production path
 // ---------------------------------------------------------------------------
 
+test("context metadata parameters are reserved to server invocation options", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  armAutoToolResult([])
+  for (const trusted of [false, true]) {
+    const sent = expectClientMessage("tool.execute")
+    const result = await executeTool(`context-${trusted}`, "list_tabs", { __site_context_tab_id: 999 }, undefined,
+      trusted ? { siteContextTabId: 7 } : undefined)
+    assert.equal(result.success, true)
+    const message = await sent
+    assert.equal(message.params.__site_context_tab_id, trusted ? 7 : undefined)
+  }
+})
+
 test("B1 hazard: ThreadManager denies synthetic outbound holder", () => {
   const tm = new ThreadManager()
   assert.equal(tm.isToolAllowed("outbound_mcp:agent", "list_tabs"), false)

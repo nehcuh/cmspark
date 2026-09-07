@@ -22,6 +22,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
     return { valid: false, error: "Message type must be a non-empty string" }
   }
 
+  if (["chat.create", "chat.regenerate", "file.upload"].includes(msg.type) && msg.context_tab_id !== undefined) {
+    if (!Number.isSafeInteger(msg.context_tab_id) || msg.context_tab_id < 0) {
+      return { valid: false, error: "context_tab_id must be a non-negative safe integer" }
+    }
+  }
+
   // Known message types with required field validation
   const validators: Record<string, (m: any) => WsValidationResult> = {
     "chat.create": (m) => {

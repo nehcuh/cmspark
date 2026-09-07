@@ -51,6 +51,25 @@ export async function getActiveTabHostname(): Promise<string | undefined> {
   }
 }
 
+export interface ActiveTabContext {
+  hostname: string
+  context_tab_id: number
+}
+
+/** Only the browser-selected id crosses the new context wire; the Companion
+ * resolves the actual tab again. No URL credentials/query/fragment here. */
+export async function getActiveTabContext(): Promise<ActiveTabContext | undefined> {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+    const tab = tabs[0]
+    const hostname = hostnameFromTabUrl(tab?.url)
+    if (!hostname || typeof tab?.id !== "number" || !Number.isSafeInteger(tab.id) || tab.id < 0) return undefined
+    return { hostname, context_tab_id: tab.id }
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Site-knowledge hostname is best-effort. Never stall chat.create / chat.user
  * echo on a hung tabs.query — 40ms is enough for the normal path. A budget
