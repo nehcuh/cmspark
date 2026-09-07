@@ -729,7 +729,8 @@ test("run_progress_propose is catalog companion not L2 not outbound", () => {
 test("adapter prompt and gate source locks", () => {
   const ad = readSrc("llm", "adapter.ts")
   const baseStart = ad.indexOf("const basePrompt =")
-  const baseEnd = ad.indexOf("const builtPrompt", baseStart)
+  const baseEnd = ad.indexOf("let contextTabId", baseStart)
+  assert.ok(baseStart >= 0 && baseEnd > baseStart, "base prompt boundaries must exist")
   const base = ad.slice(baseStart, baseEnd)
   assert.doesNotMatch(base, /run_progress_propose/)
   assert.match(ad, /run_progress_propose/)

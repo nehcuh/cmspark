@@ -3,6 +3,7 @@
 import { WebSocket } from "ws"
 import { randomUUID } from "crypto"
 import { URL } from "url"
+import { contextReadParams } from "./site-context/admission"
 import { getConfig, saveConfig, initDataDir, getConfigDir } from "./config"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
 import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
@@ -404,6 +405,8 @@ export function seedThreadManagerForTests(): ThreadManager {
  */
 export type ToolExecuteInvokeOpts = {
   trustedOutbound?: boolean
+  /** Server-owned Chat metadata resolution; never read this from tool args. */
+  siteContextTabId?: number
 }
 
 export type ToolExecutorFn = (
@@ -455,7 +458,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     signal?: AbortSignal,
     invokeOpts?: ToolExecuteInvokeOpts,
   ): Promise<{ success: boolean; data?: any; error?: string }> => {
-    let finalParams = params || {}
+    let finalParams = contextReadParams(toolName, params || {}, invokeOpts?.siteContextTabId)
     // #au4dch DL-1: normalize dotted alias → downloads_find
     if (toolName === "downloads.find") {
       toolName = "downloads_find"

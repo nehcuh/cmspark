@@ -12,6 +12,7 @@ import { getConfigDir, type LlmConfig as CompanionLlmConfig } from "../config"
 import { createProvider } from "../llm/provider"
 import { fallbackThreadManager, type ThreadManager } from "../threads/thread-manager"
 import { matchSite } from "./site-matcher"
+import { isOwnedSiteExperience } from "./site-experience-identity"
 import { sanitizeKnowledgeContent, wrapKnowledgeBlock } from "./content-sanitizer"
 import { chunkFile, searchChunks, type FileChunk } from "../file-chunker"
 import {
@@ -156,6 +157,17 @@ export type RetrievedSource = {
   group_label?: string
 }
 
+/** The exact knowledge projection used in a prompt, without security/skill
+ * instructions. Content is a summary/excerpt, never a claim of whole-document
+ * coverage. Produced only on explicit request by the shared context service. */
+export type KnowledgeBlock = {
+  source: RetrievedSource
+  document_version: string
+  content: string
+  content_kind: "summary"
+  truncated_by_budget: boolean
+}
+
 /**
  * #273 Wave B：buildSystemPromptWithSources 附带的路由元数据。
  * 仅在「按堆选文」开关 ON 且前置满足（auto + 智能匹配开 + 非空 query +
@@ -171,6 +183,7 @@ export type KnowledgeRoutingMeta = {
 
 /** buildSystemPromptWithSources 的知识侧选项。 */
 export type BuildPromptKnowledgeOpts = {
+  includeKnowledgeBlocks?: boolean
   /** 空 query + 智能匹配开的 auto 退化：每篇只注入 description。 */
   knowledgeDescriptionOnly?: boolean
   /** Wave B 路由上下文（缺省从 thread 记录推导；测试/评测可显式覆盖）。 */
@@ -207,6 +220,7 @@ interface KnowledgeRoutingPlan {
 }
 
 interface ExperienceEntry {
+  schema_version?: number
   id: string
   category: "problem" | "success" | "tip" | "rule"
   content: string
@@ -1170,7 +1184,7 @@ export class SkillEngine {
   }
 
   getBySite(hostname: string): Skill[] {
-    return this.skillsCache.filter(s => s.type === "site_knowledge" && s.site && matchSite(s.site, hostname))
+    return this.skillsCache.filter(s => s.type === "site_knowledge" && s.site && (matchSite(s.site, hostname) || isOwnedSiteExperience(s, hostname)))
   }
 
   getByType(type: string): Skill[] {
@@ -1348,6 +1362,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     mode?: "auto" | "all" | "manual",
     message?: string,
     hostname?: string,
+    cachedMatchedIds?: string[],
+    includeSiteKnowledge = true,
   ): Promise<string[]> {
     this.ensureFresh()
     const resolvedMode = mode || "auto"
@@ -1368,9 +1384,11 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const active = this.getActiveForThread(threadId)
       .filter(s => this.isSkillDoc(s))
       .map(s => s.name)
-    const matched = message ? (await this.matchSkills(message)).map(m => m.name) : []
+    const matched = cachedMatchedIds
+      ? cachedMatchedIds.filter(id => { const doc = this.get(id); return !!doc && this.isSkillDoc(doc) })
+      : message ? (await this.matchSkills(message)).map(m => m.name) : []
     // getBySite returns site_knowledge experience skills (legacy under skills/ or knowledge/)
-    const site = hostname ? this.getBySite(hostname).map(s => s.name) : []
+    const site = includeSiteKnowledge && hostname ? this.getBySite(hostname).map(s => s.name) : []
     return [...new Set([...active, ...matched, ...site])]
   }
 
@@ -1737,7 +1755,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     knowledgeIds?: string[],
     query?: string,
     opts?: BuildPromptKnowledgeOpts,
-  ): { prompt: string; retrieved_sources: RetrievedSource[]; knowledge_routing?: KnowledgeRoutingMeta } {
+  ): { prompt: string; retrieved_sources: RetrievedSource[]; knowledge_routing?: KnowledgeRoutingMeta; knowledge_blocks?: KnowledgeBlock[] } {
     const skills = skillIds
       ? skillIds.map(id => this.get(id)).filter(Boolean) as Skill[]
       : this.getActiveForThread(threadId)
@@ -1745,6 +1763,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const parts: string[] = []
     const injectedNames = new Set<string>()
     const retrieved_sources: RetrievedSource[] = []
+    const knowledgeBlocks: KnowledgeBlock[] = []
 
     // 跨文档知识注入硬预算（#273 Wave A §2.3）：只记注入的 summary 正文字符，
     // 不含 wrapKnowledgeBlock 包装（包装上界 = KNOWLEDGE_WRAP_OVERHEAD_CHARS×篇数
@@ -1771,13 +1790,26 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       }
       knowledgeBudgetLeft -= body.length
       injectedNames.add(k.name)
-      retrieved_sources.push({
+      const source: RetrievedSource = {
         id,
         title,
         chunk_index: chunkIndex,
         chars: body.length,
         ...(groupLabel ? { group_label: groupLabel } : {}),
-      })
+      }
+      retrieved_sources.push(source)
+      if (opts?.includeKnowledgeBlocks) {
+        knowledgeBlocks.push({
+          source,
+          document_version: crypto.createHash("sha256").update(JSON.stringify({
+            content: k.content, entries: k.entries || [], site: k.site || "", type: k.type,
+            title: k.title || k.name, description: k.description, tags: k.tags || [],
+          })).digest("hex"),
+          content: body,
+          content_kind: "summary",
+          truncated_by_budget: body.length < summary.length,
+        })
+      }
       parts.push(wrapKnowledgeBlock(id, title, body))
     }
 
@@ -1994,6 +2026,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     return {
       prompt: parts.join("\n\n"),
       retrieved_sources,
+      ...(opts?.includeKnowledgeBlocks ? { knowledge_blocks: knowledgeBlocks } : {}),
       ...(knowledgeRoutingMeta ? { knowledge_routing: knowledgeRoutingMeta } : {}),
     }
   }
@@ -2103,6 +2136,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     if (skill.priority) frontmatter.priority = skill.priority
     if (skill.entries?.length) {
       frontmatter.entries = skill.entries.map(e => ({
+        ...(e.schema_version !== undefined ? { schema_version: e.schema_version } : {}),
         id: e.id,
         category: e.category,
         content: e.content,
@@ -3426,6 +3460,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     if (tags?.length) frontmatter.tags = tags
     if (entry) {
       frontmatter.entries = [{
+        ...(entry.schema_version !== undefined ? { schema_version: entry.schema_version } : {}),
         id: entry.id,
         category: entry.category,
         content: entry.content,

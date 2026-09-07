@@ -118,13 +118,13 @@ test("origin prefers tabUrl over params.url", () => {
   assert.equal(origin, "https://zhihu.com")
 })
 
-test("www and apex share origin key", () => {
+test("www and apex keep distinct machine origin keys", () => {
   resetSiteOpMemoryForTests()
   const p = { tabId: 1, text: "写文章" }
   recordSiteOpFailure("w", "click", p, "ELEMENT_NOT_FOUND", "https://www.zhihu.com/write")
   recordSiteOpFailure("w", "click", p, "ELEMENT_NOT_FOUND", "https://www.zhihu.com/write")
   const ban = peekSiteOpBan("w", "click", p, "https://zhihu.com/creator")
-  assert.equal(ban.banned, true)
+  assert.equal(ban.banned, false)
 })
 
 test("press_key ignores stray text param", () => {
