@@ -5,9 +5,14 @@
  * Runs all compiled tests under .test-dist/tests matching *.test.js except:
  *  - files starting with underscore
  *  - settings-web.test.js (run last, serial — port contention)
+ * For targeted debugging, compile then pass compiled test paths as arguments:
+ * node scripts/run-tests.mjs .test-dist/tests/example.test.js
+ * Direct node --test bypasses data-dir isolation. This is config-data isolation,
+ * not a filesystem sandbox; tests must still mock host/filesystem tool effects.
  */
 import fs from "node:fs"
 import path from "node:path"
+import os from "node:os"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
@@ -26,7 +31,18 @@ function walk(dir, out = []) {
   return out
 }
 
-const all = walk(testsRoot)
+const discovered = walk(testsRoot).map(f => fs.realpathSync(f))
+const requested = process.argv.slice(2).map(f => {
+  const resolved = path.resolve(root, f)
+  // macOS /var -> /private/var and symlinked working directories must compare
+  // by the same physical path as the runner's import URL.
+  return fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved
+})
+if (requested.some(f => !discovered.includes(f))) {
+  console.error("Requested test is not a compiled test under", testsRoot)
+  process.exit(1)
+}
+const all = requested.length ? [...new Set(requested)] : discovered
 const settings = all.filter((f) => path.basename(f) === "settings-web.test.js")
 const main = all.filter((f) => path.basename(f) !== "settings-web.test.js")
 
@@ -37,10 +53,10 @@ if (main.length === 0 && settings.length === 0) {
 
 function runNodeTest(files, extraArgs = []) {
   if (files.length === 0) return 0
-  const r = spawnSync(process.execPath, ["--test", ...extraArgs, ...files], {
+  const r = spawnSync(process.execPath, ["--require", path.join(root, "scripts", "test-data-dir.cjs"), "--test", ...extraArgs, ...files], {
     cwd: root,
     stdio: "inherit",
-    env: process.env,
+    env: { ...process.env, CMSPARK_TEST_RUN_DIR: testRunDir },
   })
   return r.status ?? 1
 }
@@ -60,6 +76,18 @@ function settingsWebIsolationArgs() {
   return ["--experimental-test-isolation=none"]
 }
 
-let code = runNodeTest(main)
-if (code === 0) code = runNodeTest(settings, settingsWebIsolationArgs())
+const testRunDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-test-run-"))
+let code = 1
+try {
+  code = runNodeTest(main)
+  if (code === 0) code = runNodeTest(settings, settingsWebIsolationArgs())
+} finally {
+  // SIGKILL/host shutdown may leave a temp root; no production data lives here.
+  try {
+    fs.rmSync(testRunDir, { recursive: true, force: true })
+  } catch (error) {
+    console.error("Test data cleanup failed (test exit code:", code, "):", error)
+    code = code || 1
+  }
+}
 process.exit(code)

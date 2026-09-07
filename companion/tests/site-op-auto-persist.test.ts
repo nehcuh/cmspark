@@ -11,6 +11,7 @@
  *    machine ban refuses the exact persisted locator (SITE_OP_BANNED without
  *    dispatching to executeTool) and formatSiteOpMemoryPrompt surfaces it
  */
+import { siteExperienceIdentity, readSiteExperienceEntries } from "../src/skills/site-experience-identity"
 import test, { after, before } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
@@ -141,6 +142,55 @@ const proposeOk = { success: true, data: { items: [{ text: "bookmark this page" 
 const proposeRound = { tool: { name: "run_progress_propose", args: { items: [{ text: "bookmark this page" }] } } }
 const stubExecuteTool = async (_id: string, name: string) => (name === "run_progress_propose" ? proposeOk : { ...failResult })
 
+test("automatic persistence never appends to a colliding legacy/manual document", async () => {
+  resetSiteOpMemoryForTests()
+  clearTabUrlCacheForTests()
+  const host = "a.b-c"
+  const se = new SkillEngine()
+  se.createExperienceSkill("a-b-c", "site_knowledge", "a-b.c", ["manual"], {
+    id: "manual", category: "tip", content: "keep my document", recorded_at: new Date().toISOString(),
+    confirmed_at: null, stale: false, stale_reason: "", replaced_by: "",
+  })
+  const oldPath = se.get("a-b-c")!.source_file
+  const oldContent = fs.readFileSync(oldPath, "utf8")
+  applyTabNavigated(102, `https://${host}/page`)
+  roundScript = [proposeRound, ...["click", "hover", "type", "get_element_info"].map((name, i) => ({
+    tool: { name, args: { tabId: 102, selector: `#item-${i}`, value: "test" } },
+  })), { content: "done" }]
+  const manager = new ThreadManager()
+  const thread = manager.create("collision", "test-autoexp-collision")
+  await chatCreate(buildParams({ threadId: thread.id, skillEngine: se, manager, hostname: host, executeTool: stubExecuteTool }))
+  assert.equal(fs.readFileSync(oldPath, "utf8"), oldContent)
+  const generated = se.get(siteExperienceIdentity(host).id)
+  assert.equal(generated?.site, host)
+  assert.ok((generated?.entries?.length || 0) >= 4)
+  assert.deepEqual(readSiteExperienceEntries(host, key => se.get(key)), generated!.entries, "new persisted entries must be readable by the actual hydration selector")
+})
+
+test("occupied v1 identity is not modified and persistence failure does not abort chat", async () => {
+  resetSiteOpMemoryForTests()
+  clearTabUrlCacheForTests()
+  const host = "occupied.example"
+  const id = siteExperienceIdentity(host).id
+  const se = new SkillEngine()
+  se.createExperienceSkill(id, "domain_knowledge", undefined, ["manual"], {
+    id: "manual", category: "tip", content: "manual content", recorded_at: new Date().toISOString(),
+    confirmed_at: null, stale: false, stale_reason: "", replaced_by: "",
+  })
+  const docPath = se.get(id)!.source_file
+  const before = fs.readFileSync(docPath, "utf8")
+  applyTabNavigated(103, `https://${host}/page`)
+  roundScript = [proposeRound, ...["click", "hover", "type", "get_element_info"].map((name, i) => ({
+    tool: { name, args: { tabId: 103, selector: `#blocked-${i}`, value: "test" } },
+  })), { content: "persistence did not abort chat" }]
+  const manager = new ThreadManager()
+  const thread = manager.create("occupied", "test-autoexp-occupied")
+  await chatCreate(buildParams({ threadId: thread.id, skillEngine: se, manager, hostname: host, executeTool: stubExecuteTool }))
+  assert.equal(fs.readFileSync(docPath, "utf8"), before)
+  assert.equal(se.get(siteExperienceIdentity(host).legacyId), undefined, "an occupied v1 identity must not fall back to a legacy write")
+  assert.ok(manager.getMessages(thread.id).some(m => m.content === "persistence did not abort chat"))
+})
+
 test("4 origin failures (distinct tools+locators) auto-persist an [auto] experience", async () => {
   resetSiteOpMemoryForTests()
   clearTabUrlCacheForTests()
@@ -169,8 +219,8 @@ test("4 origin failures (distinct tools+locators) auto-persist an [auto] experie
   assert.equal(persisted.length, 1, "exactly one auto persist on the 4th origin failure")
   assert.ok((persisted[0].data.lines as number) >= 4, "MAJOR-3: persist covers every failed path, not just the 4th")
 
-  const skill = se.get("x-com")
-  assert.ok(skill, "site experience skill x-com must exist")
+  const skill = se.get(siteExperienceIdentity("x.com").id)
+  assert.ok(skill, "versioned site experience for x.com must exist")
   assert.equal(skill.type, "site_knowledge")
   assert.ok(skill.tags?.includes("auto"), "tags must mark auto origin")
   assert.ok(skill.tags?.includes("site-op-memory"))
@@ -218,7 +268,7 @@ test("3 origin failures persist nothing", async () => {
   }))
 
   assert.equal(logEvents.filter(e => e.event === "site_op.auto_experience_persisted").length, 0)
-  assert.equal(se.get("y-com"), undefined)
+  assert.equal(se.get(siteExperienceIdentity("y.com").id), undefined)
 })
 
 test("NEW thread on same origin: hydrated machine ban refuses persisted locator (no dispatch)", async () => {

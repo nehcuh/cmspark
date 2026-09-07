@@ -1,0 +1,45 @@
+{
+  "basis": "HEAD 63b449d9; actual production functions, adversarial synthetic input; no live browser",
+  "runProgress": {
+    "afterClick": {
+      "items": [
+        {
+          "id": "live:0",
+          "text": "提交表单且后台生成记录",
+          "done": true,
+          "source": "seed",
+          "tool": "click"
+        }
+      ]
+    },
+    "completion": {
+      "kind": "complete",
+      "tickedIds": [
+        "live:0"
+      ]
+    }
+  },
+  "board": {
+    "failedToolIdResolves": true,
+    "openIntentStatus": "open",
+    "completion": {
+      "ok": true,
+      "path": "supporting_facts"
+    }
+  },
+  "htmlFallback": {
+    "requested": "<section id=\"wanted\">release-A</section>",
+    "isolated": "<html><section id=\"wanted\">release-A</section><aside>unrelated-content</aside></html>",
+    "main": "<html><section id=\"wanted\">release-A</section><aside>unrelated-content</aside></html>"
+  },
+  "siteExperienceNameCollision": [
+    {
+      "host": "a.b-c",
+      "name": "a-b-c"
+    },
+    {
+      "host": "a-b.c",
+      "name": "a-b-c"
+    }
+  ]
+}
