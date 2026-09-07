@@ -29,3 +29,7 @@ declare module "node:assert/strict" {
   const assert: Assert
   export default assert
 }
+declare module "node:vm" {
+  const vm: { runInNewContext(code: string, context: Record<string, unknown>): any }
+  export default vm
+}

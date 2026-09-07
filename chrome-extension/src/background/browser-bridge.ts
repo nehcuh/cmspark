@@ -234,7 +234,7 @@ export class BrowserBridge {
         nodeId: root.nodeId,
         selector,
       })
-      if (!result.nodeId) throw new Error(`Element not found: ${selector}`)
+      if (!result.nodeId) return ""
       nodeId = result.nodeId
     }
 
@@ -246,10 +246,9 @@ export class BrowserBridge {
   // then MAIN world if ISOLATED had injection errors (some SPAs block ISOLATED).
   // Prefer CDP Runtime.evaluate (safeEvaluate) for X/Twitter — scripting can fail
   // with empty results or CSP while the debugger path still works.
-  private async scriptingExecute(tabId: number, code: string): Promise<any> {
+  private async scriptingExecute(tabId: number, code: string, htmlRead?: { selector: string }): Promise<any> {
     // Detect simple read-only expressions — use direct DOM funcs, no new Function()
     const bodyTextExpr = code === "document.body?.innerText || ''"
-    const bodyHtmlExpr = code.startsWith("document.querySelector('html')")
 
     const hasUsableResult = (results: ScriptingResult[] | undefined): boolean => {
       if (!results || results.length === 0) return false
@@ -268,10 +267,11 @@ export class BrowserBridge {
           target: { tabId }, injectImmediately: true,
           func: () => document.body?.innerText || "",
         })
-      } else if (bodyHtmlExpr) {
+      } else if (htmlRead) {
         results = await chrome.scripting.executeScript({
           target: { tabId }, injectImmediately: true,
-          func: () => document.querySelector("html")?.outerHTML?.substring(0, 500000) || "",
+          func: (selector: string) => document.querySelector(selector)?.outerHTML?.substring(0, 500000) || "",
+          args: [htmlRead.selector],
         })
       } else {
         results = await chrome.scripting.executeScript({
@@ -291,10 +291,11 @@ export class BrowserBridge {
           target: { tabId }, injectImmediately: true, world: "MAIN",
           func: () => document.body?.innerText || "",
         })
-      } else if (bodyHtmlExpr) {
+      } else if (htmlRead) {
         results = await chrome.scripting.executeScript({
           target: { tabId }, injectImmediately: true, world: "MAIN",
-          func: () => document.querySelector("html")?.outerHTML?.substring(0, 500000) || "",
+          func: (selector: string) => document.querySelector(selector)?.outerHTML?.substring(0, 500000) || "",
+          args: [htmlRead.selector],
         })
       } else {
         results = await chrome.scripting.executeScript({
@@ -598,7 +599,7 @@ export class BrowserBridge {
             `${activeTab?.id ?? "none"} — refusing captureVisibleTab of the wrong tab`,
         }
       }
-      const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: "jpeg", quality: 80 })
+      const dataUrl = await chrome.tabs.captureVisibleTab(activeTab.windowId, { format: "jpeg", quality: 80 })
       const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "")
       return {
         success: true,
@@ -848,7 +849,7 @@ export class BrowserBridge {
 
   // Safe JS execution: CDP Runtime.evaluate first (not subject to page CSP the same
   // way chrome.scripting MAIN/eval is — critical for x.com). Scripting is fallback.
-  private async safeEvaluate(tabId: number, expression: string): Promise<any> {
+  private async safeEvaluate(tabId: number, expression: string, htmlRead?: { selector: string }): Promise<any> {
     try {
       const cdp = await this.sendCdp(tabId, "Runtime.evaluate", {
         expression,
@@ -867,7 +868,7 @@ export class BrowserBridge {
     } catch (cdpErr: any) {
       // Fallback to chrome.scripting only when CDP attach/evaluate truly failed
       try {
-        const result = await this.scriptingExecute(tabId, expression)
+        const result = await this.scriptingExecute(tabId, expression, htmlRead)
         return { result: { value: result } }
       } catch (scriptErr: any) {
         throw new Error(
@@ -895,18 +896,18 @@ export class BrowserBridge {
 
   private async getPageHTML(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    // Keep document.querySelector('html') prefix for scriptingExecute bodyHtmlExpr special-case.
-    // Selector must be JSON.stringify'd — never raw-interpolate into Runtime.evaluate.
-    const selector = params.selector ? `.querySelector(${selectorJsLiteral(params.selector)})` : ""
-    const expression = `document.querySelector('html')${selector}?.outerHTML?.substring(0, 500000) || ''`
+    // Pass the same structured scope to every execution path. Do not infer it
+    // from an expression prefix: that used to silently widen reads to all HTML.
+    const selector = params.selector ? String(params.selector) : "html"
+    const expression = `document.querySelector(${selectorJsLiteral(selector)})?.outerHTML?.substring(0, 500000) || ''`
     let html = ""
     let source: "runtime" | "dom" = "runtime"
     try {
-      const result = await this.safeEvaluate(tabId, expression)
+      const result = await this.safeEvaluate(tabId, expression, { selector })
       html = result.result?.value || ""
     } catch (err: any) {
       try {
-        html = await this.getOuterHTMLViaDom(tabId, params.selector)
+        html = await this.getOuterHTMLViaDom(tabId, selector)
         source = "dom"
       } catch (domErr: any) {
         throw new Error(`${err.message || String(err)}; DOM fallback failed: ${domErr.message || String(domErr)}`)
