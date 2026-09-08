@@ -20,6 +20,7 @@ import {
   openLoopbackPage,
   __testSetOverlayLaunchGraceMs,
   __testSetOverlaySseReconnectGraceMs,
+  projectSummonerMcpList,
   SUMMONER_WEB_DISPATCH_ALLOW,
   SUMMONER_WEB_EVENT_ALLOW,
 } from "../src/summoner-web"
@@ -1692,4 +1693,16 @@ test("W3 (F3b): send() clears the attachment input after a successful send", () 
   // Failure path must NOT clear the input.
   const failIdx = send.indexOf('setStatus(d.error||"发送失败")')
   assert.ok(failIdx >= 0 && failIdx < resetIdx, "reset must come after the error early-return")
+})
+
+// Input is the actual production broadcast serializer's output, with deliberately
+// rich metadata; the overlay response must not retain unused sensitive fields.
+test("#477 MCP read projection drops config, headers/env names and tool definitions", async () => {
+  const { redactMcpServersForBroadcast } = await import("../src/message-router/handlers/mcp")
+  const servers = redactMcpServersForBroadcast([{ name: "fixture", connection: { status: "connected" },
+    config: { env: { TOKEN: "test-only" }, headers: { Authorization: "test-only" } }, tools: [{ name: "unused" }] }])
+  const result = projectSummonerMcpList({ type: "mcp.list", servers })
+  assert.deepEqual(result, { type: "mcp.list", servers: [{ name: "fixture", connection: { status: "connected" } }] })
+  for (const field of ["config", "TOKEN", "Authorization", "tools", "test-only"]) assert.equal(JSON.stringify(result).includes(field), false)
+  assert.deepEqual(projectSummonerMcpList({ type: "error", error: "offline", config: "private" }), { type: "error", error: "offline" })
 })

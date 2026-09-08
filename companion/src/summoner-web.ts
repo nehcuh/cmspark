@@ -256,6 +256,21 @@ async function dispatchAllowed(type: string, payload: Record<string, unknown>): 
   return activeDispatch(msg)
 }
 
+/** The overlay displays names/state only; do not send MCP configs or env names to its page. */
+export function projectSummonerMcpList(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object") return { type: "error", error: "无法读取 MCP 服务" }
+  const value = raw as Record<string, unknown>
+  if (value.type === "error") return { type: "error", error: typeof value.error === "string" ? value.error : "无法读取 MCP 服务" }
+  if (!Array.isArray(value.servers)) return { type: "error", error: "MCP 服务列表格式无效" }
+  return { type: "mcp.list", servers: value.servers.flatMap((server: unknown) => {
+    if (!server || typeof server !== "object") return []
+    const item = server as Record<string, unknown>
+    if (typeof item.name !== "string") return []
+    const connection = item.connection as { status?: unknown } | undefined
+    return [{ name: item.name, connection: { status: typeof connection?.status === "string" ? connection.status : "unknown" } }]
+  }) }
+}
+
 export function summonerWebPageUrl(port: number, _token?: string): string {
   return `http://127.0.0.1:${port}/`
 }
@@ -823,7 +838,7 @@ async function handleRequest(
     }
 
     if (pathOnly === "/api/mcp" && req.method === "GET") {
-      jsonResponse(res, await dispatchAllowed("mcp.list", {}))
+      jsonResponse(res, projectSummonerMcpList(await dispatchAllowed("mcp.list", {})))
       return
     }
 
@@ -1435,7 +1450,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .item.active{background:#eaeae7;color:var(--text)}.item strong{overflow-wrap:anywhere}.trow{flex-wrap:wrap}.trow .item{flex-basis:100%}.trow .icon-mini{height:28px}
 #historyClose{display:none}.log{padding:32px 28px}.empty{margin:auto;max-width:440px;line-height:1.8;color:var(--secondary)}
 .empty strong{font-size:28px;color:var(--text);margin-bottom:8px}
-@media(min-width:760px){.composer,.capture-row,.status,.cta-box{margin-left:220px;max-width:none;width:calc(100% - 220px)}.composer{padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.cta-box,.status{width:calc(100% - 244px)}#historyOpen{display:none}}
+@media(min-width:760px){.hud{background:var(--rail-bg)}.capture-row{background:var(--paper)}.log{max-width:none;padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.composer,.capture-row,.status,.cta-box{margin-left:220px;max-width:none;width:calc(100% - 220px)}.composer{padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.cta-box,.status{width:calc(100% - 244px)}#historyOpen{display:none}}
 @media(max-width:759px){.brand{flex-wrap:wrap}.brand-actions{flex-wrap:wrap;min-width:0}.hud.expanded .body{flex-direction:column}.list{display:none}.hud.history .list{display:flex;width:100%;max-height:36vh;min-height:0;border-right:0;border-bottom:1px solid var(--line)}.rail{flex-direction:row;flex-wrap:wrap;flex-shrink:0;padding:6px}.rail-btn{width:auto;height:32px;padding:0 8px;font-size:12px}.rail-btn svg{display:none}.list-head{padding:4px 12px}.list-scroll{min-height:0}#historyClose{display:block}.log{padding:20px}.empty strong{font-size:22px}}
 @media(max-height:560px){.hud.history .list{max-height:28vh}.log{padding:12px}.empty{padding:8px}.empty strong{font-size:20px}.capture-row{padding-bottom:6px}.composer{padding-top:6px}}
 
@@ -2466,8 +2481,9 @@ try{
   $("windowMode").onclick=function(){compactWindow=!compactWindow;placeWindow(compactWindow);$("windowMode").textContent=compactWindow?"工作窗口":"紧凑窗口";setStatus("已请求调整窗口；如果当前宿主未响应，可手动调整窗口大小。")};
   $("historyOpen").onclick=function(){ showHistory(!$("hud").classList.contains("history")); };
   $("threadSearch").oninput=function(){renderThreads()};
-  document.addEventListener("keydown",function(e){if(e.key==="Escape" && $("hud").classList.contains("history")){showHistory(false);$("historyOpen").focus()}});
-  $("historyClose").onclick=function(){ showHistory(false); };
+  document.addEventListener("keydown",function(e){if(e.key==="Escape" && $("hud").classList.contains("history")){closeNavigation()}});
+  function closeNavigation(){showHistory(false);(window.matchMedia("(min-width:760px)").matches?$("newChat"):$("historyOpen")).focus()}
+  $("historyClose").onclick=closeNavigation;
   $("newChat").onclick=function(){ $("newThread").click(); };
   $("newThreadBar").onclick=function(){$("newThread").click()};
   $("newThread").onclick=function(){
@@ -2556,7 +2572,7 @@ try{
     if(name==="browser"){
       box.innerHTML='<p class="resource-note">连接现有 Chrome。后台连接会尽量避免展示窗口；需要查看操作时展示浏览器。网页操作仍需要已连接的 CMspark 扩展。</p>';
       [["后台连接",false],["展示浏览器",true]].forEach(function(item){var b=document.createElement("button");b.className="row";b.textContent=item[0];b.onclick=function(){attachChrome(item[1])};box.appendChild(b)});
-      return api("/api/browser-status").then(function(d){var p=document.createElement("p");p.className="resource-note";p.textContent=d.connected===true?"CMspark 扩展已连接":"尚未连接 CMspark 扩展";box.prepend(p)}).catch(function(){setStatus("无法读取浏览器连接状态")});
+      return api("/api/browser-status").then(function(d){if(d.error||d.type==="error"||typeof d.connected!=="boolean") throw new Error("无法读取浏览器连接状态");var p=document.createElement("p");p.className="resource-note";p.textContent=d.connected===true?"CMspark 扩展已连接":"尚未连接 CMspark 扩展";box.prepend(p)}).catch(function(){setStatus("无法读取浏览器连接状态")});
     }
     if(name==="mcp"){
       return api("/api/mcp").then(function(d){

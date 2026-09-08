@@ -55,7 +55,7 @@ test("#243 ② 「新对话」清空到文字空态（newChat → newThread → 
 
 test("#243 ③ 「历史」盖住卡片列出会话：点选进入、重命名、移到回收站", () => {
   // #477 replaces full-card overlay with in-flow navigation; browser harness verifies Stop remains reachable.
-  assert.match(web, /\$\("historyClose"\)\.onclick=function\(\)\{ showHistory\(false\); \};/)
+  assert.match(web, /\$\("historyClose"\)\.onclick=closeNavigation;/)
   assert.match(web, /function renderThreads\(filter\)\{[\s\S]{0,450}?threads\.forEach/)
 
   // 点选进入（selectThread 内含 showHistory(false)，选完收起盖层）
