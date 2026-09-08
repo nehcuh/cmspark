@@ -454,6 +454,27 @@ export function toggleGroupSelection(
   return next
 }
 
+/** Select-all / clear-all for the currently visible selectable set. */
+export function toggleSelectAll(
+  selected: Set<string>,
+  selectableIds: Iterable<string>,
+): Set<string> {
+  return toggleGroupSelection([...selectableIds], selected)
+}
+
+/** Idempotent 全选 — never toggle. Safe under Strict Mode double-updaters. */
+export function selectAllIds(selectableIds: Iterable<string>): Set<string> {
+  return new Set(selectableIds)
+}
+
+export function allSelectableSelected(
+  selected: Set<string>,
+  selectableIds: Iterable<string>,
+): boolean {
+  const ids = [...selectableIds]
+  return ids.length > 0 && selectionState(ids, selected) === "all"
+}
+
 /** Build tag → threadIds index for Tags view (P1). */
 export function buildTagIndex(
   threads: TimelineThread[],

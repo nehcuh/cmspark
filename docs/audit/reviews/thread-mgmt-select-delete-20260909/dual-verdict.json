@@ -1,0 +1,9 @@
+{
+  "batch": "thread-mgmt-select-delete-20260909",
+  "base": "8a6b2e26",
+  "scope": "uncommitted ThreadList 全选/删除/整理助手 vs HEAD",
+  "claude": "APPROVE_WITH_NITS",
+  "kimi": "APPROVE_WITH_NITS",
+  "both_ok": true,
+  "notes": "Claude stdout ended with 裁决：批准（有细节问题）; body is AWN. Shared nits: stale toggleSelectAll test title (folded), leftover confirm() on handleCleanupEmpty (follow-up), empty-selection fallbacks unreachable. Extra grok subagent REJECT on test title only — not a dual gate."
+}

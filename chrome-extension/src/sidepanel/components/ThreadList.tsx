@@ -42,6 +42,8 @@ import {
   threadIdsInDay,
   threadIdsInMonth,
   toggleGroupSelection,
+  selectAllIds,
+  allSelectableSelected,
   type MonthGroup,
   type DayGroup,
   type ThreadListExpandState,
@@ -117,7 +119,7 @@ export function ThreadList() {
   const [open, setOpen] = useState(false)
   const [editingThread, setEditingThread] = useState<Thread | null>(null)
   const [metadataNotice, setMetadataNotice] = useState("")
-  useEffect(() => { if (!open) { setEditingThread(null); setMetadataNotice("") } }, [open])
+  useEffect(() => { if (!open) { setEditingThread(null); setMetadataNotice(""); setPendingDelete(null) } }, [open])
   useEffect(() => {
     const show = () => { if (!state.pendingSecurityConfirmations.length) setOpen(true) }
     window.addEventListener("cmspark:open-thread-manager", show)
@@ -174,6 +176,16 @@ export function ThreadList() {
   const [cleanupSelected, setCleanupSelected] = useState<Set<string>>(() => new Set())
   /** 0 = 全部（含近期） */
   const [cleanupDays, setCleanupDays] = useState(0)
+  /** In-panel confirm: Side Panel often swallows window.confirm (delete looks dead). */
+  const [pendingDelete, setPendingDelete] = useState<{
+    ids: string[]
+    hard: boolean
+    source: "row" | "batch" | "cleanup"
+  } | null>(null)
+  useEffect(() => {
+    if (!pendingDelete) return
+    historyRef.current?.querySelector("[role='alertdialog']")?.scrollIntoView({ block: "nearest" })
+  }, [pendingDelete])
   /** Wave C: seed for related list; graph focus */
   const [relatedSeedId, setRelatedSeedId] = useState<string | null>(null)
   /** Companion thread.related override (local mirror first; WS may refine). */
@@ -747,39 +759,71 @@ export function ThreadList() {
       alert("该线程正在运行，无法删除")
       return
     }
-    if (trashView) {
-      if (!confirm(`永久删除线程 "${threadId}"？不可恢复。`)) return
-      dispatch({ type: "REMOVE_THREAD", threadId })
-      chrome.runtime.sendMessage({ type: "thread.delete", thread_id: threadId, mode: "hard" })
-      return
-    }
-    if (confirm(`将线程移入回收站？\n可在 ⋯ → 回收站 中恢复（约 30 天后自动清理）。`)) {
-      dispatch({ type: "REMOVE_THREAD", threadId })
-      chrome.runtime.sendMessage({ type: "thread.delete", thread_id: threadId, mode: "trash" })
-    }
+    setPendingDelete({ ids: [threadId], hard: trashView, source: "row" })
   }
 
   const handleBatchDelete = () => {
-    const ids = [...selected].filter((id) => selectableIds.has(id))
-    if (ids.length === 0) return
-    const preview = ids.slice(0, 12).join(", ") + (ids.length > 12 ? " …" : "")
-    if (trashView) {
-      if (!confirm(`永久删除 ${ids.length} 个会话？不可恢复。\n\n${preview}`)) return
+    let ids = [...selected].filter((id) => selectableIds.has(id))
+    if (ids.length === 0) {
+      ids = [...selectableIds]
+      if (ids.length === 0) return
+      setSelected(new Set(ids))
+      setSelectMode(true)
+    }
+    setPendingDelete({ ids, hard: trashView, source: "batch" })
+  }
+
+  const executePendingDelete = () => {
+    if (!pendingDelete || pendingDelete.ids.length === 0) return
+    const { ids, hard, source } = pendingDelete
+    const mode = hard ? "hard" : "trash"
+    if (ids.length === 1) {
+      dispatch({ type: "REMOVE_THREAD", threadId: ids[0] })
+      chrome.runtime.sendMessage({ type: "thread.delete", thread_id: ids[0], mode }, () => {
+        void chrome.runtime.lastError
+      })
+    } else {
       dispatch({ type: "REMOVE_THREADS", threadIds: ids })
-      chrome.runtime.sendMessage({ type: "thread.batch_delete", thread_ids: ids, mode: "hard" })
-      exitSelectMode()
-      return
+      chrome.runtime.sendMessage({ type: "thread.batch_delete", thread_ids: ids, mode }, () => {
+        void chrome.runtime.lastError
+      })
     }
-    if (
-      !confirm(
-        `将 ${ids.length} 个会话移入回收站？\n可稍后恢复（约 30 天后自动清理）。\n\n${preview}`,
+    setPendingDelete(null)
+    if (source === "batch") exitSelectMode()
+    if (source === "cleanup") {
+      setCleanupOpen(false)
+      setCleanupSuggestions([])
+      setCleanupSelected(new Set())
+    }
+  }
+
+  const handleSelectAllVisible = () => {
+    if (cleanupOpen && cleanupSuggestions.length > 0) {
+      setCleanupSelected(
+        new Set(cleanupSuggestions.map((s) => s.thread_id).filter(Boolean).slice(0, 50)),
       )
-    ) {
       return
     }
-    dispatch({ type: "REMOVE_THREADS", threadIds: ids })
-    chrome.runtime.sendMessage({ type: "thread.batch_delete", thread_ids: ids, mode: "trash" })
-    exitSelectMode()
+    const ids = selectAllIds(selectableIds)
+    setSelectMode(true)
+    setSelected(ids)
+    const months = timeline.months.map((m) => m.monthKey)
+    const days = new Set<string>()
+    for (const m of timeline.months) {
+      for (const d of m.days) days.add(d.dayKey)
+    }
+    const nextExpand = { months, today: true, yesterday: true }
+    setExpandState(nextExpand)
+    saveExpandState(nextExpand)
+    setExpandedDays(days)
+  }
+
+  const handleClearVisibleSelection = () => {
+    if (cleanupOpen && cleanupSuggestions.length > 0) {
+      setCleanupSelected(new Set())
+      return
+    }
+    setSelected(new Set())
   }
 
   const handleRestore = (ids: string[]) => {
@@ -818,28 +862,13 @@ export function ThreadList() {
   }
 
   const applyCleanupTrash = () => {
-    const ids = [...cleanupSelected].slice(0, 50)
-    if (ids.length === 0) return
-    const picked = cleanupSuggestions.filter((s) => ids.includes(s.thread_id))
-    const hasHusk = picked.some((s) => s.reason === "acp_husk")
-    const lines = picked.slice(0, 12).map((s) => {
-      const thr = threads.find((t) => t.id === s.thread_id)
-      const n = thr?.message_count
-      return `#${s.thread_id}${typeof n === "number" ? ` · ${n} 条消息` : ""}`
-    })
-    const more = picked.length > 12 ? `\n…另 ${picked.length - 12} 个` : ""
-    const warn = hasHusk ? "\n含编程接力记录，请再核对。" : ""
-    if (
-      !confirm(
-        `将把 ${ids.length} 个会话移入回收站（可在 ⋯ → 回收站 恢复，约 30 天后自动清除）。${warn}\n\n${lines.join("\n")}${more}`,
-      )
-    ) {
-      return
+    let ids = [...cleanupSelected].slice(0, 50)
+    if (ids.length === 0) {
+      ids = cleanupSuggestions.map((s) => s.thread_id).filter(Boolean).slice(0, 50)
+      if (ids.length === 0) return
+      setCleanupSelected(new Set(ids))
     }
-    chrome.runtime.sendMessage({ type: "thread.batch_delete", thread_ids: ids, mode: "trash" })
-    dispatch({ type: "REMOVE_THREADS", threadIds: ids })
-    setCleanupOpen(false)
-    setCleanupSuggestions([])
+    setPendingDelete({ ids, hard: false, source: "cleanup" })
   }
 
   /** B-4: extract digests for cleanup-selected threads only (no delete). */
@@ -850,7 +879,7 @@ export function ThreadList() {
     beginExtractBatch(ids, force)
   }
 
-  const panelMaxHeight = selectMode || view === "tags" || view === "topics" || view === "ai" ? 480 : 360
+  const panelMaxHeight = selectMode || cleanupOpen || view === "tags" || view === "topics" || view === "ai" ? 480 : 360
 
   useEffect(() => {
     if (!open) {
@@ -1014,6 +1043,7 @@ export function ThreadList() {
         {!selectMode && (
           <>
             <button
+              type="button"
               style={styles.iconBtn}
               onClick={(e) => {
                 e.stopPropagation()
@@ -1024,6 +1054,7 @@ export function ThreadList() {
               🔗
             </button>
             <button
+              type="button"
               style={styles.iconBtn}
               onClick={(e) => {
                 e.stopPropagation()
@@ -1034,6 +1065,7 @@ export function ThreadList() {
               🏷
             </button>
             <button
+              type="button"
               style={styles.iconBtn}
               onClick={(e) => {
                 e.stopPropagation()
@@ -1045,6 +1077,7 @@ export function ThreadList() {
               知识
             </button>
             <button
+              type="button"
               style={styles.iconBtn}
               onClick={(e) => {
                 e.stopPropagation()
@@ -1056,6 +1089,7 @@ export function ThreadList() {
               分类
             </button>
             <button
+              type="button"
               style={styles.iconBtn}
               onClick={(e) => {
                 e.stopPropagation()
@@ -1074,9 +1108,11 @@ export function ThreadList() {
               {state.summarizingThreadId === t.id ? "⏳" : "🧠"}
             </button>
             <button
+              type="button"
               style={styles.iconBtn}
               onClick={(e) => handleDeleteOne(t.id, e)}
               title="删除线程"
+              aria-label={`删除 ${accessibleName}`}
             >
               🗑️
             </button>
@@ -1300,6 +1336,7 @@ export function ThreadList() {
         {listForTag && (
           <div>
             <div style={styles.groupHeader}>
+              {renderGroupCheckbox(listForTag.map((t) => t.id), activeTag === "__untagged__" ? "未标注" : `#${activeTag}`)}
               <span style={styles.groupLabel}>
                 {activeTag === "__untagged__" ? "未标注" : `#${activeTag}`} ·{" "}
                 {listForTag.length}
@@ -1336,6 +1373,7 @@ export function ThreadList() {
         {keys.map((key) => (
           <div key={key}>
             <div style={styles.groupHeader}>
+              {renderGroupCheckbox(groups.get(key)!.map((t) => t.id), key)}
               <span style={styles.groupLabel}>
                 {key} · {groups.get(key)!.length}
               </span>
@@ -1433,7 +1471,20 @@ export function ThreadList() {
                   }}
                   title="多选"
                 >
-                  {selectMode ? "取消" : "选择"}
+                  {selectMode ? "取消选择" : "选择"}
+                </button>
+                <button
+                  type="button"
+                  style={styles.selectBtn}
+                  disabled={selectableIds.size === 0}
+                  onClick={() =>
+                    allSelectableSelected(selected, selectableIds)
+                      ? handleClearVisibleSelection()
+                      : handleSelectAllVisible()
+                  }
+                  title="全选当前列表中可删除的会话"
+                >
+                  {allSelectableSelected(selected, selectableIds) ? "取消全选" : "全选"}
                 </button>
                 <button style={styles.newBtn} onClick={handleNewThread} title="新建线程">
                   + 新建
@@ -1545,7 +1596,184 @@ export function ThreadList() {
               <button type="button" onClick={() => { setCleanupOpen(true); runCleanupScan() }}>整理助手</button>
               <button type="button" onClick={openThreadGraph}>关系图谱</button>
               <button type="button" onClick={() => trashView ? closeTrashView() : openTrashView()}>{trashView ? "返回对话" : "回收站"}</button>
+              <button
+                type="button"
+                onClick={() =>
+                  (cleanupOpen && cleanupSuggestions.length > 0
+                    ? cleanupSelected.size === cleanupSuggestions.length
+                    : allSelectableSelected(selected, selectableIds))
+                    ? handleClearVisibleSelection()
+                    : handleSelectAllVisible()
+                }
+                disabled={cleanupOpen && cleanupSuggestions.length > 0 ? cleanupSuggestions.length === 0 : selectableIds.size === 0}
+                title={cleanupOpen ? "全选整理助手扫描结果" : "全选当前列表中可删除的会话"}
+              >
+                {(cleanupOpen && cleanupSuggestions.length > 0
+                  ? cleanupSelected.size === cleanupSuggestions.length && cleanupSuggestions.length > 0
+                  : allSelectableSelected(selected, selectableIds))
+                  ? "取消全选"
+                  : "全选"}
+              </button>
             </div>
+            {cleanupOpen && (
+              <div className="cm-thread-cleanup" style={styles.cleanupPanel}>
+                <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>整理助手（规则）</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: tokens.textSecondary }}>扫描</span>
+                  <select
+                    value={cleanupDays}
+                    onChange={(e) => setCleanupDays(Number(e.target.value))}
+                    style={{ fontSize: 11, padding: "2px 4px" }}
+                  >
+                    <option value={0}>全部（含近期）</option>
+                    <option value={30}>30 天前以前</option>
+                    <option value={90}>90 天前以前</option>
+                  </select>
+                  <button type="button" style={styles.selectBtn} onClick={runCleanupScan}>
+                    扫描
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.selectBtn}
+                    onClick={() => {
+                      setCleanupOpen(false)
+                      setCleanupSuggestions([])
+                    }}
+                  >
+                    关闭
+                  </button>
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: tokens.textMuted,
+                    marginBottom: 6,
+                  }}
+                >
+                  索引健康：未标注 {lintStats.untagged} · 过期 {lintStats.stale} · 孤立{" "}
+                  {lintStats.isolated}
+                </div>
+                {cleanupSuggestions.length === 0 ? (
+                  <div style={{ fontSize: 11, color: tokens.textMuted }}>
+                    空会话 / 无用户消息 / 极短孤消息 / 过久且少 / 同名薄会话（不含簇主）
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                      {cleanupSuggestions.map((s) => {
+                        const thr = threads.find((t) => t.id === s.thread_id)
+                        const title = thr
+                          ? displayThreadTitle(thr as Thread)
+                          : s.thread_id
+                        return (
+                          <label
+                            key={`${s.thread_id}-${s.reason}`}
+                            style={{
+                              display: "flex",
+                              gap: 6,
+                              alignItems: "flex-start",
+                              fontSize: 11,
+                              padding: "4px 0",
+                              borderBottom: `1px solid ${tokens.border}`,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={cleanupSelected.has(s.thread_id)}
+                              onChange={() => {
+                                setCleanupSelected((prev) => {
+                                  const next = new Set(prev)
+                                  if (next.has(s.thread_id)) next.delete(s.thread_id)
+                                  else next.add(s.thread_id)
+                                  return next
+                                })
+                              }}
+                            />
+                            <span>
+                              <strong>{title}</strong>
+                              <span style={{ color: tokens.textMuted }}>
+                                {" "}
+                                · {s.reason} · {s.detail}
+                              </span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 6,
+                        marginTop: 8,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        style={styles.selectBtn}
+                        disabled={cleanupSelected.size === 0}
+                        onClick={applyCleanupExtractOnly}
+                        title="仅提取要点/标签，不删除"
+                      >
+                        仅提取要点（{Math.min(cleanupSelected.size, EXTRACT_DIGEST_MAX)}）
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.selectBtn}
+                        onClick={() => {
+                          const ids = cleanupSuggestions.map((s) => s.thread_id).slice(0, 50)
+                          setCleanupSelected(new Set(ids))
+                        }}
+                      >
+                        全选
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.selectBtn}
+                        onClick={() => setCleanupSelected(new Set())}
+                      >
+                        全不选
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.dangerBtn}
+                        disabled={cleanupSelected.size === 0}
+                        onClick={applyCleanupTrash}
+                      >
+                        移入回收站（{cleanupSelected.size}）
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {pendingDelete && (
+              <div
+                role="alertdialog"
+                aria-label="确认删除会话"
+                style={styles.pendingDelete}
+              >
+                <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>
+                  {pendingDelete.hard
+                    ? `永久删除 ${pendingDelete.ids.length} 个会话？不可恢复。`
+                    : `将 ${pendingDelete.ids.length} 个会话移入回收站？可在回收站恢复（约 30 天后自动清理）。`}
+                  {pendingDelete.source === "cleanup" &&
+                  cleanupSuggestions.some(
+                    (s) => pendingDelete.ids.includes(s.thread_id) && s.reason === "acp_husk",
+                  )
+                    ? " 含编程接力记录，请再核对。"
+                    : ""}
+                </p>
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button type="button" style={styles.dangerBtn} onClick={executePendingDelete}>
+                    {pendingDelete.hard ? "永久删除" : "移入回收站"}
+                  </button>
+                  <button type="button" style={styles.selectBtn} onClick={() => setPendingDelete(null)}>
+                    取消
+                  </button>
+                </div>
+              </div>
+            )}
             {view === "ai" && <p className="cm-thread-management-help">按 AI 提取的首个主题标签自动分组；重新提取可能调整 AI 分组，不改变手动分组。点击“AI 提取标签”为最多20个未标注对话提取标签。</p>}
             {view === "tags" && <p className="cm-thread-management-help">汇总人工与 AI 标签；点对话右侧“分类”管理人工标签。</p>}
             {metadataNotice && <p className="cm-thread-management-help" role="status">{metadataNotice}</p>}
@@ -1655,6 +1883,18 @@ export function ThreadList() {
                   已选 {selected.size}
                 </span>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    style={styles.selectBtn}
+                    disabled={selectableIds.size === 0}
+                    onClick={() =>
+                      allSelectableSelected(selected, selectableIds)
+                        ? handleClearVisibleSelection()
+                        : handleSelectAllVisible()
+                    }
+                  >
+                    {allSelectableSelected(selected, selectableIds) ? "取消全选" : "全选"}
+                  </button>
                   {trashView ? (
                     <button
                       type="button"
@@ -1703,129 +1943,6 @@ export function ThreadList() {
                     取消
                   </button>
                 </div>
-              </div>
-            )}
-
-            {cleanupOpen && (
-              <div style={styles.cleanupPanel}>
-                <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>整理助手（规则）</div>
-                <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
-                  <span style={{ fontSize: 11, color: tokens.textSecondary }}>扫描</span>
-                  <select
-                    value={cleanupDays}
-                    onChange={(e) => setCleanupDays(Number(e.target.value))}
-                    style={{ fontSize: 11, padding: "2px 4px" }}
-                  >
-                    <option value={0}>全部（含近期）</option>
-                    <option value={30}>30 天前以前</option>
-                    <option value={90}>90 天前以前</option>
-                  </select>
-                  <button type="button" style={styles.selectBtn} onClick={runCleanupScan}>
-                    扫描
-                  </button>
-                  <button
-                    type="button"
-                    style={styles.selectBtn}
-                    onClick={() => {
-                      setCleanupOpen(false)
-                      setCleanupSuggestions([])
-                    }}
-                  >
-                    关闭
-                  </button>
-                </div>
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: tokens.textMuted,
-                    marginBottom: 6,
-                  }}
-                >
-                  索引健康：未标注 {lintStats.untagged} · 过期 {lintStats.stale} · 孤立{" "}
-                  {lintStats.isolated}
-                </div>
-                {cleanupSuggestions.length === 0 ? (
-                  <div style={{ fontSize: 11, color: tokens.textMuted }}>
-                    空会话 / 无用户消息 / 极短孤消息 / 过久且少 / 同名薄会话（不含簇主）
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ maxHeight: 160, overflowY: "auto" }}>
-                      {cleanupSuggestions.map((s) => {
-                        const thr = threads.find((t) => t.id === s.thread_id)
-                        const title = thr
-                          ? displayThreadTitle(thr as Thread)
-                          : s.thread_id
-                        return (
-                          <label
-                            key={`${s.thread_id}-${s.reason}`}
-                            style={{
-                              display: "flex",
-                              gap: 6,
-                              alignItems: "flex-start",
-                              fontSize: 11,
-                              padding: "4px 0",
-                              borderBottom: `1px solid ${tokens.border}`,
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={cleanupSelected.has(s.thread_id)}
-                              onChange={() => {
-                                setCleanupSelected((prev) => {
-                                  const next = new Set(prev)
-                                  if (next.has(s.thread_id)) next.delete(s.thread_id)
-                                  else next.add(s.thread_id)
-                                  return next
-                                })
-                              }}
-                            />
-                            <span>
-                              <strong>{title}</strong>
-                              <span style={{ color: tokens.textMuted }}>
-                                {" "}
-                                · {s.reason} · {s.detail}
-                              </span>
-                            </span>
-                          </label>
-                        )
-                      })}
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 6,
-                        marginTop: 8,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <button
-                        type="button"
-                        style={styles.selectBtn}
-                        disabled={cleanupSelected.size === 0}
-                        onClick={applyCleanupExtractOnly}
-                        title="仅提取要点/标签，不删除"
-                      >
-                        仅提取要点（{Math.min(cleanupSelected.size, EXTRACT_DIGEST_MAX)}）
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.selectBtn}
-                        onClick={() => setCleanupSelected(new Set())}
-                      >
-                        全不选
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.dangerBtn}
-                        disabled={cleanupSelected.size === 0}
-                        onClick={applyCleanupTrash}
-                      >
-                        移入回收站（{cleanupSelected.size}）
-                      </button>
-                    </div>
-                  </>
-                )}
               </div>
             )}
           </div>
@@ -2178,6 +2295,21 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.textMuted,
     marginTop: 2,
   },
+  pendingDelete: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "10px 12px",
+    background: tokens.warningSoft,
+    borderBottom: `1px solid ${tokens.border}`,
+    color: tokens.text,
+    position: "sticky",
+    top: 0,
+    zIndex: 6,
+    flexShrink: 0,
+  },
   bottomBar: {
     display: "flex",
     justifyContent: "space-between",
@@ -2197,10 +2329,11 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   cleanupPanel: {
-    borderTop: `1px solid ${tokens.border}`,
-    padding: "10px",
+    borderBottom: `1px solid ${tokens.border}`,
+    padding: "10px 12px",
     background: tokens.bgMuted,
-    maxHeight: 260,
+    maxHeight: "min(42%, 280px)",
     overflowY: "auto",
+    flexShrink: 0,
   },
 }
