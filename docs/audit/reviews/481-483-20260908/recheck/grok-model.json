@@ -1,0 +1,9 @@
+{
+  "model": "grok-4.6",
+  "transport": "local grok CLI --verbatim --tools empty --no-memory --no-subagents --disable-web-search",
+  "exit_code": 0,
+  "verdict": "APPROVE_WITH_NITS",
+  "completed_at": "2026-09-08T08:41:28Z",
+  "packet": "grok-retry-packet.md.gz",
+  "first_attempt": "preface only / max-turns; not approval"
+}

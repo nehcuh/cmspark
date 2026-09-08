@@ -18,3 +18,18 @@ Initial Grok4.6 APPROVE_WITH_NITS; initial DeepSeekV4Pro REJECT. Initial report 
 
 ## Evidence boundaries
 Actual App and summoner HTML / hook harnesses use synthetic transport and microphone. No real STT speedup or Windows runtime UX claim. Project entity, native #476 management/terminal, and full resource CRUD remain open. T3 metadata payload expansion is explicit; no new method, policy/path/config field, or approval capability.
+
+## Final independent delta disposition
+
+Both final reports approve this slice. DeepSeek explicitly withdraws the speculative duplicate-final defect; Grok independently pins HTTP-only commit, cleanup tracker semantics, immutable coding ownership and first background-event caching. Final Grok remaining nits are handled as follows:
+
+1. Non-stream continuous `onStart` precedes capture: existing separate path, nonblocking as judged; tracked #486 with observable acceptance requirements. Current ordinary progressive path is fixed/tested.
+2. Abort keepalive plumbing: verified `summoner-web.ts` api passes opts unchanged to fetch (`fetch(url(path), opts)`), so controller keepalive is forwarded. No claim that synthetic pagehide proves the network survives a real browser/process termination; microphone cleanup is synchronous.
+3. SSE test concern: production summoner uses `es.onmessage=function(ev)`, not addEventListener. The real HTML harness invokes that actual handler; its no-op addEventListener does not bypass the production handler. VM and HTML tests both exercise ignored duplicate SSE finals. No source change is necessary for this concern.
+4. Dismissed-session cache retention: #484 remains open; approval explicitly says nonblocking. No unsafe GC added to bypass the tombstone behavior.
+
+### Trace case: judge output validity
+1. Requested a final Grok delta review against the frozen source packet.
+2. First attempt produced preparation text and max-turns exit; retry produced a complete independent APPROVE_WITH_NITS report.
+3. Attribution: external CLI turn-limit / response outcome; counting the first output as approval would have been an agent error.
+4. Protects independent-review gate: neither preface nor another judge's attribution can authorize merge.
