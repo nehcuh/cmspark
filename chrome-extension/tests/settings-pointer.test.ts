@@ -21,12 +21,12 @@ import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
 
 const FRAME = {
   success: false,
-  error: "module_disabled:netsec — enable in settings (modules.set_enabled) before use\nsettings_path: 设置 → 本机与集成 → 网络扫描（NetSec）",
+  error: "module_disabled:netsec — enable in settings (modules.set_enabled) before use\nsettings_path: 设置 → 本机与工具 → 网络扫描（NetSec）",
   data: {
     error_code: "SETTINGS_REQUIRED",
     reason: "module_disabled",
     settings_section: "integrations",
-    settings_path: "设置 → 本机与集成 → 网络扫描（NetSec）",
+    settings_path: "设置 → 本机与工具 → 网络扫描（NetSec）",
   },
 }
 
@@ -34,7 +34,7 @@ test("extractSettingsPointer: valid frame → view with whitelisted section", ()
   const view = extractSettingsPointer(FRAME)
   assert.deepEqual(view, {
     settings_section: "integrations",
-    settings_path: "设置 → 本机与集成 → 网络扫描（NetSec）",
+    settings_path: "设置 → 本机与工具 → 网络扫描（NetSec）",
   })
 })
 
@@ -72,7 +72,7 @@ test("settingsPointerLine: template = fixed label + static path (no model free t
   const view = extractSettingsPointer(FRAME)!
   assert.equal(
     settingsPointerLine(view),
-    "此能力需要先在设置中开启：设置 → 本机与集成 → 网络扫描（NetSec）",
+    "此能力需要先在设置中开启：设置 → 本机与工具 → 网络扫描（NetSec）",
   )
 })
 

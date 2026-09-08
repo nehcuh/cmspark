@@ -1,7 +1,7 @@
 # Design
 
 ## Source of truth
-Active · 2026-09-07 · GitHub #469. This file owns product-wide UI/UX direction.
+Active · 2026-09-08 · GitHub #469 / #471. This file owns product-wide UI/UX direction.
 `docs/DESIGN.md` retains detailed capability and safety contracts; this revision
 supersedes its consumer-mascot-first layout, tiny chrome and narrow-only shell.
 Evidence: Sidepanel App, StatusRail, ThreadList, ChatView, ComposerDock,
@@ -11,7 +11,7 @@ preference for quiet, spacious hierarchy, not a pixel-matching target.
 
 ## Brand
 Calm, precise, capable. CMspark remains its own identity. Neutral paper and ink,
-small existing mark, restrained indigo links/focus, semantic risk colors.
+text-led summoner without a decorative mark, restrained indigo links/focus, semantic risk colors.
 Avoid promotional dashboards, gradients, oversized mascots, dense icon ribbons,
 unexplained technical acronyms and decorative status lights.
 
@@ -37,7 +37,7 @@ width, navigation opens through the text-labeled header control 导航 as an in-
 width. Existing full history preserves search, folders, trash and bulk actions.
 StatusRail remains the single conversation header: 导航 (narrow only), task title, existing popout/history/status/more. New conversation is owned by WorkspaceNavigation; no second new-thread control in the header. Recent rows are a projection of the existing store, while full history preserves its original owner. Conversation header shows task title (existing title resolver, 新对话 fallback); page/context and pending confirmation stay
 in the existing FocusBand. Knowledge/scenes/skills/MCP/apps/meetings use existing
-ContextPanelHost. The host is already vertically stacked, not a fixed-width side column: preserve that safe layout, cap it to36dvh (28dvh below560px height), and close supporting panels before opening configuration. Do not overlay pending confirmation. Settings is one named dialog with grouped sections.
+ContextPanelHost. The host is already vertically stacked, not a fixed-width side column: preserve that safe layout, cap it to36dvh (28dvh below560px height), and close supporting panels before opening configuration. Do not overlay pending confirmation. Settings is one named dialog with category pages; the #471 refinement below owns its navigation.
 No duplicated data loader, thread cache, Agent or confirmation center.
 
 ## Design principles
@@ -46,7 +46,7 @@ demand; pending confirmation and stop stay visible. Text labels explain navigati
 Layout changes never change trust policy. Confirmation modifications are limited to shared surface colors, type, spacing and focus visibility; component handlers, button order/roles, initial focus, timeout, whitelist and auto-approve copy/defaults stay unchanged. Decision-critical evidence remains at least as visible as baseline. FocusBand confirmation/stop priority remains authoritative, with no second sticky header. Cockpit is in shared visual-token scope; confirmation DOM/handlers remain byte-unchanged. Small screens are a first-class surface.
 
 ## Visual language
-Keep shared `sidepanel/ui/tokens.ts` the only new React color-value owner. Companion HTML constants mirror the palette without a new bundling dependency; their non-style source stays unchanged. Neutral
+Keep shared `sidepanel/ui/tokens.ts` the only new React color-value owner. Companion HTML constants mirror the palette without a new bundling dependency; their existing transport/permission behavior stays unchanged; #471 updates semantic composer markup and empty-state copy. Neutral
 surfaces and subtle borders, readable secondary text; charcoal primary composer
 action, indigo links/focus. Font system sans; body14–15, chrome12–13, headings
 15–24. Spacing4/8/12/16/24/32; rounded controls8, cards12, composer20.
@@ -101,3 +101,15 @@ shared web surfaces are verified here, native surfaces remain separately tracked
   owner maintainers. No claim of native cross-platform pixel acceptance.
 - [ ] User can refine density after using the shipped redesign; current default
   assumes readable enterprise work rather than dense diagnostics.
+
+## 2026-09-08 refinement · #471
+
+The summoner is a lightweight conversation surface using the same neutral chat
+hierarchy and full-width composer above its actions. Remove every decorative 山
+mark from initial and dynamically recreated empty states; no replacement hero.
+Settings uses category navigation and one visible content page (wide left rail,
+narrow select), not navigation chips above a giant accordion. Split voice/input
+and file/knowledge from model configuration. Keep all pages mounted so drafts
+and safety forms survive switching; retain stable deep-link IDs and save semantics.
+Pairing/elevated-trust status remains visible across categories. Root specification:
+`docs/superpowers/plans/2026-09-08-summoner-settings-redesign.md`.

@@ -3,7 +3,7 @@
  * Uses browser SpeechRecognition when available; never auto-sends chat.
  */
 
-import { useCallback, useRef, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
 import {
   parseSettingsIntent,
   SETTINGS_INTENT_HELP,
@@ -16,13 +16,26 @@ export type SettingsIntentBarProps = {
   /** Apply a parsed intent; return user-visible result string. */
   onIntent: (intent: SettingsIntent) => string
   disabled?: boolean
+  active?: boolean
 }
 
-export function SettingsIntentBar({ onIntent, disabled }: SettingsIntentBarProps) {
+export function SettingsIntentBar({ onIntent, disabled, active = true }: SettingsIntentBarProps) {
   const [text, setText] = useState("")
   const [status, setStatus] = useState<string | null>(null)
   const [listening, setListening] = useState(false)
   const recRef = useRef<{ stop: () => void; abort: () => void } | null>(null)
+  const generationRef = useRef(0)
+  useEffect(() => {
+    const cancel = () => {
+      generationRef.current += 1
+      const recognizer = recRef.current
+      recRef.current = null
+      try { recognizer?.abort() } catch { /* already ended */ }
+    }
+    if (!active) { cancel(); setListening(false); setStatus(previous => previous === "请说出设置命令…" ? "语音输入已取消" : previous) }
+    return cancel
+  }, [active])
+
 
   const run = useCallback(
     (raw: string) => {
@@ -45,7 +58,7 @@ export function SettingsIntentBar({ onIntent, disabled }: SettingsIntentBarProps
   }, [])
 
   const startVoice = useCallback(() => {
-    if (disabled || listening) return
+    if (disabled || !active || listening) return
     const Ctor = getSpeechRecognitionCtor(
       typeof globalThis !== "undefined" ? (globalThis as any) : {},
     )
@@ -53,6 +66,7 @@ export function SettingsIntentBar({ onIntent, disabled }: SettingsIntentBarProps
       setStatus("此环境不支持语音识别，请直接输入文字命令")
       return
     }
+    const generation = ++generationRef.current
     const r = new Ctor()
     r.lang = VOICE_DEFAULT_LANG
     r.continuous = false
@@ -60,6 +74,7 @@ export function SettingsIntentBar({ onIntent, disabled }: SettingsIntentBarProps
     r.maxAlternatives = 1
     let finalText = ""
     r.onresult = (ev: any) => {
+      if (generation !== generationRef.current) return
       let interim = ""
       const results = ev?.results
       if (!results) return
@@ -72,11 +87,13 @@ export function SettingsIntentBar({ onIntent, disabled }: SettingsIntentBarProps
       setText((finalText + interim).trim())
     }
     r.onerror = () => {
+      if (generation !== generationRef.current) return
       setListening(false)
       recRef.current = null
       setStatus("语音识别失败，请改用文字")
     }
     r.onend = () => {
+      if (generation !== generationRef.current) return
       setListening(false)
       recRef.current = null
       const phrase = (finalText || text).trim()
@@ -91,7 +108,7 @@ export function SettingsIntentBar({ onIntent, disabled }: SettingsIntentBarProps
       setListening(false)
       setStatus("无法启动麦克风")
     }
-  }, [disabled, listening, run, text])
+  }, [disabled, active, listening, run, text])
 
   return (
     <div style={styles.wrap} data-testid="settings-intent-bar">

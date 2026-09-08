@@ -1,0 +1,64 @@
+{
+  "baselineCount": 134,
+  "currentCount": 132,
+  "removed": [
+    {
+      "handler": "onClick={() => { dispatch({ type: \"OPEN_SETTINGS_SECTION\", section: id }) requestAnimationFrame(() => requestAnimationFrame(() => { const heading = document.querySelector<HTMLElement>(`[data-settings-section=\"${label}\"] > button`) heading?.focus(); heading?.scrollIntoView({ block: \"start\" }) })) }}",
+      "count": 1
+    },
+    {
+      "handler": "onToggle={() => handleToggleSection(\"connection\")}",
+      "count": 1
+    },
+    {
+      "handler": "onToggle={() => handleToggleSection(\"model\")}",
+      "count": 1
+    },
+    {
+      "handler": "onToggle={() => handleToggleSection(\"secrets\")}",
+      "count": 1
+    },
+    {
+      "handler": "onToggle={() => handleToggleSection(\"security\")}",
+      "count": 1
+    },
+    {
+      "handler": "onToggle={() => handleToggleSection(\"integrations\")}",
+      "count": 1
+    },
+    {
+      "handler": "onToggle={() => handleToggleSection(\"export\")}",
+      "count": 1
+    },
+    {
+      "handler": "onToggle={() => handleToggleSection(\"experimental\")}",
+      "count": 1
+    }
+  ],
+  "added": [
+    {
+      "handler": "onFocusCapture={event => { lastSettingsFocus.current = event.target as HTMLElement }}",
+      "count": 1
+    },
+    {
+      "handler": "onClick={() => selectSettingsPage(\"connection\", true)}",
+      "count": 1
+    },
+    {
+      "handler": "onClick={() => selectSettingsPage(\"security\", true)}",
+      "count": 1
+    },
+    {
+      "handler": "onClick={() => selectSettingsPage(page.id, true)}",
+      "count": 1
+    },
+    {
+      "handler": "onChange={event => selectSettingsPage(event.target.value as SettingsSectionId)}",
+      "count": 1
+    },
+    {
+      "handler": "onToggle={event => setSettingsAssistantOpen(event.currentTarget.open)}",
+      "count": 1
+    }
+  ]
+}

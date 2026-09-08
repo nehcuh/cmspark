@@ -4,7 +4,7 @@ const root=process.cwd(),out=process.argv[2] || '/private/tmp/cmspark-workspace-
 const store=path.join(root,'src/sidepanel/store/agentStore.tsx');
 const hook=`import {useEffect} from 'react';import {useAgentStore} from ${JSON.stringify(store)};
 export const shouldApplyStreamEvent=()=>true;
-export function useWebSocket(){const {state,dispatch}=useAgentStore();useEffect(()=>{window.dispatchUI=dispatch;const threads=window.demoThreads;dispatch({type:'SET_CONNECTION',state:'connected'});dispatch({type:'SET_THREADS',threads});dispatch({type:'SET_ACTIVE_THREAD',threadId:threads[0].id});dispatch({type:'SET_MESSAGES',messages:[]});},[]);return {connectionState:state.connectionState};}`;
+export function useWebSocket(){const {state,dispatch}=useAgentStore();window.fixtureState=state;useEffect(()=>{window.dispatchUI=dispatch;const threads=window.demoThreads;dispatch({type:'SET_CONNECTION',state:'connected'});dispatch({type:'SET_THREADS',threads});dispatch({type:'SET_ACTIVE_THREAD',threadId:threads[0].id});dispatch({type:'SET_MESSAGES',messages:[]});},[]);return {connectionState:state.connectionState};}`;
 const source=`import {CockpitRoot} from ${JSON.stringify(path.join(root,'src/cockpit/CockpitApp.tsx'))};import React from 'react';import{createRoot}from'react-dom/client';import{App}from${JSON.stringify(path.join(root,'src/sidepanel/App.tsx'))};
 const event={addListener(){},removeListener(){}};window.sent=[];
 window.demoThreads=['发布 v2.8 · 变更材料','支付服务 · 需求与测试追溯','本周运行状态巡检','整理架构评审记录'].map((alias,i)=>({id:'demo-'+i,alias,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),config_override:{},tool_whitelist:null,pinned_tabs:[],active_skill_ids:[],agent_role:'normal'}));

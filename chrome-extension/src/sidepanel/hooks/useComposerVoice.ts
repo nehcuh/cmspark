@@ -482,7 +482,7 @@ export function useComposerVoice({
     voice.dismissBanner()
     setComposeOpen(false)
     closePanel()
-    dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model" })
+    dispatch({ type: "OPEN_SETTINGS_SECTION", section: "voice" })
   }, [closePanel, dispatch, voice])
 
   return {

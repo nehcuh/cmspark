@@ -517,37 +517,21 @@ export const SETTINGS_HTML = `<!DOCTYPE html>
 <style>
 /*
  * Settings dark-surface tokens — single source mirroring the Side Panel
- * tokens.ts dark family (chrome-extension/src/sidepanel/ui/tokens.ts).
+ * tokens.ts light family (chrome-extension/src/sidepanel/ui/tokens.ts).
  * Companion cannot import the extension's TS tokens (package boundary), so
  * these CSS variables are a hand-mirrored copy — same pattern as the other
  * non-extension HTML surface summoner-web.ts (:root block, summoner-web.ts
- * ~1157; it mirrors the light family, this surface mirrors the dark family).
+ * ~1157; it mirrors the light family, this surface also mirrors the light family).
  * NEVER reintroduce Material palette hexes here (tokens.ts:185 bans them on
  * the side panel; same rule now applies to this surface).
  */
 :root{
-  --bg:#171717;            /* tokens.darkBg */
-  --elevated:#222222;      /* tokens.darkElevated */
-  --border:rgba(255,255,255,0.08);  /* tokens.darkBorder */
-  --border-strong:rgba(255,255,255,0.16);
-  --text:#f1f5f9;          /* tokens.darkText */
-  --muted:#94a3b8;         /* tokens.darkMuted */
-  --faint:#94a3b8;         /* muted-2 级（hint/env 弱文本） */
-  --accent:#818cf8;        /* tokens.darkAccent (indigo-400) */
-  --on-accent:#fff;
-  --success:#34d399;       /* tokens.darkSuccess */
-  --success-soft:rgba(52,211,153,0.12);
-  --danger:#f87171;        /* tokens.darkDanger */
-  --danger-soft:rgba(248,113,113,0.12);
-  --warning:#fbbf24;       /* tokens.darkWarning */
-  --warning-soft:rgba(251,191,36,0.12);
-  --success-border:rgba(52,211,153,0.3);
-  --danger-border:rgba(248,113,113,0.3);
-  --warning-border:rgba(251,191,36,0.25);
-  --field-bg:#2a2a2a;      /* input 底：darkElevated 上加一层（替代原 Material 输入蓝） */
-  --field-border:rgba(255,255,255,0.12);
-  --radius:12px;--radius-sm:8px;
-  --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --bg:#f7f7f5;--elevated:#fff;--border:rgba(23,23,23,.08);--border-strong:rgba(23,23,23,.16);
+  --text:#171717;--muted:#666;--faint:#767676;--accent:#4f46e5;--on-accent:#fff;
+  --success:#047857;--success-soft:#ecfdf5;--danger:#b91c1c;--danger-soft:#fef2f2;
+  --warning:#92400e;--warning-soft:#fffbeb;--success-border:#a7f3d0;--danger-border:#fecaca;--warning-border:#fde68a;
+  --field-bg:#fff;--field-border:rgba(23,23,23,.16);--radius:16px;--radius-sm:8px;
+  --font-ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','PingFang SC',sans-serif;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-height:100vh;display:flex;justify-content:center;padding:24px 16px}
@@ -570,7 +554,7 @@ input:focus{border-color:var(--accent)}
 .actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap}
 .btn{padding:8px 20px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:inherit;transition:opacity 0.2s}
 .btn:hover{opacity:0.85}
-.btn-primary{background:var(--accent);color:var(--on-accent)}
+.btn-primary{background:#242424;color:var(--on-accent)}
 .btn-outline{background:transparent;border:1px solid var(--accent);color:var(--accent)}
 .btn-ghost{background:transparent;border:1px solid var(--border-strong);color:var(--muted)}
 .result{margin-top:12px;padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;display:none}
@@ -598,11 +582,11 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 <body>
 <div class="container">
   <div class="card">
-    <h1>&#9881; CMspark Global Settings <span class="status-dot" id="statusDot"></span></h1>
-    <div class="subtitle">Companion global LLM config &mdash; fallback for threads without override</div>
+    <h1>CMspark 设置 <span class="status-dot" id="statusDot"></span></h1>
+    <div class="subtitle">Companion 全局模型配置 · 用于未单独配置模型的对话</div>
 
     <div class="divider"></div>
-    <div class="section-title">LLM Config</div>
+    <div class="section-title">对话模型</div>
 
     <div class="field">
       <label>API Key</label>

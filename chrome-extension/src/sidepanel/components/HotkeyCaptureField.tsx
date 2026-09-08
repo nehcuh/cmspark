@@ -10,6 +10,7 @@ import { tokens } from "../ui/tokens"
 export type HotkeyCaptureFieldProps = {
   value: string
   disabled?: boolean
+  active?: boolean
   onChange: (chord: string) => void
   /** Optional presets shown as chips */
   presets?: string[]
@@ -18,6 +19,7 @@ export type HotkeyCaptureFieldProps = {
 export function HotkeyCaptureField({
   value,
   disabled,
+  active = true,
   onChange,
   presets = [
     "Control+Shift+Space",
@@ -35,6 +37,7 @@ export function HotkeyCaptureField({
   }, [])
 
   useEffect(() => {
+    if (!active) { setCapturing(false); return }
     if (!capturing) return
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault()
@@ -70,7 +73,7 @@ export function HotkeyCaptureField({
       window.removeEventListener("keydown", onKeyDown, true)
       window.removeEventListener("blur", onBlur)
     }
-  }, [capturing, onChange, stopCapture])
+  }, [active, capturing, onChange, stopCapture])
 
   useEffect(() => {
     if (capturing) boxRef.current?.focus()
