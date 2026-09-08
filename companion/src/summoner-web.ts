@@ -711,6 +711,7 @@ async function handleRequest(
       return
     }
 
+    // All API routes below share the Host/session-token gate above.
     if (pathOnly === "/api/browser-status" && req.method === "GET") {
       jsonResponse(res, { connected: activeHasExtensionPeer?.() === true })
       return
@@ -2457,7 +2458,7 @@ try{
   function showHistory(on){
     var hud=$("hud");
     if(!hud) return;
-    if(on){ hud.classList.add("history"); }
+    if(on){ hud.classList.add("history"); if(sec==="threads") refresh().catch(function(){setStatus("无法刷新对话列表")}); }
     else hud.classList.remove("history");
     $("historyOpen").setAttribute("aria-expanded",String(on));
   }

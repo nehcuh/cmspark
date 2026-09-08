@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as out:
   assert ('POST','/api/threads') in requests
   page.get_by_role('button',name='导航',exact=True).click();assert page.locator('.hud.history .list').is_visible()
   page.get_by_role('button',name='完成',exact=True).click()
-  for width,height in [(320,420),(390,740),(1000,800)]:
+  for width,height in [(320,420),(360,420),(390,740),(760,740),(1000,800),(1440,900)]:
    page.set_viewport_size({'width':width,'height':height})
    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
    assert page.locator('.composer-actions button:visible').evaluate_all('(els)=>els.map(el=>el.id)')==['attachFile','mic','sendGo']
