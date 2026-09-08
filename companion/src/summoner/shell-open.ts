@@ -26,7 +26,7 @@ export type SummonerShellOpenOpts = {
 }
 
 /** Inner --app viewport. Outer adds ~28px title bar when centering. */
-export const OVERLAY_WINDOW_SIZE = { w: 360, h: 420 } as const
+export const OVERLAY_WINDOW_SIZE = { w: 1040, h: 760 } as const
 const OVERLAY_TITLEBAR_PX = 28
 
 export function overlayWindowPosition(

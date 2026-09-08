@@ -1,0 +1,5 @@
+{
+  "model": "grok-4.6",
+  "transport": "Grok CLI --verbatim --tools empty --max-turns1",
+  "exit": 0
+}

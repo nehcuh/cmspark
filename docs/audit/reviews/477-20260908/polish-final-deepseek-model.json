@@ -1,0 +1,17 @@
+{
+  "model": "deepseek-v4-pro",
+  "usage": {
+    "prompt_tokens": 40404,
+    "completion_tokens": 1024,
+    "total_tokens": 41428,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 40404
+  },
+  "finish_reason": "stop",
+  "has_verdict": false,
+  "thinking": "disabled",
+  "transport": "configured DeepSeek OpenAI endpoint"
+}

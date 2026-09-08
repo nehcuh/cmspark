@@ -1,0 +1,23 @@
+{
+  "workflow": 34193311965,
+  "source": "effd74870804512f934eafaadef84ded4ede35fb",
+  "native_windows_job": "success",
+  "zip_assets_sha256": {
+    "cmspark.ico": "63d758f0f22f7788b62cf43761bec53335cff600de7f87cc4dda0724972539df",
+    "tray-icon-green.ico": "b2e1c15719594cf72840eca3b67edd5e05993bc6ac227f2c76513096a34a76fe",
+    "tray-icon-red.ico": "1818550bb971ec03accfa6be0ab8f3cadfb1140d0643c4c922f30a70da4b0492",
+    "tray-icon-yellow.ico": "297448df39fe350c0615b0dc95072085d7fe62cf88734c775ee58fad451e0dba",
+    "tray-icon-template.ico": "7416de01e1bc729a2abf5e145464f6fb1a14ad27c6a7f2bbd2a46fb8f224ba6e"
+  },
+  "setup_sha256": "fcd292c94ae2c4701557e896fbafb00f9b50b290f2c3e9d329ca3ae9d0b4b0f9",
+  "setup_embedded_matching_sizes": [
+    16,
+    24,
+    32,
+    48,
+    64,
+    128,
+    256
+  ],
+  "windows_desktop_runtime": "not exercised"
+}

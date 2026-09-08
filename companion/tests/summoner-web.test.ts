@@ -20,6 +20,7 @@ import {
   openLoopbackPage,
   __testSetOverlayLaunchGraceMs,
   __testSetOverlaySseReconnectGraceMs,
+  projectSummonerMcpList,
   SUMMONER_WEB_DISPATCH_ALLOW,
   SUMMONER_WEB_EVENT_ALLOW,
 } from "../src/summoner-web"
@@ -162,7 +163,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /--indigo:#4f46e5/)
     assert.match(r.body, /class="rail-btn"/)
     assert.match(r.body, /data-sec="threads"[^>]*aria-current="true"/)
-    assert.match(r.body, /data-sec="mcp"[^>]*\bhidden\b/)
+    assert.doesNotMatch(r.body, /data-sec="mcp"[^>]*\bhidden\b/)
     assert.doesNotMatch(r.body, /＋ 添加 MCP|＋ 导入知识/)
     assert.match(r.body, /html,body\{height:100%;width:100%;overflow:hidden\}/)
     assert.match(r.body, /class="list-scroll"/)
@@ -171,7 +172,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /class="hud expanded"/)
     assert.match(r.body, /setExpanded\(true\)/)
     assert.doesNotMatch(r.body, /placeWindow\(false\);/)
-    assert.match(r.body, /var w=360,h=420/)
+    assert.match(r.body, /var w=1040,h=760/)
     assert.match(r.body, /id="empty"/)
     assert.doesNotMatch(r.body, /class="mark"/)
     assert.doesNotMatch(r.body, />山<\/div>/)
@@ -179,7 +180,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /#newThreadBar\{[^}]*display:none/)
     assert.match(r.body, /id="historyOpen"/)
     assert.match(r.body, /id="newChat"/)
-    assert.match(r.body, />历史</)
+    assert.match(r.body, />导航</)
     assert.match(r.body, /id="newChat">新对话/)
     assert.match(r.body, /id="historyClose"/)
     assert.match(r.body, /\.hud\.history \.list\{[^}]*display:flex/)
@@ -1083,6 +1084,20 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.deepEqual(attachCalls, [{ foreground: true }])
   })
 
+  test("#477 browser status requires authentication and follows the real peer predicate", async () => {
+    let connected = false
+    await startSummonerWebServer({ preferredPort: 23510,
+      dispatch: async () => ({ type: "ok" }), hasExtensionPeer: () => connected })
+    const denied = await request({ method: "GET", port, path: "/api/browser-status" })
+    assert.equal(denied.status, 403)
+    for (const value of [false, true, false]) {
+      connected = value
+      const r = await request({ method: "GET", port, path: `/api/browser-status?token=${token}` })
+      assert.equal(r.status, 200)
+      assert.deepEqual(JSON.parse(r.body), { connected: value })
+    }
+  })
+
   test("POST /api/operate no extension peer is 503 not ok", async () => {
     attachCalls.length = 0
     let opened = 0
@@ -1652,9 +1667,9 @@ test("HTML default expands the face (not 120px bar)", () => {
   assert.doesNotMatch(html, /placeWindow\(false\);/)
 })
 
-test("MCP rail stays hide-not-delete", () => {
+test("#477 MCP rail is visible and remains read-only", () => {
   const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
-  assert.match(html, /data-sec="mcp"[^>]*\bhidden\b|hidden[^>]*data-sec="mcp"/)
+  assert.doesNotMatch(html, /data-sec="mcp"[^>]*\bhidden\b|hidden[^>]*data-sec="mcp"/)
   assert.doesNotMatch(html, /mcp\.toggle_server/)
 })
 
@@ -1678,4 +1693,16 @@ test("W3 (F3b): send() clears the attachment input after a successful send", () 
   // Failure path must NOT clear the input.
   const failIdx = send.indexOf('setStatus(d.error||"发送失败")')
   assert.ok(failIdx >= 0 && failIdx < resetIdx, "reset must come after the error early-return")
+})
+
+// Input is the actual production broadcast serializer's output, with deliberately
+// rich metadata; the overlay response must not retain unused sensitive fields.
+test("#477 MCP read projection drops config, headers/env names and tool definitions", async () => {
+  const { redactMcpServersForBroadcast } = await import("../src/message-router/handlers/mcp")
+  const servers = redactMcpServersForBroadcast([{ name: "fixture", connection: { status: "connected" },
+    config: { env: { TOKEN: "test-only" }, headers: { Authorization: "test-only" } }, tools: [{ name: "unused" }] }])
+  const result = projectSummonerMcpList({ type: "mcp.list", servers })
+  assert.deepEqual(result, { type: "mcp.list", servers: [{ name: "fixture", connection: { status: "connected" } }] })
+  for (const field of ["config", "TOKEN", "Authorization", "tools", "test-only"]) assert.equal(JSON.stringify(result).includes(field), false)
+  assert.deepEqual(projectSummonerMcpList({ type: "error", error: "offline", config: "private" }), { type: "error", error: "offline" })
 })

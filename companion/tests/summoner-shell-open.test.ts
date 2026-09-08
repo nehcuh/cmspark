@@ -95,14 +95,14 @@ test("planSummonerShellOpen pins own profile + position so Chrome-already-runnin
     platform: "linux",
     browserPath: "/usr/bin/google-chrome",
     userDataDir: "/tmp/cmspark-overlay-chrome",
-    windowPosition: { x: 540, y: 226 },
+    windowPosition: { x: 200, y: 56 },
   })
   assert.equal("error" in r, false)
   if ("error" in r) return
   assert.equal(r.kind, "app-window")
   assert.ok(r.args.includes(`--app=${LOOP}`))
-  assert.ok(r.args.includes("--window-size=360,420"))
-  assert.ok(r.args.includes("--window-position=540,226"))
+  assert.ok(r.args.includes("--window-size=1040,760"))
+  assert.ok(r.args.includes("--window-position=200,56"))
   assert.ok(r.args.includes("--user-data-dir=/tmp/cmspark-overlay-chrome"))
   assert.ok(r.args.includes("--no-first-run"))
   assert.ok(r.args.includes("--no-default-browser-check"))
@@ -110,8 +110,8 @@ test("planSummonerShellOpen pins own profile + position so Chrome-already-runnin
 
 test("overlayWindowPosition centers inner card on the screen", () => {
   const p = overlayWindowPosition(1440, 900)
-  assert.equal(p.x, 540)
-  assert.equal(p.y, 226)
+  assert.equal(p.x, 200)
+  assert.equal(p.y, 56)
   const small = overlayWindowPosition(320, 400)
   assert.equal(small.x, 0)
   assert.equal(small.y, 0)
@@ -201,8 +201,8 @@ test("openLoopbackPage spawns --app for loopback and skips evil URLs", () => {
   assert.equal(calls.length, 1)
   assert.equal(calls[0].command, "/usr/bin/google-chrome")
   assert.ok(calls[0].args.includes(`--app=${LOOP}`))
-  assert.ok(calls[0].args.includes("--window-size=360,420"))
-  assert.ok(calls[0].args.includes("--window-position=540,226"))
+  assert.ok(calls[0].args.includes("--window-size=1040,760"))
+  assert.ok(calls[0].args.includes("--window-position=200,56"))
   assert.ok(calls[0].args.includes("--user-data-dir=/tmp/cmspark-overlay-chrome-test"))
   assert.equal(calls[0].shell, undefined)
 })
