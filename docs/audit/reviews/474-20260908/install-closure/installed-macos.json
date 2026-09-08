@@ -1,0 +1,10 @@
+{
+  "version": "0.6.6",
+  "cdhashes": {
+    "Contents/MacOS/CMspark": "15bc54da38104cb88ada5d016243759bbf7014ad",
+    "Contents/Resources/cmspark-host": "15bc54da38104cb88ada5d016243759bbf7014ad"
+  },
+  "tray_sha256": "523638554705e3801eecd035dbee0841db8d726129dfdf3eb02e0cd38f1c33dd",
+  "quarantine_absent": true,
+  "xattr_removal_exit": 1
+}
