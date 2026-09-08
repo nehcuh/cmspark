@@ -1,0 +1,5 @@
+{
+  "model": "grok-4.6",
+  "exit": 0,
+  "transport": "CLI verbatim"
+}
