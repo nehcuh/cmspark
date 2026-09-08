@@ -43,3 +43,9 @@ Built extension manifest verified: all five icon references resolve to PNGs matc
 DeepSeek implementation and first final invocation each returned an API socket-close error without a valid verdict (exit1). Both are INVALID and do not count as approval. A compact retry includes all changed code while removing duplicated unchanged context; output budget8192 and same verified deepseek-v4-pro model. Source remains frozen. No report from another judge is supplied.
 
 Transport diagnostics: compact DeepSeek CLI retry also failed socket-close; non-stream Anthropic transport returned IncompleteRead. No credential values were printed or committed. Final recovery tries the same configured DeepSeek host/model through its chat-compatible transport and supplies Grok the frozen code inline to avoid additional remote tool turns. Pending recovery means this PR remains gated; process exit alone is never approval.
+
+## Final gate status
+
+#474 NOT RELEASE-READY. Grok implementation timed out after900s with a truncated report/no final verdict; full final Grok attempt exited1 after network errors. Inline retry produced no report amid repeated network errors and was stopped (SIGTERM exit-15). DeepSeek CLI retries and both configured-host non-stream transports failed without valid verdict. None count as approval. Draft PR475 keeps this gate open and Issues473/474 open; #473 itself has valid dual approval. No merge or installation.
+
+After review freeze only a redundant final blank line was removed from brand-icon.mjs for git diff --check; executable content unchanged. Updated final-source-manifest records exact committed source.
