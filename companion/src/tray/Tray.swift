@@ -89,7 +89,7 @@ var recentThreads: [RecentThread] = []
 // ---------------------------------------------------------------------------
 
 // Same 24-unit geometry as scripts/lib/brand-icon.mjs, drawn at native backing scale.
-func makeStatusIcon(_ status: CompanionStatus, ws: Bool, size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
+func makeStatusIcon(_ status: CompanionStatus, size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
   let color: NSColor
   switch status {
   case .running: color = NSColor(srgbRed: 22/255, green: 132/255, blue: 93/255, alpha: 1)
@@ -306,7 +306,7 @@ class TrayDelegate: NSObject {
     statusItem = bar.statusItem(withLength: NSStatusItem.squareLength)
 
     guard let button = statusItem?.button else { return }
-    button.image = makeStatusIcon(currentStatus, ws: wsConnected)
+    button.image = makeStatusIcon(currentStatus)
     button.title = ""
     button.toolTip = tooltipForStatus(currentStatus)
     button.setAccessibilityLabel(tooltipForStatus(currentStatus))
@@ -334,7 +334,7 @@ class TrayDelegate: NSObject {
 
   func updateAppearance() {
     guard let button = statusItem?.button else { return }
-    button.image = makeStatusIcon(currentStatus, ws: wsConnected)
+    button.image = makeStatusIcon(currentStatus)
     button.title = ""
     button.toolTip = tooltipForStatus(currentStatus)
     button.setAccessibilityLabel(tooltipForStatus(currentStatus))

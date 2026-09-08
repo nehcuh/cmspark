@@ -56,7 +56,7 @@ import {
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
 // Updated 2026-09-08 #474 — native connection icon; local arm64 build-tray.sh output
 /** Mac 菜单/热键「召唤器」= HTML Capture 卡（与侧栏弹出对话框同一出口）。 */
-const SWIFT_TRAY_SHA256 = "e184528cf908e639cca2ec63c596471a6fae2992f4e7e1dca400107810c14fbb"
+const SWIFT_TRAY_SHA256 = "523638554705e3801eecd035dbee0841db8d726129dfdf3eb02e0cd38f1c33dd"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

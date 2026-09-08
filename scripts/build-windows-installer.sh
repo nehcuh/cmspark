@@ -86,7 +86,7 @@ if [ ! -d "${STAGING}" ]; then
 fi
 
 missing=0
-for rel in node.exe cmspark-agent.js launch-hidden.vbs chrome-extension; do
+for rel in node.exe cmspark-agent.js launch-hidden.vbs chrome-extension assets/cmspark.ico assets/tray-icon-green.ico assets/tray-icon-red.ico assets/tray-icon-yellow.ico assets/tray-icon-template.ico; do
   if [ ! -e "${STAGING}/${rel}" ]; then
     echo "ERROR: official installer staging missing ${rel}" >&2
     missing=1
