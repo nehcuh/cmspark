@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         assert not dialog.is_visible()
         assert history.evaluate('(el)=>el===document.activeElement')
         # Context panel fits the short viewport; closes without losing composer.
-        toggle.click();nav.get_by_role('button',name='知识',exact=True).click()
+        toggle.click();nav.locator('summary').filter(has_text='资料与工具').click();nav.get_by_role('button',name='知识',exact=True).click()
         context=page.get_by_test_id('context-panel-host')
         context.wait_for()
         assert context.bounding_box()['height'] <= 480*.28+2
@@ -112,8 +112,63 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
             assert coding.bounding_box()['y'] >= rail['y']+rail['height']-1
         coding.get_by_role('button',name='关闭',exact=True).click()
         page.set_viewport_size({'width':1440,'height':900})
+        # #483 actual App owner isolation: A → B → A, including delayed events.
+        page.evaluate("""() => {
+          window.dispatchUI({type:'UPSERT_THREAD',thread:{...window.demoThreads[0],workspace_root:'/repo/owner-a'}});
+          window.dispatchUI({type:'UPSERT_THREAD',thread:{...window.demoThreads[1],workspace_root:'/repo/owner-b'}});
+          window.dispatchUI({type:'ACP_SESSION_EVENT',event:{session_id:'coding-a',thread_id:'demo-0',state:'running',agent_id:'Fixture A',transport:'acp',mode:'propose_diff',workspace_root:'/repo/owner-a',progress_tail:'OWNER_A_PROGRESS'}});
+        }""")
+        coding.wait_for()
+        assert coding.get_by_text('OWNER_A_PROGRESS',exact=True).is_visible()
+        coding.get_by_role('button',name='关闭',exact=True).click()
+        chip=page.get_by_role('status',name='编程助手会话',exact=True)
+        assert chip.is_visible() and 'Fixture A' in chip.inner_text()
+        page.evaluate("window.dispatchUI({type:'SET_ACTIVE_THREAD',threadId:'demo-1'});window.dispatchUI({type:'SET_MESSAGES',messages:[]})")
+        page.wait_for_function("window.fixtureState.activeThreadId==='demo-1'")
+        assert not coding.is_visible() and not chip.is_visible()
+        page.evaluate("window.dispatchUI({type:'ACP_SESSION_EVENT',event:{session_id:'coding-a',thread_id:'demo-0',state:'closed',progress_tail:'OWNER_A_RETURNED',handback:'A complete',pending_diffs:[{applyable:true}]}})")
+        page.wait_for_timeout(100)
+        assert not coding.is_visible() and not chip.is_visible(), 'A background completion must not open B'
+        page.evaluate("window.dispatchUI({type:'ACP_SESSION_EVENT',event:{session_id:'coding-b',thread_id:'demo-1',state:'running',agent_id:'Fixture B',transport:'acp',workspace_root:'/repo/owner-b',progress_tail:'OWNER_B_PROGRESS'}})")
+        coding.wait_for()
+        assert coding.get_by_text('OWNER_B_PROGRESS',exact=True).is_visible()
+        assert not coding.get_by_text('OWNER_A_RETURNED',exact=True).count()
+        page.evaluate("window.dispatchUI({type:'ACP_SESSION_EVENT',event:{session_id:'coding-a',thread_id:'demo-0',state:'closed',progress_tail:'OWNER_A_LATE'}})")
+        page.wait_for_timeout(100)
+        assert coding.get_by_text('OWNER_B_PROGRESS',exact=True).is_visible(), 'A late event cannot replace B panel'
+        coding.get_by_placeholder('继续对编程助手说…（侧栏监视）',exact=True).fill('Continue owner B')
+        coding.get_by_role('button',name='发送',exact=True).click()
+        coding.get_by_role('button',name='停止编程会话',exact=True).click()
+        assert page.evaluate("window.sent.some(x=>x.type==='acp.session.prompt' && x.session_id==='coding-b' && x.thread_id==='demo-1')")
+        assert page.evaluate("window.sent.some(x=>x.type==='acp.session.cancel' && x.session_id==='coding-b' && x.thread_id==='demo-1')")
+        page.screenshot(path=str(shots/'coding-owner-b.png'))
+        page.evaluate("window.dispatchUI({type:'SET_ACTIVE_THREAD',threadId:'demo-0'});window.dispatchUI({type:'SET_MESSAGES',messages:[]})")
+        page.wait_for_function("window.fixtureState.activeThreadId==='demo-0'")
+        assert not coding.is_visible()
+        assert chip.is_visible() and 'Fixture A' in chip.inner_text() and 'Fixture B' not in chip.inner_text()
+        page.evaluate("window.dispatchEvent(new Event('cmspark:open-coding-handoff'))")
+        coding.wait_for()
+        assert coding.get_by_text('OWNER_A_LATE',exact=True).is_visible()
+        assert not coding.get_by_text('OWNER_B_PROGRESS',exact=True).count()
+        # A delayed B folder/Git reply cannot change A's workspace context.
+        page.evaluate("""() => {
+          window.emitRuntime({type:'workspace.pick_result',thread_id:'demo-1',thread:{id:'demo-1',workspace_root:'/repo/wrong-owner'},path:'/repo/wrong-owner',bound:true});
+          window.dispatchEvent(new CustomEvent('cmspark:coding.git_status',{detail:{thread_id:'demo-1',workspace_root:'/repo/owner-a',is_repo:true,branch:'WRONG_OWNER_BRANCH',dirty_count:99}}));
+        }""")
+        page.wait_for_timeout(100)
+        assert '/repo/wrong-owner' not in coding.inner_text() and 'WRONG_OWNER_BRANCH' not in coding.inner_text()
+        coding.get_by_role('button',name='应用 diff',exact=True).click()
+        assert page.evaluate("window.sent.some(x=>x.type==='acp.apply_diff' && x.session_id==='coding-a' && x.thread_id==='demo-0')")
+        page.screenshot(path=str(shots/'coding-owner-return-a.png'))
+        coding.get_by_role('button',name='关闭',exact=True).click()
+        page.evaluate("window.dispatchUI({type:'CLEAR_CODING_SESSION',sessionId:'coding-a'});window.dispatchUI({type:'CLEAR_CODING_SESSION',sessionId:'coding-b'})")
+        page.wait_for_timeout(100)
+        assert not chip.is_visible()
+        page.evaluate("window.dispatchUI({type:'UPSERT_THREAD',thread:{...window.demoThreads[0],workspace_root:null}});window.dispatchUI({type:'UPSERT_THREAD',thread:{...window.demoThreads[1],workspace_root:null}})")
+        page.evaluate('(messages)=>window.dispatchUI({type:"SET_MESSAGES",messages})',messages)
         # Confirmation queue is still rendered by the unchanged production gate.
         confirmation={'confirmation_id':'fixture-confirm','tool_name':'shell_exec','dangerous_apis':['shell'], 'code_preview':'git diff base..head','risk_level':'high','requested_at':'2026-09-07T10:00:00Z','timeout_ms':45000}
+        page.locator('.cm-nav-tools summary').click()
         page.get_by_role('navigation',name='资源与能力').get_by_role('button',name='知识',exact=True).click()
         page.evaluate('(request)=>window.dispatchUI({type:"ADD_SECURITY_CONFIRMATION",request})',confirmation)
         page.set_viewport_size({'width':320,'height':480})
@@ -153,4 +208,4 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         assert page.locator('.cm-workspace').evaluate('(el)=>getComputedStyle(el).scrollBehavior')=='auto'
         assert not errors, errors
         browser.close()
-print('PASS: actual App responsive matrix, drawer/history keyboard, settings/context, full-width input, tool disclosure, confirmation no-submit, reflow/reduced motion. Synthetic transport only.')
+print('PASS: actual App responsive matrix, drawer/history keyboard, settings/context, full-width input, tool disclosure, confirmation no-submit, A/B coding ownership and controls, reflow/reduced motion. Synthetic transport only.')

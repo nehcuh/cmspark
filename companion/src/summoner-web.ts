@@ -41,6 +41,9 @@ import { getChromeOpener } from "./platform"
 import { getConfig } from "./config"
 import { OVERLAY_RENDER_MD_JS } from "./summoner/overlay-md"
 import { currentOverlayCruiseChipLabel } from "./summoner/hydrate"
+import { SUMMONER_DICTATION_JS } from "./summoner/voice-input"
+import { SUMMONER_THREAD_MANAGEMENT_JS } from "./summoner/thread-management"
+import { summonerThreadMetadata } from "./threads/metadata-patch"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
 export type SummonerWebAttachChrome = (opts?: { foreground?: boolean }) => string
@@ -747,7 +750,7 @@ async function handleRequest(
         voice?.localModelId === "large-v3-turbo"
           ? voice.localModelId
           : "medium"
-      const sttEngine = voice?.sttEngine === "local" ? "local" : "browser"
+      const sttEngine = voice?.sttEngine === "local" ? "local" : voice?.sttEngine === "system" ? "system" : "browser"
       jsonResponse(res, { sttEngine, localModelId, lang: "zh-CN" })
       return
     }
@@ -817,8 +820,10 @@ async function handleRequest(
         return
       }
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX))
-      const alias = typeof body.alias === "string" ? body.alias : ""
-      jsonResponse(res, await dispatchAllowed("thread.update", { thread_id: id, updates: { alias } }))
+      let updates: Record<string, unknown>
+      try { updates = summonerThreadMetadata(body) }
+      catch (error) { jsonResponse(res, { type: "error", error: error instanceof Error ? error.message : "Invalid metadata" }, 400); return }
+      jsonResponse(res, await dispatchAllowed("thread.update", { thread_id: id, updates }))
       return
     }
 
@@ -1049,6 +1054,8 @@ async function handleRequest(
         channels: 1,
         privacy_ack_v2: true,
       }
+      // Engine is read from trusted configuration, never promoted by a page claim.
+      if (getConfig().voice?.sttEngine === "system") payload.engine = "system"
       if (typeof body.lang === "string" && body.lang.trim()) {
         payload.lang = body.lang.startsWith("zh") ? "zh" : body.lang
       } else {
@@ -1447,13 +1454,21 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .list{display:flex;width:220px;flex:none;background:var(--rail-bg)}
 .hud.history .list{position:static;inset:auto;width:220px;border-right:1px solid var(--line)}
 .list-head{font-size:12px;letter-spacing:0;color:var(--secondary)}
-.item.active{background:#eaeae7;color:var(--text)}.item strong{overflow-wrap:anywhere}.trow{flex-wrap:wrap}.trow .item{flex-basis:100%}.trow .icon-mini{height:28px}
+.item.active{background:#eaeae7;color:var(--text)}.item strong{overflow-wrap:anywhere}.trow{flex-wrap:wrap}.trow .item{flex-basis:100%}.trow .icon-mini{height:32px;min-height:32px}
 #historyClose{display:none}.log{padding:32px 28px}.empty{margin:auto;max-width:440px;line-height:1.8;color:var(--secondary)}
 .empty strong{font-size:28px;color:var(--text);margin-bottom:8px}
 @media(min-width:760px){.hud{background:var(--rail-bg)}.capture-row{background:var(--paper)}.log{max-width:none;padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.composer,.capture-row,.status,.cta-box{margin-left:220px;max-width:none;width:calc(100% - 220px)}.composer{padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.cta-box,.status{width:calc(100% - 244px)}#historyOpen{display:none}}
 @media(max-width:759px){.brand{flex-wrap:wrap}.brand-actions{flex-wrap:wrap;min-width:0}.hud.expanded .body{flex-direction:column}.list{display:none}.hud.history .list{display:flex;width:100%;max-height:36vh;min-height:0;border-right:0;border-bottom:1px solid var(--line)}.rail{flex-direction:row;flex-wrap:wrap;flex-shrink:0;padding:6px}.rail-btn{width:auto;height:32px;padding:0 8px;font-size:12px}.rail-btn svg{display:none}.list-head{padding:4px 12px}.list-scroll{min-height:0}#historyClose{display:block}.log{padding:20px}.empty strong{font-size:22px}}
 @media(max-height:560px){.hud.history .list{max-height:28vh}.log{padding:12px}.empty{padding:8px}.empty strong{font-size:20px}.capture-row{padding-bottom:6px}.composer{padding-top:6px}}
 
+.brand-id{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.brand-actions{flex:none}
+.workspace-tools{width:100%;min-width:0;flex:none;border-top:1px solid var(--line)}.workspace-tools[open]{max-height:24vh;overflow:auto}.workspace-tools summary{cursor:pointer;padding:10px;font-size:12px;color:var(--secondary)}.workspace-tools summary:focus-visible{outline:2px solid var(--indigo)}
+.thread-search select{display:block;width:100%;margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--text);font:inherit}
+.organization-hint{font-size:11px;line-height:1.6;margin:8px 0;color:var(--secondary)}
+#threadOrganization[hidden],#threadMetadata[hidden]{display:none}
+#threadMetadata{padding:12px 0;border-top:1px solid var(--line)}#threadMetadata label{display:block;margin-top:10px}
+#metadataTitle{display:block;overflow-wrap:anywhere}.metadata-actions{display:flex;gap:8px}.metadata-actions button{min-height:32px;border:1px solid var(--line);border-radius:8px;padding:4px 10px;background:var(--paper);font:inherit;color:var(--text)}
+#metadataError{color:#b91c1c;font-size:12px;overflow-wrap:anywhere}.thread-group-heading{font-size:12px;color:var(--secondary);padding:12px 10px 4px;overflow-wrap:anywhere}.trow .thread-classify{width:auto;min-width:40px;padding:0 6px;font:inherit;font-size:12px;color:var(--secondary)}
 </style>
 </head>
 <body>
@@ -1464,6 +1479,30 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <button class="rail-btn" data-sec="threads" aria-current="true" type="button" title="对话" aria-label="对话">
         <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h10M5 17h7"/></svg><span>对话</span>
       </button>
+
+    </nav>
+
+      <div class="list-head"><span id="secHead">历史会话</span><button type="button" id="historyClose">完成</button></div>
+      <div class="list-scroll">
+        <button class="item" id="newThread" type="button"><strong>新对话</strong><small>快捷提问</small></button>
+        <label class="thread-search" id="threadSearchLabel">搜索对话<input id="threadSearch" type="search" placeholder="标题、标签或分组" autocomplete="off"></label>
+        <div id="threadOrganization" class="thread-search">
+          <label>查看方式<select id="threadView"><option value="recent">最近对话</option><option value="folders">手动分组</option><option value="tags">对话标签</option><option value="ai">AI 分组</option></select></label>
+          <p class="organization-hint">在对话的「分类」中创建分组或添加标签。</p>
+          <form id="threadMetadata" hidden aria-label="编辑对话分类">
+            <strong id="metadataTitle">对话分类</strong>
+            <label>人工标签<input id="metadataTags" placeholder="用逗号分隔" maxlength="820"></label>
+            <label>手动分组<input id="metadataFolder" list="threadFolders" maxlength="40" placeholder="选择或输入新分组"></label>
+            <datalist id="threadFolders"></datalist>
+            <p class="organization-hint">留空可移出分组。人工分类不会被 AI 整理覆盖。</p>
+            <p id="metadataError" role="alert"></p>
+            <div class="metadata-actions"><button id="metadataCancel" type="button">取消</button><button id="metadataSave" type="submit">保存</button></div>
+          </form>
+        </div>
+        <div id="threads"></div>
+        <div id="composeList"></div>
+      </div>
+      <details class="workspace-tools"><summary>资料与工具</summary>
       <button class="rail-btn" data-sec="packs" type="button" title="场景" aria-label="场景">
         <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.4"/><rect x="13" y="4" width="7" height="7" rx="1.4"/><rect x="4" y="13" width="7" height="7" rx="1.4"/><rect x="13" y="13" width="7" height="7" rx="1.4"/></svg><span>场景</span>
       </button>
@@ -1477,15 +1516,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
         <svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1.2"/><path d="M12 4.6v3.2M12 16.2v3.2M4.6 12H8M16 12h3.4"/></svg><span>MCP</span>
       </button>
       <button class="rail-btn" data-sec="browser" type="button"><span>浏览器</span></button>
-    </nav>
-
-      <div class="list-head"><span id="secHead">历史会话</span><button type="button" id="historyClose">完成</button></div>
-      <div class="list-scroll">
-        <button class="item" id="newThread" type="button"><strong>新对话</strong><small>快捷提问</small></button>
-        <label class="thread-search" id="threadSearchLabel">搜索对话<input id="threadSearch" type="search" placeholder="标题或名称" autocomplete="off"></label>
-        <div id="threads"></div>
-        <div id="composeList"></div>
-      </div>
+      </details>
     </aside>
     <section class="main">
       <div class="brand">
@@ -1869,6 +1900,7 @@ try{
     else go();
   }
   function startStt(){
+    if(typeof summonerVoice!=="undefined" && summonerVoice) summonerVoice.cancel();
     if(sttLive){ stopStt(false); return; }
     if(!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia!=="function"){
       setStatus(STT_MIC_FAIL);
@@ -1903,19 +1935,34 @@ try{
       setStatus(STT_MIC_FAIL);
     });
   }
+  ${SUMMONER_THREAD_MANAGEMENT_JS}
   function renderThreads(filter){
+    var selected=threads.find(function(t){return t.id===threadId});
+    $("workspaceTitle").textContent=selected?(selected.title||selected.alias||"新对话"):"CMspark";
+    $("workspaceTitle").title=$("workspaceTitle").textContent;
     var q=(filter===undefined?$("threadSearch").value:filter||"").trim().toLocaleLowerCase();
     var box=$("threads");
     box.innerHTML="";
-    threads.forEach(function(t){
+    var view=$("threadView").value, previousGroup=null;
+    var listed=threadEntries(threads,view);
+    listed.forEach(function(entry){
+      var t=entry.thread;
       var title=(t.title||t.alias||t.id||"").trim()||t.id;
-      if(q && title.toLocaleLowerCase().indexOf(q)<0 && String(t.alias||"").toLocaleLowerCase().indexOf(q)<0) return;
+      var search=[title,t.alias,t.topic_folder].concat(t.user_tags||[],t.digest&&t.digest.tags||[]).join(" ").toLocaleLowerCase();
+      if(q && search.indexOf(q)<0) return;
+      if(view!=="recent"){
+        var group=entry.group;
+        if(group!==previousGroup){var heading=document.createElement("h3");heading.className="thread-group-heading";heading.textContent=group;box.appendChild(heading);previousGroup=group}
+      }
       var row=document.createElement("div");
       row.className="trow";
       var b=document.createElement("button");
       b.className="item"+(t.id===threadId?" active":"");
       b.innerHTML="<strong>"+esc(title)+"</strong>";
-      b.onclick=function(){selectThread(t.id)};
+      var details=[t.topic_folder?"分组 · "+t.topic_folder:"",(t.user_tags||[]).map(function(tag){return "#"+tag}).join(" ")].filter(Boolean).join(" · ");
+      if(details){var meta=document.createElement("small");meta.textContent=details;b.appendChild(meta)}
+      b.onclick=function(){closeThreadMetadata();selectThread(t.id)};
+      var classify=document.createElement("button");classify.className="icon-mini thread-classify";classify.type="button";classify.dataset.threadId=t.id;classify.textContent="分类";classify.setAttribute("aria-label","分类 · "+title);classify.onclick=function(){openThreadMetadata(t,classify)};
       var rn=document.createElement("button");
       rn.className="icon-mini";
       rn.title="重命名";
@@ -1949,6 +1996,7 @@ try{
         });
       };
       row.appendChild(b);
+      row.appendChild(classify);
       row.appendChild(rn);
       row.appendChild(tr);
       box.appendChild(row);
@@ -2000,19 +2048,26 @@ try{
       ?"回车纠偏 · Shift+Enter 排队 · 忙时附件请等本轮结束 · 点击右上角 ⋮ 设置快捷键"
       :"回车发送 · Shift+Enter 排队 · # 搜标题 · 点击右上角 ⋮ 设置快捷键";
   }
+  var selectionRevision=0;
   function selectThread(id){
+    var revision=++selectionRevision;
+    if(typeof summonerVoice!=="undefined" && summonerVoice) summonerVoice.cancel();
     threadId=id;
     clearStreamMsg();
     showHistory(false);
     renderThreads($("text").value.charAt(0)==="#"?$("text").value.slice(1):"");
     return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:id})})
       .then(function(d){
+        if(revision!==selectionRevision || threadId!==id) return null;
         if(d && (d.error || d.error_code || (d.data&&d.data.error_code) || d.type==="error" || d.type==="chat.error" || d.type==="composer.lease.error")){
           setStatus(statusFromEvent(d));
         }
+        if(revision!==selectionRevision || threadId!==id) return null;
         return api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:id})});
       })
       .then(function(d){
+        if(!d || revision!==selectionRevision || threadId!==id) return;
+        if(d.error||d.type==="error"){setStatus(d.error||"无法读取对话");return}
         renderMsgs(d.messages||[]);
         busy=d.run_status==="llm";
         syncBusyUi();
@@ -2023,7 +2078,9 @@ try{
     if(poll) return;
     poll=setInterval(function(){
       if(!threadId) return;
-      api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(d){
+      var owner=threadId,revision=selectionRevision;
+      api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:owner})}).then(function(d){
+        if(owner!==threadId || revision!==selectionRevision || d.error || d.type==="error")return;
         var next=d.run_status==="llm";
         // SSE 流式气泡存活期间不做整表重绘（会拆掉 streaming bubble）；轮询仅作兜底
         if(!(streamMsg&&next)) renderMsgs(d.messages||[]);
@@ -2121,20 +2178,26 @@ try{
   $("settings").onclick=function(){
     alert("快捷键设置需要在 Chrome 侧栏的设置面板中配置。\\n\\n请打开 Chrome 侧栏，点击设置图标，在「模型与推理」部分找到「发送快捷键」设置。\\n\\n召唤器使用相同的快捷键配置。");
   };
-  $("mic").onclick=function(){
-    if(sttLive){ stopStt(false); return; }
-    if(!voiceAck){
+  ${SUMMONER_DICTATION_JS}
+  var summonerVoice=createSummonerDictation({
+    api:api,mic:$("mic"),input:$("text"),threadId:function(){return threadId},blocked:function(){return sttLive||!!meetingId},
+    privacy:function(engine){
       var sheet=$("voicePrivacy");
-      if(sheet) sheet.hidden=false;
-      return;
+      var browser=engine==="browser";
+      sheet.querySelector("p").textContent=browser?"浏览器听写":engine==="system"?"系统听写":"本机听写";
+      sheet.querySelector("ol").hidden=browser;
+      var notice=sheet.querySelector(".browser-privacy");
+      if(!notice){notice=document.createElement("p");notice.className="browser-privacy";sheet.insertBefore(notice,sheet.querySelector(".cta-actions"))}
+      notice.hidden=!browser;
+      notice.textContent="可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome 语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。";
+      sheet.hidden=false;
     }
-    startStt();
-  };
+  });
+  $("mic").onclick=function(){summonerVoice.toggle()};
   $("voicePrivacyAck").onclick=function(){
-    voiceAck=true;
     var sheet=$("voicePrivacy");
     if(sheet) sheet.hidden=true;
-    startStt();
+    summonerVoice.ack();
   };
   function setMeetingUi(on){
     var b=$("meetingStart");
@@ -2481,12 +2544,14 @@ try{
   $("windowMode").onclick=function(){compactWindow=!compactWindow;placeWindow(compactWindow);$("windowMode").textContent=compactWindow?"工作窗口":"紧凑窗口";setStatus("已请求调整窗口；如果当前宿主未响应，可手动调整窗口大小。")};
   $("historyOpen").onclick=function(){ showHistory(!$("hud").classList.contains("history")); };
   $("threadSearch").oninput=function(){renderThreads()};
+  $("threadView").onchange=function(){renderThreads()};
   document.addEventListener("keydown",function(e){if(e.key==="Escape" && $("hud").classList.contains("history")){closeNavigation()}});
   function closeNavigation(){showHistory(false);(window.matchMedia("(min-width:760px)").matches?$("newChat"):$("historyOpen")).focus()}
   $("historyClose").onclick=closeNavigation;
   $("newChat").onclick=function(){ $("newThread").click(); };
   $("newThreadBar").onclick=function(){$("newThread").click()};
   $("newThread").onclick=function(){
+    summonerVoice.cancel();
     api("/api/threads",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(d){
       var id=d.thread&&d.thread.id;
       if(!id){setStatus("新建失败");return}
@@ -2524,13 +2589,15 @@ try{
   var sec="threads";
   function showSec(name){
     sec=name;
-    document.querySelectorAll("#secs [data-sec]").forEach(function(b){
+    document.querySelectorAll(".list [data-sec]").forEach(function(b){
       if(b.getAttribute("data-sec")===name) b.setAttribute("aria-current","true");
       else b.removeAttribute("aria-current");
     });
     setExpanded(true);
     var heads={threads:"对话",packs:"场景",knowledge:"知识",skills:"技能",mcp:"MCP",browser:"浏览器"};
     $("threadSearchLabel").hidden=name!=="threads";
+    $("threadOrganization").hidden=name!=="threads";
+    if(name!=="threads") closeThreadMetadata();
     $("secHead").textContent=heads[name]||name;
     $("newThread").style.display=name==="threads"?"":"none";
     $("threads").style.display=name==="threads"?"":"none";
@@ -2625,7 +2692,7 @@ try{
     }
     return Promise.resolve(load()).then(function(){if(revision===composeRevision && sec===name && threadId===ownerThread){target.replaceChildren();while(box.firstChild)target.appendChild(box.firstChild)}});
   }
-  document.querySelectorAll("#secs [data-sec]").forEach(function(b){
+  document.querySelectorAll(".list [data-sec]").forEach(function(b){
     b.onclick=function(){showSec(b.getAttribute("data-sec"))};
   });
   $("composeList").style.display="none";
@@ -2637,6 +2704,7 @@ try{
     }catch(e){}
   }
   window.addEventListener("pagehide", function(){
+    summonerVoice.cancel();
     if(sttLive) stopStt(true);
     if(meetingId){
       try{
@@ -2705,6 +2773,7 @@ try{
         startPoll();
         return;
       }
+      if(t.indexOf("voice.stt.")===0 && summonerVoice.onEvent(d)) return;
       if(t==="voice.stt.partial"){
         if(meetingId){
           var pt=typeof d.text==="string"?d.text:"";
@@ -2714,7 +2783,10 @@ try{
         return;
       }
       if(t==="voice.stt.result"){
+        // Dictation commits only its matching HTTP result. Unowned / duplicate pushes are ignored.
+        if(!meetingId) return;
         var sid=typeof d.sessionId==="string"?d.sessionId:"";
+        if(!sid || !sttFeatsBySid[sid]) return;
         var txt=typeof d.text==="string"?d.text.trim():"";
         if(txt && meetingId){
           var feat=sid&&sttFeatsBySid[sid];
@@ -2737,6 +2809,7 @@ try{
         return;
       }
       if(t==="voice.stt.error"){
+        if(!meetingId || d.sessionId!==sttSid) return;
         setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error));
         if(sttLive) stopStt(true);
         return;

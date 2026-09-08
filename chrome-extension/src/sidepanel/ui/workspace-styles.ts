@@ -11,6 +11,7 @@ export const workspaceCSS = `
 .cm-nav-new,.cm-nav-item,.cm-nav-thread{font:inherit;border:0;border-radius:${tokens.radiusMd}px;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left;min-height:36px;width:100%;padding:8px 10px;color:${tokens.text};background:transparent;font-size:13px;flex-shrink:0}
 .cm-nav-new{background:${tokens.bgElevated};border:1px solid ${tokens.border};margin-bottom:10px;font-weight:500}
 .cm-nav-item:hover,.cm-nav-thread:hover,.cm-icon-button:hover{background:${tokens.bgHover}}
+.cm-nav-tools{flex:none;border-top:1px solid ${tokens.border};margin-top:8px}.cm-nav-tools summary{cursor:pointer;min-height:36px;padding:10px 4px;font-size:12px}.cm-nav-tools summary:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .cm-nav-resources{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-bottom:16px}
 .cm-nav-resources .cm-nav-item{font-size:12px;gap:6px;padding:8px 6px;min-width:0}
 .cm-nav-resources .cm-nav-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

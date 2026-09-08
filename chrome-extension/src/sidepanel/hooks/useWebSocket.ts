@@ -23,6 +23,11 @@ export { normalizeConfig }
 
 const hydrateRetryIds = new Set<string>()
 
+/** Session feedback must carry its stored owner; missing owner never means the active thread. */
+export function codingMessageTargetsThread(msg: { thread_id?: unknown }, threadId: string | null): boolean {
+  return !!threadId && typeof msg.thread_id === "string" && msg.thread_id === threadId
+}
+
 export function isHydrateSelectError(err: string): boolean {
   return /Thread not found/i.test(err)
 }
@@ -1625,6 +1630,7 @@ export function useWebSocket() {
           break
 
         case "acp.apply_diff.result":
+          if (!codingMessageTargetsThread(msg, activeThreadRef.current)) break
           dispatch({
             type: "SET_PROCESSING_STATUS",
             status: msg.ok
@@ -1634,6 +1640,7 @@ export function useWebSocket() {
           break
 
         case "acp.ui_start.accepted":
+          if (!codingMessageTargetsThread(msg, activeThreadRef.current)) break
           // progress follows acp.session.event — keep status for panel feedback
           dispatch({
             type: "SET_PROCESSING_STATUS",
@@ -1641,6 +1648,7 @@ export function useWebSocket() {
           })
           break
         case "acp.ui_start.denied":
+          if (!codingMessageTargetsThread(msg, activeThreadRef.current)) break
           dispatch({
             type: "SET_PROCESSING_STATUS",
             status:
@@ -2329,6 +2337,8 @@ export function useWebSocket() {
               (/^acp[:.]|acp:\s|编程助手|cloud_disclosure|feature disabled/i.test(msg.error) ||
                 /\bacp\b/i.test(msg.error) && /disabled|未启用|disclosure/i.test(msg.error)))
           ) {
+            if ((msg.session_id !== undefined || msg.thread_id !== undefined) &&
+                !codingMessageTargetsThread(msg, activeThreadRef.current)) break
             dispatch({
               type: "SET_PROCESSING_STATUS",
               status:

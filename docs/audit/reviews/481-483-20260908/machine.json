@@ -1,0 +1,34 @@
+{
+  "companion": {
+    "tests": 5038,
+    "pass": 5015,
+    "skip": 23,
+    "fail": 0,
+    "auxiliary_pass": 20
+  },
+  "extension": {
+    "pass": 1296,
+    "fail": 0
+  },
+  "builds": [
+    "companion",
+    "chrome-extension"
+  ],
+  "browser_harnesses": [
+    "App responsive + A-B-A coding ownership",
+    "summoner metadata + stale thread result",
+    "summoner browser/local/system dictation"
+  ],
+  "limitations": [
+    "synthetic browser transport/audio, not measured ASR acceleration",
+    "no Windows native UI acceptance",
+    "Project entity and native full desktop remain future work"
+  ],
+  "final_delta": {
+    "owning_pass": 90,
+    "voice_owning_pass": 35,
+    "react_voice_hook_browser": "PASS",
+    "metadata_focus_and_stale_select_browser": "PASS",
+    "final_full_suites": "PASS"
+  }
+}

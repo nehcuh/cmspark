@@ -105,7 +105,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
       dispatch: async (msg) => {
         dispatched.push(msg)
         if (msg.type === "thread.list") return { type: "thread.list", threads: [{ id: "t1", title: "One" }] }
-        if (msg.type === "thread.update") return { type: "thread.updated", thread: { id: msg.thread_id, alias: (msg.updates as any)?.alias } }
+        if (msg.type === "thread.update") return { type: "thread.updated", thread: { id: msg.thread_id, ...(msg.updates as any) } }
         if (msg.type === "thread.delete") return { type: "thread.trashed", thread_id: msg.thread_id, mode: msg.mode }
         if (msg.type === "file.upload") return { type: "file.uploaded", thread_id: msg.thread_id, files: ["a.txt"] }
         if (msg.type === "pack.apply") return { type: "pack.applied", pack_id: msg.pack_id }
@@ -247,7 +247,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     // streaming bubble, thread switch clears it, recreated empty state keeps its id
     assert.match(r.body, /if\(t==="chat\.token"\)\{\s*if\(d\.thread_id&&threadId&&d\.thread_id!==threadId\) return;/)
     assert.match(r.body, /if\(d\.thread_id&&threadId&&d\.thread_id!==threadId\) return;\s*clearStreamMsg\(\);\s*busy=false/)
-    assert.match(r.body, /function selectThread\(id\)\{\s*threadId=id;\s*clearStreamMsg\(\)/)
+    assert.match(r.body, /function selectThread\(id\)\{[\s\S]{0,220}?threadId=id;\s*clearStreamMsg\(\)/)
     assert.match(r.body, /if\(!\(streamMsg&&next\)\) renderMsgs/)
     assert.match(r.body, /empty\.id="empty"/)
     assert.match(r.body, /\.hint\{[^}]*display:none/)
@@ -302,7 +302,9 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /data\.error_code/)
     assert.match(r.body, /statusFromEvent/)
     assert.doesNotMatch(r.body, /mode==="enqueue"\?"已排队"/)
-    assert.doesNotMatch(r.body, /允许|拒绝|Allow|Deny/)
+    // Microphone permission copy may say 允许. The overlay must not render approval controls.
+    assert.doesNotMatch(r.body, /<button\b[^>]*>\s*(?:允许|拒绝|Allow|Deny)\s*<\/button>/i)
+    assert.doesNotMatch(r.body, /\/api\/(?:approve|deny|confirmation\/respond)/)
     assert.match(r.body, /id="cruiseChip"/)
     assert.doesNotMatch(r.body, /%%CRUISE_LABEL%%/)
     assert.match(r.body, /点此打开侧栏调整档位/)
@@ -401,7 +403,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
         "Content-Type": "application/json",
         Origin: `http://127.0.0.1:${port}`,
       },
-      body: JSON.stringify({ alias: "周报", tool_whitelist: null }),
+      body: JSON.stringify({ alias: "周报" }),
     })
     assert.equal(r.status, 200, r.body)
     const data = JSON.parse(r.body)
@@ -410,6 +412,21 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(dispatched[0].type, "thread.update")
     assert.equal(dispatched[0].thread_id, "t1")
     assert.deepEqual(dispatched[0].updates, { alias: "周报" })
+  })
+
+  test("PATCH metadata persists tags and folder through the existing owner; rejects mixed policy fields", async () => {
+    dispatched.length = 0
+    const updates = { user_tags: ["  支付  ", "支付", "Review"], topic_folder: "变更" }
+    const send = (body: unknown) => request({ method: "PATCH", port, path: `/api/thread?token=${token}&id=t1`, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    const saved = await send(updates)
+    assert.equal(saved.status, 200)
+    assert.deepEqual(JSON.parse(saved.body).thread, { id: "t1", user_tags: ["支付", "Review"], topic_folder: "变更" })
+    assert.deepEqual(dispatched[0].updates, { user_tags: ["支付", "Review"], topic_folder: "变更" })
+    for (const payload of [{ alias: "safe", config_override: {} }, { user_tags: ["safe"], workspace_root: "/tmp" }, { topic_folder: 5 }, { user_tags: "tag" }, {}]) {
+      dispatched.length = 0
+      assert.equal((await send(payload)).status, 400)
+      assert.equal(dispatched.length, 0)
+    }
   })
 
   test("DELETE /api/thread always trashes and ignores hard", async () => {
@@ -1409,6 +1426,39 @@ describe("summoner-web server", { concurrency: 1 }, () => {
       endN,
       "second hide must not end meeting again",
     )
+  })
+
+  test("#482 STT tracker is cleanup state: JSON errors clear it, thrown end retains fallback abort", async () => {
+    for (const mode of ["json-error", "throw"] as const) {
+      const seen: Record<string, unknown>[] = []
+      await startSummonerWebServer({
+        preferredPort: 23510,
+        dispatch: async (msg) => {
+          seen.push(msg)
+          if (msg.type === "voice.stt.end") {
+            if (mode === "throw") throw new Error("synthetic transport timeout")
+            return { type: "voice.stt.error", sessionId: msg.sessionId, code: "session_unknown", message: "no matching session" }
+          }
+          return { type: "ok" }
+        },
+      })
+      const post = (route: string, body: Record<string, unknown>) => request({
+        method: "POST", port, path: `${route}?token=${token}`,
+        headers: { "Content-Type": "application/json", Origin: `http://127.0.0.1:${port}` },
+        body: JSON.stringify(body),
+      })
+      await post("/api/stt/start", { sessionId: "cleanup-old", modelId: "medium" })
+      const ended = await post("/api/stt/end", { sessionId: "cleanup-old", totalSeq: 0 })
+      assert.equal(ended.status, mode === "throw" ? 500 : 200)
+      hideSummonerWebShell()
+      await Promise.resolve()
+      assert.equal(seen.filter((m) => m.type === "voice.stt.abort" && m.sessionId === "cleanup-old").length, mode === "throw" ? 1 : 0)
+      // The tracker never gates a subsequent start; it adopts the new cleanup target.
+      assert.equal((await post("/api/stt/start", { sessionId: "cleanup-new", modelId: "medium" })).status, 200)
+      hideSummonerWebShell()
+      await Promise.resolve()
+      assert.equal(seen.filter((m) => m.type === "voice.stt.abort" && m.sessionId === "cleanup-new").length, 1)
+    }
   })
 
   test("SSE reconnect during grace cancels the pending shell close", async () => {

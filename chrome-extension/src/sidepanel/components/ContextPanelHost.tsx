@@ -61,7 +61,7 @@ export type ContextPanelTabDef = {
 // #321 PR-5: packs/meeting/board each get their own icon (were all IconSkills
 // collisions); icons come from the existing ui/icons set — nothing new drawn.
 export const CONTEXT_PANEL_TABS: ContextPanelTabDef[] = [
-  { id: "tabs", label: "标签", Icon: IconTabs },
+  { id: "tabs", label: "浏览器标签页", Icon: IconTabs },
   { id: "history", label: "历史", Icon: IconHistory },
   { id: "skills", label: "技能", Icon: IconSkills },
   { id: "knowledge", label: "知识", Icon: IconKnowledge },

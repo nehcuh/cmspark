@@ -4,7 +4,7 @@ import { useEffect, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import type { CodingSessionState } from "../store/agentStore"
-import { useAgentStore } from "../store/agentStore"
+import { useAgentStore, codingSessionBelongsToThread } from "../store/agentStore"
 
 export function CodingSessionChip({
   session,
@@ -13,7 +13,7 @@ export function CodingSessionChip({
   session: CodingSessionState
   compact?: boolean
 }) {
-  const { dispatch } = useAgentStore()
+  const { state, dispatch } = useAgentStore()
   const live = session.state === "running" || session.state === "offered"
 
   useEffect(() => {
@@ -21,7 +21,7 @@ export function CodingSessionChip({
     // Do not auto-dismiss while applyable diffs remain (UX: 应用 diff must stay reachable)
     if (session.hasPendingDiff) return
     const t = window.setTimeout(() => {
-      dispatch({ type: "CLEAR_CODING_SESSION" })
+      dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })
     }, 12_000)
     return () => window.clearTimeout(t)
   }, [session.state, session.sessionId, session.hasPendingDiff, dispatch])
@@ -42,8 +42,9 @@ export function CodingSessionChip({
       session.localTerminal !== "skipped")
 
   const onStop = () => {
+    if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
     chrome.runtime.sendMessage(
-      { type: "acp.session.cancel", session_id: session.sessionId },
+      { type: "acp.session.cancel", session_id: session.sessionId, thread_id: session.threadId },
       () => {
         void chrome.runtime.lastError
       },
@@ -51,12 +52,13 @@ export function CodingSessionChip({
   }
 
   const onFollowup = () => {
+    if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
     const goal = window.prompt("继续追问编程助手（将开新一轮并确认）")
     if (!goal?.trim()) return
     chrome.runtime.sendMessage(
       {
         type: "acp.session.followup",
-        session_id: session.sessionId,
+        session_id: session.sessionId, thread_id: session.threadId,
         goal: goal.trim(),
         mode: session.mode === "propose_diff" ? "propose_diff" : "review_readonly",
       },
@@ -67,8 +69,9 @@ export function CodingSessionChip({
   }
 
   const onApply = () => {
+    if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
     chrome.runtime.sendMessage(
-      { type: "acp.apply_diff", session_id: session.sessionId },
+      { type: "acp.apply_diff", session_id: session.sessionId, thread_id: session.threadId },
       () => {
         void chrome.runtime.lastError
       },

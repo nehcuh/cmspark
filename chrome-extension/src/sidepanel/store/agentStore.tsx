@@ -81,6 +81,22 @@ export type CodingSessionEvent = {
   local_terminal?: string
 }
 
+/** Current conversation only; background sessions remain cached for return navigation. */
+export function selectCodingSession(
+  state: Pick<AgentState, "activeThreadId" | "codingSessionsById" | "codingSessionIdByThread">,
+  threadId: string | null = state.activeThreadId,
+): CodingSessionState | null {
+  if (!threadId) return null
+  const id = state.codingSessionIdByThread[threadId]
+  const session = id ? state.codingSessionsById[id] : undefined
+  return session?.threadId === threadId ? session : null
+}
+
+/** A delayed click must never act on a session that belongs to another conversation. */
+export function codingSessionBelongsToThread(session: CodingSessionState | null, threadId: string | null): boolean {
+  return !!session && !!threadId && session.threadId === threadId
+}
+
 export type AcpAgentInfo = {
   id: string
   display_name: string
@@ -282,7 +298,8 @@ export interface AgentState {
    * 编程接力 ACP live session (acp.session.event). null = none.
    * Not L2 computer-use — separate Composition handoff surface.
    */
-  codingSession: CodingSessionState | null
+  codingSessionsById: Record<string, CodingSessionState>
+  codingSessionIdByThread: Record<string, string>
   /** Last acp.list payload (agents + enabled flag). */
   acpAgents: AcpAgentInfo[]
   acpEnabled: boolean
@@ -523,7 +540,7 @@ export type AgentAction =
   | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
   | { type: "ACP_SESSION_EVENT"; event: CodingSessionEvent }
   | { type: "SET_ACP_LIST"; enabled: boolean; agents: AcpAgentInfo[] }
-  | { type: "CLEAR_CODING_SESSION" }
+  | { type: "CLEAR_CODING_SESSION"; sessionId: string }
   /** Cockpit/panel hydrate from SW mirror — full snapshot, not incremental event. */
   | { type: "HYDRATE_COMPUTER_TASK"; task: ComputerTaskState | null }
   | { type: "HYDRATE_SECURITY_CONFIRMATIONS"; requests: SecurityConfirmationRequest[] }
@@ -695,7 +712,8 @@ export const initialState: AgentState = {
   appsError: null,
   appsPlatform: null,
   computerTask: null,
-  codingSession: null,
+  codingSessionsById: {},
+  codingSessionIdByThread: {},
   acpAgents: [],
   acpEnabled: false,
   computerCoordinateEnabled: null,
@@ -1720,55 +1738,40 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "ACP_SESSION_EVENT": {
       const e = action.event
       if (!e?.session_id) return state
-      const nextState = e.state || state.codingSession?.state || "running"
-      const nextHasPendingDiff = (() => {
-        const pd = (e as any).pending_diffs
-        if (Array.isArray(pd)) {
-          if (pd.length === 0) return false
-          // require explicit applyable:true when field present
-          return pd.some((d: any) => d && d.applyable === true)
-        }
-        return state.codingSession?.hasPendingDiff
-      })()
-      // Drop chip after terminal closed only when no applyable diffs remain
-      if (
-        nextState === "closed" &&
-        state.codingSession?.state === "closed" &&
-        !nextHasPendingDiff &&
-        !state.codingSession?.hasPendingDiff
-      ) {
-        const age = Date.now() - (state.codingSession?.updatedAt || 0)
-        if (age > 12_000) return { ...state, codingSession: null }
+      const previous = state.codingSessionsById[e.session_id]
+      const owner = typeof e.thread_id === "string" && e.thread_id ? e.thread_id : previous?.threadId
+      // An unknown event cannot borrow the current conversation as its owner.
+      if (!owner || (previous && previous.threadId !== owner)) return state
+      const pending = e.pending_diffs
+      const next: CodingSessionState = {
+        sessionId: e.session_id,
+        threadId: owner,
+        agentId: e.agent_id ?? previous?.agentId ?? "",
+        displayName: e.display_name ?? previous?.displayName,
+        state: e.state ?? previous?.state ?? "running",
+        progressTail: e.progress_tail ?? previous?.progressTail,
+        handback: e.handback ?? previous?.handback,
+        error: e.error ?? previous?.error,
+        goal: e.goal ?? previous?.goal,
+        workspaceRoot: e.workspace_root ?? previous?.workspaceRoot,
+        partial: e.partial ?? previous?.partial,
+        updatedAt: Date.now(),
+        mode: e.mode ?? previous?.mode,
+        hasPendingDiff: Array.isArray(pending)
+          ? pending.some((d: any) => d && d.applyable === true)
+          : previous?.hasPendingDiff,
+        transport: e.transport ?? previous?.transport,
+        timeline: Array.isArray(e.timeline) ? e.timeline : previous?.timeline,
+        openLocalTerminal: e.open_local_terminal ?? previous?.openLocalTerminal,
+        localTerminal: e.local_terminal ?? previous?.localTerminal,
       }
       return {
         ...state,
-        codingSession: {
-          sessionId: e.session_id,
-          threadId: e.thread_id || state.codingSession?.threadId || "",
-          agentId: e.agent_id || state.codingSession?.agentId || "",
-          displayName: e.display_name || state.codingSession?.displayName,
-          state: nextState,
-          progressTail: e.progress_tail ?? state.codingSession?.progressTail,
-          handback: e.handback ?? state.codingSession?.handback,
-          error: e.error ?? state.codingSession?.error,
-          goal: e.goal ?? state.codingSession?.goal,
-          workspaceRoot: e.workspace_root ?? state.codingSession?.workspaceRoot,
-          partial: e.partial ?? state.codingSession?.partial,
-          updatedAt: Date.now(),
-          mode: (e as any).mode ?? state.codingSession?.mode,
-          hasPendingDiff: nextHasPendingDiff,
-          transport: (e as any).transport ?? state.codingSession?.transport,
-          timeline: Array.isArray((e as any).timeline)
-            ? (e as any).timeline
-            : state.codingSession?.timeline,
-          openLocalTerminal:
-            typeof (e as any).open_local_terminal === "boolean"
-              ? (e as any).open_local_terminal
-              : state.codingSession?.openLocalTerminal,
-          localTerminal:
-            typeof (e as any).local_terminal === "string"
-              ? (e as any).local_terminal
-              : state.codingSession?.localTerminal,
+        codingSessionsById: { ...state.codingSessionsById, [next.sessionId]: next },
+        // A late event for an older session updates its own record, without
+        // replacing a newer session in the same conversation.
+        codingSessionIdByThread: previous ? state.codingSessionIdByThread : {
+          ...state.codingSessionIdByThread, [owner]: next.sessionId,
         },
       }
     }
@@ -1778,8 +1781,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         acpEnabled: action.enabled === true,
         acpAgents: Array.isArray(action.agents) ? action.agents : [],
       }
-    case "CLEAR_CODING_SESSION":
-      return { ...state, codingSession: null }
+    case "CLEAR_CODING_SESSION": {
+      const session = state.codingSessionsById[action.sessionId]
+      if (!session || state.codingSessionIdByThread[session.threadId] !== action.sessionId) return state
+      const selection = { ...state.codingSessionIdByThread }
+      delete selection[session.threadId]
+      // Retain the record so delayed progress cannot resurrect a dismissed chip.
+      return { ...state, codingSessionIdByThread: selection }
+    }
     case "COMPUTER_TASK_ABORT_ACK": {
       // matched>0 才置位;task_id="*"(急停全部)对当前任务同样生效。
       const t = state.computerTask

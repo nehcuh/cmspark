@@ -1,4 +1,5 @@
 import { isUiCommandAction } from "../ui-command"
+import { summonerThreadMetadata } from "../threads/metadata-patch"
 
 /** Per-connection method ACL keyed off handshake `surface` (S21).
  *
@@ -8,7 +9,7 @@ import { isUiCommandAction } from "../ui-command"
  * so the overlay can show connected servers. `mcp.add` stays denied.
  * `pack.apply` is allowed but router forces allowTrust=false + overlay-eligible.
  * `thread.delete` / `thread.update` are overlay-safe only via
- * `applySummonerPayloadPolicy` (trash-only; alias-only).
+ * `applySummonerPayloadPolicy` (trash-only; name/tags/folder-only).
  * Tray (`surface !== "summoner"`, including omitted/undefined) is not gated —
  * origin-cleaving would break tray `skill.list`.
  */
@@ -72,16 +73,10 @@ export function assertSummonerAllowed(
   }
 }
 
-function overlayAlias(raw: unknown): string | null {
-  if (typeof raw !== "string") return null
-  const alias = raw.replace(/[\x00-\x1F\x7F]/g, "").trim().slice(0, 200)
-  return alias || null
-}
-
 /**
  * Overlay-safe payload gate. Method allowlist is not enough: tray `thread.delete`
  * defaults to hard, and `thread.update` can mutate tool_whitelist / knowledge ids.
- * Mutates `msg` in place (strips non-alias updates). Tray / omitted surface: no-op.
+ * Mutates `msg` in place with validated metadata; rejects all other update keys. Tray / omitted surface: no-op.
  */
 export function applySummonerPayloadPolicy(
   surface: string | undefined,
@@ -100,24 +95,12 @@ export function applySummonerPayloadPolicy(
     return { ok: true }
   }
   if (type === "thread.update") {
-    const updates = msg.updates
-    if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
-      return {
-        ok: false,
-        error_code: "SUMMONER_ACL",
-        error: "SUMMONER_ACL: thread.update overlay may only set alias",
-      }
+    try {
+      msg.updates = summonerThreadMetadata(msg.updates)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error_code: "SUMMONER_ACL", error: "SUMMONER_ACL: " + (error instanceof Error ? error.message : "invalid metadata") }
     }
-    const alias = overlayAlias((updates as { alias?: unknown }).alias)
-    if (!alias) {
-      return {
-        ok: false,
-        error_code: "SUMMONER_ACL",
-        error: "SUMMONER_ACL: thread.update overlay may only set alias",
-      }
-    }
-    msg.updates = { alias }
-    return { ok: true }
   }
   if (type === "knowledge.set_active") {
     const threadId = typeof msg.thread_id === "string" ? msg.thread_id.trim() : ""

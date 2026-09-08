@@ -21,7 +21,7 @@ import {
   formatPageContext,
   cloneCommand,
 } from "../coding-handoff/repo-context"
-import { useAgentStore } from "../store/agentStore"
+import { useAgentStore, selectCodingSession, codingSessionBelongsToThread } from "../store/agentStore"
 import { MinimalConfirm } from "./MinimalConfirm"
 
 /**
@@ -133,7 +133,7 @@ export function CodingAgentPanel({
   openLocalTerminal = false,
 }: Props) {
   const { state, dispatch } = useAgentStore()
-  const session = state.codingSession
+  const session = threadId === state.activeThreadId ? selectCodingSession(state, threadId) : null
   const confirmQueue = state.pendingSecurityConfirmations
   const pendingConfirm = confirmQueue.length > 0
   const headConfirm = confirmQueue[0]
@@ -356,6 +356,7 @@ export function CodingAgentPanel({
     if (!open) return
     const onMsg = (msg: {
       type?: string
+      thread_id?: string
       thread?: { id?: string; workspace_root?: string | null }
       path?: string
       bound?: boolean
@@ -363,6 +364,8 @@ export function CodingAgentPanel({
       cancelled?: boolean
     }) => {
       if (msg?.type !== "workspace.pick_result") return
+      const owner = msg.thread_id || msg.thread?.id
+      if (!owner || owner !== threadId) return
       if (msg.error || msg.cancelled) {
         pendingStartAfterPickRef.current = false
         if (startingRef.current) setStarting(false)
@@ -376,7 +379,7 @@ export function CodingAgentPanel({
     }
     chrome.runtime.onMessage.addListener(onMsg)
     return () => chrome.runtime.onMessage.removeListener(onMsg)
-  }, [open])
+  }, [open, threadId])
 
   /**
    * B-lite S1: fetch git status when workspace is bound.
@@ -391,34 +394,30 @@ export function CodingAgentPanel({
     // Soft placeholder until response; omit spinner that would feel blocking
     setGitStatusLine("—")
     chrome.runtime.sendMessage(
-      { type: "coding.git_status", workspace_root: effectiveWorkspace },
+      { type: "coding.git_status", thread_id: threadId, workspace_root: effectiveWorkspace },
       () => {
         void chrome.runtime.lastError
       },
     )
-  }, [open, effectiveWorkspace])
+  }, [open, effectiveWorkspace, threadId])
 
   useEffect(() => {
     if (!open) return
     const onGitStatus = (ev: Event) => {
       const d = (ev as CustomEvent).detail as {
         workspace_root?: string | null
+        thread_id?: string
         branch?: string | null
         dirty_count?: number
         is_repo?: boolean
         error?: string
         agent_cwd_is_workspace?: boolean
       } | null
-      if (!d || !effectiveWorkspace) return
-      // Match request path or companion realpath (basename / string equality)
+      if (!d || !effectiveWorkspace || d.thread_id !== threadId) return
+      // Exact canonical workspace match; same basename is not repository identity.
       const returned = typeof d.workspace_root === "string" ? d.workspace_root : ""
       const req = effectiveWorkspace
-      const pathMatch =
-        !returned ||
-        returned === req ||
-        returned.endsWith(req) ||
-        req.endsWith(returned) ||
-        returned.split(/[/\\]/).pop() === req.split(/[/\\]/).filter(Boolean).pop()
+      const pathMatch = !!returned && returned === req
       if (!pathMatch) return
 
       // Only show as agent workspace status when spawn cwd == workspace (true today)
@@ -442,12 +441,12 @@ export function CodingAgentPanel({
     }
     window.addEventListener("cmspark:coding.git_status", onGitStatus)
     return () => window.removeEventListener("cmspark:coding.git_status", onGitStatus)
-  }, [open, effectiveWorkspace])
+  }, [open, effectiveWorkspace, threadId])
 
   /** Fire acp.ui_start (Companion still L2-confirms — confirm UI is in this panel). */
   const sendUiStart = useCallback(() => {
     const ws = effectiveWorkspace
-    if (!threadId || !agentId || !ws) {
+    if (!mountedRef.current || threadId !== state.activeThreadId || !threadId || !agentId || !ws) {
       setStarting(false)
       return
     }
@@ -496,6 +495,7 @@ export function CodingAgentPanel({
     )
   }, [
     threadId,
+    state.activeThreadId,
     agentId,
     effectiveWorkspace,
     goal,
@@ -683,9 +683,9 @@ export function CodingAgentPanel({
   const onSend = () => {
     if (composerDisabled) return
     const t = input.trim()
-    if (!t || !session?.sessionId) return
+    if (!t || !session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
     chrome.runtime.sendMessage(
-      { type: "acp.session.prompt", session_id: session.sessionId, text: t },
+      { type: "acp.session.prompt", session_id: session.sessionId, thread_id: session.threadId, text: t },
       () => {
         void chrome.runtime.lastError
       },
@@ -711,9 +711,9 @@ export function CodingAgentPanel({
   }, [dispatch, state.config])
 
   const onStop = () => {
-    if (!session?.sessionId) return
+    if (!session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
     chrome.runtime.sendMessage(
-      { type: "acp.session.cancel", session_id: session.sessionId },
+      { type: "acp.session.cancel", session_id: session.sessionId, thread_id: session.threadId },
       () => {
         void chrome.runtime.lastError
       },
@@ -721,9 +721,9 @@ export function CodingAgentPanel({
   }
 
   const onApply = () => {
-    if (!session?.sessionId) return
+    if (!session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
     chrome.runtime.sendMessage(
-      { type: "acp.apply_diff", session_id: session.sessionId },
+      { type: "acp.apply_diff", session_id: session.sessionId, thread_id: session.threadId },
       () => {
         void chrome.runtime.lastError
       },
@@ -1046,7 +1046,7 @@ export function CodingAgentPanel({
                   <button
                     type="button"
                     style={styles.linkBtn}
-                    onClick={() => dispatch({ type: "CLEAR_CODING_SESSION" })}
+                    onClick={() => dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })}
                   >
                     清除会话
                   </button>

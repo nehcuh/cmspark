@@ -5,7 +5,7 @@ import { useState, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import type { CodingSessionState } from "../store/agentStore"
-import { useAgentStore } from "../store/agentStore"
+import { useAgentStore, codingSessionBelongsToThread } from "../store/agentStore"
 
 export type TimelineRow = {
   id?: string
@@ -24,7 +24,7 @@ export function CodingSessionShell({
   session: CodingSessionState
   onClose?: () => void
 }) {
-  const { dispatch } = useAgentStore()
+  const { state, dispatch } = useAgentStore()
   const [text, setText] = useState("")
   const live = session.state === "running" || session.state === "offered"
   const modeBadge =
@@ -42,8 +42,9 @@ export function CodingSessionShell({
       session.localTerminal !== "skipped")
 
   const onStop = () => {
+    if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
     chrome.runtime.sendMessage(
-      { type: "acp.session.cancel", session_id: session.sessionId },
+      { type: "acp.session.cancel", session_id: session.sessionId, thread_id: session.threadId },
       () => {
         void chrome.runtime.lastError
       },
@@ -55,13 +56,14 @@ export function CodingSessionShell({
   const composerDisabled = isCliTransport
 
   const onSend = () => {
+    if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
     if (composerDisabled) return
     const t = text.trim()
     if (!t) return
     chrome.runtime.sendMessage(
       {
         type: "acp.session.prompt",
-        session_id: session.sessionId,
+        session_id: session.sessionId, thread_id: session.threadId,
         text: t,
       },
       () => {
@@ -72,8 +74,9 @@ export function CodingSessionShell({
   }
 
   const onApply = () => {
+    if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
     chrome.runtime.sendMessage(
-      { type: "acp.apply_diff", session_id: session.sessionId },
+      { type: "acp.apply_diff", session_id: session.sessionId, thread_id: session.threadId },
       () => {
         void chrome.runtime.lastError
       },
@@ -81,7 +84,7 @@ export function CodingSessionShell({
   }
 
   const dismiss = () => {
-    dispatch({ type: "CLEAR_CODING_SESSION" })
+    dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })
     onClose?.()
   }
 

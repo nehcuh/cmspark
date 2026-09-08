@@ -819,8 +819,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         }
         try {
           if (eng === "local") {
-            const nearRt =
-              o.realtimeStreaming === true && modeNow === "continuous"
+            const nearRt = o.realtimeStreaming === true
             adapterRef.current.start({
               lang: VOICE_DEFAULT_LANG,
               sessionId: sid,
@@ -828,7 +827,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
               mode: modeNow,
               hardCapMs: maxMs,
               // Shorter windows ≈ near-real-time finals when not streaming.
-              segmentMs: nearRt ? LOCAL_STT_NEAR_REALTIME_SEGMENT_MS : undefined,
+              segmentMs: nearRt && modeNow === "continuous" ? LOCAL_STT_NEAR_REALTIME_SEGMENT_MS : undefined,
               // M2: progressive hypothesis via PCM stream + partial_request.
               streamPartial: nearRt === true,
             })

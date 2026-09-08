@@ -1,0 +1,9 @@
+{
+  "version": "0.6.6",
+  "cdhashes": {
+    "Contents/MacOS/CMspark": "9718c84878efdd03130fa55e23359ae74768a69c",
+    "Contents/Resources/cmspark-host": "9718c84878efdd03130fa55e23359ae74768a69c"
+  },
+  "agent_sha256": "7b9c6028cca61ca4388c9a79bc1efe34035c6d862b7a892020f28b7ca5441b90",
+  "tray_sha256": "523638554705e3801eecd035dbee0841db8d726129dfdf3eb02e0cd38f1c33dd"
+}

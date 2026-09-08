@@ -597,7 +597,7 @@ test("error from companion while waiting: maps code", async () => {
   adapter.destroy()
 })
 
-test("classic: companion never ACKs end → stop still fires onEnd after stopGrace", async () => {
+test("classic: final gets its inference budget, then reports a missing ACK as timeout", async () => {
   const wav = silentWav()
   const events: string[] = []
   const adapter = createLocalSttAdapter(
@@ -613,18 +613,21 @@ test("classic: companion never ACKs end → stop still fires onEnd after stopGra
       onMessage: () => () => {},
       modelId: "medium",
       startCapture: fakeCaptureFactory(wav),
-      pendingTimeoutMs: 5_000,
-      stopGraceMs: 40,
+      pendingTimeoutMs: 80,
+      stopGraceMs: 5,
     },
   )
 
   adapter.start({ sessionId: "s-hang-classic", modelId: "medium" })
   await new Promise((r) => setTimeout(r, 20))
   adapter.stop()
+  await new Promise((r) => setTimeout(r, 20))
+  assert.ok(!events.includes("end"), "normal finalization must survive the continuous stop grace")
   await new Promise((r) => setTimeout(r, 120))
 
   assert.ok(events.includes("capture_stopped"), `got ${events.join(",")}`)
   assert.ok(events.includes("end"), `stop must not hang waiting for STT ACK; got ${events.join(",")}`)
+  assert.ok(events.includes("error:infer_timeout"), `got ${events.join(",")}`)
   assert.ok(!events.includes("result"))
   adapter.destroy()
 })

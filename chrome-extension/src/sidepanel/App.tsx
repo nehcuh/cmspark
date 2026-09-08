@@ -29,7 +29,7 @@ import { ComposeDrawer } from "./components/ComposeDrawer"
 import { ThreadRefChips } from "./components/ThreadRefChips"
 import { UploadChips } from "./components/UploadChips"
 import { VoiceBanner } from "./components/VoiceBanner"
-import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
+import { AgentStoreProvider, useAgentStore, selectCodingSession } from "./store/agentStore"
 import type { CapabilityLevel, FileAttachment } from "./types"
 import {
   composerPlaceholder,
@@ -159,10 +159,18 @@ function AppContent() {
     return () => window.removeEventListener("cmspark:open-coding-handoff", onOpen as EventListener)
   }, [])
 
-  // Auto-open panel when a coding session starts (e.g. from offer CTA)
+  const activeCodingSession = selectCodingSession(appState)
+  const codingPanelThreadRef = useRef(appState.activeThreadId)
+  // Background progress never opens the foreground conversation's panel.
   useEffect(() => {
-    if (appState.codingSession) setCodingPanelOpen(true)
-  }, [appState.codingSession?.sessionId])
+    if (codingPanelThreadRef.current !== appState.activeThreadId) {
+      codingPanelThreadRef.current = appState.activeThreadId
+      setCodingPanelOpen(false)
+      setCodingPanelSeed(undefined)
+      return
+    }
+    if (activeCodingSession) setCodingPanelOpen(true)
+  }, [appState.activeThreadId, activeCodingSession?.sessionId])
 
   // Show auto-matched skill toast (#321 PR-3: single queue, no bare setToast)
   useEffect(() => {
@@ -242,7 +250,8 @@ function AppContent() {
       <SettingsSlideout />
       {/* Full-height 编程接力 壳 — replaces old task-package-only modal as primary UX */}
       <CodingAgentPanel
-        open={codingPanelOpen}
+        key={appState.activeThreadId || "no-thread"}
+        open={codingPanelOpen && codingPanelThreadRef.current === appState.activeThreadId}
         onClose={() => setCodingPanelOpen(false)}
         workspaceRoot={
           (

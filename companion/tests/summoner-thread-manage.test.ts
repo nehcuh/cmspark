@@ -66,15 +66,14 @@ test("overlay thread.delete must be trash; hard and omitted are ACL-denied", () 
   assert.equal(trayHard.ok, true)
 })
 
-test("overlay thread.update keeps only alias and rejects empty / dangerous keys-only", () => {
+test("overlay thread.update rejects mixed dangerous keys and preserves tray policy", () => {
   const msg: Record<string, unknown> = {
     type: "thread.update",
     thread_id: "t1",
     updates: { alias: "  发票  ", tool_whitelist: null, active_knowledge_ids: ["k1"] },
   }
   const ok = applySummonerPayloadPolicy("summoner", msg)
-  assert.equal(ok.ok, true)
-  assert.deepEqual(msg.updates, { alias: "发票" })
+  assert.equal(ok.ok, false)
 
   const empty = applySummonerPayloadPolicy("summoner", {
     type: "thread.update",
