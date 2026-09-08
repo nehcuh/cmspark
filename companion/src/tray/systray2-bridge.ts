@@ -53,9 +53,9 @@ function getIcon(status: string): string {
 
 function getTooltip(status: string): string {
   switch (status) {
-    case "running": return "CMspark Agent - 运行中"
-    case "stopped": return "CMspark Agent - 已停止"
-    default: return "CMspark Agent - 检测中..."
+    case "running": return "CMspark — 运行中"
+    case "stopped": return "CMspark — 已停止"
+    default: return "CMspark — 状态未知"
   }
 }
 
@@ -206,17 +206,6 @@ export class SysTray2Adapter implements UnifiedTray {
       this.seqMap.push(mapping)
     }
 
-    // Status header
-    const statusLabel = this.status === "running"
-      ? "[运行中] CMspark Agent"
-      : this.status === "stopped"
-        ? "[已停止] CMspark Agent"
-        : "[检测中] CMspark Agent"
-    push(statusLabel, { type: "status" }, { enabled: false })
-
-    items.push(SEP)
-    this.seqMap.push({ type: "status" })
-
     // Start / Stop / Restart
     push("启动 Companion", { type: "start" }, { enabled: !running })
     push("停止 Companion", { type: "stop" }, { enabled: running })
@@ -269,7 +258,7 @@ export class SysTray2Adapter implements UnifiedTray {
 
     return {
       icon: getIcon(this.status),
-      title: getTooltip(this.status),
+      title: "",
       tooltip: getTooltip(this.status),
       isTemplateIcon: false,
       items,

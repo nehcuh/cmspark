@@ -7,6 +7,7 @@ import { atomicWriteJSON } from "../io"
 import type { MissionBoard } from "../board/schema"
 import type { ThreadDigest } from "./digest"
 import { isDigestStale, sanitizeDigest } from "./digest"
+import { sanitizeUserTags } from "./user-tags"
 import { sanitizeTopicFolder } from "./distill"
 import { inspectThreadMessages } from "./thread-inspect"
 import {
@@ -147,6 +148,7 @@ interface Thread {
   trashed_at?: string | null
   /** Wave 2 话题夹 — user folder label, not Project/Pack. */
   topic_folder?: string | null
+  user_tags?: string[]
 }
 
 // Allowed config_override keys and their expected types
@@ -896,6 +898,9 @@ export class ThreadManager {
     }
     if (updates.alias !== undefined) {
       updates = { ...updates, alias: this.sanitizeAlias(String(updates.alias)) }
+    }
+    if (updates.user_tags !== undefined) {
+      updates = { ...updates, user_tags: sanitizeUserTags(updates.user_tags) }
     }
     if (updates.topic_folder !== undefined) {
       updates = { ...updates, topic_folder: sanitizeTopicFolder(updates.topic_folder) }

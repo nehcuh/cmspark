@@ -208,3 +208,34 @@ test("listWithPreviews single-pass marks digest stale without second API", () =>
   assert.match(row!.first_user_preview, /hello/)
   assert.equal((row!.digest as any)?.stale, true)
 })
+
+test("human tags persist independently when AI digest is replaced, including after reload", async () => {
+  const manager = new ThreadManager()
+  const thread = manager.create("human classifications")
+  const result = await handleMessage({ type: "thread.update", thread_id: thread.id, updates: { user_tags: [" 支付 ", "PAY", "pay"], topic_folder: "发布" } } as any, { threadManager: manager, skillEngine: {} as any, historyStore: {} as any }, { sendToExtension: () => {}, executeTool: async () => ({ success: true }), broadcast: () => {} } as any)
+  assert.equal(result.type, "thread.updated")
+  assert.deepEqual((result as any).thread.user_tags, ["支付", "PAY"])
+  assert.equal((result as any).thread.topic_folder, "发布")
+  assert.deepEqual(manager.get(thread.id)?.user_tags, ["支付", "PAY"])
+  manager.update(thread.id, { digest: { extracted_at: new Date().toISOString(), content_fingerprint: "0:empty", tldr: "AI result", tags: ["模型建议"], source: "manual" } })
+  const persisted = new ThreadManager().get(thread.id)
+  assert.deepEqual(persisted?.user_tags, ["支付", "PAY"])
+  assert.equal(persisted?.topic_folder, "发布")
+  assert.deepEqual(persisted?.digest?.tags, ["模型建议"])
+  manager.update(thread.id, { user_tags: [], topic_folder: null })
+  const cleared = new ThreadManager().get(thread.id)
+  assert.deepEqual(cleared?.user_tags, [])
+  assert.equal(cleared?.topic_folder, null)
+  assert.deepEqual(cleared?.digest?.tags, ["模型建议"])
+})
+
+test("human tag writes reject malformed and oversized inputs without overwriting existing labels", () => {
+  const manager = new ThreadManager();const thread=manager.create("guard tags")
+  manager.update(thread.id,{user_tags:["keep"]})
+  for (const value of [null, "not-array", [42], Array(21).fill("tag")]) {
+    assert.throws(()=>manager.update(thread.id,{user_tags:value as any}),/user_tags/)
+    assert.deepEqual(manager.get(thread.id)?.user_tags,["keep"])
+  }
+  manager.update(thread.id,{user_tags:["a\u0000b", "", "x".repeat(50)]})
+  assert.deepEqual(manager.get(thread.id)?.user_tags,["ab", "x".repeat(40)])
+})

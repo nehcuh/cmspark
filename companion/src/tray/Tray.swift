@@ -88,42 +88,39 @@ var recentThreads: [RecentThread] = []
 // Icon generation (programmatic — no asset files needed)
 // ---------------------------------------------------------------------------
 
+// Same 24-unit geometry as scripts/lib/brand-icon.mjs, drawn at native backing scale.
 func makeStatusIcon(_ status: CompanionStatus, ws: Bool, size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
-  let image = NSImage(size: size)
-  image.lockFocus()
-
-  let fullRect = NSRect(origin: .zero, size: size)
-  let outer = NSBezierPath(ovalIn: fullRect.insetBy(dx: 2, dy: 2))
-
-  // Alpha-only fill — macOS tints for dark/light mode
-  let fillAlpha: CGFloat
+  let color: NSColor
   switch status {
-  case .running:  fillAlpha = 0.85
-  case .stopped:  fillAlpha = 0.45
-  case .unknown:  fillAlpha = 0.6
+  case .running: color = NSColor(srgbRed: 22/255, green: 132/255, blue: 93/255, alpha: 1)
+  case .stopped: color = NSColor(srgbRed: 213/255, green: 67/255, blue: 67/255, alpha: 1)
+  case .unknown: color = NSColor(srgbRed: 182/255, green: 124/255, blue: 24/255, alpha: 1)
   }
-
-  NSColor.white.withAlphaComponent(fillAlpha).setFill()
-  outer.fill()
-
-  NSColor.white.withAlphaComponent(0.3).setStroke()
-  outer.lineWidth = 0.5
-  outer.stroke()
-
-  // Inner dot when running + WS connected
-  if status == .running && ws {
-    let dotSize = NSSize(width: 6, height: 6)
-    let dotOrigin = NSPoint(
-      x: (size.width - dotSize.width) / 2,
-      y: (size.height - dotSize.height) / 2
-    )
-    let dot = NSBezierPath(ovalIn: NSRect(origin: dotOrigin, size: dotSize))
-    NSColor.white.withAlphaComponent(0.95).setFill()
-    dot.fill()
+  let image = NSImage(size: size, flipped: false) { rect in
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    let transform = NSAffineTransform()
+    transform.translateX(by: rect.minX, yBy: rect.minY)
+    transform.scaleX(by: rect.width / 24, yBy: rect.height / 24)
+    transform.concat()
+    // A hollow center distinguishes stopped even without red/green perception.
+    if status == .stopped {
+      let clip = NSBezierPath(rect: NSRect(x: 0, y: 0, width: 24, height: 24))
+      clip.appendOval(in: NSRect(x: 10.1, y: 10.1, width: 3.8, height: 3.8))
+      clip.windingRule = .evenOdd; clip.addClip()
+    }
+    color.setStroke(); color.setFill()
+    for point in [NSPoint(x: 5, y: 5), NSPoint(x: 5, y: 19), NSPoint(x: 20, y: 12)] {
+      let line = NSBezierPath(); line.move(to: point); line.line(to: NSPoint(x: 12, y: 12))
+      line.lineWidth = 2.3; line.lineCapStyle = .round; line.stroke()
+      NSBezierPath(ovalIn: NSRect(x: point.x-2.3, y: point.y-2.3, width: 4.6, height: 4.6)).fill()
+    }
+    let spark = NSBezierPath()
+    spark.move(to: NSPoint(x: 12, y: 7.5)); spark.line(to: NSPoint(x: 16.5, y: 12))
+    spark.line(to: NSPoint(x: 12, y: 16.5)); spark.line(to: NSPoint(x: 7.5, y: 12)); spark.close(); spark.fill()
+    return true
   }
-
-  image.unlockFocus()
-  image.isTemplate = true
+  image.isTemplate = false // Preserve explicit run/stop colors in both menu-bar appearances.
   return image
 }
 
@@ -158,21 +155,6 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   let menu = NSMenu()
   let running = currentStatus == .running
 
-  // -- Header (non-interactive status display). Text carries the status (#396
-  // menu copy norm: no emoji as sole semantic carrier). --
-  let statusWord: String
-  switch currentStatus {
-  case .running:  statusWord = "运行中"
-  case .stopped:  statusWord = "已停止"
-  case .unknown:  statusWord = "状态未知"
-  }
-  let header = NSMenuItem(title: "CMspark Agent · \(statusWord)", action: nil, keyEquivalent: "")
-  header.tag = MenuTag.header.rawValue
-  header.isEnabled = false
-  menu.addItem(header)
-
-  menu.addItem(NSMenuItem.separator())
-
   // -- Start / Stop / Restart --
   let startItem = NSMenuItem(title: "启动 Companion", action: action, keyEquivalent: "s")
   startItem.target = target
@@ -198,7 +180,7 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   let statusMenuItem = NSMenuItem(title: "状态详情", action: nil, keyEquivalent: "")
   let statusMenu = NSMenu()
 
-  let compLabel = running ? "运行中" : "已停止"
+  let compLabel = currentStatus == .unknown ? "状态未知" : (running ? "运行中" : "已停止")
   statusMenu.addItem(makeInfoItem("Companion: \(compLabel)"))
 
   let wsLabel = wsConnected ? "已连接" : "未连接"
@@ -325,7 +307,9 @@ class TrayDelegate: NSObject {
 
     guard let button = statusItem?.button else { return }
     button.image = makeStatusIcon(currentStatus, ws: wsConnected)
+    button.title = ""
     button.toolTip = tooltipForStatus(currentStatus)
+    button.setAccessibilityLabel(tooltipForStatus(currentStatus))
 
     // Explicitly handle both left and right mouse clicks so the menu pops up
     // reliably on either button (macOS default only shows the menu on left-click).
@@ -351,7 +335,9 @@ class TrayDelegate: NSObject {
   func updateAppearance() {
     guard let button = statusItem?.button else { return }
     button.image = makeStatusIcon(currentStatus, ws: wsConnected)
+    button.title = ""
     button.toolTip = tooltipForStatus(currentStatus)
+    button.setAccessibilityLabel(tooltipForStatus(currentStatus))
   }
 
   @objc func menuAction(_ sender: NSMenuItem) {
@@ -404,9 +390,9 @@ class TrayDelegate: NSObject {
 
 private func tooltipForStatus(_ status: CompanionStatus) -> String {
   switch status {
-  case .running:  return "CMspark Agent — 运行中"
-  case .stopped:  return "CMspark Agent — 已停止"
-  case .unknown:  return "CMspark Agent — 检测中..."
+  case .running:  return "CMspark — 运行中"
+  case .stopped:  return "CMspark — 已停止"
+  case .unknown:  return "CMspark — 状态未知"
   }
 }
 

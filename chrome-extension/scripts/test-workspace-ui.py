@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         assert page.evaluate('document.querySelector("[aria-label=设置]").contains(document.activeElement)')
         settings.get_by_role('button',name='关闭设置',exact=True).click()
         # Existing history is named and keyboard operable; Escape returns focus.
-        history=page.get_by_role('button',name='历史对话',exact=True)
+        history=page.get_by_role('button',name='对话管理（历史对话）',exact=True)
         history.click()
         dialog=page.get_by_role('dialog',name='历史对话列表',exact=True)
         dialog.wait_for()

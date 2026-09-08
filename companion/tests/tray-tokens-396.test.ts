@@ -135,11 +135,11 @@ test("#396 behavior freeze: selectors, key equivalents, protocol, sanitization u
 
 test("#396 tray NSMenu copy carries semantics without emoji", () => {
   const menu = buildMenuBody()
-  // Header status is text
+  // #474: details retain text; the redundant status header is removed.
   for (const word of ["运行中", "已停止", "状态未知"]) {
     assert.ok(menu.includes(word), `status word ${word} missing`)
   }
-  assert.match(menu, /CMspark Agent · \\\(statusWord\)/)
+  assert.doesNotMatch(menu, /CMspark Agent/)
   // WS line text label
   assert.match(menu, /已连接/)
   assert.match(menu, /未连接/)

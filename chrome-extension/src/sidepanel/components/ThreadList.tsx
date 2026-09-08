@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
+import { ThreadMetadataEditor } from "./ThreadMetadataEditor"
+import { aiThreadGroup, threadTags } from "../utils/thread-management"
 import { IconHistory } from "../ui/icons"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
 import type { Thread } from "../types"
@@ -108,11 +110,20 @@ function saveExpandState(state: ThreadListExpandState) {
   }
 }
 
-type ListView = "time" | "tags" | "topics"
+type ListView = "time" | "tags" | "topics" | "ai"
 
 export function ThreadList() {
   const { state, dispatch } = useAgentStore()
   const [open, setOpen] = useState(false)
+  const [editingThread, setEditingThread] = useState<Thread | null>(null)
+  const [metadataNotice, setMetadataNotice] = useState("")
+  useEffect(() => { if (!open) { setEditingThread(null); setMetadataNotice("") } }, [open])
+  useEffect(() => {
+    const show = () => { if (!state.pendingSecurityConfirmations.length) setOpen(true) }
+    window.addEventListener("cmspark:open-thread-manager", show)
+    return () => window.removeEventListener("cmspark:open-thread-manager", show)
+  }, [state.pendingSecurityConfirmations.length])
+  useEffect(() => { if (state.pendingSecurityConfirmations.length) setOpen(false) }, [state.pendingSecurityConfirmations.length])
   const [query, setQuery] = useState("")
   const [view, setView] = useState<ListView>("time")
   const [selectMode, setSelectMode] = useState(false)
@@ -453,12 +464,13 @@ export function ThreadList() {
       last_message_at: t.last_message_at ?? null,
       agent_role: t.agent_role,
       trashed_at: t.trashed_at ?? null,
+      user_tags: t.user_tags,
       digest: t.digest
         ? {
-            tldr: t.digest.tldr,
+            tldr: t.digest?.tldr || "",
             tags: t.digest.tags,
-            bullets: t.digest.bullets,
-            stale: t.digest.stale,
+            bullets: t.digest?.bullets || [],
+            stale: t.digest?.stale,
           }
         : null,
     }))
@@ -838,7 +850,7 @@ export function ThreadList() {
     beginExtractBatch(ids, force)
   }
 
-  const panelMaxHeight = selectMode || view === "tags" || view === "topics" ? 480 : 360
+  const panelMaxHeight = selectMode || view === "tags" || view === "topics" || view === "ai" ? 480 : 360
 
   useEffect(() => {
     if (!open) {
@@ -850,13 +862,31 @@ export function ThreadList() {
       const top = Math.round((r?.bottom ?? 48) + 6)
       setPanelBox({
         top,
-        maxHeight: Math.max(180, window.innerHeight - top - 12),
+        maxHeight: Math.max(0, Math.min(window.innerHeight - top - 12, (document.querySelector<HTMLElement>(".cm-composer-dock")?.getBoundingClientRect().top ?? window.innerHeight) - top - 8)),
       })
     }
     place()
     window.addEventListener("resize", place)
-    return () => window.removeEventListener("resize", place)
+    const observer = new ResizeObserver(place)
+    const dock = document.querySelector(".cm-composer-dock")
+    const rail = document.querySelector(".cm-status-rail")
+    if (dock) observer.observe(dock)
+    if (rail) observer.observe(rail)
+    return () => { window.removeEventListener("resize", place); observer.disconnect() }
   }, [open, selectMode, view])
+
+  // Outside actions remain directly usable (not intercepted by a transparent backdrop).
+  useEffect(() => {
+    if (!open) return
+    const outside = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (!historyRef.current?.contains(target) && !triggerRef.current?.contains(target) && !historyMenuRef.current?.contains(target)) {
+        setOpen(false); setMenuOpen(false); exitSelectMode()
+      }
+    }
+    document.addEventListener("mousedown", outside)
+    return () => document.removeEventListener("mousedown", outside)
+  }, [open, exitSelectMode])
 
   // Nonmodal history popover: focus search, Escape dismisses and returns to trigger.
   // Its existing overflow menu uses a separate portal, so do not claim aria-modal.
@@ -875,6 +905,15 @@ export function ThreadList() {
     return () => document.removeEventListener("keydown", key)
   }, [open, !!panelBox])
 
+  const closeMetadataEditor = (threadId = editingThread?.id) => {
+    setEditingThread(null)
+    requestAnimationFrame(() => {
+      const row = threadId ? historyRef.current?.querySelector(`[data-thread-id="${CSS.escape(threadId)}"]`) : null
+      const target = row?.querySelector<HTMLElement>('button[title="编辑标签与分组"]') || historyRef.current?.querySelector<HTMLElement>('input[type="search"]')
+      target?.focus()
+    })
+  }
+
   const renderThreadRow = (t: Thread) => {
     const busy = !!threadBusyById[t.id]
     const isActive = t.id === activeThreadId
@@ -883,7 +922,7 @@ export function ThreadList() {
     const accessibleName = threadAccessibleName(t)
     const idBadge = formatThreadIdBadge(t.id)
     const rel = formatThreadListTime(t, now, aliasDupCount)
-    const tags = t.digest?.tags || []
+    const tags = threadTags(t)
     const extracting = extractingIds.has(t.id)
     const evidence = displayThreadEvidence(t)
     const chip = acpOutcomeChip(t)
@@ -892,6 +931,8 @@ export function ThreadList() {
     return (
       <div
         key={t.id}
+        className={selectMode ? "cm-thread-row cm-thread-selecting" : "cm-thread-row"}
+        data-thread-id={t.id}
         style={{
           ...styles.threadItem,
           background: isActive ? tokens.accentSoft : "transparent",
@@ -911,7 +952,7 @@ export function ThreadList() {
             aria-label={`选择 ${accessibleName}`}
           />
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="cm-thread-row-content" style={{ flex: 1, minWidth: 0 }}>
           <div style={styles.threadAliasRow}>
             <button type="button" className="cm-thread-open" style={{ ...styles.threadAlias, border: 0, background: "transparent", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", padding: "6px 0", minHeight: 32 }} disabled={trashView} aria-label={`${selectMode ? "选择" : trashView ? "已删除" : "打开"} ${accessibleName}`} onClick={e => { e.stopPropagation(); handleSelect(t.id) }}>{title}</button>
             {chip ? <span style={styles.badge}>{chip}</span> : null}
@@ -958,7 +999,7 @@ export function ThreadList() {
                     setActiveTag(tag)
                   }}
                 >
-                  #{tag}
+                  #{tag} <span className="cm-thread-tag-origin">{(t.user_tags || []).some(value => value.toLowerCase() === tag) ? "人工" : "AI"}</span>
                 </button>
               ))}
             </div>
@@ -966,7 +1007,7 @@ export function ThreadList() {
           {rel && <div style={styles.relTime}>{rel}</div>}
           {t.topic_folder ? (
             <div style={styles.relTime} title="话题夹">
-              夹 · {t.topic_folder}
+              分组 · {t.topic_folder}
             </div>
           ) : null}
         </div>
@@ -1007,26 +1048,12 @@ export function ThreadList() {
               style={styles.iconBtn}
               onClick={(e) => {
                 e.stopPropagation()
-                const name = window.prompt("话题夹名称（空则移出）", t.topic_folder || "")
-                if (name === null) return
-                const folder = name
-                  .normalize("NFC")
-                  .replace(/[\x00-\x1F\x7F\\/]/g, "")
-                  .trim()
-                  .slice(0, 40) || null
-                chrome.runtime.sendMessage({
-                  type: "thread.update",
-                  thread_id: t.id,
-                  updates: { topic_folder: folder },
-                })
-                dispatch({
-                  type: "UPSERT_THREAD",
-                  thread: { ...t, topic_folder: folder },
-                })
+                setEditingThread(t)
+                setMetadataNotice("")
               }}
-              title="移入话题夹"
+              title="编辑标签与分组"
             >
-              夹
+              分类
             </button>
             <button
               style={styles.iconBtn}
@@ -1290,17 +1317,18 @@ export function ThreadList() {
     )
   }
 
-  const renderTopicsView = () => {
+  const renderTopicsView = (ai = false) => {
     const groups = new Map<string, Thread[]>()
     for (const t of filtered as Thread[]) {
-      const key = t.topic_folder || "未分组"
+      const key = ai ? aiThreadGroup(t) || "待 AI 整理" : t.topic_folder || "未分组"
       const arr = groups.get(key) || []
       arr.push(t)
       groups.set(key, arr)
     }
     const keys = [...groups.keys()].sort((a, b) => {
-      if (a === "未分组") return 1
-      if (b === "未分组") return -1
+      const ungrouped = ai ? "待 AI 整理" : "未分组"
+      if (a === ungrouped) return 1
+      if (b === ungrouped) return -1
       return a.localeCompare(b, "zh")
     })
     return (
@@ -1317,7 +1345,7 @@ export function ThreadList() {
         ))}
         {keys.length === 1 && keys[0] === "未分组" && filtered.length > 0 && (
           <div style={{ color: tokens.textMuted, fontSize: 11, padding: "8px 12px" }}>
-            点行上的「夹」把会话放进话题夹
+            点对话右侧「分类」编辑标签、选择或新建分组
           </div>
         )}
         {filtered.length === 0 && (
@@ -1334,31 +1362,25 @@ export function ThreadList() {
       <button
         ref={triggerRef}
         type="button"
+        className="cm-thread-manager-trigger"
         style={{
           ...styles.hamburger,
           ...(open ? { color: tokens.text } : null),
         }}
+        disabled={state.pendingSecurityConfirmations.length > 0}
         onClick={() => setOpen(!open)}
-        title="历史对话"
-        aria-label="历史对话"
+        title="对话管理：历史、标签、分组与图谱"
+        aria-label="对话管理（历史对话）"
         aria-expanded={open}
       >
-        <IconHistory size={17} />
+        <IconHistory size={17} /><span>对话管理</span>
       </button>
 
-      {open &&
+      {open && !state.pendingSecurityConfirmations.length &&
         panelBox &&
         typeof document !== "undefined" &&
         createPortal(
         <>
-          <div
-            style={styles.backdrop}
-            onClick={() => {
-              setOpen(false)
-              setMenuOpen(false)
-              if (selectMode) exitSelectMode()
-            }}
-          />
           <div
             ref={historyRef} className="cm-history-panel" role="dialog" aria-label="历史对话列表" aria-modal="false"
             style={{
@@ -1372,9 +1394,9 @@ export function ThreadList() {
               zIndex: 10050,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${tokens.border}` }}><strong style={{ flex: 1, fontSize: 14 }}>历史对话</strong><button type="button" className="cm-icon-button" aria-label="关闭历史对话" onClick={() => { setOpen(false); triggerRef.current?.focus() }}>×</button></div>
-            <div style={styles.panelHeader}>
-              <div style={styles.viewToggle}>
+            <div style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${tokens.border}` }}><strong style={{ flex: 1, fontSize: 14 }}>对话管理</strong><button type="button" className="cm-icon-button" aria-label="关闭历史对话" onClick={() => { setOpen(false); triggerRef.current?.focus() }}>×</button></div>
+            <div className="cm-thread-management-header" style={styles.panelHeader}>
+              <div className="cm-thread-management-views" style={styles.viewToggle}>
                 <button
                   type="button"
                   style={view === "time" ? styles.viewBtnActive : styles.viewBtn}
@@ -1394,8 +1416,9 @@ export function ThreadList() {
                   style={view === "topics" ? styles.viewBtnActive : styles.viewBtn}
                   onClick={() => setView("topics")}
                 >
-                  话题
+                  手动分组
                 </button>
+                <button type="button" style={view === "ai" ? styles.viewBtnActive : styles.viewBtn} onClick={() => setView("ai")}>AI 分组</button>
               </div>
               <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
                 <button
@@ -1436,6 +1459,8 @@ export function ThreadList() {
                           ...styles.menuPortal,
                           top: menuPos.top,
                           right: menuPos.right,
+                          maxHeight: Math.max(0, panelBox.top + panelBox.maxHeight - menuPos.top),
+                          overflowY: "auto",
                         }}
                         ref={historyMenuRef} role="menu"
                       >
@@ -1515,6 +1540,16 @@ export function ThreadList() {
               </div>
             </div>
 
+            <div className="cm-thread-management-actions" aria-label="对话整理工具">
+              <button type="button" onClick={handleExtractUntagged} disabled={untaggedExtract.ids.length === 0 || !!extractProgress}>AI 提取标签</button>
+              <button type="button" onClick={() => { setCleanupOpen(true); runCleanupScan() }}>整理助手</button>
+              <button type="button" onClick={openThreadGraph}>关系图谱</button>
+              <button type="button" onClick={() => trashView ? closeTrashView() : openTrashView()}>{trashView ? "返回对话" : "回收站"}</button>
+            </div>
+            {view === "ai" && <p className="cm-thread-management-help">按 AI 提取的首个主题标签自动分组；重新提取可能调整 AI 分组，不改变手动分组。点击“AI 提取标签”为最多20个未标注对话提取标签。</p>}
+            {view === "tags" && <p className="cm-thread-management-help">汇总人工与 AI 标签；点对话右侧“分类”管理人工标签。</p>}
+            {metadataNotice && <p className="cm-thread-management-help" role="status">{metadataNotice}</p>}
+            {editingThread && <ThreadMetadataEditor key={editingThread.id} thread={editingThread} folders={[...new Set(threads.map(t => t.topic_folder).filter((name): name is string => !!name))]} onClose={() => closeMetadataEditor()} onSaved={thread => { dispatch({ type: "UPSERT_THREAD", thread }); closeMetadataEditor(thread.id); setMetadataNotice("分类已保存") }} />}
             {extractProgress && extractProgress.total > 0 && (
               <div style={styles.progressBar} role="status" aria-live="polite">
                 提取要点 {extractProgress.done}/{extractProgress.total}
@@ -1610,8 +1645,8 @@ export function ThreadList() {
               />
             </div>
 
-            <div style={styles.list}>
-              {view === "time" ? renderTimeline() : view === "tags" ? renderTagsView() : renderTopicsView()}
+            <div className="cm-thread-management-list" style={styles.list}>
+              {view === "time" ? renderTimeline() : view === "tags" ? renderTagsView()  : renderTopicsView(view === "ai")}
             </div>
 
             {selectMode && (
@@ -1817,11 +1852,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.text,
     flexShrink: 0,
     fontFamily: tokens.font,
-  },
-  backdrop: {
-    position: "fixed",
-    inset: 0,
-    zIndex: 10040,
   },
   panel: {
     position: "fixed",

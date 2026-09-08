@@ -1,3 +1,4 @@
+import { threadTags } from "./thread-management"
 // Thread History IA — calendar grouping + filter helpers (pure).
 // Spec: docs/superpowers/specs/2026-08-06-thread-history-ia-product-design.md
 
@@ -9,6 +10,7 @@ export type AcpListMeta = {
 
 export type TimelineThread = {
   id: string
+  user_tags?: string[]
   alias?: string
   created_at?: string
   updated_at?: string
@@ -269,7 +271,7 @@ export function filterThreadsByQuery(
     const alias = (t.alias || "").toLowerCase()
     const id = (t.id || "").toLowerCase()
     const preview = (t.first_user_preview || "").toLowerCase()
-    const tags = (t.digest?.tags || []).join(" ").toLowerCase()
+    const tags = threadTags(t).join(" ").toLowerCase()
     const tldr = (t.digest?.tldr || "").toLowerCase()
     const bullets = (t.digest?.bullets || []).join(" ").toLowerCase()
     const goal = (t.acp_list?.goal_preview || "").toLowerCase()
@@ -458,7 +460,7 @@ export function buildTagIndex(
 ): Map<string, TimelineThread[]> {
   const map = new Map<string, TimelineThread[]>()
   for (const t of threads) {
-    const tags = t.digest?.tags
+    const tags = threadTags(t)
     if (!tags || tags.length === 0) {
       const list = map.get("__untagged__") || []
       list.push(t)
@@ -678,7 +680,7 @@ export function selectLazyDigestCandidates(
 /** Show digest stale badge: tags/topics always; time view only non-today (B-3). */
 export function showDigestStaleBadge(
   t: TimelineThread,
-  view: "time" | "tags" | "topics",
+  view: "time" | "tags" | "topics" | "ai",
   now: Date = new Date(),
 ): boolean {
   if (!t.digest?.stale) return false

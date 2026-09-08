@@ -2,7 +2,7 @@
 // Mode badge + pin · connection (token colors) · thread switcher · ⋯ menu
 
 import { useState, useRef, useEffect, type CSSProperties } from "react"
-import { ThreadList } from "./ThreadList"
+import { ThreadList, createBlankThread } from "./ThreadList"
 import { useAgentStore } from "../store/agentStore"
 import type { ConnectionState, CapabilityLevel } from "../types"
 import {
@@ -230,11 +230,12 @@ export function StatusRail({
       />
       {/* Brand point (small CompanionMark) — #321 PR-3: resident, no longer hidden
           on cruise / disconnect. Decorative (CompanionMark stays aria-hidden). */}
-      <div style={railStyles.brand} title="CMspark" aria-label="CMspark">
+      <div className="cm-rail-brand" style={railStyles.brand} title="CMspark" aria-label="CMspark">
         <CompanionMark size={16} />
       </div>
       <div className="cm-task-title" title={taskTitle}>{taskTitle}</div>
       <div style={railStyles.cluster}>
+      <button type="button" className="cm-icon-button cm-header-new" title="新对话" aria-label="新对话" onClick={() => createBlankThread(dispatch)}>+</button>
       <button
         type="button"
         style={{

@@ -55,7 +55,7 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
         dispatch({ type: "SET_SETTINGS_OPEN", open: false }); openPanelForce(id); onNavigate()
       }}><Icon size={16} /><span>{label}</span></button>)}
     </nav>
-    <div className="cm-nav-section"><span>最近对话</span></div>
+    <div className="cm-nav-section"><span>最近对话</span><button type="button" className="cm-nav-manage" disabled={state.pendingSecurityConfirmations.length > 0} onClick={() => { onNavigate(); window.dispatchEvent(new Event("cmspark:open-thread-manager")) }}>管理对话</button></div>
     <input className="cm-nav-search" aria-label="筛选最近对话" placeholder="查找对话…" value={query} onChange={e => setQuery(e.target.value)} />
     <div className="cm-nav-threads">
       {recent.map(thread => <button type="button" className="cm-nav-thread" key={thread.id} aria-current={thread.id === state.activeThreadId ? "page" : undefined}

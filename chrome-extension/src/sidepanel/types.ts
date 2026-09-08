@@ -76,6 +76,7 @@ export interface Thread {
   } | null
   /** Wave 2 话题夹 — not Project */
   topic_folder?: string | null
+  user_tags?: string[]
   /** P1: short searchable index from extract_digest */
   digest?: {
     extracted_at?: string
