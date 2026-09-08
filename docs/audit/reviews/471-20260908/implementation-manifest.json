@@ -1,0 +1,17 @@
+{
+  "DESIGN.md": "e567db68c91ab970bd6d4d5f83abd8956311a532f19832be198a3c56984f4909",
+  "chrome-extension/scripts/test-workspace-ui.py": "b2ca4cdccc838e2f68bffc6affa2c32e465eae2129b923f2d2febd2ba793a673",
+  "chrome-extension/src/sidepanel/components/SettingsSlideout.tsx": "a5418616db737745c12a3371c8f5d01abdff38f37a1bb52d2c7b2596c5b23f46",
+  "chrome-extension/src/sidepanel/hooks/useComposerVoice.ts": "7bb778b03f235f458011ecff6ec5b65bb3ecca8e0a052be0909e1a400cbce4c6",
+  "chrome-extension/src/sidepanel/ui/workspace-styles.ts": "5bd174893a1d238736201155b3804aedd4491dcb7b17f19f38155bfc90cf0c81",
+  "chrome-extension/src/sidepanel/utils/settings-sections.ts": "189ca3fac4ec4ea2f4db9bfbbbfd80b4a2575d3b1e009473041a47b33a20e7fa",
+  "companion/scripts/test-web-surfaces-ui.py": "1ce858790bd4ce923b3a3719d78a35c16fd85f539be90f474a6006bdd9350328",
+  "companion/src/settings-web.ts": "346ecf3950ead27c7bec6e726bb21846f72534884903ce72ce962daa048df4bb",
+  "companion/src/summoner-web.ts": "d6a7d4361335a5aefc150135a754061e373b30c5c0f7bf1a71e9325d66fbcf7c",
+  "companion/tests/settings-web-tokens.test.ts": "29c389cd7be03d2f3d0ece614bc5ca10d3bf8ae4b4edcf413f33ecf752c94700",
+  "companion/tests/summoner-capture-card-threads.test.ts": "b8e4d45ad59749fdd7d55dee7342857e90f9273e53255d7093d3e4e39309299a",
+  "companion/tests/summoner-web.test.ts": "eac88a08247884be29ea347f2b62bd27086e028b254303e3f4044235a8ab10db",
+  "chrome-extension/src/sidepanel/components/SettingsPage.tsx": "cf246a3e2ac67397cbd32d18e3979968e0722789bebf0419e2d9e24529672246",
+  "chrome-extension/scripts/test-settings-pages-ui.py": "a6fab1e7009d3f0384df90f79dcc571567f4915fe198e2a553b4dddce2ca6d5c",
+  "companion/scripts/test-summoner-workspace-ui.py": "24fc0364a7eb85a3073368ba3feb44c85257e54f7c4f216bd44932edfad0d55b"
+}

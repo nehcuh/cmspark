@@ -1,12 +1,13 @@
-// Settings accordion expand state — pure helpers (settings-thread-compact W1).
+// Stable settings deep-link IDs. Legacy accordion preference helpers remain for compatibility.
 // Spec: docs/superpowers/specs/2026-08-06-settings-thread-compact-ux.md
 
 export const LS_SETTINGS_EXPAND = "cmspark.settings.expandSections"
 
-/** Canonical section ids (order = IA). */
+/** Canonical ids; SettingsPage.SETTINGS_PAGES owns presentation order. */
 export const SETTINGS_SECTION_IDS = [
   "connection",
   "model",
+  "voice",
   "secrets",
   "security",
   "integrations",

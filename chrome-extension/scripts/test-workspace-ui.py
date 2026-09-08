@@ -51,9 +51,9 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         nav.get_by_role('button',name='设置',exact=True).click()
         settings=page.get_by_role('dialog',name='设置',exact=True)
         settings.wait_for()
-        settings.get_by_role('navigation',name='设置分类').get_by_role('button',name='安全与信任',exact=True).click()
+        settings.get_by_role('combobox',name='设置分类',exact=True).select_option('security')
         page.wait_for_timeout(100)
-        assert page.locator('[data-settings-section=安全与信任] > button').get_attribute('aria-expanded')=='true'
+        assert page.locator('[data-settings-page=security]').is_visible()
         page.screenshot(path=str(shots/'settings-320.png'))
         assert page.evaluate('document.querySelector("[aria-label=设置]").contains(document.activeElement)')
         settings.get_by_role('button',name='关闭设置',exact=True).click()

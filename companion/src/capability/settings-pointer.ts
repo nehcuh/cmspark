@@ -37,7 +37,7 @@ export type SettingsPointer = {
 export const TOOL_SETTINGS_POINTERS: Record<string, SettingsPointer> = {
   netsec_port_scan: {
     settings_section: "integrations",
-    settings_path: "设置 → 本机与集成 → 网络扫描（NetSec）",
+    settings_path: "设置 → 本机与工具 → 网络扫描（NetSec）",
   },
 }
 

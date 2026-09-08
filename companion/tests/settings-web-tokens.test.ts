@@ -138,5 +138,5 @@ test("settings-web 服务端渲染: GET / 返回 token 化 HTML（含 :root、�
   for (const hex of ["#4A90D9", "#4CAF50", "#F44336", "#1a1a2e", "#16213e", "#0f3460", "#FFC107"]) {
     assert.ok(!body.includes(hex), `渲染页不得含 Material hex: ${hex}`)
   }
-  assert.ok(body.includes("CMspark Global Settings"), "设置标题保留")
+  assert.ok(body.includes("CMspark 设置"), "设置标题保留")
 })

@@ -26,7 +26,7 @@ function mockWs(): any {
   return ws
 }
 
-const NETSEC_PATH = "设置 → 本机与集成 → 网络扫描（NetSec）"
+const NETSEC_PATH = "设置 → 本机与工具 → 网络扫描（NetSec）"
 
 beforeEach(() => {
   // Fresh throwaway config per test (CMSPARK_DATA_DIR is the temp dir from

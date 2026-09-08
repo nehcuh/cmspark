@@ -31,7 +31,7 @@ test("#243 ① 顶栏是文案按钮「历史」「新对话」，不是神秘 +
   assert.match(web, /#newThreadBar\{display:none\}/)
 })
 
-test("#243 ② 「新对话」清空到看山空态（newChat → newThread → create → selectThread → renderMsgs 空）", () => {
+test("#243 ② 「新对话」清空到文字空态（newChat → newThread → create → selectThread → renderMsgs 空）", () => {
   assert.match(web, /\$\("newChat"\)\.onclick=function\(\)\{ \$\("newThread"\)\.click\(\); \};/)
   assert.match(
     web,
@@ -45,10 +45,10 @@ test("#243 ② 「新对话」清空到看山空态（newChat → newThread → 
     web,
     /function selectThread\(id\)\{[\s\S]{0,1000}?renderMsgs\(d\.messages\|\|\[\]\)/,
   )
-  // 空线程渲染看山空态：山印 + 无任务标题 + 发送提示（不是工作台首页）
+  // 空线程渲染文字空态：无装饰标识 + 无任务标题 + 发送提示（不是工作台首页）
   assert.match(
     web,
-    /if\(!n\)\{[\s\S]{0,400}?empty\.id="empty";[\s\S]{0,300}?>山<\/div><strong>\$\{CHAT_SHELL_TITLE_NONE\}<\/strong>回车发送。/,
+    /if\(!n\)\{[\s\S]{0,400}?empty\.id="empty";[\s\S]{0,300}?<strong>\$\{CHAT_SHELL_TITLE_NONE\}<\/strong>回车发送。/,
   )
   assert.equal(CHAT_SHELL_TITLE_NONE, "要我帮你做什么？")
 })

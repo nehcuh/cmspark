@@ -184,3 +184,7 @@ uv run --no-project --with playwright python companion/scripts/test-web-surfaces
 ```
 
 第一项运行真实 React App 和合成 Chrome/Companion 传输，覆盖宽窄断点、短屏、导航与确认/停止同时显示、历史键盘、设置定位、编程面板顶栏定位、长消息和离线。第二项使用真实 React/xterm 与录制协议帧。第三项提取实际 HTML 常量，只运行表现层（移除脚本、拦截网络），并断言非样式源码与基线一致。均不连接当前安装程序或企业账户。200% 等效 CSS 视口测试不是浏览器真实缩放或 WCAG 认证；Swift/Windows 原生窗口需平台验收。
+
+## #471 设置与召唤器交互
+
+在 `nvm use 22` 后，从仓库根运行 `uv run --no-project --with playwright python chrome-extension/scripts/test-settings-pages-ui.py` 与 `uv run --no-project --with playwright python companion/scripts/test-summoner-workspace-ui.py`。使用本机 Chrome headless、真实 React/HTML 和隔离传输，覆盖四档宽度、分类草稿与深链、语音迟到回调取消、隐藏快捷键录制、许可焦点隔离及召唤器输入操作顺序；不会改写已安装程序或真实配置。

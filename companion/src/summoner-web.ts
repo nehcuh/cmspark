@@ -1303,11 +1303,6 @@ body{
 #meetingRec{background:var(--indigo);color:#fff;font-weight:500;flex:1}
 .meeting-desk.recording #meetingRec{background:#dc2626;color:#fff}
 #meetingMinutesBtn{background:var(--indigo-soft);color:var(--indigo)}
-.mark{
-  width:52px;height:52px;border-radius:50%;background:#171717;color:#fff;
-  display:grid;place-items:center;font-size:20px;font-weight:600;margin:0 auto 10px;
-}
-.mark.sm{width:26px;height:26px;font-size:11px;margin:0}
 .log{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
 .msg{max-width:46rem;font-size:14px;line-height:1.7;word-break:break-word}
 .msg.user{align-self:flex-end;background:var(--canvas);padding:8px 12px;border-radius:12px 12px 4px 12px;white-space:pre-wrap}
@@ -1399,8 +1394,25 @@ body{
 
 /* #469 shared workspace craft; transport and capture ACL are unchanged. */
 button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--indigo);outline-offset:2px}
-@media(min-width:760px){.log,.composer{width:100%;max-width:780px;margin-left:auto;margin-right:auto}.brand{padding:16px 24px 12px}}
+@media(min-width:760px){.log,.composer{width:100%;max-width:780px;margin-left:auto;margin-right:auto}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* #471: same conversation hierarchy as the extension workspace. */
+.brand{padding:12px 16px;border-bottom:1px solid var(--line);font-size:13px}
+.brand-actions button{background:transparent}.brand-actions button:hover{background:var(--canvas)}
+.cruise-chip{max-width:104px;font-weight:400;background:var(--canvas)!important;color:var(--secondary)!important}
+.empty{max-width:360px;padding:24px 12px;gap:4px}.empty strong{font-size:22px;font-weight:500;letter-spacing:-.03em}
+.msg.user{background:#f3f3f1;border:1px solid var(--line);border-radius:14px;padding:12px 16px}
+.msg.assistant{padding:8px 0;line-height:1.75}
+.log{gap:24px;padding:24px 20px}
+.composer{padding:12px 16px 8px}.composer-row{width:100%}
+.field{width:100%;display:flex;flex-direction:column;align-items:stretch;gap:6px;padding:10px 12px;border-radius:20px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.field textarea{box-sizing:border-box;flex:none;font-family:inherit;font-size:14px;line-height:1.6;padding:2px;min-height:42px}
+.field:focus-within{box-shadow:0 0 0 2px rgba(79,70,229,.12);border-color:var(--indigo)}
+.composer-actions{display:flex;align-items:center;gap:6px}.composer-actions .icon-btn{width:36px;height:36px;color:var(--secondary)}
+#mic{margin-left:auto}#sendGo{border-radius:50%;background:#242424;color:#fff}
+.capture-row{padding:0 16px 12px;gap:8px}.capture-row button{background:transparent;border:1px solid var(--line);font-size:12px;color:var(--secondary)}
+@media(max-width:380px){.brand{flex-wrap:wrap;gap:4px;padding:10px 12px}.brand-actions{margin-left:auto}.brand-actions button{padding:6px}.log{padding:16px}.composer{padding:8px 12px}.empty strong{font-size:20px}}
 </style>
 </head>
 <body>
@@ -1433,7 +1445,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     </aside>
     <section class="main">
       <div class="brand">
-        <span class="brand-id"><span class="mark sm" aria-hidden="true">山</span>CMspark</span>
+        <span class="brand-id">CMspark</span>
         <span class="brand-actions">
           <button type="button" id="cruiseChip" class="cruise-chip" title="点此打开侧栏调整档位">%%CRUISE_LABEL%%</button>
           <button type="button" id="historyOpen">历史</button>
@@ -1442,36 +1454,40 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       </div>
       <div class="log" id="log">
         <div class="empty" id="empty">
-          <div class="mark" aria-hidden="true">山</div>
           <strong>${CHAT_SHELL_TITLE_NONE}</strong>
           回车发送。附件和听写不用开浏览器。
         </div>
       </div>
     </section>
   </div>
-  <div class="composer">
-    <div class="composer-row">
+  <!-- Retained handler targets, excluded from the composer and accessibility tree. -->
+  <div hidden>
       <button class="icon-btn" id="newThreadBar" type="button" title="新对话" aria-label="新对话">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <label class="icon-btn" for="files" title="📎 添加附件" aria-label="添加附件">
-        <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
-      </label>
-      <input type="file" id="files" multiple hidden>
-      <div class="field">
-        <textarea id="text" rows="1" placeholder="问 CMspark…" aria-label="发送到当前对话"></textarea>
-        <button class="icon-btn" id="mic" type="button" title="听写" aria-label="听写" aria-pressed="false">
-          <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
-        </button>
-        <button class="icon-btn" id="sendGo" type="button" title="发送" aria-label="发送">
-          <svg viewBox="0 0 24 24"><path d="M5 12h12M13 6l6 6-6 6"/></svg>
-        </button>
         <button class="icon-btn" id="chev" type="button" hidden aria-pressed="true" title="${SUMMONER_CHEVRON_COLLAPSE}" aria-label="${SUMMONER_CHEVRON_COLLAPSE}">
           <svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>
         </button>
         <button class="icon-btn" id="settings" type="button" hidden title="设置（快捷键等）" aria-label="设置">
           <svg viewBox="0 0 24 24"><path d="M12.2 2.2a.8.8 0 0 1 .8.8v2.6a.8.8 0 0 1-.8.8H11.8a.8.8 0 0 1-.8-.8V3a.8.8 0 0 1 .8-.8zm0 16a.8.8 0 0 1 .8.8v2.6a.8.8 0 0 1-.8.8H11.8a.8.8 0 0 1-.8-.8V19a.8.8 0 0 1 .8-.8zM19.1 7.4a.8.8 0 0 1 1.1 0l1.9 1.9a.8.8 0 0 1 0 1.1l-2.6 2.6a.8.8 0 0 1-1.1 0 .8.8 0 0 1 0-1.1l1.5-1.5-1.5-1.5a.8.8 0 0 1 0-1.1zM4.9 16.6a.8.8 0 0 1 0-1.1l2.6-2.6a.8.8 0 0 1 1.1 0 .8.8 0 0 1 0 1.1L7.1 15.5l1.5 1.5a.8.8 0 0 1 0 1.1l-1.9 1.9a.8.8 0 0 1-1.1 0zm0-9.2a.8.8 0 0 1 1.1 0l1.9 1.9a.8.8 0 0 1 0 1.1L7.3 13l2.6 2.6a.8.8 0 0 1-1.1 0l-1.9-1.9a.8.8 0 0 1 0-1.1l1.5-1.5-1.5-1.5a.8.8 0 0 1 0-1.1zm14.2 9.2a.8.8 0 0 1 0-1.1l-2.6-2.6a.8.8 0 0 1-1.1 0 .8.8 0 0 1 0 1.1l1.5 1.5-1.5 1.5a.8.8 0 0 1 0 1.1l1.9 1.9a.8.8 0 0 1 1.1 0z"/></svg>
         </button>
+  </div>
+  <div class="composer">
+    <div class="composer-row">
+      <input type="file" id="files" multiple hidden>
+      <div class="field">
+        <textarea id="text" rows="1" placeholder="问 CMspark…" aria-label="发送到当前对话"></textarea>
+        <div class="composer-actions">
+      <button type="button" class="icon-btn" id="attachFile" title="📎 添加附件" aria-label="添加附件">
+        <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
+      </button>
+        <button class="icon-btn" id="mic" type="button" title="听写" aria-label="听写" aria-pressed="false">
+          <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
+        </button>
+        <button class="icon-btn" id="sendGo" type="button" title="发送" aria-label="发送">
+          <svg viewBox="0 0 24 24"><path d="M5 12h12M13 6l6 6-6 6"/></svg>
+        </button>
+        </div>
       </div>
     </div>
     <div class="capture-row">
@@ -1925,7 +1941,7 @@ try{
       var empty=document.createElement("div");
       empty.className="empty";
       empty.id="empty";
-      empty.innerHTML="<div class=\\"mark\\" aria-hidden=\\"true\\">山</div><strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。附件和听写不用开浏览器。";
+      empty.innerHTML="<strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。附件和听写不用开浏览器。";
       log.appendChild(empty);
     }
     log.scrollTop=log.scrollHeight;
@@ -2422,6 +2438,7 @@ try{
       return refresh().then(function(){return selectThread(id)});
     });
   };
+  $("attachFile").addEventListener("click",function(){ $("files").click(); });
   $("text").addEventListener("keydown",function(e){
     if(e.key!=="Enter" || e.isComposing || e.keyCode===229) return;
     if(e.shiftKey && !e.metaKey && !e.ctrlKey){

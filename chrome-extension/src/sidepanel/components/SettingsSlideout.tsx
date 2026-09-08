@@ -9,21 +9,15 @@ import { NetSecSettingsSection } from "./NetSecSettingsSection"
 import { CapabilityProfileSection } from "./CapabilityProfileSection"
 import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
 import { CodingHandoffSettingsSection } from "./CodingHandoffSettingsSection"
-import { SettingsSection } from "./SettingsSection"
+import { SettingsPage, SETTINGS_PAGES } from "./SettingsPage"
 import { SettingsIntentBar } from "./SettingsIntentBar"
 import { HotkeyCaptureField } from "./HotkeyCaptureField"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
 import type { SettingsIntent } from "../utils/settings-intent"
 import { DICTATION_HOTKEY_DEFAULT_CHORD } from "../voice/hotkey-chord"
 import {
-  defaultUserOpenSections,
   isElevatedTrust,
-  isSectionEffectivelyOpen,
-  LS_SETTINGS_EXPAND,
-  parseSettingsExpand,
-  serializeSettingsExpand,
   SETTINGS_SECTION_IDS,
-  toggleSectionOpen,
   type SettingsSectionId,
 } from "../utils/settings-sections"
 import {
@@ -181,16 +175,28 @@ export function SettingsSlideout() {
   voicePendingDownloadRef.current = voicePendingDownload
   /** 模型下载源输入草稿；null = 未编辑，跟随 voiceModel 镜像。 */
   const [voiceEndpointDraft, setVoiceEndpointDraft] = useState<string | null>(null)
-  // W1 accordion: user open preferences (force rules applied in isSectionOpen).
-  const [userOpenSections, setUserOpenSections] = useState<Set<SettingsSectionId>>(() => {
-    try {
-      const parsed = parseSettingsExpand(localStorage.getItem(LS_SETTINGS_EXPAND))
-      if (parsed) return parsed
-    } catch {
-      /* ignore */
-    }
-    return defaultUserOpenSections(null)
-  })
+  const [settingsAssistantOpen, setSettingsAssistantOpen] = useState(false)
+  const [activeSettingsPage, setActiveSettingsPage] = useState<SettingsSectionId>("model")
+  const lastSettingsFocus = useRef<HTMLElement | null>(null)
+  const licenseWasOpen = useRef(false)
+  useEffect(() => {
+    const open = licenseDoorShouldOpen(state.computerModelLicenseDoor)
+    const restore = licenseWasOpen.current && !open && state.settingsOpen && !state.settingsFocusSection
+    licenseWasOpen.current = open
+    if (!restore) return
+    const frame = requestAnimationFrame(() => lastSettingsFocus.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [state.computerModelLicenseDoor, state.settingsOpen, state.settingsFocusSection])
+  const settingsPageChosen = useRef(false)
+  const selectSettingsPage = useCallback((id: SettingsSectionId, focus = false) => {
+    settingsPageChosen.current = true
+    setActiveSettingsPage(id)
+    requestAnimationFrame(() => {
+      const body = document.querySelector<HTMLElement>(".cm-settings-body")
+      if (body) body.scrollTop = 0
+      if (focus) document.querySelector<HTMLElement>(`[data-settings-page="${id}"] h3`)?.focus()
+    })
+  }, [])
 
   const elevatedTrust = isElevatedTrust({
     auto_approve_dangerous: state.config.auto_approve_dangerous,
@@ -198,30 +204,6 @@ export function SettingsSlideout() {
     allow_all_schemes: state.config.allow_all_schemes,
     unattendedArmed: state.unattended?.armed === true,
   })
-
-  const isSectionOpen = useCallback(
-    (id: SettingsSectionId) =>
-      isSectionEffectivelyOpen(id, {
-        userOpen: userOpenSections,
-        wsPaired,
-        elevatedTrust,
-      }),
-    [userOpenSections, wsPaired, elevatedTrust],
-  )
-
-  const handleToggleSection = useCallback((id: SettingsSectionId) => {
-    // Unpaired connection stays force-open via isSectionEffectivelyOpen; security
-    // is freely collapsible even under elevated trust (armed badge remains on header).
-    setUserOpenSections((prev) => {
-      const next = toggleSectionOpen(id, prev)
-      try {
-        localStorage.setItem(LS_SETTINGS_EXPAND, serializeSettingsExpand(next))
-      } catch {
-        /* ignore */
-      }
-      return next
-    })
-  }, [])
 
   // P0-2B: check on open whether a WS pairing secret is already stored, so the
   // status badge reflects the real pairing state (not just connection state).
@@ -272,16 +254,7 @@ export function SettingsSlideout() {
     chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
       const paired = !!resp?.paired
       setWsPaired(paired)
-      // First open without LS: seed defaults from pairing (F-UX3).
-      try {
-        if (localStorage.getItem(LS_SETTINGS_EXPAND) == null) {
-          const seed = defaultUserOpenSections(paired)
-          setUserOpenSections(seed)
-          localStorage.setItem(LS_SETTINGS_EXPAND, serializeSettingsExpand(seed))
-        }
-      } catch {
-        /* ignore */
-      }
+      if (!settingsPageChosen.current) setActiveSettingsPage(paired ? "model" : "connection")
     })
     // Coding agents: list even when acp.enabled=false (discovery ≠ feature gate)
     chrome.runtime.sendMessage({ type: "acp.list" }, () => {
@@ -369,25 +342,15 @@ export function SettingsSlideout() {
 
   // F-UX7 deep-link: open target accordion section once settings opens.
   useEffect(() => {
-    if (!state.settingsOpen || !state.settingsFocusSection) return
+    if (!state.settingsOpen || !state.settingsFocusSection || licenseDoorShouldOpen(state.computerModelLicenseDoor)) return
     const id = state.settingsFocusSection as SettingsSectionId
     if (!(SETTINGS_SECTION_IDS as readonly string[]).includes(id)) {
       dispatch({ type: "CLEAR_SETTINGS_FOCUS" })
       return
     }
-    setUserOpenSections((prev) => {
-      if (prev.has(id)) return prev
-      const next = new Set(prev)
-      next.add(id)
-      try {
-        localStorage.setItem(LS_SETTINGS_EXPAND, serializeSettingsExpand(next))
-      } catch {
-        /* ignore */
-      }
-      return next
-    })
+    selectSettingsPage(id, true)
     dispatch({ type: "CLEAR_SETTINGS_FOCUS" })
-  }, [state.settingsOpen, state.settingsFocusSection, dispatch])
+  }, [state.settingsOpen, state.settingsFocusSection, state.computerModelLicenseDoor, dispatch, selectSettingsPage])
 
   /**
    * Text / voice commands for configuring this extension (D2+ UX).
@@ -395,6 +358,7 @@ export function SettingsSlideout() {
    */
   const applySettingsIntent = useCallback(
     (intent: SettingsIntent): string => {
+      if (intent.type.startsWith("set_") || intent.type === "enable_hotkey_default") selectSettingsPage("voice")
       switch (intent.type) {
         case "set_dictation_mode":
           dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: intent.mode })
@@ -431,7 +395,7 @@ export function SettingsSlideout() {
             return "已切换为浏览器听写（支持字级实时）"
           }
           setEngineDraft("local")
-          return "请在下方「听写方式」下载模型后点「启用本机转写」"
+          return "请在「输入与语音 → 听写方式」下载模型后点「启用本机转写」"
         case "enable_hotkey_default":
           dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: true })
           dispatch({
@@ -452,7 +416,7 @@ export function SettingsSlideout() {
           return "未识别。试试：开启连续听写 / 开启实时出字 / 打开会议 / 浏览器听写"
       }
     },
-    [dispatch, host],
+    [dispatch, host, selectSettingsPage],
   )
 
   if (!state.settingsOpen) return null
@@ -849,36 +813,31 @@ export function SettingsSlideout() {
       panelClassName="cm-settings-panel"
       ariaLabel="设置"
     >
+        <div className="cm-settings-content" onFocusCapture={event => { lastSettingsFocus.current = event.target as HTMLElement }} {...(licenseDoorShouldOpen(state.computerModelLicenseDoor) ? { inert: "" } : {})}>
         <div className="cm-settings-header" style={styles.header}>
           <h3 style={{ margin: 0, fontSize: 15 }}>设置</h3>
           <button type="button" aria-label="关闭设置" className="cm-icon-button" style={styles.closeBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>✕</button>
         </div>
 
-        <nav aria-label="设置分类" className="cm-settings-categories">
-          {[
-            ["model", "模型与推理"], ["connection", "连接与配对"], ["security", "安全与信任"],
-            ["secrets", "密钥与环境"], ["integrations", "本机与集成"], ["export", "导出与集成"], ["experimental", "实验功能"],
-          ].map(([id, label]) => <button key={id} type="button" onClick={() => {
-            dispatch({ type: "OPEN_SETTINGS_SECTION", section: id })
-            requestAnimationFrame(() => requestAnimationFrame(() => {
-              const heading = document.querySelector<HTMLElement>(`[data-settings-section="${label}"] > button`)
-              heading?.focus(); heading?.scrollIntoView({ block: "start" })
-            }))
-          }}>{label}</button>)}
-        </nav>
-        <div className="cm-settings-body" style={{ ...styles.body, display: "flex", flexDirection: "column" }}>
-          {/* D2+ : configure CMspark itself via text or voice */}
-          <div style={{ order: 0 }}>
-            <SettingsIntentBar onIntent={applySettingsIntent} />
-          </div>
+        <div className="cm-settings-status">
+          <span className="cm-sr-only" role="status" aria-live="polite">{[wsPaired === null ? "正在检测连接" : wsPaired === false ? "尚未配对" : "", elevatedTrust ? "有高权限开关已开启" : ""].filter(Boolean).join("；")}</span>
+          {wsPaired !== true && <button type="button" onClick={() => selectSettingsPage("connection", true)}>{wsPaired === null ? "正在检测连接" : "尚未配对 · 前往连接设置"}</button>}
+          {elevatedTrust && <button type="button" onClick={() => selectSettingsPage("security", true)}>有高权限开关已开启 · 查看安全设置</button>}
+        </div>
+        <div className="cm-settings-layout">
+          <nav aria-label="设置分类" className="cm-settings-nav">
+            {SETTINGS_PAGES.map(page => <button type="button" key={page.id} aria-current={activeSettingsPage === page.id ? "page" : undefined} onClick={() => selectSettingsPage(page.id, true)}>{page.title}</button>)}
+          </nav>
+          <label className="cm-settings-mobile-category">设置分类
+            <select aria-label="设置分类" value={activeSettingsPage} onChange={event => selectSettingsPage(event.target.value as SettingsSectionId)}>{SETTINGS_PAGES.map(page => <option value={page.id} key={page.id}>{page.title}</option>)}</select>
+          </label>
+          <div className="cm-settings-body" style={styles.body}>
+            <details className="cm-settings-assistant" onToggle={event => setSettingsAssistantOpen(event.currentTarget.open)}><summary>用一句话调整设置</summary><SettingsIntentBar onIntent={applySettingsIntent} active={settingsAssistantOpen && state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)} /></details>
 
-          {/* IA order via flex order (settings-thread-compact W1) */}
-
-          <div style={{ order: 1 }}>
-            <SettingsSection
+          <div data-settings-page="connection" hidden={activeSettingsPage !== "connection"}>
+            <SettingsPage
               title="连接与配对"
-              open={isSectionOpen("connection")}
-              onToggle={() => handleToggleSection("connection")}
+              id="connection"
               badge={wsPaired === false ? (
                 <span style={{
                   fontSize: 10,
@@ -936,18 +895,17 @@ export function SettingsSlideout() {
             )}
           </div>
 
-          
-            </SettingsSection>
+
+            </SettingsPage>
           </div>
 
-          <div style={{ order: 2 }}>
-            <SettingsSection
+          <div data-settings-page="model" hidden={activeSettingsPage !== "model"}>
+            <SettingsPage
               title="模型与推理"
-              open={isSectionOpen("model")}
-              onToggle={() => handleToggleSection("model")}
+              id="model"
             >
           {/* --- LLM Settings --- */}
-          <div style={styles.sectionTitle}>LLM 配置</div>
+          <div style={styles.sectionTitle}>对话模型</div>
 
           <div style={styles.field}>
             <label style={styles.label}>API 协议</label>
@@ -977,7 +935,7 @@ export function SettingsSlideout() {
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>Base URL</label>
+            <label style={styles.label}>服务地址（Base URL）</label>
             <input
               style={styles.input}
               type="text"
@@ -1109,7 +1067,7 @@ export function SettingsSlideout() {
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>Model</label>
+            <label style={styles.label}>模型名称</label>
             <input
               style={styles.input}
               list="model-options"
@@ -1130,7 +1088,7 @@ export function SettingsSlideout() {
             </datalist>
             {!config.model_name && state.companionConfig?.model_name && (
               <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 2 }}>
-                Using Companion global config: {state.companionConfig.model_name}
+                当前使用 Companion 全局配置： {state.companionConfig.model_name}
               </div>
             )}
           </div>
@@ -1163,7 +1121,7 @@ export function SettingsSlideout() {
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>Temperature: {(config.temperature ?? 0.7).toFixed(1)}</label>
+            <label style={styles.label}>温度： {(config.temperature ?? 0.7).toFixed(1)}</label>
             <input
               style={{ width: "100%" }}
               type="range"
@@ -1175,6 +1133,360 @@ export function SettingsSlideout() {
             />
           </div>
 
+          <div style={styles.field}>
+            <label style={styles.label}>上下文窗口（Token）</label>
+            <input
+              style={styles.input}
+              type="number"
+              value={config.context_window}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { context_window: parseInt(e.target.value) || 512000 } })}
+              min={1024}
+              max={1000000}
+              step={1024}
+            />
+            <div style={styles.helpText}>
+              {contextWindowHelpText(config.context_window)}
+            </div>
+          </div>
+
+              <div style={styles.field}>
+                <div style={styles.helpText}>
+                  上下文窗口过大时，长对话压缩会来不及触发（新默认 512000 是 Agent 工作预算）。建议按模型真实上限设置。
+                </div>
+              </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>长对话上下文预算</label>
+            <select
+              style={styles.select || styles.input}
+              value={config.context_compaction ?? "auto"}
+              onChange={e => {
+                const v = e.target.value
+                if (v !== "auto" && v !== "prompt" && v !== "off") return
+                if (v === "auto") {
+                  const ok = window.confirm(
+                    "自动压缩会让模型看不到较早轮次，即使聊天区仍显示全文。确定启用？",
+                  )
+                  if (!ok) return
+                }
+                dispatch({ type: "SET_CONFIG", config: { context_compaction: v } })
+              }}
+            >
+              <option value="auto">自动压缩（超预算时）</option>
+              <option value="prompt">仅提示（不压缩）</option>
+              <option value="off">关闭</option>
+            </select>
+            <div style={styles.helpText}>
+              仅影响发给模型的请求；磁盘与界面消息仍完整。仅提示 = 超预算时警告，需改回「自动」才压缩。
+            </div>
+          </div>
+
+          {(config.context_compaction ?? "auto") === "auto" && (
+            <div style={styles.field}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={config.context_compaction_m2 !== false}
+                  onChange={e =>
+                    dispatch({
+                      type: "SET_CONFIG",
+                      config: { context_compaction_m2: e.target.checked },
+                    })
+                  }
+                />
+                结构化工作记忆（H1）/ 滚动摘要
+              </label>
+              <div style={styles.helpText}>
+                默认开启：丢弃轮次较多时，优先生成脱敏的结构化工作记忆（目标/决策/约束/待办/产物），
+                失败则退回散文摘要；可在聊天顶栏「查看摘要」。仅在本轮开始时跑（tool 中途只做截断占位）。
+              </div>
+            </div>
+          )}
+
+          <div style={styles.field}>
+            <label style={styles.label}>思考过程展示</label>
+            <select
+              style={styles.input}
+              value={state.showReasoningMode || "auto_live"}
+              onChange={(e) => {
+                const v = e.target.value
+                if (v === "always_collapsed" || v === "auto_live" || v === "always_open") {
+                  dispatch({ type: "SET_SHOW_REASONING_MODE", mode: v })
+                }
+              }}
+            >
+              <option value="auto_live">仅推理时展开（默认）</option>
+              <option value="always_collapsed">默认折叠</option>
+              <option value="always_open">始终展开</option>
+            </select>
+            <div style={styles.helpText}>
+              仅影响 Side Panel 显示。历史消息不会把思考回灌给模型（省 token / 兼容 Anthropic）。
+            </div>
+          </div>
+
+                    {/* --- Vision Model Settings --- */}
+          <div style={styles.sectionTitle}>视觉模型（看图描述）</div>
+
+          <div style={styles.field}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={config.vision_enabled || false}
+                onChange={e => {
+                  const on = e.target.checked
+                  dispatch({ type: "SET_CONFIG", config: { vision_enabled: on } })
+                  setVisionReuseHint(null)
+                  if (!on) {
+                    setVisionReuseBanner(false)
+                    return
+                  }
+                  // Banner only on false→true; never auto-copy credentials (S-V5)
+                  if (
+                    !visionReuseBannerDismissed &&
+                    shouldOfferVisionReuse({
+                      model_name: config.model_name,
+                      base_url: config.base_url,
+                      api_key: config.api_key,
+                      protocol: config.protocol,
+                    })
+                  ) {
+                    setVisionReuseBanner(true)
+                  } else {
+                    setVisionReuseBanner(false)
+                  }
+                }}
+              />
+              启用截图视觉分析
+            </label>
+            <div style={styles.helpText}>{VISION_COPY.sectionHelp}</div>
+            <div style={{ ...styles.helpText, marginTop: 4 }}>{VISION_COPY.railDifferentiator}</div>
+          </div>
+
+          {config.vision_enabled && (config.protocol === "anthropic") && (
+            <div style={{
+              ...styles.field,
+              padding: "8px 10px",
+              borderRadius: 8,
+              background: tokens.warningSoft,
+              border: `1px solid ${tokens.warning}`,
+              fontSize: 12,
+              color: tokens.text,
+            }}>
+              {VISION_COPY.anthropicBlocked}
+            </div>
+          )}
+
+          {config.vision_enabled && visionReuseBanner && (
+            <div style={{
+              ...styles.field,
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: tokens.accentSoft,
+              border: `1px solid ${tokens.border}`,
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{VISION_COPY.bannerTitle}</div>
+              <div style={{ fontSize: 12, color: tokens.textSecondary, marginBottom: 8, lineHeight: 1.45 }}>
+                {bannerBodyForHost(extractHostname(config.base_url))}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button
+                  type="button"
+                  style={styles.testBtn}
+                  onClick={() => {
+                    const main = {
+                      model_name: config.model_name,
+                      base_url: config.base_url,
+                      api_key: config.api_key,
+                      protocol: config.protocol,
+                    }
+                    if (isCustomVisionConfig(main, config)) {
+                      if (!window.confirm(VISION_COPY.overwriteConfirm)) return
+                    }
+                    const result = applyVisionReuseFromMain(main)
+                    dispatch({ type: "SET_CONFIG", config: result.patch })
+                    setVisionReuseBanner(false)
+                    setVisionReuseBannerDismissed(true)
+                    setVisionAdvancedOpen(false)
+                    setVisionReuseHint(
+                      (result.needsKeyPaste ? VISION_COPY.needsKeyPaste + " " : "") +
+                        VISION_COPY.postReuseTestHint,
+                    )
+                  }}
+                >
+                  {VISION_COPY.useMain}
+                </button>
+                <button
+                  type="button"
+                  style={styles.toggleBtn}
+                  onClick={() => {
+                    setVisionReuseBanner(false)
+                    setVisionReuseBannerDismissed(true)
+                    setVisionAdvancedOpen(true)
+                  }}
+                >
+                  {VISION_COPY.keepSeparate}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {config.vision_enabled && visionReuseHint && (
+            <div style={{ ...styles.helpText, color: tokens.success, marginBottom: 8 }}>
+              {visionReuseHint}
+            </div>
+          )}
+
+          {config.vision_enabled && (() => {
+            const reusing = isVisionReusingMain(
+              { model_name: config.model_name, base_url: config.base_url },
+              config,
+            )
+            const showFields = !reusing || visionAdvancedOpen
+            return (
+              <>
+                {reusing && (
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    marginBottom: 8,
+                    fontSize: 12,
+                  }}>
+                    <span style={{
+                      padding: "2px 8px",
+                      borderRadius: 8,
+                      background: tokens.successSoft,
+                      color: tokens.success,
+                      fontWeight: 500,
+                    }}>
+                      {VISION_COPY.reusedChip} · {extractHostname(config.vision_base_url || config.base_url)}
+                    </span>
+                    <button
+                      type="button"
+                      style={styles.toggleBtn}
+                      onClick={() => setVisionAdvancedOpen(v => !v)}
+                    >
+                      {visionAdvancedOpen ? VISION_COPY.collapseAdvanced : VISION_COPY.expandAdvanced}
+                    </button>
+                  </div>
+                )}
+
+                {showFields && (
+                  <>
+              <div style={styles.field}>
+                <label style={styles.label}>
+                  API Key{" "}
+                  {!config.vision_api_key && state.companionConfig?.vision_api_key_set && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 500, marginLeft: 6,
+                      padding: "1px 6px", borderRadius: 8,
+                      color: tokens.success, background: tokens.successSoft,
+                    }}>
+                      ✓ 已配置
+                    </span>
+                  )}
+                </label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    style={{ ...styles.input, flex: 1 }}
+                    type={showKey ? "text" : "password"}
+                    value={config.vision_api_key || ""}
+                    onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_api_key: e.target.value } })}
+                    placeholder={
+                      state.companionConfig?.vision_api_key_set
+                        ? "（已配置，留空保持不变；输入新值覆盖）"
+                        : "本地 Ollama 可留空；云端需填写（或与主模型相同后保存继承）"
+                    }
+                  />
+                </div>
+                <div style={styles.helpText}>
+                  本地 loopback 可留空；非本机端点需真实 Key。与主模型 URL/Model 相同时，保存会继承主 Key。
+                </div>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>服务地址（Base URL）</label>
+                <input
+                  style={styles.input}
+                  type="text"
+                  value={config.vision_base_url || "http://localhost:11434/v1"}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_base_url: e.target.value } })}
+                  placeholder="http://localhost:11434/v1 或云端 OpenAI 兼容端点"
+                />
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>模型名称</label>
+                <input
+                  style={styles.input}
+                  list="vision-model-options"
+                  type="text"
+                  value={config.vision_model_name || ""}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_model_name: e.target.value } })}
+                  placeholder="输入模型名称或从列表选择"
+                />
+                <datalist id="vision-model-options">
+                  <option value="llava:7b" />
+                  <option value="llava:13b" />
+                  <option value="minicpm-v" />
+                  <option value="qwen2.5vl:3b" />
+                  <option value="moondream2" />
+                  <option value="gpt-4o" />
+                  <option value="glm-4.6v" />
+                </datalist>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>
+                  超时时间: {Math.round((config.vision_timeout_ms || 30000) / 1000)}s
+                </label>
+                <input
+                  style={{ width: "100%" }}
+                  type="range"
+                  min={10000}
+                  max={60000}
+                  step={5000}
+                  value={config.vision_timeout_ms || 30000}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_timeout_ms: parseInt(e.target.value) } })}
+                />
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>降级策略</label>
+                <select
+                  style={styles.select}
+                  value={config.vision_fallback || "metadata"}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_fallback: e.target.value as "metadata" | "passthrough" | "error" } })}
+                >
+                  <option value="metadata">{VISION_COPY.fallbackMetadata}</option>
+                  <option value="passthrough">{VISION_COPY.fallbackPassthrough}</option>
+                  <option value="error">{VISION_COPY.fallbackError}</option>
+                </select>
+                <div style={styles.helpText}>
+                  视觉模型不可用时的处理方式：仅元数据 = 发送页面标题和尺寸信息
+                </div>
+              </div>
+                  </>
+                )}
+
+              <div style={styles.field}>
+                <button style={styles.testBtn} onClick={() => {
+                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中...（请先保存配置）" })
+                  chrome.runtime.sendMessage({ type: "config.testVision" })
+                }}>
+                  测试视觉模型连接
+                </button>
+              </div>
+              </>
+            )
+          })()}
+
+            </SettingsPage>
+          </div>
+
+          <div data-settings-page="voice" hidden={activeSettingsPage !== "voice"}>
+            <SettingsPage id="voice" title="输入与语音">
           <div style={styles.field}>
             <label style={styles.label}>发送快捷键</label>
             <select
@@ -1352,6 +1664,7 @@ export function SettingsSlideout() {
                 <div style={{ marginTop: 8, fontSize: 11, color: tokens.textSecondary }}>
                   <div style={{ marginBottom: 2 }}>组合键（按键盘录制或点预设）</div>
                   <HotkeyCaptureField
+                    active={activeSettingsPage === "voice" && state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)}
                     value={state.dictationHotkeyChord || DICTATION_HOTKEY_DEFAULT_CHORD}
                     disabled={!state.dictationHotkeyEnabled}
                     onChange={(chord) =>
@@ -2216,440 +2529,25 @@ export function SettingsSlideout() {
             )}
           </div>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Context Window</label>
-            <input
-              style={styles.input}
-              type="number"
-              value={config.context_window}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { context_window: parseInt(e.target.value) || 512000 } })}
-              min={1024}
-              max={1000000}
-              step={1024}
-            />
-            <div style={styles.helpText}>
-              {contextWindowHelpText(config.context_window)}
-            </div>
+            </SettingsPage>
           </div>
 
-          <div style={styles.field}>
-            <label style={styles.label}>长对话上下文预算</label>
-            <select
-              style={styles.select || styles.input}
-              value={config.context_compaction ?? "auto"}
-              onChange={e => {
-                const v = e.target.value
-                if (v !== "auto" && v !== "prompt" && v !== "off") return
-                if (v === "auto") {
-                  const ok = window.confirm(
-                    "自动压缩会让模型看不到较早轮次，即使聊天区仍显示全文。确定启用？",
-                  )
-                  if (!ok) return
-                }
-                dispatch({ type: "SET_CONFIG", config: { context_compaction: v } })
-              }}
-            >
-              <option value="auto">自动压缩（超预算时）</option>
-              <option value="prompt">仅提示（不压缩）</option>
-              <option value="off">关闭</option>
-            </select>
-            <div style={styles.helpText}>
-              仅影响发给模型的请求；磁盘与界面消息仍完整。仅提示 = 超预算时警告，需改回「自动」才压缩。
-            </div>
-          </div>
-
-          {(config.context_compaction ?? "auto") === "auto" && (
-            <div style={styles.field}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-                <input
-                  type="checkbox"
-                  checked={config.context_compaction_m2 !== false}
-                  onChange={e =>
-                    dispatch({
-                      type: "SET_CONFIG",
-                      config: { context_compaction_m2: e.target.checked },
-                    })
-                  }
-                />
-                结构化工作记忆（H1）/ 滚动摘要
-              </label>
-              <div style={styles.helpText}>
-                默认开启：丢弃轮次较多时，优先生成脱敏的结构化工作记忆（目标/决策/约束/待办/产物），
-                失败则退回散文摘要；可在聊天顶栏「查看摘要」。仅在本轮开始时跑（tool 中途只做截断占位）。
-              </div>
-            </div>
-          )}
-
-          <div style={styles.field}>
-            <label style={styles.label}>思考过程展示</label>
-            <select
-              style={styles.input}
-              value={state.showReasoningMode || "auto_live"}
-              onChange={(e) => {
-                const v = e.target.value
-                if (v === "always_collapsed" || v === "auto_live" || v === "always_open") {
-                  dispatch({ type: "SET_SHOW_REASONING_MODE", mode: v })
-                }
-              }}
-            >
-              <option value="auto_live">仅推理时展开（默认）</option>
-              <option value="always_collapsed">默认折叠</option>
-              <option value="always_open">始终展开</option>
-            </select>
-            <div style={styles.helpText}>
-              仅影响 Side Panel 显示。历史消息不会把思考回灌给模型（省 token / 兼容 Anthropic）。
-            </div>
-          </div>
-
-          <div style={styles.field}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-              <input
-                type="checkbox"
-                checked={state.exportIncludeReasoning === true}
-                onChange={(e) =>
-                  dispatch({ type: "SET_EXPORT_INCLUDE_REASONING", enabled: e.target.checked })
-                }
-              />
-              导出 Markdown 时包含思考过程
-            </label>
-            <div style={styles.helpText}>
-              默认关闭。开启后以折叠块写入笔记；请注意思考可能含中间假设，勿默认分享。
-            </div>
-          </div>
-
-                    {/* --- Vision Model Settings --- */}
-          <div style={styles.sectionTitle}>视觉模型（看图描述）</div>
-
-          <div style={styles.field}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-              <input
-                type="checkbox"
-                checked={config.vision_enabled || false}
-                onChange={e => {
-                  const on = e.target.checked
-                  dispatch({ type: "SET_CONFIG", config: { vision_enabled: on } })
-                  setVisionReuseHint(null)
-                  if (!on) {
-                    setVisionReuseBanner(false)
-                    return
-                  }
-                  // Banner only on false→true; never auto-copy credentials (S-V5)
-                  if (
-                    !visionReuseBannerDismissed &&
-                    shouldOfferVisionReuse({
-                      model_name: config.model_name,
-                      base_url: config.base_url,
-                      api_key: config.api_key,
-                      protocol: config.protocol,
-                    })
-                  ) {
-                    setVisionReuseBanner(true)
-                  } else {
-                    setVisionReuseBanner(false)
-                  }
-                }}
-              />
-              启用截图视觉分析
-            </label>
-            <div style={styles.helpText}>{VISION_COPY.sectionHelp}</div>
-            <div style={{ ...styles.helpText, marginTop: 4 }}>{VISION_COPY.railDifferentiator}</div>
-          </div>
-
-          {config.vision_enabled && (config.protocol === "anthropic") && (
-            <div style={{
-              ...styles.field,
-              padding: "8px 10px",
-              borderRadius: 8,
-              background: tokens.warningSoft,
-              border: `1px solid ${tokens.warning}`,
-              fontSize: 12,
-              color: tokens.text,
-            }}>
-              {VISION_COPY.anthropicBlocked}
-            </div>
-          )}
-
-          {config.vision_enabled && visionReuseBanner && (
-            <div style={{
-              ...styles.field,
-              padding: "10px 12px",
-              borderRadius: 8,
-              background: tokens.accentSoft,
-              border: `1px solid ${tokens.border}`,
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{VISION_COPY.bannerTitle}</div>
-              <div style={{ fontSize: 12, color: tokens.textSecondary, marginBottom: 8, lineHeight: 1.45 }}>
-                {bannerBodyForHost(extractHostname(config.base_url))}
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <button
-                  type="button"
-                  style={styles.testBtn}
-                  onClick={() => {
-                    const main = {
-                      model_name: config.model_name,
-                      base_url: config.base_url,
-                      api_key: config.api_key,
-                      protocol: config.protocol,
-                    }
-                    if (isCustomVisionConfig(main, config)) {
-                      if (!window.confirm(VISION_COPY.overwriteConfirm)) return
-                    }
-                    const result = applyVisionReuseFromMain(main)
-                    dispatch({ type: "SET_CONFIG", config: result.patch })
-                    setVisionReuseBanner(false)
-                    setVisionReuseBannerDismissed(true)
-                    setVisionAdvancedOpen(false)
-                    setVisionReuseHint(
-                      (result.needsKeyPaste ? VISION_COPY.needsKeyPaste + " " : "") +
-                        VISION_COPY.postReuseTestHint,
-                    )
-                  }}
-                >
-                  {VISION_COPY.useMain}
-                </button>
-                <button
-                  type="button"
-                  style={styles.toggleBtn}
-                  onClick={() => {
-                    setVisionReuseBanner(false)
-                    setVisionReuseBannerDismissed(true)
-                    setVisionAdvancedOpen(true)
-                  }}
-                >
-                  {VISION_COPY.keepSeparate}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {config.vision_enabled && visionReuseHint && (
-            <div style={{ ...styles.helpText, color: tokens.success, marginBottom: 8 }}>
-              {visionReuseHint}
-            </div>
-          )}
-
-          {config.vision_enabled && (() => {
-            const reusing = isVisionReusingMain(
-              { model_name: config.model_name, base_url: config.base_url },
-              config,
-            )
-            const showFields = !reusing || visionAdvancedOpen
-            return (
-              <>
-                {reusing && (
-                  <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    flexWrap: "wrap",
-                    marginBottom: 8,
-                    fontSize: 12,
-                  }}>
-                    <span style={{
-                      padding: "2px 8px",
-                      borderRadius: 8,
-                      background: tokens.successSoft,
-                      color: tokens.success,
-                      fontWeight: 500,
-                    }}>
-                      {VISION_COPY.reusedChip} · {extractHostname(config.vision_base_url || config.base_url)}
-                    </span>
-                    <button
-                      type="button"
-                      style={styles.toggleBtn}
-                      onClick={() => setVisionAdvancedOpen(v => !v)}
-                    >
-                      {visionAdvancedOpen ? VISION_COPY.collapseAdvanced : VISION_COPY.expandAdvanced}
-                    </button>
-                  </div>
-                )}
-
-                {showFields && (
-                  <>
-              <div style={styles.field}>
-                <label style={styles.label}>
-                  API Key{" "}
-                  {!config.vision_api_key && state.companionConfig?.vision_api_key_set && (
-                    <span style={{
-                      fontSize: 10, fontWeight: 500, marginLeft: 6,
-                      padding: "1px 6px", borderRadius: 8,
-                      color: tokens.success, background: tokens.successSoft,
-                    }}>
-                      ✓ 已配置
-                    </span>
-                  )}
-                </label>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <input
-                    style={{ ...styles.input, flex: 1 }}
-                    type={showKey ? "text" : "password"}
-                    value={config.vision_api_key || ""}
-                    onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_api_key: e.target.value } })}
-                    placeholder={
-                      state.companionConfig?.vision_api_key_set
-                        ? "（已配置，留空保持不变；输入新值覆盖）"
-                        : "本地 Ollama 可留空；云端需填写（或与主模型相同后保存继承）"
-                    }
-                  />
-                </div>
-                <div style={styles.helpText}>
-                  本地 loopback 可留空；非本机端点需真实 Key。与主模型 URL/Model 相同时，保存会继承主 Key。
-                </div>
-              </div>
-
-              <div style={styles.field}>
-                <label style={styles.label}>Base URL</label>
-                <input
-                  style={styles.input}
-                  type="text"
-                  value={config.vision_base_url || "http://localhost:11434/v1"}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_base_url: e.target.value } })}
-                  placeholder="http://localhost:11434/v1 或云端 OpenAI 兼容端点"
-                />
-              </div>
-
-              <div style={styles.field}>
-                <label style={styles.label}>Model</label>
-                <input
-                  style={styles.input}
-                  list="vision-model-options"
-                  type="text"
-                  value={config.vision_model_name || ""}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_model_name: e.target.value } })}
-                  placeholder="输入模型名称或从列表选择"
-                />
-                <datalist id="vision-model-options">
-                  <option value="llava:7b" />
-                  <option value="llava:13b" />
-                  <option value="minicpm-v" />
-                  <option value="qwen2.5vl:3b" />
-                  <option value="moondream2" />
-                  <option value="gpt-4o" />
-                  <option value="glm-4.6v" />
-                </datalist>
-              </div>
-
-              <div style={styles.field}>
-                <label style={styles.label}>
-                  超时时间: {Math.round((config.vision_timeout_ms || 30000) / 1000)}s
-                </label>
-                <input
-                  style={{ width: "100%" }}
-                  type="range"
-                  min={10000}
-                  max={60000}
-                  step={5000}
-                  value={config.vision_timeout_ms || 30000}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_timeout_ms: parseInt(e.target.value) } })}
-                />
-              </div>
-
-              <div style={styles.field}>
-                <label style={styles.label}>降级策略</label>
-                <select
-                  style={styles.select}
-                  value={config.vision_fallback || "metadata"}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_fallback: e.target.value as "metadata" | "passthrough" | "error" } })}
-                >
-                  <option value="metadata">{VISION_COPY.fallbackMetadata}</option>
-                  <option value="passthrough">{VISION_COPY.fallbackPassthrough}</option>
-                  <option value="error">{VISION_COPY.fallbackError}</option>
-                </select>
-                <div style={styles.helpText}>
-                  视觉模型不可用时的处理方式：仅元数据 = 发送页面标题和尺寸信息
-                </div>
-              </div>
-                  </>
-                )}
-
-              <div style={styles.field}>
-                <button style={styles.testBtn} onClick={() => {
-                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中...（请先保存配置）" })
-                  chrome.runtime.sendMessage({ type: "config.testVision" })
-                }}>
-                  测试视觉模型连接
-                </button>
-              </div>
-              </>
-            )
-          })()}
-
-                    {/* --- File Upload Settings --- */}
-          <div style={styles.sectionTitle}>文件上传</div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>最大文件大小: {((config.file_upload_max_size ?? 10485760) / (1024 * 1024)).toFixed(0)} MB</label>
-            <input
-              style={{ width: "100%" }}
-              type="range"
-              min={1}
-              max={100}
-              step={1}
-              value={(config.file_upload_max_size ?? 10485760) / (1024 * 1024)}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_size: parseInt(e.target.value) * 1024 * 1024 } })}
-            />
-            <div style={styles.helpText}>
-              上传文件的大小上限，范围 1–100 MB。此上限不提高图片预算（压缩后单张 ≤4MB，合计 ≤6MB）。
-            </div>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>最大 Token 数</label>
-            <input
-              style={styles.input}
-              type="number"
-              value={config.file_upload_max_tokens ?? 50000}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_tokens: parseInt(e.target.value) || 50000 } })}
-              min={1000}
-              max={200000}
-              step={1000}
-            />
-            <div style={styles.helpText}>
-              文件内容截断阈值，范围 1000–200000
-            </div>
-          </div>
-
-          <div style={styles.field}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-              <input
-                type="checkbox"
-                checked={config.file_upload_vision ?? true}
-                onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_vision: e.target.checked } })}
-              />
-              启用文件视觉分析
-            </label>
-            <div style={styles.helpText}>
-              仅当主模型不能看图时，用户附图才走视觉轨。主模型能看图时此开关不影响粘贴/选/拖。
-            </div>
-          </div>
-
-              <div style={styles.field}>
-                <div style={styles.helpText}>
-                  上下文窗口过大时，长对话压缩会来不及触发（新默认 512000 是 Agent 工作预算）。建议按模型真实上限设置。
-                </div>
-              </div>
-            </SettingsSection>
-          </div>
-
-          <div style={{ order: 3 }}>
-            <SettingsSection
+          <div data-settings-page="secrets" hidden={activeSettingsPage !== "secrets"}>
+            <SettingsPage
               title="密钥与环境"
-              open={isSectionOpen("secrets")}
-              onToggle={() => handleToggleSection("secrets")}
+              id="secrets"
             >
           {/* --- User env / Secrets (ADR-019) — independent of bottom config Save --- */}
           <UserEnvSection />
 
-          
-            </SettingsSection>
+
+            </SettingsPage>
           </div>
 
-          <div style={{ order: 4 }}>
-            <SettingsSection
+          <div data-settings-page="security" hidden={activeSettingsPage !== "security"}>
+            <SettingsPage
               title="安全与信任"
-              open={isSectionOpen("security")}
-              onToggle={() => handleToggleSection("security")}
+              id="security"
               badge={elevatedTrust ? (
                 <span style={{
                   fontSize: 10,
@@ -3263,15 +3161,14 @@ export function SettingsSlideout() {
             )}
           </div>
 
-          
-            </SettingsSection>
+
+            </SettingsPage>
           </div>
 
-          <div style={{ order: 5 }}>
-            <SettingsSection
-              title="本机与集成"
-              open={isSectionOpen("integrations")}
-              onToggle={() => handleToggleSection("integrations")}
+          <div data-settings-page="integrations" hidden={activeSettingsPage !== "integrations"}>
+            <SettingsPage
+              title="本机与工具"
+              id="integrations"
             >
           {/* --- How permissions work --- */}
           <div style={styles.field}>
@@ -3292,7 +3189,7 @@ export function SettingsSlideout() {
                 <strong>本机能力</strong>（场景页）：工作区 / 扫描 / 命令等电源是否启用。
               </li>
               <li>
-                <strong>运行自主度</strong>（下方）：危险操作要不要每次确认；
+                <strong>运行自主度</strong>（「安全与信任」）：危险操作要不要每次确认；
                 <em>不会</em>放开场景已关掉的工具，也<strong>不能</strong>代替选工作区。
               </li>
             </ul>
@@ -3408,73 +3305,65 @@ export function SettingsSlideout() {
             }}
           />
 
-          
-            </SettingsSection>
+
+            </SettingsPage>
           </div>
 
-          <div style={{ order: 6 }}>
-            <SettingsSection
-              title="导出与集成"
-              open={isSectionOpen("export")}
-              onToggle={() => handleToggleSection("export")}
+          <div data-settings-page="export" hidden={activeSettingsPage !== "export"}>
+            <SettingsPage
+              title="文件与知识"
+              id="export"
             >
-          {/* --- Markdown export (optional note-folder conventions) --- */}
+                    {/* --- File Upload Settings --- */}
+          <div style={styles.sectionTitle}>文件上传</div>
+
           <div style={styles.field}>
-            <label style={styles.label}>笔记库路径（可选）</label>
+            <label style={styles.label}>最大文件大小: {((config.file_upload_max_size ?? 10485760) / (1024 * 1024)).toFixed(0)} MB</label>
+            <input
+              style={{ width: "100%" }}
+              type="range"
+              min={1}
+              max={100}
+              step={1}
+              value={(config.file_upload_max_size ?? 10485760) / (1024 * 1024)}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_size: parseInt(e.target.value) * 1024 * 1024 } })}
+            />
+            <div style={styles.helpText}>
+              上传文件的大小上限，范围 1–100 MB。此上限不提高图片预算（压缩后单张 ≤4MB，合计 ≤6MB）。
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>最大 Token 数</label>
             <input
               style={styles.input}
-              value={config.obsidian_vault_path || ""}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
-              placeholder="/path/to/your/notes"
+              type="number"
+              value={config.file_upload_max_tokens ?? 50000}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_tokens: parseInt(e.target.value) || 50000 } })}
+              min={1000}
+              max={200000}
+              step={1000}
             />
-            <button
-              style={{ ...styles.secondaryBtn, marginTop: 6 }}
-              disabled={state.vaultPicker.picking}
-              onClick={() => {
-                // Ask the companion to open the OS native folder-picker (extensions can't
-                // read real folder paths). The response sets config.obsidian_vault_path.
-                dispatch({ type: "SET_VAULT_PICKER", picking: true, error: null })
-                chrome.runtime.sendMessage({ type: "obsidian.pick_vault_folder" })
-              }}
-            >
-              {state.vaultPicker.picking ? "选择中…" : "📂 选择文件夹"}
-            </button>
-            {state.vaultPicker.error && (
-              <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
-                {state.vaultPicker.error}
-              </div>
-            )}
             <div style={styles.helpText}>
-              对话导出为 Markdown 文件下载，不写进该文件夹。若填写笔记库路径，会抽样约 200 篇笔记的 frontmatter 与正文前 200 字，提取命名 / tag 约定并建立索引；之后导出自动套用 frontmatter、相关笔记 [[wikilinks]] 与模板骨架。
+              文件内容截断阈值，范围 1000–200000
             </div>
-            <button
-              style={styles.secondaryBtn}
-              onClick={() => {
-                const vp = config.obsidian_vault_path?.trim()
-                if (!vp) return
-                dispatch({ type: "SET_OBSIDIAN_PROFILE_STATUS", status: { ok: true, message: "分析中…" } })
-                chrome.runtime.sendMessage({ type: "obsidian.refresh_profile", vault_path: vp })
-              }}
-            >
-              刷新笔记库档案
-            </button>
-            {state.obsidianProfileStatus && (
-              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? tokens.success : tokens.danger, marginTop: 6 }}>
-                {state.obsidianProfileStatus.message}
-              </div>
-            )}
           </div>
 
-            </SettingsSection>
+          <div style={styles.field}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={config.file_upload_vision ?? true}
+                onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_vision: e.target.checked } })}
+              />
+              启用文件视觉分析
+            </label>
+            <div style={styles.helpText}>
+              仅当主模型不能看图时，用户附图才走视觉轨。主模型能看图时此开关不影响粘贴/选/拖。
+            </div>
           </div>
 
-          <div style={{ order: 7 }}>
-            <SettingsSection
-              title="实验功能"
-              open={isSectionOpen("experimental")}
-              onToggle={() => handleToggleSection("experimental")}
-            >
-          {/* Thread History IA Wave B — session index (thread-list IA, not export) */}
+          {/* Thread History IA Wave B — session index (file and knowledge settings) */}
           <div style={styles.sectionTitle}>会话索引（标签 / 要点）</div>
           <div style={styles.field}>
             <label style={styles.label}>打开列表时惰性提取要点</label>
@@ -3550,6 +3439,79 @@ export function SettingsSlideout() {
 
           <div style={styles.divider} />
 
+          {/* --- Markdown export (optional note-folder conventions) --- */}
+          <div style={styles.sectionTitle}>笔记导出</div>
+          <div style={styles.field}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={state.exportIncludeReasoning === true}
+                onChange={(e) =>
+                  dispatch({ type: "SET_EXPORT_INCLUDE_REASONING", enabled: e.target.checked })
+                }
+              />
+              导出 Markdown 时包含思考过程
+            </label>
+            <div style={styles.helpText}>
+              默认关闭。开启后以折叠块写入笔记；请注意思考可能含中间假设，勿默认分享。
+            </div>
+          </div>
+
+
+          <div style={styles.field}>
+            <label style={styles.label}>笔记库路径（可选）</label>
+            <input
+              style={styles.input}
+              value={config.obsidian_vault_path || ""}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
+              placeholder="/path/to/your/notes"
+            />
+            <button
+              style={{ ...styles.secondaryBtn, marginTop: 6 }}
+              disabled={state.vaultPicker.picking}
+              onClick={() => {
+                // Ask the companion to open the OS native folder-picker (extensions can't
+                // read real folder paths). The response sets config.obsidian_vault_path.
+                dispatch({ type: "SET_VAULT_PICKER", picking: true, error: null })
+                chrome.runtime.sendMessage({ type: "obsidian.pick_vault_folder" })
+              }}
+            >
+              {state.vaultPicker.picking ? "选择中…" : "📂 选择文件夹"}
+            </button>
+            {state.vaultPicker.error && (
+              <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
+                {state.vaultPicker.error}
+              </div>
+            )}
+            <div style={styles.helpText}>
+              对话导出为 Markdown 文件下载，不写进该文件夹。若填写笔记库路径，会抽样约 200 篇笔记的 frontmatter 与正文前 200 字，提取命名 / tag 约定并建立索引；之后导出自动套用 frontmatter、相关笔记 [[wikilinks]] 与模板骨架。
+            </div>
+            <button
+              style={styles.secondaryBtn}
+              onClick={() => {
+                const vp = config.obsidian_vault_path?.trim()
+                if (!vp) return
+                dispatch({ type: "SET_OBSIDIAN_PROFILE_STATUS", status: { ok: true, message: "分析中…" } })
+                chrome.runtime.sendMessage({ type: "obsidian.refresh_profile", vault_path: vp })
+              }}
+            >
+              刷新笔记库档案
+            </button>
+            {state.obsidianProfileStatus && (
+              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? tokens.success : tokens.danger, marginTop: 6 }}>
+                {state.obsidianProfileStatus.message}
+              </div>
+            )}
+          </div>
+
+            </SettingsPage>
+          </div>
+
+          <div data-settings-page="experimental" hidden={activeSettingsPage !== "experimental"}>
+            <SettingsPage
+              title="实验功能"
+              id="experimental"
+            >
           {/* --- WP5-I4 实验功能(Qwen3-VL 本地模型定位层) --- */}
           <div style={styles.sectionTitle}>实验功能</div>
           {(() => {
@@ -4183,6 +4145,58 @@ export function SettingsSlideout() {
             )
           })()}
 
+            </SettingsPage>
+          </div>
+
+        </div>
+
+        </div>
+
+        <div className="cm-settings-footer" style={styles.footer}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
+            <span className="cm-settings-save-scope">保存配置草稿；独立表单与授权需分别提交。</span>
+            {state.testResult && (
+              <span style={{
+                fontSize: 12,
+                color: state.testResult.includes("成功") ? tokens.success : tokens.danger,
+              }}>{state.testResult}</span>
+            )}
+            {state.testVisionResult && (
+              <span style={{
+                fontSize: 12,
+                color: state.testVisionResult.includes("成功") ? tokens.success : tokens.danger,
+              }}>{state.testVisionResult}</span>
+            )}
+          </div>
+          <button style={styles.testBtn} onClick={handleTest}>
+            {config.vision_enabled ? "测试模型连接（含视觉）" : "测试模型连接"}
+          </button>
+          <button
+            style={{
+              ...styles.saveBtn,
+              ...(settingsSaveDisabled(state.configHydratedFromCompanion)
+                ? { opacity: 0.5, cursor: "not-allowed" }
+                : {}),
+            }}
+            className="cm-settings-save"
+            onClick={handleSave}
+            disabled={settingsSaveDisabled(state.configHydratedFromCompanion)}
+            title={settingsSaveDisabledTitle(state.configHydratedFromCompanion)}
+          >保存并关闭</button>
+        </div>
+
+        {state.companionConfig && (
+          <div style={{
+            fontSize: 11,
+            color: tokens.textMuted,
+            padding: "8px 16px",
+            borderTop: `1px solid ${tokens.border}`,
+            textAlign: "center",
+          }}>
+            Companion 全局配置已同步{state.companionConfig.model_name ? ` (${state.companionConfig.model_name})` : ""}
+          </div>
+        )}
+        </div>
           {/* 许可证门:渲染 license_required 载荷原文(LICENSE_DOOR_TEXT 单一真源
               在 companion model-license.ts,扩展不复制不私编) */}
           {licenseDoorShouldOpen(state.computerModelLicenseDoor) && (
@@ -4225,54 +4239,7 @@ export function SettingsSlideout() {
             </Modal>
           )}
 
-          
-            </SettingsSection>
-          </div>
 
-        </div>
-
-        <div style={styles.footer}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
-            {state.testResult && (
-              <span style={{
-                fontSize: 12,
-                color: state.testResult.includes("成功") ? tokens.success : tokens.danger,
-              }}>{state.testResult}</span>
-            )}
-            {state.testVisionResult && (
-              <span style={{
-                fontSize: 12,
-                color: state.testVisionResult.includes("成功") ? tokens.success : tokens.danger,
-              }}>{state.testVisionResult}</span>
-            )}
-          </div>
-          <button style={styles.testBtn} onClick={handleTest}>
-            {config.vision_enabled ? "测试连接（含视觉）" : "测试连接"}
-          </button>
-          <button
-            style={{
-              ...styles.saveBtn,
-              ...(settingsSaveDisabled(state.configHydratedFromCompanion)
-                ? { opacity: 0.5, cursor: "not-allowed" }
-                : {}),
-            }}
-            onClick={handleSave}
-            disabled={settingsSaveDisabled(state.configHydratedFromCompanion)}
-            title={settingsSaveDisabledTitle(state.configHydratedFromCompanion)}
-          >保存</button>
-        </div>
-
-        {state.companionConfig && (
-          <div style={{
-            fontSize: 11,
-            color: tokens.textMuted,
-            padding: "8px 16px",
-            borderTop: `1px solid ${tokens.border}`,
-            textAlign: "center",
-          }}>
-            Companion 全局配置已同步{state.companionConfig.model_name ? ` (${state.companionConfig.model_name})` : ""}
-          </div>
-        )}
     </Modal>
   )
 }
@@ -4331,7 +4298,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 6,
     fontSize: 13,
-    fontFamily: "monospace",
+    fontFamily: tokens.font,
     outline: "none",
     boxSizing: "border-box" as const,
   },
@@ -4350,16 +4317,16 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${tokens.borderStrong}`,
     borderRadius: 6,
     fontSize: 13,
-    fontFamily: "monospace",
+    fontFamily: tokens.font,
     outline: "none",
     boxSizing: "border-box" as const,
     background: tokens.bgElevated,
   },
   helpText: {
     marginTop: 6,
-    fontSize: 11,
+    fontSize: 12,
     color: tokens.textSecondary,
-    lineHeight: 1.4,
+    lineHeight: 1.6,
   },
   footer: {
     display: "flex",
