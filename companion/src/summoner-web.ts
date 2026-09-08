@@ -711,6 +711,11 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/browser-status" && req.method === "GET") {
+      jsonResponse(res, { connected: activeHasExtensionPeer?.() === true })
+      return
+    }
+
     if (pathOnly === "/api/send-shortcut" && req.method === "GET") {
       const v = getConfig().summoner?.send_shortcut
       const send_shortcut = v === "Cmd+Enter" || v === "Ctrl+Enter" || v === "Enter" ? v : "Enter"
@@ -1413,42 +1418,66 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 #mic{margin-left:auto}#sendGo{border-radius:50%;background:#242424;color:#fff}
 .capture-row{padding:0 16px 12px;gap:8px}.capture-row button{background:transparent;border:1px solid var(--line);font-size:12px;color:var(--secondary)}
 @media(max-width:380px){.brand{flex-wrap:wrap;gap:4px;padding:10px 12px}.brand-actions{margin-left:auto}.brand-actions button{padding:6px}.log{padding:16px}.composer{padding:8px 12px}.empty strong{font-size:20px}}
+
+/* #477: a readable workspace; existing overlay privileges remain unchanged. */
+#stopGo[hidden]{display:none}.thread-search{display:block;padding:8px 10px;font-size:12px;color:var(--secondary)}
+.thread-search[hidden]{display:none}.thread-search input{display:block;width:100%;margin-top:6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:var(--paper);color:var(--text)}
+.resource-note{padding:10px;font-size:12px;line-height:1.6;color:var(--secondary)}
+.resource-readonly{cursor:default}.resource-readonly:hover{background:transparent}
+.rail{display:flex;align-items:stretch;gap:2px;padding:12px 8px;border:0;overflow:auto}
+.rail-btn{display:flex;align-items:center;gap:10px;width:100%;height:36px;padding:0 10px;font:inherit;text-align:left;border-radius:8px}
+.rail-btn svg{width:18px;height:18px;flex:none}.rail-btn[aria-current="true"]{background:#eaeae7;color:var(--text)}
+.hud.expanded .body{flex-direction:row;border-bottom:0}
+.list{display:flex;width:220px;flex:none;background:var(--rail-bg)}
+.hud.history .list{position:static;inset:auto;width:220px;border-right:1px solid var(--line)}
+.list-head{font-size:12px;letter-spacing:0;color:var(--secondary)}
+.item.active{background:#eaeae7;color:var(--text)}.item strong{overflow-wrap:anywhere}.trow{flex-wrap:wrap}.trow .item{flex-basis:100%}.trow .icon-mini{height:28px}
+#historyClose{display:none}.log{padding:32px 28px}.empty{margin:auto;max-width:440px;line-height:1.8;color:var(--secondary)}
+.empty strong{font-size:28px;color:var(--text);margin-bottom:8px}
+@media(min-width:760px){.composer,.capture-row,.status,.cta-box{margin-left:220px;max-width:none;width:calc(100% - 220px)}.composer{padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.cta-box,.status{width:calc(100% - 244px)}#historyOpen{display:none}}
+@media(max-width:759px){.brand{flex-wrap:wrap}.brand-actions{flex-wrap:wrap;min-width:0}.hud.expanded .body{flex-direction:column}.list{display:none}.hud.history .list{display:flex;width:100%;max-height:36vh;min-height:0;border-right:0;border-bottom:1px solid var(--line)}.rail{flex-direction:row;flex-wrap:wrap;flex-shrink:0;padding:6px}.rail-btn{width:auto;height:32px;padding:0 8px;font-size:12px}.rail-btn svg{display:none}.list-head{padding:4px 12px}.list-scroll{min-height:0}#historyClose{display:block}.log{padding:20px}.empty strong{font-size:22px}}
+@media(max-height:560px){.hud.history .list{max-height:28vh}.log{padding:12px}.empty{padding:8px}.empty strong{font-size:20px}.capture-row{padding-bottom:6px}.composer{padding-top:6px}}
+
 </style>
 </head>
 <body>
 <div class="hud expanded" id="hud">
   <div class="body">
-    <nav class="rail" id="secs" aria-label="组合面">
+    <aside class="list" aria-label="工作空间导航">
+    <nav class="rail" id="secs" aria-label="工作空间">
       <button class="rail-btn" data-sec="threads" aria-current="true" type="button" title="对话" aria-label="对话">
-        <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h10M5 17h7"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h10M5 17h7"/></svg><span>对话</span>
       </button>
-      <button class="rail-btn" data-sec="packs" type="button" title="场景" aria-label="场景" hidden>
-        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.4"/><rect x="13" y="4" width="7" height="7" rx="1.4"/><rect x="4" y="13" width="7" height="7" rx="1.4"/><rect x="13" y="13" width="7" height="7" rx="1.4"/></svg>
+      <button class="rail-btn" data-sec="packs" type="button" title="场景" aria-label="场景">
+        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.4"/><rect x="13" y="4" width="7" height="7" rx="1.4"/><rect x="4" y="13" width="7" height="7" rx="1.4"/><rect x="13" y="13" width="7" height="7" rx="1.4"/></svg><span>场景</span>
       </button>
-      <button class="rail-btn" data-sec="knowledge" type="button" title="知识" aria-label="知识" hidden>
-        <svg viewBox="0 0 24 24"><path d="M5 5.5h9.2A2.3 2.3 0 0 1 16.5 7.8V19H7.4A2.4 2.4 0 0 1 5 16.6V5.5z"/><path d="M16.5 8h1.4A2.1 2.1 0 0 1 20 10.1V19h-3.5"/></svg>
+      <button class="rail-btn" data-sec="knowledge" type="button" title="知识" aria-label="知识">
+        <svg viewBox="0 0 24 24"><path d="M5 5.5h9.2A2.3 2.3 0 0 1 16.5 7.8V19H7.4A2.4 2.4 0 0 1 5 16.6V5.5z"/><path d="M16.5 8h1.4A2.1 2.1 0 0 1 20 10.1V19h-3.5"/></svg><span>知识</span>
       </button>
-      <button class="rail-btn" data-sec="skills" type="button" title="技能" aria-label="技能" hidden>
-        <svg viewBox="0 0 24 24"><path d="M8 15.2 4.8 12 8 8.8M16 8.8 19.2 12 16 15.2M13.1 6.8 10.9 17.2"/></svg>
+      <button class="rail-btn" data-sec="skills" type="button" title="技能" aria-label="技能">
+        <svg viewBox="0 0 24 24"><path d="M8 15.2 4.8 12 8 8.8M16 8.8 19.2 12 16 15.2M13.1 6.8 10.9 17.2"/></svg><span>技能</span>
       </button>
-      <button class="rail-btn" data-sec="mcp" type="button" title="MCP" aria-label="MCP" hidden>
-        <svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1.2"/><path d="M12 4.6v3.2M12 16.2v3.2M4.6 12H8M16 12h3.4"/></svg>
+      <button class="rail-btn" data-sec="mcp" type="button" title="MCP" aria-label="MCP">
+        <svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1.2"/><path d="M12 4.6v3.2M12 16.2v3.2M4.6 12H8M16 12h3.4"/></svg><span>MCP</span>
       </button>
+      <button class="rail-btn" data-sec="browser" type="button"><span>浏览器</span></button>
     </nav>
-    <aside class="list">
+
       <div class="list-head"><span id="secHead">历史会话</span><button type="button" id="historyClose">完成</button></div>
       <div class="list-scroll">
         <button class="item" id="newThread" type="button"><strong>新对话</strong><small>快捷提问</small></button>
+        <label class="thread-search" id="threadSearchLabel">搜索对话<input id="threadSearch" type="search" placeholder="标题或名称" autocomplete="off"></label>
         <div id="threads"></div>
         <div id="composeList"></div>
       </div>
     </aside>
     <section class="main">
       <div class="brand">
-        <span class="brand-id">CMspark</span>
+        <span class="brand-id" id="workspaceTitle">CMspark</span>
         <span class="brand-actions">
           <button type="button" id="cruiseChip" class="cruise-chip" title="点此打开侧栏调整档位">%%CRUISE_LABEL%%</button>
-          <button type="button" id="historyOpen">历史</button>
+          <button type="button" id="windowMode">紧凑窗口</button>
+          <button type="button" id="historyOpen" aria-expanded="false">导航</button>
           <button type="button" id="newChat">新对话</button>
         </span>
       </div>
@@ -1484,6 +1513,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
         <button class="icon-btn" id="mic" type="button" title="听写" aria-label="听写" aria-pressed="false">
           <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
         </button>
+        <button class="icon-btn" id="stopGo" type="button" hidden title="停止" aria-label="停止"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
         <button class="icon-btn" id="sendGo" type="button" title="发送" aria-label="发送">
           <svg viewBox="0 0 24 24"><path d="M5 12h12M13 6l6 6-6 6"/></svg>
         </button>
@@ -1612,6 +1642,7 @@ try{
     $("openConfirm").hidden=true;
   }
   function showConfirmCta(){
+    showHistory(false);
     var box=$("ctaBox"); if(!box) return;
     box.hidden=false;
     $("ctaCopy").textContent=${JSON.stringify(SUMMONER_CONFIRM_NEED)};
@@ -1627,17 +1658,18 @@ try{
   }
   function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==="&"?"&amp;":c==="<"?"&lt;":"&gt;"})}
   ${OVERLAY_RENDER_MD_JS}
-  function placeWindow(){
+  function placeWindow(compact){
     var w=${OVERLAY_WINDOW_SIZE.w},h=${OVERLAY_WINDOW_SIZE.h};
+    if(compact){w=360;h=420}
     var sw=screen.availWidth||screen.width||w;
     var sh=screen.availHeight||screen.height||h;
+    w=Math.min(w,sw);h=Math.min(h,sh);
     var x=Math.max(0, ((sw-w)/2)|0);
     var y=Math.max(0, ((sh-h)/2)|0);
     try{window.resizeTo(w,h);window.moveTo(x,y)}catch(e){}
   }
   function setExpanded(on){
     $("hud").classList.add("expanded");
-    placeWindow();
   }
   function api(path, opts){
     return fetch(url(path), opts).then(function(r){return r.json().catch(function(){return {error:r.statusText}})})
@@ -1856,12 +1888,12 @@ try{
     });
   }
   function renderThreads(filter){
-    var q=(filter||"").trim();
+    var q=(filter===undefined?$("threadSearch").value:filter||"").trim().toLocaleLowerCase();
     var box=$("threads");
     box.innerHTML="";
     threads.forEach(function(t){
       var title=(t.title||t.alias||t.id||"").trim()||t.id;
-      if(q && title.indexOf(q)<0 && String(t.alias||"").indexOf(q)<0) return;
+      if(q && title.toLocaleLowerCase().indexOf(q)<0 && String(t.alias||"").toLocaleLowerCase().indexOf(q)<0) return;
       var row=document.createElement("div");
       row.className="trow";
       var b=document.createElement("button");
@@ -1947,6 +1979,7 @@ try{
     log.scrollTop=log.scrollHeight;
   }
   function syncBusyUi(){
+    $("stopGo").hidden=!busy;
     $("hint").textContent=busy
       ?"回车纠偏 · Shift+Enter 排队 · 忙时附件请等本轮结束 · 点击右上角 ⋮ 设置快捷键"
       :"回车发送 · Shift+Enter 排队 · # 搜标题 · 点击右上角 ⋮ 设置快捷键";
@@ -2060,6 +2093,7 @@ try{
   $("sendGo").onclick=function(){send(busy?"steer":"create")};
   $("steer").onclick=function(){send("steer")};
   $("queue").onclick=function(){send("enqueue")};
+  $("stopGo").onclick=function(){$("stop").click()};
   $("stop").onclick=function(){
     if(!threadId) return;
     api("/api/abort",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})});
@@ -2423,10 +2457,15 @@ try{
   function showHistory(on){
     var hud=$("hud");
     if(!hud) return;
-    if(on){ hud.classList.add("history"); refresh(); }
+    if(on){ hud.classList.add("history"); }
     else hud.classList.remove("history");
+    $("historyOpen").setAttribute("aria-expanded",String(on));
   }
-  $("historyOpen").onclick=function(){ showHistory(true); };
+  var compactWindow=false;
+  $("windowMode").onclick=function(){compactWindow=!compactWindow;placeWindow(compactWindow);$("windowMode").textContent=compactWindow?"工作窗口":"紧凑窗口";setStatus("已请求调整窗口；如果当前宿主未响应，可手动调整窗口大小。")};
+  $("historyOpen").onclick=function(){ showHistory(!$("hud").classList.contains("history")); };
+  $("threadSearch").oninput=function(){renderThreads()};
+  document.addEventListener("keydown",function(e){if(e.key==="Escape" && $("hud").classList.contains("history")){showHistory(false);$("historyOpen").focus()}});
   $("historyClose").onclick=function(){ showHistory(false); };
   $("newChat").onclick=function(){ $("newThread").click(); };
   $("newThreadBar").onclick=function(){$("newThread").click()};
@@ -2473,7 +2512,8 @@ try{
       else b.removeAttribute("aria-current");
     });
     setExpanded(true);
-    var heads={threads:"对话",packs:"场景",knowledge:"知识",skills:"技能",mcp:"MCP"};
+    var heads={threads:"对话",packs:"场景",knowledge:"知识",skills:"技能",mcp:"MCP",browser:"浏览器"};
+    $("threadSearchLabel").hidden=name!=="threads";
     $("secHead").textContent=heads[name]||name;
     $("newThread").style.display=name==="threads"?"":"none";
     $("threads").style.display=name==="threads"?"":"none";
@@ -2481,9 +2521,12 @@ try{
     if(name==="threads") return refresh();
     loadCompose(name);
   }
+  var composeRevision=0;
   function loadCompose(name){
-    var box=$("composeList");
-    box.innerHTML="";
+    var revision=++composeRevision,ownerThread=threadId;
+    var target=$("composeList"),box=document.createElement("div");
+    target.textContent="加载中…";
+    function load(){
     function markEmpty(){
       if(box.children.length) return;
       var p=document.createElement("div");
@@ -2498,6 +2541,7 @@ try{
           b.className="row"+(p.overlay_eligible?"":" muted");
           b.innerHTML="<strong>"+esc(p.name||p.id)+"</strong><small>"+(p.overlay_eligible?"套到当前对话":"召唤器不可用")+"</small>";
           b.onclick=function(){
+            if(threadId!==ownerThread){loadCompose(name);return}
             if(!threadId){setStatus("没有当前对话");return}
             if(!p.overlay_eligible){setStatus("这个场景不能在召唤器套用");return}
             api("/api/packs/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pack_id:p.id,thread_id:threadId})}).then(function(r){
@@ -2508,19 +2552,22 @@ try{
         });
       }).catch(function(e){setStatus(String(e&&e.message||e))}).then(markEmpty);
     }
+    if(name==="browser"){
+      box.innerHTML='<p class="resource-note">连接现有 Chrome。后台连接会尽量避免展示窗口；需要查看操作时展示浏览器。网页操作仍需要已连接的 CMspark 扩展。</p>';
+      [["后台连接",false],["展示浏览器",true]].forEach(function(item){var b=document.createElement("button");b.className="row";b.textContent=item[0];b.onclick=function(){attachChrome(item[1])};box.appendChild(b)});
+      return api("/api/browser-status").then(function(d){var p=document.createElement("p");p.className="resource-note";p.textContent=d.connected===true?"CMspark 扩展已连接":"尚未连接 CMspark 扩展";box.prepend(p)}).catch(function(){setStatus("无法读取浏览器连接状态")});
+    }
     if(name==="mcp"){
       return api("/api/mcp").then(function(d){
+        if(d.error||d.type==="error") throw new Error(d.error||"无法读取 MCP");
+        var note=document.createElement("p");note.className="resource-note";note.textContent="查看已配置的服务。桌面配置编辑将在工作台管理功能中提供。";box.appendChild(note);
         (d.servers||[]).forEach(function(s){
-          var b=document.createElement("button");
-          var on=s.enabled!==false;
-          b.className="row";
-          b.innerHTML="<strong>"+esc(s.name||"")+"</strong><small>"+(on?"已开":"已关")+"</small>";
-          b.onclick=function(){
-            api("/api/mcp/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:s.name,enabled:!on})}).then(function(){loadCompose("mcp")});
-          };
-          box.appendChild(b);
+          var row=document.createElement("div");row.className="row resource-readonly";
+          row.innerHTML="<strong>"+esc(s.name||"")+"</strong><small>"+esc(({connected:"已连接",connecting:"连接中",disconnected:"未连接",error:"连接失败",dead:"已停止"})[s.connection&&s.connection.status]||"状态未知")+"</small>";
+          box.appendChild(row);
         });
-      }).catch(function(e){setStatus(String(e&&e.message||e))}).then(markEmpty);
+        if(!(d.servers||[]).length){var empty=document.createElement("p");empty.className="resource-note";empty.textContent="尚未配置 MCP 服务";box.appendChild(empty)}
+      }).catch(function(e){setStatus(String(e&&e.message||e))});
     }
     if(name==="skills"){
       return Promise.all([api("/api/skills"), threadId?api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}):Promise.resolve({})]).then(function(pair){
@@ -2531,8 +2578,9 @@ try{
           b.className="row";
           b.innerHTML="<strong>"+esc(s.title||s.name)+"</strong><small>"+(on?"已用于本对话":"未用")+"</small>";
           b.onclick=function(){
+            if(threadId!==ownerThread){loadCompose(name);return}
             if(!threadId){setStatus("没有当前对话");return}
-            api("/api/skills/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,skill_name:s.name,on:!on})}).then(function(){loadCompose("skills")});
+            api("/api/skills/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,skill_name:s.name,on:!on})}).then(function(d){if(d.error||d.type==="error") throw new Error(d.error||"保存失败");loadCompose("skills")}).catch(function(e){setStatus(String(e&&e.message||e))});
           };
           box.appendChild(b);
         });
@@ -2548,14 +2596,17 @@ try{
           b.className="row";
           b.innerHTML="<strong>"+esc(k.title||id)+"</strong><small>"+(on?"已挂到本对话":"点击挂上")+"</small>";
           b.onclick=function(){
+            if(threadId!==ownerThread){loadCompose(name);return}
             if(!threadId){setStatus("没有当前对话");return}
             var next=on?cur.filter(function(x){return x!==id}):cur.concat([id]);
-            api("/api/knowledge/active",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,ids:next})}).then(function(){loadCompose("knowledge")});
+            api("/api/knowledge/active",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,ids:next})}).then(function(d){if(d.error||d.type==="error") throw new Error(d.error||"保存失败");loadCompose("knowledge")}).catch(function(e){setStatus(String(e&&e.message||e))});
           };
           box.appendChild(b);
         });
       }).catch(function(e){setStatus(String(e&&e.message||e))}).then(markEmpty);
     }
+    }
+    return Promise.resolve(load()).then(function(){if(revision===composeRevision && sec===name && threadId===ownerThread){target.replaceChildren();while(box.firstChild)target.appendChild(box.firstChild)}});
   }
   document.querySelectorAll("#secs [data-sec]").forEach(function(b){
     b.onclick=function(){showSec(b.getAttribute("data-sec"))};
@@ -2709,6 +2760,7 @@ try{
         return;
       }
       if(t==="run_status"){
+        if(d.thread_id&&threadId&&d.thread_id!==threadId) return;
         busy=d.status==="llm";
         syncBusyUi();
         if(!busy) stopPoll(); else startPoll();

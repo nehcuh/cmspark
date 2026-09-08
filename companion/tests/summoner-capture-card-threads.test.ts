@@ -24,8 +24,8 @@ function srcFile(...parts: string[]): string {
 
 const web = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
 
-test("#243 ① 顶栏是文案按钮「历史」「新对话」，不是神秘 +", () => {
-  assert.match(web, /<button type="button" id="historyOpen">历史<\/button>/)
+test("#243 ① 顶栏保留新对话，#477 导航取代历史盖层", () => {
+  assert.match(web, /<button type="button" id="historyOpen"[^>]*>导航<\/button>/)
   assert.match(web, /<button type="button" id="newChat">新对话<\/button>/)
   // 唯一的「+」图标按钮（作曲区 #newThreadBar）保持隐藏，顶栏不靠神秘 + 开新对话
   assert.match(web, /#newThreadBar\{display:none\}/)
@@ -54,19 +54,9 @@ test("#243 ② 「新对话」清空到文字空态（newChat → newThread → 
 })
 
 test("#243 ③ 「历史」盖住卡片列出会话：点选进入、重命名、移到回收站", () => {
-  // 盖层几何：铺满整卡（inset:0 于 position:relative 的 .hud），压过作曲区
-  assert.match(
-    web,
-    /\.hud\.history \.list\{[^}]*display:flex!important;position:absolute;inset:0;z-index:5/,
-  )
-  assert.match(web, /\.composer\{[^}]*z-index:2\}/)
-  // 打开即刷新列表；完成按钮收起
-  assert.match(
-    web,
-    /function showHistory\(on\)\{[\s\S]{0,200}?classList\.add\("history"\); refresh\(\);/,
-  )
+  // #477 replaces full-card overlay with in-flow navigation; browser harness verifies Stop remains reachable.
   assert.match(web, /\$\("historyClose"\)\.onclick=function\(\)\{ showHistory\(false\); \};/)
-  assert.match(web, /function renderThreads\(filter\)\{[\s\S]{0,300}?threads\.forEach/)
+  assert.match(web, /function renderThreads\(filter\)\{[\s\S]{0,450}?threads\.forEach/)
 
   // 点选进入（selectThread 内含 showHistory(false)，选完收起盖层）
   assert.match(web, /b\.onclick=function\(\)\{selectThread\(t\.id\)\};/)
@@ -106,14 +96,10 @@ test("#243 ③' 服务端合同复用：PATCH=thread.update(alias)、DELETE=thre
   }
 })
 
-test("#243 ④ 第一屏仍是单栏 Capture 卡；rail 仍 hidden（五轨冻结，未重新占格）", () => {
-  assert.match(web, /\.rail,\.list\{display:none\}/)
-  assert.doesNotMatch(web, /grid-template-columns:\s*var\(--rail\)/)
-  // rail 除「对话」外全部 hidden；对话轨本身也不再占格（.rail 整体 display:none）
+test("#477 exposes resource navigation while preserving existing dispatch limits", () => {
   for (const sec of ["packs", "knowledge", "skills", "mcp"]) {
-    assert.match(web, new RegExp(`data-sec="${sec}"[^>]*hidden`), sec)
+    assert.doesNotMatch(web, new RegExp(`data-sec="${sec}"[^>]*hidden`), sec)
   }
-  assert.doesNotMatch(web, /data-sec="threads"[^>]*hidden/)
-  // 历史是 .list 盖层复活，不是 rail/list 回归占格：盖层规则只在 .hud.history 下生效
-  assert.match(web, /\.hud\.history \.list\{\s*display:flex!important/)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.add"), false)
+  assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.toggle_server"), false)
 })

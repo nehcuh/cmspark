@@ -200,7 +200,7 @@ test("C-thin HTML compose endpoints stay off mcp.add/knowledge.import", () => {
   assert.match(web, /\/api\/knowledge/)
 })
 
-test("PR-C: MCP rail icon isHidden without deleting summoner.mcp.add", () => {
+test("PR-C native overlay remains frozen; #477 web MCP is visible but read-only", () => {
   const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
   const web = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
   assert.match(overlay, /summoner\.mcp\.toggle/)
@@ -222,7 +222,7 @@ test("PR-C: MCP rail icon isHidden without deleting summoner.mcp.add", () => {
   assert.match(knList, /＋ 导入知识/)
   assert.match(knList, /isHidden\s*=\s*true/)
   assert.match(overlay, /railSection = 0/)
-  assert.match(web, /data-sec="mcp"[^>]*\bhidden\b/)
+  assert.doesNotMatch(web, /data-sec="mcp"[^>]*\bhidden\b/)
   assert.match(web, /data-sec="threads"[^>]*aria-current="true"/)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.toggle_server"), false)
   assert.ok(SUMMONER_WEB_DISPATCH_ALLOW.has("skill.activate"))

@@ -123,3 +123,16 @@ Keep the approved chat visual. Narrow headers retain a + button and named conver
 The extension and macOS app use a static connection-and-spark mark. The tray alone encodes Companion process state: green solid center for running, red hollow center for stopped, amber for unknown. No glow or texture. Geometry and sRGB colors are pinned in `scripts/lib/brand-icon.mjs`; Swift follows the same 24-unit contract and is compared by offscreen render. The app asset uses a dark rounded tile; the extension/tray use transparent backgrounds. Existing chat decorative illustrations remain unchanged.
 
 Tray title is empty and the redundant menu header is removed. Tooltip, native accessibility label and status details retain words; unknown is explicitly “状态未知”. WebSocket connectivity does not change the process-state meaning. Generated 16–32px and Retina assets require visual verification on light/dark backgrounds. See the #474 plan for coordinates, colors and rendering gates.
+
+## 2026-09-08 desktop workspace · #476 / #477
+
+#476 supersedes the lightweight-only product goal for the summoner. The complete
+workbench requires explicit desktop management identity and confirmations before
+sensitive management/terminal actions. #477 is the first UI slice only: a1040x760
+workspace with220px text navigation, compact360x420 user-requested window, visible
+resources and history search. At widths below760px navigation is an in-flow
+bounded disclosure; composer/stop stay outside it. Native hosting, MCP CRUD,
+terminal and complete knowledge/skill editing remain tracked gaps, never claimed
+from restored resource lists. Do not broaden the summoner ACL for this slice.
+Chrome connects the user's existing browser; launch visibility is not a per-task
+background automation guarantee. See the #476 plan for acceptance dependencies.
