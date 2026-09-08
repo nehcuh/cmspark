@@ -1,0 +1,7 @@
+{
+  "requestedModel": "deepseek-v4-pro",
+  "exit": "1",
+  "error": "IncompleteRead(0 bytes read)",
+  "validVerdict": false,
+  "credentialsStored": false
+}

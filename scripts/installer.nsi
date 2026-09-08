@@ -16,6 +16,10 @@
 !define PRODUCT_PUBLISHER "CMspark"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 
+; Shared app icon for Setup and generated uninstaller.
+!define MUI_ICON "..\companion\assets\cmspark.ico"
+!define MUI_UNICON "..\companion\assets\cmspark.ico"
+
 ; Modern UI
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
@@ -91,6 +95,7 @@ Section "CMspark Agent" SecMain
 
   ; Write registry for Add/Remove Programs
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
+  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayIcon" '"$INSTDIR\assets\cmspark.ico",0'
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'

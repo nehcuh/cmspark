@@ -1,0 +1,19 @@
+{
+  "exitCode": 0,
+  "requestedModel": "deepseek-v4-pro",
+  "modelUsage": {
+    "deepseek-v4-pro": {
+      "inputTokens": 12869,
+      "outputTokens": 3367,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.14851999999999999,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "is_error": false,
+  "duration_ms": 68222,
+  "hasVerdict": true
+}

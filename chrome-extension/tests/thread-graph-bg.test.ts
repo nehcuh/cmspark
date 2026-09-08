@@ -31,6 +31,7 @@ test("slimThreadGraphRow drops unknown keys / message bodies", () => {
   const slim = slimThreadGraphRow({
     id: "t1",
     alias: "hello",
+    user_tags: ["人工", 7],
     workspace_root: "/secret",
     first_user_preview: "should not leak",
     messages: [{ role: "user", content: "nope" }],
@@ -50,6 +51,7 @@ test("slimThreadGraphRow drops unknown keys / message bodies", () => {
   assert.equal((slim as any).first_user_preview, undefined)
   assert.equal((slim as any).messages, undefined)
   assert.deepEqual(slim!.digest?.tags, ["a", "b"])
+  assert.deepEqual(slim!.user_tags, ["人工"])
   assert.equal((slim!.digest as any).secret_field, undefined)
   assert.equal(slim!.digest?.stale, true)
   assert.equal(slimThreadGraphRow({}), null)

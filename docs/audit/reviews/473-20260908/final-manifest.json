@@ -1,0 +1,7 @@
+{
+  "companion/src/ws/lifecycle.ts": "4e68ab43f9c38da85bcb08307d17ef83d3facba639d713796580e96dc26ecacb",
+  "companion/src/message-router.ts": "273a033db18f282281aa24eda998e0b9bb0911aee840486a0310aabcafb641c4",
+  "chrome-extension/src/background/index.ts": "fa01370128f794836ce79dc7486f82107d3d7996cd1e47f6609ea1ffa359d786",
+  "chrome-extension/src/sidepanel/utils/thread-management.ts": "e8a9870973dc6957d568199b54d00aab2e84f81510f62f1cbe0715b13f822057",
+  "companion/tests/thread-digest.test.ts": "0096a6825e0181a8267a38ffe8745068fbe17f5bf7027dc73ca3104dd5890cf1"
+}

@@ -1,0 +1,21 @@
+## Review — #473 conversation management closure
+
+**Scope.** Confirmed inside T2/T3: no manifest/permission/config/default-job changes; background diff only re-shapes `thread.update`; AI grouping is a pure derived view (`aiThreadGroup`) with no writer. Six machine runs exit 0. Trajectory is right: server-side `sanitizeUserTags` enforced and exercised through the real `handleMessage` (dedupe/trim/20×40, rejects without overwriting), persistence across reload tested, digest-only graph colors and AI-only extraction eligibility pinned by unit test, outside-click nonmodal behavior and 320×480 Stop/risk/gate hit-testing all covered.
+
+**P0:** none. **P1:** none demonstrated.
+
+**MAJOR-1 — the envelope-id echo through the real companion is the one load-bearing contract no provided test exercises.** `saveThreadMetadata` only accepts a `thread.updated` carrying the exact `id` stamped by the SW (`index.ts` diff, new). That requires companion to copy `message.id` into its `thread.updated` response/broadcast. The companion diff shows only the `user_tags` allowlist line — no id pass-through. The one test that uses the real router (`human tags persist independently…`) sends a message **without** `id` and never asserts `result.id`. All three validation surfaces fabricate the contract instead of exercising it: the unit test mocks `chrome.runtime` wholesale; the browser fixture hand-crafts `{type:'thread.updated', id:m.id, …}` after 25 ms; the router test bypasses the id leg. If the real companion doesn't echo the envelope id, every production save persists server-side yet surfaces "尚未收到保存确认" after 15 s — precisely the false-negative the gate (`保存必须收到已持久化的 thread.updated`) was written to prevent. I cannot prove breakage from this frozen packet, and this codebase may well wrap responses generically ("复用 SW 请求响应规则" from the plan), but the closure explicitly promises independent verification of the matching-envelope flow, and the delivered evidence stops one hop short. If the echo is absent this becomes a P1. Remediation is cheap: in the router test send `id: "env-1"` and add `assert.equal((result as any).id, "env-1")` (or cite the generic wrapper in the reply).
+
+**NITs.**
+
+1. `ThreadList` AI view: the empty-hint guard `keys[0] === "未分组"` never matches the AI variant's "待 AI 整理", so when every thread is AI-untagged the per-view hint doesn't render (the static help line above still covers it). Dead conditional for that branch.
+
+2. Tag-origin label: `user_tags.some(v => v.toLowerCase() === tag)` marks a tag "人工" when human and AI share it — linguistically the tag is not human-*only*. Cosmetic.
+
+3. `panelMaxHeight` no longer participates in the new `panelBox.maxHeight` formula; it survives only if the portal style still references it (tsc passing suggests it does). Worth a quick grep rather than leaving the variable as cargo.
+
+4. Background `thread.update` returns `true` after a **synchronous** `sendResponse` on the connected path (pre-existing pattern, now copied); Chrome will log port-close noise. Also `saveThreadMetadata` types the resolve payload `any`. Outside-click/Escape discards an editor draft without warning — acceptable, non-spec'd.
+
+**Components that do verify correctly** (independently confirmed in the packet): sanitization is symmetric client/server and runs before mutation, so rejected writes leave existing labels intact; AI digest replacement preserves `user_tags`/`topic_folder` across reload; extension-side test covers ACK-not-success, wrong-envelope-id, wrong-thread, field-mismatch, abort, timeout cleanup, and late-reply immunity — all against the real promise code (only the transport is mocked); graph slim carries capped `user_tags` without bodies (R5 preserved); "为未标注提取要点" uses AI-only eligibility while search/related scoring legitimately include human tags; the no-write assertion runs before any deliberate save, so it's a true negative test; 320 short-screen stops, high-risk control, `+`, and all three gate buttons are hit-test-verified with the manager/menu open, and confirmation arrival both closes the panel and disables both entries.
+
+**VERDICT: REJECT** — narrowly: one added assertion (or a cited companion diff) on the envelope-id echo closes the gap between the unit/fixture doubles and the real companion, converting this to an approve. Everything else in the packet is approvable.

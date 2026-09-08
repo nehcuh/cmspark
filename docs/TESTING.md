@@ -188,3 +188,9 @@ uv run --no-project --with playwright python companion/scripts/test-web-surfaces
 ## #471 设置与召唤器交互
 
 在 `nvm use 22` 后，从仓库根运行 `uv run --no-project --with playwright python chrome-extension/scripts/test-settings-pages-ui.py` 与 `uv run --no-project --with playwright python companion/scripts/test-summoner-workspace-ui.py`。使用本机 Chrome headless、真实 React/HTML 和隔离传输，覆盖四档宽度、分类草稿与深链、语音迟到回调取消、隐藏快捷键录制、许可焦点隔离及召唤器输入操作顺序；不会改写已安装程序或真实配置。
+
+## #473 对话管理
+
+`uv run --no-project --with playwright python chrome-extension/scripts/test-thread-management-ui.py`（先 `nvm use 22`）验证真实 App 在320/390/759/760/1440宽度的创建/管理入口、手动分类保存与拒绝、AI标签保留、AI提取/规则整理/图谱调用，以及320短屏下停止/风险/确认优先级。运行时传输为隔离 fixture，不连接真实 Companion。后端 `thread-digest.test.ts` 验证分类字段通过真实路由写入、AI digest 替换后 reload 仍保留、非法输入拒绝；扩展 `thread-management.test.ts` 验证 ACK/错请求/未回显字段不构成保存成功。
+
+Brand/tray (#474): `node chrome-extension/scripts/generate-icons.mjs` and `node companion/scripts/generate-tray-icons.mjs` generate shared-geometry assets. On macOS, `uv run --no-project --with pillow python companion/scripts/test-brand-rendering.py` renders the production Swift function offscreen and compares 18 size/color combinations to JS PNG output. It does not start the tray. `bash companion/src/tray/build-tray.sh` verifies native compilation. `tray-status-474.test.ts` exercises the actual compatibility menu shape and action map after the title/header removal.

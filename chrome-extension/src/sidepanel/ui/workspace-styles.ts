@@ -72,4 +72,22 @@ export const workspaceCSS = `
 .cm-settings-body input,.cm-settings-body select,.cm-settings-body textarea{max-width:100%;box-sizing:border-box}
 @media(max-width:759px){.cm-settings-panel{height:94dvh;max-height:94dvh!important;width:100%!important}.cm-settings-layout{flex-direction:column}.cm-settings-nav{display:none}.cm-settings-mobile-category{display:flex;align-items:center;gap:12px;padding:10px 16px;background:${tokens.bgMuted};border-bottom:1px solid ${tokens.border};font-size:12px;color:${tokens.textSecondary}}.cm-settings-mobile-category select{flex:1;min-width:0;min-height:36px;border:1px solid ${tokens.border};border-radius:8px;padding:6px 10px;background:${tokens.bg};color:${tokens.text};font:inherit}.cm-settings-layout .cm-settings-body{padding:16px!important}.cm-settings-status{padding:0 16px 8px}.cm-settings-page-heading h3{font-size:18px}.cm-settings-footer{padding:10px 16px!important}}
 .cm-settings-body input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),.cm-settings-body select{min-height:36px}
+
+.cm-header-new{display:none;font-size:24px}
+.cm-nav-manage{border:0;background:transparent;color:${tokens.textSecondary};font:inherit;font-size:12px;padding:6px;cursor:pointer}
+.cm-thread-manager-trigger{width:auto!important;gap:5px;padding:0 5px;font-size:12px;white-space:nowrap}
+.cm-history-panel{display:block!important;overflow-y:auto!important;overscroll-behavior:contain}
+.cm-thread-management-header{flex-wrap:wrap}
+.cm-thread-management-views{flex-wrap:wrap}
+.cm-thread-management-list{overflow:visible!important;max-height:none!important}
+.cm-thread-management-actions{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid ${tokens.border}}
+.cm-thread-management-actions button,.cm-thread-editor button{font:inherit;font-size:12px;min-height:32px;border:1px solid ${tokens.border};border-radius:8px;padding:6px 9px;background:${tokens.bgMuted};color:${tokens.text};cursor:pointer}
+.cm-thread-management-actions button:disabled,.cm-thread-editor button:disabled{opacity:.5;cursor:not-allowed}
+.cm-thread-management-help{font-size:12px;line-height:1.6;color:${tokens.textSecondary};padding:0 12px}
+.cm-thread-editor{padding:16px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid ${tokens.border};background:${tokens.bgMuted}}
+.cm-thread-editor label{display:flex;flex-direction:column;gap:6px;font-size:12px}.cm-thread-editor input{box-sizing:border-box;width:100%;min-width:0;border:1px solid ${tokens.border};border-radius:8px;padding:8px;font:inherit;background:${tokens.bg}}
+.cm-thread-editor p{font-size:12px;line-height:1.5;margin:0;color:${tokens.textSecondary};overflow-wrap:anywhere}.cm-thread-editor [role="alert"]{color:${tokens.danger}}.cm-thread-editor-actions{display:flex;justify-content:flex-end;gap:8px}
+@media(max-width:759px){.cm-header-new{display:inline-flex;flex-shrink:0}.cm-status-rail{flex-wrap:wrap}.cm-thread-manager-trigger{min-height:32px}.cm-thread-management-header{align-items:flex-start!important}}
+@media(max-width:520px){.cm-thread-row{flex-wrap:wrap}.cm-thread-row:not(.cm-thread-selecting) .cm-thread-row-content{flex-basis:100%!important}.cm-rail-brand{display:none}}
+.cm-thread-tag-origin{font-size:10px;opacity:.8}
 `

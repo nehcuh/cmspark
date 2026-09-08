@@ -1,0 +1,8 @@
+{
+  "exitCode": 1,
+  "requestedModel": "deepseek-v4-pro",
+  "modelUsage": {},
+  "is_error": true,
+  "duration_ms": 104576,
+  "hasVerdict": false
+}

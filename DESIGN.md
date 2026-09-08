@@ -35,7 +35,7 @@ One responsive conversation workspace. At wide width, a quiet left navigation
 shows new conversation, recent conversations and supporting resources. At narrow
 width, navigation opens through the text-labeled header control 导航 as an in-flow, nonmodal disclosure (maximum28dvh, independently scrollable); primary conversation keeps full
 width. Existing full history preserves search, folders, trash and bulk actions.
-StatusRail remains the single conversation header: 导航 (narrow only), task title, existing popout/history/status/more. New conversation is owned by WorkspaceNavigation; no second new-thread control in the header. Recent rows are a projection of the existing store, while full history preserves its original owner. Conversation header shows task title (existing title resolver, 新对话 fallback); page/context and pending confirmation stay
+StatusRail remains the single conversation header: 导航 (narrow only), task title, existing popout/history/status/more. New conversation uses the existing createBlankThread owner: WorkspaceNavigation on wide screens and a persistent header + below760px (#473). Recent rows are a projection of the existing store, while full history preserves its original owner. Conversation header shows task title (existing title resolver, 新对话 fallback); page/context and pending confirmation stay
 in the existing FocusBand. Knowledge/scenes/skills/MCP/apps/meetings use existing
 ContextPanelHost. The host is already vertically stacked, not a fixed-width side column: preserve that safe layout, cap it to36dvh (28dvh below560px height), and close supporting panels before opening configuration. Do not overlay pending confirmation. Settings is one named dialog with category pages; the #471 refinement below owns its navigation.
 No duplicated data loader, thread cache, Agent or confirmation center.
@@ -113,3 +113,13 @@ and file/knowledge from model configuration. Keep all pages mounted so drafts
 and safety forms survive switching; retain stable deep-link IDs and save semantics.
 Pairing/elevated-trust status remains visible across categories. Root specification:
 `docs/superpowers/plans/2026-09-08-summoner-settings-redesign.md`.
+
+## 2026-09-08 conversation management · #473
+
+Keep the approved chat visual. Narrow headers retain a + button and named conversation management; wide navigation exposes management beside recent conversations. A single ThreadList owns time/tags/manual groups/derived AI groups and visible AI extraction, rules cleanup, graph and trash entry points. Manual labels persist separately from AI digest. AI grouping is a view of the first extracted AI label and can change on re-extraction, never rewriting manual folders. Replies must confirm the matching persisted update and its fields before showing save success. The nonmodal manager stays above the composer and yields immediately to pending confirmations; it never intercepts Stop. Narrow rows put actions below readable titles. See #473 plan and tests.
+
+## Brand assets and tray status (#474)
+
+The extension and macOS app use a static connection-and-spark mark. The tray alone encodes Companion process state: green solid center for running, red hollow center for stopped, amber for unknown. No glow or texture. Geometry and sRGB colors are pinned in `scripts/lib/brand-icon.mjs`; Swift follows the same 24-unit contract and is compared by offscreen render. The app asset uses a dark rounded tile; the extension/tray use transparent backgrounds. Existing chat decorative illustrations remain unchanged.
+
+Tray title is empty and the redundant menu header is removed. Tooltip, native accessibility label and status details retain words; unknown is explicitly “状态未知”. WebSocket connectivity does not change the process-state meaning. Generated 16–32px and Retina assets require visual verification on light/dark backgrounds. See the #474 plan for coordinates, colors and rendering gates.

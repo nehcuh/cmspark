@@ -3000,6 +3000,7 @@ export async function handleMessage(
         "active_mcp_server_ids",
         "digest",
         "topic_folder",
+        "user_tags",
       ]) {
         if (Object.prototype.hasOwnProperty.call(updates, key)) {
           allowedUpdates[key] = updates[key]

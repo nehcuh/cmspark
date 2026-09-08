@@ -9,6 +9,7 @@ export const THREAD_GRAPH_SNAPSHOT_KEY = "cmspark.thread_graph_snapshot"
 /** Slim thread seed — digest only, never message bodies (R5). */
 export type ThreadGraphSlim = {
   id: string
+  user_tags?: string[]
   alias?: string
   updated_at?: string
   created_at?: string
@@ -84,6 +85,7 @@ export function slimThreadGraphRow(raw: unknown): ThreadGraphSlim | null {
   }
   return {
     id,
+    user_tags: Array.isArray(t.user_tags) ? t.user_tags.filter((tag): tag is string => typeof tag === "string").slice(0, 20).map(tag => tag.slice(0, 40)) : undefined,
     alias: typeof t.alias === "string" ? t.alias.slice(0, 200) : undefined,
     updated_at: typeof t.updated_at === "string" ? t.updated_at : undefined,
     created_at: typeof t.created_at === "string" ? t.created_at : undefined,

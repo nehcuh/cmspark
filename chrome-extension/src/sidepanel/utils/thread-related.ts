@@ -9,6 +9,7 @@ export const RELATED_TF_MIN = 0.08
 export const RELATED_TIME_WINDOW_DAYS = 7
 
 export interface RelatedThreadInput {
+  user_tags?: string[]
   id: string
   alias?: string
   updated_at?: string
@@ -94,7 +95,7 @@ function cosineSimilarity(a: Record<string, number>, b: Record<string, number>):
 }
 
 function tagSet(t: RelatedThreadInput): Set<string> {
-  const tags = t.digest?.tags
+  const tags = [...(t.user_tags || []), ...(t.digest?.tags || [])]
   if (!Array.isArray(tags)) return new Set()
   return new Set(tags.map((x) => String(x).toLowerCase()).filter(Boolean))
 }

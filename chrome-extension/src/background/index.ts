@@ -987,8 +987,12 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
 
       case "thread.update":
-        wsClient.send({ type: "thread.update", thread_id: message.threadId || message.thread_id, updates: message.updates })
-        sendResponse({ ok: true })
+        if (message.require_connected && wsClient.getState() !== "connected") {
+          sendResponse({ ok: false, error: "Companion 未连接，尚未保存" })
+          return false
+        }
+        const metadataSent = wsClient.send({ type: "thread.update", id: message.id, thread_id: message.threadId || message.thread_id, updates: message.updates })
+        sendResponse({ ok: metadataSent })
         return true
 
       case "thread.run_progress.toggle":

@@ -321,7 +321,8 @@ if [ -x /usr/bin/true ] || [ -x /bin/true ]; then
   _TRUE="/usr/bin/true"
   [ -x "${_TRUE}" ] || _TRUE="/bin/true"
   _STAGE="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-nsis-stage.XXXXXX")"
-  mkdir -p "${_STAGE}/chrome-extension"
+  mkdir -p "${_STAGE}/chrome-extension" "${_STAGE}/assets"
+  cp "${ROOT}/companion/assets/"*.ico "${_STAGE}/assets/"
   touch "${_STAGE}/node.exe" "${_STAGE}/cmspark-agent.js" "${_STAGE}/launch-hidden.vbs" "${_STAGE}/cmspark-agent.exe"
   set +e
   OUT_SEA="$(
@@ -340,6 +341,22 @@ if [ -x /usr/bin/true ] || [ -x /bin/true ]; then
   fi
 else
   echo "  skip: no true(1) for fake makensis"
+fi
+
+echo "[dynamic] wrapper refuses a missing Windows application icon"
+_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-nsis-icon.XXXXXX")"
+mkdir -p "${_STAGE}/chrome-extension" "${_STAGE}/assets"
+touch "${_STAGE}/node.exe" "${_STAGE}/cmspark-agent.js" "${_STAGE}/launch-hidden.vbs"
+cp "${ROOT}/companion/assets/"tray-icon-*.ico "${_STAGE}/assets/"
+set +e
+OUT_ICON="$(CMSPARK_STAGING_DIR="${_STAGE}" CMSPARK_MAKENSIS="${_TRUE:-/usr/bin/true}" bash "${WIN_NSIS}" 2>&1)"
+RC_ICON=$?
+set -e
+rm -rf "${_STAGE}"
+if [ "${RC_ICON}" != "0" ] && echo "${OUT_ICON}" | grep -q 'assets/cmspark.ico'; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1)); echo "  FAIL: missing application icon must fail before installer generation" >&2
 fi
 
 echo "[dynamic] missing makensis without REQUIRE → skip (exit 0)"

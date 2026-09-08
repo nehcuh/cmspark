@@ -1,3 +1,4 @@
+import { threadTags, aiThreadGroup } from "../sidepanel/utils/thread-management"
 // Full-page Obsidian-like thread graph.
 // Spec: docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
 // v1.1+: tag colors · hover labels · floating chrome · nit closeout
@@ -68,8 +69,8 @@ function radiusForDegree(deg: number): number {
 }
 
 function isUntaggedSlim(t: ThreadGraphSlim): boolean {
-  const tags = t.digest?.tags
-  return !tags || tags.length === 0
+  // Extraction eligibility is AI-only; human labels do not replace a digest.
+  return !aiThreadGroup(t)
 }
 
 export function ThreadGraphApp() {
@@ -216,7 +217,7 @@ export function ThreadGraphApp() {
         const t = threads.find((x) => x.id === id)
         if (!t) return false
         const title = displayTitle(t).toLowerCase()
-        const tags = (t.digest?.tags || []).join(" ").toLowerCase()
+        const tags = threadTags(t).join(" ").toLowerCase()
         return title.includes(q) || tags.includes(q) || id.toLowerCase().includes(q)
       })
     }
@@ -865,6 +866,7 @@ export function ThreadGraphApp() {
                 >
                   {displayTitle(focusThread)}
                 </div>
+                {!!focusThread.user_tags?.length && <div style={styles.tags}>人工标签：{focusThread.user_tags.join("、")}</div>}
                 {(focusThread.digest?.tags || []).length > 0 && (
                   <div style={styles.tags}>
                     {(focusThread.digest?.tags || []).map((tg) => {
