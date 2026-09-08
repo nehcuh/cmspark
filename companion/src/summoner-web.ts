@@ -1746,7 +1746,7 @@ try{
   var STT_DICTATION_MS=45000;
   var STT_MEETING_MS=8000;
   var STT_MIC_FAIL="请在系统设置中打开 127.0.0.1 的麦克风";
-  var STT_NEED_MODEL="侧栏 ⋯ → 设置 → 听写 → 下载组件/模型";
+  var STT_NEED_MODEL="侧栏 ⋯ → 设置 → 输入与语音 → 下载组件/模型";
   function sttUserCopy(code, fallback){
     var c=String(code||"").toLowerCase();
     if(c.indexOf("model")>=0 || c.indexOf("binary")>=0 || c.indexOf("engine")>=0) return STT_NEED_MODEL;

@@ -10,7 +10,9 @@
  * amnesia). ALL rules live in the shared module security/redact-rules.ts —
  * history/store.ts consumes the same one (golden fixtures + lock-step tests
  * pin parity). In-flight LLM tool rows stay unredacted; only
- * createToolResultMessage → addMessage goes through here.
+ * createToolResultMessage → addMessage (tool-role) and
+ * persistAssistantDraft → addMessage (assistant tool_calls.arguments)
+ * go through here.
  */
 import {
   EXEC_FOLD_TOOLS,
@@ -265,4 +267,46 @@ export function redactToolPayloadForPersistence(
     safeResult = redactSensitiveKeysDeep(result)
   }
   return { params: safeParams, result: safeResult }
+}
+
+/** OpenAI-shaped assistant tool_call as stored on the persisted assistant row. */
+export type AssistantToolCallForPersist = {
+  id: string
+  type: "function"
+  function: { name: string; arguments: string }
+}
+
+/**
+ * Redact assistant tool_calls.arguments before durable thread JSON persist.
+ * Clones; does not mutate in-flight LLM rows. Invalid JSON is replaced with a
+ * stub — never stored raw (truncated streams can carry partial secrets).
+ */
+export function redactAssistantToolCallsForPersistence(
+  toolCalls: readonly AssistantToolCallForPersist[] | null | undefined,
+): AssistantToolCallForPersist[] {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return []
+  return toolCalls.map((tc) => redactOneAssistantToolCall(tc))
+}
+
+function redactOneAssistantToolCall(
+  tc: AssistantToolCallForPersist,
+): AssistantToolCallForPersist {
+  const name = typeof tc?.function?.name === "string" ? tc.function.name : ""
+  const rawArgs = typeof tc?.function?.arguments === "string" ? tc.function.arguments : ""
+  let argumentsOut: string
+  try {
+    const params = JSON.parse(rawArgs)
+    const { params: safeParams } = redactToolPayloadForPersistence(name, params, null)
+    argumentsOut = JSON.stringify(safeParams === undefined ? {} : safeParams)
+  } catch {
+    argumentsOut = JSON.stringify({ _redacted: "invalid_json", len: rawArgs.length })
+  }
+  return {
+    id: tc.id,
+    type: tc.type ?? "function",
+    function: {
+      name,
+      arguments: argumentsOut,
+    },
+  }
 }

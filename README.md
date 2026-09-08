@@ -13,7 +13,7 @@ CMspark 是本机 Companion + Chrome 扩展（Plasmo）的双层 Agent。人盯�
 
 | 面 | 入口 | 做什么 |
 |----|------|--------|
-| **Capture** | 热键 / 工具栏 C / 侧栏「弹出对话框」 | HTML 卡 **360×420**（流式出字、📎、听写、会议）。**永不** Allow/Deny |
+| **Capture** | 热键 / 工具栏 C / 侧栏「弹出对话框」 | HTML 卡默认 **1040×760**（紧凑切换 **360×420**；流式出字、📎、听写、会议）。**永不** Allow/Deny |
 | **Operate** | Side Panel ~320px，或后台 CDP | 盯着页时聊+点；人不在侧栏时仍可动已登录 Chrome |
 | **Confirm** | 确认台 / Mac 托盘 | 高危审批与急停。Win/Linux 必须开 Chrome 确认台 |
 | **租手** | Outbound MCP + `cmg_` 钥匙 | 外部编程助手当 client，调 `cmspark__*`。实验、非 default-on |
@@ -50,13 +50,15 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 
 | 归属 | 能力 | 说明 | 文档 |
 |------|------|------|------|
-| **Capture** | 召唤器 HTML 卡 | 360×420；流式出字；永不审批 | 本页 [召唤器](#召唤器capture) · [PRODUCT.md](PRODUCT.md) |
+| **Capture** | 召唤器 HTML 卡 | 默认 1040×760；紧凑 360×420；流式出字；永不审批 | 本页 [召唤器](#召唤器capture) · [PRODUCT.md](PRODUCT.md) |
 | **L0 · 主体** | 自然语言 · 多线程 · 历史 | Side Panel ChatShell（空态「要对这页做什么」/「弹出对话框」）；线程隔离；SQLite 操作史 | 本页 [使用指南](#使用指南) |
 | **L0 产品特性** | Obsidian 导出 · Mermaid · NotebookLM | 导出/渲染/导入（**非**组合原语） | [ADR-008](docs/adr/008-obsidian-export.md) · [009](docs/adr/009-mermaid-rendering.md) · [notebooklm-user-guide](docs/notebooklm-user-guide.md) |
 | **L0 输入** | 听写+ · 本机 STT · 会议记录 | classic/连续/按住热键；Whisper 渐进假设；场景「会议」工作台 | [meeting-and-dictation-user-guide](docs/meeting-and-dictation-user-guide.md) · [ADR-023](docs/adr/023-voice-local-stt-path-b.md) · [ADR-024](docs/adr/024-dictation-plus-asr-refiner-meeting.md) |
 | **L1 · 浅层** | 浏览器 CDP 操控 | 标签页、页面读写、点击/填表、截图、导航等 | 本页 [浏览器操作示例](#浏览器操作示例) |
 | **L1** | Cookie 信任域 | `trusted_domains` 门控 cookie；SSO 场景基础 | [Cookie 信任域](#cookie-信任域) · [ADR-005](docs/adr/005-cookie-trust-domain-security.md) |
-| **组合面** | Skills · Knowledge | Markdown+YAML Skills；知识注入 System Prompt | [Skills](#技能系统skills) · [Knowledge](#知识库knowledge) |
+| **组合面** | Skills · Knowledge | Markdown+YAML Skills；知识默认 TF-IDF top-k 注入 System Prompt | [Skills](#技能系统skills) · [Knowledge](#知识库knowledge) |
+| **组合面** | 知识图谱 | 低语料画布 + 可选「让 AI 整理」（#427）；非本体/双链 | 本页 [知识库](#知识库knowledge) |
+| **组合面** | `search_threads` / `search_knowledge` | L1 只读：历史标题/摘要与知识笔记（#439）；不回消息原文 | [CHANGELOG `[0.6.5]`](CHANGELOG.md) |
 | **组合面** | MCP（入站） | 外接 stdio/HTTP server，`mcp__<server>__<tool>` | [mcp.md](docs/mcp.md) |
 | **租手** | Outbound MCP | 我们当 server：`cmspark__*` + `cmg_`（≠ `ws_secret`，≠ 编程接力） | [mcp.md 5 分钟租手](docs/mcp.md#outbound-mcp) · [ADR-022](docs/adr/022-outbound-mcp-server.md) |
 | **组合面** | Mission Pack / 企业模块 | 任务包装配线程；appsec / workspace / shell / netsec | [mission-pack-usage](docs/mission-pack-usage.md) |
@@ -65,7 +67,8 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 | **Autonomy** | Multi-Agent · Mission Board（P0） | Orchestrator + tab 锁；黑板 `board_*` | [multi-agent-user-guide](docs/multi-agent-user-guide.md) |
 | **Autonomy** | 巡航档位 · plan_readonly · 无人值守 loop | 发送键旁四档芯片（#325）；线程级只读计划帽（#327）；L-1/L-3/L-5 loop（#386–#391，**默认关**；独立 ADR 待补） | [CHANGELOG `[0.6.0]`](CHANGELOG.md) |
 | **组合面** | 专家团队（`kind: expert`） | 七个预置角色 Pack + 一张 L2 卡组队（#366–#371；persona ≠ 权限） | [CHANGELOG `[0.6.0]`](CHANGELOG.md) · [ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)/[020](docs/adr/020-capability-model-three-axes.md) 修订段 |
-| **L2 · 深层 / opt-in** | Computer Use · Host Use · Apps | 桌面操控、宿主读写/应用白名单；平台相关、默认关 | [computer-use-user-guide](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) |
+| **L2 · 深层 / opt-in** | Computer Use · Host Use · Apps | 桌面操控、宿主读写/应用白名单；平台相关、默认关。CU 视觉定位仍 **实验**（仅 Qwen3-VL；#363 摘帽门未过） | [computer-use-user-guide](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) |
+| **L2 / opt-in** | 内嵌终端（PTY） | Darwin-only；默认关；Windows/Linux `unsupported`（#432） | [CHANGELOG `[0.6.4]`](CHANGELOG.md) |
 | **运维** | Daemon · 托盘 · 配对 | 开机自启；macOS 托盘 + 配对码 | 本页 [后台常驻服务](#后台常驻服务跨平台) |
 
 ### 系统拓扑
@@ -209,7 +212,7 @@ Companion 默认在 `ws://127.0.0.1:23401` 启动 WebSocket 服务。
 ### 快速开始
 
 1. **装好 Companion + 扩展**（见上文 [安装](#安装)）。托盘起来后扩展要配对。
-2. **开口（Capture）**：热键、工具栏 **C**，或侧栏顶栏 **弹出对话框**，打开同一张 HTML 卡（360×420，流式出字）。失败 toast：**请点工具栏 C**。
+2. **开口（Capture）**：热键、工具栏 **C**，或侧栏顶栏 **弹出对话框**，打开同一张 HTML 卡（默认 1040×760，流式出字；可切紧凑 360×420）。失败 toast：**请点工具栏 C**。
 3. **盯着页面时（Operate）**：点工具栏 C 打开 Side Panel；空态是「要对这页做什么」+ 当前页 + 3 个芯片，不是空白聊天机器人。
 4. **危险（Confirm）**：Allow/Deny **只**在确认台 / Mac 托盘。悬浮卡上没有批准按钮。
 5. **租手**：Codex 等走 Outbound MCP（[5 分钟租手](docs/mcp.md#outbound-mcp)），钥匙 `cmg_`，**不要**把 `ws_secret` 当 grant。
@@ -220,7 +223,7 @@ Companion 默认在 `ws://127.0.0.1:23401` 启动 WebSocket 服务。
 
 Mac 菜单/热键与侧栏「弹出对话框」是**同一张卡**。卡上：问答、📎、听写、开始/结束会议、**打开浏览器并打开侧栏**。Companion 进程不调 `chrome.*`；扩展 SW 才开侧栏。
 
-- 尺寸：**360×420**（代码 `OVERLAY_WINDOW_SIZE`）
+- 尺寸：默认 **1040×760**（代码 `OVERLAY_WINDOW_SIZE`）；紧凑切换 **360×420**
 - **永不** Allow/Deny；确认永远在确认台
 - HTML 卡跟 `chat.token` **流式出字**（Swift 旧条本已流式）
 - 不是 WorkBuddy 五轨工作台；禁止「去侧栏批准」文案
@@ -331,7 +334,7 @@ Knowledge 是**背景资料注入机制**，告诉 AI「需要了解什么」。
 
 **两种知识类型**：
 - `domain_knowledge`：全局知识，不绑定网站（如 API 文档、编码规范）
-- `site_knowledge`：绑定特定域名；在**自动**模式下，当前活动标签页域名匹配时自动注入
+- `site_knowledge`：绑定特定域名；在**自动**模式下，当前活动标签页 hostname 命中只做 **候选加权**，再走 TF-IDF top-k / 预算 / 分数门槛（不是该站全灌）
 
 **知识文档格式**：
 
@@ -361,12 +364,16 @@ Sprint 周期两周，每周一开始。
 提交前需关联 Confluence 文档链接。
 ```
 
-**三种注入模式**（在「知识」面板顶部切换，按线程保存）：
-- **自动**（默认，推荐）：手动勾选的知识 ∪ **当前活动标签页 hostname 匹配的 `site_knowledge`**
-- **全选**：所有知识文档全部注入（上下文大，适合文档研读）
-- **按需**：只用手动勾选（✓）的文档
+**三种注入模式**（在「知识」面板顶部切换，按线程保存；默认 **智能匹配**）：
+- **自动**（默认，推荐）：按这轮问题做 TF-IDF 打分，文档级 top-k **`KNOWLEDGE_DOC_TOPK_AUTO=5`**；已勾选（钉住）的优先全入。站点 hostname 命中只做 **候选加权**（`KNOWLEDGE_SITE_BOOST`），**不是**「该站全部文档都灌进 prompt」。
+- **全选**：在**全库**里同样检索，top-k **`KNOWLEDGE_DOC_TOPK_ALL=8`**，仍受条数/长度上限——**不是**「所有知识文档全部注入」。
+- **按需**：只用手动勾选（✓）的文档（不打分；超预算从末尾截断）。
+
+跨文档硬预算 **`KNOWLEDGE_INJECT_BUDGET_CHARS=8000`**；未达分数门槛 **`KNOWLEDGE_SCORE_MIN=0.10`** 的不入选（钉住除外）。关掉智能匹配才退回旧行为（自动 = 勾选 ∪ 站点候选；全选 = 列表序灌库，仍截预算）。
 
 #### 站点知识如何自动匹配
+
+hostname 匹配是 **候选过滤 / 排序加权**，不是「匹配到的站点文档全部注入」。默认智能匹配仍走上面的 top-k + 预算 + 分数门槛。
 
 1. **文档侧**：frontmatter 必须同时具备  
    - `type: site_knowledge`  
@@ -405,7 +412,7 @@ Sprint 周期两周，每周一开始。
 **与「技能」面板的边界**：Skills 列表只含流程类 skill（`prompt_template` 等）；`knowledge/` 下的笔记（含 vault 的 goal/task 等）只出现在「知识」面板，不会混进「技能」。
 
 **典型使用场景**：
-1. **内部系统操作**：把 URL 结构、登录方式写成 `site_knowledge`，绑定系统域名；打开该站再聊天即自动带上  
+1. **内部系统操作**：把 URL 结构、登录方式写成 `site_knowledge`，绑定系统域名；打开该站再聊天时该篇进入自动模式候选（仍受 top-k / 预算 / 分数门槛）  
 2. **研发助手**：团队规范、架构说明导入为 `domain_knowledge`  
 3. **产品调研**：竞品资料按域名拆成多篇 `site_knowledge`，浏览对应站时自动对齐上下文  
 
@@ -842,8 +849,8 @@ make package
 ```bash
 make package-macos
 # 产出：
-#   dist-package/CMspark-v0.6.0-macOS.dmg   ← 安装包
-#   dist-package/cmspark-v0.6.0-macos-arm64.zip  ← 原始压缩包
+#   dist-package/CMspark-v0.6.7-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.6.7-macos-arm64.zip  ← 原始压缩包
 ```
 
 Windows 打包流程（**官方 zip + Setup.exe / package.sh**）：
@@ -977,4 +984,4 @@ cmspark/
 
 ---
 
-> **当前阶段（0.6.0）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**侧栏 UI 重构 + 巡航档位/plan_readonly/无人值守 loop 三件套 + 专家团队 v1 + CU 完整性链**（0.6.0 主题，值守默认关）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（0.6.7）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。Capture 默认 **1040×760**（紧凑 **360×420**）· 知识默认 TF-IDF top-k 注入 · 知识图谱（#427）· Darwin 内嵌终端（#432，默认关）· `search_threads`/`search_knowledge`（#439）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**（`node.exe` + `cmspark-agent.js`）；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**侧栏 UI 重构 + 巡航档位/plan_readonly/无人值守 loop 三件套 + 专家团队 v1 + CU 完整性链**（0.6.0 主题，值守默认关）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**（#363 摘帽门未过）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。

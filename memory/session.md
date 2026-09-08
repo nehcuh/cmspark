@@ -2,6 +2,16 @@
 
 ## Current Session
 
+### S107 (2026-09-08) [pull main · NSIS 换装 · 多路对抗体检]
+- **任务**：拉最新 → `package.sh windows-x64` + `/S` 替换本机 → 多路独立对抗彻底体检。
+- **pull** `[executed]`：stash session.md → `main` ff `7ab36063` → **`4a63de56`**（#485 workspace 归属；落后 270 commits）。stash pop 冲突，保留 origin session.md 后写本条。
+- **包装** `[executed]`：`CMSPARK_REQUIRE_NSIS=1` Git Bash `package.sh windows-x64`（先 npm ci companion+extension）。zip **81M** `cmspark-v0.6.6-windows-x64.zip` + **52M** `CMspark-Setup-v0.6.6.exe`。staging **无** SEA；whisper win-x64 + ort napi win32/x64 + @lydell/node-pty 已入。
+- **换装** `[executed]`：daemon 本未跑；`/S` exit 0。ARP **0.6.6**。`wscript launch-hidden.vbs` → **3s** `127.0.0.1:23401` LISTENING（pid 17588 daemon + 17560 tray）。`cmspark-agent v0.6.6`；扩展 manifest 0.6.6。INSTDIR 残留 `gif.jpg`/`gifcode_test`（安装器 overlay 不wipe）。未改用户意图配置。
+- **对抗** `[executed]`：6 路独立。A PRODUCT **REJECT** · B CORR **AWN** · C SEC **AWN** · D SKEPTIC **REJECT** · E ARCH **AWN 6.6/C+** · F UX **REJECT**。A+D 独立命中：文档 0.6.0 vs 锁 0.6.6；README 全选灌库 vs TF-IDF top-k（**S106 同洞**）；Capture 360×420 vs `OVERLAY_WINDOW_SIZE` 1040×760。UX：Host「收起」unmount `meeting.end`；「设置→听写」死路径。合成 `docs/audit/reviews/s107-health-20260908/synthesis.md`。
+- **不阻塞狗食**（已换装 0.6.6）。**阻塞诚实发版**：前门文档 + 知识注入 + Capture 尺寸 + 会议收起文案。
+- **双路复审** `[executed]`：claude **AWN** + kimi **AWN**（`both_ok=true`）。五条 BLOCK 两路独立 TRIGGERED。NIT：听写死路径更宽（506/768/936）；unmount `meeting.end` 勿删、改 Host 文案。`docs/audit/reviews/s107-health-20260908/dual-*.md`。
+- **0.6.7 诚实关门** `[executed]`：lockstep 0.6.7。L1 文档 grok · L2 UX grok · L4 脱敏 grok · L3 CLI 本会话（claude -p 空转）。互审 kimi **AWN** + grok **AWN**；Pi XML 失败；Claude 空转杀掉。折 NIT：MeetingPanel「设置→语音」；AGENTS/CONTRIBUTING 余项。package-gates 125/0；cli+redact 11/11；diarize-copy 5/5；companion tsc clean。未再编 NSIS（本机仍 0.6.6 包）。#230 仍冻。
+
 ### S106 tail (2026-09-06) [0.6.1 打包换装]
 - make package-macos → CMspark-v0.6.1-macOS.dmg（80M）→ /Applications 换装；验证：Info.plist 0.6.1、daemon 23401 LISTEN、tray running、扩展 WS 认证。
 - Recorded: yes — merge-and-cleanup-separate-steps / eval-gate-fail-check-harness-first 入 instincts

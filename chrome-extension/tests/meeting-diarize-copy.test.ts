@@ -27,7 +27,7 @@ test("formatMeetingDiarizeStatus embedding: 说话人嵌入 · 本机 · 非身�
 
 test("mapMeetingDiarizeError: model-missing guidance, no silent fallback (#260)", () => {
   const guidance = mapMeetingDiarizeError("embedding_model_required")
-  assert.match(guidance, /设置 → 听写方式/)
+  assert.match(guidance, /设置 → 输入与语音 → 听写方式/)
   assert.match(guidance, /下载/)
   assert.match(guidance, /不会静默落回/)
   assert.equal(/识别出是谁|声纹身份|声纹/.test(guidance), false, "禁止身份识别暗示")

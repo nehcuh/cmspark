@@ -503,13 +503,13 @@ export function MeetingPanel(props: {
         return
       }
       if (!state.voicePrivacyAckV2) {
-        setError("请先确认下方「本机语音隐私说明」（或：设置 › 听写 › 启用本机转写）")
+        setError("请先确认下方「本机语音隐私说明」（或：设置 → 输入与语音 → 启用本机转写）")
         setPhase("idle")
         sendViaRuntime({ type: "meeting.end", v: 1, id })
         return
       }
       if (!localModelReady || !localBinaryReady) {
-        setError("本机转写模型或二进制未就绪。请到设置 → 语音 下载模型后再开始会议录音。")
+        setError("本机转写模型或二进制未就绪。请到设置 → 输入与语音 下载模型后再开始会议录音。")
         setPhase("idle")
         sendViaRuntime({ type: "meeting.end", v: 1, id })
         return
@@ -765,11 +765,11 @@ export function MeetingPanel(props: {
       return
     }
     if (!state.voicePrivacyAckV2) {
-      setError("请先确认下方「本机语音隐私说明」（或：设置 › 听写 › 启用本机转写）")
+      setError("请先确认下方「本机语音隐私说明」（或：设置 → 输入与语音 → 启用本机转写）")
       return
     }
     if (!localModelReady || !localBinaryReady) {
-      setError("本机转写模型或二进制未就绪。请到设置 → 语音 下载模型。")
+      setError("本机转写模型或二进制未就绪。请到设置 → 输入与语音 下载模型。")
       try {
         chrome.runtime.sendMessage({ type: "voice.model.get_state" })
       } catch {
@@ -933,7 +933,7 @@ export function MeetingPanel(props: {
       return
     }
     if (!state.voicePrivacyAckV2) {
-      setError("导入音频需先确认「本机语音隐私说明」（见下方卡片，或设置 › 听写 › 启用本机转写）")
+      setError("导入音频需先确认「本机语音隐私说明」（见下方卡片，或设置 → 输入与语音 → 启用本机转写）")
       return
     }
     if (!localModelReady || !localBinaryReady) {
@@ -1268,7 +1268,7 @@ export function MeetingPanel(props: {
             本机语音隐私说明
           </div>
           <p style={{ margin: "0 0 6px", fontSize: 10 }}>
-            会议本机录音 / 上传音频转写前须确认。也可在：侧栏 ⋯ → 设置 → 听写 →
+            会议本机录音 / 上传音频转写前须确认。也可在：侧栏 ⋯ → 设置 → 输入与语音 →
             「启用本机转写」。
           </p>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
@@ -1300,7 +1300,7 @@ export function MeetingPanel(props: {
           </button>
           {!localModelReady || !localBinaryReady ? (
             <div style={{ marginTop: 6, fontSize: 10, color: tokens.warning }}>
-              模型或本机组件未就绪时：侧栏 ⋯ → 设置 → 听写 → 下载组件/模型 → 启用本机转写。
+              模型或本机组件未就绪时：侧栏 ⋯ → 设置 → 输入与语音 → 下载组件/模型 → 启用本机转写。
             </div>
           ) : null}
         </div>
@@ -1580,7 +1580,7 @@ export function MeetingPanel(props: {
             disabled={busy || capturing || !ack}
             onClick={() => runAutoDiarize("embedding")}
             style={btnStyle(true)}
-            title="上传音频段 → 本机 ONNX 说话人嵌入 + 聚类；只标匿名发言人N，非身份识别（需先在 设置 → 听写方式 下载说话人分离模型）"
+            title="上传音频段 → 本机 ONNX 说话人嵌入 + 聚类；只标匿名发言人N，非身份识别（需先在 设置 → 输入与语音 → 听写方式 下载说话人分离模型）"
           >
             自动标说话人
           </button>

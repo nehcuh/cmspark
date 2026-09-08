@@ -1,0 +1,100 @@
+kimi version 0.40.1
+• This is a read-only review task. I need to verify many claims. Let me dispatch parallel checks or do them myself. There are ~9 items, many file reads. I could delegate to explore agents, but I can also do it directly. Given the number of independent checks, a swarm of explore agents might be efficient, but the instructions say try to reject — I need actual evidence. Let me do direct checks in parallel batches.
+
+  Let me start with several parallel tool calls:
+
+  1. Read companion/package.json, chrome-extension/package.json, AGENTS.md
+  2. Find installer.nsi
+  3. README knowledge inject TF-IDF top-k — need to find code
+  4. Capture default 1040×760
+  5. PRODUCT file — find docs/PRODUCT*.md
+  6. ContextPanelHost meetingCaptureActive
+  7. MeetingPanel unmount meeting.end
+  8. 设置 → 听写 gone from MeetingPanel / summoner-web / meeting-diarize-copy
+  9. index.ts --version exit 0; status/stop not "not yet implemented"
+  10. persistAssistantDraft redactAssistantToolCallsForPersistence
+  11. CHANGELOG
+
+  Let me batch reads and greps.
+
+• Check installer.nsi fallback line (the claim says "fallback" — check how PRODUCT_VERSION is defined, fallback if not defined?). Let me read installer.nsi line 14 area. Also AGENTS.md shows 0.6.7 in the version header (yes, "Version: 0.6.7" and footer v0.6.7). Good.
+
+  Next: README knowledge inject TF-IDF top-k; Capture default 1040×760; PRODUCT file; ContextPanelHost; MeetingPanel; 设置→听写； index.ts; persistAssistantDraft; CHANGELOG.
+
+• Version pins confirmed. TF-IDF top-k for knowledge inject: README knowledge inject — need to verify "README knowledge inject is TF-IDF top-k not 灌库". Where is README knowledge inject? Maybe in skill-engine or somewhere injecting README knowledge. Search "README" knowledge inject. Also Capture default 1040×760 — found OVERLAY_WINDOW_SIZE = { w: 1040, h: 760 } in shell-open.ts — but that's overlay window size; the claim is "Capture default 1040×760". Need to check what capture uses. Let me search for capture defaults in companion.
+
+  PRODUCT file — glob docs/PRODUCT*.md found nothing. Maybe PRODUCT.md at root or elsewhere.PRODUCT.md confirmed: 1040×760 default inner with code reference, version lock 0.6.7, remaining = #230 freeze + #228 scored (not #258–260). Wait — item 3 says "PRODUCT remaining: #230 and #228 only; not #258–#260 as remaining". Line 5: "Remaining work: #230 freeze... T1 #228 scored, do not expand outbound profile." Good. And it mentions #228. #258-#260 not mentioned. Good.
+
+  Now "README knowledge inject is TF-IDF top-k not 灌库" — where is this? Maybe in README.md itself, or it's about how companion injects knowledge from a README... Maybe it's about "workspace README" injected into context? Let me search for something like "readme" case-insensitive in companion/src (previous grep was case-sensitive pattern with -i true but pattern "README" — I passed -i true so it matched readme too, results showed ReadMessage etc). Hmm the matches are all "ReadMessage" / "README.md" references. So "README knowledge inject" might be a docs/CHANGELOG claim. Check CHANGELOG for [0.6.7] entries to understand what items refer to.
+
+  Let me read CHANGELOG.md top.
+
+• CHANGELOG checks out: [0.6.7] exists dated 2026-09-08, Unreleased is empty (just header at line 5, then [0.6.7] at line 7). The 0.6.7 section includes archived previously-Unreleased bullets — that's fine, they're inside [0.6.7], not Unreleased.
+
+  ContextPanelHost: meetingCaptureActive → 「结束并收起」 confirmed. Now need to verify:
+  - MeetingPanel unmount still sends meeting.end
+  - ContextPanelHost close behavior — does clicking 结束并收起 end meeting? Check lines ~277-300.
+  - 「设置 → 听写」 gone from MeetingPanel / summoner-web / meeting-diarize-copy; item 听写方式 under 输入与语音 OK
+  - index.ts --version exit 0; status/stop not "not yet implemented"
+  - persistAssistantDraft uses redactAssistantToolCallsForPersistence
+  - README knowledge inject TF-IDF top-k — check README.md
+
+  Let me do parallel greps/reads.persistAssistantDraft uses redactAssistantToolCallsForPersistence — confirmed (adapter.ts:1178).
+
+  设置 → 听写 gone: grep found only 设置 → 输入与语音 references. Need to confirm no remaining 「设置 → 听写」 anywhere. The greps above show none matched for 听写 variant (all results were 输入与语音）. Good.
+
+  MeetingPanel unmount sends meeting.end — need to find the unmount effect. My grep results got truncated; let me search specifically for "meeting.end" in MeetingPanel.tsx and ContextPanelHost.
+
+  Also index.ts --version/-V/version exit 0; status/stop not "not yet implemented". Read companion/src/index.ts relevant portions.
+
+  Also README knowledge inject TF-IDF top-k — check README.md for claims about 灌库 vs top-k. The CHANGELOG says README claims were fixed. Check README for "灌库" or "top-k".MeetingPanel unmount sends meeting.end — confirmed (lines 600-613).
+
+  index.ts: need to confirm --version/-V/version handling exits 0 and status/stop map to daemon status/stop. Let me read index.ts around the main switch and version handling. Also confirm "not yet implemented" absence for status/stop.index.ts verified: --version/-V/version print and exit 0; status/stop call handleDaemonStatus/handleDaemonStop. Also check no "not yet implemented" string anywhere in index.ts — the grep for "not yet" found nothing (only case matches shown). Good.
+
+  Also check resolveCliVersion returns 0.6.7 — reads from package.json presumably. Quick check cli-version.ts? The CHANGELOG claims "ACP / outbound serverInfo / lockfile 齐 0.6.7" — not in must-verify list. Skip; must-verify items are the 9 listed.
+
+  Remaining: README knowledge inject TF-IDF top-k （灌库 check in README.md). Let me grep README for 灌库/top-k/TF-IDF and knowledge sections. Also check GOAL file G19? Not in must-verify. Also "听写方式 under 输入与语音 is OK" — confirmed OK.
+
+  Also verify ContextPanelHost: 结束并收起 shown when meetingCaptureActive, and close behavior ends meeting (unmount of MeetingPanel sends meeting.end — confirmed). Let me read ContextPanelHost lines 270-300 quickly to confirm the label logic. Grep earlier showed lines 277-295 with 结束并收起. Good enough.
+
+  Also item 2: "Capture default 1040×760" — PRODUCT.md confirms and code OVERLAY_WINDOW_SIZE = {w:1040, h:760}. But should verify OVERLAY_WINDOW_SIZE is actually used as default for capture window. Quick check shell-open.ts.
+
+  README knowledge inject: grep README.md.README knowledge inject confirmed as TF-IDF top-k, not 灌库 (line 59, 337). Let me also check the README knowledge section around lines 367+ for injection modes to confirm no "全选=灌库" claim remains — grep showed truncated at 50 lines. Let me check remaining occurrences and also check 灌库 nowhere in README (the grep pattern included 灌库 — no match lines shown, so it's absent). Good.
+
+  Also should double-check: does README still say "知识「全选」" mode description as 灌库？ The grep with 灌库 found no matches in README. Good.
+
+  Also need to check docs still referencing 0.6.0 as live cut? REJECT criteria: "docs still 0.6.0 as live cut". Let me quickly grep for stale version references in key docs (README version, docs/architecture etc). Check README for version mention and a quick grep for "0.6.0" as current version in README/GOAL/architecture. Actually REJECT if "docs still 0.6.0 as live cut" — check README top and any version lock lines.
+
+  Also verify ACP / outbound serverInfo versions? Not in must-verify; only REJECT criteria mention SEA official payload, outbound default expanded, docs 0.6.0. Quick greps:
+  - SEA official payload: installer.nsi says SEA must NOT emit this OutFile — fine.
+  - outbound default expanded: CHANGELOG 0.6.7 header says #228 禁扩默认 outbound. Check companion outbound default profile quickly? That's a heavier check; maybe grep for outbound_l1_default tool list to see it's still 8 tools. Light check.
+  - docs 0.6.0: grep for version in README.
+
+• README shows 当前阶段（0.6.7）, capture 1040×760, TF-IDF top-k, #228 禁扩默认 outbound. No stale "0.6.0 as live cut" — the 0.6.0 references are historical changelog citations, fine.
+
+  One nit: MeetingPanel.tsx:512 still says "请到设置 → 语音 下载模型后再开始会议录音。" — that's 「设置 → 语音」, not 「设置 → 听写」. The claim item 5 was about 「设置 → 听写」 being gone; the actual text is 设置 → 语音， which is also arguably stale if the settings nav is now 输入与语音. Per CHANGELOG the recovery path was renamed 设置 → 听写 → 设置 → 输入与语音. MeetingPanel.tsx:512 says 设置 → 语音 — neither 听写 nor 输入与语音. That could be a nit (minor doc inconsistency in UI copy). Let me check whether 设置 → 语音 exists anywhere as a nav. The settings nav is eight-category; the item under 输入与语音 is 听写方式. So "设置 → 语音" is likely stale copy — a nit worth flagging.
+
+  Also check outbound default profile not expanded — check the default profile tool list quickly. grep for the default profile definition.Outbound default profile remains OUTBOUND_MCP_ALLOWLIST (the documented 8) — not expanded. Good.
+
+  One remaining item to spot-check: the MeetingPanel.tsx:512 copy "请到设置 → 语音 下载模型" — is 「设置 → 语音」 a live path? Settings nav is 八类 with 输入与语音. The must-verify item 5 only says 「设置 → 听写」 gone and item 听写方式 under 输入与语音 OK. 「设置 → 语音」 is stale-ish copy but not a listed pin; it's a nit candidate.
+
+  Also, should double check summoner-web and meeting-diarize-copy don't contain 设置 → 听写 — earlier grep across chrome-extension/src and companion/src found no 设置 → 听写 matches (all matches were 输入与语音）. Confirmed.
+
+  Also check ContextPanelHost behavior — does clicking 结束并收起 actually end the meeting or just collapse (relying on unmount to send meeting.end)? Line 281: closeEndsMeeting = activePanel === "meeting" && meetingCaptureActive; title 结束并收起. The unmount effect sends meeting.end. Fine.
+
+  Also verify lockfile versions? CHANGELOG claims extension lockfile now 0.6.7; not in must-verify but cheap to check quickly. Item 1 lists package.jsons + installer fallback + AGENTS.md only. AGENTS.md says Version 0.6.7 — confirmed from system listing.
+
+  Also REJECT criterion: SEA official payload — installer.nsi comments say SEA must NOT emit this OutFile, and official producer is build-windows-installer.sh. Check build-windows-exe.ps1 doesn't emit CMspark-Setup? Quick grep for OutFile in ps1. Cheap check.
+
+  Also "docs still 0.6.0 as live cut" — README says 当前阶段（0.6.7). GOAL/architecture? CHANGELOG claims GOAL and architecture lock 0.6.7. Quick grep for "0.6.7" in GOAL.md and docs/architecture.md.
+
+• All checks done. Lockfile top-level versions are 0.6.7 for both (the other 0.6.x hits are transitive dependencies — normal). SEA ps1 explicitly does not produce the official Setup.exe. Docs lock 0.6.7 (0.6.0 references are historical/index-level, not "live cut").
+
+  One nit found: MeetingPanel.tsx:512 still says "请到设置 → 语音 下载模型后再开始会议录音。" — inconsistent with the renamed 设置 → 输入与语音 path used everywhere else. Not one of the listed pins (pin was specifically 「设置 → 听写」), and it doesn't block ship, but it's stale recovery-path copy in the same file the patch touched. That justifies APPROVE_WITH_NITS rather than clean APPROVE.
+
+  Let me verify line 512 context quickly — I already saw it in the grep: `setError("本机转写模型或二进制未就绪。请到设置 → 语音 下载模型后再开始会议录音。")`. Yes, stale-ish. Check whether any settings nav category is named 语音... The CHANGELOG says 设置八类导航 with 输入与语音. So 设置 → 语音 doesn't exist as a nav. Nit confirmed.
+
+  Summarize verdict per item.
+
+To resume this session: kimi -r session_e17ad354-b227-443d-8dad-dad15da4d5c0
+KIMI_REVIEW_EXIT=0

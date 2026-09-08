@@ -19,6 +19,7 @@ import { startMenuBarAgent } from "./menu-bar-agent"
 import { runInteractiveSettings, runNonInteractiveSettings, runNonInteractiveSettingsCli } from "./settings-cli"
 import { getPlatform } from "./platform"
 import { applyHardenedProcessPath } from "./process-path"
+import { resolveCliVersion } from "./cli-version"
 import * as fs from "fs"
 import * as path from "path"
 import * as child_process from "child_process"
@@ -28,12 +29,13 @@ import * as child_process from "child_process"
 applyHardenedProcessPath()
 
 function printUsage(): void {
-  console.log(`cmspark-agent v0.6.6
+  console.log(`cmspark-agent v${resolveCliVersion()}
 
 Usage:
+  cmspark-agent --version                  打印版本并退出
   cmspark-agent start                      启动 Companion 服务器（前台）
-  cmspark-agent stop                       停止 Companion 服务器
-  cmspark-agent status                     查看服务器状态
+  cmspark-agent stop                       停止 Companion 服务器（同 daemon stop）
+  cmspark-agent status                     查看服务器状态（同 daemon status）
 
   cmspark-agent daemon start [--daemonize]  启动守护进程
   cmspark-agent daemon stop                停止守护进程
@@ -332,12 +334,12 @@ async function main() {
       break
 
     case "stop":
-      console.log("Stop command not yet implemented (use 'daemon stop' instead)")
-      process.exit(0)
+      await handleDaemonStop()
+      break
 
     case "status":
-      console.log("Status command not yet implemented (use 'daemon status' instead)")
-      process.exit(0)
+      await handleDaemonStatus()
+      break
 
     case "daemon": {
       switch (subCommand) {
@@ -469,6 +471,12 @@ async function main() {
     case "--help":
     case "-h":
       printUsage()
+      process.exit(0)
+
+    case "--version":
+    case "-V":
+    case "version":
+      console.log(`cmspark-agent v${resolveCliVersion()}`)
       process.exit(0)
 
     case undefined:

@@ -211,7 +211,7 @@ async function main(): Promise<number> {
   if (!existsSync(modelPath)) {
     console.error(
       `[abort] 说话人模型缺失：${modelPath}\n` +
-        `  下载：设置 → 听写方式 → 「说话人分离模型」；或手动放置 speaker.onnx 到上述路径\n` +
+        `  下载：设置 → 输入与语音 → 听写方式 → 「说话人分离模型」；或手动放置 speaker.onnx 到上述路径\n` +
         `  或用 --model-root <dir> 指向 <dir>/${DIARIZE_MODEL_ID}/speaker.onnx\n` +
         `（评测门绝不静默跳过 embedding 臂）`,
     )
