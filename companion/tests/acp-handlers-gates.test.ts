@@ -379,4 +379,83 @@ describe("acp manager protocol argv wiring", () => {
       })
     }
   })
+
+  it("#483 rejects an explicit wrong owner before cancel, prompt, followup or apply can act", async () => {
+    const fs = await import("node:fs")
+    const os = await import("node:os")
+    const path = await import("node:path")
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-owner-483-"))
+    try {
+      saveConfig({ acp: { enabled: true, servers: { echo: {
+        enabled: true, display_name: "Echo", command: process.execPath, args: ["-e", "process.exit(0)"], protocol: "cli", transport: "stdio",
+        policy: { profile: "propose_diff", allow_write: false, allow_exec: false },
+      } }, policy: { require_workspace: true, force_confirm_session_start: true, default_profile: "review_readonly" } } })
+      const mgr = getAcpManager()
+      const proposed = mgr.propose({ threadId: "owner-a", agentId: "echo", goal: "review A", workspaceRoot: dir, mode: "propose_diff" })
+      assert.equal(proposed.ok, true)
+      if (!proposed.ok) return
+      let confirmations = 0
+      for (const type of ["acp.session.cancel", "acp.session.prompt", "acp.session.followup", "acp.apply_diff"]) {
+        const reply = await handleAcpWsMessage(type, {
+          session_id: proposed.session.session_id, thread_id: "other-b", text: "do not run", goal: "do not run",
+        }, { requestConfirmation: async () => { confirmations++; return { approved: true } as any } })
+        assert.equal(reply.type, "error", type)
+        assert.equal(reply.thread_id, proposed.session.thread_id, type)
+        assert.equal(reply.session_id, proposed.session.session_id, type)
+        assert.match(reply.error, /does not belong/, type)
+        assert.equal(mgr.getSession(proposed.session.session_id)?.state, "offered", type)
+      }
+      assert.equal(confirmations, 0)
+      const ownedApply = await handleAcpWsMessage("acp.apply_diff", {
+        session_id: proposed.session.session_id, thread_id: "owner-a",
+      }, { requestConfirmation: async () => { confirmations++; return { approved: false } as any } })
+      assert.equal(ownedApply.type, "acp.apply_diff.denied")
+      assert.equal(ownedApply.thread_id, "owner-a")
+      assert.equal(confirmations, 1, "correct owner reaches the unchanged confirmation gate")
+      const malformed = await handleAcpWsMessage("acp.session.cancel", { session_id: proposed.session.session_id, thread_id: "" }, {})
+      assert.equal(malformed.type, "error")
+      const nullOwner = await handleAcpWsMessage("acp.session.cancel", { session_id: proposed.session.session_id, thread_id: null }, {})
+      assert.equal(nullOwner.type, "error")
+      const parentFallback = await handleAcpWsMessage("acp.session.followup", { session_id: "", parent_session_id: proposed.session.session_id, thread_id: "other-b", goal: "do not run" }, {})
+      assert.match(parentFallback.error, /does not belong/)
+      const legacyStart = await handleAcpWsMessage("acp.ui_start", {
+        agent_id: "echo", goal: "legacy context owner", workspace_root: dir, cloud_disclosure_accepted: true,
+      }, { threadId: "legacy-start-owner", requestConfirmation: async () => ({ approved: false } as any) })
+      assert.equal(legacyStart.type, "acp.ui_start.denied")
+      assert.equal(legacyStart.thread_id, "legacy-start-owner")
+      assert.equal(mgr.getSession(legacyStart.session_id)?.thread_id, "legacy-start-owner")
+      // Existing callers without thread_id still operate on the stored owner.
+      const legacyCancel = await handleAcpWsMessage("acp.session.cancel", { session_id: proposed.session.session_id }, {})
+      assert.equal(legacyCancel.type, "acp.session.cancel.ack")
+      assert.equal(legacyCancel.thread_id, "owner-a")
+      assert.equal(legacyCancel.session_id, proposed.session.session_id)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("#483 pre-session start errors carry the explicitly requested thread; missing prompt session is not invented", async () => {
+    const start = await handleAcpWsMessage("acp.ui_start", { thread_id: "owner-a", agent_id: "echo", goal: "review", cloud_disclosure_accepted: true }, {})
+    assert.equal(start.type, "error")
+    assert.equal(start.thread_id, "owner-a")
+    assert.equal(start.family, "acp")
+    const legacyStart = await handleAcpWsMessage("acp.ui_start", { agent_id: "echo", goal: "review" }, { threadId: "legacy-owner-a" })
+    assert.equal(legacyStart.type, "error")
+    assert.match(legacyStart.error, /cloud_disclosure_accepted/)
+    assert.equal(legacyStart.session_id, undefined)
+    assert.equal(legacyStart.thread_id, "legacy-owner-a")
+    const explicitStart = await handleAcpWsMessage("acp.ui_start", { thread_id: "explicit-owner-b", agent_id: "echo", goal: "review" }, { threadId: "legacy-owner-a" })
+    assert.equal(explicitStart.thread_id, "explicit-owner-b")
+    for (const invalid of ["", "  ", null, 123]) {
+      const rejected = await handleAcpWsMessage("acp.ui_start", { thread_id: invalid, agent_id: "echo", goal: "review" }, { threadId: "legacy-owner-a" })
+      assert.equal(rejected.type, "error")
+      assert.match(rejected.error, /thread_id required/)
+      assert.equal(rejected.thread_id, undefined, "invalid explicit owner must not borrow context owner")
+    }
+    const prompt = await handleAcpWsMessage("acp.session.prompt", { session_id: "absent", text: "continue" }, { threadId: "foreground-b" })
+    assert.equal(prompt.type, "error")
+    assert.equal(prompt.session_id, "absent")
+    assert.equal(prompt.thread_id, undefined)
+  })
+
 })

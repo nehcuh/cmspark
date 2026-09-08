@@ -6,7 +6,7 @@
 // L2 task active.
 
 import { useState, useEffect, type CSSProperties } from "react"
-import { useAgentStore } from "../store/agentStore"
+import { useAgentStore, selectCodingSession } from "../store/agentStore"
 import type { CapabilityLevel } from "../types"
 import { tokens } from "../ui/tokens"
 import { IconStop } from "../ui/icons"
@@ -72,7 +72,7 @@ export function FocusBand({
   const hasThreadTools = runningTools.length > 0
   const toolsLabel = formatRunningToolsLabel(runningTools)
 
-  const coding = state.codingSession
+  const coding = selectCodingSession(state)
   // Keep chip after close so 追问 / 应用 diff CTAs remain reachable (manager emits state=closed, not handback)
   const hasCodingSession =
     !!coding &&

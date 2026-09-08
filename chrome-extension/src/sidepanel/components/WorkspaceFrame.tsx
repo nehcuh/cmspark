@@ -50,11 +50,6 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
       {onClose && <button type="button" className="cm-icon-button" aria-label="关闭导航" onClick={onClose}>×</button>}
     </div>
     <button type="button" className="cm-nav-new" onClick={() => { createBlankThread(dispatch); onNavigate() }}><IconNewChat size={17} />新对话</button>
-    <nav aria-label="资源与能力" className="cm-nav-resources">
-      {CONTEXT_PANEL_TABS.filter(t => t.id !== "history").map(({ id, label, Icon }) => <button type="button" key={id} className="cm-nav-item" aria-current={activePanel === id ? "true" : undefined} onClick={() => {
-        dispatch({ type: "SET_SETTINGS_OPEN", open: false }); openPanelForce(id); onNavigate()
-      }}><Icon size={16} /><span>{label}</span></button>)}
-    </nav>
     <div className="cm-nav-section"><span>最近对话</span><button type="button" className="cm-nav-manage" disabled={state.pendingSecurityConfirmations.length > 0} onClick={() => { onNavigate(); window.dispatchEvent(new Event("cmspark:open-thread-manager")) }}>管理对话</button></div>
     <input className="cm-nav-search" aria-label="筛选最近对话" placeholder="查找对话…" value={query} onChange={e => setQuery(e.target.value)} />
     <div className="cm-nav-threads">
@@ -64,6 +59,13 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
         }}><span>{displayThreadTitle(thread)}</span>{state.threadBusyById[thread.id] && <span className="cm-nav-running" aria-label="运行中">·</span>}</button>)}
       {!recent.length && <p className="cm-nav-empty">{query ? "没有匹配的对话" : "新对话会保存在这里"}</p>}
     </div>
+    <details className="cm-nav-tools"><summary>资料与工具</summary>
+    <nav aria-label="资源与能力" className="cm-nav-resources">
+      {CONTEXT_PANEL_TABS.filter(t => t.id !== "history").map(({ id, label, Icon }) => <button type="button" key={id} className="cm-nav-item" aria-current={activePanel === id ? "true" : undefined} onClick={() => {
+        dispatch({ type: "SET_SETTINGS_OPEN", open: false }); openPanelForce(id); onNavigate()
+      }}><Icon size={16} /><span>{label}</span></button>)}
+    </nav>
+    </details>
     <button type="button" className="cm-nav-item cm-nav-settings" onClick={() => { closePanel(); dispatch({ type: "SET_SETTINGS_OPEN", open: true }); onNavigate() }}><IconSettings size={16} />设置</button>
   </aside>
 }

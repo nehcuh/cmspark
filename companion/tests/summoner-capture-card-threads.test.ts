@@ -43,7 +43,7 @@ test("#243 ② 「新对话」清空到文字空态（newChat → newThread → 
   )
   assert.match(
     web,
-    /function selectThread\(id\)\{[\s\S]{0,1000}?renderMsgs\(d\.messages\|\|\[\]\)/,
+    /function selectThread\(id\)\{[\s\S]{0,1800}?renderMsgs\(d\.messages\|\|\[\]\)/,
   )
   // 空线程渲染文字空态：无装饰标识 + 无任务标题 + 发送提示（不是工作台首页）
   assert.match(
@@ -56,10 +56,10 @@ test("#243 ② 「新对话」清空到文字空态（newChat → newThread → 
 test("#243 ③ 「历史」盖住卡片列出会话：点选进入、重命名、移到回收站", () => {
   // #477 replaces full-card overlay with in-flow navigation; browser harness verifies Stop remains reachable.
   assert.match(web, /\$\("historyClose"\)\.onclick=closeNavigation;/)
-  assert.match(web, /function renderThreads\(filter\)\{[\s\S]{0,450}?threads\.forEach/)
+  assert.match(web, /function renderThreads\(filter\)\{[\s\S]{0,500}?listed\.forEach/)
 
   // 点选进入（selectThread 内含 showHistory(false)，选完收起盖层）
-  assert.match(web, /b\.onclick=function\(\)\{selectThread\(t\.id\)\};/)
+  assert.match(web, /b\.onclick=function\(\)\{closeThreadMetadata\(\);selectThread\(t\.id\)\};/)
   assert.match(web, /function selectThread\(id\)\{[\s\S]{0,200}?showHistory\(false\);/)
 
   // 重命名：prompt → PATCH alias（trim 后上送）→ refresh
@@ -78,10 +78,10 @@ test("#243 ③ 「历史」盖住卡片列出会话：点选进入、重命名�
   )
 })
 
-test("#243 ③' 服务端合同复用：PATCH=thread.update(alias)、DELETE=thread.delete(trash)、list/create 原样", () => {
+test("#243 ③' 服务端合同复用：PATCH=thread.update(metadata)、DELETE=thread.delete(trash)、list/create 原样", () => {
   assert.match(
     web,
-    /dispatchAllowed\("thread\.update", \{ thread_id: id, updates: \{ alias \} \}\)/,
+    /dispatchAllowed\("thread\.update", \{ thread_id: id, updates \}\)/,
   )
   assert.match(
     web,

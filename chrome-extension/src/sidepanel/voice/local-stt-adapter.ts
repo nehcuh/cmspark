@@ -208,7 +208,11 @@ export function createLocalSttAdapter(
     }
   }
 
-  const pendingWaitMs = () => (wantListening ? pendingTimeoutMs : Math.min(stopGraceMs, pendingTimeoutMs))
+  const pendingWaitMs = () => {
+    const budget = deps.pendingTimeoutMs ?? (modelId === "large-v3-turbo" ? 305_000 : pendingTimeoutMs)
+    // Ending an ordinary recording is the normal route to its final, not cancellation.
+    return mode === "classic" || wantListening ? budget : Math.min(stopGraceMs, budget)
+  }
 
   const armPendingTimer = (sid: string) => {
     clearPendingTimer()
@@ -220,7 +224,7 @@ export function createLocalSttAdapter(
       // empty_result so the loop can onEnd without a scary banner.
       finishPending({
         ok: false,
-        code: wantListening ? "infer_timeout" : "empty_result",
+        code: mode === "classic" || wantListening ? "infer_timeout" : "empty_result",
       })
     }, ms)
   }
@@ -551,7 +555,7 @@ export function createLocalSttAdapter(
    */
   const runStreamingContinuous = async (gen: number) => {
     try {
-      handlers.onStart()
+      let reportedStart = false
       while (!dead && wantListening && gen === loopGen) {
         const remaining = hardCapMs - (Date.now() - wallStart)
         if (remaining < 200) break
@@ -650,6 +654,12 @@ export function createLocalSttAdapter(
           privacy_ack_v2: true,
         })
         sessionStarted = true
+        // Permission/capture acquisition is still "starting". Report listening
+        // only once capture is ready; later windows use onSegmentContinue.
+        if (!reportedStart) {
+          reportedStart = true
+          handlers.onStart()
+        }
 
         // Adaptive partial poll: setTimeout chain paced by last hypothesis `ms`
         clearPartialTimer()
@@ -789,7 +799,7 @@ export function createLocalSttAdapter(
           handlers.onResult({ interim: "", finalChunk: "" })
         }
 
-        if (!wantListening || aborted) break
+        if (!wantListening || aborted || mode === "classic") break
         handlers.onSegmentContinue?.()
       }
 
@@ -968,7 +978,7 @@ export function createLocalSttAdapter(
         if ((langOrOpts as { streamPartial?: boolean }).streamPartial === true) {
           streamPartial = true
           // Prefer near-realtime segment defaults when streaming
-          if (segmentCapMs >= LOCAL_STT_MAX_RECORD_MS) {
+          if (mode === "continuous" && segmentCapMs >= LOCAL_STT_MAX_RECORD_MS) {
             segmentCapMs = LOCAL_STT_NEAR_REALTIME_SEGMENT_MS
           }
         }
@@ -994,6 +1004,12 @@ export function createLocalSttAdapter(
       parentSessionId = sid
       sessionId = sid
       modelId = mid || deps.modelId || ""
+      if (mode === "classic" && streamPartial) {
+        // Progressive preview for ordinary dictation, with one bounded final.
+        // Leave transport/drain time before the daemon's 45 s recording lease expires.
+        hardCapMs = LOCAL_STT_MAX_RECORD_MS - 1_000
+        segmentCapMs = LOCAL_STT_MAX_RECORD_MS - 1_000
+      }
       ensureSub()
       phase = "recording"
       wallStart = Date.now()
@@ -1001,7 +1017,9 @@ export function createLocalSttAdapter(
       loopGen += 1
       const gen = loopGen
 
-      if (mode === "continuous") {
+      if (streamPartial) {
+        void runStreamingContinuous(gen)
+      } else if (mode === "continuous") {
         void runContinuous(gen)
       } else {
         void runClassic(sid)
@@ -1015,7 +1033,7 @@ export function createLocalSttAdapter(
       wantListening = false
 
       // Continuous: finish current segment early, then exit after upload / end stream
-      if (mode === "continuous") {
+      if (mode === "continuous" || streamPartial) {
         if (phase === "recording") {
           // N3: if window wait not armed yet (still in gUM), mark pending soft stop
           if (!segmentStopTrigger) {

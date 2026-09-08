@@ -5118,9 +5118,10 @@ export async function handleMessage(
     }
     case "workspace.pick": {
       // Optional thread_id: pick + bind in one step (avoids UI race / stale set)
+      const owner = typeof rest.thread_id === "string" && rest.thread_id ? { thread_id: rest.thread_id } : {}
       const result = await pickFolderNative()
-      if (result.error) return { type: "workspace.pick_result", error: result.error }
-      if (!result.path) return { type: "workspace.pick_result", error: "未选择文件夹" }
+      if (result.error) return { type: "workspace.pick_result", ...owner, error: result.error }
+      if (!result.path) return { type: "workspace.pick_result", ...owner, error: "未选择文件夹" }
       const { recordNativePick, setWorkspaceRoot } = await import("./capability/workspace")
       let abs = result.path
       try {
@@ -5132,19 +5133,19 @@ export async function handleMessage(
       if (typeof rest.thread_id === "string" && rest.thread_id) {
         const thread = threadManager.get(rest.thread_id)
         if (!thread) {
-          return { type: "workspace.pick_result", path: abs, error: `thread not found: ${rest.thread_id}` }
+          return { type: "workspace.pick_result", ...owner, path: abs, error: `thread not found: ${rest.thread_id}` }
         }
         const bind = setWorkspaceRoot(abs)
-        if (!bind.ok) return { type: "workspace.pick_result", path: abs, error: bind.error }
+        if (!bind.ok) return { type: "workspace.pick_result", ...owner, path: abs, error: bind.error }
         threadManager.update(rest.thread_id, { workspace_root: bind.path } as any)
         return {
-          type: "workspace.pick_result",
+          type: "workspace.pick_result", ...owner,
           path: bind.path,
           bound: true,
           thread: threadManager.get(rest.thread_id),
         }
       }
-      return { type: "workspace.pick_result", path: abs, bound: false }
+      return { type: "workspace.pick_result", ...owner, path: abs, bound: false }
     }
     case "workspace.set": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }

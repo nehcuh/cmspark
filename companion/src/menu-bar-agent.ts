@@ -86,6 +86,7 @@ import {
   type LeaseRpc,
 } from "./ws/composer-lease"
 import { acceptedSummonerHotkey, nextSummonerHotkeyCmd } from "./summoner/hotkey"
+import { summonerVoiceRequestTimeout } from "./summoner/voice-input"
 
 // node-notifier does not ship TypeScript declarations
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -1829,8 +1830,8 @@ function dispatchSummonerWeb(
   }
   // voice.stt.chunk / abort have no WS ack — sendAppRequest would hang the HTTP 8s timeout.
   if (type === "voice.stt.chunk" || type === "voice.stt.abort") {
-    client.sendAppMessage(type, params)
-    return Promise.resolve({ type: "ok" })
+    const ok = client.sendAppMessage(type, params)
+    return Promise.resolve(ok ? { type: "ok" } : { type: "error", error: "未连接" })
   }
   if (type === "mcp.toggle_server" || type === "mcp.add") {
     return Promise.resolve({
@@ -1839,12 +1840,12 @@ function dispatchSummonerWeb(
       error_code: "SUMMONER_L0",
     })
   }
-  const timeout =
+  const timeout = summonerVoiceRequestTimeout(type) ?? (
     type === "meeting.generate_minutes"
       ? 90_000
       : type === "pack.apply" || type === "file.upload"
         ? 30_000
-        : 8_000
+        : 8_000)
   return client.sendAppRequest(type, params, timeout)
 }
 

@@ -49,7 +49,49 @@ async function confirmOrDeny(
   return !!decision?.approved
 }
 
+/** Session ownership is fixed at proposal. Legacy callers may omit thread_id;
+ * explicit owners must match, and every session reply carries the stored owner. */
 export async function handleAcpWsMessage(
+  type: string,
+  msg: Record<string, unknown>,
+  ctx: AcpHandlerContext,
+): Promise<any> {
+  const mgr = getAcpManager()
+  const controlsSession = ["acp.session.cancel", "acp.session.prompt", "acp.session.followup", "acp.apply_diff"].includes(type)
+  const sid = typeof msg.session_id === "string" && msg.session_id ? msg.session_id
+    : type === "acp.session.followup" && typeof msg.parent_session_id === "string" ? msg.parent_session_id : ""
+  const session = controlsSession && sid ? mgr.getSession(sid) : undefined
+  const claimedOwner = msg.thread_id !== undefined ? msg.thread_id : ctx.threadId
+  if (controlsSession && claimedOwner !== undefined &&
+      (typeof claimedOwner !== "string" || !claimedOwner || (session && session.thread_id !== claimedOwner))) {
+    return {
+      type: "error", family: "acp", error: "acp: session does not belong to the requested conversation",
+      session_id: sid, ...(session ? { thread_id: session.thread_id } : {}),
+    }
+  }
+  // Resolve a start owner once, before any side effect. The legacy context is
+  // used only for an omitted field, never to rescue an explicitly invalid one.
+  const startCandidate = msg.thread_id !== undefined ? msg.thread_id : ctx.threadId
+  const startOwner = type === "acp.ui_start" && typeof startCandidate === "string" && startCandidate.trim()
+    ? startCandidate : undefined
+  if (type === "acp.ui_start" && !startOwner) {
+    return { type: "error", family: "acp", error: "acp: thread_id required" }
+  }
+  const executionMessage = startOwner ? { ...msg, thread_id: startOwner } : msg
+  const result = await handleAcpWsMessageInternal(type, executionMessage, ctx)
+  if (!result || typeof result !== "object") return result
+  const resultSession = typeof result.session_id === "string" ? mgr.getSession(result.session_id) : undefined
+  const owner = resultSession?.thread_id ?? session?.thread_id ??
+    startOwner
+  return {
+    ...result,
+    ...(result.type === "error" ? { family: "acp" } : {}),
+    ...(owner ? { thread_id: owner } : {}),
+    ...(!result.session_id && sid ? { session_id: sid } : {}),
+  }
+}
+
+async function handleAcpWsMessageInternal(
   type: string,
   msg: Record<string, unknown>,
   ctx: AcpHandlerContext,
@@ -157,6 +199,7 @@ export async function handleAcpWsMessage(
     )
     return {
       type: "coding.git_status",
+      ...(tid ? { thread_id: tid } : {}),
       // Agent spawn uses session.workspace_root as cwd (manager.ts) — true today.
       agent_cwd_is_workspace: true,
       branch: st.branch,
@@ -220,7 +263,7 @@ export async function handleAcpWsMessage(
     // Workers never start ACP — check before enabled so isolation holds even when feature off
     // and tests need not mutate global config.json (CI DATA_DIR).
     if (type === "acp.ui_start") {
-      const tid = String(msg.thread_id || ctx.threadId || "")
+      const tid = String(msg.thread_id || "")
       if (tid && ctx.getAgentRole?.(tid) === "worker") {
         return { type: "error", error: "acp: worker threads cannot start ACP sessions" }
       }
@@ -262,7 +305,7 @@ export async function handleAcpWsMessage(
         mode: followMode,
       })
     } else {
-      const threadId = String(msg.thread_id || ctx.threadId || "")
+      const threadId = String(msg.thread_id || "")
       if (!threadId) return { type: "error", error: "thread_id required" }
       const agentId = String(msg.agent_id || "")
       const goal = String(msg.goal || "").trim()
