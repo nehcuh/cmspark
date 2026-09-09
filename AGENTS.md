@@ -1,6 +1,6 @@
 # CMspark Agent Configuration
 
-> **Version**: 0.6.6 (keep in lock-step with companion/package.json)
+> **Version**: 0.6.7 (keep in lock-step with companion/package.json)
 > **Platform**: CMspark Browser Agent
 
 ## Tool Environment
@@ -26,7 +26,7 @@ The following development tools are available on this system. Use them when work
 
 ### 需求设计 Issue-first（锁定 · 2026-08-27）
 
-任何需求设计必须**先**在 GitHub 建 Issue，再写 spec/plan。禁止只在 `docs/superpowers/` 里设计。模板：`.github/ISSUE_TEMPLATE/design.md`。本季余项：#230 冻（F-S-10 / overlay-acl）· #258–#260 语音/会议。T1 #228 已记分，禁扩 outbound profile。例外：无新需求的 typo/文档；已有行为的 bugfix。
+任何需求设计必须**先**在 GitHub 建 Issue，再写 spec/plan。禁止只在 `docs/superpowers/` 里设计。模板：`.github/ISSUE_TEMPLATE/design.md`。本季余项：#230 冻（F-S-10 / overlay-acl）。T1 #228 已记分，禁扩 outbound profile。语音/会议 #258–#260 已在树上（embedding 仍 experimental）。例外：无新需求的 typo/文档；已有行为的 bugfix。
 
 Playbook categories (not executors):
 - `workflows/bridge-*.ts` — bridge/ module fixes and reviews
@@ -66,4 +66,4 @@ When the user types `/dev-*`, map to the matching playbook in `workflows/` (hist
 - MCP meta tools (`mcp_list_resources`, `mcp_read_resource`, `mcp_get_prompt`) are exposed dynamically based on connected server capabilities — they are NOT in the static `getToolDefinitions()` list.
 
 ---
-*CMspark Agent v0.6.6*
+*CMspark Agent v0.6.7*

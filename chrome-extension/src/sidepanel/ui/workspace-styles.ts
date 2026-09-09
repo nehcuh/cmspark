@@ -77,11 +77,12 @@ export const workspaceCSS = `
 .cm-header-new{display:none;font-size:24px}
 .cm-nav-manage{border:0;background:transparent;color:${tokens.textSecondary};font:inherit;font-size:12px;padding:6px;cursor:pointer}
 .cm-thread-manager-trigger{width:auto!important;gap:5px;padding:0 5px;font-size:12px;white-space:nowrap}
-.cm-history-panel{display:block!important;overflow-y:auto!important;overscroll-behavior:contain}
-.cm-thread-management-header{flex-wrap:wrap}
+.cm-history-panel{display:flex!important;flex-direction:column;overflow:hidden!important;overscroll-behavior:contain}
+.cm-thread-management-header{flex-wrap:wrap;flex-shrink:0}
 .cm-thread-management-views{flex-wrap:wrap}
-.cm-thread-management-list{overflow:visible!important;max-height:none!important}
-.cm-thread-management-actions{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid ${tokens.border}}
+.cm-thread-management-list{flex:1;min-height:0;overflow-y:auto!important;max-height:none!important}
+.cm-thread-management-actions{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid ${tokens.border};flex-shrink:0}
+.cm-thread-cleanup{flex-shrink:0}
 .cm-thread-management-actions button,.cm-thread-editor button{font:inherit;font-size:12px;min-height:32px;border:1px solid ${tokens.border};border-radius:8px;padding:6px 9px;background:${tokens.bgMuted};color:${tokens.text};cursor:pointer}
 .cm-thread-management-actions button:disabled,.cm-thread-editor button:disabled{opacity:.5;cursor:not-allowed}
 .cm-thread-management-help{font-size:12px;line-height:1.6;color:${tokens.textSecondary};padding:0 12px}

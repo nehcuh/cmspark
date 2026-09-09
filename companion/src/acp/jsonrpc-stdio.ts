@@ -161,7 +161,7 @@ export async function tryAcpInitialize(
       "initialize",
       {
         protocolVersion: 1,
-        clientInfo: { name: "cmspark", version: "0.6.6" },
+        clientInfo: { name: "cmspark", version: "0.6.7" },
         capabilities: {
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,

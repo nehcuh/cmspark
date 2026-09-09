@@ -21,7 +21,7 @@ export function formatMeetingDiarizeStatus(
  */
 export function mapMeetingDiarizeError(code: string, message?: string): string {
   if (code === "embedding_model_required") {
-    return "说话人分离模型未就绪：请到 设置 → 听写方式 下载「说话人分离模型」后重试（不会静默落回旧引擎）"
+    return "说话人分离模型未就绪：请到 设置 → 输入与语音 → 听写方式 下载「说话人分离模型」后重试（不会静默落回旧引擎）"
   }
   if (code === "diarize_runtime_unavailable") {
     return "本机推理组件不可用（onnxruntime 缺失）：请更新 Companion 后重试"

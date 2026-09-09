@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 产品 **0.6.0** · 入口 README：[仓库根 README.md](../README.md)  
+> 产品 **0.6.7** · 入口 README：[仓库根 README.md](../README.md)  
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
@@ -14,7 +14,7 @@
 | [workspace-ui.md](workspace-ui.md) | **Operate** | 响应式对话工作区、导航、历史、输入和设置 |
 | [../README.md](../README.md) | 全景 | 家 = 已登录 Chrome；Capture / 租手 / 安装 |
 | [../PRODUCT.md](../PRODUCT.md) | 产品句 | 四面 Capture·Operate·Confirm·租手 |
-| [summoner-user-guide.md](summoner-user-guide.md) | **Capture** | 召唤器 HTML 卡 360×420、流式、永不审批、请点工具栏 C |
+| [summoner-user-guide.md](summoner-user-guide.md) | **Capture** | 召唤器 HTML 卡默认 1040×760（紧凑 360×420）、流式、永不审批、请点工具栏 C |
 | [confirm-center-user-guide.md](confirm-center-user-guide.md) | **横切 Trust UI**（L1/L2） | 确认台 / Cockpit、高危审批、CU 操控台 |
 | [mcp.md](mcp.md) | **Composition** | MCP server（Inbound + **Outbound ADR-022**）、Grok `config.toml`、信任级别、Resources/Prompts、排错 |
 | [enterprise-pilot.md](enterprise-pilot.md) | **Composition · 0.7.0 开发中** | 两个企业材料场景的试点配置、来源契约和真实验收要求；尚未发布 |
@@ -46,7 +46,7 @@
 | [architecture.md](architecture.md) | 活架构：双层拓扑 + 桌面面、MCP/CU/Host/编排/Board/Packs |
 | [enterprise-architecture.md](enterprise-architecture.md) | 企业上下文、证据/核对、Mission 和可选 MCP 的职责边界；[发布验收台账](audit/0.7.0-20260907/release-acceptance.md) |
 | **[ADR-020 能力三轴](adr/020-capability-model-three-axes.md)** | **Surface · Composition · Autonomy** 本体（能力叠加与防「杂」纪律） |
-| [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.6.0** 对齐；扩展目标带轴标注） |
+| [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.6.7** 对齐；扩展目标带轴标注） |
 | [../PRODUCT.md](../PRODUCT.md) | 产品一句话 / 四面（Capture·Operate·Confirm·租手）；家 = 已登录 Chrome + 硬闸 |
 | [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD） |
 | [2026-08-27-post-227-status.md](superpowers/specs/2026-08-27-post-227-status.md) | **SNAPSHOT** 0.5.3 / #227（T1 已记分；**不是**活状态） |
@@ -120,7 +120,7 @@
 | [superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md](superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md) | Outbound MCP P0c 门控卡（M1–M9） |
 | [superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md](superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md) | P0d 记分表：T1 **已记分**（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）；**仍禁扩** profile；T2/T3 未跑 |
 | **GitHub [#230](https://github.com/nehcuh/cmspark/issues/230)** | **冻**：F-S-10 / overlay-acl。grant-cli 未知 flag 与 H1 精确勾已不在此清单 |
-| **GitHub [#258](https://github.com/nehcuh/cmspark/issues/258)–[#260](https://github.com/nehcuh/cmspark/issues/260)** | 语音 UX Hex · Windows SAPI 兜底 · speaker embedding diarize |
+| GitHub #258–#260（已实现，非余项） | Hex PTT · Windows SAPI · speaker embedding（**仍实验**） |
 | [skills/eval-engineering-gate/SKILL.md](skills/eval-engineering-gate/SKILL.md) | Eval Engineering 闸门 skill（机核 + dual + blast） |
 | [decisions/daily-content-loop-brief-2026-08-04.md](decisions/daily-content-loop-brief-2026-08-04.md) | **DIRECTION LOCKED**：每日情报环（公开站·本地模型·本机+邮件·代码+网页验证） |
 | [optimization-plan-post-v0.3.0.md](optimization-plan-post-v0.3.0.md) | 历史：v0.3.0 后 P2/P3 闭环考古（**勿再作排序权威**） |
@@ -172,5 +172,5 @@
 ## 维护提示
 
 - 新功能 PR：更新根 README 能力矩阵一行 + 本导航表（若新增用户文档）+ 必要时 ADR + [CONTRIBUTING 文档 checklist](../CONTRIBUTING.md#文档-checklist功能-pr-合并前)。  
-- 事实以 **0.6.0 代码**（`companion`/`chrome-extension` `package.json`）与 live ADR 为准；过程稿冲突时以 ADR / architecture / 用户指南为准。  
+- 事实以 **0.6.7 代码**（`companion`/`chrome-extension` `package.json`）与 live ADR 为准；过程稿冲突时以 ADR / architecture / 用户指南为准。  
 - 详细 DoD 与分阶段： [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)。

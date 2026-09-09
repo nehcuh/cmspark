@@ -10,6 +10,9 @@ import {
   localYesterdayKey,
   selectionState,
   toggleGroupSelection,
+  toggleSelectAll,
+  selectAllIds,
+  allSelectableSelected,
   displayThreadTitle,
   threadAccessibleName,
   threadRecency,
@@ -305,6 +308,27 @@ test("selectionState + toggleGroupSelection", () => {
 
   sel = toggleGroupSelection(ids, new Set(), new Set(["a", "b"]))
   assert.deepEqual([...sel].sort(), ["a", "b"])
+})
+
+test("toggleSelectAll kept for group toggling; toolbar 全选 uses selectAllIds", () => {
+  const selectable = ["a", "b", "c"]
+  assert.equal(allSelectableSelected(new Set(), selectable), false)
+  let sel = toggleSelectAll(new Set(), selectable)
+  assert.deepEqual([...sel].sort(), ["a", "b", "c"])
+  assert.equal(allSelectableSelected(sel, selectable), true)
+  sel = toggleSelectAll(sel, selectable)
+  assert.equal(sel.size, 0)
+  sel = toggleSelectAll(new Set(["z"]), ["a", "b"])
+  assert.deepEqual([...sel].sort(), ["a", "b", "z"])
+})
+
+test("selectAllIds is idempotent (double click / Strict updater still all-on)", () => {
+  const selectable = ["a", "b", "c"]
+  const once = selectAllIds(selectable)
+  const twice = selectAllIds(once)
+  assert.deepEqual([...selectAllIds(selectable)].sort(), ["a", "b", "c"])
+  assert.deepEqual([...selectAllIds(twice)].sort(), ["a", "b", "c"])
+  assert.equal(allSelectableSelected(new Set(), []), false)
 })
 
 test("displayThreadTitle fallback", () => {

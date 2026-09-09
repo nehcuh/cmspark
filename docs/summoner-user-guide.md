@@ -1,6 +1,6 @@
 # 召唤器（Capture 卡）— 用户指南
 
-> 产品 **0.6.0** · 产品句：[PRODUCT.md](../PRODUCT.md) · 设计：[DESIGN.md](DESIGN.md)  
+> 产品 **0.6.7** · 产品句：[PRODUCT.md](../PRODUCT.md) · 设计：[DESIGN.md](DESIGN.md)  
 > 听写/会议细节：[meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) · 外部热键：[summoner-launcher-plugins.md](summoner-launcher-plugins.md)
 
 ### 能力坐标
@@ -15,7 +15,7 @@
 
 ## 1. 一句话
 
-召唤器是一张 **360×420** 的 HTML Capture 卡：说话或打字把活交出去。人盯着 Chrome 时用侧栏 Operate；危险只在确认台。
+召唤器是一张 HTML Capture 卡（默认 **1040×760**，`OVERLAY_WINDOW_SIZE`；紧凑切换 **360×420**）：说话或打字把活交出去。人盯着 Chrome 时用侧栏 Operate；危险只在确认台。
 
 Mac 菜单 / 已配置热键 / 工具栏 **C** / 侧栏顶栏 **弹出对话框** 打开的是**同一张卡**。
 

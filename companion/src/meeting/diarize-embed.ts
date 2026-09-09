@@ -96,7 +96,7 @@ export async function embedSegmentsForDiarize(
     return {
       ok: false,
       code: "embedding_model_required",
-      message: `说话人模型未就绪（${probe.status}${probe.error ? ` · ${probe.error}` : ""}）：请到 设置 → 听写方式 下载「说话人分离模型」后重试`,
+      message: `说话人模型未就绪（${probe.status}${probe.error ? ` · ${probe.error}` : ""}）：请到 设置 → 输入与语音 → 听写方式 下载「说话人分离模型」后重试`,
     }
   }
 

@@ -1,7 +1,7 @@
 # Computer Use 使用说明
 
 > **面向使用者**：如何开启桌面坐标操控、确认台里怎么批/急停、session-trust 是什么、平台与限制。  
-> **产品版本**：0.5.0 · **决策摘要**：[ADR-017](adr/017-computer-use.md)  
+> **产品版本**：0.6.7 · **决策摘要**：[ADR-017](adr/017-computer-use.md)  
 > **确认台 UI**：[confirm-center-user-guide.md](confirm-center-user-guide.md) · **Host / Apps**：[host-and-apps.md](host-and-apps.md)  
 > **过程史（非规范）**：[decisions/coordinate-computer-use-plan.md](decisions/coordinate-computer-use-plan.md)
 
@@ -41,7 +41,7 @@
 
 1. **全局坐标开关** `computer.coordinateEnabled === true`  
    - 默认 **false**（fail-closed）。  
-   - **产品 0.5.0 用户路径**：Side Panel → 底栏 **应用（Apps）** → 顶部 **「坐标操作」** 勾选；走 Companion `computer.set_enabled`（可经生物识别/确认台门）。  
+   - **用户路径**：Side Panel → 底栏 **应用（Apps）** → 顶部 **「坐标操作」** 勾选；走 Companion `computer.set_enabled`（可经生物识别/确认台门）。  
    - 仍可直接编辑 `~/.cmspark-agent/config.json` 后重启 Companion。  
    - Apps 面板显示的是 **可切换** 状态（非只读镜像）。
 
@@ -117,7 +117,7 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 
 ## 6. 平台支持
 
-| 平台 | 状态（0.5.0） |
+| 平台 | 状态（0.6.7） |
 |------|----------------|
 | **macOS** | 主路径：原生适配 + 证据/急停；需本机权限（**只认 CMspark**，见下） |
 | **Windows** | 主路径：PowerShell/UIA 脚本族 + 窗口捕获；Hello 等与 host 写路径协同处见 host 指南 |
@@ -143,7 +143,7 @@ Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打
 
 ## 6.1 实验层：Qwen3-VL 本机视觉定位（可选）
 
-默认 **关闭**。开启后作为 UIA/OCR 之后的 **L2 建议点**，**每次命中仍要人工确认**。
+默认 **关闭**。开启后作为 UIA/OCR 之后的 **L2 建议点**，**每次命中仍要人工确认**。定位层保持 **实验**；[#363](https://github.com/nehcuh/cmspark/issues/363) 摘帽门未过（勿当已 GA）。
 
 - **权威在 Companion**：扩展只发 `computer.model.*`，不在浏览器内推理。  
 - **用户路径**：设置 → 看「就绪」预检 → 选下载源（大陆推荐自动/魔搭）→ 选 2B/4B/8B → 下载 → 开启。  

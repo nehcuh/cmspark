@@ -43,6 +43,7 @@ import {
   persistHealedToolRows,
   replaceInterruptedFillerIfPresent,
 } from "./tool-batch-heal"
+import { redactAssistantToolCallsForPersistence } from "../security/tool-persistence-redact"
 import { isContentRiskError, isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
 import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
 import type { RunStats } from "../loop/loop-state"
@@ -1174,7 +1175,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       thread_id: threadId,
       role: "assistant",
       content: draft.content,
-      tool_calls: assistantMsg,
+      tool_calls: redactAssistantToolCallsForPersistence(assistantMsg),
     }
     if (draft.reasoning) savedMsg.reasoning_content = draft.reasoning
     if (draft.truncated) savedMsg.truncated = true

@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-07 (lockstep 0.6.6)
+**Updated**: 2026-09-08 (lockstep 0.6.7)
 
-## CMspark — 产品 0.6.6
+## CMspark — 产品 0.6.7
 
 | 轴 | 状态 |
 |----|------|
@@ -20,10 +20,10 @@
 
 ## Branch lock (S104)
 
-- 包装 **0.6.6**（已装机）：#423 Qwen3-VL 坐标系修复（L-QW-3 修订 always-map，评测门 0/10→6/10）· create-dmg cp -R 封签修复 · installer.nsi 版本锚补钉。0.6.5 = 召唤器全链路 #433 P1–P3 + #439 LLM 检索工具；0.6.4 = 内嵌终端 #432 + 召唤器命令面板。0.6.1 基础上：测试污染根治 #404–#406 · 失败升级链 #409 · outbound MCP 三件 · 全历史专家 #411/#418。
+- 包装 **0.6.7**（S107 诚实关门）：活文档锁步、Capture 1040×760、知识 TF-IDF top-k、会议收起文案、CLI `--version`、assistant args 落盘脱敏。本机此前狗食仍是 0.6.6 NSIS，需再编包才换装。0.6.6 = #423 Qwen3-VL 坐标系。0.7.0 企业双场景仍未验收。
 - **评审弧闭环**：c39d7d3e..26949cbb 四路对抗 7 MAJOR 全修（#261–#264），main tip `18d843d1`。
 - S104 起 origin 已含开闸+查重（#280–#283）；评审波次（#286–#295）十张 PR 已合入，见 GATE-SUMMARY。
-- **活票**：#230 冻 F-S-10 / overlay-acl；#258–#260 语音/会议。T1 #228 已关，**禁扩** profile。
+- **活票**：#230 冻 F-S-10 / overlay-acl。T1 #228 已关，**禁扩** profile。#258–#260 已在树（embedding experimental）。
 - **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合；StatusRail 手风琴 / Wave 2 FocusBand。
 
 ## Next
@@ -33,6 +33,6 @@
 
 ## Docs SoT
 
-- 活切点：`CHANGELOG.md` **0.6.6**
+- 活切点：`CHANGELOG.md` **0.6.7**
 - 0.5.3 快照：`docs/superpowers/specs/2026-08-27-post-227-status.md`（SNAPSHOT）
 - 用户 / 架构：`docs/README.md` · `PRODUCT.md`

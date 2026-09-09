@@ -113,7 +113,7 @@ cmspark/
 **必须建票**：新产品行为、形态切片、能力边界、用户可见流程、冻结项（否则会「顺便」做掉）。  
 **不必建设计票**：无新需求的 typo/文档；已有行为的 bugfix（用 bug 票即可）。
 
-本季追踪：[#230](https://github.com/nehcuh/cmspark/issues/230) 冻（F-S-10 / overlay-acl）· [#258](https://github.com/nehcuh/cmspark/issues/258)–[#260](https://github.com/nehcuh/cmspark/issues/260) 语音/会议。T1 [#228](https://github.com/nehcuh/cmspark/issues/228) 已记分，**禁扩** outbound profile。正交旧债 #69 / #70 / #71。
+本季追踪：[#230](https://github.com/nehcuh/cmspark/issues/230) 冻（F-S-10 / overlay-acl）。T1 [#228](https://github.com/nehcuh/cmspark/issues/228) 已记分，**禁扩** outbound profile。语音/会议 [#258](https://github.com/nehcuh/cmspark/issues/258)–[#260](https://github.com/nehcuh/cmspark/issues/260) 已在树上（embedding 仍 experimental）。正交旧债 #69 / #70 / #71。
 
 ## 提交规范
 

@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 2.4.8 | 日期: 2026-09-06 | 状态: 已确认（同步 **0.6.0** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴** · 知识库波次（AI 草稿 / 检索 / 分布 / 文件夹）· context_window 512000 · listen-first · 当轮活计划 · ADR-023/024 语音（含 2026-08-31 L13 非静默回退）· Capture HTML 卡 360×420 流式 · 用户附图 · Windows NSIS · 知识诚实 · ChatShell · 0.6.0 自主性三件套（巡航档位 / plan_readonly / loop L-1–L-5）· 专家团队 v1 · CU 完整性链（后三项索引级，详见 [CHANGELOG](../CHANGELOG.md) `[0.6.0]`，loop/专家独立 ADR 待补）；T1 **已记分、禁扩 profile**）
+> 版本: 2.4.8 | 日期: 2026-09-08 | 状态: 已确认（同步 **0.6.7** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴** · 知识库波次（AI 草稿 / 检索 / 分布 / 文件夹）· context_window 512000 · listen-first · 当轮活计划 · ADR-023/024 语音（含 2026-08-31 L13 非静默回退）· Capture HTML 卡默认 1040×760（紧凑 360×420）流式 · 用户附图 · Windows NSIS · 知识诚实（TF-IDF top-k）· 知识图谱 #427 · Darwin 内嵌终端 #432（默认关）· `search_threads`/`search_knowledge` #439 · ChatShell · 0.6.0 自主性三件套（巡航档位 / plan_readonly / loop L-1–L-5）· 专家团队 v1 · CU 完整性链（后三项索引级，详见 [CHANGELOG](../CHANGELOG.md) `[0.6.0]`，loop/专家独立 ADR 待补；CU 定位仍实验，#363 未过）；T1 **已记分、禁扩 profile**）
 
 ---
 

@@ -274,23 +274,37 @@ export function ContextPanelHostProvider({
  */
 export function ContextPanelHost() {
   const { activePanel, closePanel } = useContextPanelHost()
+  const meetingCaptureActive = useAgentStore().state.meetingCaptureActive
   if (!activePanel) return null
 
   const label = contextPanelLabel(activePanel)
+  const closeEndsMeeting = activePanel === "meeting" && meetingCaptureActive
 
   return (
     <div className="cm-context-panel" style={styles.panel} data-testid="context-panel-host">
       <div style={styles.panelHeader}>
         <span style={styles.panelTitle}>{label}</span>
-        <button
-          type="button"
-          style={styles.panelCloseBtn}
-          title="收起面板 (Esc)"
-          aria-label="收起面板"
-          onClick={closePanel}
-        >
-          收起
-        </button>
+        {closeEndsMeeting ? (
+          <button
+            type="button"
+            style={styles.panelCloseBtn}
+            title="结束并收起"
+            aria-label="结束并收起"
+            onClick={closePanel}
+          >
+            结束并收起
+          </button>
+        ) : (
+          <button
+            type="button"
+            style={styles.panelCloseBtn}
+            title="收起面板 (Esc)"
+            aria-label="收起面板"
+            onClick={closePanel}
+          >
+            收起
+          </button>
+        )}
       </div>
       {activePanel === "tabs" && <TabsPanel />}
       {activePanel === "history" && <HistoryPanel />}

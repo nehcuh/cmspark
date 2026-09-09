@@ -1,6 +1,6 @@
 # 听写+ 与 会议记录 — 用户指南
 
-> 产品 **0.5.0** · Trust SoT：[ADR-024](adr/024-dictation-plus-asr-refiner-meeting.md)  
+> 产品 **0.6.7** · Trust SoT：[ADR-024](adr/024-dictation-plus-asr-refiner-meeting.md)  
 > 听写+ 设计：[dictation-plus SoT](superpowers/specs/2026-08-07-dictation-plus-design.md)  
 > 本机 STT：[ADR-023](adr/023-voice-local-stt-path-b.md) · [local STT SoT](superpowers/specs/2026-08-07-voice-local-stt-design.md)  
 > 会议设计：[meeting-minutes SoT](superpowers/specs/2026-08-07-meeting-minutes-design.md) · [Mtg3 diarize](superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md)
@@ -64,14 +64,14 @@ OS 级全局热键（失焦仍按住）属后续增强。
 
 ### 2.5 本机组件（cmspark-whisper）与模型
 
-本机听写分两层，都可在 **设置 → 听写** 完成：
+本机听写分两层，都可在 **设置 → 输入与语音** 完成：
 
 | 层 | 内容 | 如何就绪 |
 |----|------|----------|
 | **本机组件** | `cmspark-whisper` + 动态库 | 安装包优先内置；若提示「未找到」→ **「安装本机听写组件」**。Windows：HTTPS 自动下载 + sha256 pin。macOS：安装包内置或从本机 **Homebrew whisper-cpp** 拷贝（需已 `brew install whisper-cpp`） |
 | **模型权重** | ggml-small / medium / large-v3-turbo | 设置页下载到 `~/.cmspark-agent/models/whisper/`；下载完成自动设为活动模型；已下载模型会被自动识别（设置页状态探测） |
 
-下载源默认 huggingface.co，网络受限时在 **设置 → 听写 → 模型下载源** 改填镜像（如 `https://hf-mirror.com`），或设环境变量 `CMSPARK_HF_ENDPOINT`（优先级更高）。
+下载源默认 huggingface.co，网络受限时在 **设置 → 输入与语音 → 模型下载源** 改填镜像（如 `https://hf-mirror.com`），或设环境变量 `CMSPARK_HF_ENDPOINT`（优先级更高）。
 本机模型不可用时：默认**当次会话自动改用浏览器听写**并显示横幅（非静默、不改配置）；可在设置关闭「本机模型不可用时自动使用浏览器听写」。  
 
 打包：`build-package.bat` 在缺少 `companion/dist/bin/cmspark-whisper-win-x64.exe` 时会按 `assets/whisper-binary.manifest.json` **自动拉取**（`CMSPARK_WHISPER_AUTO_FETCH=0` 可关）。  
@@ -115,7 +115,7 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 | **Mtg1** | 显式「开始录制」本机分段 STT；结束生成纪要；`meeting_privacy_ack_v1`；默认删音频 |
 | **Mtg2** | 智能分段（静音/段落/软长度切）；默认/批量说话人；上传 `.txt/.md`；上传音频 → 本机转写 |
 | **Mtg3** | 实验：**自动标「发言人N」**（**非身份识别**）；人数可选「自动」或手动 2–6；弱标交替 |
-| **Mtg3.5 说话人嵌入** | **自动标说话人（说话人嵌入 · 实验）**：上传音频段 → 本机 ONNX 说话人嵌入 + 聚类（需先在 设置 → 听写方式 下载「说话人分离模型」；未就绪会明确提示，**不静默落回旧引擎**）。模型与转写模型共享磁盘预算；音频不出本机。评测：校准集 PASS（2026-09-04）但 **round-2 held-out 门 FAIL**（2026-09-05，全新说话人档案：人数正确率 0.667 < 0.75、过拆 held-long12-K3 k=5/truth 3）→ 保持「实验」标注；门已收紧（held-out 独立过门 + \|k−truth\| ≤ 1 + gate FAIL 默认 exit 1，`companion/scripts/diarize-eval.mjs`）。另有「旧版 3 维（区分度低）」显式回退按钮（实验 · 无需下载模型）与弱标（交替，实验） |
+| **Mtg3.5 说话人嵌入** | **自动标说话人（说话人嵌入 · 实验）**：上传音频段 → 本机 ONNX 说话人嵌入 + 聚类（需先在 设置 → 输入与语音 → 听写方式 下载「说话人分离模型」；未就绪会明确提示，**不静默落回旧引擎**）。模型与转写模型共享磁盘预算；音频不出本机。评测：校准集 PASS（2026-09-04）但 **round-2 held-out 门 FAIL**（2026-09-05，全新说话人档案：人数正确率 0.667 < 0.75、过拆 held-long12-K3 k=5/truth 3）→ 保持「实验」标注；门已收紧（held-out 独立过门 + \|k−truth\| ≤ 1 + gate FAIL 默认 exit 1，`companion/scripts/diarize-eval.mjs`）。另有「旧版 3 维（区分度低）」显式回退按钮（实验 · 无需下载模型）与弱标（交替，实验） |
 | **P1 近实时** | 会议录制默认渐进假设出字 + 约 8s 窗定稿（同听写 M2；非 token 真流式；large 仅终稿） |
 | **P2 长会** | 直播录硬上限 **3 小时**（2 小时软提示）；上传音频同上限；纪要输入抬到 20 万字 |
 | **P4 纠错/分段** | 段定稿 **opt-in AI 纠错**（上文上下文 + correct_only）；段间空行分段；结束时可选自动智能分段 |
@@ -123,7 +123,7 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 ### 3.3 会议录制操作要点
 
 1. 先确认 **本机语音隐私** + **会议隐私**（双 ack 后「开始录制」才可点）  
-2. 设置 → 听写：组件/模型就绪，活动模型建议 **medium**  
+2. 设置 → 输入与语音：组件/模型就绪，活动模型建议 **medium**  
 3. 可选：勾选 **录制 AI 纠错（参考上文）**、**结束时智能分段**  
 4. 录制中段失败：若为 soft 类错误，banner 会说明 **本段字已丢失（不可恢复）**，后续段继续；结束仍默认删音频  
 5. 结束后可再点 **智能分段** / 生成纪要（纪要可套用户模板）
@@ -187,4 +187,4 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 
 - [ADR-023 本机 STT](adr/023-voice-local-stt-path-b.md)  
 - [ADR-024 听写+ · Refiner · 会议落盘](adr/024-dictation-plus-asr-refiner-meeting.md)  
-- Side Panel → **设置 → 语音 / 听写**  
+- Side Panel → **设置 → 输入与语音**  
