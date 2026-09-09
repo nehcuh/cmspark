@@ -1,0 +1,26 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+async function main() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-488-mutation-fixture-'))
+  process.env.CMSPARK_DATA_DIR = dir
+  try {
+    const { initDataDir } = await import('../../../companion/src/config')
+    await initDataDir()
+    const { ThreadManager } = await import('../../../companion/src/threads/thread-manager')
+    const { handleMessage } = await import('../../../companion/src/message-router')
+    const tm = new ThreadManager()
+    const services = { threadManager: tm, skillEngine: {} as any, historyStore: {} as any }
+    const session = { sendToExtension: () => {}, executeTool: async () => ({ success: true }), broadcast: () => {} }
+    tm.create('Fixture A', 'fixture-a')
+    tm.create('Fixture B', 'fixture-b')
+    const targets = ['fixture-a', 'fixture-b', 'fixture-missing']
+    const capabilities = await handleMessage({ type: 'thread.batch_delete', thread_ids: [], probe: 'only_empty' }, services, session as any)
+    const trash = await handleMessage({ type: 'thread.batch_delete', thread_ids: targets, mode: 'trash' }, services, session as any)
+    const restore = await handleMessage({ type: 'thread.restore', thread_ids: targets }, services, session as any)
+    const hard = await handleMessage({ type: 'thread.batch_delete', thread_ids: targets, mode: 'hard' }, services, session as any)
+    console.log(JSON.stringify({ capabilities, trash, restore, hard }, null, 2))
+  } finally { fs.rmSync(dir, { recursive: true, force: true }) }
+}
+main().catch(error => { console.error(error); process.exitCode = 1 })

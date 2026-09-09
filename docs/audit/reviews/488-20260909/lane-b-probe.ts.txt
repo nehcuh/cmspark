@@ -1,0 +1,49 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import vm from 'node:vm'
+import { selectAllIds } from '../../../chrome-extension/src/sidepanel/utils/thread-timeline'
+import { validateWsMessage } from '../../../companion/src/ws/validate'
+
+const src = fs.readFileSync('chrome-extension/src/sidepanel/components/ThreadList.tsx', 'utf8')
+function body(name: string, next: string) {
+  const start = src.indexOf(`  const ${name} = () => {`)
+  const end = src.indexOf(`\n  const ${next}`, start)
+  assert.ok(start >= 0 && end > start)
+  return src.slice(start, end).trim().replace(/^const /, 'globalThis.').replaceAll('new Set<string>()', 'new Set()')
+}
+
+const ids = [...selectAllIds(Array.from({ length: 51 }, (_, i) => `t${i}`))]
+const dispatched: any[] = []
+const sent: any[] = []
+const context: any = {
+  pendingDelete: { ids, hard: false, source: 'batch' },
+  dispatch: (x: any) => dispatched.push(x),
+  chrome: { runtime: { sendMessage: (x: any, cb: any) => { sent.push(x); cb?.() } } },
+  setPendingDelete: () => {}, exitSelectMode: () => {},
+  setCleanupOpen: () => {}, setCleanupSuggestions: () => {}, setCleanupSelected: () => {},
+}
+vm.runInNewContext(body('executePendingDelete', 'handleSelectAllVisible') + '; executePendingDelete()', context)
+assert.equal(dispatched[0].threadIds.length, 51)
+assert.equal(sent[0].thread_ids.length, 51)
+assert.equal(validateWsMessage(sent[0]).valid, false)
+console.log('CONFIRMED: production delete handler removes all 51 locally; production WS validator rejects request:', validateWsMessage(sent[0]))
+
+const batchContext: any = {
+  selected: new Set(['busy-now']), selectableIds: new Set(['unrelated']), trashView: false,
+  setSelected: () => {}, setSelectMode: () => {}, setPendingDelete: (x: any) => batchContext.actual = x,
+}
+vm.runInNewContext(body('handleBatchDelete', 'executePendingDelete') + '; handleBatchDelete()', batchContext)
+assert.equal(batchContext.actual.ids[0], 'unrelated')
+console.log('CONFIRMED: selected thread becoming busy changes delete target to previously unselected unrelated thread:', batchContext.actual)
+
+const cleanupContext: any = {
+  cleanupOpen: true, cleanupSuggestions: [{ thread_id: 'cleanup' }],
+  selectableIds: new Set(['visible']), selectAllIds,
+  setCleanupSelected: (x: any) => cleanupContext.cleanup = [...x],
+  setSelected: (x: any) => cleanupContext.selected = [...x], setSelectMode: () => {},
+  timeline: { months: [] }, setExpandState: () => {}, saveExpandState: () => {}, setExpandedDays: () => {},
+}
+vm.runInNewContext(body('handleSelectAllVisible', 'handleClearVisibleSelection') + '; handleSelectAllVisible()', cleanupContext)
+assert.equal(cleanupContext.selected, undefined)
+assert.equal(cleanupContext.cleanup[0], 'cleanup')
+console.log('CONFIRMED: common toolbar list-select handler routes into cleanup selection while list toolbar label remains tied to selected/selectableIds')

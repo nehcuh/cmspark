@@ -9,7 +9,7 @@ import { tokens } from "../src/sidepanel/ui/tokens"
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
 
-test("#321 PR-4: CompanionMark empty imprint is 36px (#469 workspace), still red calf", () => {
+test("#488: CompanionMark empty imprint stays 36px with connection branding", () => {
   const emptyFn = src("src/sidepanel/components/ChatView.tsx").slice(
     src("src/sidepanel/components/ChatView.tsx").indexOf("function EmptyState"),
     src("src/sidepanel/components/ChatView.tsx").indexOf("const markdownCSS"),
@@ -20,9 +20,9 @@ test("#321 PR-4: CompanionMark empty imprint is 36px (#469 workspace), still red
     src("src/sidepanel/ui/icons.tsx").indexOf("export function CompanionMark"),
     src("src/sidepanel/ui/icons.tsx").indexOf("export function IconSend"),
   )
-  assert.match(mark, /tokens\.brandRed/)
+  assert.match(mark, /tokens\.textSecondary/)
   assert.doesNotMatch(mark, /#111|#000|black/i)
-  assert.match(mark, /viewBox="0 0 92 92"/)
+  assert.match(mark, /viewBox="0 0 24 24"/)
 })
 
 test("#321 PR-4: greeting stays 22px; three invites live in EmptyState (above the fold)", () => {

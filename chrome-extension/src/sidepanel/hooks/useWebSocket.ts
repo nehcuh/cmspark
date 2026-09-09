@@ -11,6 +11,7 @@ import { rememberNativeVisionProbe } from "../components/vision-reuse-logic"
 import { normalizeInboundLogEvent } from "../log-event-normalize"
 import { humanizeSidepanelGateError } from "../utils/gate-error-copy"
 import { newTempUserMessageId } from "../../utils/temp-message-id"
+import { isManagedThreadMutationReply } from "../utils/thread-mutations"
 import { knowledgePreviewErrorText, sanitizeKnowledgeSuggestion } from "../utils/knowledge-preview"
 import {
   KNOWLEDGE_DUPLICATE_CONFIRM_PREFIX,
@@ -1086,7 +1087,8 @@ export function useWebSocket() {
           break
         }
         case "thread.restored": {
-          chrome.runtime.sendMessage({ type: "thread.list" })
+          // Managed mutations refresh their own view (including remaining trash).
+          if (!isManagedThreadMutationReply(msg)) chrome.runtime.sendMessage({ type: "thread.list" })
           break
         }
         case "thread.cleanup_suggestions": {
@@ -1106,6 +1108,7 @@ export function useWebSocket() {
           break
         }
         case "thread.batch_deleted": {
+          if (isManagedThreadMutationReply(msg)) break
           const okIds: string[] = Array.isArray(msg.ok)
             ? msg.ok
             : Array.isArray(msg.deleted_ids)
@@ -2274,6 +2277,8 @@ export function useWebSocket() {
           break
 
         case "error": {
+          // A management failure must not stop or append errors to unrelated chat.
+          if (isManagedThreadMutationReply(msg)) break
           const overlayCode = typeof msg.error_code === "string" ? msg.error_code : ""
           const errText = typeof msg.error === "string" ? msg.error : ""
           if (activeThreadRef.current) {

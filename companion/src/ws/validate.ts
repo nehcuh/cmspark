@@ -115,6 +115,11 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "thread.batch_delete": (m) => {
+      if (m.probe !== undefined) {
+        return m.probe === "only_empty" && Array.isArray(m.thread_ids) && m.thread_ids.length === 0
+          ? { valid: true }
+          : { valid: false, error: "thread.batch_delete probe requires only_empty and empty thread_ids" }
+      }
       if (!Array.isArray(m.thread_ids) || m.thread_ids.length === 0) {
         return { valid: false, error: "thread.batch_delete requires non-empty thread_ids" }
       }
@@ -126,6 +131,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       if (m.mode !== undefined && m.mode !== "trash" && m.mode !== "hard") {
         return { valid: false, error: "thread.batch_delete mode must be trash|hard" }
+      }
+      if (m.only_empty !== undefined && (typeof m.only_empty !== "boolean" || (m.only_empty && m.mode !== "hard"))) {
+        return { valid: false, error: "thread.batch_delete only_empty requires a boolean and mode=hard" }
       }
       return { valid: true }
     },

@@ -1,0 +1,15 @@
+{
+  "model": "deepseek-v4-pro",
+  "usage": {
+    "prompt_tokens": 119698,
+    "completion_tokens": 3200,
+    "total_tokens": 122898,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 119698
+  },
+  "completed_at": "2026-09-09T02:05:26.013298+00:00",
+  "finish_reason": "stop"
+}

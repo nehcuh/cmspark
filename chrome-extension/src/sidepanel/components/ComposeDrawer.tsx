@@ -14,10 +14,8 @@ import {
 import {
   COMPOSE_GROUP_LABELS,
   COMPOSE_SECTIONS,
-  composeAttachLine,
   composeSectionGroups,
   composeSectionsInGroup,
-  surfaceLxLabel,
   type ComposeSection,
   type ComposeSectionGroup,
   type ComposeSectionId,
@@ -40,6 +38,15 @@ import {
 
 const FIRST_SECTION_ID: ComposeSectionId = COMPOSE_SECTIONS[0]?.id ?? "skills"
 
+const SECTION_SCOPE: Record<ComposeSectionId, string> = {
+  skills: "管理全局技能；按需用于对话",
+  knowledge: "管理知识库；选择本次对话使用的知识",
+  packs: "管理场景与专家；选择本对话工作区",
+  mcp: "管理全局 MCP 连接",
+  apps: "管理全局应用连接",
+  history: "查看当前对话的操作记录",
+}
+
 const SECTION_ICONS: Record<ComposeSection["id"], ComponentType<IconProps>> = {
   skills: IconSkills,
   knowledge: IconKnowledge,
@@ -54,7 +61,7 @@ export type ComposeDrawerProps = {
   onClose: () => void
   /** Open Host panel and close drawer. */
   onOpenSection: (panelId: ContextPanelId) => void
-  /** Current Surface level for §4.5 “挂到 … Surface Lx” copy. */
+  /** Accepted for caller compatibility; resource configuration is not Surface-scoped. */
   capabilityLevel?: CapabilityLevel
 }
 
@@ -62,10 +69,8 @@ export function ComposeDrawer({
   open,
   onClose,
   onOpenSection,
-  capabilityLevel = "chat",
 }: ComposeDrawerProps) {
   const firstBtnRef = useRef<HTMLButtonElement>(null)
-  const attachLine = composeAttachLine(capabilityLevel)
   const groups = composeSectionGroups()
 
   const handleSection = (section: ComposeSection) => {
@@ -86,7 +91,7 @@ export function ComposeDrawer({
           <div style={{ minWidth: 0 }}>
             <div style={styles.title}>装配</div>
             <div style={styles.subtitle}>
-              组合能力 · {attachLine}
+              管理资源与连接，按需用于对话
             </div>
           </div>
           <button
@@ -100,10 +105,6 @@ export function ComposeDrawer({
           </button>
         </div>
 
-        <div style={styles.surfaceChip} aria-hidden>
-          Surface {surfaceLxLabel(capabilityLevel)}
-        </div>
-
         {groups.map((group) => (
           <SectionGroup
             key={group}
@@ -111,12 +112,11 @@ export function ComposeDrawer({
             firstSectionId={FIRST_SECTION_ID}
             firstBtnRef={firstBtnRef}
             onOpen={handleSection}
-            attachLine={attachLine}
           />
         ))}
 
         <p style={styles.footNote} data-testid="compose-autonomy-note">
-          任务板不在装配内 — 使用 /board
+          任务板可从“资料与工具”或 /board 打开
         </p>
       </div>
     </BottomSheet>
@@ -128,13 +128,11 @@ function SectionGroup({
   firstSectionId,
   firstBtnRef,
   onOpen,
-  attachLine,
 }: {
   group: ComposeSectionGroup
   firstSectionId: ComposeSectionId
   firstBtnRef: RefObject<HTMLButtonElement>
   onOpen: (section: ComposeSection) => void
-  attachLine: string
 }) {
   const sections = composeSectionsInGroup(group)
   if (sections.length === 0) return null
@@ -158,7 +156,7 @@ function SectionGroup({
               <SectionRowButton
                 section={section}
                 Icon={Icon}
-                attachLine={attachLine}
+                attachLine={SECTION_SCOPE[section.id]}
                 buttonRef={section.id === firstSectionId ? firstBtnRef : undefined}
                 onOpen={onOpen}
               />
@@ -253,17 +251,6 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     padding: 0,
-  },
-  surfaceChip: {
-    display: "inline-flex",
-    margin: "0 16px 10px",
-    padding: "3px 10px",
-    borderRadius: tokens.radiusPill,
-    background: tokens.accentSoft,
-    color: tokens.accentText,
-    fontSize: 10,
-    fontWeight: 600,
-    letterSpacing: "0.02em",
   },
   group: {
     margin: 0,

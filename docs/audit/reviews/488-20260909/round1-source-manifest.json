@@ -1,0 +1,116 @@
+{
+  "base": "947532a8b8ab0eafa0da2aca91223bd0168f9ede",
+  "created_at": "2026-09-09T02:20:34.715Z",
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "40823443dd6a82164e56f9dfb6c075acedee824b3137f87444d85e3a088a03dc"
+    },
+    {
+      "path": "DESIGN.md",
+      "sha256": "fb4248060ccd8e42b15ed5342e8ab1f53cb1999bf82d71bc09887f9801e2d8b5"
+    },
+    {
+      "path": "chrome-extension/scripts/render-meeting-close-fixture.cjs",
+      "sha256": "447f76cde3e801fadc09592721be6537cf8c6f66670e7d42c83d0531dc775e99"
+    },
+    {
+      "path": "chrome-extension/scripts/render-workspace-fixture.cjs",
+      "sha256": "64d4e9d61360ed858ffcd20325798c3d71d5413fd294372a9b6b179ceb70653e"
+    },
+    {
+      "path": "chrome-extension/scripts/test-meeting-close-ui.py",
+      "sha256": "67952209a6701b3a41cda7a03306450d65e62695e8a5c502e1a0c77bfdf26ba3"
+    },
+    {
+      "path": "chrome-extension/scripts/test-thread-mutations-ui.py",
+      "sha256": "40205033cc5c769daa357a741f24457385b4b72fe08613123e5b98d083f2817b"
+    },
+    {
+      "path": "chrome-extension/src/background/index.ts",
+      "sha256": "e8387c463989ff9eeacd278cb4479addf8f0e2d824406ea2de7066e5c7ef396d"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/components/ComposeDrawer.tsx",
+      "sha256": "1ae36228575231d9a36f910cd3c0df7f4d56df6eae28de35ac711b6072f19479"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/components/ContextPanelHost.tsx",
+      "sha256": "3836cd7e418623c71430258ee7fe6a9f3496e0f567d69df73b3ef06dab5a6ad4"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/components/MeetingPanel.tsx",
+      "sha256": "a84e2933280cf4665fa71b74fa94caa4a2b8e5d0f91920b12ecf94017bca029a"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/components/ThreadList.tsx",
+      "sha256": "14e2ae56574e7b8d212047cd4a4e7192619878204b2f3c2f4f6019e6cdce62c1"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/hooks/useWebSocket.ts",
+      "sha256": "47f9c1f906f3084d583428b2f214771d41504f1bd0eec9c1347f7e761e8abf48"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/ui/icons.tsx",
+      "sha256": "fded3bbc8f5077b6141aa5769760377fac94e883cd375449c6ced10866a7e096"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/ui/workspace-styles.ts",
+      "sha256": "a8cfc1244f41f0228c6d50809ebe164b520f81ab3c8a484a7008c3c851272f4e"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/utils/thread-mutations.ts",
+      "sha256": "77c0ecb45fbfb1093a25a405045dd03eaea37feb59d7210d55f93fe28d1af498"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/voice/meeting-close.ts",
+      "sha256": "ca4c65f7c42a8542dc9cad3c5c8a449c1e940699eedea7b745d782baba11d41c"
+    },
+    {
+      "path": "chrome-extension/tests/calf-mark-323.test.ts",
+      "sha256": "dd4144cdca35145f5e6937238c6386ce95c7b1af8cf484ef39112af7ab4c5f48"
+    },
+    {
+      "path": "chrome-extension/tests/companion-canon-s12.test.ts",
+      "sha256": "cddae739eb04f2d81d6c3cdd2e8d96f19d9f088ba55fdd164b879f0870cb7c16"
+    },
+    {
+      "path": "chrome-extension/tests/empty-face-321.test.ts",
+      "sha256": "932e683ea8192aa91010a77eeeb9fc3e623616eed9e73d7cf80b377c65e00d66"
+    },
+    {
+      "path": "chrome-extension/tests/fixtures/thread-mutation-responses.ts",
+      "sha256": "79e4d9bce60dff4fd657c84931f13ddce6269d3ba70c6e359a7e76ee45d4a83e"
+    },
+    {
+      "path": "chrome-extension/tests/meeting-close.test.ts",
+      "sha256": "6ae2e0d87d00a8abf74fb1b8373d8bce6b33162b62e5f29e8f0a439ffc4667aa"
+    },
+    {
+      "path": "chrome-extension/tests/thread-mutations.test.ts",
+      "sha256": "b22a9cb8c382817fb70312a04232491359f7066c5f73950b564a787c61b302f7"
+    },
+    {
+      "path": "companion/src/message-router.ts",
+      "sha256": "91529fed720b7b1f0c85d6b5698f094ca762a4770fea2cfede2a32d9960b3e60"
+    },
+    {
+      "path": "companion/src/ws/validate.ts",
+      "sha256": "c7919a96bed0eff60a5a6ffde0d38588087a035b40a074e74cc34b164d1cbccf"
+    },
+    {
+      "path": "companion/tests/thread-empty-mutation-488.test.ts",
+      "sha256": "0e01e5d38337c6d46879ece871f745ce5d27f3d2f98dd066c5fc964a94c5e2f0"
+    },
+    {
+      "path": "docs/audit/2026-09-09-windows-thread-ux-review.md",
+      "sha256": "742c62b9581d97ea7d8fcc6e016294a6aadb78caee5aeee1a16740db207f6e02"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-09-windows-thread-ux-review.md",
+      "sha256": "720e30defa58d5a2f7fb5c2dbcbc5039fdd1d843300d1caad62ea99cef6ede0a"
+    }
+  ],
+  "diff_sha256": "f762ad164df910920416b00fc973355f9fb326b26bad018e389b5958e1316a11",
+  "packet_sha256": "4491f023d575d41a589cb129172714214b81c25fbf99115ca26ffe2c279e31a0"
+}

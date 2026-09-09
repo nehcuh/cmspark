@@ -1,7 +1,7 @@
 # Design
 
 ## Source of truth
-Active · 2026-09-08 · GitHub [#481](https://github.com/nehcuh/cmspark/issues/481).
+Active · 2026-09-09 · GitHub [#481](https://github.com/nehcuh/cmspark/issues/481), [#488](https://github.com/nehcuh/cmspark/issues/488).
 This is the current UI/UX contract for the extension workspace, summoner, settings,
 code panel, terminal, confirmation cockpit, meetings, graphs and tray. It consolidates
 #469 / #471 / #473 / #474 / #476 / #477 instead of appending competing layout rules.
@@ -59,6 +59,14 @@ ThreadList owns extension history, time/tags/manual/AI views, trash and bulk act
 Recent navigation projects the same store. Summoner uses persisted `user_tags` and
 `topic_folder`, not a second grouping store. AI grouping derives from extracted tags
 and never rewrites manual grouping. Keep AI extraction, cleanup and graph entries.
+Full selection uses the current search/tag/trash view and excludes busy threads.
+Cleanup suggestions own a separate selection. An empty selection never expands
+into a delete-all action. Confirmations show actual targets; only server-confirmed
+results update the list. Partial failures stay visible and unknown outcomes require
+refresh before retry. Empty cleanup requires server-side content revalidation.
+The entire history panel scrolls on short screens; its list cannot collapse to zero.
+Meeting close and navigation wait for final transcript persistence and end receipt;
+failures retain the panel with a retry action.
 Existing resource panels use ContextPanelHost above the composer; summoner resource
 attachments retain their current surface until native management lands. Label
 “used in this conversation” separately from global configuration. Read-only lists

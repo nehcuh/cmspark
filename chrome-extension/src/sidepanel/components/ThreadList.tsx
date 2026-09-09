@@ -7,6 +7,7 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { ThreadMetadataEditor } from "./ThreadMetadataEditor"
 import { aiThreadGroup, threadTags } from "../utils/thread-management"
+import { mutateThreads } from "../utils/thread-mutations"
 import { IconHistory } from "../ui/icons"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
 import type { Thread } from "../types"
@@ -119,6 +120,10 @@ export function ThreadList() {
   const [open, setOpen] = useState(false)
   const [editingThread, setEditingThread] = useState<Thread | null>(null)
   const [metadataNotice, setMetadataNotice] = useState("")
+  const [mutationNotice, setMutationNotice] = useState("")
+  const [mutating, setMutating] = useState(false)
+  const mutationRef = useRef<AbortController | null>(null)
+  useEffect(() => () => mutationRef.current?.abort(), [])
   useEffect(() => { if (!open) { setEditingThread(null); setMetadataNotice(""); setPendingDelete(null) } }, [open])
   useEffect(() => {
     const show = () => { if (!state.pendingSecurityConfirmations.length) setOpen(true) }
@@ -180,11 +185,12 @@ export function ThreadList() {
   const [pendingDelete, setPendingDelete] = useState<{
     ids: string[]
     hard: boolean
-    source: "row" | "batch" | "cleanup"
+    source: "row" | "batch" | "cleanup" | "empty"
   } | null>(null)
   useEffect(() => {
     if (!pendingDelete) return
     historyRef.current?.querySelector("[role='alertdialog']")?.scrollIntoView({ block: "nearest" })
+    historyRef.current?.querySelector<HTMLButtonElement>("[data-delete-cancel]")?.focus()
   }, [pendingDelete])
   /** Wave C: seed for related list; graph focus */
   const [relatedSeedId, setRelatedSeedId] = useState<string | null>(null)
@@ -508,11 +514,29 @@ export function ThreadList() {
 
   const selectableIds = useMemo(() => {
     const s = new Set<string>()
-    for (const t of filtered) {
+    const visible = view === "tags" && activeTag !== null ? tagIndex.get(activeTag) || [] : filtered
+    for (const t of visible) {
       if (!threadBusyById[t.id]) s.add(t.id)
     }
     return s
-  }, [filtered, threadBusyById])
+  }, [filtered, threadBusyById, view, activeTag, tagIndex])
+  useEffect(() => {
+    setSelected(previous => {
+      const next = new Set([...previous].filter(id => selectableIds.has(id)))
+      return next.size === previous.size ? previous : next
+    })
+  }, [selectableIds])
+  useEffect(() => { setPendingDelete(null) }, [view, activeTag, query, trashView])
+
+  const cleanupSelectableIds = useMemo(() => new Set(cleanupSuggestions
+    .map(s => s.thread_id)
+    .filter(id => threads.some(t => t.id === id && !t.trashed_at) && !threadBusyById[id])), [cleanupSuggestions, threads, threadBusyById])
+  useEffect(() => {
+    setCleanupSelected(previous => {
+      const next = new Set([...previous].filter(id => cleanupSelectableIds.has(id)))
+      return next.size === previous.size ? previous : next
+    })
+  }, [cleanupSelectableIds])
 
   const searchActive = query.trim().length > 0
 
@@ -587,28 +611,11 @@ export function ThreadList() {
   }
 
   const handleCleanupEmpty = () => {
-    const emptyN = threads.filter(
-      (t) => t.message_count === 0 && t.id !== activeThreadId && !t.trashed_at,
-    ).length
-    if (threads.some((t) => typeof t.message_count === "number") && emptyN === 0) {
-      alert("没有空白线程")
-      setMenuOpen(false)
-      return
-    }
-    const nLabel = emptyN > 0 ? `${emptyN} 个` : "所有"
-    if (
-      !confirm(
-        `将永久删除 ${nLabel}没有任何消息的空白线程。此操作不可恢复，也不经过回收站。`,
-      )
-    ) {
-      return
-    }
-    chrome.runtime.sendMessage({
-      type: "thread.cleanup_empty",
-      except_thread_id: activeThreadId,
-    })
+    if (mutationRef.current) return
+    const ids = threads.filter(t => t.message_count === 0 && t.id !== activeThreadId && !t.trashed_at && !threadBusyById[t.id]).map(t => t.id)
     setMenuOpen(false)
-    setOpen(false)
+    if (!ids.length) { setMutationNotice("没有可清理的空白对话；可刷新列表后再次检查。"); return }
+    setPendingDelete({ ids, hard: true, source: "empty" })
   }
 
   const handleGenerateTitle = () => {
@@ -755,6 +762,7 @@ export function ThreadList() {
 
   const handleDeleteOne = (threadId: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    if (mutationRef.current) return
     if (threadBusyById[threadId]) {
       alert("该线程正在运行，无法删除")
       return
@@ -763,47 +771,68 @@ export function ThreadList() {
   }
 
   const handleBatchDelete = () => {
-    let ids = [...selected].filter((id) => selectableIds.has(id))
-    if (ids.length === 0) {
-      ids = [...selectableIds]
-      if (ids.length === 0) return
-      setSelected(new Set(ids))
-      setSelectMode(true)
-    }
+    if (mutationRef.current) return
+    const ids = [...selected].filter((id) => selectableIds.has(id))
+    if (ids.length === 0) return
     setPendingDelete({ ids, hard: trashView, source: "batch" })
   }
 
-  const executePendingDelete = () => {
-    if (!pendingDelete || pendingDelete.ids.length === 0) return
-    const { ids, hard, source } = pendingDelete
-    const mode = hard ? "hard" : "trash"
-    if (ids.length === 1) {
-      dispatch({ type: "REMOVE_THREAD", threadId: ids[0] })
-      chrome.runtime.sendMessage({ type: "thread.delete", thread_id: ids[0], mode }, () => {
-        void chrome.runtime.lastError
-      })
-    } else {
-      dispatch({ type: "REMOVE_THREADS", threadIds: ids })
-      chrome.runtime.sendMessage({ type: "thread.batch_delete", thread_ids: ids, mode }, () => {
-        void chrome.runtime.lastError
-      })
-    }
+  const runMutation = async (ids: string[], mode: "trash" | "hard" | "restore" | "empty", source: "row" | "batch" | "cleanup" | "empty") => {
+    if (!ids.length || mutationRef.current) return
+    const controller = new AbortController()
+    mutationRef.current = controller
+    setMutating(true)
+    setMutationNotice(`正在${mode === "restore" ? "恢复" : "处理"} ${ids.length} 个对话，请等待服务端确认…`)
     setPendingDelete(null)
-    if (source === "batch") exitSelectMode()
-    if (source === "cleanup") {
-      setCleanupOpen(false)
-      setCleanupSuggestions([])
-      setCleanupSelected(new Set())
+    try {
+      const result = await mutateThreads(ids, mode, controller.signal)
+      if (controller.signal.aborted) return
+      if (mode !== "restore" && result.ok.length) dispatch({ type: "REMOVE_THREADS", threadIds: result.ok })
+      if (mode === "restore") chrome.runtime.sendMessage({ type: "thread.list", include_trashed: true })
+      const failedIds = new Set(result.failed.map(item => item.id))
+      const uncertain = result.failed.some(item => item.reason.startsWith("unknown"))
+      const failures = result.failed.slice(0, 3).map(item => {
+        const title = displayThreadTitle(threads.find(t => t.id === item.id) || { id: item.id })
+        const reason = item.reason === "thread_busy" ? "运行中"
+          : item.reason === "not_empty" ? "已有内容，已跳过"
+          : item.reason === "not_sent_unsupported" ? "未发送，请更新 Companion 后重试"
+          : item.reason.startsWith("not_sent") ? "未发送"
+          : item.reason.startsWith("unknown") ? "结果未确认" : item.reason
+        return `${title}：${reason}`
+      }).join("；")
+      setMutationNotice(`${mode === "restore" ? "已恢复" : mode === "hard" || mode === "empty" ? "已永久删除" : "已移入回收站"} ${result.ok.length} 个对话。${result.failed.length ? `另有 ${result.failed.length} 个未完成确认。${failures}${uncertain ? "；部分操作可能已完成，请刷新列表核对后重试。" : ""}` : ""}`)
+      if (source === "batch") {
+        setSelected(failedIds)
+        setSelectMode(failedIds.size > 0)
+      }
+      if (source === "cleanup") {
+        setCleanupSuggestions(previous => previous.filter(s => !result.ok.includes(s.thread_id)))
+        setCleanupSelected(failedIds)
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) setMutationNotice(`未收到完整结果，部分操作可能已完成；请刷新列表核对。${error instanceof Error ? error.message : ""}`)
+    } finally {
+      if (mutationRef.current === controller) mutationRef.current = null
+      if (!controller.signal.aborted) setMutating(false)
     }
   }
 
-  const handleSelectAllVisible = () => {
-    if (cleanupOpen && cleanupSuggestions.length > 0) {
-      setCleanupSelected(
-        new Set(cleanupSuggestions.map((s) => s.thread_id).filter(Boolean).slice(0, 50)),
-      )
+  const executePendingDelete = () => {
+    if (!pendingDelete || mutationRef.current) return
+    const { hard, source } = pendingDelete
+    const ids = pendingDelete.ids.filter(id => {
+      const thread = threads.find(t => t.id === id)
+      return thread && !threadBusyById[id] && (source === "empty" ? !thread.trashed_at && thread.message_count === 0 && id !== activeThreadId : !!thread.trashed_at === hard)
+    })
+    if (ids.length !== pendingDelete.ids.length) {
+      setPendingDelete(null)
+      setMutationNotice("部分对话状态已变化，请重新核对选择后操作。")
       return
     }
+    void runMutation(ids, source === "empty" ? "empty" : hard ? "hard" : "trash", source)
+  }
+
+  const handleSelectAllVisible = () => {
     const ids = selectAllIds(selectableIds)
     setSelectMode(true)
     setSelected(ids)
@@ -819,19 +848,12 @@ export function ThreadList() {
   }
 
   const handleClearVisibleSelection = () => {
-    if (cleanupOpen && cleanupSuggestions.length > 0) {
-      setCleanupSelected(new Set())
-      return
-    }
     setSelected(new Set())
   }
 
   const handleRestore = (ids: string[]) => {
-    if (ids.length === 0) return
-    chrome.runtime.sendMessage({ type: "thread.restore", thread_ids: ids })
-    dispatch({ type: "REMOVE_THREADS", threadIds: ids }) // drop from trash view until list refresh
-    chrome.runtime.sendMessage({ type: "thread.list", include_trashed: true })
-    exitSelectMode()
+    const targets = ids.filter(id => selectableIds.has(id) && threads.some(t => t.id === id && t.trashed_at))
+    void runMutation(targets, "restore", "batch")
   }
 
   const openTrashView = () => {
@@ -862,12 +884,9 @@ export function ThreadList() {
   }
 
   const applyCleanupTrash = () => {
-    let ids = [...cleanupSelected].slice(0, 50)
-    if (ids.length === 0) {
-      ids = cleanupSuggestions.map((s) => s.thread_id).filter(Boolean).slice(0, 50)
-      if (ids.length === 0) return
-      setCleanupSelected(new Set(ids))
-    }
+    if (mutationRef.current) return
+    const ids = [...cleanupSelected].filter(id => cleanupSelectableIds.has(id))
+    if (!ids.length) return
     setPendingDelete({ ids, hard: false, source: "cleanup" })
   }
 
@@ -879,7 +898,7 @@ export function ThreadList() {
     beginExtractBatch(ids, force)
   }
 
-  const panelMaxHeight = selectMode || cleanupOpen || view === "tags" || view === "topics" || view === "ai" ? 480 : 360
+  const panelMaxHeight = 480
 
   useEffect(() => {
     if (!open) {
@@ -964,7 +983,7 @@ export function ThreadList() {
         data-thread-id={t.id}
         style={{
           ...styles.threadItem,
-          background: isActive ? tokens.accentSoft : "transparent",
+          background: isActive ? tokens.bgHover : "transparent",
           opacity: selectMode && busy ? 0.45 : 1,
         }}
         aria-label={accessibleName}
@@ -1051,7 +1070,7 @@ export function ThreadList() {
               }}
               title="列表内相关"
             >
-              🔗
+              相关
             </button>
             <button
               type="button"
@@ -1062,7 +1081,7 @@ export function ThreadList() {
               }}
               title="提取要点 / 标签"
             >
-              🏷
+              AI 标签
             </button>
             <button
               type="button"
@@ -1105,16 +1124,17 @@ export function ThreadList() {
               disabled={state.summarizingThreadId === t.id}
               title="导出此线程摘要为 Markdown"
             >
-              {state.summarizingThreadId === t.id ? "⏳" : "🧠"}
+              {state.summarizingThreadId === t.id ? "导出中" : "导出"}
             </button>
             <button
               type="button"
               style={styles.iconBtn}
               onClick={(e) => handleDeleteOne(t.id, e)}
+              disabled={mutating || busy}
               title="删除线程"
               aria-label={`删除 ${accessibleName}`}
             >
-              🗑️
+              删除
             </button>
           </>
         )}
@@ -1231,7 +1251,7 @@ export function ThreadList() {
     const untagged = tagIndex.get("__untagged__") || []
     const listForTag =
       activeTag === null
-        ? null
+        ? filtered
         : activeTag === "__untagged__"
           ? untagged
           : tagIndex.get(activeTag) || []
@@ -1336,9 +1356,9 @@ export function ThreadList() {
         {listForTag && (
           <div>
             <div style={styles.groupHeader}>
-              {renderGroupCheckbox(listForTag.map((t) => t.id), activeTag === "__untagged__" ? "未标注" : `#${activeTag}`)}
+              {renderGroupCheckbox(listForTag.map((t) => t.id), activeTag === null ? "全部对话" : activeTag === "__untagged__" ? "未标注" : `#${activeTag}`)}
               <span style={styles.groupLabel}>
-                {activeTag === "__untagged__" ? "未标注" : `#${activeTag}`} ·{" "}
+                {activeTag === null ? "全部对话" : activeTag === "__untagged__" ? "未标注" : `#${activeTag}`} ·{" "}
                 {listForTag.length}
               </span>
             </div>
@@ -1432,11 +1452,12 @@ export function ThreadList() {
               zIndex: 10050,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${tokens.border}` }}><strong style={{ flex: 1, fontSize: 14 }}>对话管理</strong><button type="button" className="cm-icon-button" aria-label="关闭历史对话" onClick={() => { setOpen(false); triggerRef.current?.focus() }}>×</button></div>
+            <div className="cm-thread-management-title" style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${tokens.border}` }}><strong style={{ flex: 1, fontSize: 14 }}>对话管理</strong><button type="button" className="cm-icon-button" aria-label="关闭历史对话" onClick={() => { setOpen(false); triggerRef.current?.focus() }}>×</button></div>
             <div className="cm-thread-management-header" style={styles.panelHeader}>
               <div className="cm-thread-management-views" style={styles.viewToggle}>
                 <button
                   type="button"
+                  aria-pressed={view === "time"}
                   style={view === "time" ? styles.viewBtnActive : styles.viewBtn}
                   onClick={() => setView("time")}
                 >
@@ -1444,6 +1465,7 @@ export function ThreadList() {
                 </button>
                 <button
                   type="button"
+                  aria-pressed={view === "tags"}
                   style={view === "tags" ? styles.viewBtnActive : styles.viewBtn}
                   onClick={() => setView("tags")}
                 >
@@ -1451,12 +1473,13 @@ export function ThreadList() {
                 </button>
                 <button
                   type="button"
+                  aria-pressed={view === "topics"}
                   style={view === "topics" ? styles.viewBtnActive : styles.viewBtn}
                   onClick={() => setView("topics")}
                 >
                   手动分组
                 </button>
-                <button type="button" style={view === "ai" ? styles.viewBtnActive : styles.viewBtn} onClick={() => setView("ai")}>AI 分组</button>
+                <button type="button" aria-pressed={view === "ai"} style={view === "ai" ? styles.viewBtnActive : styles.viewBtn} onClick={() => setView("ai")}>AI 分组</button>
               </div>
               <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
                 <button
@@ -1596,27 +1619,9 @@ export function ThreadList() {
               <button type="button" onClick={() => { setCleanupOpen(true); runCleanupScan() }}>整理助手</button>
               <button type="button" onClick={openThreadGraph}>关系图谱</button>
               <button type="button" onClick={() => trashView ? closeTrashView() : openTrashView()}>{trashView ? "返回对话" : "回收站"}</button>
-              <button
-                type="button"
-                onClick={() =>
-                  (cleanupOpen && cleanupSuggestions.length > 0
-                    ? cleanupSelected.size === cleanupSuggestions.length
-                    : allSelectableSelected(selected, selectableIds))
-                    ? handleClearVisibleSelection()
-                    : handleSelectAllVisible()
-                }
-                disabled={cleanupOpen && cleanupSuggestions.length > 0 ? cleanupSuggestions.length === 0 : selectableIds.size === 0}
-                title={cleanupOpen ? "全选整理助手扫描结果" : "全选当前列表中可删除的会话"}
-              >
-                {(cleanupOpen && cleanupSuggestions.length > 0
-                  ? cleanupSelected.size === cleanupSuggestions.length && cleanupSuggestions.length > 0
-                  : allSelectableSelected(selected, selectableIds))
-                  ? "取消全选"
-                  : "全选"}
-              </button>
             </div>
             {cleanupOpen && (
-              <div className="cm-thread-cleanup" style={styles.cleanupPanel}>
+                <div className="cm-thread-cleanup" style={styles.cleanupPanel} role="region" aria-label="整理建议">
                 <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>整理助手（规则）</div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 11, color: tokens.textSecondary }}>扫描</span>
@@ -1680,6 +1685,7 @@ export function ThreadList() {
                             <input
                               type="checkbox"
                               checked={cleanupSelected.has(s.thread_id)}
+                              disabled={!cleanupSelectableIds.has(s.thread_id) || mutating}
                               onChange={() => {
                                 setCleanupSelected((prev) => {
                                   const next = new Set(prev)
@@ -1721,23 +1727,22 @@ export function ThreadList() {
                         type="button"
                         style={styles.selectBtn}
                         onClick={() => {
-                          const ids = cleanupSuggestions.map((s) => s.thread_id).slice(0, 50)
-                          setCleanupSelected(new Set(ids))
+                          setCleanupSelected(new Set(cleanupSelectableIds))
                         }}
                       >
-                        全选
+                        全选建议
                       </button>
                       <button
                         type="button"
                         style={styles.selectBtn}
                         onClick={() => setCleanupSelected(new Set())}
                       >
-                        全不选
+                        清空建议选择
                       </button>
                       <button
                         type="button"
                         style={styles.dangerBtn}
-                        disabled={cleanupSelected.size === 0}
+                        disabled={cleanupSelected.size === 0 || mutating}
                         onClick={applyCleanupTrash}
                       >
                         移入回收站（{cleanupSelected.size}）
@@ -1751,10 +1756,11 @@ export function ThreadList() {
               <div
                 role="alertdialog"
                 aria-label="确认删除会话"
+                aria-describedby="cm-delete-description"
                 style={styles.pendingDelete}
               >
-                <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>
-                  {pendingDelete.hard
+                <div id="cm-delete-description"><p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>
+                  {pendingDelete.source === "empty" ? `永久清理 ${pendingDelete.ids.length} 个空白对话？不可恢复，服务端会再次检查是否仍为空白。` : pendingDelete.hard
                     ? `永久删除 ${pendingDelete.ids.length} 个会话？不可恢复。`
                     : `将 ${pendingDelete.ids.length} 个会话移入回收站？可在回收站恢复（约 30 天后自动清理）。`}
                   {pendingDelete.source === "cleanup" &&
@@ -1764,11 +1770,14 @@ export function ThreadList() {
                     ? " 含编程接力记录，请再核对。"
                     : ""}
                 </p>
+                <ul className="cm-delete-preview">{pendingDelete.ids.slice(0, 5).map(id => <li key={id}>{displayThreadTitle(threads.find(t => t.id === id) || { id })} <span>#{id}</span></li>)}</ul>
+                {pendingDelete.ids.length > 5 && <p className="cm-thread-management-help">另有 {pendingDelete.ids.length - 5} 个已选对话</p>}
+                </div>
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button type="button" style={styles.dangerBtn} onClick={executePendingDelete}>
+                  <button type="button" style={styles.dangerBtn} disabled={mutating} onClick={executePendingDelete}>
                     {pendingDelete.hard ? "永久删除" : "移入回收站"}
                   </button>
-                  <button type="button" style={styles.selectBtn} onClick={() => setPendingDelete(null)}>
+                  <button type="button" data-delete-cancel style={styles.selectBtn} onClick={() => setPendingDelete(null)}>
                     取消
                   </button>
                 </div>
@@ -1777,6 +1786,7 @@ export function ThreadList() {
             {view === "ai" && <p className="cm-thread-management-help">按 AI 提取的首个主题标签自动分组；重新提取可能调整 AI 分组，不改变手动分组。点击“AI 提取标签”为最多20个未标注对话提取标签。</p>}
             {view === "tags" && <p className="cm-thread-management-help">汇总人工与 AI 标签；点对话右侧“分类”管理人工标签。</p>}
             {metadataNotice && <p className="cm-thread-management-help" role="status">{metadataNotice}</p>}
+            {mutationNotice && <div className="cm-thread-mutation-notice" role="status" aria-live="polite"><span>{mutationNotice}</span>{!mutating && <button type="button" onClick={() => chrome.runtime.sendMessage({ type: "thread.list", include_trashed: trashView })}>刷新列表</button>}</div>}
             {editingThread && <ThreadMetadataEditor key={editingThread.id} thread={editingThread} folders={[...new Set(threads.map(t => t.topic_folder).filter((name): name is string => !!name))]} onClose={() => closeMetadataEditor()} onSaved={thread => { dispatch({ type: "UPSERT_THREAD", thread }); closeMetadataEditor(thread.id); setMetadataNotice("分类已保存") }} />}
             {extractProgress && extractProgress.total > 0 && (
               <div style={styles.progressBar} role="status" aria-live="polite">
@@ -1878,28 +1888,16 @@ export function ThreadList() {
             </div>
 
             {selectMode && (
-              <div style={styles.bottomBar}>
+              <div className="cm-thread-selection-bar" style={styles.bottomBar}>
                 <span style={{ fontSize: 12, color: tokens.textSecondary }}>
                   已选 {selected.size}
                 </span>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                  <button
-                    type="button"
-                    style={styles.selectBtn}
-                    disabled={selectableIds.size === 0}
-                    onClick={() =>
-                      allSelectableSelected(selected, selectableIds)
-                        ? handleClearVisibleSelection()
-                        : handleSelectAllVisible()
-                    }
-                  >
-                    {allSelectableSelected(selected, selectableIds) ? "取消全选" : "全选"}
-                  </button>
                   {trashView ? (
                     <button
                       type="button"
                       style={styles.selectBtn}
-                      disabled={selected.size === 0}
+                      disabled={selected.size === 0 || mutating}
                       onClick={() => handleRestore([...selected])}
                     >
                       恢复
@@ -1934,10 +1932,10 @@ export function ThreadList() {
                   <button
                     type="button"
                     style={styles.dangerBtn}
-                    disabled={selected.size === 0}
+                    disabled={selected.size === 0 || mutating}
                     onClick={handleBatchDelete}
                   >
-                    {trashView ? "永久删除" : "回收站"}
+                    {trashView ? "永久删除" : "移入回收站"}
                   </button>
                   <button type="button" style={styles.selectBtn} onClick={exitSelectMode}>
                     取消
@@ -2194,7 +2192,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     cursor: "pointer",
     padding: "2px 4px",
-    opacity: 0.5,
+    color: tokens.textSecondary,
+    whiteSpace: "nowrap",
     flexShrink: 0,
   },
   threadAliasRow: {
@@ -2305,9 +2304,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: tokens.warningSoft,
     borderBottom: `1px solid ${tokens.border}`,
     color: tokens.text,
-    position: "sticky",
-    top: 0,
-    zIndex: 6,
     flexShrink: 0,
   },
   bottomBar: {

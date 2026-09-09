@@ -77,14 +77,21 @@ export const workspaceCSS = `
 .cm-header-new{display:none;font-size:24px}
 .cm-nav-manage{border:0;background:transparent;color:${tokens.textSecondary};font:inherit;font-size:12px;padding:6px;cursor:pointer}
 .cm-thread-manager-trigger{width:auto!important;gap:5px;padding:0 5px;font-size:12px;white-space:nowrap}
-.cm-history-panel{display:flex!important;flex-direction:column;overflow:hidden!important;overscroll-behavior:contain}
+.cm-history-panel{display:block!important;overflow-y:auto!important;overscroll-behavior:contain}
 .cm-thread-management-header{flex-wrap:wrap;flex-shrink:0}
 .cm-thread-management-views{flex-wrap:wrap}
-.cm-thread-management-list{flex:1;min-height:0;overflow-y:auto!important;max-height:none!important}
+.cm-thread-management-list{min-height:120px;overflow:visible!important;max-height:none!important}
 .cm-thread-management-actions{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid ${tokens.border};flex-shrink:0}
 .cm-thread-cleanup{flex-shrink:0}
+.cm-thread-selection-bar{position:sticky;bottom:0;z-index:2;background:${tokens.bgElevated};box-shadow:0 -2px 8px rgba(0,0,0,.04);flex-wrap:wrap;gap:8px}
+.cm-history-panel button{min-height:32px}
+.cm-thread-management-views button[aria-pressed="true"]{background:${tokens.navSelected};color:${tokens.text};font-weight:600}
+.cm-thread-mutation-notice{padding:10px 12px;font-size:12px;line-height:1.6;background:${tokens.bgMuted};color:${tokens.textSecondary};overflow-wrap:anywhere}
+.cm-thread-mutation-notice button{display:block;font:inherit;padding:4px 8px;margin-top:6px;background:${tokens.bg};border:1px solid ${tokens.border};border-radius:6px;cursor:pointer}
+.cm-delete-preview{padding-left:18px;margin:8px 0;font-size:12px;line-height:1.7;overflow-wrap:anywhere}.cm-delete-preview span{color:${tokens.textMuted}}
 .cm-thread-management-actions button,.cm-thread-editor button{font:inherit;font-size:12px;min-height:32px;border:1px solid ${tokens.border};border-radius:8px;padding:6px 9px;background:${tokens.bgMuted};color:${tokens.text};cursor:pointer}
 .cm-thread-management-actions button:disabled,.cm-thread-editor button:disabled{opacity:.5;cursor:not-allowed}
+@media(max-height:600px){.cm-thread-management-title{padding:4px 10px!important}.cm-thread-management-header{padding:4px 10px!important}.cm-thread-management-actions{padding:4px 10px;gap:4px}.cm-thread-management-actions button{padding:4px 6px;white-space:nowrap}}
 .cm-thread-management-help{font-size:12px;line-height:1.6;color:${tokens.textSecondary};padding:0 12px}
 .cm-thread-editor{padding:16px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid ${tokens.border};background:${tokens.bgMuted}}
 .cm-thread-editor label{display:flex;flex-direction:column;gap:6px;font-size:12px}.cm-thread-editor input{box-sizing:border-box;width:100%;min-width:0;border:1px solid ${tokens.border};border-radius:8px;padding:8px;font:inherit;background:${tokens.bg}}

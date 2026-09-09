@@ -126,6 +126,8 @@ export type ContextPanelHostApi = {
   /** Force-open (no toggle) — used by slash / custom events. */
   openPanelForce: (id: ContextPanelId) => void
   closePanel: () => void
+  /** A recording panel can finish its last segment before navigation unmounts it. */
+  registerBeforeClose: (guard: () => Promise<boolean>) => () => void
 }
 
 const ContextPanelHostContext = createContext<ContextPanelHostApi | null>(null)
@@ -153,9 +155,17 @@ export function ContextPanelHostProvider({
   children: ReactNode
 }) {
   const [activePanel, setActivePanel] = useState<ContextPanelId | null>(null)
+  const activePanelRef = useRef(activePanel)
+  activePanelRef.current = activePanel
+  const beforeCloseRef = useRef<(() => Promise<boolean>) | null>(null)
+  const transitionRef = useRef<Promise<boolean> | null>(null)
+  const targetRef = useRef<ContextPanelId | null>(null)
+  const transitionVersion = useRef(0)
   const pendingKnowledgeFocus = useRef<string | null>(null)
   const { state, dispatch } = useAgentStore()
   const activeThreadId = state.activeThreadId
+  const activeThreadRef = useRef(activeThreadId)
+  activeThreadRef.current = activeThreadId
 
   const allowedIds = useMemo(
     () => new Set(contextBarTabsForLevel(capabilityLevel)),
@@ -166,63 +176,89 @@ export function ContextPanelHostProvider({
     [capabilityLevel],
   )
 
-  const closePanel = useCallback(() => {
-    setActivePanel(null)
+  const registerBeforeClose = useCallback((guard: () => Promise<boolean>) => {
+    beforeCloseRef.current = guard
+    return () => { if (beforeCloseRef.current === guard) beforeCloseRef.current = null }
   }, [])
 
+  const requestPanelChange = useCallback((id: ContextPanelId | null): Promise<boolean> => {
+    targetRef.current = id
+    transitionVersion.current += 1
+    if (transitionRef.current) return transitionRef.current
+    if (activePanelRef.current === id) {
+      if (id) loadPanelData(id, activeThreadRef.current, dispatch)
+      return Promise.resolve(true)
+    }
+    const apply = () => {
+      const target = targetRef.current
+      activePanelRef.current = target
+      setActivePanel(target)
+      if (target) loadPanelData(target, activeThreadRef.current, dispatch)
+    }
+    const guard = beforeCloseRef.current
+    if (!guard) { apply(); return Promise.resolve(true) }
+    const pending = Promise.resolve().then(guard).then(allowed => {
+      if (allowed) apply()
+      return allowed
+    }, () => false).finally(() => { transitionRef.current = null })
+    transitionRef.current = pending
+    return pending
+  }, [dispatch])
+
+  const closePanel = useCallback(() => { void requestPanelChange(null) }, [requestPanelChange])
+
   useEffect(() => {
-    if (state.settingsOpen) closePanel()
-  }, [state.settingsOpen, closePanel])
+    if (!state.settingsOpen) return
+    if (!beforeCloseRef.current) { closePanel(); return }
+    // Keep the finishing/error state visible; open settings after a successful close.
+    dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+    const pending = requestPanelChange(null)
+    const version = transitionVersion.current
+    void pending.then(allowed => {
+      if (allowed && version === transitionVersion.current) dispatch({ type: "SET_SETTINGS_OPEN", open: true })
+    })
+  }, [state.settingsOpen, closePanel, dispatch, requestPanelChange])
 
   const openPanelForce = useCallback(
     (id: ContextPanelId) => {
-      setActivePanel(id)
-      loadPanelData(id, activeThreadId, dispatch)
+      void requestPanelChange(id)
     },
-    [activeThreadId, dispatch],
+    [requestPanelChange],
   )
 
   const openPanel = useCallback(
     (id: ContextPanelId) => {
-      if (activePanel === id) {
-        setActivePanel(null)
-        return
-      }
-      setActivePanel(id)
-      loadPanelData(id, activeThreadId, dispatch)
+      void requestPanelChange(activePanelRef.current === id ? null : id)
     },
-    [activePanel, activeThreadId, dispatch],
+    [requestPanelChange],
   )
 
   // Close open panel if it is no longer primary or overflow for this level
   useEffect(() => {
     if (activePanel == null) return
     if (!allowedIds.has(activePanel) && !overflowIds.includes(activePanel)) {
-      setActivePanel(null)
+      closePanel()
     }
-  }, [activePanel, allowedIds, overflowIds])
+  }, [activePanel, allowedIds, overflowIds, closePanel])
 
   // S1: slash meta commands (/packs /board /mcp) open panels via soft event
   useEffect(() => {
     const onOpen = (e: Event) => {
       const raw = (e as CustomEvent<{ panel?: string }>).detail?.panel
       if (!raw || !isContextPanelId(raw)) return
-      setActivePanel(raw)
-      loadPanelData(raw, activeThreadId, dispatch)
+      openPanelForce(raw)
     }
     window.addEventListener("cmspark:open-context-panel", onOpen as EventListener)
     const onKnowledge = (e: Event) => {
       const id = (e as CustomEvent<{ id?: string }>).detail?.id
       if (id) pendingKnowledgeFocus.current = id
-      setActivePanel("knowledge")
-      loadPanelData("knowledge", activeThreadId, dispatch)
+      openPanelForce("knowledge")
     }
     window.addEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
     const onGraphDoc = (msg: { type?: string; id?: string }) => {
       if (msg?.type !== "knowledge_graph.doc_selected" || !msg.id) return
       pendingKnowledgeFocus.current = msg.id
-      setActivePanel("knowledge")
-      loadPanelData("knowledge", activeThreadId, dispatch)
+      openPanelForce("knowledge")
     }
     chrome.runtime.onMessage.addListener(onGraphDoc)
     return () => {
@@ -230,7 +266,7 @@ export function ContextPanelHostProvider({
       window.removeEventListener("cmspark:open-knowledge", onKnowledge as EventListener)
       chrome.runtime.onMessage.removeListener(onGraphDoc)
     }
-  }, [activeThreadId, dispatch])
+  }, [openPanelForce])
 
   useEffect(() => {
     if (activePanel !== "knowledge") return
@@ -248,15 +284,15 @@ export function ContextPanelHostProvider({
       const tag = (e.target as HTMLElement | null)?.tagName
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return
       e.preventDefault()
-      setActivePanel(null)
+      closePanel()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [activePanel])
+  }, [activePanel, closePanel])
 
   const api = useMemo<ContextPanelHostApi>(
-    () => ({ activePanel, openPanel, openPanelForce, closePanel }),
-    [activePanel, openPanel, openPanelForce, closePanel],
+    () => ({ activePanel, openPanel, openPanelForce, closePanel, registerBeforeClose }),
+    [activePanel, openPanel, openPanelForce, closePanel, registerBeforeClose],
   )
 
   return (
@@ -273,7 +309,7 @@ export function ContextPanelHostProvider({
  * (Host is SoT for panels).
  */
 export function ContextPanelHost() {
-  const { activePanel, closePanel } = useContextPanelHost()
+  const { activePanel, closePanel, registerBeforeClose } = useContextPanelHost()
   const meetingCaptureActive = useAgentStore().state.meetingCaptureActive
   if (!activePanel) return null
 
@@ -314,6 +350,7 @@ export function ContextPanelHost() {
       {activePanel === "meeting" && (
         <MeetingPanel
           onClose={closePanel}
+          registerBeforeClose={registerBeforeClose}
           onSendToDraft={(text) => {
             window.dispatchEvent(
               new CustomEvent("cmspark:fill-composer", { detail: { text } }),
@@ -1018,10 +1055,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   skillToolbar: {
     display: "flex",
+    flexWrap: "wrap",
     gap: 6,
     marginBottom: 8,
   },
   skillToolbarBtn: {
+    whiteSpace: "nowrap",
+    minHeight: 32,
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusSm,
     background: tokens.bgElevated,

@@ -6,8 +6,8 @@ import { tokens } from "../src/sidepanel/ui/tokens"
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
 
-// GitHub: #323 — empty-state imprint is a red calf robot (brandRed token),
-// independent from the danger family. Pure T1 presentation.
+// #323 token contrast remains covered; #488 aligns the decorative mark with
+// the existing connection brand instead of the historical calf geometry.
 
 // --- small colour-science helpers (CIEDE2000 + Machado 2009 deutan), so the
 // "clearly distinguishable from danger" acceptance lives in code, not prose. ---
@@ -127,22 +127,20 @@ test("#323 mark keeps filled-stamp geometry, aria-hidden, no armed-state bits", 
   assert.match(mark, /aria-hidden/)
   assert.ok(!/dangerouslySetInnerHTML/.test(mark))
   assert.ok(!/armed|cruise|tier|mode|level|L[012]/.test(mark), "mark carries no state")
-  // viewBox stays 92×92 and size stays a prop (fits #321 PR-4 92→48 rescale).
-  assert.match(mark, /viewBox="0 0 92 92"/)
+  assert.match(mark, /viewBox="0 0 24 24"/)
   assert.match(mark, /\{ size = \d+ \}/)
 })
 
-test("#323 mark draws calf features from tokens, no raw hex drift", () => {
+test("#488 decorative mark uses the connection brand without state or raw colors", () => {
   const icons = src("src/sidepanel/ui/icons.tsx")
   const mark = icons.slice(
     icons.indexOf("export function CompanionMark"),
     icons.indexOf("export function IconSend"),
   )
-  // Body + horns + ears use the brandRed token (not a literal or danger).
-  assert.ok((mark.match(/tokens\.brandRed/g) ?? []).length >= 4)
-  assert.ok(!/#dc2626/i.test(mark))
-  // Robot accent stays indigo; face marker is the calf muzzle.
-  assert.match(mark, /tokens\.accent/)
-  assert.match(mark, /ellipse cx="46"/)
-  assert.match(mark, /rx="9"/)
+  assert.match(mark, /tokens\.textSecondary/)
+  assert.doesNotMatch(mark, /#[0-9a-f]{3,8}\b|tokens\.danger|tokens\.brandRed/i)
+  const brand = src("../scripts/lib/brand-icon.mjs")
+  const diamond = 'm12 7.5 4.5 4.5-4.5 4.5L7.5 12Z'
+  assert.ok(mark.includes(diamond) && brand.includes(diamond), "shared connection geometry")
+  assert.equal((mark.match(/<circle /g) ?? []).length, 3)
 })
