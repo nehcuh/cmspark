@@ -1,0 +1,57 @@
+TAP version 13
+# [cmspark-agent] computer.modelVariant=hybrid 已弃用（TinyClick）——迁移为 Qwen3-VL "2b"
+# Subtest: \#490 organize lifecycle: initial/refresh/rebuilding busy, success completion idle
+not ok 1 - \#490 organize lifecycle: initial/refresh/rebuilding busy, success completion idle
+  ---
+  duration_ms: 238.476125
+  type: 'test'
+  location: '/Users/huchen/Projects/cmspark/companion/tests/knowledge-graph-organize.test.ts:9:1750'
+  failureType: 'testCodeFailure'
+  error: |-
+    initial graph ACK does not complete the organize operation
+    + actual - expected
+    
+    + undefined
+    - true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/huchen/Projects/cmspark/companion/tests/knowledge-graph-organize.test.ts:167:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: \#490 organize lifecycle: initial/refresh/rebuilding busy, failure completion idle
+not ok 2 - \#490 organize lifecycle: initial/refresh/rebuilding busy, failure completion idle
+  ---
+  duration_ms: 7.502916
+  type: 'test'
+  location: '/Users/huchen/Projects/cmspark/companion/tests/knowledge-graph-organize.test.ts:9:1750'
+  failureType: 'testCodeFailure'
+  error: |-
+    initial graph ACK does not complete the organize operation
+    + actual - expected
+    
+    + undefined
+    - true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/huchen/Projects/cmspark/companion/tests/knowledge-graph-organize.test.ts:167:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 0
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 379.121292
