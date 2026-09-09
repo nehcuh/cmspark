@@ -108,6 +108,7 @@ type OrganizeFrame = {
   llm_ready: boolean
   organize_error?: string
   organized?: boolean
+  organizing?: boolean
   stale?: boolean
   lock_dissolved?: boolean
   tf_switch_notice?: boolean
@@ -115,6 +116,70 @@ type OrganizeFrame = {
 
 function readIndex(): import("../src/skills/knowledge-clusters").KnowledgeIndexFile | null {
   return clusters.readKnowledgeIndexFile(clusters.knowledgeIndexPath())
+}
+
+for (const outcome of ["success", "failure"] as const) {
+  test(`#490 organize lifecycle: initial/refresh/rebuilding busy, ${outcome} completion idle`, async () => {
+    resetKnowledgeState()
+    const se = new SkillEngine()
+    seedGroup(se, 3, `lifecycle-${outcome}`)
+    const docs = se.getKnowledgeDocsForOrganize()
+    const ids = docs.map((d) => d.id)
+    const rawResult = JSON.stringify({ groups: [{ name: "完成分组", ids }], relations: [] })
+    if (outcome === "failure") {
+      // Reorganizing an existing cache must remain busy even though organized is true.
+      const normalized = kg.normalizeGraphOrganize(kg.parseGraphOrganize(rawResult)!, new Set(ids), new Set())
+      se.setKnowledgeGraphLlmSection({
+        fingerprint: kg.computeGraphLlmFingerprint(docs),
+        groups: normalized.groups,
+        relations: normalized.relations,
+        stale: false,
+      })
+    }
+    let release!: (value: string) => void
+    let reject!: (error: Error) => void
+    const pending = new Promise<string>((resolve, fail) => { release = resolve; reject = fail })
+    __testSetKnowledgeGraphOrganizeImpl(() => pending)
+    let complete!: (frame: OrganizeFrame) => void
+    const completed = new Promise<OrganizeFrame>((resolve) => { complete = resolve })
+    const session = { surface: "panel", sendToExtension: complete } as never
+    const context = { skillEngine: se } as never
+    const initial = await handleMessage({ type: "knowledge.graph", organize: true, user_gesture: true }, context, session) as OrganizeFrame
+    const intermediate = await handleMessage({ type: "knowledge.graph" }, context, session) as OrganizeFrame
+    const getGraph = se.getKnowledgeGraph
+    let rebuilding: OrganizeFrame
+    try {
+      se.getKnowledgeGraph = () => null
+      rebuilding = await handleMessage({ type: "knowledge.graph" }, context, session) as OrganizeFrame
+    } finally {
+      se.getKnowledgeGraph = getGraph
+    }
+    if (outcome === "failure") reject(new Error("fixture organize failure"))
+    else release(rawResult)
+    const final = await completed
+    const after = await handleMessage({ type: "knowledge.graph" }, context, session) as OrganizeFrame
+    // Optional reusable fixture: serialize actual handler responses and push, never guessed wire fields.
+    const artifactDir = process.env.CMSPARK_TEST_GRAPH_ARTIFACT_DIR
+    if (artifactDir) {
+      fs.mkdirSync(artifactDir, { recursive: true })
+      fs.writeFileSync(path.join(artifactDir, `organize-${outcome}-frames.json`), JSON.stringify({ initial, intermediate, rebuilding, final, after }, null, 2) + "\n")
+    }
+    assert.equal(initial.organizing, true, "initial graph ACK does not complete the organize operation")
+    assert.equal(intermediate.organizing, true, "read-only refresh observes the in-flight operation")
+    assert.equal(rebuilding.status, "rebuilding")
+    assert.equal(rebuilding.organizing, true, "index unavailability must not clear the operation state")
+    assert.equal(final.organizing, false, "settled push clears busy state before serialization")
+    assert.equal(after.organizing, false)
+    assert.equal(final.status, "ok", "organize failure preserves the readable graph")
+    assert.equal(final.organized, true)
+    if (outcome === "failure") {
+      assert.equal(initial.organized, true)
+      assert.equal(final.organize_error, "AI 整理失败，请重试")
+    } else {
+      assert.equal(initial.organized, undefined)
+      assert.equal(final.organize_error, undefined)
+    }
+  })
 }
 
 test("#427 AC-1: organize happy path——首响应无产物，settle 推帧带 relations + l: 分组，缓存落盘", async () => {

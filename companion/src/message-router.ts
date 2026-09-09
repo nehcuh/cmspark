@@ -618,6 +618,8 @@ function knowledgeGraphFrame(
     edges: core.edges,
     labels: core.labels,
     llm_ready: knowledgeExtractLlmConfig() !== null,
+    // Initial ACK and intermediate refreshes must not look like organize completion.
+    organizing: knowledgeGraphOrganizeRun !== null,
   }
   if (core.llmLane) {
     // pi MAJOR-1（修复）：relations 在场 = graph_llm 缓存存在（空数组 = 组织过
@@ -3754,6 +3756,7 @@ export async function handleMessage(
           edges: [],
           labels: {},
           llm_ready: knowledgeExtractLlmConfig() !== null,
+          organizing: knowledgeGraphOrganizeRun !== null,
           ...(actionError ? { organize_error: actionError } : {}),
         }
       }

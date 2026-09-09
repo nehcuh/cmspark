@@ -15,6 +15,7 @@ import {
 import { forceLayoutTick, seedLayoutNodes, type LayoutNode } from "../thread-graph/force-layout"
 import { hexWithAlpha, lightenHex, UNTAGGED_COLOR } from "../thread-graph/tag-colors"
 import { tokens } from "../sidepanel/ui/tokens"
+import { filterKnowledgeNodes, fitKnowledgeCamera, shortKnowledgeTitle } from "./explorer"
 import {
   KNOWLEDGE_GRAPH_SNAPSHOT_KEY,
   type KnowledgeGraphSnapshot,
@@ -71,26 +72,32 @@ const HIT_PAD = 8
 const REBUILD_POLL_MS = 2500
 /** 重建轮询上限（复审 NIT-5）：40 × 2.5s = 100s 后停轮询，诚实提示手动刷新。 */
 const REBUILD_POLL_MAX = 40
+const EMPTY_NODES: KnowledgeGraphNode[] = []
+const EMPTY_EDGES: NonNullable<KnowledgeGraphSnapshot["edges"]> = []
+const EMPTY_LABELS: KnowledgeGraphSnapshot["labels"] = {}
 
 function radiusForDegree(deg: number): number {
-  return Math.min(7.5, Math.max(2.8, 2.8 + Math.sqrt(deg) * 1.35))
+  return Math.min(10, 5 + Math.sqrt(deg) * 1.4)
 }
 
 export function KnowledgeGraphApp() {
   const [snap, setSnap] = useState<KnowledgeGraphSnapshot | null>(null)
   const [colorMode, setColorMode] = useState<ColorMode>("group")
   const [llmEnabled, setLlmEnabled] = useState(false)
+  const llmEnabledRef = useRef(false)
   const [focusId, setFocusId] = useState<string | null>(null)
   const [hoverCaptionText, setHoverCaptionText] = useState("")
-  const [barHeight, setBarHeight] = useState(48)
   const [panelOpen, setPanelOpen] = useState(true)
+  const [query, setQuery] = useState("")
+  const [groupFilter, setGroupFilter] = useState("")
+  const [requestError, setRequestError] = useState("")
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const barRef = useRef<HTMLDivElement>(null)
   const nodesRef = useRef<LayoutNode[]>([])
   const edgesRef = useRef<GraphDrawEdge[]>([])
   const dragRef = useRef<{ id: string; ox: number; oy: number; moved: boolean } | null>(null)
   const [organizing, setOrganizing] = useState(false)
+  const confirmedOrganizingRef = useRef(false)
   const [relationOpen, setRelationOpen] = useState<KnowledgeGraphRelation | null>(null)
   const [tfAcked, setTfAcked] = useState(false)
   const [lockNotice, setLockNotice] = useState(false)
@@ -104,9 +111,9 @@ export function KnowledgeGraphApp() {
   const fittedRef = useRef(false)
   const userCameraRef = useRef(false)
   const colorByIdRef = useRef<Map<string, string>>(new Map())
-  const nodesByIdRef = useRef<Map<string, KnowledgeGraphNode>>(new Map())
   const fitViewRef = useRef<() => void>(() => {})
   const captionByIdRef = useRef<Map<string, string>>(new Map())
+  const titleByIdRef = useRef<Map<string, string>>(new Map())
 
   useEffect(() => {
     focusIdRef.current = focusId
@@ -123,11 +130,24 @@ export function KnowledgeGraphApp() {
       llm_labels: rec.llm_labels === true,
     })
     if (typeof rec.focus_id === "string" && rec.focus_id) setFocusId(rec.focus_id)
-    setOrganizing(false)
+    confirmedOrganizingRef.current = parsed.organizing === true
+    setOrganizing(confirmedOrganizingRef.current)
+    setRequestError("")
+  }, [])
+
+  const refresh = useCallback(() => {
+    // Preserve the existing user-authorized naming preference. Default reads
+    // never enable naming or organization on the user's behalf.
+    chrome.runtime.sendMessage({ type: "knowledge_graph.refresh", llm_labels: llmEnabledRef.current }, (res) => {
+      if (chrome.runtime.lastError || res?.ok === false || res?.sent === false) {
+        setRequestError("无法连接 CMspark，请确认程序运行后刷新图谱。已有快照可继续浏览。")
+      } else setRequestError("")
+    })
   }, [])
 
   useEffect(() => {
     let cancelled = false
+    let receivedSnapshot = false
     ;(async () => {
       try {
         const pref = await chrome.storage.local.get([
@@ -135,7 +155,8 @@ export function KnowledgeGraphApp() {
           KNOWLEDGE_GRAPH_TF_SWITCH_ACK_KEY,
         ])
         if (!cancelled) {
-          setLlmEnabled(parseLlmLabelsPref(pref[KNOWLEDGE_GRAPH_LLM_LABELS_KEY]))
+          llmEnabledRef.current = parseLlmLabelsPref(pref[KNOWLEDGE_GRAPH_LLM_LABELS_KEY])
+          setLlmEnabled(llmEnabledRef.current)
           setTfAcked(parseTfSwitchAck(pref[KNOWLEDGE_GRAPH_TF_SWITCH_ACK_KEY]))
         }
       } catch {
@@ -144,20 +165,23 @@ export function KnowledgeGraphApp() {
       try {
         const res = await chrome.storage.session.get(KNOWLEDGE_GRAPH_SNAPSHOT_KEY)
         if (cancelled) return
-        applySnap(res[KNOWLEDGE_GRAPH_SNAPSHOT_KEY])
+        if (!receivedSnapshot) applySnap(res[KNOWLEDGE_GRAPH_SNAPSHOT_KEY])
       } catch {
         /* empty → rebuilding banner via null snap */
       }
+      if (!cancelled) refresh()
     })()
     const onStorage = (
       changes: Record<string, chrome.storage.StorageChange>,
       area: string,
     ) => {
       if (area === "session" && changes[KNOWLEDGE_GRAPH_SNAPSHOT_KEY]) {
+        receivedSnapshot = true
         applySnap(changes[KNOWLEDGE_GRAPH_SNAPSHOT_KEY].newValue)
       }
       if (area === "local" && changes[KNOWLEDGE_GRAPH_LLM_LABELS_KEY]) {
-        setLlmEnabled(parseLlmLabelsPref(changes[KNOWLEDGE_GRAPH_LLM_LABELS_KEY].newValue))
+        llmEnabledRef.current = parseLlmLabelsPref(changes[KNOWLEDGE_GRAPH_LLM_LABELS_KEY].newValue)
+        setLlmEnabled(llmEnabledRef.current)
       }
 
     }
@@ -166,7 +190,7 @@ export function KnowledgeGraphApp() {
       cancelled = true
       chrome.storage.onChanged.removeListener(onStorage)
     }
-  }, [applySnap])
+  }, [applySnap, refresh])
 
   const status = snap?.status ?? "rebuilding"
   const truncated = snap?.truncated === true
@@ -187,19 +211,16 @@ export function KnowledgeGraphApp() {
         clearInterval(id)
         return
       }
-      chrome.runtime.sendMessage({ type: "knowledge_graph.refresh" }, () => {
-        void chrome.runtime.lastError
-      })
+      refresh()
     }
-    tick()
     const id = setInterval(tick, REBUILD_POLL_MS)
     return () => clearInterval(id)
-  }, [status, llmEnabled])
+  }, [status, refresh])
 
-  const payloadNodes = snap?.nodes ?? []
-  const payloadEdges = snap?.edges ?? []
-  const labels = snap?.labels ?? {}
-  const view = knowledgeGraphViewModel(snap)
+  const payloadNodes = snap?.nodes ?? EMPTY_NODES
+  const payloadEdges = snap?.edges ?? EMPTY_EDGES
+  const labels = snap?.labels ?? EMPTY_LABELS
+  const view = useMemo(() => knowledgeGraphViewModel(snap), [snap])
   const { llmLane, showOrganizeCta, showReorganize, showNoRelations, relationsToDraw } = view
   const payloadRelations = relationsToDraw
   const llmReady = snap?.llm_ready !== false
@@ -220,15 +241,13 @@ export function KnowledgeGraphApp() {
     return keys
   }, [payloadNodes])
 
+  const visibleNodes = useMemo(() => filterKnowledgeNodes(payloadNodes, query, groupFilter), [payloadNodes, query, groupFilter])
+  const selected = payloadNodes.find((n) => n.id === focusId)
   useEffect(() => {
-    const el = barRef.current
-    if (!el) return
-    const measure = () => setBarHeight(Math.max(40, Math.ceil(el.getBoundingClientRect().height)))
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [status])
+    if (!showCanvas) return
+    if (focusId && !payloadNodes.some((n) => n.id === focusId)) setFocusId(null)
+    if (groupFilter && !groupKeys.includes(groupFilter)) setGroupFilter("")
+  }, [payloadNodes, groupKeys, focusId, groupFilter, showCanvas])
 
   useEffect(() => {
     const degree = new Map<string, number>()
@@ -244,7 +263,11 @@ export function KnowledgeGraphApp() {
     const ids = payloadNodes.map((n) => n.id)
     const radiusById = new Map(ids.map((id) => [id, radiusForDegree(degree.get(id) || 0)]))
     const { w, h } = sizeRef.current
-    nodesRef.current = seedLayoutNodes(ids, w, h, radiusById)
+    const previous = new Map(nodesRef.current.map((n) => [n.id, n]))
+    nodesRef.current = seedLayoutNodes(ids, w, h, radiusById).map((n) => {
+      const old = previous.get(n.id)
+      return old ? { ...old, r: n.r } : n
+    })
     const tfKeys = new Set(payloadEdges.map((e) => knowledgeGraphPairKey(e.a, e.b)))
     const reasonByPair = new Map<string, string>()
     for (const r of payloadRelations) {
@@ -265,8 +288,9 @@ export function KnowledgeGraphApp() {
     simTicksRef.current = 0
     fittedRef.current = false
     userCameraRef.current = false
-    const byId = new Map(payloadNodes.map((n) => [n.id, n]))
-    nodesByIdRef.current = byId
+  }, [payloadNodes, payloadEdges, payloadRelations])
+
+  useEffect(() => {
     const colors = new Map<string, string>()
     const captions = new Map<string, string>()
     for (const n of payloadNodes) {
@@ -275,7 +299,8 @@ export function KnowledgeGraphApp() {
     }
     colorByIdRef.current = colors
     captionByIdRef.current = captions
-  }, [payloadNodes, payloadEdges, payloadRelations, colorMode, labels])
+    titleByIdRef.current = new Map(payloadNodes.map((n) => [n.id, shortKnowledgeTitle(n.title, n.id, payloadNodes.length <= 20 ? 18 : 12)]))
+  }, [payloadNodes, colorMode, labels])
 
   const openDoc = useCallback((id: string) => {
     setFocusId(id)
@@ -285,35 +310,47 @@ export function KnowledgeGraphApp() {
     })
   }, [])
 
+  const onActionResponse = useCallback((res: { ok?: boolean; sent?: boolean } | undefined) => {
+    if (chrome.runtime.lastError || res?.ok === false || res?.sent === false) {
+      setRequestError("请求未发送，请确认 CMspark 运行后重试。")
+      return false
+    }
+    return true
+  }, [])
+
+  useEffect(() => {
+    if (!organizing) return
+    const timer = setTimeout(() => {
+      setOrganizing(false)
+      setRequestError("尚未收到整理结果，请刷新查看当前状态后重试。")
+    }, 35_000)
+    return () => clearTimeout(timer)
+  }, [organizing])
+
   const onLlmChange = useCallback((enabled: boolean) => {
+    llmEnabledRef.current = enabled
     setLlmEnabled(enabled)
     void writeLlmLabelsPref(enabled)
     chrome.runtime.sendMessage(
       { type: "knowledge_graph.refresh", llm_labels: enabled },
-      () => {
-        void chrome.runtime.lastError
-      },
+      onActionResponse,
     )
-  }, [])
+  }, [onActionResponse])
 
   const onRegenerate = useCallback(() => {
     chrome.runtime.sendMessage(
       { type: "knowledge_graph.refresh", llm_labels: true, regenerate: true },
-      () => {
-        void chrome.runtime.lastError
-      },
+      onActionResponse,
     )
-  }, [])
+  }, [onActionResponse])
 
   const sendOrganize = useCallback(() => {
     setOrganizing(true)
     chrome.runtime.sendMessage(
       { type: "knowledge_graph.refresh", organize: true, llm_labels: llmEnabled },
-      () => {
-        void chrome.runtime.lastError
-      },
+      (res) => { if (!onActionResponse(res)) setOrganizing(confirmedOrganizingRef.current) },
     )
-  }, [llmEnabled])
+  }, [llmEnabled, onActionResponse])
 
   const sendLock = useCallback((groupKey: string, unlock: boolean) => {
     chrome.runtime.sendMessage(
@@ -322,11 +359,9 @@ export function KnowledgeGraphApp() {
         llm_labels: llmEnabled,
         ...(unlock ? { unlock_group: groupKey } : { lock_group: groupKey }),
       },
-      () => {
-        void chrome.runtime.lastError
-      },
+      onActionResponse,
     )
-  }, [llmEnabled])
+  }, [llmEnabled, onActionResponse])
 
   useEffect(() => {
     if (snap?.lock_dissolved === true) setLockNotice(true)
@@ -336,46 +371,51 @@ export function KnowledgeGraphApp() {
     if (!showTfBanner) return
     // 本会话继续展示；落盘 ack 让关 tab 重开不再出现（AC-6）。
     void writeTfSwitchAck()
-    chrome.runtime.sendMessage({ type: "knowledge_graph.refresh", ack_tf_switch: true }, () => {
+    chrome.runtime.sendMessage({ type: "knowledge_graph.refresh", ack_tf_switch: true, llm_labels: llmEnabledRef.current }, () => {
       void chrome.runtime.lastError
     })
   }, [showTfBanner])
 
   const fitView = useCallback(() => {
-    const nodes = nodesRef.current
-    if (nodes.length === 0) return
     const { w, h } = sizeRef.current
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    for (const n of nodes) {
-      minX = Math.min(minX, n.x - n.r)
-      minY = Math.min(minY, n.y - n.r)
-      maxX = Math.max(maxX, n.x + n.r)
-      maxY = Math.max(maxY, n.y + n.r)
-    }
-    const gw = Math.max(40, maxX - minX)
-    const gh = Math.max(40, maxY - minY)
-    const pad = 56
-    const s = Math.min((w - pad * 2) / gw, (h - pad * 2) / gh, 1.35)
-    scaleRef.current = Math.max(0.45, Math.min(1.8, s * 0.92))
-    const cx = (minX + maxX) / 2
-    const cy = (minY + maxY) / 2
-    panRef.current.x = w / 2 - cx * scaleRef.current
-    panRef.current.y = h / 2 - cy * scaleRef.current
+    const camera = fitKnowledgeCamera(nodesRef.current, w, h)
+    scaleRef.current = camera.scale
+    panRef.current = { x: camera.x, y: camera.y }
     fittedRef.current = true
   }, [])
   fitViewRef.current = fitView
+
+  const locateNode = useCallback((id: string) => {
+    const n = nodesRef.current.find((node) => node.id === id)
+    if (!n) return
+    setFocusId(id)
+    setPanelOpen(true)
+    simTicksRef.current = 999
+    userCameraRef.current = true
+    scaleRef.current = Math.max(1, scaleRef.current)
+    panRef.current = { x: sizeRef.current.w / 2 - n.x * scaleRef.current, y: sizeRef.current.h / 2 - n.y * scaleRef.current }
+  }, [])
+
+  const zoom = useCallback((factor: number) => {
+    simTicksRef.current = 999
+    const prev = scaleRef.current
+    const next = Math.min(3.2, Math.max(0.08, prev * factor))
+    const { w, h } = sizeRef.current
+    panRef.current = { x: w / 2 - ((w / 2 - panRef.current.x) / prev) * next, y: h / 2 - ((h / 2 - panRef.current.y) / prev) * next }
+    scaleRef.current = next
+    userCameraRef.current = true
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const parent = canvas.parentElement
     if (!parent) return
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)")
     const resize = () => {
       const rect = parent.getBoundingClientRect()
       const dpr = window.devicePixelRatio || 1
+      const previousSize = sizeRef.current
       sizeRef.current = { w: rect.width, h: rect.height }
       canvas.width = Math.max(1, Math.floor(rect.width * dpr))
       canvas.height = Math.max(1, Math.floor(rect.height * dpr))
@@ -383,6 +423,11 @@ export function KnowledgeGraphApp() {
       canvas.style.height = `${rect.height}px`
       const ctx = canvas.getContext("2d")
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      if (userCameraRef.current) {
+        // Preserve scale and the world point at the center during reflow.
+        panRef.current.x += (rect.width - previousSize.w) / 2
+        panRef.current.y += (rect.height - previousSize.h) / 2
+      } else fitViewRef.current()
     }
     resize()
     const ro = new ResizeObserver(resize)
@@ -391,14 +436,16 @@ export function KnowledgeGraphApp() {
       const ctx = canvas.getContext("2d")
       if (!ctx) return
       const { w, h } = sizeRef.current
-      if (simTicksRef.current < 320 && nodesRef.current.length > 0) {
+      const reduceMotion = motionPreference.matches
+      for (let step = 0; step < (reduceMotion ? 320 : 6) && simTicksRef.current < 320 && nodesRef.current.length > 0; step++) {
         const e = forceLayoutTick(nodesRef.current, edgesRef.current, { width: w, height: h })
         simTicksRef.current++
         if ((e < 0.06 && simTicksRef.current > 50) || simTicksRef.current >= 320) {
           simTicksRef.current = 999
-          if (!fittedRef.current) fitViewRef.current()
+          if (!userCameraRef.current) fitViewRef.current()
         }
       }
+      if (!userCameraRef.current && (!fittedRef.current || simTicksRef.current < 320)) fitViewRef.current()
       ctx.clearRect(0, 0, w, h)
       ctx.fillStyle = G.canvas
       ctx.fillRect(0, 0, w, h)
@@ -440,7 +487,11 @@ export function KnowledgeGraphApp() {
           ctx.fillText(KNOWLEDGE_GRAPH_AI_RELATION, mx, my - 2)
         }
       }
-      for (const n of nodesRef.current) {
+      const labelBoxes: { x: number; y: number; w: number; h: number }[] = []
+      // Selected titles take priority; collisions only suppress canvas labels,
+      // never the complete accessible knowledge list.
+      const drawNodes = [...nodesRef.current].sort((a, b) => Number(b.id === active) - Number(a.id === active))
+      for (const n of drawNodes) {
         const isFocus = n.id === focusIdRef.current
         const isHover = n.id === hoverIdRef.current
         const inHot = hot ? hot.has(n.id) : true
@@ -459,18 +510,26 @@ export function KnowledgeGraphApp() {
           : isHover
             ? lightenHex(baseColor, 0.28)
             : dimmed
-              ? hexWithAlpha(baseColor, 0.28)
+              ? hexWithAlpha(baseColor, 0.7)
               : baseColor
-        ctx.globalAlpha = dimmed ? 0.5 : 1
+        ctx.globalAlpha = 1
         ctx.fill()
         ctx.globalAlpha = 1
-        if (isFocus || isHover) {
-          ctx.fillStyle = G.labelFocus
-          ctx.font = `${(isFocus ? 10.5 : 9) / Math.max(0.75, Math.min(1.25, scale))}px ${tokens.font}`
+        {
+          ctx.fillStyle = dimmed ? tokens.darkMuted : G.labelFocus
+          ctx.font = `${13 / scale}px ${tokens.font}`
           ctx.textAlign = "center"
           ctx.textBaseline = "top"
-          const cap = captionByIdRef.current.get(n.id) || n.id
-          ctx.fillText(cap, n.x, n.y + n.r + 2.5)
+          const cap = titleByIdRef.current.get(n.id) || n.id
+          const textWidth = ctx.measureText(cap).width * scale
+          const sx = n.x * scale + panRef.current.x
+          const sy = (n.y + n.r) * scale + panRef.current.y + 7
+          const box = { x: sx - textWidth / 2, y: sy, w: textWidth, h: 17 }
+          const overlaps = labelBoxes.some((b) => box.x < b.x + b.w + 8 && box.x + box.w + 8 > b.x && box.y < b.y + b.h + 4 && box.y + box.h + 4 > b.y)
+          if ((isFocus || isHover || !overlaps) && box.x >= 2 && box.x + box.w <= w - 2 && sy + 17 < h) {
+            labelBoxes.push(box)
+            ctx.fillText(cap, n.x, n.y + n.r + 7 / scale)
+          }
         }
       }
       ctx.restore()
@@ -481,7 +540,7 @@ export function KnowledgeGraphApp() {
       ro.disconnect()
       cancelAnimationFrame(rafRef.current)
     }
-  }, [])
+  }, [showCanvas])
 
   const hitTest = (clientX: number, clientY: number): LayoutNode | null => {
     const canvas = canvasRef.current
@@ -539,11 +598,12 @@ export function KnowledgeGraphApp() {
   const endDrag = (ev?: ReactPointerEvent) => {
     const drag = dragRef.current
     if (drag && drag.id !== "__pan__" && !drag.moved) {
-      openDoc(drag.id)
+      locateNode(drag.id)
     }
     if (drag && drag.id === "__pan__" && !drag.moved && ev) {
       const edge = hitTestEdge(ev.clientX, ev.clientY)
       if (edge?.reason) {
+        setPanelOpen(true)
         setRelationOpen({
           a: edge.a,
           b: edge.b,
@@ -564,6 +624,7 @@ export function KnowledgeGraphApp() {
   }
 
   const onPointerDown = (ev: ReactPointerEvent) => {
+    simTicksRef.current = 999
     const n = hitTest(ev.clientX, ev.clientY)
     if (n) {
       dragRef.current = { id: n.id, ox: ev.clientX, oy: ev.clientY, moved: false }
@@ -615,6 +676,7 @@ export function KnowledgeGraphApp() {
   }
 
   const onWheel = (ev: ReactWheelEvent) => {
+    simTicksRef.current = 999
     ev.preventDefault()
     const canvas = canvasRef.current
     if (!canvas) return
@@ -622,232 +684,185 @@ export function KnowledgeGraphApp() {
     const mx = ev.clientX - rect.left
     const my = ev.clientY - rect.top
     const prev = scaleRef.current
-    const next = Math.min(3.2, Math.max(0.28, prev * (ev.deltaY > 0 ? 0.92 : 1.08)))
+    const next = Math.min(3.2, Math.max(0.08, prev * (ev.deltaY > 0 ? 0.92 : 1.08)))
     panRef.current.x = mx - ((mx - panRef.current.x) / prev) * next
     panRef.current.y = my - ((my - panRef.current.y) / prev) * next
     scaleRef.current = next
     userCameraRef.current = true
   }
 
-  const chromeTop = barHeight + 20
   const ungroupedKey = groupKeys.find((k) => k === "u:ungrouped" || k === "" || k === "ungrouped")
+  const relatedEdges = useMemo<GraphDrawEdge[]>(() => selected ? [
+    ...payloadEdges.map((e) => ({ ...e, reason: payloadRelations.find((r) => knowledgeGraphPairKey(r.a, r.b) === knowledgeGraphPairKey(e.a, e.b))?.reason })),
+    ...payloadRelations.filter((r) => !payloadEdges.some((e) => knowledgeGraphPairKey(r.a, r.b) === knowledgeGraphPairKey(e.a, e.b))).map((r) => ({ ...r, score: r.confidence, dashed: true })),
+  ].filter((e) => e.a === selected.id || e.b === selected.id) : [], [selected, payloadEdges, payloadRelations])
 
   return (
-    <div style={styles.page}>
-      <div ref={barRef} style={styles.floatBar} role="toolbar" aria-label={`${KNOWLEDGE_GRAPH_ENTRY_LABEL}工具栏`}>
-        <strong style={styles.barTitle}>{KNOWLEDGE_GRAPH_ENTRY_LABEL}</strong>
+    <div className="kg-page" style={styles.page}>
+      <style>{graphStyles}</style>
+      <header className="kg-toolbar" role="toolbar" aria-label={`${KNOWLEDGE_GRAPH_ENTRY_LABEL}工具栏`}>
+        <div className="kg-heading"><strong>{KNOWLEDGE_GRAPH_ENTRY_LABEL}</strong><span>{showCanvas ? knowledgeGraphBarMeta(payloadNodes.length, payloadEdges.length, payloadRelations.length) : "浏览知识与关联"}</span></div>
         <KnowledgeGraphColorSwitch mode={colorMode} onChange={setColorMode} />
-        <KnowledgeGraphLlmSwitch
-          enabled={llmEnabled}
-          onChange={onLlmChange}
-          onRegenerate={onRegenerate}
-        />
-        {showReorganize ? (
-          <KnowledgeGraphReorganizeButton
-            organizing={organizing}
-            disabled={!llmReady}
-            onClick={sendOrganize}
-          />
-        ) : null}
-        {snap?.stale === true && llmLane ? <KnowledgeGraphStaleBadge /> : null}
-        <span style={styles.barMeta}>
-          {showCanvas
-            ? knowledgeGraphBarMeta(payloadNodes.length, payloadEdges.length, payloadRelations.length)
-            : ""}
-        </span>
-        <button type="button" style={styles.barBtnGhost} onClick={() => setPanelOpen((v) => !v)}>
-          {panelOpen ? "收起面板" : "分组"}
-        </button>
-        <button type="button" style={styles.barBtnGhost} onClick={() => window.close()} title="关闭此标签页">
-          关闭
-        </button>
+        <button type="button" onClick={refresh}>刷新图谱</button>
+        <button type="button" aria-expanded={panelOpen} onClick={() => setPanelOpen((v) => !v)}>{panelOpen ? "收起列表" : "浏览知识"}</button>
+        <details className="kg-ai-options">
+          <summary>AI 与分组</summary>
+          <div>
+            <KnowledgeGraphLlmSwitch enabled={llmEnabled} onChange={onLlmChange} onRegenerate={onRegenerate} />
+            {showReorganize ? <KnowledgeGraphReorganizeButton organizing={organizing} disabled={!llmReady} onClick={sendOrganize} /> : null}
+            {snap?.stale === true && llmLane ? <KnowledgeGraphStaleBadge /> : null}
+          </div>
+        </details>
+        <button type="button" onClick={() => window.close()} title="关闭此标签页">关闭</button>
+      </header>
+      <div className="kg-notices">
+        {requestError ? <div className="kg-notice" role="alert">{requestError}</div> : null}
+        {status !== "ok" ? <KnowledgeGraphStatusView status={status} truncated={truncated} pollExhausted={pollExhausted} error={snap?.error} /> : null}
+        {status === "ok" && showOrganizeCta ? <KnowledgeGraphOrganizeCta n={payloadNodes.length} disabled={!llmReady} organizing={organizing} onOrganize={sendOrganize} /> : null}
+        {status === "ok" && snap?.organize_error ? <KnowledgeGraphOrganizeErrorBar error={snap.organize_error} onRetry={sendOrganize} /> : null}
+        {showTfBanner ? <KnowledgeGraphTfSwitchBanner /> : null}
+        {lockNotice ? <div className="kg-notice"><KnowledgeGraphLockDissolvedBanner /><button type="button" onClick={() => setLockNotice(false)}>知道了</button></div> : null}
       </div>
-
-      {status !== "ok" && (
-        <div style={{ ...styles.banner, top: chromeTop }}>
-          <KnowledgeGraphStatusView status={status} truncated={truncated} pollExhausted={pollExhausted} error={snap?.error} />
-        </div>
-      )}
-
-      {status === "ok" && showOrganizeCta ? (
-        <div style={{ ...styles.banner, top: chromeTop }}>
-          <KnowledgeGraphOrganizeCta
-            n={payloadNodes.length}
-            disabled={!llmReady}
-            organizing={organizing}
-            onOrganize={sendOrganize}
-          />
-        </div>
-      ) : null}
-
-      {status === "ok" && snap?.organize_error ? (
-        <div style={{ ...styles.banner, top: chromeTop + (showOrganizeCta ? 56 : 0) }}>
-          <KnowledgeGraphOrganizeErrorBar error={snap.organize_error} onRetry={sendOrganize} />
-        </div>
-      ) : null}
-
-      {showTfBanner ? (
-        <div style={{ ...styles.banner, top: chromeTop }}>
-          <KnowledgeGraphTfSwitchBanner />
-        </div>
-      ) : null}
-
-      {lockNotice ? (
-        <div style={{ ...styles.banner, top: chromeTop }}>
-          <KnowledgeGraphLockDissolvedBanner />
-        </div>
-      ) : null}
-
-      {hoverCaptionText ? (
-        <div style={{ ...styles.hoverChip, top: chromeTop }} role="status">
-          {hoverCaptionText}
-        </div>
-      ) : null}
-
-      {panelOpen && (
-        <aside style={{ ...styles.floatPanel, top: chromeTop }} aria-label="分组">
-          <div style={styles.asideTitle}>分组</div>
-          {showNoRelations ? <KnowledgeGraphNoRelationsNote /> : null}
-          {groupKeys.length === 0 ? (
-            <div style={{ fontSize: 11, color: tokens.darkMuted }}>
-              {status === "too_few" || status === "rebuilding" ? "" : KNOWLEDGE_GRAPH_UNGROUPED_LABEL}
+      <div className={`kg-workspace ${panelOpen ? "" : "kg-workspace-wide"}`}>
+        <section className="kg-map" aria-label="知识关系画布">
+          <div className="kg-map-tools">
+            <span>实线：内容相似 · 虚线：AI 关联</span>
+            <div>
+              <button type="button" disabled={!showCanvas} onClick={() => { userCameraRef.current = false; fitView() }}>适应画布</button>
+              <button type="button" disabled={!showCanvas} aria-label="放大" onClick={() => zoom(1.25)}>＋</button>
+              <button type="button" disabled={!showCanvas} aria-label="缩小" onClick={() => zoom(0.8)}>－</button>
             </div>
-          ) : (
-            groupKeys.map((k) => {
-              const llmGroup = k.startsWith("l:")
-              return (
-                <KnowledgeGraphGroupCard
-                  key={k}
-                  groupKey={k}
-                  label={
-                    labels[k] ||
-                    (k === ungroupedKey ? { name: KNOWLEDGE_GRAPH_UNGROUPED_LABEL, ai: false } : undefined)
-                  }
-                  llmEnabled={llmEnabled}
-                  llmLaneGroup={llmGroup}
+          </div>
+          <main style={styles.main}>
+            {showCanvas ? <canvas ref={canvasRef} data-testid="knowledge-graph-canvas" style={styles.canvas} role="img" tabIndex={0}
+              aria-label="知识分布图谱。点击节点查看关联；也可在知识列表搜索并定位。方向键平移，加减号缩放，0 适应画布。"
+              onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={(ev) => endDrag(ev)}
+              onPointerLeave={() => { hoverIdRef.current = null; setHoverCaptionText("") }}
+              onPointerCancel={() => { dragRef.current = null }}
+              onWheel={onWheel}
+              onKeyDown={(ev) => {
+                if (ev.key === "0" || ev.key === "Home") { ev.preventDefault(); userCameraRef.current = false; fitView() }
+                if (ev.key === "+" || ev.key === "=" || ev.key === "-") { ev.preventDefault(); zoom(ev.key === "-" ? 0.8 : 1.25) }
+                const delta: Record<string, [number, number]> = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] }
+                if (delta[ev.key]) { ev.preventDefault(); simTicksRef.current = 999; userCameraRef.current = true; panRef.current.x += delta[ev.key][0]; panRef.current.y += delta[ev.key][1] }
+                if (ev.key === "Escape") { setFocusId(null); setRelationOpen(null) }
+              }}
+            /> : <div className="kg-placeholder">知识文档和真实关联将在这里显示</div>}
+          </main>
+          <div className="kg-map-caption" role="status">
+            {hoverCaptionText || (showCanvas && !payloadEdges.length && !payloadRelations.length ? "暂无明确关联，仍可浏览全部知识" : "拖动画布 · 滚轮缩放 · 点击知识查看关联")}
+          </div>
+        </section>
+        {panelOpen ? (
+          <aside className="kg-explorer" aria-label="知识浏览">
+            <div className="kg-search">
+              <label htmlFor="kg-search">浏览知识</label>
+              <input id="kg-search" aria-label="搜索知识" placeholder="搜索标题、文件夹…" value={query} onChange={(ev) => setQuery(ev.target.value)} />
+              <select aria-label="筛选分组" value={groupFilter} onChange={(ev) => setGroupFilter(ev.target.value)}>
+                <option value="">全部分组</option>
+                {groupKeys.map((k) => <option key={k} value={k}>{labels[k]?.name || (k === ungroupedKey ? KNOWLEDGE_GRAPH_UNGROUPED_LABEL : k)}</option>)}
+              </select>
+              <span role="status">{visibleNodes.length} / {payloadNodes.length} 篇知识</span>
+            </div>
+            {selected ? <section className="kg-selection" aria-label="选中知识">
+              <div className="kg-selection-heading"><strong>{selected.title || selected.id}</strong><button type="button" aria-label="取消选中知识" onClick={() => setFocusId(null)}>取消</button></div>
+              <p>{selected.folder || "未设置文件夹"}</p>
+              <button type="button" onClick={() => openDoc(selected.id)}>在知识面板打开</button>
+              <h3>相关知识 · {relatedEdges.length}</h3>
+              {relatedEdges.length === 0 ? <p>暂无明确关联</p> : relatedEdges.map((edge) => {
+                const id = edge.a === selected.id ? edge.b : edge.a
+                const other = payloadNodes.find((node) => node.id === id)
+                return <div key={id} className="kg-relation">
+                  <button type="button" onClick={() => locateNode(id)}>{other?.title || id}</button>
+                  <span>{edge.dashed ? "AI 关联" : "内容相似"}</span>
+                  {edge.reason ? <p>AI 关联理由：{edge.reason}</p> : null}
+                </div>
+              })}
+            </section> : null}
+            {relationOpen ? <section className="kg-selection" aria-label="关联理由" data-testid="kg-relation-reason">
+              <strong>{KNOWLEDGE_GRAPH_AI_RELATION}</strong><p>{relationOpen.reason}</p>
+              <button type="button" onClick={() => setRelationOpen(null)}>{KNOWLEDGE_GRAPH_REASON_DISMISS}</button>
+            </section> : null}
+            <div className="kg-document-list" aria-label="知识列表">
+              {visibleNodes.map((n) => <button type="button" key={n.id} data-node-id={n.id} aria-pressed={n.id === focusId} onClick={() => locateNode(n.id)}>
+                <span className="kg-dot" style={{ background: nodeColor(n, colorMode) }} aria-hidden="true" />
+                <span><strong>{n.title || n.id}</strong><small>{n.folder || labels[n.group_key]?.name || KNOWLEDGE_GRAPH_UNGROUPED_LABEL}</small></span>
+              </button>)}
+              {!visibleNodes.length ? <p>{payloadNodes.length ? "没有匹配的知识。可清空搜索或切换分组。" : "当前没有可浏览的知识。"}</p> : null}
+              {(query || groupFilter) ? <button type="button" onClick={() => { setQuery(""); setGroupFilter("") }}>清除筛选</button> : null}
+            </div>
+            <details className="kg-groups" open={payloadNodes.length <= 19}>
+              <summary>分组说明与管理 · {groupKeys.length}</summary>
+              {showNoRelations ? <KnowledgeGraphNoRelationsNote /> : null}
+              {groupKeys.map((k) => {
+                const llmGroup = k.startsWith("l:")
+                return <KnowledgeGraphGroupCard key={k} groupKey={k}
+                  label={labels[k] || (k === ungroupedKey ? { name: KNOWLEDGE_GRAPH_UNGROUPED_LABEL, ai: false } : undefined)}
+                  llmEnabled={llmEnabled} llmLaneGroup={llmGroup}
                   onLock={llmLane && llmGroup ? () => sendLock(k, false) : undefined}
-                  onUnlock={
-                    llmGroup && labels[k]?.locked === true ? () => sendLock(k, true) : undefined
-                  }
-                />
-              )
-            })
-          )}
-        </aside>
-      )}
-
-      {relationOpen ? (
-        <div
-          style={{ ...styles.hoverChip, top: chromeTop + 36, maxWidth: "70%" }}
-          role="dialog"
-          data-testid="kg-relation-reason"
-        >
-          <strong style={{ fontSize: 11 }}>{KNOWLEDGE_GRAPH_AI_RELATION}</strong>
-          <div style={{ marginTop: 4 }}>{relationOpen.reason}</div>
-          <button type="button" style={styles.barBtnGhost} onClick={() => setRelationOpen(null)}>
-            {KNOWLEDGE_GRAPH_REASON_DISMISS}
-          </button>
-        </div>
-      ) : null}
-
-      <main style={styles.main}>
-        {showCanvas && (
-          <canvas
-            ref={canvasRef}
-            style={styles.canvas}
-            role="img"
-            tabIndex={0}
-            aria-label="知识分布图谱。悬停显示标题与分组，点击节点在知识面板打开文档。"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={(ev) => endDrag(ev)}
-            onPointerLeave={() => {
-              hoverIdRef.current = null
-              setHoverCaptionText("")
-            }}
-            onPointerCancel={(ev) => endDrag(ev)}
-            onWheel={onWheel}
-          />
-        )}
-      </main>
+                  onUnlock={llmGroup && labels[k]?.locked === true ? () => sendLock(k, true) : undefined} />
+              })}
+            </details>
+          </aside>
+        ) : null}
+      </div>
     </div>
   )
 }
 
-const glass: CSSProperties = {
-  background: tokens.darkElevated,
-  border: `1px solid ${tokens.darkBorder}`,
-  boxShadow: "0 8px 28px rgba(0,0,0,0.35)",
-  // Solid surface keeps graph controls legible without translucent layering.
+const styles: Record<string, CSSProperties> = {
+  page: { minHeight: "100dvh", height: "100dvh", margin: 0, fontFamily: tokens.font, background: G.canvas, color: tokens.darkText, display: "flex", flexDirection: "column", overflow: "auto" },
+  main: { position: "relative", flex: 1, minHeight: 280 },
+  canvas: { width: "100%", height: "100%", position: "absolute", inset: 0, display: "block", cursor: "grab", touchAction: "none" },
 }
 
-const styles: Record<string, CSSProperties> = {
-  page: {
-    position: "relative",
-    height: "100vh",
-    margin: 0,
-    fontFamily: tokens.font,
-    background: G.canvas,
-    color: tokens.darkText,
-    overflow: "hidden",
-  },
-  floatBar: {
-    ...glass,
-    position: "absolute",
-    zIndex: 10,
-    top: 12,
-    left: 12,
-    right: 12,
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: 10,
-    padding: "8px 12px",
-    borderRadius: 12,
-  },
-  barTitle: { fontSize: 13, fontWeight: 650, letterSpacing: "0.02em" },
-  barMeta: { fontSize: 11, color: tokens.darkMuted, marginLeft: "auto" },
-  barBtnGhost: {
-    border: `1px solid ${tokens.darkBorder}`,
-    borderRadius: tokens.radiusMd,
-    background: "transparent",
-    color: tokens.darkMuted,
-    padding: "5px 10px",
-    fontSize: 11,
-    cursor: "pointer",
-    fontFamily: tokens.font,
-  },
-  banner: {
-    position: "absolute",
-    zIndex: 8,
-    left: 12,
-    right: 12,
-    ...glass,
-    borderRadius: 10,
-    color: tokens.darkText,
-  },
-  hoverChip: {
-    position: "absolute",
-    zIndex: 8,
-    left: 12,
-    ...glass,
-    borderRadius: 8,
-    padding: "4px 10px",
-    fontSize: 11,
-    maxWidth: "60%",
-  },
-  floatPanel: {
-    ...glass,
-    position: "absolute",
-    zIndex: 9,
-    right: 12,
-    width: 260,
-    maxHeight: "70vh",
-    overflow: "auto",
-    borderRadius: 12,
-    padding: 12,
-  },
-  asideTitle: { fontSize: 11, color: tokens.darkMuted, marginBottom: 8, fontWeight: 600 },
-  main: { position: "absolute", inset: 0 },
-  canvas: { width: "100%", height: "100%", display: "block", cursor: "grab", outline: "none" },
-}
+const graphStyles = `
+  html, body { margin: 0; background: ${G.canvas}; }
+  .kg-page * { box-sizing: border-box; }
+  .kg-page button, .kg-page input, .kg-page select, .kg-page summary { font: inherit; font-size: 13px; }
+  .kg-page button { min-height: 32px; border: 1px solid ${tokens.darkBorder}; background: transparent; color: ${tokens.darkText}; border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+  .kg-page button:disabled { opacity: .45; cursor: not-allowed; }
+  .kg-page button:hover:not(:disabled), .kg-page button[aria-pressed=true] { background: ${tokens.darkElevated}; }
+  .kg-page :focus-visible { outline: 2px solid ${tokens.darkMuted}; outline-offset: 2px; }
+  .kg-page summary { cursor: pointer; padding: 8px 0; }
+  .kg-toolbar { padding: 16px 20px; border-bottom: 1px solid ${tokens.darkBorder}; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; flex-shrink: 0; }
+  .kg-heading { display: flex; flex-direction: column; gap: 4px; margin-right: auto; }
+  .kg-heading strong { font-size: 18px; }
+  .kg-heading span, .kg-search>span { color: ${tokens.darkMuted}; font-size: 12px; }
+  .kg-ai-options[open] { flex-basis: 100%; order: 2; }
+  .kg-ai-options>div { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 0; }
+  .kg-notices { flex-shrink: 0; max-height: 30dvh; overflow: auto; background: ${tokens.darkElevated}; }
+  .kg-notice { padding: 12px 16px; font-size: 13px; }
+  .kg-workspace { display: grid; grid-template-columns: minmax(0,1fr) 320px; flex: 1; min-height: 400px; }
+  .kg-workspace-wide { grid-template-columns: minmax(0,1fr); }
+  .kg-map { display: flex; flex-direction: column; min-width: 0; min-height: 360px; }
+  .kg-map-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; }
+  .kg-map-tools span, .kg-map-caption { color: ${tokens.darkMuted}; font-size: 12px; line-height: 1.5; }
+  .kg-map-tools>div { display: flex; gap: 6px; }
+  .kg-map-caption { padding: 8px 16px 12px; min-height: 38px; overflow-wrap: anywhere; }
+  .kg-placeholder { height: 100%; display: grid; place-items: center; color: ${tokens.darkMuted}; padding: 24px; text-align: center; }
+  .kg-explorer { overflow: auto; border-left: 1px solid ${tokens.darkBorder}; padding: 16px; min-width: 0; }
+  .kg-search { display: grid; gap: 10px; margin-bottom: 16px; position: sticky; top: 0; z-index: 1; background: ${G.canvas}; padding-bottom: 8px; }
+  .kg-search label { font-size: 14px; font-weight: 600; }
+  .kg-search input, .kg-search select { width: 100%; min-width: 0; min-height: 36px; background: ${tokens.darkElevated}; color: ${tokens.darkText}; border: 1px solid ${tokens.darkBorder}; border-radius: 8px; padding: 8px; }
+  .kg-document-list>button { width: 100%; display: flex; gap: 10px; align-items: center; text-align: left; border-color: transparent; padding: 10px 8px; }
+  .kg-document-list strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+  .kg-document-list small { display: block; color: ${tokens.darkMuted}; font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+  .kg-document-list p, .kg-selection p { font-size: 13px; line-height: 1.6; color: ${tokens.darkMuted}; overflow-wrap: anywhere; }
+  .kg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .kg-selection { padding: 12px; border: 1px solid ${tokens.darkBorder}; border-radius: 10px; margin-bottom: 12px; }
+  .kg-selection-heading { display: flex; align-items: start; gap: 8px; }
+  .kg-selection-heading strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+  .kg-selection h3 { font-size: 13px; margin: 16px 0 8px; }
+  .kg-relation { margin-top: 10px; }
+  .kg-relation>button { display: block; text-align: left; overflow-wrap: anywhere; max-width: 100%; }
+  .kg-relation>span { display: block; font-size: 12px; color: ${tokens.darkMuted}; margin-top: 4px; }
+  .kg-groups { margin-top: 16px; border-top: 1px solid ${tokens.darkBorder}; }
+  @media(max-width: 759px) {
+    .kg-toolbar { padding: 12px; gap: 8px; }
+    .kg-heading { flex-basis: 100%; }
+    .kg-workspace, .kg-workspace-wide { display: flex; flex-direction: column; flex: none; min-height: 0; }
+    .kg-map { height: 440px; flex-shrink: 0; }
+    .kg-explorer { border-left: none; border-top: 1px solid ${tokens.darkBorder}; overflow: visible; }
+  }
+`

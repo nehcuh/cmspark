@@ -2,13 +2,13 @@
 // 「图谱」仅限本视图；视图内分组用语只用「分组」。
 
 export const KNOWLEDGE_GRAPH_ENTRY_LABEL = "分布图谱"
-export const KNOWLEDGE_GRAPH_TOO_FEW_COPY = "知识不足 20 篇，暂无图谱"
+export const KNOWLEDGE_GRAPH_TOO_FEW_COPY = "知识库暂无可展示的文档，请先在知识面板导入或保存知识"
 export const KNOWLEDGE_GRAPH_OVER_CAP_COPY =
   "超过 200 篇，只画标题字典序前 200 篇；仅这 200 篇参与分组与着色"
 export const KNOWLEDGE_GRAPH_REBUILDING_COPY = "图谱索引重建中…"
 export const KNOWLEDGE_GRAPH_REBUILD_TIMEOUT_COPY = "索引重建超时，请手动刷新"
 /** #356: knowledge.graph 被门拒/出错映射的可见态（错误详情由调用方折叠展示）。 */
-export const KNOWLEDGE_GRAPH_ERROR_COPY = "图谱加载失败，可关闭后从知识面板重开"
+export const KNOWLEDGE_GRAPH_ERROR_COPY = "图谱加载失败，请重试刷新"
 /** #356: error 详情折叠开关文案（内部错误原文不直接铺开）。 */
 export const KNOWLEDGE_GRAPH_ERROR_DETAIL_LABEL = "技术详情"
 export const KNOWLEDGE_GRAPH_AI_BADGE = "AI 生成"
@@ -43,12 +43,12 @@ export function isKnowledgeGraphLlmLane(nodeCount: number): boolean {
   return nodeCount >= 2 && nodeCount <= KNOWLEDGE_GRAPH_LLM_LANE_MAX
 }
 
-/** 工具栏边计数：有 AI 关联时拆 TF/AI，否则保持「N 点 · M 边」。 */
+/** 工具栏用知识/相似关联计数，AI 关联单列以保留来源区别。 */
 export function knowledgeGraphBarMeta(nodeCount: number, tfEdges: number, aiRelations: number): string {
   if (aiRelations > 0) {
-    return `${nodeCount} 点 · TF ${tfEdges} 边 · AI ${aiRelations} 关联`
+    return `${nodeCount} 篇知识 · ${tfEdges} 条相似关联 · ${aiRelations} 条 AI 关联`
   }
-  return `${nodeCount} 点 · ${tfEdges} 边`
+  return `${nodeCount} 篇知识 · ${tfEdges} 条相似关联`
 }
 
 export type KnowledgeGraphStatus = "ok" | "too_few" | "over_cap" | "rebuilding" | "error"

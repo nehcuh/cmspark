@@ -628,6 +628,63 @@ test("#427 锁 overlay：改写 group_key + 注入 ai:true/locked:true labels；
   assert.deepEqual(r.relations, [], "无 graph_llm 缓存 → relations 恒空")
 })
 
+test("#490 19→20：旧未锁 AI 分组退出，节点与标签恢复 TF 结果", () => {
+  const docs = orthoDocs("transition", 20)
+  const smallDocs = docs.slice(0, 19)
+  // 复现：小语料整理后新增第 20 篇，graph_llm 缓存仍由引擎携带。
+  // 旧实现把未锁组带入 TF lane，却没有生成对应 labels（代码归责）。
+  // 使用生产归一化产物保护 lane 切换，不手造 wire 帧。
+  const llm = kg.normalizeGraphOrganize({
+    groups: [{ name: "旧 AI 分组", ids: [docs[0].id, docs[1].id] }],
+    relations: [{ a: docs[0].id, b: docs[1].id, reason: "同一主题", confidence: 0.8 }],
+  }, new Set(smallDocs.map((d) => d.id)), new Set())
+  const small = kg.buildKnowledgeGraph(smallDocs, undefined, { llm })
+  const key = kg.lGroupKey([docs[0].id, docs[1].id])
+  assert.equal(small.llmLane, true)
+  assert.equal(small.nodes.find((n) => n.id === docs[0].id)!.group_key, key)
+  assert.equal(small.labels[key].name, "旧 AI 分组")
+  assert.equal(small.relations.length, 1)
+
+  const grown = kg.buildKnowledgeGraph(docs, undefined, { llm })
+  const tf = kg.buildKnowledgeGraph(docs)
+  assert.equal(grown.llmLane, false)
+  assert.deepEqual(grown.nodes, tf.nodes, "未锁的旧 AI 分组不能改变 TF 节点归属")
+  assert.deepEqual(grown.labels, tf.labels)
+  assert.deepEqual(grown.edges, tf.edges)
+  assert.deepEqual(grown.relations, [])
+  assert.ok(grown.nodes.every((n) => grown.labels[n.group_key]), "每个节点分组都必须有标签")
+})
+
+test("#490 19→20：旧缓存退出时显式锁组仍保留", () => {
+  const docs = orthoDocs("locked-transition", 20)
+  const smallDocs = docs.slice(0, 19)
+  const llm = kg.normalizeGraphOrganize({
+    groups: [
+      { name: "未锁组", ids: [docs[0].id, docs[1].id] },
+      { name: "保留的组", ids: [docs[2].id, docs[3].id] },
+    ],
+    relations: [],
+  }, new Set(smallDocs.map((d) => d.id)), new Set())
+  const lockedGroup = llm.groups.find((g) => g.name === "保留的组")!
+  assert.ok(lockedGroup)
+  const lock = { groups: [lockedGroup] }
+  const key = kg.lGroupKey(lockedGroup.ids)
+  const small = kg.buildKnowledgeGraph(smallDocs, undefined, { llm, lock })
+  assert.equal(small.llmLane, true)
+  assert.equal(small.labels[key].locked, true)
+
+  const grown = kg.buildKnowledgeGraph(docs, undefined, { llm, lock })
+  const tfWithLock = kg.buildKnowledgeGraph(docs, undefined, { lock })
+  assert.equal(grown.llmLane, false)
+  assert.deepEqual(grown.nodes, tfWithLock.nodes, "仅显式锁组可跨越 lane")
+  assert.deepEqual(grown.labels, tfWithLock.labels)
+  assert.equal(grown.labels[key].name, "保留的组")
+  assert.equal(grown.labels[key].locked, true)
+  for (const id of lockedGroup.ids) {
+    assert.equal(grown.nodes.find((n) => n.id === id)!.group_key, key)
+  }
+})
+
 test("#427 锁跨活：≥20 帧锁 overlay 照常生效且 relations 永不上帧", () => {
   const groupA = [1, 2, 3, 4].map((i) => mkDoc(`a${i}`, { alpha: 0.8, [`pa${i}`]: 0.2 }, ["sharedalpha"], `A${i}`))
   const rest = orthoDocs("q", 16)

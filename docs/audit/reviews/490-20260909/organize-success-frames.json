@@ -1,0 +1,216 @@
+{
+  "initial": {
+    "type": "knowledge.graph",
+    "status": "ok",
+    "truncated": false,
+    "nodes": [
+      {
+        "id": "lifecycle-success-000",
+        "title": "lifecycle-success-000",
+        "group_key": "u:ungrouped",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-success-001",
+        "title": "lifecycle-success-001",
+        "group_key": "u:ungrouped",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-success-002",
+        "title": "lifecycle-success-002",
+        "group_key": "u:ungrouped",
+        "folder": ""
+      }
+    ],
+    "edges": [
+      {
+        "a": "lifecycle-success-000",
+        "b": "lifecycle-success-001",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-success-000",
+        "b": "lifecycle-success-002",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-success-001",
+        "b": "lifecycle-success-002",
+        "score": 2.125
+      }
+    ],
+    "labels": {
+      "u:ungrouped": {
+        "name": "未分组",
+        "ai": false
+      }
+    },
+    "llm_ready": true,
+    "organizing": true
+  },
+  "intermediate": {
+    "type": "knowledge.graph",
+    "status": "ok",
+    "truncated": false,
+    "nodes": [
+      {
+        "id": "lifecycle-success-000",
+        "title": "lifecycle-success-000",
+        "group_key": "u:ungrouped",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-success-001",
+        "title": "lifecycle-success-001",
+        "group_key": "u:ungrouped",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-success-002",
+        "title": "lifecycle-success-002",
+        "group_key": "u:ungrouped",
+        "folder": ""
+      }
+    ],
+    "edges": [
+      {
+        "a": "lifecycle-success-000",
+        "b": "lifecycle-success-001",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-success-000",
+        "b": "lifecycle-success-002",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-success-001",
+        "b": "lifecycle-success-002",
+        "score": 2.125
+      }
+    ],
+    "labels": {
+      "u:ungrouped": {
+        "name": "未分组",
+        "ai": false
+      }
+    },
+    "llm_ready": true,
+    "organizing": true
+  },
+  "rebuilding": {
+    "type": "knowledge.graph",
+    "status": "rebuilding",
+    "truncated": false,
+    "nodes": [],
+    "edges": [],
+    "labels": {},
+    "llm_ready": true,
+    "organizing": true
+  },
+  "final": {
+    "type": "knowledge.graph",
+    "status": "ok",
+    "truncated": false,
+    "nodes": [
+      {
+        "id": "lifecycle-success-000",
+        "title": "lifecycle-success-000",
+        "group_key": "l:29b16ed71711",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-success-001",
+        "title": "lifecycle-success-001",
+        "group_key": "l:29b16ed71711",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-success-002",
+        "title": "lifecycle-success-002",
+        "group_key": "l:29b16ed71711",
+        "folder": ""
+      }
+    ],
+    "edges": [
+      {
+        "a": "lifecycle-success-000",
+        "b": "lifecycle-success-001",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-success-000",
+        "b": "lifecycle-success-002",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-success-001",
+        "b": "lifecycle-success-002",
+        "score": 2.125
+      }
+    ],
+    "labels": {
+      "l:29b16ed71711": {
+        "name": "完成分组",
+        "ai": true
+      }
+    },
+    "llm_ready": true,
+    "organizing": false,
+    "organized": true,
+    "relations": []
+  },
+  "after": {
+    "type": "knowledge.graph",
+    "status": "ok",
+    "truncated": false,
+    "nodes": [
+      {
+        "id": "lifecycle-success-000",
+        "title": "lifecycle-success-000",
+        "group_key": "l:29b16ed71711",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-success-001",
+        "title": "lifecycle-success-001",
+        "group_key": "l:29b16ed71711",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-success-002",
+        "title": "lifecycle-success-002",
+        "group_key": "l:29b16ed71711",
+        "folder": ""
+      }
+    ],
+    "edges": [
+      {
+        "a": "lifecycle-success-000",
+        "b": "lifecycle-success-001",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-success-000",
+        "b": "lifecycle-success-002",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-success-001",
+        "b": "lifecycle-success-002",
+        "score": 2.125
+      }
+    ],
+    "labels": {
+      "l:29b16ed71711": {
+        "name": "完成分组",
+        "ai": true
+      }
+    },
+    "llm_ready": true,
+    "organizing": false,
+    "organized": true,
+    "relations": []
+  }
+}

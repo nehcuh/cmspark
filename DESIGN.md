@@ -1,7 +1,7 @@
 # Design
 
 ## Source of truth
-Active · 2026-09-09 · GitHub [#481](https://github.com/nehcuh/cmspark/issues/481), [#488](https://github.com/nehcuh/cmspark/issues/488).
+Active · 2026-09-09 · GitHub [#481](https://github.com/nehcuh/cmspark/issues/481), [#488](https://github.com/nehcuh/cmspark/issues/488), [#490](https://github.com/nehcuh/cmspark/issues/490).
 This is the current UI/UX contract for the extension workspace, summoner, settings,
 code panel, terminal, confirmation cockpit, meetings, graphs and tray. It consolidates
 #469 / #471 / #473 / #474 / #476 / #477 instead of appending competing layout rules.
@@ -67,6 +67,19 @@ refresh before retry. Empty cleanup requires server-side content revalidation.
 The entire history panel scrolls on short screens; its list cannot collapse to zero.
 Meeting close and navigation wait for final transcript persistence and end receipt;
 failures retain the panel with a retry action.
+Knowledge graph (#490) has a real canvas lifecycle tied to asynchronous data,
+an always available searchable document list, explicit fit/zoom/refresh, and
+selected-document relations. The list and notices occupy layout space rather
+than covering the canvas. Canvas labels are readable by default; collision
+suppression never removes list entries. Selection explores in place; opening
+the existing knowledge panel is explicit. Isolated documents stay visible.
+Color is a grouping aid; solid similarity edges and dashed AI relations retain
+their provenance. Search never triggers AI; refresh preserves the user's existing
+naming preference (off by default, enabled preference permits existing on-demand
+label completion). Organization still requires an explicit action. Existing AI
+naming, organization, lock/unlock and relation reasons remain discoverable.
+Below 760px, graph and browser stack in a scrollable page; zero documents,
+disconnected transport and loading failures have distinct recovery copy.
 Existing resource panels use ContextPanelHost above the composer; summoner resource
 attachments retain their current surface until native management lands. Label
 “used in this conversation” separately from global configuration. Read-only lists

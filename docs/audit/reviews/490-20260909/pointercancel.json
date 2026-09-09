@@ -1,0 +1,47 @@
+{
+  "pointerId": 2,
+  "captureAfterStart": true,
+  "captureAfterCancel": false,
+  "events": [
+    {
+      "type": "pointerdown",
+      "pointerId": 2,
+      "isTrusted": true,
+      "captureDuringEvent": true
+    },
+    {
+      "type": "gotpointercapture",
+      "pointerId": 2,
+      "isTrusted": true,
+      "captureDuringEvent": true
+    },
+    {
+      "type": "pointermove",
+      "pointerId": 2,
+      "isTrusted": true,
+      "captureDuringEvent": true
+    },
+    {
+      "type": "pointercancel",
+      "pointerId": 2,
+      "isTrusted": true,
+      "captureDuringEvent": true
+    },
+    {
+      "type": "lostpointercapture",
+      "pointerId": 2,
+      "isTrusted": true,
+      "captureDuringEvent": false
+    }
+  ],
+  "cameraAfterCancel": {
+    "x": 599.7991769234495,
+    "y": 245.94908814362964,
+    "r": 8.00000011920929
+  },
+  "cameraAfterUnpressedMoves": {
+    "x": 599.7991769234495,
+    "y": 245.94908814362964,
+    "r": 8.00000011920929
+  }
+}

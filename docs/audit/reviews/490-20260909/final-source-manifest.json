@@ -1,0 +1,65 @@
+{
+  "base": "aada096a74dce4168b40b1542fc8d75b1106717f",
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "f47b24bdd1bd97d100ed92a8cf15ae74c3b3c3ce52e55e7bc1baea7238643c7e"
+    },
+    {
+      "path": "DESIGN.md",
+      "sha256": "9ac73052742aad1640319f8207b21106f51be75639646ec8d23a95319cc234af"
+    },
+    {
+      "path": "chrome-extension/scripts/render-knowledge-graph-fixture.cjs",
+      "sha256": "2bd91db0987e73a642fee21411b5907d62b471935efb4e8fd285cb69afdd837f"
+    },
+    {
+      "path": "chrome-extension/scripts/test-knowledge-graph-ui.py",
+      "sha256": "07669448e9ae8bf6a989df17ece444467c26cc65ba28ea47f369c365086cd4e3"
+    },
+    {
+      "path": "chrome-extension/src/knowledge-graph/KnowledgeGraphApp.tsx",
+      "sha256": "49fef595f3cc12229a5c20ca6cae0049483a68fa2bc1533bc00117b8296055c4"
+    },
+    {
+      "path": "chrome-extension/src/knowledge-graph/copy.ts",
+      "sha256": "5add879ce83783c344ed083964ff03e13faccd190de06dc2eaf8fd62e1d7c738"
+    },
+    {
+      "path": "chrome-extension/src/knowledge-graph/explorer.ts",
+      "sha256": "0431f8ef29284634457fe771e0a0e886243fa5d3c8a2ca0b418dd2d60e9d083d"
+    },
+    {
+      "path": "chrome-extension/src/knowledge-graph/wire.ts",
+      "sha256": "35d481d2d27b5b5755f9162ba5bdb04e534abdec9fc822af30c5dd376b85fa5f"
+    },
+    {
+      "path": "chrome-extension/tests/knowledge-graph-explorer.test.ts",
+      "sha256": "259abd0173d3a5039927c5ab492212ac72d2ff81d7f74b8a0ec7b684012a5683"
+    },
+    {
+      "path": "chrome-extension/tests/knowledge-graph-view.test.ts",
+      "sha256": "9b7302ff17c10e7662ab6868936ab37718985c56a40eaeac085117fee3e05d4d"
+    },
+    {
+      "path": "companion/src/message-router.ts",
+      "sha256": "0acbaa556f412408abb00ca9500f834a8f4bc7cd117c1e671cde9916f0862544"
+    },
+    {
+      "path": "companion/src/skills/knowledge-graph.ts",
+      "sha256": "f4529c360c4f80fa320b18ee16499105b380e39eef971c82aa6874bb5a53c46f"
+    },
+    {
+      "path": "companion/tests/knowledge-graph-organize.test.ts",
+      "sha256": "22fa6141f4ee090adceefe90cdd46a1fee60297df5c2ba393f58b1cf07603b48"
+    },
+    {
+      "path": "companion/tests/knowledge-graph.test.ts",
+      "sha256": "25355b7d33e3d2f9d2112d40d73b2efbf8854f9c73ab2c44045fc39453a53185"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-09-knowledge-graph-usability.md",
+      "sha256": "fad379d0ddf52d64dfb94553a140edd014279511fdb2ece7c591b8f466af37db"
+    }
+  ]
+}
