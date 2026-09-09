@@ -808,6 +808,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "meeting.append_transcript": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.append_transcript requires v:1" }
       if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.append_transcript requires id" }
+      if (m.segment_id !== undefined && (typeof m.segment_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(m.segment_id))) {
+        return { valid: false, error: "meeting.append_transcript invalid segment_id" }
+      }
       if (typeof m.text !== "string" || !m.text.trim()) {
         return { valid: false, error: "meeting.append_transcript requires text" }
       }
@@ -834,6 +837,30 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "meeting.bulk_speaker": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.bulk_speaker requires v:1" }
       if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.bulk_speaker requires id" }
+      return { valid: true }
+    },
+    "meeting.import_reference": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.import_reference requires v:1" }
+      const file = m.file
+      if (!file || typeof file !== "object" || Array.isArray(file) || typeof file.name !== "string" || !file.name || file.name.length > 255) {
+        return { valid: false, error: "参考文件名无效" }
+      }
+      if (typeof file.content !== "string" || !file.content || file.content.length > Math.ceil(7 * 1024 * 1024 / 3) * 4) {
+        return { valid: false, error: "参考文件内容为空或超过 7 MiB 上限" }
+      }
+      return { valid: true }
+    },
+    "meeting.set_reference": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.set_reference requires v:1" }
+      if (!(typeof m.meeting_id === "string" && m.meeting_id) && !(typeof m.id === "string" && m.id)) {
+        return { valid: false, error: "meeting.set_reference requires meeting_id" }
+      }
+      if (typeof m.reference_notes !== "string" || m.reference_notes.length > 100_000) {
+        return { valid: false, error: "参考笔记必须为文本，且不能超过 100000 字" }
+      }
+      if (m.reference_name !== undefined && (typeof m.reference_name !== "string" || m.reference_name.length > 255)) {
+        return { valid: false, error: "参考文件名无效或过长" }
+      }
       return { valid: true }
     },
     "meeting.import_text": (m) => {
@@ -961,6 +988,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "meeting.generate_minutes": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.generate_minutes requires v:1" }
+      if (m.reference_notes !== undefined && (typeof m.reference_notes !== "string" || m.reference_notes.length > 100_000)) {
+        return { valid: false, error: "参考笔记必须为文本，且不能超过 100000 字" }
+      }
+      if (m.reference_name !== undefined && (typeof m.reference_name !== "string" || m.reference_name.length > 255)) {
+        return { valid: false, error: "参考文件名无效或过长" }
+      }
       const hasId = typeof m.id === "string" && m.id
       const hasText = typeof m.text === "string" && m.text.trim()
       if (!hasId && !hasText) {

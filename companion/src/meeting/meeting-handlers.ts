@@ -10,6 +10,8 @@ import { logger } from "../logger"
 import { isChromeExtensionOrigin, isVoiceSttOriginAllowed } from "../voice/stt-handlers"
 import type { LlmExtractConfig } from "../llm/llm-extract"
 import { generateMeetingMinutes } from "./meeting-minutes"
+import { importMeetingReference, MEETING_REFERENCE_MAX_CHARS, MEETING_REFERENCE_MAX_NAME_CHARS } from "./meeting-reference"
+import { MEETING_MINUTES_MAX_INPUT_CHARS } from "./minutes-prompt"
 import {
   appendTranscript,
   createMeeting,
@@ -22,6 +24,11 @@ import {
   setMeetingStatus,
   setMinutes,
   setTranscript,
+  setReference,
+  saveMeeting,
+  meetingSourceFingerprint,
+  MeetingTranscriptLimitError,
+  MeetingTranscriptSegmentCollisionError,
   isSafeMeetingId,
   startMeetingRecording,
   transcriptToText,
@@ -95,12 +102,23 @@ function err(code: string, message: string, extra?: Record<string, unknown>) {
   return { type: "meeting.error", v: 1, code, message, ...extra }
 }
 
+const minutesInFlight = new Set<string>()
+
+function transcriptWriteError(cause: unknown, id: string) {
+  if (cause instanceof MeetingTranscriptSegmentCollisionError) return err("segment_id_conflict", cause.message, { id })
+  return cause instanceof MeetingTranscriptLimitError
+    ? err("transcript_too_long", cause.message, { id })
+    : err("transcript_save_failed", "转写保存失败，请保留当前稿并重试", { id })
+}
+
 const OVERLAY_MEETING_TYPES = new Set([
   "meeting.create",
   "meeting.start",
   "meeting.end",
   "meeting.append_transcript",
   "meeting.generate_minutes",
+  "meeting.import_reference",
+  "meeting.set_reference",
   "meeting.list",
   "meeting.get",
   // #244 NEVER: auto_diarize / import_text remain extension-only (#246 had
@@ -230,6 +248,38 @@ export async function handleMeetingMessage(
     return { type: "meeting.get_result", v: 1, meeting: m }
   }
 
+  if (type === "meeting.import_reference") {
+    try {
+      const result = await importMeetingReference(msg.file)
+      return result.ok
+        ? { type: "meeting.reference_imported", v: 1, reference: result.reference }
+        : err(result.code, result.message)
+    } catch {
+      return err("reference_parse_failed", "参考文件解析失败，请检查文件后重试")
+    }
+  }
+
+  if (type === "meeting.set_reference") {
+    const id = resolveMeetingId(msg)
+    if (!id) return err("invalid_id", "meeting.set_reference requires meeting_id")
+    if (typeof msg.reference_notes !== "string" || msg.reference_notes.length > MEETING_REFERENCE_MAX_CHARS) {
+      return err("invalid_reference", "参考笔记必须为文本，且不能超过 100000 字", { id })
+    }
+    if (msg.reference_name !== undefined && (typeof msg.reference_name !== "string" || msg.reference_name.length > MEETING_REFERENCE_MAX_NAME_CHARS)) {
+      return err("invalid_reference", "参考文件名必须为文本，且不能超过 255 字", { id })
+    }
+    try {
+      const existing = loadMeeting(id)
+      if (!existing) return err("not_found", "meeting not found", { id })
+      const name = msg.reference_name ?? (msg.reference_notes ? existing.reference_name || "" : "")
+      const meeting = setReference(id, msg.reference_notes, name)
+      if (!meeting) return err("not_found", "meeting not found", { id })
+      return { type: "meeting.updated", v: 1, meeting }
+    } catch {
+      return err("reference_save_failed", "参考笔记保存失败，原稿仍在面板中，请重试", { id })
+    }
+  }
+
   if (type === "meeting.set_transcript") {
     const id = resolveMeetingId(msg)
     const text = typeof msg.text === "string" ? msg.text : ""
@@ -247,16 +297,22 @@ export async function handleMeetingMessage(
             .filter(Boolean)
             .map((t: string) => ({ text: t, source }))
         : silenceCutText(text, source)
-    const m = setTranscript(id, lines)
-    if (!m) return err("not_found", "meeting not found", { id })
-    return { type: "meeting.updated", v: 1, meeting: m }
+    try {
+      const m = setTranscript(id, lines)
+      if (!m) return err("not_found", "meeting not found", { id })
+      return { type: "meeting.updated", v: 1, meeting: m }
+    } catch (cause) { return transcriptWriteError(cause, id) }
   }
 
   if (type === "meeting.append_transcript") {
     const id = resolveMeetingId(msg)
+    if (msg.segment_id !== undefined && (typeof msg.segment_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(msg.segment_id))) {
+      return err("invalid_segment_id", "转写段标识需为 8–128 位字母、数字、下划线或短横线", { id })
+    }
     const text = typeof msg.text === "string" ? msg.text : ""
     if (!text.trim()) return err("empty_transcript", "empty text", { id })
     const line: TranscriptLine = {
+      ...(msg.segment_id !== undefined ? { segment_id: msg.segment_id } : {}),
       text: text.trim(),
       source:
         msg.source === "stt"
@@ -266,9 +322,11 @@ export async function handleMeetingMessage(
             : "user_edit",
       speaker: typeof msg.speaker === "string" ? msg.speaker.slice(0, 32) : undefined,
     }
-    const m = appendTranscript(id, line)
-    if (!m) return err("not_found", "meeting not found", { id })
-    return { type: "meeting.updated", v: 1, meeting: m }
+    try {
+      const m = appendTranscript(id, line)
+      if (!m) return err("not_found", "meeting not found", { id })
+      return { type: "meeting.updated", v: 1, meeting: m }
+    } catch (cause) { return transcriptWriteError(cause, id) }
   }
 
   /**
@@ -534,54 +592,64 @@ export async function handleMeetingMessage(
 
   if (type === "meeting.generate_minutes") {
     const id = resolveMeetingId(msg)
-    // Optional one-shot: text without persisted meeting
-    const inlineText = typeof msg.text === "string" ? msg.text : ""
-    let transcriptText = inlineText.trim()
-    let meetingId = id
-
-    if (id) {
-      const m = loadMeeting(id)
-      if (!m) return err("not_found", "meeting not found", { id })
-      transcriptText = transcriptToText(m.transcript) || inlineText.trim()
-      setMeetingStatus(id, "generating")
+    if ((msg.text !== undefined && typeof msg.text !== "string") ||
+        (msg.reference_notes !== undefined && typeof msg.reference_notes !== "string") ||
+        (msg.reference_name !== undefined && typeof msg.reference_name !== "string")) {
+      return err("invalid_material", "转写和参考笔记必须为文本", { id })
     }
-
-    if (!transcriptText) {
-      if (id) setMeetingStatus(id, "error", "empty transcript")
-      return err("empty_transcript", "empty transcript", { id })
-    }
-
-    const getLlm = deps.getLlmConfig ?? llmConfigFromCompanion
-    const llm = getLlm()
-    if (!llm) {
-      if (id) setMeetingStatus(id, "error", "llm not configured")
-      return err("llm_not_configured", "Companion LLM not configured")
-    }
-
-    const generate = deps.generate ?? generateMeetingMinutes
-    const templateMd = typeof msg.template_md === "string" ? msg.template_md : undefined
-    const result = await generate({ transcriptText, config: llm, templateMd })
-    if (!result.ok) {
-      if (id) setMeetingStatus(id, "error", result.message)
-      return err(result.code, result.message, { id })
-    }
-
-    if (meetingId) {
-      const updated = setMinutes(meetingId, result.minutes)
-      return {
-        type: "meeting.minutes_result",
-        v: 1,
-        meeting: updated,
-        minutes: result.minutes,
+    if (id && minutesInFlight.has(id)) return err("generation_busy", "该会议正在生成纪要，请等待当前结果", { id })
+    if (id) minutesInFlight.add(id)
+    try {
+      const meeting = id ? loadMeeting(id) : null
+      if (id && !meeting) return err("not_found", "meeting not found", { id })
+      // An explicit current snapshot wins, including an explicit empty draft.
+      const transcriptText = (msg.text !== undefined ? msg.text : meeting ? transcriptToText(meeting.transcript) : "").trim()
+      const referenceNotes = msg.reference_notes ?? meeting?.reference_notes ?? ""
+      const referenceName = msg.reference_name ?? meeting?.reference_name ?? ""
+      if (!transcriptText) return err("empty_transcript", "empty transcript", { id })
+      if (transcriptText.length > MEETING_MINUTES_MAX_INPUT_CHARS) return err("transcript_too_long", "转写不能超过 200000 字", { id })
+      if (referenceNotes.length > MEETING_REFERENCE_MAX_CHARS || referenceNotes.length + transcriptText.length > MEETING_MINUTES_MAX_INPUT_CHARS) {
+        return err("reference_too_long", "转写与参考笔记合计不能超过 200000 字，参考笔记不能超过 100000 字", { id })
       }
-    }
-
-    // Ephemeral generate (no id) — Mtg0 paste-only
-    return {
-      type: "meeting.minutes_result",
-      v: 1,
-      meeting: null,
-      minutes: result.minutes,
+      if (referenceName.length > MEETING_REFERENCE_MAX_NAME_CHARS) return err("invalid_reference", "参考文件名不能超过 255 字", { id })
+      const getLlm = deps.getLlmConfig ?? llmConfigFromCompanion
+      const llm = getLlm()
+      if (!llm) {
+        if (id) setMeetingStatus(id, "error", "llm not configured")
+        return err("llm_not_configured", "Companion LLM not configured", { id })
+      }
+      if (meeting) {
+        // Preserve STT provenance when the supplied text matches existing lines.
+        if (transcriptText !== transcriptToText(meeting.transcript)) {
+          meeting.transcript = transcriptText.split("\n").map((text: string) => ({ text, source: "user_edit" }))
+        }
+        meeting.reference_notes = referenceNotes
+        meeting.reference_name = referenceName
+        meeting.status = "generating"
+        saveMeeting(meeting) // persistence failure must prevent the LLM call
+      }
+      const fingerprint = meetingSourceFingerprint(transcriptText, referenceNotes, referenceName)
+      const generate = deps.generate ?? generateMeetingMinutes
+      const templateMd = typeof msg.template_md === "string" ? msg.template_md : undefined
+      const result = await generate({ transcriptText, config: llm, templateMd, referenceNotes, referenceName })
+      if (!result.ok) {
+        if (id) setMeetingStatus(id, "error", result.message)
+        return err(result.code, result.message, { id })
+      }
+      const minutes = { ...result.minutes, source_transcript: transcriptText, source_fingerprint: fingerprint, stale: false }
+      if (id) {
+        // setMinutes rechecks live materials: edits during inference stay marked stale.
+        const updated = setMinutes(id, minutes)
+        if (!updated) return err("not_found", "会议已删除，未保存纪要", { id })
+        return { type: "meeting.minutes_result", v: 1, meeting: updated, minutes: updated.minutes }
+      }
+      return { type: "meeting.minutes_result", v: 1, meeting: null, minutes }
+    } catch (cause) {
+      logger.warn("meeting.minutes.failed", { id, error: cause instanceof Error ? cause.message : "meeting minutes failed" })
+      try { if (id) setMeetingStatus(id, "error", "会议纪要生成或保存失败") } catch { /* storage may still be unavailable */ }
+      return err("minutes_failed", "会议纪要生成或保存失败，原始转写仍保留，请重试", { id })
+    } finally {
+      if (id) minutesInFlight.delete(id)
     }
   }
 

@@ -1,0 +1,43 @@
+{
+  "recorded_at": "2026-09-09T04:38:51.002513+00:00",
+  "implementation_commit": "16152fe441590536aedfbffff0d6583f8b15320b",
+  "commands": [
+    {
+      "log": "companion-tests-delta.log",
+      "exit_code": 0,
+      "sha256": "2c084b02dc89d63b356aa5493d0507c82ebccd9fd429ed48bd52397c489a9a60",
+      "summaries": [
+        "# tests 5078",
+        "# pass 5055",
+        "# fail 0",
+        "# skipped 23",
+        "# tests 20",
+        "# pass 20",
+        "# fail 0",
+        "# skipped 0"
+      ],
+      "browser_passes": 0
+    },
+    {
+      "log": "companion-build-delta.log",
+      "exit_code": 0,
+      "sha256": "0dffe273e8d9ce95bdd471482f126e665c2d07ff951c523064fd7d561fef2ec2",
+      "summaries": [],
+      "browser_passes": 0
+    },
+    {
+      "log": "ui-native-delta.log",
+      "exit_code": 0,
+      "sha256": "45fe784d8e5985e7bcadf3081b11bf5ff66b85f9037827d69317e1c276d70f8a",
+      "summaries": [],
+      "browser_passes": 10
+    },
+    {
+      "log": "package-macos-delta.log",
+      "exit_code": 0,
+      "sha256": "758cc6f130e29ccd1579d8078eb98fb17c450ba422e9ba8ef3fdc09f6c03a5b1",
+      "summaries": [],
+      "browser_passes": 0
+    }
+  ]
+}

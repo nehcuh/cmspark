@@ -1,0 +1,101 @@
+{
+  "base": "e7be0d2f",
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "4d5b5b4ae1f3dca2d153d5d5f3e766de0c168c21ed87540fae2417eebfd8674e"
+    },
+    {
+      "path": "DESIGN.md",
+      "sha256": "f424484c3f8acc15805eabfd419392985e0aa34930abd0deb3ca795364153ed3"
+    },
+    {
+      "path": "chrome-extension/scripts/render-meeting-close-fixture.cjs",
+      "sha256": "3b59820759702e1235c4516535747414c29a621f3d3f77d649b76c558127c0e7"
+    },
+    {
+      "path": "chrome-extension/scripts/test-meeting-close-ui.py",
+      "sha256": "fe70cd0453df4039834138727a335ec75ed42f460eda9a9945a8e7c962727a02"
+    },
+    {
+      "path": "chrome-extension/src/background/index.ts",
+      "sha256": "ed0ee630e03dd904ae25f4022f957862883fde574c772bc7bf0fa4172da9d52f"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/components/MeetingPanel.tsx",
+      "sha256": "b521ec78150f5b7919c20673db23fbda5dabe8fa6a523803639b20fe461f3e91"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/voice/meeting-audio-import.ts",
+      "sha256": "725df5553d675a110b915b72171d7e15fbdf9cbf5ca1b8e4fa74880db39ffcfb"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/voice/meeting-close.ts",
+      "sha256": "52a83375530501d3507dc75dfa5c8be8944e3c02dbdeec0b9167d3d82ef6e650"
+    },
+    {
+      "path": "chrome-extension/tests/meeting-audio-import.test.ts",
+      "sha256": "2b688dc69299b599b3df6923812c0a2866070a56c62dcbc087c86fb4839161ab"
+    },
+    {
+      "path": "chrome-extension/tests/meeting-close.test.ts",
+      "sha256": "084a449e9bd4bf4096e2664f15f102cc077becdbf319bc75dc075a3b9b4983c5"
+    },
+    {
+      "path": "companion/src/meeting/meeting-handlers.ts",
+      "sha256": "c1b2a82c579e1334aef57d10de7d91e3ca7a998bb8996455abde618bb839dc77"
+    },
+    {
+      "path": "companion/src/meeting/meeting-minutes.ts",
+      "sha256": "1a655812edc9bd1103449aa11a6ddb747e3488b70030b78e2c2a045e6753043c"
+    },
+    {
+      "path": "companion/src/meeting/meeting-store.ts",
+      "sha256": "780feef957cb5810b44c6c5925a90b1f5af38e35b564e7d4eea3e6915f0b03e1"
+    },
+    {
+      "path": "companion/src/meeting/minutes-prompt.ts",
+      "sha256": "aced23821603ae7e886cb0865571d9f004fc109f60c1a6ee2d04b5447ff00c23"
+    },
+    {
+      "path": "companion/src/message-router.ts",
+      "sha256": "dec0ca3afcc6d2f8a45638ecdeaa0ee7118a4207d469e43eb27f770f8b33e97a"
+    },
+    {
+      "path": "companion/src/ws/validate.ts",
+      "sha256": "b747ccc363cb3b420f1c9987d6c385a0ce092db7db05871f5220860f4baeab86"
+    },
+    {
+      "path": "docs/meeting-and-dictation-user-guide.md",
+      "sha256": "fe38a71778a990c759a07394af8c423a49f2eca58558897a0d4acf7452f89e77"
+    },
+    {
+      "path": "chrome-extension/scripts/meeting-workflow-server.cjs",
+      "sha256": "25a673577b4083af982ebaf014d6f009cd3d17997209c9914f8cf56d7d4ed25e"
+    },
+    {
+      "path": "chrome-extension/scripts/render-meeting-workflow-fixture.cjs",
+      "sha256": "dbcdba04b4765d4e9c0a16bf046abbf2035d30cca197c155d2285e7ac64b949f"
+    },
+    {
+      "path": "chrome-extension/scripts/test-meeting-workflow-ui.py",
+      "sha256": "e7a85c62bd1da8b841a8a86c3e94f8933ca428d195f99d930b2d406bf4780f7f"
+    },
+    {
+      "path": "companion/src/meeting/meeting-reference.ts",
+      "sha256": "c9dfb0ea61c2eb9f25f4c752f1eccaafa9e0033975cc273c0bcc6ca46a7f11f5"
+    },
+    {
+      "path": "companion/tests/meeting-reference-routing-492.test.ts",
+      "sha256": "9deb6c25054d07c5913c7880cd8d89736fc67b92ec389353b9aa9699569c70a8"
+    },
+    {
+      "path": "companion/tests/meeting-reference.test.ts",
+      "sha256": "575b05a07d54808268c24f7b83be352d5b3f6c2171fc79f0963c8261a61ff3be"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-09-meeting-transcript-and-reference-notes.md",
+      "sha256": "eafb3ad9e1d1571579ed33e044db69ddd7e1027256721de18659a19ec8a4db72"
+    }
+  ]
+}

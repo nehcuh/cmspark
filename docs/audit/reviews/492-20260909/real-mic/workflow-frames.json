@@ -1,0 +1,80 @@
+[
+  {
+    "request": {
+      "type": "meeting.start",
+      "v": 1,
+      "thread_id": "thread-fixture",
+      "privacy_ack_v1": true,
+      "audio_retained": false
+    },
+    "response": {
+      "type": "meeting.started",
+      "v": 1,
+      "meeting": {
+        "id": "mtg_42863077870942e0",
+        "thread_id": "thread-fixture",
+        "title": "会议 2026-09-09 03:58",
+        "started_at": "2026-09-09T03:58:44.489Z",
+        "ended_at": null,
+        "status": "recording",
+        "privacy": {
+          "stt_engine": "local",
+          "audio_retained": false,
+          "retain_until": null
+        },
+        "diarize": null,
+        "error": null,
+        "transcript": [],
+        "original_transcript": [],
+        "reference_notes": "",
+        "reference_name": "",
+        "minutes": null
+      }
+    }
+  },
+  {
+    "request": {
+      "text": "讨论配森发布",
+      "source": "stt",
+      "type": "meeting.append_transcript",
+      "v": 1,
+      "id": "meeting-rpc-da291121-5652-4783-9a02-690c2fee66e6",
+      "meeting_id": "mtg_42863077870942e0"
+    },
+    "response": {
+      "type": "meeting.updated",
+      "v": 1,
+      "meeting": {
+        "id": "mtg_42863077870942e0",
+        "thread_id": "thread-fixture",
+        "title": "会议 2026-09-09 03:58",
+        "started_at": "2026-09-09T03:58:44.489Z",
+        "ended_at": null,
+        "status": "recording",
+        "privacy": {
+          "stt_engine": "local",
+          "audio_retained": false,
+          "retain_until": null
+        },
+        "diarize": null,
+        "error": null,
+        "transcript": [
+          {
+            "text": "讨论配森发布",
+            "source": "stt"
+          }
+        ],
+        "original_transcript": [
+          {
+            "text": "讨论配森发布",
+            "source": "stt"
+          }
+        ],
+        "reference_notes": "",
+        "reference_name": "",
+        "minutes": null
+      },
+      "id": "meeting-rpc-da291121-5652-4783-9a02-690c2fee66e6"
+    }
+  }
+]
