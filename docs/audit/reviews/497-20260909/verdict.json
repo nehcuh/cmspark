@@ -1,0 +1,20 @@
+{
+  "issue": 497,
+  "machine": "PASS",
+  "grok": {
+    "requested_model": "grok-4.6",
+    "resolved_model": "grok-4.6-build",
+    "verdict": "APPROVE",
+    "exit_code": 0,
+    "report": "grok.response.json"
+  },
+  "deepseek": {
+    "model": "deepseek-v4-pro",
+    "verdict": "APPROVE",
+    "exit_code": 0,
+    "report": "deepseek.md"
+  },
+  "reviewed_product_commit": "8166ba03",
+  "recorded_at": "2026-09-09T07:16:19.544230+00:00",
+  "prior_grok_attempts": "No completed verdict; stalled CLI calls terminated. A successful short probe was diagnostic only. Only the completed bounded code review is counted."
+}

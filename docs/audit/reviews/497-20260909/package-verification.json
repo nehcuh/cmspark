@@ -1,0 +1,22 @@
+{
+  "build_commit": "8166ba03af68f803323c075787bb28b4f58d48af",
+  "built_on": "macOS arm64",
+  "target": "windows-x64",
+  "contains_issues": [
+    496,
+    497
+  ],
+  "windows_physical_ui": "user verification pending",
+  "zip_structure_and_integrity": "PASS",
+  "packaged_bugfix_and_ui_markers": "PASS",
+  "source_sha256": {
+    "companion/src/server.ts": "7d9e6e611c43da4cd78e6eac76bc09e515db1fd867da7677bf09d080023ec9f3",
+    "chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx": "30f3025049a2a2a9a431b56fd212847ed2b47b7b296687e96cb24a9e0695a793",
+    "chrome-extension/src/sidepanel/ui/workspace-styles.ts": "83d1dfd571975263cf0f4d8bdcbef944bebec27dfa6b5d54274bc7da782fe12c"
+  },
+  "artifacts": {
+    "CMspark-Chrome-v0.6.7-496-497.zip": "d62beea99a778396739fc78fd02b9b3d942ecd8c0f1d3e717456cb735d21ad3f",
+    "cmspark-v0.6.7-windows-x64-496-497.zip": "3cdbd9a505e8db0deaa0cb94497e7be46abd104932cffe2912afe9a751520fdb",
+    "CMspark-Setup-v0.6.7-496-497.exe": "d7e88c04af4dbea53f2c557f73312b7112021a0806d9c5a376e5710f473e9eda"
+  }
+}

@@ -18,6 +18,7 @@ T2: Chrome extension navigation. Existing resources and ThreadList composition; 
 | Plasmo production build | Exit 0 | `build.log.gz` |
 | Real App disclosure matrix | Seven viewport cases pass | `ui.log.gz` |
 | Existing workspace UI regression | Pass, including confirmation/no-submit and coding ownership | `workspace.log.gz` |
+| Combined #496 + #497 Windows package | Setup/ZIP produced, ZIP integrity and both fixes checked | `windows-package.log.gz`, `package-verification.json` |
 
 Viewport matrix: 760×740, 1040×760, 1440×900, 760×420, 320×480, 390×740, 759×740. Coverage includes initial order/open state, Enter/Space, Tab focus, hidden filter/rows, retained query/selection, every resource button, management taxonomy/cleanup/graph, full browser label and horizontal overflow. The existing broad workspace regression's wide-resources precondition was updated to assert the new default-open state instead of clicking it closed. This is a test-only follow-up to the review packet; no production code changed after submission for review.
 
@@ -36,6 +37,10 @@ uv run --no-project --with playwright python scripts/test-workspace-ui.py
 ## Independent review
 
 The review packet contains the real diff, complete changed components/styles, the synthetic transport fixture, disclosure test, design contract and machine results. Grok 4.6 and DeepSeek V4 Pro review independently; their reports and final status are retained with the packet. Informational commentary expressly described as non-defects is not converted into implementation changes.
+
+Both judges returned `APPROVE`. Grok's initial CLI attempts stalled without a completed verdict; these were not counted. A successful short diagnostic request was also not a review. The completed bounded review includes the full changed component, all navigation styles, actual diff, browser test and machine results (`grok-bounded-packet.txt.gz`). Its raw JSON verdict and CLI completion metadata are retained; the CLI resolves requested `grok-4.6` to `grok-4.6-build`. `grok.md` merely renders that JSON result. No production code changed after either completed review.
+
+The feature commit was rebased onto #496's merged main commit `afc1eba6db01a9ca74a7185b67cb9b09c464d7dd`. Only the adjacent Changelog entries conflicted; both were retained. Production sidebar files are byte-identical before/after that rebase. The combined validation package contains both issues; its source hashes are recorded for comparison after merge.
 
 ## Rendered evidence
 
