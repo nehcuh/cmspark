@@ -168,7 +168,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         page.evaluate('(messages)=>window.dispatchUI({type:"SET_MESSAGES",messages})',messages)
         # Confirmation queue is still rendered by the unchanged production gate.
         confirmation={'confirmation_id':'fixture-confirm','tool_name':'shell_exec','dangerous_apis':['shell'], 'code_preview':'git diff base..head','risk_level':'high','requested_at':'2026-09-07T10:00:00Z','timeout_ms':45000}
-        page.locator('.cm-nav-tools summary').click()
+        assert page.locator('.cm-nav-tools').evaluate('(el)=>el.open'), '#497 wide resources default open'
         page.get_by_role('navigation',name='资源与能力').get_by_role('button',name='知识',exact=True).click()
         page.evaluate('(request)=>window.dispatchUI({type:"ADD_SECURITY_CONFIRMATION",request})',confirmation)
         page.set_viewport_size({'width':320,'height':480})

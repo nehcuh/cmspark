@@ -1,7 +1,7 @@
 # Design
 
 ## Source of truth
-Active · 2026-09-09 · GitHub [#481](https://github.com/nehcuh/cmspark/issues/481), [#488](https://github.com/nehcuh/cmspark/issues/488), [#490](https://github.com/nehcuh/cmspark/issues/490).
+Active · 2026-09-09 · GitHub [#481](https://github.com/nehcuh/cmspark/issues/481), [#488](https://github.com/nehcuh/cmspark/issues/488), [#490](https://github.com/nehcuh/cmspark/issues/490), [#497](https://github.com/nehcuh/cmspark/issues/497).
 This is the current UI/UX contract for the extension workspace, summoner, settings,
 code panel, terminal, confirmation cockpit, meetings, graphs and tray. It consolidates
 #469 / #471 / #473 / #474 / #476 / #477 instead of appending competing layout rules.
@@ -45,9 +45,15 @@ repositories with optional programming agents. Others read websites, dictate a
 message or record meetings. Ordinary conversations require no repository or project.
 
 ## Information architecture
-Current navigation order: new conversation; search/recent conversations with
-visible management; supporting resources; settings where actually available.
-Use the same order on both surfaces. Preserve existing capability entries.
+Wide extension navigation (#497): new conversation; supporting resources above
+conversations, expanded by default; collapsible recent conversations with visible
+management; settings. Resource and conversation sections can be independently
+collapsed using semantic controls. Collapsing conversations hides only its filter
+and recent rows, retaining new conversation and management. Preserve filter text
+and active selection across collapse/expand; never select or delete on collapse.
+Narrow extension navigation retains conversations before resources, with resources
+initially collapsed to preserve vertical space. This wide-only override does not
+change the summoner's current navigation. Preserve every existing capability entry.
 Name browser tabs “浏览器标签页”; conversation categories remain “标签 / 分组”.
 Wide screens have left navigation and one main conversation. Narrow navigation is
 a text-triggered, nonmodal, in-flow disclosure. StatusRail is the single header:
