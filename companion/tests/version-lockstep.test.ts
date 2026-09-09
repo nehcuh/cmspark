@@ -1,7 +1,6 @@
-// Version lockstep: source-embedded version literals must match
-// companion/package.json (the version SoT). These strings ship in the bundled
-// cmspark-agent.js where package.json is unavailable at runtime, so they are
-// hardcoded by necessity — this test is the guard against bump misses.
+// Version lockstep: companion/package.json is the version SoT.
+// CLI usage/--version resolve at runtime (cli-version.ts); ACP/MCP serverInfo
+// and CLI_VERSION_FALLBACK stay as literals — this test guards bump misses.
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -19,9 +18,13 @@ function src(rel: string): string {
 
 test("version lockstep: embedded literals match package.json", () => {
   assert.ok(VERSION, "package.json must carry a version")
-  assert.match(src("index.ts"), new RegExp(`cmspark-agent v${VERSION.replace(/\./g, "\\.")}`))
-  assert.match(src(path.join("acp", "jsonrpc-stdio.ts")), new RegExp(`version: "${VERSION.replace(/\./g, "\\.")}"`))
-  assert.match(src(path.join("outbound-mcp", "stdio-server.ts")), new RegExp(`version: "${VERSION.replace(/\./g, "\\.")}"`))
+  const v = VERSION.replace(/\./g, "\\.")
+  // CLI banner is runtime-resolved; hardcoded `cmspark-agent vX.Y.Z` in
+  // index.ts would fight --version honesty. Fallback + ACP/MCP stay literals.
+  assert.match(src("index.ts"), /cmspark-agent v\$\{resolveCliVersion\(\)\}/)
+  assert.match(src("cli-version.ts"), new RegExp(`CLI_VERSION_FALLBACK = "${v}"`))
+  assert.match(src(path.join("acp", "jsonrpc-stdio.ts")), new RegExp(`version: "${v}"`))
+  assert.match(src(path.join("outbound-mcp", "stdio-server.ts")), new RegExp(`version: "${v}"`))
 })
 
 test("version lockstep: chrome-extension package.json matches companion", () => {
