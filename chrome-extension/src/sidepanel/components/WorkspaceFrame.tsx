@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { displayThreadTitle, threadRecency } from "../utils/thread-timeline"
 import { tokens } from "../ui/tokens"
-import { CompanionMark, IconNewChat, IconSettings } from "../ui/icons"
+import { CompanionMark, IconChevronDown, IconNewChat, IconSettings } from "../ui/icons"
 import { CONTEXT_PANEL_TABS, useContextPanelHost } from "./ContextPanelHost"
 import { createBlankThread } from "./ThreadList"
 
@@ -44,13 +44,26 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
   const { state, dispatch } = useAgentStore()
   const { activePanel, openPanelForce, closePanel } = useContextPanelHost()
   const [query, setQuery] = useState("")
+  const [conversationsOpen, setConversationsOpen] = useState(true)
+  const [resourcesOpen, setResourcesOpen] = useState(!onClose)
+  const conversationsId = useId()
   const recent = state.threads.filter(t => !t.trashed_at && displayThreadTitle(t).toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => threadRecency(b).localeCompare(threadRecency(a))).slice(0, 30)
+  const resources = <details className="cm-nav-tools" open={resourcesOpen} onToggle={event => setResourcesOpen(event.currentTarget.open)}><summary>资料与工具</summary>
+    <nav aria-label="资源与能力" className="cm-nav-resources">
+      {CONTEXT_PANEL_TABS.filter(t => t.id !== "history").map(({ id, label, Icon }) => <button type="button" key={id} className={`cm-nav-item${id === "tabs" ? " cm-nav-browser" : ""}`} title={label} aria-current={activePanel === id ? "true" : undefined} onClick={() => {
+        dispatch({ type: "SET_SETTINGS_OPEN", open: false }); openPanelForce(id); onNavigate()
+      }}><Icon size={16} /><span>{label}</span></button>)}
+    </nav>
+  </details>
   return <aside className="cm-navigation" aria-label="工作区">
     <div className="cm-nav-brand"><CompanionMark size={24} /><strong>CMspark</strong>
       {onClose && <button type="button" className="cm-icon-button" aria-label="关闭导航" onClick={onClose}>×</button>}
     </div>
     <button type="button" className="cm-nav-new" onClick={() => { createBlankThread(dispatch); onNavigate() }}><IconNewChat size={17} />新对话</button>
-    <div className="cm-nav-section"><span>最近对话</span><button type="button" className="cm-nav-manage" disabled={state.pendingSecurityConfirmations.length > 0} onClick={() => { onNavigate(); window.dispatchEvent(new Event("cmspark:open-thread-manager")) }}>管理对话</button></div>
+    {!onClose && resources}
+    <section className="cm-nav-conversations" data-collapsed={!conversationsOpen} aria-label="最近对话">
+    <div className="cm-nav-section"><button type="button" className="cm-nav-collapse" aria-expanded={conversationsOpen} aria-controls={conversationsId} onClick={() => setConversationsOpen(value => !value)}><IconChevronDown size={14} /><span>最近对话</span></button><button type="button" className="cm-nav-manage" disabled={state.pendingSecurityConfirmations.length > 0} onClick={() => { onNavigate(); window.dispatchEvent(new Event("cmspark:open-thread-manager")) }}>管理对话</button></div>
+    <div id={conversationsId} className="cm-nav-conversation-body" hidden={!conversationsOpen}>
     <input className="cm-nav-search" aria-label="筛选最近对话" placeholder="查找对话…" value={query} onChange={e => setQuery(e.target.value)} />
     <div className="cm-nav-threads">
       {recent.map(thread => <button type="button" className="cm-nav-thread" key={thread.id} aria-current={thread.id === state.activeThreadId ? "page" : undefined}
@@ -59,13 +72,9 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
         }}><span>{displayThreadTitle(thread)}</span>{state.threadBusyById[thread.id] && <span className="cm-nav-running" aria-label="运行中">·</span>}</button>)}
       {!recent.length && <p className="cm-nav-empty">{query ? "没有匹配的对话" : "新对话会保存在这里"}</p>}
     </div>
-    <details className="cm-nav-tools"><summary>资料与工具</summary>
-    <nav aria-label="资源与能力" className="cm-nav-resources">
-      {CONTEXT_PANEL_TABS.filter(t => t.id !== "history").map(({ id, label, Icon }) => <button type="button" key={id} className="cm-nav-item" aria-current={activePanel === id ? "true" : undefined} onClick={() => {
-        dispatch({ type: "SET_SETTINGS_OPEN", open: false }); openPanelForce(id); onNavigate()
-      }}><Icon size={16} /><span>{label}</span></button>)}
-    </nav>
-    </details>
+    </div>
+    </section>
+    {onClose && resources}
     <button type="button" className="cm-nav-item cm-nav-settings" onClick={() => { closePanel(); dispatch({ type: "SET_SETTINGS_OPEN", open: true }); onNavigate() }}><IconSettings size={16} />设置</button>
   </aside>
 }

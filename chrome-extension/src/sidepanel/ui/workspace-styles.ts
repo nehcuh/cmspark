@@ -11,11 +11,15 @@ export const workspaceCSS = `
 .cm-nav-new,.cm-nav-item,.cm-nav-thread{font:inherit;border:0;border-radius:${tokens.radiusMd}px;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left;min-height:36px;width:100%;padding:8px 10px;color:${tokens.text};background:transparent;font-size:13px;flex-shrink:0}
 .cm-nav-new{background:${tokens.bgElevated};border:1px solid ${tokens.border};margin-bottom:10px;font-weight:500}
 .cm-nav-item:hover,.cm-nav-thread:hover,.cm-icon-button:hover{background:${tokens.bgHover}}
-.cm-nav-tools{flex:none;border-top:1px solid ${tokens.border};margin-top:8px}.cm-nav-tools summary{cursor:pointer;min-height:36px;padding:10px 4px;font-size:12px}.cm-nav-tools summary:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.cm-nav-tools{flex:none;border-top:1px solid ${tokens.border};margin-top:4px}.cm-nav-tools summary{box-sizing:border-box;cursor:pointer;min-height:36px;padding:10px 4px;font-size:12px;color:${tokens.textSecondary}}.cm-nav-tools summary:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .cm-nav-resources{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-bottom:16px}
 .cm-nav-resources .cm-nav-item{font-size:12px;gap:6px;padding:8px 6px;min-width:0}
+.cm-nav-resources .cm-nav-browser{grid-column:1/-1}
 .cm-nav-resources .cm-nav-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cm-nav-section{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:${tokens.textSecondary};padding:0 8px}
+.cm-nav-conversations{display:flex;flex-direction:column;flex:1;min-height:132px;gap:6px}.cm-nav-conversations[data-collapsed="true"]{flex:none;min-height:36px}
+.cm-nav-collapse{display:flex;align-items:center;gap:4px;padding:0;border:0;min-height:36px;background:transparent;color:inherit;font:inherit;cursor:pointer}.cm-nav-collapse[aria-expanded="false"] svg{transform:rotate(-90deg)}
+.cm-nav-conversation-body{display:flex;flex-direction:column;flex:1;min-height:0}.cm-nav-conversation-body[hidden]{display:none}
 .cm-nav-search{box-sizing:border-box;width:100%;border:1px solid ${tokens.border};border-radius:${tokens.radiusMd}px;padding:9px 10px;font:inherit;font-size:12px;background:${tokens.bgElevated};color:${tokens.text}}
 .cm-nav-threads{flex:1;min-height:80px;overflow-y:auto;margin-top:4px}
 .cm-nav-thread{min-height:38px;color:${tokens.textSecondary}}
