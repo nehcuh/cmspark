@@ -1,0 +1,99 @@
+{
+  "threads": [
+    {
+      "id": "thread-496-a",
+      "alias": "附件对话",
+      "created_at": "2026-09-09T06:34:17.326Z",
+      "updated_at": "2026-09-09T06:34:17.348Z",
+      "config_override": {},
+      "tool_whitelist": null,
+      "pinned_tabs": [],
+      "active_skill_ids": [
+        "browse"
+      ],
+      "active_knowledge_ids": [],
+      "skill_selection_mode": "auto",
+      "knowledge_selection_mode": "auto",
+      "mcp_selection_mode": "auto",
+      "active_mcp_server_ids": [],
+      "mission_board": null,
+      "board_mode": false,
+      "last_message_at": "2026-09-09T06:34:17.347Z"
+    },
+    {
+      "id": "thread-496-b",
+      "alias": "新对话",
+      "created_at": "2026-09-09T06:34:17.327Z",
+      "updated_at": "2026-09-09T06:34:17.327Z",
+      "config_override": {},
+      "tool_whitelist": null,
+      "pinned_tabs": [],
+      "active_skill_ids": [
+        "browse"
+      ],
+      "active_knowledge_ids": [],
+      "skill_selection_mode": "auto",
+      "knowledge_selection_mode": "auto",
+      "mcp_selection_mode": "auto",
+      "active_mcp_server_ids": [],
+      "mission_board": null,
+      "board_mode": false
+    }
+  ],
+  "frames": [
+    {
+      "type": "chat.user",
+      "thread_id": "thread-496-a",
+      "message_id": "thread-496-a_1788935657330_3of5yq",
+      "content": "读取测试附件\n\n<document filename=\"synthetic.txt\">\nSynthetic attachment for regression testing.\n</document>\n📎 synthetic.txt"
+    },
+    {
+      "type": "tool.execute",
+      "tool_call_id": "site-context-f212f5c8-8ec1-4861-897c-d480ba3c4beb",
+      "tool_name": "list_tabs",
+      "params": {
+        "__thread_id": "thread-496-a",
+        "__site_context_tab_id": 17
+      }
+    },
+    {
+      "type": "chat.token",
+      "thread_id": "thread-496-a",
+      "content": "附件已读取，测试完成。"
+    },
+    {
+      "type": "chat.done",
+      "thread_id": "thread-496-a",
+      "message_id": "thread-496-a_1788935657347_svncv6"
+    }
+  ],
+  "select": {
+    "type": "thread.messages",
+    "messages": [
+      {
+        "thread_id": "thread-496-a",
+        "role": "user",
+        "content": "读取测试附件\n\n<document filename=\"synthetic.txt\">\nSynthetic attachment for regression testing.\n</document>\n📎 synthetic.txt",
+        "id": "thread-496-a_1788935657330_3of5yq",
+        "created_at": "2026-09-09T06:34:17.330Z"
+      },
+      {
+        "thread_id": "thread-496-a",
+        "role": "assistant",
+        "content": "附件已读取，测试完成。",
+        "tool_calls": [],
+        "finish_reason": "stop",
+        "id": "thread-496-a_1788935657347_svncv6",
+        "created_at": "2026-09-09T06:34:17.347Z"
+      }
+    ],
+    "thread_id": "thread-496-a",
+    "trashed": false,
+    "active_skill_ids": [
+      "browse"
+    ],
+    "active_knowledge_ids": [],
+    "run_status": "idle",
+    "pending_tools": []
+  }
+}

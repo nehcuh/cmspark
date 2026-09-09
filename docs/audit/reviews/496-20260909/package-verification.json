@@ -1,0 +1,12 @@
+{
+  "platform": "windows-x64",
+  "built_on": "darwin-arm64",
+  "physical_windows_test": "user will verify",
+  "version": "0.6.7",
+  "zip_structure": "PASS",
+  "patched_bundle": "PASS",
+  "sha256": {
+    "cmspark-v0.6.7-windows-x64-496.zip": "43b30b9c24f4660af7088614ac6640f174d2d4554f7058e0d2947f6b9d4aecd3",
+    "CMspark-Setup-v0.6.7-496.exe": "7f1c9dbe3fcd7f7f3d75d9c84afde17422c7f8dbb9cd45d6a15301a6de867117"
+  }
+}

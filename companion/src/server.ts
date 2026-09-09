@@ -564,14 +564,19 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         ports: normalizeNetsecPorts((finalParams as any).ports),
       }
     }
-    // Notify extension: tool execution started (show in sidebar)
-    ws.send(JSON.stringify({
-      type: "tool.start",
-      tool_call_id: toolCallId,
-      tool_name: toolName,
-      params: summarizeToolParams(finalParams),
-      ...(actingThreadId ? { thread_id: actingThreadId } : {}),
-    }))
+    // Internal site metadata reads have no adapter-owned tool.result. Publishing
+    // a chat tool.start for them leaves the sidebar busy after the run ends (#496).
+    // contextReadParams strips model-provided flags and only restores a validated
+    // server invocation option; ordinary list_tabs calls still remain visible.
+    if (!(toolName === "list_tabs" && finalParams.__site_context_tab_id !== undefined)) {
+      ws.send(JSON.stringify({
+        type: "tool.start",
+        tool_call_id: toolCallId,
+        tool_name: toolName,
+        params: summarizeToolParams(finalParams),
+        ...(actingThreadId ? { thread_id: actingThreadId } : {}),
+      }))
+    }
     logger.info("tool.start", {
       tool_call_id: toolCallId,
       tool_name: toolName,
