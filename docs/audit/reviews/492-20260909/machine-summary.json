@@ -1,0 +1,76 @@
+{
+  "recorded_at": "2026-09-09T04:27:28.865883+00:00",
+  "implementation_commit": "b349f44751712413b127336e92529f46c702bbc1",
+  "commands": [
+    {
+      "log": "extension-tests-final.log",
+      "exit_code": 0,
+      "sha256": "2305d8f62108432a3a1414f5b04ccd99a2fcd2421d237def0afb9ee3ae723f30",
+      "summaries": [
+        "# tests 1339",
+        "# pass 1339",
+        "# fail 0",
+        "# skipped 0"
+      ],
+      "browser_passes": 0
+    },
+    {
+      "log": "extension-build-final.log",
+      "exit_code": 0,
+      "sha256": "c162e9c681618af57ee79b5589cbe771011aab5aceb97bab2e24ea68b9e64858",
+      "summaries": [],
+      "browser_passes": 0
+    },
+    {
+      "log": "companion-tests-final.log",
+      "exit_code": 0,
+      "sha256": "d4c0474d1c9de7d2b19bbe95fa2d12d37bae27a6956f301d5b1c6aeb42125ba1",
+      "summaries": [
+        "# tests 5078",
+        "# pass 5055",
+        "# fail 0",
+        "# skipped 23",
+        "# tests 20",
+        "# pass 20",
+        "# fail 0",
+        "# skipped 0"
+      ],
+      "browser_passes": 0
+    },
+    {
+      "log": "companion-build-final.log",
+      "exit_code": 0,
+      "sha256": "0dffe273e8d9ce95bdd471482f126e665c2d07ff951c523064fd7d561fef2ec2",
+      "summaries": [],
+      "browser_passes": 0
+    },
+    {
+      "log": "ui-plugin-final.log",
+      "exit_code": 0,
+      "sha256": "09af90b3445774236a5976d4ab4141f96360924939beb6ccbfbe797d17ba593a",
+      "summaries": [],
+      "browser_passes": 11
+    },
+    {
+      "log": "ui-native.log",
+      "exit_code": 0,
+      "sha256": "933924067e10cf1ba8cd3a4f4b1ac4b533fb235c2d7433b58f541eecdf7419e1",
+      "summaries": [],
+      "browser_passes": 9
+    },
+    {
+      "log": "close-ui-final.log",
+      "exit_code": 0,
+      "sha256": "2d43f3796315ee38d9663a938328ccb0575c79221fb4369376206c4253b5b922",
+      "summaries": [],
+      "browser_passes": 7
+    },
+    {
+      "log": "package-macos.log",
+      "exit_code": 0,
+      "sha256": "05752a5b7f3d67602409f54aed2fe03ffa333a1a38bd8abbb43d770f9be86bd1",
+      "summaries": [],
+      "browser_passes": 0
+    }
+  ]
+}

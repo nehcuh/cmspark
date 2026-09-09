@@ -1,0 +1,33 @@
+{
+  "implementation_commit": "16152fe441590536aedfbffff0d6583f8b15320b",
+  "files": {
+    "chrome-extension/scripts/meeting-workflow-server.cjs": "25a673577b4083af982ebaf014d6f009cd3d17997209c9914f8cf56d7d4ed25e",
+    "chrome-extension/scripts/render-meeting-close-fixture.cjs": "0651d0cf7a24660e232e697a4c95876eee6b8fad2c72d83b1e361a71dfe148ed",
+    "chrome-extension/scripts/render-meeting-workflow-fixture.cjs": "dbcdba04b4765d4e9c0a16bf046abbf2035d30cca197c155d2285e7ac64b949f",
+    "chrome-extension/scripts/test-meeting-close-ui.py": "fb650d7b9d6adee20014af10f0611dcec6586b8339d55c6fc2dfba454f9364d2",
+    "chrome-extension/scripts/test-meeting-workflow-ui.py": "52c8fdf250be311ba75dd5dd5adff8b93132ab7ad7ac0789756fe98c8ef9ced0",
+    "chrome-extension/src/background/index.ts": "ed0ee630e03dd904ae25f4022f957862883fde574c772bc7bf0fa4172da9d52f",
+    "chrome-extension/src/sidepanel/components/MeetingPanel.tsx": "78acb69cb6cebc7edf2baefc035dec3d6b1a96c3e929bc97fa80a8b658720b7b",
+    "chrome-extension/src/sidepanel/voice/meeting-audio-import.ts": "725df5553d675a110b915b72171d7e15fbdf9cbf5ca1b8e4fa74880db39ffcfb",
+    "chrome-extension/src/sidepanel/voice/meeting-close.ts": "38b40f41dcf03cdf066763deffdcd7eab1ec0513bf7e0239ae376d89db39ef3d",
+    "chrome-extension/tests/meeting-audio-import.test.ts": "2b688dc69299b599b3df6923812c0a2866070a56c62dcbc087c86fb4839161ab",
+    "chrome-extension/tests/meeting-close.test.ts": "b4821f0a58c3c6a353ec7897cfc6e13e42abd4e85bfa629dc0aae60f1a8597b2",
+    "companion/scripts/serve-summoner-meeting-fixture.cjs": "bfd7d83720e00238df290b8415a6018607c184ee2e559a31c29e1ffac53b0247",
+    "companion/scripts/test-summoner-meeting-ui.py": "5aac1ea4f3ea7cec46efb37831d62293e671cb2e75186f22ad75c4621a99d151",
+    "companion/src/meeting/meeting-handlers.ts": "b542312a9fa2f53e6c19b347eb857f871f8486148e4a76f92320d60b257ed38c",
+    "companion/src/meeting/meeting-minutes.ts": "1a655812edc9bd1103449aa11a6ddb747e3488b70030b78e2c2a045e6753043c",
+    "companion/src/meeting/meeting-reference.ts": "c9dfb0ea61c2eb9f25f4c752f1eccaafa9e0033975cc273c0bcc6ca46a7f11f5",
+    "companion/src/meeting/meeting-store.ts": "b7ac6185cee3c6f5f83830e312b0220109856a539a58d87694ae8a192179b926",
+    "companion/src/meeting/minutes-prompt.ts": "aced23821603ae7e886cb0865571d9f004fc109f60c1a6ee2d04b5447ff00c23",
+    "companion/src/message-router.ts": "dec0ca3afcc6d2f8a45638ecdeaa0ee7118a4207d469e43eb27f770f8b33e97a",
+    "companion/src/summoner-web.ts": "b32434b83400ea9ddf1b925245bbdbe92b3b51c605a568af6532a022a682173f",
+    "companion/src/summoner/meeting-workflow.ts": "fe983d1bff09bfc010d0dafe3cc84994cb1de3812ab3f6cf51e67566ac13a694",
+    "companion/src/ws/summoner-acl.ts": "d6717b5db34acb8291c7ef677cf43d6de6c99fce7cbcf2ab6e640d7a8069a0e9",
+    "companion/src/ws/validate.ts": "112d32cf718bfcdc1c1cfae5d77101a56e0c66dbd45ddfa7dc50525873b02237",
+    "companion/tests/meeting-reference-routing-492.test.ts": "9deb6c25054d07c5913c7880cd8d89736fc67b92ec389353b9aa9699569c70a8",
+    "companion/tests/meeting-reference.test.ts": "ab144dea79789c5fee32b037930892d4fad875a552275216d18f3cf6d41349a5",
+    "companion/tests/meeting-segment-idempotency-492.test.ts": "b78c1b298a4b5d0afb1797eb819be8ff6ac1789247a017c1117a20ac9711b33b",
+    "companion/tests/overlay-meeting-244.test.ts": "9c5eeb851874f423b740ea17a187e6e61979f8300e35c35035ec9c4db1e35c6d",
+    "companion/tests/summoner-meeting-492.test.ts": "eef22509ad2f0bf067ad035f6f15e0536ba9d178e1f667d518b7b96292e2ba6d"
+  }
+}

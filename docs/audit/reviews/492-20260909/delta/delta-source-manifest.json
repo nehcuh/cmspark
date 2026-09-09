@@ -1,0 +1,7 @@
+{
+  "companion/scripts/serve-summoner-meeting-fixture.cjs": "bfd7d83720e00238df290b8415a6018607c184ee2e559a31c29e1ffac53b0247",
+  "companion/scripts/test-summoner-meeting-ui.py": "5aac1ea4f3ea7cec46efb37831d62293e671cb2e75186f22ad75c4621a99d151",
+  "companion/src/summoner-web.ts": "b32434b83400ea9ddf1b925245bbdbe92b3b51c605a568af6532a022a682173f",
+  "companion/src/summoner/meeting-workflow.ts": "fe983d1bff09bfc010d0dafe3cc84994cb1de3812ab3f6cf51e67566ac13a694",
+  "companion/tests/summoner-meeting-492.test.ts": "eef22509ad2f0bf067ad035f6f15e0536ba9d178e1f667d518b7b96292e2ba6d"
+}

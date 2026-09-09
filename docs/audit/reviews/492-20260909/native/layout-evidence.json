@@ -1,0 +1,84 @@
+[
+  {
+    "width": 390,
+    "scrollWidth": 390,
+    "boxes": [
+      {
+        "id": "meetingDesk",
+        "left": 0,
+        "right": 390,
+        "width": 390,
+        "height": 780
+      },
+      {
+        "id": "meetingLive",
+        "left": 12,
+        "right": 378,
+        "width": 366,
+        "height": 140
+      },
+      {
+        "id": "meetingReferenceNotes",
+        "left": 12,
+        "right": 378,
+        "width": 366,
+        "height": 84
+      },
+      {
+        "id": "meetingAudioImport",
+        "left": 12,
+        "right": 81.328125,
+        "width": 69.328125,
+        "height": 28
+      },
+      {
+        "id": "meetingReferenceImport",
+        "left": 87.328125,
+        "right": 183.3125,
+        "width": 95.984375,
+        "height": 28
+      }
+    ]
+  },
+  {
+    "width": 960,
+    "scrollWidth": 960,
+    "boxes": [
+      {
+        "id": "meetingDesk",
+        "left": 0,
+        "right": 960,
+        "width": 960,
+        "height": 780
+      },
+      {
+        "id": "meetingLive",
+        "left": 12,
+        "right": 948,
+        "width": 936,
+        "height": 140
+      },
+      {
+        "id": "meetingReferenceNotes",
+        "left": 12,
+        "right": 948,
+        "width": 936,
+        "height": 84
+      },
+      {
+        "id": "meetingAudioImport",
+        "left": 12,
+        "right": 81.328125,
+        "width": 69.328125,
+        "height": 28
+      },
+      {
+        "id": "meetingReferenceImport",
+        "left": 87.328125,
+        "right": 183.3125,
+        "width": 95.984375,
+        "height": 28
+      }
+    ]
+  }
+]

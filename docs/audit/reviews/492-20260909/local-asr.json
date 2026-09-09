@@ -1,0 +1,16 @@
+{
+  "source": "macOS Tingting synthetic speech, no microphone",
+  "expected": "今天讨论发布计划。测试通过后再上线，负责人还需要确认。",
+  "results": [
+    {
+      "model": "medium",
+      "text": "今天讨论发布计划测试通过后再上线负责人还需要确认",
+      "ms": 4805
+    },
+    {
+      "model": "large-v3-turbo",
+      "text": "今天讨论发布计划,测试通过后再上线,负责人还需要确认。",
+      "ms": 6408
+    }
+  ]
+}

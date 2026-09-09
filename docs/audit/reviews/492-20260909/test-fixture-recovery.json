@@ -1,0 +1,55 @@
+{
+  "test_log": "/Users/huchen/Projects/cmspark/.omx/artifacts/meeting-492/backend-meeting-tests.log",
+  "test_log_timestamp": "2026-09-09T03:51:39.649765+00:00",
+  "candidates": [
+    {
+      "path": "/Users/huchen/.cmspark-agent/meetings/mtg_494508ed900cdac9",
+      "id_sha256": "bd76f56bf007bdbb6affb6cdb692ca7ba3e2747e27eac9cf625f2645841b5e7b",
+      "created_at": "2026-09-09T03:51:39.421Z",
+      "modified_at": "2026-09-09T03:51:39.423933+00:00",
+      "ownership": "Exact synthetic title from meeting-mtg2/meeting-mtg3-diarize source, matching isolated test-run creation window",
+      "synthetic_title": "Diarize"
+    },
+    {
+      "path": "/Users/huchen/.cmspark-agent/meetings/mtg_b4e8fc2dedca5e66",
+      "id_sha256": "f5d93ccf1e935a4b64831717fc49bf4439d756bfc58b4c9d280b1186f90948fa",
+      "created_at": "2026-09-09T03:51:39.423Z",
+      "modified_at": "2026-09-09T03:51:39.429239+00:00",
+      "ownership": "Exact synthetic title from meeting-mtg2/meeting-mtg3-diarize source, matching isolated test-run creation window",
+      "synthetic_title": "Mtg2"
+    },
+    {
+      "path": "/Users/huchen/.cmspark-agent/meetings/mtg_868d0c660c02b17a",
+      "id_sha256": "d80c227a2924924b9c65cdbdb50f26035703069cba597e3de01c6c0e206d6973",
+      "created_at": "2026-09-09T03:51:39.428Z",
+      "modified_at": "2026-09-09T03:51:39.429356+00:00",
+      "ownership": "Exact synthetic title from meeting-mtg2/meeting-mtg3-diarize source, matching isolated test-run creation window",
+      "synthetic_title": "mm"
+    },
+    {
+      "path": "/Users/huchen/.cmspark-agent/meetings/mtg_a844b1f6b4cec3cc",
+      "id_sha256": "1bb1d98b266e796eff57cf435071a9b0405c852d9e25b27e2c11bf8610ac9254",
+      "created_at": "2026-09-09T03:51:39.435Z",
+      "modified_at": "2026-09-09T03:51:39.436368+00:00",
+      "ownership": "Exact synthetic title from meeting-mtg2/meeting-mtg3-diarize source, matching isolated test-run creation window",
+      "synthetic_title": "AutoK"
+    },
+    {
+      "path": "/Users/huchen/.cmspark-agent/meetings/mtg_4690fe0e7db95abe",
+      "id_sha256": "1d20f9c5cf7e3e4fb1d0387c86b937cf701bb56719f8d28e872ab74977ab5a4d",
+      "created_at": "2026-09-09T03:51:39.432Z",
+      "modified_at": "2026-09-09T03:51:39.432982+00:00",
+      "ownership": "Exact synthetic title from meeting-mtg2/meeting-mtg3-diarize source, matching isolated test-run creation window",
+      "synthetic_title": "导入会"
+    }
+  ],
+  "removed_id_hashes": [
+    "bd76f56bf007bdbb6affb6cdb692ca7ba3e2747e27eac9cf625f2645841b5e7b",
+    "f5d93ccf1e935a4b64831717fc49bf4439d756bfc58b4c9d280b1186f90948fa",
+    "d80c227a2924924b9c65cdbdb50f26035703069cba597e3de01c6c0e206d6973",
+    "1bb1d98b266e796eff57cf435071a9b0405c852d9e25b27e2c11bf8610ac9254",
+    "1d20f9c5cf7e3e4fb1d0387c86b937cf701bb56719f8d28e872ab74977ab5a4d"
+  ],
+  "recovery_time": "2026-09-09T03:54:12.714765+00:00",
+  "scope": "Removed only the five exact newly created synthetic fixtures; no transcript, notes, audio or user configuration read."
+}

@@ -1,0 +1,18 @@
+{
+  "fault": "partial_write",
+  "segment_id": "ov-mttlunqb-msyb2e6l",
+  "before": {
+    "transcript": 4,
+    "original": 4
+  },
+  "interrupted": {
+    "transcript": 5,
+    "original": 4
+  },
+  "repaired": {
+    "transcript": 5,
+    "original": 5
+  },
+  "ordered_edit_prefix_preserved": true,
+  "ordered_raw_prefix_preserved": true
+}
