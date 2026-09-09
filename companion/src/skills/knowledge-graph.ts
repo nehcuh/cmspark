@@ -181,11 +181,14 @@ export function buildKnowledgeGraph(
   const byId = new Map(selected.map((d) => [d.id, d]))
   const groupOf = new Map<string, string>()
   for (const g of groups) for (const id of g.ids) groupOf.set(id, `c:${g.key}`)
-  for (const g of opts?.llm?.groups ?? []) {
-    // 同成员集合两组：先到先得（后组撞已占键自然被盖）
-    const key = lGroupKey(g.ids)
-    for (const id of g.ids) {
-      if (byId.has(id) && !groupOf.has(id)) groupOf.set(id, key)
+  // 跨 20 后旧 LLM 缓存仍保留，但只有显式锁组可覆盖 TF 分组。
+  if (llmLane) {
+    for (const g of opts?.llm?.groups ?? []) {
+      // 同成员集合两组：先到先得（后组撞已占键自然被盖）
+      const key = lGroupKey(g.ids)
+      for (const id of g.ids) {
+        if (byId.has(id) && !groupOf.has(id)) groupOf.set(id, key)
+      }
     }
   }
 

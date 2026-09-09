@@ -1,0 +1,2 @@
+PASS actual Plasmo HTML and JS 1440 {'bodyMargin': '0px', 'htmlMargin': '0px', 'overflow': False, 'width': 1120, 'height': 671, 'colored': 4014}
+PASS actual Plasmo HTML and JS 390 {'bodyMargin': '0px', 'htmlMargin': '0px', 'overflow': False, 'width': 390, 'height': 346, 'colored': 3962}

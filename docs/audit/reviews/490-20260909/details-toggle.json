@@ -1,0 +1,14 @@
+[
+  {
+    "nodes": 4,
+    "defaultOpen": true,
+    "manualOpenAfterQueryAndHover": false,
+    "unlockReachable": false
+  },
+  {
+    "nodes": 20,
+    "defaultOpen": false,
+    "manualOpenAfterQueryAndHover": true,
+    "unlockReachable": true
+  }
+]

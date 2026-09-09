@@ -1,0 +1,221 @@
+{
+  "initial": {
+    "type": "knowledge.graph",
+    "status": "ok",
+    "truncated": false,
+    "nodes": [
+      {
+        "id": "lifecycle-failure-000",
+        "title": "lifecycle-failure-000",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-failure-001",
+        "title": "lifecycle-failure-001",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-failure-002",
+        "title": "lifecycle-failure-002",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      }
+    ],
+    "edges": [
+      {
+        "a": "lifecycle-failure-000",
+        "b": "lifecycle-failure-001",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-failure-000",
+        "b": "lifecycle-failure-002",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-failure-001",
+        "b": "lifecycle-failure-002",
+        "score": 2.125
+      }
+    ],
+    "labels": {
+      "l:e9fd6abc292b": {
+        "name": "完成分组",
+        "ai": true
+      }
+    },
+    "llm_ready": true,
+    "organizing": true,
+    "organized": true,
+    "relations": []
+  },
+  "intermediate": {
+    "type": "knowledge.graph",
+    "status": "ok",
+    "truncated": false,
+    "nodes": [
+      {
+        "id": "lifecycle-failure-000",
+        "title": "lifecycle-failure-000",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-failure-001",
+        "title": "lifecycle-failure-001",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-failure-002",
+        "title": "lifecycle-failure-002",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      }
+    ],
+    "edges": [
+      {
+        "a": "lifecycle-failure-000",
+        "b": "lifecycle-failure-001",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-failure-000",
+        "b": "lifecycle-failure-002",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-failure-001",
+        "b": "lifecycle-failure-002",
+        "score": 2.125
+      }
+    ],
+    "labels": {
+      "l:e9fd6abc292b": {
+        "name": "完成分组",
+        "ai": true
+      }
+    },
+    "llm_ready": true,
+    "organizing": true,
+    "organized": true,
+    "relations": []
+  },
+  "rebuilding": {
+    "type": "knowledge.graph",
+    "status": "rebuilding",
+    "truncated": false,
+    "nodes": [],
+    "edges": [],
+    "labels": {},
+    "llm_ready": true,
+    "organizing": true
+  },
+  "final": {
+    "type": "knowledge.graph",
+    "status": "ok",
+    "truncated": false,
+    "nodes": [
+      {
+        "id": "lifecycle-failure-000",
+        "title": "lifecycle-failure-000",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-failure-001",
+        "title": "lifecycle-failure-001",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-failure-002",
+        "title": "lifecycle-failure-002",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      }
+    ],
+    "edges": [
+      {
+        "a": "lifecycle-failure-000",
+        "b": "lifecycle-failure-001",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-failure-000",
+        "b": "lifecycle-failure-002",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-failure-001",
+        "b": "lifecycle-failure-002",
+        "score": 2.125
+      }
+    ],
+    "labels": {
+      "l:e9fd6abc292b": {
+        "name": "完成分组",
+        "ai": true
+      }
+    },
+    "llm_ready": true,
+    "organizing": false,
+    "organized": true,
+    "relations": [],
+    "organize_error": "AI 整理失败，请重试"
+  },
+  "after": {
+    "type": "knowledge.graph",
+    "status": "ok",
+    "truncated": false,
+    "nodes": [
+      {
+        "id": "lifecycle-failure-000",
+        "title": "lifecycle-failure-000",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-failure-001",
+        "title": "lifecycle-failure-001",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      },
+      {
+        "id": "lifecycle-failure-002",
+        "title": "lifecycle-failure-002",
+        "group_key": "l:e9fd6abc292b",
+        "folder": ""
+      }
+    ],
+    "edges": [
+      {
+        "a": "lifecycle-failure-000",
+        "b": "lifecycle-failure-001",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-failure-000",
+        "b": "lifecycle-failure-002",
+        "score": 2.125
+      },
+      {
+        "a": "lifecycle-failure-001",
+        "b": "lifecycle-failure-002",
+        "score": 2.125
+      }
+    ],
+    "labels": {
+      "l:e9fd6abc292b": {
+        "name": "完成分组",
+        "ai": true
+      }
+    },
+    "llm_ready": true,
+    "organizing": false,
+    "organized": true,
+    "relations": []
+  }
+}

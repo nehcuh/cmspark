@@ -1,0 +1,491 @@
+TAP version 13
+# [cmspark-agent] computer.modelVariant=hybrid 已弃用（TinyClick）——迁移为 Qwen3-VL "2b"
+# Subtest: \#490 19→20：旧未锁 AI 分组退出，节点与标签恢复 TF 结果
+not ok 1 - \#490 19→20：旧未锁 AI 分组退出，节点与标签恢复 TF 结果
+  ---
+  duration_ms: 466.028333
+  type: 'test'
+  location: '/Users/huchen/Projects/cmspark/companion/tests/knowledge-graph.test.ts:9:24658'
+  failureType: 'testCodeFailure'
+  error: |-
+    未锁的旧 AI 分组不能改变 TF 节点归属
+    + actual - expected
+    
+      [
+        {
+          folder: '',
+    +     group_key: 'l:0740ed61f334',
+    -     group_key: 'u:ungrouped',
+          id: 'transition000',
+          title: 'transition000'
+        },
+        {
+          folder: '',
+    +     group_key: 'l:0740ed61f334',
+    -     group_key: 'u:ungrouped',
+          id: 'transition001',
+          title: 'transition001'
+        },
+        {
+          folder: '',
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      id: 'transition000'
+      title: 'transition000'
+      group_key: 'u:ungrouped'
+      folder: ''
+    1:
+      id: 'transition001'
+      title: 'transition001'
+      group_key: 'u:ungrouped'
+      folder: ''
+    2:
+      id: 'transition002'
+      title: 'transition002'
+      group_key: 'u:ungrouped'
+      folder: ''
+    3:
+      id: 'transition003'
+      title: 'transition003'
+      group_key: 'u:ungrouped'
+      folder: ''
+    4:
+      id: 'transition004'
+      title: 'transition004'
+      group_key: 'u:ungrouped'
+      folder: ''
+    5:
+      id: 'transition005'
+      title: 'transition005'
+      group_key: 'u:ungrouped'
+      folder: ''
+    6:
+      id: 'transition006'
+      title: 'transition006'
+      group_key: 'u:ungrouped'
+      folder: ''
+    7:
+      id: 'transition007'
+      title: 'transition007'
+      group_key: 'u:ungrouped'
+      folder: ''
+    8:
+      id: 'transition008'
+      title: 'transition008'
+      group_key: 'u:ungrouped'
+      folder: ''
+    9:
+      id: 'transition009'
+      title: 'transition009'
+      group_key: 'u:ungrouped'
+      folder: ''
+    10:
+      id: 'transition010'
+      title: 'transition010'
+      group_key: 'u:ungrouped'
+      folder: ''
+    11:
+      id: 'transition011'
+      title: 'transition011'
+      group_key: 'u:ungrouped'
+      folder: ''
+    12:
+      id: 'transition012'
+      title: 'transition012'
+      group_key: 'u:ungrouped'
+      folder: ''
+    13:
+      id: 'transition013'
+      title: 'transition013'
+      group_key: 'u:ungrouped'
+      folder: ''
+    14:
+      id: 'transition014'
+      title: 'transition014'
+      group_key: 'u:ungrouped'
+      folder: ''
+    15:
+      id: 'transition015'
+      title: 'transition015'
+      group_key: 'u:ungrouped'
+      folder: ''
+    16:
+      id: 'transition016'
+      title: 'transition016'
+      group_key: 'u:ungrouped'
+      folder: ''
+    17:
+      id: 'transition017'
+      title: 'transition017'
+      group_key: 'u:ungrouped'
+      folder: ''
+    18:
+      id: 'transition018'
+      title: 'transition018'
+      group_key: 'u:ungrouped'
+      folder: ''
+    19:
+      id: 'transition019'
+      title: 'transition019'
+      group_key: 'u:ungrouped'
+      folder: ''
+  actual:
+    0:
+      id: 'transition000'
+      title: 'transition000'
+      group_key: 'l:0740ed61f334'
+      folder: ''
+    1:
+      id: 'transition001'
+      title: 'transition001'
+      group_key: 'l:0740ed61f334'
+      folder: ''
+    2:
+      id: 'transition002'
+      title: 'transition002'
+      group_key: 'u:ungrouped'
+      folder: ''
+    3:
+      id: 'transition003'
+      title: 'transition003'
+      group_key: 'u:ungrouped'
+      folder: ''
+    4:
+      id: 'transition004'
+      title: 'transition004'
+      group_key: 'u:ungrouped'
+      folder: ''
+    5:
+      id: 'transition005'
+      title: 'transition005'
+      group_key: 'u:ungrouped'
+      folder: ''
+    6:
+      id: 'transition006'
+      title: 'transition006'
+      group_key: 'u:ungrouped'
+      folder: ''
+    7:
+      id: 'transition007'
+      title: 'transition007'
+      group_key: 'u:ungrouped'
+      folder: ''
+    8:
+      id: 'transition008'
+      title: 'transition008'
+      group_key: 'u:ungrouped'
+      folder: ''
+    9:
+      id: 'transition009'
+      title: 'transition009'
+      group_key: 'u:ungrouped'
+      folder: ''
+    10:
+      id: 'transition010'
+      title: 'transition010'
+      group_key: 'u:ungrouped'
+      folder: ''
+    11:
+      id: 'transition011'
+      title: 'transition011'
+      group_key: 'u:ungrouped'
+      folder: ''
+    12:
+      id: 'transition012'
+      title: 'transition012'
+      group_key: 'u:ungrouped'
+      folder: ''
+    13:
+      id: 'transition013'
+      title: 'transition013'
+      group_key: 'u:ungrouped'
+      folder: ''
+    14:
+      id: 'transition014'
+      title: 'transition014'
+      group_key: 'u:ungrouped'
+      folder: ''
+    15:
+      id: 'transition015'
+      title: 'transition015'
+      group_key: 'u:ungrouped'
+      folder: ''
+    16:
+      id: 'transition016'
+      title: 'transition016'
+      group_key: 'u:ungrouped'
+      folder: ''
+    17:
+      id: 'transition017'
+      title: 'transition017'
+      group_key: 'u:ungrouped'
+      folder: ''
+    18:
+      id: 'transition018'
+      title: 'transition018'
+      group_key: 'u:ungrouped'
+      folder: ''
+    19:
+      id: 'transition019'
+      title: 'transition019'
+      group_key: 'u:ungrouped'
+      folder: ''
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/huchen/Projects/cmspark/companion/tests/knowledge-graph.test.ts:651:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: \#490 19→20：旧缓存退出时显式锁组仍保留
+not ok 2 - \#490 19→20：旧缓存退出时显式锁组仍保留
+  ---
+  duration_ms: 4.457
+  type: 'test'
+  location: '/Users/huchen/Projects/cmspark/companion/tests/knowledge-graph.test.ts:9:26104'
+  failureType: 'testCodeFailure'
+  error: |-
+    仅显式锁组可跨越 lane
+    + actual - expected
+    
+      [
+        {
+          folder: '',
+    +     group_key: 'l:c3bcd38fbdec',
+    -     group_key: 'u:ungrouped',
+          id: 'locked-transition000',
+          title: 'locked-transition000'
+        },
+        {
+          folder: '',
+    +     group_key: 'l:c3bcd38fbdec',
+    -     group_key: 'u:ungrouped',
+          id: 'locked-transition001',
+          title: 'locked-transition001'
+        },
+        {
+          folder: '',
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      id: 'locked-transition000'
+      title: 'locked-transition000'
+      group_key: 'u:ungrouped'
+      folder: ''
+    1:
+      id: 'locked-transition001'
+      title: 'locked-transition001'
+      group_key: 'u:ungrouped'
+      folder: ''
+    2:
+      id: 'locked-transition002'
+      title: 'locked-transition002'
+      group_key: 'l:95607331fdc4'
+      folder: ''
+    3:
+      id: 'locked-transition003'
+      title: 'locked-transition003'
+      group_key: 'l:95607331fdc4'
+      folder: ''
+    4:
+      id: 'locked-transition004'
+      title: 'locked-transition004'
+      group_key: 'u:ungrouped'
+      folder: ''
+    5:
+      id: 'locked-transition005'
+      title: 'locked-transition005'
+      group_key: 'u:ungrouped'
+      folder: ''
+    6:
+      id: 'locked-transition006'
+      title: 'locked-transition006'
+      group_key: 'u:ungrouped'
+      folder: ''
+    7:
+      id: 'locked-transition007'
+      title: 'locked-transition007'
+      group_key: 'u:ungrouped'
+      folder: ''
+    8:
+      id: 'locked-transition008'
+      title: 'locked-transition008'
+      group_key: 'u:ungrouped'
+      folder: ''
+    9:
+      id: 'locked-transition009'
+      title: 'locked-transition009'
+      group_key: 'u:ungrouped'
+      folder: ''
+    10:
+      id: 'locked-transition010'
+      title: 'locked-transition010'
+      group_key: 'u:ungrouped'
+      folder: ''
+    11:
+      id: 'locked-transition011'
+      title: 'locked-transition011'
+      group_key: 'u:ungrouped'
+      folder: ''
+    12:
+      id: 'locked-transition012'
+      title: 'locked-transition012'
+      group_key: 'u:ungrouped'
+      folder: ''
+    13:
+      id: 'locked-transition013'
+      title: 'locked-transition013'
+      group_key: 'u:ungrouped'
+      folder: ''
+    14:
+      id: 'locked-transition014'
+      title: 'locked-transition014'
+      group_key: 'u:ungrouped'
+      folder: ''
+    15:
+      id: 'locked-transition015'
+      title: 'locked-transition015'
+      group_key: 'u:ungrouped'
+      folder: ''
+    16:
+      id: 'locked-transition016'
+      title: 'locked-transition016'
+      group_key: 'u:ungrouped'
+      folder: ''
+    17:
+      id: 'locked-transition017'
+      title: 'locked-transition017'
+      group_key: 'u:ungrouped'
+      folder: ''
+    18:
+      id: 'locked-transition018'
+      title: 'locked-transition018'
+      group_key: 'u:ungrouped'
+      folder: ''
+    19:
+      id: 'locked-transition019'
+      title: 'locked-transition019'
+      group_key: 'u:ungrouped'
+      folder: ''
+  actual:
+    0:
+      id: 'locked-transition000'
+      title: 'locked-transition000'
+      group_key: 'l:c3bcd38fbdec'
+      folder: ''
+    1:
+      id: 'locked-transition001'
+      title: 'locked-transition001'
+      group_key: 'l:c3bcd38fbdec'
+      folder: ''
+    2:
+      id: 'locked-transition002'
+      title: 'locked-transition002'
+      group_key: 'l:95607331fdc4'
+      folder: ''
+    3:
+      id: 'locked-transition003'
+      title: 'locked-transition003'
+      group_key: 'l:95607331fdc4'
+      folder: ''
+    4:
+      id: 'locked-transition004'
+      title: 'locked-transition004'
+      group_key: 'u:ungrouped'
+      folder: ''
+    5:
+      id: 'locked-transition005'
+      title: 'locked-transition005'
+      group_key: 'u:ungrouped'
+      folder: ''
+    6:
+      id: 'locked-transition006'
+      title: 'locked-transition006'
+      group_key: 'u:ungrouped'
+      folder: ''
+    7:
+      id: 'locked-transition007'
+      title: 'locked-transition007'
+      group_key: 'u:ungrouped'
+      folder: ''
+    8:
+      id: 'locked-transition008'
+      title: 'locked-transition008'
+      group_key: 'u:ungrouped'
+      folder: ''
+    9:
+      id: 'locked-transition009'
+      title: 'locked-transition009'
+      group_key: 'u:ungrouped'
+      folder: ''
+    10:
+      id: 'locked-transition010'
+      title: 'locked-transition010'
+      group_key: 'u:ungrouped'
+      folder: ''
+    11:
+      id: 'locked-transition011'
+      title: 'locked-transition011'
+      group_key: 'u:ungrouped'
+      folder: ''
+    12:
+      id: 'locked-transition012'
+      title: 'locked-transition012'
+      group_key: 'u:ungrouped'
+      folder: ''
+    13:
+      id: 'locked-transition013'
+      title: 'locked-transition013'
+      group_key: 'u:ungrouped'
+      folder: ''
+    14:
+      id: 'locked-transition014'
+      title: 'locked-transition014'
+      group_key: 'u:ungrouped'
+      folder: ''
+    15:
+      id: 'locked-transition015'
+      title: 'locked-transition015'
+      group_key: 'u:ungrouped'
+      folder: ''
+    16:
+      id: 'locked-transition016'
+      title: 'locked-transition016'
+      group_key: 'u:ungrouped'
+      folder: ''
+    17:
+      id: 'locked-transition017'
+      title: 'locked-transition017'
+      group_key: 'u:ungrouped'
+      folder: ''
+    18:
+      id: 'locked-transition018'
+      title: 'locked-transition018'
+      group_key: 'u:ungrouped'
+      folder: ''
+    19:
+      id: 'locked-transition019'
+      title: 'locked-transition019'
+      group_key: 'u:ungrouped'
+      folder: ''
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/huchen/Projects/cmspark/companion/tests/knowledge-graph.test.ts:679:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 0
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 592.362041

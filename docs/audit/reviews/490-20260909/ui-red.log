@@ -1,0 +1,15 @@
+{
+  "storageReleased": true,
+  "snapshotNodes": 4,
+  "canvasWidth": 300,
+  "canvasHeight": 150,
+  "cssWidth": 1280,
+  "drawnArcs": 0,
+  "drawnFrames": 0,
+  "opaquePixels": 0
+}
+Traceback (most recent call last):
+  File "/Users/huchen/Projects/cmspark/chrome-extension/scripts/test-knowledge-graph-ui.py", line 45, in <module>
+    assert evidence['drawnArcs'] >= 4 and evidence['opaquePixels'] > 0, 'Async snapshot mounted a Canvas but never started the drawing effect'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Async snapshot mounted a Canvas but never started the drawing effect

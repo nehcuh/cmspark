@@ -1,0 +1,12 @@
+PASS 1/4/20/200: delayed storage, real node pixels, default titles, every document listed, honest zero-edge state
+PASS ok → error stops drawing → refresh → ok remount draws real nodes
+PASS failed send reports connection error while preserving the usable snapshot; default-off refresh does not enable AI
+PASS search incl. empty results, local selection, explicit document open, camera and list controls
+PASS production organized group filtering and readable AI relationship reason
+PASS native dashed AI and solid similarity lines have pixels; lock/unlock and explicit organize retain their transport contracts
+PASS desktop/mobile resize: correctly sized real Canvas, non-overlapping browser, no horizontal overflow
+PASS initially cached error snapshot can refresh and recover without closing the page
+PASS refresh preserves a previously enabled AI naming preference without automatically organizing
+PASS a requested document remains selected across rebuilding → success with no new focus id
+PASS a stale initial storage result cannot overwrite a newer successful storage event
+PASS delayed storage → real Canvas node drawing

@@ -88,7 +88,7 @@ function walkSource(dir: string): string[] {
 // --- 三态诚实文案（AC-3 / AC-5） ---
 
 test("copy pins: too_few / over_cap / rebuilding 逐字（AC-3/AC-5）", () => {
-  assert.equal(KNOWLEDGE_GRAPH_TOO_FEW_COPY, "知识不足 20 篇，暂无图谱")
+  assert.equal(KNOWLEDGE_GRAPH_TOO_FEW_COPY, "知识库暂无可展示的文档，请先在知识面板导入或保存知识")
   assert.equal(
     KNOWLEDGE_GRAPH_OVER_CAP_COPY,
     "超过 200 篇，只画标题字典序前 200 篇；仅这 200 篇参与分组与着色",
@@ -162,7 +162,7 @@ test("KnowledgeGraphStatusView 真渲染三态文案", () => {
   const tooFew = renderToStaticMarkup(
     createElement(KnowledgeGraphStatusView, { status: "too_few", truncated: false }),
   )
-  assert.ok(tooFew.includes("知识不足 20 篇，暂无图谱"), tooFew)
+  assert.ok(tooFew.includes("知识库暂无可展示的文档"), tooFew)
   assert.ok(!tooFew.includes("簇"), "视图内不得出现「簇」")
 
   const over = renderToStaticMarkup(
@@ -595,6 +595,6 @@ test("#427 App 层：CTA 只在 ok+2–19+无缓存；空结果无 CTA 有散点
 })
 
 test("#427 barMeta：有 AI 关联时拆 TF/AI", () => {
-  assert.equal(knowledgeGraphBarMeta(4, 3, 0), "4 点 · 3 边")
-  assert.equal(knowledgeGraphBarMeta(4, 3, 2), "4 点 · TF 3 边 · AI 2 关联")
+  assert.equal(knowledgeGraphBarMeta(4, 3, 0), "4 篇知识 · 3 条相似关联")
+  assert.equal(knowledgeGraphBarMeta(4, 3, 2), "4 篇知识 · 3 条相似关联 · 2 条 AI 关联")
 })

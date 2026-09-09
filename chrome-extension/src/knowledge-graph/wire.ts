@@ -57,6 +57,8 @@ export type KnowledgeGraphPayload = {
    * 无缓存帧省略或 false。
    */
   organized?: boolean
+  /** #490: actual server job state; initial graph response is not completion. */
+  organizing?: boolean
 }
 
 const STATUSES = new Set<KnowledgeGraphStatus>(["ok", "too_few", "over_cap", "rebuilding", "error"])
@@ -203,6 +205,7 @@ export function parseKnowledgeGraphPayload(raw: unknown): KnowledgeGraphPayload 
     ...(typeof o.tf_switch_notice === "boolean" ? { tf_switch_notice: o.tf_switch_notice } : {}),
     ...(o.lock_dissolved === true ? { lock_dissolved: true } : {}),
     ...(o.organized === true ? { organized: true } : {}),
+    ...(typeof o.organizing === "boolean" ? { organizing: o.organizing } : {}),
   }
 }
 
@@ -227,6 +230,7 @@ export function mockKnowledgeGraphPayload(
       : {}),
     ...(partial.lock_dissolved === true ? { lock_dissolved: true } : {}),
     ...(partial.organized === true ? { organized: true } : {}),
+    ...(typeof partial.organizing === "boolean" ? { organizing: partial.organizing } : {}),
   }
 }
 

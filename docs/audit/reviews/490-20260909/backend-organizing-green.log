@@ -1,0 +1,352 @@
+TAP version 13
+# [cmspark-agent] computer.modelVariant=hybrid 已弃用（TinyClick）——迁移为 Qwen3-VL "2b"
+# Subtest: \#490 organize lifecycle: initial/refresh/rebuilding busy, success completion idle
+ok 1 - \#490 organize lifecycle: initial/refresh/rebuilding busy, success completion idle
+  ---
+  duration_ms: 305.277167
+  type: 'test'
+  ...
+# Subtest: \#490 organize lifecycle: initial/refresh/rebuilding busy, failure completion idle
+ok 2 - \#490 organize lifecycle: initial/refresh/rebuilding busy, failure completion idle
+  ---
+  duration_ms: 7.022708
+  type: 'test'
+  ...
+# Subtest: \#427 AC-1: organize happy path——首响应无产物，settle 推帧带 relations + l: 分组，缓存落盘
+ok 3 - \#427 AC-1: organize happy path——首响应无产物，settle 推帧带 relations + l: 分组，缓存落盘
+  ---
+  duration_ms: 18.967375
+  type: 'test'
+  ...
+# Subtest: \#427 AC-2: 缓存命中 0 次 LLM；语料变化 → stale 仍渲染旧缓存且不自动重跑
+ok 4 - \#427 AC-2: 缓存命中 0 次 LLM；语料变化 → stale 仍渲染旧缓存且不自动重跑
+  ---
+  duration_ms: 19.425542
+  type: 'test'
+  ...
+# Subtest: \#427 pi MAJOR-1: 合法空整理（groups:[]+relations:[]）→ organized:true + relations 在场空数组；无缓存帧两字段皆省略
+ok 5 - \#427 pi MAJOR-1: 合法空整理（groups:[]+relations:[]）→ organized:true + relations 在场空数组；无缓存帧两字段皆省略
+  ---
+  duration_ms: 24.308125
+  type: 'test'
+  ...
+# Subtest: \#427 §4: organize 失败不静默——推 ok 帧 + organize_error，旧缓存原样保留
+ok 6 - \#427 §4: organize 失败不静默——推 ok 帧 + organize_error，旧缓存原样保留
+  ---
+  duration_ms: 28.854083
+  type: 'test'
+  ...
+# Subtest: \#427 §3.2: parse 失败 → organize_error 中文文案，无缓存写入
+ok 7 - \#427 §3.2: parse 失败 → organize_error 中文文案，无缓存写入
+  ---
+  duration_ms: 15.050542
+  type: 'test'
+  ...
+# Subtest: \#427 §3.1: 未配置 LLM → llm_ready:false + organize_error，impl 不被调
+ok 8 - \#427 §3.1: 未配置 LLM → llm_ready:false + organize_error，impl 不被调
+  ---
+  duration_ms: 17.489875
+  type: 'test'
+  ...
+# Subtest: \#427 双闸（grok M-1 修复）：缺 user_gesture 全拒，但不走红 error——ok 帧 + organize_error，画布不死者
+ok 9 - \#427 双闸（grok M-1 修复）：缺 user_gesture 全拒，但不走红 error——ok 帧 + organize_error，画布不死者
+  ---
+  duration_ms: 4.395542
+  type: 'test'
+  ...
+# Subtest: \#427 surface 门：summoner 连 organize/lock 一起拒
+ok 10 - \#427 surface 门：summoner 连 organize/lock 一起拒
+  ---
+  duration_ms: 2.651459
+  type: 'test'
+  ...
+# Subtest: \#427 AC-7: n≥20 organize no-op——impl 不调，relations 字段不上帧
+ok 11 - \#427 AC-7: n≥20 organize no-op——impl 不调，relations 字段不上帧
+  ---
+  duration_ms: 39.701458
+  type: 'test'
+  ...
+# Subtest: \#427 §5: lock_group/unlock_group round-trip——locked 标、graph_lock 落盘、幂等
+ok 12 - \#427 §5: lock_group/unlock_group round-trip——locked 标、graph_lock 落盘、幂等
+  ---
+  duration_ms: 20.249375
+  type: 'test'
+  ...
+# Subtest: \#427 §5 + grok M-1: lock_group 拒未分组堆/未知键——ok 帧 + 中文 organize_error，画布不死者
+ok 13 - \#427 §5 + grok M-1: lock_group 拒未分组堆/未知键——ok 帧 + 中文 organize_error，画布不死者
+  ---
+  duration_ms: 4.818084
+  type: 'test'
+  ...
+# Subtest: \#427 §5 + pi 终验 2: 锁缩容——同锁条目跨删除仍生效（键随成员变），<2 解散一次性提示
+ok 14 - \#427 §5 + pi 终验 2: 锁缩容——同锁条目跨删除仍生效（键随成员变），<2 解散一次性提示
+  ---
+  duration_ms: 22.649208
+  type: 'test'
+  ...
+# Subtest: \#427 §6: 跨 20——notice 持续 true 直到显式 ack_tf_switch，之后 false
+ok 15 - \#427 §6: 跨 20——notice 持续 true 直到显式 ack_tf_switch，之后 false
+  ---
+  duration_ms: 51.81225
+  type: 'test'
+  ...
+# Subtest: \#427 §3.3: 重启 + 磁盘漂移——graph_llm/graph_lock/ack 区携带到重建后的新索引
+ok 16 - \#427 §3.3: 重启 + 磁盘漂移——graph_llm/graph_lock/ack 区携带到重建后的新索引
+  ---
+  duration_ms: 22.243791
+  type: 'test'
+  ...
+# Subtest: \#427 single-flight：在飞的 organize 不被并发请求复制
+ok 17 - \#427 single-flight：在飞的 organize 不被并发请求复制
+  ---
+  duration_ms: 15.073375
+  type: 'test'
+  ...
+# [cmspark-agent] computer.modelVariant=hybrid 已弃用（TinyClick）——迁移为 Qwen3-VL "2b"
+# Subtest: \#427 pure: n=0 → too_few；n=1 → 单节点 ok；2–19 → LLM lane ok 全未分组
+ok 18 - \#427 pure: n=0 → too_few；n=1 → 单节点 ok；2–19 → LLM lane ok 全未分组
+  ---
+  duration_ms: 288.026458
+  type: 'test'
+  ...
+# Subtest: \#296 pure: n≤200 group_key = 分布视图同一 key（同源聚类）
+ok 19 - \#296 pure: n≤200 group_key = 分布视图同一 key（同源聚类）
+  ---
+  duration_ms: 2.727833
+  type: 'test'
+  ...
+# Subtest: \#296 pure: n≤200 ungrouped nodes get u:ungrouped + 未分组 label
+ok 20 - \#296 pure: n≤200 ungrouped nodes get u:ungrouped + 未分组 label
+  ---
+  duration_ms: 2.299459
+  type: 'test'
+  ...
+# Subtest: \#296 pure: edges top-5 cap, score>0, symmetric dedup a<b, determinism
+ok 21 - \#296 pure: edges top-5 cap, score>0, symmetric dedup a<b, determinism
+  ---
+  duration_ms: 2.370792
+  type: 'test'
+  ...
+# Subtest: \#296 pure: n>200 → over_cap, title-lex first 200, recluster on truncated set, truncated:true, determinism
+ok 22 - \#296 pure: n>200 → over_cap, title-lex first 200, recluster on truncated set, truncated:true, determinism
+  ---
+  duration_ms: 81.999333
+  type: 'test'
+  ...
+# Subtest: \#296/\#427 pure: constants per spec §6 / \#427 §8
+ok 23 - \#296/\#427 pure: constants per spec §6 / \#427 §8
+  ---
+  duration_ms: 0.081292
+  type: 'test'
+  ...
+# Subtest: \#296 parseGraphLabels: strict-ish JSON with surrounding noise; malformed → null
+ok 24 - \#296 parseGraphLabels: strict-ish JSON with surrounding noise; malformed → null
+  ---
+  duration_ms: 0.187709
+  type: 'test'
+  ...
+# [skills] knowledge index rebuild failed; routing/distribution degraded: Error: EEXIST: file already exists, mkdir '/var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/cmspark-k-graph-KdJprN/.cmspark-agent/cache'
+#     at Object.mkdirSync (node:fs:1370:26)
+#     at writeKnowledgeIndexFile (/Users/huchen/Projects/cmspark/companion/src/skills/knowledge-clusters.ts:218:6)
+#     at SkillEngine.rebuildKnowledgeIndexSafe (/Users/huchen/Projects/cmspark/companion/src/skills/skill-engine.ts:500:7)
+#     at SkillEngine.ensureKnowledgeIndex (/Users/huchen/Projects/cmspark/companion/src/skills/skill-engine.ts:564:12)
+#     at SkillEngine.getKnowledgeGraph (/Users/huchen/Projects/cmspark/companion/src/skills/skill-engine.ts:597:24)
+#     at handleMessage (/Users/huchen/Projects/cmspark/companion/src/message-router.ts:3748:33)
+#     at TestContext.<anonymous> (/Users/huchen/Projects/cmspark/companion/tests/knowledge-graph.test.ts:368:22)
+#     at Test.runInAsyncScope (node:async_hooks:214:14)
+#     at Test.run (node:internal/test_runner/test:1047:25)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+#   errno: -17,
+#   code: 'EEXIST',
+#   syscall: 'mkdir',
+#   path: '/var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/cmspark-k-graph-KdJprN/.cmspark-agent/cache'
+# }
+# Subtest: \#296 clamp: name ≤20 / summary ≤280 on LLM output
+ok 25 - \#296 clamp: name ≤20 / summary ≤280 on LLM output
+  ---
+  duration_ms: 68.667166
+  type: 'test'
+  ...
+# Subtest: \#296 surface gate: non-panel sessions rejected, panel served
+ok 26 - \#296 surface gate: non-panel sessions rejected, panel served
+  ---
+  duration_ms: 31.92825
+  type: 'test'
+  ...
+# Subtest: \#427 handler: 2–19 无缓存 → ok + 全未分组 + llm_ready；relations/organized 整体省略
+ok 27 - \#427 handler: 2–19 无缓存 → ok + 全未分组 + llm_ready；relations/organized 整体省略
+  ---
+  duration_ms: 7.707417
+  type: 'test'
+  ...
+# Subtest: \#296 handler: index unavailable → rebuilding (honest, no fake graph)
+ok 28 - \#296 handler: index unavailable → rebuilding (honest, no fake graph)
+  ---
+  duration_ms: 36.314666
+  type: 'test'
+  ...
+# Subtest: \#296 LLM failure → fallback labels, no display write, no error frame
+ok 29 - \#296 LLM failure → fallback labels, no display write, no error frame
+  ---
+  duration_ms: 42.405833
+  type: 'test'
+  ...
+# Subtest: \#296 LLM prompt privacy: member titles/tags only, never doc bodies (\#274 precedent)
+ok 30 - \#296 LLM prompt privacy: member titles/tags only, never doc bodies (\#274 precedent)
+  ---
+  duration_ms: 42.721042
+  type: 'test'
+  ...
+# Subtest: \#296 regen_labels: forces regeneration over cache
+ok 31 - \#296 regen_labels: forces regeneration over cache
+  ---
+  duration_ms: 62.41925
+  type: 'test'
+  ...
+# Subtest: \#296 no llm_labels → no LLM call at all (default off)
+ok 32 - \#296 no llm_labels → no LLM call at all (default off)
+  ---
+  duration_ms: 37.554042
+  type: 'test'
+  ...
+# Subtest: \#296 display round-trip via engine + file (0o600)
+ok 33 - \#296 display round-trip via engine + file (0o600)
+  ---
+  duration_ms: 38.2885
+  type: 'test'
+  ...
+# Subtest: \#296 readKnowledgeIndexFile tolerates missing / malformed display
+ok 34 - \#296 readKnowledgeIndexFile tolerates missing / malformed display
+  ---
+  duration_ms: 0.450625
+  type: 'test'
+  ...
+# Subtest: \#296/\#427 validator: knowledge.graph optional fields strict shapes
+ok 35 - \#296/\#427 validator: knowledge.graph optional fields strict shapes
+  ---
+  duration_ms: 1.929125
+  type: 'test'
+  ...
+# Subtest: \#296 llm_labels off → cached AI labels never reach the wire (AC-4 gate)
+ok 36 - \#296 llm_labels off → cached AI labels never reach the wire (AC-4 gate)
+  ---
+  duration_ms: 42.704417
+  type: 'test'
+  ...
+# Subtest: \#296 labels completion pushes an updated knowledge.graph frame to the panel
+ok 37 - \#296 labels completion pushes an updated knowledge.graph frame to the panel
+  ---
+  duration_ms: 38.416708
+  type: 'test'
+  ...
+# Subtest: \#427 lGroupKey: 服务端派生、成员集决定键、顺序无关
+ok 38 - \#427 lGroupKey: 服务端派生、成员集决定键、顺序无关
+  ---
+  duration_ms: 0.156333
+  type: 'test'
+  ...
+# Subtest: \#427 fingerprint: id/title/description/tags 任一变动都漂移；顺序无关
+ok 39 - \#427 fingerprint: id/title/description/tags 任一变动都漂移；顺序无关
+  ---
+  duration_ms: 0.156459
+  type: 'test'
+  ...
+# Subtest: \#427 锁 overlay：改写 group_key + 注入 ai:true/locked:true labels；未分组 label 重算
+ok 40 - \#427 锁 overlay：改写 group_key + 注入 ai:true/locked:true labels；未分组 label 重算
+  ---
+  duration_ms: 0.526625
+  type: 'test'
+  ...
+# Subtest: \#490 19→20：旧未锁 AI 分组退出，节点与标签恢复 TF 结果
+ok 41 - \#490 19→20：旧未锁 AI 分组退出，节点与标签恢复 TF 结果
+  ---
+  duration_ms: 1.441958
+  type: 'test'
+  ...
+# Subtest: \#490 19→20：旧缓存退出时显式锁组仍保留
+ok 42 - \#490 19→20：旧缓存退出时显式锁组仍保留
+  ---
+  duration_ms: 2.204708
+  type: 'test'
+  ...
+# Subtest: \#427 锁跨活：≥20 帧锁 overlay 照常生效且 relations 永不上帧
+ok 43 - \#427 锁跨活：≥20 帧锁 overlay 照常生效且 relations 永不上帧
+  ---
+  duration_ms: 0.520583
+  type: 'test'
+  ...
+# Subtest: \#427 organize prompt：只有 title/tags/description，不进正文；锁禁区行
+ok 44 - \#427 organize prompt：只有 title/tags/description，不进正文；锁禁区行
+  ---
+  duration_ms: 0.093
+  type: 'test'
+  ...
+# Subtest: \#427 parseGraphOrganize：容忍前后噪声；形状零容忍
+ok 45 - \#427 parseGraphOrganize：容忍前后噪声；形状零容忍
+  ---
+  duration_ms: 0.100167
+  type: 'test'
+  ...
+# Subtest: \#427 normalize：幸福路径 + 锁成员剥离 + 单成员组归一化不计分子
+ok 46 - \#427 normalize：幸福路径 + 锁成员剥离 + 单成员组归一化不计分子
+  ---
+  duration_ms: 0.10275
+  type: 'test'
+  ...
+# Subtest: \#427 normalize：亡 id / 重复归属后现条整条作废；恰好 50% 不触发回退
+ok 47 - \#427 normalize：亡 id / 重复归属后现条整条作废；恰好 50% 不触发回退
+  ---
+  duration_ms: 0.119083
+  type: 'test'
+  ...
+# Subtest: \#427 normalize：组池 >50% 回退且不连坐关系池（分池独立）
+ok 48 - \#427 normalize：组池 >50% 回退且不连坐关系池（分池独立）
+  ---
+  duration_ms: 0.050667
+  type: 'test'
+  ...
+# Subtest: \#427 normalize relations：reason 空/非有限 confidence/亡 id/自环计分子；恰好 50% 不回退；钳制；无序对去重留高分
+ok 49 - \#427 normalize relations：reason 空/非有限 confidence/亡 id/自环计分子；恰好 50% 不回退；钳制；无序对去重留高分
+  ---
+  duration_ms: 0.082292
+  type: 'test'
+  ...
+# Subtest: \#427 normalize：两段式截断——先每端点 ≤3，再全图 ≤ min(12, 3n)
+ok 50 - \#427 normalize：两段式截断——先每端点 ≤3，再全图 ≤ min(12, 3n)
+  ---
+  duration_ms: 0.156167
+  type: 'test'
+  ...
+# Subtest: \#427 normalize：reason 按码点切 ≤80，不劈代理对
+ok 51 - \#427 normalize：reason 按码点切 ≤80，不劈代理对
+  ---
+  duration_ms: 0.0415
+  type: 'test'
+  ...
+# Subtest: \#427 pruneGraphLlmSection：亡 id 剔除、组缩 <2 解散、指纹/stale 保留
+ok 52 - \#427 pruneGraphLlmSection：亡 id 剔除、组缩 <2 解散、指纹/stale 保留
+  ---
+  duration_ms: 0.0625
+  type: 'test'
+  ...
+# Subtest: \#427 pruneGraphLock：成员只减不增；<2 解散带组名（pi 终验 2：缩容后同一锁仍生效）
+ok 53 - \#427 pruneGraphLock：成员只减不增；<2 解散带组名（pi 终验 2：缩容后同一锁仍生效）
+  ---
+  duration_ms: 0.094042
+  type: 'test'
+  ...
+# Subtest: \#427 readKnowledgeIndexFile：旧索引 docs 无 description 容忍；graph 区形状不符整区丢弃不连累
+ok 54 - \#427 readKnowledgeIndexFile：旧索引 docs 无 description 容忍；graph 区形状不符整区丢弃不连累
+  ---
+  duration_ms: 0.697292
+  type: 'test'
+  ...
+1..54
+# tests 54
+# suites 0
+# pass 54
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 935.912542

@@ -1,0 +1,42 @@
+[
+  {
+    "nodes": 1,
+    "width": 960,
+    "height": 627,
+    "css": 960,
+    "dpr": 1,
+    "backgroundAlpha": 255,
+    "visible": 1,
+    "colored": 1
+  },
+  {
+    "nodes": 4,
+    "width": 960,
+    "height": 571,
+    "css": 960,
+    "dpr": 1,
+    "backgroundAlpha": 255,
+    "visible": 4,
+    "colored": 4
+  },
+  {
+    "nodes": 20,
+    "width": 960,
+    "height": 627,
+    "css": 960,
+    "dpr": 1,
+    "backgroundAlpha": 255,
+    "visible": 20,
+    "colored": 20
+  },
+  {
+    "nodes": 200,
+    "width": 960,
+    "height": 627,
+    "css": 960,
+    "dpr": 1,
+    "backgroundAlpha": 255,
+    "visible": 200,
+    "colored": 200
+  }
+]
