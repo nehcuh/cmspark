@@ -1,0 +1,204 @@
+Machine commands run on macOS with Node v22.23.2. UI uses isolated synthetic transport/PCM, not live user data.
+
+companion-tests.log
+      type: 'test'
+      ...
+    # Subtest: settings-cli: non-sensitive --set still works (model_name)
+    ok 4 - settings-cli: non-sensitive --set still works (model_name)
+      ---
+      duration_ms: 0.251334
+      type: 'test'
+      ...
+    1..4
+ok 2 - settings-cli
+  ---
+  duration_ms: 2.063625
+  type: 'suite'
+  ...
+1..2
+# tests 20
+# suites 2
+# pass 20
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 49.301708
+
+
+companion-build.log
+
+> cmspark-agent@0.6.7 prebuild
+> node scripts/generate-tray-icons.mjs
+
+Connection tray icons generated (32px PNG, 16/32/48 ICO).
+
+> cmspark-agent@0.6.7 build
+> tsc && node -e "const fs=require('fs'),p=require('path');fs.mkdirSync('dist/computer',{recursive:true});fs.copyFileSync('src/computer/qwen-vl-worker.py','dist/computer/qwen-vl-worker.py');process.platform!=='win32'&&fs.chmodSync('dist/index.js',0o755)"
+
+
+
+extension-tests.log
+  type: 'test'
+  ...
+# Subtest: shouldRefuseWsFrame allows an 8MB JSON payload
+ok 1326 - shouldRefuseWsFrame allows an 8MB JSON payload
+  ---
+  duration_ms: 0.044208
+  type: 'test'
+  ...
+# Subtest: isFrameBudgetRefusal: only the stamped SW refusal matches (F6)
+ok 1327 - isFrameBudgetRefusal: only the stamped SW refusal matches (F6)
+  ---
+  duration_ms: 0.04975
+  type: 'test'
+  ...
+1..1327
+# tests 1327
+# suites 0
+# pass 1327
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 9358.448542
+
+
+extension-build.log
+  icon.png (782 bytes)
+  icon_16x16.png (209 bytes)
+  icon_16x16@2x.png (333 bytes)
+  icon_32x32.png (333 bytes)
+  icon_32x32@2x.png (531 bytes)
+  icon_128x128.png (1235 bytes)
+  icon_128x128@2x.png (2619 bytes)
+  icon_256x256.png (2619 bytes)
+  icon_256x256@2x.png (5904 bytes)
+  icon_512x512.png (5904 bytes)
+  icon_512x512@2x.png (15004 bytes)
+
+Connection icon generation complete!
+
+> cmspark-browser-agent@0.6.7 build
+> tsc --noEmit && plasmo build
+
+🟣 Plasmo v0.90.5
+🔴 The Browser Extension Framework
+🔵 INFO   | Prepare to bundle the extension...
+🔵 INFO   | Building for target: chrome-mv3
+🔵 INFO   | Loaded environment variables from: []
+🟢 DONE   | Finished in 8553ms!
+
+
+mutations-ui-final.log
+/var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/tmpyao119no
+PASS: actual App selection boundaries, busy/filter race, 60-item batching, ACK vs persisted result, offline/partial failure, restore, independent cleanup scope and responsive management capabilities.
+
+
+management-ui.log
+/var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/tmpjhnhfeyu
+PASS: responsive new chat+manager, tags/manual/AI groups, persisted metadata+failure, AI label retention, explicit AI/cleanup/graph paths, no automatic metadata writes.
+
+
+workspace-ui.log
+/var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/cmspark-workspace-ptos29ws
+PASS: actual App responsive matrix, drawer/history keyboard, settings/context, full-width input, tool disclosure, confirmation no-submit, A/B coding ownership and controls, reflow/reduced motion. Synthetic transport only.
+
+
+settings-ui.log
+/var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/tmp31iqisc1
+PASS: settings pages responsive, all categories, retained model draft, stable deep links+focus, cross-page safety status, no implicit writes; cancelled voice callbacks, hidden hotkey capture, license keyboard isolation and focus restoration.
+
+
+meeting-ui.log
+PASS settings readback failure: visible error + meeting retained; repeated Settings action completes after recovery
+PASS standalone MeetingPanel without registerBeforeClose: final → persisted readback → end ACK → exactly one onClose
+PASS stale suffix/equal write receipts rejected; textarea retains unconfirmed final after idle and stale pushes; denied save retains draft; explicit successful save recovers close without LLM
+PASS guard effect unregisters on unmount; subsequent settings does not run stale meeting guard
+PASS normal stop followed by close completes with final text intact
+PASS failed import set_transcript preserves textarea and explicit save enables retry
+PASS meeting final PCM → STT result → append → readback → end → all close/navigation paths; failure retained/retry; pending start never opens mic; import in-flight final saved and next segment canceled; decode canceled before meeting creation
+
+
+meeting-unit.log
+  type: 'test'
+  ...
+# Subtest: \#482 ordinary local dictation previews during recording, then commits one final on stop
+ok 9 - \#482 ordinary local dictation previews during recording, then commits one final on stop
+  ---
+  duration_ms: 19.974791
+  type: 'test'
+  ...
+# Subtest: \#482 cancel ordinary streaming dictation discards a late final
+ok 10 - \#482 cancel ordinary streaming dictation discards a late final
+  ---
+  duration_ms: 4.625084
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 126.168166
+
+
+meeting-receipt-unit.log
+  type: 'test'
+  ...
+# Subtest: \#482 ordinary local dictation previews during recording, then commits one final on stop
+ok 9 - \#482 ordinary local dictation previews during recording, then commits one final on stop
+  ---
+  duration_ms: 21.227291
+  type: 'test'
+  ...
+# Subtest: \#482 cancel ordinary streaming dictation discards a late final
+ok 10 - \#482 cancel ordinary streaming dictation discards a late final
+  ---
+  duration_ms: 3.438833
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 126.103167
+
+
+meeting-real-contract.log
+TAP version 13
+# [cmspark-agent] computer.modelVariant=hybrid 已弃用（TinyClick）——迁移为 Qwen3-VL "2b"
+# Subtest: meeting existing request-id/owner contract persists writes and repeated end returns a receipt
+ok 1 - meeting existing request-id/owner contract persists writes and repeated end returns a receipt
+  ---
+  duration_ms: 8.505875
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 176.217625
+
+
+meeting-review-rebuttal-ui.log
+PASS settings readback failure: visible error + meeting retained; repeated Settings action completes after recovery
+PASS standalone MeetingPanel without registerBeforeClose: final → persisted readback → end ACK → exactly one onClose
+PASS meeting final PCM → STT result → append → readback → end → all close/navigation paths; failure retained/retry; pending start never opens mic; import in-flight final saved and next segment canceled; decode canceled before meeting creation
+
+
+resources-ui-final.log
+/var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/tmp1jd8q5xf
+PASS: six resource entries retained, explicit scope copy, responsive skills and resource drawer screenshots
+

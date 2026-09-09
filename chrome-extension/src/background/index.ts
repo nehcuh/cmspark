@@ -336,6 +336,8 @@ function init() {
 
 function handleStateChange(state: "connected" | "connecting" | "disconnected") {
   updateBadge(state)
+  // Mutation waiters must stop on connection loss; never retry destructive work.
+  chrome.runtime.sendMessage({ type: "thread.mutation.connection", state }).catch(() => {})
 
   if (state === "disconnected") {
     scheduleDisconnectNotification()
@@ -1004,35 +1006,53 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         sendResponse({ ok: true })
         return true
 
-      case "thread.delete":
+      case "thread.delete": {
+        if (wsClient.getState() !== "connected") {
+          sendResponse({ id: message.id, ok: false, error: "Companion 未连接，未发送操作" })
+          return false
+        }
         // Align with companion: omit/unknown → hard; only explicit "trash" soft-deletes.
-        wsClient.send({
+        const sent = wsClient.send({
           type: "thread.delete",
+          id: message.id,
           thread_id: message.thread_id || message.threadId,
           mode: message.mode === "trash" ? "trash" : "hard",
         })
-        sendResponse({ ok: true })
+        sendResponse({ id: message.id, ok: sent })
         return true
+      }
 
       case "thread.batch_delete": {
+        if (wsClient.getState() !== "connected") {
+          sendResponse({ id: message.id, ok: false, error: "Companion 未连接，未发送操作" })
+          return false
+        }
         const ids = Array.isArray(message.thread_ids) ? message.thread_ids : []
         // Multi-select product default is recycle bin; permanent only with mode hard.
-        wsClient.send({
+        const sent = wsClient.send({
           type: "thread.batch_delete",
+          id: message.id,
           thread_ids: ids,
           mode: message.mode === "hard" ? "hard" : "trash",
+          ...(message.only_empty === true ? { only_empty: true } : {}),
+          ...(message.probe !== undefined ? { probe: message.probe } : {}),
         })
-        sendResponse({ ok: true })
+        sendResponse({ id: message.id, ok: sent })
         return true
       }
 
       case "thread.restore": {
-        wsClient.send({
+        if (wsClient.getState() !== "connected") {
+          sendResponse({ id: message.id, ok: false, error: "Companion 未连接，未发送操作" })
+          return false
+        }
+        const sent = wsClient.send({
           type: "thread.restore",
+          id: message.id,
           thread_id: message.thread_id,
           thread_ids: message.thread_ids,
         })
-        sendResponse({ ok: true })
+        sendResponse({ id: message.id, ok: sent })
         return true
       }
 

@@ -204,52 +204,20 @@ export function IconList(p: IconProps) {
   )
 }
 
-/**
- * Empty-state imprint — red calf robot (brandRed terracotta). Filled stamp,
- * not an outline. Decorative only: aria-hidden, no cruise/armed state, no
- * danger-family red. Keep size configurable (#321 PR-4 92→48 compatible).
- */
+/** Shared connection-spark geometry from scripts/lib/brand-icon.mjs. Decorative, never process state. */
 export function CompanionMark({ size = 92 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 92 92"
-      fill="none"
+      viewBox="0 0 24 24"
+      fill={tokens.textSecondary}
       aria-hidden
       style={{ display: "block", flexShrink: 0 }}
     >
-      {/* ground shadow */}
-      <ellipse cx="46" cy="85" rx="17" ry="3.5" fill="rgba(23, 23, 23, 0.10)" />
-      {/* ears — tucked behind the head at the upper sides */}
-      <circle cx="21" cy="44" r="11" fill={tokens.brandRed} />
-      <circle cx="71" cy="44" r="11" fill={tokens.brandRed} />
-      {/* horns — smooth arcs rising from the top of the head */}
-      <path
-        d="M37 36 C34 25 31 16 29 10"
-        stroke={tokens.brandRed}
-        strokeWidth="9"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <path
-        d="M55 36 C58 25 61 16 63 10"
-        stroke={tokens.brandRed}
-        strokeWidth="9"
-        strokeLinecap="round"
-        fill="none"
-      />
-      {/* head */}
-      <circle cx="46" cy="56" r="23" fill={tokens.brandRed} />
-      {/* eyes — indigo pupils keep the robot character accent */}
-      <circle cx="36" cy="50" r="5" fill={tokens.bg} />
-      <circle cx="56" cy="50" r="5" fill={tokens.bg} />
-      <circle cx="36" cy="50" r="2.2" fill={tokens.accent} />
-      <circle cx="56" cy="50" r="2.2" fill={tokens.accent} />
-      {/* muzzle with nostrils — the calf face marker */}
-      <ellipse cx="46" cy="69" rx="9" ry="7" fill={tokens.bg} />
-      <circle cx="42" cy="69" r="1.7" fill={tokens.text} />
-      <circle cx="50" cy="69" r="1.7" fill={tokens.text} />
+      <path d="M5 5 12 12 5 19M12 12H20" fill="none" stroke={tokens.textSecondary} strokeWidth="2.3" strokeLinecap="round" />
+      <circle cx="5" cy="5" r="2.3" /><circle cx="5" cy="19" r="2.3" /><circle cx="20" cy="12" r="2.3" />
+      <path d="m12 7.5 4.5 4.5-4.5 4.5L7.5 12Z" />
     </svg>
   )
 }

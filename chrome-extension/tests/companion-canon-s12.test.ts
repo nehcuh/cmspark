@@ -36,7 +36,8 @@ test("S1.3 settings lives in ⋯ only; pin is left thumbtack", () => {
 
 test("S1.4 ComposeDrawer has no ⋯编排 dead link", () => {
   const drawer = src("src/sidepanel/components/ComposeDrawer.tsx")
-  assert.match(drawer, /使用 \/board/)
+  assert.match(drawer, /\/board/)
+  assert.match(drawer, /资料与工具/)
   assert.ok(!/⋯「编排」/.test(drawer))
 })
 
@@ -49,7 +50,7 @@ test("S2.6 inviteRow color lives only in CSS so hover can win", () => {
   assert.ok(!/color:/.test(block), "inline color would beat :hover")
 })
 
-test("S2 chrome: legal contrast, send arrow, brandRed mark, no IconPlus", () => {
+test("S2 chrome: legal contrast, send arrow, decorative connection mark, no IconPlus", () => {
   const app = src("src/sidepanel/App.tsx")
   const legal = app.slice(app.indexOf("legal:"), app.indexOf("legal:") + 180)
   assert.match(legal, /fontSize:\s*11/)
@@ -59,9 +60,8 @@ test("S2 chrome: legal contrast, send arrow, brandRed mark, no IconPlus", () => 
   const send = icons.slice(icons.indexOf("export function IconSend"), icons.indexOf("export function IconStop"))
   assert.match(send, /M12 19V6/)
   const mark = icons.slice(icons.indexOf("export function CompanionMark"), icons.indexOf("export function IconSend"))
-  // #323: mark is the brandRed calf imprint — filled stamp, aria-hidden,
-  // and must never fall back to danger-family red.
-  assert.match(mark, /tokens\.brandRed/, "mark body is brandRed")
+  // #488: align with connection branding; no process-state color on static mark.
+  assert.match(mark, /tokens\.textSecondary/, "mark uses neutral semantic color")
   assert.match(mark, /aria-hidden/, "mark stays decorative")
   assert.ok(!/tokens\.danger/.test(mark), "mark must not reuse danger red")
   assert.ok(!/#171717/.test(mark), "ink silhouette removed by #323")

@@ -2408,6 +2408,12 @@ export async function handleMessage(
      */
     case "thread.batch_delete": {
       const rawIds = rest.thread_ids
+      if (rest.probe !== undefined) {
+        if (rest.probe === "only_empty" && Array.isArray(rawIds) && rawIds.length === 0) {
+          return { type: "thread.batch_delete.capabilities", only_empty: true }
+        }
+        return { type: "error", error: "thread.batch_delete probe requires only_empty and empty thread_ids" }
+      }
       if (!Array.isArray(rawIds) || rawIds.length === 0) {
         return { type: "error", error: "thread.batch_delete requires non-empty thread_ids" }
       }
@@ -2415,6 +2421,9 @@ export async function handleMessage(
         return { type: "error", error: "thread.batch_delete max 50 threads per request" }
       }
       const mode = rest.mode === "hard" ? "hard" : "trash"
+      if (rest.only_empty !== undefined && (typeof rest.only_empty !== "boolean" || (rest.only_empty && mode !== "hard"))) {
+        return { type: "error", error: "only_empty requires a boolean and mode=hard" }
+      }
       const busy = new Set(listLlmActiveThreadIds())
       const ok: string[] = []
       const failed: Array<{ id: string; reason: string }> = []
@@ -2436,7 +2445,7 @@ export async function handleMessage(
             failed.push({ id: String(raw ?? ""), reason: "invalid_id" })
             continue
           }
-          if (busy.has(id)) {
+          if (busy.has(id) || (rest.only_empty === true && listLlmActiveThreadIds().includes(id))) {
             failed.push({ id, reason: "thread_busy" })
             continue
           }
@@ -2444,6 +2453,18 @@ export async function handleMessage(
           if (!thr) {
             failed.push({ id, reason: "not_found" })
             continue
+          }
+          if (rest.only_empty === true) {
+            if (thr.trashed_at) {
+              failed.push({ id, reason: "trashed" })
+              continue
+            }
+            // Recheck durable messages immediately before deletion, not the UI's
+            // earlier list count: a conversation may have changed during confirmation.
+            if (threadManager.getMessages(id).length !== 0) {
+              failed.push({ id, reason: "not_empty" })
+              continue
+            }
           }
           try {
             releaseTrust?.(thr, "thread.batch_delete", threadManager)
