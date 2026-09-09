@@ -1,5 +1,5 @@
 // #492: real summoner HTTP/ACL, meeting persistence, STT protocol, and minutes parser.
-// Only the recognizer service and model extraction are synthetic. All data is temporary.
+// Recognizer/model results and explicit disk-failure injection are synthetic. All data is temporary.
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
@@ -25,6 +25,7 @@ const compiled = require('esbuild').buildSync({
     import {summonerVoiceRequestTimeout} from './summoner/voice-input';
     export {handleMeetingMessage} from './meeting/meeting-handlers';
     export {generateMeetingMinutes} from './meeting/meeting-minutes';
+    export {loadMeeting, isSafeMeetingId} from './meeting/meeting-store';
     export {handleVoiceSttMessage} from './voice/stt-handlers';
     ${trayAdapter}
     export {dispatchSummonerWeb};`,
@@ -37,7 +38,7 @@ loaded.paths = Module._nodeModulePaths(path.dirname(filename));
 loaded._compile(compiled.outputFiles[0].text, filename);
 const production = loaded.exports;
 const traces = [];
-const controls = { text: '配森将在周五发布。', hold: [], failLlm: false, failStt: false };
+const controls = { text: '配森将在周五发布。', hold: [], failLlm: false, failStt: false, partialRawOnce: false };
 const pending = new Map();
 let serial = 0;
 function record(event) {
@@ -89,7 +90,20 @@ async function dispatch(message) {
   record({ phase: 'request', type: message.type, request });
   await gate(message.type);
   let result;
-  if (message.type.startsWith('meeting.')) result = await production.handleMeetingMessage(message, context, dependencies);
+  if (message.type.startsWith('meeting.')) {
+    const partialId = controls.partialRawOnce && message.type === 'meeting.append_transcript' ? message.id : null;
+    const before = partialId && production.isSafeMeetingId(partialId) ? production.loadMeeting(partialId) : null;
+    result = await production.handleMeetingMessage(message, context, dependencies);
+    if (before && result?.type === 'meeting.updated') {
+      controls.partialRawOnce = false;
+      // Reconstruct the real saveMeeting write boundary: transcript.json committed,
+      // original-transcript.json still contains its exact previous production array.
+      const rawPath = path.join(process.env.CMSPARK_DATA_DIR, 'meetings', partialId, 'original-transcript.json');
+      fs.writeFileSync(rawPath, JSON.stringify(before.original_transcript || [], null, 2));
+      record({ phase: 'disk-fault', kind: 'partial_write', id: partialId,
+        segment_id: message.segment_id, before, after: production.loadMeeting(partialId) });
+    }
+  }
   else if (message.type.startsWith('voice.stt.')) {
     result = await production.handleVoiceSttMessage(message, context, { service });
     // Production service traffic can arrive through both SSE and the HTTP reply.

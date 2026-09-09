@@ -1168,7 +1168,10 @@ async function handleRequest(
       const text = typeof body.text === "string" ? body.text : ""
       jsonResponse(
         res,
-        await dispatchAllowed("meeting.append_transcript", { v: 1, id, text, source: "stt" }),
+        await dispatchAllowed("meeting.append_transcript", {
+          v: 1, id, text, source: "stt",
+          ...(body.segment_id !== undefined ? { segment_id: body.segment_id } : {}),
+        }),
       )
       return
     }

@@ -72,19 +72,9 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     return s.committed;
   }
   async function saveMeetingSegment(s){
-    var current=await meetingRequest("/api/meeting?id="+encodeURIComponent(s.owner));
-    if(!current.meeting || current.meeting.id!==s.owner)throw new Error("无法核对转写保存状态");
-    var m=current.meeting,lines=m.transcript||[],original=m.original_transcript||[];
-    if(!s.base){s.base=lines;s.originalBase=original}
-    var unchanged=JSON.stringify(lines)===JSON.stringify(s.base) && JSON.stringify(original)===JSON.stringify(s.originalBase);
-    function appended(actual,base){return actual.length===base.length+1 && JSON.stringify(actual.slice(0,-1))===JSON.stringify(base) && actual[actual.length-1].text===s.text && actual[actual.length-1].source==="stt"}
-    var alreadySaved=appended(lines,s.base) && appended(original,s.originalBase);
-    if(!unchanged && !alreadySaved)throw new Error("会议材料已在别处变化，请核对当前稿；为避免重复，未自动重写末段");
-    if(!alreadySaved){
-      var reply=await meetingPost("/api/meeting/append",{id:s.owner,text:s.text});
-      if(!reply.meeting || reply.meeting.id!==s.owner)throw new Error("转写保存回执不匹配");
-      m=reply.meeting;
-    }
+    var reply=await meetingPost("/api/meeting/append",{id:s.owner,text:s.text,segment_id:s.sid});
+    var m=reply.meeting;
+    if(!m || m.id!==s.owner || !(m.original_transcript||[]).some(function(line){return line.segment_id===s.sid && line.text===s.text && line.source==="stt"}))throw new Error("原始转写保存回执不匹配，请重试保存");
     var raw=(m.original_transcript||[]).map(function(l){return l.text||""}).join("\n");
     $("meetingOriginal").hidden=!raw;$("meetingOriginalText").textContent=raw;renderMeetingEvidence(m.minutes);
     if(pendingMeetingSegment===s)pendingMeetingSegment=null;

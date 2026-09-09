@@ -228,15 +228,15 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
                 page.screenshot(path=str(ARTIFACTS / f"native-{width}.png"), full_page=True)
             (ARTIFACTS / "layout-evidence.json").write_text(json.dumps(layouts, ensure_ascii=False, indent=2))
 
-            # Drop the real append request, then separately drop only its successful response.
-            # Both retry paths must preserve previous imports and append the new segment once.
-            for mode in ["before_send", "after_commit"]:
+            # Drop the request, drop its successful response, or leave only the raw file stale.
+            # Every retry must preserve previous imports and commit the same segment once.
+            for mode in ["before_send", "after_commit", "partial_write"]:
                 expect(page.locator("#meetingRec")).to_be_enabled()
                 marker = control()["traces"][-1]["n"]
-                control(text=f"恢复追加不重复 {mode}。")
+                control(text=f"恢复追加不重复 {mode}。", partialRawOnce=mode == "partial_write")
                 notes_before = page.locator("#meetingReferenceNotes").input_value()
                 def lose_append(route):
-                    if mode == "after_commit":
+                    if mode in ["after_commit", "partial_write"]:
                         actual = route.fetch()
                         assert actual.json()["type"] == "meeting.updated"
                     route.abort("failed")
@@ -254,12 +254,26 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
                 expect(page.locator("#meetingLive")).to_contain_text("追加录音保留现有转写")
                 no_model(after=marker)
                 assert not events("meeting.end", after=marker), "failed save incorrectly ended meeting"
+                if mode == "partial_write":
+                    fault = [event for event in control()["traces"] if event["n"] > marker and event.get("phase") == "disk-fault"][-1]
+                    assert fault["kind"] == mode
+                    assert fault["before"]["transcript"] == existing["transcript"]
+                    assert fault["after"]["transcript"][:-1] == existing["transcript"]
+                    assert fault["after"]["original_transcript"] == existing["original_transcript"]
+                    assert fault["after"]["transcript"][-1]["segment_id"] == fault["segment_id"]
+                    assert len(fault["after"]["transcript"]) == len(existing["transcript"]) + 1
                 page.locator("#meetingRetry").click()
                 recovered = wait_event(page, "meeting.end", "ack", after=marker)["response"]["meeting"]
                 assert len(recovered["transcript"]) == len(existing["transcript"]) + 1, recovered
                 assert len(recovered["original_transcript"]) == len(existing["original_transcript"]) + 1
                 assert recovered["transcript"][:-1] == existing["transcript"]
-                assert len(events("meeting.append_transcript", after=marker)) == 1
+                assert recovered["original_transcript"][:-1] == existing["original_transcript"]
+                appended = events("meeting.append_transcript", after=marker)
+                assert len(appended) == (1 if mode == "before_send" else 2)
+                segment_ids = {event["request"].get("segment_id") for event in appended}
+                assert len(segment_ids) == 1 and None not in segment_ids and "" not in segment_ids
+                assert recovered["transcript"][-1]["segment_id"] in segment_ids
+                assert recovered["original_transcript"][-1] == recovered["transcript"][-1]
                 expect(page.locator("#meetingRetry")).to_be_hidden()
                 no_model(after=marker)
                 page.locator("#meetingMinutesBtn").click()

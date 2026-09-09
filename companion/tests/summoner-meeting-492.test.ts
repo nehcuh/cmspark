@@ -2,7 +2,10 @@ import "./meeting-test-data-dir"
 import test from "node:test"
 import assert from "node:assert/strict"
 import vm from "node:vm"
+import fs from "node:fs"
+import path from "node:path"
 import AdmZip from "adm-zip"
+import { DATA_DIR } from "../src/config"
 import { startSummonerWebServer, stopSummonerWebServer, SUMMONER_WEB_DISPATCH_ALLOW } from "../src/summoner-web"
 import { assertSummonerAllowed } from "../src/ws/summoner-acl"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
@@ -29,7 +32,6 @@ test("#492 native retry reconciles real stored transcripts after failed write or
     const id = created.meeting.id
     let appendAttempts = 0
     const context = workflowContext(async (url, options) => {
-      if (url.startsWith("/api/meeting?id=")) return handleMeetingMessage({ type: "meeting.get", id }, origin)
       assert.equal(url, "/api/meeting/append")
       appendAttempts++
       const payload = JSON.parse(options.body)
@@ -38,14 +40,15 @@ test("#492 native retry reconciles real stored transcripts after failed write or
       if (lostAck && appendAttempts === 1) throw new Error("synthetic ACK lost after persistence")
       return reply
     })
-    context.segment = { owner: id, text: "真正保存的末段", base: undefined }
+    context.segment = { owner: id, text: "真正保存的末段", sid: "native-retry-segment" }
     try {
       await assert.rejects(vm.runInContext("saveMeetingSegment(segment)", context))
       await vm.runInContext("saveMeetingSegment(segment)", context)
-      assert.equal(appendAttempts, lostAck ? 1 : 2)
+      assert.equal(appendAttempts, 2)
       const saved = loadMeeting(id)!
       assert.deepEqual(saved.transcript.map(line => line.text), ["真正保存的末段"])
       assert.deepEqual(saved.original_transcript?.map(line => line.text), ["真正保存的末段"])
+      assert.equal(saved.original_transcript?.[0].segment_id, context.segment.sid)
     } finally { deleteMeeting(id) }
   }
 })
@@ -83,6 +86,21 @@ test("#492 native reference HTTP uses actual handlers, bounded files and exact A
     const created = await post("/api/meeting/create", { title: "Native fixture" })
     assert.equal(created.data.type, "meeting.created")
     id = created.data.meeting.id
+    const segment = { id, text: "原生末段", segment_id: "native-partial-segment" }
+    const appended = await post("/api/meeting/append", segment)
+    assert.equal(appended.data.meeting.original_transcript[0].segment_id, segment.segment_id)
+    const originalPath = path.join(DATA_DIR, "meetings", id, "original-transcript.json")
+    fs.writeFileSync(originalPath, "[]")
+    const recovered = await post("/api/meeting/append", segment)
+    assert.equal(recovered.data.meeting.transcript.length, 1)
+    assert.equal(recovered.data.meeting.original_transcript.length, 1)
+    assert.equal(recovered.data.meeting.original_transcript[0].segment_id, segment.segment_id)
+    assert.deepEqual(JSON.parse(fs.readFileSync(originalPath, "utf8")), recovered.data.meeting.original_transcript)
+    const replayed = await post("/api/meeting/append", segment)
+    assert.equal(replayed.data.meeting.transcript.length, 1)
+    assert.equal(replayed.data.meeting.original_transcript.length, 1)
+    const invalidSegment = await post("/api/meeting/append", { ...segment, segment_id: "../../bad" })
+    assert.equal(invalidSegment.data.code, "invalid_segment_id")
     const imported = await post("/api/meeting/reference/import", { file: { name: "notes.md", type: "text/markdown", content: Buffer.from("Python 用于本项目").toString("base64") }, path: "/not-readable" })
     assert.equal(imported.data.type, "meeting.reference_imported")
     assert.equal(imported.data.reference.text, "Python 用于本项目")
