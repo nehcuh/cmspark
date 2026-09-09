@@ -41,6 +41,7 @@ import { getChromeOpener } from "./platform"
 import { getConfig } from "./config"
 import { OVERLAY_RENDER_MD_JS } from "./summoner/overlay-md"
 import { currentOverlayCruiseChipLabel } from "./summoner/hydrate"
+import { SUMMONER_MEETING_WORKFLOW_JS } from "./summoner/meeting-workflow"
 import { SUMMONER_DICTATION_JS } from "./summoner/voice-input"
 import { SUMMONER_THREAD_MANAGEMENT_JS } from "./summoner/thread-management"
 import { summonerThreadMetadata } from "./threads/metadata-patch"
@@ -82,6 +83,8 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "meeting.end",
   "meeting.append_transcript",
   "meeting.generate_minutes",
+  "meeting.import_reference",
+  "meeting.set_reference",
   "meeting.list",
   "meeting.get",
 ])
@@ -1107,6 +1110,31 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/meeting/reference/import" && req.method === "POST") {
+      // 7MiB binary + base64 envelope stays below the existing 10MiB WS limit.
+      const body = JSON.parse(await readBody(req, 10 * 1024 * 1024))
+      const file = body.file
+      jsonResponse(res, await dispatchAllowed("meeting.import_reference", { v: 1, file: file && {
+        name: file.name, type: file.type, content: file.content,
+      } }))
+      return
+    }
+    if (pathOnly === "/api/meeting/reference" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, 1024 * 1024))
+      jsonResponse(res, await dispatchAllowed("meeting.set_reference", {
+        v: 1, id: typeof body.id === "string" ? body.id : "",
+        reference_notes: body.reference_notes, reference_name: body.reference_name,
+      }))
+      return
+    }
+    if (pathOnly === "/api/meeting/create" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req, JSON_BODY_MAX))
+      jsonResponse(res, await dispatchAllowed("meeting.create", {
+        v: 1, title: typeof body.title === "string" ? body.title : undefined,
+      }))
+      return
+    }
+
     if (pathOnly === "/api/meeting/start" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       const payload: Record<string, unknown> = {
@@ -1148,6 +1176,10 @@ async function handleRequest(
     if (pathOnly === "/api/meeting/minutes" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       const id = typeof body.id === "string" ? body.id : ""
+      if (body.privacy_ack_v1 !== true) {
+        jsonResponse(res, { type: "meeting.error", v: 1, code: "need_privacy_ack", message: "请先阅读并确认会议说明" }, 400)
+        return
+      }
       jsonResponse(res, await dispatchAllowed("meeting.generate_minutes", { v: 1, id }))
       return
     }
@@ -1252,6 +1284,12 @@ body{
   position:absolute;inset:0;z-index:7;margin:0;
   display:flex;flex-direction:column;background:var(--paper);color:var(--text);
 }
+#meetingReferenceNotes{box-sizing:border-box;width:100%;min-height:84px;resize:vertical;border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
+#meetingReferenceSection,#meetingOriginal,#meetingEvidence{margin:8px 12px 0;font-size:12px;line-height:1.5;overflow-wrap:anywhere;flex-shrink:0}
+#meetingEvidence pre,#meetingOriginal pre{white-space:pre-wrap;font:inherit}
+#meetingWorkflowStatus{padding:6px 12px;font-size:12px;color:var(--text);white-space:pre-wrap;flex-shrink:0}
+.meeting-desk{overflow-y:auto}
+.meeting-tools{flex-wrap:wrap;flex-shrink:0}
 .meeting-desk[hidden]{display:none!important;pointer-events:none!important}
 .meeting-head{
   display:flex;align-items:center;justify-content:space-between;gap:8px;
@@ -1279,7 +1317,7 @@ body{
   100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}
 }
 .meeting-live{
-  flex:1;min-height:0;overflow:auto;margin:8px 12px 0;
+  flex:1 0 140px;min-height:140px;overflow:auto;margin:8px 12px 0;
   padding:10px 12px;background:var(--canvas);border-radius:12px;font-size:13px;line-height:1.5;
 }
 .meeting-live p{margin:0 0 8px}
@@ -1294,7 +1332,7 @@ body{
 .meeting-tools{
   display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 12px 0;
 }
-.meeting-tools button,.meeting-tools select{
+.meeting-tools button,.meeting-tools select,#meetingReferenceSave{
   min-height:28px;padding:3px 8px;border-radius:8px;border:0;cursor:pointer;font:11px inherit;
   background:var(--canvas);color:var(--text);
 }
@@ -1314,12 +1352,12 @@ body{
 .meeting-hist button small{display:block;margin-top:2px;font-size:11px;color:var(--faint)}
 .meeting-hist-empty{padding:18px 10px;text-align:center;color:var(--faint);font-size:12.5px}
 .meeting-minutes{
-  flex:0 1 36%;min-height:0;overflow:auto;margin:0 12px 8px;
+  flex:0 0 auto;min-height:100px;max-height:40vh;overflow:auto;margin:0 12px 8px;
   padding:8px 10px;background:var(--canvas);border-radius:12px;
 }
 .meeting-minutes[hidden]{display:none!important}
 .meeting-actions{
-  display:flex;flex-wrap:wrap;gap:8px;padding:8px 12px 12px;
+  display:flex;flex-wrap:wrap;flex-shrink:0;gap:8px;padding:8px 12px 12px;
   border-top:1px solid var(--line);
 }
 .meeting-actions button{
@@ -1403,6 +1441,7 @@ body{
   overflow:auto;border-radius:0;
   background:#fffbeb;border:0;color:#92400e;
 }
+#meetingPrivacy{position:absolute;inset:12px;z-index:9;margin:0;overflow:auto;background:var(--paper)}
 .privacy-sheet[hidden],.cta-box[hidden]{display:none!important;pointer-events:none!important}
 .privacy-sheet[hidden]{display:none}
 .privacy-sheet ol{margin:6px 0 8px;padding-left:1.3em;color:var(--text);font-size:12px;line-height:1.45}
@@ -1410,7 +1449,7 @@ body{
 .privacy-sheet p{font-size:12.5px;font-weight:600;color:var(--text)}
 #meetingVoiceSection{margin-bottom:8px}
 .capture-row{display:flex;gap:8px;padding:0 2px;flex-wrap:wrap;position:relative;z-index:1}
-#meetingStart,#operateOpen{
+#meetingStart,#meetingOpen,#operateOpen{
   min-height:36px;padding:6px 12px;border-radius:8px;border:0;cursor:pointer;font:inherit;
   background:var(--canvas);color:var(--text);
 }
@@ -1569,6 +1608,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     </div>
     <div class="capture-row">
       <button type="button" id="meetingStart" aria-pressed="false">开始会议</button>
+      <button type="button" id="meetingOpen">会议材料</button>
       <button type="button" id="operateOpen">打开浏览器并打开侧栏</button>
     </div>
     <div class="cta-box" id="ctaBox" hidden>
@@ -1589,6 +1629,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
         <button type="button" id="voicePrivacyAck">我已了解</button>
       </div>
     </div>
+  </div>
+  <div class="ghosts">
+    <button class="ghost" id="send" type="button">发送</button>
+    <button class="ghost" id="steer" type="button">纠偏</button>
+    <button class="ghost" id="queue" type="button">排队</button>
+    <button class="ghost" id="stop" type="button">停止</button>
+  </div>
+  <div class="hint" id="hint">回车发送 · Shift+Enter 排队 · 点击右上角 ⋮ 设置快捷键</div>
+  <div class="status" id="status"></div>
     <div class="privacy-sheet" id="meetingPrivacy" hidden>
       <div id="meetingVoiceSection">
         <p>本机听写</p>
@@ -1604,15 +1653,6 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
         <button type="button" id="meetingPrivacyAck">我已了解</button>
       </div>
     </div>
-  </div>
-  <div class="ghosts">
-    <button class="ghost" id="send" type="button">发送</button>
-    <button class="ghost" id="steer" type="button">纠偏</button>
-    <button class="ghost" id="queue" type="button">排队</button>
-    <button class="ghost" id="stop" type="button">停止</button>
-  </div>
-  <div class="hint" id="hint">回车发送 · Shift+Enter 排队 · 点击右上角 ⋮ 设置快捷键</div>
-  <div class="status" id="status"></div>
   <div class="meeting-desk" id="meetingDesk" hidden>
     <div class="meeting-head">
       <strong>会议</strong>
@@ -1624,15 +1664,31 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <span id="meetingVoiceMeta"></span>
     </div>
     <div class="meeting-tools">
+      <button type="button" id="meetingNew">新会议</button>
+      <button type="button" id="meetingRetry" hidden>重试保存 / 继续录制</button>
       <button type="button" id="meetingHistToggle" aria-pressed="false">历史会议</button>
       <span class="meeting-diarize-hint">说话人标注请在侧栏会议面板使用</span>
     </div>
     <div class="meeting-hist" id="meetingHistList" hidden></div>
-    <div class="meeting-live" id="meetingLive">
-      <div class="empty-live" id="meetingEmpty">点「开始录制」后约 8 秒出字。语音识别用侧栏听写设置。说话人是匿名「发言人N」，不是认人。</div>
+    <div class="meeting-tools">
+      <button type="button" id="meetingAudioImport">导入录音</button>
+      <input type="file" id="meetingAudioFile" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm" hidden>
+      <button type="button" id="meetingReferenceImport">导入参考笔记</button>
+      <input type="file" id="meetingReferenceFile" accept=".docx,.md,.txt" hidden>
+    </div>
+    <details id="meetingReferenceSection"><summary>参考笔记（Word / MD / TXT，最多 7 MiB）</summary>
+      <div id="meetingReferenceName"></div>
+      <textarea id="meetingReferenceNotes" aria-label="参考笔记" maxlength="100000" placeholder="独立保存参考笔记，用于核对术语；原始转写保留。"></textarea>
+      <button type="button" id="meetingReferenceSave">保存参考笔记</button>
+    </details>
+    <div id="meetingWorkflowStatus" role="status" aria-live="polite"></div>
+    <div class="meeting-live" id="meetingLive" role="log" aria-live="polite">
+      <div class="empty-live" id="meetingEmpty">录音分段转写，首段需等待本机推理。原始识别文字会保留；AI 纪要草稿请核对。</div>
     </div>
     <div class="meeting-partial" id="meetingPartial"></div>
     <div class="meeting-minutes" id="meetingMinutes" hidden></div>
+    <details id="meetingOriginal" hidden><summary>原始语音识别存档</summary><pre id="meetingOriginalText"></pre></details>
+    <div id="meetingEvidence" hidden></div>
     <div class="meeting-actions">
       <button type="button" id="meetingRec" aria-pressed="false">开始录制</button>
       <button type="button" id="meetingMinutesBtn" hidden>生成会议纪要</button>
@@ -1656,13 +1712,13 @@ try{
   function paintMeetingVoiceMeta(){
     var el=$("meetingVoiceMeta");
     if(!el) return;
-    var engine=voiceSettings.sttEngine==="local"?"本机":"浏览器";
+    var engine=voiceSettings.sttEngine==="local"?"本机":voiceSettings.sttEngine==="system"?"系统":"浏览器";
     el.textContent=engine+" · "+voiceSettings.localModelId;
   }
   function loadVoiceSettings(){
     return api("/api/voice-settings").then(function(d){
       if(!d||typeof d!=="object") return;
-      if(d.sttEngine==="browser"||d.sttEngine==="local") voiceSettings.sttEngine=d.sttEngine;
+      if(d.sttEngine==="browser"||d.sttEngine==="local"||d.sttEngine==="system") voiceSettings.sttEngine=d.sttEngine;
       if(d.localModelId==="small"||d.localModelId==="medium"||d.localModelId==="large-v3-turbo") voiceSettings.localModelId=d.localModelId;
       if(typeof d.lang==="string"&&d.lang) voiceSettings.lang=d.lang;
       paintMeetingVoiceMeta();
@@ -1822,35 +1878,6 @@ try{
     var mic=$("mic");
     if(mic) mic.setAttribute("aria-pressed","false");
   }
-  function flushStt(force){
-    if(!sttSid) return;
-    var min=force?1:STT_FLUSH;
-    while(sttBuf.length>=min){
-      var n=Math.min(STT_CHUNK, sttBuf.length);
-      if(!force && n<STT_FLUSH) break;
-      var slice=sttBuf.subarray(0,n);
-      api("/api/stt/chunk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sttSid,seq:sttSeq,data:uint8ToB64(slice)})});
-      sttSeq+=1;
-      sttBuf=n===sttBuf.length?new Uint8Array(0):new Uint8Array(sttBuf.subarray(n));
-    }
-  }
-  function stopStt(abort){
-    var sid=sttSid;
-    if(abort){
-      teardownStt();
-      sttSid="";
-      sttSeq=0;
-      if(sid) api("/api/stt/abort",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid})});
-      return;
-    }
-    flushStt(true);
-    if(sid) sttFeatsBySid[sid]=extractFeat(sttFloat);
-    var total=sttSeq;
-    teardownStt();
-    sttSid="";
-    sttSeq=0;
-    if(sid) api("/api/stt/end",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid,totalSeq:total})});
-  }
   function beginPcm(sid, stream){
     var AC=window.AudioContext||window.webkitAudioContext;
     if(!AC){ setStatus(STT_MIC_FAIL); stopStt(true); return; }
@@ -1898,42 +1925,6 @@ try{
     };
     if(ctx.state==="suspended") ctx.resume().then(go).catch(go);
     else go();
-  }
-  function startStt(){
-    if(typeof summonerVoice!=="undefined" && summonerVoice) summonerVoice.cancel();
-    if(sttLive){ stopStt(false); return; }
-    if(!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia!=="function"){
-      setStatus(STT_MIC_FAIL);
-      return;
-    }
-    var sid="ov-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,10);
-    sttSid=sid;
-    sttSeq=0;
-    sttBuf=new Uint8Array(0);
-    sttFloat=new Float32Array(0);
-    sttLive=true;
-    $("mic").setAttribute("aria-pressed","true");
-    navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}}).then(function(stream){
-      if(!sttLive || sttSid!==sid){ stream.getTracks().forEach(function(t){t.stop()}); return; }
-      sttStream=stream;
-      var sttLang=(voiceSettings.lang||"zh-CN").indexOf("zh")===0?"zh":(voiceSettings.lang||"zh");
-      var sttModel=voiceSettings.localModelId||"medium";
-      var sttMax=meetingId?STT_MEETING_MS:STT_DICTATION_MS;
-      return api("/api/stt/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:sid,modelId:sttModel,privacy_ack_v2:true,lang:sttLang,maxMs:sttMax})}).then(function(d){
-        if(!sttLive || sttSid!==sid){ teardownStt(); return; }
-        if(d && (d.type==="voice.stt.error" || d.type==="error" || d.error)){
-          setStatus(sttUserCopy(d.code||d.error_code, d.error||d.message));
-          stopStt(true);
-          return;
-        }
-        beginPcm(sid, stream);
-      });
-    }).catch(function(){
-      sttLive=false;
-      sttSid="";
-      $("mic").setAttribute("aria-pressed","false");
-      setStatus(STT_MIC_FAIL);
-    });
   }
   ${SUMMONER_THREAD_MANAGEMENT_JS}
   function renderThreads(filter){
@@ -2223,7 +2214,7 @@ try{
     recStartedAt=Date.now();
     recTimer=setInterval(function(){
       var hint=$("meetingHint");
-      if(hint && meetingId) hint.textContent="录制中 "+fmtElapsed(Date.now()-recStartedAt);
+      if(hint && meetingId && sttLive) hint.textContent="录制中 "+fmtElapsed(Date.now()-recStartedAt);
     },250);
   }
   function setRecordingUi(on){
@@ -2237,7 +2228,7 @@ try{
     if(rec){
       rec.textContent=on?"结束录制":"开始录制";
       rec.setAttribute("aria-pressed", on?"true":"false");
-      rec.disabled=false;
+      rec.disabled=meetingWorkBusy || !!meetingEnding;
     }
     if(mins){
       if(on || lastMeetingId){
@@ -2317,7 +2308,7 @@ try{
     box.innerHTML="";
     meetingLines=[];
     if(!lines||!lines.length){
-      box.innerHTML="<div class=\\"empty-live\\" id=\\"meetingEmpty\\">点「开始录制」后约 8 秒出字。语音识别用侧栏听写设置。说话人是匿名「发言人N」，不是认人。</div>";
+      box.innerHTML="<div class=\\"empty-live\\" id=\\"meetingEmpty\\">录音分段转写，首段需等待本机推理。原始识别文字会保留；AI 纪要草稿请核对。</div>";
       return;
     }
     lines.forEach(function(l){
@@ -2327,8 +2318,11 @@ try{
     });
   }
   function openPastMeeting(id){
-    if(meetingId) endMeetingCapture();
-    api("/api/meeting?id="+encodeURIComponent(id)).then(function(d){
+    if(meetingWorkBusy) return;
+    var viewRev=++meetingViewRev;
+    meetingWorkBusy=true;meetingControls(true);
+    prepareMeetingSwitch().then(function(){ return meetingRequest("/api/meeting?id="+encodeURIComponent(id)); }).then(function(d){
+      if(viewRev!==meetingViewRev)return;
       var m=d&&d.meeting;
       if(!m||!m.id){ setStatus("打不开这场会议"); return; }
       lastMeetingId=m.id;
@@ -2336,17 +2330,18 @@ try{
       meetingFeats=[];
       showMeetingHistory(false);
       paintTranscript(m.transcript||[]);
+      applyMeetingMaterials(m);
       var mins=$("meetingMinutes");
       var md=m.minutes&&(m.minutes.raw_md||m.minutes.md);
       if(mins){
-        if(md){ mins.hidden=false; mins.innerHTML=renderMd(md); }
+        if(md){ mins.hidden=false; mins.innerHTML="<p>会议纪要 · AI 草稿，请核对</p>"+renderMd(md); }
         else { mins.hidden=true; mins.innerHTML=""; }
       }
       var hint=$("meetingHint");
       if(hint) hint.textContent=(m.title||"会议")+" · "+(m.status||"历史");
       setRecordingUi(false);
       setStatus("");
-    }).catch(function(e){setStatus(String(e&&e.message||e))});
+    }).catch(meetingProblem).finally(function(){meetingWorkBusy=false;meetingControls(false)});
   }
   function paintDiarized(d){
     var m=d&&d.meeting;
@@ -2373,10 +2368,12 @@ try{
     meetingLines.push({text:text,speaker:speaker||""});
   }
   function startMeetingCapture(){
-    if(meetingId) return;
+    if(meetingId || meetingWorkBusy || meetingEnding) return;
+    if(!meetingAck || !voiceAck){requestMeetingConsent(startMeetingCapture);return;}
+    meetingViewRev++;
     var rec=$("meetingRec");
     if(rec) rec.disabled=true;
-    loadVoiceSettings().then(function(){
+    return loadVoiceSettings().then(function(){
     if(voiceSettings.sttEngine!=="local"){
       var need=STT_NEED_MODEL;
       setStatus(need);
@@ -2386,7 +2383,7 @@ try{
       return;
     }
     meetingFeats=[];
-    meetingLines=[];
+    if(!lastMeetingId)meetingLines=[];
     sttFeatsBySid={};
     showMeetingHistory(false);
     var part=$("meetingPartial");
@@ -2394,11 +2391,12 @@ try{
     var mins=$("meetingMinutes");
     if(mins){ mins.hidden=true; mins.innerHTML=""; }
     var live=$("meetingLive");
-    if(live) live.innerHTML="<div class=\\"empty-live\\" id=\\"meetingEmpty\\">正在听…约 8 秒出第一段字。</div>";
+    if(live && !lastMeetingId) live.innerHTML="<div class=\\"empty-live\\" id=\\"meetingEmpty\\">正在听…首段需等待本机推理。</div>";
     showMeetingDesk(true);
     var hint=$("meetingHint");
     if(hint) hint.textContent="正在开始…";
     var payload={};
+    if(lastMeetingId)payload.id=lastMeetingId;
     if(threadId) payload.thread_id=threadId;
     return api("/api/meeting/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(d){
       if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
@@ -2419,6 +2417,9 @@ try{
         return;
       }
       lastMeetingId=meetingId;
+      meetingFailure=null;
+      $("meetingEvidence").hidden=true;
+      $("meetingOriginal").hidden=true;
       setRecordingUi(true);
       if(hint) hint.textContent="录制中 00:00";
       startRecClock();
@@ -2435,59 +2436,7 @@ try{
       setStatus(String(e&&e.message||e));
     });
   }
-  function endMeetingCapture(){
-    var id=meetingId;
-    meetingId="";
-    stopRecClock();
-    setRecordingUi(false);
-    if(sttLive) stopStt(false);
-    var hint=$("meetingHint");
-    if(hint) hint.textContent=id?"已结束 · 可生成纪要":"未录制";
-    var part=$("meetingPartial");
-    if(part) part.textContent="";
-    if(!id){ setStatus("未在录制"); return; }
-    lastMeetingId=id;
-    api("/api/meeting/end",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})}).then(function(d){
-      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
-        setStatus(d.message||d.error||"结束录制失败");
-        return;
-      }
-      setStatus("录制已结束");
-      loadMeetingHistory();
-    }).catch(function(e){setStatus(String(e&&e.message||e))});
-  }
-  function requestMeetingMinutes(){
-    var id=meetingId||lastMeetingId;
-    if(!id){ setStatus("请先录制"); return; }
-    if(meetingId) endMeetingCapture();
-    setStatus("正在生成纪要…");
-    var hint=$("meetingHint");
-    if(hint) hint.textContent="正在生成纪要…";
-    api("/api/meeting/minutes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})}).then(function(d){
-      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
-        setStatus(d.message||d.error||"纪要生成失败");
-        if(hint) hint.textContent="纪要生成失败";
-        return;
-      }
-      var md=(d&&d.minutes&&(d.minutes.raw_md||d.minutes.md))||(d&&d.raw_md)||"";
-      if(!md && d&&d.minutes&&typeof d.minutes==="string") md=d.minutes;
-      if(!md){
-        setStatus("纪要生成失败");
-        if(hint) hint.textContent="纪要生成失败";
-        return;
-      }
-      var box=$("meetingMinutes");
-      if(box && md){
-        box.hidden=false;
-        box.innerHTML=renderMd(md);
-      }
-      setStatus("纪要已生成");
-      if(hint) hint.textContent="纪要";
-    }).catch(function(e){
-      setStatus(String(e&&e.message||e)||"纪要生成失败");
-      if(hint) hint.textContent="纪要生成失败";
-    });
-  }
+  ${SUMMONER_MEETING_WORKFLOW_JS}
   $("meetingStart").onclick=function(){
     if(!meetingAck){
       var sheet=$("meetingPrivacy");
@@ -2507,10 +2456,11 @@ try{
     var sheet=$("meetingPrivacy");
     if(sheet) sheet.hidden=true;
     showMeetingDesk(true);
+    if(meetingConsentResume){var resume=meetingConsentResume;meetingConsentResume=null;resume();return}
     startMeetingCapture();
   };
   $("meetingRec").onclick=function(){
-    if(meetingId){ endMeetingCapture(); return; }
+    if(meetingId){ endMeetingCapture().catch(function(){}); return; }
     startMeetingCapture();
   };
   $("meetingHistToggle").onclick=function(){
@@ -2519,8 +2469,7 @@ try{
   };
   $("meetingMinutesBtn").onclick=function(){ requestMeetingMinutes(); };
   $("meetingBack").onclick=function(){
-    if(meetingId) endMeetingCapture();
-    showMeetingDesk(false);
+    endMeetingCapture().then(function(){showMeetingDesk(false)}).catch(meetingProblem);
   };
   $("cruiseChip").onclick=function(){ $("operateOpen").click(); };
   $("operateOpen").onclick=function(){
@@ -2774,34 +2723,8 @@ try{
         return;
       }
       if(t.indexOf("voice.stt.")===0 && summonerVoice.onEvent(d)) return;
-      if(t==="voice.stt.partial"){
-        if(meetingId){
-          var pt=typeof d.text==="string"?d.text:"";
-          var mp=$("meetingPartial");
-          if(mp && pt) mp.textContent=pt;
-        }
-        return;
-      }
-      if(t==="voice.stt.result"){
-        // Dictation commits only its matching HTTP result. Unowned / duplicate pushes are ignored.
-        if(!meetingId) return;
-        var sid=typeof d.sessionId==="string"?d.sessionId:"";
-        if(!sid || !sttFeatsBySid[sid]) return;
-        var txt=typeof d.text==="string"?d.text.trim():"";
-        if(txt && meetingId){
-          var feat=sid&&sttFeatsBySid[sid];
-          if(feat) meetingFeats.push(feat);
-          else meetingFeats.push([0,0,0]);
-          appendMeetingLive(txt, "");
-          var mp2=$("meetingPartial");
-          if(mp2) mp2.textContent="";
-          api("/api/meeting/append",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:meetingId,text:txt})});
-        } else if(txt && !meetingId){
-          var cur=$("text").value;
-          $("text").value=cur&&cur.trim()?cur.replace(/\\s*$/,"")+" "+txt:txt;
-        }
-        if(sttLive && (!sid || sttSid===sid)) stopStt(false);
-        if(meetingId && !sttLive) startStt();
+      if(t==="voice.stt.partial" || t==="voice.stt.result"){
+        meetingSttEvent(d);
         return;
       }
       if(t==="meeting.diarized"){
@@ -2809,41 +2732,12 @@ try{
         return;
       }
       if(t==="voice.stt.error"){
-        if(!meetingId || d.sessionId!==sttSid) return;
-        setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error));
-        if(sttLive) stopStt(true);
+        meetingSttEvent(d);
         return;
       }
-      if(t==="meeting.error"){
-        setStatus(sttUserCopy(d.code||d.error_code, d.message||d.error||"会议出错"));
-        return;
-      }
-      if(t==="meeting.ended"){
-        if(meetingId) lastMeetingId=meetingId;
-        meetingId="";
-        stopRecClock();
-        setRecordingUi(false);
-        if(sttLive) stopStt(false);
-        var hint=$("meetingHint");
-        if(hint) hint.textContent="已结束 · 可生成纪要";
-        setStatus("录制已结束");
-        return;
-      }
-      if(t==="meeting.minutes_result"){
-        var md=(d&&d.minutes&&(d.minutes.raw_md||d.minutes.md))||d.raw_md||"";
-        var box=$("meetingMinutes");
-        if(!md){
-          setStatus("纪要生成失败");
-          return;
-        }
-        if(box && md){
-          showMeetingDesk(true);
-          box.hidden=false;
-          box.innerHTML=renderMd(md);
-        }
-        setStatus("纪要已生成");
-        return;
-      }
+      // Meeting HTTP requests own their ACK/result. Uncorrelated SSE cannot switch
+      // meetings, clear capture early, or display an older generation.
+      if(t.indexOf("meeting.")===0) return;
       if(t==="mcp.confirm.pending"){
         setStatus(${JSON.stringify(SUMMONER_CONFIRM_NEED)});
         showConfirmCta();

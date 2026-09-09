@@ -132,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-close-') as directory:
             page.evaluate("window.persisted=['你好'];window.failWrite=true")
             page.get_by_role('button',name='结束并收起',exact=True).click(); final(text)
             page.get_by_role('alert').filter(has_text='保存转写').wait_for()
-            textarea = page.locator('textarea').first
+            textarea = page.get_by_test_id('meeting-transcript')
             assert textarea.input_value() == text
             page.evaluate("window.reply('appended',{id:'stale-after-idle'});window.emit(window.recorded.oldRead.response)")
             assert textarea.input_value() == text
@@ -146,6 +146,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-close-') as directory:
             page.get_by_role('button',name='保存转写',exact=True).click()
             page.get_by_test_id('meeting-save-status').filter(has_text='已保存转写').wait_for()
             assert page.evaluate('window.persisted') == [text]
+            assert page.evaluate('window.snapshot().original_transcript.map(line=>line.text)') == [text]
             page.get_by_role('button',name='收起面板',exact=True).click()
             page.wait_for_function('window.activePanel===null')
             assert not page.evaluate('window.sent.some(m=>m.type==="meeting.generate_minutes")')
@@ -170,10 +171,11 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-close-') as directory:
         page.wait_for_function('window.sent.some(m=>m.type==="voice.stt.end")')
         page.get_by_role('button',name='结束并收起',exact=True).click(); final()
         page.get_by_role('alert').filter(has_text='保存转写').wait_for()
-        assert page.locator('textarea').first.input_value() == '最后一段合成转写'
+        assert page.get_by_test_id('meeting-transcript').input_value() == '最后一段合成转写'
         page.evaluate('window.failWrite=false')
         page.get_by_role('button',name='保存转写',exact=True).click()
         page.get_by_test_id('meeting-save-status').filter(has_text='已保存转写').wait_for()
+        assert page.evaluate('window.snapshot().original_transcript.map(line=>line.text)') == ['最后一段合成转写']
         page.get_by_role('button',name='收起面板',exact=True).click()
         page.wait_for_function('window.activePanel===null')
         assert not page.evaluate('window.sent.some(m=>m.type==="meeting.end")')

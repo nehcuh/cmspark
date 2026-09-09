@@ -7,6 +7,8 @@ import {
   fileToWavSegments,
   uint8ToBase64,
   MEETING_AUDIO_IMPORT_MAX_FILE_BYTES,
+  transcribeWavViaStt,
+  meetingAudioSttTimeoutMs,
 } from "../src/sidepanel/voice/meeting-audio-import"
 import { LOCAL_STT_SAMPLE_RATE } from "../src/sidepanel/voice/local-stt-detect"
 
@@ -15,6 +17,49 @@ test("uint8ToBase64 round-trip small", () => {
   const b64 = uint8ToBase64(u)
   assert.equal(typeof b64, "string")
   assert.ok(b64.length > 0)
+})
+
+test("import timeout aborts its real STT session and unsubscribes", async () => {
+  const sent: Record<string, unknown>[] = []
+  let unsubscribed = false
+  const result = await transcribeWavViaStt({ wav: new Uint8Array(44), sessionId: 'import-timeout', modelId: 'medium',
+    timeoutMs: 5, send: message => { sent.push(message) }, onMessage: () => () => { unsubscribed = true } })
+  assert.deepEqual(result, { ok: false, code: 'timeout' })
+  assert.equal(sent.at(-1)?.type, 'voice.stt.abort')
+  assert.equal(sent.at(-1)?.sessionId, 'import-timeout')
+  assert.equal(unsubscribed, true)
+})
+
+test("canceling an import releases only its session and ignores late results", async () => {
+  const controller = new AbortController()
+  const sent: Record<string, unknown>[] = []
+  let handler: (message: any) => void = () => {}
+  let unsubscribed = false
+  const pending = transcribeWavViaStt({ wav: new Uint8Array(44), sessionId: 'import-cancel', modelId: 'medium',
+    signal: controller.signal, send: (message: Record<string, unknown>) => { sent.push(message) },
+    onMessage: (listener: (message: any) => void) => { handler = listener; return () => { unsubscribed = true } },
+  } as Parameters<typeof transcribeWavViaStt>[0])
+  controller.abort()
+  handler({ type: 'voice.stt.result', sessionId: 'import-cancel', text: 'late' })
+  assert.deepEqual(await pending, { ok: false, code: 'aborted' })
+  assert.equal(unsubscribed, true)
+  assert.equal(sent.at(-1)?.type, 'voice.stt.abort')
+  assert.equal(sent.at(-1)?.sessionId, 'import-cancel')
+})
+
+test("an already canceled import never acquires the shared STT session", async () => {
+  const controller = new AbortController()
+  controller.abort()
+  const sent: unknown[] = []
+  const result = await transcribeWavViaStt({ wav: new Uint8Array(44), sessionId: 'never-start', modelId: 'medium',
+    signal: controller.signal, send: message => { sent.push(message) }, onMessage: () => () => {} })
+  assert.deepEqual(result, { ok: false, code: 'aborted' })
+  assert.deepEqual(sent, [])
+})
+
+test("large model import allows the same five-minute inference budget as the live adapter", () => {
+  assert.equal(meetingAudioSttTimeoutMs('large-v3-turbo'), 305_000)
+  assert.equal(meetingAudioSttTimeoutMs('medium'), 120_000)
 })
 
 test("fileToWavSegments rejects empty blob", async () => {

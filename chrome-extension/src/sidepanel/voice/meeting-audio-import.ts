@@ -181,6 +181,11 @@ export function uint8ToBase64(data: Uint8Array): string {
 export type SttSend = (msg: Record<string, unknown>) => void
 export type SttOnMessage = (handler: (msg: any) => void) => () => void
 
+/** Large-model inference follows the live adapter's five-minute budget. */
+export function meetingAudioSttTimeoutMs(modelId: string): number {
+  return modelId === "large-v3-turbo" ? 305_000 : 120_000
+}
+
 /**
  * One-shot voice.stt.* for a prebuilt WAV (upload path). Serial max-1 sessions.
  */
@@ -193,6 +198,7 @@ export function transcribeWavViaStt(opts: {
   lang?: string
   maxMs?: number
   timeoutMs?: number
+  signal?: AbortSignal
 }): Promise<{ ok: true; text: string } | { ok: false; code: string }> {
   const {
     wav,
@@ -202,15 +208,18 @@ export function transcribeWavViaStt(opts: {
     onMessage,
     lang = "zh",
     maxMs = MEETING_AUDIO_SEGMENT_MS,
-    timeoutMs = 120_000,
+    timeoutMs = meetingAudioSttTimeoutMs(modelId),
   } = opts
 
   return new Promise((resolve) => {
     let settled = false
+    let started = false
+    let unsub = () => {}
     const finish = (r: { ok: true; text: string } | { ok: false; code: string }) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      opts.signal?.removeEventListener("abort", onAbort)
       try {
         unsub()
       } catch {
@@ -219,7 +228,16 @@ export function transcribeWavViaStt(opts: {
       resolve(r)
     }
 
-    const unsub = onMessage((msg) => {
+    const cancel = (code: string) => {
+      if (settled) return
+      finish({ ok: false, code })
+      if (started) {
+        try { send({ type: "voice.stt.abort", v: 1, sessionId }) } catch { /* disconnected */ }
+      }
+    }
+    const onAbort = () => cancel("aborted")
+    const timer = setTimeout(() => cancel("timeout"), timeoutMs)
+    unsub = onMessage((msg) => {
       if (!msg || typeof msg.type !== "string") return
       if (msg.sessionId !== sessionId) return
       if (msg.type === "voice.stt.result") {
@@ -235,9 +253,11 @@ export function transcribeWavViaStt(opts: {
       }
     })
 
-    const timer = setTimeout(() => finish({ ok: false, code: "timeout" }), timeoutMs)
+    opts.signal?.addEventListener("abort", onAbort, { once: true })
+    if (opts.signal?.aborted) { onAbort(); return }
 
     try {
+      started = true
       send({
         type: "voice.stt.start",
         v: 1,
@@ -251,7 +271,7 @@ export function transcribeWavViaStt(opts: {
         privacy_ack_v2: true,
       })
       const chunks = splitIntoChunks(wav, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
-      for (let seq = 0; seq < chunks.length; seq++) {
+      for (let seq = 0; !settled && seq < chunks.length; seq++) {
         send({
           type: "voice.stt.chunk",
           v: 1,
@@ -260,14 +280,14 @@ export function transcribeWavViaStt(opts: {
           data: uint8ToBase64(chunks[seq]!),
         })
       }
-      send({
+      if (!settled) send({
         type: "voice.stt.end",
         v: 1,
         sessionId,
         totalSeq: chunks.length,
       })
     } catch {
-      finish({ ok: false, code: "send_failed" })
+      cancel("send_failed")
     }
   })
 }

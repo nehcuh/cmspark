@@ -3445,6 +3445,8 @@ export async function handleMessage(
     case "meeting.set_speakers":
     case "meeting.bulk_speaker":
     case "meeting.import_text":
+    case "meeting.import_reference":
+    case "meeting.set_reference":
     case "meeting.diarize.upload_start":
     case "meeting.diarize.upload_chunk":
     case "meeting.diarize.upload_end":

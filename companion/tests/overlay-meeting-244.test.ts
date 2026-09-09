@@ -7,6 +7,7 @@ import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as path from "path"
 
+import { SUMMONER_MEETING_WORKFLOW_JS } from "../src/summoner/meeting-workflow"
 import { assertSummonerAllowed } from "../src/ws/summoner-acl"
 import { SUMMONER_WEB_DISPATCH_ALLOW, SUMMONER_WEB_EVENT_ALLOW } from "../src/summoner-web"
 import { MEETING_PRIVACY_ACK_V1_CLAUSES } from "../src/summoner/client"
@@ -65,47 +66,15 @@ test("#244 禁止假装-1: 隐私「我已了解」后出现会议台，不是�
   assert.match(overlayHtml, /结束录制/)
 })
 
-test("#244 禁止假装-2: 转写进会议台滚动区，不进草稿框", () => {
-  const result = overlayHtml.slice(
-    overlayHtml.indexOf('if(t==="voice.stt.result")'),
-    overlayHtml.indexOf('if(t==="meeting.diarized")'),
-  )
-  assert.match(result, /appendMeetingLive\(txt/)
-  assert.match(result, /\/api\/meeting\/append/)
-  assert.match(result, /else if\(txt && !meetingId\)/)
+test("#244 禁止假装-2: native final transcript has its own visible commit and persistence", () => {
+  const commit = SUMMONER_MEETING_WORKFLOW_JS.slice(SUMMONER_MEETING_WORKFLOW_JS.indexOf("function commitMeetingSegment"), SUMMONER_MEETING_WORKFLOW_JS.indexOf("function meetingSttEvent"))
+  assert.match(commit, /appendMeetingLive\(text/)
+  assert.match(commit, /\/api\/meeting\/append/)
+  assert.doesNotMatch(commit, /\$\("text"\)\.value/)
   assert.match(overlayHtml, /box\.scrollTop=box\.scrollHeight/)
-  assert.match(overlayHtml, /function appendMeetingLive/)
-  // Composer fill is only the !meetingId branch.
-  const composerFill = result.slice(result.indexOf("else if(txt && !meetingId)"))
-  assert.match(composerFill, /\$\("text"\)\.value/)
-  assert.doesNotMatch(result.slice(0, result.indexOf("else if(txt && !meetingId)")), /\$\("text"\)\.value/)
 })
 
-test("#244 禁止假装-3: generate_minutes 失败不许写「已生成」", async () => {
-  const req = overlayHtml.slice(
-    overlayHtml.indexOf("function requestMeetingMinutes"),
-    overlayHtml.indexOf('$("meetingStart").onclick'),
-  )
-  assert.match(req, /纪要生成失败/)
-  const errBranch = req.slice(
-    req.indexOf("if(d && (d.type==="),
-    req.indexOf("var md="),
-  )
-  assert.doesNotMatch(errBranch, /已生成/)
-  assert.doesNotMatch(errBranch, /已提交/)
-  assert.match(req, /if\(!md\)/)
-  const emptyMd = req.slice(req.indexOf("if(!md)"), req.indexOf("var box=$(\"meetingMinutes\")"))
-  assert.match(emptyMd, /纪要生成失败/)
-  assert.doesNotMatch(emptyMd, /已生成/)
-  assert.doesNotMatch(emptyMd, /已提交/)
-
-  const sse = overlayHtml.slice(
-    overlayHtml.indexOf('if(t==="meeting.minutes_result")'),
-    overlayHtml.indexOf('if(t==="mcp.confirm.pending")'),
-  )
-  assert.doesNotMatch(sse, /纪要已提交/)
-  assert.match(sse, /纪要已生成/)
-
+test("#244 禁止假装-3: failed minutes do not claim generated", async () => {
   const failed = await handleMeetingMessage(
     { type: "meeting.generate_minutes", v: 1, text: "有转写但无 LLM。" },
     { origin: "cmspark-tray://local", surface: "summoner" },
@@ -113,8 +82,9 @@ test("#244 禁止假装-3: generate_minutes 失败不许写「已生成」", asy
   )
   assert.equal(failed.type, "meeting.error")
   assert.equal(failed.code, "llm_not_configured")
-  assert.notEqual(failed.type, "meeting.minutes_result")
   assert.equal(JSON.stringify(failed).includes("已生成"), false)
+  assert.match(SUMMONER_MEETING_WORKFLOW_JS, /if\(!md\)throw new Error\("纪要生成失败/)
+  assert.match(SUMMONER_MEETING_WORKFLOW_JS, /catch\(e\)\{meetingProblem\(e\);\$\("meetingHint"\)\.textContent="纪要生成失败"/)
 })
 
 test("#244 MeetingPanel 五条隐私原文不动（overlay lockstep）", () => {
@@ -132,7 +102,7 @@ test("#244 MeetingPanel 五条隐私原文不动（overlay lockstep）", () => {
   }
 })
 
-test("#244 overlay ACL 本票增量为零；auto_diarize 被拒（#244 NEVER）", async () => {
+test("#244 overlay ACL #492 仅增两个参考动词；auto_diarize 被拒（#244 NEVER）", async () => {
   const meeting = [...SUMMONER_WEB_DISPATCH_ALLOW].filter((t) => t.startsWith("meeting.")).sort()
   assert.deepEqual(meeting, [
     "meeting.append_transcript",
@@ -140,7 +110,9 @@ test("#244 overlay ACL 本票增量为零；auto_diarize 被拒（#244 NEVER）"
     "meeting.end",
     "meeting.generate_minutes",
     "meeting.get",
+    "meeting.import_reference",
     "meeting.list",
+    "meeting.set_reference",
     "meeting.start",
   ])
   assert.equal(assertSummonerAllowed("summoner", "meeting.append_transcript").ok, true)
@@ -172,7 +144,9 @@ test("#244 #230 freeze: overlay HTML dispatch meeting set is a snapshot (not a t
     "meeting.end",
     "meeting.generate_minutes",
     "meeting.get",
+    "meeting.import_reference",
     "meeting.list",
+    "meeting.set_reference",
     "meeting.start",
   ])
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("mcp.toggle_server"), false)

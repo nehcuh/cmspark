@@ -137,6 +137,17 @@ Verify 320/390/759/760/1040/1440px widths, 420/480px heights and 200% equivalent
 Summoner default 1040×760, explicit compact 360×420; clamp and retain user resizing.
 
 ## Interaction states
+
+Meeting workflow (#492): arrange recording/imported audio, original transcript,
+reference notes and minutes as distinct user materials. Word/Markdown/text notes
+never replace the transcript. Show raw recognition immediately; optional AI
+correction suggestions cannot delay it. Primary stop action explicitly generates
+minutes; stop-only and close retain their local-only intent. Confirm current
+material saves before generation; retain drafts on failure and label older minutes
+as needing an update. Keep corrected transcript and source excerpts reviewable,
+with note-only supplements and conflicts separate from audio evidence. Preserve
+speaker tools, templates and export under clear, discoverable controls.
+
 Empty suggestions fill, never send. Loading shows the pending action at its source,
 never a silent mic. Listening begins only when capture is ready; partial recognition
 is distinct from final text. Processing stays visible after stop; failure keeps drafts.

@@ -8,10 +8,13 @@ import * as path from "path"
 import * as crypto from "crypto"
 import { DATA_DIR } from "../config"
 import { logger } from "../logger"
+import { MEETING_MINUTES_MAX_INPUT_CHARS } from "./minutes-prompt"
 
 export type TranscriptSource = "stt" | "user_edit" | "paste" | "asr_refiner"
 
 export type TranscriptLine = {
+  /** Stable client segment key for safe retry; scoped to one meeting. */
+  segment_id?: string
   t0?: number
   t1?: number
   speaker?: string
@@ -26,6 +29,13 @@ export type MeetingMinutes = {
   risks?: string[]
   raw_md: string
   generated_at: string
+  source_fingerprint?: string
+  source_transcript?: string
+  stale?: boolean
+  corrected_transcript?: string
+  corrections?: Array<{ original: string; replacement: string; reference_excerpt: string; reason: string }>
+  reference_supplements?: Array<{ reference_excerpt: string; reason: string }>
+  conflicts?: Array<{ transcript_excerpt: string; reference_excerpt: string; reason: string }>
 }
 
 export type MeetingStatus =
@@ -63,7 +73,31 @@ export type MeetingMeta = {
 
 export type MeetingSession = MeetingMeta & {
   transcript: TranscriptLine[]
+  /** Original ASR utterances; editing/generation never rewrites this archive. */
+  original_transcript?: TranscriptLine[]
+  reference_notes?: string
+  reference_name?: string
   minutes?: MeetingMinutes | null
+}
+
+export class MeetingTranscriptLimitError extends Error {
+  constructor() { super("转写或原始识别存档已达 200000 字上限，请新建会议继续") }
+}
+
+export class MeetingTranscriptSegmentCollisionError extends Error {
+  constructor() { super("同一转写段标识对应不同内容，请保留当前稿并核对") }
+}
+
+/** Material identity, independent of recording status and generated artifacts. */
+export function meetingSourceFingerprint(transcript: string, referenceNotes = "", referenceName = ""): string {
+  return crypto.createHash("sha256").update(JSON.stringify([transcript.trim(), referenceNotes.trim(), referenceName.trim()])).digest("hex")
+}
+
+function reconcileMinutesSource(session: MeetingSession): void {
+  if (!session.minutes) return
+  const fingerprint = meetingSourceFingerprint(transcriptToText(session.transcript), session.reference_notes, session.reference_name)
+  session.minutes.stale = session.minutes.source_fingerprint !== fingerprint
+  if (session.minutes.stale && session.status === "done") session.status = "ready"
 }
 
 function meetingsRoot(dataDir = DATA_DIR): string {
@@ -221,9 +255,14 @@ export function createMeeting(opts: {
 }
 
 export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
+  if (transcriptToText(session.transcript).length > MEETING_MINUTES_MAX_INPUT_CHARS ||
+      transcriptToText(session.original_transcript || []).length > MEETING_MINUTES_MAX_INPUT_CHARS) {
+    throw new MeetingTranscriptLimitError()
+  }
   const dir = resolveContained(session.id, dataDir)
   if (!dir) throw new Error("invalid meeting id")
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  reconcileMinutesSource(session)
   const meta: MeetingMeta = {
     id: session.id,
     thread_id: session.thread_id,
@@ -237,6 +276,8 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
   }
   writeJsonAtomic(path.join(dir, "meta.json"), meta)
   writeJsonAtomic(path.join(dir, "transcript.json"), session.transcript)
+  writeJsonAtomic(path.join(dir, "reference.json"), { notes: session.reference_notes || "", name: session.reference_name || "" })
+  writeJsonAtomic(path.join(dir, "original-transcript.json"), session.original_transcript || [])
   if (session.minutes) {
     writeJsonAtomic(path.join(dir, "minutes.json"), session.minutes)
     const mdPath = path.join(dir, "minutes.md")
@@ -254,11 +295,19 @@ export function loadMeeting(id: string, dataDir = DATA_DIR): MeetingSession | nu
     readJson<TranscriptLine[]>(path.join(dir, "transcript.jsonl")) ||
     []
   const minutes = readJson<MeetingMinutes>(path.join(dir, "minutes.json"))
-  return {
+  const reference = readJson<{ notes?: unknown; name?: unknown }>(path.join(dir, "reference.json"))
+  const original = readJson<TranscriptLine[]>(path.join(dir, "original-transcript.json"))
+  const session: MeetingSession = {
     ...meta,
     transcript: Array.isArray(transcript) ? transcript : [],
+    // Legacy sessions can only recover lines still explicitly marked as raw STT.
+    original_transcript: Array.isArray(original) ? original : Array.isArray(transcript) ? transcript.filter(line => line.source === "stt") : [],
+    reference_notes: typeof reference?.notes === "string" ? reference.notes : "",
+    reference_name: typeof reference?.name === "string" ? reference.name : "",
     minutes: minutes || null,
   }
+  reconcileMinutesSource(session)
+  return session
 }
 
 export function listMeetings(dataDir = DATA_DIR): MeetingMeta[] {
@@ -280,9 +329,21 @@ export function setTranscript(
   const s = loadMeeting(id, dataDir)
   if (!s) return null
   s.transcript = lines
+  // The first bulk STT import initializes raw evidence. Later merged/editor
+  // snapshots cannot replace it; live/import utterances arrive through append.
+  if (!s.original_transcript?.length) s.original_transcript = lines.filter(line => line.source === "stt").map(line => ({ ...line }))
   if (s.status === "draft" || s.status === "error") s.status = "ready"
   saveMeeting(s, dataDir)
   return s
+}
+
+export function setReference(id: string, notes: string, name = "", dataDir = DATA_DIR): MeetingSession | null {
+  const session = loadMeeting(id, dataDir)
+  if (!session) return null
+  session.reference_notes = notes
+  session.reference_name = name
+  saveMeeting(session, dataDir)
+  return session
 }
 
 export function appendTranscript(
@@ -292,7 +353,26 @@ export function appendTranscript(
 ): MeetingSession | null {
   const s = loadMeeting(id, dataDir)
   if (!s) return null
+  if (line.segment_id) {
+    // Original STT archive survives replacement of the editable transcript.
+    // Replayed ACKs with a complete archive are read-only, including at its cap.
+    const archived = (s.original_transcript || []).find(item => item.segment_id === line.segment_id)
+    const existing = archived || s.transcript.find(item => item.segment_id === line.segment_id)
+    if (existing) {
+      if (existing.text !== line.text || existing.source !== line.source || (existing.speaker || "") !== (line.speaker || "")) {
+        throw new MeetingTranscriptSegmentCollisionError()
+      }
+      if (!archived && existing.source === "stt") {
+        // transcript.json may have committed before the raw archive write failed.
+        // Repair the missing archive entry while leaving the editable draft intact.
+        s.original_transcript = [...(s.original_transcript || []), { ...existing }]
+        saveMeeting(s, dataDir)
+      }
+      return s
+    }
+  }
   s.transcript = [...s.transcript, line]
+  if (line.source === "stt") s.original_transcript = [...(s.original_transcript || []), { ...line }]
   if (s.status === "draft") s.status = "recording"
   saveMeeting(s, dataDir)
   return s
@@ -337,7 +417,11 @@ export function setMinutes(
 ): MeetingSession | null {
   const s = loadMeeting(id, dataDir)
   if (!s) return null
-  s.minutes = minutes
+  s.minutes = {
+    ...minutes,
+    source_fingerprint: minutes.source_fingerprint ?? meetingSourceFingerprint(transcriptToText(s.transcript), s.reference_notes, s.reference_name),
+    source_transcript: minutes.source_transcript ?? transcriptToText(s.transcript),
+  }
   s.status = "done"
   s.ended_at = s.ended_at || new Date().toISOString()
   s.error = null

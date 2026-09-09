@@ -16,6 +16,7 @@ import {
 import {
   fileToWavSegments,
   transcribeWavViaStt,
+  uint8ToBase64,
 } from "../voice/meeting-audio-import"
 import {
   loadMeetingTemplate,
@@ -44,7 +45,7 @@ import {
 } from "../voice/meeting-live-refine"
 import { VOICE_PRIVACY_ACK_V2_CLAUSES } from "../voice/privacy-copy"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
-import { confirmMeetingClose, createMeetingPersistence } from "../voice/meeting-close"
+import { confirmMeetingClose, createMeetingPersistence, saveMeetingMaterials } from "../voice/meeting-close"
 
 /** Format companion transcript lines for textarea (Speaker: text). */
 function formatLinesFromMeeting(transcript: any[]): string {
@@ -133,7 +134,25 @@ export function MeetingPanel(props: {
   const { state, dispatch } = useAgentStore()
   const [title, setTitle] = useState("")
   const [transcript, setTranscript] = useState("")
+  const [originalTranscript, setOriginalTranscript] = useState("")
   const [minutesMd, setMinutesMd] = useState("")
+  const [minutesDetails, setMinutesDetails] = useState<any>(null)
+  const [minutesStale, setMinutesStale] = useState(false)
+  const [referenceNotes, setReferenceNotes] = useState("")
+  const [referenceName, setReferenceName] = useState("")
+  const [referenceStatus, setReferenceStatus] = useState("")
+  const [enablingLocal, setEnablingLocal] = useState(false)
+  const [liveCorrections, setLiveCorrections] = useState<{ original: string; replacement: string }[]>([])
+  const referenceFileRef = useRef<HTMLInputElement | null>(null)
+  const referenceNotesRef = useRef("")
+  const referenceNameRef = useRef("")
+  const referenceDirtyRef = useRef(false)
+  const referenceImportRef = useRef<string | null>(null)
+  const importControllerRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(true)
+  const recordingEpochRef = useRef(0)
+  const generatingRef = useRef(false)
+  const minutesRequestRef = useRef<{ id: string; text: string; notes: string; template: string } | null>(null)
   const [meetingId, setMeetingId] = useState<string | null>(null)
   const [status, setStatus] = useState<string>("")
   const [busy, setBusy] = useState(false)
@@ -203,6 +222,8 @@ export function MeetingPanel(props: {
 
   meetingIdRef.current = meetingId
   transcriptRef.current = transcript
+  referenceNotesRef.current = referenceNotes
+  referenceNameRef.current = referenceName
   titleRef.current = title
   phaseRef.current = capturePhase
   defaultSpeakerRef.current = defaultSpeaker
@@ -215,6 +236,7 @@ export function MeetingPanel(props: {
   const activeModelId = state.voiceModel?.localModelId || "medium"
   const localModelReady = state.voiceModel?.models?.[activeModelId]?.status === "ready"
   const localBinaryReady = state.voiceModel?.binary?.status === "ready"
+  const localEngineReady = state.voiceModel?.sttEngine === "local"
   /** #260: speaker-embedding diarize model (未就绪必须显式引导下载，不静默落回). */
   const diarizeModelReady = state.voiceModel?.diarizeModel?.status === "ready"
   /** P1: near-rt defaults on; honor global voiceRealtimeStreaming toggle. */
@@ -235,6 +257,10 @@ export function MeetingPanel(props: {
     phaseRef.current = p
     setCapturePhase(p)
   }, [])
+
+  useEffect(() => {
+    if (minutesMd) setMinutesStale(true)
+  }, [transcript, referenceNotes, templateMd])
 
   useEffect(() => {
     try {
@@ -276,6 +302,23 @@ export function MeetingPanel(props: {
       /* */
     }
   }, [companionConnected])
+
+  useEffect(() => {
+    if (localEngineReady) setEnablingLocal(false)
+  }, [localEngineReady])
+
+  useEffect(() => {
+    if (!enablingLocal) return
+    const listener = (message: any) => {
+      if (message.type === "voice.model.error") {
+        setEnablingLocal(false)
+        setError(message.message || message.error || "本机转写启用失败，请到语音设置检查")
+      }
+    }
+    chrome.runtime.onMessage.addListener(listener)
+    const timer = setTimeout(() => { setEnablingLocal(false); setError("尚未确认本机引擎启用，请刷新语音状态后重试") }, 10_000)
+    return () => { clearTimeout(timer); chrome.runtime.onMessage.removeListener(listener) }
+  }, [enablingLocal])
 
   useEffect(() => {
     if (!capturing) return
@@ -320,6 +363,7 @@ export function MeetingPanel(props: {
       liveTextRef.current.push(t)
       const sp = defaultSpeakerRef.current.trim().slice(0, 32)
       const display = sp ? `${sp}: ${t}` : t
+      if (source === "stt") setOriginalTranscript(previous => previous ? `${previous}\n\n${display}` : display)
       setTranscript((prev) => {
         // Live STT: blank-line between segments = smart paragraph boundary
         const next = prev ? `${prev}\n\n${display}` : display
@@ -338,8 +382,8 @@ export function MeetingPanel(props: {
   )
 
   /**
-   * Commit a live STT final: optional ADR-024 refine with prior transcript context,
-   * then append (paragraph-separated). Serial queue preserves order.
+   * Commit raw STT immediately; optional ADR-024 corrections stay separate.
+   * Serial queue preserves suggestion order without blocking original text.
    * Pin meeting id at enqueue so late refine never appends to a newer meeting (Pi nit).
    */
   const commitLiveSegment = useCallback(
@@ -347,33 +391,29 @@ export function MeetingPanel(props: {
       const raw = finalChunk.trim()
       if (!raw) return
       const pinnedId = meetingIdForAppend
-      const wantRefine = asrRefinerEnabledRef.current
-      if (!wantRefine) {
-        appendLocalAndRemote(raw, pinnedId, "stt")
-        return
-      }
+      const prior = transcriptRef.current
+      const epoch = recordingEpochRef.current
+      appendLocalAndRemote(raw, pinnedId, "stt")
+      if (!asrRefinerEnabledRef.current) return
       refineGenRef.current += 1
       const gen = refineGenRef.current
       const sid = `mtg-refine-${pinnedId}-${gen}`
-      const prior = transcriptRef.current
       setRefinePending((n) => n + 1)
       void refineQueueRef.current
         .enqueue(async () => {
+          if (!mountedRef.current || meetingIdRef.current !== pinnedId || recordingEpochRef.current !== epoch) return
           const { text, refined } = await requestMeetingSegmentRefine({
             sessionId: sid,
             refineGen: gen,
             text: raw,
             priorTranscript: prior,
           })
-          // Always pin to the meeting that owned this segment (not meetingIdRef after await)
-          appendLocalAndRemote(
-            text || raw,
-            pinnedId,
-            refined ? "asr_refiner" : "stt",
-          )
+          if (refined && mountedRef.current && meetingIdRef.current === pinnedId && recordingEpochRef.current === epoch) {
+            setLiveCorrections(previous => [...previous, { original: raw, replacement: text }].slice(-20))
+          }
         })
         .finally(() => {
-          setRefinePending((n) => Math.max(0, n - 1))
+          if (mountedRef.current) setRefinePending((n) => Math.max(0, n - 1))
         })
     },
     [appendLocalAndRemote],
@@ -383,7 +423,8 @@ export function MeetingPanel(props: {
    * Fire minutes job or defer until Companion is back.
    * Product adversary B1: dropped WS send used to leave 「生成中…」 forever.
    */
-  const sendMinutesJob = useCallback((id: string | null) => {
+  const sendMinutesJob = useCallback((id: string | null, silenceCut = false) => {
+    if (generatingRef.current) return
     if (meetingMinutesSendPlan(companionConnectedRef.current) === "defer-reconnect") {
       retryGenerateOnReconnectRef.current = true
       setBusy(false)
@@ -396,20 +437,52 @@ export function MeetingPanel(props: {
       return
     }
     retryGenerateOnReconnectRef.current = false
+    minutesRequestRef.current = null
+    generatingRef.current = true
     setBusy(true)
-    setPendingGenerate(true)
-    sendViaRuntime({
-      type: "meeting.generate_minutes",
-      v: 1,
-      id: id || undefined,
-      text: transcriptRef.current.trim() || undefined,
-      template_md: templateMdRef.current.trim() || undefined,
+    const snapshot = { text: transcriptRef.current, notes: referenceNotesRef.current, name: referenceNameRef.current, template: templateMdRef.current }
+    void (async () => {
+      if (!snapshot.text.trim()) throw new Error("尚无识别文字；请先完成录音、导入录音或填写转写")
+      let owner = id
+      if (!owner) {
+        const created = await persistenceRef.current.create({ title: titleRef.current || undefined })
+        owner = created.id
+        setMeetingId(owner)
+        meetingIdRef.current = owner
+      }
+      const savedText = await saveMeetingMaterials({ id: owner!, text: snapshot.text, referenceNotes: snapshot.notes,
+        referenceName: snapshot.name, persistence: persistenceRef.current, silenceCut })
+      if (transcriptRef.current === snapshot.text) {
+        transcriptRef.current = savedText
+        setTranscript(savedText)
+      }
+      snapshot.text = savedText
+      referenceDirtyRef.current = referenceNotesRef.current !== snapshot.notes || referenceNameRef.current !== snapshot.name
+      setReferenceStatus(referenceDirtyRef.current ? "笔记已修改，尚未保存" : "参考笔记已保存")
+      const requestId = `meeting-minutes-${crypto.randomUUID()}`
+      minutesRequestRef.current = { id: requestId, text: snapshot.text, notes: snapshot.notes, template: snapshot.template }
+      setPendingGenerate(true)
+      chrome.runtime.sendMessage({ type: "meeting.generate_minutes", v: 1, id: requestId, meeting_id: owner,
+        text: snapshot.text, reference_notes: snapshot.notes, reference_name: snapshot.name,
+        template_md: snapshot.template || undefined }, reply => {
+        if (chrome.runtime.lastError || reply?.ok === false || reply?.sent === false) {
+          generatingRef.current = false
+          setPendingGenerate(false)
+          setBusy(false)
+          setError("纪要请求未发送，材料已保存；请确认连接后重试")
+        }
+      })
+    })().catch(cause => {
+      generatingRef.current = false
+      setBusy(false)
+      setPendingGenerate(false)
+      setError(cause instanceof Error ? cause.message : "材料保存失败，未开始生成纪要")
     })
   }, [])
 
   /**
    * End server session + tear down adapter. Idempotent via finalizedRef.
-   * Drains in-flight AI refine before end / silence-cut / minutes (dual-review nit #2).
+   * Optional correction suggestions never delay end / silence-cut / minutes.
    */
   const finalizeCapture = useCallback(
     (opts: { generate: boolean; id: string | null }) => {
@@ -427,41 +500,28 @@ export function MeetingPanel(props: {
       const wantSegment = autoSegmentOnStopRef.current
 
       void (async () => {
-        // Wait for segment refine queue (cap ~22s) so minutes see refined text
-        try {
-          const drained = await refineQueueRef.current.drain()
-          if (!drained && closePendingRef.current) {
-            closeFailureRef.current = true
-            setError("最后一段仍在纠错，请等待转写完成后重试收起")
-          }
-          if (!drained && wantGenerate) {
-            setError((prev) =>
-              prev ||
-              "部分 AI 纠错未在时限内完成；纪要将基于当前转写（可稍后重新生成）",
-            )
-          }
-        } catch {
-          /* best-effort */
-        }
-
+        // Original recognition is already appended; optional suggestions never
+        // delay finalization or change the source used to generate minutes.
         if (id && !closePendingRef.current) {
-          sendViaRuntime({ type: "meeting.end", v: 1, id })
+          await persistenceRef.current.waitForWrites(id)
+          await persistenceRef.current.request(id, "meeting.end", "meeting.ended")
         }
-        // Smart segment after refine drain so silence-cut sees full refined blob
-        if (wantSegment && id && transcriptRef.current.trim() && !closePendingRef.current) {
-          sendViaRuntime({
-            type: "meeting.apply_silence_cut",
-            v: 1,
-            id,
-            text: transcriptRef.current,
-          })
+        // Generation saves and segments in one acknowledged operation. The
+        // stop-only path also waits for the actual cut receipt, never a timer.
+        if (!wantGenerate && wantSegment && id && transcriptRef.current.trim() && !closePendingRef.current) {
+          const cut = await persistenceRef.current.request(id, "meeting.apply_silence_cut", "meeting.updated", { text: transcriptRef.current })
+          transcriptRef.current = formatLinesFromMeeting(cut.transcript)
+          setTranscript(transcriptRef.current)
         }
         if (wantGenerate) {
-          // Brief beat for silence-cut server apply before minutes job
-          await new Promise((r) => setTimeout(r, 150))
-          sendMinutesJob(id)
+          sendMinutesJob(id, wantSegment)
         }
-      })().finally(() => {
+      })().catch(cause => {
+        closeFailureRef.current = true
+        setBusy(false)
+        setPendingGenerate(false)
+        setError(cause instanceof Error ? cause.message : "结束会议未确认；转写已保留，请保存后重试")
+      }).finally(() => {
         finalizingRef.current = false
         captureFinishedRef.current?.(!closeFailureRef.current)
         captureFinishedRef.current = null
@@ -514,6 +574,7 @@ export function MeetingPanel(props: {
     if (!pendingGenerate) return
     const t = setTimeout(() => {
       setPendingGenerate(false)
+      generatingRef.current = false
       setBusy(false)
       retryGenerateOnReconnectRef.current = false
       setError((prev) => prev || "纪要生成超时。转写已保留，可再点「生成会议纪要」")
@@ -539,7 +600,7 @@ export function MeetingPanel(props: {
         sendViaRuntime({ type: "meeting.end", v: 1, id })
         return
       }
-      if (!localModelReady || !localBinaryReady) {
+      if (!localModelReady || !localBinaryReady || !localEngineReady) {
         setError("本机转写模型或二进制未就绪。请到设置 → 输入与语音 下载模型后再开始会议录音。")
         setPhase("idle")
         sendViaRuntime({ type: "meeting.end", v: 1, id })
@@ -621,6 +682,7 @@ export function MeetingPanel(props: {
       destroyAdapter,
       finalizeCapture,
       localBinaryReady,
+      localEngineReady,
       localMedia.ok,
       localModelReady,
       nearRealtime,
@@ -635,9 +697,12 @@ export function MeetingPanel(props: {
   // Unmount / ContextPanelHost 收起: always end server session if still capturing
   // (destroy() is silent and would otherwise leave status=recording — dual-review nit).
   useEffect(() => {
+    mountedRef.current = true
     return () => {
+      mountedRef.current = false
       const id = meetingIdRef.current
       importAbortRef.current = true
+      importControllerRef.current?.abort()
       captureFinishedRef.current?.(false)
       captureFinishedRef.current = null
       const stillLive = phaseRef.current !== "idle" && !finalizedRef.current
@@ -652,17 +717,23 @@ export function MeetingPanel(props: {
 
   const onMsg = useCallback(
     (msg: any) => {
+      if (msg.meeting?.id === meetingIdRef.current && Array.isArray(msg.meeting.original_transcript) &&
+          phaseRef.current === "idle" && !persistenceRef.current.hasUnconfirmedWrites(msg.meeting.id)) {
+        setOriginalTranscript(formatLinesFromMeeting(msg.meeting.original_transcript))
+      }
       // Correlated persistence operations own their errors and busy lifecycle.
       // An append failure is recoverable text, not a failed PCM finalization.
       if (typeof msg.id === "string" && msg.id.startsWith("meeting-rpc-") &&
           (msg.type === "meeting.updated" || msg.type === "meeting.error")) return
       if (msg.type === "meeting.created" && msg.meeting) {
+        setOriginalTranscript(formatLinesFromMeeting(msg.meeting.original_transcript || []))
         setMeetingId(msg.meeting.id)
         setTitle(msg.meeting.title || "")
         setStatus(msg.meeting.status || "draft")
-        if (!savingTranscriptRef.current) setBusy(false)
+        if (!savingTranscriptRef.current && !generatingRef.current) setBusy(false)
       }
       if (msg.type === "meeting.started" && msg.meeting) {
+        setOriginalTranscript(formatLinesFromMeeting(msg.meeting.original_transcript || []))
         setMeetingId(msg.meeting.id)
         meetingIdRef.current = msg.meeting.id
         setTitle(msg.meeting.title || titleRef.current)
@@ -709,7 +780,15 @@ export function MeetingPanel(props: {
           }
         }
         if (msg.meeting.minutes?.raw_md) setMinutesMd(msg.meeting.minutes.raw_md)
-        if (!savingTranscriptRef.current) setBusy(false)
+        if (msg.meeting.minutes) {
+          setMinutesDetails(msg.meeting.minutes)
+          if (msg.meeting.minutes.stale === true) setMinutesStale(true)
+        }
+        if (!referenceDirtyRef.current && typeof msg.meeting.reference_notes === "string") {
+          setReferenceNotes(msg.meeting.reference_notes)
+          setReferenceName(msg.meeting.reference_name || "")
+        }
+        if (!savingTranscriptRef.current && !generatingRef.current) setBusy(false)
       }
       if (msg.type === "meeting.imported" && msg.meeting) {
         setMeetingId(msg.meeting.id)
@@ -742,13 +821,19 @@ export function MeetingPanel(props: {
         if (k != null && k >= 2 && k <= 6) setDiarizeK(k)
       }
       if (msg.type === "meeting.minutes_result") {
+        const request = minutesRequestRef.current
+        if (!request || msg.id !== request.id) return
         if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
+        setMinutesDetails(msg.minutes || null)
+        setMinutesStale(msg.minutes?.stale === true || request.text !== transcriptRef.current || request.notes !== referenceNotesRef.current || request.template !== templateMdRef.current)
         if (msg.meeting?.id) {
           setMeetingId(msg.meeting.id)
           setStatus(msg.meeting.status || "done")
         }
         setBusy(false)
         setPendingGenerate(false)
+        generatingRef.current = false
+        minutesRequestRef.current = null
         setError(null)
       }
       if (msg.type === "meeting.error") {
@@ -756,6 +841,7 @@ export function MeetingPanel(props: {
         setError(msg.message || msg.code || "error")
         setBusy(false)
         setPendingGenerate(false)
+        generatingRef.current = false
         if (
           msg.code === "need_privacy_ack" ||
           msg.code === "already_recording" ||
@@ -829,9 +915,15 @@ export function MeetingPanel(props: {
       }
       return
     }
+    if (!localEngineReady) {
+      setError("模型已就绪，但本机引擎尚未启用；请点击「启用本机转写」")
+      return
+    }
 
     setError(null)
-    setMinutesMd("")
+    if (minutesMd) setMinutesStale(true)
+    setLiveCorrections([])
+    recordingEpochRef.current += 1
     setPhase("starting")
     setSoftCapHint(false)
     wantGenerateRef.current = false
@@ -887,7 +979,9 @@ export function MeetingPanel(props: {
             const timer = setTimeout(() => resolve(false), MEETING_STOP_FAILSAFE_MS)
             void done.then(ok => { clearTimeout(timer); resolve(ok) })
           })
-          if (!finished) throw new Error("导入尚未完整结束，已保留面板。请等待当前段完成后重试收起")
+          if (!finished) throw new Error(Boolean(importDoneRef.current)
+            ? "导入仍在处理，已保留面板。请等待当前段完成，或中止导入后保存转写再收起"
+            : "导入未完整保存，现有转写已保留。请点击“保存转写”后重试收起")
         }
         if (phaseRef.current !== "idle" || finalizingRef.current) {
           const finished = new Promise<boolean>(resolve => { captureFinishedRef.current = resolve })
@@ -901,7 +995,6 @@ export function MeetingPanel(props: {
           if (!await finished) throw new Error("最后一段未完整处理，已保留面板和现有转写。请检查提示后重试收起")
         }
         if (needsClosePersistenceRef.current) {
-          if (!await refineQueueRef.current.drain()) throw new Error("转写仍在纠错，请稍后重试收起")
           const id = closeMeetingIdRef.current
           if (!id) throw new Error("会议尚未创建完成，请稍后重试收起")
           await confirmMeetingClose({
@@ -910,6 +1003,18 @@ export function MeetingPanel(props: {
             persistence: persistenceRef.current,
           })
           needsClosePersistenceRef.current = false
+        }
+        if (referenceDirtyRef.current) {
+          let owner = meetingIdRef.current
+          if (!owner) {
+            const created = await persistenceRef.current.create({ title: titleRef.current || undefined })
+            owner = created.id
+            setMeetingId(owner)
+          }
+          await persistenceRef.current.request(owner!, "meeting.set_reference", "meeting.updated", {
+            reference_notes: referenceNotesRef.current, reference_name: referenceNameRef.current,
+          })
+          referenceDirtyRef.current = false
         }
         return true
       } catch (cause) {
@@ -1032,6 +1137,61 @@ export function MeetingPanel(props: {
     }
   }
 
+  const onImportReferenceFile = async (file: File | null) => {
+    if (!file || busy || capturing) return
+    if (!companionConnected) { setError("Companion 未连接，参考笔记仍可手动输入"); return }
+    if (!/\.(txt|md|docx)$/i.test(file.name)) { setError("参考笔记仅支持 .txt、.md、.docx"); return }
+    // Base64 plus JSON must remain below Companion's 10 MiB WS frame cap.
+    if (file.size > 7 * 1024 * 1024) { setError("参考文件超过 7 MB，请精简后导入"); return }
+    const requestId = `meeting-reference-${crypto.randomUUID()}`
+    referenceImportRef.current = requestId
+    setBusy(true)
+    setError(null)
+    setReferenceStatus(`正在读取 ${file.name}…`)
+    try {
+      const content = uint8ToBase64(new Uint8Array(await file.arrayBuffer()))
+      const reference = await new Promise<{ name: string; text: string }>((resolve, reject) => {
+        let finished = false
+        const finish = (error?: Error, value?: { name: string; text: string }) => {
+          if (finished) return
+          finished = true
+          clearTimeout(timer)
+          chrome.runtime.onMessage.removeListener(listener)
+          error ? reject(error) : resolve(value!)
+        }
+        const listener = (message: any) => {
+          if (message.id !== requestId) return
+          if (message.type === "meeting.reference_imported" && typeof message.reference?.text === "string") {
+            finish(undefined, message.reference)
+          } else if (message.type === "meeting.error" || message.type === "error") {
+            finish(new Error(message.message || message.error || "参考文件解析失败"))
+          }
+        }
+        const timer = setTimeout(() => finish(new Error("参考文件解析超时，原笔记仍保留")), 30_000)
+        chrome.runtime.onMessage.addListener(listener)
+        try {
+          chrome.runtime.sendMessage({ type: "meeting.import_reference", v: 1, id: requestId,
+            file: { name: file.name, type: file.type, content } }, reply => {
+            if (chrome.runtime.lastError || reply?.ok === false || reply?.sent === false) finish(new Error("参考文件未发送，请检查 Companion 连接"))
+          })
+        } catch { finish(new Error("参考文件未发送，请检查 Companion 连接")) }
+      })
+      if (!mountedRef.current || referenceImportRef.current !== requestId) return
+      setReferenceNotes(reference.text)
+      setReferenceName(reference.name)
+      referenceNotesRef.current = reference.text
+      referenceNameRef.current = reference.name
+      referenceDirtyRef.current = true
+      setReferenceStatus(`已导入 ${reference.name} · ${reference.text.length} 字；生成前会保存`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "参考文件导入失败，原笔记仍保留")
+      setReferenceStatus("导入失败，原笔记仍保留")
+    } finally {
+      referenceImportRef.current = null
+      setBusy(false)
+    }
+  }
+
   const onImportAudioFile = async (file: File | null) => {
     if (!file) return
     if (!ensureAck()) return
@@ -1051,10 +1211,17 @@ export function MeetingPanel(props: {
       setError("本机转写模型或二进制未就绪")
       return
     }
+    if (!localEngineReady) {
+      setError("请先点击「启用本机转写」，再导入录音")
+      return
+    }
 
     setError(null)
     setBusy(true)
     importAbortRef.current = false
+    importControllerRef.current = new AbortController()
+    const previousText = transcriptRef.current
+    const hasPreviousText = previousText.trim().length > 0
     dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: true })
     setImportStatus("解码音频…")
     let resolveImport!: (ok: boolean) => void
@@ -1132,6 +1299,7 @@ export function MeetingPanel(props: {
         modelId: activeModelId,
         send: sendViaRuntime,
         onMessage: subscribeVoiceStt,
+        signal: importControllerRef.current?.signal,
       })
       if (r.ok === false) {
         importSucceeded = false
@@ -1145,23 +1313,33 @@ export function MeetingPanel(props: {
         texts.push(oneLine)
         pcms.push(wavToRawPcm(seg.wav))
         // local preview (speaker optional)
-        appendLocalAndRemote(oneLine, null)
+        appendLocalAndRemote(oneLine, id)
       }
       done = i + 1
     }
-    linePcmRef.current = pcms
+    linePcmRef.current = hasPreviousText ? [] : pcms
 
     // Single set_transcript so line count == features (avoid append race before diarize)
     if (texts.length > 0 && id) {
       const sp = defaultSpeakerRef.current.trim().slice(0, 32)
-      const body = texts.join("\n")
-      void persistenceRef.current.write(id, "meeting.set_transcript", {
+      const importedText = texts.map(text => sp ? `${sp}: ${text}` : text).join("\n\n")
+      const body = previousText ? `${previousText}\n\n${importedText}` : importedText
+      setTranscript(body)
+      transcriptRef.current = body
+      await persistenceRef.current.waitForWrites(id)
+      const saved = await persistenceRef.current.write(id, "meeting.set_transcript", {
         text: body,
-        source: "stt",
+        source: "user_edit",
         silence_cut: false,
       })
+      if (!saved) {
+        importSucceeded = false
+        setError("录音转写尚未确认保存；完整原文仍保留，请点击「保存转写」重试")
+        setImportStatus("转写已追加到编辑稿，尚未确认保存")
+        return
+      }
       // Restore default-speaker when not auto-diarizing (Mtg2 contract)
-      if (sp && !autoDiarizeAfterImport) {
+      if (sp && !hasPreviousText && !autoDiarizeAfterImport) {
         setTimeout(() => {
           sendViaRuntime({
             type: "meeting.bulk_speaker",
@@ -1180,7 +1358,7 @@ export function MeetingPanel(props: {
       setImportStatus(`导入部分失败（成功 ${done}/${total} 段，失败于第 ${failedAt} 段）`)
     } else {
       setImportStatus(`音频导入完成 ${done}/${total} 段`)
-      if (autoDiarizeAfterImport && pcms.length >= 2 && id) {
+      if (autoDiarizeAfterImport && !hasPreviousText && pcms.length >= 2 && id) {
         // embedding 引擎；模型未就绪 → 显式引导下载（#260 硬约束，不静默落回）
         if (!diarizeModelReady) {
           setError(mapMeetingDiarizeError("embedding_model_required"))
@@ -1189,15 +1367,18 @@ export function MeetingPanel(props: {
           await runUploadDiarize(id, pcms, "embedding")
         }
       }
+      if (hasPreviousText) setImportStatus(`已追加 ${done}/${total} 段；已有文字保留，合并稿不能自动按音频标说话人`)
     }
     dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
-    } catch {
+    } catch (cause) {
       importSucceeded = false
-      setError("音频导入失败，已保留面板和现有转写")
+      setError(cause instanceof Error ? `${cause.message}；已识别文字仍在，请点击「保存转写」后重试` : "音频导入失败，已保留现有转写；请点击「保存转写」后重试")
+      setImportStatus("导入未完成，已识别文字保留在编辑稿中")
     } finally {
       setBusy(false)
       dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
       importDoneRef.current = null
+      importControllerRef.current = null
       resolveImport(importSucceeded)
     }
   }
@@ -1294,13 +1475,6 @@ export function MeetingPanel(props: {
     }
     setBusy(true)
     setError(null)
-    if (meetingId && transcript.trim()) {
-      void persistenceRef.current.write(meetingId, "meeting.set_transcript", {
-        text: transcript,
-        source: "user_edit",
-        silence_cut: true,
-      })
-    }
     sendMinutesJob(meetingId)
   }
 
@@ -1352,7 +1526,7 @@ export function MeetingPanel(props: {
     ? "Companion 未连接"
     : !localModelReady || !localBinaryReady
       ? "本机 STT 未就绪"
-      : "本机 STT 就绪"
+      : !localEngineReady ? "本机模型已就绪，识别引擎未启用" : "本机 STT 就绪"
 
   return (
     <div
@@ -1399,13 +1573,13 @@ export function MeetingPanel(props: {
       {closing && <div role="status" aria-live="polite">正在保存最后一段转写，完成后收起…</div>}
 
       <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
-        粘贴 / 上传转写，或显式「开始录制」本机分段转写（最长约{" "}
-        {Math.round(MEETING_LIVE_HARD_CAP_MS / 60_000)} 分钟；约 2 小时软提示）。
+        开始录制或导入录音后，本机识别的原文会显示在下方。参考笔记独立保存，用于明确生成时的纠错与核对。
         {nearRealtime
           ? " 默认近实时出字（渐进假设，约 8 秒定稿；large 模型仅终稿）。"
-          : " 当前为分段终稿模式（可在设置开启实时出字）。"}
-        应用场景不会自动开麦。录音与听写互斥。说话人：手动标或实验性自动「发言人N」（非真名识别）；系统混音未支持。
-        段与段之间自动空行分段；可开「录制 AI 纠错」用上文消歧同音字（需已配置 LLM）。
+          : activeModelId === "large-v3-turbo"
+            ? " 当前大模型仅分段终稿：最长约 45 秒录音后还需本机推理。需要更快出字，可在语音设置选 medium 等模型。"
+            : " 当前为分段终稿模式：最长约 45 秒录音后出字，可在语音设置开启实时出字。"}
+        仅录麦克风，不含系统声音；录音与听写互斥。AI 建议和校正稿不会覆盖原始转写。
       </div>
 
       {/* Path B: meeting live STT / audio import requires voice_privacy_ack_v2.
@@ -1516,6 +1690,34 @@ export function MeetingPanel(props: {
         />
       </label>
 
+      <section aria-label="会议材料" data-testid="meeting-materials" style={{ border: `1px solid ${tokens.border}`, borderRadius: 8, padding: 10 }}>
+        <strong>会议材料</strong>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+          <button type="button" data-testid="meeting-import-audio" disabled={busy || capturing || !ack}
+            onClick={() => audioFileRef.current?.click()} style={btnStyle(false)}>导入录音</button>
+          <button type="button" data-testid="meeting-import-reference" disabled={busy || capturing}
+            onClick={() => referenceFileRef.current?.click()} style={btnStyle(false)}>导入参考笔记</button>
+          {importDoneRef.current && <button type="button" data-testid="meeting-import-abort" onClick={() => {
+            importAbortRef.current = true; importControllerRef.current?.abort(); setImportStatus("正在中止导入…")
+          }} style={btnStyle(false)}>中止导入</button>}
+        </div>
+        <p style={{ fontSize: 11, color: tokens.textSecondary, margin: "8px 0" }}>录音追加到现有转写。参考笔记支持 Word（.docx）、Markdown、文本，单文件最多 7 MB；它不会替换转写，也不会作为会议发言。</p>
+        <label style={{ display: "block", fontSize: 12 }}>参考笔记（可直接输入）
+          <textarea data-testid="meeting-reference-input" aria-label="参考笔记" value={referenceNotes} maxLength={100_000}
+            disabled={busy} rows={3} placeholder="人名、术语、议程或自己的会议笔记。明确生成纪要时才作为参考发送给已配置的 LLM。"
+            onChange={event => { setReferenceNotes(event.target.value); referenceDirtyRef.current = true; setReferenceStatus("笔记已修改，生成或收起前会保存") }}
+            style={{ width: "100%", boxSizing: "border-box", marginTop: 5, padding: 8, borderRadius: 6,
+              border: `1px solid ${tokens.border}`, background: tokens.bg, color: tokens.text, fontFamily: "inherit", resize: "vertical" }} />
+        </label>
+        <div data-testid="meeting-reference-status" role="status" style={{ fontSize: 11, color: tokens.textSecondary }}>
+          {referenceName ? `来源：${referenceName} · ` : referenceNotes ? "来源：手动笔记 · " : ""}{referenceStatus}
+        </div>
+        {importStatus && <div data-testid="meeting-import-status" role="status" style={{ fontSize: 11, marginTop: 6 }}>{importStatus}</div>}
+        <input ref={referenceFileRef} data-testid="meeting-reference-file" type="file" accept=".txt,.md,.docx" style={{ display: "none" }} onChange={event => {
+          const file = event.target.files?.[0] || null; event.target.value = ""; void onImportReferenceFile(file)
+        }} />
+      </section>
+
       <div
         data-testid="meeting-capture-bar"
         style={{
@@ -1533,7 +1735,7 @@ export function MeetingPanel(props: {
           {capturing ? (
             <>
               <span style={{ color: "#c44" }}>●</span> 录制中 {formatElapsed(elapsedMs)}
-              {capturePhase === "processing" ? " · 分段识别中…" : ""}
+              {capturePhase === "processing" ? " · 分段识别中，麦克风暂时暂停" : ""}
               {capturePhase === "starting" ? " · 启动中…" : ""}
               {capturePhase === "stopping" ? " · 结束中…" : ""}
               {refinePending > 0 ? ` · AI 纠错中(${refinePending})` : ""}
@@ -1543,6 +1745,16 @@ export function MeetingPanel(props: {
           )}
         </span>
         <span style={{ fontSize: 11, color: tokens.textSecondary }}>{localReadyLabel}</span>
+        <button type="button" data-testid="meeting-open-voice-settings" disabled={capturing || busy}
+          onClick={() => dispatch({ type: "SET_SETTINGS_OPEN", open: true })} style={linkBtn}>语音设置</button>
+        {!localEngineReady && <button type="button" data-testid="meeting-enable-local-stt"
+          disabled={enablingLocal || !companionConnected || !localModelReady || !localBinaryReady || !state.voicePrivacyAckV2}
+          onClick={() => {
+            setEnablingLocal(true); setError(null)
+            chrome.runtime.sendMessage({ type: "voice.model.set_engine", engine: "local", privacy_ack_v2: true, source: "settings" }, reply => {
+              if (chrome.runtime.lastError || reply?.ok === false || reply?.sent === false) { setEnablingLocal(false); setError("启用请求未发送，请检查 Companion 连接") }
+            })
+          }} style={btnStyle(false)}>{enablingLocal ? "正在启用…" : "启用本机转写"}</button>}
         {softCapHint && capturing && (
           <span style={{ fontSize: 11, color: "#b8860b" }}>
             已超过 {Math.round(MEETING_LIVE_SOFT_CAP_MS / 60_000)} 分钟软提示（硬上限{" "}
@@ -1578,7 +1790,7 @@ export function MeetingPanel(props: {
               dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: e.target.checked })
             }
           />
-          录制 AI 纠错（参考上文）
+          录制 AI 纠错建议（参考上文）
         </label>
         <label
           style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}
@@ -1607,7 +1819,7 @@ export function MeetingPanel(props: {
           <button
             type="button"
             data-testid="meeting-start-capture"
-            disabled={busy || !ack || !state.voicePrivacyAckV2}
+            disabled={busy || !ack || !state.voicePrivacyAckV2 || !localEngineReady || !localModelReady || !localBinaryReady || !companionConnected}
             onClick={startLiveCapture}
             style={btnStyle(true)}
             title={
@@ -1622,19 +1834,19 @@ export function MeetingPanel(props: {
           <>
             <button
               type="button"
-              data-testid="meeting-stop-capture"
-              onClick={() => stopLiveCapture(false)}
-              style={btnStyle(false)}
-            >
-              结束录制
-            </button>
-            <button
-              type="button"
               data-testid="meeting-stop-and-generate"
               onClick={() => stopLiveCapture(true)}
               style={btnStyle(true)}
             >
               结束并生成纪要
+            </button>
+            <button
+              type="button"
+              data-testid="meeting-stop-capture"
+              onClick={() => stopLiveCapture(false)}
+              style={btnStyle(false)}
+            >
+              仅结束录制
             </button>
           </>
         )}
@@ -1646,7 +1858,7 @@ export function MeetingPanel(props: {
       </div>
 
       {/* Mtg2: speaker + import */}
-      <div
+      <details
         data-testid="meeting-mtg2-tools"
         style={{
           display: "flex",
@@ -1658,7 +1870,7 @@ export function MeetingPanel(props: {
           background: tokens.bg,
         }}
       >
-        <div style={{ fontSize: 12, fontWeight: 500 }}>说话人 / 导入（Mtg2+3）</div>
+        <summary style={{ cursor: "pointer", marginBottom: 8 }}>说话人、分段与转写导入</summary>
         <label style={{ fontSize: 11, color: tokens.textSecondary }}>
           默认说话人标签（录制/导入 STT 追加时使用；可整表批量）
           <input
@@ -1771,28 +1983,6 @@ export function MeetingPanel(props: {
           >
             上传转写文件
           </button>
-          <button
-            type="button"
-            data-testid="meeting-import-audio"
-            disabled={busy || capturing || !ack}
-            onClick={() => audioFileRef.current?.click()}
-            style={btnStyle(false)}
-          >
-            上传音频转写
-          </button>
-          {busy && importStatus?.includes("本机转写") && (
-            <button
-              type="button"
-              data-testid="meeting-import-abort"
-              onClick={() => {
-                importAbortRef.current = true
-                setImportStatus("正在中止…")
-              }}
-              style={btnStyle(false)}
-            >
-              中止导入
-            </button>
-          )}
         </div>
         <input
           ref={textFileRef}
@@ -1816,24 +2006,23 @@ export function MeetingPanel(props: {
             void onImportAudioFile(f)
           }}
         />
-        {importStatus && (
-          <div style={{ fontSize: 11, color: tokens.textSecondary }} data-testid="meeting-import-status">
-            {importStatus}
-          </div>
-        )}
         <div style={{ fontSize: 10, color: tokens.textSecondary, lineHeight: 1.4 }}>
           「自动标说话人」= 本机段特征 k-means → 匿名「发言人N」，
           <strong>不是</strong>身份识别，也非 Otter 级 SLA。默认覆盖已有标签（可再手改）。
           弱标仅按行交替。系统混音见 parking 调研。
         </div>
-      </div>
+      </details>
 
       <label style={{ fontSize: 12, flex: 1, display: "flex", flexDirection: "column" }}>
-        转写 / 口述文字（可编辑 · 支持「说话人: 正文」）
+        转写 / 口述文字（可编辑稿 · 支持「说话人: 正文」）
         <textarea
+          data-testid="meeting-transcript"
+          aria-label="转写编辑稿"
+          disabled={!!importDoneRef.current}
           value={transcript}
           onChange={(e) => {
             transcriptDirtyRef.current = true
+            linePcmRef.current = []
             setTranscript(e.target.value)
           }}
           placeholder="粘贴会议转写，或开始录制/上传后自动填入…&#10;张三: 第一段&#10;&#10;李四: 第二段"
@@ -1881,6 +2070,18 @@ export function MeetingPanel(props: {
           </div>
         ) : null}
       </label>
+
+      {originalTranscript && <details data-testid="meeting-original-transcript">
+        <summary>原始识别稿（不随编辑或 AI 校正更改）</summary>
+        <pre style={materialPre}>{originalTranscript}</pre>
+      </details>}
+
+      {liveCorrections.length > 0 && <details data-testid="meeting-live-corrections">
+        <summary>录制 AI 纠错建议 · {liveCorrections.length} 条（原文保留）</summary>
+        {liveCorrections.map((suggestion, index) => <div key={index} style={{ padding: 8, borderBottom: `1px solid ${tokens.border}` }}>
+          <div>原文：{suggestion.original}</div><div>建议：{suggestion.replacement}</div>
+        </div>)}
+      </details>}
 
       <details style={{ fontSize: 12 }}>
         <summary style={{ cursor: "pointer", color: tokens.textSecondary }}>
@@ -1941,7 +2142,7 @@ export function MeetingPanel(props: {
       </button>
       <div role="status" aria-live="polite" data-testid="meeting-save-status">{status.startsWith("已保存") || status.startsWith("正在保存") ? status : ""}</div>
       <button type="button" disabled={busy || !ack || capturing} onClick={generate} style={btnStyle(true)}>
-        {busy || pendingGenerate ? "生成中…" : "生成会议纪要"}
+        {pendingGenerate ? "生成中…" : generatingRef.current ? "保存会议材料…" : "生成会议纪要"}
       </button>
 
       {error && (
@@ -1953,7 +2154,8 @@ export function MeetingPanel(props: {
       {minutesMd && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <strong style={{ flex: 1, fontSize: 12 }}>纪要</strong>
+            <strong style={{ flex: 1, fontSize: 12 }}>会议纪要 · AI 草稿</strong>
+            {minutesStale && <span data-testid="meeting-minutes-stale" role="status" style={{ color: tokens.warning, fontSize: 11 }}>材料已修改 · 纪要待更新</span>}
             <button type="button" onClick={copyMinutes} style={linkBtn}>
               复制
             </button>
@@ -1977,12 +2179,37 @@ export function MeetingPanel(props: {
           >
             {minutesMd}
           </pre>
+          {typeof minutesDetails?.corrected_transcript === "string" && <details data-testid="meeting-corrected-transcript">
+            <summary>校正稿（独立于原始转写）</summary><pre style={materialPre}>{minutesDetails.corrected_transcript}</pre>
+          </details>}
+          {Array.isArray(minutesDetails?.corrections) && minutesDetails.corrections.length > 0 && <details data-testid="meeting-correction-evidence">
+            <summary>纠错依据 · {minutesDetails.corrections.length}</summary>
+            {minutesDetails.corrections.map((entry: any, index: number) => <div key={index} style={{ margin: "8px 0" }}>
+              <div>原文：{String(entry.original || "")}</div><div>校正：{String(entry.replacement || "")}</div>
+              <div>参考摘录：{String(entry.reference_excerpt || "")}</div><div>{String(entry.reason || "")}</div>
+            </div>)}
+          </details>}
+          {Array.isArray(minutesDetails?.reference_supplements) && minutesDetails.reference_supplements.length > 0 && <details data-testid="meeting-reference-supplements">
+            <summary>参考笔记补充（不代表会议发言）</summary>
+            {minutesDetails.reference_supplements.map((entry: any, index: number) => <p key={index}>{String(entry.reference_excerpt || "")} · {String(entry.reason || "")}</p>)}
+          </details>}
+          {Array.isArray(minutesDetails?.conflicts) && minutesDetails.conflicts.length > 0 && <details data-testid="meeting-reference-conflicts" open>
+            <summary>转写与笔记存在冲突 · 请核对</summary>
+            {minutesDetails.conflicts.map((entry: any, index: number) => <div key={index} style={{ margin: "8px 0" }}>
+              <div>转写：{String(entry.transcript_excerpt || "")}</div><div>笔记：{String(entry.reference_excerpt || "")}</div><div>{String(entry.reason || "")}</div>
+            </div>)}
+          </details>}
+          {typeof minutesDetails?.source_transcript === "string" && <details data-testid="meeting-minutes-source">
+            <summary>本次生成使用的转写</summary><pre style={materialPre}>{minutesDetails.source_transcript}</pre>
+          </details>}
         </div>
       )}
       </fieldset>
     </div>
   )
 }
+
+const materialPre: CSSProperties = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 240, overflow: "auto", fontSize: 12, fontFamily: "inherit" }
 
 function btnStyle(primary: boolean): CSSProperties {
   return {

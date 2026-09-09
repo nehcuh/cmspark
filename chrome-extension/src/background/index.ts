@@ -1625,6 +1625,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "meeting.set_speakers":
       case "meeting.bulk_speaker":
       case "meeting.import_text":
+      case "meeting.import_reference":
+      case "meeting.set_reference":
       case "meeting.auto_diarize":
       // #260 PCM upload pipeline for embedding diarize (in-memory only, local).
       case "meeting.diarize.upload_start":
