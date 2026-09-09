@@ -1,0 +1,20 @@
+{
+  "issue": 496,
+  "base": "719890f4f160aef9b62b83d7eafa72e5a7b5dae8",
+  "blast_tier": "T2",
+  "machine": "PASS",
+  "grok": {
+    "model": "grok-4.6",
+    "verdict": "APPROVE_WITH_NITS",
+    "exit_code": 0,
+    "report": "grok-final.md"
+  },
+  "deepseek": {
+    "model": "deepseek-v4-pro",
+    "verdict": "APPROVE",
+    "exit_code": 0,
+    "report": "deepseek-final.md"
+  },
+  "adjudication": "Grok test hardening adopted; baseline browser failure disproves its claim that derived threadBusy was already false. No product change after review. Windows physical UI test reserved for user.",
+  "recorded_at": "2026-09-09T06:45:01.046487+00:00"
+}
