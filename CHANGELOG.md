@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- Windows 编程接力「选择工作区」（companion）：原生文件夹对话框加 STA / UTF-8 stdout / TopMost owner，避免藏在 Chrome 后或中文路径 mojibake；绑定比较在 win32 大小写不敏感；取消选择不再显示为失败。
 - 召唤器附件 Forbidden（Chrome `--app` / WebView 常带 `Origin: null` 或 CORS 预检无 cookie）：已登录环回请求允许空 Origin，预检不再要会话 cookie，页面用 overlay header 上传并把 403 正文显示出来，不再只显示 `Forbidden`。
 - 对话执行状态（#496）：网站上下文探测继续读取当前 Chrome 页面，但不再生成缺少完成回执的聊天工具卡片，修复首轮结束及切换对话后残留“执行中：list_tabs”；正常 Agent 工具调用继续展示执行状态。
 - 宽屏侧栏（#497）：资料与工具置顶并默认展开，最近对话支持收起/展开；收起保留新对话与管理入口，恢复保留筛选和当前对话，窄屏继续使用节省空间的导航顺序。
