@@ -270,6 +270,10 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /📎/)
     assert.match(r.body, /id="attachFile"/)
     assert.match(r.body, /\$\("files"\)\.click\(\)/)
+    assert.doesNotMatch(r.body, /%%OVERLAY_SESSION%%/)
+    assert.match(r.body, /credentials:"include"/)
+    assert.match(r.body, new RegExp(`X-CMspark-Overlay-Token":"${token}"`))
+    assert.match(r.body, /r\.text\(\)\.then/)
     assert.doesNotMatch(r.body, /去侧栏处理/)
     assert.match(r.body, /收起对话/)
     assert.doesNotMatch(r.body, /展开工作台|收起工作台/)
@@ -346,7 +350,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.equal(r.status, 403)
   })
 
-  test("POST Origin null → 403", async () => {
+  test("POST Origin null with session is allowed (Chrome --app / WebView attach)", async () => {
+    dispatched.length = 0
     const r = await request({
       method: "POST",
       port,
@@ -354,7 +359,73 @@ describe("summoner-web server", { concurrency: 1 }, () => {
       headers: { "Content-Type": "application/json", Origin: "null" },
       body: JSON.stringify({ thread_id: "t1", message: "hi", mode: "create" }),
     })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched[0]?.type, "chat.create")
+  })
+
+  test("POST Origin null without session → 403", async () => {
+    const r = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = http.request(
+        {
+          method: "POST",
+          host: "127.0.0.1",
+          port,
+          path: "/api/chat",
+          headers: { "Content-Type": "application/json", Origin: "null" },
+        },
+        (res) => {
+          let body = ""
+          res.on("data", (c) => (body += c.toString()))
+          res.on("end", () => resolve({ status: res.statusCode || 0, body }))
+        },
+      )
+      req.on("error", reject)
+      req.write(JSON.stringify({ thread_id: "t1", message: "hi" }))
+      req.end()
+    })
     assert.equal(r.status, 403)
+    assert.match(r.body, /Forbidden/)
+  })
+
+  test("OPTIONS preflight without cookie → 204 (file attach CORS)", async () => {
+    const r = await new Promise<{ status: number }>((resolve, reject) => {
+      const req = http.request(
+        {
+          method: "OPTIONS",
+          host: "127.0.0.1",
+          port,
+          path: "/api/files",
+          headers: {
+            Origin: "null",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type, x-cmspark-overlay-token",
+          },
+        },
+        (res) => {
+          res.resume()
+          res.on("end", () => resolve({ status: res.statusCode || 0 }))
+        },
+      )
+      req.on("error", reject)
+      req.end()
+    })
+    assert.equal(r.status, 204)
+  })
+
+  test("POST /api/files Origin null with session dispatches file.upload", async () => {
+    dispatched.length = 0
+    const r = await request({
+      method: "POST",
+      port,
+      path: `/api/files?token=${token}`,
+      headers: { "Content-Type": "application/json", Origin: "null" },
+      body: JSON.stringify({
+        thread_id: "t1",
+        files: [{ name: "a.txt", type: "text/plain", content: "aGVsbG8=" }],
+      }),
+    })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(dispatched[0]?.type, "file.upload")
   })
 
   test("POST with bad Origin → 403", async () => {

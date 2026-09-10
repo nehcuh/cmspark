@@ -207,12 +207,22 @@ function hostOk(req: http.IncomingMessage, port: number): boolean {
 
 function originOk(req: http.IncomingMessage, port: number): boolean {
   const origin = (req.headers.origin || "").toLowerCase()
-  if (!origin || origin === "null") return false
+  // Chrome --app / WebView2 overlay often omits Origin or sends "null" on
+  // JSON POSTs (file attach is the first one users hit). CSRF is the
+  // unguessable SameSite=Strict cookie / overlay header — Origin is forgeable.
+  if (!origin || origin === "null") return true
   return (
     origin === `http://127.0.0.1:${port}` ||
     origin === `http://localhost:${port}` ||
     origin === `http://[::1]:${port}`
   )
+}
+
+function corsAllowOrigin(req: http.IncomingMessage, port: number): string {
+  const origin = String(req.headers.origin || "")
+  if (origin.toLowerCase() === "null") return "null"
+  if (origin && originOk(req, port)) return origin
+  return `http://127.0.0.1:${port}`
 }
 
 function forbidden(res: http.ServerResponse, reason: string) {
@@ -670,7 +680,9 @@ async function handleRequest(
       return
     }
     const isDoc = (pathOnly === "/" || pathOnly === "/summoner") && req.method === "GET"
-    if (!isDoc && !tokenOk(req, token)) {
+    const isOptions = req.method === "OPTIONS"
+    // CORS preflight has no cookies; the POST/PATCH/DELETE still needs the session.
+    if (!isDoc && !isOptions && !tokenOk(req, token)) {
       forbidden(res, "missing or invalid session token")
       return
     }
@@ -685,9 +697,10 @@ async function handleRequest(
 
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
-      "Access-Control-Allow-Origin": `http://127.0.0.1:${port}`,
+      "Access-Control-Allow-Origin": corsAllowOrigin(req, port),
       "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, X-CMspark-Overlay-Token",
+      "Access-Control-Allow-Credentials": "true",
     })
     res.end()
     return
@@ -719,10 +732,9 @@ async function handleRequest(
       } catch {
         cruise = "每次确认"
       }
-      const html = SUMMONER_HTML.replace("<script>", `<script nonce="${nonce}">`).replace(
-        "%%CRUISE_LABEL%%",
-        escHtml(cruise),
-      )
+      const html = SUMMONER_HTML.replace("<script>", `<script nonce="${nonce}">`)
+        .replace("%%CRUISE_LABEL%%", escHtml(cruise))
+        .replaceAll("%%OVERLAY_SESSION%%", token)
       res.end(html)
       return
     }
@@ -1778,7 +1790,13 @@ try{
     $("hud").classList.add("expanded");
   }
   function api(path, opts){
-    return fetch(url(path), opts).then(function(r){return r.json().catch(function(){return {error:r.statusText}})})
+    opts=opts||{};
+    var headers=Object.assign({"X-CMspark-Overlay-Token":"%%OVERLAY_SESSION%%"},opts.headers||{});
+    return fetch(url(path),Object.assign({},opts,{credentials:"include",headers:headers})).then(function(r){
+      return r.text().then(function(t){
+        try{return JSON.parse(t)}catch(e){return {error:(t&&t.replace(/^Forbidden:\\s*/,"").trim())||r.statusText}}
+      });
+    });
   }
   var voiceAck=false;
   var meetingAck=false;
@@ -2141,7 +2159,8 @@ try{
       }
       if(text.trim()){clearStreamMsg();paintUser(text.trim())}
       $("text").value="";
-      return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(){
+      return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(lease){
+        if(lease&&(lease.error||lease.type==="error")){setStatus(lease.error||"无法占用输入");return}
         var go=hasFiles
           ? filesToPayload(fileEl.files).then(function(files){
               return api("/api/files",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,files:files,message:text})});
