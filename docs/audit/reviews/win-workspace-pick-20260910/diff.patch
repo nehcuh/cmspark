@@ -1,0 +1,463 @@
+diff --git a/companion/src/capability/workspace.ts b/companion/src/capability/workspace.ts
+index e16c9cb4..d84a098c 100644
+--- a/companion/src/capability/workspace.ts
++++ b/companion/src/capability/workspace.ts
+@@ -18,6 +18,27 @@ export function recordNativePick(absPath: string): void {
+   lastNativePick = { path: absPath, at: Date.now() }
+ }
+ 
++/** Strip Windows `\\?\` long-path prefix so bind compares the same filesystem path. */
++export function stripWinLongPathPrefix(p: string): string {
++  return p.replace(/^\\\\\?\\/i, "").replace(/^\/\/\?\//, "")
++}
++
++/**
++ * Compare two real paths for native-pick bind.
++ * NTFS is case-insensitive; Node `realpathSync` preserves the *input* drive-letter
++ * casing (`c:\` !== `C:\`), so a strict `!==` rejects a valid picker result on Windows.
++ */
++export function pathsEqualForBind(
++  a: string,
++  b: string,
++  platform: NodeJS.Platform = process.platform,
++): boolean {
++  const na = stripWinLongPathPrefix(path.normalize(a))
++  const nb = stripWinLongPathPrefix(path.normalize(b))
++  if (platform === "win32") return na.toLowerCase() === nb.toLowerCase()
++  return na === nb
++}
++
+ export function consumeNativePick(absPath: string): boolean {
+   if (!lastNativePick) return false
+   if (Date.now() - lastNativePick.at > PICK_TTL_MS) {
+@@ -32,7 +53,7 @@ export function consumeNativePick(absPath: string): boolean {
+   } catch {
+     return false
+   }
+-  if (a !== b) return false
++  if (!pathsEqualForBind(a, b)) return false
+   lastNativePick = null
+   return true
+ }
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index f81777d5..b14e03dd 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -39,7 +39,7 @@ import { buildContextRefsSystemSegment, type ContextRefInput } from "./threads/c
+ import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
+ import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
+ import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
+-import { pickFolderNative, pickFileNative } from "./obsidian/folder-picker"
++import { pickFolderNative, pickFileNative, WORKSPACE_FOLDER_PROMPT } from "./obsidian/folder-picker"
+ import { pinSlashSkill, type SkillEngine } from "./skills/skill-engine"
+ import { isSymlinkOrJunction, isUnsafePathComponent } from "./skills/doc-identity"
+ import { normalizeHostname } from "./skills/site-matcher"
+@@ -5145,7 +5145,10 @@ export async function handleMessage(
+     case "workspace.pick": {
+       // Optional thread_id: pick + bind in one step (avoids UI race / stale set)
+       const owner = typeof rest.thread_id === "string" && rest.thread_id ? { thread_id: rest.thread_id } : {}
+-      const result = await pickFolderNative()
++      const result = await pickFolderNativeImpl(WORKSPACE_FOLDER_PROMPT)
++      if (result.error === "cancelled") {
++        return { type: "workspace.pick_result", ...owner, cancelled: true }
++      }
+       if (result.error) return { type: "workspace.pick_result", ...owner, error: result.error }
+       if (!result.path) return { type: "workspace.pick_result", ...owner, error: "未选择文件夹" }
+       const { recordNativePick, setWorkspaceRoot } = await import("./capability/workspace")
+diff --git a/companion/src/obsidian/folder-picker.ts b/companion/src/obsidian/folder-picker.ts
+index 28240d4f..b9a05dd1 100644
+--- a/companion/src/obsidian/folder-picker.ts
++++ b/companion/src/obsidian/folder-picker.ts
+@@ -9,6 +9,8 @@
+ 
+ import { execFile } from "child_process"
+ import { promisify } from "util"
++import * as fs from "fs"
++import * as nodePath from "path"
+ import { isLinux, isMacOS, isWindows } from "../platform"
+ import { OSASCRIPT_BIN } from "../process-path"
+ 
+@@ -16,19 +18,145 @@ const execFileP = promisify(execFile)
+ const PICK_TIMEOUT_MS = 120000 // the dialog blocks until the user picks/cancels
+ /** Native dialog title — export is Markdown; this folder is optional convention source. */
+ const MARKDOWN_FOLDER_PROMPT = "选择 Markdown 笔记文件夹"
++/** Dialog title for 编程接力 / 场景「选择工作区」. */
++export const WORKSPACE_FOLDER_PROMPT = "选择工作区文件夹"
+ 
+ export interface PickResult {
+   path?: string
+   error?: string
+ }
+ 
++function escapeAppleScriptString(s: string): string {
++  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
++}
++
++function psSingleQuote(s: string): string {
++  return s.replace(/\r?\n/g, " ").replace(/'/g, "''")
++}
++
++/** Decode picker stdout. PowerShell 5.1 may emit a BOM and CRLF. */
++export function parsePickerStdout(stdout: string | Buffer): string {
++  const s = Buffer.isBuffer(stdout) ? stdout.toString("utf8") : String(stdout)
++  return s.replace(/^\uFEFF/, "").trim()
++}
++
++/**
++ * Resolve Windows PowerShell 5.1 by absolute path. Bare `"powershell"` fails when
++ * PATH is stripped (Git Bash / hidden VBS launcher) — same class as OSASCRIPT_BIN.
++ */
++export function resolveWindowsPowerShell(): string {
++  const sysroot = process.env.SystemRoot || process.env.windir || "C:\\Windows"
++  const candidate = nodePath.join(
++    sysroot,
++    "System32",
++    "WindowsPowerShell",
++    "v1.0",
++    "powershell.exe",
++  )
++  try {
++    if (fs.existsSync(candidate)) return candidate
++  } catch {
++    /* PATH fallback */
++  }
++  return "powershell.exe"
++}
++
++/**
++ * WinForms folder-picker script.
++ *
++ * Production bugs this encodes (Windows-only; macOS osascript is fine):
++ * 1. ShowDialog() with no owner + hidden companion → dialog behind Chrome / hung.
++ *    Owner is a 1×1 TopMost form so the dialog comes to the foreground.
++ * 2. PowerShell 5.1 stdout is the system ANSI code page (CP936 on zh-CN). Node
++ *    decodes utf8 → Chinese paths become mojibake → realpath ENOENT.
++ */
++export function buildWindowsFolderPickScript(prompt: string): string {
++  const title = psSingleQuote(prompt)
++  return [
++    "Add-Type -AssemblyName System.Windows.Forms",
++    "Add-Type -AssemblyName System.Drawing",
++    "[System.Windows.Forms.Application]::EnableVisualStyles()",
++    "$utf8 = New-Object System.Text.UTF8Encoding $false",
++    "[Console]::OutputEncoding = $utf8",
++    "$OutputEncoding = $utf8",
++    "$d = New-Object System.Windows.Forms.FolderBrowserDialog",
++    `$d.Description = '${title}'`,
++    "$d.ShowNewFolderButton = $true",
++    "try { $d.UseDescriptionForTitle = $true } catch {}",
++    "$f = New-Object System.Windows.Forms.Form",
++    "$f.TopMost = $true",
++    "$f.ShowInTaskbar = $false",
++    "$f.StartPosition = 'Manual'",
++    "$f.Location = New-Object System.Drawing.Point(-32000, -32000)",
++    "$f.Size = New-Object System.Drawing.Size(1, 1)",
++    "$null = $f.Show()",
++    "try { $f.Activate() } catch {}",
++    "$r = $d.ShowDialog($f)",
++    "$f.Close()",
++    "$f.Dispose()",
++    "if ($r -eq [System.Windows.Forms.DialogResult]::OK -and $d.SelectedPath) {",
++    "  [Console]::Out.Write($d.SelectedPath)",
++    "}",
++  ].join("; ")
++}
++
++export function buildWindowsFilePickScript(prompt: string, filter?: string): string {
++  const title = psSingleQuote(prompt)
++  const flt = psSingleQuote(filter || "Executable|*.exe;python.exe;pythonw.exe|All files|*.*")
++  return [
++    "Add-Type -AssemblyName System.Windows.Forms",
++    "Add-Type -AssemblyName System.Drawing",
++    "[System.Windows.Forms.Application]::EnableVisualStyles()",
++    "$utf8 = New-Object System.Text.UTF8Encoding $false",
++    "[Console]::OutputEncoding = $utf8",
++    "$OutputEncoding = $utf8",
++    "$d = New-Object System.Windows.Forms.OpenFileDialog",
++    `$d.Title = '${title}'`,
++    `$d.Filter = '${flt}'`,
++    "$d.CheckFileExists = $true",
++    "$f = New-Object System.Windows.Forms.Form",
++    "$f.TopMost = $true",
++    "$f.ShowInTaskbar = $false",
++    "$f.StartPosition = 'Manual'",
++    "$f.Location = New-Object System.Drawing.Point(-32000, -32000)",
++    "$f.Size = New-Object System.Drawing.Size(1, 1)",
++    "$null = $f.Show()",
++    "try { $f.Activate() } catch {}",
++    "$r = $d.ShowDialog($f)",
++    "$f.Close()",
++    "$f.Dispose()",
++    "if ($r -eq [System.Windows.Forms.DialogResult]::OK -and $d.FileName) {",
++    "  [Console]::Out.Write($d.FileName)",
++    "}",
++  ].join("; ")
++}
++
++async function runWindowsFormsDialog(script: string, failLabel: string): Promise<PickResult> {
++  const exe = resolveWindowsPowerShell()
++  try {
++    const { stdout } = await execFileP(exe, ["-NoProfile", "-STA", "-Command", script], {
++      timeout: PICK_TIMEOUT_MS,
++      windowsHide: true,
++      encoding: "utf8",
++      maxBuffer: 1024 * 1024,
++    })
++    const picked = parsePickerStdout(stdout)
++    return picked ? { path: picked } : { error: "cancelled" }
++  } catch (e: any) {
++    if (e.killed || e.signal) return { error: "选择超时，请重试" }
++    const msg = ((e.stderr || "") + " " + (e.message || "")).toString()
++    return { error: `${failLabel}: ${msg.slice(0, 160)}` }
++  }
++}
++
+ /** Open the OS native folder-picker. Returns {path} on success, {error:"cancelled"} if the
+  *  user dismissed it, or {error} describing the failure. */
+-export async function pickFolderNative(): Promise<PickResult> {
++export async function pickFolderNative(prompt?: string): Promise<PickResult> {
++  const title = (prompt && prompt.trim()) || MARKDOWN_FOLDER_PROMPT
+   try {
+-    if (isMacOS()) return await pickMacOS()
+-    if (isLinux()) return await pickLinux()
+-    if (isWindows()) return await pickWindows()
++    if (isMacOS()) return await pickMacOS(title)
++    if (isLinux()) return await pickLinux(title)
++    if (isWindows()) return await pickWindows(title)
+     return { error: "当前平台不支持图形化选择文件夹,请手动输入路径" }
+   } catch (e: any) {
+     return { error: `选择文件夹失败: ${e.message || String(e)}` }
+@@ -40,10 +168,10 @@ function trimTrailingSlash(p: string): string {
+   return s.length > 1 && s.endsWith("/") ? s.slice(0, -1) : s
+ }
+ 
+-async function pickMacOS(): Promise<PickResult> {
++async function pickMacOS(prompt: string): Promise<PickResult> {
+   // `choose folder` returns an alias; `POSIX path of` yields the path (with a trailing slash).
+   // Cancel → osascript exits non-zero with "User canceled" / error -128 in stderr.
+-  const script = `POSIX path of (choose folder with prompt "${MARKDOWN_FOLDER_PROMPT}")`
++  const script = `POSIX path of (choose folder with prompt "${escapeAppleScriptString(prompt)}")`
+   try {
+     const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", script], { timeout: PICK_TIMEOUT_MS })
+     const p = trimTrailingSlash(stdout)
+@@ -55,12 +183,12 @@ async function pickMacOS(): Promise<PickResult> {
+   }
+ }
+ 
+-async function pickLinux(): Promise<PickResult> {
++async function pickLinux(prompt: string): Promise<PickResult> {
+   // zenity exits 0 with the path on stdout; exit 1 if cancelled; non-zero/ENOENT if missing.
+   try {
+     const { stdout } = await execFileP(
+       "zenity",
+-      ["--file-selection", "--directory", `--title=${MARKDOWN_FOLDER_PROMPT}`],
++      ["--file-selection", "--directory", `--title=${prompt}`],
+       { timeout: PICK_TIMEOUT_MS },
+     )
+     const p = trimTrailingSlash(stdout)
+@@ -73,22 +201,8 @@ async function pickLinux(): Promise<PickResult> {
+   }
+ }
+ 
+-async function pickWindows(): Promise<PickResult> {
+-  const ps =
+-    "Add-Type -AssemblyName System.Windows.Forms; " +
+-    "$d = New-Object System.Windows.Forms.FolderBrowserDialog; " +
+-    `$d.Description = '${MARKDOWN_FOLDER_PROMPT.replace(/'/g, "''")}'; ` +
+-    "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }"
+-  try {
+-    const { stdout } = await execFileP("powershell", ["-NoProfile", "-Command", ps], {
+-      timeout: PICK_TIMEOUT_MS,
+-    })
+-    const p = stdout.trim()
+-    return p ? { path: p } : { error: "cancelled" }
+-  } catch (e: any) {
+-    const msg = ((e.stderr || "") + " " + (e.message || "")).toString()
+-    return { error: `Windows 文件夹对话框失败: ${msg.slice(0, 160)}` }
+-  }
++async function pickWindows(prompt: string): Promise<PickResult> {
++  return runWindowsFormsDialog(buildWindowsFolderPickScript(prompt), "Windows 文件夹对话框失败")
+ }
+ 
+ /**
+@@ -146,23 +260,8 @@ async function pickFileLinux(prompt: string): Promise<PickResult> {
+ }
+ 
+ async function pickFileWindows(prompt: string, filter?: string): Promise<PickResult> {
+-  const title = prompt.replace(/'/g, "''")
+-  const flt = (filter || "Executable|*.exe;python.exe;pythonw.exe|All files|*.*").replace(/'/g, "''")
+-  const ps =
+-    "Add-Type -AssemblyName System.Windows.Forms; " +
+-    "$d = New-Object System.Windows.Forms.OpenFileDialog; " +
+-    `$d.Title = '${title}'; ` +
+-    `$d.Filter = '${flt}'; ` +
+-    "$d.CheckFileExists = $true; " +
+-    "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.FileName }"
+-  try {
+-    const { stdout } = await execFileP("powershell", ["-NoProfile", "-Command", ps], {
+-      timeout: PICK_TIMEOUT_MS,
+-    })
+-    const path = stdout.trim()
+-    return path ? { path } : { error: "cancelled" }
+-  } catch (e: any) {
+-    const msg = ((e.stderr || "") + " " + (e.message || "")).toString()
+-    return { error: `Windows 文件对话框失败: ${msg.slice(0, 160)}` }
+-  }
++  return runWindowsFormsDialog(
++    buildWindowsFilePickScript(prompt, filter),
++    "Windows 文件对话框失败",
++  )
+ }
+diff --git a/companion/tests/folder-picker.test.ts b/companion/tests/folder-picker.test.ts
+new file mode 100644
+index 00000000..2471e437
+--- /dev/null
++++ b/companion/tests/folder-picker.test.ts
+@@ -0,0 +1,73 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import { execFile } from "node:child_process"
++import { promisify } from "node:util"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++import {
++  buildWindowsFilePickScript,
++  buildWindowsFolderPickScript,
++  parsePickerStdout,
++  resolveWindowsPowerShell,
++  WORKSPACE_FOLDER_PROMPT,
++} from "../src/obsidian/folder-picker"
++
++const execFileP = promisify(execFile)
++
++test("windows folder pick script forces UTF-8 stdout and a TopMost owner form", () => {
++  const script = buildWindowsFolderPickScript(WORKSPACE_FOLDER_PROMPT)
++  assert.match(script, /UTF8Encoding/)
++  assert.match(script, /\[Console\]::OutputEncoding/)
++  assert.match(script, /TopMost/)
++  assert.match(script, /ShowDialog\(\$f\)/)
++  assert.match(script, /选择工作区文件夹/)
++  assert.match(script, /\[Console\]::Out\.Write/)
++  assert.doesNotMatch(script, /Write-Output/)
++})
++
++test("windows folder pick script escapes PowerShell single quotes in the prompt", () => {
++  const script = buildWindowsFolderPickScript("it's a folder")
++  assert.match(script, /'it''s a folder'/)
++})
++
++test("windows file pick script uses the same owner + UTF-8 contract", () => {
++  const script = buildWindowsFilePickScript("选择 Python", "Executable|*.exe")
++  assert.match(script, /UTF8Encoding/)
++  assert.match(script, /OpenFileDialog/)
++  assert.match(script, /ShowDialog\(\$f\)/)
++  assert.match(script, /选择 Python/)
++})
++
++test("parsePickerStdout strips BOM, CR, and trailing newline", () => {
++  assert.equal(parsePickerStdout("\uFEFFC:\\Users\\HuChen\\proj\r\n"), "C:\\Users\\HuChen\\proj")
++  assert.equal(parsePickerStdout(Buffer.from("C:\\tmp\\a\n", "utf8")), "C:\\tmp\\a")
++})
++
++test("windows PowerShell UTF-8 stdout round-trips a Chinese path", {
++  skip: process.platform !== "win32" ? "Windows-only encoding contract" : false,
++}, async () => {
++  const dir = path.join(os.tmpdir(), `工作区测试-${Date.now()}`)
++  fs.mkdirSync(dir, { recursive: true })
++  try {
++    const exe = resolveWindowsPowerShell()
++    const escaped = dir.replace(/'/g, "''")
++    const script = [
++      "$utf8 = New-Object System.Text.UTF8Encoding $false",
++      "[Console]::OutputEncoding = $utf8",
++      "$OutputEncoding = $utf8",
++      `[Console]::Out.Write('${escaped}')`,
++    ].join("; ")
++    const { stdout } = await execFileP(exe, ["-NoProfile", "-STA", "-Command", script], {
++      encoding: "utf8",
++      timeout: 15000,
++      windowsHide: true,
++    })
++    const parsed = parsePickerStdout(stdout)
++    assert.equal(parsed, dir)
++    assert.equal(fs.existsSync(parsed), true)
++  } finally {
++    fs.rmSync(dir, { recursive: true, force: true })
++  }
++})
++
+diff --git a/companion/tests/workspace-native-pick.test.ts b/companion/tests/workspace-native-pick.test.ts
+new file mode 100644
+index 00000000..2c5f9df1
+--- /dev/null
++++ b/companion/tests/workspace-native-pick.test.ts
+@@ -0,0 +1,68 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++import {
++  consumeNativePick,
++  pathsEqualForBind,
++  recordNativePick,
++  setWorkspaceRoot,
++  stripWinLongPathPrefix,
++} from "../src/capability/workspace"
++
++test("pathsEqualForBind is case-insensitive on win32 only", () => {
++  assert.equal(
++    pathsEqualForBind("C:\\Users\\HuChen\\proj", "c:\\Users\\HuChen\\proj", "win32"),
++    true,
++  )
++  assert.equal(
++    pathsEqualForBind("/Users/a", "/Users/A", "darwin"),
++    false,
++  )
++  assert.equal(
++    pathsEqualForBind("/Users/a", "/Users/a", "darwin"),
++    true,
++  )
++})
++
++test("pathsEqualForBind strips Windows long-path prefix", () => {
++  assert.equal(stripWinLongPathPrefix("\\\\?\\C:\\Users\\x"), "C:\\Users\\x")
++  assert.equal(
++    pathsEqualForBind("\\\\?\\C:\\Users\\x", "C:\\Users\\x", "win32"),
++    true,
++  )
++})
++
++test("consumeNativePick accepts drive-letter case variants after realpath", () => {
++  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-pick-case-"))
++  try {
++    const real = fs.realpathSync(dir)
++    const flipped = real[0] === real[0].toUpperCase()
++      ? real[0].toLowerCase() + real.slice(1)
++      : real[0].toUpperCase() + real.slice(1)
++    recordNativePick(real)
++    assert.equal(consumeNativePick(flipped), true)
++    assert.equal(consumeNativePick(flipped), false, "pick is single-use")
++  } finally {
++    fs.rmSync(dir, { recursive: true, force: true })
++  }
++})
++
++test("setWorkspaceRoot binds when recorded path differs only by drive-letter case", () => {
++  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-pick-bind-"))
++  try {
++    const real = fs.realpathSync(dir)
++    const flipped = real[0] === real[0].toUpperCase()
++      ? real[0].toLowerCase() + real.slice(1)
++      : real[0].toUpperCase() + real.slice(1)
++    recordNativePick(real)
++    const bound = setWorkspaceRoot(flipped)
++    assert.equal(bound.ok, true, bound.ok ? "" : bound.error)
++    if (bound.ok) {
++      assert.equal(path.normalize(bound.path).toLowerCase(), path.normalize(real).toLowerCase())
++    }
++  } finally {
++    fs.rmSync(dir, { recursive: true, force: true })
++  }
++})

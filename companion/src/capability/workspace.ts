@@ -18,6 +18,27 @@ export function recordNativePick(absPath: string): void {
   lastNativePick = { path: absPath, at: Date.now() }
 }
 
+/** Strip Windows `\\?\` long-path prefix so bind compares the same filesystem path. */
+export function stripWinLongPathPrefix(p: string): string {
+  return p.replace(/^\\\\\?\\/i, "").replace(/^\/\/\?\//, "")
+}
+
+/**
+ * Compare two real paths for native-pick bind.
+ * NTFS is case-insensitive; Node `realpathSync` preserves the *input* drive-letter
+ * casing (`c:\` !== `C:\`), so a strict `!==` rejects a valid picker result on Windows.
+ */
+export function pathsEqualForBind(
+  a: string,
+  b: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const na = stripWinLongPathPrefix(path.normalize(a))
+  const nb = stripWinLongPathPrefix(path.normalize(b))
+  if (platform === "win32") return na.toLowerCase() === nb.toLowerCase()
+  return na === nb
+}
+
 export function consumeNativePick(absPath: string): boolean {
   if (!lastNativePick) return false
   if (Date.now() - lastNativePick.at > PICK_TTL_MS) {
@@ -32,7 +53,7 @@ export function consumeNativePick(absPath: string): boolean {
   } catch {
     return false
   }
-  if (a !== b) return false
+  if (!pathsEqualForBind(a, b)) return false
   lastNativePick = null
   return true
 }

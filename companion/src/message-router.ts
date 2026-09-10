@@ -39,7 +39,7 @@ import { buildContextRefsSystemSegment, type ContextRefInput } from "./threads/c
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
 import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
 import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
-import { pickFolderNative, pickFileNative } from "./obsidian/folder-picker"
+import { pickFolderNative, pickFileNative, WORKSPACE_FOLDER_PROMPT } from "./obsidian/folder-picker"
 import { pinSlashSkill, type SkillEngine } from "./skills/skill-engine"
 import { isSymlinkOrJunction, isUnsafePathComponent } from "./skills/doc-identity"
 import { normalizeHostname } from "./skills/site-matcher"
@@ -5145,7 +5145,10 @@ export async function handleMessage(
     case "workspace.pick": {
       // Optional thread_id: pick + bind in one step (avoids UI race / stale set)
       const owner = typeof rest.thread_id === "string" && rest.thread_id ? { thread_id: rest.thread_id } : {}
-      const result = await pickFolderNative()
+      const result = await pickFolderNativeImpl(WORKSPACE_FOLDER_PROMPT)
+      if (result.error === "cancelled") {
+        return { type: "workspace.pick_result", ...owner, cancelled: true }
+      }
       if (result.error) return { type: "workspace.pick_result", ...owner, error: result.error }
       if (!result.path) return { type: "workspace.pick_result", ...owner, error: "未选择文件夹" }
       const { recordNativePick, setWorkspaceRoot } = await import("./capability/workspace")
