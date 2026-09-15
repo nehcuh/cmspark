@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-08 (lockstep 0.6.7)
+**Updated**: 2026-09-15 (lockstep 0.6.7; VibeSOP 8.5.0 配置已刷新)
 
 ## CMspark — 产品 0.6.7
 
@@ -28,6 +28,7 @@
 
 ## Next
 
+- 重启相关 Agent 以加载 VibeSOP 8.5.0 配置；CMspark `.grok` 生成配置是否纳入版本控制需单独审阅。
 - 重载 unpacked 扩展狗食 PDF 导入 + 「按堆选文」。再编 DMG 才有查重。
 - #230 禁止整票实现。
 

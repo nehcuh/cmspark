@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S109 END (2026-09-15) [cmspark] VibeSOP 8.5.0 配置刷新
+
+- CMspark `.vibe/dist/` 已重建 Claude/Grok/Kimi/OpenCode/Pi 五个平台产物；项目级 `.claude/` 与 `.grok/` 已刷新。
+- 全局 Claude/Grok/Kimi/Pi/OpenCode 配置已同步到 8.5.0；额外 skill、`.grok/workflows`、Claude 本地设置和模型配置保留。
+- 五个平台独立验证通过；Cursor 未配置且未触碰。当前仓库原有未提交内容保留，本次新增的 `.grok/rules/` 与 `vibesop-*` hooks 未自动提交。
+- Next：重启相关 Agent；若要共享生成的 `.grok` 配置，再单独审阅并提交。
+- Recorded: no — 本次是项目配置同步；可复用的 renderer/orphan skill 注意事项已记录在 VibeSOP project-knowledge。
+
 ### S107 (2026-09-08) [pull main · NSIS 换装 · 多路对抗体检]
 - **任务**：拉最新 → `package.sh windows-x64` + `/S` 替换本机 → 多路独立对抗彻底体检。
 - **pull** `[executed]`：stash session.md → `main` ff `7ab36063` → **`4a63de56`**（#485 workspace 归属；落后 270 commits）。stash pop 冲突，保留 origin session.md 后写本条。
