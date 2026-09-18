@@ -1,5 +1,10 @@
 /**
  * #432 P0 companion: terminal.* wire, L2, plan_readonly, cwd, ack watermark, kill.
+ *
+ * Spawn is ALWAYS injected through `__testSetPtySpawn`: no test in this file may reach the real
+ * `loadNodePty()` path or start a real OS process (`$SHELL -l` included). A "production path armed"
+ * test arms that hook with a throwing function instead of removing it — see the `#502 C` free-shell
+ * pin below.
  */
 import test, { after, before, beforeEach } from "node:test"
 import assert from "node:assert/strict"
@@ -591,6 +596,72 @@ test("#502 pty spawn: every malformed file/args shape is refused before any spaw
       assert.deepEqual(calls, [], `${c.name}: spawnFn must not be called`)
       assert.equal(pty.getLivePtyId(), null, `${c.name}: no live session`)
     }
+  } finally {
+    if (previousShell === undefined) delete process.env.SHELL
+    else process.env.SHELL = previousShell
+  }
+})
+
+/**
+ * #502 C free-shell pin, with the spawn hook ARMED. Every other refusal test arms a *passive
+ * recorder*, which absorbs the call and leaves `ok === false` satisfiable by a spawn that merely
+ * failed — i.e. it cannot tell "refused before spawn" from "spawned and died". These cases arm the
+ * hook with a throw instead, so a regression (guard removed / moved after `spawnFn`) can only end in
+ * a `spawn_failed` carrying `SPAWN_MUST_NOT_BE_REACHED`, which the assertions below reject by name.
+ * The hook is still injected (never `loadNodePty()`), so no real process — `$SHELL` included — can
+ * be launched even if the guard regresses.
+ */
+const SPAWN_TRAP = "SPAWN_MUST_NOT_BE_REACHED"
+
+/** Arm the injected spawn hook with a throw, so "reached spawn" is impossible to confuse with
+ *  "spawn failed for a boring reason" (ENOENT, chdir, permissions are all replaced by the trap). */
+function armSpawnTrap(): void {
+  pty.__testResetPtySessions()
+  pty.__testSetPtyPlatform("darwin")
+  pty.__testSetPtySpawn(() => {
+    throw new Error(SPAWN_TRAP)
+  })
+}
+
+/**
+ * The refusal must be the guard's own refusal, produced WITHOUT the trap firing. A real spawn
+ * failure can never satisfy this: the only spawn that can run here throws `SPAWN_TRAP`, and the
+ * guard's message is matched exactly while `spawn_failed` is a different code entirely.
+ */
+function assertRefusedBeforeArmedSpawn(label: string, opts: Record<string, unknown>, match: RegExp): void {
+  armSpawnTrap()
+  let result: ReturnType<typeof pty.spawnPtySession>
+  try {
+    result = pty.spawnPtySession({
+      ...TERMINAL_OPTS,
+      id: `armed-${label}`,
+      ...opts,
+    } as Parameters<typeof pty.spawnPtySession>[0])
+  } catch (e: any) {
+    // The trap escaping the function means the guard never ran at all: report it by name.
+    assert.fail(`${label}: guard did not run; the armed spawn trap surfaced: ${e?.message || String(e)}`)
+  }
+  const refused = refusal(result)
+  // Checked first so the mutation proof names the trap rather than only a code mismatch.
+  assert.ok(
+    !refused.error.includes(SPAWN_TRAP),
+    `${label}: the armed spawn trap surfaced — the guard ran too late (code=${refused.code}, error=${refused.error})`,
+  )
+  assert.equal(refused.code, pty.INVALID_PTY_OPTS, `${label}: the guard's own code, never spawn_failed`)
+  assert.match(refused.error, match, `${label}: the guard's own message`)
+  assert.equal(pty.getLivePtyId(), null, `${label}: no live session`)
+}
+
+test("#502 pty spawn: free-shell refusal holds with the production spawn path armed", () => {
+  const previousShell = process.env.SHELL
+  try {
+    // `$SHELL` is a real absolute path, so a regression would spawn it with the caller's argv
+    // (the free-shell hole) rather than fail for an unrelated ENOENT.
+    process.env.SHELL = "/bin/bash"
+    // The reviewer's case: argv with no `file` used to turn `$SHELL` into a general injector.
+    assertRefusedBeforeArmedSpawn("args-without-file", { args: ["-c", "echo pwned"] }, /explicit absolute file/)
+    // Malformed `file` (relative): also must be refused with the guard's message, not a spawn try.
+    assertRefusedBeforeArmedSpawn("malformed-file", { file: "claude" }, FILE_REFUSAL)
   } finally {
     if (previousShell === undefined) delete process.env.SHELL
     else process.env.SHELL = previousShell
