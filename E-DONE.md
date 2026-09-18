@@ -19,8 +19,8 @@
 
 ## 测了什么
 
-- **companion** [executed]：`npm test` 全量 exit 0；定向 `fleet-latest-tool.test.ts` 8/8（latest_tool 倒序 / 终局 assistant 文本不遮蔽 / function 形兜底 / 空线程省略 / 旧 fake 不炸 / brief 三例：原文、折叠空白截 160、无 user 省略）。
-- **extension** [executed]：`npm test` 全量 **1373/1373 pass**（含 hygiene raw-color gate 绿）；新增 `fleet-strip-latest-tool.test.ts` 6 例 + `fleet-inspect-buffer.test.ts` 8 例。
+- **companion** [executed]：`npm test` 全量 exit 0；定向 `fleet-latest-tool.test.ts` **7/7**（BLOCK 修复后契约：盖章字段直达快照 / 无字段省略不回读 / 旧 fake 不炸 / addMessage 盖章 + brief 160 折叠 / function 形 / 历史插入不重盖 / 第二条 user 不覆写 brief；其中 getMessages 一调即抛锁死快照路径）。
+- **extension** [executed]：`npm test` 全量 **1374/1374 pass**（含 hygiene raw-color gate 绿）；新增 `fleet-strip-latest-tool.test.ts` 6 例 + `fleet-inspect-buffer.test.ts` 9 例（含 MAJOR-M1 真 reducer 测试）。
 - **构建** [executed]：`npm run build`（plasmo chrome-mv3）绿；`build/chrome-mv3-prod/sidepanel.b7741352.js` 含 `fleetGlanceLatestToolLabel` / `inspectedWorkerId` 符号与「本轮输出」文案（bundle 对非 ASCII 做 `\u` 转义，按转义形式验证）。
 - **NEVER 核查** [executed]：`git diff c61285c6..HEAD` 共 11 文件（fleet.ts / thread-manager.ts / 3 个 ext 源文件 + types / agentStore / useWebSocket + 3 测试文件）；diff 内 `run_progress` 0 处；`SET_STREAMING` 仅 1 处代码行为**既有** chat.token 门内主路径（上下文行），其余皆注释/测试；`shouldApplyStreamEvent` 真值表原样再钉 + chat.token case 内门计数 == 1（未放宽）；tool.progress case 无任何 INSPECT 引用（stdout_tail 不转发）。
 
