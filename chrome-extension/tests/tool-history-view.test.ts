@@ -4,6 +4,7 @@ import {
   viewToolHistory,
   liveChipLabel,
   doneChipLabel,
+  groupToolTurnRows,
 } from "../src/sidepanel/components/tool-history-view"
 
 const nav = { id: "1", tool_name: "navigate", status: "success" }
@@ -73,4 +74,55 @@ test("copy helpers", () => {
   assert.equal(liveChipLabel(6, 1), "已完成 6 步 · 1 失败 · 展开")
   assert.equal(doneChipLabel(8, 0), "8 步浏览器操作 · 0 失败 · 展开审计")
   assert.equal(doneChipLabel(8, 1), "8 步浏览器操作 · 1 失败 · 展开审计")
+})
+
+// The store model is ONE role=tool row per tool (live tool.start and hydrated
+// persistence agree). A turn's chip therefore groups consecutive tool rows;
+// any other row starts a new block (spec §2.3: never merge separate turns).
+const toolRow = (id: string, tool_name: string, status: string) => ({
+  id,
+  role: "tool",
+  tool_calls: [{ id, tool_name, status }],
+})
+
+test("groupToolTurnRows merges consecutive tool rows into one block", () => {
+  const items = groupToolTurnRows([
+    { id: "u1", role: "user", content: "hi" },
+    toolRow("1", "navigate", "success"),
+    toolRow("2", "click", "success"),
+    { id: "a1", role: "assistant", content: "answer" },
+  ])
+  assert.deepEqual(
+    items.map((i) => i.kind),
+    ["row", "tools", "row"],
+  )
+  const block = items[1]
+  if (block.kind !== "tools") return
+  assert.equal(block.msgs.length, 2)
+  const tools = block.msgs.flatMap((m: any) => m.tool_calls)
+  const v = viewToolHistory(tools, { threadBusy: false })
+  assert.equal(v.kind, "done")
+  if (v.kind !== "done") return
+  assert.equal(v.tools.length, 2)
+})
+
+test("groupToolTurnRows splits turns at assistant text rows", () => {
+  const items = groupToolTurnRows([
+    toolRow("1", "navigate", "success"),
+    { id: "a1", role: "assistant", content: "mid-turn text" },
+    toolRow("2", "click", "success"),
+  ])
+  assert.deepEqual(
+    items.map((i) => i.kind),
+    ["tools", "row", "tools"],
+  )
+})
+
+test("groupToolTurnRows: tool row without tool_calls stays a plain row", () => {
+  const items = groupToolTurnRows([{ id: "t0", role: "tool" }])
+  assert.deepEqual(
+    items.map((i) => i.kind),
+    ["row"],
+  )
+  assert.deepEqual(groupToolTurnRows([]), [])
 })

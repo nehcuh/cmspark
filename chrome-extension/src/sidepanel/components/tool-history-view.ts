@@ -106,3 +106,43 @@ export function liveChipLabel(completed: number, failed: number): string {
 export function doneChipLabel(steps: number, failed: number): string {
   return `${steps} 步浏览器操作 · ${failed} 失败 · 展开审计`
 }
+
+export type ToolTurnItem<T> =
+  | { kind: "row"; msg: T }
+  | { kind: "tools"; msgs: T[] }
+
+/**
+ * Group the transcript for slice A rendering: consecutive role=tool rows
+ * (one per tool — the live tool.start and hydrated persistence shapes both
+ * use single-entry tool_calls rows) collapse into ONE block per turn, so a
+ * turn renders one audit chip instead of N cards. Any non-tool row (user /
+ * assistant text) starts a new block — never merge separate turns.
+ */
+export function groupToolTurnRows<T extends { role?: unknown; tool_calls?: unknown }>(
+  messages: T[] | null | undefined,
+): ToolTurnItem<T>[] {
+  const list = Array.isArray(messages) ? messages : []
+  const out: ToolTurnItem<T>[] = []
+  let buf: T[] = []
+  const flush = () => {
+    if (buf.length > 0) {
+      out.push({ kind: "tools", msgs: buf })
+      buf = []
+    }
+  }
+  for (const m of list) {
+    const isToolRow =
+      m != null &&
+      (m as { role?: unknown }).role === "tool" &&
+      Array.isArray((m as { tool_calls?: unknown }).tool_calls) &&
+      ((m as { tool_calls: unknown[] }).tool_calls.length ?? 0) > 0
+    if (isToolRow) {
+      buf.push(m)
+    } else {
+      flush()
+      out.push({ kind: "row", msg: m })
+    }
+  }
+  flush()
+  return out
+}

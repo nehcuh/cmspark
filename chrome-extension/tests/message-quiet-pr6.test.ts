@@ -14,7 +14,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { readFileSync, readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 import {
   isCoarsePointer,
@@ -84,7 +84,9 @@ test("PR-6 ChatView wires row className + gated bar + isLast passthrough", () =>
   )
   // call site passes isLast; memo comparator includes it (else the old last row
   // would keep the persistent bar after a new message lands)
-  assert.match(chat, /isLast=\{i === messages\.length - 1\}/)
+  // #502 A: the transcript renders grouped items (tool blocks + rows), so the
+  // passthrough is per-item — `itemIsLast` marks the last render item.
+  assert.match(chat, /isLast=\{itemIsLast\}/)
   assert.match(chat, /prev\.isLast === next\.isLast/)
 })
 
@@ -213,5 +215,49 @@ test("PR-6 no raw hex left behind in the touched shells", () => {
   for (const f of files) {
     const code = stripComments(read(f))
     assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(code), `${f} must stay token-only`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// #502 slice A — tool history folding (source contract)
+// ---------------------------------------------------------------------------
+
+test("#502 ChatView routes tool history through viewToolHistory with an accessible audit chip", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // grouping + chip copy + button semantics (Enter/Space ride the native button)
+  assert.match(chat, /viewToolHistory\(/)
+  assert.match(chat, /groupToolTurnRows\(/)
+  assert.match(chat, /展开审计/)
+  assert.match(chat, /aria-expanded=\{auditOpen\}/)
+  // cards render via the existing ToolCallCard only — no new card component
+  assert.match(chat, /function ToolCallCard\(\{ tc \}/)
+  // fold is view state, never persisted onto the thread
+  assert.ok(!/thread\.collapsed/.test(chat), "fold state must not touch thread.collapsed")
+})
+
+test("#502 tool history stays sidepanel-only (no overlay wiring)", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = []
+    for (const name of readdirSync(join(process.cwd(), dir))) {
+      if (name === "node_modules" || name.startsWith(".")) continue
+      const rel = `${dir}/${name}`
+      if (statSync(join(process.cwd(), rel)).isDirectory()) out.push(...walk(rel))
+      else if (/\.(ts|tsx)$/.test(name)) out.push(rel)
+    }
+    return out
+  }
+  const offenders: string[] = []
+  for (const rel of walk("src")) {
+    if (!/\.tsx?$/.test(rel)) continue
+    if (readFileSync(join(process.cwd(), rel), "utf8").includes("tool-history")) {
+      offenders.push(rel)
+    }
+  }
+  for (const f of offenders) {
+    assert.ok(
+      f === "src/sidepanel/components/ChatView.tsx" ||
+        f === "src/sidepanel/components/tool-history-view.ts",
+      `unexpected tool-history reference outside sidepanel: ${f}`,
+    )
   }
 })
