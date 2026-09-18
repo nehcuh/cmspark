@@ -286,6 +286,21 @@ test("normalizeConfig carries persist_full_tool_history, defaulting off (#502 B)
   assert.equal(normalizeConfig({ ...base, persist_full_tool_history: "yes" }).persist_full_tool_history, false)
 })
 
+test("Settings copy for the archive switch must not promise restoring old bodies (#502 B)", () => {
+  // The switch only affects rows written AFTER it is turned on. Already-compacted
+  // bodies are gone from disk, so copy that implies recovery would be a lie.
+  const src = readFileSync(
+    join(process.cwd(), "src/sidepanel/components/SettingsSlideout.tsx"),
+    "utf8",
+  )
+  const idx = src.indexOf("保存完整操作史")
+  assert.ok(idx > 0, "the archive switch is missing from Settings")
+  const block = src.slice(idx, idx + 1600)
+  assert.match(block, /默认关/)
+  assert.match(block, /不会因打开而(恢复|回填)/, "copy must state that omitted bodies are not restored")
+  assert.match(block, /脱敏/, "copy must state that secrets stay redacted when on")
+})
+
 test("normalizeConfig flattens context_compaction modes", () => {
   assert.equal(
     normalizeConfig({ llm: { context_compaction: "prompt", base_url: "x", model_name: "m", temperature: 0, context_window: 1, api_key: "" } }).context_compaction,
