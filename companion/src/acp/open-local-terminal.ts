@@ -165,6 +165,23 @@ export function takeEmbedIntent(threadId: string | undefined): EmbedIntent | nul
   return { cwd: intent.cwd, file: intent.file, args: [...intent.args] }
 }
 
+/**
+ * Identity of a pending intent, for the peek/take race in `terminal.open`.
+ *
+ * The L2 confirmation copy is built from the PEEKED intent and the process is spawned from the
+ * TAKEN one. If Mode C records a REPLACEMENT for the same thread while the dialog is open, both
+ * sides are truthy (so the EXPIRED and UNCONFIRMED guards stay silent) but they describe DIFFERENT
+ * agents — the user would approve agent A's basename and get agent B. Same file, same cwd and the
+ * same argv IN ORDER means the approved description still holds; anything else fails closed.
+ *
+ * Absent on either side is NOT "same": those two races have their own guards.
+ */
+export function sameEmbedIntent(a: EmbedIntent | null, b: EmbedIntent | null): boolean {
+  if (!a || !b) return false
+  if (a.cwd !== b.cwd || a.file !== b.file) return false
+  return a.args.length === b.args.length && a.args.every((arg, i) => arg === b.args[i])
+}
+
 export function __resetEmbedIntentsForTests(): void {
   embedIntents.clear()
 }

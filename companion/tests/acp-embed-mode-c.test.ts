@@ -21,7 +21,13 @@ const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-embed-c-"))
 process.env.HOME = tempHome
 process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
 process.env.SHELL = process.execPath
+// `$SHELL` stays `process.execPath` (the spawn assertions below expect `$SHELL -l` to be exactly
+// that file), but the REAL `$SHELL -lic env -0` login-shell probe must not fork a host process from
+// a test whose contract is embed gating, not env parity. This is the production-sanctioned skip
+// (agent-env.ts `CMSPARK_SKIP_LOGIN_ENV`), so no assertion here is weakened: `buildAcpAgentEnv`
+// merges `{}` instead of a probed env, which is irrelevant to every intent/consent assertion.
 delete process.env.DEEPSEEK_API_KEY
+process.env.CMSPARK_SKIP_LOGIN_ENV = "1"
 
 let config: typeof import("../src/config")
 let handleMessage: typeof import("../src/message-router").handleMessage
@@ -369,6 +375,29 @@ describe("openLocalTerminalForAgent embed branch", () => {
 
 // ──────────────────────────── C. pending intent store ────────────────────────────
 
+describe("sameEmbedIntent (pure)", () => {
+  const base = { cwd: "/ws", file: "/bin/agent-a", args: ["--prompt", "task"] }
+
+  it("treats a deep-equal copy as the same intent", () => {
+    assert.equal(embed.sameEmbedIntent(base, { ...base, args: [...base.args] }), true)
+  })
+
+  it("distinguishes the executable, the cwd, argument length and argument order", () => {
+    assert.equal(embed.sameEmbedIntent(base, { ...base, file: "/bin/agent-b" }), false)
+    assert.equal(embed.sameEmbedIntent(base, { ...base, cwd: "/other" }), false)
+    assert.equal(embed.sameEmbedIntent(base, { ...base, args: ["--prompt"] }), false)
+    assert.equal(embed.sameEmbedIntent(base, { ...base, args: ["task", "--prompt"] }), false)
+    // Same length, different bytes — the case a `length`-only comparison would miss.
+    assert.equal(embed.sameEmbedIntent(base, { ...base, args: ["--prompt", "tasl"] }), false)
+  })
+
+  it("is false when either side is absent (those races have their own guards)", () => {
+    assert.equal(embed.sameEmbedIntent(base, null), false)
+    assert.equal(embed.sameEmbedIntent(null, base), false)
+    assert.equal(embed.sameEmbedIntent(null, null), false)
+  })
+})
+
 describe("embed intent store", () => {
   const intent = { cwd: "/ws", file: "/bin/agent", args: ["a", "b"] }
 
@@ -550,7 +579,9 @@ describe("terminal.open consumes a recorded embed intent", () => {
       panel({ onConfirm: () => embed.__testAgeEmbedIntents(embed.EMBED_INTENT_TTL_MS + 1) }) as never,
     )
     assert.equal(r.type, "terminal.error")
-    assert.match(String(r.error), /EMBED_INTENT/)
+    // Pin the EXACT code: `/EMBED_INTENT/` is also satisfied by EMBED_INTENT_UNCONFIRMED (and by any
+    // future EMBED_INTENT_* code), so a rename/swap of the two guards would pass unnoticed.
+    assert.match(String(r.error), /^EMBED_INTENT_EXPIRED:/)
     assert.deepEqual(spawnCalls, [])
   })
 
@@ -603,6 +634,72 @@ describe("terminal.open consumes a recorded embed intent", () => {
     assert.equal(second.type, "terminal.opened")
     assert.match(capture.codes[0], /open embedded PTY/, "the retry must ask about the embed, not a shell")
     assert.deepEqual(spawnCalls, [{ file: realBin(), args: ["T-RETRY"] }])
+  })
+
+  it("a REPLACED intent between peek and take fails closed: the dialog named agent A, not B", async () => {
+    // The third consent race, and the only one where BOTH intents exist. Mode C can start a second
+    // run for the same thread while the L2 dialog is open; `recordEmbedIntent` replaces the entry in
+    // place, so the EXPIRED guard (take is null) and the UNCONFIRMED guard (peek is null) both stay
+    // silent. Spawning the taken intent would run a binary + argv the approved copy never named.
+    const svc = services()
+    const thr = boundThread(svc, realWs())
+    const capture: ConfirmCapture = { codes: [], order: [] }
+    const otherBin = path.join(tempHome, "fake-codex")
+    fs.writeFileSync(otherBin, "#!/bin/sh\nexit 0\n", { mode: 0o755 })
+    embed.recordEmbedIntent(thr.id, { cwd: realWs(), file: realBin(), args: ["A-APPROVED"] })
+    const r = await handleMessage(
+      { type: "terminal.open", id: "e12", user_gesture: true, thread_id: thr.id },
+      svc,
+      panel({
+        capture,
+        onConfirm: () =>
+          embed.recordEmbedIntent(thr.id, {
+            cwd: realWs(),
+            file: fs.realpathSync(otherBin),
+            args: ["B-NOT-APPROVED"],
+          }),
+      }) as never,
+    )
+    // What the user approved: agent A's basename, one argv entry.
+    assert.ok(capture.codes[0].includes(path.basename(agentBin)), "the approved copy must name agent A")
+    assert.match(capture.codes[0], /参数 1 个/)
+    assert.equal(r.type, "terminal.error")
+    assert.match(String(r.error), /^EMBED_INTENT_REPLACED:/)
+    // Zero spawns of ANY kind: not the approved agent, not the replacement, not `$SHELL -l`.
+    assert.deepEqual(spawnCalls, [], "neither A nor B may spawn (the recorder was never called)")
+    assert.equal(r.id, "e12", "the refusal belongs to the requesting tab")
+  })
+
+  it("the replaced refusal restores the NEWER intent, so the retry is that agent and not a shell", async () => {
+    // Same choice as the UNCONFIRMED guard: the entry that survives is the one the panel's CURRENT
+    // state points at, so the re-click the error text asks for shows the embed copy for that agent.
+    // Restoring the STALE (approved) intent instead would make the next click re-run A silently.
+    const svc = services()
+    const thr = boundThread(svc, realWs())
+    const otherBin = path.join(tempHome, "fake-codex")
+    fs.writeFileSync(otherBin, "#!/bin/sh\nexit 0\n", { mode: 0o755 })
+    const realOther = fs.realpathSync(otherBin)
+    embed.recordEmbedIntent(thr.id, { cwd: realWs(), file: realBin(), args: ["A"] })
+    const first = await handleMessage(
+      { type: "terminal.open", id: "e13", user_gesture: true, thread_id: thr.id },
+      svc,
+      panel({
+        onConfirm: () => embed.recordEmbedIntent(thr.id, { cwd: realWs(), file: realOther, args: ["B"] }),
+      }) as never,
+    )
+    assert.match(String(first.error), /^EMBED_INTENT_REPLACED:/)
+    assert.deepEqual(spawnCalls, [])
+    assert.deepEqual(embed.peekEmbedIntent(thr.id), { cwd: realWs(), file: realOther, args: ["B"] })
+    const capture: ConfirmCapture = { codes: [], order: [] }
+    const second = await handleMessage(
+      { type: "terminal.open", id: "e14", user_gesture: true, thread_id: thr.id },
+      svc,
+      panel({ capture }) as never,
+    )
+    assert.equal(second.type, "terminal.opened")
+    assert.match(capture.codes[0], /open embedded PTY/, "the retry must ask about the embed, not a shell")
+    assert.ok(capture.codes[0].includes(path.basename(otherBin)))
+    assert.deepEqual(spawnCalls, [{ file: realOther, args: ["B"] }])
   })
 
   it("a wire argv may refine the intent's args but never the executable", async () => {
@@ -787,6 +884,12 @@ describe("manager Mode C embed gating", () => {
     const labels = (session.timeline || []).map((i: { label: string }) => i.label).join("\n")
     assert.match(labels, /终端/)
     assert.match(labels, /点击/)
+    // The instruction must name the button the panel RENDERS, not a shorter nickname for it
+    // (the cross-package lockstep lock below pins the exact label against the extension source).
+    assert.ok(
+      labels.includes("请点击面板「在本插件打开终端」"),
+      `the timeline must name the real button: ${labels}`,
+    )
     assert.doesNotMatch(labels, /已打开/)
     assert.doesNotMatch(labels, /EMBED-GOAL-SENTINEL/)
   })
@@ -910,5 +1013,70 @@ describe("manager source locks (#502 C Option 1)", () => {
     assert.doesNotMatch(block, /prompt/i)
     assert.doesNotMatch(block, /\bargs\b/)
     assert.doesNotMatch(block, /task/i)
+  })
+})
+
+// ───────── E2. the instruction names the button the Side Panel RENDERS (#502 C NIT 3) ─────────
+
+/**
+ * The companion tells the user to click a button in the Side Panel. If it names a SHORTER nickname
+ * for that button (「终端」) than the label actually painted (「在本插件打开终端」), the instruction
+ * points at a control the user cannot find — and on this path the recorded intent is only claimable
+ * by that one button, so the dead end is functional, not cosmetic. The label is read from the
+ * extension source, so a rename on EITHER side fails this lock.
+ */
+describe("embed button-label lockstep with the Side Panel", () => {
+  const repoFile = (...parts: string[]): string => {
+    const candidates = [
+      path.join(__dirname, "..", "..", "..", ...parts),
+      path.resolve(process.cwd(), "..", ...parts),
+    ]
+    for (const p of candidates) if (fs.existsSync(p)) return p
+    throw new Error(`source not found: ${candidates.join(" | ")}`)
+  }
+  const companionFile = (...parts: string[]): string => {
+    const candidates = [
+      path.join(__dirname, "..", "..", "src", ...parts),
+      path.join(process.cwd(), "src", ...parts),
+    ]
+    for (const p of candidates) if (fs.existsSync(p)) return p
+    throw new Error(`source not found: ${candidates.join(" | ")}`)
+  }
+  const companionSrc = (...parts: string[]): string =>
+    fs.readFileSync(companionFile(...parts), "utf8")
+  const extensionCopy = fs.readFileSync(
+    repoFile("chrome-extension", "src", "sidepanel", "coding-handoff", "copy.ts"),
+    "utf8",
+  )
+  const buttonLabel = (() => {
+    const m = extensionCopy.match(/panelOpenEmbeddedTerminal:\s*"([^"]+)"/)
+    assert.ok(m, "the Side Panel must expose its terminal-button label as a constant")
+    return m![1]
+  })()
+
+  it("reads the label the panel renders", () => {
+    assert.equal(buttonLabel, "在本插件打开终端")
+  })
+
+  it("the timeline instruction names that label", () => {
+    const mgr = companionSrc("acp", "manager.ts")
+    console.error("DBG", companionSrc("acp","manager.ts"), JSON.stringify(mgr), mgr.includes(`请点击面板「${buttonLabel}」`), mgr.indexOf("请点击面板"), process.cwd(), __dirname)
+    assert.ok(
+      mgr.includes(`请点击面板「${buttonLabel}」`),
+      `manager.ts must name 「${buttonLabel}」`,
+    )
+    assert.doesNotMatch(mgr, /「终端」/, "no shorter nickname for the button")
+  })
+
+  it("all three consent-race refusals name that label", () => {
+    const handler = companionSrc("pty", "handler.ts")
+    const needle = `请重新点击面板「${buttonLabel}」按钮`
+    // EXPIRED, UNCONFIRMED and REPLACED: every refusal whose only remedy is "click it again".
+    assert.equal(
+      handler.split(needle).length - 1,
+      3,
+      `every re-click instruction must name the rendered button: ${needle}`,
+    )
+    assert.doesNotMatch(handler, /「终端」/, "no shorter nickname for the button")
   })
 })

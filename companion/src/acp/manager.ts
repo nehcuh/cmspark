@@ -253,7 +253,7 @@ export class AcpManager {
           this.pushTimeline(session, [
             timelineItem(
               "status",
-              "内嵌终端待启动：请点击面板「终端」按钮（ACP 启动不会自动弹出终端）",
+              "内嵌终端待启动：请点击面板「在本插件打开终端」按钮（ACP 启动不会自动弹出终端）",
               { status: "pending", detail: r.detail },
             ),
           ])

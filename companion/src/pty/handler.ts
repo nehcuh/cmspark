@@ -5,7 +5,7 @@ import { CodeReviewService } from "../code-review/service"
 import { reviewPrompt } from "../code-review/report"
 import type { ThreadManager } from "../threads/thread-manager"
 import * as path from "path"
-import { peekEmbedIntent, recordEmbedIntent, takeEmbedIntent } from "../acp/open-local-terminal"
+import { peekEmbedIntent, recordEmbedIntent, sameEmbedIntent, takeEmbedIntent } from "../acp/open-local-terminal"
 import { resolveTerminalStartCwd } from "./cwd"
 import {
   ackPty,
@@ -176,7 +176,7 @@ export async function handleTerminalMessage(
     if (embedIntent && !intent) {
       // The copy promised an agent; the intent expired between confirm and spawn. Spawning
       // `$SHELL -l` here would run what the user did NOT approve, so fail closed instead.
-      return deny("EMBED_INTENT_EXPIRED: 内嵌 Agent 启动意图已失效，请重新点击终端按钮", { id })
+      return deny("EMBED_INTENT_EXPIRED: 内嵌 Agent 启动意图已失效，请重新点击面板「在本插件打开终端」按钮", { id })
     }
     if (intent && !embedIntent) {
       // The mirror image of the guard above. Mode C can RECORD an intent while the L2 dialog is
@@ -189,7 +189,24 @@ export async function handleTerminalMessage(
       // re-click the error text asks for really does show the embed copy and ask again.
       recordEmbedIntent(threadId, intent)
       return deny(
-        "EMBED_INTENT_UNCONFIRMED: 确认期间新出现了内嵌 Agent 启动意图，本次确认的是本机用户 shell，未授权启动 Agent，故已拒绝（未降级为登录 shell）。请重新点击面板「终端」按钮，按提示确认内嵌 Agent 后再启动",
+        "EMBED_INTENT_UNCONFIRMED: 确认期间新出现了内嵌 Agent 启动意图，本次确认的是本机用户 shell，未授权启动 Agent，故已拒绝（未降级为登录 shell）。请重新点击面板「在本插件打开终端」按钮，按提示确认内嵌 Agent 后再启动",
+        { id },
+      )
+    }
+    if (embedIntent && intent && !sameEmbedIntent(embedIntent, intent)) {
+      // The third race, and the only one where BOTH sides are present: a REPLACEMENT intent. Mode C
+      // can start a second run for this thread while the dialog is open, and `recordEmbedIntent`
+      // overwrites the entry in place — so take returns a different `file`/`args`/`cwd` than the ones
+      // the copy named. The EXPIRED guard sees a non-null take and the UNCONFIRMED guard sees a
+      // non-null peek, so neither fires; spawning would run an agent whose basename and argv the user
+      // never approved (approved A, got B). Fail CLOSED for both: neither A nor B spawns, and not
+      // `$SHELL -l` either. The TAKEN (newer) intent is put back — the same choice the UNCONFIRMED
+      // guard makes — so the re-click the error text asks for shows the embed copy for the agent the
+      // panel's CURRENT state points at. Restoring the stale approved intent would instead let the
+      // next click re-run A without ever having described it again.
+      recordEmbedIntent(threadId, intent)
+      return deny(
+        "EMBED_INTENT_REPLACED: 确认期间内嵌 Agent 启动意图已被替换为另一个 Agent，本次确认的 Agent 未获授权启动，替换后的 Agent 也未经确认，故两者均未启动。请重新点击面板「在本插件打开终端」按钮，按提示确认当前 Agent 后再启动",
         { id },
       )
     }
