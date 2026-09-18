@@ -316,14 +316,43 @@ test("plainErrorResult drops extra keys next to INTERRUPTED", () => {
   assert.ok(!JSON.stringify(result).includes("SECRET_ENV"))
 })
 
-test("benign get_page_text still persists text", () => {
+test("#502 B default tier: get_page_text persists a stub, not the text", () => {
   const msg = createToolResultMessage(
     "abc123",
     { id: "c2", function: { name: "get_page_text" } },
     { success: true, data: { text: "hello page" } },
     { tabId: 1 },
   )
-  assert.ok(msg.content.includes("hello page"))
+  // #502 B reversed this test's original expectation: without
+  // persist_full_tool_history the body is compacted. The ROW must survive —
+  // rebuild pairing and the heal flow both depend on it.
+  assert.equal(msg.role, "tool")
+  assert.equal(msg.tool_calls[0].tool_name, "get_page_text")
+  const parsed = JSON.parse(msg.content)
+  assert.equal(parsed.redacted, true)
+  assert.equal(typeof parsed.len, "number")
+  assert.equal(msg.content.includes("hello page"), false)
+})
+
+test("#502 B switch on: the #255 gated release is restored", () => {
+  // Same call path with the archive tier enabled — this is the behaviour the
+  // previous version of the test above pinned. Config is read at write time.
+  const { getConfig, saveConfig, initDataDir } = require("../src/config")
+  return initDataDir().then(() => {
+    const before = getConfig().persist_full_tool_history
+    try {
+      saveConfig({ persist_full_tool_history: true })
+      const msg = createToolResultMessage(
+        "abc124",
+        { id: "c3", function: { name: "get_page_text" } },
+        { success: true, data: { text: "hello page" } },
+        { tabId: 1 },
+      )
+      assert.ok(msg.content.includes("hello page"))
+    } finally {
+      saveConfig({ persist_full_tool_history: before === true })
+    }
+  })
 })
 
 // --- INTERRUPTED passthrough (heal fillers must keep error_code on disk) ---

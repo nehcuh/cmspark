@@ -269,7 +269,80 @@ export function redactToolPayloadForPersistence(
   return { params: safeParams, result: safeResult }
 }
 
-/** OpenAI-shaped assistant tool_call as stored on the persisted assistant row. */
+/**
+ * #502 B archive tier.
+ *
+ * Wraps the redaction SoT above and then, when `persistFull` is false (the
+ * product default), collapses the NON-SENSITIVE payload to an audit stub:
+ *
+ *   result: { success?, redacted: true, len, sha256 }
+ *   params: { redacted: true, len, sha256 }
+ *
+ * Shape reuse is deliberate: the side panel already recognises this envelope
+ * (redacted-stub-utils `extractRedactedStub`, shapes A/B) and renders it as
+ * "出于安全未持久化", so a compacted archive needs no new UI dialect.
+ *
+ * CARVE-OUTS (apply in BOTH modes):
+ *  - Sensitive classes keep their own #255 handling — cookie values, exec /
+ *    host / osascript bodies and MCP secrets are folded by the SoT call above,
+ *    and collapsing on top of that is strictly less data. The switch therefore
+ *    only ever decides whether a NON-sensitive body is written, never whether a
+ *    secret is redacted.
+ *  - FAILURE results (`success === false`) are returned verbatim. A failure
+ *    envelope is the model's DIAGNOSTIC, not an intermediate operation: it is
+ *    re-fed to the model after a reload, and it carries the machine-readable
+ *    unlock contract (SITE_OP_BANNED's `data.error_code` / `suggested_action`,
+ *    the heal flow's `error_code: INTERRUPTED`). Collapsing it would leave the
+ *    model retrying blindly — the same "fake failure" trap that makes an
+ *    omitted tool row worse than a small one. Envelopes are already bounded and
+ *    redacted by the SoT (exec data collapsed, read-tier error truncated to
+ *    200 chars, cookie values hashed), so this is not a new leak surface, and
+ *    it is byte-identical to pre-#502 behaviour for failures.
+ *
+ * Only `success === true` payloads are compacted — that is the page text / DOM
+ * / form fill / screenshot body the ticket is about.
+ *
+ * Params are stubbed as well: they are the same intermediate operation as the
+ * result (the selector typed into, the fill value, the URL fetched), and this
+ * ticket's goal is "tool name + success + size + fingerprint only". The row
+ * itself — including tool_name and the tool_call id — is never dropped.
+ */
+export function archiveToolPayload(
+  toolName: string,
+  params: unknown,
+  result: unknown,
+  persistFull: boolean,
+): { params: unknown; result: unknown } {
+  // Redaction first, unconditionally: the switch never bypasses a fold.
+  const safe = redactToolPayloadForPersistence(toolName, params, result)
+  if (persistFull) return safe
+  // Failure envelopes stay verbatim (diagnostics + heal contract).
+  if (!isSuccessfulResult(safe.result)) return safe
+  return {
+    params: safe.params === undefined ? undefined : stubPayload(safe.params),
+    result: safe.result === undefined ? undefined : collapseResult(safe.result),
+  }
+}
+
+/**
+ * Only an explicit `success: true` is a compactable body. Anything else is
+ * treated as a diagnostic envelope (including a missing `success` field, which
+ * the tool layer only ever omits on non-standard shapes) — fail-open for
+ * readability, never for secrets: the SoT redaction already ran.
+ */
+function isSuccessfulResult(result: unknown): boolean {
+  return !!result && typeof result === "object" && (result as { success?: unknown }).success === true
+}
+
+/** {redacted, len, sha256} without collapseResult's result-only `success` field. */
+function stubPayload(payload: unknown): { redacted: true; len: number; sha256: string } {
+  const raw = typeof payload === "string" ? payload : JSON.stringify(payload ?? null)
+  return { redacted: true, len: raw.length, sha256: shortHash(raw) }
+}
+
+/**
+ * OpenAI-shaped assistant tool_call as stored on the persisted assistant row.
+ */
 export type AssistantToolCallForPersist = {
   id: string
   type: "function"

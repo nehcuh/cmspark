@@ -347,6 +347,15 @@ export interface CompanionConfig {
   /** Session index / digest lazy extract (Wave B). Default enabled=false. */
   thread_digest?: ThreadDigestConfig
   /**
+   * #502 B archive tier. Default false: the durable thread JSON keeps tool rows
+   * as stubs (tool name + success + payload length/fingerprint) instead of the
+   * full params/result bodies. true restores the #255 behaviour (read-tier keeps
+   * its gated release). Sensitive classes (cookies / shell / host_* / osascript /
+   * MCP secrets) fold in BOTH modes — this switch never relaxes redaction.
+   * Omitted on disk → deepMerge leaves it undefined = off (fail-closed).
+   */
+  persist_full_tool_history?: boolean
+  /**
    * Outbound MCP (ADR-022) packaging. When require_grant is true, loopback
    * HTTP invoke/disclosure accept only CMSPARK_OUTBOUND_GRANT (cmg_…) tokens —
    * never Extension ws_secret (L4+ dual-review lock).
@@ -475,6 +484,8 @@ const defaultConfig: CompanionConfig = {
     on_idle_hours: 24,
     max_per_day: 20,
   },
+  // #502 B: archive tier — stubs by default. See CompanionConfig docs above.
+  persist_full_tool_history: false,
   capability_profile: "community",
   outbound_mcp: {
     require_grant: true,

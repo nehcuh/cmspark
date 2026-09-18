@@ -20,6 +20,7 @@ const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-m2-untrusted-"))
 
 let chatCreate: typeof import("../src/llm/adapter").chatCreate
 let createToolResultMessage: typeof import("../src/llm/adapter").createToolResultMessage
+let saveConfig: typeof import("../src/config").saveConfig
 let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
 let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
 let server: http.Server
@@ -52,6 +53,7 @@ before(async () => {
   const config = await import("../src/config")
   chatCreate = adapter.chatCreate
   createToolResultMessage = adapter.createToolResultMessage
+  saveConfig = config.saveConfig
   ThreadManager = threadManager.ThreadManager
   SkillEngine = skillEngine.SkillEngine
   await config.initDataDir()
@@ -217,7 +219,17 @@ test("replay path wraps prior-turn page content on regeneration", async () => {
     content: "reading",
     tool_calls: [{ id: "call_replay_1", function: { name: "get_page_text", arguments: "{}" } }],
   })
-  manager.addMessage(thread.id, createToolResultMessage(thread.id, { id: "call_replay_1", function: { name: "get_page_text" } }, { success: true, data: { text: "stored page content from prior turn" } }))
+  // #502 B: this test is about the REPLAY wrap of stored page content, so the
+  // prior turn must have archived the body — build the row with the archive tier
+  // on (config is read at write time). Restored right after the row is built.
+  saveConfig({ persist_full_tool_history: true })
+  const priorToolRow = createToolResultMessage(
+    thread.id,
+    { id: "call_replay_1", function: { name: "get_page_text" } },
+    { success: true, data: { text: "stored page content from prior turn" } },
+  )
+  saveConfig({ persist_full_tool_history: false })
+  manager.addMessage(thread.id, priorToolRow as any)
 
   await chatCreate({
     threadId: thread.id,

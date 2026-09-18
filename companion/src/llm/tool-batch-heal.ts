@@ -1,9 +1,28 @@
 // Heal unpaired assistant.tool_calls on disk so the next rebuild is schema-valid
 // without stripping successful tools. Pure helpers + a duck-typed persist.
 
-import { redactToolPayloadForPersistence } from "../security/tool-persistence-redact"
+import { archiveToolPayload } from "../security/tool-persistence-redact"
 
 export const INTERRUPTED_ERROR_CODE = "INTERRUPTED"
+
+/**
+ * #502 B: resolve the archive tier at WRITE time (never cached at module load —
+ * the user can flip the switch mid-session and `saveConfig` refreshes the
+ * config cache immediately).
+ *
+ * Fail-CLOSED: any config-read failure (uninitialised data dir, corrupt file)
+ * returns false = stubs. Persisting less is the safe direction here, and it also
+ * keeps unit tests that never initialise a data dir deterministic.
+ */
+function persistFullToolHistory(): boolean {
+  try {
+    // Lazy require avoids a module-load cycle: config → ... → tool-batch-heal.
+    const { getConfig } = require("../config") as typeof import("../config")
+    return getConfig().persist_full_tool_history === true
+  } catch {
+    return false
+  }
+}
 
 export function createToolResultMessage(
   threadId: string,
@@ -12,10 +31,11 @@ export function createToolResultMessage(
   params: any = {},
 ) {
   const toolName = String(toolCall.function?.name || toolCall.name || "")
-  const { params: safeParams, result: safeResult } = redactToolPayloadForPersistence(
+  const { params: safeParams, result: safeResult } = archiveToolPayload(
     toolName,
     params,
     result,
+    persistFullToolHistory(),
   )
   return {
     thread_id: threadId,

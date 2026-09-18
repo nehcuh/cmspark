@@ -36,6 +36,19 @@ after(() => {
 
 // --- createToolResultMessage tests ---
 
+/**
+ * #502 B: the archive tier is global config read at write time. These shape
+ * tests need both tiers, so toggle explicitly and always restore.
+ */
+function withFullToolHistory<T>(fn: () => T): T {
+  saveConfig({ persist_full_tool_history: true })
+  try {
+    return fn()
+  } finally {
+    saveConfig({ persist_full_tool_history: false })
+  }
+}
+
 test("createToolResultMessage produces role=tool message with correct linkage", () => {
   const toolCall = {
     id: "call_test_1",
@@ -46,14 +59,22 @@ test("createToolResultMessage produces role=tool message with correct linkage", 
 
   const msg = createToolResultMessage("thread-01", toolCall, result, params)
 
+  // Linkage is tier-independent and must always hold (rebuild pairs by id).
   assert.equal(msg.thread_id, "thread-01")
   assert.equal(msg.role, "tool")
-  assert.equal(msg.content, JSON.stringify(result))
   assert.equal(msg.tool_calls.length, 1)
   assert.equal(msg.tool_calls[0].id, "call_test_1")
   assert.equal(msg.tool_calls[0].tool_name, "get_page_text")
-  assert.deepEqual(msg.tool_calls[0].params, params)
-  assert.deepEqual(msg.tool_calls[0].result, result)
+  // #502 B default tier: the body is compacted (see archive-stub-persist.test.ts).
+  assert.equal(JSON.parse(msg.content).redacted, true)
+  assert.equal(msg.content.includes("hello world"), false)
+  // ...and switch-on restores the pass-through shape this test used to pin.
+  withFullToolHistory(() => {
+    const full = createToolResultMessage("thread-01", toolCall, result, params)
+    assert.equal(full.content, JSON.stringify(result))
+    assert.deepEqual(full.tool_calls[0].params, params)
+    assert.deepEqual(full.tool_calls[0].result, result)
+  })
 })
 
 test("createToolResultMessage handles toolCall with flat name field", () => {
@@ -66,7 +87,11 @@ test("createToolResultMessage handles toolCall with flat name field", () => {
   const msg = createToolResultMessage("thread-02", toolCall, result)
 
   assert.equal(msg.tool_calls[0].tool_name, "screenshot")
-  assert.equal(msg.content, JSON.stringify(result))
+  assert.equal(msg.content.includes("base64..."), false) // #502 B default tier
+  withFullToolHistory(() => {
+    const full = createToolResultMessage("thread-02", toolCall, result)
+    assert.equal(full.content, JSON.stringify(result))
+  })
 })
 
 test("createToolResultMessage handles empty params (defaults to {})", () => {
@@ -125,10 +150,17 @@ test("createToolResultMessage with nested result data preserves structure", () =
 
   const msg = createToolResultMessage("thread-06", toolCall, result)
 
-  const parsed = JSON.parse(msg.content)
-  assert.equal(parsed.data.html, "<html><body>test</body></html>")
-  assert.equal(parsed.data.title, "Test Page")
-  assert.deepEqual(msg.tool_calls[0].result, result)
+  // #502 B default tier compacts the body but must keep the row + its linkage.
+  assert.equal(msg.tool_calls[0].tool_name, "get_page_html")
+  assert.equal(JSON.parse(msg.content).redacted, true)
+  assert.equal(msg.content.includes("<html><body>test</body></html>"), false)
+  withFullToolHistory(() => {
+    const full = createToolResultMessage("thread-06", toolCall, result)
+    const parsed = JSON.parse(full.content)
+    assert.equal(parsed.data.html, "<html><body>test</body></html>")
+    assert.equal(parsed.data.title, "Test Page")
+    assert.deepEqual(full.tool_calls[0].result, result)
+  })
 })
 
 // --- Thread message history pairing tests ---
