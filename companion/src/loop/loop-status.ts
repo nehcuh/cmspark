@@ -11,7 +11,9 @@ import { evidenceItems } from "./completion-predicate"
 import type { RunProgress } from "../threads/run-progress"
 import { sanitizeLoopState, type LoopState, type LoopStatus } from "./loop-state"
 import type { ImpossibleReport, RouteSteer } from "./route-engine"
-import { tierShortLabel, type AutopilotTier } from "../security/autopilot-tier"
+import type { AutopilotTier } from "../security/autopilot-tier"
+import { tierShortLabel } from "../security/autopilot-tier"
+import type { RunTerminal } from "./loop-state"
 
 export type LoopPhase =
   | "advancing"
@@ -77,6 +79,13 @@ export type LoopStatusArgs = {
   impossible: ImpossibleReport | null
   pendingConfirms: number
   tier: AutopilotTier
+  /**
+   * #502 D-G1: how the run that just ended terminated. Only "round_limit"
+   * changes the copy — it means the step budget ran out while work remained, so
+   * the loop is between segments (nothing is running yet). Every other terminal
+   * keeps its existing rendering.
+   */
+  lastTerminal?: RunTerminal
 }
 
 export function deriveLoopStatusView(args: LoopStatusArgs): LoopStatusView | null {
@@ -142,6 +151,22 @@ export function deriveLoopStatusView(args: LoopStatusArgs): LoopStatusView | nul
       phase: "rerouting",
       label: "换路中",
       detail: `CDP 已被机器封禁，下一轮改走${target === "host_computer" ? "host_computer（仍走既有 L2）" : target}；两次无视将申报受阻。`,
+    }
+  }
+  // #502 D-G1: the run that just ended exhausted the 100-step budget. Nothing
+  // is running at this instant (the continuation is queued for the drain), so
+  // 「推进中」 would be the same lie the old tombstone told. Only this FALLBACK
+  // path is affected: confirm / blocked / reroute / done above all outrank a
+  // step-budget note, and any other terminal renders exactly as before.
+  if (args.lastTerminal === "round_limit") {
+    return {
+      ...base,
+      phase: "advancing",
+      label: `这一段跑完了 ${done}/${total}，接着下一段`,
+      detail:
+        total === 0
+          ? "上一段用满了 100 步；已要求模型先提出清单。"
+          : "上一段用满了 100 步，接着执行未勾选项。",
     }
   }
   return {

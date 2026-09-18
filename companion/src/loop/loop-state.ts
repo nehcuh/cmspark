@@ -163,7 +163,8 @@ export function loopBudgetExceeded(
 export type RunTerminal =
   | "aborted" // user stop / supersede — abort path owns the state transition
   | "security_halt" // shouldStop severe: security | non_recoverable → HALT, never auto-continue
-  | "circuit_breaker" // 100-round cap / continuous-failure / same-tool failure breakers
+  | "circuit_breaker" // continuous-failure / same-tool failure breakers (no auto-continue)
+  | "round_limit" // #502 D-G1: 100-round cap = run boundary, task continues
   | "error" // overflow / auth / structural / tool-exception terminal chat.error
   | null
 
