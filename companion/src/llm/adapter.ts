@@ -1175,7 +1175,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       thread_id: threadId,
       role: "assistant",
       content: draft.content,
-      tool_calls: redactAssistantToolCallsForPersistence(assistantMsg),
+      // #502 B: the assistant row carries the other copy of the tool arguments
+      // (selector / fill text / evaluate code / URL). Same archive tier as the
+      // tool-result row, read at persist time so a mid-session toggle applies to
+      // the next row. Read on every draft so it is never cached at module load.
+      tool_calls: redactAssistantToolCallsForPersistence(assistantMsg, {
+        persistFull: getConfig().persist_full_tool_history === true,
+      }),
     }
     if (draft.reasoning) savedMsg.reasoning_content = draft.reasoning
     if (draft.truncated) savedMsg.truncated = true

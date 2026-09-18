@@ -353,24 +353,45 @@ export type AssistantToolCallForPersist = {
  * Redact assistant tool_calls.arguments before durable thread JSON persist.
  * Clones; does not mutate in-flight LLM rows. Invalid JSON is replaced with a
  * stub — never stored raw (truncated streams can carry partial secrets).
+ *
+ * #502 B archive tier (`opts.persistFull`):
+ *  - false — the DEFAULT, and deliberately fail-closed — collapses the arguments
+ *    to `{redacted:true, len}`. Arguments are the second copy of the same
+ *    intermediate operation the tool-result row carries (selector, fill text,
+ *    evaluate code, fetched URL), so the product default drops the body here too.
+ *  - true — the #255 behaviour: sensitive fields folded, the rest kept.
+ *
+ * `id` and `function.name` survive BOTH tiers: rebuildMessagesFromHistory pairs
+ * assistant.tool_calls to tool rows by id, and the panel / audit key on the name.
+ * Invalid-JSON arguments keep their own `_redacted:"invalid_json"` stub in both
+ * tiers — it carries no payload and is a better diagnostic than a generic stub.
  */
 export function redactAssistantToolCallsForPersistence(
   toolCalls: readonly AssistantToolCallForPersist[] | null | undefined,
+  opts?: { persistFull?: boolean },
 ): AssistantToolCallForPersist[] {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return []
-  return toolCalls.map((tc) => redactOneAssistantToolCall(tc))
+  const persistFull = opts?.persistFull === true
+  return toolCalls.map((tc) => redactOneAssistantToolCall(tc, persistFull))
 }
 
 function redactOneAssistantToolCall(
   tc: AssistantToolCallForPersist,
+  persistFull: boolean,
 ): AssistantToolCallForPersist {
   const name = typeof tc?.function?.name === "string" ? tc.function.name : ""
   const rawArgs = typeof tc?.function?.arguments === "string" ? tc.function.arguments : ""
   let argumentsOut: string
   try {
     const params = JSON.parse(rawArgs)
-    const { params: safeParams } = redactToolPayloadForPersistence(name, params, null)
-    argumentsOut = JSON.stringify(safeParams === undefined ? {} : safeParams)
+    if (!persistFull) {
+      // Stub is derived from the raw LENGTH only — nothing sensitive can leak
+      // through it, and no redaction step is needed to prove that.
+      argumentsOut = JSON.stringify({ redacted: true, len: rawArgs.length })
+    } else {
+      const { params: safeParams } = redactToolPayloadForPersistence(name, params, null)
+      argumentsOut = JSON.stringify(safeParams === undefined ? {} : safeParams)
+    }
   } catch {
     argumentsOut = JSON.stringify({ _redacted: "invalid_json", len: rawArgs.length })
   }
