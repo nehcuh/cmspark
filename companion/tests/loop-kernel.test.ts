@@ -400,6 +400,18 @@ test("round_limit: armed but no tool calls → no continuation (pure Q&A rule ho
   assert.equal(suggestFrames.length, 0)
 })
 
+test("round_limit: worker threads still never loop (G1 acceptance)", () => {
+  const wid = newThread()
+  tm.update(wid, { agent_role: "worker" } as any)
+  setProgress(wid, [{ id: "live:0", text: "x", done: false }])
+  exitCheck(wid, stats({ terminal: "round_limit", toolCalls: 8 }))
+  // Workers can never be armed, so without the up-front worker guard the cap
+  // would fall into the unarmed branch and fire a discovery card at a worker.
+  assert.equal(queues.peekNextRunCount(wid), 0)
+  assert.equal(suggestFrames.length, 0)
+  assert.equal(audits.length, 0)
+})
+
 test("circuit_breaker still does not continue (not a round boundary)", () => {
   const tid = newThread()
   kernel.armLoop(tm, tid, "explicit_command", { audit: auditSink })
