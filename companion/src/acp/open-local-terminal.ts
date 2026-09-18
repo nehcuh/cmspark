@@ -12,7 +12,10 @@ import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
 import { promisify } from "util"
+import { getConfig } from "../config"
 import { logger } from "../logger"
+import { appendCapabilityAudit } from "../packs/audit-log"
+import { isPtyBusy } from "../pty/session"
 import {
   acpSpawnUsesCmdHost,
   resolveAcpSpawn,
@@ -62,6 +65,18 @@ export type OpenLocalTerminalOpts = {
    * See LocalTerminalAppPref.
    */
   terminalApp?: LocalTerminalAppPref
+  /**
+   * #502 C embed (Option 1): do not open any host terminal. Validate the agent/cwd, write the task
+   * prompt file and RECORD a pending embed intent for the existing in-plugin terminal tab, which
+   * starts the PTY when the user clicks its button. `embed` is the only way into that branch; when
+   * it is false/absent this function behaves exactly as before.
+   */
+  embed?: boolean
+  /**
+   * Key for the pending embed intent (the thread whose panel tab may claim it). Only used when
+   * `embed === true`; undefined records under the empty-string key.
+   */
+  threadId?: string
 }
 
 export type OpenLocalTerminalResult = {
@@ -74,6 +89,11 @@ export type OpenLocalTerminalResult = {
   level?: "L1" | "L0"
   /** Actual launched app label (never the config terminalApp pref). */
   app?: string
+  /**
+   * #502 C: set instead of `level` when the run was RECORDED as an embed intent — no terminal was
+   * opened and no PTY exists yet. Carries only audit-safe facts (never the prompt text).
+   */
+  embedIntent?: { file: string; argc: number; cwd: string }
 }
 
 /** Success timeline title: prefer the launched app, never a raw pref when `app` is set. */
@@ -86,6 +106,72 @@ export function formatModeCOpenedLabel(
   return level === "L0"
     ? `已打开本机终端（L0 · ${shown} · 可能需粘贴）`
     : `已打开本机终端（${shown} · 交互）`
+}
+
+// ── Pending embed intent (#502 C, Option 1) ─────────────────────────────────
+
+/**
+ * The ACP path may RECORD an embed intent and must never CREATE anything: no PTY, no tab, no outer
+ * terminal. The existing full-page in-plugin terminal tab claims the intent through `terminal.open`
+ * (existing frame, existing L2) when the user clicks its button. Module-level, thread-keyed,
+ * single-use, TTL-bounded — no disk persistence, no config key, no new wire message.
+ */
+export type EmbedIntent = { cwd: string; file: string; args: string[] }
+
+/** ~10 minutes; a stale intent reads as absent so a later click cannot start a stale agent run. */
+export const EMBED_INTENT_TTL_MS = 10 * 60_000
+
+const embedIntents = new Map<string, { at: number; intent: EmbedIntent }>()
+
+/** Undefined thread id shares the empty-string key (an unbound tab). */
+function embedKey(threadId: string | undefined): string {
+  return threadId || ""
+}
+
+/** Drop-on-read: an expired intent is removed, not merely hidden. */
+function liveEmbedIntent(key: string): EmbedIntent | null {
+  const entry = embedIntents.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.at > EMBED_INTENT_TTL_MS) {
+    embedIntents.delete(key)
+    return null
+  }
+  return entry.intent
+}
+
+/** Record (or replace) the pending embed intent for a thread. Stores a copy of the argv. */
+export function recordEmbedIntent(
+  threadId: string | undefined,
+  intent: EmbedIntent,
+): void {
+  embedIntents.set(embedKey(threadId), {
+    at: Date.now(),
+    intent: { cwd: intent.cwd, file: intent.file, args: [...intent.args] },
+  })
+}
+
+/** Non-consuming read: the L2 confirmation copy needs the embed facts BEFORE approval. */
+export function peekEmbedIntent(threadId: string | undefined): EmbedIntent | null {
+  const intent = liveEmbedIntent(embedKey(threadId))
+  return intent ? { cwd: intent.cwd, file: intent.file, args: [...intent.args] } : null
+}
+
+/** Consuming read: only an approved `terminal.open` may take the intent. */
+export function takeEmbedIntent(threadId: string | undefined): EmbedIntent | null {
+  const key = embedKey(threadId)
+  const intent = liveEmbedIntent(key)
+  if (!intent) return null
+  embedIntents.delete(key)
+  return { cwd: intent.cwd, file: intent.file, args: [...intent.args] }
+}
+
+export function __resetEmbedIntentsForTests(): void {
+  embedIntents.clear()
+}
+
+/** Age every pending intent (TTL tests must not sleep for 10 minutes). */
+export function __testAgeEmbedIntents(ms: number): void {
+  for (const entry of embedIntents.values()) entry.at -= ms
 }
 
 // ── Pure helpers (unit-tested) ──────────────────────────────────────────────
@@ -227,6 +313,40 @@ export function buildInteractiveExecFragment(opts: {
   }
 
   return `exec ${cmd} ${shellSingleQuote(inline)}`
+}
+
+/**
+ * #502 C embed argv — REAL argv (no shell quoting), mirroring `buildInteractiveExecFragment`'s
+ * interactive conventions:
+ *   - no task payload at all            → []
+ *   - kimi       → [] (positionals are subcommands; `-p/--prompt` is print mode)
+ *   - opencode   → ["--prompt", <task>] (root positional is the project dir)
+ *   - others     → [<task>]
+ * `<task>` is the prompt file's contents when readable (trailing whitespace stripped, like the
+ * shell path's `$(cat …)`), else the trimmed inline prompt. An unreadable or empty payload is `[]`
+ * — never an empty argv entry (`spawnPtySession` refuses those).
+ */
+export function buildEmbedArgv(opts: {
+  agentId?: string
+  promptFile?: string
+  prompt?: string
+}): string[] {
+  const inline = typeof opts.prompt === "string" ? opts.prompt.trim() : ""
+  const file = typeof opts.promptFile === "string" ? opts.promptFile.trim() : ""
+  let task = inline
+  if (file) {
+    try {
+      task = fs.readFileSync(file, "utf8").trim()
+    } catch {
+      // Unreadable file is not a reason to lose the run: fall back to the inline prompt.
+      task = inline
+    }
+  }
+  if (!task) return []
+  const id = (opts.agentId || "").toLowerCase()
+  if (id === "kimi") return []
+  if (id === "opencode") return ["--prompt", task]
+  return [task]
 }
 
 /** L1: banner + exec interactive agent with task prompt (not -p bridge). */
@@ -1032,6 +1152,40 @@ function openLinuxTerminal(term: string, script: string): void {
 }
 
 /**
+ * Outer-terminal openers behind a seam with production defaults (#502 C). The embed path must
+ * never reach one of these, and "never opened an outer terminal" has to be provable in a test
+ * without launching Terminal.app/Alacritty on the test host.
+ */
+export type OuterTerminalOpeners = {
+  darwin: (
+    script: string,
+    pref: string | undefined,
+  ) => Promise<{ appLabel: string; ranScript: boolean; fallback?: string }>
+  linux: (term: string, script: string) => void
+  windows: (
+    scriptPath: string,
+    cwd: string,
+    pref: string | undefined,
+  ) => Promise<{ appLabel: string }>
+}
+
+let outerOpeners: OuterTerminalOpeners = {
+  darwin: openDarwinWithPref,
+  linux: openLinuxTerminal,
+  windows: openWindowsWithPref,
+}
+
+/** Test seam: pass overrides (spies/throwers), or nothing to restore the real openers. */
+export function __testSetOuterOpeners(overrides?: Partial<OuterTerminalOpeners>): void {
+  outerOpeners = {
+    darwin: openDarwinWithPref,
+    linux: openLinuxTerminal,
+    windows: openWindowsWithPref,
+    ...(overrides || {}),
+  }
+}
+
+/**
  * Best-effort open host terminal running interactive agent in workspace.
  * macOS: Terminal.app via osascript. Linux: $TERMINAL / x-terminal-emulator.
  * Windows: Windows Terminal (`wt`) or `start` + PowerShell -File (quoted literals).
@@ -1041,6 +1195,23 @@ export async function openLocalTerminalForAgent(
 ): Promise<OpenLocalTerminalResult> {
   const platform = process.platform
   const allowL0 = opts.l0Degrade !== false
+  const embedRequested = opts.embed === true
+
+  // #502 C embed: decide honestly and EARLY — before temp files and before any host-terminal work.
+  // An embed failure never falls back to an outer terminal: the user asked for the in-plugin
+  // terminal, so opening Alacritty/Terminal.app instead would be a different feature than the one
+  // they chose (and would contradict the recorded intent).
+  if (embedRequested) {
+    if (platform !== "darwin") {
+      return { ok: false, platform, detail: "unsupported" }
+    }
+    if (getConfig().embedded_terminal?.enabled !== true) {
+      return { ok: false, platform, detail: "embedded_terminal_disabled" }
+    }
+    if (isPtyBusy()) {
+      return { ok: false, platform, detail: "terminal_busy" }
+    }
+  }
 
   const resolved = resolveAbsoluteCommand(opts.command)
   if (!resolved.ok) {
@@ -1096,6 +1267,42 @@ export async function openLocalTerminalForAgent(
     }
   }
 
+  if (embedRequested) {
+    // #502 C Option 1 — RECORD ONLY. No PTY, no tab, no outer terminal: the existing in-plugin
+    // terminal tab claims this intent through `terminal.open` (existing frame + existing L2) when
+    // the user clicks its button. Deliberately NO openDarwinWithPref / openDarwinTerminalApp /
+    // openSpawnETerminal / openLinuxTerminal / openWindowsWithPref on this path — a user who asked
+    // for the in-plugin terminal must not silently get Alacritty/Terminal.app instead.
+    const args = buildEmbedArgv({
+      agentId: opts.agentId,
+      promptFile,
+      prompt: fullPrompt,
+    })
+    // The task file existed only so `buildEmbedArgv` could read it (it did, immediately above);
+    // nothing exec's it on this path. Returning here would skip the `finally` below and leave the
+    // user's whole browser task in /tmp forever, so schedule the same delayed unlink the
+    // outer-terminal path performs — the embed path must be at least as tidy as the one it replaces.
+    scheduleUnlink(modeCTempFiles)
+    recordEmbedIntent(opts.threadId, { cwd, file: command, args })
+    // Audit-safe facts only: the argv carries the user's whole browser task, so never log it (or the
+    // prompt file, whose scheduled unlink is irrelevant here — the task is already inlined above).
+    appendCapabilityAudit({
+      type: "acp.mode_c_embed_intent",
+      at: new Date().toISOString(),
+      ...(opts.threadId ? { thread_id: opts.threadId } : {}),
+      agent_file_basename: path.basename(command),
+      argv_argc: args.length,
+      cwd,
+    })
+    return {
+      ok: true,
+      platform,
+      detail:
+        "embed intent recorded — open the terminal from the CMspark panel (PTY not started)",
+      embedIntent: { file: command, argc: args.length, cwd },
+    }
+  }
+
   const scriptOpts = { ...opts, command, cwd, promptFile, prompt: fullPrompt || opts.prompt }
   const l1Script = buildInteractiveScript(scriptOpts)
   const pasteLine =
@@ -1117,7 +1324,7 @@ export async function openLocalTerminalForAgent(
   try {
     if (platform === "darwin") {
       try {
-        const opened = await openDarwinWithPref(l1Script, termPref)
+        const opened = await outerOpeners.darwin(l1Script, termPref)
         // Warp (open-only) cannot inject the script — degrade to L0 semantics
         // with app open + paste line so the user still gets the dual-process path.
         if (!opened.ranScript) {
@@ -1160,7 +1367,7 @@ export async function openLocalTerminalForAgent(
         if (!allowL0) throw e
         const l0 = buildL0DegradeScript(scriptOpts)
         try {
-          const opened = await openDarwinWithPref(l0, termPref)
+          const opened = await outerOpeners.darwin(l0, termPref)
           logger.info("acp.open_local_terminal", {
             platform,
             ok: true,
@@ -1195,7 +1402,7 @@ export async function openLocalTerminalForAgent(
         }
       }
       try {
-        openLinuxTerminal(term, l1Script)
+        outerOpeners.linux(term, l1Script)
         logger.info("acp.open_local_terminal", {
           platform,
           ok: true,
@@ -1216,7 +1423,7 @@ export async function openLocalTerminalForAgent(
         if (!allowL0) throw e
         const l0 = buildL0DegradeScript(scriptOpts)
         try {
-          openLinuxTerminal(term, l0)
+          outerOpeners.linux(term, l0)
           logger.info("acp.open_local_terminal", { platform, ok: true, level: "L0", term, cwd })
           return {
             ok: true,
@@ -1298,7 +1505,7 @@ export async function openLocalTerminalForAgent(
         }
         try {
           const ps1 = writeModeCPs1(true)
-          const opened = await openWindowsWithPref(ps1, cwd, termPref)
+          const opened = await outerOpeners.windows(ps1, cwd, termPref)
           return returnL0(
             opened.appLabel,
             `opened ${opened.appLabel} (L0: cmd host cannot L1-exec; paste agent command)`,
@@ -1311,7 +1518,7 @@ export async function openLocalTerminalForAgent(
 
       try {
         const ps1 = writeModeCPs1(false)
-        const opened = await openWindowsWithPref(ps1, cwd, termPref)
+        const opened = await outerOpeners.windows(ps1, cwd, termPref)
         logger.info("acp.open_local_terminal", {
           platform,
           ok: true,
@@ -1331,7 +1538,7 @@ export async function openLocalTerminalForAgent(
         if (!allowL0) throw e
         try {
           const ps1 = writeModeCPs1(true)
-          const opened = await openWindowsWithPref(ps1, cwd, termPref)
+          const opened = await outerOpeners.windows(ps1, cwd, termPref)
           return returnL0(
             opened.appLabel,
             `opened ${opened.appLabel} (L0 degrade: banner only; paste agent command)`,

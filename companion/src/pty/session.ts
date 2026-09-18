@@ -121,6 +121,13 @@ export function getLivePtyId(): string | null {
   return live?.id ?? null
 }
 
+/** #502 C: at most one embedded PTY may exist, so "busy" is exactly "a live session exists".
+ *  The ACP embed path asks this BEFORE recording an intent: a recorded intent that races an
+ *  already-open tab would be spent on a `terminal_busy` refusal the user never saw. */
+export function isPtyBusy(): boolean {
+  return live !== null
+}
+
 /** Stable object identity permits rechecking the same session after confirmation. */
 export function getOwnedPtyContext(id: string, owner: unknown): Readonly<{ threadId?: string; reviewId?: string }> | null {
   if (!owner || typeof owner !== "object" || !("readyState" in owner) || owner.readyState !== 1) return null
