@@ -439,6 +439,8 @@ async function broadcastLoopStatus(
   session: { sendToExtension?: (data: any) => void } | null | undefined,
   threadManager: ThreadManager,
   threadId: string,
+  /** #502 D-G1: the just-finished run's terminal (round_limit → segment copy). */
+  lastTerminal?: import("./loop/loop-state").RunTerminal,
 ): Promise<void> {
   try {
     const thread = threadManager.get(threadId)
@@ -456,6 +458,7 @@ async function broadcastLoopStatus(
       impossible: getImpossibleReport(threadId),
       pendingConfirms: 0,
       tier: loopRouteCaps(isUnattendedArmed()).tier,
+      lastTerminal,
     })
     if (view) session?.sendToExtension?.(buildTaskLoopStatusFrame(threadId, view))
   } catch (e: any) {
@@ -1418,7 +1421,9 @@ export async function handleMessage(
         // L-4 (#390): every run-end transition (advance/steer/blocked/stop/
         // done) lands on the sidepanel status line. Runs after the L-3 route
         // session close (adapter finally) so steers/blocks are current.
-        await broadcastLoopStatus(session, services.threadManager, rest.thread_id)
+        // #502 D-G1: pass this run's terminal so a 100-round cap renders as a
+        // segment boundary instead of an eternal 「推进中」.
+        await broadcastLoopStatus(session, services.threadManager, rest.thread_id, runStats.terminal)
       }
       const drained = await drainNextRun(rest.thread_id, myGeneration, services, session)
       if (drained) {
