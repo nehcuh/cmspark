@@ -30,6 +30,12 @@ export const codingHandoffCopy = {
   /** Sticky banner when Mode C (local terminal) is active or was opened */
   modeCDualProcessBanner:
     "侧栏停止仅结束监视桥；本机 Terminal 内 Agent 需在终端自行退出。",
+  /**
+   * #502 C: the in-plugin embed path RECORDS an intent and opens nothing, so the
+   * dual-process copy above would describe an outer Terminal.app agent that does not exist.
+   */
+  modeCEmbedIntentBanner:
+    "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。点下方「在本插件打开终端」并在该页确认后才会启动。",
 
   // Modes (never “只读” as OS sandbox claim)
   modeReview: "审查",
@@ -80,6 +86,15 @@ export const codingHandoffCopy = {
     "默认「系统自动」：Windows 用「开始」打开控制台（有安装则再试 Windows Terminal）；macOS 用 Terminal.app；Linux 用 $TERMINAL 或常见模拟器。可改 Windows Terminal / cmd、iTerm / Warp / Alacritty 等；Warp 可能需手动粘贴任务命令。",
   /** Panel mirror of Mode C setting (same config key). */
   panelOpenLocalTerminal: "启动时打开本机终端（模式 C）",
+
+  /**
+   * #502 C Side Panel entry: opens the existing full-page in-plugin terminal tab, bound to this
+   * thread so the companion can claim the recorded embed intent. Honest: it opens the TAB; the
+   * tab asks for its own L2 confirmation before anything is spawned.
+   */
+  panelOpenEmbeddedTerminal: "在本插件打开终端",
+  panelEmbeddedTerminalHint:
+    "打开的是本插件的终端页；该页需你确认后才启动，Agent 自身可能还需先登录。",
 
   /** CLI bridge is one-shot; multi-turn composer disabled with this reason. */
   cliComposerDisabled:
