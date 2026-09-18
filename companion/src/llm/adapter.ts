@@ -2325,12 +2325,28 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     }
   }
 
+  // #502 D-G1: the 100-round cap is a run boundary, not a failure. This run is
+  // over; the TASK is not. The loop kernel treats terminal="round_limit" as a
+  // natural run end — it enqueues the next segment when armed + within budget,
+  // or offers the discovery suggestion card when not armed. The user-facing
+  // honesty copy rides task_loop.status, never a red error bubble.
+  //
+  // Frame shape (why no `finish_reason`): the side panel's chat.done handler
+  // treats `finish_reason !== undefined` as "commit a new assistant row". At this
+  // exit the last assistant row was already committed by the mid-loop
+  // `chat.assistant` echo and the live stream was reset, so passing a
+  // finish_reason here would append an EMPTY ghost bubble. chat.done without it
+  // still clears busy/processing (the part that matters) and adds nothing.
   sendToExtension({
-    type: "chat.error",
+    type: "chat.done",
     thread_id: threadId,
-    error: `达到最大工具调用轮次 (${MAX_TOOL_CALL_ROUNDS})，已暂停。`,
   })
-  if (runStats) runStats.terminal = "circuit_breaker"
+  logger.info("llm.round_limit", {
+    thread_id: threadId,
+    rounds: MAX_TOOL_CALL_ROUNDS,
+    tool_calls: runStats?.toolCalls ?? 0,
+  })
+  if (runStats) runStats.terminal = "round_limit"
   } finally {
     if (runStats && signal?.aborted) runStats.terminal = "aborted"
     if (!signal?.aborted) {
