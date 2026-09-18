@@ -10,7 +10,7 @@
 | `7cf24c2c` | feat(sidepanel): fleet glance shows latest tool — `fleetGlanceLatestToolLabel`（llm_active 优先）+ FleetStrip meta 行 `· 角色:工具名` 后缀 + 6 测试 |
 | `060bbe4d` | feat(sidepanel): inspect worker without stealing the transcript — companion `brief`、store inspect 三字段、FleetWorkerList 查看 抽屉、useWebSocket SET_INSPECT_* 接线 + 14 测试 |
 | `5c7ff774` | docs(#502 E): E-DONE 完成报告（初版） |
-| （本提交） | fix(fleet): stamp latest_tool on write; clear inspect on portal close — Kimi BLOCK + MAJOR-M1（见下） |
+| `ae014446` | fix(fleet): stamp latest_tool on write; clear inspect on portal close — Kimi BLOCK + MAJOR-M1（见下节） |
 
 ## 合并前修复（Kimi 评审，AGENT-TASK-FIX.md）
 
