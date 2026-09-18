@@ -464,3 +464,235 @@ test("#432 cwd: broken symlink refused (no lexical fallback)", () => {
   assert.equal(denied.ok, false)
   assert.match(String((denied as { error: string }).error), /unreadable|broken symlink/)
 })
+
+// --- #502 C: explicit executable + argv for agent embeds (PTY only; no Terminal.app path) ---
+
+const TERMINAL_OPTS = { cols: 80, rows: 24, cwd: tempHome, send: () => {} }
+
+/** Fresh darwin spawn recorder; resets any live session from a previous spawn. */
+function freshSpawn(): Array<{ file: string; args: string[] }> {
+  pty.__testResetPtySessions()
+  pty.__testSetPtyPlatform("darwin")
+  const calls: Array<{ file: string; args: string[] }> = []
+  pty.__testSetPtySpawn((file, args) => {
+    calls.push({ file, args })
+    lastPty = new MockPty()
+    return lastPty
+  })
+  return calls
+}
+
+/** node:assert.equal does not narrow the result union. */
+function refusal(result: ReturnType<typeof pty.spawnPtySession>): { ok: false; error: string; code?: string } {
+  assert.equal(result.ok, false)
+  // Assert the message shape here so a refusal that omits `error` fails as a readable assertion
+  // rather than `TypeError: match(undefined)` inside a case.
+  const widened = result as { ok: false; error?: unknown; code?: unknown }
+  assert.equal(typeof widened.error, "string", "refusal must carry a string error")
+  assert.equal(typeof widened.code, "string", "refusal must carry a string code")
+  return widened as { ok: false; error: string; code?: string }
+}
+
+/**
+ * #502 C refusals are a single table: every malformed-`file`/`args` shape must be refused with a
+ * `invalid_pty_opts` code, a matching message, no spawnFn call and no live session.
+ * `opts` is deliberately untyped: these are shapes a non-conforming caller can really produce
+ * (BigInt/circular/`toJSON`-throwing `file`, non-array `args`), so the cast is the test's subject.
+ */
+type RefusalCase = { name: string; opts: Record<string, unknown>; code: string; match: RegExp }
+
+const circularFile: Record<string, unknown> = {}
+circularFile.self = circularFile
+
+const FILE_REFUSAL = /absolute path/i
+const REFUSAL_CASES: RefusalCase[] = [
+  // --- no explicit file: caller-supplied argv would turn `$SHELL` into a free shell ---
+  { name: "args without file", opts: { args: ["-c", "echo pwned"] }, code: "invalid_pty_opts", match: /explicit absolute file/ },
+  { name: "empty args without file", opts: { args: [] }, code: "invalid_pty_opts", match: /explicit absolute file/ },
+  // A builder spreading an undefined key means "no file", not "omitted": still refused.
+  { name: "file undefined plus args", opts: { file: undefined, args: ["-l"] }, code: "invalid_pty_opts", match: /explicit absolute file/ },
+
+  // --- file is a string but not a usable path (never defaulted, never trimmed/repaired) ---
+  { name: "file empty string", opts: { file: "" }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file whitespace only", opts: { file: "   " }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file leading space", opts: { file: " /bin/zsh" }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file leading tab", opts: { file: "\t/bin/zsh" }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file relative name", opts: { file: "claude" }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file relative dot path", opts: { file: "./bin/claude" }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file relative bare path", opts: { file: "bin/claude" }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+
+  // --- file is not a string at all: the refusal branch must never throw (F1) ---
+  { name: "file null", opts: { file: null }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file number", opts: { file: 42 }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file boolean", opts: { file: true }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file object", opts: { file: {} }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file array", opts: { file: [] }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file function", opts: { file: () => {} }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  // JSON.stringify throws on these three: `Do not know how to serialize a BigInt`,
+  // `Converting circular structure to JSON`, and caller `toJSON`. Rendering must be total.
+  { name: "file bigint (JSON.stringify throws)", opts: { file: BigInt(42) }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  { name: "file circular (JSON.stringify throws)", opts: { file: circularFile }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+  {
+    name: "file with throwing toJSON",
+    opts: { file: { toJSON() { throw new Error("boom-toJSON") } } },
+    code: "invalid_pty_opts",
+    match: FILE_REFUSAL,
+  },
+  // Symbol used to render as the misleading `(got undefined)`.
+  { name: "file symbol", opts: { file: Symbol("s") }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+
+  // --- args is not an array (bug in the agent-spec builder, never a `-l` fallback) ---
+  { name: "args string", opts: { file: "/bin/echo", args: "oops" }, code: "invalid_pty_opts", match: /string\[\]/ },
+  { name: "args number", opts: { file: "/bin/echo", args: 7 }, code: "invalid_pty_opts", match: /string\[\]/ },
+  { name: "args boolean", opts: { file: "/bin/echo", args: true }, code: "invalid_pty_opts", match: /string\[\]/ },
+  { name: "args object", opts: { file: "/bin/echo", args: { a: 1 } }, code: "invalid_pty_opts", match: /string\[\]/ },
+  { name: "args null", opts: { file: "/bin/echo", args: null }, code: "invalid_pty_opts", match: /string\[\]/ },
+
+  // --- args is a real array but an entry is empty / the payload is over ARG_MAX ---
+  { name: "args with empty entry", opts: { file: "/bin/echo", args: [""] }, code: "invalid_pty_opts", match: /empty entry/ },
+  { name: "args mixing a valid entry with an empty one", opts: { file: "/bin/echo", args: ["-p", ""] }, code: "invalid_pty_opts", match: /empty entry/ },
+  {
+    name: "args over the argv byte cap",
+    opts: { file: "/bin/echo", args: ["x".repeat(128 * 1024 + 1)] },
+    code: "invalid_pty_opts",
+    match: /exceed/i,
+  },
+  {
+    name: "args summing just over the argv byte cap",
+    opts: { file: "/bin/echo", args: ["y".repeat(128 * 1024), "z"] },
+    code: "invalid_pty_opts",
+    match: /exceed/i,
+  },
+
+  // Guard order: the file refusal precedes the args refusal.
+  { name: "invalid file and invalid args", opts: { file: 42, args: "oops" }, code: "invalid_pty_opts", match: FILE_REFUSAL },
+]
+
+/** The refusal path must return, not throw — resolve the result and fail loudly if it did not. */
+function spawnRefused(c: RefusalCase): { ok: false; error: string; code?: string } {
+  const opts = { ...TERMINAL_OPTS, id: `refuse-${c.name}`, ...c.opts } as Parameters<typeof pty.spawnPtySession>[0]
+  try {
+    return refusal(pty.spawnPtySession(opts))
+  } catch (e: any) {
+    assert.fail(`${c.name}: spawnPtySession must return {ok:false}, got throw: ${e?.message || String(e)}`)
+  }
+}
+
+test("#502 pty spawn: every malformed file/args shape is refused before any spawn", () => {
+  const previousShell = process.env.SHELL
+  try {
+    // `$SHELL` is valid here, so only the caller's malformed opts can explain a refusal.
+    process.env.SHELL = "/bin/bash"
+    for (const c of REFUSAL_CASES) {
+      const calls = freshSpawn()
+      const refused = spawnRefused(c)
+      assert.equal(refused.code, c.code, `${c.name}: refusal code`)
+      assert.match(refused.error, c.match, `${c.name}: refusal message`)
+      assert.deepEqual(calls, [], `${c.name}: spawnFn must not be called`)
+      assert.equal(pty.getLivePtyId(), null, `${c.name}: no live session`)
+    }
+  } finally {
+    if (previousShell === undefined) delete process.env.SHELL
+    else process.env.SHELL = previousShell
+  }
+})
+
+test("#502 pty spawn: refusal code and argv byte cap are pinned for the handler mapping", () => {
+  // The WS handler maps these codes; the next task keys off the exported names, not prose.
+  assert.equal(pty.INVALID_PTY_OPTS, "invalid_pty_opts")
+  assert.equal(pty.MAX_PTY_ARGV_BYTES, 128 * 1024)
+})
+
+test("#502 pty spawn: omitted file/args keep $SHELL and login argv", () => {
+  const previousShell = process.env.SHELL
+  try {
+    process.env.SHELL = "/bin/bash"
+    const explicit = freshSpawn()
+    assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "default" }).ok, true)
+    assert.deepEqual(explicit, [{ file: "/bin/bash", args: ["-l"] }])
+
+    // file omitted (undefined) + blank $SHELL → /bin/zsh. A *supplied* blank file is refused instead.
+    for (const blank of ["", "   "]) {
+      process.env.SHELL = blank
+      const blanked = freshSpawn()
+      assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "blank-shell" }).ok, true)
+      assert.deepEqual(blanked, [{ file: "/bin/zsh", args: ["-l"] }])
+    }
+
+    delete process.env.SHELL
+    const unset = freshSpawn()
+    assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "unset-shell" }).ok, true)
+    assert.deepEqual(unset, [{ file: "/bin/zsh", args: ["-l"] }])
+  } finally {
+    if (previousShell === undefined) delete process.env.SHELL
+    else process.env.SHELL = previousShell
+  }
+})
+
+test("#502 pty spawn: supplied file is used as given — never trimmed or repaired", () => {
+  // A blank/leading-whitespace supplied file is refused by the refusal table above; an absolute
+  // value is passed to spawnFn verbatim — trailing whitespace is NOT normalized away
+  // (an absolute-but-nonexistent path falls through to the native errno, which is unchanged).
+  const calls = freshSpawn()
+  assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "verbatim-file", file: "/bin/zsh " }).ok, true)
+  assert.deepEqual(calls, [{ file: "/bin/zsh ", args: [] }])
+})
+
+test("#502 pty spawn: padded $SHELL is trimmed before spawn, never a nonexistent path", () => {
+  const previousShell = process.env.SHELL
+  try {
+    // `SHELL=" /bin/bash "` cannot exist as a path: the emptiness check trims, so the spawn value
+    // must be the trimmed one too (a half-trimmed `$SHELL` is a guaranteed ENOENT).
+    for (const padded of [" /bin/bash ", "\t/bin/bash"]) {
+      process.env.SHELL = padded
+      const calls = freshSpawn()
+      assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "padded-shell" }).ok, true)
+      assert.deepEqual(calls, [{ file: "/bin/bash", args: ["-l"] }])
+    }
+  } finally {
+    if (previousShell === undefined) delete process.env.SHELL
+    else process.env.SHELL = previousShell
+  }
+})
+
+test("#502 pty spawn: explicit file with omitted args gets [], never the -l login flag", () => {
+  // `-l` is a login-shell flag; handing it to an agent binary is meaningless. So the `-l` default
+  // and a caller-supplied executable can never mix.
+  const calls = freshSpawn()
+  assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "file-no-args", file: "/bin/echo" }).ok, true)
+  assert.deepEqual(calls, [{ file: "/bin/echo", args: [] }])
+})
+
+test("#502 pty spawn: explicit absolute file and argv reach spawnFn unchanged", () => {
+  const calls = freshSpawn()
+  const opened = pty.spawnPtySession({
+    ...TERMINAL_OPTS,
+    id: "agent",
+    file: "/opt/homebrew/bin/claude",
+    args: ["-p", "task file.md"],
+  })
+  assert.equal(opened.ok, true)
+  assert.deepEqual(calls, [{ file: "/opt/homebrew/bin/claude", args: ["-p", "task file.md"] }])
+})
+
+test("#502 pty spawn: empty argv stays empty, never -l", () => {
+  const calls = freshSpawn()
+  assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "no-argv", file: "/bin/cat", args: [] }).ok, true)
+  assert.deepEqual(calls, [{ file: "/bin/cat", args: [] }])
+})
+
+test("#502 pty spawn: junk entries inside a real argv array are dropped", () => {
+  const calls = freshSpawn()
+  const junk = [1, "ok", null, undefined, { a: 1 }] as unknown as string[]
+  assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "junk-argv", file: "/bin/echo", args: junk }).ok, true)
+  assert.deepEqual(calls, [{ file: "/bin/echo", args: ["ok"] }])
+})
+
+test("#502 pty spawn: all-junk argv collapses to an empty argv, never -l", () => {
+  // Every entry is dropped, so the surviving argv is `[]` — the `-l` login flag belongs to the
+  // `$SHELL` default and must not reappear here.
+  const calls = freshSpawn()
+  const junk = [1, null, undefined] as unknown as string[]
+  assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "all-junk-argv", file: "/bin/echo", args: junk }).ok, true)
+  assert.deepEqual(calls, [{ file: "/bin/echo", args: [] }])
+})
