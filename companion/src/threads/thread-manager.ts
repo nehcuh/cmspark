@@ -335,7 +335,7 @@ function truncatePreview(text: string, maxLen: number): string {
   return s.length > maxLen ? s.slice(0, maxLen) : s
 }
 
-function firstUserPreviewFromMessages(
+export function firstUserPreviewFromMessages(
   msgs: Array<{ role: string; content?: string }>,
   maxLen: number,
 ): string {

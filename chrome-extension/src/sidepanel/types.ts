@@ -433,6 +433,8 @@ export interface FleetWorkerView {
   llm_active?: boolean
   /** #502 E: last tool this worker ran (companion reverse-scans the thread). */
   latest_tool?: string
+  /** #502 E: task brief — first user message, ≤160 chars (Inspect drawer). */
+  brief?: string
   tab_locks: Array<{ tab_id: number; state: string; lease_expires_at: number }>
 }
 

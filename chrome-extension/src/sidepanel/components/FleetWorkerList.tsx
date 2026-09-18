@@ -1,6 +1,6 @@
 // Shared worker list + portal shell (SoT W1 — outside FocusBand overflow).
 
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useAgentStore } from "../store/agentStore"
 import type { FleetWorkerView } from "../types"
@@ -68,6 +68,17 @@ export function FleetWorkerList({
     onClose?.()
   }
 
+  // #502 E Inspect: inline drawer. Never switches the active thread — 查看 only
+  // buffers this worker's stream (useWebSocket SET_INSPECT_*); 进入子任务 above
+  // stays the explicit thread switch.
+  const inspectWorker = (w: FleetWorkerView) => {
+    if (state.inspectedWorkerId === w.id) {
+      dispatch({ type: "CLEAR_INSPECT" })
+      return
+    }
+    dispatch({ type: "SET_INSPECT_WORKER", workerId: w.id })
+  }
+
   const stopBuilt = useMemo(() => buildFleetStopAllMessage(scope), [scope])
 
   const stopAll = () => {
@@ -133,6 +144,14 @@ export function FleetWorkerList({
                   : ""}
               </div>
               <div style={styles.actions}>
+                <button
+                  type="button"
+                  style={styles.smallBtn}
+                  aria-expanded={state.inspectedWorkerId === w.id}
+                  onClick={() => inspectWorker(w)}
+                >
+                  查看
+                </button>
                 <button type="button" style={styles.smallBtn} onClick={() => enterWorker(w)}>
                   进入子任务
                 </button>
@@ -173,6 +192,13 @@ export function FleetWorkerList({
                   停止该子任务
                 </button>
               </div>
+              {state.inspectedWorkerId === w.id && (
+                <WorkerInspectPanel
+                  w={w}
+                  latestTool={state.inspectLatestTool}
+                  tokenTail={state.inspectTokenTail}
+                />
+              )}
             </li>
           )
         })}
@@ -231,6 +257,49 @@ export function FleetWorkerList({
           确认台
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * #502 E Inspect drawer — inline, view-only. Brief (first user ask, ≤160 chars,
+ * from the fleet snapshot) + live latest tool + lock count; the 本轮输出 tail
+ * (last ~800 answer chars, mono 11px) stays collapsed until asked. No system
+ * prompt, no tool.progress tails, never switches the active thread.
+ */
+function WorkerInspectPanel({
+  w,
+  latestTool,
+  tokenTail,
+}: {
+  w: FleetWorkerView
+  latestTool: string
+  tokenTail: string
+}) {
+  const [tailOpen, setTailOpen] = useState(false)
+  const brief = (typeof w.brief === "string" && w.brief) || w.worker_role_label || ""
+  return (
+    <div style={styles.inspectPanel} data-testid="worker-inspect-panel">
+      {brief ? <div style={styles.inspectBrief}>{brief}</div> : null}
+      <div style={styles.inspectMeta}>
+        {`最近工具 ${latestTool || w.latest_tool || "—"}`}
+        {w.tab_locks?.length ? ` · 锁 ${w.tab_locks.length}` : ""}
+      </div>
+      {tokenTail ? (
+        <div style={{ marginTop: 4 }}>
+          <button
+            type="button"
+            style={styles.link}
+            aria-expanded={tailOpen}
+            onClick={() => setTailOpen((v) => !v)}
+          >
+            本轮输出
+          </button>
+          {tailOpen ? <pre style={styles.inspectTail}>{tokenTail}</pre> : null}
+        </div>
+      ) : (
+        <div style={styles.inspectMeta}>本轮输出 · 暂无</div>
+      )}
     </div>
   )
 }
@@ -323,6 +392,29 @@ const styles: Record<string, React.CSSProperties> = {
   row: { display: "flex", justifyContent: "space-between", gap: 6 },
   sub: { fontSize: 9, color: tokens.textMuted, marginTop: 2 },
   actions: { display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" },
+  inspectPanel: {
+    marginTop: 6,
+    padding: "6px 8px",
+    borderRadius: tokens.radiusSm,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
+  },
+  inspectBrief: { fontSize: 11, color: tokens.text, lineHeight: 1.45 },
+  inspectMeta: { fontSize: 10, color: tokens.textMuted, marginTop: 2 },
+  inspectTail: {
+    margin: "4px 0 0",
+    padding: "6px 8px",
+    fontFamily: tokens.fontMono,
+    fontSize: 11,
+    lineHeight: 1.4,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-all",
+    maxHeight: 120,
+    overflowY: "auto",
+    background: tokens.bgElevated,
+    borderRadius: tokens.radiusSm,
+    color: tokens.text,
+  },
   smallBtn: {
     fontSize: 10,
     padding: "2px 6px",

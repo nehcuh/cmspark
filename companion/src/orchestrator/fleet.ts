@@ -1,6 +1,7 @@
 // Fleet snapshot for Side Panel FleetStrip + Dashboard — ADR-015 P1
 
 import type { ThreadManager } from "../threads/thread-manager"
+import { firstUserPreviewFromMessages } from "../threads/thread-manager"
 import { listTabLocks } from "./tab-lease"
 import { listWorkers } from "./spawn"
 import { countOpenIntents } from "../board/intent-claim"
@@ -21,6 +22,11 @@ export interface FleetWorkerView {
    * messages for a tool name — omitted when the thread ran no tools.
    */
   latest_tool?: string
+  /**
+   * #502 E: task brief for Inspect — first user message of the worker thread,
+   * whitespace-collapsed and capped at 160 chars. Omitted when none.
+   */
+  brief?: string
   tab_locks: Array<{
     tab_id: number
     state: string
@@ -104,16 +110,21 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     if (wLocks.length > 0) status = "holding_tabs"
     else if (w.paused) status = "paused"
     // #502 E: best-effort — a tm without a messages reader (old fakes) or a
-    // failed read just omits the field; the snapshot itself must never fail.
+    // failed read just omits the fields; the snapshot itself must never fail.
     let latestTool: string | undefined
+    let brief: string | undefined
     try {
       const getMessages = (tm as any).getMessages
       if (typeof getMessages === "function") {
-        const name = latestToolName(getMessages.call(tm, w.id) || [])
+        const msgs = getMessages.call(tm, w.id) || []
+        const name = latestToolName(msgs)
         if (name) latestTool = name
+        const firstUser = firstUserPreviewFromMessages(msgs, 160)
+        if (firstUser) brief = firstUser
       }
     } catch {
       latestTool = undefined
+      brief = undefined
     }
     return {
       id: w.id,
@@ -126,6 +137,7 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
       status,
       llm_active: llmSet.has(w.id),
       ...(latestTool ? { latest_tool: latestTool } : {}),
+      ...(brief ? { brief } : {}),
       tab_locks: wLocks.map((l) => ({
         tab_id: l.tab_id,
         state: l.state,

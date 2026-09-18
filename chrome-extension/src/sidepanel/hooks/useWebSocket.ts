@@ -131,6 +131,32 @@ export function shouldApplyStreamEvent(
 }
 
 /**
+ * #502 E Inspect: a frame belongs to the inspect buffer only when it carries
+ * the inspected worker's thread id. The inspect path is deliberately separate
+ * from shouldApplyStreamEvent — inspected frames must NEVER touch the main
+ * transcript (SET_STREAMING stays gated exactly as before).
+ * Pure helper for unit tests (fleet-inspect-buffer).
+ */
+export function shouldUpdateInspectBuffer(
+  msgThreadId: string | undefined | null,
+  inspectedWorkerId: string | null | undefined,
+): boolean {
+  if (msgThreadId == null || msgThreadId === "") return false
+  if (inspectedWorkerId == null || inspectedWorkerId === "") return false
+  return msgThreadId === inspectedWorkerId
+}
+
+/**
+ * #502 E Inspect: keep only the tail of the worker's answer stream (~800
+ * chars) — the drawer is a glance surface, not a transcript mirror.
+ * Pure helper for unit tests (fleet-inspect-buffer).
+ */
+export function inspectTailSlice(content: unknown, max = 800): string {
+  if (typeof content !== "string" || !content) return ""
+  return content.length > max ? content.slice(-max) : content
+}
+
+/**
  * #295: mid-turn assistant rows committed from live frames must carry the
  * tool_calls the companion already persisted (function-shaped, same as the
  * hydrated row — Message.tool_calls tolerates both shapes at runtime), so
@@ -260,6 +286,10 @@ export function useWebSocket() {
 
   // Keep refs in sync (listener is mount-once — never close over render state)
   activeThreadRef.current = state.activeThreadId
+  // #502 E Inspect: inspected worker id rides its own ref — the inspect buffer
+  // is updated independent of (and never widens) the active-thread gate above.
+  const inspectedWorkerRef = useRef<string | null>(null)
+  inspectedWorkerRef.current = state.inspectedWorkerId
   const pendingUploadsRef = useRef(state.pendingUploads)
   pendingUploadsRef.current = state.pendingUploads
 
@@ -382,6 +412,11 @@ export function useWebSocket() {
             typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
           if (tokenTid) {
             dispatch({ type: "SET_THREAD_BUSY", threadId: tokenTid, busy: true })
+          }
+          // #502 E Inspect: buffer the inspected worker's tokens BEFORE the
+          // active-thread gate — SET_INSPECT_TAIL only, never SET_STREAMING.
+          if (shouldUpdateInspectBuffer(tokenTid, inspectedWorkerRef.current)) {
+            dispatch({ type: "SET_INSPECT_TAIL", tail: inspectTailSlice(msg.content) })
           }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = msg.content
@@ -654,6 +689,15 @@ export function useWebSocket() {
           // P1 CORR-M05: missing thread_id fail-closed (no legacy active fallback)
           if (!toolTid) break
           dispatch({ type: "SET_THREAD_BUSY", threadId: toolTid, busy: true })
+          // #502 E Inspect: live latest-tool name for the inspected worker
+          // (before the gate; independent of the active transcript).
+          if (
+            shouldUpdateInspectBuffer(toolTid, inspectedWorkerRef.current) &&
+            typeof msg.tool_name === "string" &&
+            msg.tool_name
+          ) {
+            dispatch({ type: "SET_INSPECT_LATEST_TOOL", tool: msg.tool_name })
+          }
           if (!shouldApplyStreamEvent(toolTid, activeThreadRef.current)) break
           // Intermediate assistant stream ends when tools begin. Commit live
           // reasoning/content into a historical row first — otherwise only the

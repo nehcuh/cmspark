@@ -344,6 +344,15 @@ export interface AgentState {
   threadBusyById: Record<string, boolean>
   /** Open fleet worker list popover (portal). */
   fleetListOpen: boolean
+  /**
+   * #502 E Inspect: worker being inspected inline (null = none). Inspect never
+   * switches activeThreadId — the main transcript stays untouched.
+   */
+  inspectedWorkerId: string | null
+  /** #502 E Inspect: last ~800 chars of the inspected worker's answer stream. */
+  inspectTokenTail: string
+  /** #502 E Inspect: live latest tool name for the inspected worker (tool.start). */
+  inspectLatestTool: string
   /** ADR-019 user-env public snapshot (keys + mask only; null until first list/updated). */
   userEnv: UserEnvPublic | null
   /** ADR-019 last user_env.* error (Chinese-mapped), shown in Settings Secrets section. */
@@ -567,6 +576,10 @@ export type AgentAction =
   | { type: "SET_FLEET"; fleet: FleetSnapshot | null }
   | { type: "SET_THREAD_BUSY"; threadId: string; busy: boolean }
   | { type: "SET_FLEET_LIST_OPEN"; open: boolean }
+  | { type: "SET_INSPECT_WORKER"; workerId: string }
+  | { type: "SET_INSPECT_TAIL"; tail: string }
+  | { type: "SET_INSPECT_LATEST_TOOL"; tool: string }
+  | { type: "CLEAR_INSPECT" }
   | { type: "SET_USER_ENV"; userEnv: UserEnvPublic }
   | { type: "SET_USER_ENV_ERROR"; error: string | null }
   | { type: "SET_USER_ENV_STATUS"; status: string | null }
@@ -731,6 +744,9 @@ export const initialState: AgentState = {
   fleet: null,
   threadBusyById: {},
   fleetListOpen: false,
+  inspectedWorkerId: null,
+  inspectTokenTail: "",
+  inspectLatestTool: "",
   userEnv: null,
   userEnvError: null,
   userEnvStatus: null,
@@ -1691,6 +1707,23 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     }
     case "SET_FLEET_LIST_OPEN":
       return { ...state, fleetListOpen: action.open }
+    case "SET_INSPECT_WORKER":
+      if (state.inspectedWorkerId === action.workerId) return state
+      return {
+        ...state,
+        inspectedWorkerId: action.workerId,
+        inspectTokenTail: "",
+        inspectLatestTool: "",
+      }
+    case "SET_INSPECT_TAIL":
+      if (state.inspectTokenTail === action.tail) return state
+      return { ...state, inspectTokenTail: action.tail }
+    case "SET_INSPECT_LATEST_TOOL":
+      if (state.inspectLatestTool === action.tool) return state
+      return { ...state, inspectLatestTool: action.tool }
+    case "CLEAR_INSPECT":
+      if (state.inspectedWorkerId === null) return state
+      return { ...state, inspectedWorkerId: null, inspectTokenTail: "", inspectLatestTool: "" }
     case "SET_MCP_SERVERS":
       return { ...state, mcpServers: Array.isArray(action.servers) ? action.servers : [] }
     case "UPDATE_MCP_SERVER_STATUS": {

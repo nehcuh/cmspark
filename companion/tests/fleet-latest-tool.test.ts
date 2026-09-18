@@ -87,3 +87,32 @@ test("tm without a messages reader still snapshots (legacy fakes)", () => {
   assert.equal(snap.workers[0]!.id, "w1")
   assert.ok(!("latest_tool" in snap.workers[0]!))
 })
+
+// ---------------------------------------------------------------------------
+// #502 E Task 3 — brief (Inspect 任务简报，首条 user 内容，截 160)
+// ---------------------------------------------------------------------------
+
+test("brief = first user message content", () => {
+  reset()
+  const tm = workerTm([
+    { role: "user", content: "帮我抓取这页的价格表" },
+    { role: "tool", tool_calls: [{ id: "t1", tool_name: "click", status: "success" }] },
+  ])
+  const snap = buildFleetSnapshot(tm)
+  assert.equal(snap.workers[0]!.brief, "帮我抓取这页的价格表")
+})
+
+test("brief is whitespace-collapsed and capped at 160 chars", () => {
+  reset()
+  const long = `抓 ${"价".repeat(200)}`
+  const tm = workerTm([{ role: "user", content: `   ${long}\n\n  ` }])
+  const snap = buildFleetSnapshot(tm)
+  assert.equal(snap.workers[0]!.brief?.length, 160)
+})
+
+test("brief omitted when the worker thread has no user message", () => {
+  reset()
+  const tm = workerTm([{ role: "assistant", content: "在" }])
+  const snap = buildFleetSnapshot(tm)
+  assert.ok(!("brief" in snap.workers[0]!), "no user message — brief must be absent")
+})
