@@ -235,6 +235,18 @@ test("#502 ChatView routes tool history through viewToolHistory with an accessib
   assert.ok(!/thread\.collapsed/.test(chat), "fold state must not touch thread.collapsed")
 })
 
+test("#502 MessageRow no longer renders function-shape tool_calls inline (hydrate)", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // Kimi MAJOR-1: hydrated assistant rows carry function-shape tool_calls —
+  // the unconditional msg.tool_calls?.map produced nameless duplicate cards
+  // next to the audit chip. The inline render must be gated.
+  assert.match(chat, /shouldRenderInlineToolCards\(msg\)/)
+  const mapIdx = chat.indexOf("msg.tool_calls?.map")
+  assert.ok(mapIdx > 0, "inline map for flat live shape must still exist")
+  const gateIdx = chat.indexOf("shouldRenderInlineToolCards(msg)")
+  assert.ok(gateIdx > 0 && gateIdx < mapIdx, "gate must sit before the inline map")
+})
+
 test("#502 tool history stays sidepanel-only (no overlay wiring)", () => {
   const walk = (dir: string): string[] => {
     const out: string[] = []

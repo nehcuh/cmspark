@@ -29,6 +29,7 @@ import {
   doneChipLabel,
   groupToolTurnRows,
   liveChipLabel,
+  shouldRenderInlineToolCards,
   viewToolHistory,
 } from "./tool-history-view"
 import { fleetProcessingLabel } from "./focus-band-priority"
@@ -786,9 +787,14 @@ const MessageRow = memo(function MessageRow({
                 ) : (
                   <MarkdownRenderer content={msg.content} renderMermaid />
                 ))}
-              {msg.tool_calls?.map((tc: any) => (
-                <ToolCallCard key={tc.id} tc={tc} />
-              ))}
+              {/* #502 A (Kimi MAJOR-1): role=tool rows are consumed by the
+                  per-turn block; hydrated assistant rows carry function-shape
+                  tool_calls whose cards are the block's job too. Only flat
+                  live-shape tool_calls that no block swallowed render inline. */}
+              {shouldRenderInlineToolCards(msg) &&
+                msg.tool_calls?.map((tc: any) => (
+                  <ToolCallCard key={tc.id} tc={tc} />
+                ))}
             </div>
             {honestyChip ? (
               <div style={styles.truncChip} role="status">

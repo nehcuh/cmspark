@@ -5,6 +5,7 @@ import {
   liveChipLabel,
   doneChipLabel,
   groupToolTurnRows,
+  shouldRenderInlineToolCards,
 } from "../src/sidepanel/components/tool-history-view"
 
 const nav = { id: "1", tool_name: "navigate", status: "success" }
@@ -125,4 +126,75 @@ test("groupToolTurnRows: tool row without tool_calls stays a plain row", () => {
     ["row"],
   )
   assert.deepEqual(groupToolTurnRows([]), [])
+})
+
+test("shouldRenderInlineToolCards: only flat-shape assistant rows render inline cards", () => {
+  // role=tool rows are consumed by the per-turn block — never inline again
+  assert.equal(
+    shouldRenderInlineToolCards({ role: "tool", tool_calls: [toolRow("1", "click", "success").tool_calls[0]] }),
+    false,
+  )
+  // hydrated assistant rows carry OpenAI function shape — the block owns them
+  assert.equal(
+    shouldRenderInlineToolCards({
+      role: "assistant",
+      tool_calls: [{ id: "c1", type: "function", function: { name: "click", arguments: "{}" } }],
+    }),
+    false,
+  )
+  // flat live shape (tool_name, no function envelope) stays inline
+  assert.equal(
+    shouldRenderInlineToolCards({ role: "assistant", tool_calls: [toolRow("1", "click", "success").tool_calls[0]] }),
+    true,
+  )
+  // no tool_calls at all → nothing to render inline
+  assert.equal(shouldRenderInlineToolCards({ role: "assistant" }), false)
+})
+
+// Kimi MAJOR-1: prehistoric hydrated threads carry ONLY assistant rows with
+// function-shape tool_calls (no role=tool rows). Suppressing inline cards
+// alone would drop the audit chip — grouping must convert such rows.
+const fnAssistant = (id: string, name: string, content = "") => ({
+  id: `a-${id}`,
+  role: "assistant",
+  content,
+  tool_calls: [{ id, type: "function", function: { name, arguments: "{}" } }],
+})
+
+test("groupToolTurnRows converts uncovered function-shape assistant rows into tools blocks", () => {
+  const items = groupToolTurnRows([
+    { id: "u1", role: "user", content: "hi" },
+    fnAssistant("c1", "navigate"),
+    fnAssistant("c2", "click"),
+    { id: "a2", role: "assistant", content: "final answer" },
+  ])
+  // each uncovered assistant becomes one block; text-only rows stay rows
+  assert.deepEqual(
+    items.map((i) => i.kind),
+    ["row", "tools", "tools", "row"],
+  )
+  const block = items[1]
+  if (block.kind !== "tools") return
+  const tools = block.msgs.flatMap((m: any) => m.tool_calls)
+  // function name survives as flat tool_name for ToolCallCard
+  assert.equal(tools[0].tool_name, "navigate")
+})
+
+test("groupToolTurnRows keeps covered marker assistant as a plain row", () => {
+  const items = groupToolTurnRows([
+    fnAssistant("c1", "navigate"),
+    toolRow("c1", "navigate", "success"),
+  ])
+  assert.deepEqual(
+    items.map((i) => i.kind),
+    ["row", "tools"],
+  )
+})
+
+test("groupToolTurnRows: uncovered assistant with text keeps the text row before its block", () => {
+  const items = groupToolTurnRows([fnAssistant("c1", "navigate", "先看一下页面")])
+  assert.deepEqual(
+    items.map((i) => i.kind),
+    ["row", "tools"],
+  )
 })
