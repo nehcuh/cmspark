@@ -3439,6 +3439,38 @@ export function SettingsSlideout() {
 
           <div style={styles.divider} />
 
+          {/* #502 B — archive tier. Default off: durable thread JSON keeps tool
+              rows as stubs so the chat log is not a full replay of every page
+              read / form fill. Sensitive classes fold either way. */}
+          <div style={styles.sectionTitle}>对话归档</div>
+          <div style={styles.field}>
+            <label style={styles.label}>保存完整操作史</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                style={{
+                  ...styles.toggleBtn,
+                  ...(config.persist_full_tool_history
+                    ? { background: tokens.accent, color: tokens.userBubbleText, borderColor: tokens.accent }
+                    : {}),
+                }}
+                onClick={() =>
+                  dispatch({
+                    type: "SET_CONFIG",
+                    config: { persist_full_tool_history: !config.persist_full_tool_history },
+                  })
+                }
+              >
+                {config.persist_full_tool_history ? "已开启" : "默认关闭"}
+              </button>
+            </div>
+            <div style={styles.helpText}>
+              默认关。只留工具名、成败、内容指纹。打开后仍脱敏 cookie / 本机命令 / 密钥。已经省略的正文不会因打开而恢复。
+            </div>
+          </div>
+
+          <div style={styles.divider} />
+
           {/* --- Markdown export (optional note-folder conventions) --- */}
           <div style={styles.sectionTitle}>笔记导出</div>
           <div style={styles.field}>
