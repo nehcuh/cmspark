@@ -275,3 +275,35 @@ export function fleetStripShouldShow(input: {
   if (kind === "paused_only" && input.showPausedOnly) return true
   return false
 }
+
+/** #502 E: glance worker fields consumed by the meta-line suffix. */
+export interface FleetGlanceWorker {
+  id: string
+  alias?: string | null
+  worker_role_label?: string | null
+  llm_active?: boolean
+  latest_tool?: string
+}
+
+/**
+ * #502 E Glance — one-line "who:what" for the newest tool in the fleet.
+ * The llm_active worker wins (that's the one streaming); otherwise the last
+ * worker carrying a latest_tool. Empty string keeps the meta line unchanged.
+ */
+export function fleetGlanceLatestToolLabel(workers: FleetGlanceWorker[]): string {
+  let fallback: FleetGlanceWorker | null = null
+  for (let i = workers.length - 1; i >= 0; i--) {
+    const w = workers[i]
+    if (!w || typeof w.latest_tool !== "string" || !w.latest_tool.trim()) continue
+    if (w.llm_active) {
+      fallback = w
+      break
+    }
+    if (!fallback) fallback = w
+  }
+  if (!fallback) return ""
+  const who = String(fallback.worker_role_label || fallback.alias || fallback.id || "").trim() || fallback.id
+  const tool = fallback.latest_tool
+  if (typeof tool !== "string" || !tool.trim()) return ""
+  return `${who}:${tool.trim()}`
+}

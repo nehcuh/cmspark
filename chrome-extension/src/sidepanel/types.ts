@@ -431,6 +431,8 @@ export interface FleetWorkerView {
   paused: boolean
   status: "idle" | "paused" | "holding_tabs" | "unknown"
   llm_active?: boolean
+  /** #502 E: last tool this worker ran (companion reverse-scans the thread). */
+  latest_tool?: string
   tab_locks: Array<{ tab_id: number; state: string; lease_expires_at: number }>
 }
 

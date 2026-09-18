@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import type { FleetWorkerView } from "../types"
-import { fleetStripShouldShow } from "./focus-band-priority"
+import { fleetStripShouldShow, fleetGlanceLatestToolLabel } from "./focus-band-priority"
 import { useScopedRunBusy } from "../hooks/use-scoped-run-busy"
 
 function worstColor(status: string | undefined): string {
@@ -51,6 +51,9 @@ export function FleetStrip({
   )
 
   const { workerCount, lockCount, openIntents, worst } = scoped
+  // #502 E Glance: newest fleet tool on the same meta line (llm_active worker
+  // preferred). Empty string → the meta line stays exactly as before.
+  const glanceTool = fleetGlanceLatestToolLabel(scoped.workers || [])
 
   // Must stay above early-return (hooks order). Scope locks to visible workers.
   const scopedLocks = useMemo(() => {
@@ -127,6 +130,7 @@ export function FleetStrip({
           <strong style={{ fontSize: 11 }}>舰队</strong>
           <span style={styles.meta}>
             {workerCount} worker · {lockCount} 锁
+            {glanceTool ? ` · ${glanceTool}` : ""}
             {openIntents > 0 ? ` · ${openIntents} intent` : ""} · {worstLabel(worst)}
             {worst === "paused" && lockCount === 0 && openIntents === 0
               ? "（可点全停清理）"
