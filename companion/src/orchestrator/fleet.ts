@@ -16,6 +16,11 @@ export interface FleetWorkerView {
   status: "idle" | "paused" | "holding_tabs" | "unknown"
   /** In-flight LLM for this worker (run-state). */
   llm_active?: boolean
+  /**
+   * #502 E: last tool this worker ran (Glance). Reverse-scans the thread
+   * messages for a tool name — omitted when the thread ran no tools.
+   */
+  latest_tool?: string
   tab_locks: Array<{
     tab_id: number
     state: string
@@ -42,6 +47,26 @@ export interface FleetSnapshot {
   orchestrator_runs: string[]
   /** Threads with active LLM abort controllers (honest RunBusy). */
   llm_active_thread_ids: string[]
+}
+
+/**
+ * #502 E: newest tool name in a worker transcript. Live tool rows carry flat
+ * `tool_calls[].tool_name`; hydrated assistant markers carry the OpenAI
+ * function shape (`tool_calls[].function.name`). Both readable, newest wins.
+ */
+function latestToolName(messages: any[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (!m || !Array.isArray(m.tool_calls)) continue
+    for (let j = m.tool_calls.length - 1; j >= 0; j--) {
+      const tc = m.tool_calls[j]
+      const flat = typeof tc?.tool_name === "string" ? tc.tool_name : ""
+      const fn = typeof tc?.function?.name === "string" ? tc.function.name : ""
+      const name = (flat || fn).trim()
+      if (name) return name
+    }
+  }
+  return null
 }
 
 export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
@@ -78,6 +103,18 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     // (and can force-release). paused alone only when no locks remain.
     if (wLocks.length > 0) status = "holding_tabs"
     else if (w.paused) status = "paused"
+    // #502 E: best-effort — a tm without a messages reader (old fakes) or a
+    // failed read just omits the field; the snapshot itself must never fail.
+    let latestTool: string | undefined
+    try {
+      const getMessages = (tm as any).getMessages
+      if (typeof getMessages === "function") {
+        const name = latestToolName(getMessages.call(tm, w.id) || [])
+        if (name) latestTool = name
+      }
+    } catch {
+      latestTool = undefined
+    }
     return {
       id: w.id,
       alias: w.alias,
@@ -88,6 +125,7 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
       paused: !!w.paused,
       status,
       llm_active: llmSet.has(w.id),
+      ...(latestTool ? { latest_tool: latestTool } : {}),
       tab_locks: wLocks.map((l) => ({
         tab_id: l.tab_id,
         state: l.state,
