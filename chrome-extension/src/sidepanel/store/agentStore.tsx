@@ -1706,6 +1706,18 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, threadBusyById: rest }
     }
     case "SET_FLEET_LIST_OPEN":
+      // #502 E MAJOR-M1: every portal close path (Escape / backdrop / onClose /
+      // enterWorker) funnels through here — drop the inspect buffer so worker
+      // tokens stop feeding SET_INSPECT_TAIL once the drawer is gone.
+      if (!action.open && state.inspectedWorkerId !== null) {
+        return {
+          ...state,
+          fleetListOpen: false,
+          inspectedWorkerId: null,
+          inspectTokenTail: "",
+          inspectLatestTool: "",
+        }
+      }
       return { ...state, fleetListOpen: action.open }
     case "SET_INSPECT_WORKER":
       if (state.inspectedWorkerId === action.workerId) return state

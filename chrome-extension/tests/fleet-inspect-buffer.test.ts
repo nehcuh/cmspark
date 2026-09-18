@@ -17,6 +17,7 @@ import {
   shouldUpdateInspectBuffer,
   inspectTailSlice,
 } from "../src/sidepanel/hooks/useWebSocket"
+import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
 
@@ -119,6 +120,31 @@ test("agentStore carries inspect state + actions", () => {
   for (const a of ["SET_INSPECT_WORKER", "SET_INSPECT_TAIL", "SET_INSPECT_LATEST_TOOL", "CLEAR_INSPECT"]) {
     assert.ok(src.includes(`case "${a}"`), `reducer must handle ${a}`)
   }
+})
+
+test("MAJOR-M1: closing the fleet portal clears inspect state — tokens stop buffering", () => {
+  // Real reducer (not source lock): every close path (Escape / backdrop /
+  // onClose / enterWorker) dispatches SET_FLEET_LIST_OPEN false — that single
+  // choke point must drop the inspected worker and its buffer.
+  let s = agentReducer(initialState, { type: "SET_INSPECT_WORKER", workerId: "w1" })
+  s = agentReducer(s, { type: "SET_INSPECT_TAIL", tail: "部分输出" })
+  s = agentReducer(s, { type: "SET_INSPECT_LATEST_TOOL", tool: "click" })
+  assert.equal(s.inspectedWorkerId, "w1")
+
+  s = agentReducer(s, { type: "SET_FLEET_LIST_OPEN", open: false })
+  assert.equal(s.inspectedWorkerId, null)
+  assert.equal(s.inspectTokenTail, "")
+  assert.equal(s.inspectLatestTool, "")
+  // with no inspected worker, chat.token can no longer feed the buffer
+  assert.equal(shouldUpdateInspectBuffer("w1", s.inspectedWorkerId), false)
+
+  // opening the portal must NOT clobber anything (no-op direction preserved)
+  const open = agentReducer(
+    { ...initialState, inspectedWorkerId: "w2", inspectTokenTail: "tail" },
+    { type: "SET_FLEET_LIST_OPEN", open: true },
+  )
+  assert.equal(open.inspectedWorkerId, "w2")
+  assert.equal(open.inspectTokenTail, "tail")
 })
 
 // ---------------------------------------------------------------------------

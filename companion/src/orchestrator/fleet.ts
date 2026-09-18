@@ -1,7 +1,6 @@
 // Fleet snapshot for Side Panel FleetStrip + Dashboard — ADR-015 P1
 
 import type { ThreadManager } from "../threads/thread-manager"
-import { firstUserPreviewFromMessages } from "../threads/thread-manager"
 import { listTabLocks } from "./tab-lease"
 import { listWorkers } from "./spawn"
 import { countOpenIntents } from "../board/intent-claim"
@@ -55,26 +54,6 @@ export interface FleetSnapshot {
   llm_active_thread_ids: string[]
 }
 
-/**
- * #502 E: newest tool name in a worker transcript. Live tool rows carry flat
- * `tool_calls[].tool_name`; hydrated assistant markers carry the OpenAI
- * function shape (`tool_calls[].function.name`). Both readable, newest wins.
- */
-function latestToolName(messages: any[]): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (!m || !Array.isArray(m.tool_calls)) continue
-    for (let j = m.tool_calls.length - 1; j >= 0; j--) {
-      const tc = m.tool_calls[j]
-      const flat = typeof tc?.tool_name === "string" ? tc.tool_name : ""
-      const fn = typeof tc?.function?.name === "string" ? tc.function.name : ""
-      const name = (flat || fn).trim()
-      if (name) return name
-    }
-  }
-  return null
-}
-
 export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
   const locks = listTabLocks()
   const locksByHolder = new Map<string, typeof locks>()
@@ -109,23 +88,13 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     // (and can force-release). paused alone only when no locks remain.
     if (wLocks.length > 0) status = "holding_tabs"
     else if (w.paused) status = "paused"
-    // #502 E: best-effort — a tm without a messages reader (old fakes) or a
-    // failed read just omits the fields; the snapshot itself must never fail.
-    let latestTool: string | undefined
-    let brief: string | undefined
-    try {
-      const getMessages = (tm as any).getMessages
-      if (typeof getMessages === "function") {
-        const msgs = getMessages.call(tm, w.id) || []
-        const name = latestToolName(msgs)
-        if (name) latestTool = name
-        const firstUser = firstUserPreviewFromMessages(msgs, 160)
-        if (firstUser) brief = firstUser
-      }
-    } catch {
-      latestTool = undefined
-      brief = undefined
-    }
+    // #502 E (Kimi BLOCK fix): metadata only — latest_tool / brief are stamped
+    // on the write path (ThreadManager.addMessage). The 4s tick must NEVER
+    // read transcript files (getMessages = readFileSync + JSON.parse of the
+    // whole thread). Unstamped legacy threads simply omit the fields.
+    const latestTool =
+      typeof w.latest_tool === "string" && w.latest_tool.trim() ? w.latest_tool.trim() : undefined
+    const brief = typeof w.brief === "string" && w.brief.trim() ? w.brief : undefined
     return {
       id: w.id,
       alias: w.alias,

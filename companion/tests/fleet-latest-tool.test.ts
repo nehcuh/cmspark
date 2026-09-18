@@ -1,12 +1,15 @@
-// #502 slice E — FleetWorkerView.latest_tool（worker 线程最后一个工具名）。
+// #502 slice E — FleetWorkerView.latest_tool / brief。
 //
-// 契约（plan 2026-09-18-502-e Task 1）：
-//  - 从线程 messages 倒序找 role=tool 行（扁平 tool_calls[].tool_name）或
-//    assistant 行（OpenAI function 形 tool_calls[].function.name）的名字。
-//  - 没有任何工具 → 字段整个省略（不是空串）。
-//  - 旧 fake tm（无 messages 读取器）不得炸快照 —— 现有 fleet 测试的 tm 只有 list()。
+// Kimi BLOCK 修复后契约（AGENT-TASK-FIX.md）：
+//  - latest_tool / brief 在**写路径**盖章（addMessage → Thread 元数据）。
+//  - buildFleetSnapshot 只读 Thread 元数据 —— **禁止**调用 tm.getMessages
+//    （那是 readFileSync + JSON.parse 整份 transcript，4s 一拍不可接受）。
+//  - 无字段（旧线程）→ 省略，不回读文件。
 import test from "node:test"
 import assert from "node:assert/strict"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 import { buildFleetSnapshot } from "../src/orchestrator"
 import { _resetTabLeasesForTests } from "../src/orchestrator/tab-lease"
 
@@ -14,7 +17,11 @@ function reset() {
   _resetTabLeasesForTests()
 }
 
-function workerTm(messages: any[]) {
+// ---------------------------------------------------------------------------
+// 1. 快照只读元数据（禁止 getMessages —— BLOCK）
+// ---------------------------------------------------------------------------
+
+function workerTm(extra: Record<string, unknown> = {}) {
   return {
     list: () => [
       {
@@ -24,59 +31,31 @@ function workerTm(messages: any[]) {
         paused: false,
         parent_thread_id: "p",
         orchestrator_run_id: "r",
+        ...extra,
       },
     ],
-    getMessages: (id: string) => (id === "w1" ? messages : []),
+    // Must never be reached: transcript files are off-limits in the 4s tick.
+    getMessages: () => {
+      throw new Error("BLOCK: buildFleetSnapshot must not call getMessages")
+    },
   } as any
 }
 
-test("latest_tool = last tool_name across tool rows (reverse scan)", () => {
+test("snapshot surfaces stamped latest_tool/brief from thread metadata", () => {
   reset()
-  const tm = workerTm([
-    { role: "user", content: "查一下" },
-    {
-      role: "assistant",
-      tool_calls: [{ id: "t1", type: "function", function: { name: "get_page_text", arguments: "{}" } }],
-    },
-    { role: "tool", tool_calls: [{ id: "t1", tool_name: "get_page_text", status: "success" }] },
-    { role: "tool", tool_calls: [{ id: "t2", tool_name: "click", status: "running" }] },
-  ])
-  const snap = buildFleetSnapshot(tm)
+  const snap = buildFleetSnapshot(workerTm({ latest_tool: "click", brief: "帮我抓价格" }))
   assert.equal(snap.workers[0]!.latest_tool, "click")
+  assert.equal(snap.workers[0]!.brief, "帮我抓价格")
 })
 
-test("final assistant text after tools does not shadow the last tool", () => {
+test("thread without stamps omits both fields — no transcript fallback read", () => {
   reset()
-  const tm = workerTm([
-    { role: "user", content: "查一下" },
-    { role: "tool", tool_calls: [{ id: "t1", tool_name: "get_page_text", status: "success" }] },
-    { role: "assistant", content: "查完了" },
-  ])
-  const snap = buildFleetSnapshot(tm)
-  assert.equal(snap.workers[0]!.latest_tool, "get_page_text")
+  const snap = buildFleetSnapshot(workerTm())
+  assert.ok(!("latest_tool" in snap.workers[0]!), "no stamp — field must be absent")
+  assert.ok(!("brief" in snap.workers[0]!), "no stamp — field must be absent")
 })
 
-test("assistant function-shape tool_calls are readable when no role=tool rows persist", () => {
-  reset()
-  const tm = workerTm([
-    { role: "user", content: "去" },
-    {
-      role: "assistant",
-      tool_calls: [{ id: "t9", type: "function", function: { name: "navigate", arguments: "{}" } }],
-    },
-  ])
-  const snap = buildFleetSnapshot(tm)
-  assert.equal(snap.workers[0]!.latest_tool, "navigate")
-})
-
-test("thread with no tools omits latest_tool entirely", () => {
-  reset()
-  const tm = workerTm([{ role: "user", content: "在吗" }])
-  const snap = buildFleetSnapshot(tm)
-  assert.ok(!("latest_tool" in snap.workers[0]!), "no tool ran — field must be absent, not empty")
-})
-
-test("tm without a messages reader still snapshots (legacy fakes)", () => {
+test("legacy fake tm (no getMessages at all) still snapshots", () => {
   reset()
   const tm = {
     list: () => [
@@ -89,30 +68,93 @@ test("tm without a messages reader still snapshots (legacy fakes)", () => {
 })
 
 // ---------------------------------------------------------------------------
-// #502 E Task 3 — brief (Inspect 任务简报，首条 user 内容，截 160)
+// 2. 写路径盖章（真实 ThreadManager，临时数据目录）
 // ---------------------------------------------------------------------------
 
-test("brief = first user message content", () => {
+const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-fleet-stamp-"))
+process.env.HOME = tempHome
+process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
+
+test("addMessage stamps brief (first user) and latest_tool on the write path", async () => {
   reset()
-  const tm = workerTm([
-    { role: "user", content: "帮我抓取这页的价格表" },
-    { role: "tool", tool_calls: [{ id: "t1", tool_name: "click", status: "success" }] },
-  ])
-  const snap = buildFleetSnapshot(tm)
-  assert.equal(snap.workers[0]!.brief, "帮我抓取这页的价格表")
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const tid = tm.create("stamper").id
+  ;(tm.get(tid) as any).agent_role = "worker"
+
+  tm.addMessage(tid, { thread_id: tid, role: "user", content: `帮我查 ${"价".repeat(200)}` })
+  const thread = tm.get(tid) as any
+  assert.equal(thread.brief?.length, 160, "brief = first user preview, collapsed + capped 160")
+  assert.equal(thread.latest_tool, undefined)
+
+  tm.addMessage(tid, {
+    thread_id: tid,
+    role: "tool",
+    content: "",
+    tool_calls: [{ id: "t1", tool_name: "get_page_text", status: "running" }],
+  })
+  assert.equal((tm.get(tid) as any).latest_tool, "get_page_text")
+
+  tm.addMessage(tid, {
+    thread_id: tid,
+    role: "tool",
+    content: "",
+    tool_calls: [{ id: "t2", tool_name: "click", status: "running" }],
+  })
+  assert.equal((tm.get(tid) as any).latest_tool, "click", "newest tool wins")
+
+  // snapshot reads the stamps — and its getMessages is absent on the real tm
+  // path too (metadata only). If the snapshot regressed to file reads, the
+  // assertions above still hold, so pin the metadata provenance directly:
+  const snap = buildFleetSnapshot(tm as any)
+  const view = snap.workers.find((w) => w.id === tid)!
+  assert.equal(view.latest_tool, "click")
+  assert.equal(view.brief?.length, 160)
 })
 
-test("brief is whitespace-collapsed and capped at 160 chars", () => {
+test("assistant function-shape tool_calls stamp latest_tool too", async () => {
   reset()
-  const long = `抓 ${"价".repeat(200)}`
-  const tm = workerTm([{ role: "user", content: `   ${long}\n\n  ` }])
-  const snap = buildFleetSnapshot(tm)
-  assert.equal(snap.workers[0]!.brief?.length, 160)
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const tid = tm.create("fnshape").id
+  ;(tm.get(tid) as any).agent_role = "worker"
+  tm.addMessage(tid, {
+    thread_id: tid,
+    role: "assistant",
+    content: "",
+    tool_calls: [{ id: "t9", type: "function", function: { name: "navigate", arguments: "{}" } }],
+  })
+  assert.equal((tm.get(tid) as any).latest_tool, "navigate")
 })
 
-test("brief omitted when the worker thread has no user message", () => {
+test("historical inserts never restamp latest_tool (append-only semantics)", async () => {
   reset()
-  const tm = workerTm([{ role: "assistant", content: "在" }])
-  const snap = buildFleetSnapshot(tm)
-  assert.ok(!("brief" in snap.workers[0]!), "no user message — brief must be absent")
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const tid = tm.create("inserts").id
+  ;(tm.get(tid) as any).agent_role = "worker"
+  tm.addMessage(tid, {
+    thread_id: tid,
+    role: "tool",
+    content: "",
+    tool_calls: [{ id: "t2", tool_name: "click", status: "success" }],
+  })
+  // branch-style historical insert of an OLDER tool row must not win
+  tm.insertMessageAt(tid, 0, {
+    thread_id: tid,
+    role: "tool",
+    content: "",
+    tool_calls: [{ id: "t0", tool_name: "old_tool", status: "success" }],
+  })
+  assert.equal((tm.get(tid) as any).latest_tool, "click", "insert-before-last must not restamp")
+})
+
+test("second user message never overwrites the stamped brief", async () => {
+  reset()
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const tid = tm.create("briefonce").id
+  tm.addMessage(tid, { thread_id: tid, role: "user", content: "第一条任务" })
+  tm.addMessage(tid, { thread_id: tid, role: "user", content: "第二条任务" })
+  assert.equal((tm.get(tid) as any).brief, "第一条任务")
 })

@@ -85,6 +85,14 @@ interface Thread {
   } | null
   /** Multi-agent (ADR-015): role of this thread in an orchestrator run. */
   agent_role?: "normal" | "orchestrator" | "worker"
+  /**
+   * #502 E Glance: newest tool name, stamped on the write path (append only).
+   * fleet.status reads this instead of transcript files (Kimi BLOCK: no
+   * per-tick readFileSync+JSON.parse of whole threads).
+   */
+  latest_tool?: string
+  /** #502 E Inspect: first user ask preview (≤160 chars, whitespace-collapsed). */
+  brief?: string
   /** Parent orchestrator thread id when agent_role=worker. */
   parent_thread_id?: string | null
   /** Shared id for one orchestrator fan-out episode. */
@@ -345,6 +353,26 @@ export function firstUserPreviewFromMessages(
     if (text) return text
   }
   return ""
+}
+
+/**
+ * #502 E: tool name carried by a single message — live tool rows use the flat
+ * shape (tool_calls[].tool_name), hydrated assistant markers the OpenAI
+ * function shape (tool_calls[].function.name). Newest entry in the row wins.
+ */
+export function toolNameFromMessage(msg: {
+  tool_calls?: Array<{ tool_name?: string; function?: { name?: string } }>
+}): string | null {
+  const tcs = msg.tool_calls
+  if (!Array.isArray(tcs)) return null
+  for (let i = tcs.length - 1; i >= 0; i--) {
+    const tc = tcs[i]
+    const flat = typeof tc?.tool_name === "string" ? tc.tool_name : ""
+    const fn = typeof tc?.function?.name === "string" ? tc.function.name : ""
+    const name = (flat || fn).trim()
+    if (name) return name
+  }
+  return null
 }
 
 function lastUserPreviewFromMessages(
@@ -1168,6 +1196,18 @@ export class ThreadManager {
       const lastCreated = data.messages[data.messages.length - 1]?.created_at
       if (typeof lastCreated === "string" && lastCreated) {
         thread.last_message_at = lastCreated
+      }
+      // #502 E: stamp fleet Glance fields on the write path so the 4s
+      // snapshot tick reads thread metadata only — never transcript files.
+      // brief: first user ask only. latest_tool: appends only — a historical
+      // insert (branch/fork repair) must not masquerade as the newest tool.
+      if (!thread.brief && msg.role === "user") {
+        const preview = firstUserPreviewFromMessages([msg], 160)
+        if (preview) thread.brief = preview
+      }
+      if (at === data.messages.length - 1) {
+        const stamped = toolNameFromMessage(msg as never)
+        if (stamped) thread.latest_tool = stamped
       }
       this.saveIndex()
     }
