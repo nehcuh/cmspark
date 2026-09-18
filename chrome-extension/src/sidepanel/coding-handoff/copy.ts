@@ -35,13 +35,13 @@ export const codingHandoffCopy = {
    * dual-process copy above would describe an outer Terminal.app agent that does not exist.
    */
   modeCEmbedIntentBanner:
-    "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。点下方「在本插件打开终端」并在该页确认后才会启动。",
+    "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。点下方「在本插件打开终端」。打开后请回到侧栏确认才会启动。",
   /**
    * #502 C FocusBand/chip variant: the chip renders NO button next to this line, so the
    * deictic「点下方」would point at a control that is not there. Points at the panel instead.
    */
   modeCEmbedIntentBannerNoButton:
-    "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。启动入口在「编程助手」面板的「在本插件打开终端」，需在该页确认后才会启动。",
+    "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。启动入口在「编程助手」面板的「在本插件打开终端」，打开后请回到侧栏确认才会启动。",
 
   /**
    * Mode C host-terminal outcomes. Both render sites gate on `isModeCInvolved`, which excludes
@@ -106,12 +106,12 @@ export const codingHandoffCopy = {
 
   /**
    * #502 C Side Panel entry: opens the existing full-page in-plugin terminal tab, bound to this
-   * thread so the companion can claim the recorded embed intent. Honest: it opens the TAB; the
-   * tab asks for its own L2 confirmation before anything is spawned.
+   * thread so the companion can claim the recorded embed intent. Honest: it opens the TAB;
+   * L2 confirmation stays in the Side Panel FocusBand / coding panel, not on the tab.
    */
   panelOpenEmbeddedTerminal: "在本插件打开终端",
   panelEmbeddedTerminalHint:
-    "打开的是本插件的终端页；该页需你确认后才启动，Agent 自身可能还需先登录。",
+    "打开的是本插件的终端页；请回到侧栏确认后才启动，Agent 自身可能还需先登录。",
 
   /** CLI bridge is one-shot; multi-turn composer disabled with this reason. */
   cliComposerDisabled:

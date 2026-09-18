@@ -202,8 +202,10 @@ test("panel opener is thread-bound and uses the existing terminal.open_tab messa
   const at = sends[0].index!
   // The companion keys the embed intent by THREAD id and `terminal.open` claims it with the
   // same key; a thread-less open lands the user on a plain login shell.
-  assert.match(panel.slice(at, at + 220), /thread_id:\s*embedThreadId/)
-  assert.match(panel.slice(at, at + 220), /void chrome\.runtime\.lastError/)
+  assert.match(panel.slice(at, at + 500), /thread_id:\s*embedThreadId/)
+  assert.match(panel.slice(at, at + 500), /setEmbedOpenError/)
+  assert.doesNotMatch(panel.slice(at, at + 500), /void chrome\.runtime\.lastError/)
+  assert.match(panel, /role="alert"/)
 })
 
 test("no auto-open: the opener identifier is only ever declared or wired to onClick", () => {
@@ -379,7 +381,9 @@ test("FIX 3: embed_intent copy asserts 'no process yet', and rejects outer-proce
       text.includes(EMBED_INTENT_MUST_SAY),
       `must convey "no process yet / waiting to start" (missing ${EMBED_INTENT_MUST_SAY}): ${text}`,
     )
-    assert.match(text, /确认后才会启动/, "must convey 'waiting for the user to confirm'")
+    assert.match(text, /请回到侧栏确认/, "L2 lives in the side panel, not the new tab")
+    assert.doesNotMatch(text, /在该页确认/)
+    assert.match(text, /确认才会启动|确认后才会启动/)
     for (const bad of EMBED_INTENT_MUST_NOT_SAY) {
       assert.ok(!text.includes(bad), `must not claim ${bad}: ${text}`)
     }

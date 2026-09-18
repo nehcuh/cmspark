@@ -168,6 +168,7 @@ export function CodingAgentPanel({
   const [starting, setStarting] = useState(false)
   /** B-lite S1: one-line git status under 工作区 (branch · dirty N / 非 git / —) */
   const [gitStatusLine, setGitStatusLine] = useState<string | null>(null)
+  const [embedOpenError, setEmbedOpenError] = useState("")
 
   const wasOpenRef = useRef(false)
   const acpEnabledRef = useRef(storeAcpEnabled || acpEnabled)
@@ -781,9 +782,14 @@ export function CodingAgentPanel({
    * recorded the embed intent under; sending it without one would land the user on a login shell.
    */
   const openEmbeddedTerminalTab = useCallback(() => {
-    chrome.runtime.sendMessage({ type: "terminal.open_tab", thread_id: embedThreadId }, () => {
-      void chrome.runtime.lastError
-    })
+    setEmbedOpenError("")
+    chrome.runtime.sendMessage(
+      { type: "terminal.open_tab", thread_id: embedThreadId },
+      (response: { ok?: boolean; error?: string } | undefined) => {
+        const err = chrome.runtime.lastError?.message || (response?.ok ? "" : response?.error || "")
+        if (err) setEmbedOpenError(err)
+      },
+    )
   }, [embedThreadId])
 
   return (
@@ -1044,6 +1050,9 @@ export function CodingAgentPanel({
                 >
                   {codingHandoffCopy.panelOpenEmbeddedTerminal}
                 </button>
+                {embedOpenError ? (
+                  <p role="alert" style={styles.footnote}>{embedOpenError}</p>
+                ) : null}
                 <p style={styles.footnote}>{codingHandoffCopy.panelEmbeddedTerminalHint}</p>
               </div>
             ) : null}
