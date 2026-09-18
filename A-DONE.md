@@ -8,6 +8,15 @@
 |---|---|
 | `ce36c81a` | test(ext): tool history view grouping — 纯函数 `viewToolHistory`/`liveChipLabel`/`doneChipLabel` + 8 个规则测试（TDD：先红 TS2307 后绿） |
 | `f4882bfd` | feat(sidepanel): collapse completed tool cards into audit chip — ChatView 接线 + `groupToolTurnRows` 分组 + 分组测试 + pr6 源码契约测试 |
+| `8baa5749` | fix(sidepanel): fold hydrated assistant tool_calls — Kimi MAJOR-1 hydrate 修复（见下「hydrate 已修」） |
+
+## hydrate 已修（2026-09-18 追加）
+
+Kimi MAJOR-1 亲证：reload 后持久化 assistant 行带 OpenAI function 形 `tool_calls`（有 `function.name`、无扁平 `tool_name`），MessageRow 仍无条件 `map` 出无名卡——视口变成「无名卡 + 芯」。修复（`8baa5749`，TDD 三轮红绿）：
+
+1. **`shouldRenderInlineToolCards(msg)`**（`tool-history-view.ts`）：role=tool → false（块已画）；function 形（任一 tc 带 `function` 信封或缺 `tool_name`）→ false；仅扁平 `tool_name` 形 → true。MessageRow 的 inline map 挂在该门后（`ChatView.tsx`）。
+2. **史前形状兜底**：只有 assistant.tool_calls、无后续 role=tool 行的 hydrate 线程，`groupToolTurnRows` 把该 assistant 转成 tools 块（`function.name` 归一化为扁平 `tool_name`，ToolCallCard 可读名）；带正文时正文行保留在块前。被 role=tool 行覆盖（紧随其后）的标记行仍是普通行，不重复出块。
+3. 测试：truth table 4 断言 + 分组 3 用例（未覆盖转块 / 已覆盖保持行+块 / 带正文行保留）+ pr6 源码契约（门在 map 之前）。全量 1353/1353 pass、`tsc --noEmit` 绿、plasmo build 绿，产物 chunk 含新符号 [executed]。
 
 ## 测了什么
 
@@ -28,7 +37,7 @@
 
 - **未做浏览器端 e2e**：芯默认收起、点击展开、running/L2 卡可见等交互逻辑为单测+源码级验证，未在加载扩展的 Chrome 里实跑一轮工具回合（需要 companion + 真实 LLM 回合）。后续可在 #502 合并前人工过一遍线稿 01/02 两屏。
 - **tool 行的逐行操作条（复制/分支/导出）随折叠消失**：role=tool 行不再走 MessageRow，收起时（以及展开时）没有原 per-row action bar；卡片自身的「详情」控件保留。若需保留导出能力，可在展开态补（另票）。
-- **assistant 标记行的无名卡是既有行为**：mid-turn/persisted assistant 行携带 function 形状 `tool_calls`，`ToolCallCard` 只读扁平 `tc.tool_name`，渲染为空名卡。本切片未改（超范围），如需收敛建议与 #295 的 honesty-chip 语义一起另票处理。
+- ~~assistant 标记行的无名卡是既有行为~~ → 已修（`8baa5749`，见「hydrate 已修」）：function 形 inline 卡被门禁，史前线程转块出芯。
 - **isLast 语义微调**：回合进行中最后一个 item 是工具块时，其前的 assistant/user 行不享 persistent action bar（注意力集中在当前步）；回合结束后的末条 assistant 消息行为不变。
 - `SUMMONER_ALLOW` 在本 worktree 不存在（属主 checkout 的 summoner 工作），overlay 零改动以 diff + 引用扫描测试为准。
 
