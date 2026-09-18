@@ -299,6 +299,14 @@ export interface LLMConfig {
   thread_digest_enabled?: boolean
   thread_digest_on_idle_hours?: number
   thread_digest_max_per_day?: number
+  /**
+   * #502 B archive tier (top-level companion config key).
+   * false (default) → durable thread JSON keeps tool rows as stubs (tool name +
+   * success + payload length/fingerprint); true → the #255 redacted bodies.
+   * Cookie / shell / host_* / MCP secrets fold in BOTH modes — this switch never
+   * relaxes redaction. Already-compacted history is not restored by turning it on.
+   */
+  persist_full_tool_history?: boolean
 }
 
 /** Image attachment metadata on a transcript row (bytes live on companion disk). */

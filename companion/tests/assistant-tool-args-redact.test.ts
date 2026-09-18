@@ -58,7 +58,7 @@ test("set_cookie value is folded in persisted assistant arguments", () => {
     domain: "example.com",
     value: secret,
   }))
-  const out = redactAssistantToolCallsForPersistence([original])
+  const out = redactAssistantToolCallsForPersistence([original], { persistFull: true })
   const args = JSON.parse(out[0].function.arguments)
   assert.equal(out[0].id, "call_1")
   assert.equal(out[0].type, "function")
@@ -73,7 +73,7 @@ test("set_cookie value is folded in persisted assistant arguments", () => {
 test("shell_exec command is folded in persisted assistant arguments", () => {
   const command = "cat /etc/passwd && echo SHELL_SECRET_PAYLOAD"
   const original = call("shell_exec", JSON.stringify({ command, cwd: "/tmp" }))
-  const out = redactAssistantToolCallsForPersistence([original])
+  const out = redactAssistantToolCallsForPersistence([original], { persistFull: true })
   const args = JSON.parse(out[0].function.arguments)
   assert.ok(String(args.command).startsWith("<redacted:"))
   assert.equal(args.cwd, "/tmp")
@@ -85,7 +85,7 @@ test("shell_exec command is folded in persisted assistant arguments", () => {
 test("host_computer task is folded in persisted assistant arguments", () => {
   const task = "type the password hunter2 into the login form"
   const original = call("host_computer", JSON.stringify({ task, actions: [{ type: "type", text: "hunter2" }] }))
-  const out = redactAssistantToolCallsForPersistence([original])
+  const out = redactAssistantToolCallsForPersistence([original], { persistFull: true })
   const args = JSON.parse(out[0].function.arguments)
   assert.ok(String(args.task).startsWith("<redacted:"))
   assert.ok(!persistedArgs(out).includes(task))
@@ -96,7 +96,7 @@ test("host_computer task is folded in persisted assistant arguments", () => {
 test("evaluate code is folded in persisted assistant arguments", () => {
   const code = "return document.cookie"
   const original = call("evaluate", JSON.stringify({ code, tabId: 7 }))
-  const out = redactAssistantToolCallsForPersistence([original])
+  const out = redactAssistantToolCallsForPersistence([original], { persistFull: true })
   const args = JSON.parse(out[0].function.arguments)
   assert.ok(String(args.code).startsWith("<redacted:"))
   assert.equal(args.tabId, 7)
@@ -105,7 +105,7 @@ test("evaluate code is folded in persisted assistant arguments", () => {
 
 test("list_tabs keeps non-secret args", () => {
   const original = call("list_tabs", JSON.stringify({ currentWindow: true, tabId: 42 }))
-  const out = redactAssistantToolCallsForPersistence([original])
+  const out = redactAssistantToolCallsForPersistence([original], { persistFull: true })
   const args = JSON.parse(out[0].function.arguments)
   assert.equal(args.currentWindow, true)
   assert.equal(args.tabId, 42)
@@ -115,7 +115,7 @@ test("list_tabs keeps non-secret args", () => {
 test("invalid JSON arguments are replaced with a stub, not the raw string", () => {
   const raw = '{"value":"PARTIAL_SECRET_STILL_LEAK"'
   const original = call("set_cookie", raw)
-  const out = redactAssistantToolCallsForPersistence([original])
+  const out = redactAssistantToolCallsForPersistence([original], { persistFull: true })
   const args = JSON.parse(out[0].function.arguments)
   assert.equal(args._redacted, "invalid_json")
   assert.equal(args.len, raw.length)
@@ -156,9 +156,10 @@ test("set_cookie value does not appear in persisted thread JSON", () => {
     thread_id: th.id,
     role: "assistant",
     content: "",
-    tool_calls: redactAssistantToolCallsForPersistence([
-      call("set_cookie", JSON.stringify({ name: "sid", value: secret, domain: "example.com" })),
-    ]),
+    tool_calls: redactAssistantToolCallsForPersistence(
+      [call("set_cookie", JSON.stringify({ name: "sid", value: secret, domain: "example.com" }))],
+      { persistFull: true },
+    ),
   })
   const diskPath = path.join(process.env.CMSPARK_DATA_DIR!, "threads", `${th.id}.json`)
   const disk = fs.readFileSync(diskPath, "utf8")
