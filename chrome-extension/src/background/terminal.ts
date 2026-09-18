@@ -19,8 +19,11 @@ export function embeddedTerminalUrl(): string {
  * Tab-to-companion binding. #502 C: a binding is THREAD-bound first (`thread_id` is the key the
  * companion records the embed intent under, and `terminal.open` claims it with the same key).
  * `review_id` is an optional extra scope for the code-review flow, never a requirement.
+ *
+ * Not exported: the only external contract is `buildTerminalOpenBinding` /
+ * `openOrFocusEmbeddedTerminal` (no other module names this type).
  */
-export type TerminalTabBinding = { thread_id: string; review_id?: string }
+type TerminalTabBinding = { thread_id: string; review_id?: string }
 
 /**
  * Derive the tab binding from a `terminal.open_tab` message. A thread-only message MUST keep its

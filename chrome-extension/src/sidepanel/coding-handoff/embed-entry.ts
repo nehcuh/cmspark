@@ -18,17 +18,53 @@ export type EmbeddedTerminalConfig =
   | undefined
 
 /**
- * Gate for the Side Panel「在本插件打开终端」entry.
+ * Gate for the Side Panel「在本插件打开终端」entry (config half).
  *
- * Darwin: intentionally NOT gated here. The extension has no darwin signal in the
- * config/session payload — `apps.list` `platform` is companion-narrowed to `win32 | other`
- * (darwin and linux both read `other`), and `voice/stt-engine-chain.detectChainPlatform()`
- * narrows the same way, so neither can decide "is darwin". Rather than add a wire field or a
- * config key, non-darwin hosts get the companion's honest refusal
- * (`terminal.closed` / `unsupported`: 内嵌终端仅支持 macOS), which the terminal tab renders.
+ * The darwin half is `isDarwin()` below: the button is shown on `enabled && isDarwin()`.
+ * The companion still refuses a non-darwin host with `unsupported`
+ * (内嵌终端仅支持 macOS) — this is a UI-hiding gate, NOT a security boundary.
  */
 export function shouldShowEmbeddedTerminalEntry(config: EmbeddedTerminalConfig): boolean {
   return config?.embedded_terminal?.enabled === true
+}
+
+/** The slice of `navigator` the darwin predicate reads (callers pass a literal; not a public type). */
+type PlatformEnv = {
+  userAgentData?: { platform?: unknown } | null
+  platform?: unknown
+  userAgent?: unknown
+}
+
+function nonEmptyString(v: unknown): string {
+  return typeof v === "string" ? v.trim() : ""
+}
+
+/**
+ * Is this host macOS? Total and FAIL-CLOSED: anything inconclusive is `false`, so we never
+ * promise an embed the companion would refuse (`unsupported`).
+ *
+ * Order — the side panel reports `navigator.userAgentData.platform === "macOS"` (the strongest
+ * signal, and the only one that is not a UA-string sniff); `navigator.platform` then the UA
+ * string are fallbacks. iPad/iPhone UAs also say "like Mac OS X", so the UA rung requires
+ * "Macintosh" and rejects iOS. No wire field, no config key.
+ *
+ * NOT a security boundary — the companion re-checks the real platform.
+ */
+export function isDarwin(env?: PlatformEnv | null): boolean {
+  const e: PlatformEnv | null =
+    env === undefined
+      ? typeof navigator === "undefined"
+        ? null
+        : (navigator as PlatformEnv)
+      : env
+  if (!e) return false
+  const uadp = nonEmptyString(e.userAgentData?.platform)
+  if (uadp) return /^mac/i.test(uadp)
+  const platform = nonEmptyString(e.platform)
+  if (platform) return /^mac/i.test(platform)
+  const ua = nonEmptyString(e.userAgent)
+  if (ua) return /Macintosh/.test(ua) && !/iPhone|iPad|iPod/.test(ua)
+  return false
 }
 
 /** Mode C host-terminal outcome, as emitted by the companion (`local_terminal`). */
@@ -90,14 +126,23 @@ export function isModeCMonitorStop(
  * outer Terminal.app agent that has to exit on its own, while in this state nothing is running
  * at all and the user still has to click the panel button.
  */
-export function modeCBannerText(localTerminal: LocalTerminalState): string {
-  if (localTerminal === "embed_intent") return codingHandoffCopy.modeCEmbedIntentBanner
-  if (localTerminal === "failed") {
-    return "模式 C：本机终端未打开；侧栏监视仍在。停止仅结束侧栏桥。"
+export function modeCBannerText(
+  localTerminal: LocalTerminalState,
+  surface: { hasEntryButton?: boolean } = {},
+): string {
+  if (localTerminal === "embed_intent") {
+    // Only say「点下方…」where the button is actually rendered next to this line (the panel
+    // passes hasEntryButton; the FocusBand chip has no button and gets the honest variant).
+    return surface.hasEntryButton === true
+      ? codingHandoffCopy.modeCEmbedIntentBanner
+      : codingHandoffCopy.modeCEmbedIntentBannerNoButton
   }
+  // Defensive rung: both render sites gate on `isModeCInvolved`, which excludes `failed`,
+  // so this string is not rendered today — it must still be non-lying if a site ever adds it.
+  if (localTerminal === "failed") return codingHandoffCopy.modeCTerminalFailedBanner
   if (localTerminal === "opened_l0") {
-    return "模式 C：终端已开（L0 仅横幅，需手动粘贴命令）。" + codingHandoffCopy.modeCDualProcessBanner
+    return codingHandoffCopy.modeCTerminalOpenedL0Banner + codingHandoffCopy.modeCDualProcessBanner
   }
-  if (localTerminal === "pending") return "模式 C：正在打开本机终端…"
+  if (localTerminal === "pending") return codingHandoffCopy.modeCTerminalPendingBanner
   return codingHandoffCopy.modeCDualProcessBanner
 }

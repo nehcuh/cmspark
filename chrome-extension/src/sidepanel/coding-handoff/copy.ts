@@ -36,6 +36,23 @@ export const codingHandoffCopy = {
    */
   modeCEmbedIntentBanner:
     "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。点下方「在本插件打开终端」并在该页确认后才会启动。",
+  /**
+   * #502 C FocusBand/chip variant: the chip renders NO button next to this line, so the
+   * deictic「点下方」would point at a control that is not there. Points at the panel instead.
+   */
+  modeCEmbedIntentBannerNoButton:
+    "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。启动入口在「编程助手」面板的「在本插件打开终端」，需在该页确认后才会启动。",
+
+  /**
+   * Mode C host-terminal outcomes. Both render sites gate on `isModeCInvolved`, which excludes
+   * `failed`/`skipped` — the `failed` line below is a defensive rung of the ladder, not rendered
+   * today (see embed-entry.modeCBannerText).
+   */
+  modeCTerminalPendingBanner: "模式 C：正在打开本机终端…",
+  modeCTerminalOpenedL0Banner:
+    "模式 C：终端已开（L0 仅横幅，需手动粘贴命令）。",
+  modeCTerminalFailedBanner:
+    "模式 C：本机终端未打开；侧栏监视仍在。停止仅结束侧栏桥。",
 
   // Modes (never “只读” as OS sandbox claim)
   modeReview: "审查",
