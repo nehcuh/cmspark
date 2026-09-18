@@ -1175,6 +1175,10 @@ export class ThreadManager {
     }
 
     const at = Math.max(0, Math.min(index, data.messages.length))
+    // Capture append-ness BEFORE splice+trim. After the 1000-cap trim,
+    // `at === data.messages.length - 1` is permanently false (at=1000, length-1=999)
+    // and latest_tool would freeze — Kimi #502 E MAJOR.
+    const isAppend = at === data.messages.length
     data.messages.splice(at, 0, msg)
 
     if (data.messages.length > MAX_MESSAGES_PER_THREAD) {
@@ -1205,7 +1209,7 @@ export class ThreadManager {
         const preview = firstUserPreviewFromMessages([msg], 160)
         if (preview) thread.brief = preview
       }
-      if (at === data.messages.length - 1) {
+      if (isAppend) {
         const stamped = toolNameFromMessage(msg as never)
         if (stamped) thread.latest_tool = stamped
       }

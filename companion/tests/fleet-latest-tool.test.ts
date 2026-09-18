@@ -127,6 +127,34 @@ test("assistant function-shape tool_calls stamp latest_tool too", async () => {
   assert.equal((tm.get(tid) as any).latest_tool, "navigate")
 })
 
+test("latest_tool keeps updating after the 1000-message cap trim", async () => {
+  reset()
+  const { ThreadManager, MAX_MESSAGES_PER_THREAD } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const tid = tm.create("cap-freeze").id
+  ;(tm.get(tid) as any).agent_role = "worker"
+  tm.addMessage(tid, {
+    thread_id: tid,
+    role: "tool",
+    content: "",
+    tool_calls: [{ id: "t-pre", tool_name: "navigate", status: "success" }],
+  })
+  for (let i = 0; i < MAX_MESSAGES_PER_THREAD; i++) {
+    tm.addMessage(tid, { thread_id: tid, role: "assistant", content: `pad-${i}` })
+  }
+  tm.addMessage(tid, {
+    thread_id: tid,
+    role: "tool",
+    content: "",
+    tool_calls: [{ id: "t-post", tool_name: "click", status: "running" }],
+  })
+  assert.equal(
+    (tm.get(tid) as any).latest_tool,
+    "click",
+    "append after cap trim must restamp (must not freeze on pre-cap tool)",
+  )
+})
+
 test("historical inserts never restamp latest_tool (append-only semantics)", async () => {
   reset()
   const { ThreadManager } = await import("../src/threads/thread-manager")
