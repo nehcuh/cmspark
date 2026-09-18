@@ -25,6 +25,13 @@ import { KnowledgeImportModal } from "./KnowledgeImportModal"
 import { SummarySheet } from "./SummarySheet"
 import { NoticeCard } from "./ui/NoticeCard"
 import { isCoarsePointer, messageActionMode } from "./message-actions"
+import {
+  doneChipLabel,
+  groupToolTurnRows,
+  liveChipLabel,
+  shouldRenderInlineToolCards,
+  viewToolHistory,
+} from "./tool-history-view"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
 import { deriveThreadBusy } from "../utils/thread-busy"
@@ -107,6 +114,19 @@ export function ChatView() {
       ? contextCompactedByThreadId[activeThreadId]
       : null
   const runItems = threads.find((t) => t.id === activeThreadId)?.run_progress?.items
+  // #502 A: consecutive role=tool rows render as one per-turn block (audit
+  // chip). SecurityConfirmationRequest carries no tool_call_id on the wire —
+  // correlate confirmations by tool_name so a confirming step always stays
+  // the expanded `current` card, never folded into the chip.
+  const pendingConfirmToolNames = useMemo(() => {
+    const names = new Set<string>()
+    for (const c of pendingSecurityConfirmations) {
+      const n = typeof c?.tool_name === "string" ? c.tool_name.trim() : ""
+      if (n) names.add(n)
+    }
+    return names
+  }, [pendingSecurityConfirmations])
+  const transcriptItems = useMemo(() => groupToolTurnRows(messages), [messages])
   const [summaryOpen, setSummaryOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   /** Inner content grows with messages; ResizeObserver watches this for stick-to-bottom. */
@@ -440,21 +460,35 @@ export function ChatView() {
           !streamingContent &&
           !streamingReasoning &&
           !processingLabel && <EmptyState level={level} />}
-        {messages.map((msg, i) => (
-          <MessageRow
-            key={msg.id}
-            msg={msg}
-            activeThreadId={activeThreadId}
-            sendShortcut={sendShortcut}
-            onRegenerate={handleRegenerate}
-            onFork={handleFork}
-            onExport={handleExport}
-            showReasoningMode={showReasoningMode}
-            exportIncludeReasoning={exportIncludeReasoning === true}
-            isLast={i === messages.length - 1}
-            dispatch={dispatch}
-          />
-        ))}
+        {transcriptItems.map((item, i) => {
+          const itemIsLast = i === transcriptItems.length - 1
+          if (item.kind === "tools") {
+            return (
+              <ToolHistoryBlock
+                key={`tools-${item.msgs[0]!.id}`}
+                msgs={item.msgs}
+                threadBusy={Boolean(itemIsLast && threadBusy)}
+                pendingConfirmToolNames={pendingConfirmToolNames}
+              />
+            )
+          }
+          const msg = item.msg
+          return (
+            <MessageRow
+              key={msg.id}
+              msg={msg}
+              activeThreadId={activeThreadId}
+              sendShortcut={sendShortcut}
+              onRegenerate={handleRegenerate}
+              onFork={handleFork}
+              onExport={handleExport}
+              showReasoningMode={showReasoningMode}
+              exportIncludeReasoning={exportIncludeReasoning === true}
+              isLast={itemIsLast}
+              dispatch={dispatch}
+            />
+          )
+        })}
         {(streamingReasoning || streamingContent) && (
           <div style={styles.agentMsg}>
             <div style={styles.messageCol}>
@@ -753,9 +787,14 @@ const MessageRow = memo(function MessageRow({
                 ) : (
                   <MarkdownRenderer content={msg.content} renderMermaid />
                 ))}
-              {msg.tool_calls?.map((tc: any) => (
-                <ToolCallCard key={tc.id} tc={tc} />
-              ))}
+              {/* #502 A (Kimi MAJOR-1): role=tool rows are consumed by the
+                  per-turn block; hydrated assistant rows carry function-shape
+                  tool_calls whose cards are the block's job too. Only flat
+                  live-shape tool_calls that no block swallowed render inline. */}
+              {shouldRenderInlineToolCards(msg) &&
+                msg.tool_calls?.map((tc: any) => (
+                  <ToolCallCard key={tc.id} tc={tc} />
+                ))}
             </div>
             {honestyChip ? (
               <div style={styles.truncChip} role="status">
@@ -1011,6 +1050,99 @@ function toolResultUserHint(result: any): string | null {
   if (first) return first.trim().replace(/^Security Block:\s*/i, "")
   return null
 }
+
+/**
+ * #502 slice A — one chip per assistant turn's tool history.
+ *
+ * Consecutive role=tool rows (one per tool — live tool.start and hydrated
+ * persistence shapes) group into this block: while the turn is live only the
+ * current step (running / L2-confirming) stays expanded plus a
+ * `已完成 N 步` chip; after the turn ends everything folds behind one
+ * `N 步浏览器操作 · 展开审计` chip and the answer owns the viewport.
+ * Expanded rows reuse ToolCallCard verbatim — no new card. Folding is plain
+ * component state: switching threads / remounting returns to the default
+ * collapsed presentation, nothing is written back onto the thread.
+ */
+const ToolHistoryBlock = memo(function ToolHistoryBlock({
+  msgs,
+  threadBusy,
+  pendingConfirmToolNames,
+}: {
+  msgs: any[]
+  threadBusy: boolean
+  pendingConfirmToolNames: ReadonlySet<string>
+}) {
+  const [auditOpen, setAuditOpen] = useState(false)
+  const tools = useMemo(
+    () => msgs.flatMap((m) => (Array.isArray(m?.tool_calls) ? m.tool_calls : [])),
+    [msgs],
+  )
+  // SecurityConfirmationRequest carries no tool_call id on the wire — correlate
+  // by tool_name so an L2-confirming step always stays the expanded current
+  // card, never folded into the chip (redundant with its running status).
+  const pendingConfirmIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (pendingConfirmToolNames.size === 0) return ids
+    for (const t of tools) {
+      if (
+        typeof t?.id === "string" &&
+        typeof t?.tool_name === "string" &&
+        pendingConfirmToolNames.has(t.tool_name)
+      ) {
+        ids.add(t.id)
+      }
+    }
+    return ids
+  }, [tools, pendingConfirmToolNames])
+  const view = viewToolHistory(tools, { threadBusy, pendingConfirmIds })
+  if (view.kind === "empty") return null
+
+  // Failure never hides behind a neutral chip: warning tone when failed > 0.
+  const chipTone =
+    view.failed > 0
+      ? { ...styles.toolHistoryChip, color: tokens.warning, background: tokens.warningSoft }
+      : styles.toolHistoryChip
+  const renderCard = (tc: any, i: number) => <ToolCallCard key={tc.id ?? `tc-${i}`} tc={tc} />
+
+  return (
+    <div className="cmspark-msg-row" style={styles.agentMsg}>
+      <div style={styles.messageCol}>
+        <div style={styles.agentBubble}>
+          {view.kind === "live" ? (
+            <>
+              {view.completed.length > 0 ? (
+                <button
+                  type="button"
+                  style={chipTone}
+                  aria-expanded={auditOpen}
+                  aria-label={liveChipLabel(view.completed.length, view.failed)}
+                  onClick={() => setAuditOpen((v) => !v)}
+                >
+                  {liveChipLabel(view.completed.length, view.failed)}
+                </button>
+              ) : null}
+              {auditOpen ? view.completed.map(renderCard) : null}
+              <ToolCallCard tc={view.current} />
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                style={chipTone}
+                aria-expanded={auditOpen}
+                aria-label={doneChipLabel(view.tools.length, view.failed)}
+                onClick={() => setAuditOpen((v) => !v)}
+              >
+                {doneChipLabel(view.tools.length, view.failed)}
+              </button>
+              {auditOpen ? view.tools.map(renderCard) : null}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+})
 
 function ToolCallCard({ tc }: { tc: any }) {
   const { state: agentState, dispatch } = useAgentStore()
@@ -2082,6 +2214,23 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${tokens.border}`,
     borderRadius: 10,
     padding: "2px 8px",
+  },
+  // #502 A: per-turn audit chip — neutral by default, warning tone is applied
+  // inline when the turn has failures (fold must never hide a failure).
+  toolHistoryChip: {
+    display: "inline-flex" as const,
+    alignItems: "center" as const,
+    gap: 4,
+    marginTop: 4,
+    alignSelf: "flex-start" as const,
+    fontSize: 11,
+    lineHeight: 1.4,
+    color: tokens.textSecondary,
+    background: tokens.bgElevated,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: 10,
+    padding: "2px 8px",
+    cursor: "pointer",
   },
   statusBubble: {
     background: tokens.accentSoft,
