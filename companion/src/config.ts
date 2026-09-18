@@ -353,6 +353,13 @@ export interface CompanionConfig {
    * its gated release). Sensitive classes (cookies / shell / host_* / osascript /
    * MCP secrets) fold in BOTH modes — this switch never relaxes redaction.
    * Omitted on disk → deepMerge leaves it undefined = off (fail-closed).
+   *
+   * SCOPE (deliberate, #502 B): this key governs threads/*.json ONLY. It does NOT
+   * touch history.db (`history.query` / the 操作历史 panel; 30-day retention,
+   * redacted by security/redact-rules.ts) nor logs/companion-*.log. Those sinks
+   * are tracked separately and keep their own redaction.
+   *
+   * Non-retroactive: turning it on restores nothing already compacted on disk.
    */
   persist_full_tool_history?: boolean
   /**
