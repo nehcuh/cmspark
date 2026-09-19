@@ -154,13 +154,24 @@ export function buildFleetDismissMessage(threadId: string) {
 }
 
 /**
+ * Sanitize one model-produced subtask for the user-role message: collapse
+ * newlines/tabs (a subtask must never inject fake list items or line breaks),
+ * strip control chars, cap length. The schema already bounds it at 160 — this
+ * is the UI-side second gate (model output → user-role text).
+ */
+function sanitizeFleetSubtask(s: string): string {
+  return s.replace(/[\x00-\x1F\x7F]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 160)
+}
+
+/**
  * Accept = ONE user message carrying the full dispatch instruction (subtasks +
  * spawn_worker mention). Deliberately NOT task_loop.arm: arm injects 续跑
  * autonomy (kickoff / PROPOSE_REQUEST_STEER / status row) which is a different
  * axis from parallel dispatch and would race the queue steer (spec §3.3).
  */
 export function buildFleetAcceptText(subtasks: string[]): string {
-  const list = subtasks.map((s, i) => `${i + 1}) ${s}`).join("\n")
+  const list = subtasks.map((s) => sanitizeFleetSubtask(s)).filter(Boolean)
+    .map((s, i) => `${i + 1}) ${s}`).join("\n")
   return [
     "同意多路并行。请将以下子任务分派给 worker 执行（用 spawn_worker，每次仍需我在确认中心批准）：",
     list,
@@ -169,28 +180,47 @@ export function buildFleetAcceptText(subtasks: string[]): string {
 }
 
 /**
+ * The runtime message the card sends on accept. Rides the existing chat.send
+ * pipeline; `steer: true` when the thread is mid-run — a plain chat.create
+ * would bounce off `run_active` and silently lose the dispatch instruction
+ * (same reason the composer steers while busy).
+ */
+export function buildFleetAcceptMessage(
+  threadId: string,
+  subtasks: string[],
+  opts?: { steer?: boolean },
+) {
+  return {
+    type: "chat.send" as const,
+    threadId,
+    message: buildFleetAcceptText(subtasks),
+    ...(opts?.steer ? { steer: true } : {}),
+  }
+}
+
+/**
  * #513 fleet suggestion card. Non-blocking, no preselection, no countdown —
  * same surface language as LoopSuggestCard. Accept sends the dispatch message
- * (chat.send) AND the dismiss frame (companion silences re-propose); the store
- * entry is cleared synchronously by the caller — never by passive signals.
+ * (chat.send, steered while the thread is busy) AND the dismiss frame
+ * (companion silences re-propose); the store entry is cleared synchronously by
+ * the caller — never by passive signals.
  */
 export function FleetSuggestCard({
   threadId,
   reason,
   subtasks,
+  busy = false,
   onCleared,
 }: {
   threadId: string
   reason: string
   subtasks: string[]
+  /** Thread mid-run → accept steers instead of a chat.create that run_active would reject. */
+  busy?: boolean
   onCleared: () => void
 }) {
   const onAccept = () => {
-    chrome.runtime.sendMessage({
-      type: "chat.send",
-      threadId,
-      message: buildFleetAcceptText(subtasks),
-    })
+    chrome.runtime.sendMessage(buildFleetAcceptMessage(threadId, subtasks, { steer: busy }))
     chrome.runtime.sendMessage(buildFleetDismissMessage(threadId))
     onCleared()
   }
@@ -202,30 +232,27 @@ export function FleetSuggestCard({
     <div data-testid="fleet-suggest-card" style={styles.card}>
       <div style={styles.cardHead}>
         <span style={styles.cardTitle}>此任务适合多路并行</span>
-        <button
-          type="button"
-          aria-label="不再提示"
-          style={styles.dismissBtn}
-          onClick={onDismiss}
-        >
-          ✕
-        </button>
       </div>
-      {reason ? (
-        <div style={styles.cardItem}>{reason}</div>
-      ) : null}
+      {reason ? <div style={styles.fleetCardItem}>{reason}</div> : null}
       <div style={styles.cardList}>
         {subtasks.map((s, i) => (
-          <div key={`${i}-${s}`} style={styles.cardItem}>
+          <div key={`${i}-${s}`} style={styles.fleetCardItem}>
             · {s}
           </div>
         ))}
       </div>
       <div style={styles.cardFoot}>
-        <span style={styles.cardHint}>点按即发送分派指令 · 每个 worker 仍需在确认中心批准</span>
-        <button type="button" style={styles.armBtn} onClick={onAccept}>
-          派 worker 并行做
-        </button>
+        <span style={styles.cardHint}>
+          {busy ? "当前回合结束后送达分派指令" : "点按即发送分派指令"} · 每个 worker 仍需在确认中心批准
+        </span>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button type="button" style={styles.dismissTextBtn} onClick={onDismiss}>
+            不用，单线程继续
+          </button>
+          <button type="button" style={styles.armBtn} onClick={onAccept}>
+            派 worker 并行做
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -433,6 +460,27 @@ const styles: Record<string, CSSProperties> = {
     gap: 6,
   },
   cardHint: { fontSize: 10, color: tokens.textSecondary },
+  /** #513: fleet card items WRAP — a subtask is model-produced and the user
+   *  must read ALL of it before approving (nowrap+ellipsis could hide the tail). */
+  fleetCardItem: {
+    fontSize: 11,
+    color: tokens.warningText,
+    opacity: 0.9,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    overflowWrap: "anywhere",
+  },
+  /** #513: text dismiss (spec: 「不用，单线程继续」) — the ✕-only variant hid the choice. */
+  dismissTextBtn: {
+    flex: "0 0 auto",
+    border: `1px solid ${tokens.border}`,
+    background: "transparent",
+    color: tokens.textSecondary,
+    borderRadius: tokens.radiusSm,
+    fontSize: 11,
+    padding: "3px 8px",
+    cursor: "pointer",
+  },
   armBtn: {
     flex: "0 0 auto",
     border: "none",

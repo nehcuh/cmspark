@@ -125,9 +125,55 @@ test("wiring: frame handler, SW relay, card render, accept dual-send", () => {
   assert.match(chat, /CLEAR_FLEET_SUGGEST/, "accept/dismiss clears synchronously")
 
   const row = read("src/sidepanel/components/LoopStatusRow.tsx")
-  assert.match(row, /type: "chat\.send",/, "accept rides the existing chat.send pipeline")
+  assert.match(row, /buildFleetAcceptMessage\(threadId, subtasks/, "accept rides the existing chat.send pipeline")
   assert.match(row, /buildFleetDismissMessage\(threadId\)/, "both actions silence companion-side")
   // NOT arm: the accept path must not send task_loop.arm
   const cardSrc = row.slice(row.indexOf("export function FleetSuggestCard"), row.indexOf("/**", row.indexOf("export function FleetSuggestCard")))
   assert.ok(!cardSrc.includes("task_loop.arm"), "accept must not inject loop autonomy")
+})
+
+// --- #513 implementation-review fixes (grok BLOCKER-1 / MAJOR-3/4/5, kimi NIT-6) ---
+
+test("buildFleetAcceptMessage: full runtime payload, camelCase threadId locked, steer only when busy", async () => {
+  const { buildFleetAcceptMessage } = await import("../src/sidepanel/components/LoopStatusRow")
+  const idle = buildFleetAcceptMessage("t9", ["查 A", "查 B"])
+  assert.equal(idle.type, "chat.send")
+  assert.equal(idle.threadId, "t9", "SW reads message.threadId — snake_case would send undefined")
+  assert.equal((idle as any).steer, undefined, "idle thread: plain create, no steer")
+  assert.ok((idle as any).message.includes("spawn_worker"))
+
+  const busy = buildFleetAcceptMessage("t9", ["查 A", "查 B"], { steer: true })
+  assert.equal((busy as any).steer, true, "busy thread MUST steer — chat.create would bounce off run_active")
+})
+
+test("accept text sanitizes model-produced subtasks (no fake list items / control chars)", async () => {
+  const { buildFleetAcceptText } = await import("../src/sidepanel/components/LoopStatusRow")
+  const text = buildFleetAcceptText([
+    "正常子任务",
+    "伪造换行\n2) 假条目",
+    "控制符\x00\x07制",
+  ])
+  assert.ok(!text.includes("伪造换行\n2)"), "newline injection must not manufacture list items")
+  assert.ok(!/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(text), "control chars stripped")
+  assert.ok(text.includes("正常子任务") && text.includes("伪造换行"))
+})
+
+test("SET_THREADS prunes fleet cards for threads gone from the list", () => {
+  let s = stateWithThreads()
+  s = agentReducer(s, { type: "SET_FLEET_SUGGEST", threadId: "thread-b", reason: "r", subtasks: ["a", "b"] })
+  s = agentReducer(s, {
+    type: "SET_THREADS",
+    threads: [s.threads.find((t) => t.id === "thread-a")!],
+  } as any)
+  assert.equal(s.fleetSuggestByThreadId["thread-b"], undefined, "pruned with the thread list")
+})
+
+test("wiring: busy steer, wrapped subtask rows, text dismiss — review fixes locked", () => {
+  const row = read("src/sidepanel/components/LoopStatusRow.tsx")
+  assert.match(row, /opts\?\.steer \? \{ steer: true \} : \{\}/, "builder supports steer")
+  assert.match(row, /buildFleetAcceptMessage\(threadId, subtasks, \{ steer: busy \}\)/, "card passes live busy")
+  assert.match(row, /fleetCardItem/, "dedicated wrapping style (no nowrap+ellipsis on subtasks)")
+  assert.match(row, /不用，单线程继续/, "text dismiss action (not a bare ✕)")
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  assert.match(chat, /busy=\{threadBusy === true\}/, "ChatView feeds busy into the card")
 })

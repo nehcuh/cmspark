@@ -2199,9 +2199,18 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       if (!gate.ok) {
         return { success: true, data: { surfaced: false, reason: gate.reason } }
       }
+      // Honest without a broadcast channel (tests / non-server contexts): never
+      // claim "shown to the user" when nothing could receive the frame.
+      if (typeof execOpts?.broadcast !== "function") {
+        return {
+          success: false,
+          error: "fleet_suggest_propose requires a broadcast channel to surface the card",
+          data: { error_code: "NO_CHANNEL" },
+        }
+      }
       // Broadcast, not sendOrigin: the card lives in the side panel while the
       // calling connection may be tray — the frame must reach the panel ws.
-      execOpts?.broadcast?.({
+      execOpts.broadcast({
         type: "fleet.suggest",
         thread_id: tid,
         reason,

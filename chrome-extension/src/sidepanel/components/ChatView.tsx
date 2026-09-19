@@ -578,6 +578,7 @@ export function ChatView() {
               threadId={activeThreadId}
               reason={fleetSuggest.reason}
               subtasks={fleetSuggest.subtasks}
+              busy={threadBusy === true}
               onCleared={() => dispatch({ type: "CLEAR_FLEET_SUGGEST", threadId: activeThreadId })}
             />
           </div>

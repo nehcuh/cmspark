@@ -45,6 +45,9 @@ export const WORKER_HARD_DENY = new Set([
   "ask_user",
   "list_tab_locks",
   "run_progress_propose",
+  // #513: advisory propose is orchestrator-surface too — a pack roleAllow must
+  // never offer it to workers (executor would just WORKER_DENIED anyway).
+  "fleet_suggest_propose",
 ])
 
 /** Default narrow surface for orchestrator threads. */

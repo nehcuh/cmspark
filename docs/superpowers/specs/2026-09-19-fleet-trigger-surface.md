@@ -2,7 +2,7 @@
 
 GitHub: #513
 Parent: #502（操作面；D 车道 Goal Driver 正交）
-Date: 2026-09-19（v2 — 吸收 kimi companion 侧 + grok extension 侧双路对抗复审）
+Date: 2026-09-19（v2.1 — 双路复审 ×2 轮：spec 复审落设计，实现复审落修复）
 Status: Reviewed（两路 REQUEST_CHANGES 的发现已逐条落进设计）
 
 ## 1. 问题
@@ -40,7 +40,7 @@ ADR-015/016 机制完备：`spawn_worker` 常驻线程工具清单、专家团�
 
 - **store（grok MAJOR-5）**：`fleetSuggestByThreadId: Record<threadId, { reason, subtasks, at }>`（非单槽——切换线程不丢、B 的 SET 不覆盖 A）；渲染取 `fleetSuggestByThreadId[activeThreadId]`；线程删除时随 `SET_THREADS` 同步清理对应键。
 - **useWebSocket**：`fleet.suggest` 帧 → `SET_FLEET_SUGGEST`（按帧内 thread_id 入 map，不设活跃门——回切可见）；`fleet.suggest.dismiss` 上行走 `chrome.runtime.sendMessage`（**SW 转发 case 必须**，grok BLOCKER-2：`background/index.ts` default 拒未知类型）。
-- **渲染（grok MAJOR-7）**：与 LoopSuggestCard **两个独立条件块**（loop 卡在上、舰队卡在下，可并存），禁止 if/else 互斥；同一固定建议区（非滚动转写内）；**不 scrollIntoView**（grok NIT-9）。
+- **渲染（grok MAJOR-7/v2.1）**：与 LoopSuggestCard **两个独立条件块**（loop 卡在上、舰队卡在下，可并存），禁止 if/else 互斥；同区于 LoopSuggestCard（转写尾部建议区，L-4 先例——v2 原文「非滚动转写内」与 L-4 卡实际位置不符，以先例为准）；**不 scrollIntoView**。子任务行**换行展示**（fleetCardItem wrap，禁 nowrap+ellipsis——模型产出的文本用户必须能读全）。
 - **接受动作（grok BLOCKER-1 + MAJOR-4，v2 核心变更）**：**不再 task_loop.arm**——arm 会注入续跑自主权（kickoff/PROPOSE_REQUEST_STEER/状态行），与「并行分派」产品句错位，且 kickoff 与队列 steer 竞争（`message-router.ts:3204-3208`）。fleet 分派与续跑正交（#513 与 #502 D 的切割）。接受 = 立即本地 CLEAR + 上行 dismiss（companion 记静默）+ 发送一条**携带完整指令的用户消息**（grok MAJOR-6）：
   「同意多路并行。请将以下子任务分派给 worker 执行（用 spawn_worker，每次仍需我在确认中心批准）：\n1) {subtask}\n…\n全部完成后把各 worker 的结果汇总给我。」
   消息构建抽纯函数 `buildFleetAcceptMessages(threadId, subtasks)` / `buildFleetDismissMessage(threadId)`（LoopStatusRow.tsx，与 `loopArmMessage` 同居），供测试。
@@ -69,10 +69,10 @@ ADR-015/016 机制完备：`spawn_worker` 常驻线程工具清单、专家团�
 ## 5. 验收（eval gate）
 
 - [ ] companion 单测：executor 零变更（不建线程/不改角色/不 spawn/不 arm）；__thread_id 缺失 fail-closed；SUMMONER_ACL 拒；worker 拒；静默期抑制；60s 节流；dismiss 帧记账（复用 `run-progress-propose-dispatch.test.ts` harness 方式驱动 `executeCompanionTool`）。
-- [ ] lockstep：validate + router 的 dismiss 帧各有一致行为测试。
+- [x] lockstep + 行为：validate 行为测试（缺 thread_id 拒）+ router 行为测试（ack 形状、错误路径、dismiss 后 propose 被抑制——loop-status-broadcast.test.ts 追加）；kernel 钉住 propose-only run 不产 task_loop.suggest。
 - [ ] 提示词源码锁：判据段存在、含否定条件、位于 securityFooter 之前、summoner 置空。
 - [ ] extension 单测：`buildFleetAcceptMessages`（消息含每个 subtask 与 spawn_worker 指令）/`buildFleetDismissMessage` 纯函数断言；SET_FLEET_SUGGEST per-thread map 行为；接受即清；SW 转发 case 源码锁。
-- [ ] 判据评测（脚本 + 固定 mock 任务集）：并行任务集 ≥8 → propose 率 ≥6/8；顺序任务集 ≥8 → ≤2/8。
+- [ ] 判据评测（脚本 + 固定 mock 任务集）：并行任务集 ≥8 → propose 率 ≥6/8；顺序任务集 ≥8 → ≤2/8。【带外执行——#513 闭环（关票）前的独立 gate，不随首个 PR】
 - [ ] 既有 fleet/task_loop/ws 测试全绿。
 
 ## 6. 与 #513 票面的差异声明

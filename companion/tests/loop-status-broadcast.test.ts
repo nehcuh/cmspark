@@ -229,3 +229,50 @@ test(
     assert.match(String(capFrame.label), /这一段跑完了/)
   },
 )
+
+test("#513 router behavioral: fleet.suggest.dismiss acks, errors without thread_id, and silences propose", async () => {
+  const tm = new ThreadManager()
+  const th = tm.create("fleet-dismiss", tid("d"))
+  const sent: any[] = []
+  const session = makeSession(sent)
+
+  const missing = (await handleMessage(
+    { type: "fleet.suggest.dismiss" } as any,
+    makeServices(tm),
+    session,
+  )) as any
+  assert.equal(missing.type, "error")
+
+  const ack = (await handleMessage(
+    { type: "fleet.suggest.dismiss", thread_id: th.id } as any,
+    makeServices(tm),
+    session,
+  )) as any
+  assert.equal(ack.type, "fleet.suggest.dismissed")
+  assert.equal(ack.thread_id, th.id)
+
+  // silence actually recorded companion-side: an in-process propose is suppressed
+  const { bindCompanionDispatchRuntime, executeCompanionTool } = await import("../src/tool/companion-dispatch")
+  bindCompanionDispatchRuntime({
+    getThreadManager: () => tm,
+    getSkillEngine: () => null as any,
+    getCachedTabUrl: () => undefined,
+    getTabUrlCache: () => new Map(),
+    computerTaskAbort: new Map(),
+    computerRateLimiter: async () => null as any,
+    getComputerRateLimiterSingleton: () => null,
+    securityConfirmations: { request: async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const }) } as any,
+    getComputerEstopEnsureOverride: () => null,
+    rejectPendingForThread: () => 0,
+    hasPendingForTab: () => false,
+    rejectPendingForTab: () => 0,
+  })
+  const r: any = await executeCompanionTool(
+    "fleet_suggest_propose",
+    { __thread_id: th.id, reason: "r", subtasks: ["a", "b"] },
+    "tc-post-dismiss",
+    { handshakeSurface: "tray", broadcast: () => {} },
+  )
+  assert.equal(r.data.surfaced, false)
+  assert.equal(r.data.reason, "suppressed", "router dismiss must feed the executor silence map")
+})

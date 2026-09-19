@@ -247,3 +247,34 @@ test("prompt: FLEET DISPATCH CRITERIA is surface-gated and sits before the secur
   const iSec = compose.indexOf("securityFooter,")
   assert.ok(iRun > -1 && iFleet > iRun && iSec > iFleet, "segment ordered before securityFooter")
 })
+
+test("loop-kernel pin: a propose-only run never produces task_loop.suggest (no-auto-spam guard)", async () => {
+  // #513 review (kimi MAJOR-1): the unarmed suggest card requires untickedEvidence > 0 —
+  // a run whose only tool call was fleet_suggest_propose has run_progress=null and must
+  // NOT light the 续跑 card. If loop-kernel ever relaxes this, the fleet propose would
+  // start spawning loop-suggest cards — pin the dependency.
+  const kernel = await import("../src/loop/loop-kernel")
+  const tm = new ThreadManager()
+  const th = tm.create("fs-kernel-pin")
+  const sent: any[] = []
+  kernel.onLoopRunFinished({
+    threadManager: tm,
+    threadId: th.id,
+    stats: { terminal: null, toolCalls: 1, totalTokens: 0, rounds: 1 } as any,
+    audit: () => {},
+    sendToExtension: (d: any) => sent.push(d),
+  })
+  assert.ok(
+    !sent.some((f) => f.type === "task_loop.suggest"),
+    "propose-only run (run_progress=null) must not emit task_loop.suggest",
+  )
+})
+
+test("validate behavioral: fleet.suggest.dismiss accepts thread_id, rejects without", async () => {
+  const { validateWsMessage } = await import("../src/ws/validate")
+  const ok = validateWsMessage({ type: "fleet.suggest.dismiss", thread_id: "t1" })
+  assert.equal(ok.valid, true, JSON.stringify(ok))
+  const bad = validateWsMessage({ type: "fleet.suggest.dismiss" })
+  assert.equal(bad.valid, false)
+  if (!bad.valid) assert.match(String(bad.error), /requires thread_id/)
+})

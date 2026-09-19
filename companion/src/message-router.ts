@@ -2383,6 +2383,14 @@ export async function handleMessage(
           data: { error_code: "thread_busy" },
         }
       }
+      // #513: drop the deleted thread's fleet-suggest silence/throttle stamps
+      // (bounded map — deleted ids never linger).
+      try {
+        const { clearFleetSuggestState } = await import("./orchestrator/fleet-suggest")
+        clearFleetSuggestState(typeof rest.thread_id === "string" ? rest.thread_id : undefined)
+      } catch {
+        /* advisory state only — never block deletion */
+      }
       try {
         const thr = threadManager.get(rest.thread_id)
         if (thr) {
