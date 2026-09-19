@@ -279,6 +279,13 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         }
       }
       const workerAfter = threadManager.get(r.worker.id)
+      // #514: push the fleet snapshot so the Glance strip appears immediately —
+      // full-autonomy cruise auto-approves spawn (no confirm), and confirms were
+      // the panel's ONLY pull trigger for fleet.status.
+      if (typeof execOpts?.broadcast === "function") {
+        const { broadcastFleetSnapshotIfWorkers } = await import("../orchestrator/fleet")
+        broadcastFleetSnapshotIfWorkers(threadManager, execOpts.broadcast)
+      }
       return {
         success: true,
         data: {

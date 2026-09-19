@@ -188,8 +188,10 @@ export type ToolTurnItem<T> =
    *  render its standalone ReasoningBlock header. */
   | { kind: "row"; msg: T; reasoningFolded?: boolean }
   /** `reasonings`: the covered rounds' thinking texts, rendered inside the
-   *  expanded audit view (思考 precedes the tool cards chronologically). */
-  | { kind: "tools"; msgs: T[]; reasonings?: string[] }
+   *  expanded audit view (思考 precedes the tool cards chronologically).
+   *  `rounds` (#514): per-round split for the consolidated run block's pager —
+   *  msgs is the flat concat (stable key anchor). */
+  | { kind: "tools"; msgs: T[]; reasonings?: string[]; rounds?: ToolHistoryRound<T>[] }
 
 /**
  * #502 A hydrate guard: which rows may still render inline ToolCallCards?
@@ -339,4 +341,88 @@ function isToolRowType<T extends { role?: unknown; tool_calls?: unknown }>(
     Array.isArray((m as { tool_calls?: unknown }).tool_calls) &&
     ((m as { tool_calls: unknown[] }).tool_calls.length ?? 0) > 0
   )
+}
+
+// --- #514: one consolidated audit block per RUN (wireframe tab1: 整段轨迹收成审计芯) ---
+
+/** One assistant round inside a run: its tool rows + folded thinking. */
+export type ToolHistoryRound<T = unknown> = { msgs: T[]; reasonings?: string[] }
+
+/** Exported for the consolidated chip totals (was module-private countFailed). */
+export function countFailedTools(
+  tools: Array<{ status?: unknown; error?: unknown; result?: unknown } | null | undefined>,
+): number {
+  return countFailed(tools as never)
+}
+
+/**
+ * Merge every per-round tools block inside one run (user message → final
+ * answer) into a SINGLE block so a 4-round task renders ONE audit chip
+ * (wireframe: trail between user bubble and answer), instead of one chip per
+ * assistant round. Narration rows keep their relative order; the consolidated
+ * block sits AFTER them but BEFORE a trailing assistant answer row. A new user
+ * message starts the next run.
+ */
+export function consolidateRunToolTurns<T extends { role?: unknown }>(
+  items: ToolTurnItem<T>[],
+): ToolTurnItem<T>[] {
+  const out: ToolTurnItem<T>[] = []
+  let narrations: ToolTurnItem<T>[] = []
+  let rounds: ToolHistoryRound<T>[] = []
+  const flushRun = () => {
+    if (rounds.length === 0) {
+      out.push(...narrations)
+    } else {
+      const msgs = rounds.flatMap((r) => r.msgs)
+      const reasonings = rounds.flatMap((r) => r.reasonings ?? [])
+      const block: ToolTurnItem<T> = {
+        kind: "tools",
+        msgs,
+        ...(reasonings.length > 0 ? { reasonings } : {}),
+        rounds,
+      }
+      // Wireframe: the trail sits ABOVE the answer — a trailing assistant row
+      // (the run's final answer) renders after the audit block.
+      const trailing: ToolTurnItem<T>[] = []
+      const lastRow = narrations[narrations.length - 1]
+      if (lastRow && lastRow.kind === "row" && (lastRow.msg as { role?: unknown }).role === "assistant") {
+        trailing.push(narrations.pop()!)
+      }
+      out.push(...narrations, block, ...trailing)
+    }
+    narrations = []
+    rounds = []
+  }
+  for (const it of items) {
+    if (it.kind === "tools") {
+      rounds.push({ msgs: it.msgs, ...(it.reasonings ? { reasonings: it.reasonings } : {}) })
+      continue
+    }
+    if ((it.msg as { role?: unknown }).role === "user") {
+      flushRun()
+      out.push(it)
+      continue
+    }
+    // A covered round's driver row with no text is pure mechanics — its
+    // reasoning already folded into the block; an empty bubble row would only
+    // add vertical noise to the consolidated trail (#514).
+    if (it.kind === "row" && it.reasoningFolded === true) {
+      const content = (it.msg as { content?: unknown }).content
+      if (typeof content !== "string" || content.trim().length === 0) continue
+    }
+    narrations.push(it)
+  }
+  flushRun()
+  return out
+}
+
+/** Done chip with pager: `‹ 2/5 › 共 12 步浏览器操作 · 1 失败 · 展开审计`. */
+export function donePagerChipLabel(
+  page: number,
+  totalPages: number,
+  steps: number,
+  failed: number,
+): string {
+  if (totalPages <= 1) return doneChipLabel(steps, failed)
+  return `‹ ${page + 1}/${totalPages} › 共 ${steps} 步浏览器操作 · ${failed} 失败 · 展开审计`
 }

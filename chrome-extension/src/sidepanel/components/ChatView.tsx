@@ -27,12 +27,16 @@ import { NoticeCard } from "./ui/NoticeCard"
 import { isCoarsePointer, messageActionMode } from "./message-actions"
 import {
   doneChipLabel,
+  donePagerChipLabel,
   groupToolTurnRows,
+  consolidateRunToolTurns,
   liveChipLabel,
+  countFailedTools,
   pendingConfirmIdsFromTools,
   pendingConfirmToolNamesForThread,
   shouldRenderInlineToolCards,
   viewToolHistory,
+  type ToolHistoryRound,
 } from "./tool-history-view"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
@@ -135,7 +139,10 @@ export function ChatView() {
     () => pendingConfirmToolNamesForThread(pendingSecurityConfirmations, activeThreadId),
     [pendingSecurityConfirmations, activeThreadId],
   )
-  const transcriptItems = useMemo(() => groupToolTurnRows(messages), [messages])
+  const transcriptItems = useMemo(
+    () => consolidateRunToolTurns(groupToolTurnRows(messages)),
+    [messages],
+  )
   const [summaryOpen, setSummaryOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   /** Inner content grows with messages; ResizeObserver watches this for stick-to-bottom. */
@@ -480,7 +487,7 @@ export function ChatView() {
               <ToolHistoryBlock
                 key={`tools-${item.msgs[0]!.id}`}
                 msgs={item.msgs}
-                reasonings={item.reasonings}
+                rounds={item.rounds}
                 threadBusy={Boolean(itemIsLast && threadBusy)}
                 pendingConfirmToolNames={itemIsLast ? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES}
               />
@@ -1102,87 +1109,135 @@ function toolResultUserHint(result: any): string | null {
  */
 const ToolHistoryBlock = memo(function ToolHistoryBlock({
   msgs,
+  rounds,
   threadBusy,
   pendingConfirmToolNames,
-  reasonings,
 }: {
   msgs: any[]
+  /** #514: per-round split for the pager; falls back to a single round from msgs. */
+  rounds?: ToolHistoryRound<any>[]
   threadBusy: boolean
   pendingConfirmToolNames: ReadonlySet<string>
-  /** #502 A: covered rounds' thinking, rendered inside the expanded audit view
-   *  (before the tool cards — 思考在动作之前). Undefined = none recorded. */
-  reasonings?: string[]
 }) {
+  const splitRounds: ToolHistoryRound<any>[] =
+    rounds ?? [{ msgs }]
   const [auditOpen, setAuditOpen] = useState(false)
-  const tools = useMemo(
-    () => msgs.flatMap((m) => (Array.isArray(m?.tool_calls) ? m.tool_calls : [])),
-    [msgs],
-  )
+  // #514: done-mode pager over rounds, default the latest round.
+  const [page, setPage] = useState(splitRounds.length - 1)
+  useEffect(() => {
+    if (page > splitRounds.length - 1) setPage(splitRounds.length - 1)
+  }, [splitRounds.length, page])
+
+  const toolsOf = (r: ToolHistoryRound<any>) =>
+    r.msgs.flatMap((m) => (Array.isArray(m?.tool_calls) ? m.tool_calls : []))
+  const toolsAll = useMemo(() => splitRounds.flatMap(toolsOf), [splitRounds])
   // SecurityConfirmationRequest carries no tool_call id on the wire — correlate
   // by tool_name so an L2-confirming step always stays the expanded current
-  // card, never folded into the chip (redundant with its running status).
+  // card, never folded into the chip. Applied to the LIVE round only (#507:
+  // same-name tools in earlier rounds of this run must not flip).
   const pendingConfirmIds = useMemo(
-    () => pendingConfirmIdsFromTools(tools, pendingConfirmToolNames),
-    [tools, pendingConfirmToolNames],
+    () => pendingConfirmIdsFromTools(toolsAll, pendingConfirmToolNames),
+    [toolsAll, pendingConfirmToolNames],
   )
-  const view = viewToolHistory(tools, { threadBusy, pendingConfirmIds })
-  if (view.kind === "empty") return null
+  const lastRound = splitRounds[splitRounds.length - 1]
+  const lastTools = useMemo(() => (lastRound ? toolsOf(lastRound) : []), [lastRound])
+  const lastView = viewToolHistory(lastTools, { threadBusy, pendingConfirmIds })
+  const live = threadBusy === true && lastView.kind === "live"
+  const totalFailed = useMemo(() => countFailedTools(toolsAll), [toolsAll])
+
+  if (toolsAll.length === 0) return null
 
   // Failure never hides behind a neutral chip: warning tone when failed > 0.
   const chipTone =
-    view.failed > 0
+    totalFailed > 0
       ? { ...styles.toolHistoryChip, color: tokens.warning, background: tokens.warningSoft }
       : styles.toolHistoryChip
   const renderCard = (tc: any, i: number) => <ToolCallCard key={tc.id ?? `tc-${i}`} tc={tc} />
 
-  return (
-    <div className="cmspark-msg-row" style={styles.agentMsg}>
-      <div style={styles.messageCol}>
-        <div style={styles.agentBubble}>
-          {view.kind === "live" ? (
-            <>
-              {view.completed.length > 0 ? (
-                <button
-                  type="button"
-                  style={chipTone}
-                  aria-expanded={auditOpen}
-                  aria-label={liveChipLabel(view.completed.length, view.failed)}
-                  onClick={() => setAuditOpen((v) => !v)}
-                >
-                  {liveChipLabel(view.completed.length, view.failed)}
-                </button>
-              ) : null}
-              {auditOpen ? (
-                <>
-                  {(reasonings ?? []).map((r, idx) => (
-                    <AuditReasoningSection key={`ar-${idx}`} content={r} index={idx + 1} />
-                  ))}
-                  {view.completed.map(renderCard)}
-                </>
-              ) : null}
-              <ToolCallCard tc={view.current} />
-            </>
-          ) : (
-            <>
+  const renderRound = (r: ToolHistoryRound<any>, i: number) => (
+    <div key={`round-${i}`}>
+      {(r.reasonings ?? []).map((txt, j) => (
+        <AuditReasoningSection key={`ar-${i}-${j}`} content={txt} index={j + 1} />
+      ))}
+      {toolsOf(r).map(renderCard)}
+    </div>
+  )
+
+  // ---- live: wireframe 原语不变 — 当前步展开，已完成折成一条（跨轮合并） ----
+  if (live && lastView.kind === "live") {
+    const prevTools = splitRounds.slice(0, -1).flatMap(toolsOf)
+    const completedTools = [...prevTools, ...lastView.completed]
+    const completedFailed =
+      countFailedTools(prevTools) + countFailedTools(lastView.completed)
+    return (
+      <div className="cmspark-msg-row" style={styles.agentMsg}>
+        <div style={styles.messageCol}>
+          <div style={styles.agentBubble}>
+            {completedTools.length > 0 ? (
               <button
                 type="button"
                 style={chipTone}
                 aria-expanded={auditOpen}
-                aria-label={doneChipLabel(view.tools.length, view.failed)}
+                aria-label={liveChipLabel(completedTools.length, completedFailed)}
                 onClick={() => setAuditOpen((v) => !v)}
               >
-                {doneChipLabel(view.tools.length, view.failed)}
+                {liveChipLabel(completedTools.length, completedFailed)}
               </button>
-              {auditOpen ? (
-                <>
-                  {(reasonings ?? []).map((r, idx) => (
-                    <AuditReasoningSection key={`ar-${idx}`} content={r} index={idx + 1} />
-                  ))}
-                  {view.tools.map(renderCard)}
-                </>
-              ) : null}
-            </>
-          )}
+            ) : null}
+            {auditOpen ? (
+              <div>
+                {splitRounds.slice(0, -1).map(renderRound)}
+                {(lastRound.reasonings ?? []).map((txt, j) => (
+                  <AuditReasoningSection key={`ar-last-${j}`} content={txt} index={j + 1} />
+                ))}
+                {lastView.completed.map(renderCard)}
+              </div>
+            ) : null}
+            <ToolCallCard tc={lastView.current} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ---- done: 单块固定空间 + 轮次翻页 + 展开审计（#514 用户形态） ----
+  const totalPages = splitRounds.length
+  return (
+    <div className="cmspark-msg-row" style={styles.agentMsg}>
+      <div style={styles.messageCol}>
+        <div style={styles.agentBubble}>
+          <button
+            type="button"
+            style={chipTone}
+            aria-expanded={auditOpen}
+            aria-label={donePagerChipLabel(page, totalPages, toolsAll.length, totalFailed)}
+            onClick={() => setAuditOpen((v) => !v)}
+          >
+            {donePagerChipLabel(page, totalPages, toolsAll.length, totalFailed)}
+          </button>
+          {totalPages > 1 ? (
+            <span style={{ display: "inline-flex", gap: 4, marginLeft: 6 }}>
+              <button
+                type="button"
+                aria-label="上一段"
+                style={styles.toolHistoryPagerBtn}
+                disabled={page <= 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                aria-label="下一段"
+                style={styles.toolHistoryPagerBtn}
+                disabled={page >= totalPages - 1}
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              >
+                ›
+              </button>
+            </span>
+          ) : null}
+          {auditOpen ? renderRound(splitRounds[page], page) : null}
         </div>
       </div>
     </div>
@@ -2305,6 +2360,17 @@ const styles: Record<string, React.CSSProperties> = {
     background: tokens.bgElevated,
     border: `1px solid ${tokens.border}`,
     borderRadius: 10,
+    padding: "2px 8px",
+    cursor: "pointer",
+  },
+  /** #514: round pager buttons beside the done chip (‹ › between rounds). */
+  toolHistoryPagerBtn: {
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
+    borderRadius: 8,
+    fontSize: 12,
+    lineHeight: 1,
     padding: "2px 8px",
     cursor: "pointer",
   },

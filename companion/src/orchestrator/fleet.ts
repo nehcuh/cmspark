@@ -169,3 +169,25 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
 export function workersForRun(tm: ThreadManager, runId: string) {
   return listWorkers(tm, runId)
 }
+
+/**
+ * #514: proactive Glance feed. The panel only pulled fleet.status on confirm
+ * arrivals / worker.updated replies — under full-autonomy cruise spawn_worker
+ * auto-approves with NO confirm, so the strip never got data and stayed
+ * invisible for the whole run. Push the snapshot (metadata-only read) after
+ * spawn and at run-end whenever any worker thread exists. The panel's
+ * existing "fleet.status" frame handler consumes it unchanged.
+ */
+export function broadcastFleetSnapshotIfWorkers(
+  tm: ThreadManager,
+  broadcast: (data: unknown) => void,
+): void {
+  try {
+    const threads = tm.list() as Array<{ agent_role?: string }>
+    if (!threads.some((t) => t?.agent_role === "worker")) return
+    // FleetSnapshot already carries type:"fleet.status" — the spread IS the frame.
+    broadcast(buildFleetSnapshot(tm))
+  } catch {
+    /* advisory push only — never fail the caller */
+  }
+}

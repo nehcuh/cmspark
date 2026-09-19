@@ -1424,6 +1424,14 @@ export async function handleMessage(
         // #502 D-G1: pass this run's terminal so a 100-round cap renders as a
         // segment boundary instead of an eternal 「推进中」.
         await broadcastLoopStatus(session, services.threadManager, rest.thread_id, runStats.terminal)
+        // #514: worker runs end here too — refresh the Glance strip so worker
+        // done/failed states reach the panel without a confirm round-trip.
+        try {
+          const { broadcastFleetSnapshotIfWorkers } = await import("./orchestrator/fleet")
+          broadcastFleetSnapshotIfWorkers(services.threadManager, (d) => session.sendToExtension(d))
+        } catch {
+          /* advisory push only */
+        }
       }
       const drained = await drainNextRun(rest.thread_id, myGeneration, services, session)
       if (drained) {

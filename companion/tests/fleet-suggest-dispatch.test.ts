@@ -278,3 +278,27 @@ test("validate behavioral: fleet.suggest.dismiss accepts thread_id, rejects with
   assert.equal(bad.valid, false)
   if (!bad.valid) assert.match(String(bad.error), /requires thread_id/)
 })
+
+test("#514: broadcastFleetSnapshotIfWorkers pushes fleet.status only when workers exist", async () => {
+  const { broadcastFleetSnapshotIfWorkers } = await import("../src/orchestrator/fleet")
+  const tm = new ThreadManager()
+  // shared test HOME: earlier cases left worker threads in the index — clear
+  // them so the no-push baseline is about THIS manager's state.
+  for (const t of tm.list() as any[]) {
+    if (t.agent_role === "worker") tm.delete(t.id)
+  }
+  const pushed: unknown[] = []
+  const broadcast = (d: unknown) => pushed.push(d)
+
+  broadcastFleetSnapshotIfWorkers(tm, broadcast)
+  assert.equal(pushed.length, 0, "no workers → no push")
+
+  const parent = tm.create("fs-push-parent")
+  const w = tm.create("fs-push-worker")
+  tm.update(w.id, { agent_role: "worker", parent_thread_id: parent.id } as any)
+  broadcastFleetSnapshotIfWorkers(tm, broadcast)
+  assert.equal(pushed.length, 1)
+  const frame = pushed[0] as any
+  assert.equal(frame.type, "fleet.status", "panel's existing handler consumes this frame")
+  assert.ok(Array.isArray(frame.workers) && frame.workers.length === 1)
+})

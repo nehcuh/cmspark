@@ -8,6 +8,9 @@ import {
   shouldRenderInlineToolCards,
   pendingConfirmIdsFromTools,
   pendingConfirmToolNamesForThread,
+  consolidateRunToolTurns,
+  donePagerChipLabel,
+  countFailedTools,
   confirmationMatchesActiveThread,
   confirmationOwnerThreadId,
 } from "../src/sidepanel/components/tool-history-view"
@@ -321,4 +324,69 @@ test("uncovered function assistant with ONLY reasoning folds it into the synthet
   const block = items[0]
   if (block.kind !== "tools") return assert.ok(false, "synthetic block")
   assert.deepEqual(block.reasonings, ["孤立思考"])
+})
+
+// --- #514: consolidateRunToolTurns — ONE audit block per run ---
+
+test("consolidateRunToolTurns merges all rounds of a run into one block with rounds[]", () => {
+  const items = groupToolTurnRows([
+    { id: "u1", role: "user", content: "go" },
+    { id: "a1", role: "assistant", content: "", reasoning_content: "R1", tool_calls: [{ id: "c1", type: "function", function: { name: "click", arguments: "{}" } }] },
+    toolRow("c1", "click", "success"),
+    { id: "a2", role: "assistant", content: "先说一句" },
+    { id: "a3", role: "assistant", content: "", reasoning_content: "R2", tool_calls: [{ id: "c2", type: "function", function: { name: "click", arguments: "{}" } }] },
+    toolRow("c2", "click", "success"),
+    { id: "a4", role: "assistant", content: "final answer" },
+  ])
+  const merged = consolidateRunToolTurns(items)
+  assert.deepEqual(
+    merged.map((i) => i.kind),
+    ["row", "row", "tools", "row"],
+    "narrations keep order; ONE tools block; trailing answer after it",
+  )
+  const block = merged[2]
+  if (block.kind !== "tools") return assert.ok(false, "tools block")
+  assert.equal(block.msgs.length, 2, "flat concat for the stable key anchor")
+  assert.equal(block.rounds?.length, 2, "per-round split preserved")
+  assert.deepEqual(block.rounds?.[0].reasonings, ["R1"])
+  assert.deepEqual(block.rounds?.[1].reasonings, ["R2"])
+  const answer = merged[3]
+  if (answer.kind !== "row") return assert.ok(false, "answer row")
+  assert.equal(answer.msg.id, "a4", "wireframe: trail sits ABOVE the answer")
+})
+
+test("consolidateRunToolTurns: a new user message starts the next run", () => {
+  const items = groupToolTurnRows([
+    { id: "u1", role: "user", content: "t1" },
+    toolRow("c1", "click", "success"),
+    { id: "u2", role: "user", content: "t2" },
+    toolRow("c2", "click", "success"),
+    toolRow("c3", "click", "success"),
+  ])
+  const merged = consolidateRunToolTurns(items)
+  assert.deepEqual(merged.map((i) => i.kind), ["row", "tools", "row", "tools"])
+  const b2 = merged[3]
+  if (b2.kind !== "tools") return assert.ok(false)
+  assert.equal(b2.rounds?.length, 1)
+  assert.equal(b2.msgs.length, 2)
+})
+
+test("consolidateRunToolTurns: run without tools passes rows through untouched", () => {
+  const items = groupToolTurnRows([
+    { id: "u1", role: "user", content: "hi" },
+    { id: "a1", role: "assistant", content: "答" },
+  ])
+  assert.deepEqual(consolidateRunToolTurns(items), items)
+})
+
+test("donePagerChipLabel: pager only when multiple rounds", () => {
+  assert.equal(donePagerChipLabel(0, 1, 8, 0), "8 步浏览器操作 · 0 失败 · 展开审计")
+  assert.equal(
+    donePagerChipLabel(1, 3, 12, 1),
+    "‹ 2/3 › 共 12 步浏览器操作 · 1 失败 · 展开审计",
+  )
+})
+
+test("countFailedTools counts error tools", () => {
+  assert.equal(countFailedTools([{ status: "success" }, { status: "error", error: "x" }]), 1)
 })

@@ -257,8 +257,9 @@ test("#508 ToolHistoryBlock wirings: pendingConfirmIds / threadBusy last-item / 
   assert.match(chat, /pendingConfirmToolNames=\{itemIsLast \? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES\}/)
   // (b) threadBusy is the last-item AND, not a hardcoded false
   assert.match(chat, /threadBusy=\{Boolean\(itemIsLast && threadBusy\)\}/)
-  // (c) failure chipTone is a ternary on view.failed, warning tokens
-  assert.match(chat, /view\.failed\s*>\s*0/)
+  // (c) failure chipTone is a ternary on the run-wide failed count (#514
+  // consolidated block: totalFailed across rounds), warning tokens
+  assert.match(chat, /totalFailed\s*>\s*0/)
   assert.match(chat, /color: tokens\.warning/)
   assert.match(chat, /background: tokens\.warningSoft/)
 })
@@ -298,15 +299,30 @@ test("#502 ChatView folds covered rounds' reasoning into the audit block (no per
   const chat = read("src/sidepanel/components/ChatView.tsx")
   // MessageRow suppresses the standalone ReasoningBlock for folded rows
   assert.match(chat, /msg\.reasoning_content && !reasoningFolded/)
-  // ChatView wires both directions: folded flag to the row, reasonings to the block
+  // ChatView wires both directions: folded flag to the row, per-round split
+  // (reasonings ride inside rounds) to the block
   assert.match(chat, /reasoningFolded=\{item\.reasoningFolded === true\}/)
-  assert.match(chat, /reasonings=\{item\.reasonings\}/)
+  assert.match(chat, /rounds=\{item\.rounds\}/)
   // the audit view renders the thinking sections before the tool cards
   assert.match(chat, /function AuditReasoningSection\(/)
   assert.match(chat, /第 \{index\} 段思考/)
-  const auditIdx = chat.indexOf("<AuditReasoningSection")
-  const cardIdx = chat.indexOf("view.completed.map(renderCard)")
-  assert.ok(auditIdx > 0 && cardIdx > 0 && auditIdx < cardIdx, "thinking sections precede completed cards")
+  assert.match(chat, /\(r\.reasonings \?\? \[\]\)\.map/, "thinking renders inside each round, before its cards")
   // memo comparator keeps the folded flag — a flip must re-render the row
   assert.match(chat, /prev\.reasoningFolded === next\.reasoningFolded/)
+})
+
+// ---------------------------------------------------------------------------
+// #514 — ONE consolidated audit block per run, with a round pager
+// ---------------------------------------------------------------------------
+
+test("#514 ChatView consolidates per-round blocks into one run block with a pager", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  assert.match(chat, /consolidateRunToolTurns\(groupToolTurnRows\(messages\)\)/, "transcript uses the run consolidator")
+  assert.match(chat, /rounds=\{item\.rounds\}/, "block receives the per-round split")
+  // pager: ‹ › buttons page rounds in the done state, disabled at the edges
+  assert.match(chat, /aria-label="上一段"/)
+  assert.match(chat, /aria-label="下一段"/)
+  assert.match(chat, /donePagerChipLabel\(page, totalPages, toolsAll\.length, totalFailed\)/, "chip label carries pager + run totals")
+  // live semantics unchanged: current step expanded, completed folded ACROSS rounds
+  assert.match(chat, /liveChipLabel\(completedTools\.length, completedFailed\)/)
 })
