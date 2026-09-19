@@ -767,3 +767,44 @@ test("#502 pty spawn: all-junk argv collapses to an empty argv, never -l", () =>
   assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "all-junk-argv", file: "/bin/echo", args: junk }).ok, true)
   assert.deepEqual(calls, [{ file: "/bin/echo", args: [] }])
 })
+
+test("#506 pty spawn: onPtyAgentSpawned fires for an explicit executable, never for $SHELL", () => {
+  const previousShell = process.env.SHELL
+  const seen: Array<{ id: string; threadId?: string; file: string }> = []
+  const off = pty.onPtyAgentSpawned((info) => seen.push(info))
+  try {
+    process.env.SHELL = "/bin/bash"
+    // The embed/agent shape: explicit absolute file → the event carries id + threadId + file.
+    freshSpawn()
+    assert.equal(
+      pty.spawnPtySession({ ...TERMINAL_OPTS, id: "agent-ev", file: "/bin/echo", args: ["T"], threadId: "th-1" }).ok,
+      true,
+    )
+    assert.deepEqual(seen, [{ id: "agent-ev", threadId: "th-1", file: "/bin/echo" }])
+
+    // The login-shell default must NOT fire it — a subscriber (AcpManager) would otherwise move an
+    // `embed_intent` session to "running" for a plain shell.
+    freshSpawn()
+    assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "shell-ev", threadId: "th-1" }).ok, true)
+    assert.equal(seen.length, 1, "$SHELL -l never announces an agent spawn")
+
+    // A refused spawn (busy slot) fires nothing.
+    pty.__testSetPtyPlatform("darwin")
+    assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "busy-ev", file: "/bin/echo" }).ok, false)
+    assert.equal(seen.length, 1, "a spawn that never started fires no event")
+
+    // Unsubscribe works; a throwing listener cannot fail a live spawn.
+    off()
+    const offThrowing = pty.onPtyAgentSpawned(() => {
+      throw new Error("listener bug")
+    })
+    freshSpawn()
+    assert.equal(pty.spawnPtySession({ ...TERMINAL_OPTS, id: "throw-ev", file: "/bin/echo" }).ok, true)
+    assert.equal(seen.length, 1, "unsubscribed listeners are gone")
+    offThrowing()
+  } finally {
+    off()
+    if (previousShell === undefined) delete process.env.SHELL
+    else process.env.SHELL = previousShell
+  }
+})

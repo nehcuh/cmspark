@@ -25,6 +25,7 @@ import {
   PROGRESS_TAIL_ACP_CHARS,
 } from "./progress-caps"
 import { buildAcpAgentEnv } from "./agent-env"
+import { onPtyAgentSpawned } from "../pty/session"
 
 export type AcpHandbackSink = (info: {
   session: AcpSessionRecord
@@ -51,8 +52,9 @@ export type AcpLiveEvent = {
   pending_diffs?: unknown[]
   /** Mode C propose-time snapshot (UI Stop honesty) */
   open_local_terminal?: boolean
-  /** Mode C host terminal outcome (`embed_intent` = recorded, awaiting the user's panel click) */
-  local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | "embed_intent"
+  /** Mode C host terminal outcome (`embed_intent` = recorded, awaiting the user's panel click;
+   *  `embed_running` = the embedded agent PTY is live; Stop does not end that process) */
+  local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | "embed_intent" | "embed_running"
 }
 
 export type AcpEventListener = (ev: AcpLiveEvent) => void
@@ -81,6 +83,40 @@ export class AcpManager {
   permissionGate:
     | ((info: { title: string; detail?: string; sessionId: string }) => Promise<boolean>)
     | null = null
+  private unsubscribeEmbedSpawn: () => void
+
+  constructor() {
+    // #506 A: the ACP path only RECORDS the embed intent — the PTY layer owns the real spawn, so
+    // its event is the only truthful signal that the embedded agent is now running. Until it
+    // fires, the session stays in `embed_intent` and the panel copy says "no process yet".
+    this.unsubscribeEmbedSpawn = onPtyAgentSpawned(({ threadId }) => {
+      if (threadId) this.noteEmbedAgentSpawned(threadId)
+    })
+  }
+
+  /**
+   * #506 A: the embedded agent PTY for `threadId` just went live — every session of that thread
+   * still sitting in `embed_intent` leaves it. Closed sessions are left untouched (their banner
+   * no longer renders), and a session already past the intent (or never in it) is not ours.
+   */
+  private noteEmbedAgentSpawned(threadId: string): void {
+    for (const session of this.sessions.values()) {
+      if (session.thread_id !== threadId) continue
+      if (session.local_terminal !== "embed_intent" || session.state === "closed") continue
+      session.local_terminal = "embed_running"
+      logger.info("acp.mode_c_embed_running", {
+        thread_id: threadId,
+        session_id: session.session_id,
+      })
+      this.pushTimeline(session, [
+        timelineItem(
+          "status",
+          "内嵌终端已启动：Agent 正在本插件终端页运行（停止会话不会结束该进程）",
+          { status: "done" },
+        ),
+      ])
+    }
+  }
 
   onEvent(fn: AcpEventListener): () => void {
     this.listeners.add(fn)
@@ -967,6 +1003,7 @@ export class AcpManager {
   }
 
   shutdown(): void {
+    this.unsubscribeEmbedSpawn()
     for (const id of [...this.processes.keys()]) {
       this.cancel(id)
     }

@@ -3,7 +3,7 @@
 import { useEffect, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
-import { isModeCInvolved, isModeCMonitorStop, modeCBannerText } from "../coding-handoff/embed-entry"
+import { isModeCInvolved, modeCBannerText, modeCStopLabel, modeCStopTitle } from "../coding-handoff/embed-entry"
 import type { CodingSessionState } from "../store/agentStore"
 import { useAgentStore, codingSessionBelongsToThread } from "../store/agentStore"
 
@@ -35,9 +35,10 @@ export function CodingSessionChip({
   // Authoritative Mode C: only when a host terminal is/was actually involved.
   // Exclude `failed` — then the bridge is the only process (Stop = 停止编程会话).
   // #502 C: `embed_intent` means an intent was recorded and NOTHING was opened, so it raises the
-  // hint but must not claim a monitorable outer agent. Both ladders live in coding-handoff/embed-entry.
+  // hint but must not claim a monitorable outer agent. #506: `embed_running` means the embedded
+  // PTY is live and survives Stop — the Stop label/title ladder (modeCStopLabel/modeCStopTitle)
+  // owns that override. Both ladders live in coding-handoff/embed-entry.
   const modeCHint = isModeCInvolved(session.localTerminal, session.openLocalTerminal)
-  const modeCMonitorStop = isModeCMonitorStop(session.localTerminal, session.openLocalTerminal)
 
   const onStop = () => {
     if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
@@ -101,15 +102,9 @@ export function CodingSessionChip({
             type="button"
             style={styles.stop}
             onClick={onStop}
-            title={
-              modeCMonitorStop
-                ? codingHandoffCopy.ctaStopMonitorTitle
-                : codingHandoffCopy.ctaStopSession
-            }
+            title={modeCStopTitle(session.localTerminal, session.openLocalTerminal)}
           >
-            {modeCMonitorStop
-              ? codingHandoffCopy.ctaStopMonitorSession
-              : codingHandoffCopy.ctaStopSession}
+            {modeCStopLabel(session.localTerminal, session.openLocalTerminal)}
           </button>
         ) : null}
         {!live && session.state === "closed" ? (

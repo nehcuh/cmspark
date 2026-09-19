@@ -14,8 +14,9 @@ import { codingHandoffCopy } from "../coding-handoff/copy"
 import {
   isDarwin,
   isModeCInvolved,
-  isModeCMonitorStop,
   modeCBannerText,
+  modeCStopLabel,
+  modeCStopTitle,
   shouldShowEmbeddedTerminalEntry,
 } from "../coding-handoff/embed-entry"
 import {
@@ -759,7 +760,6 @@ export function CodingAgentPanel({
   // Ladders live in coding-handoff/embed-entry so the panel banner and the chip hint cannot drift
   // (and so `embed_intent` — intent recorded, nothing spawned — is unit-tested).
   const modeCLikely = isModeCInvolved(session?.localTerminal, session?.openLocalTerminal)
-  const modeCMonitorStop = isModeCMonitorStop(session?.localTerminal, session?.openLocalTerminal)
 
   /**
    * #502 C entry gate. `embedded_terminal` is the NESTED config key (SettingsSlideout precedent);
@@ -1071,15 +1071,9 @@ export function CodingAgentPanel({
                     type="button"
                     style={styles.dangerBtn}
                     onClick={onStop}
-                    title={
-                      modeCMonitorStop
-                        ? codingHandoffCopy.ctaStopMonitorTitle
-                        : codingHandoffCopy.ctaStopSession
-                    }
+                    title={modeCStopTitle(session?.localTerminal, session?.openLocalTerminal)}
                   >
-                    {modeCMonitorStop
-                      ? codingHandoffCopy.ctaStopMonitorSession
-                      : codingHandoffCopy.ctaStopSession}
+                    {modeCStopLabel(session?.localTerminal, session?.openLocalTerminal)}
                   </button>
                 ) : null}
                 {!live && session.hasPendingDiff ? (

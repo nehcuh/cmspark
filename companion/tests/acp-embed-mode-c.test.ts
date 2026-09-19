@@ -97,13 +97,18 @@ function armSpawn(): void {
 
 const realPlatform = process.platform
 
-/** `openLocalTerminalForAgent` reads `process.platform` directly; patch it for the duration. */
+/**
+ * `openLocalTerminalForAgent` reads `process.platform` directly; patch it for the duration.
+ * Restores whatever was in effect at CALL time (the file pins `darwin` in `before()` — these
+ * tests are platform-independent and must also run on a Windows host).
+ */
 async function withPlatform<T>(p: NodeJS.Platform, fn: () => Promise<T>): Promise<T> {
+  const prev = process.platform
   Object.defineProperty(process, "platform", { value: p, configurable: true })
   try {
     return await fn()
   } finally {
-    Object.defineProperty(process, "platform", { value: realPlatform, configurable: true })
+    Object.defineProperty(process, "platform", { value: prev, configurable: true })
   }
 }
 
@@ -152,6 +157,9 @@ function boundThread(svc: ReturnType<typeof services>, ws: string, title = "embe
 }
 
 before(async () => {
+  // The Mode C embed feature is darwin-only; the tests exercise it through the code's own
+  // `process.platform` reads, so pin darwin for the file's lifetime regardless of the host OS.
+  Object.defineProperty(process, "platform", { value: "darwin", configurable: true })
   config = await import("../src/config")
   await config.initDataDir()
   handleMessage = (await import("../src/message-router")).handleMessage
@@ -171,6 +179,7 @@ before(async () => {
 })
 
 after(() => {
+  Object.defineProperty(process, "platform", { value: realPlatform, configurable: true })
   pty.__testResetPtySessions()
   embed.__resetEmbedIntentsForTests()
   embed.__testSetOuterOpeners()
@@ -937,6 +946,181 @@ describe("manager Mode C embed gating", () => {
     } finally {
       delete process.env.TERMINAL
     }
+  })
+})
+
+// ─────────────── F. #506 A: a live embedded PTY leaves `embed_intent` ───────────────
+
+describe("embed_intent → embed_running on real spawn (#506 A)", () => {
+  beforeEach(() => {
+    acpMod._resetAcpManagerForTests()
+    enableAcp()
+  })
+
+  it("the panel-click spawn moves the session to embed_running and broadcasts it", async (t) => {
+    stubProtocol(t)
+    const mgr = acpMod.getAcpManager()
+    const svc = services()
+    const thr = boundThread(svc, realWs())
+    const proposed = mgr.propose({
+      threadId: thr.id,
+      agentId: "echo",
+      goal: "EMBED-TRANSITION-SENTINEL",
+      workspaceRoot: realWs(),
+    })
+    if (!proposed.ok) throw new Error(proposed.error)
+    const sessionId = proposed.session.session_id
+    const events: Array<{ session_id: string; local_terminal?: string }> = []
+    const off = mgr.onEvent((ev) => {
+      events.push({ session_id: ev.session_id, local_terminal: ev.local_terminal })
+    })
+    t.after(() => off())
+
+    startDetached(mgr, sessionId)
+    const session = await waitForLocalTerminal(mgr, sessionId)
+    assert.equal(session.local_terminal, "embed_intent")
+    assert.ok(embed.peekEmbedIntent(thr.id), "the intent waits for the panel click")
+
+    // The user clicks「在本插件打开终端」: terminal.open takes the intent and spawns the agent PTY.
+    const r = await handleMessage(
+      { type: "terminal.open", id: "a1", user_gesture: true, thread_id: thr.id },
+      svc,
+      panel() as never,
+    )
+    assert.equal(r.type, "terminal.opened")
+    assert.equal(spawnCalls.length, 1)
+    assert.equal(spawnCalls[0].file, fs.realpathSync(process.execPath), "the agent binary spawned")
+
+    // #506 A core contract: the session no longer claims "尚无进程" once the process exists.
+    const after = mgr.getSession(sessionId) as { local_terminal?: string; timeline?: Array<{ label: string }> }
+    assert.equal(after.local_terminal, "embed_running")
+    assert.equal(embed.peekEmbedIntent(thr.id), null, "the spawn consumed the intent")
+    assert.ok(
+      events.some((ev) => ev.session_id === sessionId && ev.local_terminal === "embed_running"),
+      `an acp.session.event must carry embed_running (got ${JSON.stringify(events)})`)
+    const labels = (after.timeline || []).map((i) => i.label).join("\n")
+    assert.match(labels, /内嵌终端已启动/)
+  })
+
+  it("a spawn for another thread does not move this session", async (t) => {
+    stubProtocol(t)
+    const mgr = acpMod.getAcpManager()
+    const svc = services()
+    const thr = boundThread(svc, realWs())
+    const other = boundThread(svc, realWs(), "other")
+    const proposed = mgr.propose({
+      threadId: thr.id,
+      agentId: "echo",
+      goal: "EMBED-ISOLATION",
+      workspaceRoot: realWs(),
+    })
+    if (!proposed.ok) throw new Error(proposed.error)
+    startDetached(mgr, proposed.session.session_id)
+    const session = await waitForLocalTerminal(mgr, proposed.session.session_id)
+    assert.equal(session.local_terminal, "embed_intent")
+
+    // A second thread runs the full claim flow; the first session must stay in embed_intent.
+    embed.recordEmbedIntent(other.id, { cwd: realWs(), file: realBin(), args: ["OTHER"] })
+    const r = await handleMessage(
+      { type: "terminal.open", id: "a2", user_gesture: true, thread_id: other.id },
+      svc,
+      panel() as never,
+    )
+    assert.equal(r.type, "terminal.opened")
+    const untouched = mgr.getSession(proposed.session.session_id) as { local_terminal?: string }
+    assert.equal(untouched.local_terminal, "embed_intent")
+    assert.ok(embed.peekEmbedIntent(thr.id), "this thread's intent is untouched")
+  })
+})
+
+// ─────────────── G. #506 B: a failed take-and-spawn re-records the intent ───────────────
+
+describe("terminal.open spawn failure re-records the intent (#506 B)", () => {
+  it("terminal_busy hands the intent back, and the re-click is still the agent", async () => {
+    const svc = services()
+    const thr = boundThread(svc, realWs())
+    // Occupy the single PTY slot AFTER take would run: the race the record-time isPtyBusy()
+    // check cannot cover (a tab opened between record and click).
+    const busy = pty.spawnPtySession({ id: "busy", cols: 80, rows: 24, cwd: realWs(), send: () => {} })
+    assert.equal(busy.ok, true)
+    spawnCalls.length = 0
+    embed.recordEmbedIntent(thr.id, { cwd: realWs(), file: realBin(), args: ["T-BUSY"] })
+    const r = await handleMessage(
+      { type: "terminal.open", id: "b1", user_gesture: true, thread_id: thr.id },
+      svc,
+      panel() as never,
+    )
+    assert.equal(r.type, "terminal.error")
+    assert.match(String(r.error), /terminal_busy/)
+    assert.deepEqual(spawnCalls, [], "the busy slot refused before spawning")
+    // The defect: takeEmbedIntent already consumed the intent and the old ladder never put it
+    // back, so the retry would have silently become a login shell.
+    assert.deepEqual(embed.peekEmbedIntent(thr.id), {
+      cwd: realWs(),
+      file: realBin(),
+      args: ["T-BUSY"],
+    })
+
+    // Free the slot; the re-click the error implies must be the agent, not $SHELL.
+    armSpawn()
+    const capture: ConfirmCapture = { codes: [], order: [] }
+    const second = await handleMessage(
+      { type: "terminal.open", id: "b2", user_gesture: true, thread_id: thr.id },
+      svc,
+      panel({ capture }) as never,
+    )
+    assert.equal(second.type, "terminal.opened")
+    assert.match(capture.codes[0], /open embedded PTY/, "the retry must ask about the embed, not a shell")
+    assert.deepEqual(spawnCalls, [{ file: realBin(), args: ["T-BUSY"] }])
+  })
+
+  it("spawn_failed (agent binary cannot exec) hands the intent back, and the retry is the agent", async () => {
+    const svc = services()
+    const thr = boundThread(svc, realWs())
+    embed.recordEmbedIntent(thr.id, { cwd: realWs(), file: realBin(), args: ["T-ENOENT"] })
+    // node-pty throws synchronously for a missing binary — no race needed for this variant.
+    pty.__testSetPtySpawn(() => {
+      throw new Error("spawn /no/such/agent ENOENT")
+    })
+    const r = await handleMessage(
+      { type: "terminal.open", id: "b3", user_gesture: true, thread_id: thr.id },
+      svc,
+      panel() as never,
+    )
+    assert.equal(r.type, "terminal.closed")
+    assert.equal(r.code, "spawn_failed")
+    assert.deepEqual(embed.peekEmbedIntent(thr.id), {
+      cwd: realWs(),
+      file: realBin(),
+      args: ["T-ENOENT"],
+    })
+
+    armSpawn()
+    const capture: ConfirmCapture = { codes: [], order: [] }
+    const second = await handleMessage(
+      { type: "terminal.open", id: "b4", user_gesture: true, thread_id: thr.id },
+      svc,
+      panel({ capture }) as never,
+    )
+    assert.equal(second.type, "terminal.opened")
+    assert.match(capture.codes[0], /open embedded PTY/)
+    assert.deepEqual(spawnCalls, [{ file: realBin(), args: ["T-ENOENT"] }])
+  })
+
+  it("a malformed-argv refusal (INVALID_PTY_OPTS) does NOT resurrect the intent", async () => {
+    // Deliberate asymmetry with the two put-backs above: a malformed argv fails identically on
+    // every retry, so re-recording would loop the user through an L2 that can never succeed.
+    const svc = services()
+    const thr = boundThread(svc, realWs())
+    embed.recordEmbedIntent(thr.id, { cwd: realWs(), file: realBin(), args: [""] })
+    const r = await handleMessage(
+      { type: "terminal.open", id: "b5", user_gesture: true, thread_id: thr.id },
+      svc,
+      panel() as never,
+    )
+    assert.equal(r.type, "terminal.error")
+    assert.match(String(r.error), /empty entry/)
+    assert.equal(embed.peekEmbedIntent(thr.id), null, "a never-spawnable intent is not re-recorded")
   })
 })
 

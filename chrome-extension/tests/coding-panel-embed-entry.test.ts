@@ -18,6 +18,8 @@ import {
   isModeCInvolved,
   isModeCMonitorStop,
   modeCBannerText,
+  modeCStopLabel,
+  modeCStopTitle,
 } from "../src/sidepanel/coding-handoff/embed-entry"
 import { codingHandoffCopy } from "../src/sidepanel/coding-handoff/copy"
 import { buildTerminalOpenBinding, openOrFocusEmbeddedTerminal } from "../src/background/terminal"
@@ -317,9 +319,14 @@ test("R7(b): both Mode C sites go through the helper, so neither re-selects the 
   assert.match(chip, /const modeCHint = isModeCInvolved\(/)
   assert.match(chip, /\{live && modeCHint \?/)
   assert.doesNotMatch(chip, /\{live && modeCMonitorStop \?/)
-  // Stop label/title must stay keyed on monitor-stop (never on "Mode C involved").
-  assert.match(src(PANEL), /const modeCMonitorStop = isModeCMonitorStop\(/)
-  assert.match(chip, /const modeCMonitorStop = isModeCMonitorStop\(/)
+  // Stop label/title go through the #506 ladder (which keys non-embed states on monitor-stop and
+  // overrides embed_running with its own honest copy) — never on "Mode C involved".
+  for (const rel of [PANEL, CHIP]) {
+    assert.match(src(rel), /modeCStopLabel\(/, `${rel} Stop label must come from the ladder`)
+    assert.match(src(rel), /modeCStopTitle\(/, `${rel} Stop title must come from the ladder`)
+    assert.doesNotMatch(src(rel), /codingHandoffCopy\.ctaStopMonitorSession/, `${rel} must not re-select the label`)
+    assert.doesNotMatch(src(rel), /codingHandoffCopy\.ctaStopMonitorTitle/, `${rel} must not re-select the title`)
+  }
 })
 
 test("R7(b): embed_intent is not a monitor-stop state (nothing is running in a terminal yet)", () => {
@@ -439,6 +446,7 @@ test("FIX 5: every Mode C banner string lives in copy.ts (one home for user-faci
   for (const key of [
     "modeCEmbedIntentBanner",
     "modeCEmbedIntentBannerNoButton",
+    "modeCEmbedRunningBanner",
     "modeCTerminalPendingBanner",
     "modeCTerminalOpenedL0Banner",
     "modeCTerminalFailedBanner",
@@ -447,6 +455,70 @@ test("FIX 5: every Mode C banner string lives in copy.ts (one home for user-faci
     assert.match(helper, new RegExp(`codingHandoffCopy\\.${key}\\b`), `${key} must be sourced from copy.ts`)
     assert.ok(key in codingHandoffCopy, `${key} must exist in copy.ts`)
   }
+})
+
+// ── #506: embed_running — the agent PTY is actually live ────────────────────
+
+test("#506: embed_running gets its own banner — neither 尚无进程 nor the outer-Terminal copy", () => {
+  const text = modeCBannerText("embed_running")
+  assert.equal(text, codingHandoffCopy.modeCEmbedRunningBanner)
+  // The intent copy's defining claim ("no process yet") is now false…
+  assert.doesNotMatch(text, /尚无进程/)
+  assert.notStrictEqual(text, codingHandoffCopy.modeCEmbedIntentBanner)
+  assert.notStrictEqual(text, codingHandoffCopy.modeCEmbedIntentBannerNoButton)
+  // …and so is the dual-process copy's OUTER Terminal.app process (none was ever opened).
+  assert.notStrictEqual(text, codingHandoffCopy.modeCDualProcessBanner)
+  assert.doesNotMatch(text, /本机 Terminal/)
+  // It must say what is true: the agent runs in the in-plugin terminal page, and Stop keeps it.
+  assert.match(text, /内嵌终端/)
+  assert.match(text, /正在运行|运行中/)
+  assert.match(text, /终端页/)
+  // Surface-independent: the banner does not point at a button (none renders in this state).
+  assert.equal(modeCBannerText("embed_running", { hasEntryButton: true }), text)
+  assert.doesNotMatch(text, /点下方|请点击/)
+})
+
+test("#506: embed_running is Mode-C-involved AND monitor-stop (a live process survives Stop)", () => {
+  assert.equal(isModeCInvolved("embed_running", true), true)
+  assert.equal(isModeCInvolved("embed_running", undefined), true)
+  assert.equal(isModeCMonitorStop("embed_running", true), true)
+  assert.equal(isModeCMonitorStop("embed_running", undefined), true)
+  // …but the LAUNCH entry stays gated on `embed_intent`: once running, the panel must not offer
+  // to start the agent again (the gate is source-locked on === "embed_intent" above).
+  assert.match(
+    src(PANEL),
+    /const showEmbedEntry =\s*shouldShowEmbeddedTerminalEntry\(embeddedTerminalConfig\) &&\s*isDarwin\(\) &&\s*session\?\.localTerminal === "embed_intent"/,
+  )
+})
+
+test("#506: embed_running Stop copy is honest — the embedded process is NOT ended by Stop", () => {
+  const label = modeCStopLabel("embed_running", true)
+  const title = modeCStopTitle("embed_running", true)
+  assert.equal(label, codingHandoffCopy.ctaStopEmbedRunningSession)
+  assert.equal(title, codingHandoffCopy.ctaStopEmbedRunningTitle)
+  // Not「停止编程会话」(claims the agent dies) and not the outer-Terminal monitor copy (wrong place).
+  assert.notStrictEqual(label, codingHandoffCopy.ctaStopSession)
+  assert.notStrictEqual(label, codingHandoffCopy.ctaStopMonitorSession)
+  assert.notStrictEqual(title, codingHandoffCopy.ctaStopMonitorTitle)
+  assert.match(label, /内嵌终端进程保留/)
+  assert.match(title, /内嵌终端/)
+  assert.match(title, /自行退出/)
+  assert.doesNotMatch(title, /本机 Terminal/)
+})
+
+test("#506: the Stop ladder leaves every other state on the monitor-stop mapping", () => {
+  for (const state of ["opened", "opened_l0", "pending"] as const) {
+    assert.equal(modeCStopLabel(state, true), codingHandoffCopy.ctaStopMonitorSession, state)
+    assert.equal(modeCStopTitle(state, true), codingHandoffCopy.ctaStopMonitorTitle, state)
+  }
+  // A propose-time Mode C snapshot with no outcome yet is also monitor-stop (unchanged ladder).
+  assert.equal(modeCStopLabel(undefined, true), codingHandoffCopy.ctaStopMonitorSession)
+  assert.equal(modeCStopTitle(undefined, true), codingHandoffCopy.ctaStopMonitorTitle)
+  for (const state of ["embed_intent", "failed", "skipped"] as const) {
+    assert.equal(modeCStopLabel(state, true), codingHandoffCopy.ctaStopSession, String(state))
+    assert.equal(modeCStopTitle(state, true), codingHandoffCopy.ctaStopSession, String(state))
+  }
+  assert.equal(modeCStopLabel(undefined, undefined), codingHandoffCopy.ctaStopSession)
 })
 
 // ── helpers ────────────────────────────────────────────────────────────────

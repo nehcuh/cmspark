@@ -128,6 +128,37 @@ export function isPtyBusy(): boolean {
   return live !== null
 }
 
+/**
+ * #506 A: the embed-intent lifecycle's only truthful "the agent is now running" signal. The ACP
+ * path RECORDS the intent and the WS handler CONSUMES it, but neither knows whether the PTY ever
+ * went live — this module is the only place that does. Fired synchronously, AFTER `live` is set,
+ * and only for an explicit-executable spawn (`opts.file` — the agent-embed shape); a `$SHELL -l`
+ * login tab never fires it, so a subscriber can never mistake a shell for the agent. Listeners
+ * are isolated: a throwing listener cannot fail an already-live spawn.
+ */
+export type PtyAgentSpawnedInfo = { id: string; threadId?: string; file: string }
+export type PtyAgentSpawnedListener = (info: PtyAgentSpawnedInfo) => void
+
+const agentSpawnedListeners = new Set<PtyAgentSpawnedListener>()
+
+/** Returns the unsubscribe. Production wiring subscribes once per AcpManager lifetime. */
+export function onPtyAgentSpawned(fn: PtyAgentSpawnedListener): () => void {
+  agentSpawnedListeners.add(fn)
+  return () => {
+    agentSpawnedListeners.delete(fn)
+  }
+}
+
+function emitAgentSpawned(session: LiveSession, file: string): void {
+  for (const fn of agentSpawnedListeners) {
+    try {
+      fn({ id: session.id, threadId: session.threadId, file })
+    } catch {
+      /* a listener must never kill a live spawn */
+    }
+  }
+}
+
 /** Stable object identity permits rechecking the same session after confirmation. */
 export function getOwnedPtyContext(id: string, owner: unknown): Readonly<{ threadId?: string; reviewId?: string }> | null {
   if (!owner || typeof owner !== "object" || !("readyState" in owner) || owner.readyState !== 1) return null
@@ -407,6 +438,10 @@ export function spawnPtySession(opts: {
     pid: handle.pid,
     ...(opts.threadId ? { thread_id: opts.threadId } : {}),
   })
+
+  // #506 A: only an explicit executable (the agent-embed shape) announces a spawn — the login
+  // shell default must not move an `embed_intent` session to "running".
+  if (hasFile) emitAgentSpawned(session, file)
 
   return { ok: true, pid: handle.pid }
 }

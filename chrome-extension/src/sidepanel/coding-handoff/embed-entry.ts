@@ -75,6 +75,7 @@ export type LocalTerminalState =
   | "failed"
   | "skipped"
   | "embed_intent"
+  | "embed_running"
   | string
   | undefined
 
@@ -91,6 +92,7 @@ export function isModeCInvolved(
     localTerminal === "opened_l0" ||
     localTerminal === "pending" ||
     localTerminal === "embed_intent" ||
+    localTerminal === "embed_running" ||
     (openLocalTerminal === true &&
       localTerminal !== "failed" &&
       localTerminal !== "skipped" &&
@@ -99,9 +101,12 @@ export function isModeCInvolved(
 }
 
 /**
- * Stop honesty: true only when an OUTER terminal process exists that the side panel cannot end
- * — then Stop ends the monitor bridge alone. `embed_intent` is excluded: nothing was opened and
- * no PTY exists, so the outer-terminal title would be false; Stop ends the ACP session itself.
+ * Stop honesty: true only when a process exists that the side panel cannot end — then Stop ends
+ * the monitor bridge alone. `embed_intent` is excluded: nothing was opened and no PTY exists, so
+ * the outer-terminal title would be false; Stop ends the ACP session itself. `embed_running` is
+ * INCLUDED: the embedded agent PTY is live and survives acp.session.cancel (it ends only with
+ * the terminal tab, chat.abort, or a WS drop). Its label/title come from modeCStopLabel /
+ * modeCStopTitle, which override the outer-Terminal monitor copy for this state.
  */
 export function isModeCMonitorStop(
   localTerminal: LocalTerminalState,
@@ -111,6 +116,7 @@ export function isModeCMonitorStop(
     localTerminal === "opened" ||
     localTerminal === "opened_l0" ||
     localTerminal === "pending" ||
+    localTerminal === "embed_running" ||
     (openLocalTerminal === true &&
       localTerminal !== "failed" &&
       localTerminal !== "skipped" &&
@@ -137,6 +143,9 @@ export function modeCBannerText(
       ? codingHandoffCopy.modeCEmbedIntentBanner
       : codingHandoffCopy.modeCEmbedIntentBannerNoButton
   }
+  // #506: the embedded agent is actually running — both the intent copy (尚无进程) and the
+  // outer-Terminal copy would lie here.
+  if (localTerminal === "embed_running") return codingHandoffCopy.modeCEmbedRunningBanner
   // Defensive rung: both render sites gate on `isModeCInvolved`, which excludes `failed`,
   // so this string is not rendered today — it must still be non-lying if a site ever adds it.
   if (localTerminal === "failed") return codingHandoffCopy.modeCTerminalFailedBanner
@@ -145,4 +154,31 @@ export function modeCBannerText(
   }
   if (localTerminal === "pending") return codingHandoffCopy.modeCTerminalPendingBanner
   return codingHandoffCopy.modeCDualProcessBanner
+}
+
+/**
+ * #506 Stop-label ladder — single home for the panel and the chip (the same anti-drift reason as
+ * the banner ladder). `embed_running` is checked FIRST: cancel ends the ACP bridge session but
+ * the embedded PTY process survives, so neither「停止编程会话」nor the outer-Terminal monitor copy
+ * (本机 Terminal) tells the truth. Every other state delegates to the monitor-stop ladder.
+ */
+export function modeCStopLabel(
+  localTerminal: LocalTerminalState,
+  openLocalTerminal: boolean | undefined,
+): string {
+  if (localTerminal === "embed_running") return codingHandoffCopy.ctaStopEmbedRunningSession
+  return isModeCMonitorStop(localTerminal, openLocalTerminal)
+    ? codingHandoffCopy.ctaStopMonitorSession
+    : codingHandoffCopy.ctaStopSession
+}
+
+/** Tooltip companion of modeCStopLabel — same ladder, same override order. */
+export function modeCStopTitle(
+  localTerminal: LocalTerminalState,
+  openLocalTerminal: boolean | undefined,
+): string {
+  if (localTerminal === "embed_running") return codingHandoffCopy.ctaStopEmbedRunningTitle
+  return isModeCMonitorStop(localTerminal, openLocalTerminal)
+    ? codingHandoffCopy.ctaStopMonitorTitle
+    : codingHandoffCopy.ctaStopSession
 }

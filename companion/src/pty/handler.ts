@@ -222,6 +222,14 @@ export async function handleTerminalMessage(
       ...(intent ? { file: intent.file, args: wireArgs ?? intent.args } : {}),
     })
     if (!spawned.ok) {
+      // #506 B: `takeEmbedIntent` already CONSUMED the intent above. A spawn that never started
+      // (the single slot was busy, or the agent binary failed to exec) must hand the intent back —
+      // the same put-back the EXPIRED/UNCONFIRMED/REPLACED guards make — or the re-click the error
+      // sends the user to would silently downgrade to a login shell. TTL resets on re-record;
+      // INVALID_PTY_OPTS stays consumed because that retry would fail identically forever.
+      if (intent && threadId && (spawned.error === "terminal_busy" || spawned.code === "spawn_failed")) {
+        recordEmbedIntent(threadId, intent)
+      }
       if (spawned.code === INVALID_PTY_OPTS) {
         // #502 C: a malformed file/argv never spawned anything, so reporting it as
         // `terminal.closed`/`spawn_failed` would render as "opened then died". It is a request error.

@@ -23,6 +23,15 @@ export const codingHandoffCopy = {
   ctaStopMonitorSession: "停止监视会话",
   ctaStopMonitorTitle:
     "仅结束侧栏监视桥；本机 Terminal 内 Agent 需在终端自行退出",
+  /**
+   * #506 embed_running: Stop (acp.session.cancel) ends the bridge session but the embedded PTY
+   * process survives — it ends only with the terminal tab, chat.abort, or a WS drop. Neither
+   * 「停止编程会话」(claims the process dies) nor the outer-Terminal monitor copy (wrong place)
+   * is honest here.
+   */
+  ctaStopEmbedRunningSession: "停止会话（内嵌终端进程保留）",
+  ctaStopEmbedRunningTitle:
+    "仅结束侧栏会话与监视桥；本插件内嵌终端中的 Agent 需在终端页自行退出",
   ctaMuteThread: "不再提示本对话",
   ctaOpenSettings: "打开设置 · 编程助手",
   ctaRetry: "重试",
@@ -42,6 +51,13 @@ export const codingHandoffCopy = {
    */
   modeCEmbedIntentBannerNoButton:
     "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。启动入口在「编程助手」面板的「在本插件打开终端」，打开后请回到侧栏确认才会启动。",
+
+  /**
+   * #506: the embedded agent PTY actually spawned. The intent copy above（尚无进程）would now lie,
+   * and the dual-process copy would point at an outer Terminal.app that was never opened.
+   */
+  modeCEmbedRunningBanner:
+    "模式 C：内嵌终端中的 Agent 正在运行（本插件终端页）。侧栏停止仅结束会话与监视桥；内嵌终端进程需在终端页关闭。",
 
   /**
    * Mode C host-terminal outcomes. Both render sites gate on `isModeCInvolved`, which excludes
