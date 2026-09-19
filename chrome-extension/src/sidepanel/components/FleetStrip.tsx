@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import type { FleetWorkerView } from "../types"
-import { fleetStripShouldShow, fleetGlanceLatestToolLabel } from "./focus-band-priority"
+import { fleetStripShouldShow, fleetStripShouldPoll, fleetGlanceLatestToolLabel } from "./focus-band-priority"
 import { useScopedRunBusy } from "../hooks/use-scoped-run-busy"
 
 function worstColor(status: string | undefined): string {
@@ -63,12 +63,20 @@ export function FleetStrip({
     return (fleet?.locks || []).filter((l) => allowed.has(l.holder_thread_id))
   }, [scoped.workers, activeId, fleet?.locks])
 
+  const llmActive = (scoped.workers || []).some((w) => w.llm_active === true)
+  const shouldPoll = fleetStripShouldPoll({
+    worstStatus: worst,
+    lockCount,
+    openIntents,
+    llmActive,
+  })
   useEffect(() => {
     const tick = () => chrome.runtime.sendMessage({ type: "fleet.status" })
     tick()
+    if (!shouldPoll) return
     const id = setInterval(tick, 4000)
     return () => clearInterval(id)
-  }, [])
+  }, [shouldPoll])
 
   // §4.3 rule 2: pending confirms do NOT force Fleet chrome (MinimalConfirm owns them).
   // Show only multi-agent activity / locks / board intents / user-expanded (standalone).

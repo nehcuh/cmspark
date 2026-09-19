@@ -82,7 +82,10 @@ function redactComputerParams(params: Record<string, unknown>): Record<string, u
   return redacted
 }
 
-function collapseResult(result: unknown): { success?: boolean; redacted: true; len: number; sha256: string } {
+function collapseResult(
+  result: unknown,
+  omission: "archive" | "security" = "security",
+): { success?: boolean; redacted: true; len: number; sha256: string; omission: "archive" | "security" } {
   const raw = typeof result === "string" ? result : JSON.stringify(result ?? null)
   return {
     success: typeof result === "object" && result && "success" in (result as any)
@@ -91,6 +94,7 @@ function collapseResult(result: unknown): { success?: boolean; redacted: true; l
     redacted: true,
     len: raw.length,
     sha256: shortHash(raw),
+    omission,
   }
 }
 
@@ -278,9 +282,9 @@ export function redactToolPayloadForPersistence(
  *   result: { success?, redacted: true, len, sha256 }
  *   params: { redacted: true, len, sha256 }
  *
- * Shape reuse is deliberate: the side panel already recognises this envelope
- * (redacted-stub-utils `extractRedactedStub`, shapes A/B) and renders it as
- * "出于安全未持久化", so a compacted archive needs no new UI dialect.
+ * Envelope is the same `{redacted,len,sha256}` shape the panel already
+ * detects, plus `omission:"archive"` so reload copy says 「正文未保存」
+ * instead of the SEC-C 「出于安全未持久化」 dialect.
  *
  * CARVE-OUTS (apply in BOTH modes):
  *  - Sensitive classes keep their own #255 handling — cookie values, exec /
@@ -322,7 +326,7 @@ export function archiveToolPayload(
   }
   return {
     params: safe.params === undefined ? undefined : stubPayload(safe.params),
-    result: safe.result === undefined ? undefined : collapseResult(safe.result),
+    result: safe.result === undefined ? undefined : collapseResult(safe.result, "archive"),
   }
 }
 
@@ -367,6 +371,7 @@ function stubFailureResult(result: unknown): Record<string, unknown> {
   out.redacted = true
   out.len = raw.length
   out.sha256 = shortHash(raw)
+  out.omission = "archive"
   return out
 }
 

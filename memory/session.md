@@ -2,6 +2,16 @@
 
 ## Current Session
 
+### S110 (2026-09-19) [fix/502-adversarial-punchlist 六路对抗评审]
+
+- **任务**：对 `fix/502-adversarial-punchlist` vs `origin/main` (`93923c1d..022b2f60`) 做六路独立对抗评审 → 去重验真 → kimi+claude 双路复审。不修代码。
+- **范围**：97 files / +12102 / -183。含 #502 操作面、#504–#511 punch list、#513 舰队建议卡、#514 Glance 推送/spawn kick。未提交的 `memory/project-knowledge.md` 不进审。
+- **PR**：#512（punch list）；#503 是操作面原 PR（另一 head）。#513/#514 尚无独立 PR。
+- **产物目录**：`docs/audit/reviews/502-punchlist-20260919/`
+- **对抗** `[executed]`：6 路 A PRODUCT REJECT · B CORR AWN · C SEC AWN · D ARCH REJECT · E UX REJECT · F SKEPTIC REJECT。去重后 4 BLOCK（X1 live 芯 / X2 归档方言 / X4 kick abort / X9 spawn 夹具）+ MAJOR X3/X5/X6/X7/X8/X10。产物 `docs/audit/reviews/502-punchlist-20260919/`。
+- **双路** `[executed]`：kimi REJECT + claude REJECT。X1–X9 两路 TRIGGERED。Claude 降 X10 为 NIT（预存在）并加 N-1 排队 kick 无取消（并入 X4）。
+- **修复** `[executed]`：X1–X10 + N-1 全落地。companion 定向 93+92 绿；extension 相关 58+89 绿。用户睡觉期间完成，未开新 PR。
+
 ### S109 END (2026-09-15) [cmspark] VibeSOP 8.5.0 配置刷新
 
 - CMspark `.vibe/dist/` 已重建 Claude/Grok/Kimi/OpenCode/Pi 五个平台产物；项目级 `.claude/` 与 `.grok/` 已刷新。

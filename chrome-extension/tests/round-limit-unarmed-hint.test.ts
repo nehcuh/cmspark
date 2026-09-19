@@ -35,6 +35,8 @@ test("#505 shouldShowRoundLimitHint: unarmed + round_limit only", () => {
   assert.equal(shouldShowRoundLimitHint(null, null), false)
   assert.equal(shouldShowRoundLimitHint(null, "aborted"), false)
   assert.equal(shouldShowRoundLimitHint(LOOP_VIEW, null), false)
+  assert.equal(shouldShowRoundLimitHint(null, "round_limit", true), false, "loop suggest hides the unarmed hint")
+  assert.equal(shouldShowRoundLimitHint(null, "round_limit", false), true)
 })
 
 test("#505 backfillLoopView of an armed thread is a loop view (no double hint)", () => {
@@ -74,7 +76,7 @@ test("#505 ChatView render gate matches loopView (frame ?? backfill)", () => {
     chat,
     /loopStatusByThreadId\[activeThreadId\]\s*\?\?\s*backfillLoopView\(activeThread\)/,
   )
-  assert.match(chat, /shouldShowRoundLimitHint\(loopView,\s*runTerminal\)/)
+  assert.match(chat, /shouldShowRoundLimitHint\(loopView,\s*runTerminal,\s*loopSuggestVisible\)/)
   assert.match(chat, /<RoundLimitHint\s*\/>/)
   // mutually exclusive with LoopStatusRow: ternary, not two independent ifs
   assert.match(chat, /loopView && activeThreadId \?[\s\S]{0,400}showRoundLimitHint \?/)

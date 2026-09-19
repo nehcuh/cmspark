@@ -111,7 +111,11 @@ import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
 } from "./security-confirmation"
-import { canAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
+import {
+  canAcquireMultiAgentLlmLoop,
+  cancelDeferredLlmKick,
+  releaseMultiAgentLlmLoop,
+} from "./orchestrator/llm-loop-gate"
 import {
   handleConfigFamily,
 } from "./message-router/handlers/config"
@@ -227,6 +231,28 @@ export function __testSetLlmOwnerForTests(threadId: string, panelId: string | nu
  * supersede) omit it and keep the queue. `cancelled` discloses how many
  * queued turns the stop dropped (0 unless clearQueue).
  */
+/**
+ * Register an in-flight AbortController for a kicked worker chatCreate
+ * (spawn_worker / spawn_expert_team). Same SoT as router chat.create so
+ * Glance `llm_active`, fleet.stop_all, and chat.abort can see the run.
+ */
+export function installKickAbortController(threadId: string): AbortController {
+  const existing = abortControllers.get(threadId)
+  if (existing) return existing
+  const controller = new AbortController()
+  abortControllers.set(threadId, controller)
+  nextLlmGeneration(threadId)
+  return controller
+}
+
+/** CAS-delete the kick controller after chatCreate settles (success or throw). */
+export function releaseKickAbortController(threadId: string, controller: AbortController): void {
+  if (abortControllers.get(threadId) === controller) {
+    abortControllers.delete(threadId)
+    llmLoopOwnerPanel.delete(threadId)
+  }
+}
+
 export function abortThreadChat(
   threadId: string,
   opts?: { clearQueue?: boolean },
@@ -244,6 +270,7 @@ export function abortThreadChat(
     // Free gate here: finally will CAS-skip release after generation bump.
     releaseMultiAgentLlmLoop(threadId)
   }
+  cancelDeferredLlmKick(threadId)
   dropSteer(threadId)
   return {
     stopped: controller != null,

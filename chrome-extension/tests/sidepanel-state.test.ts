@@ -295,10 +295,12 @@ test("Settings copy for the archive switch must not promise restoring old bodies
   )
   const idx = src.indexOf("保存完整操作史")
   assert.ok(idx > 0, "the archive switch is missing from Settings")
-  const block = src.slice(idx, idx + 1600)
+  const block = src.slice(idx, idx + 2200)
   assert.match(block, /默认关/)
   assert.match(block, /不会因打开而(恢复|回填)/, "copy must state that omitted bodies are not restored")
   assert.match(block, /脱敏/, "copy must state that secrets stay redacted when on")
+  assert.match(block, /type:\s*["']config\.set["']/, "toggle must persist immediately, not wait for 保存并关闭")
+  assert.match(block, /操作历史面板与日志/, "copy must disclose history.db / logs are out of scope")
 })
 
 test("normalizeConfig flattens context_compaction modes", () => {

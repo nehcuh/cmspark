@@ -126,6 +126,16 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (typeof cfg.persist_full_tool_history === "boolean") {
         normalized.persist_full_tool_history = cfg.persist_full_tool_history
       }
+      if (cfg.embedded_terminal && typeof cfg.embedded_terminal === "object" && !Array.isArray(cfg.embedded_terminal)) {
+        const src = cfg.embedded_terminal as Record<string, unknown>
+        if (typeof src.enabled === "boolean") {
+          const current = getConfig()
+          normalized.embedded_terminal = {
+            ...(current.embedded_terminal || { enabled: false }),
+            enabled: src.enabled,
+          }
+        }
+      }
       // `!== undefined` (not truthy) so the UI can disable retention/rotation by sending 0,
       // which the backend treats as "off" (pruneOldLogs / rotateLogFileIfNeeded early-return on <=0).
       if (cfg.log_retention_days !== undefined) normalized.log_retention_days = cfg.log_retention_days

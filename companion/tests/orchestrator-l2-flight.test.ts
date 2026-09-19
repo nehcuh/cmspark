@@ -20,6 +20,7 @@ import {
   multiAgentLlmLoopSnapshot,
   scheduleWhenLlmSlotAvailable,
   pendingDeferredLlmKickCount,
+  cancelDeferredLlmKick,
   _resetMultiAgentLlmLoopsForTests,
 } from "../src/orchestrator/llm-loop-gate"
 import {
@@ -168,6 +169,27 @@ test("#371 kick: 6th concurrent LLM loop queues; drain starts it after a slot fr
   releaseHang()
   await new Promise((r) => setTimeout(r, 0))
   assert.equal(multiAgentLlmLoopSnapshot().active, cap - 1)
+  for (let i = 1; i < cap; i++) releaseMultiAgentLlmLoop(`hold-${i}`)
+  _resetMultiAgentLlmLoopsForTests()
+})
+
+test("N-1 abort drops a queued kick so drain cannot start it", async () => {
+  _resetMultiAgentLlmLoopsForTests()
+  const worker = { agent_role: "worker", parent_thread_id: "p", orchestrator_run_id: "r" }
+  const cap = ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops
+  for (let i = 0; i < cap; i++) {
+    assert.equal(tryAcquireMultiAgentLlmLoop(worker, `hold-${i}`).ok, true)
+  }
+  const started: string[] = []
+  scheduleWhenLlmSlotAvailable(worker, "kick-abort-me", async () => {
+    started.push("kick-abort-me")
+  })
+  assert.equal(pendingDeferredLlmKickCount(), 1)
+  assert.equal(cancelDeferredLlmKick("kick-abort-me"), true)
+  assert.equal(pendingDeferredLlmKickCount(), 0)
+  releaseMultiAgentLlmLoop("hold-0")
+  await new Promise((r) => setTimeout(r, 0))
+  assert.deepEqual(started, [])
   for (let i = 1; i < cap; i++) releaseMultiAgentLlmLoop(`hold-${i}`)
   _resetMultiAgentLlmLoopsForTests()
 })

@@ -191,7 +191,9 @@ test("PR-6 ToolCallCard cascade untouched: status derivation + red-line mappings
   assert.match(chat, /derivedStatus === "error" \? "!" : "–"/)
   // SEC-C stub hint + failed-suffix copy intact (security disclosure)
   assert.match(chat, /data-testid="redacted-stub-hint"/)
-  assert.match(chat, /该调用当时已失败/)
+  assert.match(chat, /formatRedactedStubHint\(redactedStub,\s*stubFailed\)/)
+  const hintUtil = read("src/sidepanel/utils/redacted-stub-utils.ts")
+  assert.match(hintUtil, /该调用当时已失败/)
 })
 
 test("PR-6 RunProgress collapse semantics untouched (same-red-line neighbor)", () => {
@@ -253,10 +255,10 @@ test("#508 ToolHistoryBlock wirings: pendingConfirmIds / threadBusy last-item / 
   // inline would no longer compile against this lock.
   assert.match(chat, /pendingConfirmIdsFromTools\(/)
   assert.match(chat, /pendingConfirmToolNamesForThread\(/)
-  // last tools block only: historical turns never receive the live name set
-  assert.match(chat, /pendingConfirmToolNames=\{itemIsLast \? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES\}/)
-  // (b) threadBusy is the last-item AND, not a hardcoded false
-  assert.match(chat, /threadBusy=\{Boolean\(itemIsLast && threadBusy\)\}/)
+  // last tools *frontier* (not itemIsLast — trailing assistant sits after the block)
+  assert.match(chat, /pendingConfirmToolNames=\{liveFrontier \? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES\}/)
+  assert.match(chat, /threadBusy=\{Boolean\(liveFrontier && threadBusy\)\}/)
+  assert.match(chat, /liveToolsFrontierIndex\(/)
   // (c) failure chipTone is a ternary on the run-wide failed count (#514
   // consolidated block: totalFailed across rounds), warning tokens
   assert.match(chat, /totalFailed\s*>\s*0/)

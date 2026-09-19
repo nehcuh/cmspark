@@ -194,6 +194,22 @@ export type ToolTurnItem<T> =
   | { kind: "tools"; msgs: T[]; reasonings?: string[]; rounds?: ToolHistoryRound<T>[] }
 
 /**
+ * Index of the live tools frontier: the last `kind:"tools"` item in the
+ * transcript. #514 puts a trailing assistant answer AFTER the consolidated
+ * tools block, so `itemIsLast` is the narration, not the tools. Running / L2
+ * cards must still pin to this index.
+ */
+export function liveToolsFrontierIndex(
+  items: ReadonlyArray<{ kind?: string }> | null | undefined,
+): number {
+  if (!Array.isArray(items)) return -1
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i]?.kind === "tools") return i
+  }
+  return -1
+}
+
+/**
  * #502 A hydrate guard: which rows may still render inline ToolCallCards?
  *  - role=tool rows are consumed by the per-turn block (groupToolTurnRows)
  *  - assistant rows carrying OpenAI FUNCTION shape ({function:{name}}) are

@@ -99,6 +99,7 @@ test("P2: spawn_worker pack_id apply failure rolls back worker (SPAWN_PACK_FAILE
     __thread_id: parent.id,
     role_label: "researcher",
     pack_id: "nonexistent-pack-xyz",
+    goal: "pack-fail fixture goal",
   }
   const { token } = securityPolicy.issueTokenFor("spawn_worker", params)
   params.security_token = token
@@ -129,11 +130,14 @@ test("P2: spawn_worker without pack_id still creates worker when token ok", asyn
   const params: Record<string, any> = {
     __thread_id: parent.id,
     role_label: "helper",
+    goal: "ok-spawn fixture goal",
   }
   const { token } = securityPolicy.issueTokenFor("spawn_worker", params)
   params.security_token = token
 
-  const r = await executeCompanionTool("spawn_worker", params)
+  const r = await executeCompanionTool("spawn_worker", params, "tc-p2-ok", {
+    kickWorkerChat: () => {},
+  })
   assert.equal(r.success, true, r.error || "spawn ok")
   assert.ok(r.data?.worker_id)
   assert.ok(tm.get(r.data.worker_id), "worker exists")

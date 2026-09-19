@@ -766,6 +766,8 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             const { scheduleWhenLlmSlotAvailable } = require("./orchestrator/llm-loop-gate") as typeof import("./orchestrator/llm-loop-gate")
             const workerThread = threadManager.get(threadId)
             scheduleWhenLlmSlotAvailable(workerThread, threadId, async () => {
+              const { installKickAbortController, releaseKickAbortController } = await import("./message-router")
+              const controller = installKickAbortController(threadId)
               try {
                 const { chatCreate } = await import("./llm/adapter")
                 await chatCreate({
@@ -779,6 +781,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                   historyStore,
                   sendToExtension: broadcastToClients,
                   executeTool: executor,
+                  signal: controller.signal,
                 })
                 // #514: expert-team worker runs bypass the router's run-end
                 // fleet push — refresh the Glance here (all panels).
@@ -789,6 +792,8 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                   thread_id: threadId,
                   error: e?.message || String(e),
                 })
+              } finally {
+                releaseKickAbortController(threadId, controller)
               }
             })
           },

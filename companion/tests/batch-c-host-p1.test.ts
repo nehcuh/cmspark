@@ -288,6 +288,15 @@ test("C5: spawn HMAC sort+unique; extra tool fails; empty !== missing", () => {
   const { token } = policy.issueTokenFor("spawn_worker", p1)
   assert.equal(policy.validateTokenFor(token, "spawn_worker", pExtra), false)
   assert.equal(policy.validateTokenFor(token, "spawn_worker", pReorder), true)
+  const pGoalA = { ...p1, goal: "scrape site A" }
+  const pGoalB = { ...p1, goal: "scrape site B" }
+  assert.notEqual(
+    SecurityPolicy.bindingPayloadFor("spawn_worker", pGoalA),
+    SecurityPolicy.bindingPayloadFor("spawn_worker", pGoalB),
+  )
+  const { token: tokA } = policy.issueTokenFor("spawn_worker", pGoalA)
+  assert.equal(policy.validateTokenFor(tokA, "spawn_worker", pGoalB), false)
+  assert.equal(policy.validateTokenFor(tokA, "spawn_worker", pGoalA), true)
 })
 
 test("C1: catalog no longer teaches fragment contains", () => {

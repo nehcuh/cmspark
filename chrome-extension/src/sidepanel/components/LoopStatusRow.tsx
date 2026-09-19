@@ -35,7 +35,11 @@ export const ROUND_LIMIT_UNARMED_COPY =
 export function shouldShowRoundLimitHint(
   loopView: LoopStatusView | null | undefined,
   runTerminal: string | null | undefined,
+  loopSuggestVisible?: boolean,
 ): boolean {
+  // #505 vs kernel suggest: unarmed round_limit with unticked items also
+  // emits task_loop.suggest (arm CTA). Showing both is two "continue"s.
+  if (loopSuggestVisible) return false
   return !loopView && runTerminal === "round_limit"
 }
 
@@ -455,6 +459,7 @@ const styles: Record<string, CSSProperties> = {
   },
   cardFoot: {
     display: "flex",
+    flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 6,

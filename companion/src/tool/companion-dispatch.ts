@@ -342,11 +342,21 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           data: { error_code: "SPAWN_BRIEF_FAILED" },
         }
       }
-      let kicked = false
-      if (typeof execOpts?.kickWorkerChat === "function") {
-        await execOpts.kickWorkerChat({ threadId: r.worker.id, message: brief })
-        kicked = true
+      if (typeof execOpts?.kickWorkerChat !== "function") {
+        try {
+          threadManager.delete(r.worker.id)
+        } catch {
+          /* best-effort */
+        }
+        restoreParentAfterFailedSpawn(threadManager, String(parentId), r.parent_before_promotion)
+        return {
+          success: false,
+          error: "spawn_worker rolled back: no kick channel — worker would be a briefed dead shell",
+          data: { error_code: "SPAWN_KICK_FAILED" },
+        }
       }
+      await execOpts.kickWorkerChat({ threadId: r.worker.id, message: brief })
+      const kicked = true
       // #514: push the fleet snapshot so the Glance strip appears immediately —
       // full-autonomy cruise auto-approves spawn (no confirm), and confirms were
       // the panel's ONLY pull trigger for fleet.status.
@@ -367,7 +377,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           intent_claim: intentClaim,
           brief_persisted: true,
           kicked,
-          ...(kicked ? {} : { note: "brief persisted; no kick channel in this context — the worker starts on its next run trigger" }),
         },
       }
     }

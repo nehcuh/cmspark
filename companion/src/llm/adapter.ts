@@ -281,7 +281,11 @@ export function findLastLargeToolResultIndex(
  * 找不到就放弃——内存隔离仍生效。
  */
 export function quarantinePersistedToolRow(
-  threadManager: { getMessages(tid: string): any[]; updateMessage(tid: string, mid: string, u: any): void },
+  threadManager: {
+    getMessages(tid: string): any[]
+    updateMessage(tid: string, mid: string, u: any): void
+    rememberLiveToolResult?(tid: string, toolCallId: string, entry: { result: unknown; tool_name?: string }): void
+  },
   threadId: string,
   toolCallId?: string,
   originalContent?: string,
@@ -327,6 +331,16 @@ export function quarantinePersistedToolRow(
     content: CONTENT_RISK_QUARANTINE_PLACEHOLDER,
     ...(toolCalls ? { tool_calls: toolCalls } : {}),
   })
+  // #504 live mirror otherwise re-injects the banned body on same-process continue.
+  if (toolCallId && typeof threadManager.rememberLiveToolResult === "function") {
+    const name = Array.isArray(target.tool_calls)
+      ? target.tool_calls.find((tc: any) => tc?.id === toolCallId)?.tool_name
+      : undefined
+    threadManager.rememberLiveToolResult(threadId, toolCallId, {
+      result: { quarantined: true, reason: "content_risk" },
+      tool_name: typeof name === "string" ? name : undefined,
+    })
+  }
   return true
 }
 
@@ -433,7 +447,12 @@ export function rebuildMessagesFromHistory(
         if (!tc.id || !openToolCallIds.has(tc.id)) continue
         openToolCallIds.delete(tc.id)
         // #504: prefer the remembered full result over the archived stub.
-        const liveTool = live?.toolResults?.get(tc.id)
+        // If disk already quarantined (#430), never let a stale live body win.
+        const diskQuarantined =
+          tc.result &&
+          typeof tc.result === "object" &&
+          (tc.result as { quarantined?: unknown }).quarantined === true
+        const liveTool = diskQuarantined ? undefined : live?.toolResults?.get(tc.id)
         messages.push({
           role: "tool",
           tool_call_id: tc.id,

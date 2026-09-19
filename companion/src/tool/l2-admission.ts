@@ -327,7 +327,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         finalParams.command ||
         (Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : "") ||
         (toolName === "spawn_worker"
-          ? `Spawn worker role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"} deny=${Array.isArray(finalParams.tool_deny) ? finalParams.tool_deny.join(",") : "default"} intent=${finalParams.intent_id || ""}`
+          ? `Spawn worker role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"} deny=${Array.isArray(finalParams.tool_deny) ? finalParams.tool_deny.join(",") : "default"} intent=${finalParams.intent_id || ""} goal=${String(finalParams.goal || finalParams.task || "").replace(/\s+/g, " ").trim().slice(0, 400)}${typeof finalParams.role_prompt === "string" && finalParams.role_prompt.trim() ? ` role_prompt=${finalParams.role_prompt.replace(/\s+/g, " ").trim().slice(0, 200)}` : ""}`
           : "") ||
         (toolName === "spawn_expert_team"
           ? `Spawn expert team members=${Array.isArray(finalParams.members) ? finalParams.members.map((m: any) => m?.pack_id || m?.id || "?").join(",") : ""} goal=${String(finalParams.goal || finalParams.task || "")}`

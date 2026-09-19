@@ -9,6 +9,7 @@ import {
   pendingConfirmIdsFromTools,
   pendingConfirmToolNamesForThread,
   consolidateRunToolTurns,
+  liveToolsFrontierIndex,
   donePagerChipLabel,
   countFailedTools,
   confirmationMatchesActiveThread,
@@ -452,4 +453,23 @@ test("classifyFleetActivity: done fleet holds only while fresh (#514)", async ()
   )
   // legacy callers without fresh keep the fail-open default
   assert.equal(classifyFleetActivity({ workerCount: 2, lockCount: 0, openIntents: 0 }), "active")
+})
+
+test("#X1 liveToolsFrontierIndex pins the last tools block, not a trailing assistant", () => {
+  const tools = { kind: "tools" as const, msgs: [{ id: "t1" }] }
+  const answer = { kind: "row" as const, msg: { role: "assistant", content: "好的，我来打开页面" } }
+  const user = { kind: "row" as const, msg: { role: "user", content: "go" } }
+  assert.equal(liveToolsFrontierIndex([tools, answer]), 0)
+  assert.equal(liveToolsFrontierIndex([user, tools, answer, user, tools, answer]), 4)
+  assert.equal(liveToolsFrontierIndex([user, answer]), -1)
+  assert.equal(liveToolsFrontierIndex([]), -1)
+  const liveRun = consolidateRunToolTurns(
+    groupToolTurnRows([
+      { id: "u1", role: "user", content: "go" },
+      { id: "a-mid", role: "assistant", content: "好的，我来打开页面", tool_calls: [{ id: "c1", type: "function", function: { name: "navigate", arguments: "{}" } }] },
+      toolRow("c1", "navigate", "running"),
+    ]),
+  )
+  assert.equal(liveToolsFrontierIndex(liveRun), 1, "tools block is frontier even with trailing mid-turn text")
+  assert.equal(liveRun[liveRun.length - 1]?.kind, "row")
 })

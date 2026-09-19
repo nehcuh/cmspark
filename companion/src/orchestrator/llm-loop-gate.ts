@@ -117,6 +117,17 @@ export function pendingDeferredLlmKickCount(): number {
   return deferredKickQueue.length
 }
 
+/** Drop a queued kick so stop_all / abort cannot start it later (N-1). */
+export function cancelDeferredLlmKick(threadId: string): boolean {
+  const id = String(threadId || "")
+  if (!id) return false
+  const before = deferredKickQueue.length
+  for (let i = deferredKickQueue.length - 1; i >= 0; i--) {
+    if (deferredKickQueue[i]!.threadId === id) deferredKickQueue.splice(i, 1)
+  }
+  return deferredKickQueue.length !== before
+}
+
 function startDeferredRun(item: DeferredLlmRun): void {
   void Promise.resolve()
     .then(() => item.run())
@@ -131,6 +142,10 @@ function startDeferredRun(item: DeferredLlmRun): void {
 function drainDeferredLlmRuns(): void {
   while (deferredKickQueue.length > 0) {
     const next = deferredKickQueue[0]!
+    if ((next.thread as { paused?: unknown } | null)?.paused === true) {
+      deferredKickQueue.shift()
+      continue
+    }
     const peek = canAcquireMultiAgentLlmLoop(next.thread, next.threadId)
     if (!peek.ok) break
     deferredKickQueue.shift()

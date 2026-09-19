@@ -19,7 +19,12 @@ import {
   formatShellMetaLine,
   SHELL_BODY_PREVIEW_CHARS,
 } from "../utils/shell-card-utils"
-import { extractRedactedStub, extractTruncatedPrefix, isRedactedStubContent } from "../utils/redacted-stub-utils"
+import {
+  extractRedactedStub,
+  extractTruncatedPrefix,
+  formatRedactedStubHint,
+  isRedactedStubContent,
+} from "../utils/redacted-stub-utils"
 import { RetrievedSourcesChips } from "./RetrievedSourcesChips"
 import { KnowledgeImportModal } from "./KnowledgeImportModal"
 import { SummarySheet } from "./SummarySheet"
@@ -31,6 +36,7 @@ import {
   groupToolTurnRows,
   consolidateRunToolTurns,
   liveChipLabel,
+  liveToolsFrontierIndex,
   countFailedTools,
   pendingConfirmIdsFromTools,
   pendingConfirmToolNamesForThread,
@@ -142,6 +148,10 @@ export function ChatView() {
   const transcriptItems = useMemo(
     () => consolidateRunToolTurns(groupToolTurnRows(messages)),
     [messages],
+  )
+  const liveFrontierIdx = useMemo(
+    () => liveToolsFrontierIndex(transcriptItems),
+    [transcriptItems],
   )
   const [summaryOpen, setSummaryOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -272,7 +282,8 @@ export function ChatView() {
     ? loopStatusByThreadId[activeThreadId] ?? backfillLoopView(activeThread)
     : null
   const runTerminal = activeThreadId ? runTerminalByThreadId[activeThreadId] ?? null : null
-  const showRoundLimitHint = shouldShowRoundLimitHint(loopView, runTerminal)
+  const loopSuggestVisible = Boolean(loopSuggest && loopSuggest.threadId === activeThreadId)
+  const showRoundLimitHint = shouldShowRoundLimitHint(loopView, runTerminal, loopSuggestVisible)
   // #513: per-thread map — only the active thread's card renders.
   const fleetSuggest = activeThreadId ? fleetSuggestByThreadId[activeThreadId] ?? null : null
 
@@ -482,14 +493,15 @@ export function ChatView() {
           !processingLabel && <EmptyState level={level} />}
         {transcriptItems.map((item, i) => {
           const itemIsLast = i === transcriptItems.length - 1
+          const liveFrontier = i === liveFrontierIdx
           if (item.kind === "tools") {
             return (
               <ToolHistoryBlock
                 key={`tools-${item.msgs[0]!.id}`}
                 msgs={item.msgs}
                 rounds={item.rounds}
-                threadBusy={Boolean(itemIsLast && threadBusy)}
-                pendingConfirmToolNames={itemIsLast ? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES}
+                threadBusy={Boolean(liveFrontier && threadBusy)}
+                pendingConfirmToolNames={liveFrontier ? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES}
               />
             )
           }
@@ -560,7 +572,7 @@ export function ChatView() {
             <LoopStatusRow
               view={loopView}
               threadId={activeThreadId}
-              pendingConfirms={pendingSecurityConfirmations.length}
+              pendingConfirms={pendingConfirmToolNames.size}
             />
           </div>
         ) : showRoundLimitHint ? (
@@ -1731,7 +1743,7 @@ function ToolCallCard({ tc }: { tc: any }) {
           }}
           data-testid="redacted-stub-hint"
         >
-          {`出于安全未持久化：原始长度 ${redactedStub.len.toLocaleString()} 字符 · sha256 ${redactedStub.sha256}。实时轮次中内容对模型与界面可见（超长会截断），重新加载后不再保留。${stubFailed ? "该调用当时已失败。" : ""}`}
+          {formatRedactedStubHint(redactedStub, stubFailed)}
         </div>
       )}
       {/* #255 三态之截断态：读类工具结果过闸后按 8000 字符截断落盘——明示

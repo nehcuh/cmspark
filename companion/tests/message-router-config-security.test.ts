@@ -97,6 +97,16 @@ test("config.set: persist_full_tool_history persists in both directions (#502 B)
   assert.equal(getConfig().persist_full_tool_history, false, "toggle-off must reach the config")
 })
 
+test("config.set: embedded_terminal.enabled persists in both directions (#502 C / X10)", async () => {
+  saveConfig({ embedded_terminal: { enabled: false } })
+  const on: any = await postConfigSet({ embedded_terminal: { enabled: true } })
+  assert.notEqual(on.type, "error")
+  assert.equal(getConfig().embedded_terminal?.enabled, true)
+  const off: any = await postConfigSet({ embedded_terminal: { enabled: false } })
+  assert.notEqual(off.type, "error")
+  assert.equal(getConfig().embedded_terminal?.enabled, false)
+})
+
 test("config.set: non-boolean persist_full_tool_history is ignored, not coerced", async () => {
   saveConfig({ persist_full_tool_history: true })
   await postConfigSet({ persist_full_tool_history: "yes" })

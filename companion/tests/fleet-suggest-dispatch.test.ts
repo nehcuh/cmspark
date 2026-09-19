@@ -333,6 +333,25 @@ test("#514: spawn_worker with a dangling intent_id and NO mission board must NOT
   assert.equal(worker?.agent_role, "worker")
 })
 
+test("#X4 spawn_worker without kick channel rolls back (SPAWN_KICK_FAILED)", async () => {
+  const tm = new ThreadManager()
+  bindTm(tm)
+  const parent = tm.create("fs-spawn-nokick")
+  const { securityPolicy } = await import("../src/security-policy")
+  const spawnParams: Record<string, any> = {
+    __thread_id: parent.id,
+    role_label: "r",
+    goal: "would otherwise be a dead shell",
+  }
+  spawnParams.security_token = securityPolicy.issueTokenFor("spawn_worker", spawnParams).token
+  const r: any = await executeCompanionTool("spawn_worker", spawnParams, "tc-nokick", {
+    handshakeSurface: "tray",
+  })
+  assert.equal(r.success, false)
+  assert.equal(r.data.error_code, "SPAWN_KICK_FAILED")
+  assert.equal(tm.get(parent.id)?.agent_role, "normal")
+})
+
 test("#514: plain spawn_worker REQUIRES a goal (no more dead shells)", async () => {
   const tm = new ThreadManager()
   bindTm(tm)

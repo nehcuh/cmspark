@@ -8,6 +8,7 @@ import {
   FOCUS_BAND_SECONDARY_MAX_PX,
   resolveFocusBandSlot,
   fleetStripShouldShow,
+  fleetStripShouldPoll,
   classifyFleetActivity,
   fleetProcessingLabel,
   fleetPausedOnlyLabel,
@@ -251,5 +252,24 @@ test("active fleet: idle workers / holding_tabs / locks still show 运行中 or 
       worstStatus: "none",
     }) || "",
     /持锁/,
+  )
+})
+
+test("#X5 fleetStripShouldPoll: idle fleet must not keep the 4s clock alive", () => {
+  assert.equal(
+    fleetStripShouldPoll({ worstStatus: "idle", lockCount: 0, openIntents: 0, llmActive: false }),
+    false,
+  )
+  assert.equal(
+    fleetStripShouldPoll({ worstStatus: "holding_tabs", lockCount: 0, openIntents: 0, llmActive: false }),
+    true,
+  )
+  assert.equal(
+    fleetStripShouldPoll({ worstStatus: "idle", lockCount: 1, openIntents: 0, llmActive: false }),
+    true,
+  )
+  assert.equal(
+    fleetStripShouldPoll({ worstStatus: "idle", lockCount: 0, openIntents: 0, llmActive: true }),
+    true,
   )
 })

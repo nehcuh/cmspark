@@ -222,6 +222,23 @@ export type FleetActivityKind = "none" | "active" | "paused_only"
 
 export const FLEET_SNAPSHOT_FRESH_MS = 10 * 60_000
 
+/**
+ * Whether FleetStrip's 4s `fleet.status` poll may run. Pull rebuilds
+ * `snapshot.at`, which is also the #514 freshness clock — polling while idle
+ * makes the 10-minute inspection window never expire.
+ */
+export function fleetStripShouldPoll(input: {
+  worstStatus?: string | null
+  lockCount: number
+  openIntents: number
+  llmActive: boolean
+}): boolean {
+  if (input.llmActive) return true
+  if (input.lockCount > 0 || input.openIntents > 0) return true
+  const worst = input.worstStatus || ""
+  return worst !== "" && worst !== "idle"
+}
+
 export function classifyFleetActivity(input: {
   workerCount: number
   lockCount: number
