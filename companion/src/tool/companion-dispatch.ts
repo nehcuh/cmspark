@@ -245,7 +245,14 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         }
       }
       // ADR-016 Stage 3: claim intent on host board after worker exists
-      let intentClaim: { ok: boolean; error?: string; intent_id?: string } | null = null
+      let intentClaim: {
+        ok: boolean
+        error?: string
+        error_code?: string
+        intent_id?: string
+        /** #514: BOARD_MISSING soft-skip — claim not attempted against a nonexistent board. */
+        skipped?: boolean
+      } | null = null
       if (intentId) {
         try {
           const { claimIntent } = await import("../board/intent-claim")
@@ -255,15 +262,28 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             workerThreadId: r.worker.id,
           })
           if (!cr.ok) {
-            intentClaim = { ok: false, error: cr.error, intent_id: intentId }
+            intentClaim = { ok: false, error: cr.error, error_code: cr.error_code, intent_id: intentId }
           } else {
             intentClaim = { ok: true, intent_id: intentId }
           }
         } catch (e: any) {
-          intentClaim = { ok: false, error: e?.message || String(e), intent_id: intentId }
+          intentClaim = { ok: false, error: e?.message || String(e), error_code: "CLAIM_THREW", intent_id: intentId }
         }
-        // P2: transactional — intent_id requested but claim failed → delete worker
-        if (intentClaim && !intentClaim.ok) {
+        // P2: transactional — intent_id requested but claim failed → delete worker.
+        // #514 carve-out: BOARD_MISSING means the host never had a mission board,
+        // so the referenced intent contract does not exist (the id is inert —
+        // typically model-invented). Destroying an APPROVED worker over a
+        // reference to a nonexistent board is the harsher failure; soft-skip the
+        // claim, keep the worker, and report the skip honestly.
+        if (intentClaim && !intentClaim.ok && intentClaim.error_code === "BOARD_MISSING") {
+          logger.warn("spawn.intent_claim_skipped", {
+            thread_id: String(parentId),
+            worker_id: r.worker.id,
+            intent_id: intentId,
+            reason: "mission_board not initialized",
+          })
+          intentClaim = { ...intentClaim, skipped: true }
+        } else if (intentClaim && !intentClaim.ok) {
           try {
             threadManager.delete(r.worker.id)
           } catch {

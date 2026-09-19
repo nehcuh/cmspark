@@ -1026,7 +1026,7 @@
           },
           "intent_id": {
             "type": "string",
-            "description": "Optional MissionBoard intent id (ADR-016 Stage 3). Worker is bound and intent is claimed on the host board after spawn."
+            "description": "Optional MissionBoard intent id (ADR-016 Stage 3). ONLY pass an id you actually received from a board/intent tool (e.g. propose_expert_team member intents); when the thread has no mission board, OMIT this field — a made-up id will not bind anything."
           }
         },
         "required": []
@@ -1140,7 +1140,8 @@
         "type": "object",
         "properties": {
           "intent_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional intent id received from the board tools; omit when no mission board is in use."
           },
           "worker_id": {
             "type": "string"
@@ -1162,7 +1163,8 @@
         "type": "object",
         "properties": {
           "intent_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional intent id received from the board tools; omit when no mission board is in use."
           }
         },
         "required": [

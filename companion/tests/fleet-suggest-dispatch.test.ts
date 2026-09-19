@@ -302,3 +302,32 @@ test("#514: broadcastFleetSnapshotIfWorkers pushes fleet.status only when worker
   assert.equal(frame.type, "fleet.status", "panel's existing handler consumes this frame")
   assert.ok(Array.isArray(frame.workers) && frame.workers.length === 1)
 })
+
+test("#514: spawn_worker with a dangling intent_id and NO mission board must NOT roll back", async () => {
+  const tm = new ThreadManager()
+  for (const t of tm.list() as any[]) if (t.agent_role === "worker") tm.delete(t.id)
+  const parent = tm.create("fs-spawn-noboard")
+  bindTm(tm)
+  const { securityPolicy } = await import("../src/security-policy")
+  const spawnParams: Record<string, any> = {
+    __thread_id: parent.id,
+    role_label: "researcher",
+    alias: "noboard-worker",
+    intent_id: "intent-made-up-1",
+  }
+  spawnParams.security_token = securityPolicy.issueTokenFor("spawn_worker", spawnParams).token
+  const r: any = await executeCompanionTool(
+    "spawn_worker",
+    spawnParams,
+    "tc-spawn-nb",
+    { handshakeSurface: "tray", broadcast: () => {}, kickWorkerChat: () => {} },
+  )
+  // The exact实机 case: model-invented intent_id, board never initialized.
+  assert.equal(r.success, true, "worker must survive a BOARD_MISSING intent claim")
+  assert.equal(r.data.intent_claim.ok, false)
+  assert.equal(r.data.intent_claim.error_code, "BOARD_MISSING")
+  assert.equal(r.data.intent_claim.skipped, true, "skip is explicit, not silent")
+  const worker = tm.get(r.data.worker_id)
+  assert.ok(worker, "worker thread exists")
+  assert.equal(worker?.agent_role, "worker")
+})
