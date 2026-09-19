@@ -403,12 +403,16 @@ export function consolidateRunToolTurns<T extends { role?: unknown }>(
       out.push(it)
       continue
     }
-    // A covered round's driver row with no text is pure mechanics — its
-    // reasoning already folded into the block; an empty bubble row would only
-    // add vertical noise to the consolidated trail (#514).
-    if (it.kind === "row" && it.reasoningFolded === true) {
-      const content = (it.msg as { content?: unknown }).content
-      if (typeof content !== "string" || content.trim().length === 0) continue
+    // A covered round's driver row is pure mechanics — empty tool-call rows
+    // (with or without folded reasoning; GPT-shaped and hydrated function-shape
+    // both occur) add only vertical noise to the consolidated trail. Rows with
+    // actual narration text stay (#514).
+    if (it.kind === "row") {
+      const msg = it.msg as { role?: unknown; content?: unknown; tool_calls?: unknown }
+      if (msg.role === "assistant" && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+        const content = typeof msg.content === "string" ? msg.content : ""
+        if (content.trim().length === 0) continue
+      }
     }
     narrations.push(it)
   }

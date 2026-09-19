@@ -390,3 +390,66 @@ test("donePagerChipLabel: pager only when multiple rounds", () => {
 test("countFailedTools counts error tools", () => {
   assert.equal(countFailedTools([{ status: "success" }, { status: "error", error: "x" }]), 1)
 })
+
+// --- #514 review fixes: absorption + edge boundaries + fresh gate ---
+
+test("consolidate absorbs EMPTY tool-call driver rows even without reasoning (GPT shape)", () => {
+  const items = groupToolTurnRows([
+    { id: "u1", role: "user", content: "go" },
+    { id: "a1", role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "click", arguments: "{}" } }] },
+    toolRow("c1", "click", "success"),
+    { id: "a2", role: "assistant", content: "总结一下" },
+  ])
+  const merged = consolidateRunToolTurns(items)
+  // a1 (empty driver) absorbed; a2 is real narration and STAYS
+  assert.deepEqual(merged.map((i) => i.kind), ["row", "tools", "row"])
+  if (merged[0].kind !== "row") return assert.ok(false)
+  assert.equal(merged[0].msg.id, "u1")
+  if (merged[2].kind !== "row") return assert.ok(false)
+  assert.equal(merged[2].msg.id, "a2", "text narration never absorbed")
+})
+
+test("consolidate edges: no trailing answer / consecutive user rows", () => {
+  // interrupted run: tools, no answer row — block at end
+  const a = consolidateRunToolTurns(
+    groupToolTurnRows([
+      { id: "u1", role: "user", content: "go" },
+      toolRow("c1", "click", "success"),
+    ]),
+  )
+  assert.deepEqual(a.map((i) => i.kind), ["row", "tools"])
+  // consecutive user rows: empty run between them passes through
+  const b = consolidateRunToolTurns(
+    groupToolTurnRows([
+      { id: "u1", role: "user", content: "a" },
+      { id: "u2", role: "user", content: "b" },
+      toolRow("c1", "click", "success"),
+    ]),
+  )
+  assert.deepEqual(b.map((i) => i.kind), ["row", "row", "tools"])
+})
+
+test("classifyFleetActivity: done fleet holds only while fresh (#514)", async () => {
+  const { classifyFleetActivity } = await import("../src/sidepanel/components/focus-band-priority")
+  // idle workers + fresh snapshot → active (post-run inspection window)
+  assert.equal(
+    classifyFleetActivity({ workerCount: 4, lockCount: 0, openIntents: 0, worstStatus: "idle", fresh: true }),
+    "active",
+  )
+  // stale all-done fleet → band freed (paused_only tier, not active)
+  assert.equal(
+    classifyFleetActivity({ workerCount: 4, lockCount: 0, openIntents: 0, worstStatus: "idle", fresh: false }),
+    "paused_only",
+  )
+  // real activity ignores freshness — live work always wins
+  assert.equal(
+    classifyFleetActivity({ workerCount: 1, lockCount: 1, openIntents: 0, fresh: false }),
+    "active",
+  )
+  assert.equal(
+    classifyFleetActivity({ workerCount: 1, lockCount: 0, openIntents: 2, fresh: false }),
+    "active",
+  )
+  // legacy callers without fresh keep the fail-open default
+  assert.equal(classifyFleetActivity({ workerCount: 2, lockCount: 0, openIntents: 0 }), "active")
+})

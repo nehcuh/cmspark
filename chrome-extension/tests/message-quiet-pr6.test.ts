@@ -326,3 +326,22 @@ test("#514 ChatView consolidates per-round blocks into one run block with a page
   // live semantics unchanged: current step expanded, completed folded ACROSS rounds
   assert.match(chat, /liveChipLabel\(completedTools\.length, completedFailed\)/)
 })
+
+test("#514 review fixes: page follows latest until user pages; confirm set from live round only", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // page follow: userPaged ref + sync effect (streaming growth must not strand ‹ 1/N ›)
+  assert.match(chat, /const userPaged = useRef\(false\)/)
+  assert.match(chat, /if \(!userPaged\.current\) setPage\(splitRounds\.length - 1\)/)
+  assert.match(chat, /userPaged\.current = true/, "paging is an explicit user act")
+  // confirm correlation derived from lastTools, never toolsAll (#507 narrowing)
+  assert.match(chat, /pendingConfirmIdsFromTools\(lastTools, pendingConfirmToolNames\)/)
+  // wrap-safe chip line + visibly-inert pager edges
+  assert.match(chat, /flexWrap: "wrap"/)
+  assert.match(chat, /toolHistoryPagerBtnDisabled/)
+})
+
+test("#514 review fixes: FocusBand freshness gate feeds classify", () => {
+  const fb = read("src/sidepanel/components/FocusBand.tsx")
+  assert.match(fb, /FLEET_SNAPSHOT_FRESH_MS/)
+  assert.match(fb, /fresh: fleetFresh/, "classify receives the snapshot-age gate")
+})

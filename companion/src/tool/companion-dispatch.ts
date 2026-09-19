@@ -338,6 +338,12 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         kickWorkerChat: execOpts?.kickWorkerChat,
       })
       if (!r.ok) return { success: false, error: r.error, data: r.data }
+      // #514: expert-team spawns bypass the spawn_worker case's snapshot push —
+      // full-autonomy expert teams must light the Glance strip the same way.
+      if (typeof execOpts?.broadcast === "function") {
+        const { broadcastFleetSnapshotIfWorkers } = await import("../orchestrator/fleet")
+        broadcastFleetSnapshotIfWorkers(threadManager, execOpts.broadcast)
+      }
       return { success: true, data: r.data }
     }
     case "acp_list_agents": {

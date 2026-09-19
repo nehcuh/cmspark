@@ -780,6 +780,10 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                   sendToExtension: broadcastToClients,
                   executeTool: executor,
                 })
+                // #514: expert-team worker runs bypass the router's run-end
+                // fleet push — refresh the Glance here (all panels).
+                const { broadcastFleetSnapshotIfWorkers } = await import("./orchestrator/fleet")
+                broadcastFleetSnapshotIfWorkers(threadManager, broadcastToClients)
               } catch (e: any) {
                 logger.warn("expert_team.kick_unhandled", {
                   thread_id: threadId,

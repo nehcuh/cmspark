@@ -1122,8 +1122,15 @@ const ToolHistoryBlock = memo(function ToolHistoryBlock({
   const splitRounds: ToolHistoryRound<any>[] =
     rounds ?? [{ msgs }]
   const [auditOpen, setAuditOpen] = useState(false)
-  // #514: done-mode pager over rounds, default the latest round.
+  // #514 done-mode pager over rounds. Follow the LATEST round until the user
+  // pages — the block does not remount while a run streams (stable key), so an
+  // initial page=0 would otherwise strand the chip at ‹ 1/N › when the run
+  // ends (grok 514 review).
   const [page, setPage] = useState(splitRounds.length - 1)
+  const userPaged = useRef(false)
+  useEffect(() => {
+    if (!userPaged.current) setPage(splitRounds.length - 1)
+  }, [splitRounds.length])
   useEffect(() => {
     if (page > splitRounds.length - 1) setPage(splitRounds.length - 1)
   }, [splitRounds.length, page])
@@ -1131,16 +1138,17 @@ const ToolHistoryBlock = memo(function ToolHistoryBlock({
   const toolsOf = (r: ToolHistoryRound<any>) =>
     r.msgs.flatMap((m) => (Array.isArray(m?.tool_calls) ? m.tool_calls : []))
   const toolsAll = useMemo(() => splitRounds.flatMap(toolsOf), [splitRounds])
-  // SecurityConfirmationRequest carries no tool_call id on the wire — correlate
-  // by tool_name so an L2-confirming step always stays the expanded current
-  // card, never folded into the chip. Applied to the LIVE round only (#507:
-  // same-name tools in earlier rounds of this run must not flip).
-  const pendingConfirmIds = useMemo(
-    () => pendingConfirmIdsFromTools(toolsAll, pendingConfirmToolNames),
-    [toolsAll, pendingConfirmToolNames],
-  )
   const lastRound = splitRounds[splitRounds.length - 1]
   const lastTools = useMemo(() => (lastRound ? toolsOf(lastRound) : []), [lastRound])
+  // SecurityConfirmationRequest carries no tool_call id on the wire — correlate
+  // by tool_name so an L2-confirming step always stays the expanded current
+  // card. Derived from the LIVE round's tools only (#507 + grok 514 review:
+  // same-name tools in earlier rounds of this run must never flip, and this
+  // set must not be reusable against earlier rounds later).
+  const pendingConfirmIds = useMemo(
+    () => pendingConfirmIdsFromTools(lastTools, pendingConfirmToolNames),
+    [lastTools, pendingConfirmToolNames],
+  )
   const lastView = viewToolHistory(lastTools, { threadBusy, pendingConfirmIds })
   const live = threadBusy === true && lastView.kind === "live"
   const totalFailed = useMemo(() => countFailedTools(toolsAll), [toolsAll])
@@ -1206,37 +1214,52 @@ const ToolHistoryBlock = memo(function ToolHistoryBlock({
     <div className="cmspark-msg-row" style={styles.agentMsg}>
       <div style={styles.messageCol}>
         <div style={styles.agentBubble}>
-          <button
-            type="button"
-            style={chipTone}
-            aria-expanded={auditOpen}
-            aria-label={donePagerChipLabel(page, totalPages, toolsAll.length, totalFailed)}
-            onClick={() => setAuditOpen((v) => !v)}
-          >
-            {donePagerChipLabel(page, totalPages, toolsAll.length, totalFailed)}
-          </button>
-          {totalPages > 1 ? (
-            <span style={{ display: "inline-flex", gap: 4, marginLeft: 6 }}>
-              <button
-                type="button"
-                aria-label="上一段"
-                style={styles.toolHistoryPagerBtn}
-                disabled={page <= 0}
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-              >
-                ‹
-              </button>
-              <button
-                type="button"
-                aria-label="下一段"
-                style={styles.toolHistoryPagerBtn}
-                disabled={page >= totalPages - 1}
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              >
-                ›
-              </button>
-            </span>
-          ) : null}
+          {/* #514: wrap — the pager chip line must never blow out 320px */}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4 }}>
+            <button
+              type="button"
+              style={chipTone}
+              aria-expanded={auditOpen}
+              aria-label={donePagerChipLabel(page, totalPages, toolsAll.length, totalFailed)}
+              onClick={() => setAuditOpen((v) => !v)}
+            >
+              {donePagerChipLabel(page, totalPages, toolsAll.length, totalFailed)}
+            </button>
+            {totalPages > 1 ? (
+              <>
+                <button
+                  type="button"
+                  aria-label="上一段"
+                  style={{
+                    ...styles.toolHistoryPagerBtn,
+                    ...(page <= 0 ? styles.toolHistoryPagerBtnDisabled : {}),
+                  }}
+                  disabled={page <= 0}
+                  onClick={() => {
+                    userPaged.current = true
+                    setPage((p) => Math.max(0, p - 1))
+                  }}
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  aria-label="下一段"
+                  style={{
+                    ...styles.toolHistoryPagerBtn,
+                    ...(page >= totalPages - 1 ? styles.toolHistoryPagerBtnDisabled : {}),
+                  }}
+                  disabled={page >= totalPages - 1}
+                  onClick={() => {
+                    userPaged.current = true
+                    setPage((p) => Math.min(totalPages - 1, p + 1))
+                  }}
+                >
+                  ›
+                </button>
+              </>
+            ) : null}
+          </div>
           {auditOpen ? renderRound(splitRounds[page], page) : null}
         </div>
       </div>
@@ -2373,6 +2396,11 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
     padding: "2px 8px",
     cursor: "pointer",
+  },
+  /** #514: edge-of-list pager state — visibly inert, not a fake affordance. */
+  toolHistoryPagerBtnDisabled: {
+    opacity: 0.45,
+    cursor: "default",
   },
   statusBubble: {
     background: tokens.accentSoft,

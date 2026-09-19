@@ -211,8 +211,16 @@ export function sceneChipsSecondary(
  * - none: empty fleet
  *
  * Zombie paused workers must NOT show as「舰队运行中」or steal FocusBand.
+ *
+ * #514: `fresh` (default true) — the snapshot's age gate. A DONE fleet (all
+ * workers idle, no locks/intents) holds the band only while the snapshot is
+ * fresh (≤10 min), so the user can inspect finished workers right after a run
+ * without the strip squatting on FocusBand forever. Real activity (locks /
+ * intents / holding_tabs) ignores freshness — live work always wins.
  */
 export type FleetActivityKind = "none" | "active" | "paused_only"
+
+export const FLEET_SNAPSHOT_FRESH_MS = 10 * 60_000
 
 export function classifyFleetActivity(input: {
   workerCount: number
@@ -220,12 +228,16 @@ export function classifyFleetActivity(input: {
   openIntents: number
   /** From fleet.worst_status when available */
   worstStatus?: string | null
+  /** #514: snapshot age gate for the idle-workers fail-open branch. */
+  fresh?: boolean
 }): FleetActivityKind {
   if (input.lockCount > 0 || input.openIntents > 0) return "active"
-  if (input.worstStatus === "holding_tabs" || input.worstStatus === "idle") return "active"
+  if (input.worstStatus === "holding_tabs") return "active"
   if (input.workerCount > 0 && input.worstStatus === "paused") return "paused_only"
-  // Missing worstStatus but workers present → treat as active (fail open for visibility)
-  if (input.workerCount > 0) return "active"
+  // Idle workers (or missing worstStatus) with workers present → active ONLY
+  // while the snapshot is fresh; a stale all-done fleet frees the band (#514).
+  if (input.workerCount > 0 && input.fresh !== false) return "active"
+  if (input.workerCount > 0) return "paused_only"
   return "none"
 }
 
