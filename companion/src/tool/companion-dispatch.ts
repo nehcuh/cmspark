@@ -173,6 +173,19 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     case "spawn_worker": {
       const parentId = params.__thread_id || params._thread_id || params.parent_thread_id
       if (!parentId) return { success: false, error: "spawn_worker requires parent thread (__thread_id)" }
+      // #514: the task brief is REQUIRED — a spawned worker with no goal is a
+      // dead shell (threads existed with 0 messages in the wild: nothing ever
+      // told them what to do, wait_workers idled forever).
+      const goal = String(params.goal || params.task || "").trim()
+      if (!goal) {
+        return {
+          success: false,
+          error:
+            "spawn_worker requires goal — the worker's task brief: what it must do and what it should return. The worker starts on this goal immediately after spawn.",
+          data: { error_code: "INVALID_ARGS" },
+        }
+      }
+      const rolePrompt = typeof params.role_prompt === "string" ? params.role_prompt.trim() : ""
       // Real HITL: L2 forceConfirm issues security_token. LLM user_confirmed is NOT trusted.
       if (!params.security_token) {
         return {
@@ -299,6 +312,41 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         }
       }
       const workerAfter = threadManager.get(r.worker.id)
+      // #514: deliver the task — persist a role-aware brief (the worker's first
+      // user message + a discipline note on its system prompt) and kick its run,
+      // mirroring the expert-team path. Without this the worker NEVER starts.
+      const roleLabel = typeof params.role_label === "string" ? params.role_label.trim() : ""
+      const brief = [
+        `你是并行协作中的 worker${roleLabel ? `「${roleLabel}」` : ""}。编排由主线程负责，不要与其他 worker 互聊。`,
+        rolePrompt ? `角色要求：${rolePrompt}` : "",
+        `你的任务（只做这一件，完成后给出结果与关键来源）：`,
+        goal,
+        "完成后即可结束本轮，无需等待其他 worker。",
+      ]
+        .filter(Boolean)
+        .join("\n")
+      const { persistWorkerBrief } = await import("../orchestrator/expert-team")
+      const persisted = persistWorkerBrief(threadManager, r.worker.id, brief)
+      if (!persisted.ok) {
+        // Brief failed to land: a worker without instructions must not be
+        // kicked into a hollow run — roll back exactly like a failed intent claim.
+        try {
+          threadManager.delete(r.worker.id)
+        } catch {
+          /* best-effort */
+        }
+        restoreParentAfterFailedSpawn(threadManager, String(parentId), r.parent_before_promotion)
+        return {
+          success: false,
+          error: `spawn_worker rolled back: worker brief did not persist — ${persisted.error}`,
+          data: { error_code: "SPAWN_BRIEF_FAILED" },
+        }
+      }
+      let kicked = false
+      if (typeof execOpts?.kickWorkerChat === "function") {
+        await execOpts.kickWorkerChat({ threadId: r.worker.id, message: brief })
+        kicked = true
+      }
       // #514: push the fleet snapshot so the Glance strip appears immediately —
       // full-autonomy cruise auto-approves spawn (no confirm), and confirms were
       // the panel's ONLY pull trigger for fleet.status.
@@ -317,6 +365,9 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           pack_apply: packApply,
           assigned_intent_id: intentId,
           intent_claim: intentClaim,
+          brief_persisted: true,
+          kicked,
+          ...(kicked ? {} : { note: "brief persisted; no kick channel in this context — the worker starts on its next run trigger" }),
         },
       }
     }

@@ -994,10 +994,18 @@
     "type": "function",
     "function": {
       "name": "spawn_worker",
-      "description": "Spawn a child worker thread to run one independent subtask in parallel (ADR-015). Worth it when: >=2 independent sources/subtasks, and doing it solo serially would take >=3 page round-trips. NOT worth it for: strongly sequential steps, a single tab/source, quick tasks, or subtasks needing tools workers cannot have (shell/netsec/host). Call fleet_suggest_propose first when the criteria hold — spawn only after the user explicitly approves parallel dispatch. Triggers interactive L2 Confirm Center approval every time — do NOT invent user_confirmed. Workers get a downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Optional pack_id applies Mission Pack role template after spawn. Always pass explicit tabId in worker browser tools.",
+      "description": "Spawn a child worker thread to run one independent subtask in parallel (ADR-015). Worth it when: >=2 independent sources/subtasks, and doing it solo serially would take >=3 page round-trips. NOT worth it for: strongly sequential steps, a single tab/source, quick tasks, or subtasks needing tools workers cannot have (shell/netsec/host). Call fleet_suggest_propose first when the criteria hold — spawn only after the user explicitly approves parallel dispatch. Each worker needs an explicit goal; it starts running on it immediately. Triggers interactive L2 Confirm Center approval every time — do NOT invent user_confirmed. Workers get a downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Optional pack_id applies Mission Pack role template after spawn. Always pass explicit tabId in worker browser tools.",
       "parameters": {
         "type": "object",
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "REQUIRED. The worker's task brief: what it must do and what it should return. The worker starts on this goal immediately after spawn — be specific (sites/queries/criteria), this is the only instruction it gets beyond its role."
+          },
+          "role_prompt": {
+            "type": "string",
+            "description": "Optional extra role definition appended to the brief (expertise, constraints, output format). Keep it short."
+          },
           "role_label": {
             "type": "string",
             "description": "Short role label e.g. appsec-reviewer"
@@ -1029,7 +1037,9 @@
             "description": "Optional MissionBoard intent id (ADR-016 Stage 3). ONLY pass an id you actually received from a board/intent tool (e.g. propose_expert_team member intents); when the thread has no mission board, OMIT this field — a made-up id will not bind anything."
           }
         },
-        "required": []
+        "required": [
+          "goal"
+        ]
       }
     }
   },

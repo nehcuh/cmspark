@@ -314,6 +314,7 @@ test("#514: spawn_worker with a dangling intent_id and NO mission board must NOT
     role_label: "researcher",
     alias: "noboard-worker",
     intent_id: "intent-made-up-1",
+    goal: "做一个独立的检索子任务",
   }
   spawnParams.security_token = securityPolicy.issueTokenFor("spawn_worker", spawnParams).token
   const r: any = await executeCompanionTool(
@@ -330,4 +331,65 @@ test("#514: spawn_worker with a dangling intent_id and NO mission board must NOT
   const worker = tm.get(r.data.worker_id)
   assert.ok(worker, "worker thread exists")
   assert.equal(worker?.agent_role, "worker")
+})
+
+test("#514: plain spawn_worker REQUIRES a goal (no more dead shells)", async () => {
+  const tm = new ThreadManager()
+  bindTm(tm)
+  const parent = tm.create("fs-spawn-nogoal")
+  const r: any = await executeCompanionTool(
+    "spawn_worker",
+    { __thread_id: parent.id, role_label: "r", security_token: "x" },
+    "tc-ng",
+    { handshakeSurface: "tray", broadcast: () => {}, kickWorkerChat: () => {} },
+  )
+  assert.equal(r.success, false)
+  assert.equal(r.data.error_code, "INVALID_ARGS")
+  assert.match(r.error, /requires goal/)
+})
+
+test("#514: plain spawn_worker persists a role-aware brief and kicks the worker", async () => {
+  const tm = new ThreadManager()
+  for (const t of tm.list() as any[]) if (t.agent_role === "worker") tm.delete(t.id)
+  bindTm(tm)
+  const parent = tm.create("fs-spawn-goal")
+  const kicks: Array<{ threadId: string; message: string }> = []
+  const { securityPolicy } = await import("../src/security-policy")
+  const spawnParams: Record<string, any> = {
+    __thread_id: parent.id,
+    role_label: "论文检索员",
+    alias: "w-goal",
+    goal: "检索 latent communication 安全的 3 篇论文并给出要点",
+    role_prompt: "只信原文与官方仓库，输出中文要点",
+  }
+  spawnParams.security_token = securityPolicy.issueTokenFor("spawn_worker", spawnParams).token
+  const r: any = await executeCompanionTool("spawn_worker", spawnParams, "tc-goal", {
+    handshakeSurface: "tray",
+    broadcast: () => {},
+    kickWorkerChat: (opts: { threadId: string; message: string }) => { kicks.push(opts) },
+  })
+  assert.equal(r.success, true)
+  assert.equal(r.data.brief_persisted, true)
+  assert.equal(r.data.kicked, true)
+  // the brief IS the worker's first user message — role-aware, task-specific
+  const wmsgs = tm.getMessages(r.data.worker_id) as any[]
+  const briefRow = wmsgs.find((m) => m.role === "user")
+  assert.ok(briefRow, "brief row persisted")
+  const brief = String(briefRow.content)
+  assert.match(brief, /worker「论文检索员」/, "role definition in the brief")
+  assert.ok(brief.includes("检索 latent communication 安全的 3 篇论文"), "goal verbatim")
+  assert.match(brief, /不要与其他 worker 互聊/, "discipline note")
+  assert.match(brief, /只信原文与官方仓库/, "role_prompt carried")
+  // role note also lands on the worker's system prompt (expert-team parity)
+  const worker = tm.get(r.data.worker_id) as any
+  assert.match(String(worker.config_override?.system_prompt_append || ""), /任务切片见第一条用户消息/)
+  // kick fired with the same brief
+  assert.equal(kicks.length, 1)
+  assert.equal(kicks[0].threadId, r.data.worker_id)
+  assert.ok(kicks[0].message.includes("检索 latent communication"))
+})
+
+test("#514 catalog lock: spawn_worker goal is required", () => {
+  const src = readSrc("bridge", "tool-definitions-catalog.json")
+  assert.match(src, /"name": "spawn_worker"[\s\S]{0,4000}?"required": \[\s*"goal"\s*\]/)
 })
