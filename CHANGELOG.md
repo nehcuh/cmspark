@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 操作面（#502）：对话里已完成的浏览器/工具步骤默认收成可展开审计芯，reload 后不再摊无名卡。归档默认只留工具名、成败与指纹（设置可打开完整操作史；cookie/本机命令仍脱敏；tool 行不删）。单次 100 步触顶改为换段续跑，不再显示「已暂停」墓碑；同工具空转与连续失败仍熔断。舰队 Glance 显示最近工具，Inspect 不抢主对话。编程接力可把 Agent 挂进已有内嵌终端（macOS、默认关），不嵌 Alacritty、不自动开 PTY。
 - Windows 编程接力「选择工作区」（companion）：原生文件夹对话框加 STA / UTF-8 stdout / TopMost owner，避免藏在 Chrome 后或中文路径 mojibake；绑定比较在 win32 大小写不敏感；取消选择不再显示为失败。
 - 召唤器附件 Forbidden（Chrome `--app` / WebView 常带 `Origin: null` 或 CORS 预检无 cookie）：已登录环回请求允许空 Origin，预检不再要会话 cookie，页面用 overlay header 上传并把 403 正文显示出来，不再只显示 `Forbidden`。
 - 对话执行状态（#496）：网站上下文探测继续读取当前 Chrome 页面，但不再生成缺少完成回执的聊天工具卡片，修复首轮结束及切换对话后残留“执行中：list_tabs”；正常 Agent 工具调用继续展示执行状态。
