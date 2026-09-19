@@ -343,6 +343,7 @@ interface ToolExecutionResult {
  * hydrated AFTER rebuild via hydrateUserImageParts (no I/O here).
  */
 export type HistoryMessageLike = {
+  id?: string
   role: string
   content?: string | null
   tool_calls?: any[]
@@ -359,9 +360,19 @@ export type HistoryMessageLike = {
  *   so legacy corrupt history never produces a schema-invalid next create (400).
  * Pure function — unit-testable without chatCreate / network.
  * Providers convert to wire format (Anthropic Messages, etc.) at the boundary (L1/L2).
+ *
+ * #504 `live`: same-process full-fidelity mirror from ThreadManager. When a disk
+ * row's id (assistant) or tool_call id (tool) has a remembered live version, its
+ * body replaces the archived stub for THIS in-memory rebuild — the disk archive
+ * stays stubbed (#502 B), but a continuation segment in the same process still
+ * sees what segment 1 actually read/filled. Disk-only callers pass nothing.
  */
 export function rebuildMessagesFromHistory(
   history: HistoryMessageLike[],
+  live?: {
+    toolResults?: Map<string, { result: unknown; tool_name?: string }>
+    assistantToolCalls?: Map<string, Array<{ id: string; name: string; arguments: string }>>
+  },
 ): CanonicalChatMessage[] {
   const messages: CanonicalChatMessage[] = []
   const openToolCallIds = new Set<string>()
@@ -396,6 +407,9 @@ export function rebuildMessagesFromHistory(
         for (const tc of tcList) {
           if (tc.id) openToolCallIds.add(tc.id)
         }
+        // #504: prefer the remembered full arguments over the archived stub.
+        const liveCalls = live?.assistantToolCalls?.get(String(msg.id ?? ""))
+        const liveArgsById = new Map(liveCalls?.map((c) => [c.id, c]) ?? [])
         messages.push({
           role: "assistant",
           content: msg.content || null,
@@ -404,7 +418,9 @@ export function rebuildMessagesFromHistory(
             type: "function" as const,
             function: {
               name: tc.function?.name || tc.name,
-              arguments: tc.function?.arguments || tc.arguments || "{}",
+              arguments:
+                liveArgsById.get(tc.id)?.arguments ??
+                (tc.function?.arguments || tc.arguments || "{}"),
             },
           })),
         })
@@ -416,15 +432,19 @@ export function rebuildMessagesFromHistory(
       for (const tc of msg.tool_calls) {
         if (!tc.id || !openToolCallIds.has(tc.id)) continue
         openToolCallIds.delete(tc.id)
+        // #504: prefer the remembered full result over the archived stub.
+        const liveTool = live?.toolResults?.get(tc.id)
         messages.push({
           role: "tool",
           tool_call_id: tc.id,
           content: wrapUntrusted(
-            truncateToolResultContent(JSON.stringify(tc.result || {})),
+            truncateToolResultContent(JSON.stringify(liveTool?.result ?? tc.result ?? {})),
             tc.id,
-            tc.tool_name,
+            liveTool?.tool_name ?? tc.tool_name,
           ),
-          ...(typeof tc.tool_name === "string" && tc.tool_name ? { name: tc.tool_name } : {}),
+          ...(typeof (liveTool?.tool_name ?? tc.tool_name) === "string" && (liveTool?.tool_name ?? tc.tool_name)
+            ? { name: liveTool?.tool_name ?? tc.tool_name }
+            : {}),
         })
       }
     }
@@ -795,7 +815,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     messages.push({ role: "system", content: systemPrompt })
   }
 
-  messages.push(...rebuildMessagesFromHistory(history))
+  messages.push(...rebuildMessagesFromHistory(history, threadManager.getLiveMirror(threadId)))
 
   // Hydrate image parts AFTER rebuild (string-only pairing). Sidecar I/O lives
   // here — never inside rebuildMessagesFromHistory. skipUserMessage uses the
@@ -1191,7 +1211,30 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       savedMsg.retrieved_sources = draft.retrieved_sources
       if (draft.knowledge_routing) savedMsg.knowledge_routing = draft.knowledge_routing
     }
-    return threadManager.addMessage(threadId, savedMsg)
+    const saved = threadManager.addMessage(threadId, savedMsg)
+    // #504: remember the pre-redaction arguments so the next same-process run's
+    // rebuild can substitute them for the archived stub.
+    if (assistantMsg.length > 0 && saved?.id) {
+      threadManager.rememberLiveAssistantToolCalls(
+        threadId,
+        saved.id,
+        assistantMsg.map((tc) => ({
+          id: String(tc.id),
+          name: String(tc.function?.name || ""),
+          arguments: String(tc.function?.arguments ?? "{}"),
+        })),
+      )
+    }
+    return saved
+  }
+
+  // #504: remember the pre-archive tool result so the next same-process run's
+  // rebuild can substitute it for the archived stub (see rebuildMessagesFromHistory).
+  const rememberToolResult = (tc: any, result: unknown, toolName: string) => {
+    threadManager.rememberLiveToolResult(threadId, String(tc?.id ?? ""), {
+      result,
+      tool_name: toolName,
+    })
   }
 
   // Tool calling loop
@@ -1558,6 +1601,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             success: false,
             error: `Invalid JSON in tool arguments: ${parseErr.message}. Received: ${tc.function.arguments}`,
           }
+          rememberToolResult(tc, parseResult, toolName)
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, parseResult, {}))
           sendToExtension({
             type: "tool.result",
@@ -1594,6 +1638,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             success: false,
             error: parsed.error,
           }
+          rememberToolResult(tc, validationResult, toolName)
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, validationResult, {}))
           sendToExtension({
             type: "tool.result",
@@ -1859,6 +1904,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             shouldStop = true
             break
           }
+          rememberToolResult(tc, toolResult, toolName)
           const realResultRow = createToolResultMessage(threadId, tc, toolResult, params)
           // Supersede race: the successor run's entry heal may have persisted an
           // INTERRUPTED filler for this id while we were blocked in executeTool.
