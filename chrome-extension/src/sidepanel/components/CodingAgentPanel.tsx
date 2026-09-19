@@ -12,6 +12,13 @@ import {
 import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import {
+  isDarwin,
+  isModeCInvolved,
+  isModeCMonitorStop,
+  modeCBannerText,
+  shouldShowEmbeddedTerminalEntry,
+} from "../coding-handoff/embed-entry"
+import {
   buildCodingTaskPackage,
   copyTextToClipboard,
   summarizeDialogMessages,
@@ -161,6 +168,7 @@ export function CodingAgentPanel({
   const [starting, setStarting] = useState(false)
   /** B-lite S1: one-line git status under 工作区 (branch · dirty N / 非 git / —) */
   const [gitStatusLine, setGitStatusLine] = useState<string | null>(null)
+  const [embedOpenError, setEmbedOpenError] = useState("")
 
   const wasOpenRef = useRef(false)
   const acpEnabledRef = useRef(storeAcpEnabled || acpEnabled)
@@ -748,13 +756,41 @@ export function CodingAgentPanel({
    * Do NOT use live settings toggle or failure timeline regex (dual-review B1/B2).
    */
   // Exclude failed/skipped: no host agent to leave running after Stop.
-  const modeCLikely =
-    session?.localTerminal === "opened" ||
-    session?.localTerminal === "opened_l0" ||
-    session?.localTerminal === "pending" ||
-    (session?.openLocalTerminal === true &&
-      session?.localTerminal !== "failed" &&
-      session?.localTerminal !== "skipped")
+  // Ladders live in coding-handoff/embed-entry so the panel banner and the chip hint cannot drift
+  // (and so `embed_intent` — intent recorded, nothing spawned — is unit-tested).
+  const modeCLikely = isModeCInvolved(session?.localTerminal, session?.openLocalTerminal)
+  const modeCMonitorStop = isModeCMonitorStop(session?.localTerminal, session?.openLocalTerminal)
+
+  /**
+   * #502 C entry gate. `embedded_terminal` is the NESTED config key (SettingsSlideout precedent);
+   * there is no flattened `embedded_terminal_enabled`. Product requirement: darwin AND enabled —
+   * `isDarwin()` reads `navigator.userAgentData.platform` (fail-closed to false), so we never
+   * promise an embed the companion refuses with `unsupported` (UI-hiding gate, not a boundary).
+   */
+  const embeddedTerminalConfig = state.config as { embedded_terminal?: { enabled?: boolean } }
+  const embedThreadId = session?.threadId || ""
+  const showEmbedEntry =
+    shouldShowEmbeddedTerminalEntry(embeddedTerminalConfig) &&
+    isDarwin() &&
+    session?.localTerminal === "embed_intent" &&
+    !!embedThreadId
+
+  /**
+   * R1/R3/R7(a): explicit-click opener. Click-only by construction — this identifier is referenced
+   * from exactly one onClick and from nothing else, and no effect may send a terminal.* frame
+   * (locked by tests/coding-panel-embed-entry.test.ts). The thread id is the key the companion
+   * recorded the embed intent under; sending it without one would land the user on a login shell.
+   */
+  const openEmbeddedTerminalTab = useCallback(() => {
+    setEmbedOpenError("")
+    chrome.runtime.sendMessage(
+      { type: "terminal.open_tab", thread_id: embedThreadId },
+      (response: { ok?: boolean; error?: string } | undefined) => {
+        const err = chrome.runtime.lastError?.message || (response?.ok ? "" : response?.error || "")
+        if (err) setEmbedOpenError(err)
+      },
+    )
+  }, [embedThreadId])
 
   return (
     <div
@@ -1001,14 +1037,23 @@ export function CodingAgentPanel({
           <div style={styles.session}>
             {modeCLikely ? (
               <div style={styles.modeCBanner} role="status">
-                {session?.localTerminal === "failed"
-                  ? "模式 C：本机终端未打开；侧栏监视仍在。停止仅结束侧栏桥。"
-                  : session?.localTerminal === "opened_l0"
-                    ? "模式 C：终端已开（L0 仅横幅，需手动粘贴命令）。" +
-                      codingHandoffCopy.modeCDualProcessBanner
-                    : session?.localTerminal === "pending"
-                      ? "模式 C：正在打开本机终端…"
-                      : codingHandoffCopy.modeCDualProcessBanner}
+                {modeCBannerText(session?.localTerminal, { hasEntryButton: showEmbedEntry })}
+              </div>
+            ) : null}
+            {/* #502 C: the whole feature is unclaimable without this click. */}
+            {showEmbedEntry ? (
+              <div style={styles.embedEntry} data-embed-terminal-entry>
+                <button
+                  type="button"
+                  style={styles.secondary}
+                  onClick={openEmbeddedTerminalTab}
+                >
+                  {codingHandoffCopy.panelOpenEmbeddedTerminal}
+                </button>
+                {embedOpenError ? (
+                  <p role="alert" style={styles.footnote}>{embedOpenError}</p>
+                ) : null}
+                <p style={styles.footnote}>{codingHandoffCopy.panelEmbeddedTerminalHint}</p>
               </div>
             ) : null}
             <div style={styles.sessionHead}>
@@ -1027,12 +1072,12 @@ export function CodingAgentPanel({
                     style={styles.dangerBtn}
                     onClick={onStop}
                     title={
-                      modeCLikely
+                      modeCMonitorStop
                         ? codingHandoffCopy.ctaStopMonitorTitle
                         : codingHandoffCopy.ctaStopSession
                     }
                   >
-                    {modeCLikely
+                    {modeCMonitorStop
                       ? codingHandoffCopy.ctaStopMonitorSession
                       : codingHandoffCopy.ctaStopSession}
                   </button>
@@ -1336,6 +1381,18 @@ const styles: Record<string, CSSProperties> = {
     position: "sticky" as const,
     top: 0,
     zIndex: 1,
+  },
+  /** #502 C entry row: one button + the honest hint, never inside the sticky banner. */
+  embedEntry: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 4,
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: `1px solid ${tokens.border || "#e2e8f0"}`,
+    background: tokens.bgElevated || "#fff",
+    flexShrink: 0,
+    alignItems: "flex-start" as const,
   },
   bannerHint: { fontSize: 11, marginTop: 4, opacity: 0.9 },
   field: { display: "flex", flexDirection: "column", gap: 4 },

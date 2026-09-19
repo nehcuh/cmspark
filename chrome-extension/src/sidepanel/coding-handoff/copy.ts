@@ -30,6 +30,29 @@ export const codingHandoffCopy = {
   /** Sticky banner when Mode C (local terminal) is active or was opened */
   modeCDualProcessBanner:
     "侧栏停止仅结束监视桥；本机 Terminal 内 Agent 需在终端自行退出。",
+  /**
+   * #502 C: the in-plugin embed path RECORDS an intent and opens nothing, so the
+   * dual-process copy above would describe an outer Terminal.app agent that does not exist.
+   */
+  modeCEmbedIntentBanner:
+    "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。点下方「在本插件打开终端」。打开后请回到侧栏确认才会启动。",
+  /**
+   * #502 C FocusBand/chip variant: the chip renders NO button next to this line, so the
+   * deictic「点下方」would point at a control that is not there. Points at the panel instead.
+   */
+  modeCEmbedIntentBannerNoButton:
+    "模式 C：已记录内嵌终端启动意图（本插件终端尚无进程）。启动入口在「编程助手」面板的「在本插件打开终端」，打开后请回到侧栏确认才会启动。",
+
+  /**
+   * Mode C host-terminal outcomes. Both render sites gate on `isModeCInvolved`, which excludes
+   * `failed`/`skipped` — the `failed` line below is a defensive rung of the ladder, not rendered
+   * today (see embed-entry.modeCBannerText).
+   */
+  modeCTerminalPendingBanner: "模式 C：正在打开本机终端…",
+  modeCTerminalOpenedL0Banner:
+    "模式 C：终端已开（L0 仅横幅，需手动粘贴命令）。",
+  modeCTerminalFailedBanner:
+    "模式 C：本机终端未打开；侧栏监视仍在。停止仅结束侧栏桥。",
 
   // Modes (never “只读” as OS sandbox claim)
   modeReview: "审查",
@@ -80,6 +103,15 @@ export const codingHandoffCopy = {
     "默认「系统自动」：Windows 用「开始」打开控制台（有安装则再试 Windows Terminal）；macOS 用 Terminal.app；Linux 用 $TERMINAL 或常见模拟器。可改 Windows Terminal / cmd、iTerm / Warp / Alacritty 等；Warp 可能需手动粘贴任务命令。",
   /** Panel mirror of Mode C setting (same config key). */
   panelOpenLocalTerminal: "启动时打开本机终端（模式 C）",
+
+  /**
+   * #502 C Side Panel entry: opens the existing full-page in-plugin terminal tab, bound to this
+   * thread so the companion can claim the recorded embed intent. Honest: it opens the TAB;
+   * L2 confirmation stays in the Side Panel FocusBand / coding panel, not on the tab.
+   */
+  panelOpenEmbeddedTerminal: "在本插件打开终端",
+  panelEmbeddedTerminalHint:
+    "打开的是本插件的终端页；请回到侧栏确认后才启动，Agent 自身可能还需先登录。",
 
   /** CLI bridge is one-shot; multi-turn composer disabled with this reason. */
   cliComposerDisabled:

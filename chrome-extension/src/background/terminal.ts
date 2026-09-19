@@ -15,12 +15,37 @@ export function embeddedTerminalUrl(): string {
   return chrome.runtime.getURL(EMBEDDED_TERMINAL_PATH)
 }
 
+/**
+ * Tab-to-companion binding. #502 C: a binding is THREAD-bound first (`thread_id` is the key the
+ * companion records the embed intent under, and `terminal.open` claims it with the same key).
+ * `review_id` is an optional extra scope for the code-review flow, never a requirement.
+ *
+ * Not exported: the only external contract is `buildTerminalOpenBinding` /
+ * `openOrFocusEmbeddedTerminal` (no other module names this type).
+ */
+type TerminalTabBinding = { thread_id: string; review_id?: string }
+
+/**
+ * Derive the tab binding from a `terminal.open_tab` message. A thread-only message MUST keep its
+ * thread — requiring `review_id` here silently dropped `thread_id`, so a recorded embed intent
+ * could never be claimed and the user landed on a plain login shell. No thread id → unbound tab
+ * (the Settings entry point, which asks for no binding).
+ */
+export function buildTerminalOpenBinding(
+  message: { thread_id?: unknown; review_id?: unknown } | null | undefined,
+): TerminalTabBinding | undefined {
+  const threadId = typeof message?.thread_id === "string" ? message.thread_id : ""
+  if (!threadId) return undefined
+  const reviewId = typeof message?.review_id === "string" ? message.review_id : ""
+  return reviewId ? { thread_id: threadId, review_id: reviewId } : { thread_id: threadId }
+}
+
 /** 图谱同款 open-or-focus（knowledge-graph.ts 先例）。 */
-export async function openOrFocusEmbeddedTerminal(binding?: { thread_id: string; review_id: string }): Promise<void> {
+export async function openOrFocusEmbeddedTerminal(binding?: TerminalTabBinding): Promise<void> {
   const requested = new URL(embeddedTerminalUrl())
   if (binding) {
     requested.searchParams.set("thread_id", binding.thread_id)
-    requested.searchParams.set("review_id", binding.review_id)
+    if (binding.review_id) requested.searchParams.set("review_id", binding.review_id)
   }
   const baseUrl = requested.href
   const tabs = await chrome.tabs.query({})
@@ -35,7 +60,13 @@ export async function openOrFocusEmbeddedTerminal(binding?: { thread_id: string;
     }
   })
   if (existing?.id != null) {
-    if (binding && new URL(existing.url!).search !== requested.search) throw new Error("已有其他终端任务，请先关闭原终端后再打开此审阅任务。")
+    if (binding && new URL(existing.url!).search !== requested.search) {
+      throw new Error(
+        binding.review_id
+          ? "已有其他终端任务，请先关闭原终端后再打开此审阅任务。"
+          : "已有其他终端任务，请先关闭原终端后再打开此终端任务。",
+      )
+    }
     await chrome.tabs.update(existing.id, { active: true })
     if (existing.windowId != null) await chrome.windows.update(existing.windowId, { focused: true })
     return

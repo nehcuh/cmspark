@@ -127,6 +127,18 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
       ;(normalized as any).coding_handoff = handoff
     }
   }
+  /**
+   * #502 C embedded terminal (nested, same shape SettingsSlideout writes:
+   * `config.set { embedded_terminal: { enabled } }`). The Side Panel entry gate reads
+   * `config.embedded_terminal.enabled`; without this pass-through the gate is false after every
+   * hydrate and「在本插件打开终端」never renders, while the companion timeline tells the user to
+   * click it. Only a genuine boolean is carried — `{}` / `1` / absent must not become truthy.
+   * No flattened alias and no new config key.
+   */
+  const et = config.embedded_terminal
+  if (et && typeof et === "object" && !Array.isArray(et) && typeof et.enabled === "boolean") {
+    ;(normalized as any).embedded_terminal = { enabled: et.enabled }
+  }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)
   ) as Partial<LLMConfig>

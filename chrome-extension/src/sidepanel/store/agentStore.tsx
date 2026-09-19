@@ -56,8 +56,8 @@ export type CodingSessionState = {
   }>
   /** Mode C propose-time snapshot from companion (authoritative) */
   openLocalTerminal?: boolean
-  /** Mode C host terminal outcome */
-  localTerminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | string
+  /** Mode C host terminal outcome (`embed_intent` = intent recorded, nothing spawned yet). */
+  localTerminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | "embed_intent" | string
 }
 
 export type CodingSessionEvent = {
