@@ -6,6 +6,10 @@ import {
   doneChipLabel,
   groupToolTurnRows,
   shouldRenderInlineToolCards,
+  pendingConfirmIdsFromTools,
+  pendingConfirmToolNamesForThread,
+  confirmationMatchesActiveThread,
+  confirmationOwnerThreadId,
 } from "../src/sidepanel/components/tool-history-view"
 
 const nav = { id: "1", tool_name: "navigate", status: "success" }
@@ -197,4 +201,61 @@ test("groupToolTurnRows: uncovered assistant with text keeps the text row before
     items.map((i) => i.kind),
     ["row", "tools"],
   )
+})
+
+// ---------------------------------------------------------------------------
+// #507 / #508 — L2 confirm correlation is thread-scoped + name→id is a
+// tested pure function (empty names must yield empty ids).
+// ---------------------------------------------------------------------------
+
+test("#507 confirmationOwnerThreadId prefers worker_id then thread_id", () => {
+  assert.equal(confirmationOwnerThreadId({ worker_id: "w1", thread_id: "t1" }), "w1")
+  assert.equal(confirmationOwnerThreadId({ thread_id: "t1" }), "t1")
+  assert.equal(confirmationOwnerThreadId({ tool_name: "click" }), null)
+})
+
+test("#507 foreign worker pending does not match the idle thread", () => {
+  const workerClick = { tool_name: "click", worker_id: "worker-1", parent_thread_id: "parent-a" }
+  assert.equal(confirmationMatchesActiveThread(workerClick, "parent-a"), false)
+  assert.equal(confirmationMatchesActiveThread(workerClick, "worker-1"), true)
+  const namesOnIdle = pendingConfirmToolNamesForThread([workerClick], "parent-a")
+  assert.equal(namesOnIdle.size, 0)
+  const namesOnWorker = pendingConfirmToolNamesForThread([workerClick], "worker-1")
+  assert.equal(namesOnWorker.has("click"), true)
+})
+
+test("#507 same-thread untagged confirm still matches (legacy main-thread L2)", () => {
+  const main = { tool_name: "evaluate" }
+  assert.equal(confirmationMatchesActiveThread(main, "thread-a"), true)
+  assert.equal(pendingConfirmToolNamesForThread([main], "thread-a").has("evaluate"), true)
+})
+
+test("#508 pendingConfirmIdsFromTools: empty names → empty ids (the silent mutation)", () => {
+  const ids = pendingConfirmIdsFromTools([nav, click], new Set())
+  assert.equal(ids.size, 0)
+})
+
+test("#508 pendingConfirmIdsFromTools: matching names collect those ids", () => {
+  const ids = pendingConfirmIdsFromTools([nav, click], new Set(["click"]))
+  assert.equal(ids.has("2"), true)
+  assert.equal(ids.has("1"), false)
+})
+
+test("#507 historical completed click stays done without pending ids even if names would match", () => {
+  // Cross-thread / earlier-turn: ChatView passes EMPTY_CONFIRM_NAMES to
+  // non-frontier blocks, so pendingConfirmIds is empty and view stays done.
+  const v = viewToolHistory([nav, click], {
+    threadBusy: false,
+    pendingConfirmIds: pendingConfirmIdsFromTools([nav, click], new Set()),
+  })
+  assert.equal(v.kind, "done")
+})
+
+test("#507 current-frontier L2 pending still goes live (#502 A)", () => {
+  const pendingIds = pendingConfirmIdsFromTools([nav, click], new Set(["click"]))
+  const v = viewToolHistory([nav, click], { threadBusy: true, pendingConfirmIds: pendingIds })
+  assert.equal(v.kind, "live")
+  if (v.kind !== "live") return
+  assert.equal(v.current.id, "2")
+  assert.equal(v.completed.length, 1)
 })

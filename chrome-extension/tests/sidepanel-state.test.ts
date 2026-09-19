@@ -865,6 +865,72 @@ test("security confirmation requests are queued and removable", () => {
   assert.equal(removed.pendingSecurityConfirmations.length, 0)
 })
 
+test("#507 ADD_SECURITY_CONFIRMATION keeps thread owner fields from the frame", () => {
+  const request = {
+    confirmation_id: "confirm-w",
+    tool_name: "click",
+    dangerous_apis: [],
+    code_preview: "click",
+    thread_id: "worker-1",
+    worker_id: "worker-1",
+    parent_thread_id: "parent-a",
+    orchestrator_run_id: "run-9",
+  }
+  const queued = agentReducer(initialState, { type: "ADD_SECURITY_CONFIRMATION", request: request as any })
+  const stored = queued.pendingSecurityConfirmations[0]
+  assert.equal(stored.thread_id, "worker-1")
+  assert.equal(stored.worker_id, "worker-1")
+  assert.equal(stored.parent_thread_id, "parent-a")
+  assert.equal(stored.orchestrator_run_id, "run-9")
+})
+
+test("#505 SET_RUN_TERMINAL stores per-thread round_limit and clears on new run", () => {
+  const tid = "thread-cap"
+  const set = agentReducer(initialState, {
+    type: "SET_RUN_TERMINAL",
+    threadId: tid,
+    terminal: "round_limit",
+  })
+  assert.equal(set.runTerminalByThreadId[tid], "round_limit")
+  const other = agentReducer(set, {
+    type: "SET_RUN_TERMINAL",
+    threadId: "other",
+    terminal: "round_limit",
+  })
+  assert.equal(other.runTerminalByThreadId[tid], "round_limit")
+
+  const busy = agentReducer(set, { type: "SET_THREAD_BUSY", threadId: tid, busy: true })
+  assert.equal(busy.runTerminalByThreadId[tid], undefined)
+  assert.equal(busy.threadBusyById[tid], true)
+
+  const again = agentReducer(set, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: `${tid}_user_1`,
+      thread_id: tid,
+      role: "user",
+      content: "继续",
+      created_at: "2026-09-19T00:00:00.000Z",
+    },
+  })
+  assert.equal(again.runTerminalByThreadId[tid], undefined)
+
+  const assistant = agentReducer(set, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: `${tid}_assistant_1`,
+      thread_id: tid,
+      role: "assistant",
+      content: "ok",
+      created_at: "2026-09-19T00:00:00.000Z",
+    },
+  })
+  assert.equal(assistant.runTerminalByThreadId[tid], "round_limit")
+
+  const idleBusyFalse = agentReducer(set, { type: "SET_THREAD_BUSY", threadId: tid, busy: false })
+  assert.equal(idleBusyFalse.runTerminalByThreadId[tid], "round_limit")
+})
+
 test("initial side panel sync requests threads, skills, knowledge, config, and mcp servers exactly once per connection", () => {
   const sent: object[] = []
   const initializedRef = { current: false }

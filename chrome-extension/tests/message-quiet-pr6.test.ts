@@ -247,6 +247,22 @@ test("#502 MessageRow no longer renders function-shape tool_calls inline (hydrat
   assert.ok(gateIdx > 0 && gateIdx < mapIdx, "gate must sit before the inline map")
 })
 
+test("#508 ToolHistoryBlock wirings: pendingConfirmIds / threadBusy last-item / chipTone warning", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // (a) name→id goes through the tested pure function — emptying the memo
+  // inline would no longer compile against this lock.
+  assert.match(chat, /pendingConfirmIdsFromTools\(/)
+  assert.match(chat, /pendingConfirmToolNamesForThread\(/)
+  // last tools block only: historical turns never receive the live name set
+  assert.match(chat, /pendingConfirmToolNames=\{itemIsLast \? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES\}/)
+  // (b) threadBusy is the last-item AND, not a hardcoded false
+  assert.match(chat, /threadBusy=\{Boolean\(itemIsLast && threadBusy\)\}/)
+  // (c) failure chipTone is a ternary on view.failed, warning tokens
+  assert.match(chat, /view\.failed\s*>\s*0/)
+  assert.match(chat, /color: tokens\.warning/)
+  assert.match(chat, /background: tokens\.warningSoft/)
+})
+
 test("#502 tool history stays sidepanel-only (no overlay wiring)", () => {
   const walk = (dir: string): string[] => {
     const out: string[] = []

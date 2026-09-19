@@ -492,6 +492,12 @@ export function useWebSocket() {
           if (doneThreadId) {
             dispatch({ type: "SET_THREAD_BUSY", threadId: doneThreadId, busy: false })
           }
+          // #505: terminal rides chat.done (not finish_reason — that would
+          // ADD_MESSAGE an empty ghost bubble). Per-thread; not gated on the
+          // active transcript so a background cap still shows on switch-back.
+          if (doneThreadId && msg.terminal === "round_limit") {
+            dispatch({ type: "SET_RUN_TERMINAL", threadId: doneThreadId, terminal: "round_limit" })
+          }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           const content = streamingRef.current
           const reasoning =
@@ -900,7 +906,8 @@ export function useWebSocket() {
               preview_image: typeof msg.preview_image === "string" ? msg.preview_image : undefined,
               preview_caption: typeof msg.preview_caption === "string" ? msg.preview_caption : undefined,
               full_preview: typeof msg.full_preview === "string" ? msg.full_preview : undefined,
-              // ADR-015 multi-agent Confirm Center
+              // ADR-015 multi-agent Confirm Center + #507 thread owner
+              thread_id: typeof msg.thread_id === "string" ? msg.thread_id : undefined,
               worker_id: typeof msg.worker_id === "string" ? msg.worker_id : undefined,
               parent_thread_id: typeof msg.parent_thread_id === "string" ? msg.parent_thread_id : undefined,
               orchestrator_run_id: typeof msg.orchestrator_run_id === "string" ? msg.orchestrator_run_id : undefined,

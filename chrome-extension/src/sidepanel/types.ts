@@ -391,6 +391,13 @@ export interface SecurityConfirmationRequest {
    * 存在时优先于 code_preview 渲染为可滚动区。
    */
   full_preview?: string
+  /**
+   * Owning thread of this L2 confirm (#507). Companion may send `thread_id`
+   * on the request frame; worker confirms also carry `worker_id` (the worker
+   * thread). ChatView correlates live-tool folding by this owner — Confirm
+   * Center still reads the global queue.
+   */
+  thread_id?: string
   /** ADR-015 multi-agent Confirm Center identity */
   worker_id?: string
   parent_thread_id?: string

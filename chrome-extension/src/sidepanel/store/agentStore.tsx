@@ -397,6 +397,12 @@ export interface AgentState {
    */
   loopStatusByThreadId: Record<string, LoopStatusView>
   /**
+   * #505: unarmed 100-round cap. Companion chat.done.terminal === "round_limit"
+   * (not finish_reason — that would spawn an empty ghost bubble). Cleared when
+   * the thread starts a new run (SET_THREAD_BUSY busy:true or ADD_MESSAGE user).
+   */
+  runTerminalByThreadId: Record<string, "round_limit">
+  /**
    * L-4 (#390) suggestion card「要继续做完吗？」— non-blocking; click sends
    * task_loop.arm (source=suggestion_card == explicit gesture).
    */
@@ -613,6 +619,8 @@ export type AgentAction =
   | { type: "CLEAR_CONTEXT_COMPACTED"; threadId: string }
   /** L-4 (#390): companion task_loop.status frame (sanitized view; verbatim render). */
   | { type: "SET_LOOP_STATUS"; threadId: string; view: LoopStatusView }
+  /** #505: chat.done.terminal on the unarmed 100-round cap. `null` clears. */
+  | { type: "SET_RUN_TERMINAL"; threadId: string; terminal: "round_limit" | null }
   /** L-4 (#390): companion task_loop.suggest (non-blocking suggestion card). */
   | {
       type: "SET_LOOP_SUGGEST"
@@ -753,6 +761,7 @@ export const initialState: AgentState = {
   unattended: null,
   contextCompactedByThreadId: {},
   loopStatusByThreadId: {},
+  runTerminalByThreadId: {},
   loopSuggest: null,
 }
 
@@ -1021,6 +1030,12 @@ export function mergeHydratedMessages(
   return extras.length ? [...next, ...extras] : next
 }
 
+function withoutRunTerminal(state: AgentState, threadId: string): AgentState {
+  if (!threadId || !state.runTerminalByThreadId[threadId]) return state
+  const { [threadId]: _dropped, ...rest } = state.runTerminalByThreadId
+  return { ...state, runTerminalByThreadId: rest }
+}
+
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
     case "SET_CONNECTION": {
@@ -1122,10 +1137,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       // bubble matched by client_message_id (F1), falling back to the last temp
       // user bubble for pre-F1 companions (DoD #13).
       const next = reduceAddMessage(state, action.message)
-      if (next.overlayStandby && isPanelOriginUserMessage(action.message)) {
-        return { ...next, overlayStandby: null }
+      const tid = typeof action.message.thread_id === "string" ? action.message.thread_id : ""
+      const cleared =
+        action.message.role === "user" && tid ? withoutRunTerminal(next, tid) : next
+      if (cleared.overlayStandby && isPanelOriginUserMessage(action.message)) {
+        return { ...cleared, overlayStandby: null }
       }
-      return next
+      return cleared
     }
     case "REMOVE_MESSAGE":
       return {
@@ -1226,6 +1244,20 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           [action.threadId]: action.view,
         },
       }
+    }
+    case "SET_RUN_TERMINAL": {
+      if (!action.threadId) return state
+      if (action.terminal === "round_limit") {
+        if (state.runTerminalByThreadId[action.threadId] === "round_limit") return state
+        return {
+          ...state,
+          runTerminalByThreadId: {
+            ...state.runTerminalByThreadId,
+            [action.threadId]: "round_limit",
+          },
+        }
+      }
+      return withoutRunTerminal(state, action.threadId)
     }
     case "SET_LOOP_SUGGEST": {
       if (!action.threadId) return state
@@ -1698,8 +1730,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const id = action.threadId
       if (!id) return state
       if (action.busy) {
-        if (state.threadBusyById[id]) return state
-        return { ...state, threadBusyById: { ...state.threadBusyById, [id]: true } }
+        // #505: a new chat.create / live token on this thread clears the cap hint.
+        const base = withoutRunTerminal(state, id)
+        if (base.threadBusyById[id]) return base
+        return { ...base, threadBusyById: { ...base.threadBusyById, [id]: true } }
       }
       if (!state.threadBusyById[id]) return state
       const { [id]: _, ...rest } = state.threadBusyById

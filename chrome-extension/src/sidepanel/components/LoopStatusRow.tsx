@@ -23,6 +23,22 @@ const BACKFILL_LABEL: Record<string, string> = {
   stopped_no_checklist: "受阻：无机器可核验清单",
 }
 
+/** Unarmed 100-round cap — honest, non-tombstone (#505). Armed threads use the loop status row instead. */
+export const ROUND_LIMIT_UNARMED_COPY =
+  "这一段跑满了 100 步工具调用，任务尚未收尾。回复“继续”可接着执行。"
+
+/**
+ * Render gate: only when this thread has no loop-status view (live frame or
+ * loop_state backfill) AND the run ended on the 100-round cap. Armed threads
+ * have a loopStatusByThreadId / backfill entry, so they never double-prompt.
+ */
+export function shouldShowRoundLimitHint(
+  loopView: LoopStatusView | null | undefined,
+  runTerminal: string | null | undefined,
+): boolean {
+  return !loopView && runTerminal === "round_limit"
+}
+
 export function backfillLoopView(thread: Thread | undefined): LoopStatusView | null {
   const ls = thread?.loop_state
   if (!ls || typeof ls.status !== "string" || !ls.status) return null
@@ -124,6 +140,24 @@ export function loopArmMessage(threadId: string, budgetStopped: boolean) {
     user_gesture: true,
     ...(budgetStopped ? { resume: true } : {}),
   }
+}
+
+/**
+ * Unarmed 100-round cap row. Same surface language as LoopStatusRow (soft
+ * banner, not a red tombstone). No stop/arm controls — the user replies 继续.
+ */
+export function RoundLimitHint() {
+  const tone = phaseTone("stopped")
+  return (
+    <div
+      data-testid="round-limit-hint"
+      style={{ ...styles.row, background: tone.background, borderColor: tone.border, color: tone.color }}
+    >
+      <div style={styles.rowMain}>
+        <span style={styles.label}>{ROUND_LIMIT_UNARMED_COPY}</span>
+      </div>
+    </div>
+  )
 }
 
 /**

@@ -29,6 +29,8 @@ import {
   doneChipLabel,
   groupToolTurnRows,
   liveChipLabel,
+  pendingConfirmIdsFromTools,
+  pendingConfirmToolNamesForThread,
   shouldRenderInlineToolCards,
   viewToolHistory,
 } from "./tool-history-view"
@@ -57,7 +59,13 @@ import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
 import { compactBannerKind } from "../utils/context-window-copy"
 import { truncationHonestyChip } from "../chat-shell-copy"
 import { RunProgress } from "./RunProgress"
-import { LoopStatusRow, LoopSuggestCard, backfillLoopView } from "./LoopStatusRow"
+import {
+  LoopStatusRow,
+  LoopSuggestCard,
+  RoundLimitHint,
+  backfillLoopView,
+  shouldShowRoundLimitHint,
+} from "./LoopStatusRow"
 import { listSig } from "./run-progress-view"
 import { CHAT_MARKED_OPTIONS } from "../utils/markdown-gfm"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
@@ -87,6 +95,8 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 const LONG_CONTENT_THRESHOLD = 3000
 const LONG_CONTENT_PREVIEW = 500
 const TOOL_RESULT_PREVIEW = 200
+/** Stable empty set so non-frontier ToolHistoryBlocks don't churn on every confirm. */
+const EMPTY_CONFIRM_NAMES: ReadonlySet<string> = new Set()
 
 export function ChatView() {
   const { state, dispatch } = useAgentStore()
@@ -106,6 +116,7 @@ export function ChatView() {
     contextCompactedByThreadId,
     hydrating,
     loopStatusByThreadId,
+    runTerminalByThreadId,
     loopSuggest,
     pendingSecurityConfirmations,
   } = state
@@ -114,18 +125,14 @@ export function ChatView() {
       ? contextCompactedByThreadId[activeThreadId]
       : null
   const runItems = threads.find((t) => t.id === activeThreadId)?.run_progress?.items
-  // #502 A: consecutive role=tool rows render as one per-turn block (audit
-  // chip). SecurityConfirmationRequest carries no tool_call_id on the wire —
-  // correlate confirmations by tool_name so a confirming step always stays
-  // the expanded `current` card, never folded into the chip.
-  const pendingConfirmToolNames = useMemo(() => {
-    const names = new Set<string>()
-    for (const c of pendingSecurityConfirmations) {
-      const n = typeof c?.tool_name === "string" ? c.tool_name.trim() : ""
-      if (n) names.add(n)
-    }
-    return names
-  }, [pendingSecurityConfirmations])
+  // #502 A / #507: consecutive role=tool rows render as one per-turn block.
+  // Correlate L2 confirms by tool_name, but only those owned by this thread
+  // (worker_id / thread_id on the frame). Cross-thread pending click must
+  // not flip this thread's history. Name→id lives in pendingConfirmIdsFromTools.
+  const pendingConfirmToolNames = useMemo(
+    () => pendingConfirmToolNamesForThread(pendingSecurityConfirmations, activeThreadId),
+    [pendingSecurityConfirmations, activeThreadId],
+  )
   const transcriptItems = useMemo(() => groupToolTurnRows(messages), [messages])
   const [summaryOpen, setSummaryOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -255,6 +262,8 @@ export function ChatView() {
   const loopView = activeThreadId
     ? loopStatusByThreadId[activeThreadId] ?? backfillLoopView(activeThread)
     : null
+  const runTerminal = activeThreadId ? runTerminalByThreadId[activeThreadId] ?? null : null
+  const showRoundLimitHint = shouldShowRoundLimitHint(loopView, runTerminal)
 
   // Auto-scroll to bottom when transcript / stream grows.
   // Respects user scroll: if the user scrolled up to read history, stop forcing
@@ -468,7 +477,7 @@ export function ChatView() {
                 key={`tools-${item.msgs[0]!.id}`}
                 msgs={item.msgs}
                 threadBusy={Boolean(itemIsLast && threadBusy)}
-                pendingConfirmToolNames={pendingConfirmToolNames}
+                pendingConfirmToolNames={itemIsLast ? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES}
               />
             )
           }
@@ -540,6 +549,10 @@ export function ChatView() {
               threadId={activeThreadId}
               pendingConfirms={pendingSecurityConfirmations.length}
             />
+          </div>
+        ) : showRoundLimitHint ? (
+          <div style={styles.agentMsg}>
+            <RoundLimitHint />
           </div>
         ) : null}
         {loopSuggest && loopSuggest.threadId === activeThreadId && activeThreadId ? (
@@ -1080,20 +1093,10 @@ const ToolHistoryBlock = memo(function ToolHistoryBlock({
   // SecurityConfirmationRequest carries no tool_call id on the wire — correlate
   // by tool_name so an L2-confirming step always stays the expanded current
   // card, never folded into the chip (redundant with its running status).
-  const pendingConfirmIds = useMemo(() => {
-    const ids = new Set<string>()
-    if (pendingConfirmToolNames.size === 0) return ids
-    for (const t of tools) {
-      if (
-        typeof t?.id === "string" &&
-        typeof t?.tool_name === "string" &&
-        pendingConfirmToolNames.has(t.tool_name)
-      ) {
-        ids.add(t.id)
-      }
-    }
-    return ids
-  }, [tools, pendingConfirmToolNames])
+  const pendingConfirmIds = useMemo(
+    () => pendingConfirmIdsFromTools(tools, pendingConfirmToolNames),
+    [tools, pendingConfirmToolNames],
+  )
   const view = viewToolHistory(tools, { threadBusy, pendingConfirmIds })
   if (view.kind === "empty") return null
 

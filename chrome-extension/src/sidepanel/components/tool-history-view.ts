@@ -52,6 +52,81 @@ function isLiveTool(tool: HistoryTool, pendingConfirmIds: ReadonlySet<string>): 
   return typeof tool.id === "string" && tool.id.length > 0 && pendingConfirmIds.has(tool.id)
 }
 
+/** Frame/store fields used to decide which thread an L2 confirm belongs to. */
+export type ConfirmThreadContext = {
+  tool_name?: string | null
+  thread_id?: string | null
+  worker_id?: string | null
+}
+
+/**
+ * Owner thread of an L2 confirm. Worker frames stamp `worker_id` (the worker
+ * thread); main-thread frames may stamp `thread_id`. Untagged → null.
+ */
+export function confirmationOwnerThreadId(
+  c: ConfirmThreadContext | null | undefined,
+): string | null {
+  if (!c) return null
+  if (typeof c.worker_id === "string" && c.worker_id) return c.worker_id
+  if (typeof c.thread_id === "string" && c.thread_id) return c.thread_id
+  return null
+}
+
+/**
+ * #507: a pending confirm only flips tools on ITS thread. Untagged (legacy)
+ * confirms still match the viewed thread — the itemIsLast gate stops them
+ * from flipping historical turns.
+ */
+export function confirmationMatchesActiveThread(
+  c: ConfirmThreadContext | null | undefined,
+  activeThreadId: string | null | undefined,
+): boolean {
+  if (!activeThreadId) return false
+  const owner = confirmationOwnerThreadId(c)
+  if (owner) return owner === activeThreadId
+  return true
+}
+
+/** Tool names of L2 confirms that belong to `activeThreadId`. */
+export function pendingConfirmToolNamesForThread(
+  confirms: readonly ConfirmThreadContext[] | null | undefined,
+  activeThreadId: string | null | undefined,
+): Set<string> {
+  const names = new Set<string>()
+  if (!Array.isArray(confirms)) return names
+  for (const c of confirms) {
+    if (!confirmationMatchesActiveThread(c, activeThreadId)) continue
+    const n = typeof c?.tool_name === "string" ? c.tool_name.trim() : ""
+    if (n) names.add(n)
+  }
+  return names
+}
+
+/**
+ * #508 (a): name → tool-call id. SecurityConfirmationRequest has no
+ * tool_call_id on the wire, so the live card is correlated by tool_name.
+ * Empty names → empty ids (the mutation that previously stayed green).
+ */
+export function pendingConfirmIdsFromTools(
+  tools: HistoryTool[] | null | undefined,
+  pendingConfirmToolNames: ReadonlySet<string>,
+): Set<string> {
+  const ids = new Set<string>()
+  if (!pendingConfirmToolNames || pendingConfirmToolNames.size === 0) return ids
+  const list = Array.isArray(tools) ? tools : []
+  for (const t of list) {
+    if (
+      typeof t?.id === "string" &&
+      t.id.length > 0 &&
+      typeof t?.tool_name === "string" &&
+      pendingConfirmToolNames.has(t.tool_name)
+    ) {
+      ids.add(t.id)
+    }
+  }
+  return ids
+}
+
 export function viewToolHistory(
   tools: HistoryTool[] | null | undefined,
   options: ToolHistoryOptions = {},
