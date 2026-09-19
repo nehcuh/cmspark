@@ -476,6 +476,7 @@ export function ChatView() {
               <ToolHistoryBlock
                 key={`tools-${item.msgs[0]!.id}`}
                 msgs={item.msgs}
+                reasonings={item.reasonings}
                 threadBusy={Boolean(itemIsLast && threadBusy)}
                 pendingConfirmToolNames={itemIsLast ? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES}
               />
@@ -486,6 +487,7 @@ export function ChatView() {
             <MessageRow
               key={msg.id}
               msg={msg}
+              reasoningFolded={item.reasoningFolded === true}
               activeThreadId={activeThreadId}
               sendShortcut={sendShortcut}
               onRegenerate={handleRegenerate}
@@ -607,6 +609,7 @@ const MessageRow = memo(function MessageRow({
   sendShortcut,
   showReasoningMode,
   exportIncludeReasoning: _exportIncludeReasoning,
+  reasoningFolded = false,
   isLast = false,
   onRegenerate,
   onFork,
@@ -619,6 +622,10 @@ const MessageRow = memo(function MessageRow({
   showReasoningMode: "always_collapsed" | "auto_live" | "always_open"
   /** Primitive so custom memo re-renders when Settings export opt-in flips (P0-1). */
   exportIncludeReasoning: boolean
+  /** #502 A: the covered round's thinking folded into the following audit
+   *  block — no standalone ReasoningBlock header (live stream + final answer
+   *  rows are never folded). */
+  reasoningFolded?: boolean
   /** #321 PR-6: last message keeps its action bar visible (常驻). */
   isLast?: boolean
   onRegenerate: (messageId: string, editedMessage?: string) => void
@@ -790,7 +797,7 @@ const MessageRow = memo(function MessageRow({
           </div>
         ) : (
           <>
-            {!isUser && msg.reasoning_content ? (
+            {!isUser && msg.reasoning_content && !reasoningFolded ? (
               <ReasoningBlock content={msg.reasoning_content} mode={showReasoningMode} />
             ) : null}
             <div style={isUser ? styles.userBubble : styles.agentBubble}>
@@ -911,6 +918,7 @@ const MessageRow = memo(function MessageRow({
     prev.activeThreadId === next.activeThreadId &&
     prev.sendShortcut === next.sendShortcut &&
     prev.isLast === next.isLast &&
+    prev.reasoningFolded === next.reasoningFolded &&
     prev.showReasoningMode === next.showReasoningMode &&
     prev.exportIncludeReasoning === next.exportIncludeReasoning
   )
@@ -1080,10 +1088,14 @@ const ToolHistoryBlock = memo(function ToolHistoryBlock({
   msgs,
   threadBusy,
   pendingConfirmToolNames,
+  reasonings,
 }: {
   msgs: any[]
   threadBusy: boolean
   pendingConfirmToolNames: ReadonlySet<string>
+  /** #502 A: covered rounds' thinking, rendered inside the expanded audit view
+   *  (before the tool cards — 思考在动作之前). Undefined = none recorded. */
+  reasonings?: string[]
 }) {
   const [auditOpen, setAuditOpen] = useState(false)
   const tools = useMemo(
@@ -1124,7 +1136,14 @@ const ToolHistoryBlock = memo(function ToolHistoryBlock({
                   {liveChipLabel(view.completed.length, view.failed)}
                 </button>
               ) : null}
-              {auditOpen ? view.completed.map(renderCard) : null}
+              {auditOpen ? (
+                <>
+                  {(reasonings ?? []).map((r, idx) => (
+                    <AuditReasoningSection key={`ar-${idx}`} content={r} index={idx + 1} />
+                  ))}
+                  {view.completed.map(renderCard)}
+                </>
+              ) : null}
               <ToolCallCard tc={view.current} />
             </>
           ) : (
@@ -1138,7 +1157,14 @@ const ToolHistoryBlock = memo(function ToolHistoryBlock({
               >
                 {doneChipLabel(view.tools.length, view.failed)}
               </button>
-              {auditOpen ? view.tools.map(renderCard) : null}
+              {auditOpen ? (
+                <>
+                  {(reasonings ?? []).map((r, idx) => (
+                    <AuditReasoningSection key={`ar-${idx}`} content={r} index={idx + 1} />
+                  ))}
+                  {view.tools.map(renderCard)}
+                </>
+              ) : null}
             </>
           )}
         </div>
@@ -1146,6 +1172,37 @@ const ToolHistoryBlock = memo(function ToolHistoryBlock({
     </div>
   )
 })
+
+/**
+ * #502 A: a covered round's thinking inside the expanded audit view. Collapsed
+ * by default — the audit surface stays quiet until asked (执行过的过程不占位).
+ */
+function AuditReasoningSection({ content, index }: { content: string; index: number }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={styles.reasoningWrap}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <button
+          type="button"
+          style={{ ...styles.reasoningToggle, flex: 1 }}
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span style={styles.reasoningLabel}>
+            第 {index} 段思考
+            {!open ? <span style={styles.reasoningMeta}>（{content.length} 字）</span> : null}
+          </span>
+          <span style={styles.reasoningChevron}>{open ? "▾" : "▸"}</span>
+        </button>
+      </div>
+      {open ? (
+        <div style={styles.reasoningBody}>
+          <pre style={styles.reasoningPre}>{content}</pre>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 function ToolCallCard({ tc }: { tc: any }) {
   const { state: agentState, dispatch } = useAgentStore()

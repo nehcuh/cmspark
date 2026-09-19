@@ -183,8 +183,13 @@ export function doneChipLabel(steps: number, failed: number): string {
 }
 
 export type ToolTurnItem<T> =
-  | { kind: "row"; msg: T }
-  | { kind: "tools"; msgs: T[] }
+  /** `reasoningFolded`: this assistant row's thinking moved into the following
+   *  tools block's audit view (#502 A: 执行过的过程不占位) — MessageRow must not
+   *  render its standalone ReasoningBlock header. */
+  | { kind: "row"; msg: T; reasoningFolded?: boolean }
+  /** `reasonings`: the covered rounds' thinking texts, rendered inside the
+   *  expanded audit view (思考 precedes the tool cards chronologically). */
+  | { kind: "tools"; msgs: T[]; reasonings?: string[] }
 
 /**
  * #502 A hydrate guard: which rows may still render inline ToolCallCards?
@@ -231,11 +236,31 @@ export function groupToolTurnRows<T extends { role?: unknown; tool_calls?: unkno
   const list = Array.isArray(messages) ? messages : []
   const out: ToolTurnItem<T>[] = []
   let buf: T[] = []
+  // A tools block's covered round: the assistant row right above it (its
+  // tool_calls the block satisfies). Its thinking folds into the block's audit
+  // view instead of leaving a standalone header row per round (#502 A).
+  const reasoningOfRow = (m: T | undefined): string | null => {
+    if (m == null || (m as { role?: unknown }).role !== "assistant") return null
+    const calls = (m as { tool_calls?: unknown }).tool_calls
+    if (!Array.isArray(calls) || calls.length === 0) return null
+    const r = (m as { reasoning_content?: unknown }).reasoning_content
+    return typeof r === "string" && r.length > 0 ? r : null
+  }
   const flush = () => {
-    if (buf.length > 0) {
-      out.push({ kind: "tools", msgs: buf })
-      buf = []
+    if (buf.length === 0) return
+    const reasonings: string[] = []
+    const last = out[out.length - 1]
+    if (last != null && last.kind === "row") {
+      const r = reasoningOfRow(last.msg)
+      if (r != null) {
+        reasonings.push(r)
+        out[out.length - 1] = { ...last, reasoningFolded: true }
+      }
     }
+    out.push(
+      reasonings.length > 0 ? { kind: "tools", msgs: buf, reasonings } : { kind: "tools", msgs: buf },
+    )
+    buf = []
   }
   for (let i = 0; i < list.length; i++) {
     const m = list[i]
@@ -251,10 +276,14 @@ export function groupToolTurnRows<T extends { role?: unknown; tool_calls?: unkno
         reasoning_content?: unknown
         tool_calls: unknown[]
       }
-      const hasText =
-        (typeof record.content === "string" && record.content.length > 0) ||
-        (typeof record.reasoning_content === "string" && record.reasoning_content.length > 0)
-      if (hasText) out.push({ kind: "row", msg: m })
+      // Reasoning no longer keeps the row alive: it folds into the synthetic
+      // block's audit view like any covered round's thinking.
+      const hasText = typeof record.content === "string" && record.content.length > 0
+      if (hasText) out.push({ kind: "row", msg: m, reasoningFolded: true })
+      const syntheticReasoning =
+        typeof record.reasoning_content === "string" && record.reasoning_content.length > 0
+          ? record.reasoning_content
+          : null
       out.push({
         kind: "tools",
         msgs: [
@@ -275,6 +304,7 @@ export function groupToolTurnRows<T extends { role?: unknown; tool_calls?: unkno
             }),
           } as unknown as T,
         ],
+        ...(syntheticReasoning ? { reasonings: [syntheticReasoning] } : {}),
       })
       continue
     }

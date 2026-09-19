@@ -259,3 +259,66 @@ test("#507 current-frontier L2 pending still goes live (#502 A)", () => {
   assert.equal(v.current.id, "2")
   assert.equal(v.completed.length, 1)
 })
+
+// --- #502 A: covered rounds' thinking folds into the audit block (no per-round header) ---
+
+test("covered round's reasoning folds into its tools block and marks the row", () => {
+  const items = groupToolTurnRows([
+    { id: "u1", role: "user", content: "go" },
+    { id: "a1", role: "assistant", content: "", reasoning_content: "先看页面结构", tool_calls: [{ id: "c1", type: "function", function: { name: "navigate", arguments: "{}" } }] },
+    toolRow("c1", "navigate", "success"),
+    { id: "a2", role: "assistant", content: "done", reasoning_content: "收尾思考" },
+  ])
+  assert.deepEqual(items.map((i) => i.kind), ["row", "row", "tools", "row"])
+  const covered = items[1]
+  if (covered.kind !== "row") return assert.ok(false, "covered assistant must stay a row")
+  assert.equal(covered.reasoningFolded, true, "covered round marked folded")
+  const block = items[2]
+  if (block.kind !== "tools") return assert.ok(false, "tool rows must group")
+  assert.deepEqual(block.reasonings, ["先看页面结构"])
+  const finalRow = items[3]
+  if (finalRow.kind !== "row") return assert.ok(false, "final answer stays a row")
+  assert.equal(finalRow.reasoningFolded === true, false, "final answer reasoning is NOT folded")
+})
+
+test("multi-round turn: each block carries only its own round's reasoning", () => {
+  const items = groupToolTurnRows([
+    { id: "a1", role: "assistant", content: "", reasoning_content: "R1", tool_calls: [{ id: "c1", type: "function", function: { name: "click", arguments: "{}" } }] },
+    toolRow("c1", "click", "success"),
+    { id: "a2", role: "assistant", content: "", reasoning_content: "R2", tool_calls: [{ id: "c2", type: "function", function: { name: "click", arguments: "{}" } }] },
+    toolRow("c2", "click", "success"),
+  ])
+  assert.deepEqual(items.map((i) => i.kind), ["row", "tools", "row", "tools"])
+  const b1 = items[1]
+  const b2 = items[3]
+  if (b1.kind !== "tools" || b2.kind !== "tools") return assert.ok(false, "two blocks")
+  assert.deepEqual(b1.reasonings, ["R1"])
+  assert.deepEqual(b2.reasonings, ["R2"])
+  if (items[0].kind !== "row" || items[2].kind !== "row") return assert.ok(false, "rows")
+  assert.equal(items[0].reasoningFolded, true)
+  assert.equal(items[2].reasoningFolded, true)
+})
+
+test("covered assistant without reasoning: no reasonings attached, no folded flag", () => {
+  const items = groupToolTurnRows([
+    fnAssistant("c1", "navigate"),
+    toolRow("c1", "navigate", "success"),
+  ])
+  const row = items[0]
+  const block = items[1]
+  if (row.kind !== "row" || block.kind !== "tools") return assert.ok(false, "shapes")
+  assert.equal(row.reasoningFolded === true, false)
+  assert.equal(block.reasonings, undefined)
+})
+
+test("uncovered function assistant with ONLY reasoning folds it into the synthetic block", () => {
+  const items = groupToolTurnRows([
+    { id: "a9", role: "assistant", content: "", reasoning_content: "孤立思考", tool_calls: [{ id: "c9", type: "function", function: { name: "click", arguments: "{}" } }] },
+    { id: "a10", role: "assistant", content: "final" },
+  ])
+  // reasoning alone no longer keeps the row alive — it lives in the block's audit
+  assert.deepEqual(items.map((i) => i.kind), ["tools", "row"])
+  const block = items[0]
+  if (block.kind !== "tools") return assert.ok(false, "synthetic block")
+  assert.deepEqual(block.reasonings, ["孤立思考"])
+})

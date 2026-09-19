@@ -289,3 +289,24 @@ test("#502 tool history stays sidepanel-only (no overlay wiring)", () => {
     )
   }
 })
+
+// ---------------------------------------------------------------------------
+// #502 slice A — covered rounds' thinking folds into the audit block
+// ---------------------------------------------------------------------------
+
+test("#502 ChatView folds covered rounds' reasoning into the audit block (no per-round header)", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // MessageRow suppresses the standalone ReasoningBlock for folded rows
+  assert.match(chat, /msg\.reasoning_content && !reasoningFolded/)
+  // ChatView wires both directions: folded flag to the row, reasonings to the block
+  assert.match(chat, /reasoningFolded=\{item\.reasoningFolded === true\}/)
+  assert.match(chat, /reasonings=\{item\.reasonings\}/)
+  // the audit view renders the thinking sections before the tool cards
+  assert.match(chat, /function AuditReasoningSection\(/)
+  assert.match(chat, /第 \{index\} 段思考/)
+  const auditIdx = chat.indexOf("<AuditReasoningSection")
+  const cardIdx = chat.indexOf("view.completed.map(renderCard)")
+  assert.ok(auditIdx > 0 && cardIdx > 0 && auditIdx < cardIdx, "thinking sections precede completed cards")
+  // memo comparator keeps the folded flag — a flip must re-render the row
+  assert.match(chat, /prev\.reasoningFolded === next\.reasoningFolded/)
+})
