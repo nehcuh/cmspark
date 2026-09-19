@@ -58,3 +58,14 @@ test("adapter: the 100-round exit does not emit chat.error", () => {
   const before = src.slice(Math.max(0, idx - 600), idx)
   assert.doesNotMatch(before, /type: "chat\.error"/)
 })
+
+test("adapter: #505 the exit chat.done carries terminal:\"round_limit\" (unarmed honesty signal)", () => {
+  const src = adapterSource()
+  // Unarmed threads have no loop status and no checklist, so without this field
+  // the cap exit is indistinguishable from a finished turn (adversarial H2).
+  // NOT finish_reason — that would append an empty ghost bubble (see exit comment).
+  assert.match(
+    src,
+    /type: "chat\.done",\s*\n\s*thread_id: threadId,\s*\n\s*terminal: "round_limit",\s*\n\s*\}\)/,
+  )
+})

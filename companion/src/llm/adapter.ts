@@ -2380,8 +2380,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   // #502 D-G1: the 100-round cap is a run boundary, not a failure. This run is
   // over; the TASK is not. The loop kernel treats terminal="round_limit" as a
   // natural run end — it enqueues the next segment when armed + within budget,
-  // or offers the discovery suggestion card when not armed. The user-facing
-  // honesty copy rides task_loop.status, never a red error bubble.
+  // or offers the discovery suggestion card when not armed.
   //
   // Frame shape (why no `finish_reason`): the side panel's chat.done handler
   // treats `finish_reason !== undefined` as "commit a new assistant row". At this
@@ -2389,9 +2388,18 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   // `chat.assistant` echo and the live stream was reset, so passing a
   // finish_reason here would append an EMPTY ghost bubble. chat.done without it
   // still clears busy/processing (the part that matters) and adds nothing.
+  //
+  // #505 (adversarial H2): `terminal: "round_limit"` is the unarmed-thread
+  // honesty signal — every G1 replacement channel (task_loop.status row, suggest
+  // card) is armed/checklist-scoped, so a plain long task would otherwise end
+  // with NO user-visible difference from a finished turn. The panel renders a
+  // non-tombstone note from this field only when the thread has no loop status
+  // (armed threads get their segment copy via task_loop.status instead — no
+  // double notice).
   sendToExtension({
     type: "chat.done",
     thread_id: threadId,
+    terminal: "round_limit",
   })
   logger.info("llm.round_limit", {
     thread_id: threadId,
