@@ -103,7 +103,11 @@ test("createToolResultMessage handles empty params (defaults to {})", () => {
 
   const msg = createToolResultMessage("thread-03", toolCall, result)
 
-  assert.deepEqual(msg.tool_calls[0].params, {})
+  // #511: failure params stub like success params — no fill-value leak.
+  const params03 = msg.tool_calls[0].params as { redacted?: unknown; len?: unknown; sha256?: unknown }
+  assert.equal(params03.redacted, true)
+  assert.equal(params03.len, 2)
+  assert.equal(typeof params03.sha256, "string")
 })
 
 test("createToolResultMessage handles empty result object", () => {
@@ -115,9 +119,16 @@ test("createToolResultMessage handles empty result object", () => {
 
   const msg = createToolResultMessage("thread-04", toolCall, result)
 
-  assert.equal(msg.content, JSON.stringify({ success: false }))
+  // #511: failure envelopes keep the diagnostic (success flag) plus a
+  // fingerprint — the bare passthrough shape is gone in the default tier.
+  const parsed = JSON.parse(msg.content)
+  assert.equal(parsed.success, false)
+  assert.equal(parsed.redacted, true)
+  assert.equal(typeof parsed.sha256, "string")
   // SEC-C: persistence path may deep-clone via redact; compare structure not identity
-  assert.deepEqual(msg.tool_calls[0].result, result)
+  const result04 = msg.tool_calls[0].result as { success?: unknown; redacted?: unknown }
+  assert.equal(result04.success, false)
+  assert.equal(result04.redacted, true)
   assert.equal(msg.tool_calls[0].id, "call_test_4")
 })
 
