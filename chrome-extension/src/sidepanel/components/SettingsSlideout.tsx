@@ -3465,7 +3465,7 @@ export function SettingsSlideout() {
               </button>
             </div>
             <div style={styles.helpText}>
-              默认关。只留工具名、成败、内容指纹。打开后仍脱敏 cookie / 本机命令 / 密钥。已经省略的正文不会因打开而恢复。
+              默认关。只留工具名、成败、内容指纹；失败步骤保留错误原因与少量机器字段。打开后仍脱敏 cookie / 本机命令 / 密钥。已经省略的正文不会因打开而恢复。
             </div>
           </div>
 

@@ -4,14 +4,16 @@
  * Product switch: `config.persist_full_tool_history` (default false).
  *  - false (default): a non-sensitive tool result/params collapse to
  *    {redacted:true, len, sha256} — name + success + size + fingerprint only.
+ *    #511: failure rows keep their DIAGNOSTIC (bounded error, error_code,
+ *    machine data keys) + fingerprint, but their body/params stub too.
  *  - true: today's #255 behaviour (read-tier keeps a gated prefix, exec still folds).
  *
  * INVARIANTS that hold in BOTH modes (this file pins them):
  *  - the role="tool" ROW always exists (rebuild pairing / heal depend on it);
  *  - cookie values never persist;
  *  - shell / host_computer / osascript bodies always fold (EXEC_FOLD);
- *  - a data-less error row keeps `error`/`error_code` verbatim — the INTERRUPTED
- *    heal contract keys on error_code (`replaceInterruptedFillerIfPresent`).
+ *  - the INTERRUPTED heal contract keys on error_code
+ *    (`replaceInterruptedFillerIfPresent`) — kept in every tier.
  *
  * The 8000-char read-tier cap is #255's; the switch only decides whether the
  * gated prefix is written at all.
@@ -115,6 +117,62 @@ test("default: INTERRUPTED error rows keep error_code verbatim (heal contract)",
   assert.equal(resultOf(r).error_code, "INTERRUPTED")
   assert.equal(resultOf(r).error, "interrupted")
   assert.equal(contentOf(r).error_code, "INTERRUPTED")
+})
+
+// --- #511: failure rows keep the diagnostic, not the body ---
+
+test("#511 default: a fill_form failure drops data.filled and params.fields values", () => {
+  const r = row(
+    "fill_form",
+    { success: false, error: "element not found", data: { filled: { "#user": "FILLED_VALUE_X" } } },
+    { fields: [{ selector: "#user", value: "FILL_SECRET_TEXT" }] },
+  )
+  assert.equal(resultOf(r).success, false, "failure flag kept")
+  assert.equal(resultOf(r).error, "element not found", "bounded error kept")
+  assert.equal(JSON.stringify(r).includes("FILLED_VALUE_X"), false, "data.filled dropped")
+  assert.equal(JSON.stringify(r).includes("FILL_SECRET_TEXT"), false, "params.fields[].value stubbed")
+  assert.equal(paramsOf(r).redacted, true, "failure params stub like success params")
+})
+
+test("#511 default: failure machine keys (unlock contract) survive", () => {
+  const r = row("click", {
+    success: false,
+    error: "site policy",
+    error_code: "SITE_OP_BANNED",
+    data: { error_code: "SITE_OP_BANNED", suggested_action: "open settings", tab_url: "https://x", dumped: "PAGE_TEXT_SHALL_NOT_PERSIST" },
+  })
+  assert.equal(resultOf(r).error_code, "SITE_OP_BANNED", "top-level error_code kept")
+  assert.equal(resultOf(r).data.error_code, "SITE_OP_BANNED", "machine data key kept")
+  assert.equal(resultOf(r).data.suggested_action, "open settings", "machine data key kept")
+  assert.equal(resultOf(r).data.tab_url, "https://x", "machine data key kept")
+  assert.equal(JSON.stringify(r).includes("PAGE_TEXT_SHALL_NOT_PERSIST"), false, "non-machine data dropped")
+  assert.equal(typeof resultOf(r).sha256, "string", "fingerprint present")
+})
+
+test("#511 default: a non-standard result with no success field stubs fail-closed", () => {
+  const r = row("future_tool", { data: { text: "UNSTRUCTURED_BODY" } } as any, { q: "VALUE_Q" })
+  assert.equal(JSON.stringify(r).includes("UNSTRUCTURED_BODY"), false, "body dropped")
+  assert.equal(JSON.stringify(r).includes("VALUE_Q"), false, "params dropped")
+  assert.equal(typeof resultOf(r).sha256, "string", "fingerprint present")
+  assert.equal(r.role, "tool", "row kept for pairing")
+})
+
+test("#511 default: a long failure error is bounded to 200 chars", () => {
+  const longError = "E".repeat(500) + "TAIL_SHALL_NOT_PERSIST"
+  const r = row("click", { success: false, error: longError })
+  assert.ok((resultOf(r).error as string).length <= 201, "error bounded")
+  assert.equal(JSON.stringify(r).includes("TAIL_SHALL_NOT_PERSIST"), false, "error tail dropped")
+})
+
+test("#511 full history on: failure rows are untouched (#255 verbatim)", () => {
+  saveConfig({ persist_full_tool_history: true })
+  const r = row(
+    "fill_form",
+    { success: false, error: "x", data: { filled: { "#user": "KEPT_IN_FULL" } } },
+    { fields: [{ selector: "#user", value: "KEPT_IN_FULL" }] },
+  )
+  assert.deepEqual(resultOf(r).data, { filled: { "#user": "KEPT_IN_FULL" } })
+  assert.deepEqual(paramsOf(r), { fields: [{ selector: "#user", value: "KEPT_IN_FULL" }] })
 })
 
 // --- switch on: today's #255 behaviour ---

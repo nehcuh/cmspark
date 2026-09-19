@@ -288,19 +288,16 @@ export function redactToolPayloadForPersistence(
  *    and collapsing on top of that is strictly less data. The switch therefore
  *    only ever decides whether a NON-sensitive body is written, never whether a
  *    secret is redacted.
- *  - FAILURE results (`success === false`) are returned verbatim. A failure
- *    envelope is the model's DIAGNOSTIC, not an intermediate operation: it is
- *    re-fed to the model after a reload, and it carries the machine-readable
- *    unlock contract (SITE_OP_BANNED's `data.error_code` / `suggested_action`,
- *    the heal flow's `error_code: INTERRUPTED`). Collapsing it would leave the
- *    model retrying blindly — the same "fake failure" trap that makes an
- *    omitted tool row worse than a small one. Envelopes are already bounded and
- *    redacted by the SoT (exec data collapsed, read-tier error truncated to
- *    200 chars, cookie values hashed), so this is not a new leak surface, and
- *    it is byte-identical to pre-#502 behaviour for failures.
+ *  - FAILURE results (#511) keep their DIAGNOSTIC, not their body: bounded
+ *    `error`, `error_code`, and machine `data` keys (unlock contract:
+ *    SITE_OP_BANNED's `data.error_code` / `suggested_action`, the heal flow's
+ *    `error_code: INTERRUPTED`) survive plus a fingerprint; business payloads
+ *    riding a failure (fill values in `data.filled` / `params.fields[]`, page
+ *    text) are stubbed exactly like success bodies. Non-standard shapes with no
+ *    explicit `success` stub the same way — fail-closed, never fail-open.
  *
- * Only `success === true` payloads are compacted — that is the page text / DOM
- * / form fill / screenshot body the ticket is about.
+ * Only `success === true` payloads are compacted to the bare fingerprint — that
+ * is the page text / DOM / form fill / screenshot body the ticket is about.
  *
  * Params are stubbed as well: they are the same intermediate operation as the
  * result (the selector typed into, the fill value, the URL fetched), and this
@@ -316,8 +313,13 @@ export function archiveToolPayload(
   // Redaction first, unconditionally: the switch never bypasses a fold.
   const safe = redactToolPayloadForPersistence(toolName, params, result)
   if (persistFull) return safe
-  // Failure envelopes stay verbatim (diagnostics + heal contract).
-  if (!isSuccessfulResult(safe.result)) return safe
+  // #511: failure envelopes keep the diagnostic surface, never the body.
+  if (!isSuccessfulResult(safe.result)) {
+    return {
+      params: safe.params === undefined ? undefined : stubPayload(safe.params),
+      result: safe.result === undefined ? undefined : stubFailureResult(safe.result),
+    }
+  }
   return {
     params: safe.params === undefined ? undefined : stubPayload(safe.params),
     result: safe.result === undefined ? undefined : collapseResult(safe.result),
@@ -327,11 +329,45 @@ export function archiveToolPayload(
 /**
  * Only an explicit `success: true` is a compactable body. Anything else is
  * treated as a diagnostic envelope (including a missing `success` field, which
- * the tool layer only ever omits on non-standard shapes) — fail-open for
- * readability, never for secrets: the SoT redaction already ran.
+ * the tool layer only ever omits on non-standard shapes) — stubbed with the
+ * bounded diagnostic kept (#511).
  */
 function isSuccessfulResult(result: unknown): boolean {
   return !!result && typeof result === "object" && (result as { success?: unknown }).success === true
+}
+
+/**
+ * #511: stub a failure (or non-standard) result envelope. Keeps the bounded
+ * diagnostic surface the model and heal flow key on — boolean `success`,
+ * `error` (≤200 chars), `error_code`, machine `data` keys
+ * ({error_code, suggested_action, tab_url}) — plus the {redacted, len, sha256}
+ * fingerprint of the original envelope. Business payloads riding a failure
+ * (fill values, page text) are dropped like success bodies.
+ */
+function stubFailureResult(result: unknown): Record<string, unknown> {
+  if (!result || typeof result !== "object") {
+    return stubPayload(result)
+  }
+  const r = result as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  if (typeof r.success === "boolean") out.success = r.success
+  if (typeof r.error === "string") {
+    out.error = r.error.length > 200 ? r.error.slice(0, 200) + "…" : r.error
+  }
+  if (typeof r.error_code === "string") out.error_code = r.error_code
+  if (r.data && typeof r.data === "object") {
+    const d = r.data as Record<string, unknown>
+    const machine: Record<string, unknown> = {}
+    for (const key of ["error_code", "suggested_action", "tab_url"]) {
+      if (typeof d[key] === "string") machine[key] = d[key]
+    }
+    if (Object.keys(machine).length > 0) out.data = machine
+  }
+  const raw = JSON.stringify(result)
+  out.redacted = true
+  out.len = raw.length
+  out.sha256 = shortHash(raw)
+  return out
 }
 
 /** {redacted, len, sha256} without collapseResult's result-only `success` field. */
