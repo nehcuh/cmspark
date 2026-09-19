@@ -412,6 +412,16 @@ export interface AgentState {
     budgetStopped: boolean
     at: number
   } | null
+  /**
+   * #513 fleet suggestion cards, per thread (NOT single-slot): switching threads
+   * must not drop another thread's pending card, and a background thread's
+   * fleet.suggest frame must not overwrite the one being viewed. Rendered for
+   * the ACTIVE thread only; cleared on accept/dismiss/thread removal.
+   */
+  fleetSuggestByThreadId: Record<
+    string,
+    { reason: string; subtasks: string[]; at: number }
+  >
 }
 
 export type AgentAction =
@@ -621,6 +631,10 @@ export type AgentAction =
   | { type: "SET_LOOP_STATUS"; threadId: string; view: LoopStatusView }
   /** #505: chat.done.terminal on the unarmed 100-round cap. `null` clears. */
   | { type: "SET_RUN_TERMINAL"; threadId: string; terminal: "round_limit" | null }
+  /** #513: companion fleet.suggest frame — keyed per thread (no active gate). */
+  | { type: "SET_FLEET_SUGGEST"; threadId: string; reason: string; subtasks: string[] }
+  /** #513: local clear on accept/dismiss (companion ack is idempotent sync). */
+  | { type: "CLEAR_FLEET_SUGGEST"; threadId: string }
   /** L-4 (#390): companion task_loop.suggest (non-blocking suggestion card). */
   | {
       type: "SET_LOOP_SUGGEST"
@@ -763,6 +777,7 @@ export const initialState: AgentState = {
   loopStatusByThreadId: {},
   runTerminalByThreadId: {},
   loopSuggest: null,
+  fleetSuggestByThreadId: {},
 }
 
 /**
@@ -1036,6 +1051,24 @@ function withoutRunTerminal(state: AgentState, threadId: string): AgentState {
   return { ...state, runTerminalByThreadId: rest }
 }
 
+/** #513: drop fleet suggestion cards for threads no longer in the list. */
+function pruneFleetSuggest(map: AgentState["fleetSuggestByThreadId"], keepIds: string[]): AgentState["fleetSuggestByThreadId"] {
+  const keep = new Set(keepIds)
+  let changed = false
+  for (const id of Object.keys(map)) {
+    if (!keep.has(id)) {
+      changed = true
+      break
+    }
+  }
+  if (!changed) return map
+  const out: AgentState["fleetSuggestByThreadId"] = {}
+  for (const [id, entry] of Object.entries(map)) {
+    if (keep.has(id)) out[id] = entry
+  }
+  return out
+}
+
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
     case "SET_CONNECTION": {
@@ -1075,6 +1108,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         threads,
         activeThreadId: nextActiveThreadId,
+        // #513: cards for threads gone from the list go with them.
+        fleetSuggestByThreadId: pruneFleetSuggest(
+          state.fleetSuggestByThreadId,
+          threads.map((t: any) => t.id as string),
+        ),
         // Do not wipe messages when preserving active across trash-scoped merges
         pinnedTabIds: nextActiveThread?.pinned_tabs ?? state.pinnedTabIds,
         activeSkillIds: nextActiveThread?.active_skill_ids ?? state.activeSkillIds,
@@ -1258,6 +1296,33 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         }
       }
       return withoutRunTerminal(state, action.threadId)
+    }
+    case "SET_FLEET_SUGGEST": {
+      // #513: keyed per thread — a background thread's frame must not touch the
+      // viewed card, and switching back restores its own entry. ≥2 subtasks is
+      // the defense-in-depth twin of the useWebSocket gate.
+      if (!action.threadId) return state
+      const subtasks = Array.isArray(action.subtasks)
+        ? action.subtasks.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        : []
+      if (subtasks.length < 2) return state
+      return {
+        ...state,
+        fleetSuggestByThreadId: {
+          ...state.fleetSuggestByThreadId,
+          [action.threadId]: {
+            reason: typeof action.reason === "string" ? action.reason : "",
+            subtasks,
+            at: Date.now(),
+          },
+        },
+      }
+    }
+    case "CLEAR_FLEET_SUGGEST": {
+      if (!action.threadId) return state
+      if (!state.fleetSuggestByThreadId[action.threadId]) return state
+      const { [action.threadId]: _droppedFleet, ...restFleet } = state.fleetSuggestByThreadId
+      return { ...state, fleetSuggestByThreadId: restFleet }
     }
     case "SET_LOOP_SUGGEST": {
       if (!action.threadId) return state
@@ -1471,6 +1536,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         messagesByThreadId: dropped.cache,
         messagesCacheOrder: dropped.order,
+        // #513: the removed thread's fleet card goes with it.
+        fleetSuggestByThreadId: pruneFleetSuggest(state.fleetSuggestByThreadId, filtered.map(t => t.id)),
         ...(clearingActive
           ? { activeThreadId: null, messages: [], hydrating: false }
           : {}),
@@ -1507,6 +1574,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         messagesByThreadId: dropped.cache,
         messagesCacheOrder: dropped.order,
+        // #513: the removed thread's fleet card goes with it.
+        fleetSuggestByThreadId: pruneFleetSuggest(state.fleetSuggestByThreadId, filtered.map(t => t.id)),
         ...(clearingActive
           ? { activeThreadId: null, messages: [], hydrating: false }
           : {}),

@@ -142,6 +142,95 @@ export function loopArmMessage(threadId: string, budgetStopped: boolean) {
   }
 }
 
+// --- #513 fleet suggestion card builders (pure, test-first) ---
+
+/** Dismiss payload — records the companion-side silence window. */
+export function buildFleetDismissMessage(threadId: string) {
+  return {
+    type: "fleet.suggest.dismiss" as const,
+    thread_id: threadId,
+    user_gesture: true,
+  }
+}
+
+/**
+ * Accept = ONE user message carrying the full dispatch instruction (subtasks +
+ * spawn_worker mention). Deliberately NOT task_loop.arm: arm injects 续跑
+ * autonomy (kickoff / PROPOSE_REQUEST_STEER / status row) which is a different
+ * axis from parallel dispatch and would race the queue steer (spec §3.3).
+ */
+export function buildFleetAcceptText(subtasks: string[]): string {
+  const list = subtasks.map((s, i) => `${i + 1}) ${s}`).join("\n")
+  return [
+    "同意多路并行。请将以下子任务分派给 worker 执行（用 spawn_worker，每次仍需我在确认中心批准）：",
+    list,
+    "全部完成后把各 worker 的结果汇总给我。",
+  ].join("\n")
+}
+
+/**
+ * #513 fleet suggestion card. Non-blocking, no preselection, no countdown —
+ * same surface language as LoopSuggestCard. Accept sends the dispatch message
+ * (chat.send) AND the dismiss frame (companion silences re-propose); the store
+ * entry is cleared synchronously by the caller — never by passive signals.
+ */
+export function FleetSuggestCard({
+  threadId,
+  reason,
+  subtasks,
+  onCleared,
+}: {
+  threadId: string
+  reason: string
+  subtasks: string[]
+  onCleared: () => void
+}) {
+  const onAccept = () => {
+    chrome.runtime.sendMessage({
+      type: "chat.send",
+      threadId,
+      message: buildFleetAcceptText(subtasks),
+    })
+    chrome.runtime.sendMessage(buildFleetDismissMessage(threadId))
+    onCleared()
+  }
+  const onDismiss = () => {
+    chrome.runtime.sendMessage(buildFleetDismissMessage(threadId))
+    onCleared()
+  }
+  return (
+    <div data-testid="fleet-suggest-card" style={styles.card}>
+      <div style={styles.cardHead}>
+        <span style={styles.cardTitle}>此任务适合多路并行</span>
+        <button
+          type="button"
+          aria-label="不再提示"
+          style={styles.dismissBtn}
+          onClick={onDismiss}
+        >
+          ✕
+        </button>
+      </div>
+      {reason ? (
+        <div style={styles.cardItem}>{reason}</div>
+      ) : null}
+      <div style={styles.cardList}>
+        {subtasks.map((s, i) => (
+          <div key={`${i}-${s}`} style={styles.cardItem}>
+            · {s}
+          </div>
+        ))}
+      </div>
+      <div style={styles.cardFoot}>
+        <span style={styles.cardHint}>点按即发送分派指令 · 每个 worker 仍需在确认中心批准</span>
+        <button type="button" style={styles.armBtn} onClick={onAccept}>
+          派 worker 并行做
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Unarmed 100-round cap row. Same surface language as LoopStatusRow (soft
  * banner, not a red tombstone). No stop/arm controls — the user replies 继续.

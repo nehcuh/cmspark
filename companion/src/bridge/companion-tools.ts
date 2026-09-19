@@ -35,6 +35,8 @@ export const COMPANION_TOOLS = [
   "netsec_port_scan",
   // ADR-015 orchestrator
   "spawn_worker",
+  // #513 advisory fleet suggestion (propose-only, never spawns)
+  "fleet_suggest_propose",
   "propose_expert_team",
   "spawn_expert_team",
   "list_workers",

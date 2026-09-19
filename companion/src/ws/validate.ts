@@ -257,6 +257,13 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // #513 fleet suggestion dismissal — records the silence window companion-side.
+    "fleet.suggest.dismiss": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "fleet.suggest.dismiss requires thread_id" }
+      }
+      return { valid: true }
+    },
     "overlay.shell.open": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) {
         return { valid: false, error: "overlay.shell.open requires thread_id" }

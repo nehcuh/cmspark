@@ -62,6 +62,7 @@ import { RunProgress } from "./RunProgress"
 import {
   LoopStatusRow,
   LoopSuggestCard,
+  FleetSuggestCard,
   RoundLimitHint,
   backfillLoopView,
   shouldShowRoundLimitHint,
@@ -117,6 +118,7 @@ export function ChatView() {
     hydrating,
     loopStatusByThreadId,
     runTerminalByThreadId,
+    fleetSuggestByThreadId,
     loopSuggest,
     pendingSecurityConfirmations,
   } = state
@@ -264,6 +266,8 @@ export function ChatView() {
     : null
   const runTerminal = activeThreadId ? runTerminalByThreadId[activeThreadId] ?? null : null
   const showRoundLimitHint = shouldShowRoundLimitHint(loopView, runTerminal)
+  // #513: per-thread map — only the active thread's card renders.
+  const fleetSuggest = activeThreadId ? fleetSuggestByThreadId[activeThreadId] ?? null : null
 
   // Auto-scroll to bottom when transcript / stream grows.
   // Respects user scroll: if the user scrolled up to read history, stop forcing
@@ -564,6 +568,17 @@ export function ChatView() {
               unticked={loopSuggest.unticked}
               budgetStopped={loopSuggest.budgetStopped}
               onDismiss={() => dispatch({ type: "CLEAR_LOOP_SUGGEST" })}
+            />
+          </div>
+        ) : null}
+        {/* #513: independent block — may coexist with the loop card above (no if/else). */}
+        {activeThreadId && fleetSuggest ? (
+          <div style={styles.agentMsg}>
+            <FleetSuggestCard
+              threadId={activeThreadId}
+              reason={fleetSuggest.reason}
+              subtasks={fleetSuggest.subtasks}
+              onCleared={() => dispatch({ type: "CLEAR_FLEET_SUGGEST", threadId: activeThreadId })}
             />
           </div>
         ) : null}

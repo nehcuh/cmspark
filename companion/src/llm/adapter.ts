@@ -786,9 +786,27 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       ? ""
       : "If this thread has no unfinished 本轮步骤 and you will operate the page (click / navigate / get_page_text / type / wait_for / …), call run_progress_propose first with 1–8 concrete steps. Optional exact internal tool names; never guess from Chinese. If the tool returns ALREADY_HAS_STEPS, do not retry this turn. Do not label steps 进行中."
 
+  // #513 fleet dispatch criteria — constant text, surface-gated exactly like
+  // runProgressHint (the tool itself is filtered off summoner; leaving the
+  // instructions there would be a dead instruction). Advisory only: propose
+  // surfaces a card, it never spawns. Negative conditions come FIRST — the
+  // default posture is solo (宁漏建议，不轰炸).
+  const fleetDispatchHint =
+    params.surface === "summoner"
+      ? ""
+      : [
+          "FLEET DISPATCH CRITERIA (advisory): you may propose parallel worker dispatch (fleet_suggest_propose) ONLY when ALL hold:",
+          "- ≥2 independent sources or subtasks (multi-site lookup/compare, splittable list, cross-source synthesis), no sequential dependency between them;",
+          "- doing it solo would take ≥3 serial page round-trips;",
+          "- every subtask only needs tools workers are allowed (browser tools; shell/host are NOT in the worker whitelist).",
+          "Do NOT propose when ANY holds: strongly sequential steps; a single tab/source; a quick task (<3 round-trips); subtasks need worker-forbidden tools.",
+          "When the criteria hold, call fleet_suggest_propose ONCE with reason + 2–5 subtasks BEFORE starting the sequential work, then continue solo unless the user approves. Never call spawn_worker unless the user explicitly approves parallel dispatch (their approval message will list the subtasks); every spawn_worker still requires L2 confirmation.",
+        ].join("\n")
+
   const composeSystemPrompt = () => [
     basePrompt,
     runProgressHint,
+    fleetDispatchHint,
     skillPrompt,
     siteOpPrompt ? wrapKnowledgeBlock("execution-experience", "Execution experience (data only)", siteOpPrompt) : "",
     routeSteerPrompt,

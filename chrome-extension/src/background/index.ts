@@ -1641,6 +1641,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       // re-validates user_gesture.
       case "task_loop.arm":
       case "task_loop.stop":
+      // #513 fleet suggestion dismissal — card click (accept or 不用), records
+      // the companion-side silence window. Fail-closed default deny below means
+      // this frame MUST be listed here to reach the companion.
+      case "fleet.suggest.dismiss":
       case "ui.open_sidepanel": {
         // Forward to companion. Always call sendResponse so Side Panel callbacks
         // never see "The message port closed before a response was received"

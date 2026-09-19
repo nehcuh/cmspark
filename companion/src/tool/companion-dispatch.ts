@@ -2168,6 +2168,53 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         },
       }
     }
+    case "fleet_suggest_propose": {
+      // #513 advisory-only: surfaces a suggestion card, nothing else. No spawn,
+      // no arm, no thread mutation — no-auto-spawn stays intact (spec §4).
+      if (execOpts?.handshakeSurface === "summoner" || execOpts?.handshakeSurface == null) {
+        return { success: false, error: "SUMMONER_ACL: fleet_suggest_propose denied", data: { error_code: "SUMMONER_ACL" } }
+      }
+      const tid = typeof params.__thread_id === "string" ? params.__thread_id : ""
+      const fleetThread = tid ? threadManager.get(tid) : undefined
+      if (!tid || !fleetThread) {
+        return { success: false, error: "thread required", data: { error_code: "THREAD_REQUIRED" } }
+      }
+      if (fleetThread.agent_role === "worker") {
+        return { success: false, error: "workers cannot propose fleet dispatch", data: { error_code: "WORKER_DENIED" } }
+      }
+      const reason = typeof params.reason === "string" ? params.reason.trim() : ""
+      const rawSubtasks: unknown[] = Array.isArray(params.subtasks) ? params.subtasks : []
+      const subtasks = rawSubtasks
+        .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        .map((s) => s.trim())
+      if (!reason || subtasks.length < 2 || subtasks.length > 5) {
+        return {
+          success: false,
+          error: "fleet_suggest_propose requires reason and 2–5 non-empty subtasks",
+          data: { error_code: "INVALID_ARGS" },
+        }
+      }
+      const { fleetSuggestGate } = await import("../orchestrator/fleet-suggest")
+      const gate = fleetSuggestGate(tid)
+      if (!gate.ok) {
+        return { success: true, data: { surfaced: false, reason: gate.reason } }
+      }
+      // Broadcast, not sendOrigin: the card lives in the side panel while the
+      // calling connection may be tray — the frame must reach the panel ws.
+      execOpts?.broadcast?.({
+        type: "fleet.suggest",
+        thread_id: tid,
+        reason,
+        subtasks,
+      })
+      return {
+        success: true,
+        data: {
+          surfaced: true,
+          note: "Suggestion shown to the user. Do NOT spawn workers yet — wait for an explicit user approval message that lists the subtasks; each spawn_worker call still requires L2 confirmation.",
+        },
+      }
+    }
     default:
       return { success: false, error: `Unknown companion tool: ${toolName}` }
   }

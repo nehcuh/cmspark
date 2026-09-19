@@ -3148,6 +3148,18 @@ export async function handleMessage(
       }
     }
 
+    // --- #513 fleet suggestion dismissal: record the per-thread silence
+    // window so a dismissed (or accepted) card is not re-proposed for 10 min.
+    case "fleet.suggest.dismiss": {
+      const dismissThreadId = typeof rest.thread_id === "string" ? rest.thread_id.trim() : ""
+      if (!dismissThreadId) {
+        return { type: "error", error: "fleet.suggest.dismiss requires thread_id" }
+      }
+      const { recordFleetSuggestDismiss } = await import("./orchestrator/fleet-suggest")
+      recordFleetSuggestDismiss(dismissThreadId)
+      return { type: "fleet.suggest.dismissed", thread_id: dismissThreadId }
+    }
+
     // --- L-2 (#388) loop kernel: explicit arm / stop. Both are user-gesture
     // only; the suggestion-card click arrives as task_loop.arm
     // (source=suggestion_card == entrance ② lightweight form). ---

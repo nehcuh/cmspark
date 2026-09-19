@@ -1132,6 +1132,26 @@ export function useWebSocket() {
           dispatch({ type: "CLEAR_LOOP_SUGGEST" })
           break
         }
+        case "fleet.suggest": {
+          // #513: advisory parallel-dispatch card, keyed per thread — a frame
+          // for a background thread parks in the map until the user switches.
+          const tid = typeof msg.thread_id === "string" ? msg.thread_id : ""
+          const reason = typeof msg.reason === "string" ? msg.reason : ""
+          const subtasks = Array.isArray(msg.subtasks)
+            ? msg.subtasks.filter((s: any): s is string => typeof s === "string" && s.trim().length > 0)
+            : []
+          if (tid && subtasks.length >= 2) {
+            dispatch({ type: "SET_FLEET_SUGGEST", threadId: tid, reason, subtasks })
+          }
+          break
+        }
+        case "fleet.suggest.dismissed": {
+          // Companion ack (may arrive from another surface) — idempotent local sync.
+          if (typeof msg.thread_id === "string" && msg.thread_id) {
+            dispatch({ type: "CLEAR_FLEET_SUGGEST", threadId: msg.thread_id })
+          }
+          break
+        }
         case "thread.trashed": {
           // Soft-delete: remove from active list (server no longer returns it)
           dispatch({ type: "REMOVE_THREAD", threadId: msg.thread_id })
