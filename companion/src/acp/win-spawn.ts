@@ -349,8 +349,15 @@ export function windowsPowerShellExePath(env: NodeJS.ProcessEnv = process.env): 
 }
 
 /** Exclusive create (O_EXCL / `wx`) so a pre-planted TEMP file cannot be overwritten. */
-export function writeExclusiveUtf8(filePath: string, body: string): void {
-  fs.writeFileSync(filePath, body, { encoding: "utf8", mode: 0o600, flag: "wx" })
+export function writeExclusiveUtf8(
+  filePath: string,
+  body: string,
+  opts?: { bom?: boolean },
+): void {
+  // PS 5.1 `-File` without a UTF-8 BOM decodes as the ANSI code page; Chinese
+  // banner bytes then look like stray `'` and the parser dies on `& '…exe' $task`.
+  const data = opts?.bom ? `\uFEFF${body}` : body
+  fs.writeFileSync(filePath, data, { encoding: "utf8", mode: 0o600, flag: "wx" })
 }
 
 /** Best-effort delayed unlink (Mode C PS1/task must stay until the new window reads them). */

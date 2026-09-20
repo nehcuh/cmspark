@@ -210,6 +210,18 @@ test("panel opener is thread-bound and uses the existing terminal.open_tab messa
   assert.match(panel, /role="alert"/)
 })
 
+test("panel hooks are not after the open=false early return (React #310 /code crash)", () => {
+  const panel = src(PANEL)
+  const early = panel.search(/if\s*\(\s*!open\s*\)\s*return\s+null/)
+  assert.ok(early >= 0, "early return must exist")
+  const after = panel.slice(early)
+  assert.doesNotMatch(
+    after,
+    /\buse(Callback|Effect|Memo|State|Ref|LayoutEffect|Id)\s*\(/,
+    "hooks after `if (!open) return null` change count when /code opens the panel (React #310)",
+  )
+})
+
 test("no auto-open: the opener identifier is only ever declared or wired to onClick", () => {
   const panel = src(PANEL)
   const positions = [...panel.matchAll(/\bopenEmbeddedTerminalTab\b/g)].map(m => m.index!)

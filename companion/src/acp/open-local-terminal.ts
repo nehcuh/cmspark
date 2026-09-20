@@ -1479,7 +1479,7 @@ export async function openLocalTerminalForAgent(
           modeCTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mode-c-"))
         }
         const ps1 = path.join(modeCTempDir, l0 ? "l0.ps1" : "run.ps1")
-        writeExclusiveUtf8(ps1, body)
+        writeExclusiveUtf8(ps1, body, { bom: true })
         modeCTempFiles.push(ps1)
         return ps1
       }

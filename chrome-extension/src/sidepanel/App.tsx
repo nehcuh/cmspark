@@ -248,7 +248,8 @@ function AppContent() {
       <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
-      {/* Full-height 编程接力 壳 — replaces old task-package-only modal as primary UX */}
+      {/* Isolate /code overlay crashes so they cannot white-screen the whole sidepanel. */}
+      <ErrorBoundary>
       <CodingAgentPanel
         key={appState.activeThreadId || "no-thread"}
         open={codingPanelOpen && codingPanelThreadRef.current === appState.activeThreadId}
@@ -275,6 +276,7 @@ function AppContent() {
           )?.coding_handoff?.open_local_terminal === true
         }
       />
+      </ErrorBoundary>
       {/* P1 D10′: full confirm dialog removed from Panel — Cockpit ConfirmElevated + MinimalConfirm */}
       <McpServerForm />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}

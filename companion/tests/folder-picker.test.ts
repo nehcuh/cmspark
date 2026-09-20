@@ -15,15 +15,29 @@ import {
 
 const execFileP = promisify(execFile)
 
-test("windows folder pick script forces UTF-8 stdout and a TopMost owner form", () => {
+test("windows picker runner must not use CREATE_NO_WINDOW (windowsHide)", () => {
+  const raw = fs.readFileSync(path.join("src", "obsidian", "folder-picker.ts"), "utf8")
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1")
+  assert.match(src, /windowsHide:\s*false/)
+  assert.match(src, /-WindowStyle/)
+  assert.doesNotMatch(src, /windowsHide:\s*true/)
+})
+
+test("windows folder pick script is a single on-screen FolderBrowserDialog (no BrowseForFolder short-circuit)", () => {
   const script = buildWindowsFolderPickScript(WORKSPACE_FOLDER_PROMPT)
   assert.match(script, /UTF8Encoding/)
   assert.match(script, /\[Console\]::OutputEncoding/)
+  assert.match(script, /FolderBrowserDialog/)
+  assert.match(script, /CenterScreen/)
   assert.match(script, /TopMost/)
-  assert.match(script, /ShowDialog\(\$f\)/)
   assert.match(script, /选择工作区文件夹/)
   assert.match(script, /\[Console\]::Out\.Write/)
   assert.doesNotMatch(script, /Write-Output/)
+  assert.doesNotMatch(script, /BrowseForFolder/)
+  assert.doesNotMatch(script, /CmsparkPick/)
+  assert.doesNotMatch(script, /IFileOpenDialog/)
+  assert.doesNotMatch(script, /-32000/)
+  assert.match(script, /exit 3/)
 })
 
 test("windows folder pick script escapes PowerShell single quotes in the prompt", () => {
@@ -36,7 +50,10 @@ test("windows file pick script uses the same owner + UTF-8 contract", () => {
   assert.match(script, /UTF8Encoding/)
   assert.match(script, /OpenFileDialog/)
   assert.match(script, /ShowDialog\(\$f\)/)
+  assert.match(script, /CenterScreen/)
   assert.match(script, /选择 Python/)
+  assert.match(script, /exit 3/)
+  assert.doesNotMatch(script, /-32000/)
 })
 
 test("parsePickerStdout strips BOM, CR, and trailing newline", () => {
