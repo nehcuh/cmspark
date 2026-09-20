@@ -18,6 +18,17 @@ test("scoreRelatedPair: co-tag contributes weighted jaccard", () => {
   assert.ok(hit.signals.co_tag <= RELATED_W_CO_TAG)
 })
 
+test("#517 findRelatedThreads skips workers, keeps orchestrator parent", () => {
+  const threads = [
+    { id: "p", agent_role: "orchestrator", digest: { tags: ["c2c"], tldr: "主任务" } },
+    { id: "w", agent_role: "worker", digest: { tags: ["c2c"], tldr: "子任务" } },
+    { id: "peer", digest: { tags: ["c2c"], tldr: "别的对话" } },
+  ]
+  const fromParent = findRelatedThreads("p", threads, 5)
+  assert.ok(fromParent.every((h) => h.thread_id !== "w"))
+  assert.ok(fromParent.some((h) => h.thread_id === "peer"))
+})
+
 test("findRelatedThreads: top-K, excludes self and zero-score", () => {
   const threads = [
     { id: "seed", digest: { tags: ["x", "y"], tldr: "foo bar" } },

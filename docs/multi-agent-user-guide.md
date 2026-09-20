@@ -19,7 +19,7 @@
 
 ## 1. 一句话
 
-复杂任务可由 **Orchestrator（编排线程）** 经你确认后 **`spawn_worker`** 拉起多个 **Worker（子线程）**；同一 Chrome **tab 同时只能被一个 holder 操作**（tab lease）。子任务在最近对话里默认藏在主任务下面（「N 子任务」打开已有 Fleet 列表；进入后顶栏「← 主任务」）。  
+复杂任务可由 **Orchestrator（编排线程）** 经你确认后 **`spawn_worker`** 拉起多个 **Worker（子线程）**；同一 Chrome **tab 同时只能被一个 holder 操作**（tab lease）。子任务在最近对话里默认藏在主任务下面（「N 子任务」打开已有 Fleet 列表；进入后顶栏「← 主任务」）。图谱、相关、检索只纳主对话（含 spawn 后升成编排的父），不把 worker 当平级节点。  
 **Mission Board** 是线程上的结构化黑板（Fact / Intent / Hint）。`collect_handback`：worker 仍在跑 → `WORKER_STILL_RUNNING`（不停兄弟）；写完的 Markdown 研究报告是成功收取（`structured=false`），不是 JSON 解析失败。结构化 Fact/Intent 仍合并进板。
 
 这与 GOAL 里实验性 **Type C Skill / `sub_agent`** 设想、以及「再装一个深层 Agent」**不是同一机制**：这里是 **同一 Companion 上的编排 + 子线程**。

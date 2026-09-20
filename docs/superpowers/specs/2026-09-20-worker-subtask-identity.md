@@ -26,7 +26,7 @@ Status: LOCKED（实现 r2 dual AWN：kimi + claude）
 
 ## 三面同调
 
-ThreadList 活列表、WorkspaceFrame 最近对话、AtThreadPopover 默认池都走同一调词。**回收站不走此调词**（恢复/销毁面，父子都列出）。@ 引用默认排除隐藏的 worker（搜索式 @ 查询仍可命中，标题 `子任务 · {own} · 属于「父」`，无父则 `子任务 · {own}`）。搜索态 ThreadList 不再叠 roleBadge「子任务」。
+ThreadList 活列表、WorkspaceFrame 最近对话、AtThreadPopover 默认池都走同一调词。**回收站不走此调词**（恢复/销毁面，父子都列出）。图谱 / 相关 / 检索只纳主对话（含 orchestrator 父），不把 worker 当平级节点（#517）。@ 引用默认排除隐藏的 worker（搜索式 @ 查询仍可命中，标题 `子任务 · {own} · 属于「父」`，无父则 `子任务 · {own}`）。搜索态 ThreadList 不再叠 roleBadge「子任务」。
 
 `filterConversationEnum` 的 `viewIds` 必须来自**未剔除当前会话**的集合。`excludeId`（@ 当前线程）只从**结果**去掉自己，不得先从输入里拿掉父行——否则条件 2 恒假，主任务里 @ 会把该父的空闲 worker 摊回默认池。
 

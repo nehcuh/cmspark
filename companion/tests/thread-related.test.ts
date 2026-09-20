@@ -44,6 +44,24 @@ describe("thread related (Wave C)", () => {
     assert.ok(hits.some((h) => h.thread_id === "ok"))
   })
 
+  it("#517 findRelatedThreads skips workers, keeps orchestrator parent", () => {
+    const threads = [
+      { id: "p", agent_role: "orchestrator", digest: { tags: ["c2c"], tldr: "主任务" } },
+      {
+        id: "w",
+        agent_role: "worker",
+        digest: { tags: ["c2c"], tldr: "子任务" },
+      },
+      { id: "peer", digest: { tags: ["c2c"], tldr: "别的对话" } },
+    ]
+    const fromParent = findRelatedThreads("p", threads, 5)
+    assert.ok(fromParent.every((h) => h.thread_id !== "w"))
+    assert.ok(fromParent.some((h) => h.thread_id === "peer"))
+    const fromWorker = findRelatedThreads("w", threads, 5)
+    assert.ok(fromWorker.some((h) => h.thread_id === "p"), "worker seed may still relate to parent")
+    assert.ok(fromWorker.every((h) => h.thread_id !== "w"))
+  })
+
   it("findRelatedThreads empty when seed missing digest and no signal", () => {
     const threads = [
       { id: "seed" },

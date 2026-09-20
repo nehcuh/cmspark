@@ -2,7 +2,7 @@
  * #439 LLM search_threads / search_knowledge.
  *
  * Pins spec §5 / §7: independent clamp 5/10, omit score, redact secrets,
- * no messages field, empty hits, worker/orchestrator filter, plan_readonly
+ * no messages field, empty hits, worker filter (orchestrator parent stays), plan_readonly
  * allow, L2 red-line, companion-local (not tool.forward), catalog preamble
  * distinguishes thread_recall.
  */
@@ -114,9 +114,9 @@ test("#439 search_threads: omit score; no messages field; clamp 5", () => {
   assert.equal(capped.hits.length, 10)
 })
 
-test("#439 search_threads: worker/orchestrator filtered (same predicate as thread.search)", () => {
+test("#517 search_threads: worker out, orchestrator parent stays (same predicate as thread.search)", () => {
   assert.equal(isSearchableThreadRow({ agent_role: "worker" }), false)
-  assert.equal(isSearchableThreadRow({ agent_role: "orchestrator" }), false)
+  assert.equal(isSearchableThreadRow({ agent_role: "orchestrator" }), true)
   assert.equal(isSearchableThreadRow({ agent_role: "normal" }), true)
   assert.equal(isSearchableThreadRow({}), true)
   const rows = [
@@ -127,8 +127,10 @@ test("#439 search_threads: worker/orchestrator filtered (same predicate as threa
   const r = runSearchThreads(rows, "brew")
   assert.equal(r.ok, true)
   if (!r.ok) return
-  assert.equal(r.hits.length, 1)
-  assert.equal(r.hits[0].thread_id, "user")
+  assert.deepEqual(
+    r.hits.map((h) => h.thread_id).sort(),
+    ["o1", "user"],
+  )
 })
 
 test("#439 search_threads: sk-/api_key=/PEM/ghp_ → [REDACTED]; no message bodies", () => {

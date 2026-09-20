@@ -52,6 +52,13 @@ function textBlob(t: RelatedThreadInput): string {
   return parts.join(" ")
 }
 
+function inRelatedPool(t: RelatedThreadInput): boolean {
+  if (!t?.id || t.trashed_at) return false
+  // Subtasks are slices of the parent — not peer conversations (#517).
+  if (t.agent_role === "worker") return false
+  return true
+}
+
 function updatedMs(t: RelatedThreadInput): number {
   const raw = t.last_message_at || t.created_at
   if (!raw) return 0
@@ -111,8 +118,7 @@ export function findRelatedThreads(
   if (!seed || seed.trashed_at) return []
   const hits: RelatedHit[] = []
   for (const t of threads) {
-    if (!t?.id || t.id === seedId) continue
-    if (t.trashed_at) continue
+    if (t.id === seedId || !inRelatedPool(t)) continue
     const hit = scoreRelatedPair(seed, t)
     if (hit.score <= 0) continue
     hits.push(hit)
@@ -129,7 +135,7 @@ export function buildRelatedEdges(
   threads: RelatedThreadInput[],
   opts?: { minScore?: number; maxEdges?: number },
 ): Array<{ a: string; b: string; score: number; shared_tags: string[] }> {
-  const live = threads.filter((t) => t?.id && !t.trashed_at)
+  const live = threads.filter(inRelatedPool)
   const minScore = opts?.minScore ?? 0.15
   const maxEdges = opts?.maxEdges ?? 200
   const edges: Array<{ a: string; b: string; score: number; shared_tags: string[] }> = []
