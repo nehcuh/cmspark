@@ -9,7 +9,7 @@
 - **实现 r1 dual** kimi+claude **REJECT**：B1 `require("node:fs")` 打红 tsc；B2 @ 先抠 excludeId 导致主任务里 worker 摊平；B3 @ 缺归属标题
 - **r2** `[executed]`：excludeId 改成结果过滤；belong title；trash chip disabled；静态 `node:fs` import。`chrome-extension` **1450/0**。timeline **42/42**
 - **r2 dual** kimi **AWN** + claude **AWN**（claude 沙箱写不了文件，正文落 `issue-515-r2-dual-claude.md`）。折 nit：面包屑不跳软删父；宽屏搜索匹配 belong/role；归属标题带 own；selectMode chip disabled；计数一次过；搜索不叠「子任务」badge
-- **提交**：与 collect_handback 拆开。本 commit 关 #515；handback 在前一 commit（Refs #502）。未 push。
+- **#516** 整理确认被 overflow 裁切；回收站藏 worker + 无一键清空。确认条顶置；trash 不走 enum hide；「清空回收站」走既有 hard batch。Issue https://github.com/nehcuh/cmspark/issues/516
 
 ### S110 (2026-09-19) [fix/502-adversarial-punchlist 六路对抗评审]
 

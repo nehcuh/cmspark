@@ -713,6 +713,24 @@ test("#515 filterConversationEnum excludeId does not leak parent workers", () =>
   )
 })
 
+test("#516 trash-only enum would hide workers if parent is also trashed", () => {
+  const trashed = [
+    { id: "p", agent_role: "normal" as const, trashed_at: "2026-01-01T00:00:00Z" },
+    {
+      id: "w",
+      agent_role: "worker" as const,
+      parent_thread_id: "p",
+      user_message_count: 1,
+      trashed_at: "2026-01-01T00:00:00Z",
+    },
+  ]
+  assert.deepEqual(
+    filterConversationEnum(trashed, { activeThreadId: "x" }).map((t) => t.id),
+    ["p"],
+    "why trash view must not reuse conversation-enum hide (parent still in the trash set)",
+  )
+})
+
 test("#515 conversation enum surfaces share filterConversationEnum", () => {
   const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
   const atSrc = read("src/sidepanel/components/AtThreadPopover.tsx")
@@ -748,4 +766,13 @@ test("#515 conversation enum surfaces share filterConversationEnum", () => {
     /badge && !\(searching && isFleetWorkerThread/,
     "search belong-title already says 子任务 — do not double the role badge",
   )
+  assert.match(
+    listSrc,
+    /trashView\s*\?\s*base\s*:\s*\n?\s*filterConversationEnum/,
+    "trash recovery must list every trashed row, including workers",
+  )
+  assert.match(listSrc, /清空回收站/)
+  const pendingAt = listSrc.indexOf("{pendingDelete &&")
+  const cleanupAt = listSrc.indexOf("{cleanupOpen &&")
+  assert.ok(pendingAt >= 0 && cleanupAt >= 0 && pendingAt < cleanupAt, "delete confirm must sit above the nested cleanup scroller")
 })

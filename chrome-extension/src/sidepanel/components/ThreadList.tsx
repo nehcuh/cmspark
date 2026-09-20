@@ -396,10 +396,13 @@ export function ThreadList() {
     const base = (threads as Thread[]).filter((t) =>
       trashView ? !!t.trashed_at : !t.trashed_at,
     )
-    const enumerated = filterConversationEnum(base, {
-      activeThreadId,
-      query,
-    })
+    // Trash is recovery, not a conversation enum — keep every trashed row (#516).
+    const enumerated = trashView
+      ? base
+      : filterConversationEnum(base, {
+          activeThreadId,
+          query,
+        })
     return filterThreadsByQuery(enumerated, query)
   }, [threads, query, trashView, activeThreadId])
 
@@ -628,6 +631,18 @@ export function ThreadList() {
     setMenuOpen(false)
     if (!ids.length) { setMutationNotice("没有可清理的空白对话；可刷新列表后再次检查。"); return }
     setPendingDelete({ ids, hard: true, source: "empty" })
+  }
+
+  const handleEmptyTrash = () => {
+    if (mutationRef.current || !trashView) return
+    const ids = (filtered as Thread[])
+      .filter((t) => t.trashed_at && !threadBusyById[t.id])
+      .map((t) => t.id)
+    if (!ids.length) {
+      setMutationNotice("回收站没有可永久删除的对话（运行中的会跳过）。")
+      return
+    }
+    setPendingDelete({ ids, hard: true, source: "batch" })
   }
 
   const handleGenerateTitle = () => {
@@ -1499,6 +1514,38 @@ export function ThreadList() {
             }}
           >
             <div className="cm-thread-management-title" style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${tokens.border}` }}><strong style={{ flex: 1, fontSize: 14 }}>对话管理</strong><button type="button" className="cm-icon-button" aria-label="关闭历史对话" onClick={() => { setOpen(false); triggerRef.current?.focus() }}>×</button></div>
+            {pendingDelete && (
+              <div
+                role="alertdialog"
+                aria-label="确认删除会话"
+                aria-describedby="cm-delete-description"
+                style={styles.pendingDelete}
+              >
+                <div id="cm-delete-description"><p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>
+                  {pendingDelete.source === "empty" ? `永久清理 ${pendingDelete.ids.length} 个空白对话？不可恢复，服务端会再次检查是否仍为空白。` : pendingDelete.hard
+                    ? `永久删除 ${pendingDelete.ids.length} 个会话？不可恢复。`
+                    : `将 ${pendingDelete.ids.length} 个会话移入回收站？可在回收站恢复（约 30 天后自动清理）。`}
+                  {pendingDelete.source === "cleanup" &&
+                  cleanupSuggestions.some(
+                    (s) => pendingDelete.ids.includes(s.thread_id) && s.reason === "acp_husk",
+                  )
+                    ? " 含编程接力记录，请再核对。"
+                    : ""}
+                </p>
+                <ul className="cm-delete-preview">{pendingDelete.ids.slice(0, 5).map(id => <li key={id}>{displayThreadTitle(threads.find(t => t.id === id) || { id })} <span>#{id}</span></li>)}</ul>
+                {pendingDelete.ids.length > 5 && <p className="cm-thread-management-help">另有 {pendingDelete.ids.length - 5} 个已选对话</p>}
+                </div>
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button type="button" style={styles.dangerBtn} disabled={mutating} onClick={executePendingDelete}>
+                    {pendingDelete.hard ? "永久删除" : "移入回收站"}
+                  </button>
+                  <button type="button" data-delete-cancel style={styles.selectBtn} onClick={() => setPendingDelete(null)}>
+                    取消
+                  </button>
+                </div>
+              </div>
+            )}
+            {mutationNotice && <div className="cm-thread-mutation-notice" role="status" aria-live="polite"><span>{mutationNotice}</span>{!mutating && <button type="button" onClick={() => chrome.runtime.sendMessage({ type: "thread.list", include_trashed: trashView })}>刷新列表</button>}</div>}
             <div className="cm-thread-management-header" style={styles.panelHeader}>
               <div className="cm-thread-management-views" style={styles.viewToggle}>
                 <button
@@ -1665,6 +1712,16 @@ export function ThreadList() {
               <button type="button" onClick={() => { setCleanupOpen(true); runCleanupScan() }}>整理助手</button>
               <button type="button" onClick={openThreadGraph}>关系图谱</button>
               <button type="button" onClick={() => trashView ? closeTrashView() : openTrashView()}>{trashView ? "返回对话" : "回收站"}</button>
+              {trashView ? (
+                <button
+                  type="button"
+                  onClick={handleEmptyTrash}
+                  disabled={filtered.length === 0 || mutating}
+                  title="永久删除回收站中当前列出的对话；未满 30 天的也会删除"
+                >
+                  清空回收站
+                </button>
+              ) : null}
             </div>
             {cleanupOpen && (
                 <div className="cm-thread-cleanup" style={styles.cleanupPanel} role="region" aria-label="整理建议">
@@ -1798,41 +1855,9 @@ export function ThreadList() {
                 )}
               </div>
             )}
-            {pendingDelete && (
-              <div
-                role="alertdialog"
-                aria-label="确认删除会话"
-                aria-describedby="cm-delete-description"
-                style={styles.pendingDelete}
-              >
-                <div id="cm-delete-description"><p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>
-                  {pendingDelete.source === "empty" ? `永久清理 ${pendingDelete.ids.length} 个空白对话？不可恢复，服务端会再次检查是否仍为空白。` : pendingDelete.hard
-                    ? `永久删除 ${pendingDelete.ids.length} 个会话？不可恢复。`
-                    : `将 ${pendingDelete.ids.length} 个会话移入回收站？可在回收站恢复（约 30 天后自动清理）。`}
-                  {pendingDelete.source === "cleanup" &&
-                  cleanupSuggestions.some(
-                    (s) => pendingDelete.ids.includes(s.thread_id) && s.reason === "acp_husk",
-                  )
-                    ? " 含编程接力记录，请再核对。"
-                    : ""}
-                </p>
-                <ul className="cm-delete-preview">{pendingDelete.ids.slice(0, 5).map(id => <li key={id}>{displayThreadTitle(threads.find(t => t.id === id) || { id })} <span>#{id}</span></li>)}</ul>
-                {pendingDelete.ids.length > 5 && <p className="cm-thread-management-help">另有 {pendingDelete.ids.length - 5} 个已选对话</p>}
-                </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button type="button" style={styles.dangerBtn} disabled={mutating} onClick={executePendingDelete}>
-                    {pendingDelete.hard ? "永久删除" : "移入回收站"}
-                  </button>
-                  <button type="button" data-delete-cancel style={styles.selectBtn} onClick={() => setPendingDelete(null)}>
-                    取消
-                  </button>
-                </div>
-              </div>
-            )}
             {view === "ai" && <p className="cm-thread-management-help">按 AI 提取的首个主题标签自动分组；重新提取可能调整 AI 分组，不改变手动分组。点击“AI 提取标签”为最多20个未标注对话提取标签。</p>}
             {view === "tags" && <p className="cm-thread-management-help">汇总人工与 AI 标签；点对话右侧“分类”管理人工标签。</p>}
             {metadataNotice && <p className="cm-thread-management-help" role="status">{metadataNotice}</p>}
-            {mutationNotice && <div className="cm-thread-mutation-notice" role="status" aria-live="polite"><span>{mutationNotice}</span>{!mutating && <button type="button" onClick={() => chrome.runtime.sendMessage({ type: "thread.list", include_trashed: trashView })}>刷新列表</button>}</div>}
             {editingThread && <ThreadMetadataEditor key={editingThread.id} thread={editingThread} folders={[...new Set(threads.map(t => t.topic_folder).filter((name): name is string => !!name))]} onClose={() => closeMetadataEditor()} onSaved={thread => { dispatch({ type: "UPSERT_THREAD", thread }); closeMetadataEditor(thread.id); setMetadataNotice("分类已保存") }} />}
             {extractProgress && extractProgress.total > 0 && (
               <div style={styles.progressBar} role="status" aria-live="polite">
@@ -2194,6 +2219,7 @@ const styles: Record<string, React.CSSProperties> = {
   list: {
     overflowY: "auto",
     flex: 1,
+    minHeight: 80,
   },
   groupHeader: {
     display: "flex",

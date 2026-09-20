@@ -6,6 +6,7 @@
 
 - 多智能体触发面（#513）：提示词新增舰队分派判据（含否定条件，默认倾向单干），任务适合并行时模型可调 fleet_suggest_propose 弹出非阻断建议卡「此任务适合多路并行」；点「派 worker 并行做」仅发送携带子任务清单的分派指令（不激活续跑），spawn 仍逐次 L2 确认；拒绝后 10 分钟静默。summoner 面全程排除。
 - 操作面（#502）：对话里已完成的浏览器/工具步骤默认收成可展开审计芯，reload 后不再摊无名卡。归档默认只留工具名、成败与指纹（设置可打开完整操作史；cookie/本机命令仍脱敏；tool 行不删）。单次 100 步触顶改为换段续跑，不再显示「已暂停」墓碑；同工具空转与连续失败仍熔断。舰队 Glance 显示最近工具，Inspect 不抢主对话。编程接力可把 Agent 挂进已有内嵌终端（macOS、默认关），不嵌 Alacritty、不自动开 PTY。
+- 对话管理（#516）：整理助手「移入回收站」的确认条钉在面板顶，不再被嵌套滚动裁掉；回收站列出全部已删行（含子任务），并提供「清空回收站」（面板内确认硬删，30 天 TTL 仍是兜底）。
 - 子任务身份（#515）：最近对话 / 宽屏导航 / @ 引用默认不把 worker 摊成平级聊天；主任务行「N 子任务」打开已有 Fleet 列表；进入子任务时顶栏「← 主任务」。孤儿、人在子任务里说过话、当前正在看的行仍可见。
 - collect_handback：worker 仍在跑 → WORKER_STILL_RUNNING；已写完的 Markdown 研究报告是成功收取（`structured=false` + last_assistant），不再 ⚠️「JSON parse failed / prose-only」；数学公式 `{ }` 不当坏 JSON。结构化 Fact/Intent 仍合并进 MissionBoard。
 - 操作面对抗复审第二波（#512 后续）：进行中的工具/L2 卡不再被 mid-turn 旁白折进审计芯；默认归档 reload 文案改为「正文未保存」（安全折叠仍用「出于安全未持久化」）；`spawn_worker` kick 进入 abort map，全停能打断；goal 进 L2 预览与 HMAC；归档开关点击即 `config.set`；未武装触顶不再同时画「回复继续」与「继续做完」；内容风控隔离同步 live mirror；空闲舰队不再被 4s poll 续命 Glance；内嵌终端开关写入 companion allowlist。
