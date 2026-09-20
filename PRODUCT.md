@@ -1,7 +1,7 @@
 # CMspark — Product Context (Impeccable)
 
 > Written 2026-08-11 for design harnesses. **Refreshed 2026-09-08**: home is logged-in Chrome + hard gates, not the Side Panel. **#241:** HTML float is Capture 卡片 (**1040×760** default inner; code `OVERLAY_WINDOW_SIZE` in `companion/src/summoner/shell-open.ts`). Compact toggle is **360×420**, not the default. HTML 卡跟 `chat.token` 流式出字。  
-> Version lock: companion/extension **0.6.7**。  
+> Version lock: companion/extension **0.6.8**。  
 > Remaining work: [#230](https://github.com/nehcuh/cmspark/issues/230) freeze (F-S-10 / overlay-acl). T1 [#228](https://github.com/nehcuh/cmspark/issues/228) scored, **do not expand** outbound profile. Hex PTT / Windows SAPI / speaker embedding exist; embedding stays **experimental**. New requirement designs **must** open an Issue first.
 > Form SoT: [docs/superpowers/specs/2026-08-26-product-form-deepening-design.md](docs/superpowers/specs/2026-08-26-product-form-deepening-design.md) · Capture 怎么用：[docs/summoner-user-guide.md](docs/summoner-user-guide.md)
 

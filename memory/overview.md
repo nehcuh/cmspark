@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-15 (lockstep 0.6.7; VibeSOP 8.5.0 配置已刷新)
+**Updated**: 2026-09-20 (lockstep 0.6.8)
 
-## CMspark — 产品 0.6.7
+## CMspark — 产品 0.6.8
 
 | 轴 | 状态 |
 |----|------|
@@ -20,7 +20,7 @@
 
 ## Branch lock (S104)
 
-- 包装 **0.6.7**（S107 诚实关门）：活文档锁步、Capture 1040×760、知识 TF-IDF top-k、会议收起文案、CLI `--version`、assistant args 落盘脱敏。本机此前狗食仍是 0.6.6 NSIS，需再编包才换装。0.6.6 = #423 Qwen3-VL 坐标系。0.7.0 企业双场景仍未验收。
+- 包装 **0.6.8**：操作面审计芯 / 舰队 Glance·Inspect·kick / 子任务身份 / collect_handback 诚实 / 回收站清空。0.7.0 企业双场景仍未验收。
 - **评审弧闭环**：c39d7d3e..26949cbb 四路对抗 7 MAJOR 全修（#261–#264），main tip `18d843d1`。
 - S104 起 origin 已含开闸+查重（#280–#283）；评审波次（#286–#295）十张 PR 已合入，见 GATE-SUMMARY。
 - **活票**：#230 冻 F-S-10 / overlay-acl。T1 #228 已关，**禁扩** profile。#258–#260 已在树（embedding experimental）。
@@ -34,6 +34,6 @@
 
 ## Docs SoT
 
-- 活切点：`CHANGELOG.md` **0.6.7**
+- 活切点：`CHANGELOG.md` **0.6.8**
 - 0.5.3 快照：`docs/superpowers/specs/2026-08-27-post-227-status.md`（SNAPSHOT）
 - 用户 / 架构：`docs/README.md` · `PRODUCT.md`

@@ -1,7 +1,7 @@
 # Multi-Agent 与 Mission Board 使用说明
 
 > **面向使用者**：编排者如何拉起 Worker、tab 锁是什么、任务板怎么用、上限与禁区。  
-> **产品版本**：0.5.0  
+> **产品版本**：0.6.8  
 > **决策**：[ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) · [ADR-016](adr/016-mission-board.md)  
 > **任务包交叉**：[mission-pack-usage.md §10](mission-pack-usage.md#10-multi-agent编排-worker与任务包) · **确认台**：[confirm-center-user-guide.md](confirm-center-user-guide.md)
 
@@ -19,8 +19,8 @@
 
 ## 1. 一句话
 
-复杂任务可由 **Orchestrator（编排线程）** 经你确认后 **`spawn_worker`** 拉起多个 **Worker（子线程）**；同一 Chrome **tab 同时只能被一个 holder 操作**（tab lease）。  
-**Mission Board** 是线程上的结构化黑板（Fact / Intent / Hint），避免「散文 handback 幻觉扫完」——它属于 **自主度 / 协作**，不是 Skill/MCP 那种组合原语。
+复杂任务可由 **Orchestrator（编排线程）** 经你确认后 **`spawn_worker`** 拉起多个 **Worker（子线程）**；同一 Chrome **tab 同时只能被一个 holder 操作**（tab lease）。子任务在最近对话里默认藏在主任务下面（「N 子任务」打开已有 Fleet 列表；进入后顶栏「← 主任务」）。  
+**Mission Board** 是线程上的结构化黑板（Fact / Intent / Hint）。`collect_handback`：worker 仍在跑 → `WORKER_STILL_RUNNING`（不停兄弟）；写完的 Markdown 研究报告是成功收取（`structured=false`），不是 JSON 解析失败。结构化 Fact/Intent 仍合并进板。
 
 这与 GOAL 里实验性 **Type C Skill / `sub_agent`** 设想、以及「再装一个深层 Agent」**不是同一机制**：这里是 **同一 Companion 上的编排 + 子线程**。
 
