@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 对话图谱：index 里重复 id（Windows 测试把 `tool01` / `Tool result regression` 写进真实数据目录）不再画成一堆同名节点。`thread.list` 按 id 去重；create 同 id 覆盖不追加。
 - 检索 / 相关（#517）：spawn 后的主对话（编排父）仍可搜、可进相关；子任务不再当平级相关会话。图谱节点集原本就不含 worker。
 
 ## [0.6.8] — 2026-09-20

@@ -2,6 +2,14 @@
 
 ## Process Patterns
 
+### Windows 测试只设 HOME 会写进真实 ~/.cmspark-agent（2026-09-20）
+- **现象**：对话图谱一堆「Tool result regression」。index.json 2901 行、1156 个 id；`tool01` 重复 114 次。
+- **根因**：Node `os.homedir()` 在 Windows 用 `USERPROFILE`，忽略 `HOME`。测试 `create("Tool result regression", "tool01")` 每次 `unshift` 同 id。`DATA_DIR` 必须用 `CMSPARK_DATA_DIR`（`getConfigDir()` 活读）。
+- **保护**：`list`/`saveIndex` 按 id 去重（保留先出现=最新）；`create` 同 id 覆盖不追加；图谱 snapshot 去重。新测试顶栏钉 `CMSPARK_DATA_DIR`。
+- **4 行 case**：动作=Windows 跑 companion 测试；失败=真实会话库被 fixture 灌爆；归责=HOME≠homedir；保护=CMSPARK_DATA_DIR + index unique-by-id
+
+### 对话枚举藏 worker：excludeId 不得先抠父行（2026-09-20 · #515）
+
 ### 对话枚举藏 worker：excludeId 不得先抠父行（2026-09-20 · #515）
 - **现象**：方案 A 默认藏子任务后，在主任务里 @ 引用，空闲 worker 又摊回默认池（裸 id）。
 - **根因**：`shouldHideInConversationEnum` 条件 2 = 父 id ∈ `viewIds`。@ 池先 `filter(t => t.id !== excludeId)` 再枚举 → 当前父不在 viewIds → 条件 2 恒假 → 该父的 idle worker 当孤儿平铺。

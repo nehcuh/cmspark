@@ -14,6 +14,7 @@ let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
 
 before(async () => {
   process.env.HOME = tempHome
+  process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
   delete process.env.DEEPSEEK_API_KEY
 
   const adapter = await import("../src/llm/adapter")

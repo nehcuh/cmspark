@@ -23,6 +23,8 @@ let getLogFilePath: typeof import("../src/logger").getLogFilePath
 
 before(async () => {
   process.env.HOME = tempHome
+  // Windows: os.homedir() ignores HOME and would write tool01 into the real ~/.cmspark-agent.
+  process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
   delete process.env.DEEPSEEK_API_KEY
 
   const config = await import("../src/config")

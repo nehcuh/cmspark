@@ -71,6 +71,26 @@ describe("ThreadManager - Normal Paths", () => {
     assert.equal(thread.alias, "Custom ID Thread")
   })
 
+  test("create with the same explicit id does not duplicate index rows", () => {
+    const tm = new ThreadManager()
+    tm.create("Tool result regression", "tool01")
+    tm.create("Tool result regression", "tool01")
+    const listed = tm.list().filter((t) => t.id === "tool01")
+    assert.equal(listed.length, 1)
+    assert.equal(tm.list().length, 1)
+  })
+
+  test("list unique-by-id heals a corrupted index with duplicate rows", () => {
+    const tm = new ThreadManager()
+    tm.create("once", "dup-id")
+    const indexPath = path.join(getConfigDir(), "threads", "index.json")
+    const raw = JSON.parse(fs.readFileSync(indexPath, "utf8")) as { threads: Array<{ id: string; alias?: string }> }
+    raw.threads.unshift({ ...raw.threads[0], alias: "ghost copy" })
+    fs.writeFileSync(indexPath, JSON.stringify(raw))
+    const tm2 = new ThreadManager()
+    assert.equal(tm2.list().filter((t) => t.id === "dup-id").length, 1)
+  })
+
   test("create thread with config_override", () => {
     const tm = new ThreadManager()
     const config = { temperature: 0.5, model_name: "gpt-4" }
