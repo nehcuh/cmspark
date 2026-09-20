@@ -4,6 +4,9 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
+import { execFileSync } from "node:child_process"
+import * as fs from "node:fs"
+import * as os from "node:os"
 import * as path from "node:path"
 import {
   shellSingleQuote,
@@ -28,7 +31,7 @@ import {
   formatModeCOpenedLabel,
   type WinDetachedSpawnFn,
 } from "../src/acp/open-local-terminal"
-import { windowsCmdExePath, windowsPowerShellExePath } from "../src/acp/win-spawn"
+import { windowsCmdExePath, windowsPowerShellExePath, writeExclusiveUtf8 } from "../src/acp/win-spawn"
 
 describe("shellSingleQuote", () => {
   it("wraps plain strings in single quotes", () => {
@@ -185,6 +188,45 @@ describe("quotePowerShellLiteral / buildWindowsModeCScript", () => {
     assert.match(s, /\$task = Get-Content -LiteralPath 'C:\\tmp\\task\.md'/)
     assert.match(s, /& 'C:\\Tools\\opencode\.exe' --prompt \$task/)
     assert.doesNotMatch(s, /opencode\.exe' \$task/)
+  })
+
+  it("UTF-8 BOM makes PS 5.1 -File parse Chinese Mode C banners (WinGet claude.exe path)", {
+    skip: process.platform !== "win32" ? "Windows-only encoding contract" : false,
+  }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mode-c-bom-"))
+    const body = buildWindowsModeCScript({
+      cwd: "C:\\Users\\HuChen\\Projects\\cmspark",
+      command:
+        "C:\\Users\\HuChen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe",
+      extraArgs: [],
+      agentLabel: "Claude",
+      goalHint: "修一下认证",
+      promptFile: path.join(dir, "task.md"),
+    })
+    const nobom = path.join(dir, "nobom.ps1")
+    const bom = path.join(dir, "bom.ps1")
+    fs.writeFileSync(nobom, body, "utf8")
+    writeExclusiveUtf8(bom, body, { bom: true })
+    const ps = windowsPowerShellExePath()
+    const parse = (file: string) => {
+      const lit = file.replace(/'/g, "''")
+      const cmd = `$e=$null; $t=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${lit}', [ref]$t, [ref]$e); if ($e -and $e.Count) { $e[0].ToString(); exit 1 }; 'PARSE_OK'`
+      try {
+        return execFileSync(ps, ["-NoProfile", "-Command", cmd], {
+          encoding: "utf8",
+          timeout: 15000,
+          windowsHide: true,
+        }).trim()
+      } catch (e: any) {
+        return String(e.stdout || e.stderr || e.message)
+      }
+    }
+    try {
+      assert.match(parse(nobom), /claude\.exe' \$task/)
+      assert.equal(parse(bom), "PARSE_OK")
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

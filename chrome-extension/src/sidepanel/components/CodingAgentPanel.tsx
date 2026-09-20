@@ -378,6 +378,7 @@ export function CodingAgentPanel({
       if (msg.error || msg.cancelled) {
         pendingStartAfterPickRef.current = false
         if (startingRef.current) setStarting(false)
+        flash(msg.cancelled ? "未选择工作区" : `工作区选择失败: ${msg.error}`, 6000)
         return
       }
       const path =
@@ -739,6 +740,26 @@ export function CodingAgentPanel({
     )
   }
 
+  // Must stay above `if (!open) return null` — a hook after that return fires only
+  // when /code opens the panel and trips React #310 (more hooks than last render).
+  const embedThreadId = session?.threadId || ""
+  /**
+   * R1/R3/R7(a): explicit-click opener. Click-only by construction — this identifier is referenced
+   * from exactly one onClick and from nothing else, and no effect may send a terminal.* frame
+   * (locked by tests/coding-panel-embed-entry.test.ts). The thread id is the key the companion
+   * recorded the embed intent under; sending it without one would land the user on a login shell.
+   */
+  const openEmbeddedTerminalTab = useCallback(() => {
+    setEmbedOpenError("")
+    chrome.runtime.sendMessage(
+      { type: "terminal.open_tab", thread_id: embedThreadId },
+      (response: { ok?: boolean; error?: string } | undefined) => {
+        const err = chrome.runtime.lastError?.message || (response?.ok ? "" : response?.error || "")
+        if (err) setEmbedOpenError(err)
+      },
+    )
+  }, [embedThreadId])
+
   if (!open) return null
 
   const wsBase = effectiveWorkspace
@@ -768,29 +789,11 @@ export function CodingAgentPanel({
    * promise an embed the companion refuses with `unsupported` (UI-hiding gate, not a boundary).
    */
   const embeddedTerminalConfig = state.config as { embedded_terminal?: { enabled?: boolean } }
-  const embedThreadId = session?.threadId || ""
   const showEmbedEntry =
     shouldShowEmbeddedTerminalEntry(embeddedTerminalConfig) &&
     isDarwin() &&
     session?.localTerminal === "embed_intent" &&
     !!embedThreadId
-
-  /**
-   * R1/R3/R7(a): explicit-click opener. Click-only by construction — this identifier is referenced
-   * from exactly one onClick and from nothing else, and no effect may send a terminal.* frame
-   * (locked by tests/coding-panel-embed-entry.test.ts). The thread id is the key the companion
-   * recorded the embed intent under; sending it without one would land the user on a login shell.
-   */
-  const openEmbeddedTerminalTab = useCallback(() => {
-    setEmbedOpenError("")
-    chrome.runtime.sendMessage(
-      { type: "terminal.open_tab", thread_id: embedThreadId },
-      (response: { ok?: boolean; error?: string } | undefined) => {
-        const err = chrome.runtime.lastError?.message || (response?.ok ? "" : response?.error || "")
-        if (err) setEmbedOpenError(err)
-      },
-    )
-  }, [embedThreadId])
 
   return (
     <div

@@ -10,6 +10,7 @@
 import { execFile } from "child_process"
 import { promisify } from "util"
 import * as fs from "fs"
+import * as os from "os"
 import * as nodePath from "path"
 import { isLinux, isMacOS, isWindows } from "../platform"
 import { OSASCRIPT_BIN } from "../process-path"
@@ -62,42 +63,53 @@ export function resolveWindowsPowerShell(): string {
 }
 
 /**
- * WinForms folder-picker script.
+ * Windows folder pick from a hidden user-session daemon.
  *
- * Production bugs this encodes (Windows-only; macOS osascript is fine):
- * 1. ShowDialog() with no owner + hidden companion → dialog behind Chrome / hung.
- *    Owner is a 1×1 TopMost form so the dialog comes to the foreground.
- * 2. PowerShell 5.1 stdout is the system ANSI code page (CP936 on zh-CN). Node
- *    decodes utf8 → Chinese paths become mojibake → realpath ENOENT.
+ * Must NOT: custom IFileOpenDialog vtable (AV), owner HWND from Chrome,
+ * BrowseForFolder-null → exit 0 (skips fallback, looks like cancel),
+ * or Node `windowsHide: true` (CREATE_NO_WINDOW, dialog never maps).
+ * One path: FolderBrowserDialog + on-screen TopMost owner. PowerShell is
+ * spawned with windowsHide:false / -WindowStyle Hidden (SW_HIDE, still a
+ * desktop). UTF-8 stdout: PS 5.1 defaults to ANSI (CP936).
  */
 export function buildWindowsFolderPickScript(prompt: string): string {
   const title = psSingleQuote(prompt)
   return [
-    "Add-Type -AssemblyName System.Windows.Forms",
-    "Add-Type -AssemblyName System.Drawing",
-    "[System.Windows.Forms.Application]::EnableVisualStyles()",
     "$utf8 = New-Object System.Text.UTF8Encoding $false",
     "[Console]::OutputEncoding = $utf8",
     "$OutputEncoding = $utf8",
-    "$d = New-Object System.Windows.Forms.FolderBrowserDialog",
-    `$d.Description = '${title}'`,
-    "$d.ShowNewFolderButton = $true",
-    "try { $d.UseDescriptionForTitle = $true } catch {}",
-    "$f = New-Object System.Windows.Forms.Form",
-    "$f.TopMost = $true",
-    "$f.ShowInTaskbar = $false",
-    "$f.StartPosition = 'Manual'",
-    "$f.Location = New-Object System.Drawing.Point(-32000, -32000)",
-    "$f.Size = New-Object System.Drawing.Size(1, 1)",
-    "$null = $f.Show()",
-    "try { $f.Activate() } catch {}",
-    "$r = $d.ShowDialog($f)",
-    "$f.Close()",
-    "$f.Dispose()",
-    "if ($r -eq [System.Windows.Forms.DialogResult]::OK -and $d.SelectedPath) {",
-    "  [Console]::Out.Write($d.SelectedPath)",
+    `$title = '${title}'`,
+    "$ErrorActionPreference = 'Stop'",
+    "try {",
+    "  Add-Type -AssemblyName System.Windows.Forms",
+    "  Add-Type -AssemblyName System.Drawing",
+    "  [System.Windows.Forms.Application]::EnableVisualStyles()",
+    "  $d = New-Object System.Windows.Forms.FolderBrowserDialog",
+    "  $d.Description = $title",
+    "  $d.ShowNewFolderButton = $true",
+    "  $d.RootFolder = [System.Environment+SpecialFolder]::Desktop",
+    "  try { $d.UseDescriptionForTitle = $true } catch {}",
+    "  $f = New-Object System.Windows.Forms.Form",
+    "  $f.TopMost = $true",
+    "  $f.ShowInTaskbar = $false",
+    "  $f.StartPosition = 'CenterScreen'",
+    "  $f.Size = New-Object System.Drawing.Size(40, 40)",
+    "  $null = $f.Show()",
+    "  try { $f.Activate() } catch {}",
+    "  $r = $d.ShowDialog($f)",
+    "  $f.Close(); $f.Dispose()",
+    "  if ($r -eq [System.Windows.Forms.DialogResult]::OK -and $d.SelectedPath) {",
+    "    [Console]::Out.Write($d.SelectedPath)",
+    "    exit 0",
+    "  }",
+    "  exit 3",
+    "} catch {",
+    "  $m = $_.Exception.Message",
+    "  if (-not $m) { $m = $_.FullyQualifiedErrorId }",
+    "  [Console]::Error.Write(('WinForms: ' + $m))",
+    "  exit 2",
     "}",
-  ].join("; ")
+  ].join("\n")
 }
 
 export function buildWindowsFilePickScript(prompt: string, filter?: string): string {
@@ -117,9 +129,9 @@ export function buildWindowsFilePickScript(prompt: string, filter?: string): str
     "$f = New-Object System.Windows.Forms.Form",
     "$f.TopMost = $true",
     "$f.ShowInTaskbar = $false",
-    "$f.StartPosition = 'Manual'",
-    "$f.Location = New-Object System.Drawing.Point(-32000, -32000)",
-    "$f.Size = New-Object System.Drawing.Size(1, 1)",
+    "$f.StartPosition = 'CenterScreen'",
+    "$f.Opacity = 0.01",
+    "$f.Size = New-Object System.Drawing.Size(8, 8)",
     "$null = $f.Show()",
     "try { $f.Activate() } catch {}",
     "$r = $d.ShowDialog($f)",
@@ -133,19 +145,38 @@ export function buildWindowsFilePickScript(prompt: string, filter?: string): str
 
 async function runWindowsFormsDialog(script: string, failLabel: string): Promise<PickResult> {
   const exe = resolveWindowsPowerShell()
+  const tmp = nodePath.join(os.tmpdir(), `cmspark-pick-${process.pid}-${Date.now()}.ps1`)
   try {
-    const { stdout } = await execFileP(exe, ["-NoProfile", "-STA", "-Command", script], {
-      timeout: PICK_TIMEOUT_MS,
-      windowsHide: true,
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024,
-    })
+    fs.writeFileSync(tmp, script, "utf8")
+    // Hidden daemon uses CREATE_NO_WINDOW; a nested CREATE_NO_WINDOW child cannot
+    // map a dialog onto the interactive desktop. -WindowStyle Hidden is SW_HIDE
+    // (still a window station), not CREATE_NO_WINDOW.
+    const { stdout } = await execFileP(
+      exe,
+      ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-File", tmp],
+      {
+        timeout: PICK_TIMEOUT_MS,
+        windowsHide: false,
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+      },
+    )
     const picked = parsePickerStdout(stdout)
-    return picked ? { path: picked } : { error: "cancelled" }
+    return picked ? { path: picked } : { error: "对话框未能显示，请重试" }
   } catch (e: any) {
     if (e.killed || e.signal) return { error: "选择超时，请重试" }
-    const msg = ((e.stderr || "") + " " + (e.message || "")).toString()
-    return { error: `${failLabel}: ${msg.slice(0, 160)}` }
+    const status = typeof e.status === "number" ? e.status : Number(e.code)
+    if (status === 3) return { error: "cancelled" }
+    const stderr = String(e.stderr || "").trim()
+    const msg = String(e.message || "")
+    const short = (stderr || msg.replace(/\s*Command failed:[\s\S]*$/, "").trim() || msg).slice(0, 200)
+    return { error: `${failLabel}: ${short}` }
+  } finally {
+    try {
+      fs.unlinkSync(tmp)
+    } catch {
+      /* ignore */
+    }
   }
 }
 
