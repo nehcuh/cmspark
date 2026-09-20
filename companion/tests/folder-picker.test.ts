@@ -52,6 +52,7 @@ test("windows file pick script uses the same owner + UTF-8 contract", () => {
   assert.match(script, /ShowDialog\(\$f\)/)
   assert.match(script, /CenterScreen/)
   assert.match(script, /选择 Python/)
+  assert.match(script, /exit 3/)
   assert.doesNotMatch(script, /-32000/)
 })
 

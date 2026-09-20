@@ -139,7 +139,9 @@ export function buildWindowsFilePickScript(prompt: string, filter?: string): str
     "$f.Dispose()",
     "if ($r -eq [System.Windows.Forms.DialogResult]::OK -and $d.FileName) {",
     "  [Console]::Out.Write($d.FileName)",
+    "  exit 0",
     "}",
+    "exit 3",
   ].join("; ")
 }
 
@@ -147,7 +149,7 @@ async function runWindowsFormsDialog(script: string, failLabel: string): Promise
   const exe = resolveWindowsPowerShell()
   const tmp = nodePath.join(os.tmpdir(), `cmspark-pick-${process.pid}-${Date.now()}.ps1`)
   try {
-    fs.writeFileSync(tmp, script, "utf8")
+    fs.writeFileSync(tmp, `\uFEFF${script}`, "utf8")
     // Hidden daemon uses CREATE_NO_WINDOW; a nested CREATE_NO_WINDOW child cannot
     // map a dialog onto the interactive desktop. -WindowStyle Hidden is SW_HIDE
     // (still a window station), not CREATE_NO_WINDOW.
