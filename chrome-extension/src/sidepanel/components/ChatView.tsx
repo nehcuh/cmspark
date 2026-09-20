@@ -1069,6 +1069,13 @@ function toolResultUserHint(result: any): string | null {
     typeof result.data?.user_hint_zh === "string" ? result.data.user_hint_zh : ""
   // Prefer structured companion hints (e.g. COOKIE_TRUST_DENIED) when present.
   if (dataHint) return dataHint
+  const code = typeof result.error_code === "string" ? result.error_code : ""
+  if (code === "WORKER_STILL_RUNNING") {
+    return "子任务还在跑，还没有最终 handback。等 Glance 空闲或 wait_workers 后再收；这不会停其他 worker。"
+  }
+  if (code === "HANDBACK_MISSING_STRUCTURE") {
+    return "该 worker 写完的是研究报告正文，不是结构化 JSON handback。其他子任务不受影响，可继续等。"
+  }
   if (/default_sandbox_unavailable|cannot create default sandbox|默认工作区沙箱不可用/i.test(err)) {
     return "默认沙箱 ~/CMspark-projects 不可用：检查本机权限，或侧栏「场景」→「选择工作区」绑定目录。协议解锁不会跳过。"
   }

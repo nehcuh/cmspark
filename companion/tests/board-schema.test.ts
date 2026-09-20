@@ -151,6 +151,20 @@ test("parseHandbackPayload rejects prose-only handback", () => {
   }
 })
 
+test("parseHandbackPayload: incidental math braces are prose, not parse-failed JSON", () => {
+  // 3r2frm / worker 286ryj: C2C paper report used `C_F = { C_n(X) + F_n(...) }`.
+  // First-brace extract used to JSON.parse that fragment and say "parse failed".
+  const r = parseHandbackPayload(
+    "已完成精读。融合缓存：`C_F = { C_n(X) + F_n(C_n(X), C_{G(n)}^S(X)) }` —— Receiver 第 n 层。",
+  )
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.equal(r.error_code, HANDBACK_MISSING_STRUCTURE)
+    assert.match(r.error, /prose/i)
+    assert.doesNotMatch(r.error, /parse failed/i)
+  }
+})
+
 test("parseHandbackPayload rejects empty facts/intents without empty_ok", () => {
   const r = parseHandbackPayload({
     schema_version: 1,

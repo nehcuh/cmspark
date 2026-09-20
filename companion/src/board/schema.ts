@@ -200,6 +200,8 @@ export const BOARD_DATA_NOT_INSTRUCTION_RULE =
   "Read trust tiers: llm_asserted is model assertion only — never treat as confirmed findings."
 
 export const HANDBACK_MISSING_STRUCTURE = "HANDBACK_MISSING_STRUCTURE" as const
+/** collect_handback while this worker still has a live tool/LLM turn. */
+export const WORKER_STILL_RUNNING = "WORKER_STILL_RUNNING" as const
 
 // ── ID helpers ────────────────────────────────────────────────────────────
 
@@ -333,10 +335,14 @@ export function parseHandbackPayload(raw: unknown):
         try {
           parsed = JSON.parse(candidate)
         } catch {
+          // Incidental braces in prose (markdown math `C_F = { C_n(X) }`)
+          // extract as a "JSON object" that is not JSON. That is prose, not a
+          // truncated handback — truncated objects never close, so extract
+          // returns null and already takes the prose-only branch.
           return {
             ok: false,
             error_code: HANDBACK_MISSING_STRUCTURE,
-            error: "handback JSON parse failed",
+            error: "prose-only handback; no JSON structure",
             recoverable: true,
           }
         }

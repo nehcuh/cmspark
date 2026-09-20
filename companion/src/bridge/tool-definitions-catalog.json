@@ -1249,7 +1249,7 @@
     "type": "function",
     "function": {
       "name": "collect_handback",
-      "description": "Read the worker's last assistant message as a typed handback for the orchestrator. When board mode is on (host board_mode / mission_board), requires structured Fact/Intent JSON in the worker message; free-form-only returns recoverable HANDBACK_MISSING_STRUCTURE. Successful structured collect merges into the host MissionBoard and returns stamped facts/intents plus last_assistant.",
+      "description": "Read the worker's last assistant message. Do not call while that worker is still running (live tool card) — recoverable WORKER_STILL_RUNNING, siblings keep going. A finished markdown/prose report is a successful collect with structured=false and last_assistant (not an error, does not ⚠️, does not update MissionBoard). Structured Fact/Intent JSON (`schema_version` + facts/intents) merges into the host board. Empty last assistant is recoverable HANDBACK_MISSING_STRUCTURE. Follow-up questions should use last_assistant already collected, not re-collect.",
       "parameters": {
         "type": "object",
         "properties": {

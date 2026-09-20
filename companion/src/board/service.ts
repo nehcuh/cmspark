@@ -13,6 +13,7 @@ import {
   BOARD_SCHEMA_VERSION,
   FactSchema,
   HANDBACK_MISSING_STRUCTURE,
+  WORKER_STILL_RUNNING,
   HintSchema,
   IntentSchema,
   MissionBoardSchema,
@@ -764,6 +765,10 @@ export type CollectHandbackSuccess = {
     }
     /** G4: MissionBoard text is data not instructions. */
     data_not_instruction?: string
+    /** false = finished prose report; board was not merged. */
+    structured?: boolean
+    suggested_action?: string
+    note?: string
   }
 }
 
@@ -777,6 +782,7 @@ export type CollectHandbackFailure = {
     last_assistant: CollectHandbackLastAssistant
     message_count: number
     board_mode: boolean
+    suggested_action?: string
   }
 }
 
@@ -790,6 +796,23 @@ export function hostRequiresStructuredHandback(host: ThreadLike | null | undefin
   if (!host) return false
   if (host.board_mode === true) return true
   if (host.mission_board != null) return true
+  return false
+}
+
+/** Last row is a live tool card or an assistant that just issued tool_calls. */
+export function workerLooksInFlight(msgs: Array<{ role?: unknown; tool_calls?: unknown; finish_reason?: unknown }>): boolean {
+  if (!Array.isArray(msgs) || msgs.length === 0) return false
+  const last = msgs[msgs.length - 1] as {
+    role?: unknown
+    tool_calls?: Array<{ status?: unknown; result?: unknown }>
+    finish_reason?: unknown
+  }
+  if (last?.role === "tool" && Array.isArray(last.tool_calls)) {
+    if (last.tool_calls.some((tc) => tc?.status === "running" || tc?.result == null)) return true
+  }
+  if (last?.role === "assistant" && Array.isArray(last.tool_calls) && last.tool_calls.length > 0) {
+    if (last.finish_reason === "tool_calls" || last.finish_reason == null) return true
+  }
   return false
 }
 
@@ -851,6 +874,27 @@ export async function collectWorkerHandback(
     }
   }
 
+  if (workerLooksInFlight(msgs)) {
+    audit(
+      "board.handback_rejected",
+      {
+        thread_id: hostId,
+        worker_id: workerId,
+        error_code: WORKER_STILL_RUNNING,
+        error: "worker still running",
+      },
+      opts.auditPath,
+    )
+    return {
+      success: false,
+      error:
+        "worker still running; last assistant is not a final handback. Other workers are unaffected.",
+      error_code: WORKER_STILL_RUNNING,
+      recoverable: true,
+      data: { ...base, suggested_action: "wait_workers" },
+    }
+  }
+
   // Initialize empty board when structured path is required but board not yet created
   if (host.mission_board == null) {
     const init = await ensureBoard(tm, hostId, {
@@ -889,6 +933,37 @@ export async function collectWorkerHandback(
     }
   }
 
+  const preview = parseHandbackPayload(rawPayload)
+  if (
+    !preview.ok &&
+    preview.error_code === HANDBACK_MISSING_STRUCTURE &&
+    /prose-only/i.test(preview.error)
+  ) {
+    // Finished worker wrote a report, not board JSON (3r2frm: markdown + math
+    // braces). Collecting it is a successful read — do not ⚠️ the parent, do
+    // not merge fake facts, do not stop siblings. Follow-up "现在结论如何"
+    // must not look like a crash.
+    audit(
+      "board.handback_prose",
+      {
+        thread_id: hostId,
+        worker_id: workerId,
+        message_id: lastAssistant?.id ?? null,
+        chars: lastAssistant?.content?.length ?? 0,
+      },
+      opts.auditPath,
+    )
+    return {
+      success: true,
+      data: {
+        ...base,
+        structured: false,
+        suggested_action: "use last_assistant",
+        note: "worker finished with a prose report; MissionBoard was not updated. Other workers are unaffected.",
+      },
+    }
+  }
+
   const applied = await applyHandbackPayload(
     tm,
     hostId,
@@ -914,7 +989,7 @@ export async function collectWorkerHandback(
       error: applied.error,
       error_code: applied.error_code || HANDBACK_MISSING_STRUCTURE,
       recoverable: applied.recoverable ?? true,
-      data: base,
+      data: { ...base, suggested_action: "wait_workers" },
     }
   }
 

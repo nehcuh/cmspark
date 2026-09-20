@@ -89,7 +89,40 @@ test("collect_handback board-off keeps free-form last_assistant", async () => {
   assert.equal(readBoard(tm, parent.id), null)
 })
 
-test("collect_handback board_mode on rejects prose with HANDBACK_MISSING_STRUCTURE", async () => {
+test("collect_handback while worker still in a tool round is WORKER_STILL_RUNNING", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-busy")
+  tm.update(parent.id, { board_mode: true } as any)
+  const worker = tm.create("busy-w")
+  tm.update(worker.id, {
+    agent_role: "worker",
+    parent_thread_id: parent.id,
+    orchestrator_run_id: "run-busy",
+  } as any)
+  tm.addMessage(worker.id, {
+    role: "assistant",
+    content: "opening the paper",
+    thread_id: worker.id,
+    tool_calls: [{ id: "c1", type: "function", function: { name: "get_page_text", arguments: "{}" } }],
+    finish_reason: "tool_calls",
+  } as any)
+  tm.addMessage(worker.id, {
+    role: "tool",
+    content: "",
+    thread_id: worker.id,
+    tool_calls: [{ id: "c1", tool_name: "get_page_text", status: "running", result: null }],
+  } as any)
+  const r = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
+  assert.equal(r.success, false)
+  if (r.success) return
+  assert.equal(r.error_code, "WORKER_STILL_RUNNING")
+  assert.equal(r.recoverable, true)
+  assert.match(r.error, /still running/i)
+  assert.doesNotMatch(r.error, /parse failed/i)
+  assert.equal(r.data?.suggested_action, "wait_workers")
+})
+
+test("collect_handback board_mode on: finished prose is a successful read, not a ⚠️", async () => {
   const tm = new ThreadManager()
   const parent = tm.create("orch-prose")
   tm.update(parent.id, { board_mode: true } as any)
@@ -100,13 +133,14 @@ test("collect_handback board_mode on rejects prose with HANDBACK_MISSING_STRUCTU
     callerThreadId: parent.id,
     auditPath: ap,
   })
-  assert.equal(r.success, false)
-  if (r.success) return
-  assert.equal(r.error_code, HANDBACK_MISSING_STRUCTURE)
-  assert.equal(r.recoverable, true)
-  assert.equal(r.data?.board_mode, true)
-  assert.ok(r.data?.last_assistant?.content.includes("Scanned everything"))
-  assert.ok(readAudit(ap).some((e) => e.type === "board.handback_rejected"))
+  assert.equal(r.success, true)
+  if (!r.success) return
+  assert.equal(r.data.structured, false)
+  assert.equal(r.data.suggested_action, "use last_assistant")
+  assert.ok(r.data.last_assistant?.content.includes("Scanned everything"))
+  assert.equal(readBoard(tm, parent.id)?.facts.length ?? 0, 0, "prose must not mint board facts")
+  assert.ok(readAudit(ap).some((e) => e.type === "board.handback_prose"))
+  assert.ok(!readAudit(ap).some((e) => e.type === "board.handback_rejected"))
 })
 
 test("collect_handback structured JSON merges facts into host board", async () => {
@@ -155,7 +189,7 @@ test("collect_handback structured JSON merges facts into host board", async () =
   assert.ok(readAudit(ap).some((e) => e.type === "board.handback_applied"))
 })
 
-test("collect_handback mission_board present without board_mode still requires structure", async () => {
+test("collect_handback mission_board present without board_mode: prose is a read, board stays empty", async () => {
   const tm = new ThreadManager()
   const parent = tm.create("orch-mb")
   // board_mode false, but mission_board already initialized
@@ -164,8 +198,10 @@ test("collect_handback mission_board present without board_mode still requires s
   assert.ok(tm.get(parent.id)!.mission_board)
   const worker = seedWorker(tm, parent.id, "just prose")
   const r = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
-  assert.equal(r.success, false)
-  if (!r.success) assert.equal(r.error_code, HANDBACK_MISSING_STRUCTURE)
+  assert.equal(r.success, true)
+  if (!r.success) return
+  assert.equal(r.data.structured, false)
+  assert.equal(readBoard(tm, parent.id)?.facts.length ?? 0, 0)
 })
 
 test("collect_handback empty assistant when board mode → recoverable missing structure", async () => {
