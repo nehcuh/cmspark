@@ -243,6 +243,19 @@ interface Message {
   finish_reason?: string | null
 }
 
+/** Keep the first row per id (index is newest-first). */
+export function uniqueIndexThreads<T extends { id?: string }>(threads: T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const t of threads) {
+    const id = typeof t?.id === "string" ? t.id : ""
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push(t)
+  }
+  return out
+}
+
 /** Human-facing recency: last transcript row, else created_at. Never `updated_at`. */
 export function threadRecency(t: {
   last_message_at?: string | null
@@ -557,7 +570,9 @@ export class ThreadManager {
   private loadIndex(): ThreadIndex {
     try {
       const raw = fs.readFileSync(this.indexPath, "utf-8")
-      return JSON.parse(raw)
+      const parsed = JSON.parse(raw) as ThreadIndex
+      const threads = Array.isArray(parsed?.threads) ? parsed.threads : []
+      return { threads: uniqueIndexThreads(threads) }
     } catch {
       return { threads: [] }
     }
@@ -598,6 +613,7 @@ export class ThreadManager {
       /* best-effort merge; still write our memory snapshot */
     }
     fs.mkdirSync(path.dirname(this.indexPath), { recursive: true, mode: 0o700 })
+    this.index.threads = uniqueIndexThreads(this.index.threads)
     atomicWriteJSON(this.indexPath, this.index)
   }
 
@@ -688,6 +704,7 @@ export class ThreadManager {
       board_mode: false,
     }
 
+    this.index.threads = this.index.threads.filter((t) => t.id !== safeId)
     this.index.threads.unshift(thread)
     this.saveIndex()
 
@@ -776,7 +793,11 @@ export class ThreadManager {
   }
 
   list(opts?: { include_trashed?: boolean; only_trashed?: boolean }): Thread[] {
-    const all = this.index.threads
+    const all = uniqueIndexThreads(this.index.threads)
+    if (all.length !== this.index.threads.length) {
+      this.index.threads = all
+      this.saveIndex()
+    }
     if (opts?.only_trashed) return all.filter((t) => this.isTrashed(t))
     if (opts?.include_trashed) return all
     return all.filter((t) => !this.isTrashed(t))

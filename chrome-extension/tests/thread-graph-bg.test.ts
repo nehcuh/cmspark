@@ -4,6 +4,7 @@ import {
   isSnapshotFresh,
   isThreadGraphTabUrl,
   slimThreadGraphRow,
+  uniqueGraphThreads,
   THREAD_GRAPH_PATH,
   type ThreadGraphSnapshot,
 } from "../src/background/thread-graph"
@@ -25,6 +26,15 @@ test("isSnapshotFresh: TTL 5 minutes", () => {
   const stale: ThreadGraphSnapshot = { ts: Date.now() - 6 * 60_000, threads: [] }
   assert.equal(isSnapshotFresh(stale), false)
   assert.equal(isSnapshotFresh(null), false)
+})
+
+test("uniqueGraphThreads keeps first id after recency sort", () => {
+  const rows = uniqueGraphThreads([
+    { id: "tool01", alias: "Tool result regression" },
+    { id: "real", alias: "真对话" },
+    { id: "tool01", alias: "Tool result regression" },
+  ])
+  assert.deepEqual(rows.map((t) => t.id), ["tool01", "real"])
 })
 
 test("slimThreadGraphRow drops unknown keys / message bodies", () => {

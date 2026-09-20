@@ -101,6 +101,19 @@ export function slimThreadGraphRow(raw: unknown): ThreadGraphSlim | null {
   }
 }
 
+/** Keep the first row per id (caller should recency-sort first). */
+export function uniqueGraphThreads<T extends { id?: string }>(threads: T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const t of threads) {
+    const id = typeof t?.id === "string" ? t.id : ""
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push(t)
+  }
+  return out
+}
+
 export async function prepareThreadGraphSnapshot(
   threads: ThreadGraphSlim[] | unknown[],
   focusId?: string | null,
@@ -117,7 +130,7 @@ export async function prepareThreadGraphSnapshot(
     const tb = new Date(b.last_message_at || b.created_at || 0).getTime()
     return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0)
   })
-  let capped = live.slice(0, 300)
+  let capped = uniqueGraphThreads(live).slice(0, 300)
   // P1 M-UI-1: always pin focus into the cap set when present
   if (focusId) {
     const hasFocus = capped.some((t) => t.id === focusId)
