@@ -22,7 +22,11 @@ import {
   displayThreadTitle,
   EXTRACT_DIGEST_MAX,
   threadAccessibleName,
+  filterConversationEnum,
   filterThreadsByQuery,
+  childWorkerCountsByParent,
+  workerBelongTitle,
+  isFleetWorkerThread,
   formatThreadIdBadge,
   formatThreadListTime,
   groupThreadsByCalendar,
@@ -392,10 +396,18 @@ export function ThreadList() {
     const base = (threads as Thread[]).filter((t) =>
       trashView ? !!t.trashed_at : !t.trashed_at,
     )
-    return filterThreadsByQuery(base, query)
-  }, [threads, query, trashView])
+    const enumerated = filterConversationEnum(base, {
+      activeThreadId,
+      query,
+    })
+    return filterThreadsByQuery(enumerated, query)
+  }, [threads, query, trashView, activeThreadId])
 
   const aliasDupCount = useMemo(() => countAliases(filtered as Thread[]), [filtered])
+  const kidCounts = useMemo(
+    () => childWorkerCountsByParent(threads as Thread[]),
+    [threads],
+  )
 
   const timeline = useMemo(
     () => groupThreadsByCalendar(filtered as Thread[], now),
@@ -966,7 +978,15 @@ export function ThreadList() {
     const busy = !!threadBusyById[t.id]
     const isActive = t.id === activeThreadId
     const badge = roleBadge(t.agent_role)
-    const title = displayThreadTitle(t)
+    const parent = t.parent_thread_id
+      ? (threads as Thread[]).find((p) => p.id === t.parent_thread_id)
+      : undefined
+    const searching = Boolean(query.trim())
+    const title =
+      searching && isFleetWorkerThread(t)
+        ? workerBelongTitle(t, parent)
+        : displayThreadTitle(t)
+    const kidCount = isFleetWorkerThread(t) ? 0 : kidCounts.get(t.id) || 0
     const accessibleName = threadAccessibleName(t)
     const idBadge = formatThreadIdBadge(t.id)
     const rel = formatThreadListTime(t, now, aliasDupCount)
@@ -1021,7 +1041,33 @@ export function ThreadList() {
                 {justCopied ? "已复制" : idBadge}
               </button>
             ) : null}
-            {badge && <span style={styles.badge}>{badge}</span>}
+            {badge && !(searching && isFleetWorkerThread(t)) && (
+              <span style={styles.badge}>{badge}</span>
+            )}
+            {kidCount > 0 ? (
+              <button
+                type="button"
+                style={styles.badge}
+                disabled={trashView || selectMode}
+                title={
+                  trashView
+                    ? "回收站内不可打开子任务列表"
+                    : selectMode
+                      ? "批量选择时请用左侧勾选"
+                      : "打开本任务的子任务列表"
+                }
+                aria-label={`${kidCount} 个子任务`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (trashView || selectMode) return
+                  dispatch({ type: "SET_ACTIVE_THREAD", threadId: t.id })
+                  chrome.runtime.sendMessage({ type: "thread.select", threadId: t.id })
+                  dispatch({ type: "SET_FLEET_LIST_OPEN", open: true })
+                }}
+              >
+                {kidCount} 子任务
+              </button>
+            ) : null}
             {extracting && <span style={styles.badgeMuted}>抽取中</span>}
             {showDigestStaleBadge(t, view, now) && (
               <span style={styles.badgeMuted} title="要点可能过期">

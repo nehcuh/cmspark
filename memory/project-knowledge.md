@@ -2,6 +2,12 @@
 
 ## Process Patterns
 
+### 对话枚举藏 worker：excludeId 不得先抠父行（2026-09-20 · #515）
+- **现象**：方案 A 默认藏子任务后，在主任务里 @ 引用，空闲 worker 又摊回默认池（裸 id）。
+- **根因**：`shouldHideInConversationEnum` 条件 2 = 父 id ∈ `viewIds`。@ 池先 `filter(t => t.id !== excludeId)` 再枚举 → 当前父不在 viewIds → 条件 2 恒假 → 该父的 idle worker 当孤儿平铺。
+- **纪律**：`filterConversationEnum` 用完整（未剔除当前会话）集合建 `viewIds`；`excludeId` 只从**结果**去掉自己。测试钉「@ from parent → 只有 peer，没有 w1」以及「先抠父 → worker 泄漏」反例。
+- **4 行 case**：动作=主任务里 @；失败=子任务摊成平级；归责=把「不选自己」做成输入过滤；保护=viewIds 与结果过滤分开
+
 ### 大功能隔离：独立分支 + `rebase --onto` 接到当前 main（2026-08-23 · S77）
 - **场景**：overlay 在旧 tip 上长了 20+ commit，同时 main 合了 #213 等插件修。用户要「main=插件最新、overlay 独立」。
 - **做法**：`git rebase --onto origin/main <pre-feature-base> feat/os-agent-shell`（本轮 `e63bf87`）。drop 与 main 重复的 commit（site-op 副本、session-end docs）。push 前确认 `origin/main..HEAD` 只剩本功能。
@@ -73,6 +79,13 @@
 - **Outbound 应用**: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md`
 
 ## Technical Pitfalls
+
+### Windows 原生选文件夹：无 owner + CP936 stdout（2026-09-10 · S110）
+- **现象**：编程接力「选择工作区」Windows 失败、macOS 正常。
+- **根因**：`FolderBrowserDialog.ShowDialog()` 无 owner、从 hidden companion spawn → 对话框在 Chrome 后面或挂死；PowerShell 5.1 stdout 是系统 ANSI（zh-CN=CP936），Node 按 utf8 解 → 中文路径 mojibake → `realpath` ENOENT。另：`realpathSync` 保留输入盘符大小写，`consumeNativePick` 的 `!==` 会拒绑 `c:\` vs `C:\`。
+- **修**：STA + `[Console]::OutputEncoding` UTF-8 + 1×1 TopMost owner form + 绝对路径 `powershell.exe`；`pathsEqualForBind` 在 win32 大小写不敏感。文件选择器同合同。
+- **不要**：裸 `powershell -Command` + `Write-Output` + 无 owner 的 WinForms；不要用 `HOME` 在 win32 测 homedir（应用 `USERPROFILE`）。
+- Files: `companion/src/obsidian/folder-picker.ts`, `companion/src/capability/workspace.ts`
 
 ### BSD `cp -r` 会把 symlink 落成实体文件——DMG 内 codesign 封签静默破（2026-09-07 · host-integrity）
 - **坑**：`create-dmg.sh` 把 .app `cp -r` 进 sparse 卷。`Resources/cmspark-host` 设计为 symlink→`../MacOS/CMspark`（单 CDHash），BSD `-r` **解析 symlink 复制内容**（`-R` 才保留链接）。封签清单记的是 symlink，DMG 里变成实体文件 → `codesign --verify` 报 "a sealed resource is missing or invalid (file modified)"，packaged 安装上 host-integrity 全 fail-closed（window-list 拒 spawn）。**0.6.5/0.6.6 两个 DMG 同病**；staging 阶段的 verify 验的是拷贝前，缺陷静默存活多个版本。

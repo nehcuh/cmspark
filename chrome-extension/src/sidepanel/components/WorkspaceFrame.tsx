@@ -1,6 +1,12 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import { useAgentStore } from "../store/agentStore"
-import { displayThreadTitle, threadRecency } from "../utils/thread-timeline"
+import {
+  displayThreadTitle,
+  filterConversationEnum,
+  isFleetWorkerThread,
+  threadRecency,
+  workerBelongTitle,
+} from "../utils/thread-timeline"
 import { tokens } from "../ui/tokens"
 import { CompanionMark, IconChevronDown, IconNewChat, IconSettings } from "../ui/icons"
 import { CONTEXT_PANEL_TABS, useContextPanelHost } from "./ContextPanelHost"
@@ -47,7 +53,16 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
   const [conversationsOpen, setConversationsOpen] = useState(true)
   const [resourcesOpen, setResourcesOpen] = useState(!onClose)
   const conversationsId = useId()
-  const recent = state.threads.filter(t => !t.trashed_at && displayThreadTitle(t).toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => threadRecency(b).localeCompare(threadRecency(a))).slice(0, 30)
+  const q = query.toLocaleLowerCase().trim()
+  const recent = filterConversationEnum(
+    state.threads.filter(t => !t.trashed_at),
+    { activeThreadId: state.activeThreadId, query },
+  ).filter(t => {
+    if (!q) return true
+    const parent = state.threads.find(p => p.id === t.parent_thread_id)
+    const hay = `${workerBelongTitle(t, parent)} ${t.id || ""} ${t.worker_role_label || ""}`.toLocaleLowerCase()
+    return hay.includes(q)
+  }).sort((a, b) => threadRecency(b).localeCompare(threadRecency(a))).slice(0, 30)
   const resources = <details className="cm-nav-tools" open={resourcesOpen} onToggle={event => setResourcesOpen(event.currentTarget.open)}><summary>资料与工具</summary>
     <nav aria-label="资源与能力" className="cm-nav-resources">
       {CONTEXT_PANEL_TABS.filter(t => t.id !== "history").map(({ id, label, Icon }) => <button type="button" key={id} className={`cm-nav-item${id === "tabs" ? " cm-nav-browser" : ""}`} title={label} aria-current={activePanel === id ? "true" : undefined} onClick={() => {
@@ -67,9 +82,9 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
     <input className="cm-nav-search" aria-label="筛选最近对话" placeholder="查找对话…" value={query} onChange={e => setQuery(e.target.value)} />
     <div className="cm-nav-threads">
       {recent.map(thread => <button type="button" className="cm-nav-thread" key={thread.id} aria-current={thread.id === state.activeThreadId ? "page" : undefined}
-        title={displayThreadTitle(thread)} onClick={() => {
+        title={isFleetWorkerThread(thread) ? workerBelongTitle(thread, state.threads.find(p => p.id === thread.parent_thread_id)) : displayThreadTitle(thread)} onClick={() => {
           dispatch({ type: "SET_ACTIVE_THREAD", threadId: thread.id }); chrome.runtime.sendMessage({ type: "thread.select", threadId: thread.id }); onNavigate()
-        }}><span>{displayThreadTitle(thread)}</span>{state.threadBusyById[thread.id] && <span className="cm-nav-running" aria-label="运行中">·</span>}</button>)}
+        }}><span>{isFleetWorkerThread(thread) ? workerBelongTitle(thread, state.threads.find(p => p.id === thread.parent_thread_id)) : displayThreadTitle(thread)}</span>{state.threadBusyById[thread.id] && <span className="cm-nav-running" aria-label="运行中">·</span>}</button>)}
       {!recent.length && <p className="cm-nav-empty">{query ? "没有匹配的对话" : "新对话会保存在这里"}</p>}
     </div>
     </div>

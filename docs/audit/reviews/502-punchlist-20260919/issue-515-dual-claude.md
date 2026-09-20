@@ -1,0 +1,13 @@
+﻿Review complete. Written to `docs/audit/reviews/502-punchlist-20260919/issue-515-dual-claude-review.md` 鈥?the expected `issue-515-dual-claude.md` stub is hard-locked by another process (append/truncate/redirect all fail with `Device or resource busy`; likely the session orchestrator's handle), so move the `-review.md` file over it once unlocked.
+
+**Reviewer: claude 路 VERDICT: REJECT**
+
+**Claims 1, 2, 4, 5, 6 verified** [inspected, plus executed greps]: the shared `filterConversationEnum` is wired into all three surfaces; the hide predicate matches the spec formula exactly; chip 鈫?select parent 鈫?`SET_FLEET_LIST_OPEN` (reducer keeps portal state through `SET_ACTIVE_THREAD`); StatusRail breadcrumb falls back correctly when parent unresolvable; zero tab/spawn/L2 changes in the diff. All four attacks pass: orphans stay visible (tested), batch select derives from the filtered list so hidden workers can't be invisibly bulk-deleted (with an auto-prune effect), `childWorkerCount` matches the spec SoT verbatim, and I traced the spawn brief end-to-end on the companion side 鈥?it persists as the worker's first `role:"user"` message and `listWithPreviews` recomputes `user_message_count` fresh on every `thread.list`, so fresh worker = 1 鈫?hidden, human follow-up = 2 鈫?resurfaces.
+
+**Three blockers:**
+
+1. **`npm test` is red** [executed] 鈥?the new test's `require("node:fs")` (tests/thread-timeline.test.ts:665-666) fails compilation: `tsconfig.test.json` has no node globals, so `tsc -p tsconfig.test.json` exits 2 with TS2591 脳2 and the `&&` chain never reaches `node --test`. The tests themselves pass (41/41) only because tsc still emits despite the errors. Fix is a two-line ESM `import`, which is also the house style.
+2. **@ popover leaks the current parent's workers** 鈥?`AtThreadPopover.tsx:38-43` builds `viewIds` from the pool *after* `excludeId` is removed, and `excludeId` is the active thread (App.tsx:865). So @-mentioning *from the parent thread* 鈥?the most common flow 鈥?makes the parent unresolvable, its idle workers stay flat in the default pool with bare titles: exactly the 鈥滄憡鎴愬钩绾р€?the spec targets, leaking in the direction that hurts most.
+3. **@ search results lack the 褰掑睘 title** 鈥?spec L29 says the title *must* carry attribution; `AtThreadPopover.tsx:90,147` render and insert bare `displayThreadTitle`. Claim 3 only holds in ThreadList.
+
+Fixes are all small (two-line import, one-line set correction, one `workerBelongTitle` substitution); nits (trash-view chip bypassing the `trashView` activation guard, duplicate `瀛愪换鍔 text, count-vs-portal divergence) are non-blocking. With the three fixed this is APPROVE_WITH_NITS territory.

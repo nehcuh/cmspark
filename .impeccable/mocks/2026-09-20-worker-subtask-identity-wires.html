@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CMspark · 子任务身份 · 线稿</title>
+  <style>
+    :root {
+      --ink: #171717;
+      --paper: #f6f4ef;
+      --mute: #6b6b6b;
+      --accent: #4f46e5;
+      --ok: #059669;
+      --warn: #d97706;
+      --line: rgba(23,23,23,.12);
+      --bg: #fff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; background: var(--paper); color: var(--ink);
+      font-family: "SF Pro Text", "PingFang SC", "Segoe UI", -apple-system, sans-serif;
+    }
+    body { padding: 32px 36px 80px; }
+    h1 { margin: 0 0 8px; font-size: 26px; font-weight: 650; letter-spacing: -0.04em; }
+    .sub { margin: 0 0 8px; font-size: 15px; color: var(--mute); max-width: 920px; line-height: 1.5; }
+    .key { font-size: 13px; color: var(--mute); margin: 0 0 32px; line-height: 1.55; max-width: 920px; }
+    .key b { color: var(--ink); }
+    .board { display: flex; flex-wrap: wrap; gap: 28px 32px; align-items: flex-start; }
+    .col { width: 320px; }
+    .cap {
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--mute); margin: 0 0 6px; font-weight: 650;
+    }
+    .tag {
+      display: inline-block; font-size: 10px; font-weight: 650; letter-spacing: 0.04em;
+      border: 1px solid var(--ink); padding: 1px 6px; border-radius: 999px; margin: 0 0 8px;
+    }
+    .tag.bad { border-color: #dc2626; color: #dc2626; }
+    .tag.ok { border-color: var(--ok); color: var(--ok); }
+    .phone {
+      width: 320px; min-height: 560px; background: var(--bg);
+      border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+      box-shadow: 0 8px 28px rgba(23,23,23,.06);
+    }
+    .rail {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600;
+    }
+    .rail .crumb { font-weight: 500; color: var(--accent); font-size: 12px; cursor: default; }
+    .rail .sep { color: var(--mute); font-weight: 400; }
+    .glance {
+      margin: 8px 10px 0; padding: 6px 10px; border-radius: 8px;
+      background: #eef2ff; color: #3730a3; font-size: 11px; font-weight: 600;
+    }
+    .list { padding: 8px 0 12px; }
+    .row {
+      padding: 8px 12px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+      border-bottom: 1px solid rgba(23,23,23,.05);
+    }
+    .row.active { background: #eef2ff; }
+    .row .t { font-size: 13px; font-weight: 600; line-height: 1.35; }
+    .row .m { font-size: 11px; color: var(--mute); margin-top: 2px; }
+    .row .chip {
+      flex: 0 0 auto; font-size: 10px; color: var(--accent); background: #eef2ff;
+      border-radius: 999px; padding: 2px 7px; font-weight: 650;
+    }
+    .row .badge {
+      font-size: 10px; color: var(--mute); border: 1px solid var(--line);
+      border-radius: 4px; padding: 0 4px; margin-left: 6px; font-weight: 500;
+    }
+    .stream { padding: 12px; font-size: 13px; line-height: 1.55; }
+    .stream .u { background: #f7f7f5; border-radius: 12px; padding: 8px 10px; margin: 0 0 10px; }
+    .stream .a { margin: 0 0 10px; }
+    .stream .hint { font-size: 11px; color: var(--mute); }
+    .composer {
+      margin: 12px; border: 1px solid var(--line); border-radius: 20px; padding: 8px 12px;
+      font-size: 13px; color: var(--mute);
+    }
+    .why { font-size: 13px; color: var(--mute); margin: 8px 0 0; line-height: 1.5; max-width: 320px; }
+    h2 { font-size: 18px; margin: 36px 0 8px; }
+  </style>
+</head>
+<body>
+  <h1>子任务是切片，不是新对话</h1>
+  <p class="sub">#502 E 已经有 Glance / Inspect。缺口在「最近对话」把 worker 线程摊成平级聊天。线稿只改身份，不改 spawn / L2 / 存储。</p>
+  <p class="key"><b>方案 A：</b>列表默认不列出 worker；主对话行用「3 子任务」开口径；钻进去才切线程，顶栏必须能回到主任务。</p>
+
+  <div class="board">
+    <div class="col">
+      <div class="cap">现在 · 3r2frm</div>
+      <div class="tag bad">错</div>
+      <div class="phone">
+        <div class="rail">最近对话</div>
+        <div class="list">
+          <div class="row active">
+            <div>
+              <div class="t">推特收藏 · C2C 安全</div>
+              <div class="m">今天 07:35</div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <div class="t">286ryj <span class="badge">worker</span></div>
+              <div class="m">今天 07:38</div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <div class="t">z1p2kd <span class="badge">worker</span></div>
+              <div class="m">今天 07:39</div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <div class="t">mpvmhf <span class="badge">worker</span></div>
+              <div class="m">今天 07:40</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="why">三只手看起来像三个无关聊天。英文 worker 徽章在 320px 里等于没说。</p>
+    </div>
+
+    <div class="col">
+      <div class="cap">方案 A · 主任务列表</div>
+      <div class="tag ok">推荐</div>
+      <div class="phone">
+        <div class="rail">最近对话</div>
+        <div class="glance">舰队 3 子任务 · 论文精读 处理中</div>
+        <div class="list">
+          <div class="row active">
+            <div>
+              <div class="t">推特收藏 · C2C 安全</div>
+              <div class="m">今天 07:35</div>
+            </div>
+            <span class="chip">3 子任务</span>
+          </div>
+          <div class="row">
+            <div>
+              <div class="t">本周会议纪要</div>
+              <div class="m">昨天</div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <div class="t">选工作区失败</div>
+              <div class="m">周一</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="why">主任务仍是一条对话。点「3 子任务」打开已有 Fleet 列表（查看 / 进入），不新开 Tab。</p>
+    </div>
+
+    <div class="col">
+      <div class="cap">方案 A · 进入一只手</div>
+      <div class="tag ok">降级路径</div>
+      <div class="phone">
+        <div class="rail">
+          <span class="crumb">← 主任务</span>
+          <span class="sep">/</span>
+          <span>子任务 · 论文精读</span>
+        </div>
+        <div class="stream">
+          <div class="hint">属于「推特收藏 · C2C 安全」· 不出现在最近对话</div>
+          <div class="u">精读 arXiv 2510.03215 与 thu-nics/C2C，提取方法与可监控性影响。</div>
+          <div class="a">已完成精读。C2C 让模型用 KV-Cache 通信……（报告正文）</div>
+        </div>
+        <div class="composer">子任务内可追问这一只 · 结论仍回主任务</div>
+      </div>
+      <p class="why">切线程是显式动作。顶栏必须能回到主对话。Inspect「查看」仍不切线程。</p>
+    </div>
+  </div>
+
+  <h2>双路收下的例外（Kimi + Claude 均 APPROVE_WITH_NITS）</h2>
+  <p class="sub">隐藏只在「父行就在本视图」时成立；孤儿 worker、用户在子任务里说过话的、以及当前正在看的那一行，仍要露出来。批量全选不得误删被藏的行。计数跟持久 parent 图，不跟会空的 Glance 快照。</p>
+  <h2>搜索（例外）</h2>
+  <p class="sub">搜到 worker 时必须写出归属，不能只显示短 id。</p>
+  <div class="board">
+    <div class="col">
+      <div class="cap">搜索 「C2C」</div>
+      <div class="phone" style="min-height: 280px;">
+        <div class="rail">搜索</div>
+        <div class="list">
+          <div class="row">
+            <div>
+              <div class="t">推特收藏 · C2C 安全</div>
+              <div class="m">主任务</div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <div class="t">子任务 · 论文精读</div>
+              <div class="m">属于「推特收藏 · C2C 安全」</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

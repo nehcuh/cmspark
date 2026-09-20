@@ -1,5 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import {
   groupThreadsByCalendar,
   filterThreadsByQuery,
@@ -38,6 +40,13 @@ import {
   TAG_CLOUD_MAX_VISIBLE,
   parseDigestQuota,
   remainingDigestQuota,
+  isFleetWorkerThread,
+  shouldHideInConversationEnum,
+  filterConversationEnum,
+  childWorkerCount,
+  childWorkerCountsByParent,
+  workerBelongTitle,
+  roleBadge,
   selectLazyDigestCandidates,
   showDigestStaleBadge,
   digestQuotaDayKey,
@@ -581,4 +590,162 @@ test("showDigestStaleBadge: time view only non-today", () => {
     true,
   )
   assert.equal(showDigestStaleBadge({ id: "d", digest: { tags: ["x"] } }, "tags", now), false)
+})
+
+test("#515 isFleetWorkerThread only matches worker role", () => {
+  assert.equal(isFleetWorkerThread({ agent_role: "worker" }), true)
+  assert.equal(isFleetWorkerThread({ agent_role: "orchestrator" }), false)
+  assert.equal(isFleetWorkerThread({ agent_role: "normal" }), false)
+  assert.equal(isFleetWorkerThread({}), false)
+})
+
+test("#515 hide worker in enum only when parent is in the same view", () => {
+  const parent = { id: "3r2frm", agent_role: "orchestrator" as const }
+  const child = {
+    id: "286ryj",
+    agent_role: "worker" as const,
+    parent_thread_id: "3r2frm",
+    user_message_count: 1,
+  }
+  const viewIds = new Set(["3r2frm", "286ryj", "other"])
+  assert.equal(
+    shouldHideInConversationEnum(child, { viewIds, activeThreadId: "3r2frm" }),
+    true,
+  )
+  assert.equal(
+    shouldHideInConversationEnum(child, { viewIds, activeThreadId: "286ryj" }),
+    false,
+    "active worker stays visible",
+  )
+  assert.equal(
+    shouldHideInConversationEnum(
+      { ...child, user_message_count: 2 },
+      { viewIds, activeThreadId: "3r2frm" },
+    ),
+    false,
+    "user follow-up in the worker stays a conversation",
+  )
+  assert.equal(
+    shouldHideInConversationEnum(child, { viewIds: new Set(["286ryj"]), activeThreadId: "x" }),
+    false,
+    "orphan (parent not in view) stays visible",
+  )
+  assert.equal(
+    shouldHideInConversationEnum(child, { viewIds, searching: true }),
+    false,
+  )
+  assert.equal(shouldHideInConversationEnum(parent, { viewIds }), false)
+})
+
+test("#515 filterConversationEnum + childWorkerCount + belong title", () => {
+  const threads = [
+    { id: "p", agent_role: "normal" as const, alias: "推特收藏 · C2C 安全" },
+    {
+      id: "w1",
+      agent_role: "worker" as const,
+      parent_thread_id: "p",
+      user_message_count: 1,
+      worker_role_label: "论文精读",
+    },
+    {
+      id: "w2",
+      agent_role: "worker" as const,
+      parent_thread_id: "p",
+      user_message_count: 1,
+      alias: "z1p2kd",
+    },
+    { id: "orphan", agent_role: "worker" as const, parent_thread_id: "gone", user_message_count: 1 },
+  ]
+  const hidden = filterConversationEnum(threads, { activeThreadId: "p" })
+  assert.deepEqual(hidden.map((t) => t.id), ["p", "orphan"])
+  assert.equal(childWorkerCount("p", threads), 2)
+  assert.deepEqual(
+    [...childWorkerCountsByParent(threads).entries()].sort(),
+    [
+      ["gone", 1],
+      ["p", 2],
+    ],
+  )
+  assert.equal(
+    workerBelongTitle(threads[1]!, threads[0]),
+    "子任务 · 论文精读 · 属于「推特收藏 · C2C 安全」",
+  )
+  assert.equal(
+    workerBelongTitle(threads[2]!, threads[0]),
+    "子任务 · z1p2kd · 属于「推特收藏 · C2C 安全」",
+  )
+  assert.notStrictEqual(
+    workerBelongTitle(threads[1]!, threads[0]),
+    workerBelongTitle(threads[2]!, threads[0]),
+    "siblings must stay distinguishable in search / @",
+  )
+  assert.equal(roleBadge("worker"), "子任务")
+  assert.equal(roleBadge("orchestrator"), "编排")
+})
+
+test("#515 filterConversationEnum excludeId does not leak parent workers", () => {
+  const threads = [
+    { id: "p", agent_role: "normal" as const, alias: "主任务" },
+    {
+      id: "w1",
+      agent_role: "worker" as const,
+      parent_thread_id: "p",
+      user_message_count: 1,
+    },
+    { id: "peer", agent_role: "normal" as const, alias: "别的对话" },
+  ]
+  const fromParent = filterConversationEnum(threads, {
+    activeThreadId: "p",
+    excludeId: "p",
+  })
+  assert.deepEqual(
+    fromParent.map((t) => t.id),
+    ["peer"],
+    "@ from the parent must hide idle children, not flatten them",
+  )
+  const leaked = filterConversationEnum(
+    threads.filter((t) => t.id !== "p"),
+    { activeThreadId: "p" },
+  )
+  assert.ok(
+    leaked.some((t) => t.id === "w1"),
+    "dropping the parent from the input list must be treated as orphan (why excludeId is a result filter)",
+  )
+})
+
+test("#515 conversation enum surfaces share filterConversationEnum", () => {
+  const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
+  const atSrc = read("src/sidepanel/components/AtThreadPopover.tsx")
+  const listSrc = read("src/sidepanel/components/ThreadList.tsx")
+  assert.match(listSrc, /filterConversationEnum\(/)
+  assert.match(read("src/sidepanel/components/WorkspaceFrame.tsx"), /filterConversationEnum\(/)
+  assert.match(atSrc, /filterConversationEnum\(/)
+  assert.match(atSrc, /excludeId/)
+  assert.match(atSrc, /workerBelongTitle/)
+  assert.doesNotMatch(
+    atSrc,
+    /t\.id !== excludeId && !t\.trashed_at/,
+    "must not shrink viewIds by dropping the active parent before enum",
+  )
+  const railSrc = read("src/sidepanel/components/StatusRail.tsx")
+  const navSrc = read("src/sidepanel/components/WorkspaceFrame.tsx")
+  assert.match(railSrc, /← 主任务/)
+  assert.match(railSrc, /!t\.trashed_at/, "breadcrumb must not select a soft-deleted parent")
+  assert.match(navSrc, /worker_role_label/, "recent-nav search must match role / belong title, not only displayThreadTitle")
+  assert.match(listSrc, /子任务/)
+  assert.match(
+    listSrc,
+    /disabled=\{trashView \|\| selectMode\}/,
+    "subtask chip must not leave selectMode to open the fleet portal",
+  )
+  assert.match(
+    listSrc,
+    /childWorkerCountsByParent\(/,
+    "kid counts must be a single pass, not per-row scans",
+  )
+  assert.match(
+    listSrc,
+    /badge && !\(searching && isFleetWorkerThread/,
+    "search belong-title already says 子任务 — do not double the role badge",
+  )
 })

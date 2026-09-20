@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S111 (2026-09-20) [#515 子任务身份 标准流程]
+
+- **Issue** https://github.com/nehcuh/cmspark/issues/515 · spec `docs/superpowers/specs/2026-09-20-worker-subtask-identity.md` LOCKED
+- **方案 A**：对话枚举默认藏 worker（父在同视图、非 active、`user_message_count<=1`）；chip `N 子任务` → select 父 + Fleet portal；面包屑 `← 主任务`
+- **实现 r1 dual** kimi+claude **REJECT**：B1 `require("node:fs")` 打红 tsc；B2 @ 先抠 excludeId 导致主任务里 worker 摊平；B3 @ 缺归属标题
+- **r2** `[executed]`：excludeId 改成结果过滤；belong title；trash chip disabled；静态 `node:fs` import。`chrome-extension` **1450/0**。timeline **42/42**
+- **r2 dual** kimi **AWN** + claude **AWN**（claude 沙箱写不了文件，正文落 `issue-515-r2-dual-claude.md`）。折 nit：面包屑不跳软删父；宽屏搜索匹配 belong/role；归属标题带 own；selectMode chip disabled；计数一次过；搜索不叠「子任务」badge
+- **提交**：与 collect_handback 拆开。本 commit 关 #515；handback 在前一 commit（Refs #502）。未 push。
+
 ### S110 (2026-09-19) [fix/502-adversarial-punchlist 六路对抗评审]
 
 - **任务**：对 `fix/502-adversarial-punchlist` vs `origin/main` (`93923c1d..022b2f60`) 做六路独立对抗评审 → 去重验真 → kimi+claude 双路复审。不修代码。
@@ -11,6 +20,7 @@
 - **对抗** `[executed]`：6 路 A PRODUCT REJECT · B CORR AWN · C SEC AWN · D ARCH REJECT · E UX REJECT · F SKEPTIC REJECT。去重后 4 BLOCK（X1 live 芯 / X2 归档方言 / X4 kick abort / X9 spawn 夹具）+ MAJOR X3/X5/X6/X7/X8/X10。产物 `docs/audit/reviews/502-punchlist-20260919/`。
 - **双路** `[executed]`：kimi REJECT + claude REJECT。X1–X9 两路 TRIGGERED。Claude 降 X10 为 NIT（预存在）并加 N-1 排队 kick 无取消（并入 X4）。
 - **修复** `[executed]`：X1–X10 + N-1 全落地。companion 定向 93+92 绿；extension 相关 58+89 绿。用户睡觉期间完成，未开新 PR。
+- **换装** `[executed]` 2026-09-20：`CMSPARK_REQUIRE_NSIS=1` Git Bash `package.sh windows-x64` → zip **81M** + Setup **52M** `CMspark-Setup-v0.6.7.exe`。daemon stop + 杀 tray → `/S` exit 0。ARP **0.6.7**。`wscript launch-hidden.vbs` → 2s `127.0.0.1:23401` LISTENING（daemon pid 856 + tray 20272）。`cmspark-agent v0.6.7`；扩展 manifest 0.6.7。安装目录 `cmspark-agent.js` 与 staging 同时戳。版本号仍 0.6.7（含 punchlist 代码）。
 
 ### S109 END (2026-09-15) [cmspark] VibeSOP 8.5.0 配置刷新
 
