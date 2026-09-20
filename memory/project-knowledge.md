@@ -7,6 +7,7 @@
 - **根因**：Node `os.homedir()` 在 Windows 用 `USERPROFILE`，忽略 `HOME`。测试 `create("Tool result regression", "tool01")` 每次 `unshift` 同 id。`DATA_DIR` 必须用 `CMSPARK_DATA_DIR`（`getConfigDir()` 活读）。
 - **保护**：`list`/`saveIndex` 按 id 去重（保留先出现=最新）；`create` 同 id 覆盖不追加；图谱 snapshot 去重。新测试顶栏钉 `CMSPARK_DATA_DIR`。
 - **4 行 case**：动作=Windows 跑 companion 测试；失败=真实会话库被 fixture 灌爆；归责=HOME≠homedir；保护=CMSPARK_DATA_DIR + index unique-by-id
+- **续**：同 id 去重后图谱变成一堆 **独立 id** 的 Distill / Thread 1 / race-probe（`files.test.ts` 每次 generateId）。本机按首条假话软删 404 条。新测必须在文件顶钉 `CMSPARK_DATA_DIR`。
 
 ### 对话枚举藏 worker：excludeId 不得先抠父行（2026-09-20 · #515）
 

@@ -5,12 +5,15 @@ import * as os from "node:os"
 import * as path from "node:path"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-thread-lock-"))
+process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
+process.env.HOME = tempHome
 
 let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
 let initDataDir: typeof import("../src/config").initDataDir
 
 before(async () => {
   process.env.HOME = tempHome
+  process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
   const config = await import("../src/config")
   initDataDir = config.initDataDir
   await initDataDir()
