@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- Windows 测试隔离：`files.test.ts` / `thread-manager-lock.test.ts` 钉 `CMSPARK_DATA_DIR`（只设 HOME 时 `os.homedir()` 仍写真实会话库，图谱会出现一堆 Distill / Thread 1）。
 - 对话图谱：index 里重复 id（Windows 测试把 `tool01` / `Tool result regression` 写进真实数据目录）不再画成一堆同名节点。`thread.list` 按 id 去重；create 同 id 覆盖不追加。
 - 检索 / 相关（#517）：spawn 后的主对话（编排父）仍可搜、可进相关；子任务不再当平级相关会话。图谱节点集原本就不含 worker。
 

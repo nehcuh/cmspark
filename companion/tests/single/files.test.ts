@@ -8,6 +8,8 @@ import * as os from "node:os"
 import * as path from "node:path"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-single-"))
+process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
+process.env.HOME = tempHome
 
 let initDataDir: typeof import("../../src/config").initDataDir
 let getConfig: typeof import("../../src/config").getConfig
@@ -53,6 +55,7 @@ const mockHistoryStore = {
 
 before(async () => {
   process.env.HOME = tempHome
+  process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
   delete process.env.DEEPSEEK_API_KEY
 
   const config = await import("../../src/config")
