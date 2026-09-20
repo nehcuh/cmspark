@@ -19,12 +19,31 @@ import {
   formatShellMetaLine,
   SHELL_BODY_PREVIEW_CHARS,
 } from "../utils/shell-card-utils"
-import { extractRedactedStub, extractTruncatedPrefix, isRedactedStubContent } from "../utils/redacted-stub-utils"
+import {
+  extractRedactedStub,
+  extractTruncatedPrefix,
+  formatRedactedStubHint,
+  isRedactedStubContent,
+} from "../utils/redacted-stub-utils"
 import { RetrievedSourcesChips } from "./RetrievedSourcesChips"
 import { KnowledgeImportModal } from "./KnowledgeImportModal"
 import { SummarySheet } from "./SummarySheet"
 import { NoticeCard } from "./ui/NoticeCard"
 import { isCoarsePointer, messageActionMode } from "./message-actions"
+import {
+  doneChipLabel,
+  donePagerChipLabel,
+  groupToolTurnRows,
+  consolidateRunToolTurns,
+  liveChipLabel,
+  liveToolsFrontierIndex,
+  countFailedTools,
+  pendingConfirmIdsFromTools,
+  pendingConfirmToolNamesForThread,
+  shouldRenderInlineToolCards,
+  viewToolHistory,
+  type ToolHistoryRound,
+} from "./tool-history-view"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
 import { deriveThreadBusy } from "../utils/thread-busy"
@@ -50,7 +69,14 @@ import { emptyStateCopy, type EmptyInvite } from "../empty-state-copy"
 import { compactBannerKind } from "../utils/context-window-copy"
 import { truncationHonestyChip } from "../chat-shell-copy"
 import { RunProgress } from "./RunProgress"
-import { LoopStatusRow, LoopSuggestCard, backfillLoopView } from "./LoopStatusRow"
+import {
+  LoopStatusRow,
+  LoopSuggestCard,
+  FleetSuggestCard,
+  RoundLimitHint,
+  backfillLoopView,
+  shouldShowRoundLimitHint,
+} from "./LoopStatusRow"
 import { listSig } from "./run-progress-view"
 import { CHAT_MARKED_OPTIONS } from "../utils/markdown-gfm"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
@@ -80,6 +106,8 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 const LONG_CONTENT_THRESHOLD = 3000
 const LONG_CONTENT_PREVIEW = 500
 const TOOL_RESULT_PREVIEW = 200
+/** Stable empty set so non-frontier ToolHistoryBlocks don't churn on every confirm. */
+const EMPTY_CONFIRM_NAMES: ReadonlySet<string> = new Set()
 
 export function ChatView() {
   const { state, dispatch } = useAgentStore()
@@ -99,6 +127,8 @@ export function ChatView() {
     contextCompactedByThreadId,
     hydrating,
     loopStatusByThreadId,
+    runTerminalByThreadId,
+    fleetSuggestByThreadId,
     loopSuggest,
     pendingSecurityConfirmations,
   } = state
@@ -107,6 +137,22 @@ export function ChatView() {
       ? contextCompactedByThreadId[activeThreadId]
       : null
   const runItems = threads.find((t) => t.id === activeThreadId)?.run_progress?.items
+  // #502 A / #507: consecutive role=tool rows render as one per-turn block.
+  // Correlate L2 confirms by tool_name, but only those owned by this thread
+  // (worker_id / thread_id on the frame). Cross-thread pending click must
+  // not flip this thread's history. Name→id lives in pendingConfirmIdsFromTools.
+  const pendingConfirmToolNames = useMemo(
+    () => pendingConfirmToolNamesForThread(pendingSecurityConfirmations, activeThreadId),
+    [pendingSecurityConfirmations, activeThreadId],
+  )
+  const transcriptItems = useMemo(
+    () => consolidateRunToolTurns(groupToolTurnRows(messages)),
+    [messages],
+  )
+  const liveFrontierIdx = useMemo(
+    () => liveToolsFrontierIndex(transcriptItems),
+    [transcriptItems],
+  )
   const [summaryOpen, setSummaryOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   /** Inner content grows with messages; ResizeObserver watches this for stick-to-bottom. */
@@ -235,6 +281,11 @@ export function ChatView() {
   const loopView = activeThreadId
     ? loopStatusByThreadId[activeThreadId] ?? backfillLoopView(activeThread)
     : null
+  const runTerminal = activeThreadId ? runTerminalByThreadId[activeThreadId] ?? null : null
+  const loopSuggestVisible = Boolean(loopSuggest && loopSuggest.threadId === activeThreadId)
+  const showRoundLimitHint = shouldShowRoundLimitHint(loopView, runTerminal, loopSuggestVisible)
+  // #513: per-thread map — only the active thread's card renders.
+  const fleetSuggest = activeThreadId ? fleetSuggestByThreadId[activeThreadId] ?? null : null
 
   // Auto-scroll to bottom when transcript / stream grows.
   // Respects user scroll: if the user scrolled up to read history, stop forcing
@@ -440,21 +491,38 @@ export function ChatView() {
           !streamingContent &&
           !streamingReasoning &&
           !processingLabel && <EmptyState level={level} />}
-        {messages.map((msg, i) => (
-          <MessageRow
-            key={msg.id}
-            msg={msg}
-            activeThreadId={activeThreadId}
-            sendShortcut={sendShortcut}
-            onRegenerate={handleRegenerate}
-            onFork={handleFork}
-            onExport={handleExport}
-            showReasoningMode={showReasoningMode}
-            exportIncludeReasoning={exportIncludeReasoning === true}
-            isLast={i === messages.length - 1}
-            dispatch={dispatch}
-          />
-        ))}
+        {transcriptItems.map((item, i) => {
+          const itemIsLast = i === transcriptItems.length - 1
+          const liveFrontier = i === liveFrontierIdx
+          if (item.kind === "tools") {
+            return (
+              <ToolHistoryBlock
+                key={`tools-${item.msgs[0]!.id}`}
+                msgs={item.msgs}
+                rounds={item.rounds}
+                threadBusy={Boolean(liveFrontier && threadBusy)}
+                pendingConfirmToolNames={liveFrontier ? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES}
+              />
+            )
+          }
+          const msg = item.msg
+          return (
+            <MessageRow
+              key={msg.id}
+              msg={msg}
+              reasoningFolded={item.reasoningFolded === true}
+              activeThreadId={activeThreadId}
+              sendShortcut={sendShortcut}
+              onRegenerate={handleRegenerate}
+              onFork={handleFork}
+              onExport={handleExport}
+              showReasoningMode={showReasoningMode}
+              exportIncludeReasoning={exportIncludeReasoning === true}
+              isLast={itemIsLast}
+              dispatch={dispatch}
+            />
+          )
+        })}
         {(streamingReasoning || streamingContent) && (
           <div style={styles.agentMsg}>
             <div style={styles.messageCol}>
@@ -504,8 +572,12 @@ export function ChatView() {
             <LoopStatusRow
               view={loopView}
               threadId={activeThreadId}
-              pendingConfirms={pendingSecurityConfirmations.length}
+              pendingConfirms={pendingConfirmToolNames.size}
             />
+          </div>
+        ) : showRoundLimitHint ? (
+          <div style={styles.agentMsg}>
+            <RoundLimitHint />
           </div>
         ) : null}
         {loopSuggest && loopSuggest.threadId === activeThreadId && activeThreadId ? (
@@ -515,6 +587,18 @@ export function ChatView() {
               unticked={loopSuggest.unticked}
               budgetStopped={loopSuggest.budgetStopped}
               onDismiss={() => dispatch({ type: "CLEAR_LOOP_SUGGEST" })}
+            />
+          </div>
+        ) : null}
+        {/* #513: independent block — may coexist with the loop card above (no if/else). */}
+        {activeThreadId && fleetSuggest ? (
+          <div style={styles.agentMsg}>
+            <FleetSuggestCard
+              threadId={activeThreadId}
+              reason={fleetSuggest.reason}
+              subtasks={fleetSuggest.subtasks}
+              busy={threadBusy === true}
+              onCleared={() => dispatch({ type: "CLEAR_FLEET_SUGGEST", threadId: activeThreadId })}
             />
           </div>
         ) : null}
@@ -560,6 +644,7 @@ const MessageRow = memo(function MessageRow({
   sendShortcut,
   showReasoningMode,
   exportIncludeReasoning: _exportIncludeReasoning,
+  reasoningFolded = false,
   isLast = false,
   onRegenerate,
   onFork,
@@ -572,6 +657,10 @@ const MessageRow = memo(function MessageRow({
   showReasoningMode: "always_collapsed" | "auto_live" | "always_open"
   /** Primitive so custom memo re-renders when Settings export opt-in flips (P0-1). */
   exportIncludeReasoning: boolean
+  /** #502 A: the covered round's thinking folded into the following audit
+   *  block — no standalone ReasoningBlock header (live stream + final answer
+   *  rows are never folded). */
+  reasoningFolded?: boolean
   /** #321 PR-6: last message keeps its action bar visible (常驻). */
   isLast?: boolean
   onRegenerate: (messageId: string, editedMessage?: string) => void
@@ -743,7 +832,7 @@ const MessageRow = memo(function MessageRow({
           </div>
         ) : (
           <>
-            {!isUser && msg.reasoning_content ? (
+            {!isUser && msg.reasoning_content && !reasoningFolded ? (
               <ReasoningBlock content={msg.reasoning_content} mode={showReasoningMode} />
             ) : null}
             <div style={isUser ? styles.userBubble : styles.agentBubble}>
@@ -753,9 +842,14 @@ const MessageRow = memo(function MessageRow({
                 ) : (
                   <MarkdownRenderer content={msg.content} renderMermaid />
                 ))}
-              {msg.tool_calls?.map((tc: any) => (
-                <ToolCallCard key={tc.id} tc={tc} />
-              ))}
+              {/* #502 A (Kimi MAJOR-1): role=tool rows are consumed by the
+                  per-turn block; hydrated assistant rows carry function-shape
+                  tool_calls whose cards are the block's job too. Only flat
+                  live-shape tool_calls that no block swallowed render inline. */}
+              {shouldRenderInlineToolCards(msg) &&
+                msg.tool_calls?.map((tc: any) => (
+                  <ToolCallCard key={tc.id} tc={tc} />
+                ))}
             </div>
             {honestyChip ? (
               <div style={styles.truncChip} role="status">
@@ -859,6 +953,7 @@ const MessageRow = memo(function MessageRow({
     prev.activeThreadId === next.activeThreadId &&
     prev.sendShortcut === next.sendShortcut &&
     prev.isLast === next.isLast &&
+    prev.reasoningFolded === next.reasoningFolded &&
     prev.showReasoningMode === next.showReasoningMode &&
     prev.exportIncludeReasoning === next.exportIncludeReasoning
   )
@@ -974,6 +1069,13 @@ function toolResultUserHint(result: any): string | null {
     typeof result.data?.user_hint_zh === "string" ? result.data.user_hint_zh : ""
   // Prefer structured companion hints (e.g. COOKIE_TRUST_DENIED) when present.
   if (dataHint) return dataHint
+  const code = typeof result.error_code === "string" ? result.error_code : ""
+  if (code === "WORKER_STILL_RUNNING") {
+    return "子任务还在跑，还没有最终 handback。等 Glance 空闲或 wait_workers 后再收；这不会停其他 worker。"
+  }
+  if (code === "HANDBACK_MISSING_STRUCTURE") {
+    return "该 worker 写完的是研究报告正文，不是结构化 JSON handback。其他子任务不受影响，可继续等。"
+  }
   if (/default_sandbox_unavailable|cannot create default sandbox|默认工作区沙箱不可用/i.test(err)) {
     return "默认沙箱 ~/CMspark-projects 不可用：检查本机权限，或侧栏「场景」→「选择工作区」绑定目录。协议解锁不会跳过。"
   }
@@ -1010,6 +1112,209 @@ function toolResultUserHint(result: any): string | null {
     .find((l: string) => l.trim() && !l.trim().startsWith("[") && /[\u4e00-\u9fff]/.test(l) && l.length < 160)
   if (first) return first.trim().replace(/^Security Block:\s*/i, "")
   return null
+}
+
+/**
+ * #502 slice A — one chip per assistant turn's tool history.
+ *
+ * Consecutive role=tool rows (one per tool — live tool.start and hydrated
+ * persistence shapes) group into this block: while the turn is live only the
+ * current step (running / L2-confirming) stays expanded plus a
+ * `已完成 N 步` chip; after the turn ends everything folds behind one
+ * `N 步浏览器操作 · 展开审计` chip and the answer owns the viewport.
+ * Expanded rows reuse ToolCallCard verbatim — no new card. Folding is plain
+ * component state: switching threads / remounting returns to the default
+ * collapsed presentation, nothing is written back onto the thread.
+ */
+const ToolHistoryBlock = memo(function ToolHistoryBlock({
+  msgs,
+  rounds,
+  threadBusy,
+  pendingConfirmToolNames,
+}: {
+  msgs: any[]
+  /** #514: per-round split for the pager; falls back to a single round from msgs. */
+  rounds?: ToolHistoryRound<any>[]
+  threadBusy: boolean
+  pendingConfirmToolNames: ReadonlySet<string>
+}) {
+  const splitRounds: ToolHistoryRound<any>[] =
+    rounds ?? [{ msgs }]
+  const [auditOpen, setAuditOpen] = useState(false)
+  // #514 done-mode pager over rounds. Follow the LATEST round until the user
+  // pages — the block does not remount while a run streams (stable key), so an
+  // initial page=0 would otherwise strand the chip at ‹ 1/N › when the run
+  // ends (grok 514 review).
+  const [page, setPage] = useState(splitRounds.length - 1)
+  const userPaged = useRef(false)
+  useEffect(() => {
+    if (!userPaged.current) setPage(splitRounds.length - 1)
+  }, [splitRounds.length])
+  useEffect(() => {
+    if (page > splitRounds.length - 1) setPage(splitRounds.length - 1)
+  }, [splitRounds.length, page])
+
+  const toolsOf = (r: ToolHistoryRound<any>) =>
+    r.msgs.flatMap((m) => (Array.isArray(m?.tool_calls) ? m.tool_calls : []))
+  const toolsAll = useMemo(() => splitRounds.flatMap(toolsOf), [splitRounds])
+  const lastRound = splitRounds[splitRounds.length - 1]
+  const lastTools = useMemo(() => (lastRound ? toolsOf(lastRound) : []), [lastRound])
+  // SecurityConfirmationRequest carries no tool_call id on the wire — correlate
+  // by tool_name so an L2-confirming step always stays the expanded current
+  // card. Derived from the LIVE round's tools only (#507 + grok 514 review:
+  // same-name tools in earlier rounds of this run must never flip, and this
+  // set must not be reusable against earlier rounds later).
+  const pendingConfirmIds = useMemo(
+    () => pendingConfirmIdsFromTools(lastTools, pendingConfirmToolNames),
+    [lastTools, pendingConfirmToolNames],
+  )
+  const lastView = viewToolHistory(lastTools, { threadBusy, pendingConfirmIds })
+  const live = threadBusy === true && lastView.kind === "live"
+  const totalFailed = useMemo(() => countFailedTools(toolsAll), [toolsAll])
+
+  if (toolsAll.length === 0) return null
+
+  // Failure never hides behind a neutral chip: warning tone when failed > 0.
+  const chipTone =
+    totalFailed > 0
+      ? { ...styles.toolHistoryChip, color: tokens.warning, background: tokens.warningSoft }
+      : styles.toolHistoryChip
+  const renderCard = (tc: any, i: number) => <ToolCallCard key={tc.id ?? `tc-${i}`} tc={tc} />
+
+  const renderRound = (r: ToolHistoryRound<any>, i: number) => (
+    <div key={`round-${i}`}>
+      {(r.reasonings ?? []).map((txt, j) => (
+        <AuditReasoningSection key={`ar-${i}-${j}`} content={txt} index={j + 1} />
+      ))}
+      {toolsOf(r).map(renderCard)}
+    </div>
+  )
+
+  // ---- live: wireframe 原语不变 — 当前步展开，已完成折成一条（跨轮合并） ----
+  if (live && lastView.kind === "live") {
+    const prevTools = splitRounds.slice(0, -1).flatMap(toolsOf)
+    const completedTools = [...prevTools, ...lastView.completed]
+    const completedFailed =
+      countFailedTools(prevTools) + countFailedTools(lastView.completed)
+    return (
+      <div className="cmspark-msg-row" style={styles.agentMsg}>
+        <div style={styles.messageCol}>
+          <div style={styles.agentBubble}>
+            {completedTools.length > 0 ? (
+              <button
+                type="button"
+                style={chipTone}
+                aria-expanded={auditOpen}
+                aria-label={liveChipLabel(completedTools.length, completedFailed)}
+                onClick={() => setAuditOpen((v) => !v)}
+              >
+                {liveChipLabel(completedTools.length, completedFailed)}
+              </button>
+            ) : null}
+            {auditOpen ? (
+              <div>
+                {splitRounds.slice(0, -1).map(renderRound)}
+                {(lastRound.reasonings ?? []).map((txt, j) => (
+                  <AuditReasoningSection key={`ar-last-${j}`} content={txt} index={j + 1} />
+                ))}
+                {lastView.completed.map(renderCard)}
+              </div>
+            ) : null}
+            <ToolCallCard tc={lastView.current} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ---- done: 单块固定空间 + 轮次翻页 + 展开审计（#514 用户形态） ----
+  const totalPages = splitRounds.length
+  return (
+    <div className="cmspark-msg-row" style={styles.agentMsg}>
+      <div style={styles.messageCol}>
+        <div style={styles.agentBubble}>
+          {/* #514: wrap — the pager chip line must never blow out 320px */}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4 }}>
+            <button
+              type="button"
+              style={chipTone}
+              aria-expanded={auditOpen}
+              aria-label={donePagerChipLabel(page, totalPages, toolsAll.length, totalFailed)}
+              onClick={() => setAuditOpen((v) => !v)}
+            >
+              {donePagerChipLabel(page, totalPages, toolsAll.length, totalFailed)}
+            </button>
+            {totalPages > 1 ? (
+              <>
+                <button
+                  type="button"
+                  aria-label="上一段"
+                  style={{
+                    ...styles.toolHistoryPagerBtn,
+                    ...(page <= 0 ? styles.toolHistoryPagerBtnDisabled : {}),
+                  }}
+                  disabled={page <= 0}
+                  onClick={() => {
+                    userPaged.current = true
+                    setPage((p) => Math.max(0, p - 1))
+                  }}
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  aria-label="下一段"
+                  style={{
+                    ...styles.toolHistoryPagerBtn,
+                    ...(page >= totalPages - 1 ? styles.toolHistoryPagerBtnDisabled : {}),
+                  }}
+                  disabled={page >= totalPages - 1}
+                  onClick={() => {
+                    userPaged.current = true
+                    setPage((p) => Math.min(totalPages - 1, p + 1))
+                  }}
+                >
+                  ›
+                </button>
+              </>
+            ) : null}
+          </div>
+          {auditOpen ? renderRound(splitRounds[page], page) : null}
+        </div>
+      </div>
+    </div>
+  )
+})
+
+/**
+ * #502 A: a covered round's thinking inside the expanded audit view. Collapsed
+ * by default — the audit surface stays quiet until asked (执行过的过程不占位).
+ */
+function AuditReasoningSection({ content, index }: { content: string; index: number }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={styles.reasoningWrap}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <button
+          type="button"
+          style={{ ...styles.reasoningToggle, flex: 1 }}
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span style={styles.reasoningLabel}>
+            第 {index} 段思考
+            {!open ? <span style={styles.reasoningMeta}>（{content.length} 字）</span> : null}
+          </span>
+          <span style={styles.reasoningChevron}>{open ? "▾" : "▸"}</span>
+        </button>
+      </div>
+      {open ? (
+        <div style={styles.reasoningBody}>
+          <pre style={styles.reasoningPre}>{content}</pre>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function ToolCallCard({ tc }: { tc: any }) {
@@ -1445,7 +1750,7 @@ function ToolCallCard({ tc }: { tc: any }) {
           }}
           data-testid="redacted-stub-hint"
         >
-          {`出于安全未持久化：原始长度 ${redactedStub.len.toLocaleString()} 字符 · sha256 ${redactedStub.sha256}。实时轮次中内容对模型与界面可见（超长会截断），重新加载后不再保留。${stubFailed ? "该调用当时已失败。" : ""}`}
+          {formatRedactedStubHint(redactedStub, stubFailed)}
         </div>
       )}
       {/* #255 三态之截断态：读类工具结果过闸后按 8000 字符截断落盘——明示
@@ -2082,6 +2387,39 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${tokens.border}`,
     borderRadius: 10,
     padding: "2px 8px",
+  },
+  // #502 A: per-turn audit chip — neutral by default, warning tone is applied
+  // inline when the turn has failures (fold must never hide a failure).
+  toolHistoryChip: {
+    display: "inline-flex" as const,
+    alignItems: "center" as const,
+    gap: 4,
+    marginTop: 4,
+    alignSelf: "flex-start" as const,
+    fontSize: 11,
+    lineHeight: 1.4,
+    color: tokens.textSecondary,
+    background: tokens.bgElevated,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: 10,
+    padding: "2px 8px",
+    cursor: "pointer",
+  },
+  /** #514: round pager buttons beside the done chip (‹ › between rounds). */
+  toolHistoryPagerBtn: {
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
+    borderRadius: 8,
+    fontSize: 12,
+    lineHeight: 1,
+    padding: "2px 8px",
+    cursor: "pointer",
+  },
+  /** #514: edge-of-list pager state — visibly inert, not a fake affordance. */
+  toolHistoryPagerBtnDisabled: {
+    opacity: 0.45,
+    cursor: "default",
   },
   statusBubble: {
     background: tokens.accentSoft,

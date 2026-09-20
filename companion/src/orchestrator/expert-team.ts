@@ -361,7 +361,7 @@ export function mergeEditedSlices(
   })
 }
 
-function persistWorkerBrief(tm: ThreadManager, workerId: string, brief: string): { ok: true } | { ok: false; error: string } {
+export function persistWorkerBrief(tm: ThreadManager, workerId: string, brief: string): { ok: true } | { ok: false; error: string } {
   const trimmed = String(brief || "").trim()
   if (!trimmed) {
     return { ok: false, error: "worker brief is empty" }

@@ -104,6 +104,10 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     if (typeof td.on_idle_hours === "number") normalized.thread_digest_on_idle_hours = td.on_idle_hours
     if (typeof td.max_per_day === "number") normalized.thread_digest_max_per_day = td.max_per_day
   }
+  // #502 B archive tier (top-level boolean). Emitted EXPLICITLY as false when
+  // absent so the Settings toggle renders off for older companions instead of
+  // undefined→true on the first click.
+  normalized.persist_full_tool_history = config.persist_full_tool_history === true
   // Mode C prefs (nested; stored on config for Settings UI round-trip)
   const ch = config.coding_handoff
   if (ch && typeof ch === "object" && !Array.isArray(ch)) {
@@ -122,6 +126,18 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     if (Object.keys(handoff).length > 0) {
       ;(normalized as any).coding_handoff = handoff
     }
+  }
+  /**
+   * #502 C embedded terminal (nested, same shape SettingsSlideout writes:
+   * `config.set { embedded_terminal: { enabled } }`). The Side Panel entry gate reads
+   * `config.embedded_terminal.enabled`; without this pass-through the gate is false after every
+   * hydrate and「在本插件打开终端」never renders, while the companion timeline tells the user to
+   * click it. Only a genuine boolean is carried — `{}` / `1` / absent must not become truthy.
+   * No flattened alias and no new config key.
+   */
+  const et = config.embedded_terminal
+  if (et && typeof et === "object" && !Array.isArray(et) && typeof et.enabled === "boolean") {
+    ;(normalized as any).embedded_terminal = { enabled: et.enabled }
   }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)

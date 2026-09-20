@@ -4,6 +4,7 @@
 import { WSClient } from "./ws-client"
 import {
   attachTerminalPort,
+  buildTerminalOpenBinding,
   openOrFocusEmbeddedTerminal,
   TERMINAL_PORT_NAME,
   type TerminalRelay,
@@ -1640,6 +1641,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       // re-validates user_gesture.
       case "task_loop.arm":
       case "task_loop.stop":
+      // #513 fleet suggestion dismissal — card click (accept or 不用), records
+      // the companion-side silence window. Fail-closed default deny below means
+      // this frame MUST be listed here to reach the companion.
+      case "fleet.suggest.dismiss":
       case "ui.open_sidepanel": {
         // Forward to companion. Always call sendResponse so Side Panel callbacks
         // never see "The message port closed before a response was received"
@@ -1727,9 +1732,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
       }
       case "terminal.open_tab": {
-        const binding = typeof message.thread_id === "string" && typeof message.review_id === "string"
-          ? { thread_id: message.thread_id, review_id: message.review_id } : undefined
-        openOrFocusEmbeddedTerminal(binding)
+        // #502 C: a thread-only binding is legitimate — the embed intent is keyed by thread id and
+        // the companion accepts `terminal.open` without a review_id. The construction lives in
+        // buildTerminalOpenBinding so the "dropped thread_id" regression stays unit-tested.
+        openOrFocusEmbeddedTerminal(buildTerminalOpenBinding(message))
           .then(() => sendResponse({ ok: true }))
           .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
         return true

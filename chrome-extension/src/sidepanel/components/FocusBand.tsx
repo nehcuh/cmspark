@@ -20,6 +20,7 @@ import {
   FOCUS_BAND_MAX_PX,
   FOCUS_BAND_PRIMARY_MAX_PX,
   FOCUS_BAND_SECONDARY_MAX_PX,
+  FLEET_SNAPSHOT_FRESH_MS,
   classifyFleetActivity,
   resolveFocusBandSlot,
   sceneChipsSecondary,
@@ -41,6 +42,7 @@ export {
   fleetStripShouldShow,
   classifyFleetActivity,
   fleetProcessingLabel,
+  FLEET_SNAPSHOT_FRESH_MS,
 } from "./focus-band-priority"
 
 export function FocusBand({
@@ -59,12 +61,17 @@ export function FocusBand({
     (task.status === "running" || task.status === "paused")
   // Paused-only zombie workers must not steal FocusBand as「舰队运行中」.
   // Also: foreign residual workers of other sessions must not steal FocusBand.
+  // #514: a DONE fleet (all idle, no locks/intents) holds the band only while
+  // the snapshot is fresh — post-run inspection window, not a forever squat.
+  const fleetFresh =
+    !!state.fleet?.at && Date.now() - new Date(state.fleet.at).getTime() < FLEET_SNAPSHOT_FRESH_MS
   const hasFleetActivity =
     classifyFleetActivity({
       workerCount: scoped.workerCount,
       lockCount: scoped.lockCount,
       openIntents: scoped.openIntents,
       worstStatus: scoped.worstStatus,
+      fresh: fleetFresh,
     }) === "active"
   const isBrowserContext = capabilityLevel === "browser"
   // #au4dch ST-4: long tools must surface in FocusBand (not only chat footer).

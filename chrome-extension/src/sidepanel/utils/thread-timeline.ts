@@ -19,6 +19,8 @@ export type TimelineThread = {
   /** First user message preview (optional, from companion list enrichment). */
   first_user_preview?: string | null
   agent_role?: "normal" | "orchestrator" | "worker" | string
+  parent_thread_id?: string | null
+  worker_role_label?: string | null
   message_count?: number
   user_message_count?: number
   /** First-party ACP list meta from companion — never parsed from handback body. */
@@ -418,9 +420,82 @@ export function aliasFromFirstUserText(text: string, maxLen = 40): string {
 }
 
 export function roleBadge(role: string | undefined): string | null {
-  if (role === "worker") return "worker"
-  if (role === "orchestrator") return "orch"
+  if (role === "worker") return "子任务"
+  if (role === "orchestrator") return "编排"
   return null
+}
+
+export function isFleetWorkerThread(t: { agent_role?: string } | null | undefined): boolean {
+  return t?.agent_role === "worker"
+}
+
+export type ConversationEnumCtx = {
+  viewIds: ReadonlySet<string>
+  activeThreadId?: string | null
+  searching?: boolean
+}
+
+/** Hide a worker row in conversation enumerations (list / recent / @). */
+export function shouldHideInConversationEnum(
+  t: TimelineThread,
+  ctx: ConversationEnumCtx,
+): boolean {
+  if (!isFleetWorkerThread(t)) return false
+  if (ctx.searching) return false
+  if (t.id && t.id === ctx.activeThreadId) return false
+  const userMsgs = typeof t.user_message_count === "number" ? t.user_message_count : 0
+  if (userMsgs > 1) return false
+  const parentId = typeof t.parent_thread_id === "string" ? t.parent_thread_id.trim() : ""
+  if (!parentId) return false
+  if (!ctx.viewIds.has(parentId)) return false
+  return true
+}
+
+export function filterConversationEnum<T extends TimelineThread>(
+  threads: T[],
+  opts: { activeThreadId?: string | null; query?: string; excludeId?: string | null },
+): T[] {
+  const list = Array.isArray(threads) ? threads : []
+  const searching = Boolean(opts.query && opts.query.trim())
+  const viewIds = new Set(list.map((t) => t.id))
+  // excludeId is a result filter only — never drop it from viewIds first (#515 B2).
+  const excludeId = opts.excludeId || null
+  return list.filter((t) => {
+    if (excludeId && t.id === excludeId) return false
+    return !shouldHideInConversationEnum(t, {
+      viewIds,
+      activeThreadId: opts.activeThreadId,
+      searching,
+    })
+  })
+}
+
+export function childWorkerCountsByParent(
+  threads: ReadonlyArray<TimelineThread>,
+): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const t of threads) {
+    if (!isFleetWorkerThread(t)) continue
+    const parentId = typeof t.parent_thread_id === "string" ? t.parent_thread_id : ""
+    if (!parentId) continue
+    counts.set(parentId, (counts.get(parentId) || 0) + 1)
+  }
+  return counts
+}
+
+export function childWorkerCount(
+  parentId: string,
+  threads: ReadonlyArray<TimelineThread>,
+): number {
+  if (!parentId) return 0
+  return childWorkerCountsByParent(threads).get(parentId) || 0
+}
+
+export function workerBelongTitle(t: TimelineThread, parent?: TimelineThread | null): string {
+  if (!isFleetWorkerThread(t)) return displayThreadTitle(t)
+  const own = (t.worker_role_label || "").trim() || displayThreadTitle(t)
+  if (!parent) return `子任务 · ${own}`
+  return `子任务 · ${own} · 属于「${displayThreadTitle(parent)}」`
 }
 
 /** Checkbox tri-state for group headers. */

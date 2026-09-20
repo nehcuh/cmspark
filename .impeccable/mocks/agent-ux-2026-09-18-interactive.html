@@ -1,0 +1,894 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CMspark · 操作面交互稿 · #502</title>
+  <style>
+    :root {
+      --bg: #f4f3ef;
+      --paper: #ffffff;
+      --ink: #171717;
+      --mute: #666;
+      --faint: #767676;
+      --line: rgba(23,23,23,.10);
+      --line2: rgba(23,23,23,.14);
+      --accent: #4f46e5;
+      --accent-soft: #eef2ff;
+      --accent-text: #3730a3;
+      --ok: #059669;
+      --ok-soft: #ecfdf5;
+      --warn: #d97706;
+      --warn-soft: #fffbeb;
+      --danger: #dc2626;
+      --danger-soft: #fef2f2;
+      --dark: #171717;
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); }
+    button, summary { font-family: inherit; }
+    body { min-height: 100vh; }
+
+    .page {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 28px 24px 80px;
+    }
+    header.top h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+      font-weight: 650;
+      letter-spacing: -0.035em;
+    }
+    header.top p {
+      margin: 0 0 18px;
+      color: var(--mute);
+      font-size: 13px;
+      line-height: 1.55;
+      max-width: 760px;
+    }
+    header.top a { color: var(--accent); text-decoration: none; }
+    header.top a:hover { text-decoration: underline; }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 0 0 22px;
+    }
+    .tabs button {
+      border: 1px solid var(--ink);
+      background: transparent;
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tabs button[aria-selected="true"] {
+      background: var(--ink);
+      color: #fff;
+    }
+    .panel { display: none; }
+    .panel.on { display: block; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+    .layout.wide { grid-template-columns: 1fr 320px; }
+    @media (max-width: 860px) {
+      .layout, .layout.wide { grid-template-columns: 1fr; }
+    }
+
+    .side {
+      width: 320px;
+      height: 640px;
+      background: var(--paper);
+      border: 1.5px solid var(--ink);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 18px 40px rgba(23,23,23,.06);
+    }
+    .side::before {
+      content: "CMspark · Chrome 侧栏";
+      flex-shrink: 0;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 11px;
+      color: var(--faint);
+      background: #f3f2ee;
+      border-bottom: 1px solid var(--line);
+    }
+    .stage-wide {
+      background: var(--paper);
+      border: 1.5px solid var(--ink);
+      border-radius: 8px;
+      min-height: 640px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 18px 40px rgba(23,23,23,.06);
+    }
+    .rail {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 650;
+      flex-shrink: 0;
+    }
+    .live {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+    }
+    .sp { flex: 1; }
+    .ghost {
+      border: 0; background: transparent; cursor: pointer; font-size: 16px; color: var(--mute);
+    }
+    .focus {
+      min-height: 28px;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--line);
+      font-size: 11px;
+      color: var(--mute);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .stream {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .composer {
+      border-top: 1px solid var(--line);
+      padding: 10px 12px 12px;
+      flex-shrink: 0;
+    }
+    .composer .box {
+      border: 1px solid var(--line2);
+      border-radius: 12px;
+      padding: 9px 12px;
+      font-size: 13px;
+      color: var(--faint);
+    }
+
+    .bubble {
+      max-width: 92%;
+      padding: 8px 10px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.45;
+      border: 1px solid var(--ink);
+    }
+    .bubble.user {
+      align-self: flex-end;
+      background: var(--ink);
+      color: #fff;
+      border-color: var(--ink);
+    }
+    .bubble.agent { align-self: flex-start; background: #fff; }
+    .bubble.streamish { border-style: dashed; color: var(--mute); }
+
+    .trail {
+      align-self: flex-start;
+      width: 100%;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px dashed var(--ink);
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .chip:hover { background: var(--accent-soft); }
+    .chip[aria-expanded="true"] { border-style: solid; background: var(--accent-soft); }
+
+    .tool {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-left: 2px solid #a3a3a3;
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 12px;
+      font-family: var(--mono);
+      margin: 4px 0;
+      background: #fff;
+    }
+    .tool.run { border-left-color: var(--accent); background: var(--accent-soft); }
+    .tool.err { border-left-color: var(--danger); }
+    .tool .name { flex: 1; }
+    .tool .st { font-size: 11px; color: var(--faint); }
+    .tool-detail {
+      display: none;
+      font-size: 11px;
+      color: var(--mute);
+      padding: 0 8px 6px 28px;
+      font-family: var(--mono);
+    }
+    .tool.open .tool-detail { display: block; }
+
+    .aside {
+      background: var(--paper);
+      border: 1px solid var(--line2);
+      border-radius: 16px;
+      padding: 16px 18px 18px;
+    }
+    .aside h2 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+    }
+    .aside p, .aside li {
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--mute);
+    }
+    .aside ul { padding-left: 18px; }
+    .aside .now {
+      font-size: 12px;
+      background: var(--warn-soft);
+      border: 1px solid #fde68a;
+      color: #92400e;
+      border-radius: 10px;
+      padding: 8px 10px;
+      margin: 0 0 12px;
+    }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .controls button, .btn {
+      border: 1px solid var(--ink);
+      background: #fff;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .controls button.primary, .btn.primary {
+      background: var(--ink);
+      color: #fff;
+    }
+    .controls button:disabled { opacity: .4; cursor: not-allowed; }
+
+    .goal {
+      border: 1.5px solid var(--ink);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #fff;
+    }
+    .goal .k { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); font-weight: 650; }
+    .goal .t { font-size: 14px; font-weight: 650; margin: 2px 0 4px; }
+    .goal .m { font-size: 12px; color: var(--mute); }
+    .pills { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .pill {
+      font-size: 11px;
+      border: 1px solid var(--line2);
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: var(--mute);
+    }
+    .pill.warn { background: var(--warn-soft); border-color: #fde68a; color: #92400e; }
+    .pill.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+
+    .toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .switch {
+      width: 36px; height: 20px; border-radius: 99px;
+      background: #d4d4d4; position: relative; cursor: pointer; border: 0;
+    }
+    .switch i {
+      position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+      background: #fff; border-radius: 50%; transition: left .15s;
+      pointer-events: none;
+    }
+    .switch.on { background: var(--ink); }
+    .switch.on i { left: 18px; }
+
+    pre.json {
+      font-family: var(--mono);
+      font-size: 11px;
+      background: #171717;
+      color: #e7e5e4;
+      border-radius: 10px;
+      padding: 10px 12px;
+      overflow: auto;
+      line-height: 1.45;
+      margin: 8px 0 0;
+    }
+    .json .k { color: #a5b4fc; }
+    .json .s { color: #86efac; }
+    .json .dim { color: #a8a29e; }
+
+    .workers { display: grid; gap: 8px; }
+    .worker {
+      border: 1px solid var(--ink);
+      border-radius: 12px;
+      padding: 10px;
+      text-align: left;
+      background: #fff;
+      cursor: pointer;
+      width: 100%;
+    }
+    .worker[aria-current="true"] { background: var(--accent-soft); }
+    .worker b { display: block; font-size: 13px; }
+    .worker span { font-size: 11px; color: var(--mute); }
+    .bar { height: 3px; background: #eee; border-radius: 99px; margin-top: 8px; }
+    .bar i { display: block; height: 100%; background: var(--ink); border-radius: 99px; }
+
+    .obs {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      min-height: 640px;
+    }
+    @media (max-width: 860px) { .obs { grid-template-columns: 1fr; } }
+    .obs-nav {
+      border-right: 1px solid var(--line);
+      padding: 12px;
+      background: #fafafa;
+    }
+    .obs-main { padding: 16px 18px; }
+    .prompt {
+      font-family: var(--mono);
+      font-size: 12px;
+      background: #f7f7f5;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      color: #444;
+      display: none;
+      white-space: pre-wrap;
+    }
+    .prompt.on { display: block; }
+
+    .term-stage {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: 580px;
+    }
+    @media (max-width: 860px) { .term-stage { grid-template-columns: 1fr; } }
+    .acp-col {
+      border-right: 1px solid var(--line);
+      padding: 12px;
+      background: #fafafa;
+    }
+    .xterm {
+      background: #171717;
+      color: #e7e5e4;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      padding: 14px 16px;
+      line-height: 1.5;
+      min-height: 580px;
+    }
+    .xterm .c { color: #a5b4fc; }
+    .xterm .g { color: #86efac; }
+    .xterm input {
+      background: transparent;
+      border: 0;
+      color: #fff;
+      font: inherit;
+      outline: none;
+      width: 70%;
+    }
+    .term-cursor {
+      display: inline-block;
+      width: 7px; height: 14px;
+      background: #fff;
+      vertical-align: text-bottom;
+      animation: blink 1s steps(1) infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .compare div {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      font-size: 12px;
+    }
+    .compare .bad { border-color: #fecaca; background: var(--danger-soft); }
+    .compare .good { border-color: #bbf7d0; background: var(--ok-soft); }
+
+    .legend {
+      font-size: 11px;
+      color: var(--faint);
+      margin-top: 10px;
+    }
+    kbd {
+      font-family: var(--mono);
+      font-size: 11px;
+      border: 1px solid var(--line2);
+      border-radius: 4px;
+      padding: 0 4px;
+    }
+  </style>
+</head>
+<body>
+  <!--
+    THESIS: Operate surface hides agent mechanics by default and reveals them on purpose.
+    OWN-WORLD: paper/ink CMspark tokens, 320px side panel frames, indigo only for live work.
+    STORY: user reads answers; audit, terminal, goal, and fleet are opt-in inspections.
+    FIRST VIEWPORT: five slice tabs, live Chrome side panel, notes on the right.
+    FORM: established Operate world · #502 · no new visual identity.
+    FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+  -->
+  <div class="page">
+    <header class="top">
+      <h1>操作面 · 可点设计稿</h1>
+      <p>
+        GitHub <a href="https://github.com/nehcuh/cmspark/issues/502">#502</a>。
+        这是产品效果，不是实现。左侧是桌面 Chrome Side Panel（约 320px），不是手机。终端和舰队观察面是扩展全页 tab。
+        线稿对照：<a href="./agent-ux-2026-09-18-wires.html">wires.html</a>。
+      </p>
+    </header>
+
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="tools">1 工具史</button>
+      <button role="tab" aria-selected="false" data-tab="archive">2 归档</button>
+      <button role="tab" aria-selected="false" data-tab="term">3 终端</button>
+      <button role="tab" aria-selected="false" data-tab="goal">4 Goal</button>
+      <button role="tab" aria-selected="false" data-tab="fleet">5 舰队</button>
+    </div>
+
+    <!-- 1 tools -->
+    <section class="panel on" id="tab-tools">
+      <div class="layout">
+        <div class="side" aria-label="侧栏对话">
+          <div class="rail"><span class="live"></span> 对话<span class="sp"></span><button class="ghost" tabindex="-1">⋯</button></div>
+          <div class="focus" id="tools-focus">空闲</div>
+          <div class="stream" id="tools-stream">
+            <div class="bubble user">把这个招聘站前 8 个 JD 抽成表</div>
+            <div class="trail" id="tools-trail"></div>
+            <div class="bubble agent" id="tools-answer" hidden>8 条 JD 已写入表。两家没写薪资，标了「未公开」。</div>
+          </div>
+          <div class="composer"><div class="box">要对这页做什么</div></div>
+        </div>
+        <div class="aside">
+          <div class="now">今天：每条 click / navigate 都占一张卡，答案被顶出视口。#256 本轮步骤管待办，不管工具史。</div>
+          <h2>做完即收，当前步占位</h2>
+          <p>进行中只展开正在做的那一步；做完的折成一条。回合结束后整段轨迹收成审计芯，默认给人看的是答案。</p>
+          <div class="controls">
+            <button class="primary" id="tools-play">跑一轮</button>
+            <button id="tools-reset">回到空闲</button>
+          </div>
+          <ul>
+            <li>确认台 / 急停仍在顶栏，不进这条芯。</li>
+            <li>失败步骤在收起态用「1 失败」标出来，点开才看到哪一步。</li>
+            <li>召唤器 overlay 不画工具史（沿用 #256 pin）。</li>
+          </ul>
+          <p class="legend">点审计芯可展开。进行中也可点「已完成 N 步」回看。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2 archive -->
+    <section class="panel" id="tab-archive">
+      <div class="layout">
+        <div class="side">
+          <div class="rail">设置</div>
+          <div class="stream">
+            <div class="bubble agent" style="max-width:100%">对话档案</div>
+            <div class="toggle">
+              <div>
+                <b>保存完整操作史</b>
+                <div style="font-size:12px;color:var(--mute);margin-top:2px">默认关。只留工具名、成败、内容指纹。</div>
+              </div>
+              <button class="switch" id="arch-switch" aria-pressed="false" title="保存完整操作史"><i></i></button>
+            </div>
+            <div class="toggle">
+              <div>
+                <b>敏感结果</b>
+                <div style="font-size:12px;color:var(--mute);margin-top:2px">始终 redact。此开关加不开 cookie / shell 全文。</div>
+              </div>
+              <span class="pill">锁死</span>
+            </div>
+            <pre class="json" id="arch-json"></pre>
+          </div>
+        </div>
+        <div class="aside">
+          <div class="now">仓库已有 tool-persistence-redact（#255）：read-tier 留前缀，防 reload 失忆。用户要的是「中间过程默认不进档案」，不是再 redact 一次。</div>
+          <h2>三层必须拆开</h2>
+          <ul>
+            <li><b>UI</b> — 切片 1，默认折叠。</li>
+            <li><b>磁盘</b> — 默认 stub（工具名 + ok/fail + sha256）。设置打开才写受 redact 的正文。</li>
+            <li><b>再喂模型</b> — 默认不把历史 click 全文塞回下一轮。答案 + 目标卡才是记忆。</li>
+          </ul>
+          <div class="compare">
+            <div class="bad">禁止：磁盘删光却还宣称「可审计」</div>
+            <div class="good">允许：stub 可展开成「navigate · 成功」</div>
+          </div>
+          <p class="legend">拨开关看 JSON 形状变化。L2 确认记录不走这条省略。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 terminal -->
+    <section class="panel" id="tab-term">
+      <div class="layout wide">
+        <div class="stage-wide">
+          <div class="rail">全页 tab · 编程接力终端 · 本线程<span class="sp"></span><span class="pill">darwin PTY</span></div>
+          <div class="term-stage">
+            <div class="acp-col">
+              <div class="goal" style="margin-bottom:10px">
+                <div class="k">ACP 时间线</div>
+                <div class="t" style="font-size:13px">审查 auth 中间件</div>
+                <div class="m">claude · 审查模式</div>
+              </div>
+              <div class="tool"><span>✓</span><span class="name">session start</span></div>
+              <div class="tool"><span>✓</span><span class="name">read auth.ts</span></div>
+              <div class="tool run"><span>…</span><span class="name">permission · 写 diff</span></div>
+              <button class="btn primary" style="margin-top:10px;width:100%">允许写盘（确认台）</button>
+              <p class="legend">结构化通道：权限、diff、handback。侧栏 320px 只留这张卡 +「打开终端」。</p>
+            </div>
+            <div class="xterm" id="xterm">
+              <div class="c">cmspark pty · zsh · workspace/cmspark</div>
+              <div class="g">claude · review auth middleware</div>
+              <div>Reading src/auth.ts</div>
+              <div>Plan: reject missing CSRF on POST /login</div>
+              <div>Need write permission for src/auth.ts</div>
+              <div id="xterm-out"></div>
+              <div><span class="c">› </span><input id="xterm-in" placeholder="在这敲（演示）" autocomplete="off" /><span class="term-cursor"></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="aside">
+          <div class="now">#432 已有 xterm.js + node-pty 全页 tab（默认关）。Mode C 外跳已支持 Alacritty / Ghostty / iTerm。缺的是 P1：把 agent stdio 挂进这只 PTY。</div>
+          <h2>不要把 Alacritty 嵌进 Chrome</h2>
+          <ul>
+            <li>Alacritty 是 wgpu 窗口。MV3 扩展没有宿主可嵌 GPU 终端。</li>
+            <li>Zed 用的是 <code>alacritty_terminal</code> crate + GPUI，那是原生应用，对标的是未来 Host 工作台（#476），不是插件。</li>
+            <li>Native Messaging = 外跳，Mode C 已经做了。</li>
+          </ul>
+          <p>双向交互 = <b>ACP 事件</b>（可确认）+ <b>PTY 字节</b>（可敲）。并存，不是二选一。</p>
+          <div class="compare">
+            <div class="bad">侧栏里跑 vim / claude TUI</div>
+            <div class="good">全页 tab 真终端，侧栏只放入口</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 goal -->
+    <section class="panel" id="tab-goal">
+      <div class="layout">
+        <div class="side">
+          <div class="rail"><span class="live"></span> 对话</div>
+          <div class="focus" id="goal-focus">续跑推进中 · 第 4 轮</div>
+          <div class="stream">
+            <div class="bubble user">把这个招聘站前 8 个 JD 抽成表</div>
+            <div class="goal" id="goal-card">
+              <div class="k">目标</div>
+              <div class="t">抽出 8 条 JD 成表</div>
+              <div class="m" id="goal-meta">进行中 · 已核 6/8</div>
+              <div class="pills">
+                <span class="pill" id="goal-round">续跑 4/20</span>
+                <span class="pill" id="goal-progress">无进展 0</span>
+                <span class="pill">熔断 100 隐藏</span>
+              </div>
+            </div>
+            <div class="chip" id="goal-audit">6 步浏览器操作 · 展开审计</div>
+            <div class="bubble agent" id="goal-say">还差两条。下一页。</div>
+          </div>
+          <div class="composer"><div class="box">要对这页做什么</div></div>
+        </div>
+        <div class="aside">
+          <div class="now">今天停因是「达到最大工具调用轮次 (100)」。100 是单次 chatCreate 的电路熔断，不是目标。跨轮续跑已有 task_loop（20 run / 30–60 min），STOPPED_USER 永不自行复活。</div>
+          <h2>Goal 是完成态，driver 另挂</h2>
+          <p>DeepSeek：goal 不调度；round-driver 只在 idle + 已武装 + 有余量时续一轮；resume/fork 不自动武装。我们把可见上限从 100 换成目标卡，100 留在地下室。</p>
+          <div class="controls">
+            <button class="primary" id="goal-complete">目标完成</button>
+            <button id="goal-stall">无进展停</button>
+            <button id="goal-budget">预算尽</button>
+            <button id="goal-reset">重置</button>
+          </div>
+          <ul>
+            <li>停因：完成 / 无进展 / 预算 / 同工具空转 / 安全 / 人停。</li>
+            <li>不把 100 改成 10000 就叫 Goal Driver。</li>
+            <li>与 run_progress 合并成一张目标卡，不并排两套清单。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 fleet -->
+    <section class="panel" id="tab-fleet">
+      <div class="layout wide">
+        <div class="stage-wide">
+          <div class="rail">观察面 · 本 run<span class="sp"></span><span class="pill">最多 5 路 · ADR-015</span></div>
+          <div class="obs">
+            <div class="obs-nav">
+              <div class="goal" style="margin-bottom:10px">
+                <div class="k">编排</div>
+                <div class="t" style="font-size:13px">招聘表并行</div>
+                <div class="m">3 worker · 1 把 tab 锁</div>
+              </div>
+              <div class="workers" id="fleet-list"></div>
+            </div>
+            <div class="obs-main" id="fleet-main"></div>
+          </div>
+        </div>
+        <div class="aside">
+          <div class="now">FleetStrip 只有「3 路 / 持锁」。点进 worker 只能切线程，看不到它此刻的提示词和进度。Kimi 网页 Swarm 能点进子 agent；kimi vis 是调试器。</div>
+          <h2>三档，默认只给两档</h2>
+          <ul>
+            <li><b>Glance</b> — 侧栏三行：角色 + 当前工具 + 粗进度。</li>
+            <li><b>Inspect</b> — 点开一只：目标、锁、本轮工具、提示词默认收。</li>
+            <li><b>Observatory</b> — 这张全页，对标 vis。不进 BottomBar，不进 overlay。</li>
+          </ul>
+          <p>内部 prompt 不是默认装饰。要看再展开。Board（Fact/Intent）仍是协作板，不是运行时透视。</p>
+          <p class="legend">点左侧 worker。再点「本轮提示」。</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (s, r = document) => r.querySelector(s);
+    const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+    /* tabs */
+    $$(".tabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $$(".tabs button").forEach((b) => b.setAttribute("aria-selected", b === btn ? "true" : "false"));
+        $$(".panel").forEach((p) => p.classList.toggle("on", p.id === "tab-" + btn.dataset.tab));
+      });
+    });
+
+    /* 1 tools */
+    const STEPS = [
+      { name: "navigate", detail: "https://jobs.example/list" },
+      { name: "click", detail: "#filters .remote" },
+      { name: "get_page_text", detail: "list · 12 cards" },
+      { name: "click", detail: ".job-card[0]" },
+      { name: "get_page_text", detail: "JD · 后端" },
+      { name: "click", detail: ".pager-next" },
+      { name: "click", detail: ".job-card[1]" },
+      { name: "get_page_text", detail: "JD · 设计" },
+    ];
+    let toolsTimer = null;
+    let toolsI = -1;
+    let toolsOpen = false;
+    let toolsDoneOpen = false;
+
+    function renderTools() {
+      const trail = $("#tools-trail");
+      const focus = $("#tools-focus");
+      const answer = $("#tools-answer");
+      trail.innerHTML = "";
+      const running = toolsI >= 0 && toolsI < STEPS.length;
+      const done = toolsI >= STEPS.length;
+
+      if (toolsI < 0) {
+        focus.textContent = "空闲";
+        answer.hidden = true;
+        return;
+      }
+
+      if (running) {
+        focus.textContent = "进行中 · " + STEPS[toolsI].name;
+        if (toolsI > 0) {
+          const chip = document.createElement("button");
+          chip.className = "chip";
+          chip.setAttribute("aria-expanded", toolsOpen ? "true" : "false");
+          chip.textContent = toolsOpen ? "收起已完成" : "已完成 " + toolsI + " 步 · 展开";
+          chip.onclick = () => { toolsOpen = !toolsOpen; renderTools(); };
+          trail.appendChild(chip);
+          if (toolsOpen) {
+            STEPS.slice(0, toolsI).forEach((s) => trail.appendChild(toolRow(s, false)));
+          }
+        }
+        trail.appendChild(toolRow(STEPS[toolsI], true));
+        const live = document.createElement("div");
+        live.className = "bubble streamish";
+        live.textContent = "正在处理…";
+        trail.appendChild(live);
+        answer.hidden = true;
+      } else if (done) {
+        focus.textContent = "空闲";
+        const chip = document.createElement("button");
+        chip.className = "chip";
+        chip.setAttribute("aria-expanded", toolsDoneOpen ? "true" : "false");
+        chip.textContent = toolsDoneOpen ? "收起审计" : "8 步浏览器操作 · 0 失败 · 展开审计";
+        chip.onclick = () => { toolsDoneOpen = !toolsDoneOpen; renderTools(); };
+        trail.appendChild(chip);
+        if (toolsDoneOpen) {
+          STEPS.forEach((s) => trail.appendChild(toolRow(s, false)));
+        }
+        answer.hidden = false;
+      }
+    }
+    function toolRow(s, run) {
+      const wrap = document.createElement("div");
+      wrap.className = "tool" + (run ? " run" : "");
+      wrap.innerHTML = "<span>" + (run ? "…" : "✓") + "</span><span class='name'>" + s.name + "</span><span class='st'>" + (run ? "正在做" : "ok") + "</span>";
+      const d = document.createElement("div");
+      d.className = "tool-detail";
+      d.textContent = s.detail;
+      wrap.appendChild(d);
+      wrap.addEventListener("click", () => wrap.classList.toggle("open"));
+      return wrap;
+    }
+    $("#tools-play").onclick = () => {
+      clearInterval(toolsTimer);
+      toolsI = 0;
+      toolsOpen = false;
+      toolsDoneOpen = false;
+      renderTools();
+      toolsTimer = setInterval(() => {
+        toolsI += 1;
+        renderTools();
+        if (toolsI >= STEPS.length) clearInterval(toolsTimer);
+      }, 700);
+    };
+    $("#tools-reset").onclick = () => {
+      clearInterval(toolsTimer);
+      toolsI = -1;
+      toolsOpen = false;
+      toolsDoneOpen = false;
+      renderTools();
+    };
+
+    /* 2 archive */
+    const stubJson = `{
+  "messages": [
+    { "role": "user", "content": "抽出 8 条 JD" },
+    { "role": "assistant", "content": "8 条已写入表。" },
+    { "role": "assistant", "tool_calls": [
+      { "name": "navigate", "ok": true, "sha256": "8f2a…" },
+      { "name": "click", "ok": true, "sha256": "b91c…" },
+      { "name": "get_page_text", "ok": true, "len": 18420, "kept": 0 }
+    ]}
+  ]
+}`;
+    const fullJson = `{
+  "messages": [
+    { "role": "user", "content": "抽出 8 条 JD" },
+    { "role": "assistant", "content": "8 条已写入表。" },
+    { "role": "assistant", "tool_calls": [
+      { "name": "navigate", "ok": true, "url": "https://jobs.example/list" },
+      { "name": "click", "ok": true, "selector": ".job-card[0]" },
+      { "name": "get_page_text", "ok": true, "prefix": "岗位：后端…", "kept": 4000, "total": 18420 }
+    ]}
+  ]
+}`;
+    function paintArch(on) {
+      $("#arch-switch").classList.toggle("on", on);
+      $("#arch-switch").setAttribute("aria-pressed", on ? "true" : "false");
+      $("#arch-json").textContent = on ? fullJson : stubJson;
+    }
+    paintArch(false);
+    $("#arch-switch").onclick = () => paintArch(!$("#arch-switch").classList.contains("on"));
+
+    /* 3 terminal */
+    const xtermIn = $("#xterm-in");
+    const xtermOut = $("#xterm-out");
+    xtermIn.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const v = xtermIn.value.trim();
+      if (!v) return;
+      const line = document.createElement("div");
+      line.innerHTML = "<span class='c'>› " + v.replace(/[<>&]/g, "") + "</span>";
+      xtermOut.appendChild(line);
+      const resp = document.createElement("div");
+      resp.textContent = v === "help"
+        ? "这是 xterm.js PTY 演示。真实现状：#432 已能敲 zsh。P1 要把 claude/pi stdio 接到同一只 PTY。"
+        : "pty: " + v + "  （演示回显；真终端走 node-pty）";
+      xtermOut.appendChild(resp);
+      xtermIn.value = "";
+    });
+
+    /* 4 goal */
+    const goalState = {
+      complete: { focus: "计划完成，待你确认", meta: "完成 · 8/8 已核", round: "续跑 4/20", progress: "无进展 0", say: "表已齐。两家薪资未公开。", pill: "ok" },
+      stall: { focus: "受阻：连续无进展", meta: "已暂停 · 仍是 6/8", round: "续跑 4/20", progress: "无进展 ×3", say: "同一分页器点了三遍，没有新 JD。目标未完成。", pill: "warn" },
+      budget: { focus: "续跑预算已尽", meta: "预算停 · 6/8", round: "续跑 20/20", progress: "可再武装", say: "预算到点。点目标卡续跑，不会自己醒来。", pill: "warn" },
+      idle: { focus: "续跑推进中 · 第 4 轮", meta: "进行中 · 已核 6/8", round: "续跑 4/20", progress: "无进展 0", say: "还差两条。下一页。", pill: "" },
+    };
+    function setGoal(key) {
+      const s = goalState[key];
+      $("#goal-focus").textContent = s.focus;
+      $("#goal-meta").textContent = s.meta;
+      $("#goal-round").textContent = s.round;
+      $("#goal-progress").textContent = s.progress;
+      $("#goal-progress").className = "pill" + (s.pill ? " " + s.pill : "");
+      $("#goal-say").textContent = s.say;
+    }
+    $("#goal-complete").onclick = () => setGoal("complete");
+    $("#goal-stall").onclick = () => setGoal("stall");
+    $("#goal-budget").onclick = () => setGoal("budget");
+    $("#goal-reset").onclick = () => setGoal("idle");
+
+    /* 5 fleet */
+    const FLEET = [
+      {
+        id: "fetch",
+        title: "抓取",
+        status: "get_page_text · tab 1842",
+        pct: 62,
+        goal: "收集 8 条 JD 原文",
+        lock: "持锁 tab 1842",
+        tools: ["navigate", "click ×4", "get_page_text ← 当前"],
+        prompt: "你是抓取工人。只读招聘列表和 JD 页。不要写表。每条 JD 交 handback：title, company, url, salary_raw。禁止 evaluate。",
+      },
+      {
+        id: "sheet",
+        title: "写表",
+        status: "等待 handback",
+        pct: 20,
+        goal: "把 JD 写成一张表",
+        lock: "无锁",
+        tools: ["等待 collect_handback"],
+        prompt: "你是写表工人。只消费抓取工人的 handback。不要自己打开招聘站。缺薪资写「未公开」。",
+      },
+      {
+        id: "check",
+        title: "核对",
+        status: "空闲",
+        pct: 0,
+        goal: "核对薪资字段",
+        lock: "无锁",
+        tools: ["尚未开工"],
+        prompt: "你是核对工人。表齐之后再跑。只标不一致，不改源页。",
+      },
+    ];
+    let fleetSel = "fetch";
+    let promptOn = false;
+    function paintFleet() {
+      const list = $("#fleet-list");
+      list.innerHTML = "";
+      FLEET.forEach((w) => {
+        const b = document.createElement("button");
+        b.className = "worker";
+        b.setAttribute("aria-current", w.id === fleetSel ? "true" : "false");
+        b.innerHTML = "<b>" + w.title + "</b><span>" + w.status + "</span><div class='bar'><i style='width:" + w.pct + "%'></i></div>";
+        b.onclick = () => { fleetSel = w.id; promptOn = false; paintFleet(); };
+        list.appendChild(b);
+      });
+      const w = FLEET.find((x) => x.id === fleetSel);
+      $("#fleet-main").innerHTML =
+        "<div class='goal'><div class='k'>" + w.title + " · worker</div>" +
+        "<div class='t'>" + w.goal + "</div>" +
+        "<div class='m'>" + w.lock + " · " + w.status + "</div></div>" +
+        "<div class='pills' style='margin:10px 0'>" + w.tools.map((t) => "<span class='pill'>" + t + "</span>").join("") + "</div>" +
+        "<button class='chip' id='prompt-chip'>" + (promptOn ? "收起本轮提示" : "本轮提示 · 默认收") + "</button>" +
+        "<pre class='prompt" + (promptOn ? " on" : "") + "'>" + w.prompt + "</pre>";
+      $("#prompt-chip").onclick = () => { promptOn = !promptOn; paintFleet(); };
+    }
+    paintFleet();
+  </script>
+</body>
+</html>

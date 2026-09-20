@@ -3,10 +3,14 @@
 // Design basis: .omx/artifacts/loop-rethink-20260906/FINAL-SYNTHESIS.md §分歧 1/4 + L-2.
 //
 // RED LINES enforced here:
-// - Unactivated === zero behavior change: no loop_state write, no nextRun, no
-//   run-level semantic change (100-round cap / failure breakers untouched).
-//   The only unactivated emission is the non-blocking suggestion card
-//   (task_loop.suggest) — discovery, not behavior (FINAL-SYNTHESIS 分歧 1).
+// - Unactivated === no loop_state write and no nextRun: the only unactivated
+//   emission is the non-blocking suggestion card (task_loop.suggest) — discovery,
+//   not behavior (FINAL-SYNTHESIS 分歧 1). #502 D-G1 note: that card now also
+//   fires for the 100-round cap (round_limit), because the cap is a run boundary
+//   rather than a failure.
+// - Failure breakers keep their semantics: circuit_breaker (same-tool /
+//   continuous API failures) and error never auto-continue. The 100-round cap is
+//   NOT one of them — it ends the run, not the task (#502 D-G1).
 // - Completion is NEVER model prose self-assessment: the verdict comes from
 //   #387's evaluateCompletion (all evidence-tick ∧ closing turn no tool_calls);
 //   the kernel passes no claim, so only machine evidence can complete a loop.
@@ -321,9 +325,22 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
       // The abort path (markLoopStoppedByUser) owns the state transition.
       return
     }
+    // #502 D-G1: the 100-round cap is a RUN boundary, not a terminal verdict.
+    // It must NOT fall into the breaker branch below — the task is still
+    // unfinished (that is exactly why the cap fired), so this run falls through
+    // to the normal budget / eligibility / enqueue path as if it had ended
+    // naturally. Audited separately so replay can tell "this run hit the cap"
+    // from "this run ended on its own".
+    if (stats.terminal === "round_limit") {
+      audit(args.audit, {
+        type: "task_loop.round_limit",
+        thread_id: threadId,
+        runs_used: state.runs_used,
+      })
+    }
     if (stats.terminal === "circuit_breaker" || stats.terminal === "error") {
-      // Run-level breakers (100 rounds / failure limits) keep their semantics:
-      // no auto-continue. The loop stays armed — a user-driven run resumes it.
+      // Failure / API / structural breakers keep their semantics: no
+      // auto-continue. The loop stays armed — a user-driven run resumes it.
       // Event is `paused`, not `stopped`: the loop STATE did not stop (NIT-2 —
       // replay must distinguish "this run not continued" from a state stop).
       audit(args.audit, {
@@ -339,8 +356,14 @@ export function onLoopRunFinished(args: LoopExitCheckArgs): void {
     // only emission is the non-blocking suggestion card (discovery — FINAL-
     // SYNTHESIS 分歧 1). STOPPED_USER/HALT_SECURITY: no card (user/security
     // already spoke); STOPPED_BUDGET: card click == explicit resume gesture.
+    //
+    // #502 D-G1: `round_limit` is admitted here as well — an UNARMED thread
+    // that just hit the 100-round cap has unfinished work but no continuation
+    // authority, which is precisely what the discovery card is for. Breakers
+    // (circuit_breaker / error) stay excluded: they mean "this run went wrong",
+    // not "this run used up its step budget".
     if (
-      !stats.terminal &&
+      (stats.terminal === null || stats.terminal === "round_limit") &&
       stats.toolCalls >= 1 &&
       state?.status !== "stopped_user" &&
       state?.status !== "halt_security"

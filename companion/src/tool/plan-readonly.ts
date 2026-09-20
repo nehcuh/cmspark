@@ -59,6 +59,8 @@ export const PLAN_READONLY_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   "wait_workers",
   // --- display-only plan card; orthogonal to the cap (propose ≠ exemption) ---
   "run_progress_propose",
+  // #513 advisory fleet suggestion — same class: propose-only, zero mutation
+  "fleet_suggest_propose",
 ])
 
 /** Plan-safe ⇔ explicitly allowlisted. mcp__* never matches → default-deny. */

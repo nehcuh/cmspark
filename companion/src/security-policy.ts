@@ -98,7 +98,9 @@ export class SecurityPolicy {
           return JSON.stringify([...new Set(list.map(String))].sort())
         }
         const intent = String(params?.intent_id || "").trim()
-        return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}|allow=${canon(params?.tool_allow)}|deny=${canon(params?.tool_deny)}|intent=${intent}`
+        const goal = String(params?.goal || params?.task || "").replace(/\s+/g, " ").trim().slice(0, 400)
+        const rolePrompt = String(params?.role_prompt || "").replace(/\s+/g, " ").trim().slice(0, 200)
+        return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}|allow=${canon(params?.tool_allow)}|deny=${canon(params?.tool_deny)}|intent=${intent}|goal=${goal}|role_prompt=${rolePrompt}`
       }
       case "spawn_expert_team": {
         const { expertTeamBindingPayload } = require("./orchestrator/expert-team") as typeof import("./orchestrator/expert-team")

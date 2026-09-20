@@ -173,6 +173,19 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     case "spawn_worker": {
       const parentId = params.__thread_id || params._thread_id || params.parent_thread_id
       if (!parentId) return { success: false, error: "spawn_worker requires parent thread (__thread_id)" }
+      // #514: the task brief is REQUIRED — a spawned worker with no goal is a
+      // dead shell (threads existed with 0 messages in the wild: nothing ever
+      // told them what to do, wait_workers idled forever).
+      const goal = String(params.goal || params.task || "").trim()
+      if (!goal) {
+        return {
+          success: false,
+          error:
+            "spawn_worker requires goal — the worker's task brief: what it must do and what it should return. The worker starts on this goal immediately after spawn.",
+          data: { error_code: "INVALID_ARGS" },
+        }
+      }
+      const rolePrompt = typeof params.role_prompt === "string" ? params.role_prompt.trim() : ""
       // Real HITL: L2 forceConfirm issues security_token. LLM user_confirmed is NOT trusted.
       if (!params.security_token) {
         return {
@@ -245,7 +258,14 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         }
       }
       // ADR-016 Stage 3: claim intent on host board after worker exists
-      let intentClaim: { ok: boolean; error?: string; intent_id?: string } | null = null
+      let intentClaim: {
+        ok: boolean
+        error?: string
+        error_code?: string
+        intent_id?: string
+        /** #514: BOARD_MISSING soft-skip — claim not attempted against a nonexistent board. */
+        skipped?: boolean
+      } | null = null
       if (intentId) {
         try {
           const { claimIntent } = await import("../board/intent-claim")
@@ -255,15 +275,28 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             workerThreadId: r.worker.id,
           })
           if (!cr.ok) {
-            intentClaim = { ok: false, error: cr.error, intent_id: intentId }
+            intentClaim = { ok: false, error: cr.error, error_code: cr.error_code, intent_id: intentId }
           } else {
             intentClaim = { ok: true, intent_id: intentId }
           }
         } catch (e: any) {
-          intentClaim = { ok: false, error: e?.message || String(e), intent_id: intentId }
+          intentClaim = { ok: false, error: e?.message || String(e), error_code: "CLAIM_THREW", intent_id: intentId }
         }
-        // P2: transactional — intent_id requested but claim failed → delete worker
-        if (intentClaim && !intentClaim.ok) {
+        // P2: transactional — intent_id requested but claim failed → delete worker.
+        // #514 carve-out: BOARD_MISSING means the host never had a mission board,
+        // so the referenced intent contract does not exist (the id is inert —
+        // typically model-invented). Destroying an APPROVED worker over a
+        // reference to a nonexistent board is the harsher failure; soft-skip the
+        // claim, keep the worker, and report the skip honestly.
+        if (intentClaim && !intentClaim.ok && intentClaim.error_code === "BOARD_MISSING") {
+          logger.warn("spawn.intent_claim_skipped", {
+            thread_id: String(parentId),
+            worker_id: r.worker.id,
+            intent_id: intentId,
+            reason: "mission_board not initialized",
+          })
+          intentClaim = { ...intentClaim, skipped: true }
+        } else if (intentClaim && !intentClaim.ok) {
           try {
             threadManager.delete(r.worker.id)
           } catch {
@@ -279,6 +312,58 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         }
       }
       const workerAfter = threadManager.get(r.worker.id)
+      // #514: deliver the task — persist a role-aware brief (the worker's first
+      // user message + a discipline note on its system prompt) and kick its run,
+      // mirroring the expert-team path. Without this the worker NEVER starts.
+      const roleLabel = typeof params.role_label === "string" ? params.role_label.trim() : ""
+      const brief = [
+        `你是并行协作中的 worker${roleLabel ? `「${roleLabel}」` : ""}。编排由主线程负责，不要与其他 worker 互聊。`,
+        rolePrompt ? `角色要求：${rolePrompt}` : "",
+        `你的任务（只做这一件，完成后给出结果与关键来源）：`,
+        goal,
+        "完成后即可结束本轮，无需等待其他 worker。",
+      ]
+        .filter(Boolean)
+        .join("\n")
+      const { persistWorkerBrief } = await import("../orchestrator/expert-team")
+      const persisted = persistWorkerBrief(threadManager, r.worker.id, brief)
+      if (!persisted.ok) {
+        // Brief failed to land: a worker without instructions must not be
+        // kicked into a hollow run — roll back exactly like a failed intent claim.
+        try {
+          threadManager.delete(r.worker.id)
+        } catch {
+          /* best-effort */
+        }
+        restoreParentAfterFailedSpawn(threadManager, String(parentId), r.parent_before_promotion)
+        return {
+          success: false,
+          error: `spawn_worker rolled back: worker brief did not persist — ${persisted.error}`,
+          data: { error_code: "SPAWN_BRIEF_FAILED" },
+        }
+      }
+      if (typeof execOpts?.kickWorkerChat !== "function") {
+        try {
+          threadManager.delete(r.worker.id)
+        } catch {
+          /* best-effort */
+        }
+        restoreParentAfterFailedSpawn(threadManager, String(parentId), r.parent_before_promotion)
+        return {
+          success: false,
+          error: "spawn_worker rolled back: no kick channel — worker would be a briefed dead shell",
+          data: { error_code: "SPAWN_KICK_FAILED" },
+        }
+      }
+      await execOpts.kickWorkerChat({ threadId: r.worker.id, message: brief })
+      const kicked = true
+      // #514: push the fleet snapshot so the Glance strip appears immediately —
+      // full-autonomy cruise auto-approves spawn (no confirm), and confirms were
+      // the panel's ONLY pull trigger for fleet.status.
+      if (typeof execOpts?.broadcast === "function") {
+        const { broadcastFleetSnapshotIfWorkers } = await import("../orchestrator/fleet")
+        broadcastFleetSnapshotIfWorkers(threadManager, execOpts.broadcast)
+      }
       return {
         success: true,
         data: {
@@ -290,6 +375,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           pack_apply: packApply,
           assigned_intent_id: intentId,
           intent_claim: intentClaim,
+          brief_persisted: true,
+          kicked,
         },
       }
     }
@@ -331,6 +418,12 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         kickWorkerChat: execOpts?.kickWorkerChat,
       })
       if (!r.ok) return { success: false, error: r.error, data: r.data }
+      // #514: expert-team spawns bypass the spawn_worker case's snapshot push —
+      // full-autonomy expert teams must light the Glance strip the same way.
+      if (typeof execOpts?.broadcast === "function") {
+        const { broadcastFleetSnapshotIfWorkers } = await import("../orchestrator/fleet")
+        broadcastFleetSnapshotIfWorkers(threadManager, execOpts.broadcast)
+      }
       return { success: true, data: r.data }
     }
     case "acp_list_agents": {
@@ -2165,6 +2258,62 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           tool: contractTool,
           shadow: true,
           note: "registration only — grants no execution permission; shell_exec still requires normal confirmation",
+        },
+      }
+    }
+    case "fleet_suggest_propose": {
+      // #513 advisory-only: surfaces a suggestion card, nothing else. No spawn,
+      // no arm, no thread mutation — no-auto-spawn stays intact (spec §4).
+      if (execOpts?.handshakeSurface === "summoner" || execOpts?.handshakeSurface == null) {
+        return { success: false, error: "SUMMONER_ACL: fleet_suggest_propose denied", data: { error_code: "SUMMONER_ACL" } }
+      }
+      const tid = typeof params.__thread_id === "string" ? params.__thread_id : ""
+      const fleetThread = tid ? threadManager.get(tid) : undefined
+      if (!tid || !fleetThread) {
+        return { success: false, error: "thread required", data: { error_code: "THREAD_REQUIRED" } }
+      }
+      if (fleetThread.agent_role === "worker") {
+        return { success: false, error: "workers cannot propose fleet dispatch", data: { error_code: "WORKER_DENIED" } }
+      }
+      const reason = typeof params.reason === "string" ? params.reason.trim() : ""
+      const rawSubtasks: unknown[] = Array.isArray(params.subtasks) ? params.subtasks : []
+      const subtasks = rawSubtasks
+        .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        .map((s) => s.trim())
+      if (!reason || subtasks.length < 2 || subtasks.length > 5) {
+        return {
+          success: false,
+          error: "fleet_suggest_propose requires reason and 2–5 non-empty subtasks",
+          data: { error_code: "INVALID_ARGS" },
+        }
+      }
+      const { fleetSuggestGate } = await import("../orchestrator/fleet-suggest")
+      const gate = fleetSuggestGate(tid)
+      if (!gate.ok) {
+        return { success: true, data: { surfaced: false, reason: gate.reason } }
+      }
+      // Honest without a broadcast channel (tests / non-server contexts): never
+      // claim "shown to the user" when nothing could receive the frame.
+      if (typeof execOpts?.broadcast !== "function") {
+        return {
+          success: false,
+          error: "fleet_suggest_propose requires a broadcast channel to surface the card",
+          data: { error_code: "NO_CHANNEL" },
+        }
+      }
+      // Broadcast, not sendOrigin: the card lives in the side panel while the
+      // calling connection may be tray — the frame must reach the panel ws.
+      execOpts.broadcast({
+        type: "fleet.suggest",
+        thread_id: tid,
+        reason,
+        subtasks,
+      })
+      return {
+        success: true,
+        data: {
+          surfaced: true,
+          note: "Suggestion shown to the user. Do NOT spawn workers yet — wait for an explicit user approval message that lists the subtasks; each spawn_worker call still requires L2 confirmation.",
         },
       }
     }

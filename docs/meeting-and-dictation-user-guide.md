@@ -1,6 +1,6 @@
 # 听写+ 与 会议记录 — 用户指南
 
-> 产品 **0.6.7** · Trust SoT：[ADR-024](adr/024-dictation-plus-asr-refiner-meeting.md)  
+> 产品 **0.6.8** · Trust SoT：[ADR-024](adr/024-dictation-plus-asr-refiner-meeting.md)  
 > 听写+ 设计：[dictation-plus SoT](superpowers/specs/2026-08-07-dictation-plus-design.md)  
 > 本机 STT：[ADR-023](adr/023-voice-local-stt-path-b.md) · [local STT SoT](superpowers/specs/2026-08-07-voice-local-stt-design.md)  
 > 会议设计：[meeting-minutes SoT](superpowers/specs/2026-08-07-meeting-minutes-design.md) · [Mtg3 diarize](superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md)

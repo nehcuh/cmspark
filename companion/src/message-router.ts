@@ -111,7 +111,11 @@ import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
 } from "./security-confirmation"
-import { canAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } from "./orchestrator/llm-loop-gate"
+import {
+  canAcquireMultiAgentLlmLoop,
+  cancelDeferredLlmKick,
+  releaseMultiAgentLlmLoop,
+} from "./orchestrator/llm-loop-gate"
 import {
   handleConfigFamily,
 } from "./message-router/handlers/config"
@@ -227,6 +231,28 @@ export function __testSetLlmOwnerForTests(threadId: string, panelId: string | nu
  * supersede) omit it and keep the queue. `cancelled` discloses how many
  * queued turns the stop dropped (0 unless clearQueue).
  */
+/**
+ * Register an in-flight AbortController for a kicked worker chatCreate
+ * (spawn_worker / spawn_expert_team). Same SoT as router chat.create so
+ * Glance `llm_active`, fleet.stop_all, and chat.abort can see the run.
+ */
+export function installKickAbortController(threadId: string): AbortController {
+  const existing = abortControllers.get(threadId)
+  if (existing) return existing
+  const controller = new AbortController()
+  abortControllers.set(threadId, controller)
+  nextLlmGeneration(threadId)
+  return controller
+}
+
+/** CAS-delete the kick controller after chatCreate settles (success or throw). */
+export function releaseKickAbortController(threadId: string, controller: AbortController): void {
+  if (abortControllers.get(threadId) === controller) {
+    abortControllers.delete(threadId)
+    llmLoopOwnerPanel.delete(threadId)
+  }
+}
+
 export function abortThreadChat(
   threadId: string,
   opts?: { clearQueue?: boolean },
@@ -244,6 +270,7 @@ export function abortThreadChat(
     // Free gate here: finally will CAS-skip release after generation bump.
     releaseMultiAgentLlmLoop(threadId)
   }
+  cancelDeferredLlmKick(threadId)
   dropSteer(threadId)
   return {
     stopped: controller != null,
@@ -439,6 +466,8 @@ async function broadcastLoopStatus(
   session: { sendToExtension?: (data: any) => void } | null | undefined,
   threadManager: ThreadManager,
   threadId: string,
+  /** #502 D-G1: the just-finished run's terminal (round_limit → segment copy). */
+  lastTerminal?: import("./loop/loop-state").RunTerminal,
 ): Promise<void> {
   try {
     const thread = threadManager.get(threadId)
@@ -456,6 +485,7 @@ async function broadcastLoopStatus(
       impossible: getImpossibleReport(threadId),
       pendingConfirms: 0,
       tier: loopRouteCaps(isUnattendedArmed()).tier,
+      lastTerminal,
     })
     if (view) session?.sendToExtension?.(buildTaskLoopStatusFrame(threadId, view))
   } catch (e: any) {
@@ -1418,7 +1448,17 @@ export async function handleMessage(
         // L-4 (#390): every run-end transition (advance/steer/blocked/stop/
         // done) lands on the sidepanel status line. Runs after the L-3 route
         // session close (adapter finally) so steers/blocks are current.
-        await broadcastLoopStatus(session, services.threadManager, rest.thread_id)
+        // #502 D-G1: pass this run's terminal so a 100-round cap renders as a
+        // segment boundary instead of an eternal 「推进中」.
+        await broadcastLoopStatus(session, services.threadManager, rest.thread_id, runStats.terminal)
+        // #514: worker runs end here too — refresh the Glance strip so worker
+        // done/failed states reach the panel without a confirm round-trip.
+        try {
+          const { broadcastFleetSnapshotIfWorkers } = await import("./orchestrator/fleet")
+          broadcastFleetSnapshotIfWorkers(services.threadManager, (d) => session.sendToExtension(d))
+        } catch {
+          /* advisory push only */
+        }
       }
       const drained = await drainNextRun(rest.thread_id, myGeneration, services, session)
       if (drained) {
@@ -2378,6 +2418,14 @@ export async function handleMessage(
           data: { error_code: "thread_busy" },
         }
       }
+      // #513: drop the deleted thread's fleet-suggest silence/throttle stamps
+      // (bounded map — deleted ids never linger).
+      try {
+        const { clearFleetSuggestState } = await import("./orchestrator/fleet-suggest")
+        clearFleetSuggestState(typeof rest.thread_id === "string" ? rest.thread_id : undefined)
+      } catch {
+        /* advisory state only — never block deletion */
+      }
       try {
         const thr = threadManager.get(rest.thread_id)
         if (thr) {
@@ -3141,6 +3189,18 @@ export async function handleMessage(
       } catch (e: any) {
         return { type: "error", error: e.message || String(e) }
       }
+    }
+
+    // --- #513 fleet suggestion dismissal: record the per-thread silence
+    // window so a dismissed (or accepted) card is not re-proposed for 10 min.
+    case "fleet.suggest.dismiss": {
+      const dismissThreadId = typeof rest.thread_id === "string" ? rest.thread_id.trim() : ""
+      if (!dismissThreadId) {
+        return { type: "error", error: "fleet.suggest.dismiss requires thread_id" }
+      }
+      const { recordFleetSuggestDismiss } = await import("./orchestrator/fleet-suggest")
+      recordFleetSuggestDismiss(dismissThreadId)
+      return { type: "fleet.suggest.dismissed", thread_id: dismissThreadId }
     }
 
     // --- L-2 (#388) loop kernel: explicit arm / stop. Both are user-gesture

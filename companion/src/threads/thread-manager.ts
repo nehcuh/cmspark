@@ -85,6 +85,14 @@ interface Thread {
   } | null
   /** Multi-agent (ADR-015): role of this thread in an orchestrator run. */
   agent_role?: "normal" | "orchestrator" | "worker"
+  /**
+   * #502 E Glance: newest tool name, stamped on the write path (append only).
+   * fleet.status reads this instead of transcript files (Kimi BLOCK: no
+   * per-tick readFileSync+JSON.parse of whole threads).
+   */
+  latest_tool?: string
+  /** #502 E Inspect: first user ask preview (≤160 chars, whitespace-collapsed). */
+  brief?: string
   /** Parent orchestrator thread id when agent_role=worker. */
   parent_thread_id?: string | null
   /** Shared id for one orchestrator fan-out episode. */
@@ -335,7 +343,7 @@ function truncatePreview(text: string, maxLen: number): string {
   return s.length > maxLen ? s.slice(0, maxLen) : s
 }
 
-function firstUserPreviewFromMessages(
+export function firstUserPreviewFromMessages(
   msgs: Array<{ role: string; content?: string }>,
   maxLen: number,
 ): string {
@@ -345,6 +353,26 @@ function firstUserPreviewFromMessages(
     if (text) return text
   }
   return ""
+}
+
+/**
+ * #502 E: tool name carried by a single message — live tool rows use the flat
+ * shape (tool_calls[].tool_name), hydrated assistant markers the OpenAI
+ * function shape (tool_calls[].function.name). Newest entry in the row wins.
+ */
+export function toolNameFromMessage(msg: {
+  tool_calls?: Array<{ tool_name?: string; function?: { name?: string } }>
+}): string | null {
+  const tcs = msg.tool_calls
+  if (!Array.isArray(tcs)) return null
+  for (let i = tcs.length - 1; i >= 0; i--) {
+    const tc = tcs[i]
+    const flat = typeof tc?.tool_name === "string" ? tc.tool_name : ""
+    const fn = typeof tc?.function?.name === "string" ? tc.function.name : ""
+    const name = (flat || fn).trim()
+    if (name) return name
+  }
+  return null
 }
 
 function lastUserPreviewFromMessages(
@@ -440,6 +468,26 @@ export function fallbackThreadManager(): ThreadManager {
   return new ThreadManager()
 }
 
+/** #504: same-process full-fidelity rows for rebuild (see ThreadManager.liveMirrors). */
+export type LiveThreadMirror = {
+  toolResults: Map<string, { result: unknown; tool_name?: string }>
+  assistantToolCalls: Map<string, Array<{ id: string; name: string; arguments: string }>>
+}
+
+// Caps sized to cover the 1000-message disk window (MAX_MESSAGES_PER_THREAD)
+// plus headroom; entries beyond the cap evict oldest-first (insertion order).
+const LIVE_MIRROR_MAX_TOOL_RESULTS = 1200
+const LIVE_MIRROR_MAX_ASSISTANT_ROWS = 800
+const LIVE_MIRROR_MAX_THREADS = 64
+
+function evictOldest<K, V>(map: Map<K, V>, max: number): void {
+  while (map.size > max) {
+    const oldest = map.keys().next()
+    if (oldest.done) return
+    map.delete(oldest.value)
+  }
+}
+
 export class ThreadManager {
   private index: ThreadIndex
   private indexPath: string
@@ -462,6 +510,14 @@ export class ThreadManager {
   // because they mutate the shared index.json regardless of thread.
   private threadLocks = new Map<string, Promise<unknown>>()
   private indexLock: Promise<unknown> = Promise.resolve()
+
+  // #504: same-process full-fidelity mirror for rebuild (round_limit 续跑/reload).
+  // The disk archive stubs tool bodies by default (#502 B); without this mirror
+  // the next run in the SAME process rebuilds from those stubs and the model
+  // re-reads/re-fires everything segment 1 already did. Process memory only —
+  // never written to disk, dropped on process exit; a companion restart falls
+  // back to the archived stubs (B's disclosed tradeoff).
+  private liveMirrors = new Map<string, LiveThreadMirror>()
 
   /**
    * Serialize async compound operations on a single thread. Sync methods
@@ -644,6 +700,7 @@ export class ThreadManager {
   delete(threadId: string): void {
     // Still drop from index even if id is malicious (no FS if unsafe).
     this.index.threads = this.index.threads.filter(t => t.id !== threadId)
+    this.liveMirrors.delete(threadId)
     this.saveIndex()
     if (!ThreadManager.isSafeThreadId(threadId)) return
     try { fs.unlinkSync(this.threadFilePath(threadId)) } catch { /* ignore */ }
@@ -1147,6 +1204,10 @@ export class ThreadManager {
     }
 
     const at = Math.max(0, Math.min(index, data.messages.length))
+    // Capture append-ness BEFORE splice+trim. After the 1000-cap trim,
+    // `at === data.messages.length - 1` is permanently false (at=1000, length-1=999)
+    // and latest_tool would freeze — Kimi #502 E MAJOR.
+    const isAppend = at === data.messages.length
     data.messages.splice(at, 0, msg)
 
     if (data.messages.length > MAX_MESSAGES_PER_THREAD) {
@@ -1169,6 +1230,18 @@ export class ThreadManager {
       if (typeof lastCreated === "string" && lastCreated) {
         thread.last_message_at = lastCreated
       }
+      // #502 E: stamp fleet Glance fields on the write path so the 4s
+      // snapshot tick reads thread metadata only — never transcript files.
+      // brief: first user ask only. latest_tool: appends only — a historical
+      // insert (branch/fork repair) must not masquerade as the newest tool.
+      if (!thread.brief && msg.role === "user") {
+        const preview = firstUserPreviewFromMessages([msg], 160)
+        if (preview) thread.brief = preview
+      }
+      if (isAppend) {
+        const stamped = toolNameFromMessage(msg as never)
+        if (stamped) thread.latest_tool = stamped
+      }
       this.saveIndex()
     }
 
@@ -1185,6 +1258,48 @@ export class ThreadManager {
       if (msg) Object.assign(msg, updates)
       atomicWriteJSON(filePath, data)
     } catch { /* ignore */ }
+  }
+
+  // ---- #504 live mirror (see field comment) ----
+
+  /** Full tool result keyed by tool_call id (matches disk rows' tool_calls[].id). */
+  rememberLiveToolResult(threadId: string, toolCallId: string, entry: { result: unknown; tool_name?: string }): void {
+    if (!toolCallId) return
+    const mirror = this.liveMirrorFor(threadId)
+    mirror.toolResults.set(toolCallId, entry)
+    evictOldest(mirror.toolResults, LIVE_MIRROR_MAX_TOOL_RESULTS)
+  }
+
+  /** Full assistant tool_calls keyed by the persisted assistant message id. */
+  rememberLiveAssistantToolCalls(
+    threadId: string,
+    assistantMessageId: string,
+    calls: Array<{ id: string; name: string; arguments: string }>,
+  ): void {
+    if (!assistantMessageId || calls.length === 0) return
+    const mirror = this.liveMirrorFor(threadId)
+    mirror.assistantToolCalls.set(assistantMessageId, calls)
+    evictOldest(mirror.assistantToolCalls, LIVE_MIRROR_MAX_ASSISTANT_ROWS)
+  }
+
+  getLiveMirror(threadId: string): LiveThreadMirror | undefined {
+    return this.liveMirrors.get(threadId)
+  }
+
+  clearLiveMirror(threadId: string): void {
+    this.liveMirrors.delete(threadId)
+  }
+
+  private liveMirrorFor(threadId: string): LiveThreadMirror {
+    let mirror = this.liveMirrors.get(threadId)
+    if (!mirror) {
+      // Bound the number of mirrored threads (long sessions churn threads);
+      // dropping the oldest entry only degrades rebuild fidelity to disk stubs.
+      evictOldest(this.liveMirrors, LIVE_MIRROR_MAX_THREADS)
+      mirror = { toolResults: new Map(), assistantToolCalls: new Map() }
+      this.liveMirrors.set(threadId, mirror)
+    }
+    return mirror
   }
 
   /**

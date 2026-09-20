@@ -25,6 +25,7 @@ import {
   PROGRESS_TAIL_ACP_CHARS,
 } from "./progress-caps"
 import { buildAcpAgentEnv } from "./agent-env"
+import { onPtyAgentSpawned } from "../pty/session"
 
 export type AcpHandbackSink = (info: {
   session: AcpSessionRecord
@@ -51,8 +52,9 @@ export type AcpLiveEvent = {
   pending_diffs?: unknown[]
   /** Mode C propose-time snapshot (UI Stop honesty) */
   open_local_terminal?: boolean
-  /** Mode C host terminal outcome */
-  local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped"
+  /** Mode C host terminal outcome (`embed_intent` = recorded, awaiting the user's panel click;
+   *  `embed_running` = the embedded agent PTY is live; Stop does not end that process) */
+  local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | "embed_intent" | "embed_running"
 }
 
 export type AcpEventListener = (ev: AcpLiveEvent) => void
@@ -81,6 +83,40 @@ export class AcpManager {
   permissionGate:
     | ((info: { title: string; detail?: string; sessionId: string }) => Promise<boolean>)
     | null = null
+  private unsubscribeEmbedSpawn: () => void
+
+  constructor() {
+    // #506 A: the ACP path only RECORDS the embed intent — the PTY layer owns the real spawn, so
+    // its event is the only truthful signal that the embedded agent is now running. Until it
+    // fires, the session stays in `embed_intent` and the panel copy says "no process yet".
+    this.unsubscribeEmbedSpawn = onPtyAgentSpawned(({ threadId }) => {
+      if (threadId) this.noteEmbedAgentSpawned(threadId)
+    })
+  }
+
+  /**
+   * #506 A: the embedded agent PTY for `threadId` just went live — every session of that thread
+   * still sitting in `embed_intent` leaves it. Closed sessions are left untouched (their banner
+   * no longer renders), and a session already past the intent (or never in it) is not ours.
+   */
+  private noteEmbedAgentSpawned(threadId: string): void {
+    for (const session of this.sessions.values()) {
+      if (session.thread_id !== threadId) continue
+      if (session.local_terminal !== "embed_intent" || session.state === "closed") continue
+      session.local_terminal = "embed_running"
+      logger.info("acp.mode_c_embed_running", {
+        thread_id: threadId,
+        session_id: session.session_id,
+      })
+      this.pushTimeline(session, [
+        timelineItem(
+          "status",
+          "内嵌终端已启动：Agent 正在本插件终端页运行（停止会话不会结束该进程）",
+          { status: "done" },
+        ),
+      ])
+    }
+  }
 
   onEvent(fn: AcpEventListener): () => void {
     this.listeners.add(fn)
@@ -208,7 +244,18 @@ export class AcpManager {
     }
     session.local_terminal = "pending"
     session.mode_c_open_cancelled = false
-    this.emitProgress(session, "Mode C: opening host terminal…", true)
+    // Eligibility is computed INSIDE this opt-in branch (never hoisted above the early return).
+    // #502 C Option 1: the ACP path may RECORD an embed intent — it must never CREATE anything,
+    // and `embed: true` is the only way into the embed branch. A user who merely enabled the
+    // embedded terminal is NOT had their outer terminal cancelled: without eligibility this call
+    // behaves exactly as it did before.
+    const embedEligible =
+      getConfig().embedded_terminal?.enabled === true && process.platform === "darwin"
+    this.emitProgress(
+      session,
+      embedEligible ? "Mode C: recording embedded terminal intent…" : "Mode C: opening host terminal…",
+      true,
+    )
     // Full browser task → interactive agent (not banner-only). Same intent as bridge prompt.
     const modeCPrompt = this.buildUserPrompt(session)
     const terminalApp =
@@ -216,11 +263,13 @@ export class AcpManager {
     void openLocalTerminalForAgent({
       command: server.command,
       cwd,
+      threadId: session.thread_id,
       agentId: session.agent_id,
       goalHint: session.goal,
       agentLabel: server.display_name || session.agent_id,
       prompt: modeCPrompt,
       terminalApp,
+      ...(embedEligible ? { embed: true } : {}),
     }).then((r) => {
       // Stop/cancel raced the open — do not mutate a closed session as success.
       if (session.mode_c_open_cancelled || session.state === "closed") {
@@ -228,6 +277,24 @@ export class AcpManager {
         return
       }
       if (r.ok) {
+        if (r.embedIntent) {
+          // Intent recorded — nothing was opened. Never claim the terminal opened.
+          session.local_terminal = "embed_intent"
+          logger.info("acp.mode_c_embed_intent", {
+            thread_id: session.thread_id,
+            agent_file_basename: path.basename(r.embedIntent.file),
+            argv_argc: r.embedIntent.argc,
+            cwd: r.embedIntent.cwd,
+          })
+          this.pushTimeline(session, [
+            timelineItem(
+              "status",
+              "内嵌终端待启动：请点击面板「在本插件打开终端」按钮（ACP 启动不会自动弹出终端）",
+              { status: "pending", detail: r.detail },
+            ),
+          ])
+          return
+        }
         session.local_terminal = r.level === "L0" ? "opened_l0" : "opened"
         const label = formatModeCOpenedLabel(r.level, r.app, terminalApp)
         this.pushTimeline(session, [
@@ -936,6 +1003,7 @@ export class AcpManager {
   }
 
   shutdown(): void {
+    this.unsubscribeEmbedSpawn()
     for (const id of [...this.processes.keys()]) {
       this.cancel(id)
     }

@@ -23,6 +23,26 @@ const BACKFILL_LABEL: Record<string, string> = {
   stopped_no_checklist: "受阻：无机器可核验清单",
 }
 
+/** Unarmed 100-round cap — honest, non-tombstone (#505). Armed threads use the loop status row instead. */
+export const ROUND_LIMIT_UNARMED_COPY =
+  "这一段跑满了 100 步工具调用，任务尚未收尾。回复“继续”可接着执行。"
+
+/**
+ * Render gate: only when this thread has no loop-status view (live frame or
+ * loop_state backfill) AND the run ended on the 100-round cap. Armed threads
+ * have a loopStatusByThreadId / backfill entry, so they never double-prompt.
+ */
+export function shouldShowRoundLimitHint(
+  loopView: LoopStatusView | null | undefined,
+  runTerminal: string | null | undefined,
+  loopSuggestVisible?: boolean,
+): boolean {
+  // #505 vs kernel suggest: unarmed round_limit with unticked items also
+  // emits task_loop.suggest (arm CTA). Showing both is two "continue"s.
+  if (loopSuggestVisible) return false
+  return !loopView && runTerminal === "round_limit"
+}
+
 export function backfillLoopView(thread: Thread | undefined): LoopStatusView | null {
   const ls = thread?.loop_state
   if (!ls || typeof ls.status !== "string" || !ls.status) return null
@@ -124,6 +144,140 @@ export function loopArmMessage(threadId: string, budgetStopped: boolean) {
     user_gesture: true,
     ...(budgetStopped ? { resume: true } : {}),
   }
+}
+
+// --- #513 fleet suggestion card builders (pure, test-first) ---
+
+/** Dismiss payload — records the companion-side silence window. */
+export function buildFleetDismissMessage(threadId: string) {
+  return {
+    type: "fleet.suggest.dismiss" as const,
+    thread_id: threadId,
+    user_gesture: true,
+  }
+}
+
+/**
+ * Sanitize one model-produced subtask for the user-role message: collapse
+ * newlines/tabs (a subtask must never inject fake list items or line breaks),
+ * strip control chars, cap length. The schema already bounds it at 160 — this
+ * is the UI-side second gate (model output → user-role text).
+ */
+function sanitizeFleetSubtask(s: string): string {
+  return s.replace(/[\x00-\x1F\x7F]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 160)
+}
+
+/**
+ * Accept = ONE user message carrying the full dispatch instruction (subtasks +
+ * spawn_worker mention). Deliberately NOT task_loop.arm: arm injects 续跑
+ * autonomy (kickoff / PROPOSE_REQUEST_STEER / status row) which is a different
+ * axis from parallel dispatch and would race the queue steer (spec §3.3).
+ */
+export function buildFleetAcceptText(subtasks: string[]): string {
+  const list = subtasks.map((s) => sanitizeFleetSubtask(s)).filter(Boolean)
+    .map((s, i) => `${i + 1}) ${s}`).join("\n")
+  return [
+    "同意多路并行。请将以下子任务分派给 worker 执行（用 spawn_worker，每次仍需我在确认中心批准）：",
+    list,
+    "全部完成后把各 worker 的结果汇总给我。",
+  ].join("\n")
+}
+
+/**
+ * The runtime message the card sends on accept. Rides the existing chat.send
+ * pipeline; `steer: true` when the thread is mid-run — a plain chat.create
+ * would bounce off `run_active` and silently lose the dispatch instruction
+ * (same reason the composer steers while busy).
+ */
+export function buildFleetAcceptMessage(
+  threadId: string,
+  subtasks: string[],
+  opts?: { steer?: boolean },
+) {
+  return {
+    type: "chat.send" as const,
+    threadId,
+    message: buildFleetAcceptText(subtasks),
+    ...(opts?.steer ? { steer: true } : {}),
+  }
+}
+
+/**
+ * #513 fleet suggestion card. Non-blocking, no preselection, no countdown —
+ * same surface language as LoopSuggestCard. Accept sends the dispatch message
+ * (chat.send, steered while the thread is busy) AND the dismiss frame
+ * (companion silences re-propose); the store entry is cleared synchronously by
+ * the caller — never by passive signals.
+ */
+export function FleetSuggestCard({
+  threadId,
+  reason,
+  subtasks,
+  busy = false,
+  onCleared,
+}: {
+  threadId: string
+  reason: string
+  subtasks: string[]
+  /** Thread mid-run → accept steers instead of a chat.create that run_active would reject. */
+  busy?: boolean
+  onCleared: () => void
+}) {
+  const onAccept = () => {
+    chrome.runtime.sendMessage(buildFleetAcceptMessage(threadId, subtasks, { steer: busy }))
+    chrome.runtime.sendMessage(buildFleetDismissMessage(threadId))
+    onCleared()
+  }
+  const onDismiss = () => {
+    chrome.runtime.sendMessage(buildFleetDismissMessage(threadId))
+    onCleared()
+  }
+  return (
+    <div data-testid="fleet-suggest-card" style={styles.card}>
+      <div style={styles.cardHead}>
+        <span style={styles.cardTitle}>此任务适合多路并行</span>
+      </div>
+      {reason ? <div style={styles.fleetCardItem}>{reason}</div> : null}
+      <div style={styles.cardList}>
+        {subtasks.map((s, i) => (
+          <div key={`${i}-${s}`} style={styles.fleetCardItem}>
+            · {s}
+          </div>
+        ))}
+      </div>
+      <div style={styles.cardFoot}>
+        <span style={styles.cardHint}>
+          {busy ? "当前回合结束后送达分派指令" : "点按即发送分派指令"} · 每个 worker 仍需在确认中心批准
+        </span>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button type="button" style={styles.dismissTextBtn} onClick={onDismiss}>
+            不用，单线程继续
+          </button>
+          <button type="button" style={styles.armBtn} onClick={onAccept}>
+            派 worker 并行做
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Unarmed 100-round cap row. Same surface language as LoopStatusRow (soft
+ * banner, not a red tombstone). No stop/arm controls — the user replies 继续.
+ */
+export function RoundLimitHint() {
+  const tone = phaseTone("stopped")
+  return (
+    <div
+      data-testid="round-limit-hint"
+      style={{ ...styles.row, background: tone.background, borderColor: tone.border, color: tone.color }}
+    >
+      <div style={styles.rowMain}>
+        <span style={styles.label}>{ROUND_LIMIT_UNARMED_COPY}</span>
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -305,11 +459,33 @@ const styles: Record<string, CSSProperties> = {
   },
   cardFoot: {
     display: "flex",
+    flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 6,
   },
   cardHint: { fontSize: 10, color: tokens.textSecondary },
+  /** #513: fleet card items WRAP — a subtask is model-produced and the user
+   *  must read ALL of it before approving (nowrap+ellipsis could hide the tail). */
+  fleetCardItem: {
+    fontSize: 11,
+    color: tokens.warningText,
+    opacity: 0.9,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    overflowWrap: "anywhere",
+  },
+  /** #513: text dismiss (spec: 「不用，单线程继续」) — the ✕-only variant hid the choice. */
+  dismissTextBtn: {
+    flex: "0 0 auto",
+    border: `1px solid ${tokens.border}`,
+    background: "transparent",
+    color: tokens.textSecondary,
+    borderRadius: tokens.radiusSm,
+    fontSize: 11,
+    padding: "3px 8px",
+    cursor: "pointer",
+  },
   armBtn: {
     flex: "0 0 auto",
     border: "none",

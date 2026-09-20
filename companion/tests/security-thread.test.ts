@@ -65,13 +65,38 @@ test("tool result messages persist with OpenAI-compatible tool call linkage", ()
   const [message] = manager.getMessages(thread.id)
   assert.equal(message.role, "tool")
   assert.equal(message.thread_id, thread.id)
-  assert.equal(message.content, JSON.stringify(result))
-  assert.deepEqual(message.tool_calls?.[0], {
-    id: "call_123",
-    tool_name: "get_page_text",
-    params: { tabId: 303 },
-    result,
-  })
+  // #502 B default tier: the BODY is compacted, the row + linkage are not.
+  // This test is about the OpenAI-compatible linkage, which is tier-independent.
+  assert.equal(message.tool_calls?.[0].id, "call_123")
+  assert.equal(message.tool_calls?.[0].tool_name, "get_page_text")
+  assert.equal(message.content, JSON.stringify(message.tool_calls?.[0].result))
+  assert.equal(JSON.parse(message.content).redacted, true)
+  assert.equal(message.content.includes("hello"), false)
+})
+
+test("full tool history tier: the same row keeps params + result verbatim", () => {
+  const manager = new ThreadManager()
+  const thread = manager.create("Tool result regression full", "tool02")
+  const toolCall = {
+    id: "call_124",
+    function: { name: "get_page_text", arguments: "{\"tabId\":303}" },
+  }
+  const result = { success: true, data: { text: "hello" } }
+  const prev = getConfig().persist_full_tool_history
+  try {
+    saveConfig({ persist_full_tool_history: true })
+    manager.addMessage(thread.id, createToolResultMessage(thread.id, toolCall, result, { tabId: 303 }))
+    const [message] = manager.getMessages(thread.id)
+    assert.equal(message.content, JSON.stringify(result))
+    assert.deepEqual(message.tool_calls?.[0], {
+      id: "call_124",
+      tool_name: "get_page_text",
+      params: { tabId: 303 },
+      result,
+    })
+  } finally {
+    saveConfig({ persist_full_tool_history: prev === true })
+  }
 })
 
 test("thread.update route persists pinned tabs through the message router", async () => {

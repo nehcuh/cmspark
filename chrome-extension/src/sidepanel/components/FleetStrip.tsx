@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import type { FleetWorkerView } from "../types"
-import { fleetStripShouldShow } from "./focus-band-priority"
+import { fleetStripShouldShow, fleetStripShouldPoll, fleetGlanceLatestToolLabel } from "./focus-band-priority"
 import { useScopedRunBusy } from "../hooks/use-scoped-run-busy"
 
 function worstColor(status: string | undefined): string {
@@ -51,6 +51,9 @@ export function FleetStrip({
   )
 
   const { workerCount, lockCount, openIntents, worst } = scoped
+  // #502 E Glance: newest fleet tool on the same meta line (llm_active worker
+  // preferred). Empty string → the meta line stays exactly as before.
+  const glanceTool = fleetGlanceLatestToolLabel(scoped.workers || [])
 
   // Must stay above early-return (hooks order). Scope locks to visible workers.
   const scopedLocks = useMemo(() => {
@@ -60,12 +63,20 @@ export function FleetStrip({
     return (fleet?.locks || []).filter((l) => allowed.has(l.holder_thread_id))
   }, [scoped.workers, activeId, fleet?.locks])
 
+  const llmActive = (scoped.workers || []).some((w) => w.llm_active === true)
+  const shouldPoll = fleetStripShouldPoll({
+    worstStatus: worst,
+    lockCount,
+    openIntents,
+    llmActive,
+  })
   useEffect(() => {
     const tick = () => chrome.runtime.sendMessage({ type: "fleet.status" })
     tick()
+    if (!shouldPoll) return
     const id = setInterval(tick, 4000)
     return () => clearInterval(id)
-  }, [])
+  }, [shouldPoll])
 
   // §4.3 rule 2: pending confirms do NOT force Fleet chrome (MinimalConfirm owns them).
   // Show only multi-agent activity / locks / board intents / user-expanded (standalone).
@@ -127,6 +138,7 @@ export function FleetStrip({
           <strong style={{ fontSize: 11 }}>舰队</strong>
           <span style={styles.meta}>
             {workerCount} worker · {lockCount} 锁
+            {glanceTool ? ` · ${glanceTool}` : ""}
             {openIntents > 0 ? ` · ${openIntents} intent` : ""} · {worstLabel(worst)}
             {worst === "paused" && lockCount === 0 && openIntents === 0
               ? "（可点全停清理）"

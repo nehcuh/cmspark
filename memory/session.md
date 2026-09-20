@@ -2,6 +2,34 @@
 
 ## Current Session
 
+### S111 (2026-09-20) [#515 子任务身份 标准流程]
+
+- **Issue** https://github.com/nehcuh/cmspark/issues/515 · spec `docs/superpowers/specs/2026-09-20-worker-subtask-identity.md` LOCKED
+- **方案 A**：对话枚举默认藏 worker（父在同视图、非 active、`user_message_count<=1`）；chip `N 子任务` → select 父 + Fleet portal；面包屑 `← 主任务`
+- **实现 r1 dual** kimi+claude **REJECT**：B1 `require("node:fs")` 打红 tsc；B2 @ 先抠 excludeId 导致主任务里 worker 摊平；B3 @ 缺归属标题
+- **r2** `[executed]`：excludeId 改成结果过滤；belong title；trash chip disabled；静态 `node:fs` import。`chrome-extension` **1450/0**。timeline **42/42**
+- **r2 dual** kimi **AWN** + claude **AWN**（claude 沙箱写不了文件，正文落 `issue-515-r2-dual-claude.md`）。折 nit：面包屑不跳软删父；宽屏搜索匹配 belong/role；归属标题带 own；selectMode chip disabled；计数一次过；搜索不叠「子任务」badge
+- **#516** 整理确认被 overflow 裁切；回收站藏 worker + 无一键清空。确认条顶置；trash 不走 enum hide；「清空回收站」走既有 hard batch。Issue https://github.com/nehcuh/cmspark/issues/516
+
+### S110 (2026-09-19) [fix/502-adversarial-punchlist 六路对抗评审]
+
+- **任务**：对 `fix/502-adversarial-punchlist` vs `origin/main` (`93923c1d..022b2f60`) 做六路独立对抗评审 → 去重验真 → kimi+claude 双路复审。不修代码。
+- **范围**：97 files / +12102 / -183。含 #502 操作面、#504–#511 punch list、#513 舰队建议卡、#514 Glance 推送/spawn kick。未提交的 `memory/project-knowledge.md` 不进审。
+- **PR**：#512（punch list）；#503 是操作面原 PR（另一 head）。#513/#514 尚无独立 PR。
+- **产物目录**：`docs/audit/reviews/502-punchlist-20260919/`
+- **对抗** `[executed]`：6 路 A PRODUCT REJECT · B CORR AWN · C SEC AWN · D ARCH REJECT · E UX REJECT · F SKEPTIC REJECT。去重后 4 BLOCK（X1 live 芯 / X2 归档方言 / X4 kick abort / X9 spawn 夹具）+ MAJOR X3/X5/X6/X7/X8/X10。产物 `docs/audit/reviews/502-punchlist-20260919/`。
+- **双路** `[executed]`：kimi REJECT + claude REJECT。X1–X9 两路 TRIGGERED。Claude 降 X10 为 NIT（预存在）并加 N-1 排队 kick 无取消（并入 X4）。
+- **修复** `[executed]`：X1–X10 + N-1 全落地。companion 定向 93+92 绿；extension 相关 58+89 绿。用户睡觉期间完成，未开新 PR。
+- **换装** `[executed]` 2026-09-20：`CMSPARK_REQUIRE_NSIS=1` Git Bash `package.sh windows-x64` → zip **81M** + Setup **52M** `CMspark-Setup-v0.6.7.exe`。daemon stop + 杀 tray → `/S` exit 0。ARP **0.6.7**。`wscript launch-hidden.vbs` → 2s `127.0.0.1:23401` LISTENING（daemon pid 856 + tray 20272）。`cmspark-agent v0.6.7`；扩展 manifest 0.6.7。安装目录 `cmspark-agent.js` 与 staging 同时戳。版本号仍 0.6.7（含 punchlist 代码）。
+
+### S109 END (2026-09-15) [cmspark] VibeSOP 8.5.0 配置刷新
+
+- CMspark `.vibe/dist/` 已重建 Claude/Grok/Kimi/OpenCode/Pi 五个平台产物；项目级 `.claude/` 与 `.grok/` 已刷新。
+- 全局 Claude/Grok/Kimi/Pi/OpenCode 配置已同步到 8.5.0；额外 skill、`.grok/workflows`、Claude 本地设置和模型配置保留。
+- 五个平台独立验证通过；Cursor 未配置且未触碰。当前仓库原有未提交内容保留，本次新增的 `.grok/rules/` 与 `vibesop-*` hooks 未自动提交。
+- Next：重启相关 Agent；若要共享生成的 `.grok` 配置，再单独审阅并提交。
+- Recorded: no — 本次是项目配置同步；可复用的 renderer/orphan skill 注意事项已记录在 VibeSOP project-knowledge。
+
 ### S107 (2026-09-08) [pull main · NSIS 换装 · 多路对抗体检]
 - **任务**：拉最新 → `package.sh windows-x64` + `/S` 替换本机 → 多路独立对抗彻底体检。
 - **pull** `[executed]`：stash session.md → `main` ff `7ab36063` → **`4a63de56`**（#485 workspace 归属；落后 270 commits）。stash pop 冲突，保留 origin session.md 后写本条。

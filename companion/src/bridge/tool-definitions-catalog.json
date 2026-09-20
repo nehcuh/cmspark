@@ -994,10 +994,18 @@
     "type": "function",
     "function": {
       "name": "spawn_worker",
-      "description": "Spawn a child worker Thread under this orchestrator (ADR-015). Triggers interactive L2 Confirm Center approval — do NOT invent user_confirmed. Workers get a non-empty downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Optional pack_id applies Mission Pack role template after spawn. Always pass explicit tabId in worker browser tools.",
+      "description": "Spawn a child worker thread to run one independent subtask in parallel (ADR-015). Worth it when: >=2 independent sources/subtasks, and doing it solo serially would take >=3 page round-trips. NOT worth it for: strongly sequential steps, a single tab/source, quick tasks, or subtasks needing tools workers cannot have (shell/netsec/host). Call fleet_suggest_propose first when the criteria hold — spawn only after the user explicitly approves parallel dispatch. Each worker needs an explicit goal; it starts running on it immediately. Triggers interactive L2 Confirm Center approval every time — do NOT invent user_confirmed. Workers get a downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Optional pack_id applies Mission Pack role template after spawn. Always pass explicit tabId in worker browser tools.",
       "parameters": {
         "type": "object",
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "REQUIRED. The worker's task brief: what it must do and what it should return. The worker starts on this goal immediately after spawn — be specific (sites/queries/criteria), this is the only instruction it gets beyond its role."
+          },
+          "role_prompt": {
+            "type": "string",
+            "description": "Optional extra role definition appended to the brief (expertise, constraints, output format). Keep it short."
+          },
           "role_label": {
             "type": "string",
             "description": "Short role label e.g. appsec-reviewer"
@@ -1026,10 +1034,41 @@
           },
           "intent_id": {
             "type": "string",
-            "description": "Optional MissionBoard intent id (ADR-016 Stage 3). Worker is bound and intent is claimed on the host board after spawn."
+            "description": "Optional MissionBoard intent id (ADR-016 Stage 3). ONLY pass an id you actually received from a board/intent tool (e.g. propose_expert_team member intents); when the thread has no mission board, OMIT this field — a made-up id will not bind anything."
           }
         },
-        "required": []
+        "required": [
+          "goal"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fleet_suggest_propose",
+      "description": "Advisory only (#513): when the FLEET DISPATCH CRITERIA in the system prompt hold, surface a parallel-dispatch suggestion card to the user (reason + 2-5 independent subtasks). Never spawns, never arms, never mutates anything — spawning happens only if the user approves, via spawn_worker with its own L2. Propose at most once per task; a suppressed/throttled result means no card was shown.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Why parallel dispatch fits (independent sources, expected round-trip savings), <=300 chars"
+          },
+          "subtasks": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 5,
+            "items": {
+              "type": "string"
+            },
+            "description": "The independent subtasks, each <=160 chars"
+          }
+        },
+        "required": [
+          "reason",
+          "subtasks"
+        ]
       }
     }
   },
@@ -1111,7 +1150,8 @@
         "type": "object",
         "properties": {
           "intent_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional intent id received from the board tools; omit when no mission board is in use."
           },
           "worker_id": {
             "type": "string"
@@ -1133,7 +1173,8 @@
         "type": "object",
         "properties": {
           "intent_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional intent id received from the board tools; omit when no mission board is in use."
           }
         },
         "required": [
@@ -1208,7 +1249,7 @@
     "type": "function",
     "function": {
       "name": "collect_handback",
-      "description": "Read the worker's last assistant message as a typed handback for the orchestrator. When board mode is on (host board_mode / mission_board), requires structured Fact/Intent JSON in the worker message; free-form-only returns recoverable HANDBACK_MISSING_STRUCTURE. Successful structured collect merges into the host MissionBoard and returns stamped facts/intents plus last_assistant.",
+      "description": "Read the worker's last assistant message. Do not call while that worker is still running (live tool card) — recoverable WORKER_STILL_RUNNING, siblings keep going. A finished markdown/prose report is a successful collect with structured=false and last_assistant (not an error, does not ⚠️, does not update MissionBoard). Structured Fact/Intent JSON (`schema_version` + facts/intents) merges into the host board. Empty last assistant is recoverable HANDBACK_MISSING_STRUCTURE. Follow-up questions should use last_assistant already collected, not re-collect.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1494,7 +1535,10 @@
           },
           "mode": {
             "type": "string",
-            "enum": ["review_readonly", "propose_diff"],
+            "enum": [
+              "review_readonly",
+              "propose_diff"
+            ],
             "description": "Task intent: review_readonly (default) or propose_diff. Not an OS sandbox claim."
           },
           "workspace_root": {

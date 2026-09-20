@@ -16,6 +16,16 @@ export interface FleetWorkerView {
   status: "idle" | "paused" | "holding_tabs" | "unknown"
   /** In-flight LLM for this worker (run-state). */
   llm_active?: boolean
+  /**
+   * #502 E: last tool this worker ran (Glance). Reverse-scans the thread
+   * messages for a tool name — omitted when the thread ran no tools.
+   */
+  latest_tool?: string
+  /**
+   * #502 E: task brief for Inspect — first user message of the worker thread,
+   * whitespace-collapsed and capped at 160 chars. Omitted when none.
+   */
+  brief?: string
   tab_locks: Array<{
     tab_id: number
     state: string
@@ -78,6 +88,13 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     // (and can force-release). paused alone only when no locks remain.
     if (wLocks.length > 0) status = "holding_tabs"
     else if (w.paused) status = "paused"
+    // #502 E (Kimi BLOCK fix): metadata only — latest_tool / brief are stamped
+    // on the write path (ThreadManager.addMessage). The 4s tick must NEVER
+    // read transcript files (getMessages = readFileSync + JSON.parse of the
+    // whole thread). Unstamped legacy threads simply omit the fields.
+    const latestTool =
+      typeof w.latest_tool === "string" && w.latest_tool.trim() ? w.latest_tool.trim() : undefined
+    const brief = typeof w.brief === "string" && w.brief.trim() ? w.brief : undefined
     return {
       id: w.id,
       alias: w.alias,
@@ -88,6 +105,8 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
       paused: !!w.paused,
       status,
       llm_active: llmSet.has(w.id),
+      ...(latestTool ? { latest_tool: latestTool } : {}),
+      ...(brief ? { brief } : {}),
       tab_locks: wLocks.map((l) => ({
         tab_id: l.tab_id,
         state: l.state,
@@ -149,4 +168,26 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
 
 export function workersForRun(tm: ThreadManager, runId: string) {
   return listWorkers(tm, runId)
+}
+
+/**
+ * #514: proactive Glance feed. The panel only pulled fleet.status on confirm
+ * arrivals / worker.updated replies — under full-autonomy cruise spawn_worker
+ * auto-approves with NO confirm, so the strip never got data and stayed
+ * invisible for the whole run. Push the snapshot (metadata-only read) after
+ * spawn and at run-end whenever any worker thread exists. The panel's
+ * existing "fleet.status" frame handler consumes it unchanged.
+ */
+export function broadcastFleetSnapshotIfWorkers(
+  tm: ThreadManager,
+  broadcast: (data: unknown) => void,
+): void {
+  try {
+    const threads = tm.list() as Array<{ agent_role?: string }>
+    if (!threads.some((t) => t?.agent_role === "worker")) return
+    // FleetSnapshot already carries type:"fleet.status" — the spread IS the frame.
+    broadcast(buildFleetSnapshot(tm))
+  } catch {
+    /* advisory push only — never fail the caller */
+  }
 }

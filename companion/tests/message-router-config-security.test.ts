@@ -83,6 +83,40 @@ function readTodayLog(): string {
 
 // --- Nesting (with phrase where arming) ---
 
+// #502 B: the archive-tier switch is a TOP-LEVEL companion key. config.set is an
+// explicit allow-list (see the file header: a key nobody re-nests is "silently
+// dropped"), so without a branch in handlers/config.ts the settings toggle would
+// be a no-op — the UI would flip and nothing would change on disk.
+test("config.set: persist_full_tool_history persists in both directions (#502 B)", async () => {
+  saveConfig({ persist_full_tool_history: false })
+  const on: any = await postConfigSet({ persist_full_tool_history: true })
+  assert.notEqual(on.type, "error")
+  assert.equal(getConfig().persist_full_tool_history, true, "toggle-on must reach the config")
+  const off: any = await postConfigSet({ persist_full_tool_history: false })
+  assert.notEqual(off.type, "error")
+  assert.equal(getConfig().persist_full_tool_history, false, "toggle-off must reach the config")
+})
+
+test("config.set: embedded_terminal.enabled persists in both directions (#502 C / X10)", async () => {
+  saveConfig({ embedded_terminal: { enabled: false } })
+  const on: any = await postConfigSet({ embedded_terminal: { enabled: true } })
+  assert.notEqual(on.type, "error")
+  assert.equal(getConfig().embedded_terminal?.enabled, true)
+  const off: any = await postConfigSet({ embedded_terminal: { enabled: false } })
+  assert.notEqual(off.type, "error")
+  assert.equal(getConfig().embedded_terminal?.enabled, false)
+})
+
+test("config.set: non-boolean persist_full_tool_history is ignored, not coerced", async () => {
+  saveConfig({ persist_full_tool_history: true })
+  await postConfigSet({ persist_full_tool_history: "yes" })
+  // Truthy junk must not arm the archive switch; keep whatever was persisted.
+  assert.equal(getConfig().persist_full_tool_history, true)
+  saveConfig({ persist_full_tool_history: false })
+  await postConfigSet({ persist_full_tool_history: 1 })
+  assert.equal(getConfig().persist_full_tool_history, false)
+})
+
 test("config.set: flat allow_all_schemes=true with correct phrase nests under security.*", async () => {
   resetSecurityFlags()
   const r: any = await postConfigSet(

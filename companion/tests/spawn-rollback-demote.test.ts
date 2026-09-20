@@ -61,7 +61,12 @@ function bindTm(tm: InstanceType<typeof ThreadManager>, skillEngine: any = null)
 }
 
 function mintedSpawnParams(parentId: string, extra: Record<string, any>) {
-  const params: Record<string, any> = { __thread_id: parentId, role_label: "researcher", ...extra }
+  const params: Record<string, any> = {
+    __thread_id: parentId,
+    role_label: "researcher",
+    goal: "rollback-fixture goal",
+    ...extra,
+  }
   const { token } = securityPolicy.issueTokenFor("spawn_worker", params)
   params.security_token = token
   return params
@@ -82,19 +87,24 @@ test("#292 pack apply failure restores the parent's pre-spawn surface", async ()
   assert.ok(!p?.orchestrator_run_id, "run id cleared")
 })
 
-test("#292 intent claim failure restores the parent's pre-spawn surface", async () => {
+test("#514 BOARD_MISSING intent claim is a soft skip — approved worker stays", async () => {
   const tm = new ThreadManager()
   const parent = tm.create("host-292-intent")
-  bindTm(tm, null) // fresh host has no mission_board → claim fails
+  bindTm(tm, null) // fresh host has no mission_board
 
-  const r = await executeCompanionTool("spawn_worker", mintedSpawnParams(parent.id, { intent_id: "intent-nope-292" }))
-  assert.equal(r.success, false)
-  assert.equal(r.data?.error_code, "SPAWN_INTENT_FAILED")
+  const r = await executeCompanionTool(
+    "spawn_worker",
+    mintedSpawnParams(parent.id, { intent_id: "intent-nope-292" }),
+    "tc-intent",
+    { kickWorkerChat: () => {} },
+  )
+  assert.equal(r.success, true, "BOARD_MISSING must not roll back an approved worker")
+  assert.equal(r.data?.intent_claim?.error_code, "BOARD_MISSING")
+  assert.equal(r.data?.intent_claim?.skipped, true)
+  assert.ok(tm.get(r.data?.worker_id), "worker remains")
 
   const p = tm.get(parent.id) as any
-  assert.equal(p?.agent_role, "normal")
-  assert.equal(p?.tool_whitelist, null)
-  assert.ok(!p?.orchestrator_run_id)
+  assert.equal(p?.agent_role, "orchestrator")
 })
 
 test("#292 max-workers failure never narrows the parent (validation precedes promotion)", () => {
@@ -181,7 +191,10 @@ test("#292 already-orchestrator parent: pack-failure rollback keeps its whitelis
   } as any)
   bindTm(tm, null)
 
-  const r = await executeCompanionTool("spawn_worker", mintedSpawnParams(parent.id, { pack_id: "nonexistent-pack-292b" }))
+  const r = await executeCompanionTool(
+    "spawn_worker",
+    mintedSpawnParams(parent.id, { pack_id: "nonexistent-pack-292b" }),
+  )
   assert.equal(r.success, false)
   assert.equal(r.data?.error_code, "SPAWN_PACK_FAILED")
 

@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CMspark · 操作面五切片 · 线稿 #502</title>
+  <style>
+    :root {
+      --ink: #171717;
+      --paper: #f6f4ef;
+      --mute: #6b6b6b;
+      --red: #c23a2b;
+      --accent: #4f46e5;
+      --ok: #059669;
+      --line: rgba(23,23,23,.12);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; background: var(--paper); color: var(--ink);
+      font-family: "SF Pro Text", "PingFang SC", "Segoe UI", -apple-system, sans-serif;
+    }
+    body { padding: 32px 36px 72px; }
+    h1 { margin: 0 0 8px; font-size: 28px; font-weight: 650; letter-spacing: -0.04em; line-height: 1.15; }
+    .sub { margin: 0 0 10px; font-size: 15px; color: var(--mute); max-width: 980px; line-height: 1.5; }
+    .key { font-size: 13px; color: var(--mute); margin: 0 0 36px; line-height: 1.55; max-width: 980px; }
+    .key b { color: var(--ink); font-weight: 650; }
+    .slice { margin: 0 0 48px; }
+    .slice h2 {
+      font-size: 18px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.25;
+    }
+    .slice .why { font-size: 14px; color: var(--mute); margin: 0 0 16px; line-height: 1.5; max-width: 920px; }
+    .board { display: flex; flex-wrap: wrap; gap: 28px 32px; align-items: flex-start; }
+    .col { width: 320px; }
+    .col.browser { width: 460px; }
+    .cap {
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--mute); margin: 0 0 6px; font-weight: 650;
+    }
+    .tag {
+      display: inline-block; font-size: 10px; font-weight: 650; letter-spacing: 0.04em;
+      border: 1px solid var(--ink); padding: 1px 6px; border-radius: 999px; margin: 0 0 8px;
+    }
+    .tag.rec { background: var(--ink); color: #fff; }
+    .tag.no { color: var(--red); border-color: var(--red); }
+    .tag.opt { border-style: dashed; }
+    .note { font-size: 13px; color: var(--mute); margin: 10px 0 0; line-height: 1.5; }
+    .dock {
+      width: 460px; height: 560px; background: #eceae4;
+      border: 1.5px solid var(--ink); border-radius: 8px;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .dock.short { height: auto; }
+    .chrome-bar {
+      height: 28px; display: flex; align-items: center; gap: 6px;
+      padding: 0 10px; background: #e4e2dc; border-bottom: 1px solid var(--line);
+      font-size: 11px; color: var(--mute); flex-shrink: 0;
+    }
+    .traffic { display: flex; gap: 4px; }
+    .traffic i { width: 8px; height: 8px; border-radius: 50%; background: #bbb; border: 1px solid var(--ink); }
+    .dock-body { display: flex; flex: 1; min-height: 0; }
+    .page-peek {
+      width: 140px; flex-shrink: 0; padding: 10px 8px; font-size: 10px;
+      color: #8a8a8a; line-height: 1.35; border-right: 1px solid var(--line);
+    }
+    .page-peek b { display: block; color: #555; font-size: 11px; margin: 0 0 6px; }
+    .page-peek .card {
+      background: #fff; border: 1px solid var(--line); border-radius: 4px;
+      padding: 6px; margin: 0 0 6px; height: 36px;
+    }
+    .side {
+      width: 320px; flex: 1; min-width: 0; background: #fff;
+      display: flex; flex-direction: column; overflow: hidden; position: relative;
+    }
+    .side.solo {
+      width: 320px; height: 560px; border: 1.5px solid var(--ink); border-radius: 8px;
+    }
+    .side.solo::before,
+    .side.wide::before {
+      content: "CMspark · Chrome 侧栏";
+      flex-shrink: 0;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      font-size: 11px;
+      color: var(--mute);
+      background: #f3f2ee;
+      border-bottom: 1px solid var(--line);
+    }
+    .side.wide::before { content: "CMspark · Chrome 全页 tab"; }
+    .side.wide { width: 640px; height: 280px; border: 1.5px solid var(--ink); border-radius: 8px; }
+    .rail {
+      height: 44px; display: flex; align-items: center; padding: 0 10px;
+      gap: 6px; flex-shrink: 0; border-bottom: 1px solid var(--line);
+      font-size: 13px; font-weight: 650;
+    }
+    .dot { width: 7px; height: 7px; background: var(--ok); border-radius: 50%; }
+    .sp { flex: 1; }
+    .stream { flex: 1; min-height: 0; overflow: hidden; padding: 10px 12px; }
+    .msg {
+      max-width: 92%; font-size: 13px; line-height: 1.4; padding: 7px 9px;
+      border: 1px solid var(--ink); border-radius: 8px; margin: 0 0 8px;
+    }
+    .msg.user { margin-left: auto; background: #171717; color: #fff; }
+    .tool {
+      font-size: 12px; border: 1px solid var(--line); border-left: 2px solid #999;
+      border-radius: 8px; padding: 5px 8px; margin: 0 0 6px; color: #444;
+      font-family: ui-monospace, Menlo, monospace;
+    }
+    .tool.run { border-left-color: var(--accent); color: var(--ink); }
+    .chip {
+      font-size: 12px; border: 1px dashed var(--ink); border-radius: 999px;
+      padding: 4px 10px; display: inline-flex; gap: 6px; align-items: center;
+      margin: 0 0 8px;
+    }
+    .composer {
+      height: 52px; border-top: 1px solid var(--line); display: flex; align-items: center;
+      padding: 0 12px; font-size: 12px; color: var(--mute); flex-shrink: 0;
+    }
+    .goal {
+      border: 1.5px solid var(--ink); border-radius: 10px; padding: 8px 10px; margin: 0 0 8px;
+      font-size: 12px;
+    }
+    .goal small { display: block; color: var(--mute); font-size: 10px; margin-top: 3px; }
+    .row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+    .pill { font-size: 10px; border: 1px solid var(--ink); border-radius: 999px; padding: 1px 7px; }
+    .worker {
+      border: 1px solid var(--ink); border-radius: 10px; padding: 8px; font-size: 11px; margin: 0 0 6px;
+    }
+    .worker b { display: block; font-size: 12px; margin-bottom: 2px; }
+    .bar { height: 3px; background: #eee; border-radius: 99px; margin-top: 6px; }
+    .bar > i { display: block; height: 100%; background: var(--ink); border-radius: 99px; }
+    .term {
+      background: #171717; color: #d6d3d1; font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px; padding: 10px; flex: 1; line-height: 1.45;
+    }
+    .term .c { color: #a5b4fc; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; flex: 1; min-height: 0; }
+    .tl { padding: 8px; font-size: 11px; border-right: 1px solid var(--line); overflow: hidden; }
+    .x { color: var(--red); text-decoration: line-through; }
+  </style>
+</head>
+<body>
+  <h1>操作面五切片 · 线稿</h1>
+  <p class="sub">GitHub <b>#502</b> · 不是新视觉世界，是侧栏 Operate 面把「给人看的」和「给 agent 用的」分开。交互稿见同目录 <code>agent-ux-2026-09-18-interactive.html</code>。</p>
+  <p class="key">
+    图例：<b>黑底标签 = 推荐</b> · 虚线 = 可选 · <span style="color:var(--red)">红框 = 不做</span>。
+    框是 <b>桌面 Chrome</b>：左边网页，右边 Side Panel（约 320px）。不是手机。宽框是扩展全页 tab（终端 / 观察面）。
+  </p>
+
+  <!-- 1 -->
+  <section class="slice">
+    <h2>1 · 工具史：做完即收，当前步占位</h2>
+    <p class="why">今天每条 click / navigate / get_page_text 都占一张卡，人只能往下翻。本轮步骤卡（#256）管的是待办清单，不管工具史。</p>
+    <div class="board">
+      <div class="col browser">
+        <div class="cap">00 现状</div>
+        <span class="tag no">痛点</span>
+        <div class="dock">
+          <div class="chrome-bar"><span class="traffic"><i></i><i></i><i></i></span> jobs.example · CMspark 侧栏</div>
+          <div class="dock-body">
+            <div class="page-peek"><b>招聘列表</b><div class="card"></div><div class="card"></div><div class="card"></div></div>
+            <div class="side">
+              <div class="rail"><span class="dot"></span> 对话 <span class="sp"></span> ⋯</div>
+              <div class="stream">
+                <div class="msg user">把这个招聘站前 8 个 JD 抽成表</div>
+                <div class="tool">navigate · jobs.example</div>
+                <div class="tool">click · #next</div>
+                <div class="tool">click · .job-card</div>
+                <div class="tool">get_page_text</div>
+                <div class="tool">click · #next</div>
+                <div class="tool">get_page_text</div>
+                <div class="tool run">… click · .pager</div>
+                <div class="msg" style="opacity:.45">（答案被顶出视口）</div>
+              </div>
+              <div class="composer">要对这页做什么</div>
+            </div>
+          </div>
+        </div>
+        <p class="note">ToolCallCard 有「详情」，但卡头永远占行。人看到的是 agent 日志。</p>
+      </div>
+      <div class="col browser">
+        <div class="cap">01 进行中</div>
+        <span class="tag rec">推荐 · 活轨迹</span>
+        <div class="dock">
+          <div class="chrome-bar"><span class="traffic"><i></i><i></i><i></i></span> jobs.example · CMspark 侧栏</div>
+          <div class="dock-body">
+            <div class="page-peek"><b>招聘列表</b><div class="card"></div><div class="card"></div><div class="card"></div></div>
+            <div class="side">
+              <div class="rail"><span class="dot"></span> 对话 <span class="sp"></span> ⋯</div>
+              <div class="stream">
+                <div class="msg user">把这个招聘站前 8 个 JD 抽成表</div>
+                <div class="chip">已完成 6 步 · 展开</div>
+                <div class="tool run">click · .pager-2　正在点</div>
+                <div class="msg" style="border-style:dashed;color:#666">正在读第 7 条…</div>
+              </div>
+              <div class="composer">要对这页做什么</div>
+            </div>
+          </div>
+        </div>
+        <p class="note">活着的那一步展开；做完的折成一条。确认台 / 急停仍在顶栏，不进这条。</p>
+      </div>
+      <div class="col browser">
+        <div class="cap">02 回合结束</div>
+        <span class="tag rec">推荐 · 审计芯</span>
+        <div class="dock">
+          <div class="chrome-bar"><span class="traffic"><i></i><i></i><i></i></span> jobs.example · CMspark 侧栏</div>
+          <div class="dock-body">
+            <div class="page-peek"><b>招聘列表</b><div class="card"></div><div class="card"></div><div class="card"></div></div>
+            <div class="side">
+              <div class="rail"><span class="dot"></span> 对话 <span class="sp"></span> ⋯</div>
+              <div class="stream">
+                <div class="msg user">把这个招聘站前 8 个 JD 抽成表</div>
+                <div class="chip">8 步浏览器操作 · 0 失败 · 展开审计</div>
+                <div class="msg">8 条 JD 已写入表。两家没写薪资，标了「未公开」。</div>
+              </div>
+              <div class="composer">要对这页做什么</div>
+            </div>
+          </div>
+        </div>
+        <p class="note">默认给人看的是答案。审计是主动动作，不是默认卷轴。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="slice">
+    <h2>2 · 归档：默认 stub，全文是设置</h2>
+    <p class="why">磁盘上已经 redact（#255）。用户要的是「中间过程默认不进档案」，不是再 redact 一次。三层必须拆开：UI / 磁盘 / 再喂给模型。</p>
+    <div class="board">
+      <div class="col">
+        <div class="cap">默认</div>
+        <span class="tag rec">推荐</span>
+        <div class="side solo" style="height:280px">
+          <div class="rail">设置 · 对话档案</div>
+          <div class="stream">
+            <div class="msg">保存操作史</div>
+            <div class="chip">关 · 只留工具名与成败</div>
+            <div class="tool">navigate ok · sha 8f2a…</div>
+            <div class="tool">click ok · sha b91c…</div>
+            <div class="note" style="margin:8px 0 0">reload 不失忆靠：答案正文 + 目标卡。不靠把 HTML 全文再喂一遍。</div>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="cap">用户打开</div>
+        <span class="tag opt">可选</span>
+        <div class="side solo" style="height:280px">
+          <div class="rail">设置 · 对话档案</div>
+          <div class="stream">
+            <div class="msg">保存操作史</div>
+            <div class="chip">开 · 仍走 redact</div>
+            <div class="tool">get_page_text · 前 4k/18k 字</div>
+            <div class="note" style="margin:8px 0 0">开也不存 cookie / shell 全文。redact 规则不放松。</div>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="cap">不做</div>
+        <span class="tag no">NO-GO</span>
+        <div class="side solo" style="height:280px">
+          <div class="rail">错误</div>
+          <div class="stream">
+            <div class="msg x">磁盘删光 tool 行，UI 还能展开审计</div>
+            <div class="msg x">reload 后模型忘了读过的页（#255 已踩）</div>
+            <div class="msg x">把 L2 确认证据一并丢掉</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section class="slice">
+    <h2>3 · 终端：#432 P1，不是把 Alacritty 塞进扩展</h2>
+    <p class="why">Alacritty 已是 Mode C <b>外跳</b>偏好之一。插件里已经有 xterm.js + node-pty 全页 tab。缺的是把编程 Agent 的 stdio 挂到这只 PTY，同时保留 ACP 结构化事件。</p>
+    <div class="board">
+      <div class="col">
+        <div class="cap">侧栏</div>
+        <span class="tag rec">入口 only</span>
+        <div class="side solo" style="height:240px">
+          <div class="rail">编程接力 · claude</div>
+          <div class="stream">
+            <div class="goal">审查 auth 中间件<small>ACP 会话进行中 · 审查</small></div>
+            <div class="chip">终端运行中 · 打开全页</div>
+            <div class="tool">permission · 读 src/auth.ts</div>
+            <div class="tool">pending diff · 2 文件</div>
+          </div>
+        </div>
+        <p class="note">320px 不跑 TUI。侧栏只放状态 + 确认 + 打开。</p>
+      </div>
+      <div class="col">
+        <div class="cap">全页 tab · 双通道</div>
+        <span class="tag rec">推荐</span>
+        <div class="side wide" style="height:240px;width:640px">
+          <div class="rail">终端 · 本线程 · darwin PTY</div>
+          <div class="split">
+            <div class="tl">
+              <b>ACP 时间线</b>
+              <div class="tool">session start</div>
+              <div class="tool">read · auth.ts</div>
+              <div class="tool run">permission · 写 diff</div>
+              <div class="chip">应用 diff 需确认</div>
+            </div>
+            <div class="term">
+              <div class="c">claude ▸ review auth middleware</div>
+              <div>Reading src/auth.ts</div>
+              <div>Plan: add CSRF token check</div>
+              <div class="c">_</div>
+            </div>
+          </div>
+        </div>
+        <p class="note">左：结构化（可确认）。右：真 PTY（可敲）。同一会话，不是两套 runtime。</p>
+      </div>
+      <div class="col">
+        <div class="cap">Alacritty 嵌入 MV3</div>
+        <span class="tag no">不可做</span>
+        <div class="side solo" style="height:240px">
+          <div class="rail">反例</div>
+          <div class="stream">
+            <div class="msg">wgpu 窗口不能画进 Side Panel</div>
+            <div class="msg">Native Messaging = 外跳，Mode C 已做</div>
+            <div class="msg">Zed 用的是 alacritty_terminal crate + GPUI，那是原生应用</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="slice">
+    <h2>4 · 停在目标，不数到 100</h2>
+    <p class="why">100 是单次 tool-loop 熔断。续跑已有 task_loop（20 run / 30–60 min）。DeepSeek goal 是完成态对象，driver 另挂，resume 不自动武装——这点和我们 STOPPED_USER 纪律同构。</p>
+    <div class="board">
+      <div class="col">
+        <div class="cap">00 现状</div>
+        <span class="tag no">魔法数</span>
+        <div class="side solo" style="height:260px">
+          <div class="rail">对话</div>
+          <div class="stream">
+            <div class="msg">达到最大工具调用轮次 (100)，已暂停。</div>
+            <div class="note">人不知道目标完成没有。Agent 可能第 40 步已经做完，也可能第 99 步还在空转 click。</div>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="cap">01 Goal 卡</div>
+        <span class="tag rec">推荐</span>
+        <div class="side solo" style="height:260px">
+          <div class="rail">对话</div>
+          <div class="stream">
+            <div class="goal">
+              抽出 8 条 JD 成表
+              <small>进行中 · 第 4 续跑 · 已核 6/8</small>
+            </div>
+            <div class="row">
+              <span class="pill">无进展 ×2 将停</span>
+              <span class="pill">预算 4/20</span>
+            </div>
+            <div class="chip">暂停目标</div>
+          </div>
+        </div>
+        <p class="note">100 留作看不见的电路熔断，不进文案。完成 / 无进展 / 预算 / 安全 / 人停 才是停因。</p>
+      </div>
+      <div class="col">
+        <div class="cap">DeepSeek 对位</div>
+        <span class="tag opt">搬纪律不搬包</span>
+        <div class="side solo" style="height:260px">
+          <div class="rail">映射</div>
+          <div class="stream">
+            <div class="tool">goal 对象 → 我们的目标卡（可与 run_progress 合并）</div>
+            <div class="tool">round-driver → 已有 task_loop.arm</div>
+            <div class="tool">resume 不自动武装 → STOPPED_USER 已锁</div>
+            <div class="tool">maxGoalRounds → 取代「100」作为人可见上限</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slice">
+    <h2>5 · 舰队透视：看懂，不是 vis 调试器</h2>
+    <p class="why">FleetStrip 只有计数。Kimi 网页 Swarm 能点进一只子 agent；<code>kimi vis</code> 是调试器，默认不该进 320px 对话流。</p>
+    <div class="board">
+      <div class="col">
+        <div class="cap">Glance · 侧栏</div>
+        <span class="tag rec">默认</span>
+        <div class="side solo" style="height:300px">
+          <div class="rail"><span class="dot"></span> 3 路进行中</div>
+          <div class="stream">
+            <div class="msg user">并行：抓 JD / 写表 / 核对薪资</div>
+            <div class="worker"><b>抓取</b> get_page_text · 第 5 页<div class="bar"><i style="width:60%"></i></div></div>
+            <div class="worker"><b>写表</b> 等抓取<div class="bar"><i style="width:20%"></i></div></div>
+            <div class="worker"><b>核对</b> 空闲<div class="bar"><i style="width:0"></i></div></div>
+            <div class="chip">打开观察面</div>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="cap">Inspect · 点开一只</div>
+        <span class="tag rec">推荐</span>
+        <div class="side solo" style="height:300px">
+          <div class="rail">抓取 · worker</div>
+          <div class="stream">
+            <div class="goal">收集 8 条 JD 原文<small>持锁 tab 1842</small></div>
+            <div class="chip">本轮提示 · 默认收</div>
+            <div class="tool run">get_page_text</div>
+            <div class="tool">已完成 4 步 · 展开</div>
+            <div class="note">内部 prompt 默认折叠。要看再点。不是把 system 全文铺在侧栏。</div>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="cap">Observatory / vis</div>
+        <span class="tag opt">全页 · 可选</span>
+        <div class="side solo" style="height:300px">
+          <div class="rail">观察面 · 本 run</div>
+          <div class="stream">
+            <div class="msg">时间线 · 三列 worker · 锁</div>
+            <div class="note">对标 kimi vis 的是这一档，不是侧栏。不新开 BottomBar Tab，图谱同款全页。</div>
+            <div class="msg x" style="margin-top:10px">300 路蜂群动画</div>
+            <div class="msg x">默认展示完整内部 prompt</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</body>
+</html>

@@ -38,5 +38,7 @@ test("#255 ChatView truncated prefix renders the prefix, not the envelope JSON",
 test("#255 redacted-stub hint （折叠态） copy unchanged", () => {
   const chat = read("src/sidepanel/components/ChatView.tsx")
   assert.match(chat, /data-testid="redacted-stub-hint"/)
-  assert.match(chat, /出于安全未持久化/)
+  assert.match(chat, /formatRedactedStubHint\(/)
+  const hintUtil = read("src/sidepanel/utils/redacted-stub-utils.ts")
+  assert.match(hintUtil, /出于安全未持久化/)
 })

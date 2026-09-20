@@ -21,6 +21,8 @@ export interface RedactedStub {
   len: number
   /** Short sha256 fingerprint of the original payload. */
   sha256: string
+  /** Product archive stub vs security-class fold. Missing = legacy SEC-C copy. */
+  omission?: "archive" | "security"
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -35,7 +37,18 @@ function asStub(v: unknown): RedactedStub | null {
   if (r.redacted !== true) return null
   if (typeof r.len !== "number" || !Number.isFinite(r.len)) return null
   if (typeof r.sha256 !== "string") return null
-  return { len: r.len, sha256: r.sha256 }
+  const omission = r.omission === "archive" || r.omission === "security" ? r.omission : undefined
+  return omission ? { len: r.len, sha256: r.sha256, omission } : { len: r.len, sha256: r.sha256 }
+}
+
+/** Reload-card copy: product archive vs security fold must not share a dialect. */
+export function formatRedactedStubHint(stub: RedactedStub, stubFailed: boolean): string {
+  const fingerprint = `原始长度 ${stub.len.toLocaleString()} 字符 · sha256 ${stub.sha256}。实时轮次中内容对模型与界面可见（超长会截断），重新加载后不再保留。`
+  const fail = stubFailed ? "该调用当时已失败。" : ""
+  if (stub.omission === "archive") {
+    return `正文未保存：${fingerprint}打开「设置 → 对话归档」只影响之后写入的步骤。${fail}`
+  }
+  return `出于安全未持久化：${fingerprint}${fail}`
 }
 
 /**

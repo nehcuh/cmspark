@@ -56,8 +56,8 @@ export type CodingSessionState = {
   }>
   /** Mode C propose-time snapshot from companion (authoritative) */
   openLocalTerminal?: boolean
-  /** Mode C host terminal outcome */
-  localTerminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | string
+  /** Mode C host terminal outcome (`embed_intent` = intent recorded, nothing spawned yet). */
+  localTerminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | "embed_intent" | string
 }
 
 export type CodingSessionEvent = {
@@ -344,6 +344,15 @@ export interface AgentState {
   threadBusyById: Record<string, boolean>
   /** Open fleet worker list popover (portal). */
   fleetListOpen: boolean
+  /**
+   * #502 E Inspect: worker being inspected inline (null = none). Inspect never
+   * switches activeThreadId — the main transcript stays untouched.
+   */
+  inspectedWorkerId: string | null
+  /** #502 E Inspect: last ~800 chars of the inspected worker's answer stream. */
+  inspectTokenTail: string
+  /** #502 E Inspect: live latest tool name for the inspected worker (tool.start). */
+  inspectLatestTool: string
   /** ADR-019 user-env public snapshot (keys + mask only; null until first list/updated). */
   userEnv: UserEnvPublic | null
   /** ADR-019 last user_env.* error (Chinese-mapped), shown in Settings Secrets section. */
@@ -388,6 +397,12 @@ export interface AgentState {
    */
   loopStatusByThreadId: Record<string, LoopStatusView>
   /**
+   * #505: unarmed 100-round cap. Companion chat.done.terminal === "round_limit"
+   * (not finish_reason — that would spawn an empty ghost bubble). Cleared when
+   * the thread starts a new run (SET_THREAD_BUSY busy:true or ADD_MESSAGE user).
+   */
+  runTerminalByThreadId: Record<string, "round_limit">
+  /**
    * L-4 (#390) suggestion card「要继续做完吗？」— non-blocking; click sends
    * task_loop.arm (source=suggestion_card == explicit gesture).
    */
@@ -397,6 +412,16 @@ export interface AgentState {
     budgetStopped: boolean
     at: number
   } | null
+  /**
+   * #513 fleet suggestion cards, per thread (NOT single-slot): switching threads
+   * must not drop another thread's pending card, and a background thread's
+   * fleet.suggest frame must not overwrite the one being viewed. Rendered for
+   * the ACTIVE thread only; cleared on accept/dismiss/thread removal.
+   */
+  fleetSuggestByThreadId: Record<
+    string,
+    { reason: string; subtasks: string[]; at: number }
+  >
 }
 
 export type AgentAction =
@@ -567,6 +592,10 @@ export type AgentAction =
   | { type: "SET_FLEET"; fleet: FleetSnapshot | null }
   | { type: "SET_THREAD_BUSY"; threadId: string; busy: boolean }
   | { type: "SET_FLEET_LIST_OPEN"; open: boolean }
+  | { type: "SET_INSPECT_WORKER"; workerId: string }
+  | { type: "SET_INSPECT_TAIL"; tail: string }
+  | { type: "SET_INSPECT_LATEST_TOOL"; tool: string }
+  | { type: "CLEAR_INSPECT" }
   | { type: "SET_USER_ENV"; userEnv: UserEnvPublic }
   | { type: "SET_USER_ENV_ERROR"; error: string | null }
   | { type: "SET_USER_ENV_STATUS"; status: string | null }
@@ -600,6 +629,12 @@ export type AgentAction =
   | { type: "CLEAR_CONTEXT_COMPACTED"; threadId: string }
   /** L-4 (#390): companion task_loop.status frame (sanitized view; verbatim render). */
   | { type: "SET_LOOP_STATUS"; threadId: string; view: LoopStatusView }
+  /** #505: chat.done.terminal on the unarmed 100-round cap. `null` clears. */
+  | { type: "SET_RUN_TERMINAL"; threadId: string; terminal: "round_limit" | null }
+  /** #513: companion fleet.suggest frame — keyed per thread (no active gate). */
+  | { type: "SET_FLEET_SUGGEST"; threadId: string; reason: string; subtasks: string[] }
+  /** #513: local clear on accept/dismiss (companion ack is idempotent sync). */
+  | { type: "CLEAR_FLEET_SUGGEST"; threadId: string }
   /** L-4 (#390): companion task_loop.suggest (non-blocking suggestion card). */
   | {
       type: "SET_LOOP_SUGGEST"
@@ -731,13 +766,18 @@ export const initialState: AgentState = {
   fleet: null,
   threadBusyById: {},
   fleetListOpen: false,
+  inspectedWorkerId: null,
+  inspectTokenTail: "",
+  inspectLatestTool: "",
   userEnv: null,
   userEnvError: null,
   userEnvStatus: null,
   unattended: null,
   contextCompactedByThreadId: {},
   loopStatusByThreadId: {},
+  runTerminalByThreadId: {},
   loopSuggest: null,
+  fleetSuggestByThreadId: {},
 }
 
 /**
@@ -1005,6 +1045,30 @@ export function mergeHydratedMessages(
   return extras.length ? [...next, ...extras] : next
 }
 
+function withoutRunTerminal(state: AgentState, threadId: string): AgentState {
+  if (!threadId || !state.runTerminalByThreadId[threadId]) return state
+  const { [threadId]: _dropped, ...rest } = state.runTerminalByThreadId
+  return { ...state, runTerminalByThreadId: rest }
+}
+
+/** #513: drop fleet suggestion cards for threads no longer in the list. */
+function pruneFleetSuggest(map: AgentState["fleetSuggestByThreadId"], keepIds: string[]): AgentState["fleetSuggestByThreadId"] {
+  const keep = new Set(keepIds)
+  let changed = false
+  for (const id of Object.keys(map)) {
+    if (!keep.has(id)) {
+      changed = true
+      break
+    }
+  }
+  if (!changed) return map
+  const out: AgentState["fleetSuggestByThreadId"] = {}
+  for (const [id, entry] of Object.entries(map)) {
+    if (keep.has(id)) out[id] = entry
+  }
+  return out
+}
+
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
     case "SET_CONNECTION": {
@@ -1044,6 +1108,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         threads,
         activeThreadId: nextActiveThreadId,
+        // #513: cards for threads gone from the list go with them.
+        fleetSuggestByThreadId: pruneFleetSuggest(
+          state.fleetSuggestByThreadId,
+          threads.map((t: any) => t.id as string),
+        ),
         // Do not wipe messages when preserving active across trash-scoped merges
         pinnedTabIds: nextActiveThread?.pinned_tabs ?? state.pinnedTabIds,
         activeSkillIds: nextActiveThread?.active_skill_ids ?? state.activeSkillIds,
@@ -1106,10 +1175,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       // bubble matched by client_message_id (F1), falling back to the last temp
       // user bubble for pre-F1 companions (DoD #13).
       const next = reduceAddMessage(state, action.message)
-      if (next.overlayStandby && isPanelOriginUserMessage(action.message)) {
-        return { ...next, overlayStandby: null }
+      const tid = typeof action.message.thread_id === "string" ? action.message.thread_id : ""
+      const cleared =
+        action.message.role === "user" && tid ? withoutRunTerminal(next, tid) : next
+      if (cleared.overlayStandby && isPanelOriginUserMessage(action.message)) {
+        return { ...cleared, overlayStandby: null }
       }
-      return next
+      return cleared
     }
     case "REMOVE_MESSAGE":
       return {
@@ -1210,6 +1282,47 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           [action.threadId]: action.view,
         },
       }
+    }
+    case "SET_RUN_TERMINAL": {
+      if (!action.threadId) return state
+      if (action.terminal === "round_limit") {
+        if (state.runTerminalByThreadId[action.threadId] === "round_limit") return state
+        return {
+          ...state,
+          runTerminalByThreadId: {
+            ...state.runTerminalByThreadId,
+            [action.threadId]: "round_limit",
+          },
+        }
+      }
+      return withoutRunTerminal(state, action.threadId)
+    }
+    case "SET_FLEET_SUGGEST": {
+      // #513: keyed per thread — a background thread's frame must not touch the
+      // viewed card, and switching back restores its own entry. ≥2 subtasks is
+      // the defense-in-depth twin of the useWebSocket gate.
+      if (!action.threadId) return state
+      const subtasks = Array.isArray(action.subtasks)
+        ? action.subtasks.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        : []
+      if (subtasks.length < 2) return state
+      return {
+        ...state,
+        fleetSuggestByThreadId: {
+          ...state.fleetSuggestByThreadId,
+          [action.threadId]: {
+            reason: typeof action.reason === "string" ? action.reason : "",
+            subtasks,
+            at: Date.now(),
+          },
+        },
+      }
+    }
+    case "CLEAR_FLEET_SUGGEST": {
+      if (!action.threadId) return state
+      if (!state.fleetSuggestByThreadId[action.threadId]) return state
+      const { [action.threadId]: _droppedFleet, ...restFleet } = state.fleetSuggestByThreadId
+      return { ...state, fleetSuggestByThreadId: restFleet }
     }
     case "SET_LOOP_SUGGEST": {
       if (!action.threadId) return state
@@ -1423,6 +1536,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         messagesByThreadId: dropped.cache,
         messagesCacheOrder: dropped.order,
+        // #513: the removed thread's fleet card goes with it.
+        fleetSuggestByThreadId: pruneFleetSuggest(state.fleetSuggestByThreadId, filtered.map(t => t.id)),
         ...(clearingActive
           ? { activeThreadId: null, messages: [], hydrating: false }
           : {}),
@@ -1459,6 +1574,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         messagesByThreadId: dropped.cache,
         messagesCacheOrder: dropped.order,
+        // #513: the removed thread's fleet card goes with it.
+        fleetSuggestByThreadId: pruneFleetSuggest(state.fleetSuggestByThreadId, filtered.map(t => t.id)),
         ...(clearingActive
           ? { activeThreadId: null, messages: [], hydrating: false }
           : {}),
@@ -1682,15 +1799,46 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const id = action.threadId
       if (!id) return state
       if (action.busy) {
-        if (state.threadBusyById[id]) return state
-        return { ...state, threadBusyById: { ...state.threadBusyById, [id]: true } }
+        // #505: a new chat.create / live token on this thread clears the cap hint.
+        const base = withoutRunTerminal(state, id)
+        if (base.threadBusyById[id]) return base
+        return { ...base, threadBusyById: { ...base.threadBusyById, [id]: true } }
       }
       if (!state.threadBusyById[id]) return state
       const { [id]: _, ...rest } = state.threadBusyById
       return { ...state, threadBusyById: rest }
     }
     case "SET_FLEET_LIST_OPEN":
+      // #502 E MAJOR-M1: every portal close path (Escape / backdrop / onClose /
+      // enterWorker) funnels through here — drop the inspect buffer so worker
+      // tokens stop feeding SET_INSPECT_TAIL once the drawer is gone.
+      if (!action.open && state.inspectedWorkerId !== null) {
+        return {
+          ...state,
+          fleetListOpen: false,
+          inspectedWorkerId: null,
+          inspectTokenTail: "",
+          inspectLatestTool: "",
+        }
+      }
       return { ...state, fleetListOpen: action.open }
+    case "SET_INSPECT_WORKER":
+      if (state.inspectedWorkerId === action.workerId) return state
+      return {
+        ...state,
+        inspectedWorkerId: action.workerId,
+        inspectTokenTail: "",
+        inspectLatestTool: "",
+      }
+    case "SET_INSPECT_TAIL":
+      if (state.inspectTokenTail === action.tail) return state
+      return { ...state, inspectTokenTail: action.tail }
+    case "SET_INSPECT_LATEST_TOOL":
+      if (state.inspectLatestTool === action.tool) return state
+      return { ...state, inspectLatestTool: action.tool }
+    case "CLEAR_INSPECT":
+      if (state.inspectedWorkerId === null) return state
+      return { ...state, inspectedWorkerId: null, inspectTokenTail: "", inspectLatestTool: "" }
     case "SET_MCP_SERVERS":
       return { ...state, mcpServers: Array.isArray(action.servers) ? action.servers : [] }
     case "UPDATE_MCP_SERVER_STATUS": {

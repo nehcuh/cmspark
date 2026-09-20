@@ -393,6 +393,14 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     })).min(1).max(8),
   }).strict(),
 
+  // #513 advisory fleet suggestion — reason + subtasks only. .strict(): a
+  // model-sent `surface` fails validation here first (fail-closed); the
+  // server-side strip stays as belt-and-braces for any future non-strict use.
+  fleet_suggest_propose: z.object({
+    reason: z.string().min(1).max(300),
+    subtasks: z.array(z.string().min(1).max(160)).min(2).max(5),
+  }).strict(),
+
   // #328 execution contract shadow — registration only, never an execution
   // permit. .strict() so no extra predicate can ride (HTTP/DOM 谓词 v0 禁用).
   execution_contract_propose: z.object({

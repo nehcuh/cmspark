@@ -131,6 +131,32 @@ export function shouldApplyStreamEvent(
 }
 
 /**
+ * #502 E Inspect: a frame belongs to the inspect buffer only when it carries
+ * the inspected worker's thread id. The inspect path is deliberately separate
+ * from shouldApplyStreamEvent — inspected frames must NEVER touch the main
+ * transcript (SET_STREAMING stays gated exactly as before).
+ * Pure helper for unit tests (fleet-inspect-buffer).
+ */
+export function shouldUpdateInspectBuffer(
+  msgThreadId: string | undefined | null,
+  inspectedWorkerId: string | null | undefined,
+): boolean {
+  if (msgThreadId == null || msgThreadId === "") return false
+  if (inspectedWorkerId == null || inspectedWorkerId === "") return false
+  return msgThreadId === inspectedWorkerId
+}
+
+/**
+ * #502 E Inspect: keep only the tail of the worker's answer stream (~800
+ * chars) — the drawer is a glance surface, not a transcript mirror.
+ * Pure helper for unit tests (fleet-inspect-buffer).
+ */
+export function inspectTailSlice(content: unknown, max = 800): string {
+  if (typeof content !== "string" || !content) return ""
+  return content.length > max ? content.slice(-max) : content
+}
+
+/**
  * #295: mid-turn assistant rows committed from live frames must carry the
  * tool_calls the companion already persisted (function-shaped, same as the
  * hydrated row — Message.tool_calls tolerates both shapes at runtime), so
@@ -260,6 +286,10 @@ export function useWebSocket() {
 
   // Keep refs in sync (listener is mount-once — never close over render state)
   activeThreadRef.current = state.activeThreadId
+  // #502 E Inspect: inspected worker id rides its own ref — the inspect buffer
+  // is updated independent of (and never widens) the active-thread gate above.
+  const inspectedWorkerRef = useRef<string | null>(null)
+  inspectedWorkerRef.current = state.inspectedWorkerId
   const pendingUploadsRef = useRef(state.pendingUploads)
   pendingUploadsRef.current = state.pendingUploads
 
@@ -383,6 +413,11 @@ export function useWebSocket() {
           if (tokenTid) {
             dispatch({ type: "SET_THREAD_BUSY", threadId: tokenTid, busy: true })
           }
+          // #502 E Inspect: buffer the inspected worker's tokens BEFORE the
+          // active-thread gate — SET_INSPECT_TAIL only, never SET_STREAMING.
+          if (shouldUpdateInspectBuffer(tokenTid, inspectedWorkerRef.current)) {
+            dispatch({ type: "SET_INSPECT_TAIL", tail: inspectTailSlice(msg.content) })
+          }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = msg.content
           dispatch({ type: "SET_STREAMING", content: msg.content })
@@ -456,6 +491,12 @@ export function useWebSocket() {
             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
           if (doneThreadId) {
             dispatch({ type: "SET_THREAD_BUSY", threadId: doneThreadId, busy: false })
+          }
+          // #505: terminal rides chat.done (not finish_reason — that would
+          // ADD_MESSAGE an empty ghost bubble). Per-thread; not gated on the
+          // active transcript so a background cap still shows on switch-back.
+          if (doneThreadId && msg.terminal === "round_limit") {
+            dispatch({ type: "SET_RUN_TERMINAL", threadId: doneThreadId, terminal: "round_limit" })
           }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           const content = streamingRef.current
@@ -654,6 +695,15 @@ export function useWebSocket() {
           // P1 CORR-M05: missing thread_id fail-closed (no legacy active fallback)
           if (!toolTid) break
           dispatch({ type: "SET_THREAD_BUSY", threadId: toolTid, busy: true })
+          // #502 E Inspect: live latest-tool name for the inspected worker
+          // (before the gate; independent of the active transcript).
+          if (
+            shouldUpdateInspectBuffer(toolTid, inspectedWorkerRef.current) &&
+            typeof msg.tool_name === "string" &&
+            msg.tool_name
+          ) {
+            dispatch({ type: "SET_INSPECT_LATEST_TOOL", tool: msg.tool_name })
+          }
           if (!shouldApplyStreamEvent(toolTid, activeThreadRef.current)) break
           // Intermediate assistant stream ends when tools begin. Commit live
           // reasoning/content into a historical row first — otherwise only the
@@ -856,7 +906,8 @@ export function useWebSocket() {
               preview_image: typeof msg.preview_image === "string" ? msg.preview_image : undefined,
               preview_caption: typeof msg.preview_caption === "string" ? msg.preview_caption : undefined,
               full_preview: typeof msg.full_preview === "string" ? msg.full_preview : undefined,
-              // ADR-015 multi-agent Confirm Center
+              // ADR-015 multi-agent Confirm Center + #507 thread owner
+              thread_id: typeof msg.thread_id === "string" ? msg.thread_id : undefined,
               worker_id: typeof msg.worker_id === "string" ? msg.worker_id : undefined,
               parent_thread_id: typeof msg.parent_thread_id === "string" ? msg.parent_thread_id : undefined,
               orchestrator_run_id: typeof msg.orchestrator_run_id === "string" ? msg.orchestrator_run_id : undefined,
@@ -1079,6 +1130,26 @@ export function useWebSocket() {
         case "task_loop.armed": {
           // Armed ⇒ the suggestion card has served its purpose; drop it.
           dispatch({ type: "CLEAR_LOOP_SUGGEST" })
+          break
+        }
+        case "fleet.suggest": {
+          // #513: advisory parallel-dispatch card, keyed per thread — a frame
+          // for a background thread parks in the map until the user switches.
+          const tid = typeof msg.thread_id === "string" ? msg.thread_id : ""
+          const reason = typeof msg.reason === "string" ? msg.reason : ""
+          const subtasks = Array.isArray(msg.subtasks)
+            ? msg.subtasks.filter((s: any): s is string => typeof s === "string" && s.trim().length > 0)
+            : []
+          if (tid && subtasks.length >= 2) {
+            dispatch({ type: "SET_FLEET_SUGGEST", threadId: tid, reason, subtasks })
+          }
+          break
+        }
+        case "fleet.suggest.dismissed": {
+          // Companion ack (may arrive from another surface) — idempotent local sync.
+          if (typeof msg.thread_id === "string" && msg.thread_id) {
+            dispatch({ type: "CLEAR_FLEET_SUGGEST", threadId: msg.thread_id })
+          }
           break
         }
         case "thread.trashed": {

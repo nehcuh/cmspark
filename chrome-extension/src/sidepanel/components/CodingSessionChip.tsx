@@ -3,6 +3,7 @@
 import { useEffect, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
+import { isModeCInvolved, modeCBannerText, modeCStopLabel, modeCStopTitle } from "../coding-handoff/embed-entry"
 import type { CodingSessionState } from "../store/agentStore"
 import { useAgentStore, codingSessionBelongsToThread } from "../store/agentStore"
 
@@ -33,13 +34,11 @@ export function CodingSessionChip({
   const tail = (session.progressTail || "").replace(/\s+/g, " ").trim().slice(0, 80)
   // Authoritative Mode C: only when a host terminal is/was actually involved.
   // Exclude `failed` — then the bridge is the only process (Stop = 停止编程会话).
-  const modeCMonitorStop =
-    session.localTerminal === "opened" ||
-    session.localTerminal === "opened_l0" ||
-    session.localTerminal === "pending" ||
-    (session.openLocalTerminal === true &&
-      session.localTerminal !== "failed" &&
-      session.localTerminal !== "skipped")
+  // #502 C: `embed_intent` means an intent was recorded and NOTHING was opened, so it raises the
+  // hint but must not claim a monitorable outer agent. #506: `embed_running` means the embedded
+  // PTY is live and survives Stop — the Stop label/title ladder (modeCStopLabel/modeCStopTitle)
+  // owns that override. Both ladders live in coding-handoff/embed-entry.
+  const modeCHint = isModeCInvolved(session.localTerminal, session.openLocalTerminal)
 
   const onStop = () => {
     if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
@@ -94,16 +93,8 @@ export function CodingSessionChip({
       </div>
       {!compact && tail ? <div style={styles.tail}>{tail}</div> : null}
       {session.error ? <div style={styles.err}>{session.error}</div> : null}
-      {live && modeCMonitorStop ? (
-        <div style={styles.modeCHint}>
-          {session.localTerminal === "failed"
-            ? "模式 C：本机终端未打开；侧栏监视仍在。停止仅结束侧栏桥。"
-            : session.localTerminal === "opened_l0"
-              ? "模式 C：终端已开（L0 仅横幅，需手动粘贴）。停止仅结束侧栏桥。"
-              : session.localTerminal === "pending"
-                ? "模式 C：正在打开本机终端…"
-                : codingHandoffCopy.modeCDualProcessBanner}
-        </div>
+      {live && modeCHint ? (
+        <div style={styles.modeCHint}>{modeCBannerText(session.localTerminal)}</div>
       ) : null}
       <div style={styles.btns}>
         {live ? (
@@ -111,15 +102,9 @@ export function CodingSessionChip({
             type="button"
             style={styles.stop}
             onClick={onStop}
-            title={
-              modeCMonitorStop
-                ? codingHandoffCopy.ctaStopMonitorTitle
-                : codingHandoffCopy.ctaStopSession
-            }
+            title={modeCStopTitle(session.localTerminal, session.openLocalTerminal)}
           >
-            {modeCMonitorStop
-              ? codingHandoffCopy.ctaStopMonitorSession
-              : codingHandoffCopy.ctaStopSession}
+            {modeCStopLabel(session.localTerminal, session.openLocalTerminal)}
           </button>
         ) : null}
         {!live && session.state === "closed" ? (

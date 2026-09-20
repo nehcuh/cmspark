@@ -104,7 +104,10 @@ export interface AcpSessionRecord {
    * Outcome of host Terminal open for Mode C (emitted on acp.session.event).
    * UI must key Stop honesty off this + snapshot, not live settings toggles.
    */
-  local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped"
+  /** Mode C host terminal outcome. `embed_intent` = intent recorded; the user must open the
+   *  in-plugin terminal (no PTY exists yet, nothing was opened). `embed_running` = the embedded
+   *  agent PTY actually spawned (#506 A); Stop/cancel does NOT end that process. */
+  local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | "embed_intent" | "embed_running"
   /** Set by cancel() so in-flight Mode C open does not update a closed session */
   mode_c_open_cancelled?: boolean
 }

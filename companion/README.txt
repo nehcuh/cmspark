@@ -1,4 +1,4 @@
-CMspark Browser Agent v0.6.7
+CMspark Browser Agent v0.6.8
 ===============================
 
 浏览器 AI 助手 — 让 AI 帮你操作网页
@@ -7,7 +7,7 @@ CMspark Browser Agent v0.6.7
 
 官方路径（Windows）：
 
-1. 运行安装向导 CMspark-Setup-v0.6.7.exe（NSIS），或解压 cmspark-v0.6.7-windows-x64.zip
+1. 运行安装向导 CMspark-Setup-v0.6.8.exe（NSIS），或解压 cmspark-v0.6.8-windows-x64.zip
 2. 官方 zip / Setup 入口是包内的 node.exe + cmspark-agent.js（不是 cmspark-agent.exe SEA 单文件）
 3. 在 Chrome 中加载扩展（按屏幕提示 / 安装器说明）
 4. 完成！

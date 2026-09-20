@@ -691,7 +691,13 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       try {
         // #265: overlay ACL is handshake-only. Strip model-claimed surface so
         // dispatch cannot be spoofed even if a future case reads params.surface.
-        if (toolName === "run_progress_propose" || toolName === "execution_contract_propose") {
+        // #513: fleet_suggest_propose joins the strip list (strict zod schema
+        // would otherwise reject the model-sent surface field).
+        if (
+          toolName === "run_progress_propose" ||
+          toolName === "execution_contract_propose" ||
+          toolName === "fleet_suggest_propose"
+        ) {
           delete (finalParams as { surface?: unknown }).surface
         }
         // Thread id already injected by adapter as __thread_id (computer-use precedent)
@@ -760,6 +766,8 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             const { scheduleWhenLlmSlotAvailable } = require("./orchestrator/llm-loop-gate") as typeof import("./orchestrator/llm-loop-gate")
             const workerThread = threadManager.get(threadId)
             scheduleWhenLlmSlotAvailable(workerThread, threadId, async () => {
+              const { installKickAbortController, releaseKickAbortController } = await import("./message-router")
+              const controller = installKickAbortController(threadId)
               try {
                 const { chatCreate } = await import("./llm/adapter")
                 await chatCreate({
@@ -773,12 +781,19 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                   historyStore,
                   sendToExtension: broadcastToClients,
                   executeTool: executor,
+                  signal: controller.signal,
                 })
+                // #514: expert-team worker runs bypass the router's run-end
+                // fleet push — refresh the Glance here (all panels).
+                const { broadcastFleetSnapshotIfWorkers } = await import("./orchestrator/fleet")
+                broadcastFleetSnapshotIfWorkers(threadManager, broadcastToClients)
               } catch (e: any) {
                 logger.warn("expert_team.kick_unhandled", {
                   thread_id: threadId,
                   error: e?.message || String(e),
                 })
+              } finally {
+                releaseKickAbortController(threadId, controller)
               }
             })
           },

@@ -82,7 +82,10 @@ function redactComputerParams(params: Record<string, unknown>): Record<string, u
   return redacted
 }
 
-function collapseResult(result: unknown): { success?: boolean; redacted: true; len: number; sha256: string } {
+function collapseResult(
+  result: unknown,
+  omission: "archive" | "security" = "security",
+): { success?: boolean; redacted: true; len: number; sha256: string; omission: "archive" | "security" } {
   const raw = typeof result === "string" ? result : JSON.stringify(result ?? null)
   return {
     success: typeof result === "object" && result && "success" in (result as any)
@@ -91,6 +94,7 @@ function collapseResult(result: unknown): { success?: boolean; redacted: true; l
     redacted: true,
     len: raw.length,
     sha256: shortHash(raw),
+    omission,
   }
 }
 
@@ -269,7 +273,117 @@ export function redactToolPayloadForPersistence(
   return { params: safeParams, result: safeResult }
 }
 
-/** OpenAI-shaped assistant tool_call as stored on the persisted assistant row. */
+/**
+ * #502 B archive tier.
+ *
+ * Wraps the redaction SoT above and then, when `persistFull` is false (the
+ * product default), collapses the NON-SENSITIVE payload to an audit stub:
+ *
+ *   result: { success?, redacted: true, len, sha256 }
+ *   params: { redacted: true, len, sha256 }
+ *
+ * Envelope is the same `{redacted,len,sha256}` shape the panel already
+ * detects, plus `omission:"archive"` so reload copy says 「正文未保存」
+ * instead of the SEC-C 「出于安全未持久化」 dialect.
+ *
+ * CARVE-OUTS (apply in BOTH modes):
+ *  - Sensitive classes keep their own #255 handling — cookie values, exec /
+ *    host / osascript bodies and MCP secrets are folded by the SoT call above,
+ *    and collapsing on top of that is strictly less data. The switch therefore
+ *    only ever decides whether a NON-sensitive body is written, never whether a
+ *    secret is redacted.
+ *  - FAILURE results (#511) keep their DIAGNOSTIC, not their body: bounded
+ *    `error`, `error_code`, and machine `data` keys (unlock contract:
+ *    SITE_OP_BANNED's `data.error_code` / `suggested_action`, the heal flow's
+ *    `error_code: INTERRUPTED`) survive plus a fingerprint; business payloads
+ *    riding a failure (fill values in `data.filled` / `params.fields[]`, page
+ *    text) are stubbed exactly like success bodies. Non-standard shapes with no
+ *    explicit `success` stub the same way — fail-closed, never fail-open.
+ *
+ * Only `success === true` payloads are compacted to the bare fingerprint — that
+ * is the page text / DOM / form fill / screenshot body the ticket is about.
+ *
+ * Params are stubbed as well: they are the same intermediate operation as the
+ * result (the selector typed into, the fill value, the URL fetched), and this
+ * ticket's goal is "tool name + success + size + fingerprint only". The row
+ * itself — including tool_name and the tool_call id — is never dropped.
+ */
+export function archiveToolPayload(
+  toolName: string,
+  params: unknown,
+  result: unknown,
+  persistFull: boolean,
+): { params: unknown; result: unknown } {
+  // Redaction first, unconditionally: the switch never bypasses a fold.
+  const safe = redactToolPayloadForPersistence(toolName, params, result)
+  if (persistFull) return safe
+  // #511: failure envelopes keep the diagnostic surface, never the body.
+  if (!isSuccessfulResult(safe.result)) {
+    return {
+      params: safe.params === undefined ? undefined : stubPayload(safe.params),
+      result: safe.result === undefined ? undefined : stubFailureResult(safe.result),
+    }
+  }
+  return {
+    params: safe.params === undefined ? undefined : stubPayload(safe.params),
+    result: safe.result === undefined ? undefined : collapseResult(safe.result, "archive"),
+  }
+}
+
+/**
+ * Only an explicit `success: true` is a compactable body. Anything else is
+ * treated as a diagnostic envelope (including a missing `success` field, which
+ * the tool layer only ever omits on non-standard shapes) — stubbed with the
+ * bounded diagnostic kept (#511).
+ */
+function isSuccessfulResult(result: unknown): boolean {
+  return !!result && typeof result === "object" && (result as { success?: unknown }).success === true
+}
+
+/**
+ * #511: stub a failure (or non-standard) result envelope. Keeps the bounded
+ * diagnostic surface the model and heal flow key on — boolean `success`,
+ * `error` (≤200 chars), `error_code`, machine `data` keys
+ * ({error_code, suggested_action, tab_url}) — plus the {redacted, len, sha256}
+ * fingerprint of the original envelope. Business payloads riding a failure
+ * (fill values, page text) are dropped like success bodies.
+ */
+function stubFailureResult(result: unknown): Record<string, unknown> {
+  if (!result || typeof result !== "object") {
+    return stubPayload(result)
+  }
+  const r = result as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  if (typeof r.success === "boolean") out.success = r.success
+  if (typeof r.error === "string") {
+    out.error = r.error.length > 200 ? r.error.slice(0, 200) + "…" : r.error
+  }
+  if (typeof r.error_code === "string") out.error_code = r.error_code
+  if (r.data && typeof r.data === "object") {
+    const d = r.data as Record<string, unknown>
+    const machine: Record<string, unknown> = {}
+    for (const key of ["error_code", "suggested_action", "tab_url"]) {
+      if (typeof d[key] === "string") machine[key] = d[key]
+    }
+    if (Object.keys(machine).length > 0) out.data = machine
+  }
+  const raw = JSON.stringify(result)
+  out.redacted = true
+  out.len = raw.length
+  out.sha256 = shortHash(raw)
+  out.omission = "archive"
+  return out
+}
+
+/** {redacted, len, sha256} without collapseResult's result-only `success` field. */
+function stubPayload(payload: unknown): { redacted: true; len: number; sha256: string } {
+  const raw = typeof payload === "string" ? payload : JSON.stringify(payload ?? null)
+  return { redacted: true, len: raw.length, sha256: shortHash(raw) }
+}
+
+/**
+ * OpenAI-shaped assistant tool_call as stored on the persisted assistant row.
+ */
 export type AssistantToolCallForPersist = {
   id: string
   type: "function"
@@ -280,24 +394,45 @@ export type AssistantToolCallForPersist = {
  * Redact assistant tool_calls.arguments before durable thread JSON persist.
  * Clones; does not mutate in-flight LLM rows. Invalid JSON is replaced with a
  * stub — never stored raw (truncated streams can carry partial secrets).
+ *
+ * #502 B archive tier (`opts.persistFull`):
+ *  - false — the DEFAULT, and deliberately fail-closed — collapses the arguments
+ *    to `{redacted:true, len}`. Arguments are the second copy of the same
+ *    intermediate operation the tool-result row carries (selector, fill text,
+ *    evaluate code, fetched URL), so the product default drops the body here too.
+ *  - true — the #255 behaviour: sensitive fields folded, the rest kept.
+ *
+ * `id` and `function.name` survive BOTH tiers: rebuildMessagesFromHistory pairs
+ * assistant.tool_calls to tool rows by id, and the panel / audit key on the name.
+ * Invalid-JSON arguments keep their own `_redacted:"invalid_json"` stub in both
+ * tiers — it carries no payload and is a better diagnostic than a generic stub.
  */
 export function redactAssistantToolCallsForPersistence(
   toolCalls: readonly AssistantToolCallForPersist[] | null | undefined,
+  opts?: { persistFull?: boolean },
 ): AssistantToolCallForPersist[] {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return []
-  return toolCalls.map((tc) => redactOneAssistantToolCall(tc))
+  const persistFull = opts?.persistFull === true
+  return toolCalls.map((tc) => redactOneAssistantToolCall(tc, persistFull))
 }
 
 function redactOneAssistantToolCall(
   tc: AssistantToolCallForPersist,
+  persistFull: boolean,
 ): AssistantToolCallForPersist {
   const name = typeof tc?.function?.name === "string" ? tc.function.name : ""
   const rawArgs = typeof tc?.function?.arguments === "string" ? tc.function.arguments : ""
   let argumentsOut: string
   try {
     const params = JSON.parse(rawArgs)
-    const { params: safeParams } = redactToolPayloadForPersistence(name, params, null)
-    argumentsOut = JSON.stringify(safeParams === undefined ? {} : safeParams)
+    if (!persistFull) {
+      // Stub is derived from the raw LENGTH only — nothing sensitive can leak
+      // through it, and no redaction step is needed to prove that.
+      argumentsOut = JSON.stringify({ redacted: true, len: rawArgs.length })
+    } else {
+      const { params: safeParams } = redactToolPayloadForPersistence(name, params, null)
+      argumentsOut = JSON.stringify(safeParams === undefined ? {} : safeParams)
+    }
   } catch {
     argumentsOut = JSON.stringify({ _redacted: "invalid_json", len: rawArgs.length })
   }

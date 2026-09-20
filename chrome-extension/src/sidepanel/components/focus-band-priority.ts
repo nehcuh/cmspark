@@ -211,8 +211,33 @@ export function sceneChipsSecondary(
  * - none: empty fleet
  *
  * Zombie paused workers must NOT show as「舰队运行中」or steal FocusBand.
+ *
+ * #514: `fresh` (default true) — the snapshot's age gate. A DONE fleet (all
+ * workers idle, no locks/intents) holds the band only while the snapshot is
+ * fresh (≤10 min), so the user can inspect finished workers right after a run
+ * without the strip squatting on FocusBand forever. Real activity (locks /
+ * intents / holding_tabs) ignores freshness — live work always wins.
  */
 export type FleetActivityKind = "none" | "active" | "paused_only"
+
+export const FLEET_SNAPSHOT_FRESH_MS = 10 * 60_000
+
+/**
+ * Whether FleetStrip's 4s `fleet.status` poll may run. Pull rebuilds
+ * `snapshot.at`, which is also the #514 freshness clock — polling while idle
+ * makes the 10-minute inspection window never expire.
+ */
+export function fleetStripShouldPoll(input: {
+  worstStatus?: string | null
+  lockCount: number
+  openIntents: number
+  llmActive: boolean
+}): boolean {
+  if (input.llmActive) return true
+  if (input.lockCount > 0 || input.openIntents > 0) return true
+  const worst = input.worstStatus || ""
+  return worst !== "" && worst !== "idle"
+}
 
 export function classifyFleetActivity(input: {
   workerCount: number
@@ -220,12 +245,16 @@ export function classifyFleetActivity(input: {
   openIntents: number
   /** From fleet.worst_status when available */
   worstStatus?: string | null
+  /** #514: snapshot age gate for the idle-workers fail-open branch. */
+  fresh?: boolean
 }): FleetActivityKind {
   if (input.lockCount > 0 || input.openIntents > 0) return "active"
-  if (input.worstStatus === "holding_tabs" || input.worstStatus === "idle") return "active"
+  if (input.worstStatus === "holding_tabs") return "active"
   if (input.workerCount > 0 && input.worstStatus === "paused") return "paused_only"
-  // Missing worstStatus but workers present → treat as active (fail open for visibility)
-  if (input.workerCount > 0) return "active"
+  // Idle workers (or missing worstStatus) with workers present → active ONLY
+  // while the snapshot is fresh; a stale all-done fleet frees the band (#514).
+  if (input.workerCount > 0 && input.fresh !== false) return "active"
+  if (input.workerCount > 0) return "paused_only"
   return "none"
 }
 
@@ -274,4 +303,36 @@ export function fleetStripShouldShow(input: {
   if (kind === "active") return true
   if (kind === "paused_only" && input.showPausedOnly) return true
   return false
+}
+
+/** #502 E: glance worker fields consumed by the meta-line suffix. */
+export interface FleetGlanceWorker {
+  id: string
+  alias?: string | null
+  worker_role_label?: string | null
+  llm_active?: boolean
+  latest_tool?: string
+}
+
+/**
+ * #502 E Glance — one-line "who:what" for the newest tool in the fleet.
+ * The llm_active worker wins (that's the one streaming); otherwise the last
+ * worker carrying a latest_tool. Empty string keeps the meta line unchanged.
+ */
+export function fleetGlanceLatestToolLabel(workers: FleetGlanceWorker[]): string {
+  let fallback: FleetGlanceWorker | null = null
+  for (let i = workers.length - 1; i >= 0; i--) {
+    const w = workers[i]
+    if (!w || typeof w.latest_tool !== "string" || !w.latest_tool.trim()) continue
+    if (w.llm_active) {
+      fallback = w
+      break
+    }
+    if (!fallback) fallback = w
+  }
+  if (!fallback) return ""
+  const who = String(fallback.worker_role_label || fallback.alias || fallback.id || "").trim() || fallback.id
+  const tool = fallback.latest_tool
+  if (typeof tool !== "string" || !tool.trim()) return ""
+  return `${who}:${tool.trim()}`
 }

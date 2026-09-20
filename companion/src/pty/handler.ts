@@ -4,10 +4,13 @@ import { getConfig, getConfigDir } from "../config"
 import { CodeReviewService } from "../code-review/service"
 import { reviewPrompt } from "../code-review/report"
 import type { ThreadManager } from "../threads/thread-manager"
+import * as path from "path"
+import { peekEmbedIntent, recordEmbedIntent, sameEmbedIntent, takeEmbedIntent } from "../acp/open-local-terminal"
 import { resolveTerminalStartCwd } from "./cwd"
 import {
   ackPty,
   closePty,
+  INVALID_PTY_OPTS,
   pausePty,
   pingPty,
   resizePty,
@@ -111,6 +114,19 @@ export async function handleTerminalMessage(
       catch { return deny("CODE_REVIEW_NOT_FOUND_OR_INVALID", { id }) }
     }
     if (pendingOpen) return deny("terminal_busy", { id })
+    // #502 C: PEEK (non-consuming) before building the L2 copy. The dialog must describe what the
+    // PTY will actually run — a user approving a "login shell" while the handler launches the agent
+    // binary with their task file would be consenting to something the text does not describe.
+    // The `threadId` test below is the SAME one the TAKE uses: an intent is claimed only by a
+    // thread-bound tab, and peek/take must never disagree about which key they are looking at. If
+    // peek used the normalizing key while take refused a falsy thread, the L2 copy could promise an
+    // agent that the spawn site then rejects as "expired" — a copy that lies in the other direction.
+    const embedIntent = threadId ? peekEmbedIntent(threadId) : null
+    // A wire `argv` may only refine the args of an intent-supplied executable, never choose one.
+    const wireArgs = Array.isArray(rest.argv)
+      ? rest.argv.filter((a): a is string => typeof a === "string")
+      : null
+    const embedArgs = embedIntent ? wireArgs ?? embedIntent.args : null
     const pending = { id, owner: session.originWs, canceled: false }
     pendingOpen = pending
     let decision: { approved: boolean }
@@ -118,7 +134,9 @@ export async function handleTerminalMessage(
       decision = await session.requestConfirmation({
         toolName: "terminal.open",
         dangerousApis: ["pty", "shell"],
-        code: `open login PTY cwd=${cwdRes.cwd}\n本机用户 shell，可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}`,
+        code: embedIntent && embedArgs
+          ? `open embedded PTY cwd=${cwdRes.cwd}\n本机内嵌终端将运行 Agent：${path.basename(embedIntent.file)}（参数 ${embedArgs.length} 个）；该 Agent 可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}`
+          : `open login PTY cwd=${cwdRes.cwd}\n本机用户 shell，可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}`,
       })
     } catch { return deny("TERMINAL_CONFIRMATION_FAILED", { id }) }
     finally { if (pendingOpen === pending) pendingOpen = null }
@@ -152,6 +170,46 @@ export async function handleTerminalMessage(
         /* ignore */
       }
     }
+    // #502 C: only NOW may the intent be consumed. Without one this is exactly today's request
+    // (`$SHELL -l`) — a page-supplied `argv` alone can never choose an executable or args.
+    const intent = threadId ? takeEmbedIntent(threadId) : null
+    if (embedIntent && !intent) {
+      // The copy promised an agent; the intent expired between confirm and spawn. Spawning
+      // `$SHELL -l` here would run what the user did NOT approve, so fail closed instead.
+      return deny("EMBED_INTENT_EXPIRED: 内嵌 Agent 启动意图已失效，请重新点击面板「在本插件打开终端」按钮", { id })
+    }
+    if (intent && !embedIntent) {
+      // The mirror image of the guard above. Mode C can RECORD an intent while the L2 dialog is
+      // open, so peek found nothing and the user was shown (and approved) the "本机用户 shell" copy.
+      // Take now sees a freshly recorded intent, and spawning the agent binary with the task file
+      // would run what this dialog never described — the same consent violation, inverted. Fail
+      // CLOSED: `$SHELL -l` is refused too, because the approved copy promised a shell while the
+      // panel's own state now says embed; returning without spawning and asking again is the only
+      // honest answer. The intent is put back (same choice as the denied-confirmation path) so the
+      // re-click the error text asks for really does show the embed copy and ask again.
+      recordEmbedIntent(threadId, intent)
+      return deny(
+        "EMBED_INTENT_UNCONFIRMED: 确认期间新出现了内嵌 Agent 启动意图，本次确认的是本机用户 shell，未授权启动 Agent，故已拒绝（未降级为登录 shell）。请重新点击面板「在本插件打开终端」按钮，按提示确认内嵌 Agent 后再启动",
+        { id },
+      )
+    }
+    if (embedIntent && intent && !sameEmbedIntent(embedIntent, intent)) {
+      // The third race, and the only one where BOTH sides are present: a REPLACEMENT intent. Mode C
+      // can start a second run for this thread while the dialog is open, and `recordEmbedIntent`
+      // overwrites the entry in place — so take returns a different `file`/`args`/`cwd` than the ones
+      // the copy named. The EXPIRED guard sees a non-null take and the UNCONFIRMED guard sees a
+      // non-null peek, so neither fires; spawning would run an agent whose basename and argv the user
+      // never approved (approved A, got B). Fail CLOSED for both: neither A nor B spawns, and not
+      // `$SHELL -l` either. The TAKEN (newer) intent is put back — the same choice the UNCONFIRMED
+      // guard makes — so the re-click the error text asks for shows the embed copy for the agent the
+      // panel's CURRENT state points at. Restoring the stale approved intent would instead let the
+      // next click re-run A without ever having described it again.
+      recordEmbedIntent(threadId, intent)
+      return deny(
+        "EMBED_INTENT_REPLACED: 确认期间内嵌 Agent 启动意图已被替换为另一个 Agent，本次确认的 Agent 未获授权启动，替换后的 Agent 也未经确认，故两者均未启动。请重新点击面板「在本插件打开终端」按钮，按提示确认当前 Agent 后再启动",
+        { id },
+      )
+    }
     const spawned = spawnPtySession({
       id,
       cols: clampSize(rest.cols, 80, 500),
@@ -161,8 +219,22 @@ export async function handleTerminalMessage(
       reviewId: reviewId || undefined,
       owner: session.originWs,
       send,
+      ...(intent ? { file: intent.file, args: wireArgs ?? intent.args } : {}),
     })
     if (!spawned.ok) {
+      // #506 B: `takeEmbedIntent` already CONSUMED the intent above. A spawn that never started
+      // (the single slot was busy, or the agent binary failed to exec) must hand the intent back —
+      // the same put-back the EXPIRED/UNCONFIRMED/REPLACED guards make — or the re-click the error
+      // sends the user to would silently downgrade to a login shell. TTL resets on re-record;
+      // INVALID_PTY_OPTS stays consumed because that retry would fail identically forever.
+      if (intent && threadId && (spawned.error === "terminal_busy" || spawned.code === "spawn_failed")) {
+        recordEmbedIntent(threadId, intent)
+      }
+      if (spawned.code === INVALID_PTY_OPTS) {
+        // #502 C: a malformed file/argv never spawned anything, so reporting it as
+        // `terminal.closed`/`spawn_failed` would render as "opened then died". It is a request error.
+        return deny(spawned.error, { id })
+      }
       if (spawned.code === "unsupported" || spawned.code === "spawn_failed") {
         return {
           type: "terminal.closed",

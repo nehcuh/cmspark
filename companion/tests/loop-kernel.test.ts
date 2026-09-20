@@ -365,6 +365,65 @@ test("circuit_breaker / error terminals: no continuation, loop stays armed", () 
   assert.equal(audits.find((e) => e.type === "task_loop.paused")?.reason, "circuit_breaker")
 })
 
+// --- #502 D-G1: 100-round cap is a run boundary, not a dead pause ---
+// The cap ends THIS run; the task continues (goal still active + budget left).
+// continuous-failure / same-tool breakers keep the old no-continuation rule.
+
+test("round_limit: armed + unticked evidence → enqueue next run (G1)", () => {
+  const tid = newThread()
+  kernel.armLoop(tm, tid, "explicit_command", { audit: auditSink })
+  setProgress(tid, [{ id: "live:0", text: "x", done: false }])
+  exitCheck(tid, stats({ terminal: "round_limit", toolCalls: 8 }))
+  assert.equal(getLoop(tid)?.status, "active")
+  assert.equal(queues.peekNextRunCount(tid), 1)
+  assert.equal(audits.some((e) => e.type === "task_loop.run_scheduled"), true)
+  assert.equal(
+    audits.some((e) => e.type === "task_loop.paused" && e.reason === "circuit_breaker"),
+    false,
+  )
+})
+
+test("round_limit: not armed + tools ran → suggestion card, no enqueue", () => {
+  const tid = newThread() // no armLoop
+  setProgress(tid, [{ id: "live:0", text: "x", done: false }])
+  exitCheck(tid, stats({ terminal: "round_limit", toolCalls: 8 }))
+  assert.equal(queues.peekNextRunCount(tid), 0)
+  assert.equal(suggestFrames.length, 1)
+})
+
+test("round_limit: armed but no tool calls → no continuation (pure Q&A rule holds)", () => {
+  const tid = newThread()
+  kernel.armLoop(tm, tid, "explicit_command", { audit: auditSink })
+  setProgress(tid, [{ id: "live:0", text: "x", done: false }])
+  exitCheck(tid, stats({ terminal: "round_limit", toolCalls: 0 }))
+  assert.equal(queues.peekNextRunCount(tid), 0)
+  assert.equal(suggestFrames.length, 0)
+})
+
+test("round_limit: worker threads still never loop (G1 acceptance)", () => {
+  const wid = newThread()
+  tm.update(wid, { agent_role: "worker" } as any)
+  setProgress(wid, [{ id: "live:0", text: "x", done: false }])
+  exitCheck(wid, stats({ terminal: "round_limit", toolCalls: 8 }))
+  // Workers can never be armed, so without the up-front worker guard the cap
+  // would fall into the unarmed branch and fire a discovery card at a worker.
+  assert.equal(queues.peekNextRunCount(wid), 0)
+  assert.equal(suggestFrames.length, 0)
+  assert.equal(audits.length, 0)
+})
+
+test("circuit_breaker still does not continue (not a round boundary)", () => {
+  const tid = newThread()
+  kernel.armLoop(tm, tid, "explicit_command", { audit: auditSink })
+  setProgress(tid, [{ id: "live:0", text: "x", done: false }])
+  exitCheck(tid, stats({ terminal: "circuit_breaker", toolCalls: 8 }))
+  assert.equal(queues.peekNextRunCount(tid), 0)
+  // The breakers are terminal for the run AND must not degrade into a
+  // discovery card either — the loop is still armed, the user drives it.
+  assert.equal(suggestFrames.length, 0)
+  assert.equal(audits.some((e) => e.type === "task_loop.run_scheduled"), false)
+})
+
 test("aborted terminal: exit check defers to the abort path (no state change)", () => {
   const tid = newThread()
   kernel.armLoop(tm, tid, "explicit_command", { audit: auditSink })

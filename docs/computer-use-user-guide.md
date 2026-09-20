@@ -1,7 +1,7 @@
 # Computer Use 使用说明
 
 > **面向使用者**：如何开启桌面坐标操控、确认台里怎么批/急停、session-trust 是什么、平台与限制。  
-> **产品版本**：0.6.7 · **决策摘要**：[ADR-017](adr/017-computer-use.md)  
+> **产品版本**：0.6.8 · **决策摘要**：[ADR-017](adr/017-computer-use.md)  
 > **确认台 UI**：[confirm-center-user-guide.md](confirm-center-user-guide.md) · **Host / Apps**：[host-and-apps.md](host-and-apps.md)  
 > **过程史（非规范）**：[decisions/coordinate-computer-use-plan.md](decisions/coordinate-computer-use-plan.md)
 
@@ -117,7 +117,7 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 
 ## 6. 平台支持
 
-| 平台 | 状态（0.6.7） |
+| 平台 | 状态（0.6.8） |
 |------|----------------|
 | **macOS** | 主路径：原生适配 + 证据/急停；需本机权限（**只认 CMspark**，见下） |
 | **Windows** | 主路径：PowerShell/UIA 脚本族 + 窗口捕获；Hello 等与 host 写路径协同处见 host 指南 |

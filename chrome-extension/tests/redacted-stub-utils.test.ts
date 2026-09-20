@@ -4,6 +4,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import {
   extractRedactedStub,
+  formatRedactedStubHint,
   extractTruncatedPrefix,
   isRedactedStubContent,
 } from "../src/sidepanel/utils/redacted-stub-utils"
@@ -213,4 +214,21 @@ test("extractTruncatedPrefix: full result / redacted stub / junk → null", () =
   )
   assert.equal(extractTruncatedPrefix(null), null)
   assert.equal(extractTruncatedPrefix("truncated"), null)
+})
+
+test("#X2 archive omission is not the SEC-C dialect", () => {
+  const archive = extractRedactedStub({
+    success: true,
+    redacted: true,
+    len: 42,
+    sha256: "deadbeef",
+    omission: "archive",
+  })
+  assert.equal(archive?.omission, "archive")
+  const hint = formatRedactedStubHint(archive!, false)
+  assert.match(hint, /正文未保存/)
+  assert.doesNotMatch(hint, /出于安全未持久化/)
+  const sec = formatRedactedStubHint({ len: 42, sha256: "deadbeef" }, false)
+  assert.match(sec, /出于安全未持久化/)
+  assert.doesNotMatch(sec, /正文未保存/)
 })

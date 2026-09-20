@@ -14,7 +14,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { readFileSync, readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 import {
   isCoarsePointer,
@@ -84,7 +84,9 @@ test("PR-6 ChatView wires row className + gated bar + isLast passthrough", () =>
   )
   // call site passes isLast; memo comparator includes it (else the old last row
   // would keep the persistent bar after a new message lands)
-  assert.match(chat, /isLast=\{i === messages\.length - 1\}/)
+  // #502 A: the transcript renders grouped items (tool blocks + rows), so the
+  // passthrough is per-item — `itemIsLast` marks the last render item.
+  assert.match(chat, /isLast=\{itemIsLast\}/)
   assert.match(chat, /prev\.isLast === next\.isLast/)
 })
 
@@ -189,7 +191,9 @@ test("PR-6 ToolCallCard cascade untouched: status derivation + red-line mappings
   assert.match(chat, /derivedStatus === "error" \? "!" : "–"/)
   // SEC-C stub hint + failed-suffix copy intact (security disclosure)
   assert.match(chat, /data-testid="redacted-stub-hint"/)
-  assert.match(chat, /该调用当时已失败/)
+  assert.match(chat, /formatRedactedStubHint\(redactedStub,\s*stubFailed\)/)
+  const hintUtil = read("src/sidepanel/utils/redacted-stub-utils.ts")
+  assert.match(hintUtil, /该调用当时已失败/)
 })
 
 test("PR-6 RunProgress collapse semantics untouched (same-red-line neighbor)", () => {
@@ -214,4 +218,132 @@ test("PR-6 no raw hex left behind in the touched shells", () => {
     const code = stripComments(read(f))
     assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(code), `${f} must stay token-only`)
   }
+})
+
+// ---------------------------------------------------------------------------
+// #502 slice A — tool history folding (source contract)
+// ---------------------------------------------------------------------------
+
+test("#502 ChatView routes tool history through viewToolHistory with an accessible audit chip", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // grouping + chip copy + button semantics (Enter/Space ride the native button)
+  assert.match(chat, /viewToolHistory\(/)
+  assert.match(chat, /groupToolTurnRows\(/)
+  assert.match(chat, /展开审计/)
+  assert.match(chat, /aria-expanded=\{auditOpen\}/)
+  // cards render via the existing ToolCallCard only — no new card component
+  assert.match(chat, /function ToolCallCard\(\{ tc \}/)
+  // fold is view state, never persisted onto the thread
+  assert.ok(!/thread\.collapsed/.test(chat), "fold state must not touch thread.collapsed")
+})
+
+test("#502 MessageRow no longer renders function-shape tool_calls inline (hydrate)", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // Kimi MAJOR-1: hydrated assistant rows carry function-shape tool_calls —
+  // the unconditional msg.tool_calls?.map produced nameless duplicate cards
+  // next to the audit chip. The inline render must be gated.
+  assert.match(chat, /shouldRenderInlineToolCards\(msg\)/)
+  const mapIdx = chat.indexOf("msg.tool_calls?.map")
+  assert.ok(mapIdx > 0, "inline map for flat live shape must still exist")
+  const gateIdx = chat.indexOf("shouldRenderInlineToolCards(msg)")
+  assert.ok(gateIdx > 0 && gateIdx < mapIdx, "gate must sit before the inline map")
+})
+
+test("#508 ToolHistoryBlock wirings: pendingConfirmIds / threadBusy last-item / chipTone warning", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // (a) name→id goes through the tested pure function — emptying the memo
+  // inline would no longer compile against this lock.
+  assert.match(chat, /pendingConfirmIdsFromTools\(/)
+  assert.match(chat, /pendingConfirmToolNamesForThread\(/)
+  // last tools *frontier* (not itemIsLast — trailing assistant sits after the block)
+  assert.match(chat, /pendingConfirmToolNames=\{liveFrontier \? pendingConfirmToolNames : EMPTY_CONFIRM_NAMES\}/)
+  assert.match(chat, /threadBusy=\{Boolean\(liveFrontier && threadBusy\)\}/)
+  assert.match(chat, /liveToolsFrontierIndex\(/)
+  // (c) failure chipTone is a ternary on the run-wide failed count (#514
+  // consolidated block: totalFailed across rounds), warning tokens
+  assert.match(chat, /totalFailed\s*>\s*0/)
+  assert.match(chat, /color: tokens\.warning/)
+  assert.match(chat, /background: tokens\.warningSoft/)
+})
+
+test("#502 tool history stays sidepanel-only (no overlay wiring)", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = []
+    for (const name of readdirSync(join(process.cwd(), dir))) {
+      if (name === "node_modules" || name.startsWith(".")) continue
+      const rel = `${dir}/${name}`
+      if (statSync(join(process.cwd(), rel)).isDirectory()) out.push(...walk(rel))
+      else if (/\.(ts|tsx)$/.test(name)) out.push(rel)
+    }
+    return out
+  }
+  const offenders: string[] = []
+  for (const rel of walk("src")) {
+    if (!/\.tsx?$/.test(rel)) continue
+    if (readFileSync(join(process.cwd(), rel), "utf8").includes("tool-history")) {
+      offenders.push(rel)
+    }
+  }
+  for (const f of offenders) {
+    assert.ok(
+      f === "src/sidepanel/components/ChatView.tsx" ||
+        f === "src/sidepanel/components/tool-history-view.ts",
+      `unexpected tool-history reference outside sidepanel: ${f}`,
+    )
+  }
+})
+
+// ---------------------------------------------------------------------------
+// #502 slice A — covered rounds' thinking folds into the audit block
+// ---------------------------------------------------------------------------
+
+test("#502 ChatView folds covered rounds' reasoning into the audit block (no per-round header)", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // MessageRow suppresses the standalone ReasoningBlock for folded rows
+  assert.match(chat, /msg\.reasoning_content && !reasoningFolded/)
+  // ChatView wires both directions: folded flag to the row, per-round split
+  // (reasonings ride inside rounds) to the block
+  assert.match(chat, /reasoningFolded=\{item\.reasoningFolded === true\}/)
+  assert.match(chat, /rounds=\{item\.rounds\}/)
+  // the audit view renders the thinking sections before the tool cards
+  assert.match(chat, /function AuditReasoningSection\(/)
+  assert.match(chat, /第 \{index\} 段思考/)
+  assert.match(chat, /\(r\.reasonings \?\? \[\]\)\.map/, "thinking renders inside each round, before its cards")
+  // memo comparator keeps the folded flag — a flip must re-render the row
+  assert.match(chat, /prev\.reasoningFolded === next\.reasoningFolded/)
+})
+
+// ---------------------------------------------------------------------------
+// #514 — ONE consolidated audit block per run, with a round pager
+// ---------------------------------------------------------------------------
+
+test("#514 ChatView consolidates per-round blocks into one run block with a pager", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  assert.match(chat, /consolidateRunToolTurns\(groupToolTurnRows\(messages\)\)/, "transcript uses the run consolidator")
+  assert.match(chat, /rounds=\{item\.rounds\}/, "block receives the per-round split")
+  // pager: ‹ › buttons page rounds in the done state, disabled at the edges
+  assert.match(chat, /aria-label="上一段"/)
+  assert.match(chat, /aria-label="下一段"/)
+  assert.match(chat, /donePagerChipLabel\(page, totalPages, toolsAll\.length, totalFailed\)/, "chip label carries pager + run totals")
+  // live semantics unchanged: current step expanded, completed folded ACROSS rounds
+  assert.match(chat, /liveChipLabel\(completedTools\.length, completedFailed\)/)
+})
+
+test("#514 review fixes: page follows latest until user pages; confirm set from live round only", () => {
+  const chat = read("src/sidepanel/components/ChatView.tsx")
+  // page follow: userPaged ref + sync effect (streaming growth must not strand ‹ 1/N ›)
+  assert.match(chat, /const userPaged = useRef\(false\)/)
+  assert.match(chat, /if \(!userPaged\.current\) setPage\(splitRounds\.length - 1\)/)
+  assert.match(chat, /userPaged\.current = true/, "paging is an explicit user act")
+  // confirm correlation derived from lastTools, never toolsAll (#507 narrowing)
+  assert.match(chat, /pendingConfirmIdsFromTools\(lastTools, pendingConfirmToolNames\)/)
+  // wrap-safe chip line + visibly-inert pager edges
+  assert.match(chat, /flexWrap: "wrap"/)
+  assert.match(chat, /toolHistoryPagerBtnDisabled/)
+})
+
+test("#514 review fixes: FocusBand freshness gate feeds classify", () => {
+  const fb = read("src/sidepanel/components/FocusBand.tsx")
+  assert.match(fb, /FLEET_SNAPSHOT_FRESH_MS/)
+  assert.match(fb, /fresh: fleetFresh/, "classify receives the snapshot-age gate")
 })

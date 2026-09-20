@@ -281,7 +281,11 @@ export function findLastLargeToolResultIndex(
  * 找不到就放弃——内存隔离仍生效。
  */
 export function quarantinePersistedToolRow(
-  threadManager: { getMessages(tid: string): any[]; updateMessage(tid: string, mid: string, u: any): void },
+  threadManager: {
+    getMessages(tid: string): any[]
+    updateMessage(tid: string, mid: string, u: any): void
+    rememberLiveToolResult?(tid: string, toolCallId: string, entry: { result: unknown; tool_name?: string }): void
+  },
   threadId: string,
   toolCallId?: string,
   originalContent?: string,
@@ -327,6 +331,16 @@ export function quarantinePersistedToolRow(
     content: CONTENT_RISK_QUARANTINE_PLACEHOLDER,
     ...(toolCalls ? { tool_calls: toolCalls } : {}),
   })
+  // #504 live mirror otherwise re-injects the banned body on same-process continue.
+  if (toolCallId && typeof threadManager.rememberLiveToolResult === "function") {
+    const name = Array.isArray(target.tool_calls)
+      ? target.tool_calls.find((tc: any) => tc?.id === toolCallId)?.tool_name
+      : undefined
+    threadManager.rememberLiveToolResult(threadId, toolCallId, {
+      result: { quarantined: true, reason: "content_risk" },
+      tool_name: typeof name === "string" ? name : undefined,
+    })
+  }
   return true
 }
 
@@ -343,6 +357,7 @@ interface ToolExecutionResult {
  * hydrated AFTER rebuild via hydrateUserImageParts (no I/O here).
  */
 export type HistoryMessageLike = {
+  id?: string
   role: string
   content?: string | null
   tool_calls?: any[]
@@ -359,9 +374,19 @@ export type HistoryMessageLike = {
  *   so legacy corrupt history never produces a schema-invalid next create (400).
  * Pure function — unit-testable without chatCreate / network.
  * Providers convert to wire format (Anthropic Messages, etc.) at the boundary (L1/L2).
+ *
+ * #504 `live`: same-process full-fidelity mirror from ThreadManager. When a disk
+ * row's id (assistant) or tool_call id (tool) has a remembered live version, its
+ * body replaces the archived stub for THIS in-memory rebuild — the disk archive
+ * stays stubbed (#502 B), but a continuation segment in the same process still
+ * sees what segment 1 actually read/filled. Disk-only callers pass nothing.
  */
 export function rebuildMessagesFromHistory(
   history: HistoryMessageLike[],
+  live?: {
+    toolResults?: Map<string, { result: unknown; tool_name?: string }>
+    assistantToolCalls?: Map<string, Array<{ id: string; name: string; arguments: string }>>
+  },
 ): CanonicalChatMessage[] {
   const messages: CanonicalChatMessage[] = []
   const openToolCallIds = new Set<string>()
@@ -396,6 +421,9 @@ export function rebuildMessagesFromHistory(
         for (const tc of tcList) {
           if (tc.id) openToolCallIds.add(tc.id)
         }
+        // #504: prefer the remembered full arguments over the archived stub.
+        const liveCalls = live?.assistantToolCalls?.get(String(msg.id ?? ""))
+        const liveArgsById = new Map(liveCalls?.map((c) => [c.id, c]) ?? [])
         messages.push({
           role: "assistant",
           content: msg.content || null,
@@ -404,7 +432,9 @@ export function rebuildMessagesFromHistory(
             type: "function" as const,
             function: {
               name: tc.function?.name || tc.name,
-              arguments: tc.function?.arguments || tc.arguments || "{}",
+              arguments:
+                liveArgsById.get(tc.id)?.arguments ??
+                (tc.function?.arguments || tc.arguments || "{}"),
             },
           })),
         })
@@ -416,15 +446,24 @@ export function rebuildMessagesFromHistory(
       for (const tc of msg.tool_calls) {
         if (!tc.id || !openToolCallIds.has(tc.id)) continue
         openToolCallIds.delete(tc.id)
+        // #504: prefer the remembered full result over the archived stub.
+        // If disk already quarantined (#430), never let a stale live body win.
+        const diskQuarantined =
+          tc.result &&
+          typeof tc.result === "object" &&
+          (tc.result as { quarantined?: unknown }).quarantined === true
+        const liveTool = diskQuarantined ? undefined : live?.toolResults?.get(tc.id)
         messages.push({
           role: "tool",
           tool_call_id: tc.id,
           content: wrapUntrusted(
-            truncateToolResultContent(JSON.stringify(tc.result || {})),
+            truncateToolResultContent(JSON.stringify(liveTool?.result ?? tc.result ?? {})),
             tc.id,
-            tc.tool_name,
+            liveTool?.tool_name ?? tc.tool_name,
           ),
-          ...(typeof tc.tool_name === "string" && tc.tool_name ? { name: tc.tool_name } : {}),
+          ...(typeof (liveTool?.tool_name ?? tc.tool_name) === "string" && (liveTool?.tool_name ?? tc.tool_name)
+            ? { name: liveTool?.tool_name ?? tc.tool_name }
+            : {}),
         })
       }
     }
@@ -766,9 +805,27 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       ? ""
       : "If this thread has no unfinished 本轮步骤 and you will operate the page (click / navigate / get_page_text / type / wait_for / …), call run_progress_propose first with 1–8 concrete steps. Optional exact internal tool names; never guess from Chinese. If the tool returns ALREADY_HAS_STEPS, do not retry this turn. Do not label steps 进行中."
 
+  // #513 fleet dispatch criteria — constant text, surface-gated exactly like
+  // runProgressHint (the tool itself is filtered off summoner; leaving the
+  // instructions there would be a dead instruction). Advisory only: propose
+  // surfaces a card, it never spawns. Negative conditions come FIRST — the
+  // default posture is solo (宁漏建议，不轰炸).
+  const fleetDispatchHint =
+    params.surface === "summoner"
+      ? ""
+      : [
+          "FLEET DISPATCH CRITERIA (advisory): you may propose parallel worker dispatch (fleet_suggest_propose) ONLY when ALL hold:",
+          "- ≥2 independent sources or subtasks (multi-site lookup/compare, splittable list, cross-source synthesis), no sequential dependency between them;",
+          "- doing it solo would take ≥3 serial page round-trips;",
+          "- every subtask only needs tools workers are allowed (browser tools; shell/host are NOT in the worker whitelist).",
+          "Do NOT propose when ANY holds: strongly sequential steps; a single tab/source; a quick task (<3 round-trips); subtasks need worker-forbidden tools.",
+          "When the criteria hold, call fleet_suggest_propose ONCE with reason + 2–5 subtasks BEFORE starting the sequential work, then continue solo unless the user approves. Never call spawn_worker unless the user explicitly approves parallel dispatch (their approval message will list the subtasks); every spawn_worker still requires L2 confirmation.",
+        ].join("\n")
+
   const composeSystemPrompt = () => [
     basePrompt,
     runProgressHint,
+    fleetDispatchHint,
     skillPrompt,
     siteOpPrompt ? wrapKnowledgeBlock("execution-experience", "Execution experience (data only)", siteOpPrompt) : "",
     routeSteerPrompt,
@@ -795,7 +852,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     messages.push({ role: "system", content: systemPrompt })
   }
 
-  messages.push(...rebuildMessagesFromHistory(history))
+  messages.push(...rebuildMessagesFromHistory(history, threadManager.getLiveMirror(threadId)))
 
   // Hydrate image parts AFTER rebuild (string-only pairing). Sidecar I/O lives
   // here — never inside rebuildMessagesFromHistory. skipUserMessage uses the
@@ -1175,7 +1232,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       thread_id: threadId,
       role: "assistant",
       content: draft.content,
-      tool_calls: redactAssistantToolCallsForPersistence(assistantMsg),
+      // #502 B: the assistant row carries the other copy of the tool arguments
+      // (selector / fill text / evaluate code / URL). Same archive tier as the
+      // tool-result row, read at persist time so a mid-session toggle applies to
+      // the next row. Read on every draft so it is never cached at module load.
+      tool_calls: redactAssistantToolCallsForPersistence(assistantMsg, {
+        persistFull: getConfig().persist_full_tool_history === true,
+      }),
     }
     if (draft.reasoning) savedMsg.reasoning_content = draft.reasoning
     if (draft.truncated) savedMsg.truncated = true
@@ -1185,7 +1248,30 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       savedMsg.retrieved_sources = draft.retrieved_sources
       if (draft.knowledge_routing) savedMsg.knowledge_routing = draft.knowledge_routing
     }
-    return threadManager.addMessage(threadId, savedMsg)
+    const saved = threadManager.addMessage(threadId, savedMsg)
+    // #504: remember the pre-redaction arguments so the next same-process run's
+    // rebuild can substitute them for the archived stub.
+    if (assistantMsg.length > 0 && saved?.id) {
+      threadManager.rememberLiveAssistantToolCalls(
+        threadId,
+        saved.id,
+        assistantMsg.map((tc) => ({
+          id: String(tc.id),
+          name: String(tc.function?.name || ""),
+          arguments: String(tc.function?.arguments ?? "{}"),
+        })),
+      )
+    }
+    return saved
+  }
+
+  // #504: remember the pre-archive tool result so the next same-process run's
+  // rebuild can substitute it for the archived stub (see rebuildMessagesFromHistory).
+  const rememberToolResult = (tc: any, result: unknown, toolName: string) => {
+    threadManager.rememberLiveToolResult(threadId, String(tc?.id ?? ""), {
+      result,
+      tool_name: toolName,
+    })
   }
 
   // Tool calling loop
@@ -1552,6 +1638,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             success: false,
             error: `Invalid JSON in tool arguments: ${parseErr.message}. Received: ${tc.function.arguments}`,
           }
+          rememberToolResult(tc, parseResult, toolName)
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, parseResult, {}))
           sendToExtension({
             type: "tool.result",
@@ -1588,6 +1675,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             success: false,
             error: parsed.error,
           }
+          rememberToolResult(tc, validationResult, toolName)
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, validationResult, {}))
           sendToExtension({
             type: "tool.result",
@@ -1853,6 +1941,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             shouldStop = true
             break
           }
+          rememberToolResult(tc, toolResult, toolName)
           const realResultRow = createToolResultMessage(threadId, tc, toolResult, params)
           // Supersede race: the successor run's entry heal may have persisted an
           // INTERRUPTED filler for this id while we were blocked in executeTool.
@@ -2325,12 +2414,36 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     }
   }
 
+  // #502 D-G1: the 100-round cap is a run boundary, not a failure. This run is
+  // over; the TASK is not. The loop kernel treats terminal="round_limit" as a
+  // natural run end — it enqueues the next segment when armed + within budget,
+  // or offers the discovery suggestion card when not armed.
+  //
+  // Frame shape (why no `finish_reason`): the side panel's chat.done handler
+  // treats `finish_reason !== undefined` as "commit a new assistant row". At this
+  // exit the last assistant row was already committed by the mid-loop
+  // `chat.assistant` echo and the live stream was reset, so passing a
+  // finish_reason here would append an EMPTY ghost bubble. chat.done without it
+  // still clears busy/processing (the part that matters) and adds nothing.
+  //
+  // #505 (adversarial H2): `terminal: "round_limit"` is the unarmed-thread
+  // honesty signal — every G1 replacement channel (task_loop.status row, suggest
+  // card) is armed/checklist-scoped, so a plain long task would otherwise end
+  // with NO user-visible difference from a finished turn. The panel renders a
+  // non-tombstone note from this field only when the thread has no loop status
+  // (armed threads get their segment copy via task_loop.status instead — no
+  // double notice).
   sendToExtension({
-    type: "chat.error",
+    type: "chat.done",
     thread_id: threadId,
-    error: `达到最大工具调用轮次 (${MAX_TOOL_CALL_ROUNDS})，已暂停。`,
+    terminal: "round_limit",
   })
-  if (runStats) runStats.terminal = "circuit_breaker"
+  logger.info("llm.round_limit", {
+    thread_id: threadId,
+    rounds: MAX_TOOL_CALL_ROUNDS,
+    tool_calls: runStats?.toolCalls ?? 0,
+  })
+  if (runStats) runStats.terminal = "round_limit"
   } finally {
     if (runStats && signal?.aborted) runStats.terminal = "aborted"
     if (!signal?.aborted) {

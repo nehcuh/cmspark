@@ -299,6 +299,14 @@ export interface LLMConfig {
   thread_digest_enabled?: boolean
   thread_digest_on_idle_hours?: number
   thread_digest_max_per_day?: number
+  /**
+   * #502 B archive tier (top-level companion config key).
+   * false (default) → durable thread JSON keeps tool rows as stubs (tool name +
+   * success + payload length/fingerprint); true → the #255 redacted bodies.
+   * Cookie / shell / host_* / MCP secrets fold in BOTH modes — this switch never
+   * relaxes redaction. Already-compacted history is not restored by turning it on.
+   */
+  persist_full_tool_history?: boolean
 }
 
 /** Image attachment metadata on a transcript row (bytes live on companion disk). */
@@ -383,6 +391,13 @@ export interface SecurityConfirmationRequest {
    * 存在时优先于 code_preview 渲染为可滚动区。
    */
   full_preview?: string
+  /**
+   * Owning thread of this L2 confirm (#507). Companion may send `thread_id`
+   * on the request frame; worker confirms also carry `worker_id` (the worker
+   * thread). ChatView correlates live-tool folding by this owner — Confirm
+   * Center still reads the global queue.
+   */
+  thread_id?: string
   /** ADR-015 multi-agent Confirm Center identity */
   worker_id?: string
   parent_thread_id?: string
@@ -423,6 +438,10 @@ export interface FleetWorkerView {
   paused: boolean
   status: "idle" | "paused" | "holding_tabs" | "unknown"
   llm_active?: boolean
+  /** #502 E: last tool this worker ran (companion reverse-scans the thread). */
+  latest_tool?: string
+  /** #502 E: task brief — first user message, ≤160 chars (Inspect drawer). */
+  brief?: string
   tab_locks: Array<{ tab_id: number; state: string; lease_expires_at: number }>
 }
 

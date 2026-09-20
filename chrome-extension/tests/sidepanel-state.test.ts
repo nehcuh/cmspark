@@ -242,6 +242,9 @@ test("normalizeConfig flattens companion config and keeps masked API keys out of
     client_header_profile: "none",
     trusted_domains: ["example.com", "*.company.com"],
     vision_enabled: false,
+    // #502 B: archive tier is emitted explicitly (absent → false) so the
+    // Settings toggle starts off instead of undefined-flipping to on.
+    persist_full_tool_history: false,
   })
 })
 
@@ -270,6 +273,34 @@ test("normalizeConfig flattens thread_digest (Wave B)", () => {
   assert.equal(n.thread_digest_enabled, true)
   assert.equal(n.thread_digest_on_idle_hours, 48)
   assert.equal(n.thread_digest_max_per_day, 10)
+})
+
+test("normalizeConfig carries persist_full_tool_history, defaulting off (#502 B)", () => {
+  const base = { llm: { base_url: "x", model_name: "m", temperature: 0, context_window: 1, api_key: "" } }
+  // Absent (older companion) → explicit false, so the toggle renders off rather
+  // than undefined-flipping to "on" on the first click.
+  assert.equal(normalizeConfig(base).persist_full_tool_history, false)
+  assert.equal(normalizeConfig({ ...base, persist_full_tool_history: true }).persist_full_tool_history, true)
+  assert.equal(normalizeConfig({ ...base, persist_full_tool_history: false }).persist_full_tool_history, false)
+  // Non-boolean payloads never arm the switch.
+  assert.equal(normalizeConfig({ ...base, persist_full_tool_history: "yes" }).persist_full_tool_history, false)
+})
+
+test("Settings copy for the archive switch must not promise restoring old bodies (#502 B)", () => {
+  // The switch only affects rows written AFTER it is turned on. Already-compacted
+  // bodies are gone from disk, so copy that implies recovery would be a lie.
+  const src = readFileSync(
+    join(process.cwd(), "src/sidepanel/components/SettingsSlideout.tsx"),
+    "utf8",
+  )
+  const idx = src.indexOf("保存完整操作史")
+  assert.ok(idx > 0, "the archive switch is missing from Settings")
+  const block = src.slice(idx, idx + 2200)
+  assert.match(block, /默认关/)
+  assert.match(block, /不会因打开而(恢复|回填)/, "copy must state that omitted bodies are not restored")
+  assert.match(block, /脱敏/, "copy must state that secrets stay redacted when on")
+  assert.match(block, /type:\s*["']config\.set["']/, "toggle must persist immediately, not wait for 保存并关闭")
+  assert.match(block, /操作历史面板与日志/, "copy must disclose history.db / logs are out of scope")
 })
 
 test("normalizeConfig flattens context_compaction modes", () => {
@@ -834,6 +865,72 @@ test("security confirmation requests are queued and removable", () => {
 
   const removed = agentReducer(queued, { type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: "confirm-1" })
   assert.equal(removed.pendingSecurityConfirmations.length, 0)
+})
+
+test("#507 ADD_SECURITY_CONFIRMATION keeps thread owner fields from the frame", () => {
+  const request = {
+    confirmation_id: "confirm-w",
+    tool_name: "click",
+    dangerous_apis: [],
+    code_preview: "click",
+    thread_id: "worker-1",
+    worker_id: "worker-1",
+    parent_thread_id: "parent-a",
+    orchestrator_run_id: "run-9",
+  }
+  const queued = agentReducer(initialState, { type: "ADD_SECURITY_CONFIRMATION", request: request as any })
+  const stored = queued.pendingSecurityConfirmations[0]
+  assert.equal(stored.thread_id, "worker-1")
+  assert.equal(stored.worker_id, "worker-1")
+  assert.equal(stored.parent_thread_id, "parent-a")
+  assert.equal(stored.orchestrator_run_id, "run-9")
+})
+
+test("#505 SET_RUN_TERMINAL stores per-thread round_limit and clears on new run", () => {
+  const tid = "thread-cap"
+  const set = agentReducer(initialState, {
+    type: "SET_RUN_TERMINAL",
+    threadId: tid,
+    terminal: "round_limit",
+  })
+  assert.equal(set.runTerminalByThreadId[tid], "round_limit")
+  const other = agentReducer(set, {
+    type: "SET_RUN_TERMINAL",
+    threadId: "other",
+    terminal: "round_limit",
+  })
+  assert.equal(other.runTerminalByThreadId[tid], "round_limit")
+
+  const busy = agentReducer(set, { type: "SET_THREAD_BUSY", threadId: tid, busy: true })
+  assert.equal(busy.runTerminalByThreadId[tid], undefined)
+  assert.equal(busy.threadBusyById[tid], true)
+
+  const again = agentReducer(set, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: `${tid}_user_1`,
+      thread_id: tid,
+      role: "user",
+      content: "继续",
+      created_at: "2026-09-19T00:00:00.000Z",
+    },
+  })
+  assert.equal(again.runTerminalByThreadId[tid], undefined)
+
+  const assistant = agentReducer(set, {
+    type: "ADD_MESSAGE",
+    message: {
+      id: `${tid}_assistant_1`,
+      thread_id: tid,
+      role: "assistant",
+      content: "ok",
+      created_at: "2026-09-19T00:00:00.000Z",
+    },
+  })
+  assert.equal(assistant.runTerminalByThreadId[tid], "round_limit")
+
+  const idleBusyFalse = agentReducer(set, { type: "SET_THREAD_BUSY", threadId: tid, busy: false })
+  assert.equal(idleBusyFalse.runTerminalByThreadId[tid], "round_limit")
 })
 
 test("initial side panel sync requests threads, skills, knowledge, config, and mcp servers exactly once per connection", () => {

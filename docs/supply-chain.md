@@ -2,7 +2,7 @@
 
 > Companion to the 2026-07-09 full audit (`audit-report-cmspark-2026-07-09.md`,
 > finding "supply-chain") and remediation plan (`docs/remediation-plan-2026-07-09.md`,
-> item **P1-2**). Last updated 2026-07-11.
+> item **P1-2**). Last updated 2026-09-20.
 
 This document records what was fixed, what is deliberately **accepted as
 blocked-on-upstream risk**, and why, so the decision is reviewable and the
@@ -15,11 +15,11 @@ alarm) can tell a *known, triaged* advisory from a *new, actionable* one.
 |---|---|---|
 | **chrome-extension — production deps** (`dependencies`, ship in the MV3 bundle) | **0** | **Gating** — `npm audit --omit=dev` must pass |
 | **chrome-extension — dev-toolchain** (`devDependencies`, bundler + plugins, never shipped) | 71 (1 low / 3 moderate / 67 high) | **Informational** — `continue-on-error: true` |
-| **companion — production deps** (`dependencies`, ship in the packaged binary) | **2 moderate** (`node-notifier` → `uuid`) | **Gating** — `npm audit --omit=dev --audit-level=high` |
+| **companion — production deps** (`dependencies`, ship in the packaged binary) | **moderate only** (`node-notifier` → `uuid`; MCP `hono`) | **Gating** — `npm audit --omit=dev --audit-level=high` |
 
 The extension that users install contains **zero** known-vulnerable packages.
-The companion ships two triaged, blocked-on-upstream moderate advisories and
-zero high/critical. All remaining extension advisories live in the build tool
+The companion ships triaged moderate advisories (`node-notifier`→`uuid`, MCP `hono`) and
+zero high/critical. `adm-zip` is pinned **0.6.1** (0.6.0 was GHSA zip-symlink overwrite / zip-bomb). All remaining extension advisories live in the build tool
 (plasmo + Parcel) and its plugins, which compile the bundle but are not present
 in the shipped artifact.
 

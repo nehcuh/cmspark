@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useMemo, useState, useCallback } from "react"
 import type { Thread } from "../types"
-import { displayThreadTitle, threadRecency } from "../utils/thread-timeline"
+import {
+  displayThreadTitle,
+  filterConversationEnum,
+  isFleetWorkerThread,
+  threadRecency,
+  workerBelongTitle,
+} from "../utils/thread-timeline"
 import { tokens } from "../ui/tokens"
 
 export type AtThreadChoice = {
@@ -33,10 +39,18 @@ export function AtThreadPopover({
   const [highlightedIndex, setHighlightedIndex] = useState(0)
   const popoverRef = useRef<HTMLDivElement>(null)
   const query = searchText.toLowerCase().trim()
+  const enumTitle = (t: Thread) => {
+    if (!isFleetWorkerThread(t)) return displayThreadTitle(t)
+    const parent = threads.find((p) => p.id === t.parent_thread_id)
+    return workerBelongTitle(t, parent)
+  }
 
   const matches = useMemo(() => {
-    const pool = (Array.isArray(threads) ? threads : []).filter(
-      (t) => t.id !== excludeId && !t.trashed_at,
+    const pool = filterConversationEnum(
+      (Array.isArray(threads) ? threads : []).filter((t) => !t.trashed_at),
+      // activeThreadId and excludeId are the same row here: excludeId strips it
+      // from results, so the "keep the active worker visible" clause is a no-op.
+      { activeThreadId: excludeId, query: searchText, excludeId },
     )
     // Recent first (last_message_at || created_at) when no query
     const sorted = [...pool].sort((a, b) => {
@@ -48,13 +62,14 @@ export function AtThreadPopover({
 
     const scored: Array<{ t: Thread; score: number }> = []
     for (const t of sorted) {
-      const title = displayThreadTitle(t).toLowerCase()
+      const title = enumTitle(t).toLowerCase()
       const id = (t.id || "").toLowerCase()
       const preview = (t.first_user_preview || "").toLowerCase()
       const tags = (t.digest?.tags || []).join(" ").toLowerCase()
+      const role = (t.worker_role_label || "").toLowerCase()
       let score = 999
-      if (title.startsWith(query) || id.startsWith(query)) score = 1
-      else if (title.includes(query) || id.includes(query)) score = 2
+      if (title.startsWith(query) || id.startsWith(query) || role.startsWith(query)) score = 1
+      else if (title.includes(query) || id.includes(query) || role.includes(query)) score = 2
       else if (preview.includes(query) || tags.includes(query)) score = 3
       if (score < 999) scored.push({ t, score })
     }
@@ -84,7 +99,7 @@ export function AtThreadPopover({
           e.preventDefault()
           if (matches[highlightedIndex]) {
             const t = matches[highlightedIndex]
-            onSelect({ id: t.id, title: displayThreadTitle(t) })
+            onSelect({ id: t.id, title: enumTitle(t) })
           }
           break
         case "Escape":
@@ -141,7 +156,7 @@ export function AtThreadPopover({
         引用会话 @
       </div>
       {matches.map((t, i) => {
-        const title = displayThreadTitle(t)
+        const title = enumTitle(t)
         const active = i === highlightedIndex
         return (
           <div
