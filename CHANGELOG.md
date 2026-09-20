@@ -9,6 +9,7 @@
 操作面切点：工具审计芯、归档诚实、舰队 Glance/Inspect/spawn kick、子任务身份、collect_handback 诚实、对话管理确认与清空回收站。不叫 0.7.0（企业双场景未验收）。#230 仍冻，#228 禁扩默认 outbound。
 
 - **版本锚**：companion / extension / NSIS fallback / ACP / outbound serverInfo / CLI fallback / lockfile / AGENTS.md 齐 **0.6.8**。
+- **供应链**：companion `adm-zip` 提到 **0.6.1**（修 GHSA zip 解压跟 symlink / 声明未压缩大小），CI `npm audit --omit=dev --audit-level=high` 过门。
 - 多智能体触发面（#513）：提示词新增舰队分派判据（含否定条件，默认倾向单干），任务适合并行时模型可调 fleet_suggest_propose 弹出非阻断建议卡「此任务适合多路并行」；点「派 worker 并行做」仅发送携带子任务清单的分派指令（不激活续跑），spawn 仍逐次 L2 确认；拒绝后 10 分钟静默。summoner 面全程排除。
 - 操作面（#502）：对话里已完成的浏览器/工具步骤默认收成可展开审计芯，reload 后不再摊无名卡。归档默认只留工具名、成败与指纹（设置可打开完整操作史；cookie/本机命令仍脱敏；tool 行不删）。单次 100 步触顶改为换段续跑，不再显示「已暂停」墓碑；同工具空转与连续失败仍熔断。舰队 Glance 显示最近工具，Inspect 不抢主对话。编程接力可把 Agent 挂进已有内嵌终端（macOS、默认关），不嵌 Alacritty、不自动开 PTY。
 - 对话管理（#516）：整理助手「移入回收站」的确认条钉在面板顶，不再被嵌套滚动裁掉；回收站列出全部已删行（含子任务），并提供「清空回收站」（面板内确认硬删，30 天 TTL 仍是兜底）。
