@@ -118,6 +118,12 @@ function updatedMs(t: RelatedThreadInput): number {
   return Number.isFinite(n) ? n : 0
 }
 
+function inRelatedPool(t: RelatedThreadInput): boolean {
+  if (!t?.id || t.trashed_at) return false
+  if (t.agent_role === "worker") return false
+  return true
+}
+
 export function scoreRelatedPair(seed: RelatedThreadInput, other: RelatedThreadInput): RelatedHit {
   const a = tagSet(seed)
   const b = tagSet(other)
@@ -162,7 +168,7 @@ export function findRelatedThreads(
   if (!seed || seed.trashed_at) return []
   const hits: RelatedHit[] = []
   for (const t of threads) {
-    if (!t?.id || t.id === seedId || t.trashed_at) continue
+    if (t.id === seedId || !inRelatedPool(t)) continue
     const hit = scoreRelatedPair(seed, t)
     if (hit.score <= 0) continue
     hits.push(hit)
@@ -190,7 +196,7 @@ export function buildRelatedEdges(
   threads: RelatedThreadInput[],
   opts?: { minScore?: number; maxEdges?: number },
 ): RelatedEdge[] {
-  const live = threads.filter((t) => t?.id && !t.trashed_at)
+  const live = threads.filter(inRelatedPool)
   const minScore = opts?.minScore ?? 0.15
   // Full-page canvas can show more edges than the old side-panel list (80).
   const maxEdges = opts?.maxEdges ?? 200
@@ -218,7 +224,7 @@ export function digestLintStats(threads: RelatedThreadInput[]): {
   stale: number
   isolated: number
 } {
-  const live = threads.filter((t) => t?.id && !t.trashed_at)
+  const live = threads.filter(inRelatedPool)
   let untagged = 0
   let stale = 0
   for (const t of live) {
