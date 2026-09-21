@@ -766,8 +766,18 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             const { scheduleWhenLlmSlotAvailable } = require("./orchestrator/llm-loop-gate") as typeof import("./orchestrator/llm-loop-gate")
             const workerThread = threadManager.get(threadId)
             scheduleWhenLlmSlotAvailable(workerThread, threadId, async () => {
-              const { installKickAbortController, releaseKickAbortController } = await import("./message-router")
+              // F1: synchronous require — an `await import` gap let a user
+              // chat.create install its controller first, and the old
+              // install-reuse then double-ran the worker on one signal.
+              const { installKickAbortController, releaseKickAbortController } = require("./message-router") as typeof import("./message-router")
               const controller = installKickAbortController(threadId)
+              if (!controller) {
+                // Another run owns the thread (user manually chatting this
+                // worker). Skip — the brief stays persisted; this kick is
+                // dropped (a later fleet/orchestrator action re-kicks).
+                logger.warn("expert_team.kick_skipped_active", { thread_id: threadId })
+                return
+              }
               try {
                 const { chatCreate } = await import("./llm/adapter")
                 await chatCreate({

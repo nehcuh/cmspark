@@ -117,6 +117,24 @@ export function pendingDeferredLlmKickCount(): number {
   return deferredKickQueue.length
 }
 
+/** F2: thread ids with a queued-but-not-started kick (in-flight for handback gating). */
+export function pendingDeferredLlmKickThreadIds(): string[] {
+  return deferredKickQueue.map((q) => q.threadId)
+}
+
+/**
+ * F1 (pull 2026-09-21): message-router registers this so drain can see whether
+ * a thread already has an in-flight chat run (abort map). llm-loop-gate must
+ * not import message-router (cycle), so the dependency is injected. A queued
+ * kick for a thread the user is manually chatting stays queued instead of
+ * double-running the worker alongside the user's run.
+ */
+let isThreadRunActiveProbe: ((threadId: string) => boolean) | null = null
+
+export function setThreadRunActiveProbe(probe: ((threadId: string) => boolean) | null): void {
+  isThreadRunActiveProbe = probe
+}
+
 /** Drop a queued kick so stop_all / abort cannot start it later (N-1). */
 export function cancelDeferredLlmKick(threadId: string): boolean {
   const id = String(threadId || "")
@@ -140,10 +158,20 @@ function startDeferredRun(item: DeferredLlmRun): void {
 }
 
 function drainDeferredLlmRuns(): void {
-  while (deferredKickQueue.length > 0) {
+  // F1: at most one pass over the queue per drain — probe-requeued items must
+  // not loop forever when every queued thread is manually driven.
+  let guard = deferredKickQueue.length
+  while (deferredKickQueue.length > 0 && guard-- > 0) {
     const next = deferredKickQueue[0]!
     if ((next.thread as { paused?: unknown } | null)?.paused === true) {
       deferredKickQueue.shift()
+      continue
+    }
+    if (isThreadRunActiveProbe?.(next.threadId)) {
+      // F1: another run owns this thread (user manually chatting the worker).
+      // Keep the kick queued; the next release retries it single-run.
+      deferredKickQueue.shift()
+      deferredKickQueue.push(next)
       continue
     }
     const peek = canAcquireMultiAgentLlmLoop(next.thread, next.threadId)

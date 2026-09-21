@@ -115,6 +115,7 @@ import {
   canAcquireMultiAgentLlmLoop,
   cancelDeferredLlmKick,
   releaseMultiAgentLlmLoop,
+  setThreadRunActiveProbe,
 } from "./orchestrator/llm-loop-gate"
 import {
   handleConfigFamily,
@@ -188,6 +189,9 @@ function applySlashSkillPin(
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
+// F1 (pull 2026-09-21): let the gate's deferred-kick drain see live runs without
+// llm-loop-gate importing this module (cycle). Registered once at module init.
+setThreadRunActiveProbe((threadId) => abortControllers.has(threadId))
 /**
  * SEC-D: generation token per thread so a superseded run's `finally` cannot
  * delete the successor AbortController or release the multi-agent LLM gate.
@@ -235,18 +239,25 @@ export function __testSetLlmOwnerForTests(threadId: string, panelId: string | nu
  * Register an in-flight AbortController for a kicked worker chatCreate
  * (spawn_worker / spawn_expert_team). Same SoT as router chat.create so
  * Glance `llm_active`, fleet.stop_all, and chat.abort can see the run.
+ *
+ * F1 (pull 2026-09-21): returns null when another run already owns the thread
+ * (e.g. the user manually chat.create'd a queued worker). Reusing the existing
+ * controller made two chatCreate loops share one signal, and the kick's
+ * release then deleted the USER's controller mid-flight. Callers must skip
+ * the kick on null — the brief stays persisted; this kick is dropped (a later
+ * fleet/orchestrator action re-kicks the worker).
  */
-export function installKickAbortController(threadId: string): AbortController {
-  const existing = abortControllers.get(threadId)
-  if (existing) return existing
+export function installKickAbortController(threadId: string): AbortController | null {
+  if (abortControllers.has(threadId)) return null
   const controller = new AbortController()
   abortControllers.set(threadId, controller)
   nextLlmGeneration(threadId)
   return controller
 }
 
-/** CAS-delete the kick controller after chatCreate settles (success or throw). */
-export function releaseKickAbortController(threadId: string, controller: AbortController): void {
+/** CAS-delete the kick controller after chatCreate settles (success or throw). No-op on a refused (null) install. */
+export function releaseKickAbortController(threadId: string, controller: AbortController | null): void {
+  if (!controller) return
   if (abortControllers.get(threadId) === controller) {
     abortControllers.delete(threadId)
     llmLoopOwnerPanel.delete(threadId)
