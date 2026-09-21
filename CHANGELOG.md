@@ -5,7 +5,7 @@
 ## [Unreleased]
 
 - 舰队 kick 竞争修复（2026-09-21 拉取三路评审 F1）：排队的 spawn / expert-team kick 撞上用户在同一 worker 线程手动发起的对话时，不再复用对方 AbortController（此前单信号双跑，kick 收尾还会误删用户控制器）；拒装时丢弃本次 kick（brief 已持久化，后续舰队/编排动作可再 kick），排队项在活跃 run 结束后重排队 drain。
-- stop/abort 不再复活排队 kick（复审追加，grok+kimi 双路独立命中）：`abortThreadChat` 改为先 cancel 再 release（release 同步 drain 会把本该丢弃的排队 kick 立刻拉起）；`fleet.stop_all` 在逐 worker abort **之前**统一预取消全部目标的排队 kick（否则先 abort 的 worker 释放槽位、同步 drain 拉起还没轮到迭代的 worker 的排队 kick——跨线程复活）；`scheduleWhenLlmSlotAvailable` 槽位有空也先看活跃 run（probe），占线则排队让位，不再丢弃 kick。
+- stop/abort 不再复活排队 kick（复审追加，grok+kimi 双路独立命中）：`abortThreadChat` 改为先 cancel 再 release（release 同步 drain 会把本该丢弃的排队 kick 立刻拉起）；`fleet.stop_all` 在逐 worker abort **之前**统一预取消全部目标的排队 kick（否则先 abort 的 worker 释放槽位、同步 drain 拉起还没轮到迭代的 worker 的排队 kick——跨线程复活）；`scheduleWhenLlmSlotAvailable` 槽位有空也先看活跃 run（probe），占线则排队让位，不再丢弃 kick；`fleet.stop_all_result` 逐 worker 披露被取消的排队 kick 数（`cancelled_kick`）。
 - collect_handback 在跑盲窗修复（2026-09-21 拉取三路评审 F2）：worker 的 LLM run 在飞或排队（abort map ∪ llm-loop-gate holders ∪ 排队 kick 三源并集）时，轮次间隙不再把前一轮叙述误读成 prose 成功收取——统一 WORKER_STILL_RUNNING（含 board 关闭路径）；谓词抽成 `buildIsThreadLlmActive` 命名导出并逐源单测。
 
 ## [0.6.8] — 2026-09-20

@@ -131,6 +131,39 @@ test("abortThreadChat cancels a queued kick instead of reviving it (grok A P1 / 
   gate._resetMultiAgentLlmLoopsForTests()
 })
 
+test("F1 drain with multiple probe-active kicks: single pass, no start, no loss, no livelock", async () => {
+  gate._resetMultiAgentLlmLoopsForTests()
+  const cap = gate.multiAgentLlmLoopSnapshot().cap
+  const started: string[] = []
+  for (let i = 0; i < cap; i++) {
+    const r = gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, `guard-filler-${i}`, () => new Promise<void>(() => {}))
+    assert.equal(r.started, true)
+  }
+  const t1 = `kick-guard-1-${Date.now()}`
+  const t2 = `kick-guard-2-${Date.now()}`
+  router.__testSetLlmActiveForTests(t1, true)
+  router.__testSetLlmActiveForTests(t2, true)
+  assert.equal(gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, t1, () => { started.push(t1); return Promise.resolve() }).queued, true)
+  assert.equal(gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, t2, () => { started.push(t2); return Promise.resolve() }).queued, true)
+  // One release must rotate both probe-active items exactly one pass (guard),
+  // start nothing, keep both queued, and return — not spin forever.
+  gate.releaseMultiAgentLlmLoop("guard-filler-0")
+  assert.deepEqual(started, [], "neither manually-driven kick starts")
+  assert.equal(gate.pendingDeferredLlmKickCount(), 2, "both kicks survive the single pass")
+  // Probes clear: filler-0's slot is still free (rotation took nothing), so
+  // the next release leaves two open slots — both kicks dispatch FIFO.
+  router.__testSetLlmActiveForTests(t1, false)
+  router.__testSetLlmActiveForTests(t2, false)
+  gate.releaseMultiAgentLlmLoop("guard-filler-1")
+  assert.equal(gate.pendingDeferredLlmKickCount(), 0, "both kicks take the open slots")
+  assert.deepEqual(started, [], "runs fire in microtasks, not during the drain")
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(started, [t1, t2], "FIFO drain starts both once the threads are free")
+  router.__testSetLlmActiveForTests(t1, false)
+  router.__testSetLlmActiveForTests(t2, false)
+  gate._resetMultiAgentLlmLoopsForTests()
+})
+
 test("F2 buildIsThreadLlmActive unions abort map, gate holders, and deferred queue", async () => {
   gate._resetMultiAgentLlmLoopsForTests()
   const { buildIsThreadLlmActive } = await import("../src/tool/companion-dispatch")

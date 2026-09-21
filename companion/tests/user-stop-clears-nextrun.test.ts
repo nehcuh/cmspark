@@ -299,7 +299,14 @@ test("pull-20260921 stop_all pre-cancels queued kicks — one worker's release m
 
   const resp = await handleMessage({ type: "fleet.stop_all" }, makeServices(tm), makeSession([]))
   assert.equal(resp.type, "fleet.stop_all_result")
-  await new Promise((r) => setTimeout(r, 20))
+  const kickCancelled = resp.results.find((r: any) => r.worker_id === w2.id)
+  assert.equal(kickCancelled.cancelled_kick, 1, "per-worker disclosure: w2's queued kick was killed")
+  assert.equal(
+    resp.results.find((r: any) => r.worker_id === w1.id).cancelled_kick,
+    0,
+    "w1 had no queued kick",
+  )
+  await new Promise((r) => setTimeout(r, 0))
   assert.deepEqual(started, [], "w1's synchronous release-drain must not start w2's queued kick")
   assert.equal(gate.pendingDeferredLlmKickCount(), 0)
   __testSetLlmActiveForTests(w1.id, false)

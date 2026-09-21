@@ -4479,8 +4479,10 @@ export async function handleMessage(
       // drains synchronously and would start a sibling worker's queued kick
       // before that worker's own iteration cancels it. Drop every target's
       // queued kick up front.
-      const { cancelDeferredLlmKick: cancelQueuedKick } = await import("./orchestrator/llm-loop-gate")
-      for (const w of targets) cancelQueuedKick(w.id)
+      const cancelledKick = new Map<string, number>()
+      for (const w of targets) {
+        if (cancelDeferredLlmKick(w.id)) cancelledKick.set(w.id, (cancelledKick.get(w.id) ?? 0) + 1)
+      }
       for (const w of targets) {
         // #307: user stop — clear the worker's nextRun so it never drains later.
         const { cancelled: nextRunCancelled } = abortThreadChat(w.id, { clearQueue: true })
@@ -4519,6 +4521,7 @@ export async function handleMessage(
           leases_drained: drained,
           intents_abandoned: intentsAbandoned,
           cancelled_next_run: nextRunCancelled,
+          cancelled_kick: cancelledKick.get(w.id) ?? 0,
         })
       }
       const { buildFleetSnapshot } = await import("./orchestrator/fleet")
