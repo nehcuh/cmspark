@@ -122,6 +122,63 @@ test("collect_handback while worker still in a tool round is WORKER_STILL_RUNNIN
   assert.equal(r.data?.suggested_action, "wait_workers")
 })
 
+test("F2 between-rounds live run (predicate) is WORKER_STILL_RUNNING even when disk rows look finished", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-f2")
+  tm.update(parent.id, { board_mode: true } as any)
+  const worker = tm.create("f2-w")
+  tm.update(worker.id, {
+    agent_role: "worker",
+    parent_thread_id: parent.id,
+    orchestrator_run_id: "run-f2",
+  } as any)
+  // The steady state the disk heuristic cannot see: last row = a COMPLETED
+  // tool, previous assistant carried narration; the next LLM call is in
+  // flight but nothing on disk looks unfinished. (Seed simplification: rows
+  // carry a `status` field production tool-batch-heal omits — the shapes
+  // workerLooksInFlight keys on still match.)
+  tm.addMessage(worker.id, {
+    role: "assistant",
+    content: "reading the sources",
+    thread_id: worker.id,
+    tool_calls: [{ id: "c1", type: "function", function: { name: "get_page_text", arguments: "{}" } }],
+    finish_reason: "tool_calls",
+  } as any)
+  tm.addMessage(worker.id, {
+    role: "tool",
+    content: "",
+    thread_id: worker.id,
+    tool_calls: [{ id: "c1", tool_name: "get_page_text", status: "done", result: { success: true } }],
+  } as any)
+  // Documents the F2 hole: without the live predicate the disk heuristic
+  // alone reads this as a finished prose report (false completion).
+  const diskOnly = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
+  assert.equal(diskOnly.success, true)
+  const r = await collectWorkerHandback(tm, {
+    workerId: worker.id,
+    callerThreadId: parent.id,
+    isThreadLlmActive: () => true,
+  })
+  assert.equal(r.success, false)
+  if (r.success) return
+  assert.equal(r.error_code, "WORKER_STILL_RUNNING")
+  assert.equal(r.data?.suggested_action, "wait_workers")
+})
+
+test("F2 board-off live run is WORKER_STILL_RUNNING, not a silent prose success", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-f2-off")
+  const worker = seedWorker(tm, parent.id, "Interim narration, not final")
+  const r = await collectWorkerHandback(tm, {
+    workerId: worker.id,
+    callerThreadId: parent.id,
+    isThreadLlmActive: () => true,
+  })
+  assert.equal(r.success, false)
+  if (r.success) return
+  assert.equal(r.error_code, "WORKER_STILL_RUNNING")
+})
+
 test("collect_handback board_mode on: finished prose is a successful read, not a ⚠️", async () => {
   const tm = new ThreadManager()
   const parent = tm.create("orch-prose")

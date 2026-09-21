@@ -831,6 +831,14 @@ export async function collectWorkerHandback(
     auditPath?: string
     /** Force structured path even if host flags off (tests / expect_structured). */
     forceStructured?: boolean
+    /**
+     * F2 (pull 2026-09-21): live run predicate — abort map ∪ gate holders ∪
+     * deferred kick queue, injected by the dispatch layer to avoid a
+     * board → message-router dependency. The disk-shape heuristic alone
+     * cannot see the between-rounds steady state (last row = completed
+     * tool, next assistant not yet written while the LLM call is in flight).
+     */
+    isThreadLlmActive?: (threadId: string) => boolean
   },
 ): Promise<CollectHandbackResult> {
   const workerId = String(opts.workerId)
@@ -860,25 +868,15 @@ export async function collectWorkerHandback(
     board_mode: boardMode,
   }
 
-  if (!boardMode) {
-    return { success: true, data: base }
-  }
-
-  if (!hostId || !host || !isBoardHostThread(host)) {
-    return {
-      success: false,
-      error: "cannot resolve board host for structured handback",
-      error_code: "BOARD_HOST_INVALID",
-      recoverable: false,
-      data: base,
-    }
-  }
-
-  if (workerLooksInFlight(msgs)) {
+  // F2: live run state first, before the board-off early return — a running
+  // worker is a fact regardless of board mode, and the board-off path used to
+  // hand back mid-run prose as a silent success. The disk heuristic stays as
+  // the second line (covers rows that merely look unfinished).
+  if (opts.isThreadLlmActive?.(workerId) === true || workerLooksInFlight(msgs)) {
     audit(
       "board.handback_rejected",
       {
-        thread_id: hostId,
+        thread_id: hostId ?? null,
         worker_id: workerId,
         error_code: WORKER_STILL_RUNNING,
         error: "worker still running",
@@ -892,6 +890,20 @@ export async function collectWorkerHandback(
       error_code: WORKER_STILL_RUNNING,
       recoverable: true,
       data: { ...base, suggested_action: "wait_workers" },
+    }
+  }
+
+  if (!boardMode) {
+    return { success: true, data: base }
+  }
+
+  if (!hostId || !host || !isBoardHostThread(host)) {
+    return {
+      success: false,
+      error: "cannot resolve board host for structured handback",
+      error_code: "BOARD_HOST_INVALID",
+      recoverable: false,
+      data: base,
     }
   }
 

@@ -128,6 +128,22 @@ export interface CompanionToolExecOptions {
   kickWorkerChat?: (opts: { threadId: string; message: string }) => void | Promise<void>
 }
 
+/**
+ * F2: is a thread's LLM run live or queued behind the multi-agent cap?
+ * Union of the three run-tracking SoTs — the router abort map (any chat.create /
+ * kick run, incl. summoner and non-multi-agent threads), the llm-loop-gate
+ * holders (multi-agent runs), and the deferred kick queue (cap-queued kicks).
+ * collect_handback uses this to refuse premature handback reads.
+ */
+export async function buildIsThreadLlmActive(): Promise<(threadId: string) => boolean> {
+  const { listLlmActiveThreadIds } = await import("../message-router")
+  const { multiAgentLlmLoopSnapshot, pendingDeferredLlmKickThreadIds } = await import("../orchestrator/llm-loop-gate")
+  return (id: string) =>
+    listLlmActiveThreadIds().includes(id) ||
+    multiAgentLlmLoopSnapshot().holders.includes(id) ||
+    pendingDeferredLlmKickThreadIds().includes(id)
+}
+
 export async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
   // C10-B: resolve server-bound runtime (bound from server after initServices)
   const _rt = requireRt()
@@ -696,11 +712,15 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         workerId,
         hostId,
       )
+      // F2: a worker whose run is live (or queued behind the multi-agent cap)
+      // is WORKER_STILL_RUNNING, never a premature prose "success".
+      const isThreadLlmActive = await buildIsThreadLlmActive()
       return collectWorkerHandback(threadManager, {
         workerId,
         callerThreadId: callerId ? String(callerId) : null,
         forceStructured: params.expect_structured === true,
         resolveToolCall,
+        isThreadLlmActive,
       })
     }
     case "board_read": {
