@@ -738,9 +738,10 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 ### 10.1 Orchestrator
 
 - Worker = **子 Thread**（非独立 swarm runtime）。  
-- Orchestrator **窄工具面**：`spawn_worker` / `wait_workers` / `collect_handback` / `list_*` / `ask_user` / `board_*`。  
+- Orchestrator **窄工具面**：`spawn_worker` / `wait_workers` / `collect_handback` / `list_*` / `ask_user` / `board_*` / `fleet_suggest_propose`（#513，仅建议卡，不直接 spawn）。  
 - Spawn **仅** L2 HITL；`ORCHESTRATOR_CAPS`（默认 max 5 workers 等）见 `orchestrator/constants.ts`。  
-- **Tab lease**：`tab-lease.ts` 进程级排他；TAB_LEASE_TOOLS 含读写页工具；扩展 per-tab 队列纵深防御。
+- **Tab lease**：`tab-lease.ts` 进程级排他；TAB_LEASE_TOOLS 含读写页工具；扩展 per-tab 队列纵深防御。  
+- **0.6.8 操作面补充**：`spawn_worker` 必填 `goal`（无任务简报的 worker 是死壳），spawn 后持久化角色化 brief 并 kick（进 abort map，`fleet.stop_all`/`chat.abort` 可打断；LLM 槽位（`llm-loop-gate`）满则排队，槽位释放或该线程 run 结束后 drain）。舰队 Glance 快照主动推送给面板；`collect_handback` 诚实分层——worker 在跑（live run 或盘面未完成）→ `WORKER_STILL_RUNNING`，散文报告 → `structured:false` 成功收取，不再误报坏 JSON。多智能体并发 LLM 上限（`llm-loop-gate`，默认 5）统一管 spawn kick 与 expert-team。
 
 ### 10.2 Mission Board（P0）
 

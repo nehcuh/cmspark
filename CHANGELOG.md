@@ -4,9 +4,9 @@
 
 ## [Unreleased]
 
-- Windows 测试隔离：`files.test.ts` / `thread-manager-lock.test.ts` 钉 `CMSPARK_DATA_DIR`（只设 HOME 时 `os.homedir()` 仍写真实会话库，图谱会出现一堆 Distill / Thread 1）。
-- 对话图谱：index 里重复 id（Windows 测试把 `tool01` / `Tool result regression` 写进真实数据目录）不再画成一堆同名节点。`thread.list` 按 id 去重；create 同 id 覆盖不追加。
-- 检索 / 相关（#517）：spawn 后的主对话（编排父）仍可搜、可进相关；子任务不再当平级相关会话。图谱节点集原本就不含 worker。
+- 舰队 kick 竞争修复（2026-09-21 拉取三路评审 F1）：排队的 spawn / expert-team kick 撞上用户在同一 worker 线程手动发起的对话时，不再复用对方 AbortController（此前单信号双跑，kick 收尾还会误删用户控制器）；拒装时丢弃本次 kick（brief 已持久化，后续舰队/编排动作可再 kick），排队项在活跃 run 结束后重排队 drain。
+- stop/abort 不再复活排队 kick（复审追加，grok+kimi 双路独立命中）：`abortThreadChat` 改为先 cancel 再 release（release 同步 drain 会把本该丢弃的排队 kick 立刻拉起）；`fleet.stop_all` 在逐 worker abort **之前**统一预取消全部目标的排队 kick（否则先 abort 的 worker 释放槽位、同步 drain 拉起还没轮到迭代的 worker 的排队 kick——跨线程复活）；`scheduleWhenLlmSlotAvailable` 槽位有空也先看活跃 run（probe），占线则排队让位，不再丢弃 kick。
+- collect_handback 在跑盲窗修复（2026-09-21 拉取三路评审 F2）：worker 的 LLM run 在飞或排队（abort map ∪ llm-loop-gate holders ∪ 排队 kick 三源并集）时，轮次间隙不再把前一轮叙述误读成 prose 成功收取——统一 WORKER_STILL_RUNNING（含 board 关闭路径）；谓词抽成 `buildIsThreadLlmActive` 命名导出并逐源单测。
 
 ## [0.6.8] — 2026-09-20
 
@@ -14,6 +14,10 @@
 
 - **版本锚**：companion / extension / NSIS fallback / ACP / outbound serverInfo / CLI fallback / lockfile / AGENTS.md 齐 **0.6.8**。
 - **供应链**：companion `adm-zip` 提到 **0.6.1**（修 GHSA zip 解压跟 symlink / 声明未压缩大小），CI `npm audit --omit=dev --audit-level=high` 过门。
+- 检索 / 相关（#517）：spawn 后的主对话（编排父）仍可搜、可进相关；子任务不再当平级相关会话。图谱默认视图不含 worker（手动开 showIsolated 仍可见孤立点）。
+- 对话图谱去重：index 里重复 id（Windows 测试把 `tool01` / `Tool result regression` 写进真实数据目录）不再画成一堆同名节点。`thread.list` 按 id 去重；create 同 id 覆盖不追加。
+- Windows 测试隔离：`files.test.ts` / `thread-manager-lock.test.ts` 钉 `CMSPARK_DATA_DIR`（只设 HOME 时 `os.homedir()` 仍写真实会话库）。
+- Windows 选夹/编程接力（#523）：PowerShell 选夹脚本以 UTF-8 BOM 写临时 `.ps1` 并 `-File` 执行（PS 5.1 无 BOM 按 ANSI 解码，中文提示/路径乱码崩溃）；取消选择走 `exit 3` 显式区分失败，不再显示为错误。
 - 多智能体触发面（#513）：提示词新增舰队分派判据（含否定条件，默认倾向单干），任务适合并行时模型可调 fleet_suggest_propose 弹出非阻断建议卡「此任务适合多路并行」；点「派 worker 并行做」仅发送携带子任务清单的分派指令（不激活续跑），spawn 仍逐次 L2 确认；拒绝后 10 分钟静默。summoner 面全程排除。
 - 操作面（#502）：对话里已完成的浏览器/工具步骤默认收成可展开审计芯，reload 后不再摊无名卡。归档默认只留工具名、成败与指纹（设置可打开完整操作史；cookie/本机命令仍脱敏；tool 行不删）。单次 100 步触顶改为换段续跑，不再显示「已暂停」墓碑；同工具空转与连续失败仍熔断。舰队 Glance 显示最近工具，Inspect 不抢主对话。编程接力可把 Agent 挂进已有内嵌终端（macOS、默认关），不嵌 Alacritty、不自动开 PTY。
 - 对话管理（#516）：整理助手「移入回收站」的确认条钉在面板顶，不再被嵌套滚动裁掉；回收站列出全部已删行（含子任务），并提供「清空回收站」（面板内确认硬删，30 天 TTL 仍是兜底）。
