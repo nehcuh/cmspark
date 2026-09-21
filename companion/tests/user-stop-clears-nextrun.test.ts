@@ -265,6 +265,47 @@ test("#307 fleet.stop_all clears every worker's nextRun and discloses the counts
   )
 })
 
+test("pull-20260921 stop_all pre-cancels queued kicks — one worker's release must not start another's", async () => {
+  const gate = await import("../src/orchestrator/llm-loop-gate")
+  gate._resetMultiAgentLlmLoopsForTests()
+  const cap = gate.multiAgentLlmLoopSnapshot().cap
+  const tm = new ThreadManager()
+  // Creation order matters: threadManager.list() is newest-first, so the
+  // LIVE worker (w1) must be created last to iterate first — the queued
+  // worker's own cancel must come too late to matter (that is the bug).
+  const w2 = tm.create("", "fleet-revive-w2")
+  const w1 = tm.create("", "fleet-revive-w1")
+  tm.update(w1.id, { agent_role: "worker" } as any)
+  tm.update(w2.id, { agent_role: "worker" } as any)
+
+  const started: string[] = []
+  // w1: a live run — holds a slot plus an abort controller.
+  for (let i = 0; i < cap - 1; i++) {
+    const r = gate.scheduleWhenLlmSlotAvailable(
+      { agent_role: "worker" },
+      `rev-filler-${i}`,
+      () => new Promise<void>(() => {}),
+    )
+    assert.equal(r.started, true)
+  }
+  assert.ok(gate.tryAcquireMultiAgentLlmLoop({ agent_role: "worker" }, w1.id).ok)
+  __testSetLlmActiveForTests(w1.id, true)
+  // w2: kick queued behind the now-full cap.
+  const q = gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, w2.id, () => {
+    started.push(w2.id)
+    return Promise.resolve()
+  })
+  assert.equal(q.queued, true)
+
+  const resp = await handleMessage({ type: "fleet.stop_all" }, makeServices(tm), makeSession([]))
+  assert.equal(resp.type, "fleet.stop_all_result")
+  await new Promise((r) => setTimeout(r, 20))
+  assert.deepEqual(started, [], "w1's synchronous release-drain must not start w2's queued kick")
+  assert.equal(gate.pendingDeferredLlmKickCount(), 0)
+  __testSetLlmActiveForTests(w1.id, false)
+  gate._resetMultiAgentLlmLoopsForTests()
+})
+
 test("#307 cockpit stop_thread clears the worker's queued nextRun", async () => {
   const tm = new ThreadManager()
   const worker = tm.create("", "cockpit-stop")

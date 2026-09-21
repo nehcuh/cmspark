@@ -94,6 +94,21 @@ export function scheduleWhenLlmSlotAvailable(
   }
   const gate = tryAcquireMultiAgentLlmLoop(counted, id)
   if (gate.ok) {
+    // F1: a free slot does not mean a free thread — same probe discipline as
+    // drain. If the user's run owns this thread, queue and hand the slot back
+    // (startDeferredRun would install-refuse and silently drop the kick).
+    if (isThreadRunActiveProbe?.(id)) {
+      if (!deferredKickQueue.some((q) => q.threadId === id)) {
+        deferredKickQueue.push({ threadId: id, thread: counted, run })
+      }
+      releaseMultiAgentLlmLoop(id)
+      return {
+        started: false,
+        queued: true,
+        active: multiAgentLlmLoopSnapshot().active,
+        cap: ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops,
+      }
+    }
     startDeferredRun({ threadId: id, thread: counted, run })
     return {
       started: true,

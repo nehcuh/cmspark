@@ -269,6 +269,10 @@ export function abortThreadChat(
   opts?: { clearQueue?: boolean },
 ): { stopped: boolean; cancelled: number } {
   if (!threadId) return { stopped: false, cancelled: 0 }
+  // N-1 no-revive: cancel this thread's queued kick BEFORE freeing the gate —
+  // releaseMultiAgentLlmLoop drains synchronously and would start the very
+  // kick this stop is meant to kill (grok A / kimi B, pull 2026-09-21).
+  cancelDeferredLlmKick(threadId)
   const controller = abortControllers.get(threadId)
   if (controller) {
     controller.abort()
@@ -281,7 +285,6 @@ export function abortThreadChat(
     // Free gate here: finally will CAS-skip release after generation bump.
     releaseMultiAgentLlmLoop(threadId)
   }
-  cancelDeferredLlmKick(threadId)
   dropSteer(threadId)
   return {
     stopped: controller != null,
@@ -4471,6 +4474,13 @@ export async function handleMessage(
         targets = threadManager.list().filter((t: any) => t.agent_role === "worker")
       }
       const results: any[] = []
+      // Cross-thread no-revive (pull 2026-09-21): cancelling inside the loop
+      // is too late — the first abortThreadChat's releaseMultiAgentLlmLoop
+      // drains synchronously and would start a sibling worker's queued kick
+      // before that worker's own iteration cancels it. Drop every target's
+      // queued kick up front.
+      const { cancelDeferredLlmKick: cancelQueuedKick } = await import("./orchestrator/llm-loop-gate")
+      for (const w of targets) cancelQueuedKick(w.id)
       for (const w of targets) {
         // #307: user stop — clear the worker's nextRun so it never drains later.
         const { cancelled: nextRunCancelled } = abortThreadChat(w.id, { clearQueue: true })
