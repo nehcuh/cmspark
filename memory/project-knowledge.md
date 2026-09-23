@@ -113,7 +113,7 @@
 
 ### 嵌套 grok `--output-format text` 非法；`kimi -p` 不能配 `--yolo`/`--auto`（2026-09-03 · Gate10）
 - **坑**：grok CLI 只认 `plain|json|streaming-json`，`--output-format text` 立刻 exit 2。`kimi -p` 与 `--yolo`/`--auto` 互斥，立刻 exit 1。本会话 Gate10 第二路因此空转两次。
-- **纪律**：独立 grok 评审用 `grok --prompt-file … --output-format plain`。kimi headless 只用 `kimi -p "…" --output-format text`（不要 --auto/--yolo）。Pi 仍不在 PATH 时第二家族用 kimi。
+- **纪律**：独立 grok 评审用 `grok --prompt-file … --output-format plain`（`--max-turns` 必加，否则 prompt-file 只吐一句就退出）。kimi 的 `--output-format` 必须写在 `-p` **前面**（`-p` 会把下一个词当成 prompt，`text` 会变成 unknown command）。不要给 `kimi -p` 加 `--yolo`/`--auto`。OAuth 文件空时用 `KIMI_MODEL_NAME` / `KIMI_MODEL_API_KEY` / `KIMI_MODEL_PROVIDER_TYPE=kimi` / `KIMI_MODEL_BASE_URL=https://api.kimi.com/coding/v1`。claude `-p` 长提示走 stdin。
 - **4 行 case**：动作=派 grok/kimi 独立评审；失败=0.4s 退出、无报告；归责=flag 抄 claude 的 text / 把 yolo 接到 -p；保护=Gate10 改 kimi -p 成功出 AWN
 
 ### tmux `capture-pane` 看不到 Kimi 折叠块（2026-09-03 · 接手）
@@ -1216,6 +1216,12 @@
 - 边界:技能默认只审计出报告,不改源码(除非用户明确要求实现修复)。
 
 ## Technical Pitfalls
+
+### 租手确认不抢焦点，以及 Linux 发布包检查认不出 napi-v6（2026-09-23 · #524 / v0.6.9）
+- **确认**：`[Outbound]` 以外的轻确认保持后台。租手人在 IDE 里，Windows 没有托盘，45 秒会静默失败。焦点例外只认 `tool_name` 以 `[Outbound]` 开头。L2 的托盘请求和侧栏 `securityConfirmations.request` 必须共用 `confirmToolName`，否则侧栏帧仍是裸工具名。
+- **钥匙**：`CMSPARK_OUTBOUND_CALLER_ID` 必须和 grant 的 caller 逐字相同。MCP 的 `command`/`args` 不要写 `%LOCALAPPDATA%`，Claude Code / Grok 不会展开。
+- **发布**：`release.yml` 的 Linux zip 检查若写成 `napi-[0-9]+`，会漏掉 `napi-v6/linux/x64/onnxruntime_binding.node`。包其实打出来了，断言先失败，Release 不会挂附件。改成 `napi-v?[0-9]+` 后才能发 `v0.6.9`。
+- **4 行 case**：动作=打 `v*` 标签；失败=Build (linux-x64) exit 1 且 zip 已生成；归责=断言正则没有 `v`；保护=与 `package.sh` 的 `napi-*` glob 对齐。
 
 ### F-S5 `redactMessagesForCompaction` 依赖 assistant↔tool 配对（2026-08-07 · Wave C dual）
 - **现象**：计划写「对 hit 建 `{role,content}` 再跑 redact」——双审 R2 REJECT。

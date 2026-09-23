@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S116 (2026-09-23) [#524 租手确认 · 0.6.9 换装发布]
+- 侧栏 caller/权限、Windows 绝对路径、`[Outbound]` 确认把确认台拉到前面。Kimi+Claude AWN，NIT 补丁后再 Kimi AWN，Grok 复审 APPROVE。快进合 main `1f27b988`，CI 四作业绿。[PR #525](https://github.com/nehcuh/cmspark/pull/525)。
+- 版本收到 **0.6.9**（`b78e0962`）。本机 `make package-macos` 换装 `/Applications/CMspark.app`：CDHash `37d554d0…` 与 staging 一致，`cmspark-agent v0.6.9`，`:23401` 在听。无 bak。`host-integrity.ts` 被 build-host 改脏，未提交。
+- 发布：[v0.6.9](https://github.com/nehcuh/cmspark/releases/tag/v0.6.9) 含三端 zip、Windows Setup.exe、SHA256SUMS。第一标签因 Linux 断言 `napi-[0-9]+` 对不上 `napi-v6` 失败；正则修好后标签移到 `488252bf`。
+- **Next**：Chrome 里重载未打包扩展 `chrome-extension/build/chrome-mv3-prod/`。不要提交 `host-integrity.ts`。#230 仍冻。
+- Recorded: yes — kimi 参数顺序、租手确认前缀、napi-v6 发布断言
+
 ### S111 (2026-09-20) [#515 子任务身份 标准流程]
 
 - **Issue** https://github.com/nehcuh/cmspark/issues/515 · spec `docs/superpowers/specs/2026-09-20-worker-subtask-identity.md` LOCKED
@@ -1105,10 +1112,10 @@
 
 ### 形态深化 0.5.3 切点（S84–S104 · main 含知识 Wave A/B + 开闸 + 查重）
 - status: **active**（用户可见主线 on main；不宣称 Capture/CU 闭合）
-- context: 切片 1–6、ChatShell、Capture、体检、#265 当轮活计划、#272–#274 知识、#280 开闸、#282 PDF 编码、#281/#283 查重。origin/main tip **`7ab36063`**。本机 DMG **0.5.8 开闸枝**（无 #282/#283）。#228 禁扩 profile；#230 冻。
-- next_action: 重载 unpacked 扩展狗食 PDF 导入 + 「按堆选文」。再 `make package-macos` 才有查重。#230 禁止整票。
-- resume_doc: spec 2026-09-02 retrieval-scoring · 2026-09-03 exact-duplicate · CHANGELOG 0.5.8 · #230
-- updated: 2026-09-03
+- context: 活切点 **0.6.9**（#524 租手确认已换装并发布）。#228 禁扩 profile；#230 冻。
+- next_action: 重载 unpacked 扩展 `chrome-extension/build/chrome-mv3-prod/`。不要提交本机 `host-integrity.ts`。#230 禁止整票。
+- resume_doc: CHANGELOG 0.6.9 · https://github.com/nehcuh/cmspark/releases/tag/v0.6.9 · #524
+- updated: 2026-09-23
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**

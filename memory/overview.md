@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-20 (lockstep 0.6.8)
+**Updated**: 2026-09-23 (lockstep 0.6.9)
 
-## CMspark — 产品 0.6.8
+## CMspark — 产品 0.6.9
 
 | 轴 | 状态 |
 |----|------|
@@ -20,7 +20,7 @@
 
 ## Branch lock (S104)
 
-- 包装 **0.6.8**：操作面审计芯 / 舰队 Glance·Inspect·kick / 子任务身份 / collect_handback 诚实 / 回收站清空。0.7.0 企业双场景仍未验收。
+- 包装 **0.6.9**：租手确认台到前面 / Windows 租手路径 / 舰队 kick 收口。本机已换装，GitHub Release 已挂三端 zip + Setup.exe。0.7.0 企业双场景仍未验收。
 - **评审弧闭环**：c39d7d3e..26949cbb 四路对抗 7 MAJOR 全修（#261–#264），main tip `18d843d1`。
 - S104 起 origin 已含开闸+查重（#280–#283）；评审波次（#286–#295）十张 PR 已合入，见 GATE-SUMMARY。
 - **活票**：#230 冻 F-S-10 / overlay-acl。T1 #228 已关，**禁扩** profile。#258–#260 已在树（embedding experimental）。
@@ -28,12 +28,12 @@
 
 ## Next
 
-- 重启相关 Agent 以加载 VibeSOP 8.5.0 配置；CMspark `.grok` 生成配置是否纳入版本控制需单独审阅。
-- 重载 unpacked 扩展狗食 PDF 导入 + 「按堆选文」。再编 DMG 才有查重。
+- 重载 unpacked 扩展 `chrome-extension/build/chrome-mv3-prod/`，狗食租手确认是否把确认台拉到前面。
+- 不要提交本机 `host-integrity.ts`（build-host 改写的 SHA）。
 - #230 禁止整票实现。
 
 ## Docs SoT
 
-- 活切点：`CHANGELOG.md` **0.6.8**
+- 活切点：`CHANGELOG.md` **0.6.9**
 - 0.5.3 快照：`docs/superpowers/specs/2026-08-27-post-227-status.md`（SNAPSHOT）
 - 用户 / 架构：`docs/README.md` · `PRODUCT.md`
