@@ -1256,6 +1256,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         // confirm (S42 P1 Compat-C5). systray2/readline return a never-resolving
         // Promise — marking them trayEligible lied on Windows/Linux and held
         // Promise.race with a dead contender. Win Hello nonce still needs Side Panel.
+        // Tray and the Side Panel WS frame must share this label. A bare
+        // toolName on the WS frame stays a light confirm and never opens
+        // the cockpit (#524).
+        const confirmToolName = isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName
         let trayBackendIsSwift = false
         try {
           const { detectTrayBackend } = require("../tray/tray-adapter") as typeof import("../tray/tray-adapter")
@@ -1267,7 +1271,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         const trayReq: TrayConfirmRequest | null = trayEligible
           ? {
               id: sharedConfirmId,
-              toolName: isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName,
+              toolName: confirmToolName,
               riskLevel: forceConfirm
                 ? "high"
                 : safety.dangerousApis.length > 0 || isOutboundMcpCall ? "medium" : "low",
@@ -1485,7 +1489,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         const wsPromise = securityConfirmations.request(
           sendConfirm,
           {
-            toolName,
+            toolName: confirmToolName,
             dangerousApis: safety.dangerousApis,
             // App tab WP3: no code to preview — show WHAT will be launched.
             // host_computer (A3): show the task + app + EVERY type.text literal.

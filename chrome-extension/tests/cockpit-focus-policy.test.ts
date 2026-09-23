@@ -1,5 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import {
   cockpitFocusEventFromMessage,
   cruiseFlagsFromConfig,
@@ -214,6 +216,43 @@ test("full_preview / preview_image → 重预览级", () => {
 // grok review NIT-3：白名单/信任勾选不算重预览——relevant_domains /
 // relevant_apps 是 MinimalConfirm 可批的轻确认（白名单勾选在确认台，但此处
 // 可快速允许/拒绝），若算重预览则几乎所有 navigate L2 仍抢桌面，票 5 空转。
+test("[Outbound] 轻确认 ⇒ open_focus（人在别的应用，Win/Linux 无托盘）", () => {
+  const ev = cockpitFocusEventFromMessage({
+    type: "security.confirmation.request",
+    confirmation_id: "ob1",
+    tool_name: "[Outbound] get_page_text",
+    code_preview: "此 MCP 调用将把页面文本/截图发送给外部编程 Agent",
+  })
+  assert.deepEqual(ev, {
+    kind: "confirmation",
+    hasNonce: false,
+    hasHeavyPreview: false,
+    outboundChannel: true,
+  })
+  assert.equal(decideCockpitFocus(ev!, UNARMED), "open_focus")
+  assert.equal(decideCockpitFocus(ev!, CRUISE_FULL), "open_focus")
+})
+
+test("#524 background opens cockpit when decideCockpitFocus says open_focus", () => {
+  const bg = readFileSync(join(process.cwd(), "src/background/index.ts"), "utf8")
+  const start = bg.indexOf("const focusEvent = cockpitFocusEventFromMessage")
+  assert.ok(start > 0)
+  const slice = bg.slice(start, start + 400)
+  assert.match(slice, /decideCockpitFocus\(focusEvent, cockpitArmState\) === "open_focus"/)
+  assert.match(slice, /openOrFocusCockpit\(\)/)
+})
+
+test("普通 navigate 轻确认仍 stay_background", () => {
+  const ev = cockpitFocusEventFromMessage({
+    type: "security.confirmation.request",
+    confirmation_id: "nav1",
+    tool_name: "navigate",
+    code_preview: "https://example.com",
+  })
+  assert.equal(ev && "outboundChannel" in ev, false)
+  assert.equal(decideCockpitFocus(ev!, UNARMED), "stay_background")
+})
+
 test("relevant_domains 非空 ⇒ 仍轻确认（hasHeavyPreview: false，不抢焦点）", () => {
   const ev = cockpitFocusEventFromMessage({
     type: "security.confirmation.request",

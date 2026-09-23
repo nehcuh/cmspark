@@ -93,6 +93,18 @@ test("source: trayOwnerWs never overlay — activeTrayConfirmsByWs uses helper o
   assert.match(l2, /trayEligible\s*=\s*!!tray\s*&&\s*!winL2NonceChallenge\s*&&\s*trayBackendIsSwift/)
 })
 
+test("#524 source: tray and WS share the [Outbound] confirm label", () => {
+  const l2 = companionSrc("tool/l2-admission.ts")
+  assert.match(
+    l2,
+    /const confirmToolName = isOutboundMcpCall \? `\[Outbound\] \$\{toolName\}` : toolName/,
+  )
+  assert.ok(
+    l2.split("confirmToolName").length - 1 >= 3,
+    "definition, tray request, and WS request must all use confirmToolName",
+  )
+})
+
 test("source: both admission files import confirm-fanout helper", () => {
   const l2 = companionSrc("tool/l2-admission.ts")
   const url = companionSrc("tool/url-cookie-admission.ts")

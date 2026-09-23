@@ -303,6 +303,14 @@ test("first screenshot with allow_page_export queues confirm and does not accept
   })
   await waitUntil(() => sent.some((s) => s.includes("security.confirmation.request")))
   const confirmId = lastConfirmId(sent)
+  const confirmFrame = JSON.parse(sent.find((s) => s.includes(confirmId)) || "{}") as {
+    tool_name?: string
+    full_preview?: string
+    code_preview?: string
+  }
+  assert.equal(confirmFrame.tool_name, "[Outbound] screenshot")
+  assert.match(confirmFrame.full_preview || "", /调用方：exfil-http/)
+  assert.match(confirmFrame.code_preview || "", /调用方：exfil-http/)
   assert.equal(hasOutboundDisclosure("exfil-http"), false)
   assert.equal(runnerHit, false)
 

@@ -188,6 +188,12 @@ async function waitFirstExfilOperatorConfirm(
   }
 
   const internal = outboundToInternalName(tool) || tool
+  const preview = [
+    OUTBOUND_DISCLOSURE_ZH,
+    `调用方：${caller_id}`,
+    `工具：${internal}`,
+    "允许后，该调用方在本次 Companion 进程内的后续同类外泄不再逐次询问；重启后要再批。约 45 秒内未处理，这次调用失败。",
+  ].join("\n")
   logger.info("outbound_mcp.confirm_fanout", {
     tool_name: internal,
     caller: caller_id,
@@ -201,7 +207,8 @@ async function waitFirstExfilOperatorConfirm(
       {
         toolName: `[Outbound] ${internal}`,
         dangerousApis: [],
-        code: OUTBOUND_DISCLOSURE_ZH,
+        code: preview,
+        fullPreview: preview,
         riskLevel: "high",
         autoConfirmEligible: false,
       },

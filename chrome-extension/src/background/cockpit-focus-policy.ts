@@ -36,7 +36,13 @@ export function isArmed(arm: ArmState): boolean {
 }
 
 export type CockpitFocusEvent =
-  | { kind: "confirmation"; hasNonce: boolean; hasHeavyPreview: boolean }
+  | {
+      kind: "confirmation"
+      hasNonce: boolean
+      hasHeavyPreview: boolean
+      /** Tool name `[Outbound] …`: operator is in another app; Win/Linux have no tray. */
+      outboundChannel?: boolean
+    }
   | { kind: "computer_task"; event: string }
   /** L-5 (#391): unattended blocked report — tray/Board only, never steal. */
   | { kind: "loop_blocked" }
@@ -51,6 +57,7 @@ export type CockpitFocusAction = "open_focus" | "stay_background"
  * | 确认 + nonce_challenge（侧栏禁批）     | open_focus      |
  * | 确认 + 重预览（full_preview/preview_image） | open_focus  |
  * | 确认 + 轻量（MinimalConfirm 可批）     | stay_background |
+ * | 确认 + 租手 `[Outbound]`（人在别的应用） | open_focus    |
  * | computer.task paused（需人）           | open_focus      |
  * | computer.task started + 巡航/值守武装  | stay_background |
  * | computer.task started + 未武装/未知    | open_focus      |
@@ -60,14 +67,16 @@ export type CockpitFocusAction = "open_focus" | "stay_background"
  * 注意：轻确认分支**无武装门**——未武装时轻确认也不抢焦点。这是刻意对齐
  * FINAL-SYNTHESIS 票 5（原文无「武装下」限定；issue 首条的「巡航/值守武装下」
  * 是窄述）与 inventory §5（轻量 = 侧栏可批）。勿按 issue 字面把武装门加回。
- * Win/Linux 侧栏关且无托盘时，未批确认 45s 超时 deny（fail-closed）是票面
- * 明示验收，不是本表的 bug。
+ * Win/Linux 侧栏关且无托盘时，普通轻确认 45s 超时 deny（fail-closed）仍是
+ * 票面明示验收。租手是例外：人在 IDE 里，Windows/Linux 没有托盘窗，轻确认
+ * 会静默超时。`[Outbound]` 确认改为 open_focus（#524），侧栏红条仍可批。
  */
 export function decideCockpitFocus(
   event: CockpitFocusEvent,
   arm: ArmState,
 ): CockpitFocusAction {
   if (event.kind === "confirmation") {
+    if (event.outboundChannel) return "open_focus"
     return event.hasNonce || event.hasHeavyPreview ? "open_focus" : "stay_background"
   }
   if (event.kind === "loop_blocked") return "stay_background"
@@ -89,10 +98,13 @@ function nonEmptyString(v: unknown): v is string {
 export function cockpitFocusEventFromMessage(msg: any): CockpitFocusEvent | null {
   if (!msg || typeof msg.type !== "string") return null
   if (msg.type === "security.confirmation.request") {
+    const outboundChannel =
+      typeof msg.tool_name === "string" && msg.tool_name.startsWith("[Outbound]")
     return {
       kind: "confirmation",
       hasNonce: nonEmptyString(msg.nonce_challenge),
       hasHeavyPreview: nonEmptyString(msg.full_preview) || nonEmptyString(msg.preview_image),
+      ...(outboundChannel ? { outboundChannel: true } : {}),
     }
   }
   if (msg.type === "computer.task.event") {

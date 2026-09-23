@@ -252,7 +252,7 @@ tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i mcp
 1. Companion 在跑（托盘 / CMspark.app / `cmspark-agent daemon start`）。**`daemon start` 不会拉起 `mcp-outbound`。**
 2. Chrome 扩展曾经配对（`.paired`）。要用页时 Chrome 得在（可最小化）。
 3. 一把 **`cmg_…` 租手钥匙**（不是扩展配对码 `ws_secret`）。`require_grant` 默认 true。
-4. 人能批确认：**macOS** 可用 Swift 托盘；**Windows / Linux 没有原生托盘确认**，必须 **打开 Chrome 确认台**。超时 `OUTBOUND_CONFIRM_REQUIRED`，不会自动过。
+4. 人能批确认：外部助手发起的确认会把 **Chrome 确认台**拉到前面（扩展需已连接；侧栏红条也可以批）。**macOS** 另有 Swift 托盘。**Windows / Linux 没有原生托盘确认**，不要只盯 IDE。约 45 秒未批则 `OUTBOUND_CONFIRM_REQUIRED`，不会自动过。
 
 ### 1. 拿钥匙（主路 = CLI）
 
@@ -261,6 +261,8 @@ cmspark-agent outbound-grant issue --caller-id codex --label Codex
 ```
 
 stdout 只印一次 `cmg_…`，以及 `CMSPARK_OUTBOUND_GRANT` / `CMSPARK_OUTBOUND_CALLER_ID` / `CMSPARK_OUTBOUND_PORT` 和本机 `command` / `args`。这把钥匙不是扩展配对码。
+
+`CMSPARK_OUTBOUND_CALLER_ID` **必须**和签发时的 caller 逐字相同。侧栏在「设置 → 本机与工具 → 调用方 caller_id」里填；命令行是 `--caller-id`。下面示例里的 `codex`、`grok-build`、`claude-code` 是不同调用方，不要混用：钥匙签成 `grok-build`、配置里却写 `codex`，会 `GRANT_CALLER_MISMATCH`。
 
 可选：`--allow-page-export` 把「允许该 caller 把页文/截图发给其云模型」写在钥匙上（可撤销）。**这不跳过确认台**：首次外泄仍须操作者 HITL。编程助手自己 `acknowledge` **不够**。
 
@@ -286,15 +288,17 @@ stdout 只印一次 `cmg_…`，以及 `CMSPARK_OUTBOUND_GRANT` / `CMSPARK_OUTBO
 }
 ```
 
-**Windows（NSIS）** — `%LOCALAPPDATA%\CMspark\node.exe` + `cmspark-agent.js`：
+**Windows（NSIS）** — 用展开后的绝对路径，不要写 `%LOCALAPPDATA%`。
+
+在资源管理器地址栏输入 `%LOCALAPPDATA%\CMspark` 回车，把看到的真实目录换进下面的 `<你的用户名>`。Claude Code、Grok 启动 MCP 时**不会**展开 `%LOCALAPPDATA%`（还会把 `%` 转义），字面路径找不到文件，报错可能是乱码。在 Windows 本机跑 `outbound-grant issue` 时，若环境变量 `LOCALAPPDATA` 有值，stdout 会印出已经展开的 `command` / `args`，优先复制那两行。若印出的仍是 `%LOCALAPPDATA%`，stderr 会提示，不要复制，改用资源管理器里的真实路径。
 
 ```json
 {
   "mcpServers": {
     "cmspark": {
-      "command": "%LOCALAPPDATA%\\CMspark\\node.exe",
+      "command": "C:\\Users\\<你的用户名>\\AppData\\Local\\CMspark\\node.exe",
       "args": [
-        "%LOCALAPPDATA%\\CMspark\\cmspark-agent.js",
+        "C:\\Users\\<你的用户名>\\AppData\\Local\\CMspark\\cmspark-agent.js",
         "mcp-outbound"
       ],
       "env": {
@@ -343,7 +347,7 @@ tool_timeout_sec = 120
 env = { CMSPARK_OUTBOUND_GRANT = "cmg_粘贴刚才那把钥匙", CMSPARK_OUTBOUND_CALLER_ID = "grok-build", CMSPARK_OUTBOUND_PORT = "23401" }
 ```
 
-Windows 把 `command` / `args` 换成上面 NSIS 的 `node.exe` + `cmspark-agent.js`，**不要漏 GRANT**。
+Windows 把 `command` / `args` 换成上面 NSIS 的绝对路径（`C:\Users\<你的用户名>\AppData\Local\CMspark\node.exe` 与同目录的 `cmspark-agent.js`），**不要**写 `%LOCALAPPDATA%`，**不要漏 GRANT**。`CMSPARK_OUTBOUND_CALLER_ID` 与这把钥匙的 caller 相同。
 
 验证：
 
@@ -369,7 +373,7 @@ claude mcp add --env CMSPARK_OUTBOUND_GRANT=cmg_粘贴刚才那把钥匙 \
 
 ### 3. 用起来
 
-新开一轮，问「用 cmspark 列出我的 Chrome 标签」。要动未批准的站：看 **确认台**（macOS 也可看托盘），不要盯 IDE。Windows / Linux：**打开 Chrome 确认台**。超时则失败并停，不会跳过。
+新开一轮，问「用 cmspark 列出我的 Chrome 标签」。要动未批准的站，或第一次把页文发给云模型：Chrome **确认台会到前面**（侧栏红条也可以批）。macOS 另有托盘。Windows / Linux 没有托盘窗，不要只盯 IDE。约 45 秒未批则失败并停，不会跳过。若窗口没出现，确认 Chrome 已开且扩展已连接，或自己打开 Chrome 确认台。
 
 页文 / 截图交给第三方云模型前：
 
@@ -412,7 +416,7 @@ stdio `tools/list` 会按钥匙 profile 裁剪（只广告这把钥匙能调用�
 
 - **真桥**：编程助手 spawn `mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`，Bearer = `CMSPARK_OUTBOUND_GRANT`（`cmg_…`）。默认 `require_grant=true`，勿用 `ws_secret`。
 - 无扩展连接：`EXTENSION_UNAVAILABLE`（**仅** Chrome 扩展 peer 可做 CDP runner）。
-- **L8 确认**：fan-out 到已鉴权 Side Panel；**macOS Swift 托盘**可弹原生确认；**Windows/Linux 须打开 Chrome 确认台**，没有原生 tray 确认。超时 `OUTBOUND_CONFIRM_REQUIRED`。
+- **L8 确认**：fan-out 到已鉴权扩展，并把 **确认台拉到前面**（工具名 `[Outbound]`）。侧栏红条也可以批。**macOS Swift 托盘**另有原生确认；**Windows/Linux 没有原生 tray 确认**。约 45 秒未批则 `OUTBOUND_CONFIRM_REQUIRED`。
 - **L9 tab lease**：交互工具须显式 `tabId`；holder=`outbound_mcp:<caller>`；与 Side Panel 冲突时 **Side Panel 赢**，MCP 得 `TAB_LOCKED`。
 - **租约上限**：同一 caller 默认最多 **2** 个 tab lease。
 

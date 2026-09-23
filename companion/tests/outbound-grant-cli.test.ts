@@ -9,7 +9,11 @@ import {
   grantAllowsPageExport,
 } from "../src/outbound-mcp/outbound-grants"
 import { hasOutboundDisclosure, clearAllOutboundDisclosureSessions } from "../src/outbound-mcp/disclosure-session"
-import { handleOutboundGrantCli, outboundMcpLaunchSpec } from "../src/outbound-mcp/grant-cli"
+import {
+  handleOutboundGrantCli,
+  outboundMcpLaunchSpec,
+  unexpandedLocalAppDataWarning,
+} from "../src/outbound-mcp/grant-cli"
 
 function companionSrc(rel: string): string {
   return fs.readFileSync(path.join(__dirname, "..", "..", "src", rel), "utf8")
@@ -157,6 +161,15 @@ test("outboundMcpLaunchSpec is platform-honest", () => {
   const linux = outboundMcpLaunchSpec("linux")
   assert.doesNotMatch(linux.command, /\/Applications\/CMspark/)
   assert.ok(linux.args.includes("mcp-outbound"))
+
+  const winWarn = unexpandedLocalAppDataWarning(win)
+  if (win.command.includes("%LOCALAPPDATA%")) {
+    assert.match(winWarn || "", /未展开的 %LOCALAPPDATA%/)
+  } else {
+    assert.equal(winWarn, null)
+  }
+  assert.equal(unexpandedLocalAppDataWarning(darwin), null)
+  assert.equal(unexpandedLocalAppDataWarning(linux), null)
 })
 
 test("#410 --profile outbound_l1_interact issues an interact grant", async () => {

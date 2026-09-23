@@ -28,6 +28,13 @@ export type OutboundMcpLaunchSpec = {
   args: string[]
 }
 
+/** Non-null when the snippet still contains a literal %LOCALAPPDATA% MCP hosts will not expand. */
+export function unexpandedLocalAppDataWarning(spec: OutboundMcpLaunchSpec): string | null {
+  const blob = [spec.command, ...spec.args].join("\n")
+  if (!blob.includes("%LOCALAPPDATA%")) return null
+  return "command/args 含未展开的 %LOCALAPPDATA%。编程助手启动时不会展开它。请在 Windows 本机重跑本命令（且 LOCALAPPDATA 有值），或把资源管理器里的真实路径写进 MCP 配置。不要复制这一行。"
+}
+
 const DEFAULT_IO: GrantCliIo = {
   stdout: process.stdout,
   stderr: process.stderr,
@@ -181,7 +188,7 @@ function printIssue(
   if (allowPageExport) {
     writeln(
       io.stdout,
-      `已允许 ${issued.caller_id} 把页文/截图/DOM 发给其云模型（可在设置里撤销这把钥匙）。首次外泄仍须在确认台批准；Windows/Linux 请打开 Chrome 确认台。`,
+      `已允许 ${issued.caller_id} 把页文/截图/DOM 发给其云模型（可在设置里撤销这把钥匙）。首次外泄仍须在确认台批准。确认台会到前面；若没有，请打开 Chrome 确认台（Windows/Linux 没有托盘窗）。`,
     )
   } else {
     writeln(
@@ -198,6 +205,8 @@ function printIssue(
   writeln(io.stdout, "command / args（本机）：")
   writeln(io.stdout, `  command: ${launch.command}`)
   writeln(io.stdout, `  args: ${JSON.stringify(launch.args)}`)
+  const unexpanded = unexpandedLocalAppDataWarning(launch)
+  if (unexpanded) writeln(io.stderr, unexpanded)
 }
 
 function issue(flags: Map<string, string | true>, io: GrantCliIo): number {

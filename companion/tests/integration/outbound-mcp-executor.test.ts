@@ -414,8 +414,8 @@ test("createToolExecutor: outbound navigate untrusted domain → confirm fan-out
   )
 
   const confirmation = await confirmationPromise
-  // S42 P1: outbound URL-gate labels tool as [Outbound] navigate for UI honesty
-  assert.match(String(confirmation.tool_name || ""), /navigate/)
+  // S42 P1 / #524: cockpit focus keys off this exact prefix.
+  assert.equal(String(confirmation.tool_name || ""), "[Outbound] navigate")
   // L8: origin unbound for outbound — privileged respond() still works
   clientSideWs.send(
     JSON.stringify({

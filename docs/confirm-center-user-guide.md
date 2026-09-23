@@ -88,6 +88,7 @@ Companion 在下列工具**真正执行前**会排队确认（列表以代码 `L
 | 拉起多 Agent Worker | `spawn_worker` | role / pack / allow 摘要 |
 | 编排者是非题 | `ask_user` | 问题；允许≈是，拒绝≈否 |
 | MissionBoard 收工 | `board_complete` | 目标摘要 / 风险 / empty_complete |
+| 外部编程助手（租手） | 工具名以 `[Outbound]` 开头 | 确认台会被拉到前面。侧栏红条也可以批。Windows / Linux 没有托盘窗。首次把页文发给云模型时，正文写明调用方 |
 
 **设计原则：** 模型参数里的 `user_confirmed` **不被信任**；必须你在 UI 上点（或超时自动拒绝）。
 

@@ -121,9 +121,17 @@ server 没连上或没声明 `tools` capability。先解决上面的连接问题
 
 - **`DISCLOSURE_NOT_GRANTED`**：这把 `cmg_` 钥匙没有 `allow_page_export`。重新签发并勾选「允许该 caller 把页文/截图发给其云模型」，或 CLI `--allow-page-export`。
   （HTTP 路径按这把钥匙本身判定；stdio / `mcp-outbound` 路径无钥匙凭证、按 caller 判定——同一 caller 若有另一把带旗钥匙会放行。）
-- **`DISCLOSURE_HITL_REQUIRED`**：钥匙已允许外泄，但**首次仍须人批**。**打开 Chrome 确认台**（macOS 也可托盘）。调用方 `cmspark__accept_data_disclosure` **不够**，也不表示用户已同意云端外泄。
+- **`DISCLOSURE_HITL_REQUIRED`**：钥匙已允许外泄，但**首次仍须人批**。确认台应被拉到前面（侧栏红条也可以批；macOS 另有托盘）。调用方 `cmspark__accept_data_disclosure` **不够**，也不表示用户已同意云端外泄。窗口没出现时：Chrome 要开着、扩展要已连接，或自己打开确认台。约 45 秒未批会超时。
 
 Windows / Linux 没有原生 tray 确认。
+
+### `GRANT_CALLER_MISMATCH`
+
+编程助手环境变量 `CMSPARK_OUTBOUND_CALLER_ID` 和钥匙上的 caller 不是同一个字符串。侧栏「调用方 caller_id」或 CLI `--caller-id` 填什么，env 就写什么。`grok-build` 和 `codex` 不能混用。
+
+### Windows 上 `command not found` / 找不到 `node.exe` / 路径乱码
+
+MCP 配置里的 `command` 和 `args` 必须是展开后的绝对路径，例如 `C:\Users\<你的用户名>\AppData\Local\CMspark\node.exe`。不要写 `%LOCALAPPDATA%`：编程助手启动时不会展开它。在资源管理器地址栏输入 `%LOCALAPPDATA%\CMspark` 找到真实目录。优先复制 Windows 本机 `outbound-grant issue` 印出的 `command` / `args`。
 
 ### `PROFILE_FORBIDDEN`（如 `cmspark__scroll`）
 
@@ -139,7 +147,7 @@ Companion 在跑但 **没有已鉴权的 Chrome 扩展**（Side Panel 未开或�
 
 ### `OUTBOUND_CONFIRM_REQUIRED`
 
-危险工具等 L2 确认超时或未在确认台处理。Outbound 确认会 fan-out 到 Side Panel / 确认台；macOS 还可 Swift 托盘。Windows / Linux **没有原生 tray 确认** — **打开 Chrome 确认台**，不要只盯编程 Agent 窗口。
+危险工具等 L2 确认超时或未在确认台处理。Outbound 确认会 fan-out 到 Side Panel，并把确认台拉到前面；macOS 还可 Swift 托盘。Windows / Linux **没有原生 tray 确认** — 看弹出的 Chrome 确认台或侧栏红条，不要只盯编程 Agent 窗口。约 45 秒未批即拒绝。
 
 ### command not found / doctor 找不到 `cmspark-agent`
 

@@ -40,9 +40,11 @@ function outboundMcpLaunchSpec(os: HostOs): { command: string; args: string[] } 
     }
   }
   if (os === "win") {
+    // MCP hosts do not expand %LOCALAPPDATA%. Explorer does — user pastes the real path.
+    const winDir = "C:\\Users\\<你的用户名>\\AppData\\Local\\CMspark"
     return {
-      command: "%LOCALAPPDATA%\\CMspark\\node.exe",
-      args: ["%LOCALAPPDATA%\\CMspark\\cmspark-agent.js", "mcp-outbound"],
+      command: `${winDir}\\node.exe`,
+      args: [`${winDir}\\cmspark-agent.js`, "mcp-outbound"],
     }
   }
   return {
@@ -205,7 +207,11 @@ export function OutboundMcpSettingsSection() {
       `\n` +
       `command: ${launch.command}\n` +
       `args: ${JSON.stringify(launch.args)}\n` +
-      `# 命令行 cmspark-agent outbound-grant issue 也会打印 command / args\n`
+      `# CMSPARK_OUTBOUND_CALLER_ID 必须与上面这把钥匙的 caller_id 逐字相同\n` +
+      `# 命令行 cmspark-agent outbound-grant issue 也会打印 command / args\n` +
+      (hostOs === "win"
+        ? `# Windows：资源管理器地址栏输入 %LOCALAPPDATA%\\CMspark，把真实路径换掉 <你的用户名>。不要把 %LOCALAPPDATA% 写进 command。\n`
+        : "")
     try {
       await navigator.clipboard.writeText(snippet)
       setCopyOk(true)
@@ -222,7 +228,13 @@ export function OutboundMcpSettingsSection() {
         推荐命令行签发（五分钟主路）。这里是备用与撤销。
         <code>cmspark-agent outbound-grant issue --caller-id …</code> 会打印钥匙、env 和 command / args。
         钥匙与扩展配对码（ws_secret）分离。写入 IDE 的 <code>CMSPARK_OUTBOUND_GRANT</code>。
+        编程助手里的 <code>CMSPARK_OUTBOUND_CALLER_ID</code> 必须和下面的调用方逐字相同。
       </div>
+      {hostOs === "win" && (
+        <div style={{ ...styles.helpText, marginTop: 6 }}>
+          Windows：在资源管理器地址栏输入 %LOCALAPPDATA%\CMspark，把看到的真实路径写进 MCP 的 command / args。不要写 %LOCALAPPDATA% 本身，编程助手启动时不会展开它。
+        </div>
+      )}
 
       <div style={{ ...styles.row, marginTop: 10, alignItems: "flex-start" }}>
         <label style={{ ...styles.label, flex: 1, marginBottom: 0 }}>
@@ -246,22 +258,34 @@ export function OutboundMcpSettingsSection() {
       </div>
 
       <div style={{ ...styles.field, marginTop: 12 }}>
-        <label style={styles.label}>签发新 grant</label>
+        <div style={styles.label}>签发新 grant</div>
+        <label style={styles.label} htmlFor="outbound-grant-label">显示名称</label>
         <input
+          id="outbound-grant-label"
           style={styles.input}
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder="显示名称（如 grok-build）"
+          placeholder="如 grok-build"
         />
+        <label style={{ ...styles.label, marginTop: 8 }} htmlFor="outbound-grant-caller">
+          调用方 caller_id
+        </label>
         <input
-          style={{ ...styles.input, marginTop: 6 }}
+          id="outbound-grant-caller"
+          style={styles.input}
           value={callerId}
           onChange={(e) => setCallerId(e.target.value)}
-          placeholder="caller_id（与 MCP 调用 body 绑定）"
+          placeholder="与 CMSPARK_OUTBOUND_CALLER_ID 逐字相同"
+          aria-label="caller_id"
           spellCheck={false}
         />
+        <div style={styles.helpText}>
+          必填。编程助手环境变量 CMSPARK_OUTBOUND_CALLER_ID 必须和这里逐字相同，否则 GRANT_CALLER_MISMATCH，工具直接失败。
+        </div>
+        <label style={{ ...styles.label, marginTop: 8 }} htmlFor="outbound-grant-ttl">有效期</label>
         <select
-          style={{ ...styles.input, marginTop: 6 }}
+          id="outbound-grant-ttl"
+          style={styles.input}
           value={String(ttlMs)}
           onChange={(e) => setTtlMs(Number(e.target.value))}
         >
@@ -271,8 +295,10 @@ export function OutboundMcpSettingsSection() {
             </option>
           ))}
         </select>
+        <label style={{ ...styles.label, marginTop: 8 }} htmlFor="outbound-grant-profile">工具档</label>
         <select
-          style={{ ...styles.input, marginTop: 6 }}
+          id="outbound-grant-profile"
+          style={styles.input}
           value={profile}
           onChange={(e) => {
             const v = e.target.value
@@ -290,6 +316,10 @@ export function OutboundMcpSettingsSection() {
           {OUTBOUND_GRANT_PROFILE_OPTIONS.find((o) => o.value === profile)?.hint}
           — 交互档含 get_page_html / analyze_image（页面内容外泄），需勾下方外泄允许并经确认台。
         </div>
+        <div style={styles.label}>权限</div>
+        <div style={styles.helpText}>
+          页面外泄可直接勾选。不勾时，读正文、截图、DOM 会直接拒绝，确认台也不会弹出。上下文出口要先把工具档选成「站点上下文档」。
+        </div>
         <label style={{ ...styles.helpText, display: "flex", gap: 6, marginTop: 8, alignItems: "flex-start" }}>
           <input
             type="checkbox"
@@ -300,11 +330,12 @@ export function OutboundMcpSettingsSection() {
           <span>
             允许 {callerId.trim() || "<caller>"} 把页文/截图发给其云模型
             <div style={{ marginTop: 2 }}>
-              勾选写在这把钥匙上，可撤销。首次外泄仍走确认台，不跳过 HITL。
+              勾选写在这把钥匙上，可撤销。首次外泄仍走确认台，不跳过 HITL。确认台会到前面。
             </div>
           </span>
         </label>
         {profile === OUTBOUND_CONTEXT_PROFILE && <div style={{ marginTop: 10 }}>
+          <div style={styles.label}>上下文出口</div>
           <label style={styles.label}>允许导出上下文的精确站点（每行一个 origin）</label>
           <textarea style={styles.input} rows={3} value={contextOrigins} onChange={event => setContextOrigins(event.target.value)} placeholder="https://devops.example.com" spellCheck={false} />
           <div style={styles.helpText}>只写协议、主机和端口，不含路径或通配符。所选知识正文片段及当前目标地址会发送给外部助手。</div>
