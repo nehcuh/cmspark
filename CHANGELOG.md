@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.6.9] — 2026-09-23
+
+0.6.8 切点之后的补丁。版本锚齐 **0.6.9**。不叫 0.7.0。
+
 - 租手确认与 Windows 配置（#524）：外部助手的 `[Outbound]` 确认会把确认台拉到前面（侧栏红条仍可批；普通轻确认仍不抢焦点）。首次页面外泄的正文写明调用方、工具，以及允许后只在本次 Companion 进程内免再问。侧栏签发钥匙时，「调用方 caller_id」和「权限」（页面外泄 / 上下文出口）是带标签的输入；`CMSPARK_OUTBOUND_CALLER_ID` 必须与之逐字相同。Windows 文档和复制片段改为展开后的绝对路径，不再让人把 `%LOCALAPPDATA%` 写进 MCP command。L2 确认发给侧栏的工具名与托盘使用同一 `[Outbound]` 前缀。签发命令若印出未展开的 `%LOCALAPPDATA%`，stderr 会提示不要复制。
 - 舰队 kick 竞争修复（2026-09-21 拉取三路评审 F1）：排队的 spawn / expert-team kick 撞上用户在同一 worker 线程手动发起的对话时，不再复用对方 AbortController（此前单信号双跑，kick 收尾还会误删用户控制器）；拒装时丢弃本次 kick（brief 已持久化，后续舰队/编排动作可再 kick），排队项在活跃 run 结束后重排队 drain。
 - stop/abort 不再复活排队 kick（复审追加，grok+kimi 双路独立命中）：`abortThreadChat` 改为先 cancel 再 release（release 同步 drain 会把本该丢弃的排队 kick 立刻拉起）；`fleet.stop_all` 在逐 worker abort **之前**统一预取消全部目标的排队 kick（否则先 abort 的 worker 释放槽位、同步 drain 拉起还没轮到迭代的 worker 的排队 kick——跨线程复活）；`scheduleWhenLlmSlotAvailable` 槽位有空也先看活跃 run（probe），占线则排队让位，不再丢弃 kick；`fleet.stop_all_result` 逐 worker 披露被取消的排队 kick 数（`cancelled_kick`）。

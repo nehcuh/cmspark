@@ -29,7 +29,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"))
 
 describe("cli version", () => {
   it("resolveCliVersion matches package.json", () => {
-    assert.equal(pkg.version, "0.6.8")
+    assert.equal(pkg.version, "0.6.9")
     assert.equal(resolveCliVersion(), pkg.version)
     assert.equal(CLI_VERSION_FALLBACK, pkg.version)
   })
@@ -42,7 +42,7 @@ describe("cli version", () => {
       env: { ...process.env, CMSPARK_DATA_DIR: path.join(ROOT, ".test-dist", "cli-version") },
     })
     assert.equal(r.status, 0, r.stderr)
-    assert.match(r.stdout, /^cmspark-agent v0\.6\.8\r?\n$/)
+    assert.match(r.stdout, /^cmspark-agent v0\.6\.9\r?\n$/)
     assert.doesNotMatch(r.stdout, /Unknown command/)
   })
 })

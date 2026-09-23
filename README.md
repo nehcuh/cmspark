@@ -849,8 +849,8 @@ make package
 ```bash
 make package-macos
 # 产出：
-#   dist-package/CMspark-v0.6.8-macOS.dmg   ← 安装包
-#   dist-package/cmspark-v0.6.8-macos-arm64.zip  ← 原始压缩包
+#   dist-package/CMspark-v0.6.9-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.6.9-macos-arm64.zip  ← 原始压缩包
 ```
 
 Windows 打包流程（**官方 zip + Setup.exe / package.sh**）：
@@ -984,4 +984,4 @@ cmspark/
 
 ---
 
-> **当前阶段（0.6.8）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。操作面：已完成工具步骤收成审计芯 · 舰队 Glance/Inspect · spawn kick · 子任务不摊成平级聊天 · collect_handback 散文研究报告算成功收取。Capture 默认 **1040×760**（紧凑 **360×420**）· 知识默认 TF-IDF top-k 注入 · 知识图谱（#427）· Darwin 内嵌终端（#432，默认关）· `search_threads`/`search_knowledge`（#439）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**（`node.exe` + `cmspark-agent.js`）；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**侧栏 UI 重构 + 巡航档位/plan_readonly/无人值守 loop 三件套 + 专家团队 v1 + CU 完整性链**（0.6.0 主题，值守默认关）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**（#363 摘帽门未过）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（0.6.9）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。操作面：已完成工具步骤收成审计芯 · 舰队 Glance/Inspect · spawn kick · 子任务不摊成平级聊天 · collect_handback 散文研究报告算成功收取。Capture 默认 **1040×760**（紧凑 **360×420**）· 知识默认 TF-IDF top-k 注入 · 知识图谱（#427）· Darwin 内嵌终端（#432，默认关）· `search_threads`/`search_knowledge`（#439）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**（`node.exe` + `cmspark-agent.js`）；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**侧栏 UI 重构 + 巡航档位/plan_readonly/无人值守 loop 三件套 + 专家团队 v1 + CU 完整性链**（0.6.0 主题，值守默认关）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**（#363 摘帽门未过）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
