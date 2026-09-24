@@ -42,10 +42,11 @@ test("adapter: the 100-round exit is a run boundary (chat.done + round_limit)", 
 
 test("adapter: same-tool and continuous-failure breakers stay circuit_breaker", () => {
   const src = adapterSource()
-  // Exactly two breaker sites: MAX_SAME_TOOL_RECOVERABLE_FAILURES and
-  // CONTINUOUS_FAILURE_LIMIT. G1 must not have flipped either to round_limit.
+  // Same-tool stop, transient transport limit, and the generic API failure
+  // limit. A locator miss pivots instead of adding another stop site.
+  // G1 must not flip these to round_limit.
   const breakers = src.match(/runStats\.terminal = "circuit_breaker"/g) ?? []
-  assert.equal(breakers.length, 2, `expected 2 circuit_breaker sites, got ${breakers.length}`)
+  assert.equal(breakers.length, 3, `expected 3 circuit_breaker sites, got ${breakers.length}`)
   const roundLimits = src.match(/runStats\.terminal = "round_limit"/g) ?? []
   assert.equal(roundLimits.length, 1, `expected 1 round_limit site, got ${roundLimits.length}`)
 })

@@ -15,6 +15,7 @@ import { toolChatErrorPayload } from "../ws/l1-actuator"
 import { logger } from "../logger"
 import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
 import { isTransientLlmTransportError } from "./transport-error"
+import { decideSameToolFailure } from "./same-tool-guard"
 import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
 import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
@@ -1283,6 +1284,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   let contentRiskRecoveryUsed = false
   let outputMaxTokens = computeMaxTokens(contextWindow, config.max_tokens)
   const recoverableFailureCounts = new Map<string, number>()
+  const locatorPivotIssued = new Set<string>()
 
   try {
   await runContextBudgetPass("pre_loop")
@@ -1969,6 +1971,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             // Reset failure counters on success
             continuousFailures = 0
             recoverableFailureCounts.delete(toolName)
+            locatorPivotIssued.delete(toolName)
             // Only navigate/set_tab_url on THIS tabId may thaw. create_tab must
             // not thaw pinned_tabs[0] (qg44es: freeze 4151 then create_tab re-opens CDP).
             if (shouldThawAfterSuccess(toolName)) {
@@ -2146,7 +2149,30 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             if (failCode !== "SITE_OP_BANNED" && failCode !== "SITE_OP_ESCALATE") {
             const failCount = (recoverableFailureCounts.get(toolName) || 0) + 1
             recoverableFailureCounts.set(toolName, failCount)
-            if (failCount >= MAX_SAME_TOOL_RECOVERABLE_FAILURES) {
+            const sameToolDecision = decideSameToolFailure({
+              failCount,
+              threshold: MAX_SAME_TOOL_RECOVERABLE_FAILURES,
+              errorCode: failCode,
+              errorText: toolResult.error,
+              alreadyPivoted: locatorPivotIssued.has(toolName),
+            })
+            if (sameToolDecision.action === "pivot") {
+              locatorPivotIssued.add(toolName)
+              recoverableFailureCounts.set(toolName, 0)
+              const note = sameToolDecision.instruction
+              toolResult.error = `${toolResult.error || ""} ${note}`.trim()
+              const data = (toolResult.data && typeof toolResult.data === "object")
+                ? toolResult.data
+                : {}
+              data.suggested_action = "switch_strategy"
+              data.pivot_zh = note
+              toolResult.data = data
+              logger.info("llm.locator_pivot", {
+                tool_name: toolName,
+                fail_count: failCount,
+                thread_id: threadId,
+              })
+            } else if (sameToolDecision.action === "stop") {
               logger.error("llm.recoverable_loop_detected", {
                 tool_name: toolName,
                 fail_count: failCount,
@@ -2171,10 +2197,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               } catch {
                 /* L-3 optional */
               }
+              const pivoted = locatorPivotIssued.has(toolName)
+                ? "已要求改读页面、滚动或搜索，仍在重复同一工具。"
+                : ""
               sendToExtension({
                 type: "chat.error",
                 thread_id: threadId,
-                error: `工具 ${toolName} 连续 ${failCount} 次执行失败，已停止以防止无限循环。${unlockHint}最后错误: ${toolResult.error}`,
+                error: `工具 ${toolName} 连续 ${failCount} 次执行失败，已停止以防止无限循环。${pivoted}${unlockHint}最后错误: ${toolResult.error}`,
               })
               break
             }
