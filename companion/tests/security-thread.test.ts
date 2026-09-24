@@ -505,6 +505,71 @@ test("classifyError web act-loop codes are recoverable (not chat.error)", () => 
   assert.equal(classifyError("TAB_ATTACH_FROZEN: CDP attach already failed"), "recoverable")
 })
 
+test("classifyError tab held by another worker is recoverable (HARD_HELD copy)", () => {
+  assert.equal(
+    classifyError("tab 1492102817 held by xdigpo (HARD_HELD)", {
+      toolName: "get_page_text",
+      error_code: "TAB_LOCKED",
+    }),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError("tab 1492102817 held by xdigpo (HARD_HELD)", { toolName: "navigate" }),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError("tab 9 is force-releasing; wait", {
+      toolName: "click",
+      error_code: "TAB_FORCE_RELEASING",
+    }),
+    "recoverable",
+  )
+})
+
+test("classifyError handback and screenshot tab mismatch do not halt the parent", () => {
+  assert.equal(
+    classifyError("handback payload is empty (no assistant message)", {
+      toolName: "collect_handback",
+      error_code: "HANDBACK_MISSING_STRUCTURE",
+    }),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError("worker stopped before writing a report (assistant turns were tool calls only)", {
+      toolName: "collect_handback",
+      error_code: "HANDBACK_MISSING_STRUCTURE",
+    }),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError("worker still running; last assistant is not a final handback. Other workers are unaffected.", {
+      toolName: "collect_handback",
+      error_code: "WORKER_STILL_RUNNING",
+    }),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError(
+      "SCREENSHOT_FALLBACK_TAB_MISMATCH: CDP failed for tab 1 and active tab is 2 — refusing captureVisibleTab of the wrong tab",
+      { toolName: "screenshot" },
+    ),
+    "recoverable",
+  )
+})
+
+test("classifyError page-read races during navigation are recoverable", () => {
+  for (const msg of [
+    "PAGE_READ_INVALID_RESULT",
+    "debugger is not attached to the tab",
+    "cannot find context with specified id",
+    "inspected target navigated or closed",
+    "target closed",
+    "debugger attach failed for tab 12",
+  ]) {
+    assert.equal(classifyError(msg, { toolName: "get_page_text" }), "recoverable", msg)
+  }
+})
+
 test("classifyError TAB_LEASE_CAP is recoverable so agent can close_tab and retry", () => {
   assert.equal(
     classifyError(

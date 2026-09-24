@@ -14,7 +14,11 @@ import {
   isPrivateOrLoopbackIp,
 } from "../security"
 import { decodeDataUrlImage, summarizeCandidateUrl } from "../image-data-url"
-import type { SecurityConfirmationManager } from "../security-confirmation"
+import {
+  DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS,
+  type SecurityConfirmationManager,
+} from "../security-confirmation"
+import { extendLeaseIdle, SOFT_LEASE_SKEW_MS } from "../orchestrator/tab-lease"
 import { isFullAutonomyCruise } from "./l2-admission"
 
 /** True when user armed three-flag cruise = explicit risk acceptance for tool surface + fewer gates. */
@@ -42,7 +46,12 @@ export type ImageFetchAdmissionCtx = {
     toolName: string,
     params: any,
     ws: WebSocket,
+    meta?: { threadId?: string; tabId?: number; trackTimeoutInFlight?: boolean },
   ) => Promise<ToolResult>
+  /** Server-injected thread. Used to renew the mutation lease across confirm/phase2. */
+  actingThreadId?: string
+  /** True when pregate incremented mutationHolds. Timeout then stays in-flight. */
+  trackTimeoutInFlight?: boolean
 }
 
 /**
@@ -62,7 +71,25 @@ export async function runImageFetchAdmission(
     logToolFinish,
     securityConfirmations,
     dispatchToExtension,
+    actingThreadId,
+    trackTimeoutInFlight,
   } = ctx
+  const dispatchMeta = trackTimeoutInFlight
+    ? {
+        threadId: actingThreadId,
+        tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
+        trackTimeoutInFlight: true as const,
+      }
+    : undefined
+  const coverMutationIdle = () => {
+    if (!trackTimeoutInFlight || !actingThreadId) return
+    if (typeof finalParams.tabId !== "number") return
+    extendLeaseIdle(
+      finalParams.tabId,
+      actingThreadId,
+      Date.now() + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS,
+    )
+  }
 
   // analyze_image_fetch is an INTERNAL phase-2 tool, dispatched only by the
   // analyze_image branch below via dispatchToExtension (which does NOT re-enter
@@ -97,7 +124,7 @@ export async function runImageFetchAdmission(
     return null
   }
 
-  const phase1 = await dispatchToExtension(toolCallId, "analyze_image", finalParams, ws)
+  const phase1 = await dispatchToExtension(toolCallId, "analyze_image", finalParams, ws, dispatchMeta)
   const p1 = phase1?.data
   // Path A (canvas → image_base64) or any error: return as-is. The adapter's
   // VISION_TOOLS post-processing runs vision when image_base64 is present.
@@ -238,6 +265,7 @@ export async function runImageFetchAdmission(
     }
     // P1-2 / day dual-review nit: bind confirm to requesting socket (align with
     // L2/URL/MCP — prevent other loopback peers burning the confirm).
+    coverMutationIdle()
     const decision = await securityConfirmations.request(
       (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)) },
       {
@@ -270,11 +298,12 @@ export async function runImageFetchAdmission(
   }
   // Gate passed → phase 2 fetch. Synthetic id keeps the LLM-facing
   // tool_call_id for the final result while correlating the internal fetch.
+  coverMutationIdle()
   const phase2 = await dispatchToExtension(`${toolCallId}__image_fetch`, "analyze_image_fetch", {
     tabId: finalParams.tabId,
     candidate_url: candidateUrl,
     selector: finalParams.selector,
-  }, ws)
+  }, ws, dispatchMeta)
   logToolFinish(toolCallId, toolName, startedAt, phase2)
   return phase2
 }

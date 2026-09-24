@@ -506,7 +506,7 @@ Worker 最后 assistant（或 tool 参数）在 board mode 下应可解析为：
 | cancel / stop_all / chat.abort | 见下方 **MF-5 顺序** |
 | `max_workers=5` 等 cap | Intent 扇出 **叠加** per-worker intent cap，不突破 worker cap |
 | FleetStrip / Dashboard | 阶段 4：open intent 徽标；图可视化更后 |
-| shared-observer / auto-spawn | **仍 defer**；board 不复活之 |
+| shared-observer / auto-spawn | 只读不占锁见 ADR-015 #526；正式 observer 状态机与 auto-spawn **仍 defer**；board 不复活之 |
 
 #### Cancel → Intent `abandoned` 顺序（**MF-5 锁定**）
 

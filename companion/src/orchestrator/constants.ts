@@ -9,7 +9,8 @@ export const ORCHESTRATOR_CAPS = {
   hard_max_lease_ms: 600_000,
   max_active_l2_per_run: 1,
   max_active_l2_process: 2,
-  create_tab_auto_hold_ms: 120_000,
+  /** Worker/orchestrator create_tab hold. Single-agent auto-hold does not use this. */
+  create_tab_auto_hold_ms: 60_000,
 } as const
 
 /** Tools workers must not get by default (evaluate is intentionally allowed under L2). */
@@ -68,7 +69,11 @@ export const ORCHESTRATOR_TOOL_ALLOWLIST = [
   "list_tabs", // read-only fleet awareness
 ] as const
 
-/** Tab-targeted tools that require exclusive lease (read + write). */
+/**
+ * Tab-targeted tools. Membership is the identity gate (explicit tabId, pinned
+ * exemption, run-progress, outbound dual-entry). Acquire is NOT this set —
+ * only TAB_MUTATION_LEASE_TOOLS take a per-call exclusive lease.
+ */
 export const TAB_LEASE_TOOLS = new Set([
   "navigate",
   "set_tab_url",
@@ -88,6 +93,31 @@ export const TAB_LEASE_TOOLS = new Set([
   "select_option",
   "drag_and_drop",
   "wait_for",
+  "evaluate",
+  "browser_download",
+])
+
+/**
+ * Calls that acquire a per-call exclusive lease. Reads stay in TAB_LEASE_TOOLS
+ * for the identity gate but do not acquire and are not rejected for HARD_HELD.
+ * get_element_info stays here (locator side effects). evaluate always mutates.
+ */
+export const TAB_MUTATION_LEASE_TOOLS = new Set([
+  "navigate",
+  "set_tab_url",
+  "close_tab",
+  "screenshot",
+  "analyze_image",
+  "get_element_info",
+  "click",
+  "dblclick",
+  "type",
+  "fill_form",
+  "scroll",
+  "press_key",
+  "hover",
+  "select_option",
+  "drag_and_drop",
   "evaluate",
   "browser_download",
 ])

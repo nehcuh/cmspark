@@ -14,6 +14,7 @@ import { classifyError } from "../security"
 import { toolChatErrorPayload } from "../ws/l1-actuator"
 import { logger } from "../logger"
 import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
+import { isTransientLlmTransportError } from "./transport-error"
 import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
 import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
@@ -1412,6 +1413,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         }
       }
 
+      // A completed stream ends the transport-failure streak. Tool success
+      // resets it too, but a text-only round never reaches that line.
+      continuousFailures = 0
+
       const truncatedToolBatch = isTruncatedToolBatch(
         finishReason,
         toolCalls.some((tc) => tc != null),
@@ -2311,7 +2316,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         continuous_failures: continuousFailures,
       })
 
-      if (!isContentRisk) {
+      const transientTransport = isTransientLlmTransportError(errorMsg)
+      // Transport flakes (Premature close / Connection error) retry the same
+      // request. Toasting each one paints "⚠️ Premature close" on a run that
+      // is about to continue — thread 8olhpa, parent + four workers.
+      if (!isContentRisk && !transientTransport) {
         sendToExtension({
           type: "chat.error",
           thread_id: threadId,
@@ -2384,6 +2393,32 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         })
         if (runStats) runStats.terminal = "error"
         return
+      }
+
+      if (transientTransport) {
+        continuousFailures++
+        logger.warn("llm.recoverable_api_error", {
+          error: errorMsg,
+          continuous_failures: continuousFailures,
+          limit: CONTINUOUS_FAILURE_LIMIT,
+        })
+        if (continuousFailures >= CONTINUOUS_FAILURE_LIMIT) {
+          logger.error("llm.failure_limit_reached", {
+            continuous_failures: continuousFailures,
+            limit: CONTINUOUS_FAILURE_LIMIT,
+          })
+          sendToExtension({
+            type: "chat.error",
+            thread_id: threadId,
+            error: `模型连接中断（${errorMsg}），已连续失败 ${CONTINUOUS_FAILURE_LIMIT} 次并暂停。请重试。`,
+          })
+          if (runStats) runStats.terminal = "circuit_breaker"
+          return
+        }
+        // Do not push "Please try a different approach" — the model then
+        // abandons a finished plan because the socket closed. Same request.
+        round--
+        continue
       }
 
       continuousFailures++

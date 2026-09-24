@@ -928,6 +928,27 @@ export function classifyError(
   // Without this mapping the queued error string falls through to the default
   // non_recoverable bucket → adapter security_halt → drain drops the retry.
   if (context?.error_code === "CU_FOCUS_LEASE_QUEUED") return "recoverable"
+  // Multi-agent collect: one worker's missing/partial handback must not
+  // HALT the parent and INTERRUPT the sibling collects in the same batch
+  // (thread 8olhpa). The service already marks these recoverable.
+  if (
+    context?.error_code === "HANDBACK_MISSING_STRUCTURE" ||
+    context?.error_code === "WORKER_STILL_RUNNING"
+  ) {
+    return "recoverable"
+  }
+  // Another worker already holds the tab. The message is
+  // "tab N held by <id> (HARD_HELD)" and does not contain the token
+  // "tab_locked", so the substring list below never matched and the
+  // parent turn halted (bqn39n vs xdigpo, tab 1492102817).
+  if (
+    context?.error_code === "TAB_LOCKED" ||
+    context?.error_code === "TAB_BUSY_CONFIRMING" ||
+    context?.error_code === "TAB_FORCE_RELEASING" ||
+    context?.error_code === "TAB_LEASE_CAP"
+  ) {
+    return "recoverable"
+  }
   const msg = errorMessage.toLowerCase()
 
   if (msg.includes("security block")) {
@@ -1028,6 +1049,17 @@ export function classifyError(
     "tab_locked",
     "tab_busy_confirming",
     "tab_force_releasing",
+    // User-facing lease copy omits the TAB_LOCKED token.
+    "hard_held",
+    "soft_reserved",
+    "force-releasing",
+    // Read racing a navigate/click. Only strings a production path actually emits.
+    "page_read_invalid_result",
+    "debugger is not attached to the tab",
+    "cannot find context with specified id",
+    "inspected target navigated or closed",
+    "target closed",
+    "debugger attach failed for tab",
     "tab_id_required",
     // Missing / malformed tool args: LLM should re-call with correct shape
     // (was default non_recoverable → chat.error "不可恢复错误: url and expression required")
@@ -1065,6 +1097,14 @@ export function classifyError(
     "type_unsupported_editor",
     "site_op_banned",
     "tab_attach_frozen",
+    // Parallel workers share one Chrome window; the active tab moves under
+    // them. The model can list_tabs and capture the leased tab. Halting the
+    // worker here leaves an empty tool-call turn and a failed handback.
+    "screenshot_fallback_tab_mismatch",
+    // collect_handback strings (also matched by error_code above).
+    "handback payload is empty",
+    "worker stopped before writing a report",
+    "worker still running",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"

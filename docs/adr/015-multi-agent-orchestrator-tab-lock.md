@@ -82,8 +82,8 @@
 
 #### 3.3 作用域与禁绕过
 
-- **P0 需要 lease 的工具**：所有 tab-targeted **读+写**（含 `screenshot` / `get_page_*` / `evaluate` 等）。  
-  shared-observer 只读模式 **非默认**，归 P2。
+- **需要 per-call 排他的工具**：修改页面的调用（`navigate` / `click` / `evaluate` / `screenshot` / `analyze_image` / `get_element_info` 等），只在这一次调用期间独占。`get_page_text` / `get_page_html` / `wait_for` 不 acquire，也不因别人的 HARD_HELD 被拒绝。`TAB_LEASE_TOOLS` 仍包含读和写，只做身份门禁（显式 tabId、pinned 豁免、outbound dual-entry）。  
+  正式的 shared-observer 双轨状态机仍不做；本修订是「只读不占锁」，不是 observer lease。
 - **Multi-agent 模式禁止 silent active-tab**：缺 `tabId` → `TAB_ID_REQUIRED`（修 `screenshot`/`analyze_image` fallback）。
 - **`create_tab`**：创建成功后对该 caller **auto HARD 短租约**（防抢新 tab）。
 - **`list_tabs`**：每项返回 `locked_by_thread_id` / `lease_expires_at`（防重试风暴）。
@@ -95,7 +95,7 @@
 - **Cancel worker**（`worker_cancel` / `fleet.stop_all` / `chat.abort`）：**先** deny 该 worker 盖章的 L2 确认（`rejectForWorker`，关闭 Confirm Center、释放 admission/flight），**再** reject 该 `thread_id` 的 pending tools，**再** pending-aware 释放 tab lease（有 CDP in-flight 时 `FORCE_RELEASING` → reject → `completeForceRelease`）。  
   → 要求 `pendingToolCalls` **绑定 `thread_id`（及 tabId）**——P0，不可放 P1。  
   → 禁止 cancel 后 zombie approve **re-HARD FREE tab**（`hardReacquireAfterConfirm` → `POST_CONFIRM_CANCELLED`）。
-- **Pause ≠ Cancel**：`worker.pause` **只**中止 LLM / 冻结新 dispatch；**保留** tab leases、打开的 L2 确认与 pending tools（直至 TTL / resume / 显式 cancel）。Pause **不是** stop；要清确认与锁请用 cancel / stop_all / Confirm Center stop。
+- **Pause ≠ Cancel**：`worker.pause` **只**中止 LLM / 冻结新 dispatch，不批量扫锁。暂停之后不再为 worker 新增 per-call 锁；已经在飞的修改锁保持到该调用结束。worker / orchestrator 的 `create_tab` 持有（60 秒，或该持有者第一次成功跳转）暂停后仍在。打开的 L2 确认与尚未结束的 pending tools 不因 pause 被清掉。Pause **不是** stop；要清确认与锁请用 cancel / stop_all / Confirm Center stop。outbound 的 episode 租约仍会使 `anyHeld()` 为真，浏览器窗口坐标门禁在那段时间照旧。
 - **HITL enter**：切换 `activeThreadId`，**可**发用户消息 follow-up；**不**转移 lease。  
   人要 mutate 非己持锁 tab：先 force-release 或等释放。
 
@@ -108,7 +108,8 @@
 | `max_tabs_leased_per_worker` | **2** | 单 worker 懒获取 tab 上限（5 总预算内控局部占用） |
 | `max_tabs_leased_process` | **10** | 进程总 lease 上限 |
 | `idle_ttl_ms` | **120_000** | 覆盖一轮 LLM 思考；仅 **worker tab-tool entry** 续租 |
-| `hard_max_lease_ms` | **600_000** | 单 episode 硬顶 |
+| `hard_max_lease_ms` | **600_000** | 单 episode 硬顶；到点拒绝还在飞的调用并释放 |
+| `create_tab_auto_hold_ms` | **60_000** | 仅 worker / orchestrator 新建标签；第一次成功跳转可提前结束 |
 | `max_active_l2_per_run` | **1** | 每 orchestrator_run |
 | `max_active_l2_process` | **2** | 全局 |
 
@@ -139,7 +140,7 @@
 | **P0** | Lease Map + 状态机（含 SOFT 互斥、`HELD_PENDING_L2`）；`isToolAllowed` 硬门；`pendingToolCalls.thread_id`；禁 active-tab 绕过；spawn+确认+Pack 降权；窄 orchestrator；数值 cap；worker-cancel；`list_tabs` 锁元数据 + `list_tab_locks`；`create_tab` auto-hold；最小 FleetStrip；审计；host_computer×Chrome×lease 门禁 |
 | **P1** | Confirm Center 完整身份与 FIFO；HITL pause/force-release UX；shell/netsec single-flight；可选 SOFT 排队（替代纯拒绝） |
 | **P2** | 全量 Dashboard；Extension per-tab 队列（纵深） |
-| **Deferred（明确不做于本阶段）** | **shared-observer 只读 lease**（P0/P1 仍全量排他，含纯读）；**受限 auto-spawn**（spawn **仅** L2 Confirm Center 显式批准，LLM 不得自批 / 无静默 fan-out） |
+| **Deferred（明确不做于本阶段）** | 正式 shared-observer 双轨状态机（只读已改为不 acquire、不被 HARD_HELD 拒绝；修改仍是调用期排他）；**受限 auto-spawn**（spawn **仅** L2 Confirm Center 显式批准，LLM 不得自批 / 无静默 fan-out） |
 
 ## 否决
 
@@ -155,7 +156,7 @@
 - **代价**：多 worker 浏览器 mutate 在同 tab 上串行；P0 工作量大（executor / schema / abort 链路）。  
 - **已做**：P0 内核 + P1 FleetStrip/L2 FIFO/single-flight/llm-loop cap/spawn HITL（见上方进度表）。  
 - **未做**：全量 Dashboard 网格 / E2E；默认 Chrome Store 分发「多 agent 攻击面」SKU。  
-- **明确延期**：shared-observer 只读模式；auto-spawn（保持 explicit HITL only）。
+- **明确延期**：正式 shared-observer 双轨状态机（只读并发已由 #526 落地）；auto-spawn（保持 explicit HITL only）。
 
 ## 实现入口（供 writing-plan）
 
@@ -196,7 +197,7 @@
 
 | 项 | 决定 | 理由 |
 |----|------|------|
-| **shared-observer 只读 lease** | **Defer** | 保持 P0 不变量：tab-targeted **读+写**一律排他。共享只读会引入 observer vs mutate 双轨状态机与绕过面；待产品有「扫描 worker 旁观 mutate worker」真实需求再开 ADR 修订。 |
+| **shared-observer 只读 lease** | **只读不占锁（#526）** | `get_page_text` / `get_page_html` / `wait_for` 不 acquire，也不被 HARD_HELD 拒绝。修改仍是调用期排他。正式 observer 双轨状态机仍不做。 |
 | **受限 auto-spawn** | **Defer / 不做** | 当前与目标均为 **explicit only**：每次 `spawn_worker` 走 Confirm Center。不引入 opt-in 静默 fan-out；即使未来做，也须限制非高危 Pack 且仍受并发 cap。 |
 
 ### 仍开放（按优先级）
@@ -226,3 +227,4 @@
 | 2026-07-27 | 初版：对抗 workflow + Claude/Pi + 用户 Q1–Q5 拍板 |
 | 2026-07-27 | P0 内核 + P1 FleetStrip/L2 FIFO/single-flight/llm-loop cap/spawn HITL/ask_user/tool whitelist filter/pending force-release；更新本进度表 |
 | 2026-07-27 | P2 polish：extension `TabQueue` 可测化；**shared-observer / auto-spawn 标为 Deferred**；用法见 mission-pack-usage § Multi-Agent |
+| 2026-09-24 | #526：只读不 acquire、不被 HARD_HELD 拒绝；修改是调用期排他；worker/orchestrator `create_tab` 持有 60 秒。正式 observer 状态机仍不做。 |

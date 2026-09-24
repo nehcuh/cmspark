@@ -69,6 +69,11 @@ export type PendingToolCall = {
   tabId?: number
   tool_name?: string
   /**
+   * Caller promise already failed. Late tool.result must not re-enter
+   * finishAndResolve. The entry stays until delete + settle or hard_max.
+   */
+  timedOutInFlight?: boolean
+  /**
    * SEC-E: socket that received tool.execute. Close grace and tool.result
    * acceptance are scoped to this peer so tray reconnect cannot kill extension tools.
    */
@@ -97,6 +102,32 @@ export function listPendingToolsForThread(
   return out
 }
 
+function settleTimedOut(tabId: number | undefined, holderThreadId: string | undefined): void {
+  if (typeof tabId !== "number" || !holderThreadId) return
+  try {
+    const { settleTimedOutLease } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
+    settleTimedOutLease(tabId, holderThreadId)
+  } catch {
+    /* lease module not ready */
+  }
+}
+
+/**
+ * Drop timed_out_in_flight entries without resolving and without settling.
+ * hard_max calls this, then FREEs the lease itself.
+ */
+export function discardTimedOutForTab(tabId: number, holderThreadId: string): number {
+  let n = 0
+  for (const [id, pending] of [...pendingToolCalls.entries()]) {
+    if (pending.thread_id !== holderThreadId || pending.tabId !== tabId) continue
+    if (!pending.timedOutInFlight) continue
+    clearTimeout(pending.timer)
+    pendingToolCalls.delete(id)
+    n++
+  }
+  return n
+}
+
 /** Reject in-flight extension tools owned by a thread (worker-cancel / lease drain). */
 export function rejectPendingForThread(
   threadId: string,
@@ -104,14 +135,22 @@ export function rejectPendingForThread(
   tabIdFilter?: number,
 ): number {
   let n = 0
+  const tombs: Array<{ tabId: number; holder: string }> = []
   for (const [id, pending] of [...pendingToolCalls.entries()]) {
     if (pending.thread_id !== threadId) continue
     if (tabIdFilter != null && pending.tabId !== tabIdFilter) continue
     clearTimeout(pending.timer)
     pendingToolCalls.delete(id)
-    pending.resolve({ success: false, error: reason })
     n++
+    if (pending.timedOutInFlight) {
+      if (typeof pending.tabId === "number" && pending.thread_id) {
+        tombs.push({ tabId: pending.tabId, holder: pending.thread_id })
+      }
+      continue
+    }
+    pending.resolve({ success: false, error: reason })
   }
+  for (const tomb of tombs) settleTimedOut(tomb.tabId, tomb.holder)
   return n
 }
 
@@ -149,6 +188,10 @@ export function handleToolResult(msg: any, fromWs?: WebSocket) {
   }
   clearTimeout(pending.timer)
   pendingToolCalls.delete(tool_call_id)
+  if (pending.timedOutInFlight) {
+    settleTimedOut(pending.tabId, pending.thread_id)
+    return
+  }
   if (error) {
     pending.resolve({ success: false, error: error.message || String(error) })
   } else {
@@ -177,6 +220,7 @@ export function dispatchToExtension(
   toolName: string,
   params: any,
   ws: WebSocket,
+  meta?: { threadId?: string; tabId?: number; trackTimeoutInFlight?: boolean },
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   return new Promise((resolve) => {
     let settled = false
@@ -187,15 +231,33 @@ export function dispatchToExtension(
       pendingToolCalls.delete(toolCallId)
       resolve(result)
     }
+    const tabId = typeof meta?.tabId === "number"
+      ? meta.tabId
+      : typeof params?.tabId === "number"
+        ? params.tabId
+        : undefined
     const timer = setTimeout(() => {
       const result = { success: false, error: `Tool execution timeout (${TOOL_EXECUTION_TIMEOUT_MS}ms): ${toolName}` }
       logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: TOOL_EXECUTION_TIMEOUT_MS })
+      // Tombstone only for a per-call mutation hold. Outbound and calls
+      // without a hold keep today's delete. The caller logs tool.finish.
+      if (meta?.trackTimeoutInFlight) {
+        const pending = pendingToolCalls.get(toolCallId)
+        if (pending) pending.timedOutInFlight = true
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(result)
+        return
+      }
       finish(result)
     }, TOOL_EXECUTION_TIMEOUT_MS)
     pendingToolCalls.set(toolCallId, {
       resolve: finish as any,
       reject: finish as any,
       timer,
+      thread_id: meta?.threadId,
+      tabId,
       tool_name: toolName,
       originWs: ws,
     })
@@ -226,6 +288,8 @@ export type ForwardToolToExtensionCtx = {
   ws: WebSocket
   actingThreadId?: string
   startedAt: number
+  /** True when pregate incremented mutationHolds for this call. */
+  mutationHold?: boolean
   logToolFinish: (id: string, name: string, startedAt: number, result: any) => void
 }
 
@@ -246,12 +310,16 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
     ws,
     actingThreadId,
     startedAt,
+    mutationHold,
     logToolFinish,
   } = ctx
   const { getTabUrlCache, refreshTabUrlCache, getThreadManager } = requireRt()
 
   return new Promise((resolve, reject) => {
+    let settled = false
     const finishAndResolve = (result: any) => {
+      if (settled) return
+      settled = true
       // Refresh tab URL cache when list_tabs returns, so the evaluate
       // whitelist gate can resolve tabId → hostname on the next call.
       if (toolName === "list_tabs" && result?.success && Array.isArray(result.data)) {
@@ -288,6 +356,15 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
         typeof finalParams.url === "string"
       ) {
         getTabUrlCache().set(finalParams.tabId, finalParams.url)
+        // Clear the create_tab hold before the executor finally runs.
+        if (actingThreadId) {
+          try {
+            const { clearCreatedHold } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
+            clearCreatedHold(finalParams.tabId, actingThreadId)
+          } catch {
+            /* ignore */
+          }
+        }
       }
       // Cache the new tab created by create_tab so the next evaluate({tabId})
       // can be domain-whitelisted without waiting for a fresh list_tabs.
@@ -312,6 +389,15 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
             const th = getThreadManager()?.get(actingThreadId) as any
             if (isMultiAgentThread(th) || anyTabLeaseHeld()) {
               autoHoldCreatedTab(result.data.id, actingThreadId)
+              if (th?.agent_role === "worker" || th?.agent_role === "orchestrator") {
+                const { armCreatedTabHold } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
+                const { ORCHESTRATOR_CAPS } = require("../orchestrator/constants") as typeof import("../orchestrator/constants")
+                armCreatedTabHold(
+                  result.data.id,
+                  actingThreadId,
+                  ORCHESTRATOR_CAPS.create_tab_auto_hold_ms,
+                )
+              }
             }
           } catch {
             /* ignore */
@@ -331,9 +417,20 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
     }
     const dispatchTimeoutMs = resolveToolDispatchTimeoutMs(toolName, finalParams)
     const timer = setTimeout(() => {
-      pendingToolCalls.delete(toolCallId)
       const result = { success: false, error: `Tool execution timeout (${dispatchTimeoutMs}ms): ${toolName}` }
       logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: dispatchTimeoutMs })
+      const outbound = typeof actingThreadId === "string" && actingThreadId.startsWith("outbound_mcp:")
+      if (mutationHold && !outbound) {
+        const pending = pendingToolCalls.get(toolCallId)
+        if (pending) pending.timedOutInFlight = true
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        resolve(result)
+        return
+      }
+      pendingToolCalls.delete(toolCallId)
       finishAndResolve(result)
     }, dispatchTimeoutMs)
 

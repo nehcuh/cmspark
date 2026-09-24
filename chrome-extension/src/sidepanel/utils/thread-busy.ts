@@ -111,6 +111,7 @@ export type FleetWorkerLike = {
   parent_thread_id?: string | null
   orchestrator_run_id?: string | null
   status?: string | null
+  llm_active?: boolean
 }
 
 export type ActiveThreadLike = {

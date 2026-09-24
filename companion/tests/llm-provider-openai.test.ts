@@ -129,6 +129,41 @@ test("complete sends no cap when neither params nor config sets max_tokens", asy
   assert.equal("max_tokens" in captured[0], false)
 })
 
+test("streamChat treats Premature close after finish_reason as a completed round", async () => {
+  const provider = new OpenAIProvider(baseLlm())
+  captureCreate(provider, async function* () {
+    yield { choices: [{ delta: { content: "报告正文" }, finish_reason: null }] }
+    yield { choices: [{ delta: {}, finish_reason: "stop" }] }
+    throw new Error("Premature close")
+  })
+
+  const events: CanonicalStreamEvent[] = []
+  for await (const e of provider.streamChat({ messages: [{ role: "user", content: "hi" }] })) {
+    events.push(e)
+  }
+  assert.deepEqual(events, [
+    { type: "token", text: "报告正文" },
+    { type: "done", finish_reason: "stop" },
+  ])
+})
+
+test("streamChat still throws Premature close when the socket dies before finish_reason", async () => {
+  const provider = new OpenAIProvider(baseLlm())
+  captureCreate(provider, async function* () {
+    yield { choices: [{ delta: { content: "半" }, finish_reason: null }] }
+    throw new Error("Premature close")
+  })
+
+  await assert.rejects(
+    async () => {
+      for await (const _e of provider.streamChat({ messages: [{ role: "user", content: "hi" }] })) {
+        /* drain */
+      }
+    },
+    /Premature close/,
+  )
+})
+
 test("streamChat passes through messages without internal-only fields unchanged", async () => {
   const provider = new OpenAIProvider(baseLlm())
   const plain: CanonicalChatMessage[] = [

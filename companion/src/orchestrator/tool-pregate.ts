@@ -8,10 +8,12 @@
 // MCP → mcp/dispatch.ts.
 
 import { logger } from "../logger"
-import { TAB_LEASE_TOOLS } from "./constants"
+import { TAB_LEASE_TOOLS, TAB_MUTATION_LEASE_TOOLS } from "./constants"
 import {
   anyTabLeaseHeld,
   acquireOrRenewTabLease,
+  noteMutationHold,
+  releaseMutationHold,
   sweepExpired,
 } from "./tab-lease"
 import { isMultiAgentThread } from "./spawn"
@@ -21,8 +23,10 @@ import {
   resolveEffectiveExecutionPolicy,
 } from "../tool/plan-readonly"
 
+export type MutationHoldRelease = { tabId: number; holderThreadId: string }
+
 export type ToolPregateResult =
-  | { ok: true; finalParams: Record<string, any> }
+  | { ok: true; finalParams: Record<string, any>; releaseMutationHold?: MutationHoldRelease }
   | { ok: false; result: { success: false; error: string; data?: any } }
 
 export type ToolPregateCtx = {
@@ -127,6 +131,7 @@ export async function runMultiAgentToolPregate(
   const anyHeld = deps?.anyTabLeaseHeld ?? anyTabLeaseHeld
   const acquire = deps?.acquireOrRenewTabLease ?? acquireOrRenewTabLease
   const sweep = deps?.sweepExpired ?? sweepExpired
+  let acquiredMutation: MutationHoldRelease | undefined
 
   try {
     if (deps?.forceThrow) deps.forceThrow()
@@ -235,7 +240,8 @@ export async function runMultiAgentToolPregate(
         // Defense-in-depth for extension screenshot/analyze_image fallback
         ;(finalParams as any).__require_tab_id = true
       }
-      // Early exclusive HARD for tab tools — multi-agent only (ADR-015).
+      // Per-call exclusive HARD for mutation tools only (ADR-015 revision).
+      // Reads stay in TAB_LEASE_TOOLS for the tabId gate above and do not acquire.
       // Outbound MCP already leased in companion-http (L9); skip double-acquire here
       // when isOutboundMcpCall (holder is outbound_mcp:*).
       // Normal single-agent chats must not take per-worker tab leases: browse /
@@ -245,10 +251,11 @@ export async function runMultiAgentToolPregate(
       // GATE2: auto-approve / domain-whitelist / god-mode must still hold exclusive
       // lease — previously willEnterL2 skipped HARD and skipConfirmation skipped SOFT.
       // Interactive L2 path upgrades same-holder HARD → HELD_PENDING_L2 below.
+      // +1 is here only. L2 acquire and hardReacquireAfterConfirm do not count.
       if (
         multi &&
         !isOutboundMcpCall &&
-        tabLeaseTools.has(toolName) &&
+        TAB_MUTATION_LEASE_TOOLS.has(toolName) &&
         typeof finalParams.tabId === "number" &&
         actingThreadId
       ) {
@@ -270,6 +277,8 @@ export async function runMultiAgentToolPregate(
           logToolFinish(toolCallId, toolName, startedAt, result)
           return { ok: false, result }
         }
+        noteMutationHold(finalParams.tabId, actingThreadId)
+        acquiredMutation = { tabId: finalParams.tabId, holderThreadId: actingThreadId }
       }
     }
     // host_computer vs any tab lease (Q4): block vault-browser window ops while tabs leased
@@ -286,7 +295,12 @@ export async function runMultiAgentToolPregate(
       }
     }
   } catch (gateErr: any) {
-    // Fail closed: never skip multi-agent exclusivity on gate exception (ADR-015)
+    // Fail closed: never skip multi-agent exclusivity on gate exception (ADR-015).
+    // If +1 already happened, give it back before the error return.
+    if (acquiredMutation) {
+      releaseMutationHold(acquiredMutation.tabId, acquiredMutation.holderThreadId)
+      acquiredMutation = undefined
+    }
     logger.warn("orchestrator.gate_error", { error: gateErr?.message || String(gateErr) })
     const result = {
       success: false as const,
@@ -297,5 +311,9 @@ export async function runMultiAgentToolPregate(
     return { ok: false, result }
   }
 
-  return { ok: true, finalParams }
+  return {
+    ok: true,
+    finalParams,
+    ...(acquiredMutation ? { releaseMutationHold: acquiredMutation } : {}),
+  }
 }

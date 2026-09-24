@@ -16,6 +16,7 @@ import type {
   StreamChatParams,
 } from "../provider"
 import { throwIfLlmEndpointBlocked } from "../../security"
+import { isBenignStreamTailClose } from "../transport-error"
 import { cleanCompanionUserAgent } from "./headers"
 
 export class OpenAIProvider implements LlmProvider {
@@ -63,51 +64,58 @@ export class OpenAIProvider implements LlmProvider {
 
     let finishReason: string | null | undefined
 
-    for await (const chunk of stream) {
-      const choice = chunk.choices[0]
-      const delta = choice?.delta as
-        | (OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta & {
-            reasoning_content?: string
-          })
-        | undefined
+    try {
+      for await (const chunk of stream) {
+        const choice = chunk.choices[0]
+        const delta = choice?.delta as
+          | (OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta & {
+              reasoning_content?: string
+            })
+          | undefined
 
-      if ((chunk as { usage?: OpenAI.Completions.CompletionUsage }).usage) {
-        const u = (chunk as { usage: OpenAI.Completions.CompletionUsage }).usage
-        yield {
-          type: "usage",
-          prompt_tokens: u.prompt_tokens,
-          completion_tokens: u.completion_tokens,
-          total_tokens: u.total_tokens,
-          reasoning_tokens: (u as { completion_tokens_details?: { reasoning_tokens?: number } })
-            .completion_tokens_details?.reasoning_tokens,
-        }
-      }
-
-      if (delta?.content) {
-        yield { type: "token", text: delta.content }
-      }
-
-      if (delta?.reasoning_content) {
-        yield { type: "reasoning", text: delta.reasoning_content }
-      }
-
-      if (delta?.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          if (tc.index === undefined) continue
-          const ev: CanonicalStreamEvent = {
-            type: "tool_call_delta",
-            index: tc.index,
+        if ((chunk as { usage?: OpenAI.Completions.CompletionUsage }).usage) {
+          const u = (chunk as { usage: OpenAI.Completions.CompletionUsage }).usage
+          yield {
+            type: "usage",
+            prompt_tokens: u.prompt_tokens,
+            completion_tokens: u.completion_tokens,
+            total_tokens: u.total_tokens,
+            reasoning_tokens: (u as { completion_tokens_details?: { reasoning_tokens?: number } })
+              .completion_tokens_details?.reasoning_tokens,
           }
-          if (tc.id) ev.id = tc.id
-          if (tc.function?.name) ev.name = tc.function.name
-          if (tc.function?.arguments) ev.arguments = tc.function.arguments
-          yield ev
+        }
+
+        if (delta?.content) {
+          yield { type: "token", text: delta.content }
+        }
+
+        if (delta?.reasoning_content) {
+          yield { type: "reasoning", text: delta.reasoning_content }
+        }
+
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            if (tc.index === undefined) continue
+            const ev: CanonicalStreamEvent = {
+              type: "tool_call_delta",
+              index: tc.index,
+            }
+            if (tc.id) ev.id = tc.id
+            if (tc.function?.name) ev.name = tc.function.name
+            if (tc.function?.arguments) ev.arguments = tc.function.arguments
+            yield ev
+          }
+        }
+
+        if (choice?.finish_reason) {
+          finishReason = choice.finish_reason
         }
       }
-
-      if (choice?.finish_reason) {
-        finishReason = choice.finish_reason
-      }
+    } catch (err) {
+      // DeepSeek-class gateways often deliver finish_reason and then RST
+      // the socket instead of `data: [DONE]`. The round is complete; throwing
+      // here discards the tool calls and surfaces "Premature close".
+      if (finishReason == null || !isBenignStreamTailClose(err)) throw err
     }
 
     yield { type: "done", finish_reason: finishReason ?? null }

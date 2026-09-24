@@ -267,13 +267,18 @@ export function fleetProcessingLabel(input: {
   lockCount: number
   openIntents: number
   worstStatus?: string | null
+  /**
+   * A scoped worker is inside an LLM run. Idle workers left over after the
+   * run (the 10-minute inspect window) must not read as 运行中.
+   */
+  llmActive?: boolean
 }): string | null {
-  const kind = classifyFleetActivity(input)
-  if (kind === "none") return null
-  if (kind === "paused_only") {
-    // Soft hint only if caller wants it; default ChatView passes showPausedHint=false via null.
-    return null
-  }
+  const live =
+    input.lockCount > 0 ||
+    input.openIntents > 0 ||
+    input.worstStatus === "holding_tabs" ||
+    input.llmActive === true
+  if (!live) return null
   if (input.workerCount > 0) return `舰队运行中 · ${input.workerCount} worker`
   if (input.lockCount > 0) return `舰队持锁 · ${input.lockCount} 锁`
   if (input.openIntents > 0) return `舰队 · ${input.openIntents} intent 未关闭`

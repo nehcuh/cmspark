@@ -341,10 +341,21 @@ export function applyConnectionCloseGracePeriod(closedWs?: WebSocket): void {
       scoped: !!closedWs,
     })
     pending.timer = setTimeout(() => {
-      if (pendingToolCalls.has(id)) {
-        pendingToolCalls.delete(id)
-        pending.resolve({ success: false, error: "WebSocket disconnected" })
+      const current = pendingToolCalls.get(id)
+      if (!current) return
+      pendingToolCalls.delete(id)
+      if (current.timedOutInFlight) {
+        if (typeof current.tabId === "number") {
+          try {
+            const { settleTimedOutLease } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
+            settleTimedOutLease(current.tabId, current.thread_id)
+          } catch {
+            /* ignore */
+          }
+        }
+        return
       }
+      current.resolve({ success: false, error: "WebSocket disconnected" })
     }, WS_DISCONNECT_GRACE_MS)
   }
 }

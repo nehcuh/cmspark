@@ -68,8 +68,8 @@ Orchestrator **默认不能**直接 mutate 浏览器 / shell / host；执行细�
 
 - **单位**：Chrome `tabId`。  
 - **不变量**：同一时刻最多 **一个** exclusive holder。  
-- Worker 对 tab 的读/写工具（navigate、screenshot、`get_page_*`、click、`evaluate`…）都要 **lease**；本阶段 **没有**「只读共享 observer」。  
-- 其它 worker 撞锁 → 可恢复错误（如 `TAB_LOCKED` / `TAB_BUSY_CONFIRMING`），**不会**并行进第二确认。  
+- 改页面的调用（navigate、click、`evaluate`、screenshot…）在这一次调用期间独占该标签。`get_page_text`、`get_page_html`、`wait_for` 不占锁，也可以读别人正在用的页面。  
+- 其它 worker 在对方正在修改时去改同一页 → 可恢复错误（如 `TAB_LOCKED` / `TAB_BUSY_CONFIRMING`），**不会**并行进第二确认。  
 - 权威在 Companion（`orchestrator/tab-lease`）；扩展另有 per-tab 串行队列防 CDP 竞态。  
 - 你向 worker 发 follow-up **不会**自动偷锁；要操作非己持锁 tab 须等待释放或 **force-release**（高级）。  
 - **`host_computer` vs Chrome 窗**：存在任意 tab lease 时，禁止对 Chrome/Chromium 窗口做坐标操控（见 Computer Use 指南）。
@@ -117,7 +117,7 @@ FleetStrip / **子任务列表**：worker 数量、状态、**进入子任务**�
 | 项 | 状态 |
 |----|------|
 | auto-spawn | **不做** |
-| 只读 tab 共享 | **延期** |
+| 只读 tab 共享 | 只读已不占锁（#526）；正式 observer 状态机仍不做 |
 | 全量图 Dashboard / Intent 抢占调度 | 后置（ADR-016 阶段 3+） |
 
 ---

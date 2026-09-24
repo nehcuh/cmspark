@@ -1,7 +1,7 @@
 // Fleet snapshot for Side Panel FleetStrip + Dashboard — ADR-015 P1
 
 import type { ThreadManager } from "../threads/thread-manager"
-import { listTabLocks } from "./tab-lease"
+import { listTabLocks, releaseIdleWorkerLeases } from "./tab-lease"
 import { listWorkers } from "./spawn"
 import { countOpenIntents } from "../board/intent-claim"
 
@@ -55,14 +55,6 @@ export interface FleetSnapshot {
 }
 
 export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
-  const locks = listTabLocks()
-  const locksByHolder = new Map<string, typeof locks>()
-  for (const l of locks) {
-    const arr = locksByHolder.get(l.holder_thread_id) || []
-    arr.push(l)
-    locksByHolder.set(l.holder_thread_id, arr)
-  }
-
   let llmActive: string[] = []
   try {
     // Lazy require avoids circular import at module load
@@ -77,6 +69,19 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
   const llmSet = new Set(llmActive)
 
   const all = tm.list() as any[]
+  // A worker whose LLM run has ended (and was not paused) must not keep tab
+  // leases. Otherwise Glance stays holding_tabs and the chip says 运行中
+  // after the subtask is done (thread 8olhpa).
+  releaseIdleWorkerLeases(all, llmSet)
+
+  const locks = listTabLocks()
+  const locksByHolder = new Map<string, typeof locks>()
+  for (const l of locks) {
+    const arr = locksByHolder.get(l.holder_thread_id) || []
+    arr.push(l)
+    locksByHolder.set(l.holder_thread_id, arr)
+  }
+
   const workers = all.filter(
     (t) => t.agent_role === "worker" || t.agent_role === "orchestrator" || t.parent_thread_id,
   )
@@ -84,8 +89,8 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
   const views: FleetWorkerView[] = workers.map((w) => {
     const wLocks = locksByHolder.get(w.id) || []
     let status: FleetWorkerView["status"] = "idle"
-    // ADR: pause keeps leases — prefer holding_tabs so operators still see exclusive holds
-    // (and can force-release). paused alone only when no locks remain.
+    // A remaining lock (in-flight mutation or create_tab hold) wins over paused.
+    // paused alone only when no locks remain. Pause does not bulk-free.
     if (wLocks.length > 0) status = "holding_tabs"
     else if (w.paused) status = "paused"
     // #502 E (Kimi BLOCK fix): metadata only — latest_tool / brief are stamped

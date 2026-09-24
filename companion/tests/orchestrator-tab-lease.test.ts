@@ -12,10 +12,17 @@ import {
   getTabLease,
   registerTabLeasePendingHooks,
   sweepExpired,
+  noteMutationHold,
+  releaseMutationHold,
+  clearCreatedHold,
+  armCreatedTabHold,
+  settleTimedOutLease,
   SOFT_LEASE_MS,
   SOFT_LEASE_SKEW_MS,
 } from "../src/orchestrator/tab-lease"
+import { ORCHESTRATOR_CAPS, TAB_LEASE_TOOLS, TAB_MUTATION_LEASE_TOOLS } from "../src/orchestrator/constants"
 import { computeWorkerWhitelist, WORKER_HARD_DENY, buildFleetSnapshot, spawnWorkerThread } from "../src/orchestrator"
+import { runMultiAgentToolPregate } from "../src/orchestrator/tool-pregate"
 import { DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS } from "../src/security-confirmation"
 
 function reset() {
@@ -403,17 +410,12 @@ test("unregistered pending hooks fail-closed (treat as pending)", () => {
   const lease = getTabLease(83)!
   ;(lease as any).idleDeadline = Date.now() - 1
   sweepExpired()
-  // Fail-closed: should not silent-FREE; either FORCE_RELEASING or still held/drained path
+  // Fail-closed pending (hooks unregistered) must not idle-FREE or idle-drain.
   const after = getTabLease(83)
-  // Without rejector: FORCE_RELEASING; with null hooks resolveHasPending=true → FORCE_RELEASING
-  assert.ok(after === null || after.state === "FORCE_RELEASING", `state=${after?.state}`)
-  if (after?.state === "FORCE_RELEASING") {
-    // GC path eventually frees; for unit assert we just require no silent free without pending drain attempt
-    assert.equal(after.state, "FORCE_RELEASING")
-  }
+  assert.equal(after?.state, "HARD_HELD")
 })
 
-test("sweepExpired with pending hook drains instead of silent FREE", () => {
+test("idle expiry does not drain a per-call lease that still has pending", () => {
   reset()
   let rejected = 0
   registerTabLeasePendingHooks({
@@ -425,12 +427,60 @@ test("sweepExpired with pending hook drains instead of silent FREE", () => {
   })
   const a = acquireOrRenewTabLease({ tabId: 60, holderThreadId: "w1", needsL2: false })
   assert.equal(a.ok, true)
-  // Force idle expiry
   const lease = getTabLease(60)!
   ;(lease as any).idleDeadline = Date.now() - 1
   sweepExpired()
-  assert.equal(getTabLease(60), null, "pending path should drain+free")
+  assert.equal(getTabLease(60)?.state, "HARD_HELD")
+  assert.equal(rejected, 0)
+})
+
+test("hard_max still rejects live pending and frees a per-call lease", () => {
+  reset()
+  let rejected = 0
+  registerTabLeasePendingHooks({
+    hasPendingForTab: () => true,
+    rejectPendingForTab: () => {
+      rejected++
+      return 1
+    },
+  })
+  acquireOrRenewTabLease({ tabId: 61, holderThreadId: "w1", needsL2: false })
+  const lease = getTabLease(61)!
+  ;(lease as any).hardMaxDeadline = Date.now() - 1
+  sweepExpired()
+  assert.equal(getTabLease(61), null)
   assert.ok(rejected >= 1)
+})
+
+test("fleet drops tab leases when a worker run has ended and was not paused", () => {
+  reset()
+  acquireOrRenewTabLease({ tabId: 71, holderThreadId: "worker-done", needsL2: false })
+  acquireOrRenewTabLease({ tabId: 72, holderThreadId: "worker-paused", needsL2: false })
+  const tm = {
+    list: () => [
+      {
+        id: "worker-done",
+        alias: "done",
+        agent_role: "worker",
+        paused: false,
+        parent_thread_id: "p",
+      },
+      {
+        id: "worker-paused",
+        alias: "paused",
+        agent_role: "worker",
+        paused: true,
+        parent_thread_id: "p",
+      },
+    ],
+  }
+  const snap = buildFleetSnapshot(tm as any)
+  const done = snap.workers.find((w) => w.id === "worker-done")
+  const paused = snap.workers.find((w) => w.id === "worker-paused")
+  assert.equal(done?.status, "idle")
+  assert.equal(done?.tab_locks.length, 0)
+  assert.equal(paused?.status, "holding_tabs")
+  assert.equal(paused?.tab_locks.length, 1)
 })
 
 test("fleet prefers holding_tabs over paused when locks present", () => {
@@ -497,4 +547,166 @@ test("fleet open_intents_by_run scopes board intents by orchestrator_run_id", ()
   assert.equal(snap.open_intents_by_run["run-a"], 2)
   assert.equal(snap.open_intents_by_run["run-b"], 1)
   assert.equal(snap.open_intents_by_run["missing"], undefined)
+})
+
+test("reads stay in the identity set and are not mutation leases", () => {
+  for (const name of ["get_page_text", "get_page_html", "wait_for"]) {
+    assert.equal(TAB_LEASE_TOOLS.has(name), true, name)
+    assert.equal(TAB_MUTATION_LEASE_TOOLS.has(name), false, name)
+  }
+  assert.equal(TAB_MUTATION_LEASE_TOOLS.has("evaluate"), true)
+  assert.equal(TAB_MUTATION_LEASE_TOOLS.has("get_element_info"), true)
+  assert.equal(ORCHESTRATOR_CAPS.create_tab_auto_hold_ms, 60_000)
+})
+
+test("mutation hold releases when the call ends and no create hold remains", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 90, holderThreadId: "w1", needsL2: false })
+  noteMutationHold(90, "w1")
+  releaseMutationHold(90, "w1")
+  assert.equal(getTabLease(90), null)
+})
+
+test("create_tab hold survives the creating call and a later idle renew", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 91, holderThreadId: "w1", needsL2: false })
+  armCreatedTabHold(91, "w1", 60_000)
+  noteMutationHold(91, "w1")
+  releaseMutationHold(91, "w1")
+  const held = getTabLease(91)
+  assert.ok(held, "create hold keeps the lease")
+  assert.ok(held!.createdHoldUntil && held!.createdHoldUntil > Date.now())
+  // A later mutation renews idle past the create deadline.
+  acquireOrRenewTabLease({ tabId: 91, holderThreadId: "w1", needsL2: false })
+  const renewed = getTabLease(91)!
+  renewed.idleDeadline = Date.now() + 120_000
+  renewed.createdHoldUntil = Date.now() - 1
+  sweepExpired()
+  assert.equal(getTabLease(91), null)
+})
+
+test("releaseMutationHold ignores a different holder", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 92, holderThreadId: "w1", needsL2: false })
+  noteMutationHold(92, "w1")
+  releaseMutationHold(92, "w2")
+  assert.equal(getTabLease(92)?.mutationHolds, 1)
+  assert.equal(getTabLease(92)?.holderThreadId, "w1")
+})
+
+test("hard reacquire keeps the mutation count", () => {
+  reset()
+  acquireOrRenewTabLease({ tabId: 93, holderThreadId: "w1", needsL2: false })
+  noteMutationHold(93, "w1")
+  acquireOrRenewTabLease({ tabId: 93, holderThreadId: "w1", needsL2: true, confirmId: "c" })
+  const promoted = hardReacquireAfterConfirm({ tabId: 93, holderThreadId: "w1" })
+  assert.equal(promoted.ok, true)
+  assert.equal(getTabLease(93)?.mutationHolds, 1)
+  assert.equal(getTabLease(93)?.state, "HARD_HELD")
+})
+
+test("pending blocks release until the tombstone is settled", () => {
+  reset()
+  let pending = true
+  registerTabLeasePendingHooks({ hasPendingForTab: () => pending })
+  acquireOrRenewTabLease({ tabId: 94, holderThreadId: "w1", needsL2: false })
+  noteMutationHold(94, "w1")
+  releaseMutationHold(94, "w1")
+  assert.equal(getTabLease(94)?.state, "HARD_HELD")
+  assert.equal(getTabLease(94)?.mutationHolds, 0)
+  pending = false
+  settleTimedOutLease(94, "w1")
+  assert.equal(getTabLease(94), null)
+})
+
+test("settle does not free an outbound episode lease", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 95, holderThreadId: "outbound_mcp:caller", needsL2: false })
+  settleTimedOutLease(95, "outbound_mcp:caller")
+  releaseMutationHold(95, "outbound_mcp:caller")
+  assert.equal(getTabLease(95)?.holderThreadId, "outbound_mcp:caller")
+})
+
+test("outbound idle expiry still drains pending", () => {
+  reset()
+  let rejected = 0
+  registerTabLeasePendingHooks({
+    hasPendingForTab: () => true,
+    rejectPendingForTab: () => {
+      rejected++
+      return 1
+    },
+  })
+  acquireOrRenewTabLease({ tabId: 97, holderThreadId: "outbound_mcp:caller", needsL2: false })
+  const lease = getTabLease(97)!
+  lease.idleDeadline = Date.now() - 1
+  sweepExpired()
+  assert.equal(getTabLease(97), null)
+  assert.ok(rejected >= 1)
+})
+
+test("a read is not blocked by another worker holding the tab", async () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  const tm = {
+    get: (id: string) => ({
+      id,
+      agent_role: id === "p" ? "orchestrator" : "worker",
+      parent_thread_id: id === "p" ? null : "p",
+    }),
+    isToolAllowed: () => true,
+  }
+  const gate = {
+    toolCallId: "c",
+    startedAt: Date.now(),
+    isOutboundMcpCall: false,
+    logToolFinish: () => {},
+    getThreadManager: () => tm as any,
+    hasPendingForTab: () => false,
+    toolDisplayNameZh: (n: string) => n,
+  }
+  const held = await runMultiAgentToolPregate({
+    ...gate,
+    toolName: "click",
+    finalParams: { tabId: 7 },
+    actingThreadId: "w1",
+  })
+  assert.equal(held.ok, true)
+  if (held.ok) assert.deepEqual(held.releaseMutationHold, { tabId: 7, holderThreadId: "w1" })
+  assert.equal(getTabLease(7)?.mutationHolds, 1)
+
+  const read = await runMultiAgentToolPregate({
+    ...gate,
+    toolName: "get_page_text",
+    finalParams: { tabId: 7 },
+    toolCallId: "r",
+    actingThreadId: "w2",
+  })
+  assert.equal(read.ok, true)
+  if (read.ok) assert.equal(read.releaseMutationHold, undefined)
+  assert.equal(getTabLease(7)?.holderThreadId, "w1")
+
+  const blocked = await runMultiAgentToolPregate({
+    ...gate,
+    toolName: "click",
+    finalParams: { tabId: 7 },
+    toolCallId: "c2",
+    actingThreadId: "w2",
+  })
+  assert.equal(blocked.ok, false)
+})
+
+test("clearCreatedHold lets the in-flight mutation finally free the tab", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 96, holderThreadId: "w1", needsL2: false })
+  armCreatedTabHold(96, "w1", 60_000)
+  noteMutationHold(96, "w1")
+  clearCreatedHold(96, "w1")
+  releaseMutationHold(96, "w1")
+  assert.equal(getTabLease(96), null)
 })

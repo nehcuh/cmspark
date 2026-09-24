@@ -767,6 +767,8 @@ export type CollectHandbackSuccess = {
     data_not_instruction?: string
     /** false = finished prose report; board was not merged. */
     structured?: boolean
+    /** True when the worker stopped on a later empty tool-call turn. */
+    partial?: boolean
     suggested_action?: string
     note?: string
   }
@@ -848,10 +850,20 @@ export async function collectWorkerHandback(
   }
 
   const msgs = tm.getMessages(workerId)
-  const last = [...msgs].reverse().find((m) => m.role === "assistant")
-  const lastAssistant: CollectHandbackLastAssistant = last
-    ? { id: last.id, content: last.content, created_at: last.created_at }
+  // Tool-call turns persist an assistant row with empty content. After a
+  // worker dies on that turn (screenshot tab mismatch, same-tool circuit),
+  // the chronological last assistant is blank even though earlier turns
+  // wrote the report. Hand back the last non-empty body (thread 8olhpa).
+  const assistants = msgs.filter((m) => m.role === "assistant")
+  const chronologicalLast = assistants.length > 0 ? assistants[assistants.length - 1] : undefined
+  const report = [...assistants].reverse().find((m) => typeof m.content === "string" && m.content.trim())
+  const handbackSource = report ?? chronologicalLast
+  const stoppedMidRun = !!report && report !== chronologicalLast
+  const lastAssistant: CollectHandbackLastAssistant = handbackSource
+    ? { id: handbackSource.id, content: handbackSource.content, created_at: handbackSource.created_at }
     : null
+  const partialNote =
+    "worker stopped mid-run; last_assistant is the last non-empty assistant text, not a closing report. MissionBoard was not updated. Other workers are unaffected."
 
   const hostId =
     resolveBoardHostThreadId(tm, workerId) ||
@@ -894,7 +906,12 @@ export async function collectWorkerHandback(
   }
 
   if (!boardMode) {
-    return { success: true, data: base }
+    return {
+      success: true,
+      data: stoppedMidRun
+        ? { ...base, partial: true, note: partialNote }
+        : base,
+    }
   }
 
   if (!hostId || !host || !isBoardHostThread(host)) {
@@ -926,19 +943,22 @@ export async function collectWorkerHandback(
 
   const rawPayload = lastAssistant?.content ?? null
   if (rawPayload == null || (typeof rawPayload === "string" && !rawPayload.trim())) {
+    const error = assistants.length
+      ? "worker stopped before writing a report (assistant turns were tool calls only)"
+      : "handback payload is empty (no assistant message)"
     audit(
       "board.handback_rejected",
       {
         thread_id: hostId,
         worker_id: workerId,
         error_code: HANDBACK_MISSING_STRUCTURE,
-        error: "handback payload is empty (no assistant message)",
+        error,
       },
       opts.auditPath,
     )
     return {
       success: false,
-      error: "handback payload is empty (no assistant message)",
+      error,
       error_code: HANDBACK_MISSING_STRUCTURE,
       recoverable: true,
       data: base,
@@ -970,8 +990,11 @@ export async function collectWorkerHandback(
       data: {
         ...base,
         structured: false,
+        ...(stoppedMidRun ? { partial: true } : {}),
         suggested_action: "use last_assistant",
-        note: "worker finished with a prose report; MissionBoard was not updated. Other workers are unaffected.",
+        note: stoppedMidRun
+          ? partialNote
+          : "worker finished with a prose report; MissionBoard was not updated. Other workers are unaffected.",
       },
     }
   }
@@ -1016,6 +1039,7 @@ export async function collectWorkerHandback(
     success: true,
     data: {
       ...base,
+      ...(stoppedMidRun ? { partial: true } : {}),
       facts: added.map((f) => ({
         id: f.id,
         trust: f.trust,

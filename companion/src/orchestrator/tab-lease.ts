@@ -24,6 +24,10 @@ export interface TabLease {
   softDeadline?: number
   /** When state entered FORCE_RELEASING (for bounded GC). */
   forceReleasingAt?: number
+  /** In-flight mutation calls for this holder. 0 on episode/outbound leases. */
+  mutationHolds: number
+  /** Worker/orchestrator create_tab hold deadline. null when none. */
+  createdHoldUntil: number | null
 }
 
 export type LeaseErrorCode =
@@ -60,6 +64,11 @@ type PendingHooks = {
    * Prefer confirmId match; fall back to holderThreadId worker stamp.
    */
   hasPendingConfirmation?: (confirmId: string | undefined, holderThreadId: string) => boolean
+  /**
+   * Delete timed_out_in_flight entries for this tab/holder without resolving
+   * the caller (it already failed). Does not FREE the lease.
+   */
+  discardTimedOutForTab?: (tabId: number, holderThreadId: string) => number
 }
 
 /** Module-level pending hooks so *every* sweepExpired path respects in-flight CDP. */
@@ -134,83 +143,176 @@ function drainPendingAndFree(
   })
 }
 
-/**
- * Drop expired HARD/SOFT leases when no pending tools.
- * Always consults module-level hasPendingForTab (or opts override).
- * Never silent-FREE while CDP pending — reject pending + free, or FORCE_RELEASING + GC.
- */
-export function sweepExpired(opts?: {
+type SweepOpts = {
   hasPendingForTab?: (tabId: number, holderThreadId: string) => boolean
-}): void {
-  const t = now()
-  for (const [tabId, lease] of [...leases.entries()]) {
-    if (lease.state === "FORCE_RELEASING") {
-      const since = lease.forceReleasingAt ?? lease.renewedAt
-      if (t > since + FORCE_RELEASING_GC_MS) {
-        // Bounded GC: reject any residual pending and free so peers are not stuck forever
-        drainPendingAndFree(tabId, lease, "force_releasing_gc")
-      }
-      continue
+}
+
+/** Outbound episode leases keep today's idle-drain and hard_max behavior. */
+function sweepOutboundLease(tabId: number, lease: TabLease, t: number, opts?: SweepOpts): void {
+  if (lease.state === "FORCE_RELEASING") {
+    const since = lease.forceReleasingAt ?? lease.renewedAt
+    if (t > since + FORCE_RELEASING_GC_MS) {
+      drainPendingAndFree(tabId, lease, "force_releasing_gc")
     }
-    if (lease.state === "SOFT_RESERVED" && lease.softDeadline && t > lease.softDeadline) {
-      // Bind soft expire to live Confirm Center (confirmId and/or worker stamp).
-      // Do not FREE mid-dialog if a matching confirmation is still pending.
-      if (pendingHooks?.hasPendingConfirmation) {
-        try {
-          if (pendingHooks.hasPendingConfirmation(lease.confirmId, lease.holderThreadId)) {
-            lease.softDeadline = t + SOFT_LEASE_SKEW_MS
-            leases.set(tabId, lease)
-            continue
-          }
-        } catch {
-          // Fail closed: keep soft while confirmation probe is uncertain
-          lease.softDeadline = t + SOFT_LEASE_SKEW_MS
-          leases.set(tabId, lease)
-          continue
-        }
-      }
-      leases.delete(tabId)
-      audit("tab.lease.soft_expired", { tab_id: tabId, holder_thread_id: lease.holderThreadId })
-      continue
+    return
+  }
+  if (lease.state === "SOFT_RESERVED" && lease.softDeadline && t > lease.softDeadline) {
+    if (keepSoftForLiveConfirm(tabId, lease, t)) return
+    leases.delete(tabId)
+    audit("tab.lease.soft_expired", { tab_id: tabId, holder_thread_id: lease.holderThreadId })
+    return
+  }
+  if (lease.state !== "HARD_HELD" && lease.state !== "HELD_PENDING_L2") return
+  if (lease.state === "HELD_PENDING_L2") {
+    const coverUntil = t + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS
+    if (lease.idleDeadline < coverUntil) {
+      lease.idleDeadline = coverUntil
+      leases.set(tabId, lease)
     }
-    if (lease.state === "HARD_HELD" || lease.state === "HELD_PENDING_L2") {
-      // HELD_PENDING_L2: freeze idle expiry for confirm duration (soft-style cover)
-      if (lease.state === "HELD_PENDING_L2") {
-        const coverUntil = t + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS
-        if (lease.idleDeadline < coverUntil) {
-          lease.idleDeadline = coverUntil
-          leases.set(tabId, lease)
-        }
-        // Only hard_max can expire HELD_PENDING_L2 while confirm is open
-        if (t <= lease.hardMaxDeadline) continue
-      }
-      const idleOrHard = t > lease.idleDeadline || t > lease.hardMaxDeadline
-      if (!idleOrHard) continue
-      if (resolveHasPending(tabId, lease.holderThreadId, opts)) {
-        // TTL path with in-flight CDP: reject pending + free (or short FORCE_RELEASING if rejector absent)
-        if (pendingHooks?.rejectPendingForTab) {
-          drainPendingAndFree(
-            tabId,
-            lease,
-            t > lease.hardMaxDeadline ? "hard_max_pending_drain" : "idle_ttl_pending_drain",
-          )
-        } else {
-          lease.state = "FORCE_RELEASING"
-          lease.forceReleasingAt = t
-          leases.set(tabId, lease)
-          audit("tab.lease.expire_blocked_pending", {
-            tab_id: tabId,
-            holder_thread_id: lease.holderThreadId,
-          })
-        }
-        continue
-      }
-      leases.delete(tabId)
-      audit("tab.lease.expired", {
+    if (t <= lease.hardMaxDeadline) return
+  }
+  const idleOrHard = t > lease.idleDeadline || t > lease.hardMaxDeadline
+  if (!idleOrHard) return
+  if (resolveHasPending(tabId, lease.holderThreadId, opts)) {
+    if (pendingHooks?.rejectPendingForTab) {
+      drainPendingAndFree(
+        tabId,
+        lease,
+        t > lease.hardMaxDeadline ? "hard_max_pending_drain" : "idle_ttl_pending_drain",
+      )
+    } else {
+      lease.state = "FORCE_RELEASING"
+      lease.forceReleasingAt = t
+      leases.set(tabId, lease)
+      audit("tab.lease.expire_blocked_pending", {
         tab_id: tabId,
         holder_thread_id: lease.holderThreadId,
-        reason: t > lease.hardMaxDeadline ? "hard_max" : "idle_ttl",
       })
+    }
+    return
+  }
+  leases.delete(tabId)
+  audit("tab.lease.expired", {
+    tab_id: tabId,
+    holder_thread_id: lease.holderThreadId,
+    reason: t > lease.hardMaxDeadline ? "hard_max" : "idle_ttl",
+  })
+}
+
+function keepSoftForLiveConfirm(tabId: number, lease: TabLease, t: number): boolean {
+  if (!pendingHooks?.hasPendingConfirmation) return false
+  try {
+    if (pendingHooks.hasPendingConfirmation(lease.confirmId, lease.holderThreadId)) {
+      lease.softDeadline = t + SOFT_LEASE_SKEW_MS
+      leases.set(tabId, lease)
+      return true
+    }
+  } catch {
+    lease.softDeadline = t + SOFT_LEASE_SKEW_MS
+    leases.set(tabId, lease)
+    return true
+  }
+  return false
+}
+
+/**
+ * Absolute cap: drop tombstones without resolving, reject live pending, then FREE.
+ * createdHoldUntil and mutationHolds do not survive hard_max.
+ */
+function freeAtHardMax(tabId: number, lease: TabLease, opts?: SweepOpts): void {
+  const discard = pendingHooks?.discardTimedOutForTab
+  if (discard) {
+    try {
+      discard(tabId, lease.holderThreadId)
+    } catch {
+      /* best-effort */
+    }
+  }
+  if (resolveHasPending(tabId, lease.holderThreadId, opts)) {
+    if (pendingHooks?.rejectPendingForTab) {
+      drainPendingAndFree(tabId, lease, "hard_max_pending_drain")
+    } else {
+      lease.state = "FORCE_RELEASING"
+      lease.forceReleasingAt = now()
+      leases.set(tabId, lease)
+      audit("tab.lease.expire_blocked_pending", {
+        tab_id: tabId,
+        holder_thread_id: lease.holderThreadId,
+      })
+    }
+    return
+  }
+  leases.delete(tabId)
+  audit("tab.lease.expired", {
+    tab_id: tabId,
+    holder_thread_id: lease.holderThreadId,
+    reason: "hard_max",
+  })
+}
+
+/** Per-call leases: idle does not drain in-flight work. hard_max still does. */
+function sweepPerCallLease(tabId: number, lease: TabLease, t: number, opts?: SweepOpts): void {
+  if (lease.state === "FORCE_RELEASING") {
+    const since = lease.forceReleasingAt ?? lease.renewedAt
+    if (t > since + FORCE_RELEASING_GC_MS) {
+      drainPendingAndFree(tabId, lease, "force_releasing_gc")
+    }
+    return
+  }
+  if (lease.state === "SOFT_RESERVED" && lease.softDeadline && t > lease.softDeadline) {
+    if (keepSoftForLiveConfirm(tabId, lease, t)) return
+    leases.delete(tabId)
+    audit("tab.lease.soft_expired", { tab_id: tabId, holder_thread_id: lease.holderThreadId })
+    return
+  }
+  if (lease.state !== "HARD_HELD" && lease.state !== "HELD_PENDING_L2") return
+  if (lease.state === "HELD_PENDING_L2") {
+    const coverUntil = t + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS
+    if (lease.idleDeadline < coverUntil) {
+      lease.idleDeadline = coverUntil
+      leases.set(tabId, lease)
+    }
+    if (lease.createdHoldUntil != null && t >= lease.createdHoldUntil) {
+      lease.createdHoldUntil = null
+      leases.set(tabId, lease)
+    }
+    if (t <= lease.hardMaxDeadline) return
+  }
+  let createExpired = false
+  if (lease.createdHoldUntil != null && t >= lease.createdHoldUntil) {
+    lease.createdHoldUntil = null
+    createExpired = true
+    leases.set(tabId, lease)
+  }
+  if (t > lease.hardMaxDeadline) {
+    freeAtHardMax(tabId, lease, opts)
+    return
+  }
+  const pending = resolveHasPending(tabId, lease.holderThreadId, opts)
+  const holds = lease.mutationHolds ?? 0
+  if (holds > 0 || pending) return
+  if (lease.createdHoldUntil != null && lease.createdHoldUntil > t) return
+  if (!createExpired && t <= lease.idleDeadline) return
+  leases.delete(tabId)
+  audit("tab.lease.expired", {
+    tab_id: tabId,
+    holder_thread_id: lease.holderThreadId,
+    reason: createExpired ? "created_hold" : "idle_ttl",
+  })
+}
+
+/**
+ * Drop expired HARD/SOFT leases when no pending tools.
+ * Outbound episode leases keep idle-drain. Other holders do not idle-drain
+ * while a mutation is in flight or a create_tab hold is still live.
+ */
+export function sweepExpired(opts?: SweepOpts): void {
+  const t = now()
+  for (const [tabId, lease] of [...leases.entries()]) {
+    if (isOutboundLeaseHolder(lease.holderThreadId)) {
+      sweepOutboundLease(tabId, lease, t, opts)
+    } else {
+      sweepPerCallLease(tabId, lease, t, opts)
     }
   }
 }
@@ -235,6 +337,10 @@ function activeLeaseCount(): number {
   return leases.size
 }
 
+function isOutboundLeaseHolder(holderThreadId: string): boolean {
+  return holderThreadId.startsWith("outbound_mcp:")
+}
+
 function makeHard(tabId: number, holderThreadId: string, base?: Partial<TabLease>): TabLease {
   const t = now()
   return {
@@ -248,6 +354,8 @@ function makeHard(tabId: number, holderThreadId: string, base?: Partial<TabLease
     confirmId: undefined,
     softDeadline: undefined,
     forceReleasingAt: undefined,
+    mutationHolds: base?.mutationHolds ?? 0,
+    createdHoldUntil: base?.createdHoldUntil ?? null,
   }
 }
 
@@ -307,6 +415,8 @@ export function acquireOrRenewTabLease(opts: {
         hardMaxDeadline: t + ORCHESTRATOR_CAPS.hard_max_lease_ms,
         idleDeadline: t + ORCHESTRATOR_CAPS.idle_ttl_ms,
         softDeadline: t + softMs,
+        mutationHolds: 0,
+        createdHoldUntil: null,
       }
       leases.set(tabId, lease)
       audit("tab.lease.soft_reserved", { tab_id: tabId, holder_thread_id: holderThreadId, confirm_id: confirmId })
@@ -423,6 +533,8 @@ export function hardReacquireAfterConfirm(opts: {
     const hard = makeHard(opts.tabId, opts.holderThreadId, {
       acquiredAt: existing.acquiredAt,
       hardMaxDeadline: existing.hardMaxDeadline,
+      mutationHolds: existing.mutationHolds,
+      createdHoldUntil: existing.createdHoldUntil,
     })
     leases.set(opts.tabId, hard)
     audit("tab.lease.hard_after_confirm", {
@@ -469,10 +581,21 @@ export function releaseSoftOrPendingL2(opts: {
   }
 }
 
+function dropTimedOutPending(tabId: number, holderThreadId: string): void {
+  const discard = pendingHooks?.discardTimedOutForTab
+  if (!discard) return
+  try {
+    discard(tabId, holderThreadId)
+  } catch {
+    /* best-effort */
+  }
+}
+
 export function releaseTabLease(tabId: number, reason: string, holderThreadId?: string): boolean {
   const existing = leases.get(tabId)
   if (!existing) return false
   if (holderThreadId && existing.holderThreadId !== holderThreadId) return false
+  dropTimedOutPending(tabId, existing.holderThreadId)
   leases.delete(tabId)
   audit("tab.lease.released", {
     tab_id: tabId,
@@ -480,6 +603,110 @@ export function releaseTabLease(tabId: number, reason: string, holderThreadId?: 
     reason,
   })
   return true
+}
+
+/** +1 at the pregate acquire call site. Not used by renew / L2 reacquire. */
+export function noteMutationHold(tabId: number, holderThreadId: string): void {
+  const existing = leases.get(tabId)
+  if (!existing || existing.holderThreadId !== holderThreadId) return
+  existing.mutationHolds = (existing.mutationHolds ?? 0) + 1
+  leases.set(tabId, existing)
+}
+
+/**
+ * −1 for the call that noteMutationHold incremented.
+ * FREE only when holds hit 0, no create hold remains, and nothing is pending
+ * (including timed_out_in_flight). Outbound holders are ignored.
+ */
+export function releaseMutationHold(tabId: number, holderThreadId: string): void {
+  if (isOutboundLeaseHolder(holderThreadId)) return
+  const existing = leases.get(tabId)
+  if (!existing || existing.holderThreadId !== holderThreadId) return
+  existing.mutationHolds = Math.max(0, (existing.mutationHolds ?? 0) - 1)
+  if (existing.createdHoldUntil != null && existing.createdHoldUntil <= now()) {
+    existing.createdHoldUntil = null
+  }
+  leases.set(tabId, existing)
+  if (existing.mutationHolds !== 0) return
+  if (existing.createdHoldUntil != null) return
+  if (resolveHasPending(tabId, holderThreadId)) return
+  leases.delete(tabId)
+  audit("tab.lease.released", {
+    tab_id: tabId,
+    holder_thread_id: holderThreadId,
+    reason: "mutation_hold_released",
+  })
+}
+
+/** First successful navigate/set_tab_url by this holder. Does not FREE. */
+export function clearCreatedHold(tabId: number, holderThreadId: string): void {
+  const existing = leases.get(tabId)
+  if (!existing || existing.holderThreadId !== holderThreadId) return
+  if (existing.createdHoldUntil == null) return
+  existing.createdHoldUntil = null
+  leases.set(tabId, existing)
+}
+
+/** Worker/orchestrator create_tab: 60s hold and matching idle deadline. */
+export function armCreatedTabHold(tabId: number, holderThreadId: string, holdMs: number): void {
+  if (isOutboundLeaseHolder(holderThreadId)) return
+  const existing = leases.get(tabId)
+  if (!existing || existing.holderThreadId !== holderThreadId) return
+  const until = now() + holdMs
+  existing.createdHoldUntil = until
+  existing.idleDeadline = until
+  leases.set(tabId, existing)
+}
+
+/** Cover a confirm window or phase2 without shortening an already-later idle. */
+export function extendLeaseIdle(tabId: number, holderThreadId: string, until: number): void {
+  const existing = leases.get(tabId)
+  if (!existing || existing.holderThreadId !== holderThreadId) return
+  if (existing.idleDeadline >= until) return
+  existing.idleDeadline = until
+  leases.set(tabId, existing)
+}
+
+/**
+ * After a timed_out_in_flight entry is deleted and the caller was already failed.
+ * Does not FREE outbound episode leases. hard_max does not use this path.
+ */
+export function settleTimedOutLease(tabId: number, holderThreadId: string | undefined): void {
+  if (!holderThreadId || isOutboundLeaseHolder(holderThreadId)) return
+  const existing = leases.get(tabId)
+  if (!existing || existing.holderThreadId !== holderThreadId) return
+  if (resolveHasPending(tabId, holderThreadId)) return
+  if (existing.state === "FORCE_RELEASING") {
+    completeForceRelease(tabId, "timed_out_settled")
+    return
+  }
+  if ((existing.mutationHolds ?? 0) !== 0) return
+  if (existing.createdHoldUntil != null && existing.createdHoldUntil > now()) return
+  leases.delete(tabId)
+  audit("tab.lease.released", {
+    tab_id: tabId,
+    holder_thread_id: holderThreadId,
+    reason: "timed_out_settled",
+  })
+}
+
+/**
+ * Drop tab leases held by workers that are not inside an LLM run and not
+ * paused. Pause does not bulk-free: a create_tab hold or an in-flight mutation
+ * stays until its own deadline or that call's finally (ADR-015).
+ */
+export function releaseIdleWorkerLeases(
+  threads: Array<{ id?: string; agent_role?: string; paused?: boolean }>,
+  llmActive: ReadonlySet<string>,
+): number {
+  let n = 0
+  for (const t of threads) {
+    if (t.agent_role !== "worker" || t.paused) continue
+    const id = typeof t.id === "string" ? t.id : ""
+    if (!id || llmActive.has(id)) continue
+    n += releaseAllLeasesForThread(id, "worker_run_ended")
+  }
+  return n
 }
 
 /**
@@ -490,6 +717,7 @@ export function releaseAllLeasesForThread(holderThreadId: string, reason: string
   let n = 0
   for (const [tabId, lease] of [...leases.entries()]) {
     if (lease.holderThreadId === holderThreadId) {
+      dropTimedOutPending(tabId, holderThreadId)
       leases.delete(tabId)
       n++
       audit("tab.lease.released", { tab_id: tabId, holder_thread_id: holderThreadId, reason })

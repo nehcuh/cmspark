@@ -87,7 +87,7 @@
 | 单线程 tool loop | 默认 | 核心 |
 | Multi-worker + tab lease | 编排、tab 排他 | P0 已交付（ADR-015） |
 | Mission Board | Fact / Intent / Hint 共享板 | P0 已交付（ADR-016） |
-| 推迟 | shared-observer、auto-spawn、真 `wait_workers` barrier、自由文本 `ask_user` | 明确 defer |
+| 推迟 | 正式 shared-observer 状态机（只读不占锁已见 ADR-015 #526）、auto-spawn、真 `wait_workers` barrier、自由文本 `ask_user` | 明确 defer |
 
 规则：
 

@@ -50,6 +50,7 @@ import {
   rejectPendingForTab,
   dispatchToExtension,
   forwardToolToExtension,
+  discardTimedOutForTab,
   bindToolForwardRuntime,
 } from "./ws/tool-forward"
 export {
@@ -168,6 +169,7 @@ void import("./orchestrator/tab-lease")
     registerTabLeasePendingHooks({
       hasPendingForTab,
       rejectPendingForTab,
+      discardTimedOutForTab,
       hasPendingConfirmation: (confirmId, holderThreadId) => {
         if (confirmId && securityConfirmations.isPending(confirmId)) return true
         return securityConfirmations.hasPendingForWorker(holderThreadId)
@@ -601,7 +603,9 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     })
     if (!pregate.ok) return pregate.result
     finalParams = pregate.finalParams
+    const mutationHold = pregate.releaseMutationHold
 
+    try {
     // Cookie trust domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
     const cookieOutcome = runCookieTrustAdmission({
       toolName,
@@ -680,6 +684,8 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       logToolFinish,
       securityConfirmations,
       dispatchToExtension,
+      actingThreadId,
+      trackTimeoutInFlight: !!mutationHold,
     })
     if (imageOutcome !== null) {
       return imageOutcome
@@ -865,12 +871,23 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           ws: actuatorWs,
           actingThreadId,
           startedAt,
+          mutationHold: !!mutationHold,
           logToolFinish,
         }),
     })
     const currentEvidenceThread = evidenceScope?.kind === "chat" ? threadManager.get(evidenceScope.threadId) : undefined
     return captureLocalPageResult(getConfigDir(), currentEvidenceThread ? evidenceScope : undefined, toolCallId, toolName, result, signal,
       captureWritesAllowedAtStart && currentEvidenceThread?.execution_policy !== "plan_readonly")
+    } finally {
+      if (mutationHold) {
+        try {
+          const { releaseMutationHold } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
+          releaseMutationHold(mutationHold.tabId, mutationHold.holderThreadId)
+        } catch {
+          /* lease module not ready */
+        }
+      }
+    }
   }
   return executor
 }

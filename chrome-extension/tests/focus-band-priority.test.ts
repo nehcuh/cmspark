@@ -216,6 +216,28 @@ test("paused-only zombies: no 运行中 label; strip hidden unless showPausedOnl
   assert.equal(fleetPausedOnlyLabel(1), "舰队已暂停 · 1 worker")
 })
 
+test("finished idle workers do not read as 运行中 (8olhpa)", () => {
+  assert.equal(
+    fleetProcessingLabel({
+      workerCount: 4,
+      lockCount: 0,
+      openIntents: 0,
+      worstStatus: "idle",
+    }),
+    null,
+  )
+  assert.equal(
+    fleetProcessingLabel({
+      workerCount: 4,
+      lockCount: 0,
+      openIntents: 0,
+      worstStatus: "idle",
+      llmActive: true,
+    }),
+    "舰队运行中 · 4 worker",
+  )
+})
+
 test("active fleet: idle workers / holding_tabs / locks still show 运行中 or strip", () => {
   assert.equal(
     classifyFleetActivity({

@@ -302,9 +302,9 @@
 
 ### 10.3 Tab 排他锁（操作同一页时）
 
-- 某 worker **持有** tab lease 时，其它 worker 对同一 `tabId` 的读/写工具会得到可恢复错误（如 `TAB_LOCKED` / `TAB_BUSY_CONFIRMING`），**不会**并行进第二确认。
+- 某 worker **正在修改**一个标签时，其它 worker 对同一 `tabId` 的修改会得到可恢复错误（如 `TAB_LOCKED` / `TAB_BUSY_CONFIRMING`），**不会**并行进第二确认。只读（`get_page_text` / `get_page_html` / `wait_for`）不占锁，也不被这把锁挡住。
 - 权威在 Companion；扩展侧另有 **per-tab 串行队列**（纵深，防 CDP 竞态）。
-- **shared-observer（只读共享）本阶段不做**——纯读（screenshot / get_page_*）也要 lease。
+- 正式的 shared-observer 双轨状态机仍不做。只读不占锁见 ADR-015 / #526。截图仍算修改，本轮短锁。
 - 人为切入 worker 可发 follow-up，**不会**自动偷锁；要 mutate 非己持锁 tab 须 force-release 或等待释放。
 
 ### 10.4 与 enterprise / shell / netsec 的关系
@@ -326,7 +326,7 @@
 | 项 | 状态 |
 |----|------|
 | auto-spawn / 静默 fan-out | **不做**（仅 explicit L2） |
-| shared-observer 只读并行 | **延期** |
+| shared-observer 双轨状态机 | **不做**（只读已不占锁，见 #526） |
 | 全量 Dashboard 网格 / lease 图 | 部分（FleetStrip + Cockpit 计数） |
 
 ---

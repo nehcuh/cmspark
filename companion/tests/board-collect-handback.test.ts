@@ -261,6 +261,75 @@ test("collect_handback mission_board present without board_mode: prose is a read
   assert.equal(readBoard(tm, parent.id)?.facts.length ?? 0, 0)
 })
 
+test("collect_handback uses earlier prose when the worker died on an empty tool-call turn", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-partial")
+  tm.update(parent.id, { board_mode: true } as any)
+  const worker = tm.create("partial-w")
+  tm.update(worker.id, {
+    agent_role: "worker",
+    parent_thread_id: parent.id,
+    orchestrator_run_id: "run-partial",
+  } as any)
+  tm.addMessage(worker.id, {
+    role: "assistant",
+    content: "信用代码 91440300MA5GH8056Y，企查查页已核对。",
+    thread_id: worker.id,
+  })
+  tm.addMessage(worker.id, {
+    role: "assistant",
+    content: "",
+    thread_id: worker.id,
+    tool_calls: [{ id: "c1", type: "function", function: { name: "screenshot", arguments: "{}" } }],
+    finish_reason: "tool_calls",
+  } as any)
+  tm.addMessage(worker.id, {
+    role: "tool",
+    content: JSON.stringify({ success: false, error: "SCREENSHOT_FALLBACK_TAB_MISMATCH" }),
+    thread_id: worker.id,
+    tool_call_id: "c1",
+  } as any)
+  const r = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
+  assert.equal(r.success, true)
+  if (!r.success) return
+  assert.equal(r.data.structured, false)
+  assert.equal(r.data.partial, true)
+  assert.match(r.data.last_assistant?.content || "", /91440300MA5GH8056Y/)
+  assert.match(r.data.note || "", /stopped mid-run/)
+  assert.equal(readBoard(tm, parent.id)?.facts.length ?? 0, 0)
+})
+
+test("collect_handback tool-calls-only worker is recoverable and does not claim there was no assistant", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-notext")
+  tm.update(parent.id, { board_mode: true } as any)
+  const worker = tm.create("notext-w")
+  tm.update(worker.id, {
+    agent_role: "worker",
+    parent_thread_id: parent.id,
+  } as any)
+  tm.addMessage(worker.id, {
+    role: "assistant",
+    content: "",
+    thread_id: worker.id,
+    tool_calls: [{ id: "c1", type: "function", function: { name: "navigate", arguments: "{}" } }],
+    finish_reason: "tool_calls",
+  } as any)
+  tm.addMessage(worker.id, {
+    role: "tool",
+    content: JSON.stringify({ success: true }),
+    thread_id: worker.id,
+    tool_call_id: "c1",
+  } as any)
+  const r = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
+  assert.equal(r.success, false)
+  if (r.success) return
+  assert.equal(r.error_code, HANDBACK_MISSING_STRUCTURE)
+  assert.equal(r.recoverable, true)
+  assert.match(r.error, /tool calls only/)
+  assert.doesNotMatch(r.error, /no assistant message/)
+})
+
 test("collect_handback empty assistant when board mode → recoverable missing structure", async () => {
   const tm = new ThreadManager()
   const parent = tm.create("orch-empty")

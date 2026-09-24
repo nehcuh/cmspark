@@ -152,6 +152,50 @@ test("rejectPendingForThread counts matching thread", () => {
   clearPending()
 })
 
+test("late tool.result does not re-enter a timed-out call", () => {
+  clearPending()
+  const owner = mockWs({ id: "owner" })
+  let resolved = 0
+  pendingToolCalls.set("t-late", {
+    resolve: () => {
+      resolved++
+    },
+    reject: () => {},
+    timer: setTimeout(() => {}, 60_000),
+    thread_id: "w1",
+    tabId: 4,
+    timedOutInFlight: true,
+    originWs: owner,
+    tool_name: "click",
+  })
+  handleToolResult(
+    { tool_call_id: "t-late", result: { success: true, data: { url: "https://example.test" } } },
+    owner,
+  )
+  assert.equal(resolved, 0)
+  assert.equal(pendingToolCalls.has("t-late"), false)
+})
+
+test("rejectPendingForThread drops a tombstone without resolving it", () => {
+  clearPending()
+  let resolved = 0
+  pendingToolCalls.set("t-tomb", {
+    resolve: () => {
+      resolved++
+    },
+    reject: () => {},
+    timer: setTimeout(() => {}, 60_000),
+    thread_id: "w1",
+    tabId: 4,
+    timedOutInFlight: true,
+    tool_name: "click",
+  })
+  const n = rejectPendingForThread("w1", "worker_cancel:w1")
+  assert.equal(n, 1)
+  assert.equal(resolved, 0)
+  assert.equal(pendingToolCalls.has("t-tomb"), false)
+})
+
 test("bindToolForwardRuntime is callable (smoke)", () => {
   bindToolForwardRuntime({
     getTabUrlCache: () => new Map(),

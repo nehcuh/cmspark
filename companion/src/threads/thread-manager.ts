@@ -101,7 +101,7 @@ interface Thread {
   worker_role_label?: string | null
   /** Optional elevation marker (audited grants only). */
   capability_elevation_level?: string | null
-  /** Pause freezes LLM loop + new tool dispatch; leases retained until TTL/cancel. */
+  /** Pause freezes LLM loop + new tool dispatch. In-flight mutation locks end with that call; a create_tab hold stays until its deadline. */
   paused?: boolean
   /**
    * #327 thread execution cap: plan_readonly = deny every tool not in

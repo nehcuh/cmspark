@@ -26,6 +26,8 @@ export interface ScopedRunBusyView {
   stopAll: ReturnType<typeof buildFleetStopAllMessage>
   /** Scoped worst worker status for fleet classification (holding_tabs > paused > idle). */
   worstStatus: "holding_tabs" | "paused" | "idle" | "none"
+  /** True when a scoped worker's LLM run is still in flight. */
+  llmActive: boolean
   workerCount: number
   lockCount: number
   openIntents: number
@@ -91,12 +93,17 @@ export function useScopedRunBusy(): ScopedRunBusyView {
         : scopedWorkers.length > 0
           ? "idle"
           : "none"
+    const llmActiveIds = new Set(fleet?.llm_active_thread_ids || [])
+    const llmActive = scopedWorkers.some(
+      (w) => w.agent_role === "worker" && (w.llm_active === true || llmActiveIds.has(w.id)),
+    )
     return {
       scope,
       scopeKind: scope.kind,
       scopedWorkers,
       stopAll: buildFleetStopAllMessage(scope),
       worstStatus,
+      llmActive,
       workerCount,
       lockCount,
       openIntents,

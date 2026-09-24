@@ -233,6 +233,7 @@ export function ChatView() {
       lockCount,
       openIntents: scopedRunBusy.openIntents,
       worstStatus: scopedRunBusy.worstStatus,
+      llmActive: scopedRunBusy.llmActive,
     })
     // Active fleet only (not paused-only zombies) — suffix while tools/thinking.
     const fleetBit = fleetLabel ? ` · ${fleetLabel.replace(/^舰队/, "").trim()}` : ""
