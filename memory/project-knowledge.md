@@ -121,6 +121,12 @@
 - **纪律**：接手另一窗 Kimi = `tmux list-panes` + `capture-pane` **加上** `~/.kimi-code/sessions/…/agents/main/wire.jsonl` 里 `content.part`（含 `think`）。不要把 TUI 状态条 `[+132 -48]` 当活工作树——另一 agent 可能已 commit。
 - **4 行 case**：动作=接手 kimi 优化；失败=跳过打断工作和查重判断；归责=只信可见 pane；保护=展开 wire.jsonl
 
+### 点不到文字的 3 次熔断会放弃目标（2026-09-24）
+- 现象：`click` 对一个标题连续 `ELEMENT_NOT_FOUND` 三次 → `chat.error`「已停止以防止无限循环」。研究题被当成按钮，整轮停掉。
+- 修法：同工具预算第一次花在 locator miss（`ELEMENT_NOT_FOUND` / `ELEMENT_AMBIGUOUS` / `SELECTOR_OR_TEXT_REQUIRED` / `INVALID_SELECTOR`）时不停轮，工具结果要求改 `get_page_text`、`scroll`，或搜索 / `navigate`。换过办法后再花满三次才停。
+- 不要把 `MAX_SAME_TOOL_RECOVERABLE_FAILURES` 从 3 调高。
+- Files: `companion/src/llm/same-tool-guard.ts`, `adapter.ts`
+
 ### `classifyError` 默认 `non_recoverable` 会杀掉准入闸（2026-09-01 · #265）
 - **坑**：page-tool 无活清单时 `PROPOSE_REQUIRED`。若先走 `classifyError`，默认 fallthrough = `non_recoverable` → **整轮对话死**。若当 recoverable 再进 `MAX_SAME_TOOL_RECOVERABLE_FAILURES=3`，三次 gated click 也会杀轮。plan dual 2× AWN 点名此序。
 - **纪律**：adapter 先认 `proposeDenied`；闸错误**绕过** classifyError 与同工具失败计数。`runChatCreate` 必须 sticky-clear `run_progress: null`，否则 leftover H1 / 上轮清单让测试（`m2-untrusted-marker` 的 `get_page_text`/`get_page_html`）撞闸、注入断言假红。
@@ -1176,6 +1182,13 @@
 - 摘要表冲突：两边 **FIXED 取并集**；文首「下一枪」跟 main 实际状态改
 - CI 根因修（cwd / osascript 平台测）**先 cherry-pick 到所有开放 PR** 再等绿，否则 6 条 PR 全红
 - browser_download：PRIMARY `chrome.downloads`；Downloads 沙箱；`DOWNLOAD_BUSY` 在 TabQueue 前；`download` 别名在 companion 入口规范化
+
+### 多 worker 标签锁：只读不占锁，修改只占这一下（2026-09-24 · #526）
+- 读（`get_page_text` / `get_page_html` / `wait_for`）不 acquire，也不被别人的 HARD_HELD 拒绝。`TAB_LEASE_TOOLS` 仍是身份门；真正加锁的是 `TAB_MUTATION_LEASE_TOOLS`。
+- `mutationHolds` 只在 pregate 里 acquire 成功后 +1，在 executor 的 finally 里 −1。L2 再 acquire 和 `hardReacquireAfterConfirm` / `makeHard` 不改计数；`makeHard` 必须拷贝 `mutationHolds` 和 `createdHoldUntil`。
+- 超时只把 pending 标成 `timed_out_in_flight`，不删。该 holder 还有 pending 时 finally 不 FREE。删墓碑才结算；`outbound_mcp:` 不走这次结算，超时仍按原来的 delete。
+- worker / orchestrator 的 `create_tab` 用 `create_tab_auto_hold_ms`（60 秒）。sweep 到期把字段写成 null；holds 为 0 且无 pending 就放，即使 idle 被续晚。`hard_max` 仍是拒绝后释放。pause 不批量扫锁。
+- 合 main 用快进 push，不用 `gh pr merge`。tip `b5a7396a`。Files: `tab-lease.ts`, `tool-pregate.ts`, `tool-forward.ts`, ADR-015。
 
 ### Tab lease 仅 multi-agent：单 agent 多 tab 勿 HARD lease（2026-07-28 PR #81）
 - 现象：普通聊天 / AppSec 打开第 3 个 tab 命中 `max_tabs_leased_per_worker=2` → 硬失败
