@@ -24,7 +24,7 @@ Mac 菜单 / 已配置热键 / 工具栏 **C** / 侧栏顶栏 **弹出对话框*
 | 入口 | 说明 |
 |------|------|
 | 托盘 / 菜单栏「召唤器」 | Companion 已在跑时打开 HTML `--app` 窗 |
-| 已配置的全局热键 | 以托盘设置为准；Raycast/uTools 只当分发，见 [launcher 插件](summoner-launcher-plugins.md) |
+| 已配置的全局热键 | **仅 macOS**（Swift 托盘 Carbon 热键）；Windows 暂无全局热键，用托盘菜单 / 工具栏 C 代替。以托盘设置为准；Raycast/uTools 只当分发，见 [launcher 插件](summoner-launcher-plugins.md) |
 | Chrome 工具栏 **C** | 扩展图标；也是打不开侧栏时的退路 |
 | 侧栏 **弹出对话框** | 从 Operate 面弹出同一张卡，不是第二个产品 |
 
