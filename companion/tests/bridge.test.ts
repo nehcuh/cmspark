@@ -354,14 +354,15 @@ test("tool-definitions: includes cookie tools", () => {
 })
 
 test("tool-definitions: includes companion direct tools", () => {
-  // Full catalog always has osascript; LLM-visible set is platform-filtered.
+  // Full catalog keeps osascript_eval (pack validation is platform-stable);
+  // #529: the LLM-visible set hides it on EVERY platform (dead path on modern Chrome).
   const allNames = getAllToolDefinitions().map((t: any) => t.function.name)
   assert.ok(allNames.includes("use_skill"))
   assert.ok(allNames.includes("osascript_eval"))
   assert.ok(allNames.includes("record_experience"))
 
   const darwinNames = getToolDefinitions("darwin").map((t: any) => t.function.name)
-  assert.ok(darwinNames.includes("osascript_eval"))
+  assert.ok(!darwinNames.includes("osascript_eval"))
 
   const winNames = getToolDefinitions("win32").map((t: any) => t.function.name)
   assert.ok(!winNames.includes("osascript_eval"), "win32 must hide osascript_eval from LLM")
@@ -369,12 +370,12 @@ test("tool-definitions: includes companion direct tools", () => {
   assert.ok(!linuxNames.includes("osascript_eval"))
 })
 
-test("tool-definitions: platform helpers for osascript", () => {
-  assert.equal(shouldExposeOsascript("darwin"), true)
+test("tool-definitions: platform helpers for osascript (#529 always hidden)", () => {
+  assert.equal(shouldExposeOsascript("darwin"), false)
   assert.equal(shouldExposeOsascript("win32"), false)
+  assert.equal(shouldExposeOsascript("linux"), false)
+  // L2-gate helper retained for the dormant implementation layer.
   assert.equal(shouldL2GateOsascript("darwin"), true)
-  assert.equal(shouldL2GateOsascript("win32"), false)
-  assert.match(OSASCRIPT_MACOS_ONLY_ERROR, /macos-only/i)
 })
 
 test("tool-definitions: each tool has required OpenAI function-calling format", () => {

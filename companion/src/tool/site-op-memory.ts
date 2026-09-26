@@ -32,6 +32,19 @@ export const SITE_ATTACH_FAIL_BAN = 1
 export const SITE_ORIGIN_FAIL_ESCALATE = 4
 export const EVALUATE_NULL_RESULT = "EVALUATE_NULL_RESULT"
 
+/**
+ * Failure codes that must NOT aggregate toward the origin CDP fail streak or
+ * locator bans (#528, real-run 2026-09-26): they are parameter/authorization
+ * issues the model can fix immediately, not evidence that the page's CDP
+ * interaction path is broken. Counting them let 4× "evaluate without
+ * security_token" escalate an origin to SITE_OP_ESCALATE and ban the very
+ * selector-based retry that would have succeeded.
+ */
+export const NON_AGGREGATING_SITE_OP_CODES: ReadonlySet<string> = new Set([
+  "EVALUATE_AUTH_REQUIRED",
+  "SELECTOR_REQUIRED",
+])
+
 const CDP_INTERACTIVE = new Set([
   "click",
   "dblclick",
@@ -367,6 +380,10 @@ export function recordSiteOpFailure(
     originPersistDue: false,
   }
   if (!isCdpInteractiveTool(toolName)) return empty
+  // #528: parameter/authorization refusals are model-correctable, not CDP-health
+  // signals — never aggregate them toward locator bans or the origin streak.
+  // (adapter.ts also gates the call site; this keeps the invariant testable here.)
+  if (errorCode && NON_AGGREGATING_SITE_OP_CODES.has(errorCode)) return empty
   const s = stateFor(threadId)
   const tabId = typeof params.tabId === "number" ? params.tabId : undefined
   const code = errorCode || "UNKNOWN"
@@ -552,8 +569,8 @@ export function thawTabIfPresent(threadId: string, tabId: number | undefined): v
 /**
  * #417 NIT-1/NIT-4 — single source for linux / unarmed / armed escalate copy.
  * Envelope (`originEscalateError`), locator-ban alt, and origin-streak prompt
- * all read from here so #414/#417 cannot drift. Armed osascript_eval is
- * darwin-only (Win/Linux never see a macOS path).
+ * all read from here so #414/#417 cannot drift. osascript_eval was removed
+ * from the escalation copy in #529 (deterministic dead path on modern Chrome).
  */
 export type EscalateGuidanceMode = "linux" | "unarmed" | "armed"
 
@@ -593,19 +610,17 @@ export function escalateGuidance(
         "The loop will never flip this flag itself.",
     }
   }
-  const osa = plat === "darwin"
   return {
     mode: "armed",
     locatorAlt:
       "Prefer an alternative path " +
-      `(different locator, navigate to reset, host_computer under Rule 12 confirm${osa ? ", or osascript_eval" : ""}) ` +
+      "(different locator, navigate to reset, or host_computer under Rule 12 confirm) " +
       "instead of re-probing the same locator.",
     originEsc:
-      `do not retry CDP; escalate to host_computer (Chrome token, ALWAYS confirms)${osa ? " or osascript_eval" : ""}`,
+      "do not retry CDP; escalate to host_computer (Chrome token, ALWAYS confirms)",
     envelopeGuidance:
       "After this origin fail streak / CDP attach freeze / DOM-script cap, you MAY call host_computer on the Chrome app token. " +
-      "That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). NEVER treat this as auto-approved CU." +
-      (osa ? " osascript_eval is a last-resort macOS JS path after CDP+scripting both fail." : ""),
+      "That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). NEVER treat this as auto-approved CU.",
   }
 }
 

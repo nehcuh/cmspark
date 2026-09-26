@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
+import { getAllToolDefinitions, getToolDefinitions } from "../src/bridge/tool-definitions"
 import { join } from "node:path"
 import {
   locatorKeyForTool,
@@ -202,7 +203,8 @@ test("origin CDP fail streak: 4 different locators/tools then peek refuses 5th w
     assert.match(r.error, /Chrome/)
     assert.match(r.error, /ALWAYS pops a confirm|无人值守/)
   }
-  if (process.platform === "darwin") assert.match(r.error, /osascript/)
+  // #529: osascript_eval removed from escalation copy everywhere (dead path on modern Chrome).
+  assert.doesNotMatch(r.error, /osascript/)
   assert.match(r.error, /list_tabs/)
   assert.doesNotMatch(r.error, /bypass L2|skip the confirm/i)
   const snap = snapshotOriginCdpFails("hgrsix")
@@ -300,11 +302,9 @@ test("#417: armed formatSiteOpMemoryPrompt keeps CU escalate copy (non-linux)", 
   } else {
     assert.match(prompt, /escalate to host_computer/)
     assert.match(prompt, /ALWAYS confirms/)
-    if (process.platform === "darwin") {
-      assert.match(prompt, /osascript_eval/)
-    } else {
-      assert.doesNotMatch(prompt, /osascript_eval/)
-    }
+    // #529: osascript_eval removed from escalation copy on every platform —
+    // it is a deterministic dead path on modern Chrome (AppleScript JS off by default).
+    assert.doesNotMatch(prompt, /osascript_eval/)
   }
 })
 
@@ -340,9 +340,10 @@ test("#417 NIT-1/NIT-4: escalateGuidance is the single source; osa is darwin-onl
 
   const macArmed = escalateGuidance(true, "darwin")
   assert.equal(macArmed.mode, "armed")
-  assert.match(macArmed.originEsc, /osascript_eval/)
-  assert.match(macArmed.locatorAlt, /osascript_eval/)
-  assert.match(macArmed.envelopeGuidance, /osascript_eval/)
+  // #529: osascript_eval removed from all escalation copy (dead path on modern Chrome).
+  assert.doesNotMatch(macArmed.originEsc, /osascript/)
+  assert.doesNotMatch(macArmed.locatorAlt, /osascript/)
+  assert.doesNotMatch(macArmed.envelopeGuidance, /osascript/)
 })
 
 test("origin CDP fail streak does not leak to another origin or thread", () => {
@@ -615,4 +616,38 @@ test("hydration is idempotent per thread+origin and capped", () => {
   const second = hydratePersistedSiteOpExperience("cap", "x.com", entries)
   assert.ok(first > 0 && first <= 8, "hydrate respects per-origin cap")
   assert.equal(second, 0, "re-hydrating the same origin is a no-op")
+})
+
+test("#528: auth/param refusal codes never aggregate toward origin streak or locator bans", () => {
+  resetSiteOpMemoryForTests()
+  const origin = "http://127.0.0.1:8770"
+  // 6 × evaluate-without-token style refusals + selector-missing errors — well past
+  // SITE_ORIGIN_FAIL_ESCALATE (4) if they counted. They must not.
+  for (let i = 0; i < 6; i++) {
+    const r1 = recordSiteOpFailure("p528", "evaluate", { tabId: 1 }, "EVALUATE_AUTH_REQUIRED", origin)
+    assert.equal(r1.originFails, 0)
+    const r2 = recordSiteOpFailure("p528", "click", { tabId: 1, text: "提交" }, "SELECTOR_REQUIRED", origin)
+    assert.equal(r2.originFails, 0)
+    assert.equal(r2.fails, 0)
+  }
+  assert.equal(getOriginFailCount("p528", origin), 0)
+  assert.equal(peekSiteOpBan("p528", "click", { tabId: 1, text: "提交" }, origin).banned, false)
+  // Genuine CDP failures still aggregate as before.
+  for (const text of ["a", "b", "c", "d"]) {
+    recordSiteOpFailure("p528", "click", { tabId: 1, text }, "ELEMENT_NOT_FOUND", origin)
+  }
+  assert.equal(getOriginFailCount("p528", origin), 4)
+  const ban = peekSiteOpBan("p528", "click", { tabId: 1, text: "new" }, origin)
+  assert.equal(ban.banned, true)
+  assert.equal(ban.error_code, "SITE_OP_ESCALATE")
+})
+
+test("#529: osascript_eval hidden from the LLM-visible tool set on every platform", () => {
+  // Full catalog keeps the entry (pack validation is platform-stable); the
+  // LLM-visible getToolDefinitions() filters it on ALL platforms now.
+  for (const plat of ["darwin", "win32", "linux"] as const) {
+    const names = getToolDefinitions(plat).map((t) => t.function.name)
+    assert.ok(!names.includes("osascript_eval"), `${plat} must hide osascript_eval`)
+  }
+  assert.ok(getAllToolDefinitions().some((t) => t.function.name === "osascript_eval"))
 })
