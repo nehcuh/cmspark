@@ -86,3 +86,41 @@ test("grok P2: concurrent ensureAttached on the same tab shares ONE attach seque
     else (globalThis as any).chrome = previous
   }
 })
+
+test("#538: wait_for selector timeout surfaces the last swallowed error", async () => {
+  const previous = (globalThis as any).chrome
+  const chrome: any = {
+    tabs: {
+      get: async (tabId: number) => ({ id: tabId, url: "http://127.0.0.1:8790/approval.html" }),
+      onUpdated: { addListener: (_f: any) => {}, removeListener: (_f: any) => {} },
+    },
+    debugger: {
+      onDetach: { addListener: (_f: any) => {} },
+      onEvent: { addListener: (_f: any) => {} },
+      attach: async (_: any) => {},
+      detach: async (_: any) => {},
+      // Runtime.evaluate always throws → wait_for loop swallows per-attempt errors
+      // until timeout; the thrown error must carry the last error (kimi P2-a).
+      sendCommand: async (_t: any, method: string) => {
+        if (method === "Runtime.evaluate") throw new Error("context destroyed #538")
+        return {}
+      },
+    },
+  }
+  ;(globalThis as any).chrome = chrome
+  try {
+    const bridge = new BrowserBridge()
+    const r = await bridge.execute("wait_for", {
+      tabId: 9,
+      selector: "#orderNo",
+      state: "visible",
+      timeout: 900,
+    })
+    assert.equal(r.success, false)
+    assert.match(String(r.error || ""), /Timeout waiting for selector "#orderNo"/)
+    assert.match(String(r.error || ""), /— last error: context destroyed #538/)
+  } finally {
+    if (previous === undefined) delete (globalThis as any).chrome
+    else (globalThis as any).chrome = previous
+  }
+})

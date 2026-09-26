@@ -232,6 +232,11 @@ export class BrowserBridge {
       try {
         await chrome.debugger.sendCommand({ tabId }, "Page.enable")
       } catch { /* ignore */ }
+      // #538: right after attach (and right after navigation, when onDetach clears
+      // the session and the next call re-attaches), Runtime.evaluate can land in a
+      // not-yet-stable execution context and silently return falsy. Wait briefly
+      // for the document to be ready so locator probes don't false-negative.
+      await this.waitForReadyState(tabId, 5000)
     } catch (e: any) {
       // Orphaned session from a previous service-worker incarnation: debugger
       // attachments survive extension reloads / SW restarts, so the new SW's
@@ -247,6 +252,7 @@ export class BrowserBridge {
           try {
             await chrome.debugger.sendCommand({ tabId }, "Page.enable")
           } catch { /* ignore */ }
+          await this.waitForReadyState(tabId, 5000)
           return
         } catch {
           // DevTools / another extension holds the session — scripting fallback.
@@ -560,6 +566,22 @@ export class BrowserBridge {
     }
 
     return { success: true, data: { id: tab.id, url: tab.url, title: tab.title } }
+  }
+
+  /** #538: poll document.readyState via CDP until "complete" (or timeout). */
+  private async waitForReadyState(tabId: number, timeoutMs = 5000): Promise<void> {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const r: any = await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: "document.readyState",
+          returnByValue: true,
+        })
+        if (r?.result?.value === "complete") return
+      } catch { /* context may not exist yet; retry */ }
+      await new Promise(res => setTimeout(res, 200))
+    }
+    // Non-fatal: callers proceed even if the page never reports complete.
   }
 
   /** Wait for a tab to finish loading */
@@ -1550,6 +1572,7 @@ export class BrowserBridge {
       const timeout = typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : 15000
       const interval = params.interval || 500
       const start = Date.now()
+      let lastErr: any = null
       while (Date.now() - start < timeout) {
         try {
           const result = await this.sendCdp(tabId, "Runtime.evaluate", {
@@ -1557,12 +1580,16 @@ export class BrowserBridge {
             expression: `!!document.querySelector(${JSON.stringify(mode.selector)})`,
             returnByValue: true,
           })
+          lastErr = null
           const exists = result.result?.value === true
           if (exists === mode.expectVisible) return { success: true, data: { elapsed_ms: Date.now() - start } }
-        } catch { /* ignore */ }
+        } catch (e: any) { lastErr = e }
         await new Promise(r => setTimeout(r, interval))
       }
-      throw new Error(`Timeout waiting for selector "${mode.selector}" (${mode.expectVisible ? "visible" : "hidden"})`)
+      // #538: the loop above swallows per-attempt errors; without the last one the
+      // timeout error is indistinguishable from a genuinely absent element.
+      const detail = lastErr ? ` — last error: ${String(lastErr?.message || lastErr).slice(0, 200)}` : ""
+      throw new Error(`Timeout waiting for selector "${mode.selector}" (${mode.expectVisible ? "visible" : "hidden"})${detail}`)
     }
 
     await this.waitForTabLoad(tabId, mode.timeoutMs)
