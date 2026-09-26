@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-23 (lockstep 0.6.9)
+**Updated**: 2026-09-24 (main `b5a7396a`，版本仍 0.6.9)
 
 ## CMspark — 产品 0.6.9
 
@@ -20,7 +20,7 @@
 
 ## Branch lock (S104)
 
-- 包装 **0.6.9**：租手确认台到前面 / Windows 租手路径 / 舰队 kick 收口。本机已换装，GitHub Release 已挂三端 zip + Setup.exe。0.7.0 企业双场景仍未验收。
+- 包装仍是 **0.6.9**。main `b5a7396a` 额外有 #526：多 worker 只读不占锁、修改只占这一下、点不到文字先换路。本机已换装（CDHash `8910dba5…`），没有新的 GitHub Release。0.7.0 企业双场景仍未验收。
 - **评审弧闭环**：c39d7d3e..26949cbb 四路对抗 7 MAJOR 全修（#261–#264），main tip `18d843d1`。
 - S104 起 origin 已含开闸+查重（#280–#283）；评审波次（#286–#295）十张 PR 已合入，见 GATE-SUMMARY。
 - **活票**：#230 冻 F-S-10 / overlay-acl。T1 #228 已关，**禁扩** profile。#258–#260 已在树（embedding experimental）。
@@ -28,9 +28,9 @@
 
 ## Next
 
-- 重载 unpacked 扩展 `chrome-extension/build/chrome-mv3-prod/`，狗食租手确认是否把确认台拉到前面。
+- 重载 unpacked 扩展 `chrome-extension/build/chrome-mv3-prod/`，狗食只读并发和点不到标题时是否改去读页面或搜索。
 - 不要提交本机 `host-integrity.ts`（build-host 改写的 SHA）。
-- #230 禁止整票实现。
+- #230 禁止整票实现。版本仍 0.6.9，发版要另开。
 
 ## Docs SoT
 

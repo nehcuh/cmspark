@@ -184,9 +184,25 @@ export class BrowserBridge {
 
   // --- CDP helpers ---
 
+  /** Per-tab in-flight attach dedup (grok P2): two overlapping ensureAttached
+   *  calls for the same tab must share ONE attach sequence — otherwise the
+   *  second caller's "already attached" recovery would detach the session the
+   *  first caller just established (screenshot/analyze_image can bypass
+   *  TabQueue and overlap a queued op while attachedTabs is still empty). */
+  private attachInflight = new Map<number, Promise<void>>()
+
   private async ensureAttached(tabId: number): Promise<void> {
     if (this.attachedTabs.has(tabId)) return
+    const inflight = this.attachInflight.get(tabId)
+    if (inflight) return inflight
+    const seq = this.attachSequence(tabId).finally(() => {
+      if (this.attachInflight.get(tabId) === seq) this.attachInflight.delete(tabId)
+    })
+    this.attachInflight.set(tabId, seq)
+    return seq
+  }
 
+  private async attachSequence(tabId: number): Promise<void> {
     // Verify tab exists and is accessible
     try {
       // Retry up to 10 times with delay — tab URL may be blank during creation/navigation
@@ -216,7 +232,32 @@ export class BrowserBridge {
       try {
         await chrome.debugger.sendCommand({ tabId }, "Page.enable")
       } catch { /* ignore */ }
+      // #538: right after attach (and right after navigation, when onDetach clears
+      // the session and the next call re-attaches), Runtime.evaluate can land in a
+      // not-yet-stable execution context and silently return falsy. Wait briefly
+      // for the document to be ready so locator probes don't false-negative.
+      await this.waitForReadyState(tabId, 5000)
     } catch (e: any) {
+      // Orphaned session from a previous service-worker incarnation: debugger
+      // attachments survive extension reloads / SW restarts, so the new SW's
+      // attach fails with "already attached" and EVERY CDP call falls back to
+      // scripting (evaluate → EVALUATE_NULL_RESULT, selectors → ELEMENT_NOT_FOUND
+      // on elements that exist — real-run 2026-09-26). If the session belongs
+      // to this extension, detach and re-attach so this SW owns it.
+      if (/already attached/i.test(String(e?.message || ""))) {
+        try {
+          await chrome.debugger.detach({ tabId })
+          await chrome.debugger.attach({ tabId }, "1.3")
+          this.attachedTabs.add(tabId)
+          try {
+            await chrome.debugger.sendCommand({ tabId }, "Page.enable")
+          } catch { /* ignore */ }
+          await this.waitForReadyState(tabId, 5000)
+          return
+        } catch {
+          // DevTools / another extension holds the session — scripting fallback.
+        }
+      }
       // Try scripting API as fallback for page read tools
       throw new Error(`Debugger attach failed for tab ${tabId}: ${e.message}`)
     }
@@ -525,6 +566,22 @@ export class BrowserBridge {
     }
 
     return { success: true, data: { id: tab.id, url: tab.url, title: tab.title } }
+  }
+
+  /** #538: poll document.readyState via CDP until "complete" (or timeout). */
+  private async waitForReadyState(tabId: number, timeoutMs = 5000): Promise<void> {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const r: any = await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: "document.readyState",
+          returnByValue: true,
+        })
+        if (r?.result?.value === "complete") return
+      } catch { /* context may not exist yet; retry */ }
+      await new Promise(res => setTimeout(res, 200))
+    }
+    // Non-fatal: callers proceed even if the page never reports complete.
   }
 
   /** Wait for a tab to finish loading */
@@ -1515,6 +1572,7 @@ export class BrowserBridge {
       const timeout = typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : 15000
       const interval = params.interval || 500
       const start = Date.now()
+      let lastErr: any = null
       while (Date.now() - start < timeout) {
         try {
           const result = await this.sendCdp(tabId, "Runtime.evaluate", {
@@ -1522,12 +1580,16 @@ export class BrowserBridge {
             expression: `!!document.querySelector(${JSON.stringify(mode.selector)})`,
             returnByValue: true,
           })
+          lastErr = null
           const exists = result.result?.value === true
           if (exists === mode.expectVisible) return { success: true, data: { elapsed_ms: Date.now() - start } }
-        } catch { /* ignore */ }
+        } catch (e: any) { lastErr = e }
         await new Promise(r => setTimeout(r, interval))
       }
-      throw new Error(`Timeout waiting for selector "${mode.selector}" (${mode.expectVisible ? "visible" : "hidden"})`)
+      // #538: the loop above swallows per-attempt errors; without the last one the
+      // timeout error is indistinguishable from a genuinely absent element.
+      const detail = lastErr ? ` — last error: ${String(lastErr?.message || lastErr).slice(0, 200)}` : ""
+      throw new Error(`Timeout waiting for selector "${mode.selector}" (${mode.expectVisible ? "visible" : "hidden"})${detail}`)
     }
 
     await this.waitForTabLoad(tabId, mode.timeoutMs)
@@ -1744,7 +1806,11 @@ export class BrowserBridge {
 
   private async getElementCenter(tabId: number, selector?: string, scrollIntoView = true): Promise<{ x: number; y: number }> {
     if (!selector) {
-      throw new Error("SELECTOR_REQUIRED: interactive tools need a CSS selector (no default 300,300 click)")
+      throw new Error(
+        "SELECTOR_REQUIRED: interactive tools need a CSS selector (no default 300,300 click). " +
+          "This is a missing-parameter error, NOT an origin/CDP ban — provide a selector " +
+          "(e.g. #id, .class, [name=...]) or use the text locator parameter and retry.",
+      )
     }
     const scrollExpr = scrollIntoView
       ? `if(r.bottom<0||r.top>window.innerHeight||r.right<0||r.left>window.innerWidth){el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});r=el.getBoundingClientRect();}`

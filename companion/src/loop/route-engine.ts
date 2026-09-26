@@ -190,8 +190,11 @@ export function buildSteerText(p: {
     )
   }
   if (p.target === "osascript") {
+    // #529: osascript_eval 已从 LLM 工具集移除（现代 Chrome 默认拒绝 AppleScript JS），
+    // 该 steer 目标在生产中不会生成（route 硬编码 host_computer）；保留分支仅作防御，
+    // 文案指向 declare_blocked 而不是一个不可用的工具。
     return (
-      `${label}：CDP 已被机器封禁且 CU 面不可用；本 run 必须改用 osascript_eval（仍 L2），或申报 blocked。`
+      `${label}：CDP 已被机器封禁且 CU 面不可用；osascript_eval 已不可用（#529），本 run 请申报 blocked（loop_declare_blocked）。`
     )
   }
   return `${label}：无法自动换路。请调用 loop_declare_blocked 申报受阻，不要再重试已封禁的 CDP。`

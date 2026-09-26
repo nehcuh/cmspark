@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+- **站点熔断不再吃掉授权/参数错误（#528）**：`evaluate` 缺 `security_token` 的拒绝带机器可读前缀 `EVALUATE_AUTH_REQUIRED:`（扩展侧新增契约测试钉住格式），与 `SELECTOR_REQUIRED` 一起列入 `NON_AGGREGATING_SITE_OP_CODES`——这类模型可立即改正的错误不再累计 (thread, origin) CDP 失败条数、也不做 locator ban，避免 4 次授权拒绝就触发 `SITE_OP_FAIL_ESCALATE`、把可成功的 selector 路径一并禁掉。
+- **`osascript_eval` 从 LLM 可见工具集移除（#529）**：现代 Chrome 默认拒绝 AppleScript JS，该工具是确定性死路。`getToolDefinitions()` 在**所有平台**（含 darwin）过滤它；full catalog 保留条目（pack 校验不受影响）。系统提示 Rule 8、升级指引、恢复文案、route-engine steer 死分支同步清理。
+- **navigate 后定位工具窗口期修复（#538）**：debugger 重新 attach（含导航后 onDetach 触发的重挂）后先轮询 \`document.readyState\` 至 complete（非致命 5s 上限），避免 Runtime.evaluate 落在未稳定上下文里静默返回 falsy、把存在的元素报成 ELEMENT_NOT_FOUND；\`wait_for\` selector 模式超时时附带最后一次被吞掉的底层错误。
+- **扩展重载后的孤儿 debugger 会话可自愈（#537）**：扩展重载 / SW 重启后旧 `chrome.debugger` 会话残留，新 SW attach 报 already attached，导致所有 CDP 调用静默降级为 scripting 回退（evaluate 变 `EVALUATE_NULL_RESULT`、存在的选择器报 `ELEMENT_NOT_FOUND`）。`ensureAttached` 现在对 already-attached 先 detach 再重attach（同扩展孤儿可回收），detach 失败（DevTools/其他扩展占用）才走 scripting 回退。
+
 - 点不到页面上的文字时，不再连失败三次就停掉整轮。会改去读页面、往下滚动，或把那句标题当作要查的内容去搜索、打开，而不是继续当按钮点。换过办法之后还在重复同一个工具，才会停。
 - 多个 worker 一起看网页时，只有正在改页面的那一下才独占标签（#526）。读正文、读 HTML、等待元素不再占锁，也可以读别人正在用的页面。刚创建的标签由创建它的 worker 或编排线程独占 60 秒，或直到它自己第一次成功跳转。暂停不再整段占住标签；已经点下去的修改会保持到这一下结束。
 - 子任务的模型已经停、也没有暂停时，不再占着标签页，侧栏也不再把它们显示成「运行中 N worker」。暂停的子任务仍保留标签。父任务自己还在思考时，状态只写「思考中」。

@@ -122,3 +122,22 @@ test("page-sanitizer HTML pipeline still strips scripts (unrelated to evaluate)"
   assert.ok(result.threatsRemoved.includes("script-tags"))
   assert.equal(result.sanitized.includes("<script"), false)
 })
+
+test("#528: auth refusal error carries the EVALUATE_AUTH_REQUIRED machine prefix (companion regex contract)", () => {
+  // companion/src/llm/adapter.ts extracts failCode via /^([A-Z][A-Z0-9_]+):/
+  // on the error STRING (this refusal path returns no data.error_code).
+  // If this prefix drifts, the failure silently degrades to "UNKNOWN" and is
+  // counted toward the origin CDP fail streak — the #528 regression.
+  const companionFailCodeRe = /^([A-Z][A-Z0-9_]+):/
+  for (const params of [
+    { code: "1 + 1" },
+    { code: "1 + 1", security_token: "" },
+    { code: "1 + 1", security_token: null },
+  ]) {
+    const d = resolveEvaluateExecution(params as any)
+    assert.equal(d.allowed, false)
+    const m = companionFailCodeRe.exec((d as any).error || "")
+    assert.ok(m, `error must start with an uppercase machine code: ${(d as any).error}`)
+    assert.equal(m![1], "EVALUATE_AUTH_REQUIRED")
+  }
+})

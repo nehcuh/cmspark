@@ -2,6 +2,20 @@
 
 ## Current Session
 
+### S118 (22:46) [标签只在改页时锁 · 点不到就换办法 · 合 main]
+- 设计经 Kimi+Claude 六轮收到 `APPROVE_WITH_NITS` 后实现。只读不占锁；修改只占这一下；worker/编排新建标签 60 秒。点不到可见文字时不再连失败三次停轮，改读页面、滚动或搜索。
+- [#526](https://github.com/nehcuh/cmspark/issues/526) / [PR #527](https://github.com/nehcuh/cmspark/pull/527) 快进合 `origin/main` `b5a7396a`。CI 四作业绿（build + smoke ×3）。版本仍 **0.6.9**，未发版。
+- 换装 `[executed]`：本机 `/Applications/CMspark.app` CDHash `8910dba5e15847b4e11954884a3c72831cd2fcd4`（主程序与 cmspark-host 相同），`:23401` 在听。无 bak。`host-integrity.ts` 被打包改脏，未提交。
+- **Next**：Chrome 重载未打包扩展 `chrome-extension/build/chrome-mv3-prod/`。不要提交 `host-integrity.ts` / `memory/session.md`。#230 仍冻。
+- Recorded: yes — 只读不占锁的计数/墓碑/60 秒 sweep；点不到文字先换路再熔断
+
+### S117 (2026-09-24) [多智能体 handback / Premature close]
+- 对话 `8olhpa`：4 个 worker（m5v709 / ybzrxk / 56cqgn / 6xgjgo）并行核验。`Premature close` 是网关掐 SSE，旧逻辑每断一次就 `chat.error` 刷 ⚠️，并塞一条 “try a different approach”。
+- 两个 worker 死于 `SCREENSHOT_FALLBACK_TAB_MISMATCH`（被判不可恢复）；另两个死于 click/type 连续 3 次熔断。最后一条 assistant 是空的工具回合，更早的正文被 `collect_handback` 当成没有助手消息，且该错误被判不可恢复，同批其余 collect 变成 INTERRUPTED。
+- Claude 与 Kimi 均为 APPROVE_WITH_NITS，Blocking 无。未改 NIT。
+- 换装 `[executed]`：`make package-macos` 后 ditto 到 `/Applications/CMspark.app`。CDHash `84a1dd0e99f1ba60b3c6f6e5068deadd530a5ae2`（CMspark 与 cmspark-host 相同）。版本 0.6.9。`127.0.0.1:23401` 在听。无 bak。`host-integrity.ts` 被 build-host 改脏，未提交。
+- **Next**：Chrome 里重载未打包扩展 `chrome-extension/build/chrome-mv3-prod/`。同工具 3 次熔断仍会停掉只发工具调用、从未写正文的 worker。
+
 ### S116 (2026-09-23) [#524 租手确认 · 0.6.9 换装发布]
 - 侧栏 caller/权限、Windows 绝对路径、`[Outbound]` 确认把确认台拉到前面。Kimi+Claude AWN，NIT 补丁后再 Kimi AWN，Grok 复审 APPROVE。快进合 main `1f27b988`，CI 四作业绿。[PR #525](https://github.com/nehcuh/cmspark/pull/525)。
 - 版本收到 **0.6.9**（`b78e0962`）。本机 `make package-macos` 换装 `/Applications/CMspark.app`：CDHash `37d554d0…` 与 staging 一致，`cmspark-agent v0.6.9`，`:23401` 在听。无 bak。`host-integrity.ts` 被 build-host 改脏，未提交。
@@ -1112,10 +1126,10 @@
 
 ### 形态深化 0.5.3 切点（S84–S104 · main 含知识 Wave A/B + 开闸 + 查重）
 - status: **active**（用户可见主线 on main；不宣称 Capture/CU 闭合）
-- context: 活切点 **0.6.9**（#524 租手确认已换装并发布）。#228 禁扩 profile；#230 冻。
+- context: 活切点仍是 **0.6.9**（未发 0.6.10）。main `b5a7396a` 含 #526 只读不占锁和点不到就换路。本机已换装 CDHash `8910dba5…`。#228 禁扩 profile；#230 冻。
 - next_action: 重载 unpacked 扩展 `chrome-extension/build/chrome-mv3-prod/`。不要提交本机 `host-integrity.ts`。#230 禁止整票。
-- resume_doc: CHANGELOG 0.6.9 · https://github.com/nehcuh/cmspark/releases/tag/v0.6.9 · #524
-- updated: 2026-09-23
+- resume_doc: CHANGELOG Unreleased · PR #527 · #526 · https://github.com/nehcuh/cmspark/releases/tag/v0.6.9
+- updated: 2026-09-24
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**

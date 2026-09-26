@@ -67,6 +67,7 @@ import { normalizeWaitForParams } from "../tool/wait-for-params"
 import {
   peekSiteOpBan,
   recordSiteOpFailure,
+  NON_AGGREGATING_SITE_OP_CODES,
   bannedSiteOpResult,
   formatSiteOpMemoryPrompt,
   thawTabIfPresent,
@@ -695,8 +696,12 @@ CRITICAL RULES:
 6. Wait for pages to load before extracting content. After create_tab/navigate, wait_for({tabId}) or wait_for({tabId, network_idle:true}) waits for load (tabId-only is treated as network_idle). Use wait_for({tabId, selector}) when waiting for a specific element.
 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate. For clicking visible labels use click({text}) or click({selector}) — text is exclusive when provided. If a tool returns CDP_ATTACH_FAILED, call list_tabs / ask the user to focus the tab; do NOT retry via evaluate (same debugger). host_computer is NOT a substitute for a missed debugger — only after TAB_ATTACH_FROZEN / DOM-script volume cap, or an explicit user 模拟点击, MAY you call host_computer on a browser token (Rule 12; ALWAYS pops a confirm).
 8. ${
+  // #529: osascript_eval was removed from the LLM-visible tool set on every
+  // platform (deterministic dead path on modern Chrome — AppleScript JS is off
+  // by default). Both branches now say the same thing: it is not in your tool
+  // list; do not call it; escalate via host_computer (Rule 12) only.
   os.platform() === "darwin"
-    ? "osascript_eval is a LAST-RESORT macOS-only tool (AppleScript JS in Chrome) after CDP+scripting both fail. Prefer get_page_text / click({text}) / evaluate first. http pages are allowed. Counted in the DOM-script success budget. After freeze/cap or explicit 模拟点击, host_computer on the browser token is Rule 12 (ALWAYS confirms) — not a silent fallback."
+    ? "osascript_eval is NOT available (removed from your tool list on macOS too — modern Chrome denies AppleScript JS by default) and is not in your tool list. NEVER call it. If click/evaluate returns CDP_ATTACH_FAILED, stop or list_tabs — there is no third JS injection path. After TAB_ATTACH_FROZEN / DOM-script cap or an explicit user 模拟点击, host_computer on the browser token is Rule 12 (ALWAYS confirms) — not a silent fallback."
     : "osascript_eval is NOT available on this platform (Windows/Linux) and is not in your tool list. NEVER call it. If click/evaluate returns CDP_ATTACH_FAILED, stop or list_tabs — there is no third JS injection path. After TAB_ATTACH_FROZEN / DOM-script cap or an explicit user 模拟点击, host_computer on the browser token is Rule 12 (ALWAYS confirms) — not a silent fallback."
 }
 9. Vision / OCR — three DIFFERENT capabilities; never conflate them:
@@ -922,7 +927,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   // ADR-015: narrow LLM-visible tool schemas by thread tool_whitelist (null = full surface).
   // Use the same isToolAllowed gate as execution (wildcards, fs↔filesystem aliases,
   // full-autonomy cruise expansion). Prevents "tool offered to model then blocked".
-  // Platform filter: omit osascript_eval on non-darwin so the model cannot call a dead tool.
+  // #529: getToolDefinitions omits osascript_eval on every platform (dead tool on modern Chrome).
   let nativeTools: ToolDefinition[] = [...getToolDefinitions(os.platform())]
   let tools: ToolDefinition[] = [...nativeTools, ...mcpTools, ...mcpMetaTools]
   if (thread) {
@@ -1997,7 +2002,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               isCdpInteractiveTool(toolName) &&
               failCode !== "SITE_OP_BANNED" &&
               failCode !== "TAB_ATTACH_FROZEN" &&
-              failCode !== "SITE_OP_ESCALATE"
+              failCode !== "SITE_OP_ESCALATE" &&
+              // #528: param/authorization refusals (missing security_token,
+              // missing selector) are model-correctable, not CDP-health signals.
+              (failCode === undefined || !NON_AGGREGATING_SITE_OP_CODES.has(failCode))
             ) {
               const rec = recordSiteOpFailure(threadId, toolName, execParams, failCode, tabUrl)
               // #358: persist trigger is the (thread, origin) aggregate threshold,
@@ -2191,7 +2199,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                 const { loopRouteCaps } = require("../loop/tier-bind") as typeof import("../loop/tier-bind")
                 if (isOriginEscalated(threadId)) {
                   unlockHint = loopRouteCaps().cuArmed
-                    ? " 替代路径（host_computer/osascript）连续失败：请人工接手或更换任务，之后可从 checkpoint 恢复。"
+                    ? " 替代路径（host_computer）连续失败：请人工接手或更换任务，之后可从 checkpoint 恢复。"
                     : " 解锁：在 设置 → 坐标计算机使用 打开 coordinateEnabled 后从 checkpoint 恢复，或更换任务（loop 不会自动打开该开关）。"
                 }
               } catch {
