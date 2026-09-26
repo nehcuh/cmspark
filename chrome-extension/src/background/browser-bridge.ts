@@ -217,6 +217,25 @@ export class BrowserBridge {
         await chrome.debugger.sendCommand({ tabId }, "Page.enable")
       } catch { /* ignore */ }
     } catch (e: any) {
+      // Orphaned session from a previous service-worker incarnation: debugger
+      // attachments survive extension reloads / SW restarts, so the new SW's
+      // attach fails with "already attached" and EVERY CDP call falls back to
+      // scripting (evaluate → EVALUATE_NULL_RESULT, selectors → ELEMENT_NOT_FOUND
+      // on elements that exist — real-run 2026-09-26). If the session belongs
+      // to this extension, detach and re-attach so this SW owns it.
+      if (/already attached/i.test(String(e?.message || ""))) {
+        try {
+          await chrome.debugger.detach({ tabId })
+          await chrome.debugger.attach({ tabId }, "1.3")
+          this.attachedTabs.add(tabId)
+          try {
+            await chrome.debugger.sendCommand({ tabId }, "Page.enable")
+          } catch { /* ignore */ }
+          return
+        } catch {
+          // DevTools / another extension holds the session — scripting fallback.
+        }
+      }
       // Try scripting API as fallback for page read tools
       throw new Error(`Debugger attach failed for tab ${tabId}: ${e.message}`)
     }
@@ -1744,7 +1763,11 @@ export class BrowserBridge {
 
   private async getElementCenter(tabId: number, selector?: string, scrollIntoView = true): Promise<{ x: number; y: number }> {
     if (!selector) {
-      throw new Error("SELECTOR_REQUIRED: interactive tools need a CSS selector (no default 300,300 click)")
+      throw new Error(
+        "SELECTOR_REQUIRED: interactive tools need a CSS selector (no default 300,300 click). " +
+          "This is a missing-parameter error, NOT an origin/CDP ban — provide a selector " +
+          "(e.g. #id, .class, [name=...]) or use the text locator parameter and retry.",
+      )
     }
     const scrollExpr = scrollIntoView
       ? `if(r.bottom<0||r.top>window.innerHeight||r.right<0||r.left>window.innerWidth){el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});r=el.getBoundingClientRect();}`
