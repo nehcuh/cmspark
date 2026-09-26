@@ -184,9 +184,25 @@ export class BrowserBridge {
 
   // --- CDP helpers ---
 
+  /** Per-tab in-flight attach dedup (grok P2): two overlapping ensureAttached
+   *  calls for the same tab must share ONE attach sequence — otherwise the
+   *  second caller's "already attached" recovery would detach the session the
+   *  first caller just established (screenshot/analyze_image can bypass
+   *  TabQueue and overlap a queued op while attachedTabs is still empty). */
+  private attachInflight = new Map<number, Promise<void>>()
+
   private async ensureAttached(tabId: number): Promise<void> {
     if (this.attachedTabs.has(tabId)) return
+    const inflight = this.attachInflight.get(tabId)
+    if (inflight) return inflight
+    const seq = this.attachSequence(tabId).finally(() => {
+      if (this.attachInflight.get(tabId) === seq) this.attachInflight.delete(tabId)
+    })
+    this.attachInflight.set(tabId, seq)
+    return seq
+  }
 
+  private async attachSequence(tabId: number): Promise<void> {
     // Verify tab exists and is accessible
     try {
       // Retry up to 10 times with delay — tab URL may be blank during creation/navigation

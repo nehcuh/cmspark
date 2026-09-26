@@ -806,7 +806,7 @@
     "type": "function",
     "function": {
       "name": "loop_declare_blocked",
-      "description": "Declare a checklist item blocked when you cannot switch routes after a route-directive (CDP origin escalate). Required if you will NOT try the directed route (host_computer / osascript_eval). Does not complete the task. Never enables computer.use or modules.",
+      "description": "Declare a checklist item blocked when you cannot switch routes after a route-directive (CDP origin escalate). Required if you will NOT try the directed route (host_computer). Does not complete the task. Never enables computer.use or modules.",
       "parameters": {
         "type": "object",
         "properties": {

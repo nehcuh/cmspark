@@ -376,6 +376,11 @@ test("tool-definitions: platform helpers for osascript (#529 always hidden)", ()
   assert.equal(shouldExposeOsascript("linux"), false)
   // L2-gate helper retained for the dormant implementation layer.
   assert.equal(shouldL2GateOsascript("darwin"), true)
+  assert.equal(shouldL2GateOsascript("win32"), false)
+  // The macos-only refusal copy is what the direct executor path returns;
+  // it must keep the "macos-only" marker (message-router imports this constant).
+  const { OSASCRIPT_MACOS_ONLY_ERROR } = require("../src/bridge/tool-definitions") as typeof import("../src/bridge/tool-definitions")
+  assert.match(OSASCRIPT_MACOS_ONLY_ERROR, /macos-only/i)
 })
 
 test("tool-definitions: each tool has required OpenAI function-calling format", () => {
