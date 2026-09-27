@@ -88,3 +88,28 @@ test("windows PowerShell UTF-8 stdout round-trips a Chinese path", {
   }
 })
 
+
+// #542: error classification for the macOS pick (timeout vs cancel vs automation denial)
+test("classifyMacOSPickError: cancel / timeout / denied / other", async () => {
+  const { classifyMacOSPickError } = await import("../src/obsidian/folder-picker")
+  assert.equal(classifyMacOSPickError({ stderr: "User canceled. (-128)" }).kind, "cancel")
+  assert.equal(classifyMacOSPickError({ killed: true, signal: "SIGTERM" }).kind, "timeout")
+  assert.equal(classifyMacOSPickError({ message: "ETIMEDOUT" }).kind, "timeout")
+  assert.equal(
+    classifyMacOSPickError({ stderr: "error -1743" }).kind,
+    "denied",
+  )
+  assert.equal(classifyMacOSPickError({ message: "boom" }).kind, "other")
+  // timeout message tells the user the dialog may be behind other windows
+  assert.match(classifyMacOSPickError({ killed: true }).message, /其它窗口后面|重试/)
+})
+
+// grok NIT: killed with the full script echoed in the message must still classify as timeout
+test("classifyMacOSPickError: killed + full command line in message => timeout", async () => {
+  const { classifyMacOSPickError } = await import("../src/obsidian/folder-picker")
+  const r = classifyMacOSPickError({
+    killed: true,
+    message: 'Command failed: /usr/bin/osascript -e POSIX path of (choose folder with prompt "选择工作区文件夹")',
+  })
+  assert.equal(r.kind, "timeout")
+})

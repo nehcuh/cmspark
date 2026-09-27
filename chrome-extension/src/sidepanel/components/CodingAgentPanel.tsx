@@ -170,6 +170,13 @@ export function CodingAgentPanel({
   /** B-lite S1: one-line git status under 工作区 (branch · dirty N / 非 git / —) */
   const [gitStatusLine, setGitStatusLine] = useState<string | null>(null)
   const [embedOpenError, setEmbedOpenError] = useState("")
+  /** #543: workspace-pick failures stay visible (with retry hint) instead of a 6s flash. */
+  const [pickError, setPickError] = useState("")
+  // kimi P2-1: closing the panel must clear the stale pick error (thread switch is
+  // already covered by the App.tsx `key` remount, but open→false is not).
+  useEffect(() => {
+    if (!open) setPickError("")
+  }, [open])
 
   const wasOpenRef = useRef(false)
   const acpEnabledRef = useRef(storeAcpEnabled || acpEnabled)
@@ -378,9 +385,14 @@ export function CodingAgentPanel({
       if (msg.error || msg.cancelled) {
         pendingStartAfterPickRef.current = false
         if (startingRef.current) setStarting(false)
-        flash(msg.cancelled ? "未选择工作区" : `工作区选择失败: ${msg.error}`, 6000)
+        setPickError(
+          msg.cancelled
+            ? "未选择工作区。再次点击「在本面板启动」重试，或先在「装配 → 场景与专家」绑定工作区。"
+            : `工作区选择失败：${msg.error}。再次点击「在本面板启动」重试。`,
+        )
         return
       }
+      setPickError("")
       const path =
         (typeof msg.thread?.workspace_root === "string" && msg.thread.workspace_root) ||
         (typeof msg.path === "string" && msg.path) ||
@@ -1003,6 +1015,9 @@ export function CodingAgentPanel({
                               ? codingHandoffCopy.ctaStartDraft
                               : codingHandoffCopy.ctaStartReview}
                       </button>
+                      {pickError ? (
+                        <p role="alert" style={styles.pickError}>{pickError}</p>
+                      ) : null}
                       {ctaDisabled && missingPre && !starting ? (
                         <p style={styles.precondition}>{missingPre}</p>
                       ) : null}
@@ -1059,6 +1074,15 @@ export function CodingAgentPanel({
                 <p style={styles.footnote}>{codingHandoffCopy.panelEmbeddedTerminalHint}</p>
               </div>
             ) : null}
+            {/* #540: an explicit way back to the main conversation during a live session.
+                Closing the panel keeps the monitor bridge alive (per the mode C copy). */}
+            <button
+              type="button"
+              style={styles.backToChat}
+              onClick={onClose}
+            >
+              ← 返回主对话（本会话继续运行）
+            </button>
             <div style={styles.sessionHead}>
               <span>
                 {session.displayName || session.agentId} ·{" "}
@@ -1494,6 +1518,23 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 10,
     background: tokens.bgElevated || "#fff",
     overflow: "hidden",
+  },
+  pickError: {
+    margin: "6px 0 0",
+    fontSize: 12,
+    lineHeight: 1.5,
+    color: tokens.danger,
+  },
+  backToChat: {
+    alignSelf: "flex-start",
+    border: "none",
+    background: "none",
+    padding: "4px 0",
+    marginBottom: 8,
+    fontSize: 12,
+    color: tokens.textSecondary,
+    cursor: "pointer",
+    textDecoration: "underline",
   },
   sessionHead: {
     display: "flex",

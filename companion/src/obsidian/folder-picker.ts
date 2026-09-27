@@ -201,18 +201,54 @@ function trimTrailingSlash(p: string): string {
   return s.length > 1 && s.endsWith("/") ? s.slice(0, -1) : s
 }
 
-async function pickMacOS(prompt: string): Promise<PickResult> {
+/** #542: distinguish timeout (user never saw the dialog) from cancel/denied. Exported for tests. */
+export function classifyMacOSPickError(e: any): { kind: "cancel" | "timeout" | "denied" | "other"; message: string } {
+  const msg = ((e?.stderr || "") + " " + (e?.message || "")).toString()
+  if (/cancel|-128/i.test(msg)) return { kind: "cancel", message: "cancelled" }
+  // Automation consent denied (telling another app to run the dialog) → fall back, not fail.
+  if (/-1743|not allowed to send|automation/i.test(msg)) return { kind: "denied", message: msg }
+  // execFile timeout kills the child (killed=true) — the dialog was likely hidden behind
+  // other windows and the user never saw it (real-run 2026-09-27).
+  if (e?.killed || /timed? ?out|ETIMEDOUT/i.test(msg)) {
+    return { kind: "timeout", message: `对话框超时（${Math.round(PICK_TIMEOUT_MS / 1000)} 秒未选择）。对话框可能开在其它窗口后面，请重试` }
+  }
+  return { kind: "other", message: msg }
+}
+
+async function pickMacOSPlain(prompt: string): Promise<PickResult> {
   // `choose folder` returns an alias; `POSIX path of` yields the path (with a trailing slash).
   // Cancel → osascript exits non-zero with "User canceled" / error -128 in stderr.
   const script = `POSIX path of (choose folder with prompt "${escapeAppleScriptString(prompt)}")`
+  const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", script], { timeout: PICK_TIMEOUT_MS })
+  const p = trimTrailingSlash(stdout)
+  return p ? { path: p } : { error: "未选择文件夹" }
+}
+
+async function pickMacOS(prompt: string): Promise<PickResult> {
+  // #542: a companion daemon spawned in the background shows the dialog BEHIND the
+  // user's windows; the pick then times out and the relay panel start dies silently.
+  // First try binding the dialog to the frontmost app so it actually appears in front.
+  const frontScript =
+    `tell application (path to frontmost application as text) to ` +
+    `POSIX path of (choose folder with prompt "${escapeAppleScriptString(prompt)}")`
   try {
-    const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", script], { timeout: PICK_TIMEOUT_MS })
+    const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", frontScript], { timeout: PICK_TIMEOUT_MS })
     const p = trimTrailingSlash(stdout)
     return p ? { path: p } : { error: "未选择文件夹" }
   } catch (e: any) {
-    const msg = ((e.stderr || "") + " " + (e.message || "")).toString()
-    if (/cancel|-128/i.test(msg)) return { error: "cancelled" }
-    return { error: `macOS 文件夹对话框失败: ${msg.slice(0, 160)}` }
+    const c = classifyMacOSPickError(e)
+    if (c.kind === "cancel") return { error: "cancelled" }
+    if (c.kind === "timeout") return { error: c.message }
+    // Any other front-tell failure (Automation denied -1743, no frontmost app, …):
+    // degrade to the plain dialog exactly once rather than failing the whole pick.
+    try {
+      return await pickMacOSPlain(prompt)
+    } catch (e2: any) {
+      const c2 = classifyMacOSPickError(e2)
+      if (c2.kind === "cancel") return { error: "cancelled" }
+      if (c2.kind === "timeout") return { error: c2.message }
+      return { error: `macOS 文件夹对话框失败: ${c2.message.slice(0, 160)}` }
+    }
   }
 }
 
