@@ -6,6 +6,7 @@
 
 - **站点熔断不再吃掉授权/参数错误（#528）**：`evaluate` 缺 `security_token` 的拒绝带机器可读前缀 `EVALUATE_AUTH_REQUIRED:`（扩展侧新增契约测试钉住格式），与 `SELECTOR_REQUIRED` 一起列入 `NON_AGGREGATING_SITE_OP_CODES`——这类模型可立即改正的错误不再累计 (thread, origin) CDP 失败条数、也不做 locator ban，避免 4 次授权拒绝就触发 `SITE_OP_FAIL_ESCALATE`、把可成功的 selector 路径一并禁掉。
 - **`osascript_eval` 从 LLM 可见工具集移除（#529）**：现代 Chrome 默认拒绝 AppleScript JS，该工具是确定性死路。`getToolDefinitions()` 在**所有平台**（含 darwin）过滤它；full catalog 保留条目（pack 校验不受影响）。系统提示 Rule 8、升级指引、恢复文案、route-engine steer 死分支同步清理。
+- **接力面板体验修复（#540 #542 #543）**：「在本面板启动」点了没反应的因果链修复 —— daemon 后台弹的 macOS 文件夹对话框改为绑定前台应用置前（失败回退原生对话框），超时/取消/权限拒绝分类报错并提示重试；工作区选择失败在启动按钮下方常驻显示（不再 6 秒快闪消失）；进行中会话壳新增「← 返回主对话」入口。kimi + grok 双门禁（grok 一轮 REQUEST CHANGES 的 P1/NIT 全采纳）。
 - **navigate 后定位工具窗口期修复（#538）**：debugger 重新 attach（含导航后 onDetach 触发的重挂）后先轮询 \`document.readyState\` 至 complete（非致命 5s 上限），避免 Runtime.evaluate 落在未稳定上下文里静默返回 falsy、把存在的元素报成 ELEMENT_NOT_FOUND；\`wait_for\` selector 模式超时时附带最后一次被吞掉的底层错误。
 - **扩展重载后的孤儿 debugger 会话可自愈（#537）**：扩展重载 / SW 重启后旧 `chrome.debugger` 会话残留，新 SW attach 报 already attached，导致所有 CDP 调用静默降级为 scripting 回退（evaluate 变 `EVALUATE_NULL_RESULT`、存在的选择器报 `ELEMENT_NOT_FOUND`）。`ensureAttached` 现在对 already-attached 先 detach 再重attach（同扩展孤儿可回收），detach 失败（DevTools/其他扩展占用）才走 scripting 回退。
 
