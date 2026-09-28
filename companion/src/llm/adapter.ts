@@ -2289,6 +2289,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       // field (providers/anthropic-convert.ts:190-192); OpenAI passes them
       // through unchanged (providers/openai.ts toWireMessages), so this is
       // wire-safe on both.
+      //
+      // Why this cannot be forged by page content (dual-review #549 grok/kimi
+      // NIT): the guarantee is the CHANNEL, not the marker text. wrapUntrusted
+      // (text-sanitize.ts:128-131) only adds open/close tags and does not rewrite
+      // the body, so a page can emit the "[CMspark 系统提示 …]" string verbatim —
+      // but it then lands inside <untrusted-N source="page"> where rule 11 orders
+      // the model to ignore it. Page/tool data can never arrive as role:"system",
+      // which is the property actually relied on here. The marker is a readability
+      // aid for the model, not a security boundary.
       if (pivotNotes.length > 0) {
         messages.push({
           role: "system" as const,
