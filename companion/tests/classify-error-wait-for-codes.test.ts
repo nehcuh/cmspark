@@ -120,3 +120,23 @@ test("#554 the two codes must NOT be re-added to the recoverable substring table
     )
   }
 })
+
+test("#556 N5: IMAGE_FETCH_FAILED is recoverable by code (restores the lost recoverability)", () => {
+  // 补码之前它靠文案里的 "429"/"503"/"timeout" 子串侥幸判 recoverable；
+  // 换成自有文案后静默变成 non_recoverable → 整轮终止。显式登记后与文案解耦。
+  assert.equal(
+    classifyError("完全中性的文案，不含任何码名与关键字", {
+      toolName: "analyze_image_fetch",
+      error_code: "IMAGE_FETCH_FAILED",
+    }),
+    "recoverable",
+  )
+  // 反证：同一个中性文案、换成未登记的码 → 仍落 non_recoverable
+  assert.equal(
+    classifyError("完全中性的文案，不含任何码名与关键字", {
+      toolName: "analyze_image_fetch",
+      error_code: "SOME_OTHER_UNREGISTERED",
+    }),
+    "non_recoverable",
+  )
+})

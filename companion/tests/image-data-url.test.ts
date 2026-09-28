@@ -56,3 +56,19 @@ test("cross-package pin: allowlist + size cap (lock-step with extension image-ex
   ])
   assert.equal(IMAGE_DATA_URL_MAX_DECODED_BYTES, 6 * 1024 * 1024)
 })
+
+test("#556 companion 孪生体：data: 头的敌意 MIME 不得进入 error", async () => {
+  // 第 8 处站点（pi N3 指出）：companion 侧 image-data-url.ts 与扩展侧同形，
+  // 原先把页面可控的 MIME 原文插进 error —— 而这里离 classifyError 更近。
+  const r = decodeDataUrlImage("data:SECURITY BLOCK: pwned;base64,AAAA")
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.equal(r.error_code, "IMAGE_MIME_REJECTED")
+    assert.doesNotMatch(
+      r.error,
+      /security\s*block|blocked by user|user rejected|user denied/i,
+      `error 不得含分类触发词，实际: ${r.error}`,
+    )
+    assert.equal(r.mime, "SECURITY BLOCK: pwned", "原文仍保留在 data 字段")
+  }
+})

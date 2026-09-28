@@ -84,6 +84,24 @@ function untrustedPageText(...parts: unknown[]): string | undefined {
   return s || undefined
 }
 
+/**
+ * A page-side exception, carried WITHOUT page-controlled text in `message`.
+ *
+ * SECURITY (#554 / #556): any expression we evaluate can be made to throw
+ * arbitrary wording by the page. That wording must never reach `err.message`,
+ * because the companion's `classifyError` keys on substrings and maps
+ * "security block" → `security` → adapter `shouldStop` / `security_halt`, i.e. a
+ * hostile page could end a whole turn at will. The page's own text travels on
+ * `err.pageText`, which `failInteractive` forwards to the DATA channel
+ * (`page_text_untrusted`) where the classifier never looks.
+ */
+function pageExceptionError(context: string, pageText?: string): Error & { pageText?: string } {
+  const err = new Error(context) as Error & { pageText?: string }
+  const text = untrustedPageText(pageText)
+  if (text) err.pageText = text
+  return err
+}
+
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
   private sanitizer: PageSanitizer
@@ -470,9 +488,14 @@ export class BrowserBridge {
     const msg = String(err?.message || err || "")
     const url = await this.getTabUrl(tabId)
     const c = classifyInteractiveFailure(url, msg, fallbackCode)
+    // Any page-controlled excerpt carried on the error goes to the DATA channel
+    // only (#556). Reading it here rather than at each call site means every
+    // failInteractive caller inherits the guarantee.
+    const pageText = untrustedPageText((err as any)?.pageText)
     return codedToolError(c.error_code, msg, {
       suggested_action: c.suggested_action,
       tab_url: url || "",
+      ...(pageText ? { page_text_untrusted: pageText } : {}),
       ...(extraData || {}),
     })
   }
@@ -552,11 +575,21 @@ export class BrowserBridge {
       const probed = await this.safeEvaluate(tabId, syntaxProbe)
       const pv = probed?.result?.value
       if (pv && pv.ok === false) {
+        // #556: `pv.message` is not our text — the page can patch querySelector to
+        // throw any wording, and Chrome's own message quotes the caller-supplied
+        // selector (so agent-supplied text would echo too). Use our own wording;
+        // the page's text goes to the data channel only.
+        const pageText = untrustedPageText(pv.message)
         return {
           ok: false,
-          result: codedToolError("INVALID_SELECTOR", pv.message || "invalid selector", {
-            suggested_action: "refine_text_or_selector",
-          }),
+          result: codedToolError(
+            "INVALID_SELECTOR",
+            "the page rejected the selector syntax (is not a valid selector)",
+            {
+              suggested_action: "refine_text_or_selector",
+              ...(pageText ? { page_text_untrusted: pageText } : {}),
+            },
+          ),
         }
       }
     } catch (e: any) {
@@ -776,7 +809,8 @@ export class BrowserBridge {
       expression: `
         (function() {
           const el = document.querySelector(${JSON.stringify(selector)});
-          if (!el) return { error: "Element not found: " + ${JSON.stringify(selector)} };
+          // Token, not a message: this object is page-rewritable (#556).
+          if (!el) return { fail: "missing", detail: "" };
 
           // For <img> elements
           if (el.tagName === "IMG") {
@@ -799,7 +833,9 @@ export class BrowserBridge {
               // fetch the raw bytes directly — host_permissions: <all_urls> lets
               // the service worker bypass page CORS / canvas taint.
               const src = el.currentSrc || el.src || "";
-              if (!src) return { error: "Cannot extract image (CORS, no src): " + e.message };
+              // Return a reason TOKEN + raw detail only — never a message: this runs in
+              // the page MAIN world, so any wording written here is page-rewritable (#556).
+              if (!src) return { fail: "extract", detail: String((e && e.message) || e).slice(0, 300) };
               return {
                 fetchSrc: src,
                 width: el.naturalWidth || el.width || 0,
@@ -862,11 +898,11 @@ export class BrowserBridge {
                   alt: el.getAttribute("aria-label") || ""
                 });
               };
-              img.onerror = () => resolve({ error: "Failed to render element" });
+              img.onerror = () => resolve({ fail: "render", detail: "" });
               img.src = url;
             });
           } catch (e) {
-            return { error: "Cannot render element: " + e.message };
+            return { fail: "render", detail: String((e && e.message) || e).slice(0, 300) };
           }
         })()
       `,
@@ -928,8 +964,28 @@ export class BrowserBridge {
         },
       }
     }
-    if (data.error) {
-      return { success: false, error: data.error }
+    if (data.fail || data.error) {
+      // #556 (structural). The injected expression runs in the PAGE main world, so
+      // ANY string it returns is page-rewritable — including "our own wording" we
+      // might write inside that expression. (dual-review pi reproduced exactly that:
+      // a one-line page-side Proxy replaced the whole returned object, so the
+      // previous literal-based fix was ineffective.) Hence: never use a
+      // page-returned STRING as the message. The page value is only allowed to
+      // SELECT among literals that live HERE, in extension code; everything else
+      // rides the data channel.
+      const ourWording =
+        data.fail === "render"
+          ? "Cannot render element"
+          : data.fail === "extract"
+            ? "Cannot extract image (cross-origin, no src)"
+            : data.fail === "missing"
+              ? "Element not found"
+              : "Image element could not be captured"
+      // `data.detail` / `data.error` both come from the page world — data channel only.
+      const pageText = untrustedPageText(data.detail, data.error)
+      const result: ToolResult = { success: false, error: ourWording }
+      if (pageText) result.data = { page_text_untrusted: pageText }
+      return result
     }
 
     // Path A — same-origin canvas (bytes already in the page; screenshot already
@@ -983,10 +1039,21 @@ export class BrowserBridge {
         },
       }
     } catch (e: any) {
-      return {
-        success: false,
-        error: `analyze_image_fetch failed for ${candidateUrl}: ${e?.message || e}`,
-      }
+      // #556 (7th site): `candidateUrl` is caller/page-derived, and `e.message` can
+      // embed page-controlled text (e.g. the MIME echo out of fetchImageAsBase64).
+      // Own wording + untrusted parts on the data channel only.
+      const pageText = untrustedPageText(candidateUrl, (e as any)?.message || e)
+      // N5 (pi): the plain message lost the substrings ("429"/"503"/"timeout") that used
+      // to make this recoverable, so it silently became non_recoverable → halt. Use a
+      // coded error instead: classification then depends on the CODE, not on wording.
+      return codedToolError(
+        "IMAGE_FETCH_FAILED",
+        "analyze_image_fetch failed",
+        {
+          suggested_action: "get_page_text",
+          ...(pageText ? { page_text_untrusted: pageText } : {}),
+        },
+      )
     }
   }
 
@@ -1000,12 +1067,15 @@ export class BrowserBridge {
         awaitPromise: true,
       })
       // Surface page exceptions instead of silently returning null (agent mislabels as CSP).
+      // #556: but the text here is PAGE-CONTROLLED — it must not enter `message`
+      // (see pageExceptionError); it rides `pageText` to the data channel instead.
       if (cdp?.exceptionDetails) {
-        const text =
+        const text = String(
           cdp.exceptionDetails?.exception?.description ||
-          cdp.exceptionDetails?.text ||
-          "Runtime.evaluate exception"
-        throw new Error(text)
+            cdp.exceptionDetails?.text ||
+            "",
+        )
+        throw pageExceptionError("Runtime.evaluate raised a page exception", text)
       }
       reportChannel?.("cdp")
       return cdp
@@ -1015,9 +1085,15 @@ export class BrowserBridge {
         const result = await this.scriptingExecute(tabId, expression, pageRead, reportChannel)
         return { result: { value: result } }
       } catch (scriptErr: any) {
-        throw new Error(
+        // Both channels failed. The messages themselves are already ours (CDP
+        // attach text, or our own literals) — only the page texts are untrusted,
+        // and they go to the data channel.
+        const err = pageExceptionError(
           `${cdpErr?.message || cdpErr}; scripting fallback: ${scriptErr?.message || scriptErr}`,
         )
+        const text = untrustedPageText((cdpErr as any)?.pageText, (scriptErr as any)?.pageText)
+        if (text) err.pageText = text
+        throw err
       }
     }
   }
@@ -1677,13 +1753,9 @@ export class BrowserBridge {
         // Not one single reading ever came back, so this is NOT a timeout on a
         // working probe: surface the real transport reason instead of pretending
         // the element is missing (#554; dual-review claude/pi/kimi all landed here).
-        const pageText = (probeError as any)?.pageText
-        return await this.failInteractive(
-          tabId,
-          probeError,
-          "WAIT_PROBE_FAILED",
-          pageText ? { page_text_untrusted: pageText } : undefined,
-        )
+        // `probeError.pageText` is forwarded to the data channel by failInteractive
+        // itself — one mechanism for every caller (#556).
+        return await this.failInteractive(tabId, probeError, "WAIT_PROBE_FAILED")
       }
       // Genuine timeout: at least one probe succeeded, the condition just never
       // held. The message keeps the word "timeout" so classifyError still scores
@@ -1743,11 +1815,19 @@ export class BrowserBridge {
     }
 
     if (result?.exceptionDetails) {
-      const text =
-        result.exceptionDetails?.exception?.description ||
-        result.exceptionDetails?.text ||
-        "Runtime.evaluate exception"
-      return codedToolError("EVAL_THROWN", text, { suggested_action: "fix_expression" })
+      // #558: same family as #556 — the page decides this text, so it must not
+      // enter `message` (classifyError reads it). Own wording + data channel.
+      const pageText = untrustedPageText(
+        result.exceptionDetails?.exception?.description || result.exceptionDetails?.text,
+      )
+      return codedToolError(
+        "EVAL_THROWN",
+        "the evaluated expression threw a page exception",
+        {
+          suggested_action: "fix_expression",
+          ...(pageText ? { page_text_untrusted: pageText } : {}),
+        },
+      )
     }
 
     const value = result?.result?.value
