@@ -57,11 +57,9 @@ test("classifyError: new act-loop codes are recoverable", () => {
     "TYPE_UNSUPPORTED_EDITOR: ce",
     "ELEMENT_NOT_FOUND: no visible element",
     "WAIT_CONDITION_REQUIRED: selector or network_idle is required",
-    // #554: wait_for 的两条新码（本清单是文案驱动的，故用实际文案形态）。
-    // 它们同时已登记在 security.ts，所以即便文案不含子串也判定为 recoverable ——
+    // #554 的 wait_for 两条码**刻意不在本清单**：本清单是**文案驱动**的（上面只传一个
+    // 参数），而它们走 error_code 显式分支判定，与文案解耦。
     // 见 tests/classify-error-wait-for-codes.test.ts。
-    "WAIT_TIMEOUT: timeout after 12000ms waiting for selector \"#app\" to be visible",
-    "WAIT_PROBE_FAILED: selector probe failed on both channels — cdp: Debugger attach failed for tab 7",
   ]
   for (const c of codes) {
     assert.equal(classifyError(c), "recoverable", c)

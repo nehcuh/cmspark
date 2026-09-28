@@ -3,62 +3,84 @@ import assert from "node:assert/strict"
 import { classifyError } from "../src/security"
 
 /**
- * #554 dual-review claude 的 BLOCKING：wait_for 新增的 coded error 若**不登记**
- * 在 security.ts 的 recoverable 名单里，会被判成 **non_recoverable** → adapter
- * 直接 shouldStop / security_halt，整轮终止。而修复前同场景是「吞异常 → 报
- * timeout → recoverable → 可重试」，所以不登记等于把「可重试的错误归因」悄悄
- * 变成「整轮死亡」。
+ * #554 dual-review claude 的 BLOCKING：wait_for 新增的 coded error 若没被处理，会落进
+ * 默认桶 **non_recoverable** → adapter 直接 shouldStop / security_halt，整轮终止。
+ * 而修复前同场景是「吞异常 → 报 timeout → recoverable → 可重试」，所以这等于把
+ * 「可重试的错误归因」悄悄换成「整轮死亡」。
  *
- * 机制澄清（写用例时发现的）：`classifyError` 主要按 **errorMessage 的子串**匹配，
- * `context.error_code` 只用于少数显式分支。而 `codedToolError()` 产出的真实形态是
- * `"${CODE}: ${message}"` —— 所以登记为 `"wait_probe_failed"` 后，真实 message 里的
- * 那段子串就会命中它。用例因此必须用**真实产出形态**，否则测的不是生产路径。
+ * 设计：判定走 **error_code 显式分支**，不走 recoverable 子串表。
+ * 理由（dual-review pi）：子串表要求 message 里出现 code 名（`codedToolError` 的
+ * `"${CODE}: "` 前缀），即判定依赖**文案形态** —— 谁改了前缀就会静默退回整轮终止。
+ * 显式分支让判定与文案解耦，也是本文件既有的写法。
+ *
+ * 因此本文件用**完全中性**的 message（连 code 名都不含）来测 —— 那才是真正证明
+ * 「只靠 code 生效」。若哪天有人把分支挪回子串表，这些用例立刻变红。
  */
 
-/** 生产形态：codedToolError 把 code 前缀拼进 message。 */
-const asEmitted = (code: string, tail: string) => `${code}: ${tail}`
-
-test("#554 WAIT_PROBE_FAILED emitted form is recoverable (this is the BLOCKING fix)", () => {
-  // 尾部刻意中性：不含 timeout / not found / attach 等任何既有 recoverable 子串，
-  // 于是唯一能救它的就是「wait_probe_failed 已被登记」。
-  const msg = asEmitted("WAIT_PROBE_FAILED", "探测通道不可用")
+test("#554 WAIT_PROBE_FAILED is recoverable from error_code alone (message fully neutral)", () => {
   assert.equal(
-    /timeout|not found|attach|cannot access|disconnect|element not visible/i.test(msg.replace(/^WAIT_PROBE_FAILED: /, "")),
-    false,
-    "前提：除 code 前缀外不含任何 recoverable 子串，否则本用例测不到「登记」",
-  )
-  assert.equal(classifyError(msg, { toolName: "wait_for", error_code: "WAIT_PROBE_FAILED" }), "recoverable")
-})
-
-test("#554 WAIT_TIMEOUT emitted form is recoverable (belt and braces)", () => {
-  // 这条**同时**靠两重保险：文案里有 "timeout" 子串，且已显式登记该码。
-  // 如实标注：即便不登记它也会因 "timeout" 通过；登记的价值是让它不依赖文案措辞
-  // （将来谁改了文案也不会把它变成 non_recoverable）。
-  const msg = asEmitted("WAIT_TIMEOUT", "timeout after 12000ms waiting for selector \"#app\" to be visible")
-  assert.equal(classifyError(msg, { toolName: "wait_for", error_code: "WAIT_TIMEOUT" }), "recoverable")
-})
-
-test("#554 the real probe-failure copy stays recoverable", () => {
-  const msg =
-    "CDP_ATTACH_FAILED: selector probe failed on both channels — cdp: Debugger attach failed for tab 7: x; scripting: scripting probe: the page raised an exception while evaluating the selector"
-  assert.equal(classifyError(msg, { toolName: "wait_for", error_code: "CDP_ATTACH_FAILED" }), "recoverable")
-})
-
-test("#554 counter-proof: dropping the registration flips the verdict to non_recoverable", () => {
-  // 反证「登记就是关键变量」：同一条（除 code 前缀外）中性的消息，只有 code 名不同，
-  // 结论就相反 —— 未登记的码落默认桶 non_recoverable，会整轮终止。
-  assert.equal(
-    classifyError(asEmitted("SOME_UNREGISTERED_CODE", "探测通道不可用"), {
-      toolName: "wait_for",
-      error_code: "SOME_UNREGISTERED_CODE",
-    }),
-    "non_recoverable",
-  )
-  assert.equal(
-    classifyError(asEmitted("WAIT_PROBE_FAILED", "探测通道不可用"), {
+    classifyError("完全中性的文案，不含任何码名与关键字", {
       toolName: "wait_for",
       error_code: "WAIT_PROBE_FAILED",
     }),
     "recoverable",
   )
+})
+
+test("#554 WAIT_TIMEOUT is recoverable from error_code alone (message fully neutral)", () => {
+  assert.equal(
+    classifyError("完全中性的文案，不含任何码名与关键字", {
+      toolName: "wait_for",
+      error_code: "WAIT_TIMEOUT",
+    }),
+    "recoverable",
+  )
+})
+
+test("#554 emitted form (with the coded prefix) is recoverable too", () => {
+  // 生产形态：codedToolError 产出 "${CODE}: ${message}"。
+  assert.equal(
+    classifyError('WAIT_PROBE_FAILED: selector probe failed on both channels', {
+      toolName: "wait_for",
+      error_code: "WAIT_PROBE_FAILED",
+    }),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError('WAIT_TIMEOUT: timeout after 12000ms waiting for selector "#app" to be visible', {
+      toolName: "wait_for",
+      error_code: "WAIT_TIMEOUT",
+    }),
+    "recoverable",
+  )
+})
+
+test("#554 counter-proof: an UNREGISTERED code with neutral copy lands in non_recoverable", () => {
+  // 反证「处理与否就是关键变量」：同样的中性文案，只因 code 未被处理，结论就相反 ——
+  // 未处理者落默认桶 non_recoverable，会整轮终止。
+  assert.equal(
+    classifyError("完全中性的文案，不含任何码名与关键字", {
+      toolName: "wait_for",
+      error_code: "SOME_UNREGISTERED_CODE",
+    }),
+    "non_recoverable",
+  )
+})
+
+test("#554 verdict does not depend on the message shape at all", () => {
+  // 同一 code、四种截然不同的文案形态 —— 结论必须一致。
+  // 这正是「与文案解耦」的可执行定义。
+  const shapes = [
+    "",
+    "完全中性",
+    "WAIT_PROBE_FAILED: selector probe failed on both channels",
+    "timeout not found attach failed cannot access disconnected", // 塞满既有子串
+  ]
+  for (const msg of shapes) {
+    assert.equal(
+      classifyError(msg, { toolName: "wait_for", error_code: "WAIT_PROBE_FAILED" }),
+      "recoverable",
+      `形态 ${JSON.stringify(msg)} 下结论应一致`,
+    )
+  }
 })
