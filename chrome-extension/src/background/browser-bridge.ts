@@ -84,6 +84,24 @@ function untrustedPageText(...parts: unknown[]): string | undefined {
   return s || undefined
 }
 
+/**
+ * A page-side exception, carried WITHOUT page-controlled text in `message`.
+ *
+ * SECURITY (#554 / #556): any expression we evaluate can be made to throw
+ * arbitrary wording by the page. That wording must never reach `err.message`,
+ * because the companion's `classifyError` keys on substrings and maps
+ * "security block" → `security` → adapter `shouldStop` / `security_halt`, i.e. a
+ * hostile page could end a whole turn at will. The page's own text travels on
+ * `err.pageText`, which `failInteractive` forwards to the DATA channel
+ * (`page_text_untrusted`) where the classifier never looks.
+ */
+function pageExceptionError(context: string, pageText?: string): Error & { pageText?: string } {
+  const err = new Error(context) as Error & { pageText?: string }
+  const text = untrustedPageText(pageText)
+  if (text) err.pageText = text
+  return err
+}
+
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
   private sanitizer: PageSanitizer
@@ -470,9 +488,14 @@ export class BrowserBridge {
     const msg = String(err?.message || err || "")
     const url = await this.getTabUrl(tabId)
     const c = classifyInteractiveFailure(url, msg, fallbackCode)
+    // Any page-controlled excerpt carried on the error goes to the DATA channel
+    // only (#556). Reading it here rather than at each call site means every
+    // failInteractive caller inherits the guarantee.
+    const pageText = untrustedPageText((err as any)?.pageText)
     return codedToolError(c.error_code, msg, {
       suggested_action: c.suggested_action,
       tab_url: url || "",
+      ...(pageText ? { page_text_untrusted: pageText } : {}),
       ...(extraData || {}),
     })
   }
@@ -1000,12 +1023,15 @@ export class BrowserBridge {
         awaitPromise: true,
       })
       // Surface page exceptions instead of silently returning null (agent mislabels as CSP).
+      // #556: but the text here is PAGE-CONTROLLED — it must not enter `message`
+      // (see pageExceptionError); it rides `pageText` to the data channel instead.
       if (cdp?.exceptionDetails) {
-        const text =
+        const text = String(
           cdp.exceptionDetails?.exception?.description ||
-          cdp.exceptionDetails?.text ||
-          "Runtime.evaluate exception"
-        throw new Error(text)
+            cdp.exceptionDetails?.text ||
+            "",
+        )
+        throw pageExceptionError("Runtime.evaluate raised a page exception", text)
       }
       reportChannel?.("cdp")
       return cdp
@@ -1015,9 +1041,15 @@ export class BrowserBridge {
         const result = await this.scriptingExecute(tabId, expression, pageRead, reportChannel)
         return { result: { value: result } }
       } catch (scriptErr: any) {
-        throw new Error(
+        // Both channels failed. The messages themselves are already ours (CDP
+        // attach text, or our own literals) — only the page texts are untrusted,
+        // and they go to the data channel.
+        const err = pageExceptionError(
           `${cdpErr?.message || cdpErr}; scripting fallback: ${scriptErr?.message || scriptErr}`,
         )
+        const text = untrustedPageText((cdpErr as any)?.pageText, (scriptErr as any)?.pageText)
+        if (text) err.pageText = text
+        throw err
       }
     }
   }
@@ -1677,13 +1709,9 @@ export class BrowserBridge {
         // Not one single reading ever came back, so this is NOT a timeout on a
         // working probe: surface the real transport reason instead of pretending
         // the element is missing (#554; dual-review claude/pi/kimi all landed here).
-        const pageText = (probeError as any)?.pageText
-        return await this.failInteractive(
-          tabId,
-          probeError,
-          "WAIT_PROBE_FAILED",
-          pageText ? { page_text_untrusted: pageText } : undefined,
-        )
+        // `probeError.pageText` is forwarded to the data channel by failInteractive
+        // itself — one mechanism for every caller (#556).
+        return await this.failInteractive(tabId, probeError, "WAIT_PROBE_FAILED")
       }
       // Genuine timeout: at least one probe succeeded, the condition just never
       // held. The message keeps the word "timeout" so classifyError still scores
