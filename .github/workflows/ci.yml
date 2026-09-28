@@ -38,6 +38,9 @@ jobs:
           bash -n scripts/package.sh
           bash -n scripts/build-windows-installer.sh
           bash -n scripts/verify-node.sh
+          # #552: release-guard.sh 也要有语法门 —— 它唯一的覆盖在 test-package-gates.sh
+          # 的动态块里，而那块在 command -v node/git 缺失时会整块跳过（pi NIT）。
+          bash -n scripts/release-guard.sh
           bash scripts/tests/test-verify-node.sh
 
       - name: Package fail-closed gates (P0-D nits)

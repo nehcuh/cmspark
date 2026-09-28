@@ -5,7 +5,10 @@ name: Release
 #
 # `workflow_dispatch` lets the matrix be dry-run on main WITHOUT creating a
 # release (the release job is gated on a tag) — use it to verify the 3-platform
-# build before tagging.
+# build before tagging. #552 release-guard.sh honours this: it receives
+# CMSPARK_RELEASE_REF_TYPE=github.ref_type, so a dispatch run (ref_type=branch)
+# skips the tag-equality assertion but still enforces a clean tree and an empty
+# [Unreleased] section. Tag pushes (ref_type=tag) get the full strict check.
 on:
   push:
     tags:
@@ -32,14 +35,19 @@ jobs:
           cache-dependency-path: |
             companion/package-lock.json
             chrome-extension/package-lock.json
-      # #552 / #547 防复发：正式版必须由 tag 产出，且版本锚与 tag 一致。
-      # 放在装依赖之前，好让脱节的发布在几十秒内失败，而不是白跑完整测试。
-      # CMSPARK_RELEASE_TAG 用 workflow context 而非 git describe：
+      # #552 / #547 防复发：tag push 时版本锚必须与 tag 一致，工作树必须干净，
+      # [Unreleased] 必须已归档。放在装依赖之前，好让脱节的发布几十秒内失败。
+      # CMSPARK_RELEASE_TAG / _REF_TYPE 用 workflow context 而非 git describe：
       # actions/checkout@v4 默认 fetch-depth=1，浅克隆里 tag 对象不一定存在。
+      # ref_type=branch（workflow_dispatch dry-run）时守卫跳过 tag 断言 —— release
+      # job 本就被 if: startsWith(github.ref, refs/tags/v) 挡住，dry-run 不发布。
       - name: Release guard (tag == version anchor, clean tree, Unreleased archived)
         env:
           CMSPARK_RELEASE_STRICT: "1"
           CMSPARK_RELEASE_TAG: ${{ github.ref_name }}
+          # ref_type 让守卫区分 tag push（严格校验 tag==版本锚）与 dispatch
+          # dry-run（跳过 tag 断言，仍强制干净树 + Unreleased 已归档）。
+          CMSPARK_RELEASE_REF_TYPE: ${{ github.ref_type }}
         run: bash scripts/release-guard.sh
 
       - name: Install companion deps
@@ -119,6 +127,7 @@ jobs:
           # 三个平台的打包都必须来自正确的 tag（#552）。
           CMSPARK_RELEASE_STRICT: "1"
           CMSPARK_RELEASE_TAG: ${{ github.ref_name }}
+          CMSPARK_RELEASE_REF_TYPE: ${{ github.ref_type }}
         run: bash scripts/package.sh ${{ matrix.platform }}
 
       # P0-D fail-closed content asserts — package.sh already gates at stage time;

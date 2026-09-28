@@ -706,7 +706,9 @@ if command -v node >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
       && git -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
   }
   # 在 repo 内跑守卫，只回传退出码。额外 env 以 KEY=VAL 形式传入。
-  rg_run() { ( cd "${RG_TMP}/repo" && env "$@" bash scripts/release-guard.sh >/dev/null 2>&1; echo $? ); }
+  # env -u 先清掉三个守卫变量，再套用调用方传入的 —— 否则开发者 shell 里预先
+  # export 了 CMSPARK_ALLOW_UNTAGGED=1 之类会让「默认拒绝」断言假红（claude P3）。
+  rg_run() { ( cd "${RG_TMP}/repo" && env -u CMSPARK_ALLOW_UNTAGGED -u CMSPARK_ALLOW_DIRTY -u CMSPARK_RELEASE_STRICT -u CMSPARK_RELEASE_REF_TYPE "$@" bash scripts/release-guard.sh >/dev/null 2>&1; echo $? ); }
 
   # 1) 干净树 + 正确 tag → 通过
   rg_setup 9.9.9
@@ -742,12 +744,25 @@ if command -v node >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
     "release-guard: strict 下 dirty 豁免失效"
 
   # 5) [Unreleased] 非空 → 拒绝（归档必须在打 tag 前完成）
+  #    **必须在 commit 之后 git tag -f**：否则 HEAD 离开 tag，rc=1 来自断言 2
+  #    （HEAD 无 tag）而非断言 3。pi 的突变验证证明过：把断言 3 整段删掉，
+  #    旧写法下这条断言仍然绿 —— 即它根本没测到目标行为。
   rg_setup 9.9.9
-  ( cd "${RG_TMP}/repo" && git tag v9.9.9 \
+  ( cd "${RG_TMP}/repo" \
     && printf '# Changelog\n\n## [Unreleased]\n\n- 未归档变更\n\n## [9.9.9] - x\n' > CHANGELOG.md \
-    && git add -A && git -c user.email=t@t -c user.name=t commit -qm unrel ) >/dev/null 2>&1
+    && git add -A && git -c user.email=t@t -c user.name=t commit -qm unrel \
+    && git tag -f v9.9.9 ) >/dev/null 2>&1
   assert_eq "1" "$(rg_run PATH="$PATH")" \
-    "release-guard: [Unreleased] 非空 → 拒绝"
+    "release-guard: [Unreleased] 非空 → 拒绝（tag 已在 HEAD，失败只能来自断言 3）"
+
+  # 5b) [Unreleased] 段**缺失** → 也必须拒绝（旧实现 inblk 从未置位 → 误报 ok）
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" \
+    && printf '# Changelog\n\n## [9.9.9] - x\n\n- 已发布\n' > CHANGELOG.md \
+    && git add -A && git -c user.email=t@t -c user.name=t commit -qm nosect \
+    && git tag -f v9.9.9 ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH")" \
+    "release-guard: CHANGELOG 无 [Unreleased] 段 → 拒绝（不把「没这段」当「已检查为空」）"
 
   # 6) CMSPARK_RELEASE_TAG（CI 路径，不依赖本地 tag 对象）
   rg_setup 9.9.9
@@ -756,6 +771,33 @@ if command -v node >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
   assert_eq "0" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_TAG=v9.9.9)" \
     "release-guard: CMSPARK_RELEASE_TAG 匹配 → 通过（不依赖浅克隆里的 tag 对象）"
 
+  # 7) dry-run（ref_type=branch）：跳过 tag 断言，但仍强制 dirty / Unreleased
+  rg_setup 9.9.9
+  assert_eq "0" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_REF_TYPE=branch CMSPARK_ALLOW_DIRTY=1)" \
+    "release-guard: dry-run(ref_type=branch) 无 tag 也放行（dispatch 验证三平台构建）"
+  ( cd "${RG_TMP}/repo" && echo dirty >> CHANGELOG.md ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_REF_TYPE=branch)" \
+    "release-guard: dry-run 仍强制干净树（不是无脑放行）"
+  # dry-run 不得让「tag 不匹配」的正式发布蒙混：显式 ref_type=tag 时仍硬失败
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" && git tag v8.8.8 ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_REF_TYPE=tag CMSPARK_RELEASE_TAG=v8.8.8)" \
+    "release-guard: ref_type=tag 时 tag 不匹配仍拒绝"
+
+  # 8) 非 git 仓库 / git 不可用 → 必须硬失败，不得把「查不出」当成「树干净」
+  #    （claude + kimi 各自独立指出的 fail-open）。用「不是 git 仓库」触发同一条
+  #    `git rev-parse --git-dir` 失败路径 —— 比从 PATH 摘掉 git 更可移植
+  #    （Git Bash 下给 92MB 的 node.exe 建符号链接会退化成复制，不可靠）。
+  RG_NOGIT="${RG_TMP}/nogit"
+  rm -rf "${RG_NOGIT}" 2>/dev/null || true
+  mkdir -p "${RG_NOGIT}/scripts" "${RG_NOGIT}/companion"
+  cp "${RELEASE_GUARD}" "${RG_NOGIT}/scripts/release-guard.sh"
+  printf '{"name":"cmspark-agent","version":"9.9.9"}\n' > "${RG_NOGIT}/companion/package.json"
+  printf '# Changelog\n\n## [Unreleased]\n\n## [9.9.9] - x\n' > "${RG_NOGIT}/CHANGELOG.md"
+  # 注意：这里**不** git init。豁免全开也必须失败 —— 证明 fail-closed 优先于豁免。
+  assert_eq "1" \
+    "$( cd "${RG_NOGIT}" && env -u CMSPARK_ALLOW_UNTAGGED -u CMSPARK_ALLOW_DIRTY -u CMSPARK_RELEASE_STRICT -u CMSPARK_RELEASE_REF_TYPE PATH="$PATH" CMSPARK_ALLOW_UNTAGGED=1 CMSPARK_ALLOW_DIRTY=1 bash scripts/release-guard.sh >/dev/null 2>&1; echo $? )" \
+    "release-guard: 非 git 仓库（查不出树状态）→ 硬失败，豁免不得覆盖"
   rm -rf "${RG_TMP}" 2>/dev/null || true
 else
   echo "  skip release-guard dynamic tests (node/git missing)"

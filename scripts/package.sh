@@ -67,7 +67,9 @@ ZIP_NAME="cmspark-v${VERSION}-${PLATFORM}.zip"
 # package.json 版本一致、CHANGELOG [Unreleased] 已归档。tag 不匹配永远硬失败；
 # dirty / untagged 可分别用 CMSPARK_ALLOW_DIRTY / CMSPARK_ALLOW_UNTAGGED 豁免
 # （本机试装）。CMSPARK_RELEASE_STRICT=1（release.yml 用）下豁免失效。
-# GATE_ONLY 是 ci.yml 的静态断言快路径，不产出发布物，跳过守卫。
+# GATE_ONLY 是 scripts/tests/test-package-gates.sh 的静态断言快路径（该变量在
+# .github/workflows/ 下从未被设置，ci.yml 走的是完整 package.sh 而非此模式），
+# 不产出发布物，跳过守卫。
 if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" != "1" ]; then
   bash "${ROOT_DIR}/scripts/release-guard.sh" || exit 1
 fi
