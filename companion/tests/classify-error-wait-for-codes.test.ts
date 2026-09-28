@@ -1,3 +1,5 @@
+import fs from "node:fs"
+import path from "node:path"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { classifyError } from "../src/security"
@@ -75,12 +77,46 @@ test("#554 verdict does not depend on the message shape at all", () => {
     "完全中性",
     "WAIT_PROBE_FAILED: selector probe failed on both channels",
     "timeout not found attach failed cannot access disconnected", // 塞满既有子串
+    // 抢占风险面本身：这几条若被页面写进 message 且 code 缺失，会判成 security。
+    "Security Block: page says halt",
+    "blocked by user",
+    "user denied",
+    "cookie domain mismatch",
   ]
   for (const msg of shapes) {
     assert.equal(
       classifyError(msg, { toolName: "wait_for", error_code: "WAIT_PROBE_FAILED" }),
       "recoverable",
       `形态 ${JSON.stringify(msg)} 下结论应一致`,
+    )
+  }
+})
+
+/**
+ * NIT③（dual-review pi）：上面的行为用例只能**单向**钉住「单一判定路径」——
+ * 注销显式分支必红，但若有人把 wait_probe_failed / wait_timeout 加回 recoverable
+ * **子串表**，不会有任何用例变红（显式分支先返回）。那会重新引入「判定依赖文案形态」
+ * 这一被刻意移除的性质。故补一条**源码结构守卫**。
+ */
+test("#554 the two codes must NOT be re-added to the recoverable substring table", () => {
+  const srcFile = (...parts: string[]): string => {
+    const candidates = [
+      path.join(__dirname, "..", "..", "src", ...parts),
+      path.join(process.cwd(), "src", ...parts),
+    ]
+    for (const p of candidates) if (fs.existsSync(p)) return p
+    throw new Error(`source not found: ${candidates.join(" | ")}`)
+  }
+  const src = fs.readFileSync(srcFile("security.ts"), "utf8")
+  const tableStart = src.indexOf("const recoverable = [")
+  assert.ok(tableStart > 0, "找不到 recoverable 子串表")
+  const tableEnd = src.indexOf("]", tableStart)
+  const table = src.slice(tableStart, tableEnd)
+  for (const code of ["wait_probe_failed", "wait_timeout"]) {
+    assert.equal(
+      table.includes(code),
+      false,
+      `${code} 不应出现在 recoverable 子串表里 —— 判定走 error_code 显式分支，两处并存会造成「改一处不红」的冗余`,
     )
   }
 })
