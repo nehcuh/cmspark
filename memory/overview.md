@@ -2,9 +2,9 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-23 (lockstep 0.6.9)
+**Updated**: 2026-09-28 (lockstep 0.6.10)
 
-## CMspark — 产品 0.6.9
+## CMspark — 产品 0.6.10
 
 | 轴 | 状态 |
 |----|------|
@@ -21,6 +21,7 @@
 ## Branch lock (S104)
 
 - 包装 **0.6.9**：租手确认台到前面 / Windows 租手路径 / 舰队 kick 收口。本机已换装，GitHub Release 已挂三端 zip + Setup.exe。0.7.0 企业双场景仍未验收。
+- 包装 **0.6.10**（版本锚已锁步，**尚未打包/发布**）：0.6.9 拉取批次对抗评审的三条 BLOCKING 修复（#544 pivot 投递进 untrusted 通道 / #545 fleet 快照读路径抹租约 / #546 Windows 测试静默空转），经 PR #549 合入；#547 tag 脱节经 PR #551 切版归档、PR #553 落地 release-guard 防复发机制。
 - **评审弧闭环**：c39d7d3e..26949cbb 四路对抗 7 MAJOR 全修（#261–#264），main tip `18d843d1`。
 - S104 起 origin 已含开闸+查重（#280–#283）；评审波次（#286–#295）十张 PR 已合入，见 GATE-SUMMARY。
 - **活票**：#230 冻 F-S-10 / overlay-acl。T1 #228 已关，**禁扩** profile。#258–#260 已在树（embedding experimental）。
@@ -34,6 +35,6 @@
 
 ## Docs SoT
 
-- 活切点：`CHANGELOG.md` **0.6.9**
+- 活切点：`CHANGELOG.md` **0.6.10**
 - 0.5.3 快照：`docs/superpowers/specs/2026-08-27-post-227-status.md`（SNAPSHOT）
 - 用户 / 架构：`docs/README.md` · `PRODUCT.md`

@@ -2,6 +2,24 @@
 
 ## Current Session
 
+### S117 (2026-09-27→28) [0.6.9 拉取 · 多路对抗评审 · 三条 BLOCKING 修复 · cut 0.6.10]
+
+- **任务**：拉 0.6.9（`59931595..b5a7396a`，12 提交）→ 编译 Windows 安装包换装 → 四路独立对抗评审 → 修 BLOCKING → 发布卫生。本机换装 `cmspark-agent v0.6.9`（Setup `c61a949e…`），daemon `:23401` 在听，备份 `CMspark-backup-20260927-225703.zip`。
+- **环境坑（Windows）**：`make` 缺失直接跑 `package.sh`；bash→cmd 的 PATH 被截断致 `node` not found；WSL bash 抢 Git Bash 致 `set -o pipefail` 报错（`/usr/bin` 须在 system32 前）；node `-p require(POSIX路径)` 需 `cygpath -m`。
+- **四路评审裁决 REJECT**（claude/pi/grok/kimi，`docs/audit/reviews/069-pull-20260927/SYNTHESIS.md`）：三条 BLOCKING 全实机复现——
+  - **B1 #545**：`releaseIdleWorkerLeases` 在 fleet 快照**读路径**（FleetStrip 每 4s）无条件释放 worker 租约，绕过同批次刚建的三重保护；`create_tab` 60s 独占作废。5 场景 + 2 对照组复现。
+  - **B2 #544（P0）**：same-tool-guard 的 pivot 指令被 `wrapUntrusted` 包进 `<untrusted>` 块，而 rule 11 / SECURITY FOOTER 明令禁止遵循块内 "call tool X" → 功能依赖模型违反安全规则才生效 + 侵蚀提示注入防线。真实模块重放确认 pivot 落在 untrusted 块内。
+  - **B3 #546**：`run-tests.mjs` 拼 418 路径超 Windows argv 32767 → `ENAMETOOLONG`、`r.status ?? 1` 吞 `r.error` → exit 1 零输出（测试根本没跑）。
+- **连带发现 #548**：写 B2 adapter 级测试时发现 pivot 在其声称的核心场景（连点同一句）不可达——site-op 熔断 `SITE_LOCATOR_FAIL_BAN=2` 按 locator 键在第 3 次点击前拦截，guard 按 toolName 键要到 3，且 `SITE_OP_BANNED` 不计数。实机探针确认。另 **#550**（SOFT_RESERVED 窄时序）。
+- **PR #549**（B1/B2/B3 修复，`d1ee60a6`）：四路 APPROVE_WITH_NITS。B2 改走可信 system 轮次（先例 #430 CONTENT_RISK_QUARANTINE_PLACEHOLDER）；B1 三重保护 + fleet fail-closed；B3 分批 spawn + 打印 r.error。新增 `adapter-pivot-trusted-turn.test.ts`（4 用例含 anti-vacuity 守卫）+ tab-lease 6 用例。companion 5306 / ext 1458，新增失败文件为空。
+- **PR #551**（cut 0.6.10，`c8d3741f`）：pi **三轮**才 APPROVE——① over-claim「页面伪造不出可信标记」（实为通道 role:system 不可伪造，非标记文字）② 熔断时序「第 2 次拦截」应为「第 3 次点击前」③ **改 PR 正文时手滑写 `Closes #552` 会误关承接票**（GitHub `closingIssuesReferences` 亲验）。17 文件版本锚 lock-step（照 `b78e0962`）。
+- **PR #553**（#547 防复发机制，`aa3c786b`）：新增 `scripts/release-guard.sh`（tag==HEAD / 工作树干净 / [Unreleased] 空）。pi 两轮 REJECT→APPROVE：① git fail-open（`|| true` 吞 git status 失败 + 校验周边仓库）② dispatch dry-run 被误杀（用 `ref_type` 区分 tag/branch）③ `CMSPARK_RELEASE_TAG` 无条件信任可复现 #547（加 `^{commit}==HEAD` 校验）。gate 125→156，三次突变验证确认在守行为。
+- **操作者本轮三处 over-claiming 均被评审或自查抓到并更正**：#549 防伪造论证、#551 熔断时序 + `Closes #552`、#553 package.sh 的 GATE_ONLY 归属（kimi 抓，该变量只在 test-package-gates.sh 用）。另：误关 #547 后已 `gh issue reopen`（根因是 commit message 的 `Closes` 也会关票，而 `closingIssuesReferences` 只查 PR 正文——操作者和 pi 都漏了这个来源）。
+- **发布**：⚠️ **尚未打 v0.6.10 tag**。release.yml 监听 `push: tags: v*` 会自动构建对外 Release（三端 zip + Setup.exe + SHA256SUMS），属不可逆对外动作，待用户拍板。tag 前置：memory 锁步（本提交）已完成。
+- **Next**：用户确认后打 `v0.6.10` tag 触发发布；发布后据实补 `PROJECT_CONTEXT.md` / overview.md 打包行的发布事实（Release URL、CDHash、SHA256），再关 #547（tag 与 HEAD 对齐后脱节闭环）。#548 / #550 / #552 follow-up（ps1/create-dmg/installer 三入口未接守卫、cli-version 硬编码正则）另票。
+- Recorded: yes — release-guard fail-closed 三原则（查不出=失败、tag 不匹配豁免不覆盖、dispatch 用 ref_type 区分）；`Closes` 在 commit message 也关票；测试必须带 anti-vacuity 守卫防空转假绿；突变验证是「测试真在守」的唯一证据。
+
+
 ### S116 (2026-09-23) [#524 租手确认 · 0.6.9 换装发布]
 - 侧栏 caller/权限、Windows 绝对路径、`[Outbound]` 确认把确认台拉到前面。Kimi+Claude AWN，NIT 补丁后再 Kimi AWN，Grok 复审 APPROVE。快进合 main `1f27b988`，CI 四作业绿。[PR #525](https://github.com/nehcuh/cmspark/pull/525)。
 - 版本收到 **0.6.9**（`b78e0962`）。本机 `make package-macos` 换装 `/Applications/CMspark.app`：CDHash `37d554d0…` 与 staging 一致，`cmspark-agent v0.6.9`，`:23401` 在听。无 bak。`host-integrity.ts` 被 build-host 改脏，未提交。
@@ -1112,10 +1130,10 @@
 
 ### 形态深化 0.5.3 切点（S84–S104 · main 含知识 Wave A/B + 开闸 + 查重）
 - status: **active**（用户可见主线 on main；不宣称 Capture/CU 闭合）
-- context: 活切点 **0.6.9**（#524 租手确认已换装并发布）。#228 禁扩 profile；#230 冻。
-- next_action: 重载 unpacked 扩展 `chrome-extension/build/chrome-mv3-prod/`。不要提交本机 `host-integrity.ts`。#230 禁止整票。
-- resume_doc: CHANGELOG 0.6.9 · https://github.com/nehcuh/cmspark/releases/tag/v0.6.9 · #524
-- updated: 2026-09-23
+- context: 活切点 **0.6.10**（#549 三条 BLOCKING 修复 / #551 cut 0.6.10 / #553 release-guard 均已合并 main）。v0.6.10 tag **待打**。#228 禁扩 profile；#230 冻；#548/#550/#552 follow-up 未做。
+- next_action: 用户确认后打 `v0.6.10` tag 触发 release.yml 对外发布；发布后据实补 `PROJECT_CONTEXT.md` + overview.md 打包行（Release URL / SHA256），再关 #547。
+- resume_doc: CHANGELOG 0.6.10 · docs/audit/reviews/069-pull-20260927/SYNTHESIS.md · #547 · #552
+- updated: 2026-09-28
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**
