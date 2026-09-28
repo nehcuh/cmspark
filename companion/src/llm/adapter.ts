@@ -2174,8 +2174,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               // text) and do not smuggle the instruction through data.pivot_zh.
               // Both used to be wrapped by wrapUntrusted below, putting a
               // "call tool X" directive inside a block the system prompt orders
-              // the model never to obey. suggested_action stays as a machine
-              // enum (not natural-language instruction) for toolChatErrorPayload.
+              // the model never to obey. suggested_action stays because it is a
+              // machine enum, not natural-language instruction, and it does have
+              // live consumers on THIS path: the tool.result frame sent to the
+              // extension (:1193/:1661) and the persisted stub, which
+              // tool-persistence-redact.ts:365 explicitly keeps alongside
+              // error_code / tab_url. (dual-review #549 correction: an earlier
+              // comment claimed toolChatErrorPayload, but that call site is in
+              // the security/non_recoverable branch, which breaks at :2152 and
+              // so is unreachable from here.)
               const data = (toolResult.data && typeof toolResult.data === "object")
                 ? toolResult.data
                 : {}

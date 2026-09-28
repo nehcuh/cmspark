@@ -1,4 +1,5 @@
 import test from "node:test"
+import { createRequire } from "node:module"
 import assert from "node:assert/strict"
 import {
   acquireOrRenewTabLease,
@@ -798,4 +799,65 @@ test("releaseIdleWorkerLeases: a genuinely idle worker IS released (#545 regress
   )
   assert.equal(n, 1, "the original intent — free a truly-idle worker — must still hold")
   assert.equal(getTabLease(561), null)
+})
+
+// #545 fail-closed regression. buildFleetSnapshot lazy-requires message-router
+// to learn which threads have a live LLM run. Before this fix, a throw there
+// fell into `catch { llmActive = [] }`, which — combined with idle release keyed
+// on that empty set — released EVERY non-paused worker's lease at once. The
+// fix adds llmActiveResolved so a failed resolve skips idle release entirely
+// (worst case: a stale holding_tabs badge; never a dropped write lock). All
+// three reviewers flagged this branch as zero-coverage; lock it here.
+
+test("buildFleetSnapshot: does NOT release idle leases when the LLM-active set cannot be resolved (#545 fail-closed)", () => {
+  reset()
+  // hooks registered so a resolvable run WOULD release — isolates the resolve failure as the only reason we keep the lease
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 570, holderThreadId: "w-idle", needsL2: false })
+  const tm = {
+    list: () => [{ id: "w-idle", alias: "w", agent_role: "worker", paused: false, parent_thread_id: "p" }],
+  } as any
+
+  const cjsRequire = createRequire(__filename)
+  const mrPath = cjsRequire.resolve("../src/message-router")
+  const orig = require.cache[mrPath]
+  // Force the lazy require to yield a module whose listLlmActiveThreadIds throws.
+  require.cache[mrPath] = {
+    id: mrPath, filename: mrPath, loaded: true, exports: {
+      listLlmActiveThreadIds: () => { throw new Error("simulated message-router require/eval failure") },
+    },
+  } as any
+  try {
+    const snap = buildFleetSnapshot(tm)
+    // The lease must survive: fail-closed on an unresolvable active set.
+    assert.notEqual(getTabLease(570), null, "#545 fail-closed: an unresolvable LLM-active set must NOT release the lease")
+    // Display path still works (llm_active just reflects the empty fallback).
+    const w = snap.workers.find((x) => x.id === "w-idle")
+    assert.equal(w?.status, "holding_tabs", "the worker still shows as holding its tab")
+  } finally {
+    if (orig) require.cache[mrPath] = orig
+    else delete require.cache[mrPath]
+  }
+})
+
+test("buildFleetSnapshot: DOES release a genuinely idle worker when the active set resolves (#545 control)", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 571, holderThreadId: "w-idle", needsL2: false })
+  const tm = {
+    list: () => [{ id: "w-idle", alias: "w", agent_role: "worker", paused: false, parent_thread_id: "p" }],
+  } as any
+  const cjsRequire = createRequire(__filename)
+  const mrPath = cjsRequire.resolve("../src/message-router")
+  const orig = require.cache[mrPath]
+  require.cache[mrPath] = {
+    id: mrPath, filename: mrPath, loaded: true, exports: { listLlmActiveThreadIds: () => [] },
+  } as any
+  try {
+    buildFleetSnapshot(tm)
+    assert.equal(getTabLease(571), null, "a truly idle worker (resolved active set, not in it) is still released — the ad7f0980 intent holds")
+  } finally {
+    if (orig) require.cache[mrPath] = orig
+    else delete require.cache[mrPath]
+  }
 })
