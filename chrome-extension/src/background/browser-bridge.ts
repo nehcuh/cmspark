@@ -31,6 +31,7 @@ import {
   codedToolError,
   planLocator,
   classifyInteractiveFailure,
+  isInvalidSelectorMessage,
 } from "./locator-classify"
 import { buildTypeFallbackExpression } from "./type-fallback"
 import {
@@ -54,6 +55,34 @@ interface ToolResult {
 // sets when an injection fails; include it locally so the fallback-on-injection-error logic in
 // scriptingExecute type-checks (audit H7 — the build was shipping with these tsc errors).
 type ScriptingResult = chrome.scripting.InjectionResult<any> & { error?: string }
+
+/**
+ * Message for a failed selector probe.
+ *
+ * SECURITY (dual-review pi N1, after I first shipped it wrong): whatever lands
+ * in `err.message` is fed to the companion's `classifyError`, which keys on
+ * substrings — "security block" resolves to `security`, and the adapter turns
+ * that into `shouldStop` / `security_halt`, killing the whole turn. The page can
+ * patch `document.querySelector`, so an exception raised by our injected probe
+ * is PAGE-CONTROLLED text: embedding it verbatim would let a hostile page end a
+ * turn at will. Hence this message only ever contains OUR OWN wording, and the
+ * page's text travels separately on the data channel (`page_text_untrusted`),
+ * which the classifier never reads.
+ */
+function probeFailureMessage(channel: "cdp" | "scripting", pageText: string): string {
+  if (isInvalidSelectorMessage(pageText)) {
+    // Our own literal — deliberately includes the phrase the classifier keys on,
+    // so a genuinely broken selector still resolves to INVALID_SELECTOR.
+    return `${channel} probe: the page rejected the selector syntax (is not a valid selector)`
+  }
+  return `${channel} probe: the page raised an exception while evaluating the selector`
+}
+
+/** Page text for the data channel only: bounded, and never fed to a classifier. */
+function untrustedPageText(...parts: unknown[]): string | undefined {
+  const s = parts.map(p => String(p ?? "")).filter(Boolean).join(" | ").slice(0, 300)
+  return s || undefined
+}
 
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
@@ -217,7 +246,9 @@ export class BrowserBridge {
         await chrome.debugger.sendCommand({ tabId }, "Page.enable")
       } catch { /* ignore */ }
     } catch (e: any) {
-      // Try scripting API as fallback for page read tools
+      // Debugger path unavailable. This layer reports the reason only; callers
+      // that can serve the request without CDP must fall back to
+      // chrome.scripting themselves (see scriptingProbeSelector / #554).
       throw new Error(`Debugger attach failed for tab ${tabId}: ${e.message}`)
     }
   }
@@ -225,6 +256,101 @@ export class BrowserBridge {
   private async sendCdp(tabId: number, method: string, params?: any): Promise<any> {
     await this.ensureAttached(tabId)
     return chrome.debugger.sendCommand({ tabId }, method, params)
+  }
+
+  /**
+   * CSP-safe selector existence probe via an injected *function* (never
+   * new Function()/eval, which the page CSP can block). ISOLATED world first,
+   * then MAIN — the same two-world dance as scriptingExecute, kept separate so
+   * that helper's contract stays untouched.
+   */
+  private async scriptingProbeSelector(tabId: number, selector: string): Promise<boolean> {
+    const probe = (sel: string) => !!document.querySelector(sel)
+    let pageText = ""
+    const run = async (world?: "MAIN"): Promise<boolean | undefined> => {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        injectImmediately: true,
+        ...(world ? { world } : {}),
+        func: probe,
+        args: [selector],
+      })
+      const first = results?.[0] as ScriptingResult | undefined
+      if (!first) return undefined
+      if (first.error) {
+        // Injection was blocked WITHOUT throwing — the shape hasUsableResult
+        // warns about. It used to be dropped silently, so the caller reported
+        // "no detail" (dual-review pi N2). Surface it as page text instead.
+        pageText = String(first.error)
+        return undefined
+      }
+      if (!("result" in first)) return undefined
+      return first.result === true
+    }
+    try {
+      const isolated = await run()
+      if (isolated !== undefined) return isolated
+    } catch (e) { pageText = String((e as any)?.message || e) }
+    try {
+      const main = await run("MAIN")
+      if (main !== undefined) return main
+    } catch (e) { pageText = String((e as any)?.message || e) }
+    const err = new Error(probeFailureMessage("scripting", pageText))
+    ;(err as any).pageText = pageText
+    throw err
+  }
+
+  /**
+   * Probe whether a selector currently exists, preferring CDP and falling back
+   * to chrome.scripting (#554).
+   *
+   * A boolean DOM read needs no debugger, so the debugger path being
+   * unavailable must not make this a dead end. When BOTH channels fail this
+   * throws with the real reason attached — never let a transport failure reach
+   * the caller disguised as "the element is not there".
+   */
+  private async probeSelectorExists(
+    tabId: number,
+    selector: string,
+  ): Promise<{ exists: boolean; channel: "cdp" | "scripting" }> {
+    let cdpErr: unknown = null
+    try {
+      const result = await this.sendCdp(tabId, "Runtime.evaluate", {
+        // Safe interpolation: JSON.stringify produces a valid JS string literal.
+        expression: `!!document.querySelector(${JSON.stringify(selector)})`,
+        returnByValue: true,
+      })
+      // A page-side exception (an invalid selector makes querySelector throw)
+      // arrives as exceptionDetails with no result.value. Folding that into
+      // exists=false answered "the element is not there" for a broken selector
+      // — and the new probe_channel field would have vouched for it. Treat it as
+      // a channel failure so the real reason reaches the caller (dual-review
+      // claude + pi, independently).
+      if (result?.exceptionDetails) {
+        const d = result.exceptionDetails
+        // Page-controlled: a page can patch document.querySelector to raise any
+        // wording it likes, so this must never reach `message` (see
+        // probeFailureMessage). Diagnosis rides `pageText` → the data channel.
+        const pageText = String(d?.exception?.description || d?.text || "")
+        const err = new Error(probeFailureMessage("cdp", pageText))
+        ;(err as any).pageText = pageText
+        throw err
+      }
+      return { exists: result?.result?.value === true, channel: "cdp" }
+    } catch (e) {
+      cdpErr = e
+    }
+    try {
+      return { exists: await this.scriptingProbeSelector(tabId, selector), channel: "scripting" }
+    } catch (e: any) {
+      const cdpMsg = String((cdpErr as any)?.message || cdpErr || "unknown")
+      const err = new Error(
+        `selector probe failed on both channels — cdp: ${cdpMsg}; scripting: ${String(e?.message || e)}`,
+      )
+      // Diagnosis rides the data channel; the message above stays page-free.
+      ;(err as any).pageText = untrustedPageText((cdpErr as any)?.pageText, e?.pageText)
+      throw err
+    }
   }
 
   private async getOuterHTMLViaDom(tabId: number, selector?: string): Promise<PageReadSnapshot> {
@@ -335,13 +461,19 @@ export class BrowserBridge {
     }
   }
 
-  private async failInteractive(tabId: number, err: any, fallbackCode = "CDP_ATTACH_FAILED"): Promise<ToolResult> {
+  private async failInteractive(
+    tabId: number,
+    err: any,
+    fallbackCode = "CDP_ATTACH_FAILED",
+    extraData?: Record<string, unknown>,
+  ): Promise<ToolResult> {
     const msg = String(err?.message || err || "")
     const url = await this.getTabUrl(tabId)
     const c = classifyInteractiveFailure(url, msg, fallbackCode)
     return codedToolError(c.error_code, msg, {
       suggested_action: c.suggested_action,
       tab_url: url || "",
+      ...(extraData || {}),
     })
   }
 
@@ -1515,19 +1647,52 @@ export class BrowserBridge {
       const timeout = typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : 15000
       const interval = params.interval || 500
       const start = Date.now()
+      // Keep waiting for the WHOLE deadline (same as before this fix): a slow
+      // navigation must not abort the wait. What changes is only the verdict at
+      // the end — see the split below. (dual-review pi: a round-count budget
+      // collapsed the tolerance window from the full deadline to ~2×interval.)
+      let probeError: unknown = null
+      let anyProbeSucceeded = false
+      let channel: "cdp" | "scripting" = "cdp"
       while (Date.now() - start < timeout) {
         try {
-          const result = await this.sendCdp(tabId, "Runtime.evaluate", {
-            // Safe interpolation: JSON.stringify produces a valid JS string literal.
-            expression: `!!document.querySelector(${JSON.stringify(mode.selector)})`,
-            returnByValue: true,
-          })
-          const exists = result.result?.value === true
-          if (exists === mode.expectVisible) return { success: true, data: { elapsed_ms: Date.now() - start } }
-        } catch { /* ignore */ }
+          const probe = await this.probeSelectorExists(tabId, mode.selector)
+          channel = probe.channel
+          anyProbeSucceeded = true
+          probeError = null
+          if (probe.exists === mode.expectVisible) {
+            return { success: true, data: { elapsed_ms: Date.now() - start, probe_channel: probe.channel } }
+          }
+        } catch (e) {
+          // Both probe channels failed: infrastructure, not "the element is
+          // absent". Remember the reason and keep waiting.
+          probeError = e
+        }
         await new Promise(r => setTimeout(r, interval))
       }
-      throw new Error(`Timeout waiting for selector "${mode.selector}" (${mode.expectVisible ? "visible" : "hidden"})`)
+      // Exactly one discriminator: did ANY reading ever come back? A wait whose
+      // probe never once succeeded is not a slow page — it is a broken probe, and
+      // saying "timed out" would repeat the misattribution this ticket is about.
+      if (!anyProbeSucceeded && probeError) {
+        // Not one single reading ever came back, so this is NOT a timeout on a
+        // working probe: surface the real transport reason instead of pretending
+        // the element is missing (#554; dual-review claude/pi/kimi all landed here).
+        const pageText = (probeError as any)?.pageText
+        return await this.failInteractive(
+          tabId,
+          probeError,
+          "WAIT_PROBE_FAILED",
+          pageText ? { page_text_untrusted: pageText } : undefined,
+        )
+      }
+      // Genuine timeout: at least one probe succeeded, the condition just never
+      // held. The message keeps the word "timeout" so classifyError still scores
+      // it recoverable (same as before this fix) rather than a fatal halt.
+      return codedToolError(
+        "WAIT_TIMEOUT",
+        `timeout after ${timeout}ms waiting for selector ${JSON.stringify(mode.selector)} to be ${mode.expectVisible ? "visible" : "hidden"}`,
+        { suggested_action: "get_page_text", probe_channel: channel, elapsed_ms: Date.now() - start },
+      )
     }
 
     await this.waitForTabLoad(tabId, mode.timeoutMs)

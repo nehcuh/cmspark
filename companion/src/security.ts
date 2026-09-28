@@ -921,6 +921,18 @@ export function classifyError(
 ): ErrorLevel {
   // Typed missing-peer must not retry even if the message contains timeout/disconnected/not found.
   if (context?.error_code === "BROWSER_UNAVAILABLE") return "non_recoverable"
+  // #554: wait_for 的两条新码 —— 从 dead end 里救回来的是这次登记。
+  // 语义：一次都没探成功 ⇒ 探测坏了（可重试），不是「元素不存在」。未登记时它们落
+  // 默认桶 non_recoverable → adapter shouldStop/security_halt 整轮终止，而修复前同场景
+  // 是 recoverable 可重试（dual-review claude 实测）。
+  //
+  // 刻意用**显式分支**而非 recoverable 子串表：子串表要求 message 里出现 code 名
+  // （codedToolError 的 "${CODE}: " 前缀），即判定依赖**文案形态** —— 谁改了前缀就会
+  // 静默退回整轮终止。走 error_code 与文案解耦，也是本文件既有的写法（见上方
+  // BROWSER_UNAVAILABLE / UNATTENDED_CONFIRM_DENIED / TAB_LOCKED 等同族分支）。
+  if (context?.error_code === "WAIT_PROBE_FAILED" || context?.error_code === "WAIT_TIMEOUT") {
+    return "recoverable"
+  }
   // L-5: unattended NEVER-list confirm timeout/deny is item-blocked + bypass,
   // not HALT_SECURITY. 45s fail-closed is unchanged (the tool still denied).
   if (context?.error_code === "UNATTENDED_CONFIRM_DENIED") return "recoverable"
