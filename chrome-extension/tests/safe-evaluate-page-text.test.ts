@@ -84,6 +84,25 @@ const HOST_IMAGE_ERROR_CODES = new Set([
   "SELECTOR_OR_TEXT_REQUIRED",
 ])
 
+/**
+ * #559（pi M5）：光校验「码 ∈ 集合」「措辞 ∈ 集合」**不够** —— 把 IMAGE_RENDER_FAILED 的
+ * 措辞换成另一条宿主字面量仍然全绿。故这里锁**配对**（每条码允许哪些措辞）。
+ * 一个码允许多条措辞是有意的（IMAGE_EXTRACT_FAILED 覆盖三个成因）。
+ */
+const HOST_IMAGE_PAIRS: Record<string, string[]> = {
+  "ELEMENT_NOT_FOUND": ["Element not found"],
+  "IMAGE_RENDER_FAILED": ["Cannot render element"],
+  "IMAGE_EXTRACT_FAILED": [
+    "Cannot extract image (cross-origin, no src)",
+    "Image element could not be captured",
+    "Failed to extract image data",
+  ],
+  "SELECTOR_OR_TEXT_REQUIRED": [
+    "selector is required for analyze_image",
+    "candidate_url is required for analyze_image_fetch",
+  ],
+}
+
 /** `codedToolError` 产出 "CODE: wording"；两半都必须来自宿主。 */
 function hostImageFailure(r: any): { code: string; wording: string } {
   const m = /^([A-Z][A-Z0-9_]*): (.*)$/.exec(String(r.error || ""))
@@ -92,6 +111,10 @@ function hostImageFailure(r: any): { code: string; wording: string } {
   assert.ok(
     HOST_IMAGE_ERROR_LITERALS.has(m![2]),
     `措辞必须属于宿主字面量集合，实际: ${m![2]}`
+  )
+  assert.ok(
+    (HOST_IMAGE_PAIRS[m![1]] || []).includes(m![2]),
+    `(码, 措辞) 配对必须成立，实际: ${m![1]} / ${m![2]}`
   )
   assert.equal(r.data?.error_code, m![1], "data.error_code 必须与 error 前缀一致")
   return { code: m![1], wording: m![2] }
@@ -447,4 +470,48 @@ test("#559 data: 但不支持的图片类型 → 透传 IMAGE_MIME_REJECTED（�
       assert.equal(r.data?.error_code, "IMAGE_MIME_REJECTED", `实际: ${JSON.stringify(r.data)}`)
     },
   )
+})
+
+test("#559 页面返回空对象/非对象时不得报「成功但没图」（pi 指出的最尖锐形态）", async () => {
+  // 注入表达式在页面主世界执行 → 页面可让返回值为 {} / 5 / "str" / []。
+  // 那样 data.base64 是 undefined；若不校验形状，工具会报 success:true 而模型可能
+  // 据此声称「已经看过图」。修法是成功前先过形状校验。
+  for (const value of [{}, 5, "str", [], { foo: 1 }]) {
+    await withBridge(
+      { send: async (m: string) => (m === "Runtime.evaluate" ? { result: { value } } : {}) },
+      async (bridge) => {
+        const r = await bridge.execute("analyze_image", { tabId: 7, selector: "#img" })
+        assert.equal(r.success, false, `返回值 ${JSON.stringify(value)} 不得报成功`)
+        assert.equal(r.data?.error_code, "IMAGE_EXTRACT_FAILED")
+        hostImageFailure(r)
+      },
+    )
+  }
+})
+
+test("#559 无活动标签可分析 → TAB_ID_REQUIRED（不再是默认桶整轮终止）", async () => {
+  // pi：:805 的 "No active tab found" 原本无码 → non_recoverable → 整轮终止，
+  // 而「没有标签页可分析」显然可恢复。
+  await withBridge({}, async (bridge) => {
+    const r = await bridge.execute("analyze_image", { selector: "#img" })
+    assert.equal(r.success, false)
+    assert.equal(r.data?.error_code, "TAB_ID_REQUIRED", `实际: ${JSON.stringify(r)}`)
+  })
+})
+
+test("#559 suggested_action 随成因走（不把非选择器问题说成选择器问题）", async () => {
+  const cases: Array<[string, string]> = [
+    ["missing", "refine_text_or_selector"],
+    ["render", "get_page_text"],
+    ["extract", "get_page_text"],
+  ]
+  for (const [token, expected] of cases) {
+    await withBridge(
+      { send: async (m: string) => (m === "Runtime.evaluate" ? { result: { value: { fail: token, detail: "" } } } : {}) },
+      async (bridge) => {
+        const r = await bridge.execute("analyze_image", { tabId: 7, selector: "#img" })
+        assert.equal(r.data?.suggested_action, expected, `${token} 的建议应是 ${expected}`)
+      },
+    )
+  }
 })

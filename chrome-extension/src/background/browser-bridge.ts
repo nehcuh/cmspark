@@ -741,7 +741,10 @@ export class BrowserBridge {
         throw new Error("TAB_ID_REQUIRED: explicit tabId required (multi-agent mode)")
       }
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!activeTab?.id) throw new Error("No active tab found")
+      // pi: this path had no code → default bucket non_recoverable → halt, even though
+      // "there is no tab to analyse" is plainly recoverable. Prefix a REGISTERED code so
+      // executeInner's "^([A-Z_]+):" parsing sets data.error_code.
+      if (!activeTab?.id) throw new Error("TAB_ID_REQUIRED: No active tab found")
       tabId = activeTab.id
     }
 
@@ -802,7 +805,7 @@ export class BrowserBridge {
         throw new Error("TAB_ID_REQUIRED: explicit tabId required (multi-agent mode)")
       }
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!activeTab?.id) throw new Error("No active tab found")
+      if (!activeTab?.id) throw new Error("TAB_ID_REQUIRED: No active tab found")
       tabId = activeTab.id
     }
 
@@ -919,7 +922,7 @@ export class BrowserBridge {
     if (!data) {
       // #559: coded (see E1 rationale).
       return codedToolError("IMAGE_EXTRACT_FAILED", "Failed to extract image data", {
-        suggested_action: "refine_text_or_selector",
+        suggested_action: "get_page_text",
       })
     }
     // Canvas extract failed with a fetchSrc fallback (taint / no draw path).
@@ -954,6 +957,8 @@ export class BrowserBridge {
           error: promoted.error,
           data: {
             error_code: promoted.error_code,
+            // pi: 这些成因（mime/体积/blob）与选择器无关 —— 别给 refine 建议。
+            suggested_action: "get_page_text",
             mime: promoted.mime,
             byte_len: promoted.byte_len,
           },
@@ -984,21 +989,40 @@ export class BrowserBridge {
       // #559: the token now selects BOTH the code and the wording; both live here.
       // Codes are registered recoverable in companion/src/security.ts, so the level
       // no longer falls into the default (non_recoverable → whole-turn halt) bucket.
+      // suggested_action 随成因走（pi）：「渲染/取像素失败」与选择器无关，劝人重刷
+      // 选择器是误导；只有真正的位置失败才该给 refine_text_or_selector。
       const mapped =
         data.fail === "render"
-          ? { code: "IMAGE_RENDER_FAILED", wording: "Cannot render element" }
+          ? { code: "IMAGE_RENDER_FAILED", wording: "Cannot render element", action: "get_page_text" }
           : data.fail === "extract"
-            ? { code: "IMAGE_EXTRACT_FAILED", wording: "Cannot extract image (cross-origin, no src)" }
+            ? {
+                code: "IMAGE_EXTRACT_FAILED",
+                wording: "Cannot extract image (cross-origin, no src)",
+                action: "get_page_text",
+              }
             : data.fail === "missing"
               // Reuses the registered locator-miss code — semantically exact, and it
               // also feeds the same-tool-guard pivot path for a bad selector.
-              ? { code: "ELEMENT_NOT_FOUND", wording: "Element not found" }
-              : { code: "IMAGE_EXTRACT_FAILED", wording: "Image element could not be captured" }
+              ? { code: "ELEMENT_NOT_FOUND", wording: "Element not found", action: "refine_text_or_selector" }
+              : {
+                  code: "IMAGE_EXTRACT_FAILED",
+                  wording: "Image element could not be captured",
+                  action: "get_page_text",
+                }
       // `data.detail` / `data.error` both come from the page world — data channel only.
       const pageText = untrustedPageText(data.detail, data.error)
       return codedToolError(mapped.code, mapped.wording, {
-        suggested_action: "refine_text_or_selector",
+        suggested_action: mapped.action,
         ...(pageText ? { page_text_untrusted: pageText } : {}),
+      })
+    }
+
+    // pi（#559 第三条最尖锐形态）：注入表达式在**页面主世界**执行，页面可让返回值为
+    // `{}` / `5` / `"str"` / `[]` —— 那样 data.base64 是 undefined，工具却报成功，
+    // 模型可能据此声称「已经看过图」。所以成功必须先过形状校验。
+    if (typeof data.base64 !== "string" || data.base64.length === 0) {
+      return codedToolError("IMAGE_EXTRACT_FAILED", "Image element could not be captured", {
+        suggested_action: "get_page_text",
       })
     }
 

@@ -191,3 +191,39 @@ test("#559 counter-proof: an unregistered image-shaped code still halts", () => 
     "non_recoverable",
   )
 })
+
+test("#559 cross-package: every image code the extension emits is registered here", async () => {
+  // pi：手抄的码表会漏 —— extension 新增一个 image 码而 companion 忘登记时，
+  // 没有任何测试变红（这正是本 PR 修的那类漂移）。故直接读 extension 源码取码，
+  // 断言它们都在 security.ts 里登记过。
+  const extFiles = [
+    "chrome-extension/src/background/browser-bridge.ts",
+    "chrome-extension/src/background/image-extract-utils.ts",
+  ]
+  const rootOf = (): string => {
+    const candidates = [
+      path.resolve(process.cwd(), ".."), // 从 companion/ 运行
+      process.cwd(),
+    ]
+    for (const c of candidates) if (fs.existsSync(path.join(c, extFiles[0]))) return c
+    throw new Error(`repo root not found from ${process.cwd()}`)
+  }
+  const root = rootOf()
+  const emitted = new Set<string>()
+  for (const f of extFiles) {
+    const src = fs.readFileSync(path.join(root, f), "utf8")
+    for (const m of src.matchAll(/"(IMAGE_[A-Z_]+|INVALID_DATA_URL|BLOB_URL_UNSUPPORTED)"/g)) {
+      emitted.add(m[1])
+    }
+  }
+  assert.ok(emitted.size >= 7, `anti-vacuity: 至少应扫到 7 个 image 码，实际 ${emitted.size}`)
+  const security = fs.readFileSync(path.join(root, "companion/src/security.ts"), "utf8")
+  const unregistered = [...emitted].filter(
+    (c) => !new RegExp(`error_code === "${c}"`).test(security),
+  )
+  assert.deepEqual(
+    unregistered,
+    [],
+    `这些码由 extension 产出但未在 security.ts 登记 → 会落默认桶整轮终止: ${unregistered.join(", ")}`,
+  )
+})
