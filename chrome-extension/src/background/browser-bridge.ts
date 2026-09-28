@@ -809,7 +809,8 @@ export class BrowserBridge {
       expression: `
         (function() {
           const el = document.querySelector(${JSON.stringify(selector)});
-          if (!el) return { error: "Element not found: " + ${JSON.stringify(selector)} };
+          // Token, not a message: this object is page-rewritable (#556).
+          if (!el) return { fail: "missing", detail: "" };
 
           // For <img> elements
           if (el.tagName === "IMG") {
@@ -832,7 +833,9 @@ export class BrowserBridge {
               // fetch the raw bytes directly — host_permissions: <all_urls> lets
               // the service worker bypass page CORS / canvas taint.
               const src = el.currentSrc || el.src || "";
-              if (!src) return { error: "Cannot extract image (cross-origin, no src)", pageText: String((e && e.message) || e).slice(0, 300) };
+              // Return a reason TOKEN + raw detail only — never a message: this runs in
+              // the page MAIN world, so any wording written here is page-rewritable (#556).
+              if (!src) return { fail: "extract", detail: String((e && e.message) || e).slice(0, 300) };
               return {
                 fetchSrc: src,
                 width: el.naturalWidth || el.width || 0,
@@ -895,11 +898,11 @@ export class BrowserBridge {
                   alt: el.getAttribute("aria-label") || ""
                 });
               };
-              img.onerror = () => resolve({ error: "Failed to render element" });
+              img.onerror = () => resolve({ fail: "render", detail: "" });
               img.src = url;
             });
           } catch (e) {
-            return { error: "Cannot render element", pageText: String((e && e.message) || e).slice(0, 300) };
+            return { fail: "render", detail: String((e && e.message) || e).slice(0, 300) };
           }
         })()
       `,
@@ -961,11 +964,26 @@ export class BrowserBridge {
         },
       }
     }
-    if (data.error) {
-      // #556: `data.error` is now our own wording; whatever page-side text the
-      // injected expression captured rides `data.pageText` to the DATA channel.
-      const pageText = untrustedPageText(data.pageText)
-      const result: ToolResult = { success: false, error: data.error }
+    if (data.fail || data.error) {
+      // #556 (structural). The injected expression runs in the PAGE main world, so
+      // ANY string it returns is page-rewritable — including "our own wording" we
+      // might write inside that expression. (dual-review pi reproduced exactly that:
+      // a one-line page-side Proxy replaced the whole returned object, so the
+      // previous literal-based fix was ineffective.) Hence: never use a
+      // page-returned STRING as the message. The page value is only allowed to
+      // SELECT among literals that live HERE, in extension code; everything else
+      // rides the data channel.
+      const ourWording =
+        data.fail === "render"
+          ? "Cannot render element"
+          : data.fail === "extract"
+            ? "Cannot extract image (cross-origin, no src)"
+            : data.fail === "missing"
+              ? "Element not found"
+              : "Image element could not be captured"
+      // `data.detail` / `data.error` both come from the page world — data channel only.
+      const pageText = untrustedPageText(data.detail, data.error)
+      const result: ToolResult = { success: false, error: ourWording }
       if (pageText) result.data = { page_text_untrusted: pageText }
       return result
     }

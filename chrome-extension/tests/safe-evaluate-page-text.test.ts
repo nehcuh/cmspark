@@ -191,9 +191,10 @@ test("#556 analyze_image：注入表达式回传的页面文案不得进入 erro
   // :825/:892 的注入表达式把页面异常文案塞进返回值，:955 再原样交回。
   await withBridge(
     {
+      // 页面侧的返回对象——注意连 key 都是页面可控的，故实现只把它当「令牌」。
       send: async (m: string) =>
         m === "Runtime.evaluate"
-          ? { result: { value: { error: "Cannot render element", pageText: HOSTILE } } }
+          ? { result: { value: { fail: "render", detail: HOSTILE } } }
           : {},
     },
     async (bridge) => {
@@ -224,6 +225,49 @@ test("#556 evaluate：EVAL_THROWN 的页面异常文案不得进入 error（#558
       assert.equal(r.data?.error_code, "EVAL_THROWN")
       assert.equal(SECURITY_TRIGGERS.test(r.error), false, `实际: ${r.error}`)
       assert.match(String(r.data?.page_text_untrusted || ""), /Security Block/i, "原文保留在 data")
+    },
+  )
+})
+
+test("#556 analyze_image：页面改写返回对象（含改写 key）也无法注入措辞 —— 结构性", async () => {
+  // dual-review pi 用真 Chrome + 页面侧一行 Proxy 证伪了「字面量写在注入表达式里」的修法：
+  // 那个对象诞生在页面主世界，页面可整体替换。故实现改为「令牌 + 宿主侧字面量」。
+  // 本例把令牌本身设成攻击串，断言宿主**回落到自己的字面量**，且页面文本只进 data。
+  await withBridge(
+    {
+      send: async (m: string) =>
+        m === "Runtime.evaluate"
+          ? { result: { value: { fail: HOSTILE, detail: HOSTILE } } } // 令牌与原文都被页面控制
+          : {},
+    },
+    async (bridge) => {
+      const r = await bridge.execute("analyze_image", { tabId: 7, selector: "#img" })
+      assert.equal(r.success, false)
+      assert.equal(SECURITY_TRIGGERS.test(r.error), false, `实际: ${r.error}`)
+      assert.equal(
+        r.error,
+        "Image element could not be captured",
+        "令牌不匹配时必须回落到宿主自己的字面量",
+      )
+      assert.match(String(r.data?.page_text_untrusted || ""), /Security Block/i)
+    },
+  )
+})
+
+test("#556 analyze_image：页面把对象改写成旧 error 形状，仍走宿主字面量", async () => {
+  await withBridge(
+    {
+      send: async (m: string) =>
+        m === "Runtime.evaluate"
+          ? { result: { value: { error: HOSTILE } } } // 页面把返回值整体换成任意 {error}
+          : {},
+    },
+    async (bridge) => {
+      const r = await bridge.execute("analyze_image", { tabId: 7, selector: "#img" })
+      assert.equal(r.success, false)
+      assert.equal(SECURITY_TRIGGERS.test(r.error), false, `实际: ${r.error}`)
+      assert.equal(r.error, "Image element could not be captured", "措辞必须来自宿主")
+      assert.match(String(r.data?.page_text_untrusted || ""), /Security Block/i, "页面原文只进 data")
     },
   )
 })
