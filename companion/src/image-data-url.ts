@@ -112,7 +112,10 @@ export function decodeDataUrlImage(src: string): DecodeDataUrlImageResult {
   if (!mime) {
     return {
       ok: false,
-      error: `Unsupported image MIME: ${rawMimeShort || "(empty)"}`,
+      // #556 (8th site, companion 孪生体): `rawMimeShort` comes from the data: URL
+      // header — page-controlled text. It must not be interpolated into `error`
+      // (that string reaches classifyError). Kept on the `mime` field instead.
+      error: "Unsupported image MIME (not a recognized image type)",
       error_code: "IMAGE_MIME_REJECTED",
       mime: rawMimeShort || undefined,
     }

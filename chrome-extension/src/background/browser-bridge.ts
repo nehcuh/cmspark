@@ -1039,10 +1039,13 @@ export class BrowserBridge {
         },
       }
     } catch (e: any) {
-      return {
-        success: false,
-        error: `analyze_image_fetch failed for ${candidateUrl}: ${e?.message || e}`,
-      }
+      // #556 (7th site): `candidateUrl` is caller/page-derived, and `e.message` can
+      // embed page-controlled text (e.g. the MIME echo out of fetchImageAsBase64).
+      // Own wording + untrusted parts on the data channel only.
+      const pageText = untrustedPageText(candidateUrl, (e as any)?.message || e)
+      const result: ToolResult = { success: false, error: "analyze_image_fetch failed" }
+      if (pageText) result.data = { page_text_untrusted: pageText }
+      return result
     }
   }
 
