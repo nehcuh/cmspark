@@ -140,3 +140,54 @@ test("#556 N5: IMAGE_FETCH_FAILED is recoverable by code (restores the lost reco
     "non_recoverable",
   )
 })
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * #559：image 家族。这些码本来就存在（image-extract-utils.ts），但从未登记 →
+ * 每一个 analyze_image 失败都落默认桶 non_recoverable → 整轮终止（良性形态亦然）。
+ * 与 #556 N5 同一手法：显式 error_code 分支，判定与文案解耦。
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const IMAGE_FAMILY_CODES = [
+  "IMAGE_MIME_REJECTED",
+  "IMAGE_TOO_LARGE",
+  "INVALID_DATA_URL",
+  "BLOB_URL_UNSUPPORTED",
+  "IMAGE_RENDER_FAILED",
+  "IMAGE_EXTRACT_FAILED",
+  "IMAGE_FETCH_FAILED",
+] as const
+
+test("#559 every image-family code is recoverable from error_code alone", () => {
+  for (const code of IMAGE_FAMILY_CODES) {
+    assert.equal(
+      classifyError("完全中性的文案，不含任何码名与关键字", {
+        toolName: "analyze_image",
+        error_code: code,
+      }),
+      "recoverable",
+      `${code} 必须靠登记生效（否则落默认桶 → 整轮终止）`,
+    )
+  }
+})
+
+test("#559 the level does not drift with wording for image codes", () => {
+  // 同一 code、四种文案形态 —— 结论必须一致（与文案解耦的可执行定义）。
+  const shapes = ["", "完全中性", "IMAGE_MIME_REJECTED: x", "timeout not found attach failed"]
+  for (const code of IMAGE_FAMILY_CODES) {
+    for (const msg of shapes) {
+      assert.equal(
+        classifyError(msg, { toolName: "analyze_image", error_code: code }),
+        "recoverable",
+        `${code} 在形态 ${JSON.stringify(msg)} 下结论应一致`,
+      )
+    }
+  }
+})
+
+test("#559 counter-proof: an unregistered image-shaped code still halts", () => {
+  // 反证「登记」是关键变量：同样中性文案、同样前缀，换成未登记的码 → non_recoverable。
+  assert.equal(
+    classifyError("完全中性的文案", { toolName: "analyze_image", error_code: "IMAGE_NOT_REGISTERED" }),
+    "non_recoverable",
+  )
+})

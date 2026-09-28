@@ -933,10 +933,25 @@ export function classifyError(
   if (context?.error_code === "WAIT_PROBE_FAILED" || context?.error_code === "WAIT_TIMEOUT") {
     return "recoverable"
   }
-  // #556 N5: analyze_image_fetch 的失败是「换路重试」类（CDN 限流 429/502/503、超时、
-  // 跨域取字节失败），补码前它靠文案里的 "429"/"timeout" 子串侥幸判 recoverable；
-  // 换成自有文案后静默变成 non_recoverable → 整轮终止。显式登记把判定钉在 code 上。
-  if (context?.error_code === "IMAGE_FETCH_FAILED") {
+  // #559（并吸收 #556 N5）：**image 家族**。这些码本来就存在（image-extract-utils.ts /
+  // browser-bridge.ts），但从未登记 → 它们全部落默认桶 non_recoverable → adapter
+  // shouldStop / security_halt 整轮终止。实测良性形态亦然：
+  //   "Cannot render element: SecurityError: Tainted canvases may not be exported" →
+  //   non_recoverable。语义上它们都是「这一个元素/这一份图源没搞定」——agent 可以换目标
+  // 或放弃该子目标；重试仍由 same-tool-guard 有界约束，不会无限打转。
+  //
+  // 刻意用**显式分支**而非 recoverable 子串表：子串表要求文案里恰好出现码名，判定就会
+  // 随文案漂移 —— #560 记录了这一类脆弱性（其中 #556 N5 已经真的咬过一次：改干净文案
+  // 时丢掉 "429"/"timeout" 子串，静默从 recoverable 变成整轮终止）。
+  if (
+    context?.error_code === "IMAGE_MIME_REJECTED" ||
+    context?.error_code === "IMAGE_TOO_LARGE" ||
+    context?.error_code === "INVALID_DATA_URL" ||
+    context?.error_code === "BLOB_URL_UNSUPPORTED" ||
+    context?.error_code === "IMAGE_RENDER_FAILED" ||
+    context?.error_code === "IMAGE_EXTRACT_FAILED" ||
+    context?.error_code === "IMAGE_FETCH_FAILED"
+  ) {
     return "recoverable"
   }
   // L-5: unattended NEVER-list confirm timeout/deny is item-blocked + bypass,

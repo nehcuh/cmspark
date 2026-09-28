@@ -789,7 +789,12 @@ export class BrowserBridge {
     const selector = params.selector
 
     if (!selector) {
-      return { success: false, error: "selector is required for analyze_image" }
+      // #559: coded so the level does not depend on wording (default bucket is
+      // non_recoverable → whole-turn halt). SELECTOR_OR_TEXT_REQUIRED is already
+      // registered recoverable and is the established code for a missing locator.
+      return codedToolError("SELECTOR_OR_TEXT_REQUIRED", "selector is required for analyze_image", {
+        suggested_action: "refine_text_or_selector",
+      })
     }
 
     if (!tabId) {
@@ -912,7 +917,10 @@ export class BrowserBridge {
 
     const data = extractResult?.result?.value
     if (!data) {
-      return { success: false, error: "Failed to extract image data" }
+      // #559: coded (see E1 rationale).
+      return codedToolError("IMAGE_EXTRACT_FAILED", "Failed to extract image data", {
+        suggested_action: "refine_text_or_selector",
+      })
     }
     // Canvas extract failed with a fetchSrc fallback (taint / no draw path).
     // Handle data:/blob: HERE (after CDP returns — never inside the page expr):
@@ -973,19 +981,25 @@ export class BrowserBridge {
       // page-returned STRING as the message. The page value is only allowed to
       // SELECT among literals that live HERE, in extension code; everything else
       // rides the data channel.
-      const ourWording =
+      // #559: the token now selects BOTH the code and the wording; both live here.
+      // Codes are registered recoverable in companion/src/security.ts, so the level
+      // no longer falls into the default (non_recoverable → whole-turn halt) bucket.
+      const mapped =
         data.fail === "render"
-          ? "Cannot render element"
+          ? { code: "IMAGE_RENDER_FAILED", wording: "Cannot render element" }
           : data.fail === "extract"
-            ? "Cannot extract image (cross-origin, no src)"
+            ? { code: "IMAGE_EXTRACT_FAILED", wording: "Cannot extract image (cross-origin, no src)" }
             : data.fail === "missing"
-              ? "Element not found"
-              : "Image element could not be captured"
+              // Reuses the registered locator-miss code — semantically exact, and it
+              // also feeds the same-tool-guard pivot path for a bad selector.
+              ? { code: "ELEMENT_NOT_FOUND", wording: "Element not found" }
+              : { code: "IMAGE_EXTRACT_FAILED", wording: "Image element could not be captured" }
       // `data.detail` / `data.error` both come from the page world — data channel only.
       const pageText = untrustedPageText(data.detail, data.error)
-      const result: ToolResult = { success: false, error: ourWording }
-      if (pageText) result.data = { page_text_untrusted: pageText }
-      return result
+      return codedToolError(mapped.code, mapped.wording, {
+        suggested_action: "refine_text_or_selector",
+        ...(pageText ? { page_text_untrusted: pageText } : {}),
+      })
     }
 
     // Path A — same-origin canvas (bytes already in the page; screenshot already
@@ -1012,7 +1026,11 @@ export class BrowserBridge {
   private async analyzeImageFetch(params: Record<string, any>): Promise<ToolResult> {
     const candidateUrl = String(params?.candidate_url || "")
     if (!candidateUrl) {
-      return { success: false, error: "candidate_url is required for analyze_image_fetch" }
+      return codedToolError(
+        "SELECTOR_OR_TEXT_REQUIRED",
+        "candidate_url is required for analyze_image_fetch",
+        { suggested_action: "refine_text_or_selector" },
+      )
     }
     let title = "fetched image"
     try {
