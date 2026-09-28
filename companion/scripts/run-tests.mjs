@@ -51,14 +51,63 @@ if (main.length === 0 && settings.length === 0) {
   process.exit(1)
 }
 
+// Windows CreateProcess caps the command line at 32767 chars. Passing every
+// compiled test path in a single spawn overflows it once the suite is large
+// enough: spawnSync then fails with r.error.code === "ENAMETOOLONG", r.status
+// is null, and (before #546) `return r.status ?? 1` silently swallowed the
+// error — exit 1 with zero output, indistinguishable from "every test failed".
+// Batch the file list so no single command line can approach the cap, and
+// surface r.error explicitly so a spawn failure is never mistaken for a
+// test failure. POSIX has no such cap, so batching is a no-op safety net there.
+const MAX_ARGV_CHARS = 32000 // stay clear of the 32767 hard limit
+function argvChars(execPath, fixedArgs, batch) {
+  let n = execPath.length + 2 // quoting slack
+  for (const a of fixedArgs) n += a.length + 1
+  for (const f of batch) n += f.length + 1
+  return n
+}
+function chunkByArgv(execPath, fixedArgs, files) {
+  const batches = []
+  let cur = []
+  for (const f of files) {
+    if (cur.length > 0 && argvChars(execPath, fixedArgs, [...cur, f]) > MAX_ARGV_CHARS) {
+      batches.push(cur)
+      cur = []
+    }
+    cur.push(f)
+  }
+  if (cur.length > 0) batches.push(cur)
+  return batches
+}
+
 function runNodeTest(files, extraArgs = []) {
   if (files.length === 0) return 0
-  const r = spawnSync(process.execPath, ["--require", path.join(root, "scripts", "test-data-dir.cjs"), "--test", ...extraArgs, ...files], {
-    cwd: root,
-    stdio: "inherit",
-    env: { ...process.env, CMSPARK_TEST_RUN_DIR: testRunDir },
-  })
-  return r.status ?? 1
+  const preload = path.join(root, "scripts", "test-data-dir.cjs")
+  const fixedArgs = ["--require", preload, "--test", ...extraArgs]
+  const batches = chunkByArgv(process.execPath, fixedArgs, files)
+  let worst = 0
+  for (const batch of batches) {
+    const r = spawnSync(process.execPath, [...fixedArgs, ...batch], {
+      cwd: root,
+      stdio: "inherit",
+      env: { ...process.env, CMSPARK_TEST_RUN_DIR: testRunDir },
+    })
+    // A spawn failure is NOT a test failure — report it loudly and fail closed.
+    if (r.error) {
+      console.error(
+        `[run-tests] failed to spawn node for a batch of ${batch.length} test file(s): ` +
+          `${r.error.code || ""} ${r.error.message}`,
+      )
+      console.error(`[run-tests] argv chars were ~${argvChars(process.execPath, fixedArgs, batch)}; first file: ${batch[0]}`)
+      return 1
+    }
+    if (r.status !== 0) worst = r.status ?? 1
+    if (r.signal) {
+      console.error(`[run-tests] test batch terminated by signal ${r.signal}`)
+      worst = worst || 1
+    }
+  }
+  return worst
 }
 
 function nodeMajor() {
