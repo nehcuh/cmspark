@@ -55,14 +55,6 @@ interface ToolResult {
 // scriptingExecute type-checks (audit H7 — the build was shipping with these tsc errors).
 type ScriptingResult = chrome.scripting.InjectionResult<any> & { error?: string }
 
-/**
- * #554: how many consecutive "both probe channels failed" rounds to tolerate
- * before giving up. A bounded retry keeps a transient blip (tab mid-navigation)
- * from aborting the wait, while a persistent transport failure still fails fast
- * instead of spinning until the caller's deadline.
- */
-const MAX_WAIT_PROBE_FAILURES = 3
-
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
   private sanitizer: PageSanitizer
@@ -259,15 +251,20 @@ export class BrowserBridge {
       if (!first || first.error || !("result" in first)) return undefined
       return first.result === true
     }
+    let lastErr: unknown = null
     try {
       const isolated = await run()
       if (isolated !== undefined) return isolated
-    } catch { /* fall through to MAIN world */ }
+    } catch (e) { lastErr = e }
     try {
       const main = await run("MAIN")
       if (main !== undefined) return main
-    } catch { /* fall through to the combined throw below */ }
-    throw new Error("scripting selector probe failed in ISOLATED and MAIN worlds")
+    } catch (e) { lastErr = e }
+    // Carry the injection error text through: classifyInteractiveFailure keys on
+    // it, so an invalid selector still resolves to INVALID_SELECTOR rather than a
+    // generic code (dual-review kimi).
+    const detail = String((lastErr as any)?.message || lastErr || "no detail")
+    throw new Error(`scripting selector probe failed in ISOLATED and MAIN worlds: ${detail}`)
   }
 
   /**
@@ -290,6 +287,18 @@ export class BrowserBridge {
         expression: `!!document.querySelector(${JSON.stringify(selector)})`,
         returnByValue: true,
       })
+      // A page-side exception (an invalid selector makes querySelector throw)
+      // arrives as exceptionDetails with no result.value. Folding that into
+      // exists=false answered "the element is not there" for a broken selector
+      // — and the new probe_channel field would have vouched for it. Treat it as
+      // a channel failure so the real reason reaches the caller (dual-review
+      // claude + pi, independently).
+      if (result?.exceptionDetails) {
+        const d = result.exceptionDetails
+        throw new Error(
+          `Runtime.evaluate raised: ${d?.exception?.description || d?.text || "unknown page exception"}`,
+        )
+      }
       return { exists: result?.result?.value === true, channel: "cdp" }
     } catch (e) {
       cdpErr = e
@@ -1592,37 +1601,38 @@ export class BrowserBridge {
       const timeout = typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : 15000
       const interval = params.interval || 500
       const start = Date.now()
-      let probeFailure: unknown = null
-      let probeFailures = 0
+      // Keep waiting for the WHOLE deadline (same as before this fix): a slow
+      // navigation must not abort the wait. What changes is only the verdict at
+      // the end — see the split below. (dual-review pi: a round-count budget
+      // collapsed the tolerance window from the full deadline to ~2×interval.)
+      let probeError: unknown = null
+      let anyProbeSucceeded = false
       let channel: "cdp" | "scripting" = "cdp"
       while (Date.now() - start < timeout) {
         try {
           const probe = await this.probeSelectorExists(tabId, mode.selector)
           channel = probe.channel
-          probeFailures = 0
+          anyProbeSucceeded = true
+          probeError = null
           if (probe.exists === mode.expectVisible) {
             return { success: true, data: { elapsed_ms: Date.now() - start, probe_channel: probe.channel } }
           }
         } catch (e) {
-          // Both probe channels failed. That is infrastructure, not "the element
-          // is absent". Retry a bounded number of rounds so a transient blip
-          // (tab mid-navigation) does not abort the wait, then give up carrying
-          // the REAL reason — never spin to the deadline and report a selector
-          // timeout (#554).
-          probeFailures += 1
-          if (probeFailures >= MAX_WAIT_PROBE_FAILURES) {
-            probeFailure = e
-            break
-          }
+          // Both probe channels failed: infrastructure, not "the element is
+          // absent". Remember the reason and keep waiting.
+          probeError = e
         }
         await new Promise(r => setTimeout(r, interval))
       }
-      if (probeFailure) {
-        return await this.failInteractive(tabId, probeFailure, "WAIT_PROBE_FAILED")
+      if (!anyProbeSucceeded && probeError) {
+        // Not one single reading ever came back, so this is NOT a timeout on a
+        // working probe: surface the real transport reason instead of pretending
+        // the element is missing (#554; dual-review claude/pi/kimi all landed here).
+        return await this.failInteractive(tabId, probeError, "WAIT_PROBE_FAILED")
       }
-      // Genuine timeout: the probe was working, the condition just never held.
-      // The message keeps the word "timeout" so classifyError still scores it
-      // recoverable (unchanged from before this fix) rather than a fatal halt.
+      // Genuine timeout: at least one probe succeeded, the condition just never
+      // held. The message keeps the word "timeout" so classifyError still scores
+      // it recoverable (same as before this fix) rather than a fatal halt.
       return codedToolError(
         "WAIT_TIMEOUT",
         `timeout after ${timeout}ms waiting for selector ${JSON.stringify(mode.selector)} to be ${mode.expectVisible ? "visible" : "hidden"}`,

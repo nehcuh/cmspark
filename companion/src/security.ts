@@ -1083,6 +1083,14 @@ export function classifyError(
     // Web act-loop W1/W3′/W4 coded errors (default is non_recoverable)
     "selector_or_text_required",
     "wait_condition_required",
+    // #554: wait_for 的两条新码。这里**必须**登记 —— 本文件分组注释已写明
+    // "default is non_recoverable"：未登记的 coded error 会让 adapter 直接
+    // shouldStop/security_halt 整轮终止。修复前该场景是「吞异常→报 timeout→
+    // recoverable→可重试」，若不登记就把「可重试的错误归因」变成了「整轮死亡」
+    // （dual-review claude 实测复现：classifyError('WAIT_PROBE_FAILED: …') →
+    //  non_recoverable）。wait_timeout 显式登记，免得只靠文案里的 "timeout" 子串。
+    "wait_probe_failed",
+    "wait_timeout",
     "selector or network_idle",
     "network_idle is required",
     "element_not_found",
