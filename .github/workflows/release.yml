@@ -32,6 +32,16 @@ jobs:
           cache-dependency-path: |
             companion/package-lock.json
             chrome-extension/package-lock.json
+      # #552 / #547 防复发：正式版必须由 tag 产出，且版本锚与 tag 一致。
+      # 放在装依赖之前，好让脱节的发布在几十秒内失败，而不是白跑完整测试。
+      # CMSPARK_RELEASE_TAG 用 workflow context 而非 git describe：
+      # actions/checkout@v4 默认 fetch-depth=1，浅克隆里 tag 对象不一定存在。
+      - name: Release guard (tag == version anchor, clean tree, Unreleased archived)
+        env:
+          CMSPARK_RELEASE_STRICT: "1"
+          CMSPARK_RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/release-guard.sh
+
       - name: Install companion deps
         run: cd companion && npm ci
       - name: Build companion
@@ -105,6 +115,10 @@ jobs:
         shell: bash
         env:
           CMSPARK_REQUIRE_NSIS: ${{ matrix.platform == 'windows-x64' && '1' || '' }}
+          # package.sh 内部会再跑一次 release-guard.sh；strict 下豁免开关失效，
+          # 三个平台的打包都必须来自正确的 tag（#552）。
+          CMSPARK_RELEASE_STRICT: "1"
+          CMSPARK_RELEASE_TAG: ${{ github.ref_name }}
         run: bash scripts/package.sh ${{ matrix.platform }}
 
       # P0-D fail-closed content asserts — package.sh already gates at stage time;
