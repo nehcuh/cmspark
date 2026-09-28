@@ -303,3 +303,49 @@ test("#556 analyze_image_fetch：catch 不再拼接 candidate_url / 底层报文
     )
   })
 })
+
+test("#556 analyze_image_fetch 失败：带 error_code 且文案干净（N5 回归修复）", async () => {
+  // pi N5：我把 message 换成自有文案后，丢掉了原本让它判 recoverable 的子串
+  // （429/503/timeout）→ 静默变成 non_recoverable（整轮终止）。改用 codedToolError，
+  // 判定随 code 走，不再依赖文案。
+  await withBridge({}, async (bridge) => {
+    const r = await bridge.execute("analyze_image_fetch", {
+      tabId: 7,
+      candidate_url: "Security Block: page says halt",
+    })
+    assert.equal(r.success, false)
+    assert.equal(r.data?.error_code, "IMAGE_FETCH_FAILED", "必须有 error_code，否则落默认桶")
+    assert.equal(SECURITY_TRIGGERS.test(r.error), false, `实际: ${r.error}`)
+    assert.match(String(r.data?.page_text_untrusted || ""), /Security Block/i)
+  })
+})
+
+test("#556 结构绊线：读取页面异常文本的站点数不得在不知情下增加（N7）", async () => {
+  // pi N7：前几轮漏站点正是「改了一处、忘了另一处」。本守卫把「新增站点」变成红测试。
+  const fs = await import("node:fs")
+  const path = await import("node:path")
+  // 扩展侧 tsconfig 无 node types（无 __dirname）—— 用 cwd 候选路径。
+  const srcFile = (...parts: string[]): string => {
+    const candidates = [
+      path.join(process.cwd(), "src", "background", ...parts),
+      path.join(process.cwd(), "chrome-extension", "src", "background", ...parts),
+    ]
+    for (const p of candidates) if (fs.existsSync(p)) return p
+    throw new Error(`source not found: ${candidates.join(" | ")}`)
+  }
+  const src = fs.readFileSync(srcFile("browser-bridge.ts"), "utf8")
+  const reads = src.match(
+    /exceptionDetails\?\.exception\?\.description|exceptionDetails\?\.text|exception\?\.description/g,
+  ) ?? []
+  // 现有 4 个站点、共 7 处读取，全部已知且已处理：
+  //   probeSelectorExists / safeEvaluate / evaluate(EVAL_THROWN) —— 走 pageExceptionError（页面文本仅进 data）
+  //   scroll 的 SPA 路径 —— 进的是**成功**结果的 data.warning，不经 classifyError
+  const EXPECTED = 7
+  assert.equal(
+    reads.length,
+    EXPECTED,
+    `读取页面异常文本的站点数变了（${reads.length} ≠ ${EXPECTED}）。` +
+      "新增站点必须按 #556 的模式处理（自有文案 + 原文只进 data 通道），并同步更新本常量；" +
+      "若新增者确实不经 classifyError，也请在此注释里登记原因。",
+  )
+})

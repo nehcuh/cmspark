@@ -933,6 +933,12 @@ export function classifyError(
   if (context?.error_code === "WAIT_PROBE_FAILED" || context?.error_code === "WAIT_TIMEOUT") {
     return "recoverable"
   }
+  // #556 N5: analyze_image_fetch 的失败是「换路重试」类（CDN 限流 429/502/503、超时、
+  // 跨域取字节失败），补码前它靠文案里的 "429"/"timeout" 子串侥幸判 recoverable；
+  // 换成自有文案后静默变成 non_recoverable → 整轮终止。显式登记把判定钉在 code 上。
+  if (context?.error_code === "IMAGE_FETCH_FAILED") {
+    return "recoverable"
+  }
   // L-5: unattended NEVER-list confirm timeout/deny is item-blocked + bypass,
   // not HALT_SECURITY. 45s fail-closed is unchanged (the tool still denied).
   if (context?.error_code === "UNATTENDED_CONFIRM_DENIED") return "recoverable"

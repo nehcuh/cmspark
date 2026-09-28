@@ -1043,9 +1043,17 @@ export class BrowserBridge {
       // embed page-controlled text (e.g. the MIME echo out of fetchImageAsBase64).
       // Own wording + untrusted parts on the data channel only.
       const pageText = untrustedPageText(candidateUrl, (e as any)?.message || e)
-      const result: ToolResult = { success: false, error: "analyze_image_fetch failed" }
-      if (pageText) result.data = { page_text_untrusted: pageText }
-      return result
+      // N5 (pi): the plain message lost the substrings ("429"/"503"/"timeout") that used
+      // to make this recoverable, so it silently became non_recoverable → halt. Use a
+      // coded error instead: classification then depends on the CODE, not on wording.
+      return codedToolError(
+        "IMAGE_FETCH_FAILED",
+        "analyze_image_fetch failed",
+        {
+          suggested_action: "get_page_text",
+          ...(pageText ? { page_text_untrusted: pageText } : {}),
+        },
+      )
     }
   }
 
