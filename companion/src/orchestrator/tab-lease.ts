@@ -694,17 +694,56 @@ export function settleTimedOutLease(tabId: number, holderThreadId: string | unde
  * Drop tab leases held by workers that are not inside an LLM run and not
  * paused. Pause does not bulk-free: a create_tab hold or an in-flight mutation
  * stays until its own deadline or that call's finally (ADR-015).
+ *
+ * #545: this used to delegate to `releaseAllLeasesForThread`, which applies
+ * NONE of the protections the doc above promises — it drops the timed-out
+ * tombstone and then deletes unconditionally. Because this runs on the
+ * fleet-snapshot READ path (`fleet.status` every 4s from FleetStrip, plus the
+ * broadcast), a user merely watching the panel could free a tab another worker
+ * was still writing to, and the 60s create_tab hold (ADR-015
+ * `create_tab_auto_hold_ms`) evaporated on the first snapshot. Idle release now
+ * applies the same three guards `releaseMutationHold` (`:621`) and
+ * `sweepPerCallLease` (`:291`) already apply, per lease rather than per thread.
+ *
+ * Note this must NOT delegate to `releaseLeasesForThreadPendingAware` either:
+ * that path force-releases pending leases, which is correct for a cancel and
+ * wrong here — an idle worker's in-flight CDP should simply keep its lease.
  */
 export function releaseIdleWorkerLeases(
   threads: Array<{ id?: string; agent_role?: string; paused?: boolean }>,
   llmActive: ReadonlySet<string>,
 ): number {
   let n = 0
-  for (const t of threads) {
-    if (t.agent_role !== "worker" || t.paused) continue
-    const id = typeof t.id === "string" ? t.id : ""
+  const t = now()
+  for (const th of threads) {
+    if (th.agent_role !== "worker" || th.paused) continue
+    const id = typeof th.id === "string" ? th.id : ""
     if (!id || llmActive.has(id)) continue
-    n += releaseAllLeasesForThread(id, "worker_run_ended")
+    n += releaseIdleLeasesForThread(id, t)
+  }
+  return n
+}
+
+/**
+ * Release only the genuinely-free leases of one idle holder. A create_tab hold
+ * that has not expired, a live mutation hold, or a pending CDP call (including a
+ * timed-out tombstone awaiting settle) all keep the lease. `resolveHasPending`
+ * fails closed when hooks are unregistered, so a cold start never silent-FREEs.
+ */
+function releaseIdleLeasesForThread(holderThreadId: string, t: number): number {
+  let n = 0
+  for (const [tabId, lease] of [...leases.entries()]) {
+    if (lease.holderThreadId !== holderThreadId) continue
+    if ((lease.mutationHolds ?? 0) > 0) continue
+    if (lease.createdHoldUntil != null && lease.createdHoldUntil > t) continue
+    if (resolveHasPending(tabId, holderThreadId)) continue
+    leases.delete(tabId)
+    n++
+    audit("tab.lease.released", {
+      tab_id: tabId,
+      holder_thread_id: holderThreadId,
+      reason: "worker_run_ended",
+    })
   }
   return n
 }

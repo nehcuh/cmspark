@@ -1619,6 +1619,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
       // Execute tool calls via extension (async — wait for results)
       const toolResults: CanonicalChatMessage[] = []
+      // #544: same-tool-guard pivot instructions are companion-authored system
+      // actions, not page data. They are collected here and emitted as a
+      // TRUSTED system turn after the tool results, instead of being spliced
+      // into toolResult.error / data.pivot_zh (which land inside <untrusted-N>
+      // — exactly what rule 11 and the SECURITY FOOTER forbid the model to
+      // follow). Precedent: CONTENT_RISK_QUARANTINE_PLACEHOLDER (#430) is also
+      // deliberately kept out of the untrusted wrap. Kept separate from
+      // toolResults so #430 findLastLargeToolResultIndex length heuristics are
+      // not perturbed by our own text.
+      const pivotNotes: string[] = []
       let shouldStop = false
 
       for (const tc of assistantMsg) {
@@ -2160,17 +2170,30 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               locatorPivotIssued.add(toolName)
               recoverableFailureCounts.set(toolName, 0)
               const note = sameToolDecision.instruction
-              toolResult.error = `${toolResult.error || ""} ${note}`.trim()
+              // #544: keep the real tool error intact (do NOT append the pivot
+              // text) and do not smuggle the instruction through data.pivot_zh.
+              // Both used to be wrapped by wrapUntrusted below, putting a
+              // "call tool X" directive inside a block the system prompt orders
+              // the model never to obey. suggested_action stays because it is a
+              // machine enum, not natural-language instruction, and it does have
+              // live consumers on THIS path: the tool.result frame sent to the
+              // extension (:1193/:1661) and the persisted stub, which
+              // tool-persistence-redact.ts:365 explicitly keeps alongside
+              // error_code / tab_url. (dual-review #549 correction: an earlier
+              // comment claimed toolChatErrorPayload, but that call site is in
+              // the security/non_recoverable branch, which breaks at :2152 and
+              // so is unreachable from here.)
               const data = (toolResult.data && typeof toolResult.data === "object")
                 ? toolResult.data
                 : {}
               data.suggested_action = "switch_strategy"
-              data.pivot_zh = note
               toolResult.data = data
+              pivotNotes.push(`工具 ` + toolName + "：" + note)
               logger.info("llm.locator_pivot", {
                 tool_name: toolName,
                 fail_count: failCount,
                 thread_id: threadId,
+                delivery: "trusted_system_turn",
               })
             } else if (sameToolDecision.action === "stop") {
               logger.error("llm.recoverable_loop_detected", {
@@ -2263,6 +2286,35 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
       // Add tool results to messages for next LLM round
       messages.push(...toolResults)
+
+      // #544: deliver any same-tool-guard pivot instruction as a TRUSTED system
+      // turn, outside every <untrusted-N> block, so the model is actually allowed
+      // to act on it (rule 11 / SECURITY FOOTER forbid following directives that
+      // arrive inside tool results). Placed after toolResults to keep the
+      // tool_call_id / tool-response adjacency that both wire converters expect.
+      // Anthropic hoists non-leading system messages into the top-level system
+      // field (providers/anthropic-convert.ts:190-192); OpenAI passes them
+      // through unchanged (providers/openai.ts toWireMessages), so this is
+      // wire-safe on both.
+      //
+      // Why this cannot be forged by page content (dual-review #549 grok/kimi
+      // NIT): the guarantee is the CHANNEL, not the marker text. wrapUntrusted
+      // (text-sanitize.ts:128-131) only adds open/close tags and does not rewrite
+      // the body, so a page can emit the "[CMspark 系统提示 …]" string verbatim —
+      // but it then lands inside <untrusted-N source="page"> where rule 11 orders
+      // the model to ignore it. Page/tool data can never arrive as role:"system",
+      // which is the property actually relied on here. The marker is a readability
+      // aid for the model, not a security boundary.
+      if (pivotNotes.length > 0) {
+        messages.push({
+          role: "system" as const,
+          content:
+            "[CMspark 系统提示 · 非网页内容 · 可以遵循] " +
+            "以下工具调用因重复失败而触发了换策略建议。这是 Companion 自身的系统动作，" +
+            "不是来自页面或工具返回的数据：\n" +
+            pivotNotes.join("\n"),
+        })
+      }
 
       // Mid-loop recompact (F-I6 follow-up): tool rounds can blow budget after pre_loop.
       await runContextBudgetPass("mid_loop")

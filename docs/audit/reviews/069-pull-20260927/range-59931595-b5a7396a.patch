@@ -1,0 +1,3536 @@
+diff --git a/chrome-extension/src/background/cockpit-focus-policy.ts b/chrome-extension/src/background/cockpit-focus-policy.ts
+index 50c7ed98..54b4fc65 100644
+--- a/chrome-extension/src/background/cockpit-focus-policy.ts
++++ b/chrome-extension/src/background/cockpit-focus-policy.ts
+@@ -36,7 +36,13 @@ export function isArmed(arm: ArmState): boolean {
+ }
+ 
+ export type CockpitFocusEvent =
+-  | { kind: "confirmation"; hasNonce: boolean; hasHeavyPreview: boolean }
++  | {
++      kind: "confirmation"
++      hasNonce: boolean
++      hasHeavyPreview: boolean
++      /** Tool name `[Outbound] …`: operator is in another app; Win/Linux have no tray. */
++      outboundChannel?: boolean
++    }
+   | { kind: "computer_task"; event: string }
+   /** L-5 (#391): unattended blocked report — tray/Board only, never steal. */
+   | { kind: "loop_blocked" }
+@@ -51,6 +57,7 @@ export type CockpitFocusAction = "open_focus" | "stay_background"
+  * | 确认 + nonce_challenge（侧栏禁批）     | open_focus      |
+  * | 确认 + 重预览（full_preview/preview_image） | open_focus  |
+  * | 确认 + 轻量（MinimalConfirm 可批）     | stay_background |
++ * | 确认 + 租手 `[Outbound]`（人在别的应用） | open_focus    |
+  * | computer.task paused（需人）           | open_focus      |
+  * | computer.task started + 巡航/值守武装  | stay_background |
+  * | computer.task started + 未武装/未知    | open_focus      |
+@@ -60,14 +67,16 @@ export type CockpitFocusAction = "open_focus" | "stay_background"
+  * 注意：轻确认分支**无武装门**——未武装时轻确认也不抢焦点。这是刻意对齐
+  * FINAL-SYNTHESIS 票 5（原文无「武装下」限定；issue 首条的「巡航/值守武装下」
+  * 是窄述）与 inventory §5（轻量 = 侧栏可批）。勿按 issue 字面把武装门加回。
+- * Win/Linux 侧栏关且无托盘时，未批确认 45s 超时 deny（fail-closed）是票面
+- * 明示验收，不是本表的 bug。
++ * Win/Linux 侧栏关且无托盘时，普通轻确认 45s 超时 deny（fail-closed）仍是
++ * 票面明示验收。租手是例外：人在 IDE 里，Windows/Linux 没有托盘窗，轻确认
++ * 会静默超时。`[Outbound]` 确认改为 open_focus（#524），侧栏红条仍可批。
+  */
+ export function decideCockpitFocus(
+   event: CockpitFocusEvent,
+   arm: ArmState,
+ ): CockpitFocusAction {
+   if (event.kind === "confirmation") {
++    if (event.outboundChannel) return "open_focus"
+     return event.hasNonce || event.hasHeavyPreview ? "open_focus" : "stay_background"
+   }
+   if (event.kind === "loop_blocked") return "stay_background"
+@@ -89,10 +98,13 @@ function nonEmptyString(v: unknown): v is string {
+ export function cockpitFocusEventFromMessage(msg: any): CockpitFocusEvent | null {
+   if (!msg || typeof msg.type !== "string") return null
+   if (msg.type === "security.confirmation.request") {
++    const outboundChannel =
++      typeof msg.tool_name === "string" && msg.tool_name.startsWith("[Outbound]")
+     return {
+       kind: "confirmation",
+       hasNonce: nonEmptyString(msg.nonce_challenge),
+       hasHeavyPreview: nonEmptyString(msg.full_preview) || nonEmptyString(msg.preview_image),
++      ...(outboundChannel ? { outboundChannel: true } : {}),
+     }
+   }
+   if (msg.type === "computer.task.event") {
+diff --git a/chrome-extension/src/sidepanel/components/ChatView.tsx b/chrome-extension/src/sidepanel/components/ChatView.tsx
+index 170cb5c0..ab4610e1 100644
+--- a/chrome-extension/src/sidepanel/components/ChatView.tsx
++++ b/chrome-extension/src/sidepanel/components/ChatView.tsx
+@@ -233,6 +233,7 @@ export function ChatView() {
+       lockCount,
+       openIntents: scopedRunBusy.openIntents,
+       worstStatus: scopedRunBusy.worstStatus,
++      llmActive: scopedRunBusy.llmActive,
+     })
+     // Active fleet only (not paused-only zombies) — suffix while tools/thinking.
+     const fleetBit = fleetLabel ? ` · ${fleetLabel.replace(/^舰队/, "").trim()}` : ""
+diff --git a/chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx b/chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx
+index 4b0a8fad..dca86892 100644
+--- a/chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx
++++ b/chrome-extension/src/sidepanel/components/OutboundMcpSettingsSection.tsx
+@@ -40,9 +40,11 @@ function outboundMcpLaunchSpec(os: HostOs): { command: string; args: string[] }
+     }
+   }
+   if (os === "win") {
++    // MCP hosts do not expand %LOCALAPPDATA%. Explorer does — user pastes the real path.
++    const winDir = "C:\\Users\\<你的用户名>\\AppData\\Local\\CMspark"
+     return {
+-      command: "%LOCALAPPDATA%\\CMspark\\node.exe",
+-      args: ["%LOCALAPPDATA%\\CMspark\\cmspark-agent.js", "mcp-outbound"],
++      command: `${winDir}\\node.exe`,
++      args: [`${winDir}\\cmspark-agent.js`, "mcp-outbound"],
+     }
+   }
+   return {
+@@ -205,7 +207,11 @@ export function OutboundMcpSettingsSection() {
+       `\n` +
+       `command: ${launch.command}\n` +
+       `args: ${JSON.stringify(launch.args)}\n` +
+-      `# 命令行 cmspark-agent outbound-grant issue 也会打印 command / args\n`
++      `# CMSPARK_OUTBOUND_CALLER_ID 必须与上面这把钥匙的 caller_id 逐字相同\n` +
++      `# 命令行 cmspark-agent outbound-grant issue 也会打印 command / args\n` +
++      (hostOs === "win"
++        ? `# Windows：资源管理器地址栏输入 %LOCALAPPDATA%\\CMspark，把真实路径换掉 <你的用户名>。不要把 %LOCALAPPDATA% 写进 command。\n`
++        : "")
+     try {
+       await navigator.clipboard.writeText(snippet)
+       setCopyOk(true)
+@@ -222,7 +228,13 @@ export function OutboundMcpSettingsSection() {
+         推荐命令行签发（五分钟主路）。这里是备用与撤销。
+         <code>cmspark-agent outbound-grant issue --caller-id …</code> 会打印钥匙、env 和 command / args。
+         钥匙与扩展配对码（ws_secret）分离。写入 IDE 的 <code>CMSPARK_OUTBOUND_GRANT</code>。
++        编程助手里的 <code>CMSPARK_OUTBOUND_CALLER_ID</code> 必须和下面的调用方逐字相同。
+       </div>
++      {hostOs === "win" && (
++        <div style={{ ...styles.helpText, marginTop: 6 }}>
++          Windows：在资源管理器地址栏输入 %LOCALAPPDATA%\CMspark，把看到的真实路径写进 MCP 的 command / args。不要写 %LOCALAPPDATA% 本身，编程助手启动时不会展开它。
++        </div>
++      )}
+ 
+       <div style={{ ...styles.row, marginTop: 10, alignItems: "flex-start" }}>
+         <label style={{ ...styles.label, flex: 1, marginBottom: 0 }}>
+@@ -246,22 +258,34 @@ export function OutboundMcpSettingsSection() {
+       </div>
+ 
+       <div style={{ ...styles.field, marginTop: 12 }}>
+-        <label style={styles.label}>签发新 grant</label>
++        <div style={styles.label}>签发新 grant</div>
++        <label style={styles.label} htmlFor="outbound-grant-label">显示名称</label>
+         <input
++          id="outbound-grant-label"
+           style={styles.input}
+           value={label}
+           onChange={(e) => setLabel(e.target.value)}
+-          placeholder="显示名称（如 grok-build）"
++          placeholder="如 grok-build"
+         />
++        <label style={{ ...styles.label, marginTop: 8 }} htmlFor="outbound-grant-caller">
++          调用方 caller_id
++        </label>
+         <input
+-          style={{ ...styles.input, marginTop: 6 }}
++          id="outbound-grant-caller"
++          style={styles.input}
+           value={callerId}
+           onChange={(e) => setCallerId(e.target.value)}
+-          placeholder="caller_id（与 MCP 调用 body 绑定）"
++          placeholder="与 CMSPARK_OUTBOUND_CALLER_ID 逐字相同"
++          aria-label="caller_id"
+           spellCheck={false}
+         />
++        <div style={styles.helpText}>
++          必填。编程助手环境变量 CMSPARK_OUTBOUND_CALLER_ID 必须和这里逐字相同，否则 GRANT_CALLER_MISMATCH，工具直接失败。
++        </div>
++        <label style={{ ...styles.label, marginTop: 8 }} htmlFor="outbound-grant-ttl">有效期</label>
+         <select
+-          style={{ ...styles.input, marginTop: 6 }}
++          id="outbound-grant-ttl"
++          style={styles.input}
+           value={String(ttlMs)}
+           onChange={(e) => setTtlMs(Number(e.target.value))}
+         >
+@@ -271,8 +295,10 @@ export function OutboundMcpSettingsSection() {
+             </option>
+           ))}
+         </select>
++        <label style={{ ...styles.label, marginTop: 8 }} htmlFor="outbound-grant-profile">工具档</label>
+         <select
+-          style={{ ...styles.input, marginTop: 6 }}
++          id="outbound-grant-profile"
++          style={styles.input}
+           value={profile}
+           onChange={(e) => {
+             const v = e.target.value
+@@ -290,6 +316,10 @@ export function OutboundMcpSettingsSection() {
+           {OUTBOUND_GRANT_PROFILE_OPTIONS.find((o) => o.value === profile)?.hint}
+           — 交互档含 get_page_html / analyze_image（页面内容外泄），需勾下方外泄允许并经确认台。
+         </div>
++        <div style={styles.label}>权限</div>
++        <div style={styles.helpText}>
++          页面外泄可直接勾选。不勾时，读正文、截图、DOM 会直接拒绝，确认台也不会弹出。上下文出口要先把工具档选成「站点上下文档」。
++        </div>
+         <label style={{ ...styles.helpText, display: "flex", gap: 6, marginTop: 8, alignItems: "flex-start" }}>
+           <input
+             type="checkbox"
+@@ -300,11 +330,12 @@ export function OutboundMcpSettingsSection() {
+           <span>
+             允许 {callerId.trim() || "<caller>"} 把页文/截图发给其云模型
+             <div style={{ marginTop: 2 }}>
+-              勾选写在这把钥匙上，可撤销。首次外泄仍走确认台，不跳过 HITL。
++              勾选写在这把钥匙上，可撤销。首次外泄仍走确认台，不跳过 HITL。确认台会到前面。
+             </div>
+           </span>
+         </label>
+         {profile === OUTBOUND_CONTEXT_PROFILE && <div style={{ marginTop: 10 }}>
++          <div style={styles.label}>上下文出口</div>
+           <label style={styles.label}>允许导出上下文的精确站点（每行一个 origin）</label>
+           <textarea style={styles.input} rows={3} value={contextOrigins} onChange={event => setContextOrigins(event.target.value)} placeholder="https://devops.example.com" spellCheck={false} />
+           <div style={styles.helpText}>只写协议、主机和端口，不含路径或通配符。所选知识正文片段及当前目标地址会发送给外部助手。</div>
+diff --git a/chrome-extension/src/sidepanel/components/focus-band-priority.ts b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
+index 7888656e..43be288e 100644
+--- a/chrome-extension/src/sidepanel/components/focus-band-priority.ts
++++ b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
+@@ -267,13 +267,18 @@ export function fleetProcessingLabel(input: {
+   lockCount: number
+   openIntents: number
+   worstStatus?: string | null
++  /**
++   * A scoped worker is inside an LLM run. Idle workers left over after the
++   * run (the 10-minute inspect window) must not read as 运行中.
++   */
++  llmActive?: boolean
+ }): string | null {
+-  const kind = classifyFleetActivity(input)
+-  if (kind === "none") return null
+-  if (kind === "paused_only") {
+-    // Soft hint only if caller wants it; default ChatView passes showPausedHint=false via null.
+-    return null
+-  }
++  const live =
++    input.lockCount > 0 ||
++    input.openIntents > 0 ||
++    input.worstStatus === "holding_tabs" ||
++    input.llmActive === true
++  if (!live) return null
+   if (input.workerCount > 0) return `舰队运行中 · ${input.workerCount} worker`
+   if (input.lockCount > 0) return `舰队持锁 · ${input.lockCount} 锁`
+   if (input.openIntents > 0) return `舰队 · ${input.openIntents} intent 未关闭`
+diff --git a/chrome-extension/src/sidepanel/hooks/use-scoped-run-busy.ts b/chrome-extension/src/sidepanel/hooks/use-scoped-run-busy.ts
+index 50c3531d..67e3073c 100644
+--- a/chrome-extension/src/sidepanel/hooks/use-scoped-run-busy.ts
++++ b/chrome-extension/src/sidepanel/hooks/use-scoped-run-busy.ts
+@@ -26,6 +26,8 @@ export interface ScopedRunBusyView {
+   stopAll: ReturnType<typeof buildFleetStopAllMessage>
+   /** Scoped worst worker status for fleet classification (holding_tabs > paused > idle). */
+   worstStatus: "holding_tabs" | "paused" | "idle" | "none"
++  /** True when a scoped worker's LLM run is still in flight. */
++  llmActive: boolean
+   workerCount: number
+   lockCount: number
+   openIntents: number
+@@ -91,12 +93,17 @@ export function useScopedRunBusy(): ScopedRunBusyView {
+         : scopedWorkers.length > 0
+           ? "idle"
+           : "none"
++    const llmActiveIds = new Set(fleet?.llm_active_thread_ids || [])
++    const llmActive = scopedWorkers.some(
++      (w) => w.agent_role === "worker" && (w.llm_active === true || llmActiveIds.has(w.id)),
++    )
+     return {
+       scope,
+       scopeKind: scope.kind,
+       scopedWorkers,
+       stopAll: buildFleetStopAllMessage(scope),
+       worstStatus,
++      llmActive,
+       workerCount,
+       lockCount,
+       openIntents,
+diff --git a/chrome-extension/src/sidepanel/utils/thread-busy.ts b/chrome-extension/src/sidepanel/utils/thread-busy.ts
+index 01853bc2..6953e1cb 100644
+--- a/chrome-extension/src/sidepanel/utils/thread-busy.ts
++++ b/chrome-extension/src/sidepanel/utils/thread-busy.ts
+@@ -111,6 +111,7 @@ export type FleetWorkerLike = {
+   parent_thread_id?: string | null
+   orchestrator_run_id?: string | null
+   status?: string | null
++  llm_active?: boolean
+ }
+ 
+ export type ActiveThreadLike = {
+diff --git a/chrome-extension/tests/cockpit-focus-policy.test.ts b/chrome-extension/tests/cockpit-focus-policy.test.ts
+index 5c4c2da4..d40f4039 100644
+--- a/chrome-extension/tests/cockpit-focus-policy.test.ts
++++ b/chrome-extension/tests/cockpit-focus-policy.test.ts
+@@ -1,5 +1,7 @@
+ import test from "node:test"
+ import assert from "node:assert/strict"
++import { readFileSync } from "node:fs"
++import { join } from "node:path"
+ import {
+   cockpitFocusEventFromMessage,
+   cruiseFlagsFromConfig,
+@@ -214,6 +216,43 @@ test("full_preview / preview_image → 重预览级", () => {
+ // grok review NIT-3：白名单/信任勾选不算重预览——relevant_domains /
+ // relevant_apps 是 MinimalConfirm 可批的轻确认（白名单勾选在确认台，但此处
+ // 可快速允许/拒绝），若算重预览则几乎所有 navigate L2 仍抢桌面，票 5 空转。
++test("[Outbound] 轻确认 ⇒ open_focus（人在别的应用，Win/Linux 无托盘）", () => {
++  const ev = cockpitFocusEventFromMessage({
++    type: "security.confirmation.request",
++    confirmation_id: "ob1",
++    tool_name: "[Outbound] get_page_text",
++    code_preview: "此 MCP 调用将把页面文本/截图发送给外部编程 Agent",
++  })
++  assert.deepEqual(ev, {
++    kind: "confirmation",
++    hasNonce: false,
++    hasHeavyPreview: false,
++    outboundChannel: true,
++  })
++  assert.equal(decideCockpitFocus(ev!, UNARMED), "open_focus")
++  assert.equal(decideCockpitFocus(ev!, CRUISE_FULL), "open_focus")
++})
++
++test("#524 background opens cockpit when decideCockpitFocus says open_focus", () => {
++  const bg = readFileSync(join(process.cwd(), "src/background/index.ts"), "utf8")
++  const start = bg.indexOf("const focusEvent = cockpitFocusEventFromMessage")
++  assert.ok(start > 0)
++  const slice = bg.slice(start, start + 400)
++  assert.match(slice, /decideCockpitFocus\(focusEvent, cockpitArmState\) === "open_focus"/)
++  assert.match(slice, /openOrFocusCockpit\(\)/)
++})
++
++test("普通 navigate 轻确认仍 stay_background", () => {
++  const ev = cockpitFocusEventFromMessage({
++    type: "security.confirmation.request",
++    confirmation_id: "nav1",
++    tool_name: "navigate",
++    code_preview: "https://example.com",
++  })
++  assert.equal(ev && "outboundChannel" in ev, false)
++  assert.equal(decideCockpitFocus(ev!, UNARMED), "stay_background")
++})
++
+ test("relevant_domains 非空 ⇒ 仍轻确认（hasHeavyPreview: false，不抢焦点）", () => {
+   const ev = cockpitFocusEventFromMessage({
+     type: "security.confirmation.request",
+diff --git a/chrome-extension/tests/focus-band-priority.test.ts b/chrome-extension/tests/focus-band-priority.test.ts
+index b2990e01..e146e85d 100644
+--- a/chrome-extension/tests/focus-band-priority.test.ts
++++ b/chrome-extension/tests/focus-band-priority.test.ts
+@@ -216,6 +216,28 @@ test("paused-only zombies: no 运行中 label; strip hidden unless showPausedOnl
+   assert.equal(fleetPausedOnlyLabel(1), "舰队已暂停 · 1 worker")
+ })
+ 
++test("finished idle workers do not read as 运行中 (8olhpa)", () => {
++  assert.equal(
++    fleetProcessingLabel({
++      workerCount: 4,
++      lockCount: 0,
++      openIntents: 0,
++      worstStatus: "idle",
++    }),
++    null,
++  )
++  assert.equal(
++    fleetProcessingLabel({
++      workerCount: 4,
++      lockCount: 0,
++      openIntents: 0,
++      worstStatus: "idle",
++      llmActive: true,
++    }),
++    "舰队运行中 · 4 worker",
++  )
++})
++
+ test("active fleet: idle workers / holding_tabs / locks still show 运行中 or strip", () => {
+   assert.equal(
+     classifyFleetActivity({
+diff --git a/companion/src/acp/jsonrpc-stdio.ts b/companion/src/acp/jsonrpc-stdio.ts
+index 1405ba2e..5552175c 100644
+--- a/companion/src/acp/jsonrpc-stdio.ts
++++ b/companion/src/acp/jsonrpc-stdio.ts
+@@ -161,7 +161,7 @@ export async function tryAcpInitialize(
+       "initialize",
+       {
+         protocolVersion: 1,
+-        clientInfo: { name: "cmspark", version: "0.6.8" },
++        clientInfo: { name: "cmspark", version: "0.6.9" },
+         capabilities: {
+           fs: { readTextFile: false, writeTextFile: false },
+           terminal: false,
+diff --git a/companion/src/board/service.ts b/companion/src/board/service.ts
+index acb19ffd..efa9cde8 100644
+--- a/companion/src/board/service.ts
++++ b/companion/src/board/service.ts
+@@ -767,6 +767,8 @@ export type CollectHandbackSuccess = {
+     data_not_instruction?: string
+     /** false = finished prose report; board was not merged. */
+     structured?: boolean
++    /** True when the worker stopped on a later empty tool-call turn. */
++    partial?: boolean
+     suggested_action?: string
+     note?: string
+   }
+@@ -831,6 +833,14 @@ export async function collectWorkerHandback(
+     auditPath?: string
+     /** Force structured path even if host flags off (tests / expect_structured). */
+     forceStructured?: boolean
++    /**
++     * F2 (pull 2026-09-21): live run predicate — abort map ∪ gate holders ∪
++     * deferred kick queue, injected by the dispatch layer to avoid a
++     * board → message-router dependency. The disk-shape heuristic alone
++     * cannot see the between-rounds steady state (last row = completed
++     * tool, next assistant not yet written while the LLM call is in flight).
++     */
++    isThreadLlmActive?: (threadId: string) => boolean
+   },
+ ): Promise<CollectHandbackResult> {
+   const workerId = String(opts.workerId)
+@@ -840,10 +850,20 @@ export async function collectWorkerHandback(
+   }
+ 
+   const msgs = tm.getMessages(workerId)
+-  const last = [...msgs].reverse().find((m) => m.role === "assistant")
+-  const lastAssistant: CollectHandbackLastAssistant = last
+-    ? { id: last.id, content: last.content, created_at: last.created_at }
++  // Tool-call turns persist an assistant row with empty content. After a
++  // worker dies on that turn (screenshot tab mismatch, same-tool circuit),
++  // the chronological last assistant is blank even though earlier turns
++  // wrote the report. Hand back the last non-empty body (thread 8olhpa).
++  const assistants = msgs.filter((m) => m.role === "assistant")
++  const chronologicalLast = assistants.length > 0 ? assistants[assistants.length - 1] : undefined
++  const report = [...assistants].reverse().find((m) => typeof m.content === "string" && m.content.trim())
++  const handbackSource = report ?? chronologicalLast
++  const stoppedMidRun = !!report && report !== chronologicalLast
++  const lastAssistant: CollectHandbackLastAssistant = handbackSource
++    ? { id: handbackSource.id, content: handbackSource.content, created_at: handbackSource.created_at }
+     : null
++  const partialNote =
++    "worker stopped mid-run; last_assistant is the last non-empty assistant text, not a closing report. MissionBoard was not updated. Other workers are unaffected."
+ 
+   const hostId =
+     resolveBoardHostThreadId(tm, workerId) ||
+@@ -860,25 +880,15 @@ export async function collectWorkerHandback(
+     board_mode: boardMode,
+   }
+ 
+-  if (!boardMode) {
+-    return { success: true, data: base }
+-  }
+-
+-  if (!hostId || !host || !isBoardHostThread(host)) {
+-    return {
+-      success: false,
+-      error: "cannot resolve board host for structured handback",
+-      error_code: "BOARD_HOST_INVALID",
+-      recoverable: false,
+-      data: base,
+-    }
+-  }
+-
+-  if (workerLooksInFlight(msgs)) {
++  // F2: live run state first, before the board-off early return — a running
++  // worker is a fact regardless of board mode, and the board-off path used to
++  // hand back mid-run prose as a silent success. The disk heuristic stays as
++  // the second line (covers rows that merely look unfinished).
++  if (opts.isThreadLlmActive?.(workerId) === true || workerLooksInFlight(msgs)) {
+     audit(
+       "board.handback_rejected",
+       {
+-        thread_id: hostId,
++        thread_id: hostId ?? null,
+         worker_id: workerId,
+         error_code: WORKER_STILL_RUNNING,
+         error: "worker still running",
+@@ -895,6 +905,25 @@ export async function collectWorkerHandback(
+     }
+   }
+ 
++  if (!boardMode) {
++    return {
++      success: true,
++      data: stoppedMidRun
++        ? { ...base, partial: true, note: partialNote }
++        : base,
++    }
++  }
++
++  if (!hostId || !host || !isBoardHostThread(host)) {
++    return {
++      success: false,
++      error: "cannot resolve board host for structured handback",
++      error_code: "BOARD_HOST_INVALID",
++      recoverable: false,
++      data: base,
++    }
++  }
++
+   // Initialize empty board when structured path is required but board not yet created
+   if (host.mission_board == null) {
+     const init = await ensureBoard(tm, hostId, {
+@@ -914,19 +943,22 @@ export async function collectWorkerHandback(
+ 
+   const rawPayload = lastAssistant?.content ?? null
+   if (rawPayload == null || (typeof rawPayload === "string" && !rawPayload.trim())) {
++    const error = assistants.length
++      ? "worker stopped before writing a report (assistant turns were tool calls only)"
++      : "handback payload is empty (no assistant message)"
+     audit(
+       "board.handback_rejected",
+       {
+         thread_id: hostId,
+         worker_id: workerId,
+         error_code: HANDBACK_MISSING_STRUCTURE,
+-        error: "handback payload is empty (no assistant message)",
++        error,
+       },
+       opts.auditPath,
+     )
+     return {
+       success: false,
+-      error: "handback payload is empty (no assistant message)",
++      error,
+       error_code: HANDBACK_MISSING_STRUCTURE,
+       recoverable: true,
+       data: base,
+@@ -958,8 +990,11 @@ export async function collectWorkerHandback(
+       data: {
+         ...base,
+         structured: false,
++        ...(stoppedMidRun ? { partial: true } : {}),
+         suggested_action: "use last_assistant",
+-        note: "worker finished with a prose report; MissionBoard was not updated. Other workers are unaffected.",
++        note: stoppedMidRun
++          ? partialNote
++          : "worker finished with a prose report; MissionBoard was not updated. Other workers are unaffected.",
+       },
+     }
+   }
+@@ -1004,6 +1039,7 @@ export async function collectWorkerHandback(
+     success: true,
+     data: {
+       ...base,
++      ...(stoppedMidRun ? { partial: true } : {}),
+       facts: added.map((f) => ({
+         id: f.id,
+         trust: f.trust,
+diff --git a/companion/src/cli-version.ts b/companion/src/cli-version.ts
+index 8bff339b..372a8f90 100644
+--- a/companion/src/cli-version.ts
++++ b/companion/src/cli-version.ts
+@@ -2,7 +2,7 @@ import * as fs from "fs"
+ import * as path from "path"
+ 
+ /** Fallback must stay lock-step with companion/package.json (test-package-gates). */
+-export const CLI_VERSION_FALLBACK = "0.6.8"
++export const CLI_VERSION_FALLBACK = "0.6.9"
+ 
+ export function resolveCliVersion(): string {
+   const candidates = [
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 19eb7bf3..9e469367 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -14,6 +14,8 @@ import { classifyError } from "../security"
+ import { toolChatErrorPayload } from "../ws/l1-actuator"
+ import { logger } from "../logger"
+ import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
++import { isTransientLlmTransportError } from "./transport-error"
++import { decideSameToolFailure } from "./same-tool-guard"
+ import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
+ import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
+ import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
+@@ -1282,6 +1284,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+   let contentRiskRecoveryUsed = false
+   let outputMaxTokens = computeMaxTokens(contextWindow, config.max_tokens)
+   const recoverableFailureCounts = new Map<string, number>()
++  const locatorPivotIssued = new Set<string>()
+ 
+   try {
+   await runContextBudgetPass("pre_loop")
+@@ -1412,6 +1415,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+         }
+       }
+ 
++      // A completed stream ends the transport-failure streak. Tool success
++      // resets it too, but a text-only round never reaches that line.
++      continuousFailures = 0
++
+       const truncatedToolBatch = isTruncatedToolBatch(
+         finishReason,
+         toolCalls.some((tc) => tc != null),
+@@ -1964,6 +1971,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+             // Reset failure counters on success
+             continuousFailures = 0
+             recoverableFailureCounts.delete(toolName)
++            locatorPivotIssued.delete(toolName)
+             // Only navigate/set_tab_url on THIS tabId may thaw. create_tab must
+             // not thaw pinned_tabs[0] (qg44es: freeze 4151 then create_tab re-opens CDP).
+             if (shouldThawAfterSuccess(toolName)) {
+@@ -2141,7 +2149,30 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+             if (failCode !== "SITE_OP_BANNED" && failCode !== "SITE_OP_ESCALATE") {
+             const failCount = (recoverableFailureCounts.get(toolName) || 0) + 1
+             recoverableFailureCounts.set(toolName, failCount)
+-            if (failCount >= MAX_SAME_TOOL_RECOVERABLE_FAILURES) {
++            const sameToolDecision = decideSameToolFailure({
++              failCount,
++              threshold: MAX_SAME_TOOL_RECOVERABLE_FAILURES,
++              errorCode: failCode,
++              errorText: toolResult.error,
++              alreadyPivoted: locatorPivotIssued.has(toolName),
++            })
++            if (sameToolDecision.action === "pivot") {
++              locatorPivotIssued.add(toolName)
++              recoverableFailureCounts.set(toolName, 0)
++              const note = sameToolDecision.instruction
++              toolResult.error = `${toolResult.error || ""} ${note}`.trim()
++              const data = (toolResult.data && typeof toolResult.data === "object")
++                ? toolResult.data
++                : {}
++              data.suggested_action = "switch_strategy"
++              data.pivot_zh = note
++              toolResult.data = data
++              logger.info("llm.locator_pivot", {
++                tool_name: toolName,
++                fail_count: failCount,
++                thread_id: threadId,
++              })
++            } else if (sameToolDecision.action === "stop") {
+               logger.error("llm.recoverable_loop_detected", {
+                 tool_name: toolName,
+                 fail_count: failCount,
+@@ -2166,10 +2197,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+               } catch {
+                 /* L-3 optional */
+               }
++              const pivoted = locatorPivotIssued.has(toolName)
++                ? "已要求改读页面、滚动或搜索，仍在重复同一工具。"
++                : ""
+               sendToExtension({
+                 type: "chat.error",
+                 thread_id: threadId,
+-                error: `工具 ${toolName} 连续 ${failCount} 次执行失败，已停止以防止无限循环。${unlockHint}最后错误: ${toolResult.error}`,
++                error: `工具 ${toolName} 连续 ${failCount} 次执行失败，已停止以防止无限循环。${pivoted}${unlockHint}最后错误: ${toolResult.error}`,
+               })
+               break
+             }
+@@ -2311,7 +2345,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+         continuous_failures: continuousFailures,
+       })
+ 
+-      if (!isContentRisk) {
++      const transientTransport = isTransientLlmTransportError(errorMsg)
++      // Transport flakes (Premature close / Connection error) retry the same
++      // request. Toasting each one paints "⚠️ Premature close" on a run that
++      // is about to continue — thread 8olhpa, parent + four workers.
++      if (!isContentRisk && !transientTransport) {
+         sendToExtension({
+           type: "chat.error",
+           thread_id: threadId,
+@@ -2386,6 +2424,32 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
+         return
+       }
+ 
++      if (transientTransport) {
++        continuousFailures++
++        logger.warn("llm.recoverable_api_error", {
++          error: errorMsg,
++          continuous_failures: continuousFailures,
++          limit: CONTINUOUS_FAILURE_LIMIT,
++        })
++        if (continuousFailures >= CONTINUOUS_FAILURE_LIMIT) {
++          logger.error("llm.failure_limit_reached", {
++            continuous_failures: continuousFailures,
++            limit: CONTINUOUS_FAILURE_LIMIT,
++          })
++          sendToExtension({
++            type: "chat.error",
++            thread_id: threadId,
++            error: `模型连接中断（${errorMsg}），已连续失败 ${CONTINUOUS_FAILURE_LIMIT} 次并暂停。请重试。`,
++          })
++          if (runStats) runStats.terminal = "circuit_breaker"
++          return
++        }
++        // Do not push "Please try a different approach" — the model then
++        // abandons a finished plan because the socket closed. Same request.
++        round--
++        continue
++      }
++
+       continuousFailures++
+       logger.warn("llm.recoverable_api_error", {
+         error: errorMsg,
+diff --git a/companion/src/llm/providers/openai.ts b/companion/src/llm/providers/openai.ts
+index c2ca99a3..e7eb9f50 100644
+--- a/companion/src/llm/providers/openai.ts
++++ b/companion/src/llm/providers/openai.ts
+@@ -16,6 +16,7 @@ import type {
+   StreamChatParams,
+ } from "../provider"
+ import { throwIfLlmEndpointBlocked } from "../../security"
++import { isBenignStreamTailClose } from "../transport-error"
+ import { cleanCompanionUserAgent } from "./headers"
+ 
+ export class OpenAIProvider implements LlmProvider {
+@@ -63,51 +64,58 @@ export class OpenAIProvider implements LlmProvider {
+ 
+     let finishReason: string | null | undefined
+ 
+-    for await (const chunk of stream) {
+-      const choice = chunk.choices[0]
+-      const delta = choice?.delta as
+-        | (OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta & {
+-            reasoning_content?: string
+-          })
+-        | undefined
+-
+-      if ((chunk as { usage?: OpenAI.Completions.CompletionUsage }).usage) {
+-        const u = (chunk as { usage: OpenAI.Completions.CompletionUsage }).usage
+-        yield {
+-          type: "usage",
+-          prompt_tokens: u.prompt_tokens,
+-          completion_tokens: u.completion_tokens,
+-          total_tokens: u.total_tokens,
+-          reasoning_tokens: (u as { completion_tokens_details?: { reasoning_tokens?: number } })
+-            .completion_tokens_details?.reasoning_tokens,
++    try {
++      for await (const chunk of stream) {
++        const choice = chunk.choices[0]
++        const delta = choice?.delta as
++          | (OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta & {
++              reasoning_content?: string
++            })
++          | undefined
++
++        if ((chunk as { usage?: OpenAI.Completions.CompletionUsage }).usage) {
++          const u = (chunk as { usage: OpenAI.Completions.CompletionUsage }).usage
++          yield {
++            type: "usage",
++            prompt_tokens: u.prompt_tokens,
++            completion_tokens: u.completion_tokens,
++            total_tokens: u.total_tokens,
++            reasoning_tokens: (u as { completion_tokens_details?: { reasoning_tokens?: number } })
++              .completion_tokens_details?.reasoning_tokens,
++          }
+         }
+-      }
+ 
+-      if (delta?.content) {
+-        yield { type: "token", text: delta.content }
+-      }
++        if (delta?.content) {
++          yield { type: "token", text: delta.content }
++        }
+ 
+-      if (delta?.reasoning_content) {
+-        yield { type: "reasoning", text: delta.reasoning_content }
+-      }
++        if (delta?.reasoning_content) {
++          yield { type: "reasoning", text: delta.reasoning_content }
++        }
+ 
+-      if (delta?.tool_calls) {
+-        for (const tc of delta.tool_calls) {
+-          if (tc.index === undefined) continue
+-          const ev: CanonicalStreamEvent = {
+-            type: "tool_call_delta",
+-            index: tc.index,
++        if (delta?.tool_calls) {
++          for (const tc of delta.tool_calls) {
++            if (tc.index === undefined) continue
++            const ev: CanonicalStreamEvent = {
++              type: "tool_call_delta",
++              index: tc.index,
++            }
++            if (tc.id) ev.id = tc.id
++            if (tc.function?.name) ev.name = tc.function.name
++            if (tc.function?.arguments) ev.arguments = tc.function.arguments
++            yield ev
+           }
+-          if (tc.id) ev.id = tc.id
+-          if (tc.function?.name) ev.name = tc.function.name
+-          if (tc.function?.arguments) ev.arguments = tc.function.arguments
+-          yield ev
+         }
+-      }
+ 
+-      if (choice?.finish_reason) {
+-        finishReason = choice.finish_reason
++        if (choice?.finish_reason) {
++          finishReason = choice.finish_reason
++        }
+       }
++    } catch (err) {
++      // DeepSeek-class gateways often deliver finish_reason and then RST
++      // the socket instead of `data: [DONE]`. The round is complete; throwing
++      // here discards the tool calls and surfaces "Premature close".
++      if (finishReason == null || !isBenignStreamTailClose(err)) throw err
+     }
+ 
+     yield { type: "done", finish_reason: finishReason ?? null }
+diff --git a/companion/src/llm/same-tool-guard.ts b/companion/src/llm/same-tool-guard.ts
+new file mode 100644
+index 00000000..46300d95
+--- /dev/null
++++ b/companion/src/llm/same-tool-guard.ts
+@@ -0,0 +1,46 @@
++/**
++ * Same-tool recoverable failures stop a turn so a model cannot spin forever.
++ * A missed click (the text is not a visible control) is not that spin: the
++ * goal is still open, so the first time the budget is spent we tell the model
++ * to switch method instead of ending the turn.
++ */
++
++export const LOCATOR_MISS_CODES = new Set([
++  "ELEMENT_NOT_FOUND",
++  "ELEMENT_AMBIGUOUS",
++  "SELECTOR_OR_TEXT_REQUIRED",
++  "INVALID_SELECTOR",
++])
++
++export const LOCATOR_PIVOT_INSTRUCTION =
++  "不要再点击这句文字。页面上没有对应的可见元素。请改用其它办法完成目标：先 get_page_text 阅读当前页面；若目标在下方就 scroll 后再按页面上真实的链接点击；若这句是要查证的标题而不是按钮，用搜索或 navigate 打开来源。"
++
++export function isLocatorMiss(errorCode?: string, errorText?: string): boolean {
++  if (errorCode && LOCATOR_MISS_CODES.has(errorCode)) return true
++  const text = (errorText || "").toLowerCase()
++  return (
++    text.includes("element_not_found") ||
++    text.includes("no visible element matching") ||
++    text.includes("element_ambiguous") ||
++    text.includes("elements match text")
++  )
++}
++
++export type SameToolFailureDecision =
++  | { action: "count" }
++  | { action: "pivot"; instruction: string }
++  | { action: "stop" }
++
++export function decideSameToolFailure(input: {
++  failCount: number
++  threshold: number
++  errorCode?: string
++  errorText?: string
++  alreadyPivoted: boolean
++}): SameToolFailureDecision {
++  if (input.failCount < input.threshold) return { action: "count" }
++  if (!input.alreadyPivoted && isLocatorMiss(input.errorCode, input.errorText)) {
++    return { action: "pivot", instruction: LOCATOR_PIVOT_INSTRUCTION }
++  }
++  return { action: "stop" }
++}
+diff --git a/companion/src/llm/transport-error.ts b/companion/src/llm/transport-error.ts
+new file mode 100644
+index 00000000..034d1dc6
+--- /dev/null
++++ b/companion/src/llm/transport-error.ts
+@@ -0,0 +1,31 @@
++/**
++ * Socket / gateway closes that are safe to retry as the same request.
++ * "Premature close" is undici's message when the peer drops a stream after
++ * (or instead of) the SSE terminator. "Connection error." is the OpenAI SDK
++ * wrapper around the same class of failure. These are not model errors.
++ */
++export function isTransientLlmTransportError(errorMessage: string): boolean {
++  const msg = errorMessage.toLowerCase()
++  return (
++    msg.includes("premature close") ||
++    msg.includes("connection error") ||
++    msg.includes("socket hang up") ||
++    msg.includes("econnreset") ||
++    msg.includes("econnrefused") ||
++    msg.includes("und_err") ||
++    msg.includes("other side closed") ||
++    msg.includes("fetch failed") ||
++    msg.includes("request timed out") ||
++    msg.includes("headers timeout") ||
++    msg.includes("body timeout")
++  )
++}
++
++/** Stream iterator died after the provider had already delivered a finish chunk. */
++export function isBenignStreamTailClose(err: unknown): boolean {
++  const e = err as { message?: unknown; cause?: { message?: unknown; code?: unknown } }
++  const bits = [e?.message, e?.cause?.message, e?.cause?.code].filter(
++    (x): x is string => typeof x === "string",
++  )
++  return bits.length > 0 && isTransientLlmTransportError(bits.join(" "))
++}
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 2bdc736f..63d9317a 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -115,6 +115,7 @@ import {
+   canAcquireMultiAgentLlmLoop,
+   cancelDeferredLlmKick,
+   releaseMultiAgentLlmLoop,
++  setThreadRunActiveProbe,
+ } from "./orchestrator/llm-loop-gate"
+ import {
+   handleConfigFamily,
+@@ -188,6 +189,9 @@ function applySlashSkillPin(
+ 
+ // Per-thread abort controllers for cancelling in-flight LLM requests
+ const abortControllers = new Map<string, AbortController>()
++// F1 (pull 2026-09-21): let the gate's deferred-kick drain see live runs without
++// llm-loop-gate importing this module (cycle). Registered once at module init.
++setThreadRunActiveProbe((threadId) => abortControllers.has(threadId))
+ /**
+  * SEC-D: generation token per thread so a superseded run's `finally` cannot
+  * delete the successor AbortController or release the multi-agent LLM gate.
+@@ -235,18 +239,25 @@ export function __testSetLlmOwnerForTests(threadId: string, panelId: string | nu
+  * Register an in-flight AbortController for a kicked worker chatCreate
+  * (spawn_worker / spawn_expert_team). Same SoT as router chat.create so
+  * Glance `llm_active`, fleet.stop_all, and chat.abort can see the run.
++ *
++ * F1 (pull 2026-09-21): returns null when another run already owns the thread
++ * (e.g. the user manually chat.create'd a queued worker). Reusing the existing
++ * controller made two chatCreate loops share one signal, and the kick's
++ * release then deleted the USER's controller mid-flight. Callers must skip
++ * the kick on null — the brief stays persisted; this kick is dropped (a later
++ * fleet/orchestrator action re-kicks the worker).
+  */
+-export function installKickAbortController(threadId: string): AbortController {
+-  const existing = abortControllers.get(threadId)
+-  if (existing) return existing
++export function installKickAbortController(threadId: string): AbortController | null {
++  if (abortControllers.has(threadId)) return null
+   const controller = new AbortController()
+   abortControllers.set(threadId, controller)
+   nextLlmGeneration(threadId)
+   return controller
+ }
+ 
+-/** CAS-delete the kick controller after chatCreate settles (success or throw). */
+-export function releaseKickAbortController(threadId: string, controller: AbortController): void {
++/** CAS-delete the kick controller after chatCreate settles (success or throw). No-op on a refused (null) install. */
++export function releaseKickAbortController(threadId: string, controller: AbortController | null): void {
++  if (!controller) return
+   if (abortControllers.get(threadId) === controller) {
+     abortControllers.delete(threadId)
+     llmLoopOwnerPanel.delete(threadId)
+@@ -258,6 +269,10 @@ export function abortThreadChat(
+   opts?: { clearQueue?: boolean },
+ ): { stopped: boolean; cancelled: number } {
+   if (!threadId) return { stopped: false, cancelled: 0 }
++  // N-1 no-revive: cancel this thread's queued kick BEFORE freeing the gate —
++  // releaseMultiAgentLlmLoop drains synchronously and would start the very
++  // kick this stop is meant to kill (grok A / kimi B, pull 2026-09-21).
++  cancelDeferredLlmKick(threadId)
+   const controller = abortControllers.get(threadId)
+   if (controller) {
+     controller.abort()
+@@ -270,7 +285,6 @@ export function abortThreadChat(
+     // Free gate here: finally will CAS-skip release after generation bump.
+     releaseMultiAgentLlmLoop(threadId)
+   }
+-  cancelDeferredLlmKick(threadId)
+   dropSteer(threadId)
+   return {
+     stopped: controller != null,
+@@ -4460,6 +4474,15 @@ export async function handleMessage(
+         targets = threadManager.list().filter((t: any) => t.agent_role === "worker")
+       }
+       const results: any[] = []
++      // Cross-thread no-revive (pull 2026-09-21): cancelling inside the loop
++      // is too late — the first abortThreadChat's releaseMultiAgentLlmLoop
++      // drains synchronously and would start a sibling worker's queued kick
++      // before that worker's own iteration cancels it. Drop every target's
++      // queued kick up front.
++      const cancelledKick = new Map<string, number>()
++      for (const w of targets) {
++        if (cancelDeferredLlmKick(w.id)) cancelledKick.set(w.id, (cancelledKick.get(w.id) ?? 0) + 1)
++      }
+       for (const w of targets) {
+         // #307: user stop — clear the worker's nextRun so it never drains later.
+         const { cancelled: nextRunCancelled } = abortThreadChat(w.id, { clearQueue: true })
+@@ -4498,6 +4521,7 @@ export async function handleMessage(
+           leases_drained: drained,
+           intents_abandoned: intentsAbandoned,
+           cancelled_next_run: nextRunCancelled,
++          cancelled_kick: cancelledKick.get(w.id) ?? 0,
+         })
+       }
+       const { buildFleetSnapshot } = await import("./orchestrator/fleet")
+diff --git a/companion/src/orchestrator/constants.ts b/companion/src/orchestrator/constants.ts
+index ba9439a7..925ad4ff 100644
+--- a/companion/src/orchestrator/constants.ts
++++ b/companion/src/orchestrator/constants.ts
+@@ -9,7 +9,8 @@ export const ORCHESTRATOR_CAPS = {
+   hard_max_lease_ms: 600_000,
+   max_active_l2_per_run: 1,
+   max_active_l2_process: 2,
+-  create_tab_auto_hold_ms: 120_000,
++  /** Worker/orchestrator create_tab hold. Single-agent auto-hold does not use this. */
++  create_tab_auto_hold_ms: 60_000,
+ } as const
+ 
+ /** Tools workers must not get by default (evaluate is intentionally allowed under L2). */
+@@ -68,7 +69,11 @@ export const ORCHESTRATOR_TOOL_ALLOWLIST = [
+   "list_tabs", // read-only fleet awareness
+ ] as const
+ 
+-/** Tab-targeted tools that require exclusive lease (read + write). */
++/**
++ * Tab-targeted tools. Membership is the identity gate (explicit tabId, pinned
++ * exemption, run-progress, outbound dual-entry). Acquire is NOT this set —
++ * only TAB_MUTATION_LEASE_TOOLS take a per-call exclusive lease.
++ */
+ export const TAB_LEASE_TOOLS = new Set([
+   "navigate",
+   "set_tab_url",
+@@ -92,6 +97,31 @@ export const TAB_LEASE_TOOLS = new Set([
+   "browser_download",
+ ])
+ 
++/**
++ * Calls that acquire a per-call exclusive lease. Reads stay in TAB_LEASE_TOOLS
++ * for the identity gate but do not acquire and are not rejected for HARD_HELD.
++ * get_element_info stays here (locator side effects). evaluate always mutates.
++ */
++export const TAB_MUTATION_LEASE_TOOLS = new Set([
++  "navigate",
++  "set_tab_url",
++  "close_tab",
++  "screenshot",
++  "analyze_image",
++  "get_element_info",
++  "click",
++  "dblclick",
++  "type",
++  "fill_form",
++  "scroll",
++  "press_key",
++  "hover",
++  "select_option",
++  "drag_and_drop",
++  "evaluate",
++  "browser_download",
++])
++
+ /** Tools that need L2 and interact with a tab (SOFT_RESERVED path). */
+ export const TAB_L2_TOOLS = new Set(["evaluate"])
+ 
+diff --git a/companion/src/orchestrator/fleet.ts b/companion/src/orchestrator/fleet.ts
+index 92eb6a73..1c2e9caa 100644
+--- a/companion/src/orchestrator/fleet.ts
++++ b/companion/src/orchestrator/fleet.ts
+@@ -1,7 +1,7 @@
+ // Fleet snapshot for Side Panel FleetStrip + Dashboard — ADR-015 P1
+ 
+ import type { ThreadManager } from "../threads/thread-manager"
+-import { listTabLocks } from "./tab-lease"
++import { listTabLocks, releaseIdleWorkerLeases } from "./tab-lease"
+ import { listWorkers } from "./spawn"
+ import { countOpenIntents } from "../board/intent-claim"
+ 
+@@ -55,14 +55,6 @@ export interface FleetSnapshot {
+ }
+ 
+ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
+-  const locks = listTabLocks()
+-  const locksByHolder = new Map<string, typeof locks>()
+-  for (const l of locks) {
+-    const arr = locksByHolder.get(l.holder_thread_id) || []
+-    arr.push(l)
+-    locksByHolder.set(l.holder_thread_id, arr)
+-  }
+-
+   let llmActive: string[] = []
+   try {
+     // Lazy require avoids circular import at module load
+@@ -77,6 +69,19 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
+   const llmSet = new Set(llmActive)
+ 
+   const all = tm.list() as any[]
++  // A worker whose LLM run has ended (and was not paused) must not keep tab
++  // leases. Otherwise Glance stays holding_tabs and the chip says 运行中
++  // after the subtask is done (thread 8olhpa).
++  releaseIdleWorkerLeases(all, llmSet)
++
++  const locks = listTabLocks()
++  const locksByHolder = new Map<string, typeof locks>()
++  for (const l of locks) {
++    const arr = locksByHolder.get(l.holder_thread_id) || []
++    arr.push(l)
++    locksByHolder.set(l.holder_thread_id, arr)
++  }
++
+   const workers = all.filter(
+     (t) => t.agent_role === "worker" || t.agent_role === "orchestrator" || t.parent_thread_id,
+   )
+@@ -84,8 +89,8 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
+   const views: FleetWorkerView[] = workers.map((w) => {
+     const wLocks = locksByHolder.get(w.id) || []
+     let status: FleetWorkerView["status"] = "idle"
+-    // ADR: pause keeps leases — prefer holding_tabs so operators still see exclusive holds
+-    // (and can force-release). paused alone only when no locks remain.
++    // A remaining lock (in-flight mutation or create_tab hold) wins over paused.
++    // paused alone only when no locks remain. Pause does not bulk-free.
+     if (wLocks.length > 0) status = "holding_tabs"
+     else if (w.paused) status = "paused"
+     // #502 E (Kimi BLOCK fix): metadata only — latest_tool / brief are stamped
+diff --git a/companion/src/orchestrator/llm-loop-gate.ts b/companion/src/orchestrator/llm-loop-gate.ts
+index 7d0df209..9f21a42e 100644
+--- a/companion/src/orchestrator/llm-loop-gate.ts
++++ b/companion/src/orchestrator/llm-loop-gate.ts
+@@ -94,6 +94,21 @@ export function scheduleWhenLlmSlotAvailable(
+   }
+   const gate = tryAcquireMultiAgentLlmLoop(counted, id)
+   if (gate.ok) {
++    // F1: a free slot does not mean a free thread — same probe discipline as
++    // drain. If the user's run owns this thread, queue and hand the slot back
++    // (startDeferredRun would install-refuse and silently drop the kick).
++    if (isThreadRunActiveProbe?.(id)) {
++      if (!deferredKickQueue.some((q) => q.threadId === id)) {
++        deferredKickQueue.push({ threadId: id, thread: counted, run })
++      }
++      releaseMultiAgentLlmLoop(id)
++      return {
++        started: false,
++        queued: true,
++        active: multiAgentLlmLoopSnapshot().active,
++        cap: ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops,
++      }
++    }
+     startDeferredRun({ threadId: id, thread: counted, run })
+     return {
+       started: true,
+@@ -117,6 +132,24 @@ export function pendingDeferredLlmKickCount(): number {
+   return deferredKickQueue.length
+ }
+ 
++/** F2: thread ids with a queued-but-not-started kick (in-flight for handback gating). */
++export function pendingDeferredLlmKickThreadIds(): string[] {
++  return deferredKickQueue.map((q) => q.threadId)
++}
++
++/**
++ * F1 (pull 2026-09-21): message-router registers this so drain can see whether
++ * a thread already has an in-flight chat run (abort map). llm-loop-gate must
++ * not import message-router (cycle), so the dependency is injected. A queued
++ * kick for a thread the user is manually chatting stays queued instead of
++ * double-running the worker alongside the user's run.
++ */
++let isThreadRunActiveProbe: ((threadId: string) => boolean) | null = null
++
++export function setThreadRunActiveProbe(probe: ((threadId: string) => boolean) | null): void {
++  isThreadRunActiveProbe = probe
++}
++
+ /** Drop a queued kick so stop_all / abort cannot start it later (N-1). */
+ export function cancelDeferredLlmKick(threadId: string): boolean {
+   const id = String(threadId || "")
+@@ -140,12 +173,22 @@ function startDeferredRun(item: DeferredLlmRun): void {
+ }
+ 
+ function drainDeferredLlmRuns(): void {
+-  while (deferredKickQueue.length > 0) {
++  // F1: at most one pass over the queue per drain — probe-requeued items must
++  // not loop forever when every queued thread is manually driven.
++  let guard = deferredKickQueue.length
++  while (deferredKickQueue.length > 0 && guard-- > 0) {
+     const next = deferredKickQueue[0]!
+     if ((next.thread as { paused?: unknown } | null)?.paused === true) {
+       deferredKickQueue.shift()
+       continue
+     }
++    if (isThreadRunActiveProbe?.(next.threadId)) {
++      // F1: another run owns this thread (user manually chatting the worker).
++      // Keep the kick queued; the next release retries it single-run.
++      deferredKickQueue.shift()
++      deferredKickQueue.push(next)
++      continue
++    }
+     const peek = canAcquireMultiAgentLlmLoop(next.thread, next.threadId)
+     if (!peek.ok) break
+     deferredKickQueue.shift()
+diff --git a/companion/src/orchestrator/tab-lease.ts b/companion/src/orchestrator/tab-lease.ts
+index 5ab0134e..a38d7db8 100644
+--- a/companion/src/orchestrator/tab-lease.ts
++++ b/companion/src/orchestrator/tab-lease.ts
+@@ -24,6 +24,10 @@ export interface TabLease {
+   softDeadline?: number
+   /** When state entered FORCE_RELEASING (for bounded GC). */
+   forceReleasingAt?: number
++  /** In-flight mutation calls for this holder. 0 on episode/outbound leases. */
++  mutationHolds: number
++  /** Worker/orchestrator create_tab hold deadline. null when none. */
++  createdHoldUntil: number | null
+ }
+ 
+ export type LeaseErrorCode =
+@@ -60,6 +64,11 @@ type PendingHooks = {
+    * Prefer confirmId match; fall back to holderThreadId worker stamp.
+    */
+   hasPendingConfirmation?: (confirmId: string | undefined, holderThreadId: string) => boolean
++  /**
++   * Delete timed_out_in_flight entries for this tab/holder without resolving
++   * the caller (it already failed). Does not FREE the lease.
++   */
++  discardTimedOutForTab?: (tabId: number, holderThreadId: string) => number
+ }
+ 
+ /** Module-level pending hooks so *every* sweepExpired path respects in-flight CDP. */
+@@ -134,84 +143,177 @@ function drainPendingAndFree(
+   })
+ }
+ 
+-/**
+- * Drop expired HARD/SOFT leases when no pending tools.
+- * Always consults module-level hasPendingForTab (or opts override).
+- * Never silent-FREE while CDP pending — reject pending + free, or FORCE_RELEASING + GC.
+- */
+-export function sweepExpired(opts?: {
++type SweepOpts = {
+   hasPendingForTab?: (tabId: number, holderThreadId: string) => boolean
+-}): void {
+-  const t = now()
+-  for (const [tabId, lease] of [...leases.entries()]) {
+-    if (lease.state === "FORCE_RELEASING") {
+-      const since = lease.forceReleasingAt ?? lease.renewedAt
+-      if (t > since + FORCE_RELEASING_GC_MS) {
+-        // Bounded GC: reject any residual pending and free so peers are not stuck forever
+-        drainPendingAndFree(tabId, lease, "force_releasing_gc")
+-      }
+-      continue
++}
++
++/** Outbound episode leases keep today's idle-drain and hard_max behavior. */
++function sweepOutboundLease(tabId: number, lease: TabLease, t: number, opts?: SweepOpts): void {
++  if (lease.state === "FORCE_RELEASING") {
++    const since = lease.forceReleasingAt ?? lease.renewedAt
++    if (t > since + FORCE_RELEASING_GC_MS) {
++      drainPendingAndFree(tabId, lease, "force_releasing_gc")
+     }
+-    if (lease.state === "SOFT_RESERVED" && lease.softDeadline && t > lease.softDeadline) {
+-      // Bind soft expire to live Confirm Center (confirmId and/or worker stamp).
+-      // Do not FREE mid-dialog if a matching confirmation is still pending.
+-      if (pendingHooks?.hasPendingConfirmation) {
+-        try {
+-          if (pendingHooks.hasPendingConfirmation(lease.confirmId, lease.holderThreadId)) {
+-            lease.softDeadline = t + SOFT_LEASE_SKEW_MS
+-            leases.set(tabId, lease)
+-            continue
+-          }
+-        } catch {
+-          // Fail closed: keep soft while confirmation probe is uncertain
+-          lease.softDeadline = t + SOFT_LEASE_SKEW_MS
+-          leases.set(tabId, lease)
+-          continue
+-        }
+-      }
+-      leases.delete(tabId)
+-      audit("tab.lease.soft_expired", { tab_id: tabId, holder_thread_id: lease.holderThreadId })
+-      continue
++    return
++  }
++  if (lease.state === "SOFT_RESERVED" && lease.softDeadline && t > lease.softDeadline) {
++    if (keepSoftForLiveConfirm(tabId, lease, t)) return
++    leases.delete(tabId)
++    audit("tab.lease.soft_expired", { tab_id: tabId, holder_thread_id: lease.holderThreadId })
++    return
++  }
++  if (lease.state !== "HARD_HELD" && lease.state !== "HELD_PENDING_L2") return
++  if (lease.state === "HELD_PENDING_L2") {
++    const coverUntil = t + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS
++    if (lease.idleDeadline < coverUntil) {
++      lease.idleDeadline = coverUntil
++      leases.set(tabId, lease)
+     }
+-    if (lease.state === "HARD_HELD" || lease.state === "HELD_PENDING_L2") {
+-      // HELD_PENDING_L2: freeze idle expiry for confirm duration (soft-style cover)
+-      if (lease.state === "HELD_PENDING_L2") {
+-        const coverUntil = t + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS
+-        if (lease.idleDeadline < coverUntil) {
+-          lease.idleDeadline = coverUntil
+-          leases.set(tabId, lease)
+-        }
+-        // Only hard_max can expire HELD_PENDING_L2 while confirm is open
+-        if (t <= lease.hardMaxDeadline) continue
+-      }
+-      const idleOrHard = t > lease.idleDeadline || t > lease.hardMaxDeadline
+-      if (!idleOrHard) continue
+-      if (resolveHasPending(tabId, lease.holderThreadId, opts)) {
+-        // TTL path with in-flight CDP: reject pending + free (or short FORCE_RELEASING if rejector absent)
+-        if (pendingHooks?.rejectPendingForTab) {
+-          drainPendingAndFree(
+-            tabId,
+-            lease,
+-            t > lease.hardMaxDeadline ? "hard_max_pending_drain" : "idle_ttl_pending_drain",
+-          )
+-        } else {
+-          lease.state = "FORCE_RELEASING"
+-          lease.forceReleasingAt = t
+-          leases.set(tabId, lease)
+-          audit("tab.lease.expire_blocked_pending", {
+-            tab_id: tabId,
+-            holder_thread_id: lease.holderThreadId,
+-          })
+-        }
+-        continue
+-      }
+-      leases.delete(tabId)
+-      audit("tab.lease.expired", {
++    if (t <= lease.hardMaxDeadline) return
++  }
++  const idleOrHard = t > lease.idleDeadline || t > lease.hardMaxDeadline
++  if (!idleOrHard) return
++  if (resolveHasPending(tabId, lease.holderThreadId, opts)) {
++    if (pendingHooks?.rejectPendingForTab) {
++      drainPendingAndFree(
++        tabId,
++        lease,
++        t > lease.hardMaxDeadline ? "hard_max_pending_drain" : "idle_ttl_pending_drain",
++      )
++    } else {
++      lease.state = "FORCE_RELEASING"
++      lease.forceReleasingAt = t
++      leases.set(tabId, lease)
++      audit("tab.lease.expire_blocked_pending", {
++        tab_id: tabId,
++        holder_thread_id: lease.holderThreadId,
++      })
++    }
++    return
++  }
++  leases.delete(tabId)
++  audit("tab.lease.expired", {
++    tab_id: tabId,
++    holder_thread_id: lease.holderThreadId,
++    reason: t > lease.hardMaxDeadline ? "hard_max" : "idle_ttl",
++  })
++}
++
++function keepSoftForLiveConfirm(tabId: number, lease: TabLease, t: number): boolean {
++  if (!pendingHooks?.hasPendingConfirmation) return false
++  try {
++    if (pendingHooks.hasPendingConfirmation(lease.confirmId, lease.holderThreadId)) {
++      lease.softDeadline = t + SOFT_LEASE_SKEW_MS
++      leases.set(tabId, lease)
++      return true
++    }
++  } catch {
++    lease.softDeadline = t + SOFT_LEASE_SKEW_MS
++    leases.set(tabId, lease)
++    return true
++  }
++  return false
++}
++
++/**
++ * Absolute cap: drop tombstones without resolving, reject live pending, then FREE.
++ * createdHoldUntil and mutationHolds do not survive hard_max.
++ */
++function freeAtHardMax(tabId: number, lease: TabLease, opts?: SweepOpts): void {
++  const discard = pendingHooks?.discardTimedOutForTab
++  if (discard) {
++    try {
++      discard(tabId, lease.holderThreadId)
++    } catch {
++      /* best-effort */
++    }
++  }
++  if (resolveHasPending(tabId, lease.holderThreadId, opts)) {
++    if (pendingHooks?.rejectPendingForTab) {
++      drainPendingAndFree(tabId, lease, "hard_max_pending_drain")
++    } else {
++      lease.state = "FORCE_RELEASING"
++      lease.forceReleasingAt = now()
++      leases.set(tabId, lease)
++      audit("tab.lease.expire_blocked_pending", {
+         tab_id: tabId,
+         holder_thread_id: lease.holderThreadId,
+-        reason: t > lease.hardMaxDeadline ? "hard_max" : "idle_ttl",
+       })
+     }
++    return
++  }
++  leases.delete(tabId)
++  audit("tab.lease.expired", {
++    tab_id: tabId,
++    holder_thread_id: lease.holderThreadId,
++    reason: "hard_max",
++  })
++}
++
++/** Per-call leases: idle does not drain in-flight work. hard_max still does. */
++function sweepPerCallLease(tabId: number, lease: TabLease, t: number, opts?: SweepOpts): void {
++  if (lease.state === "FORCE_RELEASING") {
++    const since = lease.forceReleasingAt ?? lease.renewedAt
++    if (t > since + FORCE_RELEASING_GC_MS) {
++      drainPendingAndFree(tabId, lease, "force_releasing_gc")
++    }
++    return
++  }
++  if (lease.state === "SOFT_RESERVED" && lease.softDeadline && t > lease.softDeadline) {
++    if (keepSoftForLiveConfirm(tabId, lease, t)) return
++    leases.delete(tabId)
++    audit("tab.lease.soft_expired", { tab_id: tabId, holder_thread_id: lease.holderThreadId })
++    return
++  }
++  if (lease.state !== "HARD_HELD" && lease.state !== "HELD_PENDING_L2") return
++  if (lease.state === "HELD_PENDING_L2") {
++    const coverUntil = t + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS
++    if (lease.idleDeadline < coverUntil) {
++      lease.idleDeadline = coverUntil
++      leases.set(tabId, lease)
++    }
++    if (lease.createdHoldUntil != null && t >= lease.createdHoldUntil) {
++      lease.createdHoldUntil = null
++      leases.set(tabId, lease)
++    }
++    if (t <= lease.hardMaxDeadline) return
++  }
++  let createExpired = false
++  if (lease.createdHoldUntil != null && t >= lease.createdHoldUntil) {
++    lease.createdHoldUntil = null
++    createExpired = true
++    leases.set(tabId, lease)
++  }
++  if (t > lease.hardMaxDeadline) {
++    freeAtHardMax(tabId, lease, opts)
++    return
++  }
++  const pending = resolveHasPending(tabId, lease.holderThreadId, opts)
++  const holds = lease.mutationHolds ?? 0
++  if (holds > 0 || pending) return
++  if (lease.createdHoldUntil != null && lease.createdHoldUntil > t) return
++  if (!createExpired && t <= lease.idleDeadline) return
++  leases.delete(tabId)
++  audit("tab.lease.expired", {
++    tab_id: tabId,
++    holder_thread_id: lease.holderThreadId,
++    reason: createExpired ? "created_hold" : "idle_ttl",
++  })
++}
++
++/**
++ * Drop expired HARD/SOFT leases when no pending tools.
++ * Outbound episode leases keep idle-drain. Other holders do not idle-drain
++ * while a mutation is in flight or a create_tab hold is still live.
++ */
++export function sweepExpired(opts?: SweepOpts): void {
++  const t = now()
++  for (const [tabId, lease] of [...leases.entries()]) {
++    if (isOutboundLeaseHolder(lease.holderThreadId)) {
++      sweepOutboundLease(tabId, lease, t, opts)
++    } else {
++      sweepPerCallLease(tabId, lease, t, opts)
++    }
+   }
+ }
+ 
+@@ -235,6 +337,10 @@ function activeLeaseCount(): number {
+   return leases.size
+ }
+ 
++function isOutboundLeaseHolder(holderThreadId: string): boolean {
++  return holderThreadId.startsWith("outbound_mcp:")
++}
++
+ function makeHard(tabId: number, holderThreadId: string, base?: Partial<TabLease>): TabLease {
+   const t = now()
+   return {
+@@ -248,6 +354,8 @@ function makeHard(tabId: number, holderThreadId: string, base?: Partial<TabLease
+     confirmId: undefined,
+     softDeadline: undefined,
+     forceReleasingAt: undefined,
++    mutationHolds: base?.mutationHolds ?? 0,
++    createdHoldUntil: base?.createdHoldUntil ?? null,
+   }
+ }
+ 
+@@ -307,6 +415,8 @@ export function acquireOrRenewTabLease(opts: {
+         hardMaxDeadline: t + ORCHESTRATOR_CAPS.hard_max_lease_ms,
+         idleDeadline: t + ORCHESTRATOR_CAPS.idle_ttl_ms,
+         softDeadline: t + softMs,
++        mutationHolds: 0,
++        createdHoldUntil: null,
+       }
+       leases.set(tabId, lease)
+       audit("tab.lease.soft_reserved", { tab_id: tabId, holder_thread_id: holderThreadId, confirm_id: confirmId })
+@@ -423,6 +533,8 @@ export function hardReacquireAfterConfirm(opts: {
+     const hard = makeHard(opts.tabId, opts.holderThreadId, {
+       acquiredAt: existing.acquiredAt,
+       hardMaxDeadline: existing.hardMaxDeadline,
++      mutationHolds: existing.mutationHolds,
++      createdHoldUntil: existing.createdHoldUntil,
+     })
+     leases.set(opts.tabId, hard)
+     audit("tab.lease.hard_after_confirm", {
+@@ -469,10 +581,21 @@ export function releaseSoftOrPendingL2(opts: {
+   }
+ }
+ 
++function dropTimedOutPending(tabId: number, holderThreadId: string): void {
++  const discard = pendingHooks?.discardTimedOutForTab
++  if (!discard) return
++  try {
++    discard(tabId, holderThreadId)
++  } catch {
++    /* best-effort */
++  }
++}
++
+ export function releaseTabLease(tabId: number, reason: string, holderThreadId?: string): boolean {
+   const existing = leases.get(tabId)
+   if (!existing) return false
+   if (holderThreadId && existing.holderThreadId !== holderThreadId) return false
++  dropTimedOutPending(tabId, existing.holderThreadId)
+   leases.delete(tabId)
+   audit("tab.lease.released", {
+     tab_id: tabId,
+@@ -482,6 +605,110 @@ export function releaseTabLease(tabId: number, reason: string, holderThreadId?:
+   return true
+ }
+ 
++/** +1 at the pregate acquire call site. Not used by renew / L2 reacquire. */
++export function noteMutationHold(tabId: number, holderThreadId: string): void {
++  const existing = leases.get(tabId)
++  if (!existing || existing.holderThreadId !== holderThreadId) return
++  existing.mutationHolds = (existing.mutationHolds ?? 0) + 1
++  leases.set(tabId, existing)
++}
++
++/**
++ * −1 for the call that noteMutationHold incremented.
++ * FREE only when holds hit 0, no create hold remains, and nothing is pending
++ * (including timed_out_in_flight). Outbound holders are ignored.
++ */
++export function releaseMutationHold(tabId: number, holderThreadId: string): void {
++  if (isOutboundLeaseHolder(holderThreadId)) return
++  const existing = leases.get(tabId)
++  if (!existing || existing.holderThreadId !== holderThreadId) return
++  existing.mutationHolds = Math.max(0, (existing.mutationHolds ?? 0) - 1)
++  if (existing.createdHoldUntil != null && existing.createdHoldUntil <= now()) {
++    existing.createdHoldUntil = null
++  }
++  leases.set(tabId, existing)
++  if (existing.mutationHolds !== 0) return
++  if (existing.createdHoldUntil != null) return
++  if (resolveHasPending(tabId, holderThreadId)) return
++  leases.delete(tabId)
++  audit("tab.lease.released", {
++    tab_id: tabId,
++    holder_thread_id: holderThreadId,
++    reason: "mutation_hold_released",
++  })
++}
++
++/** First successful navigate/set_tab_url by this holder. Does not FREE. */
++export function clearCreatedHold(tabId: number, holderThreadId: string): void {
++  const existing = leases.get(tabId)
++  if (!existing || existing.holderThreadId !== holderThreadId) return
++  if (existing.createdHoldUntil == null) return
++  existing.createdHoldUntil = null
++  leases.set(tabId, existing)
++}
++
++/** Worker/orchestrator create_tab: 60s hold and matching idle deadline. */
++export function armCreatedTabHold(tabId: number, holderThreadId: string, holdMs: number): void {
++  if (isOutboundLeaseHolder(holderThreadId)) return
++  const existing = leases.get(tabId)
++  if (!existing || existing.holderThreadId !== holderThreadId) return
++  const until = now() + holdMs
++  existing.createdHoldUntil = until
++  existing.idleDeadline = until
++  leases.set(tabId, existing)
++}
++
++/** Cover a confirm window or phase2 without shortening an already-later idle. */
++export function extendLeaseIdle(tabId: number, holderThreadId: string, until: number): void {
++  const existing = leases.get(tabId)
++  if (!existing || existing.holderThreadId !== holderThreadId) return
++  if (existing.idleDeadline >= until) return
++  existing.idleDeadline = until
++  leases.set(tabId, existing)
++}
++
++/**
++ * After a timed_out_in_flight entry is deleted and the caller was already failed.
++ * Does not FREE outbound episode leases. hard_max does not use this path.
++ */
++export function settleTimedOutLease(tabId: number, holderThreadId: string | undefined): void {
++  if (!holderThreadId || isOutboundLeaseHolder(holderThreadId)) return
++  const existing = leases.get(tabId)
++  if (!existing || existing.holderThreadId !== holderThreadId) return
++  if (resolveHasPending(tabId, holderThreadId)) return
++  if (existing.state === "FORCE_RELEASING") {
++    completeForceRelease(tabId, "timed_out_settled")
++    return
++  }
++  if ((existing.mutationHolds ?? 0) !== 0) return
++  if (existing.createdHoldUntil != null && existing.createdHoldUntil > now()) return
++  leases.delete(tabId)
++  audit("tab.lease.released", {
++    tab_id: tabId,
++    holder_thread_id: holderThreadId,
++    reason: "timed_out_settled",
++  })
++}
++
++/**
++ * Drop tab leases held by workers that are not inside an LLM run and not
++ * paused. Pause does not bulk-free: a create_tab hold or an in-flight mutation
++ * stays until its own deadline or that call's finally (ADR-015).
++ */
++export function releaseIdleWorkerLeases(
++  threads: Array<{ id?: string; agent_role?: string; paused?: boolean }>,
++  llmActive: ReadonlySet<string>,
++): number {
++  let n = 0
++  for (const t of threads) {
++    if (t.agent_role !== "worker" || t.paused) continue
++    const id = typeof t.id === "string" ? t.id : ""
++    if (!id || llmActive.has(id)) continue
++    n += releaseAllLeasesForThread(id, "worker_run_ended")
++  }
++  return n
++}
++
+ /**
+  * Release all leases for a holder. Prefer `releaseLeasesForThreadPendingAware`
+  * on cancel paths when CDP may still be in flight.
+@@ -490,6 +717,7 @@ export function releaseAllLeasesForThread(holderThreadId: string, reason: string
+   let n = 0
+   for (const [tabId, lease] of [...leases.entries()]) {
+     if (lease.holderThreadId === holderThreadId) {
++      dropTimedOutPending(tabId, holderThreadId)
+       leases.delete(tabId)
+       n++
+       audit("tab.lease.released", { tab_id: tabId, holder_thread_id: holderThreadId, reason })
+diff --git a/companion/src/orchestrator/tool-pregate.ts b/companion/src/orchestrator/tool-pregate.ts
+index b60cb4b6..b9eb29b1 100644
+--- a/companion/src/orchestrator/tool-pregate.ts
++++ b/companion/src/orchestrator/tool-pregate.ts
+@@ -8,10 +8,12 @@
+ // MCP → mcp/dispatch.ts.
+ 
+ import { logger } from "../logger"
+-import { TAB_LEASE_TOOLS } from "./constants"
++import { TAB_LEASE_TOOLS, TAB_MUTATION_LEASE_TOOLS } from "./constants"
+ import {
+   anyTabLeaseHeld,
+   acquireOrRenewTabLease,
++  noteMutationHold,
++  releaseMutationHold,
+   sweepExpired,
+ } from "./tab-lease"
+ import { isMultiAgentThread } from "./spawn"
+@@ -21,8 +23,10 @@ import {
+   resolveEffectiveExecutionPolicy,
+ } from "../tool/plan-readonly"
+ 
++export type MutationHoldRelease = { tabId: number; holderThreadId: string }
++
+ export type ToolPregateResult =
+-  | { ok: true; finalParams: Record<string, any> }
++  | { ok: true; finalParams: Record<string, any>; releaseMutationHold?: MutationHoldRelease }
+   | { ok: false; result: { success: false; error: string; data?: any } }
+ 
+ export type ToolPregateCtx = {
+@@ -127,6 +131,7 @@ export async function runMultiAgentToolPregate(
+   const anyHeld = deps?.anyTabLeaseHeld ?? anyTabLeaseHeld
+   const acquire = deps?.acquireOrRenewTabLease ?? acquireOrRenewTabLease
+   const sweep = deps?.sweepExpired ?? sweepExpired
++  let acquiredMutation: MutationHoldRelease | undefined
+ 
+   try {
+     if (deps?.forceThrow) deps.forceThrow()
+@@ -235,7 +240,8 @@ export async function runMultiAgentToolPregate(
+         // Defense-in-depth for extension screenshot/analyze_image fallback
+         ;(finalParams as any).__require_tab_id = true
+       }
+-      // Early exclusive HARD for tab tools — multi-agent only (ADR-015).
++      // Per-call exclusive HARD for mutation tools only (ADR-015 revision).
++      // Reads stay in TAB_LEASE_TOOLS for the tabId gate above and do not acquire.
+       // Outbound MCP already leased in companion-http (L9); skip double-acquire here
+       // when isOutboundMcpCall (holder is outbound_mcp:*).
+       // Normal single-agent chats must not take per-worker tab leases: browse /
+@@ -245,10 +251,11 @@ export async function runMultiAgentToolPregate(
+       // GATE2: auto-approve / domain-whitelist / god-mode must still hold exclusive
+       // lease — previously willEnterL2 skipped HARD and skipConfirmation skipped SOFT.
+       // Interactive L2 path upgrades same-holder HARD → HELD_PENDING_L2 below.
++      // +1 is here only. L2 acquire and hardReacquireAfterConfirm do not count.
+       if (
+         multi &&
+         !isOutboundMcpCall &&
+-        tabLeaseTools.has(toolName) &&
++        TAB_MUTATION_LEASE_TOOLS.has(toolName) &&
+         typeof finalParams.tabId === "number" &&
+         actingThreadId
+       ) {
+@@ -270,6 +277,8 @@ export async function runMultiAgentToolPregate(
+           logToolFinish(toolCallId, toolName, startedAt, result)
+           return { ok: false, result }
+         }
++        noteMutationHold(finalParams.tabId, actingThreadId)
++        acquiredMutation = { tabId: finalParams.tabId, holderThreadId: actingThreadId }
+       }
+     }
+     // host_computer vs any tab lease (Q4): block vault-browser window ops while tabs leased
+@@ -286,7 +295,12 @@ export async function runMultiAgentToolPregate(
+       }
+     }
+   } catch (gateErr: any) {
+-    // Fail closed: never skip multi-agent exclusivity on gate exception (ADR-015)
++    // Fail closed: never skip multi-agent exclusivity on gate exception (ADR-015).
++    // If +1 already happened, give it back before the error return.
++    if (acquiredMutation) {
++      releaseMutationHold(acquiredMutation.tabId, acquiredMutation.holderThreadId)
++      acquiredMutation = undefined
++    }
+     logger.warn("orchestrator.gate_error", { error: gateErr?.message || String(gateErr) })
+     const result = {
+       success: false as const,
+@@ -297,5 +311,9 @@ export async function runMultiAgentToolPregate(
+     return { ok: false, result }
+   }
+ 
+-  return { ok: true, finalParams }
++  return {
++    ok: true,
++    finalParams,
++    ...(acquiredMutation ? { releaseMutationHold: acquiredMutation } : {}),
++  }
+ }
+diff --git a/companion/src/outbound-mcp/companion-http.ts b/companion/src/outbound-mcp/companion-http.ts
+index 80d6dc42..3cd7881e 100644
+--- a/companion/src/outbound-mcp/companion-http.ts
++++ b/companion/src/outbound-mcp/companion-http.ts
+@@ -188,6 +188,12 @@ async function waitFirstExfilOperatorConfirm(
+   }
+ 
+   const internal = outboundToInternalName(tool) || tool
++  const preview = [
++    OUTBOUND_DISCLOSURE_ZH,
++    `调用方：${caller_id}`,
++    `工具：${internal}`,
++    "允许后，该调用方在本次 Companion 进程内的后续同类外泄不再逐次询问；重启后要再批。约 45 秒内未处理，这次调用失败。",
++  ].join("\n")
+   logger.info("outbound_mcp.confirm_fanout", {
+     tool_name: internal,
+     caller: caller_id,
+@@ -201,7 +207,8 @@ async function waitFirstExfilOperatorConfirm(
+       {
+         toolName: `[Outbound] ${internal}`,
+         dangerousApis: [],
+-        code: OUTBOUND_DISCLOSURE_ZH,
++        code: preview,
++        fullPreview: preview,
+         riskLevel: "high",
+         autoConfirmEligible: false,
+       },
+diff --git a/companion/src/outbound-mcp/grant-cli.ts b/companion/src/outbound-mcp/grant-cli.ts
+index 79162457..dd5f1eec 100644
+--- a/companion/src/outbound-mcp/grant-cli.ts
++++ b/companion/src/outbound-mcp/grant-cli.ts
+@@ -28,6 +28,13 @@ export type OutboundMcpLaunchSpec = {
+   args: string[]
+ }
+ 
++/** Non-null when the snippet still contains a literal %LOCALAPPDATA% MCP hosts will not expand. */
++export function unexpandedLocalAppDataWarning(spec: OutboundMcpLaunchSpec): string | null {
++  const blob = [spec.command, ...spec.args].join("\n")
++  if (!blob.includes("%LOCALAPPDATA%")) return null
++  return "command/args 含未展开的 %LOCALAPPDATA%。编程助手启动时不会展开它。请在 Windows 本机重跑本命令（且 LOCALAPPDATA 有值），或把资源管理器里的真实路径写进 MCP 配置。不要复制这一行。"
++}
++
+ const DEFAULT_IO: GrantCliIo = {
+   stdout: process.stdout,
+   stderr: process.stderr,
+@@ -181,7 +188,7 @@ function printIssue(
+   if (allowPageExport) {
+     writeln(
+       io.stdout,
+-      `已允许 ${issued.caller_id} 把页文/截图/DOM 发给其云模型（可在设置里撤销这把钥匙）。首次外泄仍须在确认台批准；Windows/Linux 请打开 Chrome 确认台。`,
++      `已允许 ${issued.caller_id} 把页文/截图/DOM 发给其云模型（可在设置里撤销这把钥匙）。首次外泄仍须在确认台批准。确认台会到前面；若没有，请打开 Chrome 确认台（Windows/Linux 没有托盘窗）。`,
+     )
+   } else {
+     writeln(
+@@ -198,6 +205,8 @@ function printIssue(
+   writeln(io.stdout, "command / args（本机）：")
+   writeln(io.stdout, `  command: ${launch.command}`)
+   writeln(io.stdout, `  args: ${JSON.stringify(launch.args)}`)
++  const unexpanded = unexpandedLocalAppDataWarning(launch)
++  if (unexpanded) writeln(io.stderr, unexpanded)
+ }
+ 
+ function issue(flags: Map<string, string | true>, io: GrantCliIo): number {
+diff --git a/companion/src/outbound-mcp/stdio-server.ts b/companion/src/outbound-mcp/stdio-server.ts
+index 621acadf..87079578 100644
+--- a/companion/src/outbound-mcp/stdio-server.ts
++++ b/companion/src/outbound-mcp/stdio-server.ts
+@@ -249,7 +249,7 @@ export function createOutboundMcpServer(
+   // token at wire time; else default (byte-identical to pre-#410 behavior).
+   if (profiles) resolvedProfiles = [...profiles]
+   const server = new Server(
+-    { name: "cmspark-outbound", version: "0.6.8" },
++    { name: "cmspark-outbound", version: "0.6.9" },
+     { capabilities: { tools: {} } },
+   )
+ 
+diff --git a/companion/src/security.ts b/companion/src/security.ts
+index 25f17cec..525bdb37 100644
+--- a/companion/src/security.ts
++++ b/companion/src/security.ts
+@@ -928,6 +928,27 @@ export function classifyError(
+   // Without this mapping the queued error string falls through to the default
+   // non_recoverable bucket → adapter security_halt → drain drops the retry.
+   if (context?.error_code === "CU_FOCUS_LEASE_QUEUED") return "recoverable"
++  // Multi-agent collect: one worker's missing/partial handback must not
++  // HALT the parent and INTERRUPT the sibling collects in the same batch
++  // (thread 8olhpa). The service already marks these recoverable.
++  if (
++    context?.error_code === "HANDBACK_MISSING_STRUCTURE" ||
++    context?.error_code === "WORKER_STILL_RUNNING"
++  ) {
++    return "recoverable"
++  }
++  // Another worker already holds the tab. The message is
++  // "tab N held by <id> (HARD_HELD)" and does not contain the token
++  // "tab_locked", so the substring list below never matched and the
++  // parent turn halted (bqn39n vs xdigpo, tab 1492102817).
++  if (
++    context?.error_code === "TAB_LOCKED" ||
++    context?.error_code === "TAB_BUSY_CONFIRMING" ||
++    context?.error_code === "TAB_FORCE_RELEASING" ||
++    context?.error_code === "TAB_LEASE_CAP"
++  ) {
++    return "recoverable"
++  }
+   const msg = errorMessage.toLowerCase()
+ 
+   if (msg.includes("security block")) {
+@@ -1028,6 +1049,17 @@ export function classifyError(
+     "tab_locked",
+     "tab_busy_confirming",
+     "tab_force_releasing",
++    // User-facing lease copy omits the TAB_LOCKED token.
++    "hard_held",
++    "soft_reserved",
++    "force-releasing",
++    // Read racing a navigate/click. Only strings a production path actually emits.
++    "page_read_invalid_result",
++    "debugger is not attached to the tab",
++    "cannot find context with specified id",
++    "inspected target navigated or closed",
++    "target closed",
++    "debugger attach failed for tab",
+     "tab_id_required",
+     // Missing / malformed tool args: LLM should re-call with correct shape
+     // (was default non_recoverable → chat.error "不可恢复错误: url and expression required")
+@@ -1065,6 +1097,14 @@ export function classifyError(
+     "type_unsupported_editor",
+     "site_op_banned",
+     "tab_attach_frozen",
++    // Parallel workers share one Chrome window; the active tab moves under
++    // them. The model can list_tabs and capture the leased tab. Halting the
++    // worker here leaves an empty tool-call turn and a failed handback.
++    "screenshot_fallback_tab_mismatch",
++    // collect_handback strings (also matched by error_code above).
++    "handback payload is empty",
++    "worker stopped before writing a report",
++    "worker still running",
+   ]
+   if (recoverable.some(p => msg.includes(p))) {
+     return "recoverable"
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 61903e27..860b6a13 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -50,6 +50,7 @@ import {
+   rejectPendingForTab,
+   dispatchToExtension,
+   forwardToolToExtension,
++  discardTimedOutForTab,
+   bindToolForwardRuntime,
+ } from "./ws/tool-forward"
+ export {
+@@ -168,6 +169,7 @@ void import("./orchestrator/tab-lease")
+     registerTabLeasePendingHooks({
+       hasPendingForTab,
+       rejectPendingForTab,
++      discardTimedOutForTab,
+       hasPendingConfirmation: (confirmId, holderThreadId) => {
+         if (confirmId && securityConfirmations.isPending(confirmId)) return true
+         return securityConfirmations.hasPendingForWorker(holderThreadId)
+@@ -601,7 +603,9 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+     })
+     if (!pregate.ok) return pregate.result
+     finalParams = pregate.finalParams
++    const mutationHold = pregate.releaseMutationHold
+ 
++    try {
+     // Cookie trust domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
+     const cookieOutcome = runCookieTrustAdmission({
+       toolName,
+@@ -680,6 +684,8 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+       logToolFinish,
+       securityConfirmations,
+       dispatchToExtension,
++      actingThreadId,
++      trackTimeoutInFlight: !!mutationHold,
+     })
+     if (imageOutcome !== null) {
+       return imageOutcome
+@@ -766,8 +772,18 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+             const { scheduleWhenLlmSlotAvailable } = require("./orchestrator/llm-loop-gate") as typeof import("./orchestrator/llm-loop-gate")
+             const workerThread = threadManager.get(threadId)
+             scheduleWhenLlmSlotAvailable(workerThread, threadId, async () => {
+-              const { installKickAbortController, releaseKickAbortController } = await import("./message-router")
++              // F1: synchronous require — an `await import` gap let a user
++              // chat.create install its controller first, and the old
++              // install-reuse then double-ran the worker on one signal.
++              const { installKickAbortController, releaseKickAbortController } = require("./message-router") as typeof import("./message-router")
+               const controller = installKickAbortController(threadId)
++              if (!controller) {
++                // Another run owns the thread (user manually chatting this
++                // worker). Skip — the brief stays persisted; this kick is
++                // dropped (a later fleet/orchestrator action re-kicks).
++                logger.warn("expert_team.kick_skipped_active", { thread_id: threadId })
++                return
++              }
+               try {
+                 const { chatCreate } = await import("./llm/adapter")
+                 await chatCreate({
+@@ -855,12 +871,23 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+           ws: actuatorWs,
+           actingThreadId,
+           startedAt,
++          mutationHold: !!mutationHold,
+           logToolFinish,
+         }),
+     })
+     const currentEvidenceThread = evidenceScope?.kind === "chat" ? threadManager.get(evidenceScope.threadId) : undefined
+     return captureLocalPageResult(getConfigDir(), currentEvidenceThread ? evidenceScope : undefined, toolCallId, toolName, result, signal,
+       captureWritesAllowedAtStart && currentEvidenceThread?.execution_policy !== "plan_readonly")
++    } finally {
++      if (mutationHold) {
++        try {
++          const { releaseMutationHold } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
++          releaseMutationHold(mutationHold.tabId, mutationHold.holderThreadId)
++        } catch {
++          /* lease module not ready */
++        }
++      }
++    }
+   }
+   return executor
+ }
+diff --git a/companion/src/threads/thread-manager.ts b/companion/src/threads/thread-manager.ts
+index db799fb7..818eb44b 100644
+--- a/companion/src/threads/thread-manager.ts
++++ b/companion/src/threads/thread-manager.ts
+@@ -101,7 +101,7 @@ interface Thread {
+   worker_role_label?: string | null
+   /** Optional elevation marker (audited grants only). */
+   capability_elevation_level?: string | null
+-  /** Pause freezes LLM loop + new tool dispatch; leases retained until TTL/cancel. */
++  /** Pause freezes LLM loop + new tool dispatch. In-flight mutation locks end with that call; a create_tab hold stays until its deadline. */
+   paused?: boolean
+   /**
+    * #327 thread execution cap: plan_readonly = deny every tool not in
+diff --git a/companion/src/tool/companion-dispatch.ts b/companion/src/tool/companion-dispatch.ts
+index 4bd5ed2a..8018597a 100644
+--- a/companion/src/tool/companion-dispatch.ts
++++ b/companion/src/tool/companion-dispatch.ts
+@@ -128,6 +128,22 @@ export interface CompanionToolExecOptions {
+   kickWorkerChat?: (opts: { threadId: string; message: string }) => void | Promise<void>
+ }
+ 
++/**
++ * F2: is a thread's LLM run live or queued behind the multi-agent cap?
++ * Union of the three run-tracking SoTs — the router abort map (any chat.create /
++ * kick run, incl. summoner and non-multi-agent threads), the llm-loop-gate
++ * holders (multi-agent runs), and the deferred kick queue (cap-queued kicks).
++ * collect_handback uses this to refuse premature handback reads.
++ */
++export async function buildIsThreadLlmActive(): Promise<(threadId: string) => boolean> {
++  const { listLlmActiveThreadIds } = await import("../message-router")
++  const { multiAgentLlmLoopSnapshot, pendingDeferredLlmKickThreadIds } = await import("../orchestrator/llm-loop-gate")
++  return (id: string) =>
++    listLlmActiveThreadIds().includes(id) ||
++    multiAgentLlmLoopSnapshot().holders.includes(id) ||
++    pendingDeferredLlmKickThreadIds().includes(id)
++}
++
+ export async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
+   // C10-B: resolve server-bound runtime (bound from server after initServices)
+   const _rt = requireRt()
+@@ -696,11 +712,15 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
+         workerId,
+         hostId,
+       )
++      // F2: a worker whose run is live (or queued behind the multi-agent cap)
++      // is WORKER_STILL_RUNNING, never a premature prose "success".
++      const isThreadLlmActive = await buildIsThreadLlmActive()
+       return collectWorkerHandback(threadManager, {
+         workerId,
+         callerThreadId: callerId ? String(callerId) : null,
+         forceStructured: params.expect_structured === true,
+         resolveToolCall,
++        isThreadLlmActive,
+       })
+     }
+     case "board_read": {
+diff --git a/companion/src/tool/image-fetch-admission.ts b/companion/src/tool/image-fetch-admission.ts
+index fb30b81f..c0eb8655 100644
+--- a/companion/src/tool/image-fetch-admission.ts
++++ b/companion/src/tool/image-fetch-admission.ts
+@@ -14,7 +14,11 @@ import {
+   isPrivateOrLoopbackIp,
+ } from "../security"
+ import { decodeDataUrlImage, summarizeCandidateUrl } from "../image-data-url"
+-import type { SecurityConfirmationManager } from "../security-confirmation"
++import {
++  DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS,
++  type SecurityConfirmationManager,
++} from "../security-confirmation"
++import { extendLeaseIdle, SOFT_LEASE_SKEW_MS } from "../orchestrator/tab-lease"
+ import { isFullAutonomyCruise } from "./l2-admission"
+ 
+ /** True when user armed three-flag cruise = explicit risk acceptance for tool surface + fewer gates. */
+@@ -42,7 +46,12 @@ export type ImageFetchAdmissionCtx = {
+     toolName: string,
+     params: any,
+     ws: WebSocket,
++    meta?: { threadId?: string; tabId?: number; trackTimeoutInFlight?: boolean },
+   ) => Promise<ToolResult>
++  /** Server-injected thread. Used to renew the mutation lease across confirm/phase2. */
++  actingThreadId?: string
++  /** True when pregate incremented mutationHolds. Timeout then stays in-flight. */
++  trackTimeoutInFlight?: boolean
+ }
+ 
+ /**
+@@ -62,7 +71,25 @@ export async function runImageFetchAdmission(
+     logToolFinish,
+     securityConfirmations,
+     dispatchToExtension,
++    actingThreadId,
++    trackTimeoutInFlight,
+   } = ctx
++  const dispatchMeta = trackTimeoutInFlight
++    ? {
++        threadId: actingThreadId,
++        tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
++        trackTimeoutInFlight: true as const,
++      }
++    : undefined
++  const coverMutationIdle = () => {
++    if (!trackTimeoutInFlight || !actingThreadId) return
++    if (typeof finalParams.tabId !== "number") return
++    extendLeaseIdle(
++      finalParams.tabId,
++      actingThreadId,
++      Date.now() + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS,
++    )
++  }
+ 
+   // analyze_image_fetch is an INTERNAL phase-2 tool, dispatched only by the
+   // analyze_image branch below via dispatchToExtension (which does NOT re-enter
+@@ -97,7 +124,7 @@ export async function runImageFetchAdmission(
+     return null
+   }
+ 
+-  const phase1 = await dispatchToExtension(toolCallId, "analyze_image", finalParams, ws)
++  const phase1 = await dispatchToExtension(toolCallId, "analyze_image", finalParams, ws, dispatchMeta)
+   const p1 = phase1?.data
+   // Path A (canvas → image_base64) or any error: return as-is. The adapter's
+   // VISION_TOOLS post-processing runs vision when image_base64 is present.
+@@ -238,6 +265,7 @@ export async function runImageFetchAdmission(
+     }
+     // P1-2 / day dual-review nit: bind confirm to requesting socket (align with
+     // L2/URL/MCP — prevent other loopback peers burning the confirm).
++    coverMutationIdle()
+     const decision = await securityConfirmations.request(
+       (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)) },
+       {
+@@ -270,11 +298,12 @@ export async function runImageFetchAdmission(
+   }
+   // Gate passed → phase 2 fetch. Synthetic id keeps the LLM-facing
+   // tool_call_id for the final result while correlating the internal fetch.
++  coverMutationIdle()
+   const phase2 = await dispatchToExtension(`${toolCallId}__image_fetch`, "analyze_image_fetch", {
+     tabId: finalParams.tabId,
+     candidate_url: candidateUrl,
+     selector: finalParams.selector,
+-  }, ws)
++  }, ws, dispatchMeta)
+   logToolFinish(toolCallId, toolName, startedAt, phase2)
+   return phase2
+ }
+diff --git a/companion/src/tool/l2-admission.ts b/companion/src/tool/l2-admission.ts
+index 8e3d275c..c0b455c3 100644
+--- a/companion/src/tool/l2-admission.ts
++++ b/companion/src/tool/l2-admission.ts
+@@ -1256,6 +1256,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+         // confirm (S42 P1 Compat-C5). systray2/readline return a never-resolving
+         // Promise — marking them trayEligible lied on Windows/Linux and held
+         // Promise.race with a dead contender. Win Hello nonce still needs Side Panel.
++        // Tray and the Side Panel WS frame must share this label. A bare
++        // toolName on the WS frame stays a light confirm and never opens
++        // the cockpit (#524).
++        const confirmToolName = isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName
+         let trayBackendIsSwift = false
+         try {
+           const { detectTrayBackend } = require("../tray/tray-adapter") as typeof import("../tray/tray-adapter")
+@@ -1267,7 +1271,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+         const trayReq: TrayConfirmRequest | null = trayEligible
+           ? {
+               id: sharedConfirmId,
+-              toolName: isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName,
++              toolName: confirmToolName,
+               riskLevel: forceConfirm
+                 ? "high"
+                 : safety.dangerousApis.length > 0 || isOutboundMcpCall ? "medium" : "low",
+@@ -1485,7 +1489,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
+         const wsPromise = securityConfirmations.request(
+           sendConfirm,
+           {
+-            toolName,
++            toolName: confirmToolName,
+             dangerousApis: safety.dangerousApis,
+             // App tab WP3: no code to preview — show WHAT will be launched.
+             // host_computer (A3): show the task + app + EVERY type.text literal.
+diff --git a/companion/src/ws/lifecycle.ts b/companion/src/ws/lifecycle.ts
+index a32ddbd3..a40c740f 100644
+--- a/companion/src/ws/lifecycle.ts
++++ b/companion/src/ws/lifecycle.ts
+@@ -341,10 +341,21 @@ export function applyConnectionCloseGracePeriod(closedWs?: WebSocket): void {
+       scoped: !!closedWs,
+     })
+     pending.timer = setTimeout(() => {
+-      if (pendingToolCalls.has(id)) {
+-        pendingToolCalls.delete(id)
+-        pending.resolve({ success: false, error: "WebSocket disconnected" })
++      const current = pendingToolCalls.get(id)
++      if (!current) return
++      pendingToolCalls.delete(id)
++      if (current.timedOutInFlight) {
++        if (typeof current.tabId === "number") {
++          try {
++            const { settleTimedOutLease } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
++            settleTimedOutLease(current.tabId, current.thread_id)
++          } catch {
++            /* ignore */
++          }
++        }
++        return
+       }
++      current.resolve({ success: false, error: "WebSocket disconnected" })
+     }, WS_DISCONNECT_GRACE_MS)
+   }
+ }
+diff --git a/companion/src/ws/tool-forward.ts b/companion/src/ws/tool-forward.ts
+index f5466f50..f5d8a5ae 100644
+--- a/companion/src/ws/tool-forward.ts
++++ b/companion/src/ws/tool-forward.ts
+@@ -68,6 +68,11 @@ export type PendingToolCall = {
+   thread_id?: string
+   tabId?: number
+   tool_name?: string
++  /**
++   * Caller promise already failed. Late tool.result must not re-enter
++   * finishAndResolve. The entry stays until delete + settle or hard_max.
++   */
++  timedOutInFlight?: boolean
+   /**
+    * SEC-E: socket that received tool.execute. Close grace and tool.result
+    * acceptance are scoped to this peer so tray reconnect cannot kill extension tools.
+@@ -97,6 +102,32 @@ export function listPendingToolsForThread(
+   return out
+ }
+ 
++function settleTimedOut(tabId: number | undefined, holderThreadId: string | undefined): void {
++  if (typeof tabId !== "number" || !holderThreadId) return
++  try {
++    const { settleTimedOutLease } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
++    settleTimedOutLease(tabId, holderThreadId)
++  } catch {
++    /* lease module not ready */
++  }
++}
++
++/**
++ * Drop timed_out_in_flight entries without resolving and without settling.
++ * hard_max calls this, then FREEs the lease itself.
++ */
++export function discardTimedOutForTab(tabId: number, holderThreadId: string): number {
++  let n = 0
++  for (const [id, pending] of [...pendingToolCalls.entries()]) {
++    if (pending.thread_id !== holderThreadId || pending.tabId !== tabId) continue
++    if (!pending.timedOutInFlight) continue
++    clearTimeout(pending.timer)
++    pendingToolCalls.delete(id)
++    n++
++  }
++  return n
++}
++
+ /** Reject in-flight extension tools owned by a thread (worker-cancel / lease drain). */
+ export function rejectPendingForThread(
+   threadId: string,
+@@ -104,14 +135,22 @@ export function rejectPendingForThread(
+   tabIdFilter?: number,
+ ): number {
+   let n = 0
++  const tombs: Array<{ tabId: number; holder: string }> = []
+   for (const [id, pending] of [...pendingToolCalls.entries()]) {
+     if (pending.thread_id !== threadId) continue
+     if (tabIdFilter != null && pending.tabId !== tabIdFilter) continue
+     clearTimeout(pending.timer)
+     pendingToolCalls.delete(id)
+-    pending.resolve({ success: false, error: reason })
+     n++
++    if (pending.timedOutInFlight) {
++      if (typeof pending.tabId === "number" && pending.thread_id) {
++        tombs.push({ tabId: pending.tabId, holder: pending.thread_id })
++      }
++      continue
++    }
++    pending.resolve({ success: false, error: reason })
+   }
++  for (const tomb of tombs) settleTimedOut(tomb.tabId, tomb.holder)
+   return n
+ }
+ 
+@@ -149,6 +188,10 @@ export function handleToolResult(msg: any, fromWs?: WebSocket) {
+   }
+   clearTimeout(pending.timer)
+   pendingToolCalls.delete(tool_call_id)
++  if (pending.timedOutInFlight) {
++    settleTimedOut(pending.tabId, pending.thread_id)
++    return
++  }
+   if (error) {
+     pending.resolve({ success: false, error: error.message || String(error) })
+   } else {
+@@ -177,6 +220,7 @@ export function dispatchToExtension(
+   toolName: string,
+   params: any,
+   ws: WebSocket,
++  meta?: { threadId?: string; tabId?: number; trackTimeoutInFlight?: boolean },
+ ): Promise<{ success: boolean; data?: any; error?: string }> {
+   return new Promise((resolve) => {
+     let settled = false
+@@ -187,15 +231,33 @@ export function dispatchToExtension(
+       pendingToolCalls.delete(toolCallId)
+       resolve(result)
+     }
++    const tabId = typeof meta?.tabId === "number"
++      ? meta.tabId
++      : typeof params?.tabId === "number"
++        ? params.tabId
++        : undefined
+     const timer = setTimeout(() => {
+       const result = { success: false, error: `Tool execution timeout (${TOOL_EXECUTION_TIMEOUT_MS}ms): ${toolName}` }
+       logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: TOOL_EXECUTION_TIMEOUT_MS })
++      // Tombstone only for a per-call mutation hold. Outbound and calls
++      // without a hold keep today's delete. The caller logs tool.finish.
++      if (meta?.trackTimeoutInFlight) {
++        const pending = pendingToolCalls.get(toolCallId)
++        if (pending) pending.timedOutInFlight = true
++        if (settled) return
++        settled = true
++        clearTimeout(timer)
++        resolve(result)
++        return
++      }
+       finish(result)
+     }, TOOL_EXECUTION_TIMEOUT_MS)
+     pendingToolCalls.set(toolCallId, {
+       resolve: finish as any,
+       reject: finish as any,
+       timer,
++      thread_id: meta?.threadId,
++      tabId,
+       tool_name: toolName,
+       originWs: ws,
+     })
+@@ -226,6 +288,8 @@ export type ForwardToolToExtensionCtx = {
+   ws: WebSocket
+   actingThreadId?: string
+   startedAt: number
++  /** True when pregate incremented mutationHolds for this call. */
++  mutationHold?: boolean
+   logToolFinish: (id: string, name: string, startedAt: number, result: any) => void
+ }
+ 
+@@ -246,12 +310,16 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
+     ws,
+     actingThreadId,
+     startedAt,
++    mutationHold,
+     logToolFinish,
+   } = ctx
+   const { getTabUrlCache, refreshTabUrlCache, getThreadManager } = requireRt()
+ 
+   return new Promise((resolve, reject) => {
++    let settled = false
+     const finishAndResolve = (result: any) => {
++      if (settled) return
++      settled = true
+       // Refresh tab URL cache when list_tabs returns, so the evaluate
+       // whitelist gate can resolve tabId → hostname on the next call.
+       if (toolName === "list_tabs" && result?.success && Array.isArray(result.data)) {
+@@ -288,6 +356,15 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
+         typeof finalParams.url === "string"
+       ) {
+         getTabUrlCache().set(finalParams.tabId, finalParams.url)
++        // Clear the create_tab hold before the executor finally runs.
++        if (actingThreadId) {
++          try {
++            const { clearCreatedHold } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
++            clearCreatedHold(finalParams.tabId, actingThreadId)
++          } catch {
++            /* ignore */
++          }
++        }
+       }
+       // Cache the new tab created by create_tab so the next evaluate({tabId})
+       // can be domain-whitelisted without waiting for a fresh list_tabs.
+@@ -312,6 +389,15 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
+             const th = getThreadManager()?.get(actingThreadId) as any
+             if (isMultiAgentThread(th) || anyTabLeaseHeld()) {
+               autoHoldCreatedTab(result.data.id, actingThreadId)
++              if (th?.agent_role === "worker" || th?.agent_role === "orchestrator") {
++                const { armCreatedTabHold } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
++                const { ORCHESTRATOR_CAPS } = require("../orchestrator/constants") as typeof import("../orchestrator/constants")
++                armCreatedTabHold(
++                  result.data.id,
++                  actingThreadId,
++                  ORCHESTRATOR_CAPS.create_tab_auto_hold_ms,
++                )
++              }
+             }
+           } catch {
+             /* ignore */
+@@ -331,9 +417,20 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
+     }
+     const dispatchTimeoutMs = resolveToolDispatchTimeoutMs(toolName, finalParams)
+     const timer = setTimeout(() => {
+-      pendingToolCalls.delete(toolCallId)
+       const result = { success: false, error: `Tool execution timeout (${dispatchTimeoutMs}ms): ${toolName}` }
+       logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: dispatchTimeoutMs })
++      const outbound = typeof actingThreadId === "string" && actingThreadId.startsWith("outbound_mcp:")
++      if (mutationHold && !outbound) {
++        const pending = pendingToolCalls.get(toolCallId)
++        if (pending) pending.timedOutInFlight = true
++        if (settled) return
++        settled = true
++        clearTimeout(timer)
++        logToolFinish(toolCallId, toolName, startedAt, result)
++        resolve(result)
++        return
++      }
++      pendingToolCalls.delete(toolCallId)
+       finishAndResolve(result)
+     }, dispatchTimeoutMs)
+ 
+diff --git a/companion/tests/adapter-transient-transport.test.ts b/companion/tests/adapter-transient-transport.test.ts
+new file mode 100644
+index 00000000..5578b472
+--- /dev/null
++++ b/companion/tests/adapter-transient-transport.test.ts
+@@ -0,0 +1,138 @@
++/**
++ * Parallel workers + parent share one gateway. A socket drop ("Premature close"
++ * / "Connection error.") must retry the same request without a ⚠️ toast and
++ * without a synthetic "try a different approach" user turn (thread 8olhpa).
++ * The toast appears only after the continuous-failure limit.
++ */
++import test, { after, before } from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++import type { CanonicalStreamEvent, StreamChatParams } from "../src/llm/provider"
++
++const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-transient-"))
++
++let chatCreate: typeof import("../src/llm/adapter").chatCreate
++let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
++let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
++let OpenAIProvider: typeof import("../src/llm/providers/openai").OpenAIProvider
++
++type CreateHandler = (params: StreamChatParams) => AsyncIterable<CanonicalStreamEvent>
++let createHandlers: CreateHandler[] = []
++let streamParams: StreamChatParams[] = []
++let originalStreamChat: InstanceType<typeof OpenAIProvider>["streamChat"] | undefined
++let originalComplete: InstanceType<typeof OpenAIProvider>["complete"] | undefined
++
++function textStream(text: string): CreateHandler {
++  return async function* () {
++    yield { type: "token", text }
++    yield { type: "done", finish_reason: "stop" }
++  }
++}
++
++function prematureClose(): CreateHandler {
++  return (() => {
++    throw new Error("Premature close")
++  }) as unknown as CreateHandler
++}
++
++before(async () => {
++  process.env.HOME = tempHome
++  process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
++  delete process.env.DEEPSEEK_API_KEY
++
++  const adapter = await import("../src/llm/adapter")
++  const threadManager = await import("../src/threads/thread-manager")
++  const config = await import("../src/config")
++  const skillEngine = await import("../src/skills/skill-engine")
++  const openaiProv = await import("../src/llm/providers/openai")
++
++  chatCreate = adapter.chatCreate
++  ThreadManager = threadManager.ThreadManager
++  SkillEngine = skillEngine.SkillEngine
++  OpenAIProvider = openaiProv.OpenAIProvider
++
++  await config.initDataDir()
++
++  originalStreamChat = OpenAIProvider.prototype.streamChat
++  originalComplete = OpenAIProvider.prototype.complete
++  OpenAIProvider.prototype.streamChat = async function* (params: StreamChatParams) {
++    streamParams.push(params)
++    const h = createHandlers.shift()
++    if (!h) throw new Error("unexpected streamChat call (no handler queued)")
++    yield* h(params)
++  }
++  OpenAIProvider.prototype.complete = async function () {
++    return { content: "标题" }
++  }
++})
++
++after(() => {
++  if (originalStreamChat) OpenAIProvider.prototype.streamChat = originalStreamChat
++  if (originalComplete) OpenAIProvider.prototype.complete = originalComplete
++  fs.rmSync(tempHome, { recursive: true, force: true })
++})
++
++function buildParams() {
++  const manager = new ThreadManager()
++  const thread = manager.create("transient")
++  const sent: any[] = []
++  return {
++    threadId: thread.id,
++    message: "继续核验",
++    skillIds: [] as string[],
++    config: {
++      base_url: "http://localhost:9999",
++      api_key: "sk-test",
++      model_name: "test-model",
++      temperature: 0.5,
++      context_window: 4000,
++    },
++    threadManager: manager,
++    skillEngine: new SkillEngine(),
++    historyStore: { record: () => 0 } as any,
++    sendToExtension: (data: any) => {
++      sent.push(data)
++    },
++    executeTool: async () => ({ success: true, data: {} }),
++    getSent: () => sent,
++  }
++}
++
++test("Premature close retries the same request and does not toast", async () => {
++  createHandlers = [prematureClose(), textStream("核验结论")]
++  streamParams = []
++  const params = buildParams()
++  await chatCreate(params)
++
++  const errors = params.getSent().filter((m) => m.type === "chat.error")
++  assert.equal(errors.length, 0, JSON.stringify(errors))
++  assert.equal(streamParams.length, 2)
++  const retryUsers = streamParams[1].messages.filter((m) => m.role === "user")
++  assert.ok(retryUsers.every((m) => !String(m.content).includes("Premature close")))
++  assert.ok(retryUsers.every((m) => !String(m.content).includes("different approach")))
++  const done = params.getSent().find((m) => m.type === "chat.done")
++  assert.ok(done)
++  const saved = params.threadManager.getMessages(params.threadId).filter((m) => m.role === "assistant")
++  assert.ok(saved.some((m) => m.content?.includes("核验结论")))
++})
++
++test("five Premature closes toast once, in Chinese, at the limit", async () => {
++  createHandlers = [prematureClose(), prematureClose(), prematureClose(), prematureClose(), prematureClose()]
++  streamParams = []
++  const params = buildParams()
++  await chatCreate(params)
++
++  assert.equal(streamParams.length, 5)
++  const errors = params.getSent().filter((m) => m.type === "chat.error")
++  assert.equal(errors.length, 1)
++  assert.match(errors[0].error, /连续失败 5 次/)
++  assert.match(errors[0].error, /Premature close/)
++  assert.equal(
++    streamParams.some((p) =>
++      p.messages.some((m) => m.role === "user" && String(m.content).includes("different approach")),
++    ),
++    false,
++  )
++})
+diff --git a/companion/tests/board-collect-handback.test.ts b/companion/tests/board-collect-handback.test.ts
+index 46465e27..d1402d64 100644
+--- a/companion/tests/board-collect-handback.test.ts
++++ b/companion/tests/board-collect-handback.test.ts
+@@ -122,6 +122,63 @@ test("collect_handback while worker still in a tool round is WORKER_STILL_RUNNIN
+   assert.equal(r.data?.suggested_action, "wait_workers")
+ })
+ 
++test("F2 between-rounds live run (predicate) is WORKER_STILL_RUNNING even when disk rows look finished", async () => {
++  const tm = new ThreadManager()
++  const parent = tm.create("orch-f2")
++  tm.update(parent.id, { board_mode: true } as any)
++  const worker = tm.create("f2-w")
++  tm.update(worker.id, {
++    agent_role: "worker",
++    parent_thread_id: parent.id,
++    orchestrator_run_id: "run-f2",
++  } as any)
++  // The steady state the disk heuristic cannot see: last row = a COMPLETED
++  // tool, previous assistant carried narration; the next LLM call is in
++  // flight but nothing on disk looks unfinished. (Seed simplification: rows
++  // carry a `status` field production tool-batch-heal omits — the shapes
++  // workerLooksInFlight keys on still match.)
++  tm.addMessage(worker.id, {
++    role: "assistant",
++    content: "reading the sources",
++    thread_id: worker.id,
++    tool_calls: [{ id: "c1", type: "function", function: { name: "get_page_text", arguments: "{}" } }],
++    finish_reason: "tool_calls",
++  } as any)
++  tm.addMessage(worker.id, {
++    role: "tool",
++    content: "",
++    thread_id: worker.id,
++    tool_calls: [{ id: "c1", tool_name: "get_page_text", status: "done", result: { success: true } }],
++  } as any)
++  // Documents the F2 hole: without the live predicate the disk heuristic
++  // alone reads this as a finished prose report (false completion).
++  const diskOnly = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
++  assert.equal(diskOnly.success, true)
++  const r = await collectWorkerHandback(tm, {
++    workerId: worker.id,
++    callerThreadId: parent.id,
++    isThreadLlmActive: () => true,
++  })
++  assert.equal(r.success, false)
++  if (r.success) return
++  assert.equal(r.error_code, "WORKER_STILL_RUNNING")
++  assert.equal(r.data?.suggested_action, "wait_workers")
++})
++
++test("F2 board-off live run is WORKER_STILL_RUNNING, not a silent prose success", async () => {
++  const tm = new ThreadManager()
++  const parent = tm.create("orch-f2-off")
++  const worker = seedWorker(tm, parent.id, "Interim narration, not final")
++  const r = await collectWorkerHandback(tm, {
++    workerId: worker.id,
++    callerThreadId: parent.id,
++    isThreadLlmActive: () => true,
++  })
++  assert.equal(r.success, false)
++  if (r.success) return
++  assert.equal(r.error_code, "WORKER_STILL_RUNNING")
++})
++
+ test("collect_handback board_mode on: finished prose is a successful read, not a ⚠️", async () => {
+   const tm = new ThreadManager()
+   const parent = tm.create("orch-prose")
+@@ -204,6 +261,75 @@ test("collect_handback mission_board present without board_mode: prose is a read
+   assert.equal(readBoard(tm, parent.id)?.facts.length ?? 0, 0)
+ })
+ 
++test("collect_handback uses earlier prose when the worker died on an empty tool-call turn", async () => {
++  const tm = new ThreadManager()
++  const parent = tm.create("orch-partial")
++  tm.update(parent.id, { board_mode: true } as any)
++  const worker = tm.create("partial-w")
++  tm.update(worker.id, {
++    agent_role: "worker",
++    parent_thread_id: parent.id,
++    orchestrator_run_id: "run-partial",
++  } as any)
++  tm.addMessage(worker.id, {
++    role: "assistant",
++    content: "信用代码 91440300MA5GH8056Y，企查查页已核对。",
++    thread_id: worker.id,
++  })
++  tm.addMessage(worker.id, {
++    role: "assistant",
++    content: "",
++    thread_id: worker.id,
++    tool_calls: [{ id: "c1", type: "function", function: { name: "screenshot", arguments: "{}" } }],
++    finish_reason: "tool_calls",
++  } as any)
++  tm.addMessage(worker.id, {
++    role: "tool",
++    content: JSON.stringify({ success: false, error: "SCREENSHOT_FALLBACK_TAB_MISMATCH" }),
++    thread_id: worker.id,
++    tool_call_id: "c1",
++  } as any)
++  const r = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
++  assert.equal(r.success, true)
++  if (!r.success) return
++  assert.equal(r.data.structured, false)
++  assert.equal(r.data.partial, true)
++  assert.match(r.data.last_assistant?.content || "", /91440300MA5GH8056Y/)
++  assert.match(r.data.note || "", /stopped mid-run/)
++  assert.equal(readBoard(tm, parent.id)?.facts.length ?? 0, 0)
++})
++
++test("collect_handback tool-calls-only worker is recoverable and does not claim there was no assistant", async () => {
++  const tm = new ThreadManager()
++  const parent = tm.create("orch-notext")
++  tm.update(parent.id, { board_mode: true } as any)
++  const worker = tm.create("notext-w")
++  tm.update(worker.id, {
++    agent_role: "worker",
++    parent_thread_id: parent.id,
++  } as any)
++  tm.addMessage(worker.id, {
++    role: "assistant",
++    content: "",
++    thread_id: worker.id,
++    tool_calls: [{ id: "c1", type: "function", function: { name: "navigate", arguments: "{}" } }],
++    finish_reason: "tool_calls",
++  } as any)
++  tm.addMessage(worker.id, {
++    role: "tool",
++    content: JSON.stringify({ success: true }),
++    thread_id: worker.id,
++    tool_call_id: "c1",
++  } as any)
++  const r = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
++  assert.equal(r.success, false)
++  if (r.success) return
++  assert.equal(r.error_code, HANDBACK_MISSING_STRUCTURE)
++  assert.equal(r.recoverable, true)
++  assert.match(r.error, /tool calls only/)
++  assert.doesNotMatch(r.error, /no assistant message/)
++})
++
+ test("collect_handback empty assistant when board mode → recoverable missing structure", async () => {
+   const tm = new ThreadManager()
+   const parent = tm.create("orch-empty")
+diff --git a/companion/tests/cli-version.test.ts b/companion/tests/cli-version.test.ts
+index 5de2308e..c3fb8d5e 100644
+--- a/companion/tests/cli-version.test.ts
++++ b/companion/tests/cli-version.test.ts
+@@ -29,7 +29,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"))
+ 
+ describe("cli version", () => {
+   it("resolveCliVersion matches package.json", () => {
+-    assert.equal(pkg.version, "0.6.8")
++    assert.equal(pkg.version, "0.6.9")
+     assert.equal(resolveCliVersion(), pkg.version)
+     assert.equal(CLI_VERSION_FALLBACK, pkg.version)
+   })
+@@ -42,7 +42,7 @@ describe("cli version", () => {
+       env: { ...process.env, CMSPARK_DATA_DIR: path.join(ROOT, ".test-dist", "cli-version") },
+     })
+     assert.equal(r.status, 0, r.stderr)
+-    assert.match(r.stdout, /^cmspark-agent v0\.6\.8\r?\n$/)
++    assert.match(r.stdout, /^cmspark-agent v0\.6\.9\r?\n$/)
+     assert.doesNotMatch(r.stdout, /Unknown command/)
+   })
+ })
+diff --git a/companion/tests/integration/outbound-mcp-executor.test.ts b/companion/tests/integration/outbound-mcp-executor.test.ts
+index 0649a7ca..2cf82c9d 100644
+--- a/companion/tests/integration/outbound-mcp-executor.test.ts
++++ b/companion/tests/integration/outbound-mcp-executor.test.ts
+@@ -414,8 +414,8 @@ test("createToolExecutor: outbound navigate untrusted domain → confirm fan-out
+   )
+ 
+   const confirmation = await confirmationPromise
+-  // S42 P1: outbound URL-gate labels tool as [Outbound] navigate for UI honesty
+-  assert.match(String(confirmation.tool_name || ""), /navigate/)
++  // S42 P1 / #524: cockpit focus keys off this exact prefix.
++  assert.equal(String(confirmation.tool_name || ""), "[Outbound] navigate")
+   // L8: origin unbound for outbound — privileged respond() still works
+   clientSideWs.send(
+     JSON.stringify({
+diff --git a/companion/tests/kick-abort-map.test.ts b/companion/tests/kick-abort-map.test.ts
+index 23c98a0f..12e3b6b3 100644
+--- a/companion/tests/kick-abort-map.test.ts
++++ b/companion/tests/kick-abort-map.test.ts
+@@ -16,10 +16,14 @@ let releaseKickAbortController: typeof import("../src/message-router").releaseKi
+ let abortThreadChat: typeof import("../src/message-router").abortThreadChat
+ let listLlmActiveThreadIds: typeof import("../src/message-router").listLlmActiveThreadIds
+ 
++let router: typeof import("../src/message-router")
++let gate: typeof import("../src/orchestrator/llm-loop-gate")
++
+ before(async () => {
+   const config = await import("../src/config")
+   await config.initDataDir()
+-  const router = await import("../src/message-router")
++  router = await import("../src/message-router")
++  gate = await import("../src/orchestrator/llm-loop-gate")
+   installKickAbortController = router.installKickAbortController
+   releaseKickAbortController = router.releaseKickAbortController
+   abortThreadChat = router.abortThreadChat
+@@ -29,6 +33,7 @@ before(async () => {
+ test("#X4 installKickAbortController is visible to listLlmActiveThreadIds and abortThreadChat", () => {
+   const tid = `kick-abort-${Date.now()}`
+   const controller = installKickAbortController(tid)
++  assert.ok(controller, "free thread must install fresh")
+   assert.equal(listLlmActiveThreadIds().includes(tid), true)
+   const r = abortThreadChat(tid)
+   assert.equal(r.stopped, true)
+@@ -44,3 +49,147 @@ test("#X4 releaseKickAbortController CAS-deletes only its own controller", () =>
+   const r = abortThreadChat(tid)
+   assert.equal(r.stopped, false)
+ })
++
++test("F1 installKickAbortController refuses a thread owned by a live run", () => {
++  const tid = `kick-refuse-${Date.now()}`
++  // Simulate the user's chat.create holding the thread.
++  router.__testSetLlmActiveForTests(tid, true)
++  assert.equal(installKickAbortController(tid), null, "must not reuse another run's controller")
++  // The owner's controller survives untouched.
++  assert.equal(listLlmActiveThreadIds().includes(tid), true)
++  router.__testSetLlmActiveForTests(tid, false)
++  // Free thread installs fresh; release with null (refused install) is a no-op.
++  const controller = installKickAbortController(tid)
++  assert.ok(controller)
++  releaseKickAbortController(tid, null)
++  assert.equal(listLlmActiveThreadIds().includes(tid), true)
++  releaseKickAbortController(tid, controller)
++  assert.equal(listLlmActiveThreadIds().includes(tid), false)
++})
++
++test("F1 queued kick waits while the user's run owns the worker, then drains", async () => {
++  gate._resetMultiAgentLlmLoopsForTests()
++  const cap = gate.multiAgentLlmLoopSnapshot().cap
++  const started: string[] = []
++  // Fill every multi-agent slot with a run that never settles.
++  for (let i = 0; i < cap; i++) {
++    const r = gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, `filler-${i}`, () => new Promise<void>(() => {}))
++    assert.equal(r.started, true)
++  }
++  const target = `kick-queue-${Date.now()}`
++  // The user manually chat.create'd the worker: the abort map (probe) is live.
++  router.__testSetLlmActiveForTests(target, true)
++  const q = gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, target, () => {
++    started.push(target)
++    return Promise.resolve()
++  })
++  assert.equal(q.queued, true)
++  // Free a slot: the drain must requeue (not start) the probe-active target.
++  gate.releaseMultiAgentLlmLoop("filler-0")
++  assert.deepEqual(started, [], "kick must not start beside the user's run")
++  assert.equal(gate.pendingDeferredLlmKickCount(), 1)
++  // The user's run settles: the next drain starts the kick exactly once.
++  router.__testSetLlmActiveForTests(target, false)
++  gate.releaseMultiAgentLlmLoop("filler-1")
++  await new Promise((resolve) => setTimeout(resolve, 0))
++  assert.deepEqual(started, [target])
++  assert.equal(gate.pendingDeferredLlmKickCount(), 0)
++  gate._resetMultiAgentLlmLoopsForTests()
++})
++
++test("abortThreadChat cancels a queued kick instead of reviving it (grok A P1 / kimi B MAJOR-2)", async () => {
++  gate._resetMultiAgentLlmLoopsForTests()
++  const cap = gate.multiAgentLlmLoopSnapshot().cap
++  // Keep one slot free so the queueing itself exercises the probe path in
++  // scheduleWhenLlmSlotAvailable (a free slot does not mean a free thread).
++  for (let i = 0; i < cap - 1; i++) {
++    const r = gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, `rev-filler-${i}`, () => new Promise<void>(() => {}))
++    assert.equal(r.started, true)
++  }
++  const target = `kick-revive-${Date.now()}`
++  const started: string[] = []
++  // The user's run owns the thread: controller in the abort map …
++  router.__testSetLlmActiveForTests(target, true)
++  // … and the kick queues beside it (schedule first: a pre-acquired slot
++  // would trip the holders.has early-return and never reach the probe path).
++  const q = gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, target, () => {
++    started.push(target)
++    return Promise.resolve()
++  })
++  assert.equal(q.queued, true, "probe-active thread queues even with a free slot")
++  assert.equal(gate.pendingDeferredLlmKickCount(), 1)
++  // The user's run also holds a gate slot (chat.create acquires before
++  // claiming the controller) — its release is what would drain the kick.
++  assert.ok(gate.tryAcquireMultiAgentLlmLoop({ agent_role: "worker" }, target).ok)
++  // User hits stop: the queued kick must die, not start.
++  const r = abortThreadChat(target, { clearQueue: true })
++  assert.equal(r.stopped, true)
++  assert.equal(gate.pendingDeferredLlmKickCount(), 0)
++  await new Promise((resolve) => setTimeout(resolve, 0))
++  assert.deepEqual(started, [], "stop must not revive the queued kick")
++  router.__testSetLlmActiveForTests(target, false)
++  gate._resetMultiAgentLlmLoopsForTests()
++})
++
++test("F1 drain with multiple probe-active kicks: single pass, no start, no loss, no livelock", async () => {
++  gate._resetMultiAgentLlmLoopsForTests()
++  const cap = gate.multiAgentLlmLoopSnapshot().cap
++  const started: string[] = []
++  for (let i = 0; i < cap; i++) {
++    const r = gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, `guard-filler-${i}`, () => new Promise<void>(() => {}))
++    assert.equal(r.started, true)
++  }
++  const t1 = `kick-guard-1-${Date.now()}`
++  const t2 = `kick-guard-2-${Date.now()}`
++  router.__testSetLlmActiveForTests(t1, true)
++  router.__testSetLlmActiveForTests(t2, true)
++  assert.equal(gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, t1, () => { started.push(t1); return Promise.resolve() }).queued, true)
++  assert.equal(gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, t2, () => { started.push(t2); return Promise.resolve() }).queued, true)
++  // One release must rotate both probe-active items exactly one pass (guard),
++  // start nothing, keep both queued, and return — not spin forever.
++  gate.releaseMultiAgentLlmLoop("guard-filler-0")
++  assert.deepEqual(started, [], "neither manually-driven kick starts")
++  assert.equal(gate.pendingDeferredLlmKickCount(), 2, "both kicks survive the single pass")
++  // Probes clear: filler-0's slot is still free (rotation took nothing), so
++  // the next release leaves two open slots — both kicks dispatch FIFO.
++  router.__testSetLlmActiveForTests(t1, false)
++  router.__testSetLlmActiveForTests(t2, false)
++  gate.releaseMultiAgentLlmLoop("guard-filler-1")
++  assert.equal(gate.pendingDeferredLlmKickCount(), 0, "both kicks take the open slots")
++  assert.deepEqual(started, [], "runs fire in microtasks, not during the drain")
++  await new Promise((resolve) => setTimeout(resolve, 0))
++  assert.deepEqual(started, [t1, t2], "FIFO drain starts both once the threads are free")
++  router.__testSetLlmActiveForTests(t1, false)
++  router.__testSetLlmActiveForTests(t2, false)
++  gate._resetMultiAgentLlmLoopsForTests()
++})
++
++test("F2 buildIsThreadLlmActive unions abort map, gate holders, and deferred queue", async () => {
++  gate._resetMultiAgentLlmLoopsForTests()
++  const { buildIsThreadLlmActive } = await import("../src/tool/companion-dispatch")
++  const isActive = await buildIsThreadLlmActive()
++  const tid = `pred-${Date.now()}`
++  assert.equal(isActive(tid), false, "idle thread is inactive")
++  // Source 1: router abort map (user chat.create / kick controller).
++  router.__testSetLlmActiveForTests(tid, true)
++  assert.equal(isActive(tid), true, "abort map counts as live")
++  router.__testSetLlmActiveForTests(tid, false)
++  assert.equal(isActive(tid), false)
++  // Source 2: llm-loop-gate holders (multi-agent slot).
++  assert.ok(gate.tryAcquireMultiAgentLlmLoop({ agent_role: "worker" }, tid).ok)
++  assert.equal(isActive(tid), true, "gate holder counts as live")
++  gate.releaseMultiAgentLlmLoop(tid)
++  assert.equal(isActive(tid), false)
++  // Source 3: deferred kick queue (cap-queued kick).
++  gate._resetMultiAgentLlmLoopsForTests()
++  const cap = gate.multiAgentLlmLoopSnapshot().cap
++  for (let i = 0; i < cap; i++) {
++    gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, `src3-filler-${i}`, () => new Promise<void>(() => {}))
++  }
++  const q = gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, tid, () => Promise.resolve())
++  assert.equal(q.queued, true)
++  assert.equal(isActive(tid), true, "queued kick counts as live")
++  assert.equal(gate.cancelDeferredLlmKick(tid), true)
++  assert.equal(isActive(tid), false)
++  gate._resetMultiAgentLlmLoopsForTests()
++})
+diff --git a/companion/tests/l2-summoner-confirm-origin.test.ts b/companion/tests/l2-summoner-confirm-origin.test.ts
+index afc2fcfb..b8cb963c 100644
+--- a/companion/tests/l2-summoner-confirm-origin.test.ts
++++ b/companion/tests/l2-summoner-confirm-origin.test.ts
+@@ -93,6 +93,18 @@ test("source: trayOwnerWs never overlay — activeTrayConfirmsByWs uses helper o
+   assert.match(l2, /trayEligible\s*=\s*!!tray\s*&&\s*!winL2NonceChallenge\s*&&\s*trayBackendIsSwift/)
+ })
+ 
++test("#524 source: tray and WS share the [Outbound] confirm label", () => {
++  const l2 = companionSrc("tool/l2-admission.ts")
++  assert.match(
++    l2,
++    /const confirmToolName = isOutboundMcpCall \? `\[Outbound\] \$\{toolName\}` : toolName/,
++  )
++  assert.ok(
++    l2.split("confirmToolName").length - 1 >= 3,
++    "definition, tray request, and WS request must all use confirmToolName",
++  )
++})
++
+ test("source: both admission files import confirm-fanout helper", () => {
+   const l2 = companionSrc("tool/l2-admission.ts")
+   const url = companionSrc("tool/url-cookie-admission.ts")
+diff --git a/companion/tests/llm-provider-openai.test.ts b/companion/tests/llm-provider-openai.test.ts
+index 8bf3f5ed..753968d1 100644
+--- a/companion/tests/llm-provider-openai.test.ts
++++ b/companion/tests/llm-provider-openai.test.ts
+@@ -129,6 +129,41 @@ test("complete sends no cap when neither params nor config sets max_tokens", asy
+   assert.equal("max_tokens" in captured[0], false)
+ })
+ 
++test("streamChat treats Premature close after finish_reason as a completed round", async () => {
++  const provider = new OpenAIProvider(baseLlm())
++  captureCreate(provider, async function* () {
++    yield { choices: [{ delta: { content: "报告正文" }, finish_reason: null }] }
++    yield { choices: [{ delta: {}, finish_reason: "stop" }] }
++    throw new Error("Premature close")
++  })
++
++  const events: CanonicalStreamEvent[] = []
++  for await (const e of provider.streamChat({ messages: [{ role: "user", content: "hi" }] })) {
++    events.push(e)
++  }
++  assert.deepEqual(events, [
++    { type: "token", text: "报告正文" },
++    { type: "done", finish_reason: "stop" },
++  ])
++})
++
++test("streamChat still throws Premature close when the socket dies before finish_reason", async () => {
++  const provider = new OpenAIProvider(baseLlm())
++  captureCreate(provider, async function* () {
++    yield { choices: [{ delta: { content: "半" }, finish_reason: null }] }
++    throw new Error("Premature close")
++  })
++
++  await assert.rejects(
++    async () => {
++      for await (const _e of provider.streamChat({ messages: [{ role: "user", content: "hi" }] })) {
++        /* drain */
++      }
++    },
++    /Premature close/,
++  )
++})
++
+ test("streamChat passes through messages without internal-only fields unchanged", async () => {
+   const provider = new OpenAIProvider(baseLlm())
+   const plain: CanonicalChatMessage[] = [
+diff --git a/companion/tests/orchestrator-tab-lease.test.ts b/companion/tests/orchestrator-tab-lease.test.ts
+index 570e8195..19c2b9df 100644
+--- a/companion/tests/orchestrator-tab-lease.test.ts
++++ b/companion/tests/orchestrator-tab-lease.test.ts
+@@ -12,10 +12,17 @@ import {
+   getTabLease,
+   registerTabLeasePendingHooks,
+   sweepExpired,
++  noteMutationHold,
++  releaseMutationHold,
++  clearCreatedHold,
++  armCreatedTabHold,
++  settleTimedOutLease,
+   SOFT_LEASE_MS,
+   SOFT_LEASE_SKEW_MS,
+ } from "../src/orchestrator/tab-lease"
++import { ORCHESTRATOR_CAPS, TAB_LEASE_TOOLS, TAB_MUTATION_LEASE_TOOLS } from "../src/orchestrator/constants"
+ import { computeWorkerWhitelist, WORKER_HARD_DENY, buildFleetSnapshot, spawnWorkerThread } from "../src/orchestrator"
++import { runMultiAgentToolPregate } from "../src/orchestrator/tool-pregate"
+ import { DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS } from "../src/security-confirmation"
+ 
+ function reset() {
+@@ -403,17 +410,12 @@ test("unregistered pending hooks fail-closed (treat as pending)", () => {
+   const lease = getTabLease(83)!
+   ;(lease as any).idleDeadline = Date.now() - 1
+   sweepExpired()
+-  // Fail-closed: should not silent-FREE; either FORCE_RELEASING or still held/drained path
++  // Fail-closed pending (hooks unregistered) must not idle-FREE or idle-drain.
+   const after = getTabLease(83)
+-  // Without rejector: FORCE_RELEASING; with null hooks resolveHasPending=true → FORCE_RELEASING
+-  assert.ok(after === null || after.state === "FORCE_RELEASING", `state=${after?.state}`)
+-  if (after?.state === "FORCE_RELEASING") {
+-    // GC path eventually frees; for unit assert we just require no silent free without pending drain attempt
+-    assert.equal(after.state, "FORCE_RELEASING")
+-  }
++  assert.equal(after?.state, "HARD_HELD")
+ })
+ 
+-test("sweepExpired with pending hook drains instead of silent FREE", () => {
++test("idle expiry does not drain a per-call lease that still has pending", () => {
+   reset()
+   let rejected = 0
+   registerTabLeasePendingHooks({
+@@ -425,14 +427,62 @@ test("sweepExpired with pending hook drains instead of silent FREE", () => {
+   })
+   const a = acquireOrRenewTabLease({ tabId: 60, holderThreadId: "w1", needsL2: false })
+   assert.equal(a.ok, true)
+-  // Force idle expiry
+   const lease = getTabLease(60)!
+   ;(lease as any).idleDeadline = Date.now() - 1
+   sweepExpired()
+-  assert.equal(getTabLease(60), null, "pending path should drain+free")
++  assert.equal(getTabLease(60)?.state, "HARD_HELD")
++  assert.equal(rejected, 0)
++})
++
++test("hard_max still rejects live pending and frees a per-call lease", () => {
++  reset()
++  let rejected = 0
++  registerTabLeasePendingHooks({
++    hasPendingForTab: () => true,
++    rejectPendingForTab: () => {
++      rejected++
++      return 1
++    },
++  })
++  acquireOrRenewTabLease({ tabId: 61, holderThreadId: "w1", needsL2: false })
++  const lease = getTabLease(61)!
++  ;(lease as any).hardMaxDeadline = Date.now() - 1
++  sweepExpired()
++  assert.equal(getTabLease(61), null)
+   assert.ok(rejected >= 1)
+ })
+ 
++test("fleet drops tab leases when a worker run has ended and was not paused", () => {
++  reset()
++  acquireOrRenewTabLease({ tabId: 71, holderThreadId: "worker-done", needsL2: false })
++  acquireOrRenewTabLease({ tabId: 72, holderThreadId: "worker-paused", needsL2: false })
++  const tm = {
++    list: () => [
++      {
++        id: "worker-done",
++        alias: "done",
++        agent_role: "worker",
++        paused: false,
++        parent_thread_id: "p",
++      },
++      {
++        id: "worker-paused",
++        alias: "paused",
++        agent_role: "worker",
++        paused: true,
++        parent_thread_id: "p",
++      },
++    ],
++  }
++  const snap = buildFleetSnapshot(tm as any)
++  const done = snap.workers.find((w) => w.id === "worker-done")
++  const paused = snap.workers.find((w) => w.id === "worker-paused")
++  assert.equal(done?.status, "idle")
++  assert.equal(done?.tab_locks.length, 0)
++  assert.equal(paused?.status, "holding_tabs")
++  assert.equal(paused?.tab_locks.length, 1)
++})
++
+ test("fleet prefers holding_tabs over paused when locks present", () => {
+   reset()
+   acquireOrRenewTabLease({ tabId: 70, holderThreadId: "worker-1", needsL2: false })
+@@ -498,3 +548,165 @@ test("fleet open_intents_by_run scopes board intents by orchestrator_run_id", ()
+   assert.equal(snap.open_intents_by_run["run-b"], 1)
+   assert.equal(snap.open_intents_by_run["missing"], undefined)
+ })
++
++test("reads stay in the identity set and are not mutation leases", () => {
++  for (const name of ["get_page_text", "get_page_html", "wait_for"]) {
++    assert.equal(TAB_LEASE_TOOLS.has(name), true, name)
++    assert.equal(TAB_MUTATION_LEASE_TOOLS.has(name), false, name)
++  }
++  assert.equal(TAB_MUTATION_LEASE_TOOLS.has("evaluate"), true)
++  assert.equal(TAB_MUTATION_LEASE_TOOLS.has("get_element_info"), true)
++  assert.equal(ORCHESTRATOR_CAPS.create_tab_auto_hold_ms, 60_000)
++})
++
++test("mutation hold releases when the call ends and no create hold remains", () => {
++  reset()
++  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
++  acquireOrRenewTabLease({ tabId: 90, holderThreadId: "w1", needsL2: false })
++  noteMutationHold(90, "w1")
++  releaseMutationHold(90, "w1")
++  assert.equal(getTabLease(90), null)
++})
++
++test("create_tab hold survives the creating call and a later idle renew", () => {
++  reset()
++  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
++  acquireOrRenewTabLease({ tabId: 91, holderThreadId: "w1", needsL2: false })
++  armCreatedTabHold(91, "w1", 60_000)
++  noteMutationHold(91, "w1")
++  releaseMutationHold(91, "w1")
++  const held = getTabLease(91)
++  assert.ok(held, "create hold keeps the lease")
++  assert.ok(held!.createdHoldUntil && held!.createdHoldUntil > Date.now())
++  // A later mutation renews idle past the create deadline.
++  acquireOrRenewTabLease({ tabId: 91, holderThreadId: "w1", needsL2: false })
++  const renewed = getTabLease(91)!
++  renewed.idleDeadline = Date.now() + 120_000
++  renewed.createdHoldUntil = Date.now() - 1
++  sweepExpired()
++  assert.equal(getTabLease(91), null)
++})
++
++test("releaseMutationHold ignores a different holder", () => {
++  reset()
++  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
++  acquireOrRenewTabLease({ tabId: 92, holderThreadId: "w1", needsL2: false })
++  noteMutationHold(92, "w1")
++  releaseMutationHold(92, "w2")
++  assert.equal(getTabLease(92)?.mutationHolds, 1)
++  assert.equal(getTabLease(92)?.holderThreadId, "w1")
++})
++
++test("hard reacquire keeps the mutation count", () => {
++  reset()
++  acquireOrRenewTabLease({ tabId: 93, holderThreadId: "w1", needsL2: false })
++  noteMutationHold(93, "w1")
++  acquireOrRenewTabLease({ tabId: 93, holderThreadId: "w1", needsL2: true, confirmId: "c" })
++  const promoted = hardReacquireAfterConfirm({ tabId: 93, holderThreadId: "w1" })
++  assert.equal(promoted.ok, true)
++  assert.equal(getTabLease(93)?.mutationHolds, 1)
++  assert.equal(getTabLease(93)?.state, "HARD_HELD")
++})
++
++test("pending blocks release until the tombstone is settled", () => {
++  reset()
++  let pending = true
++  registerTabLeasePendingHooks({ hasPendingForTab: () => pending })
++  acquireOrRenewTabLease({ tabId: 94, holderThreadId: "w1", needsL2: false })
++  noteMutationHold(94, "w1")
++  releaseMutationHold(94, "w1")
++  assert.equal(getTabLease(94)?.state, "HARD_HELD")
++  assert.equal(getTabLease(94)?.mutationHolds, 0)
++  pending = false
++  settleTimedOutLease(94, "w1")
++  assert.equal(getTabLease(94), null)
++})
++
++test("settle does not free an outbound episode lease", () => {
++  reset()
++  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
++  acquireOrRenewTabLease({ tabId: 95, holderThreadId: "outbound_mcp:caller", needsL2: false })
++  settleTimedOutLease(95, "outbound_mcp:caller")
++  releaseMutationHold(95, "outbound_mcp:caller")
++  assert.equal(getTabLease(95)?.holderThreadId, "outbound_mcp:caller")
++})
++
++test("outbound idle expiry still drains pending", () => {
++  reset()
++  let rejected = 0
++  registerTabLeasePendingHooks({
++    hasPendingForTab: () => true,
++    rejectPendingForTab: () => {
++      rejected++
++      return 1
++    },
++  })
++  acquireOrRenewTabLease({ tabId: 97, holderThreadId: "outbound_mcp:caller", needsL2: false })
++  const lease = getTabLease(97)!
++  lease.idleDeadline = Date.now() - 1
++  sweepExpired()
++  assert.equal(getTabLease(97), null)
++  assert.ok(rejected >= 1)
++})
++
++test("a read is not blocked by another worker holding the tab", async () => {
++  reset()
++  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
++  const tm = {
++    get: (id: string) => ({
++      id,
++      agent_role: id === "p" ? "orchestrator" : "worker",
++      parent_thread_id: id === "p" ? null : "p",
++    }),
++    isToolAllowed: () => true,
++  }
++  const gate = {
++    toolCallId: "c",
++    startedAt: Date.now(),
++    isOutboundMcpCall: false,
++    logToolFinish: () => {},
++    getThreadManager: () => tm as any,
++    hasPendingForTab: () => false,
++    toolDisplayNameZh: (n: string) => n,
++  }
++  const held = await runMultiAgentToolPregate({
++    ...gate,
++    toolName: "click",
++    finalParams: { tabId: 7 },
++    actingThreadId: "w1",
++  })
++  assert.equal(held.ok, true)
++  if (held.ok) assert.deepEqual(held.releaseMutationHold, { tabId: 7, holderThreadId: "w1" })
++  assert.equal(getTabLease(7)?.mutationHolds, 1)
++
++  const read = await runMultiAgentToolPregate({
++    ...gate,
++    toolName: "get_page_text",
++    finalParams: { tabId: 7 },
++    toolCallId: "r",
++    actingThreadId: "w2",
++  })
++  assert.equal(read.ok, true)
++  if (read.ok) assert.equal(read.releaseMutationHold, undefined)
++  assert.equal(getTabLease(7)?.holderThreadId, "w1")
++
++  const blocked = await runMultiAgentToolPregate({
++    ...gate,
++    toolName: "click",
++    finalParams: { tabId: 7 },
++    toolCallId: "c2",
++    actingThreadId: "w2",
++  })
++  assert.equal(blocked.ok, false)
++})
++
++test("clearCreatedHold lets the in-flight mutation finally free the tab", () => {
++  reset()
++  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
++  acquireOrRenewTabLease({ tabId: 96, holderThreadId: "w1", needsL2: false })
++  armCreatedTabHold(96, "w1", 60_000)
++  noteMutationHold(96, "w1")
++  clearCreatedHold(96, "w1")
++  releaseMutationHold(96, "w1")
++  assert.equal(getTabLease(96), null)
++})
+diff --git a/companion/tests/outbound-grant-cli.test.ts b/companion/tests/outbound-grant-cli.test.ts
+index 6dd25632..cd0ad17a 100644
+--- a/companion/tests/outbound-grant-cli.test.ts
++++ b/companion/tests/outbound-grant-cli.test.ts
+@@ -9,7 +9,11 @@ import {
+   grantAllowsPageExport,
+ } from "../src/outbound-mcp/outbound-grants"
+ import { hasOutboundDisclosure, clearAllOutboundDisclosureSessions } from "../src/outbound-mcp/disclosure-session"
+-import { handleOutboundGrantCli, outboundMcpLaunchSpec } from "../src/outbound-mcp/grant-cli"
++import {
++  handleOutboundGrantCli,
++  outboundMcpLaunchSpec,
++  unexpandedLocalAppDataWarning,
++} from "../src/outbound-mcp/grant-cli"
+ 
+ function companionSrc(rel: string): string {
+   return fs.readFileSync(path.join(__dirname, "..", "..", "src", rel), "utf8")
+@@ -157,6 +161,15 @@ test("outboundMcpLaunchSpec is platform-honest", () => {
+   const linux = outboundMcpLaunchSpec("linux")
+   assert.doesNotMatch(linux.command, /\/Applications\/CMspark/)
+   assert.ok(linux.args.includes("mcp-outbound"))
++
++  const winWarn = unexpandedLocalAppDataWarning(win)
++  if (win.command.includes("%LOCALAPPDATA%")) {
++    assert.match(winWarn || "", /未展开的 %LOCALAPPDATA%/)
++  } else {
++    assert.equal(winWarn, null)
++  }
++  assert.equal(unexpandedLocalAppDataWarning(darwin), null)
++  assert.equal(unexpandedLocalAppDataWarning(linux), null)
+ })
+ 
+ test("#410 --profile outbound_l1_interact issues an interact grant", async () => {
+diff --git a/companion/tests/outbound-mcp-companion-http.test.ts b/companion/tests/outbound-mcp-companion-http.test.ts
+index 4672092c..0e32b14e 100644
+--- a/companion/tests/outbound-mcp-companion-http.test.ts
++++ b/companion/tests/outbound-mcp-companion-http.test.ts
+@@ -303,6 +303,14 @@ test("first screenshot with allow_page_export queues confirm and does not accept
+   })
+   await waitUntil(() => sent.some((s) => s.includes("security.confirmation.request")))
+   const confirmId = lastConfirmId(sent)
++  const confirmFrame = JSON.parse(sent.find((s) => s.includes(confirmId)) || "{}") as {
++    tool_name?: string
++    full_preview?: string
++    code_preview?: string
++  }
++  assert.equal(confirmFrame.tool_name, "[Outbound] screenshot")
++  assert.match(confirmFrame.full_preview || "", /调用方：exfil-http/)
++  assert.match(confirmFrame.code_preview || "", /调用方：exfil-http/)
+   assert.equal(hasOutboundDisclosure("exfil-http"), false)
+   assert.equal(runnerHit, false)
+ 
+diff --git a/companion/tests/round-limit-exit.test.ts b/companion/tests/round-limit-exit.test.ts
+index 22efc057..a540d45a 100644
+--- a/companion/tests/round-limit-exit.test.ts
++++ b/companion/tests/round-limit-exit.test.ts
+@@ -42,10 +42,11 @@ test("adapter: the 100-round exit is a run boundary (chat.done + round_limit)",
+ 
+ test("adapter: same-tool and continuous-failure breakers stay circuit_breaker", () => {
+   const src = adapterSource()
+-  // Exactly two breaker sites: MAX_SAME_TOOL_RECOVERABLE_FAILURES and
+-  // CONTINUOUS_FAILURE_LIMIT. G1 must not have flipped either to round_limit.
++  // Same-tool stop, transient transport limit, and the generic API failure
++  // limit. A locator miss pivots instead of adding another stop site.
++  // G1 must not flip these to round_limit.
+   const breakers = src.match(/runStats\.terminal = "circuit_breaker"/g) ?? []
+-  assert.equal(breakers.length, 2, `expected 2 circuit_breaker sites, got ${breakers.length}`)
++  assert.equal(breakers.length, 3, `expected 3 circuit_breaker sites, got ${breakers.length}`)
+   const roundLimits = src.match(/runStats\.terminal = "round_limit"/g) ?? []
+   assert.equal(roundLimits.length, 1, `expected 1 round_limit site, got ${roundLimits.length}`)
+ })
+diff --git a/companion/tests/same-tool-guard.test.ts b/companion/tests/same-tool-guard.test.ts
+new file mode 100644
+index 00000000..f9dfd859
+--- /dev/null
++++ b/companion/tests/same-tool-guard.test.ts
+@@ -0,0 +1,71 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  decideSameToolFailure,
++  isLocatorMiss,
++  LOCATOR_PIVOT_INSTRUCTION,
++} from "../src/llm/same-tool-guard"
++
++const threshold = 3
++
++test("two click misses stay inside the retry budget", () => {
++  const d = decideSameToolFailure({
++    failCount: 2,
++    threshold,
++    errorCode: "ELEMENT_NOT_FOUND",
++    errorText: 'ELEMENT_NOT_FOUND: no visible element matching text "标题"',
++    alreadyPivoted: false,
++  })
++  assert.equal(d.action, "count")
++})
++
++test("the third missed click switches strategy instead of stopping", () => {
++  const d = decideSameToolFailure({
++    failCount: 3,
++    threshold,
++    errorCode: "ELEMENT_NOT_FOUND",
++    errorText: 'ELEMENT_NOT_FOUND: no visible element matching text "DeepSeek融资500亿，梁文锋难逃资本局"',
++    alreadyPivoted: false,
++  })
++  assert.equal(d.action, "pivot")
++  if (d.action === "pivot") {
++    assert.match(d.instruction, /get_page_text/)
++    assert.equal(d.instruction, LOCATOR_PIVOT_INSTRUCTION)
++  }
++})
++
++test("a missed click is recognized from the error text alone", () => {
++  assert.equal(
++    isLocatorMiss(undefined, 'ELEMENT_NOT_FOUND: no visible element matching text "x"'),
++    true,
++  )
++  const d = decideSameToolFailure({
++    failCount: 3,
++    threshold,
++    errorText: 'no visible element matching text "x"',
++    alreadyPivoted: false,
++  })
++  assert.equal(d.action, "pivot")
++})
++
++test("after a strategy switch, another three misses still stop", () => {
++  const d = decideSameToolFailure({
++    failCount: 3,
++    threshold,
++    errorCode: "ELEMENT_NOT_FOUND",
++    errorText: "ELEMENT_NOT_FOUND: no visible element matching text \"x\"",
++    alreadyPivoted: true,
++  })
++  assert.equal(d.action, "stop")
++})
++
++test("three non-locator failures still stop", () => {
++  const d = decideSameToolFailure({
++    failCount: 3,
++    threshold,
++    errorCode: "WAIT_TIMEOUT",
++    errorText: "timed out waiting for selector",
++    alreadyPivoted: false,
++  })
++  assert.equal(d.action, "stop")
++})
+diff --git a/companion/tests/security-thread.test.ts b/companion/tests/security-thread.test.ts
+index 052d7e8f..042f90c0 100644
+--- a/companion/tests/security-thread.test.ts
++++ b/companion/tests/security-thread.test.ts
+@@ -505,6 +505,71 @@ test("classifyError web act-loop codes are recoverable (not chat.error)", () =>
+   assert.equal(classifyError("TAB_ATTACH_FROZEN: CDP attach already failed"), "recoverable")
+ })
+ 
++test("classifyError tab held by another worker is recoverable (HARD_HELD copy)", () => {
++  assert.equal(
++    classifyError("tab 1492102817 held by xdigpo (HARD_HELD)", {
++      toolName: "get_page_text",
++      error_code: "TAB_LOCKED",
++    }),
++    "recoverable",
++  )
++  assert.equal(
++    classifyError("tab 1492102817 held by xdigpo (HARD_HELD)", { toolName: "navigate" }),
++    "recoverable",
++  )
++  assert.equal(
++    classifyError("tab 9 is force-releasing; wait", {
++      toolName: "click",
++      error_code: "TAB_FORCE_RELEASING",
++    }),
++    "recoverable",
++  )
++})
++
++test("classifyError handback and screenshot tab mismatch do not halt the parent", () => {
++  assert.equal(
++    classifyError("handback payload is empty (no assistant message)", {
++      toolName: "collect_handback",
++      error_code: "HANDBACK_MISSING_STRUCTURE",
++    }),
++    "recoverable",
++  )
++  assert.equal(
++    classifyError("worker stopped before writing a report (assistant turns were tool calls only)", {
++      toolName: "collect_handback",
++      error_code: "HANDBACK_MISSING_STRUCTURE",
++    }),
++    "recoverable",
++  )
++  assert.equal(
++    classifyError("worker still running; last assistant is not a final handback. Other workers are unaffected.", {
++      toolName: "collect_handback",
++      error_code: "WORKER_STILL_RUNNING",
++    }),
++    "recoverable",
++  )
++  assert.equal(
++    classifyError(
++      "SCREENSHOT_FALLBACK_TAB_MISMATCH: CDP failed for tab 1 and active tab is 2 — refusing captureVisibleTab of the wrong tab",
++      { toolName: "screenshot" },
++    ),
++    "recoverable",
++  )
++})
++
++test("classifyError page-read races during navigation are recoverable", () => {
++  for (const msg of [
++    "PAGE_READ_INVALID_RESULT",
++    "debugger is not attached to the tab",
++    "cannot find context with specified id",
++    "inspected target navigated or closed",
++    "target closed",
++    "debugger attach failed for tab 12",
++  ]) {
++    assert.equal(classifyError(msg, { toolName: "get_page_text" }), "recoverable", msg)
++  }
++})
++
+ test("classifyError TAB_LEASE_CAP is recoverable so agent can close_tab and retry", () => {
+   assert.equal(
+     classifyError(
+diff --git a/companion/tests/user-stop-clears-nextrun.test.ts b/companion/tests/user-stop-clears-nextrun.test.ts
+index d2a8bcd7..470248d9 100644
+--- a/companion/tests/user-stop-clears-nextrun.test.ts
++++ b/companion/tests/user-stop-clears-nextrun.test.ts
+@@ -265,6 +265,54 @@ test("#307 fleet.stop_all clears every worker's nextRun and discloses the counts
+   )
+ })
+ 
++test("pull-20260921 stop_all pre-cancels queued kicks — one worker's release must not start another's", async () => {
++  const gate = await import("../src/orchestrator/llm-loop-gate")
++  gate._resetMultiAgentLlmLoopsForTests()
++  const cap = gate.multiAgentLlmLoopSnapshot().cap
++  const tm = new ThreadManager()
++  // Creation order matters: threadManager.list() is newest-first, so the
++  // LIVE worker (w1) must be created last to iterate first — the queued
++  // worker's own cancel must come too late to matter (that is the bug).
++  const w2 = tm.create("", "fleet-revive-w2")
++  const w1 = tm.create("", "fleet-revive-w1")
++  tm.update(w1.id, { agent_role: "worker" } as any)
++  tm.update(w2.id, { agent_role: "worker" } as any)
++
++  const started: string[] = []
++  // w1: a live run — holds a slot plus an abort controller.
++  for (let i = 0; i < cap - 1; i++) {
++    const r = gate.scheduleWhenLlmSlotAvailable(
++      { agent_role: "worker" },
++      `rev-filler-${i}`,
++      () => new Promise<void>(() => {}),
++    )
++    assert.equal(r.started, true)
++  }
++  assert.ok(gate.tryAcquireMultiAgentLlmLoop({ agent_role: "worker" }, w1.id).ok)
++  __testSetLlmActiveForTests(w1.id, true)
++  // w2: kick queued behind the now-full cap.
++  const q = gate.scheduleWhenLlmSlotAvailable({ agent_role: "worker" }, w2.id, () => {
++    started.push(w2.id)
++    return Promise.resolve()
++  })
++  assert.equal(q.queued, true)
++
++  const resp = await handleMessage({ type: "fleet.stop_all" }, makeServices(tm), makeSession([]))
++  assert.equal(resp.type, "fleet.stop_all_result")
++  const kickCancelled = resp.results.find((r: any) => r.worker_id === w2.id)
++  assert.equal(kickCancelled.cancelled_kick, 1, "per-worker disclosure: w2's queued kick was killed")
++  assert.equal(
++    resp.results.find((r: any) => r.worker_id === w1.id).cancelled_kick,
++    0,
++    "w1 had no queued kick",
++  )
++  await new Promise((r) => setTimeout(r, 0))
++  assert.deepEqual(started, [], "w1's synchronous release-drain must not start w2's queued kick")
++  assert.equal(gate.pendingDeferredLlmKickCount(), 0)
++  __testSetLlmActiveForTests(w1.id, false)
++  gate._resetMultiAgentLlmLoopsForTests()
++})
++
+ test("#307 cockpit stop_thread clears the worker's queued nextRun", async () => {
+   const tm = new ThreadManager()
+   const worker = tm.create("", "cockpit-stop")
+diff --git a/companion/tests/ws-tool-forward.test.ts b/companion/tests/ws-tool-forward.test.ts
+index cc45e79d..58558b47 100644
+--- a/companion/tests/ws-tool-forward.test.ts
++++ b/companion/tests/ws-tool-forward.test.ts
+@@ -152,6 +152,50 @@ test("rejectPendingForThread counts matching thread", () => {
+   clearPending()
+ })
+ 
++test("late tool.result does not re-enter a timed-out call", () => {
++  clearPending()
++  const owner = mockWs({ id: "owner" })
++  let resolved = 0
++  pendingToolCalls.set("t-late", {
++    resolve: () => {
++      resolved++
++    },
++    reject: () => {},
++    timer: setTimeout(() => {}, 60_000),
++    thread_id: "w1",
++    tabId: 4,
++    timedOutInFlight: true,
++    originWs: owner,
++    tool_name: "click",
++  })
++  handleToolResult(
++    { tool_call_id: "t-late", result: { success: true, data: { url: "https://example.test" } } },
++    owner,
++  )
++  assert.equal(resolved, 0)
++  assert.equal(pendingToolCalls.has("t-late"), false)
++})
++
++test("rejectPendingForThread drops a tombstone without resolving it", () => {
++  clearPending()
++  let resolved = 0
++  pendingToolCalls.set("t-tomb", {
++    resolve: () => {
++      resolved++
++    },
++    reject: () => {},
++    timer: setTimeout(() => {}, 60_000),
++    thread_id: "w1",
++    tabId: 4,
++    timedOutInFlight: true,
++    tool_name: "click",
++  })
++  const n = rejectPendingForThread("w1", "worker_cancel:w1")
++  assert.equal(n, 1)
++  assert.equal(resolved, 0)
++  assert.equal(pendingToolCalls.has("t-tomb"), false)
++})
++
+ test("bindToolForwardRuntime is callable (smoke)", () => {
+   bindToolForwardRuntime({
+     getTabUrlCache: () => new Map(),
+diff --git a/scripts/installer.nsi b/scripts/installer.nsi
+index d9819a50..99eaf75b 100644
+--- a/scripts/installer.nsi
++++ b/scripts/installer.nsi
+@@ -11,7 +11,7 @@
+ !define PRODUCT_NAME "CMspark"
+ ; Prefer -DPRODUCT_VERSION= from build-windows-installer.sh; fallback must match companion/package.json.
+ !ifndef PRODUCT_VERSION
+-  !define PRODUCT_VERSION "0.6.8"
++  !define PRODUCT_VERSION "0.6.9"
+ !endif
+ !define PRODUCT_PUBLISHER "CMspark"
+ !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"

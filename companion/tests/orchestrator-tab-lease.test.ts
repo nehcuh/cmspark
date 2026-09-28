@@ -1,10 +1,12 @@
 import test from "node:test"
+import { createRequire } from "node:module"
 import assert from "node:assert/strict"
 import {
   acquireOrRenewTabLease,
   hardReacquireAfterConfirm,
   releaseSoftOrPendingL2,
   releaseAllLeasesForThread,
+  releaseIdleWorkerLeases,
   releaseLeasesForThreadPendingAware,
   releaseTabLease,
   listTabLocks,
@@ -454,6 +456,14 @@ test("hard_max still rejects live pending and frees a per-call lease", () => {
 
 test("fleet drops tab leases when a worker run has ended and was not paused", () => {
   reset()
+  // #545: idle release is now pending-aware (it no longer delegates to the
+  // unconditional releaseAllLeasesForThread). Production always registers the
+  // pending hooks at server start (server.ts), so a genuinely-idle worker has
+  // hasPendingForTab()===false and is released. Register the same hooks here so
+  // "worker-done" models a worker with no in-flight CDP rather than a cold start
+  // (resolveHasPending fails closed to true when hooks are absent). The paused
+  // worker is skipped before the pending check, so it keeps its lease either way.
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
   acquireOrRenewTabLease({ tabId: 71, holderThreadId: "worker-done", needsL2: false })
   acquireOrRenewTabLease({ tabId: 72, holderThreadId: "worker-paused", needsL2: false })
   const tm = {
@@ -709,4 +719,145 @@ test("clearCreatedHold lets the in-flight mutation finally free the tab", () => 
   clearCreatedHold(96, "w1")
   releaseMutationHold(96, "w1")
   assert.equal(getTabLease(96), null)
+})
+
+// #545 regression suite. releaseIdleWorkerLeases runs on the fleet-snapshot READ
+// path (FleetStrip polls fleet.status every 4s). Before the fix it delegated to
+// releaseAllLeasesForThread, which applied NONE of the pending / mutationHold /
+// createdHold guards, so merely watching the panel could free a tab another
+// worker was still writing to. Each case below pairs a "must NOT release" guard
+// with a control that proves idle release still works for a truly-idle worker.
+
+test("releaseIdleWorkerLeases: in-flight mutation hold is NOT released (#545)", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 556, holderThreadId: "w1", needsL2: false })
+  noteMutationHold(556, "w1")
+  const n = releaseIdleWorkerLeases(
+    [{ id: "w1", agent_role: "worker", paused: false }],
+    new Set(),
+  )
+  assert.equal(n, 0, "a live mutationHold must block idle release")
+  assert.notEqual(getTabLease(556), null, "lease must survive the fleet snapshot")
+})
+
+test("releaseIdleWorkerLeases: create_tab 60s hold is NOT freed by one snapshot (#545)", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 555, holderThreadId: "w-new", needsL2: false })
+  armCreatedTabHold(555, "w-new", 60_000)
+  const n = releaseIdleWorkerLeases(
+    [{ id: "w-new", agent_role: "worker", paused: false }],
+    new Set(),
+  )
+  assert.equal(n, 0, "the ADR-015 60s create hold must survive idle release")
+  assert.notEqual(getTabLease(555), null)
+})
+
+test("releaseIdleWorkerLeases: pending CDP is NOT dropped (#545)", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => true })
+  acquireOrRenewTabLease({ tabId: 560, holderThreadId: "w1", needsL2: false })
+  const n = releaseIdleWorkerLeases(
+    [{ id: "w1", agent_role: "worker", paused: false }],
+    new Set(),
+  )
+  assert.equal(n, 0, "an in-flight CDP call (pending) must keep its lease")
+  assert.notEqual(getTabLease(560), null)
+})
+
+test("releaseIdleWorkerLeases: fails closed when pending hooks are unregistered (#545)", () => {
+  reset() // pendingHooks = null → resolveHasPending returns true (cold start)
+  acquireOrRenewTabLease({ tabId: 562, holderThreadId: "w1", needsL2: false })
+  const n = releaseIdleWorkerLeases(
+    [{ id: "w1", agent_role: "worker", paused: false }],
+    new Set(),
+  )
+  assert.equal(n, 0, "cold start without hooks must never silent-FREE")
+  assert.notEqual(getTabLease(562), null)
+})
+
+test("releaseIdleWorkerLeases: LLM-active worker is skipped (#545 control)", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 563, holderThreadId: "w-busy", needsL2: false })
+  const n = releaseIdleWorkerLeases(
+    [{ id: "w-busy", agent_role: "worker", paused: false }],
+    new Set(["w-busy"]),
+  )
+  assert.equal(n, 0)
+  assert.notEqual(getTabLease(563), null)
+})
+
+test("releaseIdleWorkerLeases: a genuinely idle worker IS released (#545 regression guard)", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 561, holderThreadId: "w1", needsL2: false })
+  const n = releaseIdleWorkerLeases(
+    [{ id: "w1", agent_role: "worker", paused: false }],
+    new Set(),
+  )
+  assert.equal(n, 1, "the original intent — free a truly-idle worker — must still hold")
+  assert.equal(getTabLease(561), null)
+})
+
+// #545 fail-closed regression. buildFleetSnapshot lazy-requires message-router
+// to learn which threads have a live LLM run. Before this fix, a throw there
+// fell into `catch { llmActive = [] }`, which — combined with idle release keyed
+// on that empty set — released EVERY non-paused worker's lease at once. The
+// fix adds llmActiveResolved so a failed resolve skips idle release entirely
+// (worst case: a stale holding_tabs badge; never a dropped write lock). All
+// three reviewers flagged this branch as zero-coverage; lock it here.
+
+test("buildFleetSnapshot: does NOT release idle leases when the LLM-active set cannot be resolved (#545 fail-closed)", () => {
+  reset()
+  // hooks registered so a resolvable run WOULD release — isolates the resolve failure as the only reason we keep the lease
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 570, holderThreadId: "w-idle", needsL2: false })
+  const tm = {
+    list: () => [{ id: "w-idle", alias: "w", agent_role: "worker", paused: false, parent_thread_id: "p" }],
+  } as any
+
+  const cjsRequire = createRequire(__filename)
+  const mrPath = cjsRequire.resolve("../src/message-router")
+  const orig = require.cache[mrPath]
+  // Force the lazy require to yield a module whose listLlmActiveThreadIds throws.
+  require.cache[mrPath] = {
+    id: mrPath, filename: mrPath, loaded: true, exports: {
+      listLlmActiveThreadIds: () => { throw new Error("simulated message-router require/eval failure") },
+    },
+  } as any
+  try {
+    const snap = buildFleetSnapshot(tm)
+    // The lease must survive: fail-closed on an unresolvable active set.
+    assert.notEqual(getTabLease(570), null, "#545 fail-closed: an unresolvable LLM-active set must NOT release the lease")
+    // Display path still works (llm_active just reflects the empty fallback).
+    const w = snap.workers.find((x) => x.id === "w-idle")
+    assert.equal(w?.status, "holding_tabs", "the worker still shows as holding its tab")
+  } finally {
+    if (orig) require.cache[mrPath] = orig
+    else delete require.cache[mrPath]
+  }
+})
+
+test("buildFleetSnapshot: DOES release a genuinely idle worker when the active set resolves (#545 control)", () => {
+  reset()
+  registerTabLeasePendingHooks({ hasPendingForTab: () => false })
+  acquireOrRenewTabLease({ tabId: 571, holderThreadId: "w-idle", needsL2: false })
+  const tm = {
+    list: () => [{ id: "w-idle", alias: "w", agent_role: "worker", paused: false, parent_thread_id: "p" }],
+  } as any
+  const cjsRequire = createRequire(__filename)
+  const mrPath = cjsRequire.resolve("../src/message-router")
+  const orig = require.cache[mrPath]
+  require.cache[mrPath] = {
+    id: mrPath, filename: mrPath, loaded: true, exports: { listLlmActiveThreadIds: () => [] },
+  } as any
+  try {
+    buildFleetSnapshot(tm)
+    assert.equal(getTabLease(571), null, "a truly idle worker (resolved active set, not in it) is still released — the ad7f0980 intent holds")
+  } finally {
+    if (orig) require.cache[mrPath] = orig
+    else delete require.cache[mrPath]
+  }
 })
