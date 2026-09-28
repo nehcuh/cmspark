@@ -5,33 +5,35 @@
 # 0.6.9，于是从 tag 和从 main 打出来的包版本号相同、内容不同，无法区分。
 # 本次工作流中操作者就真实地从 b5a7396a 打出了 CMspark-Setup-v0.6.9.exe。
 #
-# 三条断言（默认 fail-closed）：
-#   1. 工作树干净（只看 tracked）—— 未提交改动不得混进「正式版」
+# 断言（默认 fail-closed；「查不出」一律当失败，绝不当「干净」）：
+#   0. git 可用，且 ROOT 就是本仓库根（不是被解包进某个更大的仓库里）
+#   1. 工作树干净（只看 tracked）—— git status 失败也硬失败，不吞
 #   2. HEAD 的 tag == v$(companion/package.json version)
 #   3. CHANGELOG 的 [Unreleased] 段存在且为空 —— 归档必须在打 tag 前完成
 #
-# 设计要点（与 #547 原文的偏离及理由，均经 dual-review #553 打磨）：
+# 设计要点（与 #547 原文的偏离及理由，均经 dual-review #553 两轮打磨）：
 #   - tag 来源优先用 CMSPARK_RELEASE_TAG（release.yml 传 github.ref_name）。
 #     **不能**只靠 git describe --exact-match HEAD：actions/checkout@v4 默认
 #     fetch-depth=1，浅克隆里 tag 对象不一定存在，会把正常发布误判为失败。
-#     本地无该变量时回退到 git tag --points-at HEAD。
-#   - CI_TAG 加固：若本地能解析该 tag（^{commit}），必须指向 HEAD，否则硬失败。
-#     否则手工设 CMSPARK_RELEASE_TAG=<旧tag> 就能在「HEAD 领先 tag」的 #547 场景
-#     下原样通过。解析不到（浅克隆）才信任 workflow context。
-#   - git 必须可用：git 失败不是「树干净」，必须硬失败（否则 fail-open）。
+#     本地无该变量时回退到 git tag --points-at HEAD（优先匹配 EXPECTED_TAG）。
+#   - CI_TAG 加固：本地能解析该 tag（^{commit}）时必须指向 HEAD，否则硬失败。
+#     否则手工设 CMSPARK_RELEASE_TAG=<旧tag> 就能在「HEAD 领先 tag」的 #547
+#     场景下原样通过。解析不到（浅克隆无 tag 对象）才信任 workflow context。
+#   - git 硬失败优先于一切豁免：git 不可用 / ROOT 非仓库根 / git status 读不出，
+#     都是「查不出」而非「干净」，直接 exit 1，ALLOW_* 不得覆盖（fail-closed）。
 #   - 本机试装是合法需求，故有两个独立豁免开关（沿用 build-windows-exe.ps1 里
 #     CMSPARK_ALLOW_VERSION_DRIFT 的既有惯例）：
 #       CMSPARK_ALLOW_UNTAGGED=1  放行「HEAD 无 tag」
 #       CMSPARK_ALLOW_DIRTY=1     放行「工作树不干净」
-#     豁免只影响这两条；tag **不匹配** / git 不可用 / CI_TAG 指向不符 永远硬失败
-#     （那是真错误，不是环境限制）。
+#     豁免只影响这两条；tag **不匹配** / CI_TAG 指向不符 / git 查不出 永远硬失败。
 #   - CMSPARK_RELEASE_STRICT=1（release.yml 用）：两个豁免开关全部失效。
-#   - CMSPARK_RELEASE_REF_TYPE=branch（workflow_dispatch dry-run）：跳过 tag 断言，
-#     因为 release job 有 if: startsWith(github.ref, 'refs/tags/v')，dry-run 不发布；
-#     但仍强制 dirty / Unreleased 两条。缺省按 tag 路径（保守）。
+#   - CMSPARK_RELEASE_REF_TYPE=branch（workflow_dispatch dry-run）：release job 有
+#     if: startsWith(github.ref,'refs/tags/v')，dry-run 不发布，故**容忍 HEAD 无 tag**；
+#     但**不容忍 HEAD 带着一个与版本锚不符的 tag**（否则 branch 会盖过 STRICT、
+#     变成 #547 的新绕过面 —— dual-review #553 pi ③）。dirty / Unreleased 仍强制。
 #
 # Usage: bash scripts/release-guard.sh
-# Exit:  0 通过（含豁免通过）· 1 断言失败
+# Exit:  0 通过（含豁免通过）· 1 断言失败或环境查不出
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -61,27 +63,46 @@ fail() {
 }
 ok() { echo "  ok: $1"; }
 warn() { echo "  WARN: $1" >&2; }
+# 「查不出」≠「干净」：环境类失败直接终止，不给豁免覆盖的机会（fail-closed）。
+die_unknown() {
+  echo "[release-guard] ERROR: $1" >&2
+  echo "[release-guard]        fail-closed：查不出就当失败，不把不确定当成通过。$2" >&2
+  exit 1
+}
 
 # --- 版本 SoT -------------------------------------------------------------
 VERSION="$(node -p "require('${ROOT_MIXED}/companion/package.json').version" 2>/dev/null || true)"
 if [ -z "${VERSION}" ]; then
-  echo "[release-guard] ERROR: 读不到 companion/package.json 的 version" >&2
-  exit 1
+  die_unknown "读不到 companion/package.json 的 version（node 不可用或路径错）" ""
 fi
 EXPECTED_TAG="v${VERSION}"
 echo "[release-guard] version SoT = ${VERSION} → expected tag ${EXPECTED_TAG}"
 echo "[release-guard] strict=${STRICT:-off} ref_type=${REF_TYPE} allow_untagged=${ALLOW_UNTAGGED:-off} allow_dirty=${ALLOW_DIRTY:-off} ci_tag=${CI_TAG:-none}"
 
-# --- 0. git 必须可用（否则「查不出」会被当成「干净」→ fail-open）-----------
+# --- 0. git 可用 + ROOT 是本仓库根 ---------------------------------------
+# （dual-review #553 pi ①：只拦「仓库级失败」不够 —— 源码被解包进某个更大的
+#  git 仓库时，rev-parse 会成功但校验的是那棵树，不是本项目。）
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
-  echo "[release-guard] ERROR: git 不可用或当前目录不是 git 仓库 —— 无法证明工作树干净。" >&2
-  echo "[release-guard]        fail-closed：不把「查不出」当成「干净」，拒绝打包。" >&2
-  exit 1
+  die_unknown "git 不可用或当前目录不是 git 仓库 —— 无法证明工作树干净" ""
+fi
+ROOT_TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "${ROOT_TOP}" ]; then
+  die_unknown "git rev-parse --show-toplevel 无输出" ""
+fi
+if [ "$(to_mixed "${ROOT_TOP}")" != "${ROOT_MIXED}" ]; then
+  die_unknown "守卫所在目录不是本仓库根" \
+    "(ROOT=${ROOT_MIXED} 但 git 顶层=${ROOT_TOP}) — 校验的会是别的树"
 fi
 
 # --- 1. 工作树干净（只看 tracked）---------------------------------------
 # untracked 的评审归档 / 本地草稿不算脏，否则本机永远打不了包。
-DIRTY="$(git status --porcelain --untracked-files=no 2>/dev/null || true)"
+# （pi ①a：`|| true` 会把 git status 的失败——如 index 损坏——压成空串，
+#  于是脏树被当成干净。改为显式检查退出码。）
+DIRTY="$(git status --porcelain --untracked-files=no 2>/dev/null)"
+GIT_STATUS_RC=$?
+if [ "${GIT_STATUS_RC}" -ne 0 ]; then
+  die_unknown "git status 失败（rc=${GIT_STATUS_RC}，如 index 损坏）—— 读不出树状态" ""
+fi
 if [ -n "${DIRTY}" ]; then
   DIRTY_HEAD="$(printf '%s' "${DIRTY}" | head -8 | tr '\n' '; ')"
   if [ -n "${STRICT}" ]; then
@@ -99,56 +120,82 @@ else
 fi
 
 # --- 2. HEAD 的 tag 与版本锚一致 -----------------------------------------
+tag_mismatch_hard_fail() {
+  # $1=实际 tag 描述。tag 与版本锚不符永远硬失败：不是环境限制而是真错误，
+  # 正是 #547 的成因。豁免开关、STRICT、REF_TYPE 都不得覆盖此条。
+  fail "HEAD 的 tag 是 $1，但 package.json 版本是 ${VERSION}（应为 ${EXPECTED_TAG}）" \
+       "版本锚与 tag 不一致 → 会产出与已发布同号但内容不同的包"
+}
+
 if [ "${REF_TYPE}" = "branch" ]; then
   # workflow_dispatch dry-run：release job 被 if: startsWith(ref, refs/tags/v) 挡住，
-  # 这条路径的产物永远不会发布，故不要求 tag；但仍强制 dirty / Unreleased。
-  warn "dry-run（ref_type=branch）→ 跳过 tag 断言"
-  warn "产物**不是**正式 ${EXPECTED_TAG} 发布物，不得对外分发或手动挂 Release"
-  ok "豁免通过（dry-run）"
+  # 产物永不发布 → 容忍 HEAD 无 tag；但**不容忍 HEAD 带着错 tag**（pi ③：否则
+  # REF_TYPE=branch 会盖过 STRICT，成为 #547 的新绕过面）。dirty/Unreleased 仍强制。
+  HEAD_TAGS="$(git tag --points-at HEAD 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+  if [ -z "${HEAD_TAGS}" ]; then
+    warn "dry-run（ref_type=branch，HEAD 无 tag）→ 跳过 tag 断言"
+    warn "产物**不是**正式 ${EXPECTED_TAG} 发布物，不得对外分发或手动挂 Release"
+    ok "豁免通过（dry-run）"
+  elif printf '%s\n' ${HEAD_TAGS} | grep -qx "${EXPECTED_TAG}"; then
+    ok "dry-run：HEAD 的 tag 含 ${EXPECTED_TAG}"
+  else
+    tag_mismatch_hard_fail "${HEAD_TAGS}（dry-run 也不容忍错 tag）"
+  fi
 else
   HEAD_TAG=""
+  CI_TAG_RESOLVED=""
   if [ -n "${CI_TAG}" ]; then
     HEAD_TAG="${CI_TAG}"
     echo "  (tag 来源: CMSPARK_RELEASE_TAG)"
-    # 加固：CI_TAG 曾被无条件信任，于是本地手工设一个变量就能让「HEAD 领先 tag、
-    # 版本锚不变」的 #547 场景原样通过。本地能解析该 tag 时要求其确实指向 HEAD；
-    # 解析不到（浅克隆无 tag 对象）才信任 workflow context。
+    # 加固：CI_TAG 曾被无条件信任 → 手工设旧 tag 就能复现 #547。本地能解析时
+    # 要求其指向 HEAD；解析不到（浅克隆无 tag 对象）才信任 workflow context。
     TAG_SHA="$(git rev-parse --verify -q "${CI_TAG}^{commit}" 2>/dev/null || true)"
     HEAD_SHA="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
-    if [ -n "${TAG_SHA}" ] && [ -n "${HEAD_SHA}" ] && [ "${TAG_SHA}" != "${HEAD_SHA}" ]; then
-      fail "CMSPARK_RELEASE_TAG=${CI_TAG} 解析到 ${TAG_SHA:0:8}，但 HEAD 是 ${HEAD_SHA:0:8}" \
-           "tag 并未指向被打包的提交 —— 这正是 #547「同版本号两份二进制」"
-    elif [ -n "${TAG_SHA}" ]; then
-      ok "CMSPARK_RELEASE_TAG 确实指向 HEAD"
+    if [ -n "${TAG_SHA}" ] && [ -n "${HEAD_SHA}" ]; then
+      if [ "${TAG_SHA}" != "${HEAD_SHA}" ]; then
+        fail "CMSPARK_RELEASE_TAG=${CI_TAG} 解析到 ${TAG_SHA:0:8}，但 HEAD 是 ${HEAD_SHA:0:8}" \
+             "tag 并未指向被打包的提交 —— 这正是 #547「同版本号两份二进制」"
+        CI_TAG_RESOLVED="mismatch"   # 阻止后面再打印 ok（pi ④：FAIL 与 ok 同屏）
+      else
+        ok "CMSPARK_RELEASE_TAG 确实指向 HEAD"
+        CI_TAG_RESOLVED="points-at-head"
+      fi
     else
       echo "  (tag 对象本地不可解析 → 信任 workflow context，浅克隆预期行为)"
+      CI_TAG_RESOLVED="unresolvable"
     fi
   else
-    HEAD_TAG="$(git tag --points-at HEAD 2>/dev/null | head -1 || true)"
+    # 本地回退：优先匹配 EXPECTED_TAG，避免多 tag 指向 HEAD 时取到字母序第一个
+    # 而误挡（pi ⑥）。
+    HEAD_TAG="$(git tag --points-at HEAD 2>/dev/null | grep -x "${EXPECTED_TAG}" | head -1 || true)"
+    if [ -z "${HEAD_TAG}" ]; then
+      HEAD_TAG="$(git tag --points-at HEAD 2>/dev/null | head -1 || true)"
+    fi
     echo "  (tag 来源: git tag --points-at HEAD)"
   fi
 
-  if [ -z "${HEAD_TAG}" ]; then
-    if [ -n "${STRICT}" ]; then
-      fail "strict 模式：HEAD 不在任何 tag 上（需要 ${EXPECTED_TAG}）" \
-           "正式发布必须由 tag push 触发；workflow_dispatch 手跑请先打 tag"
-    elif [ -n "${ALLOW_UNTAGGED}" ]; then
-      warn "HEAD 不在 tag 上，CMSPARK_ALLOW_UNTAGGED=1 → 放行（本机试装）"
-      warn "产物**不是**正式 ${EXPECTED_TAG} 发布物，不得对外分发"
-      ok "豁免通过（untagged）"
+  # 只有在 CI_TAG 指向已确认 mismatch 时跳过名字比较（否则 FAIL+ok 同屏，pi ④）
+  if [ "${CI_TAG_RESOLVED}" != "mismatch" ]; then
+    if [ -z "${HEAD_TAG}" ]; then
+      if [ -n "${STRICT}" ]; then
+        fail "strict 模式：HEAD 不在任何 tag 上（需要 ${EXPECTED_TAG}）" \
+             "正式发布必须由 tag push 触发；workflow_dispatch 手跑请先打 tag"
+      elif [ -n "${ALLOW_UNTAGGED}" ]; then
+        warn "HEAD 不在 tag 上，CMSPARK_ALLOW_UNTAGGED=1 → 放行（本机试装）"
+        warn "产物**不是**正式 ${EXPECTED_TAG} 发布物，不得对外分发"
+        ok "豁免通过（untagged）"
+      else
+        fail "HEAD 不在任何 tag 上（需要 ${EXPECTED_TAG}）" \
+             "本机试装请显式设 CMSPARK_ALLOW_UNTAGGED=1；正式发布请先打 tag"
+      fi
+    elif [ "${HEAD_TAG}" != "${EXPECTED_TAG}" ]; then
+      tag_mismatch_hard_fail "${HEAD_TAG}"
     else
-      fail "HEAD 不在任何 tag 上（需要 ${EXPECTED_TAG}）" \
-           "本机试装请显式设 CMSPARK_ALLOW_UNTAGGED=1；正式发布请先打 tag"
+      ok "HEAD tag == ${EXPECTED_TAG}"
     fi
-  elif [ "${HEAD_TAG}" != "${EXPECTED_TAG}" ]; then
-    # 不匹配永远硬失败：这不是环境限制，而是版本锚与 tag 真的对不上，
-    # 正是 #547「同版本号两份二进制」的成因。豁免开关不得覆盖此条。
-    fail "HEAD 的 tag 是 ${HEAD_TAG}，但 package.json 版本是 ${VERSION}（应为 ${EXPECTED_TAG}）" \
-         "版本锚与 tag 不一致 → 会产出与已发布 ${HEAD_TAG} 同号但内容不同的包"
-  else
-    ok "HEAD tag == ${EXPECTED_TAG}"
   fi
-fi # REF_TYPE != branch
+fi
+
 
 # --- 3. [Unreleased] 段必须存在且为空 ------------------------------------
 CHANGELOG="${ROOT_MIXED}/CHANGELOG.md"
@@ -162,7 +209,7 @@ else
     inblk && NF { line=$0; gsub(/^[ \t]+|[ \t]+$/, "", line); if (line != "") print line }
   ' "${CHANGELOG}")"
   if [ "${HAS_UNREL:-0}" -eq 0 ]; then
-    # 段缺失时旧实现 inblk 从未置位 → UNREL 为空 → 误报 ok。必须区分「没这段」。
+    # 段缺失时旧实现 inblk 从未置位 → UNREL 为空 → 误报 ok（pi 上轮 NIT）。
     fail "CHANGELOG 里没有 ## [Unreleased] 段 —— 无法确认变更已归档" \
          "本仓库惯例是保留该段标题（b78e0962 / 71ff2ff9 归档后都留空标题）"
   elif [ -n "${UNREL}" ]; then
