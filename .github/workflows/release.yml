@@ -5,7 +5,10 @@ name: Release
 #
 # `workflow_dispatch` lets the matrix be dry-run on main WITHOUT creating a
 # release (the release job is gated on a tag) — use it to verify the 3-platform
-# build before tagging.
+# build before tagging. #552 release-guard.sh honours this: it receives
+# CMSPARK_RELEASE_REF_TYPE=github.ref_type, so a dispatch run (ref_type=branch)
+# tolerates HEAD having no tag but still rejects a wrong tag and enforces a clean
+# tree + empty [Unreleased]. Tag pushes (ref_type=tag) get the full strict check.
 on:
   push:
     tags:
@@ -32,6 +35,22 @@ jobs:
           cache-dependency-path: |
             companion/package-lock.json
             chrome-extension/package-lock.json
+      # #552 / #547 防复发：tag push 时版本锚必须与 tag 一致，工作树必须干净，
+      # [Unreleased] 必须已归档。放在装依赖之前，好让脱节的发布几十秒内失败。
+      # CMSPARK_RELEASE_TAG / _REF_TYPE 用 workflow context 而非 git describe：
+      # actions/checkout@v4 默认 fetch-depth=1，浅克隆里 tag 对象不一定存在。
+      # ref_type=branch（workflow_dispatch dry-run）时守卫**容忍 HEAD 无 tag**，但
+      # 仍拒绝 HEAD 带着与版本锚不符的 tag（否则 branch 会盖过 STRICT 成 #547 绕过面）——
+      # release job 本就被 if: startsWith(github.ref, refs/tags/v) 挡住，dry-run 不发布。
+      - name: Release guard (tag == version anchor, clean tree, Unreleased archived)
+        env:
+          CMSPARK_RELEASE_STRICT: "1"
+          CMSPARK_RELEASE_TAG: ${{ github.ref_name }}
+          # ref_type 让守卫区分 tag push（严格校验 tag==版本锚）与 dispatch dry-run
+          # （容忍 HEAD 无 tag，但错 tag 仍拒；且始终强制干净树 + Unreleased 已归档）。
+          CMSPARK_RELEASE_REF_TYPE: ${{ github.ref_type }}
+        run: bash scripts/release-guard.sh
+
       - name: Install companion deps
         run: cd companion && npm ci
       - name: Build companion
@@ -105,6 +124,11 @@ jobs:
         shell: bash
         env:
           CMSPARK_REQUIRE_NSIS: ${{ matrix.platform == 'windows-x64' && '1' || '' }}
+          # package.sh 内部会再跑一次 release-guard.sh；strict 下豁免开关失效，
+          # 三个平台的打包都必须来自正确的 tag（#552）。
+          CMSPARK_RELEASE_STRICT: "1"
+          CMSPARK_RELEASE_TAG: ${{ github.ref_name }}
+          CMSPARK_RELEASE_REF_TYPE: ${{ github.ref_type }}
         run: bash scripts/package.sh ${{ matrix.platform }}
 
       # P0-D fail-closed content asserts — package.sh already gates at stage time;

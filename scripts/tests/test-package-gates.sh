@@ -667,6 +667,177 @@ else
 fi
 set -e
 
+# --- #552: release-guard.sh 六路径行为（防「同版本号两份二进制」复发）-----
+# 用**临时 git repo** 造场景，而不是弄脏真实仓库 —— 否则测试结果取决于本机
+# 工作树是否恰好干净，CI 与本机结论会不一致。
+RELEASE_GUARD="${ROOT}/scripts/release-guard.sh"
+assert_file_has "${RELEASE_GUARD}" 'CMSPARK_RELEASE_STRICT' \
+  "release-guard.sh 支持 strict 模式（豁免开关失效）"
+assert_file_has "${RELEASE_GUARD}" 'CMSPARK_RELEASE_TAG' \
+  "release-guard.sh 用 workflow context 取 tag（浅克隆下 git describe 不可靠）"
+assert_file_has "${RELEASE_GUARD}" 'points-at HEAD' \
+  "release-guard.sh 本地回退到 git tag --points-at HEAD"
+assert_file_has "${RELEASE_GUARD}" 'STRICT、REF_TYPE 都不得覆盖此条' \
+  "release-guard.sh 注明 tag 不匹配不受豁免覆盖（#547 核心失效模式）"
+assert_file_has "${PACKAGE_SH}" 'release-guard\.sh' \
+  "package.sh 调用 release-guard.sh"
+assert_file_has "${PACKAGE_SH}" 'CMSPARK_PACKAGE_GATE_ONLY:-\}" != "1"' \
+  "package.sh 在 GATE_ONLY（ci.yml 静态断言快路径）下跳过守卫"
+assert_file_has "${RELEASE_YML}" 'CMSPARK_RELEASE_STRICT' \
+  "release.yml 启用 strict 模式"
+assert_file_has "${RELEASE_YML}" 'CMSPARK_RELEASE_TAG:' \
+  "release.yml 传 tag 来源"
+assert_file_has "${RELEASE_YML}" 'github\.ref_name' \
+  "release.yml 用 github.ref_name（不依赖浅克隆里的 tag 对象）"
+
+echo "[dynamic] release-guard.sh 六路径行为（临时 git repo）"
+if command -v node >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+  RG_TMP="$(mktemp -d)"
+  # $1=version — 造最小 repo：守卫脚本 + companion/package.json + CHANGELOG.md
+  rg_setup() {
+    rm -rf "${RG_TMP}/repo" 2>/dev/null || true
+    mkdir -p "${RG_TMP}/repo/scripts" "${RG_TMP}/repo/companion"
+    cp "${RELEASE_GUARD}" "${RG_TMP}/repo/scripts/release-guard.sh"
+    printf '{"name":"cmspark-agent","version":"%s"}\n' "$1" \
+      > "${RG_TMP}/repo/companion/package.json"
+    printf '# Changelog\n\n## [Unreleased]\n\n## [%s] - 2026-09-28\n\n- x\n' "$1" \
+      > "${RG_TMP}/repo/CHANGELOG.md"
+    ( cd "${RG_TMP}/repo" && git init -q . && git add -A \
+      && git -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
+  }
+  # 在 repo 内跑守卫，只回传退出码。额外 env 以 KEY=VAL 形式传入。
+  # env -u 先清掉三个守卫变量，再套用调用方传入的 —— 否则开发者 shell 里预先
+  # export 了 CMSPARK_ALLOW_UNTAGGED=1 之类会让「默认拒绝」断言假红（claude P3）。
+  # 清掉**全部五个**守卫变量再套调用方传入的 —— 漏掉 CMSPARK_RELEASE_TAG（pi ⑤）
+  # 会让「tag 不匹配 / 无 tag」四条断言在开发者 shell 里假红：
+  #   CMSPARK_RELEASE_TAG=v9.9.9 bash scripts/tests/test-package-gates.sh → 147/4
+  rg_run() { ( cd "${RG_TMP}/repo" && env -u CMSPARK_ALLOW_UNTAGGED -u CMSPARK_ALLOW_DIRTY -u CMSPARK_RELEASE_STRICT -u CMSPARK_RELEASE_REF_TYPE -u CMSPARK_RELEASE_TAG "$@" bash scripts/release-guard.sh >/dev/null 2>&1; echo $? ); }
+
+  # 1) 干净树 + 正确 tag → 通过
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" && git tag v9.9.9 ) >/dev/null 2>&1
+  assert_eq "0" "$(rg_run PATH="$PATH")" \
+    "release-guard: 干净树 + tag==版本 → 通过"
+
+  # 2) tag 不匹配 → 硬失败，且豁免全开也不放过（#547 核心失效模式）
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" && git tag v8.8.8 ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH")" \
+    "release-guard: tag(v8.8.8) != 版本(9.9.9) → 拒绝"
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_ALLOW_UNTAGGED=1 CMSPARK_ALLOW_DIRTY=1)" \
+    "release-guard: tag 不匹配时豁免开关不得覆盖"
+
+  # 3) 无 tag：默认拒绝 / 豁免放行 / strict 拒绝
+  rg_setup 9.9.9
+  assert_eq "1" "$(rg_run PATH="$PATH")" \
+    "release-guard: HEAD 无 tag → 默认拒绝"
+  assert_eq "0" "$(rg_run PATH="$PATH" CMSPARK_ALLOW_UNTAGGED=1)" \
+    "release-guard: CMSPARK_ALLOW_UNTAGGED=1 → 本机试装放行"
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_STRICT=1 CMSPARK_ALLOW_UNTAGGED=1)" \
+    "release-guard: strict 下 untagged 豁免失效"
+
+  # 4) 工作树脏：默认拒绝 / 豁免放行 / strict 拒绝
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" && git tag v9.9.9 && echo dirty >> CHANGELOG.md ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH")" \
+    "release-guard: 工作树脏 → 默认拒绝"
+  assert_eq "0" "$(rg_run PATH="$PATH" CMSPARK_ALLOW_DIRTY=1)" \
+    "release-guard: CMSPARK_ALLOW_DIRTY=1 → 放行"
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_STRICT=1 CMSPARK_ALLOW_DIRTY=1)" \
+    "release-guard: strict 下 dirty 豁免失效"
+
+  # 5) [Unreleased] 非空 → 拒绝（归档必须在打 tag 前完成）
+  #    **必须在 commit 之后 git tag -f**：否则 HEAD 离开 tag，rc=1 来自断言 2
+  #    （HEAD 无 tag）而非断言 3。pi 的突变验证证明过：把断言 3 整段删掉，
+  #    旧写法下这条断言仍然绿 —— 即它根本没测到目标行为。
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" \
+    && printf '# Changelog\n\n## [Unreleased]\n\n- 未归档变更\n\n## [9.9.9] - x\n' > CHANGELOG.md \
+    && git add -A && git -c user.email=t@t -c user.name=t commit -qm unrel \
+    && git tag -f v9.9.9 ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH")" \
+    "release-guard: [Unreleased] 非空 → 拒绝（tag 已在 HEAD，失败只能来自断言 3）"
+
+  # 5b) [Unreleased] 段**缺失** → 也必须拒绝（旧实现 inblk 从未置位 → 误报 ok）
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" \
+    && printf '# Changelog\n\n## [9.9.9] - x\n\n- 已发布\n' > CHANGELOG.md \
+    && git add -A && git -c user.email=t@t -c user.name=t commit -qm nosect \
+    && git tag -f v9.9.9 ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH")" \
+    "release-guard: CHANGELOG 无 [Unreleased] 段 → 拒绝（不把「没这段」当「已检查为空」）"
+
+  # 6) CMSPARK_RELEASE_TAG（CI 路径，不依赖本地 tag 对象）
+  rg_setup 9.9.9
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_TAG=v0.0.1)" \
+    "release-guard: CMSPARK_RELEASE_TAG 与版本不符 → 拒绝（workflow_dispatch 手跑分支）"
+  assert_eq "0" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_TAG=v9.9.9)" \
+    "release-guard: CMSPARK_RELEASE_TAG 匹配 → 通过（不依赖浅克隆里的 tag 对象）"
+
+  # 7) dry-run（ref_type=branch）：跳过 tag 断言，但仍强制 dirty / Unreleased
+  rg_setup 9.9.9
+  assert_eq "0" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_REF_TYPE=branch CMSPARK_ALLOW_DIRTY=1)" \
+    "release-guard: dry-run(ref_type=branch) 无 tag 也放行（dispatch 验证三平台构建）"
+  ( cd "${RG_TMP}/repo" && echo dirty >> CHANGELOG.md ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_REF_TYPE=branch)" \
+    "release-guard: dry-run 仍强制干净树（不是无脑放行）"
+  # dry-run 不得让「tag 不匹配」的正式发布蒙混：显式 ref_type=tag 时仍硬失败
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" && git tag v8.8.8 ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_REF_TYPE=tag CMSPARK_RELEASE_TAG=v8.8.8)" \
+    "release-guard: ref_type=tag 时 tag 不匹配仍拒绝"
+
+  # 8) 非 git 仓库 / git 不可用 → 必须硬失败，不得把「查不出」当成「树干净」
+  #    （claude + kimi 各自独立指出的 fail-open）。用「不是 git 仓库」触发同一条
+  #    `git rev-parse --git-dir` 失败路径 —— 比从 PATH 摘掉 git 更可移植
+  #    （Git Bash 下给 92MB 的 node.exe 建符号链接会退化成复制，不可靠）。
+  RG_NOGIT="${RG_TMP}/nogit"
+  rm -rf "${RG_NOGIT}" 2>/dev/null || true
+  mkdir -p "${RG_NOGIT}/scripts" "${RG_NOGIT}/companion"
+  cp "${RELEASE_GUARD}" "${RG_NOGIT}/scripts/release-guard.sh"
+  printf '{"name":"cmspark-agent","version":"9.9.9"}\n' > "${RG_NOGIT}/companion/package.json"
+  printf '# Changelog\n\n## [Unreleased]\n\n## [9.9.9] - x\n' > "${RG_NOGIT}/CHANGELOG.md"
+  # 注意：这里**不** git init。豁免全开也必须失败 —— 证明 fail-closed 优先于豁免。
+  assert_eq "1" \
+    "$( cd "${RG_NOGIT}" && env -u CMSPARK_ALLOW_UNTAGGED -u CMSPARK_ALLOW_DIRTY -u CMSPARK_RELEASE_STRICT -u CMSPARK_RELEASE_REF_TYPE PATH="$PATH" CMSPARK_ALLOW_UNTAGGED=1 CMSPARK_ALLOW_DIRTY=1 bash scripts/release-guard.sh >/dev/null 2>&1; echo $? )" \
+    "release-guard: 非 git 仓库（查不出树状态）→ 硬失败，豁免不得覆盖"
+  # 9) CI_TAG 指向校验（pi ②：新加固必须被测试锁住，否则突变存活）
+  #    tag 在 A、HEAD 领先 2 提交、锚仍匹配 → 设 CI_TAG=旧tag 必须拒绝（#547 绕过）
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" && git tag v9.9.9 \
+    && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m ahead1 \
+    && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m ahead2 ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_TAG=v9.9.9 CMSPARK_ALLOW_DIRTY=1)" \
+    "release-guard: CI_TAG 指向旧提交（HEAD 领先）→ 拒绝（堵住 #547 绕过）"
+  # 反向不误挡：CI_TAG 确实指向 HEAD → 通过
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" && git tag v9.9.9 ) >/dev/null 2>&1
+  assert_eq "0" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_TAG=v9.9.9)" \
+    "release-guard: CI_TAG 确实指向 HEAD → 通过"
+
+  # 10) REF_TYPE=branch 不得盖过「tag 明显不匹配」（pi ③：新绕过面）
+  #     #547 特征态：锚 9.9.9、HEAD 被 v8.8.8 标记、v9.9.9 停在 HEAD~1
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" && git tag v9.9.9 \
+    && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c2 \
+    && git tag v8.8.8 ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_STRICT=1 CMSPARK_RELEASE_REF_TYPE=branch)" \
+    "release-guard: dry-run 但 HEAD 带错 tag（v8.8.8≠锚）→ 拒绝（branch 不豁免错 tag）"
+  # 合法 dry-run：HEAD 无 tag → 放行（不误挡 dispatch 验证三平台构建）
+  rg_setup 9.9.9
+  assert_eq "0" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_STRICT=1 CMSPARK_RELEASE_REF_TYPE=branch CMSPARK_RELEASE_TAG=main)" \
+    "release-guard: dry-run + HEAD 无 tag + 干净树 → 放行（dispatch 能力保留）"
+
+  # 11) git status 读不出（index 损坏）→ 硬失败，豁免不得覆盖（pi ①a：根因闭合）
+  rg_setup 9.9.9
+  ( cd "${RG_TMP}/repo" && git tag v9.9.9 && printf GARBAGE > .git/index ) >/dev/null 2>&1
+  assert_eq "1" "$(rg_run PATH="$PATH" CMSPARK_RELEASE_STRICT=1 CMSPARK_RELEASE_TAG=v9.9.9 CMSPARK_ALLOW_DIRTY=1 CMSPARK_ALLOW_UNTAGGED=1)" \
+    "release-guard: index 损坏致 git status 失败 → 硬失败（不把「查不出」当「干净」）"
+  rm -rf "${RG_TMP}" 2>/dev/null || true
+else
+  echo "  skip release-guard dynamic tests (node/git missing)"
+fi
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 if [ "${FAIL}" -ne 0 ]; then
