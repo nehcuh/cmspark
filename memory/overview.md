@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-28 (lockstep 0.6.10)
+**Updated**: 2026-09-29 (lockstep 0.6.10 · S118 安全批次)
 
 ## CMspark — 产品 0.6.10
 
@@ -28,6 +28,10 @@
 - **不要**：overlay Allow/Deny；第二扩展；`ws_secret` 当 grant；#230 整票「继续」；宣称 Capture/CU/F-S-10 闭合；StatusRail 手风琴 / Wave 2 FocusBand。
 
 ## Next
+
+- ： 任何失败都判 （缺  落默认桶）→ 整轮终止；image 家族码整族未登记。
+- ： 剩余「依赖文案恰好含某词」的脆弱点（优先显式分支、子串表逐步退役）。
+- ：前提已更正（管道是通的）；若确要断开期不丢日志，建议只加计数、不缓冲（该路径有回环事故史）。
 
 - 重载 unpacked 扩展 `chrome-extension/build/chrome-mv3-prod/`，狗食租手确认是否把确认台拉到前面。
 - 不要提交本机 `host-integrity.ts`（build-host 改写的 SHA）。

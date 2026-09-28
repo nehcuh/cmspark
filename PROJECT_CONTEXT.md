@@ -4,6 +4,18 @@
 
 <!-- handoff:start -->
 
+### 2026-09-28→29 S118 · computer-use 实测 · 安全缺陷三票收敛
+
+- **授权与边界**：用户睡前「把所有验证到的真实问题全部解决」。**披露/HITL 属操作员动作，即使口头同意也未代批** —— 该闸门设计上就是防「AI 自己把自己放进门」（`ACK_NOT_OPERATOR: caller acknowledge is not operator consent`，实测复核）。
+- **方法**：用产品自己的通道实测（`mcp-outbound` 当 MCP 客户端 → companion → 扩展 → 真 Chrome）；桌面侧 Windows UIA + 内置 OCR 当眼睛；真实鼠标点击（用后还原光标）。
+- **已修并合并**：
+  - `#554` `wait_for` 6/6 失败（吞 CDP 异常 + 误报「selector 超时」+ 兜底未实现）→ PR **#555**（`654ba143`）
+  - `#556`/`#558` 页面可控文本进 `classifyError` → 可被页面用来**整轮终止** → PR **#557**（`227da3b6`）
+- **另立待办**：`#559`（`analyze_image` 任何失败都 `non_recoverable`；image 家族码整族未登记）、`#560`（`classifyError` 剩余「依赖文案含某词」的脆弱点）、`#539`（前提已更正）。
+- **重要教训**：① 注入表达式里写的任何字符串**都属于页面**，措辞必须来自扩展侧、页面值只能当令牌；② 大文件禁用整文件 Read→Write 回写（本会话因此栽两次，第二次提交了截断的 `session.md`，已由 `b06d8890` 恢复 1112 行）。
+- **Next**：`#559` / `#560` / `#539`。本机已装 0.6.10（S117）。
+
+
 ### 2026-09-27→28 S117 · 0.6.9 拉取 · 三条 BLOCKING 修复 · cut 0.6.10 发布
 
 - **拉取**：0.6.9（`59931595..b5a7396a`，12 提交）。本机 Windows 编译 `CMspark-Setup-v0.6.9.exe`（sha256 `c61a949e…`）并换装 `C:\Users\HuChen\AppData\Local\CMspark`，daemon `:23401`。备份 `CMspark-backup-20260927-225703.zip`。
