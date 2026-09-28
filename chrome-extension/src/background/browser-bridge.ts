@@ -575,11 +575,21 @@ export class BrowserBridge {
       const probed = await this.safeEvaluate(tabId, syntaxProbe)
       const pv = probed?.result?.value
       if (pv && pv.ok === false) {
+        // #556: `pv.message` is not our text — the page can patch querySelector to
+        // throw any wording, and Chrome's own message quotes the caller-supplied
+        // selector (so agent-supplied text would echo too). Use our own wording;
+        // the page's text goes to the data channel only.
+        const pageText = untrustedPageText(pv.message)
         return {
           ok: false,
-          result: codedToolError("INVALID_SELECTOR", pv.message || "invalid selector", {
-            suggested_action: "refine_text_or_selector",
-          }),
+          result: codedToolError(
+            "INVALID_SELECTOR",
+            "the page rejected the selector syntax (is not a valid selector)",
+            {
+              suggested_action: "refine_text_or_selector",
+              ...(pageText ? { page_text_untrusted: pageText } : {}),
+            },
+          ),
         }
       }
     } catch (e: any) {
@@ -822,7 +832,7 @@ export class BrowserBridge {
               // fetch the raw bytes directly — host_permissions: <all_urls> lets
               // the service worker bypass page CORS / canvas taint.
               const src = el.currentSrc || el.src || "";
-              if (!src) return { error: "Cannot extract image (CORS, no src): " + e.message };
+              if (!src) return { error: "Cannot extract image (cross-origin, no src)", pageText: String((e && e.message) || e).slice(0, 300) };
               return {
                 fetchSrc: src,
                 width: el.naturalWidth || el.width || 0,
@@ -889,7 +899,7 @@ export class BrowserBridge {
               img.src = url;
             });
           } catch (e) {
-            return { error: "Cannot render element: " + e.message };
+            return { error: "Cannot render element", pageText: String((e && e.message) || e).slice(0, 300) };
           }
         })()
       `,
@@ -952,7 +962,12 @@ export class BrowserBridge {
       }
     }
     if (data.error) {
-      return { success: false, error: data.error }
+      // #556: `data.error` is now our own wording; whatever page-side text the
+      // injected expression captured rides `data.pageText` to the DATA channel.
+      const pageText = untrustedPageText(data.pageText)
+      const result: ToolResult = { success: false, error: data.error }
+      if (pageText) result.data = { page_text_untrusted: pageText }
+      return result
     }
 
     // Path A — same-origin canvas (bytes already in the page; screenshot already
@@ -1771,11 +1786,19 @@ export class BrowserBridge {
     }
 
     if (result?.exceptionDetails) {
-      const text =
-        result.exceptionDetails?.exception?.description ||
-        result.exceptionDetails?.text ||
-        "Runtime.evaluate exception"
-      return codedToolError("EVAL_THROWN", text, { suggested_action: "fix_expression" })
+      // #558: same family as #556 — the page decides this text, so it must not
+      // enter `message` (classifyError reads it). Own wording + data channel.
+      const pageText = untrustedPageText(
+        result.exceptionDetails?.exception?.description || result.exceptionDetails?.text,
+      )
+      return codedToolError(
+        "EVAL_THROWN",
+        "the evaluated expression threw a page exception",
+        {
+          suggested_action: "fix_expression",
+          ...(pageText ? { page_text_untrusted: pageText } : {}),
+        },
+      )
     }
 
     const value = result?.result?.value

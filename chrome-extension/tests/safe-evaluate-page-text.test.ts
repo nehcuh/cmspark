@@ -160,3 +160,70 @@ test("#556 非页面来源的失败仍带真实原因（不可过度清洗）", 
     },
   )
 })
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 以下为「页面文本进分类输入」**族修复**的其余站点（dual-review pi 在 #557
+ * 复审中逐处点出：我的第一版只修了 safeEvaluate，漏了 resolveLocator /
+ * analyze_image / evaluate 三条同族路径）。
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("#556 resolveLocator：页面 patch querySelector 抛出触发词时，INVALID_SELECTOR 也不得带它", async () => {
+  // :580 —— syntaxProbe 是注入表达式，它把 catch 到的 message 原样返回；
+  // 页面 patch document.querySelector 即可决定该文案（无需真非法 selector）。
+  await withBridge(
+    {
+      send: async (m: string) =>
+        m === "Runtime.evaluate"
+          ? { result: { value: { ok: false, name: "SyntaxError", message: HOSTILE } } }
+          : {},
+    },
+    async (bridge) => {
+      const r = await bridge.execute("click", { tabId: 7, selector: "#app" })
+      assert.equal(r.success, false)
+      assert.equal(r.data?.error_code, "INVALID_SELECTOR")
+      assert.equal(SECURITY_TRIGGERS.test(r.error), false, `实际: ${r.error}`)
+      assert.match(String(r.data?.page_text_untrusted || ""), /Security Block/i, "原文保留在 data")
+    },
+  )
+})
+
+test("#556 analyze_image：注入表达式回传的页面文案不得进入 error", async () => {
+  // :825/:892 的注入表达式把页面异常文案塞进返回值，:955 再原样交回。
+  await withBridge(
+    {
+      send: async (m: string) =>
+        m === "Runtime.evaluate"
+          ? { result: { value: { error: "Cannot render element", pageText: HOSTILE } } }
+          : {},
+    },
+    async (bridge) => {
+      const r = await bridge.execute("analyze_image", { tabId: 7, selector: "#img" })
+      assert.equal(r.success, false)
+      assert.equal(SECURITY_TRIGGERS.test(r.error), false, `实际: ${r.error}`)
+      assert.match(String(r.data?.page_text_untrusted || ""), /Security Block/i, "原文保留在 data")
+    },
+  )
+})
+
+test("#556 evaluate：EVAL_THROWN 的页面异常文案不得进入 error（#558）", async () => {
+  // security_token 非空即可通过 L2 判定（见 evaluate-code-policy.ts:39-55）。
+  await withBridge(
+    {
+      send: async (m: string) =>
+        m === "Runtime.evaluate"
+          ? { exceptionDetails: { text: "Error", exception: { description: HOSTILE } } }
+          : {},
+    },
+    async (bridge) => {
+      const r = await bridge.execute("evaluate", {
+        tabId: 7,
+        code: "1+1",
+        security_token: "t",
+      })
+      assert.equal(r.success, false)
+      assert.equal(r.data?.error_code, "EVAL_THROWN")
+      assert.equal(SECURITY_TRIGGERS.test(r.error), false, `实际: ${r.error}`)
+      assert.match(String(r.data?.page_text_untrusted || ""), /Security Block/i, "原文保留在 data")
+    },
+  )
+})
