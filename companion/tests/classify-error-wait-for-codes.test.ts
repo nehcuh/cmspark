@@ -2,7 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import assert from "node:assert/strict"
-import { classifyError } from "../src/security"
+import { classifyError, IMAGE_FAMILY_ERROR_CODES } from "../src/security"
 
 /**
  * #554 dual-review claude 的 BLOCKING：wait_for 新增的 coded error 若没被处理，会落进
@@ -136,6 +136,135 @@ test("#556 N5: IMAGE_FETCH_FAILED is recoverable by code (restores the lost reco
     classifyError("完全中性的文案，不含任何码名与关键字", {
       toolName: "analyze_image_fetch",
       error_code: "SOME_OTHER_UNREGISTERED",
+    }),
+    "non_recoverable",
+  )
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * #559：image 家族。这些码本来就存在（image-extract-utils.ts），但从未登记 →
+ * 每一个 analyze_image 失败都落默认桶 non_recoverable → 整轮终止（良性形态亦然）。
+ * 与 #556 N5 同一手法：显式 error_code 分支，判定与文案解耦。
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const IMAGE_FAMILY_CODES = [
+  "IMAGE_MIME_REJECTED",
+  "IMAGE_TOO_LARGE",
+  "INVALID_DATA_URL",
+  "BLOB_URL_UNSUPPORTED",
+  "IMAGE_RENDER_FAILED",
+  "IMAGE_EXTRACT_FAILED",
+  "IMAGE_FETCH_FAILED",
+] as const
+
+test("#559 every image-family code is recoverable from error_code alone", () => {
+  for (const code of IMAGE_FAMILY_CODES) {
+    assert.equal(
+      classifyError("完全中性的文案，不含任何码名与关键字", {
+        toolName: "analyze_image",
+        error_code: code,
+      }),
+      "recoverable",
+      `${code} 必须靠登记生效（否则落默认桶 → 整轮终止）`,
+    )
+  }
+})
+
+test("#559 the level does not drift with wording for image codes", () => {
+  // 同一 code、四种文案形态 —— 结论必须一致（与文案解耦的可执行定义）。
+  const shapes = ["", "完全中性", "IMAGE_MIME_REJECTED: x", "timeout not found attach failed"]
+  for (const code of IMAGE_FAMILY_CODES) {
+    for (const msg of shapes) {
+      assert.equal(
+        classifyError(msg, { toolName: "analyze_image", error_code: code }),
+        "recoverable",
+        `${code} 在形态 ${JSON.stringify(msg)} 下结论应一致`,
+      )
+    }
+  }
+})
+
+test("#559 counter-proof: an unregistered image-shaped code still halts", () => {
+  // 反证「登记」是关键变量：同样中性文案、同样前缀，换成未登记的码 → non_recoverable。
+  assert.equal(
+    classifyError("完全中性的文案", { toolName: "analyze_image", error_code: "IMAGE_NOT_REGISTERED" }),
+    "non_recoverable",
+  )
+})
+
+test("#559 cross-package: every image code the extension emits is registered here", () => {
+  // 定位（重要，勿当完备性证明）：这是一个**变更探测器** —— 它把「extension 产出新码而
+  // companion 忘登记」这类漂移变成红测试。它**不**保证「页面文本不再进分类器」之类的
+  // 安全性质（那是行为测试的事），也存在**已知盲区**：
+  //   ① 码名形状：正则只认 `IMAGE_*` / `INVALID_DATA_URL` / `BLOB_URL_UNSUPPORTED`。
+  //      将来若新增**不带 IMAGE_ 前缀**的同族码（如 `CANVAS_TAINTED`），需同步扩正则。
+  //   ② 它扫的是「源码里出现的字符串字面量」，不是「真正会发给 companion 的码」。
+  // 断言方式：import 导出的集合（不是 grep `error_code === "CODE"` 字面量）——
+  //   pi 实测后者会对行为等价的重构（`||` 链 → 集合判定）**假红**。
+  // 去注释：否则「注释里提一句某个码」也会触发假红（pi 第二轮实测）。
+  const SCAN_ROOT = "chrome-extension/src"
+  const rootOf = (): string => {
+    const candidates = [path.resolve(process.cwd(), ".."), process.cwd()]
+    for (const c of candidates) if (fs.existsSync(path.join(c, SCAN_ROOT))) return c
+    throw new Error(`repo root not found from ${process.cwd()}`)
+  }
+  const root = rootOf()
+  // 无正则的手写剥离（避免嵌套转义出错）：先去掉 /* */ 段，再截掉每行的 // 之后。
+  const stripComments = (x: string): string => {
+    const NLCH = String.fromCharCode(10) // 避免在源码里写转义序列（易错）
+    const noBlock = x
+      .split("/*")
+      .map((seg, i) => (i === 0 ? seg : seg.slice(seg.indexOf("*/") + 2)))
+      .join("")
+    return noBlock
+      .split(NLCH)
+      .map((l) => {
+        const k = l.indexOf("//")
+        return k >= 0 ? l.slice(0, k) : l
+      })
+      .join(NLCH)
+  }
+  // 收 .ts **与 .tsx**（pi：`chrome-extension/src` 下有 77 个 .tsx，漏掉是真盲区）。
+  const walk = (dir: string, out: string[] = []): string[] => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) walk(p, out)
+      else if (/.tsx?$/.test(e.name) && !/.test.tsx?$/.test(e.name)) out.push(p)
+    }
+    return out
+  }
+  const emitted = new Set<string>()
+  for (const f of walk(path.join(root, SCAN_ROOT))) {
+    const src = stripComments(fs.readFileSync(f, "utf8"))
+    for (const m of src.matchAll(/"(IMAGE_[A-Z_]+|INVALID_DATA_URL|BLOB_URL_UNSUPPORTED)"/g)) {
+      emitted.add(m[1])
+    }
+  }
+  assert.ok(emitted.size >= 7, `anti-vacuity: 至少应扫到 7 个 image 码，实际 ${emitted.size}`)
+  const unregistered = [...emitted].filter((c) => !IMAGE_FAMILY_ERROR_CODES.has(c))
+  assert.deepEqual(
+    unregistered,
+    [],
+    `这些码由 extension 产出但未登记进 IMAGE_FAMILY_ERROR_CODES → 会落默认桶整轮终止: ${unregistered.join(", ")}`,
+  )
+})
+
+test("#559 TAB_ID_REQUIRED is recoverable by CODE, not only by the substring table", () => {
+  // pi（第二轮）：上一版只靠子串表里的 "tab_id_required" 生效 —— 换成中性文案就掉回
+  // non_recoverable（正是 #560 要消掉的那种耦合）。本断言用**完全中性**的文案，
+  // 于是唯一能救它的就是「已并入显式分支」。
+  assert.equal(
+    classifyError("完全中性的文案，不含任何码名与关键字", {
+      toolName: "analyze_image",
+      error_code: "TAB_ID_REQUIRED",
+    }),
+    "recoverable",
+  )
+  // 反证：同文案换未登记的码 → non_recoverable
+  assert.equal(
+    classifyError("完全中性的文案，不含任何码名与关键字", {
+      toolName: "analyze_image",
+      error_code: "TAB_ID_NOT_REGISTERED",
     }),
     "non_recoverable",
   )

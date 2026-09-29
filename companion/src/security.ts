@@ -913,6 +913,24 @@ export function highRiskExecutionDeniedError(
 export type ErrorLevel = "recoverable" | "non_recoverable" | "security"
 
 /**
+ * #559：image 家族的码。**导出**是为了让跨包守卫直接 import 这个集合，而不是靠
+ * 在源码里 grep `error_code === "CODE"` 字面量 —— 后者会对行为等价的重构误红
+ * （dual-review pi 实测：把 || 链改成数组/Set 判定 → 守卫假红）。
+ *
+ * 语义：这些失败都是「这一个元素 / 这一份图源没搞定」，agent 换目标或放弃该子目标
+ * 即可继续；页面/网络侧可触发，不该整轮终止。
+ */
+export const IMAGE_FAMILY_ERROR_CODES: ReadonlySet<string> = new Set([
+  "IMAGE_MIME_REJECTED",
+  "IMAGE_TOO_LARGE",
+  "INVALID_DATA_URL",
+  "BLOB_URL_UNSUPPORTED",
+  "IMAGE_RENDER_FAILED",
+  "IMAGE_EXTRACT_FAILED",
+  "IMAGE_FETCH_FAILED",
+])
+
+/**
  * Classify an error to determine the response strategy.
  */
 export function classifyError(
@@ -933,10 +951,22 @@ export function classifyError(
   if (context?.error_code === "WAIT_PROBE_FAILED" || context?.error_code === "WAIT_TIMEOUT") {
     return "recoverable"
   }
-  // #556 N5: analyze_image_fetch 的失败是「换路重试」类（CDN 限流 429/502/503、超时、
-  // 跨域取字节失败），补码前它靠文案里的 "429"/"timeout" 子串侥幸判 recoverable；
-  // 换成自有文案后静默变成 non_recoverable → 整轮终止。显式登记把判定钉在 code 上。
-  if (context?.error_code === "IMAGE_FETCH_FAILED") {
+  // #559（并吸收 #556 N5）：**image 家族**。这些码本来就存在（image-extract-utils.ts /
+  // browser-bridge.ts），但从未登记 → 它们全部落默认桶 non_recoverable → adapter
+  // shouldStop / security_halt 整轮终止。实测良性形态亦然：
+  //   "Cannot render element: SecurityError: Tainted canvases may not be exported" →
+  //   non_recoverable。语义上它们都是「这一个元素/这一份图源没搞定」——agent 可以换目标
+  // 或放弃该子目标；重试仍由 same-tool-guard 有界约束，不会无限打转。
+  //
+  // 刻意用**显式分支**而非 recoverable 子串表：子串表要求文案里恰好出现码名，判定就会
+  // 随文案漂移 —— #560 记录了这一类脆弱性（其中 #556 N5 已经真的咬过一次：改干净文案
+  // 时丢掉 "429"/"timeout" 子串，静默从 recoverable 变成整轮终止）。
+  if (context?.error_code && IMAGE_FAMILY_ERROR_CODES.has(context.error_code)) {
+    return "recoverable"
+  }
+  // pi：TAB_ID_REQUIRED 原先**只靠子串表**里的 "tab_id_required" 生效 —— 换成中性文案
+  // 就会掉回 non_recoverable（正是 #560 要消掉的那种耦合）。并入 TAB_LOCKED 同族显式分支。
+  if (context?.error_code === "TAB_ID_REQUIRED") {
     return "recoverable"
   }
   // L-5: unattended NEVER-list confirm timeout/deny is item-blocked + bypass,

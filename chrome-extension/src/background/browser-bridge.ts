@@ -741,7 +741,10 @@ export class BrowserBridge {
         throw new Error("TAB_ID_REQUIRED: explicit tabId required (multi-agent mode)")
       }
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!activeTab?.id) throw new Error("No active tab found")
+      // pi: this path had no code → default bucket non_recoverable → halt, even though
+      // "there is no tab to analyse" is plainly recoverable. Prefix a REGISTERED code so
+      // executeInner's "^([A-Z_]+):" parsing sets data.error_code.
+      if (!activeTab?.id) throw new Error("TAB_ID_REQUIRED: No active tab found")
       tabId = activeTab.id
     }
 
@@ -789,7 +792,12 @@ export class BrowserBridge {
     const selector = params.selector
 
     if (!selector) {
-      return { success: false, error: "selector is required for analyze_image" }
+      // #559: coded so the level does not depend on wording (default bucket is
+      // non_recoverable → whole-turn halt). SELECTOR_OR_TEXT_REQUIRED is already
+      // registered recoverable and is the established code for a missing locator.
+      return codedToolError("SELECTOR_OR_TEXT_REQUIRED", "selector is required for analyze_image", {
+        suggested_action: "refine_text_or_selector",
+      })
     }
 
     if (!tabId) {
@@ -797,7 +805,7 @@ export class BrowserBridge {
         throw new Error("TAB_ID_REQUIRED: explicit tabId required (multi-agent mode)")
       }
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!activeTab?.id) throw new Error("No active tab found")
+      if (!activeTab?.id) throw new Error("TAB_ID_REQUIRED: No active tab found")
       tabId = activeTab.id
     }
 
@@ -912,7 +920,10 @@ export class BrowserBridge {
 
     const data = extractResult?.result?.value
     if (!data) {
-      return { success: false, error: "Failed to extract image data" }
+      // #559: coded (see E1 rationale).
+      return codedToolError("IMAGE_EXTRACT_FAILED", "Failed to extract image data", {
+        suggested_action: "get_page_text",
+      })
     }
     // Canvas extract failed with a fetchSrc fallback (taint / no draw path).
     // Handle data:/blob: HERE (after CDP returns — never inside the page expr):
@@ -946,6 +957,8 @@ export class BrowserBridge {
           error: promoted.error,
           data: {
             error_code: promoted.error_code,
+            // pi: 这些成因（mime/体积/blob）与选择器无关 —— 别给 refine 建议。
+            suggested_action: "get_page_text",
             mime: promoted.mime,
             byte_len: promoted.byte_len,
           },
@@ -973,19 +986,51 @@ export class BrowserBridge {
       // page-returned STRING as the message. The page value is only allowed to
       // SELECT among literals that live HERE, in extension code; everything else
       // rides the data channel.
-      const ourWording =
+      // #559: the token now selects BOTH the code and the wording; both live here.
+      // Codes are registered recoverable in companion/src/security.ts, so the level
+      // no longer falls into the default (non_recoverable → whole-turn halt) bucket.
+      // suggested_action 随成因走（pi）：「渲染/取像素失败」与选择器无关，劝人重刷
+      // 选择器是误导；只有真正的位置失败才该给 refine_text_or_selector。
+      const mapped =
         data.fail === "render"
-          ? "Cannot render element"
+          ? { code: "IMAGE_RENDER_FAILED", wording: "Cannot render element", action: "get_page_text" }
           : data.fail === "extract"
-            ? "Cannot extract image (cross-origin, no src)"
+            ? {
+                code: "IMAGE_EXTRACT_FAILED",
+                wording: "Cannot extract image (cross-origin, no src)",
+                action: "get_page_text",
+              }
             : data.fail === "missing"
-              ? "Element not found"
-              : "Image element could not be captured"
+              // Reuses the registered locator-miss code — semantically exact, and it
+              // also feeds the same-tool-guard pivot path for a bad selector.
+              ? { code: "ELEMENT_NOT_FOUND", wording: "Element not found", action: "refine_text_or_selector" }
+              : {
+                  code: "IMAGE_EXTRACT_FAILED",
+                  wording: "Image element could not be captured",
+                  action: "get_page_text",
+                }
       // `data.detail` / `data.error` both come from the page world — data channel only.
       const pageText = untrustedPageText(data.detail, data.error)
-      const result: ToolResult = { success: false, error: ourWording }
-      if (pageText) result.data = { page_text_untrusted: pageText }
-      return result
+      return codedToolError(mapped.code, mapped.wording, {
+        suggested_action: mapped.action,
+        ...(pageText ? { page_text_untrusted: pageText } : {}),
+      })
+    }
+
+    // pi（#559 第三条最尖锐形态）：注入表达式在**页面主世界**执行，页面可让返回值为
+    // `{}` / `5` / `"str"` / `[]` —— 那样 data.base64 是 undefined，工具却报成功，
+    // 模型可能据此声称「已经看过图」。所以成功必须先过形状校验。
+    // pi 追加：退化画布（naturalWidth/width 均为 0 → 0×0 canvas）的 toDataURL() 返回
+    // `"data:,"`，注入表达式的 `^data:image/w+;base64,` 替换不命中 → base64 变成
+    // `"data:,"` 这个**非空字符串**，仍然「成功但没有可用的图」。故同时拒掉以 `data:` 开头的。
+    if (
+      typeof data.base64 !== "string" ||
+      data.base64.length === 0 ||
+      data.base64.startsWith("data:")
+    ) {
+      return codedToolError("IMAGE_EXTRACT_FAILED", "Image element could not be captured", {
+        suggested_action: "get_page_text",
+      })
     }
 
     // Path A — same-origin canvas (bytes already in the page; screenshot already
@@ -1012,7 +1057,11 @@ export class BrowserBridge {
   private async analyzeImageFetch(params: Record<string, any>): Promise<ToolResult> {
     const candidateUrl = String(params?.candidate_url || "")
     if (!candidateUrl) {
-      return { success: false, error: "candidate_url is required for analyze_image_fetch" }
+      return codedToolError(
+        "SELECTOR_OR_TEXT_REQUIRED",
+        "candidate_url is required for analyze_image_fetch",
+        { suggested_action: "refine_text_or_selector" },
+      )
     }
     let title = "fetched image"
     try {
