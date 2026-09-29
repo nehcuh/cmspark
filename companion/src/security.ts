@@ -931,72 +931,113 @@ export const IMAGE_FAMILY_ERROR_CODES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Classify an error to determine the response strategy.
+ * 错误码 → 等级：**单一真相源**（#560）。
+ *
+ * 为什么需要这张表：`classifyError` 的兜底是**按 message 子串**判等级，于是「某个码该是
+ * 什么等级」很容易退化成「那个码的名字恰好命中哪条子串」。两者在代码里长得一样，但后者会
+ * 在**改文案时静默换桶** —— #556 N5 已经真的咬过一次（把 `analyze_image_fetch` 的报文改
+ * 干净、丢掉 `429`/`timeout` 后，失败从 recoverable 静默变成整轮终止）。
+ *
+ * 纪律：
+ *   1. 需要「某个等级」的失败**一律给码**，并登记到本表；
+ *   2. 表里的等级必须与该码**真实报文的既有行为**一致 —— 改等级是**语义决策**，不是顺手
+ *      为之（本票只做「与文案解耦」；下方注记了发现的两处不对称，留给 owner）；
+ *   3. 子串表只作**无码**场景的兜底，新码不要再往子串表里加。
+ *
+ * 各条的历史原因沿用原先散落在 classifyError 里的分支注释。
  */
+export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string, ErrorLevel>([
+  // ── security ──────────────────────────────────────────────────────────────
+  // Cookie 信任域拦截：真实报文以 "Security Block: …" 开头，今天靠子串判 security。
+  ["COOKIE_TRUST_DENIED", "security"],
+
+  // ── non_recoverable ───────────────────────────────────────────────────────
+  // Typed missing-peer must not retry even if the message contains timeout/disconnected/not found.
+  ["BROWSER_UNAVAILABLE", "non_recoverable"],
+  // 前两条的真实报文**不含码名**（"downloads API unavailable" /
+  // "downloads.find requires filenameHint and/or urlContains"）→ 今天无子串命中、落默认桶；
+  // DOWNLOAD_BUSY 的报文含码名但与任何子串都不沾（"DOWNLOAD_BUSY: a browser_download is
+  // already in progress on this tab"）→ 同样落默认桶。三条都按现状固定。
+  //
+  // ⚠️ HINT_REQUIRED / DOWNLOAD_BUSY 的语义本可恢复（前者自带 suggested_action、后者是**瞬时**
+  // 互斥），判 non_recoverable 偏严 —— 但那是等级决策，本票不动（见下 SELECTOR_REQUIRED 同款注记）。
+  ["DOWNLOADS_API_UNAVAILABLE", "non_recoverable"],
+  ["HINT_REQUIRED", "non_recoverable"],
+  ["DOWNLOAD_BUSY", "non_recoverable"],
+  // ⚠️ 有意保持现状（**不是**本票要改的决策）：同族的 SELECTOR_OR_TEXT_REQUIRED 是
+  // recoverable，而它（真实报文 "SELECTOR_REQUIRED: interactive tools need a CSS selector…"）
+  // 今天判 non_recoverable。本票只做解耦，不趁机改等级 —— 该不对称已登记给 owner。
+  ["SELECTOR_REQUIRED", "non_recoverable"],
+
+  // ── recoverable ───────────────────────────────────────────────────────────
+  // #554：wait_for 探测失败 —— 一次都没探成功 ⇒ 探测坏了（可重试），不是「元素不存在」。
+  ["WAIT_PROBE_FAILED", "recoverable"],
+  ["WAIT_TIMEOUT", "recoverable"],
+  // #559：image 家族 —— 「这一个元素 / 这一份图源没搞定」，换目标或放弃该子目标即可。
+  ...[...IMAGE_FAMILY_ERROR_CODES].map((c) => [c, "recoverable"] as const),
+  // L-5：unattended NEVER-list 的确认超时/拒绝是 item-blocked + bypass，不是 HALT_SECURITY。
+  ["UNATTENDED_CONFIRM_DENIED", "recoverable"],
+  // L-5（#402 MAJOR-2）：CU focus lease 排队是「等」，不是致命中止。
+  ["CU_FOCUS_LEASE_QUEUED", "recoverable"],
+  // 多智能体 collect：某个 worker 的 handback 缺失/不完整不该 HALT 父任务，也不该打断同批的
+  // 兄弟 collect（thread 8olhpa）。
+  ["HANDBACK_MISSING_STRUCTURE", "recoverable"],
+  ["WORKER_STILL_RUNNING", "recoverable"],
+  // 另一个 worker 已持有 tab。报文是 "tab N held by <id> (HARD_HELD)"，**不含** "tab_locked"，
+  // 所以子串表永远匹配不到，父轮次被中止过（bqn39n vs xdigpo, tab 1492102817）。
+  ["TAB_LOCKED", "recoverable"],
+  ["TAB_BUSY_CONFIRMING", "recoverable"],
+  ["TAB_FORCE_RELEASING", "recoverable"],
+  ["TAB_LEASE_CAP", "recoverable"],
+  // #559：TAB_ID_REQUIRED 原先只靠子串表里的 "tab_id_required" 生效 —— 换成中性文案就掉回
+  // non_recoverable。
+  ["TAB_ID_REQUIRED", "recoverable"],
+  // ↓ 以下这些**本来就存在**（extension 产出并一路传到 data.error_code），但从未登记 →
+  //   全靠「码名恰好命中 recoverable 子串表」生效。等级与今天一致，只是把依赖显式化。
+  ["CDP_ATTACH_FAILED", "recoverable"],
+  ["WRONG_ORIGIN", "recoverable"],
+  ["ELEMENT_NOT_FOUND", "recoverable"],
+  ["ELEMENT_AMBIGUOUS", "recoverable"],
+  ["INVALID_SELECTOR", "recoverable"],
+  ["SELECTOR_OR_TEXT_REQUIRED", "recoverable"],
+  ["WAIT_CONDITION_REQUIRED", "recoverable"],
+  ["EVAL_THROWN", "recoverable"],
+  ["EVAL_DEAD_WORLD", "recoverable"],
+  ["TYPE_UNSUPPORTED_EDITOR", "recoverable"],
+  // ⚠️ 今天判 recoverable 是因为子串表里恰好有 "not allowed"。语义上这是**路径沙箱越界**
+  // （download path not allowed）—— 是否该是 security/non_recoverable 属 owner 决策，
+  // 本票按现状映射，不趁机改等级。
+  ["PATH_ESCAPE", "recoverable"],
+])
+
+/**
+ * Classify an error to determine the response strategy.
+ *
+ * #560：**有 `error_code` 且已登记时，等级只由码决定**（见 ERROR_CODE_LEVELS；
+ * 这是为了让等级不受 message 内容左右 —— 页面/调用方可控的文本不得影响分类）。
+ * 无码或未登记的码 → 落到文案启发式兜底。
+ */
+
 export function classifyError(
   errorMessage: string,
   context?: { toolName?: string; domain?: string; error_code?: string },
 ): ErrorLevel {
-  // Typed missing-peer must not retry even if the message contains timeout/disconnected/not found.
-  if (context?.error_code === "BROWSER_UNAVAILABLE") return "non_recoverable"
-  // #554: wait_for 的两条新码 —— 从 dead end 里救回来的是这次登记。
-  // 语义：一次都没探成功 ⇒ 探测坏了（可重试），不是「元素不存在」。未登记时它们落
-  // 默认桶 non_recoverable → adapter shouldStop/security_halt 整轮终止，而修复前同场景
-  // 是 recoverable 可重试（dual-review claude 实测）。
+  // #560：**有码就以码为准，绝不看文案。**
   //
-  // 刻意用**显式分支**而非 recoverable 子串表：子串表要求 message 里出现 code 名
-  // （codedToolError 的 "${CODE}: " 前缀），即判定依赖**文案形态** —— 谁改了前缀就会
-  // 静默退回整轮终止。走 error_code 与文案解耦，也是本文件既有的写法（见上方
-  // BROWSER_UNAVAILABLE / UNATTENDED_CONFIRM_DENIED / TAB_LOCKED 等同族分支）。
-  if (context?.error_code === "WAIT_PROBE_FAILED" || context?.error_code === "WAIT_TIMEOUT") {
-    return "recoverable"
-  }
-  // #559（并吸收 #556 N5）：**image 家族**。这些码本来就存在（image-extract-utils.ts /
-  // browser-bridge.ts），但从未登记 → 它们全部落默认桶 non_recoverable → adapter
-  // shouldStop / security_halt 整轮终止。实测良性形态亦然：
-  //   "Cannot render element: SecurityError: Tainted canvases may not be exported" →
-  //   non_recoverable。语义上它们都是「这一个元素/这一份图源没搞定」——agent 可以换目标
-  // 或放弃该子目标；重试仍由 same-tool-guard 有界约束，不会无限打转。
+  // 这里原先是一串 `if (context?.error_code === "X")` 分支，而它们的**兄弟码**
+  // （CDP_ATTACH_FAILED / ELEMENT_NOT_FOUND / INVALID_SELECTOR / …）却只靠 recoverable
+  // **子串表**生效 —— 即那些码的等级成立与否，取决于「码名恰好出现在 message 里」。
+  // pi 在 #556 N5 实测过这条路的后果：把 analyze_image_fetch 的报文改干净、丢掉
+  // `429`/`timeout` 子串后，那类失败**静默从 recoverable 变成整轮终止**。
+  // 本票把判定收敛成一张表（ERROR_CODE_LEVELS）。
   //
-  // 刻意用**显式分支**而非 recoverable 子串表：子串表要求文案里恰好出现码名，判定就会
-  // 随文案漂移 —— #560 记录了这一类脆弱性（其中 #556 N5 已经真的咬过一次：改干净文案
-  // 时丢掉 "429"/"timeout" 子串，静默从 recoverable 变成整轮终止）。
-  if (context?.error_code && IMAGE_FAMILY_ERROR_CODES.has(context.error_code)) {
-    return "recoverable"
-  }
-  // pi：TAB_ID_REQUIRED 原先**只靠子串表**里的 "tab_id_required" 生效 —— 换成中性文案
-  // 就会掉回 non_recoverable（正是 #560 要消掉的那种耦合）。并入 TAB_LOCKED 同族显式分支。
-  if (context?.error_code === "TAB_ID_REQUIRED") {
-    return "recoverable"
-  }
-  // L-5: unattended NEVER-list confirm timeout/deny is item-blocked + bypass,
-  // not HALT_SECURITY. 45s fail-closed is unchanged (the tool still denied).
-  if (context?.error_code === "UNATTENDED_CONFIRM_DENIED") return "recoverable"
-  // L-5 (#402 MAJOR-2): CU focus lease queue is a wait, not a fatal halt.
-  // Without this mapping the queued error string falls through to the default
-  // non_recoverable bucket → adapter security_halt → drain drops the retry.
-  if (context?.error_code === "CU_FOCUS_LEASE_QUEUED") return "recoverable"
-  // Multi-agent collect: one worker's missing/partial handback must not
-  // HALT the parent and INTERRUPT the sibling collects in the same batch
-  // (thread 8olhpa). The service already marks these recoverable.
-  if (
-    context?.error_code === "HANDBACK_MISSING_STRUCTURE" ||
-    context?.error_code === "WORKER_STILL_RUNNING"
-  ) {
-    return "recoverable"
-  }
-  // Another worker already holds the tab. The message is
-  // "tab N held by <id> (HARD_HELD)" and does not contain the token
-  // "tab_locked", so the substring list below never matched and the
-  // parent turn halted (bqn39n vs xdigpo, tab 1492102817).
-  if (
-    context?.error_code === "TAB_LOCKED" ||
-    context?.error_code === "TAB_BUSY_CONFIRMING" ||
-    context?.error_code === "TAB_FORCE_RELEASING" ||
-    context?.error_code === "TAB_LEASE_CAP"
-  ) {
-    return "recoverable"
-  }
+  // 语义：
+  //   - 码在表里 → 直接返回该等级。消息里就算写着 `Security Block:` 也不改变结论
+  //     （这正是 #556 要的：页面/调用方可控的文本不得影响分类）。
+  //   - 码不在表里，或压根没有码 → 落到下面的文案启发式（**保持原行为**）。
+  //     这些「无码」站点是 #560 尚未收口的部分。
+  const byCode = context?.error_code ? ERROR_CODE_LEVELS.get(context.error_code) : undefined
+  if (byCode) return byCode
   const msg = errorMessage.toLowerCase()
 
   if (msg.includes("security block")) {
