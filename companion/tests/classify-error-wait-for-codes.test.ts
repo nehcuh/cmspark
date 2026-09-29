@@ -193,9 +193,15 @@ test("#559 counter-proof: an unregistered image-shaped code still halts", () => 
 })
 
 test("#559 cross-package: every image code the extension emits is registered here", () => {
-  // pi（第二轮）：只扫两个**硬编码**文件有盲区 —— 换第三个模块发码就静默通过（它实测过）。
-  // 断言也不该靠 grep `error_code === "CODE"` 字面量：行为等价的重构（|| 链 → 集合判定）会假红。
-  // 改为：扫全树取「产出的码」+ import 导出的集合做断言。
+  // 定位（重要，勿当完备性证明）：这是一个**变更探测器** —— 它把「extension 产出新码而
+  // companion 忘登记」这类漂移变成红测试。它**不**保证「页面文本不再进分类器」之类的
+  // 安全性质（那是行为测试的事），也存在**已知盲区**：
+  //   ① 码名形状：正则只认 `IMAGE_*` / `INVALID_DATA_URL` / `BLOB_URL_UNSUPPORTED`。
+  //      将来若新增**不带 IMAGE_ 前缀**的同族码（如 `CANVAS_TAINTED`），需同步扩正则。
+  //   ② 它扫的是「源码里出现的字符串字面量」，不是「真正会发给 companion 的码」。
+  // 断言方式：import 导出的集合（不是 grep `error_code === "CODE"` 字面量）——
+  //   pi 实测后者会对行为等价的重构（`||` 链 → 集合判定）**假红**。
+  // 去注释：否则「注释里提一句某个码」也会触发假红（pi 第二轮实测）。
   const SCAN_ROOT = "chrome-extension/src"
   const rootOf = (): string => {
     const candidates = [path.resolve(process.cwd(), ".."), process.cwd()]
@@ -203,19 +209,33 @@ test("#559 cross-package: every image code the extension emits is registered her
     throw new Error(`repo root not found from ${process.cwd()}`)
   }
   const root = rootOf()
-  // 去注释：否则「文档里提到某个码」会被误判成「产出该码」。
-  // pi 自己扫过全树：同一正则得到同样的 7 个码、0 误报 —— 无需先剥注释。
+  // 无正则的手写剥离（避免嵌套转义出错）：先去掉 /* */ 段，再截掉每行的 // 之后。
+  const stripComments = (x: string): string => {
+    const NLCH = String.fromCharCode(10) // 避免在源码里写转义序列（易错）
+    const noBlock = x
+      .split("/*")
+      .map((seg, i) => (i === 0 ? seg : seg.slice(seg.indexOf("*/") + 2)))
+      .join("")
+    return noBlock
+      .split(NLCH)
+      .map((l) => {
+        const k = l.indexOf("//")
+        return k >= 0 ? l.slice(0, k) : l
+      })
+      .join(NLCH)
+  }
+  // 收 .ts **与 .tsx**（pi：`chrome-extension/src` 下有 77 个 .tsx，漏掉是真盲区）。
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name)
       if (e.isDirectory()) walk(p, out)
-      else if (e.name.endsWith(".ts") && !e.name.endsWith(".test.ts")) out.push(p)
+      else if (/.tsx?$/.test(e.name) && !/.test.tsx?$/.test(e.name)) out.push(p)
     }
     return out
   }
   const emitted = new Set<string>()
   for (const f of walk(path.join(root, SCAN_ROOT))) {
-    const src = fs.readFileSync(f, "utf8")
+    const src = stripComments(fs.readFileSync(f, "utf8"))
     for (const m of src.matchAll(/"(IMAGE_[A-Z_]+|INVALID_DATA_URL|BLOB_URL_UNSUPPORTED)"/g)) {
       emitted.add(m[1])
     }
