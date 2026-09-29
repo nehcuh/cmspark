@@ -1020,7 +1020,14 @@ export class BrowserBridge {
     // pi（#559 第三条最尖锐形态）：注入表达式在**页面主世界**执行，页面可让返回值为
     // `{}` / `5` / `"str"` / `[]` —— 那样 data.base64 是 undefined，工具却报成功，
     // 模型可能据此声称「已经看过图」。所以成功必须先过形状校验。
-    if (typeof data.base64 !== "string" || data.base64.length === 0) {
+    // pi 追加：退化画布（naturalWidth/width 均为 0 → 0×0 canvas）的 toDataURL() 返回
+    // `"data:,"`，注入表达式的 `^data:image/w+;base64,` 替换不命中 → base64 变成
+    // `"data:,"` 这个**非空字符串**，仍然「成功但没有可用的图」。故同时拒掉以 `data:` 开头的。
+    if (
+      typeof data.base64 !== "string" ||
+      data.base64.length === 0 ||
+      data.base64.startsWith("data:")
+    ) {
       return codedToolError("IMAGE_EXTRACT_FAILED", "Image element could not be captured", {
         suggested_action: "get_page_text",
       })

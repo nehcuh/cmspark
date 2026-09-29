@@ -2,7 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import assert from "node:assert/strict"
-import { classifyError } from "../src/security"
+import { classifyError, IMAGE_FAMILY_ERROR_CODES } from "../src/security"
 
 /**
  * #554 dual-review claude 的 BLOCKING：wait_for 新增的 coded error 若没被处理，会落进
@@ -192,38 +192,60 @@ test("#559 counter-proof: an unregistered image-shaped code still halts", () => 
   )
 })
 
-test("#559 cross-package: every image code the extension emits is registered here", async () => {
-  // pi：手抄的码表会漏 —— extension 新增一个 image 码而 companion 忘登记时，
-  // 没有任何测试变红（这正是本 PR 修的那类漂移）。故直接读 extension 源码取码，
-  // 断言它们都在 security.ts 里登记过。
-  const extFiles = [
-    "chrome-extension/src/background/browser-bridge.ts",
-    "chrome-extension/src/background/image-extract-utils.ts",
-  ]
+test("#559 cross-package: every image code the extension emits is registered here", () => {
+  // pi（第二轮）：只扫两个**硬编码**文件有盲区 —— 换第三个模块发码就静默通过（它实测过）。
+  // 断言也不该靠 grep `error_code === "CODE"` 字面量：行为等价的重构（|| 链 → 集合判定）会假红。
+  // 改为：扫全树取「产出的码」+ import 导出的集合做断言。
+  const SCAN_ROOT = "chrome-extension/src"
   const rootOf = (): string => {
-    const candidates = [
-      path.resolve(process.cwd(), ".."), // 从 companion/ 运行
-      process.cwd(),
-    ]
-    for (const c of candidates) if (fs.existsSync(path.join(c, extFiles[0]))) return c
+    const candidates = [path.resolve(process.cwd(), ".."), process.cwd()]
+    for (const c of candidates) if (fs.existsSync(path.join(c, SCAN_ROOT))) return c
     throw new Error(`repo root not found from ${process.cwd()}`)
   }
   const root = rootOf()
+  // 去注释：否则「文档里提到某个码」会被误判成「产出该码」。
+  // pi 自己扫过全树：同一正则得到同样的 7 个码、0 误报 —— 无需先剥注释。
+  const walk = (dir: string, out: string[] = []): string[] => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) walk(p, out)
+      else if (e.name.endsWith(".ts") && !e.name.endsWith(".test.ts")) out.push(p)
+    }
+    return out
+  }
   const emitted = new Set<string>()
-  for (const f of extFiles) {
-    const src = fs.readFileSync(path.join(root, f), "utf8")
+  for (const f of walk(path.join(root, SCAN_ROOT))) {
+    const src = fs.readFileSync(f, "utf8")
     for (const m of src.matchAll(/"(IMAGE_[A-Z_]+|INVALID_DATA_URL|BLOB_URL_UNSUPPORTED)"/g)) {
       emitted.add(m[1])
     }
   }
   assert.ok(emitted.size >= 7, `anti-vacuity: 至少应扫到 7 个 image 码，实际 ${emitted.size}`)
-  const security = fs.readFileSync(path.join(root, "companion/src/security.ts"), "utf8")
-  const unregistered = [...emitted].filter(
-    (c) => !new RegExp(`error_code === "${c}"`).test(security),
-  )
+  const unregistered = [...emitted].filter((c) => !IMAGE_FAMILY_ERROR_CODES.has(c))
   assert.deepEqual(
     unregistered,
     [],
-    `这些码由 extension 产出但未在 security.ts 登记 → 会落默认桶整轮终止: ${unregistered.join(", ")}`,
+    `这些码由 extension 产出但未登记进 IMAGE_FAMILY_ERROR_CODES → 会落默认桶整轮终止: ${unregistered.join(", ")}`,
+  )
+})
+
+test("#559 TAB_ID_REQUIRED is recoverable by CODE, not only by the substring table", () => {
+  // pi（第二轮）：上一版只靠子串表里的 "tab_id_required" 生效 —— 换成中性文案就掉回
+  // non_recoverable（正是 #560 要消掉的那种耦合）。本断言用**完全中性**的文案，
+  // 于是唯一能救它的就是「已并入显式分支」。
+  assert.equal(
+    classifyError("完全中性的文案，不含任何码名与关键字", {
+      toolName: "analyze_image",
+      error_code: "TAB_ID_REQUIRED",
+    }),
+    "recoverable",
+  )
+  // 反证：同文案换未登记的码 → non_recoverable
+  assert.equal(
+    classifyError("完全中性的文案，不含任何码名与关键字", {
+      toolName: "analyze_image",
+      error_code: "TAB_ID_NOT_REGISTERED",
+    }),
+    "non_recoverable",
   )
 })

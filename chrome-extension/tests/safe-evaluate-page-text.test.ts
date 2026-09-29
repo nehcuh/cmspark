@@ -74,6 +74,9 @@ const HOST_IMAGE_ERROR_LITERALS = new Set([
   "Element not found",
   "Image element could not be captured",
   "Failed to extract image data", // #559：这一支也是宿主自有措辞
+  // pi：这两条漏了 → hostImageFailure() 对两条 coded 路径不可用（只查了 code）
+  "selector is required for analyze_image",
+  "candidate_url is required for analyze_image_fetch",
 ])
 
 /** #559: analyze_image 的失败现在一律带码；码与措辞都取自扩展侧。 */
@@ -514,4 +517,27 @@ test("#559 suggested_action 随成因走（不把非选择器问题说成选择�
       },
     )
   }
+})
+
+test("#559 退化画布返回 \"data:,\" 也不得报成功（pi 第二轮追加）", async () => {
+  // 0×0 canvas 的 toDataURL() 返回 "data:,"，注入表达式的 ^data:image/\w+;base64, 替换不命中
+  // → base64 是 "data:," 这个**非空字符串**，只查「非空」仍会放过。
+  await withBridge(
+    { send: async (m: string) => (m === "Runtime.evaluate" ? { result: { value: { base64: "data:,", width: 0, height: 0, src: "", alt: "" } } } : {}) },
+    async (bridge) => {
+      const r = await bridge.execute("analyze_image", { tabId: 7, selector: "#img" })
+      assert.equal(r.success, false, "退化画布不得报成功")
+      assert.equal(r.data?.error_code, "IMAGE_EXTRACT_FAILED")
+      hostImageFailure(r)
+    },
+  )
+})
+
+test("#559 TAB_ID_REQUIRED 的包装形态仍带码（screenshot 同路径）", async () => {
+  // pi：:747 那处属于 screenshot（不是 analyzeImage）；两处都应带码。
+  await withBridge({}, async (bridge) => {
+    const r = await bridge.execute("screenshot", {})
+    assert.equal(r.success, false)
+    assert.equal(r.data?.error_code, "TAB_ID_REQUIRED", `实际: ${JSON.stringify(r)}`)
+  })
 })
