@@ -936,20 +936,20 @@ export const IMAGE_FAMILY_ERROR_CODES: ReadonlySet<string> = new Set([
  * 为什么登记：这些码一直被生产者写进 `error_code`，但从不在 `ERROR_CODE_LEVELS` 里，
  * 于是等级由**报文子串**决定（#560 的病根）。登记后等级只由码决定，不再随文案漂移。
  *
- * ⚠️ **收录口径**：本批收的码，其产出报文在登记前与登记后等级一致（零变更），
- * **或**已在 下方**逐条声明**的有意变更（见显式条目段的 ⚠️）。
- * 两个先天限制，如实写出：
+ * ⚠️ **收录口径**：本批收的码，其**静态可确定的**产出报文在登记前与登记后等级一致（零变更），
+ * **或**已在下方**逐条声明**的有意变更（见显式条目段的 ⚠️）。
+ * 三个先天限制，如实写出：
  *   ① **本清单是下界**：产出报文由 helper **按分参注入**（码与报文分两处传入）的站点，静态无法
  *      归属到某个码。外部评审 pi 的 AST 扫描器多次比本仓静态扫描找到更多产出点 ——
  *      单 `SUMMONER_ACL` 就达 20+ 处。故「已登记/未登记」都按**下界**理解。
  *   ② **报文可能「由别的码拼成」的码不收**：若某码的报文里插值取的是**另一个错误值**
  *      （`${baseError}` / `${e?.message}` / `${xxx.error}` / `String(err)` …），它的等级可能
- *      继承被嵌入的报文 → **无法证明登记后等级不变**。本批因此排除了 6 个：
+ *      继承被嵌入的报文 → **无法证明登记后等级不变**。本批因此排除了 **7** 个：
  *      `SPAWN_INTENT_FAILED` / `SPAWN_BRIEF_FAILED` / `SPAWN_PACK_FAILED` /
  *      `SETTINGS_REQUIRED` / `ORCHESTRATOR_GATE_ERROR` / `OUTBOUND_CONFIRM_REQUIRED` /
  *      `EMERGENCY_STOP_UNAVAILABLE`（它的 `estop.reason` 经**对象属性**间接继承 `lastSpawnDiag`，
  *      含 "not found at …" / "spawn failed: …"）。
- *   ② 本表**不是**逐条评审过的「该不该致命」 —— 只保证「等级不再随文案漂移」。生产者**自写**
+ *   ③ 本表**不是**逐条评审过的「该不该致命」 —— 只保证「等级不再随文案漂移」。生产者**自写**
  *      `recoverable: true` 的 `BOARD_*` 里，与登记值冲突的那几个属**等级决策**，清单与理由见 #563
  *      （本票不趁机改等级）。
  *
@@ -1076,7 +1076,7 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["TAB_ATTACH_FROZEN", "recoverable"],        // CDP attach 失败，换 tab 再试即可
   ["INTENT_NOT_FOUND", "recoverable"],
   ["L2_ADMISSION_TIMEOUT", "recoverable"],
-  ["CALLER_DISCONNECTED", "recoverable"],      // 唯一带报文的产出点（companion-http.ts:601）报文含
+  ["CALLER_DISCONNECTED", "recoverable"],      // 唯一带报文的产出点（companion-http.ts:600）报文含
                                                //   "disconnected" → base 已是 recoverable，净变更 0
   ["SITE_OP_ESCALATE", "recoverable"],         // adapter.ts:2157-2159 明文约定「经 classifyError
                                                //   **recoverable** 喂回模型换路」，登记以遵守该契约
@@ -1107,7 +1107,7 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // ③ 运行时**中性**（登记为 recoverable 只为「万一到达分类器时按非致命处理」）：
   // ⚠️ PROPOSE_REQUIRED / ALREADY_HAS_STEPS → recoverable。**今天到不了 `classifyError`**：
   //   AST 实测 `if (!proposeDenied) {`（`adapter.ts:1994`）的 then 分支跨 **1994–2234 行、且无 else**，
-  //   其中包含 `classifyError`(2121)、`shouldStop`(2136)、`terminal="security_halt"`(2137)；
+  //   其中包含 `classifyError`(2121)、`shouldStop`(2137)、`terminal="security_halt"`(2138)；
   //   而这两个码的产出点全部写 `data.error_code`（`adapter.ts:236`/`:1750`、
   //   `tool/companion-dispatch.ts:2226`），正是 `proposeDenied` 匹配的字段 → 该码到达时整块被跳过。
   //   仍登记的理由：该守卫只看 `data.error_code`，若将来有产出点把码放到**顶层**

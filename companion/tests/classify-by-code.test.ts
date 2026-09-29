@@ -111,7 +111,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   INTENT_CAP: "recoverable",
   // adapter.ts:1990-1994 把这两个码归为 proposeDenied（排除出失败计数）→ 不是真失败；
   // 注：这两码今天**到不了** `classifyError` —— AST 实测 `if (!proposeDenied)`（`adapter.ts:1994`）的 then
-  // 分支跨 1994–2234 行、**含** `classifyError`(2121) 与 `shouldStop`(2136)（详见源码注释）。
+  // 分支跨 1994–2234 行、**含** `classifyError`(2121) 与 `shouldStop`(2137)（详见源码注释）。
   PROPOSE_REQUIRED: "recoverable",
   ALREADY_HAS_STEPS: "recoverable",
   INTENT_NOT_FOUND: "recoverable",
@@ -198,7 +198,9 @@ test("#563 默认桶清单的等级也必须被钉住（防整体偷改）", () 
   // anti-vacuity：用**松**下界（只防「批量删除/搬运」这种整体翻转，不追具体条数）。
   // 会让整体翻转/搬运无从察觉。若确实要缩这个清单，改这里的下界并在提交信息里说明。
 
-  assert.ok(DEFAULT_NON_RECOVERABLE_CODES.length >= 50, `anti-vacuity: 应 >= 50，实际 ${DEFAULT_NON_RECOVERABLE_CODES.length}`)
+  // NIT-6（评审 pi）：原先用松下界（>=50）→ **静默删 1~9 个码都是 0 红**，与「防整体偷改」的意图不符。
+  // 改为**等值**：删任何一个都要显式改这里（新增码同样要改 —— 这正是「登记表」应有的摩擦）。
+  assert.equal(DEFAULT_NON_RECOVERABLE_CODES.length, 59, `默认桶应有 59 条，实际 ${DEFAULT_NON_RECOVERABLE_CODES.length}（增删请同时改这里并说明）`)
   const wrong = DEFAULT_NON_RECOVERABLE_CODES.filter(
     (c) => ERROR_CODE_LEVELS.get(c) !== "non_recoverable",
   )
@@ -208,13 +210,24 @@ test("#563 显式表与默认桶不得重复登记同一个码（spread 会静�
   // 评审 pi 指出：只查「默认桶 × EXPECTED_LEVELS」挡不住这一手 —— 在显式表里给一个**已在默认桶**
   // 的码加条目（不改 EXPECTED），会被末尾 `.map()` 的 spread **静默覆盖**且 0 红。
   // 故从**源码文本**取显式条目（不能用 ERROR_CODE_LEVELS 的键：那已含 spread，与桶相交恒为空）。
-  const src = readFileSync("src/security.ts", "utf8")
-  // 无正则实现（避免转义）：取每行形如 `["CODE", "level"],` 的显式条目
-  const explicit = src
-    .split(String.fromCharCode(10))
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith('["') && l.includes('",'))
-    .map((l) => l.slice(2, l.indexOf('"', 2)))
+  // NIT-8（评审 pi）：原为 CWD 相对路径，换入口会 ENOENT 假红 → 两个候选路径都试。
+  const src = ["src/security.ts", "companion/src/security.ts"].map((p) => {
+    try { return readFileSync(p, "utf8") } catch { return null }
+  }).find((x) => x !== null)
+  assert.ok(src, "找不到 security.ts（请在 companion/ 或仓库根运行）")
+  // 逐段扫描形如 ["CODE", "level"] 的片段：**不依赖排版**（", " / "," 都可）、
+  // 且**一行多个条目也能抓到**（NIT-7）。用 indexOf 扫描而非正则，避免转义问题。
+  // 已知残余：`["X",\n  "recoverable"],` 这种**跨行拆写**抓不到（本仓不存在该排版）。
+  const explicit: string[] = []
+  for (const line of src.split(String.fromCharCode(10))) {
+    const t = line.trim()
+    let i = t.indexOf('["')
+    while (i >= 0) {
+      const m = /^\["([A-Z][A-Z0-9_]+)",[ ]*"(?:recoverable|non_recoverable|security)"/.exec(t.slice(i))
+      if (m) explicit.push(m[1])
+      i = t.indexOf('["', i + 2)
+    }
+  }
   assert.ok(explicit.length > 20, `anti-vacuity: 显式条目应 >20，实际 ${explicit.length}`)
   const dup = explicit.filter((c) => DEFAULT_NON_RECOVERABLE_CODES.includes(c))
   assert.deepEqual(dup, [], `这些码在显式表与默认桶各登记一次（spread 会覆盖）: ${dup.join(", ")}`)
@@ -278,6 +291,6 @@ test("#560b DOWNLOAD_BUSY：瞬时互斥，等前一个下载结束即可重试"
 // 验证力：能红它的突变都能红上面的登记守卫，纯重复声明）。它的意图已记在 EXPECTED_LEVELS 注释里。
 //
 // 该码硬理由（pi 给的更硬版本）：它**抛不出来** —— 唯一会传空 selector 的位点
-// `browser-bridge.ts:600` 拿的是 `plan.selector`，而 `planLocator` 用 `presentLocator()`
-// 保证非空（`locator-classify.ts:64-71`）；其余调用点 `:1214/:1660/:1735/:1738` 全带
+// `browser-bridge.ts:572` 拿的是 `plan.selector`（调用点 `:512`），而 `planLocator` 用 `presentLocator()`
+// 保证非空（`locator-classify.ts:64-71`）；`failInteractive(…, "ELEMENT_NOT_FOUND")` 在 `:603`。
 // `selector ? … : null` 守卫。故它只是**意图登记**，不是行为修复。
