@@ -931,6 +931,57 @@ export const IMAGE_FAMILY_ERROR_CODES: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * #563 A 批：**当前落默认桶**（`non_recoverable`）的码。
+ *
+ * 为什么登记：这些码一直被生产者写进 `error_code`，但从不在 `ERROR_CODE_LEVELS` 里，
+ * 于是等级由**报文子串**决定（#560 的病根）。登记后等级只由码决定，不再随文案漂移。
+ *
+ * ⚠️ **收录口径**：本批收的码，其**静态可确定的**产出报文在登记前与登记后等级一致（零变更），
+ * **或**已在下方**逐条声明**的有意变更（见显式条目段的 ⚠️）。
+ * 三个先天限制，如实写出：
+ *   ① **本清单是下界**：产出报文由 helper **按分参注入**（码与报文分两处传入）的站点，静态无法
+ *      归属到某个码。外部评审 pi 的 AST 扫描器多次比本仓静态扫描找到更多产出点 ——
+ *      单 `SUMMONER_ACL` 就达 20+ 处。故「已登记/未登记」都按**下界**理解。
+ *   ② **报文可能「由别的码拼成」的码不收**：若某码的报文里插值取的是**另一个错误值**
+ *      （`${baseError}` / `${e?.message}` / `${xxx.error}` / `String(err)` …），它的等级可能
+ *      继承被嵌入的报文 → **无法证明登记后等级不变**。本批因此排除了 **7** 个：
+ *      `SPAWN_INTENT_FAILED` / `SPAWN_BRIEF_FAILED` / `SPAWN_PACK_FAILED` /
+ *      `SETTINGS_REQUIRED` / `ORCHESTRATOR_GATE_ERROR` / `OUTBOUND_CONFIRM_REQUIRED` /
+ *      `EMERGENCY_STOP_UNAVAILABLE`（它的 `estop.reason` 经**对象属性**间接继承 `lastSpawnDiag`，
+ *      含 "not found at …" / "spawn failed: …"）。
+ *   ③ 本表**不是**逐条评审过的「该不该致命」 —— 只保证「等级不再随文案漂移」。生产者**自写**
+ *      `recoverable: true` 的 `BOARD_*` 里，与登记值冲突的那几个属**等级决策**，清单与理由见 #563
+ *      （本票不趁机改等级）。
+ *
+ * 未登记的产出码（含 `new ComputerError(code,…)` 一族的全部 `ComputerErrorCode`）见 #563。
+ */
+
+export const DEFAULT_NON_RECOVERABLE_CODES: readonly string[] = [
+  "ACK_NOT_OPERATOR", "BOARD_CAP_FACTS", "BOARD_CAP_HINTS",
+  "BOARD_CAP_INTENTS", "BOARD_COMPLETE_FORBIDDEN", "BOARD_COMPLETE_L2_REQUIRED",
+  "BOARD_COMPLETE_SELF_APPROVE", "BOARD_EMPTY_COMPLETE_REASON", "BOARD_GOAL_REQUIRED",
+  "BOARD_HINT_FORBIDDEN", "BOARD_MISSING", "BOARD_MODE_OFF",
+  "BOARD_NOT_OPEN", "BOARD_STATUS_INVALID", "BOARD_SUPPORTING_FACTS_REQUIRED",
+  "BOARD_SUPPORTING_FACT_MISSING", "BOARD_TOO_LARGE", "BOARD_TRUST_INSUFFICIENT",
+  "BOARD_TRUST_REJECTED", "COMPUTER_TASK_BUSY", "DISCLOSURE_HITL_REQUIRED",
+  "GRANT_CALLER_MISMATCH", "GRANT_DENIED",
+  "GRANT_EXPIRED", "GRANT_REQUIRED", "GRANT_REVOKED",
+  "HOST_CHROME_TAB_LEASE", "INTENT_BUSY", "INTENT_CLOSED",
+  "INTENT_NOT_HOLDER", "INTERNAL", "INTERNAL_NAME_MISSING",
+  "INVALID_ARGS", "INVALID_KEY", "INVALID_PAYLOAD",
+  "LEASE_HOLDER_SURFACE_MISMATCH", "MAX_WORKERS", "NO_CHANNEL",
+  "NO_ELIGIBLE_EXPERTS", "OPERATE_SIDEPANEL_UNAVAILABLE", "OVERLAY_SHELL_UNAVAILABLE",
+  "OVERLAY_STANDBY", "OVERLAY_THREAD_MISMATCH", "PLAN_READONLY_BLOCKED",
+  "POST_CONFIRM_CANCELLED", "PROFILE_FORBIDDEN", "RESERVED_KEY",
+  "SPAWN_KICK_FAILED", "THREAD_REQUIRED", "TOOL_NOT_OFFERED",
+  "TOOL_REQUIRED", "TOO_MANY_KEYS", "UI_COMMAND_UNAVAILABLE",
+  "UI_COMMAND_UNKNOWN", "UNSUPPORTED_TOOL", "VALUE_TOO_LONG",
+  "WORKER_DENIED", "WORKER_NOT_OWNED", "WORKER_PATH_DENIED",
+]
+
+
+
+/**
  * 错误码 → 等级：**单一真相源**（#560）。
  *
  * 为什么需要这张表：`classifyError` 的兜底是**按 message 子串**判等级，于是「某个码该是
@@ -993,9 +1044,9 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["DOWNLOAD_BUSY", "recoverable"],
   // SELECTOR_REQUIRED：与同族的 SELECTOR_OR_TEXT_REQUIRED 对齐（后者一直是 recoverable）。
   // ⚠️ 该码**抛不出来**（故本条是**意图登记**，不声称是行为修复）：唯一会传空 selector 的位点
-  // `browser-bridge.ts:600` 拿的是 `plan.selector`，而 `planLocator` 用 `presentLocator()` 保证
-  // 非空（`locator-classify.ts:64-71`）；其余调用点 `:1214/:1660/:1735/:1738` 全带
-  // `selector ? … : null` 守卫。（另一重保险：即便抛出，:600 的 `failInteractive(…,
+  // `chrome-extension/src/background/browser-bridge.ts:572` 拿的是 `plan.selector`（调用点 `:512`），
+  // 而 `planLocator` 用 `presentLocator()` 保证非空（`locator-classify.ts:64-71`）；其余调用点全带
+  // `selector ? … : null` 守卫。（另一重保险：即便抛出，`:603` 的 `failInteractive(…,
   // "ELEMENT_NOT_FOUND")` 也会把码改写成 ELEMENT_NOT_FOUND。）
   ["SELECTOR_REQUIRED", "recoverable"],
   // ↓ 以下这些**本来就存在**（extension 产出并一路传到 data.error_code），但从未登记 →
@@ -1014,6 +1065,59 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // （download path not allowed）—— 是否该是 security/non_recoverable 属 owner 决策，
   // 本票按现状映射，不趁机改等级。
   ["PATH_ESCAPE", "recoverable"],
+
+  // ── #563 A 批的**显式条目**：逐条登记。本批的**有意变更全部是放宽（无收紧）**，分三类 ──
+  // （判断「运行时中性」的依据：全仓 `classifyError` 只被 `adapter.ts:2121` 调用。）
+  //
+  // ① 零变更：base 本就 recoverable（码名或报文命中 recoverable 子串表），登记只把依赖显式化。
+  ["DOM_SCRIPT_LOOP_CAPPED", "recoverable"],   // adapter 明确把它排除出熔断预算
+  ["DOM_SCRIPT_VOLUME_CAPPED", "recoverable"], // 同上
+  ["SITE_OP_BANNED", "recoverable"],           // 同上（peek 拒执，工具根本没跑）
+  ["TAB_ATTACH_FROZEN", "recoverable"],        // CDP attach 失败，换 tab 再试即可
+  ["INTENT_NOT_FOUND", "recoverable"],
+  ["L2_ADMISSION_TIMEOUT", "recoverable"],
+  ["CALLER_DISCONNECTED", "recoverable"],      // 唯一带报文的产出点（companion-http.ts:600）报文含
+                                               //   "disconnected" → base 已是 recoverable，净变更 0
+  ["SITE_OP_ESCALATE", "recoverable"],         // adapter.ts:2157-2159 明文约定「经 classifyError
+                                               //   **recoverable** 喂回模型换路」，登记以遵守该契约
+  ["INTENT_CAP", "recoverable"],               // 报文模板含 "already holds" → 命中子串表
+  //
+  // ② 运行时可观测的**放宽**（⚠️ 逐条声明）：
+  // ⚠️ BOARD_HOST_INVALID → recoverable：按仓库自己的判据「**agent 本回合能否自修**」定级 ——
+  //   报文都是「选错线程 / 这个工具不该由 worker 调」→ 换目标或并入父线程即可继续；与兄弟分支
+  //   `tool/companion-dispatch.ts:759`（`board host not found`，无码 → recoverable）一致。
+  //   产出方在 `board/service.ts:179/922/1205` 自写 `recoverable: false`，与本登记**冲突** ——
+  //   属**等级决策**，已记入 #563（本票按判据取 recoverable）。
+  ["BOARD_HOST_INVALID", "recoverable"],
+
+  // ⚠️ CLAIM_FAILED → recoverable：这一条是**本仓静态扫描漏掉、由评审 pi 追出来的** —— 它的报文
+  //   并不来自自己的产出点，而是回退自 `board/service.ts:172` 的 `host thread not found: ${id}`
+  //   （`board/intent-claim.ts:120` 写 `error_code: result.error_code || "CLAIM_FAILED"`）。
+  //   该报文 base 命中子串 "not found" → recoverable；若按「码名」登记成 non_recoverable，
+  //   就是一处**未声明的收紧**（父线程被删的窄竞态下会把整轮终止）。取 recoverable：
+  //   重新解析 host / 读一次 board 即可自修。
+  ["CLAIM_FAILED", "recoverable"],  // ⚠️ SUMMONER_ACL / SUMMONER_L0 → recoverable：两码 base **混合** —— `not allowed` 类报文命中
+  //   子串表里的通用词（那是为 PATH_ESCAPE 的「download path not allowed」加的）→ base recoverable；
+  //   其余（"…not on whitelist" / "…denied" / "SUMMONER_L0: native executor denied on Capture
+  //   overlay"）→ base non_recoverable。统一取 recoverable：对前者 0 变更，**对后者是放宽**。
+  //   判据：summoner surface 不允许该动作 = 让模型换工具/换路的信号，本回合可自修。
+  ["SUMMONER_ACL", "recoverable"],
+  ["SUMMONER_L0", "recoverable"],
+  //
+  // ③ 运行时**中性**（登记为 recoverable 只为「万一到达分类器时按非致命处理」）：
+  // ⚠️ PROPOSE_REQUIRED / ALREADY_HAS_STEPS → recoverable。**今天到不了 `classifyError`**：
+  //   AST 实测 `if (!proposeDenied) {`（`adapter.ts:1994`）的 then 分支跨 **1994–2234 行、且无 else**，
+  //   其中包含 `classifyError`(2121)、`shouldStop`(2137)、`terminal="security_halt"`(2138)；
+  //   而这两个码的产出点全部写 `data.error_code`（`adapter.ts:236`/`:1750`、
+  //   `tool/companion-dispatch.ts:2226`），正是 `proposeDenied` 匹配的字段 → 该码到达时整块被跳过。
+  //   仍登记的理由：该守卫只看 `data.error_code`，若将来有产出点把码放到**顶层**
+  //   `toolResult.error_code`，守卫失效、这两条会立刻成为真实路径 —— 登记可取到「非致命」这一
+  //   预期语义（`adapter.ts:1990-1994` 明示把 `proposeDenied` 视为**不是真失败**）。
+  ["PROPOSE_REQUIRED", "recoverable"],
+  ["ALREADY_HAS_STEPS", "recoverable"],
+
+  // ── #563 A 批：今天落默认桶的码（见 DEFAULT_NON_RECOVERABLE_CODES 的诚实标注）──
+  ...[...DEFAULT_NON_RECOVERABLE_CODES].map((c) => [c, "non_recoverable"] as const),
 ])
 
 /**
