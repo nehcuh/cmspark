@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-29 (lockstep 0.6.10 · S118 安全批次)
+**Updated**: 2026-09-29 (lockstep 0.6.10 · S118 安全批次 · #559 已修)
 
 ## CMspark — 产品 0.6.10
 
@@ -29,7 +29,7 @@
 
 ## Next
 
-- `#559`：`analyze_image` 任何失败都判 `non_recoverable`（缺 `error_code` 落默认桶）→ 整轮终止；image 家族码整族未登记。
+- ~~`#559`~~ **已解决**（PR #561 `bb325d90`）：image 家族 7 码已登记为 recoverable + 补齐无码路径。
 - `#560`：`classifyError` 剩余「依赖文案恰好含某词」的脆弱点（优先显式分支、子串表逐步退役）。
 - `#539`：前提已更正（管道是通的）；若确要断开期不丢日志，建议只加计数、不缓冲（该路径有回环事故史）。
 
