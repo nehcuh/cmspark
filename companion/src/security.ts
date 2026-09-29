@@ -954,7 +954,13 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // ── non_recoverable ───────────────────────────────────────────────────────
   // Typed missing-peer must not retry even if the message contains timeout/disconnected/not found.
   ["BROWSER_UNAVAILABLE", "non_recoverable"],
-  // 以下三条的真实报文不含码名（如 "downloads API unavailable"），今天落默认桶。
+  // 前两条的真实报文**不含码名**（"downloads API unavailable" /
+  // "downloads.find requires filenameHint and/or urlContains"）→ 今天无子串命中、落默认桶；
+  // DOWNLOAD_BUSY 的报文含码名但与任何子串都不沾（"DOWNLOAD_BUSY: a browser_download is
+  // already in progress on this tab"）→ 同样落默认桶。三条都按现状固定。
+  //
+  // ⚠️ HINT_REQUIRED / DOWNLOAD_BUSY 的语义本可恢复（前者自带 suggested_action、后者是**瞬时**
+  // 互斥），判 non_recoverable 偏严 —— 但那是等级决策，本票不动（见下 SELECTOR_REQUIRED 同款注记）。
   ["DOWNLOADS_API_UNAVAILABLE", "non_recoverable"],
   ["HINT_REQUIRED", "non_recoverable"],
   ["DOWNLOAD_BUSY", "non_recoverable"],

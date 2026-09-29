@@ -105,6 +105,54 @@ test("#560 表里的等级 = 记录的既有行为（本票只解耦、不改等
   }
 })
 
+test("#560 表与期望表**双向**一致（防「表里偷偷多一个码」）", () => {
+  // pi：原守卫是单向的 —— 只钉「表里有、期望里有」的条目，往表里加一个新码（哪怕等级错）
+  // 不会变红。补反向断言：两边键集合必须完全相同。
+  assert.deepEqual(
+    [...ERROR_CODE_LEVELS.keys()].sort(),
+    Object.keys(EXPECTED_LEVELS).sort(),
+    "ERROR_CODE_LEVELS 与 EXPECTED_LEVELS 的键集合必须一致（新增码要两边都登记）",
+  )
+})
+
+/**
+ * 两处**已声明的行为变更**（本票解耦带来的，不是回归）：它们只在「不是该码的常规报文」时
+ * 出现，且方向都是「从依赖文案 → 变成稳定/更合适」。这里显式钉住新行为，避免将来被当成
+ * 回归来回改。
+ */
+test("#560 已声明变更 ①：PATH_ESCAPE 的非 PathEscapeError 形态改为稳定 recoverable", () => {
+  // path-sandbox.ts:176：非 PathEscapeError 抛出时是 `PATH_ESCAPE: ${String(e)}`，
+  // 例如 "PATH_ESCAPE: Error: EACCES: permission denied, realpath …"。
+  // 旧行为：命中 nonRecoverable 的 "permission denied" → non_recoverable（**取决于内文**）。
+  // 新行为：码优先 → recoverable（稳定）。沙箱本身仍 fail-closed 拒绝，重试受 same-tool-guard 有界。
+  assert.equal(
+    classifyError("PATH_ESCAPE: Error: EACCES: permission denied, realpath X", {
+      toolName: "browser_download",
+      error_code: "PATH_ESCAPE",
+    }),
+    "recoverable",
+  )
+})
+
+test("#560 已声明变更 ②：COOKIE_TRUST_DENIED 的空报文改为稳定 security", () => {
+  // 旧行为：空 message 无子串命中 → 默认桶 non_recoverable（**取决于报文**）。
+  // 新行为：码优先 → security（稳定，且语义正确：这是 Cookie 信任域拒绝）。
+  // 两者在 adapter 侧都会 shouldStop；差异在等级标签。
+  assert.equal(classifyError("", { toolName: "get_cookies", error_code: "COOKIE_TRUST_DENIED" }), "security")
+  assert.equal(classifyError("任意文案", { toolName: "get_cookies", error_code: "COOKIE_TRUST_DENIED" }), "security")
+})
+
+test("#560 untrusted-domain 分支：带 domain 形态下等级仍由码决定（该分支在生产不可达）", () => {
+  // pi 指出 HOSTILE_SHAPES 都不带 domain，故没覆盖 security.ts 的「untrusted domain + cookie」分支。
+  // 实测该分支在生产**不可达**：classifyError 的唯一生产调用点（adapter.ts:2121）只传
+  // {toolName, error_code}，不传 domain。这里仍显式覆盖，作为防卫性记录。
+  const ctx = { toolName: "get_cookies", domain: "evil.example.com" }
+  // 带码 → 码优先（cookie 码本身就是 security，结论一致）
+  assert.equal(classifyError("", { ...ctx, error_code: "COOKIE_TRUST_DENIED" }), "security")
+  // 无码 → 旧分支仍生效（message 提到 cookie 且域不受信）
+  assert.equal(classifyError("cookie read failed", ctx), "security")
+})
+
 test("#560 未登记的码仍走文案兜底（无码场景保持原行为）", () => {
   // 未登记的码 = 表里没有。此时按既有启发式走：中性 → 默认桶，含触发词 → 对应等级。
   assert.equal(
