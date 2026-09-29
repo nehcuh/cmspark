@@ -33,6 +33,20 @@
 - **验证**：多处突变对照（含「语义等价重构 → 不红」「新文件/新 .tsx 发码 → 红」「注释 → 不红」）；extension **1498/1498**、companion 相关失败 0、门禁 156/0；真端到端（真 bridge + 真 `classifyError`）确认 5/6 形态从终止变为可恢复。
 - **工具教训（本会话第三次栽在同类问题）**：① 嵌套正则转义在 heredoc→node→TS 三层里连续出错（改用 `String.fromCharCode(10)` 与手写剥离规避）；② 用 `Stop-Process` 匹配 `pi-coding` 时**命中了执行该命令的 shell 自己**，把自己杀掉 → 脚本从未启动，却看起来像 pi 卡死（浪费约 20 分钟）。**匹配进程时不要把模式写进自己的命令行。**
 - Recorded: yes — ①「把等级判定钉在 `error_code` 上」要靠**导出集合**而非 grep 字面量，否则守卫会对等价重构假红；②扫源码的守卫必须**先声明它的盲区**，否则「完备性」就是 over-claim；③杀进程命令的模式会出现在自己的命令行里。
+
+### S118 续 2（2026-09-29 上午）[#560 classifyError 等级判定收敛 · PR #562]
+
+- **任务**：把 `classifyError` 的等级判定收敛为「**码优先的单一真相源**」—— 有 `error_code` 且已登记时，等级只由码决定、绝不看 message。
+- **量化**：用属性探测跑扩展侧**全部 24 个码** × 5 种 message 形态 → **16 个不稳定**，其中 10 个是同一形态：「中性文案 → `non_recoverable`，生产形态 → `recoverable`」（`CDP_ATTACH_FAILED`/`ELEMENT_NOT_FOUND`/`ELEMENT_AMBIGUOUS`/`INVALID_SELECTOR`/`SELECTOR_OR_TEXT_REQUIRED`/`WAIT_CONDITION_REQUIRED`/`EVAL_THROWN`/`EVAL_DEAD_WORLD`/`TYPE_UNSUPPORTED_EDITOR`/`WRONG_ORIGIN`）。即它们之所以可恢复，只因**码名里含 `attach failed`/`element not found` 之类子串**。
+- **修法**：新增 `ERROR_CODE_LEVELS`（35 条）为单一真相源；`classifyError` 最前 `if (byCode) return byCode`；原 8 组散落分支收敛进表；无码/未知码仍走原子串启发式。
+- **pi 评审 AWN、无 BLOCKING**（「没找到任何『码优先把本该 security/该终止的失败放过去』的真实路径，也没有行为回归」），逐条复核 35 条定级无异议。但它**更正了我两处 over-claim**：
+  1. 「零行为变更」只在「各码真实报文」口径成立 —— 另有两条非常规形态是真的变更：`PATH_ESCAPE` 的**非 `PathEscapeError`** 形态（旧 `non_recoverable` 靠内文 `permission denied`；新稳定 `recoverable`）、`COOKIE_TRUST_DENIED` + **空报文**（旧 `non_recoverable`；新稳定 `security`）。已声明+钉住。
+  2. 守卫是**单向**的（往表里加一个码 → 0 红），已补双向断言。
+- **范围外发现（本票不修）**：`classifyError` 的「untrusted domain + cookie」安全分支（`security.ts:1042`）在生产**不可达** —— 唯一生产调用点 `adapter.ts:2121` 只传 `{toolName, error_code}`，**不传 `domain`**。属「死检查」问题，已加防卫性用例记录。
+- **两处故意保留的等级不对称**（只登记不改，供 owner）：`SELECTOR_REQUIRED` 是 `non_recoverable` 而同族 `SELECTOR_OR_TEXT_REQUIRED` 是 `recoverable`；`PATH_ESCAPE`（沙箱越界）是 `recoverable`（只因 recoverable 子串表恰好含 `"not allowed"`）。pi 的独立判断：前者「不该是 non_recoverable」（偏严），后者「可接受」（沙箱本身 fail-closed，判终止会因一个路径笔误毙掉无人值守任务）。
+- **仍未收口**：无码站点仍走子串启发式 —— 本票建立了「需要等级就给码」的机制与守卫，把所有无码站点补码是更大的收敛，建议逐步迁移；子串表按纪律**只作兜底、不再新增**。
+- **工具教训（本会话第四次）**：突变脚本用 `s.replace(o+'\n','')` 在 **CRLF** 文件上**静默不生效**，我却报「M3 没红」——差点误判成「测试有缺口」。此后所有突变都**先断言改动真的落地**（如 `if (s.includes(code)) 报错退出`）。
+- Recorded: yes — ①「等级与文案解耦」的正确形态是**导出码→等级表**，而不是把码名塞进子串表（后者是伪解耦：改写文案就退回）；②**声明「零变更」必须限定口径**，否则非常规输入下的真实变更就是 over-claim；③突变验证前必须先确认突变已应用（CRLF/转义会让 replace 静默失败）。
 ### S117 (2026-09-27→28) [0.6.9 拉取 · 多路对抗评审 · 三条 BLOCKING 修复 · cut 0.6.10]
 
 - **任务**：拉 0.6.9（`59931595..b5a7396a`，12 提交）→ 编译 Windows 安装包换装 → 四路独立对抗评审 → 修 BLOCKING → 发布卫生。本机换装 `cmspark-agent v0.6.9`（Setup `c61a949e…`），daemon `:23401` 在听，备份 `CMspark-backup-20260927-225703.zip`。
