@@ -984,17 +984,19 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // ── #560 第二半：把「偏严」的三个改为 recoverable ──────────────────────────
   // 这三条原先落默认桶 non_recoverable → **整轮终止**，但语义上 agent 都能继续：
   //
-  // HINT_REQUIRED（downloads_find 没给 filenameHint/urlContains）：这条结果**自己就带**
-  // `suggested_action: "provide_filenameHint_or_urlContains"` —— 给了一个「让调用方去做」
-  // 的建议、却同时把整轮终止掉，自相矛盾。改 recoverable 后 agent 补上 hint 重试即可。
+  // HINT_REQUIRED（downloads_find 没给 filenameHint/urlContains）：agent 补上 hint 重试即可**自修**。
+  // 判据是「本回合能否自修」，**不是**「结果里有没有 suggested_action」—— 后者同带该字段的
+  // DOWNLOADS_API_UNAVAILABLE（下载 API 不可用，权限/环境类，agent 修不了）仍留在 non_recoverable。
   ["HINT_REQUIRED", "recoverable"],
   // DOWNLOAD_BUSY（同一 tab 上已有 browser_download 在跑）：**瞬时**互斥，等前一个结束再试
   // 就是。判致命中止等于让用户看到对话直接断掉。
   ["DOWNLOAD_BUSY", "recoverable"],
   // SELECTOR_REQUIRED：与同族的 SELECTOR_OR_TEXT_REQUIRED 对齐（后者一直是 recoverable）。
-  // ⚠️ 实测该码**当前不可达**：`getElementCenter` 的抛出在 `browser-bridge.ts:600` 被
-  // `failInteractive(…, "ELEMENT_NOT_FOUND")` 接住，最终 error_code 是 ELEMENT_NOT_FOUND。
-  // 即这条改的是「意图一致性」，行为上无变化（惰性），故不声称它是行为修复。
+  // ⚠️ 该码**抛不出来**（故本条是**意图登记**，不声称是行为修复）：唯一会传空 selector 的位点
+  // `browser-bridge.ts:600` 拿的是 `plan.selector`，而 `planLocator` 用 `presentLocator()` 保证
+  // 非空（`locator-classify.ts:64-71`）；其余调用点 `:1214/:1660/:1735/:1738` 全带
+  // `selector ? … : null` 守卫。（另一重保险：即便抛出，:600 的 `failInteractive(…,
+  // "ELEMENT_NOT_FOUND")` 也会把码改写成 ELEMENT_NOT_FOUND。）
   ["SELECTOR_REQUIRED", "recoverable"],
   // ↓ 以下这些**本来就存在**（extension 产出并一路传到 data.error_code），但从未登记 →
   //   全靠「码名恰好命中 recoverable 子串表」生效。等级与今天一致，只是把依赖显式化。

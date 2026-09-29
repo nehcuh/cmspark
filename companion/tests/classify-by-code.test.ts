@@ -57,14 +57,13 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   COOKIE_TRUST_DENIED: "security",
   // non_recoverable
   BROWSER_UNAVAILABLE: "non_recoverable",
-  DOWNLOADS_API_UNAVAILABLE: "non_recoverable",
-  HINT_REQUIRED: "recoverable", // 结果自带 suggested_action，终止整轮自相矛盾
-  DOWNLOAD_BUSY: "recoverable", // 瞬时互斥，等前一个下载结束即可重试
-  // #560 第二半：三条由 non_recoverable 改为 recoverable（见下「已声明变更」用例）。
-  // ⚠️ SELECTOR_REQUIRED 实测不可达（getElementCenter 的抛出被 failInteractive 改成
-  // ELEMENT_NOT_FOUND），改它只图意图一致，行为无变化。
-  SELECTOR_REQUIRED: "recoverable",
-  // recoverable
+  DOWNLOADS_API_UNAVAILABLE: "non_recoverable", // 下载 API 不可用（权限/环境）不是 agent 能自修的
+  // recoverable（#560 第二半改过下面前三条，原 non_recoverable）
+  // 判据是「**agent 本回合能否自修**」，不是「结果里有没有 suggested_action」
+  // （pi 指出：同带 suggested_action 的 DOWNLOADS_API_UNAVAILABLE 就留在 non_recoverable）。
+  HINT_REQUIRED: "recoverable",   // agent 补上 filenameHint/urlContains 即可自修
+  DOWNLOAD_BUSY: "recoverable",   // 瞬时互斥，等前一个下载结束即可重试
+  SELECTOR_REQUIRED: "recoverable", // 与同族 SELECTOR_OR_TEXT_REQUIRED 对齐；⚠️ 见下注
   WAIT_PROBE_FAILED: "recoverable",
   WAIT_TIMEOUT: "recoverable",
   IMAGE_MIME_REJECTED: "recoverable",
@@ -189,10 +188,9 @@ test("#560 码优先：已登记的码即使报文写着 Security Block 也不�
  * #560 第二半：两条**真实的行为变更**（agent 从「整轮终止」变为「可重试」）。
  * 它们原先落默认桶 non_recoverable —— 不是有意决策，而是「没人登记过」。
  */
-test("#560b HINT_REQUIRED：结果自带 suggested_action，不该终止整轮", () => {
-  // downloads_find 没给 filenameHint/urlContains 时返回该码，并**同时**给出
-  // `suggested_action: "provide_filenameHint_or_urlContains"` —— 既让调用方去做、又把整轮杀掉，
-  // 自相矛盾（adapter 侧 non_recoverable → shouldStop / terminal="security_halt"）。
+test("#560b HINT_REQUIRED：agent 补上 hint 即可自修，不该终止整轮", () => {
+  // 判据是「**agent 本回合能否自修**」：补上 filenameHint/urlContains 重试即可。
+  // （原先落默认桶 → adapter shouldStop / terminal="security_halt" → 整轮终止。）
   assert.equal(
     classifyError("downloads.find requires filenameHint and/or urlContains", {
       toolName: "downloads_find",
@@ -212,8 +210,10 @@ test("#560b DOWNLOAD_BUSY：瞬时互斥，等前一个下载结束即可重试"
   )
 })
 
-test("#560b SELECTOR_REQUIRED 与同族 SELECTOR_OR_TEXT_REQUIRED 现在一致", () => {
-  // 意图一致性（⚠️ 该码实测不可达，见 EXPECTED_LEVELS 注释）。
-  assert.equal(ERROR_CODE_LEVELS.get("SELECTOR_REQUIRED"), ERROR_CODE_LEVELS.get("SELECTOR_OR_TEXT_REQUIRED"))
-  assert.equal(ERROR_CODE_LEVELS.get("SELECTOR_REQUIRED"), "recoverable")
-})
+// ⚠️ 已删除一条「SELECTOR_REQUIRED 与 SELECTOR_OR_TEXT_REQUIRED 相等」的用例（pi 实测它零独立
+// 验证力：能红它的突变都能红上面的登记守卫，纯重复声明）。它的意图已记在 EXPECTED_LEVELS 注释里。
+//
+// 该码硬理由（pi 给的更硬版本）：它**抛不出来** —— 唯一会传空 selector 的位点
+// `browser-bridge.ts:600` 拿的是 `plan.selector`，而 `planLocator` 用 `presentLocator()`
+// 保证非空（`locator-classify.ts:64-71`）；其余调用点 `:1214/:1660/:1735/:1738` 全带
+// `selector ? … : null` 守卫。故它只是**意图登记**，不是行为修复。
