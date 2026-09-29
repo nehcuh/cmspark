@@ -47,21 +47,23 @@ test("#560 每个已登记的码：等级与 message 内容完全无关（属性
 })
 
 /**
- * 「与文案解耦」的**零行为变更**守卫：表里的等级必须等于**该码真实报文的既有行为**。
+ * 等级**登记表**：表里的每个码在此显式登记，且必须与 `ERROR_CODE_LEVELS` 完全一致。
  *
- * 这是把等级改动挡在门外的那道闸 —— 本票只做解耦，**不趁机改等级**（改等级是语义决策）。
- * 若将来有人想改某个码的等级，这条测试会逼他显式改这里的期望值 + 给出理由。
+ * 作用：改等级是**语义决策** —— 这条测试逼改动者同时改表与这里、并在注释里给理由
+ * （#562 只做「与文案解耦」，等级按既有行为原样固定；#560 第二半改过 3 条，见下）。
  */
 const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "security"> = {
   // security
   COOKIE_TRUST_DENIED: "security",
   // non_recoverable
   BROWSER_UNAVAILABLE: "non_recoverable",
-  DOWNLOADS_API_UNAVAILABLE: "non_recoverable",
-  HINT_REQUIRED: "non_recoverable",
-  DOWNLOAD_BUSY: "non_recoverable",
-  SELECTOR_REQUIRED: "non_recoverable", // ⚠️ 与同族 SELECTOR_OR_TEXT_REQUIRED 不对称，见 #560 登记
-  // recoverable
+  DOWNLOADS_API_UNAVAILABLE: "non_recoverable", // 下载 API 不可用（权限/环境）不是 agent 能自修的
+  // recoverable（#560 第二半改过下面前三条，原 non_recoverable）
+  // 判据是「**agent 本回合能否自修**」，不是「结果里有没有 suggested_action」
+  // （pi 指出：同带 suggested_action 的 DOWNLOADS_API_UNAVAILABLE 就留在 non_recoverable）。
+  HINT_REQUIRED: "recoverable",   // agent 补上 filenameHint/urlContains 即可自修
+  DOWNLOAD_BUSY: "recoverable",   // 瞬时互斥，等前一个下载结束即可重试
+  SELECTOR_REQUIRED: "recoverable", // 与同族 SELECTOR_OR_TEXT_REQUIRED 对齐；⚠️ 见下注
   WAIT_PROBE_FAILED: "recoverable",
   WAIT_TIMEOUT: "recoverable",
   IMAGE_MIME_REJECTED: "recoverable",
@@ -93,7 +95,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   PATH_ESCAPE: "recoverable", // ⚠️ 今天靠子串 "not allowed" 得以 recoverable；见 #560
 }
 
-test("#560 表里的等级 = 记录的既有行为（本票只解耦、不改等级）", () => {
+test("#560 登记表：每个码的等级都必须显式登记（改等级要改这里 + 给出理由）", () => {
   for (const [code, expected] of Object.entries(EXPECTED_LEVELS)) {
     assert.equal(ERROR_CODE_LEVELS.get(code), expected, `${code} 的等级被改动了`)
     // 且 classifyError 的对外结论一致（含被 wrap 前的码优先路径）
@@ -181,3 +183,37 @@ test("#560 码优先：已登记的码即使报文写着 Security Block 也不�
     )
   }
 })
+
+/**
+ * #560 第二半：两条**真实的行为变更**（agent 从「整轮终止」变为「可重试」）。
+ * 它们原先落默认桶 non_recoverable —— 不是有意决策，而是「没人登记过」。
+ */
+test("#560b HINT_REQUIRED：agent 补上 hint 即可自修，不该终止整轮", () => {
+  // 判据是「**agent 本回合能否自修**」：补上 filenameHint/urlContains 重试即可。
+  // （原先落默认桶 → adapter shouldStop / terminal="security_halt" → 整轮终止。）
+  assert.equal(
+    classifyError("downloads.find requires filenameHint and/or urlContains", {
+      toolName: "downloads_find",
+      error_code: "HINT_REQUIRED",
+    }),
+    "recoverable",
+  )
+})
+
+test("#560b DOWNLOAD_BUSY：瞬时互斥，等前一个下载结束即可重试", () => {
+  assert.equal(
+    classifyError("DOWNLOAD_BUSY: a browser_download is already in progress on this tab", {
+      toolName: "browser_download",
+      error_code: "DOWNLOAD_BUSY",
+    }),
+    "recoverable",
+  )
+})
+
+// ⚠️ 已删除一条「SELECTOR_REQUIRED 与 SELECTOR_OR_TEXT_REQUIRED 相等」的用例（pi 实测它零独立
+// 验证力：能红它的突变都能红上面的登记守卫，纯重复声明）。它的意图已记在 EXPECTED_LEVELS 注释里。
+//
+// 该码硬理由（pi 给的更硬版本）：它**抛不出来** —— 唯一会传空 selector 的位点
+// `browser-bridge.ts:600` 拿的是 `plan.selector`，而 `planLocator` 用 `presentLocator()`
+// 保证非空（`locator-classify.ts:64-71`）；其余调用点 `:1214/:1660/:1735/:1738` 全带
+// `selector ? … : null` 守卫。故它只是**意图登记**，不是行为修复。

@@ -954,20 +954,9 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // ── non_recoverable ───────────────────────────────────────────────────────
   // Typed missing-peer must not retry even if the message contains timeout/disconnected/not found.
   ["BROWSER_UNAVAILABLE", "non_recoverable"],
-  // 前两条的真实报文**不含码名**（"downloads API unavailable" /
-  // "downloads.find requires filenameHint and/or urlContains"）→ 今天无子串命中、落默认桶；
-  // DOWNLOAD_BUSY 的报文含码名但与任何子串都不沾（"DOWNLOAD_BUSY: a browser_download is
-  // already in progress on this tab"）→ 同样落默认桶。三条都按现状固定。
-  //
-  // ⚠️ HINT_REQUIRED / DOWNLOAD_BUSY 的语义本可恢复（前者自带 suggested_action、后者是**瞬时**
-  // 互斥），判 non_recoverable 偏严 —— 但那是等级决策，本票不动（见下 SELECTOR_REQUIRED 同款注记）。
+  // 真实报文不含码名（"downloads API unavailable"）→ 今天无子串命中、落默认桶。
+  // 语义上也确实不可恢复：下载 API（扩展权限/环境）不可用不是 agent 能重试解决的。
   ["DOWNLOADS_API_UNAVAILABLE", "non_recoverable"],
-  ["HINT_REQUIRED", "non_recoverable"],
-  ["DOWNLOAD_BUSY", "non_recoverable"],
-  // ⚠️ 有意保持现状（**不是**本票要改的决策）：同族的 SELECTOR_OR_TEXT_REQUIRED 是
-  // recoverable，而它（真实报文 "SELECTOR_REQUIRED: interactive tools need a CSS selector…"）
-  // 今天判 non_recoverable。本票只做解耦，不趁机改等级 —— 该不对称已登记给 owner。
-  ["SELECTOR_REQUIRED", "non_recoverable"],
 
   // ── recoverable ───────────────────────────────────────────────────────────
   // #554：wait_for 探测失败 —— 一次都没探成功 ⇒ 探测坏了（可重试），不是「元素不存在」。
@@ -992,6 +981,23 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // #559：TAB_ID_REQUIRED 原先只靠子串表里的 "tab_id_required" 生效 —— 换成中性文案就掉回
   // non_recoverable。
   ["TAB_ID_REQUIRED", "recoverable"],
+  // ── #560 第二半：把「偏严」的三个改为 recoverable ──────────────────────────
+  // 这三条原先落默认桶 non_recoverable → **整轮终止**，但语义上 agent 都能继续：
+  //
+  // HINT_REQUIRED（downloads_find 没给 filenameHint/urlContains）：agent 补上 hint 重试即可**自修**。
+  // 判据是「本回合能否自修」，**不是**「结果里有没有 suggested_action」—— 后者同带该字段的
+  // DOWNLOADS_API_UNAVAILABLE（下载 API 不可用，权限/环境类，agent 修不了）仍留在 non_recoverable。
+  ["HINT_REQUIRED", "recoverable"],
+  // DOWNLOAD_BUSY（同一 tab 上已有 browser_download 在跑）：**瞬时**互斥，等前一个结束再试
+  // 就是。判致命中止等于让用户看到对话直接断掉。
+  ["DOWNLOAD_BUSY", "recoverable"],
+  // SELECTOR_REQUIRED：与同族的 SELECTOR_OR_TEXT_REQUIRED 对齐（后者一直是 recoverable）。
+  // ⚠️ 该码**抛不出来**（故本条是**意图登记**，不声称是行为修复）：唯一会传空 selector 的位点
+  // `browser-bridge.ts:600` 拿的是 `plan.selector`，而 `planLocator` 用 `presentLocator()` 保证
+  // 非空（`locator-classify.ts:64-71`）；其余调用点 `:1214/:1660/:1735/:1738` 全带
+  // `selector ? … : null` 守卫。（另一重保险：即便抛出，:600 的 `failInteractive(…,
+  // "ELEMENT_NOT_FOUND")` 也会把码改写成 ELEMENT_NOT_FOUND。）
+  ["SELECTOR_REQUIRED", "recoverable"],
   // ↓ 以下这些**本来就存在**（extension 产出并一路传到 data.error_code），但从未登记 →
   //   全靠「码名恰好命中 recoverable 子串表」生效。等级与今天一致，只是把依赖显式化。
   ["CDP_ATTACH_FAILED", "recoverable"],
