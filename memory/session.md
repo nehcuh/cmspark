@@ -47,6 +47,32 @@
 - **仍未收口**：无码站点仍走子串启发式 —— 本票建立了「需要等级就给码」的机制与守卫，把所有无码站点补码是更大的收敛，建议逐步迁移；子串表按纪律**只作兜底、不再新增**。
 - **工具教训（本会话第四次）**：突变脚本用 `s.replace(o+'\n','')` 在 **CRLF** 文件上**静默不生效**，我却报「M3 没红」——差点误判成「测试有缺口」。此后所有突变都**先断言改动真的落地**（如 `if (s.includes(code)) 报错退出`）。
 - Recorded: yes — ①「等级与文案解耦」的正确形态是**导出码→等级表**，而不是把码名塞进子串表（后者是伪解耦：改写文案就退回）；②**声明「零变更」必须限定口径**，否则非常规输入下的真实变更就是 over-claim；③突变验证前必须先确认突变已应用（CRLF/转义会让 replace 静默失败）。
+
+### S118 续 3（2026-09-29 傍晚）[#560 第二半 · 决策落地 · PR #564]
+
+- **任务**：落地 #560 第二半留的四条「待决策等级」。结果：`HINT_REQUIRED` / `DOWNLOAD_BUSY` → `recoverable`（真实行为变更）；`SELECTOR_REQUIRED` → 意图登记（**该码抛不出来**）；`PATH_ESCAPE` 保持。
+- **判据**：从「结果里有没有 `suggested_action`」改成 **「agent 本回合能否自修」** —— pi 指出前者站不住（面板 `chat.error` 处理器根本不读 `suggested_action`；且同带该字段的 `DOWNLOADS_API_UNAVAILABLE` 我保留为 `non_recoverable`）。
+- **pi 又抓到我三处 over-claim（全在「声明与口径」层，无 BLOCKING）**：
+  1. 「自相矛盾」论证不成立（见上判据）。
+  2. 「两条真实行为变更」**偏高** —— `HINT_REQUIRED` 的**常规路径到不了 `classifyError`**（`tool-schemas.ts` 的 zod refine 先拒；`adapter.ts:1683-1710` 只回 tool_result 然后 `continue`）。仍可达的只剩空白 hint / dotted 别名两条窄路。**我的端到端证据只证明「分类」、不证明「LLM 可触达」。**
+  3. 我称「三条针对本次改动的显式用例」—— 其中 `SELECTOR_REQUIRED` 那条**零独立验证力**（能红它的突变都能红登记守卫）→ 已删（不留证明不了东西的测试）。
+- **#563 立案并更正两轮**（本次调查最有价值的产出）：
+  - 扫出「**无码**」站点：`success:false` 350 → 无码 273 → 静态报文 103 → **落默认桶 96 处**
+    （pi 严谨口径；我的初估「约 50」**低估约一半**）。
+  - pi 发现**更大的一类**：「**有码但未登记**」**≥108 个码** → 一样走文案启发式。
+    同族实例 `DOWNLOADS_FIND_CHUNK_LOAD` / `WORKER_PATH_DENIED` 实测 `non_recoverable`（整轮终止），
+    且只在报文恰好含 `chrome-extension://` 时才 recoverable。
+  - **更正我的过强结论**：不是「子串原理上无法安全区分」，而是**通用 token 危险、窄子串安全**
+    （`"command required"` 等修好笔误站点、7 条 HITL 报文一条不动）—— 但窄子串仍违反码优先纪律。
+  - 雷区清单：`required` 命中 `OUTBOUND_CONFIRM_REQUIRED`/`ACK_REQUIRED`/`GRANT_REQUIRED`/
+    `DISCLOSURE_HITL_REQUIRED`/`user_gesture required`/`task authorization required`；
+    `requires` 命中 `host_read/host_write/skill_install requires L2 security_token confirmation`。
+- **工具教训（本会话第五次）**：用 bash `echo "...\`required\`..."` 拼 PR 正文 → 反引号被当命令替换，
+  两个词被吃掉，PR 建出来是残的。**拼含反引号的正文一律用 quoted heredoc**。
+- Recorded: yes — ①「等级该是什么」的判据是**agent 能否自修**，不是「结果里有没有建议字段」；
+  ②**可达性声明必须与分类声明分开**（端到端只证明分类，不证明 LLM 可触达）；
+  ③不留「能红它的突变都能红另一个守卫」的测试（零验证力）；④扫源码立票时口径要写清（我低估一半）。
+
 ### S117 (2026-09-27→28) [0.6.9 拉取 · 多路对抗评审 · 三条 BLOCKING 修复 · cut 0.6.10]
 
 - **任务**：拉 0.6.9（`59931595..b5a7396a`，12 提交）→ 编译 Windows 安装包换装 → 四路独立对抗评审 → 修 BLOCKING → 发布卫生。本机换装 `cmspark-agent v0.6.9`（Setup `c61a949e…`），daemon `:23401` 在听，备份 `CMspark-backup-20260927-225703.zip`。
