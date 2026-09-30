@@ -148,6 +148,30 @@
 - 另：`Closes **#529**`（带粗体）**不被 GitHub 识别**为 closing keyword（`closingIssuesReferences` 为空）
   —— closing keyword 要**裸写**。
 - Recorded: yes
+
+### S118 续 7（2026-09-30 上午）[**cut 0.6.11 并发布**]
+
+- **背景**：`v0.6.10` 之后 main 攒了 **7 个 PR**（#555 #557 #561 #562 #564 #565 #566），
+  全是「工具直接是死的 / 整轮对话会无故断掉」这个量级的修复，**用户手上没有**。
+- **流程（照先例）**：
+  1. 版本 lock-step **17 个文件**（与 v0.6.9→0.6.10 的 `b78e0962` 同集合）。
+     ⚠️ 含 `companion/tests/cli-version.test.ts:45` 的**转义形态**锚点 `v0\.6\.11`
+     —— 我的 `split("0\.6\.10")` 第一次**没匹配上**，靠 `String.fromCharCode(92)` 构造才修对。
+     漏掉它会直接让 CLI 版本断言失败（我重编后才暴露）。
+  2. CHANGELOG：`[Unreleased]` 段**存在且必须为空**（release-guard 断言 3）→ 把内容归档进 `[0.6.11]`。
+  3. 全量重跑（bump 后）：companion 70=基线/版本相关 **0**、extension **1499/1499**、门禁 **156/0**。
+  4. `release-guard.sh` 本地核对：tag 前**只**因「HEAD 无 tag」失败（符合设计）。
+  5. **先 `workflow_dispatch` dry-run**（run `36661632709`）：三端构建成功、Publish **正确跳过**。
+  6. 打 tag `v0.6.11` → push（run `36662324260`）：preflight + 三端 + Publish **全绿**。
+- **产出**：https://github.com/nehcuh/cmspark/releases/tag/v0.6.11
+  · tag → **`4158cffe`**（== 打 tag 时 main HEAD，**无「同版本两份二进制」**）
+  · 6 个产物（三端 zip + Setup.exe + SHA256SUMS ×2）
+  · `CMspark-Setup-v0.6.11.exe` sha256 `6fb3814fe9337c2bb472c0b06101a06cd04a075ea18d1d5b1b56aeb6ac57cf2f`
+- **Tool 教训（本会话第九次）**：**转义形态的字符串替换**必须绕开 shell/JS 双重转义歧义 ——
+  我第一次用 `split("0\.6\.10")` 静默没命中，改用 `String.fromCharCode(92)` 拼反斜杠才可靠。
+  另：**改了版本锚后必须 `rm -rf .test-dist` 重编**，否则测试跑的是旧产物（我因此看到过一次假红）。
+- **Next**：换装官方 v0.6.11（本机仍 0.6.10）；技术待办优先级 **#568** > **#567** > #563 批次 > #548/#550/#539。
+- Recorded: yes
 ### S117 (2026-09-27→28) [0.6.9 拉取 · 多路对抗评审 · 三条 BLOCKING 修复 · cut 0.6.10]
 
 - **任务**：拉 0.6.9（`59931595..b5a7396a`，12 提交）→ 编译 Windows 安装包换装 → 四路独立对抗评审 → 修 BLOCKING → 发布卫生。本机换装 `cmspark-agent v0.6.9`（Setup `c61a949e…`），daemon `:23401` 在听，备份 `CMspark-backup-20260927-225703.zip`。
