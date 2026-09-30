@@ -1998,6 +1998,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               toolResult.data?.error_code === "ALREADY_HAS_STEPS"
             if (!proposeDenied) {
             logger.warn("llm.tool_failed", {
+              // #569: thread_id 是必须的 —— 多 worker 并行时，没有它就无法把某次工具失败
+              // 归因到具体线程（本次 ibg908 事故排查就卡在这）。同文件 :2205 的
+              // llm.locator_pivot 早已带上，此处与下面 llm.recoverable_loop_detected 是遗漏。
+              thread_id: threadId,
               tool_call_id: tc.id,
               tool_name: toolName,
               error: toolResult.error,
@@ -2207,6 +2211,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               })
             } else if (sameToolDecision.action === "stop") {
               logger.error("llm.recoverable_loop_detected", {
+                // #569: 这条日志是「某线程被熔断处死」的唯一直接证据 —— 之前没有 thread_id，
+                // 导致本次事故里最有诊断价值的一行反而无法归因。
+                thread_id: threadId,
                 tool_name: toolName,
                 fail_count: failCount,
                 threshold: MAX_SAME_TOOL_RECOVERABLE_FAILURES,

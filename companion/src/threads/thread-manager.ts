@@ -91,6 +91,23 @@ interface Thread {
    * per-tick readFileSync+JSON.parse of whole threads).
    */
   latest_tool?: string
+  /**
+   * #569: how the **last finished run** on this thread terminated
+   * (`RunTerminal`: "aborted" | "security_halt" | "circuit_breaker" | "round_limit" | "error";
+   * **`null` = the run ended normally**, i.e. the model just finished — that is a real value,
+   * not "unknown"). Persisted at run end (`message-router`) because the in-memory `RunStats`
+   * dies with the turn. Without this, a worker killed mid-run is **indistinguishable from an idle
+   * one** — see ibg908, where 2 workers were silently killed by the same-tool breaker and neither
+   * the parent thread nor the user could tell what happened.
+   *
+   * Tri-state reading (together with `last_run_ended_at`):
+   *   ended_at === undefined          → this thread has never finished a run
+   *   ended_at set + terminal === null → ended normally
+   *   ended_at set + terminal !== null → ended by that terminal
+   */
+  last_run_terminal?: string | null
+  /** #569: ISO-8601 timestamp of that run end (see `last_run_terminal`). */
+  last_run_ended_at?: string | null
   /** #502 E Inspect: first user ask preview (≤160 chars, whitespace-collapsed). */
   brief?: string
   /** Parent orchestrator thread id when agent_role=worker. */

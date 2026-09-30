@@ -1080,7 +1080,16 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
                                                //   "disconnected" → base 已是 recoverable，净变更 0
   ["SITE_OP_ESCALATE", "recoverable"],         // adapter.ts:2157-2159 明文约定「经 classifyError
                                                //   **recoverable** 喂回模型换路」，登记以遵守该契约
-  ["INTENT_CAP", "recoverable"],               // 报文模板含 "already holds" → 命中子串表
+  ["INTENT_CAP", "recoverable"],
+  // ⚠️ EVALUATE_NULL_RESULT → recoverable（#569 评审 claude 发现的**脆弱点**）：
+  //   它此前**未登记**，等级靠**文案兜底**命中子串 "script evaluation failed" 才得以 recoverable；
+  //   而 classifyError 的默认是 `non_recoverable`（`security.ts` 的兜底 return）——
+  //   即：将来谁改一句报错文案，这个等级就会**静默翻成 non_recoverable**，
+  //   从「可重试」变成 `security_halt` **终止整轮**（比同工具熔断更狠）。
+  //   登记后等级只由码决定。生产报文实测本就是 recoverable ⇒ **零行为变更**；
+  //   仅当报文不含该子串时（例如空报文）由 non_recoverable 变为 recoverable —— 即本意。
+  //   产出点：`site-op-memory.ts:334-343`（`evaluate` 返回 null / CSP / 空完成）。
+  ["EVALUATE_NULL_RESULT", "recoverable"],               // 报文模板含 "already holds" → 命中子串表
   //
   // ② 运行时可观测的**放宽**（⚠️ 逐条声明）：
   // ⚠️ BOARD_HOST_INVALID → recoverable：按仓库自己的判据「**agent 本回合能否自修**」定级 ——
