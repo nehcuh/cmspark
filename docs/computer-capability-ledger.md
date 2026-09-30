@@ -81,7 +81,7 @@ cua 的做法不同：既然已经通过 UIA 找到了元素，就**用 UIA 投�
 
 | 靶子/框架 | 前台左键 | 后台左键 | 后台键盘 | 后台滚动 | 后台拖拽 |
 |---|---|---|---|---|---|
-| **WPF** | Gap 🟡 | **Delivered** ✅ | Gap | Gap | Gap |
+| **WPF** | Gap | **Delivered（后台已验证）** ✅ | Gap | Gap | Gap |
 | WinUI3 | Gap | Gap | Gap | Gap | Gap |
 | WebView2 | Gap | Gap | Gap | Gap | Gap |
 | Electron | Gap | Gap | Gap | Gap | Gap |
@@ -96,9 +96,24 @@ cua 的做法不同：既然已经通过 UIA 找到了元素，就**用 UIA 投�
 ```
 
 UIA 树为 `Window/Button/Text`；点击处理器写的标记文件出现 ⇒ **靶子侧状态变化** ⇒ Delivered。
-⚠️ **仍缺 `focus 未变` / `z-order 未变` / `无输入泄漏` / `光标保持` 四项 oracle**（见 §5），
-所以严格说这是「动作送达且靶子状态变了，但『后台』的四个副作用 oracle 尚未断言」——
-在补齐前**不额外宣称**「对用户零打扰」。
+**四个后台 oracle 现已全部通过**（同一台机、同一夹具、同一轮实测）：
+
+```
+focus_kept           true
+zorder_kept          true
+cursor_kept          true
+no_leaked_input      true   (类型: derived —— 见 §5 的诚实说明)
+background_verified  true
+```
+
+oracle 脚本：`computer-bg-oracles.ps1`（`snapshot` / `compare` 两模式）。
+**且已证明 oracle 有牙**：`computer-bg-oracles.test.ts` 用合成快照逐项触发 ——
+焦点变 / 光标动 / z 序变 各自都会把 `background_verified` 打成 **false**；
+并且 **`-Delivery sendinput` 即使桌面一切未变也必须判 false**（前台路径不得冒充后台）。
+
+> ⚠️ `no_leaked_input` 是 **derived** 而非 observed：它由 `focus_kept ∧ cursor_kept ∧
+> 投递方式是 UIA-pattern` 推出（SendInput 注入输入队列、必然作用于持焦窗口；UIA 模式直接作用于元素）。
+> 这是**强代理而非证明**，故台账记为 derived。将来若加输入队列观察者，可升级为 observed。
 
 **同为 Windows 的 WinForms 是反例**（同批实测）：其 Button 经 UIA 只暴露成**裸 `Pane`、无动作模式**：
 
@@ -137,10 +152,10 @@ UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tri
 |---|---|---|
 | **靶子状态变化** | ✅ 有 | `executor.ts` 的 `crossverifyChannel: "pixel-region" \| "uia+ocr"`；`computer-imgdiff.ps1` 的 `maxZoneRatio`/`maxBlobRatio`（专为区分「弹窗出现」与「光标闪烁」设计） |
 | **弹窗不变量（A2.1）** | ✅ 有（每次注入后跑） | `executor.ts:1403` |
-| **focus 未变** | ❌ **无** | 未实现 |
-| **z-order 未变** | ❌ **无** | 未实现 |
-| **无输入泄漏** | ❌ **无** | 未实现 |
-| **光标保持** | ❌ **无** | 未实现 |
+| **focus 未变** | ✅ **有**（已实测） | `computer-bg-oracles.ps1`（`focus_kept`） |
+| **z-order 未变** | ✅ **有**（已实测） | 同上（`zorder_kept`，EnumWindows 顶序 Top-16） |
+| **无输入泄漏** | 🟡 **derived**（非 observed，见 §3.3 说明） | 同上（`no_leaked_input`） |
+| **光标保持** | ✅ **有**（已实测） | 同上（`cursor_kept`，GetCursorPos） |
 
 ⚠️ **注意区分**：前两项服务于**安全**（别在弹窗上乱点），后四项才能证明**「后台」真的成立**。
 我们**有机制，缺后四项** —— 而它们恰恰是「不抢焦点」这件事的验收条件。
@@ -157,7 +172,7 @@ UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tri
 | # | 事项 | 状态 |
 |---|---|---|
 | 1 | **本台账** | ✅ 本文件 |
-| 2 | **补 4 个后台 oracle**（focus / z-order / 输入泄漏 / 光标） | 待做 —— 可复用 imgdiff 机制 |
+| 2 | **补 4 个后台 oracle** | ✅ 已做（`computer-bg-oracles.ps1` + 5 项测试；`no_leaked_input` 为 derived） |
 | 3 | **Windows 后台投递**：UIA 动作模式 —— 脚本 `computer-uia-invoke.ps1` 已落地并在 WPF 上实测 **Delivered**；**TS 侧接线与闸门**待做 | 🟡 部分 |
 | 4 | **GUI 夹具**（先做最小：WinUI3 或 WPF 一个窗口） | 待做 |
 | 5 | **macOS 对齐** | → 立 issue 跟踪（本轮不做） |
