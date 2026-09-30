@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-30 (0.6.10 · S118 安全批次 #559 #560 已修 · #563 A 批已合并)
+**Updated**: 2026-09-30 (0.6.10 · S118 安全批次 · #554/#556/#558/#559/#560 已修 · #563 A 批 · #528/#529 · #537 拆解)
 
 ## CMspark — 产品 0.6.10
 
