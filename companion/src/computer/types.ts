@@ -429,6 +429,44 @@ export interface Locator {
 
 export type ClickKind = "click" | "double_click" | "right_click"
 
+/** #572: which UIA action pattern to use. `auto` tries the least-destructive route first. */
+export type UiaInvokeMode = "auto" | "invoke" | "setvalue" | "select" | "toggle" | "scroll"
+
+/**
+ * #572: outcome of a UIA **action-pattern** delivery attempt.
+ *
+ * This is deliberately a discriminated result rather than a thrown ComputerError: a missing
+ * pattern or a vanished element is a **fallback decision** (use the coordinate path), not a
+ * failure to report upward, and the caller must be able to switch routes without unwinding.
+ * It also keeps these codes out of `ComputerErrorCode` — they are internal routing signals,
+ * not something the model should ever see.
+ */
+export type UiaInvokeResult =
+  | {
+      ok: true
+      mode: string
+      name: string
+      controlType: string
+      automationId: string
+      x: number
+      y: number
+      bbox: { x: number; y: number; w: number; h: number }
+      tried: string[]
+      /** Always false on success — that is the entire point (§oracles in the ledger). */
+      foreground: false
+    }
+  | {
+      ok: false
+      reason:
+        | "window_gone"
+        | "element_gone"
+        | "element_mismatch"
+        | "pattern_unavailable"
+        | "method_failed"
+        | "bad_output"
+      detail: string
+    }
+
 export interface InputInjector {
   click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void>
   typeText(hwnd: number, text: string): Promise<void>
@@ -438,6 +476,30 @@ export interface InputInjector {
   scroll(hwnd: number, x: number, y: number, delta: number): Promise<void>
   /** WP2: left-button drag (x,y) -> (x2,y2), client px. */
   drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void>
+  /**
+   * #572: deliver through a UIA **action pattern** instead of synthesizing input. This is the
+   * background route — the element is re-found by accessible Name and acted on directly, so
+   * the target never has to be raised to the foreground (#534 / #530).
+   *
+   * Optional: an injector without UIA capability simply does not implement it, and callers
+   * must treat `undefined` as "not available" and fall back to the coordinate path.
+   *
+   * Never falls back to blind coordinates itself — a stale coordinate is the #532 defect
+   * class. It refuses with `element_gone` and lets the caller re-locate.
+   */
+  invokeUia?(
+    hwnd: number,
+    name: string,
+    mode: UiaInvokeMode,
+    opts?: {
+      value?: string
+      direction?: "up" | "down" | "left" | "right"
+      scrollAmount?: number
+      /** Identity re-verification against the earlier locate hit (#572). */
+      expectControlType?: string
+      expectAutomationId?: string
+    },
+  ): Promise<UiaInvokeResult>
   probeWindow(hwnd: number): Promise<WindowInfo>
   foregroundHwnd(): Promise<number>
   /**
