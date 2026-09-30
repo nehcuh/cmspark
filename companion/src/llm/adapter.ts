@@ -2585,6 +2585,19 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     tool_calls: runStats?.toolCalls ?? 0,
   })
   if (runStats) runStats.terminal = "round_limit"
+  } catch (runErr: any) {
+    // #569: 本函数级 try **只配了 finally、没有 catch** —— 异常会外逸到 message-router 的
+    // catch，而那里是**在落盘之后**才设 `"aborted"`/`"error"`（message-router.ts:1403-1405）。
+    // 若不在此处兜底，finally 会把「异常结束」落成 `terminal === null`，
+    // 而 catalog 文案把 null+时间戳教作「正常跑完」—— 那是个**错误的肯定答案**
+    // （正是 #569 要消灭的「误读 worker 状态」，评审 claude 独立发现并证成回归）。
+    //
+    // 只在本函数自己没定过终值时兜底；措辞与 router 的判据对齐。
+    // 抛回原异常 ⇒ router catch / 上层调用方行为一字不变。
+    if (!runStats.terminal) {
+      runStats.terminal = runErr?.name === "AbortError" ? "aborted" : "error"
+    }
+    throw runErr
   } finally {
     if (runStats && signal?.aborted) runStats.terminal = "aborted"
     // #569: run 终值落盘。此处是**唯一覆盖全部 run 路径**的位置 ——

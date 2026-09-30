@@ -163,3 +163,31 @@ test("#569 落盘不扰动 run_progress —— update() 是胖 API，带播种�
     "落盘**不得**播种/改动 run_progress（update() 的副作用不能被本调用带出）",
   )
 })
+
+test("#569 异常逃逸必须落成 error/aborted —— 不得留下「正常跑完」的错误痕迹", () => {
+  // 评审 claude 实测出的两类触发（我最初的实现两者都错）：
+  //   A in-try 逃逸：异常从函数级 try 内、不经任何登记点抛出（如 runContextBudgetPass /
+  //     buildCurrentContext / 循环内磁盘写）→ finally 先于 router 的 catch 执行 →
+  //     terminal 仍为 null → 落盘 {null, now}，而 catalog 文案把「null + 时间戳」教作
+  //     「正常跑完」⇒ **错误的肯定痕迹**。
+  //   B pre-try 崩溃：entry→try 之间抛出 → finally 不执行 → 零落盘，读到上次 run 残留。
+  // 旧落点（在 router 的 catch **之后**）对这两类都写 "error" ⇒ 搬迁后是**回归**。
+  const cwd = ["src/llm/adapter.ts", "companion/src/llm/adapter.ts"].find((p) => {
+    try { readFileSync(p, "utf8"); return true } catch { return false }
+  })
+  assert.ok(cwd, "找不到 adapter.ts")
+  const src = readFileSync(cwd, "utf8")
+
+  // ① 必须存在**函数级 catch**（在 finally 之前）——这是兜底的前提。
+  const catchAt = src.indexOf("} catch (runErr: any) {")
+  const finallyAt = src.indexOf("} finally {", catchAt > 0 ? catchAt : 0)
+  assert.ok(catchAt > 0, "函数级 try 必须配 catch：只有 finally 会让异常逃逸时落成「正常跑完」")
+  assert.ok(finallyAt > catchAt, "catch 必须在 finally 之前（同一 try 语句）")
+
+  // ② catch 里必须在 terminal 未定时兜底，且**抛回原异常**（router 语义不变）。
+  const block = src.slice(catchAt, finallyAt)
+  assert.ok(block.includes("if (!runStats.terminal)"), "catch 里应仅在未定终值时兜底")
+  assert.ok(block.includes('"error"'), "非 abort 异常应落成 error")
+  assert.ok(block.includes('"aborted"'), "AbortError 应落成 aborted")
+  assert.ok(/throw runErr/.test(block), "必须抛回原异常 —— 否则 router 的 catch 行为被改变")
+})
