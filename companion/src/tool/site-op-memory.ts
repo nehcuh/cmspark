@@ -32,6 +32,53 @@ export const SITE_ATTACH_FAIL_BAN = 1
 export const SITE_ORIGIN_FAIL_ESCALATE = 4
 export const EVALUATE_NULL_RESULT = "EVALUATE_NULL_RESULT"
 
+/**
+ * Failure codes that must NOT aggregate toward the origin CDP fail streak or
+ * locator bans (#528, real-run 2026-09-26): they are parameter/authorization
+ * issues the model can fix immediately, not evidence that the page's CDP
+ * interaction path is broken. Counting them let 4× "evaluate without
+ * security_token" escalate an origin to SITE_OP_ESCALATE and ban the very
+ * selector-based retry that would have succeeded.
+ *
+ * ⚠️ **收录边界（有意取舍，评审 pi 复核后确认并写明）**：本集是**反向排除** ——
+ * 列在这里的码不累计，**其余一律累计，包括 `undefined`**（无码时
+ * `recordSiteOpFailure` 落 `UNKNOWN` 后照常计数）。即「未知码按 CDP 健康信号处理，
+ * **宁可多熔断**」。
+ *
+ * 代价 —— **实测清单**（评审 pi 用探针逐条验过：4 次即升级 origin 并封掉后续 click）：
+ *   · **参数类**：`INVALID_SELECTOR`（模型给出坏 CSS；zod 只要求非空串）、
+ *     `scroll({})` 的无码 tabId 缺失
+ *   · **授权类**：`L2_ADMISSION_TIMEOUT`（L2 队列排队超时，**所有** L2 工具都走该队列）、
+ *     `UNATTENDED_CONFIRM_DENIED`（用户/超时拒批）、
+ *     **无码**的 `"Invalid or expired security token for evaluate"`
+ *     （`tool/l2-admission.ts:1887-1890`：模型回放被脱敏的旧 token —— **与 #528 同形**）
+ *   · **机器预算类**：`DOM_SCRIPT_LOOP_CAPPED` / `DOM_SCRIPT_VOLUME_CAPPED`
+ *     （与已排除的 `SITE_OP_BANNED` 同形态 —— 那是 #425 的约定）
+ * 收口见 **#568**（含「l2-admission 分支复用 `EVALUATE_AUTH_REQUIRED`」的一行修法）。
+ *
+ * ⚠️ **为什么不立刻正向化**（评审 pi 实测支持该理由）：真正属于「CDP / 脚本健康」的失败
+ * **大量是无码的** —— 例如 `chrome-extension/.../browser-bridge.ts` 的
+ * "Script injection failed in both ISOLATED and MAIN worlds"（safeEvaluate 三路全败）、
+ * `page-read-tools.ts` 的 `PAGE_READ_INVALID_RESULT`（**无冒号**，companion 的
+ * `/^([A-Z][A-Z0-9_]+):/` 抓不到）。这些 `undefined` 今天**会正常累计并升级**；
+ * 一旦改成「只有已知 CDP 码才累计」，这些**真实信号会静默消失**。
+ * 故在现有编码覆盖度下，「反向排除 + 声明边界」是**更安全**的方向。
+ * 收口路径：先补码（#563）→ 届时再正向化。
+ */
+export const NON_AGGREGATING_SITE_OP_CODES: ReadonlySet<string> = new Set([
+  // evaluate 缺 security_token / 未获批准（#528 的原始事故形态）
+  "EVALUATE_AUTH_REQUIRED",
+  // wait_for 既没给 selector 也没给 network_idle —— 纯参数缺失。
+  // 评审 pi 实测：`wait_for({tabId, network_idle:false})` 是**合法**调用
+  // （catalog required 只有 tabId；normalizeWaitForParams 保留显式 false），
+  // 此前 4 次即可把 origin 升级到 SITE_OP_ESCALATE、封掉后续 click。
+  "WAIT_CONDITION_REQUIRED",
+  // ⚠️ SELECTOR_REQUIRED 在本仓**不可达**（唯一生产者 `getElementCenter` 的 5 个调用点
+  //    全传真值，且即便抛出也会被 `classifyInteractiveFailure` 改写成 ELEMENT_NOT_FOUND）。
+  //    保留它属**意图声明**，不是有效防线 —— 不要以为这两条里它也在守。
+  "SELECTOR_REQUIRED",
+])
+
 const CDP_INTERACTIVE = new Set([
   "click",
   "dblclick",
@@ -367,6 +414,10 @@ export function recordSiteOpFailure(
     originPersistDue: false,
   }
   if (!isCdpInteractiveTool(toolName)) return empty
+  // #528: parameter/authorization refusals are model-correctable, not CDP-health
+  // signals — never aggregate them toward locator bans or the origin streak.
+  // (adapter.ts also gates the call site; this keeps the invariant testable here.)
+  if (errorCode && NON_AGGREGATING_SITE_OP_CODES.has(errorCode)) return empty
   const s = stateFor(threadId)
   const tabId = typeof params.tabId === "number" ? params.tabId : undefined
   const code = errorCode || "UNKNOWN"
@@ -552,8 +603,8 @@ export function thawTabIfPresent(threadId: string, tabId: number | undefined): v
 /**
  * #417 NIT-1/NIT-4 — single source for linux / unarmed / armed escalate copy.
  * Envelope (`originEscalateError`), locator-ban alt, and origin-streak prompt
- * all read from here so #414/#417 cannot drift. Armed osascript_eval is
- * darwin-only (Win/Linux never see a macOS path).
+ * all read from here so #414/#417 cannot drift. osascript_eval was removed
+ * from the escalation copy in #529 (deterministic dead path on modern Chrome).
  */
 export type EscalateGuidanceMode = "linux" | "unarmed" | "armed"
 
@@ -593,19 +644,17 @@ export function escalateGuidance(
         "The loop will never flip this flag itself.",
     }
   }
-  const osa = plat === "darwin"
   return {
     mode: "armed",
     locatorAlt:
       "Prefer an alternative path " +
-      `(different locator, navigate to reset, host_computer under Rule 12 confirm${osa ? ", or osascript_eval" : ""}) ` +
+      "(different locator, navigate to reset, or host_computer under Rule 12 confirm) " +
       "instead of re-probing the same locator.",
     originEsc:
-      `do not retry CDP; escalate to host_computer (Chrome token, ALWAYS confirms)${osa ? " or osascript_eval" : ""}`,
+      "do not retry CDP; escalate to host_computer (Chrome token, ALWAYS confirms)",
     envelopeGuidance:
       "After this origin fail streak / CDP attach freeze / DOM-script cap, you MAY call host_computer on the Chrome app token. " +
-      "That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). NEVER treat this as auto-approved CU." +
-      (osa ? " osascript_eval is a last-resort macOS JS path after CDP+scripting both fail." : ""),
+      "That ALWAYS pops a confirm (无人值守/三旗 will NOT skip it). NEVER treat this as auto-approved CU.",
   }
 }
 

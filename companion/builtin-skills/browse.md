@@ -34,14 +34,15 @@ You have access to a Chrome browser through the CMspark Browser Agent. You can:
 **If `get_page_text` returns empty/null:**
 - The extension's cross-platform fallback (ISOLATED world scripting via `chrome.scripting`) handles CSP-restricted pages on ALL platforms
 - **All platforms:** Try `get_page_html(tabId)`, `evaluate(tabId, code)`, or `screenshot(tabId)` next
-- **macOS only (last resort):** `osascript_eval` exists only on darwin; it is **not available** on Windows/Linux and must never be called there
+- **macOS note:** `osascript_eval` is **no longer offered** on any platform (#529 — AppleScript-JS is a
+  deterministic dead path on modern Chrome). Do not look for it; use the CDP / `chrome.scripting` paths above.
 
 **Content extraction on restricted pages, by platform:**
 
 | Platform | Primary | Fallback 1 | Fallback 2 |
 |----------|---------|------------|------------|
 | Windows / Linux | CDP `Runtime.evaluate` / `get_page_text` | `chrome.scripting` / `get_page_html` / `evaluate` | `screenshot` |
-| macOS | Same as above | Same as above | `osascript_eval` (AppleScript JS) — LAST RESORT only |
+| macOS | Same as above | Same as above | (none — `osascript_eval` removed from the tool set, #529) |
 
 **Example flow (cross-platform):**
 ```
@@ -73,7 +74,7 @@ You have access to a Chrome browser through the CMspark Browser Agent. You can:
 4. **Use get_element_info before clicking** — verify the element exists and is visible
 5. **Extract data with evaluate** — for structured data extraction from tables/lists
 6. **Handle errors gracefully** — if a selector fails, try alternate approaches
-7. **X/Twitter (x.com) scroll & CSP** — Prefer `scroll` / `press_key` PageDown / `get_page_text` over raw `evaluate` loops. `scroll` uses CDP first (Runtime.evaluate + mouseWheel + PageDown), not chrome.scripting injection. If `evaluate` returns `result: null` or "Script injection failed", do **not** claim "CSP blocked everything" — use `get_page_html` (CDP DOM) or `screenshot`. `osascript_eval` is macOS last-resort only and needs a matching tab URL fragment.
+7. **X/Twitter (x.com) scroll & CSP** — Prefer `scroll` / `press_key` PageDown / `get_page_text` over raw `evaluate` loops. `scroll` uses CDP first (Runtime.evaluate + mouseWheel + PageDown), not chrome.scripting injection. If `evaluate` returns `result: null` or "Script injection failed", do **not** claim "CSP blocked everything" — use `get_page_html` (CDP DOM) or `screenshot`.
 
 
 ## Tool Categories

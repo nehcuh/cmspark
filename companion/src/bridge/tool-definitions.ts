@@ -90,7 +90,11 @@ export const OSASCRIPT_MACOS_ONLY_ERROR =
 
 /** Whether osascript_eval is exposed to the LLM (tool schema) on this platform. */
 export function shouldExposeOsascript(platform: NodeJS.Platform = process.platform): boolean {
-  return platform === "darwin"
+  // #529: osascript_eval is a deterministic dead path on modern Chrome on EVERY
+  // platform (AppleScript JS is off by default since long ago). Kept exported for
+  // compatibility; getToolDefinitions below no longer consults it.
+  void platform
+  return false
 }
 
 /** Whether osascript_eval enters the L2 confirmation gate (darwin only). */
@@ -112,11 +116,14 @@ export function getAllToolDefinitions(): ToolDefinition[] {
 
 /**
  * LLM-visible tools for the given platform (default: process.platform).
- * On non-darwin, `osascript_eval` is omitted so models cannot call a dead tool.
+ * `osascript_eval` is omitted on every platform so models cannot call a dead tool (#529).
  */
 export function getToolDefinitions(platform: NodeJS.Platform = process.platform): ToolDefinition[] {
   const all = getAllToolDefinitions()
-  if (shouldExposeOsascript(platform)) return all
+  // #529: never expose osascript_eval to the LLM on any platform — modern Chrome
+  // denies AppleScript JS by default, so the tool is a dead path that only burns
+  // the action budget. (Previously only non-darwin platforms filtered it.)
+  void platform
   return all.filter((t) => t.function.name !== "osascript_eval")
 }
 
