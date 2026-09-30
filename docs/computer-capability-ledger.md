@@ -77,18 +77,39 @@ cua 的做法不同：既然已经通过 UIA 找到了元素，就**用 UIA 投�
 | 浏览器类应用的坐标控制 | **Refused**（结构性排除，强制清除 hints） | `APP_COORDINATE_STRUCTURAL`（日志原文：`has coordinate/UIA hints on a vault/LOLBIN binary — force-cleared (structural exclusion, A10/Y5)`） | `docs/host-and-apps.md`、#534 |
 | 高危区域（假 UAC / 假支付 / 凭据邻域） | **Refused** | `DANGER_HARD_DENY`（零 re-L2 路径） | `computer-cu-redteam-corpus.test.ts` ③ 类 |
 
-### 3.3 按靶子/框架的行（**全部 Gap**）
+### 3.3 按靶子/框架的行
 
 | 靶子/框架 | 前台左键 | 后台左键 | 后台键盘 | 后台滚动 | 后台拖拽 |
 |---|---|---|---|---|---|
-| WPF | Gap | Gap | Gap | Gap | Gap |
+| **WPF** | Gap 🟡 | **Delivered** ✅ | Gap | Gap | Gap |
 | WinUI3 | Gap | Gap | Gap | Gap | Gap |
 | WebView2 | Gap | Gap | Gap | Gap | Gap |
 | Electron | Gap | Gap | Gap | Gap | Gap |
 | Tauri | Gap | Gap | Gap | Gap | Gap |
 | 原生 Win32 | Gap | Gap | Gap | Gap | Gap |
 
-**填这些行需要什么**：可复现的 GUI 夹具（§5③）+ 后台 oracle（§5②）。在那之前不填 —— **不许猜**。
+**WPF 行的证据**（2026-09-30 本机实测，夹具 `companion/tests/fixtures/win/uia-wpf-fixture.ps1`）：
+
+```json
+{"ok":true,"mode":"invoke","controlType":"Button","automationId":"cmspark_fixture_button",
+ "tried":["invoke:ok"],"foreground":false,"ms":2107}
+```
+
+UIA 树为 `Window/Button/Text`；点击处理器写的标记文件出现 ⇒ **靶子侧状态变化** ⇒ Delivered。
+⚠️ **仍缺 `focus 未变` / `z-order 未变` / `无输入泄漏` / `光标保持` 四项 oracle**（见 §5），
+所以严格说这是「动作送达且靶子状态变了，但『后台』的四个副作用 oracle 尚未断言」——
+在补齐前**不额外宣称**「对用户零打扰」。
+
+**同为 Windows 的 WinForms 是反例**（同批实测）：其 Button 经 UIA 只暴露成**裸 `Pane`、无动作模式**：
+
+```
+UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tried=[invoke:unsupported]
+```
+
+⇒ 该靶子此行应为 **Refused**（精确码），**不是** Delivered。夹具 `uia-winforms-fixture.ps1`。
+**这就是「UIA 暴露面取决于工具包」的实证** —— 也是 cua 自建原生夹具的原因。
+
+**其余行仍是 Gap**：填它们需要可复现夹具（§5③）+ 后台 oracle（§5②）。在那之前不填 —— **不许猜**。
 
 > 参考：cua 在 Windows 上已证实的行可供我们**假设**，但**不能当我们的证据**。
 > 例如它记 Windows/Electron **后台左键可做**，而右/双击、type、press key、hotkey、scroll、editor save
@@ -137,7 +158,7 @@ cua 的做法不同：既然已经通过 UIA 找到了元素，就**用 UIA 投�
 |---|---|---|
 | 1 | **本台账** | ✅ 本文件 |
 | 2 | **补 4 个后台 oracle**（focus / z-order / 输入泄漏 / 光标） | 待做 —— 可复用 imgdiff 机制 |
-| 3 | **Windows 后台投递**：UIA 动作模式（`Invoke`/`SetValue`/`Scroll`/`Select`/`Toggle`），保留 `SendInput` 作前台回退 | 待做 |
+| 3 | **Windows 后台投递**：UIA 动作模式 —— 脚本 `computer-uia-invoke.ps1` 已落地并在 WPF 上实测 **Delivered**；**TS 侧接线与闸门**待做 | 🟡 部分 |
 | 4 | **GUI 夹具**（先做最小：WinUI3 或 WPF 一个窗口） | 待做 |
 | 5 | **macOS 对齐** | → 立 issue 跟踪（本轮不做） |
 
