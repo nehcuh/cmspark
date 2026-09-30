@@ -173,9 +173,11 @@ UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tri
 |---|---|---|
 | 1 | **本台账** | ✅ 本文件 |
 | 2 | **补 4 个后台 oracle** | ✅ 已做（`computer-bg-oracles.ps1` + 5 项测试；`no_leaked_input` 为 derived） |
-| 3 | **Windows 后台投递**：UIA 动作模式 —— 脚本 `computer-uia-invoke.ps1` 已落地并在 WPF 上实测 **Delivered**；**TS 侧接线与闸门**待做 | 🟡 部分 |
-| 4 | **GUI 夹具**（先做最小：WinUI3 或 WPF 一个窗口） | 待做 |
-| 5 | **macOS 对齐** | → 立 issue 跟踪（本轮不做） |
+| 3 | **Windows 后台投递**：UIA 动作模式 —— 脚本已落地并在 WPF 实测；**executor 已接线**（仅左键，条件窄；不绕过 A2.1/预算/速率窗） | ✅ |
+| 4 | **GUI 夹具** | 🟡 已有 WPF（正）+ WinForms（反）两个；其余靶子待做 |
+| 5 | **逐靶子回填**：WinUI3 / WebView2 / Electron / Tauri / 原生 Win32 | 待做 —— 目前**只有 WPF 左键**被证实 |
+| 6 | 键盘 / 滚动 / 拖拽的后台投递 | 待做 —— 脚本已支持 `setvalue`/`select`/`toggle`/`scroll`；executor 只接了左键（**只有左键有语义正确的 UIA 映射**：InvokePattern = 激活 = 左键；UIA 无右键/双击模式） |
+| 7 | **macOS 对齐** | → #571 跟踪 |
 
 **纪律**：第 3 步无论成败都要**写回本台账** —— 那是这件事的价值所在。
 第 3 步的拒绝要**精确码**（例如 `uia_pattern_unavailable` = 该控件不暴露可调用模式），
