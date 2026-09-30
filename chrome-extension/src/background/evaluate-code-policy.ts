@@ -38,11 +38,17 @@ export function resolveEvaluateExecution(params: {
 }): EvaluateExecutionDecision {
   const rawToken = params.security_token
   // Missing, null, or empty/whitespace-only token → refuse (never bare-run).
+  // The EVALUATE_AUTH_REQUIRED prefix is machine-readable: companion's site-op
+  // memory must NOT count authorization refusals toward the origin CDP fail
+  // streak (they are parameter/approval issues, not page-interaction failures).
   if (rawToken === undefined || rawToken === null) {
     return {
       allowed: false,
       error:
-        "evaluate requires security_token (companion L2 / auto-approve). Unapproved evaluate is refused.",
+        "EVALUATE_AUTH_REQUIRED: evaluate requires security_token (companion L2 / auto-approve). " +
+        "Unapproved evaluate is refused. This is an authorization requirement, not an origin/CDP failure — " +
+        "prefer get_page_text or selector-based tools (click/type/fill_form with a CSS selector); " +
+        "do not count this against the page.",
     }
   }
   const token = String(rawToken).trim()
@@ -50,7 +56,10 @@ export function resolveEvaluateExecution(params: {
     return {
       allowed: false,
       error:
-        "evaluate requires security_token (companion L2 / auto-approve). Unapproved evaluate is refused.",
+        "EVALUATE_AUTH_REQUIRED: evaluate requires security_token (companion L2 / auto-approve). " +
+        "Unapproved evaluate is refused. This is an authorization requirement, not an origin/CDP failure — " +
+        "prefer get_page_text or selector-based tools (click/type/fill_form with a CSS selector); " +
+        "do not count this against the page.",
     }
   }
 
