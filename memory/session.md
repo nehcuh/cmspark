@@ -172,6 +172,31 @@
   另：**改了版本锚后必须 `rm -rf .test-dist` 重编**，否则测试跑的是旧产物（我因此看到过一次假红）。
 - **Next**：换装官方 v0.6.11（本机仍 0.6.10）；技术待办优先级 **#568** > **#567** > #563 批次 > #548/#550/#539。
 - Recorded: yes
+
+### S118 续 8（2026-09-30 11:30）[本机换装官方 **v0.6.11**]
+
+- **换装前**：本机 `AppData\Local\CMspark` 是 **0.6.10**（散装：`cmspark-agent.js` + `node.exe`），
+  有 tray（cmd→node）+ daemon 两个实例在跑。
+- **流程**：下载 `CMspark-Setup-v0.6.11.exe` → **sha256 双来源校验**（Release API digest +
+  `SHA256SUMS`，均为 `6fb3814f…cf2f`）→ 精确停进程 → **NSIS 静默安装**（`/S`，ExitCode 0）
+  → 启动 → 验证。
+- **验证（三层）**：
+  1. 文件 hash 变化（`cmspark-agent.js` `75703092` → `710b4289`）+ 内置 `CLI_VERSION_FALLBACK = "0.6.11"`
+  2. CLI 自报 `cmspark-agent v0.6.11`；注册表 `DisplayVersion 0.6.11`
+  3. **决定性**：经 `mcp-outbound` 问 daemon → `serverInfo.version = "0.6.11"`
+- **⚠️ 关键陷阱（本会话第十次工具教训）**：我第一次写「停止 CMspark 进程」的过滤器时，
+  **把我自己的 bash shell 也匹配进去了** —— 因为**我传给 powershell 的命令文本里含
+  `C:\Users\...\CMspark`**，而 bash 正在执行这条命令，其 cmdline 因此包含该串。
+  → 教训：**用「命令文本本身」当匹配模式会自指**。改用「`ExecutablePath` 在应用目录内」+
+  「cmdline 含 `cmspark-agent.js`」两个判别式，并在杀之前**先打印清单人工核对**（含"自己的 shell"对照）。
+  另：安装器自己的 `StopInstalledAgent` 宏是安全的（用 `ExecutablePath` 前缀过滤，不会伤 Alma）。
+- **剩余一步（需人手）**：Chrome 加载的 unpacked 扩展路径 = **安装目录**（不是仓库 `build/`，那里仍 0.6.10 陈旧），
+  安装器已把文件换成 0.6.11 → 需在 `chrome://extensions` 点一次 **Reload**。
+  `chrome://` 页禁止 CDP 附着，**无法程序化重载**；扩展侧也没有自 reload 通路。
+- **既存问题（非本次引入，已取证）**：`filesystem` MCP server 反复失败 `spawn npx ENOENT`
+  —— `npx` 只在 nvm4w 目录（登录会话 PATH），而 daemon 由 `wscript` 拉起、`launch.bat` **不设 PATH**。
+  证据：`companion-2026-09-27.log` / `-09-28.log` 里同样有 6 次。→ 与本票无关，未动。
+- Recorded: yes
 ### S117 (2026-09-27→28) [0.6.9 拉取 · 多路对抗评审 · 三条 BLOCKING 修复 · cut 0.6.10]
 
 - **任务**：拉 0.6.9（`59931595..b5a7396a`，12 提交）→ 编译 Windows 安装包换装 → 四路独立对抗评审 → 修 BLOCKING → 发布卫生。本机换装 `cmspark-agent v0.6.9`（Setup `c61a949e…`），daemon `:23401` 在听，备份 `CMspark-backup-20260927-225703.zip`。
