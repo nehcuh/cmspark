@@ -523,7 +523,15 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, knowledgeDescriptionOnly, knowledgeMode, knowledgeSmartMatch, knowledgeRouteByGroup, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, signal, skipUserMessage, contextRefsSegment, hostname } = params
   // L-2 (#388): reset the caller-owned run-outcome accumulator (observation only).
-  const runStats = params.runStats
+  //
+  // #569: **本地兜底**。`params.runStats` 是调用方**可选**传入的：router 的三条路径都传
+  // （`message-router.ts:1369/1958/2362`），但 worker 的 kick 路径**不传** ——
+  // `server.ts:789` 在 kick 回调里直接 `await chatCreate(...)`，压根不经过 router 的
+  // `case "chat.create"`。所以不能只依赖它：没传就在这里自建一份，让下面 12 处
+  // `if (runStats) runStats.terminal = …` 一律生效，finally 才拿得到终值。
+  // （评审 claude 以编译产物 grep + 控制流穷尽证实了 kick 路径确实绕过 router。）
+  const runStats: RunStats =
+    params.runStats ?? { toolCalls: 0, closingTurnToolCalls: 0, totalTokens: 0, terminal: null }
   if (runStats) {
     runStats.toolCalls = 0
     runStats.closingTurnToolCalls = 0
@@ -2579,6 +2587,25 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   if (runStats) runStats.terminal = "round_limit"
   } finally {
     if (runStats && signal?.aborted) runStats.terminal = "aborted"
+    // #569: run 终值落盘。此处是**唯一覆盖全部 run 路径**的位置 ——
+    // router 的 chat.create / chat.regenerate / file.upload 与 server 的 worker kick
+    // （`server.ts:789` 直接调本函数、不过 router）都收口到这一个 finally。
+    // 之前放在 message-router 里只覆盖了 router 自己那几条路，worker kick 完全漏掉。
+    //
+    // 三态：`runStats.terminal === null` 且时间戳已写 = **正常跑完**（RunTerminal 的合法成员），
+    // 不是「未知」；字段完全不存在才表示「该线程从未跑完过一次 run」。
+    // 落盘失败绝不允许影响 run 的收尾，故吞掉异常只记日志。
+    try {
+      threadManager.update(threadId, {
+        last_run_terminal: runStats.terminal,
+        last_run_ended_at: new Date().toISOString(),
+      })
+    } catch (termErr: any) {
+      logger.warn("run.terminal_persist_failed", {
+        thread_id: threadId,
+        error: termErr?.message || String(termErr),
+      })
+    }
     if (!signal?.aborted) {
       // Normal (non-abort) finish: steers that arrived during the final streaming
       // round were already acked (chat.steered) but are never consumed — dropping

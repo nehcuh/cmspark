@@ -1089,7 +1089,7 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   //   登记后等级只由码决定。生产报文实测本就是 recoverable ⇒ **零行为变更**；
   //   仅当报文不含该子串时（例如空报文）由 non_recoverable 变为 recoverable —— 即本意。
   //   产出点：`site-op-memory.ts:334-343`（`evaluate` 返回 null / CSP / 空完成）。
-  ["EVALUATE_NULL_RESULT", "recoverable"],               // 报文模板含 "already holds" → 命中子串表
+  ["EVALUATE_NULL_RESULT", "recoverable"],               // 见上方块注释（原行尾注释误抄自 INTENT_CAP 的 "already holds"）
   //
   // ② 运行时可观测的**放宽**（⚠️ 逐条声明）：
   // ⚠️ BOARD_HOST_INVALID → recoverable：按仓库自己的判据「**agent 本回合能否自修**」定级 ——

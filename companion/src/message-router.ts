@@ -1464,24 +1464,9 @@ export async function handleMessage(
         // session close (adapter finally) so steers/blocks are current.
         // #502 D-G1: pass this run's terminal so a 100-round cap renders as a
         // segment boundary instead of an eternal 「推进中」.
-        // #569: persist this run's terminal **before** the broadcast above so the #514 fleet
-        // refresh (a few lines down) already sees the fresh value. The in-memory RunStats is
-        // gone the moment this turn unwinds, and a worker that dies mid-run writes nothing
-        // else — ibg908 lost 2 workers that way with no trace anyone could read.
-        // NOTE: do NOT move this into onLoopRunFinished — that early-returns for workers
-        // (loop-kernel.ts:295), so worker runs never reach it.
-        try {
-          services.threadManager.update(rest.thread_id, {
-            last_run_terminal: runStats.terminal ?? null,
-            last_run_ended_at: new Date().toISOString(),
-          })
-        } catch (termErr: any) {
-          // Never let observability break the run-end path.
-          logger.warn("run.terminal_persist_failed", {
-            thread_id: rest.thread_id,
-            error: termErr?.message || String(termErr),
-          })
-        }
+        // #569: run 终值**不在这里**落盘 —— 评审 claude 证实 worker 的 kick 路径
+        // （`server.ts:789` 直接调 `chatCreate`）压根不经过本函数，放这里对 worker 是 no-op。
+        // 唯一覆盖全部路径的落点在 `llm/adapter.ts` 的 `chatCreate` finally。
         await broadcastLoopStatus(session, services.threadManager, rest.thread_id, runStats.terminal)
         // #514: worker runs end here too — refresh the Glance strip so worker
         // done/failed states reach the panel without a confirm round-trip.
