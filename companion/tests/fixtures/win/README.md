@@ -57,6 +57,13 @@ Notes learned while measuring:
   reaches the console.
 - Run the fixture via `Start-Process`; a shell `&` (Git Bash) does not give it a desktop.
 - Pass paths in Windows form (`C:/...`); POSIX paths do not resolve inside PowerShell.
-- **Non-ASCII anchor text passed through `powershell -Command` gets mangled** (observed
-  `提交测试` → mojibake) and then fails with `UIA_ELEMENT_GONE`. The invoke path the
-  companion actually uses must set the argument encoding explicitly — tracked in #572.
+- **`powershell -Command` mangles non-ASCII anchors — but that is a TEST-HARNESS trap, not a
+  product bug.** Observed `提交测试` → mojibake → `UIA_ELEMENT_GONE` when driving the script
+  through Git Bash (`bash -c "powershell -Command \"& script -Name '…'\""`): the layered shell
+  quoting garbles the argument before PowerShell ever sees it.
+  **Verified 2026-09-30** through the production-style invocation (`execFile` + absolute
+  `System32\WindowsPowerShell\v1.0\powershell.exe` + an argv array, exactly as
+  `host-use/win/powershell.ts` does): the same string arrives intact —
+  `{"received":"提交测试","len":4,"codes":"25552,20132,27979,35797"}` (all four code points
+  match). That module already forbids `-Command` and string interpolation for precisely this
+  class of reason. So no product change is needed — just do not test through `-Command`.
