@@ -28,7 +28,11 @@ $btn.Content = $ButtonText
 $btn.Name = 'cmspark_fixture_button'
 $btn.Width = 180; $btn.Height = 44
 $btn.Add_Click({
+  # The oracle, in two channels: a marker file (machine-checkable) and a visible label
+  # change (eye-checkable — a screenshot can show the target-owned state change without
+  # trusting any file the harness wrote).
   try { [IO.File]::WriteAllText($Marker, "clicked " + [DateTime]::UtcNow.ToString('o')) } catch {}
+  try { $btn.Content = "Clicked OK" } catch {}
 })
 $win.Content = $btn
 
