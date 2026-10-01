@@ -28,6 +28,8 @@ import {
   type UiaLocateHit,
   type UiaLocator,
   type UiaWatcher,
+  type UiaInvokeMode,
+  type UiaInvokeResult,
   type UiaWindowOpenedEvent,
   type WindowEnumerator,
   type WindowInfo,
@@ -51,10 +53,20 @@ const PS_ERROR_CODES: Record<string, import("./types").ComputerErrorCode> = {
   BADARGS: "INVALID_ACTION",
 }
 
+/**
+ * stderr error-line shape: `PREFIX:detail`.
+ *
+ * Must allow underscores: the original pattern (`^[A-Z]{4,16}:`) silently ignored any prefix
+ * containing `_`, so a script that used one would fall through to the generic code with no
+ * hint why. #572 hit exactly that with `UIA_ELEMENT_GONE`. Loosening it is safe — a line that
+ * newly matches but whose prefix is not in the map still ends up on the same generic path.
+ */
+const PS_ERR_LINE = /^[A-Z][A-Z0-9_]{3,}:/
+
 /** Map a rejected PsRunner call to a typed ComputerError. */
 export function rethrowComputerPsError(err: any, label: string): never {
   const stderr = err && typeof err === "object" && "stderr" in err && err.stderr ? String(err.stderr) : ""
-  const line = stderr.split(/\r?\n/).find((l) => /^[A-Z]{4,16}:/.test(l))
+  const line = stderr.split(/\r?\n/).find((l) => PS_ERR_LINE.test(l))
   if (line) {
     const sep = line.indexOf(":")
     const prefix = line.slice(0, sep)
@@ -64,6 +76,40 @@ export function rethrowComputerPsError(err: any, label: string): never {
   }
   if (stderr.trim()) throw new ComputerError("INJECT_FAILED", `computer.${label}: ${stderr.trim()}`)
   throw err
+}
+
+/** #572: computer-uia-invoke.ps1 stderr prefix → the caller-facing fallback reason. */
+const UIA_PS_FAILURE: Record<string, Extract<UiaInvokeResult, { ok: false }>["reason"]> = {
+  UIA_WINDOW_GONE: "window_gone",
+  UIA_ELEMENT_GONE: "element_gone",
+  UIA_ELEMENT_MISMATCH: "element_mismatch",
+  UIA_PATTERN_UNAVAILABLE: "pattern_unavailable",
+  UIA_METHOD_FAILED: "method_failed",
+  // Same prefix/exit code as computer-input.ps1's Test-StopFlag — one vocabulary on both
+  // delivery paths. Callers must ABORT on this, never fall back (see UiaInvokeResult).
+  STOPPED: "aborted",
+}
+
+/**
+ * #572: map a rejected invoke call to a fallback reason.
+ *
+ * Untyped by design (never a ComputerError): the caller decides whether to fall back to the
+ * coordinate path. A prefix we do not recognise is reported as `bad_output` with the raw
+ * detail rather than being silently downgraded to a "known" reason.
+ */
+function uiaFailureFromPsError(err: any): Extract<UiaInvokeResult, { ok: false }> {
+  const stderr = err && typeof err === "object" && "stderr" in err && err.stderr ? String(err.stderr) : ""
+  const line = stderr.split(/\r?\n/).find((l) => PS_ERR_LINE.test(l))
+  if (line) {
+    const sep = line.indexOf(":")
+    const prefix = line.slice(0, sep)
+    const detail = line.slice(sep + 1).trim()
+    const reason = UIA_PS_FAILURE[prefix]
+    if (reason) return { ok: false, reason, detail }
+    return { ok: false, reason: "bad_output", detail: `${prefix}: ${detail}` }
+  }
+  const msg = err?.message ? String(err.message) : String(err)
+  return { ok: false, reason: "method_failed", detail: msg.slice(0, 300) }
 }
 
 export const COMPUTER_TEMP_DIR_NAME = "cmspark-computer"
@@ -372,6 +418,72 @@ export class PsInputInjector implements InputInjector {
       ]))
     } catch (err) {
       rethrowComputerPsError(err, "inject.click")
+    }
+  }
+
+  /**
+   * #572: UIA action-pattern delivery — the **background** route.
+   *
+   * The element is re-found by accessible Name and acted on through a UIA pattern, so the
+   * target never has to be raised to the foreground. That matters because raising it costs a
+   * one-shot L2 confirmation (#530) and made multi-step tasks effectively unreachable (#534).
+   *
+   * Returns a discriminated result rather than throwing: `element_gone` / `pattern_unavailable`
+   * are **fallback decisions** for the caller (use the coordinate path), not errors to surface.
+   * It never falls back to blind coordinates itself — a stale coordinate is the #532 defect
+   * class — so a caller that cannot fall back must refuse the action outright.
+   */
+  async invokeUia(
+    hwnd: number,
+    name: string,
+    mode: UiaInvokeMode,
+    opts: {
+      value?: string
+      direction?: "up" | "down" | "left" | "right"
+      scrollAmount?: number
+      expectControlType?: string
+      expectAutomationId?: string
+    } = {},
+  ): Promise<UiaInvokeResult> {
+    const args = [
+      "-Hwnd", String(hwnd),
+      "-Name", name,
+      "-Mode", mode,
+      ...(opts.value !== undefined && opts.value !== "" ? ["-Value", opts.value] : []),
+      ...(opts.direction ? ["-Direction", opts.direction] : []),
+      ...(opts.scrollAmount !== undefined ? ["-ScrollAmount", String(opts.scrollAmount)] : []),
+      ...(opts.expectControlType ? ["-ExpectControlType", opts.expectControlType] : []),
+      ...(opts.expectAutomationId ? ["-ExpectAutomationId", opts.expectAutomationId] : []),
+    ]
+    let stdout = ""
+    try {
+      stdout = await this.runner(resolveWinScript("computer-uia-invoke.ps1"), this.withStop(args))
+    } catch (err) {
+      return uiaFailureFromPsError(err)
+    }
+    let parsed: any
+    try {
+      parsed = JSON.parse(stdout)
+    } catch (e: any) {
+      return { ok: false, reason: "bad_output", detail: `unparseable stdout: ${String(e?.message ?? e)}` }
+    }
+    if (!parsed || parsed.ok !== true) {
+      return { ok: false, reason: "bad_output", detail: "script exited 0 without reporting ok:true" }
+    }
+    const bbox = parsed.bbox && typeof parsed.bbox === "object" ? parsed.bbox : { x: 0, y: 0, w: 0, h: 0 }
+    return {
+      ok: true,
+      mode: String(parsed.mode ?? mode),
+      name: String(parsed.name ?? name),
+      controlType: String(parsed.controlType ?? ""),
+      automationId: String(parsed.automationId ?? ""),
+      x: Number(parsed.x ?? 0),
+      y: Number(parsed.y ?? 0),
+      bbox: { x: Number(bbox.x ?? 0), y: Number(bbox.y ?? 0), w: Number(bbox.w ?? 0), h: Number(bbox.h ?? 0) },
+      tried: Array.isArray(parsed.tried) ? parsed.tried.map(String) : [],
+      // Success always reports foreground:false. If that ever changes, the oracles in
+      // computer-bg-oracles.ps1 will catch it — this field is a promise, not a measurement.
+      foreground: false,
     }
   }
 

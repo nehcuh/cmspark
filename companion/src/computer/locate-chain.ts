@@ -108,6 +108,15 @@ export interface ChainLocateResult {
   shot: CaptureMeta
   crossverified: boolean
   crossverifyChannel?: "uia+ocr" | "pixel-region"
+  /**
+   * #572: identity of the UIA element behind an L0-derived hit.
+   *
+   * Present so a UIA **action-pattern** delivery can re-verify the element before acting on it:
+   * a renamed or reused node must not be actioned merely because its accessible Name matched
+   * the anchor (the invoke script refuses with UIA_ELEMENT_MISMATCH otherwise). Absent for
+   * OCR-only hits — those have no element identity to carry.
+   */
+  uia?: { name: string; controlType: string; automationId?: string }
   uncrossverified: boolean
   attempts: LocateAttempt[]
   /** X1: quantified witness strength (present when the L0 witness OCR ran). */
@@ -450,6 +459,9 @@ export async function locateTargetWithChain(args: {
             uncrossverified: ambiguous,
             attempts,
             ...(witnessVerdict ? { witness: witnessVerdict } : {}),
+            // #572: carry the element identity so a UIA-pattern delivery can re-verify it.
+            // This is what the invoke script's UIA_ELEMENT_MISMATCH check needs.
+            uia: { name: uiaHit.name, controlType: uiaHit.controlType, automationId: uiaHit.automationId },
           }
         }
         // Unstable region: ONE live re-probe (UIA re-read on the fresh frame).

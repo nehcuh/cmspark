@@ -19,6 +19,8 @@ import {
   type OcrWord,
   type ScreenCapturer,
   type SecurityEnvironment,
+  type UiaInvokeMode,
+  type UiaInvokeResult,
   type UiaLocateHit,
   type UiaLocator,
   type WindowEnumerator,
@@ -900,4 +902,254 @@ test("#360: flag 缺省（OSR 白名单类非浏览器应用）→ 实验层照�
   assert.equal(result.hit.layer, "qwen-vl")
   assert.equal(result.experimental, true)
   assert.equal(tc.calls.length, 1)
+})
+
+// --- #572 background (UIA action-pattern) delivery ---------------------------
+//
+// The delivery step is the ONLY thing the background route replaces. Budget, the rate window
+// and — critically — the A2.1 task-induced-dialog invariant must all still run. These tests
+// exist mainly to pin that down: an earlier batch of work in this repo (#570) shipped a
+// "placement move" that looked equivalent and silently dropped coverage, so a route swap on a
+// safety-critical path gets its invariants asserted explicitly rather than assumed.
+
+/** Capturer that counts post-action diffs — A2.1's own signal. */
+class DiffCountingCapturer extends ExecCapturer {
+  diffs = 0
+  async diff(...args: any[]): Promise<any> {
+    this.diffs++
+    return (super.diff as any)(...args)
+  }
+}
+
+/** Injector with the #572 UIA capability, recording both routes. */
+function uiaInjector(reply: UiaInvokeResult | (() => UiaInvokeResult)) {
+  const rec = {
+    clicks: [] as Array<{ hwnd: number; x: number; y: number; kind: string }>,
+    invokes: [] as Array<{ hwnd: number; name: string; mode: UiaInvokeMode; opts: any }>,
+    async click(hwnd: number, x: number, y: number, kind: any) {
+      rec.clicks.push({ hwnd, x, y, kind })
+    },
+    async typeText() {}, async keyChord() {}, async scroll() {}, async drag() {},
+    async probeWindow() { return winInfo() },
+    async foregroundHwnd() { return HWND },
+    async forceForeground() { return true },
+    async invokeUia(hwnd: number, name: string, mode: UiaInvokeMode, opts: any) {
+      rec.invokes.push({ hwnd, name, mode, opts })
+      return typeof reply === "function" ? reply() : reply
+    },
+  }
+  return rec
+}
+
+/** A caller-visible success from the invoke script (see computer-uia-invoke.ps1). */
+function invokeOk(name = "确定"): UiaInvokeResult {
+  return {
+    ok: true, mode: "invoke", name, controlType: "Button", automationId: "okBtn",
+    x: 250, y: 280, bbox: { x: 230, y: 270, w: 40, h: 20 }, tried: ["invoke:ok"], foreground: false,
+  }
+}
+
+/** The UIA hit's identity must reach the invoke call so it can be re-verified. */
+function uiaButtonHit(): UiaLocateHit {
+  return uiaHit({ controlType: "Button", automationId: "okBtn" })
+}
+
+function bgDeps(over: Partial<ComputerExecutorDeps>, evidence: RecordEvidence, log?: (e: string, d: any) => void) {
+  return execDeps({ ...(log ? { log } : {}), ...over }, evidence)
+}
+
+test("#572: a background-eligible click delivers via UIA and NEVER touches the coordinate path", async () => {
+  const injector = uiaInjector(invokeOk())
+  const capturer = new DiffCountingCapturer()
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    { injector: injector as unknown as InputInjector, capturer, uiaLocator: new FakeUia([uiaButtonHit()]) },
+    evidence,
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+
+  assert.equal(r.success, true)
+  // The whole point: no synthesized input.
+  assert.equal(injector.clicks.length, 0, "UIA delivery must not also inject a coordinate click")
+  assert.equal(injector.invokes.length, 1, "exactly one UIA delivery attempt")
+  assert.equal(injector.invokes[0].name, "确定")
+  assert.equal(injector.invokes[0].mode, "auto")
+  // Identity must be carried through for re-verification (UIA_ELEMENT_MISMATCH).
+  assert.equal(injector.invokes[0].opts.expectControlType, "Button")
+  assert.equal(injector.invokes[0].opts.expectAutomationId, "okBtn")
+  // …and the A2.1 post-action invariant still ran. This is the assertion that matters: the
+  // background route must not be able to skip an adversary-mandated check.
+  assert.ok(capturer.diffs >= 1, "A2.1's post-action diff must still run on the background path")
+})
+
+test("#572: a UIA failure falls back to the coordinate path and records the reason", async () => {
+  const injector = uiaInjector({
+    ok: false, reason: "pattern_unavailable",
+    detail: "no usable UIA action pattern for '确定' (Pane) tried=[invoke:unsupported]",
+  })
+  const evidence = new RecordEvidence()
+  const events: Array<{ e: string; d: any }> = []
+  const deps = bgDeps(
+    { injector: injector as unknown as InputInjector, uiaLocator: new FakeUia([uiaButtonHit()]) },
+    evidence,
+    (e, d) => events.push({ e, d }),
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+
+  assert.equal(r.success, true)
+  assert.equal(injector.invokes.length, 1, "the attempt was made")
+  assert.equal(injector.clicks.length, 1, "and it fell back to the coordinate path")
+  // The reason must travel verbatim — a silent downgrade is the #532 defect class.
+  const fb = events.find((x) => x.e === "computer.uia_invoke_fallback")
+  assert.ok(fb, "the fallback must be logged")
+  assert.equal(fb!.d.reason, "pattern_unavailable")
+  assert.match(String(fb!.d.detail), /invoke:unsupported/)
+})
+
+test("#572: the background route is NOT attempted for right/double click (no such UIA pattern)", async () => {
+  // Not merely conservative: UIA has no right-click or double-click pattern, so there is no
+  // valid mapping. These kinds must keep the coordinate path untouched.
+  for (const kind of ["double_click", "right_click"] as const) {
+    const injector = uiaInjector(invokeOk())
+    const evidence = new RecordEvidence()
+    const deps = bgDeps(
+      { injector: injector as unknown as InputInjector, uiaLocator: new FakeUia([uiaButtonHit()]) },
+      evidence,
+    )
+    const r = await runComputerTask(
+      { task: "t", app: "win.app.test", actions: [{ action: kind, target: "确定" }] },
+      deps,
+    )
+    assert.equal(r.success, true, kind)
+    assert.equal(injector.invokes.length, 0, `${kind} must not attempt UIA delivery`)
+    assert.equal(injector.clicks.length, 1, `${kind} keeps the coordinate path`)
+  }
+})
+
+test("#572: without a text anchor there is nothing to invoke — coordinate path unchanged", async () => {
+  const injector = uiaInjector(invokeOk())
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    { injector: injector as unknown as InputInjector, uiaLocator: new FakeUia([uiaButtonHit()]) },
+    evidence,
+  )
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", x: 180, y: 183 }] },
+    deps,
+  )
+  assert.equal(r.success, true)
+  assert.equal(injector.invokes.length, 0, "no anchor => no UIA element to act on")
+  assert.equal(injector.clicks.length, 1)
+})
+
+test("#572: an OCR-only hit (no UIA identity) keeps the coordinate path", async () => {
+  // No uiaLocator wired => the chain degrades to the pixel-region channel => no element
+  // identity to re-verify => no background attempt.
+  const injector = uiaInjector(invokeOk())
+  const evidence = new RecordEvidence()
+  const deps = bgDeps({ injector: injector as unknown as InputInjector }, evidence)
+  const r = await runComputerTask(CLICK_OK, deps)
+
+  assert.equal(r.success, true)
+  assert.equal(evidence.records[0].crossverifyChannel, "pixel-region")
+  assert.equal(injector.invokes.length, 0, "pixel-region hits carry no element identity")
+  assert.equal(injector.clicks.length, 1)
+})
+
+test("#572: a pixel-region hit is NOT background-eligible even when UIA identity exists", async () => {
+  // The isolation case the reviewer found uncovered: wiring a uiaLocator makes `uiaIdentity`
+  // present, so only the `crossverifyChannel === "uia+ocr"` clause can block the background
+  // attempt. Achieved by making the OCR witness UNAVAILABLE (`ocrAvailable: false` ⇒ witness
+  // "unavailable" ⇒ channel "pixel-region"): the UIA hit is still returned, identity and all,
+  // but the two sources never agreed, so it must not go background.
+  //
+  // (A flat disagreement would not isolate anything: the chain degrades a disagreeing witness
+  // to the L1/OCR hit, so there would be no uiaIdentity to begin with.)
+  const injector = uiaInjector(invokeOk())
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    {
+      injector: injector as unknown as InputInjector,
+      uiaLocator: new FakeUia([uiaButtonHit()]),
+      // No OCR pack ⇒ executor's ocrAvailable() is false ⇒ chain witness "unavailable".
+      locator: new FakeLocator([{ text: "确定", x: 130, y: 170, w: 40, h: 20 }], { available: false }),
+    },
+    evidence,
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+
+  assert.equal(r.success, true)
+  assert.equal(evidence.records[0].crossverifyChannel, "pixel-region", "witness must be unavailable")
+  assert.equal(injector.invokes.length, 0, "pixel-region must never take the background route")
+  assert.equal(injector.clicks.length, 1)
+  assert.equal(evidence.records[0].delivery, "sendinput")
+})
+
+test("#572: an emergency stop during background delivery ABORTS — it must not fall back", async () => {
+  // `aborted` is the one reason that is not a fallback trigger: retrying through the
+  // coordinate path would inject AFTER the user stopped the task.
+  // NOTE: `abortCheck` must NOT report a stop here — the executor checks it at the top of
+  // every action, which would fail the task before it ever reaches delivery. The scenario is
+  // the flag appearing *during* the action, which is precisely what the delivery script
+  // detects; `abortCheck` is therefore null and the channel falls back to "hotkey".
+  const injector = uiaInjector({ ok: false, reason: "aborted", detail: "emergency-stop flag present" })
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    {
+      injector: injector as unknown as InputInjector,
+      uiaLocator: new FakeUia([uiaButtonHit()]),
+    },
+    evidence,
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+
+  assert.equal(r.success, false, "the task must abort")
+  assert.equal(injector.invokes.length, 1, "the background attempt was made")
+  assert.equal(injector.clicks.length, 0, "and it must NOT fall back to a coordinate click")
+})
+
+test("#572: the evidence record carries the delivery route", async () => {
+  // Without this, a background delivery and a foreground one are byte-identical in
+  // actions.json — the audit trail could not tell them apart.
+  const injector = uiaInjector(invokeOk())
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    { injector: injector as unknown as InputInjector, uiaLocator: new FakeUia([uiaButtonHit()]) },
+    evidence,
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+  assert.equal(r.success, true)
+  assert.equal(evidence.records[0].delivery, "uia_pattern")
+  assert.equal(evidence.records[0].deliveryMode, "invoke")
+})
+
+test("#572: a refused background attempt is recorded as uia_fallback, not as plain sendinput", async () => {
+  const injector = uiaInjector({ ok: false, reason: "pattern_unavailable", detail: "…" })
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    { injector: injector as unknown as InputInjector, uiaLocator: new FakeUia([uiaButtonHit()]) },
+    evidence,
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+  assert.equal(r.success, true)
+  assert.equal(evidence.records[0].delivery, "uia_fallback")
+  assert.equal(injector.clicks.length, 1)
+})
+
+test("#572: an injector without the capability behaves exactly as before", async () => {
+  // Backwards compatibility: invokeUia is optional, so every existing platform/fake keeps
+  // working untouched.
+  const evidence = new RecordEvidence()
+  const injector: any = {
+    clicks: [] as any[],
+    async click(hwnd: number, x: number, y: number, kind: any) { injector.clicks.push({ hwnd, x, y, kind }) },
+    async typeText() {}, async keyChord() {}, async scroll() {}, async drag() {},
+    async probeWindow() { return winInfo() },
+    async foregroundHwnd() { return HWND },
+    async forceForeground() { return true },
+  }
+  const deps = bgDeps({ injector, uiaLocator: new FakeUia([uiaButtonHit()]) }, evidence)
+  const r = await runComputerTask(CLICK_OK, deps)
+  assert.equal(r.success, true)
+  assert.equal(injector.clicks.length, 1)
 })

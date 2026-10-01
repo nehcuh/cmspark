@@ -866,6 +866,18 @@ export async function runComputerTask(
       let crossverified = false
       let uncrossverified = false
       let crossverifyChannel: "pixel-region" | "uia+ocr" | undefined
+      /**
+       * #572: element identity of an L0(UIA)-derived hit, when the chain carried one.
+       * Used to re-verify the element before delivering through a UIA action pattern.
+       */
+      let uiaIdentity: { name: string; controlType: string; automationId?: string } | undefined
+      /**
+       * #572: how this action was actually delivered, for the evidence record. Without it a
+       * background delivery and a foreground one are indistinguishable in actions.json.
+       */
+      let deliveryRoute: "uia_pattern" | "sendinput" | "uia_fallback" | undefined
+      /** Which UIA pattern fired (only meaningful when `deliveryRoute === "uia_pattern"`). */
+      let deliveryMode: string | undefined
       // WP3 (§B.1): per-layer degradation log — sealed into the evidence
       // chain for this action (and the computeruse.locate audit lines).
       let locateAttempts: LocateAttempt[] | undefined
@@ -915,6 +927,7 @@ export async function runComputerTask(
         pointClient = chain.pointClient
         crossverified = chain.crossverified
         crossverifyChannel = chain.crossverifyChannel
+        uiaIdentity = chain.uia
         uncrossverified = chain.uncrossverified
         locateAttempts = chain.attempts
         witnessStrength = chain.witness
@@ -1262,6 +1275,10 @@ export async function runComputerTask(
           pointClient = refresh.pointClient
           crossverified = refresh.crossverified
           crossverifyChannel = refresh.crossverifyChannel
+          // #572: the refresh re-located on a fresh frame, so its element identity supersedes
+          // whatever the pre-refresh locate produced. Re-probe LOOKUP is also what pins the
+          // `staleOnNotFound` semantics reproduced on this path.
+          uiaIdentity = refresh.uia
           uncrossverified = refresh.uncrossverified
           locateAttempts = [
             ...(locateAttempts ?? []),
@@ -1375,22 +1392,99 @@ export async function runComputerTask(
           }
         }
       } else if (action.action === "key") {
+        deliveryRoute = "sendinput"
         await deps.injector.keyChord(hwnd, action.keys.map((k) => k.toLowerCase()))
       } else if (action.action === "scroll") {
         if (pointClient) {
           assertClickClearsCompanionUi(infoLive.rect.x + pointClient.x, infoLive.rect.y + pointClient.y)
         }
+        deliveryRoute = "sendinput"
         await deps.injector.scroll(hwnd, pointClient!.x, pointClient!.y, action.delta)
       } else if (action.action === "drag") {
         if (pointClient) {
           assertClickClearsCompanionUi(infoLive.rect.x + pointClient.x, infoLive.rect.y + pointClient.y)
         }
+        deliveryRoute = "sendinput"
         await deps.injector.drag(hwnd, pointClient!.x, pointClient!.y, action.x2, action.y2)
       } else {
         if (pointClient) {
           assertClickClearsCompanionUi(infoLive.rect.x + pointClient.x, infoLive.rect.y + pointClient.y)
         }
-        await deps.injector.click(hwnd, pointClient!.x, pointClient!.y, action.action)
+        // #572 — BACKGROUND delivery. Try a UIA **action pattern** first, so the target never
+        // has to be raised to the foreground; raising it costs a one-shot L2 confirmation
+        // (#530) and made multi-step tasks effectively unreachable (#534).
+        //
+        // Deliberately narrow, and not only out of caution:
+        //   * left click ONLY — UIA has no right-click or double-click pattern. InvokePattern
+        //     *is* "activate", i.e. a left click; there is no semantically valid mapping for
+        //     the other kinds, so they keep the coordinate path outright.
+        //   * an explicit text anchor AND a hit that UIA **and** OCR both agreed on
+        //     (`crossverified` + `uia+ocr`), so we act on an element two independent sources
+        //     already identified.
+        //   * a live identity to re-verify against.
+        // Everything else is unchanged. This is the only cell the capability ledger currently
+        // records as background-proven (docs/computer-capability-ledger.md §3.3: WPF).
+        //
+        // Critically, this REPLACES ONLY THE DELIVERY STEP. Budget, the rate window and the
+        // A2.1 task-induced-dialog invariant below all still run unconditionally, because we
+        // fall through to them rather than returning early. The UIA route must not be able to
+        // skip an adversary-mandated check.
+        let deliveredInBackground = false
+        const invokeUia = deps.injector.invokeUia?.bind(deps.injector)
+        if (
+          !invokeUia ||
+          action.action !== "click" ||
+          typeof action.target !== "string" ||
+          action.target.length === 0 ||
+          !crossverified ||
+          crossverifyChannel !== "uia+ocr" ||
+          !uiaIdentity
+        ) {
+          // Not a background-eligible action — leave the path exactly as it was.
+        } else {
+          const r = await invokeUia(hwnd, uiaIdentity.name, "auto", {
+            expectControlType: uiaIdentity.controlType,
+            expectAutomationId: uiaIdentity.automationId,
+          })
+          if (r.ok) {
+            deliveredInBackground = true
+            deliveryRoute = "uia_pattern"
+            deliveryMode = r.mode
+            log("computer.uia_invoke", {
+              taskId,
+              target: action.target,
+              mode: r.mode,
+              controlType: r.controlType,
+              automationId: r.automationId,
+              tried: r.tried,
+              foreground: false,
+            })
+          } else if (r.reason === "aborted") {
+            // The delivery script saw the emergency-stop flag. This is NOT a fallback case:
+            // retrying through the coordinate path would inject *after* the user stopped the
+            // task. The coordinate path only survives this today because computer-input.ps1
+            // separately re-checks the same flag — i.e. by luck, not by design. Abort here so
+            // it is design.
+            const channel = deps.abortCheck?.() ?? "hotkey"
+            log("computer.task.aborted", { taskId, seq, channel, via: "uia_invoke" })
+            throw abortChannelError(channel, "computer: task aborted by emergency stop (uia delivery)")
+          } else {
+            // Fall back to the coordinate path. The reason travels verbatim — a silent
+            // downgrade is exactly the failure mode we are trying to eliminate (#532 class),
+            // and an unrecognised state must not be rounded off to a confident wrong answer.
+            deliveryRoute = "uia_fallback"
+            log("computer.uia_invoke_fallback", {
+              taskId,
+              target: action.target,
+              reason: r.reason,
+              detail: r.detail,
+            })
+          }
+        }
+        if (!deliveredInBackground) {
+          deliveryRoute = deliveryRoute ?? "sendinput"
+          await deps.injector.click(hwnd, pointClient!.x, pointClient!.y, action.action)
+        }
       }
       budget -= 1
       // Y7: only a SUCCESSFUL dispatch consumes the session rate window.
@@ -1517,6 +1611,8 @@ export async function runComputerTask(
         confidence: hit?.confidence,
         crossverified,
         ...(crossverifyChannel ? { crossverifyChannel } : {}),
+        ...(deliveryRoute ? { delivery: deliveryRoute } : {}),
+        ...(deliveryMode ? { deliveryMode } : {}),
         uncrossverified,
         ...(locateAttempts ? { locateAttempts } : {}),
         ...(witnessStrength ? { witness: witnessStrength } : {}),

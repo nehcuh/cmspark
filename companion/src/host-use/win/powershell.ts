@@ -80,8 +80,16 @@ export function resolveWinScript(name: string): string {
     path.resolve(__dirname, "../host-scripts-win", name),
     // 3a. tsx dev: running from src/host-use/win/.
     path.resolve(__dirname, "scripts", name),
-    // 3b. .test-dist runs: .test-dist/src/host-use/win/ → companion/src/...
+    // 3b. Built dev tree: companion/dist/host-use/win/ → companion/src/host-use/win/scripts.
+    //     THREE levels up: dist/host-use/win → dist/host-use → dist → companion root.
     path.resolve(__dirname, "../../../src/host-use/win/scripts", name),
+    // 3c. .test-dist runs are the same tree nested ONE level deeper
+    //     (companion/.test-dist/src/host-use/win/), so they need FOUR. Without this the
+    //     `.test-dist` case resolved to `.test-dist/src/host-use/win/scripts` (never exists)
+    //     and silently fell through to the last-resort candidate, which is why tests that
+    //     exercise a real script got an unexplained ENOENT. Found while adding the #572
+    //     real-integration test.
+    path.resolve(__dirname, "../../../../src/host-use/win/scripts", name),
   ]
   for (const c of candidates) {
     try {
