@@ -24,7 +24,7 @@
 #   { ok:true, mode, name, controlType, automationId, x, y, bbox, tried:[...], ms }
 # stderr: CODE:<detail>
 # exit:   2 BADARGS · 3 UIA_WINDOW_GONE · 4 UIA_ELEMENT_GONE · 5 UIA_ELEMENT_MISMATCH
-#         6 UIA_PATTERN_UNAVAILABLE · 7 UIA_METHOD_FAILED
+#         6 UIA_PATTERN_UNAVAILABLE · 7 UIA_METHOD_FAILED · 11 STOPPED (emergency stop)
 #
 # NOTE: gaining authority to act is NOT this script's job — the TS layer keeps the same
 # action gates (L2 / evidence chain) as any other action. This script only performs the
@@ -39,7 +39,14 @@ param(
   [string]$ExpectControlType = '',
   [string]$ExpectAutomationId = '',
   [int]$MaxDepth = 24,
-  [int]$MaxNodes = 4000
+  [int]$MaxNodes = 4000,
+  # WP2 (E.6): emergency-stop flag. The CALLER (PsInputInjector.withStop) appends this to
+  # every injector call, so omitting it here does not "opt out" — it makes the parameter
+  # binding fail outright and the whole background route silently degrade to the
+  # foreground path. That is exactly what shipped in the first cut of #572 and was caught
+  # only by review, because the adapter tests use a fake runner (no argv binding) and the
+  # manual E2E drove this script without the flag. Keep it, and keep it checked.
+  [string]$StopFile = ''
 )
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
@@ -61,8 +68,19 @@ Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h);' -Name W32 -Namespace CU | Out-Null
 
+# WP2 (E.6): emergency-stop flag — its mere presence aborts, fail-closed. Mirrors
+# computer-input.ps1's Test-StopFlag (same prefix, same exit code) so the caller sees one
+# vocabulary on both delivery paths.
+function Test-StopFlag {
+  if ($StopFile -ne '' -and (Test-Path -LiteralPath $StopFile)) {
+    Fail "STOPPED" "emergency-stop flag present — delivery aborted" 11
+  }
+}
+
 $sw = [Diagnostics.Stopwatch]::StartNew()
+Test-StopFlag
 if (-not [CU.W32]::IsWindow([IntPtr]$Hwnd)) { Fail "UIA_WINDOW_GONE" "Hwnd $Hwnd is not a window" 3 }
+Test-StopFlag
 
 # NFKC + case-insensitive anchor normalisation (mirrors locate).
 function Normalize-Anchor([string]$s) {
@@ -88,6 +106,9 @@ while ($stack.Count -gt 0) {
   if ($depth -ge $MaxDepth) { continue }
   $nodes++
   if ($nodes -gt $MaxNodes) { break }
+  # The tree walk is the one long-running part of this script; check the stop flag
+  # periodically so an emergency stop is not held hostage by a large tree.
+  if (($nodes % 128) -eq 0) { Test-StopFlag }
   $nm = ''
   try { $nm = $cur.Current.Name } catch { $nm = '' }
   if ($nm -ne '') {
@@ -133,7 +154,8 @@ while ($stack.Count -gt 0) {
   } catch {}
 }
 
-# Selection: unique exact wins; otherwise the first substring hit. Deliberately the SAME
+# Selection: the FIRST exact hit (tree order) wins — including when several exact hits exist;
+# otherwise the first substring hit. Deliberately the SAME
 # rule as locate, so an invoke can never target something locate would not have returned.
 $hit = $null
 if ($exact.Count -ge 1) { $hit = $exact[0] }
@@ -167,6 +189,10 @@ function Try-Pattern([string]$pname, [System.Windows.Automation.AutomationPatter
   try { & $act $obj; [void]$tried.Add("${pname}:ok"); return $true }
   catch { [void]$tried.Add("${pname}:failed(" + $_.Exception.Message.Replace([char]10, [char]32).Replace([char]13, [char]32) + ")"); return $false }
 }
+
+# Last check immediately before the ACT: a stop raised while we were re-verifying identity
+# must still prevent the delivery.
+Test-StopFlag
 
 $used = $null
 

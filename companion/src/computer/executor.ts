@@ -871,6 +871,13 @@ export async function runComputerTask(
        * Used to re-verify the element before delivering through a UIA action pattern.
        */
       let uiaIdentity: { name: string; controlType: string; automationId?: string } | undefined
+      /**
+       * #572: how this action was actually delivered, for the evidence record. Without it a
+       * background delivery and a foreground one are indistinguishable in actions.json.
+       */
+      let deliveryRoute: "uia_pattern" | "sendinput" | "uia_fallback" | undefined
+      /** Which UIA pattern fired (only meaningful when `deliveryRoute === "uia_pattern"`). */
+      let deliveryMode: string | undefined
       // WP3 (§B.1): per-layer degradation log — sealed into the evidence
       // chain for this action (and the computeruse.locate audit lines).
       let locateAttempts: LocateAttempt[] | undefined
@@ -1268,6 +1275,10 @@ export async function runComputerTask(
           pointClient = refresh.pointClient
           crossverified = refresh.crossverified
           crossverifyChannel = refresh.crossverifyChannel
+          // #572: the refresh re-located on a fresh frame, so its element identity supersedes
+          // whatever the pre-refresh locate produced. Re-probe LOOKUP is also what pins the
+          // `staleOnNotFound` semantics reproduced on this path.
+          uiaIdentity = refresh.uia
           uncrossverified = refresh.uncrossverified
           locateAttempts = [
             ...(locateAttempts ?? []),
@@ -1381,16 +1392,19 @@ export async function runComputerTask(
           }
         }
       } else if (action.action === "key") {
+        deliveryRoute = "sendinput"
         await deps.injector.keyChord(hwnd, action.keys.map((k) => k.toLowerCase()))
       } else if (action.action === "scroll") {
         if (pointClient) {
           assertClickClearsCompanionUi(infoLive.rect.x + pointClient.x, infoLive.rect.y + pointClient.y)
         }
+        deliveryRoute = "sendinput"
         await deps.injector.scroll(hwnd, pointClient!.x, pointClient!.y, action.delta)
       } else if (action.action === "drag") {
         if (pointClient) {
           assertClickClearsCompanionUi(infoLive.rect.x + pointClient.x, infoLive.rect.y + pointClient.y)
         }
+        deliveryRoute = "sendinput"
         await deps.injector.drag(hwnd, pointClient!.x, pointClient!.y, action.x2, action.y2)
       } else {
         if (pointClient) {
@@ -1434,6 +1448,8 @@ export async function runComputerTask(
           })
           if (r.ok) {
             deliveredInBackground = true
+            deliveryRoute = "uia_pattern"
+            deliveryMode = r.mode
             log("computer.uia_invoke", {
               taskId,
               target: action.target,
@@ -1443,10 +1459,20 @@ export async function runComputerTask(
               tried: r.tried,
               foreground: false,
             })
+          } else if (r.reason === "aborted") {
+            // The delivery script saw the emergency-stop flag. This is NOT a fallback case:
+            // retrying through the coordinate path would inject *after* the user stopped the
+            // task. The coordinate path only survives this today because computer-input.ps1
+            // separately re-checks the same flag — i.e. by luck, not by design. Abort here so
+            // it is design.
+            const channel = deps.abortCheck?.() ?? "hotkey"
+            log("computer.task.aborted", { taskId, seq, channel, via: "uia_invoke" })
+            throw abortChannelError(channel, "computer: task aborted by emergency stop (uia delivery)")
           } else {
             // Fall back to the coordinate path. The reason travels verbatim — a silent
             // downgrade is exactly the failure mode we are trying to eliminate (#532 class),
             // and an unrecognised state must not be rounded off to a confident wrong answer.
+            deliveryRoute = "uia_fallback"
             log("computer.uia_invoke_fallback", {
               taskId,
               target: action.target,
@@ -1456,6 +1482,7 @@ export async function runComputerTask(
           }
         }
         if (!deliveredInBackground) {
+          deliveryRoute = deliveryRoute ?? "sendinput"
           await deps.injector.click(hwnd, pointClient!.x, pointClient!.y, action.action)
         }
       }
@@ -1584,6 +1611,8 @@ export async function runComputerTask(
         confidence: hit?.confidence,
         crossverified,
         ...(crossverifyChannel ? { crossverifyChannel } : {}),
+        ...(deliveryRoute ? { delivery: deliveryRoute } : {}),
+        ...(deliveryMode ? { deliveryMode } : {}),
         uncrossverified,
         ...(locateAttempts ? { locateAttempts } : {}),
         ...(witnessStrength ? { witness: witnessStrength } : {}),

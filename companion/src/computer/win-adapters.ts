@@ -85,6 +85,9 @@ const UIA_PS_FAILURE: Record<string, Extract<UiaInvokeResult, { ok: false }>["re
   UIA_ELEMENT_MISMATCH: "element_mismatch",
   UIA_PATTERN_UNAVAILABLE: "pattern_unavailable",
   UIA_METHOD_FAILED: "method_failed",
+  // Same prefix/exit code as computer-input.ps1's Test-StopFlag — one vocabulary on both
+  // delivery paths. Callers must ABORT on this, never fall back (see UiaInvokeResult).
+  STOPPED: "aborted",
 }
 
 /**

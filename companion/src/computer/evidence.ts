@@ -49,6 +49,22 @@ export interface EvidenceActionRecord {
   crossverified: boolean
   /** Which channel verified: "pixel-region" (WP1) / "uia+ocr" (WP3 L0 witness). Absent when not verified. */
   crossverifyChannel?: string
+  /**
+   * #572: HOW the action was delivered.
+   *
+   * Without this, a UIA-pattern delivery and a SendInput delivery produce byte-identical
+   * records — same x/y (the point the action *would* have used), same flags — so an auditor
+   * reading actions.json cannot tell whether the target was driven in the background or was
+   * raised to the foreground. That distinction is the whole reason the second route exists,
+   * and it is invisible in the artifact that is supposed to be the audit trail.
+   *
+   * "uia_pattern" = delivered via a UIA action pattern, foreground untouched.
+   * "sendinput"   = the coordinate path (foreground-requiring).
+   * "uia_fallback" = a background attempt was made and refused; the coordinate path delivered.
+   */
+  delivery?: "uia_pattern" | "sendinput" | "uia_fallback"
+  /** Which UIA pattern actually fired (only for `delivery: "uia_pattern"`). */
+  deliveryMode?: string
   uncrossverified: boolean
   /**
    * WP3 (§B.1): per-layer locate attempts with structured degradation

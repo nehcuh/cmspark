@@ -464,6 +464,14 @@ export type UiaInvokeResult =
         | "pattern_unavailable"
         | "method_failed"
         | "bad_output"
+        /**
+         * #572: the emergency-stop flag was present (ps1 `STOPPED`, exit 11).
+         *
+         * NOT a fallback trigger. Every other reason means "this route could not deliver, try
+         * the coordinate path"; this one means the user stopped the task, so falling back
+         * would inject *after* an emergency stop. Callers MUST abort instead.
+         */
+        | "aborted"
       detail: string
     }
 

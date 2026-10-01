@@ -1056,6 +1056,86 @@ test("#572: an OCR-only hit (no UIA identity) keeps the coordinate path", async 
   assert.equal(injector.clicks.length, 1)
 })
 
+test("#572: a pixel-region hit is NOT background-eligible even when UIA identity exists", async () => {
+  // The isolation case the reviewer found uncovered: wiring a uiaLocator makes `uiaIdentity`
+  // present, so only the `crossverifyChannel === "uia+ocr"` clause can block the background
+  // attempt. Achieved by making the OCR witness UNAVAILABLE (`ocrAvailable: false` ⇒ witness
+  // "unavailable" ⇒ channel "pixel-region"): the UIA hit is still returned, identity and all,
+  // but the two sources never agreed, so it must not go background.
+  //
+  // (A flat disagreement would not isolate anything: the chain degrades a disagreeing witness
+  // to the L1/OCR hit, so there would be no uiaIdentity to begin with.)
+  const injector = uiaInjector(invokeOk())
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    {
+      injector: injector as unknown as InputInjector,
+      uiaLocator: new FakeUia([uiaButtonHit()]),
+      // No OCR pack ⇒ executor's ocrAvailable() is false ⇒ chain witness "unavailable".
+      locator: new FakeLocator([{ text: "确定", x: 130, y: 170, w: 40, h: 20 }], { available: false }),
+    },
+    evidence,
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+
+  assert.equal(r.success, true)
+  assert.equal(evidence.records[0].crossverifyChannel, "pixel-region", "witness must be unavailable")
+  assert.equal(injector.invokes.length, 0, "pixel-region must never take the background route")
+  assert.equal(injector.clicks.length, 1)
+  assert.equal(evidence.records[0].delivery, "sendinput")
+})
+
+test("#572: an emergency stop during background delivery ABORTS — it must not fall back", async () => {
+  // `aborted` is the one reason that is not a fallback trigger: retrying through the
+  // coordinate path would inject AFTER the user stopped the task.
+  // NOTE: `abortCheck` must NOT report a stop here — the executor checks it at the top of
+  // every action, which would fail the task before it ever reaches delivery. The scenario is
+  // the flag appearing *during* the action, which is precisely what the delivery script
+  // detects; `abortCheck` is therefore null and the channel falls back to "hotkey".
+  const injector = uiaInjector({ ok: false, reason: "aborted", detail: "emergency-stop flag present" })
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    {
+      injector: injector as unknown as InputInjector,
+      uiaLocator: new FakeUia([uiaButtonHit()]),
+    },
+    evidence,
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+
+  assert.equal(r.success, false, "the task must abort")
+  assert.equal(injector.invokes.length, 1, "the background attempt was made")
+  assert.equal(injector.clicks.length, 0, "and it must NOT fall back to a coordinate click")
+})
+
+test("#572: the evidence record carries the delivery route", async () => {
+  // Without this, a background delivery and a foreground one are byte-identical in
+  // actions.json — the audit trail could not tell them apart.
+  const injector = uiaInjector(invokeOk())
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    { injector: injector as unknown as InputInjector, uiaLocator: new FakeUia([uiaButtonHit()]) },
+    evidence,
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+  assert.equal(r.success, true)
+  assert.equal(evidence.records[0].delivery, "uia_pattern")
+  assert.equal(evidence.records[0].deliveryMode, "invoke")
+})
+
+test("#572: a refused background attempt is recorded as uia_fallback, not as plain sendinput", async () => {
+  const injector = uiaInjector({ ok: false, reason: "pattern_unavailable", detail: "…" })
+  const evidence = new RecordEvidence()
+  const deps = bgDeps(
+    { injector: injector as unknown as InputInjector, uiaLocator: new FakeUia([uiaButtonHit()]) },
+    evidence,
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+  assert.equal(r.success, true)
+  assert.equal(evidence.records[0].delivery, "uia_fallback")
+  assert.equal(injector.clicks.length, 1)
+})
+
 test("#572: an injector without the capability behaves exactly as before", async () => {
   // Backwards compatibility: invokeUia is optional, so every existing platform/fake keeps
   // working untouched.
