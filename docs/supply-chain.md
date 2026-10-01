@@ -41,6 +41,27 @@ in the shipped artifact.
 
 After both: `npm audit` went **73 → 71**; `npm audit --omit=dev` went to **0**.
 
+### Fixed in the 2026-10-01 advisory (unplanned, blocking)
+
+3. **`dompurify` 3.4.11 → 3.4.16** (`dependencies`, direct floor bump).
+   A **new** advisory covering `3.4.13 - 3.4.15` (`IN_PLACE`: a node-removing
+   `afterSanitize` hook leaves detached nodes) was published between 2026-09-30 and
+   2026-10-01. The lockfile had resolved to 3.4.13, so the gating production audit
+   started failing — **on `main` as well**, i.e. it blocked every branch, not just the
+   one that happened to be in flight.
+
+   Same reasoning as P1-2 for why this is treated as gating despite `low` severity:
+   DOMPurify sanitizes untrusted Mermaid SVG in a privileged MV3 context, and the
+   floor is pinned so the vulnerable range cannot be re-resolved from a lockfile
+   refresh. Fix is a patch bump inside the already-declared `^3.4.13` range.
+
+   Verified: `npm audit --omit=dev` → **0 vulnerabilities**; `npm run build` exit 0;
+   extension suite **1499 pass / 0 fail**.
+
+   > Standing lesson: this gate is **time-dependent**. A green `main` yesterday does not
+   > mean a green `main` today, and a red one may have nothing to do with the branch under
+   > test. Check `main`'s own latest run before assuming a branch caused an audit failure.
+
 ## Accepted risk — blocked on upstream (build-time only, NOT shipped)
 
 These cannot be fixed without plasmo bumping its Parcel pin, which npm's only
