@@ -1206,7 +1206,7 @@
     "type": "function",
     "function": {
       "name": "list_workers",
-      "description": "List worker threads for the current orchestrator_run.",
+      "description": "List worker threads for the current orchestrator_run. Each worker also carries `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = the run ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both null = it never ran (the fields are never set); a null terminal WITH a timestamp = it ended normally. Use these to tell a dead worker from an idle one (#569).",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -1218,7 +1218,7 @@
     "type": "function",
     "function": {
       "name": "get_worker_status",
-      "description": "Get status and tab locks held by a worker thread.",
+      "description": "Get status and tab locks held by a worker thread. Each worker also carries `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = the run ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both absent = it never ran. Use these to tell a dead worker from an idle one (#569).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1323,7 +1323,7 @@
     "type": "function",
     "function": {
       "name": "wait_workers",
-      "description": "Poll-only snapshot of workers in this orchestrator_run (ADR-015). Does NOT block/sleep for a barrier — call repeatedly or use HITL. True async barrier is not implemented.",
+      "description": "Poll-only snapshot of workers in this orchestrator_run (ADR-015). Does NOT block/sleep for a barrier — call repeatedly or use HITL. True async barrier is not implemented. Each worker also carries `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = the run ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both absent = it never ran. Use these to tell a dead worker from an idle one (#569).",
       "parameters": {
         "type": "object",
         "properties": {},

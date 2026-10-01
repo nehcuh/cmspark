@@ -109,6 +109,8 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   CLAIM_FAILED: "recoverable",
   SITE_OP_ESCALATE: "recoverable",
   INTENT_CAP: "recoverable",
+  // #569：此前未登记，等级靠文案子串 "script evaluation failed" 兜底（脆弱）。
+  EVALUATE_NULL_RESULT: "recoverable",
   // adapter.ts:1990-1994 把这两个码归为 proposeDenied（排除出失败计数）→ 不是真失败；
   // 注：这两码今天**到不了** `classifyError` —— AST 实测 `if (!proposeDenied)`（`adapter.ts:1994`）的 then
   // 分支跨 1994–2234 行、**含** `classifyError`(2121) 与 `shouldStop`(2137)（详见源码注释）。

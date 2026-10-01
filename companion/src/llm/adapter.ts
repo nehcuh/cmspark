@@ -523,7 +523,15 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, knowledgeDescriptionOnly, knowledgeMode, knowledgeSmartMatch, knowledgeRouteByGroup, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, signal, skipUserMessage, contextRefsSegment, hostname } = params
   // L-2 (#388): reset the caller-owned run-outcome accumulator (observation only).
-  const runStats = params.runStats
+  //
+  // #569: **本地兜底**。`params.runStats` 是调用方**可选**传入的：router 的三条路径都传
+  // （`message-router.ts:1369/1958/2362`），但 worker 的 kick 路径**不传** ——
+  // `server.ts:789` 在 kick 回调里直接 `await chatCreate(...)`，压根不经过 router 的
+  // `case "chat.create"`。所以不能只依赖它：没传就在这里自建一份，让下面 12 处
+  // `if (runStats) runStats.terminal = …` 一律生效，finally 才拿得到终值。
+  // （评审 claude 以编译产物 grep + 控制流穷尽证实了 kick 路径确实绕过 router。）
+  const runStats: RunStats =
+    params.runStats ?? { toolCalls: 0, closingTurnToolCalls: 0, totalTokens: 0, terminal: null }
   if (runStats) {
     runStats.toolCalls = 0
     runStats.closingTurnToolCalls = 0
@@ -1998,6 +2006,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               toolResult.data?.error_code === "ALREADY_HAS_STEPS"
             if (!proposeDenied) {
             logger.warn("llm.tool_failed", {
+              // #569: thread_id 是必须的 —— 多 worker 并行时，没有它就无法把某次工具失败
+              // 归因到具体线程（本次 ibg908 事故排查就卡在这）。同文件 :2205 的
+              // llm.locator_pivot 早已带上，此处与下面 llm.recoverable_loop_detected 是遗漏。
+              thread_id: threadId,
               tool_call_id: tc.id,
               tool_name: toolName,
               error: toolResult.error,
@@ -2207,6 +2219,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               })
             } else if (sameToolDecision.action === "stop") {
               logger.error("llm.recoverable_loop_detected", {
+                // #569: 这条日志是「某线程被熔断处死」的唯一直接证据 —— 之前没有 thread_id，
+                // 导致本次事故里最有诊断价值的一行反而无法归因。
+                thread_id: threadId,
                 tool_name: toolName,
                 fail_count: failCount,
                 threshold: MAX_SAME_TOOL_RECOVERABLE_FAILURES,
@@ -2570,8 +2585,40 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     tool_calls: runStats?.toolCalls ?? 0,
   })
   if (runStats) runStats.terminal = "round_limit"
+  } catch (runErr: any) {
+    // #569: 本函数级 try **只配了 finally、没有 catch** —— 异常会外逸到 message-router 的
+    // catch，而那里是**在落盘之后**才设 `"aborted"`/`"error"`（message-router.ts:1403-1405）。
+    // 若不在此处兜底，finally 会把「异常结束」落成 `terminal === null`，
+    // 而 catalog 文案把 null+时间戳教作「正常跑完」—— 那是个**错误的肯定答案**
+    // （正是 #569 要消灭的「误读 worker 状态」，评审 claude 独立发现并证成回归）。
+    //
+    // 只在本函数自己没定过终值时兜底；措辞与 router 的判据对齐。
+    // 抛回原异常 ⇒ router catch / 上层调用方行为一字不变。
+    if (!runStats.terminal) {
+      runStats.terminal = runErr?.name === "AbortError" ? "aborted" : "error"
+    }
+    throw runErr
   } finally {
     if (runStats && signal?.aborted) runStats.terminal = "aborted"
+    // #569: run 终值落盘。此处是**唯一覆盖全部 run 路径**的位置 ——
+    // router 的 chat.create / chat.regenerate / file.upload 与 server 的 worker kick
+    // （`server.ts:789` 直接调本函数、不过 router）都收口到这一个 finally。
+    // 之前放在 message-router 里只覆盖了 router 自己那几条路，worker kick 完全漏掉。
+    //
+    // 三态：`runStats.terminal === null` 且时间戳已写 = **正常跑完**（RunTerminal 的合法成员），
+    // 不是「未知」；字段完全不存在才表示「该线程从未跑完过一次 run」。
+    // 落盘失败绝不允许影响 run 的收尾，故吞掉异常只记日志。
+    try {
+      threadManager.update(threadId, {
+        last_run_terminal: runStats.terminal,
+        last_run_ended_at: new Date().toISOString(),
+      })
+    } catch (termErr: any) {
+      logger.warn("run.terminal_persist_failed", {
+        thread_id: threadId,
+        error: termErr?.message || String(termErr),
+      })
+    }
     if (!signal?.aborted) {
       // Normal (non-abort) finish: steers that arrived during the final streaming
       // round were already acked (chat.steered) but are never consumed — dropping

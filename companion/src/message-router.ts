@@ -1464,6 +1464,9 @@ export async function handleMessage(
         // session close (adapter finally) so steers/blocks are current.
         // #502 D-G1: pass this run's terminal so a 100-round cap renders as a
         // segment boundary instead of an eternal 「推进中」.
+        // #569: run 终值**不在这里**落盘 —— 评审 claude 证实 worker 的 kick 路径
+        // （`server.ts:789` 直接调 `chatCreate`）压根不经过本函数，放这里对 worker 是 no-op。
+        // 唯一覆盖全部路径的落点在 `llm/adapter.ts` 的 `chatCreate` finally。
         await broadcastLoopStatus(session, services.threadManager, rest.thread_id, runStats.terminal)
         // #514: worker runs end here too — refresh the Glance strip so worker
         // done/failed states reach the panel without a confirm round-trip.

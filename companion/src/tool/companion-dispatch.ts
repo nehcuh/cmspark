@@ -650,6 +650,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         worker_role_label: w.worker_role_label,
         paused: !!w.paused,
         tool_whitelist: w.tool_whitelist,
+        // #569: 该 worker **最后一次跑完**的结局。`null` = 正常跑完；非 null = 被该 terminal 结束
+        // （如 "circuit_breaker"）；两者都没有 = 从未跑过。父线程靠这三个字段区分
+        // 「在跑 / 正常收工 / 被处死 / 闲着」，不必再猜。
+        last_run_terminal: w.last_run_terminal ?? null,
+        last_run_ended_at: w.last_run_ended_at ?? null,
       }))
       return { success: true, data: { orchestrator_run_id: runId, workers } }
     }
@@ -669,6 +674,9 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           parent_thread_id: w.parent_thread_id,
           orchestrator_run_id: w.orchestrator_run_id,
           paused: !!w.paused,
+          // #569: 见 list_workers 的同名字段说明。
+          last_run_terminal: w.last_run_terminal ?? null,
+          last_run_ended_at: w.last_run_ended_at ?? null,
           tab_locks: locks,
         },
       }
@@ -909,6 +917,10 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             paused: !!w.paused,
             llm_active: llm.holders.includes(w.id),
             assigned_intent_id: w.assigned_intent_id || null,
+            // #569: 与 list_workers 同义 —— 这是父线程判断「我的 worker 到底怎么了」的依据，
+            // 不必再把「空闲」误读成「卡住」（ibg908 就是这么误判的）。
+            last_run_terminal: w.last_run_terminal ?? null,
+            last_run_ended_at: w.last_run_ended_at ?? null,
           })),
         },
       }

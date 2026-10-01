@@ -85,3 +85,4 @@ dist/
 dist-package/
 chrome-extension/.shot-dist/
 chrome-extension/.shot-out/
+.alma-snapshots
