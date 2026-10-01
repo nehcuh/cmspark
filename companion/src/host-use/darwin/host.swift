@@ -810,6 +810,18 @@ do {
     case "ax-locate":
         guard let ws = argValue("--window-id"), let w = UInt32(ws), let target = argValue("--target") else { fputs("ax-locate: --window-id and --target required\n", stderr); exit(2) }
         out = cuAXLocate(windowId: w, target: target)
+    case "ax-invoke":   // #571 — background delivery through an AX action (no front raise)
+        guard let ws = argValue("--window-id"), let w = UInt32(ws),
+              let target = argValue("--target"), let act = argValue("--action") else {
+            fputs("ax-invoke: --window-id, --target and --action required\n", stderr); exit(2)
+        }
+        out = cuAXInvoke(windowId: w, target: target, action: act,
+                         value: argValue("--value"),
+                         expectRole: argValue("--expect-role"),
+                         expectName: argValue("--expect-name"),
+                         estopFlag: argValue("--estop-flag"))
+    case "cursor-get":  // #571 — read-only pointer position for the background oracles
+        out = cuCursorGet()
     case "screenshot":
         guard let ws = argValue("--window-id"), let w = UInt32(ws), let output = argValue("--output") else { fputs("screenshot: --window-id and --output required\n", stderr); exit(2) }
         out = cuScreenshot(windowId: w, outputPath: output)
@@ -1174,6 +1186,150 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
         queue = nextLevel; depth += 1
     }
     return cuJson(["found": false])
+}
+
+// MARK: - ax-invoke (#571 — background delivery through AX actions)
+//
+// WHY: cuAXLocate already finds elements through the AX tree, but delivery goes through
+// cuInject — whose own comment reads "Always activate before inject", i.e. the target must be
+// raised to the front. Raising it costs a one-shot L2 confirmation, so a multi-step task is
+// effectively unreachable. Having found the element through AX, deliver the ACTION through AX
+// (kAXPressAction / SetValue / Increment / Decrement) and never touch the frontmost app.
+//
+// CONTRACT
+//   * Traversal and matching mirror cuAXLocate exactly, so an invoke can never target an
+//     element locate would not have returned.
+//   * Identity is re-verified against what locate reported (`--expect-role` / `--expect-name`);
+//     a mismatch refuses with AX_ELEMENT_MISMATCH rather than acting on a same-named impostor.
+//   * An unsupported action refuses with a PRECISE code (AX_ACTION_UNAVAILABLE, listing what
+//     the element does support) — never a blanket failure.
+//   * `--estop-flag` is checked at entry, periodically through the walk, and immediately
+//     before the act. The caller passes this on every injector call. A handler that ignores it
+//     silently disables the emergency stop — that is precisely the #573-P0 defect class
+//     (a delivery path whose argument the callee never accepted), so it is checked here
+//     deliberately rather than incidentally.
+func cuAXInvoke(windowId: UInt32, target: String, action: String, value: String?,
+                expectRole: String?, expectName: String?, estopFlag: String?) -> String {
+    func stopRaised() -> Bool {
+        guard let p = estopFlag, !p.isEmpty else { return false }
+        return FileManager.default.fileExists(atPath: p)
+    }
+    if stopRaised() { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
+
+    let pid = cuPidForWindow(windowId)
+    guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
+    guard let appElement = cuAppElementForPid(pid) else {
+        return cuError("cannot create AX app element for pid \(pid)", code: "AX_WINDOW_GONE")
+    }
+
+    let isSetValue = (action == "setvalue")
+    let wantedAction: String
+    switch action {
+    case "press": wantedAction = kAXPressAction as String
+    case "increment": wantedAction = kAXIncrementAction as String
+    case "decrement": wantedAction = kAXDecrementAction as String
+    case "confirm": wantedAction = kAXConfirmAction as String
+    case "cancel": wantedAction = kAXCancelAction as String
+    case "setvalue": wantedAction = "AXValue"  // attribute write, not an AX action
+    default: return cuError("unknown action '\(action)'", code: "INVALID_ACTION")
+    }
+    if isSetValue && (value ?? "").isEmpty {
+        return cuError("setvalue requires --value", code: "INVALID_ACTION")
+    }
+
+    var queue: [AXUIElement] = [appElement]
+    var depth = 0
+    var nodes = 0
+    while !queue.isEmpty && depth < 50 {
+        var nextLevel: [AXUIElement] = []
+        for element in queue {
+            nodes += 1
+            // A long walk must not hold an emergency stop hostage.
+            if nodes % 128 == 0 && stopRaised() {
+                return cuError("E-Stop flag present", code: "TASK_ABORTED")
+            }
+            var hiddenRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXHiddenAttribute as CFString, &hiddenRef)
+            if let hidden = hiddenRef as? Bool, hidden { continue }
+            var sizeRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef)
+            var sz = CGSize.zero
+            if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &sz) }
+            if sz.width <= 1 && sz.height <= 1 { continue }
+
+            var nameRef: CFTypeRef?; var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &nameRef)
+            AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+            let name = (nameRef as? String) ?? ""
+            let role = (roleRef as? String) ?? "unknown"
+            if name.lowercased() == target.lowercased() || name.contains(target) {
+                // Identity re-verification against what locate reported.
+                if let er = expectRole, !er.isEmpty, er != role {
+                    return cuError("role mismatch: expected '\(er)' got '\(role)'", code: "AX_ELEMENT_MISMATCH")
+                }
+                if let en = expectName, !en.isEmpty, en != name {
+                    return cuError("name mismatch: expected '\(en)' got '\(name)'", code: "AX_ELEMENT_MISMATCH")
+                }
+                // Last check immediately before the act.
+                if stopRaised() { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
+
+                var posRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef)
+                var pos = CGPoint.zero
+                if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+
+                if isSetValue {
+                    let setErr = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString,
+                                                              (value ?? "") as CFTypeRef)
+                    if setErr != .success {
+                        return cuError("SetValue failed (AXError \(setErr.rawValue))", code: "AX_ACTION_FAILED")
+                    }
+                } else {
+                    // Query what the element actually supports first, so an unsupported action
+                    // is reported precisely instead of collapsing into a generic failure.
+                    var actionsRef: CFArray?
+                    AXUIElementCopyActionNames(element, &actionsRef)
+                    let supported = (actionsRef as? [String]) ?? []
+                    if !supported.contains(wantedAction) {
+                        return cuJson([
+                            "ok": false, "code": "AX_ACTION_UNAVAILABLE", "action": action,
+                            "role": role, "name": name, "supported": supported,
+                        ])
+                    }
+                    let perfErr = AXUIElementPerformAction(element, wantedAction as CFString)
+                    if perfErr != .success {
+                        return cuError("PerformAction failed (AXError \(perfErr.rawValue))", code: "AX_ACTION_FAILED")
+                    }
+                }
+                return cuJson([
+                    "ok": true, "action": action, "role": role, "name": name,
+                    "x": pos.x, "y": pos.y, "foreground": false, "nodes": nodes,
+                ])
+            }
+            var children: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
+            if let childArray = children as? [AXUIElement] { nextLevel.append(contentsOf: childArray) }
+        }
+        queue = nextLevel; depth += 1
+    }
+    return cuError("target '\(target)' not found in AX tree", code: "ELEMENT_NOT_FOUND")
+}
+
+// MARK: - cursor-get (#571 — the cursor-preservation oracle needs a reading)
+//
+// The background oracles (scripts/computer-bg-oracles.sh) compare the pointer position
+// before and after a delivery: a background route must not move it. macOS has no built-in
+// CLI for this, and `CGEvent` is already used throughout this file for injection, so the
+// reading lives here rather than pulling in an external dependency.
+//
+// Deliberately its own command: it is a pure read with no side effects, and the caller
+// treats an unavailable reading as "cannot verify" (fail-closed), never as "cursor kept".
+func cuCursorGet() -> String {
+    guard let ev = CGEvent(source: nil) else {
+        return cuError("cannot read cursor position", code: "ORACLE_UNAVAILABLE")
+    }
+    let p = ev.location
+    return cuJson(["ok": true, "x": p.x, "y": p.y])
 }
 
 // MARK: - screenshot (ScreenCaptureKit)

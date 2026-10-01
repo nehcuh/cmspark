@@ -169,6 +169,38 @@ jobs:
             tests/security/security-policy.test.ts \
             tests/ws-router-validator-lockstep.test.ts
 
+      - name: Swift host typecheck (macOS only)
+        # WHY THIS EXISTS: the native host binaries are built by build-host*.sh, which CI
+        # never invoked — so until this step, host.swift (~2400 lines) and
+        # host-skylight.swift (~1500) had **zero compile checking anywhere**. A syntax or
+        # type error could land on main and nothing would notice until someone built on a
+        # Mac. Found while writing #571's AX action code, which I could not compile locally
+        # (Windows has no Swift toolchain).
+        #
+        # `-typecheck` is deliberate: it needs no signing, entitlements or Info.plist —
+        # that is build-host.sh's job — and "does it compile at all" is the part CI can
+        # meaningfully own without provisioning a full macOS build.
+        #
+        # The -framework list mirrors each build script's `swiftc` line, so a framework
+        # dropped from the build shows up here instead of on a developer's machine.
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=companion/src/host-use/darwin
+          echo "--- typecheck host.swift ---"
+          swiftc -typecheck "$D/host.swift" \
+            -framework Foundation -framework ApplicationServices -framework Vision \
+            -framework Security -framework Carbon -framework CoreImage \
+            -framework ImageIO -framework ScreenCaptureKit
+          echo "--- typecheck host-skylight.swift ---"
+          swiftc -typecheck "$D/host-skylight.swift" \
+            -framework Foundation -framework AppKit -framework ApplicationServices \
+            -framework Vision -framework Security -framework Carbon \
+            -framework CoreImage -framework ImageIO -framework ScreenCaptureKit
+          echo "OK: both Swift hosts typecheck"
+
+
       - name: Windows launcher runtime smoke (launch-hidden.vbs / launch.bat)
         # Runtime proof of the VBS decision tree on a real Windows box — esp.
         # the b09b2211 nested HasSystemNode probe (js present + no node on
