@@ -475,6 +475,50 @@ export type UiaInvokeResult =
       detail: string
     }
 
+/** #571: which AX action to perform. `auto` tries the least-destructive route first. */
+export type AxInvokeMode = "auto" | "press" | "setvalue" | "increment" | "decrement" | "confirm" | "cancel"
+
+/**
+ * #571: outcome of an AX **action** delivery attempt (the macOS counterpart of
+ * `UiaInvokeResult`).
+ *
+ * Same shape and same reasoning: a discriminated result rather than a thrown
+ * `ComputerError`, because "the element does not support this action" and "the element is
+ * gone" are **fallback decisions** for the caller, not failures to report upward. Keeping
+ * them out of `ComputerErrorCode` also keeps internal routing signals away from the model.
+ */
+export type AxInvokeResult =
+  | {
+      ok: true
+      action: string
+      role: string
+      name: string
+      x: number
+      y: number
+      /** Always false on success — the whole point of the AX route. */
+      foreground: false
+      nodes: number
+    }
+  | {
+      ok: false
+      reason:
+        | "window_gone"
+        | "element_gone"
+        | "element_mismatch"
+        | "action_unavailable"
+        | "action_failed"
+        | "method_failed"
+        | "bad_output"
+        /**
+         * #571: the emergency-stop flag was present (`TASK_ABORTED` from cmspark-host).
+         * NOT a fallback trigger — see `UiaInvokeResult`'s `aborted` for the full reasoning.
+         */
+        | "aborted"
+      detail: string
+      /** Actions the element actually supports (only for `action_unavailable`). */
+      supported?: string[]
+    }
+
 export interface InputInjector {
   click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void>
   typeText(hwnd: number, text: string): Promise<void>
@@ -508,6 +552,30 @@ export interface InputInjector {
       expectAutomationId?: string
     },
   ): Promise<UiaInvokeResult>
+  /**
+   * #571: deliver through an **AX action** instead of synthesizing input — the macOS
+   * counterpart of `invokeUia`. Having found the element through the AX tree, act on it
+   * directly, so the target never has to be raised to the front. Raising it is what
+   * `cuInject` does today ("Always activate before inject") and what makes multi-step tasks
+   * unreachable.
+   *
+   * Optional for the same reason as `invokeUia`: an injector without AX capability simply
+   * omits it, and callers must treat `undefined` as "not available".
+   *
+   * Never falls back to a coordinate click itself — it refuses with `element_gone` and lets
+   * the caller decide.
+   */
+  invokeAx?(
+    hwnd: number,
+    name: string,
+    mode: AxInvokeMode,
+    opts?: {
+      value?: string
+      /** Identity re-verification against the earlier locate hit. */
+      expectRole?: string
+      expectName?: string
+    },
+  ): Promise<AxInvokeResult>
   probeWindow(hwnd: number): Promise<WindowInfo>
   foregroundHwnd(): Promise<number>
   /**

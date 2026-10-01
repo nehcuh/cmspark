@@ -38,6 +38,8 @@ import {
   type RectPx,
   type ScreenCapturer,
   type SecurityEnvironment,
+  type AxInvokeMode,
+  type AxInvokeResult,
   type UiaLocateHit,
   type UiaLocator,
   type UiaWatcher,
@@ -71,6 +73,23 @@ export function parseComputerJson(stdout: string, label: string): Record<string,
     throw new ComputerError("INVALID_ACTION", `${label}: malformed payload from cmspark-host`)
   }
   return parsed as Record<string, any>
+}
+
+/**
+ * #571: cmspark-host `ax-invoke` failure code → the caller-facing fallback reason.
+ *
+ * The host emits `AX_ACTION_UNAVAILABLE` through `cuJson` (with a `supported` list) and the
+ * rest through `cuError`. A code that is not listed here deliberately surfaces as `bad_output`
+ * rather than being mapped onto a plausible-sounding known reason.
+ */
+const AX_FAILURE: Record<string, Extract<AxInvokeResult, { ok: false }>["reason"]> = {
+  TASK_ABORTED: "aborted",
+  HWND_DEAD: "window_gone",
+  AX_WINDOW_GONE: "window_gone",
+  ELEMENT_NOT_FOUND: "element_gone",
+  AX_ELEMENT_MISMATCH: "element_mismatch",
+  AX_ACTION_UNAVAILABLE: "action_unavailable",
+  AX_ACTION_FAILED: "action_failed",
 }
 
 export function checkOk(parsed: Record<string, any>, label: string): void {
@@ -619,6 +638,78 @@ export class MacInputInjector implements InputInjector {
 
   constructor(estopFlagPath?: string) {
     this.estopFlagPath = estopFlagPath
+  }
+
+  /**
+   * #571: AX **action** delivery — the background route on macOS.
+   *
+   * `cuAXLocate` already walks the AX tree to find elements, but delivery goes through
+   * `cuInject`, whose own comment says "Always activate before inject" — the target must be
+   * raised to the front, which costs a one-shot L2 confirmation and makes multi-step tasks
+   * unreachable. This acts on the element directly and never touches the frontmost app.
+   *
+   * Returns a discriminated result rather than throwing, mirroring `invokeUia`: `element_gone`
+   * and `action_unavailable` are **fallback decisions** for the caller. It never falls back to a
+   * coordinate click itself.
+   *
+   * `--estop-flag` is forwarded on every call. `cuInject` takes the same flag; a delivery
+   * handler that does not accept it would silently disable the emergency stop (the #573-P0
+   * defect class), so the host side reads it and refuses with `TASK_ABORTED`.
+   */
+  async invokeAx(
+    hwnd: number,
+    name: string,
+    mode: AxInvokeMode,
+    opts: { value?: string; expectRole?: string; expectName?: string } = {},
+  ): Promise<AxInvokeResult> {
+    // `auto` = the least-destructive semantic route: AX press is macOS's equivalent of
+    // Windows' InvokePattern ("activate"). A caller wanting a value write says `setvalue`.
+    const action = mode === "auto" ? "press" : mode
+    const args = [
+      "ax-invoke",
+      "--window-id", String(hwnd),
+      "--target", name,
+      "--action", action,
+      ...(opts.value !== undefined && opts.value !== "" ? ["--value", opts.value] : []),
+      ...(opts.expectRole ? ["--expect-role", opts.expectRole] : []),
+      ...(opts.expectName ? ["--expect-name", opts.expectName] : []),
+      ...(this.estopFlagPath ? ["--estop-flag", this.estopFlagPath] : []),
+    ]
+    let stdout: string
+    try {
+      stdout = await spawnHostBin(resolveHostBinary(), args, { timeoutMs: 8000 })
+    } catch (err) {
+      return { ok: false, reason: "method_failed", detail: String((err as Error)?.message ?? err).slice(0, 300) }
+    }
+    let parsed: Record<string, any>
+    try {
+      parsed = parseComputerJson(stdout, "ax-invoke")
+    } catch (err) {
+      return { ok: false, reason: "bad_output", detail: String((err as Error)?.message ?? err) }
+    }
+    if (parsed.ok === true) {
+      return {
+        ok: true,
+        action: String(parsed.action ?? action),
+        role: String(parsed.role ?? ""),
+        name: String(parsed.name ?? name),
+        x: Number(parsed.x ?? 0),
+        y: Number(parsed.y ?? 0),
+        // Success always reports foreground:false. If that ever changes, the oracles in
+        // computer-bg-oracles.sh will catch it — this field is a promise, not a measurement.
+        foreground: false,
+        nodes: Number(parsed.nodes ?? 0),
+      }
+    }
+    // The host reports "the element does not support this action" via `code` (cuJson) and
+    // everything else via `error_code` (cuError). Read both.
+    const code = String(parsed.code ?? parsed.error_code ?? "")
+    const detail = String(parsed.error ?? parsed.code ?? "unknown failure")
+    const supported = Array.isArray(parsed.supported) ? parsed.supported.map(String) : undefined
+    const mapped = AX_FAILURE[code]
+    if (mapped) return { ok: false, reason: mapped, detail, ...(supported ? { supported } : {}) }
+    // An unrecognised code must not be rounded off to a confident known reason.
+    return { ok: false, reason: "bad_output", detail: `${code || "(no code)"}: ${detail}`.slice(0, 300), ...(supported ? { supported } : {}) }
   }
 
   // Resolve hwnd → bundleId via cmspark-host windows query. Cached.
