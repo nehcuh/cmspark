@@ -78,9 +78,11 @@ function Test-StopFlag {
 }
 
 $sw = [Diagnostics.Stopwatch]::StartNew()
+# Checked at entry, every 128 nodes through the walk, and once more immediately before the
+# act. (The walk and pre-act checks are the load-bearing ones for a stop raised *during* the
+# action; this one covers the trivial case where the flag was already up on arrival.)
 Test-StopFlag
 if (-not [CU.W32]::IsWindow([IntPtr]$Hwnd)) { Fail "UIA_WINDOW_GONE" "Hwnd $Hwnd is not a window" 3 }
-Test-StopFlag
 
 # NFKC + case-insensitive anchor normalisation (mirrors locate).
 function Normalize-Anchor([string]$s) {
