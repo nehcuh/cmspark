@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S121 (2026-10-02) [网易云 computer use · 站点知识 · 焦点 · 无人值守]
+- `rw70ik` 把客户端操作经验记成 `music.163.com` 站点知识，磁盘上拆成四个同名 `music-163-com*.md`。`j2l9u7` 只注入其中一份，仍用「顶部搜索框」去点，得到 `ocr:not-found`。
+- macOS 生产点击会 `activate`。截图不抢焦点。`invokeAx` 未接到执行器。cua 的后台只覆盖部分框架和动作，做不到就拒绝，不抢前台冒充。
+- 没有「本对话全部免点」。无人值守可让已开坐标的 App 的 `host_computer` 在 8 小时、默认 30 步内免点；启动应用和 `evaluate` 仍可能确认。网易云坐标开关已开。
+- Next：若要修，先合并同名站点经验，再让 computer use 按 App token 取知识，并把 macOS 后台点击接到执行器。未做。
+- Recorded: yes — 三条坑见 project-knowledge。
+
 ### S120 (2026-10-02) [拉取 0.6.11 · 三处 P1 · 本机换装 · CLEARED]
 - 本地 `main` 从 `8e74b77b` 快进到 `origin/main` `6e0dec82`（0.6.11，84 提交）。五路对抗确认 3 条现行 P1 + 1 条测试网：页面标题能把无码缺标签抬成 `security_halt`；Windows 后台左键把 Select/Toggle 当成已点击；上一段 `chatCreate` 的 finally 盖掉下一段的 `last_run_terminal`；`-StopFile` 回归测试在 CI 上永远 skip。
 - Claude 与 Kimi 均为 `APPROVE_WITH_NITS`。已改：分类先于标题拼接并登记 `TAB_NOT_FOUND`；左键只认 Invoke；epoch 在第一个 `await` 之前领走；适配器测试断言 `-StopFile`。Pi 测试格 `REQUEST_CHANGES` 后补了真实 `chatCreate` 双跑锁。
@@ -1333,8 +1340,8 @@
 
 ### 形态深化 0.5.3 切点（S84–S104 · main 含知识 Wave A/B + 开闸 + 查重）
 - status: **active**（用户可见主线 on main；不宣称 Capture/CU 闭合）
-- context: 活切点 **0.6.11**（tag `4158cffe` 已发布）。本机 `/Applications/CMspark.app` 是 2026-10-02 工作区试装，CDHash `167c71c0…`，含未提交的缺标签分类 / UIA Invoke / run epoch 修复。#228 禁扩 profile；#230 冻。
-- next_action: 重载 unpacked 扩展。不要用线程 `t569rp`。不要提交 `host-integrity.ts`。#568 仍优先于 #567 / #563 后续。
+- context: 活切点 **0.6.11**。本机已换装，CDHash `167c71c0…`。循环修复在本地提交 `68a7c581`，未推远程。#228 禁扩 profile；#230 冻。
+- next_action: 重载 unpacked 扩展。不要用 `t569rp`。不要提交 `host-integrity.ts`。computer use 站点知识与 macOS 后台点击未修。#568 仍优先。
 - resume_doc: CHANGELOG [Unreleased] · `dist-package/CMspark-v0.6.11-macOS.dmg`
 - updated: 2026-10-02
 

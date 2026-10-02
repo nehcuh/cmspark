@@ -4,6 +4,14 @@
 
 <!-- handoff:start -->
 
+### 2026-10-02 S121 · 网易云 computer use · 站点知识 · 焦点 · 确认
+
+- **站点知识**：`rw70ik` 四次 `record_experience` 都写成 `name: music-163-com`，文件是 `music-163-com.md` 与 `-2/-3/-4.md`。注入按 name 只取一份。挂载键是浏览器标签 hostname，不是 `mac.app.neteasemusic`。无 `site-op-memory`+`auto`，不进操作记忆。`j2l9u7` 只看到 173 字，仍点「顶部搜索框」→ `ocr:not-found`。
+- **焦点**：截图不 `activate`。点击走 `preferForeground` + `cuActivatePid`。`invokeAx` 未接线。台账 §4 macOS 仍是 Gap。cua 后台是部分动作的真后台，失败码 `background_unavailable`，不抢焦点冒充。
+- **确认**：无「本对话全部免点」。无人值守可免已开坐标 App 的 `host_computer`（8h、默认 30 步/预算，含中途再确认）。`host_app` 与默认 `evaluate` 仍可能问。网易云 `coordinateAllowed: true`。
+- **Next**：未改代码。若修：合并同名站点经验；computer use 按 App 取知识；macOS 后台点击接到执行器。重载扩展。不要提交 `host-integrity.ts`。#568 > #567 > #563。
+- **Do not**：`xattr -cr`、`pgrep -f /Applications/CMspark.app`、换装留 bak、裸 `node --test` 打本机数据目录、把截图不抢焦点说成点击也不抢、把无人值守说成所有弹窗都免。
+
 ### 2026-10-02 S120 · 拉取 0.6.11 · 三处 P1 · 本机换装
 
 - **拉取**：`8e74b77b` → `6e0dec82`（84 提交，产品 0.6.11）。五路对抗 + Claude/Kimi 双路 `APPROVE_WITH_NITS`。
@@ -12,32 +20,5 @@
 - **CLEARED**：线程 `t569rp` / `w-569-rp` 是裸 `node --test` 写进 `~/.cmspark-agent` 的残留，`run_progress` 为 sticky `null`。用户在这条上让插件播网易云，提案被拒并整轮停止。换新对话。
 - **Next**：重载 `chrome-extension/build/chrome-mv3-prod/`。#568 > #567 > #563 后续。
 - **Do not**：`xattr -cr`、`pgrep -f /Applications/CMspark.app`、换装留 bak、`kimi -p` 后紧跟 `--output-format`、裸 `node --test` 打到本机数据目录、`cp` 不带 `/bin/cp -f` 去还原 CHANGELOG。
-
-### 2026-09-29→30 S119 · #560 收尾 · #563 A 批 · #537 拆解 · **cut 0.6.11 发布**
-
-- **决策落地（#560 第二半）**：`HINT_REQUIRED` / `DOWNLOAD_BUSY` 改 `recoverable`（真实行为变更），
-  `SELECTOR_REQUIRED` 意图登记（实测**不可达**），`PATH_ESCAPE` 保持 → PR **#564**（`827809ed`）。
-  pi 抓到我 3 处 **over-claim**（判据/可达性/用例数），全部更正。
-- **#563 A 批**：登记「**已产出但未登记**」的码 → PR **#565**（`d958b70b`）。**七次修订、pi 五轮 REJECT**。
-  教训链：枚举盲区逐层暴露（单报文 → 只看首个产出点 → 报文集 helper **分参注入** → 经**对象属性**间接拼装）。
-  最终口径：**按「可验证性」收口**，无法证明等级不变的码**一律不收**（它们回到 main 的行为）。
-  pi 的判词值得记住：**「风险从『漏一个 = 收紧』变成『漏一个 = 不变』」** —— 对不可穷尽的集合，
-  「不确定就不登记」本身就是结构性防线。registry **35 → 109** 条。
-- **#537 拆解**：它 4 天没人管、**落后 main 52 提交**、**从未跑过 CI**，且是杂烩（9 提交跨 ≥5 issue）。
-  用「**逐提交实测能否 cherry-pick 到当前 main**」决策：只提取 `2a1ca91c`（#528+#529）→ PR **#566**
-  （`471a3240`）→ **#529 CLOSED**；其余 3 个 attach/debugger 提交冲突（#555/#559 重写过
-  `browser-bridge.ts`）→ **#567**。pi 两轮：REJECT（3 条全成立）→ APPROVE_WITH_NITS。
-- **cut 0.6.11**：0.6.10 之后攒了 **7 个 PR**（#555 #557 #561 #562 #564 #565 #566），全是安全/健壮性修复。
-  版本 lock-step **17 个文件**（同 v0.6.9/v0.6.10 集合）。
-- **Release**：https://github.com/nehcuh/cmspark/releases/tag/v0.6.11 —— tag `v0.6.11` → **`4158cffe`**
-  （== 打 tag 时 main HEAD）。三端 zip + Windows Setup.exe + SHA256SUMS 共 **6 个产物**。
-  `CMspark-Setup-v0.6.11.exe` sha256 `6fb3814fe9337c2bb472c0b06101a06cd04a075ea18d1d5b1b56aeb6ac57cf2f`。
-- **流程**：先 `workflow_dispatch` **dry-run**（run `36661632709`，三端构建 + Publish 正确跳过）
-  → 再打 tag（run `36662324260`，preflight + 三端 + Publish 全绿）。`release-guard.sh` 本地全绿。
-- **Next**：换装官方 **v0.6.11**（本机仍是 0.6.10，官方已发新版）；重载 unpacked 扩展
-  `chrome-extension/build/`。**技术待办优先级**：`#568`（参数拒执的码/等级未闭环 —— 含与 #528
-  **同形**的 l2-admission token 过期路径，**可达的真实误封**）> `#567`（attach/debugger，需按现结构重做）
-  > `#563` 后续批次（B 产出点保留上游码 / C 模型派生插值 / D `ComputerErrorCode` 35 个未登记，
-  含 fail-closed 安全闸门）> `#548` / `#550` / `#539`。
 
 <!-- handoff:end -->

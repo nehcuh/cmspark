@@ -89,6 +89,24 @@
 
 ## Technical Pitfalls
 
+### 桌面操作经验写成站点知识后，computer use 下一轮用不上（2026-10-02 · rw70ik → j2l9u7）
+- **现象**：`rw70ik` 用 `record_experience` 把网易云客户端的点击路径记成 `site: music.163.com`。`j2l9u7` 检索只拿到一份 173 字的 `music-163-com`，模型知道「CEF、没有 AX」，仍用「顶部搜索框」去点，日志是 `ocr:not-found`。
+- **根因**：四次并行记录的 `name` 都是 `music-163-com`。文件名被占后另存为 `-2/-3/-4.md`，frontmatter 名字不变。`get(name)` 只返回一份。站点知识自动挂载看的是**当前浏览器标签 hostname**，不是 `mac.app.neteasemusic`。这些手写条目也没有 `site-op-memory` + `auto`，进不了跨线程操作记忆。知识块包在 untrusted 里，并写明忽略其中祈使句。
+- **纪律**：桌面 App 的操作步骤不要指望 `target=site` 跨对话生效。查注入先看 `retrieved_sources` 的 id 和 chars，再对磁盘上同名多文件。
+- **4 行 case**：动作=下一对话继续操作同一客户端；失败=重复死路锚点；归责=同名拆文件 + 按网页域名注入；保护=按 name 合并条目，computer use 按 App token 选知识
+
+### macOS 点击仍抢焦点；cua 的后台是部分动作（2026-10-02）
+- **现象**：截图不抢焦点，点击和打字会把网易云拉到最前。
+- **根因**：截屏默认不 `activate`（注释里的 Hermes 只指截屏）。`click()` 走 `preferForeground()`，`cuInject` 里 `cuActivatePid`。SkyLight 按进程投递会被微信/网易云丢掉，HID 只打到最前窗口。`invokeAx()` 是对标 cua 的后台动作，执行器没有调用。台账 §4 macOS 仍是 Gap。cua 的后台是真的：焦点、叠放、光标都不变才算；做不到返回 `background_unavailable`，不偷偷抢前台。macOS Electron 的点击和输入可以后台，滚动和像素拖拽不行。AX 树为空的自绘窗口没有元素可发动作。
+- **纪律**：不要把「截图不抢焦点」说成点击也不抢。不要把 cua 说成全动作后台，也不要说它会抢焦点冒充后台。
+- **4 行 case**：动作=macOS host_computer 点击；失败=窗口被提前；归责=生产路径是前台注入，AX 后台未接线；保护=台账 §4 / `invokeAx` 调用点
+
+### 无人值守免的是桌面 `host_computer`，不是整段对话（2026-10-02）
+- **现象**：用户要「本对话全部免点允许」。确认台勾选只记同类 `host_computer`，且 `j2l9u7` 的 grant 是 `explicit_opt_in:false`。
+- **根因**：无人值守（ADR-021）在已武装、App `coordinateAllowed`、步数和预算不超过默认 30 时，跳过该 App 的任务级 L2，并静默中途再确认（含前台让出、危险、实验）。硬拒绝仍直接失败。`host_app` 启动不在这张名单里。`evaluate` 默认仍确认。出站确认不跳过。授权在进程内存，8 小时或重启后失效。网易云 `mac.app.neteasemusic` 已 `coordinateAllowed: true`。
+- **纪律**：对用户说清范围。不要把无人值守说成所有弹窗都不再出现。
+- **4 行 case**：动作=少点确认弹窗；失败=仍逐次允许；归责=未武装或动作不是 host_computer / 超 cap / App 未开坐标；保护=`evaluateUnattendedHostComputerSkipDetail`
+
 ### 裸 `node --test` 会把 ThreadManager 写进本机 `~/.cmspark-agent`（2026-10-02）
 - **现象**：侧栏最新对话标题是测试别名 `w-569-rp`，让插件操作电脑只回 `⚠️ CLEARED`，后面的 `host_app` / `host_computer` 不再执行。
 - **根因**：`run-terminal-persist-569` 用 `ThreadManager` 建了线程 `t569rp`，并把 `run_progress` 设成 `null`。`node --import tsx --test` **没有** `scripts/test-data-dir.cjs` 预加载，`CMSPARK_DATA_DIR` 未设，写入就是用户数据目录。`null` 是粘住清空：`proposeRunProgress` 回 `CLEARED`，无码报文落到 `non_recoverable`，整轮停止。页面工具在 sticky null 下本可以不提案，但系统提示仍要求先 `run_progress_propose`。
