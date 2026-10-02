@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S120 (2026-10-02) [拉取 0.6.11 · 三处 P1 · 本机换装 · CLEARED]
+- 本地 `main` 从 `8e74b77b` 快进到 `origin/main` `6e0dec82`（0.6.11，84 提交）。五路对抗确认 3 条现行 P1 + 1 条测试网：页面标题能把无码缺标签抬成 `security_halt`；Windows 后台左键把 Select/Toggle 当成已点击；上一段 `chatCreate` 的 finally 盖掉下一段的 `last_run_terminal`；`-StopFile` 回归测试在 CI 上永远 skip。
+- Claude 与 Kimi 均为 `APPROVE_WITH_NITS`。已改：分类先于标题拼接并登记 `TAB_NOT_FOUND`；左键只认 Invoke；epoch 在第一个 `await` 之前领走；适配器测试断言 `-StopFile`。Pi 测试格 `REQUEST_CHANGES` 后补了真实 `chatCreate` 双跑锁。
+- 本机试装：`CMSPARK_ALLOW_DIRTY=1` `CMSPARK_ALLOW_UNTAGGED=1` 打出 `dist-package/CMspark-v0.6.11-macOS.dmg`，已换上 `/Applications/CMspark.app`。CDHash `167c71c0c34fbfeda80490385f04e199ae09182a`，daemon `127.0.0.1:23401`。无 bak。`host-integrity.ts` 不提交。
+- **CLEARED**：用户在线程 `t569rp`（别名 `w-569-rp`）上让插件播网易云，模型先 `run_progress_propose`，因测试把 `run_progress` 写成 sticky `null` 而失败，并被分成不可恢复。换新对话。`w-569-*` 是裸 `node --test` 写进 `~/.cmspark-agent` 的残留。
+- Next：重载 unpacked 扩展 `chrome-extension/build/chrome-mv3-prod/`。不要在 `w-569-rp` 上继续。#568 仍开。
+- Recorded: yes — 裸测试写入本机数据目录；本机打包时 Unreleased 无豁免且 `cp -i` 会吞还原。
+
 ### S118 (2026-09-28→29) [深夜批次 · computer-use 实测挖出安全缺陷 · 三票收敛]
 
 - **授权**：用户睡前「将所有验证到的真实问题全部解决，我允许你所有操作」。**边界自守**：披露/HITL 属操作员动作，即使用户口头同意也未代批。
@@ -1325,10 +1333,10 @@
 
 ### 形态深化 0.5.3 切点（S84–S104 · main 含知识 Wave A/B + 开闸 + 查重）
 - status: **active**（用户可见主线 on main；不宣称 Capture/CU 闭合）
-- context: 活切点 **0.6.10**（#549 三条 BLOCKING 修复 / #551 cut 0.6.10 / #553 release-guard 均已合并 main）。v0.6.10 tag **待打**。#228 禁扩 profile；#230 冻；#548/#550/#552 follow-up 未做。
-- next_action: 用户确认后打 `v0.6.10` tag 触发 release.yml 对外发布；发布后据实补 `PROJECT_CONTEXT.md` + overview.md 打包行（Release URL / SHA256），再关 #547。
-- resume_doc: CHANGELOG 0.6.10 · docs/audit/reviews/069-pull-20260927/SYNTHESIS.md · #547 · #552
-- updated: 2026-09-28
+- context: 活切点 **0.6.11**（tag `4158cffe` 已发布）。本机 `/Applications/CMspark.app` 是 2026-10-02 工作区试装，CDHash `167c71c0…`，含未提交的缺标签分类 / UIA Invoke / run epoch 修复。#228 禁扩 profile；#230 冻。
+- next_action: 重载 unpacked 扩展。不要用线程 `t569rp`。不要提交 `host-integrity.ts`。#568 仍优先于 #567 / #563 后续。
+- resume_doc: CHANGELOG [Unreleased] · `dist-package/CMspark-v0.6.11-macOS.dmg`
+- updated: 2026-10-02
 
 ### steer/nextRun 耐久 + overlay nits（S79 · #220/#221 MERGED）
 - status: **done**

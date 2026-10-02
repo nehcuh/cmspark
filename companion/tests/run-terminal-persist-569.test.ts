@@ -92,6 +92,23 @@ test("#569 落点在 adapter 的 chatCreate finally —— 唯一覆盖全部 ru
   assert.ok(cwd, "找不到 adapter.ts")
   const adapter = readFileSync(cwd, "utf8")
   assert.ok(adapter.includes("last_run_terminal: runStats.terminal"), "落盘应写本 run 的终值")
+  assert.ok(
+    adapter.includes("runTerminalEpochIsCurrent(threadId, runEpoch)"),
+    "落盘必须先确认本 run 仍是该线程最新一次 chatCreate",
+  )
+  const fn = adapter.slice(adapter.indexOf("export async function chatCreate"))
+  const code = fn.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+  const claimAt = code.indexOf("claimRunTerminalEpoch(threadId)")
+  const awaitAt = code.indexOf("await ")
+  assert.ok(claimAt >= 0 && awaitAt > claimAt, "epoch 必须在 chatCreate 的第一个 await 之前领走")
+  const gateAt = adapter.indexOf("runTerminalEpochIsCurrent(threadId, runEpoch)")
+  const writeAt = adapter.indexOf("last_run_terminal: runStats.terminal", gateAt)
+  assert.ok(gateAt >= 0 && writeAt > gateAt, "写盘必须出现在 epoch 判断之后")
+  assert.equal(
+    adapter.slice(gateAt, writeAt).includes("await"),
+    false,
+    "比较和 update 之间不能有 await，否则后任可以插进来",
+  )
   assert.ok(adapter.includes("last_run_ended_at: new Date().toISOString()"), "落盘应写结束时刻")
 
   // 为什么必须写局部值而不是 `runStats.terminal`：`runStats` 是调用方可选传入的，
@@ -190,4 +207,16 @@ test("#569 异常逃逸必须落成 error/aborted —— 不得留下「正常�
   assert.ok(block.includes('"error"'), "非 abort 异常应落成 error")
   assert.ok(block.includes('"aborted"'), "AbortError 应落成 aborted")
   assert.ok(/throw runErr/.test(block), "必须抛回原异常 —— 否则 router 的 catch 行为被改变")
+})
+
+test("#569 后任 epoch 占住之后，前任不得再写终值；没有后任时仍可写", async () => {
+  const { claimRunTerminalEpoch, runTerminalEpochIsCurrent } = await import("../src/llm/adapter")
+  const first = claimRunTerminalEpoch("t-epoch")
+  assert.equal(runTerminalEpochIsCurrent("t-epoch", first), true, "没有后任时，被中止的这一跑仍是当前")
+  const second = claimRunTerminalEpoch("t-epoch")
+  assert.equal(runTerminalEpochIsCurrent("t-epoch", first), false)
+  assert.equal(runTerminalEpochIsCurrent("t-epoch", second), true)
+  const other = claimRunTerminalEpoch("t-epoch-other")
+  assert.equal(runTerminalEpochIsCurrent("t-epoch", second), true, "别的线程不抢本线程的 epoch")
+  assert.equal(runTerminalEpochIsCurrent("t-epoch-other", other), true)
 })

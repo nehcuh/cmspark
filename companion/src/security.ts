@@ -1032,6 +1032,9 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // #559：TAB_ID_REQUIRED 原先只靠子串表里的 "tab_id_required" 生效 —— 换成中性文案就掉回
   // non_recoverable。
   ["TAB_ID_REQUIRED", "recoverable"],
+  // 缺标签。扩展抛 `TAB_NOT_FOUND: No tab with given id …`。无码时文案兜底仍可能
+  // 被拼进来的页面标题抬成 security；登记后等级只看码。
+  ["TAB_NOT_FOUND", "recoverable"],
   // ── #560 第二半：把「偏严」的三个改为 recoverable ──────────────────────────
   // 这三条原先落默认桶 non_recoverable → **整轮终止**，但语义上 agent 都能继续：
   //

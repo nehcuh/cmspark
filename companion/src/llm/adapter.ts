@@ -520,8 +520,32 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
   return sections.join("\n\n")
 }
 
+/**
+ * Per-thread run ordinal, bumped at chatCreate entry before any await.
+ * The finally writes last_run_terminal only while this ordinal is still the
+ * latest. abortThreadChat bumps llmLoopGeneration before the old finally, so
+ * that counter cannot be the guard: an abort with no successor would skip its
+ * own write. A later chatCreate on the same thread claims a newer ordinal, and
+ * the predecessor's finally then no-ops.
+ */
+const runTerminalEpoch = new Map<string, number>()
+let runTerminalEpochSeq = 0
+
+export function claimRunTerminalEpoch(threadId: string): number {
+  const epoch = ++runTerminalEpochSeq
+  runTerminalEpoch.set(threadId, epoch)
+  return epoch
+}
+
+export function runTerminalEpochIsCurrent(threadId: string, epoch: number): boolean {
+  return runTerminalEpoch.get(threadId) === epoch
+}
+
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, knowledgeDescriptionOnly, knowledgeMode, knowledgeSmartMatch, knowledgeRouteByGroup, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, signal, skipUserMessage, contextRefsSegment, hostname } = params
+  // Before any await. A successor can start once this function yields; if the
+  // claim happened later, the older run could become "latest" and overwrite.
+  const runEpoch = claimRunTerminalEpoch(threadId)
   // L-2 (#388): reset the caller-owned run-outcome accumulator (observation only).
   //
   // #569: **本地兜底**。`params.runStats` 是调用方**可选**传入的：router 的三条路径都传
@@ -2086,6 +2110,18 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               }
             }
 
+            const classCode =
+              (toolResult as { error_code?: string }).error_code ||
+              (typeof (toolResult as { data?: { error_code?: string } }).data?.error_code === "string"
+                ? (toolResult as { data?: { error_code?: string } }).data?.error_code
+                : undefined)
+            // Classify before any tab-title splice. Titles are page-controlled;
+            // appending them first let "Security Block" in a title halt the turn.
+            const errorLevel = classifyError(toolResult.error || "", {
+              toolName,
+              error_code: classCode,
+            })
+
             // Auto-recovery for tabId hallucination (P0): inject available tabs into error
             const tabIdErrorPatterns = [
               "No tab with given id",
@@ -2140,14 +2176,6 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               }
             } catch { /* best-effort stale detection */ }
 
-            const errorLevel = classifyError(toolResult.error || "", {
-              toolName,
-              error_code:
-                (toolResult as { error_code?: string }).error_code ||
-                (typeof (toolResult as { data?: { error_code?: string } }).data?.error_code === "string"
-                  ? (toolResult as { data?: { error_code?: string } }).data?.error_code
-                  : undefined),
-            })
             logger.info("llm.error_classified", {
               tool_call_id: tc.id,
               tool_name: toolName,
@@ -2159,11 +2187,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               shouldStop = true
               if (runStats) runStats.terminal = "security_halt"
               const { formatChatErrorLine } = await import("../capability/user-gate-copy")
-              const code =
-                (toolResult as { error_code?: string }).error_code ||
-                (typeof (toolResult as { data?: { error_code?: string } }).data?.error_code === "string"
-                  ? (toolResult as { data?: { error_code?: string } }).data?.error_code
-                  : undefined)
+              const code = classCode
               sendToExtension(toolChatErrorPayload({
                 thread_id: threadId,
                 error: formatChatErrorLine(errorLevel, toolResult.error || ""),
@@ -2608,6 +2632,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     // 三态：`runStats.terminal === null` 且时间戳已写 = **正常跑完**（RunTerminal 的合法成员），
     // 不是「未知」；字段完全不存在才表示「该线程从未跑完过一次 run」。
     // 落盘失败绝不允许影响 run 的收尾，故吞掉异常只记日志。
+    // 比较和写入在同一同步段：后任 chatCreate 已领到更新的 epoch 时，本段不再写。
+    if (runEpoch !== 0 && runTerminalEpochIsCurrent(threadId, runEpoch)) {
     try {
       threadManager.update(threadId, {
         last_run_terminal: runStats.terminal,
@@ -2618,6 +2644,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         thread_id: threadId,
         error: termErr?.message || String(termErr),
       })
+    }
     }
     if (!signal?.aborted) {
       // Normal (non-abort) finish: steers that arrived during the final streaming

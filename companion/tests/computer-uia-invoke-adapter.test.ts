@@ -57,6 +57,16 @@ test("#572 invokeUia: a successful run parses into ok:true and promises foregrou
   assert.ok(calls[0].args.includes("-ExpectControlType"), "identity expectation must reach the script")
 })
 
+test("#573 invokeUia forwards -StopFile when the injector was given a stop file", async () => {
+  const { runner, calls } = fakeRunner({ stdout: OK_JSON })
+  const inj = new PsInputInjector(runner, "/tmp/cmspark-stop.flag")
+  const r = await inj.invokeUia(777, "SubmitTest", "invoke")
+  assert.equal(r.ok, true)
+  const stopAt = calls[0].args.indexOf("-StopFile")
+  assert.ok(stopAt >= 0, `argv missing -StopFile: ${calls[0].args.join(" ")}`)
+  assert.equal(calls[0].args[stopAt + 1], "/tmp/cmspark-stop.flag")
+})
+
 test("#572 invokeUia: element_gone is a RESULT, not a throw — the caller falls back", async () => {
   const { runner } = fakeRunner({
     throwIt: true,

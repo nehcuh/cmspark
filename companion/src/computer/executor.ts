@@ -1442,11 +1442,12 @@ export async function runComputerTask(
         ) {
           // Not a background-eligible action — leave the path exactly as it was.
         } else {
-          const r = await invokeUia(hwnd, uiaIdentity.name, "auto", {
+          // "invoke" only. "auto" also treats Select/Toggle success as a click.
+          const r = await invokeUia(hwnd, uiaIdentity.name, "invoke", {
             expectControlType: uiaIdentity.controlType,
             expectAutomationId: uiaIdentity.automationId,
           })
-          if (r.ok) {
+          if (r.ok && r.mode === "invoke") {
             deliveredInBackground = true
             deliveryRoute = "uia_pattern"
             deliveryMode = r.mode
@@ -1459,7 +1460,7 @@ export async function runComputerTask(
               tried: r.tried,
               foreground: false,
             })
-          } else if (r.reason === "aborted") {
+          } else if (!r.ok && r.reason === "aborted") {
             // The delivery script saw the emergency-stop flag. This is NOT a fallback case:
             // retrying through the coordinate path would inject *after* the user stopped the
             // task. The coordinate path only survives this today because computer-input.ps1
@@ -1476,8 +1477,8 @@ export async function runComputerTask(
             log("computer.uia_invoke_fallback", {
               taskId,
               target: action.target,
-              reason: r.reason,
-              detail: r.detail,
+              reason: r.ok ? "not_invoke" : r.reason,
+              detail: r.ok ? `mode=${r.mode}` : r.detail,
             })
           }
         }

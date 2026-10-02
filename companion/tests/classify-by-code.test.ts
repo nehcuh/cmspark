@@ -83,6 +83,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   TAB_FORCE_RELEASING: "recoverable",
   TAB_LEASE_CAP: "recoverable",
   TAB_ID_REQUIRED: "recoverable",
+  TAB_NOT_FOUND: "recoverable",
   CDP_ATTACH_FAILED: "recoverable",
   WRONG_ORIGIN: "recoverable",
   ELEMENT_NOT_FOUND: "recoverable",

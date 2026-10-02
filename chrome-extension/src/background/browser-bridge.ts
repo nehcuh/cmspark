@@ -254,7 +254,7 @@ export class BrowserBridge {
     } catch (e: any) {
       if (e.message.includes("Cannot access")) throw e
       // Tab might have been closed
-      throw new Error(`No tab with given id ${tabId}.`)
+      throw new Error(`TAB_NOT_FOUND: No tab with given id ${tabId}.`)
     }
 
     try {

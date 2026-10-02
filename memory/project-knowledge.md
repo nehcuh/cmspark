@@ -89,6 +89,17 @@
 
 ## Technical Pitfalls
 
+### 裸 `node --test` 会把 ThreadManager 写进本机 `~/.cmspark-agent`（2026-10-02）
+- **现象**：侧栏最新对话标题是测试别名 `w-569-rp`，让插件操作电脑只回 `⚠️ CLEARED`，后面的 `host_app` / `host_computer` 不再执行。
+- **根因**：`run-terminal-persist-569` 用 `ThreadManager` 建了线程 `t569rp`，并把 `run_progress` 设成 `null`。`node --import tsx --test` **没有** `scripts/test-data-dir.cjs` 预加载，`CMSPARK_DATA_DIR` 未设，写入就是用户数据目录。`null` 是粘住清空：`proposeRunProgress` 回 `CLEARED`，无码报文落到 `non_recoverable`，整轮停止。页面工具在 sticky null 下本可以不提案，但系统提示仍要求先 `run_progress_propose`。
+- **纪律**：凡是会 `new ThreadManager()` 的测试，走 `node scripts/run-tests.mjs`（它设 `CMSPARK_TEST_RUN_DIR` 并 `--require scripts/test-data-dir.cjs`）。不要用裸 `node --test`。看到 `⚠️ CLEARED` 先查该线程 `run_progress === null`，换一条新对话；不要在 `w-569-*` 上继续。
+- **4 行 case**：动作=插件操作电脑；失败=只显示 CLEARED；归责=测试线程 sticky null + 错误码被当成不可恢复；保护=测试数据目录隔离
+
+### 本机试装 DMG：`[Unreleased]` 无豁免，`cp` 别名会吞掉还原（2026-10-02）
+- **坑**：`release-guard.sh` 对脏树和未打 tag 有 `CMSPARK_ALLOW_DIRTY=1` / `CMSPARK_ALLOW_UNTAGGED=1`。`[Unreleased]` 非空**没有**豁免，正式 `make package-macos` 会拒。临时挪空说明再打包时，zsh 的 `cp` 常是 `cp -i`，非交互回答 n，变更说明不会写回去，命令却继续。
+- **纪律**：还原用 `/bin/cp -f`。`host-integrity.ts` 仍不提交。换装后 CDHash 以当次 staging 为准，不要沿用旧哈希。
+- **4 行 case**：动作=本机打 DMG；失败=闸门拒包或 CHANGELOG 被掏空；归责=Unreleased 无豁免 + `cp -i`；保护=`/bin/cp -f` 还原后再换装
+
 ### Windows 原生选文件夹：无 owner + CP936 stdout（2026-09-10 · S110）
 - **现象**：编程接力「选择工作区」Windows 失败、macOS 正常。
 - **根因**：`FolderBrowserDialog.ShowDialog()` 无 owner、从 hidden companion spawn → 对话框在 Chrome 后面或挂死；PowerShell 5.1 stdout 是系统 ANSI（zh-CN=CP936），Node 按 utf8 解 → 中文路径 mojibake → `realpath` ENOENT。另：`realpathSync` 保留输入盘符大小写，`consumeNativePick` 的 `!==` 会拒绑 `c:\` vs `C:\`。

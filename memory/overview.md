@@ -2,7 +2,7 @@
 
 > Low-frequency status. Prefer session.md for hot work; this file is remote-synced snapshot.
 
-**Updated**: 2026-09-30 · **v0.6.11 已发布**（`4158cffe`）· 本批 7 个 PR 收口（#554/#556/#558/#559/#560 修 · #528/#529 修 · #563 A 批 · #537 拆解）
+**Updated**: 2026-10-02 · **v0.6.11 已发布**（`4158cffe`）· 本机已换装工作区试装（CDHash `167c71c0…`，含未提交的缺标签 / UIA Invoke / run epoch 修复）
 
 ## CMspark — 产品 0.6.10
 
@@ -39,6 +39,6 @@
 
 ## Docs SoT
 
-- 活切点：`CHANGELOG.md` **0.6.10**
+- 活切点：`CHANGELOG.md` **0.6.11** + `[Unreleased]` 本机试装修复
 - 0.5.3 快照：`docs/superpowers/specs/2026-08-27-post-227-status.md`（SNAPSHOT）
 - 用户 / 架构：`docs/README.md` · `PRODUCT.md`

@@ -973,13 +973,42 @@ test("#572: a background-eligible click delivers via UIA and NEVER touches the c
   assert.equal(injector.clicks.length, 0, "UIA delivery must not also inject a coordinate click")
   assert.equal(injector.invokes.length, 1, "exactly one UIA delivery attempt")
   assert.equal(injector.invokes[0].name, "确定")
-  assert.equal(injector.invokes[0].mode, "auto")
+  assert.equal(injector.invokes[0].mode, "invoke")
   // Identity must be carried through for re-verification (UIA_ELEMENT_MISMATCH).
   assert.equal(injector.invokes[0].opts.expectControlType, "Button")
   assert.equal(injector.invokes[0].opts.expectAutomationId, "okBtn")
   // …and the A2.1 post-action invariant still ran. This is the assertion that matters: the
   // background route must not be able to skip an adversary-mandated check.
   assert.ok(capturer.diffs >= 1, "A2.1's post-action diff must still run on the background path")
+})
+
+test("#572: Select/Toggle success is not a left click — fall back to coordinates", async () => {
+  const injector = uiaInjector({
+    ok: true,
+    mode: "select",
+    name: "确定",
+    controlType: "Button",
+    automationId: "okBtn",
+    x: 250,
+    y: 280,
+    bbox: { x: 230, y: 270, w: 40, h: 20 },
+    tried: ["invoke:unsupported", "select:ok"],
+    foreground: false,
+  })
+  const evidence = new RecordEvidence()
+  const events: Array<{ e: string; d: any }> = []
+  const deps = bgDeps(
+    { injector: injector as unknown as InputInjector, uiaLocator: new FakeUia([uiaButtonHit()]) },
+    evidence,
+    (e, d) => events.push({ e, d }),
+  )
+  const r = await runComputerTask(CLICK_OK, deps)
+
+  assert.equal(r.success, true)
+  assert.equal(injector.invokes[0].mode, "invoke", "production left click asks only for Invoke")
+  assert.equal(injector.clicks.length, 1, "a non-invoke UIA success must not skip the click")
+  const fb = events.find((x) => x.e === "computer.uia_invoke_fallback")
+  assert.equal(fb?.d.reason, "not_invoke")
 })
 
 test("#572: a UIA failure falls back to the coordinate path and records the reason", async () => {
