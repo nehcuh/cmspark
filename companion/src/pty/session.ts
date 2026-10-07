@@ -6,6 +6,7 @@ import { isAbsolute } from "node:path"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { loadNodePty, type PtyHandle, type PtySpawnFn } from "./load-native"
 import { buildTerminalEnv } from "./env"
+import { createKimiTaskPrefill } from "./kimi-task-prefill"
 
 /**
  * Total (never-throwing) rendering of a caller-supplied value for a refusal message.
@@ -296,6 +297,8 @@ export function spawnPtySession(opts: {
    *  are dropped; a non-array, an empty-string entry, or an argv over `MAX_PTY_ARGV_BYTES` is a
    *  caller bug and refused. */
   args?: string[]
+  /** Internal approved Kimi task, submitted once; never accepted from a terminal.open wire field. */
+  initialPrompt?: string
   threadId?: string
   reviewId?: string
   owner?: unknown
@@ -317,6 +320,10 @@ export function spawnPtySession(opts: {
   // feature would double as a general shell-argv injector. Refused before env work and before any
   // spawnFn call — including for `[]`, which is still a caller shaping the shell invocation.
   const hasFile = opts.file !== undefined
+  if (opts.initialPrompt !== undefined && (!hasFile || typeof opts.initialPrompt !== "string" ||
+      Buffer.byteLength(opts.initialPrompt, "utf8") > MAX_PTY_ARGV_BYTES)) {
+    return { ok: false, error: "embedded task draft requires an explicit file and at most 128 KiB of text", code: INVALID_PTY_OPTS }
+  }
   if (!hasFile && opts.args !== undefined) {
     return {
       ok: false,
@@ -415,15 +422,27 @@ export function spawnPtySession(opts: {
       // Last-resort orphan reclaim. Client ping/input/ack/resize reset lastClientAt
       // so a quiet-but-watched tab (vim/man/ssh idle) is not SIGKILL'd.
       if (Date.now() - s.lastClientAt > heartbeatMs) closeLive("killed")
-    }, Math.min(heartbeatMs, 5000)),
+      else s.send({ type: "terminal.heartbeat", id: s.id })
+    }, Math.min(Math.max(1, heartbeatMs / 3), 15_000)),
     send: opts.send,
   }
   session.heartbeat.unref?.()
   live = session
 
+  const prefillTask = createKimiTaskPrefill(hasFile ? opts.initialPrompt : undefined, text => handle.write(text))
   handle.onData((data) => {
     if (live !== session) return
     emitChunks(session, data)
+    if (live === session) {
+      try {
+        if (prefillTask(data)) {
+          appendCapabilityAudit({ type: "terminal.task_submitted", at: new Date().toISOString(), id: session.id,
+            ...(session.threadId ? { thread_id: session.threadId } : {}) })
+        }
+      } catch {
+        session.send({ type: "terminal.error", id: session.id, code: "task_prefill_failed", error: "任务自动提交失败，请检查终端连接。" })
+      }
+    }
   })
   handle.onExit(({ exitCode, signal }) => {
     if (live !== session) return

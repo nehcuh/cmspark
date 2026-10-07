@@ -219,7 +219,9 @@ export async function handleTerminalMessage(
       reviewId: reviewId || undefined,
       owner: session.originWs,
       send,
-      ...(intent ? { file: intent.file, args: wireArgs ?? intent.args } : {}),
+      ...(intent ? { file: intent.file, args: wireArgs ?? intent.args,
+        ...(wireArgs == null ? { initialPrompt: intent.initialPrompt } : {}),
+      } : {}),
     })
     if (!spawned.ok) {
       // #506 B: `takeEmbedIntent` already CONSUMED the intent above. A spawn that never started

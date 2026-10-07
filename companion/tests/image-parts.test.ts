@@ -1,6 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { estimateImagePartTokens, hydrateUserImageParts } from "../src/llm/image-parts"
+import { ARCHIVED_TOOL_OUTCOMES_PREFIX } from "../src/llm/history-notice"
+import { isOmitNotice } from "../src/llm/context-budget"
 
 const att = {
   kind: "image" as const,
@@ -9,6 +11,18 @@ const att = {
   sha256: "abc",
   bytes: 100,
 }
+
+test("archived diagnostic notices neither shift image ownership nor become user-turn pins", () => {
+  const notice = { role: "user" as const, content: ARCHIVED_TOOL_OUTCOMES_PREFIX + "timeout" }
+  const rebuilt = [notice, { role: "user" as const, content: "看这张截图" }]
+  const persisted = [{ role: "user", content: "看这张截图", attachments: [att] }]
+  const out = hydrateUserImageParts(rebuilt, persisted, { useNative: true, maxImages: 4,
+    readImage: a => ({ base64: "image-data", mime: a.mime }) })
+  assert.equal(out[0].content, notice.content)
+  assert.ok(Array.isArray(out[1].content))
+  assert.ok((out[1].content as any[]).some(p => p.type === "image_url"))
+  assert.equal(isOmitNotice(notice), true)
+})
 
 test("estimateImagePartTokens: default 1600; square 2800", () => {
   assert.equal(estimateImagePartTokens(), 1600)

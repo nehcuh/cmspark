@@ -204,6 +204,9 @@ cp companion/node_modules/sql.js/dist/sql-wasm.wasm "${STAGING}/"
 # Builtin skills
 cp -r companion/builtin-skills "${STAGING}/"
 
+# Mission packs are refreshed from __dirname/builtin at daemon startup, including their skills.
+cp -r companion/src/packs/builtin "${STAGING}/builtin"
+
 # Optional legacy models.manifest.json (not required for Qwen3-VL weights).
 if [ -f companion/models.manifest.json ]; then
   cp companion/models.manifest.json "${STAGING}/"

@@ -1,6 +1,9 @@
 // LLM adapter — chat + tool loop via LlmProvider (OpenAI / Anthropic wire)
 
 import os from "os"
+import { randomUUID } from "crypto"
+import { buildCodingHandoffContext } from "../acp/capability-context"
+import { currentAcpSessions } from "../acp/session-recovery"
 import { buildSiteContext, type SiteContextSelection } from "../site-context/service"
 import type { SiteTarget } from "../site-context/target"
 import { wrapKnowledgeBlock } from "../skills/content-sanitizer"
@@ -17,6 +20,13 @@ import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
 import { isTransientLlmTransportError } from "./transport-error"
 import { decideSameToolFailure } from "./same-tool-guard"
 import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
+import { ARCHIVED_TOOL_OUTCOMES_PREFIX } from "./history-notice"
+import { assessFleetTask, shouldAssessFleetTask, FLEET_DISPATCH_HINT } from "../orchestrator/fleet-assessment"
+import { peekFleetSuggestGate } from "../orchestrator/fleet-suggest"
+import { computeWorkerWhitelist, workerParentCapabilityWhitelist } from "../orchestrator/spawn"
+import { projectCooperationToolResult, projectFleetReports } from "../orchestrator/cooperation-result"
+import { superviseFleet, abortableDelay, FLEET_SUPERVISION_HINT } from "../orchestrator/fleet-supervision"
+import { multiAgentLlmLoopSnapshot, releaseMultiAgentLlmLoop, tryAcquireMultiAgentLlmLoop } from "../orchestrator/llm-loop-gate"
 import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
 import type { AppsConfig } from "../apps/types"
@@ -366,6 +376,43 @@ export type HistoryMessageLike = {
   tool_calls?: any[]
 }
 
+function archivedToolArguments(raw: string): boolean {
+  try {
+    const value = JSON.parse(raw)
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false
+    return (value.redacted === true || value._redacted === "invalid_json")
+      && typeof value.len === "number"
+      && Object.keys(value).every(key => ["redacted", "_redacted", "len", "sha256", "omission"].includes(key))
+  } catch { return false }
+}
+
+/** Archive fingerprints contain no tool body. Keep only meaningful diagnostics. */
+function historicalToolBody(result: unknown): unknown | null {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result
+  const row = result as Record<string, unknown>
+  if (row.redacted !== true || typeof row.len !== "number" ||
+      !Object.keys(row).every(key => ["success", "error", "error_code", "data", "redacted", "len", "sha256", "omission"].includes(key))) return result
+  if (row.success === true) return null
+  const diagnostic: Record<string, unknown> = {}
+  if (row.success === false) diagnostic.success = false
+  for (const key of ["error", "error_code", "data"]) {
+    if (row[key] !== undefined) diagnostic[key] = row[key]
+  }
+  return Object.keys(diagnostic).length ? diagnostic : null
+}
+
+/** Repair context polluted by the former rebuild note without rewriting durable history. */
+function cleanArchivedAssistantEcho(content: string): string {
+  const note = /\n?\[历史工具调用参数未保存：[^\r\n]*。占位符不是调用参数；重试须按当前工具定义重新提供完整参数。\]/g
+  if (!note.test(content)) return content
+  note.lastIndex = 0
+  return content.replace(note, "").replace(/<(untrusted-[A-Za-z0-9]+) source="(?:tool|page)">\s*([\s\S]*?)\s*<\/\1>/g,
+    (block, _tag, body) => {
+      try { return historicalToolBody(JSON.parse(body)) === null ? "" : block }
+      catch { return block }
+    }).trim()
+}
+
 /**
  * P0-B: rebuild canonical (OpenAI-shaped) chat messages from persisted thread history.
  * - Assistant rows with incomplete following tool results are stripped to text-only.
@@ -375,6 +422,8 @@ export type HistoryMessageLike = {
  *   "insufficient tool messages following tool_calls message".
  * - Unpaired role=tool rows (orphan tool_call_id not in the open set) are skipped
  *   so legacy corrupt history never produces a schema-invalid next create (400).
+ * - Archived argument/result fingerprints are omitted, never API calls or assistant
+ *   prose. Meaningful outcomes stay wrapped in a separate data-only context row.
  * Pure function — unit-testable without chatCreate / network.
  * Providers convert to wire format (Anthropic Messages, etc.) at the boundary (L1/L2).
  *
@@ -393,13 +442,18 @@ export function rebuildMessagesFromHistory(
 ): CanonicalChatMessage[] {
   const messages: CanonicalChatMessage[] = []
   const openToolCallIds = new Set<string>()
+  const omittedCalls = new Set<string>()
+  const historicalOutcomes: string[] = []
 
   for (let i = 0; i < history.length; i++) {
     const msg = history[i]
     if (msg.role === "user") {
       openToolCallIds.clear()
+      omittedCalls.clear()
       messages.push({ role: "user", content: msg.content ?? "" })
     } else if (msg.role === "assistant") {
+      omittedCalls.clear()
+      const assistantContent = cleanArchivedAssistantEcho(msg.content || "")
       const tcList = msg.tool_calls || []
       let validToolCalls = false
       if (tcList.length > 0) {
@@ -421,33 +475,34 @@ export function rebuildMessagesFromHistory(
       }
       if (validToolCalls && tcList.length > 0) {
         openToolCallIds.clear()
-        for (const tc of tcList) {
-          if (tc.id) openToolCallIds.add(tc.id)
-        }
         // #504: prefer the remembered full arguments over the archived stub.
         const liveCalls = live?.assistantToolCalls?.get(String(msg.id ?? ""))
         const liveArgsById = new Map(liveCalls?.map((c) => [c.id, c]) ?? [])
-        messages.push({
+        const rebuiltCalls = tcList.map((tc: any) => ({
+          id: tc.id,
+          type: "function" as const,
+          function: {
+            name: tc.function?.name || tc.name,
+            arguments: liveArgsById.get(tc.id)?.arguments ?? (tc.function?.arguments || tc.arguments || "{}"),
+          },
+        }))
+        const omitted = rebuiltCalls.filter(tc => archivedToolArguments(tc.function.arguments))
+        const kept = rebuiltCalls.filter(tc => !archivedToolArguments(tc.function.arguments))
+        const rebuilt: CanonicalChatMessage = {
           role: "assistant",
-          content: msg.content || null,
-          tool_calls: tcList.map((tc: any) => ({
-            id: tc.id,
-            type: "function" as const,
-            function: {
-              name: tc.function?.name || tc.name,
-              arguments:
-                liveArgsById.get(tc.id)?.arguments ??
-                (tc.function?.arguments || tc.arguments || "{}"),
-            },
-          })),
-        })
+          content: assistantContent || null,
+          ...(kept.length ? { tool_calls: kept } : {}),
+        }
+        if (assistantContent || kept.length) messages.push(rebuilt)
+        for (const tc of kept) openToolCallIds.add(tc.id)
+        for (const tc of omitted) omittedCalls.add(tc.id)
       } else {
         openToolCallIds.clear()
-        messages.push({ role: "assistant", content: msg.content || "(tool call failed)" })
+        if (assistantContent || tcList.length) messages.push({ role: "assistant", content: assistantContent || "(tool call failed)" })
       }
     } else if (msg.role === "tool" && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
-        if (!tc.id || !openToolCallIds.has(tc.id)) continue
+        if (!tc.id || !openToolCallIds.has(tc.id) && !omittedCalls.has(tc.id)) continue
         openToolCallIds.delete(tc.id)
         // #504: prefer the remembered full result over the archived stub.
         // If disk already quarantined (#430), never let a stale live body win.
@@ -456,18 +511,31 @@ export function rebuildMessagesFromHistory(
           typeof tc.result === "object" &&
           (tc.result as { quarantined?: unknown }).quarantined === true
         const liveTool = diskQuarantined ? undefined : live?.toolResults?.get(tc.id)
+        if (omittedCalls.has(tc.id)) {
+          omittedCalls.delete(tc.id)
+          const body = historicalToolBody(liveTool?.result ?? tc.result ?? {})
+          if (body !== null) historicalOutcomes.push(wrapUntrusted(
+            truncateToolResultContent(JSON.stringify(projectCooperationToolResult(liveTool?.tool_name ?? tc.tool_name, body))), tc.id, liveTool?.tool_name ?? tc.tool_name,
+          ))
+          continue
+        }
+        const content = wrapUntrusted(
+          truncateToolResultContent(JSON.stringify(projectCooperationToolResult(liveTool?.tool_name ?? tc.tool_name, liveTool?.result ?? tc.result ?? {}))),
+          tc.id, liveTool?.tool_name ?? tc.tool_name,
+        )
         messages.push({
           role: "tool",
           tool_call_id: tc.id,
-          content: wrapUntrusted(
-            truncateToolResultContent(JSON.stringify(liveTool?.result ?? tc.result ?? {})),
-            tc.id,
-            liveTool?.tool_name ?? tc.tool_name,
-          ),
+          content,
           ...(typeof (liveTool?.tool_name ?? tc.tool_name) === "string" && (liveTool?.tool_name ?? tc.tool_name)
             ? { name: liveTool?.tool_name ?? tc.tool_name }
             : {}),
         })
+      }
+      if (!openToolCallIds.size && !omittedCalls.size && historicalOutcomes.length) {
+        // Never interleave a context row before responses to real tool calls.
+        messages.push({ role: "user", content: ARCHIVED_TOOL_OUTCOMES_PREFIX + historicalOutcomes.join("\n") })
+        historicalOutcomes.length = 0
       }
     }
   }
@@ -844,33 +912,27 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       ? ""
       : "If this thread has no unfinished 本轮步骤 and you will operate the page (click / navigate / get_page_text / type / wait_for / …), call run_progress_propose first with 1–8 concrete steps. Optional exact internal tool names; never guess from Chinese. If the tool returns ALREADY_HAS_STEPS, do not retry this turn. Do not label steps 进行中."
 
-  // #513 fleet dispatch criteria — constant text, surface-gated exactly like
-  // runProgressHint (the tool itself is filtered off summoner; leaving the
-  // instructions there would be a dead instruction). Advisory only: propose
-  // surfaces a card, it never spawns. Negative conditions come FIRST — the
-  // default posture is solo (宁漏建议，不轰炸).
-  const fleetDispatchHint =
+  // #576: mixed workflows can delegate ready, independent parts without
+  // widening worker permissions. A read-only preflight makes the decision explicit.
+  let fleetDispatchHint =
     params.surface === "summoner"
       ? ""
-      : [
-          "FLEET DISPATCH CRITERIA (advisory): you may propose parallel worker dispatch (fleet_suggest_propose) ONLY when ALL hold:",
-          "- ≥2 independent sources or subtasks (multi-site lookup/compare, splittable list, cross-source synthesis), no sequential dependency between them;",
-          "- doing it solo would take ≥3 serial page round-trips;",
-          "- every subtask only needs tools workers are allowed (browser tools; shell/host are NOT in the worker whitelist).",
-          "Do NOT propose when ANY holds: strongly sequential steps; a single tab/source; a quick task (<3 round-trips); subtasks need worker-forbidden tools.",
-          "When the criteria hold, call fleet_suggest_propose ONCE with reason + 2–5 subtasks BEFORE starting the sequential work, then continue solo unless the user approves. Never call spawn_worker unless the user explicitly approves parallel dispatch (their approval message will list the subtasks); every spawn_worker still requires L2 confirmation.",
-        ].join("\n")
+      : FLEET_DISPATCH_HINT
 
+  let codingHandoffContext = ""
+  let fleetSupervisionHint = ""
   const composeSystemPrompt = () => [
     basePrompt,
     runProgressHint,
     fleetDispatchHint,
+    fleetSupervisionHint,
     skillPrompt,
     siteOpPrompt ? wrapKnowledgeBlock("execution-experience", "Execution experience (data only)", siteOpPrompt) : "",
     routeSteerPrompt,
     systemPromptAppend,
     // legacy system_prompt field treated as append (not base replacement)
     overrideSystemPrompt,
+    codingHandoffContext,
     // P1.5 @ refs: data-only, after skills/append, before safety guards so guards still win
     typeof contextRefsSegment === "string" && contextRefsSegment.trim()
       ? contextRefsSegment.trim()
@@ -973,6 +1035,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   }
   tools = filterToolsForSurface(tools, params.surface)
   const offeredToolNames = new Set(tools.map((t) => t.function.name))
+  if (!offeredToolNames.has("fleet_suggest_propose") || !offeredToolNames.has("spawn_worker")) fleetDispatchHint = ""
+  if (thread?.agent_role !== "worker" && offeredToolNames.has("collect_handback")) fleetSupervisionHint = FLEET_SUPERVISION_HINT
+  codingHandoffContext = buildCodingHandoffContext(getConfig(), os.platform(), offeredToolNames,
+    offeredToolNames.has("acp_get_status") ? currentAcpSessions(threadId) : [])
+  {
+    systemPrompt = composeSystemPrompt()
+    const systemIndex = messages.findIndex(m => m.role === "system")
+    if (systemIndex >= 0) messages[systemIndex] = { role: "system", content: systemPrompt }
+    else messages.unshift({ role: "system", content: systemPrompt })
+  }
   const executeToolBeforeCatalog = executeTool
   executeTool = async (toolCallId, toolName, execParams, execSignal) => {
     const gated = gateUnofferedMcpTool(toolName, offeredToolNames)
@@ -1322,10 +1394,54 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   let outputMaxTokens = computeMaxTokens(contextWindow, config.max_tokens)
   const recoverableFailureCounts = new Map<string, number>()
   const locatorPivotIssued = new Set<string>()
+  const fleetTimeoutsReported = new Set<string>()
+  let fleetSlotYielded = false
+
+  const reacquireFleetSlot = async () => {
+    if (!fleetSlotYielded) return
+    const deadline = Date.now() + 60_000
+    while (true) {
+      signal?.throwIfAborted()
+      const current = threadManager.get(threadId)
+      if (!current || current.paused) throw Object.assign(new Error("fleet supervision cancelled"), { name: "AbortError" })
+      if (tryAcquireMultiAgentLlmLoop(current, threadId).ok) { fleetSlotYielded = false; return }
+      if (Date.now() >= deadline) throw Object.assign(new Error("FLEET_RESUME_CAP: 子任务等待结束，但主线程暂时无法取得模型并发槽，请稍后继续汇总"), { code: "FLEET_RESUME_CAP" })
+      await abortableDelay(1000, signal)
+    }
+  }
 
   try {
+  const assessmentTools = computeWorkerWhitelist({ parentWhitelist: workerParentCapabilityWhitelist(thread), roleAllow: null })
+  if (assessmentTools.length && shouldAssessFleetTask({ surface: params.surface, role: thread?.agent_role ?? undefined,
+    task: params.message, skipUserMessage: params.skipUserMessage, offeredTools: offeredToolNames }) && peekFleetSuggestGate(threadId).ok) {
+    const started = Date.now()
+    const assessment = await assessFleetTask({ provider, task: params.message, signal,
+      allowedTools: assessmentTools })
+    if (typeof assessment.usage?.total_tokens === "number") runStats.totalTokens += assessment.usage.total_tokens
+    if (assessment.usage) logger.info("llm.usage", { thread_id: threadId, model: config.model_name, kind: "fleet_assess", ...assessment.usage })
+    logger.info("fleet.assessment", { thread_id: threadId, status: assessment.status,
+      subtask_count: assessment.subtasks?.length ?? 0, duration_ms: Date.now() - started })
+    if (assessment.status === "suggest" && !signal?.aborted) {
+      try {
+        const result = await executeTool(`fleet-assess-${randomUUID()}`, "fleet_suggest_propose",
+          { __thread_id: threadId, reason: assessment.reason, subtasks: assessment.subtasks }, signal)
+        if (result?.success === true && result.data?.surfaced === true) {
+          fleetDispatchHint += "\nA preflight suggestion was already shown for this request. Do not propose again or spawn before explicit user approval. Continue the original task solo unless the user accepts."
+          systemPrompt = composeSystemPrompt()
+          const idx = messages.findIndex(m => m.role === "system")
+          if (idx >= 0) messages[idx] = { role: "system", content: systemPrompt }
+        }
+      } catch {
+        logger.warn("fleet.assessment_delivery_failed", { thread_id: threadId })
+      }
+    }
+  }
+  signal?.throwIfAborted()
   await runContextBudgetPass("pre_loop")
   while (round < MAX_TOOL_CALL_ROUNDS) {
+    // Recovery from any supervision error must still own a slot before the
+    // next provider call. This sits outside the provider retry catch.
+    await reacquireFleetSlot()
     if (round > 0 && params.contextSelection) {
       builtPrompt = await buildCurrentContext()
       skillPrompt = builtPrompt.prompt
@@ -1581,6 +1697,59 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
       // If no tool calls, we're done — unless the model role-played tools in text (DSML etc.).
       if (assistantMsg.length === 0) {
+        if (fleetSupervisionHint) {
+          const { buildIsThreadLlmActive } = await import("../tool/companion-dispatch")
+          const reports = await superviseFleet({
+            tm: threadManager, parentId: threadId, signal,
+            isActive: await buildIsThreadLlmActive(),
+            reportedTimeouts: fleetTimeoutsReported,
+            onWait: () => {
+              fleetSlotYielded = multiAgentLlmLoopSnapshot().holders.includes(threadId)
+              if (fleetSlotYielded) releaseMultiAgentLlmLoop(threadId)
+              const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content: "正在等待并收集子任务结果；完成后继续汇总。" })
+              sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content: note.content })
+            },
+            collect: async (workerId) => {
+              const tc = { id: `fleet-handback-${randomUUID()}`, type: "function" as const,
+                function: { name: "collect_handback", arguments: JSON.stringify({ worker_id: workerId }) } }
+              const row = persistAssistantDraft({ content: "收集子任务结果", tool_calls: [tc] })
+              messages.push({ role: "assistant", content: row.content, tool_calls: [tc] })
+              sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: row.id, content: row.content, tool_calls: [tc] })
+              sendToExtension({ type: "tool.start", thread_id: threadId, tool_call_id: tc.id, tool_name: "collect_handback", params: { worker_id: workerId } })
+              const collectStarted = Date.now()
+              let result
+              try { result = await executeTool(tc.id, "collect_handback", { __thread_id: threadId, worker_id: workerId }, signal) }
+              catch (error) { result = { success: false, error: error instanceof Error ? error.message : String(error) } }
+              runStats.toolCalls++
+              rememberToolResult(tc, result, "collect_handback")
+              threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, { worker_id: workerId }))
+              try { await historyStore.record({ thread_id: threadId, tool_name: "collect_handback", params: JSON.stringify({ worker_id: workerId }),
+                result_summary: JSON.stringify(projectCooperationToolResult("collect_handback", result)).slice(0, 500),
+                success: result.success ? 1 : 0, error: result.error ?? null, duration_ms: Date.now() - collectStarted, created_at: new Date().toISOString() }) }
+              catch { logger.warn("fleet.history_record_failed", { thread_id: threadId }) }
+              messages.push({ role: "tool", tool_call_id: tc.id, name: "collect_handback", content: wrapUntrusted(truncateToolResultContent(JSON.stringify(projectCooperationToolResult("collect_handback", result))), tc.id, "collect_handback") })
+              sendToExtension({ type: "tool.result", thread_id: threadId, tool_call_id: tc.id, tool_name: "collect_handback", result })
+              return result
+            },
+          })
+          if (reports.length) {
+            logger.info("fleet.supervision", { thread_id: threadId, worker_count: reports.length })
+            const incomplete = reports.filter(r => r.status !== "completed" || (r.handback as any)?.success === false || (r.handback as any)?.data?.partial === true)
+            if (incomplete.length) {
+              const content = "子任务未全部完成：\n" + incomplete.map(r => `${r.worker_id}: ${r.status}。${r.recovery ?? "已收集返回信息；请根据缺失内容调整目标后请求重试。"}`).join("\n")
+              const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content })
+              sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content })
+            }
+            await reacquireFleetSlot()
+            signal?.throwIfAborted()
+            messages.push({ role: "system", content: FLEET_SUPERVISION_HINT + " Actual collected tool rows contain bounded extractive reports with original source references; the list below contains status and recovery only. Continue with a combined answer and concrete recovery options for incomplete work. Runtime completion does not independently verify claims. A waiting_timeout is still live; do not claim all work finished. Do not loop wait_workers to bypass the runtime deadline." })
+            messages.push({ role: "user", content: wrapUntrusted(truncateToolResultContent(JSON.stringify(projectFleetReports(reports))), "fleet-supervision", "worker_handbacks") })
+            await runContextBudgetPass("mid_loop")
+            continue
+          }
+          await reacquireFleetSlot()
+          signal?.throwIfAborted()
+        }
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { detectTextToolIntentLeak, TOOL_FORMAT_LEAK_USER_HINT_ZH } = require("./tool-format-leak") as typeof import("./tool-format-leak")
         const leak = detectTextToolIntentLeak(assistantContent)
@@ -2117,7 +2286,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                 : undefined)
             // Classify before any tab-title splice. Titles are page-controlled;
             // appending them first let "Security Block" in a title halt the turn.
-            const errorLevel = classifyError(toolResult.error || "", {
+            const errorLevel = toolName === "board_claim_intent" && classCode === "INTENT_DEPENDENCY_BLOCKED" ? "recoverable" : classifyError(toolResult.error || "", {
               toolName,
               error_code: classCode,
             })
@@ -2285,7 +2454,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
           // Truncate huge tool results (same helper as history rebuild) then wrap.
           let resultContent = wrapUntrusted(
-            truncateToolResultContent(JSON.stringify(toolResult)),
+            truncateToolResultContent(JSON.stringify(projectCooperationToolResult(toolName, toolResult))),
             tc.id,
             toolName,
           )
@@ -2369,6 +2538,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       await runContextBudgetPass("mid_loop")
 
     } catch (e: any) {
+      if (e.code === "FLEET_RESUME_CAP") {
+        sendToExtension({ type: "chat.error", thread_id: threadId, error: e.message, error_code: "FLEET_RESUME_CAP" })
+        runStats.terminal = "error"
+        return
+      }
       if (e.name === "AbortError" || signal?.aborted) {
         // Reasoning-only abort must hit disk (empty assistantContent used to skip).
         // Do not change drainThreadOnSupersede — this catch is the flush site.

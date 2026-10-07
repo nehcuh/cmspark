@@ -124,6 +124,30 @@ test("#432 validate: open requires id + user_gesture", () => {
   assert.equal(validateWsMessage({ type: "terminal.ack", id: "t1", seq: 1 }).valid, true)
 })
 
+test("Kimi draft cannot target a login shell or exceed the existing task byte limit", () => {
+  const base = { id: "draft-bounds", cwd: tempHome, cols: 80, rows: 24, send() {} }
+  const shell = pty.spawnPtySession({ ...base, initialPrompt: "task" })
+  const oversized = pty.spawnPtySession({ ...base, file: process.execPath, initialPrompt: "x".repeat(pty.MAX_PTY_ARGV_BYTES + 1) })
+  assert.equal(shell.ok, false)
+  assert.equal(oversized.ok, false)
+  assert.equal(lastPty, null, "invalid drafts never start a process")
+})
+
+test("approved Kimi task is submitted once through the spawned PTY after its input is ready", () => {
+  const result = pty.spawnPtySession({ id: "kimi-submit", cwd: tempHome, cols: 80, rows: 24,
+    file: process.execPath, initialPrompt: "review\nsecond line", send() {} })
+  assert.equal(result.ok, true)
+  const handle = lastPty as MockPty | null
+  assert.ok(handle)
+  const fixture = (name: string) => fs.readFileSync(path.join(process.cwd(), "tests/fixtures/kimi-prefill", name), "utf8")
+  handle.emit(fixture("trust.ansi"))
+  assert.equal(handle.writes.length, 0)
+  handle.emit(fixture("ready.ansi"))
+  handle.emit(fixture("ready.ansi"))
+  handle.emit(fixture("trust.ansi"))
+  assert.deepEqual(handle.writes, ["\x1b[200~review\nsecond line\x1b[201~\r"])
+})
+
 test("#432 open: default-disabled / no gesture / summoner / tray", async () => {
   saveConfig({ embedded_terminal: { enabled: false } })
   const svc = services()
@@ -423,6 +447,24 @@ test("#432 ping resets heartbeat; unknown id is ignored", async () => {
   const unknown = await handleMessage({ type: "terminal.ping", id: "no-such" }, svc, sess as never)
   assert.equal(unknown.type, "terminal.error")
   assert.equal(pty.getLivePtyId(), "t1")
+})
+
+test("background challenge replies keep a quiet terminal alive beyond the page-heartbeat deadline", async () => {
+  pty.__testSetPtyHeartbeatMs(300)
+  const svc = services(), sess = panel()
+  let challenges = 0
+  sess.sendToExtension = (frame: any) => {
+    if (frame.type === "terminal.heartbeat") {
+      challenges += 1
+      void handleMessage({ type: "terminal.ping", id: frame.id }, svc, sess as never)
+    }
+  }
+  const opened = await handleMessage({ type: "terminal.open", id: "quiet-background", user_gesture: true }, svc, sess as never)
+  assert.equal(opened.type, "terminal.opened")
+  await new Promise(resolve => setTimeout(resolve, 450))
+  assert.ok(challenges >= 3)
+  assert.equal(pty.getLivePtyId(), "quiet-background")
+  pty.closePty("quiet-background")
 })
 
 test("#432 WS-close kills only that peer's PTY", async () => {

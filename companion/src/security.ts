@@ -1035,6 +1035,10 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // 缺标签。扩展抛 `TAB_NOT_FOUND: No tab with given id …`。无码时文案兜底仍可能
   // 被拼进来的页面标题抬成 security；登记后等级只看码。
   ["TAB_NOT_FOUND", "recoverable"],
+  // ACP runtime handles disappear on daemon restart; re-propose under the existing L2 gate.
+  ["ACP_SESSION_NOT_FOUND", "recoverable"],
+  ["ACP_SESSION_ID_REQUIRED", "recoverable"],
+  ["ACP_PROPOSAL_PARAMS_REQUIRED", "recoverable"], // model can supply the missing agent/task before L2
   // ── #560 第二半：把「偏严」的三个改为 recoverable ──────────────────────────
   // 这三条原先落默认桶 non_recoverable → **整轮终止**，但语义上 agent 都能继续：
   //

@@ -84,6 +84,9 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   TAB_LEASE_CAP: "recoverable",
   TAB_ID_REQUIRED: "recoverable",
   TAB_NOT_FOUND: "recoverable",
+  ACP_SESSION_NOT_FOUND: "recoverable", // stale daemon handle can be replaced via confirmed propose/start
+  ACP_SESSION_ID_REQUIRED: "recoverable", // model can use a current ID or propose a new session
+  ACP_PROPOSAL_PARAMS_REQUIRED: "recoverable", // malformed proposals can be rebuilt before confirmation
   CDP_ATTACH_FAILED: "recoverable",
   WRONG_ORIGIN: "recoverable",
   ELEMENT_NOT_FOUND: "recoverable",

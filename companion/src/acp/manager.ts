@@ -147,6 +147,7 @@ export class AcpManager {
     code?: number | null,
   ): void {
     if (this.terminalEmitted.has(session)) return
+    session.terminal_kind = kind
     this.terminalEmitted.add(session)
     if (!this.terminalSink) return
     try {
@@ -554,6 +555,7 @@ export class AcpManager {
       maxChars: maxOut,
     })
     session.state = "closed"
+    session.terminal_kind ??= code !== 0 && code != null ? "failed" : "closed"
     markAcpHandbackSeen(session.thread_id)
     if (session.handback_text && this.handbackSink) {
       try {

@@ -49,6 +49,7 @@ import {
 import { getCachedTabUrl } from "../ws/tab-url-cache"
 import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { resolveAcpThreadId } from "../acp/thread-id"
+import { validateAcpProposalParams } from "../acp/proposal-params"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
 import {
@@ -209,7 +210,7 @@ export type L2AdmissionResult =
     }
   | {
       ok: false
-      result: { success: false; error: string; data?: any }
+      result: { success: false; error: string; error_code?: string; data?: any }
     }
 
 /**
@@ -240,6 +241,11 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
   // ADR-025: normalize mode + workspace into finalParams so L2 preview, token
   // binding, and dispatch validateTokenFor share one binding surface.
   if (toolName === "acp_propose_session") {
+    const invalid = validateAcpProposalParams(finalParams)
+    if (invalid) {
+      logToolFinish(toolCallId, toolName, startedAt, invalid)
+      return { ok: false, result: invalid }
+    }
     const tid = resolveAcpThreadId(finalParams, actingThreadId)
     const thread = tid ? (threadManager.get(String(tid)) as { workspace_root?: string } | null) : null
     const mode = finalParams.mode === "propose_diff" ? "propose_diff" : "review_readonly"

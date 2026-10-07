@@ -18,7 +18,7 @@ import { tokens } from "../sidepanel/ui/tokens"
 type TermStatus = "connecting" | "running" | "closed" | "error"
 
 const STATUS_COPY: Record<TermStatus, string> = {
-  connecting: "正在开门并启动终端…（首次需确认）",
+  connecting: "等待启动终端…请回到 CMspark 侧栏批准确认",
   running: "",
   closed: "终端会话已结束",
   error: "终端不可用",
@@ -62,15 +62,21 @@ export function TerminalApp() {
     let inputSeq = 0
     let closedByUs = false
     let sessionEnded = false
+    let ready = false
+    let pendingResize: { cols: number; rows: number } | null = null
     // 会话 keepalive：静默（无输入无输出）不等于孤儿——每 25s ping 重置服务端心跳（spec §4）
     const pingTimer = setInterval(() => {
       send({ type: "terminal.ping", id: sessionId })
     }, 25_000)
-    // pi MAJOR-1 ③：开门 watchdog——12s 无 opened/error 一律落 error，不永转圈
-    const OPEN_WATCHDOG_MS = 12_000
+    // Confirmation may take 45s, followed by the bounded login-env/native spawn work.
+    const OPEN_WATCHDOG_MS = 60_000
     let opened = false
     const watchdog = setTimeout(() => {
       if (!opened) {
+        send({ type: "terminal.close", id: sessionId })
+        sessionEnded = true
+        clearInterval(pingTimer)
+        subData.dispose()
         setStatus("error")
         setDetail("companion 未响应：请确认 CMspark 在运行，且设置中已开启「内嵌终端」")
       }
@@ -80,6 +86,9 @@ export function TerminalApp() {
 
     const send = (frame: unknown) => {
       if (sessionEnded) return
+      // L2 is still pending: the server has no owned PTY for input/resize/heartbeat yet.
+      const type = (frame as { type?: string }).type
+      if (!ready && (type === "terminal.input" || type === "terminal.resize" || type === "terminal.ping")) return
       try {
         port.postMessage(frame)
       } catch {
@@ -106,17 +115,28 @@ export function TerminalApp() {
 
     port.onMessage.addListener((raw: unknown) => {
       const frame = raw as TerminalServerFrame
-      if (!frame) return
+      if (!frame || sessionEnded) return
+      if ((frame as { id?: string }).id && (frame as { id?: string }).id !== sessionId) return
       // 扩展级错误无会话 id（busy/disconnected/watchdog 同类），不受会话过滤
       if (frame.type === "terminal.error") {
         if (opened) {
           setDetail(frame.error)
           setReportStatus(frame.error)
           setSubmitting(false)
-          if (frame.code === "disconnected") { sessionEnded = true; clearInterval(pingTimer); setStatus("closed"); subData.dispose() }
+          if (frame.code === "disconnected" || frame.error === "TERMINAL_SESSION_NOT_OWNED") {
+            sessionEnded = true
+            clearInterval(pingTimer)
+            setStatus("closed")
+            setDetail("连接中断，终端进程已结束。请关闭此页并重新发起编程接力。")
+            subData.dispose()
+          }
           return
         }
         opened = true // 停 watchdog
+        clearTimeout(watchdog)
+        send({ type: "terminal.close", id: sessionId })
+        sessionEnded = true
+        clearInterval(pingTimer)
         setStatus("error")
         setDetail(frame.error)
         subData.dispose()
@@ -126,7 +146,13 @@ export function TerminalApp() {
       switch (frame.type) {
         case "terminal.opened":
           opened = true
+          ready = true
+          clearTimeout(watchdog)
+          setDetail("")
           setStatus("running")
+          fit.fit()
+          send({ type: "terminal.resize", id: sessionId, ...(pendingResize || { cols: term.cols, rows: term.rows }) })
+          pendingResize = null
           term.focus()
           if (frame.review_prompt) setReviewPrompt(frame.review_prompt)
           break
@@ -177,14 +203,15 @@ export function TerminalApp() {
     })
 
     let resizeTimer: ReturnType<typeof setTimeout> | null = null
-    let pendingResize: { cols: number; rows: number } | null = null
     const subResize = term.onResize(({ cols, rows }) => {
       pendingResize = { cols, rows }
       if (resizeTimer) return
       resizeTimer = setTimeout(() => {
         resizeTimer = null
-        if (pendingResize) send({ type: "terminal.resize", id: sessionId, ...pendingResize })
-        pendingResize = null
+        if (ready && pendingResize) {
+          send({ type: "terminal.resize", id: sessionId, ...pendingResize })
+          pendingResize = null
+        }
       }, 50)
     })
 

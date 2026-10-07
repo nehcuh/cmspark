@@ -7,6 +7,7 @@
 
 import { z } from "zod"
 import { randomBytes } from "crypto"
+import { dependencyReadiness } from "../orchestrator/cooperation-dependencies"
 
 // ── Schema caps (ADR-016 §2.2.3) ──────────────────────────────────────────
 
@@ -106,6 +107,7 @@ export const IntentSchema = z.object({
   claimed_by_worker_id: z.string().nullable().default(null),
   heartbeat_at: z.string().nullable().default(null),
   parent_fact_ids: z.array(z.string()).default([]),
+  depends_on_intent_ids: z.array(z.string().min(1).max(160)).max(15).optional(),
   result_fact_ids: z.array(z.string()).default([]),
   provenance: ProvenanceSchema,
   created_at: z.string().min(1),
@@ -174,6 +176,7 @@ export const HandbackIntentDraftSchema = z.object({
   status: z.enum(["open", "done", "abandoned"]).optional().default("open"),
   priority: IntentPrioritySchema.optional().default("normal"),
   parent_fact_ids: z.array(z.string()).optional().default([]),
+  depends_on_intent_ids: z.array(z.string().min(1).max(160)).max(15).optional(),
   // stripped
   trust: z.unknown().optional(),
   provenance: z.unknown().optional(),
@@ -484,6 +487,9 @@ export function projectBoardForModel(board: MissionBoard | null | undefined): {
     status: IntentStatus
     priority: IntentPriority
     description: string
+    depends_on_intent_ids?: string[]
+    dependency_ready?: boolean
+    dependency_blockers?: string[]
   }>
   hints: Array<{
     id: string
@@ -523,6 +529,9 @@ export function projectBoardForModel(board: MissionBoard | null | undefined): {
       status: i.status,
       priority: i.priority,
       description: neutralizeBoardDelimiterBreakout(i.description),
+      ...(i.depends_on_intent_ids?.length ? { depends_on_intent_ids: i.depends_on_intent_ids,
+        dependency_ready: dependencyReadiness(i.id, board.intents).ready,
+        dependency_blockers: dependencyReadiness(i.id, board.intents).blockers } : {}),
     })),
     hints: board.hints.map((h) => ({
       id: h.id,

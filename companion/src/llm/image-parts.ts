@@ -1,4 +1,5 @@
 import type { CanonicalChatMessage, UserContentPart } from "./provider"
+import { ARCHIVED_TOOL_OUTCOMES_PREFIX } from "./history-notice"
 
 export interface ImageAttachmentMeta {
   kind: "image"
@@ -50,7 +51,9 @@ export function hydrateUserImageParts(
   },
 ): CanonicalChatMessage[] {
   const userIdx: number[] = []
-  rebuilt.forEach((m, i) => { if (m.role === "user") userIdx.push(i) })
+  rebuilt.forEach((m, i) => {
+    if (m.role === "user" && !(typeof m.content === "string" && m.content.startsWith(ARCHIVED_TOOL_OUTCOMES_PREFIX))) userIdx.push(i)
+  })
   const persistedUsers = persisted.filter((m) => m.role === "user")
 
   type Slot = { rebuiltIndex: number; att: ImageAttachmentMeta }

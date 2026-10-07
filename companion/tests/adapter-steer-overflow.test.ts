@@ -296,13 +296,16 @@ test("real tool result replaces the successor's INTERRUPTED filler in place (no 
   assert.equal(result.success, true, "real result won")
   assert.notEqual(result.error_code, "INTERRUPTED")
 
-  const rebuilt = rebuildMessagesFromHistory(disk)
+  const rebuilt = rebuildMessagesFromHistory(disk, manager.getLiveMirror(thread.id))
   const rebuiltAsst = rebuilt.find((m) => m.role === "assistant" && (m as any).tool_calls)
   assert.ok(rebuiltAsst, "assistant round survives rebuild")
   assert.ok(
     rebuilt.some((m) => m.role === "tool" && (m as any).tool_call_id === "call_A"),
     "tool row pairs at rebuild",
   )
+  const afterRestart = rebuildMessagesFromHistory(disk)
+  assert.ok(!afterRestart.some(m => m.role === "assistant" && String(m.content).includes("参数未保存")), "archive bookkeeping is not assistant prose")
+  assert.ok(!afterRestart.some(m => m.role === "assistant" && m.tool_calls?.length), "disk argument stubs are not callable examples")
 })
 
 test("overflow retry uses mid_loop pin: live assistant+tool rows survive into the retry request", async () => {

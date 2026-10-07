@@ -81,6 +81,8 @@ export interface AcpSessionRecord {
   partial: boolean
   handback_text?: string
   error?: string
+  /** Actual manager lifecycle outcome; a closed bridge alone is not completion. */
+  terminal_kind?: "closed" | "cancelled" | "failed"
   pid?: number
   parent_session_id?: string
   pending_diffs?: AcpPendingDiff[]

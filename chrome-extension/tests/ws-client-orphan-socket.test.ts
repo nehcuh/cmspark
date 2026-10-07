@@ -5,6 +5,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { WSClient } from "../src/background/ws-client"
+import { attachTerminalPort } from "../src/background/terminal"
 
 class MockWebSocket {
   static CONNECTING = 0
@@ -80,6 +81,52 @@ function makeClient() {
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
+
+test("socket replacement ends the old terminal even on silent wake/reconnect paths", async () => {
+  for (const cause of ["close", "wake", "send", "force", "pairing"] as const) {
+    installGlobals()
+    Object.assign((globalThis as any).chrome.runtime = {}, {
+      id: "test", getURL: () => "chrome-extension://test/tabs/embedded-terminal.html",
+    })
+    let onPortMessage: (message: unknown) => void = () => {}
+    const delivered: any[] = []
+    let relay: ReturnType<typeof attachTerminalPort>
+    const options = {
+      url: "ws://127.0.0.1:8787/ws", onStateChange() {}, onMessage: (msg: unknown) => relay?.handleWsFrame(msg),
+      onConnectionLost: () => relay?.handleConnectionLost(),
+    }
+    const client = new WSClient(options)
+    const port = {
+      sender: { id: "test", url: "chrome-extension://test/tabs/embedded-terminal.html" },
+      postMessage: (msg: unknown) => delivered.push(msg),
+      onMessage: { addListener: (fn: typeof onPortMessage) => { onPortMessage = fn } },
+      onDisconnect: { addListener() {} },
+    }
+    relay = attachTerminalPort(port as never, frame => client.send(frame), () => {})!
+    client.connect()
+    const old = MockWebSocket.instances[0]
+    old.simulateOpen()
+    old.simulateMessage({ type: "auth.ok" })
+    onPortMessage({ type: "terminal.open", id: "old-pty", user_gesture: true })
+    old.simulateMessage({ type: "terminal.opened", id: "old-pty", pid: 1, platform: "darwin" })
+    if (cause === "close") { old.readyState = MockWebSocket.CLOSED; old.onclose?.() }
+    if (cause === "wake") { old.readyState = MockWebSocket.CLOSING; client.checkAndReconnect() }
+    if (cause === "send") { old.readyState = MockWebSocket.CLOSING; client.send({ type: "system.ping" }) }
+    if (cause === "force") client.forceReconnect()
+    if (cause === "pairing") client.setSecret("deadbeef")
+    await flush()
+    assert.equal(delivered.at(-1)?.code, "disconnected", cause)
+    assert.equal(delivered.filter(frame => frame.code === "disconnected").length, 1, "notify once")
+    if (cause === "close") client.connect()
+    const current = MockWebSocket.instances.at(-1)!
+    current.simulateOpen()
+    current.simulateMessage({ type: "auth.ok" })
+    onPortMessage({ type: "terminal.input", id: "old-pty", b64: "eA==" })
+    onPortMessage({ type: "terminal.ping", id: "old-pty" })
+    current.simulateMessage({ type: "terminal.heartbeat", id: "old-pty" })
+    assert.deepEqual(current.sent, [], "old terminal must never send into replacement socket")
+  }
+})
 
 test("checkAndReconnect treats a CONNECTING socket as alive: no close, no new socket", () => {
   installGlobals()

@@ -5,7 +5,7 @@
 //   run 2 (same ThreadManager instance = same process) must see the FULL body
 //   via the live mirror, while the disk row stays stubbed;
 //   a fresh ThreadManager instance on the same disk (process restart analog)
-//   falls back to the archived stubs — the documented B-tier boundary.
+//   omits archive fingerprints; missing arguments cannot be replayed as calls.
 import test, { before, after } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
@@ -175,7 +175,7 @@ test("#504: same-process second run sees the full tool body via the live mirror 
   )
 })
 
-test("#504: fresh ThreadManager on the same disk (process-restart analog) falls back to stubs", async () => {
+test("fresh ThreadManager omits archive fingerprints without callable argument stubs", async () => {
   resetCapture()
   responder = (body) => {
     if (!body.stream) return json({ choices: [{ message: { content: "T" } }] })
@@ -187,12 +187,10 @@ test("#504: fresh ThreadManager on the same disk (process-restart analog) falls 
 
   const body = capturedBodies.find(b => b.stream)
   assert.ok(body, "request issued")
-  const toolMsg = body.messages.find(
-    (m: any) => m.role === "tool" && m.tool_call_id === "call_live_1",
-  )
-  assert.ok(toolMsg, "tool row replayed from disk")
-  assert.ok(!String(toolMsg.content).includes(FULL_BODY), "no mirror after restart — stub only")
-  assert.match(String(toolMsg.content), /"redacted"/, "stub envelope replayed")
+  assert.ok(!body.messages.some((m: any) => m.tool_calls?.some((tc: any) => tc.id === "call_live_1")), "argument stubs must not become callable examples")
+  const historyText = JSON.stringify(body.messages.filter((m: any) => m.role !== "system"))
+  assert.ok(!historyText.includes(FULL_BODY), "no mirror after restart — no unavailable body")
+  assert.doesNotMatch(historyText, /参数未保存|"redacted"|"sha256"|"omission"/, "archive metadata is not conversational content")
 })
 
 test("#504: rebuildMessagesFromHistory live substitution (pure function)", () => {

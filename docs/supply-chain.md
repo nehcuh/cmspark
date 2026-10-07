@@ -2,7 +2,7 @@
 
 > Companion to the 2026-07-09 full audit (`audit-report-cmspark-2026-07-09.md`,
 > finding "supply-chain") and remediation plan (`docs/remediation-plan-2026-07-09.md`,
-> item **P1-2**). Last updated 2026-09-20.
+> item **P1-2**). Last updated 2026-10-07.
 
 This document records what was fixed, what is deliberately **accepted as
 blocked-on-upstream risk**, and why, so the decision is reviewable and the
@@ -18,12 +18,41 @@ alarm) can tell a *known, triaged* advisory from a *new, actionable* one.
 | **companion — production deps** (`dependencies`, ship in the packaged binary) | **moderate only** (`node-notifier` → `uuid`; MCP `hono`) | **Gating** — `npm audit --omit=dev --audit-level=high` |
 
 The extension that users install contains **zero** known-vulnerable packages.
-The companion ships triaged moderate advisories (`node-notifier`→`uuid`, MCP `hono`) and
+The companion has moderate advisories (see the dated updates below) and
 zero high/critical. `adm-zip` is pinned **0.6.1** (0.6.0 was GHSA zip-symlink overwrite / zip-bomb). All remaining extension advisories live in the build tool
 (plasmo + Parcel) and its plugins, which compile the bundle but are not present
 in the shipped artifact.
 
 ## chrome-extension (`chrome-extension/`)
+
+### Fixed during the 2026-10-07 main landing
+
+The existing production audit gates became red from newly published advisories;
+their thresholds remain unchanged.
+
+- Companion: MCP SDK floor `^1.31.0`, locked at `1.31.0`, fixes
+  [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h).
+  This application does not configure an SDK OAuth provider or persist its OAuth
+  credentials; the update closes the dependency advisory without introducing a
+  new authentication flow. Transitive `proxy-addr` is locked at `2.0.8`, fixing
+  [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h).
+- Extension: KaTeX is pinned to patched `0.18.2` for
+  [GHSA-238p-pmpm-9mq7](https://github.com/advisories/GHSA-238p-pmpm-9mq7),
+  with `overrides.katex="$katex"` so Mermaid cannot retain vulnerable `0.16.x`.
+  `marked-katex-extension` floor `5.1.13` supports KaTeX `>=0.16 <0.19`.
+  No Mermaid major upgrade, renderer trust relaxation or sanitizer removal.
+  `0.18.2` retains commander 8 compatibility; newer 0.18 patches require a newer
+  Node floor and were unnecessary for this advisory.
+
+Clean `npm ci` and both production audits passed: extension **0 vulnerabilities**;
+companion **9 moderate, 0 high/critical**. Remaining moderate dependency paths are
+fast-uri, Hono, ip-address, gray-matter/js-yaml/argparse/sprintf-js, and
+node-notifier/uuid. This is the configured high-severity gate's scope, not a claim
+that every moderate issue is fixed or has the same triage as node-notifier.
+Both full test suites and builds pass; added actual Markdown/KaTeX rendering and
+inherited-trust regression tests protect the dependency compatibility boundary.
+No `npm audit fix --force`, gate suppression, or unrelated native-package version
+update was used.
 
 ### Fixed in P1-2
 

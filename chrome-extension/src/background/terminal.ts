@@ -76,6 +76,7 @@ export async function openOrFocusEmbeddedTerminal(binding?: TerminalTabBinding):
 
 export type TerminalRelay = {
   handleWsFrame: (msg: unknown) => boolean
+  handleConnectionLost: () => void
   detach: () => void
 }
 
@@ -98,14 +99,42 @@ export function attachTerminalPort(
   }
   let sessionId: string | null = null
   let detached = false
+  let inputFrames = 0
+  let opened = false
 
   const relay: TerminalRelay = {
+    handleConnectionLost() {
+      if (detached || !sessionId) return
+      opened = false
+      // Companion kills this socket's PTY on close. Reconnecting cannot revive it.
+      detached = true
+      try {
+        port.postMessage({ type: "terminal.error", id: sessionId, code: "disconnected", error: "连接中断，终端进程已结束。请关闭此页并重新发起编程接力。" })
+      } catch { /* tab already gone */ }
+    },
     handleWsFrame(msg) {
       if (detached || !isTerminalFrame(msg)) return false
       if ((msg as { type: string }).type === "terminal.open_tab") return false
+      if ((msg as { type: string }).type === "terminal.heartbeat") {
+        // Companion messages wake the worker; a background tab's setInterval may
+        // run only once a minute. Reply here while its owned Port remains attached.
+        if (opened && (msg as { id?: string }).id === sessionId) {
+          const forwarded = wsSend({ type: "terminal.ping", id: sessionId }) === true
+          log("info", "extension.terminal_heartbeat_forwarded", { id: sessionId, forwarded, input_frames: inputFrames })
+        }
+        return true
+      }
       const frame = parseTerminalServerFrame(msg)
       if (!frame) return false
       if (sessionId && frame.id && frame.id !== sessionId) return true // 别的会话帧：吞掉不回（单会话）
+      if (frame.type === "terminal.opened") opened = true
+      if (frame.type === "terminal.closed") opened = false
+      if (frame.type === "terminal.opened" || frame.type === "terminal.closed" || frame.type === "terminal.error") {
+        log("info", "extension.terminal_session_frame", {
+          id: sessionId, type: frame.type, input_frames: inputFrames,
+          ...("code" in frame ? { code: frame.code } : {}),
+        })
+      }
       try {
         port.postMessage(frame)
       } catch {
@@ -130,10 +159,16 @@ export function attachTerminalPort(
     } else if (!sessionId || m.id !== sessionId) return
     // pi MAJOR-1 ②：WS 未连时 wsSend=false，帧会静默丢失、tab 永挂 connecting——
     // 回推扩展级错误帧让 tab 落 error 态。
-    if (wsSend(raw as Record<string, unknown>) !== true) {
-      try {
-        port.postMessage({ type: "terminal.error", code: "disconnected", error: "companion 未连接，请确认 CMspark 在运行后重开终端" })
-      } catch {}
+    const forwarded = wsSend(raw as Record<string, unknown>) === true
+    if (m.type === "terminal.input") inputFrames += 1
+    // Diagnose a frozen TUI without logging keyboard bytes, commands or pasted text.
+    if (m.type === "terminal.ping" || m.type === "terminal.input" && inputFrames === 1) {
+      log("info", "extension.terminal_activity_forwarded", {
+        id: sessionId, type: m.type, input_frames: inputFrames, forwarded,
+      })
+    }
+    if (!forwarded) {
+      relay.handleConnectionLost()
     }
   })
 

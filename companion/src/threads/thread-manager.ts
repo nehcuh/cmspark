@@ -108,6 +108,10 @@ interface Thread {
   last_run_terminal?: string | null
   /** #569: ISO-8601 timestamp of that run end (see `last_run_terminal`). */
   last_run_ended_at?: string | null
+  /** #576: terminal worker versions already delivered to this parent's summary. */
+  fleet_handback_epochs?: Record<string, string>
+  /** #577: bounded runtime-owned result snapshots, never executable grants. */
+  cooperation_tasks?: Record<string, import("../orchestrator/cooperation-state").CooperationTaskRecord>
   /** #502 E Inspect: first user ask preview (≤160 chars, whitespace-collapsed). */
   brief?: string
   /** Parent orchestrator thread id when agent_role=worker. */

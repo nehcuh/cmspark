@@ -9,6 +9,7 @@ import {
 } from "./service"
 import type { Intent, MissionBoard } from "./schema"
 import { appendCapabilityAudit } from "../packs/audit-log"
+import { dependencyReadiness } from "../orchestrator/cooperation-dependencies"
 
 type ThreadLike = {
   id: string
@@ -84,6 +85,8 @@ export async function claimIntent(
       return { ok: false, error: `intent not found: ${opts.intentId}`, error_code: "INTENT_NOT_FOUND" }
     }
     const intent = board.intents[idx]
+    const dependency = dependencyReadiness(intent.id, board.intents)
+    if (!dependency.ready) return { ok: false, error: `intent dependencies ${dependency.reason}: ${dependency.blockers.join(", ")}`, error_code: "INTENT_DEPENDENCY_BLOCKED" }
     if (intent.status === "done" || intent.status === "abandoned") {
       return { ok: false, error: `intent not claimable: ${intent.status}`, error_code: "INTENT_CLOSED" }
     }

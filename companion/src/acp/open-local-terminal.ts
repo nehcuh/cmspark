@@ -116,7 +116,7 @@ export function formatModeCOpenedLabel(
  * (existing frame, existing L2) when the user clicks its button. Module-level, thread-keyed,
  * single-use, TTL-bounded — no disk persistence, no config key, no new wire message.
  */
-export type EmbedIntent = { cwd: string; file: string; args: string[] }
+export type EmbedIntent = { cwd: string; file: string; args: string[]; initialPrompt?: string }
 
 /** ~10 minutes; a stale intent reads as absent so a later click cannot start a stale agent run. */
 export const EMBED_INTENT_TTL_MS = 10 * 60_000
@@ -146,14 +146,14 @@ export function recordEmbedIntent(
 ): void {
   embedIntents.set(embedKey(threadId), {
     at: Date.now(),
-    intent: { cwd: intent.cwd, file: intent.file, args: [...intent.args] },
+    intent: { ...intent, args: [...intent.args] },
   })
 }
 
 /** Non-consuming read: the L2 confirmation copy needs the embed facts BEFORE approval. */
 export function peekEmbedIntent(threadId: string | undefined): EmbedIntent | null {
   const intent = liveEmbedIntent(embedKey(threadId))
-  return intent ? { cwd: intent.cwd, file: intent.file, args: [...intent.args] } : null
+  return intent ? { ...intent, args: [...intent.args] } : null
 }
 
 /** Consuming read: only an approved `terminal.open` may take the intent. */
@@ -162,7 +162,7 @@ export function takeEmbedIntent(threadId: string | undefined): EmbedIntent | nul
   const intent = liveEmbedIntent(key)
   if (!intent) return null
   embedIntents.delete(key)
-  return { cwd: intent.cwd, file: intent.file, args: [...intent.args] }
+  return { ...intent, args: [...intent.args] }
 }
 
 /**
@@ -179,6 +179,7 @@ export function takeEmbedIntent(threadId: string | undefined): EmbedIntent | nul
 export function sameEmbedIntent(a: EmbedIntent | null, b: EmbedIntent | null): boolean {
   if (!a || !b) return false
   if (a.cwd !== b.cwd || a.file !== b.file) return false
+  if (a.initialPrompt !== b.initialPrompt) return false
   return a.args.length === b.args.length && a.args.every((arg, i) => arg === b.args[i])
 }
 
@@ -1300,9 +1301,10 @@ export async function openLocalTerminalForAgent(
     // user's whole browser task in /tmp forever, so schedule the same delayed unlink the
     // outer-terminal path performs — the embed path must be at least as tidy as the one it replaces.
     scheduleUnlink(modeCTempFiles)
-    recordEmbedIntent(opts.threadId, { cwd, file: command, args })
-    // Audit-safe facts only: the argv carries the user's whole browser task, so never log it (or the
-    // prompt file, whose scheduled unlink is irrelevant here — the task is already inlined above).
+    recordEmbedIntent(opts.threadId, { cwd, file: command, args,
+      ...((opts.agentId || "").toLowerCase() === "kimi" && fullPrompt ? { initialPrompt: fullPrompt } : {}),
+    })
+    // Audit-safe facts only: argv or initialPrompt carries the full task. Never log either.
     appendCapabilityAudit({
       type: "acp.mode_c_embed_intent",
       at: new Date().toISOString(),

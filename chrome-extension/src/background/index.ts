@@ -289,6 +289,7 @@ function init() {
     url: "ws://127.0.0.1:23401",
     onMessage: handleCompanionMessage,
     onStateChange: handleStateChange,
+    onConnectionLost: () => terminalRelay?.handleConnectionLost(),
   })
 
   wsClient.connect()

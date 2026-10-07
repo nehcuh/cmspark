@@ -20,6 +20,8 @@ interface WSClientOptions {
   url: string
   onMessage: (msg: any) => void
   onStateChange: (state: ConnectionState) => void
+  /** Socket-owned channels must end even when badge updates are intentionally silent. */
+  onConnectionLost?: () => void
 }
 
 const WS_SECRET_KEY = "wsSharedSecret"
@@ -49,6 +51,7 @@ export class WSClient {
   private reconnectAttempts = 0
   private onMessage: (msg: any) => void
   private onStateChange: (state: ConnectionState) => void
+  private onConnectionLost?: () => void
 
   /** Authenticated = companion accepted our handshake. App sends are gated on this. */
   private authenticated = false
@@ -69,6 +72,7 @@ export class WSClient {
     this.url = opts.url
     this.onMessage = opts.onMessage
     this.onStateChange = opts.onStateChange
+    this.onConnectionLost = opts.onConnectionLost
   }
 
   connect(silent = false) {
@@ -147,9 +151,7 @@ export class WSClient {
     socket.onclose = () => {
       if (stale()) return
       const wasConnected = this.state === "connected"
-      this.authenticated = false
-      this.pending = []
-      this.ws = null
+      this.discardSocket(false)
       this.setState("disconnected", !wasConnected)
       // If unpaired (no secret), don't storm reconnect — wait for setSecret().
       if (!this.unpaired) {
@@ -212,8 +214,7 @@ export class WSClient {
     chrome.storage.local.set({ [WS_SECRET_KEY]: secret }, () => {
       // Reset backoff so pairing triggers an immediate reconnect.
       this.reconnectAttempts = 0
-      try { this.ws?.close() } catch { /* */ }
-      this.ws = null
+      this.discardSocket()
       this.connect()
     })
   }
@@ -248,8 +249,7 @@ export class WSClient {
     }
     // Not open → trigger reconnect.
     if (this.ws && this.ws.readyState !== WebSocket.CONNECTING) {
-      this.ws.close()
-      this.ws = null
+      this.discardSocket()
       this.setState("disconnected")
       this.connect()
     }
@@ -303,8 +303,7 @@ export class WSClient {
     // discarding (aligned with send()/forceReconnect()) so the old socket's
     // handlers can't crosstalk with the new connection; the generation guard
     // then ignores its late onclose (#290).
-    try { this.ws?.close() } catch { /* ignore */ }
-    this.ws = null
+    this.discardSocket()
     this.setState("disconnected", true)
     this.connect(true)
   }
@@ -315,13 +314,7 @@ export class WSClient {
    */
   forceReconnect() {
     if (this.unpaired) return
-    try {
-      this.ws?.close()
-    } catch {
-      /* ignore */
-    }
-    this.ws = null
-    this.authenticated = false
+    this.discardSocket()
     this.reconnectAttempts = 0
     this.setState("connecting")
     this.connect(true)
@@ -332,6 +325,17 @@ export class WSClient {
     if (!silent) {
       this.onStateChange(state)
     }
+  }
+
+  private discardSocket(close = true) {
+    const socket = this.ws
+    this.ws = null
+    this.authenticated = false
+    this.pending = []
+    if (!socket) return
+    // Null first: a late onclose is stale, and callbacks cannot send on the old peer.
+    try { this.onConnectionLost?.() } catch { /* channel cleanup is best-effort */ }
+    if (close) { try { socket.close() } catch { /* closing */ } }
   }
 
   /**

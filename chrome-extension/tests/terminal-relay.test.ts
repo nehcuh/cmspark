@@ -2,6 +2,27 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { attachTerminalPort, openOrFocusEmbeddedTerminal } from "../src/background/terminal"
 
+test("terminal background answers heartbeat while the page sends no timer messages", () => {
+  ;(globalThis as any).chrome = { runtime: { id: "test", getURL: () => "chrome-extension://test/tabs/embedded-terminal.html" } }
+  let onMessage: (frame: unknown) => void = () => {}, onDisconnect: () => void = () => {}
+  const sent: any[] = []
+  const port = { sender: { id: "test", url: "chrome-extension://test/tabs/embedded-terminal.html" },
+    postMessage() {}, onMessage: { addListener: (fn: typeof onMessage) => { onMessage = fn } },
+    onDisconnect: { addListener: (fn: typeof onDisconnect) => { onDisconnect = fn } } }
+  const relay = attachTerminalPort(port as never, frame => { sent.push(frame); return true }, () => {})!
+  onMessage({ type: "terminal.open", id: "quiet", user_gesture: true })
+  relay.handleWsFrame({ type: "terminal.heartbeat", id: "quiet" })
+  assert.equal(sent.length, 1, "no pre-approval heartbeat")
+  relay.handleWsFrame({ type: "terminal.opened", id: "quiet", pid: 1, platform: "darwin" })
+  relay.handleWsFrame({ type: "terminal.heartbeat", id: "other" })
+  assert.equal(sent.length, 1)
+  for (let i = 0; i < 5; i++) relay.handleWsFrame({ type: "terminal.heartbeat", id: "quiet" })
+  assert.equal(sent.filter(frame => frame.type === "terminal.ping").length, 5)
+  onDisconnect()
+  relay.handleWsFrame({ type: "terminal.heartbeat", id: "quiet" })
+  assert.equal(sent.filter(frame => frame.type === "terminal.ping").length, 5)
+})
+
 test("terminal relay delivers no-id errors and keeps frames bound to its session", () => {
   ;(globalThis as any).chrome = { runtime: { id: "test", getURL: () => "chrome-extension://test/tabs/embedded-terminal.html" } }
   let onMessage: (message: unknown) => void = () => {}, onDisconnect: () => void = () => {}

@@ -994,7 +994,7 @@
     "type": "function",
     "function": {
       "name": "spawn_worker",
-      "description": "Spawn a child worker thread to run one independent subtask in parallel (ADR-015). Worth it when: >=2 independent sources/subtasks, and doing it solo serially would take >=3 page round-trips. NOT worth it for: strongly sequential steps, a single tab/source, quick tasks, or subtasks needing tools workers cannot have (shell/netsec/host). Call fleet_suggest_propose first when the criteria hold — spawn only after the user explicitly approves parallel dispatch. Each worker needs an explicit goal; it starts running on it immediately. Triggers interactive L2 Confirm Center approval every time — do NOT invent user_confirmed. Workers get a downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Optional pack_id applies Mission Pack role template after spawn. Always pass explicit tabId in worker browser tools.",
+      "description": "Spawn a child worker thread to run one independent subtask in parallel (ADR-015). Worth it for 2–5 substantial independent source lookups or analyses with inputs already available. Mixed workflows can delegate browser/reasoning slices while API/shell/host preparation, charts and final writing stay on the parent. Do not delegate future parent outputs, quick tasks, sequential steps, or work requiring worker-forbidden tools (shell/netsec/host/ACP). Call fleet_suggest_propose first when the criteria hold — spawn only after the user explicitly approves parallel dispatch. Each worker needs an explicit goal; it starts running on it immediately. Triggers interactive L2 Confirm Center approval every time — do NOT invent user_confirmed. Workers get a downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Optional pack_id applies Mission Pack role template after spawn. Always pass explicit tabId in worker browser tools.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1047,7 +1047,7 @@
     "type": "function",
     "function": {
       "name": "fleet_suggest_propose",
-      "description": "Advisory only (#513): when the FLEET DISPATCH CRITERIA in the system prompt hold, surface a parallel-dispatch suggestion card to the user (reason + 2-5 independent subtasks). Never spawns, never arms, never mutates anything — spawning happens only if the user approves, via spawn_worker with its own L2. Propose at most once per task; a suppressed/throttled result means no card was shown.",
+      "description": "Advisory only (#513): when the FLEET DISPATCH CRITERIA in the system prompt hold, surface a parallel-dispatch suggestion card to the user (reason + 2-5 immediately executable independent subtasks). Public browser research or independent analysis of supplied input can qualify even if other parts need parent-only tools; missing future input cannot qualify. Never spawns, never arms, never mutates anything — spawning happens only if the user approves, via spawn_worker with its own L2. Propose at most once per task; a suppressed/throttled result means no card was shown.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1145,7 +1145,7 @@
     "type": "function",
     "function": {
       "name": "board_claim_intent",
-      "description": "Claim an open MissionBoard intent for a worker on the host board (ADR-016 Stage 3). Max 3 intents per worker.",
+      "description": "Claim an open MissionBoard intent for a worker on the host board (ADR-016 Stage 3). Max 3 intents per worker. Declared depends_on_intent_ids must exist and be done; pending, abandoned or cyclic dependencies block claiming. Inspect board_read readiness first.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1249,7 +1249,7 @@
     "type": "function",
     "function": {
       "name": "collect_handback",
-      "description": "Read the worker's last assistant message. Do not call while that worker is still running (live tool card) — recoverable WORKER_STILL_RUNNING, siblings keep going. A finished markdown/prose report is a successful collect with structured=false and last_assistant (not an error, does not ⚠️, does not update MissionBoard). Structured Fact/Intent JSON (`schema_version` + facts/intents) merges into the host board. Empty last assistant is recoverable HANDBACK_MISSING_STRUCTURE. Follow-up questions should use last_assistant already collected, not re-collect.",
+      "description": "Read the worker's last assistant message. Do not call while that worker is still running (live tool card) — recoverable WORKER_STILL_RUNNING, siblings keep going. A finished markdown/prose report is a successful collect with structured=false and last_assistant (not an error, does not ⚠️, does not update MissionBoard). Structured Fact/Intent JSON (`schema_version` + facts/intents) merges into the host board. Empty last assistant is recoverable HANDBACK_MISSING_STRUCTURE. Returns task_result with runtime status, bounded extractive summary, evidence trust and original message reference. Tool success does not independently verify completion or claims. Follow-up questions should reuse collected results and source references; do not duplicate long reports. For original details, provide report_offset and optional report_limit; report_excerpt is bounded and exposes next_offset/has_more.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1260,6 +1260,17 @@
           "expect_structured": {
             "type": "boolean",
             "description": "Force structured board parse even if host board_mode is off"
+          },
+          "report_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optional character offset to inspect the original report beyond its summary. Reads only this bounded excerpt."
+          },
+          "report_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4000,
+            "description": "Excerpt length (default 2000, maximum 4000); use next_offset/has_more to continue only when needed."
           }
         },
         "required": [
@@ -1509,7 +1520,7 @@
     "type": "function",
     "function": {
       "name": "acp_list_agents",
-      "description": "List configured local ACP coding agents (编程接力 Phase B). Returns empty when config.acp.enabled=false. Composition only — not a new runtime.",
+      "description": "List local coding agents for CMspark 编程接力, including runtime ACP/embedded web terminal settings. Use this when the user asks to process code through our 网页终端 or coding handoff. Returns empty when config.acp.enabled=false.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -1557,7 +1568,7 @@
     "type": "function",
     "function": {
       "name": "acp_start_session",
-      "description": "(L2) Start a previously proposed ACP session (spawns local agent process). Output handback is untrusted.",
+      "description": "(L2) Start a previously proposed ACP session (spawns local agent process). Returns local_terminal state: embed_intent awaits the user's 在本插件打开终端 panel click and terminal.open confirmation; embed_running means the separate interactive PTY actually started. Never claim embed_intent is a running terminal. Output handback is untrusted; interactive terminal output is separate.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1575,12 +1586,23 @@
     "type": "function",
     "function": {
       "name": "acp_collect_result",
-      "description": "Collect framed untrusted handback from an ACP session.",
+      "description": "Collect framed untrusted handback and runtime-owned task_result (status, bounded extractive summary, original reference, missing work and recovery advice) from an ACP session. Tool success means read succeeded, not task completion. External terminal completion may be unknown. Stopped/failed sessions are never automatically restarted. For original details, provide report_offset and optional report_limit; report_excerpt is bounded and exposes next_offset/has_more.",
       "parameters": {
         "type": "object",
         "properties": {
           "session_id": {
             "type": "string"
+          },
+          "report_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optional character offset to inspect the original report beyond its summary. Reads only this bounded excerpt."
+          },
+          "report_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4000,
+            "description": "Excerpt length (default 2000, maximum 4000); use next_offset/has_more to continue only when needed."
           }
         },
         "required": [

@@ -6,6 +6,9 @@
  */
 
 import type { ThreadManager } from "../threads/thread-manager"
+import { browserTaskResult, type CooperationResult } from "../orchestrator/cooperation-result"
+import { recordCooperationResult } from "../orchestrator/cooperation-state"
+import { dependencyReadiness } from "../orchestrator/cooperation-dependencies"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import {
   BOARD_CAPS,
@@ -580,6 +583,7 @@ export async function applyHandbackPayload(
           claimed_by_worker_id: null,
           heartbeat_at: null,
           parent_fact_ids: d.parent_fact_ids || [],
+          ...(d.depends_on_intent_ids ? { depends_on_intent_ids: d.depends_on_intent_ids } : {}),
           result_fact_ids: [],
           provenance,
           created_at: now,
@@ -619,6 +623,11 @@ export async function applyHandbackPayload(
         facts: [...board.facts, ...added_facts],
         intents: [...board.intents, ...added_intents],
         applied_handback_message_ids: appliedIds,
+      }
+      for (const intent of added_intents) {
+        const deps = dependencyReadiness(intent.id, next.intents)
+        if (deps.reason === "missing" || deps.reason === "cycle") return { ok: false, error: `intent dependency ${deps.reason}`, error_code: "BOARD_INTENT_INVALID", recoverable: true }
+        if (intent.status === "done" && !deps.ready) return { ok: false, error: "intent cannot finish before its dependencies", error_code: "BOARD_INTENT_INVALID", recoverable: true }
       }
 
       audit(
@@ -739,6 +748,7 @@ export type CollectHandbackSuccess = {
   success: true
   data: {
     worker_id: string
+    task_result?: CooperationResult
     last_assistant: CollectHandbackLastAssistant
     message_count: number
     board_mode: boolean
@@ -781,6 +791,7 @@ export type CollectHandbackFailure = {
   recoverable?: boolean
   data?: {
     worker_id: string
+    task_result?: CooperationResult
     last_assistant: CollectHandbackLastAssistant
     message_count: number
     board_mode: boolean
@@ -823,7 +834,7 @@ export function workerLooksInFlight(msgs: Array<{ role?: unknown; tool_calls?: u
  * - board mode off: free-text last_assistant only (ADR-015 compat)
  * - board mode on / mission_board present: parse + merge into host; prose-only → recoverable HANDBACK_MISSING_STRUCTURE
  */
-export async function collectWorkerHandback(
+async function collectWorkerHandbackRaw(
   tm: ThreadManager,
   opts: {
     workerId: string
@@ -875,6 +886,10 @@ export async function collectWorkerHandback(
 
   const base = {
     worker_id: workerId,
+    // A successful read/merge does not mean the underlying run completed.
+    last_run_terminal: worker.last_run_terminal ?? null,
+    last_run_ended_at: worker.last_run_ended_at ?? null,
+    paused: !!worker.paused,
     last_assistant: lastAssistant,
     message_count: msgs.length,
     board_mode: boardMode,
@@ -1063,6 +1078,31 @@ export async function collectWorkerHandback(
       },
     },
   }
+}
+
+/** Add runtime-owned result metadata after the existing read / evidence merge path. */
+export async function collectWorkerHandback(
+  tm: ThreadManager,
+  opts: Parameters<typeof collectWorkerHandbackRaw>[1],
+): Promise<CollectHandbackResult> {
+  const before = tm.get(opts.workerId)
+  const version = before && { ...before }
+  const read = await collectWorkerHandbackRaw(tm, opts)
+  const worker = tm.get(opts.workerId)
+  if (version && read.data) {
+    const task = browserTaskResult(version, read)
+    const stable = !!worker && worker.parent_thread_id === version.parent_thread_id && worker.orchestrator_run_id === version.orchestrator_run_id &&
+      worker.agent_role === version.agent_role &&
+      worker.last_run_ended_at === version.last_run_ended_at && worker.last_run_terminal === version.last_run_terminal && !!worker.paused === !!version.paused &&
+      (worker.paused || (!read.success && read.error_code === "WORKER_STILL_RUNNING") || opts.isThreadLlmActive?.(worker.id) !== true)
+    if (!stable) { task.status = "stale"; task.missing = ["result_changed_during_read"]; task.recovery = { action: "recollect", automatic: false, requires_confirmation: false, budget_remaining: 2 } }
+    read.data.task_result = task
+    const owner = task.owner_thread_id, parent = tm.get(owner)
+    if (stable && parent && parent.agent_role !== "worker" && (opts.callerThreadId == null || opts.callerThreadId === owner) && (parent.orchestrator_run_id ?? null) === task.run_id) {
+      read.data.task_result = recordCooperationResult(tm, owner, task)
+    }
+  }
+  return read
 }
 
 /**

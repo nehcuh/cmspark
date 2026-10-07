@@ -26,7 +26,7 @@ export type FleetSuggestGate =
  * Decide whether a propose may surface. Sets the throttle stamp only when
  * allowed — a suppressed/throttled call never extends either window.
  */
-export function fleetSuggestGate(threadId: string, now: number = Date.now()): FleetSuggestGate {
+export function peekFleetSuggestGate(threadId: string, now: number = Date.now()): FleetSuggestGate {
   if (!threadId) return { ok: false, reason: "suppressed" }
   const dismissed = dismissedAt.get(threadId)
   if (dismissed !== undefined && now - dismissed < FLEET_SUGGEST_SILENCE_MS) {
@@ -36,8 +36,13 @@ export function fleetSuggestGate(threadId: string, now: number = Date.now()): Fl
   if (last !== undefined && now - last < FLEET_SUGGEST_THROTTLE_MS) {
     return { ok: false, reason: "throttled" }
   }
-  lastProposeAt.set(threadId, now)
   return { ok: true }
+}
+
+export function fleetSuggestGate(threadId: string, now: number = Date.now()): FleetSuggestGate {
+  const gate = peekFleetSuggestGate(threadId, now)
+  if (gate.ok) lastProposeAt.set(threadId, now)
+  return gate
 }
 
 /** Test isolation only — production never clears per-thread state. */

@@ -906,6 +906,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
         if (!pongReceived) {
+          logger.warn("ws.pong_timeout", { origin: peerOrigin || "<none>" })
           ws.terminate()
           return
         }
@@ -1490,7 +1491,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       }
     })
 
-    ws.on("close", () => {
+    ws.on("close", (code) => {
       clearInterval(pingInterval)
       clients.delete(ws)
       // P0-2B: clear the per-connection auth timer + state.
@@ -1566,7 +1567,11 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       // wrongly auto-approve a tool call from whatever reconnects next).
       requireRt().clearMcpSession(ws)
       console.log(`[cmspark-agent] Client disconnected (${clients.size} remaining)`)
-      logger.info("ws.client_disconnected", { clients: clients.size })
+      logger.info("ws.client_disconnected", {
+        clients: clients.size, close_status: code, origin: peerOrigin || "<none>",
+        authenticated: closedAuth?.authenticated === true, surface: closedAuth?.surface,
+        pong_pending: !pongReceived,
+      })
     })
 
     ws.on("pong", () => {

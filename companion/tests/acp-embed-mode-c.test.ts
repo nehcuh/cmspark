@@ -47,8 +47,10 @@ let agentBin = ""
 class MockPty {
   pid = 0
   killed = false
+  writes: string[] = []
+  private dataCb: ((data: string) => void) | undefined
   private exitCb: ((e: { exitCode: number; signal?: number }) => void) | undefined
-  write() {}
+  write(text: string) { this.writes.push(text) }
   resize() {}
   pause() {}
   resume() {}
@@ -56,7 +58,8 @@ class MockPty {
     this.killed = true
     this.exitCb?.({ exitCode: 0, signal: 0 })
   }
-  onData() {}
+  onData(callback: (data: string) => void) { this.dataCb = callback }
+  emit(data: string) { this.dataCb?.(data) }
   onExit(cb: (e: { exitCode: number; signal?: number }) => void) {
     this.exitCb = cb
   }
@@ -257,6 +260,35 @@ describe("buildEmbedArgv (pure)", () => {
 // ────────────────── B. embed decision: honest refusal, no outer fallback ──────────────────
 
 describe("openLocalTerminalForAgent embed branch", () => {
+  it("retains Kimi's full task for interactive input despite its empty argv", async () => {
+    const task = "审阅认证逻辑\n保留 '引号' 与 $(literal)"
+    const result = await embed.openLocalTerminalForAgent(embedOpts({ embed: true, threadId: "kimi-task", agentId: "kimi", prompt: task }))
+    assert.equal(result.ok, true)
+    const intent = embed.takeEmbedIntent("kimi-task") as any
+    assert.deepEqual(intent.args, [])
+    assert.equal(intent.initialPrompt, task, "Kimi's task must survive the bare interactive launch")
+  })
+  it("delivers Kimi's retained task through approved terminal.open only after the TUI is ready", async () => {
+    const svc = services(), thr = boundThread(svc, realWs())
+    const task = "Review authentication\nKeep quotes ' and $(literal) 中文"
+    await embed.openLocalTerminalForAgent(embedOpts({ embed: true, threadId: thr.id, agentId: "kimi", prompt: task }))
+    const mock = new MockPty()
+    pty.__testSetPtySpawn(() => mock)
+    const opened = await handleMessage({ type: "terminal.open", id: "kimi-prefill", thread_id: thr.id, user_gesture: true }, svc, panel() as never)
+    assert.equal(opened.type, "terminal.opened")
+    assert.deepEqual(mock.writes, [])
+    mock.emit(fs.readFileSync(path.join(process.cwd(), "tests/fixtures/kimi-prefill/trust.ansi"), "utf8"))
+    assert.deepEqual(mock.writes, [], "never type the task into a trust dialog")
+    const ready = fs.readFileSync(path.join(process.cwd(), "tests/fixtures/kimi-prefill/ready.ansi"), "utf8")
+    mock.emit(ready)
+    mock.emit(ready)
+    assert.deepEqual(mock.writes, [`\x1b[200~${task}\x1b[201~\r`], "paste and submit the approved task once")
+    assert.equal(embed.peekEmbedIntent(thr.id), null)
+  })
+  it("rejects replacement Kimi tasks even when executable and empty argv are unchanged", () => {
+    assert.equal(embed.sameEmbedIntent({ cwd: realWs(), file: realBin(), args: [], initialPrompt: "approved" },
+      { cwd: realWs(), file: realBin(), args: [], initialPrompt: "replacement" }), false)
+  })
   it("refuses non-darwin honestly and never opens an outer terminal", async () => {
     const r = await withPlatform("linux", () =>
       embed.openLocalTerminalForAgent(embedOpts({ embed: true, threadId: "t-lin" })),

@@ -233,13 +233,13 @@ test("wiring: registered in catalog, COMPANION_TOOLS, plan-readonly, strip list,
 
 test("prompt: FLEET DISPATCH CRITERIA is surface-gated and sits before the security footer", () => {
   const src = readSrc("llm", "adapter.ts")
-  assert.match(src, /FLEET DISPATCH CRITERIA/, "criteria segment present")
+  assert.match(readSrc("orchestrator", "fleet-assessment.ts"), /FLEET DISPATCH CRITERIA/, "criteria segment present")
   assert.match(src, /fleetDispatchHint/, "segment variable")
   // surface gate mirrors runProgressHint (summoner gets no dead instruction)
-  const gate = src.match(/const fleetDispatchHint =\s*\n\s*params\.surface === "summoner"\s*\n\s*\? ""/)
+  const gate = src.match(/let fleetDispatchHint =\s*\n\s*params\.surface === "summoner"\s*\n\s*\? ""/)
   assert.ok(gate, "fleetDispatchHint is summoner-gated like runProgressHint")
   // negative conditions come first (default posture: solo)
-  assert.match(src, /Do NOT propose when ANY holds/, "negative criteria present")
+  assert.match(readSrc("orchestrator", "fleet-assessment.ts"), /Do NOT propose when ANY holds/, "negative criteria present")
   // order inside composeSystemPrompt: runProgressHint → fleetDispatchHint → … → securityFooter
   const compose = src.slice(src.indexOf("const composeSystemPrompt"), src.indexOf("const systemPrompt = composeSystemPrompt"))
   const iRun = compose.indexOf("runProgressHint,")

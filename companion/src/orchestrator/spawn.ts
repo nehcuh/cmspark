@@ -10,6 +10,16 @@ import {
 } from "./constants"
 import { appendCapabilityAudit } from "../packs/audit-log"
 
+/** Orchestrator control tools are not the capability surface inherited by workers. */
+export function workerParentCapabilityWhitelist(parent: {
+  agent_role?: string | null
+  tool_whitelist?: string[] | null
+} | null | undefined): string[] | null {
+  return parent?.agent_role === "orchestrator" || !Array.isArray(parent?.tool_whitelist)
+    ? null
+    : [...parent.tool_whitelist]
+}
+
 export function computeWorkerWhitelist(opts: {
   parentWhitelist: string[] | null
   roleAllow: string[] | null
@@ -130,14 +140,7 @@ export function spawnWorkerThread(
   // After the parent is already an orchestrator, parent.tool_whitelist is the control
   // surface — do NOT inherit that onto workers. Treat orchestrator parent as null parent
   // capability so roleAllow (or the safe browser default) is the base, then HARD_DENY.
-  const parentCapabilityWhitelist: string[] | null =
-    parent.agent_role === "orchestrator"
-      ? null
-      : parent.tool_whitelist === null
-        ? null
-        : Array.isArray(parent.tool_whitelist)
-          ? [...parent.tool_whitelist]
-          : null
+  const parentCapabilityWhitelist = workerParentCapabilityWhitelist(parent)
 
   const runId = ensureOrchestratorRunId(parent)
 
