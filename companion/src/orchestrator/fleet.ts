@@ -4,6 +4,8 @@ import type { ThreadManager } from "../threads/thread-manager"
 import { listTabLocks, releaseIdleWorkerLeases } from "./tab-lease"
 import { listWorkers } from "./spawn"
 import { countOpenIntents } from "../board/intent-claim"
+import { multiAgentLlmLoopSnapshot, pendingDeferredLlmKickThreadIds } from "./llm-loop-gate"
+import { workerOccupiesSlot } from "./worker-occupancy"
 
 export interface FleetWorkerView {
   id: string
@@ -16,6 +18,12 @@ export interface FleetWorkerView {
   status: "idle" | "paused" | "holding_tabs" | "unknown"
   /** In-flight LLM for this worker (run-state). */
   llm_active?: boolean
+  /**
+   * #578: 该 worker 是否占用 spawn 名额（paused/在跑/新鲜未跑占；终局/逾期让位）。
+   * 与 spawn gate 同一谓词（worker-occupancy.ts）。与 `llm_active` 不同：
+   * 排队 kick 与 paused 的 worker 也算占，`llm_active` 只反映 abort map 的在跑。
+   */
+  occupied?: boolean
   /**
    * #502 E: last tool this worker ran (Glance). Reverse-scans the thread
    * messages for a tool name — omitted when the thread ran no tools.
@@ -76,6 +84,13 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     llmActiveResolved = false
   }
   const llmSet = new Set(llmActive)
+  // #578: 完整三源并集（abort map ∪ loop-gate holders ∪ 排队 kick）——与 spawn gate
+  // 的占名额口径同源。llmActiveResolved=false 时退化为 loop-gate 两源（advisory 展示，
+  // 执行闸不受影响）。
+  const isActiveUnion = (id: string) =>
+    llmSet.has(id) ||
+    multiAgentLlmLoopSnapshot().holders.includes(id) ||
+    pendingDeferredLlmKickThreadIds().includes(id)
 
   const all = tm.list() as any[]
   // A worker whose LLM run has ended (and was not paused) must not keep tab
@@ -121,6 +136,10 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
       paused: !!w.paused,
       status,
       llm_active: llmSet.has(w.id),
+      // #578: 占名额只对 worker 行有意义——orchestrator/普通 parent 行不算占用
+      ...(w.agent_role === "worker"
+        ? { occupied: workerOccupiesSlot(w, { isActive: isActiveUnion }) }
+        : {}),
       ...(latestTool ? { latest_tool: latestTool } : {}),
       ...(brief ? { brief } : {}),
       tab_locks: wLocks.map((l) => ({

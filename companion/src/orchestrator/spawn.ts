@@ -9,6 +9,7 @@ import {
   type AgentRole,
 } from "./constants"
 import { appendCapabilityAudit } from "../packs/audit-log"
+import { workerCapUsage } from "./worker-occupancy"
 
 /** Orchestrator control tools are not the capability surface inherited by workers. */
 export function workerParentCapabilityWhitelist(parent: {
@@ -116,6 +117,11 @@ export function spawnWorkerThread(
     userConfirmed: boolean
     /** ADR-016 Stage 3: bind worker to a board intent (claimed after create). */
     intentId?: string | null
+    /**
+     * #578: 活性谓词（三源并集）——执行闸必须注入（dispatch / expert-team），
+     * 缺省退化为纯字段判定只对测试/advisory 可接受。
+     */
+    isActive?: (threadId: string) => boolean
   },
 ): SpawnWorkerResult {
   if (!opts.userConfirmed) {
@@ -147,11 +153,28 @@ export function spawnWorkerThread(
   // #292: everything that can fail is validated BEFORE the parent is
   // promoted — a failed spawn must leave the parent's tool surface
   // untouched (a normal thread keeps navigate/click, not just list_tabs).
-  const workerCount = countWorkersInRun(tm, runId)
-  if (workerCount >= ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run) {
+  //
+  // #578: 占名额口径（终局释放）——paused/在跑/新鲜未跑占，终局与逾期孤儿让位；
+  // 外加单 run 累计创建上限（删除/回收站不退款，回滚硬删不计数）。
+  const usage = workerCapUsage(tm, runId, { isActive: opts.isActive })
+  if (usage.occupied >= ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run) {
     return {
       ok: false,
-      error: `max_workers_per_orchestrator_run (${ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run}) reached`,
+      error:
+        `max_workers_per_orchestrator_run reached: worker slots full ` +
+        `${usage.occupied}/${ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run} occupied ` +
+        `(paused/running/pending), ` +
+        `${usage.created}/${ORCHESTRATOR_CAPS.max_workers_created_per_run} created this run ` +
+        `(trashed workers still count)`,
+    }
+  }
+  if (usage.created >= ORCHESTRATOR_CAPS.max_workers_created_per_run) {
+    return {
+      ok: false,
+      error:
+        `worker creation cap reached: ${usage.created}/${ORCHESTRATOR_CAPS.max_workers_created_per_run} ` +
+        `created this run — finished workers free slots but not the creation budget; ` +
+        `start a new thread for a fresh run, or hard-delete workers (trash does not refund the budget)`,
     }
   }
 

@@ -1362,13 +1362,21 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
               String(finalParams.goal || finalParams.task || ""),
               eligible,
             )
+            // #578: 确认卡截断也持完整谓词（async 上下文可得；与执行闸同口径，评审 n2）
+            let isActive: ((id: string) => boolean) | undefined
+            if (parent && actingThreadId) {
+              const { buildIsThreadLlmActive } = await import("./companion-dispatch")
+              isActive = await buildIsThreadLlmActive()
+            }
             const slots =
-              parent && actingThreadId ? remainingWorkerSlots(threadManager, String(actingThreadId)) : members.length
+              parent && actingThreadId
+                ? remainingWorkerSlots(threadManager, String(actingThreadId), { isActive })
+                : members.length
             // N-3: do not show an empty team card when the worker cap is already full.
             if (parent && actingThreadId && slots <= 0) {
               expertTeamAdmissionError = {
                 success: false,
-                error: `max_workers_per_orchestrator_run reached; spawn_expert_team has no remaining slots`,
+                error: `max_workers_per_orchestrator_run reached; spawn_expert_team has no remaining worker slots or creation budget`,
                 data: { error_code: "MAX_WORKERS" },
               }
               return { confirmationId: "", approved: false, reason: "denied" as const }
