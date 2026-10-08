@@ -1,7 +1,10 @@
 // Multi-agent P0 caps and hard denylists — ADR-015 §3.5 / §2
 
 export const ORCHESTRATOR_CAPS = {
+  /** #578: 占名额口径（终局释放）——见 orchestrator/worker-occupancy.ts */
   max_workers_per_orchestrator_run: 5,
+  /** #578 D3 对冲：单 run 累计创建上限（删除/回收站不退款；回滚硬删不计数） */
+  max_workers_created_per_run: 20,
   max_concurrent_multi_agent_llm_loops: 5,
   max_tabs_leased_per_worker: 2,
   max_tabs_leased_process: 10,

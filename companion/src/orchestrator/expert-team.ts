@@ -20,6 +20,7 @@ import {
   ensureOrchestratorRunId,
   type ParentPromotionSnapshot,
 } from "./spawn"
+import { workerCapUsage } from "./worker-occupancy"
 import { appendCapabilityAudit } from "../packs/audit-log"
 
 /** ≤4 experts so one orchestrator slot remains under the ADR-015 cap of 5. */
@@ -264,12 +265,28 @@ function parentCapabilityWhitelist(parent: any): string[] | null {
   return Array.isArray(parent.tool_whitelist) ? [...parent.tool_whitelist] : null
 }
 
-export function remainingWorkerSlots(tm: ThreadManager, parentThreadId: string): number {
+/**
+ * #578: advisory 口径的可 spawn 余量 = min(占用名额余量, 累计创建预算余量)。
+ * expert-team 的 upfront 截断用它——预算不足时截到预算内，避免循环中途
+ * spawn gate 拒绝触发 fail() 全队回滚。无 isActive 时占用退化到纯字段判定
+ * （advisory 可接受；执行闸 spawnWorkerThread 会持完整谓词纠正）。
+ */
+export function remainingWorkerSlots(
+  tm: ThreadManager,
+  parentThreadId: string,
+  opts: { now?: number; isActive?: (threadId: string) => boolean } = {},
+): number {
   const parent = tm.get(parentThreadId) as any
   if (!parent) return 0
   const runId = parent.orchestrator_run_id || ensureOrchestratorRunId(parent)
-  const used = countWorkersInRun(tm, runId)
-  return Math.max(0, ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run - used)
+  const usage = workerCapUsage(tm, runId, opts)
+  return Math.max(
+    0,
+    Math.min(
+      ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run - usage.occupied,
+      ORCHESTRATOR_CAPS.max_workers_created_per_run - usage.created,
+    ),
+  )
 }
 
 export function buildExpertTeamConfirmCard(opts: {
@@ -287,7 +304,7 @@ export function buildExpertTeamConfirmCard(opts: {
     effective_tools: computePackEffectiveTools(m.tools, parentWl),
     brief: m.brief,
   }))
-  const capNote = `最多 ${MAX_EXPERT_TEAM_SIZE} 名专家；总 worker ≤ ${ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run}（含已有）。`
+  const capNote = `最多 ${MAX_EXPERT_TEAM_SIZE} 名专家；同时占用 worker ≤ ${ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run}（终局的自动让位）、本编排累计创建 ≤ ${ORCHESTRATOR_CAPS.max_workers_created_per_run}；超出将按余量截断。`
   const expertTeam: ExpertTeamDigest = {
     will_promote_orchestrator: willPromote,
     will_open_board: true,
@@ -489,11 +506,20 @@ export async function spawnExpertTeam(opts: {
     }
   }
 
-  const slots = remainingWorkerSlots(opts.tm, opts.parentThreadId)
+  // #578: 执行闸持完整三源并集谓词（与 dispatch 同源；adapter.ts 从 orchestrator
+  // 侧 lazy dynamic import dispatch 是既有先例）。占名额满或创建预算耗尽都在
+  // upfront 截断/拒绝，循环内不会再撞 gate（min 双上限截断）。
+  const { buildIsThreadLlmActive } = await import("../tool/companion-dispatch")
+  const isThreadLlmActive = await buildIsThreadLlmActive()
+  const isActive = (id: string) => isThreadLlmActive(id)
+  const slots = remainingWorkerSlots(opts.tm, opts.parentThreadId, { isActive })
   if (slots <= 0) {
     return {
       ok: false,
-      error: `max_workers_per_orchestrator_run (${ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run}) reached`,
+      error:
+        `max_workers_per_orchestrator_run reached: no remaining worker slots ` +
+        `(occupied ≤ ${ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run}) or creation budget ` +
+        `(≤ ${ORCHESTRATOR_CAPS.max_workers_created_per_run} created this run)`,
       data: { error_code: "MAX_WORKERS" },
     }
   }
@@ -530,6 +556,7 @@ export async function spawnExpertTeam(opts: {
       roleDeny: deny,
       packId: m.pack_id,
       userConfirmed: true,
+      isActive,
     })
     if (!spawned.ok) {
       return fail(`spawn_expert_team rolled back: ${spawned.error}`)
@@ -599,6 +626,9 @@ export function parentRoleSnapshot(tm: ThreadManager, parentId: string): {
 } {
   const p = tm.get(parentId) as any
   const runId = p?.orchestrator_run_id
+  // #578: worker_count 是**库存口径**（该 run 创建过的全部 worker，回收站除外），
+  // 不是占名额口径——展示「有几个子任务」，与 spawn 闸的 workerCapUsage 刻意不同，
+  // 勿「顺手统一」（评审 G10 钉死此决策）。
   const worker_count = runId ? countWorkersInRun(tm, runId) : tm.list().filter((t: any) => t.parent_thread_id === parentId).length
   return {
     agent_role: (p?.agent_role || "normal") as AgentRole,

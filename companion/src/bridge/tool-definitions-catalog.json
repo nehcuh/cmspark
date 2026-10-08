@@ -994,7 +994,7 @@
     "type": "function",
     "function": {
       "name": "spawn_worker",
-      "description": "Spawn a child worker thread to run one independent subtask in parallel (ADR-015). Worth it for 2–5 substantial independent source lookups or analyses with inputs already available. Mixed workflows can delegate browser/reasoning slices while API/shell/host preparation, charts and final writing stay on the parent. Do not delegate future parent outputs, quick tasks, sequential steps, or work requiring worker-forbidden tools (shell/netsec/host/ACP). Call fleet_suggest_propose first when the criteria hold — spawn only after the user explicitly approves parallel dispatch. Each worker needs an explicit goal; it starts running on it immediately. Triggers interactive L2 Confirm Center approval every time — do NOT invent user_confirmed. Workers get a downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Optional pack_id applies Mission Pack role template after spawn. Always pass explicit tabId in worker browser tools.",
+      "description": "Spawn a child worker thread to run one independent subtask in parallel (ADR-015). Worth it for 2–5 substantial independent source lookups or analyses with inputs already available. Mixed workflows can delegate browser/reasoning slices while API/shell/host preparation, charts and final writing stay on the parent. Do not delegate future parent outputs, quick tasks, sequential steps, or work requiring worker-forbidden tools (shell/netsec/host/ACP). Call fleet_suggest_propose first when the criteria hold — spawn only after the user explicitly approves parallel dispatch. Each worker needs an explicit goal; it starts running on it immediately. Triggers interactive L2 Confirm Center approval every time — do NOT invent user_confirmed. Workers get a downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Up to 5 workers may occupy slots at once — finished (terminal) workers free their slots automatically, but a run may create at most 20 workers in total (#578). Optional pack_id applies Mission Pack role template after spawn. Always pass explicit tabId in worker browser tools.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1102,7 +1102,7 @@
     "type": "function",
     "function": {
       "name": "spawn_expert_team",
-      "description": "Spawn up to 4 expert workers in ONE L2 Confirm Center card (not N serial spawn_worker confirms). After approval: spawnWorkerThread + applyPack(allowTrust:false) + persist task slice + chat.create kick. Empty brief = failure + rollback. Do NOT invent user_confirmed or security_token. Do NOT write base_url. Workers cannot nest or chat with each other. Total workers ≤5.",
+      "description": "Spawn up to 4 expert workers in ONE L2 Confirm Center card (not N serial spawn_worker confirms). After approval: spawnWorkerThread + applyPack(allowTrust:false) + persist task slice + chat.create kick. Empty brief = failure + rollback. Do NOT invent user_confirmed or security_token. Do NOT write base_url. Workers cannot nest or chat with each other. Team size is capped by both the occupancy cap (≤5 workers occupying slots at once) and the per-run creation budget (≤20 created), whichever is smaller — the team is truncated up front to fit (#578).",
       "parameters": {
         "type": "object",
         "properties": {

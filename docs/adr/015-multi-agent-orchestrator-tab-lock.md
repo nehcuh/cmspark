@@ -103,17 +103,25 @@
 
 | 参数 | 值 | 说明 |
 |------|-----|------|
-| `max_workers_per_orchestrator_run` | **5** | 单次编排最多 5 个 worker |
+| `max_workers_per_orchestrator_run` | **5** | 单次编排**同时占用**的 worker 上限（#578 占用口径，见下；**spawn 准入口径**——re-kick 复查不在此闸，瞬时并发下界由 `max_concurrent_multi_agent_llm_loops` 兜底） |
+| `max_workers_created_per_run` | **20** | #578：单 run **累计创建**上限（对冲失控刷 worker） |
 | `max_concurrent_multi_agent_llm_loops` | **5** | 进程内 multi-agent 同时跑的 LLM 环上限 |
 | `max_tabs_leased_per_worker` | **2** | 单 worker 懒获取 tab 上限（5 总预算内控局部占用） |
 | `max_tabs_leased_process` | **10** | 进程总 lease 上限 |
-| `idle_ttl_ms` | **120_000** | 覆盖一轮 LLM 思考；仅 **worker tab-tool entry** 续租 |
+| `idle_ttl_ms` | **120_000** | 覆盖一轮 LLM 思考；仅 **worker tab-tool entry** 续租。#578 起一个常量三处语义载荷：tab lease idle（`tab-lease.ts`）· intent 心跳宽限（`intent-claim.ts`，×2）· 「从未跑过孤儿」占用宽限（`worker-occupancy.ts`，**恒读静态常量，不受任何 Pack 覆盖影响**）——调此旋钮三处联动 |
 | `hard_max_lease_ms` | **600_000** | 单 episode 硬顶；到点拒绝还在飞的调用并释放 |
 | `create_tab_auto_hold_ms` | **60_000** | 仅 worker / orchestrator 新建标签；第一次成功跳转可提前结束 |
 | `max_active_l2_per_run` | **1** | 每 orchestrator_run |
 | `max_active_l2_process` | **2** | 全局 |
 
 （TTL 可按 Pack 覆盖，但不得超过 hard 上限表。）
+
+**#578 占用口径**（`orchestrator/worker-occupancy.ts` 单一 SoT）：`max_workers_per_orchestrator_run` 从「出现过的 worker 总数」（累计口径）改为「**同时占用**的 worker 数」——**占名额** = paused ∨ LLM 在跑/排队（三源并集）∨ 从未跑过且 `created_at` 在 `idle_ttl_ms` 宽限内；**让位** = 终局（`last_run_ended_at` 已设且非 paused/active，正常收工与被处死一视同仁）∨ 逾期孤儿（从未跑过且超宽限）。设计要点：
+
+- 终局判定只对非 in-flight worker 生效——re-kick 第二轮在跑时 `last_run_ended_at` 仍是上一轮旧值（adapter 的 epoch 守卫不防新 run），谓词必须先查活性。
+- `created_at` 缺失/不可解析 → fail-closed 视为新鲜（占名额，只收紧不放松）。
+- 累计创建预算含回收站行（trash 不退款）；**硬删与 #292 spawn 失败回滚不计数**（「spawn 从未发生」）。预算是索引派生值：30 天 `purgeExpiredTrash` 与手动 `cleanup_empty` 会让 M 自然衰减——这是预期行为，不是退款漏洞。
+- 执行闸（spawn gate）必须注入完整三源活性谓词；advisory 路径（expert-team 截断、l2 确认卡）可退化到纯字段判定，错了由执行闸纠正。
 
 ### 4. L2 与安全
 

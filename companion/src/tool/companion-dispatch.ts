@@ -231,6 +231,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         typeof params.intent_id === "string" && params.intent_id.trim()
           ? params.intent_id.trim()
           : null
+      // #578: 执行闸持完整三源并集谓词（终局释放口径下防 re-kick in-flight 误判让位）
+      const isThreadLlmActive = await buildIsThreadLlmActive()
       const r = spawnWorkerThread(threadManager, {
         parentThreadId: String(parentId),
         roleLabel: params.role_label || params.roleLabel,
@@ -240,6 +242,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         packId: params.pack_id || null,
         userConfirmed: true, // L2 approval above is the sole user-confirm authority
         intentId,
+        isActive: (id) => isThreadLlmActive(id),
       })
       if (!r.ok) return { success: false, error: r.error }
       // Optional pack.apply after spawn: composition only — NEVER allowTrust (S46 P0-4).
@@ -670,6 +673,10 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
       if (!runId) return { success: false, error: "orchestrator_run_id required (spawn workers first)" }
       const { listWorkers } = await import("../orchestrator/spawn")
+      // #578: 透出占用状态，让「名额为何空了/为何满了」可解释（overdue = 从未跑过且超 idle_ttl，spawn 已让位）
+      const { workerOccupancyStatus } = await import("../orchestrator/worker-occupancy")
+      const isThreadLlmActive = await buildIsThreadLlmActive()
+      const now = Date.now()
       const workers = listWorkers(threadManager, String(runId)).map((w: any) => ({
         id: w.id,
         alias: w.alias,
@@ -681,6 +688,10 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         // 「在跑 / 正常收工 / 被处死 / 闲着」，不必再猜。
         last_run_terminal: w.last_run_terminal ?? null,
         last_run_ended_at: w.last_run_ended_at ?? null,
+        occupancy: workerOccupancyStatus(w, {
+          now,
+          isActive: (id) => isThreadLlmActive(id),
+        }),
       }))
       return { success: true, data: { orchestrator_run_id: runId, workers } }
     }
