@@ -42,6 +42,7 @@
     "@mermaid-js/parser": "@mermaid-js/parser/dist/mermaid-parser.core.mjs"
   },
   "manifest": {
+    "minimum_chrome_version": "116",
     "host_permissions": [
       "<all_urls>",
       "http://127.0.0.1/*",

@@ -3,7 +3,8 @@
 // Designed for MV3 service worker lifecycle:
 // - Uses chrome.alarms for reconnection (setInterval dies on worker suspend)
 // - On worker wake, checks state and reconnects if needed
-// - No setInterval for pings — relies on server-side WS protocol ping/pong
+// - Authenticated app heartbeat every 20s keeps MV3 active (Chrome 116+).
+// - Alarms remain the wake/reconnect fallback after worker suspension.
 //
 // P0-2B authentication: the companion challenges every new connection; the
 // extension must reply with proof = HMAC-SHA256(sharedSecret, nonce) before any
@@ -64,6 +65,12 @@ export class WSClient {
    *  orphan socket's late onclose/onmessage can never tear down or answer on
    *  behalf of the current connection. */
   private generation = 0
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  private connectStartedAt = 0
+  private lastReceivedAt = 0
+  private readonly HEARTBEAT_MS = 20_000
+  private readonly HANDSHAKE_MS = 15_000
+  private readonly DEAD_PEER_MS = 60_000
 
   private readonly ALARM_NAME = "cmspark-ws-reconnect"
   private readonly MAX_RECONNECT_DELAY = 30000
@@ -93,6 +100,13 @@ export class WSClient {
 
     const socket = this.ws
     const gen = ++this.generation
+    this.connectStartedAt = Date.now()
+    this.lastReceivedAt = Date.now()
+    // Start the watchdog even while connecting; otherwise a blackholed TCP
+    // connect or a peer that never sends auth.challenge can wedge forever.
+    this.heartbeatTimer = setInterval(() => this.checkAndReconnect(), this.HEARTBEAT_MS)
+    // Node test harnesses must not remain alive solely for a browser timer.
+    ;(this.heartbeatTimer as any)?.unref?.()
     // Stale-event guard: after any reconnect, events from the previous socket
     // (queued while the worker was suspended) must be ignored (#290).
     const stale = () => gen !== this.generation || this.ws !== socket
@@ -128,6 +142,7 @@ export class WSClient {
           return
         }
         this.authenticated = true
+        this.lastReceivedAt = Date.now()
         this.setState("connected")
         this.flushPending()
         return
@@ -141,6 +156,7 @@ export class WSClient {
       // App-level message. Defense-in-depth: the companion only emits app
       // messages after auth.ok, but never trust wire state alone.
       if (!this.authenticated) return
+      this.lastReceivedAt = Date.now()
       try {
         this.onMessage(msg)
       } catch {
@@ -238,8 +254,15 @@ export class WSClient {
     if (this.unpaired) return false
     // Authenticated + open → send now.
     if (this.authenticated && this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(data))
-      return true
+      try {
+        this.ws.send(JSON.stringify(data))
+        return true
+      } catch {
+        this.discardSocket()
+        this.setState("disconnected")
+        this.scheduleReconnect()
+        return false
+      }
     }
     // Open but still handshaking → queue until auth.ok (sending pre-auth makes the
     // companion terminate the connection).
@@ -248,7 +271,7 @@ export class WSClient {
       return true
     }
     // Not open → trigger reconnect.
-    if (this.ws && this.ws.readyState !== WebSocket.CONNECTING) {
+    if (!this.ws || this.ws.readyState !== WebSocket.CONNECTING) {
       this.discardSocket()
       this.setState("disconnected")
       this.connect()
@@ -291,11 +314,19 @@ export class WSClient {
   checkAndReconnect() {
     // No secret stored — nothing to reconnect with; wait for setSecret().
     if (this.unpaired) return
+    const now = Date.now()
+    const expired = this.ws && (!this.authenticated
+      ? now - this.connectStartedAt >= this.HANDSHAKE_MS
+      : now - this.lastReceivedAt >= this.DEAD_PEER_MS)
+    if (expired) {
+      this.discardSocket()
+      this.setState("disconnected")
+    }
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       // Live connection (#290): OPEN or still handshaking after the worker
       // woke — never discard it, just verify liveness. Ping is a no-op while
       // CONNECTING (send() refuses to touch a pre-auth socket).
-      this.ping()
+      if (this.authenticated) this.ping()
       return
     }
 
@@ -328,6 +359,8 @@ export class WSClient {
   }
 
   private discardSocket(close = true) {
+    if (this.heartbeatTimer !== null) clearInterval(this.heartbeatTimer)
+    this.heartbeatTimer = null
     const socket = this.ws
     this.ws = null
     this.authenticated = false

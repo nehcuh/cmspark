@@ -1,3 +1,4 @@
+import { reviewAgentPolicy } from "../code-review/local-agent-policy"
 // L2 security admission gate for createToolExecutor.
 // Extracted from server.ts (C10 Phase B mechanical split) — zero behavior change.
 //
@@ -63,6 +64,7 @@ import { ensureExtensionPeerForOverlayConfirm } from "../ws/extension-peer"
 
 /** Tools that require L2 security_token issuance (or evaluate token revalidate). */
 export const L2_GATE_TOOLS: readonly string[] = [
+  "code_review_run",
   "evaluate",
   "osascript_eval",
   "host_read",
@@ -104,7 +106,7 @@ export function resolveL2ForceConfirm(opts: {
   /** Chrome/Safari one-shot pixel CU — never waived by 三旗巡航. */
   vaultBrowserOneShot?: boolean
 }): boolean {
-  if (isAcpL2ForceTool(opts.toolName)) return true
+  if (isAcpL2ForceTool(opts.toolName) || opts.toolName === "code_review_run") return true
   if (opts.vaultBrowserOneShot && opts.hostComputerGated) return true
   return (
     (opts.capabilityForceConfirm || !!opts.hostComputerGated) && !opts.userFullAutonomy
@@ -314,11 +316,26 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       finalParams = { ...finalParams, url: resolved.url }
     }
   }
+  let reviewAgentPreview = ""
+  if (toolName === "code_review_run") {
+    try {
+      const policy = finalParams.agent_id ? reviewAgentPolicy(String(finalParams.agent_id)) : null
+      // Snapshot BEFORE showing confirmation. A config edit while the dialog
+      // is pending must not authorize a different command/inference service.
+      finalParams = { ...finalParams, __local_review_agent_digest: policy?.digest || "static-only" }
+      reviewAgentPreview = policy ? JSON.stringify({ agent_id: finalParams.agent_id, ...policy }) : "仅静态扫描，无 Agent 语义评审"
+    } catch {
+      return { ok: false, result: { success: false, error: "LOCAL_REVIEW_AUTHORIZED_ACP_AGENT_REQUIRED" } }
+    }
+  }
   if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostCliGated || hostComputerGated) && !finalParams.security_token) {
     // shell_exec / netsec use command|targets for L2 preview text (not code/expression).
     // spawn_worker / ask_user use role/question summaries for the Confirm Center.
     // C7/C8: shell preview includes cwd; netsec includes ports summary (post-normalize).
     const code = String(
+      (toolName === "code_review_run"
+        ? `本地 ZIP 扫描；不执行下载内容。agent=${reviewAgentPreview}。本地进程不等于本地推理；所选 ACP 必须已配置离线或明确授权源代码发送到该服务。确认本次制品与代码交给此 agent 评审。review=${finalParams.review_id} request=${finalParams.request_id} artifacts=${JSON.stringify(finalParams.artifacts)}`
+        : null) ||
       (toolName === "shell_exec"
         ? `command=${finalParams.command || ""} cwd=${finalParams.cwd || ""}`
         : null) ||
@@ -957,7 +974,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // spawn_worker / ask_user / board_complete: real HITL (never LLM self-approve)
     // ADR-025: ACP spawn is real HITL — never waived by god-mode / auto_approve /
     // three-flag full autonomy cruise (product design: Never skip ACP).
-    const acpForceConfirm = isAcpL2ForceTool(toolName)
+    const acpForceConfirm = isAcpL2ForceTool(toolName) || toolName === "code_review_run"
     const capabilityForceConfirm =
       toolName === "shell_exec" ||
       toolName === "netsec_port_scan" ||
@@ -1537,6 +1554,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             // 语料的逐条枚举对人完整可见);其余工具不设置,修复面收窄。
             ...(hostComputerGated && computerPreview ? { fullPreview: computerPreview } : {}),
             ...(expertTeamPreview ? { fullPreview: expertTeamPreview } : {}),
+            ...(toolName === "code_review_run" ? { fullPreview: code } : {}),
             ...(expertTeamForConfirm ? { expertTeam: expertTeamForConfirm } : {}),
             // WP4 (§F.1): L2 标注截图 + 三段式非绑定 caption(best-effort,
             // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。

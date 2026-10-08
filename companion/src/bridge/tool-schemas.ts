@@ -27,6 +27,7 @@
 import { z } from "zod"
 import { isMcpNamespaced } from "../mcp/aggregator.js"
 import { logger } from "../logger.js"
+import { localRunSchema, localJobIdSchema } from "../code-review/local-contract"
 
 // Schema lookup is lazy to avoid an import-time cycle: the manager singleton
 // is only available after the MCP module initializes. Tests inject a stub via
@@ -484,6 +485,9 @@ function mcpInputSchemaToZod(schema: Record<string, any> | undefined): z.ZodType
 }
 
 function schemaForTool(toolName: string): z.ZodTypeAny {
+  if (toolName === "code_review_run") return localRunSchema
+  if (toolName === "code_review_status") return z.object({ job_id: z.string().uuid().optional() }).strict()
+  if (toolName === "code_review_cancel" || toolName === "code_review_risk_report") return localJobIdSchema
   if (isMcpNamespaced(toolName)) {
     const inputSchema = lookupMcpSchema(toolName)
     if (inputSchema) {

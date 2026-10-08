@@ -26,3 +26,5 @@ type: prompt_template
 - release_artifact、architecture_target、runtime_target：锁定来源绑定支持双方身份，或引用已有人工映射。模型不能新建 mapping_id 或用布尔确认。
 
 运行态未采集就是缺失。仅锁定试点契约明确允许不适用且未提交运行态材料时，核对器可显示带理由的不适用；不得填 N/A 绕过。材料不等于变更申请已提交。
+
+8. 用户要求下载本地扫描/评审时，先获取可信 SHA-256 与 base/head 公网 HTTPS ZIP 地址和根前缀，调用 `code_review_run` 请求完整范围确认。ACP 推理位置和目的地已由运营者核验及授权时传 `agent_id`；未配置时只能静态扫描并明确没有语义评审。保存 job_id，断连后用 `code_review_status` 回收结果，需停止时用 `code_review_cancel`，最终 `code_review_risk_report` 合并实际变化、Agent 评语和网页业务引用。禁止自动运行下载内容、安装依赖；真实私有源码外发必须有针对服务和代码范围的明确授权，默认禁止。完整 SHA-256 不能证明 Git 身份，报告必须保留未扫描/未核验范围。

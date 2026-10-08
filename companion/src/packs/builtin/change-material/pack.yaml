@@ -27,6 +27,10 @@ tools:
     - draft_render
     - code_review_create
     - code_review_read
+    - code_review_run
+    - code_review_status
+    - code_review_cancel
+    - code_review_risk_report
     - code_review_assess
     - code_review_render
   deny:

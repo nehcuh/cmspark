@@ -843,6 +843,13 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   })
 
   wss.on("connection", (ws, req) => {
+    const peerOrigin = typeof req.headers.origin === "string" ? req.headers.origin : undefined
+    // Receiver/socket errors belong to the peer, not WebSocketServer.
+    // Register before even the unauthenticated admission/close paths.
+    ws.on("error", (err: any) => {
+      logger.warn("ws.peer_error", { code: err?.code || "WS_ERROR", origin: peerOrigin || "<none>" })
+      ws.terminate()
+    })
     // Note: services (threadManager / skillEngine / historyStore) are initialized
     // exactly once via `await requireRt().initServices()` at boot (line ~835) before the WS
     // server starts listening. A previous version re-ran initServices() here on
@@ -867,8 +874,6 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       return
     }
     clients.add(ws)
-    const peerOrigin =
-      typeof req.headers.origin === "string" ? req.headers.origin : undefined
     console.log(`[cmspark-agent] Client connected (${clients.size} total)`)
     logger.info("ws.client_connected", { clients: clients.size, origin: peerOrigin || "<none>" })
 
@@ -900,6 +905,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     const panelId = randomUUID()
     // P0 CORR-02: stamp for close-time LLM abort of this peer's loops
     ;(ws as any).__cmsparkPanelId = panelId
+
 
     // Ping/pong keepalive — terminate clients that don't respond within 30s
     let pongReceived = true

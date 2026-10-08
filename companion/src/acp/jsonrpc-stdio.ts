@@ -30,6 +30,9 @@ export class JsonRpcStdioClient extends EventEmitter {
 
   constructor(private readonly child: ChildProcessWithoutNullStreams) {
     super()
+    child.stdin.on("error", (err) => this.shutdown(err))
+    child.stdout.on("error", (err) => this.shutdown(err))
+    child.stderr.on("error", (err) => this.shutdown(err))
     child.stdout.setEncoding("utf8")
     child.stdout.on("data", (chunk: string) => this.onData(chunk))
     child.stderr.setEncoding("utf8")
@@ -42,6 +45,9 @@ export class JsonRpcStdioClient extends EventEmitter {
 
   private onData(chunk: string): void {
     this.buf += chunk
+    // Bound a missing-newline/oversized agent frame before JSON parsing.
+    // Structured review output has a stricter 256KiB message budget.
+    if (Buffer.byteLength(this.buf) > 1024 * 1024) { this.buf = ""; this.kill(); return }
     let idx: number
     while ((idx = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, idx).trim()
@@ -54,6 +60,16 @@ export class JsonRpcStdioClient extends EventEmitter {
         // Non-JSON line — treat as log/agent text for CLI hybrids
         this.emit("raw_line", line)
         continue
+      }
+      if (!msg || typeof msg !== "object" || Array.isArray(msg) || msg.jsonrpc !== "2.0"
+        || (msg.id != null && typeof msg.id !== "string" && !(typeof msg.id === "number" && Number.isFinite(msg.id)))
+        || (msg.method !== undefined && typeof msg.method !== "string")
+        || (!msg.method && (msg.id == null || (msg.result === undefined && msg.error === undefined)))
+        || (msg.error !== undefined && (!msg.error || typeof msg.error !== "object"
+          || typeof msg.error.message !== "string" || !Number.isFinite(msg.error.code)))) {
+        // Syntactically valid JSON is not necessarily a JSON-RPC object.
+        // Fail this peer, never throw out of the stdout data event callback.
+        this.kill(); return
       }
       this.dispatch(msg)
     }
@@ -119,7 +135,7 @@ export class JsonRpcStdioClient extends EventEmitter {
     try {
       this.child.stdin.write(JSON.stringify(msg) + "\n")
     } catch (e) {
-      this.emit("error", e)
+      this.shutdown(e instanceof Error ? e : new Error(String(e)))
     }
   }
 

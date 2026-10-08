@@ -27,6 +27,12 @@ export interface AcpAgentServerConfig {
     allow_exec?: boolean
   }
   startup_timeout_ms?: number
+  /** Operator-selected offline ACP server for private artifact reviews.
+   * Default false; PATH-discovered/cloud CLIs never qualify automatically.
+   * This is a deployment assertion, not an OS network sandbox. */
+  offline_review?: boolean
+  /** Operator has explicitly authorized source transfer to this configured service. Default false. */
+  review_external_authorized?: boolean
 }
 
 export interface AcpConfig {
@@ -95,6 +101,8 @@ export interface AcpSessionRecord {
   timeline?: import("./timeline").TimelineItem[]
   /** Accumulated agent text for handback */
   agent_text?: string
+  /** ACP message chunks only, without timeline/status/reasoning duplication. */
+  agent_output_text?: string
   /** Page context injected at start (URL/title/repo hint) */
   page_context?: string
   /**
@@ -177,6 +185,8 @@ export function sanitizeAcpConfig(raw: unknown): AcpConfig {
       },
       startup_timeout_ms:
         typeof s.startup_timeout_ms === "number" ? s.startup_timeout_ms : 30_000,
+      offline_review: s.offline_review === true,
+      review_external_authorized: s.review_external_authorized === true,
     }
   }
   const policyIn =

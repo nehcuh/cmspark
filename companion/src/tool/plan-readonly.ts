@@ -50,6 +50,8 @@ export const PLAN_READONLY_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   "draft_read",
   "code_review_read",
   "code_review_render",
+  "code_review_status",
+  "code_review_risk_report",
   "draft_render",
   // --- orchestration run-state reads ---
   "board_read",

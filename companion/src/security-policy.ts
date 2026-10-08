@@ -45,6 +45,10 @@ export class SecurityPolicy {
    */
   static bindingPayloadFor(toolName: string, params: Record<string, any>): string {
     switch (toolName) {
+      case "code_review_run": {
+        const { localReviewBinding } = require("./code-review/local-contract") as typeof import("./code-review/local-contract")
+        return localReviewBinding(params)
+      }
       case "evaluate":
         return String(params?.code || "")
       case "osascript_eval": {

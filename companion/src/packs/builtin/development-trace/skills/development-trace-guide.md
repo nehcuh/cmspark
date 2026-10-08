@@ -27,3 +27,5 @@ type: prompt_template
 - story_requirement、criteria_cases 由核对器推导，不能通过 relations 提交。其余关系需要锁定来源绑定或已有人工映射。
 
 资料齐备和测试通过不代表研发完成。CMspark 负责跨平台信息关联及回到网页核实，不冒充已经开发、提交或发布代码。
+
+8. 用户要求下载本地扫描/评审时，先获取可信 SHA-256 与 base/head 公网 HTTPS ZIP 地址和根前缀，调用 `code_review_run` 请求完整范围确认。ACP 推理位置和目的地已由运营者核验及授权时传 `agent_id`；未配置时只能静态扫描并明确没有语义评审。保存 job_id，断连后用 `code_review_status` 回收结果，需停止时用 `code_review_cancel`，最终 `code_review_risk_report` 合并实际变化、Agent 评语和网页业务引用。禁止自动运行下载内容、安装依赖；真实私有源码外发必须有针对服务和代码范围的明确授权，默认禁止。完整 SHA-256 不能证明 Git 身份，报告必须保留未扫描/未核验范围。

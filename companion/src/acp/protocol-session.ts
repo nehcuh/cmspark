@@ -15,6 +15,8 @@ import { logger } from "../logger"
 
 export type ProtocolSessionHooks = {
   onTimeline: (items: TimelineItem[], progress?: string) => void
+  onSpawn?: (child: ChildProcessWithoutNullStreams) => void
+  onAgentText?: (text: string) => void
   onPermission?: (req: {
     id: string | number
     title: string
@@ -58,6 +60,7 @@ export async function tryStartProtocolSession(opts: {
   }
 
   const client = new JsonRpcStdioClient(child)
+  opts.hooks.onSpawn?.(child)
   const timeline: TimelineItem[] = []
   const push = (items: TimelineItem[], progress?: string) => {
     for (const it of items) timeline.push(it)
@@ -70,6 +73,12 @@ export async function tryStartProtocolSession(opts: {
   client.on("notification", (method: string, params: unknown) => {
     if (method === "session/update" || method === "session/update_session") {
       const parsed = parseSessionUpdate(params)
+      const p = (params || {}) as any
+      const update = p.update || p.sessionUpdate || p
+      const kind = String(update.sessionUpdate || update.type || p.sessionUpdate || "")
+      if (parsed.textAppend && /agent_message|message_chunk|assistant/i.test(kind) && !/thought|reasoning/i.test(kind)) {
+        opts.hooks.onAgentText?.(parsed.textAppend)
+      }
       if (parsed.items.length) push(parsed.items, parsed.progress)
       return
     }

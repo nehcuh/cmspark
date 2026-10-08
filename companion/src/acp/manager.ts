@@ -425,6 +425,8 @@ export class AcpManager {
     workspaceRoot?: string | null
     mode?: "review_readonly" | "propose_diff"
     parentSessionId?: string
+    /** Internal background artifact reviews must never open a second terminal. */
+    suppressLocalTerminal?: boolean
   }): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
     const cfg = getConfig()
     if (!cfg.acp?.enabled) {
@@ -459,7 +461,7 @@ export class AcpManager {
 
     // Snapshot Mode C flag at propose (L2 confirm copy + maybeOpenLocalTerminal both use this).
     const openLocalTerminalSnap =
-      getConfig().coding_handoff?.open_local_terminal === true
+      opts.suppressLocalTerminal !== true && getConfig().coding_handoff?.open_local_terminal === true
     const session: AcpSessionRecord = {
       session_id: newSessionId(),
       thread_id: opts.threadId,
@@ -611,19 +613,22 @@ export class AcpManager {
         env,
         session,
         hooks: {
-          onTimeline: (items, progress) => {
-            for (const it of items) {
-              if (
-                (it.kind === "agent_message" || it.kind === "status") &&
-                (it.detail || it.label)
-              ) {
-                session.agent_text =
-                  (session.agent_text || "") +
-                  (it.detail || it.label || "") +
-                  "\n"
-              }
+          onSpawn: (child) => { this.processes.set(sessionId, child) },
+          onAgentText: (text) => {
+            const next = (session.agent_output_text || "") + text
+            if (Buffer.byteLength(next) > 256 * 1024) {
+              session.partial = true
+              this.cancel(sessionId)
+            } else {
+              session.agent_output_text = next
+              session.agent_text = next
             }
-            this.pushTimeline(session, items, progress)
+          },
+          onTimeline: (items, progress) => {
+            // The protocol owns the cumulative timeline. Appending it repeats
+            // earlier chunks and contaminates structured handback with status.
+            session.timeline = items
+            this.emitProgress(session, progress || "", false)
           },
           onAgentSessionId: (id) => {
             session.agent_session_id = id
@@ -639,6 +644,12 @@ export class AcpManager {
           },
         },
       })
+      if (session.mode_c_open_cancelled) {
+        handle?.kill()
+        this.processes.delete(sessionId)
+        this.runningCount = Math.max(0, this.runningCount - 1)
+        return { ok: false, error: "acp: cancelled during startup" }
+      }
       if (handle) {
         session.transport = "acp"
         session.pid = handle.child.pid
@@ -651,6 +662,9 @@ export class AcpManager {
         try {
           await handle.prompt(prompt)
           const body = session.agent_text || session.timeline?.map((t) => t.detail || t.label).join("\n") || "(empty)"
+          // A completed ACP turn need not exit the server process. Reclaim it
+          // before dropping its handles; otherwise every review leaks a child.
+          handle.kill()
           this.runningCount = Math.max(0, this.runningCount - 1)
           this.protocolHandles.delete(sessionId)
           this.processes.delete(sessionId)
@@ -671,6 +685,7 @@ export class AcpManager {
           return { ok: false, error: errMsg }
         }
       }
+      this.processes.delete(sessionId)
       if (protocolMode === "acp") {
         this.runningCount = Math.max(0, this.runningCount - 1)
         session.state = "closed"

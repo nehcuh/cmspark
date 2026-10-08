@@ -606,7 +606,7 @@ function ConfirmElevated({
             />
           ) : (
             <pre style={s.codePreview}>
-              {(request.full_preview || request.code_preview || "").slice(0, 1200)}
+              {request.full_preview || (request.code_preview || "").slice(0, 1200)}
             </pre>
           )}
           {domain && (

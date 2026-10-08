@@ -59,6 +59,7 @@ export const SURFACE_BY_TOOL: Readonly<Record<string, SurfaceLevel>> = {
   ask_user: "L2",
   board_complete: "L2",
   skill_install: "L2",
+  code_review_run: "L2",
 }
 
 export function surfaceLevelForTool(name: string): SurfaceLevel {
