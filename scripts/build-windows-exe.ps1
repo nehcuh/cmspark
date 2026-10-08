@@ -408,7 +408,10 @@ foreach ($pkg in $Systray2Packages) {
 if ($anySystray2Ok) { Ok "node_modules/ systray2 + deps (tray support)" }
 else { Warn "systray2 not installed — tray icon will not work" }
 
-# #432 PTY native (SEA createRequire). Darwin-first; stage win optional pkgs if present.
+# Embedded ConPTY is a shipped feature: required x64 native payload must be present.
+foreach ($required in @("@lydell\node-pty", "@lydell\node-pty-win32-x64")) {
+    if (!(Test-Path "$CompanionDir\node_modules\$required")) { throw "Missing required ConPTY package: $required. Run npm install on Windows x64." }
+}
 $PtyPackages = @(
     "@lydell\node-pty",
     "@lydell\node-pty-win32-x64",

@@ -79,3 +79,28 @@ test("only the extension terminal document can attach; disconnect feedback is de
   listener({ type: "terminal.open", id: "owned", user_gesture: true })
   assert.equal(messages[0].code, "disconnected")
 })
+
+test("relay reattaches on reconnection, keeps ack position and never logs the credential or input", () => {
+  ;(globalThis as any).chrome = { runtime: { id: "test", getURL: () => "chrome-extension://test/tabs/embedded-terminal.html" } }
+  let message: (frame: unknown) => void = () => {}, disconnect: () => void = () => {}
+  const sent: any[] = [], delivered: any[] = [], logs: unknown[] = []
+  let connected = true
+  const port = { sender: { id: "test", url: "chrome-extension://test/tabs/embedded-terminal.html" },
+    postMessage: (value: unknown) => delivered.push(value), onMessage: { addListener: (fn: typeof message) => { message = fn } },
+    onDisconnect: { addListener: (fn: typeof disconnect) => { disconnect = fn } } }
+  const relay = attachTerminalPort(port as never, frame => { if (!connected) return false; sent.push(frame); return true }, (...args) => logs.push(args))!
+  message({ type: "terminal.open", id: "resume", user_gesture: true })
+  relay.handleWsFrame({ type: "terminal.opened", id: "resume", pid: 1, platform: "win32", resume_token: "b".repeat(64) })
+  message({ type: "terminal.ack", id: "resume", seq: 3 })
+  connected = false; relay.handleConnectionLost()
+  assert.equal(delivered.at(-1).type, "terminal.detached")
+  message({ type: "terminal.input", id: "resume", b64: "c2VjcmV0" })
+  message({ type: "terminal.ack", id: "resume", seq: 4 })
+  connected = true; relay.handleConnectionRestored()
+  assert.deepEqual(sent.at(-1), { type: "terminal.attach", id: "resume", resume_token: "b".repeat(64), last_seq: 4 })
+  relay.handleWsFrame({ type: "terminal.attached", id: "resume", pid: 1, platform: "win32" })
+  disconnect()
+  assert.deepEqual(sent.at(-1), { type: "terminal.detach", id: "resume" })
+  assert.equal(JSON.stringify(logs).includes("b".repeat(64)), false)
+  assert.equal(JSON.stringify(logs).includes("c2VjcmV0"), false)
+})

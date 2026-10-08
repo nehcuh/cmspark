@@ -2,7 +2,9 @@
 // Kill tree on close / heartbeat / process exit. Ack watermark → pause.
 
 import { spawn } from "child_process"
-import { isAbsolute } from "node:path"
+import { isAbsolute, win32 } from "node:path"
+import { randomBytes, timingSafeEqual } from "node:crypto"
+import { resolveAcpSpawn, windowsPowerShellExePath, windowsTaskkillPath } from "../acp/win-spawn"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { loadNodePty, type PtyHandle, type PtySpawnFn } from "./load-native"
 import { buildTerminalEnv } from "./env"
@@ -38,7 +40,8 @@ function killPidTree(pid: number): void {
   if (pid <= 0) return
   if (process.platform === "win32") {
     try {
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true })
+      const killer = spawn(windowsTaskkillPath(), ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true })
+      killer.on("error", () => { /* native handle.kill remains the fallback */ })
     } catch {
       /* ignore */
     }
@@ -60,6 +63,7 @@ export const TERMINAL_HIGH_WATER_UNACKED = 64 * 1024
 export const TERMINAL_LOW_WATER_UNACKED = 16 * 1024
 export const TERMINAL_MAX_UNACKED = 256 * 1024
 export const TERMINAL_HEARTBEAT_MS = 45_000
+export const TERMINAL_REATTACH_MS = 30_000
 /** Upper bound on the summed UTF-8 byte length of a caller-supplied argv (#502 C). */
 export const MAX_PTY_ARGV_BYTES = 128 * 1024
 /** Refusal code for malformed `spawnPtySession` opts: nothing was spawned, so it is not a spawn failure. */
@@ -76,12 +80,15 @@ type LiveSession = {
   owner?: unknown
   cwd: string
   seq: number
-  unacked: Map<number, number>
+  unacked: Map<number, { bytes: number; b64: string }>
   unackedBytes: number
   paused: boolean
   lastClientAt: number
   heartbeat: ReturnType<typeof setInterval>
   send: (frame: Record<string, unknown>) => void
+  resumeToken: string
+  detachTimer?: ReturnType<typeof setTimeout>
+  detachedUntil?: number
 }
 
 let live: LiveSession | null = null
@@ -89,6 +96,8 @@ let spawnOverride: PtySpawnFn | null = null
 let heartbeatMs = TERMINAL_HEARTBEAT_MS
 let platformOverride: NodeJS.Platform | null = null
 let exitHookInstalled = false
+let reattachMs = TERMINAL_REATTACH_MS
+export function __testSetPtyReattachMs(ms?: number): void { reattachMs = ms ?? TERMINAL_REATTACH_MS }
 
 export function __testSetPtySpawn(fn?: PtySpawnFn): void {
   spawnOverride = fn || null
@@ -107,6 +116,7 @@ export function __testResetPtySessions(): void {
   live = null
   if (s) {
     clearInterval(s.heartbeat)
+    clearTimeout(s.detachTimer)
     try {
       s.handle.kill()
     } catch {
@@ -116,6 +126,7 @@ export function __testResetPtySessions(): void {
   spawnOverride = null
   heartbeatMs = TERMINAL_HEARTBEAT_MS
   platformOverride = null
+  reattachMs = TERMINAL_REATTACH_MS
 }
 
 export function getLivePtyId(): string | null {
@@ -179,6 +190,50 @@ export function killPtyByPeer(peer: unknown): boolean {
   return true
 }
 
+/** A broken socket/worker may resume only this already-approved process, for a fixed lease. */
+export function detachPtyByPeer(peer: unknown, id?: string): boolean {
+  const s = live
+  if (!peer || !s || s.owner !== peer || id && id !== s.id) return false
+  s.owner = undefined
+  s.detachedUntil = Date.now() + reattachMs
+  s.send = () => {}
+  try { s.handle.pause(); s.paused = true } catch { /* output remains bounded */ }
+  s.detachTimer = setTimeout(() => { if (live === s && s.detachedUntil) closeLive("reattach_expired") }, reattachMs)
+  s.detachTimer.unref?.()
+  return true
+}
+
+/** No credential disclosure: caller uses the context only AFTER verifying the opaque token. */
+export function getDetachedPtyContext(id: string, token: unknown): Readonly<{ threadId?: string; reviewId?: string; cwd: string }> | null {
+  const s = live
+  if (!s || s.id !== id || !s.detachedUntil || s.detachedUntil <= Date.now() || typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) return null
+  return timingSafeEqual(Buffer.from(s.resumeToken), Buffer.from(token)) ? s : null
+}
+
+/** Duplicate attaches from the same authenticated peer are safe and idempotent. */
+export function getPtyAttachContext(id: string, token: unknown, owner: unknown): ReturnType<typeof getDetachedPtyContext> {
+  const detached = getDetachedPtyContext(id, token)
+  if (detached) return detached
+  const s = live
+  if (!s || s.id !== id || s.detachedUntil || s.owner !== owner || !owner || (owner as { readyState?: number }).readyState !== 1 || typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) return null
+  return timingSafeEqual(Buffer.from(s.resumeToken), Buffer.from(token)) ? s : null
+}
+
+export function attachPtySession(id: string, token: unknown, owner: unknown, lastSeq: number, send: LiveSession["send"]): boolean {
+  const s = live
+  if (!s || getPtyAttachContext(id, token, owner) !== s || !owner || (owner as { readyState?: number }).readyState !== 1 || !Number.isSafeInteger(lastSeq) || lastSeq < 0 || lastSeq > s.seq) return false
+  clearTimeout(s.detachTimer)
+  s.owner = owner
+  s.send = send
+  s.lastClientAt = Date.now()
+  ackPty(id, lastSeq)
+  s.detachedUntil = undefined
+  send({ type: "terminal.attached", id, pid: s.handle.pid, platform: ptyHostPlatform() })
+  for (const [seq, frame] of s.unacked) send({ type: "terminal.data", id, seq, b64: frame.b64 })
+  maybeResume(s)
+  return true
+}
+
 export function killAllPty(): void {
   if (live) closeLive("killed")
 }
@@ -207,6 +262,7 @@ function closeLive(code: TerminalClosedCode, extra?: { signal?: number; error?: 
   if (!s) return
   live = null
   clearInterval(s.heartbeat)
+  clearTimeout(s.detachTimer)
   try {
     const pid = s.handle.pid
     if (typeof pid === "number" && pid > 0) killPidTree(pid)
@@ -244,7 +300,7 @@ function maybePause(s: LiveSession): void {
 }
 
 function maybeResume(s: LiveSession): void {
-  if (s.paused && s.unackedBytes <= TERMINAL_LOW_WATER_UNACKED) {
+  if (!s.detachedUntil && s.paused && s.unackedBytes <= TERMINAL_LOW_WATER_UNACKED) {
     s.paused = false
     try {
       s.handle.resume()
@@ -269,7 +325,7 @@ function emitChunks(s: LiveSession, text: string): void {
     }
     s.seq += 1
     const seq = s.seq
-    s.unacked.set(seq, slice.length)
+    s.unacked.set(seq, { bytes: slice.length, b64: slice.toString("base64") })
     s.unackedBytes += slice.length
     s.send({
       type: "terminal.data",
@@ -303,11 +359,12 @@ export function spawnPtySession(opts: {
   reviewId?: string
   owner?: unknown
   send: (frame: Record<string, unknown>) => void
-}): { ok: true; pid: number } | { ok: false; error: string; code?: TerminalClosedCode } {
-  if (ptyHostPlatform() !== "darwin") {
+}): { ok: true; pid: number; resumeToken: string } | { ok: false; error: string; code?: TerminalClosedCode } {
+  const platform = ptyHostPlatform()
+  if (platform !== "darwin" && platform !== "win32") {
     return {
       ok: false,
-      error: "内嵌终端仅支持 macOS（darwin）；Windows/Linux 另票。",
+      error: "内嵌终端支持 macOS 与 Windows；当前平台不受支持。",
       code: "unsupported",
     }
   }
@@ -343,8 +400,8 @@ export function spawnPtySession(opts: {
     // `$SHELL` is trimmed ONCE and the trimmed value is what spawns: `" /bin/bash "` cannot exist
     // as a path, so trimming only for the emptiness check would guarantee ENOENT.
     const shell = process.env.SHELL?.trim()
-    file = shell ? shell : "/bin/zsh"
-  } else if (typeof opts.file === "string" && opts.file.length > 0 && isAbsolute(opts.file)) {
+    file = platform === "win32" ? windowsPowerShellExePath().replaceAll("/", "\\") : shell ? shell : "/bin/zsh"
+  } else if (typeof opts.file === "string" && opts.file.length > 0 && (platform === "win32" ? win32.isAbsolute(opts.file) : isAbsolute(opts.file))) {
     // Used exactly as given: no trim/normalization of a malformed supplied path. This no-trim rule
     // deliberately diverges from `rejectNonAbsoluteCommand` (src/acp/open-local-terminal.ts), which
     // owns the same "must be absolute" rule WITH trimming (`" /bin/zsh"` is accepted there and
@@ -365,7 +422,7 @@ export function spawnPtySession(opts: {
   // loudly before spawning.
   let args: string[]
   if (opts.args === undefined) {
-    args = hasFile ? [] : ["-l"]
+    args = hasFile ? [] : platform === "win32" ? ["-NoLogo", "-NoProfile"] : ["-l"]
   } else if (Array.isArray(opts.args)) {
     args = opts.args.filter((a): a is string => typeof a === "string")
     // An empty argv entry is refused, consistently with the empty-`file` rule above: `exec` would
@@ -394,11 +451,18 @@ export function spawnPtySession(opts: {
     }
   }
   const env = buildTerminalEnv()
+  if (platform === "win32" && hasFile) {
+    const spec = resolveAcpSpawn(file, args, { platform })
+    // ConPTY quotes argv itself. Unknown cmd wrappers requiring verbatim quoting are refused.
+    if (spec.options.windowsVerbatimArguments) return { ok: false, code: INVALID_PTY_OPTS, error: "Windows embedded agent requires an executable or a recognized node shim" }
+    file = spec.command
+    args = spec.args
+  }
   const spawnFn: PtySpawnFn = spawnOverride || ((f, a, o) => loadNodePty().spawn(f, a, o))
 
   let handle: PtyHandle
   try {
-    handle = spawnFn(file, args, { name: "xterm-256color", cols, rows, cwd: opts.cwd, env })
+    handle = spawnFn(file, args, { name: "xterm-256color", cols, rows, cwd: opts.cwd, env, ...(platform === "win32" ? { useConpty: true } : {}) })
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e), code: "spawn_failed" }
   }
@@ -419,12 +483,14 @@ export function spawnPtySession(opts: {
     heartbeat: setInterval(() => {
       const s = live
       if (!s || s.id !== opts.id) return
+      if (s.detachedUntil) return // the fixed reattach lease owns orphan cleanup
       // Last-resort orphan reclaim. Client ping/input/ack/resize reset lastClientAt
       // so a quiet-but-watched tab (vim/man/ssh idle) is not SIGKILL'd.
       if (Date.now() - s.lastClientAt > heartbeatMs) closeLive("killed")
       else s.send({ type: "terminal.heartbeat", id: s.id })
     }, Math.min(Math.max(1, heartbeatMs / 3), 15_000)),
     send: opts.send,
+    resumeToken: randomBytes(32).toString("hex"),
   }
   session.heartbeat.unref?.()
   live = session
@@ -462,7 +528,7 @@ export function spawnPtySession(opts: {
   // shell default must not move an `embed_intent` session to "running".
   if (hasFile) emitAgentSpawned(session, file)
 
-  return { ok: true, pid: handle.pid }
+  return { ok: true, pid: handle.pid, resumeToken: session.resumeToken }
 }
 
 export function noteClientActivity(id: string): boolean {
@@ -512,7 +578,7 @@ export function ackPty(id: string, seq: number): { ok: true } | { ok: false; err
   for (const [q, n] of [...s.unacked.entries()]) {
     if (q <= seq) {
       s.unacked.delete(q)
-      s.unackedBytes = Math.max(0, s.unackedBytes - n)
+      s.unackedBytes = Math.max(0, s.unackedBytes - n.bytes)
     }
   }
   maybeResume(s)

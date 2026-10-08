@@ -5743,6 +5743,8 @@ export async function handleMessage(
 
     case "terminal.review.submit":
     case "terminal.open":
+    case "terminal.attach":
+    case "terminal.detach":
     case "terminal.input":
     case "terminal.resize":
     case "terminal.ack":

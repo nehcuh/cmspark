@@ -251,7 +251,7 @@ export class AcpManager {
     // embedded terminal is NOT had their outer terminal cancelled: without eligibility this call
     // behaves exactly as it did before.
     const embedEligible =
-      getConfig().embedded_terminal?.enabled === true && process.platform === "darwin"
+      getConfig().embedded_terminal?.enabled === true && (process.platform === "darwin" || process.platform === "win32")
     this.emitProgress(
       session,
       embedEligible ? "Mode C: recording embedded terminal intent…" : "Mode C: opening host terminal…",

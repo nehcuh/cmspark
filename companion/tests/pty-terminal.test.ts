@@ -850,3 +850,82 @@ test("#506 pty spawn: onPtyAgentSpawned fires for an explicit executable, never 
     else process.env.SHELL = previousShell
   }
 })
+
+test("Windows default shell uses absolute PowerShell, safe default argv and ConPTY; no wire argv injection", async () => {
+  pty.__testSetPtyPlatform("win32")
+  let spawned: any
+  pty.__testSetPtySpawn((file, args, opts) => { spawned = { file, args, opts }; return lastPty = new MockPty() })
+  const result = await handleMessage({ type: "terminal.open", id: "windows", user_gesture: true, argv: ["-Command", "malicious"] }, services(), panel() as never)
+  assert.equal(result.type, "terminal.opened")
+  assert.equal(result.platform, "win32")
+  assert.match(String(result.resume_token), /^[a-f0-9]{64}$/)
+  assert.equal(path.win32.isAbsolute(spawned.file), true)
+  assert.match(spawned.file, /System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/)
+  assert.deepEqual(spawned.args, ["-NoLogo", "-NoProfile"])
+  assert.equal(spawned.opts.useConpty, true)
+})
+
+test("reattach authenticates token, replays only unacknowledged output, revokes old owner, preserves process", async () => {
+  const svc = services(), first = panel(), next = panel(), intruder = panel()
+  const opened = await handleMessage({ type: "terminal.open", id: "reattach", user_gesture: true }, svc, first as never)
+  const handle = lastPty!
+  handle.emit("first中文"); handle.emit("second")
+  await handleMessage({ type: "terminal.ack", id: "reattach", seq: 1 }, svc, first as never)
+  assert.equal(pty.detachPtyByPeer(first.originWs), true)
+  assert.equal(pty.detachPtyByPeer(first.originWs), false, "stale peer cannot renew the lease")
+  assert.equal(handle.paused, true)
+  const bad = await handleMessage({ type: "terminal.attach", id: "reattach", resume_token: "0".repeat(64), last_seq: 0 }, svc, intruder as never)
+  assert.equal(bad.error, "TERMINAL_REATTACH_UNAVAILABLE")
+  const unavailable = await handleMessage({ type: "terminal.input", id: "reattach", b64: "eA==" }, svc, first as never)
+  assert.equal(unavailable.error, "TERMINAL_SESSION_NOT_OWNED")
+  const replay: any[] = []
+  next.sendToExtension = frame => replay.push(frame)
+  const attached = await handleMessage({ type: "terminal.attach", id: "reattach", resume_token: opened.resume_token, last_seq: 1 }, svc, next as never)
+  assert.equal(attached.type, "terminal.ok")
+  assert.deepEqual(replay.map(frame => frame.type), ["terminal.attached", "terminal.data"])
+  assert.equal(Buffer.from(replay[1].b64, "base64").toString(), "second")
+  assert.equal(handle.killed, false)
+  assert.equal(handle.paused, false)
+  const duplicate = await handleMessage({ type: "terminal.attach", id: "reattach", resume_token: opened.resume_token, last_seq: 1 }, svc, next as never)
+  assert.equal(duplicate.type, "terminal.ok", "relay and page recovery may both attach the same authenticated peer")
+  assert.equal(handle.killed, false)
+  const steal = await handleMessage({ type: "terminal.attach", id: "reattach", resume_token: opened.resume_token, last_seq: 1 }, svc, intruder as never)
+  assert.equal(steal.error, "TERMINAL_REATTACH_UNAVAILABLE", "an attached session cannot change owners even with the token")
+  await handleMessage({ type: "terminal.input", id: "reattach", b64: "eA==" }, svc, next as never)
+  assert.deepEqual(handle.writes, ["x"])
+  await handleMessage({ type: "terminal.close", id: "reattach" }, svc, first as never)
+  assert.equal(handle.killed, false, "old peer cannot close the newly attached session")
+  await handleMessage({ type: "terminal.close", id: "reattach" }, svc, next as never)
+  assert.equal(handle.killed, true)
+})
+
+test("reattach lease expires without renewal, clears process slot and rejects stale token", async () => {
+  pty.__testSetPtyReattachMs(15)
+  pty.__testSetPtyHeartbeatMs(2)
+  const svc = services(), owner = panel()
+  const opened = await handleMessage({ type: "terminal.open", id: "expired", user_gesture: true }, svc, owner as never)
+  const handle = lastPty!
+  pty.detachPtyByPeer(owner.originWs)
+  await new Promise(resolve => setTimeout(resolve, 5))
+  assert.equal(handle.killed, false, "detach lease supersedes the normal heartbeat")
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(handle.killed, true)
+  assert.equal(pty.isPtyBusy(), false)
+  assert.equal(pty.getDetachedPtyContext("expired", opened.resume_token), null)
+})
+
+test("reattach refuses changed thread execution policy, disabled config, bad scope and future ack", async () => {
+  const svc = services(), owner = panel(), next = panel()
+  const thread = svc.threadManager.create("terminal policy")
+  const opened = await handleMessage({ type: "terminal.open", id: "policy", user_gesture: true, thread_id: thread.id }, svc, owner as never)
+  pty.detachPtyByPeer(owner.originWs)
+  for (const changes of [{ id: "other" }, { last_seq: 999 }, { resume_token: "wrong" }]) {
+    const result = await handleMessage({ type: "terminal.attach", id: "policy", resume_token: opened.resume_token, last_seq: 0, ...changes }, svc, next as never)
+    assert.equal(result.error, "TERMINAL_REATTACH_UNAVAILABLE")
+  }
+  saveConfig({ embedded_terminal: { enabled: false } })
+  const disabled = await handleMessage({ type: "terminal.attach", id: "policy", resume_token: opened.resume_token, last_seq: 0 }, svc, next as never)
+  assert.equal(disabled.error, "TERMINAL_CONTEXT_CHANGED")
+  assert.equal(lastPty!.killed, true)
+  assert.equal(validateWsMessage({ type: "terminal.attach", id: "policy", resume_token: opened.resume_token, last_seq: -1 }).valid, false)
+})

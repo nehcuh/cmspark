@@ -1712,6 +1712,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "terminal.attach": (m) => typeof m.id === "string" && !!m.id.trim() && typeof m.resume_token === "string" && /^[a-f0-9]{64}$/.test(m.resume_token) && Number.isSafeInteger(m.last_seq) && (m.last_seq as number) >= 0
+      ? { valid: true } : { valid: false, error: "terminal.attach requires id, opaque resume token and last_seq" },
+    "terminal.detach": (m) => typeof m.id === "string" && !!m.id.trim() ? { valid: true } : { valid: false, error: "terminal.detach requires id" },
     "terminal.input": (m) => {
       if (typeof m.id !== "string" || !m.id.trim()) return { valid: false, error: "terminal.input requires id" }
       if (typeof m.b64 !== "string") return { valid: false, error: "terminal.input requires b64" }

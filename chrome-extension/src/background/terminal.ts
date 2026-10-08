@@ -77,6 +77,7 @@ export async function openOrFocusEmbeddedTerminal(binding?: TerminalTabBinding):
 export type TerminalRelay = {
   handleWsFrame: (msg: unknown) => boolean
   handleConnectionLost: () => void
+  handleConnectionRestored: () => void
   detach: () => void
 }
 
@@ -101,16 +102,25 @@ export function attachTerminalPort(
   let detached = false
   let inputFrames = 0
   let opened = false
+  let resumeToken: string | undefined
+  let lastAck = 0
+  let recovering = false
 
   const relay: TerminalRelay = {
     handleConnectionLost() {
       if (detached || !sessionId) return
       opened = false
-      // Companion kills this socket's PTY on close. Reconnecting cannot revive it.
-      detached = true
+      if (recovering) return
+      recovering = true
       try {
-        port.postMessage({ type: "terminal.error", id: sessionId, code: "disconnected", error: "连接中断，终端进程已结束。请关闭此页并重新发起编程接力。" })
+        port.postMessage(resumeToken
+          ? { type: "terminal.detached", id: sessionId, grace_ms: 30000 }
+          : { type: "terminal.error", id: sessionId, code: "disconnected", error: "启动时连接中断，请重新打开终端并确认。" })
       } catch { /* tab already gone */ }
+    },
+    handleConnectionRestored() {
+      if (detached || !recovering || !sessionId || !resumeToken) return
+      wsSend({ type: "terminal.attach", id: sessionId, resume_token: resumeToken, last_seq: lastAck })
     },
     handleWsFrame(msg) {
       if (detached || !isTerminalFrame(msg)) return false
@@ -127,7 +137,8 @@ export function attachTerminalPort(
       const frame = parseTerminalServerFrame(msg)
       if (!frame) return false
       if (sessionId && frame.id && frame.id !== sessionId) return true // 别的会话帧：吞掉不回（单会话）
-      if (frame.type === "terminal.opened") opened = true
+      if (frame.type === "terminal.opened") resumeToken = frame.resume_token
+      if (frame.type === "terminal.opened" || frame.type === "terminal.attached") { opened = true; recovering = false }
       if (frame.type === "terminal.closed") opened = false
       if (frame.type === "terminal.opened" || frame.type === "terminal.closed" || frame.type === "terminal.error") {
         log("info", "extension.terminal_session_frame", {
@@ -150,16 +161,22 @@ export function attachTerminalPort(
   port.onMessage.addListener((raw: unknown) => {
     if (detached) return
     if (!raw || typeof raw !== "object") return
-    const m = raw as { type?: unknown; id?: unknown }
-    if (typeof m.type !== "string" || !["terminal.open", "terminal.input", "terminal.resize", "terminal.ack", "terminal.ping", "terminal.pause", "terminal.resume", "terminal.close", "terminal.review.submit"].includes(m.type)) return
+    const m = raw as { type?: unknown; id?: unknown; resume_token?: unknown; last_seq?: unknown; seq?: unknown }
+    if (typeof m.type !== "string" || !["terminal.open", "terminal.attach", "terminal.input", "terminal.resize", "terminal.ack", "terminal.ping", "terminal.pause", "terminal.resume", "terminal.close", "terminal.review.submit"].includes(m.type)) return
     if (m.type === "terminal.open") {
       if (sessionId || typeof m.id !== "string" || !m.id) return
       sessionId = m.id
       log("info", "extension.terminal_open_requested", { id: sessionId })
+    } else if (m.type === "terminal.attach") {
+      if (sessionId && sessionId !== m.id || typeof m.id !== "string" || typeof m.resume_token !== "string" || !/^[a-f0-9]{64}$/.test(m.resume_token) || !Number.isSafeInteger(m.last_seq) || (m.last_seq as number) < 0) return
+      sessionId = m.id; resumeToken = m.resume_token; lastAck = m.last_seq as number; recovering = true
     } else if (!sessionId || m.id !== sessionId) return
+    if (m.type === "terminal.ack" && Number.isSafeInteger(m.seq)) lastAck = Math.max(lastAck, m.seq as number)
+    if (recovering && m.type !== "terminal.attach" && m.type !== "terminal.close") return
     // pi MAJOR-1 ②：WS 未连时 wsSend=false，帧会静默丢失、tab 永挂 connecting——
     // 回推扩展级错误帧让 tab 落 error 态。
     const forwarded = wsSend(raw as Record<string, unknown>) === true
+    if (m.type === "terminal.close") { detached = true; opened = false; resumeToken = undefined }
     if (m.type === "terminal.input") inputFrames += 1
     // Diagnose a frozen TUI without logging keyboard bytes, commands or pasted text.
     if (m.type === "terminal.ping" || m.type === "terminal.input" && inputFrames === 1) {
@@ -176,7 +193,8 @@ export function attachTerminalPort(
     if (detached) return
     detached = true
     log("info", "extension.terminal_port_disconnected", { id: sessionId })
-    if (sessionId) wsSend({ type: "terminal.close", id: sessionId })
+    // Unexpected worker/Port loss is indistinguishable from tab loss; the fixed lease bounds it.
+    if (sessionId) wsSend({ type: resumeToken ? "terminal.detach" : "terminal.close", id: sessionId })
     sessionId = null
   })
 

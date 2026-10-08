@@ -337,6 +337,7 @@ function init() {
 }
 
 function handleStateChange(state: "connected" | "connecting" | "disconnected") {
+  if (state === "connected") terminalRelay?.handleConnectionRestored()
   updateBadge(state)
   // Mutation waiters must stop on connection loss; never retry destructive work.
   chrome.runtime.sendMessage({ type: "thread.mutation.connection", state }).catch(() => {})

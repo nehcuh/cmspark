@@ -12,7 +12,7 @@ import {
 import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import {
-  isDarwin,
+  isEmbeddedTerminalPlatform,
   isModeCInvolved,
   modeCBannerText,
   modeCStopLabel,
@@ -784,14 +784,14 @@ export function CodingAgentPanel({
 
   /**
    * #502 C entry gate. `embedded_terminal` is the NESTED config key (SettingsSlideout precedent);
-   * there is no flattened `embedded_terminal_enabled`. Product requirement: darwin AND enabled —
-   * `isDarwin()` reads `navigator.userAgentData.platform` (fail-closed to false), so we never
+   * there is no flattened `embedded_terminal_enabled`. Entry requires macOS/Windows AND enabled.
+   * `isEmbeddedTerminalPlatform()` reads navigator platform signals (fail-closed), so we never
    * promise an embed the companion refuses with `unsupported` (UI-hiding gate, not a boundary).
    */
   const embeddedTerminalConfig = state.config as { embedded_terminal?: { enabled?: boolean } }
   const showEmbedEntry =
     shouldShowEmbeddedTerminalEntry(embeddedTerminalConfig) &&
-    isDarwin() &&
+    isEmbeddedTerminalPlatform() &&
     session?.localTerminal === "embed_intent" &&
     !!embedThreadId
 

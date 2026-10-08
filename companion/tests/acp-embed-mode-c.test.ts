@@ -524,8 +524,8 @@ describe("terminal.open consumes a recorded embed intent", () => {
     )
     assert.equal(r.type, "terminal.opened")
     assert.deepEqual(spawnCalls, [{ file: process.execPath, args: ["-l"] }])
-    assert.match(capture.codes[0], /open login PTY/)
-    assert.match(capture.codes[0], /本机用户 shell/)
+    assert.match(capture.codes[0], /open interactive PTY/)
+    assert.match(capture.codes[0], /本机用户登录 shell/)
     assert.doesNotMatch(capture.codes[0], /embedded/)
     assert.equal(embed.peekEmbedIntent(thr.id), null)
   })
@@ -605,7 +605,7 @@ describe("terminal.open consumes a recorded embed intent", () => {
     )
     assert.equal(r.type, "terminal.opened")
     assert.deepEqual(spawnCalls, [{ file: process.execPath, args: ["-l"] }])
-    assert.match(capture.codes[0], /open login PTY/)
+    assert.match(capture.codes[0], /open interactive PTY/)
     assert.doesNotMatch(capture.codes[0], /embedded/)
     assert.notEqual(embed.peekEmbedIntent(undefined), null, "the unclaimed intent is not consumed")
   })
@@ -642,7 +642,7 @@ describe("terminal.open consumes a recorded embed intent", () => {
         onConfirm: () => embed.recordEmbedIntent(thr.id, { cwd: realWs(), file: realBin(), args: ["T-SENTINEL-UNCONFIRMED"] }),
       }) as never,
     )
-    assert.match(capture.codes[0], /open login PTY/, "the approved copy must be the login-shell one")
+    assert.match(capture.codes[0], /open interactive PTY/, "the approved copy must be the login-shell one")
     assert.doesNotMatch(capture.codes[0], /embedded/)
     assert.equal(r.type, "terminal.error")
     assert.match(String(r.error), /EMBED_INTENT_UNCONFIRMED/)
@@ -1193,7 +1193,7 @@ describe("manager source locks (#502 C Option 1)", () => {
     assert.match(branch, /\.\.\.\(embedEligible \? \{ embed: true \} : \{\}\)/)
     assert.match(
       branch,
-      /const embedEligible =\s*\n?\s*getConfig\(\)\.embedded_terminal\?\.enabled === true && process\.platform === "darwin"/,
+      /const embedEligible =\s*\n?\s*getConfig\(\)\.embedded_terminal\?\.enabled === true && \(process\.platform === "darwin" \|\| process\.platform === "win32"\)/,
     )
     // The only embedded_terminal read in the manager is that eligibility expression, so there is
     // no config-driven cancellation of the outer terminal.

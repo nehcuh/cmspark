@@ -46,9 +46,62 @@ stage1-extension-all.log、stage1-extension-tests.log、两个测试类型编译
 stage1-extension-production-typecheck.log、stage1-companion-bundle-retry.log。
 历史证据位于旧任务同级 evidence，未覆盖。
 
+## 第二阶段：Windows 终端与恢复
+
+在第一阶段远程提交 `164f36d53c9bb73b6daae9007dff0277b72620f2` 上移植
+原副本未提交的第二阶段补丁，未重新实现已有功能。最后的重复附着修复
+重新经过测试：同一已认证 owner 的重复 attach 成功，另一 peer 即使持有
+token 也不能抢占已附着会话；旧 owner 不能输入或关闭新 owner 的进程。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| companion 最终测试类型编译 | exit 0 |
+| PTY / ACP embed / 本地终端 / gates / review / WS / Windows helper 定向套件 | 220 tests，216 pass，0 fail，4 Windows-only skip |
+| extension 全量 `npm test`（含 UI hygiene） | 1515/1515 pass |
+| extension `npm run build` | exit 0，chrome-mv3，Finished in 8079ms |
+| companion `npm run build:exe` | exit 0；Mac 类型编译、Windows脚本 staging、JS bundle，非 Windows SEA 实机 |
+| 认证 loopback WS → 真实 Mac native PTY | exit 0，全部四组断言通过 |
+
+真实 PTY 冒烟使用临时数据目录与 `/bin/sh -i`，无 profile、LLM 或生产 agent。
+L2 确认前无 PID；批准后验证中文/emoji 输入输出、`stty size` 为 27×83、
+断线重连 PID 不变、未 ACK 的真实输出按原 seq/b64 重放、重复 attach、
+恢复后输入，以及关闭后 OS 返回 PID 不存在。服务及临时目录在测试结束时
+显式清理。它使用真实 WebSocket/native PTY 和生产终端 handler，
+没有使用真实浏览器、MV3 worker 或生产完整路由；不能代替浏览器验收。
+
+接手过程中修复了验证脚手架遗漏：浏览器 TSX 夹具被 Node 测试 tsconfig
+纳入导致类型编译失败，已移到 `scripts/browser-fixtures`；旧 macOS-only
+门控和旧 L2 shell 文案断言已更新，未放宽配置/线程/L2 验证。
+初轮扩展 2 个旧断言失败，companion 4 个旧断言失败，均在更新后重新通过。
+完整日志：stage2-companion-typecheck-complete.log、
+stage2-companion-tests-complete.log、stage2-extension-all-final.log、
+stage2-extension-build-final.log、stage2-companion-build-exe.log、
+stage2-real-mac-pty.log。依赖安装最终均 exit 0（companion 第二次安装约 7 分钟）。
+
+## 启动与复验
+
+在新目录 clone 此远程分支，保留原脏 checkout。Node 22+；各自执行
+`cd companion && npm ci && npm run build:exe`，
+`cd chrome-extension && npm ci && npm run build`。
+设置独立 `CMSPARK_DATA_DIR` 后在 companion 目录运行 `npm start`，使用独立
+Chrome/Edge profile（至少116），加载 `chrome-extension/build/chrome-mv3-prod`
+并手动配对该测试实例。不要把测试配对密钥提交或写入报告。
+
+真实产品入口经源码与门控测试核对：设置 → 本机与工具 →
+「内嵌终端（实验 · 默认关 · macOS / Windows）」→ 开启 →
+「打开内嵌终端」→ 返回侧栏批准 L2。它可启动默认交互 shell；配置的 Mode C
+agent 另需已有编程接力和 thread-bound embed intent。本次未启用生产 agent。
+
+Mac 上在仓库根目录执行 `node companion/scripts/terminal-protocol-smoke.cjs`
+可复验已通过的协议冒烟；执行 `node companion/scripts/terminal-browser-smoke.cjs`
+启动浏览器夹具，打开其输出的随机 loopback URL，点 Open controlled terminal →
+Approve fixture L2 → 输入 → Resize → Drop socket → 关闭。该夹具连接生产
+TerminalApp/xterm/WSClient/relay，但 chrome runtime/确认 UI 是测试替身；
+即使通过，也仍需上述真实扩展 UI / Windows 实机检查。结束时 Ctrl-C 显式清理。
+
 ## 尚未验证的边界
 
 Mac 被锁定时 computer-use 返回浏览器列表为空，内置浏览器不可用。
-因此浏览器→真实 PTY 尚未通过。Windows 真机、ConPTY/SEA/taskkill/Chrome
+因此浏览器→真实 PTY 尚未通过（仅协议冒烟通过）。Windows 真机、ConPTY/SEA/taskkill/Chrome
 MV3 多任务与重连仍待实机验收；生产 agent 未指定/授权，默认关闭。
 没有合并放行或全 companion 仓库测试通过的声明。

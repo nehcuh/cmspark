@@ -19,6 +19,9 @@ import {
   writePtyInput,
   ptyHostPlatform,
   getOwnedPtyContext,
+  getPtyAttachContext,
+  attachPtySession,
+  detachPtyByPeer,
 } from "./session"
 
 type Services = { threadManager: ThreadManager }
@@ -74,13 +77,13 @@ export async function handleTerminalMessage(
     if (getConfig().embedded_terminal?.enabled !== true) {
       return deny("embedded_terminal_disabled")
     }
-    if (ptyHostPlatform() !== "darwin") {
+    if (ptyHostPlatform() !== "darwin" && ptyHostPlatform() !== "win32") {
       return {
         type: "terminal.closed",
         id,
         code: "unsupported",
         signal: 0,
-        error: "内嵌终端仅支持 macOS（darwin）；Windows/Linux 另票。",
+        error: "内嵌终端支持 macOS 与 Windows；当前平台不受支持。",
       }
     }
 
@@ -136,7 +139,7 @@ export async function handleTerminalMessage(
         dangerousApis: ["pty", "shell"],
         code: embedIntent && embedArgs
           ? `open embedded PTY cwd=${cwdRes.cwd}\n本机内嵌终端将运行 Agent：${path.basename(embedIntent.file)}（参数 ${embedArgs.length} 个）；该 Agent 可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}`
-          : `open login PTY cwd=${cwdRes.cwd}\n本机用户 shell，可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}`,
+          : `open interactive PTY cwd=${cwdRes.cwd}\n${ptyHostPlatform() === "win32" ? "Windows PowerShell（-NoLogo -NoProfile），ConPTY" : "本机用户登录 shell"}，可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}`,
       })
     } catch { return deny("TERMINAL_CONFIRMATION_FAILED", { id }) }
     finally { if (pendingOpen === pending) pendingOpen = null }
@@ -151,6 +154,7 @@ export async function handleTerminalMessage(
     }
     // Confirmation can outlive a socket, thread, workspace or execution policy.
     if (peer.readyState !== 1) return deny("TERMINAL_PEER_CLOSED", { id })
+    if (getConfig().embedded_terminal?.enabled !== true) return deny("embedded_terminal_disabled", { id })
     const current = threadId ? services.threadManager.get(threadId) : null
     if (threadId && (!current || current.execution_policy === "plan_readonly" || (current.workspace_root || null) !== workspaceRoot)) return deny("TERMINAL_CONTEXT_CHANGED", { id })
     const freshCwd = resolveTerminalStartCwd({ requested: cwdRes.cwd, workspaceRoot })
@@ -248,12 +252,28 @@ export async function handleTerminalMessage(
       }
       return deny(spawned.error)
     }
-    return { type: "terminal.opened", id, pid: spawned.pid, platform: "darwin", ...(review ? { review_id: reviewId, review_prompt: reviewPrompt(review) } : {}) }
+    return { type: "terminal.opened", id, pid: spawned.pid, platform: ptyHostPlatform(), resume_token: spawned.resumeToken, ...(review ? { review_id: reviewId, review_prompt: reviewPrompt(review) } : {}) }
   }
 
   if (!id) return deny(`${type} requires id`)
+  if (type === "terminal.attach") {
+    const context = getPtyAttachContext(id, rest.resume_token, session?.originWs)
+    if (!context) return deny("TERMINAL_REATTACH_UNAVAILABLE", { id })
+    const thread = context.threadId ? services.threadManager.get(context.threadId) : null
+    const cwd = resolveTerminalStartCwd({ requested: context.cwd, workspaceRoot: thread?.workspace_root })
+    if (getConfig().embedded_terminal?.enabled !== true || context.threadId && (!thread || thread.execution_policy === "plan_readonly") || !cwd.ok || cwd.cwd !== context.cwd) {
+      closePty(id)
+      return deny("TERMINAL_CONTEXT_CHANGED", { id })
+    }
+    if (!session || !attachPtySession(id, rest.resume_token, session.originWs, rest.last_seq as number, frame => { try { session.sendToExtension(frame) } catch { /* socket-close lease handles recovery */ } })) return deny("TERMINAL_REATTACH_UNAVAILABLE", { id })
+    return { type: "terminal.ok", id }
+  }
   const context = getOwnedPtyContext(id, session?.originWs)
   if (!context) return deny("TERMINAL_SESSION_NOT_OWNED", { id })
+  if (type === "terminal.detach") {
+    detachPtyByPeer(session?.originWs, id)
+    return { type: "terminal.ok", id }
+  }
   if (context.threadId) {
     const thread = services.threadManager.get(context.threadId)
     if (!thread || thread.execution_policy === "plan_readonly") { closePty(id); return deny("TERMINAL_CONTEXT_CHANGED", { id }) }

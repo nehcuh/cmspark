@@ -1546,8 +1546,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       }
       applyConnectionCloseGracePeriod(ws)
       try {
-        const { killPtyByPeer } = require("../pty/session") as typeof import("../pty/session")
-        killPtyByPeer(ws)
+        const { detachPtyByPeer } = require("../pty/session") as typeof import("../pty/session")
+        detachPtyByPeer(ws)
       } catch {
         /* best-effort — PTY module optional at boot */
       }

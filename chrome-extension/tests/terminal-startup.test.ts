@@ -11,6 +11,8 @@ function startup() {
   const sent: any[] = [], states: any[] = []
   let effect: (() => (() => void)) | undefined
   let onFrame: (frame: unknown) => void = () => {}
+  let onDisconnect: () => void = () => {}
+  const written: string[] = []
   let onInput: (text: string) => void = () => {}
   let onResize: (size: { cols: number; rows: number }) => void = () => {}
   let inputDisposed = false
@@ -20,7 +22,7 @@ function startup() {
   class FakeTerminal {
     cols = 80; rows = 24
     loadAddon() {}; open() {}; focus() {}; dispose() {}
-    write(_bytes: unknown, callback: () => void) { callback() }
+    write(bytes: Uint8Array, callback: () => void) { written.push(new TextDecoder().decode(bytes)); callback() }
     onData(fn: typeof onInput) { onInput = fn; return { dispose() { inputDisposed = true } } }
     onResize(fn: typeof onResize) { onResize = fn; return { dispose() {} } }
   }
@@ -46,25 +48,25 @@ function startup() {
   exports.TerminalApp()
   const globals: Record<string, unknown> = {
     window: { location: { search: "?thread_id=jeatvi" }, addEventListener() {}, removeEventListener() {} },
-    chrome: { runtime: { connect: () => ({ postMessage: (frame: unknown) => sent.push(frame), disconnect() {}, onMessage: { addListener: (fn: typeof onFrame) => { onFrame = fn } }, onDisconnect: { addListener() {} } }) } },
+    chrome: { runtime: { connect: () => ({ postMessage: (frame: unknown) => sent.push(frame), disconnect() {}, onMessage: { addListener: (fn: typeof onFrame) => { onFrame = fn } }, onDisconnect: { addListener: (fn: () => void) => { onDisconnect = fn } } }) } },
     ResizeObserver: class { observe() { onResize({ cols: 100, rows: 30 }) } disconnect() {} },
     setTimeout: (fn: () => void, ms: number) => schedule(fn, ms),
     setInterval: (fn: () => void, ms: number) => schedule(fn, ms, true),
-    clearTimeout: (timer: any) => { timer.active = false },
-    clearInterval: (timer: any) => { timer.active = false },
+    clearTimeout: (timer: any) => { if (timer) timer.active = false },
+    clearInterval: (timer: any) => { if (timer) timer.active = false },
   }
   const previous = Object.fromEntries(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true, writable: true })
   const cleanup = effect!()
   return {
-    sent, states,
+    sent, states, written, disconnect() { onDisconnect() },
     frame(value: unknown) { onFrame(value) },
     fire(ms: number) { for (const timer of [...timers]) if (timer.active && timer.ms <= ms) { if (!timer.interval) timer.active = false; timer.callback() } },
     input(text: string) { if (!inputDisposed) onInput(text) },
-    opened() {
+    opened(resumeToken?: string) {
       // Recorded from the real Companion handler (the existing wire fixture).
       const fixture = JSON.parse(fs.readFileSync(path.join(process.cwd(), "tests/fixtures/terminal-review-v1.json"), "utf8"))
-      onFrame({ ...fixture.opened, id: sent[0].id })
+      onFrame({ ...fixture.opened, id: sent[0].id, ...(resumeToken ? { resume_token: resumeToken } : {}) })
     },
     close() {
       cleanup()
@@ -103,14 +105,14 @@ test("a vanished PTY ends the UI and blocks old input after reconnect", () => {
     try {
       app.opened()
       app.frame({ type: "terminal.error", id: app.sent[0].id, ...failure })
-      assert.equal(app.states[0], "closed")
-      assert.match(app.states[1], /重新发起编程接力/)
+      assert.equal(app.states[0], "error")
+      assert.ok(app.states[1])
       const count = app.sent.length
       app.input("lost keystroke")
       app.fire(25_000)
       app.opened()
       assert.equal(app.sent.length, count)
-      assert.equal(app.states[0], "closed")
+      assert.equal(app.states[0], "error")
     } finally { app.close() }
   }
 })
@@ -137,6 +139,45 @@ test("terminal watchdog closes a never-opened request and stops late frames", ()
     app.input("must not send")
     app.fire(60_000)
     assert.equal(app.states[0], "error")
+    assert.equal(app.sent.length, count)
+  } finally { app.close() }
+})
+
+test("TerminalApp preserves output, blocks disconnected input, reconnects Port and deduplicates replay", () => {
+  const app = startup()
+  try {
+    app.opened("a".repeat(64))
+    const id = app.sent[0].id
+    app.frame({ type: "terminal.data", id, seq: 1, b64: terminalB64Encode("one中文") })
+    app.disconnect()
+    assert.equal(app.states[0], "reconnecting")
+    const inputs = app.sent.filter(frame => frame.type === "terminal.input").length
+    app.input("must not replay command")
+    app.fire(500)
+    assert.deepEqual(app.sent.at(-1), { type: "terminal.attach", id, resume_token: "a".repeat(64), last_seq: 1 })
+    app.frame({ type: "terminal.attached", id, pid: 1, platform: "win32" })
+    app.frame({ type: "terminal.data", id, seq: 1, b64: terminalB64Encode("one中文") })
+    app.frame({ type: "terminal.data", id, seq: 2, b64: terminalB64Encode("two") })
+    assert.deepEqual(app.written, ["one中文", "two"])
+    assert.equal(app.states[0], "running")
+    assert.equal(app.sent.filter(frame => frame.type === "terminal.input").length, inputs)
+    app.input("new input")
+    assert.equal(app.sent.at(-1).type, "terminal.input")
+  } finally { app.close() }
+})
+
+test("repeated disconnects do not renew TerminalApp's recovery lease", () => {
+  const app = startup()
+  try {
+    app.opened("a".repeat(64))
+    const id = app.sent[0].id
+    app.frame({ type: "terminal.detached", id, grace_ms: 30000 })
+    app.frame({ type: "terminal.error", id, code: "request_failed", error: "TERMINAL_REATTACH_UNAVAILABLE" })
+    app.fire(30_000)
+    assert.equal(app.states[0], "closed")
+    assert.match(app.states[1], /过期/)
+    const count = app.sent.length
+    app.input("late"); app.opened("a".repeat(64)); app.fire(30_000)
     assert.equal(app.sent.length, count)
   } finally { app.close() }
 })

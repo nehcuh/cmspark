@@ -1,6 +1,6 @@
 # Windows 实机验收（待执行）
 
-此文是可执行检查清单，不是 Windows 已通过的声明。当前只在 Mac/Node 22.23.2 验证。
+此文是可执行检查清单，不是 Windows 已通过的声明。当前只在 Mac/Node 22.23.2 验证。干净发布分支为 `codex/windows-artifact-review`，接手回归和已跑/未跑边界见 `2026-10-09-stage-validation.md`；旧共享依赖的 KaTeX 红测在独立 lockfile 依赖下已通过。
 
 1. 使用隔离副本和独立 `CMSPARK_DATA_DIR`，不要覆盖生产配置/原 checkout。记录 Windows版本、Node版本、Chrome/Edge版本、companion包版本/文件SHA-256、扩展版本及基线 `3d368a4e`；Chrome/Edge 至少116。生成的新配对密钥只在该测试 profile 手动配对，不写进报告。
 2. 在隔离副本安装 lockfile 的依赖后，运行 `cd companion; npm test` 或先 `npx tsc -p tsconfig.test.json`，再 `node scripts/run-tests.mjs .test-dist/tests/local-code-review.test.js .test-dist/tests/local-download.test.js .test-dist/tests/acp-peer-isolation.test.js .test-dist/tests/ws-peer-error.test.js .test-dist/tests/acp-win-spawn.test.js`。扩展 `npm test`。保存完整 exit codes；当前Mac复用KaTeX依赖0.16.47（声明0.18.2）导致一个全量红测，Windows须实际使用声明依赖后重新核验。
@@ -12,6 +12,8 @@
 8. pending L2时尝试其他WS答复、model token/thread伪造、修改agent command/env/推理目的地、URL/hash/root/agent替换；必须拒绝或要求新确认。确认台必须滚动显示完整agent目的地和末尾ZIP哈希，不得仅前1200字。运行计划只读run/cancel应拒绝，status/risk_report允许。
 9. 握手中取消、评审中取消、120s deadline、下载DNS/stream中取消、排队取消、迟到结果：终态不覆盖、下载/worker终止，ACP child/Windows进程树回收。原chat stop/WS断开后已接受后台job仍可按job_id回收；接受响应丢失后scope内列表可找回。另一chat不得看到job。重启中断job应interrupted且不自动重放，完成结果可恢复。强杀进程后系统temp中源码capsule残留属于当前限制，应核查/清理测试目录。
 10. 从网页采集合成统一diff和需求/任务/测试引用，经 `code_review_create → code_review_run → code_review_status → code_review_risk_report` 完整走真实UI。核对输入digest/job_id、ZIP SHA/file/line证据、网页observation/time/url、Agent评语来源、binary/vendor/胶囊外变化遗漏。无命中仍unknown，测试网页声明不可升格已测试；未验证Git身份、业务因果关系与独立评审应保留。
+11. 验证新增 Windows 内嵌终端：扩展「设置 → 本机与工具 → 内嵌终端（实验 · 默认关 · macOS / Windows）」开启后，点击「打开内嵌终端」，回到侧栏批准 L2。拒绝时不得有 PTY PID；批准后应为绝对路径 PowerShell `-NoLogo -NoProfile` / ConPTY。输入合成中文/emoji、缩放窗口、查看 `$Host.UI.RawUI.WindowSize`，核对实际输出及 resize；不启动真实 agent。现有限制为同时一个内嵌 PTY，仍可与五个 companion 任务并发。
+12. 仅断开扩展 WS 或停止/唤醒 MV3 worker（不要重启 companion），在 30 秒内恢复：UI 显示恢复中并暂停输入，恢复后 PID 不变，未 ACK 输出回放且 UI 不重复显示，断线期间命令/粘贴不得重放；relay 与 page 同时 attach 不得结束 PTY。旧 peer 输入/关闭无权影响新 owner。超过 30 秒应回收进程、拒绝旧 token，重开仍需新 L2。关闭终端页/点击关闭应回收 PowerShell 和其受控子进程树。分别对 Node 开发版与实际 SEA exe 验证 native sidecar 的 staging/解析；缺 `@lydell/node-pty-win32-x64` 打包必须失败。
 
 生产启用的具体决策仍未收到：所选ACP命令/agent ID、模型与推理位置、如需外部推理其允许服务和代码范围，以及经核验的禁执行设置。支持明确离线配置或明确外发授权配置，均默认false；本地进程不能证明本地推理。`offline_review` / `review_external_authorized` 是运营者声明，不是OS隔离，协议默认deny不能控制恶意agent自有工具。先用合成代码验证服务配置，不拿真实私有代码试探。
 

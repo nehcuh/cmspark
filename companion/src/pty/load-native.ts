@@ -10,6 +10,7 @@ export type PtySpawnOpts = {
   rows: number
   cwd: string
   env: Record<string, string>
+  useConpty?: boolean
 }
 
 export type PtyHandle = {

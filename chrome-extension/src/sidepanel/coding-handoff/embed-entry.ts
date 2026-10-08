@@ -20,9 +20,8 @@ export type EmbeddedTerminalConfig =
 /**
  * Gate for the Side Panel「在本插件打开终端」entry (config half).
  *
- * The darwin half is `isDarwin()` below: the button is shown on `enabled && isDarwin()`.
- * The companion still refuses a non-darwin host with `unsupported`
- * (内嵌终端仅支持 macOS) — this is a UI-hiding gate, NOT a security boundary.
+ * The platform half is `isEmbeddedTerminalPlatform()` below (macOS / Windows).
+ * The companion checks its own platform and authorization; this display gate is not a security boundary.
  */
 export function shouldShowEmbeddedTerminalEntry(config: EmbeddedTerminalConfig): boolean {
   return config?.embedded_terminal?.enabled === true
@@ -67,6 +66,15 @@ export function isDarwin(env?: PlatformEnv | null): boolean {
   return false
 }
 
+/** Display predicate only; the companion rechecks its own OS and authorization. */
+export function isEmbeddedTerminalPlatform(env?: PlatformEnv | null): boolean {
+  if (isDarwin(env)) return true
+  const e = env === undefined ? typeof navigator === "undefined" ? null : navigator as PlatformEnv : env
+  if (!e) return false
+  const platform = nonEmptyString(e.userAgentData?.platform) || nonEmptyString(e.platform)
+  return platform ? /^win/i.test(platform) : /Windows NT/.test(nonEmptyString(e.userAgent))
+}
+
 /** Mode C host-terminal outcome, as emitted by the companion (`local_terminal`). */
 export type LocalTerminalState =
   | "pending"
@@ -105,7 +113,7 @@ export function isModeCInvolved(
  * the monitor bridge alone. `embed_intent` is excluded: nothing was opened and no PTY exists, so
  * the outer-terminal title would be false; Stop ends the ACP session itself. `embed_running` is
  * INCLUDED: the embedded agent PTY is live and survives acp.session.cancel (it ends only with
- * the terminal tab, chat.abort, or a WS drop). Its label/title come from modeCStopLabel /
+ * the terminal tab, chat.abort, or an expired WS recovery lease). Its label/title come from modeCStopLabel /
  * modeCStopTitle, which override the outer-Terminal monitor copy for this state.
  */
 export function isModeCMonitorStop(
