@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-- collect_handback 不再把「有点像 handback 的报告」当硬失败：markdown 报告含非 JSON 代码块（YAML 示例/规范摘录）、或报告引用的 JSON 示例缺 `schema_version` 时，按 0.6.8 的既定决策降级为 prose 成功收取（`structured=false`，解析原因如实写进 note 与审计），不再让父任务原样重试直到三连熔断断轮（`ibg908` / `9lvswp` 双实测）。`schema_version` 另容忍字符串 `"1"`（等价收 1）。
+- collect_handback 不再把「有点像 handback 的报告」当硬失败：报告含非 JSON 代码块（YAML 示例/规范摘录）时降级走无 fence 路径；fence 改为从后往前逐个尝试、取第一个通过 schema 校验的——合法 handback 之后引用的 JSON 示例不再顶掉 handback；结构化解析失败（含引用示例缺 `schema_version` 等 schema 近失、empty_ok 语义拒绝）一律按 0.6.8 决策降级 prose 成功收取（`structured=false`），解析原因经 `parse_note` 穿透 cooperation 投影到父对话并如实入审计；`schema_version` 为字符串 "1" 刻意不容忍（模板回显会被幂等 fold，永久挡住真实发现）。`ibg908` / `9lvswp` 双实测的三连熔断断轮消除。
 
 ## [0.6.12] — 2026-10-09
 
