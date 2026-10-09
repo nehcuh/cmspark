@@ -243,6 +243,26 @@ test("G11 fleet occupied 字段与 llm_active 语义同源且互不覆盖", asyn
   assert.equal(terminalRow?.occupied, false, "terminal worker released")
 })
 
+test("G11c fleet trashed_occupied_count：回收站占位行计数透出且不进 workers 视图（评审 F1 fleet 半）", async () => {
+  const tm = new ThreadManager()
+  const { buildFleetSnapshot } = await import("../src/orchestrator/fleet")
+  // 全局计数（非 per-run），同数据目录内其他测试会留下 trashed worker——
+  // 用前后快照增量断言，不受既有污染影响。
+  const beforeCount = buildFleetSnapshot(tm).trashed_occupied_count
+  const parent = seedParent(tm, "run-g11c")
+  const occ = seedWorker(tm, parent, "run-g11c", { created_at: new Date(Date.now()).toISOString() }) // 占用中
+  seedWorker(tm, parent, "run-g11c", terminalWorker()) // 已终局让位
+  tm.trash(occ.id) // 占用中的 worker 进回收站：仍占名额（G8b）
+  const snap = buildFleetSnapshot(tm)
+  assert.equal(snap.trashed_occupied_count, beforeCount + 1, "trashed-but-occupied worker must be counted")
+  assert.equal(
+    snap.workers.some((w) => w.id === occ.id),
+    false,
+    "trashed row must NOT appear in the workers view (worker_count stays inventory-only, G10)",
+  )
+  // 变异敏感性：fleet.ts 计数处若退化为 tm.list()（丢 include_trashed），增量恒 0 本测试必红。
+})
+
 test("G9 专家队余量 min(5−N, 20−M)：预算不足截到 1；超出部分被创建预算拒绝", () => {
   const tm = new ThreadManager()
   const parent = seedParent(tm, "run-g9")

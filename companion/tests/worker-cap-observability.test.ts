@@ -219,6 +219,34 @@ test("G7-expert-team 生产点 + F3 文案：同态 spawn_expert_team 拒且文�
   }
 })
 
+test("F3 源码守卫：l2-admission 确认卡拒绝文案钉在 workerCapExhaustionMessage（评审 F3 的 l2 半）", () => {
+  // N-3 分支（l2-admission.ts「名额已满不出空队卡」）走完整确认流前置（WS ctx /
+  // tray 绑定），行为测试成本高；评审证明的回归恰是「该分支文案被退回旧的
+  // 硬编码归因」（变异全绿）——用 #569 同款源码守卫钉死，退回即红。
+  const src = ["src/tool/l2-admission.ts", "companion/src/tool/l2-admission.ts"]
+    .map((p) => {
+      try {
+        return fs.readFileSync(p, "utf8")
+      } catch {
+        return null
+      }
+    })
+    .find((x) => x !== null)
+  assert.ok(src, "找不到 l2-admission.ts（请在 companion/ 或仓库根运行）")
+  assert.ok(
+    src.includes("workerCapExhaustionMessage(capUsage)"),
+    "确认卡 N-3 拒绝必须走 workerCapExhaustionMessage SSOT（按真实阻塞归因 + 当前 N/M）",
+  )
+  assert.ok(
+    src.includes("spawn_expert_team denied: "),
+    "确认卡拒绝文案须保留 spawn_expert_team denied: 前缀（错误归因可辨识）",
+  )
+  assert.ok(
+    !src.includes("max_workers_per_orchestrator_run reached; spawn_expert_team has no remaining"),
+    "旧文案（仅预算耗尽时误归因 occupancy 上限）不得回潮",
+  )
+})
+
 test("G9c 预算不足队伍 upfront 截断：M=19 → 3 人队截为 1 且无全队回滚（评审 G9）", async () => {
   const tm = new ThreadManager()
   const e1 = saveExpert("评审G9甲")
