@@ -1191,9 +1191,10 @@ describe("manager source locks (#502 C Option 1)", () => {
       "exactly one embed: true, paired with the eligibility expression",
     )
     assert.match(branch, /\.\.\.\(embedEligible \? \{ embed: true \} : \{\}\)/)
+    // #584: 平台半边是 darwin || win32（Linux 仍不放行）——单一资格表达式。
     assert.match(
       branch,
-      /const embedEligible =\s*\n?\s*getConfig\(\)\.embedded_terminal\?\.enabled === true && process\.platform === "darwin"/,
+      /const embedEligible =\s*\n?\s*getConfig\(\)\.embedded_terminal\?\.enabled === true &&\s*\n?\s*\(process\.platform === "darwin" \|\| process\.platform === "win32"\)/,
     )
     // The only embedded_terminal read in the manager is that eligibility expression, so there is
     // no config-driven cancellation of the outer terminal.
