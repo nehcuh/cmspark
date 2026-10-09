@@ -79,6 +79,15 @@ test("#569 三个 worker 查询工具都带上这两个字段（源码守卫，�
     `三处返回体都要把两个字段 ?? null 兜成**显式 null**（不是留着 undefined，那会被 JSON 丢键）。` +
       `实测 terminal=${covT} ended_at=${covE}；注意不能按全文件 ?? null 计数（那有 9 处、含无关用途）` ,
   )
+
+  // 评审 F1/G11（pr-579-adversarial-20261009）：list_workers 行体必须带
+  // `trashed` 标记（占名额 SoT 含回收站行，诊断面删除它则「5/5 occupied」
+  // 无法对账）与 `occupancy` 状态。同款突变（删字段全绿）有 #569 先例，
+  // 故与上面同款加源码守卫。
+  const trashed = (src.match(/trashed: !!w\.trashed_at/g) || []).length
+  const occupancy = (src.match(/occupancy: workerOccupancyStatus\(w/g) || []).length
+  assert.ok(trashed >= 1, `list_workers 行体该带 trashed: !!w.trashed_at 标记，实测 ${trashed} 处`)
+  assert.ok(occupancy >= 1, `list_workers 行体该带 occupancy: workerOccupancyStatus(w, …) 状态，实测 ${occupancy} 处`)
 })
 
 test("#569 落点在 adapter 的 chatCreate finally —— 唯一覆盖全部 run 路径的位置", () => {

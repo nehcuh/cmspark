@@ -1374,9 +1374,18 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
                 : members.length
             // N-3: do not show an empty team card when the worker cap is already full.
             if (parent && actingThreadId && slots <= 0) {
+              // 评审 F3：与执行闸同 SSOT（workerCapExhaustionMessage）——按真实
+              // 阻塞归因且含当前 N/M；旧文案把「仅预算耗尽」误归因为 occupancy 上限。
+              const { workerCapUsage } = await import("../orchestrator/worker-occupancy")
+              const { workerCapExhaustionMessage } = await import("../orchestrator/expert-team")
+              const capUsage = workerCapUsage(
+                threadManager!,
+                (parent as any).orchestrator_run_id || String(actingThreadId),
+                { isActive },
+              )
               expertTeamAdmissionError = {
                 success: false,
-                error: `max_workers_per_orchestrator_run reached; spawn_expert_team has no remaining worker slots or creation budget`,
+                error: `spawn_expert_team denied: ${workerCapExhaustionMessage(capUsage)}`,
                 data: { error_code: "MAX_WORKERS" },
               }
               return { confirmationId: "", approved: false, reason: "denied" as const }

@@ -289,6 +289,32 @@ export function remainingWorkerSlots(
   )
 }
 
+/**
+ * 评审 F3（pr-579-adversarial-20261009）：双闸（名额/预算）拒绝文案的唯一
+ * SSOT——必须含当前 N/5 与 M/20 数字，并按真实阻塞归因。旧文案在「仅预算
+ * 耗尽」（occupied=0、created=20，#576「收一波再派一波」末波的典型态）时
+ * 硬断言 occupancy 上限，模型会去等一个永不变化的「占用释放」。
+ * spawn.ts 的两条同族文案不动（G1/G2 断言钉死）；本函数供 expert-team
+ * 执行闸与 l2-admission 确认卡共用。
+ */
+export function workerCapExhaustionMessage(usage: { occupied: number; created: number }): string {
+  const occ = `${usage.occupied}/${ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run} occupied`
+  const bud = `${usage.created}/${ORCHESTRATOR_CAPS.max_workers_created_per_run} created this run`
+  const occFull = usage.occupied >= ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run
+  const budgetFull = usage.created >= ORCHESTRATOR_CAPS.max_workers_created_per_run
+  if (occFull && budgetFull) {
+    return `worker slots and creation budget both exhausted: ${occ}, ${bud} (trashed workers still count)`
+  }
+  if (occFull) {
+    return `worker slots full: ${occ} (paused/running/pending), ${bud} (trashed workers still count)`
+  }
+  return (
+    `worker creation budget exhausted: ${bud}; ${occ} — finished workers free slots but not ` +
+    `the creation budget; start a new thread for a fresh run, or hard-delete workers ` +
+    `(trash does not refund the budget)`
+  )
+}
+
 export function buildExpertTeamConfirmCard(opts: {
   parent: any
   members: NormalizedTeamMember[]
@@ -512,14 +538,25 @@ export async function spawnExpertTeam(opts: {
   const { buildIsThreadLlmActive } = await import("../tool/companion-dispatch")
   const isThreadLlmActive = await buildIsThreadLlmActive()
   const isActive = (id: string) => isThreadLlmActive(id)
-  const slots = remainingWorkerSlots(opts.tm, opts.parentThreadId, { isActive })
+  // 评审 F3：归因需要 usage 原值——语义同 remainingWorkerSlots 的 min()，
+  // 这里直接算一次，拒绝文案走 workerCapExhaustionMessage（含当前 N/M）。
+  const capParent = opts.tm.get(opts.parentThreadId) as any
+  const capUsage = workerCapUsage(
+    opts.tm,
+    capParent.orchestrator_run_id || ensureOrchestratorRunId(capParent),
+    { isActive },
+  )
+  const slots = Math.max(
+    0,
+    Math.min(
+      ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run - capUsage.occupied,
+      ORCHESTRATOR_CAPS.max_workers_created_per_run - capUsage.created,
+    ),
+  )
   if (slots <= 0) {
     return {
       ok: false,
-      error:
-        `max_workers_per_orchestrator_run reached: no remaining worker slots ` +
-        `(occupied ≤ ${ORCHESTRATOR_CAPS.max_workers_per_orchestrator_run}) or creation budget ` +
-        `(≤ ${ORCHESTRATOR_CAPS.max_workers_created_per_run} created this run)`,
+      error: workerCapExhaustionMessage(capUsage),
       data: { error_code: "MAX_WORKERS" },
     }
   }

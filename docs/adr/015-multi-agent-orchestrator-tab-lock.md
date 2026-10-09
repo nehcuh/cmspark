@@ -120,7 +120,8 @@
 
 - 终局判定只对非 in-flight worker 生效——re-kick 第二轮在跑时 `last_run_ended_at` 仍是上一轮旧值（adapter 的 epoch 守卫不防新 run），谓词必须先查活性。
 - `created_at` 缺失/不可解析 → fail-closed 视为新鲜（占名额，只收紧不放松）。
-- 累计创建预算含回收站行（trash 不退款）；**硬删与 #292 spawn 失败回滚不计数**（「spawn 从未发生」）。预算是索引派生值：30 天 `purgeExpiredTrash` 与手动 `cleanup_empty` 会让 M 自然衰减——这是预期行为，不是退款漏洞。
+- 逾期孤儿判定对墙钟回拨鲁棒（2026-10-09 评审 F2）：模块内持单调高水位，生产路径 `now = max(Date.now(), highWater)`；注入 `now` 的测试路径不读不写高水位。伴随进程重启的回拨仍可翻转一次，量级受步长限制，接受。
+- 累计创建预算含回收站行（trash 不退款）；**硬删与 #292 spawn 失败回滚不计数**（「spawn 从未发生」）。预算是索引派生值：30 天 `purgeExpiredTrash` 与手动 `cleanup_empty` 会让 M 自然衰减——这是预期行为，不是退款漏洞。诊断面与门同口径枚举回收站行（2026-10-09 评审 F1）：`list_workers` 行带 `trashed:true`、fleet 快照带 `trashed_occupied_count`，「5/5 occupied (trashed workers still count)」可在产品内对账；`worker_count` / `parentRoleSnapshot` 保持库存口径不变。
 - 执行闸（spawn gate）必须注入完整三源活性谓词；advisory 路径（expert-team 截断、l2 确认卡）可退化到纯字段判定，错了由执行闸纠正。
 
 ### 4. L2 与安全
