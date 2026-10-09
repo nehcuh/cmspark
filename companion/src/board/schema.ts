@@ -186,8 +186,12 @@ export const HandbackIntentDraftSchema = z.object({
 export type HandbackIntentDraft = z.infer<typeof HandbackIntentDraftSchema>
 
 export const HandbackPayloadSchema = z.object({
-  /** Exact schema_version=1 only until a migration path exists (code gate F1). */
-  schema_version: z.literal(BOARD_SCHEMA_VERSION),
+  /** Exact schema_version=1 only until a migration path exists (code gate F1).
+   *  容忍 LLM 写成字符串 "1"（9lvswp 实测的 schema 近失之一）——等价收 1。 */
+  schema_version: z.preprocess(
+    (v) => (v === `${BOARD_SCHEMA_VERSION}` ? BOARD_SCHEMA_VERSION : v),
+    z.literal(BOARD_SCHEMA_VERSION),
+  ),
   facts: z.array(HandbackFactDraftSchema).max(BOARD_CAPS.max_facts).optional().default([]),
   intents: z.array(HandbackIntentDraftSchema).max(BOARD_CAPS.max_intents).optional().default([]),
   summary: z.string().max(BOARD_CAPS.max_summary_chars).optional().nullable(),
@@ -313,16 +317,16 @@ export function parseHandbackPayload(raw: unknown):
           /* try earlier fence */
         }
       }
-      if (fencedOk === undefined) {
-        return {
-          ok: false,
-          error_code: HANDBACK_MISSING_STRUCTURE,
-          error: "fenced JSON present but not a valid handback object",
-          recoverable: true,
-        }
+      if (fencedOk !== undefined) {
+        return parseHandbackPayload(fencedOk)
       }
-      parsed = fencedOk
-    } else {
+      // 评审修复（ibg908 / 9lvswp 双实测）：fence 全部解析不出 JSON 对象——YAML
+      // 示例/规范摘录/表格是研究报告的常态——不再硬失败。旧分支返回 "fenced JSON
+      // present but not a valid handback object"，让 0.6.8「markdown 报告 = 成功
+      // 收取」的 prose 路径不可达；父 LLM 只会原样重试同一 payload → 三连熔断断轮。
+      // 降级走无 fence 同款路径：整串 parse → 首个对象提取 → prose-only。
+    }
+    {
       try {
         parsed = JSON.parse(trimmed)
       } catch {

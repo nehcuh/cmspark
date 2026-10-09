@@ -981,15 +981,15 @@ async function collectWorkerHandbackRaw(
   }
 
   const preview = parseHandbackPayload(rawPayload)
-  if (
-    !preview.ok &&
-    preview.error_code === HANDBACK_MISSING_STRUCTURE &&
-    /prose-only/i.test(preview.error)
-  ) {
-    // Finished worker wrote a report, not board JSON (3r2frm: markdown + math
-    // braces). Collecting it is a successful read — do not ⚠️ the parent, do
-    // not merge fake facts, do not stop siblings. Follow-up "现在结论如何"
-    // must not look like a crash.
+  if (!preview.ok && preview.error_code === HANDBACK_MISSING_STRUCTURE) {
+    // Finished worker wrote a report, not board JSON. Collecting it is a
+    // successful read — do not ⚠️ the parent, do not merge fake facts, do not
+    // stop siblings. Previously only the "prose-only" wording fell through
+    // (3r2frm: markdown + math braces); every other recoverable parse failure —
+    // fenced near-miss (ibg908) or schema drift like a spec-example JSON without
+    // schema_version (9lvswp: "Invalid literal value, expected 1") — hard-failed
+    // and the parent's retry of the same payload burned the 3-strike breaker,
+    // killing the whole turn. The parse reason is disclosed in note/audit.
     audit(
       "board.handback_prose",
       {
@@ -997,6 +997,7 @@ async function collectWorkerHandbackRaw(
         worker_id: workerId,
         message_id: lastAssistant?.id ?? null,
         chars: lastAssistant?.content?.length ?? 0,
+        parse_error: preview.error,
       },
       opts.auditPath,
     )
@@ -1009,7 +1010,7 @@ async function collectWorkerHandbackRaw(
         suggested_action: "use last_assistant",
         note: stoppedMidRun
           ? partialNote
-          : "worker finished with a prose report; MissionBoard was not updated. Other workers are unaffected.",
+          : `worker finished with a prose report (structured parse failed: ${preview.error}); collected as prose — MissionBoard was not updated. Other workers are unaffected.`,
       },
     }
   }

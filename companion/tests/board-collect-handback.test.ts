@@ -200,6 +200,84 @@ test("collect_handback board_mode on: finished prose is a successful read, not a
   assert.ok(!readAudit(ap).some((e) => e.type === "board.handback_rejected"))
 })
 
+test("collect_handback: markdown 报告含非 JSON fence 是 prose 成功，不再硬失败（ibg908 实测）", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-fence")
+  tm.update(parent.id, { board_mode: true } as any)
+  const ap = auditPath()
+  const report = [
+    "# Docker Sandbox Kit v3 调研报告",
+    "",
+    "结论先行：规范已发布、生态未动。",
+    "",
+    "最小示例原文：",
+    "",
+    "```yaml",
+    'schemaVersion: "3"',
+    "kind: workload",
+    "```",
+    "",
+    "能力类型清单（节选）：",
+    "",
+    "```json",
+    '[{"name": "network-policy", "version": 1}]',
+    "```",
+    "",
+    "以上为全部要点，任务完成。",
+  ].join("\n")
+  const worker = seedWorker(tm, parent.id, report)
+  const r = await collectWorkerHandback(tm, {
+    workerId: worker.id,
+    callerThreadId: parent.id,
+    auditPath: ap,
+  })
+  assert.equal(r.success, true, r.success ? undefined : r.error)
+  if (!r.success) return
+  assert.equal(r.data.structured, false, "yaml/array fences are not a handback — prose collect")
+  assert.equal(r.data.suggested_action, "use last_assistant")
+  assert.equal(readBoard(tm, parent.id)?.facts.length ?? 0, 0, "spec examples must not mint board facts")
+  assert.ok(readAudit(ap).some((e) => e.type === "board.handback_prose"))
+  assert.ok(!readAudit(ap).some((e) => e.type === "board.handback_rejected"))
+})
+
+test("collect_handback: 报告引用的 JSON 示例缺 schema_version 降级 prose，不再三连熔断（9lvswp 实测）", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-schema-drift")
+  tm.update(parent.id, { board_mode: true } as any)
+  const ap = auditPath()
+  const report = [
+    "## 规范原文摘录",
+    "",
+    "```json",
+    '{ "schemaVersion": "3", "kind": "workload" }',
+    "```",
+    "",
+    "### 结论",
+    "",
+    "该 JSON 是研究对象（Docker 规范）的示例，不是 handback；结论：可落地性中等。",
+  ].join("\n")
+  const worker = seedWorker(tm, parent.id, report)
+  const r = await collectWorkerHandback(tm, {
+    workerId: worker.id,
+    callerThreadId: parent.id,
+    auditPath: ap,
+  })
+  assert.equal(r.success, true, r.success ? undefined : r.error)
+  if (!r.success) return
+  assert.equal(r.data.structured, false)
+  assert.match(String(r.data.note), /structured parse failed/)
+  assert.match(String(r.data.note), /schema_version/, "parse reason disclosed in note")
+  assert.ok(readAudit(ap).some((e) => e.type === "board.handback_prose"))
+  assert.ok(!readAudit(ap).some((e) => e.type === "board.handback_rejected"))
+})
+
+test("parseHandbackPayload: schema_version 字符串 \"1\" 等价收 1", async () => {
+  const { parseHandbackPayload } = await import("../src/board/schema")
+  const r = parseHandbackPayload({ schema_version: "1", empty_ok: true, summary: "no findings" })
+  assert.equal(r.ok, true, r.ok ? undefined : r.error)
+  if (r.ok) assert.equal(r.payload.schema_version, 1)
+})
+
 test("collect_handback structured JSON merges facts into host board", async () => {
   const tm = new ThreadManager()
   const parent = tm.create("orch-ok")
