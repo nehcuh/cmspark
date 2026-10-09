@@ -1206,7 +1206,7 @@
     "type": "function",
     "function": {
       "name": "list_workers",
-      "description": "List worker threads for the current orchestrator_run. Each worker also carries `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = the run ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both null = it never ran (the fields are never set); a null terminal WITH a timestamp = it ended normally. Use these to tell a dead worker from an idle one (#569).",
+      "description": "List worker threads for the current orchestrator_run, including trashed rows (`trashed: true`) — trashed workers still hold spawn slots and creation budget, so use these rows to reconcile a \"worker slots full (trashed workers still count)\" rejection. Each row carries `occupancy` (paused/running/not_started/overdue/completed/terminated: the last three have released their slot; the first three hold one) plus `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both null = it never ran. Use these to tell a dead worker from an idle one (#569) and to see why slots are full or free (#578).",
       "parameters": {
         "type": "object",
         "properties": {},

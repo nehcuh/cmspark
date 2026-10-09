@@ -47,6 +47,12 @@ export interface FleetSnapshot {
   workers: FleetWorkerView[]
   locks: ReturnType<typeof listTabLocks>
   worker_count: number
+  /**
+   * 评审 F1：在回收站但按占名额 SoT 仍持有 spawn 名额的 worker 数（G8b：
+   * trash 不释放占用）。这些行不在 `workers` 视图里——没有这个数，
+   * 「名额满但 fleet 看不到任何 worker」的矛盾态无法解释。
+   */
+  trashed_occupied_count: number
   lock_count: number
   /** ADR-016 Stage 4: sum of open+claimed intents across orchestrator hosts */
   open_intent_count: number
@@ -186,12 +192,22 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     }
   }
 
+  // 评审 F1：占名额 SoT 含回收站行——把「不可见但占名额」的数量单独透出，
+  // worker_count 维持库存口径（#578 G10 钉死）。
+  const trashed_occupied_count = (tm.list({ include_trashed: true }) as any[]).filter(
+    (t) =>
+      !!t.trashed_at &&
+      t.agent_role === "worker" &&
+      workerOccupiesSlot(t, { isActive: isActiveUnion }),
+  ).length
+
   return {
     type: "fleet.status",
     at: new Date().toISOString(),
     workers: views,
     locks,
     worker_count: views.filter((v) => v.agent_role === "worker").length,
+    trashed_occupied_count,
     lock_count: locks.length,
     open_intent_count,
     open_intents_by_run,

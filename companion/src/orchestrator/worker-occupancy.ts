@@ -62,10 +62,30 @@ export function workerOccupancyStatus(
     // 保 #292 测试种的裸 worker（无 created_at）仍被名额闸拒绝。
     const createdMs = w.created_at ? Date.parse(w.created_at) : NaN
     if (!Number.isFinite(createdMs)) return "not_started"
-    const now = opts.now ?? Date.now()
+    const now = monotonicWallClock(opts.now)
     return now - createdMs >= ORCHESTRATOR_CAPS.idle_ttl_ms ? "overdue" : "not_started"
   }
   return w.last_run_terminal ? "terminated" : "completed"
+}
+
+// 评审 F2（pr-579-adversarial-20261009）：宽限判定对墙钟回拨不鲁棒——
+// created_at 固定而 now 逐次现读 Date.now()，NTP 步进/挂起恢复会把已让位的
+// 逾期孤儿翻回「新鲜占位」，gate/fleet/list_workers 在两次评估间振荡。
+// 高水位钳制让缺省（生产）时钟只前进：注入 opts.now 的测试路径不读不写
+// 高水位，保持确定性。残留风险：伴随重启的回拨（高水位随进程归零）仍可
+// 翻转一次，量级受步长限制，接受。
+let wallClockHighWaterMs = 0
+
+function monotonicWallClock(injected?: number): number {
+  if (injected !== undefined) return injected
+  const now = Date.now()
+  if (now > wallClockHighWaterMs) wallClockHighWaterMs = now
+  return Math.max(now, wallClockHighWaterMs)
+}
+
+/** @internal 测试隔离：清零墙钟高水位（node:test 每文件独立进程，仍以防串扰）。 */
+export function __resetOccupancyClockForTests(): void {
+  wallClockHighWaterMs = 0
 }
 
 /** 是否占用 spawn 名额。released = 终局（completed/terminated）∨ 逾期（overdue）。 */

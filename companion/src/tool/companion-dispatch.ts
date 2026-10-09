@@ -673,23 +673,27 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
       if (!runId) return { success: false, error: "orchestrator_run_id required (spawn workers first)" }
       const { listWorkers } = await import("../orchestrator/spawn")
-      // #578: 透出占用状态，让「名额为何空了/为何满了」可解释（overdue = 从未跑过且超 idle_ttl，spawn 已让位）
+      // #578: 透出占用状态，让「名额为何空了/为何满了」可解释（overdue = 从未跑过且超 idle_ttl，spawn 已让位）。
+      // 评审 F1：占名额 SoT 含回收站行（G8b），诊断面必须同口径枚举——否则 gate 报
+      // 「5/5 occupied (trashed workers still count)」时模型 list_workers 看到 0 行，无法对账。
       const { workerOccupancyStatus } = await import("../orchestrator/worker-occupancy")
       const isThreadLlmActive = await buildIsThreadLlmActive()
-      const now = Date.now()
-      const workers = listWorkers(threadManager, String(runId)).map((w: any) => ({
+      const workers = listWorkers(threadManager, String(runId), { includeTrashed: true }).map((w: any) => ({
         id: w.id,
         alias: w.alias,
         worker_role_label: w.worker_role_label,
         paused: !!w.paused,
         tool_whitelist: w.tool_whitelist,
+        // 评审 F1：该行是否在回收站（仍占名额/预算）。gate 错误串的
+        // 「(trashed workers still count)」靠这里对账。
+        trashed: !!w.trashed_at,
         // #569: 该 worker **最后一次跑完**的结局。`null` = 正常跑完；非 null = 被该 terminal 结束
         // （如 "circuit_breaker"）；两者都没有 = 从未跑过。父线程靠这三个字段区分
         // 「在跑 / 正常收工 / 被处死 / 闲着」，不必再猜。
         last_run_terminal: w.last_run_terminal ?? null,
         last_run_ended_at: w.last_run_ended_at ?? null,
+        // 模块自持单调钟（评审 F2），不再注入 once-captured now。
         occupancy: workerOccupancyStatus(w, {
-          now,
           isActive: (id) => isThreadLlmActive(id),
         }),
       }))

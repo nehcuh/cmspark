@@ -266,10 +266,18 @@ export function spawnWorkerThread(
   return { ok: true, worker: full, orchestrator_run_id: runId, parent_before_promotion: parentBeforePromotion }
 }
 
-export function listWorkers(tm: ThreadManager, orchestratorRunId: string): any[] {
-  return tm.list().filter(
-    (t: any) => t.orchestrator_run_id === orchestratorRunId && t.agent_role === "worker",
-  )
+export function listWorkers(
+  tm: ThreadManager,
+  orchestratorRunId: string,
+  opts: { includeTrashed?: boolean } = {},
+): any[] {
+  // 评审 F1：默认仍排除回收站（wait_workers / run-busy probe 等消费方不变）；
+  // list_workers 诊断面显式传 includeTrashed——占名额 SoT 含 trashed 行
+  // （G8b：trash 不释放占用、不退预算），诊断面必须能枚举到同一批行，
+  // 否则「5/5 occupied」对模型不可对账。
+  return tm
+    .list(opts.includeTrashed ? { include_trashed: true } : undefined)
+    .filter((t: any) => t.orchestrator_run_id === orchestratorRunId && t.agent_role === "worker")
 }
 
 export function isMultiAgentThread(thread: any | null | undefined): boolean {

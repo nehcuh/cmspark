@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 多智能体 worker 名额的「占名额口径」补三个评审缺口：回收站里仍占名额的 worker 现在会在 `list_workers` 里以 `trashed: true` 列出、舰队快照新增 `trashed_occupied_count`——「5/5 occupied (trashed workers still count)」从此可在产品内对账（此前名额闸数它们、诊断面却看不见，paused+回收站变体更是永久占名额且不可见）。
+- 逾期孤儿（从未跑过且超 idle_ttl）的让位判定改用单调高水位时钟：NTP 回拨 / 挂起恢复不再把已让位的 worker 翻回「占位」、不再让 spawn 门在两次评估间振荡。
+- `spawn_expert_team` 的双闸（名额/预算）拒绝文案按真实阻塞归因并携带当前 N/5、M/20（此前「仅预算耗尽」被误报成 occupancy 上限，模型会去等一个永不变化的「占用释放」）；确认卡路径同款。
+- 评审测试缺口补齐：dispatch / expert-team 两个生产点的活性谓词注入、双上限 `min()` 的预算腿（occupied=0、M=19 → 余量 1）、`list_workers` 行级 occupancy 均有「删除即红」的测试与源码守卫。
 - 缺标签恢复不再把页面标题送进错误分类。分类先于标题拼接；`No tab with given id` 登记为可恢复的 `TAB_NOT_FOUND`。无码或未登记码仍走文案兜底。
 - Windows 后台左键只把 UIA Invoke 当成点击。Select / Toggle 成功改走坐标点击。
 - 上一段 run 的结束记录不再盖掉下一段。没有下一段时，中止仍记为 aborted。
