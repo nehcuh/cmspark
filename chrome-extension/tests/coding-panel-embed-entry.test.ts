@@ -15,6 +15,7 @@ import { join } from "node:path"
 import {
   shouldShowEmbeddedTerminalEntry,
   isDarwin,
+  isEmbeddedTerminalSupported,
   isModeCInvolved,
   isModeCMonitorStop,
   modeCBannerText,
@@ -180,15 +181,16 @@ test("panel renders the entry through the gate, label from copy (R1/R2)", () => 
     /import\s*\{[^}]*shouldShowEmbeddedTerminalEntry[^}]*\}\s*from\s*"\.\.\/coding-handoff\/embed-entry"/,
   )
   assert.match(panel, /shouldShowEmbeddedTerminalEntry\(/)
-  // The gate must actually drive the render: enabled === true AND this darwin host AND this
-  // thread's embed_intent (a darwin-less gate would promise an embed the companion refuses).
+  // The gate must actually drive the render: enabled === true AND a supported host (#584:
+  // macOS / Windows — Linux stays unsupported) AND this thread's embed_intent (a platform-less
+  // gate would promise an embed the companion refuses).
   assert.match(
     panel,
-    /const showEmbedEntry =\s*shouldShowEmbeddedTerminalEntry\(embeddedTerminalConfig\) &&\s*isDarwin\(\) &&\s*session\?\.localTerminal === "embed_intent"/,
+    /const showEmbedEntry =\s*shouldShowEmbeddedTerminalEntry\(embeddedTerminalConfig\) &&\s*isEmbeddedTerminalSupported\(\) &&\s*session\?\.localTerminal === "embed_intent"/,
   )
   assert.match(
     panel,
-    /import\s*\{[^}]*\bisDarwin\b[^}]*\}\s*from\s*"\.\.\/coding-handoff\/embed-entry"/,
+    /import\s*\{[^}]*\bisEmbeddedTerminalSupported\b[^}]*\}\s*from\s*"\.\.\/coding-handoff\/embed-entry"/,
   )
   assert.match(panel, /\{showEmbedEntry \? \(/)
   assert.match(panel, /codingHandoffCopy\.panelOpenEmbeddedTerminal/)
@@ -499,7 +501,7 @@ test("#506: embed_running is Mode-C-involved AND monitor-stop (a live process su
   // to start the agent again (the gate is source-locked on === "embed_intent" above).
   assert.match(
     src(PANEL),
-    /const showEmbedEntry =\s*shouldShowEmbeddedTerminalEntry\(embeddedTerminalConfig\) &&\s*isDarwin\(\) &&\s*session\?\.localTerminal === "embed_intent"/,
+    /const showEmbedEntry =\s*shouldShowEmbeddedTerminalEntry\(embeddedTerminalConfig\) &&\s*isEmbeddedTerminalSupported\(\) &&\s*session\?\.localTerminal === "embed_intent"/,
   )
 })
 
@@ -556,3 +558,20 @@ function effectBlocks(text: string): string[] {
   }
   return blocks
 }
+
+test("#584: isEmbeddedTerminalSupported admits macOS + Windows, fail-closed elsewhere", () => {
+  assert.equal(isEmbeddedTerminalSupported({ userAgentData: { platform: "Windows" } }), true)
+  assert.equal(isEmbeddedTerminalSupported({ platform: "Win32" }), true)
+  assert.equal(isEmbeddedTerminalSupported({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }), true)
+  assert.equal(isEmbeddedTerminalSupported({ userAgentData: { platform: "macOS" } }), true)
+  assert.equal(isEmbeddedTerminalSupported({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" }), true)
+  assert.equal(isEmbeddedTerminalSupported({ userAgentData: { platform: "Linux" } }), false)
+  assert.equal(isEmbeddedTerminalSupported({ userAgent: "Mozilla/5.0 (X11; Linux x86_64)" }), false)
+  assert.equal(isEmbeddedTerminalSupported(null), false, "fail-closed on inconclusive")
+  // 无参/undefined 会读真 navigator——断言「显式空信号」的 fail-closed，而非宿主平台。
+  assert.equal(
+    isEmbeddedTerminalSupported({ userAgentData: { platform: "" }, platform: "", userAgent: "" }),
+    false,
+    "empty signals fail closed",
+  )
+})

@@ -248,8 +248,16 @@ export async function handleTerminalMessage(
       }
       return deny(spawned.error)
     }
-    // #584: 如实上报宿主平台（写死 "darwin" 在 win32 opened 帧上是假话）。
-    return { type: "terminal.opened", id, pid: spawned.pid, platform: ptyHostPlatform(), ...(review ? { review_id: reviewId, review_prompt: reviewPrompt(review) } : {}) }
+    // #584: 如实上报宿主平台（写死 "darwin" 在 win32 opened 帧上是假话）；
+    // ConPTY 的子进程在 spawn 返回后才创建——pid 为 0（未知）时如实缺省，
+    // 不上报假 pid（wire 侧已容忍缺省）。
+    return {
+      type: "terminal.opened",
+      id,
+      ...(spawned.pid ? { pid: spawned.pid } : {}),
+      platform: ptyHostPlatform(),
+      ...(review ? { review_id: reviewId, review_prompt: reviewPrompt(review) } : {}),
+    }
   }
 
   if (!id) return deny(`${type} requires id`)

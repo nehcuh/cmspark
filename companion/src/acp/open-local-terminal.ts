@@ -77,6 +77,11 @@ export type OpenLocalTerminalOpts = {
    * `embed === true`; undefined records under the empty-string key.
    */
   threadId?: string
+  /**
+   * #584: 平台注入口（仅测试）——缺省 process.platform。平台闸直接读宿主值
+   * 是既有局限；给测试一个不依赖宿主 OS 的口子，避免用例在 CI 平台上整体 skip。
+   */
+  platform?: NodeJS.Platform
 }
 
 export type OpenLocalTerminalResult = {
@@ -1211,7 +1216,7 @@ export function __testSetOuterOpeners(overrides?: Partial<OuterTerminalOpeners>)
 export async function openLocalTerminalForAgent(
   opts: OpenLocalTerminalOpts,
 ): Promise<OpenLocalTerminalResult> {
-  const platform = process.platform
+  const platform = opts.platform ?? process.platform
   const allowL0 = opts.l0Degrade !== false
   const embedRequested = opts.embed === true
 
