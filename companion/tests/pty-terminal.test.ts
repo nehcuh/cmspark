@@ -888,10 +888,12 @@ test("#584 win32 agent embed: explicit absolute file keeps [] default argv", () 
     cwd: tempHome,
     cols: 80,
     rows: 24,
-    file: "C:\\agents\\kimi.exe",
+    // 双平台都 absolute 的路径：测试经 platformOverride 模拟 win32，但 path 模块
+    // 跟宿主走（linux CI 的 posix isAbsolute 拒 "C:\..."）。argv 断言与盘符无关。
+    file: "/opt/agents/kimi.exe",
     send: () => {},
   })
   assert.equal(r.ok, true, JSON.stringify(r))
-  assert.deepEqual(calls[0], { file: "C:\\agents\\kimi.exe", args: [] })
+  assert.deepEqual(calls[0], { file: "/opt/agents/kimi.exe", args: [] })
   pty.__testResetPtySessions()
 })
