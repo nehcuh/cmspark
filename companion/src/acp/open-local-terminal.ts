@@ -77,6 +77,11 @@ export type OpenLocalTerminalOpts = {
    * `embed === true`; undefined records under the empty-string key.
    */
   threadId?: string
+  /**
+   * #584: 平台注入口（仅测试）——缺省 process.platform。平台闸直接读宿主值
+   * 是既有局限；给测试一个不依赖宿主 OS 的口子，避免用例在 CI 平台上整体 skip。
+   */
+  platform?: NodeJS.Platform
 }
 
 export type OpenLocalTerminalResult = {
@@ -1211,7 +1216,7 @@ export function __testSetOuterOpeners(overrides?: Partial<OuterTerminalOpeners>)
 export async function openLocalTerminalForAgent(
   opts: OpenLocalTerminalOpts,
 ): Promise<OpenLocalTerminalResult> {
-  const platform = process.platform
+  const platform = opts.platform ?? process.platform
   const allowL0 = opts.l0Degrade !== false
   const embedRequested = opts.embed === true
 
@@ -1220,7 +1225,9 @@ export async function openLocalTerminalForAgent(
   // terminal, so opening Alacritty/Terminal.app instead would be a different feature than the one
   // they chose (and would contradict the recorded intent).
   if (embedRequested) {
-    if (platform !== "darwin") {
+    // #584: win32 放行（与 pty/session.ts 的平台闸同口径）——嵌入意图仍走
+    // RECORD-ONLY 登记 + terminal.open 认领，平台无关；Linux 保持 unsupported。
+    if (platform !== "darwin" && platform !== "win32") {
       return { ok: false, platform, detail: "unsupported" }
     }
     if (getConfig().embedded_terminal?.enabled !== true) {

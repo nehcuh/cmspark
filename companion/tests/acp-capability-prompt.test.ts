@@ -82,3 +82,20 @@ test("chat exposes the actual coding handoff and embedded terminal capabilities"
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("#584 buildCodingHandoffContext: win32 + enabled 如实宣称网页终端可用", async () => {
+  const { buildCodingHandoffContext } = await import("../src/acp/capability-context")
+  const cfg = {
+    acp: { enabled: true },
+    embedded_terminal: { enabled: true },
+    coding_handoff: { open_local_terminal: true },
+  } as any
+  const tools = new Set(["acp_list_agents", "acp_propose_session", "acp_start_session"])
+  const win32 = buildCodingHandoffContext(cfg, "win32", tools)
+  assert.match(win32, /网页终端已启用/, "win32 must advertise the embedded terminal (#584)")
+  assert.doesNotMatch(win32, /需要 macOS/, "stale darwin-only claim would make the model deny the capability")
+  const darwin = buildCodingHandoffContext(cfg, "darwin", tools)
+  assert.match(darwin, /网页终端已启用/)
+  const linux = buildCodingHandoffContext(cfg, "linux", tools)
+  assert.match(linux, /需要 macOS \/ Windows/, "linux stays unsupported and the copy says so")
+})

@@ -177,7 +177,7 @@ export function TerminalApp() {
           subData.dispose() // pi NIT-2：closed 后不再发 input
           setStatus(frame.error ? "error" : "closed")
           if (frame.error) setDetail(frame.error)
-          else if (frame.code === "unsupported") setDetail("当前平台暂不支持内嵌终端（首发仅 macOS）")
+          else if (frame.code === "unsupported") setDetail("当前平台暂不支持内嵌终端（支持 macOS / Windows，Linux 另票）")
           else if (typeof frame.code === "number") setDetail(`进程退出码 ${frame.code}`)
           break
         }

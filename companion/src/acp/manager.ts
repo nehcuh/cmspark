@@ -251,7 +251,10 @@ export class AcpManager {
     // embedded terminal is NOT had their outer terminal cancelled: without eligibility this call
     // behaves exactly as it did before.
     const embedEligible =
-      getConfig().embedded_terminal?.enabled === true && process.platform === "darwin"
+      getConfig().embedded_terminal?.enabled === true &&
+      // #584: win32 放行——与 pty/session、pty/handler、open-local-terminal 的
+      // 平台闸同口径。这里是 embed:true 的唯一生产者；不放行则下游三闸全是死代码。
+      (process.platform === "darwin" || process.platform === "win32")
     this.emitProgress(
       session,
       embedEligible ? "Mode C: recording embedded terminal intent…" : "Mode C: opening host terminal…",

@@ -196,7 +196,8 @@ test("#432 open: L2 denied does not spawn; approved opens", async () => {
   )
   assert.equal(ok.type, "terminal.opened")
   assert.equal(ok.platform, "darwin")
-  assert.equal(ok.pid, 0)
+  // #584: pid 为 0（未知，ConPTY 子进程未就绪）时如实缺省字段，不上报假 pid。
+  assert.equal(ok.pid, undefined)
   assert.ok(lastPty)
 })
 
@@ -849,4 +850,77 @@ test("#506 pty spawn: onPtyAgentSpawned fires for an explicit executable, never 
     if (previousShell === undefined) delete process.env.SHELL
     else process.env.SHELL = previousShell
   }
+})
+
+// --- #584: win32 内嵌终端（闸放行 + 平台缺省） ---
+
+test("#584 win32 gate admits spawn: default shell powershell.exe, no login arg", () => {
+  pty.__testResetPtySessions()
+  pty.__testSetPtyPlatform("win32")
+  const calls: Array<{ file: string; args: string[] }> = []
+  pty.__testSetPtySpawn((file, args) => {
+    calls.push({ file, args })
+    lastPty = new MockPty()
+    return lastPty
+  })
+  const r = pty.spawnPtySession({ id: "win-default", cwd: tempHome, cols: 80, rows: 24, send: () => {} })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].file, "powershell.exe", "win32 must default to PowerShell, not $SHELL//bin/zsh")
+  assert.equal(
+    calls[0].args.length,
+    0,
+    "win32 default must NOT carry the bash `-l` login arg (PowerShell has no such parameter)",
+  )
+  pty.__testResetPtySessions()
+})
+
+test("#584 win32 agent embed: explicit absolute file keeps [] default argv", () => {
+  pty.__testResetPtySessions()
+  pty.__testSetPtyPlatform("win32")
+  const calls: Array<{ file: string; args: string[] }> = []
+  pty.__testSetPtySpawn((file, args) => {
+    calls.push({ file, args })
+    lastPty = new MockPty()
+    return lastPty
+  })
+  const r = pty.spawnPtySession({
+    id: "win-agent",
+    cwd: tempHome,
+    cols: 80,
+    rows: 24,
+    // 双平台都 absolute 的路径：测试经 platformOverride 模拟 win32，但 path 模块
+    // 跟宿主走（linux CI 的 posix isAbsolute 拒 "C:\..."）。argv 断言与盘符无关。
+    file: "/opt/agents/kimi.exe",
+    send: () => {},
+  })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.deepEqual(calls[0], { file: "/opt/agents/kimi.exe", args: [] })
+  pty.__testResetPtySessions()
+})
+
+test("#584 win32 terminal.open passes the handler gate and reports platform win32", async () => {
+  pty.__testResetPtySessions()
+  pty.__testSetPtyPlatform("win32")
+  pty.__testSetPtySpawn((_file, _args) => {
+    lastPty = new MockPty()
+    return lastPty
+  })
+  const svc = services()
+  const frames: unknown[] = []
+  const p = panel({ frames })
+  const r1 = await handleMessage(
+    { type: "terminal.open", id: "w1", cols: 80, rows: 24, user_gesture: true },
+    svc,
+    p as never,
+  )
+  assert.equal(r1.type, "terminal.opened", JSON.stringify(r1))
+  assert.equal((r1 as any).platform, "win32", "opened frame must report the real host platform (#584)")
+  // owner 绑定：close 必须来自 open 的同一 peer；closed 帧发给 owner 的
+  // sendToExtension（同步回执只是 terminal.ok）。
+  const closeReply = await handleMessage({ type: "terminal.close", id: "w1" }, svc, p as never)
+  assert.equal(closeReply.type, "terminal.ok", JSON.stringify(closeReply))
+  assert.equal(lastPty?.killed, true, "close must kill the pty")
+  assert.ok(frames.some((f: any) => f.type === "terminal.closed"), "terminal.closed frame must reach the client")
+  pty.__testResetPtySessions()
 })

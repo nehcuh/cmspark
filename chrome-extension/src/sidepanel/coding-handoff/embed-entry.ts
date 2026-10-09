@@ -20,9 +20,9 @@ export type EmbeddedTerminalConfig =
 /**
  * Gate for the Side Panel「在本插件打开终端」entry (config half).
  *
- * The darwin half is `isDarwin()` below: the button is shown on `enabled && isDarwin()`.
- * The companion still refuses a non-darwin host with `unsupported`
- * (内嵌终端仅支持 macOS) — this is a UI-hiding gate, NOT a security boundary.
+ * The platform half is `isEmbeddedTerminalSupported()` below: the button is shown on
+ * `enabled && isEmbeddedTerminalSupported()`. #584: the companion admits macOS AND Windows
+ * (Linux stays `unsupported`) — this is a UI-hiding gate, NOT a security boundary.
  */
 export function shouldShowEmbeddedTerminalEntry(config: EmbeddedTerminalConfig): boolean {
   return config?.embedded_terminal?.enabled === true
@@ -65,6 +65,34 @@ export function isDarwin(env?: PlatformEnv | null): boolean {
   const ua = nonEmptyString(e.userAgent)
   if (ua) return /Macintosh/.test(ua) && !/iPhone|iPad|iPod/.test(ua)
   return false
+}
+
+/** Same rungs as {@link isDarwin}, matched against Windows signals. */
+function isWin32(env?: PlatformEnv | null): boolean {
+  const e: PlatformEnv | null =
+    env === undefined
+      ? typeof navigator === "undefined"
+        ? null
+        : (navigator as PlatformEnv)
+      : env
+  if (!e) return false
+  const uadp = nonEmptyString(e.userAgentData?.platform)
+  if (uadp) return /^win/i.test(uadp)
+  const platform = nonEmptyString(e.platform)
+  if (platform) return /^win/i.test(platform)
+  const ua = nonEmptyString(e.userAgent)
+  if (ua) return /Windows/.test(ua)
+  return false
+}
+
+/**
+ * #584: does this host's platform sit behind a companion embed gate that is OPEN?
+ * macOS 与 Windows 都已放行（Linux 仍 `unsupported`）。Same fail-closed contract
+ * as `isDarwin`: anything inconclusive is `false` — never promise an embed the
+ * companion would refuse. NOT a security boundary — the companion re-checks.
+ */
+export function isEmbeddedTerminalSupported(env?: PlatformEnv | null): boolean {
+  return isDarwin(env) || isWin32(env)
 }
 
 /** Mode C host-terminal outcome, as emitted by the companion (`local_terminal`). */

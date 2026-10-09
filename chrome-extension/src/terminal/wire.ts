@@ -23,7 +23,7 @@ export type TerminalClientFrame =
 // --- companion → client ---
 
 export type TerminalServerFrame =
-  | { type: "terminal.opened"; id: string; pid: number; platform: string; review_id?: string; review_prompt?: string }
+  | { type: "terminal.opened"; id: string; pid?: number; platform: string; review_id?: string; review_prompt?: string }
   | { type: "terminal.review.received"; id: string; receipt_id: string; review_id: string }
   /** 扩展级错误（无会话 id，id=""）：busy 拒 / WS 未连 / 开门超时。与 closed 分开——closed 是某会话终态，error 是「连会话都没成立」。 */
   | { type: "terminal.error"; id: string; code: string; error: string }
@@ -71,11 +71,13 @@ export function parseTerminalServerFrame(raw: unknown): TerminalServerFrame | nu
   if (!id) return null
   switch (type) {
     case "terminal.opened": {
+      // #584: ConPTY 的子进程在 spawn 返回后才创建——companion 在 pid 未知（0）时
+      // 如实缺省该字段，wire 不再因此丢帧。
       const pid = asInt(o.pid)
       const platform = asStr(o.platform)
-      if (pid == null || !platform) return null
+      if (!platform || (o.pid != null && pid == null)) return null
       const review_id = asStr(o.review_id), review_prompt = asStr(o.review_prompt)
-      return { type, id, pid, platform, ...(review_id && review_prompt && review_prompt.length <= 512 * 1024 ? { review_id, review_prompt } : {}) }
+      return { type, id, ...(pid != null ? { pid } : {}), platform, ...(review_id && review_prompt && review_prompt.length <= 512 * 1024 ? { review_id, review_prompt } : {}) }
     }
     case "terminal.review.received": {
       const receipt_id = asStr(o.receipt_id), review_id = asStr(o.review_id)

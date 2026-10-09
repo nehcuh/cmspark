@@ -29,6 +29,7 @@ import {
   planWindowsStartSpawn,
   openWindowsWithPref,
   formatModeCOpenedLabel,
+  openLocalTerminalForAgent,
   type WinDetachedSpawnFn,
 } from "../src/acp/open-local-terminal"
 import { windowsCmdExePath, windowsPowerShellExePath, writeExclusiveUtf8 } from "../src/acp/win-spawn"
@@ -848,5 +849,27 @@ describe("path.isAbsolute matrix (platform)", () => {
     const good = path.resolve("/opt/agent")
     assert.equal(path.isAbsolute(good), true)
     assert.equal(rejectNonAbsoluteCommand(good), null)
+  })
+})
+
+describe("#584 embed platform gate（注入 platform，三平台用例在任何宿主都跑）", () => {
+  const base = { agentId: "kimi", command: process.execPath, cwd: process.cwd(), embed: true }
+
+  it("win32 passes the gate (refusals past it are never 'unsupported')", async () => {
+    const r = await openLocalTerminalForAgent({ ...base, platform: "win32" } as Parameters<typeof openLocalTerminalForAgent>[0])
+    assert.equal(r.ok, false, "no intent recorder wired in this unit test — gate-past refusal expected")
+    assert.notEqual((r as { detail?: string }).detail, "unsupported", "win32 must not be refused by the platform gate (#584)")
+  })
+
+  it("darwin passes the gate", async () => {
+    const r = await openLocalTerminalForAgent({ ...base, platform: "darwin" } as Parameters<typeof openLocalTerminalForAgent>[0])
+    assert.equal(r.ok, false, "no intent recorder wired in this unit test — gate-past refusal expected")
+    assert.notEqual((r as { detail?: string }).detail, "unsupported")
+  })
+
+  it("linux stays unsupported", async () => {
+    const r = await openLocalTerminalForAgent({ ...base, platform: "linux" } as Parameters<typeof openLocalTerminalForAgent>[0])
+    assert.equal(r.ok, false)
+    assert.equal((r as { detail?: string }).detail, "unsupported", "linux must stay unsupported (#584 scope: darwin + win32 only)")
   })
 })
