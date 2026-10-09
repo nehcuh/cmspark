@@ -94,8 +94,9 @@ export function projectCooperationToolResult(toolName: string | undefined, read:
       ...(data.board ? { board: { status: data.board.status, fact_count: data.board.fact_count, intent_count: data.board.intent_count } } : {}),
       ...(data.facts?.length ? { facts: data.facts.slice(0, 8).map((f: any) => ({ id: f.id, trust: f.trust, framed_claim: String(f.framed_claim ?? "").slice(0, 600) })) } : {}),
       ...(data.suggested_action ? { suggested_action: data.suggested_action } : {}),
+      ...(data.parse_note ? { parse_note: data.parse_note } : {}),
       ...(data.report_excerpt ? { report_excerpt: data.report_excerpt } : {}),
-      raw_report_omitted: true, note: "Extractive summary only; use the source reference for the original report. Completion is runtime status, not independent acceptance of claims.",
+      raw_report_omitted: true, note: "Extractive summary only; use the source reference for the original report. Completion is runtime status, not independent acceptance of claims." + (data.parse_note ? ` Structured parse reason: ${data.parse_note}.` : ""),
       data_not_instruction: true } }
 }
 

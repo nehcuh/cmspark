@@ -187,11 +187,11 @@ export type HandbackIntentDraft = z.infer<typeof HandbackIntentDraftSchema>
 
 export const HandbackPayloadSchema = z.object({
   /** Exact schema_version=1 only until a migration path exists (code gate F1).
-   *  容忍 LLM 写成字符串 "1"（9lvswp 实测的 schema 近失之一）——等价收 1。 */
-  schema_version: z.preprocess(
-    (v) => (v === `${BOARD_SCHEMA_VERSION}` ? BOARD_SCHEMA_VERSION : v),
-    z.literal(BOARD_SCHEMA_VERSION),
-  ),
+   *  字符串 "1" 刻意不容忍：worker 报告会原样回显提交模板（fenced JSON），容忍
+   *  会让模板回显静默变成结构化空 handback 并被幂等 fold、永久挡住真实发现
+   *  （评审 F1'，2026-10-09）。9lvswp 的真实失败（缺 schema_version）由 prose
+   *  兜底按可恢复路径处理，不需要这里放松。 */
+  schema_version: z.literal(BOARD_SCHEMA_VERSION),
   facts: z.array(HandbackFactDraftSchema).max(BOARD_CAPS.max_facts).optional().default([]),
   intents: z.array(HandbackIntentDraftSchema).max(BOARD_CAPS.max_intents).optional().default([]),
   summary: z.string().max(BOARD_CAPS.max_summary_chars).optional().nullable(),
@@ -302,29 +302,23 @@ export function parseHandbackPayload(raw: unknown):
     // Prefer fenced ```json``` over whole-string / first-brace (code gate F1).
     let parsed: unknown
     const fenceMatches = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)]
-    if (fenceMatches.length > 0) {
-      // Prefer last fenced block that parses as object (workers often put JSON last).
-      let fencedOk: unknown | undefined
-      for (let i = fenceMatches.length - 1; i >= 0; i--) {
-        const body = fenceMatches[i][1].trim()
-        try {
-          const p = JSON.parse(body)
-          if (p && typeof p === "object" && !Array.isArray(p)) {
-            fencedOk = p
-            break
-          }
-        } catch {
-          /* try earlier fence */
+    // 评审修复④（2026-10-09）：从后往前**逐个尝试**可解析成对象的 fence，取第一个
+    // 通过 schema 校验的。旧逻辑只取最后一个可解析 fence——合法 handback 之后再
+    // 引用任何可解析 JSON（如规范示例），示例会顶掉 handback：此前硬失败、首版
+    // 修复后 prose 降级，结构化都丢。没有任何合法 handback fence 时降级走无 fence
+    // 同款路径：整串 parse → 首个对象提取 → prose-only——ibg908（非 JSON fence）
+    // / 9lvswp（示例 JSON 缺 schema_version）双实测的三连熔断断轮不再发生。
+    for (let i = fenceMatches.length - 1; i >= 0; i--) {
+      const body = fenceMatches[i][1].trim()
+      try {
+        const p = JSON.parse(body)
+        if (p && typeof p === "object" && !Array.isArray(p)) {
+          const r = parseHandbackPayload(p)
+          if (r.ok) return r
         }
+      } catch {
+        /* try earlier fence */
       }
-      if (fencedOk !== undefined) {
-        return parseHandbackPayload(fencedOk)
-      }
-      // 评审修复（ibg908 / 9lvswp 双实测）：fence 全部解析不出 JSON 对象——YAML
-      // 示例/规范摘录/表格是研究报告的常态——不再硬失败。旧分支返回 "fenced JSON
-      // present but not a valid handback object"，让 0.6.8「markdown 报告 = 成功
-      // 收取」的 prose 路径不可达；父 LLM 只会原样重试同一 payload → 三连熔断断轮。
-      // 降级走无 fence 同款路径：整串 parse → 首个对象提取 → prose-only。
     }
     {
       try {

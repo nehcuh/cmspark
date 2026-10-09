@@ -271,11 +271,78 @@ test("collect_handback: 报告引用的 JSON 示例缺 schema_version 降级 pro
   assert.ok(!readAudit(ap).some((e) => e.type === "board.handback_rejected"))
 })
 
-test("parseHandbackPayload: schema_version 字符串 \"1\" 等价收 1", async () => {
+test("parseHandbackPayload: schema_version 字符串 \"1\" 不容忍（模板回显假阳性面——评审 F1'）", async () => {
   const { parseHandbackPayload } = await import("../src/board/schema")
   const r = parseHandbackPayload({ schema_version: "1", empty_ok: true, summary: "no findings" })
-  assert.equal(r.ok, true, r.ok ? undefined : r.error)
-  if (r.ok) assert.equal(r.payload.schema_version, 1)
+  assert.equal(r.ok, false, "string schema_version must stay rejected — template echoes would fold idempotently")
+  if (!r.ok) {
+    assert.match(r.error, /schema_version/)
+    assert.equal(r.error_code, HANDBACK_MISSING_STRUCTURE)
+  }
+})
+
+test("collect_handback: 合法 handback 之后引用的 JSON 示例不再顶掉 handback（评审 F4'）", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-handback-then-example")
+  tm.update(parent.id, { board_mode: true } as any)
+  const ap = auditPath()
+  const report = [
+    "结论如下。",
+    "",
+    "```json",
+    "{",
+    '  "schema_version": 1,',
+    '  "facts": [',
+    '    { "claim": "规范已发布但生态未动", "evidence": [{ "kind": "quote", "value": "released 2026-09-24" }], "tags": ["maturity"], "severity": "medium" }',
+    "  ],",
+    '  "summary": "可落地性中等"',
+    "}",
+    "```",
+    "",
+    "规范原文示例（研究对象，非 handback）：",
+    "",
+    "```json",
+    '{ "schemaVersion": "3", "kind": "workload" }',
+    "```",
+  ].join("\n")
+  const worker = seedWorker(tm, parent.id, report)
+  const r = await collectWorkerHandback(tm, {
+    workerId: worker.id,
+    callerThreadId: parent.id,
+    auditPath: ap,
+  })
+  assert.equal(r.success, true, r.success ? undefined : r.error)
+  if (!r.success) return
+  assert.notEqual(r.data.structured, false, "real handback must not be demoted by the trailing example fence")
+  assert.equal((r.data.facts ?? []).length, 1)
+  assert.equal(readBoard(tm, parent.id)?.facts.length, 1, "the real fact must reach the board")
+})
+
+test("collect_handback: 空 structured handback 未声明 empty_ok → 语义拒绝如实披露，不叫 prose report（评审 F2'）", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-semantic-empty")
+  tm.update(parent.id, { board_mode: true } as any)
+  const ap = auditPath()
+  const worker = seedWorker(
+    tm,
+    parent.id,
+    '```json\n{ "schema_version": 1, "facts": [], "intents": [], "summary": "nothing found" }\n```',
+  )
+  const r = await collectWorkerHandback(tm, {
+    workerId: worker.id,
+    callerThreadId: parent.id,
+    auditPath: ap,
+  })
+  assert.equal(r.success, true, r.success ? undefined : r.error)
+  if (!r.success) return
+  assert.equal(r.data.structured, false, "degraded read keeps the turn alive (old path burned the breaker)")
+  assert.match(String(r.data.note), /semantic gate/)
+  assert.match(String(r.data.note), /empty_ok/, "repair hint preserved")
+  assert.match(String(r.data.parse_note ?? ""), /empty_ok/)
+  const prose = readAudit(ap).find((e) => e.type === "board.handback_prose") as any
+  assert.ok(prose, "audit event present")
+  assert.equal(prose.payload_kind, "structured_empty", "audit must not call a structured payload a prose report")
+  assert.ok(!readAudit(ap).some((e) => e.type === "board.handback_rejected"))
 })
 
 test("collect_handback structured JSON merges facts into host board", async () => {
