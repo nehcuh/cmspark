@@ -850,3 +850,48 @@ test("#506 pty spawn: onPtyAgentSpawned fires for an explicit executable, never 
     else process.env.SHELL = previousShell
   }
 })
+
+// --- #584: win32 内嵌终端（闸放行 + 平台缺省） ---
+
+test("#584 win32 gate admits spawn: default shell powershell.exe, no login arg", () => {
+  pty.__testResetPtySessions()
+  pty.__testSetPtyPlatform("win32")
+  const calls: Array<{ file: string; args: string[] }> = []
+  pty.__testSetPtySpawn((file, args) => {
+    calls.push({ file, args })
+    lastPty = new MockPty()
+    return lastPty
+  })
+  const r = pty.spawnPtySession({ id: "win-default", cwd: tempHome, cols: 80, rows: 24, send: () => {} })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].file, "powershell.exe", "win32 must default to PowerShell, not $SHELL//bin/zsh")
+  assert.equal(
+    calls[0].args.length,
+    0,
+    "win32 default must NOT carry the bash `-l` login arg (PowerShell has no such parameter)",
+  )
+  pty.__testResetPtySessions()
+})
+
+test("#584 win32 agent embed: explicit absolute file keeps [] default argv", () => {
+  pty.__testResetPtySessions()
+  pty.__testSetPtyPlatform("win32")
+  const calls: Array<{ file: string; args: string[] }> = []
+  pty.__testSetPtySpawn((file, args) => {
+    calls.push({ file, args })
+    lastPty = new MockPty()
+    return lastPty
+  })
+  const r = pty.spawnPtySession({
+    id: "win-agent",
+    cwd: tempHome,
+    cols: 80,
+    rows: 24,
+    file: "C:\\agents\\kimi.exe",
+    send: () => {},
+  })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.deepEqual(calls[0], { file: "C:\\agents\\kimi.exe", args: [] })
+  pty.__testResetPtySessions()
+})

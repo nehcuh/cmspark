@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **编程接力的内嵌终端（网页终端）支持 Windows**（[#584](https://github.com/nehcuh/cmspark/issues/584)）：`pty/session` 与 `pty/handler` 的 darwin 硬闸放行 win32（`@lydell/node-pty` 经 ConPTY 原生可用，真机实测 PowerShell 回显全链路通过）；win32 缺省 shell 为 PowerShell、不带 bash 主义的 `-l` 登录参数、整段忽略 `$SHELL`（MSYS 注入的 POSIX 路径在 win32 spawn 必 ENOENT）；编程接力「嵌入内嵌终端」入口同步放行（仍走 RECORD-ONLY 意图登记 + `terminal.open` 认领，零新协议）；`terminal.opened` 帧的 `platform` 字段如实上报宿主平台（此前写死 darwin）；Linux 保持 unsupported 另票；默认关不动摇（`embedded_terminal.enabled` 仍须显式开启）。
 - collect_handback 不再把「有点像 handback 的报告」当硬失败：报告含非 JSON 代码块（YAML 示例/规范摘录）时降级走无 fence 路径；fence 改为从后往前逐个尝试、取第一个通过 schema 校验的——合法 handback 之后引用的 JSON 示例不再顶掉 handback；结构化解析失败（含引用示例缺 `schema_version` 等 schema 近失、empty_ok 语义拒绝）一律按 0.6.8 决策降级 prose 成功收取（`structured=false`），解析原因经 `parse_note` 穿透 cooperation 投影到父对话并如实入审计；`schema_version` 为字符串 "1" 刻意不容忍（模板回显会被幂等 fold，永久挡住真实发现）。`ibg908` / `9lvswp` 双实测的三连熔断断轮消除。
 
 ## [0.6.12] — 2026-10-09

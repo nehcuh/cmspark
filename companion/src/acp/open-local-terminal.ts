@@ -1220,7 +1220,9 @@ export async function openLocalTerminalForAgent(
   // terminal, so opening Alacritty/Terminal.app instead would be a different feature than the one
   // they chose (and would contradict the recorded intent).
   if (embedRequested) {
-    if (platform !== "darwin") {
+    // #584: win32 放行（与 pty/session.ts 的平台闸同口径）——嵌入意图仍走
+    // RECORD-ONLY 登记 + terminal.open 认领，平台无关；Linux 保持 unsupported。
+    if (platform !== "darwin" && platform !== "win32") {
       return { ok: false, platform, detail: "unsupported" }
     }
     if (getConfig().embedded_terminal?.enabled !== true) {

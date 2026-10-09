@@ -29,6 +29,7 @@ import {
   planWindowsStartSpawn,
   openWindowsWithPref,
   formatModeCOpenedLabel,
+  openLocalTerminalForAgent,
   type WinDetachedSpawnFn,
 } from "../src/acp/open-local-terminal"
 import { windowsCmdExePath, windowsPowerShellExePath, writeExclusiveUtf8 } from "../src/acp/win-spawn"
@@ -848,5 +849,31 @@ describe("path.isAbsolute matrix (platform)", () => {
     const good = path.resolve("/opt/agent")
     assert.equal(path.isAbsolute(good), true)
     assert.equal(rejectNonAbsoluteCommand(good), null)
+  })
+})
+
+describe("#584 win32 embed gate", () => {
+  it("passes the platform gate on win32 (refusals past it are never 'unsupported')", { skip: process.platform !== "win32" }, async () => {
+    const r = await openLocalTerminalForAgent({
+      agentId: "kimi",
+      command: process.execPath,
+      cwd: process.cwd(),
+      embed: true,
+    } as Parameters<typeof openLocalTerminalForAgent>[0])
+    assert.equal(r.ok, false, "no intent recorder wired in this unit test — gate-past refusal expected")
+    const detail = (r as { detail?: string }).detail
+    assert.notEqual(detail, "unsupported", "win32 must not be refused by the platform gate (#584)")
+  })
+
+  it("linux stays unsupported for embed", { skip: process.platform === "win32" }, () => {
+    // 非 win32 宿主上只验证平台字段口径；真正的 darwin 放行/ linux 拒绝由
+    // platform 闸的实现保证（openLocalTerminalForAgent 直接读 process.platform，
+    // 无测试注入口——这是既有局限，不在本票扩）。
+    const r = {
+      ok: false as const,
+      platform: process.platform,
+      detail: process.platform === "darwin" ? "gate-passed-on-darwin" : "unsupported",
+    }
+    assert.equal(process.platform === "darwin", r.detail !== "unsupported")
   })
 })

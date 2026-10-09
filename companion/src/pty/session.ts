@@ -304,10 +304,13 @@ export function spawnPtySession(opts: {
   owner?: unknown
   send: (frame: Record<string, unknown>) => void
 }): { ok: true; pid: number } | { ok: false; error: string; code?: TerminalClosedCode } {
-  if (ptyHostPlatform() !== "darwin") {
+  const hostPlatform = ptyHostPlatform()
+  // #584: win32 放行——@lydell/node-pty 经 ConPTY 在 Windows 原生可用（本机实测
+  // spawn powershell.exe 成功）；Linux 仍 unsupported 另票。
+  if (hostPlatform !== "darwin" && hostPlatform !== "win32") {
     return {
       ok: false,
-      error: "内嵌终端仅支持 macOS（darwin）；Windows/Linux 另票。",
+      error: "内嵌终端仅支持 macOS / Windows（Linux 另票）。",
       code: "unsupported",
     }
   }
@@ -340,10 +343,17 @@ export function spawnPtySession(opts: {
   // an unrequested login shell. Refused before env work and before any spawnFn call.
   let file: string
   if (opts.file === undefined) {
-    // `$SHELL` is trimmed ONCE and the trimmed value is what spawns: `" /bin/bash "` cannot exist
-    // as a path, so trimming only for the emptiness check would guarantee ENOENT.
-    const shell = process.env.SHELL?.trim()
-    file = shell ? shell : "/bin/zsh"
+    if (hostPlatform === "win32") {
+      // #584: Windows 没有 `$SHELL` 惯例——MSYS/Git-Bash 反而会注入 POSIX 路径
+      // （如 /usr/bin/bash），在 win32 spawn 必 ENOENT，故整段忽略 `$SHELL`，
+      // 缺省 PowerShell（node-pty 直收 PATH 裸名）。
+      file = "powershell.exe"
+    } else {
+      // `$SHELL` is trimmed ONCE and the trimmed value is what spawns: `" /bin/bash "` cannot exist
+      // as a path, so trimming only for the emptiness check would guarantee ENOENT.
+      const shell = process.env.SHELL?.trim()
+      file = shell ? shell : "/bin/zsh"
+    }
   } else if (typeof opts.file === "string" && opts.file.length > 0 && isAbsolute(opts.file)) {
     // Used exactly as given: no trim/normalization of a malformed supplied path. This no-trim rule
     // deliberately diverges from `rejectNonAbsoluteCommand` (src/acp/open-local-terminal.ts), which
@@ -365,7 +375,9 @@ export function spawnPtySession(opts: {
   // loudly before spawning.
   let args: string[]
   if (opts.args === undefined) {
-    args = hasFile ? [] : ["-l"]
+    // #584: `-l` 是 login-shell 的 bash 主义，PowerShell 无此参数——win32 缺省
+    // argv 与「显式可执行文件」同为 []。
+    args = hasFile || hostPlatform === "win32" ? [] : ["-l"]
   } else if (Array.isArray(opts.args)) {
     args = opts.args.filter((a): a is string => typeof a === "string")
     // An empty argv entry is refused, consistently with the empty-`file` rule above: `exec` would
