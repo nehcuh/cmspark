@@ -21,14 +21,21 @@ test("b64 roundtrip is UTF-8 safe (CJK / emoji / control)", () => {
   }
 })
 
-test("parse terminal.opened requires pid+platform", () => {
+test("parse terminal.opened requires platform; pid optional (#584: ConPTY pid 异步就绪时如实缺省)", () => {
   assert.deepEqual(parseTerminalServerFrame({ type: "terminal.opened", id: "t1", pid: 42, platform: "darwin" }), {
     type: "terminal.opened",
     id: "t1",
     pid: 42,
     platform: "darwin",
   })
-  assert.equal(parseTerminalServerFrame({ type: "terminal.opened", id: "t1", platform: "darwin" }), null)
+  // #584: pid 缺省（ConPTY 子进程未就绪）不再丢帧。
+  assert.deepEqual(parseTerminalServerFrame({ type: "terminal.opened", id: "t1", platform: "win32" }), {
+    type: "terminal.opened",
+    id: "t1",
+    platform: "win32",
+  })
+  // pid 存在但不是整数 → 仍拒（类型污染防线不变）。
+  assert.equal(parseTerminalServerFrame({ type: "terminal.opened", id: "t1", pid: "x", platform: "darwin" }), null)
   assert.equal(parseTerminalServerFrame({ type: "terminal.opened", id: "", pid: 1, platform: "darwin" }), null)
 })
 
