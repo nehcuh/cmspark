@@ -202,7 +202,9 @@ test("panel renders the entry through the gate, label from copy (R1/R2)", () => 
 test("panel opener is thread-bound and uses the existing terminal.open_tab message (R3/R7a)", () => {
   const panel = src(PANEL)
   const sends = [...panel.matchAll(/type:\s*"terminal\.open_tab"/g)]
-  assert.equal(sends.length, 1, "exactly one open_tab call site")
+  // #586: 恰两处合法 call site——①会话级认领（thread 绑定 embed intent）
+  // ②常驻独立终端页（无 thread，纯登录 shell，同设置区按钮）。出现第三处 = 新表面未过审。
+  assert.equal(sends.length, 2, "thread-bound session opener + #586 persistent entry, nothing else")
   const at = sends[0].index!
   // The companion keys the embed intent by THREAD id and `terminal.open` claims it with the
   // same key; a thread-less open lands the user on a plain login shell.
@@ -573,5 +575,22 @@ test("#584: isEmbeddedTerminalSupported admits macOS + Windows, fail-closed else
     isEmbeddedTerminalSupported({ userAgentData: { platform: "" }, platform: "", userAgent: "" }),
     false,
     "empty signals fail closed",
+  )
+})
+
+test("#586: 常驻内嵌终端入口——gate 不要求 embed_intent，点击发 terminal.open_tab", () => {
+  // gate 与会话级按钮同口径（enabled + 支持的平台），但**不**要求
+  // embed_intent / embedThreadId——不依赖会话，随时可开独立终端页。
+  assert.match(
+    src(PANEL),
+    /const showPersistentTerminalEntry =\s*\n?\s*shouldShowEmbeddedTerminalEntry\(embeddedTerminalConfig\) &&\s*\n?\s*isEmbeddedTerminalSupported\(\)/,
+  )
+  assert.match(src(PANEL), /type: "terminal\.open_tab"/)
+  assert.equal(typeof codingHandoffCopy.panelOpenEmbeddedTerminalTab, "string")
+  assert.ok(codingHandoffCopy.panelOpenEmbeddedTerminalTab.length > 0)
+  // 与会话级认领按钮并存且语义分离：认领按钮仍锁在 embed_intent 上。
+  assert.match(
+    src(PANEL),
+    /session\?\.localTerminal === "embed_intent"/,
   )
 })

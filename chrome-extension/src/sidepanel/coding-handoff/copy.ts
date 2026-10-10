@@ -126,6 +126,8 @@ export const codingHandoffCopy = {
    * L2 confirmation stays in the Side Panel FocusBand / coding panel, not on the tab.
    */
   panelOpenEmbeddedTerminal: "在本插件打开终端",
+  /** #586: 常驻入口（不依赖会话）——独立终端页，terminal.open_tab，同设置区按钮。 */
+  panelOpenEmbeddedTerminalTab: "打开内嵌终端页 →",
   panelEmbeddedTerminalHint:
     "打开的是本插件的终端页；请回到侧栏确认后才启动，Agent 自身可能还需先登录。",
 
