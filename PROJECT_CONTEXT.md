@@ -4,21 +4,13 @@
 
 <!-- handoff:start -->
 
-### 2026-10-02 S121 · 网易云 computer use · 站点知识 · 焦点 · 确认
+### 2026-10-10 S122 · 0.6.12/0.6.13 双切点 · worker-cap 收尾 · win32 内嵌终端 · handback 兜底
 
-- **站点知识**：`rw70ik` 四次 `record_experience` 都写成 `name: music-163-com`，文件是 `music-163-com.md` 与 `-2/-3/-4.md`。注入按 name 只取一份。挂载键是浏览器标签 hostname，不是 `mac.app.neteasemusic`。无 `site-op-memory`+`auto`，不进操作记忆。`j2l9u7` 只看到 173 字，仍点「顶部搜索框」→ `ocr:not-found`。
-- **焦点**：截图不 `activate`。点击走 `preferForeground` + `cuActivatePid`。`invokeAx` 未接线。台账 §4 macOS 仍是 Gap。cua 后台是部分动作的真后台，失败码 `background_unavailable`，不抢焦点冒充。
-- **确认**：无「本对话全部免点」。无人值守可免已开坐标 App 的 `host_computer`（8h、默认 30 步/预算，含中途再确认）。`host_app` 与默认 `evaluate` 仍可能问。网易云 `coordinateAllowed: true`。
-- **Next**：未改代码。若修：合并同名站点经验；computer use 按 App 取知识；macOS 后台点击接到执行器。重载扩展。不要提交 `host-integrity.ts`。#568 > #567 > #563。
-- **Do not**：`xattr -cr`、`pgrep -f /Applications/CMspark.app`、换装留 bak、裸 `node --test` 打本机数据目录、把截图不抢焦点说成点击也不抢、把无人值守说成所有弹窗都免。
-
-### 2026-10-02 S120 · 拉取 0.6.11 · 三处 P1 · 本机换装
-
-- **拉取**：`8e74b77b` → `6e0dec82`（84 提交，产品 0.6.11）。五路对抗 + Claude/Kimi 双路 `APPROVE_WITH_NITS`。
-- **已改未提交的行为**：缺标签先分类再拼标题，登记 `TAB_NOT_FOUND`；Windows 后台左键只认 UIA Invoke；`chatCreate` 用 run epoch 写 `last_run_terminal`，领号在第一个 `await` 之前。Pi 要求的双跑行为测试已补。
-- **换装**：`dist-package/CMspark-v0.6.11-macOS.dmg`。`/Applications/CMspark.app` CDHash `167c71c0c34fbfeda80490385f04e199ae09182a`，plist 0.6.11，daemon `127.0.0.1:23401`。无 bak。`host-integrity.ts` 不提交。
-- **CLEARED**：线程 `t569rp` / `w-569-rp` 是裸 `node --test` 写进 `~/.cmspark-agent` 的残留，`run_progress` 为 sticky `null`。用户在这条上让插件播网易云，提案被拒并整轮停止。换新对话。
-- **Next**：重载 `chrome-extension/build/chrome-mv3-prod/`。#568 > #567 > #563 后续。
-- **Do not**：`xattr -cr`、`pgrep -f /Applications/CMspark.app`、换装留 bak、`kimi -p` 后紧跟 `--output-format`、裸 `node --test` 打到本机数据目录、`cp` 不带 `/bin/cp -f` 去还原 CHANGELOG。
+- **合并**：#580（worker-cap 评审修复 F1-F4：回收站占位可见性 / 墙钟回拨钳制 / 双闸文案 SSOT / G7-G11 测试绑定）/ #582（collect_handback prose 兜底：fence 降级 + 逐 fence 尝试 + 全可恢复失败兜底 + parse_note 穿透投影；schema_version 字符串 "1" 刻意不容忍）/ #585（#584 win32 内嵌终端端到端：五处 darwin 闸 + 面板按钮 isEmbeddedTerminalSupported + capability 提示词 + pid 如实缺省）/ #587（#586 面板常驻「打开内嵌终端页 →」入口）。全部经 10-11 agent 多路对抗复审。
+- **切点**：0.6.12（#581/#583）、0.6.13（#588）。锚点 ×9、CLAUDE.md 活切点、GOAL/architecture/code-review-workflow 过时「仅 macOS」表述更正。
+- **换装**：×6 全部 hash 级验证，最终 **v0.6.13**，daemon `:23401`。装后扩展 bundle 含面板常驻入口。
+- **坑**（已入 memory）：评审 verify agent 变异残留工作树（并行互相误判）——workflow 后必 `git status` 核对；gh 大 body POST 间歇 EOF（probe+PATCH）；MSYS hash 前导反斜杠假差；打包产物中文 \u 转义——grep 汉字验证构建是假阴性，用 ASCII 锚点；`package.sh` 构建步骤 cwd 必须仓库根（漂移会静默装旧包）。
+- **Next**：用户 Reload 扩展验收面板「打开内嵌终端页 →」；未立票线索：ibg908 父线程 run 段记录缺口（09-30 spawn 记录缺失）、UI 设置 worker 数（Issue-first）、Linux 内嵌终端另票。
+- **Do not**：拿汉字 grep 构建产物定性新旧；`git checkout --` 未过目的「他人」改动（先 diff 定性再走用户确认）；对 verify agent 只下口头恢复指令就当万事大吉。
 
 <!-- handoff:end -->
