@@ -267,7 +267,7 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 
 - Pack 平台：install / apply / uninstall + snapshot 回滚 + capability 审计日志
 - 企业模块 opt-in：workspace / shell_exec / netsec（community 默认不开放 shell/netsec）
-- **内嵌终端（#432）**：Darwin-only 真 PTY（xterm.js + `@lydell/node-pty`），**默认关**；Windows/Linux 返回 `unsupported`。不是「非目标：交互式 PTY」。
+- **内嵌终端（#432/#584）**：macOS / Windows 真 PTY（xterm.js + `@lydell/node-pty`；#584 起 win32 经 ConPTY），**默认关**；Linux 返回 `unsupported`。不是「非目标：交互式 PTY」。
 - 明确 **非目标**（本阶段）：捆绑 nmap、CWS 默认扫描能力
 
 ### G20. MCP / Computer·Host Use / Multi-Agent·Board / NotebookLM ✅ 已实现（0.3.0）

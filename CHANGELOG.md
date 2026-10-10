@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.6.13] — 2026-10-10
+
+0.6.12 切点之后的补丁，全部围绕**多智能体与编程接力的实测收尾**：Windows 内嵌终端端到端、编程接力面板常驻终端入口、collect_handback 对「像 handback 的报告」的 prose 兜底。版本锚齐 **0.6.13**。不叫 0.7.0（企业双场景未验收）。
+
 - 编程接力面板新增常驻「打开内嵌终端页 →」入口（[#586](https://github.com/nehcuh/cmspark/issues/586)）：不依赖会话、不需要 embed_intent——「内嵌终端」开关开启且平台支持（macOS / Windows）时，随时可从面板工作区一行旁直达独立终端页（复用 `terminal.open_tab`，同设置区按钮）；会话级「在本插件打开终端」认领按钮语义不变（仍一次性、线程绑定）。
 - **编程接力的内嵌终端（网页终端）支持 Windows，端到端**（[#584](https://github.com/nehcuh/cmspark/issues/584)）：五处 darwin 闸同口径放行 win32——`pty/session`、`pty/handler`、`acp/open-local-terminal` embed 早闸、`acp/manager` 的 `embedEligible`（embed:true 唯一生产者，不放行则下游全死代码）、`capability-context` 系统提示词（不再向 Windows 用户宣称「需要 macOS」）；侧栏「在本插件打开终端」按钮改用 `isEmbeddedTerminalSupported()`（macOS / Windows，Linux fail-closed）；win32 缺省 shell 为 PowerShell、不带 bash 主义的 `-l`、整段忽略 `$SHELL`（MSYS 注入的 POSIX 路径在 win32 spawn 必 ENOENT）；`terminal.opened` 帧 `platform` 如实上报、pid 未知时如实缺省（ConPTY 子进程异步就绪，wire 容忍缺省不再丢帧）；设置项文案去掉「仅 macOS」。真机实测（真 node-pty ConPTY + 完整 wire 面）通过。Linux 保持 unsupported 另票；默认关不动摇。
 - collect_handback 不再把「有点像 handback 的报告」当硬失败：报告含非 JSON 代码块（YAML 示例/规范摘录）时降级走无 fence 路径；fence 改为从后往前逐个尝试、取第一个通过 schema 校验的——合法 handback 之后引用的 JSON 示例不再顶掉 handback；结构化解析失败（含引用示例缺 `schema_version` 等 schema 近失、empty_ok 语义拒绝）一律按 0.6.8 决策降级 prose 成功收取（`structured=false`），解析原因经 `parse_note` 穿透 cooperation 投影到父对话并如实入审计；`schema_version` 为字符串 "1" 刻意不容忍（模板回显会被幂等 fold，永久挡住真实发现）。`ibg908` / `9lvswp` 双实测的三连熔断断轮消除。

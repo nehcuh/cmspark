@@ -28,7 +28,7 @@
 
 ## 使用本机编程 Agent（可选）
 
-1. 在设置中启用内嵌终端。当前仅支持 macOS，同一时间一个 PTY。
+1. 在设置中启用内嵌终端。当前支持 macOS / Windows（#584），同一时间一个 PTY。
 2. 在 `code_review_create` / `code_review_read` 工具结果旁点击
    **在终端审阅并回传**。确认窗口展示原任务绑定的仓库与 base/head。
 3. 在终端自行运行已经安装的 Agent。终端加载用户登录 shell，可使用用户
