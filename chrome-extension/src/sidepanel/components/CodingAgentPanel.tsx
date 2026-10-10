@@ -795,6 +795,10 @@ export function CodingAgentPanel({
     isEmbeddedTerminalSupported() &&
     session?.localTerminal === "embed_intent" &&
     !!embedThreadId
+  // #586: 常驻入口——不要求 embed_intent / 会话；平台与开关口径与会话级按钮一致，
+  // 行为是独立终端页（terminal.open_tab，同设置区按钮），不认领任何 embed 意图。
+  const showPersistentTerminalEntry =
+    shouldShowEmbeddedTerminalEntry(embeddedTerminalConfig) && isEmbeddedTerminalSupported()
 
   return (
     <div
@@ -845,6 +849,22 @@ export function CodingAgentPanel({
               {wsBase ? "更换" : "选择…"}
             </button>
           </div>
+          {showPersistentTerminalEntry ? (
+            <div style={styles.ctxItem}>
+              <button
+                type="button"
+                style={styles.linkBtn}
+                title="打开内嵌终端（独立终端页，需在确认台批准）"
+                onClick={() => {
+                  chrome.runtime.sendMessage({ type: "terminal.open_tab" }, () => {
+                    void chrome.runtime.lastError
+                  })
+                }}
+              >
+                {codingHandoffCopy.panelOpenEmbeddedTerminalTab}
+              </button>
+            </div>
+          ) : null}
           {wsBase && gitStatusLine ? (
             <div style={styles.ctxItem} data-git-status aria-label="工作区 git 状态">
               <span
