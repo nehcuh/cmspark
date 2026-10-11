@@ -222,6 +222,13 @@ jobs:
           & scripts/tests/win-sapi-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: "Native Windows, macOS and Linux authorization / process regressions (#605)"
+        shell: bash
+        run: |
+          cd companion
+          npx tsc -p tsconfig.test.json
+          node scripts/run-tests.mjs .test-dist/tests/integration/cross-os-mcp-605.test.js .test-dist/tests/integration/cross-os-process-605.test.js .test-dist/tests/source-services-605.test.js .test-dist/tests/mcp-http-recovery.test.js .test-dist/tests/mcp-stdio-tree.test.js
+
       - name: "Windows reliability and confirmation regressions (#592, #595, #598, #599)"
         if: matrix.os == 'windows-latest'
         shell: pwsh

@@ -1240,9 +1240,9 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         let extensionWs = pickExtensionWsFromAuth(clients, (w) => wsAuth.get(w))
         if (isSummonerSurface(originatingSurface) && !(extensionWs && extensionWs.readyState === WebSocket.OPEN)) {
           try {
-            extensionWs = await ensureExtensionPeerForOverlayConfirm({ existing: extensionWs })
+            extensionWs = await ensureExtensionPeerForOverlayConfirm({ existing: extensionWs, signal: ctx.signal })
           } catch {
-            return { confirmationId: "", approved: false, reason: "timeout" as const }
+            return { confirmationId: "", approved: false, reason: ctx.signal?.aborted ? "denied" as const : "timeout" as const }
           }
         }
 
@@ -1258,6 +1258,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           : hostApp
             ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
             : code
+        if (ctx.signal?.aborted) return { confirmationId: "", approved: false, reason: "denied" as const }
         const tray = getTrayInstance()
         // Tray dialog only when Swift backend can actually show a native
         // confirm (S42 P1 Compat-C5). systray2/readline return a never-resolving
@@ -1618,6 +1619,11 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           const { releaseFlight } = await import("../orchestrator/single-flight")
           releaseFlight(flightReserved, flightOwner)
           flightReserved = null
+        }
+        if (ctx.signal?.aborted) {
+          const result = { success: false as const, error: "Tool confirmation cancelled" }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
         }
         const reason =
           !decision ? "unavailable" : decision.reason === "approved" ? "unavailable" : decision.reason

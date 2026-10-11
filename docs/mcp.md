@@ -96,15 +96,15 @@ CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://mod
 macOS 示例：`args` 末尾用 `"/Users/you"`，`cwd` 同理。
 
 关键点：
-- `args` 里的路径才是 filesystem server **真正允许访问的目录**；`cwd` 只是 npx 进程启动目录。
+- 配置了非空 `roots` 时，roots 是最终授权目录，启动 CLI 也会限制在有效 roots 内；未配置 roots 时，使用 `args` 中的目录。`cwd` 只是进程启动目录。
 - **默认主目录**：未配置任何 allow-dir / roots 时，companion 会注入用户 home（见 `ensureFilesystemAllowlist`）。你当前若已写 `/Users/you` 或 `C:/Users/you`，即已覆盖主目录。
-- **失效路径自愈**：`args` / `roots` 里**已不存在**的目录会在 sanitize 时剔除；若剔除后为空则**重新注入 home**（避免测试/动态 expand 留下的 `/tmp/cmspark-allow-dir-*` 永久打死 server）。
+- **失效路径**：显式 roots 失去最后一个有效目录时会拒绝连接，请恢复目录或修改 roots；不会回退到更宽的 CLI 目录或 home。未配置 roots 的旧 CLI 配置仍会清理失效目录；清理后没有有效 allowlist 时按原有行为使用默认 home。
 - **线程 `tool_whitelist`**：真实工具名为 `mcp__filesystem__…`（server id = config 键名）。历史短写 `mcp__fs__*` 会与 `filesystem` 双向别名匹配。
 - **三旗全自动巡航（产品）**：`auto_approve_dangerous` + `auto_approve_enterprise_tools` + `allow_all_schemes` 同时开启时，**普通线程**的 `tool_whitelist` **立即视为全开**（不必新建对话；worker 仍 HARD_DENY）。未开三旗时，收窄白名单仍硬挡工具；全工具请设 `tool_whitelist: null`。`thread.update` 改白名单对内存中当前线程即时生效（勿只改磁盘 index）。
 - 所有 **作为 allow-dir 的路径必须真实存在**，否则 server 会启动失败；**其下的子目录**可在运行时 `create_directory` 逐级创建（父目录不存在时会报 `Parent directory does not exist`，属可恢复错误，应先建父级）。
 - 想放开多个目录，就在 `args` 里加多个路径参数（或 MCP 面板编辑）。
 - Windows 路径建议正斜杠（`C:/Users/...`），与 companion `normalizeArgsForPlatform` 一致。
-- **Windows 8.3 短名称**：本地 stdio 官方 filesystem（npx、官方可执行文件或 Node 启动官方入口）会在发送工具调用前展开 `RUNNER~1` 等真实路径别名；新文件名和文件内容保持原样。目录授权使用原生长路径，取消或连接变更后不会继续发送调用；越界路径与链接目标仍由 server 的 allowlist 校验。HTTP、SSH 及自定义 server 保留各自的路径语义。
+- **跨平台路径等价**：macOS `/tmp`、`/var`、`/etc` 与其 `/private` 路径别名、已授权根目录的实际大小写及 Windows 8.3 短名称会转换成该 root 的原生路径；仅转换已授权根的拼写，保留子目录中的链接，Linux 不同大小写目录不会合并。**Windows 8.3 短名称**：本地 stdio 官方 filesystem（npx、官方可执行文件或 Node 启动官方入口）会在发送工具调用前展开 `RUNNER~1` 等真实路径别名；新文件名和文件内容保持原样。目录授权使用原生长路径，取消或连接变更后不会继续发送调用；越界路径与链接目标仍由 server 的 allowlist 校验。HTTP、SSH 及自定义 server 保留各自的路径语义。
 - **路径笼子 vs 三旗风险自担（2026-08）**：
   - 默认：越界路径走 L2「是否加入 allow-dir」；God-mode **单独**不扩 allow-dir。
   - **三旗全开**：越界且 `canOffer` 通过时 **自动加入 allow-dir（无 L2）**；仍拒绝整盘根、`/Users` 多用户根、系统敏感树（`/etc` 等）。
@@ -458,3 +458,8 @@ stdio 进程自动申请服务端会话并发送不透明句柄，不让模型�
 此档案成功读取的本地页面会在独立 grant/session 下保留有界 Observation 供内部审计；没有材料编辑或证据历史导出工具。单会话上限为 64 条 Observation、单条 64 KiB 规范化正文及总计 4 MiB；容量满时仍保留普通读取结果，返回捕获跳过原因。经验摘要最多 64 个 origin/会话，30 分钟过期，不恢复其他 Chat/知识中的经验。
 
 当前是开发实现。真实模型、企业页面及两个场景的发布验收仍按 [企业试点指南](enterprise-pilot.md) 执行，工具连通不等于 0.7.0 已发布。
+
+
+Companion 升级时，应先用正在运行的旧版本执行 `daemon stop`，或通过注册该服务的系统服务管理器停止 CMspark，再替换程序。旧版本不提供新的认证停止协议时，新版本会拒绝仅凭 PID 杀进程并保留状态；这同样适用于源码服务卸载。源码安装器使用前台服务监督，生命周期由 launchd、systemd 或 Windows Task Scheduler 管理。
+
+源码安装的是用户级服务：macOS LaunchAgent 与 Windows 登录任务依附当前登录会话，不能承诺注销后继续运行；Linux user unit 是否跨注销运行取决于系统的用户服务管理配置（例如 linger）。前台监督用于让服务管理器掌握真实进程和退出结果，正常停止后不会留下脱离管理的后台实例。

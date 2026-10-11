@@ -90,10 +90,11 @@ function requireRt(): McpDispatchRuntime {
  * Overlay with no peer: attachChromeOnly + waitForExtensionPeer; timeout
  * stays UNAVAILABLE (never approved).
  */
-export async function confirmChannel(originatingWs: WebSocket): Promise<
+export async function confirmChannel(originatingWs: WebSocket, signal?: AbortSignal): Promise<
   | { originWs: WebSocket; send: (data: unknown) => void }
   | { error: string }
 > {
+  if (signal?.aborted) return { error: "MCP confirmation cancelled" }
   const rt = requireRt()
   let ext = rt.pickExtensionWs?.() ?? null
   const originatingSurface = rt.getWsSurface?.(originatingWs)
@@ -101,12 +102,13 @@ export async function confirmChannel(originatingWs: WebSocket): Promise<
     const extOpen = ext != null && ext.readyState === WebSocket.OPEN
     if (!extOpen) {
       try {
-        ext = await ensureExtensionPeerForOverlayConfirm({ existing: ext })
+        ext = await ensureExtensionPeerForOverlayConfirm({ existing: ext, signal })
       } catch {
-        return { error: MCP_OVERLAY_CONFIRM_UNAVAILABLE }
+        return { error: signal?.aborted ? "MCP confirmation cancelled" : MCP_OVERLAY_CONFIRM_UNAVAILABLE }
       }
     }
   }
+  if (signal?.aborted) return { error: "MCP confirmation cancelled" }
   const decided = resolveMcpConfirmTarget({
     originatingSurface,
     originatingOpen: originatingWs.readyState === WebSocket.OPEN,
@@ -333,7 +335,7 @@ export async function executeMcpTool(
       reason: "full_autonomy_cruise",
     })
   } else if (needsConfirm || forceMcpConfirm) {
-    const channel = await confirmChannel(ws)
+    const channel = await confirmChannel(ws, signal)
     if ("error" in channel) {
       return { success: false, error: `Security Block: ${channel.error}` }
     }
@@ -431,7 +433,17 @@ export async function executeMcpTool(
       if (!currentRoute || currentRoute.serverName !== route.serverName || currentRoute.toolName !== route.toolName) {
         return { success: false, error: `MCP tool ${toolName} route changed during authorization` }
       }
-      const result = await manager.callTool(route, mcpArgs, signal)
+      const result = await manager.callTool(route, mcpArgs, signal, () => {
+        if (!checkAuthorization()) throw new Error("MCP authorization changed or revoked before dispatch")
+        const selected = checkSelection()
+        if (selected) throw new Error(selected.error)
+        const planned = gatePlannedMcpIdentity(toolName, params, sessionId)
+        if (planned) throw new Error(planned)
+        const current = manager.resolveToolName(toolName)
+        if (!current || current.serverName !== route.serverName || current.toolName !== route.toolName) {
+          throw new Error(`MCP tool ${toolName} route changed during authorization`)
+        }
+      })
       const structuredData = result?.structuredContent !== undefined
         ? { content: result.content ?? [], structuredContent: result.structuredContent }
         : undefined
@@ -564,7 +576,7 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
       return { retried: true, ok: true, authorizationIdentity: added.authorizationIdentity }
     }
 
-    const channel = await confirmChannel(opts.ws)
+    const channel = await confirmChannel(opts.ws, opts.signal)
     if ("error" in channel) {
       return {
         retried: true,
@@ -755,7 +767,7 @@ export async function executeMcpMetaTool(
       reason: "full_autonomy_cruise",
     })
   } else if (needsConfirm) {
-    const channel = await confirmChannel(ws)
+    const channel = await confirmChannel(ws, signal)
     if ("error" in channel) {
       return { success: false, error: `Security Block: ${channel.error}` }
     }

@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events"
 /**
  * #502 C — Mode C embed intent (Option 1).
  *
@@ -868,7 +869,7 @@ function startDetached(mgr: { start: (id: string) => Promise<unknown> }, id: str
 /** Stub the ACP handshake so `start()` reaches maybeOpenLocalTerminal without a real child. */
 function stubProtocol(t: TestContext): void {
   t.mock.method(protocolSession as any, "tryStartProtocolSession", async () => ({
-    child: { pid: 43210 },
+    child: Object.assign(new EventEmitter(), { pid: 43210, exitCode: 0, signalCode: null, kill: () => true }),
     client: null,
     agentSessionId: "agent-sess-stub",
     transport: "acp",

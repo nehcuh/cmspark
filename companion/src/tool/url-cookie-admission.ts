@@ -176,11 +176,11 @@ export async function runUrlNavigateAdmission(
       !(extensionWs && extensionWs.readyState === WebSocket.OPEN)
     ) {
       try {
-        extensionWs = await ensureExtensionPeerForOverlayConfirm({ existing: extensionWs })
+        extensionWs = await ensureExtensionPeerForOverlayConfirm({ existing: extensionWs, signal: ctx.signal })
       } catch {
         const result = {
           success: false as const,
-          error: `Security Block: ${toolName} to "${rawUrlForError}" was unavailable.`,
+          error: ctx.signal?.aborted ? "Tool confirmation cancelled" : `Security Block: ${toolName} to "${rawUrlForError}" was unavailable.`,
         }
         logToolFinish(toolCallId, toolName, startedAt, result)
         return { ok: false, result }

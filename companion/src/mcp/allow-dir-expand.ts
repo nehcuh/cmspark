@@ -1,3 +1,4 @@
+import { isLocalOfficialFilesystem } from "./filesystem-identity"
 // Expand MCP filesystem allow-dirs after user L2 confirm (P2).
 // Paths under home or outside home may be offered; volume roots and sensitive
 // system / credential trees are hard-refused (never prompted).
@@ -8,7 +9,7 @@ import * as os from "os"
 import { pathToFileURL } from "node:url"
 import { getConfig, replaceMcpServers, configEvents, CONFIG_CHANGE_EVENT } from "../config"
 import type { McpServerConfig, McpStdioServerConfig } from "./types"
-import { isFilesystemAllowPathArg, MCP_FILESYSTEM_PACKAGE, resolveFilesystemAllowPathForExists } from "./filesystem-home"
+import { isFilesystemAllowPathArg, resolveFilesystemAllowPathForExists } from "./filesystem-home"
 import { getMcpManager } from "./manager"
 import { mcpAuthorizationDigest } from "./authorization"
 
@@ -31,25 +32,39 @@ export function captureFilesystemAdmission(serverName: string, pendingCommit?: M
 
 /** Extract a filesystem path from MCP denial / tool params. */
 export function extractPathCandidate(errMsg: string, params: any): string | null {
+  const candidates: string[] = []
   if (params && typeof params === "object") {
-    for (const k of ["path", "parent", "directory", "dir", "uri"]) {
-      const v = (params as any)[k]
-      if (typeof v === "string" && v.trim()) {
-        let p = v.trim()
-        if (p.startsWith("file:")) {
-          p = resolveFilesystemAllowPathForExists(p)
-          if (!p) return null
-        }
-        return p
+    for (const key of ["path", "parent", "directory", "dir", "uri", "source", "destination", "paths"]) {
+      const values = Array.isArray(params[key]) ? params[key] : [params[key]]
+      for (const value of values) {
+        if (typeof value !== "string" || !value.trim()) continue
+        const raw = value
+        const resolved = raw.startsWith("file:") ? resolveFilesystemAllowPathForExists(raw) : raw
+        if (resolved) candidates.push(resolved)
       }
     }
   }
-  // "…: /path/to/x" or "path outside allowed directories: /x"
-  const m =
-    errMsg.match(/(?:does not exist|outside allowed[^:]*|Access denied[^:]*|not allowed[^:]*):\s*([^\s"']+)/i) ||
-    errMsg.match(/((?:\/|[A-Za-z]:[\\/])[^\s"']+)/)
-  if (m?.[1]) return m[1].replace(/[,;.)]+$/, "")
-  return null
+  // The separator can itself occur inside a filename or an allowed root.
+  // Prefer complete known operands; never grant a prefix produced by a lazy
+  // textual split. Expanded aliases are accepted only with one possible split.
+  const printed = errMsg.match(/(?:outside allowed directories|not allowed):[ \t]*([\s\S]+)/i)?.[1]
+  if (printed) {
+    const splits = [...printed.matchAll(/ not in(?: |$)/g)].map(match => printed.slice(0, match.index))
+    const exact = [...new Set(candidates.filter(candidate => splits.some(denial => path.normalize(candidate) === path.normalize(denial))))]
+    if (exact.length === 1) return exact[0]
+    if (exact.length > 1 || splits.length > 1) return null
+    if (splits.length === 1) return path.isAbsolute(splits[0]) ? splits[0] : null
+    // Older servers omit their allowed roots. Preserve a full absolute path.
+    if (path.isAbsolute(printed)) return printed
+    return null
+  }
+  if (candidates.length === 1) return candidates[0]
+  // Multiple operands without an unambiguous denial must never guess a grant.
+  if (candidates.length > 1) return null
+  const unambiguous = errMsg.match(/outside allowed directories:\s*((?:\/|[A-Za-z]:[\\/])[^\r\n]+)$/i)
+  if (unambiguous) return unambiguous[1]
+  const quoted = errMsg.match(/["']((?:\/|[A-Za-z]:[\\/])[^"']+)["']/)
+  return quoted?.[1] ?? null
 }
 
 /**
@@ -361,10 +376,8 @@ export function isWriteLikeMcpTool(toolName: string): boolean {
   )
 }
 
-export function looksLikeFilesystemServer(name: string, cfg: McpStdioServerConfig): boolean {
-  if (name === "filesystem") return true
-  const args = cfg.args ?? []
-  return args.some((a) => a === MCP_FILESYSTEM_PACKAGE || /server-filesystem/.test(a))
+export function looksLikeFilesystemServer(_name: string, cfg: McpStdioServerConfig): boolean {
+  return isLocalOfficialFilesystem(cfg)
 }
 
 /**

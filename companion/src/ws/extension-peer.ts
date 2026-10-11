@@ -42,7 +42,7 @@ type Picker = () => WebSocket | null
 
 type Waiter = {
   resolve: (ws: WebSocket) => void
-  reject: (err: ExtensionPeerTimeoutError) => void
+  reject: (err: Error) => void
   timer: NodeJS.Timeout
 }
 
@@ -70,7 +70,9 @@ function makeTimeoutError(): ExtensionPeerTimeoutError {
 export async function ensureExtensionPeerForOverlayConfirm(opts?: {
   existing?: WebSocket | null
   timeoutMs?: number
+  signal?: AbortSignal
 }): Promise<WebSocket> {
+  opts?.signal?.throwIfAborted()
   const existing = opts?.existing ?? null
   if (existing && existing.readyState === WebSocket.OPEN) return existing
   const already = pickAuthenticated()
@@ -82,6 +84,7 @@ export async function ensureExtensionPeerForOverlayConfirm(opts?: {
   }
   return waitForExtensionPeer({
     timeoutMs: opts?.timeoutMs ?? overlayPeerWaitMs,
+    signal: opts?.signal,
   })
 }
 
@@ -92,26 +95,26 @@ export async function ensureExtensionPeerForOverlayConfirm(opts?: {
  *
  * One fail-path timer only. Do not poll pick() on a repeating timer.
  */
-export function waitForExtensionPeer(opts: { timeoutMs: number }): Promise<WebSocket> {
+export function waitForExtensionPeer(opts: { timeoutMs: number; signal?: AbortSignal }): Promise<WebSocket> {
+  if (opts.signal?.aborted) return Promise.reject(opts.signal.reason)
   const existing = pickAuthenticated()
   if (existing) return Promise.resolve(existing)
 
   const timeoutMs = Math.max(0, opts.timeoutMs)
   return new Promise<WebSocket>((resolve, reject) => {
+    const abort = () => waiter.reject(opts.signal?.reason ?? new Error("confirmation cancelled"))
+    const clean = () => { clearTimeout(waiter.timer); waiters.delete(waiter); opts.signal?.removeEventListener("abort", abort) }
     const waiter: Waiter = {
       resolve: (ws) => {
-        clearTimeout(waiter.timer)
-        waiters.delete(waiter)
+        clean()
         resolve(ws)
       },
       reject: (err) => {
-        clearTimeout(waiter.timer)
-        waiters.delete(waiter)
+        clean()
         reject(err)
       },
       timer: setTimeout(() => {
-        waiters.delete(waiter)
-        reject(makeTimeoutError())
+        waiter.reject(makeTimeoutError())
       }, timeoutMs),
     }
     // Production: overlay wait must not pin process.exit. Tests: keep the
@@ -119,6 +122,8 @@ export function waitForExtensionPeer(opts: { timeoutMs: number }): Promise<WebSo
     // event loop is only unref'd handles (CI: 13 cancelled, 0 fail).
     if (!process.env.NODE_TEST_CONTEXT) waiter.timer.unref?.()
     waiters.add(waiter)
+    opts.signal?.addEventListener("abort", abort, { once: true })
+    if (opts.signal?.aborted) abort()
   })
 }
 
@@ -144,6 +149,6 @@ export function resetExtensionPeerWaitersForTests(): void {
   overlayAttach = defaultOverlayAttach
   overlayPeerWaitMs = DEFAULT_EXTENSION_PEER_WAIT_MS
   for (const w of pending) {
-    clearTimeout(w.timer)
+    w.reject(makeTimeoutError())
   }
 }

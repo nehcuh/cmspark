@@ -72,6 +72,18 @@ info()  { printf '[INFO]  %s\n' "$*"; }
 warn()  { printf '[WARN]  %s\n' "$*" >&2; }
 error() { printf '[ERROR] %s\n' "$*" >&2; }
 
+# Render completely before replacing a working registration.
+render_service() {
+    local render_mode="$1" render_source="$2" render_target="$3" render_tmp
+    render_tmp="$(mktemp "${render_target}.XXXXXX")"
+    if ! "${CMSPARK_NODE_EXEC}" "${SCRIPT_DIR}/render-service.mjs" "$render_mode" "$render_source" "${HOME}" "${CMSPARK_NODE_EXEC}" "${CMSPARK_AGENT_PATH}" > "$render_tmp"; then
+        rm -f "$render_tmp"
+        return 1
+    fi
+    chmod 0644 "$render_tmp"
+    mv -f "$render_tmp" "$render_target"
+}
+
 # ---------------------------------------------------------------------------
 # Common prerequisites
 # ---------------------------------------------------------------------------
@@ -88,8 +100,8 @@ fi
 
 # Detect Node.js path (needed for launchd / .app bundles without shell PATH)
 if command -v node >/dev/null 2>&1; then
-    NODE_PATH="$(command -v node)"
-    info "Found Node.js: ${NODE_PATH}"
+    CMSPARK_NODE_EXEC="$(command -v node)"
+    info "Found Node.js: ${CMSPARK_NODE_EXEC}"
 else
     error "Node.js not found in PATH."
     exit 1
@@ -121,10 +133,7 @@ if [[ "$PLATFORM" == "macos" ]]; then
 
     mkdir -p "${HOME}/Library/LaunchAgents"
 
-    sed -e "s|{{HOME}}|${HOME}|g" \
-        -e "s|{{NODE_PATH}}|${NODE_PATH}|g" \
-        -e "s|{{CMSPARK_AGENT_PATH}}|${CMSPARK_AGENT_PATH}|g" \
-        "${SOURCE_PLIST}" > "${TARGET_PLIST}"
+    render_service plist "${SOURCE_PLIST}" "${TARGET_PLIST}"
 
     chmod 644 "${TARGET_PLIST}"
 
@@ -158,9 +167,7 @@ if [[ "$PLATFORM" == "linux" ]]; then
 
     mkdir -p "${HOME}/.config/systemd/user"
 
-    sed -e "s|%h|${HOME}|g" \
-        -e "s|${HOME}/.cmspark-agent/bin/cmspark-agent|${CMSPARK_AGENT_PATH}|g" \
-        "${SOURCE_SERVICE}" > "${TARGET_SERVICE}"
+    render_service systemd "${SOURCE_SERVICE}" "${TARGET_SERVICE}"
 
     chmod 644 "${TARGET_SERVICE}"
 
@@ -203,10 +210,7 @@ if [[ "$PLATFORM" == "macos" ]]; then
     # Install menubar launchd plist
     if [[ -f "${SOURCE_MENUBAR_PLIST}" ]]; then
         info "Installing menubar plist: ${TARGET_MENUBAR_PLIST}"
-        sed -e "s|{{HOME}}|${HOME}|g" \
-            -e "s|{{NODE_PATH}}|${NODE_PATH}|g" \
-            -e "s|{{CMSPARK_AGENT_PATH}}|${CMSPARK_AGENT_PATH}|g" \
-            "${SOURCE_MENUBAR_PLIST}" > "${TARGET_MENUBAR_PLIST}"
+        render_service plist "${SOURCE_MENUBAR_PLIST}" "${TARGET_MENUBAR_PLIST}"
         chmod 644 "${TARGET_MENUBAR_PLIST}"
 
         info "Unloading existing menubar service (if any)..."
@@ -222,24 +226,13 @@ if [[ "$PLATFORM" == "macos" ]]; then
     info "Creating tray launcher: ${APP_DIR}"
     rm -rf "${APP_DIR}"
 
-    OSASCRIPT_SRC="
-on run
-    do shell script \"${NODE_PATH} ${CMSPARK_AGENT_PATH} tray\"
-end run
-
-on open theFiles
-    do shell script \"${NODE_PATH} ${CMSPARK_AGENT_PATH} tray\"
-end open
-"
+    OSASCRIPT_SRC="$("${CMSPARK_NODE_EXEC}" "${SCRIPT_DIR}/render-service.mjs" applescript - "${HOME}" "${CMSPARK_NODE_EXEC}" "${CMSPARK_AGENT_PATH}")"
 
     mkdir -p "$(dirname "${APP_DIR}")"
     echo "${OSASCRIPT_SRC}" | osacompile -o "${APP_DIR}" 2>&1 || {
         warn "osacompile failed; falling back to shell-script wrapper."
         mkdir -p "${APP_DIR}/Contents/MacOS"
-        cat > "${APP_DIR}/Contents/MacOS/CMspark Agent" <<EOF
-#!/bin/bash
-exec "${NODE_PATH}" "${CMSPARK_AGENT_PATH}" tray
-EOF
+        "${CMSPARK_NODE_EXEC}" "${SCRIPT_DIR}/render-service.mjs" shell - "${HOME}" "${CMSPARK_NODE_EXEC}" "${CMSPARK_AGENT_PATH}" > "${APP_DIR}/Contents/MacOS/CMspark Agent"
         chmod +x "${APP_DIR}/Contents/MacOS/CMspark Agent"
 
         cat > "${APP_DIR}/Contents/Info.plist" <<'PLIST'

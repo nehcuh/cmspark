@@ -3,10 +3,9 @@
 // provided via CLI args OR MCP roots. We default missing allowlists to the
 // user home directory (platform-aware: Windows C:/Users/... vs macOS /Users/...).
 //
-// Stale allow-dirs (e.g. /tmp/cmspark-allow-dir-* left by tests or expand after
-// OS cleaned the path) are pruned; if nothing remains, home is re-injected so
-// the server can start again (ensureFilesystemAllowlist previously treated any
-// path arg as "configured" even when the directory no longer existed).
+// Stale CLI allow-dirs are pruned and legacy empty CLI configurations default
+// to home. Explicit roots remain authoritative: losing their last valid root
+// fails closed, rather than broadening to CLI directories or home.
 
 import fs from "node:fs"
 import os from "node:os"
@@ -14,7 +13,8 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { McpServerConfig, McpStdioServerConfig } from "./types.js"
 
-export const MCP_FILESYSTEM_PACKAGE = "@modelcontextprotocol/server-filesystem"
+import { MCP_FILESYSTEM_PACKAGE, isLocalOfficialFilesystem, filesystemDirectoryArgIndex } from "./filesystem-identity"
+export { MCP_FILESYSTEM_PACKAGE } from "./filesystem-identity"
 
 /**
  * User home as an MCP allow-path.
@@ -42,7 +42,7 @@ export function isFilesystemAllowPathArg(arg: string): boolean {
   if (!arg || arg.startsWith("-")) return false
   // npm package names like @modelcontextprotocol/server-filesystem
   if (arg.startsWith("@") && !/^[a-zA-Z]:/.test(arg)) return false
-  if (arg === MCP_FILESYSTEM_PACKAGE || /server-filesystem/.test(arg)) return false
+  if (arg === MCP_FILESYSTEM_PACKAGE || arg.startsWith(`${MCP_FILESYSTEM_PACKAGE}@`)) return false
   if (arg.startsWith("file:")) return true
   if (/^[a-zA-Z]:[\\/]/.test(arg)) return true // Windows drive
   if (arg.startsWith("/") || arg.startsWith("~")) return true
@@ -51,10 +51,17 @@ export function isFilesystemAllowPathArg(arg: string): boolean {
   return false
 }
 
-function looksLikeFilesystemServer(name: string, cfg: McpStdioServerConfig): boolean {
-  if (name === "filesystem") return true
-  const args = cfg.args ?? []
-  return args.some((a) => a === MCP_FILESYSTEM_PACKAGE || /server-filesystem/.test(a))
+
+/** Match the home used by the configured Node filesystem subprocess. */
+export function filesystemServerHome(cfg: McpServerConfig, platform: NodeJS.Platform = process.platform, fallback = os.homedir()): string {
+  if (cfg.transport !== "stdio") return fallback
+  const value = cfg.env?.[platform === "win32" ? "USERPROFILE" : "HOME"]
+  if (typeof value !== "string") return fallback
+  const api = platform === "win32" ? path.win32 : path.posix
+  const cwd = cfg.cwd && defaultPathExists(cfg.cwd) ? cfg.cwd : process.cwd()
+  // Node permits an empty or relative HOME; expand it relative to the same
+  // effective working directory, rather than granting Companion's home.
+  return api.resolve(cwd, value)
 }
 
 /** Resolve an allow-dir arg or file:// root URI to a local path for existence checks. */
@@ -100,8 +107,8 @@ function defaultPathExists(absPath: string): boolean {
 
 /**
  * If this is the official filesystem server:
- * - drop allow-dir args / roots whose paths no longer exist on disk
- * - if nothing remains, inject the platform home directory into args + roots + cwd
+ * - prune missing paths while preserving an entirely invalid explicit roots list
+ * - only legacy CLI configurations with no valid allowlist default to home
  *
  * Idempotent when all configured paths still exist.
  */
@@ -113,20 +120,24 @@ export function ensureFilesystemAllowlist(
   opts?: EnsureFilesystemAllowlistOpts,
 ): McpServerConfig {
   if (cfg.transport !== "stdio") return cfg
-  if (!looksLikeFilesystemServer(name, cfg)) return cfg
+  if (!isLocalOfficialFilesystem(cfg)) return cfg
 
+  homeRaw = filesystemServerHome(cfg, platform, homeRaw)
   const home = mcpHomeDir(platform, homeRaw)
   const pathExists = opts?.pathExists ?? defaultPathExists
   const argsIn = cfg.args ? [...cfg.args] : []
+  const operandStart = filesystemDirectoryArgIndex(cfg)
 
   let pruned = false
   const args: string[] = []
-  for (const a of argsIn) {
-    if (!isFilesystemAllowPathArg(a)) {
+  for (const [index, a] of argsIn.entries()) {
+    if (index < operandStart) {
       args.push(a)
       continue
     }
-    const resolved = resolveFilesystemAllowPathForExists(a, platform, homeRaw)
+    const rawPath = resolveFilesystemAllowPathForExists(a, platform, homeRaw)
+    const api = platform === "win32" ? path.win32 : path.posix
+    const resolved = rawPath && (api.isAbsolute(rawPath) ? rawPath : api.resolve(cfg.cwd && pathExists(cfg.cwd) ? cfg.cwd : process.cwd(), rawPath))
     if (resolved && pathExists(resolved)) {
       args.push(a)
     } else {
@@ -147,10 +158,15 @@ export function ensureFilesystemAllowlist(
       return false
     })
     roots = kept
-    if (kept.length === 0) roots = undefined
+    // Explicit roots are authoritative. Retain an invalid original list so
+    // connect can fail closed; upstream otherwise falls back to CLI dirs.
+    if (kept.length === 0) {
+      if (cfg.roots?.some(root => typeof root?.uri === "string" && root.uri.length > 0)) return cfg
+      roots = undefined
+    }
   }
 
-  const hasDir = args.some(isFilesystemAllowPathArg)
+  const hasDir = args.length > operandStart
   const hasRoots = Array.isArray(roots) && roots.length > 0
 
   if (hasDir || hasRoots) {
@@ -167,17 +183,7 @@ export function ensureFilesystemAllowlist(
     return next
   }
 
-  // Insert home after package name when present, else append
-  const pkgIdx = args.findIndex(
-    (a) => a === MCP_FILESYSTEM_PACKAGE || /server-filesystem/.test(a),
-  )
-  if (pkgIdx >= 0) {
-    args.splice(pkgIdx + 1, 0, home)
-  } else if (args.length === 0) {
-    args.push("-y", MCP_FILESYSTEM_PACKAGE, home)
-  } else {
-    args.push(home)
-  }
+  args.push(home)
 
   const next: McpStdioServerConfig = {
     ...cfg,
@@ -203,4 +209,14 @@ export function defaultFilesystemServerConfig(
     cwd: home,
     roots: [{ uri: mcpHomeFileUri(platform, home), name: "home" }],
   }
+}
+
+/** Restrict the initial CLI sandbox before the server's asynchronous roots update. */
+export function filesystemStartupConfig(cfg: McpServerConfig): McpServerConfig {
+  if (!isLocalOfficialFilesystem(cfg) || cfg.transport !== "stdio" || !cfg.roots?.length) return cfg
+  const declared = cfg.roots.filter(root => typeof root?.uri === "string" && root.uri.length > 0)
+  if (!declared.length) return cfg
+  const dirs = declared.map(root => resolveFilesystemAllowPathForExists(root.uri, process.platform, filesystemServerHome(cfg))).filter(defaultPathExists)
+  if (!dirs.length) throw new Error("MCP filesystem has no valid configured roots; restore the directory or update roots")
+  return { ...cfg, args: [...(cfg.args ?? []).slice(0, filesystemDirectoryArgIndex(cfg)), ...dirs] }
 }

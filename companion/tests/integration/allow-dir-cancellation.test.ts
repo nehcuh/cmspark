@@ -59,7 +59,7 @@ beforeEach(async () => {
   bindMcpDispatchRuntime({ getThreadManager: () => tm, securityConfirmations: confirmations,
     broadcastToClients: () => {},
   })
-  const cfg = { transport: "stdio" as const, command: "node", args: [initial], roots: [], enabled: true,
+  const cfg = { transport: "stdio" as const, command: process.execPath, args: [require.resolve("@modelcontextprotocol/server-filesystem/dist/index.js"), initial], roots: [], enabled: true,
     trust_level: "trusted" as const, security_capabilities: ["read-only" as const],
   }
   saveConfig({ security: { ...getConfig().security, allow_all_schemes: false,

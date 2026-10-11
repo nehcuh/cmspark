@@ -47,7 +47,7 @@ for (const action of ["ready", "abort", "off-on", "contract-change"] as const) {
     const listener = (cfg: ReturnType<typeof getConfig>) => { void manager.applyConfig(cfg.mcp) }
     try {
       saveConfig({ security: { ...getConfig().security, allow_all_schemes: false, auto_approve_dangerous: false, auto_approve_enterprise_tools: false },
-        mcp: { enabled: true, servers: { filesystem: { transport: "stdio", command: "owned-fixture", args: [initial], enabled: true, trust_level: "trusted", security_capabilities: ["read-only"] } } } })
+        mcp: { enabled: true, servers: { filesystem: { transport: "stdio", command: process.execPath, args: [require.resolve("@modelcontextprotocol/server-filesystem/dist/index.js"), initial], enabled: true, trust_level: "trusted", security_capabilities: ["read-only"] } } } })
       await manager.applyConfig(getConfig().mcp)
       await manager.waitForServerReady("filesystem")
       configEvents.on(CONFIG_CHANGE_EVENT, listener)

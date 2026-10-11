@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events"
 import "./_acp-gates-setup" // MUST be first — pins DATA_DIR before config/handlers import
 
 import { describe, it, before, beforeEach } from "node:test"
@@ -330,7 +331,7 @@ describe("acp manager protocol argv wiring", () => {
         async (opts: any) => {
           captured.push({ agentId: opts.session.agent_id, args: [...opts.args] })
           return {
-            child: { pid: 43210 },
+            child: Object.assign(new EventEmitter(), { pid: 43210, exitCode: 0, signalCode: null, kill: () => true }),
             client: null,
             agentSessionId: "agent-sess-stub",
             transport: "acp",
