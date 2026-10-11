@@ -26,6 +26,8 @@ import {
 import { ensureFilesystemAllowlist } from "./filesystem-home.js"
 import { getMcpConfirmCache } from "./confirm-cache.js"
 import { mcpAuthorizationDigest } from "./authorization.js"
+import { setTimeout as delay } from "node:timers/promises"
+import { resolveStartupTimeout, resolveCallTimeout } from "./types.js"
 
 const SLIDING_WINDOW_MS = 5 * 60 * 1000
 const RESTART_BACKOFF_EXTRA_JITTER_MS = 200
@@ -514,6 +516,31 @@ export class McpManager extends EventEmitter {
 
   getServerConfig(name: string): McpServerConfig | undefined {
     return this.currentConfig?.servers[name]
+  }
+
+  /** Wait for reconciliation AND initial catalog discovery, not just initialize.
+   * The caller's admission captures revocations across the persistence boundary. */
+  async waitForServerReady(name: string, signal?: AbortSignal, admitted: () => boolean = () => true): Promise<string> {
+    const cfg = this.currentConfig?.servers[name]
+    if (!cfg) throw new Error(`MCP server not found: ${name}`)
+    const deadline = Date.now() + Math.min(120_000, resolveStartupTimeout(cfg) + resolveCallTimeout(cfg))
+    while (true) {
+      signal?.throwIfAborted()
+      if (!admitted() || this.shuttingDown || !this.currentConfig?.enabled || !this.currentConfig.servers[name]?.enabled) {
+        throw new Error("MCP allow-dir authorization changed or revoked while reconnecting")
+      }
+      const client = this.clients.get(name)
+      if (!this.startingPromises.has(name) && !this.restartTimers.has(name)) {
+        const identity = this.getAuthorizationIdentity(name)
+        if (identity) {
+          if (!client?.catalogReady) throw new Error(`MCP server ${name} catalog discovery failed; reconnect not ready`)
+          return identity
+        }
+        if (client?.connection.status === "dead") throw new Error(`MCP server ${name} failed to reconnect`)
+      }
+      if (Date.now() >= deadline) throw new Error(`MCP server ${name} not ready before reconnect deadline`)
+      await delay(20, undefined, { signal })
+    }
   }
 }
 

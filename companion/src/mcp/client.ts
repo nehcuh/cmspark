@@ -6,6 +6,7 @@
 
 import { EventEmitter } from "events"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import {
   ListRootsRequestSchema,
   ToolListChangedNotificationSchema,
@@ -54,6 +55,7 @@ export class McpClient extends EventEmitter {
   private _stderrBuffer = ""
   private _closing = false
   private refreshes = new Map<CacheKind, { client: Client; promise: Promise<unknown>; dirty: boolean }>()
+  private publishedCatalogs = new Set<CacheKind>()
 
   constructor(
     public readonly name: string,
@@ -73,6 +75,11 @@ export class McpClient extends EventEmitter {
 
   get connection(): McpConnectionState {
     return { ...this._connection }
+  }
+
+  get catalogReady(): boolean {
+    return (["tools", "resources", "prompts"] as const).every(kind =>
+      !this._capabilities[kind] || this.publishedCatalogs.has(kind))
   }
 
   /** Live meta snapshot for frontend and aggregator. */
@@ -101,6 +108,7 @@ export class McpClient extends EventEmitter {
       return
     }
     this._closing = false
+    this.publishedCatalogs.clear()
     this.setStatus("connecting")
     // #289: do NOT clear _stderrBuffer here — the previous attempt's stderr
     // must stay visible to the UI while the retry is connecting. last_error is
@@ -139,6 +147,16 @@ export class McpClient extends EventEmitter {
       transport.onerror = (err: Error) => {
         logger.error("mcp.client.transport_error", { server: this.name, error: err.message })
         this._connection.last_error = err.message
+        // A lost HTTP session cannot recover by resending its old session id.
+        // Revoke the live identity and let the manager's bounded restart policy
+        // create a fresh transport. Never replay the failed tool invocation.
+        if (this._config.transport === "http" && err instanceof StreamableHTTPError && err.code === 404 &&
+            !this._closing && this._connection.status === "connected") {
+          this._closing = true
+          this.setStatus("disconnected", err.message)
+          this.emit("disconnected", "HTTP session expired")
+          void this.close()
+        }
       }
 
       const roots = this._config.roots
@@ -348,6 +366,7 @@ export class McpClient extends EventEmitter {
         description: t.description ?? "",
         inputSchema: (t.inputSchema ?? { type: "object", properties: {} }) as Record<string, any>,
       }))
+      this.publishedCatalogs.add("tools")
       this.emit("tools_changed")
       return this._toolsCache
     })
@@ -371,6 +390,7 @@ export class McpClient extends EventEmitter {
         description: r.description,
         mimeType: r.mimeType,
       }))
+      this.publishedCatalogs.add("resources")
       return this._resourcesCache
     })
   }
@@ -392,6 +412,7 @@ export class McpClient extends EventEmitter {
         description: p.description,
         arguments: p.arguments,
       }))
+      this.publishedCatalogs.add("prompts")
       return this._promptsCache
     })
   }

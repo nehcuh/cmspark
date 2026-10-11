@@ -1,12 +1,12 @@
-// Transport factory — wraps the MCP SDK's built-in StdioClientTransport and
-// StreamableHTTPClientTransport with a unified config-driven constructor.
+// Transport factory — application-owned stdio process trees and the SDK's
+// StreamableHTTPClientTransport share a config-driven constructor.
 //
 // We do NOT reimplement the wire protocol; the SDK handles JSON-RPC framing,
 // initialize handshake, and resumption tokens. This module just selects the
 // right transport based on McpServerConfig and configures stderr capture so
 // the manager can surface subprocess diagnostics.
 
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+import { OwnedStdioTransport } from "./stdio-transport.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import path from "node:path"
@@ -267,7 +267,7 @@ export function createTransport(config: McpServerConfig, extras?: TransportExtra
       }
     }
 
-    const transport = new StdioClientTransport({
+    const transport = new OwnedStdioTransport({
       command: config.command,
       args: normalizeArgsForPlatform(config.args),
       env,

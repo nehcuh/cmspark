@@ -146,6 +146,8 @@ const RESTART_FIELD_KEYS = [
   "cwd",
   "url",
   "headers",
+  // roots/list and the advertised roots capability are bound at initialize.
+  "roots",
 ] as const
 
 export function requiresRestart(prev: McpServerConfig, next: McpServerConfig): boolean {

@@ -1,0 +1,109 @@
+// SDK framing/protocol, application-owned process lifetime. The SDK stdio
+// transport only kills its direct child, which can leave npx/cmd descendants.
+import { type ChildProcess, type SpawnOptions } from "node:child_process"
+import { PassThrough } from "node:stream"
+import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js"
+import type { StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js"
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
+import { killWindowsPtyTree } from "../pty/windows-tree"
+
+const spawn: (command: string, args: string[], opts: SpawnOptions) => ChildProcess = require("cross-spawn")
+
+export class OwnedStdioTransport implements Transport {
+  onclose?: () => void
+  onerror?: (error: Error) => void
+  onmessage?: (message: JSONRPCMessage) => void
+  readonly stderr = new PassThrough()
+  private child?: ChildProcess
+  private started = false
+  private closed = false
+  private closing?: Promise<void>
+  private readonly buffer = new ReadBuffer()
+
+  constructor(private readonly _serverParams: StdioServerParameters) {}
+  get pid(): number | undefined { return this.child?.pid }
+
+  async start(): Promise<void> {
+    if (this.started || this.closed) throw new Error("MCP stdio transport already started or closed")
+    this.started = true
+    const child = spawn(this._serverParams.command, this._serverParams.args ?? [], {
+      env: this._serverParams.env, cwd: this._serverParams.cwd, shell: false,
+      detached: process.platform !== "win32", windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+    this.child = child
+    child.stderr?.pipe(this.stderr)
+    child.stdin?.on("error", error => this.onerror?.(error))
+    child.stdout?.on("error", error => this.onerror?.(error))
+    child.stdout?.on("data", (data: Buffer) => {
+      try {
+        this.buffer.append(data)
+        for (let message; (message = this.buffer.readMessage()) !== null;) this.onmessage?.(message)
+      } catch (error) {
+        this.onerror?.(error instanceof Error ? error : new Error(String(error)))
+        void this.close()
+      }
+    })
+    // Do not wait for inherited stdout pipes to close after a root crashes.
+    // POSIX still owns its process group; Windows must not kill an exited PID.
+    child.once("exit", () => { void this.close() })
+    await new Promise<void>((resolve, reject) => {
+      child.once("spawn", resolve)
+      child.on("error", error => {
+        this.onerror?.(error); reject(error); void this.close()
+      })
+    })
+  }
+
+  close(): Promise<void> {
+    if (!this.closing) {
+      this.closed = true
+      // Publish the promise before closeChild can synchronously invoke onclose.
+      this.closing = Promise.resolve().then(() => this.closeChild())
+    }
+    return this.closing
+  }
+
+  private async closeChild(): Promise<void> {
+    const child = this.child
+    if (child?.pid) {
+      const pid = child.pid
+      if (process.platform === "win32") {
+        if (child.exitCode == null && child.signalCode == null) {
+          // Enumerate before ending stdin/killing the wrapper. No later PID retry.
+          await new Promise<void>(resolve => killWindowsPtyTree(pid, () => {
+            if (child.exitCode == null && child.signalCode == null) {
+              try { child.kill() } catch { /* original handle already closed */ }
+            }
+            resolve()
+          }))
+        }
+      } else {
+        // detached=true creates an owned group. Kill it once, synchronously;
+        // descendants cannot outlive an explicit close via an inherited pipe.
+        try { process.kill(-pid, "SIGKILL") }
+        catch { if (child.exitCode == null && child.signalCode == null) child.kill("SIGKILL") }
+      }
+      if (child.exitCode == null && child.signalCode == null) {
+        await new Promise<void>(resolve => {
+          const done = () => { clearTimeout(timer); child.off("exit", done); resolve() }
+          const timer = setTimeout(done, 1000)
+          child.once("exit", done)
+        })
+      }
+    }
+    child?.stdin?.destroy(); child?.stdout?.destroy(); child?.stderr?.destroy()
+    child?.unref()
+    this.stderr.end(); this.buffer.clear(); this.child = undefined
+    this.onclose?.()
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    if (this.closed || !this.child?.stdin) throw new Error("MCP stdio not connected")
+    const input = this.child.stdin
+    await new Promise<void>((resolve, reject) => {
+      input.write(serializeMessage(message), error => error ? reject(error) : resolve())
+    })
+  }
+}

@@ -374,30 +374,21 @@ export function scheduleUnlink(paths: string[], delayMs = 60_000): void {
   t.unref?.()
 }
 
+const closingWindowsChildren = new WeakSet<ChildProcess>()
+
 /** Kill ACP child + descendants (win32 taskkill tree; POSIX SIGTERM). */
 export function killAcpChild(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM"): void {
   const pid = child.pid
   if (pid == null || pid <= 0) return
   if (process.platform === "win32") {
-    try {
-      const k = spawn(windowsTaskkillPath(), ["/pid", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-      })
-      k.once("error", () => {
-        try {
-          child.kill()
-        } catch {
-          /* */
-        }
-      })
-    } catch {
-      try {
-        child.kill()
-      } catch {
-        /* */
-      }
-    }
+    if (child.exitCode != null || child.signalCode != null || closingWindowsChildren.has(child)) return
+    closingWindowsChildren.add(child)
+    // Loaded here because the shared cleanup helper uses this module's pinned
+    // System32 path. Later ACP escalation timers cannot repeat a naked PID kill.
+    const { killWindowsPtyTree } = require("../pty/windows-tree") as typeof import("../pty/windows-tree")
+    killWindowsPtyTree(pid, () => {
+      if (child.exitCode == null && child.signalCode == null) child.kill()
+    })
     return
   }
   try {

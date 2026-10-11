@@ -243,3 +243,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/run-tests.mjs .test-dist/tests/integration/confirmation-cancellation.test.js .test-dist/tests/integration/allow-dir-cancellation.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Windows MCP and ACP recovery regressions (#601)"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/acp-cleanup.test.js .test-dist/tests/mcp-roots-reload.test.js .test-dist/tests/mcp-stdio-tree.test.js .test-dist/tests/mcp-http-recovery.test.js .test-dist/tests/integration/allow-dir-reconnect.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

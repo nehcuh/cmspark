@@ -307,7 +307,14 @@ test("direct persistence helper rejects a cancelled request", async () => {
 test("cancellation during tool re-registration wait prevents retry", { timeout: 5000 }, async () => {
   cruise()
   const controller = new AbortController()
-  onReload = () => { setImmediate(() => controller.abort()) }
+  onReload = () => {
+    // Model an actual in-flight catalog load, rather than relying on a fixed sleep.
+    const manager = getMcpManager() as any
+    const starting = new Promise<void>(resolve => setImmediate(() => {
+      controller.abort(); manager.startingPromises.delete("filesystem"); resolve()
+    }))
+    manager.startingPromises.set("filesystem", starting)
+  }
   const outcome = await call(controller.signal)
   assert.equal(outcome.success, false)
   assert.match(outcome.error!, /cancel/i)

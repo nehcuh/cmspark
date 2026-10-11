@@ -5,7 +5,6 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import { setTimeout as delay } from "node:timers/promises"
 import { getConfig, replaceMcpServers, configEvents, CONFIG_CHANGE_EVENT } from "../config"
 import type { McpServerConfig, McpStdioServerConfig } from "./types"
 import { isFilesystemAllowPathArg, MCP_FILESYSTEM_PACKAGE } from "./filesystem-home"
@@ -486,24 +485,24 @@ export async function addFilesystemAllowDir(
   const committedAdmission = captureFilesystemAdmission(serverName, next)
   try {
     replaceMcpServers(newServers)
-    // applyConfig is triggered by CONFIG_CHANGE_EVENT; give stdio a moment to restart
+    // The config listener may already be reconciling this same snapshot.
     try {
       await getMcpManager().applyConfig(getConfig().mcp)
     } catch {
       /* listener may already apply */
     }
     if (signal?.aborted) return cancelled
-    // Brief wait for tools to re-register
+    let authorizationIdentity: string
     try {
-      await delay(400, undefined, { signal })
+      authorizationIdentity = await getMcpManager().waitForServerReady(serverName, signal, committedAdmission.isCurrent)
     } catch (error) {
       if (signal?.aborted) return cancelled
-      throw error
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
     if (signal?.aborted) return cancelled
     if (!committedAdmission.isCurrent()) {
       return { ok: false, error: "MCP allow-dir authorization changed or revoked after commit" }
     }
-    return { ok: true, args: next.args || [], authorizationIdentity: getMcpManager().getAuthorizationIdentity(serverName) }
+    return { ok: true, args: next.args || [], authorizationIdentity }
   } finally { committedAdmission.dispose() }
 }
