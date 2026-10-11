@@ -95,6 +95,8 @@ export interface AcpSessionRecord {
   timeline?: import("./timeline").TimelineItem[]
   /** Accumulated agent text for handback */
   agent_text?: string
+  /** ACP message chunks only, without timeline/status/reasoning duplication. */
+  agent_output_text?: string
   /** Page context injected at start (URL/title/repo hint) */
   page_context?: string
   /**
