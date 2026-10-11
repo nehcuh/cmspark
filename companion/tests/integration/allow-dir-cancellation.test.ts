@@ -12,7 +12,7 @@ import { WebSocket } from "ws"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { initDataDir, getConfig, getConfigDir, saveConfig, configEvents, CONFIG_CHANGE_EVENT } from "../../src/config"
+import { initDataDir, getConfig, getConfigDir, saveConfig, replaceMcpServers, configEvents, CONFIG_CHANGE_EVENT } from "../../src/config"
 import { SecurityConfirmationManager } from "../../src/security-confirmation"
 import { ThreadManager } from "../../src/threads/thread-manager"
 import { bindMcpDispatchRuntime, executeMcpTool, tryExpandFilesystemAllowDirOnDenial } from "../../src/mcp/dispatch"
@@ -152,6 +152,31 @@ for (const change of ["global-off", "server-off", "replace", "off-on"] as const)
     assert.equal(configEvents.listenerCount(CONFIG_CHANGE_EVENT), listeners)
   })
 }
+
+// #600: a missing server used to be masked by the generic disabled guard.
+// Pin the diagnostic and absence of side effects, including a late approval.
+test("direct allow-dir persistence reports the missing server without side effects", async () => {
+  const result = await addFilesystemAllowDir("missing-filesystem", offered)
+  assert.deepEqual(result, { ok: false, error: "MCP server not found: missing-filesystem" })
+  unchanged(0)
+  assert.equal(frames.length, 0)
+})
+
+test("server removed during allow-dir confirmation reports not found without restoring it", async () => {
+  const listeners = configEvents.listenerCount(CONFIG_CHANGE_EVENT)
+  const pending = prompt(), result = call()
+  const frame = await getPrompt(pending, result)
+  replaceMcpServers({})
+  cfgBefore = configText()
+  assert.equal(getConfig().mcp!.servers.filesystem, undefined)
+  confirmations.respondFrom(frame.confirmation_id, true, ws)
+  const outcome = await result
+  assert.equal(outcome.success, false)
+  assert.match(outcome.error!, /MCP server not found: filesystem/)
+  unchanged(1)
+  assert.equal(confirmations.pendingCount(), 0)
+  assert.equal(configEvents.listenerCount(CONFIG_CHANGE_EVENT), listeners)
+})
 
 test("direct allow-dir persistence rejects a disabled server", async () => {
   const original = getConfig().mcp!
