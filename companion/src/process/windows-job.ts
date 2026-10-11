@@ -50,7 +50,10 @@ public static class CMsparkOwnedJob {
   [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
-  static void Fail(string stage) { throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), stage); }
+  static void Fail(string stage) {
+    int code=Marshal.GetLastWin32Error();
+    throw new System.ComponentModel.Win32Exception(code,stage+" ("+code+"): "+new System.ComponentModel.Win32Exception(code).Message);
+  }
   static IntPtr InheritableStandardHandle(int kind) {
     IntPtr source=GetStdHandle(kind), temporary=IntPtr.Zero, duplicate;
     // Node's stdio:ignore can leave a console-less host without a standard
@@ -85,7 +88,9 @@ public static class CMsparkOwnedJob {
       start.Input=input=InheritableStandardHandle(-10);
       start.Output=output=InheritableStandardHandle(-11);
       start.Error=error=InheritableStandardHandle(-12);
-      if(!CreateProcess(app,new StringBuilder(line),IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,cwd,ref start,out info)) Fail("CreateProcess");
+      // PowerShell binds $null to String.Empty for a string method parameter.
+      // Win32 needs a null pointer to inherit cwd; an empty path is invalid.
+      if(!CreateProcess(app,new StringBuilder(line),IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,String.IsNullOrEmpty(cwd) ? null : cwd,ref start,out info)) Fail("CreateProcess");
       if(!AssignProcessToJobObject(job,info.Process)) Fail("AssignProcessToJobObject");
       if(ResumeThread(info.Thread)==0xffffffff) Fail("ResumeThread");
       resumed=true;

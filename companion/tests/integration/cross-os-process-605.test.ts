@@ -165,7 +165,7 @@ test("job launcher CRT quoting preserves empty, quote and trailing-backslash ope
 
 test("native Windows job preserves bidirectional protocol pipes and ignored stdio", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
   const root = ownedRoot(), script = path.join(root, "protocol.cjs"), marker = path.join(root, "ready")
-  fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},'ready');
+  fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify({cwd:process.cwd()}));
     process.stdout.write('READY\\n');process.stderr.write('OWNED_STDERR\\n');
     require('node:readline').createInterface({input:process.stdin}).on('line',line=>process.stdout.write(JSON.stringify({echo:JSON.parse(line)})+'\\n'));
     setTimeout(()=>{},20000);`)
@@ -175,12 +175,14 @@ test("native Windows job preserves bidirectional protocol pipes and ignored stdi
     child.stdout!.on("data", chunk => { output += chunk }); child.stderr!.on("data", chunk => { errors += chunk })
     try {
       await until(() => output.includes("READY\n") && errors.includes("OWNED_STDERR\n"), 10000)
+      assert.equal(fs.realpathSync.native(JSON.parse(fs.readFileSync(marker, "utf8")).cwd), fs.realpathSync.native(process.cwd()), "omitted cwd inherits the actual parent directory")
       child.stdin!.write(JSON.stringify({ owned: "中文 & literal" }) + "\n")
       await until(() => output.includes(JSON.stringify({ echo: { owned: "中文 & literal" } })), 5000)
     } catch (error) { throw new Error(`protocol pipe failure (exit=${child.exitCode}): ${output}\n${errors}`, { cause: error }) }
     await stop(child); fs.unlinkSync(marker)
     child = spawnWindowsJob(process.execPath, [script], { stdio: "ignore" })
     await until(() => fs.existsSync(marker), 10000)
+    assert.equal(fs.realpathSync.native(JSON.parse(fs.readFileSync(marker, "utf8")).cwd), fs.realpathSync.native(process.cwd()))
     assert.ok(alive(child.pid), "ignored stdio does not prevent native startup")
   } finally { await stop(child); fs.rmSync(root, { recursive: true, force: true }) }
 })
