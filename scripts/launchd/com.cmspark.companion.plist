@@ -25,16 +25,18 @@
         <string>{{CMSPARK_AGENT_PATH}}</string>
         <string>daemon</string>
         <string>start</string>
-        <string>--daemonize</string>
     </array>
 
     <!-- Start automatically at login / boot -->
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Restart automatically if the process exits -->
+    <!-- Restart after failure; an authenticated normal stop stays stopped -->
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 
     <!-- Minimum seconds between restarts (prevents restart storms) -->
     <key>ThrottleInterval</key>

@@ -2,7 +2,7 @@
 // Spawns configured stdio agent; streams progress via onEvent → WS broadcast.
 
 import type { ChildProcessWithoutNullStreams } from "child_process"
-import { spawnAcpChild, killAcpChild } from "./win-spawn"
+import { spawnAcpChild, killAcpChild, closeAcpChild } from "./win-spawn"
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
@@ -66,8 +66,15 @@ function newSessionId(): string {
 export class AcpManager {
   private sessions = new Map<string, AcpSessionRecord>()
   private processes = new Map<string, ChildProcessWithoutNullStreams>()
+  private ownedChildren = new Set<ChildProcessWithoutNullStreams>()
+  private trackChild(id: string, child: ChildProcessWithoutNullStreams): void {
+    this.processes.set(id, child)
+    this.ownedChildren.add(child)
+    child.once("close", () => this.ownedChildren.delete(child))
+  }
   private protocolHandles = new Map<string, ProtocolSessionHandle>()
   private runningCount = 0
+  private shuttingDown = false
   private listeners = new Set<AcpEventListener>()
   private lastProgressAt = new Map<string, number>()
   private handbackSink: AcpHandbackSink | null = null
@@ -580,6 +587,7 @@ export class AcpManager {
     | { ok: true; session: AcpSessionRecord }
     | { ok: false; error: string }
   > {
+    if (this.shuttingDown) return { ok: false, error: "acp: manager shutting down" }
     const session = this.sessions.get(sessionId)
     if (!session) return { ok: false, error: "acp: unknown session" }
     if (session.state !== "offered" && session.state !== "confirmed") {
@@ -605,6 +613,12 @@ export class AcpManager {
       serverEnv: server.env,
     })
 
+    // Event observers may synchronously shut down/cancel during starting….
+    if (this.shuttingDown || session.mode_c_open_cancelled) {
+      this.runningCount = Math.max(0, this.runningCount - 1)
+      session.state = "closed"
+      return { ok: false, error: "acp: cancelled during startup" }
+    }
     // --- S1: try real ACP JSON-RPC Client ---
     if (protocolMode === "auto" || protocolMode === "acp") {
       const handle = await tryStartProtocolSession({
@@ -614,7 +628,7 @@ export class AcpManager {
         env,
         session,
         hooks: {
-          onSpawn: (child) => { this.processes.set(sessionId, child) },
+          onSpawn: (child) => { this.trackChild(sessionId, child) },
           onAgentText: (text) => {
             const next = (session.agent_output_text || "") + text
             if (Buffer.byteLength(next) > 256 * 1024) {
@@ -655,7 +669,7 @@ export class AcpManager {
         session.transport = "acp"
         session.pid = handle.child.pid
         this.protocolHandles.set(sessionId, handle)
-        this.processes.set(sessionId, handle.child)
+        this.trackChild(sessionId, handle.child)
         this.pushTimeline(session, [
           timelineItem("status", "ACP Client connected", { status: "done" }),
         ])
@@ -759,7 +773,7 @@ export class AcpManager {
       }
 
       session.pid = child.pid
-      this.processes.set(sessionId, child)
+      this.trackChild(sessionId, child)
       this.pushTimeline(session, [
         timelineItem("status", `CLI pid ${child.pid}`, { status: "running" }),
       ])
@@ -1039,11 +1053,14 @@ export class AcpManager {
     return { ok: true }
   }
 
-  shutdown(): void {
+  async shutdown(): Promise<void> {
+    this.shuttingDown = true
     this.unsubscribeEmbedSpawn()
-    for (const id of [...this.processes.keys()]) {
-      this.cancel(id)
+    const children = [...this.ownedChildren]
+    for (const [id, session] of this.sessions) {
+      if (session.state === "running" || this.processes.has(id)) this.cancel(id)
     }
+    await Promise.all(children.map(closeAcpChild))
   }
 }
 

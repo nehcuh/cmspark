@@ -10,6 +10,7 @@ import {
   releaseLock,
   isProcessRunning,
   isDaemonRunning,
+  requestDaemonStopOwner,
   readPidFile,
   writePidFile,
   cleanupPidFile,
@@ -200,66 +201,30 @@ async function handleDaemonStart(): Promise<void> {
 }
 
 async function handleDaemonStop(): Promise<void> {
-  const lockPath = getLockFilePath()
   const pidPath = getPidFilePath()
   const pid = readPidFile(pidPath)
-
-  if (!pid) {
-    console.log("[cmspark-agent] No PID file found — daemon not running")
-    releaseLock(lockPath)
-    process.exit(0)
-  }
-
-  if (!isProcessRunning(pid)) {
-    console.log(`[cmspark-agent] Process ${pid} is not running — cleaning up stale state`)
-    cleanupPidFile(pidPath)
-    releaseLock(lockPath)
-    process.exit(0)
-  }
-
-  console.log(`[cmspark-agent] Sending SIGTERM to process ${pid}...`)
-  try {
-    process.kill(pid, "SIGTERM")
-  } catch (err: any) {
-    console.error("[cmspark-agent] Failed to send signal:", err.message)
-    process.exit(1)
-  }
-
-  const start = Date.now()
-  const timeout = 10000
-  while (Date.now() - start < timeout) {
-    if (!isProcessRunning(pid)) {
-      console.log("[cmspark-agent] Daemon stopped successfully")
-      cleanupPidFile(pidPath)
-      releaseLock(lockPath)
-      process.exit(0)
+  const control = await requestDaemonStopOwner(getLockFilePath(), pid ?? undefined)
+  if (!control.authenticated) {
+    if (!control.present && (!pid || !isProcessRunning(pid))) {
+      if (pid && readPidFile(pidPath) === pid) cleanupPidFile(pidPath)
+      console.log("[cmspark-agent] Daemon not running; cleaned stale PID state")
+      return
     }
-    await new Promise((r) => setTimeout(r, 200))
+    console.error("[cmspark-agent] Refusing to stop an unverified process; daemon control authentication failed")
+    console.error("[cmspark-agent] Older daemons must be stopped with their original executable or their registered service manager before upgrading. Stale PID files never authorize killing a process.")
+    process.exitCode = 1
+    return
   }
-
-  // SIGTERM didn't work within 10s — escalate to SIGKILL
-  console.log(`[cmspark-agent] SIGTERM timed out, sending SIGKILL to process ${pid}...`)
-  try {
-    process.kill(pid, "SIGKILL")
-  } catch (err: any) {
-    console.error("[cmspark-agent] Failed to send SIGKILL:", err.message)
-    process.exit(1)
+  const ownerPid = control.pid!
+  const until = Date.now() + 20000
+  while (Date.now() < until && isProcessRunning(ownerPid)) await new Promise(resolve => setTimeout(resolve, 100))
+  if (isProcessRunning(ownerPid)) {
+    console.error("[cmspark-agent] Daemon did not finish graceful shutdown; state preserved")
+    process.exitCode = 1
+    return
   }
-
-  // Wait up to 5 more seconds for SIGKILL to take effect
-  const killStart = Date.now()
-  while (Date.now() - killStart < 5000) {
-    if (!isProcessRunning(pid)) {
-      console.log("[cmspark-agent] Daemon killed successfully")
-      cleanupPidFile(pidPath)
-      releaseLock(lockPath)
-      process.exit(0)
-    }
-    await new Promise((r) => setTimeout(r, 200))
-  }
-
-  console.error("[cmspark-agent] Daemon refused to die even after SIGKILL")
-  process.exit(1)
+  if (readPidFile(pidPath) === ownerPid) cleanupPidFile(pidPath)
+  console.log("[cmspark-agent] Daemon stopped successfully")
 }
 
 async function handleDaemonStatus(): Promise<void> {

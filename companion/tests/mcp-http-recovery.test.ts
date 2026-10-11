@@ -32,18 +32,24 @@ test("HTTP expired session reconnects with fresh authorization but never replays
     await manager.callTool(route, {})
     expiredSession = "owned-1"
     await assert.rejects(manager.callTool(route, {}), /Session not found|closed/i)
+    assert.equal(manager.getAggregatedTools().length, 0, "expired session catalog is withdrawn immediately")
+    assert.equal(manager.resolveToolName("mcp__owned__read_value"), undefined)
     assert.equal(manager.getAuthorizationIdentity("owned"), undefined)
     const after = await manager.waitForServerReady("owned")
+    assert.equal(manager.getAggregatedTools().length, 1, "new session restores discovered tools")
     assert.notEqual(after, before); assert.equal(initializations, 2); assert.equal(executed, 1)
     await manager.callTool(route, {})
     assert.deepEqual(seen, ["owned-1", "owned-2"])
     ordinaryError = true
     await assert.rejects(manager.callTool(route, {}), /ordinary server failure/)
+    assert.equal(manager.getAggregatedTools().length, 1, "ordinary errors do not withdraw healthy tools")
     assert.equal(manager.getAuthorizationIdentity("owned"), after, "ordinary HTTP errors do not churn sessions")
     // A pending recovery must not revive a disabled server.
     ordinaryError = false
     expiredSession = "owned-2"
     await assert.rejects(manager.callTool(route, {}), /Session not found|closed/i)
+    assert.equal(manager.getAggregatedTools().length, 0, "expired session catalog is withdrawn immediately")
+    assert.equal(manager.resolveToolName("mcp__owned__read_value"), undefined)
     assert.equal(manager.getAuthorizationIdentity("owned"), undefined)
     await manager.applyConfig({ enabled: false, servers: {} })
     await new Promise(resolve => setTimeout(resolve, 300))

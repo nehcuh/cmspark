@@ -27,7 +27,7 @@ PLIST_NAME="${LABEL}.plist"
 TARGET_PLIST="${HOME}/Library/LaunchAgents/${PLIST_NAME}"
 MENUBAR_PLIST_NAME="${MENUBAR_LABEL}.plist"
 TARGET_MENUBAR_PLIST="${HOME}/Library/LaunchAgents/${MENUBAR_PLIST_NAME}"
-DATA_DIR="${HOME}/.cmspark-agent"
+DATA_DIR="${CMSPARK_DATA_DIR:-${HOME}/.cmspark-agent}"
 APP_NAME="CMspark Agent.app"
 SERVICE_NAME="cmspark-companion.service"
 TARGET_SERVICE="${HOME}/.config/systemd/user/${SERVICE_NAME}"
@@ -52,11 +52,34 @@ done
 # Helpers
 # ---------------------------------------------------------------------------
 info()  { printf '[INFO]  %s\n' "$*"; }
+error() { printf '[ERROR] %s\n' "$*" >&2; }
 warn()  { printf '[WARN]  %s\n' "$*" >&2; }
 
 # ===========================================================================
 # Platform-specific uninstallation
 # ===========================================================================
+
+# Stop the authenticated live daemon before removing supervisor/data state.
+AGENT_ENTRY="${CMSPARK_AGENT_PATH:-}"
+if [[ -z "$AGENT_ENTRY" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    AGENT_ENTRY="${SCRIPT_DIR}/../companion/dist/index.js"
+    if [[ ! -f "$AGENT_ENTRY" ]]; then AGENT_ENTRY="$(command -v cmspark-agent || true)"; fi
+fi
+if [[ -n "$AGENT_ENTRY" && -f "$AGENT_ENTRY" ]]; then
+    NODE_EXEC="$(command -v node || true)"
+    if [[ -z "$NODE_EXEC" ]]; then
+        error "Node.js missing; cannot verify daemon shutdown; uninstall aborted and state preserved"
+        exit 1
+    fi
+    "$NODE_EXEC" "$AGENT_ENTRY" daemon stop || {
+        error "Daemon did not stop; uninstall aborted and state preserved"
+        exit 1
+    }
+elif [[ -f "${DATA_DIR}/daemon.pid" || -S "${DATA_DIR}/daemon.sock" ]]; then
+    error "Cannot verify daemon shutdown: agent entrypoint missing; uninstall aborted"
+    exit 1
+fi
 
 if [[ "$PLATFORM" == "macos" ]]; then
     # -----------------------------------------------------------------------
@@ -117,20 +140,6 @@ if [[ -n "${APP_DIR}" && -d "${APP_DIR}" ]]; then
     rm -rf "${APP_DIR}"
 else
     warn "Menu-bar launcher not found."
-fi
-
-# Clean up UDS lock files
-info "Cleaning up UDS lock files..."
-for lock in "${DATA_DIR}"/*.sock "${DATA_DIR}"/*.lock; do
-    [[ -e "$lock" ]] || continue
-    info "Removing lock file: $lock"
-    rm -f "$lock"
-done
-
-# Remove PID file if it exists
-if [[ -f "${DATA_DIR}/daemon.pid" ]]; then
-    info "Removing PID file: ${DATA_DIR}/daemon.pid"
-    rm -f "${DATA_DIR}/daemon.pid"
 fi
 
 # Remove checksum file

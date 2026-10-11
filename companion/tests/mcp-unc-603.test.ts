@@ -16,7 +16,7 @@ for (const [platform, input, uri] of [
   assert.equal(resolveFilesystemAllowPathForExists(uri, platform), input)
 })
 
-test("valid UNC root is retained without inserting home; malformed URLs are pruned", () => {
+test("valid UNC root is retained; malformed authoritative roots never widen to home", () => {
   const config = { transport: "stdio" as const, command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem"], enabled: true, trust_level: "trusted" as const,
     roots: [{ uri: "file://nas/team/project" }] }
   const observed: string[] = []
@@ -25,8 +25,10 @@ test("valid UNC root is retained without inserting home; malformed URLs are prun
   assert.equal(fixed, config)
   assert.equal(resolveFilesystemAllowPathForExists("file:////nas/team/project", "win32"), "")
   assert.equal(resolveFilesystemAllowPathForExists("file:///C:/bad%2Fsegment", "win32"), "")
-  const pruned = ensureFilesystemAllowlist("filesystem", { ...config, roots: [{ uri: "file:////nas/team/project" }] }, "win32", "C:\\Users\\fixture", { pathExists: () => true })
-  assert.equal(pruned.roots?.[0].uri, "file:///C:/Users/fixture")
+  const invalid = { ...config, roots: [{ uri: "file:////nas/team/project" }] }
+  const preserved = ensureFilesystemAllowlist("filesystem", invalid, "win32", "C:\\Users\\fixture", { pathExists: () => true })
+  assert.equal(preserved, invalid)
+  assert.deepEqual(preserved.args, config.args)
 })
 
 test("native Windows owned SMB root survives actual stat, config sanitization and URI extraction", { skip: process.platform !== "win32", timeout: 15000 }, async () => {

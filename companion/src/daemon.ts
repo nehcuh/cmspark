@@ -7,6 +7,7 @@
 //   - releaseLock closes the server and unlinks the socket file.
 
 import * as net from "net"
+import { randomBytes, createHmac, timingSafeEqual } from "node:crypto"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
@@ -117,7 +118,7 @@ export async function acquireLock(lockPath: string): Promise<boolean> {
     }
   }
 
-  const server = net.createServer()
+  const server = net.createServer(socket => handleDaemonControl(socket))
 
   const result = await new Promise<
     { ok: true } | { ok: false; error: NodeJS.ErrnoException }
@@ -519,6 +520,7 @@ export function setupGracefulShutdown(cleanup: (signal: NodeJS.Signals) => void 
     process.exit(0)
   }
 
+  daemonControlShutdown = () => void handler("SIGTERM")
   process.on("SIGTERM", () => void handler("SIGTERM"))
   process.on("SIGINT", () => void handler("SIGINT"))
 }
@@ -552,4 +554,86 @@ function classifySystemError(err: NodeJS.ErrnoException): DaemonErrorLevel {
     return "recoverable"
   }
   return "fatal"
+}
+
+
+// Authenticated local control reuses the existing exclusive lock. No numeric
+// PID signal is sent: stale/recycled PIDs and a wrong data directory fail closed.
+let daemonControlShutdown: (() => void) | null = null
+function existingDaemonSecret(): string | null {
+  try { return fs.readFileSync(path.join(getConfigDir(), "ws_secret"), "utf8").trim() || null }
+  catch { return null }
+}
+function controlProof(secret: string, kind: string, pid: number, nonce: string): string {
+  return createHmac("sha256", secret).update(`cmspark-control-v1:${kind}:${pid}:${nonce}`).digest("hex")
+}
+function equalProof(actual: unknown, expected: string): boolean {
+  if (typeof actual !== "string" || !/^[a-f0-9]{64}$/.test(actual)) return false
+  return timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"))
+}
+function handleDaemonControl(socket: net.Socket): void {
+  socket.on("error", () => {})
+  socket.setTimeout(2000, () => socket.destroy())
+  const secret = existingDaemonSecret()
+  if (!daemonControlShutdown || !secret) { socket.end(); return }
+  const nonce = randomBytes(24).toString("hex")
+  socket.write(JSON.stringify({ version: 1, pid: process.pid, nonce }) + "\n")
+  let buffer = "", consumed = false
+  socket.on("data", chunk => {
+    if (consumed) return
+    buffer += chunk.toString("utf8")
+    if (Buffer.byteLength(buffer) > 4096) { consumed = true; socket.destroy(); return }
+    if (!buffer.includes("\n")) return
+    consumed = true
+    let request: any
+    try { request = JSON.parse(buffer.slice(0, buffer.indexOf("\n"))) } catch { socket.destroy(); return }
+    if (!request || typeof request !== "object" || Array.isArray(request) || request.version !== 1 || request.pid !== process.pid || request.method !== "stop" ||
+        !equalProof(request.proof, controlProof(secret, "stop", process.pid, nonce))) { socket.destroy(); return }
+    const stop = daemonControlShutdown
+    if (!stop) { socket.destroy(); return }
+    socket.end(JSON.stringify({ accepted: true, proof: controlProof(secret, "accepted", process.pid, nonce) }) + "\n", stop)
+  })
+}
+
+/** Requests the exact live lock owner to run the normal graceful shutdown. */
+export async function requestDaemonStop(lockPath: string, pid: number): Promise<boolean> {
+  return (await requestDaemonStopOwner(lockPath, pid)).authenticated
+}
+
+export function requestDaemonStopOwner(lockPath: string, pid?: number): Promise<{ authenticated: boolean; present: boolean; pid?: number }> {
+  const secret = existingDaemonSecret()
+  if (pid !== undefined && (!Number.isSafeInteger(pid) || pid <= 0)) return Promise.resolve({ authenticated: false, present: true })
+  return new Promise(resolve => {
+    const socket = net.createConnection(lockPath)
+    let nonce = "", buffer = "", settled = false, present = true, ownerPid = pid
+    const finish = (ok: boolean) => { if (settled) return; settled = true; socket.destroy(); resolve({ authenticated: ok, present, ...(ok ? { pid: ownerPid } : {}) }) }
+    socket.on("connect", () => { present = true; if (!secret) finish(false) })
+    socket.setTimeout(2500, () => finish(false))
+    socket.on("error", (error: NodeJS.ErrnoException) => {
+      // Only a definite absent endpoint permits stale-state cleanup. Access
+      // errors, busy pipes and connection timeouts cannot prove owner exit.
+      if (!settled && (error.code === "ENOENT" || error.code === "ECONNREFUSED")) present = false
+      finish(false)
+    })
+    socket.on("end", () => finish(false))
+    socket.on("data", chunk => {
+      buffer += chunk.toString("utf8")
+      if (Buffer.byteLength(buffer) > 4096) { finish(false); return }
+      while (buffer.includes("\n") && !settled) {
+        const index = buffer.indexOf("\n"), line = buffer.slice(0, index)
+        buffer = buffer.slice(index + 1)
+        let frame: any
+        try { frame = JSON.parse(line) } catch { finish(false); return }
+        if (!frame || typeof frame !== "object" || Array.isArray(frame)) { finish(false); return }
+        if (!nonce) {
+          if (frame.version !== 1 || !Number.isSafeInteger(frame.pid) || frame.pid <= 0 || (pid !== undefined && frame.pid !== pid) || typeof frame.nonce !== "string" || !/^[a-f0-9]{48}$/.test(frame.nonce)) { finish(false); return }
+          nonce = frame.nonce; ownerPid = frame.pid
+          if (!secret) { finish(false); return }
+          socket.write(JSON.stringify({ version: 1, pid: ownerPid, method: "stop", proof: controlProof(secret, "stop", ownerPid!, nonce) }) + "\n")
+        } else {
+          finish(!!secret && frame.accepted === true && equalProof(frame.proof, controlProof(secret, "accepted", ownerPid!, nonce)))
+        }
+      }
+    })
+  })
 }

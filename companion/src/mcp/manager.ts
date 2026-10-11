@@ -278,7 +278,10 @@ export class McpManager extends EventEmitter {
   private attachClientListeners(client: McpClient): void {
     client.on("status_changed", () => {
       if (this.clients.get(client.name) !== client) return
+      this.reaggregate()
       this.emit("status_changed", client.getMeta())
+      this.emit("tools_changed", this.aggregated)
+      this.emit("servers_updated", this.listServers())
     })
     client.on("tools_changed", () => {
       if (this.clients.get(client.name) !== client) return
@@ -453,9 +456,17 @@ export class McpManager extends EventEmitter {
     route: McpToolRoute,
     args: Record<string, any>,
     signal?: AbortSignal,
+    beforeDispatch?: () => void,
   ): Promise<any> {
     const client = this.requireAvailableClient(route.serverName)
-    return client.callTool(route.toolName, args, signal)
+    const identity = this.getAuthorizationIdentity(route.serverName)
+    return client.callTool(route.toolName, args, signal, () => {
+      if (identity === undefined || this.getAuthorizationIdentity(route.serverName) !== identity ||
+          this.requireAvailableClient(route.serverName) !== client) {
+        throw new Error("MCP authorization changed or revoked before dispatch")
+      }
+      beforeDispatch?.()
+    })
   }
 
   async listResources(serverName: string, signal?: AbortSignal): Promise<any> {

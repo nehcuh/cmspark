@@ -9,9 +9,10 @@ param(
     [switch]$Force
 )
 
+$ErrorActionPreference = "Stop"
 $Label = "cmspark-companion"
 $TaskPath = "\$Label"
-$DataDir = "$env:USERPROFILE\.cmspark-agent"
+$DataDir = if ($env:CMSPARK_DATA_DIR) { $env:CMSPARK_DATA_DIR } else { "$env:USERPROFILE\.cmspark-agent" }
 $LogDir = "$DataDir\logs"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
@@ -32,7 +33,7 @@ Info "Checking prerequisites..."
 
 $NodeCmd = $null
 if (Get-Command node -ErrorAction SilentlyContinue) {
-    $NodeCmd = "node"
+    $NodeCmd = (Get-Command node -ErrorAction Stop).Source
 } elseif (Test-Path "$RepoRoot\companion\node.exe") {
     $NodeCmd = "$RepoRoot\companion\node.exe"
 } else {
@@ -44,8 +45,11 @@ $AgentScript = "$RepoRoot\companion\dist\index.js"
 if (-not (Test-Path $AgentScript)) {
     Warn "Companion not built yet. Building now..."
     Push-Location "$RepoRoot\companion"
-    & $NodeCmd npm run build
-    Pop-Location
+    try {
+        $NpmCmd = (Get-Command npm.cmd -ErrorAction Stop).Source
+        & $NpmCmd run build
+        if ($LASTEXITCODE -ne 0) { throw "Companion build failed" }
+    } finally { Pop-Location }
     if (-not (Test-Path $AgentScript)) {
         Err "Build failed. Please run 'npm run build' in the companion directory."
         exit 1
@@ -70,6 +74,8 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $ExistingTask = Get-ScheduledTask -TaskName $Label -ErrorAction SilentlyContinue
 if ($ExistingTask) {
     if ($Force) {
+        & $NodeCmd $AgentScript daemon stop
+        if ($LASTEXITCODE -ne 0) { throw "Existing daemon did not stop; task preserved" }
         Info "Removing existing task..."
         Unregister-ScheduledTask -TaskName $Label -Confirm:$false
     } else {
@@ -84,7 +90,7 @@ if ($ExistingTask) {
 
 Info "Registering Task Scheduler job: $Label"
 
-$Action = New-ScheduledTaskAction -Execute $NodeCmd -Argument "$AgentScript daemon start --daemonize" -WorkingDirectory "$RepoRoot\companion"
+$Action = New-ScheduledTaskAction -Execute $NodeCmd -Argument "`"$AgentScript`" daemon start" -WorkingDirectory "$RepoRoot\companion"
 
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
 
@@ -137,7 +143,7 @@ New-Item -ItemType Directory -Force -Path $StartMenuDir | Out-Null
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut("$StartMenuDir\CMspark Agent.lnk")
 $Shortcut.TargetPath = $NodeCmd
-$Shortcut.Arguments = "$AgentScript tray"
+$Shortcut.Arguments = "`"$AgentScript`" tray"
 $Shortcut.WorkingDirectory = "$RepoRoot\companion"
 $Shortcut.Description = "CMspark Browser Agent Menu Bar"
 $Shortcut.Save()

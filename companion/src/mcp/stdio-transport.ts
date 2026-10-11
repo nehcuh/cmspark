@@ -6,7 +6,7 @@ import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/s
 import type { StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
-import { killWindowsPtyTree } from "../pty/windows-tree"
+import { spawnWindowsJob } from "../process/windows-job"
 
 const spawn: (command: string, args: string[], opts: SpawnOptions) => ChildProcess = require("cross-spawn")
 
@@ -27,11 +27,18 @@ export class OwnedStdioTransport implements Transport {
   async start(): Promise<void> {
     if (this.started || this.closed) throw new Error("MCP stdio transport already started or closed")
     this.started = true
-    const child = spawn(this._serverParams.command, this._serverParams.args ?? [], {
+    let child: ChildProcess
+    try {
+      child = (process.platform === "win32" ? spawnWindowsJob : spawn)(this._serverParams.command, this._serverParams.args ?? [], {
       env: this._serverParams.env, cwd: this._serverParams.cwd, shell: false,
       detached: process.platform !== "win32", windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     })
+    } catch (error) {
+      this.onerror?.(error instanceof Error ? error : new Error(String(error)))
+      await this.close()
+      throw error
+    }
     this.child = child
     child.stderr?.pipe(this.stderr)
     child.stdin?.on("error", error => this.onerror?.(error))
@@ -74,14 +81,10 @@ export class OwnedStdioTransport implements Transport {
     if (child?.pid) {
       const pid = child.pid
       if (process.platform === "win32") {
+        // This is a Job Object launcher. Ending its owned process handle closes
+        // the non-inherited job and reclaims descendants, even after root exit.
         if (child.exitCode == null && child.signalCode == null) {
-          // Enumerate before ending stdin/killing the wrapper. No later PID retry.
-          await new Promise<void>(resolve => killWindowsPtyTree(pid, () => {
-            if (child.exitCode == null && child.signalCode == null) {
-              try { child.kill() } catch { /* original handle already closed */ }
-            }
-            resolve()
-          }))
+          try { child.kill() } catch { /* already exited */ }
         }
       } else {
         // detached=true creates an owned group. Kill it once, synchronously;

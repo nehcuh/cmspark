@@ -1609,6 +1609,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   const shutdown = async (signal: string) => {
     console.log(`\n[cmspark-agent] Shutting down (${signal})...`)
     logger.info("server.shutdown", { signal })
+    // Stop ACP admission and await owned subprocess teardown before exiting.
+    try {
+      await (await import("../acp/manager")).getAcpManager().shutdown()
+    } catch (err: any) {
+      logger.warn("acp.shutdown_failed", { error: err?.message || String(err) })
+    }
     // Stop MCP servers first (terminates child processes) before closing WS.
     // Wrap in a timeout — a stuck MCP transport must not block shutdown indefinitely.
     try {

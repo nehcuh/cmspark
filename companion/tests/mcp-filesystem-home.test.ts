@@ -120,3 +120,28 @@ test("defaultFilesystemServerConfig: darwin home", () => {
   assert.deepEqual(cfg.args, ["-y", MCP_FILESYSTEM_PACKAGE, "/Users/alice"])
   assert.equal(cfg.roots?.[0]?.uri, "file:///Users/alice")
 })
+
+test("official launch identity ignores display names and arbitrary package-looking arguments", () => {
+  for (const cfg of [
+    { command: "node", args: ["custom.js"] },
+    { command: "ssh", args: ["host", MCP_FILESYSTEM_PACKAGE] },
+    { command: "node", args: ["/project/server-filesystem/custom.js"] },
+  ]) {
+    const custom: McpStdioServerConfig = { transport: "stdio", ...cfg, enabled: true, trust_level: "trusted" }
+    assert.equal(ensureFilesystemAllowlist("filesystem", custom), custom)
+  }
+})
+
+test("official binary and Node entry append only the home operand, under any display name", () => {
+  const home = "/owned/home"
+  for (const launch of [
+    { command: "mcp-server-filesystem", args: [] },
+    { command: "node", args: ["/owned/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js"] },
+    { command: "npx", args: ["-y", `${MCP_FILESYSTEM_PACKAGE}@2026.8.31`] },
+  ]) {
+    const cfg: McpStdioServerConfig = { transport: "stdio", ...launch, enabled: true, trust_level: "trusted" }
+    const fixed = ensureFilesystemAllowlist("myfiles", cfg, "darwin", home)
+    assert.deepEqual((fixed as McpStdioServerConfig).args, [...launch.args, home])
+    assert.equal(fixed.roots?.[0].uri, "file:///owned/home")
+  }
+})

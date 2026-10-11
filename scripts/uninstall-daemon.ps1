@@ -8,8 +8,9 @@ param(
     [switch]$Purge
 )
 
+$ErrorActionPreference = "Stop"
 $Label = "cmspark-companion"
-$DataDir = "$env:USERPROFILE\.cmspark-agent"
+$DataDir = if ($env:CMSPARK_DATA_DIR) { $env:CMSPARK_DATA_DIR } else { "$env:USERPROFILE\.cmspark-agent" }
 $StartMenuDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\CMspark"
 
 function Info($msg) { Write-Host "[INFO]  $msg" -ForegroundColor Cyan }
@@ -19,7 +20,17 @@ function Warn($msg) { Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 # 1. Stop and remove scheduled task
 # ---------------------------------------------------------------------------
 
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = Split-Path -Parent $ScriptDir
+$AgentScript = "$RepoRoot\companion\dist\index.js"
 $ExistingTask = Get-ScheduledTask -TaskName $Label -ErrorAction SilentlyContinue
+if (Test-Path $AgentScript) {
+    $NodeCmd = if (Get-Command node -ErrorAction SilentlyContinue) { (Get-Command node -ErrorAction Stop).Source }
+        elseif (Test-Path "$RepoRoot\companion\node.exe") { "$RepoRoot\companion\node.exe" }
+        else { throw "Node.js missing; daemon state preserved" }
+    & $NodeCmd $AgentScript daemon stop
+    if ($LASTEXITCODE -ne 0) { throw "Daemon did not stop; uninstall aborted and state preserved" }
+} elseif ((Test-Path "$DataDir\daemon.pid") -or ($ExistingTask -and $ExistingTask.State -eq "Running")) { throw "Agent entrypoint missing; daemon state preserved" }
 if ($ExistingTask) {
     Info "Stopping scheduled task: $Label"
     Stop-ScheduledTask -TaskName $Label -ErrorAction SilentlyContinue
@@ -48,13 +59,6 @@ if (Test-Path $StartMenuDir) {
 # ---------------------------------------------------------------------------
 # 3. Clean up lock files
 # ---------------------------------------------------------------------------
-
-Info "Cleaning up lock files..."
-$LockFile = "$DataDir\daemon.sock"
-$PidFile = "$DataDir\daemon.pid"
-
-if (Test-Path $LockFile) { Remove-Item -Path $LockFile -Force }
-if (Test-Path $PidFile) { Remove-Item -Path $PidFile -Force }
 
 # ---------------------------------------------------------------------------
 # 4. Optionally purge data directory

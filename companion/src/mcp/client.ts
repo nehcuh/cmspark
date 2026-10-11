@@ -1,3 +1,5 @@
+import { normalizeFilesystemRootAliases } from "./filesystem-root-alias"
+import { filesystemStartupConfig } from "./filesystem-home"
 // Single MCP server client. Wraps the SDK's Client class with:
 // - config-driven transport selection (stdio or http)
 // - per-call AbortController timeouts (call_timeout_ms)
@@ -122,7 +124,8 @@ export class McpClient extends EventEmitter {
     // the try — a synchronous throw must land in `error`, not leak past the
     // catch and leave this instance stuck in `connecting` forever.
     try {
-      const transport = injectedTransport ?? createTransport(this._config, {
+      const startupConfig = filesystemStartupConfig(this._config)
+      const transport = injectedTransport ?? createTransport(startupConfig, {
         onStderr: (chunk) => {
           this._stderrBuffer += chunk
           if (this._stderrBuffer.length > 8192) {
@@ -424,6 +427,7 @@ export class McpClient extends EventEmitter {
     toolName: string,
     args: Record<string, any>,
     externalSignal?: AbortSignal,
+    beforeDispatch?: () => void,
   ): Promise<any> {
     if (!this.client) throw new Error(`MCP server ${this.name} not connected`)
     if (!this._capabilities.tools) {
@@ -463,6 +467,12 @@ export class McpClient extends EventEmitter {
         if (!this.isCurrentClient(client)) throw new Error(`MCP server ${this.name} connection changed before dispatch`)
         controller.signal.throwIfAborted()
       }
+      if (isLocalOfficialFilesystem(this._config)) {
+        toolArgs = await waitForFilesystemNormalization(normalizeFilesystemRootAliases(this._config, toolName, toolArgs, controller.signal), controller.signal)
+      }
+      controller.signal.throwIfAborted()
+      if (!this.isCurrentClient(client)) throw new Error(`MCP server ${this.name} connection changed before dispatch`)
+      beforeDispatch?.()
       const result = await client.callTool(
         { name: toolName, arguments: toolArgs },
         undefined,

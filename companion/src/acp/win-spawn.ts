@@ -305,20 +305,39 @@ export function resolveAcpSpawn(
   return wrapViaCmd(target, args)
 }
 
+const ownedPosixChildren = new WeakSet<ChildProcess>()
+
 export function spawnAcpChild(
   command: string,
   args: string[],
   options: SpawnOptions,
 ): ReturnType<typeof spawn> {
+  if (process.platform === "win32") {
+    const { spawnWindowsJob } = require("../process/windows-job") as typeof import("../process/windows-job")
+    const spec = resolveAcpSpawn(command, args)
+    return spawnWindowsJob(spec.command, spec.args, { ...options, ...spec.options, windowsHide: true })
+  }
   const spec = resolveAcpSpawn(command, args)
-  return spawn(spec.command, spec.args, {
+  const child = spawn(spec.command, spec.args, {
     ...options,
+    detached: true,
     shell: false,
     windowsHide: spec.options.windowsHide ?? (options.windowsHide as boolean | undefined),
     windowsVerbatimArguments:
       spec.options.windowsVerbatimArguments ??
       (options.windowsVerbatimArguments as boolean | undefined),
   })
+  {
+    ownedPosixChildren.add(child)
+    // Reclaim descendants synchronously while this owned group identity is
+    // still live. Never retain a numeric PID for a later post-exit retry.
+    child.once("exit", () => {
+      killAcpChild(child, "SIGKILL")
+      ownedPosixChildren.delete(child)
+    })
+    child.once("error", () => { if (!child.pid) ownedPosixChildren.delete(child) })
+  }
+  return child
 }
 
 function windowsSystemRoot(env: NodeJS.ProcessEnv = process.env): string {
@@ -381,6 +400,11 @@ export function killAcpChild(child: ChildProcess, signal: NodeJS.Signals = "SIGT
   const pid = child.pid
   if (pid == null || pid <= 0) return
   if (process.platform === "win32") {
+    const { isOwnedWindowsJobChild } = require("../process/windows-job") as typeof import("../process/windows-job")
+    if (isOwnedWindowsJobChild(child)) {
+      if (child.exitCode == null && child.signalCode == null) { try { child.kill() } catch { /* closed handle */ } }
+      return
+    }
     if (child.exitCode != null || child.signalCode != null || closingWindowsChildren.has(child)) return
     closingWindowsChildren.add(child)
     // Loaded here because the shared cleanup helper uses this module's pinned
@@ -392,8 +416,34 @@ export function killAcpChild(child: ChildProcess, signal: NodeJS.Signals = "SIGT
     return
   }
   try {
-    child.kill(signal)
+    if (ownedPosixChildren.has(child)) process.kill(-pid, signal)
+    else if (child.exitCode == null && child.signalCode == null) child.kill(signal)
   } catch {
-    /* */
+    /* already terminated */
   }
+}
+
+const acpClosing = new WeakMap<ChildProcess, Promise<void>>()
+/** Idempotent bounded teardown awaited before Companion exits. */
+export function closeAcpChild(child: ChildProcess): Promise<void> {
+  const existing = acpClosing.get(child)
+  if (existing) return existing
+  const closing = new Promise<void>((resolve, reject) => {
+    let done = false
+    let timer: ReturnType<typeof setTimeout>
+    const clean = () => { clearTimeout(timer); child.removeListener("close", finish) }
+    const finish = () => { if (done) return; done = true; clean(); resolve() }
+    child.once("close", finish)
+    timer = setTimeout(() => {
+      killAcpChild(child, "SIGKILL")
+      timer = setTimeout(() => {
+        if (done) return
+        done = true; clean(); reject(new Error("ACP subprocess teardown timed out"))
+      }, 1000)
+    }, 2000)
+    killAcpChild(child, "SIGTERM")
+    if (child.exitCode != null || child.signalCode != null || !child.pid) finish()
+  })
+  acpClosing.set(child, closing)
+  return closing
 }
