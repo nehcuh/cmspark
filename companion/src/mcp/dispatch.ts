@@ -259,6 +259,10 @@ export async function executeMcpTool(
   if (selectionDenied) return selectionDenied
   const plannedIdentityError = gatePlannedMcpIdentity(toolName, params, sessionId)
   if (plannedIdentityError) return { success: false, error: plannedIdentityError }
+  let authorizationIdentity = manager.getAuthorizationIdentity(route.serverName)
+  if (!authorizationIdentity) return { success: false, error: "MCP server unavailable for authorization" }
+  const authorizationContract = manager.getAuthorizationContract(route.serverName)
+  const checkAuthorization = () => authorizationIdentity !== undefined && manager.getAuthorizationIdentity(route.serverName) === authorizationIdentity
 
   const configuredTrustLevel = manager.getTrustLevel(route.serverName) ?? "first-use"
   // Audit item 8: destructive-looking tool names ALWAYS require per-call confirmation,
@@ -275,7 +279,7 @@ export async function executeMcpTool(
   }
 
   const cache = getMcpConfirmCache()
-  const cacheKey = { sessionId, serverName: route.serverName, toolName: route.toolName }
+  const cacheKey = { sessionId, serverName: route.serverName, toolName: route.toolName, identity: authorizationIdentity }
 
   const needsConfirm =
     trustLevel === "manual" ||
@@ -358,6 +362,15 @@ export async function executeMcpTool(
     // Approval can resolve just before abort; do not promote a cancelled call
     // into session trust even when the confirmation already left pending state.
     if (signal?.aborted) return { success: false, error: "MCP tool call cancelled during confirmation" }
+    const selectionRevoked = checkSelection()
+    if (selectionRevoked) return selectionRevoked
+    const plannedError = gatePlannedMcpIdentity(toolName, params, sessionId)
+    if (plannedError) return { success: false, error: plannedError }
+    const approvedRoute = manager.resolveToolName(toolName)
+    if (!approvedRoute || approvedRoute.serverName !== route.serverName || approvedRoute.toolName !== route.toolName) {
+      return { success: false, error: `MCP tool ${toolName} route changed during authorization` }
+    }
+    if (!checkAuthorization()) return { success: false, error: "MCP authorization changed or revoked during confirmation" }
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
       if (forceMcpConfirm) {
@@ -408,6 +421,7 @@ export async function executeMcpTool(
   const mcpArgs = stripCmsparkInternalMcpArgs(params)
   const runOnce = async (): Promise<{ success: boolean; data?: any; error?: string; rawErr?: string }> => {
     if (signal?.aborted) return { success: false, error: "MCP tool call cancelled before dispatch" }
+    if (!checkAuthorization()) return { success: false, error: "MCP authorization changed or revoked before dispatch" }
     const selectionDenied = checkSelection()
     if (selectionDenied) return selectionDenied
     try {
@@ -452,11 +466,19 @@ export async function executeMcpTool(
       toolName,
       ws,
       checkSelection,
+      checkAuthorization,
       signal,
     })
     if (expanded.retried) {
       if (expanded.ok) {
-        outcome = await runOnce()
+        // The approved directory change may replace the client/config, but it
+        // must not authorize a changed tool contract during the reload.
+        if (manager.getAuthorizationContract(route.serverName) !== authorizationContract) {
+          outcome = { success: false, error: "MCP tool contract changed during allow-dir reload" }
+        } else {
+          authorizationIdentity = expanded.authorizationIdentity
+          outcome = await runOnce()
+        }
       } else if (expanded.error) {
         outcome = {
           success: false,
@@ -492,15 +514,18 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
   toolName: string
   ws: WebSocket
   checkSelection?: () => { error: string } | null
+  checkAuthorization?: () => boolean
   signal?: AbortSignal
-}): Promise<{ retried: boolean; ok?: boolean; error?: string }> {
+}): Promise<{ retried: boolean; ok?: boolean; error?: string; authorizationIdentity?: string }> {
   const cancelled = { retried: true, ok: false, error: "MCP allow-dir expansion cancelled" }
   if (opts.signal?.aborted) return cancelled
   const { securityConfirmations } = requireRt()
-  const { canOfferAllowDirExpand, addFilesystemAllowDir } = await import("./allow-dir-expand")
+  const { canOfferAllowDirExpand, addFilesystemAllowDir, captureFilesystemAdmission } = await import("./allow-dir-expand")
   if (opts.signal?.aborted) return cancelled
   const selectionDenied = opts.checkSelection?.()
   if (selectionDenied) return { retried: true, ok: false, error: selectionDenied.error }
+  const revoked = { retried: true, ok: false, error: "MCP allow-dir authorization changed or revoked" }
+  if (opts.checkAuthorization?.() === false) return revoked
 
   // Pre-check filesystem server + path BEFORE L2 (Pi nit: no misleading prompt)
   const pre = canOfferAllowDirExpand({
@@ -513,83 +538,89 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
     return { retried: false }
   }
 
-  // Three-flag cruise = path risk accepted: auto-add allow-dir without L2.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { isCruisePathRiskAccepted } = require("../security/cruise-path") as typeof import("../security/cruise-path")
-  if (isCruisePathRiskAccepted()) {
-    const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir, opts.signal)
+  const admission = captureFilesystemAdmission(opts.route.serverName)
+  const authorized = () => admission.isCurrent() && opts.checkAuthorization?.() !== false && !opts.checkSelection?.()
+  try {
+    if (!authorized()) return revoked
+
+    // Three-flag cruise = path risk accepted: auto-add allow-dir without L2.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { isCruisePathRiskAccepted } = require("../security/cruise-path") as typeof import("../security/cruise-path")
+    if (isCruisePathRiskAccepted()) {
+      const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir, opts.signal, authorized)
+      if (opts.signal?.aborted) return cancelled
+      if (!added.ok) {
+        return {
+          retried: true,
+          ok: false,
+          error: `Failed to expand allow-dir under cruise: ${added.error}. Underlying: ${opts.rawErr}`,
+        }
+      }
+      logger.warn("mcp.allow_dir.cruise_auto_added", {
+        server: opts.route.serverName,
+        dir: pre.dir,
+        reason: "full_autonomy_cruise",
+      })
+      return { retried: true, ok: true, authorizationIdentity: added.authorizationIdentity }
+    }
+
+    const channel = await confirmChannel(opts.ws)
+    if ("error" in channel) {
+      return {
+        retried: true,
+        ok: false,
+        error:
+          `MCP path denied (${pre.dir}); ${channel.error} Underlying: ${opts.rawErr}`,
+      }
+    }
+
+    logger.info("mcp.allow_dir.propose", {
+      server: opts.route.serverName,
+      tool: opts.route.toolName,
+      dir: pre.dir,
+    })
+
+    const decision = await securityConfirmations.request(
+      channel.send,
+      {
+        toolName: opts.toolName,
+        dangerousApis: ["mcp-allow-dir-expand"],
+        code:
+          `允许 MCP filesystem 访问目录：\n${pre.dir}\n\n` +
+          `仅把该目录加入 allowlist（可在主目录内或之外；不会放开整盘/系统目录）。拒绝则保持当前配置。`,
+        riskLevel: "medium",
+        autoConfirmEligible: false,
+        criticalApis: ["mcp-allow-dir-expand"],
+      },
+      { originWs: channel.originWs, signal: opts.signal },
+    )
+
+    // A response may resolve just before abort. Recheck before granting a path.
+    if (opts.signal?.aborted) return cancelled
+    if (!decision.approved) {
+      logger.info("mcp.allow_dir.denied", { dir: pre.dir, reason: decision.reason })
+      return {
+        retried: true,
+        ok: false,
+        error:
+          `User declined adding MCP allow-dir ${pre.dir}. Access denied. Underlying: ${opts.rawErr}`,
+      }
+    }
+
+    const selectionRevoked = opts.checkSelection?.()
+    if (selectionRevoked) return { retried: true, ok: false, error: selectionRevoked.error }
+    const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir, opts.signal, authorized)
     if (opts.signal?.aborted) return cancelled
     if (!added.ok) {
       return {
         retried: true,
         ok: false,
-        error: `Failed to expand allow-dir under cruise: ${added.error}. Underlying: ${opts.rawErr}`,
+        error: `Failed to expand allow-dir: ${added.error}. Underlying: ${opts.rawErr}`,
       }
     }
-    logger.warn("mcp.allow_dir.cruise_auto_added", {
-      server: opts.route.serverName,
-      dir: pre.dir,
-      reason: "full_autonomy_cruise",
-    })
-    return { retried: true, ok: true }
-  }
-
-  const channel = await confirmChannel(opts.ws)
-  if ("error" in channel) {
-    return {
-      retried: true,
-      ok: false,
-      error:
-        `MCP path denied (${pre.dir}); ${channel.error} Underlying: ${opts.rawErr}`,
-    }
-  }
-
-  logger.info("mcp.allow_dir.propose", {
-    server: opts.route.serverName,
-    tool: opts.route.toolName,
-    dir: pre.dir,
-  })
-
-  const decision = await securityConfirmations.request(
-    channel.send,
-    {
-      toolName: opts.toolName,
-      dangerousApis: ["mcp-allow-dir-expand"],
-      code:
-        `允许 MCP filesystem 访问目录：\n${pre.dir}\n\n` +
-        `仅把该目录加入 allowlist（可在主目录内或之外；不会放开整盘/系统目录）。拒绝则保持当前配置。`,
-      riskLevel: "medium",
-      autoConfirmEligible: false,
-      criticalApis: ["mcp-allow-dir-expand"],
-    },
-    { originWs: channel.originWs, signal: opts.signal },
-  )
-
-  // A response may resolve just before abort. Recheck before granting a path.
-  if (opts.signal?.aborted) return cancelled
-  if (!decision.approved) {
-    logger.info("mcp.allow_dir.denied", { dir: pre.dir, reason: decision.reason })
-    return {
-      retried: true,
-      ok: false,
-      error:
-        `User declined adding MCP allow-dir ${pre.dir}. Access denied. Underlying: ${opts.rawErr}`,
-    }
-  }
-
-  const selectionRevoked = opts.checkSelection?.()
-  if (selectionRevoked) return { retried: true, ok: false, error: selectionRevoked.error }
-  const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir, opts.signal)
-  if (opts.signal?.aborted) return cancelled
-  if (!added.ok) {
-    return {
-      retried: true,
-      ok: false,
-      error: `Failed to expand allow-dir: ${added.error}. Underlying: ${opts.rawErr}`,
-    }
-  }
-  logger.info("mcp.allow_dir.added", { server: opts.route.serverName, dir: pre.dir })
-  return { retried: true, ok: true }
+    logger.info("mcp.allow_dir.added", { server: opts.route.serverName, dir: pre.dir })
+    return { retried: true, ok: true, authorizationIdentity: added.authorizationIdentity }
+  } finally { admission.dispose() }
 }
 
 /**
@@ -700,9 +731,12 @@ export async function executeMcpMetaTool(
   if (selectionDenied) return selectionDenied
 
   const forceMetaConfirm = CRITICAL_MCP_META_TOOLS.has(toolName)
+  const authorizationIdentity = manager.getAuthorizationIdentity(serverName)
+  if (!authorizationIdentity) return { success: false, error: "MCP server unavailable for authorization" }
+  const checkAuthorization = () => manager.getAuthorizationIdentity(serverName) === authorizationIdentity
   const configuredTrustLevel = manager.getTrustLevel(serverName) ?? "first-use"
   const cache = getMcpConfirmCache()
-  const cacheKey = { sessionId, serverName, toolName }
+  const cacheKey = { sessionId, serverName, toolName, identity: authorizationIdentity }
   const needsConfirm =
     forceMetaConfirm ||
     configuredTrustLevel === "manual" ||
@@ -744,6 +778,9 @@ export async function executeMcpMetaTool(
       { originWs: channel.originWs, signal },
     )
     if (signal?.aborted) return { success: false, error: "MCP meta-tool call cancelled during confirmation" }
+    const selectionRevoked = checkSelection()
+    if (selectionRevoked) return selectionRevoked
+    if (!checkAuthorization()) return { success: false, error: "MCP authorization changed or revoked during confirmation" }
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
       if (forceMetaConfirm) {
@@ -779,23 +816,24 @@ export async function executeMcpMetaTool(
   const selectionRevoked = checkSelection()
   if (selectionRevoked) return selectionRevoked
   if (signal?.aborted) return { success: false, error: "MCP meta-tool call cancelled before dispatch" }
+  if (!checkAuthorization()) return { success: false, error: "MCP authorization changed or revoked before dispatch" }
 
   try {
     switch (toolName) {
       case "mcp_list_resources": {
-        const resources = await manager.listResources(serverName)
+        const resources = await manager.listResources(serverName, signal)
         return { success: true, data: { server: serverName, resources } }
       }
       case "mcp_read_resource": {
         const uri = String(args.uri || "").trim()
         if (!uri) return { success: false, error: "Resource uri is required" }
-        const result = await manager.readResource(serverName, uri)
+        const result = await manager.readResource(serverName, uri, signal)
         return { success: true, data: result }
       }
       case "mcp_get_prompt": {
         const name = String(args.name || "").trim()
         if (!name) return { success: false, error: "Prompt name is required" }
-        const result = await manager.getPrompt(serverName, name, args.arguments)
+        const result = await manager.getPrompt(serverName, name, args.arguments, signal)
         return { success: true, data: result }
       }
       default:

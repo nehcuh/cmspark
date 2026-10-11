@@ -17,7 +17,7 @@ export function killWindowsPtyTree(pid: number, releaseHandle: () => void, spawn
       stdio: "ignore", windowsHide: true,
     })
     // ENOENT/EACCES arrive asynchronously. Never retry the numeric PID later.
-    child.once("error", release)
+    child.on("error", release)
     child.once("close", release)
     timer = setTimeout(() => {
       try { child.kill() } catch { /* gone */ }

@@ -323,7 +323,7 @@ if [ -x /usr/bin/true ] || [ -x /bin/true ]; then
   _STAGE="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-nsis-stage.XXXXXX")"
   mkdir -p "${_STAGE}/chrome-extension" "${_STAGE}/assets"
   cp "${ROOT}/companion/assets/"*.ico "${_STAGE}/assets/"
-  touch "${_STAGE}/node.exe" "${_STAGE}/cmspark-agent.js" "${_STAGE}/launch-hidden.vbs" "${_STAGE}/cmspark-agent.exe"
+  touch "${_STAGE}/node.exe" "${_STAGE}/cmspark-agent.js" "${_STAGE}/launch-hidden.vbs" "${_STAGE}/stop-installed-agent.ps1" "${_STAGE}/cmspark-agent.exe"
   set +e
   OUT_SEA="$(
     CMSPARK_STAGING_DIR="${_STAGE}" CMSPARK_MAKENSIS="${_TRUE}" \
@@ -346,7 +346,7 @@ fi
 echo "[dynamic] wrapper refuses a missing Windows application icon"
 _STAGE="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-nsis-icon.XXXXXX")"
 mkdir -p "${_STAGE}/chrome-extension" "${_STAGE}/assets"
-touch "${_STAGE}/node.exe" "${_STAGE}/cmspark-agent.js" "${_STAGE}/launch-hidden.vbs"
+touch "${_STAGE}/node.exe" "${_STAGE}/cmspark-agent.js" "${_STAGE}/launch-hidden.vbs" "${_STAGE}/stop-installed-agent.ps1"
 cp "${ROOT}/companion/assets/"tray-icon-*.ico "${_STAGE}/assets/"
 set +e
 OUT_ICON="$(CMSPARK_STAGING_DIR="${_STAGE}" CMSPARK_MAKENSIS="${_TRUE:-/usr/bin/true}" bash "${WIN_NSIS}" 2>&1)"

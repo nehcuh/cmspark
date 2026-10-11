@@ -462,7 +462,7 @@ export class McpClient extends EventEmitter {
 
   /**
    * #289: shared AbortController timeout for SDK calls that only take a
-   * per-call timeout (no external abort signal) — readResource / getPrompt.
+   * per-call timeout and caller cancellation — readResource / getPrompt.
    * Mirrors callTool's cancellation path: on timeout the SDK removes the
    * in-flight response handler and notifies the server, instead of leaving
    * a dangling handler behind a naked Promise.race.
@@ -470,23 +470,32 @@ export class McpClient extends EventEmitter {
   private async withCallTimeout<T>(
     label: string,
     fn: (signal: AbortSignal) => Promise<T>,
+    externalSignal?: AbortSignal,
   ): Promise<T> {
+    if (externalSignal?.aborted) throw new Error(`MCP call aborted: ${label}`)
     const timeout = resolveCallTimeout(this._config)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeout)
+    const onAbort = () => controller.abort()
+    externalSignal?.addEventListener("abort", onAbort, { once: true })
     try {
-      return await fn(controller.signal)
+      const result = await fn(controller.signal)
+      if (externalSignal?.aborted) throw new Error(`MCP call aborted: ${label}`)
+      return result
     } catch (err: any) {
+      if (externalSignal?.aborted) throw new Error(`MCP call aborted: ${label}`)
       if (controller.signal.aborted) {
         throw new Error(`MCP timeout: ${label} > ${timeout}ms`)
       }
       throw err
     } finally {
       clearTimeout(timer)
+      externalSignal?.removeEventListener("abort", onAbort)
     }
   }
 
-  async listResources(): Promise<McpResourceMeta[]> {
+  async listResources(signal?: AbortSignal): Promise<McpResourceMeta[]> {
+    if (signal?.aborted) throw new Error(`MCP call aborted: list_resources ${this.name}`)
     if (!this._capabilities.resources) {
       const fileTools = this._toolsCache
         .filter((t) => /read|list|directory|file|search/i.test(t.name))
@@ -500,10 +509,10 @@ export class McpClient extends EventEmitter {
     }
     // Return cache to avoid hammering the server; caller can call refreshResources() to force update
     if (this._resourcesCache.length > 0) return this._resourcesCache
-    return this.refreshResources()
+    return waitForCatalogCaller(this.refreshResources(), signal)
   }
 
-  async readResource(uri: string): Promise<any> {
+  async readResource(uri: string, externalSignal?: AbortSignal): Promise<any> {
     if (!this.client) throw new Error(`MCP server ${this.name} not connected`)
     if (!this._capabilities.resources) {
       // Provide concrete guidance when the server exposes filesystem-style tools.
@@ -528,16 +537,18 @@ export class McpClient extends EventEmitter {
     // gets a JSON-RPC `notifications/cancelled`.
     return this.withCallTimeout(`read_resource ${this.name} ${uri}`, (signal) =>
       this.client!.readResource({ uri }, { signal }),
+      externalSignal,
     )
   }
 
-  async listPrompts(): Promise<McpPromptMeta[]> {
+  async listPrompts(signal?: AbortSignal): Promise<McpPromptMeta[]> {
+    if (signal?.aborted) throw new Error(`MCP call aborted: list_prompts ${this.name}`)
     if (!this._capabilities.prompts) return []
     if (this._promptsCache.length > 0) return this._promptsCache
-    return this.refreshPrompts()
+    return waitForCatalogCaller(this.refreshPrompts(), signal)
   }
 
-  async getPrompt(name: string, args?: Record<string, any>): Promise<any> {
+  async getPrompt(name: string, args?: Record<string, any>, externalSignal?: AbortSignal): Promise<any> {
     if (!this.client) throw new Error(`MCP server ${this.name} not connected`)
     if (!this._capabilities.prompts) {
       throw new Error(`MCP server ${this.name} does not support prompts`)
@@ -545,12 +556,27 @@ export class McpClient extends EventEmitter {
     // #289: same AbortController alignment as readResource (see callTool).
     return this.withCallTimeout(`get_prompt ${this.name}/${name}`, (signal) =>
       this.client!.getPrompt({ name, arguments: args }, { signal }),
+      externalSignal,
     )
   }
 
   get stderrTail(): string {
     return this._stderrBuffer
   }
+}
+
+/** Discovery is shared by notifications and callers. Cancel this wait, not the
+ * shared SDK request; other callers still receive its atomic cache publication. */
+async function waitForCatalogCaller<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return pending
+  let onAbort!: () => void
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new Error("MCP call aborted: catalog wait"))
+    signal.addEventListener("abort", onAbort, { once: true })
+    if (signal.aborted) onAbort()
+  })
+  try { return await Promise.race([pending, cancelled]) }
+  finally { signal.removeEventListener("abort", onAbort) }
 }
 
 async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {

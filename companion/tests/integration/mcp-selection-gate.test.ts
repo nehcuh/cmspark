@@ -238,6 +238,7 @@ test("sessionId fallback enforces selection and keeps its binding when lookup di
 
 test("selection revoked during allow-directory confirmation prevents permission expansion", async () => {
   await server("selected")
+  saveConfig({ mcp: { enabled: true, servers: { selected: getMcpManager().getServerConfig("selected")! } } })
   const tid = thread(["selected"])
   toolResponse = () => ({ isError: true, content: [{ type: "text", text: "Access denied" }] })
   const expand = require("../../src/mcp/allow-dir-expand") as typeof import("../../src/mcp/allow-dir-expand")
@@ -254,13 +255,14 @@ test("selection revoked during allow-directory confirmation prevents permission 
 
 test("selection revoked during server reload prevents the filesystem retry", async () => {
   await server("selected")
+  saveConfig({ mcp: { enabled: true, servers: { selected: getMcpManager().getServerConfig("selected")! } } })
   const tid = thread(["selected"])
   toolResponse = () => ({ isError: true, content: [{ type: "text", text: "Access denied" }] })
   const expand = require("../../src/mcp/allow-dir-expand") as typeof import("../../src/mcp/allow-dir-expand")
   mock.method(expand, "canOfferAllowDirExpand", () => ({ offer: true, dir: "/fixture" }))
   const add = mock.method(expand, "addFilesystemAllowDir", async () => {
     tm.update(tid, { active_mcp_server_ids: [] })
-    return { ok: true }
+    return { ok: true, authorizationIdentity: getMcpManager().getAuthorizationIdentity("selected") }
   })
   const result = await call("namespaced", tid)
   assert.equal(result.success, false)

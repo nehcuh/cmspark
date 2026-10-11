@@ -6,10 +6,28 @@ import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
 import { setTimeout as delay } from "node:timers/promises"
-import { getConfig, replaceMcpServers } from "../config"
+import { getConfig, replaceMcpServers, configEvents, CONFIG_CHANGE_EVENT } from "../config"
 import type { McpServerConfig, McpStdioServerConfig } from "./types"
 import { isFilesystemAllowPathArg, MCP_FILESYSTEM_PACKAGE } from "./filesystem-home"
 import { getMcpManager } from "./manager"
+import { mcpAuthorizationDigest } from "./authorization"
+
+/** A pending grant cannot survive disable/re-enable or replacement, even if
+ * the final config happens to equal the original (ABA). Dispose on every exit. */
+export function captureFilesystemAdmission(serverName: string, pendingCommit?: McpServerConfig) {
+  const original = getConfig().mcp
+  const identity = mcpAuthorizationDigest(pendingCommit ?? original?.servers[serverName])
+  const matches = (mcp: typeof original) => mcp?.enabled === true &&
+    mcp.servers[serverName]?.enabled === true && mcpAuthorizationDigest(mcp.servers[serverName]) === identity
+  // Install before our synchronous commit, so reentrant config changes are seen.
+  let valid = pendingCommit ? original?.enabled === true && original.servers[serverName]?.enabled === true : matches(original)
+  const changed = (config: ReturnType<typeof getConfig>) => { if (!matches(config.mcp)) valid = false }
+  configEvents.on(CONFIG_CHANGE_EVENT, changed)
+  return {
+    isCurrent: () => valid && matches(getConfig().mcp),
+    dispose: () => { configEvents.off(CONFIG_CHANGE_EVENT, changed) },
+  }
+}
 
 /** Extract a filesystem path from MCP denial / tool params. */
 export function extractPathCandidate(errMsg: string, params: any): string | null {
@@ -411,12 +429,16 @@ export async function addFilesystemAllowDir(
   serverName: string,
   dir: string,
   signal?: AbortSignal,
-): Promise<{ ok: true; args: string[] } | { ok: false; error: string }> {
+  isAuthorized?: () => boolean,
+): Promise<{ ok: true; args: string[]; authorizationIdentity?: string } | { ok: false; error: string }> {
   const cancelled = { ok: false as const, error: "MCP allow-dir expansion cancelled" }
   if (signal?.aborted) return cancelled
   const config = getConfig()
   const existing = config.mcp?.servers?.[serverName]
   if (!existing) return { ok: false, error: `MCP server not found: ${serverName}` }
+  if (!config.mcp?.enabled || !existing.enabled || isAuthorized?.() === false) {
+    return { ok: false, error: "MCP allow-dir authorization changed, revoked or disabled" }
+  }
   if (existing.transport !== "stdio") {
     return { ok: false, error: "only stdio filesystem servers support allow-dir args" }
   }
@@ -460,21 +482,28 @@ export async function addFilesystemAllowDir(
   // preserve config; after it, finish reconciliation rather than rolling back
   // an approved change or overwriting a subsequent configuration update.
   if (signal?.aborted) return cancelled
-  replaceMcpServers(newServers)
-  // applyConfig is triggered by CONFIG_CHANGE_EVENT; give stdio a moment to restart
+  if (isAuthorized?.() === false) return { ok: false, error: "MCP allow-dir authorization changed or revoked" }
+  const committedAdmission = captureFilesystemAdmission(serverName, next)
   try {
-    await getMcpManager().applyConfig(getConfig().mcp)
-  } catch {
-    /* listener may already apply */
-  }
-  if (signal?.aborted) return cancelled
-  // Brief wait for tools to re-register
-  try {
-    await delay(400, undefined, { signal })
-  } catch (error) {
+    replaceMcpServers(newServers)
+    // applyConfig is triggered by CONFIG_CHANGE_EVENT; give stdio a moment to restart
+    try {
+      await getMcpManager().applyConfig(getConfig().mcp)
+    } catch {
+      /* listener may already apply */
+    }
     if (signal?.aborted) return cancelled
-    throw error
-  }
-  if (signal?.aborted) return cancelled
-  return { ok: true, args: next.args || [] }
+    // Brief wait for tools to re-register
+    try {
+      await delay(400, undefined, { signal })
+    } catch (error) {
+      if (signal?.aborted) return cancelled
+      throw error
+    }
+    if (signal?.aborted) return cancelled
+    if (!committedAdmission.isCurrent()) {
+      return { ok: false, error: "MCP allow-dir authorization changed or revoked after commit" }
+    }
+    return { ok: true, args: next.args || [], authorizationIdentity: getMcpManager().getAuthorizationIdentity(serverName) }
+  } finally { committedAdmission.dispose() }
 }

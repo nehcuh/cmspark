@@ -222,7 +222,7 @@ jobs:
           & scripts/tests/win-sapi-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: "Windows reliability and confirmation regressions (#592, #595, #598)"
+      - name: "Windows reliability and confirmation regressions (#592, #595, #598, #599)"
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
@@ -238,6 +238,8 @@ jobs:
           npx tsc -p tsconfig.test.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/run-tests.mjs .test-dist/tests/windows-reliability.test.js .test-dist/tests/host-use-win-adapter.test.js .test-dist/tests/pty-terminal.test.js .test-dist/tests/acp-win-spawn.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/run-tests.mjs .test-dist/tests/windows-shell-cleanup.test.js .test-dist/tests/mcp-manager.test.js .test-dist/tests/integration/mcp-authorization-lifecycle.test.js .test-dist/tests/integration/mcp-meta-cancellation.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/run-tests.mjs .test-dist/tests/integration/confirmation-cancellation.test.js .test-dist/tests/integration/allow-dir-cancellation.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

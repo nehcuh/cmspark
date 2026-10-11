@@ -24,6 +24,7 @@ export const DEFAULT_APPROVAL_MAX_CALLS = 10
 interface ApprovalMeta {
   approvedAt: number
   callCount: number
+  identity?: string
 }
 
 export interface McpConfirmCacheOptions {
@@ -35,6 +36,7 @@ export interface ConfirmCacheKey {
   sessionId: string
   serverName: string
   toolName: string
+  identity?: string
 }
 
 function keyToString(k: ConfirmCacheKey): string {
@@ -46,7 +48,7 @@ export class McpConfirmCache {
   // Sessions that have explicitly chosen "approve all from this server" — optional convenience
   // for power users who want to bulk-trust a server mid-session without re-confirming each tool.
   // Bulk trust has NO TTL/cap — it's an explicit "trust this whole server" choice.
-  private trustedServers = new Map<string, Set<string>>()
+  private trustedServers = new Map<string, Map<string, string | undefined>>()
   private readonly ttlMs: number
   private readonly maxCalls: number
 
@@ -58,13 +60,14 @@ export class McpConfirmCache {
   isApproved(key: ConfirmCacheKey): boolean {
     // Bulk-trust path: still permanent within session (explicit user choice).
     const perServer = this.trustedServers.get(key.sessionId)
-    if (perServer && perServer.has(key.serverName)) return true
+    if (perServer?.has(key.serverName) && perServer.get(key.serverName) === key.identity) return true
 
     // Per-tool path: TTL + call-count gated.
     const perSession = this.approved.get(key.sessionId)
     if (!perSession) return false
     const meta = perSession.get(key.serverName + "/" + key.toolName)
     if (!meta) return false
+    if (meta.identity !== key.identity) return false
 
     const now = Date.now()
     if (now - meta.approvedAt > this.ttlMs) {
@@ -98,6 +101,7 @@ export class McpConfirmCache {
     perSession.set(key.serverName + "/" + key.toolName, {
       approvedAt: Date.now(),
       callCount: 0,
+      identity: key.identity,
     })
   }
 
@@ -114,13 +118,13 @@ export class McpConfirmCache {
     meta.callCount += 1
   }
 
-  approveServer(sessionId: string, serverName: string): void {
+  approveServer(sessionId: string, serverName: string, identity?: string): void {
     let perServer = this.trustedServers.get(sessionId)
     if (!perServer) {
-      perServer = new Set()
+      perServer = new Map()
       this.trustedServers.set(sessionId, perServer)
     }
-    perServer.add(serverName)
+    perServer.set(serverName, identity)
   }
 
   revoke(key: ConfirmCacheKey): void {

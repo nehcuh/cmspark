@@ -9,6 +9,7 @@ import { getModule, requireModule } from "./modules"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { getUserEnvVars } from "../user-env"
 import { hardenPath } from "../process-path"
+import { killWindowsPtyTree } from "../pty/windows-tree"
 
 const MAX_OUTPUT = 200_000
 /** Default one-shot wall clock; killProcessTree on expiry (not just the shell parent). */
@@ -93,22 +94,20 @@ export function abortAllShellRuns(): number {
  * - win32: `taskkill /T /F` process tree (detached not required).
  * Bare `child.kill("SIGKILL")` alone leaves grandchildren alive under shell:true.
  */
+const closingWindowsShells = new WeakSet<ChildProcess>()
+
 export function killProcessTree(child: ChildProcess): void {
   const pid = child.pid
   if (pid == null || pid <= 0) return
   if (process.platform === "win32") {
-    try {
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-      })
-    } catch {
-      try {
-        child.kill()
-      } catch {
-        /* ignore */
-      }
-    }
+    if (child.exitCode != null || child.signalCode != null) return
+    if (closingWindowsShells.has(child)) return
+    closingWindowsShells.add(child)
+    // Share the bounded System32 cleanup used by PTY. Retain the original
+    // ChildProcess handle for fallback; never retry a possibly recycled PID.
+    killWindowsPtyTree(pid, () => {
+      if (child.exitCode == null && child.signalCode == null) child.kill()
+    })
     return
   }
   try {

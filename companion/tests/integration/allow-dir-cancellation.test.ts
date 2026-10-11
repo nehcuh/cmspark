@@ -12,7 +12,7 @@ import { WebSocket } from "ws"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { initDataDir, getConfig, getConfigDir, saveConfig } from "../../src/config"
+import { initDataDir, getConfig, getConfigDir, saveConfig, configEvents, CONFIG_CHANGE_EVENT } from "../../src/config"
 import { SecurityConfirmationManager } from "../../src/security-confirmation"
 import { ThreadManager } from "../../src/threads/thread-manager"
 import { bindMcpDispatchRuntime, executeMcpTool, tryExpandFilesystemAllowDirOnDenial } from "../../src/mcp/dispatch"
@@ -131,6 +131,53 @@ async function getPrompt(pending: Promise<any>, result: Promise<any>) {
   return Promise.race([pending, result.then(value => { throw new Error(`Prompt not reached: ${JSON.stringify(value)}`) })])
 }
 
+// #599 F4: revoking configuration is independent of aborting a request. Old
+// approvals must not persist a grant after disable, replacement or off/on ABA.
+for (const change of ["global-off", "server-off", "replace", "off-on"] as const) {
+  test(`allow-dir approval after ${change} cannot persist a grant`, async () => {
+    const listeners = configEvents.listenerCount(CONFIG_CHANGE_EVENT)
+    const original = getConfig().mcp!
+    const pending = prompt(), result = call()
+    const frame = await getPrompt(pending, result)
+    if (change === "global-off" || change === "off-on") saveConfig({ mcp: { ...original, enabled: false } })
+    if (change === "server-off") saveConfig({ mcp: { ...original, servers: { filesystem: { ...original.servers.filesystem, enabled: false } } } })
+    if (change === "replace") saveConfig({ mcp: { ...original, servers: { filesystem: { ...original.servers.filesystem, command: "owned-replacement" } as any } } })
+    if (change === "off-on") saveConfig({ mcp: original })
+    cfgBefore = configText()
+    confirmations.respondFrom(frame.confirmation_id, true, ws)
+    const outcome = await result
+    assert.equal(outcome.success, false)
+    assert.match(outcome.error!, /changed|revoked|disabled/i)
+    unchanged(1)
+    assert.equal(configEvents.listenerCount(CONFIG_CHANGE_EVENT), listeners)
+  })
+}
+
+test("direct allow-dir persistence rejects a disabled server", async () => {
+  const original = getConfig().mcp!
+  saveConfig({ mcp: { ...original, servers: { filesystem: { ...original.servers.filesystem, enabled: false } } } })
+  cfgBefore = configText()
+  assert.equal((await addFilesystemAllowDir("filesystem", offered)).ok, false)
+  unchanged(0)
+})
+
+test("an approved directory reload does not authorize a changed tool schema", async () => {
+  onReload = async () => {
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: "read_file", inputSchema: {
+      type: "object", properties: { changed: { type: "string" } },
+    } }] }))
+    await client.refreshTools()
+  }
+  const pending = prompt(), result = call()
+  const frame = await getPrompt(pending, result)
+  confirmations.respondFrom(frame.confirmation_id, true, ws)
+  const outcome = await result
+  assert.equal(outcome.success, false)
+  assert.match(outcome.error!, /contract changed/i)
+  assert.equal(calls, 1)
+  persisted() // the earlier, explicitly approved configuration commit remains
+})
+
 test("abort drains only its allow-dir confirmation; late approval cannot persist or retry", { timeout: 5000 }, async () => {
   const controller = new AbortController()
   const requested = prompt()
@@ -242,3 +289,31 @@ test("cancellation during tool re-registration wait prevents retry", { timeout: 
   persisted()
   assert.equal(calls, 1)
 })
+
+// Independent adversary found post-commit ABA bypassed the final-value check.
+// The earlier approved config must remain; its revoked call must never retry.
+// Implementation error: refreshing identity hid a revocation during reload.
+// Protects L2 grant continuity without rolling back committed user config.
+for (const change of ["global-off-on", "server-off-on", "replace-restore"] as const) {
+  test(`committed allow-dir followed by ${change} cannot inherit retry`, async () => {
+    const listeners = configEvents.listenerCount(CONFIG_CHANGE_EVENT)
+    onReload = () => {
+      const committed = getConfig().mcp!
+      const changed = change === "global-off-on" ? { ...committed, enabled: false }
+        : { ...committed, servers: { filesystem: { ...committed.servers.filesystem,
+          ...(change === "server-off-on" ? { enabled: false } : { command: "owned-replacement" }),
+        } as any } }
+      saveConfig({ mcp: changed })
+      saveConfig({ mcp: committed })
+    }
+    const pending = prompt(), result = call()
+    const frame = await getPrompt(pending, result)
+    confirmations.respondFrom(frame.confirmation_id, true, ws)
+    const outcome = await result
+    assert.equal(outcome.success, false)
+    assert.match(outcome.error!, /changed|revoked/i)
+    assert.equal(calls, 1)
+    persisted()
+    assert.equal(configEvents.listenerCount(CONFIG_CHANGE_EVENT), listeners)
+  })
+}

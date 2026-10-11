@@ -9,6 +9,7 @@ $inside = Join-Path $root "space 中文 & O'Brien ! (test)"
 $sibling = $inside + '-other'
 $processes = @()
 $saved = $env:CMSPARK_SMOKE_INSTALL_ROOT
+. (Join-Path $PSScriptRoot 'win-system-node-fixtures.ps1')
 try {
     $node = (Get-Command node).Source
     foreach ($directory in @($inside, $sibling)) {
@@ -17,6 +18,8 @@ try {
         Set-Content -LiteralPath (Join-Path $directory 'idle.js') -Encoding ascii -Value 'setInterval(()=>{},1000)'
         $processes += Start-Process -FilePath (Join-Path $directory 'node.exe') -ArgumentList ('"{0}"' -f (Join-Path $directory 'idle.js')) -PassThru -WindowStyle Hidden
     }
+    $system = New-OwnedSystemNodeFixtures $root $inside $sibling
+    $processes += @($system.Stop) + @($system.Survive)
     # Include the whole production macro, so a prepended daemon stop or global
     # taskkill cannot hide outside the tested PowerShell expression.
     $source = Get-Content -LiteralPath (Join-Path $repo 'scripts\installer.nsi') -Raw
@@ -35,6 +38,7 @@ Name "CMspark scoped stop smoke"
 OutFile "stop-smoke.exe"
 RequestExecutionLevel user
 SilentInstall silent
+!include "LogicLib.nsh"
 __MACRO__
 Section
   ReadEnvStr $INSTDIR "CMSPARK_SMOKE_INSTALL_ROOT"
@@ -42,7 +46,7 @@ Section
 SectionEnd
 '@
     Set-Content -LiteralPath (Join-Path $root 'stop-smoke.nsi') -Value $harness.Replace('__MACRO__', $macro) -Encoding utf8BOM
-    & $makensis /V2 (Join-Path $root 'stop-smoke.nsi')
+    & $makensis /V2 ('/DCMSPARK_STOP_SCRIPT=' + (Join-Path $repo 'companion\stop-installed-agent.ps1')) (Join-Path $root 'stop-smoke.nsi')
     if ($LASTEXITCODE -ne 0) { throw "NSIS smoke compilation failed: $LASTEXITCODE" }
     $env:CMSPARK_SMOKE_INSTALL_ROOT = $inside
     $stop = Start-Process -FilePath (Join-Path $root 'stop-smoke.exe') -PassThru
@@ -54,7 +58,9 @@ SectionEnd
     if (-not $processes[0].WaitForExit(10000)) { throw 'installed fixture was not stopped' }
     $processes[1].Refresh()
     if ($processes[1].HasExited) { throw 'sibling installation was incorrectly stopped' }
-    Write-Host 'PASS: special-character install root stopped; sibling installation survived'
+    foreach ($p in $system.Stop) { if (-not $p.WaitForExit(10000)) { throw 'system Node agent was not stopped' } }
+    foreach ($p in $system.Survive) { $p.Refresh(); if ($p.HasExited) { throw 'unrelated system Node process was stopped' } }
+    Write-Host 'PASS: bundled and system Node agents stopped; sibling/unrelated Node survived'
 } finally {
     $env:CMSPARK_SMOKE_INSTALL_ROOT = $saved
     foreach ($p in $processes) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }

@@ -28,7 +28,7 @@ if "%NODE_CMD%"=="" (
 
 if not "%NODE_CMD%"=="" (
     set "LAUNCH_EXE=%NODE_CMD%"
-    set "LAUNCH_ARGS=cmspark-agent.js tray"
+    set LAUNCH_ARGS="%~dp0cmspark-agent.js" tray
     echo [launch] NODE_CMD=%NODE_CMD%
     goto :do_launch
 )
@@ -64,7 +64,7 @@ if exist "%~dp0launch-hidden.vbs" (
     echo [launch] Launching via launch-hidden.vbs...
     wscript.exe "%~dp0launch-hidden.vbs"
 ) else (
-    echo [launch] VBS not found, fallback: %LAUNCH_EXE% %LAUNCH_ARGS%
+    echo [launch] VBS not found, launching the selected runtime
     set "NODE_PATH=%~dp0"
     start "" /MIN "%LAUNCH_EXE%" %LAUNCH_ARGS%
 )

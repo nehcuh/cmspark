@@ -24,6 +24,8 @@ import {
   type McpToolRoute,
 } from "./types.js"
 import { ensureFilesystemAllowlist } from "./filesystem-home.js"
+import { getMcpConfirmCache } from "./confirm-cache.js"
+import { mcpAuthorizationDigest } from "./authorization.js"
 
 const SLIDING_WINDOW_MS = 5 * 60 * 1000
 const RESTART_BACKOFF_EXTRA_JITTER_MS = 200
@@ -45,6 +47,10 @@ export class McpManager extends EventEmitter {
   private generations = new Map<string, number>()
   private configUpdates: Promise<void> = Promise.resolve()
   private appliedConfig: McpConfig | null = null
+  private authorizationEpochs = new Map<string, number>()
+  private authorizationClients = new WeakMap<McpClient, number>()
+  private authorizationCatalogs = new WeakMap<McpClient, string>()
+  private nextAuthorizationClient = 0
 
   constructor() {
     super()
@@ -89,6 +95,12 @@ export class McpManager extends EventEmitter {
   async applyConfig(next: McpConfig | undefined): Promise<void> {
     const previous = this.currentConfig
     const config = sanitizeMcpConfig(next)
+    for (const name of new Set([...Object.keys(previous?.servers ?? {}), ...Object.keys(config.servers)])) {
+      if (previous?.enabled !== config.enabled ||
+          mcpAuthorizationDigest(previous?.servers[name]) !== mcpAuthorizationDigest(config.servers[name])) {
+        this.revokeAuthorization(name)
+      }
+    }
     // Publish revocations immediately; serialize process teardown/replacement.
     this.currentConfig = config
     this.reaggregate()
@@ -209,8 +221,8 @@ export class McpManager extends EventEmitter {
           this.reaggregate()
           return
         }
-        // First successful connect resets the restart window
-        this.restartAttempts.delete(name)
+        // A handshake is not evidence of stability. Keep recent crashes until
+        // they age out of the sliding window, even after a successful restart.
         this.deadServers.delete(name)
         this.reaggregate()
         this.emit("servers_updated", this.listServers())
@@ -268,6 +280,7 @@ export class McpManager extends EventEmitter {
     })
     client.on("tools_changed", () => {
       if (this.clients.get(client.name) !== client) return
+      this.getAuthorizationIdentity(client.name)
       this.reaggregate()
       this.emit("tools_changed", this.aggregated)
       this.emit("servers_updated", this.listServers())
@@ -357,6 +370,40 @@ export class McpManager extends EventEmitter {
     return client
   }
 
+  private revokeAuthorization(name: string): void {
+    this.authorizationEpochs.set(name, (this.authorizationEpochs.get(name) ?? 0) + 1)
+    getMcpConfirmCache().clearServer(name)
+  }
+
+  /** Bind cached and in-flight approvals to live config, client and contracts.
+   * Revocations advance synchronously, including off/on updates whose teardown
+   * is superseded. A reconnect also creates a fresh approval identity. */
+  getAuthorizationIdentity(name: string): string | undefined {
+    const client = this.clients.get(name)
+    if (!client || !this.isCurrentClient(client) || client.connection.status !== "connected") return undefined
+    let instance = this.authorizationClients.get(client)
+    if (instance === undefined) {
+      instance = ++this.nextAuthorizationClient
+      this.authorizationClients.set(client, instance)
+    }
+    const catalog = this.getAuthorizationContract(name)!
+    const previous = this.authorizationCatalogs.get(client)
+    if (previous !== undefined && previous !== catalog) this.revokeAuthorization(name)
+    this.authorizationCatalogs.set(client, catalog)
+    return mcpAuthorizationDigest({ instance, epoch: this.authorizationEpochs.get(name) ?? 0,
+      config: this.currentConfig!.servers[name], catalog })
+  }
+
+  getAuthorizationContract(name: string): string | undefined {
+    const client = this.clients.get(name)
+    if (!client || !this.isCurrentClient(client) || client.connection.status !== "connected") return undefined
+    const meta = client.getMeta()
+    return mcpAuthorizationDigest({ capabilities: meta.capabilities,
+      tools: meta.tools.map(t => ({ name: t.name, inputSchema: t.inputSchema })).sort((a, b) => a.name.localeCompare(b.name)),
+      prompts: meta.prompts.map(p => ({ name: p.name, arguments: p.arguments })).sort((a, b) => a.name.localeCompare(b.name)),
+    })
+  }
+
   getAggregatedTools() {
     return this.aggregated.definitions
   }
@@ -409,28 +456,28 @@ export class McpManager extends EventEmitter {
     return client.callTool(route.toolName, args, signal)
   }
 
-  async listResources(serverName: string): Promise<any> {
+  async listResources(serverName: string, signal?: AbortSignal): Promise<any> {
     const client = this.requireAvailableClient(serverName)
-    return client.listResources()
+    return client.listResources(signal)
   }
 
-  async readResource(serverName: string, uri: string): Promise<any> {
+  async readResource(serverName: string, uri: string, signal?: AbortSignal): Promise<any> {
     const client = this.requireAvailableClient(serverName)
-    return client.readResource(uri)
+    return client.readResource(uri, signal)
   }
 
-  async listPrompts(serverName: string): Promise<any> {
+  async listPrompts(serverName: string, signal?: AbortSignal): Promise<any> {
     const client = this.requireAvailableClient(serverName)
-    return client.listPrompts()
+    return client.listPrompts(signal)
   }
 
-  async getPrompt(serverName: string, name: string, args?: Record<string, any>): Promise<any> {
+  async getPrompt(serverName: string, name: string, args?: Record<string, any>, signal?: AbortSignal): Promise<any> {
     const client = this.requireAvailableClient(serverName)
-    return client.getPrompt(name, args)
+    return client.getPrompt(name, args, signal)
   }
 
   getTrustLevel(serverName: string): McpServerConfig["trust_level"] | undefined {
-    return this.clients.get(serverName)?.trustLevel
+    return this.currentConfig?.servers[serverName]?.trust_level
   }
 
   // --- metadata for UI ---

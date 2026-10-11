@@ -38,6 +38,52 @@ const httpCfg = (overrides: Partial<any> = {}): McpServerConfig => ({
   ...overrides,
 } as McpServerConfig)
 
+// #599 F5: successful handshakes used to erase the five-minute crash history.
+// Drive the real scheduler with an owned, transport-free connect boundary.
+test("successful short-lived connections still exhaust the restart window", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1000000 })
+  t.mock.method(Math, "random", () => 0)
+  let starts = 0
+  t.mock.method(McpClient.prototype, "connect", async function(this: McpClient) {
+    starts++; (this as any)._connection.status = "connected"
+  })
+  const manager = new McpManager(), internal = manager as any
+  await manager.start({ enabled: true, servers: { owned: stdioCfg({ restart_policy: { max_restarts: 2, backoff_base_ms: 100, backoff_max_ms: 1000 } }) } })
+  try {
+    for (const backoff of [100, 200]) {
+      internal.clients.get("owned").emit("disconnected", "owned crash after handshake")
+      t.mock.timers.tick(backoff - 1)
+      const before = starts
+      t.mock.timers.tick(1)
+      await new Promise<void>(r => setImmediate(r))
+      assert.equal(starts, before + 1)
+    }
+    internal.clients.get("owned").emit("disconnected", "third owned crash")
+    t.mock.timers.tick(1000)
+    await new Promise<void>(r => setImmediate(r))
+    assert.equal(starts, 3)
+    assert.equal(internal.deadServers.has("owned"), true)
+    assert.equal(internal.restartTimers.size, 0)
+  } finally { await manager.shutdown() }
+})
+
+test("restart history ages out after a stable five-minute interval", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1000000 })
+  t.mock.method(Math, "random", () => 0)
+  t.mock.method(McpClient.prototype, "connect", async function(this: McpClient) { (this as any)._connection.status = "connected" })
+  const manager = new McpManager(), internal = manager as any
+  await manager.start({ enabled: true, servers: { owned: stdioCfg({ restart_policy: { max_restarts: 1, backoff_base_ms: 100 } }) } })
+  try {
+    internal.clients.get("owned").emit("disconnected", "owned crash")
+    t.mock.timers.tick(100)
+    await new Promise<void>(r => setImmediate(r))
+    t.mock.timers.tick(300001)
+    internal.clients.get("owned").emit("disconnected", "owned later crash")
+    assert.equal(internal.restartAttempts.get("owned").length, 1)
+    assert.equal(internal.deadServers.has("owned"), false)
+  } finally { await manager.shutdown() }
+})
+
 test("requiresRestart: returns false when configs are identical", () => {
   assert.equal(requiresRestart(stdioCfg(), stdioCfg()), false)
 })

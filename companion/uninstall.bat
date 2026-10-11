@@ -11,7 +11,9 @@ echo Uninstalling CMspark Browser Agent...
 :: 1. Kill processes
 echo   [1/3] Stopping processes...
 set "CMSPARK_INSTALL_STOP_ROOT=%~dp0"
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$r = [IO.Path]::GetFullPath($env:CMSPARK_INSTALL_STOP_ROOT).TrimEnd('\') + '\'; Get-CimInstance Win32_Process | ForEach-Object { if (($_.Name -eq 'node.exe' -or $_.Name -eq 'cmspark-agent.exe') -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0stop-installed-agent.ps1"
+if errorlevel 1 exit /b 1
+if not errorlevel 0 exit /b 1
 set "CMSPARK_INSTALL_STOP_ROOT="
 echo          Done
 

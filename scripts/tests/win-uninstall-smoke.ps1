@@ -9,6 +9,7 @@ $inside = Join-Path $root "space 中文 & O'Brien ! (test)"
 $sibling = $inside + '-other'
 $processes = @()
 $runner = $null
+. (Join-Path $PSScriptRoot 'win-system-node-fixtures.ps1')
 try {
     $node = (Get-Command node).Source
     foreach ($directory in @($inside, $sibling)) {
@@ -19,7 +20,10 @@ try {
             $processes += Start-Process -FilePath (Join-Path $directory $image) -ArgumentList ('"{0}"' -f (Join-Path $directory 'idle.js')) -PassThru -WindowStyle Hidden
         }
     }
+    $system = New-OwnedSystemNodeFixtures $root $inside $sibling
+    $processes += @($system.Stop) + @($system.Survive)
     Copy-Item -LiteralPath (Join-Path $repo 'companion\uninstall.bat') -Destination $inside
+    Copy-Item -LiteralPath (Join-Path $repo 'companion\stop-installed-agent.ps1') -Destination $inside
     $fixtureProfile = Join-Path $root 'profile'
     $startup = Join-Path $fixtureProfile 'Microsoft\Windows\Start Menu\Programs\Startup'
     New-Item -ItemType Directory -Path $startup -Force | Out-Null
@@ -57,12 +61,14 @@ try {
     if ($runner.ExitCode -ne 0) { throw "ZIP uninstaller failed: $($runner.ExitCode)" }
     foreach ($p in $processes[0..1]) { if (-not $p.WaitForExit(10000)) { throw 'installed runtime was not stopped' } }
     foreach ($p in $processes[2..3]) { $p.Refresh(); if ($p.HasExited) { throw 'sibling runtime was incorrectly stopped' } }
+    foreach ($p in $system.Stop) { if (-not $p.WaitForExit(10000)) { throw 'system Node agent was not stopped' } }
+    foreach ($p in $system.Survive) { $p.Refresh(); if ($p.HasExited) { throw 'unrelated system Node process was stopped' } }
     if (Test-Path -LiteralPath (Join-Path $startup 'CMspark.lnk')) { throw 'full uninstall did not remove fixture shortcut' }
     foreach ($name in @('cmspark-agent.log', 'cmspark-agent.lock')) {
         if (Test-Path -LiteralPath (Join-Path $inside $name)) { throw "full uninstall did not remove $name" }
     }
     if (-not (Test-Path -LiteralPath (Join-Path $fixtureProfile '.cmspark-agent\keep.txt'))) { throw 'declined user data deletion was ignored' }
-    Write-Host 'PASS: complete ZIP uninstall stopped both owned runtimes; sibling runtimes and declined data survived'
+    Write-Host 'PASS: complete ZIP uninstall stopped bundled/system runtimes; siblings/unrelated Node and declined data survived'
 } finally {
     if ($runner -and -not $runner.HasExited) { Stop-Process -Id $runner.Id -Force -ErrorAction SilentlyContinue }
     foreach ($p in $processes) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }

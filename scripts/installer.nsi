@@ -14,6 +14,9 @@
   !define PRODUCT_VERSION "0.6.13"
 !endif
 !define PRODUCT_PUBLISHER "CMspark"
+!ifndef CMSPARK_STOP_SCRIPT
+  !define CMSPARK_STOP_SCRIPT "..\companion\stop-installed-agent.ps1"
+!endif
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 
 ; Shared app icon for Setup and generated uninstaller.
@@ -23,6 +26,7 @@
 ; Modern UI
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
 ; Installer settings
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
@@ -62,10 +66,16 @@ Var /GLOBAL START_MENU_FOLDER
 ; Paths travel through the inherited process environment, not PowerShell source.
 ; Stop only this installation's agent runtimes; unrelated SEA processes survive.
 !macro StopInstalledAgentUnshared
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\cmspark-stop.ps1 "${CMSPARK_STOP_SCRIPT}"
   StrCpy $0 "$INSTDIR"
   System::Call 'Kernel32::SetEnvironmentVariable(t "CMSPARK_INSTALL_STOP_ROOT", t r0) i.r1'
-  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$r = [IO.Path]::GetFullPath($$env:CMSPARK_INSTALL_STOP_ROOT).TrimEnd('\') + '\'; Get-CimInstance Win32_Process | ForEach-Object { if (($$_.Name -eq 'node.exe' -or $$_.Name -eq 'cmspark-agent.exe') -and $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$r, [StringComparison]::OrdinalIgnoreCase)) { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue } }"`
+  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\cmspark-stop.ps1"`
+  Pop $1
   System::Call 'Kernel32::SetEnvironmentVariable(t "CMSPARK_INSTALL_STOP_ROOT", p 0)'
+  ${If} $1 != 0
+    Abort "Could not stop this installation's processes."
+  ${EndIf}
   Sleep 400
 !macroend
 

@@ -102,7 +102,9 @@ async function mcp(trust: "manual" | "first-use") {
   manager.reaggregate()
   fixtures.push({ client, server })
   const thread = seedThreadManagerForTests().create("cancel confirmation")
-  const key = { sessionId: thread.id, serverName: client.name, toolName: "read_value" }
+  const key = { sessionId: thread.id, serverName: client.name, toolName: "read_value",
+    identity: manager.getAuthorizationIdentity(client.name),
+  }
   const executor = createToolExecutor(ws)
   const metaSessionId = getSessionIdForTests(ws)!
   return {
