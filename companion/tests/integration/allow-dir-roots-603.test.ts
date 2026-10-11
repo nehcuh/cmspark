@@ -13,7 +13,7 @@ import { pathToFileUri } from "../../src/mcp/allow-dir-expand"
 import { SecurityConfirmationManager } from "../../src/security-confirmation"
 
 for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli", "cwd-fallback", "null-roots", "mixed-roots"] as const) {
-  test(`official filesystem approved expansion preserves effective allowlist: ${mode}`, { timeout: 20000 }, async () => {
+  test(`official filesystem ${mode === "null-roots" ? "rejects invalid explicit roots" : "approved expansion preserves effective allowlist"}: ${mode}`, { timeout: 20000 }, async () => {
     await initDataDir()
     // Match the official server's async/native realpath. On Windows the sync
     // implementation can retain TEMP's RUNNER~1 alias, while roots use the
@@ -52,11 +52,20 @@ for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli
           ...(authoritative ? [c] : []), ...(mode === "arg-present" ? [b] : [])],
         ...(mode === "cwd-fallback" ? { cwd: path.join(root, "missing-cwd") } : {}),
         enabled: true, trust_level: "trusted", security_capabilities: ["read-only"],
+        restart_policy: { max_restarts: 0 },
         ...(mode === "empty" ? { roots: [] } : mode === "null-roots" ? { roots: [null] as any } :
           authoritative ? { roots: [{ uri: pathToFileUri(a) }, ...(mode === "mixed-roots" ? [null] as any : [])] } : {}),
       } })
       clearConfigCache()
       await manager.applyConfig(getConfig().mcp)
+      if (mode === "null-roots") {
+        await assert.rejects(manager.waitForServerReady("filesystem"), /failed to reconnect/)
+        assert.equal(manager.getAggregatedTools().length, 0)
+        await assert.rejects(read(a), /not connected/)
+        assert.equal(prompts, 0)
+        assert.deepEqual(getConfig().mcp!.servers.filesystem.roots, [null])
+        return
+      }
       await manager.waitForServerReady("filesystem")
       // Official oninitialized roots refresh is asynchronous. Wait for its
       // observable allowlist rather than testing the startup CLI window.
@@ -82,7 +91,7 @@ for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli
         assert.ok(roots?.some(r => r.uri === pathToFileUri(b)))
         assert.ok(!roots?.some(r => r.uri === pathToFileUri(c)))
       } else {
-        assert.deepEqual(roots, mode === "empty" ? [] : mode === "null-roots" ? [null] : undefined, "args-only mode must keep the server's original interpretation")
+        assert.deepEqual(roots, mode === "empty" ? [] : undefined, "args-only mode must keep the server's original interpretation")
       }
       // Restart from persisted config, proving both directories survive reconnect.
       await manager.applyConfig({ enabled: false, servers: {} })
