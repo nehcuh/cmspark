@@ -15,11 +15,11 @@ StartLimitBurst=3
 
 # Environment
 Environment="NODE_ENV=production"
-Environment="CMSPARK_DATA_DIR={{HOME}}/.cmspark-agent"
+Environment="CMSPARK_DATA_DIR={{DATA_DIR}}"
 
 # Logging
-StandardOutput=append:{{HOME}}/.cmspark-agent/logs/stdout.log
-StandardError=append:{{HOME}}/.cmspark-agent/logs/stderr.log
+StandardOutput=append:{{DATA_DIR}}/logs/stdout.log
+StandardError=append:{{DATA_DIR}}/logs/stderr.log
 
 [Install]
 WantedBy=default.target

@@ -41,8 +41,13 @@ export class OwnedStdioTransport implements Transport {
     }
     this.child = child
     child.stderr?.pipe(this.stderr)
-    child.stdin?.on("error", error => this.onerror?.(error))
-    child.stdout?.on("error", error => this.onerror?.(error))
+    const streamError = (error: Error) => {
+      this.onerror?.(error)
+      void this.close()
+    }
+    child.stdin?.on("error", streamError)
+    child.stdout?.on("error", streamError)
+    child.stderr?.on("error", streamError)
     child.stdout?.on("data", (data: Buffer) => {
       try {
         this.buffer.append(data)

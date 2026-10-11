@@ -79,7 +79,8 @@ for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli
       }
       assert.equal((await read(b)).isError, true)
       const excluded = await read(c)
-      assert.ok(outside(excluded), JSON.stringify(excluded))
+      if (mode === "uri-cli") assert.equal(excluded.isError, false, "explicit URI CLI grant must reach the native server")
+      else assert.ok(outside(excluded), JSON.stringify(excluded))
       bindMcpDispatchRuntime({ getThreadManager: () => null, securityConfirmations: confirmations, broadcastToClients() {} })
       const result = await executeMcpTool("mcp__filesystem__read_text_file", { path: path.join(b, "file.txt") }, "owned", ws, Date.now())
       assert.equal(result.success, true, result.error)
@@ -100,7 +101,8 @@ for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli
       assert.equal((await read(a)).isError, false)
       assert.equal((await read(b)).isError, false)
       // In authoritative mode C is a CLI arg; wait out the startup window.
-      await waitExcluded()
+      if (mode === "uri-cli") assert.equal((await read(c)).isError, false)
+      else await waitExcluded()
       assert.equal(confirmations.pendingCount(), 0)
     } finally {
       confirmations.rejectAll(); bindMcpDispatchRuntime(null)

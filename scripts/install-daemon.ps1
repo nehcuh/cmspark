@@ -13,9 +13,12 @@ $ErrorActionPreference = "Stop"
 $Label = "cmspark-companion"
 $TaskPath = "\$Label"
 $DataDir = if ($env:CMSPARK_DATA_DIR) { $env:CMSPARK_DATA_DIR } else { "$env:USERPROFILE\.cmspark-agent" }
+$DataDir = [System.IO.Path]::GetFullPath($DataDir)
+$env:CMSPARK_DATA_DIR = $DataDir
 $LogDir = "$DataDir\logs"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
+. (Join-Path $ScriptDir "service-data.ps1")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,7 +77,9 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $ExistingTask = Get-ScheduledTask -TaskName $Label -ErrorAction SilentlyContinue
 if ($ExistingTask) {
     if ($Force) {
-        & $NodeCmd $AgentScript daemon stop
+        $StopDataDir = Resolve-RegisteredServiceDataDir $ExistingTask $DataDir
+        try { $env:CMSPARK_DATA_DIR = $StopDataDir; & $NodeCmd $AgentScript daemon stop }
+        finally { $env:CMSPARK_DATA_DIR = $DataDir }
         if ($LASTEXITCODE -ne 0) { throw "Existing daemon did not stop; task preserved" }
         Info "Removing existing task..."
         Unregister-ScheduledTask -TaskName $Label -Confirm:$false
@@ -90,7 +95,13 @@ if ($ExistingTask) {
 
 Info "Registering Task Scheduler job: $Label"
 
-$Action = New-ScheduledTaskAction -Execute $NodeCmd -Argument "`"$AgentScript`" daemon start" -WorkingDirectory "$RepoRoot\companion"
+# Persist transient installer configuration for a fresh login environment.
+$ServiceEntry = Join-Path $ScriptDir "service-entry.cjs"
+function Quote-NativeArgument([string]$Value) {
+    '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
+}
+$ServiceArguments = ((@($ServiceEntry, $DataDir, $AgentScript) | ForEach-Object { Quote-NativeArgument $_ }) -join ' ')
+$Action = New-ScheduledTaskAction -Execute $NodeCmd -Argument "$ServiceArguments daemon start" -WorkingDirectory "$RepoRoot\companion"
 
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
 
@@ -106,6 +117,7 @@ $Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" 
 
 Register-ScheduledTask `
     -TaskName $Label `
+    -Description ("CMspark source data: " + (@{dataDir=$DataDir} | ConvertTo-Json -Compress)) `
     -Action $Action `
     -Trigger $Trigger `
     -Settings $Settings `
@@ -143,7 +155,7 @@ New-Item -ItemType Directory -Force -Path $StartMenuDir | Out-Null
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut("$StartMenuDir\CMspark Agent.lnk")
 $Shortcut.TargetPath = $NodeCmd
-$Shortcut.Arguments = "`"$AgentScript`" tray"
+$Shortcut.Arguments = "$ServiceArguments tray"
 $Shortcut.WorkingDirectory = "$RepoRoot\companion"
 $Shortcut.Description = "CMspark Browser Agent Menu Bar"
 $Shortcut.Save()

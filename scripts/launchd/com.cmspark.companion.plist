@@ -48,21 +48,23 @@
 
     <!-- Standard output log path -->
     <key>StandardOutPath</key>
-    <string>{{HOME}}/.cmspark-agent/logs/stdout.log</string>
+    <string>{{DATA_DIR}}/logs/stdout.log</string>
 
     <!-- Standard error log path -->
     <key>StandardErrorPath</key>
-    <string>{{HOME}}/.cmspark-agent/logs/stderr.log</string>
+    <string>{{DATA_DIR}}/logs/stderr.log</string>
 
     <!-- Environment variables -->
     <key>EnvironmentVariables</key>
     <dict>
+        <key>CMSPARK_DATA_DIR</key>
+        <string>{{DATA_DIR}}</string>
         <key>NODE_ENV</key>
         <string>production</string>
     </dict>
 
     <!-- Working directory for the daemon -->
     <key>WorkingDirectory</key>
-    <string>{{HOME}}/.cmspark-agent/</string>
+    <string>{{DATA_DIR}}/</string>
 </dict>
 </plist>
