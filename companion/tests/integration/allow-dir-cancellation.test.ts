@@ -43,7 +43,9 @@ beforeEach(async () => {
   offered = path.join(root, "requested")
   fs.mkdirSync(initial)
   fs.mkdirSync(offered)
-  offered = fs.realpathSync(offered)
+  // #604: match the official server/native grant spelling, including 8.3
+  // ancestors. The in-memory fixture must not reject a valid long-name grant.
+  offered = process.platform === "win32" ? fs.realpathSync.native(offered) : fs.realpathSync(offered)
   calls = 0; reloads = 0; onReload = undefined; onRequest = undefined; frames = []
   confirmations = new SecurityConfirmationManager()
   tm = new ThreadManager()

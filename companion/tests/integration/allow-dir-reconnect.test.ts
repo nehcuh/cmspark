@@ -20,7 +20,10 @@ import { normalizeAllowDirKey } from "../../src/mcp/allow-dir-expand"
 for (const action of ["ready", "abort", "off-on", "contract-change"] as const) {
   test(`real allow-dir reload waits for catalog: ${action}`, { timeout: 6000 }, async t => {
     await initDataDir()
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-reconnect-")))
+    const owned = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-reconnect-"))
+    // Native Windows grants use long names; mirror that in the fake server's
+    // exact allowlist without weakening cancellation or persistence assertions.
+    const root = process.platform === "win32" ? fs.realpathSync.native(owned) : fs.realpathSync(owned)
     const initial = path.join(root, "initial"), offered = path.join(root, "requested")
     fs.mkdirSync(initial); fs.mkdirSync(offered)
     const manager = getMcpManager(), confirmations = new SecurityConfirmationManager(), servers: Server[] = []
