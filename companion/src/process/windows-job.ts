@@ -73,15 +73,8 @@ public static class CMsparkOwnedJob {
       return duplicate;
     } finally { if(temporary!=IntPtr.Zero) CloseHandle(temporary); }
   }
-  static byte[] TargetEnvironment(string prefix, int count) {
-    StringBuilder encoded=new StringBuilder();
-    for(int i=0;i<count;i++) {
-      string key=prefix+i, value=Environment.GetEnvironmentVariable(key);
-      Environment.SetEnvironmentVariable(key,null);
-      if(value==null) throw new InvalidOperationException("Missing target environment carrier");
-      encoded.Append(value);
-    }
-    byte[] bytes=Convert.FromBase64String(encoded.ToString());
+  static byte[] TargetEnvironment(string encoded) {
+    byte[] bytes=Convert.FromBase64String(encoded);
     if(bytes.Length<4 || bytes.Length%2!=0 || bytes[bytes.Length-1]!=0 || bytes[bytes.Length-2]!=0 || bytes[bytes.Length-3]!=0 || bytes[bytes.Length-4]!=0)
       throw new InvalidOperationException("Invalid target environment block");
     string[] entries=Encoding.Unicode.GetString(bytes).Split(new char[] {'\0'},StringSplitOptions.RemoveEmptyEntries);
@@ -91,13 +84,13 @@ public static class CMsparkOwnedJob {
     });
     return Encoding.Unicode.GetBytes(String.Join("\0",entries)+"\0\0");
   }
-  public static int Run(string app, string line, string cwd, uint parentPid, ulong parentCreated, string envPrefix, int envCount) {
+  public static int Run(string app, string line, string cwd, uint parentPid, ulong parentCreated, string encodedEnv) {
     IntPtr parent=OpenProcess(0x00101000,false,parentPid), job=IntPtr.Zero;
     IntPtr input=IntPtr.Zero, output=IntPtr.Zero, error=IntPtr.Zero, environment=IntPtr.Zero;
     ProcessInfo info=new ProcessInfo(); bool resumed=false;
     if(parent==IntPtr.Zero) Fail("OpenProcess(parent)");
     try {
-      byte[] targetEnv=TargetEnvironment(envPrefix,envCount);
+      byte[] targetEnv=TargetEnvironment(encodedEnv);
       environment=Marshal.AllocHGlobal(targetEnv.Length);
       Marshal.Copy(targetEnv,0,environment,targetEnv.Length);
       FileTime created, exited, kernel, user;
@@ -176,7 +169,10 @@ export function spawnWindowsJob(command: string, args: string[], options: SpawnO
   for (let offset = 0; offset < encodedEnv.length; offset += 12000) controlEnv[envPrefix + envCount++] = encodedEnv.slice(offset, offset + 12000)
   // EncodedCommand leaves stdin exclusively for the configured protocol, and
   // embedding the fixed bootstrap also works in the SEA bundle without files.
-  const script = `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $WarningPreference='SilentlyContinue'; Add-Type -TypeDefinition @'\n${JOB_BOOTSTRAP}\n'@; try { exit ([CMsparkOwnedJob]::Run(${psLiteral(app)},${psLiteral(line)},${cwd ? psLiteral(cwd) : "$null"},${process.pid},[UInt64]::Parse('${created}'),${psLiteral(envPrefix)},${envCount})) } catch { [Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }`
+  // Windows PowerShell's Add-Type compiler also starts a child and imposes a
+  // legacy environment-size limit. Read/clear carriers before compiling, so
+  // neither that compiler nor the target inherits the potentially large blob.
+  const script = `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $WarningPreference='SilentlyContinue'; try { $targetEnvironment=[Text.StringBuilder]::new(); for($i=0;$i -lt ${envCount};$i++){ $key=${psLiteral(envPrefix)}+$i; $piece=[Environment]::GetEnvironmentVariable($key); [Environment]::SetEnvironmentVariable($key,$null); if($null -eq $piece){throw 'Missing target environment carrier'}; [void]$targetEnvironment.Append($piece); $piece=$null }; Add-Type -TypeDefinition @'\n${JOB_BOOTSTRAP}\n'@; exit ([CMsparkOwnedJob]::Run(${psLiteral(app)},${psLiteral(line)},${cwd ? psLiteral(cwd) : "$null"},${process.pid},[UInt64]::Parse('${created}'),$targetEnvironment.ToString())) } catch { [Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }`
   const child = spawn(windowsPowerShellExePath(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
     ...options, env: controlEnv, shell: false, windowsHide: true, windowsVerbatimArguments: false,
   })
