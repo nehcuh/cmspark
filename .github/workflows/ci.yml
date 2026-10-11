@@ -227,6 +227,7 @@ jobs:
         run: |
           cd companion
           npx tsc -p tsconfig.test.json
+          node scripts/run-tests.mjs .test-dist/tests/integration/windows-job-env-605.test.js
           node scripts/run-tests.mjs .test-dist/tests/integration/cross-os-mcp-605.test.js .test-dist/tests/integration/cross-os-process-605.test.js .test-dist/tests/source-services-605.test.js .test-dist/tests/mcp-http-recovery.test.js .test-dist/tests/mcp-stdio-tree.test.js
 
       - name: "Windows reliability and confirmation regressions (#592, #595, #598, #599)"
