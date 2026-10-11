@@ -53,7 +53,11 @@ for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli
           await new Promise(resolve => setTimeout(resolve, 20))
         }
       }
-      assert.equal((await read(a)).isError, false)
+      const initialRead = await read(a)
+      assert.equal(initialRead.isError, false, JSON.stringify({ initialRead, a,
+        canonicalA: await fs.promises.realpath(a), uri: pathToFileUri(a),
+        allowed: await manager.callTool({ serverName: "filesystem", toolName: "list_allowed_directories" }, {}),
+      }))
       assert.equal((await read(b)).isError, true)
       assert.equal((await read(c)).isError, true)
       bindMcpDispatchRuntime({ getThreadManager: () => null, securityConfirmations: confirmations, broadcastToClients() {} })

@@ -17,7 +17,7 @@ async function setup(t: TestContext) {
   await initDataDir()
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-cli-owned-")))
   saveConfig({ acp: { enabled: true, policy: { require_workspace: true, force_confirm_session_start: true, default_profile: "review_readonly" }, servers: {
-    missing: { display_name: "Missing owned fixture", transport: "stdio", enabled: true, command: path.join(root, "does-not-exist"), protocol: "cli", args: [], policy: { profile: "review_readonly", session_timeout_ms: 5000 } },
+    missing: { display_name: "Missing owned fixture", transport: "stdio", enabled: true, command: path.join(root, "does-not-exist.exe"), protocol: "cli", args: [], policy: { profile: "review_readonly", session_timeout_ms: 5000 } },
     owned: { display_name: "Owned fixture", transport: "stdio", enabled: true, command: process.execPath, protocol: "cli", args: ["-e", "process.stdin.resume();setTimeout(()=>console.log('owned output'),500)"], policy: { profile: "review_readonly", session_timeout_ms: 5000 } },
   } }, coding_handoff: { open_local_terminal: false } })
   const manager = new AcpManager()

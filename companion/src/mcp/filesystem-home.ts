@@ -78,7 +78,7 @@ export function resolveFilesystemAllowPathForExists(
   if (platform === "win32") {
     return path.win32.normalize(p)
   }
-  return path.normalize(p)
+  return path.posix.normalize(p)
 }
 
 export type EnsureFilesystemAllowlistOpts = {
