@@ -15,7 +15,10 @@ import { SecurityConfirmationManager } from "../../src/security-confirmation"
 for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli", "cwd-fallback", "null-roots", "mixed-roots"] as const) {
   test(`official filesystem approved expansion preserves effective allowlist: ${mode}`, { timeout: 20000 }, async () => {
     await initDataDir()
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-roots-owned-")))
+    // Match the official server's async/native realpath. On Windows the sync
+    // implementation can retain TEMP's RUNNER~1 alias, while roots use the
+    // long name; the upstream allowlist compares those strings literally.
+    const root = await fs.promises.realpath(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-roots-owned-")))
     const [a, b, c] = ["original space #百分", "approved", "unapproved"].map(name => path.join(root, name))
     for (const dir of [a, b, c]) { fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, "file.txt"), path.basename(dir)) }
     const initialCwd = process.cwd()
@@ -28,6 +31,17 @@ for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli
       }
     } } as WebSocket
     const read = (dir: string) => manager.callTool({ serverName: "filesystem", toolName: "read_text_file" }, { path: path.join(dir, "file.txt") })
+    const outside = (result: Awaited<ReturnType<typeof read>>) => result.isError === true && result.content.some((item: any) =>
+      item.type === "text" && /Access denied - path outside allowed directories/.test(item.text))
+    const waitExcluded = async () => {
+      const until = Date.now() + 4000
+      for (;;) {
+        const result = await read(c)
+        if (outside(result)) return
+        assert.ok(Date.now() < until, `unapproved CLI directory not excluded by roots: ${JSON.stringify(result)}`)
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+    }
     try {
       const authoritative = mode === "authoritative" || mode === "arg-present" || mode === "mixed-roots"
       if (mode === "cwd-fallback") process.chdir(root)
@@ -46,20 +60,17 @@ for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli
       await manager.waitForServerReady("filesystem")
       // Official oninitialized roots refresh is asynchronous. Wait for its
       // observable allowlist rather than testing the startup CLI window.
-      if (authoritative) {
-        const until = Date.now() + 4000
-        while (!(await read(c)).isError) {
-          assert.ok(Date.now() < until, "official initial roots never took effect")
-          await new Promise(resolve => setTimeout(resolve, 20))
-        }
-      }
+      if (authoritative) await waitExcluded()
       const initialRead = await read(a)
-      assert.equal(initialRead.isError, false, JSON.stringify({ initialRead, a,
-        canonicalA: await fs.promises.realpath(a), uri: pathToFileUri(a),
-        allowed: await manager.callTool({ serverName: "filesystem", toolName: "list_allowed_directories" }, {}),
-      }))
+      if (initialRead.isError !== false) {
+        let allowed: unknown
+        try { allowed = await manager.callTool({ serverName: "filesystem", toolName: "list_allowed_directories" }, {}) }
+        catch (error) { allowed = String(error) }
+        assert.equal(initialRead.isError, false, JSON.stringify({ initialRead, a, uri: pathToFileUri(a), allowed }))
+      }
       assert.equal((await read(b)).isError, true)
-      assert.equal((await read(c)).isError, true)
+      const excluded = await read(c)
+      assert.ok(outside(excluded), JSON.stringify(excluded))
       bindMcpDispatchRuntime({ getThreadManager: () => null, securityConfirmations: confirmations, broadcastToClients() {} })
       const result = await executeMcpTool("mcp__filesystem__read_text_file", { path: path.join(b, "file.txt") }, "owned", ws, Date.now())
       assert.equal(result.success, true, result.error)
@@ -80,11 +91,7 @@ for (const mode of ["omitted", "empty", "authoritative", "arg-present", "uri-cli
       assert.equal((await read(a)).isError, false)
       assert.equal((await read(b)).isError, false)
       // In authoritative mode C is a CLI arg; wait out the startup window.
-      const until = Date.now() + 4000
-      while (!(await read(c)).isError) {
-        assert.ok(Date.now() < until, "unapproved CLI directory promoted into roots")
-        await new Promise(resolve => setTimeout(resolve, 20))
-      }
+      await waitExcluded()
       assert.equal(confirmations.pendingCount(), 0)
     } finally {
       confirmations.rejectAll(); bindMcpDispatchRuntime(null)
