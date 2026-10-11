@@ -749,6 +749,9 @@ export class AcpManager {
       const maxOut = server.policy.max_handback_chars ?? 48_000
       const timeoutMs = server.policy.session_timeout_ms ?? 15 * 60_000
       let lineBuf = ""
+      const removePrompt = () => {
+        try { fs.unlinkSync(promptPath) } catch { /* best-effort */ }
+      }
 
       let child: ChildProcessWithoutNullStreams
       try {
@@ -762,6 +765,7 @@ export class AcpManager {
           stdio: ["pipe", "pipe", "pipe"],
         }) as ChildProcessWithoutNullStreams
       } catch (e: any) {
+        removePrompt()
         this.runningCount = Math.max(0, this.runningCount - 1)
         session.state = "closed"
         const errMsg = e?.message || String(e)
@@ -787,9 +791,6 @@ export class AcpManager {
         released = true
         this.runningCount = Math.max(0, this.runningCount - 1)
         if (this.processes.get(sessionId) === child) this.processes.delete(sessionId)
-      }
-      const removePrompt = () => {
-        try { fs.unlinkSync(promptPath) } catch { /* best-effort */ }
       }
       const stopChild = () => {
         try { killAcpChild(child, "SIGTERM") } catch { /* best-effort */ }

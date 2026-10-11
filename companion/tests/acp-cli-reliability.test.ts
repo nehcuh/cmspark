@@ -53,17 +53,41 @@ for (const stream of ["stdin", "stdout", "stderr"] as const) {
   })
 }
 
+test("CLI synchronous spawn failure removes its owned prompt and releases its slot once", async t => {
+  const { manager, offer, terminals, handbacks } = await setup(t)
+  t.mock.method(launch, "spawnAcpChild", () => { throw Object.assign(new Error("owned synchronous ENOENT"), { code: "ENOENT" }) })
+  const a = offer("A", "missing"), prompt = path.join(os.tmpdir(), `cmspark-acp-${a.session_id}.md`)
+  assert.equal((await manager.start(a.session_id)).ok, false)
+  assert.match(a.error!, /owned synchronous ENOENT/)
+  assert.equal(fs.existsSync(prompt), false)
+  assert.equal(terminals.filter(id => id === a.session_id).length, 1)
+  assert.equal(handbacks.length, 0)
+  const b = offer("B")
+  assert.equal((await manager.start(b.session_id)).ok, false)
+  assert.equal(fs.existsSync(path.join(os.tmpdir(), `cmspark-acp-${b.session_id}.md`)), false)
+  assert.ok(offer("C"), "each synchronous failure releases exactly its own slot")
+})
+
 test("native CLI spawn error then close cannot release a replacement session's slot", { timeout: 8000 }, async t => {
   const { manager, offer, root, terminals, handbacks } = await setup(t)
   const children: cp.ChildProcess[] = [], closes: Promise<void>[] = []
   const spawn = launch.spawnAcpChild
   t.mock.method(launch, "spawnAcpChild", (...args: Parameters<typeof spawn>) => {
-    const child = spawn(...args); children.push(child)
+    // A missing executable can now fail synchronously in the owned Windows
+    // launcher. A valid executable with a missing cwd produces a real native
+    // asynchronous error followed by close, on every platform.
+    const child = args[0].endsWith("does-not-exist.exe")
+      ? spawn(process.execPath, [], { ...args[2], cwd: path.join(root, "does-not-exist-cwd") })
+      : spawn(...args)
+    children.push(child)
     closes.push(new Promise(resolve => child.once("close", () => resolve())))
     return child
   })
   const a = offer("A", "missing")
   assert.equal((await manager.start(a.session_id)).ok, false)
+  assert.equal(children.length, 1, "failed native spawn must still return A's ChildProcess")
+  assert.equal(children[0].pid, undefined)
+  assert.match(a.error!, /ENOENT/)
   const b = offer("B"), bResult = manager.start(b.session_id)
   await closes[0]
   assert.equal(b.state, "running")
