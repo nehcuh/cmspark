@@ -53,6 +53,7 @@ export const PLAN_READONLY_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   "draft_render",
   // --- orchestration run-state reads ---
   "board_read",
+  "cooperation_status",
   "list_workers",
   "get_worker_status",
   "list_tab_locks",

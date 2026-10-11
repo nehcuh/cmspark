@@ -160,6 +160,16 @@ export async function heartbeatIntent(
   return { ok: true, intent: updated, board: result.board }
 }
 
+/** Undo only this unstarted spawn's claim; never release another worker's claim. */
+export async function releaseUnstartedClaim(tm: ThreadManager, hostId: string, intentId: string | null, workerId: string): Promise<void> {
+  if (!intentId) return
+  await mutateMissionBoard(tm, hostId, board => ({ ok: true, board: { ...board,
+    intents: board.intents.map(i => i.id === intentId && i.status === "claimed" && i.claimed_by_worker_id === workerId
+      ? { ...i, status: "open" as const, claimed_by_worker_id: null, heartbeat_at: null, updated_at: nowIso() } : i),
+    updated_at: nowIso(),
+  } }))
+}
+
 /**
  * Reap stale claimed intents (no heartbeat within window) → abandoned.
  * Call from wait_workers / fleet.status / periodic.

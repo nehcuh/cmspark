@@ -91,6 +91,9 @@ export function restoreParentAfterFailedSpawn(
   snapshot: ParentPromotionSnapshot | null,
 ): void {
   if (!snapshot) return
+  // An overlapping spawn may already have published a worker under this run.
+  // Its parent promotion no longer belongs exclusively to the failed caller.
+  if (tm.list({ include_trashed: true }).some(t => t.parent_thread_id === parentThreadId && t.agent_role === "worker")) return
   try {
     tm.update(parentThreadId, {
       agent_role: snapshot.agent_role,

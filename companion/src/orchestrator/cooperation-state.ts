@@ -1,6 +1,7 @@
 import type { ThreadManager } from "../threads/thread-manager"
 import { acpTaskResult, recoveryForTaskStatus, type CooperationResult, type CooperationStatus } from "./cooperation-result"
 import type { AcpSessionRecord } from "../acp/types"
+import { checkpointCooperationResult } from "./cooperation-plan"
 
 export type CooperationTaskRecord = { result: CooperationResult; observed_at: string; failure_versions: string[] }
 export const COOPERATION_TASK_CAP = 64
@@ -13,7 +14,11 @@ export function recordCooperationResult(tm: ThreadManager, ownerId: string, resu
   if (result.executor === "browser" && result.run_id !== (parent.orchestrator_run_id ?? null)) throw new Error("cooperation run mismatch")
   const entries = new Map(Object.entries(parent.cooperation_tasks ?? {}))
   const previous = entries.get(result.task_id)
-  if (previous?.result.source.version === result.source.version && previous.result.status === result.status) return previous.result
+  if (previous?.result.source.version === result.source.version && previous.result.status === result.status) {
+    // Repair a crash between the result-cache and plan-checkpoint writes.
+    checkpointCooperationResult(tm, ownerId, previous.result)
+    return previous.result
+  }
   const failureVersions = result.status === "completed" ? [] : [...(previous?.failure_versions ?? [])]
   if (["failed", "partial"].includes(result.status) && !failureVersions.includes(result.source.version)) failureVersions.push(result.source.version)
   const bounded = { ...result, recovery: recoveryForTaskStatus(result.status, failureVersions.length) }
@@ -24,6 +29,7 @@ export function recordCooperationResult(tm: ThreadManager, ownerId: string, resu
   for (const [id, task] of entries) if (task.result.executor === "browser" && task.result.run_id !== (parent.orchestrator_run_id ?? null)) entries.delete(id)
   while (entries.size > COOPERATION_TASK_CAP) entries.delete(entries.keys().next().value!)
   tm.update(ownerId, { cooperation_tasks: Object.fromEntries(entries) })
+  checkpointCooperationResult(tm, ownerId, bounded)
   return bounded
 }
 
@@ -45,10 +51,15 @@ export function cooperationSnapshot(tm: ThreadManager, ownerId: string, opts?: {
       else if (opts?.isActive?.(worker.id)) status = "running"
       else {
         const prefix = `${worker.last_run_ended_at ?? "not_started"}:${worker.last_run_terminal ?? "normal"}:${!!worker.paused}:`
-        if (!result.source.version.startsWith(prefix) || status === "running") status = "stale"
+        if (!result.source.version.startsWith(prefix) || status === "running" ||
+            result.source.execution_id !== worker.last_run_execution_id ||
+            (worker.last_run_execution_id && worker.last_run_execution_id !== worker.last_run_settled_execution_id)) status = "stale"
       }
     }
-    return { ...current, status, observed_at,
+    const rawReportAvailable = result.executor === "acp"
+      ? sessions.has(result.source.session_id ?? "")
+      : !!tm.get(result.source.thread_id) && tm.getMessages(result.source.thread_id).some(m => m.id === result.source.message_id)
+    return { ...current, status, observed_at, raw_report_available: rawReportAvailable,
       recovery: status === result.status && current.source.version === result.source.version ? result.recovery : recoveryForTaskStatus(status, failure_versions.length) }
   })
   return { schema_version: 1 as const, tasks, data_not_instruction: true as const }

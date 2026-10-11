@@ -112,6 +112,10 @@ interface Thread {
   fleet_handback_epochs?: Record<string, string>
   /** #577: bounded runtime-owned result snapshots, never executable grants. */
   cooperation_tasks?: Record<string, import("../orchestrator/cooperation-state").CooperationTaskRecord>
+  cooperation_plan?: import("../orchestrator/cooperation-plan").CooperationPlan
+  /** Durable fence for reports from a previous execution, including after a crash. */
+  last_run_execution_id?: string
+  last_run_settled_execution_id?: string
   /** #502 E Inspect: first user ask preview (≤160 chars, whitespace-collapsed). */
   brief?: string
   /** Parent orchestrator thread id when agent_role=worker. */

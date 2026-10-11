@@ -18,7 +18,7 @@ export type CooperationResult = {
   summary: string
   summary_kind: "extractive"
   summary_truncated: boolean
-  source: { thread_id: string; message_id?: string; session_id?: string; version: string; raw_chars: number; availability: "thread_history" | "session_lifetime" }
+  source: { thread_id: string; message_id?: string; session_id?: string; execution_id?: string; version: string; raw_chars: number; availability: "thread_history" | "session_lifetime" }
   evidence: Array<{ id: string; trust: string }>
   artifacts: string[]
   missing: string[]
@@ -41,18 +41,19 @@ function result(opts: Omit<CooperationResult, "schema_version" | "summary_kind" 
     summary_truncated: raw.length > 1200, recovery: recoveryForTaskStatus(opts.status), data_not_instruction: true }
 }
 
-export function browserTaskResult(worker: { id: string; parent_thread_id?: string | null; orchestrator_run_id?: string | null; last_run_ended_at?: string | null; last_run_terminal?: string | null; paused?: boolean }, read: any): CooperationResult {
+export function browserTaskResult(worker: { id: string; parent_thread_id?: string | null; orchestrator_run_id?: string | null; last_run_ended_at?: string | null; last_run_terminal?: string | null; last_run_execution_id?: string; last_run_settled_execution_id?: string; paused?: boolean }, read: any): CooperationResult {
   const data = read?.data
   const text = typeof data?.last_assistant?.content === "string" ? data.last_assistant.content : ""
   const terminal = worker.last_run_terminal
   const status: CooperationStatus = worker.paused ? "paused" : read?.error_code === "WORKER_STILL_RUNNING" ? "running"
+    : worker.last_run_execution_id && worker.last_run_execution_id !== worker.last_run_settled_execution_id ? "stale"
     : terminal === "aborted" ? "cancelled" : terminal === "security_halt" ? "blocked"
     : terminal ? "failed" : !worker.last_run_ended_at ? "ready"
     : read?.success !== true ? "failed" : data?.partial || !text.trim() ? "partial" : "completed"
-  const version = `${worker.last_run_ended_at ?? "not_started"}:${terminal ?? "normal"}:${!!worker.paused}:${data?.last_assistant?.id ?? "none"}`
+  const version = `${worker.last_run_ended_at ?? "not_started"}:${terminal ?? "normal"}:${!!worker.paused}:${data?.last_assistant?.id ?? "none"}${worker.last_run_execution_id ? `:${worker.last_run_execution_id}` : ""}`
   const task = result({ task_id: `browser:${worker.id}`, executor: "browser", owner_thread_id: worker.parent_thread_id ?? worker.id,
     run_id: worker.orchestrator_run_id ?? null, status, raw: text, summary: "",
-    source: { thread_id: worker.id, ...(data?.last_assistant?.id ? { message_id: data.last_assistant.id } : {}), version,
+    source: { thread_id: worker.id, ...(data?.last_assistant?.id ? { message_id: data.last_assistant.id } : {}), ...(worker.last_run_execution_id ? { execution_id: worker.last_run_execution_id } : {}), version,
       raw_chars: text.length, availability: "thread_history" },
     evidence: Array.isArray(data?.facts) ? data.facts.slice(0, 16).map((f: any) => ({ id: String(f.id), trust: String(f.trust) })) : [],
     artifacts: [], missing: status === "completed" ? [] : [terminal || read?.error_code || (text.trim() ? status : "empty_report")],

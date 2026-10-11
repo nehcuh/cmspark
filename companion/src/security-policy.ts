@@ -100,7 +100,9 @@ export class SecurityPolicy {
         const intent = String(params?.intent_id || "").trim()
         const goal = String(params?.goal || params?.task || "").replace(/\s+/g, " ").trim().slice(0, 400)
         const rolePrompt = String(params?.role_prompt || "").replace(/\s+/g, " ").trim().slice(0, 200)
-        return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}|allow=${canon(params?.tool_allow)}|deny=${canon(params?.tool_deny)}|intent=${intent}|goal=${goal}|role_prompt=${rolePrompt}`
+        const plan = params?.plan_id || params?.plan_task_id
+          ? `|plan=${JSON.stringify([params.__thread_id ?? params._thread_id, params.plan_id, params.plan_task_id, params.plan_task_attempt, params.goal, params.role_prompt])}` : ""
+        return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}|allow=${canon(params?.tool_allow)}|deny=${canon(params?.tool_deny)}|intent=${intent}|goal=${goal}|role_prompt=${rolePrompt}${plan}`
       }
       case "spawn_expert_team": {
         const { expertTeamBindingPayload } = require("./orchestrator/expert-team") as typeof import("./orchestrator/expert-team")

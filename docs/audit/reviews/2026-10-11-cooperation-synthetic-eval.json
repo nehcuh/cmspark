@@ -1,0 +1,62 @@
+{
+  "kind": "synthetic_deterministic_cooperation_eval",
+  "schema_version": 1,
+  "limitations": [
+    "Reports and confirmations are fixtures, not real LLM outputs or human approvals.",
+    "Coverage measures fixture acceptance only; it is not factual accuracy or real task quality.",
+    "Scheduling waves assume one equal-duration unit per wave; wall time measures the harness only.",
+    "Serialized status bytes are observable payload volume, not model tokens or cost.",
+    "Disk reload is exercised; fresh-process crash recovery is covered separately by cooperation-plan.test."
+  ],
+  "model_calls": 0,
+  "scenarios": [
+    {
+      "worker_width": 1,
+      "logical_tasks": 9,
+      "accepted_tasks": 9,
+      "acceptance_coverage": 1,
+      "injected_failures": 1,
+      "recovery_attempts": 1,
+      "duplicate_launches": 0,
+      "worker_launches": 10,
+      "collections": 10,
+      "scheduling_waves": 10,
+      "simulated_elapsed_units": 10,
+      "checkpoint_reload_preserved_acceptance": true,
+      "serialized_status_bytes": 149642,
+      "harness_wall_ms": 141
+    },
+    {
+      "worker_width": 2,
+      "logical_tasks": 9,
+      "accepted_tasks": 9,
+      "acceptance_coverage": 1,
+      "injected_failures": 1,
+      "recovery_attempts": 1,
+      "duplicate_launches": 0,
+      "worker_launches": 10,
+      "collections": 10,
+      "scheduling_waves": 6,
+      "simulated_elapsed_units": 6,
+      "checkpoint_reload_preserved_acceptance": true,
+      "serialized_status_bytes": 101770,
+      "harness_wall_ms": 69
+    },
+    {
+      "worker_width": 4,
+      "logical_tasks": 9,
+      "accepted_tasks": 9,
+      "acceptance_coverage": 1,
+      "injected_failures": 1,
+      "recovery_attempts": 1,
+      "duplicate_launches": 0,
+      "worker_launches": 10,
+      "collections": 10,
+      "scheduling_waves": 4,
+      "simulated_elapsed_units": 4,
+      "checkpoint_reload_preserved_acceptance": true,
+      "serialized_status_bytes": 77836,
+      "harness_wall_ms": 88
+    }
+  ]
+}
