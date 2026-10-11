@@ -196,6 +196,8 @@ async function injectServer(
 
   const manager: any = getMcpManager()
   ;(manager.clients as Map<string, McpClient>).set(name, client)
+  manager.currentConfig ??= { enabled: true, servers: {} }
+  manager.currentConfig.servers[name] = client.config
   manager.reaggregate()
   injected.push({ server, client, name })
 }

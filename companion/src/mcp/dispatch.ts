@@ -171,6 +171,55 @@ export function gateUnofferedMcpTool(
   }
 }
 
+/** Selection is an execution boundary, shared by namespaced and meta tools.
+ * Workers may narrow their parent's selection, but cannot widen it. Resolve
+ * live state again after confirmation (and before retries) so revocation wins.
+ */
+function createMcpServerSelectionGate(
+  serverName: string,
+  params: any,
+  sessionId: string,
+): () => { success: false; error: string } | null {
+  let boundThreadId = typeof params?.__thread_id === "string"
+    ? params.__thread_id
+    : typeof params?._thread_id === "string" ? params._thread_id : undefined
+  const unavailable = {
+    success: false as const,
+    error: "MCP thread selection unavailable (mcp_selection_unavailable)",
+  }
+  return () => {
+    try {
+      const tm = requireRt().getThreadManager()
+      let thread = tm?.get(boundThreadId ?? sessionId)
+      // Direct/legacy calls have a connection session, but no thread context.
+      // An explicitly bound thread must remain present throughout the call.
+      if (!thread) return boundThreadId !== undefined ? unavailable : null
+      // Preserve a sessionId-resolved thread binding across asynchronous prompts:
+      // deleting that thread must not turn this into an unbound legacy call.
+      boundThreadId = thread.id
+      const seen = new Set<string>()
+      while (thread) {
+        if (seen.has(thread.id)) return unavailable
+        seen.add(thread.id)
+        if (thread.mcp_selection_mode === "manual"
+          && !thread.active_mcp_server_ids?.includes(serverName)) {
+          return {
+            success: false,
+            error: `MCP server "${serverName}" is not in this thread's active selection (mcp_selection_mode=manual)`,
+          }
+        }
+        if (thread.agent_role !== "worker") return null
+        if (!thread.parent_thread_id) return unavailable
+        thread = tm?.get(thread.parent_thread_id)
+        if (!thread) return unavailable
+      }
+      return null
+    } catch {
+      return unavailable
+    }
+  }
+}
+
 /**
  * Execute an MCP namespaced tool (mcp__<server>__<tool>). Enforces the per-server
  * trust_level policy: manual = always prompt, first-use = prompt once per session,
@@ -189,33 +238,16 @@ export async function executeMcpTool(
   void startedAt // retained for call-site parity with pre-split createToolExecutor
   const notOffered = gateUnofferedMcpTool(toolName, offeredToolNames)
   if (notOffered) return notOffered
-  const { getThreadManager, securityConfirmations, broadcastToClients } = requireRt()
+  const { securityConfirmations, broadcastToClients } = requireRt()
   const manager = getMcpManager()
   const route = manager.resolveToolName(toolName)
   if (!route) {
     return { success: false, error: `MCP tool ${toolName} not found (server may be disconnected)` }
   }
 
-  // Manual MCP selection must gate dispatch (not only LLM catalog filtering).
-  try {
-    const actingTid =
-      typeof (params as any)?.__thread_id === "string"
-        ? String((params as any).__thread_id)
-        : sessionId
-    const thr = actingTid ? getThreadManager()?.get(actingTid) : null
-    const mode = thr?.mcp_selection_mode || "auto"
-    if (mode === "manual") {
-      const active = new Set(thr?.active_mcp_server_ids || [])
-      if (!active.has(route.serverName)) {
-        return {
-          success: false,
-          error: `MCP server "${route.serverName}" is not in this thread's active selection (mcp_selection_mode=manual)`,
-        }
-      }
-    }
-  } catch {
-    /* unexpected thread lookup — fail closed below only when mode is known */
-  }
+  const checkSelection = createMcpServerSelectionGate(route.serverName, params, sessionId)
+  const selectionDenied = checkSelection()
+  if (selectionDenied) return selectionDenied
 
   const configuredTrustLevel = manager.getTrustLevel(route.serverName) ?? "first-use"
   // Audit item 8: destructive-looking tool names ALWAYS require per-call confirmation,
@@ -361,6 +393,8 @@ export async function executeMcpTool(
   const callStartedAt = Date.now()
   const mcpArgs = stripCmsparkInternalMcpArgs(params)
   const runOnce = async (): Promise<{ success: boolean; data?: any; error?: string; rawErr?: string }> => {
+    const selectionDenied = checkSelection()
+    if (selectionDenied) return selectionDenied
     try {
       const result = await manager.callTool(route, mcpArgs, signal)
       if (result?.isError) {
@@ -392,6 +426,7 @@ export async function executeMcpTool(
       rawErr: outcome.rawErr,
       toolName,
       ws,
+      checkSelection,
     })
     if (expanded.retried) {
       if (expanded.ok) {
@@ -428,9 +463,12 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
   rawErr: string
   toolName: string
   ws: WebSocket
+  checkSelection?: () => { error: string } | null
 }): Promise<{ retried: boolean; ok?: boolean; error?: string }> {
   const { securityConfirmations } = requireRt()
   const { canOfferAllowDirExpand, addFilesystemAllowDir } = await import("./allow-dir-expand")
+  const selectionDenied = opts.checkSelection?.()
+  if (selectionDenied) return { retried: true, ok: false, error: selectionDenied.error }
 
   // Pre-check filesystem server + path BEFORE L2 (Pi nit: no misleading prompt)
   const pre = canOfferAllowDirExpand({
@@ -504,6 +542,8 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
     }
   }
 
+  const selectionRevoked = opts.checkSelection?.()
+  if (selectionRevoked) return { retried: true, ok: false, error: selectionRevoked.error }
   const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir)
   if (!added.ok) {
     return {
@@ -617,6 +657,9 @@ export async function executeMcpMetaTool(
   const args = params || {}
   const serverName = String(args.server || "").trim()
   if (!serverName) return { success: false, error: "MCP server name is required" }
+  const checkSelection = createMcpServerSelectionGate(serverName, args, sessionId)
+  const selectionDenied = checkSelection()
+  if (selectionDenied) return selectionDenied
 
   const forceMetaConfirm = CRITICAL_MCP_META_TOOLS.has(toolName)
   const configuredTrustLevel = manager.getTrustLevel(serverName) ?? "first-use"
@@ -693,6 +736,9 @@ export async function executeMcpMetaTool(
   } else if (configuredTrustLevel === "first-use") {
     cache.recordCall(cacheKey)
   }
+
+  const selectionRevoked = checkSelection()
+  if (selectionRevoked) return selectionRevoked
 
   try {
     switch (toolName) {
