@@ -4,7 +4,9 @@
 import { spawn, execFileSync, type ChildProcess, type SpawnOptions } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { randomBytes } from "node:crypto"
 import { windowsCmdExePath, windowsPowerShellExePath } from "../acp/win-spawn"
+import { windowsTargetEnvironment } from "./windows-env"
 
 const ownedJobChildren = new WeakSet<ChildProcess>()
 export const isOwnedWindowsJobChild = (child: ChildProcess): boolean => ownedJobChildren.has(child)
@@ -71,12 +73,33 @@ public static class CMsparkOwnedJob {
       return duplicate;
     } finally { if(temporary!=IntPtr.Zero) CloseHandle(temporary); }
   }
-  public static int Run(string app, string line, string cwd, uint parentPid, ulong parentCreated) {
+  static byte[] TargetEnvironment(string prefix, int count) {
+    StringBuilder encoded=new StringBuilder();
+    for(int i=0;i<count;i++) {
+      string key=prefix+i, value=Environment.GetEnvironmentVariable(key);
+      Environment.SetEnvironmentVariable(key,null);
+      if(value==null) throw new InvalidOperationException("Missing target environment carrier");
+      encoded.Append(value);
+    }
+    byte[] bytes=Convert.FromBase64String(encoded.ToString());
+    if(bytes.Length<4 || bytes.Length%2!=0 || bytes[bytes.Length-1]!=0 || bytes[bytes.Length-2]!=0 || bytes[bytes.Length-3]!=0 || bytes[bytes.Length-4]!=0)
+      throw new InvalidOperationException("Invalid target environment block");
+    string[] entries=Encoding.Unicode.GetString(bytes).Split(new char[] {'\0'},StringSplitOptions.RemoveEmptyEntries);
+    Array.Sort(entries,delegate(string a,string b) {
+      int ai=a.IndexOf('=',a.StartsWith("=") ? 1 : 0), bi=b.IndexOf('=',b.StartsWith("=") ? 1 : 0);
+      return StringComparer.OrdinalIgnoreCase.Compare(a.Substring(0,ai),b.Substring(0,bi));
+    });
+    return Encoding.Unicode.GetBytes(String.Join("\0",entries)+"\0\0");
+  }
+  public static int Run(string app, string line, string cwd, uint parentPid, ulong parentCreated, string envPrefix, int envCount) {
     IntPtr parent=OpenProcess(0x00101000,false,parentPid), job=IntPtr.Zero;
-    IntPtr input=IntPtr.Zero, output=IntPtr.Zero, error=IntPtr.Zero;
+    IntPtr input=IntPtr.Zero, output=IntPtr.Zero, error=IntPtr.Zero, environment=IntPtr.Zero;
     ProcessInfo info=new ProcessInfo(); bool resumed=false;
     if(parent==IntPtr.Zero) Fail("OpenProcess(parent)");
     try {
+      byte[] targetEnv=TargetEnvironment(envPrefix,envCount);
+      environment=Marshal.AllocHGlobal(targetEnv.Length);
+      Marshal.Copy(targetEnv,0,environment,targetEnv.Length);
       FileTime created, exited, kernel, user;
       if(!GetProcessTimes(parent,out created,out exited,out kernel,out user)) Fail("GetProcessTimes(parent)");
       if((((ulong)created.High<<32)|created.Low)!=parentCreated || WaitForSingleObject(parent,0)==0)
@@ -90,7 +113,7 @@ public static class CMsparkOwnedJob {
       start.Error=error=InheritableStandardHandle(-12);
       // PowerShell binds $null to String.Empty for a string method parameter.
       // Win32 needs a null pointer to inherit cwd; an empty path is invalid.
-      if(!CreateProcess(app,new StringBuilder(line),IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,String.IsNullOrEmpty(cwd) ? null : cwd,ref start,out info)) Fail("CreateProcess");
+      if(!CreateProcess(app,new StringBuilder(line),IntPtr.Zero,IntPtr.Zero,true,0x08000404,environment,String.IsNullOrEmpty(cwd) ? null : cwd,ref start,out info)) Fail("CreateProcess");
       if(!AssignProcessToJobObject(job,info.Process)) Fail("AssignProcessToJobObject");
       if(ResumeThread(info.Thread)==0xffffffff) Fail("ResumeThread");
       resumed=true;
@@ -100,6 +123,7 @@ public static class CMsparkOwnedJob {
       uint code; if(!GetExitCodeProcess(info.Process,out code)) Fail("GetExitCodeProcess");
       return unchecked((int)code);
     } finally {
+      if(environment!=IntPtr.Zero) Marshal.FreeHGlobal(environment);
       if(input!=IntPtr.Zero) CloseHandle(input);
       if(output!=IntPtr.Zero) CloseHandle(output);
       if(error!=IntPtr.Zero) CloseHandle(error);
@@ -139,11 +163,22 @@ export function spawnWindowsJob(command: string, args: string[], options: SpawnO
   if (!parsed.file) throw Object.assign(new Error(`spawn ${command} ENOENT`), { code: "ENOENT" })
   const app = parsed.options.windowsVerbatimArguments ? windowsCmdExePath() : parsed.command === command ? parsed.file : parsed.command
   const line = quoteWindowsJobArg(app) + " " + (parsed.options.windowsVerbatimArguments ? parsed.args.join(" ") : parsed.args.map(quoteWindowsJobArg).join(" "))
+  const targetEnv = options.env ?? { ...process.env }
+  const encodedEnv = windowsTargetEnvironment(targetEnv).toString("base64")
+  const controlEnv = { ...process.env }
+  const existingKeys = [...Object.keys(controlEnv), ...Object.keys(targetEnv)].map(key => key.toUpperCase())
+  let envPrefix: string
+  do { envPrefix = `CMSPARK_OWNED_JOB_ENV_${randomBytes(16).toString("hex")}_` }
+  while (existingKeys.some(key => key.startsWith(envPrefix.toUpperCase())))
+  // Bound each carrier well below Windows' per-variable limit. Values never
+  // appear in argv/EncodedCommand, and the target receives an explicit block.
+  let envCount = 0
+  for (let offset = 0; offset < encodedEnv.length; offset += 12000) controlEnv[envPrefix + envCount++] = encodedEnv.slice(offset, offset + 12000)
   // EncodedCommand leaves stdin exclusively for the configured protocol, and
   // embedding the fixed bootstrap also works in the SEA bundle without files.
-  const script = `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $WarningPreference='SilentlyContinue'; Add-Type -TypeDefinition @'\n${JOB_BOOTSTRAP}\n'@; try { exit ([CMsparkOwnedJob]::Run(${psLiteral(app)},${psLiteral(line)},${cwd ? psLiteral(cwd) : "$null"},${process.pid},[UInt64]::Parse('${created}'))) } catch { [Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }`
+  const script = `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $WarningPreference='SilentlyContinue'; Add-Type -TypeDefinition @'\n${JOB_BOOTSTRAP}\n'@; try { exit ([CMsparkOwnedJob]::Run(${psLiteral(app)},${psLiteral(line)},${cwd ? psLiteral(cwd) : "$null"},${process.pid},[UInt64]::Parse('${created}'),${psLiteral(envPrefix)},${envCount})) } catch { [Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }`
   const child = spawn(windowsPowerShellExePath(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
-    ...options, shell: false, windowsHide: true, windowsVerbatimArguments: false,
+    ...options, env: controlEnv, shell: false, windowsHide: true, windowsVerbatimArguments: false,
   })
   ownedJobChildren.add(child)
   return child
