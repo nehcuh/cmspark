@@ -693,6 +693,10 @@ assert_file_has "${RELEASE_YML}" 'github\.ref_name' \
 echo "[dynamic] release-guard.sh 六路径行为（临时 git repo）"
 if command -v node >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
   RG_TMP="$(mktemp -d)"
+  # macOS /var is a symlink to /private/var; git reports the physical root.
+  # Keep the fixture path physical so the strict production guard compares
+  # the same repository spelling instead of rejecting the test environment.
+  RG_TMP="$(cd "${RG_TMP}" && pwd -P)"
   # $1=version — 造最小 repo：守卫脚本 + companion/package.json + CHANGELOG.md
   rg_setup() {
     rm -rf "${RG_TMP}/repo" 2>/dev/null || true

@@ -59,6 +59,9 @@ class MockPty {
   emit(d: string) {
     this.dataCb?.(d)
   }
+  exit(code = 0) {
+    this.exitCb?.({ exitCode: code, signal: 0 })
+  }
 }
 
 let lastPty: MockPty | null = null
@@ -122,6 +125,60 @@ test("#432 validate: open requires id + user_gesture", () => {
   assert.equal(validateWsMessage({ type: "terminal.open", id: "t1" }).valid, false)
   assert.equal(validateWsMessage({ type: "terminal.open", id: "t1", user_gesture: true }).valid, true)
   assert.equal(validateWsMessage({ type: "terminal.ack", id: "t1", seq: 1 }).valid, true)
+})
+
+test("Windows close reserves the only slot and rejects input until tree cleanup completes", () => {
+  const frames: Record<string, unknown>[] = []
+  const owner = { readyState: 1 }
+  let complete!: () => void
+  let treeKills = 0
+  pty.__testSetPtyPlatform("win32")
+  pty.__testSetPtyTreeKill((_pid, release) => { treeKills++; complete = release })
+  assert.equal(pty.spawnPtySession({ id: "closing", cwd: tempHome, cols: 80, rows: 24, owner, send: frame => frames.push(frame) }).ok, true)
+  const old = lastPty!
+  old.pid = 12345 // synthetic; the injected tree killer never starts an OS process
+  pty.closePty("closing")
+  pty.closePty("closing")
+  const closeAudits = () => fs.readFileSync(path.join(process.env.CMSPARK_DATA_DIR!, "logs", "capability-audit.jsonl"), "utf8")
+    .trim().split("\n").map(line => JSON.parse(line)).filter(event => event.type === "terminal.close" && event.id === "closing")
+  assert.equal(closeAudits().length, 1) // audit must survive shutdown before cleanup completion
+  assert.equal(treeKills, 1)
+  assert.equal(pty.isPtyBusy(), true)
+  assert.equal(old.killed, false)
+  assert.equal(pty.getOwnedPtyContext("closing", owner), null)
+  assert.equal(pty.writePtyInput("closing", "eA==").ok, false)
+  assert.equal(pty.resizePty("closing", 80, 24).ok, false)
+  assert.equal(pty.ackPty("closing", 1).ok, false)
+  old.emit("ignored while closing")
+  old.exit() // natural exit during an active tree cleanup must not kill twice
+  assert.equal(treeKills, 1)
+  assert.equal(frames.filter(frame => frame.type === "terminal.closed").length, 0)
+  assert.equal(frames.filter(frame => frame.type === "terminal.data").length, 0)
+  assert.deepEqual(pty.spawnPtySession({ id: "next", cwd: tempHome, cols: 80, rows: 24, send() {} }), { ok: false, error: "terminal_busy" })
+  complete()
+  assert.equal(old.killed, true)
+  assert.equal(pty.isPtyBusy(), false)
+  assert.equal(frames.filter(frame => frame.type === "terminal.closed").length, 1)
+  assert.equal(pty.spawnPtySession({ id: "next", cwd: tempHome, cols: 80, rows: 24, send() {} }).ok, true)
+  complete() // a late duplicate completion cannot clear the new session
+  assert.equal(pty.getLivePtyId(), "next")
+  assert.equal(closeAudits().length, 1)
+  assert.equal(frames.filter(frame => frame.type === "terminal.closed").length, 1)
+})
+
+test("natural PTY exit releases its slot without killing the exited numeric PID", () => {
+  let treeKills = 0
+  const frames: Record<string, unknown>[] = []
+  pty.__testSetPtyPlatform("win32")
+  pty.__testSetPtyTreeKill(() => { treeKills++ })
+  assert.equal(pty.spawnPtySession({ id: "natural", cwd: tempHome, cols: 80, rows: 24, send: frame => frames.push(frame) }).ok, true)
+  const old = lastPty!
+  old.pid = 12345
+  old.exit(7)
+  assert.equal(treeKills, 0)
+  assert.equal(old.killed, false)
+  assert.equal(pty.isPtyBusy(), false)
+  assert.equal(frames.find(frame => frame.type === "terminal.closed")?.code, 7)
 })
 
 test("Kimi draft cannot target a login shell or exceed the existing task byte limit", () => {

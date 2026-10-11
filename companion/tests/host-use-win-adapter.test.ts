@@ -83,6 +83,65 @@ function fakeFs(files: Record<string, FakeEntry>, realpathMap?: Record<string, s
 
 const noopRunner: PsRunner = async () => { throw new Error("runner not expected") }
 
+test("redirected Known Folders are snapshotted once per operation and retain containment", async () => {
+  const redirected = path.join(USERPROFILE, "OneDrive 公司", "Documents")
+  const target = path.join(redirected, "a.txt")
+  const outside = path.join(USERPROFILE, "Private")
+  const { fsOps, renamed } = fakeFs({
+    [redirected]: { dir: true }, [target]: { mtime: 1 }, [DESKTOP]: { dir: true },
+    [path.join(redirected, "escape.txt")]: { mtime: 2 },
+  }, { [path.join(redirected, "escape.txt")]: path.join(outside, "secret.txt") })
+  let resolutions = 0
+  const adapter = new WinHostAdapter({ fsOps, knownFolders: async () => {
+    resolutions++
+    return [{ token: "documents", path: redirected }, { token: "desktop", path: DESKTOP }]
+  } })
+  const id = adapter.validateTargetId(`win:fs:documents:file-${b64("a.txt")}`)
+  assert.deepEqual(await adapter.listReadTargets("file"), [id])
+  assert.equal(resolutions, 1)
+  assert.equal((await adapter.readOne(id)).file_path, target)
+  assert.equal(resolutions, 2)
+  await adapter.writeOne(id, { kind: "move", source_path: target, destination: DESKTOP })
+  assert.equal(resolutions, 3)
+  assert.deepEqual(renamed, [{ src: target, dest: path.join(DESKTOP, "a.txt") }])
+  await assert.rejects(adapter.writeOne(id, { kind: "move", source_path: path.join(DOCS, "a.txt"), destination: DESKTOP }), WinPathOutsideAllowlist)
+  const escaped = adapter.validateTargetId(`win:fs:documents:file-${b64("escape.txt")}`)
+  await assert.rejects(adapter.readOne(escaped), WinPathOutsideAllowlist)
+})
+
+test("Known Folder junction roots authorize their canonical children, but nested escapes are denied", async () => {
+  const storage = path.join(USERPROFILE, "RedirectedStorage")
+  const target = path.join(DOCS, "a.txt")
+  const escaped = path.join(DOCS, "nested", "b.txt")
+  const { fsOps } = fakeFs({ [DOCS]: { dir: true }, [target]: { mtime: 1 }, [escaped]: { mtime: 2 } }, {
+    [DOCS]: storage,
+    [target]: path.join(storage, "a.txt"),
+    [escaped]: path.join(USERPROFILE, "Private", "b.txt"),
+  })
+  const adapter = new WinHostAdapter({ fsOps, knownFolders: async () => [{ token: "documents", path: DOCS }] })
+  const id = adapter.validateTargetId(`win:fs:documents:file-${b64("a.txt")}`)
+  assert.equal((await adapter.readOne(id)).file_path, target)
+  const escapedId = adapter.validateTargetId(`win:fs:documents:file-${b64(path.join("nested", "b.txt"))}`)
+  await assert.rejects(adapter.readOne(escapedId), WinPathOutsideAllowlist)
+})
+
+test("Known Folder junctions to canonical volume/share roots do not authorize files", async () => {
+  const roots = [path.parse(DOCS).root]
+  if (process.platform === "win32") roots.push("\\\\server\\share\\")
+  for (const root of roots) {
+    const target = path.join(DOCS, "a.txt")
+    const { fsOps, renamed } = fakeFs({ [DOCS]: { dir: true }, [target]: { mtime: 1 }, [DESKTOP]: { dir: true } }, {
+      [DOCS]: root, [target]: path.join(root, "a.txt"),
+    })
+    const adapter = new WinHostAdapter({ fsOps, knownFolders: async () => [{ token: "documents", path: DOCS }, { token: "desktop", path: DESKTOP }] })
+    const id = adapter.validateTargetId(`win:fs:documents:file-${b64("a.txt")}`)
+    assert.deepEqual(await adapter.listReadTargets("file"), [])
+    await assert.rejects(adapter.readOne(id))
+    await assert.rejects(adapter.writeOne(id, { kind: "move", source_path: target, destination: DESKTOP }))
+    assert.deepEqual(renamed, [])
+  }
+})
+
 function makeAdapter(opts?: { runner?: PsRunner; fsOps?: FsOps }): WinHostAdapter {
   return new WinHostAdapter({
     runner: opts?.runner ?? noopRunner,

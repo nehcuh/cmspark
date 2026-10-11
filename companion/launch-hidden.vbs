@@ -8,6 +8,8 @@ Set objFSO   = CreateObject("Scripting.FileSystemObject")
 
 ' Resolve directory where THIS script lives — always correct regardless of working dir
 strHere = objFSO.GetParentFolderName(WScript.ScriptFullName)
+' Pass paths through the process environment, never through cmd syntax.
+objShell.Environment("PROCESS")("NODE_PATH") = strHere
 
 strLogDir  = objShell.ExpandEnvironmentStrings("%USERPROFILE%") & "\.cmspark-agent\logs"
 strLogFile = strLogDir & "\vbs-launcher.log"
@@ -20,12 +22,12 @@ EnsureFolder strLogDir
 ' --- Resolve launch command ---
 ' Priority 1: Bundled node.exe + cmspark-agent.js (official zip; wins over leftover SEA)
 If objFSO.FileExists(strHere & "\node.exe") And objFSO.FileExists(strHere & "\cmspark-agent.js") Then
-    strCmd = "cmd /c "" set NODE_PATH=" & strHere & " && """ & strHere & "\node.exe"" """ & strHere & "\cmspark-agent.js"" tray """
+    strCmd = """" & strHere & "\node.exe"" """ & strHere & "\cmspark-agent.js"" tray"
 ' Priority 2: System node + local cmspark-agent.js with NODE_PATH
 ' (And does not short-circuit — nest the probe so it only runs when the js file exists)
 ElseIf objFSO.FileExists(strHere & "\cmspark-agent.js") Then
     If HasSystemNode() Then
-        strCmd = "cmd /c "" set NODE_PATH=" & strHere & " && node """ & strHere & "\cmspark-agent.js"" tray """
+        strCmd = "node """ & strHere & "\cmspark-agent.js"" tray"
     ' Priority 3 fallback: no usable node, but a leftover SEA may still exist
     ElseIf objFSO.FileExists(strHere & "\cmspark-agent.exe") Then
         strCmd = """" & strHere & "\cmspark-agent.exe" & """ tray"

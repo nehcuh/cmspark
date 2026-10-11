@@ -5,13 +5,14 @@
 // cert and remain NON-goals, see RUNBOOK-phase0.md):
 //   - mail-inbox: classic Outlook COM via PowerShell (read-only)
 //   - note:       OneNote desktop COM via PowerShell (create-only)
-//   - file:       Node fs, restricted to %USERPROFILE%\{Documents,Desktop,
-//                 Downloads} (hardening W-1 — no TCC-equivalent on Windows,
+//   - file:       Node fs, restricted to the user's Windows Known Folders
+//                 Documents/Desktop/Downloads (including policy redirection;
+//                 hardening W-1 — no TCC-equivalent on Windows,
 //                 so blast radius is capped by construction)
 
 import * as path from "path"
 import * as fs from "fs"
-import * as os from "os"
+import { resolveKnownFolders, WIN_FS_ROOT_TOKENS, type WinFsRootToken, type WinFsRoot, type KnownFolderResolver } from "./known-folders"
 import type {
   HostAdapter,
   TargetId,
@@ -46,9 +47,6 @@ const DEFAULT_LIMIT = 100
 // Runtime rules 3/4 below backstop per-kind structure.
 const WIN_TARGET_RE =
   /^win:(outlook|onenote|fs):[A-Za-z0-9_\-]+:(msg|note|file)-[A-Za-z0-9_\-]+$/
-
-const WIN_FS_ROOT_TOKENS = ["documents", "desktop", "downloads"] as const
-type WinFsRootToken = (typeof WIN_FS_ROOT_TOKENS)[number]
 
 export interface FsStatLike {
   isFile(): boolean
@@ -86,7 +84,7 @@ const defaultFsOps: FsOps = {
 export function isWithinRoot(resolved: string, root: string): boolean {
   const resolvedLower = resolved.toLowerCase()
   const rootLower = root.toLowerCase()
-  return resolvedLower === rootLower || resolvedLower.startsWith(rootLower + path.sep)
+  return resolvedLower === rootLower || resolvedLower.startsWith(rootLower.endsWith(path.sep) ? rootLower : rootLower + path.sep)
 }
 
 function encodeFileId(rootToken: string, relPath: string): string {
@@ -96,25 +94,38 @@ function encodeFileId(rootToken: string, relPath: string): string {
 export class WinHostAdapter implements HostAdapter {
   private readonly runner: PsRunner
   private readonly fsOps: FsOps
-  private readonly userProfile: string
+  private readonly resolveRoots: KnownFolderResolver
 
-  constructor(opts?: { runner?: PsRunner; fsOps?: FsOps; userProfile?: string }) {
+  constructor(opts?: { runner?: PsRunner; fsOps?: FsOps; userProfile?: string; knownFolders?: KnownFolderResolver }) {
     this.runner = opts?.runner ?? runPs
     this.fsOps = opts?.fsOps ?? defaultFsOps
-    // %USERPROFILE% — homedir() fallback for exotic service contexts.
-    this.userProfile = opts?.userProfile ?? process.env.USERPROFILE ?? os.homedir()
+    // userProfile remains an explicit fixture seam; production uses Windows APIs.
+    this.resolveRoots = opts?.knownFolders ?? (opts?.userProfile
+      ? async () => [
+          { token: "documents", path: path.join(opts.userProfile!, "Documents") },
+          { token: "desktop", path: path.join(opts.userProfile!, "Desktop") },
+          { token: "downloads", path: path.join(opts.userProfile!, "Downloads") },
+        ]
+      : () => resolveKnownFolders(this.runner))
   }
 
-  private rootPaths(): Array<{ token: WinFsRootToken; path: string }> {
-    return [
-      { token: "documents", path: path.join(this.userProfile, "Documents") },
-      { token: "desktop", path: path.join(this.userProfile, "Desktop") },
-      { token: "downloads", path: path.join(this.userProfile, "Downloads") },
-    ]
+  private async rootPaths(): Promise<Array<WinFsRoot & { realPath: string }>> {
+    // One snapshot per operation: a refresh must not change the allowlist halfway
+    // through validation. Missing/offline roots cannot authorize any operation.
+    const roots = await this.resolveRoots()
+    return roots.flatMap((root) => {
+      try {
+        const realPath = path.normalize(this.fsOps.realpathSync(root.path))
+        // A user-folder junction must not authorize its entire destination volume/share.
+        if (realPath === path.parse(realPath).root) return []
+        return [{ ...root, realPath }]
+      }
+      catch { return [] }
+    })
   }
 
-  private assertInsideRoots(resolved: string): void {
-    if (!this.rootPaths().some((r) => isWithinRoot(resolved, r.path))) {
+  private assertInsideRoots(resolved: string, roots: Array<WinFsRoot & { realPath: string }>, real = false): void {
+    if (!roots.some((r) => isWithinRoot(resolved, real ? r.realPath : r.path))) {
       throw new WinPathOutsideAllowlist(resolved)
     }
   }
@@ -142,7 +153,8 @@ export class WinHostAdapter implements HostAdapter {
       case "file": {
         // Metadata listing of allowlisted roots (files only, mtime desc).
         const entries: Array<{ rootToken: WinFsRootToken; name: string; mtimeMs: number }> = []
-        for (const root of this.rootPaths()) {
+        const roots = await this.rootPaths()
+        for (const root of roots) {
           let names: string[]
           try {
             names = this.fsOps.readdirSync(root.path)
@@ -151,7 +163,10 @@ export class WinHostAdapter implements HostAdapter {
           }
           for (const name of names) {
             try {
-              const st = this.fsOps.statSync(path.join(root.path, name))
+              const full = path.resolve(root.path, name)
+              this.assertInsideRoots(full, roots)
+              this.assertInsideRoots(this.fsOps.realpathSync(full), roots, true)
+              const st = this.fsOps.statSync(full)
               if (st.isFile()) {
                 entries.push({ rootToken: root.token, name, mtimeMs: st.mtime.getTime() })
               }
@@ -213,14 +228,15 @@ export class WinHostAdapter implements HostAdapter {
       // through MCP filesystem, never host_read.
       const rel = decodeFileRelPath(raw)
       const rootToken = seg[2] as WinFsRootToken
-      const root = this.rootPaths().find((r) => r.token === rootToken)
+      const roots = await this.rootPaths()
+      const root = roots.find((r) => r.token === rootToken)
       if (!root) {
         throw new Error(`readOne: unknown fs root "${rootToken}"`)
       }
       const full = path.resolve(root.path, rel)
-      this.assertInsideRoots(full)
-      // Junction mitigation: the parent dir must also resolve inside the root.
-      this.assertInsideRoots(this.fsOps.realpathSync(path.dirname(full)))
+      this.assertInsideRoots(full, roots)
+      // Junction/file-symlink mitigation against the canonical root snapshot.
+      this.assertInsideRoots(this.fsOps.realpathSync(full), roots, true)
       const st = this.fsOps.statSync(full)
       return {
         file_path: full,
@@ -269,8 +285,8 @@ export class WinHostAdapter implements HostAdapter {
           )
         }
         // Hardening W-1 + adversary amendment A2 (MUST-FIX): BOTH source and
-        // destination must stay inside %USERPROFILE%\{Documents,Desktop,
-        // Downloads}. The boundary check (exact match OR root + path.sep) is
+        // destination must stay inside the Known Folders Documents/Desktop/
+        // Downloads. The boundary check (exact match OR root + path.sep) is
         // applied TWICE per side: once to the path.resolve() result and once
         // to the realpath of the container that could be junctioned —
         // dirname(source) for the source FILE, the destination FOLDER itself
@@ -281,13 +297,15 @@ export class WinHostAdapter implements HostAdapter {
         // %USERPROFILE% itself and reject every legitimate move.)
         const resolvedSource = path.resolve(payload.source_path)
         const resolvedDest = path.resolve(payload.destination)
-        this.assertInsideRoots(resolvedSource)
-        this.assertInsideRoots(resolvedDest)
-        this.assertInsideRoots(this.fsOps.realpathSync(path.dirname(resolvedSource)))
+        const roots = await this.rootPaths()
+        this.assertInsideRoots(resolvedSource, roots)
+        this.assertInsideRoots(resolvedDest, roots)
+        this.assertInsideRoots(this.fsOps.realpathSync(path.dirname(resolvedSource)), roots, true)
         this.assertInsideRoots(
           this.fsOps.existsSync(resolvedDest)
             ? this.fsOps.realpathSync(resolvedDest)
             : this.fsOps.realpathSync(path.dirname(resolvedDest)),
+          roots, true,
         )
         try {
           this.fsOps.renameSync(
