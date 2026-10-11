@@ -9,7 +9,7 @@ import * as os from "os"
 import { pathToFileURL } from "node:url"
 import { getConfig, replaceMcpServers, configEvents, CONFIG_CHANGE_EVENT } from "../config"
 import type { McpServerConfig, McpStdioServerConfig } from "./types"
-import { isFilesystemAllowPathArg, resolveFilesystemAllowPathForExists } from "./filesystem-home"
+import { isFilesystemAllowPathArg, resolveFilesystemAllowPathForExists, filesystemServerHome } from "./filesystem-home"
 import { getMcpManager } from "./manager"
 import { mcpAuthorizationDigest } from "./authorization"
 
@@ -403,9 +403,15 @@ export function canOfferAllowDirExpand(opts: {
   }
   const candidate = extractPathCandidate(opts.rawErr, opts.params)
   if (!candidate) return { offer: false, reason: "no_path" }
-  const offered = resolveAllowDirToOffer(candidate)
+  const offered = resolveServiceAllowDir(candidate, existing)
   if (!offered.ok) return { offer: false, reason: offered.error }
   return { offer: true, dir: offered.dir }
+}
+
+// Both the companion account and the service HOME retain their credential cage.
+function resolveServiceAllowDir(candidate: string, cfg: McpServerConfig) {
+  const service = resolveAllowDirToOffer(candidate, filesystemServerHome(cfg))
+  return service.ok ? resolveAllowDirToOffer(service.dir) : service
 }
 
 /**
@@ -433,7 +439,7 @@ export async function addFilesystemAllowDir(
     return { ok: false, error: "server does not look like @modelcontextprotocol/server-filesystem" }
   }
 
-  const offered = resolveAllowDirToOffer(dir)
+  const offered = resolveServiceAllowDir(dir, existing)
   if (!offered.ok) return offered
 
   const dirForArgs =

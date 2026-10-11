@@ -621,14 +621,17 @@ export class AcpManager {
     }
     // --- S1: try real ACP JSON-RPC Client ---
     if (protocolMode === "auto" || protocolMode === "acp") {
-      const handle = await tryStartProtocolSession({
+      let probeChild: ChildProcessWithoutNullStreams | undefined
+      let handle: ProtocolSessionHandle | null
+      try { handle = await tryStartProtocolSession({
         command: server.command,
         args: resolveProtocolArgs(session.agent_id, server.args),
         cwd: session.workspace_root,
         env,
         session,
+        promptTimeoutMs: server.policy.session_timeout_ms,
         hooks: {
-          onSpawn: (child) => { this.trackChild(sessionId, child) },
+          onSpawn: (child) => { probeChild = child; this.trackChild(sessionId, child) },
           onAgentText: (text) => {
             const next = (session.agent_output_text || "") + text
             if (Buffer.byteLength(next) > 256 * 1024) {
@@ -658,45 +661,72 @@ export class AcpManager {
             return ok ? "allow" : "deny"
           },
         },
-      })
-      if (session.mode_c_open_cancelled) {
-        handle?.kill()
-        this.processes.delete(sessionId)
+      }) } catch (e: any) {
+        // A failed teardown must not start the CLI fallback or release a live
+        // probe's slot. Settle the public request and release only on close.
+        let released = false
+        const release = () => {
+          if (released) return
+          released = true
+          this.runningCount = Math.max(0, this.runningCount - 1)
+          if (this.processes.get(sessionId) === probeChild) this.processes.delete(sessionId)
+        }
+        if (!probeChild?.pid || probeChild.exitCode != null || probeChild.signalCode != null) release()
+        else probeChild.once("close", release)
+        const error = e?.message || String(e)
+        session.state = "closed"; session.error = error
+        this.emitTerminal(session, "failed")
+        return { ok: false, error }
+      }
+      let released = false
+      const releaseProtocolSlot = () => {
+        if (released) return
+        released = true
         this.runningCount = Math.max(0, this.runningCount - 1)
+        if (this.protocolHandles.get(sessionId) === handle) this.protocolHandles.delete(sessionId)
+        if (!handle || this.processes.get(sessionId) === handle.child) this.processes.delete(sessionId)
+      }
+      handle?.child.once("close", releaseProtocolSlot)
+      if (session.mode_c_open_cancelled) {
+        if (handle) {
+          handle.kill()
+          try { await closeAcpChild(handle.child) }
+          catch (e: any) { return { ok: false, error: e?.message || String(e) } }
+        }
+        releaseProtocolSlot()
         return { ok: false, error: "acp: cancelled during startup" }
       }
       if (handle) {
         session.transport = "acp"
         session.pid = handle.child.pid
         this.protocolHandles.set(sessionId, handle)
-        this.trackChild(sessionId, handle.child)
         this.pushTimeline(session, [
           timelineItem("status", "ACP Client connected", { status: "done" }),
         ])
         this.maybeOpenLocalTerminal(session, server)
+        const stopProtocolChild = async () => {
+          handle.kill()
+          await closeAcpChild(handle.child)
+          releaseProtocolSlot()
+        }
         try {
           await handle.prompt(prompt)
           const body = session.agent_output_text || ""
           if (!body.trim()) session.partial = true
           // A completed ACP turn need not exit the server process. Reclaim it
           // before dropping its handles so successful sessions do not leak children.
-          handle.kill()
-          this.runningCount = Math.max(0, this.runningCount - 1)
-          this.protocolHandles.delete(sessionId)
-          this.processes.delete(sessionId)
+          await stopProtocolChild()
           this.finishSession(session, body, server.policy.max_handback_chars ?? 48_000, 0)
           return { ok: true, session }
         } catch (e: any) {
-          this.runningCount = Math.max(0, this.runningCount - 1)
-          this.protocolHandles.delete(sessionId)
-          this.processes.delete(sessionId)
+          let errMsg = e?.message || String(e)
+          try { await stopProtocolChild() }
+          catch (teardown: any) { errMsg += `; ${teardown?.message || String(teardown)}` }
           session.state = "closed"
-          const errMsg = e?.message || String(e)
           session.error = errMsg
           this.pushTimeline(session, [
             timelineItem("error", errMsg, { status: "error" }),
           ])
-          handle.kill()
           this.emitTerminal(session, "failed")
           return { ok: false, error: errMsg }
         }
@@ -748,7 +778,7 @@ export class AcpManager {
       let stderr = ""
       const maxOut = server.policy.max_handback_chars ?? 48_000
       const timeoutMs = server.policy.session_timeout_ms ?? 15 * 60_000
-      let lineBuf = ""
+      const lineBuffers = { stdout: "", stderr: "" }
       const removePrompt = () => {
         try { fs.unlinkSync(promptPath) } catch { /* best-effort */ }
       }
@@ -845,9 +875,10 @@ export class AcpManager {
             session.agent_text = session.agent_text!.slice(-maxOut)
           }
         }
-        lineBuf += s
-        const parts = lineBuf.split("\n")
-        lineBuf = parts.pop() || ""
+        const stream = isErr ? "stderr" : "stdout"
+        const parts = (lineBuffers[stream] + s).split("\n")
+        // Retain only the largest detail we expose, even without a newline.
+        lineBuffers[stream] = (parts.pop() || "").slice(-4000)
         for (const line of parts) {
           const t = line.trim()
           // Lower threshold: short progress lines still matter in the steps list

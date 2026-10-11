@@ -200,7 +200,10 @@ test("per-server HOME keeps tilde grants scoped to the child project", { timeout
   fs.writeFileSync(path.join(project, "file.txt"), "CHILD_PROJECT")
   const cfg: McpStdioServerConfig = { ...f.cfg, roots: undefined, args: [entry, "~/project"], env: { [process.platform === "win32" ? "USERPROFILE" : "HOME"]: childHome } }
   try {
-    assert.equal(ensureFilesystemAllowlist("owned", cfg), cfg)
+    const normalized = ensureFilesystemAllowlist("owned", cfg) as McpStdioServerConfig
+    assert.deepEqual(normalized.args, [entry, path.join(childHome, "project")])
+    assert.deepEqual(cfg.args, [entry, "~/project"], "launch normalization keeps the input config unchanged")
+    assert.equal(ensureFilesystemAllowlist("owned", normalized), normalized)
     await manager.start({ enabled: true, servers: { owned: cfg } })
     assert.equal((await manager.callTool({ serverName: "owned", toolName: "read_text_file" }, { path: path.join(project, "file.txt") })).isError, false)
     assert.equal((await manager.callTool({ serverName: "owned", toolName: "read_text_file" }, { path: path.join(f.a, "file.txt") })).isError, true)

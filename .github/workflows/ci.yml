@@ -230,11 +230,11 @@ jobs:
           node scripts/run-tests.mjs .test-dist/tests/integration/windows-job-env-605.test.js
           node scripts/run-tests.mjs .test-dist/tests/integration/cross-os-mcp-605.test.js .test-dist/tests/integration/cross-os-process-605.test.js .test-dist/tests/source-services-605.test.js .test-dist/tests/mcp-http-recovery.test.js .test-dist/tests/mcp-stdio-tree.test.js
 
-      - name: "Cross-platform MCP admission boundaries (#607)"
+      - name: "Cross-platform MCP and process boundaries (#607)"
         shell: bash
         run: |
           cd companion
-          node scripts/run-tests.mjs .test-dist/tests/integration/cross-os-mcp-607.test.js
+          node scripts/run-tests.mjs .test-dist/tests/integration/cross-os-mcp-607.test.js .test-dist/tests/integration/mcp-boundaries-607.test.js .test-dist/tests/integration/process-isolation-607.test.js .test-dist/tests/integration/acp-slot-boundaries-607.test.js
 
       - name: "Windows reliability and confirmation regressions (#592, #595, #598, #599)"
         if: matrix.os == 'windows-latest'

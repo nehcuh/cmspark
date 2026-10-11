@@ -2,7 +2,7 @@
 // Falls back responsibility stays in manager when initialize fails.
 
 import type { ChildProcessWithoutNullStreams } from "child_process"
-import { spawnAcpChild } from "./win-spawn"
+import { spawnAcpChild, closeAcpChild } from "./win-spawn"
 import { JsonRpcStdioClient, tryAcpInitialize } from "./jsonrpc-stdio"
 import {
   capTimeline,
@@ -45,6 +45,7 @@ export async function tryStartProtocolSession(opts: {
   cwd: string
   env: Record<string, string | undefined>
   session: AcpSessionRecord
+  promptTimeoutMs?: number
   hooks: ProtocolSessionHooks
 }): Promise<ProtocolSessionHandle | null> {
   let child: ChildProcessWithoutNullStreams
@@ -147,6 +148,7 @@ export async function tryStartProtocolSession(opts: {
   const init = await tryAcpInitialize(client, 5000)
   if (!init.ok) {
     client.kill()
+    await closeAcpChild(child)
     return null
   }
   push([timelineItem("status", "ACP initialized", { status: "done" })])
@@ -172,6 +174,7 @@ export async function tryStartProtocolSession(opts: {
   } catch (e: any) {
     logger.warn("acp.session_new_failed", { err: e?.message || String(e) })
     client.kill()
+    await closeAcpChild(child)
     return null
   }
 
@@ -184,7 +187,7 @@ export async function tryStartProtocolSession(opts: {
         sessionId: agentSessionId,
         prompt: [{ type: "text", text }],
       },
-      15 * 60_000,
+      opts.promptTimeoutMs ?? 15 * 60_000,
     )
     push([timelineItem("status", "turn complete", { status: "done" })])
   }

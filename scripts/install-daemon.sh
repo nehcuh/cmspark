@@ -36,7 +36,7 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LABEL="com.cmspark.companion"
 MENUBAR_LABEL="com.cmspark.menubar"
-DATA_DIR="${HOME}/.cmspark-agent"
+DATA_DIR="${CMSPARK_DATA_DIR:-${HOME}/.cmspark-agent}"
 LOGS_DIR="${DATA_DIR}/logs"
 CHECKSUM_FILE="${DATA_DIR}/.plist.sha256"
 
@@ -76,7 +76,7 @@ error() { printf '[ERROR] %s\n' "$*" >&2; }
 render_service() {
     local render_mode="$1" render_source="$2" render_target="$3" render_tmp
     render_tmp="$(mktemp "${render_target}.XXXXXX")"
-    if ! "${CMSPARK_NODE_EXEC}" "${SCRIPT_DIR}/render-service.mjs" "$render_mode" "$render_source" "${HOME}" "${CMSPARK_NODE_EXEC}" "${CMSPARK_AGENT_PATH}" > "$render_tmp"; then
+    if ! "${CMSPARK_NODE_EXEC}" "${SCRIPT_DIR}/render-service.mjs" "$render_mode" "$render_source" "${HOME}" "${CMSPARK_NODE_EXEC}" "${CMSPARK_AGENT_PATH}" "${DATA_DIR}" > "$render_tmp"; then
         rm -f "$render_tmp"
         return 1
     fi
@@ -106,6 +106,11 @@ else
     error "Node.js not found in PATH."
     exit 1
 fi
+
+DATA_DIR="$("${CMSPARK_NODE_EXEC}" -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "${DATA_DIR}")"
+LOGS_DIR="${DATA_DIR}/logs"
+CHECKSUM_FILE="${DATA_DIR}/.plist.sha256"
+export CMSPARK_DATA_DIR="${DATA_DIR}"
 
 info "Creating data directory: ${DATA_DIR}"
 mkdir -p "${DATA_DIR}"
@@ -226,13 +231,13 @@ if [[ "$PLATFORM" == "macos" ]]; then
     info "Creating tray launcher: ${APP_DIR}"
     rm -rf "${APP_DIR}"
 
-    OSASCRIPT_SRC="$("${CMSPARK_NODE_EXEC}" "${SCRIPT_DIR}/render-service.mjs" applescript - "${HOME}" "${CMSPARK_NODE_EXEC}" "${CMSPARK_AGENT_PATH}")"
+    OSASCRIPT_SRC="$("${CMSPARK_NODE_EXEC}" "${SCRIPT_DIR}/render-service.mjs" applescript - "${HOME}" "${CMSPARK_NODE_EXEC}" "${CMSPARK_AGENT_PATH}" "${DATA_DIR}")"
 
     mkdir -p "$(dirname "${APP_DIR}")"
     echo "${OSASCRIPT_SRC}" | osacompile -o "${APP_DIR}" 2>&1 || {
         warn "osacompile failed; falling back to shell-script wrapper."
         mkdir -p "${APP_DIR}/Contents/MacOS"
-        "${CMSPARK_NODE_EXEC}" "${SCRIPT_DIR}/render-service.mjs" shell - "${HOME}" "${CMSPARK_NODE_EXEC}" "${CMSPARK_AGENT_PATH}" > "${APP_DIR}/Contents/MacOS/CMspark Agent"
+        "${CMSPARK_NODE_EXEC}" "${SCRIPT_DIR}/render-service.mjs" shell - "${HOME}" "${CMSPARK_NODE_EXEC}" "${CMSPARK_AGENT_PATH}" "${DATA_DIR}" > "${APP_DIR}/Contents/MacOS/CMspark Agent"
         chmod +x "${APP_DIR}/Contents/MacOS/CMspark Agent"
 
         cat > "${APP_DIR}/Contents/Info.plist" <<'PLIST'

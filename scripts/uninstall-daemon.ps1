@@ -24,6 +24,9 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 $AgentScript = "$RepoRoot\companion\dist\index.js"
 $ExistingTask = Get-ScheduledTask -TaskName $Label -ErrorAction SilentlyContinue
+. (Join-Path $ScriptDir "service-data.ps1")
+$DataDir = Resolve-RegisteredServiceDataDir $ExistingTask $DataDir
+$env:CMSPARK_DATA_DIR = $DataDir
 if (Test-Path $AgentScript) {
     $NodeCmd = if (Get-Command node -ErrorAction SilentlyContinue) { (Get-Command node -ErrorAction Stop).Source }
         elseif (Test-Path "$RepoRoot\companion\node.exe") { "$RepoRoot\companion\node.exe" }

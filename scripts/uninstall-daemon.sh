@@ -21,6 +21,7 @@ esac
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LABEL="com.cmspark.companion"
 MENUBAR_LABEL="com.cmspark.menubar"
 PLIST_NAME="${LABEL}.plist"
@@ -58,6 +59,18 @@ warn()  { printf '[WARN]  %s\n' "$*" >&2; }
 # ===========================================================================
 # Platform-specific uninstallation
 # ===========================================================================
+
+# The registration is authoritative after login; transient installer env is gone.
+REGISTERED_FILE="$TARGET_SERVICE"
+REGISTERED_FORMAT=systemd
+if [[ "$PLATFORM" == "macos" ]]; then REGISTERED_FILE="$TARGET_PLIST"; REGISTERED_FORMAT=plist; fi
+if [[ -f "$REGISTERED_FILE" ]]; then
+    NODE_EXEC="$(command -v node || true)"
+    if [[ -z "$NODE_EXEC" ]]; then error "Node.js missing; registered service state preserved"; exit 1; fi
+    REGISTERED_DATA="$("$NODE_EXEC" "$SCRIPT_DIR/read-service-data.mjs" "$REGISTERED_FORMAT" "$REGISTERED_FILE")"
+    if [[ -n "$REGISTERED_DATA" ]]; then DATA_DIR="$REGISTERED_DATA"; fi
+fi
+export CMSPARK_DATA_DIR="$DATA_DIR"
 
 # Stop the authenticated live daemon before removing supervisor/data state.
 AGENT_ENTRY="${CMSPARK_AGENT_PATH:-}"
