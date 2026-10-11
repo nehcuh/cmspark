@@ -1035,6 +1035,18 @@
           "intent_id": {
             "type": "string",
             "description": "Optional MissionBoard intent id (ADR-016 Stage 3). ONLY pass an id you actually received from a board/intent tool (e.g. propose_expert_team member intents); when the thread has no mission board, OMIT this field — a made-up id will not bind anything."
+          },
+          "plan_id": {
+            "type": "string",
+            "description": "Immutable cooperation plan ID; required with plan_task_id."
+          },
+          "plan_task_id": {
+            "type": "string",
+            "description": "Logical task ID. Goal must match plan; dependencies require explicit acceptance. Every attempt retains existing L2."
+          },
+          "plan_task_attempt": {
+            "type": "integer",
+            "description": "Required for planned spawn. Exact next_attempt from cooperation_status; confirmation is bound to this generation."
           }
         },
         "required": [
@@ -1767,6 +1779,151 @@
           "category",
           "content"
         ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cooperation_plan",
+      "description": "Create an immutable bounded parent task plan before spawning. Up to 32 tasks with dependencies, required tools, input references and 1-8 explicit success criteria. Does not execute or grant permissions; use returned plan_id and task id in confirmed spawn_worker. Resume an existing plan instead of resetting attempts.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "goal": {
+                  "type": "string"
+                },
+                "depends_on": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "required_tools": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "input_refs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "criteria": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "description"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "goal",
+                "criteria"
+              ]
+            }
+          }
+        },
+        "required": [
+          "tasks"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cooperation_review",
+      "description": "Review a collected current attempt against success criteria. Runtime completed is not acceptance. Provide exact source_version, criteria judgments with reasons and existing refs (source:<version>, evidence:<id>, artifact:<path>), plus unresolved conflicts. Semantic judgment is attributed to orchestrator, never independent truth. Missing/failed criteria or conflicts block downstream tasks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "source_version": {
+            "type": "string"
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "refs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "passed",
+                "reason",
+                "refs"
+              ]
+            }
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "plan_id",
+          "task_id",
+          "source_version",
+          "criteria",
+          "conflicts"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cooperation_status",
+      "description": "Read durable task checkpoints, accepted outcomes, remaining criteria, blocked dependencies, bounded attempts, ready queue and live browser/ACP result availability. Ready means eligible for a new confirmed dispatch; never automatic replay. Paused, cancelled and security-blocked workers need user control.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
       }
     }
   }

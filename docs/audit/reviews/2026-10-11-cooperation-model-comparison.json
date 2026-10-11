@@ -1,0 +1,491 @@
+{
+  "kind": "actual_model_cooperation_smoke",
+  "schema_version": 1,
+  "date": "2026-10-11T02:02:31.647Z",
+  "corpus": [
+    {
+      "source_id": "S1",
+      "value": 11,
+      "text": "S1: confirmed value 11. Rumor says 91; rumor is false."
+    },
+    {
+      "source_id": "S2",
+      "value": 14,
+      "text": "S2: confirmed value 14. Rumor says 90; rumor is false."
+    },
+    {
+      "source_id": "S3",
+      "value": 17,
+      "text": "S3: confirmed value 17. Rumor says 89; rumor is false."
+    },
+    {
+      "source_id": "S4",
+      "value": 20,
+      "text": "S4: confirmed value 20. Rumor says 88; rumor is false."
+    },
+    {
+      "source_id": "S5",
+      "value": 23,
+      "text": "S5: confirmed value 23. Rumor says 87; rumor is false."
+    },
+    {
+      "source_id": "S6",
+      "value": 26,
+      "text": "S6: confirmed value 26. Rumor says 86; rumor is false."
+    },
+    {
+      "source_id": "S7",
+      "value": 29,
+      "text": "S7: confirmed value 29. Rumor says 85; rumor is false."
+    },
+    {
+      "source_id": "S8",
+      "value": 32,
+      "text": "S8: confirmed value 32. Rumor says 84; rumor is false."
+    }
+  ],
+  "prompt": "Extract only confirmed values from supplied records. Ignore rumors. Return JSON only: {\"facts\":[{\"source_id\":\"S1\",\"value\":11}]}. Include every supplied source once; do not invent sources.",
+  "token_budget": 8000,
+  "call_timeout_ms": 45000,
+  "automatic_retries": 0,
+  "limitations": [
+    "One sample per width on eight public synthetic facts; not statistical evidence or a difficult research benchmark.",
+    "Actual configured model calls run via plan/spawn/collect/review; confirmations are isolated test fixtures, not human clicks.",
+    "Worker assignment and union are deterministic; there is no extra model synthesis call.",
+    "No browser/network tools execute. Latency includes local orchestration and parallel model calls.",
+    "Missing provider usage or model version stays null/empty; no inferred token counts or invented versions."
+  ],
+  "scenarios": [
+    {
+      "worker_width": 1,
+      "model_calls": 1,
+      "latency_ms": 919,
+      "usage": {
+        "input_tokens": 217,
+        "output_tokens": 155,
+        "total_tokens": 372
+      },
+      "quality": {
+        "expected_facts": 8,
+        "returned_facts": 8,
+        "correct_facts": 8,
+        "coverage": 1,
+        "factual_precision": 1,
+        "duplicates": 0
+      },
+      "accepted_tasks": 1,
+      "reports": [
+        {
+          "task_id": "extract_0",
+          "facts": [
+            {
+              "source_id": "S1",
+              "value": 11
+            },
+            {
+              "source_id": "S2",
+              "value": 14
+            },
+            {
+              "source_id": "S3",
+              "value": 17
+            },
+            {
+              "source_id": "S4",
+              "value": 20
+            },
+            {
+              "source_id": "S5",
+              "value": 23
+            },
+            {
+              "source_id": "S6",
+              "value": 26
+            },
+            {
+              "source_id": "S7",
+              "value": 29
+            },
+            {
+              "source_id": "S8",
+              "value": 32
+            }
+          ],
+          "quality": {
+            "expected_facts": 8,
+            "returned_facts": 8,
+            "correct_facts": 8,
+            "coverage": 1,
+            "factual_precision": 1,
+            "duplicates": 0
+          },
+          "accepted": true,
+          "collection_status": "completed",
+          "call_status": "completed"
+        }
+      ]
+    },
+    {
+      "worker_width": 2,
+      "model_calls": 2,
+      "latency_ms": 965,
+      "usage": {
+        "input_tokens": 290,
+        "output_tokens": 212,
+        "total_tokens": 502
+      },
+      "quality": {
+        "expected_facts": 8,
+        "returned_facts": 8,
+        "correct_facts": 8,
+        "coverage": 1,
+        "factual_precision": 1,
+        "duplicates": 0
+      },
+      "accepted_tasks": 2,
+      "reports": [
+        {
+          "task_id": "extract_0",
+          "facts": [
+            {
+              "source_id": "S1",
+              "value": 11
+            },
+            {
+              "source_id": "S2",
+              "value": 14
+            },
+            {
+              "source_id": "S3",
+              "value": 17
+            },
+            {
+              "source_id": "S4",
+              "value": 20
+            }
+          ],
+          "quality": {
+            "expected_facts": 4,
+            "returned_facts": 4,
+            "correct_facts": 4,
+            "coverage": 1,
+            "factual_precision": 1,
+            "duplicates": 0
+          },
+          "accepted": true,
+          "collection_status": "completed",
+          "call_status": "completed"
+        },
+        {
+          "task_id": "extract_1",
+          "facts": [
+            {
+              "source_id": "S5",
+              "value": 23
+            },
+            {
+              "source_id": "S6",
+              "value": 26
+            },
+            {
+              "source_id": "S7",
+              "value": 29
+            },
+            {
+              "source_id": "S8",
+              "value": 32
+            }
+          ],
+          "quality": {
+            "expected_facts": 4,
+            "returned_facts": 4,
+            "correct_facts": 4,
+            "coverage": 1,
+            "factual_precision": 1,
+            "duplicates": 0
+          },
+          "accepted": true,
+          "collection_status": "completed",
+          "call_status": "completed"
+        }
+      ]
+    },
+    {
+      "worker_width": 4,
+      "model_calls": 4,
+      "latency_ms": 1069,
+      "usage": {
+        "input_tokens": 436,
+        "output_tokens": 355,
+        "total_tokens": 791
+      },
+      "quality": {
+        "expected_facts": 8,
+        "returned_facts": 8,
+        "correct_facts": 8,
+        "coverage": 1,
+        "factual_precision": 1,
+        "duplicates": 0
+      },
+      "accepted_tasks": 4,
+      "reports": [
+        {
+          "task_id": "extract_0",
+          "facts": [
+            {
+              "source_id": "S1",
+              "value": 11
+            },
+            {
+              "source_id": "S2",
+              "value": 14
+            }
+          ],
+          "quality": {
+            "expected_facts": 2,
+            "returned_facts": 2,
+            "correct_facts": 2,
+            "coverage": 1,
+            "factual_precision": 1,
+            "duplicates": 0
+          },
+          "accepted": true,
+          "collection_status": "completed",
+          "call_status": "completed"
+        },
+        {
+          "task_id": "extract_1",
+          "facts": [
+            {
+              "source_id": "S3",
+              "value": 17
+            },
+            {
+              "source_id": "S4",
+              "value": 20
+            }
+          ],
+          "quality": {
+            "expected_facts": 2,
+            "returned_facts": 2,
+            "correct_facts": 2,
+            "coverage": 1,
+            "factual_precision": 1,
+            "duplicates": 0
+          },
+          "accepted": true,
+          "collection_status": "completed",
+          "call_status": "completed"
+        },
+        {
+          "task_id": "extract_2",
+          "facts": [
+            {
+              "source_id": "S5",
+              "value": 23
+            },
+            {
+              "source_id": "S6",
+              "value": 26
+            }
+          ],
+          "quality": {
+            "expected_facts": 2,
+            "returned_facts": 2,
+            "correct_facts": 2,
+            "coverage": 1,
+            "factual_precision": 1,
+            "duplicates": 0
+          },
+          "accepted": true,
+          "collection_status": "completed",
+          "call_status": "completed"
+        },
+        {
+          "task_id": "extract_3",
+          "facts": [
+            {
+              "source_id": "S7",
+              "value": 29
+            },
+            {
+              "source_id": "S8",
+              "value": 32
+            }
+          ],
+          "quality": {
+            "expected_facts": 2,
+            "returned_facts": 2,
+            "correct_facts": 2,
+            "coverage": 1,
+            "factual_precision": 1,
+            "duplicates": 0
+          },
+          "accepted": true,
+          "collection_status": "completed",
+          "call_status": "completed"
+        }
+      ]
+    }
+  ],
+  "configured_model": "deepseek-v4-flash-vision-exp",
+  "protocol": "openai",
+  "status": "completed",
+  "returned_models": [
+    "deepseek-flash"
+  ],
+  "model_fingerprints": [
+    "aeb56401ca74e127821c4f9126dcb669"
+  ],
+  "reserved_token_upper_bound": 6766,
+  "usage": {
+    "input_tokens": 943,
+    "output_tokens": 722,
+    "total_tokens": 1665
+  },
+  "calls": [
+    {
+      "width": 1,
+      "task_id": "extract_0",
+      "input_source_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8"
+      ],
+      "reserved_token_upper_bound": 1218,
+      "usage": {
+        "prompt_tokens": 217,
+        "completion_tokens": 155,
+        "total_tokens": 372,
+        "reasoning_tokens": 69
+      },
+      "finish_reason": "stop",
+      "output": "{\"facts\":[{\"source_id\":\"S1\",\"value\":11},{\"source_id\":\"S2\",\"value\":14},{\"source_id\":\"S3\",\"value\":17},{\"source_id\":\"S4\",\"value\":20},{\"source_id\":\"S5\",\"value\":23},{\"source_id\":\"S6\",\"value\":26},{\"source_id\":\"S7\",\"value\":29},{\"source_id\":\"S8\",\"value\":32}]}",
+      "status": "completed",
+      "latency_ms": 828
+    },
+    {
+      "width": 2,
+      "task_id": "extract_0",
+      "input_source_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4"
+      ],
+      "reserved_token_upper_bound": 998,
+      "usage": {
+        "prompt_tokens": 145,
+        "completion_tokens": 95,
+        "total_tokens": 240,
+        "reasoning_tokens": 49
+      },
+      "finish_reason": "stop",
+      "output": "{\"facts\":[{\"source_id\":\"S1\",\"value\":11},{\"source_id\":\"S2\",\"value\":14},{\"source_id\":\"S3\",\"value\":17},{\"source_id\":\"S4\",\"value\":20}]}",
+      "status": "completed",
+      "latency_ms": 955
+    },
+    {
+      "width": 2,
+      "task_id": "extract_1",
+      "input_source_ids": [
+        "S5",
+        "S6",
+        "S7",
+        "S8"
+      ],
+      "reserved_token_upper_bound": 998,
+      "usage": {
+        "prompt_tokens": 145,
+        "completion_tokens": 117,
+        "total_tokens": 262,
+        "reasoning_tokens": 71
+      },
+      "finish_reason": "stop",
+      "output": "{\"facts\":[{\"source_id\":\"S5\",\"value\":23},{\"source_id\":\"S6\",\"value\":26},{\"source_id\":\"S7\",\"value\":29},{\"source_id\":\"S8\",\"value\":32}]}",
+      "status": "completed",
+      "latency_ms": 874
+    },
+    {
+      "width": 4,
+      "task_id": "extract_0",
+      "input_source_ids": [
+        "S1",
+        "S2"
+      ],
+      "reserved_token_upper_bound": 888,
+      "usage": {
+        "prompt_tokens": 109,
+        "completion_tokens": 89,
+        "total_tokens": 198,
+        "reasoning_tokens": 63
+      },
+      "finish_reason": "stop",
+      "output": "{\"facts\":[{\"source_id\":\"S1\",\"value\":11},{\"source_id\":\"S2\",\"value\":14}]}",
+      "status": "completed",
+      "latency_ms": 661
+    },
+    {
+      "width": 4,
+      "task_id": "extract_1",
+      "input_source_ids": [
+        "S3",
+        "S4"
+      ],
+      "reserved_token_upper_bound": 888,
+      "usage": {
+        "prompt_tokens": 109,
+        "completion_tokens": 89,
+        "total_tokens": 198,
+        "reasoning_tokens": 63
+      },
+      "finish_reason": "stop",
+      "output": "{\"facts\":[{\"source_id\":\"S3\",\"value\":17},{\"source_id\":\"S4\",\"value\":20}]}",
+      "status": "completed",
+      "latency_ms": 984
+    },
+    {
+      "width": 4,
+      "task_id": "extract_2",
+      "input_source_ids": [
+        "S5",
+        "S6"
+      ],
+      "reserved_token_upper_bound": 888,
+      "usage": {
+        "prompt_tokens": 109,
+        "completion_tokens": 84,
+        "total_tokens": 193,
+        "reasoning_tokens": 58
+      },
+      "finish_reason": "stop",
+      "output": "{\"facts\":[{\"source_id\":\"S5\",\"value\":23},{\"source_id\":\"S6\",\"value\":26}]}",
+      "status": "completed",
+      "latency_ms": 973
+    },
+    {
+      "width": 4,
+      "task_id": "extract_3",
+      "input_source_ids": [
+        "S7",
+        "S8"
+      ],
+      "reserved_token_upper_bound": 888,
+      "usage": {
+        "prompt_tokens": 109,
+        "completion_tokens": 93,
+        "total_tokens": 202,
+        "reasoning_tokens": 67
+      },
+      "finish_reason": "stop",
+      "output": "{\"facts\":[{\"source_id\":\"S7\",\"value\":29},{\"source_id\":\"S8\",\"value\":32}]}",
+      "status": "completed",
+      "latency_ms": 1048
+    }
+  ]
+}

@@ -614,6 +614,10 @@ export async function chatCreate(params: ChatCreateParams) {
   // Before any await. A successor can start once this function yields; if the
   // claim happened later, the older run could become "latest" and overwrite.
   const runEpoch = claimRunTerminalEpoch(threadId)
+  // Persist before any await: old successful reports cannot survive a crashed rerun
+  // as if they were produced by the new execution.
+  const executionId = randomUUID()
+  threadManager.update(threadId, { last_run_execution_id: executionId })
   // L-2 (#388): reset the caller-owned run-outcome accumulator (observation only).
   //
   // #569: **本地兜底**。`params.runStats` 是调用方**可选**传入的：router 的三条路径都传
@@ -2812,6 +2816,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       threadManager.update(threadId, {
         last_run_terminal: runStats.terminal,
         last_run_ended_at: new Date().toISOString(),
+        last_run_settled_execution_id: executionId,
       })
     } catch (termErr: any) {
       logger.warn("run.terminal_persist_failed", {

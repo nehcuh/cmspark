@@ -8,6 +8,7 @@
 import type { ThreadManager } from "../threads/thread-manager"
 import { browserTaskResult, type CooperationResult } from "../orchestrator/cooperation-result"
 import { recordCooperationResult } from "../orchestrator/cooperation-state"
+import { isCurrentPlannedWorker } from "../orchestrator/cooperation-plan"
 import { dependencyReadiness } from "../orchestrator/cooperation-dependencies"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import {
@@ -434,6 +435,7 @@ export async function applyHandbackPayload(
     auditPath?: string
     /** Worker thread that produced the handback (for provenance). */
     workerThreadId?: string | null
+    sourceStillCurrent?: () => boolean
   },
 ): Promise<BoardResult> {
   const parsed = parseHandbackPayload(rawPayload)
@@ -465,6 +467,11 @@ export async function applyHandbackPayload(
     hostThreadId,
     (board) => {
       const msgId = actor.message_id ? String(actor.message_id) : null
+      const sourceWorker = opts?.workerThreadId ?? actor.worker_id
+      if (opts?.sourceStillCurrent && !opts.sourceStillCurrent()) return { ok: false, error: "worker changed during collection", error_code: "COOPERATION_STALE_ATTEMPT" }
+      if (sourceWorker && !isCurrentPlannedWorker(tm, sourceWorker)) {
+        return { ok: false, error: "superseded cooperation attempt", error_code: "COOPERATION_STALE_ATTEMPT" }
+      }
       const appliedIds = Array.isArray(board.applied_handback_message_ids)
         ? [...board.applied_handback_message_ids]
         : []
@@ -854,6 +861,7 @@ async function collectWorkerHandbackRaw(
      * tool, next assistant not yet written while the LLM call is in flight).
      */
     isThreadLlmActive?: (threadId: string) => boolean
+    sourceStillCurrent?: () => boolean
   },
 ): Promise<CollectHandbackResult> {
   const workerId = String(opts.workerId)
@@ -1041,6 +1049,7 @@ async function collectWorkerHandbackRaw(
       resolveToolCall: opts.resolveToolCall,
       auditPath: opts.auditPath,
       workerThreadId: workerId,
+      sourceStillCurrent: opts.sourceStillCurrent,
     },
   )
 
@@ -1096,14 +1105,28 @@ export async function collectWorkerHandback(
   tm: ThreadManager,
   opts: Parameters<typeof collectWorkerHandbackRaw>[1],
 ): Promise<CollectHandbackResult> {
+  if (!isCurrentPlannedWorker(tm, opts.workerId)) return { success: false, error: "superseded cooperation attempt", error_code: "COOPERATION_STALE_ATTEMPT", recoverable: true }
   const before = tm.get(opts.workerId)
+  if (before?.last_run_execution_id && before.last_run_execution_id !== before.last_run_settled_execution_id && !opts.isThreadLlmActive?.(opts.workerId)) {
+    return { success: false, error: "worker execution interrupted before settlement; old report is not current", error_code: "COOPERATION_INTERRUPTED", recoverable: true,
+      data: { task_result: browserTaskResult(before, { success: false, error_code: "COOPERATION_INTERRUPTED" }) } as any }
+  }
   const version = before && { ...before }
-  const read = await collectWorkerHandbackRaw(tm, opts)
+  const sourceStillCurrent = () => {
+    const now = tm.get(opts.workerId)
+    return !!now && !!version && now.last_run_execution_id === version.last_run_execution_id &&
+      now.last_run_settled_execution_id === version.last_run_settled_execution_id &&
+      now.parent_thread_id === version.parent_thread_id && now.orchestrator_run_id === version.orchestrator_run_id &&
+      now.last_run_ended_at === version.last_run_ended_at && now.last_run_terminal === version.last_run_terminal &&
+      !!now.paused === !!version.paused && !opts.isThreadLlmActive?.(opts.workerId)
+  }
+  const read = await collectWorkerHandbackRaw(tm, { ...opts, sourceStillCurrent })
   const worker = tm.get(opts.workerId)
   if (version && read.data) {
     const task = browserTaskResult(version, read)
     const stable = !!worker && worker.parent_thread_id === version.parent_thread_id && worker.orchestrator_run_id === version.orchestrator_run_id &&
       worker.agent_role === version.agent_role &&
+      worker.last_run_execution_id === version.last_run_execution_id && worker.last_run_settled_execution_id === version.last_run_settled_execution_id &&
       worker.last_run_ended_at === version.last_run_ended_at && worker.last_run_terminal === version.last_run_terminal && !!worker.paused === !!version.paused &&
       (worker.paused || (!read.success && read.error_code === "WORKER_STILL_RUNNING") || opts.isThreadLlmActive?.(worker.id) !== true)
     if (!stable) { task.status = "stale"; task.missing = ["result_changed_during_read"]; task.recovery = { action: "recollect", automatic: false, requires_confirmation: false, budget_remaining: 2 } }

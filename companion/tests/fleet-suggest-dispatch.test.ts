@@ -410,5 +410,8 @@ test("#514: plain spawn_worker persists a role-aware brief and kicks the worker"
 
 test("#514 catalog lock: spawn_worker goal is required", () => {
   const src = readSrc("bridge", "tool-definitions-catalog.json")
-  assert.match(src, /"name": "spawn_worker"[\s\S]{0,4000}?"required": \[\s*"goal"\s*\]/)
+  const tool = JSON.parse(src).find((entry: any) => entry.function?.name === "spawn_worker")
+  assert.ok(tool, "spawn_worker must remain in the production catalog")
+  assert.deepEqual(tool.function.parameters.required, ["goal"])
+  assert.equal(tool.function.parameters.properties.goal.type, "string")
 })

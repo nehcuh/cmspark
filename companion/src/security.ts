@@ -1023,6 +1023,12 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // 兄弟 collect（thread 8olhpa）。
   ["HANDBACK_MISSING_STRUCTURE", "recoverable"],
   ["WORKER_STILL_RUNNING", "recoverable"],
+  // #590: stale/invalid collaboration state is recoverable by inspection or a
+  // fresh confirmed attempt; it never grants permission or replays a tool.
+  ["COOPERATION_REJECTED", "recoverable"],
+  ["COOPERATION_STALE_ATTEMPT", "recoverable"],
+  ["COOPERATION_INTERRUPTED", "recoverable"],
+  ["ACP_OWNER_MISMATCH", "security"],
   // 另一个 worker 已持有 tab。报文是 "tab N held by <id> (HARD_HELD)"，**不含** "tab_locked"，
   // 所以子串表永远匹配不到，父轮次被中止过（bqn39n vs xdigpo, tab 1492102817）。
   ["TAB_LOCKED", "recoverable"],

@@ -1,7 +1,7 @@
 // Unit tests for Mode C open-local-terminal pure helpers.
 // Shell escape, absolute-path rejection, Windows quoting, Linux terminal pick, L0 script.
 
-import { describe, it } from "node:test"
+import { describe, it, before, after } from "node:test"
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { execFileSync } from "node:child_process"
@@ -30,9 +30,13 @@ import {
   openWindowsWithPref,
   formatModeCOpenedLabel,
   openLocalTerminalForAgent,
+  peekEmbedIntent,
+  takeEmbedIntent,
+  __testSetOuterOpeners,
   type WinDetachedSpawnFn,
 } from "../src/acp/open-local-terminal"
 import { windowsCmdExePath, windowsPowerShellExePath, writeExclusiveUtf8 } from "../src/acp/win-spawn"
+import { getConfig } from "../src/config"
 
 describe("shellSingleQuote", () => {
   it("wraps plain strings in single quotes", () => {
@@ -854,16 +858,26 @@ describe("path.isAbsolute matrix (platform)", () => {
 
 describe("#584 embed platform gate（注入 platform，三平台用例在任何宿主都跑）", () => {
   const base = { agentId: "kimi", command: process.execPath, cwd: process.cwd(), embed: true }
+  let previous: ReturnType<typeof getConfig>["embedded_terminal"]
+  before(() => {
+    previous = getConfig().embedded_terminal
+    // Fix the fixture explicitly; a recorder is built in, and ambient enabled
+    // config must not change the disabled-gate assertions. No config file write.
+    getConfig().embedded_terminal = { enabled: false }
+  })
+  after(() => { getConfig().embedded_terminal = previous })
 
   it("win32 passes the gate (refusals past it are never 'unsupported')", async () => {
     const r = await openLocalTerminalForAgent({ ...base, platform: "win32" } as Parameters<typeof openLocalTerminalForAgent>[0])
-    assert.equal(r.ok, false, "no intent recorder wired in this unit test — gate-past refusal expected")
+    assert.equal(r.ok, false)
+    assert.equal(r.detail, "embedded_terminal_disabled")
     assert.notEqual((r as { detail?: string }).detail, "unsupported", "win32 must not be refused by the platform gate (#584)")
   })
 
   it("darwin passes the gate", async () => {
     const r = await openLocalTerminalForAgent({ ...base, platform: "darwin" } as Parameters<typeof openLocalTerminalForAgent>[0])
-    assert.equal(r.ok, false, "no intent recorder wired in this unit test — gate-past refusal expected")
+    assert.equal(r.ok, false)
+    assert.equal(r.detail, "embedded_terminal_disabled")
     assert.notEqual((r as { detail?: string }).detail, "unsupported")
   })
 
@@ -871,5 +885,30 @@ describe("#584 embed platform gate（注入 platform，三平台用例在任何�
     const r = await openLocalTerminalForAgent({ ...base, platform: "linux" } as Parameters<typeof openLocalTerminalForAgent>[0])
     assert.equal(r.ok, false)
     assert.equal((r as { detail?: string }).detail, "unsupported", "linux must stay unsupported (#584 scope: darwin + win32 only)")
+  })
+
+  it("enabled darwin and win32 record the pending intent without opening any terminal", async () => {
+    getConfig().embedded_terminal = { enabled: true }
+    let hostOpens = 0
+    const refuseHostOpen = () => { hostOpens++; throw new Error("record-only path must not open host terminals") }
+    __testSetOuterOpeners({ darwin: refuseHostOpen, linux: refuseHostOpen, windows: refuseHostOpen })
+    try {
+      for (const platform of ["darwin", "win32"] as const) {
+        const threadId = `platform-record-only-${platform}`
+        const r = await openLocalTerminalForAgent({ ...base, platform, threadId, prompt: "fixture task" })
+        assert.equal(r.ok, true, JSON.stringify(r))
+        assert.equal(hostOpens, 0)
+        assert.equal(r.level, undefined)
+        assert.ok(r.embedIntent)
+        const intent = peekEmbedIntent(threadId)
+        assert.equal(intent?.file, process.execPath)
+        assert.equal(intent?.initialPrompt, "fixture task")
+        assert.deepEqual(takeEmbedIntent(threadId), intent)
+        assert.equal(peekEmbedIntent(threadId), null)
+      }
+    } finally {
+      __testSetOuterOpeners()
+      getConfig().embedded_terminal = { enabled: false }
+    }
   })
 })

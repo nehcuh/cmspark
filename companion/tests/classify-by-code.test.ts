@@ -56,6 +56,7 @@ test("#560 每个已登记的码：等级与 message 内容完全无关（属性
 const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "security"> = {
   // security
   COOKIE_TRUST_DENIED: "security",
+  ACP_OWNER_MISMATCH: "security", // cross-thread session access is an ownership boundary violation
   // non_recoverable
   BROWSER_UNAVAILABLE: "non_recoverable",
   DOWNLOADS_API_UNAVAILABLE: "non_recoverable", // 下载 API 不可用（权限/环境）不是 agent 能自修的
@@ -78,6 +79,9 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   CU_FOCUS_LEASE_QUEUED: "recoverable",
   HANDBACK_MISSING_STRUCTURE: "recoverable",
   WORKER_STILL_RUNNING: "recoverable",
+  COOPERATION_REJECTED: "recoverable", // repair plan/review inputs through the existing authorized workflow
+  COOPERATION_STALE_ATTEMPT: "recoverable", // inspect current attempt and collect its report instead of reusing an old one
+  COOPERATION_INTERRUPTED: "recoverable", // disclose interrupted execution; explicit resume/retry remains confirmed
   TAB_LOCKED: "recoverable",
   TAB_BUSY_CONFIRMING: "recoverable",
   TAB_FORCE_RELEASING: "recoverable",
