@@ -124,7 +124,9 @@ function persisted() {
   const original = JSON.parse(cfgBefore).mcp.servers.filesystem
   const dirArg = process.platform === "win32" ? offered.replace(/\\/g, "/") : offered
   assert.deepEqual(cfg.args, [...original.args, dirArg])
-  assert.deepEqual(cfg.roots, [{ uri: pathToFileUri(offered), name: path.basename(offered) }])
+  // #603: args-only expansion keeps CLI interpretation, including after
+  // cancellation at the commit point (which must not roll approval back).
+  assert.deepEqual(cfg.roots, original.roots)
   assert.equal(reloads, 1)
 }
 async function getPrompt(pending: Promise<any>, result: Promise<any>) {

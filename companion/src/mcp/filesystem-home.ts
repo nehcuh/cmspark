@@ -11,6 +11,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import type { McpServerConfig, McpStdioServerConfig } from "./types.js"
 
 export const MCP_FILESYSTEM_PACKAGE = "@modelcontextprotocol/server-filesystem"
@@ -33,12 +34,7 @@ export function mcpHomeFileUri(
   platform: NodeJS.Platform = process.platform,
   home = mcpHomeDir(platform),
 ): string {
-  if (platform === "win32") {
-    const normalized = home.replace(/\\/g, "/").replace(/^\/+/, "")
-    return `file:///${normalized}`
-  }
-  const abs = home.startsWith("/") ? home : `/${home}`
-  return `file://${abs}`
+  return pathToFileURL(home, { windows: platform === "win32" }).href
 }
 
 /** Heuristic: arg is an allow-directory (not a flag or npm package name). */
@@ -68,18 +64,15 @@ export function resolveFilesystemAllowPathForExists(
   homeRaw = os.homedir(),
 ): string {
   let p = raw.trim()
-  if (p.startsWith("file://")) {
-    try {
-      p = decodeURIComponent(p.replace(/^file:\/\//, ""))
-      // file:///C:/Users → /C:/Users or C:/Users
-      if (platform === "win32" && /^\/[A-Za-z]:/.test(p)) p = p.slice(1)
-    } catch {
-      /* keep p */
-    }
+  if (p.startsWith("file:")) {
+    // Invalid URIs must not turn into relative paths and accidentally pass an
+    // existence check. Callers prune them rather than reinterpret their text.
+    try { p = fileURLToPath(p, { windows: platform === "win32" }) }
+    catch { return "" }
   }
   if (p === "~") return homeRaw
   if (p.startsWith("~/") || p.startsWith("~\\")) {
-    p = path.join(homeRaw, p.slice(2))
+    p = (platform === "win32" ? path.win32 : path.posix).join(homeRaw, p.slice(2))
   }
   // Avoid path.resolve turning "C:/Users/x" into nonsense on POSIX; still OK for exists inject.
   if (platform === "win32") {
@@ -134,7 +127,7 @@ export function ensureFilesystemAllowlist(
       continue
     }
     const resolved = resolveFilesystemAllowPathForExists(a, platform, homeRaw)
-    if (pathExists(resolved)) {
+    if (resolved && pathExists(resolved)) {
       args.push(a)
     } else {
       pruned = true
@@ -149,7 +142,7 @@ export function ensureFilesystemAllowlist(
         return false
       }
       const resolved = resolveFilesystemAllowPathForExists(r.uri, platform, homeRaw)
-      if (pathExists(resolved)) return true
+      if (resolved && pathExists(resolved)) return true
       pruned = true
       return false
     })

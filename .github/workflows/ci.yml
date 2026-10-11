@@ -259,3 +259,23 @@ jobs:
           cd companion
           node scripts/run-tests.mjs .test-dist/tests/mcp-compatibility-602.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Windows ACP pipes and filesystem roots / native UNC (#603)"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "cmspark-603-$env:GITHUB_RUN_ID"
+          $share = "cmspark603_$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Path $fixture -ErrorAction Stop | Out-Null
+          try {
+            Start-Service LanmanServer -ErrorAction Stop
+            New-SmbShare -Name $share -Path $fixture -FullAccess (whoami) -ErrorAction Stop | Out-Null
+            $env:CMSPARK_TEST_UNC_SHARE = "\\127.0.0.1\$share"
+            cd companion
+            node scripts/run-tests.mjs .test-dist/tests/acp-cli-reliability.test.js .test-dist/tests/integration/allow-dir-roots-603.test.js .test-dist/tests/mcp-unc-603.test.js
+            if ($LASTEXITCODE -ne 0) { throw "#603 native Windows regressions failed: $LASTEXITCODE" }
+          } finally {
+            Remove-SmbShare -Name $share -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item Env:CMSPARK_TEST_UNC_SHARE -ErrorAction SilentlyContinue
+          }

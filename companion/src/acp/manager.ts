@@ -765,31 +765,58 @@ export class AcpManager {
       ])
       this.maybeOpenLocalTerminal(session, server)
 
-      try {
-        child.stdin.write(prompt)
-        child.stdin.end()
-      } catch {
-        /* some CLIs ignore stdin */
+      let completed = false
+      let released = false
+      let escalation: ReturnType<typeof setTimeout> | undefined
+      const releaseSlot = () => {
+        if (released) return
+        released = true
+        this.runningCount = Math.max(0, this.runningCount - 1)
+        if (this.processes.get(sessionId) === child) this.processes.delete(sessionId)
       }
-
+      const removePrompt = () => {
+        try { fs.unlinkSync(promptPath) } catch { /* best-effort */ }
+      }
+      const stopChild = () => {
+        try { killAcpChild(child, "SIGTERM") } catch { /* best-effort */ }
+        // kill may synchronously emit error and reenter this cleanup. Clear
+        // any prior or nested timer before registering the sole escalation.
+        if (escalation) clearTimeout(escalation)
+        if (!released) escalation = setTimeout(() => {
+          try { killAcpChild(child, "SIGKILL") } catch { /* best-effort */ }
+        }, 2000)
+      }
       const timer = setTimeout(() => {
         session.partial = true
         this.emitProgress(session, "timeout — stopping…", true)
-        try {
-          killAcpChild(child, "SIGTERM")
-        } catch {
-          /* */
-        }
-        setTimeout(() => {
-          try {
-            killAcpChild(child, "SIGKILL")
-          } catch {
-            /* */
-          }
-        }, 2000)
+        stopChild()
       }, timeoutMs)
+      const fail = (err: Error) => {
+        if (completed) return
+        completed = true
+        clearTimeout(timer)
+        // A failed spawn owns no process. Stream errors in a live child settle
+        // immediately, but retain its slot until close confirms termination.
+        if (!child.pid || child.exitCode != null || child.signalCode != null) releaseSlot()
+        const msg = err?.message || String(err)
+        session.state = "closed"
+        session.error = msg
+        removePrompt()
+        logger.warn("acp.cli_error", { session_id: sessionId, err: msg })
+        this.emitProgress(session, msg, true)
+        this.emitTerminal(session, "failed")
+        stopChild()
+        resolve({ ok: false, error: msg })
+      }
+      // ChildProcess 'error' does not cover its stdio streams. Keep listeners
+      // through close so late async pipe errors are consumed as well.
+      child.on("error", fail)
+      child.stdin.on("error", fail)
+      child.stdout.on("error", fail)
+      child.stderr.on("error", fail)
 
       const onChunk = (buf: Buffer, isErr: boolean) => {
+        if (completed) return
         const s = buf.toString("utf8")
         if (isErr) {
           stderr += s
@@ -825,32 +852,17 @@ export class AcpManager {
       child.stdout.on("data", (buf: Buffer) => onChunk(buf, false))
       child.stderr.on("data", (buf: Buffer) => onChunk(buf, true))
 
-      child.on("error", (err) => {
-        clearTimeout(timer)
-        this.runningCount = Math.max(0, this.runningCount - 1)
-        this.processes.delete(sessionId)
-        session.state = "closed"
-        const msg = err?.message || String(err)
-        session.error = msg
-        logger.warn("acp.spawn_error", { session_id: sessionId, err: msg })
-        this.emitProgress(session, msg, true)
-        this.emitTerminal(session, "failed")
-        resolve({ ok: false, error: msg })
-      })
-
       child.on("close", (code) => {
         clearTimeout(timer)
-        this.runningCount = Math.max(0, this.runningCount - 1)
-        this.processes.delete(sessionId)
+        if (escalation) clearTimeout(escalation)
+        releaseSlot()
+        if (completed) return
+        completed = true
         const body =
           stdout.trim() ||
           stderr.trim() ||
           `(agent exited code=${code} with no output)`
-        try {
-          fs.unlinkSync(promptPath)
-        } catch {
-          /* best-effort */
-        }
+        removePrompt()
         this.finishSession(session, body, maxOut, code)
         logger.info("acp.session_ended", {
           session_id: sessionId,
@@ -860,6 +872,12 @@ export class AcpManager {
         })
         resolve({ ok: true, session })
       })
+      // Register lifecycle handlers before the first write (including streams
+      // whose _write callback reports errors asynchronously).
+      try {
+        child.stdin.write(prompt)
+        child.stdin.end()
+      } catch (err) { fail(err instanceof Error ? err : new Error(String(err))) }
     })
   }
 

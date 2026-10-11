@@ -5,9 +5,10 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import { pathToFileURL } from "node:url"
 import { getConfig, replaceMcpServers, configEvents, CONFIG_CHANGE_EVENT } from "../config"
 import type { McpServerConfig, McpStdioServerConfig } from "./types"
-import { isFilesystemAllowPathArg, MCP_FILESYSTEM_PACKAGE } from "./filesystem-home"
+import { isFilesystemAllowPathArg, MCP_FILESYSTEM_PACKAGE, resolveFilesystemAllowPathForExists } from "./filesystem-home"
 import { getMcpManager } from "./manager"
 import { mcpAuthorizationDigest } from "./authorization"
 
@@ -35,14 +36,9 @@ export function extractPathCandidate(errMsg: string, params: any): string | null
       const v = (params as any)[k]
       if (typeof v === "string" && v.trim()) {
         let p = v.trim()
-        if (p.startsWith("file://")) {
-          try {
-            p = decodeURIComponent(p.replace(/^file:\/\//, ""))
-            // file:///Users/x → /Users/x
-            if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1) // windows quirk
-          } catch {
-            /* keep */
-          }
+        if (p.startsWith("file:")) {
+          p = resolveFilesystemAllowPathForExists(p)
+          if (!p) return null
         }
         return p
       }
@@ -60,29 +56,8 @@ export function extractPathCandidate(errMsg: string, params: any): string | null
  * file:// URI for MCP roots (encode each path segment; keep leading /).
  * POSIX: file:///Users/you/foo%20bar
  */
-export function pathToFileUri(absPath: string): string {
-  const resolved = path.resolve(absPath)
-  if (process.platform === "win32") {
-    const normalized = resolved.replace(/\\/g, "/")
-    const withSlash = normalized.startsWith("/") ? normalized : `/${normalized}`
-    // Encode each segment except drive colon handling: /C:/Users → file:///C:/Users
-    const parts = withSlash.split("/")
-    const encoded = parts
-      .map((seg, i) => {
-        if (i === 0) return ""
-        // Windows drive letter segment "C:"
-        if (/^[A-Za-z]:$/.test(seg)) return seg
-        return encodeURIComponent(seg)
-      })
-      .join("/")
-    return `file://${encoded.startsWith("/") ? "" : "/"}${encoded}`
-  }
-  const abs = resolved.startsWith("/") ? resolved : `/${resolved}`
-  const encoded = abs
-    .split("/")
-    .map((seg, i) => (i === 0 ? "" : encodeURIComponent(seg)))
-    .join("/")
-  return `file://${encoded}`
+export function pathToFileUri(absPath: string, platform: NodeJS.Platform = process.platform): string {
+  return pathToFileURL(absPath, { windows: platform === "win32" }).href
 }
 
 /** Sensitive home-relative prefixes (matched case-insensitively). */
@@ -466,14 +441,20 @@ export async function addFilesystemAllowDir(
     args.push(dirForArgs)
   }
 
-  const rootUri = pathToFileUri(offered.dir)
-  const next: McpStdioServerConfig = {
-    ...existing,
-    args,
-    roots: [
-      ...((existing.roots || []).filter((r) => r && typeof r.uri === "string") as any[]),
-      ...(already ? [] : [{ uri: rootUri, name: path.basename(offered.dir) }]),
-    ],
+  // Preserve args-only mode: interpreting CLI arguments as roots would change
+  // the official server's URI, cwd and HOME semantics. Nonempty roots are
+  // authoritative, so only append the explicitly approved directory there.
+  const next: McpStdioServerConfig = { ...existing, args }
+  // Hand-edited config may contain null roots. Match the sanitizer's shape
+  // guard before deciding whether there are authoritative roots at all.
+  const roots = (existing.roots ?? []).filter(root => root && typeof root.uri === "string")
+  if (roots.length) {
+    const rootUri = pathToFileUri(offered.dir)
+    next.roots = roots
+    // B may already be a CLI arg yet still be excluded by authoritative roots.
+    if (!next.roots.some(root => root.uri === rootUri)) {
+      next.roots.push({ uri: rootUri, name: path.basename(offered.dir) })
+    }
   }
 
   const newServers = { ...(config.mcp?.servers || {}), [serverName]: next as McpServerConfig }
