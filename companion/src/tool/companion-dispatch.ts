@@ -1618,11 +1618,13 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         }
       }
       try {
+        execOpts?.signal?.throwIfAborted()
         const isWin = hostPlatform === "win32"
         // Phase 1 W8-windows: win32 dispatches to the COM/fs-based WinHostAdapter.
         const adapter = isWin
           ? (await import("../host-use/win/adapter")).getWinAdapter()
           : (await import("../host-use/darwin/adapter")).getDarwinAdapter()
+        execOpts?.signal?.throwIfAborted()
         const kind = String(params.kind) as "create" | "move" | "update" | "delete"
 
         // Phase 1 W8/W9: biometric verification BEFORE writeOne.
@@ -1647,6 +1649,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         } else if (isWin) {
           const { tryWindowsHello } = await import("../host-use/win")
           const hello = await tryWindowsHello(toolCallId || "no-tool-call-id", biometricReason)
+          execOpts?.signal?.throwIfAborted()
           if ("ok" in hello) {
             nonce = hello.nonce
             method = "windows-hello"
@@ -1670,6 +1673,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
                 )
               }
               const { generateManualNonce } = await import("../host-use/nonce")
+              execOpts?.signal?.throwIfAborted()
               const challenge = generateManualNonce()
               // Adversary amendment 7a: dedicated downgrade audit event.
               logger.info("security.biometric.downgrade", {
@@ -1705,6 +1709,9 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             error: `host_write on Linux: biometric nonce generated (${nonce}) but Linux has no writeOne adapter in Phase 1 (darwin + win32 only). Linux implementation pending Phase 2.`,
           }
         }
+        // A resolved approval/native verification is not permission to continue
+        // after cancellation. Already-dispatched writes are not rolled back.
+        execOpts?.signal?.throwIfAborted()
         logger.info("security.biometric.verified", {
           tool_call_id: toolCallId,
           tool_name: "host_write",
@@ -1754,6 +1761,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               ? "macos:com.apple.finder:default:file-source"
               : "macos:com.apple.Notes:default:note-default")
         const target = adapter.validateTargetId(syntheticTarget)
+        execOpts?.signal?.throwIfAborted()
         const result = await adapter.writeOne(target, payload)
         // Grill G4: Notes create — posted after writeOne; verified via list-notes
         // re-read (S-semantic success contract).

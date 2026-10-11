@@ -245,6 +245,7 @@ export async function executeMcpTool(
   offeredToolNames?: ReadonlySet<string>,
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   void startedAt // retained for call-site parity with pre-split createToolExecutor
+  if (signal?.aborted) return { success: false, error: "MCP tool call cancelled before dispatch" }
   const notOffered = gateUnofferedMcpTool(toolName, offeredToolNames)
   if (notOffered) return notOffered
   const { securityConfirmations, broadcastToClients } = requireRt()
@@ -352,8 +353,11 @@ export async function executeMcpTool(
         ...(forceMcpConfirm ? { criticalApis: mcpCaps, riskLevel: "high" as const, autoConfirmEligible: false } : {}),
       },
       // Overlay chat retargets origin to the extension WS (N5). Panel stays self-origin.
-      { originWs: channel.originWs },
+      { originWs: channel.originWs, signal },
     )
+    // Approval can resolve just before abort; do not promote a cancelled call
+    // into session trust even when the confirmation already left pending state.
+    if (signal?.aborted) return { success: false, error: "MCP tool call cancelled during confirmation" }
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
       if (forceMcpConfirm) {
@@ -403,6 +407,7 @@ export async function executeMcpTool(
   const callStartedAt = Date.now()
   const mcpArgs = stripCmsparkInternalMcpArgs(params)
   const runOnce = async (): Promise<{ success: boolean; data?: any; error?: string; rawErr?: string }> => {
+    if (signal?.aborted) return { success: false, error: "MCP tool call cancelled before dispatch" }
     const selectionDenied = checkSelection()
     if (selectionDenied) return selectionDenied
     try {
@@ -673,7 +678,9 @@ export async function executeMcpMetaTool(
   params: any,
   sessionId: string,
   ws: WebSocket,
+  signal?: AbortSignal,
 ): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (signal?.aborted) return { success: false, error: "MCP meta-tool call cancelled before dispatch" }
   const { securityConfirmations } = requireRt()
   const manager = getMcpManager()
   const args = params || {}
@@ -725,8 +732,9 @@ export async function executeMcpMetaTool(
         riskLevel: forceMetaConfirm ? "high" : "medium",
         ...(forceMetaConfirm ? { criticalApis: [metaCap], autoConfirmEligible: false } : {}),
       },
-      { originWs: channel.originWs },
+      { originWs: channel.originWs, signal },
     )
+    if (signal?.aborted) return { success: false, error: "MCP meta-tool call cancelled during confirmation" }
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
       if (forceMetaConfirm) {
@@ -761,6 +769,7 @@ export async function executeMcpMetaTool(
 
   const selectionRevoked = checkSelection()
   if (selectionRevoked) return selectionRevoked
+  if (signal?.aborted) return { success: false, error: "MCP meta-tool call cancelled before dispatch" }
 
   try {
     switch (toolName) {

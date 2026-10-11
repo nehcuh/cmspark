@@ -730,7 +730,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
                 }
               },
               details,
-              { originWs: ws },
+              { originWs: ws, signal },
             ),
           // Amendment A3: set only when the L2 dialog above carried this
           // challenge and was approved (respondFrom resolves "approved" for
@@ -833,7 +833,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     // MCP meta tools — Resources/Prompts access (executed locally via McpManager)
     if (toolName === "mcp_list_resources" || toolName === "mcp_read_resource" || toolName === "mcp_get_prompt") {
       try {
-        const result = await executeMcpMetaTool(toolName, finalParams, sessionId, ws)
+        const result = await executeMcpMetaTool(toolName, finalParams, sessionId, ws, signal)
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {
