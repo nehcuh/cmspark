@@ -205,7 +205,7 @@ export function resolveAllowDirToOffer(
 
   let homeReal: string
   try {
-    homeReal = fs.realpathSync(home)
+    homeReal = platform === "win32" ? fs.realpathSync.native(home) : fs.realpathSync(home)
   } catch {
     return { ok: false, error: "cannot resolve home" }
   }
@@ -255,7 +255,7 @@ export function resolveAllowDirToOffer(
 
   let dirReal: string
   try {
-    dirReal = fs.existsSync(dir) ? fs.realpathSync(dir) : dir
+    dirReal = fs.existsSync(dir) ? (platform === "win32" ? fs.realpathSync.native(dir) : fs.realpathSync(dir)) : dir
   } catch {
     return { ok: false, error: `cannot resolve directory: ${dir}` }
   }

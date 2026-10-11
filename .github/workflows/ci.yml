@@ -279,3 +279,10 @@ jobs:
             Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item Env:CMSPARK_TEST_UNC_SHARE -ErrorAction SilentlyContinue
           }
+
+      - name: "Windows native 8.3 filesystem paths (#604)"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          & scripts/tests/win-mcp-short-path-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

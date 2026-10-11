@@ -104,6 +104,7 @@ macOS 示例：`args` 末尾用 `"/Users/you"`，`cwd` 同理。
 - 所有 **作为 allow-dir 的路径必须真实存在**，否则 server 会启动失败；**其下的子目录**可在运行时 `create_directory` 逐级创建（父目录不存在时会报 `Parent directory does not exist`，属可恢复错误，应先建父级）。
 - 想放开多个目录，就在 `args` 里加多个路径参数（或 MCP 面板编辑）。
 - Windows 路径建议正斜杠（`C:/Users/...`），与 companion `normalizeArgsForPlatform` 一致。
+- **Windows 8.3 短名称**：本地 stdio 官方 filesystem（npx、官方可执行文件或 Node 启动官方入口）会在发送工具调用前展开 `RUNNER~1` 等真实路径别名；新文件名和文件内容保持原样。目录授权使用原生长路径，取消或连接变更后不会继续发送调用；越界路径与链接目标仍由 server 的 allowlist 校验。HTTP、SSH 及自定义 server 保留各自的路径语义。
 - **路径笼子 vs 三旗风险自担（2026-08）**：
   - 默认：越界路径走 L2「是否加入 allow-dir」；God-mode **单独**不扩 allow-dir。
   - **三旗全开**：越界且 `canOffer` 通过时 **自动加入 allow-dir（无 L2）**；仍拒绝整盘根、`/Users` 多用户根、系统敏感树（`/etc` 等）。

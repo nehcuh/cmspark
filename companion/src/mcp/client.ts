@@ -15,6 +15,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import { createTransport, extractPid } from "./transport.js"
+import { isLocalOfficialFilesystem, normalizeFilesystemToolArgs, waitForFilesystemNormalization } from "./filesystem-short-path.js"
 import { logger } from "../logger.js"
 import {
   resolveCallTimeout,
@@ -429,6 +430,7 @@ export class McpClient extends EventEmitter {
       throw new Error(`MCP server ${this.name} does not support tools`)
     }
     const timeout = resolveCallTimeout(this._config)
+    const client = this.client
 
     // Audit item 15: use an AbortController so that BOTH the per-call timeout
     // AND an externally-supplied signal (e.g. chat.abort from the adapter)
@@ -455,8 +457,14 @@ export class McpClient extends EventEmitter {
     }
 
     try {
-      const result = await this.client.callTool(
-        { name: toolName, arguments: args },
+      let toolArgs = args
+      if (process.platform === "win32" && isLocalOfficialFilesystem(this._config)) {
+        toolArgs = await waitForFilesystemNormalization(normalizeFilesystemToolArgs(toolName, args, controller.signal), controller.signal)
+        if (!this.isCurrentClient(client)) throw new Error(`MCP server ${this.name} connection changed before dispatch`)
+        controller.signal.throwIfAborted()
+      }
+      const result = await client.callTool(
+        { name: toolName, arguments: toolArgs },
         undefined,
         { signal: controller.signal },
       )
