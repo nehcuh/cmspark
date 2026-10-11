@@ -614,19 +614,22 @@ export class AcpManager {
         env,
         session,
         hooks: {
-          onTimeline: (items, progress) => {
-            for (const it of items) {
-              if (
-                (it.kind === "agent_message" || it.kind === "status") &&
-                (it.detail || it.label)
-              ) {
-                session.agent_text =
-                  (session.agent_text || "") +
-                  (it.detail || it.label || "") +
-                  "\n"
-              }
+          onSpawn: (child) => { this.processes.set(sessionId, child) },
+          onAgentText: (text) => {
+            const next = (session.agent_output_text || "") + text
+            if (Buffer.byteLength(next) > 256 * 1024) {
+              session.partial = true
+              this.cancel(sessionId)
+            } else {
+              session.agent_output_text = next
+              session.agent_text = next
             }
-            this.pushTimeline(session, items, progress)
+          },
+          onTimeline: (items, progress) => {
+            // The protocol owns the cumulative timeline. Appending it repeats
+            // earlier chunks and contaminates handback with status.
+            session.timeline = items
+            this.emitProgress(session, progress || "", false)
           },
           onAgentSessionId: (id) => {
             session.agent_session_id = id
@@ -642,6 +645,12 @@ export class AcpManager {
           },
         },
       })
+      if (session.mode_c_open_cancelled) {
+        handle?.kill()
+        this.processes.delete(sessionId)
+        this.runningCount = Math.max(0, this.runningCount - 1)
+        return { ok: false, error: "acp: cancelled during startup" }
+      }
       if (handle) {
         session.transport = "acp"
         session.pid = handle.child.pid
@@ -653,7 +662,11 @@ export class AcpManager {
         this.maybeOpenLocalTerminal(session, server)
         try {
           await handle.prompt(prompt)
-          const body = session.agent_text || session.timeline?.map((t) => t.detail || t.label).join("\n") || "(empty)"
+          const body = session.agent_output_text || ""
+          if (!body.trim()) session.partial = true
+          // A completed ACP turn need not exit the server process. Reclaim it
+          // before dropping its handles so successful sessions do not leak children.
+          handle.kill()
           this.runningCount = Math.max(0, this.runningCount - 1)
           this.protocolHandles.delete(sessionId)
           this.processes.delete(sessionId)
@@ -674,6 +687,7 @@ export class AcpManager {
           return { ok: false, error: errMsg }
         }
       }
+      this.processes.delete(sessionId)
       if (protocolMode === "acp") {
         this.runningCount = Math.max(0, this.runningCount - 1)
         session.state = "closed"
