@@ -57,18 +57,15 @@ Var /GLOBAL START_MENU_FOLDER
 !insertmacro MUI_LANGUAGE "English"
 
 ; Stop tray + daemon whose ExecutablePath lives under $INSTDIR.
-; `daemon stop` only kills daemon.pid - tray is a second node.exe.
+; Never use the user's shared daemon.pid here: it may belong to another install.
 ; Do not use WMIC (removed/optional on Windows 11 24H2+).
-; Quote rule (Claude dual-review B1, makensis 3.12 executed): NSIS does NOT
-; treat '' as an escaped quote. Backtick strings may contain both ' and ".
-; Residual nit: an apostrophe in $INSTDIR (username O'Brien) still breaks the
-; PowerShell single-quoted GetFullPath; daemon stop + taskkill still run.
+; Paths travel through the inherited process environment, not PowerShell source.
+; Stop only this installation's agent runtimes; unrelated SEA processes survive.
 !macro StopInstalledAgentUnshared
-  IfFileExists "$INSTDIR\node.exe" 0 +3
-    nsExec::ExecToLog `"$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" daemon stop`
-    Sleep 200
-  nsExec::ExecToLog `taskkill /F /IM cmspark-agent.exe`
-  nsExec::ExecToLog `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$r = [IO.Path]::GetFullPath('$INSTDIR').TrimEnd('\') + '\'; Get-CimInstance Win32_Process | ForEach-Object { if ($$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$r, [StringComparison]::OrdinalIgnoreCase)) { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue } }"`
+  StrCpy $0 "$INSTDIR"
+  System::Call 'Kernel32::SetEnvironmentVariable(t "CMSPARK_INSTALL_STOP_ROOT", t r0) i.r1'
+  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$r = [IO.Path]::GetFullPath($$env:CMSPARK_INSTALL_STOP_ROOT).TrimEnd('\') + '\'; Get-CimInstance Win32_Process | ForEach-Object { if (($$_.Name -eq 'node.exe' -or $$_.Name -eq 'cmspark-agent.exe') -and $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$r, [StringComparison]::OrdinalIgnoreCase)) { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue } }"`
+  System::Call 'Kernel32::SetEnvironmentVariable(t "CMSPARK_INSTALL_STOP_ROOT", p 0)'
   Sleep 400
 !macroend
 

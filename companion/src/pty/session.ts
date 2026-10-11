@@ -1,7 +1,8 @@
 // Embedded PTY sessions — at most one live process (spec §5).
-// Kill tree on close / heartbeat / process exit. Ack watermark → pause.
+// Kill tree on explicit close / heartbeat; natural exit never reuses a PID.
+// Ack watermark → pause.
 
-import { spawn } from "child_process"
+import { killWindowsPtyTree } from "./windows-tree"
 import { isAbsolute } from "node:path"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { loadNodePty, type PtyHandle, type PtySpawnFn } from "./load-native"
@@ -36,14 +37,6 @@ function describeValue(v: unknown): string {
 
 function killPidTree(pid: number): void {
   if (pid <= 0) return
-  if (process.platform === "win32") {
-    try {
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true })
-    } catch {
-      /* ignore */
-    }
-    return
-  }
   try {
     process.kill(-pid, "SIGKILL")
   } catch {
@@ -85,6 +78,10 @@ type LiveSession = {
 }
 
 let live: LiveSession | null = null
+// A closing terminal no longer accepts input/data, but reserves the only PTY slot
+// until its process tree and native handle have actually been released.
+let closing: LiveSession | null = null
+let treeKillOverride: typeof killWindowsPtyTree | null = null
 let spawnOverride: PtySpawnFn | null = null
 let heartbeatMs = TERMINAL_HEARTBEAT_MS
 let platformOverride: NodeJS.Platform | null = null
@@ -92,6 +89,10 @@ let exitHookInstalled = false
 
 export function __testSetPtySpawn(fn?: PtySpawnFn): void {
   spawnOverride = fn || null
+}
+
+export function __testSetPtyTreeKill(fn?: typeof killWindowsPtyTree): void {
+  treeKillOverride = fn ?? null
 }
 
 export function __testSetPtyHeartbeatMs(ms?: number): void {
@@ -104,7 +105,9 @@ export function __testSetPtyPlatform(p?: NodeJS.Platform): void {
 
 export function __testResetPtySessions(): void {
   const s = live
+  const pending = closing
   live = null
+  closing = null
   if (s) {
     clearInterval(s.heartbeat)
     try {
@@ -113,7 +116,12 @@ export function __testResetPtySessions(): void {
       /* ignore */
     }
   }
+  if (pending) {
+    clearInterval(pending.heartbeat)
+    try { pending.handle.kill() } catch { /* already exited */ }
+  }
   spawnOverride = null
+  treeKillOverride = null
   heartbeatMs = TERMINAL_HEARTBEAT_MS
   platformOverride = null
 }
@@ -122,11 +130,11 @@ export function getLivePtyId(): string | null {
   return live?.id ?? null
 }
 
-/** #502 C: at most one embedded PTY may exist, so "busy" is exactly "a live session exists".
+/** #502 C: at most one embedded PTY may exist, including one still being cleaned up.
  *  The ACP embed path asks this BEFORE recording an intent: a recorded intent that races an
  *  already-open tab would be spent on a `terminal_busy` refusal the user never saw. */
 export function isPtyBusy(): boolean {
-  return live !== null
+  return live !== null || closing !== null
 }
 
 /**
@@ -202,18 +210,12 @@ function installExitHook(): void {
   process.on("beforeExit", halt)
 }
 
-function closeLive(code: TerminalClosedCode, extra?: { signal?: number; error?: string }): void {
+function closeLive(code: TerminalClosedCode, extra?: { signal?: number; error?: string; exited?: boolean }): void {
   const s = live
   if (!s) return
   live = null
+  closing = s
   clearInterval(s.heartbeat)
-  try {
-    const pid = s.handle.pid
-    if (typeof pid === "number" && pid > 0) killPidTree(pid)
-    s.handle.kill()
-  } catch {
-    /* ignore */
-  }
   appendCapabilityAudit({
     type: "terminal.close",
     at: new Date().toISOString(),
@@ -223,13 +225,30 @@ function closeLive(code: TerminalClosedCode, extra?: { signal?: number; error?: 
     code,
     ...(s.threadId ? { thread_id: s.threadId } : {}),
   })
-  s.send({
-    type: "terminal.closed",
-    id: s.id,
-    code,
-    signal: extra?.signal ?? 0,
-    ...(extra?.error ? { error: extra.error } : {}),
-  })
+  const finish = () => {
+    if (closing !== s) return
+    if (!extra?.exited) {
+      try { s.handle.kill() } catch { /* already exited */ }
+    }
+    closing = null
+    s.send({
+      type: "terminal.closed",
+      id: s.id,
+      code,
+      signal: extra?.signal ?? 0,
+      ...(extra?.error ? { error: extra.error } : {}),
+    })
+  }
+  // onExit no longer owns a live PID. Never taskkill a potentially reused PID.
+  if (extra?.exited) { finish(); return }
+  const pid = s.handle.pid
+  if (ptyHostPlatform() === "win32" && typeof pid === "number" && pid > 0) {
+    const killTree = treeKillOverride ?? killWindowsPtyTree
+    killTree(pid, finish)
+  } else {
+    if (typeof pid === "number" && pid > 0) killPidTree(pid)
+    finish()
+  }
 }
 
 function maybePause(s: LiveSession): void {
@@ -314,7 +333,7 @@ export function spawnPtySession(opts: {
       code: "unsupported",
     }
   }
-  if (live) {
+  if (isPtyBusy()) {
     return { ok: false, error: "terminal_busy" }
   }
 
@@ -458,7 +477,7 @@ export function spawnPtySession(opts: {
   })
   handle.onExit(({ exitCode, signal }) => {
     if (live !== session) return
-    closeLive(typeof exitCode === "number" ? exitCode : 0, { signal: signal ?? 0 })
+    closeLive(typeof exitCode === "number" ? exitCode : 0, { signal: signal ?? 0, exited: true })
   })
 
   appendCapabilityAudit({

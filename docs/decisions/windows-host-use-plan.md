@@ -1,5 +1,11 @@
 # Windows Host-Use Implementation Plan
 
+> **2026-10-11 update (#592):** The fixed `%USERPROFILE%` filesystem roots below
+> are superseded by Windows Known Folders for Documents/Desktop/Downloads,
+> including policy/OneDrive redirection. Each operation resolves current Windows
+> settings, snapshots roots and rechecks canonical paths without caching authority.
+> See `docs/superpowers/specs/2026-10-11-windows-reliability-592.md`.
+
 > **Branch**: `computer-use-w8-windows` (from `computer-use-w8-snapshot`, HEAD `44d27e9`)
 > **Author**: Planning agent (read-only) · **Date**: 2026-07-17 (local, UTC+8)
 > **Status**: Adversary-reviewed, verdict `PLAN CORRECT WITH MANDATORY AMENDMENTS` (see `windows-host-use-adversary.md`). **The "Amendments (adversary-mandated)" section at the bottom OVERRIDES conflicting main text — dev must implement the amended version.** → dev

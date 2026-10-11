@@ -224,8 +224,9 @@ function Get-VbsLog {
 # ----------------------------------------------------------------- states ---
 
 function Test-S1 {
+    param([string]$Name = 's1')
     $id = 'S1'
-    $dir = New-State 's1'
+    $dir = New-State $Name
     Restore-OriginalPath
     Write-JsStub $dir
     Copy-BundledNode $dir
@@ -249,8 +250,9 @@ function Test-S1 {
 }
 
 function Test-S2 {
+    param([string]$Name = 's2')
     $id = 'S2'
-    $dir = New-State 's2'
+    $dir = New-State $Name
     Restore-OriginalPath
     Write-JsStub $dir
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -450,6 +452,30 @@ function Test-S9 {
     Write-Check $id $true 'empty dir -> bat prints "Neither ..." and never reaches :do_launch'
 }
 
+function Test-BatSpecialPath {
+    param([bool]$WithVbs)
+    $id = "special-bat-$WithVbs"
+    $dir = New-State ("$id space 中文 & O'Brien ! (test)")
+    Restore-OriginalPath
+    Write-JsStub $dir
+    Copy-BundledNode $dir
+    Copy-Item -LiteralPath $BatSource -Destination (Join-Path $dir 'launch.bat')
+    if (-not $WithVbs) { Remove-Item -LiteralPath (Join-Path $dir 'launch-hidden.vbs') }
+    $env:USERPROFILE = $dir
+    # Keep the wrapper ASCII and relative. The fixture path goes through
+    # CreateProcess's working directory, not another layer of cmd expansion.
+    Set-Content -LiteralPath (Join-Path $dir '_run-bat.cmd') -Encoding ascii -Value '@echo off', 'echo. | cmd /d /v:off /c launch.bat > _bat-output.txt 2>&1'
+    $p = Start-Process -FilePath $CmdExe -ArgumentList '/d', '/v:off', '/c', '_run-bat.cmd' -WorkingDirectory $dir -PassThru
+    if (-not $p.WaitForExit(60000)) {
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        Write-Check $id $false 'special-path BAT timed out' $dir; return
+    }
+    $marker = Join-Path $dir 'launched-js.txt'
+    if (-not (Wait-ForFile $marker)) { Write-Check $id $false 'special-path BAT did not start Node' $dir; return }
+    $m = Read-Marker $marker
+    Write-Check $id ((Test-SamePath $m.NODE_PATH $dir) -and (Test-SamePath $m.execPath (Join-Path $dir 'node.exe')) -and $m.argv[-1] -eq 'tray') 'BAT preserves special paths, NODE_PATH and tray argv' $dir
+}
+
 # ------------------------------------------------------------------- main ---
 
 function Invoke-State {
@@ -471,6 +497,10 @@ try {
     Invoke-State 'S7' { Test-S7 }
     Invoke-State 'S8' { Test-S8 }
     Invoke-State 'S9' { Test-S9 }
+    Invoke-State 'special-vbs-bundled' { Test-S1 "bundled space 中文 & O'Brien ! (test)" }
+    Invoke-State 'special-vbs-system' { Test-S2 "system space 中文 & O'Brien ! (test)" }
+    Invoke-State 'special-bat-vbs' { Test-BatSpecialPath $true }
+    Invoke-State 'special-bat-fallback' { Test-BatSpecialPath $false }
 } finally {
     $env:PATH        = $SavedPath
     $env:USERPROFILE = $SavedUserProfile

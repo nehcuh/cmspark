@@ -221,3 +221,21 @@ jobs:
         run: |
           & scripts/tests/win-sapi-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Windows reliability regressions (#592)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe") -and -not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis --version=3.12.0 --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          & scripts/tests/win-installer-stop-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & scripts/tests/win-uninstall-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cd companion
+          npx tsc -p tsconfig.test.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/run-tests.mjs .test-dist/tests/windows-reliability.test.js .test-dist/tests/host-use-win-adapter.test.js .test-dist/tests/pty-terminal.test.js .test-dist/tests/acp-win-spawn.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
