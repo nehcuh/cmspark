@@ -456,16 +456,16 @@ export class McpManager extends EventEmitter {
     route: McpToolRoute,
     args: Record<string, any>,
     signal?: AbortSignal,
-    beforeDispatch?: () => void,
+    beforeDispatch?: (preparedArgs: Record<string, any>) => void,
   ): Promise<any> {
     const client = this.requireAvailableClient(route.serverName)
     const identity = this.getAuthorizationIdentity(route.serverName)
-    return client.callTool(route.toolName, args, signal, () => {
+    return client.callTool(route.toolName, args, signal, preparedArgs => {
       if (identity === undefined || this.getAuthorizationIdentity(route.serverName) !== identity ||
           this.requireAvailableClient(route.serverName) !== client) {
         throw new Error("MCP authorization changed or revoked before dispatch")
       }
-      beforeDispatch?.()
+      beforeDispatch?.(preparedArgs)
     })
   }
 
