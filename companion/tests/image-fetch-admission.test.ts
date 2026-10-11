@@ -26,6 +26,7 @@ import {
   type ToolResult,
 } from "../src/tool/image-fetch-admission"
 import { initDataDir, getConfig, saveConfig } from "../src/config"
+import { SecurityConfirmationManager } from "../src/security-confirmation"
 
 /** 1×1 PNG (valid allowlisted raster MIME). */
 const TINY_PNG_B64 =
@@ -82,6 +83,42 @@ beforeEach(() => {
 })
 
 describe("runImageFetchAdmission", () => {
+  it("cancel during image confirmation removes prompt and prevents phase2", async () => {
+    const controller = new AbortController(), manager = new SecurityConfirmationManager()
+    const dispatches: string[] = []
+    let requested!: () => void
+    const pending = new Promise<void>(resolve => { requested = resolve })
+    const ws = { readyState: WebSocket.OPEN, send(raw: string) {
+      if (JSON.parse(raw).type === "security.confirmation.request") requested()
+    } } as unknown as WebSocket
+    const result = runImageFetchAdmission(makeCtx({
+      toolName: "analyze_image", signal: controller.signal, ws, securityConfirmations: manager,
+      dispatchToExtension: async (_id, name) => {
+        dispatches.push(name)
+        return { success: true, data: { type: "fetch_required", candidate_url: "https://cdn.example.com/image.png" } }
+      },
+    }))
+    await pending
+    controller.abort()
+    assert.equal((await result)?.success, false)
+    assert.equal(manager.pendingCount(), 0)
+    assert.deepEqual(dispatches, ["analyze_image"])
+  })
+
+  it("cancel during phase1 prevents an automatically allowed phase2", async () => {
+    saveConfig({ auto_approved_domains: ["cdn.example.com"] })
+    const controller = new AbortController(), dispatches: string[] = []
+    const result = await runImageFetchAdmission(makeCtx({
+      toolName: "analyze_image", signal: controller.signal,
+      dispatchToExtension: async (_id, name) => {
+        dispatches.push(name); controller.abort()
+        return { success: true, data: { type: "fetch_required", candidate_url: "https://cdn.example.com/image.png" } }
+      },
+    }))
+    assert.equal(result?.success, false)
+    assert.deepEqual(dispatches, ["analyze_image"])
+  })
+
   it("non-analyze tools → null (caller continues)", async () => {
     const r = await runImageFetchAdmission(
       makeCtx({ toolName: "navigate", finalParams: { url: "https://example.com" } }),

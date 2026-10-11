@@ -121,6 +121,7 @@ export function runCookieTrustAdmission(ctx: CookieAdmissionCtx): AdmissionEarly
 }
 
 export type UrlAdmissionCtx = {
+  signal?: AbortSignal
   toolName: string
   finalParams: Record<string, any>
   toolCallId: string
@@ -307,7 +308,7 @@ export async function runUrlNavigateAdmission(
         riskLevel: "medium",
         autoConfirmEligible: false,
       },
-      bound.confirmOriginOpts,
+      { ...bound.confirmOriginOpts, ...(ctx.signal ? { signal: ctx.signal } : {}) },
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -397,7 +398,7 @@ export async function runUrlNavigateAdmission(
         code: `navigate(${rawUrl})`,
         relevantDomains: [host],
       },
-      bound.confirmOriginOpts,
+      { ...bound.confirmOriginOpts, ...(ctx.signal ? { signal: ctx.signal } : {}) },
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason

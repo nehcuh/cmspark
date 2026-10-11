@@ -1,9 +1,10 @@
-import { randomUUID } from "crypto"
+import { createHash, randomUUID } from "crypto"
 import { z } from "zod"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { CooperationResult } from "./cooperation-result"
 import { dependencyReadiness } from "./cooperation-dependencies"
-import { computeWorkerWhitelist, workerParentCapabilityWhitelist } from "./spawn"
+import { computeWorkerWhitelist, workerParentCapabilityWhitelist, workerWhitelistAllows } from "./spawn"
+import { getMcpManager } from "../mcp/manager"
 import { workerCapUsage } from "./worker-occupancy"
 import { ORCHESTRATOR_CAPS } from "./constants"
 import catalog from "../bridge/tool-definitions-catalog.json"
@@ -14,7 +15,7 @@ const id = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)
 const text = z.string().trim().min(1).max(2000)
 export const planInput = z.object({ tasks: z.array(z.object({
   id, goal: text, depends_on: z.array(id).max(32).default([]),
-  required_tools: z.array(z.string().min(1).max(100)).max(32).default([]),
+  required_tools: z.array(z.string().min(1).max(128)).max(32).default([]),
   input_refs: z.array(z.string().min(1).max(512)).max(16).default([]),
   criteria: z.array(z.object({ id, description: text })).min(1).max(8),
 })).min(1).max(32) })
@@ -25,8 +26,10 @@ export const reviewInput = z.object({ plan_id: id, task_id: id, source_version: 
 })
 type Decision = z.infer<typeof reviewInput>["criteria"][number] & { source_version: string; attempt: number }
 type Attempt = { number: number; worker_id: string; process_id: string; started_at: string; result?: CooperationResult; launch_error?: string }
+type McpBinding = { server_name: string; tool_name: string; identity: string }
 export type PlannedTask = z.infer<typeof planInput>["tasks"][number] & {
   attempts: Attempt[]; decisions: Decision[]; conflicts: string[]
+  mcp_bindings?: Record<string, McpBinding>
 }
 export type CooperationPlan = { id: string; run_id: string | null; tasks: PlannedTask[]; created_at: string }
 type Active = (id: string) => boolean
@@ -35,6 +38,68 @@ function owner(tm: ThreadManager, ownerId: string) {
   const parent = tm.get(ownerId)
   if (!parent || parent.agent_role === "worker" || parent.parent_thread_id) throw new Error("cooperation requires the owning parent thread")
   return parent
+}
+
+function fingerprint(value: unknown): string {
+  // Persist only a deterministic digest: server config can contain credentials.
+  const json = JSON.stringify(value, (_key, entry) => entry && typeof entry === "object" && !Array.isArray(entry)
+    ? Object.fromEntries(Object.keys(entry).sort().map(key => [key, entry[key]])) : entry)
+  return createHash("sha256").update(json).digest("hex")
+}
+
+function currentMcpBinding(tm: ThreadManager, ownerId: string, name: string): McpBinding {
+  const parent = owner(tm, ownerId), manager = getMcpManager()
+  const route = manager.resolveToolName(name)
+  if (!name.startsWith("mcp__") || !route) throw new Error(`unknown or unavailable required MCP capability: ${name}`)
+  const live = manager.listServers().find(server => server.name === route.serverName)
+  const configured = manager.getServerConfig(route.serverName)
+  if (!live || live.connection.status !== "connected" || !live.enabled || !configured?.enabled ||
+    fingerprint(live.config) !== fingerprint(configured)) throw new Error(`required MCP server unavailable or changing: ${route.serverName}`)
+  if (parent.mcp_selection_mode === "manual" && !parent.active_mcp_server_ids?.includes(route.serverName)) {
+    throw new Error(`required MCP server is outside parent selection: ${route.serverName}`)
+  }
+  const whitelist = workerParentCapabilityWhitelist(parent)
+  if (whitelist !== null && !workerWhitelistAllows(whitelist, name)) throw new Error(`parent lacks required MCP capability: ${name}`)
+  return { server_name: route.serverName, tool_name: route.toolName,
+    identity: fingerprint({ config: configured, inputSchema: manager.getToolInputSchema(name) }) }
+}
+
+function assertRequiredCapabilities(tm: ThreadManager, ownerId: string, task: PlannedTask, tools: string[]): void {
+  for (const name of task.required_tools) {
+    if (!workerWhitelistAllows(tools, name)) throw new Error("worker lacks required capabilities")
+    if (!KNOWN_TOOLS.has(name)) assertBoundMcpCapability(tm, ownerId, task, name)
+  }
+}
+
+function assertBoundMcpCapability(tm: ThreadManager, ownerId: string, task: PlannedTask, name: string, currentName = name): void {
+  const binding = task.mcp_bindings?.[name], current = currentMcpBinding(tm, ownerId, currentName)
+  if (!binding || binding.server_name !== current.server_name || binding.tool_name !== current.tool_name || binding.identity !== current.identity) {
+    throw new Error(`required MCP capability changed since planning: ${name}`)
+  }
+}
+
+/** Reuse before/after confirmation; bind both the requested alias and the underlying capability. */
+export function plannedWorkerMcpError(tm: ThreadManager, workerId: string, name: string): string | null {
+  const worker = tm.get(workerId), parentId = worker?.parent_thread_id
+  if (!worker || !parentId || !name.startsWith("mcp__")) return null
+  const parent = tm.get(parentId), plan = parent?.cooperation_plan
+  const task = plan?.tasks.find(task => task.attempts.some(attempt => attempt.worker_id === workerId))
+  if (!task) return null
+  const route = getMcpManager().resolveToolName(name)
+  const boundNames = task.required_tools.filter(requiredName => {
+    const binding = task.mcp_bindings?.[requiredName]
+    return requiredName === name || (binding && route &&
+      binding.server_name === route.serverName && binding.tool_name === route.toolName)
+  })
+  if (boundNames.length === 0) return null
+  try {
+    if (latest(task)?.worker_id !== workerId || plan?.run_id !== worker.orchestrator_run_id || plan?.run_id !== parent?.orchestrator_run_id) {
+      throw new Error("MCP worker belongs to a stale cooperation attempt")
+    }
+    if (!tm.isToolAllowed(workerId, name)) throw new Error("worker lacks required MCP capability")
+    for (const boundName of boundNames) assertBoundMcpCapability(tm, parentId, task, boundName, name)
+    return null
+  } catch (error) { return String(error) }
 }
 function currentPlan(tm: ThreadManager, ownerId: string, planId?: string) {
   const parent = owner(tm, ownerId), plan = parent.cooperation_plan
@@ -96,13 +161,17 @@ export function createCooperationPlan(tm: ThreadManager, ownerId: string, input:
   if (parent.cooperation_plan) throw new Error("a cooperation plan already exists; resume it instead of resetting its budget")
   if (new Set(parsed.tasks.map(t => t.id)).size !== parsed.tasks.length) throw new Error("duplicate task id")
   for (const task of parsed.tasks) {
-    if (task.required_tools.some(t => !KNOWN_TOOLS.has(t))) throw new Error("unknown required capability")
+    for (const name of task.required_tools) {
+      if (!KNOWN_TOOLS.has(name)) currentMcpBinding(tm, ownerId, name)
+    }
     if (new Set(task.criteria.map(c => c.id)).size !== task.criteria.length) throw new Error("duplicate criterion id")
     const check = dependencyReadiness(task.id, parsed.tasks.map(t => ({ id: t.id, status: "open", depends_on_intent_ids: t.depends_on })))
     if (check.reason === "missing" || check.reason === "cycle") throw new Error(`invalid dependencies: ${check.reason}`)
   }
   const plan: CooperationPlan = { id: randomUUID(), run_id: parent.orchestrator_run_id ?? null,
-    created_at: new Date().toISOString(), tasks: parsed.tasks.map(t => ({ ...t, attempts: [], decisions: [], conflicts: [] })) }
+    created_at: new Date().toISOString(), tasks: parsed.tasks.map(t => ({ ...t, attempts: [], decisions: [], conflicts: [],
+      mcp_bindings: Object.fromEntries(t.required_tools.filter(name => !KNOWN_TOOLS.has(name)).map(name => [name, currentMcpBinding(tm, ownerId, name)])),
+    })) }
   write(tm, ownerId, plan)
   return plan
 }
@@ -124,7 +193,7 @@ export function plannedSpawnCheck(tm: ThreadManager, ownerId: string, params: Re
   if (state === "completed" && task.decisions.length === 0) throw new Error("review the completed result before replacement")
   const tools = effectiveTools ?? computeWorkerWhitelist({ parentWhitelist: workerParentCapabilityWhitelist(parent),
     roleAllow: Array.isArray(params.tool_allow) ? params.tool_allow : null, roleDeny: params.tool_deny })
-  if (task.required_tools.some(tool => !tools.includes(tool))) throw new Error("worker lacks required capabilities")
+  assertRequiredCapabilities(tm, ownerId, task, tools)
   return { plan, task, missing: missing(tm, task, isActive) }
 }
 
@@ -133,6 +202,9 @@ export function bindPlannedWorker(tm: ThreadManager, ownerId: string, params: Re
   const worker = tm.get(workerId)
   if (!worker || worker.parent_thread_id !== ownerId) throw new Error("planned worker owner mismatch")
   const { plan, task } = plannedSpawnCheck(tm, ownerId, params, isActive, worker.tool_whitelist ?? [])
+  if (worker.mcp_selection_mode === "manual" && Object.values(task.mcp_bindings ?? {}).some(binding => !worker.active_mcp_server_ids?.includes(binding.server_name))) {
+    throw new Error("worker selection excludes required MCP server")
+  }
   const attempt: Attempt = { number: task.attempts.length + 1, worker_id: workerId, process_id: PROCESS_ID, started_at: new Date().toISOString() }
   write(tm, ownerId, { ...plan, run_id: worker.orchestrator_run_id ?? null,
     tasks: plan.tasks.map(t => t.id === task.id ? { ...t, attempts: [...t.attempts, attempt] } : t) })
@@ -204,7 +276,8 @@ export function cooperationPlanSnapshot(tm: ThreadManager, ownerId: string, isAc
     const done = accepted(tm, task, isActive), needsReview = state === "completed" && task.decisions.length === 0
     const stopped = parent.paused || (["aborted", "security_halt"].includes(parent.last_run_terminal ?? "") && !isActive(ownerId))
     const tools = computeWorkerWhitelist({ parentWhitelist: workerParentCapabilityWhitelist(parent), roleAllow: task.required_tools.length ? task.required_tools : null })
-    const capable = task.required_tools.every(tool => tools.includes(tool))
+    let capable = true
+    try { assertRequiredCapabilities(tm, ownerId, task, tools) } catch { capable = false }
     const ready = !stale && !stopped && !done && !blockedBy.length && capable && task.attempts.length < 3 &&
       !needsReview && ["pending", "failed", "partial", "interrupted", "completed"].includes(state)
     return { ...task, runtime_status: state, accepted: done, missing: missing(tm, task, isActive), blocked_by: blockedBy,

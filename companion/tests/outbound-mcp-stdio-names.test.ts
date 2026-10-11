@@ -139,7 +139,7 @@ test("short-name exfil tools stay gated: no grant → DISCLOSURE_NOT_GRANTED", a
     // flagged grant for that caller, both wire-name and canonical exfil calls
     // must be denied BEFORE any dispatcher involvement.
     for (const name of ["get_page_text", "screenshot", "cmspark__get_page_text"]) {
-      const r = parseToolJson(await client.callTool({ name, arguments: {} }))
+      const r = parseToolJson(await client.callTool({ name, arguments: { tabId: 1 } }))
       assert.equal(r.isError, true, name)
       assert.equal(r.body.error_code, "DISCLOSURE_NOT_GRANTED", name)
     }

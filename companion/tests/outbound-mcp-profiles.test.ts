@@ -279,8 +279,11 @@ test("#456 context profile advertises strict site_context only alongside default
     const result = await s.client.listTools()
     const context = result.tools.find(tool => tool.name === "site_context")!
     assert.ok(context)
-    assert.deepEqual(context.inputSchema.required, ["tabId"])
-    assert.equal(context.inputSchema.additionalProperties, false)
+    const schema = context.inputSchema as any
+    assert.deepEqual(schema.anyOf[0].required, ["tabId"])
+    assert.equal(schema.anyOf[0].additionalProperties, false)
+    assert.deepEqual(schema.properties.args.required, ["tabId"])
+    assert.equal(schema.properties.args.additionalProperties, false)
     assert.equal(result.tools.length, 11, "default eight, site_context, two metadata tools")
     assert.equal(result.tools.some(tool => tool.name === "get_page_html" || tool.name.startsWith("draft_")), false)
     assert.equal((await s.call("site_context")).isError, false)

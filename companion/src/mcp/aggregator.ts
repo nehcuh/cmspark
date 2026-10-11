@@ -34,12 +34,20 @@ function scanMetadata(tool: McpToolMeta): { description: string } | { flagged: t
   if (tool.description) {
     fieldsToScan.push(typeof tool.description === "string" ? tool.description : String(tool.description))
   }
-  // Argument descriptions are nested inside inputSchema.properties.*.description
-  const props = (tool.inputSchema as any)?.properties
-  if (props && typeof props === "object") {
-    for (const key of Object.keys(props)) {
-      const argDesc = props[key]?.description
-      if (typeof argDesc === "string") fieldsToScan.push(argDesc)
+  // Definitions, composition branches and array items carry descriptions too.
+  // Scan every string we expose, including defaults/examples, with an iterative
+  // traversal so deeply nested or cyclic test/plugin schemas cannot overflow.
+  const pending: unknown[] = [tool.inputSchema]
+  const seen = new Set<object>()
+  while (pending.length) {
+    const value = pending.pop()
+    if (typeof value === "string") fieldsToScan.push(value)
+    else if (value && typeof value === "object" && !seen.has(value)) {
+      seen.add(value)
+      for (const [key, child] of Object.entries(value)) {
+        fieldsToScan.push(key)
+        pending.push(child)
+      }
     }
   }
 
@@ -151,7 +159,7 @@ function normalizeInputSchema(schema: Record<string, any>): ToolDefinition["func
   // Preserve additional OpenAI-compatible JSON Schema fields (oneOf/anyOf/$ref/additionalProperties)
   // — these are passed through to the LLM; cmspark's own ToolParameter type is narrower but
   // only used by the cached native-tool validator, which does not run against MCP tools.
-  for (const key of ["additionalProperties", "oneOf", "anyOf", "allOf", "$ref", "enum", "description"]) {
+  for (const key of ["additionalProperties", "oneOf", "anyOf", "allOf", "$ref", "$defs", "definitions", "enum", "description"]) {
     if (key in schema) (out as any)[key] = schema[key]
   }
   return out

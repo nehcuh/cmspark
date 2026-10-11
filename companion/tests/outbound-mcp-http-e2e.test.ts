@@ -645,9 +645,10 @@ test("e2e: caller disconnect during HITL wait → approved tool NOT executed (R1
     // event. Assert the actual server boundary before simulating approval.
     await responseClosed
 
-    // Operator approves AFTER the caller disconnected.
+    // Disconnect revokes this pending prompt; late approval cannot authorize it.
+    await waitUntilE2E(() => mgr.pendingCount() === 0)
     const approved = mgr.respondFrom(confirmId, true, ws)
-    assert.equal(approved.outcome, "resolved")
+    assert.equal(approved.outcome, "unknown")
 
     const client = await clientDone
     assert.equal(client.status, null, "caller never receives a response (socket gone)")
@@ -656,7 +657,7 @@ test("e2e: caller disconnect during HITL wait → approved tool NOT executed (R1
       try {
         return fs
           .readFileSync(getAuditLogPath(), "utf8")
-          .includes("CALLER_DISCONNECTED")
+          .includes("CALLER_CANCELLED")
       } catch {
         return false
       }
@@ -670,16 +671,11 @@ test("e2e: caller disconnect during HITL wait → approved tool NOT executed (R1
       .split("\n")
       .map((l) => JSON.parse(l))
       .filter((e) => e.type === "outbound_mcp.tool" && e.caller_id === "r1-agent")
-    // Operator approval itself is audited (distinct from the skip below).
-    assert.ok(
-      events.some((e) => e.ok === true && e.confirm_outcome === "approved"),
-      `operator approval audited: ${JSON.stringify(events)}`,
-    )
-    // Approved-but-not-executed has its own explicit record.
-    const skipped = events.find((e) => e.error_code === "CALLER_DISCONNECTED")
-    assert.ok(skipped, `CALLER_DISCONNECTED audit exists: ${JSON.stringify(events)}`)
+    assert.equal(events.some((e) => e.confirm_outcome === "approved"), false)
+    const skipped = events.find((e) => e.error_code === "CALLER_CANCELLED")
+    assert.ok(skipped, `CALLER_CANCELLED audit exists: ${JSON.stringify(events)}`)
     assert.equal(skipped.ok, false)
-    assert.equal(skipped.confirm_outcome, "approved")
+    assert.equal(skipped.confirm_outcome, "denied")
     assert.equal(skipped.tool, "cmspark__screenshot")
   } finally {
     creq.destroy()

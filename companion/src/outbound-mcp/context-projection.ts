@@ -6,7 +6,7 @@ import { evidenceScopeHash } from "../business-evidence/content"
 import { requireContextGrant, type GrantLookup } from "./context-permission"
 import type { ContextSessionRegistry } from "./context-session"
 
-const requestSchema = z.object({ tabId: z.number().int().safe().positive(), query: z.string().max(2048).default("") }).strict()
+export const outboundContextRequestSchema = z.object({ tabId: z.number().int().safe().positive(), query: z.string().max(2048).default("") }).strict()
 export type ContextOmission = { id?: string; reason: "GRANT_DENIED" | "SCOPE_DENIED" | "NOT_FOUND" | "BUDGET" | "REDACTED" | "CAPACITY" }
 type ContextEngine = Pick<SkillEngine, "refresh" | "getKnowledgeVersion" | "resolveSkillIdsForThread" | "resolveKnowledgeIdsForThread" | "buildSystemPromptWithSources">
 
@@ -19,7 +19,7 @@ export async function projectOutboundContext(input: unknown, identity: { grantId
   engine: ContextEngine
   resolveTarget: (tabId: number) => Promise<SiteTarget | undefined>
 }) {
-  const request = requestSchema.parse(input)
+  const request = outboundContextRequestSchema.parse(input)
   const firstGrant = structuredClone(requireContextGrant(deps.lookupGrant, identity.grantId, identity.callerId))
   const scope = deps.sessions.scope(identity.sessionHandle, identity.grantId, identity.callerId)
   const target = await deps.resolveTarget(request.tabId)

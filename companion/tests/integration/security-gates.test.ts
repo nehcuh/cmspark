@@ -29,6 +29,25 @@ import { saveConfig, getConfig, getConfigDir } from "../../src/config.js"
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-secg-"))
 
+for (const [tool, params] of [
+  ["navigate", { tabId: 1, url: "https://untrusted.example.net/cancel" }],
+  ["evaluate", { tabId: 1, code: "document.title" }],
+] as const) {
+  test(`cancel ${tool} during production admission revokes prompt and never sends tool.execute`, async () => {
+    const controller = new AbortController()
+    const prompt = expectClientMessage("security.confirmation.request")
+    const noDispatch = expectNoClientMessage("tool.execute")
+    const result = createToolExecutor(serverSideWs)(`cancel-${tool}`, tool, params, controller.signal)
+    const frame = await prompt
+    controller.abort()
+    assert.equal((await result).success, false)
+    assert.equal(securityConfirmations.pendingCount(), 0)
+    assert.equal(securityConfirmations.respond(frame.confirmation_id, true), false)
+    assert.equal(pendingToolCalls.has(`cancel-${tool}`), false)
+    await noDispatch
+  })
+}
+
 let wss: WebSocketServer
 let serverSideWs: WebSocket
 let clientSideWs: WebSocket

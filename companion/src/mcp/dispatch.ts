@@ -220,6 +220,15 @@ function createMcpServerSelectionGate(
   }
 }
 
+function gatePlannedMcpIdentity(toolName: string, params: any, sessionId: string): string | null {
+  const tm = requireRt().getThreadManager()
+  if (!tm) return null // The general dispatch selection gate owns missing-thread rejection.
+  const threadId = typeof params?.__thread_id === "string" ? params.__thread_id
+    : typeof params?._thread_id === "string" ? params._thread_id : sessionId
+  const { plannedWorkerMcpError } = require("../orchestrator/cooperation-plan") as typeof import("../orchestrator/cooperation-plan")
+  return plannedWorkerMcpError(tm, threadId, toolName)
+}
+
 /**
  * Execute an MCP namespaced tool (mcp__<server>__<tool>). Enforces the per-server
  * trust_level policy: manual = always prompt, first-use = prompt once per session,
@@ -244,10 +253,11 @@ export async function executeMcpTool(
   if (!route) {
     return { success: false, error: `MCP tool ${toolName} not found (server may be disconnected)` }
   }
-
   const checkSelection = createMcpServerSelectionGate(route.serverName, params, sessionId)
   const selectionDenied = checkSelection()
   if (selectionDenied) return selectionDenied
+  const plannedIdentityError = gatePlannedMcpIdentity(toolName, params, sessionId)
+  if (plannedIdentityError) return { success: false, error: plannedIdentityError }
 
   const configuredTrustLevel = manager.getTrustLevel(route.serverName) ?? "first-use"
   // Audit item 8: destructive-looking tool names ALWAYS require per-call confirmation,
@@ -396,11 +406,21 @@ export async function executeMcpTool(
     const selectionDenied = checkSelection()
     if (selectionDenied) return selectionDenied
     try {
+      const identityError = gatePlannedMcpIdentity(toolName, params, sessionId)
+      if (identityError) return { success: false, error: identityError }
+      const currentRoute = manager.resolveToolName(toolName)
+      if (!currentRoute || currentRoute.serverName !== route.serverName || currentRoute.toolName !== route.toolName) {
+        return { success: false, error: `MCP tool ${toolName} route changed during authorization` }
+      }
       const result = await manager.callTool(route, mcpArgs, signal)
+      const structuredData = result?.structuredContent !== undefined
+        ? { content: result.content ?? [], structuredContent: result.structuredContent }
+        : undefined
       if (result?.isError) {
         const errMsg = extractMcpError(result)
         return {
           success: false,
+          ...(structuredData !== undefined ? { data: structuredData } : {}),
           rawErr: errMsg,
           error: enhanceMcpError(
             `MCP ${route.serverName}/${route.toolName} returned error: ${errMsg}`,
@@ -409,7 +429,7 @@ export async function executeMcpTool(
           ),
         }
       }
-      return { success: true, data: result?.content ?? result }
+      return { success: true, data: structuredData ?? result?.content ?? result }
     } catch (err: any) {
       const rawErr = err?.message || String(err)
       return { success: false, rawErr, error: enhanceMcpError(rawErr, route, params) }
@@ -435,6 +455,7 @@ export async function executeMcpTool(
         outcome = {
           success: false,
           error: enhanceMcpError(expanded.error, route, params),
+          ...(outcome.data !== undefined ? { data: outcome.data } : {}),
         }
       }
     }
@@ -450,7 +471,8 @@ export async function executeMcpTool(
     ...(outcome.success ? {} : { error: outcome.error }),
   })
   if (outcome.success) return { success: true, data: outcome.data }
-  return { success: false, error: outcome.error || "MCP call failed" }
+  return { success: false, error: outcome.error || "MCP call failed",
+    ...(outcome.data !== undefined ? { data: outcome.data } : {}) }
 }
 
 /**
