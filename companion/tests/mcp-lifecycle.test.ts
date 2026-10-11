@@ -70,6 +70,86 @@ type ManagerInternals = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+const servingStdioCfg = () => stdioCfg({ args: ["-e", `
+  const r = require('node:readline').createInterface({ input: process.stdin });
+  r.on('line', line => {
+    const m = JSON.parse(line); if (m.id === undefined) return;
+    const result = m.method === 'initialize'
+      ? { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
+      : m.method === 'tools/list' ? { tools: [{ name: 'ping', inputSchema: { type: 'object' } }] } : {};
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }) + '\\n');
+  });
+  r.on('close', () => process.exit(0));
+`] })
+
+async function until(predicate: () => boolean) {
+  const deadline = Date.now() + 5000
+  while (!predicate() && Date.now() < deadline) await sleep(10)
+  assert.ok(predicate(), "condition did not settle")
+}
+
+test("global off/on restores a real stdio connection and tool catalog", async () => {
+  const manager = new McpManager()
+  const cfg = { enabled: true, servers: { fixture: servingStdioCfg() } }
+  try {
+    await manager.start(cfg)
+    assert.equal(manager.getAggregatedTools().length, 1)
+    await manager.applyConfig({ ...cfg, enabled: false })
+    assert.equal(manager.getAggregatedTools().length, 0)
+    await manager.applyConfig(cfg)
+    await until(() => manager.getAggregatedTools().length === 1)
+    assert.equal(manager.listServers()[0].connection.status, "connected")
+  } finally { await manager.shutdown() }
+})
+
+test("global disable during a real handshake drains starts and prevents revival", async () => {
+  const manager = new McpManager(), internals = manager as unknown as ManagerInternals
+  const cfg = { enabled: true, servers: { fixture: stdioCfg({
+    args: ["-e", "process.stdin.resume(); process.stdin.on('end', () => process.exit(0))"],
+    restart_policy: { max_restarts: 2, backoff_base_ms: 10, backoff_max_ms: 10 },
+  }) } }
+  try {
+    const starting = manager.start(cfg)
+    await until(() => internals.clients.get("fixture")?.connection.status === "connecting")
+    await manager.applyConfig({ ...cfg, enabled: false })
+    await starting
+    await sleep(300)
+    assert.equal(internals.clients.size, 0)
+    assert.equal(internals.restartTimers.size, 0)
+    assert.equal(internals.restartAttempts.size, 0)
+    assert.equal(manager.getAggregatedTools().length, 0)
+  } finally { await manager.shutdown() }
+})
+
+test("overlapping global off/on reconciles after teardown without losing the new start", async () => {
+  const manager = new McpManager()
+  const cfg = { enabled: true, servers: { fixture: servingStdioCfg() } }
+  try {
+    await manager.start(cfg)
+    const off = manager.applyConfig({ ...cfg, enabled: false })
+    // Let disable enter teardown, then re-enable before it finishes.
+    await Promise.resolve()
+    const on = manager.applyConfig(cfg)
+    await Promise.all([off, on])
+    await until(() => manager.getAggregatedTools().length === 1)
+    assert.equal(manager.listServers()[0].connection.status, "connected")
+  } finally { await manager.shutdown() }
+})
+
+test("global disable clears scheduled retries even when their client is absent", async () => {
+  const manager = new McpManager(), internals = manager as unknown as ManagerInternals
+  const cfg = stdioCfg({ restart_policy: { max_restarts: 2, backoff_base_ms: 1000, backoff_max_ms: 1000 } })
+  internals.currentConfig = { enabled: true, servers: { fixture: cfg } }
+  ;(manager as any).scheduleRestart("fixture", cfg, "fixture failure")
+  assert.equal(internals.restartTimers.size, 1)
+  await manager.applyConfig({ enabled: false, servers: { fixture: cfg } })
+  assert.equal(internals.restartTimers.size, 0)
+  ;(manager as any).scheduleRestart("fixture", cfg, "late callback")
+  assert.equal(internals.restartTimers.size, 0)
+  assert.equal(internals.restartAttempts.size, 0)
+  await manager.shutdown()
+})
+
 // =============================================================================
 // #289-3: createTransport sync throw (bad URL) → error, never stuck connecting
 // =============================================================================

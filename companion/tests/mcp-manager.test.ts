@@ -9,6 +9,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { EventEmitter } from "events"
 import { McpManager } from "../src/mcp/manager.js"
+import { McpClient } from "../src/mcp/client.js"
 import {
   requiresRestart,
   resolveRestartPolicy,
@@ -196,6 +197,51 @@ test("applyConfig: removed server triggers stopClient (client.close called)", as
 
   assert.equal(closeCalled, true, "stopClient should call close() on the removed client")
   assert.equal(internals.clients.has("fs"), false, "removed server should be gone from clients Map")
+})
+
+test("superseded reconciliation removes clients omitted by the latest config", async () => {
+  const cfg = stdioCfg()
+  const { manager, fake: a, internals } = makeManagerWithFakeClient("a", cfg)
+  const b = makeFakeClient("b", cfg)
+  internals.clients.set("b", b)
+  internals.currentConfig.servers.b = cfg
+  let finishClose!: () => void
+  const held = new Promise<void>(resolve => { finishClose = resolve })
+  a.close = () => held
+  let bClosed = false
+  b.close = async () => { bClosed = true }
+  ;(manager as any).startClient = async (name: string, next: McpServerConfig) => {
+    internals.clients.set(name, makeFakeClient(name, next))
+  }
+  const removeBoth = manager.applyConfig({ enabled: true, servers: {} })
+  await Promise.resolve()
+  const retainA = manager.applyConfig({ enabled: true, servers: { a: cfg } })
+  finishClose()
+  await Promise.all([removeBoth, retainA])
+  assert.equal(bClosed, true)
+  assert.deepEqual([...internals.clients.keys()], ["a"])
+  await manager.shutdown()
+})
+
+test("global revocation blocks every RPC immediately while another client closes", async () => {
+  const cfg = stdioCfg()
+  const { manager, fake: a, internals } = makeManagerWithFakeClient("a", cfg)
+  const b = makeFakeClient("b", cfg)
+  internals.clients.set("b", b)
+  internals.currentConfig.servers.b = cfg
+  let finishClose!: () => void, calls = 0
+  a.close = () => new Promise<void>(resolve => { finishClose = resolve })
+  for (const method of ["callTool", "listResources", "readResource", "listPrompts", "getPrompt"]) (b as any)[method] = async () => { calls++; return [] }
+  const stopped = manager.applyConfig({ enabled: false, servers: { a: cfg, b: cfg } })
+  await Promise.resolve()
+  try {
+    for (const call of [() => manager.callTool({ serverName: "b", toolName: "ping" }, {}),
+      () => manager.listResources("b"), () => manager.readResource("b", "fixture://x"),
+      () => manager.listPrompts("b"), () => manager.getPrompt("b", "prompt")]) {
+      await assert.rejects(call, /disabled or unavailable/)
+    }
+    assert.equal(calls, 0)
+  } finally { finishClose(); await stopped; await manager.shutdown() }
 })
 
 test("applyConfig: changed server (requiresRestart) triggers stop + start", async () => {
@@ -407,6 +453,7 @@ test("getAggregatedToolsForServers returns ONLY tools whose server is in the all
   const { manager, internals } = makeManagerWithFakeClient("fs", stdioCfg())
   // Add a second fake client
   internals.clients.set("git", makeFakeClient("git", stdioCfg()))
+  internals.currentConfig.servers.git = stdioCfg()
 
   // Stub getMeta on both — inject tools with server-distinct names
   internals.clients.get("fs")!.getMeta = () => ({
@@ -462,3 +509,62 @@ test("getAggregatedToolsForServers with unknown server name returns empty for th
   // Only an unknown server in allow-list → empty
   assert.equal(manager.getAggregatedToolsForServers(new Set(["nonexistent"])).length, 0)
 })
+
+for (const holdGhostClose of [false, true]) {
+  test(`latest config restores a same-name ghost while another server closes (ghost close held: ${holdGhostClose})`, async (t) => {
+    const deferred = () => {
+      let resolve!: () => void
+      const promise = new Promise<void>(done => { resolve = done })
+      return { promise, resolve }
+    }
+    const aClosing = deferred(), finishAClose = deferred()
+    const finishBHandshake = deferred(), bGhostClosing = deferred(), finishBGhostClose = deferred()
+    let bStarts = 0, bCloses = 0
+    t.mock.method(McpClient.prototype, "connect", async function(this: McpClient) {
+      ;(this as any)._connection.status = "connecting"
+      if (this.name === "b" && ++bStarts === 1) await finishBHandshake.promise
+      ;(this as any)._connection.status = "connected"
+    })
+    t.mock.method(McpClient.prototype, "close", async function(this: McpClient) {
+      if (this.name === "a") {
+        aClosing.resolve()
+        await finishAClose.promise
+      } else if (++bCloses === 1) {
+        bGhostClosing.resolve()
+        if (holdGhostClose) await finishBGhostClose.promise
+      }
+      ;(this as any)._connection.status = "disconnected"
+    })
+    const manager = new McpManager()
+    const cfg = stdioCfg()
+    try {
+      const starting = manager.start({ enabled: true, servers: { a: cfg, b: cfg } })
+      // A must finish its successful start before removal, otherwise the first
+      // configuration change also turns A into a ghost and holds `starting`.
+      await (manager as any).startingPromises.get("a")
+      const removeBoth = manager.applyConfig({ enabled: true, servers: {} })
+      await aClosing.promise
+      finishBHandshake.resolve()
+      await bGhostClosing.promise
+      if (!holdGhostClose) await starting
+      const restoreB = manager.applyConfig({ enabled: true, servers: { b: cfg } })
+      finishAClose.resolve()
+      await Promise.all([removeBoth, restoreB])
+      finishBGhostClose.resolve()
+      await starting
+      // Drain the follow-up start's promise continuations without wall-clock timing.
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(bStarts, 2, "latest configuration must start a fresh B, not retain/join a closed ghost")
+      assert.equal(manager.listServers().find(server => server.name === "b")?.connection.status, "connected")
+      const internals = manager as any
+      assert.deepEqual([...internals.clients.keys()], ["b"])
+      assert.equal(internals.startingPromises.size, 0)
+      assert.equal(internals.restartTimers.size, 0)
+    } finally {
+      finishAClose.resolve()
+      finishBHandshake.resolve()
+      finishBGhostClose.resolve()
+      await manager.shutdown()
+    }
+  })
+}

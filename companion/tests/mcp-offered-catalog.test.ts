@@ -84,6 +84,7 @@ function injectConnectedFilesystem(callToolHits: { n: number; lastArgs?: unknown
     },
   }
   manager.clients.set("filesystem", client as unknown as McpClient)
+  manager.currentConfig = { enabled: true, servers: { filesystem: client.config } }
   manager.reaggregate()
   return () => {
     manager.clients.delete("filesystem")

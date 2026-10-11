@@ -42,6 +42,9 @@ export class McpManager extends EventEmitter {
   private restartTimers = new Map<string, NodeJS.Timeout>()
   private startingPromises = new Map<string, Promise<void>>()
   private shuttingDown = false
+  private generations = new Map<string, number>()
+  private configUpdates: Promise<void> = Promise.resolve()
+  private appliedConfig: McpConfig | null = null
 
   constructor() {
     super()
@@ -52,6 +55,7 @@ export class McpManager extends EventEmitter {
 
   async start(config: McpConfig | undefined): Promise<void> {
     this.currentConfig = sanitizeMcpConfig(config)
+    this.appliedConfig = this.currentConfig
     if (!this.currentConfig.enabled) {
       logger.info("mcp.manager.disabled", {})
       return
@@ -83,12 +87,25 @@ export class McpManager extends EventEmitter {
   // --- config hot reload (diff-aware) ---
 
   async applyConfig(next: McpConfig | undefined): Promise<void> {
-    const prev = this.currentConfig
-    this.currentConfig = sanitizeMcpConfig(next)
+    const previous = this.currentConfig
+    const config = sanitizeMcpConfig(next)
+    // Publish revocations immediately; serialize process teardown/replacement.
+    this.currentConfig = config
+    this.reaggregate()
+    const update = this.configUpdates.then(() => this.reconcileConfig(config, previous))
+    this.configUpdates = update.catch(() => {})
+    return update
+  }
 
-    if (!this.currentConfig.enabled) {
+  private async reconcileConfig(config: McpConfig, previous: McpConfig | null): Promise<void> {
+    if (this.shuttingDown || this.currentConfig !== config) return
+    const prev = this.appliedConfig ?? previous
+    this.appliedConfig = config
+
+    if (!config.enabled) {
       // Kill everything
-      for (const name of Array.from(this.clients.keys())) {
+      const names = new Set([...this.clients.keys(), ...this.restartTimers.keys(), ...this.startingPromises.keys()])
+      for (const name of names) {
         await this.stopClient(name)
       }
       this.reaggregate()
@@ -97,24 +114,30 @@ export class McpManager extends EventEmitter {
     }
 
     const prevServers = prev?.servers ?? {}
-    const nextServers = this.currentConfig.servers
+    const nextServers = config.servers
 
     // Removed
-    for (const name of Object.keys(prevServers)) {
+    const knownNames = new Set([...Object.keys(prevServers), ...this.clients.keys(),
+      ...this.restartTimers.keys(), ...this.startingPromises.keys()])
+    for (const name of knownNames) {
       if (!(name in nextServers)) {
         await this.stopClient(name)
+        if (this.currentConfig !== config) return
       }
     }
 
     // Added or changed
     for (const [name, cfg] of Object.entries(nextServers)) {
-      const prevCfg = prevServers[name]
-      if (!prevCfg) {
+      const prevCfg = this.clients.get(name)?.config ?? prevServers[name]
+      if (!prevServers[name] || !prevCfg || !prev?.enabled || (!this.clients.has(name) && !this.startingPromises.has(name) &&
+          !this.restartTimers.has(name) && !this.deadServers.has(name))) {
+        this.deadServers.delete(name)
         if (cfg.enabled) this.startClient(name, cfg).catch(() => {})
         continue
       }
       if (requiresRestart(prevCfg, cfg)) {
         await this.stopClient(name)
+        if (this.currentConfig !== config) return
         this.deadServers.delete(name)
         if (cfg.enabled) this.startClient(name, cfg).catch(() => {})
       } else {
@@ -143,18 +166,31 @@ export class McpManager extends EventEmitter {
   // --- per-client management ---
 
   async startClient(name: string, cfg: McpServerConfig): Promise<void> {
-    if (this.shuttingDown) return
+    const generation = this.generations.get(name) ?? 0
+    const permitted = () => !this.shuttingDown && this.currentConfig?.enabled === true &&
+      this.currentConfig.servers[name]?.enabled === true &&
+      (this.generations.get(name) ?? 0) === generation &&
+      !requiresRestart(cfg, this.currentConfig.servers[name])
+    if (!permitted()) return
     // Serialize concurrent start attempts
     const existing = this.startingPromises.get(name)
-    if (existing) return existing
+    if (existing) {
+      await existing
+      if (!permitted()) return
+      const current = this.clients.get(name)
+      if (this.restartTimers.has(name) || this.deadServers.has(name)) return
+      if (current && this.isCurrentClient(current) && current.connection.status !== "disconnected") return
+      return this.startClient(name, this.currentConfig!.servers[name])
+    }
 
     const promise = (async () => {
       // If a client already exists (e.g. restart), close it first
       const prior = this.clients.get(name)
       if (prior) {
         await prior.close().catch(() => {})
-        this.clients.delete(name)
+        if (this.clients.get(name) === prior) this.clients.delete(name)
       }
+      if (!permitted()) return
 
       const client = new McpClient(name, cfg)
       this.attachClientListeners(client)
@@ -166,9 +202,11 @@ export class McpManager extends EventEmitter {
         // #289: if the server was disabled / removed / replaced while the
         // handshake was in flight, this client is a ghost — close it instead
         // of reviving it or leaking a live-but-untracked connection.
-        if (this.clients.get(name) !== client || this.currentConfig?.servers[name]?.enabled !== true) {
+        if (this.clients.get(name) !== client || !permitted()) {
           logger.warn("mcp.client.ghost_after_connect", { server: name })
           await client.close().catch(() => {})
+          if (this.clients.get(name) === client) this.clients.delete(name)
+          this.reaggregate()
           return
         }
         // First successful connect resets the restart window
@@ -185,7 +223,9 @@ export class McpManager extends EventEmitter {
         })
         // Surface error state but keep client in map so getMeta() shows error
         this.emit("status_changed", client.getMeta())
-        this.scheduleRestart(name, cfg, err?.message || "start failed")
+        if (this.clients.get(name) === client && permitted()) {
+          this.scheduleRestart(name, cfg, err?.message || "start failed")
+        }
       }
     })()
 
@@ -193,11 +233,12 @@ export class McpManager extends EventEmitter {
     try {
       await promise
     } finally {
-      this.startingPromises.delete(name)
+      if (this.startingPromises.get(name) === promise) this.startingPromises.delete(name)
     }
   }
 
   async stopClient(name: string): Promise<void> {
+    this.generations.set(name, (this.generations.get(name) ?? 0) + 1)
     // Clear all per-name state so a re-added server starts fresh (audit item 16).
     // Without this, a name reused after a prior crash-detection would stay in deadServers
     // and scheduleRestart would bail on the first new failure — silent breakage.
@@ -210,19 +251,23 @@ export class McpManager extends EventEmitter {
     this.restartAttempts.delete(name)
 
     const client = this.clients.get(name)
-    if (!client) return
-    await client.close().catch(() => {})
     this.clients.delete(name)
+    const starting = this.startingPromises.get(name)
+    if (client) await client.close().catch(() => {})
+    // Drain the old start before allowing a same-name replacement to begin.
+    await starting?.catch(() => {})
     this.reaggregate()
-    this.emit("status_changed", client.getMeta())
+    if (client) this.emit("status_changed", client.getMeta())
     this.emit("servers_updated", this.listServers())
   }
 
   private attachClientListeners(client: McpClient): void {
     client.on("status_changed", () => {
+      if (this.clients.get(client.name) !== client) return
       this.emit("status_changed", client.getMeta())
     })
     client.on("tools_changed", () => {
+      if (this.clients.get(client.name) !== client) return
       this.reaggregate()
       this.emit("tools_changed", this.aggregated)
       this.emit("servers_updated", this.listServers())
@@ -230,7 +275,7 @@ export class McpManager extends EventEmitter {
     client.on("disconnected", (reason) => {
       const name = client.name
       logger.warn("mcp.client.disconnected", { server: name, reason })
-      if (this.shuttingDown) return
+      if (this.shuttingDown || this.clients.get(name) !== client) return
       // #289: consult the LIVE config, not client.config (the snapshot captured
       // when this start began) — a server disabled or removed mid-connect must
       // not be revived by the stale closure.
@@ -241,7 +286,7 @@ export class McpManager extends EventEmitter {
   }
 
   private scheduleRestart(name: string, cfg: McpServerConfig, reason: string): void {
-    if (this.shuttingDown) return
+    if (this.shuttingDown || !this.currentConfig?.enabled) return
     // #289: re-read the live config — `cfg` is the stale snapshot captured when
     // the (failed) start began. A disable/remove during connect must win over
     // the closure, and the restart itself must use the current command/policy.
@@ -283,7 +328,9 @@ export class McpManager extends EventEmitter {
     const timer = setTimeout(() => {
       this.restartTimers.delete(name)
       // #289: restart with the live config, not the stale startup closure.
-      this.startClient(name, live).catch((err) => {
+      const latest = this.currentConfig?.servers[name]
+      if (this.shuttingDown || !this.currentConfig?.enabled || !latest?.enabled) return
+      this.startClient(name, latest).catch((err) => {
         logger.error("mcp.client.restart_failed", { server: name, error: err?.message })
       })
     }, backoff)
@@ -294,7 +341,20 @@ export class McpManager extends EventEmitter {
   // --- aggregation ---
 
   private reaggregate(): void {
-    this.aggregated = aggregateMcpTools(this.clients.values())
+    this.aggregated = aggregateMcpTools([...this.clients.values()].filter(client => this.isCurrentClient(client)))
+  }
+
+  private isCurrentClient(client: McpClient): boolean {
+    const config = this.currentConfig?.servers[client.name]
+    return this.currentConfig?.enabled === true && config?.enabled === true &&
+      this.clients.get(client.name) === client && !requiresRestart(client.config, config)
+  }
+
+  private requireAvailableClient(name: string): McpClient {
+    const client = this.clients.get(name)
+    if (!client || !this.isCurrentClient(client)) throw new Error(`MCP server ${name} is disabled or unavailable`)
+    if (client.connection.status !== "connected") throw new Error(`MCP server ${name} not connected (status: ${client.connection.status})`)
+    return client
   }
 
   getAggregatedTools() {
@@ -345,35 +405,27 @@ export class McpManager extends EventEmitter {
     args: Record<string, any>,
     signal?: AbortSignal,
   ): Promise<any> {
-    const client = this.clients.get(route.serverName)
-    if (!client) throw new Error(`MCP server ${route.serverName} not found`)
-    if (client.connection.status !== "connected") {
-      throw new Error(`MCP server ${route.serverName} not connected (status: ${client.connection.status})`)
-    }
+    const client = this.requireAvailableClient(route.serverName)
     return client.callTool(route.toolName, args, signal)
   }
 
   async listResources(serverName: string): Promise<any> {
-    const client = this.clients.get(serverName)
-    if (!client) throw new Error(`MCP server ${serverName} not found`)
+    const client = this.requireAvailableClient(serverName)
     return client.listResources()
   }
 
   async readResource(serverName: string, uri: string): Promise<any> {
-    const client = this.clients.get(serverName)
-    if (!client) throw new Error(`MCP server ${serverName} not found`)
+    const client = this.requireAvailableClient(serverName)
     return client.readResource(uri)
   }
 
   async listPrompts(serverName: string): Promise<any> {
-    const client = this.clients.get(serverName)
-    if (!client) throw new Error(`MCP server ${serverName} not found`)
+    const client = this.requireAvailableClient(serverName)
     return client.listPrompts()
   }
 
   async getPrompt(serverName: string, name: string, args?: Record<string, any>): Promise<any> {
-    const client = this.clients.get(serverName)
-    if (!client) throw new Error(`MCP server ${serverName} not found`)
+    const client = this.requireAvailableClient(serverName)
     return client.getPrompt(name, args)
   }
 
