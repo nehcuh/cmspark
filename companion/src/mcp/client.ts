@@ -35,6 +35,7 @@ export interface McpClientEvents {
   disconnected: (reason: string) => void
   status_changed: (status: McpConnectionStatus, error?: string) => void
   tools_changed: () => void
+  prompts_changed: () => void
   stderr: (chunk: string) => void
 }
 
@@ -419,6 +420,7 @@ export class McpClient extends EventEmitter {
         arguments: p.arguments,
       }))
       this.publishedCatalogs.add("prompts")
+      this.emit("prompts_changed")
       return this._promptsCache
     })
   }
@@ -460,6 +462,7 @@ export class McpClient extends EventEmitter {
       externalSignal.addEventListener("abort", onExternalAbort, { once: true })
     }
 
+    let succeeded = false
     try {
       let toolArgs = args
       if (process.platform === "win32" && isLocalOfficialFilesystem(this._config)) {
@@ -478,6 +481,7 @@ export class McpClient extends EventEmitter {
         undefined,
         { signal: controller.signal },
       )
+      succeeded = true
       // Result shape: { content: [{type, text|...}], isError }
       return {
         content: (result as any).content,
@@ -496,6 +500,9 @@ export class McpClient extends EventEmitter {
       }
       throw err
     } finally {
+      // SDK send failures can reject without removing their response handler.
+      // Abort only the failed lifecycle, after preserving the original error.
+      if (!succeeded) controller.abort()
       clearTimeout(timer)
       if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort)
     }
@@ -519,9 +526,11 @@ export class McpClient extends EventEmitter {
     const timer = setTimeout(() => controller.abort(), timeout)
     const onAbort = () => controller.abort()
     externalSignal?.addEventListener("abort", onAbort, { once: true })
+    let succeeded = false
     try {
       const result = await fn(controller.signal)
       if (externalSignal?.aborted) throw new Error(`MCP call aborted: ${label}`)
+      succeeded = true
       return result
     } catch (err: any) {
       if (externalSignal?.aborted) throw new Error(`MCP call aborted: ${label}`)
@@ -530,6 +539,7 @@ export class McpClient extends EventEmitter {
       }
       throw err
     } finally {
+      if (!succeeded) controller.abort()
       clearTimeout(timer)
       externalSignal?.removeEventListener("abort", onAbort)
     }
