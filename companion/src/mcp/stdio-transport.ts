@@ -45,9 +45,9 @@ export class OwnedStdioTransport implements Transport {
         void this.close()
       }
     })
-    // Do not wait for inherited stdout pipes to close after a root crashes.
-    // POSIX still owns its process group; Windows must not kill an exited PID.
-    child.once("exit", () => { void this.close() })
+    // Exit can precede the last stdout data event. Drain with a deadline so an
+    // inherited pipe cannot hold the connection open indefinitely.
+    child.once("exit", () => { void this.beginClose(true) })
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", resolve)
       child.on("error", error => {
@@ -57,15 +57,19 @@ export class OwnedStdioTransport implements Transport {
   }
 
   close(): Promise<void> {
+    return this.beginClose(false)
+  }
+
+  private beginClose(drain: boolean): Promise<void> {
     if (!this.closing) {
       this.closed = true
       // Publish the promise before closeChild can synchronously invoke onclose.
-      this.closing = Promise.resolve().then(() => this.closeChild())
+      this.closing = Promise.resolve().then(() => this.closeChild(drain))
     }
     return this.closing
   }
 
-  private async closeChild(): Promise<void> {
+  private async closeChild(drain: boolean): Promise<void> {
     const child = this.child
     if (child?.pid) {
       const pid = child.pid
@@ -92,6 +96,18 @@ export class OwnedStdioTransport implements Transport {
           child.once("exit", done)
         })
       }
+    }
+    const output = child?.stdout
+    if (drain && output && !output.readableEnded && !output.destroyed) {
+      await new Promise<void>(resolve => {
+        const done = () => {
+          clearTimeout(timer)
+          output.off("end", done); output.off("close", done); output.off("error", done)
+          resolve()
+        }
+        const timer = setTimeout(done, 1000)
+        output.once("end", done); output.once("close", done); output.once("error", done)
+      })
     }
     child?.stdin?.destroy(); child?.stdout?.destroy(); child?.stderr?.destroy()
     child?.unref()

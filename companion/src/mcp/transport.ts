@@ -191,6 +191,8 @@ const MCP_STDIO_ENV_ALLOW = new Set([
   "USERNAME",
   "LOGNAME",
   "SystemRoot",
+  "SYSTEMDRIVE",
+  "PROCESSOR_ARCHITECTURE",
   "windir",
   "ComSpec",
   "APPDATA",

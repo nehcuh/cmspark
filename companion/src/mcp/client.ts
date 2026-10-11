@@ -78,7 +78,9 @@ export class McpClient extends EventEmitter {
   }
 
   get catalogReady(): boolean {
-    return (["tools", "resources", "prompts"] as const).every(kind =>
+    // Match the catalogs included in the manager's authorization contract.
+    // Resource listing is independent of tool/prompt approval readiness.
+    return (["tools", "prompts"] as const).every(kind =>
       !this._capabilities[kind] || this.publishedCatalogs.has(kind))
   }
 
