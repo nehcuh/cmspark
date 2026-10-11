@@ -21,12 +21,18 @@ CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://mod
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | stdio MCP server | ✅ 支持 | 通过 `command` + `args` 启动本地子进程 |
-| HTTP MCP server | ✅ 支持 | 通过 `url` + `headers` 连接远程端点 |
+| HTTP MCP server | ✅ 支持 | Streamable HTTP，通过 `url` + `headers` 连接远程端点 |
 | 工具调用 | ✅ 支持 | 暴露为 `mcp__<server>__<tool>` 形式 |
 | Resources | ✅ 支持 | 仅当 server 声明 `resources` 能力时动态暴露 `mcp_list_resources` / `mcp_read_resource` |
 | Prompts | ✅ 支持 | 仅当 server 声明 `prompts` 能力时动态暴露 `mcp_get_prompt` |
 | 每线程 server 选择 | ✅ 支持 | `auto` / `all` / `manual` 三种模式 |
 | 信任级别 | ✅ 支持 | `manual` / `first-use` / `trusted` |
+
+工具、Resources 和 Prompts 的目录会读取全部分页，并响应服务端的 `listChanged` 通知。刷新成功后整体替换目录；失败时保留上一次完整结果。单次刷新限制为 100 页、10,000 项，并受调用超时限制。工具结果保留 `structuredContent`，输入 Schema 保留本地 `$ref` 依赖的 `$defs` / `definitions`。
+
+每线程的 server 选择同时约束普通工具和 Resources / Prompts 元工具；worker 还须满足祖先线程的选择及自身工具白名单。协作计划可以声明当前可用的 MCP 工具，并绑定 server、工具名、配置和参数 Schema；执行前发现身份变化时需重新规划。
+
+当前未提供 OAuth 登录流程、旧版 HTTP+SSE 回退、sampling 或 MCP tasks 的产品支持。分页目录已完整聚合，但所用 SDK 的工具输出 Schema 校验缓存仅保留最后一页，不能将此能力理解为所有分页工具都经过输出 Schema 校验。
 
 ## 配置文件位置
 
@@ -419,6 +425,8 @@ stdio `tools/list` 会按钥匙 profile 裁剪（只广告这把钥匙能调用�
 - **L8 确认**：fan-out 到已鉴权扩展，并把 **确认台拉到前面**（工具名 `[Outbound]`）。侧栏红条也可以批。**macOS Swift 托盘**另有原生确认；**Windows/Linux 没有原生 tray 确认**。约 45 秒未批则 `OUTBOUND_CONFIRM_REQUIRED`。
 - **L9 tab lease**：交互工具须显式 `tabId`；holder=`outbound_mcp:<caller>`；与 Side Panel 冲突时 **Side Panel 赢**，MCP 得 `TAB_LOCKED`。
 - **租约上限**：同一 caller 默认最多 **2** 个 tab lease。
+- **参数契约**：`tools/list` 描述各工具参数，兼容平铺参数和 `{ "args": { ... }, "domain": "..." }` 包装；执行端校验同一契约，不扩大钥匙 profile。
+- **取消**：调用方取消或断开 HTTP 后，信号传递到执行器，并撤销本次尚在等待的确认；取消后不会继续派发后续动作。已派发到浏览器的动作无法保证撤回，仍需跟踪其结果，不能把取消视为回滚。
 
 ### 站点上下文档案（0.7.0 开发切片 / #456）
 

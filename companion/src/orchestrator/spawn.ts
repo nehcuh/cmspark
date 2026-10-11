@@ -1,7 +1,8 @@
 // Spawn worker threads under an orchestrator — ADR-015 §1–2
 
 import { randomUUID } from "crypto"
-import type { ThreadManager } from "../threads/thread-manager"
+import { isMcpToolAllowedByWhitelist, type ThreadManager } from "../threads/thread-manager"
+import { getMcpManager } from "../mcp/manager"
 import {
   ORCHESTRATOR_CAPS,
   ORCHESTRATOR_TOOL_ALLOWLIST,
@@ -21,6 +22,19 @@ export function workerParentCapabilityWhitelist(parent: {
     : [...parent.tool_whitelist]
 }
 
+/** Match the same MCP exact/server/global patterns accepted at dispatch. */
+export function workerWhitelistAllows(whitelist: string[], tool: string): boolean {
+  return tool.startsWith("mcp__") ? isMcpToolAllowedByWhitelist(whitelist, tool) : whitelist.includes(tool)
+}
+
+function expandMcpPatterns(tools: string[]): string[] {
+  const patterns = tools.filter(tool => tool.startsWith("mcp__") && tool.endsWith("*"))
+  if (!patterns.length) return [...tools]
+  const live = getMcpManager().getAggregatedTools().map(tool => tool.function.name)
+  return [...new Set([...tools.filter(tool => !patterns.includes(tool)),
+    ...live.filter(tool => isMcpToolAllowedByWhitelist(patterns, tool))])]
+}
+
 export function computeWorkerWhitelist(opts: {
   parentWhitelist: string[] | null
   roleAllow: string[] | null
@@ -31,8 +45,9 @@ export function computeWorkerWhitelist(opts: {
     if (opts.parentWhitelist === null) {
       base = [...opts.roleAllow]
     } else {
-      const parentSet = new Set(opts.parentWhitelist)
-      base = opts.roleAllow.filter((t) => parentSet.has(t))
+      // A wildcard intersected with an exact parent grant must become exact;
+      // retaining the wildcard would authorize unrelated future tools.
+      base = expandMcpPatterns(opts.roleAllow).filter(t => workerWhitelistAllows(opts.parentWhitelist!, t))
     }
   } else if (opts.parentWhitelist !== null) {
     base = [...opts.parentWhitelist]
@@ -55,7 +70,8 @@ export function computeWorkerWhitelist(opts: {
     ]
   }
   const deny = new Set([...(opts.roleDeny || []), ...WORKER_HARD_DENY])
-  return base.filter((t) => !deny.has(t))
+  if (opts.roleDeny?.some(tool => tool.startsWith("mcp__"))) base = expandMcpPatterns(base)
+  return base.filter(t => !deny.has(t) && !(t.startsWith("mcp__") && isMcpToolAllowedByWhitelist(opts.roleDeny ?? [], t)))
 }
 
 export function countWorkersInRun(tm: ThreadManager, orchestratorRunId: string): number {
@@ -239,6 +255,10 @@ export function spawnWorkerThread(
     agent_role: "worker" as AgentRole,
     ...(parentPlan ? { execution_policy: "plan_readonly" as const } : {}),
     tool_whitelist: whitelist,
+    ...(parentThread?.mcp_selection_mode === "manual" ? {
+      mcp_selection_mode: "manual" as const,
+      active_mcp_server_ids: [...(parentThread.active_mcp_server_ids ?? [])],
+    } : {}),
     mission_pack_id: opts.packId ?? null,
     assigned_intent_id: intentId,
     config_override: {

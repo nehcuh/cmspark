@@ -26,6 +26,7 @@ import {
 } from "./http-client"
 import { getOrCreateSharedSecret } from "../ws-auth"
 import { getConfig } from "../config"
+import { outboundToolWireSchema, decodeOutboundWireArgs, validateOutboundToolArgs } from "./tool-schema"
 
 const CALLER_ENV = "CMSPARK_OUTBOUND_CALLER_ID"
 const PORT_ENV = "CMSPARK_OUTBOUND_PORT"
@@ -93,18 +94,6 @@ function toolDescription(name: string): string {
     [META_PROFILE]: "List default outbound L1 tool names (curated profile)",
   }
   return base[name] || `CMspark outbound tool ${name}`
-}
-
-function openArgsSchema(): {
-  type: "object"
-  properties: Record<string, unknown>
-  additionalProperties: boolean
-} {
-  return {
-    type: "object",
-    properties: {},
-    additionalProperties: true,
-  }
 }
 
 /**
@@ -267,15 +256,12 @@ export function createOutboundMcpServer(
       tools: allToolNames.map((canonical) => ({
         name: outboundMcpWireName(canonical),
         description: toolDescription(canonical),
-        inputSchema: canonical === "cmspark__site_context" ? {
-          type: "object" as const, properties: { tabId: { type: "integer", minimum: 1 }, query: { type: "string", maxLength: 2048 } },
-          required: ["tabId"], additionalProperties: false,
-        } : openArgsSchema(),
+        inputSchema: outboundToolWireSchema(canonical),
       })),
     }
   })
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     // #419: lazy re-pull before the local gate so an interact key that could
     // not fetch its profile at boot (companion was down) upgrades once the
     // companion is reachable again (throttled, bounded — see module doc).
@@ -300,6 +286,8 @@ export function createOutboundMcpServer(
           isError: true,
         }
       }
+      const invalid = validateOutboundToolArgs(name, args)
+      if (invalid) return { content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error_code: "INVALID_ARGUMENTS", error: invalid }) }], isError: true }
       // Caller ack is not operator HITL (Task 10 Confirm Center). Do not arm execute.
       return {
         content: [
@@ -319,6 +307,8 @@ export function createOutboundMcpServer(
     }
 
     if (name === META_PROFILE) {
+      const invalid = validateOutboundToolArgs(name, args)
+      if (invalid) return { content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error_code: "INVALID_ARGUMENTS", error: invalid }) }], isError: true }
       return {
         content: [
           {
@@ -352,11 +342,12 @@ export function createOutboundMcpServer(
       }
     }
 
-    const domain = typeof args.domain === "string" ? args.domain : undefined
-    const toolArgs =
-      args.args && typeof args.args === "object" && !Array.isArray(args.args)
-        ? (args.args as Record<string, unknown>)
-        : Object.fromEntries(Object.entries(args).filter(([k]) => k !== "domain"))
+    const decoded = decodeOutboundWireArgs(name, args)
+    if (!decoded.ok) return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error_code: "INVALID_ARGUMENTS", error: decoded.error }) }],
+      isError: true,
+    }
+    const { domain, args: toolArgs } = decoded
 
     const result = await invokeOutboundTool(
       {
@@ -364,6 +355,7 @@ export function createOutboundMcpServer(
         tool: name,
         args: toolArgs,
         domain,
+        signal: extra.signal,
       },
       undefined,
       // Local gate mirrors the advertised set (explicit profiles → per-key;

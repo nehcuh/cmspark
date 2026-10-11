@@ -150,6 +150,7 @@ export interface SecurityConfirmationDecision {
 }
 
 export interface SecurityConfirmationRequestOptions {
+  signal?: AbortSignal
   /**
    * Originating WebSocket for this confirmation. When set, only responses
    * (security.confirmation.response) arriving on this same socket may resolve
@@ -267,8 +268,9 @@ export class SecurityConfirmationManager {
     preGeneratedId?: string,
   ): Promise<SecurityConfirmationDecision> {
     const confirmationId = preGeneratedId ?? randomUUID()
+    if (options?.signal?.aborted) return Promise.resolve({ confirmationId, approved: false, reason: "denied" })
 
-    return new Promise((resolve) => {
+    const result = new Promise<SecurityConfirmationDecision>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(confirmationId)
         send({ type: "security.confirmation.expired", confirmation_id: confirmationId })
@@ -363,6 +365,23 @@ export class SecurityConfirmationManager {
           : {}),
       })
     })
+    const signal = options?.signal
+    if (!signal) return result
+    // Resolve only this request; cancellation must not drain another caller's prompt.
+    const onAbort = () => {
+      const pending = this.pending.get(confirmationId)
+      if (!pending) return
+      clearTimeout(pending.timer)
+      this.pending.delete(confirmationId)
+      // Disconnect can make the notification fail; the request must still settle.
+      try { pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false }) } catch { /* peer closed */ }
+      const decision: SecurityConfirmationDecision = { confirmationId, approved: false, reason: "denied" }
+      pending.resolve(decision)
+      this.fireTerminal(decision)
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+    if (signal.aborted) onAbort()
+    return result.finally(() => signal.removeEventListener("abort", onAbort))
   }
 
   /**

@@ -29,6 +29,7 @@ function requestJson(
   method: string,
   path: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<{ status: number; json: any }> {
   const timeout = opts.timeout_ms ?? 120_000
   const payload = body === undefined ? null : Buffer.from(JSON.stringify(body), "utf8")
@@ -49,6 +50,7 @@ function requestJson(
             : {}),
         },
         timeout,
+        signal,
       },
       (res) => {
         const chunks: Buffer[] = []
@@ -151,12 +153,13 @@ export function createHttpOutboundDispatcher(opts: HttpClientOptions): OutboundD
   return async (req: OutboundDispatchRequest): Promise<OutboundDispatchResult> => {
     try {
       const handle = opts.contextSession?.() ? await ensureSession(req.caller_id) : undefined
+      req.signal?.throwIfAborted()
       const r = await requestJson(opts, "POST", OUTBOUND_INVOKE_PATH, {
         caller_id: req.caller_id,
         tool: req.mcp_tool,
         args: req.args,
         ...(handle ? { session_handle: handle } : {}),
-      })
+      }, req.signal)
       const j = r.json || {}
       if (j.ok === true) {
         return { success: true, data: j.data }

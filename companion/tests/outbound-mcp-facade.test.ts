@@ -215,6 +215,7 @@ test("invoke HITL_REQUIRED with dispatcher still reaches companion HTTP", async 
   const r = await invokeOutboundTool({
     caller_id: "hitl-pass",
     tool: "cmspark__get_page_text",
+    args: { tabId: 1 },
   })
   assert.equal(called, true)
   assert.equal(r.ok, true)

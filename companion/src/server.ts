@@ -466,6 +466,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     signal?: AbortSignal,
     invokeOpts?: ToolExecuteInvokeOpts,
   ): Promise<{ success: boolean; data?: any; error?: string }> => {
+    if (signal?.aborted) return { success: false, error: "Tool call cancelled before dispatch" }
     let finalParams = contextReadParams(toolName, params || {}, invokeOpts?.siteContextTabId)
     const evidenceScope = invokeOpts?.evidenceScope?.kind === "chat" && !invokeOpts.trustedOutbound
       && threadManager.get(invokeOpts.evidenceScope.threadId) ? invokeOpts.evidenceScope : undefined
@@ -632,6 +633,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
 
     // L2 confirmation gate — extracted to tool/l2-admission.ts (C10-B)
     const l2Outcome = await runL2ToolAdmission({
+      signal,
       toolName,
       finalParams,
       toolCallId,
@@ -660,6 +662,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
 
     // URL scheme+domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
     const urlOutcome = await runUrlNavigateAdmission({
+      signal,
       toolName,
       finalParams,
       toolCallId,
@@ -673,9 +676,11 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       wsAuthGet: (w) => getWsAuthState(w),
     })
     if (!urlOutcome.ok) return urlOutcome.result
+    if (signal?.aborted) return { success: false, error: "Tool call cancelled during admission" }
 
     // IMAGE_FETCH two-phase gate — extracted to tool/image-fetch-admission.ts (C10-D)
     const imageOutcome = await runImageFetchAdmission({
+      signal,
       toolName,
       finalParams,
       toolCallId,
@@ -690,6 +695,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     if (imageOutcome !== null) {
       return imageOutcome
     }
+    if (signal?.aborted) return { success: false, error: "Tool call cancelled during admission" }
 
     // Companion-side tools (executed locally, not forwarded to extension)
     // P2: SoT is companion/src/bridge/companion-tools.ts
@@ -855,6 +861,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     // Extension forward — pending map / timeout / tabUrlCache post-process in
     // ws/tool-forward.ts (C10-G). createToolExecutor stays pure orchestration.
     // L1 actuator is the Chrome extension peer, never tray/summoner (tool.execute).
+    if (signal?.aborted) return { success: false, error: "Tool call cancelled before extension dispatch" }
     const result = await forwardL1OrUnavailable({
       originatingWs: ws,
       getAuth: (w) => getWsAuthState(w),

@@ -174,6 +174,7 @@ function resolveHostUseApp(toolName: string, params: any): string {
 }
 
 export type L2AdmissionContext = {
+  signal?: AbortSignal
   toolName: string
   finalParams: Record<string, any>
   toolCallId: string
@@ -1557,7 +1558,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
               ? { boardCompleteDigest: boardCompleteDigestForConfirm }
               : {}),
           },
-          confirmOriginOpts,
+          { ...confirmOriginOpts, ...(ctx.signal ? { signal: ctx.signal } : {}) },
           // P0a: pre-generated id shared with tray.
           sharedConfirmId,
         )

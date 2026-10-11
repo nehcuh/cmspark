@@ -33,6 +33,7 @@ function cruiseRiskAccepted(): boolean {
 export type ToolResult = { success: boolean; data?: any; error?: string }
 
 export type ImageFetchAdmissionCtx = {
+  signal?: AbortSignal
   toolName: string
   finalParams: Record<string, any>
   toolCallId: string
@@ -124,7 +125,9 @@ export async function runImageFetchAdmission(
     return null
   }
 
+  if (ctx.signal?.aborted) return { success: false, error: "Tool call cancelled before image dispatch" }
   const phase1 = await dispatchToExtension(toolCallId, "analyze_image", finalParams, ws, dispatchMeta)
+  if (ctx.signal?.aborted) return { success: false, error: "Tool call cancelled after image dispatch" }
   const p1 = phase1?.data
   // Path A (canvas → image_base64) or any error: return as-is. The adapter's
   // VISION_TOOLS post-processing runs vision when image_base64 is present.
@@ -276,7 +279,7 @@ export async function runImageFetchAdmission(
         defenseLayer: 2,
         riskLevel: "high",
       },
-      { originWs: ws },
+      { originWs: ws, ...(ctx.signal ? { signal: ctx.signal } : {}) },
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -299,6 +302,7 @@ export async function runImageFetchAdmission(
   // Gate passed → phase 2 fetch. Synthetic id keeps the LLM-facing
   // tool_call_id for the final result while correlating the internal fetch.
   coverMutationIdle()
+  if (ctx.signal?.aborted) return { success: false, error: "Tool call cancelled before image fetch" }
   const phase2 = await dispatchToExtension(`${toolCallId}__image_fetch`, "analyze_image_fetch", {
     tabId: finalParams.tabId,
     candidate_url: candidateUrl,

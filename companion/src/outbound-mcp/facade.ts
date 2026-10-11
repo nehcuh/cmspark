@@ -23,6 +23,8 @@ import {
 } from "./outbound-grants"
 
 export type OutboundCallRequest = {
+  /** In-process cancellation only; never supplied by JSON arguments. */
+  signal?: AbortSignal
   caller_id: string
   tool: string
   /** Raw invoke name before canonicalOutboundMcpName (HTTP dual-track). */

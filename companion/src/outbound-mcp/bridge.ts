@@ -15,8 +15,10 @@ import {
 import { outboundToInternalName } from "./profile"
 import { makeOutboundMcpOrigin, type OutboundMcpOrigin } from "./origin"
 import { appendOutboundMcpAudit } from "./audit"
+import { validateOutboundToolArgs } from "./tool-schema"
 
 export type OutboundDispatchRequest = {
+  signal?: AbortSignal
   internal_tool: string
   mcp_tool: string
   args: Record<string, unknown>
@@ -59,6 +61,7 @@ export async function invokeOutboundTool(
   dispatcher: OutboundDispatcher | null | undefined = defaultDispatcher,
   gateProfiles?: string[],
 ): Promise<InvokeOutboundResult> {
+  if (req.signal?.aborted) return { ok: false, error_code: "CALLER_CANCELLED", error: "caller cancelled before dispatch" }
   // #410: stdio child that resolved its env token's grant profile passes it
   // here so the local gate matches the tools/list it advertised. When unset
   // (legacy ws_secret / unit tests) gateOutboundCall falls back to the caller-
@@ -88,6 +91,9 @@ export async function invokeOutboundTool(
       origin,
     }
   }
+
+  const invalidArgs = validateOutboundToolArgs(req.tool, req.args === undefined ? {} : req.args, req.domain)
+  if (invalidArgs) return { ok: false, error_code: "INVALID_ARGUMENTS", error: invalidArgs, origin }
 
   if (!dispatcher) {
     appendOutboundMcpAudit({
@@ -119,6 +125,7 @@ export async function invokeOutboundTool(
 
   try {
     const dispatch = await dispatcher({
+      signal: req.signal,
       internal_tool: internal,
       mcp_tool: req.tool,
       args: req.args || {},

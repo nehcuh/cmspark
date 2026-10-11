@@ -19,6 +19,7 @@ import type { SkillEngine } from "../skills/skill-engine"
 import { ContextSessionRegistry, ContextSessionUnavailable } from "./context-session"
 import { requireLiveGrant, OUTBOUND_CONTEXT_PROFILE } from "./context-permission"
 import { projectOutboundContext } from "./context-projection"
+import { validateOutboundToolArgs } from "./tool-schema"
 import { resolveBrowserSiteTarget } from "../site-context/browser-resolver"
 import { captureLocalPageResult } from "../business-evidence/executor"
 import { recordContextFailure, contextExperience, clearContextExperiences } from "./context-experience"
@@ -52,6 +53,7 @@ import { makeOutboundMcpOrigin } from "./origin"
 import { appendOutboundMcpAudit } from "./audit"
 import {
   gateOutboundTabLease,
+  outboundNeedsTabLease,
   OUTBOUND_MCP_PARAM,
   OUTBOUND_CALLER_PARAM,
   outboundHolderThreadId,
@@ -149,6 +151,7 @@ async function waitFirstExfilOperatorConfirm(
   grant_id?: string,
   wire_name?: string,
   profile?: string,
+  signal?: AbortSignal,
 ): Promise<OutboundCallResult> {
   const deps = exfilConfirmer
   if (!deps) {
@@ -212,7 +215,7 @@ async function waitFirstExfilOperatorConfirm(
         riskLevel: "high",
         autoConfirmEligible: false,
       },
-      confirmOriginOpts,
+      { ...confirmOriginOpts, signal },
     )
   } catch (e: any) {
     appendOutboundMcpAudit({
@@ -234,6 +237,11 @@ async function waitFirstExfilOperatorConfirm(
     }
   }
 
+  if (signal?.aborted) {
+    appendOutboundMcpAudit({ caller_id, tool, wire_name, profile, grant_id,
+      ok: false, error_code: "CALLER_CANCELLED", confirm_outcome: "denied" })
+    return { ok: false, error_code: "CALLER_CANCELLED", error: "caller cancelled during confirmation" }
+  }
   if (!decision.approved) {
     const outcome =
       decision.reason === "timeout" ? ("timeout" as const) : ("denied" as const)
@@ -489,8 +497,10 @@ export async function companionInvokeOutbound(
     /** Grant profile resolved from the authenticated key (#410). */
     grant_profile?: string
     callerConnected?: () => boolean
+    signal?: AbortSignal
   },
 ): Promise<OutboundCallResult & { data?: unknown; session_invalid?: boolean; origin?: ReturnType<typeof makeOutboundMcpOrigin> }> {
+  if (opts?.signal?.aborted) return { ok: false, error_code: "CALLER_CANCELLED" }
   const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
   const rawTool = (body.tool || "").trim()
   const tool = canonicalOutboundMcpName(rawTool)
@@ -572,7 +582,7 @@ export async function companionInvokeOutbound(
     // HTTP invoke waits on first-exfil HITL when a confirmer is injected.
     // Facade unit tests without a manager still see DISCLOSURE_HITL_REQUIRED.
     if (gate.error_code === "DISCLOSURE_HITL_REQUIRED" && exfilConfirmer) {
-      const hitl = await waitFirstExfilOperatorConfirm(caller_id, tool, grant_id, wire_name, grant_profile)
+      const hitl = await waitFirstExfilOperatorConfirm(caller_id, tool, grant_id, wire_name, grant_profile, opts?.signal)
       if (!hitl.ok) return hitl
       // R1: the caller's HTTP client may have timed out / disconnected while
       // the operator HITL was pending. Fail-safe: an approved tool must NOT
@@ -621,6 +631,13 @@ export async function companionInvokeOutbound(
   if (!internal) {
     return { ok: false, error: "internal tool name missing", error_code: "INTERNAL_NAME_MISSING" }
   }
+
+  const invalidArgs = validateOutboundToolArgs(tool, body.args === undefined ? {} : body.args, body.domain)
+  // Keep L9's actionable TAB_ID_REQUIRED response (with queue disclosure) for
+  // a missing target. Other malformed arguments fail before acquiring a lease.
+  const missingTabId = (body.args === undefined || (body.args !== null && typeof body.args === "object" && !Array.isArray(body.args))) &&
+    body.args?.tabId === undefined && outboundNeedsTabLease(internal === "site_context" ? "get_page_text" : internal)
+  if (invalidArgs && !missingTabId) return { ok: false, error_code: "INVALID_ARGUMENTS", error: invalidArgs }
 
   const origin = makeOutboundMcpOrigin(caller_id)
   try {
@@ -690,7 +707,7 @@ export async function companionInvokeOutbound(
   try {
     const resolveTarget = (tabId: number) => resolveBrowserSiteTarget((id, name, params, signal, options) => runner(id, name, {
       ...params, [OUTBOUND_MCP_PARAM]: true, [OUTBOUND_CALLER_PARAM]: caller_id, __thread_id: outboundHolderThreadId(caller_id),
-    }, { siteContextTabId: options?.siteContextTabId, signal }), outboundHolderThreadId(caller_id), tabId)
+    }, { siteContextTabId: options?.siteContextTabId, signal: opts?.signal ?? signal }), outboundHolderThreadId(caller_id), tabId)
     if (grant_id) requireLiveGrant(lookupContextGrant, grant_id, caller_id)
     if (contextSession && grant_id) contextSessions.resolve(contextSession.handle, grant_id, caller_id)
     if (internal === "site_context") {
@@ -710,7 +727,8 @@ export async function companionInvokeOutbound(
     const beforeReadDeny = denyOutboundExfilIfNeeded(caller_id, tool, { grant_id, wire_name, profile: grant_profile })
     if (beforeReadDeny) return beforeReadDeny
     if (contextSession && grant_id) contextSessions.resolve(contextSession.handle, grant_id, caller_id)
-    let result = await runner(toolCallId, internal, taggedArgs)
+    opts?.signal?.throwIfAborted()
+    let result = await runner(toolCallId, internal, taggedArgs, { signal: opts?.signal })
     const targetAfter = contextSession && targetBefore ? await resolveTarget(targetBefore.tab_id) : undefined
     // Revocation during an asynchronous read discards the pending export and
     // cannot create an Observation. It cannot undo an already executed click.
@@ -960,12 +978,15 @@ export async function handleOutboundMcpHttp(
       // R1: fail-safe liveness probe — if the caller's socket dies while the
       // operator HITL is pending, the approved tool must not execute.
       let callerSocketGone = false
+      const controller = new AbortController()
       res.on("close", () => {
         callerSocketGone = true
+        if (!res.writableEnded) controller.abort()
       })
       const out = await companionInvokeOutbound(body, {
         grant_id: auth.mode === "grant" ? auth.grant_id : undefined,
         grant_profile: auth.mode === "grant" ? auth.profile : undefined,
+        signal: controller.signal,
         callerConnected: () =>
           !callerSocketGone &&
           // IncomingMessage may be destroyed normally once the request body

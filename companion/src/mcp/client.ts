@@ -6,7 +6,12 @@
 
 import { EventEmitter } from "events"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { ListRootsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
+import {
+  ListRootsRequestSchema,
+  ToolListChangedNotificationSchema,
+  ResourceListChangedNotificationSchema,
+  PromptListChangedNotificationSchema,
+} from "@modelcontextprotocol/sdk/types.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import { createTransport, extractPid } from "./transport.js"
 import { logger } from "../logger.js"
@@ -29,6 +34,10 @@ export interface McpClientEvents {
   stderr: (chunk: string) => void
 }
 
+type CacheKind = "tools" | "resources" | "prompts"
+const MAX_CATALOG_PAGES = 100
+const MAX_CATALOG_ITEMS = 10000
+
 export class McpClient extends EventEmitter {
   private client: Client | null = null
   private transport: Transport | null = null
@@ -44,6 +53,7 @@ export class McpClient extends EventEmitter {
   private _promptsCache: McpPromptMeta[] = []
   private _stderrBuffer = ""
   private _closing = false
+  private refreshes = new Map<CacheKind, { client: Client; promise: Promise<unknown>; dirty: boolean }>()
 
   constructor(
     public readonly name: string,
@@ -141,6 +151,12 @@ export class McpClient extends EventEmitter {
         },
       )
       this.client = client
+      // The SDK's automatic listChanged refresh reads only one page. Keep the
+      // notification handler here so every refresh follows the same pagination,
+      // timeout and atomic-publication rules as initial discovery.
+      client.setNotificationHandler(ToolListChangedNotificationSchema, () => this.onListChanged("tools", client))
+      client.setNotificationHandler(ResourceListChangedNotificationSchema, () => this.onListChanged("resources", client))
+      client.setNotificationHandler(PromptListChangedNotificationSchema, () => this.onListChanged("prompts", client))
 
       // The official filesystem server requests initial roots during startup.
       // Only advertise roots support when the user has configured roots, so we do not
@@ -243,6 +259,68 @@ export class McpClient extends EventEmitter {
 
   // --- capability methods ---
 
+  private isCurrentClient(client: Client): boolean {
+    return this.client === client && !this._closing && this._connection.status === "connected"
+  }
+
+  private onListChanged(kind: CacheKind, client: Client): void {
+    if (!this.isCurrentClient(client) || !this._capabilities[kind]) return
+    const inFlight = this.refreshes.get(kind)
+    if (inFlight?.client === client) {
+      inFlight.dirty = true
+      return
+    }
+    void this.refreshKind(kind).catch((err) => {
+      logger.warn("mcp.catalog_refresh_failed", { server: this.name, kind, error: err?.message })
+    })
+  }
+
+  private refreshKind(kind: CacheKind): Promise<unknown> {
+    if (kind === "tools") return this.refreshTools()
+    if (kind === "resources") return this.refreshResources()
+    return this.refreshPrompts()
+  }
+
+  private refreshCache<T>(kind: CacheKind, client: Client, load: () => Promise<T[]>): Promise<T[]> {
+    const existing = this.refreshes.get(kind)
+    if (existing?.client === client) return existing.promise as Promise<T[]>
+    const entry = { client, promise: Promise.resolve([]) as Promise<T[]>, dirty: false }
+    // Start on the next microtask so the entry is visible even when a transport
+    // dispatches notifications synchronously while requesting the first page.
+    entry.promise = Promise.resolve().then(load).finally(() => {
+      if (this.refreshes.get(kind) !== entry) return
+      this.refreshes.delete(kind)
+      if (entry.dirty) this.onListChanged(kind, client)
+    })
+    this.refreshes.set(kind, entry)
+    return entry.promise
+  }
+
+  private collectPages<T>(
+    kind: CacheKind,
+    fetch: (cursor: string | undefined, signal: AbortSignal) => Promise<{ items: T[]; nextCursor?: string }>,
+  ): Promise<T[]> {
+    // One deadline covers the entire catalog, not a fresh timeout per page.
+    return this.withCallTimeout(`list_${kind} ${this.name}`, async (signal) => {
+      const items: T[] = []
+      const cursors = new Set<string>()
+      let cursor: string | undefined
+      for (let page = 0; page < MAX_CATALOG_PAGES; page++) {
+        const result = await fetch(cursor, signal)
+        if (signal.aborted) throw new Error("catalog refresh aborted")
+        if (items.length + result.items.length > MAX_CATALOG_ITEMS) {
+          throw new Error(`MCP ${kind} catalog exceeds ${MAX_CATALOG_ITEMS} items`)
+        }
+        items.push(...result.items)
+        if (result.nextCursor === undefined) return items
+        if (cursors.has(result.nextCursor)) throw new Error(`MCP ${kind} catalog repeated pagination cursor`)
+        cursors.add(result.nextCursor)
+        cursor = result.nextCursor
+      }
+      throw new Error(`MCP ${kind} catalog exceeds ${MAX_CATALOG_PAGES} pages`)
+    })
+  }
+
   async refreshAllCaches(): Promise<void> {
     if (!this.client) return
     await Promise.all([
@@ -257,15 +335,22 @@ export class McpClient extends EventEmitter {
       this._toolsCache = []
       return []
     }
-    const res = await this.client.listTools()
-    this._toolsCache = (res.tools || []).map((t) => ({
-      name: t.name,
-      namespacedName: "", // filled by aggregator
-      description: t.description ?? "",
-      inputSchema: (t.inputSchema ?? { type: "object", properties: {} }) as Record<string, any>,
-    }))
-    this.emit("tools_changed")
-    return this._toolsCache
+    const client = this.client
+    return this.refreshCache("tools", client, async () => {
+      const tools = await this.collectPages("tools", async (cursor, signal) => {
+        const res = await client.listTools(cursor === undefined ? undefined : { cursor }, { signal })
+        return { items: res.tools, nextCursor: res.nextCursor }
+      })
+      if (!this.isCurrentClient(client)) return this._toolsCache
+      this._toolsCache = tools.map((t) => ({
+        name: t.name,
+        namespacedName: "", // filled by aggregator
+        description: t.description ?? "",
+        inputSchema: (t.inputSchema ?? { type: "object", properties: {} }) as Record<string, any>,
+      }))
+      this.emit("tools_changed")
+      return this._toolsCache
+    })
   }
 
   async refreshResources(): Promise<McpResourceMeta[]> {
@@ -273,14 +358,21 @@ export class McpClient extends EventEmitter {
       this._resourcesCache = []
       return []
     }
-    const res = await this.client.listResources()
-    this._resourcesCache = (res.resources || []).map((r) => ({
-      uri: r.uri,
-      name: r.name ?? r.uri,
-      description: r.description,
-      mimeType: r.mimeType,
-    }))
-    return this._resourcesCache
+    const client = this.client
+    return this.refreshCache("resources", client, async () => {
+      const resources = await this.collectPages("resources", async (cursor, signal) => {
+        const res = await client.listResources(cursor === undefined ? undefined : { cursor }, { signal })
+        return { items: res.resources, nextCursor: res.nextCursor }
+      })
+      if (!this.isCurrentClient(client)) return this._resourcesCache
+      this._resourcesCache = resources.map((r) => ({
+        uri: r.uri,
+        name: r.name ?? r.uri,
+        description: r.description,
+        mimeType: r.mimeType,
+      }))
+      return this._resourcesCache
+    })
   }
 
   async refreshPrompts(): Promise<McpPromptMeta[]> {
@@ -288,13 +380,20 @@ export class McpClient extends EventEmitter {
       this._promptsCache = []
       return []
     }
-    const res = await this.client.listPrompts()
-    this._promptsCache = (res.prompts || []).map((p) => ({
-      name: p.name,
-      description: p.description,
-      arguments: p.arguments,
-    }))
-    return this._promptsCache
+    const client = this.client
+    return this.refreshCache("prompts", client, async () => {
+      const prompts = await this.collectPages("prompts", async (cursor, signal) => {
+        const res = await client.listPrompts(cursor === undefined ? undefined : { cursor }, { signal })
+        return { items: res.prompts, nextCursor: res.nextCursor }
+      })
+      if (!this.isCurrentClient(client)) return this._promptsCache
+      this._promptsCache = prompts.map((p) => ({
+        name: p.name,
+        description: p.description,
+        arguments: p.arguments,
+      }))
+      return this._promptsCache
+    })
   }
 
   async callTool(
@@ -341,6 +440,7 @@ export class McpClient extends EventEmitter {
       // Result shape: { content: [{type, text|...}], isError }
       return {
         content: (result as any).content,
+        ...((result as any).structuredContent !== undefined ? { structuredContent: (result as any).structuredContent } : {}),
         isError: (result as any).isError === true,
       }
     } catch (err: any) {
