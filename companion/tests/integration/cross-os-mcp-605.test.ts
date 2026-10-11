@@ -101,12 +101,14 @@ test("real move denial preserves the exact spaced destination, rather than its p
   try {
     await client.connect()
     const params = { source: path.join(f.a, "file.txt"), destination: path.join(f.c, "new.txt") }
-    const result = await client.callTool("move_file", params)
+    let sent: Record<string, any> = params
+    const result = await client.callTool("move_file", params, undefined, args => { sent = args })
     assert.equal(result.isError, true)
     const error = result.content.map((item: any) => item.text ?? "").join("\n")
-    assert.equal(extractPathCandidate(error, params), params.destination)
-    const sourceDenied = await client.callTool("move_file", { source: params.destination, destination: params.source })
-    assert.equal(extractPathCandidate(sourceDenied.content.map((item: any) => item.text ?? "").join("\n"), { source: params.destination, destination: params.source }), params.destination)
+    assert.equal(extractPathCandidate(error, sent), sent.destination)
+    assert.equal(fs.realpathSync.native(path.dirname(sent.destination)), fs.realpathSync.native(f.c))
+    const sourceDenied = await client.callTool("move_file", { source: params.destination, destination: params.source }, undefined, args => { sent = args })
+    assert.equal(extractPathCandidate(sourceDenied.content.map((item: any) => item.text ?? "").join("\n"), sent), sent.source)
     assert.equal(extractPathCandidate("ambiguous Access denied", params), null)
   } finally { await client.close(); fs.rmSync(f.root, { recursive: true, force: true }) }
 })
@@ -214,14 +216,47 @@ test("denial paths and roots containing the literal separator never grant a pref
     await client.connect()
     const target = path.join(denied, "new.txt"), source = path.join(f.a, "file.txt")
     for (const params of [{ source, destination: target }, { source: path.join(denied, "file.txt"), destination: path.join(f.a, "new.txt") }, { path: path.join(denied, "file.txt") }]) {
-      const result = await client.callTool("path" in params ? "read_text_file" : "move_file", params)
+      let sent: Record<string, any> = params
+      const result = await client.callTool("path" in params ? "read_text_file" : "move_file", params, undefined, args => { sent = args })
       assert.equal(result.isError, true)
-      const expected = "path" in params ? params.path : params.source.startsWith(denied) ? params.source : params.destination
-      assert.equal(extractPathCandidate(result.content.map((v: any) => v.text ?? "").join("\n"), params), expected)
+      const expected = "path" in params ? sent.path : params.source.startsWith(denied) ? sent.source : sent.destination
+      assert.equal(extractPathCandidate(result.content.map((v: any) => v.text ?? "").join("\n"), sent), expected)
+      assert.equal(fs.realpathSync.native(path.dirname(expected)), fs.realpathSync.native(denied))
     }
     assert.equal(extractPathCandidate(`Access denied - path outside allowed directories: ${target} not in ${source} not in root`, { source, destination: target }), target)
     assert.equal(extractPathCandidate("Access denied - path outside allowed directories: /expanded not in sibling/file not in /allowed not in root", { source: "/alias/file", destination: "/other/file" }), null)
   } finally { await client.close(); fs.rmSync(f.root, { recursive: true, force: true }) }
+})
+
+test("real public denial confirmation uses the complete dispatched operand after alias normalization", { timeout: 30000 }, async () => {
+  await initDataDir()
+  const f = fixture(), denied = path.join(f.c, "denied not in sibling"), manager = getMcpManager(), confirmations = new SecurityConfirmationManager()
+  fs.mkdirSync(denied); fs.mkdirSync(path.join(f.c, "denied")); fs.writeFileSync(path.join(denied, "file.txt"), "EXCLUDED_SECRET")
+  const frames: any[] = []
+  const ws = { readyState: WebSocket.OPEN, send(raw: string) {
+    const frame = JSON.parse(raw); frames.push(frame)
+    if (frame.type === "security.confirmation.request") queueMicrotask(() => confirmations.respondFrom(frame.confirmation_id, false, ws as WebSocket))
+  } } as WebSocket
+  try {
+    saveConfig({ security: { ...getConfig().security, allow_all_schemes: false, auto_approve_dangerous: false, auto_approve_enterprise_tools: false },
+      mcp: { enabled: true, servers: { owned: { ...f.cfg, security_capabilities: ["read-only"] } } } })
+    await manager.applyConfig(getConfig().mcp); await manager.waitForServerReady("owned")
+    bindMcpDispatchRuntime({ getThreadManager: () => null, securityConfirmations: confirmations, broadcastToClients() {} })
+    const params = { path: path.join(denied, "file.txt") }, original = { ...params }
+    const result = await executeMcpTool("mcp__owned__read_text_file", params, "owned", ws, Date.now())
+    assert.equal(result.success, false)
+    assert.match(result.error!, /declined adding MCP allow-dir/)
+    const requests = frames.filter(frame => frame.type === "security.confirmation.request")
+    assert.equal(requests.length, 1, "one complete denied directory must be offered")
+    assert.ok(requests[0].code_preview.includes(fs.realpathSync.native(denied)))
+    assert.ok(requests[0].code_preview.includes("denied not in sibling"))
+    assert.deepEqual(params, original, "path preparation must not mutate caller operands")
+    assert.deepEqual((getConfig().mcp!.servers.owned as McpStdioServerConfig).args, f.cfg.args, "denial must not persist a new grant")
+    assert.equal(confirmations.pendingCount(), 0)
+  } finally {
+    confirmations.rejectAll(); bindMcpDispatchRuntime(null); await manager.applyConfig({ enabled: false, servers: {} })
+    fs.rmSync(f.root, { recursive: true, force: true })
+  }
 })
 
 

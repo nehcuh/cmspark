@@ -427,7 +427,7 @@ export class McpClient extends EventEmitter {
     toolName: string,
     args: Record<string, any>,
     externalSignal?: AbortSignal,
-    beforeDispatch?: () => void,
+    beforeDispatch?: (preparedArgs: Record<string, any>) => void,
   ): Promise<any> {
     if (!this.client) throw new Error(`MCP server ${this.name} not connected`)
     if (!this._capabilities.tools) {
@@ -472,7 +472,7 @@ export class McpClient extends EventEmitter {
       }
       controller.signal.throwIfAborted()
       if (!this.isCurrentClient(client)) throw new Error(`MCP server ${this.name} connection changed before dispatch`)
-      beforeDispatch?.()
+      beforeDispatch?.(toolArgs)
       const result = await client.callTool(
         { name: toolName, arguments: toolArgs },
         undefined,

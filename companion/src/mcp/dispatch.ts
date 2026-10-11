@@ -421,6 +421,7 @@ export async function executeMcpTool(
 
   const callStartedAt = Date.now()
   const mcpArgs = stripCmsparkInternalMcpArgs(params)
+  let dispatchedArgs = mcpArgs
   const runOnce = async (): Promise<{ success: boolean; data?: any; error?: string; rawErr?: string }> => {
     if (signal?.aborted) return { success: false, error: "MCP tool call cancelled before dispatch" }
     if (!checkAuthorization()) return { success: false, error: "MCP authorization changed or revoked before dispatch" }
@@ -433,7 +434,7 @@ export async function executeMcpTool(
       if (!currentRoute || currentRoute.serverName !== route.serverName || currentRoute.toolName !== route.toolName) {
         return { success: false, error: `MCP tool ${toolName} route changed during authorization` }
       }
-      const result = await manager.callTool(route, mcpArgs, signal, () => {
+      const result = await manager.callTool(route, mcpArgs, signal, preparedArgs => {
         if (!checkAuthorization()) throw new Error("MCP authorization changed or revoked before dispatch")
         const selected = checkSelection()
         if (selected) throw new Error(selected.error)
@@ -443,6 +444,10 @@ export async function executeMcpTool(
         if (!current || current.serverName !== route.serverName || current.toolName !== route.toolName) {
           throw new Error(`MCP tool ${toolName} route changed during authorization`)
         }
+        // Match denial operands against what the server actually received,
+        // including long names and approved root aliases, without guessing a
+        // prefix or repeating filesystem IO after the response.
+        dispatchedArgs = preparedArgs
       })
       const structuredData = result?.structuredContent !== undefined
         ? { content: result.content ?? [], structuredContent: result.structuredContent }
@@ -473,7 +478,7 @@ export async function executeMcpTool(
   if (!outcome.success && outcome.rawErr) {
     const expanded = await tryExpandFilesystemAllowDirOnDenial({
       route,
-      params,
+      params: dispatchedArgs,
       rawErr: outcome.rawErr,
       toolName,
       ws,
