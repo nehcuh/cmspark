@@ -47,9 +47,30 @@ public static class CMsparkOwnedJob {
   [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr process, uint code);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int kind);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
   static void Fail(string stage) { throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), stage); }
+  static IntPtr InheritableStandardHandle(int kind) {
+    IntPtr source=GetStdHandle(kind), temporary=IntPtr.Zero, duplicate;
+    // Node's stdio:ignore can leave a console-less host without a standard
+    // handle. Supply NUL, rather than passing an invalid STARTUPINFO handle.
+    if(source==IntPtr.Zero || source==new IntPtr(-1)) {
+      temporary=CreateFile("NUL",kind==-10 ? 0x80000000u : 0x40000000u,3,IntPtr.Zero,3,0,IntPtr.Zero);
+      if(temporary==new IntPtr(-1)) Fail("CreateFile(NUL)");
+      source=temporary;
+    }
+    try {
+      // A valid host handle is not necessarily inheritable. STARTF_USESTDHANDLES
+      // alone does not make the child's copy valid. Duplicate the handle with
+      // inheritance enabled, without mutating the host's handle.
+      if(!DuplicateHandle(GetCurrentProcess(),source,GetCurrentProcess(),out duplicate,0,true,2)) Fail("DuplicateHandle(stdio)");
+      return duplicate;
+    } finally { if(temporary!=IntPtr.Zero) CloseHandle(temporary); }
+  }
   public static int Run(string app, string line, string cwd, uint parentPid, ulong parentCreated) {
     IntPtr parent=OpenProcess(0x00101000,false,parentPid), job=IntPtr.Zero;
+    IntPtr input=IntPtr.Zero, output=IntPtr.Zero, error=IntPtr.Zero;
     ProcessInfo info=new ProcessInfo(); bool resumed=false;
     if(parent==IntPtr.Zero) Fail("OpenProcess(parent)");
     try {
@@ -61,7 +82,9 @@ public static class CMsparkOwnedJob {
       Limits limits=new Limits(); limits.Basic.Flags=0x2000;
       if(!SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(Limits)))) Fail("SetInformationJobObject");
       Startup start=new Startup(); start.Size=(uint)Marshal.SizeOf(typeof(Startup)); start.Flags=0x100;
-      start.Input=GetStdHandle(-10); start.Output=GetStdHandle(-11); start.Error=GetStdHandle(-12);
+      start.Input=input=InheritableStandardHandle(-10);
+      start.Output=output=InheritableStandardHandle(-11);
+      start.Error=error=InheritableStandardHandle(-12);
       if(!CreateProcess(app,new StringBuilder(line),IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,cwd,ref start,out info)) Fail("CreateProcess");
       if(!AssignProcessToJobObject(job,info.Process)) Fail("AssignProcessToJobObject");
       if(ResumeThread(info.Thread)==0xffffffff) Fail("ResumeThread");
@@ -72,6 +95,9 @@ public static class CMsparkOwnedJob {
       uint code; if(!GetExitCodeProcess(info.Process,out code)) Fail("GetExitCodeProcess");
       return unchecked((int)code);
     } finally {
+      if(input!=IntPtr.Zero) CloseHandle(input);
+      if(output!=IntPtr.Zero) CloseHandle(output);
+      if(error!=IntPtr.Zero) CloseHandle(error);
       if(!resumed && info.Process!=IntPtr.Zero) { TerminateProcess(info.Process,1); WaitForSingleObject(info.Process,1000); }
       if(info.Thread!=IntPtr.Zero) CloseHandle(info.Thread);
       if(info.Process!=IntPtr.Zero) CloseHandle(info.Process);

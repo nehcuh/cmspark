@@ -16,9 +16,9 @@ import { quoteWindowsJobArg, spawnWindowsJob } from "../../src/process/windows-j
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const alive = (pid?: number) => { if (!pid) return false; try { process.kill(pid, 0); return true } catch { return false } }
-async function until(check: () => boolean, budget = 8000) {
+async function until(check: () => boolean, budget = 8000, details?: () => string) {
   const end = Date.now() + budget
-  while (!check()) { assert.ok(Date.now() < end, "owned process condition timed out"); await pause(20) }
+  while (!check()) { assert.ok(Date.now() < end, `owned process condition timed out${details ? ": " + details() : ""}`); await pause(20) }
 }
 function ownedRoot() { return fs.mkdtempSync(path.join(os.tmpdir(), "cmspark 605 & 中文 owned-")) }
 async function stop(child?: ChildProcess) {
@@ -78,9 +78,10 @@ test("MCP natural wrapper exit drains its final response and reclaims descendant
   }
   const transport = new OwnedStdioTransport({ command, args })
   let response: any, closed = 0, descendant = 0
+  let errors = ""; transport.stderr.on("data", chunk => { errors += chunk })
   transport.onmessage = value => { response = value }; transport.onclose = () => { closed++ }
   try {
-    await transport.start(); await until(() => fs.existsSync(marker))
+    await transport.start(); await until(() => fs.existsSync(marker), 8000, () => errors)
     descendant = Number(fs.readFileSync(marker, "utf8"))
     await transport.send({ jsonrpc: "2.0", id: 1, method: "owned" })
     await until(() => closed === 1)
@@ -162,6 +163,28 @@ test("job launcher CRT quoting preserves empty, quote and trailing-backslash ope
   assert.equal(quoteWindowsJobArg("C:\\owned path\\"), '"C:\\owned path\\\\"')
 })
 
+test("native Windows job preserves bidirectional protocol pipes and ignored stdio", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
+  const root = ownedRoot(), script = path.join(root, "protocol.cjs"), marker = path.join(root, "ready")
+  fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},'ready');
+    process.stdout.write('READY\\n');process.stderr.write('OWNED_STDERR\\n');
+    require('node:readline').createInterface({input:process.stdin}).on('line',line=>process.stdout.write(JSON.stringify({echo:JSON.parse(line)})+'\\n'));
+    setTimeout(()=>{},20000);`)
+  let child: ChildProcess | undefined, output = "", errors = ""
+  try {
+    child = spawnWindowsJob(process.execPath, [script], { stdio: "pipe" })
+    child.stdout!.on("data", chunk => { output += chunk }); child.stderr!.on("data", chunk => { errors += chunk })
+    try {
+      await until(() => output.includes("READY\n") && errors.includes("OWNED_STDERR\n"), 10000)
+      child.stdin!.write(JSON.stringify({ owned: "中文 & literal" }) + "\n")
+      await until(() => output.includes(JSON.stringify({ echo: { owned: "中文 & literal" } })), 5000)
+    } catch (error) { throw new Error(`protocol pipe failure (exit=${child.exitCode}): ${output}\n${errors}`, { cause: error }) }
+    await stop(child); fs.unlinkSync(marker)
+    child = spawnWindowsJob(process.execPath, [script], { stdio: "ignore" })
+    await until(() => fs.existsSync(marker), 10000)
+    assert.ok(alive(child.pid), "ignored stdio does not prevent native startup")
+  } finally { await stop(child); fs.rmSync(root, { recursive: true, force: true }) }
+})
+
 
 test("native Windows job survives hostile server env and preserves literal argv", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
   const root = ownedRoot(), marker = path.join(root, "argv.json"), script = path.join(root, "literal argv.cjs")
@@ -173,7 +196,7 @@ test("native Windows job survives hostile server env and preserves literal argv"
     child.stderr?.on("data", () => {})
     await until(() => fs.existsSync(marker), 15000)
     const observed = JSON.parse(fs.readFileSync(marker, "utf8"))
-    assert.deepEqual(observed.args, args); assert.equal(observed.cwd, fs.realpathSync.native(root))
+    assert.deepEqual(observed.args, args); assert.equal(fs.realpathSync.native(observed.cwd), fs.realpathSync.native(root))
   } finally { await stop(child); fs.rmSync(root, { recursive: true, force: true }) }
 })
 
@@ -182,10 +205,11 @@ test("native Windows owner crash reclaims its job without touching a sentinel", 
   const jobModule = path.resolve(__dirname, "../../src/process/windows-job.js")
   fs.writeFileSync(controllerScript, `const c=require(${JSON.stringify(jobModule)}).spawnWindowsJob(process.execPath,[${JSON.stringify(f.script)}],{stdio:'ignore'});require('node:fs').writeFileSync(${JSON.stringify(launcherMarker)},String(c.pid));setTimeout(()=>{},20000);`)
   const sentinel = spawn(process.execPath, ["-e", "setTimeout(()=>{},25000)"], { stdio: "ignore", windowsHide: true })
-  const controller = spawn(process.execPath, [controllerScript], { stdio: "ignore", windowsHide: true })
+  const controller = spawn(process.execPath, [controllerScript], { stdio: ["ignore", "ignore", "pipe"], windowsHide: true })
+  let errors = ""; controller.stderr!.on("data", chunk => { errors += chunk })
   let descendant = 0, launcher = 0
   try {
-    await until(() => fs.existsSync(f.marker) && fs.existsSync(launcherMarker), 15000)
+    await until(() => fs.existsSync(f.marker) && fs.existsSync(launcherMarker), 15000, () => `controller exit=${controller.exitCode}; ${errors}`)
     descendant = Number(fs.readFileSync(f.marker, "utf8")); launcher = Number(fs.readFileSync(launcherMarker, "utf8"))
     await stop(controller)
     await until(() => !alive(descendant) && !alive(launcher))
@@ -218,9 +242,10 @@ test("native Windows ACP extensionless npm shim uses its sibling cmd through the
   fs.writeFileSync(shim + ".cmd", `@echo off\r\n"${process.execPath}" "%~dp0main.cjs" %*\r\n`)
   fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify(process.argv.slice(2)));process.stdin.resume();setTimeout(()=>{},20000);`)
   let child: ChildProcess | undefined
+  let errors = ""
   try {
-    child = spawnAcpChild(shim, ["owned argument"], { stdio: "pipe" }); child.stderr?.on("data", () => {})
-    await until(() => fs.existsSync(marker), 15000); assert.deepEqual(JSON.parse(fs.readFileSync(marker, "utf8")), ["owned argument"])
+    child = spawnAcpChild(shim, ["owned argument"], { stdio: "pipe" }); child.stderr?.on("data", chunk => { errors += chunk })
+    await until(() => fs.existsSync(marker), 15000, () => `launcher exit=${child?.exitCode}; ${errors}`); assert.deepEqual(JSON.parse(fs.readFileSync(marker, "utf8")), ["owned argument"])
   } finally { await stop(child); fs.rmSync(root, { recursive: true, force: true }) }
 })
 
