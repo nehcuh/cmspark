@@ -290,6 +290,11 @@ export class McpManager extends EventEmitter {
       this.emit("tools_changed", this.aggregated)
       this.emit("servers_updated", this.listServers())
     })
+    client.on("prompts_changed", () => {
+      if (this.clients.get(client.name) !== client) return
+      this.getAuthorizationIdentity(client.name)
+      this.emit("servers_updated", this.listServers())
+    })
     client.on("disconnected", (reason) => {
       const name = client.name
       logger.warn("mcp.client.disconnected", { server: name, reason })

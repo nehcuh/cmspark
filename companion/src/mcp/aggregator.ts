@@ -77,7 +77,12 @@ export function sanitizeSegment(name: string): string {
 }
 
 export function buildNamespacedName(serverName: string, toolName: string): string {
-  return `mcp__${sanitizeSegment(serverName)}__${sanitizeSegment(toolName)}`
+  const server = sanitizeSegment(serverName), tool = sanitizeSegment(toolName)
+  const original = `mcp__${server}__${tool}`
+  if (original.length <= 64) return original
+  // Preserve existing valid aliases; reserve both segments for overlong names.
+  const shortenedServer = server.slice(0, 28)
+  return `mcp__${shortenedServer}__${tool.slice(0, 57 - shortenedServer.length)}`
 }
 
 export function isMcpNamespaced(toolName: string): boolean {
@@ -89,6 +94,7 @@ export function aggregateMcpTools(clients: Iterable<McpClient>): AggregatedTools
   const aliases = new Map<string, McpToolRoute>()
   const metas = new Map<string, McpToolMeta>()
   const usedNames = new Set<string>()
+  const nextSuffix = new Map<string, number>()
 
   for (const client of clients) {
     if (client.connection.status !== "connected") continue
@@ -109,12 +115,12 @@ export function aggregateMcpTools(clients: Iterable<McpClient>): AggregatedTools
 
       const baseName = buildNamespacedName(serverName, tool.name)
       let finalName = baseName
-      let n = 2
+      let n = nextSuffix.get(baseName) ?? 2
       while (usedNames.has(finalName)) {
-        finalName = `${baseName}_${n}`
-        n++
-        if (n > 99) break
+        const suffix = `_${n++}`
+        finalName = `${baseName.slice(0, 64 - suffix.length)}${suffix}`
       }
+      nextSuffix.set(baseName, n)
       usedNames.add(finalName)
 
       const parameters = normalizeInputSchema(tool.inputSchema)
