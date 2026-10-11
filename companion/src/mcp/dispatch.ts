@@ -452,6 +452,7 @@ export async function executeMcpTool(
       toolName,
       ws,
       checkSelection,
+      signal,
     })
     if (expanded.retried) {
       if (expanded.ok) {
@@ -491,9 +492,13 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
   toolName: string
   ws: WebSocket
   checkSelection?: () => { error: string } | null
+  signal?: AbortSignal
 }): Promise<{ retried: boolean; ok?: boolean; error?: string }> {
+  const cancelled = { retried: true, ok: false, error: "MCP allow-dir expansion cancelled" }
+  if (opts.signal?.aborted) return cancelled
   const { securityConfirmations } = requireRt()
   const { canOfferAllowDirExpand, addFilesystemAllowDir } = await import("./allow-dir-expand")
+  if (opts.signal?.aborted) return cancelled
   const selectionDenied = opts.checkSelection?.()
   if (selectionDenied) return { retried: true, ok: false, error: selectionDenied.error }
 
@@ -512,7 +517,8 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { isCruisePathRiskAccepted } = require("../security/cruise-path") as typeof import("../security/cruise-path")
   if (isCruisePathRiskAccepted()) {
-    const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir)
+    const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir, opts.signal)
+    if (opts.signal?.aborted) return cancelled
     if (!added.ok) {
       return {
         retried: true,
@@ -556,9 +562,11 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
       autoConfirmEligible: false,
       criticalApis: ["mcp-allow-dir-expand"],
     },
-    { originWs: channel.originWs },
+    { originWs: channel.originWs, signal: opts.signal },
   )
 
+  // A response may resolve just before abort. Recheck before granting a path.
+  if (opts.signal?.aborted) return cancelled
   if (!decision.approved) {
     logger.info("mcp.allow_dir.denied", { dir: pre.dir, reason: decision.reason })
     return {
@@ -571,7 +579,8 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
 
   const selectionRevoked = opts.checkSelection?.()
   if (selectionRevoked) return { retried: true, ok: false, error: selectionRevoked.error }
-  const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir)
+  const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir, opts.signal)
+  if (opts.signal?.aborted) return cancelled
   if (!added.ok) {
     return {
       retried: true,

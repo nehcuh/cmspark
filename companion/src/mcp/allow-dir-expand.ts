@@ -5,6 +5,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import { setTimeout as delay } from "node:timers/promises"
 import { getConfig, replaceMcpServers } from "../config"
 import type { McpServerConfig, McpStdioServerConfig } from "./types"
 import { isFilesystemAllowPathArg, MCP_FILESYSTEM_PACKAGE } from "./filesystem-home"
@@ -409,7 +410,10 @@ export function canOfferAllowDirExpand(opts: {
 export async function addFilesystemAllowDir(
   serverName: string,
   dir: string,
+  signal?: AbortSignal,
 ): Promise<{ ok: true; args: string[] } | { ok: false; error: string }> {
+  const cancelled = { ok: false as const, error: "MCP allow-dir expansion cancelled" }
+  if (signal?.aborted) return cancelled
   const config = getConfig()
   const existing = config.mcp?.servers?.[serverName]
   if (!existing) return { ok: false, error: `MCP server not found: ${serverName}` }
@@ -452,6 +456,10 @@ export async function addFilesystemAllowDir(
   }
 
   const newServers = { ...(config.mcp?.servers || {}), [serverName]: next as McpServerConfig }
+  // This synchronous write is the commit point. Cancellation before it must
+  // preserve config; after it, finish reconciliation rather than rolling back
+  // an approved change or overwriting a subsequent configuration update.
+  if (signal?.aborted) return cancelled
   replaceMcpServers(newServers)
   // applyConfig is triggered by CONFIG_CHANGE_EVENT; give stdio a moment to restart
   try {
@@ -459,7 +467,14 @@ export async function addFilesystemAllowDir(
   } catch {
     /* listener may already apply */
   }
+  if (signal?.aborted) return cancelled
   // Brief wait for tools to re-register
-  await new Promise((r) => setTimeout(r, 400))
+  try {
+    await delay(400, undefined, { signal })
+  } catch (error) {
+    if (signal?.aborted) return cancelled
+    throw error
+  }
+  if (signal?.aborted) return cancelled
   return { ok: true, args: next.args || [] }
 }
