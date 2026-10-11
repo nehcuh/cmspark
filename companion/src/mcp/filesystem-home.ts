@@ -97,6 +97,14 @@ export type EnsureFilesystemAllowlistOpts = {
   pathExists?: (absPath: string) => boolean
 }
 
+// Roots are protocol URIs, not CLI operands. Reinterpreting an empty string,
+// relative path or ordinary pathname as cwd would broaden an explicit sandbox.
+function resolveFilesystemRoot(raw: unknown, platform: NodeJS.Platform): string {
+  if (typeof raw !== "string" || !raw.startsWith("file://")) return ""
+  try { return fileURLToPath(raw, { windows: platform === "win32" }) }
+  catch { return "" }
+}
+
 function defaultPathExists(absPath: string): boolean {
   try {
     return fs.existsSync(absPath) && fs.statSync(absPath).isDirectory()
@@ -152,7 +160,7 @@ export function ensureFilesystemAllowlist(
         pruned = true
         return false
       }
-      const resolved = resolveFilesystemAllowPathForExists(r.uri, platform, homeRaw)
+      const resolved = resolveFilesystemRoot(r.uri, platform)
       if (resolved && pathExists(resolved)) return true
       pruned = true
       return false
@@ -160,10 +168,7 @@ export function ensureFilesystemAllowlist(
     roots = kept
     // Explicit roots are authoritative. Retain an invalid original list so
     // connect can fail closed; upstream otherwise falls back to CLI dirs.
-    if (kept.length === 0) {
-      if (cfg.roots?.some(root => typeof root?.uri === "string" && root.uri.length > 0)) return cfg
-      roots = undefined
-    }
+    if (kept.length === 0) return cfg
   }
 
   const hasDir = args.length > operandStart
@@ -214,9 +219,7 @@ export function defaultFilesystemServerConfig(
 /** Restrict the initial CLI sandbox before the server's asynchronous roots update. */
 export function filesystemStartupConfig(cfg: McpServerConfig): McpServerConfig {
   if (!isLocalOfficialFilesystem(cfg) || cfg.transport !== "stdio" || !cfg.roots?.length) return cfg
-  const declared = cfg.roots.filter(root => typeof root?.uri === "string" && root.uri.length > 0)
-  if (!declared.length) return cfg
-  const dirs = declared.map(root => resolveFilesystemAllowPathForExists(root.uri, process.platform, filesystemServerHome(cfg))).filter(defaultPathExists)
+  const dirs = cfg.roots.map(root => resolveFilesystemRoot(root?.uri, process.platform)).filter(dir => dir && defaultPathExists(dir))
   if (!dirs.length) throw new Error("MCP filesystem has no valid configured roots; restore the directory or update roots")
   return { ...cfg, args: [...(cfg.args ?? []).slice(0, filesystemDirectoryArgIndex(cfg)), ...dirs] }
 }
