@@ -20,12 +20,12 @@ try {
         }
     }
     Copy-Item -LiteralPath (Join-Path $repo 'companion\uninstall.bat') -Destination $inside
-    $profile = Join-Path $root 'profile'
-    $startup = Join-Path $profile 'Microsoft\Windows\Start Menu\Programs\Startup'
+    $fixtureProfile = Join-Path $root 'profile'
+    $startup = Join-Path $fixtureProfile 'Microsoft\Windows\Start Menu\Programs\Startup'
     New-Item -ItemType Directory -Path $startup -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $startup 'CMspark.lnk') -Value 'fixture'
-    New-Item -ItemType Directory -Path (Join-Path $profile '.cmspark-agent') -Force | Out-Null
-    Set-Content -LiteralPath (Join-Path $profile '.cmspark-agent\keep.txt') -Value 'keep'
+    New-Item -ItemType Directory -Path (Join-Path $fixtureProfile '.cmspark-agent') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $fixtureProfile '.cmspark-agent\keep.txt') -Value 'keep'
     Set-Content -LiteralPath (Join-Path $inside 'cmspark-agent.log') -Value 'fixture'
     Set-Content -LiteralPath (Join-Path $inside 'cmspark-agent.lock') -Value 'fixture'
     $bin = Join-Path $root 'bin'
@@ -49,8 +49,8 @@ try {
     $start.CreateNoWindow = $true
     $start.Environment['CMSPARK_SMOKE_UNINSTALL'] = Join-Path $inside 'uninstall.bat'
     $start.Environment['CMSPARK_SMOKE_INPUT'] = Join-Path $root 'input.txt'
-    $start.Environment['APPDATA'] = $profile
-    $start.Environment['USERPROFILE'] = $profile
+    $start.Environment['APPDATA'] = $fixtureProfile
+    $start.Environment['USERPROFILE'] = $fixtureProfile
     $start.Environment['PATH'] = $bin + ';' + $env:PATH
     $runner = [Diagnostics.Process]::Start($start)
     if (-not $runner.WaitForExit(30000)) { throw 'ZIP uninstaller timed out' }
@@ -61,7 +61,7 @@ try {
     foreach ($name in @('cmspark-agent.log', 'cmspark-agent.lock')) {
         if (Test-Path -LiteralPath (Join-Path $inside $name)) { throw "full uninstall did not remove $name" }
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $profile '.cmspark-agent\keep.txt'))) { throw 'declined user data deletion was ignored' }
+    if (-not (Test-Path -LiteralPath (Join-Path $fixtureProfile '.cmspark-agent\keep.txt'))) { throw 'declined user data deletion was ignored' }
     Write-Host 'PASS: complete ZIP uninstall stopped both owned runtimes; sibling runtimes and declined data survived'
 } finally {
     if ($runner -and -not $runner.HasExited) { Stop-Process -Id $runner.Id -Force -ErrorAction SilentlyContinue }
