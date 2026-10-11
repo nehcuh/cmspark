@@ -8,6 +8,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { EventEmitter } from "events"
+import os from "node:os"
 import { McpManager } from "../src/mcp/manager.js"
 import { McpClient } from "../src/mcp/client.js"
 import {
@@ -24,7 +25,8 @@ import type { McpServerConfig, McpServerMeta, McpConnectionStatus } from "../src
 const stdioCfg = (overrides: Partial<any> = {}): McpServerConfig => ({
   transport: "stdio",
   command: "npx",
-  args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+  // The real sanitizer prunes missing roots: /tmp is not portable to Windows.
+  args: ["-y", "@modelcontextprotocol/server-filesystem", os.tmpdir()],
   enabled: true,
   trust_level: "first-use",
   ...overrides,
@@ -313,7 +315,7 @@ test("applyConfig: changed server (requiresRestart) triggers stop + start", asyn
   assert.equal(startCalled, true, "startClient should be called with the new config")
 })
 
-test("applyConfig: soft-only change (trust_level) does NOT restart, calls updateConfig", async () => {
+test("applyConfig: soft-only change (trust_level) does NOT restart, calls updateConfig", async t => {
   const { manager, fake } = makeManagerWithFakeClient("fs", stdioCfg({ trust_level: "first-use" }))
 
   let updateConfigCalled = false
@@ -326,6 +328,10 @@ test("applyConfig: soft-only change (trust_level) does NOT restart, calls update
   let closeCalled = false
   fake.close = async () => { closeCalled = true }
 
+  // A fixture regression must fail without ever launching a real MCP server.
+  let startCalled = false
+  t.mock.method(manager as any, "startClient", async () => { startCalled = true })
+
   // Apply config with only trust_level changed
   await manager.applyConfig({
     enabled: true,
@@ -333,6 +339,7 @@ test("applyConfig: soft-only change (trust_level) does NOT restart, calls update
   })
 
   assert.equal(closeCalled, false, "soft-only change must NOT close the client")
+  assert.equal(startCalled, false, "soft-only change must NOT start a replacement")
   assert.equal(updateConfigCalled, true, "soft-only change must call client.updateConfig")
   assert.equal(capturedConfig!.trust_level, "manual")
 })
