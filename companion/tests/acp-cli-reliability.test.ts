@@ -13,6 +13,18 @@ import * as launch from "../src/acp/win-spawn"
 import { AcpManager } from "../src/acp/manager"
 import { initDataDir, saveConfig } from "../src/config"
 
+// Error injection and fake-clock advancement belong after the real start
+// path installs child listeners, including asynchronous Windows preparation.
+function observeMockSpawn(t: TestContext, child: any) {
+  let observed!: () => void
+  const spawned = new Promise<void>(resolve => { observed = resolve })
+  t.mock.method(launch, "spawnAcpChild", () => { observed(); return child })
+  return (pending: ReturnType<AcpManager["start"]>) => Promise.race([
+    spawned,
+    pending.then(result => { throw new Error(`owned startup ended before spawn: ${JSON.stringify(result)}`) }),
+  ])
+}
+
 async function setup(t: TestContext) {
   await initDataDir()
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-cli-owned-")))
@@ -37,9 +49,10 @@ for (const stream of ["stdin", "stdout", "stderr"] as const) {
     const { manager, offer, terminals } = await setup(t)
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() })
     if (stream === "stdin") child.stdin = new Writable({ write(_b, _e, done) { setImmediate(() => done(Object.assign(new Error("owned EPIPE"), { code: "EPIPE" }))) } }) as PassThrough
-    t.mock.method(launch, "spawnAcpChild", () => child as any)
+    const waitForSpawn = observeMockSpawn(t, child)
     t.mock.method(launch, "killAcpChild", () => {})
     const session = offer(stream), pending = manager.start(session.session_id)
+    await waitForSpawn(pending)
     if (stream !== "stdin") setImmediate(() => child[stream].emit("error", new Error("owned stream failure")))
     const result = await pending
     assert.equal(result.ok, false)
@@ -106,11 +119,12 @@ for (const afterTimeout of [false, true]) test(`CLI late pipe errors retain owne
   const { manager, offer, root } = await setup(t)
   const child = Object.assign(new EventEmitter(), { pid: 98765, exitCode: null, signalCode: null,
     stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() })
-  t.mock.method(launch, "spawnAcpChild", () => child as any)
+  const waitForSpawn = observeMockSpawn(t, child)
   let kills = 0
   t.mock.timers.enable({ apis: ["setTimeout"] })
   t.mock.method(launch, "killAcpChild", () => { kills++ })
   const session = offer("failing"), pending = manager.start(session.session_id)
+  await waitForSpawn(pending)
   if (afterTimeout) t.mock.timers.tick(5000)
   child.stdout.emit("error", new Error("owned read error"))
   assert.equal((await pending).ok, false)
@@ -132,11 +146,12 @@ test("CLI timeout handles synchronous ChildProcess.kill error reentry without or
     stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() })
   const eperm = [...require("node:util").getSystemErrorMap()].find(([, value]: [number, string[]]) => value[0] === "EPERM")![0]
   ;(child as any)._handle = { kill: () => eperm }
-  t.mock.method(launch, "spawnAcpChild", () => child as any)
+  const waitForSpawn = observeMockSpawn(t, child)
   t.mock.timers.enable({ apis: ["setTimeout"] })
   let stops = 0
   t.mock.method(launch, "killAcpChild", (_child: cp.ChildProcess, signal: NodeJS.Signals) => { stops++; child.kill(signal) })
   const session = offer("reentrant"), pending = manager.start(session.session_id)
+  await waitForSpawn(pending)
   t.mock.timers.tick(5000)
   assert.equal((await pending).ok, false)
   assert.match(session.error!, /EPERM/)
