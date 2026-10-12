@@ -136,7 +136,14 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
  try{
   await initDataDir();saveConfig({acp:{enabled:true,policy:{require_workspace:true,force_confirm_session_start:true,default_profile:'review_readonly'},servers:{owned:{display_name:'Owned memory fixture',transport:'stdio',enabled:true,command:process.execPath,args:[script],protocol:'cli',policy:{profile:'review_readonly',max_handback_chars:1000,session_timeout_ms:50000}}}},coding_handoff:{open_local_terminal:false}});
   const offered=manager.propose({threadId:'owned',agentId:'owned',goal:'bounded line fixture',workspaceRoot:root});if(!offered.ok)throw Error(JSON.stringify(offered));
-  pending=manager.start(offered.session.session_id);child=manager.processes.get(offered.session.session_id);if(!child)throw Error('own child not tracked');
+  let startResult;pending=manager.start(offered.session.session_id).then(result=>{startResult=result;return result});
+  // Cold Windows ownership preparation is asynchronous. Observe the actual
+  // tracked child before sampling; never warm the cache or skip native spawn.
+  const startupDeadline=Date.now()+20000;
+  while(!(child=manager.processes.get(offered.session.session_id))){
+   if(startResult)throw Error('owned startup ended before tracking: '+JSON.stringify(startResult));
+   if(Date.now()>startupDeadline)throw Error('owned child tracking deadline');await pause(10);
+  }
   child.stderr.on('data',()=>{});let bytes=0;child.stdout.on('data',buf=>{bytes+=buf.length});
   const sample=async phase=>{await pause(50);for(let i=0;i<3;i++)global.gc();await pause(30);console.log(JSON.stringify({ownedMemory:true,mode,phase,bytes,heap:process.memoryUsage().heapUsed,agentTextChars:offered.session.agent_text?.length||0,state:offered.session.state}));};
   await sample(0);
