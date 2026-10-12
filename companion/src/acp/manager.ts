@@ -26,6 +26,7 @@ import {
 } from "./progress-caps"
 import { buildAcpAgentEnv } from "./agent-env"
 import { onPtyAgentSpawned } from "../pty/session"
+import { prepareWindowsJob } from "../process/windows-job"
 
 export type AcpHandbackSink = (info: {
   session: AcpSessionRecord
@@ -67,6 +68,7 @@ export class AcpManager {
   private sessions = new Map<string, AcpSessionRecord>()
   private processes = new Map<string, ChildProcessWithoutNullStreams>()
   private ownedChildren = new Set<ChildProcessWithoutNullStreams>()
+  private startupPreparations = new Map<string, { controller: AbortController; done: Promise<void> }>()
   private trackChild(id: string, child: ChildProcessWithoutNullStreams): void {
     this.processes.set(id, child)
     this.ownedChildren.add(child)
@@ -619,6 +621,32 @@ export class AcpManager {
       session.state = "closed"
       return { ok: false, error: "acp: cancelled during startup" }
     }
+    if (process.platform === "win32") {
+      const controller = new AbortController()
+      const timer = setTimeout(() => {
+        session.partial = true
+        controller.abort()
+      }, server.policy.session_timeout_ms ?? 15 * 60_000)
+      const done = prepareWindowsJob(controller.signal)
+      this.startupPreparations.set(sessionId, { controller, done })
+      try { await done }
+      catch (e: any) {
+        this.runningCount = Math.max(0, this.runningCount - 1)
+        session.state = "closed"
+        const error = session.mode_c_open_cancelled ? "acp: cancelled during startup" : e?.message || String(e)
+        session.error = session.error || error
+        this.emitTerminal(session, session.mode_c_open_cancelled ? "cancelled" : "failed")
+        return { ok: false, error }
+      } finally {
+        clearTimeout(timer)
+        this.startupPreparations.delete(sessionId)
+      }
+      if (this.shuttingDown || session.mode_c_open_cancelled) {
+        this.runningCount = Math.max(0, this.runningCount - 1)
+        session.state = "closed"
+        return { ok: false, error: "acp: cancelled during startup" }
+      }
+    }
     // --- S1: try real ACP JSON-RPC Client ---
     if (protocolMode === "auto" || protocolMode === "acp") {
       let probeChild: ChildProcessWithoutNullStreams | undefined
@@ -1040,6 +1068,7 @@ export class AcpManager {
     // (and Mode C terminal agent may still be running).
     session.partial = true
     session.mode_c_open_cancelled = true
+    this.startupPreparations.get(sessionId)?.controller.abort()
     if (session.local_terminal === "pending") {
       session.local_terminal = "skipped"
     }
@@ -1089,10 +1118,11 @@ export class AcpManager {
     this.shuttingDown = true
     this.unsubscribeEmbedSpawn()
     const children = [...this.ownedChildren]
+    const preparations = [...this.startupPreparations.values()]
     for (const [id, session] of this.sessions) {
       if (session.state === "running" || this.processes.has(id)) this.cancel(id)
     }
-    await Promise.all(children.map(closeAcpChild))
+    await Promise.all([...children.map(closeAcpChild), ...preparations.map(p => p.done.catch(() => {}))])
   }
 }
 

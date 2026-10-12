@@ -236,6 +236,12 @@ jobs:
           cd companion
           node scripts/run-tests.mjs .test-dist/tests/integration/cross-os-mcp-607.test.js .test-dist/tests/integration/mcp-boundaries-607.test.js .test-dist/tests/integration/process-isolation-607.test.js .test-dist/tests/integration/acp-slot-boundaries-607.test.js
 
+      - name: "Cancellable Windows ownership startup (#609)"
+        shell: bash
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/windows-owner.test.js .test-dist/tests/integration/windows-owner-609.test.js
+
       - name: "Windows reliability and confirmation regressions (#592, #595, #598, #599)"
         if: matrix.os == 'windows-latest'
         shell: pwsh

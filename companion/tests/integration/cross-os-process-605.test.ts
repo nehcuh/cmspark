@@ -12,7 +12,7 @@ import { requestDaemonStop } from "../../src/daemon"
 import { getLockPath } from "../../src/platform"
 import { spawnAcpChild } from "../../src/acp/win-spawn"
 import { OwnedStdioTransport } from "../../src/mcp/stdio-transport"
-import { quoteWindowsJobArg, spawnWindowsJob } from "../../src/process/windows-job"
+import { prepareWindowsJob, quoteWindowsJobArg, spawnWindowsJob } from "../../src/process/windows-job"
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const alive = (pid?: number) => { if (!pid) return false; try { process.kill(pid, 0); return true } catch { return false } }
@@ -171,6 +171,7 @@ test("native Windows job preserves bidirectional protocol pipes and ignored stdi
     setTimeout(()=>{},20000);`)
   let child: ChildProcess | undefined, output = "", errors = ""
   try {
+    await prepareWindowsJob()
     child = spawnWindowsJob(process.execPath, [script], { stdio: "pipe" })
     child.stdout!.on("data", chunk => { output += chunk }); child.stderr!.on("data", chunk => { errors += chunk })
     try {
@@ -194,6 +195,7 @@ test("native Windows job survives hostile server env and preserves literal argv"
   fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify({args:process.argv.slice(2),cwd:process.cwd()}));process.stdin.resume();setTimeout(()=>{},20000);`)
   let child: ChildProcess | undefined
   try {
+    await prepareWindowsJob()
     child = spawnWindowsJob(process.execPath, [script, ...args], { env: { ...process.env, SystemRoot: root, ComSpec: path.join(root, "fake.exe") }, cwd: path.relative(process.cwd(), root), stdio: "pipe" })
     child.stderr?.on("data", () => {})
     await until(() => fs.existsSync(marker), 15000)
@@ -205,7 +207,7 @@ test("native Windows job survives hostile server env and preserves literal argv"
 test("native Windows owner crash reclaims its job without touching a sentinel", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
   const root = ownedRoot(), f = childFixture(root, "shutdown"), controllerScript = path.join(root, "controller.cjs"), launcherMarker = path.join(root, "launcher.pid")
   const jobModule = path.resolve(__dirname, "../../src/process/windows-job.js")
-  fs.writeFileSync(controllerScript, `const c=require(${JSON.stringify(jobModule)}).spawnWindowsJob(process.execPath,[${JSON.stringify(f.script)}],{stdio:'ignore'});require('node:fs').writeFileSync(${JSON.stringify(launcherMarker)},String(c.pid));setTimeout(()=>{},20000);`)
+  fs.writeFileSync(controllerScript, `(async()=>{const job=require(${JSON.stringify(jobModule)});await job.prepareWindowsJob();const c=job.spawnWindowsJob(process.execPath,[${JSON.stringify(f.script)}],{stdio:'ignore'});require('node:fs').writeFileSync(${JSON.stringify(launcherMarker)},String(c.pid));setTimeout(()=>{},20000)})().catch(e=>{console.error(e);process.exit(1)});`)
   const sentinel = spawn(process.execPath, ["-e", "setTimeout(()=>{},25000)"], { stdio: "ignore", windowsHide: true })
   const controller = spawn(process.execPath, [controllerScript], { stdio: ["ignore", "ignore", "pipe"], windowsHide: true })
   let errors = ""; controller.stderr!.on("data", chunk => { errors += chunk })
@@ -246,6 +248,7 @@ test("native Windows ACP extensionless npm shim uses its sibling cmd through the
   let child: ChildProcess | undefined
   let errors = ""
   try {
+    await prepareWindowsJob()
     child = spawnAcpChild(shim, ["owned argument"], { stdio: "pipe" }); child.stderr?.on("data", chunk => { errors += chunk })
     await until(() => fs.existsSync(marker), 15000, () => `launcher exit=${child?.exitCode}; ${errors}`); assert.deepEqual(JSON.parse(fs.readFileSync(marker, "utf8")), ["owned argument"])
   } finally { await stop(child); fs.rmSync(root, { recursive: true, force: true }) }
