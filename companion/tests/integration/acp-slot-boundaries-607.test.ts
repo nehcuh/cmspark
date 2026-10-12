@@ -23,16 +23,17 @@ for (const mode of ["init-fail", "new-fail", "success", "failure", "cancel", "st
     const script = path.join(root, "owned.cjs"), proto = path.join(root, "protocol.json")
     const newStage = path.join(root, "new.json"), prompt = path.join(root, "prompt.json"), cli = path.join(root, "cli.json")
     fs.writeFileSync(script, `const fs=require('node:fs');const mode=${JSON.stringify(mode)};process.on('SIGTERM',()=>{});let raw=false;
+      const publish=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value));fs.renameSync(file+'.tmp',file)};
       const write=(id,result,error)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,...(error?{error:{code:-1,message:error}}:{result})})+String.fromCharCode(10));
       require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
         let m;try{m=JSON.parse(line)}catch{
           if(raw)return;raw=true;const old=JSON.parse(fs.readFileSync(${JSON.stringify(proto)},'utf8'));
           let oldAlive=true;try{process.kill(old.pid,0)}catch{oldAlive=false}
-          fs.writeFileSync(${JSON.stringify(cli)},JSON.stringify({pid:process.pid,oldAlive}));
+          publish(${JSON.stringify(cli)},{pid:process.pid,oldAlive});
           process.stdout.write('owned cli');setTimeout(()=>process.exit(0),100);return;
         }
         if(m.method==='initialize'){
-          fs.writeFileSync(${JSON.stringify(proto)},JSON.stringify({pid:process.pid}));
+          publish(${JSON.stringify(proto)},{pid:process.pid});
           if(mode==='init-fail')write(m.id,null,'owned initialize rejected');
           else write(m.id,{protocolVersion:1,agentCapabilities:{},agentInfo:{name:'owned',version:'1'}});
         }
