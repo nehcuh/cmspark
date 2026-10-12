@@ -6,7 +6,7 @@ import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/s
 import type { StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
-import { spawnWindowsJob } from "../process/windows-job"
+import { prepareWindowsJob, spawnWindowsJob } from "../process/windows-job"
 
 const spawn: (command: string, args: string[], opts: SpawnOptions) => ChildProcess = require("cross-spawn")
 
@@ -19,6 +19,8 @@ export class OwnedStdioTransport implements Transport {
   private started = false
   private closed = false
   private closing?: Promise<void>
+  private readonly startup = new AbortController()
+  private preparing?: Promise<void>
   private readonly buffer = new ReadBuffer()
 
   constructor(private readonly _serverParams: StdioServerParameters) {}
@@ -29,6 +31,11 @@ export class OwnedStdioTransport implements Transport {
     this.started = true
     let child: ChildProcess
     try {
+      if (process.platform === "win32") {
+        this.preparing = prepareWindowsJob(this.startup.signal)
+        await this.preparing
+      }
+      if (this.closed) throw new Error("MCP stdio transport closed during startup")
       child = (process.platform === "win32" ? spawnWindowsJob : spawn)(this._serverParams.command, this._serverParams.args ?? [], {
       env: this._serverParams.env, cwd: this._serverParams.cwd, shell: false,
       detached: process.platform !== "win32", windowsHide: true,
@@ -75,6 +82,7 @@ export class OwnedStdioTransport implements Transport {
   private beginClose(drain: boolean): Promise<void> {
     if (!this.closing) {
       this.closed = true
+      this.startup.abort()
       // Publish the promise before closeChild can synchronously invoke onclose.
       this.closing = Promise.resolve().then(() => this.closeChild(drain))
     }
@@ -82,6 +90,7 @@ export class OwnedStdioTransport implements Transport {
   }
 
   private async closeChild(drain: boolean): Promise<void> {
+    await this.preparing?.catch(() => {})
     const child = this.child
     if (child?.pid) {
       const pid = child.pid

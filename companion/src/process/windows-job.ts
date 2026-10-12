@@ -1,12 +1,14 @@
 // Start an owned Windows process suspended, assign it to a non-inherited
 // kill-on-close Job Object, then resume. Kernel ownership also covers a wrapper
 // that exits before its descendants and a forcefully terminated Companion.
-import { spawn, execFileSync, type ChildProcess, type SpawnOptions } from "node:child_process"
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { randomBytes } from "node:crypto"
 import { windowsCmdExePath, windowsPowerShellExePath } from "../acp/win-spawn"
 import { windowsTargetEnvironment } from "./windows-env"
+import { windowsJobOwner } from "./windows-owner"
+export { prepareWindowsJob } from "./windows-owner"
 
 const ownedJobChildren = new WeakSet<ChildProcess>()
 export const isOwnedWindowsJobChild = (child: ChildProcess): boolean => ownedJobChildren.has(child)
@@ -134,24 +136,14 @@ public static class CMsparkOwnedJob {
 export function quoteWindowsJobArg(value: string): string {
   return '"' + value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"'
 }
-let ownerCreated: string | undefined
-function ownerCreationFileTime(): string {
-  if (ownerCreated) return ownerCreated
-  // Bind the launcher to this process instance, not a reusable PID. Control
-  // binaries always use the host environment, never an MCP server's overrides.
-  const value = execFileSync(windowsPowerShellExePath(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-    `(Get-Process -Id ${process.pid}).StartTime.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)`],
-    { encoding: "utf8", windowsHide: true, timeout: 10000 }).trim()
-  if (!/^\d+$/.test(value)) throw new Error("Cannot establish Windows process ownership")
-  return ownerCreated = value
-}
 const psLiteral = (value: string) => "'" + value.replace(/'/g, "''") + "'"
 
+/** Caller must await prepareWindowsJob within its cancellable startup lifetime. */
 export function spawnWindowsJob(command: string, args: string[], options: SpawnOptions): ChildProcess {
   // Isolate cross-spawn's pinned parser so npm shims retain their existing argv
   // behavior. Never trust ComSpec or PATH to select the Windows control shell.
   const cwd = options.cwd ? path.resolve(options.cwd instanceof URL ? fileURLToPath(options.cwd) : options.cwd) : undefined
-  const created = ownerCreationFileTime()
+  const created = windowsJobOwner.created
   const parsed = require("cross-spawn")._parse(command, args, { ...options, shell: false })
   if (!parsed.file) throw Object.assign(new Error(`spawn ${command} ENOENT`), { code: "ENOENT" })
   const app = parsed.options.windowsVerbatimArguments ? windowsCmdExePath() : parsed.command === command ? parsed.file : parsed.command

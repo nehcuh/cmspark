@@ -5,7 +5,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { type ChildProcess } from "node:child_process"
-import { spawnWindowsJob } from "../../src/process/windows-job"
+import { prepareWindowsJob, spawnWindowsJob } from "../../src/process/windows-job"
 import { buildMcpStdioEnv } from "../../src/mcp/transport"
 import { McpClient } from "../../src/mcp/client"
 
@@ -38,6 +38,7 @@ for (const environment of ["full", "minimal"] as const) {
       process.env.CMSPARK_ENV_HOST_SECRET = "owned-probe-secret"
       try {
         const env = { ...(environment === "minimal" ? buildMcpStdioEnv() : process.env), CMSPARK_ENV_VALUE: "中文=x&literal", CMSPARK_ENV_EMPTY: "", CMSPARK_ENV_LARGE: "中".repeat(20000) }
+        await prepareWindowsJob()
         child = spawnWindowsJob(process.execPath, [script], { env, stdio: "pipe" })
         child.stdout!.on("data", chunk => { output += chunk }); child.stderr!.on("data", chunk => { errors += chunk })
         child.stdin!.on("error", error => { errors += error.message })
