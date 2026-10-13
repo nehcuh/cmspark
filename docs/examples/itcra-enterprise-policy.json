@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "subject": "user-a",
+  "instance_id": "REPLACE_WITH_REGISTERED_INSTANCE_ID",
+  "profile_id": "REPLACE_WITH_ACTUAL_EXTENSION_PROFILE_UUID",
+  "revision": "site-verified-r1",
+  "expires_at": "2026-10-31T00:00:00.000Z",
+  "authority_public_key": "REPLACE_WITH_ED25519_SPKI_PEM_PUBLIC_KEY",
+  "tools": ["create_tab", "navigate", "get_page_text", "screenshot", "click", "type", "scroll"],
+  "navigation": [{"origin": "https://business.example", "path": "/app"}],
+  "evidence": [{"origin": "https://business.example", "path": "/app"}],
+  "login": [{"origin": "https://sso.example", "path": "/login"}],
+  "ready": [{"selector": "[data-itcra-authenticated='true']"}],
+  "login_markers": [{"selector": "[data-itcra-qr-login='true']"}],
+  "actions": [
+    {"id": "next-sheet", "tool": "click", "effect": "read_only", "selector": "button[data-action='next-sheet']", "target": {"tag": "button", "attributes": {"data-action": "next-sheet"}}},
+    {"id": "query", "tool": "type", "effect": "read_only", "selector": "input[name='query']", "target": {"tag": "input", "attributes": {"type": "search", "name": "query"}}, "max_length": 256},
+    {"id": "delete-test-record", "tool": "click", "effect": "write", "selector": "button[data-action='delete-test-record']", "target": {"tag": "button", "attributes": {"data-action": "delete-test-record"}, "text": "Delete test record"}}
+  ]
+}

@@ -12,6 +12,7 @@ import * as crypto from "crypto"
 import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
 import { appendCapabilityAudit } from "../packs/audit-log"
+import { parseEnterprisePolicy, enterpriseInstance, deny, type EnterprisePolicy } from "./enterprise-policy"
 import { contextPermissionFromRecord, parseContextPermission, OUTBOUND_CONTEXT_PROFILE, type ContextPermission, type LiveContextGrant } from "./context-permission"
 export { OUTBOUND_CONTEXT_PROFILE } from "./context-permission"
 
@@ -51,6 +52,7 @@ export type OutboundGrantRecord = Partial<ContextPermission> & {
   /** Durable page-export consent on the grant file (not the in-process disclosure Map). */
   allow_page_export: boolean
   allow_page_export_at: string | null
+  enterprise_policy?: EnterprisePolicy
 }
 
 type GrantsFile = { grants: OutboundGrantRecord[] }
@@ -63,6 +65,7 @@ export type IssueGrantOpts = Partial<ContextPermission> & {
   profile?: string
   /** Persist page-export consent on the grant; default false. Does not arm disclosure. */
   allow_page_export?: boolean
+  enterprise_policy?: unknown
 }
 
 export type IssueGrantResult = {
@@ -134,6 +137,26 @@ function saveFile(data: GrantsFile): void {
   atomicWriteJSON(grantsFilePath(), data, 0o600)
 }
 
+/** Authority mutations serialize across CLI/Companion processes. Never steal
+ * a crashed writer's lock: operators must quiesce writers before recovery. */
+function mutateGrants<T>(mutation: (file: GrantsFile) => T): T {
+  const lock = grantsFilePath() + ".lock"
+  let fd: number
+  try { fs.mkdirSync(path.dirname(lock), { recursive: true, mode: 0o700 }); fd = fs.openSync(lock, "wx", 0o600) }
+  catch (error) { throw new Error((error as NodeJS.ErrnoException).code === "EEXIST" ? "GRANT_STORE_BUSY" : "GRANT_STORE_UNAVAILABLE") }
+  try { return mutation(loadFile()) }
+  finally { try { fs.closeSync(fd) } finally { fs.unlinkSync(lock) } }
+}
+function usagePath(id: string): string { return path.join(getConfigDir(), "outbound-grant-usage", hashToken(id) + ".json") }
+function lastUsed(id: string, fallback: string | null): string | null {
+  try {
+    const file = usagePath(id)
+    if (fs.statSync(file).size > 512) return fallback
+    const value = JSON.parse(fs.readFileSync(file, "utf8")).last_used_at
+    return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : fallback
+  } catch { return fallback }
+}
+
 function audit(type: string, fields: Record<string, unknown>): void {
   try {
     appendCapabilityAudit({
@@ -177,6 +200,13 @@ export function issueOutboundGrant(opts: IssueGrantOpts): IssueGrantResult {
   const expires_at =
     ttl > 0 ? new Date(Date.now() + ttl).toISOString() : null
 
+  const enterprise_policy = opts.enterprise_policy === undefined ? undefined : parseEnterprisePolicy(opts.enterprise_policy, profile)
+  if (enterprise_policy) {
+    const instance = enterpriseInstance()
+    if (!expires_at || enterprise_policy.instance_id !== instance.instance_id || enterprise_policy.profile_id !== instance.profile_id || enterprise_policy.subject !== instance.subject) deny("ENTERPRISE_BINDING_INVALID")
+    if (Date.parse(enterprise_policy.expires_at) > Date.parse(expires_at)) deny("POLICY_OUTLIVES_GRANT")
+  }
+
   const token = generateOutboundGrantToken()
   const id = "gr_" + crypto.randomBytes(12).toString("hex")
   const allow_page_export = !!opts.allow_page_export
@@ -196,11 +226,10 @@ export function issueOutboundGrant(opts: IssueGrantOpts): IssueGrantResult {
     allow_page_export,
     allow_page_export_at: allow_page_export ? created_at : null,
     ...context,
+    ...(enterprise_policy ? { enterprise_policy } : {}),
   }
 
-  const file = loadFile()
-  file.grants.push(rec)
-  saveFile(file)
+  mutateGrants(file => { file.grants.push(rec); saveFile(file) })
   audit("outbound_mcp.grant_issue", {
     grant_id: id,
     caller_id,
@@ -286,6 +315,13 @@ export function verifyOutboundGrantToken(
     }
   }
 
+  // A malformed persisted enterprise field must not turn into a personal key.
+  if (Object.hasOwn(rec, "enterprise_policy")) {
+    try { requireEnterpriseGrant(rec.id) } catch {
+      return { ok: false, error_code: "GRANT_REQUIRED", error: "enterprise grant unavailable", http_status: 403 }
+    }
+  }
+
   const bodyCaller = (bodyCallerId || "").trim()
   if (bodyCaller && bodyCaller !== rec.caller_id) {
     return {
@@ -296,10 +332,12 @@ export function verifyOutboundGrantToken(
     }
   }
 
-  // Touch last_used (best-effort)
+  // Authentication never rewrites authority. Usage races are best-effort
+  // telemetry and cannot restore a revoked grant or old policy.
   try {
-    rec.last_used_at = nowIso()
-    saveFile(file)
+    const usage = usagePath(rec.id)
+    fs.mkdirSync(path.dirname(usage), { recursive: true, mode: 0o700 })
+    atomicWriteJSON(usage, { last_used_at: nowIso() }, 0o600)
   } catch {
     /* ignore */
   }
@@ -319,40 +357,57 @@ export function verifyOutboundGrantToken(
 }
 
 export function revokeOutboundGrant(grantId: string): boolean {
-  const file = loadFile()
-  const rec = file.grants.find((g) => g.id === grantId)
-  if (!rec) return false
-  if (!rec.revoked_at) {
-    rec.revoked_at = nowIso()
-    saveFile(file)
-    audit("outbound_mcp.grant_revoke", {
-      grant_id: rec.id,
-      caller_id: rec.caller_id,
-    })
-  }
-  return true
+  return mutateGrants(file => {
+    const rec = file.grants.find((g) => g.id === grantId)
+    if (!rec) return false
+    if (!rec.revoked_at) {
+      rec.revoked_at = nowIso()
+      saveFile(file)
+      audit("outbound_mcp.grant_revoke", {
+        grant_id: rec.id,
+        caller_id: rec.caller_id,
+      })
+    }
+    return true
+  })
 }
 
 export function revokeAllOutboundGrants(): number {
-  const file = loadFile()
-  let n = 0
-  const at = nowIso()
-  for (const g of file.grants) {
-    if (!g.revoked_at) {
-      g.revoked_at = at
-      n++
+  return mutateGrants(file => {
+    let n = 0
+    const at = nowIso()
+    for (const g of file.grants) {
+      if (!g.revoked_at) {
+        g.revoked_at = at
+        n++
+      }
     }
-  }
-  if (n > 0) {
-    saveFile(file)
-    audit("outbound_mcp.grant_revoke_all", { count: n })
-  }
-  return n
+    if (n > 0) {
+      saveFile(file)
+      audit("outbound_mcp.grant_revoke_all", { count: n })
+    }
+    return n
+  })
 }
 
 /** Public list without token hashes. */
 export function listOutboundGrants(): Omit<OutboundGrantRecord, "token_hash">[] {
-  return loadFile().grants.map(({ token_hash: _h, ...rest }) => rest)
+  return loadFile().grants.map(({ token_hash: _h, ...rest }) => ({ ...rest, last_used_at: lastUsed(rest.id, rest.last_used_at) }))
+}
+
+/** Exact key only; malformed/expired/changed authority is denied on every use. */
+export function hasEnterpriseBinding(grantId: string): boolean {
+  const record = loadFile().grants.find(grant => grant.id === grantId)
+  return !!record && Object.hasOwn(record, "enterprise_policy")
+}
+export function requireEnterpriseGrant(grantId: string): { grant: Omit<OutboundGrantRecord, "token_hash">; policy: EnterprisePolicy } {
+  const record = loadFile().grants.find(grant => grant.id === grantId)
+  if (!record || record.revoked_at || !record.expires_at || !Number.isFinite(Date.parse(record.expires_at)) || Date.parse(record.expires_at) <= Date.now()) deny("GRANT_UNAVAILABLE")
+  const policy = parseEnterprisePolicy(record.enterprise_policy, record.profile)
+  const instance = enterpriseInstance()
+  if (instance.instance_id !== policy.instance_id || instance.profile_id !== policy.profile_id || instance.subject !== policy.subject || Date.parse(policy.expires_at) > Date.parse(record.expires_at)) deny("ENTERPRISE_BINDING_INVALID")
+  const { token_hash: _hash, ...grant } = record
+  return { grant, policy }
 }
 
 /** Exact-record lookup for the new context boundary; never exposes token hash.

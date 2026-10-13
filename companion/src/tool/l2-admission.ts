@@ -175,6 +175,7 @@ function resolveHostUseApp(toolName: string, params: any): string {
 }
 
 export type L2AdmissionContext = {
+  enterprisePermit?: import("../outbound-mcp/enterprise-permit").EnterprisePermit
   signal?: AbortSignal
   toolName: string
   finalParams: Record<string, any>
@@ -220,6 +221,11 @@ export type L2AdmissionResult =
  * On ok:false, caller must return result immediately (already logToolFinish'd inside when appropriate — match current code).
  */
 export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2AdmissionResult> {
+  if (ctx.enterprisePermit) {
+    const { checkEnterprisePermit } = await import("../outbound-mcp/enterprise-permit")
+    if (!checkEnterprisePermit(ctx.enterprisePermit, ctx.toolName, ctx.finalParams, ctx.ws)) return { ok: false, result: { success: false, error: "PERMIT_INVALID" } }
+    return { ok: true, finalParams: ctx.finalParams }
+  }
   let finalParams = ctx.finalParams
   const toolName = ctx.toolName
   const toolCallId = ctx.toolCallId

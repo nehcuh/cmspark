@@ -124,7 +124,7 @@ export type ToolExecutorFn = (
   toolName: string,
   params: any,
   signal?: AbortSignal,
-  invokeOpts?: { trustedOutbound?: boolean; siteContextTabId?: number },
+  invokeOpts?: { trustedOutbound?: boolean; siteContextTabId?: number; enterprisePermit?: import("../outbound-mcp/enterprise-permit").EnterprisePermit },
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
 export type WsLifecycleDeps = {
@@ -277,6 +277,17 @@ export function pickAuthenticatedClientWs(): WebSocket | null {
 
 bindExtensionPeerPicker(pickAuthenticatedClientWs)
 
+const enterprisePeerEpochs = new WeakMap<WebSocket, string>()
+/** Dedicated deployments must have exactly one authenticated browser actuator. */
+export function getEnterprisePeer(): { peer: WebSocket; epoch: string } {
+  const candidates = [...clients].filter(c => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && /^chrome-extension:\/\//i.test(wsAuth.get(c)?.origin || ""))
+  if (candidates.length !== 1) throw new Error("ENTERPRISE_PEER_AMBIGUOUS")
+  const peer = candidates[0]
+  let epoch = enterprisePeerEpochs.get(peer)
+  if (!epoch) { epoch = require("node:crypto").randomUUID() as string; enterprisePeerEpochs.set(peer, epoch) }
+  return { peer, epoch }
+}
+
 /**
  * Ensure outbound HTTP runner is wired to createToolExecutor(extensionWs).
  * Synchronous so invoke never races an empty runner after auth.
@@ -300,9 +311,14 @@ export function ensureOutboundToolRunnerWired(): boolean {
   // trustedOutbound: only this Bearer-gated runner may re-apply __outbound_mcp
   // (S42 multi-adv P0 — params alone are not a trust boundary).
   setOutboundToolRunner(async (toolCallId, internalTool, params, options) => {
+    if (options?.enterprisePermit) {
+      const current = getEnterprisePeer()
+      if (current.peer !== ws || current.epoch !== options.enterprisePermit.peer_epoch) return { success: false, error: "ENTERPRISE_PEER_CHANGED" }
+    }
     return executeTool(toolCallId, internalTool, params, options?.signal, {
       trustedOutbound: true,
       siteContextTabId: options?.siteContextTabId,
+      enterprisePermit: options?.enterprisePermit,
     })
   })
   outboundRunnerWs = ws

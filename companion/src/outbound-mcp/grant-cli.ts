@@ -7,6 +7,7 @@
 
 import { getPlatform, type PlatformName } from "../platform"
 import * as fs from "node:fs"
+import { registerEnterpriseInstance } from "./enterprise-policy"
 import { parseContextPermission } from "./context-permission"
 import {
   issueOutboundGrant,
@@ -40,9 +41,11 @@ const DEFAULT_IO: GrantCliIo = {
   stderr: process.stderr,
 }
 
-const USAGE = `cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--profile <outbound_l1_default|outbound_l1_interact|outbound_context_v1>] [--context-config <file.json>] [--allow-page-export] [--ttl-ms N]
+const USAGE = `cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--profile <outbound_l1_default|outbound_l1_interact|outbound_context_v1>] [--context-config <file.json> | --enterprise-config <file.json>] [--allow-page-export] [--ttl-ms N]
+cmspark-agent outbound-grant register-instance --profile-id <dedicated-extension-profile-uuid> --subject <business-subject>
 cmspark-agent outbound-grant revoke --grant-id <id>
 cmspark-agent outbound-grant list`
+// Administrator registration is a local CLI action, never an HTTP action.
 
 function writeln(stream: { write: (chunk: string) => unknown }, line = ""): void {
   stream.write(line + "\n")
@@ -64,7 +67,7 @@ function flagEnabled(flags: Map<string, string | true>, key: string): boolean {
   return s === "true" || s === "1" || s === "yes"
 }
 
-const ISSUE_FLAGS = new Set(["caller-id", "label", "allow-page-export", "ttl-ms", "profile", "context-config"])
+const ISSUE_FLAGS = new Set(["caller-id", "label", "allow-page-export", "ttl-ms", "profile", "context-config", "enterprise-config"])
 const REVOKE_FLAGS = new Set(["grant-id"])
 const LIST_FLAGS = new Set<string>()
 
@@ -72,6 +75,7 @@ function allowedFlagsFor(sub: string): Set<string> | null {
   if (sub === "issue") return ISSUE_FLAGS
   if (sub === "revoke") return REVOKE_FLAGS
   if (sub === "list") return LIST_FLAGS
+  if (sub === "register-instance") return new Set(["profile-id", "subject"])
   return null
 }
 
@@ -243,6 +247,13 @@ function issue(flags: Map<string, string | true>, io: GrantCliIo): number {
     return 1
   }
   let context = parseContextPermission({})
+  const enterpriseFile = flagString(flags, "enterprise-config")
+  let enterprise_policy: unknown
+  if (flags.has("enterprise-config")) {
+    if (!enterpriseFile || contextFile) throw new Error("--enterprise-config requires a file and cannot combine with --context-config")
+    if (fs.statSync(enterpriseFile).size > 64 * 1024) throw new Error("enterprise config exceeds 64 KiB")
+    try { enterprise_policy = JSON.parse(fs.readFileSync(enterpriseFile, "utf8")) } catch { throw new Error("enterprise config must be valid JSON") }
+  }
   if (contextFile) {
     try {
       if (fs.statSync(contextFile).size > 64 * 1024) throw new Error("capacity")
@@ -256,7 +267,14 @@ function issue(flags: Map<string, string | true>, io: GrantCliIo): number {
     allow_page_export: allowPageExport,
     profile,
     ...context,
+    ...(enterprise_policy === undefined ? {} : { enterprise_policy }),
   })
+  if (enterprise_policy !== undefined) {
+    writeln(io.stdout, issued.token)
+    writeln(io.stdout, `grant_id: ${issued.id}\ncaller_id: ${issued.caller_id}\nexpires_at: ${issued.expires_at}`)
+    writeln(io.stdout, "企业钥匙仅用于 /outbound-mcp/v1/enterprise。身份与实例固定；危险操作需要 ITCra 独立人类签名。")
+    return 0
+  }
   printIssue(io, issued, allowPageExport, profile)
   if (profile === OUTBOUND_CONTEXT_PROFILE) writeln(io.stdout, `上下文出口：${context.allow_context_export ? "已允许" : "未允许"}；精确站点 ${context.context_origins.length} 个，所选知识 ${context.context_knowledge_ids.length} 篇。页面出口仍独立授权，不受上下文站点列表限制。`)
   return 0
@@ -320,6 +338,13 @@ export async function handleOutboundGrantCli(
     const unknown = rejectUnknownArgs(sub, flags, extras, io)
     if (unknown !== null) return unknown
     switch (sub) {
+      case "register-instance": {
+        const profileId = flagString(flags, "profile-id"), subject = flagString(flags, "subject")
+        if (!profileId) throw new Error("--profile-id required (actual dedicated extension profile UUID)")
+        if (!subject) throw new Error("--subject required (fixed business identity)")
+        writeln(io.stdout, JSON.stringify(registerEnterpriseInstance(profileId, subject)))
+        return 0
+      }
       case "issue":
         return issue(flags, io)
       case "revoke":

@@ -4,6 +4,7 @@ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { fetchImageAsBase64, promoteFetchSrc, sanitizeImageDim } from "./image-extract-utils"
 import { selectorJsLiteral } from "./selector-js-literal"
 import { browserSiteTarget } from "./browser-site-target"
+import { executeEnterpriseBrowser, enterpriseProfileId } from "./enterprise-browser"
 import { readPageText, readPageHtml, type PageReadDependencies } from "./page-read-tools"
 import type { PageReadChannel } from "./page-read-provenance"
 import { pageReadSnapshot, type PageReadRequest, type PageReadSnapshot } from "./page-read-snapshot"
@@ -111,6 +112,8 @@ export class BrowserBridge {
   downloadBusyTabs: Set<number> = new Set()
 
   constructor(sanitizer?: PageSanitizer) {
+    // Local identity exists before an administrator registers the first grant.
+    void enterpriseProfileId().catch(() => {})
     this.sanitizer = sanitizer || pageSanitizer
     chrome.debugger.onDetach.addListener((source) => {
       if (source.tabId) {
@@ -141,6 +144,7 @@ export class BrowserBridge {
   }
 
   private async executeInner(toolName: string, params: Record<string, any>): Promise<ToolResult> {
+    if (params.__enterprise_guard !== undefined) return executeEnterpriseBrowser(toolName, params, p => this.screenshot(p))
     try {
       switch (toolName) {
         // Tab tools

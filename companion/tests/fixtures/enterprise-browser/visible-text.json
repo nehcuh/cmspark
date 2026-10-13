@@ -1,0 +1,17 @@
+{
+  "evidence_kind": "simulated",
+  "producer": "BrowserBridge.execute -> JSON; controlled DOM/API adapter",
+  "payload": {
+    "success": true,
+    "data": {
+      "text": "Business visible text",
+      "provenance": {
+        "source": "visible_dom",
+        "coverage": "incomplete",
+        "frames_read": 1,
+        "frames_total": 1,
+        "workbook_complete": false
+      }
+    }
+  }
+}

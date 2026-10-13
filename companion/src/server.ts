@@ -4,6 +4,7 @@ import { WebSocket } from "ws"
 import { randomUUID } from "crypto"
 import { URL } from "url"
 import { contextReadParams } from "./site-context/admission"
+import { checkEnterprisePermit, claimEnterpriseDispatch, type EnterprisePermit } from "./outbound-mcp/enterprise-permit"
 import { getConfig, saveConfig, initDataDir, getConfigDir } from "./config"
 import type { EvidenceScope } from "./business-evidence/content"
 import { captureLocalPageResult } from "./business-evidence/executor"
@@ -410,6 +411,7 @@ export function seedThreadManagerForTests(): ThreadManager {
  * runner (or tests) may pass `trustedOutbound: true` after Bearer auth.
  */
 export type ToolExecuteInvokeOpts = {
+  enterprisePermit?: EnterprisePermit
   trustedOutbound?: boolean
   /** Server-owned Chat metadata resolution; never read this from tool args. */
   siteContextTabId?: number
@@ -468,6 +470,10 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   ): Promise<{ success: boolean; data?: any; error?: string }> => {
     if (signal?.aborted) return { success: false, error: "Tool call cancelled before dispatch" }
     let finalParams = contextReadParams(toolName, params || {}, invokeOpts?.siteContextTabId)
+    delete finalParams.__enterprise_guard
+    const enterprisePermit = invokeOpts?.enterprisePermit
+    if (enterprisePermit && !checkEnterprisePermit(enterprisePermit, toolName, finalParams, ws)) return { success: false, error: "PERMIT_INVALID" }
+    if (enterprisePermit) finalParams = { ...finalParams, __enterprise_guard: enterprisePermit.guard }
     const evidenceScope = invokeOpts?.evidenceScope?.kind === "chat" && !invokeOpts.trustedOutbound
       && threadManager.get(invokeOpts.evidenceScope.threadId) ? invokeOpts.evidenceScope : undefined
     const captureWritesAllowedAtStart = evidenceScope?.kind !== "chat"
@@ -571,7 +577,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     // a chat tool.start for them leaves the sidebar busy after the run ends (#496).
     // contextReadParams strips model-provided flags and only restores a validated
     // server invocation option; ordinary list_tabs calls still remain visible.
-    if (!(toolName === "list_tabs" && finalParams.__site_context_tab_id !== undefined)) {
+    if (!enterprisePermit && !(toolName === "list_tabs" && finalParams.__site_context_tab_id !== undefined)) {
       ws.send(JSON.stringify({
         type: "tool.start",
         tool_call_id: toolCallId,
@@ -583,7 +589,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     logger.info("tool.start", {
       tool_call_id: toolCallId,
       tool_name: toolName,
-      params: summarizeToolParams(finalParams),
+      params: enterprisePermit ? { enterprise: true } : summarizeToolParams(finalParams),
       thread_id: actingThreadId,
     })
     // Only true when re-applied under trustedOutbound — never from raw LLM params.
@@ -633,6 +639,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
 
     // L2 confirmation gate — extracted to tool/l2-admission.ts (C10-B)
     const l2Outcome = await runL2ToolAdmission({
+      enterprisePermit,
       signal,
       toolName,
       finalParams,
@@ -662,6 +669,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
 
     // URL scheme+domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
     const urlOutcome = await runUrlNavigateAdmission({
+      enterprisePermit,
       signal,
       toolName,
       finalParams,
@@ -862,6 +870,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     // ws/tool-forward.ts (C10-G). createToolExecutor stays pure orchestration.
     // L1 actuator is the Chrome extension peer, never tray/summoner (tool.execute).
     if (signal?.aborted) return { success: false, error: "Tool call cancelled before extension dispatch" }
+    if (enterprisePermit) claimEnterpriseDispatch(enterprisePermit, toolName, finalParams, ws)
     const result = await forwardL1OrUnavailable({
       originatingWs: ws,
       getAuth: (w) => getWsAuthState(w),

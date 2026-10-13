@@ -1,0 +1,19 @@
+# ADR-029: ITCra enterprise browser authority
+
+Status: implementation under review, opt-in; joint bake-off and human approval required before merge/release. Design issue [#618](https://github.com/nehcuh/cmspark/issues/618). User selected extension of REST/grant on 2026-10-13.
+
+Existing personal/outbound grants retain their gates. A concrete enterprise grant instead carries administrator-defined identity, dedicated Companion/Chrome profile, finite authority, boundary paths, verified action rules and a separate Ed25519 human issuer. Each user or expressly authorized business identity has its own process/data directory/port/profile. Local registration immutably binds the fixed business subject to that instance/profile; issuance and every live use reject conflicting subjects or old unbound registrations. Shared-account humans map to the same business subject through ITCra RBAC. No new general outbound tools or permissive profile are introduced.
+
+Execution uses opaque sessions/operations. The gateway creates a frozen, WeakSet-branded permit in trusted invocation options; JSON flags never grant authority. Real URL/L2 admission and final dispatch validate its bound arguments, exact authenticated peer and current grant. Extension-side ISOLATED scripts check document IDs, navigation generation, scoped frames and the actual target. A target is compared immediately before its effect in the same script tick.
+
+Administrator read-only rules are a trust input requiring site verification, not an inference from tool/domain names. Unknown actions and credential fields are denied. Dangerous rules require a signed single-use challenge bound to the immutable operation digest. Human presentation is a separate purpose, not approval. ITCra must independently authenticate the user and approval permission, fetch the canonical challenge from Companion, and keep the signing key outside the Agent runtime.
+
+State persists claims/idempotency and hashes, not screenshots, URLs, typed values or extracted text. Pending jobs terminate on restart. A dispatched operation with an ambiguous result is terminal `outcome_unknown`; automatic replay is prohibited. A successful 202 response hands work to the service, while an incomplete execute response cancels it. Cancellation after dispatch cannot promise rollback.
+
+v1 supports configured main-frame redirect and same-origin QR markers. Login iframe/popup is explicitly unsupported, never implicitly ready. Business text reports incomplete visible DOM coverage; v1 does not claim original-workbook export. Required missing joint cases fail acceptance.
+
+ADR-020 axes: Surface authenticated versioned REST/local admin CLI; L2 constrained existing browser actions; Compose grant × subject × instance × session × document × target; Autonomy verified normal actions and same-session continuation; Trust deny-by-default, live rechecks and single-use human authority; Channel paired extension plus separate authenticated ITCra human presentation.
+
+Blast tier T4: machine checks → independent adversary → Pi rereview → Kimi supplement/CI → human boundary approval and real bake-off. No automatic merge or production policy installation.
+
+Authority persistence: authentication usage is separate metadata; supported grant issue/revoke writers serialize load→commit across processes with explicit contention. Revocation/policy state cannot be rolled back by usage telemetry. Ambiguous same-origin cross-route login without trusted requested/current destination fails RETURN_TARGET_NOT_RETAINED and emits no earlier document evidence; explicit intent and qualified same-URL login remain supported.
