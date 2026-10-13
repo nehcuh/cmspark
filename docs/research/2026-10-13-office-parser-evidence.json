@@ -1,0 +1,278 @@
+{
+  "researchDate": "2026-10-13",
+  "timezone": "Asia/Shanghai",
+  "sourceRevision": "b19bb73c74ed893b8a5d1716d32df32a113ed31b",
+  "scope": "Single-host smoke with synthetic upstream fixtures, not real WPS files, not full fidelity or cross-platform evaluation",
+  "installedOfficeparser": "7.2.3",
+  "packages": [
+    {
+      "name": "@deepseek-ai/libreoffice-kit",
+      "version": "0.1.5",
+      "published": "2026-10-01T01:18:33.424Z",
+      "engines": {
+        "node": ">=22.19.0"
+      },
+      "license": "MPL-2.0",
+      "optionalDependencies": {
+        "@deepseek-ai/libreoffice-kit-wasm": "0.1.5",
+        "@deepseek-ai/libreoffice-kit-win32-x64": "0.1.5",
+        "@deepseek-ai/libreoffice-kit-darwin-x64": "0.1.5",
+        "@deepseek-ai/libreoffice-kit-win32-arm64": "0.1.5",
+        "@deepseek-ai/libreoffice-kit-darwin-arm64": "0.1.5"
+      },
+      "unpackedSize": 349150,
+      "integrity": "sha512-H12xtUsAyl70zFeQ5pk5GGRc3N1+6zn+DVAcqwlguI6EvqopBGP3xkUmePU7g5f6ydYlDZLWedHT9lTSL7zLxA==",
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/libreoffice-kit/-/libreoffice-kit-0.1.5.tgz"
+    },
+    {
+      "name": "@deepseek-ai/libreoffice-kit-darwin-arm64",
+      "version": "0.1.5",
+      "published": "2026-10-01T01:19:30.275Z",
+      "engines": {
+        "node": ">=22.19.0"
+      },
+      "license": "MPL-2.0",
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "arm64"
+      ],
+      "unpackedSize": 153160461,
+      "integrity": "sha512-SjeXmyaTevEq2TxK7reb1rhCrQZ4QOXmXt/qEwfQD5Fx3odU0ILx2uiXN+nphSCQ95LFCzrElHGgv2c7a824yg==",
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/libreoffice-kit-darwin-arm64/-/libreoffice-kit-darwin-arm64-0.1.5.tgz"
+    },
+    {
+      "name": "@deepseek-ai/libreoffice-kit-darwin-x64",
+      "version": "0.1.5",
+      "published": "2026-10-01T01:19:21.204Z",
+      "engines": {
+        "node": ">=22.19.0"
+      },
+      "license": "MPL-2.0",
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "x64"
+      ],
+      "unpackedSize": 162997417,
+      "integrity": "sha512-vuz2tTpH1Edk75+DISwg/TXdQ3BNSNSHoVnWVqxqbGMgrrK9trLOw2+0X7mjT1naGO00Zc1qkyQ4if3kx5XjqQ==",
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/libreoffice-kit-darwin-x64/-/libreoffice-kit-darwin-x64-0.1.5.tgz"
+    },
+    {
+      "name": "@deepseek-ai/libreoffice-kit-win32-x64",
+      "version": "0.1.5",
+      "published": "2026-10-01T01:19:50.250Z",
+      "engines": {
+        "node": ">=22.19.0"
+      },
+      "license": "MPL-2.0",
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "x64"
+      ],
+      "unpackedSize": 190868740,
+      "integrity": "sha512-uKuDGZdofxuW4iRmUh8b3+XWU28JeOCYMTAONzo7tEHIq00DV2cARcgUYiTP7gUH49tH4A/RyPMOVEBzK7qjjw==",
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/libreoffice-kit-win32-x64/-/libreoffice-kit-win32-x64-0.1.5.tgz"
+    },
+    {
+      "name": "@deepseek-ai/libreoffice-kit-win32-arm64",
+      "version": "0.1.5",
+      "published": "2026-10-01T01:19:04.030Z",
+      "engines": {
+        "node": ">=22.19.0"
+      },
+      "license": "MPL-2.0",
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "arm64"
+      ],
+      "unpackedSize": 180006237,
+      "integrity": "sha512-Av3aFfNLaVxfffu0JXP5mqfmsCU3gQtlUH9UD+zdXl8ON06ukVAmu7LqNyuKAz/68WoOMTQ+YBlVQukgDRKd/A==",
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/libreoffice-kit-win32-arm64/-/libreoffice-kit-win32-arm64-0.1.5.tgz"
+    },
+    {
+      "name": "@deepseek-ai/libreoffice-kit-wasm",
+      "version": "0.1.5",
+      "published": "2026-10-01T01:18:44.683Z",
+      "engines": {
+        "node": ">=22.19.0"
+      },
+      "license": "MPL-2.0",
+      "os": [
+        "linux"
+      ],
+      "unpackedSize": 152357942,
+      "integrity": "sha512-V+pu5xJsKhVD4AU1xbFlMWY91svK9ZIC2JsNOph9kWp/arF/KQcuytt76bcbozJqPbE8o0n04lyh0m3QW5RYSA==",
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/libreoffice-kit-wasm/-/libreoffice-kit-wasm-0.1.5.tgz"
+    }
+  ],
+  "smoke": {
+    "node": "v22.23.2",
+    "platform": "darwin",
+    "arch": "arm64",
+    "kit": "0.1.5",
+    "runtime": {
+      "version": "0.1.5",
+      "backend": "native"
+    },
+    "cases": [
+      {
+        "name": "one-page.doc",
+        "ext": "docx",
+        "success": true,
+        "conversionMs": 4804,
+        "totalMs": 4828,
+        "backend": "native",
+        "missingFonts": [],
+        "text": "---\n---\n\nOffice preview 中文文档",
+        "expectedTextPresent": true
+      },
+      {
+        "name": "one-sheet.xls",
+        "ext": "xlsx",
+        "success": true,
+        "conversionMs": 555,
+        "totalMs": 559,
+        "backend": "native",
+        "missingFonts": [],
+        "text": "---\n---\n\n\n---\n\n\n| Office preview 中文文档 |\n|  ---  |",
+        "expectedTextPresent": true
+      },
+      {
+        "name": "one-slide.ppt",
+        "ext": "pptx",
+        "success": true,
+        "conversionMs": 521,
+        "totalMs": 527,
+        "backend": "native",
+        "missingFonts": [],
+        "text": "---\n---\n\n\n---\n\nOffice preview 中文文档",
+        "expectedTextPresent": true
+      },
+      {
+        "name": "color-blocks.docx",
+        "ext": "txt",
+        "success": true,
+        "conversionMs": 512,
+        "totalMs": 512,
+        "backend": "native",
+        "missingFonts": [],
+        "text": "﻿RED\tBLUE\rOffice render content 123\r"
+      },
+      {
+        "name": "one-sheet.xls",
+        "ext": "ods",
+        "success": true,
+        "conversionMs": 676,
+        "totalMs": 691,
+        "text": "---\n---\n\n\n---\n\n\n| Office preview 中文文档 |\n|  ---  |",
+        "expectedTextPresent": true
+      },
+      {
+        "name": "one-slide.ppt",
+        "ext": "odp",
+        "success": true,
+        "conversionMs": 629,
+        "totalMs": 640,
+        "text": "---\n---\n\n\n---",
+        "expectedTextPresent": false
+      },
+      {
+        "name": "wps",
+        "success": false,
+        "code": "unsupported-format",
+        "error": "Unsupported conversion: wps → docx.",
+        "fixture": "Legacy Office bytes with alternate suffix; extension rejection only, not genuine WPS compatibility test"
+      },
+      {
+        "name": "et",
+        "success": false,
+        "code": "unsupported-format",
+        "error": "Unsupported conversion: et → xlsx.",
+        "fixture": "Legacy Office bytes with alternate suffix; extension rejection only, not genuine WPS compatibility test"
+      },
+      {
+        "name": "dps",
+        "success": false,
+        "code": "unsupported-format",
+        "error": "Unsupported conversion: dps → pptx.",
+        "fixture": "Legacy Office bytes with alternate suffix; extension rejection only, not genuine WPS compatibility test"
+      },
+      {
+        "name": "color-blocks.docx PNG",
+        "success": true,
+        "ms": 601,
+        "result": {
+          "schemaVersion": 1,
+          "backend": "native",
+          "rasterEngine": "libreoffice",
+          "source": "saved",
+          "sourceSha256": "7c86b96d6aaf5fd8d542951976984d3c4bb13f08846d04baf835790c21acc0ee",
+          "dpi": 72,
+          "pageCount": 1,
+          "images": [
+            {
+              "index": 1,
+              "page": 1,
+              "width": 432,
+              "height": 288,
+              "rectangle": {
+                "x": 0,
+                "y": 0,
+                "width": 576,
+                "height": 384
+              },
+              "byteLength": 7169,
+              "sha256": "ea6a3323d557041cba4628797eba76c2fa6f1bc9ff8b215fa67e4aeba4f84c2a"
+            }
+          ],
+          "missingFonts": []
+        }
+      }
+    ],
+    "odpDiagnosis": {
+      "contentXmlContainsExpectedText": true,
+      "roundtripText": "---\n---\n\n\n---\n\nOffice preview 中文文档",
+      "roundtripRetainsText": true,
+      "rendering": {
+        "schemaVersion": 1,
+        "backend": "native",
+        "rasterEngine": "libreoffice",
+        "source": "saved",
+        "sourceSha256": "84846bd209b92baf5ad00261d17a8e4171297fd7a52bcff29908ce7ba1449ca5",
+        "dpi": 72,
+        "pageCount": 1,
+        "images": [
+          {
+            "index": 1,
+            "page": 1,
+            "width": 721,
+            "height": 541,
+            "rectangle": {
+              "x": 0,
+              "y": 0,
+              "width": 960.0666666666667,
+              "height": 720.0666666666667
+            },
+            "byteLength": 7779,
+            "sha256": "540c379136136a8af162243115d111c5cb555f3e95e1d66e658c58210fe2fbaa"
+          }
+        ],
+        "missingFonts": [
+          "Liberation Sans",
+          "Linux Libertine G",
+          "Noto Sans"
+        ]
+      },
+      "textParagraphs": [
+        "<text:p text:style-name=\"P1\"><text:span text:style-name=\"T1\">Office preview </text:span><text:span text:style-name=\"T2\">中文文档</text:span></text:p>"
+      ]
+    }
+  }
+}

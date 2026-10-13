@@ -16,6 +16,21 @@ CMspark Browser Agent v0.6.11
 
 ## 使用
 
+Office 文件导入：支持 DOC/DOCX、XLS/XLSX、PPT/PPTX、ODT/ODS/ODP。
+旧版 DOC/XLS/PPT 和 ODP 使用随包分发的 DeepSeek LibreOffice Kit 0.1.5
+进行本地转换后读取；PDF 的低文本页面也可使用此引擎渲染供视觉分析。
+WPS 保存的标准 DOCX/XLSX/PPTX 可读取；专有 WPS/ET/DPS 请先另存为标准格式。
+ODF 导入限制重复正文和图表数据的展开量；超预算、重复嵌入对象、ODS 图表范围
+引用或 ODF 内混合 OOXML 图表会拒绝。可拆分或另存为 DOCX/XLSX/PPTX 后导入。
+文档不会上传到在线格式转换服务。复杂排版、字体和公式仍须核对原文。
+
+Windows：Office 引擎需要与包内 Node 架构一致的 Microsoft Visual C++ v14
+Redistributable（官方 x64 包请选择 x64）。没有安装时请从微软官方安装：
+https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist
+安装器不自动提权或安装该组件。Linux WASM 引擎需要宿主可用字体；中文文档
+建议安装开源中文字体，例如 Noto CJK。开发环境需要 Node >=22.19.0。
+引擎及依赖的许可、源码信息见 THIRD_PARTY_NOTICES 和 office-runtime.json。
+
 1. 打开任意网页
 2. 点击 Chrome 右侧工具栏的 CMspark 图标（拼图 → CMspark）
 3. 在侧边栏输入任务，如"读取这个页面内容"、"点击登录按钮"
@@ -67,4 +82,4 @@ A: 下载新版本 zip 或 Setup.exe，解压覆盖或覆盖安装，重启 CMsp
 
 Q: 需要安装 Node.js 吗？
 A: 不需要。官方分发包已内置 node.exe，开箱即用。
-   （精简版用户如需使用系统 Node.js，请确保版本 v22+）
+   （精简版用户如需使用系统 Node.js，请确保版本 >=22.19.0）

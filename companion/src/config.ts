@@ -12,6 +12,7 @@ import { defaultFilesystemServerConfig } from "./mcp/filesystem-home"
 import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
 import { resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
+import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
 
 export const configEvents = new EventEmitter()
 export const CONFIG_CHANGE_EVENT = "config.change"
@@ -550,18 +551,7 @@ const defaultConfig: CompanionConfig = {
   },
   file_upload: {
     max_file_size: 10 * 1024 * 1024,
-    allowed_types: [
-      "application/pdf",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "text/plain",
-      "text/markdown",
-      "text/csv",
-      "text/html",
-      "application/rtf",
-      "application/vnd.oasis.opendocument.text",
-    ],
+    allowed_types: [...DEFAULT_UPLOAD_MIMES],
     max_embedded_images: 20,
     enable_vision_analysis: true,
     max_file_tokens: 50000,

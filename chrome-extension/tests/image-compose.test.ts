@@ -20,12 +20,32 @@ import {
   imageTypeRefuseReason,
   isAllowlistedImageMime,
   mimeFromName,
+  mimeForIncomingFile,
+  IMAGE_ACCEPT,
   needsCompress,
   nextFileErrorAfterIngest,
   pasteImageDisplayName,
   previewDataUrl,
   visionRailOpen,
 } from "../src/sidepanel/utils/image-compose"
+
+test("Office format picker MIME fallback supports legacy and OpenDocument files", () => {
+  const formats: Record<string, string> = {
+    doc: "application/msword",
+    xls: "application/vnd.ms-excel",
+    ppt: "application/vnd.ms-powerpoint",
+    ods: "application/vnd.oasis.opendocument.spreadsheet",
+    odp: "application/vnd.oasis.opendocument.presentation",
+  }
+  for (const [extension, mime] of Object.entries(formats)) {
+    assert.ok(IMAGE_ACCEPT.split(",").includes(`.${extension}`))
+    assert.equal(mimeForIncomingFile(`WPS-export.${extension.toUpperCase()}`, ""), mime)
+    assert.equal(mimeForIncomingFile(`WPS-export.${extension}`, " application/octet-stream "), mime)
+    assert.equal(mimeForIncomingFile(`WPS-export.${extension}`, "binary/octet-stream"), mime)
+    assert.equal(mimeForIncomingFile(`WPS-export.${extension}`, "application/unknown"), "application/unknown")
+  }
+  assert.equal(mimeForIncomingFile("photo.png", "IMAGE/PNG; charset=binary"), "image/png")
+})
 
 // --- isAllowlistedImageMime ---
 
@@ -339,4 +359,10 @@ test("compressImageBlob: oversized non-gif without canvas refuses", async () => 
 test("IMAGE_PREFLIGHT_NO_VISION copy is honest", () => {
   assert.match(IMAGE_PREFLIGHT_NO_VISION, /不支持直接看图/)
   assert.match(IMAGE_PREFLIGHT_NO_VISION, /视觉分析/)
+})
+
+test("mimeForIncomingFile canonicalizes only the verified WPS PDF alias", () => {
+  assert.equal(mimeForIncomingFile("report.pdf", " Application/WPS-Office.PDF; charset=binary "), "application/pdf")
+  assert.equal(mimeForIncomingFile("report.pdf", "application/wps-office.unknown"), "application/wps-office.unknown")
+  assert.equal(mimeForIncomingFile("report.pdf", "application/custom"), "application/custom")
 })

@@ -1,6 +1,20 @@
 THIRD_PARTY_NOTICES — CMspark Agent（实验定位模型层）
 ================================================================================
 
+Office compatibility runtime (#611)
+Package: @deepseek-ai/libreoffice-kit 0.1.5
+Source: https://github.com/deepseek-ai/dsh-libreoffice-kit
+License: MPL-2.0; incorporated work has additional notices.
+The complete selected engine package is redistributed without modification.
+Its corresponding source recipes, upstream revisions, patches and build metadata
+are preserved under node_modules/@deepseek-ai/libreoffice-kit-*/sources/.
+Its MPL and third-party license text are preserved under the same package's
+licenses/ directory. The entry package's LICENSE and NOTICE are retained under
+node_modules/@deepseek-ai/libreoffice-kit/. See office-runtime.json for the exact
+selected engine and complete staged dependency/version list. Transitive packages
+retain their own license files and notices in the shipped node_modules tree.
+
+
 本分发物支持由用户显式下载以下第三方模型工件（模型文件不随安装包分发，
 下载前须经许可证门确认）。
 
@@ -29,3 +43,18 @@ See: docs/licenses/cairn-inspiration.md
 
 FORBIDDEN: copying Cairn source files, pasting schema JSON verbatim, or adding
 Cairn as an npm/git dependency.
+
+--------------------------------------------------------------------------------
+3. @xmldom/xmldom 0.9.12 (bundled XML parser / Office archive preflight)
+--------------------------------------------------------------------------------
+Source: https://github.com/xmldom/xmldom/tree/0.9.12
+License: MIT. The upstream LICENSE is reproduced in full below.
+
+Copyright 2019 - present Christopher J. Brody and other contributors, as listed in: https://github.com/xmldom/xmldom/graphs/contributors
+Copyright 2012 - 2017 @jindw <jindw@xidea.org> and other contributors, as listed in: https://github.com/jindw/xmldom/graphs/contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

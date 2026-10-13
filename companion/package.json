@@ -6,7 +6,7 @@
     "cmspark-agent": "./dist/index.js"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "prebuild": "node scripts/generate-tray-icons.mjs",
@@ -29,9 +29,11 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.3.0",
+    "@deepseek-ai/libreoffice-kit": "0.1.5",
     "@lydell/node-pty": "^1.2.0-beta.15",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@types/js-yaml": "^4.0.9",
+    "@xmldom/xmldom": "0.9.12",
     "adm-zip": "^0.6.1",
     "cross-spawn": "^7.0.6",
     "gray-matter": "^4.0.3",

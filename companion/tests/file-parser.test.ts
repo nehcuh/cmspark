@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 /**
- * Build a minimal zip buffer (central directory file header + EOCD) with one entry of the given
+ * Build a minimal zip buffer (local header + central directory + EOCD) with one empty entry of the given
  * raw name. Hand-crafted because adm-zip normalizes "../" away on read AND write — it can neither
  * detect nor construct a real zip-slip archive. EOCD is included so rawZipEntries (which locates
  * the central directory via EOCD) actually walks the entry. Optionally mark the entry a Unix
@@ -12,6 +12,11 @@ const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingm
  */
 function buildOfficeZipBuffer(opts: { name: string; symlink?: boolean }): Buffer {
   const nameBytes = Buffer.from(opts.name, "utf8")
+  const local = Buffer.alloc(30 + nameBytes.length)
+  local.writeUInt32LE(0x04034b50, 0)
+  local.writeUInt16LE(20, 4)
+  local.writeUInt16LE(nameBytes.length, 26)
+  local.set(nameBytes, 30)
   // Central directory file header: signature (4) + 42 bytes fields + name. Total 46 + nameLen.
   const cd = Buffer.alloc(46 + nameBytes.length)
   cd.writeUInt32LE(0x02014b50, 0) // signature PK\x01\x02
@@ -21,13 +26,14 @@ function buildOfficeZipBuffer(opts: { name: string; symlink?: boolean }): Buffer
     cd.writeUInt32LE((0o120000 << 16) >>> 0, 38)
   }
   cd.set(nameBytes, 46)
-  // End of central directory record (22 bytes). CD sits at offset 0.
+  // End of central directory record (22 bytes). Counts agree and CD follows the local entry.
   const eocd = Buffer.alloc(22)
   eocd.writeUInt32LE(0x06054b50, 0) // signature PK\x05\x06
+  eocd.writeUInt16LE(1, 8) // central directory entries on this disk
   eocd.writeUInt16LE(1, 10) // total central directory entries
   eocd.writeUInt32LE(cd.length, 12) // size of central directory
-  eocd.writeUInt32LE(0, 16) // offset of start of central directory
-  return Buffer.concat([cd, eocd])
+  eocd.writeUInt32LE(local.length, 16) // offset of start of central directory
+  return Buffer.concat([local, cd, eocd])
 }
 
 // P0-5 / audit C4 regression: office files are zip archives; officeparser decompresses them

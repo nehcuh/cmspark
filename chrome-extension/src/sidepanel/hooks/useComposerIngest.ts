@@ -12,7 +12,7 @@ import {
   compressImageBlob,
   imageTypeRefuseReason,
   isAllowlistedImageMime,
-  mimeFromName,
+  mimeForIncomingFile,
   needsCompress,
   nextFileErrorAfterIngest,
   pasteImageDisplayName,
@@ -87,7 +87,7 @@ export function useComposerIngest({
     // and the refused files vanish silently.
     let firstErr: string | undefined
     for (const file of list) {
-      const type = file.type || mimeFromName(file.name)
+      const type = mimeForIncomingFile(file.name, file.type)
       const refuseReason = imageTypeRefuseReason(type)
       if (refuseReason) {
         refuse = refuseReason
@@ -176,7 +176,7 @@ export function useComposerIngest({
       if (item.kind !== "file") continue
       const f = item.getAsFile()
       if (!f) continue
-      const type = item.type || mimeFromName(f.name)
+      const type = mimeForIncomingFile(f.name, item.type || f.type)
       if (isAllowlistedImageMime(type) || type.startsWith("image/")) {
         imageFiles.push(f)
       }

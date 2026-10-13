@@ -9,7 +9,7 @@ declare module "pdf-parse" {
   }
 
   function pdfParse(
-    dataBuffer: Buffer,
+    dataBuffer: Buffer | Uint8Array | ArrayBuffer,
     options?: Record<string, any>,
   ): Promise<PdfData>
 

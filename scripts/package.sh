@@ -13,7 +13,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-NODE_VERSION="v22.16.0"
+NODE_VERSION="v22.23.2"
 NODE_MIRROR="${NODE_MIRROR:-https://nodejs.org/dist}"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -224,6 +224,8 @@ cp -r chrome-extension/build/chrome-mv3-prod "${STAGING}/chrome-extension"
 # (#260 diarize) have native binaries that can't be bundled, so we ship their
 # full dependency tree (ORT cross-platform napi dirs get stripped in step [5/9])
 mkdir -p "${STAGING}/node_modules"
+node "${ROOT_DIR}/scripts/stage-office-runtime.mjs" --source "${ROOT_DIR}/companion" --destination "${STAGING}" --platform "${PLATFORM}"
+cp companion/THIRD_PARTY_NOTICES "${STAGING}/"
 for pkg in node-notifier systray2 onnxruntime-node; do
   if [ -d "companion/node_modules/${pkg}" ]; then
     cp -r "companion/node_modules/${pkg}" "${STAGING}/node_modules/"
