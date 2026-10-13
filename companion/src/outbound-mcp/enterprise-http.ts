@@ -7,7 +7,9 @@ import { EnterpriseError, deny, identifier, object } from "./enterprise-policy"
 export const ENTERPRISE_HTTP_PREFIX = "/outbound-mcp/v1/enterprise"
 let singleton: EnterpriseBrowserService | undefined
 let singletonDir: string | undefined
+let shuttingDown = false
 function service(): EnterpriseBrowserService {
+  if (shuttingDown) deny("SERVICE_SHUTTING_DOWN", 503)
   if (!singleton || singletonDir !== getConfigDir()) {
     singleton?.close(); singletonDir = getConfigDir()
     singleton = new EnterpriseBrowserService({
@@ -21,7 +23,10 @@ function service(): EnterpriseBrowserService {
   }
   return singleton
 }
-export function resetEnterpriseHttpForTests(): void { singleton?.close(); singleton = undefined; singletonDir = undefined }
+/** Fence admission before asynchronous process teardown. Never instantiate
+ * the lazy service just to stop it, and never reopen it during shutdown. */
+export function closeEnterpriseHttp(): void { shuttingDown = true; singleton?.close() }
+export function resetEnterpriseHttpForTests(): void { singleton?.close(); singleton = undefined; singletonDir = undefined; shuttingDown = false }
 function json(res: ServerResponse, status: number, value: unknown): void {
   if (res.destroyed || res.writableEnded) return
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Pragma": "no-cache", "X-Content-Type-Options": "nosniff" })
@@ -44,6 +49,7 @@ export async function handleEnterpriseHttp(req: IncomingMessage, res: ServerResp
   const url = new URL(req.url || "/", "http://loopback.invalid")
   if (url.pathname !== ENTERPRISE_HTTP_PREFIX && !url.pathname.startsWith(ENTERPRISE_HTTP_PREFIX + "/")) return false
   try {
+    if (shuttingDown) deny("SERVICE_SHUTTING_DOWN", 503)
     const authorization = /^Bearer (cmg_[A-Za-z0-9]+)$/.exec(req.headers.authorization || "")
     const auth = verifyOutboundGrantToken(authorization?.[1])
     if (!auth.ok) { json(res, auth.http_status, { ok: false, error_code: auth.error_code }); return true }

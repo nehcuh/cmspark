@@ -144,8 +144,15 @@ function mutateGrants<T>(mutation: (file: GrantsFile) => T): T {
   let fd: number
   try { fs.mkdirSync(path.dirname(lock), { recursive: true, mode: 0o700 }); fd = fs.openSync(lock, "wx", 0o600) }
   catch (error) { throw new Error((error as NodeJS.ErrnoException).code === "EEXIST" ? "GRANT_STORE_BUSY" : "GRANT_STORE_UNAVAILABLE") }
+  const owner = fs.fstatSync(fd)
   try { return mutation(loadFile()) }
-  finally { try { fs.closeSync(fd) } finally { fs.unlinkSync(lock) } }
+  finally {
+    try {
+      const current = fs.lstatSync(lock)
+      if (current.dev === owner.dev && current.ino === owner.ino && current.isFile()) fs.unlinkSync(lock)
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
+    finally { fs.closeSync(fd) }
+  }
 }
 function usagePath(id: string): string { return path.join(getConfigDir(), "outbound-grant-usage", hashToken(id) + ".json") }
 function lastUsed(id: string, fallback: string | null): string | null {
@@ -393,6 +400,23 @@ export function revokeAllOutboundGrants(): number {
 /** Public list without token hashes. */
 export function listOutboundGrants(): Omit<OutboundGrantRecord, "token_hash">[] {
   return loadFile().grants.map(({ token_hash: _h, ...rest }) => ({ ...rest, last_used_at: lastUsed(rest.id, rest.last_used_at) }))
+}
+
+/** Recovery cannot treat a missing/corrupt authority store as revocation.
+ * Serialize the strict check and reset with all supported authority writers. */
+export function withRevokedEnterpriseGrants<T>(ids: string[], action: () => T): T {
+  return mutateGrants(() => {
+    let raw: GrantsFile
+    try {
+      raw = JSON.parse(fs.readFileSync(grantsFilePath(), "utf8")) as GrantsFile
+      if (!raw || !Array.isArray(raw.grants) || new Set(raw.grants.map(g => g.id)).size !== raw.grants.length) throw new Error()
+    } catch { return deny("GRANT_STORE_UNAVAILABLE", 503) }
+    for (const id of ids) {
+      const record = raw.grants.find(g => g.id === id)
+      if (!record || typeof record.revoked_at !== "string" || !Number.isFinite(Date.parse(record.revoked_at))) deny("ROTATION_REQUIRES_REVOKED_GRANTS", 409)
+    }
+    return action()
+  })
 }
 
 /** Exact key only; malformed/expired/changed authority is denied on every use. */

@@ -1,0 +1,52 @@
+{
+  "base": "20a8bdd73630c151a29fbab04992674000ae0f02",
+  "diff_sha256": "7ed35a331a37d40dae989df26dff6f4e7bd6d97ac5762f89752efc4a9db59e1e",
+  "host_full_tests": {
+    "tests": 5915,
+    "pass": 5863,
+    "fail": 0,
+    "skipped": 52
+  },
+  "targeted": {
+    "tests": 38,
+    "pass": 38,
+    "fail": 0
+  },
+  "linux_arm64": {
+    "tests": 38,
+    "pass": 38,
+    "fail": 0,
+    "build_exit": 0
+  },
+  "host_build_exit": 0,
+  "tier": "T3 capacity recovery only; overall joint #626 remains T4 and unaccepted",
+  "files": [
+    "companion/src/outbound-mcp/enterprise-state.ts",
+    "companion/src/outbound-mcp/enterprise-service.ts",
+    "companion/src/outbound-mcp/outbound-grants.ts",
+    "companion/src/outbound-mcp/grant-cli.ts",
+    "companion/tests/enterprise-service.test.ts",
+    "companion/tests/outbound-grant-cli.test.ts",
+    "docs/itcra-enterprise-capacity-recovery.md",
+    "docs/superpowers/plans/2026-10-13-itcra-624-joint-completion.md",
+    "companion/src/outbound-mcp/enterprise-http.ts",
+    "companion/src/ws/lifecycle.ts",
+    "companion/tests/enterprise-http.test.ts"
+  ],
+  "repairs": "Production shutdown admission/close, successor-lock inode ownership, 8MiB shared maximum before read, normalized malformed rotation entries. Kimi TS-loading finding refuted: actual require.resolve resolves .test-dist JS and runs Node22.23.2.; r3 mirrors successor inode ownership in grant writer and tests it, resolving Kimi r2 remaining nit.",
+  "judges": {
+    "independent_adversary": "APPROVE",
+    "kimi": {
+      "version": "2.1.1",
+      "model": "kimi-code/kimi-for-coding",
+      "verdict": "APPROVE"
+    },
+    "pi": {
+      "version": "0.85.1",
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "verdict": "APPROVE"
+    }
+  },
+  "merge": "NO: capacity component only; ITCra T4 and real acceptance remain pending"
+}
