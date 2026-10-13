@@ -191,8 +191,15 @@ export class EnterpriseBrowserService {
       ...(session.state === "login_required" ? { presentation_challenge: session.presentation } : {}) }
   }
   private publicOperation(operation: Operation): unknown {
+    const snapshot = this.snapshots.get(operation.handle)
+    const site = operation.state === "waiting_human" && snapshot ? canonicalURL(snapshot.url) : undefined
+    const target = snapshot?.target
+    const attributes = target?.attributes as Record<string, unknown> | undefined
+    const reviewTarget = target ? { tag: target.tag, attributes: Object.fromEntries(["type", "name", "role", "aria-label", "data-action"].flatMap(key =>
+      typeof attributes?.[key] === "string" && (attributes[key] as string).length <= 512 ? [[key, attributes[key]]] : [])) } : undefined
     return { operation_handle: operation.handle, session_handle: operation.session, state: operation.state, tool: operation.tool, effect: operation.effect,
-      ...(operation.challenge && operation.state === "waiting_human" ? { challenge: operation.challenge, review: { tool: operation.tool, effect: operation.effect, parameters: this.args.get(operation.handle), operation_digest: operation.operation_digest } } : {}), ...(operation.error_code ? { error_code: operation.error_code } : {}),
+      ...(operation.challenge && operation.state === "waiting_human" ? { challenge: operation.challenge, review: { tool: operation.tool, effect: operation.effect, parameters: this.args.get(operation.handle), operation_digest: operation.operation_digest,
+        ...(site ? { site: { origin: site.origin, path: site.pathname } } : {}), ...(reviewTarget ? { target: reviewTarget } : {}) } } : {}), ...(operation.error_code ? { error_code: operation.error_code } : {}),
       ...(operation.state === "completed" ? (this.outputs.has(operation.handle) ? { data: this.outputs.get(operation.handle) } : { data_not_retained: true }) : {}) }
   }
   capabilities(grantId: string, subject: string): unknown {

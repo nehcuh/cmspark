@@ -56,7 +56,7 @@ function trackBusinessTab(tabId: number, policy: Guard["policy"], requested?: st
   return tracked
 }
 /** This function is serialized into Chrome's ISOLATED world. Keep it self-contained. */
-function inspectDocument(policy: Guard["policy"], rule?: Rule): any {
+function inspectDocument(policy: Guard["policy"], rule?: Rule | null): any {
   const url = location.href
   function inScope(scopes: Scope[]) {
     try {
@@ -99,7 +99,7 @@ function inspectDocument(policy: Guard["policy"], rule?: Rule): any {
 async function snapshot(tabId: number, guard: Guard): Promise<EnterpriseSnapshot> {
   const tracked = trackBusinessTab(tabId, guard.policy)
   const before = generations.get(tabId) || 0
-  const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: "ISOLATED", func: inspectDocument, args: [guard.policy, guard.rule] })
+  const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: "ISOLATED", func: inspectDocument, args: [guard.policy, guard.rule ?? null] })
   if (results.length > 128) throw new Error("FRAME_UNAVAILABLE")
   const top = results.find(r => r.frameId === 0)
   if (!top?.documentId || !top.result || before !== (generations.get(tabId) || 0)) throw new Error("NAVIGATION_CHANGED")

@@ -241,6 +241,17 @@ test("write actions need signed human authority; Agent boolean, tamper and immed
   await h.api.drain(); assert.equal(h.browser.effects, 1)
   h.api.close()
 })
+test("human review identifies actual site and target without exporting private URL query or node token", async () => {
+  const h = harness(), session = await h.open()
+  h.browser.url = "https://business.test/app/object?ticket=PRIVATE_TARGET_QUERY"
+  const op = await h.prepare(session.session_handle, "click", "delete")
+  assert.deepEqual(op.review.site, { origin: "https://business.test", path: "/app/object" })
+  assert.equal(op.review.target.tag, "button"); assert.equal(op.review.target.attributes["data-action"], "delete")
+  assert.equal("element_token" in op.review.target, false)
+  assert.equal(JSON.stringify(op.review).includes("PRIVATE_TARGET_QUERY"), false)
+  assert.equal(JSON.stringify(op.review).includes(h.browser.target_id), false)
+  h.api.close()
+})
 test("signed old target is rejected when identical replacement node has a different private identity", async () => {
   const h = harness(), session = await h.open(), op = await h.prepare(session.session_handle, "click", "delete")
   h.browser.target_id = "replacement-node"

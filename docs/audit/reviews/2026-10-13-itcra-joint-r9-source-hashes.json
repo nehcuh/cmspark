@@ -1,0 +1,28 @@
+{
+  "files": {
+    "app/capabilities.py": "d35be00233c632d0457ded500f46eed05439ea7946736aeac0b6b3220bf4cf1c",
+    "app/enterprise_browser.py": "527cd9034eda6fda352cb4f2196149bb41f4481212d43d80d81b6173e046343e",
+    "app/enterprise_resume.py": "073679e896113f3513dac5988ee7321358d9f8951a16bf2cd57017d6132afe2e",
+    "app/enterprise_tools.py": "4a6ac8bbea52fa1de4c5ffcc804e896c57ab7de8285cb84d4bf3b49607194633",
+    "app/extensions.py": "677fc5c0eeb5272af19bb134498e44a312b5dfdd1d7acac795541cb17a9d6207",
+    "app/main.py": "60409254d1790afc4d239eaf26f85e60d159631401939ff6b0dd82d48edc3f24",
+    "app/orchestration.py": "7b6895cedc955d0a6e960c1facd96da6c5311d42c55817dc36e873c81925006a",
+    "app/static/app.js": "26b4f7f435deda89626704e3ff28aa55b583cfdd1b3d8e7f349f7146e3dee634",
+    "app/static/enterprise-browser.js": "7c1d08e99f5705165e54fb1ce12d175039b31cf0e95b3e89c7e564955d8a8fcf",
+    "app/static/index.html": "a7a52a7e96884c2fc724dc092cebbd67585262e05e77c77810081a6a8d137fb9",
+    "app/worker.py": "a91feea96cee94d1a94b2d2b935c49fc7a2af6657913966fd4fbc544d375bc9f",
+    "compose.enterprise.yaml": "e18a9a8a649e4e6bd0f37b6c5e6f8a70caf99e5dd0044d24bbf8ece6d68fea95",
+    "docs/ENTERPRISE-BROWSER.md": "6bf5bd4761e87768fbe942026e3860aedbaa0433ec7a88a8f6fca5a69ccd16fc",
+    "docs/superpowers/plans/2026-10-13-enterprise-human-continuation.md": "4ed8cf5857b18112e27c561f9d741c5406066ca5d552735d5d3f8db0286ab618",
+    "pyproject.toml": "9990b2288f8e733a54e28ca79b3de21b83294e8084f60e0252093f4beb6e30b3",
+    "tests/fixtures/README.md": "2301c094796f78f15b83316554ec0ec3802cc2e620f123a91fa996090714b03f",
+    "tests/fixtures/enterprise-ui.json": "6ea809c4fc513d2a3237e88e5f7f2d45e93454564c8ef1f189d426206dd65651",
+    "tests/fixtures/enterprise_service.cjs": "0c239e0bd0bfe7d2e0e14a9ad794f41e685fcd41d01371a9586c826727f78bd0",
+    "tests/test_enterprise_browser.py": "9ef31b6d0ed254b630efb720dbbe5a60628fc4b780dfa9e1b85f627eb52ac268",
+    "tests/test_enterprise_resume.py": "89c4ce8ecb9f3c7d7c8eeb9debcbe3e113fb22dc5d423ccd39fb0407131cb8a2",
+    "tests/test_enterprise_ui.py": "b19e4d0e0fe6661642e623a93263ea55cdbdbcf2f89ae5ea1ff3016a1cc12346",
+    "uv.lock": "e0d98cbee25ff927bb1e0435798dee9c5786768003ed67fa8ac89d18a602899f"
+  },
+  "itcra_diff_sha256": "c53d431693d313ed58cb57a3caba227ca5c8c4a2fd8284e4547f01c2f10ead4d",
+  "private_patch_location": "~/.codex/review-backups/itcra-joint-final-r9/itcra.diff"
+}

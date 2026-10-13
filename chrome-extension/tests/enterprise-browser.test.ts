@@ -13,3 +13,26 @@ test("enterprise profile mismatch never invokes Chrome action or screenshot and 
     assert.ok(!JSON.stringify(result).includes("PRIVATE_TOKEN"))
   } finally { if (previous === undefined) delete (globalThis as any).chrome; else (globalThis as any).chrome = previous }
 })
+
+test("rule-free native ScriptInjection uses explicit JSON null, never unserializable undefined", async () => {
+  const previous = (globalThis as any).chrome
+  const profile = "00000000-0000-4000-8000-000000000011"
+  let injections = 0
+  ;(globalThis as any).chrome = {
+    storage: { local: { get: async () => ({ enterprise_profile_id: profile }) } },
+    tabs: { onUpdated: { addListener() {} }, onRemoved: { addListener() {} }, get: async () => ({ id: 7, url: "https://business.test/app" }), query: async () => [] },
+    scripting: { executeScript: async (request: any) => {
+      // This is Chrome's native serialization constraint. JSON.stringify alone
+      // would silently convert undefined to null and mask the production bug.
+      assert.equal(request.args.some((arg: unknown) => arg === undefined), false)
+      assert.equal(request.args[1], null)
+      injections++
+      return [{ frameId: 0, documentId: "native-document", result: { url: "https://business.test/app", state: "ready" } }]
+    } },
+  }
+  try {
+    const result = await executeEnterpriseBrowser("list_tabs", { tabId: 7, __enterprise_guard: { version: 1, profile_id: profile, mode: "inspect", expires_at: new Date(Date.now() + 30000).toISOString(),
+      policy: { navigation: [{ origin: "https://business.test", path: "/app" }], evidence: [], login: [], ready: [{ selector: "#ready" }], login_markers: [] } } }, async () => ({ success: false }))
+    assert.equal(result.success, true); assert.equal(injections, 1)
+  } finally { if (previous === undefined) delete (globalThis as any).chrome; else (globalThis as any).chrome = previous }
+})
