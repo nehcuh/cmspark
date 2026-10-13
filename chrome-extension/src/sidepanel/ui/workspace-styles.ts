@@ -30,6 +30,15 @@ export const workspaceCSS = `
 .cm-nav-settings{margin-top:12px;border-top:1px solid ${tokens.border};border-radius:0;padding-top:14px}
 .cm-icon-button{display:inline-flex;align-items:center;justify-content:center;min-width:32px;min-height:32px;border:0;background:transparent;color:${tokens.textSecondary};border-radius:${tokens.radiusMd}px;cursor:pointer;font-size:18px}
 .cm-task-title{font-size:13px;font-weight:500;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:8px}
+.cm-task-relationship{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding-left:8px}
+.cm-parent-task-button{flex-shrink:0;min-height:32px;padding:4px 8px;border:1px solid ${tokens.border};border-radius:${tokens.radiusMd}px;background:transparent;color:${tokens.text};font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.cm-parent-task-button:hover:not(:disabled){background:${tokens.bgHover}}
+.cm-parent-task-button:disabled{color:${tokens.textSecondary};opacity:.65;cursor:not-allowed}
+.cm-task-relationship-labels{display:flex;flex-direction:column;min-width:0;flex:1;gap:2px}
+.cm-parent-task-title,.cm-child-task-title{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.cm-parent-task-title{color:${tokens.textSecondary}}
+.cm-child-task-title{font-weight:500}
+.cm-parent-task-status{font-size:11px;color:${tokens.textSecondary}}
 .cm-chat-content,.cm-composer-dock{width:100%;max-width:780px;margin-left:auto;margin-right:auto;box-sizing:border-box}
 .cm-composer-dock{padding:12px 20px 18px!important}
 .cm-composer-actions{display:flex;align-items:center;gap:8px;min-width:0}
@@ -100,7 +109,7 @@ export const workspaceCSS = `
 .cm-thread-editor{padding:16px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid ${tokens.border};background:${tokens.bgMuted}}
 .cm-thread-editor label{display:flex;flex-direction:column;gap:6px;font-size:12px}.cm-thread-editor input{box-sizing:border-box;width:100%;min-width:0;border:1px solid ${tokens.border};border-radius:8px;padding:8px;font:inherit;background:${tokens.bg}}
 .cm-thread-editor p{font-size:12px;line-height:1.5;margin:0;color:${tokens.textSecondary};overflow-wrap:anywhere}.cm-thread-editor [role="alert"]{color:${tokens.danger}}.cm-thread-editor-actions{display:flex;justify-content:flex-end;gap:8px}
-@media(max-width:759px){.cm-header-new{display:inline-flex;flex-shrink:0}.cm-status-rail{flex-wrap:wrap}.cm-thread-manager-trigger{min-height:32px}.cm-thread-management-header{align-items:flex-start!important}}
+@media(max-width:759px){.cm-header-new{display:inline-flex;flex-shrink:0}.cm-status-rail{flex-wrap:wrap}.cm-task-relationship{flex-basis:100%;order:1;padding:6px 0 0}.cm-thread-manager-trigger{min-height:32px}.cm-thread-management-header{align-items:flex-start!important}}
 @media(max-width:520px){.cm-thread-row{flex-wrap:wrap}.cm-thread-row:not(.cm-thread-selecting) .cm-thread-row-content{flex-basis:100%!important}.cm-rail-brand{display:none}}
 .cm-thread-tag-origin{font-size:10px;opacity:.8}
 `
