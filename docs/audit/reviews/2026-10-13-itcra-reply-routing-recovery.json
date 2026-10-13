@@ -1,0 +1,25 @@
+{
+  "blocked_plan": "a238eba1-28d",
+  "reason": "supplemental UI answer envelope decomposed into unresolved synthetic fallback-llm steps; not a missing executable skill",
+  "rebuilt_plan_file": "/tmp/cmspark-itcra-reply-plan-r2.json",
+  "rebuilt_skill": "builtin/deep-diagnosis-optimization",
+  "required_skill_scans": [
+    {
+      "path": "/Users/huchen/.local/share/uv/tools/vibesop/lib/python3.13/site-packages/vibesop/builtin_skills/deep-diagnosis-optimization/SKILL.md",
+      "sha256": "da943e589e460988fa55e2e35b9ba4a3c406f15bc37180cb73f34c9e2a723ea5",
+      "safe": true
+    },
+    {
+      "path": "/Users/huchen/Projects/cmspark/.agents/skills/cmspark-eval-engineering-gate/SKILL.md",
+      "sha256": "ad8ce0b24c8a4f8df6fe227d5ee65c253d45b6072cb26268e4e1b1b50eb914c8",
+      "safe": true
+    }
+  ],
+  "verification_preserved": "host/build + independent adversary/Kimi + LinuxARM + Pi + fresh CI + human real acceptance",
+  "human_answer": {
+    "qr": "expired_or_invisible",
+    "second_identity": false,
+    "business_link_config": false
+  },
+  "executed_blocked_plan": false
+}

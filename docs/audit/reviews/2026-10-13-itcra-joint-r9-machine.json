@@ -1,0 +1,82 @@
+{
+  "scope": "component implementation review only; real T4 acceptance remains BLOCKED, no merge authorization from this card",
+  "cmspark_base": "0b1be2e5d10e58cb90d972a4f7a989baa451e9f4",
+  "itcra_diff_sha256": "c53d431693d313ed58cb57a3caba227ca5c8c4a2fd8284e4547f01c2f10ead4d",
+  "cmspark_diff_sha256": "cafbf36ca52823c7c63939d5029bef119ebbabc6bb293b2293261ed023b8f42e",
+  "host": {
+    "companion": {
+      "tests": 5916,
+      "passed": 5864,
+      "skipped": 52,
+      "failed": 0,
+      "build_exit": 0
+    },
+    "extension": {
+      "passed": 1521,
+      "failed": 0,
+      "build_exit": 0
+    },
+    "itcra": {
+      "passed": 127,
+      "skipped": 0,
+      "failed": 0
+    },
+    "native_isolated_checks": 16,
+    "native_isolated_evidence_kind": "actual_renderer_with_simulated_chrome_api_adapter"
+  },
+  "real_native_joint": {
+    "actual_sso_completed": false,
+    "post_login_readiness_calibrated": false,
+    "second_enterprise_principal": false,
+    "real_case_receipts": false,
+    "human_answer": {
+      "qr": "previous_image_expired_or_not_visible; human_session_expiry_UI_fixed_r9",
+      "business_link_config": false,
+      "second_enterprise_identity": false
+    },
+    "actual_sso_login_image_visible_previously": true,
+    "current_image_visible": false,
+    "scan_completed": false,
+    "source_of_missing_image": "observed human-cookie expiry; r9 restores sign-in UI, refreshed actual scan pending",
+    "human_scan_reported": true,
+    "calibrated_new_session_ready": true,
+    "same_original_session_resume_verified": false,
+    "business_text_retained": false,
+    "qualified_business_documents": false,
+    "second_enterprise_identity": false,
+    "full_p0_receipts": false,
+    "calibration_scope": "single dedicated profile native SSO \u2192 configured portal structure; policy changed to calibrate, not original-session resume acceptance"
+  },
+  "linux_arm64": {
+    "architecture": "linux/arm64",
+    "itcra": {
+      "passed": 127,
+      "failed": 0,
+      "skipped": 0,
+      "python": "3.12.13"
+    },
+    "companion": {
+      "passed": 23,
+      "failed": 0,
+      "build_exit": 0
+    },
+    "log": "/tmp/itcra-joint-linux-r9-tests.log",
+    "validation_source_manifest_sha256": "ebfa49b937fa43bdf3e3135deceedad676b0587b2d97e3e200b425b6270844d6",
+    "validation_source_manifest_path": "/tmp/itcra-joint-linux-r5/source-manifest.json"
+  },
+  "logs": [
+    "/tmp/cmspark-itcra-joint-host-r5.log",
+    "/tmp/cmspark-itcra-extension-tests-r2.log",
+    "/tmp/itcra-joint-host-r9.log",
+    "/tmp/cmspark-itcra-native-isolated-r5.log"
+  ],
+  "known_warnings": [
+    "existing Starlette TestClient httpx deprecation",
+    "Linux SDK stdio transport finalizer after loop close; not suppressed"
+  ],
+  "itcra_changed_files_manifest": {
+    "path": "/tmp/itcra-joint-review-r9/itcra-source-manifest.json",
+    "sha256": "27e6ad971099388ebaf07af868f7beb0e1bb2f61927489b105d8112287999c5d",
+    "scope": "22 changed ITCra delivery files; different artifact from the full Linux two-repo validation snapshot"
+  }
+}

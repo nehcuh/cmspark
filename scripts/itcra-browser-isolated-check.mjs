@@ -62,6 +62,7 @@ try {
     },
     debugger: { onDetach: { addListener() {} }, attach: async () => {}, detach: async () => {}, sendCommand: ({ tabId }, method, params) => targets.get(tabId).send(method, params) },
     scripting: { executeScript: async request => {
+      if (request.args?.some(arg => arg === undefined)) throw new TypeError("ScriptInjection arguments must be JSON serializable")
       const frames = await frameList(request.target.tabId)
       const selected = request.target.documentIds ? frames.filter(f => request.target.documentIds.includes(f.documentId)) : request.target.allFrames ? frames : frames.filter(f => f.frameId === 0)
       if (request.target.documentIds && selected.length !== request.target.documentIds.length) throw new Error("old document no longer exists")
