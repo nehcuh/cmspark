@@ -1856,7 +1856,7 @@
     "type": "function",
     "function": {
       "name": "cooperation_review",
-      "description": "Review a collected current attempt against success criteria. Runtime completed is not acceptance. Provide exact source_version, criteria judgments with reasons and existing refs (source:<version>, evidence:<id>, artifact:<path>), plus unresolved conflicts. Semantic judgment is attributed to orchestrator, never independent truth. Missing/failed criteria or conflicts block downstream tasks.",
+      "description": "Review a collected current attempt against success criteria. Runtime completed is not acceptance. Provide exact source_version, criteria judgments with reasons and existing refs (source:<version>, evidence:<id>, artifact:<path>), plus unresolved conflicts. Semantic judgment is attributed to orchestrator, never independent truth. Failed terminal results allow all-negative criteria only; they remain unaccepted and block downstream tasks. Recovery budgets cannot exceed remaining planned worker creation attempts; retries still require confirmation. Missing criteria or conflicts block downstream tasks.",
       "parameters": {
         "type": "object",
         "properties": {

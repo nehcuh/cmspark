@@ -423,11 +423,27 @@ test("hydrateOriginCdpFails restores streak for #358 persistence hook", () => {
   assert.equal(getOriginFailCount("persist-unk", "origin:unknown"), 0)
 })
 
-test("evaluate result:null is coerced to failure and does not look like success", () => {
+test("unconfirmed evaluate null remains failure; host typed completions survive JSON", () => {
   const fake = coerceEvaluateNullResult("evaluate", { success: true, data: { result: null, evaluate_kind: "empty_completion" } })
   assert.equal(fake.success, false)
   assert.equal(fake.data?.error_code, "EVALUATE_NULL_RESULT")
-  assert.match(fake.error || "", /script evaluation failed/)
+  assert.match(fake.error || "", /confirmed typed completion/)
+  for (const data of [
+    { result: null, type: "object", evaluate_kind: "null_completion" },
+    { result: undefined, type: "undefined", evaluate_kind: "empty_completion" },
+  ]) {
+    const wire = JSON.parse(JSON.stringify({ success: true, data }))
+    assert.equal(coerceEvaluateNullResult("evaluate", wire).success, true)
+  }
+  for (const data of [
+    { result: null, type: "object" }, // Old extension without host confirmation.
+    { result: null, type: "undefined", evaluate_kind: "empty_completion" },
+    { type: "object", evaluate_kind: "null_completion" },
+    { result: null, evaluate_kind: "null_completion" },
+    { type: "undefined" },
+  ]) {
+    assert.equal(coerceEvaluateNullResult("evaluate", { success: true, data }).success, false)
+  }
   const live = coerceEvaluateNullResult("evaluate", { success: true, data: { result: 0 } })
   assert.equal(live.success, true)
   const click = coerceEvaluateNullResult("click", { success: true, data: { result: null } })

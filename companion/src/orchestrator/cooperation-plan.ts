@@ -114,6 +114,20 @@ function assertMutable(tm: ThreadManager, ownerId: string) {
   if (owner(tm, ownerId).execution_policy === "plan_readonly") throw new Error("cooperation mutation forbidden in plan_readonly")
 }
 function latest(task: PlannedTask) { return task.attempts.at(-1) }
+
+/** Observation only: planned creation attempts never increase a worker's recovery budget. */
+export function clampPlannedRecovery(tm: ThreadManager, ownerId: string, result: CooperationResult): CooperationResult {
+  const parent = tm.get(ownerId), plan = parent?.cooperation_plan
+  if (result.executor !== "browser" || result.owner_thread_id !== ownerId || !plan ||
+      plan.run_id !== (parent?.orchestrator_run_id ?? null) || result.run_id !== plan.run_id) return result
+  const task = plan.tasks.find(t => t.attempts.some(a => a.worker_id === result.source.thread_id))
+  if (!task) return result
+  const budget = Math.min(result.recovery.budget_remaining, Math.max(0, 3 - task.attempts.length))
+  const exhaustedRetry = budget === 0 && result.recovery.action === "retry_after_confirmation"
+  if (budget === result.recovery.budget_remaining && !exhaustedRetry) return result
+  return { ...result, recovery: { ...result.recovery, budget_remaining: budget,
+    ...(exhaustedRetry ? { action: "revise_plan" as const, requires_confirmation: false } : {}) } }
+}
 function sourceIsCurrent(tm: ThreadManager, result: CooperationResult) {
   const worker = tm.get(result.source.thread_id)
   if (!worker) return true
@@ -130,6 +144,8 @@ function validDecision(tm: ThreadManager, task: PlannedTask, decision: Decision,
   const worker = tm.get(attempt.worker_id)
   // A removed source retains its bounded checkpoint, but cannot promise raw history.
   if (!worker) return true
+  if (worker.parent_thread_id !== result.owner_thread_id || worker.orchestrator_run_id !== result.run_id ||
+      (tm.get(result.owner_thread_id)?.orchestrator_run_id ?? null) !== result.run_id) return false
   return !isActive(worker.id) && !worker.paused && sourceIsCurrent(tm, result)
 }
 function accepted(tm: ThreadManager, task: PlannedTask, isActive: Active) {
@@ -232,11 +248,13 @@ export function checkpointCooperationResult(tm: ThreadManager, ownerId: string, 
   const plan = owner(tm, ownerId).cooperation_plan
   const task = plan?.tasks.find(t => latest(t)?.worker_id === result.source.thread_id)
   if (!plan || !task) return
+  result = clampPlannedRecovery(tm, ownerId, result)
   const old = latest(task)!
-  if (old.result?.source.version === result.source.version && old.result.status === result.status) return
+  const sameReport = old.result?.source.version === result.source.version && old.result.status === result.status
+  if (sameReport && JSON.stringify(old.result!.recovery) === JSON.stringify(result.recovery)) return
   write(tm, ownerId, { ...plan, tasks: plan.tasks.map(t => t.id !== task.id ? t : { ...t,
     // A changed report invalidates judgments about that attempt, not accepted siblings.
-    decisions: t.decisions.filter(d => d.attempt !== old.number),
+    decisions: sameReport ? t.decisions : t.decisions.filter(d => d.attempt !== old.number),
     attempts: t.attempts.map(a => a.number === old.number ? { ...a, result } : a),
   }) })
 }
@@ -246,10 +264,13 @@ export function reviewCooperationTask(tm: ThreadManager, ownerId: string, input:
   const parsed = reviewInput.parse(input), plan = currentPlan(tm, ownerId, parsed.plan_id)
   const task = plan.tasks.find(t => t.id === parsed.task_id), attempt = task && latest(task), result = attempt?.result
   if (!task || !attempt || !result || result.source.version !== parsed.source_version) throw new Error("review source is stale or uncollected")
-  if (!["completed", "partial"].includes(runtimeStatus(tm, task, isActive))) throw new Error("review requires a terminal report")
+  const state = runtimeStatus(tm, task, isActive)
+  const failedRejection = state === "failed" && result.status === "failed" && parsed.criteria.every(c => !c.passed)
+  if (!["completed", "partial"].includes(state) && !failedRejection) throw new Error("review requires a terminal report; failed results only allow all-negative criteria")
   const worker = tm.get(attempt.worker_id)
   const prefix = `${worker?.last_run_ended_at ?? "not_started"}:${worker?.last_run_terminal ?? "normal"}:${!!worker?.paused}:`
-  if (!worker || !result.source.version.startsWith(prefix) || !sourceIsCurrent(tm, result) || !isCurrentPlannedWorker(tm, worker.id)) throw new Error("worker changed since collection")
+  if (!worker || worker.parent_thread_id !== ownerId || worker.orchestrator_run_id !== plan.run_id ||
+      !result.source.version.startsWith(prefix) || !sourceIsCurrent(tm, result) || !isCurrentPlannedWorker(tm, worker.id)) throw new Error("worker changed since collection")
   const validRefs = new Set([`source:${result.source.version}`, ...result.evidence.map(e => `evidence:${e.id}`), ...result.artifacts.map(a => `artifact:${a}`)])
   if (new Set(parsed.criteria.map(c => c.id)).size !== parsed.criteria.length) throw new Error("duplicate review criterion")
   for (const c of parsed.criteria) {
@@ -280,7 +301,9 @@ export function cooperationPlanSnapshot(tm: ThreadManager, ownerId: string, isAc
     try { assertRequiredCapabilities(tm, ownerId, task, tools) } catch { capable = false }
     const ready = !stale && !stopped && !done && !blockedBy.length && capable && task.attempts.length < 3 &&
       !needsReview && ["pending", "failed", "partial", "interrupted", "completed"].includes(state)
-    return { ...task, runtime_status: state, accepted: done, missing: missing(tm, task, isActive), blocked_by: blockedBy,
+    return { ...task, attempts: task.attempts.map(attempt => ({ ...attempt,
+      ...(attempt.result ? { result: clampPlannedRecovery(tm, ownerId, attempt.result) } : {}) })),
+      runtime_status: state, accepted: done, missing: missing(tm, task, isActive), blocked_by: blockedBy,
       next_attempt: task.attempts.length + 1,
       required_capabilities_available: capable, ready, attempts_remaining: Math.max(0, 3 - task.attempts.length),
       next_action: done ? "reuse_accepted_result" : ready ? "spawn_worker_after_confirmation" : needsReview ? "review_result" : state === "needs_collection" ? "collect_handback" : "resolve_blocker_or_wait" }

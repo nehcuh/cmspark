@@ -24,7 +24,7 @@ type Calls = { cdp: number; script: number }
 async function withBridge(
   stub: {
     attach?: () => Promise<void>
-    send?: (method: string) => Promise<any>
+    send?: (method: string, params?: any) => Promise<any>
     scriptExec?: (opts: any) => Promise<any>
   },
   fn: (bridge: any, calls: Calls) => Promise<void>,
@@ -42,9 +42,9 @@ async function withBridge(
       attach: async () => {
         if (stub.attach) await stub.attach()
       },
-      sendCommand: async (_t: any, method: string) => {
+      sendCommand: async (_t: any, method: string, params?: any) => {
         calls.cdp += 1
-        return stub.send ? stub.send(method) : {}
+        return stub.send ? stub.send(method, params) : {}
       },
     },
     scripting: {
@@ -286,6 +286,42 @@ test("#556 evaluate：EVAL_THROWN 的页面异常文案不得进入 error（#558
       assert.match(String(r.data?.page_text_untrusted || ""), /Security Block/i, "原文保留在 data")
     },
   )
+})
+
+test("#612 evaluate: original typed undefined completes after one healthy probe without replay", async () => {
+  const expressions: string[] = []
+  const code = "void globalThis.syntheticOperation()"
+  await withBridge({
+    send: async (method, params) => {
+      if (method !== "Runtime.evaluate") return {}
+      expressions.push(params.expression)
+      return params.expression === code
+        ? { result: { type: "undefined" } }
+        : { result: { type: "boolean", value: true } }
+    },
+  }, async bridge => {
+    const r = await bridge.execute("evaluate", { tabId: 7, code, security_token: "synthetic" })
+    assert.equal(r.success, true)
+    assert.equal(r.data.type, "undefined")
+    assert.equal(r.data.evaluate_kind, "empty_completion")
+    assert.deepEqual(expressions, [code, "1+1===2"])
+  })
+})
+
+test("#612 evaluate: missing original RemoteObject cannot become completion via a live probe", async () => {
+  const expressions: string[] = []
+  await withBridge({
+    send: async (method, params) => {
+      if (method !== "Runtime.evaluate") return {}
+      expressions.push(params.expression)
+      return params.expression === "1+1===2" ? { result: { type: "boolean", value: true } } : {}
+    },
+  }, async bridge => {
+    const r = await bridge.execute("evaluate", { tabId: 7, code: "synthetic", security_token: "synthetic", evaluate_kind: "empty_completion", type: "undefined" })
+    assert.equal(r.success, false)
+    assert.equal(r.data.error_code, "EVALUATE_NULL_RESULT")
+    assert.deepEqual(expressions, ["synthetic"])
+  })
 })
 
 test("#556 analyze_image：页面改写返回对象（含改写 key）也无法注入措辞 —— 结构性", async () => {
