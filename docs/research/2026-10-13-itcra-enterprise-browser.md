@@ -1,6 +1,6 @@
 # ITCra enterprise browser research — #618
 
-Status: Research complete; architecture choice pending. No enterprise policy code, production grants or live configuration changes.
+Status: Research complete; user selected extension of REST/grant on 2026-10-13. Implementation proceeds under issue #618 and ADR-029. No production grants or live configuration changes.
 
 Source: `/Users/huchen/Projects/ITCra/docs/CMSPARK-ADAPTATION-HANDOFF.md` v1.1, SHA256 `52010d7a4ba59134e33263b271040e10a762157b177b3073185b4f78adb068b7`. Research CMspark base `c570cb80c5799057e067ae0b55e6a3e4548288c3` (Office PR #617). Handoff original source baseline3705f5d/install0.6.13 is not the current source/build; new feature discovery and minimum compatible versions are required.
 
@@ -29,7 +29,7 @@ P0 required A1–A11,A13–A24; phase=all adds A12. Fail/missing/skipped require
 1. Extend existing authenticated REST/grant with administrator-owned enterprise policy, isolated browser identity, controlled sessions and separate signed single-use human authority (recommended).
 2. Deploy an independent enterprise browser service, with separate operational ownership and interface migration.
 
-The RIPER Innovate exit requires user selection. No dependent implementation or finalized spec starts before that answer.
+The user selected approach 1. Implementation spec/plan follow that choice.
 
 ## Scope constraints for either implementation
 
@@ -39,4 +39,10 @@ Keep old grant/desktop HITL defaults. Do not authorize by caller_id alone, agent
 
 Office #617, subtask navigation #620 and cooperation recovery #622 passed their machine/adversary/Pi/Kimi/required CI gates and landed. Next implementation base is main e44af42f0f3999f23306e41159edb8b12e3dbdff. #622 Windows first attempt hit unchanged native PowerShell ownership-query timeouts; one fresh failed-job retry passed at original limits; diagnostic follow-up #623 retains the uncertainty. Existing installed builds were not replaced.
 
-This research is committed on codex/itcra-enterprise-browser-618 for a reviewable handoff. Architecture selection remains pending; no enterprise feature implementation, final spec or production policy is claimed.
+This research is committed on codex/itcra-enterprise-browser-618. Source implementation and isolated verification follow; joint acceptance and production policy issuance are separate evidence and actions.
+
+## Live entry observation after user network steering — 2026-10-13
+
+Authorized read-only fresh Chrome probe: HTTPS and HTTP `home.cmschina.com.cn` each reached the main-frame `https://sso.cmschina.com.cn/login.aspx` with status200 on retry. Initial probes had returned ERR_EMPTY_RESPONSE; the successful retry supersedes entry-connectivity failure, not a completed authenticated acceptance. Headed browser navigation and separate headless DOM-structure probe were both used. Visible iframe count0, form1, text inputs4, password inputs0, canvas0; login structures `#loginBody` (body), `#qrcode` (div), `#btnLogin` (input) each visible/unique. One exact visible “扫码登录” label. This observation qualifies candidate login selectors only; no ready marker or actual principal/post-login state was observed.
+
+Captured only bounded marker counts/known host groups. No page-body text, QR/image pixels or sources, credential values, tickets/query strings, browser userdata or production grant changes. The real ITCra authenticated presentation/signing UI and complete A1–A24 driver remain required. The supplied enterprise site is reachable in the current local network; no bypass of certificate validation or user profile was used.

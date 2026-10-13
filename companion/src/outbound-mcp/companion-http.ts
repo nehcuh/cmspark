@@ -12,6 +12,8 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "http"
+import type { EnterprisePermit } from "./enterprise-permit"
+import { handleEnterpriseHttp } from "./enterprise-http"
 import { timingSafeEqual } from "crypto"
 import { WebSocket } from "ws"
 import { getConfig, getConfigDir } from "../config"
@@ -64,6 +66,7 @@ import {
   liveGrantProfileById,
   OUTBOUND_L1_DEFAULT_PROFILE,
   lookupContextGrant,
+  hasEnterpriseBinding,
 } from "./outbound-grants"
 import {
   outboundToolsForProfiles,
@@ -85,7 +88,7 @@ export type OutboundToolRunner = (
   toolCallId: string,
   internalTool: string,
   params: Record<string, unknown>,
-  options?: { siteContextTabId?: number; signal?: AbortSignal },
+  options?: { siteContextTabId?: number; signal?: AbortSignal; enterprisePermit?: EnterprisePermit },
 ) => Promise<{ success: boolean; data?: unknown; error?: string }>
 
 let toolRunner: OutboundToolRunner | null = null
@@ -506,6 +509,7 @@ export async function companionInvokeOutbound(
   const tool = canonicalOutboundMcpName(rawTool)
   const wire_name = redactOutboundMcpWireName(rawTool)
   const grant_id = opts?.grant_id
+  if (grant_id && hasEnterpriseBinding(grant_id)) return { ok: false, error_code: "ENTERPRISE_SESSION_REQUIRED", error: "ENTERPRISE_SESSION_REQUIRED" }
   // #410 per-key profile: the authenticated key's OWN grant profile decides the
   // allowed tool set (never widened by sibling grants of the same caller).
   // Legacy ws_secret / no-grant → undefined → facade falls back to caller-level.
@@ -825,6 +829,7 @@ export async function handleOutboundMcpHttp(
   if (!pathOnly.startsWith(OUTBOUND_HTTP_PREFIX)) {
     return false
   }
+  if (await handleEnterpriseHttp(req, res)) return true
 
   if (req.method === "GET" && pathOnly === OUTBOUND_HEALTH_PATH) {
     // Health is unauthenticated but only on loopback (server bind); reports no secrets

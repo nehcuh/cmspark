@@ -121,6 +121,7 @@ export function runCookieTrustAdmission(ctx: CookieAdmissionCtx): AdmissionEarly
 }
 
 export type UrlAdmissionCtx = {
+  enterprisePermit?: import("../outbound-mcp/enterprise-permit").EnterprisePermit
   signal?: AbortSignal
   toolName: string
   finalParams: Record<string, any>
@@ -141,6 +142,11 @@ export type UrlAdmissionCtx = {
 export async function runUrlNavigateAdmission(
   ctx: UrlAdmissionCtx,
 ): Promise<AdmissionEarlyResult> {
+  if (ctx.enterprisePermit) {
+    const { checkEnterprisePermit } = await import("../outbound-mcp/enterprise-permit")
+    if (!checkEnterprisePermit(ctx.enterprisePermit, ctx.toolName, ctx.finalParams, ctx.ws)) return { ok: false, result: { success: false, error: "PERMIT_INVALID" } }
+    return { ok: true }
+  }
   const {
     toolName,
     finalParams,
