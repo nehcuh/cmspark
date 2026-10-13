@@ -747,8 +747,8 @@ test("#515 conversation enum surfaces share filterConversationEnum", () => {
   )
   const railSrc = read("src/sidepanel/components/StatusRail.tsx")
   const navSrc = read("src/sidepanel/components/WorkspaceFrame.tsx")
-  assert.match(railSrc, /← 主任务/)
-  assert.match(railSrc, /!t\.trashed_at/, "breadcrumb must not select a soft-deleted parent")
+  assert.match(railSrc, /TaskRelationshipNav/, "rail mounts the tested relationship presentation")
+  assert.match(railSrc, /resolveTaskRelationship/, "rail uses explicit metadata for parent availability")
   assert.match(navSrc, /worker_role_label/, "recent-nav search must match role / belong title, not only displayThreadTitle")
   assert.match(listSrc, /子任务/)
   assert.match(

@@ -11,7 +11,8 @@ import {
   connectionLabel,
   connectionDotShadow,
 } from "../ui/tokens"
-import { displayThreadTitle, isFleetWorkerThread } from "../utils/thread-timeline"
+import { resolveTaskRelationship } from "../utils/task-relationship"
+import { TaskRelationshipNav } from "./TaskRelationshipNav"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
 import { ModeBadge } from "../ui/ModeBadge"
 
@@ -78,18 +79,7 @@ export function StatusRail({
     }
   }
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
-  const activeThreadId = state.activeThreadId
-  const activeThread = state.threads.find(t => t.id === activeThreadId)
-  const parentThread =
-    activeThread && isFleetWorkerThread(activeThread) && activeThread.parent_thread_id
-      ? state.threads.find((t) => t.id === activeThread.parent_thread_id && !t.trashed_at)
-      : undefined
-  const inSubtask = Boolean(parentThread)
-  const taskTitle = !activeThread
-    ? "新对话"
-    : inSubtask
-      ? `子任务 · ${activeThread.worker_role_label || displayThreadTitle(activeThread)}`
-      : displayThreadTitle(activeThread)
+  const relationship = resolveTaskRelationship(state.activeThreadId, state.threads, state.fleet?.workers)
   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
   const [nbTooltip, setNbTooltip] = useState<string>(
     "离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）",
@@ -242,27 +232,10 @@ export function StatusRail({
       <div className="cm-rail-brand" style={railStyles.brand} title="CMspark" aria-label="CMspark">
         <CompanionMark size={16} />
       </div>
-      {inSubtask && parentThread ? (
-        <div className="cm-task-title" style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-          <button
-            type="button"
-            className="cm-icon-button"
-            title={`返回主任务 ${displayThreadTitle(parentThread)}`}
-            aria-label={`返回主任务 ${displayThreadTitle(parentThread)}`}
-            onClick={() => {
-              dispatch({ type: "SET_ACTIVE_THREAD", threadId: parentThread.id })
-              chrome.runtime.sendMessage({ type: "thread.select", threadId: parentThread.id })
-            }}
-          >
-            ← 主任务
-          </button>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={taskTitle}>
-            {taskTitle}
-          </span>
-        </div>
-      ) : (
-        <div className="cm-task-title" title={taskTitle}>{taskTitle}</div>
-      )}
+      <TaskRelationshipNav relationship={relationship} onNavigate={parentId => {
+        dispatch({ type: "SET_ACTIVE_THREAD", threadId: parentId })
+        chrome.runtime.sendMessage({ type: "thread.select", threadId: parentId })
+      }} />
       <div style={railStyles.cluster}>
       <button type="button" className="cm-icon-button cm-header-new" title="新对话" aria-label="新对话" onClick={() => createBlankThread(dispatch)}>+</button>
       <button
