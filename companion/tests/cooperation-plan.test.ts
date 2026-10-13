@@ -243,3 +243,193 @@ test("ACP collect, status and cancel reject another real conversation and preser
   const own = await dispatch.executeCompanionTool("acp_get_status", { __thread_id: other.id, session_id: sid })
   assert.equal(own.success, true)
 })
+
+test("three failed terminal reports accept negative review, keep dependents blocked and recover only after confirmation", async () => {
+  const c = setup(), p = await plan(c, [task("a"), task("b"), task("c"), task("dependent", ["a", "b", "c"])])
+  for (const id of ["a", "b", "c"]) {
+    const spawned = await spawn(c, p, id)
+    assert.equal(spawned.success, true, spawned.error)
+    const result = await finish(c, spawned.data.worker_id, "circuit_breaker")
+    assert.equal(result.status, "failed")
+    const rejected = await review(c, p, id, result, false)
+    assert.equal(rejected.success, true, rejected.error)
+    const current = rejected.data.plan.tasks.find((t: any) => t.id === id)
+    assert.equal(current.accepted, false)
+    assert.equal(current.runtime_status, "failed")
+    assert.equal(current.attempts[0].result.status, "failed")
+  }
+  assert.equal((await spawn(c, p, "dependent")).success, false)
+  const params = spawnParams(c, p, "a")
+  assert.equal((await c.call("spawn_worker", params)).success, false)
+  const recovered = await spawn(c, p, "a")
+  assert.equal(recovered.success, true, recovered.error)
+  const result = await finish(c, recovered.data.worker_id)
+  assert.equal((await review(c, p, "a", result)).data.plan.tasks[0].accepted, true)
+  assert.equal(new ThreadManager().get(c.parent.id)!.cooperation_plan!.tasks[0].attempts.length, 2)
+  assert.equal((await spawn(c, p, "dependent")).success, false, "unaccepted siblings still block")
+})
+
+test("failed reviews retain positive, mixed, stale, unsettled, halted and paused refusals", async () => {
+  const c = setup(), p = await plan(c, [task("a", [], ["coverage", "accuracy"])])
+  const spawned = await spawn(c, p, "a"), wid = spawned.data.worker_id
+  const result = await finish(c, wid, "error")
+  assert.equal((await review(c, p, "a", result)).success, false)
+  const input = { plan_id: p.id, task_id: "a", source_version: result.source.version,
+    criteria: p.tasks[0].criteria.map((criterion, index) => ({ id: criterion.id, passed: index === 0,
+      reason: "Recorded criterion judgment", refs: [`source:${result.source.version}`] })), conflicts: [] }
+  assert.equal((await c.call("cooperation_review", input)).success, false)
+  const negative = { ...input, criteria: input.criteria.map(criterion => ({ ...criterion, passed: false })) }
+  assert.throws(() => runtime.reviewCooperationTask(c.tm, c.parent.id, negative, () => true), /terminal report/)
+  assert.equal((await c.call("cooperation_review", { ...negative, source_version: "stale" })).success, false)
+  assert.equal((await c.call("cooperation_review", { ...negative, criteria: negative.criteria.map(criterion => ({ ...criterion, refs: ["evidence:invented"] })) })).success, false)
+  c.tm.update(wid, { last_run_execution_id: "new-execution", last_run_settled_execution_id: "older-execution" })
+  assert.equal((await c.call("cooperation_review", negative)).success, false)
+  for (const terminal of ["aborted", "security_halt", "paused"]) {
+    const another = setup(), anotherPlan = await plan(another)
+    const worker = (await spawn(another, anotherPlan, "a")).data.worker_id
+    const collected = await finish(another, worker, terminal === "paused" ? "error" : terminal)
+    if (terminal === "paused") another.tm.update(worker, { paused: true })
+    assert.equal((await review(another, anotherPlan, "a", collected, false)).success, false, terminal)
+    assert.equal((await spawn(another, anotherPlan, "a")).success, false, terminal)
+  }
+})
+
+test("launch failure with a ready producer result cannot enter the failed negative-review path", async () => {
+  const c = setup(), p = await plan(c)
+  const params = spawnParams(c, p, "a")
+  const spawned = await dispatch.executeCompanionTool("spawn_worker", { ...params, security_token: policy.issueTokenFor("spawn_worker", params).token }, undefined,
+    { kickWorkerChat: () => { throw new Error("synthetic launch failure") } })
+  assert.equal(spawned.success, false)
+  assert.equal(spawned.error_code, "SPAWN_KICK_FAILED")
+  const worker = c.tm.list().find(worker => worker.parent_thread_id === c.parent.id)!
+  const read = await c.call("collect_handback", { worker_id: worker.id })
+  assert.equal(read.data.task_result.status, "ready")
+  assert.equal((await c.call("cooperation_status")).data.plan.tasks[0].runtime_status, "failed")
+  assert.equal((await review(c, p, "a", read.data.task_result, false)).success, false)
+})
+
+test("planned recovery clamps all projections, repairs legacy cache metadata and preserves judgments on recollection", async () => {
+  const c = setup(), p = await plan(c)
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const spawned = await spawn(c, p, "a")
+    const result = await finish(c, spawned.data.worker_id, attempt === 3 ? null : "error")
+    const judged = await review(c, p, "a", result, attempt === 3)
+    assert.equal(judged.success, true, judged.error)
+    const remaining = 3 - attempt
+    assert.ok(result.recovery.budget_remaining <= remaining)
+    for (const recorded of judged.data.plan.tasks[0].attempts) assert.ok(recorded.result.recovery.budget_remaining <= remaining)
+    for (const recorded of judged.data.cooperation.tasks) assert.ok(recorded.recovery.budget_remaining <= remaining)
+  }
+  const parent = c.tm.get(c.parent.id)!, planned = parent.cooperation_plan!, current = planned.tasks[0].attempts.at(-1)!
+  const read = await c.call("collect_handback", { worker_id: current.worker_id })
+  const { browserTaskResult } = await import("../src/orchestrator/cooperation-result")
+  const unbounded = browserTaskResult(c.tm.get(current.worker_id)!, read)
+  assert.equal(unbounded.recovery.budget_remaining, 2, "legacy metadata comes from the real result producer")
+  const decisions = structuredClone(planned.tasks[0].decisions)
+  c.tm.update(c.parent.id, { cooperation_tasks: { ...parent.cooperation_tasks,
+    [unbounded.task_id]: { ...parent.cooperation_tasks![unbounded.task_id], result: unbounded } },
+    cooperation_plan: { ...planned, tasks: planned.tasks.map(task => ({ ...task, attempts: task.attempts.map(attempt =>
+      attempt.worker_id === current.worker_id ? { ...attempt, result: unbounded } : attempt) })) } })
+  const projected = await c.call("cooperation_status")
+  assert.equal(projected.data.plan.tasks[0].attempts.at(-1).result.recovery.budget_remaining, 0)
+  assert.equal(projected.data.cooperation.tasks.at(-1).recovery.budget_remaining, 0)
+  const recollected = await c.call("collect_handback", { worker_id: current.worker_id })
+  assert.equal(recollected.data.task_result.recovery.budget_remaining, 0)
+  const reloaded = new ThreadManager().get(c.parent.id)!
+  assert.equal(reloaded.cooperation_tasks![unbounded.task_id].result.recovery.budget_remaining, 0)
+  assert.equal(reloaded.cooperation_plan!.tasks[0].attempts.at(-1)!.result!.recovery.budget_remaining, 0)
+  assert.deepEqual(reloaded.cooperation_plan!.tasks[0].decisions, decisions)
+  assert.equal((await c.call("cooperation_status")).data.plan.tasks[0].accepted, true)
+})
+
+test("exhausted planned failure recommends revision without changing resume or unplanned recovery", async () => {
+  const c = setup(), p = await plan(c)
+  let result!: Awaited<ReturnType<typeof finish>>
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const spawned = await spawn(c, p, "a")
+    result = await finish(c, spawned.data.worker_id, "error")
+    assert.equal((await review(c, p, "a", result, false)).success, true)
+  }
+  assert.equal(result.recovery.budget_remaining, 0)
+  assert.equal(result.recovery.action, "revise_plan")
+  assert.equal(result.recovery.automatic, false)
+  assert.equal((await spawn(c, p, "a")).success, false)
+  const workerId = result.source.thread_id
+  const failures = structuredClone(c.tm.get(c.parent.id)!.cooperation_tasks![result.task_id].failure_versions)
+  const decisions = structuredClone(c.tm.get(c.parent.id)!.cooperation_plan!.tasks[0].decisions)
+  const repeated = await c.call("collect_handback", { worker_id: workerId })
+  assert.equal(repeated.data.task_result.recovery.action, "revise_plan")
+  assert.deepEqual(c.tm.get(c.parent.id)!.cooperation_tasks![result.task_id].failure_versions, failures)
+  assert.deepEqual(c.tm.get(c.parent.id)!.cooperation_plan!.tasks[0].decisions, decisions)
+  c.tm.update(workerId, { paused: true })
+  const paused = await c.call("collect_handback", { worker_id: workerId })
+  assert.equal(paused.data.task_result.recovery.action, "resume_after_confirmation")
+  assert.equal(paused.data.task_result.recovery.requires_confirmation, true)
+  assert.equal(paused.data.task_result.recovery.budget_remaining, 0)
+  const { acpTaskResult, browserTaskResult } = await import("../src/orchestrator/cooperation-result")
+  const acp = acpTaskResult({ session_id: "synthetic-unplanned", thread_id: c.parent.id, state: "closed", terminal_kind: "failed", partial: false } as any)
+  assert.equal(runtime.clampPlannedRecovery(c.tm, c.parent.id, acp), acp)
+  const unplannedWorker = c.tm.create("unplanned worker")
+  c.tm.update(unplannedWorker.id, { parent_thread_id: c.parent.id, orchestrator_run_id: c.tm.get(c.parent.id)!.orchestrator_run_id, last_run_terminal: "error" })
+  const unplanned = browserTaskResult(c.tm.get(unplannedWorker.id)!, {})
+  assert.equal(runtime.clampPlannedRecovery(c.tm, c.parent.id, unplanned), unplanned)
+})
+
+test("live source ownership or run changes reject failed review and invalidate prior acceptance", async () => {
+  for (const change of ["owner", "run"] as const) {
+    for (const terminal of [null, "error"]) {
+      const c = setup(), p = await plan(c, [task("a"), task("dependent", ["a"])])
+      const workerId = (await spawn(c, p, "a")).data.worker_id
+      const result = await finish(c, workerId, terminal)
+      if (terminal === null) assert.equal((await review(c, p, "a", result)).data.plan.tasks[0].accepted, true)
+      const foreign = c.tm.create("synthetic foreign owner")
+      c.tm.update(workerId, change === "owner" ? { parent_thread_id: foreign.id } : { orchestrator_run_id: foreign.id })
+      const refused = await review(c, p, "a", result, false)
+      assert.equal(refused.success, false, `${change}/${terminal}`)
+      assert.match(refused.error, /worker changed since collection/)
+      const status = await c.call("cooperation_status")
+      assert.equal(status.data.plan.tasks[0].accepted, false)
+      assert.equal(status.data.plan.tasks[1].ready, false)
+      assert.equal((await spawn(c, p, "dependent")).success, false)
+    }
+  }
+})
+
+test("removed accepted sources retain bounded checkpoints without promising raw history", async () => {
+  const c = setup(), p = await plan(c, [task("a"), task("dependent", ["a"])])
+  const workerId = (await spawn(c, p, "a")).data.worker_id
+  const result = await finish(c, workerId)
+  assert.equal((await review(c, p, "a", result)).data.plan.tasks[0].accepted, true)
+  c.tm.delete(workerId)
+  const status = await c.call("cooperation_status")
+  assert.equal(status.data.plan.tasks[0].accepted, true)
+  assert.equal(status.data.plan.tasks[1].ready, true)
+  assert.equal(status.data.cooperation.tasks.find((record: any) => record.task_id === result.task_id).raw_report_available, false)
+  assert.equal((await spawn(c, p, "dependent")).success, true)
+})
+
+test("replacement completes only the missing criterion and reuses an unchanged owned earlier source", async () => {
+  const c = setup(), p = await plan(c, [task("a", [], ["coverage", "accuracy"]), task("dependent", ["a"])])
+  const firstWorker = (await spawn(c, p, "a")).data.worker_id
+  const first = await finish(c, firstWorker, null, "Recorded coverage; accuracy still missing")
+  const judged = await c.call("cooperation_review", { plan_id: p.id, task_id: "a", source_version: first.source.version,
+    criteria: p.tasks[0].criteria.map(criterion => ({ id: criterion.id, passed: criterion.id === "coverage",
+      reason: criterion.id === "coverage" ? "Coverage is established" : "Accuracy needs another source", refs: [`source:${first.source.version}`] })), conflicts: [] })
+  assert.equal(judged.success, true, judged.error)
+  assert.deepEqual(judged.data.plan.tasks[0].missing.map((criterion: any) => criterion.id), ["accuracy"])
+  const replacement = await spawn(c, p, "a")
+  assert.equal(replacement.success, true, replacement.error)
+  assert.deepEqual(replacement.data.checkpoint.missing.map((criterion: any) => criterion.id), ["accuracy"])
+  const brief = c.tm.getMessages(replacement.data.worker_id).find(message => message.role === "user")!.content
+  const checkpoint = JSON.parse(brief.split("\n").find(line => line.includes('"remaining_criteria"'))!)
+  assert.deepEqual(checkpoint.remaining_criteria.map((criterion: any) => criterion.id), ["accuracy"])
+  const second = await finish(c, replacement.data.worker_id, null, "Recorded accuracy source for the remaining criterion")
+  const accepted = await c.call("cooperation_review", { plan_id: p.id, task_id: "a", source_version: second.source.version,
+    criteria: [{ id: "accuracy", passed: true, reason: "Accuracy is established by the replacement report", refs: [`source:${second.source.version}`] }], conflicts: [] })
+  assert.equal(accepted.success, true, accepted.error)
+  assert.equal(accepted.data.plan.tasks[0].accepted, true)
+  assert.deepEqual(accepted.data.plan.tasks[0].missing, [])
+  assert.equal(accepted.data.plan.tasks[1].ready, true)
+  assert.equal(accepted.data.plan.tasks[0].decisions.find((decision: any) => decision.id === "coverage").source_version, first.source.version)
+  assert.equal((await spawn(c, p, "dependent")).success, true)
+})

@@ -320,8 +320,9 @@ export function hydrateOriginCdpFails(
 }
 
 /**
- * evaluate success:true with result null/undefined is not a live completion
- * (X CSP empty_completion / #357). Click and real 0/false/"" stay success.
+ * Preserve host-confirmed null/undefined execution completions across JSON.
+ * Missing/untyped legacy results remain failures; completion is not proof that
+ * a user's goal was fulfilled. Older extensions need the matching updated build.
  */
 export function coerceEvaluateNullResult(
   toolName: string,
@@ -331,11 +332,14 @@ export function coerceEvaluateNullResult(
   const data = toolResult.data
   const result = data == null ? undefined : data.result
   if (result !== null && result !== undefined) return toolResult
+  if (
+    (result === null && data?.type === "object" && data?.evaluate_kind === "null_completion") ||
+    (result === undefined && data?.type === "undefined" && data?.evaluate_kind === "empty_completion")
+  ) return toolResult
   return {
     success: false,
     error:
-      "EVALUATE_NULL_RESULT: evaluate returned result:null — script evaluation failed " +
-      "(empty_completion / CSP); do not treat as success",
+      "EVALUATE_NULL_RESULT: evaluate did not return a confirmed typed completion; do not treat as success",
     data: {
       error_code: EVALUATE_NULL_RESULT,
       evaluate_kind: data?.evaluate_kind,

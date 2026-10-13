@@ -1,7 +1,7 @@
 import type { ThreadManager } from "../threads/thread-manager"
 import { acpTaskResult, recoveryForTaskStatus, type CooperationResult, type CooperationStatus } from "./cooperation-result"
 import type { AcpSessionRecord } from "../acp/types"
-import { checkpointCooperationResult } from "./cooperation-plan"
+import { checkpointCooperationResult, clampPlannedRecovery } from "./cooperation-plan"
 
 export type CooperationTaskRecord = { result: CooperationResult; observed_at: string; failure_versions: string[] }
 export const COOPERATION_TASK_CAP = 64
@@ -15,14 +15,20 @@ export function recordCooperationResult(tm: ThreadManager, ownerId: string, resu
   const entries = new Map(Object.entries(parent.cooperation_tasks ?? {}))
   const previous = entries.get(result.task_id)
   if (previous?.result.source.version === result.source.version && previous.result.status === result.status) {
+    const bounded = clampPlannedRecovery(tm, ownerId, previous.result)
+    if (bounded !== previous.result) {
+      entries.set(result.task_id, { ...previous, result: bounded })
+      tm.update(ownerId, { cooperation_tasks: Object.fromEntries(entries) })
+    }
     // Repair a crash between the result-cache and plan-checkpoint writes.
-    checkpointCooperationResult(tm, ownerId, previous.result)
-    return previous.result
+    checkpointCooperationResult(tm, ownerId, bounded)
+    return bounded
   }
   const failureVersions = result.status === "completed" ? [] : [...(previous?.failure_versions ?? [])]
   if (["failed", "partial"].includes(result.status) && !failureVersions.includes(result.source.version)) failureVersions.push(result.source.version)
-  const bounded = { ...result, recovery: recoveryForTaskStatus(result.status, failureVersions.length) }
-  if (result.recovery.action === "recollect") bounded.recovery = { ...bounded.recovery, action: "recollect", requires_confirmation: false }
+  const recovered = { ...result, recovery: recoveryForTaskStatus(result.status, failureVersions.length) }
+  if (result.recovery.action === "recollect") recovered.recovery = { ...recovered.recovery, action: "recollect", requires_confirmation: false }
+  const bounded = clampPlannedRecovery(tm, ownerId, recovered)
   entries.delete(result.task_id)
   entries.set(result.task_id, { result: bounded, observed_at: new Date().toISOString(), failure_versions: failureVersions.slice(-2) })
   // Old browser fan-outs are outside the current run; keep ACP summaries for this owner.
@@ -59,8 +65,9 @@ export function cooperationSnapshot(tm: ThreadManager, ownerId: string, opts?: {
     const rawReportAvailable = result.executor === "acp"
       ? sessions.has(result.source.session_id ?? "")
       : !!tm.get(result.source.thread_id) && tm.getMessages(result.source.thread_id).some(m => m.id === result.source.message_id)
-    return { ...current, status, observed_at, raw_report_available: rawReportAvailable,
-      recovery: status === result.status && current.source.version === result.source.version ? result.recovery : recoveryForTaskStatus(status, failure_versions.length) }
+    const projected = clampPlannedRecovery(tm, ownerId, { ...current, status,
+      recovery: status === result.status && current.source.version === result.source.version ? result.recovery : recoveryForTaskStatus(status, failure_versions.length) })
+    return { ...projected, observed_at, raw_report_available: rawReportAvailable }
   })
   return { schema_version: 1 as const, tasks, data_not_instruction: true as const }
 }

@@ -1854,7 +1854,11 @@ export class BrowserBridge {
     } catch (cdpErr: any) {
       try {
         const scripted = await this.scriptingExecute(tabId, codeToExecute)
-        result = { result: { value: scripted, type: scripted === undefined ? "undefined" : typeof scripted } }
+        result = { result: {
+          value: scripted,
+          type: scripted === undefined ? "undefined" : typeof scripted,
+          ...(scripted === null ? { subtype: "null" } : {}),
+        } }
       } catch (scriptErr: any) {
         return await this.failInteractive(
           tabId,
@@ -1879,19 +1883,33 @@ export class BrowserBridge {
       )
     }
 
-    const value = result?.result?.value
-    const type = result?.result?.type
-    const looksEmpty = type === "undefined" || (value === undefined && type !== "object")
+    const remote = result?.result
+    const value = remote?.value
+    const type = remote?.type
+    const typed = remote !== null && typeof remote === "object" && !Array.isArray(remote) && Object.hasOwn(remote, "type")
+    // Only the host protocol/scripting result supplies these fields. A live
+    // probe alone cannot prove that a missing/malformed original response ran.
+    const nullCompletion = typed && type === "object" && remote.subtype === "null" &&
+      Object.hasOwn(remote, "value") && value === null && remote.objectId === undefined && remote.unserializableValue === undefined
+    const undefinedCompletion = typed && type === "undefined" && value === undefined &&
+      remote.subtype === undefined && remote.objectId === undefined && remote.unserializableValue === undefined
 
-    if (!looksEmpty) {
+    if (nullCompletion || (value !== null && value !== undefined && type !== "undefined")) {
       return {
         success: true,
         data: {
           result: value,
           type,
+          ...(nullCompletion ? { evaluate_kind: "null_completion" } : {}),
           risk_pattern_matches: matches.length > 0 ? matches : undefined,
         },
       }
+    }
+
+    if (!undefinedCompletion) {
+      return codedToolError("EVALUATE_NULL_RESULT", "evaluate did not return a valid typed completion", {
+        suggested_action: "fix_expression",
+      })
     }
 
     let probeOk = false
@@ -1900,7 +1918,8 @@ export class BrowserBridge {
         expression: "1+1===2",
         returnByValue: true,
       })
-      probeOk = probe?.result?.value === true
+      probeOk = !probe?.exceptionDetails && probe?.result?.type === "boolean" &&
+        Object.hasOwn(probe.result, "value") && probe.result.value === true
     } catch {
       try {
         probeOk = (await this.scriptingExecute(tabId, "1+1===2")) === true
