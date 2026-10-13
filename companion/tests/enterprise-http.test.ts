@@ -4,9 +4,10 @@ import assert from "node:assert/strict"
 import http from "node:http"
 import { generateKeyPairSync } from "node:crypto"
 import { join } from "node:path"
+import { existsSync } from "node:fs"
 import { getConfigDir } from "../src/config"
 import { EnterpriseBrowserService } from "../src/outbound-mcp/enterprise-service"
-import { handleEnterpriseHttp } from "../src/outbound-mcp/enterprise-http"
+import { closeEnterpriseHttp, handleEnterpriseHttp, resetEnterpriseHttpForTests } from "../src/outbound-mcp/enterprise-http"
 import { registerEnterpriseInstance } from "../src/outbound-mcp/enterprise-policy"
 import { issueOutboundGrant, revokeOutboundGrant } from "../src/outbound-mcp/outbound-grants"
 
@@ -36,4 +37,25 @@ test("actual loopback HTTP uses concrete grant-only versioned contract, no-store
     revokeOutboundGrant(grant.id)
     assert.equal((await call("/capabilities?subject=user-a")).result.error_code, "GRANT_REVOKED")
   } finally { api.close(); await new Promise<void>(resolve => server.close(() => resolve())) }
+})
+
+test("production shutdown closes lazy writer and permanently fences late HTTP admission", async () => {
+  resetEnterpriseHttpForTests()
+  const instance = registerEnterpriseInstance("http-test-profile", "user-a")
+  const key = generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" }).toString()
+  const grant = issueOutboundGrant({ caller_id: "itcra", label: "shutdown", enterprise_policy: { ...instance, revision: "r1", expires_at: new Date(Date.now() + 60_000).toISOString(), authority_public_key: key,
+    tools: ["navigate"], navigation: [{ origin: "https://business.test", path: "/app" }], evidence: [], login: [], ready: [{ selector: "#ready" }], login_markers: [{ selector: "#login" }], actions: [] } })
+  const lock = join(getConfigDir(), "enterprise-browser-state.json.lock")
+  closeEnterpriseHttp(); assert.equal(existsSync(lock), false)
+  resetEnterpriseHttpForTests()
+  const server = http.createServer((req, res) => { void handleEnterpriseHttp(req, res) })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+  const url = `http://127.0.0.1:${(server.address() as any).port}/outbound-mcp/v1/enterprise/capabilities?subject=user-a`
+  const request = () => fetch(url, { headers: { Authorization: "Bearer " + grant.token } })
+  try {
+    assert.equal((await request()).status, 200); assert.equal(existsSync(lock), true)
+    closeEnterpriseHttp(); assert.equal(existsSync(lock), false)
+    for (let i = 0; i < 3; i++) { const denied = await request(); assert.equal(denied.status, 503); assert.equal((await denied.json() as any).error_code, "SERVICE_SHUTTING_DOWN"); assert.equal(existsSync(lock), false) }
+    resetEnterpriseHttpForTests(); assert.equal((await request()).status, 200); assert.equal(existsSync(lock), true)
+  } finally { closeEnterpriseHttp(); await new Promise<void>(resolve => server.close(() => resolve())); resetEnterpriseHttpForTests() }
 })

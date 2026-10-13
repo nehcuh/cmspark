@@ -37,6 +37,7 @@ import {
   HUD_SPIKE_TASK_ID,
 } from "../hud/spike"
 import { logger, type LogLevel } from "../logger"
+import { closeEnterpriseHttp } from "../outbound-mcp/enterprise-http"
 import { applyTabNavigated } from "./tab-url-cache"
 import {
   acquireLock,
@@ -1609,6 +1610,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
 
   // Graceful shutdown
   const shutdown = async (signal: string) => {
+    // Stop enterprise admission and fence late work before any awaited teardown.
+    try { closeEnterpriseHttp() } catch { logger.warn("enterprise.shutdown_failed") }
     console.log(`\n[cmspark-agent] Shutting down (${signal})...`)
     logger.info("server.shutdown", { signal })
     // Stop ACP admission and await owned subprocess teardown before exiting.

@@ -2,13 +2,15 @@ import "./_outbound-grants-setup.js"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { generateKeyPairSync, sign } from "node:crypto"
-import { readFileSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { readFileSync, writeFileSync, statSync, existsSync, unlinkSync } from "node:fs"
 import { join } from "node:path"
 import { getConfigDir } from "../src/config"
 import { EnterpriseBrowserService } from "../src/outbound-mcp/enterprise-service"
 import { canonicalJSON, registerEnterpriseInstance } from "../src/outbound-mcp/enterprise-policy"
 import { checkEnterprisePermit, claimEnterpriseDispatch } from "../src/outbound-mcp/enterprise-permit"
-import { issueOutboundGrant, revokeOutboundGrant, resetOutboundGrantsForTests } from "../src/outbound-mcp/outbound-grants"
+import { issueOutboundGrant, revokeOutboundGrant, resetOutboundGrantsForTests, verifyOutboundGrantToken, withRevokedEnterpriseGrants } from "../src/outbound-mcp/outbound-grants"
+import { lockEnterpriseState, rotateEnterpriseState } from "../src/outbound-mcp/enterprise-state"
 import { _resetTabLeasesForTests } from "../src/orchestrator/tab-lease"
 import { companionInvokeOutbound } from "../src/outbound-mcp/companion-http"
 
@@ -48,6 +50,153 @@ function harness() {
   return { api, grant, browser, deps, peer, path, open, prepare, proof }
 }
 test.beforeEach(() => { resetOutboundGrantsForTests(); _resetTabLeasesForTests() })
+test("state has one writer; repeated close cannot release a new owner's lock", () => {
+  const h = harness()
+  assert.throws(() => new EnterpriseBrowserService(h.deps), /STATE_BUSY/)
+  assert.throws(() => rotateEnterpriseState(true, h.path), /STATE_BUSY/)
+  h.api.close()
+  const release = lockEnterpriseState(h.path)
+  h.api.close()
+  assert.equal(existsSync(h.path + ".lock"), true)
+  release()
+})
+test("unexpected old owner release does not unlink a replacement lock after offline recovery", () => {
+  const h = harness()
+  unlinkSync(h.path + ".lock") // explicit administrator fault injection, never a supported live operation
+  const release = lockEnterpriseState(h.path)
+  h.api.close()
+  assert.equal(existsSync(h.path + ".lock"), true)
+  assert.throws(() => lockEnterpriseState(h.path), /STATE_BUSY/)
+  release()
+})
+test("authority recovery also preserves a successor's grant writer lock", () => {
+  const h = harness(), grantPath = join(getConfigDir(), "outbound-grants.json")
+  revokeOutboundGrant(h.grant.id)
+  let release!: () => void
+  try {
+    withRevokedEnterpriseGrants([h.grant.id], () => {
+      unlinkSync(grantPath + ".lock") // administrator fault injection
+      release = lockEnterpriseState(grantPath)
+    })
+    assert.equal(existsSync(grantPath + ".lock"), true)
+    assert.throws(() => revokeOutboundGrant(h.grant.id), /GRANT_STORE_BUSY/)
+  } finally { release?.(); h.api.close() }
+})
+test("session capacity preserves claims; revoked rotation archives and recovers with a fresh grant namespace", async () => {
+  const h = harness()
+  try {
+    const first = await h.open()
+    for (let i = 1; i < 128; i++) await h.api.open(h.grant.id, { subject: "user-a", change_id: "change-test-1", request_key: "open-" + (i + 1), url: "https://business.test/app" })
+    const full = readFileSync(h.path, "utf8")
+    await assert.rejects(h.api.open(h.grant.id, { subject: "user-a", change_id: "change-test-1", request_key: "overflow", url: "https://business.test/app" }), /CAPACITY/)
+    assert.equal(readFileSync(h.path, "utf8"), full)
+    assert.equal((await h.open()).session_handle, first.session_handle)
+    h.api.close()
+    assert.throws(() => rotateEnterpriseState(false, h.path), /QUIESCENCE_REQUIRED/)
+    assert.throws(() => rotateEnterpriseState(true, h.path), /ROTATION_REQUIRES_REVOKED_GRANTS/)
+    assert.equal(readFileSync(h.path, "utf8"), full)
+    revokeOutboundGrant(h.grant.id)
+    const rotated = rotateEnterpriseState(true, h.path)
+    assert.equal(rotated.sessions, 128); assert.equal(readFileSync(rotated.archive, "utf8"), full)
+    if (process.platform !== "win32") {
+      assert.equal(statSync(rotated.archive).mode & 0o777, 0o600)
+      assert.equal(statSync(join(getConfigDir(), "enterprise-browser-archives")).mode & 0o777, 0o700)
+    }
+    assert.equal(verifyOutboundGrantToken(h.grant.token).ok, false)
+    const fresh = harness(); fresh.api.close()
+    const next = new EnterpriseBrowserService({ ...fresh.deps, path: h.path })
+    try {
+      const opened = await next.open(fresh.grant.id, { subject: "user-a", change_id: "change-test-1", request_key: "open-1", url: "https://business.test/app" }) as any
+      assert.notEqual(opened.session_handle, first.session_handle)
+      await assert.rejects(next.status(fresh.grant.id, "user-a", first.session_handle), /SESSION_UNAVAILABLE/)
+      await assert.rejects(next.status(h.grant.id, "user-a", first.session_handle), /GRANT_UNAVAILABLE/)
+    } finally { next.close() }
+  } finally { h.api.close() }
+})
+test("operation capacity keeps pending proof claims; rotation requires explicit revocation even after expiry", async () => {
+  const h = harness(), session = await h.open()
+  try {
+    let first: any
+    for (let i = 0; i < 1024; i++) { const op = await h.prepare(session.session_handle, "click", "delete", "operation-" + i); first ||= op }
+    const full = readFileSync(h.path, "utf8")
+    await assert.rejects(h.prepare(session.session_handle, "click", "delete", "overflow"), /CAPACITY/)
+    assert.equal(readFileSync(h.path, "utf8"), full); assert.equal(h.browser.effects, 0)
+    h.api.close()
+    const grantPath = join(getConfigDir(), "outbound-grants.json"), grants = JSON.parse(readFileSync(grantPath, "utf8"))
+    grants.grants[0].expires_at = new Date(0).toISOString(); writeFileSync(grantPath, JSON.stringify(grants))
+    assert.throws(() => rotateEnterpriseState(true, h.path), /ROTATION_REQUIRES_REVOKED_GRANTS/)
+    revokeOutboundGrant(h.grant.id)
+    const rotated = rotateEnterpriseState(true, h.path)
+    assert.equal(rotated.operations, 1024); assert.equal(readFileSync(rotated.archive, "utf8"), full)
+    const fresh = harness(); fresh.api.close()
+    const next = new EnterpriseBrowserService({ ...fresh.deps, path: h.path })
+    try {
+      assert.throws(() => next.execute(fresh.grant.id, { subject: "user-a", operation_handle: first.operation_handle, human_proof: h.proof(first.challenge, "approve") }), /OPERATION_UNAVAILABLE/)
+      assert.equal(h.browser.effects, 0); assert.equal(fresh.browser.effects, 0)
+    } finally { next.close() }
+  } finally { h.api.close() }
+})
+test("closed writer cannot dispatch or overwrite reset state when a pending probe resolves late", async () => {
+  const h = harness()
+  let release!: () => void, entered!: () => void
+  const held = new Promise<void>(r => { release = r }), started = new Promise<void>(r => { entered = r })
+  const runner = h.deps.runner
+  h.deps.runner = () => async (...args: Parameters<ReturnType<typeof runner>>) => {
+    if ((args[3] as any).enterprisePermit.guard.mode === "probe") { entered(); await held }
+    return runner()(...args)
+  }
+  const opening = h.open(); await started
+  h.api.close(); revokeOutboundGrant(h.grant.id)
+  const rotated = rotateEnterpriseState(true, h.path), empty = readFileSync(h.path, "utf8"), archived = readFileSync(rotated.archive, "utf8")
+  release(); await assert.rejects(opening, /SERVICE_CLOSED/)
+  assert.equal(h.browser.opens, 0)
+  assert.equal(readFileSync(h.path, "utf8"), empty); assert.equal(readFileSync(rotated.archive, "utf8"), archived)
+})
+test("separate processes contend on the actual state writer lock", () => {
+  const h = harness(), modulePath = require.resolve("../src/outbound-mcp/enterprise-state")
+  const child = () => spawnSync(process.execPath, ["-e", "try { const release = require(process.argv[1]).lockEnterpriseState(process.argv[2]); release(); process.stdout.write('acquired') } catch(e) { process.stdout.write(e.message) }", modulePath, h.path], { encoding: "utf8", timeout: 5000 })
+  try { const blocked = child(); assert.equal(blocked.status, 0); assert.equal(blocked.stdout, "STATE_BUSY") }
+  finally { h.api.close() }
+  const admitted = child(); assert.equal(admitted.status, 0); assert.equal(admitted.stdout, "acquired")
+})
+test("missing/corrupt authority and archive/reset failures preserve original claims", async t => {
+  const fs = require("node:fs") as typeof import("node:fs")
+  for (const fault of ["missing", "corrupt", "archive", "reset"] as const) {
+    const h = harness(); await h.open(); h.api.close(); revokeOutboundGrant(h.grant.id)
+    const original = readFileSync(h.path, "utf8"), grantPath = join(getConfigDir(), "outbound-grants.json"), grantBytes = readFileSync(grantPath, "utf8")
+    try {
+      if (fault === "missing") writeFileSync(grantPath, JSON.stringify({ grants: [] }))
+      else if (fault === "corrupt") writeFileSync(grantPath, "{")
+      else if (fault === "archive") {
+        const open = fs.openSync
+        t.mock.method(fs, "openSync", (path: any, ...args: any[]) => { if (String(path).includes("enterprise-browser-archives")) throw new Error("archive fault"); return (open as any)(path, ...args) })
+      } else {
+        const rename = fs.renameSync
+        t.mock.method(fs, "renameSync", (from: any, to: any) => { if (to === h.path) throw new Error("reset fault"); return rename(from, to) })
+      }
+      assert.throws(() => rotateEnterpriseState(true, h.path))
+      assert.equal(readFileSync(h.path, "utf8"), original)
+      assert.equal(existsSync(h.path + ".lock"), false)
+    } finally { t.mock.restoreAll(); writeFileSync(grantPath, grantBytes) }
+  }
+})
+test("already-dispatched effect remains an archived ambiguous claim, never replayed after rotation", async () => {
+  const h = harness(), session = await h.open(), op = await h.prepare(session.session_handle)
+  let release!: () => void, entered!: () => void
+  const held = new Promise<void>(r => { release = r }), started = new Promise<void>(r => { entered = r }), runner = h.deps.runner
+  h.deps.runner = () => async (...args: Parameters<ReturnType<typeof runner>>) => {
+    const result = await runner()(...args)
+    if ((args[3] as any).enterprisePermit.guard.mode === "act") { entered(); await held }
+    return result
+  }
+  h.api.execute(h.grant.id, { subject: "user-a", operation_handle: op.operation_handle }); await started
+  assert.equal(h.browser.effects, 1)
+  h.api.close(); revokeOutboundGrant(h.grant.id)
+  const rotated = rotateEnterpriseState(true, h.path), fresh = readFileSync(h.path, "utf8"), archive = readFileSync(rotated.archive, "utf8")
+  assert.equal(JSON.parse(archive).operations[0].state, "executing")
+  release(); await h.api.drain()
+  assert.equal(h.browser.effects, 1); assert.equal(readFileSync(h.path, "utf8"), fresh); assert.equal(readFileSync(rotated.archive, "utf8"), archive)
+})
 test("normal actions use concrete authority, durable idempotency and return real producer envelopes", async () => {
   const h = harness(), session = await h.open()
   assert.equal(h.browser.opens, 1)

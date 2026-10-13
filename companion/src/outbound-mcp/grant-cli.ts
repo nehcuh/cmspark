@@ -7,6 +7,7 @@
 
 import { getPlatform, type PlatformName } from "../platform"
 import * as fs from "node:fs"
+import { rotateEnterpriseState } from "./enterprise-state"
 import { registerEnterpriseInstance } from "./enterprise-policy"
 import { parseContextPermission } from "./context-permission"
 import {
@@ -43,6 +44,7 @@ const DEFAULT_IO: GrantCliIo = {
 
 const USAGE = `cmspark-agent outbound-grant issue --caller-id <id> [--label <name>] [--profile <outbound_l1_default|outbound_l1_interact|outbound_context_v1>] [--context-config <file.json> | --enterprise-config <file.json>] [--allow-page-export] [--ttl-ms N]
 cmspark-agent outbound-grant register-instance --profile-id <dedicated-extension-profile-uuid> --subject <business-subject>
+cmspark-agent outbound-grant rotate-enterprise-state --quiesced
 cmspark-agent outbound-grant revoke --grant-id <id>
 cmspark-agent outbound-grant list`
 // Administrator registration is a local CLI action, never an HTTP action.
@@ -76,6 +78,7 @@ function allowedFlagsFor(sub: string): Set<string> | null {
   if (sub === "revoke") return REVOKE_FLAGS
   if (sub === "list") return LIST_FLAGS
   if (sub === "register-instance") return new Set(["profile-id", "subject"])
+  if (sub === "rotate-enterprise-state") return new Set(["quiesced"])
   return null
 }
 
@@ -338,6 +341,10 @@ export async function handleOutboundGrantCli(
     const unknown = rejectUnknownArgs(sub, flags, extras, io)
     if (unknown !== null) return unknown
     switch (sub) {
+      case "rotate-enterprise-state": {
+        writeln(io.stdout, JSON.stringify(rotateEnterpriseState(flagEnabled(flags, "quiesced"))))
+        return 0
+      }
       case "register-instance": {
         const profileId = flagString(flags, "profile-id"), subject = flagString(flags, "subject")
         if (!profileId) throw new Error("--profile-id required (actual dedicated extension profile UUID)")

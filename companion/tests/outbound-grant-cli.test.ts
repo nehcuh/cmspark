@@ -87,6 +87,15 @@ test("unknown subcommand exits 1", async () => {
   assert.doesNotMatch(stdout, /cmg_/)
 })
 
+test("enterprise rotation is local and requires explicit quiescence; unknown flags cannot reset state", async () => {
+  const missing = await runGrantCli(["rotate-enterprise-state"])
+  assert.equal(missing.code, 1); assert.match(missing.stderr, /QUIESCENCE_REQUIRED/)
+  const unknown = await runGrantCli(["rotate-enterprise-state", "--quiesced", "--force"])
+  assert.equal(unknown.code, 1); assert.match(unknown.stderr, /未知参数/)
+  const absent = await runGrantCli(["rotate-enterprise-state", "--quiesced"])
+  assert.equal(absent.code, 1); assert.match(absent.stderr, /STATE_NOT_FOUND/)
+})
+
 test("#235 unknown flag exits 1 and does not issue a grant", async () => {
   const { code, stderr, stdout } = await runGrantCli([
     "issue", "--caller-id", "c", "--allow-page-expor",

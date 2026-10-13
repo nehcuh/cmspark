@@ -1,8 +1,9 @@
 import { randomUUID, verify } from "node:crypto"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
+import { ENTERPRISE_STATE_BYTES, lockEnterpriseState } from "./enterprise-state"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { requireEnterpriseGrant } from "./outbound-grants"
 import { canonicalJSON, canonicalURL, deny, digest, EnterpriseError, identifier, inScope, object, string, type EnterprisePolicy, type EnterpriseAction } from "./enterprise-policy"
@@ -40,13 +41,17 @@ export class EnterpriseBrowserService {
   private scheduled = new Set<string>()
   private timer?: ReturnType<typeof setInterval>
   private healthy = true
+  private closed = false
+  private unlock: () => void
   private readonly path: string
   constructor(private readonly deps: EnterpriseDependencies) {
     this.path = deps.path || join(getConfigDir(), "enterprise-browser-state.json")
+    this.unlock = lockEnterpriseState(this.path)
     if (existsSync(this.path)) {
       try {
+        if (statSync(this.path).size > ENTERPRISE_STATE_BYTES) deny("STATE_CORRUPT", 503)
         const text = readFileSync(this.path, "utf8")
-        if (Buffer.byteLength(text) > 2 * 1024 * 1024) deny("STATE_CORRUPT", 503)
+        if (Buffer.byteLength(text) > ENTERPRISE_STATE_BYTES) deny("STATE_CORRUPT", 503)
         const raw = object(JSON.parse(text), ["version", "sessions", "operations"])
         if (raw.version !== 1 || !Array.isArray(raw.sessions) || !Array.isArray(raw.operations) || raw.sessions.length > 128 || raw.operations.length > 1024) deny("STATE_CORRUPT", 503)
         for (const value of raw.sessions) {
@@ -69,12 +74,20 @@ export class EnterpriseBrowserService {
     }
     if (deps.monitor !== false) { this.timer = setInterval(() => { void this.tick() }, 2000); this.timer.unref() }
   }
-  close(): void { if (this.timer) clearInterval(this.timer); for (const controller of this.controllers.values()) controller.abort() }
+  close(): void {
+    if (this.closed) return
+    this.closed = true
+    if (this.timer) clearInterval(this.timer)
+    for (const controller of this.controllers.values()) controller.abort()
+    this.unlock()
+  }
   private save(): void {
+    if (this.closed) deny("SERVICE_CLOSED", 503)
     if (!this.healthy) deny("STATE_CORRUPT", 503)
     try { atomicWriteJSON(this.path, this.store, 0o600) } catch { this.healthy = false; deny("STATE_UNWRITABLE", 503) }
   }
   private authority(grantId: string, subject: string) {
+    if (this.closed) deny("SERVICE_CLOSED", 503)
     if (!this.healthy) deny("STATE_CORRUPT", 503)
     const result = requireEnterpriseGrant(grantId)
     if (result.policy.subject !== subject) deny("SUBJECT_MISMATCH")
@@ -168,6 +181,7 @@ export class EnterpriseBrowserService {
     return current
   }
   private schedule(op: Operation): Promise<void> {
+    if (this.closed) return Promise.resolve()
     if (this.scheduled.has(op.handle)) return Promise.resolve()
     this.scheduled.add(op.handle)
     return this.queue(op.session, () => this.run(op)).finally(() => { this.scheduled.delete(op.handle) })
@@ -390,7 +404,7 @@ export class EnterpriseBrowserService {
     })
   }
   async tick(): Promise<void> {
-    if (!this.healthy) return
+    if (!this.healthy || this.closed) return
     for (const op of this.store.operations) {
       if (op.state === "waiting_human" && op.challenge && Date.parse(op.challenge.expires_at) <= Date.now()) {
         op.state = "cancelled"; op.error_code = "APPROVAL_EXPIRED"; this.save()

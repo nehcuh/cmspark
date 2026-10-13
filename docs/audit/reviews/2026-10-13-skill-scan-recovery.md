@@ -1,0 +1,6 @@
+# Local skill scan recovery
+
+1. Routing a supplemental human reply selected ultraqa and its runtime scan rejected a descriptive attack-taxonomy phrase. No blocked skill body was executed.
+2. Independent audit identified the single benign phrase in both local copies; exact wording substitutions restored scan PASS. Scanner code, heuristics and fail-closed behavior remain unchanged. Host and fresh Linux ARM64 scanner/runtime suites each passed36 tests; ten actual malicious probes remain rejected. Kimi2.1.1 independent review APPROVE_WITH_NITS (minor grammar only, owner nehcuh). Local hashes/backups reside in restricted `~/.codex/review-backups/itcra-skill-repair-20261013/recovery.json`; source private credentials are absent.
+3. Attribution: external routing false positive, not an enterprise permission failure. Initial container setup lacked installed package metadata/build resources; corrected the temporary validation environment, no tests or scans disabled.
+4. Protects runtime skill scanning and preservation of tests, independent reviews, CI and real human acceptance. Rebuilt active routing selected builtin/deep-diagnosis-optimization; required skill files pass scanning. This local skill repair is separate from real enterprise acceptance.
