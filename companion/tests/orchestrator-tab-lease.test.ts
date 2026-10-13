@@ -801,6 +801,43 @@ test("releaseIdleWorkerLeases: a genuinely idle worker IS released (#545 regress
   assert.equal(getTabLease(561), null)
 })
 
+for (const existingHardLease of [false, true]) {
+  test(`idle fleet snapshot preserves ${existingHardLease ? "HELD_PENDING_L2" : "SOFT_RESERVED"} while confirmation is live (#550)`, () => {
+    reset()
+    let confirmationLive = true
+    registerTabLeasePendingHooks({
+      hasPendingForTab: () => false,
+      hasPendingConfirmation: (confirmId, holder) => {
+        assert.equal(confirmId, "confirm-idle")
+        assert.equal(holder, "w-confirm")
+        return confirmationLive
+      },
+    })
+    if (existingHardLease) acquireOrRenewTabLease({ tabId: 580, holderThreadId: "w-confirm", needsL2: false })
+    acquireOrRenewTabLease({ tabId: 580, holderThreadId: "w-confirm", needsL2: true, confirmId: "confirm-idle" })
+    const state = existingHardLease ? "HELD_PENDING_L2" : "SOFT_RESERVED"
+    const workers = [{ id: "w-confirm", agent_role: "worker", paused: false }]
+    assert.equal(releaseIdleWorkerLeases(workers, new Set()), 0)
+    assert.equal(getTabLease(580)?.state, state)
+    const rival = acquireOrRenewTabLease({ tabId: 580, holderThreadId: "w-rival", needsL2: false })
+    assert.equal(rival.ok, false, "watching an idle worker must not unlock its live confirmation")
+    confirmationLive = false
+    assert.equal(releaseIdleWorkerLeases(workers, new Set()), 1)
+    assert.equal(getTabLease(580), null)
+  })
+}
+
+test("idle fleet snapshot keeps a confirmation lease when the confirmation hook throws (#550)", () => {
+  reset()
+  registerTabLeasePendingHooks({
+    hasPendingForTab: () => false,
+    hasPendingConfirmation: () => { throw new Error("confirmation registry unavailable") },
+  })
+  acquireOrRenewTabLease({ tabId: 581, holderThreadId: "w-confirm", needsL2: true, confirmId: "confirm-unavailable" })
+  assert.equal(releaseIdleWorkerLeases([{ id: "w-confirm", agent_role: "worker" }], new Set()), 0)
+  assert.equal(getTabLease(581)?.state, "SOFT_RESERVED")
+})
+
 // #545 fail-closed regression. buildFleetSnapshot lazy-requires message-router
 // to learn which threads have a live LLM run. Before this fix, a throw there
 // fell into `catch { llmActive = [] }`, which — combined with idle release keyed
