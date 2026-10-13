@@ -3,6 +3,7 @@
   "platform": "node",
   "target": "node22",
   "externals": [
+    "@deepseek-ai/libreoffice-kit",
     "systray2",
     "canvas",
     "pdfjs-dist",

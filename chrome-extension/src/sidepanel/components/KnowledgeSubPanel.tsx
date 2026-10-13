@@ -313,7 +313,7 @@ export function KnowledgeSubPanel() {
     // down with it). Multi-select file input is untrusted at scale.
     try {
       const allowedExts = new Set([
-        "md", "markdown", "docx", "pdf", "xlsx", "pptx", "odt", "rtf", "txt", "csv", "html", "htm",
+        "md", "markdown", "doc", "docx", "pdf", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "txt", "csv", "html", "htm",
       ])
       // Per-file size cap. Base64 expansion is 4/3 plus JSON overhead, so 6MB raw
       // keeps each WS frame well under companion's 10MB hard limit. Files above
@@ -1058,7 +1058,7 @@ export function KnowledgeSubPanel() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".md,.markdown,.docx,.pdf,.xlsx,.pptx,.odt,.rtf,.txt,.csv,.html"
+          accept=".md,.markdown,.doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.txt,.csv,.html,.htm"
           style={{ display: "none" }}
           onChange={(e) => {
             handleImportFiles(e.target.files)

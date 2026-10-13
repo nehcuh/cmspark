@@ -145,7 +145,7 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 
 ### 环境要求
 
-- **Node.js** ≥ 22（推荐使用 `nvm` 管理；与 CONTRIBUTING / CI / `engines` / `package.sh` 对齐）
+- **Node.js** ≥ 22.19.0（Office 引擎最低要求；推荐使用 `nvm` 管理；发行 runtime 固定 22.23.2）
 - **Chrome / Edge** 浏览器（支持 Manifest V3 扩展）
 - **LLM API Key**（默认支持 DeepSeek，也可配置其他 OpenAI-compatible 服务）
 
@@ -504,7 +504,8 @@ Side Panel 底栏 → **任务包**：启用模块、选择工作区、NetSec �
 
 Agent 可通过浏览器工具向页面 **file input** 提交本地文件（CDP `DOM.setFileInputFiles` 路径），覆盖常见网页上传框。
 
-- **聊天附件**：Side Panel 支持上传 PDF / Office / 文本等，解析后进入对话上下文（扫描件 PDF 依赖 `canvas` 原生模块，缺失时优雅降级提示）。  
+- **聊天附件**：Side Panel 支持 PDF / Office / 文本。Office 包括 DOC/DOCX、XLS/XLSX、PPT/PPTX、ODT/ODS/ODP；WPS 请保存为这些标准格式，专有 WPS/ET/DPS 尚不支持。低文本 PDF 最多渲染前十页，须经实际视觉分析成功后才能进入聊天；只有页面图片的文档不能直接导入知识库。
+  ODF 导入有正文展开与图表数据预算；超预算、重复嵌入对象、ODS 图表范围引用，以及 ODF 内混合 OOXML 图表会明确拒绝，可拆分或另存为 DOCX/XLSX/PPTX 后导入。普通内嵌数据图表与空白表格尾行仍可读取。
 - **页面上传**：指令如「把这份文件上传到表单」时，Agent 定位 input 并挂载路径。  
 - **NotebookLM 等场景**：导入管线也会复用文件/下载路径，见 [ADR-011](docs/adr/011-notebooklm-import.md)。
 
@@ -645,6 +646,8 @@ dist-package\cmspark-windows-x64\        ← 便携包（解压即用）
   builtin-skills\
   host-scripts-win\
   node_modules\systray2\                 ← 系统托盘支持
+  node_modules\@deepseek-ai\             ← Office Kit + 匹配平台引擎及完整源码/许可信息
+  office-runtime.json / THIRD_PARTY_NOTICES
   launch-hidden.vbs / launch.bat
 dist-package\CMspark-v*-windows-x64.zip  ← SEA 便携压缩包（非 GitHub Release 默认）
 ```
@@ -679,7 +682,7 @@ build-package.bat
 
 验证：包内 `dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe` 或设置页「本机组件：已就绪」。
 
-> 本地 SEA 构建仅要求本机有 Node.js ≥ 22。官方 Setup.exe 由 `make package-windows` / CI `package.sh` 在安装 [NSIS](https://nsis.sourceforge.io/) 后生成。
+> 本地 Windows x64 SEA 构建需要 x64 Node.js ≥ 22.19.0。官方 Setup.exe 由 `make package-windows` / CI `package.sh` 在安装 [NSIS](https://nsis.sourceforge.io/) 后生成。Office 引擎还需要匹配架构的 [Microsoft Visual C++ v14 runtime](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist)。
 
 #### 安装（注册后台服务）
 
@@ -855,7 +858,7 @@ make package-macos
 
 Windows 打包流程（**官方 zip + Setup.exe / package.sh**）：
 1. TypeScript 编译 → `esbuild` bundle 为 `cmspark-agent.js`（`systray2` 等运行时依赖保持 external）
-2. 暂存 `node.exe` + bundle + Chrome 扩展 + 内置技能 + `sql-wasm.wasm` + 平台脚本
+2. 暂存 `node.exe` + bundle + Chrome 扩展 + 内置技能 + `sql-wasm.wasm` + 平台脚本；Office Kit 的 Worker、匹配平台引擎和依赖保留为文件系统 sidecar，并验证引擎文件哈希
 3. 压缩为 `cmspark-v*-windows-x64.zip`（CI / `make package-windows`）
 4. `scripts/build-windows-installer.sh` 用 NSIS 包同一 staging → `CMspark-Setup-v*.exe`（CI `CMSPARK_REQUIRE_NSIS=1`）
 
@@ -869,7 +872,7 @@ macOS 打包流程：
 2. esbuild bundle + 复制 Node.js 运行时、原生依赖
 3. 压缩为 zip，额外生成 DMG 安装包
 
-**Windows 前提**：本机 Node.js ≥ 22。官方 Setup.exe 需要 [NSIS](https://nsis.sourceforge.io/)（CI 钉死 Chocolatey `nsis` 3.12.0）；本机未装则 `package.sh` 跳过安装器并警告，zip 仍可用。
+**Windows 前提**：构建用 Node.js ≥ 22.19.0；发行包自带 Node 22.23.2。Office 导入需要匹配架构的 Microsoft Visual C++ v14 runtime。官方 Setup.exe 需要 [NSIS](https://nsis.sourceforge.io/)（CI 钉死 Chocolatey `nsis` 3.12.0）；本机未装则 `package.sh` 跳过安装器并警告，zip 仍可用。
 
 ### 分别启动
 

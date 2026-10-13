@@ -26,10 +26,27 @@ const failResult: FileParseResponse = {
 }
 
 test("hanging parseFile rejects with 解析超时", async () => {
+  let parseSignal: AbortSignal | undefined
   await assert.rejects(
-    parseFileBounded(Buffer.from("PK fake"), "stuck.docx", "application/octet-stream", 20, neverResolves),
+    parseFileBounded(Buffer.from("PK fake"), "stuck.docx", "application/octet-stream", 20, async (_buffer, _name, _mime, options) => {
+      parseSignal = options?.signal
+      return neverResolves()
+    }),
     /文件 "stuck\.docx" 解析超时 \(\d+s\)/,
   )
+  assert.equal(parseSignal?.aborted, true)
+})
+
+test("parent cancellation is forwarded to injected parsers", async () => {
+  const parent = new AbortController()
+  let parseSignal: AbortSignal | undefined
+  const parsing = parseFileBounded(Buffer.from("PK fake"), "stuck.docx", "application/octet-stream", 1000, async (_buffer, _name, _mime, options) => {
+    parseSignal = options?.signal
+    return neverResolves()
+  }, parent.signal)
+  parent.abort()
+  await assert.rejects(parsing, /取消/)
+  assert.equal(parseSignal?.aborted, true)
 })
 
 test("settled parseFile result passes through before the timeout", async () => {

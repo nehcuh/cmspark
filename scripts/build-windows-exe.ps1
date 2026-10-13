@@ -77,6 +77,10 @@ Write-Host ""
 # ---------------------------------------------------------------------------
 Step 1 6 "Installing dependencies..."
 
+# #611: Kit's filesystem ESM + native Worker runtime requires Node >=22.19.
+node -e "const [major,minor]=process.versions.node.split('.').map(Number);if(major<22||(major===22&&minor<19)||process.arch!=='x64'){console.error('This Windows x64 package requires x64 Node >=22.19.0');process.exit(1)}"
+if ($LASTEXITCODE -ne 0) { Fail "Node.js >=22.19.0 required for the Office runtime" }
+
 if (-not $SkipInstall) {
     Push-Location $CompanionDir
     try {
@@ -394,6 +398,8 @@ $Systray2Packages = @(
     "universalify"  # fs-extra dep
 )
 New-Item -ItemType Directory -Force "$StagingDir\node_modules" | Out-Null
+node "$ProjectRoot\scripts\stage-office-runtime.mjs" --source "$CompanionDir" --destination "$StagingDir" --platform "windows-x64"
+if ($LASTEXITCODE -ne 0) { Fail "Office runtime staging failed" }
 $anySystray2Ok = $false
 foreach ($pkg in $Systray2Packages) {
     $pkgSrc  = "$CompanionDir\node_modules\$pkg"

@@ -61,10 +61,9 @@ jobs:
       - name: Supply-chain audit — companion (gating, high+)
         # Companion ships to users in the packaged binary; its production deps
         # (dependencies, not devDependencies) must be free of high/critical
-        # advisories. Currently green (audit P1-2): the only prod advisories are
-        # 2 moderate via node-notifier→uuid, which is blocked-on-upstream and
-        # accepted (see docs/supply-chain.md). `--audit-level=high` sets the bar
-        # at high+ so that known moderate set does not gate, while any NEW
+        # advisories. Known moderate advisories, including Kit's pinned fflate
+        # and node-notifier→uuid, are documented in docs/supply-chain.md.
+        # `--audit-level=high` keeps the bar at high+; any NEW
         # high/critical on a shipped dep blocks CI. `--omit=dev` scopes to
         # shipped deps — devDeps (tsx/typescript/@types/*) are build-time only.
         run: |
@@ -158,6 +157,15 @@ jobs:
           cd companion
           npm ci
           npm run build
+
+      - name: Office compatibility and relocated runtime (#611)
+        shell: bash
+        run: |
+          node --test scripts/tests/office-runtime-stage.test.mjs
+          node scripts/smoke-office-runtime.mjs
+          cd companion
+          npx tsc -p tsconfig.test.json
+          node scripts/run-tests.mjs .test-dist/tests/office-format-compatibility.test.js .test-dist/tests/office-import-entry.test.js .test-dist/tests/odf-expansion.test.js
 
       - name: Smoke pure tests (no native host required)
         shell: bash

@@ -60,6 +60,7 @@ import type { RunStats } from "./loop/loop-state"
 import { listPendingToolsForThread } from "./ws/tool-forward"
 
 import { parseFile, PARSE_FILE_MAX_BYTES } from "./file-parser"
+import { resolveDocumentMime, effectiveUploadAllowedTypes, unsupportedWpsError } from "./file-formats"
 import type { FileParseResponse, FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
 import { extractKnowledgeDraft, type KnowledgeDraftSuggestion } from "./llm/knowledge-draft-extract"
@@ -511,27 +512,47 @@ async function broadcastLoopStatus(
 }
 
 const KNOWLEDGE_PARSE_TIMEOUT_MS = 30000
+const KNOWLEDGE_REQUIRES_TEXT = "文件仅能渲染为页面图片，知识库需要可提取的文字。请先 OCR 或另存为含文字的文档后导入。"
+
+let fileParseImpl: typeof parseFile = parseFile
+export function __testSetFileParseImpl(impl?: typeof parseFile): void {
+  fileParseImpl = impl || parseFile
+}
 
 /**
- * #270: parseFile can hang indefinitely on malformed office files
- * (officeparser.convert never settling). Bound it with the same 30s
- * Promise.race pattern the chat attachment path uses (file.upload below), so
- * knowledge.preview / knowledge.import_directory return an honest error frame
- * instead of leaving the side panel loading forever. Exported for tests.
+ * The production parser owns its deadline and waits for native cleanup.
+ * Only injected parsers need an outer bound, for tests that model a hung parser.
  */
-export function parseFileBounded(
+export async function parseFileBounded(
   buffer: Buffer,
   name: string,
   mime: string,
   timeoutMs = KNOWLEDGE_PARSE_TIMEOUT_MS,
-  parseFn: typeof parseFile = parseFile,
+  parseFn: typeof parseFile = fileParseImpl,
+  parentSignal?: AbortSignal,
 ): Promise<FileParseResponse> {
-  return Promise.race([
-    parseFn(buffer, name, mime),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`文件 "${name}" 解析超时 (${Math.round(timeoutMs / 1000)}s)`)), timeoutMs)
-    ),
-  ])
+  if (parseFn === parseFile) return parseFn(buffer, name, mime, { timeoutMs, signal: parentSignal })
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
+  try {
+    const bounded = new Promise<never>((_, reject) => {
+      onAbort = () => {
+        controller.abort(parentSignal?.reason)
+        reject(new Error("文件解析已取消"))
+      }
+      if (parentSignal?.aborted) onAbort()
+      else parentSignal?.addEventListener("abort", onAbort, { once: true })
+      timer = setTimeout(() => {
+        controller.abort()
+        reject(new Error(`文件 "${name}" 解析超时 (${Math.round(timeoutMs / 1000)}s)`))
+      }, timeoutMs)
+    })
+    return await Promise.race([bounded, parseFn(buffer, name, mime, { timeoutMs, signal: controller.signal })])
+  } finally {
+    if (timer) clearTimeout(timer)
+    if (onAbort) parentSignal?.removeEventListener("abort", onAbort)
+  }
 }
 
 // --- #272: knowledge AI draft extract (single-doc, draft-only) ---
@@ -1008,6 +1029,7 @@ async function loadKnowledgePayload(rest: Record<string, any>): Promise<
       return { error: parseErr?.message || `文件 "${name}" 解析失败` }
     }
     if (!parsed.success) return { error: parsed.error }
+    if (parsed.requiresVision) return { error: KNOWLEDGE_REQUIRES_TEXT }
     return { text: parsed.text, fallback: String(name).replace(/\.[^.]+$/, "") }
   }
   if (rest.url) {
@@ -1641,7 +1663,11 @@ export async function handleMessage(
         const fileCount = docFiles.length
         for (let fi = 0; fi < docFiles.length; fi++) {
           const file = docFiles[fi]
-          const { name, type, content } = file
+          const { name, content } = file
+          if (uploadController.signal.aborted) return uploadError("文件处理已取消")
+          const type = resolveDocumentMime(name, file.type)
+          const wpsError = unsupportedWpsError(name)
+          if (wpsError) return uploadError(wpsError)
 
           pushUploadStatus(
             "parsing",
@@ -1658,7 +1684,8 @@ export async function handleMessage(
             )
           }
 
-          if (fileConfig.allowed_types.length > 0 && !fileConfig.allowed_types.includes(type)) {
+          const allowedTypes = effectiveUploadAllowedTypes(fileConfig.allowed_types)
+          if (allowedTypes.length > 0 && !allowedTypes.some(allowed => resolveDocumentMime("", allowed) === type)) {
             return uploadError(
               `不支持的文件类型: ${type}（请确认扩展名为 .docx/.pdf 等支持格式）`,
             )
@@ -1667,12 +1694,7 @@ export async function handleMessage(
           const buffer = Buffer.from(content, "base64")
           let parseResult: Awaited<ReturnType<typeof parseFile>>
           try {
-            parseResult = await Promise.race([
-              parseFile(buffer, name, type),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error(`文件 "${name}" 解析超时 (30s)`)), 30000)
-              ),
-            ])
+            parseResult = await parseFileBounded(buffer, name, type, KNOWLEDGE_PARSE_TIMEOUT_MS, fileParseImpl, uploadController.signal)
           } catch (parseErr: any) {
             logger.warn("file.upload.parse_failed", {
               thread_id,
@@ -1702,19 +1724,30 @@ export async function handleMessage(
         const visionEnabled = !!(embedVisionCfg && fileConfig.enable_vision_analysis !== false)
 
         for (const parseResult of parseResults) {
-          let content = parseResult.text
+          if (uploadController.signal.aborted) return uploadError("文件处理已取消")
+          let content = parseResult.requiresVision
+            ? `# ${parseResult.filename}\n\n[以下内容来自页面视觉分析。]`
+            : parseResult.text
+          let successfulVision = 0
+          const visionPageCount = parseResult.embeddedImages?.filter(img => img.format !== "note").length || 0
+          if (parseResult.requiresVision && !visionEnabled) {
+            return uploadError(`文件 "${parseResult.filename}" 需要视觉分析才能读取，请开启文档视觉分析后重试。`)
+          }
 
           if (visionEnabled && parseResult.embeddedImages?.length) {
             const imgs = parseResult.embeddedImages.filter(i => i.format !== "note")
             if (imgs.length > 0) {
               pushUploadStatus(
                 "vision",
-                `正在分析文档内嵌图片（${imgs.length} 张）…`,
+                parseResult.requiresVision
+                  ? `正在分析文档页面（${imgs.length} 页）…`
+                  : `正在分析文档内嵌图片（${imgs.length} 张）…`,
                 { filename: parseResult.filename, image_count: imgs.length },
               )
             }
             const visionDescriptions: string[] = []
             for (const img of parseResult.embeddedImages) {
+              if (uploadController.signal.aborted) return uploadError("文件处理已取消")
               if (img.format === "note") {
                 visionDescriptions.push(img.title)
                 continue
@@ -1730,7 +1763,11 @@ export async function handleMessage(
                   },
                   embedVisionCfg as any,
                   `分析这张文档内嵌图片 "${img.title}" 的内容，提取所有可见文本和视觉信息。`,
+                  uploadController.signal,
                 )
+                if (!visionResult.description.trim()) throw new Error("视觉分析未返回内容")
+                if (parseResult.requiresVision && (!visionResult.model_used || visionResult.model_used === "none")) throw new Error("视觉分析不可用")
+                if (visionResult.model_used && visionResult.model_used !== "none") successfulVision++
                 visionDescriptions.push(`[图片: ${img.title}] ${visionResult.description}`)
               } catch {
                 visionDescriptions.push(`[图片: ${img.title}] (视觉分析不可用)`)
@@ -1747,6 +1784,12 @@ export async function handleMessage(
             if (note) {
               content += `\n\n[文档包含图片但视觉分析未启用: ${note}]`
             }
+          }
+
+          if (uploadController.signal.aborted) return uploadError("文件处理已取消")
+          if (parseResult.requiresVision) {
+            if (successfulVision === 0) return uploadError(`文件 "${parseResult.filename}" 没有可提取文字，页面视觉分析未成功，请重试或先 OCR 后导入。`)
+            content += `\n\n[页面视觉分析：成功 ${successfulVision}/${visionPageCount} 页${parseResult.pageCount ? `，文档共 ${parseResult.pageCount} 页` : ""}；仅已分析页面可供参考。${parseResult.warning || ""}]`
           }
 
           finalFileContents.push({ filename: parseResult.filename, content })
@@ -3983,7 +4026,7 @@ export async function handleMessage(
       const pick = await pickFileNativeImpl({
         prompt: "选择要导入的知识文档",
         windowsFilter:
-          "Documents|*.md;*.markdown;*.txt;*.docx;*.pdf;*.xlsx;*.pptx;*.odt;*.rtf;*.csv;*.html;*.htm|All files|*.*",
+          "Documents|*.md;*.markdown;*.txt;*.doc;*.docx;*.pdf;*.xls;*.xlsx;*.ppt;*.pptx;*.odt;*.ods;*.odp;*.rtf;*.csv;*.html;*.htm|All files|*.*",
       })
       if (pick.error === "cancelled") {
         return { type: "knowledge.import_local_file_result", error: "cancelled", id: requestId || undefined }
@@ -4010,6 +4053,7 @@ export async function handleMessage(
         return failPreview(parseErr?.message || `文件 "${filename}" 解析失败`)
       }
       if (!parsed.success) return failPreview(parsed.error)
+      if (parsed.requiresVision) return failPreview(KNOWLEDGE_REQUIRES_TEXT)
       const fallback = filename.replace(/\.[^.]+$/, "")
       const { body: previewBody, ...preview } = skillEngine.previewKnowledge(parsed.text, fallback)
       const duplicate_of = skillEngine.findKnowledgeDuplicate(parsed.text, fallback) || undefined
@@ -4052,7 +4096,7 @@ export async function handleMessage(
       // #285: native walk has no WS base64 budget — align with parseFile 10MB.
       const MAX_FILE_SIZE = PARSE_FILE_MAX_BYTES
       const TEXT_EXTS = new Set(["md", "markdown", "txt", "csv", "html", "htm"])
-      const BINARY_EXTS = new Set(["docx", "pdf", "xlsx", "pptx", "odt", "rtf"])
+      const BINARY_EXTS = new Set(["doc", "docx", "pdf", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf"])
 
       let imported = 0
       let skippedOversize = 0
@@ -4176,7 +4220,7 @@ export async function handleMessage(
                 // office file must not stall the whole folder import; the
                 // surrounding catch counts it as failed.
                 const parsed = await parseFileBounded(buffer, entry.name, "application/octet-stream")
-                if (parsed.success) {
+                if (parsed.success && !parsed.requiresVision) {
                   if (skillEngine.findKnowledgeDuplicate(parsed.text, baseName)) {
                     skippedDuplicate++
                   } else {
@@ -4187,7 +4231,7 @@ export async function handleMessage(
                   }
                 } else {
                   failed++
-                  if (errors.length < 5) errors.push(`${entry.name}: ${parsed.error}`)
+                  if (errors.length < 5) errors.push(`${entry.name}: ${parsed.success ? KNOWLEDGE_REQUIRES_TEXT : parsed.error}`)
                 }
               }
               // MAJOR-5: honestly count docs bumped up by the per-layer 50 cap.
