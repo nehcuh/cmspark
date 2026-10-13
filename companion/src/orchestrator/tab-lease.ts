@@ -702,8 +702,8 @@ export function settleTimedOutLease(tabId: number, holderThreadId: string | unde
  * broadcast), a user merely watching the panel could free a tab another worker
  * was still writing to, and the 60s create_tab hold (ADR-015
  * `create_tab_auto_hold_ms`) evaporated on the first snapshot. Idle release now
- * applies the same three guards `releaseMutationHold` (`:621`) and
- * `sweepPerCallLease` (`:291`) already apply, per lease rather than per thread.
+ * applies pending/mutation/create guards and preserves live confirmation
+ * leases, per lease rather than per thread.
  *
  * Note this must NOT delegate to `releaseLeasesForThreadPendingAware` either:
  * that path force-releases pending leases, which is correct for a cancel and
@@ -727,7 +727,7 @@ export function releaseIdleWorkerLeases(
 /**
  * Release only the genuinely-free leases of one idle holder. A create_tab hold
  * that has not expired, a live mutation hold, or a pending CDP call (including a
- * timed-out tombstone awaiting settle) all keep the lease. `resolveHasPending`
+ * timed-out tombstone awaiting settle), or a live confirmation all keep the lease. `resolveHasPending`
  * fails closed when hooks are unregistered, so a cold start never silent-FREEs.
  */
 function releaseIdleLeasesForThread(holderThreadId: string, t: number): number {
@@ -737,6 +737,7 @@ function releaseIdleLeasesForThread(holderThreadId: string, t: number): number {
     if ((lease.mutationHolds ?? 0) > 0) continue
     if (lease.createdHoldUntil != null && lease.createdHoldUntil > t) continue
     if (resolveHasPending(tabId, holderThreadId)) continue
+    if ((lease.state === "SOFT_RESERVED" || lease.state === "HELD_PENDING_L2") && keepSoftForLiveConfirm(tabId, lease, t)) continue
     leases.delete(tabId)
     n++
     audit("tab.lease.released", {

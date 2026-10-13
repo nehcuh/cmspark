@@ -1,0 +1,28 @@
+{
+  "base": "e44af42f0f3999f23306e41159edb8b12e3dbdff",
+  "diff_sha256": "6cb049b0491f1cf03ff0e58a5c1bcb2fb5ffb4a8336ec9ec5eea946aa4c35c5e",
+  "host": {
+    "tests": 5885,
+    "pass": 5833,
+    "fail": 0,
+    "skipped": 52
+  },
+  "host_test_exit": 0,
+  "build_exit": 0,
+  "reproduction": {
+    "tests": 43,
+    "passed": 40,
+    "failed": 3,
+    "exit": 1
+  },
+  "linux_pending": false,
+  "linux_arm64": {
+    "tests": 79,
+    "passed": 79,
+    "failed": 0,
+    "skipped": 0,
+    "build_exit": 0,
+    "test_exit": 0,
+    "snapshot_manifest_sha256": "b99f65bd118abe7c62df25ea1fd151e34e06191fdc35d2666b8b593718497908"
+  }
+}
