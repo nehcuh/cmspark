@@ -1,0 +1,89 @@
+{
+  "base": "6594c053e4485182fec100b178df40ff8bf16a95",
+  "scope": "four module groups; conservative T3 CI process lifetime, T2 remaining components; no T4 enterprise acceptance",
+  "host": {
+    "companion": {
+      "tests": 5901,
+      "pass": 5849,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 52
+    },
+    "companion_test_exit": 0,
+    "companion_build_exit": 0,
+    "extension": {
+      "tests": 1527,
+      "pass": 1527,
+      "fail": 0,
+      "skipped": 0
+    },
+    "extension_test_exit": 0,
+    "extension_build_exit": 0
+  },
+  "test_scheduling": "Complete compiled inventory through canonical isolated runner; unchanged native Office file isolated serially after all other files, settings via existing serial runner path; no skips/timeouts changed",
+  "initial_failures_preserved": [
+    "stdio stalled protocol regression fixed CIr2 with actualSDK onclose+rejected process receipt tests",
+    "nativeOffice full-context240s timeout; precise phase unknown, same source and dependency baseline standalone20+snapshot20+nativegroup54 green; final complete inventory now green"
+  ],
+  "model": "exact same model/tool/corpus/1600tokens12s; r1/r2 failed traces retained, r3 original16+2semantic pass and manually checked",
+  "linux_arm64": {
+    "state": "PASS",
+    "fresh_container": true,
+    "locked_dep_install_exit": 0,
+    "companion_compile_build_exit": 0,
+    "extension_compile_production_build_exit": 0,
+    "test_exit": 0,
+    "companion": {
+      "tests": 233,
+      "pass": 232,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 1
+    },
+    "extension": {
+      "tests": 103,
+      "pass": 103,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "logs": [
+      "/tmp/cmspark-convergence-wave-linux-r3-build.log",
+      "/tmp/cmspark-convergence-wave-linux-r3-test.log"
+    ],
+    "dependency_delivery": "Public lock-only cache; three missing GNU tarballs fetched via mirror then verified byte-for-byte against unchanged lock SHA512; no cache/config/credentials from private service",
+    "prior_r3_manifest_sha256": "4248df6eb50a5bffca4bae1b7217054d51eceb31960664b726b04cd027926e75",
+    "final_product_source_identical": true
+  },
+  "source_manifest_sha256": "956299e311bb1877c0e1c6456c46338f0a26a293a7a896ee8a6a880620dafdf4",
+  "host_r3_delta": {
+    "scope": "allMCPfamily + process/ACP integrations",
+    "tests": 483,
+    "pass": 472,
+    "skipped": 11,
+    "fail": 0,
+    "cancelled": 0,
+    "test_exit": 0,
+    "build_exit": 0
+  },
+  "host_r4_test_delta": {
+    "test_file": "integration/allow-dir-reconnect",
+    "tests": 4,
+    "pass": 4,
+    "fail": 0,
+    "skipped": 0,
+    "test_exit": 0,
+    "compile_exit": 0
+  },
+  "linux_r4_test_delta": {
+    "fresh_container": true,
+    "readonly_test_overlay": true,
+    "same_r3_product_source_and_builds": true,
+    "tests": 4,
+    "pass": 4,
+    "fail": 0,
+    "skipped": 0,
+    "test_compile_exit": 0,
+    "test_exit": 0
+  }
+}
