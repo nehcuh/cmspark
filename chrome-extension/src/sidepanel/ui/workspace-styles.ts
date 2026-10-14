@@ -2,6 +2,8 @@ import { tokens } from "./tokens"
 
 /** Scoped shell styles; colors remain owned by tokens.ts. */
 export const workspaceCSS = `
+.cm-projects{font-size:12px;padding:8px 0;border-bottom:1px solid ${tokens.border}}
+.cm-projects summary{cursor:pointer;min-height:32px}.cm-project-controls{display:flex;flex-direction:column;gap:8px;max-height:42dvh;overflow:auto;padding:8px 2px}.cm-project-controls p{margin:0;overflow-wrap:anywhere}.cm-project-controls form,.cm-project-controls label{display:flex;flex-direction:column;gap:6px}.cm-project-controls input,.cm-project-controls select,.cm-project-controls button{box-sizing:border-box;max-width:100%;min-height:32px;font:inherit}.cm-project-controls button{white-space:normal}.cm-project-controls [role=alert]{color:${tokens.danger}}
 .cm-workspace{display:flex;height:100dvh;min-height:0;width:100%;overflow:hidden;background:${tokens.bg};font-family:${tokens.font};color:${tokens.text}}
 .cm-workspace-main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;position:relative}
 .cm-navigation{width:220px;height:100%;box-sizing:border-box;flex-shrink:0;display:flex;flex-direction:column;padding:20px 12px 12px;background:${tokens.bgMuted};border-right:1px solid ${tokens.border};gap:6px;overflow-y:auto}

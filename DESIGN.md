@@ -34,8 +34,9 @@ the current Chromium summoner is transitional, not that complete native product.
 
 Current #481 delivery: voice reliability/feedback (#482), coding-session scope
 (#483), summoner manual tags/groups using existing metadata, and conversation-first
-navigation. Project entities/defaults, a global activity center, merged code/terminal
-workspace and native management are future work. No copied Codex assets, mandatory
+navigation. #641 adds optional name-only Project metadata and explicit conversation
+membership. Project directory defaults, a global activity center, merged code/terminal
+workspace and native management remain future work. No copied Codex assets, mandatory
 external agent, blanket permission or automatic live-configuration migration.
 
 ## Personas and jobs
@@ -93,9 +94,10 @@ must not imply edit/install/connect capability. Settings uses one named dialog,
 category pages (wide rail/narrow select), stable deep links and mounted forms that
 preserve drafts. Pairing/elevated trust remains visible; independent saves stay explicit.
 
-Future proposal: optional Project → Conversation → Execution records. Project is
-a durable context with an optional local repository, not a renamed manual folder.
-Conversations may remain outside projects. No project UI ships before its real model.
+Implemented metadata: optional Project → Conversation membership; conversations may
+remain outside projects. Optional Project directory defaults and Project-linked
+Execution records remain future extensions. Project UI uses its real metadata model,
+not a renamed manual folder.
 
 ## Design principles
 One dominant action per area; supporting controls on demand. Preserve existing
@@ -185,9 +187,14 @@ and actual independent Grok + DeepSeek gates. Native host behavior, signatures,
 microphone performance and Windows runtime need separate evidence. Reports distinguish
 current delivery, reviewed design and future capabilities.
 
+Optional name-only Project metadata uses one canonical ProjectStore with stable IDs
+and explicit Thread.project_id membership (#641). Both conversation surfaces share
+that organization metadata; manual tags/groups and explicit thread workspace bindings
+remain separate. Project selection does not create directories or grant permissions.
+
 ## Open questions
-- [ ] Project proposal: maintainers to validate optional single-directory defaults,
-  migration and storage in a subsequent implementation Issue; no shipped schema here.
+- [ ] Project directory defaults/suggestions, automatic history migration and Fork
+  project inheritance remain follow-ups; the metadata schema does not implement them.
 - [ ] Native #476 management, Windows host visuals and task-level Chrome visibility
   remain owned by their slices; current repairs cannot close them.
 - [ ] Voice #482: measure installed engine/model cold/warm timing before claiming

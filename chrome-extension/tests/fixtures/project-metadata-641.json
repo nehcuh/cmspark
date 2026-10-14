@@ -1,0 +1,74 @@
+{
+  "source": "actual handleMessage JSON roundtrip; isolated synthetic names, no guessed payload keys",
+  "createRequest": {
+    "operation_id": "8e49556d-fc96-4086-9c86-2b42d0004583",
+    "expected_revision": 0,
+    "user_gesture": true,
+    "name": "OWNED_RECORDED_PROJECT"
+  },
+  "bindRequest": {
+    "operation_id": "d3d5bfd3-7cfc-48d3-87d7-8a3a239a30b2",
+    "expected_revision": 1,
+    "user_gesture": true,
+    "thread_id": "rwjo5b",
+    "project_id": "a646ad90-4a2f-426e-974f-17136941c6c3"
+  },
+  "created": {
+    "type": "project.changed",
+    "revision": 1,
+    "project": {
+      "id": "a646ad90-4a2f-426e-974f-17136941c6c3",
+      "name": "OWNED_RECORDED_PROJECT",
+      "created_at": "2026-10-14T15:54:04.841Z",
+      "updated_at": "2026-10-14T15:54:04.841Z",
+      "archived_at": null
+    },
+    "operation_id": "8e49556d-fc96-4086-9c86-2b42d0004583"
+  },
+  "bound": {
+    "type": "project.changed",
+    "revision": 2,
+    "thread_id": "rwjo5b",
+    "project_id": "a646ad90-4a2f-426e-974f-17136941c6c3",
+    "operation_id": "d3d5bfd3-7cfc-48d3-87d7-8a3a239a30b2",
+    "thread": {
+      "id": "rwjo5b",
+      "alias": "OWNED_RECORDED_THREAD",
+      "created_at": "2026-10-14T15:54:04.847Z",
+      "updated_at": "2026-10-14T15:54:04.847Z",
+      "config_override": {},
+      "tool_whitelist": null,
+      "pinned_tabs": [],
+      "active_skill_ids": [
+        "browse"
+      ],
+      "active_knowledge_ids": [],
+      "skill_selection_mode": "auto",
+      "knowledge_selection_mode": "auto",
+      "mcp_selection_mode": "auto",
+      "active_mcp_server_ids": [],
+      "mission_board": null,
+      "board_mode": false,
+      "project_id": "a646ad90-4a2f-426e-974f-17136941c6c3"
+    }
+  },
+  "state": {
+    "type": "project.state",
+    "revision": 2,
+    "projects": [
+      {
+        "id": "a646ad90-4a2f-426e-974f-17136941c6c3",
+        "name": "OWNED_RECORDED_PROJECT",
+        "created_at": "2026-10-14T15:54:04.841Z",
+        "updated_at": "2026-10-14T15:54:04.841Z",
+        "archived_at": null
+      }
+    ]
+  },
+  "refused": {
+    "type": "project.error",
+    "error_code": "PROJECT_CONFLICT",
+    "error": "项目记录已变化，请刷新并核对后重新保存。",
+    "operation_id": "4b11630a-fde5-4ef5-8f9a-34202af05474"
+  }
+}

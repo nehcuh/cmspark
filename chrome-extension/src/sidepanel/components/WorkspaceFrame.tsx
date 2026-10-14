@@ -11,6 +11,7 @@ import { tokens } from "../ui/tokens"
 import { CompanionMark, IconChevronDown, IconNewChat, IconSettings } from "../ui/icons"
 import { CONTEXT_PANEL_TABS, useContextPanelHost } from "./ContextPanelHost"
 import { createBlankThread } from "./ThreadList"
+import { ProjectPanel } from "./ProjectPanel"
 
 /** Presentation only: existing store, context loaders and thread.select own data. */
 export function WorkspaceFrame({ children }: { children: ReactNode }) {
@@ -50,6 +51,7 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
   const { state, dispatch } = useAgentStore()
   const { activePanel, openPanelForce, closePanel } = useContextPanelHost()
   const [query, setQuery] = useState("")
+  const [projectFilter, setProjectFilter] = useState("*")
   const [conversationsOpen, setConversationsOpen] = useState(true)
   const [resourcesOpen, setResourcesOpen] = useState(!onClose)
   const conversationsId = useId()
@@ -58,6 +60,7 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
     state.threads.filter(t => !t.trashed_at),
     { activeThreadId: state.activeThreadId, query },
   ).filter(t => {
+    if (projectFilter !== "*" && (t.project_id || "") !== projectFilter) return false
     if (!q) return true
     const parent = state.threads.find(p => p.id === t.parent_thread_id)
     const hay = `${workerBelongTitle(t, parent)} ${t.id || ""} ${t.worker_role_label || ""}`.toLocaleLowerCase()
@@ -75,6 +78,7 @@ function WorkspaceNavigation({ onNavigate, onClose }: { onNavigate: () => void; 
       {onClose && <button type="button" className="cm-icon-button" aria-label="关闭导航" onClick={onClose}>×</button>}
     </div>
     <button type="button" className="cm-nav-new" onClick={() => { createBlankThread(dispatch); onNavigate() }}><IconNewChat size={17} />新对话</button>
+    <ProjectPanel filter={projectFilter} onFilter={setProjectFilter} />
     {!onClose && resources}
     <section className="cm-nav-conversations" data-collapsed={!conversationsOpen} aria-label="最近对话">
     <div className="cm-nav-section"><button type="button" className="cm-nav-collapse" aria-expanded={conversationsOpen} aria-controls={conversationsId} onClick={() => setConversationsOpen(value => !value)}><IconChevronDown size={14} /><span>最近对话</span></button><button type="button" className="cm-nav-manage" disabled={state.pendingSecurityConfirmations.length > 0} onClick={() => { onNavigate(); window.dispatchEvent(new Event("cmspark:open-thread-manager")) }}>管理对话</button></div>

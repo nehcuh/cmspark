@@ -2,6 +2,7 @@
 // WebSocket client, CDP manager, tab manager, cookie ops
 
 import { WSClient } from "./ws-client"
+import { projectMetadataSenderAllowed } from "./project-metadata"
 import {
   attachTerminalPort,
   buildTerminalOpenBinding,
@@ -637,7 +638,7 @@ function setupMessageHandlers() {
     // Outer guard: any uncaught throw in a case would otherwise leave the
     // sender with lastError "The message port closed before a response was received."
     try {
-      return handleRuntimeMessage(message, sendResponse)
+      return handleRuntimeMessage(message, sendResponse, _sender)
     } catch (e: any) {
       try {
         sendResponse({ ok: false, error: e?.message || String(e) })
@@ -650,7 +651,7 @@ function setupMessageHandlers() {
 }
 
 /** Sync dispatch for extension UI → SW messages. Returns whether the channel is kept open. */
-function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): boolean {
+function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sender?: chrome.runtime.MessageSender): boolean {
     switch (message?.type) {
       case "getStatus":
         sendResponse({
@@ -998,6 +999,19 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         const metadataSent = wsClient.send({ type: "thread.update", id: message.id, thread_id: message.threadId || message.thread_id, updates: message.updates })
         sendResponse({ ok: metadataSent })
         return true
+
+      case "project.list":
+      case "project.create":
+      case "project.rename":
+      case "project.archive":
+      case "project.restore":
+      case "thread.project.set": {
+        if (!projectMetadataSenderAllowed(sender, chrome.runtime.id)) { sendResponse({ ok: false, error: "仅插件对话面板可整理项目" }); return false }
+        if (wsClient.getState() !== "connected") { sendResponse({ ok: false, error: "Companion 未连接，尚未保存" }); return false }
+        const { require_connected: _connection, ...frame } = message
+        sendResponse({ ok: wsClient.send(frame) })
+        return true
+      }
 
       case "thread.run_progress.toggle":
         wsClient.send({
