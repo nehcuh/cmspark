@@ -37,7 +37,14 @@ with tempfile.TemporaryDirectory() as out:
             page.screenshot(path=str(shots / f'available-{width}.png'))
         calls = page.evaluate('window.navigationCalls')
         assert len(calls) == 9, calls
-        assert all(call == {'type': 'thread.select', 'threadId': 'parent', 'busy': {'parent': True, 'child': True}} for call in calls), calls
+        expected = {'type': 'thread.select', 'threadId': 'parent', 'busy': {'parent': True, 'child': True}, 'message': '主任务消息', 'childCache': '子任务消息', 'draft': '待发送草稿', 'uploadClearSeq': 0}
+        assert all(call == expected for call in calls), calls
+        page.evaluate("window.showCase('multilevel')")
+        button = page.get_by_role('button', name='返回主任务 上级子任务', exact=True)
+        button.click()
+        nested = page.evaluate('window.navigationCalls.at(-1)')
+        assert nested == {**expected, 'threadId': 'middle'}, nested
+        assert len(page.evaluate('window.navigationCalls')) == 10
         for kind, label in [('missing', '主任务暂不可用'), ('trashed', '主任务在回收站'), ('cycle', '主任务关系无效')]:
             page.evaluate('(kind) => window.showCase(kind)', kind)
             button = page.get_by_role('button', name=label, exact=True)
@@ -45,9 +52,9 @@ with tempfile.TemporaryDirectory() as out:
             assert button.is_disabled()
             assert page.locator('.cm-child-task-title').is_visible()
             button.evaluate('(element) => element.click()')
-            assert len(page.evaluate('window.navigationCalls')) == 9
+            assert len(page.evaluate('window.navigationCalls')) == 10
             page.screenshot(path=str(shots / f'{kind}.png'))
         assert not browser_errors, browser_errors
         browser.close()
-(shots / 'evidence.json').write_text(json.dumps({'widths': [320, 390, 900], 'navigation_calls': calls, 'unavailable_cases': ['missing', 'trashed', 'cycle']}, ensure_ascii=False, indent=2))
+(shots / 'evidence.json').write_text(json.dumps({'widths': [320, 390, 900], 'navigation_calls': calls, 'multilevel_call': nested, 'unavailable_cases': ['missing', 'trashed', 'cycle']}, ensure_ascii=False, indent=2))
 print(f'PASS: rendered parent/child, click/Enter/Space, no overflow and unavailable refusal; screenshots {shots}')
