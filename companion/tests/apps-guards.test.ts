@@ -51,7 +51,7 @@ test("W1: multi-extension lolbin bypass is closed (cmd.exe.exe, cmd.fake.exe)", 
 // --- lolbin hard deny -------------------------------------------------------
 
 const REQUIRED_LOLBINS = [
-  "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta", "rundll32",
+  "powershell", "powershell_ise", "pwsh", "cmd", "wscript", "cscript", "mshta", "rundll32",
   "regsvr32", "wmic", "wsl", "bash", "msbuild", "installutil", "regasm",
   "forfiles", "pcalua", "control", "wt", "windowsterminal", "python",
   "pythonw", "node", "autohotkey", "cmspark-agent",
@@ -84,10 +84,10 @@ for (const name of REQUIRED_LOLBINS) {
 }
 
 test("non-lolbin lookalikes are NOT denied (substring must not match)", () => {
-  // e.g. "powershell_ise" is a vault app name but not the lolbin basename; and
-  // "my-node-app" contains "node" but is a distinct basename.
+  // Exact known interpreter names are blocked; unrelated basename lookalikes
+  // must not inherit that refusal from a substring.
   assert.ok(!isLolbinPath("C:\\apps\\my-node-app.exe"))
-  assert.ok(!isLolbinPath("C:\\apps\\powershell_ise.exe"))
+  assert.ok(!isLolbinPath("C:\\apps\\powershell_ise_helper.exe"))
   assert.ok(!isLolbinPath("C:\\apps\\nodepad.exe"))
 })
 
@@ -111,6 +111,7 @@ test("basenameToVault: browsers / password managers / terminals / wallets", () =
     ["C:\\apps\\KeePass.exe", "win.keepass"],
     ["C:\\apps\\wt.exe", "win.terminal"],
     ["C:\\apps\\WindowsTerminal.exe", "win.terminal"],
+    ["C:\\apps\\powershell_ise.exe", "win.powershell_ise"],
     ["C:\\w\\MetaMask.exe", "win.metamask"],
     ["C:\\w\\exodus.exe", "win.exodus"],
     ["C:\\w\\LedgerLive.exe", "win.ledgerlive"],
