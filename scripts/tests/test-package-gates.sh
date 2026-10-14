@@ -283,8 +283,14 @@ else
 fi
 assert_file_has "${MAKEFILE}" 'package\.sh windows-x64' \
   "Makefile package-windows uses package.sh (CI SoT)"
-assert_file_has "${RELEASE_YML}" 'nsis --version=3\.12\.0' \
-  "release.yml pins Chocolatey NSIS 3.12.0"
+assert_file_has "${RELEASE_YML}" 'node scripts/ensure-ci-nsis\.mjs' \
+  "release.yml invokes the verified pinned NSIS setup"
+assert_file_has "${ROOT}/scripts/ensure-ci-nsis.mjs" 'https://community\.chocolatey\.org/api/v2/package/nsis\.install/3\.12\.0' \
+  "NSIS setup pins the same 3.12.0 package"
+assert_file_has "${ROOT}/scripts/ensure-ci-nsis.mjs" '!== NSIS_PACKAGE_SHA512' \
+  "NSIS setup rejects a package checksum mismatch before archive parsing"
+assert_file_has "${ROOT}/scripts/ensure-ci-nsis.mjs" '!== NSIS_SETUP_SHA256' \
+  "NSIS setup rejects an installer checksum mismatch before execution"
 assert_file_has "${RELEASE_YML}" 'CMSPARK_REQUIRE_NSIS' \
   "release.yml sets CMSPARK_REQUIRE_NSIS on windows-x64"
 assert_file_has "${RELEASE_YML}" 'cmspark-windows-x64-setup' \
