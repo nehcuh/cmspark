@@ -24,6 +24,12 @@ This calibration changes policy/namespace and does not establish original-sessio
 
 ## Release decision
 
+### 2026-10-14 decision superseding the historical merge order
+
+The user explicitly authorized merging #626 first and performing real-system joint testing afterward. The historical draft/real-T4-before-merge decision below records the earlier state; it no longer blocks code integration after source tests, independent review, Pi and exact-head CI pass. Real joint acceptance remains incomplete. The authenticated ITCra acceptance driver is also unfinished code work, separately from missing qualified business URLs and the second independent enterprise identity. #618 tracks that acceptance work; nonblocking source follow-ups in #625/#628 are explicitly deferred to their existing issues to avoid expanding this reviewed integration. No real 23 P0 receipts, original-session continuation, business workflow, dangerous human approval, identity isolation or offline-installed acceptance is claimed. Merge does not install or enable live enterprise policy.
+
+### Historical 2026-10-13 decision
+
 #626 remains draft. After this component commit, its new head requires freshCI. Even greenCI does not authorize merge: T4 still needs actual complete joint acceptance/human bake-off, business-link configuration, secondenterprise identity and real receipts. User currently has only one identity and no business-link configuration. Do not fabricate a passing driver/report or skip cases.
 
 Supplemental answer a238eba1-28d generated unresolved synthetic fallback-llm routing steps; that blocked plan was not executed. Rebuilt the already approved task into the actual builtin/deep-diagnosis-optimization skill, scanned both required skills with unchanged default rules/heuristics and retained all machine/review/Linux/Pi/CI/real acceptance steps. The synthetic fallback is not an installable skill and no bypass/stub was invented.
