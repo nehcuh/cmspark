@@ -23,7 +23,7 @@ before(async () => {
   previousChrome = (globalThis as any).chrome
   ;(globalThis as any).chrome = {
     tabs: { get: async (id: number) => { chromeCalls++; return { id, url: "https://synthetic.example/page" } } },
-    debugger: { onDetach: { addListener() {} }, attach: async () => { chromeCalls++ },
+    debugger: { onDetach: { addListener() {} }, getTargets: async () => [{ tabId: 7, attached: false }], attach: async () => { chromeCalls++ },
       sendCommand: async (_target: any, method: string, params: any) => {
         chromeCalls++
         if (method === "Runtime.evaluate") evaluations.push(params.expression)

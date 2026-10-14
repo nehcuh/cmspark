@@ -1,0 +1,5 @@
+# Actual manual-entry producer fixture
+
+Captured from canonical compiled Companion acp-manual-entry-522.test through actual AcpManager successful CLI spawn/progress/handleAcpWsMessage, with CMSPARK_RECORD_MANUAL_ENTRY_FIXTURE. The inert known-name launcher only emits synthetic handback; no model/native terminal/businesscredentials. Session ID and owned temporary paths normalized, real fieldnames and commands preserved. Proposed record is already closed when captured; not called offered. Wrong-owner reply is actual handler output. UI tests correlate the real UI requestID; expired/foreign/replacement fields are labelled negative/lifecycle mutations.
+
+Canonical recording after nvm use22 and tsc testcompilation: CMSPARK_RECORD_MANUAL_ENTRY_FIXTURE=../chrome-extension/tests/fixtures/coding-manual-entry-522.json node scripts/run-tests.mjs .test-dist/tests/acp-manual-entry-522.test.js. Controlled transport/clipboard App test never executes these prepared strings; inert-shell native contract is a separate Companion test.

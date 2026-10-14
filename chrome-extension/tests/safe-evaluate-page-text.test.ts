@@ -38,6 +38,7 @@ async function withBridge(
       query: async () => [],
     },
     debugger: {
+      getTargets: async () => [{ tabId: 7, attached: false }],
       onDetach: { addListener() {} },
       attach: async () => {
         if (stub.attach) await stub.attach()

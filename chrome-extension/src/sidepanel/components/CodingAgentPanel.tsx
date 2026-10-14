@@ -11,6 +11,7 @@ import {
 } from "react"
 import { tokens } from "../ui/tokens"
 import { useCodingStop } from "../hooks/useCodingStop"
+import { sendCodingOperation } from "../utils/coding-operation-send"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import {
   isEmbeddedTerminalSupported,
@@ -30,7 +31,7 @@ import {
   formatPageContext,
   cloneCommand,
 } from "../coding-handoff/repo-context"
-import { useAgentStore, selectCodingSession, codingSessionBelongsToThread, selectCodingOperationError } from "../store/agentStore"
+import { useAgentStore, selectCodingSession, codingSessionBelongsToThread, selectCodingOperationError, selectCodingManualEntry } from "../store/agentStore"
 import { MinimalConfirm } from "./MinimalConfirm"
 
 /**
@@ -144,6 +145,7 @@ export function CodingAgentPanel({
   const { state, dispatch } = useAgentStore()
   const session = threadId === state.activeThreadId ? selectCodingSession(state, threadId) : null
   const actionError = selectCodingOperationError(state, session)
+  const manualEntry = selectCodingManualEntry(state, session)
   const confirmQueue = state.pendingSecurityConfirmations
   const pendingConfirm = confirmQueue.length > 0
   const headConfirm = confirmQueue[0]
@@ -187,6 +189,16 @@ export function CodingAgentPanel({
   const stopControl = useCodingStop(session)
   const currentSessionRef = useRef(session)
   currentSessionRef.current = session
+  const currentManualEntryRef = useRef(manualEntry)
+  currentManualEntryRef.current = manualEntry
+  useEffect(() => {
+    if (!manualEntry?.pending) return
+    const captured = manualEntry
+    const timer = window.setTimeout(() => dispatch({ type: "ACP_MANUAL_ENTRY_RESULT",
+      sessionId: captured.sessionId, threadId: captured.threadId, requestId: captured.requestId,
+      error: "未收到交互入口准备回执，请重试。" }), 10_000)
+    return () => window.clearTimeout(timer)
+  }, [manualEntry, dispatch])
   useEffect(() => {
     setControlError("")
     setStatus("")
@@ -725,13 +737,7 @@ export function CodingAgentPanel({
     if (composerDisabled) return
     const t = input.trim()
     if (!t || !session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
-    dispatch({ type: "ACP_OPERATION_REQUEST", sessionId: session.sessionId, threadId: session.threadId })
-    chrome.runtime.sendMessage(
-      { type: "acp.session.prompt", session_id: session.sessionId, thread_id: session.threadId, text: t },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
+    sendCodingOperation(session, dispatch, { type: "acp.session.prompt", text: t })
     setInput("")
   }
 
@@ -754,13 +760,7 @@ export function CodingAgentPanel({
 
   const onApply = () => {
     if (!session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
-    dispatch({ type: "ACP_OPERATION_REQUEST", sessionId: session.sessionId, threadId: session.threadId })
-    chrome.runtime.sendMessage(
-      { type: "acp.apply_diff", session_id: session.sessionId, thread_id: session.threadId },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
+    sendCodingOperation(session, dispatch, { type: "acp.apply_diff" })
   }
 
   // Must stay above `if (!open) return null` — a hook after that return fires only
@@ -782,6 +782,26 @@ export function CodingAgentPanel({
       },
     )
   }, [embedThreadId])
+
+  const prepareManualEntry = () => {
+    const target = currentSessionRef.current
+    setControlError(""); setStatus("")
+    if (!target || !codingSessionBelongsToThread(target, state.activeThreadId) ||
+        state.codingSessionIdByThread[target.threadId] !== target.sessionId) {
+      setControlError("当前会话已变化，请返回所属对话后重试。"); return
+    }
+    if (!storeAcpEnabled && !acpEnabled) { setControlError("编程助手已关闭，请先在设置中启用。"); return }
+    const requestId = `coding-entry-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const identity = { sessionId: target.sessionId, threadId: target.threadId, requestId }
+    dispatch({ type: "ACP_MANUAL_ENTRY_REQUEST", ...identity })
+    try {
+      chrome.runtime.sendMessage({ type: "acp.session.prepare_manual_entry", session_id: target.sessionId,
+        thread_id: target.threadId, request_id: requestId, user_gesture: true }, (response: { ok?: boolean; error?: string } | undefined) => {
+        const error = chrome.runtime.lastError?.message || (response?.ok === true ? "" : response?.error || "入口请求未能发送，请重试。")
+        if (error) dispatch({ type: "ACP_MANUAL_ENTRY_RESULT", ...identity, error })
+      })
+    } catch (error) { dispatch({ type: "ACP_MANUAL_ENTRY_RESULT", ...identity, error: error instanceof Error ? error.message : "入口请求未能发送，请重试。" }) }
+  }
 
   if (!open) return null
 
@@ -1085,8 +1105,8 @@ export function CodingAgentPanel({
         {/* Live session shell (main surface) */}
         {session ? (
           <div style={styles.session}>
-            {session.cacheCompacted ? <p role="status" style={styles.footnote}>此会话输出已收起，请返回所属主对话查看已保存的结果。</p> : null}
-            {session.outputTruncated && !session.cacheCompacted ? <p role="status" style={styles.footnote}>此处仅显示部分输出；请返回所属主对话查看已保存的结果。</p> : null}
+            {session.cacheCompacted ? <p role="status" style={styles.footnote}>此会话输出已收起。可返回所属主对话查看回传内容（如有）。</p> : null}
+            {session.outputTruncated && !session.cacheCompacted ? <p role="status" style={styles.footnote}>此处仅显示部分输出。可返回所属主对话查看回传内容（如有）。</p> : null}
             {actionError ? <p role="alert" style={styles.err}>{actionError}</p> : null}
             {controlError ? <p role="alert" style={styles.err}>{controlError}</p> : null}
             {stopControl.error ? <p role="alert" style={styles.err}>{stopControl.error}</p> : null}
@@ -1159,7 +1179,7 @@ export function CodingAgentPanel({
               </div>
             </div>
 
-            {session.error ? <div style={styles.err}>{session.error}</div> : null}
+            {session.error && !(session.state === "closed" && session.error === "cancelled") ? <div style={styles.err}>{session.error}</div> : null}
             {session.transport === "cli" && !session.cacheCompacted ? (
               <div style={styles.transportNote}>
                 {commandAvailable ? <>
@@ -1182,6 +1202,33 @@ export function CodingAgentPanel({
                   }}>复制本次启动命令</button>
                   <p style={styles.footnote}>临时命令只在生成后 60 秒内可复制，请及时执行。手动执行会启动 Agent；已有外部终端请自行切换。</p>
                 </> : <p style={styles.footnote}>{session.terminalCommandLine ? "临时启动命令已过期；请自行切换到已有外部终端。" : "本次启动命令不可用；请自行切换到已有外部终端。"}</p>}
+              </div>
+            ) : null}
+
+            {session.transport === "cli" ? (
+              <div style={styles.transportNote}>
+                <button type="button" style={styles.secondary} onClick={prepareManualEntry} disabled={manualEntry?.pending === true}>
+                  {manualEntry?.pending ? "正在准备交互启动命令…" : "准备交互启动命令"}
+                </button>
+                <p style={styles.footnote}>这是新开交互 Agent 的手动入口，不会恢复或切换到监视中的会话，也不会自动执行。</p>
+                {manualEntry?.error ? <p role="alert" style={styles.err}>{manualEntry.error}</p> : null}
+                {manualEntry?.commandLine && manualEntry.shell ? <>
+                  <p style={styles.footnote}>请在 {manualEntry.shell} 中手动执行。任务内容可另用「复制任务包」粘贴。</p>
+                  <button type="button" style={styles.secondary} onClick={async () => {
+                    const target = currentSessionRef.current, entry = currentManualEntryRef.current
+                    if (!target || !entry?.commandLine || entry.pending || entry.sessionId !== target.sessionId ||
+                        entry.threadId !== target.threadId || !codingSessionBelongsToThread(target, state.activeThreadId)) {
+                      setControlError("入口对应的会话已变化，请重新准备。"); return
+                    }
+                    setControlError(""); setStatus("")
+                    const ok = await copyTextToClipboard(entry.commandLine)
+                    if (mountedRef.current && currentManualEntryRef.current?.requestId === entry.requestId &&
+                        currentSessionRef.current?.sessionId === target.sessionId && currentSessionRef.current?.threadId === target.threadId) {
+                      setControlError(ok ? "" : "复制交互启动命令失败，请检查剪贴板权限后重试。")
+                      if (ok) setStatus(`已复制新开交互 Agent 的命令，请在 ${entry.shell} 中手动执行；原会话保持独立。`)
+                    }
+                  }}>复制交互启动命令</button>
+                </> : null}
               </div>
             ) : null}
 

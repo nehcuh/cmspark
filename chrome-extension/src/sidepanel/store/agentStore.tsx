@@ -117,6 +117,16 @@ export function selectCodingOperationError(
     notice.threadId === session.threadId && notice.sessionId === session.sessionId ? notice.error : undefined
 }
 
+export function selectCodingManualEntry(
+  state: Pick<AgentState, "activeThreadId" | "codingSessionIdByThread" | "codingManualEntry">,
+  session: CodingSessionState | null,
+): AgentState["codingManualEntry"] {
+  const entry = state.codingManualEntry
+  return session && entry && session.threadId === state.activeThreadId &&
+    state.codingSessionIdByThread[session.threadId] === session.sessionId &&
+    entry.threadId === session.threadId && entry.sessionId === session.sessionId ? entry : null
+}
+
 /** A delayed click must never act on a session that belongs to another conversation. */
 export function codingSessionBelongsToThread(session: CodingSessionState | null, threadId: string | null): boolean {
   return !!session && !!threadId && session.threadId === threadId
@@ -327,6 +337,8 @@ export interface AgentState {
   codingSessionsById: Record<string, CodingSessionState>
   codingSessionIdByThread: Record<string, string>
   codingOperationError?: { sessionId: string; threadId: string; error: string } | null
+  codingManualEntry?: { sessionId: string; threadId: string; requestId: string; pending: boolean;
+    commandLine?: string; shell?: "cmd.exe" | "POSIX sh"; error?: string } | null
   /** Last acp.list payload (agents + enabled flag). */
   acpAgents: AcpAgentInfo[]
   acpEnabled: boolean
@@ -599,6 +611,9 @@ export type AgentAction =
   | { type: "ACP_CONTROL_REQUEST"; sessionId: string; threadId: string }
   | { type: "ACP_OPERATION_ERROR"; sessionId: string; threadId: string; error: string }
   | { type: "ACP_OPERATION_REQUEST"; sessionId: string; threadId: string }
+  | { type: "ACP_MANUAL_ENTRY_REQUEST"; sessionId: string; threadId: string; requestId: string }
+  | { type: "ACP_MANUAL_ENTRY_RESULT"; sessionId: string; threadId: string; requestId: string;
+      commandLine?: string; shell?: "cmd.exe" | "POSIX sh"; error?: string }
   /** Cockpit/panel hydrate from SW mirror — full snapshot, not incremental event. */
   | { type: "HYDRATE_COMPUTER_TASK"; task: ComputerTaskState | null }
   | { type: "HYDRATE_SECURITY_CONFIRMATIONS"; requests: SecurityConfirmationRequest[] }
@@ -1010,6 +1025,7 @@ function applyActiveThreadSwitch(
   AgentState,
   | "activeThreadId"
   | "codingOperationError"
+  | "codingManualEntry"
   | "messages"
   | "messagesByThreadId"
   | "messagesCacheOrder"
@@ -1037,6 +1053,7 @@ function applyActiveThreadSwitch(
   return {
     activeThreadId: threadId,
     codingOperationError: null,
+    codingManualEntry: null,
     messages: hit && threadId ? cache[threadId]! : [],
     messagesByThreadId: cache,
     messagesCacheOrder: order,
@@ -1145,6 +1162,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         threads,
         activeThreadId: nextActiveThreadId,
         codingOperationError: nextActiveThreadId === state.activeThreadId ? state.codingOperationError : null,
+        codingManualEntry: nextActiveThreadId === state.activeThreadId ? state.codingManualEntry : null,
         // #513: cards for threads gone from the list go with them.
         fleetSuggestByThreadId: pruneFleetSuggest(
           state.fleetSuggestByThreadId,
@@ -1554,6 +1572,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         threads: [action.thread, ...state.threads],
         activeThreadId: action.thread.id,
         codingOperationError: null,
+        codingManualEntry: null,
         messages: [],
         streamingContent: "",
         streamingReasoning: "",
@@ -1976,6 +1995,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         codingOperationError: state.codingOperationError &&
           selection[state.codingOperationError.threadId] === state.codingOperationError.sessionId
           ? state.codingOperationError : null,
+        codingManualEntry: state.codingManualEntry && selection[state.codingManualEntry.threadId] === state.codingManualEntry.sessionId
+          ? state.codingManualEntry : null,
       }
     }
     case "ACP_CANCEL_RECEIPT": {
@@ -2004,6 +2025,18 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, codingOperationError: action.type === "ACP_OPERATION_ERROR"
         ? { sessionId: row.sessionId, threadId: row.threadId, error: action.error.slice(0, 1000) } : null }
     }
+    case "ACP_MANUAL_ENTRY_REQUEST":
+    case "ACP_MANUAL_ENTRY_RESULT": {
+      const row = state.codingSessionsById[action.sessionId]
+      if (!row || row.threadId !== action.threadId || state.activeThreadId !== row.threadId ||
+          state.codingSessionIdByThread[row.threadId] !== row.sessionId) return state
+      if (action.type === "ACP_MANUAL_ENTRY_REQUEST") return { ...state, codingManualEntry: {
+        sessionId: row.sessionId, threadId: row.threadId, requestId: action.requestId, pending: true } }
+      const pending = state.codingManualEntry
+      if (!pending?.pending || pending.requestId !== action.requestId || pending.sessionId !== row.sessionId || pending.threadId !== row.threadId) return state
+      return { ...state, codingManualEntry: { ...pending, pending: false,
+        ...(action.error ? { error: action.error.slice(0, 1000) } : { commandLine: action.commandLine, shell: action.shell }) } }
+    }
     case "SET_ACP_LIST":
       return {
         ...state,
@@ -2018,6 +2051,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       // Retain the record so delayed progress cannot resurrect a dismissed chip.
       return { ...state, codingSessionIdByThread: selection,
         codingOperationError: state.codingOperationError?.sessionId === action.sessionId ? null : state.codingOperationError,
+        codingManualEntry: state.codingManualEntry?.sessionId === action.sessionId ? null : state.codingManualEntry,
         codingSessionsById: pruneCodingSessionCache(state.codingSessionsById, state.activeThreadId, selection, action.sessionId),
       }
     }
