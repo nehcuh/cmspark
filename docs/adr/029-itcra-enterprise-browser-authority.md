@@ -1,6 +1,6 @@
 # ADR-029: ITCra enterprise browser authority
 
-Status: implementation under review, opt-in; joint bake-off and human approval required before merge/release. Design issue [#618](https://github.com/nehcuh/cmspark/issues/618). User selected extension of REST/grant on 2026-10-13.
+Status: opt-in implementation; on 2026-10-14 the user explicitly authorized merging reviewed code before real-system joint testing. Real joint acceptance remains incomplete and required before a claim of enterprise readiness. Design issue [#618](https://github.com/nehcuh/cmspark/issues/618). User selected extension of REST/grant on 2026-10-13.
 
 Existing personal/outbound grants retain their gates. A concrete enterprise grant instead carries administrator-defined identity, dedicated Companion/Chrome profile, finite authority, boundary paths, verified action rules and a separate Ed25519 human issuer. Each user or expressly authorized business identity has its own process/data directory/port/profile. Local registration immutably binds the fixed business subject to that instance/profile; issuance and every live use reject conflicting subjects or old unbound registrations. Shared-account humans map to the same business subject through ITCra RBAC. No new general outbound tools or permissive profile are introduced.
 
@@ -14,6 +14,6 @@ v1 supports configured main-frame redirect and same-origin QR markers. Login ifr
 
 ADR-020 axes: Surface authenticated versioned REST/local admin CLI; L2 constrained existing browser actions; Compose grant × subject × instance × session × document × target; Autonomy verified normal actions and same-session continuation; Trust deny-by-default, live rechecks and single-use human authority; Channel paired extension plus separate authenticated ITCra human presentation.
 
-Blast tier T4: machine checks → independent adversary → Pi rereview → Kimi supplement/CI → human boundary approval and real bake-off. No automatic merge or production policy installation.
+Blast tier T4: machine checks → independent adversary → Pi rereview → Kimi supplement/CI → human boundary approval and real bake-off. The 2026-10-14 human instruction permits code integration before the real bake-off, which remains postmerge work. No production policy installation is authorized by the code merge; product human-approval and grant boundaries remain unchanged.
 
 Authority persistence: authentication usage is separate metadata; supported grant issue/revoke writers serialize load→commit across processes with explicit contention. Revocation/policy state cannot be rolled back by usage telemetry. Ambiguous same-origin cross-route login without trusted requested/current destination fails RETURN_TARGET_NOT_RETAINED and emits no earlier document evidence; explicit intent and qualified same-URL login remain supported.
