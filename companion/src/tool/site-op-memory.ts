@@ -25,6 +25,7 @@
 
 import { platform } from "node:os"
 import { originKeyFromUrl } from "./dom-script-budget.js"
+import { isDurableSiteOpFailureCode, parsePersistedSiteOpLine } from "./site-op-provenance"
 
 export const SITE_LOCATOR_FAIL_BAN = 2
 export const SITE_ATTACH_FAIL_BAN = 1
@@ -218,24 +219,7 @@ export function autoSiteOpExperienceLine(origin: string, tool: string, locator: 
   return `[auto] DO NOT retry ${tool} ${locator} on ${origin}: last ${code}`
 }
 
-const PERSISTED_LINE_RE =
-  /^\[auto\] DO NOT retry ([a-z_]+) (.+?) on (https?:\/\/[^\s]+): last ([A-Z0-9_]+)$/
-
-/**
- * Strict inverse of autoSiteOpExperienceLine. Only exact-template [auto] lines
- * parse — free-form text, manual experience lines, or anything a user/hand-edit
- * mangled returns null and can never hydrate into a machine ban or a prompt.
- */
-export function parsePersistedSiteOpLine(content: string): {
-  origin: string
-  tool: string
-  locator: string
-  code: string
-} | null {
-  const m = PERSISTED_LINE_RE.exec(String(content || "").trim())
-  if (!m) return null
-  return { tool: m[1], locator: m[2], origin: m[3], code: m[4] }
-}
+export { parsePersistedSiteOpLine } from "./site-op-provenance"
 
 export type SiteOpBan =
   | { banned: false }
@@ -502,7 +486,7 @@ export function collectOriginFailedLocators(
     if (!k.startsWith(prefix)) continue
     const [o, tool, locator] = k.split("|")
     if (o !== key || tool === "*" || !locator || locator === "none" || locator === "attach") continue
-    if (st.fails < 1) continue
+    if (st.fails < 1 || !isDurableSiteOpFailureCode(st.lastCode)) continue
     if (!isSafeSiteOpLocatorText(locator)) continue
     out.push({ tool, locator, code: st.lastCode, fails: st.fails })
     if (out.length >= cap) break
@@ -536,7 +520,7 @@ export function hydratePersistedSiteOpExperience(
   for (const e of entries) {
     if (e.stale) continue
     const parsed = parsePersistedSiteOpLine(e.content)
-    if (!parsed) continue
+    if (!parsed || !isDurableSiteOpFailureCode(parsed.code)) continue
     // Round-2 MAJOR-2: disk entries are user-editable — re-run the injection gate
     // here so a template-conformant [auto] line with a poisoned locator cannot
     // ride past the persist-side check into a machine ban / prompt.
@@ -584,7 +568,7 @@ export function refreshPersistedSiteOpExperience(
     const recordedAt = typeof entry.recorded_at === "string" ? Date.parse(entry.recorded_at) : NaN
     if (!Number.isFinite(recordedAt) || recordedAt > now || now - recordedAt >= SITE_EXPERIENCE_TTL_MS) continue
     const parsed = parsePersistedSiteOpLine(entry.content)
-    if (!parsed || canonicalizeSiteOrigin(parsed.origin) !== origin || !isSafeSiteOpLocatorText(parsed.locator)) continue
+    if (!parsed || !isDurableSiteOpFailureCode(parsed.code) || canonicalizeSiteOrigin(parsed.origin) !== origin || !isSafeSiteOpLocatorText(parsed.locator)) continue
     const parsedUrl = new URL(parsed.origin)
     if (parsedUrl.pathname !== "/" || parsedUrl.search || parsedUrl.hash || parsedUrl.username || parsedUrl.password) continue
     if (!isCdpInteractiveTool(parsed.tool) || parsed.locator === "none" || parsed.locator === "attach") continue

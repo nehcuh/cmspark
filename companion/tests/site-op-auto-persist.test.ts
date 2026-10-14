@@ -384,3 +384,89 @@ test("NIT: full dedup-skip persists nothing new and stays silent (no info event)
   const after = (se.get("x-com")?.entries || []).filter(e => e.content.startsWith("[auto] DO NOT retry")).length
   assert.equal(after, before, "no duplicate [auto] entries written")
 })
+
+// #535: real BrowserBridge→JSON→current WS context options→chatCreate. Chrome
+// and provider transport are controlled seams; no native site or human approval.
+test("#535 channel failure cannot persist locator proof; true locator miss still does", async () => {
+  const { buildSync } = require("esbuild") as typeof import("esbuild")
+  const bundle = path.join(tempHome, "bridge-535.cjs")
+  buildSync({ entryPoints: [path.resolve(__dirname, "../../../chrome-extension/src/background/browser-bridge.ts")], bundle: true, platform: "node", format: "cjs", outfile: bundle, logLevel: "silent" })
+  const previous = (globalThis as any).chrome
+  let mode: "channel" | "missing" | "ready" = "channel"
+  let url = "https://channel-fixture.test/page"
+  let cdpReads = 0, scriptingReads = 0, dispatched = 0
+  ;(globalThis as any).chrome = {
+    tabs: { get: async (id: number) => ({ id, url }), query: async () => [] },
+    debugger: { getTargets: async () => [{ tabId: 7, attached: false }], onDetach: { addListener() {} }, attach: async () => {},
+      sendCommand: async (_target: unknown, method: string) => { cdpReads++; return method === "Runtime.evaluate"
+        ? mode === "channel" ? { exceptionDetails: { text: "controlled opaque probe" } } : { result: { value: mode === "ready" ? true : null } } : {} } },
+    scripting: { executeScript: async () => { scriptingReads++; return mode === "channel" ? [{ error: "controlled no reading" }] : [{ result: mode === "ready" ? true : null }] } },
+  }
+  const { BrowserBridge } = require(bundle)
+  const bridge = new BrowserBridge()
+  const { resolveBrowserSiteTarget } = await import("../src/site-context/browser-resolver")
+  const { contextReadParams } = await import("../src/site-context/admission")
+  const { getOriginFailCount } = await import("../src/tool/site-op-memory")
+  const manager = new ThreadManager(), se = new SkillEngine()
+  const codes: string[] = []
+  const current = (threadId: string) => ({ ...buildParams({ threadId, skillEngine: se, manager, executeTool: async (_id, name, args) => {
+    if (name === "run_progress_propose") return proposeOk
+    dispatched++
+    const result = await bridge.execute(name, args)
+    if (result.data?.error_code) codes.push(result.data.error_code)
+    return JSON.parse(JSON.stringify(result))
+  } }), siteContextTabId: 7,
+    contextSelection: { kind: "thread", skillMode: "manual", knowledgeMode: "all", extraSkillIds: [] },
+    resolveSiteTarget: (tabId: number, signal?: AbortSignal) => resolveBrowserSiteTarget(
+      async (_id, name, args, _signal, options) => bridge.execute(name, contextReadParams(name, args, options?.siteContextTabId)), threadId, tabId, signal),
+  } as any)
+  try {
+    resetSiteOpMemoryForTests(); clearTabUrlCacheForTests()
+    const thread = manager.create("channel proof", "test-channel-proof-535")
+    manager.update(thread.id, { knowledge_selection_mode: "all" })
+    for (let i = 0; i < 4; i++) {
+      roundScript = [proposeRound, { tool: { name: "wait_for", args: { tabId: 7, selector: `#fixture-${i}`, timeout: 20, interval: 5 } } }, { content: "done" }]
+      await chatCreate(current(thread.id))
+    }
+    const badEntries = se.get(siteExperienceIdentity("channel-fixture.test").id)?.entries || []
+    // Optional author recorder saves the actual producer schema before RED;
+    // normal/CI tests do not write outside their owned temp directory.
+    if (process.env.CMSPARK_RECORD_535_PATH && badEntries.length) {
+      fs.writeFileSync(process.env.CMSPARK_RECORD_535_PATH, JSON.stringify(badEntries, null, 2)+"\n", { mode: 0o600 })
+    }
+    assert.deepEqual(codes, Array(4).fill("WAIT_PROBE_FAILED"))
+    assert.equal(getOriginFailCount(thread.id, "https://channel-fixture.test"), 4, "channel health remains conservative")
+    assert.equal(badEntries.length, 0, "a broken probe is not evidence of a broken selector")
+    assert.ok(cdpReads > 0 && scriptingReads > 0, "actual producer must try both channels")
+
+    mode = "ready"
+    const fresh = manager.create("channel recovered", "test-channel-fresh-535")
+    manager.update(fresh.id, { knowledge_selection_mode: "all" })
+    const before = dispatched
+    roundScript = [proposeRound, { tool: { name: "wait_for", args: { tabId: 7, selector: "#fixture-0", timeout: 20, interval: 5 } } }, { content: "done" }]
+    await chatCreate(current(fresh.id))
+    assert.equal(getOriginFailCount(fresh.id, "https://channel-fixture.test"), 0)
+    assert.equal(dispatched-before, 1, "new thread must be able to use the recovered channel")
+
+    mode = "missing"; url = "https://locator-fixture.test/page"
+    const locator = manager.create("real locator miss", "test-locator-positive-535")
+    manager.update(locator.id, { knowledge_selection_mode: "all" })
+    const codeCount = codes.length
+    for (let i = 0; i < 4; i++) {
+      roundScript = [proposeRound, { tool: { name: "get_element_info", args: { tabId: 7, selector: `#missing-${i}` } } }, { content: "done" }]
+      await chatCreate(current(locator.id))
+    }
+    assert.deepEqual(codes.slice(codeCount), Array(4).fill("ELEMENT_NOT_FOUND"))
+    assert.equal(getOriginFailCount(locator.id, "https://locator-fixture.test"), 4)
+    assert.equal(se.get(siteExperienceIdentity("locator-fixture.test").id)?.entries?.length, 4)
+    const after = manager.create("locator remains banned", "test-locator-fresh-535")
+    manager.update(after.id, { knowledge_selection_mode: "all" })
+    const beforeBan = dispatched
+    roundScript = [proposeRound, { tool: { name: "get_element_info", args: { tabId: 7, selector: "#missing-0" } } }, { content: "done" }]
+    await chatCreate(current(after.id))
+    assert.equal(dispatched, beforeBan, "genuine locator proof still prevents a repeated dead path")
+  } finally {
+    if (previous === undefined) delete (globalThis as any).chrome
+    else (globalThis as any).chrome = previous
+  }
+})

@@ -12,7 +12,8 @@ import { getConfigDir, type LlmConfig as CompanionLlmConfig } from "../config"
 import { createProvider } from "../llm/provider"
 import { fallbackThreadManager, type ThreadManager } from "../threads/thread-manager"
 import { matchSite } from "./site-matcher"
-import { isOwnedSiteExperience } from "./site-experience-identity"
+import { isOwnedSiteExperience, isAutomaticSiteExperienceDocument } from "./site-experience-identity"
+import { parsePersistedSiteOpLine, isDurableSiteOpFailureCode } from "../tool/site-op-provenance"
 import { sanitizeKnowledgeContent, wrapKnowledgeBlock } from "./content-sanitizer"
 import { chunkFile, searchChunks, type FileChunk } from "../file-chunker"
 import {
@@ -1840,7 +1841,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
     // Experience skills: inject entry summaries directly (no use_skill needed)
     for (const s of experienceSkills) {
-      const summary = this.getEntriesSummary(s.name)
+      const summary = this.getEntriesSummary(s.name, true)
       if (summary) pushKnowledge(s, summary)
     }
 
@@ -1892,7 +1893,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
             if (desc) pushKnowledge(k, desc)
             continue
           }
-          const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
+          const summary = this.getKnowledgeSummaryForPrompt(k, query)
           if (summary) pushKnowledge(k, summary, undefined, labelOf(k))
         }
         if (routing?.edgeClosed) {
@@ -1903,7 +1904,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         // 截断语义逐字节对齐），再按序实灌——recall 槽的「让位」因此只是
         // 计划层的末位移出，不需要实灌撤回。
         type PlannedDoc = { k: Skill; body: string; groupLabel?: string }
-        const summaryOf = (k: Skill) => this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
+        const summaryOf = (k: Skill) => this.getKnowledgeSummaryForPrompt(k, query)
         const labelOf = (k: Skill) => routing.labelByName.get(k.name)
         let left = knowledgeBudgetLeft
         let stop = false
@@ -2060,7 +2061,15 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
    * - Large docs with query: search relevant chunks via RAG
    * - Large docs without query: return truncated summary */
   private getKnowledgeSummary(skill: Skill, query?: string): string {
-    const chunks = this.knowledgeChunks.get(skill.name)
+    const originalContent = skill.content || ""
+    const projectedContent = this.projectAutomaticSiteExperienceBody(skill, originalContent)
+    // Search the projected body, never cached raw chunks containing retired rows.
+    // The existing chunker, threshold, ranking and shared injection budget remain.
+    const projectedChunks = projectedContent !== originalContent
+      ? chunkFile(skill.name, projectedContent, KNOWLEDGE_SEARCH_THRESHOLD_TOKENS) : undefined
+    const chunks = projectedChunks
+      ? (projectedChunks.chunks.length > 1 || projectedChunks.totalTokens > KNOWLEDGE_SEARCH_THRESHOLD_TOKENS ? projectedChunks.chunks : undefined)
+      : this.knowledgeChunks.get(skill.name)
 
     // Large doc + query → RAG chunk retrieval (tags + description in the query bag)
     if (chunks && chunks.length > 0 && query && query.trim()) {
@@ -2074,7 +2083,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       // If no chunks matched the query, fall through to truncated summary
     }
 
-    let content = skill.content || ""
+    let content = projectedContent
     // Sanitize before injection
     content = sanitizeKnowledgeContent(content)
     // Rough token estimate: 1 token ≈ 4 chars for English, 1 token ≈ 1 char for CJK
@@ -2088,12 +2097,127 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
   // --- Experience entry management ---
 
+  private projectAutomaticSiteExperienceBody(skill: Skill, content: string): string {
+    if (!isAutomaticSiteExperienceDocument(skill.name, skill) || !skill.entries?.length) return content
+    const records = skill.entries.map(entry => {
+      const icon = entry.category === "problem" ? "🐛" : entry.category === "success" ? "✅" : entry.category === "tip" ? "💡" : "📋"
+      const parsed = parsePersistedSiteOpLine(entry.content)
+      return {
+        active: `- ${icon} ${entry.content}`.split("\n"),
+        stalePrefix: `- ⚠️ ${entry.content} [已过期: `.split("\n"),
+        currentStale: entry.stale ? `- ⚠️ ${entry.content} [已过期: ${entry.stale_reason}]`.split("\n") : undefined,
+        retired: !!parsed && !isDurableSiteOpFailureCode(parsed.code),
+      }
+    })
+    if (!records.some(record => record.retired)) return content
+    const lines = content.split("\n"), kept: string[] = []
+    const matches = (start: number, row: string[], prefix = false): boolean =>
+      row.every((part, offset) => prefix && offset === row.length - 1
+        ? lines[start + offset]?.startsWith(part)
+        : lines[start + offset] === part)
+    const recordIdentity = (start: number): number => records.findIndex(record =>
+      matches(start, record.active) || matches(start, record.stalePrefix, true))
+    const recordBoundary = (end: number, index: number): boolean => {
+      if (end === lines.length || recordIdentity(end) === index + 1) return true
+      let seam = end
+      while (seam < lines.length && lines[seam] === "") seam++
+      if (seam === end) return false
+      if (seam === lines.length) return true
+      if (lines[seam] !== "# 说明") return false
+      // A title alone may be data inside a supported stale reason. The retained
+      // serializer body must restart its owned, ordered record list: entry zero,
+      // not the later sibling after a reason-contained fake frame.
+      let header = seam + 1
+      while (header < lines.length && lines[header] === "") header++
+      if (lines[header] !== "# 记录列表") return false
+      let first = header + 1
+      while (first < lines.length && lines[first] === "") first++
+      return recordIdentity(first) === 0
+    }
+    const recordAt = (start: number, index: number): { end: number; retired: boolean } | undefined => {
+      const record = records[index]
+      if (!record) return undefined
+      if (matches(start, record.active)) return { end: start + record.active.length, retired: record.retired }
+      if (!matches(start, record.stalePrefix, true)) return undefined
+      // Current metadata binds literal content/reason, but its end must also be
+      // a boundary of this ordered serializer list; a historical reason can
+      // begin with the same text and continue after it.
+      if (record.currentStale && matches(start, record.currentStale) && recordBoundary(start + record.currentStale.length, index)) {
+        return { end: start + record.currentStale.length, retired: record.retired }
+      }
+      // The older reason is free-form. A quoted bracket/blank/title cannot pick
+      // its end: validate the next owned successor or the retained list restart.
+      for (let end = start + record.stalePrefix.length - 1; end < lines.length; end++) {
+        if (lines[end].endsWith("]") && recordBoundary(end + 1, index)) {
+          return { end: end + 1, retired: record.retired }
+        }
+      }
+      return undefined
+    }
+    let fence: { marker: string; length: number } | undefined
+    for (let i = 0; i < lines.length; i++) {
+      const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[i])
+      if (fence) {
+        if (delimiter && delimiter[1][0] === fence.marker && delimiter[1].length >= fence.length && !delimiter[2].trim()) fence = undefined
+        kept.push(lines[i])
+        continue
+      }
+      if (delimiter) {
+        fence = { marker: delimiter[1][0], length: delimiter[1].length }
+        kept.push(lines[i])
+        continue
+      }
+      if (lines[i] === "# 记录列表") {
+        let start = i + 1
+        while (start < lines.length && lines[start] === "") start++
+        let end = start, hasRetired = false, index = 0
+        const live: string[] = []
+        let record
+        while ((record = recordAt(end, index))) {
+          hasRetired ||= record.retired
+          // Retire only the generated machine-rule line. Its free-form reason
+          // continuations remain ordinary untrusted text; later siblings still
+          // belong to this record list, even after heading/fence-like data.
+          live.push(...lines.slice(end + (record.retired ? 1 : 0), record.end))
+          end = record.end
+          index++
+        }
+        if (hasRetired) {
+          if (live.length) kept.push(...lines.slice(i, start), ...live)
+          else {
+            // Drop only an otherwise empty serializer #说明 scaffold preceding
+            // this removed record block. Human explanations remain untouched.
+            let previous = kept.length - 1
+            while (previous >= 0 && kept[previous] === "") previous--
+            if (kept[previous] === "# 说明") kept.splice(previous)
+          }
+          i = end - 1
+          continue
+        }
+      }
+      kept.push(lines[i])
+    }
+    return kept.join("\n")
+  }
+
+  private getKnowledgeSummaryForPrompt(skill: Skill, query?: string): string {
+    const summary = this.getEntriesSummary(skill.name, true)
+    // Empty entry projections can fall back only through the projected body.
+    return summary || this.getKnowledgeSummary(skill, query)
+  }
+
   /** Get formatted summary of entries for a skill. */
-  getEntriesSummary(skillName: string): string {
+  getEntriesSummary(skillName: string, forPrompt = false): string {
     const skill = this.get(skillName)
     if (!skill?.entries?.length) return ""
-    const active = skill.entries.filter(e => !e.stale)
-    const stale = skill.entries.filter(e => e.stale)
+    const entries = forPrompt && isAutomaticSiteExperienceDocument(skillName, skill)
+      ? skill.entries.filter(entry => {
+          const parsed = parsePersistedSiteOpLine(entry.content)
+          return !parsed || isDurableSiteOpFailureCode(parsed.code)
+        })
+      : skill.entries
+    const active = entries.filter(e => !e.stale)
+    const stale = entries.filter(e => e.stale)
     const parts: string[] = []
     if (active.length) {
       parts.push(`Active entries (${active.length}):`)

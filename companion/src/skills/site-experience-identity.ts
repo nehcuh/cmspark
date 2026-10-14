@@ -57,3 +57,14 @@ export function readSiteExperienceEntries<T extends { content: string }>(
   }
   return [...entries.values()]
 }
+
+/** Only exact v1/legacy automatic site documents receive machine-entry prompt
+ * projection. Other/manual knowledge, including similarly worded text, stays data. */
+export function isAutomaticSiteExperienceDocument(name: string, doc: ExperienceDocument | undefined): boolean {
+  if (!doc?.site) return false
+  try {
+    const identity = siteExperienceIdentity(doc.site)
+    const legacy = name === identity.legacyId
+    return (name === identity.id || legacy) && matchesSiteExperience(doc, doc.site, legacy)
+  } catch { return false }
+}

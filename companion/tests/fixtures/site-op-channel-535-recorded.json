@@ -1,0 +1,38 @@
+[
+  {
+    "schema_version": 1,
+    "id": "auto-mv862vqb-ie84fc",
+    "category": "problem",
+    "content": "[auto] DO NOT retry wait_for css:fixture-0 on https://channel-fixture.test: last WAIT_PROBE_FAILED",
+    "recorded_at": "2026-10-14T13:50:04.067Z",
+    "stale": false,
+    "stale_reason": ""
+  },
+  {
+    "schema_version": 1,
+    "id": "auto-mv862vqc-dk20cl",
+    "category": "problem",
+    "content": "[auto] DO NOT retry wait_for css:fixture-1 on https://channel-fixture.test: last WAIT_PROBE_FAILED",
+    "recorded_at": "2026-10-14T13:50:04.068Z",
+    "stale": false,
+    "stale_reason": ""
+  },
+  {
+    "schema_version": 1,
+    "id": "auto-mv862vqd-m24zpp",
+    "category": "problem",
+    "content": "[auto] DO NOT retry wait_for css:fixture-2 on https://channel-fixture.test: last WAIT_PROBE_FAILED",
+    "recorded_at": "2026-10-14T13:50:04.069Z",
+    "stale": false,
+    "stale_reason": ""
+  },
+  {
+    "schema_version": 1,
+    "id": "auto-mv862vqe-5yfd01",
+    "category": "problem",
+    "content": "[auto] DO NOT retry wait_for css:fixture-3 on https://channel-fixture.test: last WAIT_PROBE_FAILED",
+    "recorded_at": "2026-10-14T13:50:04.070Z",
+    "stale": false,
+    "stale_reason": ""
+  }
+]
