@@ -33,6 +33,8 @@ type Session = {
   originWs?: unknown
 }
 let pendingOpen: { id: string; owner: unknown; canceled: boolean } | null = null
+/** Conservative metadata admission: never move a thread during any pending PTY L2. */
+export function hasPendingTerminalOpen(): boolean { return pendingOpen !== null }
 
 function clampSize(n: unknown, fallback: number, max: number): number {
   if (typeof n !== "number" || !Number.isFinite(n)) return fallback

@@ -7,6 +7,8 @@
 // Deferred: full family split for chat/thread/skill/pack/mcp/…
 
 import os from "os"
+import { handleProjectMessage, projectReplyProjection } from "./message-router/handlers/projects"
+import { beginProjectRunAdmission } from "./threads/project-activity"
 import { resolveBrowserSiteTarget } from "./site-context/browser-resolver"
 import { bindChatEvidenceScope } from "./business-evidence/chat-scope"
 import * as fs from "fs"
@@ -1081,6 +1083,19 @@ export async function handleMessage(
   services: Services,
   session?: SessionCallbacks,
 ): Promise<any> {
+  const releaseAdmission = beginProjectRunAdmission(msg?.type, msg?.thread_id)
+  try {
+    const result = await dispatchMessage(msg, services, session)
+    // Committed project mutations carry their authoritative result; do not re-read after commit.
+    return msg.type?.startsWith("project.") || msg.type === "thread.project.set" ? result : projectReplyProjection(services.threadManager, result)
+  } finally { releaseAdmission() }
+}
+
+async function dispatchMessage(
+  msg: any,
+  services: Services,
+  session?: SessionCallbacks,
+): Promise<any> {
   const { type, ...rest } = msg
   // S20: lifecycle stamped this from auth; never forward a client-spoofable field to LLM.
   const stampedSurface = stripCmsparkSurface(rest)
@@ -1088,6 +1103,13 @@ export async function handleMessage(
   const { threadManager, skillEngine, historyStore } = services
 
   switch (type) {
+    case "project.list":
+    case "project.create":
+    case "project.rename":
+    case "project.archive":
+    case "project.restore":
+    case "thread.project.set":
+      return handleProjectMessage(type, rest, threadManager, session?.surface, id => abortControllers.has(id))
     // --- Config (C10-C: handlers/config.ts) ---
     case "config.get":
     case "config.set":

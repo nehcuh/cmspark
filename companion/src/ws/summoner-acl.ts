@@ -1,5 +1,6 @@
 import { isUiCommandAction } from "../ui-command"
 import { summonerThreadMetadata } from "../threads/metadata-patch"
+import { PROJECT_METHODS, validateProjectRequest } from "../threads/project-store"
 
 /** Per-connection method ACL keyed off handshake `surface` (S21).
  *
@@ -15,6 +16,7 @@ import { summonerThreadMetadata } from "../threads/metadata-patch"
  */
 
 const SUMMONER_ALLOW = new Set([
+  ...PROJECT_METHODS,
   "system.ping",
   "chat.create",
   "chat.abort",
@@ -86,6 +88,11 @@ export function applySummonerPayloadPolicy(
 ): { ok: true } | { ok: false; error_code: "SUMMONER_ACL"; error: string } {
   if (surface !== "summoner") return { ok: true }
   const type = msg.type
+  if ((PROJECT_METHODS as readonly unknown[]).includes(type)) {
+    const { type: _type, id: _id, ...rest } = msg
+    try { validateProjectRequest(type as string, rest); return { ok: true } }
+    catch { return { ok: false, error_code: "SUMMONER_ACL", error: "SUMMONER_ACL: invalid project metadata" } }
+  }
   if (type === "thread.delete") {
     if (msg.mode !== "trash") {
       return {

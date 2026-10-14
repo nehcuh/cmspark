@@ -145,6 +145,8 @@ export interface AgentState {
   connectionState: ConnectionState
   threads: Thread[]
   activeThreadId: string | null
+  /** UI selection identity: advances on distinct explicit navigation, including batched return. */
+  activeThreadSelectionRevision: number
   messages: Message[]
   /**
    * LRU transcript cache (last 2 threads). Cross-id switch restores if present;
@@ -697,6 +699,7 @@ export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
   activeThreadId: null,
+  activeThreadSelectionRevision: 0,
   messages: [],
   messagesByThreadId: {},
   messagesCacheOrder: [],
@@ -1196,6 +1199,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return {
         ...state,
         ...switched,
+        activeThreadSelectionRevision: state.activeThreadSelectionRevision + 1,
         lastBrowserToolAt: null,
         modePin: null,
         pinnedTabIds: activeThread?.pinned_tabs || [],

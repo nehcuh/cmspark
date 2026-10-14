@@ -449,6 +449,15 @@ export class AcpManager {
     return [...this.sessions.values()].filter((s) => s.thread_id === threadId)
   }
 
+  /** Read-only metadata admission; closed UI state does not prove the owned child finished. */
+  hasProjectThreadActivity(threadId: string): boolean {
+    return this.listSessionsForThread(threadId).some(session => {
+      const child = this.processes.get(session.session_id)
+      return ["offered", "confirmed", "running"].includes(session.state) || this.startupPreparations.has(session.session_id) ||
+        !!child && child.exitCode === null && child.signalCode === null
+    })
+  }
+
   propose(opts: {
     threadId: string
     agentId: string

@@ -45,6 +45,8 @@ import { SUMMONER_MEETING_WORKFLOW_JS } from "./summoner/meeting-workflow"
 import { SUMMONER_DICTATION_JS } from "./summoner/voice-input"
 import { SUMMONER_THREAD_MANAGEMENT_JS } from "./summoner/thread-management"
 import { summonerThreadMetadata } from "./threads/metadata-patch"
+import { PROJECT_METHODS } from "./threads/project-store"
+import { SUMMONER_PROJECT_HTML, SUMMONER_PROJECT_JS } from "./summoner/projects"
 
 export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
 export type SummonerWebAttachChrome = (opts?: { foreground?: boolean }) => string
@@ -52,6 +54,7 @@ export type SummonerWebRequestOpenSidePanel = () => Promise<{ error_code?: strin
 export type SummonerWebHasExtensionPeer = () => boolean
 
 export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
+  ...PROJECT_METHODS,
   "system.ping",
   "chat.create",
   "chat.abort",
@@ -807,6 +810,19 @@ async function handleRequest(
       return
     }
 
+    const projectRoutes: Record<string, string> = { "/api/projects": req.method === "GET" ? "project.list" : "project.create",
+      "/api/project/rename": "project.rename", "/api/project/archive": "project.archive",
+      "/api/project/restore": "project.restore", "/api/thread/project": "thread.project.set" }
+    if (projectRoutes[pathOnly]) {
+      const type = projectRoutes[pathOnly]
+      if (!(pathOnly === "/api/projects" && req.method === "GET") && req.method !== "POST") { jsonResponse(res, { type: "error", error: "method not allowed" }, 405); return }
+      try {
+        const body = type === "project.list" ? {} : JSON.parse(await readBody(req, 4096))
+        jsonResponse(res, await dispatchAllowed(type, body))
+      } catch { jsonResponse(res, { type: "project.error", error_code: "PROJECT_INVALID", error: "项目请求格式无效。" }, 400) }
+      return
+    }
+
     if (pathOnly === "/api/threads" && req.method === "POST") {
       jsonResponse(res, await dispatchAllowed("thread.create", {}))
       return
@@ -1520,6 +1536,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .thread-search select{display:block;width:100%;margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--text);font:inherit}
 .organization-hint{font-size:11px;line-height:1.6;margin:8px 0;color:var(--secondary)}
 #threadOrganization[hidden],#threadMetadata[hidden]{display:none}
+#projectOrganization[hidden]{display:none}.project-controls{display:flex;flex-direction:column;gap:8px;max-height:42dvh;overflow:auto;padding:8px 2px}.project-controls p{margin:0;overflow-wrap:anywhere}.project-controls label,.project-controls form{display:flex;flex-direction:column;gap:6px}.project-controls input,.project-controls select,.project-controls button{max-width:100%;box-sizing:border-box;min-height:32px;font:inherit}.project-controls [role=alert]{color:var(--red)}#projectOrganization summary{min-height:32px;cursor:pointer}
 #threadMetadata{padding:12px 0;border-top:1px solid var(--line)}#threadMetadata label{display:block;margin-top:10px}
 #metadataTitle{display:block;overflow-wrap:anywhere}.metadata-actions{display:flex;gap:8px}.metadata-actions button{min-height:32px;border:1px solid var(--line);border-radius:8px;padding:4px 10px;background:var(--paper);font:inherit;color:var(--text)}
 #metadataError{color:#b91c1c;font-size:12px;overflow-wrap:anywhere}.thread-group-heading{font-size:12px;color:var(--secondary);padding:12px 10px 4px;overflow-wrap:anywhere}.trow .thread-classify{width:auto;min-width:40px;padding:0 6px;font:inherit;font-size:12px;color:var(--secondary)}
@@ -1554,6 +1571,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
           </form>
         </div>
         <div id="threads"></div>
+        ${SUMMONER_PROJECT_HTML}
         <div id="composeList"></div>
       </div>
       <details class="workspace-tools"><summary>资料与工具</summary>
@@ -1948,6 +1966,7 @@ try{
     else go();
   }
   ${SUMMONER_THREAD_MANAGEMENT_JS}
+  ${SUMMONER_PROJECT_JS}
   function renderThreads(filter){
     var selected=threads.find(function(t){return t.id===threadId});
     $("workspaceTitle").textContent=selected?(selected.title||selected.alias||"新对话"):"CMspark";
@@ -1959,6 +1978,7 @@ try{
     var listed=threadEntries(threads,view);
     listed.forEach(function(entry){
       var t=entry.thread;
+      var projectFilter=$("projectFilter").value;if(projectFilter!=="*"&&(t.project_id||"")!==projectFilter)return;
       var title=(t.title||t.alias||t.id||"").trim()||t.id;
       var search=[title,t.alias,t.topic_folder].concat(t.user_tags||[],t.digest&&t.digest.tags||[]).join(" ").toLocaleLowerCase();
       if(q && search.indexOf(q)<0) return;
@@ -2555,6 +2575,7 @@ try{
         return String(b.last_message_at||b.created_at||"").localeCompare(String(a.last_message_at||a.created_at||""));
       });
       renderThreads();
+      renderProjects();
     });
   }
   var sec="threads";
@@ -2568,6 +2589,7 @@ try{
     var heads={threads:"对话",packs:"场景",knowledge:"知识",skills:"技能",mcp:"MCP",browser:"浏览器"};
     $("threadSearchLabel").hidden=name!=="threads";
     $("threadOrganization").hidden=name!=="threads";
+    $("projectOrganization").hidden=name!=="threads";
     if(name!=="threads") closeThreadMetadata();
     $("secHead").textContent=heads[name]||name;
     $("newThread").style.display=name==="threads"?"":"none";

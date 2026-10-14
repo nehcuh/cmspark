@@ -16,6 +16,7 @@ import {
 } from "./runtime-context-budget"
 import { sanitizeRunProgress, seedRunProgress, type RunProgress } from "./run-progress"
 import { sanitizeLoopState, type LoopState } from "../loop/loop-state"
+import { ProjectStore } from "./project-store"
 import { isExecutionPolicy, type ExecutionPolicy } from "../tool/plan-readonly"
 import type { ImageAttachmentMeta } from "../llm/image-parts"
 import { sniffedExt, type RasterMime } from "../llm/image-sniff"
@@ -40,6 +41,9 @@ interface ThreadPackSnapshot {
 }
 
 interface Thread {
+  /** Public projection only: canonical membership lives in ProjectStore, not this index. */
+  project_id?: string | null
+  project_metadata_unavailable?: boolean
   id: string
   alias: string
   created_at: string
@@ -529,6 +533,7 @@ function evictOldest<K, V>(map: Map<K, V>, max: number): void {
 }
 
 export class ThreadManager {
+  readonly projects: ProjectStore
   private index: ThreadIndex
   private indexPath: string
 
@@ -590,6 +595,7 @@ export class ThreadManager {
 
   constructor() {
     const dir = getConfigDir()
+    this.projects = new ProjectStore(dir)
     this.indexPath = path.join(dir, "threads", "index.json")
     this.index = this.loadIndex()
   }
@@ -947,6 +953,9 @@ export class ThreadManager {
   }
 
   update(threadId: string, updates: Partial<Thread>): Thread | undefined {
+    if (Object.prototype.hasOwnProperty.call(updates, "project_id") || Object.prototype.hasOwnProperty.call(updates, "project_metadata_unavailable")) {
+      throw new Error("Project membership is owned by ProjectStore; use thread.project.set")
+    }
     const thread = this.index.threads.find(t => t.id === threadId)
     if (!thread) return undefined
     // Validate config_override if being updated

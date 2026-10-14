@@ -11,6 +11,7 @@
 // and are injected via WsLifecycleDeps.
 
 import { WebSocketServer, WebSocket } from "ws"
+import { bindProjectConfirmationProbe } from "../threads/project-activity"
 import { codingHandbackView } from "../acp/ui-progress"
 import { randomUUID } from "crypto"
 import http from "http"
@@ -156,6 +157,7 @@ let _rt: WsLifecycleDeps | null = null
 
 export function bindWsLifecycle(deps: WsLifecycleDeps): void {
   _rt = deps
+  bindProjectConfirmationProbe(() => deps.securityConfirmations.pendingCount())
 }
 
 function requireRt(): WsLifecycleDeps {

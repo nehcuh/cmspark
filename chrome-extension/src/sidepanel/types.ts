@@ -31,6 +31,9 @@ export type McpDeclaredCapability =
 export type McpConnectionStatus = "disconnected" | "connecting" | "connected" | "error" | "dead"
 
 export interface Thread {
+  /** Read-only projection from Companion's canonical ProjectStore. */
+  project_id?: string | null
+  project_metadata_unavailable?: boolean
   id: string
   alias: string
   created_at: string

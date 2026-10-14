@@ -6,6 +6,13 @@
 // (keep lockstep with message-router case arms — see ws-router-validator-lockstep.test).
 
 import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "../voice/session-caps"
+import { validateProjectRequest } from "../threads/project-store"
+function projectSchema(message: any): WsValidationResult {
+  const { type, id, ...rest } = message
+  if (id !== undefined && (typeof id !== "string" || id.length > 200)) return { valid: false, error: "Invalid project correlation" }
+  try { validateProjectRequest(type, rest); return { valid: true } }
+  catch { return { valid: false, error: "Invalid project metadata" } }
+}
 
 // --- WS message validation ---
 
@@ -30,6 +37,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
 
   // Known message types with required field validation
   const validators: Record<string, (m: any) => WsValidationResult> = {
+    "project.list": (m) => projectSchema(m),
+    "project.create": (m) => projectSchema(m),
+    "project.rename": (m) => projectSchema(m),
+    "project.archive": (m) => projectSchema(m),
+    "project.restore": (m) => projectSchema(m),
+    "thread.project.set": (m) => projectSchema(m),
     "chat.create": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "chat.create requires thread_id" }
       if (typeof m.message !== "string") return { valid: false, error: "chat.create requires message string" }
