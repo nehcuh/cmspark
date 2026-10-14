@@ -1,0 +1,33 @@
+{
+  "base": "e5b3511bc6e3ed36aca9c71314ec21ae1f3bf5a8",
+  "groups": {
+    "browser": {
+      "source": "/Users/huchen/.codex/worktrees/browser-recovery/cmspark",
+      "branch": "codex/browser-recovery-568-548",
+      "files": {
+        "chrome-extension/src/background/browser-bridge.ts": "517353d45e65ab51efa6719788da9e84f2c68c549f07a46eb3acd1ffe541a767",
+        "companion/src/llm/adapter.ts": "69bbda503f60746e5bc9968767971816364f6c50147254ce82bf9572fde4bebb",
+        "companion/src/security.ts": "bd0361e755f1a2d35e355a5309bc8f5789dd54d5d08b08de71f4bc56ad9b7397",
+        "companion/src/tool/l2-admission.ts": "4e2296f8b764d638bf8576e2502cbdd125b5db39f2bb15de4e9d0e84ada82aef",
+        "companion/src/tool/site-op-memory.ts": "e47fe9fc8bb8c8de4c8e25f93cb8e2bfbfa8a41303aea1a9be419284159c1a9a",
+        "companion/tests/browser-recovery-568-548.test.ts": "c52723699ea0bbba75a8704cc84978a90ca2cb7b60f491fd16f971806365b858",
+        "companion/tests/classify-by-code.test.ts": "31e811702ab1fe1a268afce41ff505fbde3c1685a99465ee22bf2fa6d95c1272",
+        "companion/tests/site-op-memory.test.ts": "0c941df2b1f1b6d1c8d1237eaa21c9e8c4d5b364b03d68f00d2d962775c2b8cb"
+      },
+      "complete_diff": "/tmp/cmspark-browser-recovery-full.diff",
+      "diff_sha256": "06ebab53da6478623e8c6e4132cccc9e4e3e354292ff8d61d7101abdfc4c354a"
+    },
+    "windows_diagnostics": {
+      "source": "/Users/huchen/.codex/worktrees/issue-convergence/cmspark",
+      "branch": "codex/windows-owner-diagnostics-623",
+      "files": {
+        "companion/src/process/windows-owner.ts": "b2e8c16ade957b7c3141e2abdd6f9886950eed866152aef97dcee4a00ab5ea4a",
+        "companion/tests/windows-owner.test.ts": "9e6dd1339cd1d1aadc791131118fd5067bc808a6766e9abd7ecd45b6b4069271"
+      },
+      "complete_diff": "/tmp/cmspark-623.diff",
+      "diff_sha256": "f6eb9be284a0c1ce835ecf215c55dd333024a297e0ed7478aff9189deb91b0c5"
+    }
+  },
+  "blast": "T3 browser trust-classification/guidance; existing authorization/budget/UNKNOWN unchanged; Windows diagnostics preserve probe10000ms semantics",
+  "paths": 10
+}
