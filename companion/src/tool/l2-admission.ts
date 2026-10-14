@@ -6,6 +6,7 @@
 // Cookie + URL gates → tool/url-cookie-admission.ts (C10-C).
 
 import { randomUUID } from "crypto"
+import type { PreviewUnavailableReason } from "../computer/preview-availability"
 import os from "os"
 import { WebSocket } from "ws"
 import { getConfig } from "../config"
@@ -534,6 +535,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // WP4: L2 标注截图 + 三段式 caption(best-effort;undefined = 无图降级)。
     let computerL2PreviewImage: string | undefined
     let computerL2PreviewCaption: string | undefined
+    let computerL2PreviewUnavailableReason: PreviewUnavailableReason | undefined
     // P5 / Grok v4.1 §3.2 (Pi re-confirm PROCEED 2026-07-24): when the session
     // already has a live trust grant for this app AND every type.text literal
     // in the new task was in the previously-approved corpus AND no credential
@@ -813,6 +815,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
                 appDisplayName: entryC.display_name,
                 actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
                 timeoutMs: 5000,
+                onUnavailable: reason => { computerL2PreviewUnavailableReason = reason },
               },
             )
             if (l2img) {
@@ -821,6 +824,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             }
           } catch (helperErr: any) {
             // best-effort:helper 异常绝不拒飞任务(降级无图)。
+            computerL2PreviewUnavailableReason = "preview_failed"
             logger.info("computer.l2preview.failed", { tool_call_id: toolCallId, error: helperErr?.message || String(helperErr) })
           }
         } else if (os.platform() === "win32" && entryC.exe?.path) {
@@ -840,6 +844,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
                 appDisplayName: entryC.display_name,
                 actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
                 timeoutMs: 5000,
+                onUnavailable: reason => { computerL2PreviewUnavailableReason = reason },
               },
             )
             if (l2img) {
@@ -848,6 +853,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             }
           } catch (helperErr: any) {
             // best-effort:helper 异常绝不拒飞任务(降级无图)。
+            computerL2PreviewUnavailableReason = "preview_failed"
             logger.info("computer.l2preview.failed", { tool_call_id: toolCallId, error: helperErr?.message || String(helperErr) })
           }
         }
@@ -1553,6 +1559,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
             ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
             ...(computerL2PreviewCaption ? { previewCaption: computerL2PreviewCaption } : {}),
+            ...(computerL2PreviewUnavailableReason ? { previewUnavailableReason: computerL2PreviewUnavailableReason } : {}),
             ...multiAgentFields,
             // ADR-016 G6: attach board_complete digest when available
             ...(toolName === "board_complete" && boardCompleteDigestForConfirm

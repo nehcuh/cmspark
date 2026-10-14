@@ -112,6 +112,9 @@ export interface AcpSessionRecord {
    *  in-plugin terminal (no PTY exists yet, nothing was opened). `embed_running` = the embedded
    *  agent PTY actually spawned (#506 A); Stop/cancel does NOT end that process. */
   local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | "embed_intent" | "embed_running"
+  /** Complete generated outer-terminal launch command; UI-only, bounded to 32KiB UTF-8. */
+  terminal_command_line?: string
+  terminal_command_expires_at?: number
   /** Set by cancel() so in-flight Mode C open does not update a closed session */
   mode_c_open_cancelled?: boolean
 }

@@ -1,6 +1,7 @@
 // Security confirmation flow — request/response queue for high-risk tool execution
 
 import { randomUUID } from "crypto"
+import { normalizePreviewUnavailableReason, type PreviewUnavailableReason } from "./computer/preview-availability"
 import type { WebSocket } from "ws"
 
 export const DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS = 45000
@@ -81,6 +82,8 @@ export interface SecurityConfirmationDetails {
   previewImage?: string
   /** 截图说明行(三段式非绑定声明;companion 侧已过 P3 字符类清洗)。 */
   previewCaption?: string
+  /** Operator-only fixed failure reason; never affects confirmation authority. */
+  previewUnavailableReason?: PreviewUnavailableReason
   /**
    * P1 (WP4 对抗裁决) — computer 类确认的完整预览文本独立字段。
    * code_preview 经 codePreview() 截断(CODE_PREVIEW_LIMIT=1200)——30 动作 +
@@ -332,6 +335,8 @@ export class SecurityConfirmationManager {
         ...(typeof details.previewCaption === "string" && details.previewCaption
           ? { preview_caption: details.previewCaption }
           : {}),
+        ...(normalizePreviewUnavailableReason(details.previewUnavailableReason)
+          ? { preview_unavailable_reason: normalizePreviewUnavailableReason(details.previewUnavailableReason) } : {}),
         // P1: 完整预览文本独立字段,绕过 codePreview 的 1200 截断。
         ...(typeof details.fullPreview === "string" && details.fullPreview
           ? { full_preview: details.fullPreview }

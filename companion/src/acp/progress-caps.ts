@@ -21,3 +21,8 @@ export const PROGRESS_TAIL_ACP_CHARS = 2_000
  * Companion does not line-split on emit; UI trims to last N lines of progress_tail.
  */
 export const PROGRESS_TAIL_DISPLAY_LINES = 200
+
+/** UI launch-command contract: never expose a truncated executable command. */
+export function retainTerminalCommandLine(command: string | undefined): string | undefined {
+  return command && Buffer.byteLength(command, "utf8") <= 32 * 1024 ? command : undefined
+}

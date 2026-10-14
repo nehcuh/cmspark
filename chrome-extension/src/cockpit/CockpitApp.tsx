@@ -24,6 +24,7 @@ import {
   connectionDotShadowDark,
 } from "../sidepanel/ui/tokens"
 import { cockpitModeBadgeLabel } from "./cockpit-status"
+import { ConfirmationPreview } from "./ConfirmationPreview"
 import { resolveStopTargetId } from "../sidepanel/utils/thread-busy"
 import { disarmAllFlags } from "../sidepanel/components/autopilot-tier"
 import { newTempUserMessageId } from "../utils/temp-message-id"
@@ -463,7 +464,7 @@ function ExpertTeamConfirm({
   )
 }
 
-function ConfirmElevated({
+export function ConfirmElevated({
   request,
   threadId,
   onResolved,
@@ -475,7 +476,7 @@ function ConfirmElevated({
   const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
   const [nonceInput, setNonceInput] = useState("")
   const [pasteBlocked, setPasteBlocked] = useState(false)
-  const [imgFailed, setImgFailed] = useState(false)
+  const [failedImageId, setFailedImageId] = useState<string | null>(null)
   const domain = request.relevant_domains?.[0]
   const relevantApp = request.relevant_apps?.[0]
   const canThreadTrust = canOfferThreadTrust(request.tool_name, relevantApp)
@@ -490,7 +491,6 @@ function ConfirmElevated({
   const nonceChallenge = request.nonce_challenge
   const nonceMatches =
     !nonceChallenge || nonceInput.toUpperCase() === nonceChallenge.toUpperCase()
-  const showImg = !imgFailed && previewImageSafe(request.preview_image)
 
   useEffect(() => {
     setWhitelistMode("none")
@@ -499,7 +499,6 @@ function ConfirmElevated({
     setEnterpriseTrust(false)
     setNonceInput("")
     setPasteBlocked(false)
-    setImgFailed(false)
     const next: Record<string, string> = {}
     for (const m of request.expert_team?.members || []) {
       next[m.pack_id] = m.brief
@@ -581,19 +580,9 @@ function ConfirmElevated({
         </span>
       </div>
       <div style={{ display: "flex", gap: 12 }}>
-        {showImg && (
-          <img
-            src={`data:image/jpeg;base64,${request.preview_image}`}
-            alt="标注截图"
-            style={{
-              width: 160,
-              maxHeight: 100,
-              objectFit: "cover",
-              borderRadius: tokens.radiusSm,
-            }}
-            onError={() => setImgFailed(true)}
-          />
-        )}
+        <ConfirmationPreview image={request.preview_image} reason={request.preview_unavailable_reason}
+          imageFailed={failedImageId === request.confirmation_id}
+          onImageError={() => setFailedImageId(request.confirmation_id)} />
         <div style={{ flex: 1, fontSize: 11, color: tokens.darkText }}>
           {request.preview_caption && <div style={{ marginBottom: 6 }}>{request.preview_caption}</div>}
           {request.expert_team ? (

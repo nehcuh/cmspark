@@ -11,6 +11,7 @@
 // and are injected via WsLifecycleDeps.
 
 import { WebSocketServer, WebSocket } from "ws"
+import { codingHandbackView } from "../acp/ui-progress"
 import { randomUUID } from "crypto"
 import http from "http"
 import {
@@ -661,24 +662,9 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           role: "assistant",
           content,
         })
-        broadcastToClients({
-          type: "acp.handback.message",
-          thread_id: session.thread_id,
-          message: msg,
-          session_id: session.session_id,
-          pending_diffs: (session.pending_diffs || []).map((d) => ({
-            path: d.relPath,
-            isNew: d.isNew,
-            isDelete: d.isDelete,
-            // applyable: new files with body, or existing files with parseable hunks
-            applyable:
-              !d.isDelete &&
-              ((d.isNew && d.newContent != null) ||
-                (Array.isArray(d.hunks) && d.hunks.length > 0) ||
-                d.newContent != null),
-          })),
-          mode: session.mode,
-        })
+        const view = codingHandbackView(session, msg)
+        if (view) broadcastToClients(view)
+        else logger.warn("acp.ui_handback_oversized_metadata", { state: session.state })
       } catch (err: any) {
         logger.warn("acp.handback_inject_failed", { error: err?.message || String(err) })
       }
