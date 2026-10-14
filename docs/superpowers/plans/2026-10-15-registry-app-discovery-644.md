@@ -2,7 +2,7 @@
 
 GitHub: https://github.com/nehcuh/cmspark/issues/644 · Parent: #70 candidate 3
 Spec: ../specs/2026-10-15-registry-app-discovery-644.md
-Status: R2 CONTRACT APPROVED / SOURCE CANDIDATE — root authorized implementation; independent source/native/delivery gates pending.
+Status: R2 product contract approved; PR648 native-R1 failed; root authorized the bounded CI-only prerequisite/syntax-diagnostic increment; source/native/delivery review pending.
 Base:36827c849633239811e7437e8452729a35aafb6e. R1/R2 contract history is preserved. The execution gates below remain mandatory; local results do not approve this author’s source.
 
 ## 1. Goal
@@ -87,3 +87,13 @@ Do not implement other #70 candidates, app parameters/CLI/Hello/drift/UIA/backgr
 ## 5. Context and remaining decisions
 
 Full linked issue644 and prior #70 diagnostic are the source of scope; see spec official sources and `/tmp/cmspark-70-registry-current-contract-diagnosis.md`. Current code uses array parser/runPs, annotations and global candidate view, so optional truthful summary requires small actual WS/store/UI projection; it cannot be bolted on as shared mutable diagnostics. Numeric ceilings, conservative grammar, embedded bounded APIs/local-reparse checks and safe summary were explicitly reviewed as contract assumptions. R2 non-author contract acceptance and root authorization are recorded; source acceptance and native/delivery gates are still pending, without a new user permission question.
+
+## 6. Actual PR648 native-R1 recovery increment
+
+Preserve exact ebf1fd7901d87d35a0b91f70ee465f3704d2f701 source25, complete formal/full-model approvals and actual Windows CI38646395544 two failures before edits. Work from that exact head in a separate clean owned checkout; do not reset/clean old author or active grouped trees. Original source acceptance did not imply native acceptance.
+
+Implement only the spec §9 root-authorized CI prerequisite amendment inside the Windows Registry step: guard owned GitHub Actions/Windows, fixed local HKCU explicit views, OpenBaseKey + existing-container open/create-if-missing + finally Dispose. No existing values, HKLM, parent deletion, recursive cleanup or user-machine setup; fixed view/state output only. Ordinary fixture still fails missing standard parent and owns only atomic UUID/nonce children. This is an explicitly changed CI prerequisite, not retroactive "contract unchanged" wording.
+
+The second actual failure was generic Parser rejection. Retain that RED; move the candidate line-leading binary operator to the previous line end without changing its condition, and add bounded public ErrorId/line/column-only diagnostics (max8 errors, bounded ID shape, no Message/Extent.Text). Add one real PS5.1 fixed-invalid-source refusal/diagnostic non-disclosure control to the existing second native test; keep two native test cases and their original deadlines, buffer, assertions, no retries/skips. The helper must reject syntax failure before Add-Type/effects. macOS can compile/check only and must not claim either Registry/native assertion GREEN. New exact-head Windows execution is the proof of parser compatibility and both test outcomes.
+
+Freeze the small increment with docs, native RED, exact before/after hashes and affected test/build logs. Root/non-author and full Kimi/configured Claude must review this increment before a new PR648 head is pushed; both actual native PS5.1 tests and exact head/main required jobs remain mandatory. Do not mix #649 grant race, other #563 leaves or change application authority/capacity/trust/20s/16MiB limits.

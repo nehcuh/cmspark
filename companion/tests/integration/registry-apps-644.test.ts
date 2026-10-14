@@ -38,6 +38,15 @@ test("#644 native5.1 actual serializer/wire maxBuffer boundaries and bounded pri
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"cmspark-registry-primitives-644-"));fs.writeFileSync(path.join(directory,"App.exe"),"OWNED_INERT");fs.writeFileSync(path.join(directory,"App.dll"),"OWNED");fs.mkdirSync(path.join(directory,"Folder.exe"))
  const call=(mode:string)=>runPs(helper,[mode,resolveAppsEnumerateScript(),directory],{timeoutMs:20000})
  try{
+  // Real PS5.1 parser negative: fixed public bad source, no metadata/env dump.
+  const badSyntax=path.join(directory,"owned-invalid-syntax.ps1")
+  fs.writeFileSync(badSyntax,"if ($true -or ) { 'OWNED_PARSE_TEXT_NEVER_LOG' }\n")
+  await assert.rejects(runPs(helper,["primitives",badSyntax,directory],{timeoutMs:20000}),(e:any)=>{
+   const stderr=String(e.stderr??"")
+   assert.match(stderr,/OWNED_PRODUCTION_PS_SYNTAX ErrorId=[A-Za-z][A-Za-z0-9]{0,63} Line=1 Column=[0-9]+/)
+   assert.equal(stderr.includes("OWNED_PARSE_TEXT_NEVER_LOG"),false,"parser diagnostic must not print raw source/Extent.Text")
+   return e.code===1
+  })
   const primitive=JSON.parse((await call("primitives")).trim());assert.equal(primitive.native_ps51,true);assert.equal(primitive.cases.length,12);assert.equal(primitive.literal_controls,true);assert.equal(primitive.admission_boundaries,6)
   const small=await call("small-wire"),measure=JSON.parse((await call("measure-small")).trim());assert.equal(Buffer.byteLength(small,"utf8"),measure.wire_bytes,"actual emitted UTF-8/newline/preamble equals production cost")
   const partial=await call("partial-wire");assert.equal(Buffer.byteLength(partial,"utf8"),16777216);const p=JSON.parse(partial.trim());assert.deepEqual(p.registry_summary,{status:"partial",reasons:["OUTPUT_LIMIT"]});assert.equal(p.apps.length,1)

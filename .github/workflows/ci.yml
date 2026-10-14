@@ -289,6 +289,27 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
+          # CI-only owned runner prerequisite: fixtures/collector never create parents.
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_REQUIRED' }
+          $uninstall = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+          $views = @([Microsoft.Win32.RegistryView]::Registry32)
+          if ([Environment]::Is64BitOperatingSystem) { $views = @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32) }
+          foreach ($view in $views) {
+            $base = $null; $key = $null
+            try {
+              $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $view)
+              $key = $base.OpenSubKey($uninstall, $false)
+              $state = 'present'
+              if ($null -eq $key) { $key = $base.CreateSubKey($uninstall); $state = 'created' }
+              if ($null -eq $key) { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_FAILED' }
+              $tag = 32; if ($view -eq [Microsoft.Win32.RegistryView]::Registry64) { $tag = 64 }
+              Write-Output ('OWNED_GHA_REGISTRY_PREREQUISITE view={0} state={1}' -f $tag, $state)
+            } finally {
+              if ($null -ne $key) { $key.Dispose() }
+              if ($null -ne $base) { $base.Dispose() }
+            }
+          }
           cd companion
           node scripts/run-tests.mjs .test-dist/tests/integration/registry-apps-644.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
