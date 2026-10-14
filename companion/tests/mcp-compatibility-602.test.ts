@@ -73,6 +73,8 @@ for (const resume of [true, false]) {
       args: ["-e", `process.stdin.once('data',()=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:1,result:{text:${JSON.stringify(text)}}})+'\\n',()=>process.exit(0)));setTimeout(()=>process.exit(2),5000)`],
     })
     const messages: any[] = []
+    const errors: Error[] = []
+    transport.onerror = error => errors.push(error)
     let closeCount = 0
     const closed = new Promise<void>(resolve => { transport.onclose = () => { closeCount++; resolve() } })
     transport.onmessage = message => messages.push(message)
@@ -89,15 +91,20 @@ for (const resume of [true, false]) {
       await exited
       assert.equal(child.exitCode, 0)
       const duplicateClose = transport.close()
+      const outcome = resume ? duplicateClose : assert.rejects(duplicateClose, /subprocess teardown timed out/)
       if (resume) {
         await new Promise(resolve => setTimeout(resolve, 30))
         resumeOutput()
       }
       await closed
-      await duplicateClose
+      await outcome
       if (resume) assert.deepEqual(messages.map(message => message.result.text), [text])
+      assert.equal(errors.length, resume ? 0 : 1)
       assert.equal(closeCount, 1)
       await assert.rejects(transport.send({ jsonrpc: "2.0", id: 2, method: "owned" }), /not connected/)
-    } finally { await transport.close() }
+    } finally {
+      if (resume) await transport.close()
+      else await assert.rejects(transport.close(), /subprocess teardown timed out/)
+    }
   })
 }
