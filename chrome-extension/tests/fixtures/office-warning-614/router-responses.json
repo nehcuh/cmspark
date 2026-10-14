@@ -1,0 +1,36 @@
+{
+  "chat": {
+    "type": "chat.user",
+    "thread_id": "office-entry",
+    "message_id": "office-entry_1791905305796_nrur69",
+    "content": "读取这份文档\n\n<document filename=\"report.DOC\">\nFONT_WARNING_DOCUMENT_BODY\n</document>\n📎 report.DOC",
+    "files": [
+      {
+        "filename": "report.DOC",
+        "warning": "文档转换时缺少部分字体，布局可能与原文不同。"
+      }
+    ]
+  },
+  "previewUpload": {
+    "type": "knowledge.preview",
+    "title": "report",
+    "description": "FONT_WARNING_DOCUMENT_BODY",
+    "preview": "\nFONT_WARNING_DOCUMENT_BODY",
+    "char_count": 27,
+    "tags": [],
+    "warning": "文档转换时缺少部分字体，布局可能与原文不同。",
+    "extract_pending": true
+  },
+  "previewNative": {
+    "type": "knowledge.preview",
+    "id": "kp-font-native",
+    "title": "font-warning",
+    "description": "FONT_WARNING_DOCUMENT_BODY",
+    "preview": "\nFONT_WARNING_DOCUMENT_BODY",
+    "char_count": 27,
+    "tags": [],
+    "import_content": "FONT_WARNING_DOCUMENT_BODY",
+    "warning": "文档转换时缺少部分字体，布局可能与原文不同。",
+    "extract_pending": true
+  }
+}

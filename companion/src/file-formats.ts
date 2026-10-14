@@ -36,6 +36,12 @@ export const CONVERTED_EXTENSIONS: Readonly<Record<string, string>> = {
   doc: "docx", xls: "xlsx", ppt: "pptx", odp: "pptx",
 }
 
+/** Import notices are display metadata, never document/model text. */
+export function normalizeDocumentWarning(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  return value.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512) || undefined
+}
+
 export function documentExtension(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() || ""
 }

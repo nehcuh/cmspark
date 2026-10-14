@@ -4,6 +4,7 @@ import { createContext, useContext, useReducer, type ReactNode, type Dispatch } 
 import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, VoiceSystemState, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
+import { normalizeDocumentWarning } from "../utils/document-warning"
 
 /** S20: Side Panel composer is read-only while overlay holds the lease. */
 export type OverlayStandbyFromError = { standby: boolean; label: string }
@@ -236,6 +237,7 @@ export interface AgentState {
     description: string
     preview: string
     char_count: number
+    warning?: string
     payload: { file?: { name: string; content: string }; content?: string; url?: string }
     /** #272 Phase 1: tags carried by the source file's own frontmatter. */
     tags?: string[]
@@ -517,6 +519,7 @@ export type AgentAction =
         description?: string
         preview?: string
         char_count?: number
+        warning?: string
         payload?: { file?: { name: string; content: string }; content?: string; url?: string }
         /** #272 Phase 1: source-file frontmatter tags. */
         tags?: string[]
@@ -827,11 +830,12 @@ function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
   if (sameIdIdx >= 0) {
     const existing = state.messages[sameIdIdx]!
     const merged = mergeAttachments(existing.attachments, incoming.attachments)
-    if (merged === existing.attachments) return state
+    const files = incoming.files ?? existing.files
+    if (merged === existing.attachments && files === existing.files) return state
     return {
       ...state,
       messages: state.messages.map((m, i) =>
-        i === sameIdIdx ? { ...m, attachments: merged } : m,
+        i === sameIdIdx ? { ...m, attachments: merged, files } : m,
       ),
     }
   }
@@ -860,7 +864,7 @@ function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
         ...state,
         messages: state.messages.map((m, i) =>
           i === matchIdx
-            ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}) }
+            ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}), ...(incoming.files ? { files: incoming.files } : {}) }
             : m,
         ),
       }
@@ -885,7 +889,7 @@ function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
           ...state,
           messages: state.messages.map((m, i) =>
             i === lastUserIdx
-              ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}) }
+              ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}), ...(incoming.files ? { files: incoming.files } : {}) }
               : m,
           ),
         }
@@ -1368,6 +1372,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const next = {
         ...prev,
         ...previewRest,
+        // A warning belongs to this parse response, never an earlier request.
+        warning: action.replyId ? normalizeDocumentWarning(action.preview.warning) : undefined,
         payload: Object.prototype.hasOwnProperty.call(action.preview, "payload")
           ? action.preview.payload || {}
           : prev.payload,
@@ -1379,6 +1385,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         delete next.extractError
         delete next.extractPending
         delete next.duplicate_of
+        delete next.warning
       } else if (extractArmed) {
         next.extractPending = true
       }

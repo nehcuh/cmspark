@@ -506,6 +506,8 @@ Agent 可通过浏览器工具向页面 **file input** 提交本地文件（CDP 
 
 - **聊天附件**：Side Panel 支持 PDF / Office / 文本。Office 包括 DOC/DOCX、XLS/XLSX、PPT/PPTX、ODT/ODS/ODP；WPS 请保存为这些标准格式，专有 WPS/ET/DPS 尚不支持。低文本 PDF 最多渲染前十页，须经实际视觉分析成功后才能进入聊天；只有页面图片的文档不能直接导入知识库。
   ODF 导入有正文展开与图表数据预算；超预算、重复嵌入对象、ODS 图表范围引用，以及 ODF 内混合 OOXML 图表会明确拒绝，可拆分或另存为 DOCX/XLSX/PPTX 后导入。普通内嵌数据图表与空白表格尾行仍可读取。
+  转换缺字体等提示显示在对应聊天附件或知识导入预览中，不写入提取正文。复杂多工作表文档仍需用实际文件核对；合成样例通过不代表所有业务表格都兼容。
+  旧上传 MIME 默认集合会在放行判断时扩展为当前默认集合，不改写配置；手工配置恰好同集也按此约定处理。自定义子集/超集保留限制，`application/octet-stream` 或 `binary/octet-stream` 白名单项不是所有文档的通配符。详见 [Office 导入契约](docs/office-import-contract.md)。
 - **页面上传**：指令如「把这份文件上传到表单」时，Agent 定位 input 并挂载路径。  
 - **NotebookLM 等场景**：导入管线也会复用文件/下载路径，见 [ADR-011](docs/adr/011-notebooklm-import.md)。
 

@@ -60,7 +60,7 @@ import type { RunStats } from "./loop/loop-state"
 import { listPendingToolsForThread } from "./ws/tool-forward"
 
 import { parseFile, PARSE_FILE_MAX_BYTES } from "./file-parser"
-import { resolveDocumentMime, effectiveUploadAllowedTypes, unsupportedWpsError } from "./file-formats"
+import { resolveDocumentMime, effectiveUploadAllowedTypes, unsupportedWpsError, normalizeDocumentWarning } from "./file-formats"
 import type { FileParseResponse, FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
 import { extractKnowledgeDraft, type KnowledgeDraftSuggestion } from "./llm/knowledge-draft-extract"
@@ -1016,7 +1016,7 @@ export function __testSetPickFileNative(impl?: typeof pickFileNative): void {
 }
 
 async function loadKnowledgePayload(rest: Record<string, any>): Promise<
-  { text: string; fallback: string } | { error: string }
+  { text: string; fallback: string; warning?: string } | { error: string }
 > {
   if (rest.file) {
     const { name, content } = rest.file
@@ -1030,7 +1030,7 @@ async function loadKnowledgePayload(rest: Record<string, any>): Promise<
     }
     if (!parsed.success) return { error: parsed.error }
     if (parsed.requiresVision) return { error: KNOWLEDGE_REQUIRES_TEXT }
-    return { text: parsed.text, fallback: String(name).replace(/\.[^.]+$/, "") }
+    return { text: parsed.text, fallback: String(name).replace(/\.[^.]+$/, ""), warning: normalizeDocumentWarning(parsed.warning) }
   }
   if (rest.url) {
     const urlStr = String(rest.url)
@@ -1643,7 +1643,7 @@ export async function handleMessage(
       // (images are not required to be in allowed_types). Wrap parse/vision so
       // timeouts / unexpected throws become file.upload_error (UI clears busy).
       const parseResults: FileParseResult[] = []
-      let finalFileContents: Array<{ filename: string; content: string }> = []
+      let finalFileContents: Array<{ filename: string; content: string; warning?: string }> = []
       const partitioned = partitionUploadFiles(Array.isArray(files) ? files : [])
       if (partitioned.error) return uploadError(partitioned.error)
       const standaloneImages = partitioned.images
@@ -1792,7 +1792,10 @@ export async function handleMessage(
             content += `\n\n[页面视觉分析：成功 ${successfulVision}/${visionPageCount} 页${parseResult.pageCount ? `，文档共 ${parseResult.pageCount} 页` : ""}；仅已分析页面可供参考。${parseResult.warning || ""}]`
           }
 
-          finalFileContents.push({ filename: parseResult.filename, content })
+          // Render-only page coverage is already carried by its existing text
+          // path. Ordinary conversion notices stay display metadata only.
+          const warning = !parseResult.requiresVision ? normalizeDocumentWarning(parseResult.warning) : undefined
+          finalFileContents.push({ filename: parseResult.filename, content, ...(warning ? { warning } : {}) })
         }
       } catch (phaseErr: any) {
         logger.error("file.upload.phase_error", {
@@ -3051,6 +3054,7 @@ export async function handleMessage(
           ...(Array.isArray(msg.attachments) && msg.attachments.length > 0
             ? { attachments: msg.attachments }
             : {}),
+          ...(msg.files?.length ? { files: msg.files } : {}),
         })
         idMap.set(msg.id, copied.id)
       }
@@ -3928,6 +3932,7 @@ export async function handleMessage(
       return {
         type: "knowledge.preview",
         ...preview,
+        ...(loaded.warning ? { warning: loaded.warning } : {}),
         ...(duplicate_of ? { duplicate_of } : {}),
         ...(extractStarted ? { extract_pending: true } : {}),
       }
@@ -4068,6 +4073,7 @@ export async function handleMessage(
         id: requestId || undefined,
         ...preview,
         import_content: parsed.text,
+        ...(normalizeDocumentWarning(parsed.warning) ? { warning: normalizeDocumentWarning(parsed.warning) } : {}),
         ...(duplicate_of ? { duplicate_of } : {}),
         ...(extractStarted ? { extract_pending: true } : {}),
       }

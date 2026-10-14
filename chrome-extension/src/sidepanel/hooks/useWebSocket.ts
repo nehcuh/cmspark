@@ -1,7 +1,8 @@
 // WebSocket hook for Side Panel — communicates with background service worker
 
 import { useEffect, useRef } from "react"
-import { overlayStandbyFromError, useAgentStore } from "../store/agentStore"
+import { overlayStandbyFromError, useAgentStore, type AgentAction } from "../store/agentStore"
+import { normalizeDocumentWarning, parseDocumentNotices } from "../utils/document-warning"
 import type { ComputerTaskEventView, LLMConfig, Message, MessageAttachment } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
@@ -262,15 +263,32 @@ export function sanitizeHydratedMessages(raw: unknown): Message[] {
       ...(incompleteTools ? { incomplete_tools: true } : {}),
       ...(finishReason !== undefined ? { finish_reason: finishReason } : {}),
     }
-    if (msg.attachments == null) {
+    if (msg.attachments == null && msg.files == null) {
       return Object.keys(honesty).length ? { ...msg, ...honesty } : msg
     }
     return {
       ...msg,
       attachments: parseChatUserAttachments(msg.attachments),
+      files: parseDocumentNotices(msg.files),
       ...honesty,
     }
   })
+}
+
+/** Same whitelist for live preview responses and recorded producer contracts. */
+export function knowledgePreviewFromMessage(msg: any): Extract<AgentAction, { type: "SET_KNOWLEDGE_PREVIEW" }>["preview"] {
+  return {
+    title: String(msg.title || ""),
+    description: String(msg.description || ""),
+    preview: String(msg.preview || ""),
+    char_count: typeof msg.char_count === "number" ? msg.char_count : 0,
+    warning: normalizeDocumentWarning(msg.warning),
+    tags: Array.isArray(msg.tags) ? msg.tags.filter((t: unknown): t is string => typeof t === "string" && !!t.trim()) : undefined,
+    extract_pending: msg.extract_pending === true,
+    duplicate_of: msg.duplicate_of && typeof msg.duplicate_of === "object" && typeof msg.duplicate_of.id === "string" && typeof msg.duplicate_of.title === "string"
+      ? { id: msg.duplicate_of.id, title: msg.duplicate_of.title } : undefined,
+    ...(typeof msg.import_content === "string" ? { payload: { content: msg.import_content } } : {}),
+  }
 }
 
 export function useWebSocket() {
@@ -454,6 +472,7 @@ export function useWebSocket() {
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           const content = typeof msg.content === "string" ? msg.content : ""
           const attachments = parseChatUserAttachments(msg.attachments)
+          const files = parseDocumentNotices(msg.files)
           if (!content.trim() && !attachments?.length) break
           const threadId =
             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
@@ -476,6 +495,7 @@ export function useWebSocket() {
                 (typeof msg.created_at === "string" && msg.created_at) ||
                 new Date().toISOString(),
               ...(attachments ? { attachments } : {}),
+              ...(files ? { files } : {}),
               ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
             },
           })
@@ -2022,30 +2042,7 @@ export function useWebSocket() {
             // #270: companion echoes the request id; the store applies this only
             // while the id is still pending (#271 late-reply guard).
             replyId: typeof msg.id === "string" && msg.id ? msg.id : undefined,
-            preview: {
-              title: String(msg.title || ""),
-              description: String(msg.description || ""),
-              preview: String(msg.preview || ""),
-              char_count: typeof msg.char_count === "number" ? msg.char_count : 0,
-              // #272 Phase 1: source-file frontmatter tags (prefill the modal).
-              tags: Array.isArray(msg.tags)
-                ? msg.tags.filter((t: unknown): t is string => typeof t === "string" && !!t.trim())
-                : undefined,
-              // #272: companion started the async LLM draft extraction.
-              extract_pending: msg.extract_pending === true,
-              // #281: exact-duplicate hint (must be explicit — this handler is a whitelist).
-              duplicate_of:
-                msg.duplicate_of &&
-                typeof msg.duplicate_of === "object" &&
-                typeof msg.duplicate_of.id === "string" &&
-                typeof msg.duplicate_of.title === "string"
-                  ? { id: msg.duplicate_of.id, title: msg.duplicate_of.title }
-                  : undefined,
-              // #285: native picker parsed on companion — import via content, not base64 file.
-              ...(typeof msg.import_content === "string"
-                ? { payload: { content: msg.import_content } }
-                : {}),
-            },
+            preview: knowledgePreviewFromMessage(msg),
           })
           break
 

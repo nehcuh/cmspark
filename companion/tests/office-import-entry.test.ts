@@ -109,6 +109,33 @@ test("chat preserves custom subset/superset restrictions and explicit unknown MI
   assert.equal(parses, 0)
 })
 
+test("generic upload MIME infers a format but generic allowlist entries are not wildcards", async () => {
+  let parses = 0
+  router.__testSetFileParseImpl(async (_bytes, name, mime) => {
+    parses++
+    return { success: false, filename: name, mimeType: mime, error: "permitted parser reached" }
+  })
+  for (const generic of ["application/octet-stream", "binary/octet-stream"]) {
+    const beforeParses = parses
+    saveUploadConfig([generic])
+    for (const ext of ["pdf", "docx", "doc", "ods"]) {
+      const svc = services()
+      const result = await router.handleMessage(upload(svc.thread.id, `report.${ext}`, generic), svc, session())
+      assert.equal(result.type, "file.upload_error")
+      assert.match(String(result.error), /不支持的文件类型/)
+    }
+    assert.equal(parses, beforeParses, "generic allowlist item must not authorize inferred document MIME")
+    saveUploadConfig([DOCUMENT_MIMES.docx, generic])
+    const docx = services()
+    const allowed = await router.handleMessage(upload(docx.thread.id, "report.docx", generic), docx, session())
+    assert.equal(allowed.error, "permitted parser reached")
+    const pdf = services()
+    const denied = await router.handleMessage(upload(pdf.thread.id, "report.pdf", generic), pdf, session())
+    assert.match(String(denied.error), /不支持的文件类型/)
+  }
+  assert.equal(parses, 2)
+})
+
 test("chat canonicalizes the WPS PDF alias before admission and keeps custom restrictions", async () => {
   let reached = 0
   router.__testSetFileParseImpl(async (_bytes, name, mime) => {
@@ -250,6 +277,7 @@ test("render-only chat accepts an actual vision success and records partial-page
   assert.match(text, /页面实际正文：收入 12345/)
   assert.match(text, /成功 1\/2 页，文档共 12 页/)
   assert.match(text, /仅渲染前 2 页/)
+  assert.equal((user as any).files, undefined, "render-only coverage does not masquerade as an ordinary conversion notice")
 })
 
 test("real legacy DOC reaches chat and regression ODP reaches native knowledge preview", async () => {
@@ -283,4 +311,56 @@ test("real legacy DOC reaches chat and regression ODP reaches native knowledge p
   assert.equal(preview.type, "knowledge.preview")
   assert.match(String(preview.import_content), /Office preview 中文文档/)
   for (const ext of ["doc", "xls", "ppt", "ods", "odp"]) assert.ok(pickedFilter.includes(`*.${ext};`))
+})
+
+test("font warnings survive real chat/knowledge producer responses as metadata, never document or model text", async () => {
+  const warning = "文档转换时缺少部分字体，布局可能与原文不同。"
+  const body = "FONT_WARNING_DOCUMENT_BODY"
+  router.__testSetFileParseImpl(async (_bytes, name, mime) => ({ success: true, filename: name, mimeType: mime, fileSize: 10, text: body, warning }))
+  saveUploadConfig(DEFAULT_UPLOAD_MIMES, false)
+  const modelInputs: string[] = []
+  completionImpl = async params => {
+    modelInputs.push(JSON.stringify(params.messages))
+    return params.stream ? (async function* () {
+      yield { choices: [{ index: 0, delta: { content: "已读取" }, finish_reason: null }] }
+      yield { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+    })() : { choices: [{ message: { content: "文档" } }] }
+  }
+  const svc = services(), frames: any[] = []
+  const sess = { ...session(), sendToExtension: (frame: unknown) => frames.push(frame) }
+  const chatResult = await router.handleMessage(upload(svc.thread.id), svc, sess)
+  assert.equal(chatResult.type, "file.uploaded")
+  const chat = frames.find(frame => frame.type === "chat.user")
+  assert.equal(chat.files?.[0]?.warning, warning)
+  const reloaded = new ThreadManager().getMessages(svc.thread.id).find(message => message.id === chat.message_id) as any
+  assert.equal(reloaded.files?.[0]?.warning, warning)
+  assert.ok(!chat.content.includes(warning))
+  await router.handleMessage({ type: "chat.create", thread_id: svc.thread.id, message: "继续讨论正文" }, svc, sess)
+  const previewUpload = await router.handleMessage({ type: "knowledge.preview", id: "kp-font-upload", file: upload(svc.thread.id).files[0] }, svc, sess)
+  assert.equal(previewUpload.warning, warning)
+  const disk = path.join(testHome, "font-warning.doc")
+  fs.writeFileSync(disk, "test document bytes")
+  router.__testSetPickFileNative(async () => ({ path: disk }))
+  const previewNative = await router.handleMessage({ type: "knowledge.import_local_file", id: "kp-font-native", user_gesture: true }, svc, sess)
+  assert.equal(previewNative.warning, warning)
+  assert.equal(previewNative.import_content, body)
+  for (const preview of [previewUpload, previewNative]) assert.ok(!preview.preview.includes(warning))
+  await router.handleMessage({ type: "knowledge.import", content: previewNative.import_content, title: "Font warning document", user_gesture: true }, svc, sess)
+  const imported = svc.skillEngine.listKnowledge().find(item => item.title === "Font warning document")
+  assert.ok(imported)
+  assert.ok(!svc.skillEngine.getKnowledge(imported.id || imported.name)?.body.includes(warning))
+  assert.ok(!modelInputs.join("\n").includes(warning))
+  router.__testSetFileParseImpl(async (_bytes, name, mime) => ({ success: true, filename: name, mimeType: mime, fileSize: 10, text: body }))
+  const clean = services(), cleanFrames: any[] = []
+  await router.handleMessage(upload(clean.thread.id), clean, { ...session(), sendToExtension: (frame: any) => cleanFrames.push(frame) })
+  assert.equal(Object.hasOwn(cleanFrames.find(frame => frame.type === "chat.user"), "files"), false)
+  const cleanPreview = await router.handleMessage({ type: "knowledge.preview", id: "kp-clean", file: upload(clean.thread.id).files[0] }, clean, session())
+  assert.equal(Object.hasOwn(cleanPreview, "warning"), false)
+  router.__testSetFileParseImpl(async (_bytes, name, mime) => ({ success: true, filename: name, mimeType: mime, fileSize: 10, text: body, warning: warning.repeat(200) }))
+  const boundedPreview = await router.handleMessage({ type: "knowledge.preview", id: "kp-bounded", file: upload(clean.thread.id).files[0] }, clean, session())
+  assert.equal(boundedPreview.warning.length, 512)
+  if (process.env.CMSPARK_RECORD_WARNING_FIXTURE) {
+    const recorded = JSON.parse(JSON.stringify({ chat, previewUpload, previewNative }))
+    fs.writeFileSync(process.env.CMSPARK_RECORD_WARNING_FIXTURE, JSON.stringify(recorded, null, 2) + "\n")
+  }
 })
