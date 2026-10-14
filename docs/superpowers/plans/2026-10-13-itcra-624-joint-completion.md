@@ -2,6 +2,8 @@
 
 Existing design authority: #618 and #624; user selected REST/grant and authorized ITCra changes and merge only after all gates. Rebuilt 2026-10-13 after the local ultraqa taxonomy wording repair. Runtime scanner and rules are unchanged. The live router selects builtin/deep-diagnosis-optimization; both it and the CMspark eval gate pass runtime scanning.
 
+2026-10-14 update: the user explicitly authorized merging reviewed code before real-system joint testing. The original premerge real-acceptance ordering below is historical and superseded by that instruction. Source machine/review/CI gates remain mandatory; real acceptance and its missing authenticated ITCra driver remain postmerge work in #618, without a passing enterprise-readiness claim or automatic issue closure.
+
 ## Batch 1: capacity recovery (#624)
 
 - `companion/src/outbound-mcp/enterprise-state.ts`: exclusive lifetime writer lock, no stale-lock stealing; local admin rotation requiring explicit quiescence acknowledgement, strict revoked referenced-grant validation under the grant writer lock, unique private archive, atomic reset.
