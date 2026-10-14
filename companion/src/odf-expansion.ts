@@ -207,7 +207,14 @@ function checkObjectReferences(document: Node, references: ObjectReferences): vo
 
 function xmlCost(xml: string, kind: string, xmlNodes: { count: number }, references: ObjectReferences, entryName: string, originalHead: string): Cost {
   const sanitized = xml.charCodeAt(0) === 0xFEFF ? xml.slice(1) : xml.trim()
-  const document = new DOMParser({ onError: () => refuse("XML 损坏") }).parseFromString(sanitized, "application/xml")
+  let document: import("@xmldom/xmldom").Document
+  try {
+    // Warnings remain refusals; xmldom may wrap a thrown onError in an English
+    // fatalError. Normalize only DOM construction, not later budget/conversion errors.
+    document = new DOMParser({ onError: () => refuse("XML 损坏") }).parseFromString(sanitized, "application/xml")
+  } catch {
+    refuse("XML 损坏")
+  }
   const ordered: Node[] = []
   const stack: Array<{ node: Node; depth: number; insideTable: boolean }> = [{ node: document, depth: 0, insideTable: false }]
   while (stack.length) {

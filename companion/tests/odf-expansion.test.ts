@@ -106,6 +106,77 @@ test("DOM reads XML structure and enforces total XML bytes without expanding com
   validateOdfExpansion(zip(bom), "ods")
 })
 
+test("malformed XML, including DOM warnings, has one fixed Chinese refusal", async () => {
+  const message = "ODF 文档展开超过解析预算或格式无效（XML 损坏），请拆分文档或另存为标准 Office 文件。"
+  for (const body of [
+    '<invalid:p>marker</invalid:p>', // undeclared namespace: DOM fatalError
+    '<text:p text:a="1" text:a="2">marker</text:p>', // duplicate attribute: DOM fatalError
+    '<text:p text:a=unquoted>marker</text:p>', // DOM warning remains a refusal
+    '<text:p>marker</text:span>',
+  ]) {
+    const bytes = zip(xml(body, "odt"), "odt")
+    assert.throws(() => validateOdfExpansion(bytes, "odt"), error => error instanceof Error && error.message === message)
+    const result = await parseFile(bytes, "malformed.odt", mime("odt"))
+    assert.equal(result.success, false)
+    if (!result.success) assert.equal(result.error, `文件解析失败: ${message}`)
+  }
+})
+
+// Synthetic minimal XML, observed through the locked officeparser producer.
+// These are compatibility/cost probes, not authorized business-document fixtures.
+test("real ODT producer emits text:s spaces without its invalid child text", async () => {
+  const bytes = zip(xml('<text:p>before<text:s text:c="2"><text:span>CHILD_MARKER</text:span></text:s>after</text:p>', "odt"), "odt")
+  validateOdfExpansion(bytes, "odt")
+  const ast = await OfficeParser.parseOffice(bytes, { fileType: "odt", extractAttachments: true })
+  assert.equal(ast.toText(), "before  after")
+  assert.equal(ast.toText().includes("CHILD_MARKER"), false)
+  const result = await parseFile(bytes, "spaces.odt", mime("odt"))
+  assert.equal(result.success, true, JSON.stringify(result))
+  if (result.success) {
+    assert.match(result.text, /before\s{2}after/)
+    assert.equal(result.text.includes("CHILD_MARKER"), false)
+  }
+})
+
+test("real ODS producer materializes paragraph newlines but not bare frames; frame costing stays conservative", async () => {
+  const newline = zip(xml(table(row('<table:table-cell><text:p/><text:p/></table:table-cell>', "2"))))
+  validateOdfExpansion(newline, "ods")
+  const ast = await OfficeParser.parseOffice(newline, { fileType: "ods" })
+  assert.equal(ast.toText(), "\n\n\n")
+  assert.equal(ast.content[0]?.children?.length, 2)
+  assert.deepEqual(ast.content[0]?.children?.map(r => r.children?.[0]?.text), ["\n", "\n"])
+  const frame = zip(xml(table(row('<table:table-cell><draw:frame/></table:table-cell>', "2"))))
+  validateOdfExpansion(frame, "ods")
+  const frameAst = await OfficeParser.parseOffice(frame, { fileType: "ods", extractAttachments: true })
+  assert.equal(frameAst.toText(), "")
+  assert.deepEqual(frameAst.content[0]?.children, [])
+  assert.deepEqual(frameAst.attachments, [])
+  refused(table(row('<table:table-cell><draw:frame/></table:table-cell>', "100000")))
+  refused(table(row('<table:table-cell><text:p/><text:p/></table:table-cell>', "100000")))
+})
+
+test("synthetic two-sheet column boundary is measured in a bounded real-parser child", t => {
+  const sheet = (name: string, blank: number) => `<table:table table:name="${name}">${row(cell("1", name) + '<table:table-cell table:number-columns-repeated="' + blank + '"/>')}</table:table>`
+  const bytes = zip(xml(sheet("First", 24999) + sheet("Second", 24999)))
+  validateOdfExpansion(bytes, "ods") // 50,000 global column iterations, including blanks.
+  assert.throws(() => validateOdfExpansion(zip(xml(sheet("First", 24999) + sheet("Second", 25000))), "ods"), /列循环/)
+  const parser = path.join(__dirname, "../src/file-parser.js")
+  const child = spawnSync(process.execPath, ["--max-old-space-size=128", "-e", `
+    const started = performance.now();
+    require(${JSON.stringify(parser)}).parseFile(Buffer.from(process.argv[1], 'base64'), 'synthetic-two-sheet.ods', ${JSON.stringify(mime("ods"))}).then(result => {
+      const retained = result.success && result.text.includes('First') && result.text.includes('Second');
+      if (!retained) process.exitCode = 1;
+      console.log(JSON.stringify({provenance: 'synthetic-two-sheet', success: result.success, retained,
+        elapsed_ms: performance.now() - started, max_rss_kib: process.resourceUsage().maxRSS}));
+    });`, bytes.toString("base64")], { encoding: "utf8", timeout: 6000, killSignal: "SIGKILL", maxBuffer: 16 * 1024 })
+  assert.equal(child.error, undefined, String(child.error))
+  assert.equal(child.status, 0, child.stderr + child.stdout)
+  const observation = JSON.parse(child.stdout.trim().split("\n").pop()!)
+  assert.equal(observation.retained, true)
+  assert.ok(observation.elapsed_ms >= 0 && observation.max_rss_kib > 0)
+  t.diagnostic(JSON.stringify(observation))
+})
+
 test("independent references and nested frames cannot repeatedly expand external MathML", async () => {
   const frame = '<draw:frame><draw:object xlink:href="./Object 1"/></draw:frame>'
   const object = '<math><mi>' + 'a'.repeat(100000) + '</mi></math>'
@@ -172,10 +243,16 @@ test("ordinary two-series chart retains names, labels and attribute values in th
   assert.deepEqual(attachment?.chartData?.labels, ["January", "February"])
 })
 
-test("chart namespaces preserve ordinary ODS blank tails; mixed OOXML chart caches are refused", () => {
+test("chart namespaces preserve ordinary ODS blank tails; mixed OOXML chart caches are refused", async () => {
   const body = table(row(cell()) + row("<table:table-cell/>", "1048576"))
   const main = xml(body).replace('<office:document-content ', '<office:document-content xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0" ')
   validateOdfExpansion(zip(main), "ods")
+  const mainAst = await OfficeParser.parseOffice(zip(main), { fileType: "ods", extractAttachments: true })
+  assert.equal(mainAst.toText(), "marker")
+  assert.deepEqual(mainAst.attachments, [], "main content with a chart namespace is not an embedded chart attachment")
+  const mainResult = await parseFile(zip(main), "main-with-chart-namespace.ods", mime("ods"))
+  assert.equal(mainResult.success, true, JSON.stringify(mainResult))
+  if (mainResult.success) assert.match(mainResult.text, /marker/)
   const cache = '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:ser><c:tx><c:v>' + "x".repeat(30000) + '</c:v></c:tx></c:ser>' + '<c:ser/>'.repeat(100) + '</c:chartSpace>'
   assert.throws(() => validateOdfExpansion(chartZip(cache), "odt"), /不支持 ODF 内嵌 OOXML 图表/)
   // The extractor selects its branch from original bytes, before trim/BOM normalization.

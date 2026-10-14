@@ -18,6 +18,7 @@ import {
 } from "../utils/knowledge-distribution"
 import { tokens } from "../ui/tokens"
 import { BottomSheet } from "./ui/BottomSheet"
+import { DocumentWarning } from "./DocumentWarning"
 
 export function KnowledgeImportModal() {
   const { state, dispatch } = useAgentStore()
@@ -122,6 +123,7 @@ export function KnowledgeImportModal() {
       {p && (
         <>
           <strong style={{ fontSize: 13 }}>确认导入知识库</strong>
+          <DocumentWarning warning={p.warning} />
           {p.duplicate_of?.title ? (
             <div style={{ fontSize: 11, color: tokens.textSecondary, marginTop: 6 }}>
               内容与已有文档《{p.duplicate_of.title}》完全相同

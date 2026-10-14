@@ -4,6 +4,7 @@ import os from "os"
 import { randomUUID } from "crypto"
 import { buildCodingHandoffContext } from "../acp/capability-context"
 import { currentAcpSessions } from "../acp/session-recovery"
+import { normalizeDocumentWarning } from "../file-formats"
 import { buildSiteContext, type SiteContextSelection } from "../site-context/service"
 import type { SiteTarget } from "../site-context/target"
 import { wrapKnowledgeBlock } from "../skills/content-sanitizer"
@@ -169,7 +170,7 @@ interface ChatCreateParams {
   knowledgeMode?: "auto" | "all" | "manual"
   knowledgeSmartMatch?: boolean
   knowledgeRouteByGroup?: boolean
-  fileContents?: Array<{ filename: string; content: string }>
+  fileContents?: Array<{ filename: string; content: string; warning?: string }>
   /** Image sidecar metadata only — bytes are written by the router before chatCreate. */
   imageAttachments?: Array<{
     name: string
@@ -718,11 +719,16 @@ export async function chatCreate(params: ChatCreateParams) {
     if (displayNames.length && !userContent.includes("📎")) {
       userContent = `${userContent}\n📎 ${displayNames.join(", ")}`
     }
+    const files = (fileContents || []).flatMap(file => {
+      const warning = normalizeDocumentWarning(file.warning)
+      return warning ? [{ filename: file.filename.slice(0, 256), warning }] : []
+    }).slice(0, 20)
     const msg = threadManager.addMessage(threadId, {
       thread_id: threadId,
       role: "user",
       content: userContent,
       attachments: imageAttachments?.map((a) => ({ kind: "image" as const, ...a })),
+      ...(files.length ? { files } : {}),
       ...(reservedUserMessageId ? { id: reservedUserMessageId } : {}),
     })
     sendToExtension({
@@ -732,6 +738,7 @@ export async function chatCreate(params: ChatCreateParams) {
       ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
       content: userContent,
       attachments: msg.attachments,
+      ...(msg.files ? { files: msg.files } : {}),
     })
   }
 
