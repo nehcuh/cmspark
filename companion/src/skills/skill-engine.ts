@@ -343,6 +343,8 @@ export class SkillEngine {
   // --- #273 Wave B: 派生索引生命周期（§6.1） ---
   /** 内存中的派生索引（null = 不可用/重建失败；undefined = 尚未尝试）。 */
   private knowledgeIndex: KnowledgeIndexFile | null | undefined = undefined
+  /** A computed index is still usable if its disposable cache could not be saved. */
+  private knowledgeIndexCacheDirty = false
   /** 防抖重建定时器（single-flight：重建是同步的，防抖窗口合并连续触发）。 */
   private knowledgeIndexTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -474,7 +476,20 @@ export class SkillEngine {
     this.knowledgeIndexTimer.unref?.()
   }
 
-  /** 聚类/索引层任何异常 → 仅日志、索引置不可用，降级 Wave A 扁平打分（§6.1/§2.5）。 */
+  private persistKnowledgeIndex(index: KnowledgeIndexFile): void {
+    try {
+      writeKnowledgeIndexFile(knowledgeIndexPath(), index)
+      this.knowledgeIndexCacheDirty = false
+    } catch (e: any) {
+      if (!this.knowledgeIndexCacheDirty) {
+        console.warn("[skills] knowledge cache write failed; in-memory index remains available:",
+          typeof e?.code === "string" ? e.code : "CACHE_WRITE_FAILED")
+      }
+      this.knowledgeIndexCacheDirty = true
+    }
+  }
+
+  /** 计算失败才降级；缓存写失败保留内存索引，后续读取重试持久化。 */
   private rebuildKnowledgeIndexSafe(): void {
     try {
       const docs = this.buildKnowledgeIndexDocs()
@@ -497,11 +512,12 @@ export class SkillEngine {
         ...(prevGraphLock && prevGraphLock.groups.length > 0 ? { graph_lock: prevGraphLock } : {}),
         ...(prevTfSwitchAck === true ? { graph_tf_switch_ack: true } : {}),
       }
-      writeKnowledgeIndexFile(knowledgeIndexPath(), index)
       this.knowledgeIndex = index
+      this.persistKnowledgeIndex(index)
     } catch (e) {
       console.warn("[skills] knowledge index rebuild failed; routing/distribution degraded:", e)
       this.knowledgeIndex = null
+      this.knowledgeIndexCacheDirty = false
     }
   }
 
@@ -545,11 +561,13 @@ export class SkillEngine {
       this.ensureFresh()
       const fp = this.diskFingerprint || ""
       if (this.knowledgeIndex && this.knowledgeIndex.fingerprint === fp) {
+        if (this.knowledgeIndexCacheDirty) this.persistKnowledgeIndex(this.knowledgeIndex)
         return this.knowledgeIndex
       }
       const fromDisk = readKnowledgeIndexFile(knowledgeIndexPath())
       if (fromDisk && fromDisk.fingerprint === fp) {
         this.knowledgeIndex = fromDisk
+        this.knowledgeIndexCacheDirty = false
         return fromDisk
       }
       // #427：重启后内存为空、磁盘指纹已漂 → 先收编磁盘文件的派生区再重建，

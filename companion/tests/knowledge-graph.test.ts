@@ -355,24 +355,40 @@ test("#427 handler: 2–19 无缓存 → ok + 全未分组 + llm_ready；relatio
   assert.equal(resp.tf_switch_notice, undefined, "LLM lane 帧不带跨 20 notice")
 })
 
-test("#296 handler: index unavailable → rebuilding (honest, no fake graph)", async () => {
+test("#491 handler: cache unavailable still returns computed graph and recovers", async () => {
   resetKnowledgeState()
   const se = new SkillEngine()
   seedThemed(se, 25)
-  // 破坏 cache 路径：把 cache 变成普通文件 → 重建写盘失败 → 索引不可用
+  // 破坏 cache 路径，不破坏知识原文或实际计算。
   const cachePath = path.join(DATA_DIR, "cache")
   fs.rmSync(cachePath, { recursive: true, force: true })
   fs.writeFileSync(cachePath, "not a dir")
   se.importKnowledge(mdDoc("extra-doc", ["alpha"], "alpha shared body words")) // 指纹漂移触发重建
 
+  try {
+    const resp = await handleMessage({ type: "knowledge.graph" }, { skillEngine: se } as never, panelSession)
+    assert.equal(resp.type, "knowledge.graph")
+    assert.equal(resp.status, "ok")
+    assert.ok(resp.nodes.some((n: any) => n.id === "extra-doc"))
+    fs.rmSync(cachePath, { force: true })
+    const recovered = await handleMessage({ type: "knowledge.graph" }, { skillEngine: se } as never, panelSession)
+    assert.equal(recovered.status, "ok")
+    assert.ok(clusters.readKnowledgeIndexFile(clusters.knowledgeIndexPath()))
+  } finally {
+    fs.rmSync(cachePath, { recursive: true, force: true })
+    fs.mkdirSync(cachePath, { recursive: true })
+  }
+})
+
+test("#491 handler: actual index computation failure remains rebuilding", async () => {
+  resetKnowledgeState()
+  const se = new SkillEngine()
+  seedThemed(se, 25)
+  ;(se as any).buildKnowledgeIndexDocs = () => { throw new Error("controlled calculation failure") }
+  se.importKnowledge(mdDoc("extra-doc", ["alpha"], "alpha shared body words"))
   const resp = await handleMessage({ type: "knowledge.graph" }, { skillEngine: se } as never, panelSession)
-  assert.equal(resp.type, "knowledge.graph")
   assert.equal(resp.status, "rebuilding")
   assert.equal(resp.nodes.length, 0)
-
-  // 恢复路径后续测试可用
-  fs.rmSync(cachePath, { recursive: true, force: true })
-  fs.mkdirSync(cachePath, { recursive: true })
 })
 
 test("#296 LLM failure → fallback labels, no display write, no error frame", async () => {

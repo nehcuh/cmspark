@@ -258,6 +258,58 @@ test("write path schedules debounced rebuild; read path reflects new doc immedia
   assert.equal(clusters.KNOWLEDGE_INDEX_DEBOUNCE_MS, 2000, "debounce window constant (spec §6.2)")
 })
 
+test("#491: failed cache persistence keeps graph/distribution/retrieval and retries after recovery", () => {
+  resetKnowledgeDirs()
+  corpus.seedEvalCorpus(path.join(getConfigDir(), "knowledge"))
+  const indexPath = clusters.knowledgeIndexPath()
+  fs.rmSync(indexPath, { recursive: true, force: true })
+  fs.mkdirSync(indexPath, { recursive: true }) // Real EISDIR/rename fault, including root-run Linux.
+  const warnings: string[] = []
+  const originalWarn = console.warn
+  console.warn = (...args) => { warnings.push(String(args[0])) }
+  try {
+    const se = new SkillEngine()
+    const distribution = se.getKnowledgeDistribution()
+    assert.ok(distribution && distribution.groups.length > 0, "computed data must survive a cache write failure")
+    assert.ok(se.getKnowledgeGraph()?.nodes.length, "a write failure must not masquerade as rebuilding")
+    const ids = se.resolveKnowledgeIdsForThread("cache-fault", "auto", undefined, "refund policy return process")
+    const prompt = se.buildSystemPromptWithSources("cache-fault", undefined, [], ids, "refund policy return process")
+    assert.ok(prompt.retrieved_sources.length > 0, "retrieval remains available")
+    assert.ok(warnings.some(w => w.includes("cache write failed") && w.includes("in-memory index remains available")))
+    assert.ok(!warnings.some(w => w.includes("rebuild failed")), "persistence and calculation failure have distinct diagnostics")
+    fs.rmSync(indexPath, { recursive: true, force: true })
+    assert.deepEqual(se.getKnowledgeDistribution(), distribution)
+    assert.ok(clusters.readKnowledgeIndexFile(indexPath), "the next read retries persistence without requiring a source edit")
+  } finally {
+    console.warn = originalWarn
+    fs.rmSync(indexPath, { recursive: true, force: true })
+  }
+})
+
+test("#491: rebuild under cache failure preserves graph locks and new source data", () => {
+  resetKnowledgeDirs()
+  corpus.seedEvalCorpus(path.join(getConfigDir(), "knowledge"))
+  const se = new SkillEngine()
+  const docs = se.getKnowledgeDocsForOrganize()
+  const lock = { groups: [{ ids: docs.slice(0, 2).map(d => d.id), name: "Accepted group" }] }
+  se.setKnowledgeGraphLockSection(lock)
+  const indexPath = clusters.knowledgeIndexPath()
+  fs.rmSync(indexPath, { force: true })
+  fs.mkdirSync(indexPath)
+  try {
+    se.importKnowledge("---\nname: cache-newdoc\ndescription: refund policy extra note\ntype: domain_knowledge\n---\nrefund policy return process body\n")
+    assert.ok(se.getKnowledgeDocsForOrganize().some(d => d.name === "cache-newdoc"), "fresh source data must replace the old derived index")
+    assert.deepEqual(se.getKnowledgeGraphSections().lock, lock)
+    fs.rmSync(indexPath, { recursive: true })
+    se.getKnowledgeGraph()
+    const persisted = clusters.readKnowledgeIndexFile(indexPath)
+    assert.ok(persisted?.docs.some(d => d.name === "cache-newdoc"))
+    assert.deepEqual(persisted?.graph_lock, lock, "accepted derived state survives recovery")
+  } finally {
+    fs.rmSync(indexPath, { recursive: true, force: true })
+  }
+})
+
 test("AC-12 view side: n=20 renders, n=19 hidden; all-outlier not rendered", () => {
   resetKnowledgeDirs()
   corpus.seedEvalCorpus(path.join(getConfigDir(), "knowledge"))
