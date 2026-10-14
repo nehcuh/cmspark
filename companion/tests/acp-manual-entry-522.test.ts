@@ -203,8 +203,10 @@ test("native Windows cmd runs only the inert verified CLI in its captured cwd", 
   assert.equal(reply.ok, true)
   if (!reply.ok) return
   assert.equal(reply.shell, "cmd.exe")
-  const observed = JSON.parse(cp.execFileSync("cmd.exe", ["/d", "/s", "/c", reply.commandLine], {
-    cwd: root, input: "", timeout: 5000, encoding: "utf8",
+  // Node's shell adapter quotes the whole CMD expression and disables CRT
+  // argument escaping; execFileSync would re-escape this already quoted line.
+  const observed = JSON.parse(cp.execSync(reply.commandLine, {
+    shell: "cmd.exe", cwd: root, input: "", timeout: 5000, encoding: "utf8",
   }))
   assert.deepEqual(observed, { cwd: fs.realpathSync(dir), args: [] })
 })
