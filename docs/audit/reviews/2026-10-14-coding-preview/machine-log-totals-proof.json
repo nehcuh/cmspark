@@ -1,0 +1,121 @@
+{
+  "host-companion.log": {
+    "groups": {
+      "tests": [
+        3493,
+        2406,
+        20
+      ],
+      "pass": [
+        3445,
+        2402,
+        20
+      ],
+      "fail": [
+        0,
+        0,
+        0
+      ],
+      "cancelled": [
+        0,
+        0,
+        0
+      ],
+      "skipped": [
+        48,
+        4,
+        0
+      ]
+    },
+    "sum": {
+      "tests": 5919,
+      "pass": 5867,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 52
+    }
+  },
+  "host-office-native.log": {
+    "groups": {
+      "tests": [
+        20
+      ],
+      "pass": [
+        20
+      ],
+      "fail": [
+        0
+      ],
+      "cancelled": [
+        0
+      ],
+      "skipped": [
+        0
+      ]
+    },
+    "sum": {
+      "tests": 20,
+      "pass": 20,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    }
+  },
+  "host-extension.log": {
+    "groups": {
+      "tests": [
+        1546
+      ],
+      "pass": [
+        1546
+      ],
+      "fail": [
+        0
+      ],
+      "cancelled": [
+        0
+      ],
+      "skipped": [
+        0
+      ]
+    },
+    "sum": {
+      "tests": 1546,
+      "pass": 1546,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    }
+  },
+  "linux-test.log": {
+    "groups": {
+      "tests": [
+        204,
+        102
+      ],
+      "pass": [
+        203,
+        102
+      ],
+      "fail": [
+        0,
+        0
+      ],
+      "cancelled": [
+        0,
+        0
+      ],
+      "skipped": [
+        1,
+        0
+      ]
+    },
+    "sum": {
+      "tests": 306,
+      "pass": 305,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 1
+    }
+  }
+}

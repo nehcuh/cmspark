@@ -1,0 +1,45 @@
+{
+  "base": "04353ca73b06e245cf0f114ec1ec946b90173dad",
+  "source_paths": 37,
+  "host_companion": {
+    "tests": 5939,
+    "pass": 5887,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 52
+  },
+  "host_extension": {
+    "tests": 1546,
+    "pass": 1546,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "host_compile_test_and_both_production_build_exit": 0,
+  "scheduling": "canonicalcompletecompiledhost inventory, unchangedOffice native20serial, existing settingsserial; no skips/timeoutchanges",
+  "component_ui": "finalr3 host20/front51/actualApp10groups/ARM20+51/bothbuildPASS; realclosed+compacted refusalreds retained",
+  "component_preview": "host61/front51/actualDOM/bothbuildPASS, independentcanonical32/front14/DOMAPPROVE onlycomponent",
+  "judge_status": "UIr3 independent and Grokincremental, completeKimi and finalPiPro pending; all newhead/mainCIpending",
+  "linux_arm64": {
+    "fresh_container": true,
+    "architecture": "arm64",
+    "locked_packages_hash_check": "PASS",
+    "build_and_test_exit": 0,
+    "companion": {
+      "tests": 204,
+      "pass": 203,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 1
+    },
+    "extension": {
+      "tests": 102,
+      "pass": 102,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "scope": "targetedcombinednotfullLinuxinventory; noNativeWindows/Chrome businessclaim"
+  },
+  "gate": "MACHINE PASS frozen37paths; fullhost5939/front1546+bothbuild, freshARMbothbuild+targeted"
+}

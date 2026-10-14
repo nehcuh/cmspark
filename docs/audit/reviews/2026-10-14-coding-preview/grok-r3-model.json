@@ -1,0 +1,23 @@
+{
+  "stopReason": "end_turn",
+  "modelUsage": {
+    "grok-4.6-build": {
+      "inputTokens": 50283,
+      "outputTokens": 27141,
+      "cacheReadInputTokens": 1990144,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 11,
+      "costUSD": 0.47355472
+    }
+  },
+  "usage": {
+    "input_tokens": 50283,
+    "cache_read_input_tokens": 1990144,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 27141,
+    "reasoning_tokens": 22119,
+    "total_tokens": 2067568
+  },
+  "num_turns": 11,
+  "requestId": "f98f8689-c2d8-4359-a4f4-033aad11852e"
+}
