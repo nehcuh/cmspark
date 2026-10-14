@@ -3,9 +3,9 @@
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 exports.loadOwnedCounterBridge=repo=>{
  const owned=fs.mkdtempSync(path.join(os.tmpdir(),'cmspark-533-bridge-'));const output=path.join(owned,'bridge.cjs');
- fs.symlinkSync(path.join(repo,'chrome-extension/node_modules'),path.join(owned,'node_modules'),'dir');
- require(path.join(repo,'chrome-extension/node_modules/esbuild')).buildSync({entryPoints:[path.join(repo,'chrome-extension/src/background/browser-bridge.ts')],bundle:true,platform:'node',format:'cjs',packages:'external',outfile:output,logLevel:'silent'});
- const ts=require(path.join(repo,'chrome-extension/node_modules/typescript'));
+ fs.symlinkSync(path.join(repo,'companion/node_modules'),path.join(owned,'node_modules'),'dir');
+ require(path.join(repo,'companion/node_modules/esbuild')).buildSync({entryPoints:[path.join(repo,'chrome-extension/src/background/browser-bridge.ts')],bundle:true,platform:'node',format:'cjs',packages:'external',outfile:output,logLevel:'silent'});
+ const ts=require(path.join(repo,'companion/node_modules/typescript'));
  const file=path.join(repo,'chrome-extension/src/background/index.ts'),source=fs.readFileSync(file,'utf8'),ast=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true);
  let exact;
  const walk=node=>{if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==='send'){
