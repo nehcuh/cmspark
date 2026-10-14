@@ -5,6 +5,15 @@ import { WebSocket, WebSocketServer } from "ws"
 import { createToolExecutor, handleToolResult, seedThreadManagerForTests, seedExtensionWsAuthForTests, pendingToolCalls, securityConfirmations } from "../src/server"
 import { checkEnterprisePermit, mintEnterprisePermit } from "../src/outbound-mcp/enterprise-permit"
 import { getEnterprisePeer, getWsClients } from "../src/ws/lifecycle"
+import { runL2ToolAdmission } from "../src/tool/l2-admission"
+import { runUrlNavigateAdmission } from "../src/tool/url-cookie-admission"
+
+test("nonbranded runtime permits are rejected at both enterprise admission boundaries", async () => {
+  const ctx = { enterprisePermit: {}, toolName: "navigate", finalParams: { url: "https://business.test/app" }, ws: {} } as any
+  const refusal = { ok: false, result: { success: false, error: "PERMIT_INVALID" } }
+  assert.deepEqual(await runL2ToolAdmission(ctx), refusal)
+  assert.deepEqual(await runUrlNavigateAdmission(ctx), refusal)
+})
 
 test("real executor admits only branded bound browser permits, strips raw guards and emits no local confirmation or sensitive tool.start", async () => {
   seedThreadManagerForTests()
@@ -35,6 +44,9 @@ test("real executor admits only branded bound browser permits, strips raw guards
     assert.deepEqual(seen.find(m => m.type === "tool.execute").params.__enterprise_guard, guard)
     assert.throws(() => checkEnterprisePermit(permit, "create_tab", params, peer), /PERMIT_MISMATCH/)
     assert.equal(checkEnterprisePermit(JSON.parse(JSON.stringify(permit)), "create_tab", params, peer), false)
+    seen.length = 0
+    assert.deepEqual(await execute("nonbranded", "create_tab", params, undefined, { enterprisePermit: {} as any }), { success: false, error: "PERMIT_INVALID" })
+    assert.equal(seen.length, 0)
     assert.throws(() => mintEnterprisePermit("shell_exec", {}, guard, peer, "peer", () => {}), /ENTERPRISE_TOOL_FORBIDDEN/)
     seen.length = 0
     await execute("raw-guard", "list_tabs", { __enterprise_guard: guard })

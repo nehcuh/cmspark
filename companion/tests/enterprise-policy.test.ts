@@ -46,6 +46,10 @@ test("URL aliases, path siblings, unbounded authority and unsupported tools fail
   assert.throws(() => parseEnterprisePolicy({ ...policy(), expires_at: "invalid" }, "outbound_l1_default"))
   assert.throws(() => parseEnterprisePolicy({ ...policy(), actions: [{ ...policy().actions[0], tool: "type", target: { tag: "input", attributes: { type: "password" } } }] }, "outbound_l1_default"))
 })
+test("v1 rejects benign percent-encoded request paths even under a decoded policy scope", () => {
+  for (const url of ["https://business.test/app/a%20b", "https://business.test/app/%41", "https://business.test/app/%E4%B8%AD"]) assert.throws(() => canonicalURL(url), /URL_AMBIGUOUS/)
+  assert.equal(inScope(canonicalURL("https://business.test/app/a-b"), policy().navigation), true)
+})
 test("administrator CLI registers actual profile, issues enterprise token once without legacy HITL instructions", async () => {
   const file = join(getConfigDir(), "policy-test.json")
   writeFileSync(file, JSON.stringify(policy()))
