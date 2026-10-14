@@ -1013,6 +1013,10 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // no longer downgrades the refusal. This tightens classification, not admission.
   ["APP_COORDINATE_DENIED", "non_recoverable"],
   ["HWND_NOT_OWNED", "non_recoverable"],
+  // #563 D2: structural exclusions and non-Default desktops remain hard refusals;
+  // app tokens and desktop metadata cannot downgrade their classification.
+  ["APP_COORDINATE_STRUCTURAL", "non_recoverable"],
+  ["DESKTOP_DENIED", "non_recoverable"],
 
   // ── recoverable ───────────────────────────────────────────────────────────
   // Authorization refusal permits a different tool or fresh human approval;
