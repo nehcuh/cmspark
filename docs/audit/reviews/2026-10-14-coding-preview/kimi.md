@@ -75,4 +75,3 @@
   ## VERDICT: APPROVE_WITH_NITS
 
   Code: push-ready for the 37-path batch — no confirmed P0/P1/P2 source defect; every prior rejection is verified fixed against actual bytes; T2/T3 capability bounds hold. Conditions before merge/release: (1) correct the P2 machine totals in machine.json/context.md/proposed-PR-body; (2) the still-missing named reports (complete Kimi, DeepSeekV4Pro, final Pi), exact head/main CI, and #522's remaining CLI-entry work remain open gates — no issue closure, no `Closes #522`, no native/T4 claims.
-

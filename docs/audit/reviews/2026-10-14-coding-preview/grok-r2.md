@@ -22,20 +22,20 @@ None confirmed from the shown source. The Stop/ack/owner fence, cache exclusions
 
 ### P2
 
-1. **Closed-without-ack is a weaker stop latch than ack.**  
-   `agentStore.tsx:1916-1917` ignores late non-closed events only when `cancelConfirmed` is set. `ACP_CANCEL_RECEIPT` (`:1958-1964`) sets that latch; a plain closed `ACP_SESSION_EVENT` (`:1924`, `:1944`) sets `state: "closed"` and clears `stopPending` but leaves `cancelConfirmed` unset.  
-   **Scenario:** companion closed/`error: "cancelled"` arrives, UI shows 已停止 and hides Stop; a later in-flight `state: "running"` event for the same owner/session is applied, `live` becomes true, Stop returns, while `error ?? previous` can keep `"cancelled"`.  
+1. **Closed-without-ack is a weaker stop latch than ack.**
+   `agentStore.tsx:1916-1917` ignores late non-closed events only when `cancelConfirmed` is set. `ACP_CANCEL_RECEIPT` (`:1958-1964`) sets that latch; a plain closed `ACP_SESSION_EVENT` (`:1924`, `:1944`) sets `state: "closed"` and clears `stopPending` but leaves `cancelConfirmed` unset.
+   **Scenario:** companion closed/`error: "cancelled"` arrives, UI shows 已停止 and hides Stop; a later in-flight `state: "running"` event for the same owner/session is applied, `live` becomes true, Stop returns, while `error ?? previous` can keep `"cancelled"`.
    **Evidence:** reducer source + `coding-control-522.test.ts:24` only locks the ack path. In-order WS makes this uncommon; still a real latch hole.
 
-2. **Any `family: "acp"` error with session+thread becomes a control error.**  
-   `coding-control-message.ts:10-13` → `ACP_CONTROL_ERROR` at `agentStore.tsx:1966-1973`, which writes `controlError` and sets `stopPending` to false.  
+2. **Any `family: "acp"` error with session+thread becomes a control error.**
+   `coding-control-message.ts:10-13` → `ACP_CONTROL_ERROR` at `agentStore.tsx:1966-1973`, which writes `controlError` and sets `stopPending` to false.
    **Scenario:** user is in the 10s wait; an unrelated ACP error with the same ids arrives; pending clears and the raw error (sliced to 1000) is shown as a Stop alert. Completion is still not claimed.
 
-3. **Compact drops `error`, so cancelled-without-ack can read as Done after retirement.**  
-   `coding-session-cache.ts:10-17` keeps `cancelConfirmed` and `state`, and drops `error`. Panel/chip use `cancelConfirmed || error === "cancelled"` (`CodingAgentPanel.tsx:1126`, `CodingSessionChip.tsx:79`).  
+3. **Compact drops `error`, so cancelled-without-ack can read as Done after retirement.**
+   `coding-session-cache.ts:10-17` keeps `cancelConfirmed` and `state`, and drops `error`. Panel/chip use `cancelConfirmed || error === "cancelled"` (`CodingAgentPanel.tsx:1126`, `CodingSessionChip.tsx:79`).
    **Scenario:** closed+cancelled never got an ack, then the row is compacted; return UI shows 已收起 plus Done.
 
-4. **`confirmed` is treated as live for copy.**  
+4. **`confirmed` is treated as live for copy.**
    `CodingAgentPanel.tsx` live includes `confirmed` (diff hunk at 247); back-link uses that live flag (`:1117`) as “本会话继续运行”. Confirmed is L2-accepted, before running. Stop-on-confirmed is reasonable; the running claim is early.
 
 ## Nits / bounds (non-blocking)

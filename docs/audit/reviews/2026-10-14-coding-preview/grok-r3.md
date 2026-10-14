@@ -1,9 +1,9 @@
 I'll read the remaining production callers and reducer paths the packet only excerpts, then judge closed/compacted feedback, typed dispatch, cache, TTL, and preview isolation against the frozen source.# Independent Grok 4.6 finalR3 combined review — coding UI #484/#522 + preview #532
 
-**Verdict: APPROVE_WITH_NITS**  
-**Severity: no confirmed P0 / P1 / P2**  
-**#522: remains PARTIAL** (do not write `Closes #522`)  
-**#484 / #532: closable only after remaining named-review + exact-head CI gates**  
+**Verdict: APPROVE_WITH_NITS**
+**Severity: no confirmed P0 / P1 / P2**
+**#522: remains PARTIAL** (do not write `Closes #522`)
+**#484 / #532: closable only after remaining named-review + exact-head CI gates**
 R2 Grok `APPROVE_WITH_NITS` is not evidence for this freeze. Office R2 P2s are checked against this source, not against R2 approval.
 
 Machine PASS (host 5939/5887 + 52 skips, extension 1546, ARM targeted, both builds 0) is inventory, not correctness proof.
@@ -161,12 +161,12 @@ Default-off / missing / oversize / expired still have no usable CLI entry: `open
 
 ## 7. Nits (non-blocking)
 
-**NIT-1 — uncompacted cancelled rows still paint raw `session.error`.**  
+**NIT-1 — uncompacted cancelled rows still paint raw `session.error`.**
 `CodingSessionChip.tsx:91`, `CodingAgentPanel.tsx:1162` render `session.error` in addition to `已停止`. After Stop, companion error is the sentinel `"cancelled"`, so the chip/panel show a red English `cancelled` line next to 已停止 until compaction drops `error`.
 
 Reproduction: running CLI session → matching cancel ack or closed `error:"cancelled"` before cache retirement → inspect chip/panel. Compacted no-ack path already hides rich error and keeps the marker.
 
-**NIT-2 — followup / prompt / apply runtime `lastError` still swallowed.**  
+**NIT-2 — followup / prompt / apply runtime `lastError` still swallowed.**
 `CodingSessionChip.tsx:59-61,70-72`, `CodingAgentPanel.tsx:731-733,760-762`. Spec calls this preexisting and out of incremental scope. `ACP_OPERATION_REQUEST` still clears the companion notice on retry, so a disconnected retry can hide the last visible refusal with no new alert. Not a reopen of Office P2 (that was WS `request_type` + closed/compacted reducer drop).
 
 ---
