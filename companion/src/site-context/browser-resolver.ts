@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto"
 import { siteTargetFromBridge, type SiteTarget } from "./target"
 import { applyTabNavigated } from "../ws/tab-url-cache"
 
-type Executor = (id: string, name: string, params: any, signal?: AbortSignal, options?: { siteContextTabId?: number }) => Promise<{ success: boolean; data?: any }>
+type Executor = (id: string, name: string, params: any, signal?: AbortSignal, options?: { siteContextTabId?: number; siteContextRequireActive?: boolean }) => Promise<{ success: boolean; data?: any }>
 
 /** Local Chat entry only. Resolve the browser-selected id through the existing
  * authenticated read executor, never model params.url or a hostname hint.
  * This is metadata discovery, not an Observation or an MCP grant decision. */
 export async function resolveBrowserSiteTarget(
-  execute: Executor, scopeId: string, tabId: number, signal?: AbortSignal, budgetMs = 1500,
+  execute: Executor, scopeId: string, tabId: number, signal?: AbortSignal, budgetMs = 1500, requireActive = false,
 ): Promise<SiteTarget | undefined> {
   if (!Number.isSafeInteger(tabId) || tabId < 0 || signal?.aborted) return undefined
   const controller = new AbortController()
@@ -19,7 +19,7 @@ export async function resolveBrowserSiteTarget(
     const deadline = new Promise<undefined>(resolve => {
       timer = setTimeout(() => { controller.abort(); resolve(undefined) }, budgetMs)
     })
-    const read = execute(`site-context-${randomUUID()}`, "list_tabs", { __thread_id: scopeId }, controller.signal, { siteContextTabId: tabId })
+    const read = execute(`site-context-${randomUUID()}`, "list_tabs", { __thread_id: scopeId }, controller.signal, { siteContextTabId: tabId, ...(requireActive ? { siteContextRequireActive: true } : {}) })
       .then(result => {
         if (controller.signal.aborted || !result.success) return undefined
         const target = siteTargetFromBridge(result.data?.site_target)

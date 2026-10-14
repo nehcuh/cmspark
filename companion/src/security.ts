@@ -1106,6 +1106,8 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["SITE_OP_ESCALATE", "recoverable"],         // adapter.ts:2157-2159 明文约定「经 classifyError
                                                //   **recoverable** 喂回模型换路」，登记以遵守该契约
   ["INTENT_CAP", "recoverable"],
+  // #563 B1: dependency refusals permit waiting/replanning, never a claim bypass.
+  ["INTENT_DEPENDENCY_BLOCKED", "recoverable"],
   // ⚠️ EVALUATE_NULL_RESULT → recoverable（#569 评审 claude 发现的**脆弱点**）：
   //   它此前**未登记**，等级靠**文案兜底**命中子串 "script evaluation failed" 才得以 recoverable；
   //   而 classifyError 的默认是 `non_recoverable`（`security.ts` 的兜底 return）——

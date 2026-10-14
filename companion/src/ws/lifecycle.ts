@@ -126,7 +126,7 @@ export type ToolExecutorFn = (
   toolName: string,
   params: any,
   signal?: AbortSignal,
-  invokeOpts?: { trustedOutbound?: boolean; siteContextTabId?: number; enterprisePermit?: import("../outbound-mcp/enterprise-permit").EnterprisePermit },
+  invokeOpts?: { trustedOutbound?: boolean; siteContextTabId?: number; siteContextRequireActive?: boolean; enterprisePermit?: import("../outbound-mcp/enterprise-permit").EnterprisePermit },
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
 export type WsLifecycleDeps = {
@@ -1471,6 +1471,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               origin: peerOrigin,
               surface: wsAuth.get(ws)?.surface,
               originWs: ws,
+              isCurrentSession: () => ws.readyState === WebSocket.OPEN && wsAuth.get(ws)?.authenticated === true && wsAuth.get(ws)?.surface === "panel",
             },
           )
         } catch (handlerErr: any) {

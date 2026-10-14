@@ -1,3 +1,5 @@
+import { ERROR_CODE_LEVELS } from "../security"
+
 /**
  * Same-tool recoverable failures stop a turn so a model cannot spin forever.
  * A missed click (the text is not a visible control) is not that spin: the
@@ -17,6 +19,9 @@ export const LOCATOR_PIVOT_INSTRUCTION =
 
 export function isLocatorMiss(errorCode?: string, errorText?: string): boolean {
   if (errorCode && LOCATOR_MISS_CODES.has(errorCode)) return true
+  // A known non-locator code wins over diagnostics containing model input.
+  // Unknown and uncoded legacy failures retain their text-based fallback.
+  if (errorCode && ERROR_CODE_LEVELS.has(errorCode)) return false
   const text = (errorText || "").toLowerCase()
   return (
     text.includes("element_not_found") ||

@@ -154,8 +154,12 @@ export class BrowserBridge {
           if (params.__site_context_tab_id !== undefined) {
             const id = params.__site_context_tab_id
             if (!Number.isSafeInteger(id) || id < 0) return { success: false, error: "Invalid context tab id" }
+            const requireActive = params.__site_context_require_active === true
+            const selected = async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id === id
+            if (requireActive && !await selected()) return { success: false, error: "SITE_TARGET_UNAVAILABLE" }
             const tab = await chrome.tabs.get(id)
             const target = await browserSiteTarget(id, tab.url)
+            if (requireActive && (!await selected() || (await chrome.tabs.get(id)).url !== tab.url)) return { success: false, error: "SITE_TARGET_UNAVAILABLE" }
             return target ? { success: true, data: { site_target: target } } : { success: false, error: "SITE_TARGET_UNAVAILABLE" }
           }
           return await this.listTabs()

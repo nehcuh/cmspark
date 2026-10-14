@@ -6,6 +6,7 @@
 // handleXMessage(rest) over inlining multi-hundred-line cases.
 // Deferred: full family split for chat/thread/skill/pack/mcp/…
 
+import { handleSiteCounterMessage, noteSiteCounterThreadSelection } from "./message-router/handlers/site-counter"
 import os from "os"
 import { handleProjectMessage, projectReplyProjection } from "./message-router/handlers/projects"
 import { beginProjectRunAdmission } from "./threads/project-activity"
@@ -334,7 +335,7 @@ interface Services {
 
 interface SessionCallbacks {
   sendToExtension: (data: any) => void
-  executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal) => Promise<{ success: boolean; data?: any; error?: string }>
+  executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal, options?: { siteContextTabId?: number; siteContextRequireActive?: boolean }) => Promise<{ success: boolean; data?: any; error?: string }>
   broadcast?: (data: any) => void
   /**
    * Origin-bound security-confirmation channel (App tab D2 biometric gates).
@@ -360,6 +361,8 @@ interface SessionCallbacks {
   surface?: "panel" | "tray" | "summoner"
   /** Originating WS; PTY kill-on-close is scoped to this peer. */
   originWs?: unknown
+  /** Lifecycle-owned liveness/auth check, never a WS JSON flag. */
+  isCurrentSession?: () => boolean
 }
 
 /** Internal nextRun drain: preserve overlay/panel lease identity. */
@@ -1110,6 +1113,13 @@ async function dispatchMessage(
     case "project.restore":
     case "thread.project.set":
       return handleProjectMessage(type, rest, threadManager, session?.surface, id => abortControllers.has(id))
+    case "site.counter.status":
+    case "site.counter.reset":
+      return handleSiteCounterMessage(msg, threadManager, session, () => {
+        const { securityConfirmations } = require("./server") as typeof import("./server")
+        return listLlmActiveThreadIds().includes(rest.thread_id) || listPendingToolsForThread(rest.thread_id).length > 0
+          || securityConfirmations.hasPendingForWorker(rest.thread_id) || securityConfirmations.hasPendingForOriginWs(session?.originWs)
+      })
     // --- Config (C10-C: handlers/config.ts) ---
     case "config.get":
     case "config.set":
@@ -3021,6 +3031,7 @@ async function dispatchMessage(
     case "thread.select": {
       const thr = threadManager.get(rest.thread_id)
       if (!thr) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+      if (!thr.trashed_at) noteSiteCounterThreadSelection(session, rest.thread_id)
       // Soft-deleted: still allow reading messages in trash view, but flag so UI can warn.
       // Block switching into chat loop for trashed threads from normal select is product-side;
       // companion returns messages + trashed so extension can refuse activation.

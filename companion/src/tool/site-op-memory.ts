@@ -278,6 +278,29 @@ export function getOriginFailCount(threadId: string, origin: string): number {
   return stateFor(threadId).originFails[key]?.fails ?? 0
 }
 
+/** #533 UI read face: one verified origin/tab only; no locator strings. */
+export function readSiteOriginCounter(threadId: string, origin: string, tabId: number) {
+  const key = originFailKey(origin), s = mem.get(threadId)
+  const observed = isAggregatableSiteOrigin(key) ? s?.originFails[key] : undefined
+  const prefix = `${key}|`
+  return {
+    fails: observed?.fails ?? 0,
+    lastCode: observed?.lastCode ?? "UNKNOWN",
+    locatorBan: !!s && (Object.entries(s.locators).some(([k,v]) => k.startsWith(prefix) && v.fails >= SITE_LOCATOR_FAIL_BAN)
+      || Object.entries(s.restoredLocators).some(([k,v]) => k.startsWith(prefix) && v.expiresAt > Date.now())),
+    attachFrozen: s?.frozenTabs.has(tabId) ?? false,
+  }
+}
+
+/** Called only after the authenticated settings handler's owner/target/busy
+ * checks. Retire the runtime escalation count, never knowledge or safety state. */
+export function resetSiteOriginCounter(threadId: string, origin: string): void {
+  const key = originFailKey(origin)
+  if (!isAggregatableSiteOrigin(key)) return
+  const observed = mem.get(threadId)?.originFails[key]
+  if (observed) observed.fails = 0
+}
+
 /** #358 read seam: dump per-origin CDP fail counters (http(s) only; no locators / frozen tabs). */
 export function snapshotOriginCdpFails(threadId: string): Record<string, OriginCdpFailState> {
   const s = mem.get(threadId)
