@@ -1,0 +1,43 @@
+{
+  "base": "e5b3511bc6e3ed36aca9c71314ec21ae1f3bf5a8",
+  "blast": "T3 browser trust-classification/guidance; existing authorization/budget/UNKNOWN unchanged; Windows diagnostics preserve probe10000ms semantics",
+  "source_manifest_sha256": "a3285ae6983c50fe25f6bab4afe85ad5b30483dbab063a6fed1afc75d68ac57b",
+  "host_companion": {
+    "tests": 5926,
+    "pass": 5874,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 52
+  },
+  "host_extension": {
+    "tests": 1527,
+    "pass": 1527,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "host_test_and_both_build_exit": 0,
+  "host_scheduling": "complete compiled inventory canonicalisolatedrunner, existingsettings serial; unchangednativeOffice20 serial afterothers, no skip/timeoutchanges",
+  "linux_arm64": {
+    "fresh_container": true,
+    "locked_packages_verified_sha256": true,
+    "test_and_both_production_build_exit": 0,
+    "companion": {
+      "tests": 153,
+      "pass": 148,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 5
+    },
+    "extension": {
+      "tests": 50,
+      "pass": 50,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    }
+  },
+  "scope": "actualBridge/L2/adapter/pivot paths with controlledChrome/model seams; no nativeChrome business accuracy; actualhost execFile abort/logger boundary not nativeWindows.NET, 10s incident rootcause notproven",
+  "exacthead_nativeWindows_CI": "pending beforemerge",
+  "exactmain_CI": "pending aftermerge"
+}
