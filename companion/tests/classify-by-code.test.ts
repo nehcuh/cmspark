@@ -66,6 +66,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   HINT_REQUIRED: "recoverable",   // agent 补上 filenameHint/urlContains 即可自修
   DOWNLOAD_BUSY: "recoverable",   // 瞬时互斥，等前一个下载结束即可重试
   SELECTOR_REQUIRED: "recoverable", // 与同族 SELECTOR_OR_TEXT_REQUIRED 对齐；⚠️ 见下注
+  EVALUATE_AUTH_REQUIRED: "recoverable", // exact authorization refusal: alternate tool/fresh L2, never execution permission
   WAIT_PROBE_FAILED: "recoverable",
   WAIT_TIMEOUT: "recoverable",
   IMAGE_MIME_REJECTED: "recoverable",

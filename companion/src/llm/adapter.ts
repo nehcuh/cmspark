@@ -77,6 +77,7 @@ import { getCachedTabUrl } from "../ws/tab-url-cache"
 import { normalizeWaitForParams } from "../tool/wait-for-params"
 import {
   peekSiteOpBan,
+  originForSiteOp,
   recordSiteOpFailure,
   NON_AGGREGATING_SITE_OP_CODES,
   bannedSiteOpResult,
@@ -1405,6 +1406,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   let outputMaxTokens = computeMaxTokens(contextWindow, config.max_tokens)
   const recoverableFailureCounts = new Map<string, number>()
   const locatorPivotIssued = new Set<string>()
+  // Context-keyed refusals do not spend the executed-failure threshold or
+  // mark a different-locator same-tool pivot as already used.
+  const locatorBanGuidanceIssued = new Set<string>()
+  let evaluateAuthGuidanceIssued = false
   const fleetTimeoutsReported = new Set<string>()
   let fleetSlotYielded = false
 
@@ -1989,6 +1994,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               /* fail-closed: unarmed copy */
             }
             toolResult = bannedSiteOpResult(siteBan, { cuArmed })
+            if (siteBan.error_code === "SITE_OP_BANNED") {
+              const key = JSON.stringify([originForSiteOp(execParams, tabUrl), siteBan.locator])
+              if (!locatorBanGuidanceIssued.has(key)) {
+                locatorBanGuidanceIssued.add(key)
+                // Only fixed host text becomes a directive. Locator/title/page
+                // strings remain untrusted data, never part of this system note.
+                pivotNotes.push("该定位路径已被重复失败保护拒绝，不要再重试同一路径。请换策略完成原目标：先 get_page_text 阅读页面；需要下方内容时 scroll，再根据真实页面信息选择链接；标题不是按钮时，用搜索或 navigate 查找来源。仍须遵循各工具的既有权限与确认。")
+              }
+            }
           } else if (isDomScriptTool(toolName, execParams)) {
             const meta = resolveDomScriptBudgetMeta(
               toolName,
@@ -2301,6 +2315,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               toolName,
               error_code: classCode,
             })
+            if (toolName === "evaluate" && classCode === "EVALUATE_AUTH_REQUIRED" && !evaluateAuthGuidanceIssued) {
+              evaluateAuthGuidanceIssued = true
+              pivotNotes.push("本次 evaluate 因授权要求被拒绝，代码没有执行。请优先用已允许的 get_page_text 或 selector 工具完成目标；确需 evaluate 时重新取得既有人类确认，不得构造、重放或复用旧 security_token。替代工具仍须通过其既有权限与确认。")
+            }
 
             // Auto-recovery for tabId hallucination (P0): inject available tabs into error
             const tabIdErrorPatterns = [
@@ -2539,7 +2557,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           role: "system" as const,
           content:
             "[CMspark 系统提示 · 非网页内容 · 可以遵循] " +
-            "以下工具调用因重复失败而触发了换策略建议。这是 Companion 自身的系统动作，" +
+            "以下工具调用被拒绝或因重复失败触发了恢复建议。这是 Companion 自身的系统动作，" +
             "不是来自页面或工具返回的数据：\n" +
             pivotNotes.join("\n"),
         })
