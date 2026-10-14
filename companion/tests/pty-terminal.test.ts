@@ -258,6 +258,47 @@ test("#432 open: L2 denied does not spawn; approved opens", async () => {
   assert.ok(lastPty)
 })
 
+test("#432 disabling the feature during L2 refuses a shell and preserves an unconsumed agent intent", async t => {
+  const { recordEmbedIntent, peekEmbedIntent, __resetEmbedIntentsForTests } = await import("../src/acp/open-local-terminal")
+  for (const agent of [false, true]) await t.test(agent ? "explicit agent" : "login shell", async () => {
+    const svc = services(), sess = panel(), thread = svc.threadManager.create("feature-off fixture")
+    const intent = { cwd: path.join(tempHome, "CMspark-projects"), file: process.execPath, args: ["--version"] }
+    if (agent) recordEmbedIntent(thread.id, intent)
+    sess.requestConfirmation = async () => {
+      saveConfig({ embedded_terminal: { enabled: false } })
+      return { approved: true, confirmationId: "late", reason: "approved" }
+    }
+    try {
+      const response = await handleMessage({ type: "terminal.open", id: "revoked", user_gesture: true,
+        ...(agent ? { thread_id: thread.id } : {}) }, svc, sess as never)
+      assert.equal(response.type, "terminal.error")
+      assert.equal(response.error, "embedded_terminal_disabled")
+      assert.equal(lastPty, null, "disabled feature must not reach the native spawn boundary")
+      assert.equal(pty.getLivePtyId(), null)
+      if (agent) assert.deepEqual(peekEmbedIntent(thread.id), intent, "refusal cannot consume or retry an agent intent")
+    } finally { __resetEmbedIntentsForTests() }
+  })
+})
+
+test("#432 disabling the feature does not kill or revoke input to an already approved terminal", async () => {
+  const svc = services(), sess = panel()
+  assert.equal((await handleMessage({ type: "terminal.open", id: "existing", user_gesture: true }, svc, sess as never)).type, "terminal.opened")
+  const existing = lastPty!
+  saveConfig({ embedded_terminal: { enabled: false } })
+  const denied = await handleMessage({ type: "terminal.open", id: "new", user_gesture: true }, svc, sess as never)
+  assert.equal(denied.error, "embedded_terminal_disabled")
+  assert.equal(existing.killed, false); assert.equal(pty.getLivePtyId(), "existing")
+  assert.equal((await handleMessage({ type: "terminal.input", id: "existing", b64: "eA==" }, svc, sess as never)).type, "terminal.ok")
+  assert.deepEqual(existing.writes, ["x"])
+})
+
+test("#432 no origin-bound confirmation channel refuses open without spawning", async () => {
+  const svc = services(), sess = { ...panel(), requestConfirmation: undefined }
+  const response = await handleMessage({ type: "terminal.open", id: "no-confirmation", user_gesture: true }, svc, sess as never)
+  assert.match(String(response.error), /origin-bound confirmation channel/)
+  assert.equal(lastPty, null)
+})
+
 test("#432 open: plan_readonly bound thread denied; unbound ok", async () => {
   const svc = services()
   const thr = svc.threadManager.create("plan")

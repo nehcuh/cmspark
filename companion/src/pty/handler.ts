@@ -162,6 +162,9 @@ export async function handleTerminalMessage(
         review = freshReview
       } catch { return deny("CODE_REVIEW_CONTEXT_CHANGED", { id }) }
     }
+    // Disabling admission while L2 is pending cannot authorize a later spawn.
+    // Keep existing PTYs and unconsumed embed intents unchanged.
+    if (getConfig().embedded_terminal?.enabled !== true) return deny("embedded_terminal_disabled", { id })
 
     const send = (frame: Record<string, unknown>) => {
       try {
