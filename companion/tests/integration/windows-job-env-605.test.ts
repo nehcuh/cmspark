@@ -8,6 +8,7 @@ import { type ChildProcess } from "node:child_process"
 import { prepareWindowsJob, spawnWindowsJob } from "../../src/process/windows-job"
 import { buildMcpStdioEnv } from "../../src/mcp/transport"
 import { McpClient } from "../../src/mcp/client"
+import { observeWindowsOwnerFailures } from "../fixtures/windows-owner-diagnostics"
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 async function wait(check: () => boolean, details: () => string) {
@@ -21,7 +22,8 @@ async function stop(child?: ChildProcess) {
 
 for (const environment of ["full", "minimal"] as const) {
   for (const timing of ["immediate", "ready"] as const) {
-    test(`native Windows protocol with ${environment} env and ${timing} input`, { skip: process.platform !== "win32", timeout: 20000 }, async () => {
+    test(`native Windows protocol with ${environment} env and ${timing} input`, { skip: process.platform !== "win32", timeout: 20000 }, async t => {
+      observeWindowsOwnerFailures(t)
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-env-605-")), marker = path.join(root, "stage.json"), script = path.join(root, "echo.cjs")
       fs.writeFileSync(script, String.raw`const fs=require('node:fs');
         const env={secret:process.env.CMSPARK_ENV_HOST_SECRET,configured:process.env.CMSPARK_ENV_VALUE,empty:process.env.CMSPARK_ENV_EMPTY,largeLength:process.env.CMSPARK_ENV_LARGE?.length,carrier:Object.keys(process.env).some(k=>k.startsWith('CMSPARK_OWNED_JOB_ENV_'))};
@@ -58,7 +60,8 @@ for (const environment of ["full", "minimal"] as const) {
   }
 }
 
-test("native Windows public MCP handshake preserves minimal child environment", { skip: process.platform !== "win32", timeout: 20000 }, async () => {
+test("native Windows public MCP handshake preserves minimal child environment", { skip: process.platform !== "win32", timeout: 20000 }, async t => {
+  observeWindowsOwnerFailures(t)
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mcp-env-605-")), marker = path.join(root, "stage.json"), script = path.join(root, "mcp.cjs")
   fs.writeFileSync(script, String.raw`const fs=require('node:fs');const env={secret:process.env.CMSPARK_ENV_HOST_SECRET,configured:process.env.CMSPARK_ENV_VALUE,empty:process.env.CMSPARK_ENV_EMPTY,carrier:Object.keys(process.env).some(k=>k.startsWith('CMSPARK_OWNED_JOB_ENV_'))};fs.writeFileSync(${JSON.stringify(marker)},JSON.stringify({stage:'started',env}));
     require('node:readline').createInterface({input:process.stdin}).on('line',line=>{

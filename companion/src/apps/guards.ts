@@ -32,7 +32,7 @@ export const COMPANION_EXE_BASENAME = "cmspark-agent"
  */
 export const LOLBIN_BASENAMES: ReadonlySet<string> = new Set([
   // shells / script hosts
-  "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta",
+  "powershell", "powershell_ise", "pwsh", "cmd", "wscript", "cscript", "mshta",
   // loader / execution proxies
   "rundll32", "regsvr32", "wmic", "wsl", "bash",
   // build / install execution proxies
@@ -79,6 +79,7 @@ const BASENAME_TO_VAULT_TOKEN: Readonly<Record<string, string>> = {
   windowsterminal: "win.terminal",
   cmd: "win.cmd",
   powershell: "win.powershell",
+  powershell_ise: "win.powershell_ise",
   pwsh: "win.powershell",
   wsl: "win.wsl",
   bash: "win.wsl",
