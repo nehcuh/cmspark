@@ -4,7 +4,15 @@ $ErrorActionPreference='Stop'
 if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1 -or $PSVersionTable.PSEdition -ne 'Desktop') { throw 'OWNED_REQUIRES_NATIVE_PS51' }
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($Script,[ref]$tokens,[ref]$errors)
-if ($errors.Count -ne 0) { throw 'OWNED_PRODUCTION_PS_SYNTAX' }
+if ($errors.Count -ne 0) {
+ # Public parser identities/locations only; never Message, Extent.Text or source.
+ foreach ($parseError in @($errors | Select-Object -First 8)) {
+  $errorId=[string]$parseError.ErrorId
+  if ($errorId -notmatch '^[A-Za-z][A-Za-z0-9]{0,63}$') { $errorId='UNKNOWN' }
+  [Console]::Error.WriteLine(('OWNED_PRODUCTION_PS_SYNTAX ErrorId={0} Line={1} Column={2}' -f $errorId,[int]$parseError.Extent.StartLineNumber,[int]$parseError.Extent.StartColumnNumber))
+ }
+ throw 'OWNED_PRODUCTION_PS_SYNTAX'
+}
 $add=$ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Add-Type'},$true)
 if ($add.Count -ne 1 -or $add[0].CommandElements[2] -isnot [Management.Automation.Language.StringConstantExpressionAst]) { throw 'OWNED_NATIVE_LITERAL_REQUIRED' }
 $code=$add[0].CommandElements[2].Value

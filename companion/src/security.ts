@@ -1001,6 +1001,7 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // #563 B2: finite applyPack composition failures, preserving their original levels.
   ["PACK_MODULE_DISABLED", "recoverable"],
   ["PACK_ENTERPRISE_PROFILE_REQUIRED", "non_recoverable"],
+  ["NETSEC_TARGETS_DENIED", "non_recoverable"], // #563 E1: finite allowlist refusal; poisoned target names now also halt.
   // ── security ──────────────────────────────────────────────────────────────
   // Cookie 信任域拦截：真实报文以 "Security Block: …" 开头，今天靠子串判 security。
   ["COOKIE_TRUST_DENIED", "security"],

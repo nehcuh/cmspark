@@ -1,7 +1,7 @@
 # Windows Registry app candidates — #644
 
 GitHub: https://github.com/nehcuh/cmspark/issues/644 · Parent: #70 candidate 3
-Status: R2 CONTRACT APPROVED — implementation source candidate; native Windows/source/parent delivery gates remain pending.
+Status: R2 product contract approved; PR648 native-R1 failed; CI-only prerequisite/syntax-diagnostic increment is a source candidate, native revalidation/delivery pending.
 Base examined: 36827c849633239811e7437e8452729a35aafb6e.
 
 ## 1. Goal and authority
@@ -95,4 +95,12 @@ Before implementation root independently reviews this spec/plan, numeric assumpt
 
 ## 8. Explicit non-goals and evidence limits
 
-No all-portable discovery, directory recursion, InstallLocation guesses, UninstallString launch, env expansion, remote registry/filesystem, registration writes, execution authority, new params/templates/CLI/Hello/drift/GUI automation, platform skip/deadline increase/scanner weakening or default app/config changes. No shared policy/general severity cleanup. Native Registry fixture is not interactive desktop/Hello/SSO/business acceptance. No Windows result exists yet for this new source; old native CI shows infrastructure capability only. Local source/controlled-boundary results do not replace exact-head native CI acceptance.
+No all-portable discovery, directory recursion, InstallLocation guesses, UninstallString launch, env expansion, remote registry/filesystem, registration writes, execution authority, new params/templates/CLI/Hello/drift/GUI automation, platform skip/deadline increase/scanner weakening or default app/config changes. No shared policy/general severity cleanup. Native Registry fixture is not interactive desktop/Hello/SSO/business acceptance. PR648 head ebf1fd7901d87d35a0b91f70ee465f3704d2f701 CI38646395544 ran the new Windows lane: two tests failed (missing preexisting HKCU Uninstall container and generic production Parser rejection). Those failures are retained, not native acceptance. Local source/controlled-boundary results do not replace exact-head native CI acceptance.
+
+## 9. PR648 native-R1 CI-only prerequisite exception
+
+The original fixture contract required an existing standard HKCU Uninstall parent. Actual ephemeral GitHub Windows runner CI38646395544 did not have it. Root expressly authorized this narrow exception after the real failure: **only the Windows Registry CI step on an owned GitHub Actions runner** may ensure the fixed `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall` container exists under current-user Registry64/Registry32 views (Registry32 only on a 32-bit OS). The step checks `GITHUB_ACTIONS=true` and `RUNNER_OS=Windows`, opens each explicit local HKCU view via OpenBaseKey, opens the container or creates the missing fixed container, then disposes handles in finally. It emits only fixed view and `created|present` facts; no values/inventory/environment/exception body. No HKLM/remote key, existing value write, parent deletion, cleanup recursion, retry or elevated operation is allowed. Containers are left for the one-time runner lifecycle; they are never recursively deleted.
+
+This is a **CI prerequisite contract amendment**, not a claim that the original no-parent-creation contract was wholly unchanged. The production collector and ordinary `registry-owned-644.ps1` fixture still never create/delete standard parents; the fixture must fail when its required parent is absent outside this expressly scoped CI setup, atomically creates only generated UUID children, and deletes only nonce-matching owned children. No user-machine prerequisite setup is performed automatically or exposed as a product/admin feature. Original grammar/budgets/authority and all assertions remain.
+
+The actual native R1 parser rejection had no source position. Test-helper errors now project at most eight public parser ErrorIds (bounded alphanumeric shape, otherwise UNKNOWN) plus integer line/column, never Message, Extent.Text, source/environment/Registry data. A fixed invalid owned snippet exercises that projection on real PS5.1. Moving one binary `-or` to the previous line's end preserves the literal condition; it is a bounded syntax-repair candidate, **not proven PS5.1 GREEN on macOS**. New exact-head native PS5.1 both original tests, original budgets/wire/owned-cleanup assertions and all required jobs must succeed before merge. No platform skip/deadline/maxBuffer increase or blind rerun is permitted.

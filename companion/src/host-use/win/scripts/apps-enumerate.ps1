@@ -92,8 +92,8 @@ function Get-RegistryExe644 {
   if ($v -match '^"(?<path>[^"]+)"(?:,[+-]?[0-9]{1,6})?$') { $literal=$Matches.path }
   elseif ($v -match '(?i)^(?<path>[A-Za-z]:\\[^\s"]+\.exe)(?:,[+-]?[0-9]{1,6})?$') { $literal=$Matches.path }
   if ($literal -and $literal.Length -gt 1024) { return @{path=$null;reason='VALUE_LIMIT'} }
-  if (!$literal -or $literal -notmatch '^[A-Za-z]:\\' -or $literal -notmatch '(?i)\.exe$'
-    -or $literal.Substring(2).Contains(':') -or $literal -match '[<>"/|?*]') { return $none }
+  if (!$literal -or $literal -notmatch '^[A-Za-z]:\\' -or $literal -notmatch '(?i)\.exe$' -or
+    $literal.Substring(2).Contains(':') -or $literal -match '[<>"/|?*]') { return $none }
   $parts=$literal.Substring(3).Split([char]'\')
   if ($parts -contains '.' -or $parts -contains '..' -or $parts -contains '') { return $none }
   try {

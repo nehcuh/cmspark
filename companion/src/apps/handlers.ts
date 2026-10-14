@@ -13,7 +13,7 @@
 // without touching the router.
 
 import os from "os"
-import { getConfig, replaceAppsEntries } from "../config"
+import { CONFIG_CHANGE_EVENT, configEvents, getConfig, replaceAppsEntries } from "../config"
 import { logger } from "../logger"
 import { getThreadApprovals } from "../host-use/thread-approvals"
 import { getComputerSessionTrust } from "../computer/session-trust"
@@ -96,6 +96,46 @@ function clearAppLaunchTrust(token: string, deps: AppsHandlerDeps, via: string):
 
 const POLICY_RANK: Record<AppPolicy, number> = { manual: 0, ai: 1, auto: 2 }
 const VALID_POLICIES: ReadonlySet<string> = new Set(["auto", "ai", "manual"])
+
+/** Only the pending grant's authority/identity, not mutable UI probe hints. */
+function grantSubject(entry: AppEntry | undefined, enabled: boolean): string {
+  if (!entry) return JSON.stringify([enabled, null])
+  return JSON.stringify([enabled, entry.token, entry.kind, entry.source, entry.display_name,
+    entry.added_at, entry.policy, entry.enabled, entry.aumid, entry.bundleId,
+    entry.coordinateAllowed, entry.exe?.path, entry.exe?.sha256, entry.exe?.signer,
+    entry.exe?.user_writable_dir])
+}
+
+/**
+ * #649: observe host mutations before the first await. Once the subject changed,
+ * returning to the old value cannot revive that pending approval (ABA). This
+ * listener belongs to one request; finally removes it on every exit. Unrelated
+ * app changes remain valid and are merged from the current map at commit time.
+ */
+function watchGrantSubject(token: string, entry: AppEntry) {
+  const captured = grantSubject(entry, getConfig().apps?.enabled ?? true)
+  let stale = false
+  const onChange = (config: ReturnType<typeof getConfig>) => {
+    if (grantSubject(config.apps?.entries[token], config.apps?.enabled ?? true) !== captured) stale = true
+  }
+  configEvents.on(CONFIG_CHANGE_EVENT, onChange)
+  return {
+    current() {
+      const config = getConfig()
+      onChange(config)
+      if (stale) return undefined
+      const entries = config.apps?.entries ?? {}
+      return { entries, entry: entries[token] }
+    },
+    close() { configEvents.off(CONFIG_CHANGE_EVENT, onChange) },
+  }
+}
+
+function staleGrantError() {
+  return appsError("App changed while approval was pending — review the current app before granting again", {
+    code: "APP_GRANT_STALE",
+  })
+}
 
 // Mirrors message-router.ts's local guard (kept local — handlers must not
 // reach into the router module for it).
@@ -374,40 +414,51 @@ const cap = maxPolicyForEntry(entry)
           { code: "POLICY_CAP_EXCEEDED", cap },
         )
       }
-      // D2: upgrade →auto requires the biometric gate. Downgrades and
-      // manual↔ai moves below auto are free (design §1: policy 降级自由).
-      if (policy === "auto") {
-        if (!ctx.requestConfirmation) {
-          return appsError("upgrade to \"auto\" requires an interactive confirmation channel", {
-            code: "NO_CONFIRMATION_CHANNEL",
+      const watch = policy === "auto" ? watchGrantSubject(token, entry) : undefined
+      try {
+        // D2: upgrade →auto requires the biometric gate. Downgrades and
+        // manual↔ai moves below auto are free (design §1: policy 降级自由).
+        if (policy === "auto") {
+          if (!ctx.requestConfirmation) {
+            return appsError("upgrade to \"auto\" requires an interactive confirmation channel", {
+              code: "NO_CONFIRMATION_CHANNEL",
+            })
+          }
+          const gate = deps.gate ?? requireAppsBiometric
+          const outcome = await gate({
+            action: "apps.set_policy",
+            reason: `Upgrade "${entry.display_name}" to auto-launch`,
+            requestConfirmation: ctx.requestConfirmation,
           })
+          if (!outcome.approved) {
+            logger.warn("apps.policy_upgrade_denied", { token, from: current, reason: outcome.reason })
+            return appsError(
+              `policy upgrade ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — policy unchanged`,
+              { code: "BIOMETRIC_DENIED", reason: outcome.reason },
+            )
+          }
+          logger.info("apps.set_policy_auto_approved", { token, from: current, method: outcome.method })
         }
-        const gate = deps.gate ?? requireAppsBiometric
-        const outcome = await gate({
-          action: "apps.set_policy",
-          reason: `Upgrade "${entry.display_name}" to auto-launch`,
-          requestConfirmation: ctx.requestConfirmation,
-        })
-        if (!outcome.approved) {
-          logger.warn("apps.policy_upgrade_denied", { token, from: current, reason: outcome.reason })
-          return appsError(
-            `policy upgrade ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — policy unchanged`,
-            { code: "BIOMETRIC_DENIED", reason: outcome.reason },
-          )
+        const subject = watch?.current()
+        if (watch && !subject) return staleGrantError()
+        const currentEntry = subject?.entry ?? entry
+        const currentEntries = subject?.entries ?? existing
+        const currentCap = maxPolicyForEntry(currentEntry)
+        if ((currentEntry.kind === "cli" && policy === "auto") || POLICY_RANK[policy as AppPolicy] > POLICY_RANK[currentCap]) {
+          return appsError("Current app no longer permits the requested policy", { code: "POLICY_CAP_EXCEEDED", cap: currentCap })
         }
-        logger.info("apps.set_policy_auto_approved", { token, from: current, method: outcome.method })
-      }
-      const updated = normalizeAppEntry({ ...entry, policy: policy as AppPolicy })
-      const schemaErr = validateAppEntry(updated)
-      if (schemaErr) return appsError(schemaErr)
-      const newEntries = { ...existing, [token]: updated }
-      replaceAppsEntries(newEntries)
-      logger.info("apps.policy_changed", { token, from: current, to: policy, gated: policy === "auto" })
-      // WP3 obligation: ANY policy change invalidates the "app-launch" trust
-      // context (the user approved launches under the OLD policy). Clearing
-      // on upgrade→auto is belt-and-braces (auto never consults trust).
-      clearAppLaunchTrust(token, deps, "apps.set_policy")
-      return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), { token, policy, changed: true })
+        const updated = normalizeAppEntry({ ...currentEntry, policy: policy as AppPolicy })
+        const schemaErr = validateAppEntry(updated)
+        if (schemaErr) return appsError(schemaErr)
+        const newEntries = { ...currentEntries, [token]: updated }
+        replaceAppsEntries(newEntries)
+        logger.info("apps.policy_changed", { token, from: current, to: policy, gated: policy === "auto" })
+        // WP3 obligation: ANY policy change invalidates the "app-launch" trust
+        // context (the user approved launches under the OLD policy). Clearing
+        // on upgrade→auto is belt-and-braces (auto never consults trust).
+        clearAppLaunchTrust(token, deps, "apps.set_policy")
+        return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), { token, policy, changed: true })
+      } finally { watch?.close() }
     }
 
     // --- apps.set_enabled: free both directions ------------------------------
@@ -446,55 +497,71 @@ const cap = maxPolicyForEntry(entry)
       const existing = getConfig().apps?.entries ?? {}
       const entry = existing[token]
       if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
-      // A10.3 — structural exclusion: vault-mapped / LOLBIN binaries can never
-      // persist coordinateAllowed (macOS Chrome is bundleId-only — path basename
-      // "Google Chrome" is NOT in the Windows vault table). Trust adversary 2026-08-22.
-      if (rest.allowed === true) {
-        const { canEverCoordinate } = await import("../computer/policy")
-        if (!canEverCoordinate(entry)) {
-          logger.warn("apps.coordinate_structural_deny", { token, bundleId: entry.bundleId, exe: entry.exe?.path })
-          return appsError(
-            `"${token}" maps to a vault/LOLBIN binary — coordinate operation is structurally denied (A10)`,
-            { code: "COORDINATE_STRUCTURAL_DENY" },
-          )
+      const watch = rest.allowed === true ? watchGrantSubject(token, entry) : undefined
+      let coordinateCheck: typeof import("../computer/policy").canEverCoordinate | undefined
+      try {
+        // A10.3 — structural exclusion: vault-mapped / LOLBIN binaries can never
+        // persist coordinateAllowed (macOS Chrome is bundleId-only — path basename
+        // "Google Chrome" is NOT in the Windows vault table). Trust adversary 2026-08-22.
+        if (rest.allowed === true) {
+          const { canEverCoordinate } = await import("../computer/policy")
+          coordinateCheck = canEverCoordinate
+          const subject = watch!.current()
+          if (!subject) return staleGrantError()
+          if (!canEverCoordinate(subject.entry)) {
+            logger.warn("apps.coordinate_structural_deny", { token, bundleId: entry.bundleId, exe: entry.exe?.path })
+            return appsError(
+              `"${token}" maps to a vault/LOLBIN binary — coordinate operation is structurally denied (A10)`,
+              { code: "COORDINATE_STRUCTURAL_DENY" },
+            )
+          }
         }
-      }
-      // Setting the bit is a persistent grant -> biometric gate; clearing is free.
-      // Idempotent: if already true, skip the gate (avoids gratuitous timeout errors).
-      if (rest.allowed === true) {
-        if (entry.coordinateAllowed === true) {
-          // Already enabled — no-op, return current state without gate
-          logger.info("apps.coordinate_already_enabled", { token })
-          return broadcastAndReturn(ctx, appsUpdatedPayload(existing), { token, coordinateAllowed: true })
-        }
-        if (!ctx.requestConfirmation) {
-          return appsError("apps.set_coordinate_allowed(true) requires an interactive confirmation channel", {
-            code: "NO_CONFIRMATION_CHANNEL",
+        // Setting the bit is a persistent grant -> biometric gate; clearing is free.
+        // Idempotent: if already true, skip the gate (avoids gratuitous timeout errors).
+        if (rest.allowed === true) {
+          if (entry.coordinateAllowed === true) {
+            // Already enabled — no-op, return current state without gate
+            logger.info("apps.coordinate_already_enabled", { token })
+            return broadcastAndReturn(ctx, appsUpdatedPayload(getConfig().apps?.entries ?? {}), { token, coordinateAllowed: true })
+          }
+          if (!ctx.requestConfirmation) {
+            return appsError("apps.set_coordinate_allowed(true) requires an interactive confirmation channel", {
+              code: "NO_CONFIRMATION_CHANNEL",
+            })
+          }
+          const gate = deps.gate ?? requireAppsBiometric
+          const outcome = await gate({
+            action: "apps.set_coordinate_allowed",
+            reason: `Allow coordinate input injection into "${entry.display_name}" (${token})`,
+            requestConfirmation: ctx.requestConfirmation,
           })
+          if (!outcome.approved) {
+            logger.warn("apps.coordinate_enable_denied", { token, reason: outcome.reason })
+            return appsError(
+              `coordinateAllowed ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — bit unchanged`,
+              { code: "BIOMETRIC_DENIED", reason: outcome.reason },
+            )
+          }
+          logger.info("apps.coordinate_enabled", { token, method: outcome.method })
+        } else {
+          logger.info("apps.coordinate_disabled", { token })
         }
-        const gate = deps.gate ?? requireAppsBiometric
-        const outcome = await gate({
-          action: "apps.set_coordinate_allowed",
-          reason: `Allow coordinate input injection into "${entry.display_name}" (${token})`,
-          requestConfirmation: ctx.requestConfirmation,
+        const subject = watch?.current()
+        if (watch && !subject) return staleGrantError()
+        const currentEntry = subject?.entry ?? entry
+        const currentEntries = subject?.entries ?? existing
+        if (rest.allowed === true && !coordinateCheck!(currentEntry)) {
+          return appsError("Current app does not permit coordinate input", { code: "COORDINATE_STRUCTURAL_DENY" })
+        }
+        // The dynamic import above has completed; no async boundary remains
+        // between the final subject check and synchronous persistence.
+        const newEntries = { ...currentEntries, [token]: { ...currentEntry, coordinateAllowed: rest.allowed } }
+        replaceAppsEntries(newEntries)
+        return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), {
+          token,
+          coordinateAllowed: rest.allowed,
         })
-        if (!outcome.approved) {
-          logger.warn("apps.coordinate_enable_denied", { token, reason: outcome.reason })
-          return appsError(
-            `coordinateAllowed ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — bit unchanged`,
-            { code: "BIOMETRIC_DENIED", reason: outcome.reason },
-          )
-        }
-        logger.info("apps.coordinate_enabled", { token, method: outcome.method })
-      } else {
-        logger.info("apps.coordinate_disabled", { token })
-      }
-      const newEntries = { ...existing, [token]: { ...entry, coordinateAllowed: rest.allowed } }
-      replaceAppsEntries(newEntries)
-      return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), {
-        token,
-        coordinateAllowed: rest.allowed,
-      })
+      } finally { watch?.close() }
     }
 
     default:

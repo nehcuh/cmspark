@@ -212,7 +212,8 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
   netsec_port_scan: z.object({
-    targets: z.array(z.string().min(1)).min(1).max(16),
+    // Reject blank arguments before admission; retain nonblank bytes for L2 binding.
+    targets: z.array(z.string().min(1).refine((value) => value.trim().length > 0, "target must not be blank")).min(1).max(16),
     ports: z.array(z.number().int().min(1).max(65535)).max(32).optional(),
     security_token: z.string().optional(),
   }),
