@@ -1020,6 +1020,12 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // app tokens and desktop metadata cannot downgrade their classification.
   ["APP_COORDINATE_STRUCTURAL", "non_recoverable"],
   ["DESKTOP_DENIED", "non_recoverable"],
+  // #563 D3: failed landing/foreground refusals retain their ordinary hard stop.
+  // Process diagnostics cannot enable retry or a webpage locator pivot. This
+  // tightens poisoned variants; it does not alter native input, post-success
+  // self-UI re-L2, or the separate TYPE_NO_EFFECT one-refocus/retype path.
+  ["CLICK_OCCLUDED", "non_recoverable"],
+  ["FOCUS_LOST", "non_recoverable"],
 
   // ── recoverable ───────────────────────────────────────────────────────────
   // Authorization refusal permits a different tool or fresh human approval;

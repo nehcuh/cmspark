@@ -391,8 +391,11 @@ export function AppsPanel() {
                 />
               )}
               {state.appCandidates === null && (
-                <div style={styles.emptyMini}>正在枚举本机应用（运行中进程 + 开始菜单）…</div>
+                <div style={styles.emptyMini}>正在枚举本机应用…</div>
               )}
+              {state.appRegistrySummary?.status === "partial" && <p role="status" style={styles.emptyMini}>注册表候选发现不完整，部分应用可能未列出。</p>}
+              {state.appRegistrySummary?.status === "unavailable" && <p role="status" style={styles.emptyMini}>当前无法读取注册表候选，部分应用可能未列出。</p>}
+              {state.appCandidates?.some(c => c.source === "registry") && <p style={styles.emptyMini}>注册表路径可能只是图标所在程序，请核对后再添加。</p>}
               {state.appCandidates !== null && filteredCandidates.length === 0 && (
                 <div style={styles.emptyMini}>无匹配候选</div>
               )}
@@ -723,7 +726,7 @@ function CandidateRow({
           {c.aumid ? "UWP 应用" : c.bundleId ? c.bundleId : c.path ? ellipsizePath(c.path, 36) : ""}
         </span>
       </span>
-      <span style={styles.sourceBadge}>{c.source === "running" ? "运行中" : c.source === "installed" ? "已安装" : "开始菜单"}</span>
+      <span style={styles.sourceBadge}>{c.source === "running" ? "运行中" : c.source === "installed" ? "已安装" : c.source === "registry" ? "注册表候选" : "开始菜单"}</span>
     </button>
   )
 }

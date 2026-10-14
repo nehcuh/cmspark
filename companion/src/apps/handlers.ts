@@ -37,7 +37,7 @@ import {
   type AddFlowDeps,
   type AddFlowOrigin,
 } from "./add-flow"
-import { enumerateApps, enumerateMacApps, type EnumeratedAppCandidate } from "./enumerate"
+import { enumerateAppsDetailed, enumerateMacApps, type EnumeratedAppCandidate, type WindowsAppEnumeration } from "./enumerate"
 import { basenameToVault, isLolbinPath } from "./guards"
 import { materializePresets } from "./presets"
 import { requireAppsBiometric } from "./biometric-gate"
@@ -52,6 +52,7 @@ export interface AppsHandlerContext {
 
 export interface AppsHandlerDeps extends AddFlowDeps {
   enumerate?: () => Promise<EnumeratedAppCandidate[]>
+  enumerateDetailed?: () => Promise<WindowsAppEnumeration>
   gate?: typeof requireAppsBiometric
   platform?: NodeJS.Platform
   /**
@@ -187,8 +188,10 @@ export async function handleAppsMessage(
         const candidates = await enumerateMacApps()
         return { type: "apps.enumerate.result", candidates }
       }
-      const run = deps.enumerate ?? (() => enumerateApps())
-      const candidates = await run()
+      // Injected legacy array seams have no reported Registry status.
+      const discovery = deps.enumerateDetailed ? await deps.enumerateDetailed() : deps.enumerate
+        ? { candidates: await deps.enumerate(), registry_summary: null } : await enumerateAppsDetailed()
+      const candidates = discovery.candidates
       // Annotate with guard verdicts so the panel can grey out hard-denied
       // candidates and badge vault-mapped ones BEFORE the user picks them.
       const annotated = candidates.map((c) => {
@@ -202,7 +205,7 @@ export async function handleAppsMessage(
           ...(vaultToken ? { vault_token: vaultToken } : {}),
         }
       })
-      return { type: "apps.enumerate.result", candidates: annotated }
+      return { type: "apps.enumerate.result", candidates: annotated, ...(discovery.registry_summary ? { registry_summary: discovery.registry_summary } : {}) }
     }
 
     // --- apps.add: enumeration pick OR manual paste → validated entry --------

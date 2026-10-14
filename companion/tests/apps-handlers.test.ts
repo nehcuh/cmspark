@@ -10,6 +10,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 
+import { enumerateAppsDetailed } from "../src/apps/enumerate"
 import { handleAppsMessage, type AppsHandlerDeps } from "../src/apps/handlers"
 import { maxPolicyForEntry, type AppEntry } from "../src/apps/types"
 
@@ -637,4 +638,43 @@ test("default clearer removes ONLY the token's app-launch entries (kind + bundle
     approvals.clearThread(T)
     approvals.clearThread(`${T}-2`)
   }
+})
+
+// #644 actual parser -> handler -> JSON outlet, controlled PowerShell boundary.
+// Native PS5.1 output is separately pinned by registry-apps-644 on Windows CI.
+test("#644 Registry discovery outlet preserves guards without registration or authority", async () => {
+  reset()
+  const before = JSON.stringify(getConfig().apps)
+  let gateCalls = 0, broadcasts = 0, probeCalls = 0
+  const controlled = { apps: [
+    { name: "Owned normal", source: "registry", path: "C:\\Owned644\\Normal.exe" },
+    { name: "Owned command", source: "registry", path: "C:\\Owned644\\cmd.exe" },
+    { name: "Owned vault", source: "registry", path: "C:\\Owned644\\chrome.exe" },
+  ], registry_summary: { status: "partial", reasons: ["VALUE_LIMIT"] } }
+  const result = await handleAppsMessage({ type: "apps.enumerate" }, { broadcast: () => { broadcasts++ } }, deps({
+    enumerateDetailed: () => enumerateAppsDetailed(async (_script, args, opts) => {
+      assert.deepEqual(args, []); assert.equal(opts?.timeoutMs, 20000)
+      return JSON.stringify(controlled)
+    }),
+    gate: async () => { gateCalls++; throw new Error("NO_GATE_DURING_DISCOVERY") },
+    signerProbe: async () => { probeCalls++; throw new Error("NO_SIGNER_DURING_DISCOVERY") },
+  }))
+  const wire = JSON.parse(JSON.stringify(result))
+  assert.equal(wire.type, "apps.enumerate.result")
+  assert.deepEqual(wire.registry_summary, controlled.registry_summary)
+  assert.equal(wire.candidates[0].blocked, false)
+  assert.equal(wire.candidates[1].blocked, true)
+  assert.equal(wire.candidates[1].block_reason, "lolbin")
+  assert.equal(wire.candidates[2].vault_token, "win.chrome")
+  for (const c of wire.candidates) for (const k of ["policy", "enabled", "token", "signer", "sha256", "cli_manifest"]) assert.equal(Object.hasOwn(c, k), false)
+  assert.equal(JSON.stringify(getConfig().apps), before)
+  assert.equal(gateCalls + broadcasts + probeCalls, 0)
+})
+
+test("#644 legacy unreported and zero-row summary are distinct handler outlets", async () => {
+  const legacy = await handleAppsMessage({type:"apps.enumerate"}, {}, deps({enumerate:async()=>[]}))
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(legacy)), "registry_summary"), false)
+  const zero = await handleAppsMessage({type:"apps.enumerate"}, {}, deps({enumerateDetailed:()=>enumerateAppsDetailed(async()=>JSON.stringify({apps:[],registry_summary:{status:"partial",reasons:["OUTPUT_LIMIT"]}}))}))
+  assert.deepEqual(JSON.parse(JSON.stringify(zero)).registry_summary, {status:"partial",reasons:["OUTPUT_LIMIT"]})
+  await assert.rejects(handleAppsMessage({type:"apps.enumerate"}, {}, deps({enumerateDetailed:()=>enumerateAppsDetailed(async()=>{throw new Error("OWNED_DISCOVERY_TRANSPORT_FAILURE")})})), /OWNED_DISCOVERY_TRANSPORT_FAILURE/)
 })

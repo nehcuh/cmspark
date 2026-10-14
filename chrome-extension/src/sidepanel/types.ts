@@ -677,7 +677,7 @@ export interface AppPresetStatus {
 /** Candidate from apps.enumerate.result, annotated by the backend guards. */
 export interface AppEnumerateCandidate {
   name: string
-  source: "running" | "startapps" | "installed"
+  source: "running" | "startapps" | "installed" | "registry"
   path?: string
   aumid?: string
   /** macOS bundle identifier (e.g. "com.apple.Notes"). */

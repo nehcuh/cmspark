@@ -1656,6 +1656,7 @@ export function useWebSocket() {
           dispatch({
             type: "SET_APPS_CANDIDATES",
             candidates: Array.isArray(msg.candidates) ? msg.candidates : [],
+            registrySummary: msg.registry_summary,
           })
           break
 
