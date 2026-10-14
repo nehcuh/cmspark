@@ -1916,7 +1916,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       String(finalParams.security_token), "evaluate", evalCode,
     )
     if (!tokenValid) {
-      const result = { success: false, error: "Invalid or expired security token for evaluate" }
+      const result = { success: false, error: "Invalid or expired security token for evaluate", data: { error_code: "EVALUATE_AUTH_REQUIRED" } }
       logToolFinish(toolCallId, toolName, startedAt, result)
       return result
     }

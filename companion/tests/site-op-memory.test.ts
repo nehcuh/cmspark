@@ -82,7 +82,7 @@ test("prompt lists banned locators; other thread isolated", () => {
 
 test("banned result never suggests host_computer", () => {
   const r = bannedSiteOpResult({ banned: true, error_code: "SITE_OP_BANNED", locator: "text:写文章" })
-  assert.equal(r.data.suggested_action, "stop_or_change_task")
+  assert.equal(r.data.suggested_action, "switch_strategy")
   assert.doesNotMatch(JSON.stringify(r), /host_computer/)
 })
 
@@ -360,7 +360,7 @@ test("origin CDP fail streak does not leak to another origin or thread", () => {
 
 test("locator SITE_OP_BANNED envelope still never suggests host_computer", () => {
   const r = bannedSiteOpResult({ banned: true, error_code: "SITE_OP_BANNED", locator: "text:写文章" })
-  assert.equal(r.data.suggested_action, "stop_or_change_task")
+  assert.equal(r.data.suggested_action, "switch_strategy")
   assert.doesNotMatch(JSON.stringify(r), /host_computer/)
 })
 

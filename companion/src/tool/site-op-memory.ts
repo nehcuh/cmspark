@@ -47,11 +47,10 @@ export const EVALUATE_NULL_RESULT = "EVALUATE_NULL_RESULT"
  *
  * 代价 —— **实测清单**（评审 pi 用探针逐条验过：4 次即升级 origin 并封掉后续 click）：
  *   · **参数类**：`INVALID_SELECTOR`（模型给出坏 CSS；zod 只要求非空串）、
- *     `scroll({})` 的无码 tabId 缺失
+ *     其他尚未编码的参数拒执（缺 tabId 已由 TAB_ID_REQUIRED 排除）
  *   · **授权类**：`L2_ADMISSION_TIMEOUT`（L2 队列排队超时，**所有** L2 工具都走该队列）、
  *     `UNATTENDED_CONFIRM_DENIED`（用户/超时拒批）、
- *     **无码**的 `"Invalid or expired security token for evaluate"`
- *     （`tool/l2-admission.ts:1887-1890`：模型回放被脱敏的旧 token —— **与 #528 同形**）
+ *     其他尚未编码的授权拒执（evaluate 无效 token 已补 EVALUATE_AUTH_REQUIRED）
  *   · **机器预算类**：`DOM_SCRIPT_LOOP_CAPPED` / `DOM_SCRIPT_VOLUME_CAPPED`
  *     （与已排除的 `SITE_OP_BANNED` 同形态 —— 那是 #425 的约定）
  * 收口见 **#568**（含「l2-admission 分支复用 `EVALUATE_AUTH_REQUIRED`」的一行修法）。
@@ -68,6 +67,8 @@ export const EVALUATE_NULL_RESULT = "EVALUATE_NULL_RESULT"
 export const NON_AGGREGATING_SITE_OP_CODES: ReadonlySet<string> = new Set([
   // evaluate 缺 security_token / 未获批准（#528 的原始事故形态）
   "EVALUATE_AUTH_REQUIRED",
+  // Missing tab identity is an argument refusal, not evidence about any page.
+  "TAB_ID_REQUIRED",
   // wait_for 既没给 selector 也没给 network_idle —— 纯参数缺失。
   // 评审 pi 实测：`wait_for({tabId, network_idle:false})` 是**合法**调用
   // （catalog required 只有 tabId；normalizeWaitForParams 保留显式 false），
@@ -680,7 +681,7 @@ export function bannedSiteOpResult(
   error: string
   data: {
     error_code: string
-    suggested_action: "stop_or_change_task" | "list_tabs" | "escalate_to_host_computer" | "declare_blocked"
+    suggested_action: "switch_strategy" | "list_tabs" | "escalate_to_host_computer" | "declare_blocked"
     locator: string
   }
 } {
@@ -717,7 +718,7 @@ export function bannedSiteOpResult(
     error: `SITE_OP_BANNED: already failed ${ban.locator} — do not retry the same locator/tool on this origin`,
     data: {
       error_code: "SITE_OP_BANNED",
-      suggested_action: "stop_or_change_task",
+      suggested_action: "switch_strategy",
       locator: ban.locator,
     },
   }
