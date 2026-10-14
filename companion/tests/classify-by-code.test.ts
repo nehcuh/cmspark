@@ -60,6 +60,8 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   // non_recoverable
   BROWSER_UNAVAILABLE: "non_recoverable",
   DOWNLOADS_API_UNAVAILABLE: "non_recoverable", // 下载 API 不可用（权限/环境）不是 agent 能自修的
+  APP_COORDINATE_DENIED: "non_recoverable", // #563 D1: metadata must not turn app opt-out into recovery
+  HWND_NOT_OWNED: "non_recoverable", // #563 D1: foreign-window refusal remains a hard stop
   // recoverable（#560 第二半改过下面前三条，原 non_recoverable）
   // 判据是「**agent 本回合能否自修**」，不是「结果里有没有 suggested_action」
   // （pi 指出：同带 suggested_action 的 DOWNLOADS_API_UNAVAILABLE 就留在 non_recoverable）。

@@ -7,6 +7,11 @@ type Frame = { id: number; document_id: string; url: string }
 export type EnterpriseSnapshot = { tab_id: number; url: string; document_id: string; generation: number; frames: Frame[]; state: string; last_business_url?: string; business_target_unavailable?: boolean; target?: Record<string, unknown> }
 type Guard = { version: number; profile_id: string; mode: string; expires_at: string; policy: { navigation: Scope[]; evidence: Scope[]; login: Scope[]; ready: Marker[]; login_markers: Marker[] }; expected?: EnterpriseSnapshot; rule?: Rule }
 type Result = { success: boolean; data?: any; error?: string }
+// These diagnostics are produced only by this host module, never page/Chrome
+// exception messages. Keep the brand private to the extension process.
+class SnapshotDiagnostic extends Error {
+  constructor(readonly code: "TAB_HISTORY_CAPACITY" | "FRAME_UNAVAILABLE") { super(code) }
+}
 const generations = new Map<number, number>()
 // Process-private owned-tab history; never exported as business evidence.
 const businessTabs = new Map<number, { policyKey: string; policy: Guard["policy"]; url?: string; intent?: string; ambiguous?: boolean }>()
@@ -49,7 +54,7 @@ function trackBusinessTab(tabId: number, policy: Guard["policy"], requested?: st
   const policyKey = JSON.stringify(policy)
   let tracked = businessTabs.get(tabId)
   if (!tracked || tracked.policyKey !== policyKey) {
-    if (!tracked && businessTabs.size >= 128) throw new Error("TAB_HISTORY_CAPACITY")
+    if (!tracked && businessTabs.size >= 128) throw new SnapshotDiagnostic("TAB_HISTORY_CAPACITY")
     tracked = { policyKey, policy }; businessTabs.set(tabId, tracked)
   }
   if (requested) { tracked.url = requested; tracked.intent = requested; tracked.ambiguous = false }
@@ -100,11 +105,11 @@ async function snapshot(tabId: number, guard: Guard): Promise<EnterpriseSnapshot
   const tracked = trackBusinessTab(tabId, guard.policy)
   const before = generations.get(tabId) || 0
   const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: "ISOLATED", func: inspectDocument, args: [guard.policy, guard.rule ?? null] })
-  if (results.length > 128) throw new Error("FRAME_UNAVAILABLE")
+  if (results.length > 128) throw new SnapshotDiagnostic("FRAME_UNAVAILABLE")
   const top = results.find(r => r.frameId === 0)
   if (!top?.documentId || !top.result || before !== (generations.get(tabId) || 0)) throw new Error("NAVIGATION_CHANGED")
   const frames = results.map(r => {
-    if (!r.documentId || !r.result || typeof r.result.url !== "string") throw new Error("FRAME_UNAVAILABLE")
+    if (!r.documentId || !r.result || typeof r.result.url !== "string") throw new SnapshotDiagnostic("FRAME_UNAVAILABLE")
     return { id: r.frameId, document_id: r.documentId, url: r.result.url }
   }).sort((a, b) => a.id - b.id)
   let state = top.result.state as string
@@ -206,8 +211,9 @@ export async function executeEnterpriseBrowser(tool: string, params: Record<stri
     }
     throw new Error("ENTERPRISE_TOOL_FORBIDDEN")
   } catch (error) {
+    if (error instanceof SnapshotDiagnostic) return { success: false, error: error.code }
     // Page/Chrome exceptions are untrusted, may contain tokens; fixed allowlist.
-    const code = (error as Error).message
+    const code = error instanceof Error ? error.message : ""
     const allowed = /^(ENTERPRISE_PROFILE_MISMATCH|ENTERPRISE_DEADLINE_EXPIRED|READINESS_CHANGED|ACTION_SCOPE_FORBIDDEN|NAVIGATION_CHANGED|NAVIGATION_FORBIDDEN|TAB_UNAVAILABLE|LOGIN_VIEW_FORBIDDEN|EVIDENCE_FORBIDDEN|SCREENSHOT_SCOPE_INCOMPLETE|SCREENSHOT_UNAVAILABLE|TARGET_MISMATCH|CREDENTIAL_FIELD_FORBIDDEN|ACTION_INVALID|ACTION_UNAVAILABLE|ENTERPRISE_TOOL_FORBIDDEN)$/
     return { success: false, error: allowed.test(code) ? code : "ENTERPRISE_BROWSER_UNAVAILABLE" }
   }

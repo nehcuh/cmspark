@@ -252,6 +252,49 @@ test("human review identifies actual site and target without exporting private U
   assert.equal(JSON.stringify(op.review).includes(h.browser.target_id), false)
   h.api.close()
 })
+test("frame URLs are private snapshot input and are absent from public status and durable metadata", async () => {
+  const h = harness()
+  try {
+    h.browser.url = "https://business.test/app?ticket=PRIVATE_FRAME_QUERY"
+    const session = await h.open(), status = await h.api.status(h.grant.id, "user-a", session.session_handle)
+    const op = await h.prepare(session.session_handle)
+    assert.ok(!JSON.stringify({ status, op }).includes("PRIVATE_FRAME_QUERY"))
+    assert.ok(!JSON.stringify(status).includes("frames"))
+    const durable = readFileSync(h.path, "utf8")
+    assert.ok(!durable.includes("PRIVATE_FRAME_QUERY")); assert.ok(!durable.includes("https://"))
+  } finally { h.api.close() }
+})
+test("failed login capture consumes its proof before capture and permits only a fresh challenge retry", async () => {
+  const h = harness(); h.browser.state = "login_required"
+  try {
+    const session = await h.open(), status = await h.api.status(h.grant.id, "user-a", session.session_handle) as any
+    const oldProof = h.proof(status.presentation_challenge), body = { subject: "user-a", session_handle: session.session_handle, presentation_proof: oldProof }
+    h.browser.fail = true
+    await assert.rejects(h.api.loginSnapshot(h.grant.id, body), /DISCONNECTED/)
+    h.browser.fail = false
+    await assert.rejects(h.api.loginSnapshot(h.grant.id, body), /HUMAN_PROOF_INVALID/)
+    assert.equal(h.browser.effects, 0)
+    const fresh = await h.api.status(h.grant.id, "user-a", session.session_handle) as any
+    assert.notEqual(fresh.presentation_challenge.nonce, status.presentation_challenge.nonce)
+    const image = await h.api.loginSnapshot(h.grant.id, { ...body, presentation_proof: h.proof(fresh.presentation_challenge) }) as any
+    assert.equal(image.audience, "human_only"); assert.equal(h.browser.effects, 1)
+  } finally { h.api.close() }
+})
+test("a proof consumed on late readiness cannot capture a later relogin image", async () => {
+  const h = harness(); h.browser.state = "login_required"
+  try {
+    const session = await h.open(), status = await h.api.status(h.grant.id, "user-a", session.session_handle) as any
+    const body = { subject: "user-a", session_handle: session.session_handle, presentation_proof: h.proof(status.presentation_challenge) }
+    h.browser.state = "ready"
+    await assert.rejects(h.api.loginSnapshot(h.grant.id, body), /LOGIN_VIEW_UNAVAILABLE/)
+    h.browser.state = "login_required"
+    await assert.rejects(h.api.loginSnapshot(h.grant.id, body), /HUMAN_PROOF_INVALID/)
+    assert.equal(h.browser.effects, 0)
+    const fresh = await h.api.status(h.grant.id, "user-a", session.session_handle) as any
+    assert.equal((await h.api.loginSnapshot(h.grant.id, { ...body, presentation_proof: h.proof(fresh.presentation_challenge) }) as any).audience, "human_only")
+    assert.equal(h.browser.effects, 1)
+  } finally { h.api.close() }
+})
 test("signed old target is rejected when identical replacement node has a different private identity", async () => {
   const h = harness(), session = await h.open(), op = await h.prepare(session.session_handle, "click", "delete")
   h.browser.target_id = "replacement-node"

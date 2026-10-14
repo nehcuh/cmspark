@@ -1,7 +1,7 @@
 /** Administrator-owned authority; never parsed from an execution request. */
 import { createHash, createPublicKey, randomUUID } from "node:crypto"
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, unlinkSync, type Stats } from "node:fs"
+import { dirname, join } from "node:path"
 import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
 
@@ -122,12 +122,33 @@ export function enterpriseInstance(): EnterpriseInstance {
 }
 export function registerEnterpriseInstance(profileId: string, subject: string): EnterpriseInstance {
   const profile_id = identifier(profileId), boundSubject = identifier(subject)
-  if (existsSync(instancePath())) {
-    const existing = enterpriseInstance()
-    if (existing.profile_id !== profile_id || existing.subject !== boundSubject) deny("INSTANCE_ALREADY_REGISTERED")
-    return existing
+  const path = instancePath(), lock = path + ".lock"
+  let fd: number
+  // Serialize the fresh read and atomic commit across administrator processes.
+  // A crashed writer requires offline recovery; never steal by age or PID.
+  try { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); fd = openSync(lock, "wx", 0o600) }
+  catch (error) { return deny((error as NodeJS.ErrnoException).code === "EEXIST" ? "INSTANCE_BUSY" : "INSTANCE_UNWRITABLE", 503) }
+  let owner: Stats | undefined
+  try {
+    owner = fstatSync(fd)
+    if (existsSync(path)) {
+      const existing = enterpriseInstance()
+      if (existing.profile_id !== profile_id || existing.subject !== boundSubject) deny("INSTANCE_ALREADY_REGISTERED")
+      return existing
+    }
+    const result: EnterpriseInstance = { version: 1, instance_id: randomUUID(), profile_id, subject: boundSubject }
+    atomicWriteJSON(path, result, 0o600)
+    return result
+  } catch (error) {
+    if (error instanceof EnterpriseError) throw error
+    return deny("INSTANCE_UNWRITABLE", 503)
+  } finally {
+    try {
+      if (owner) {
+        const current = lstatSync(lock)
+        if (current.dev === owner.dev && current.ino === owner.ino && current.isFile()) unlinkSync(lock)
+      }
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") deny("INSTANCE_UNWRITABLE", 503) }
+    finally { try { closeSync(fd) } catch { deny("INSTANCE_UNWRITABLE", 503) } }
   }
-  const result: EnterpriseInstance = { version: 1, instance_id: randomUUID(), profile_id, subject: boundSubject }
-  atomicWriteJSON(instancePath(), result, 0o600)
-  return result
 }

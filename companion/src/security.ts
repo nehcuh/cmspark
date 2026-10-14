@@ -1008,6 +1008,11 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // 真实报文不含码名（"downloads API unavailable"）→ 今天无子串命中、落默认桶。
   // 语义上也确实不可恢复：下载 API（扩展权限/环境）不可用不是 agent 能重试解决的。
   ["DOWNLOADS_API_UNAVAILABLE", "non_recoverable"],
+  // #563 D1: app opt-out and foreign HWND ownership are hard denials.
+  // Pin the ordinary hard-stop behavior; metadata containing timeout/disconnected
+  // no longer downgrades the refusal. This tightens classification, not admission.
+  ["APP_COORDINATE_DENIED", "non_recoverable"],
+  ["HWND_NOT_OWNED", "non_recoverable"],
 
   // ── recoverable ───────────────────────────────────────────────────────────
   // Authorization refusal permits a different tool or fresh human approval;
