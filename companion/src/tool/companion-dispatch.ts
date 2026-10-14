@@ -353,7 +353,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           return {
             success: false,
             error: `spawn_worker rolled back: intent claim failed — ${intentClaim.error}`,
-            data: { error_code: "SPAWN_INTENT_FAILED", intent_claim: intentClaim },
+            data: { error_code: intentClaim.error_code || "SPAWN_INTENT_FAILED", intent_claim: intentClaim },
           }
         }
       }

@@ -156,7 +156,7 @@ export function planReadonlyBlockedResult(
 } {
   return {
     success: false,
-    error: `PLAN_READONLY: 本线程处于计划模式（plan_readonly），只读观察工具可用，其余工具一律硬拒绝：${toolName}。需要执行时由用户关闭计划模式（user_gesture）。`,
+    error: "PLAN_READONLY: 本线程处于计划模式（plan_readonly），只读观察工具可用，其余工具一律硬拒绝。需要执行时由用户关闭计划模式（user_gesture）。",
     data: {
       error_code: "PLAN_READONLY_BLOCKED",
       error_level: "recoverable",

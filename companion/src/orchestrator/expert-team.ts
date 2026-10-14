@@ -517,7 +517,7 @@ export async function spawnExpertTeam(opts: {
     return {
       ok: false,
       error: invented.length
-        ? `no eligible experts after filtering invented ids: ${invented.join(", ")}`
+        ? "no eligible experts after filtering invented ids"
         : "spawn_expert_team requires at least one installed kind=expert member",
       data: { error_code: "NO_ELIGIBLE_EXPERTS", invented_filtered: invented },
     }

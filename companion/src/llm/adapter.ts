@@ -2311,7 +2311,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                 : undefined)
             // Classify before any tab-title splice. Titles are page-controlled;
             // appending them first let "Security Block" in a title halt the turn.
-            const errorLevel = toolName === "board_claim_intent" && classCode === "INTENT_DEPENDENCY_BLOCKED" ? "recoverable" : classifyError(toolResult.error || "", {
+            const errorLevel = classifyError(toolResult.error || "", {
               toolName,
               error_code: classCode,
             })

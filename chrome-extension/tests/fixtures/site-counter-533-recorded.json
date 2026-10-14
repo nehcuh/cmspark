@@ -1,0 +1,72 @@
+{
+  "classification": "actual HMAC WS/lifecycle/validator/router/executor/Bridge; controlled Chrome read APIs, not native",
+  "events": [
+    {
+      "phase": "actual-preauth-rejected",
+      "count": 4
+    },
+    {
+      "phase": "actual-controller-busy-refusal",
+      "count": 4
+    },
+    {
+      "phase": "actual-Bridge-inactive-tab-refusal",
+      "count": 4
+    },
+    {
+      "phase": "actual-validator-hostname-rejection",
+      "count": 4
+    },
+    {
+      "phase": "actual-different-peer-selected-owner-refusal"
+    },
+    {
+      "phase": "actual-HMAC-router-executor-Bridge-reset",
+      "count": 0,
+      "other_count": 1,
+      "health": "unknown",
+      "locator_preserved": true,
+      "readQueries": 7,
+      "readGets": 6,
+      "effectCalls": 0
+    }
+  ],
+  "status": {
+    "type": "site.counter.state",
+    "id": "status533",
+    "thread_id": "counter533-owned",
+    "context_tab_id": 7,
+    "origin": "https://scope533.test:8443",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "fails": 4,
+    "last_code": "UNKNOWN",
+    "threshold": 4,
+    "health": "unknown",
+    "locator_ban": true,
+    "attach_frozen": false,
+    "busy": false,
+    "reset": false
+  },
+  "reset": {
+    "type": "site.counter.state",
+    "id": "reset-final533",
+    "thread_id": "counter533-owned",
+    "context_tab_id": 7,
+    "origin": "https://scope533.test:8443",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "fails": 0,
+    "last_code": "UNKNOWN",
+    "threshold": 4,
+    "health": "unknown",
+    "locator_ban": true,
+    "attach_frozen": false,
+    "busy": false,
+    "reset": true
+  },
+  "busy": {
+    "type": "site.counter.error",
+    "id": "reset533",
+    "thread_id": "counter533-owned",
+    "code": "SITE_COUNTER_BUSY"
+  }
+}

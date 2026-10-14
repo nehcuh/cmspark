@@ -668,6 +668,14 @@ export class SecurityConfirmationManager {
     return false
   }
 
+  /** Read-only busy fence for an authenticated settings peer, including its
+   * non-worker confirmations. Does not resolve or disclose pending details. */
+  hasPendingForOriginWs(ws: unknown): boolean {
+    if (!ws) return false
+    for (const p of this.pending.values()) if (p.originWs === ws) return true
+    return false
+  }
+
   /** True if confirmationId is still in the pending map. */
   isPending(confirmationId: string): boolean {
     return this.pending.has(confirmationId)

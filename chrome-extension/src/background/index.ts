@@ -1,6 +1,7 @@
 // CMspark Browser Agent — Background Service Worker
 // WebSocket client, CDP manager, tab manager, cookie ops
 
+import { forwardSiteCounterSettings, noteSiteCounterUiSelection } from "./site-counter-settings"
 import { WSClient } from "./ws-client"
 import { projectMetadataSenderAllowed } from "./project-metadata"
 import {
@@ -634,11 +635,11 @@ async function handleCompanionMessage(msg: any) {
 // --- Message handlers for popup/side panel ---
 
 function setupMessageHandlers() {
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Outer guard: any uncaught throw in a case would otherwise leave the
     // sender with lastError "The message port closed before a response was received."
     try {
-      return handleRuntimeMessage(message, sendResponse, _sender)
+      return handleRuntimeMessage(message, sendResponse, sender)
     } catch (e: any) {
       try {
         sendResponse({ ok: false, error: e?.message || String(e) })
@@ -986,8 +987,13 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         sendResponse({ ok: true })
         return true
 
+      case "site.counter.status":
+      case "site.counter.reset":
+        forwardSiteCounterSettings(message, sender, wsClient).then(sendResponse, () => sendResponse({ ok:false }))
+        return true
+
       case "thread.select":
-        wsClient.send({ type: "thread.select", thread_id: message.threadId })
+        if (wsClient.send({ type: "thread.select", thread_id: message.threadId })) noteSiteCounterUiSelection(message.threadId)
         sendResponse({ ok: true })
         return true
 

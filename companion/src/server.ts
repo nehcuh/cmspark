@@ -415,6 +415,8 @@ export type ToolExecuteInvokeOpts = {
   trustedOutbound?: boolean
   /** Server-owned Chat metadata resolution; never read this from tool args. */
   siteContextTabId?: number
+  /** Settings-only current-tab metadata proof; stripped from untrusted args. */
+  siteContextRequireActive?: boolean
   /** Bound by the Chat router or authenticated outbound runner, never tool args. */
   evidenceScope?: EvidenceScope
 }
@@ -469,7 +471,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     invokeOpts?: ToolExecuteInvokeOpts,
   ): Promise<{ success: boolean; data?: any; error?: string }> => {
     if (signal?.aborted) return { success: false, error: "Tool call cancelled before dispatch" }
-    let finalParams = contextReadParams(toolName, params || {}, invokeOpts?.siteContextTabId)
+    let finalParams = contextReadParams(toolName, params || {}, invokeOpts?.siteContextTabId, invokeOpts?.siteContextRequireActive)
     delete finalParams.__enterprise_guard
     const enterprisePermit = invokeOpts?.enterprisePermit
     if (enterprisePermit && !checkEnterprisePermit(enterprisePermit, toolName, finalParams, ws)) return { success: false, error: "PERMIT_INVALID" }

@@ -1,0 +1,182 @@
+[
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-82f4c686-dd2f-4a7b-8ae9-fdbb3ad71fa1",
+    "thread_id": "demo-0"
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-eb790e5b-08e0-4676-99a7-9a63119a911d",
+    "thread_id": "demo-0"
+  },
+  {
+    "type": "site.counter.reset",
+    "source": "settings",
+    "id": "site-counter-b06958ea-2a59-47a0-bb05-9da7098414bc",
+    "thread_id": "demo-0",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "user_gesture": true
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-2d9e7673-fcee-46a8-8d13-f6764e149c87",
+    "thread_id": "demo-0"
+  },
+  {
+    "type": "site.counter.reset",
+    "source": "settings",
+    "id": "site-counter-79bb7842-37c2-4f3c-85c8-c18c88af031e",
+    "thread_id": "demo-0",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "user_gesture": true
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-76f01c02-17c1-43b7-aed6-ec6bbba89312",
+    "thread_id": "demo-0"
+  },
+  {
+    "type": "site.counter.reset",
+    "source": "settings",
+    "id": "site-counter-29aadffe-9f42-48fe-820b-164b0a12aa99",
+    "thread_id": "demo-0",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "user_gesture": true
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-e93732a3-8ff8-4bfe-b4ec-042512672fd9",
+    "thread_id": "demo-0"
+  },
+  {
+    "type": "site.counter.reset",
+    "source": "settings",
+    "id": "site-counter-18fccaf2-dabc-4157-851d-a8b074d07774",
+    "thread_id": "demo-0",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "user_gesture": true
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-37fa29c2-af1a-4f3f-9d3b-c29aab0e5c23",
+    "thread_id": "demo-0"
+  },
+  {
+    "type": "site.counter.reset",
+    "source": "settings",
+    "id": "site-counter-e5810a25-9931-4d92-acfd-315f48ffb55c",
+    "thread_id": "demo-0",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "user_gesture": true
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-0012897b-7ad2-4662-a7b2-1509ed03a624",
+    "thread_id": "demo-0"
+  },
+  {
+    "type": "site.counter.reset",
+    "source": "settings",
+    "id": "site-counter-541d6b60-b0e3-42d7-a2ee-6046d418e2e5",
+    "thread_id": "demo-0",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "user_gesture": true
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-29d986bc-9dbd-4a78-87c4-db97ad2c456e",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-b990ee44-1f91-40cb-8e84-1a64a4331267",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.reset",
+    "source": "settings",
+    "id": "site-counter-2d0be669-e78f-46c7-9c49-00ff31f82b44",
+    "thread_id": "demo-1",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "user_gesture": true
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-e82978a5-847d-4acf-985a-e5993a573afd",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.reset",
+    "source": "settings",
+    "id": "site-counter-d9452a25-ca0e-4b6d-a5ac-7082bbf3f4d6",
+    "thread_id": "demo-1",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "user_gesture": true
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-3c795d99-10a7-43cf-83fa-0abd1e036261",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-a68986eb-e338-4758-996f-271aba7105bf",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-6f1435ac-2cb5-4be2-a0a4-3f60ca1772e4",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-6260daa5-a258-4b4f-b79c-be97eae8c294",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-0cdfcd74-0942-487b-938b-e81a9e849c0f",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-de4ebb4b-147b-4ab4-b5c4-6656322c17f7",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-1e113efa-4f3d-4bc0-bbdf-5fc6a2dc50fa",
+    "thread_id": "demo-1"
+  },
+  {
+    "type": "site.counter.reset",
+    "source": "settings",
+    "id": "site-counter-3c2f62f7-83b7-40a6-ac04-36f05c19f473",
+    "thread_id": "demo-1",
+    "target_key": "f961caee5d62007a5053f63110890adc7e9907dcc0d27163413ce46e294d873e",
+    "user_gesture": true
+  },
+  {
+    "type": "site.counter.status",
+    "source": "settings",
+    "id": "site-counter-970e750f-853e-4c34-bc1d-3ffc0d89b661",
+    "thread_id": "demo-1"
+  }
+]

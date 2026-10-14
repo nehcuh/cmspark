@@ -5,6 +5,7 @@ import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
 import { UserEnvSection } from "./UserEnvSection"
+import { SiteCounterSettingsSection } from "./SiteCounterSettingsSection"
 import { NetSecSettingsSection } from "./NetSecSettingsSection"
 import { CapabilityProfileSection } from "./CapabilityProfileSection"
 import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
@@ -2559,6 +2560,7 @@ export function SettingsSlideout() {
                 }}>有开关已开</span>
               ) : null}
             >
+          <SiteCounterSettingsSection visible={activeSettingsPage === "security" && state.settingsOpen} />
           {/* --- 运行自主度 (Trust packaging / Autopilot + ADR-021 unattended) --- */}
           {(() => {
             const armFlags = {
