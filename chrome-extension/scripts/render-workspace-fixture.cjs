@@ -2,9 +2,13 @@
 const fs=require('fs'),path=require('path');
 const root=process.cwd(),out=process.argv[2] || '/private/tmp/cmspark-workspace-ui';fs.mkdirSync(out,{recursive:true});
 const store=path.join(root,'src/sidepanel/store/agentStore.tsx');
-const hook=`import {useEffect} from 'react';import {useAgentStore} from ${JSON.stringify(store)};
+const syntheticHook=`import {useEffect} from 'react';import {useAgentStore} from ${JSON.stringify(store)};
 export const shouldApplyStreamEvent=()=>true;
 export function useWebSocket(){const {state,dispatch}=useAgentStore();window.fixtureState=state;useEffect(()=>{window.dispatchUI=dispatch;const threads=window.demoThreads;dispatch({type:'SET_CONNECTION',state:'connected'});dispatch({type:'SET_THREADS',threads});dispatch({type:'SET_ACTIVE_THREAD',threadId:threads[0].id});dispatch({type:'SET_MESSAGES',messages:[]});},[]);return {connectionState:state.connectionState};}`;
+// #644 can retain the actual WS hook at the controlled runtime transport seam.
+// The wrapper exposes state for assertions; it does not translate responses.
+const realHookPath=path.join(root,'src/sidepanel/hooks/useWebSocket.ts');
+const hook=process.argv.includes('--real-hook') ? `import {useAgentStore} from ${JSON.stringify(store)};import {useWebSocket as realHook} from ${JSON.stringify(realHookPath)};export * from ${JSON.stringify(realHookPath)};export function useWebSocket(){const {state,dispatch}=useAgentStore();window.fixtureState=state;window.dispatchUI=dispatch;return realHook();}` : syntheticHook;
 const source=`import {codingManualEntryAction} from ${JSON.stringify(path.join(root,'src/sidepanel/utils/coding-manual-entry-message.ts'))};import {codingControlAction} from ${JSON.stringify(path.join(root,'src/sidepanel/utils/coding-control-message.ts'))};import {recordedThreadMutationResponses} from ${JSON.stringify(path.join(root,'tests/fixtures/thread-mutation-responses.ts'))};import {CockpitRoot} from ${JSON.stringify(path.join(root,'src/cockpit/CockpitApp.tsx'))};import React from 'react';import{createRoot}from'react-dom/client';import{App}from${JSON.stringify(path.join(root,'src/sidepanel/App.tsx'))};
 const event={addListener(){},removeListener(){}};window.sent=[];window.runtimeListeners=new Set();window.emitRuntime=message=>{for(const fn of window.runtimeListeners)fn(message)};const runtimeEvent={addListener:fn=>window.runtimeListeners.add(fn),removeListener:fn=>window.runtimeListeners.delete(fn)};
 window.demoThreads=['发布 v2.8 · 变更材料','支付服务 · 需求与测试追溯','本周运行状态巡检','整理架构评审记录'].map((alias,i)=>({id:'demo-'+i,alias,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),config_override:{},tool_whitelist:null,pinned_tabs:[],active_skill_ids:[],agent_role:'normal'}));

@@ -1,3 +1,4 @@
+import { registrySummaryFromMessage, type RegistryDiscoverySummary } from "../utils/apps-discovery"
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
@@ -322,6 +323,7 @@ export interface AgentState {
   appPresets: AppPresetStatus[]
   /** Latest apps.enumerate.result (null = no enumeration run this session). */
   appCandidates: AppEnumerateCandidate[] | null
+  appRegistrySummary: RegistryDiscoverySummary | null
   /** Warnings from the last successful apps.add (D8 prominent render area). */
   appsWarnings: AppAddWarning[]
   /** Last apps.* error (BIOMETRIC_DENIED / POLICY_CAP_EXCEEDED / ...). */
@@ -600,7 +602,7 @@ export type AgentAction =
   | { type: "OPEN_MCP_SERVER_FORM"; editing: string | null }
   | { type: "CLOSE_MCP_SERVER_FORM" }
   | { type: "SET_APPS_STATE"; enabled: boolean; entries: AppEntry[]; presets?: AppPresetStatus[]; platform?: string }
-  | { type: "SET_APPS_CANDIDATES"; candidates: AppEnumerateCandidate[] | null }
+  | { type: "SET_APPS_CANDIDATES"; candidates: AppEnumerateCandidate[] | null; registrySummary?: unknown }
   | { type: "SET_APPS_WARNINGS"; warnings: AppAddWarning[] }
   | { type: "SET_APPS_ERROR"; error: string | null }
   | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
@@ -794,6 +796,7 @@ export const initialState: AgentState = {
   appEntries: [],
   appPresets: [],
   appCandidates: null,
+  appRegistrySummary: null,
   appsWarnings: [],
   appsError: null,
   appsPlatform: null,
@@ -1940,7 +1943,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         appsPlatform: action.platform ?? state.appsPlatform,
       }
     case "SET_APPS_CANDIDATES":
-      return { ...state, appCandidates: action.candidates }
+      return { ...state, appCandidates: action.candidates, appRegistrySummary: action.candidates === null ? null : registrySummaryFromMessage(action.registrySummary, action.candidates.filter(c => c?.source === "registry").length) }
     case "SET_APPS_WARNINGS":
       return { ...state, appsWarnings: action.warnings }
     case "SET_APPS_ERROR":
