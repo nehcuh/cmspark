@@ -14,7 +14,9 @@ import { getConfig } from "../config"
 import { securityPolicy } from "../security-policy"
 import { logger } from "../logger"
 import { checkHighRiskExecution } from "../security"
-import { APP_TOKEN_PATTERN } from "../apps/types"
+import { packApplyErrorCode } from "../packs/pack-apply-error"
+import { APP_TOKEN_PATTERN, type AppEntry } from "../apps/types"
+import { asCliManifest } from "../apps/cli-manifest"
 import {
   OSASCRIPT_MACOS_ONLY_ERROR,
   shouldL2GateOsascript,
@@ -271,7 +273,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       if (!r.ok) return { success: false, error: r.error }
       // Optional pack.apply after spawn: composition only — NEVER allowTrust (S46 P0-4).
       // Spawn L2 ≠ consent to write global auto_approve / three-flag cruise (Trust B).
-      let packApply: { ok: boolean; error?: string } | null = null
+      let packApply: { ok: boolean; error?: string; error_code?: string } | null = null
       if (params.pack_id && typeof params.pack_id === "string") {
         try {
           const { applyPack } = await import("../packs/pack-engine")
@@ -281,7 +283,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             const ar = applyPack(String(params.pack_id), r.worker.id, threadManager, skillEngine, {
               allowTrust: false,
             })
-            packApply = ar.ok ? { ok: true } : { ok: false, error: ar.error }
+            packApply = ar.ok ? { ok: true } : { ok: false, error: ar.error, error_code: packApplyErrorCode(ar.code) }
           }
         } catch (e: any) {
           packApply = { ok: false, error: e?.message || String(e) }
@@ -299,7 +301,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           return {
             success: false,
             error: `spawn_worker rolled back: pack apply failed — ${packApply.error}`,
-            data: { error_code: "SPAWN_PACK_FAILED", pack_apply: packApply },
+            data: { error_code: packApply.error_code || "SPAWN_PACK_FAILED", pack_apply: packApply },
           }
         }
       }
@@ -1952,7 +1954,14 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       try {
         const { prepareCliExecution, runCliExecFile } = await import("../apps/cli-exec")
         const { markCliOutputSeen } = await import("../apps/cli-q5")
-        const prepared = prepareCliExecution(entry, {
+        // Imports are await boundaries: the app/manifest may have changed
+        // since the initial lookup, including read-only becoming dangerous.
+        const latestApps = getConfig().apps
+        const preparedEntry = latestApps?.entries?.[appToken]
+        if (!latestApps || latestApps.enabled === false || !preparedEntry || preparedEntry.kind !== "cli" || !preparedEntry.enabled) {
+          return { success: false, error: "host_cli: app changed before CLI preparation" }
+        }
+        let prepared = prepareCliExecution(preparedEntry, {
           app: appToken,
           subcommand,
           flags: params.flags,
@@ -1961,7 +1970,52 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         if (!prepared.ok) {
           return { success: false, error: `host_cli: ${prepared.error}` }
         }
-        // Dangerous risk: still require L2 (already have token); biometric floor deferred to L2 dialog riskLevel
+        // #646: ordinary L2 (even labelled high risk) is not a second factor.
+        // Guard direct/preauthorized calls at the final process boundary too.
+        if (prepared.risk === "dangerous") {
+          execOpts?.signal?.throwIfAborted()
+          if (!execOpts?.sendConfirmation) {
+            return { success: false, error: "host_cli: dangerous subcommand requires an origin-bound biometric confirmation channel" }
+          }
+          const snapshot = (candidate: AppEntry, execution: Extract<ReturnType<typeof prepareCliExecution>, { ok: true }>) => JSON.stringify({
+            enabled: candidate.enabled,
+            kind: candidate.kind,
+            canonicalExe: execution.exe,
+            selectedCommand: asCliManifest(candidate.cli_manifest)?.subcommands.find(s => s.name === subcommand),
+            risk: execution.risk,
+            argv: execution.argv,
+            timeoutMs: execution.timeoutMs,
+            maxOutputBytes: execution.maxOutputBytes,
+          })
+          const approvedSnapshot = snapshot(preparedEntry, prepared)
+          const { requireAppsBiometric } = await import("../apps/biometric-gate")
+          execOpts.signal?.throwIfAborted()
+          const outcome = await requireAppsBiometric({
+            action: "host_cli",
+            reason: `Run dangerous CLI "${appToken}" subcommand "${subcommand}"`,
+            requestConfirmation: execOpts.sendConfirmation,
+          })
+          execOpts.signal?.throwIfAborted()
+          if (!outcome.approved) {
+            return { success: false, error: `host_cli: dangerous subcommand biometric verification ${outcome.reason}` }
+          }
+          const currentApps = getConfig().apps
+          const current = currentApps?.entries?.[appToken]
+          if (!currentApps || currentApps.enabled === false || !current || current.kind !== "cli" || !current.enabled) {
+            return { success: false, error: "host_cli: app changed during biometric approval" }
+          }
+          const currentPrepared = prepareCliExecution(current, {
+            app: appToken, subcommand, flags: params.flags, args: params.args,
+          })
+          if (!currentPrepared.ok || snapshot(current, currentPrepared) !== approvedSnapshot) {
+            return { success: false, error: "host_cli: approved CLI operation changed during biometric approval" }
+          }
+          if (!securityPolicy.validateTokenFor(String(params.security_token), "host_cli", params)) {
+            return { success: false, error: "Invalid or expired security token for host_cli" }
+          }
+          execOpts.signal?.throwIfAborted()
+          prepared = currentPrepared
+        }
         const result = await runCliExecFile(prepared.exe, prepared.argv, {
           timeoutMs: prepared.timeoutMs,
           maxOutputBytes: prepared.maxOutputBytes,

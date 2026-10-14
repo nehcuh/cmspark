@@ -998,6 +998,9 @@ export const DEFAULT_NON_RECOVERABLE_CODES: readonly string[] = [
  * 各条的历史原因沿用原先散落在 classifyError 里的分支注释。
  */
 export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string, ErrorLevel>([
+  // #563 B2: finite applyPack composition failures, preserving their original levels.
+  ["PACK_MODULE_DISABLED", "recoverable"],
+  ["PACK_ENTERPRISE_PROFILE_REQUIRED", "non_recoverable"],
   // ── security ──────────────────────────────────────────────────────────────
   // Cookie 信任域拦截：真实报文以 "Security Block: …" 开头，今天靠子串判 security。
   ["COOKIE_TRUST_DENIED", "security"],

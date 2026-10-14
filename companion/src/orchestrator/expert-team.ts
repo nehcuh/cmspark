@@ -5,6 +5,7 @@
 import { createHash } from "crypto"
 import { logger } from "../logger"
 import { listInstalledPacks, readInstalledManifest, applyPack } from "../packs/pack-engine"
+import { packApplyErrorCode } from "../packs/pack-apply-error"
 import { computePackEffectiveTools, getPackSpawnGate } from "../packs/expert-panel"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { ThreadManager } from "../threads/thread-manager"
@@ -607,15 +608,15 @@ export async function spawnExpertTeam(opts: {
     if (!opts.skillEngine) {
       return fail(`spawn_expert_team rolled back: skillEngine not initialized; pack apply required`, "SPAWN_PACK_FAILED")
     }
-    let packApply: { ok: boolean; error?: string }
+    let packApply: { ok: boolean; error?: string; error_code?: string }
     try {
       const ar = applyPack(m.pack_id, spawned.worker.id, opts.tm, opts.skillEngine, { allowTrust: false })
-      packApply = ar.ok ? { ok: true } : { ok: false, error: ar.error }
+      packApply = ar.ok ? { ok: true } : { ok: false, error: ar.error, error_code: packApplyErrorCode(ar.code) }
     } catch (e: any) {
       packApply = { ok: false, error: e?.message || String(e) }
     }
     if (!packApply.ok) {
-      return fail(`spawn_expert_team rolled back: pack apply failed — ${packApply.error}`, "SPAWN_PACK_FAILED")
+      return fail(`spawn_expert_team rolled back: pack apply failed — ${packApply.error}`, packApply.error_code || "SPAWN_PACK_FAILED")
     }
 
     const persisted = persistWorkerBrief(opts.tm, spawned.worker.id, m.brief)
