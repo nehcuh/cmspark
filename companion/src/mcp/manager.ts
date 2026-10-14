@@ -13,6 +13,7 @@ import { logger } from "../logger.js"
 import { isValidDeclaredCapability } from "../security.js"
 import type { ToolDefinition } from "../bridge/tool-definitions.js"
 import { McpClient } from "./client.js"
+import { McpStdioTeardownError } from "./stdio-transport.js"
 import { aggregateMcpTools, type AggregatedTools } from "./aggregator.js"
 import {
   DEFAULT_RESTART_POLICY,
@@ -45,6 +46,8 @@ export class McpManager extends EventEmitter {
   private deadServers = new Set<string>()
   private restartTimers = new Map<string, NodeJS.Timeout>()
   private startingPromises = new Map<string, Promise<void>>()
+  /** Pending/failed owned close receipts also fence name reuse. */
+  private retiringClients = new Map<string, { client: McpClient; promise: Promise<void>; failed: boolean }>()
   private shuttingDown = false
   private generations = new Map<string, number>()
   private configUpdates: Promise<void> = Promise.resolve()
@@ -85,9 +88,10 @@ export class McpManager extends EventEmitter {
       this.restartTimers.delete(name)
     }
     await Promise.allSettled(
-      Array.from(this.clients.keys()).map((name) => this.stopClient(name)),
+      [...new Set([...this.clients.keys(), ...this.retiringClients.keys()])].map((name) => this.stopClient(name)),
     )
-    this.clients.clear()
+    // Successful closes remove themselves. Failed receipts must remain owned
+    // and visible even after shutdown; clearing the map would orphan them.
     this.reaggregate()
     this.emit("servers_updated", this.listServers())
   }
@@ -115,15 +119,18 @@ export class McpManager extends EventEmitter {
     if (this.shuttingDown || this.currentConfig !== config) return
     const prev = this.appliedConfig ?? previous
     this.appliedConfig = config
+    const teardownErrors: unknown[] = []
+    const stop = (name: string) => this.stopClient(name).catch(error => { teardownErrors.push(error) })
 
     if (!config.enabled) {
       // Kill everything
-      const names = new Set([...this.clients.keys(), ...this.restartTimers.keys(), ...this.startingPromises.keys()])
+      const names = new Set([...this.clients.keys(), ...this.retiringClients.keys(), ...this.restartTimers.keys(), ...this.startingPromises.keys()])
       for (const name of names) {
-        await this.stopClient(name)
+        await stop(name)
       }
       this.reaggregate()
       this.emit("servers_updated", this.listServers())
+      if (teardownErrors.length) throw teardownErrors[0]
       return
     }
 
@@ -131,11 +138,11 @@ export class McpManager extends EventEmitter {
     const nextServers = config.servers
 
     // Removed
-    const knownNames = new Set([...Object.keys(prevServers), ...this.clients.keys(),
+    const knownNames = new Set([...Object.keys(prevServers), ...this.clients.keys(), ...this.retiringClients.keys(),
       ...this.restartTimers.keys(), ...this.startingPromises.keys()])
     for (const name of knownNames) {
       if (!(name in nextServers)) {
-        await this.stopClient(name)
+        await stop(name)
         if (this.currentConfig !== config) return
       }
     }
@@ -150,7 +157,7 @@ export class McpManager extends EventEmitter {
         continue
       }
       if (requiresRestart(prevCfg, cfg)) {
-        await this.stopClient(name)
+        await stop(name)
         if (this.currentConfig !== config) return
         this.deadServers.delete(name)
         if (cfg.enabled) this.startClient(name, cfg).catch(() => {})
@@ -167,7 +174,7 @@ export class McpManager extends EventEmitter {
             this.deadServers.delete(name)
             this.startClient(name, cfg).catch(() => {})
           } else {
-            await this.stopClient(name)
+            await stop(name)
           }
         }
       }
@@ -175,6 +182,7 @@ export class McpManager extends EventEmitter {
 
     this.reaggregate()
     this.emit("servers_updated", this.listServers())
+    if (teardownErrors.length) throw teardownErrors[0]
   }
 
   // --- per-client management ---
@@ -186,6 +194,11 @@ export class McpManager extends EventEmitter {
       (this.generations.get(name) ?? 0) === generation &&
       !requiresRestart(cfg, this.currentConfig.servers[name])
     if (!permitted()) return
+    const retiring = this.retiringClients.get(name)
+    if (retiring) {
+      await retiring.promise
+      if (!permitted()) return
+    }
     // Serialize concurrent start attempts
     const existing = this.startingPromises.get(name)
     if (existing) {
@@ -201,8 +214,7 @@ export class McpManager extends EventEmitter {
       // If a client already exists (e.g. restart), close it first
       const prior = this.clients.get(name)
       if (prior) {
-        await prior.close().catch(() => {})
-        if (this.clients.get(name) === prior) this.clients.delete(name)
+        await this.retireClient(name, prior)
       }
       if (!permitted()) return
 
@@ -218,8 +230,7 @@ export class McpManager extends EventEmitter {
         // of reviving it or leaking a live-but-untracked connection.
         if (this.clients.get(name) !== client || !permitted()) {
           logger.warn("mcp.client.ghost_after_connect", { server: name })
-          await client.close().catch(() => {})
-          if (this.clients.get(name) === client) this.clients.delete(name)
+          await this.retireClient(name, client)
           this.reaggregate()
           return
         }
@@ -237,7 +248,9 @@ export class McpManager extends EventEmitter {
         })
         // Surface error state but keep client in map so getMeta() shows error
         this.emit("status_changed", client.getMeta())
-        if (this.clients.get(name) === client && permitted()) {
+        if (err instanceof McpStdioTeardownError) {
+          await this.retireClient(name, client).catch(() => {})
+        } else if (this.clients.get(name) === client && permitted()) {
           this.scheduleRestart(name, cfg, err?.message || "start failed")
         }
       }
@@ -265,14 +278,41 @@ export class McpManager extends EventEmitter {
     this.restartAttempts.delete(name)
 
     const client = this.clients.get(name)
-    this.clients.delete(name)
     const starting = this.startingPromises.get(name)
-    if (client) await client.close().catch(() => {})
-    // Drain the old start before allowing a same-name replacement to begin.
-    await starting?.catch(() => {})
-    this.reaggregate()
-    if (client) this.emit("status_changed", client.getMeta())
-    this.emit("servers_updated", this.listServers())
+    this.revokeAuthorization(name)
+    try {
+      if (client) await this.retireClient(name, client)
+      else await this.retiringClients.get(name)?.promise
+    } finally {
+      // Drain the old start even on rejected close; preserve its owned receipt.
+      await starting?.catch(() => {})
+      this.reaggregate()
+      if (client) this.emit("status_changed", client.getMeta())
+      this.emit("servers_updated", this.listServers())
+    }
+  }
+
+  private retireClient(name: string, client: McpClient): Promise<void> {
+    const existing = this.retiringClients.get(name)
+    if (existing) return existing.promise
+    const entry = { client, promise: Promise.resolve(), failed: false }
+    this.retiringClients.set(name, entry)
+    const timer = this.restartTimers.get(name)
+    if (timer) { clearTimeout(timer); this.restartTimers.delete(name) }
+    this.revokeAuthorization(name)
+    this.reaggregate() // Capability revocation precedes asynchronous close.
+    entry.promise = Promise.resolve().then(() => client.close()).then(() => {
+      if (this.retiringClients.get(name) === entry) this.retiringClients.delete(name)
+      if (this.clients.get(name) === client) this.clients.delete(name)
+      this.reaggregate()
+    }).catch(error => {
+      entry.failed = true
+      this.reaggregate()
+      this.emit("status_changed", client.getMeta())
+      this.emit("servers_updated", this.listServers())
+      throw error
+    })
+    return entry.promise
   }
 
   private attachClientListeners(client: McpClient): void {
@@ -309,7 +349,7 @@ export class McpManager extends EventEmitter {
   }
 
   private scheduleRestart(name: string, cfg: McpServerConfig, reason: string): void {
-    if (this.shuttingDown || !this.currentConfig?.enabled) return
+    if (this.shuttingDown || !this.currentConfig?.enabled || this.retiringClients.has(name)) return
     // #289: re-read the live config — `cfg` is the stale snapshot captured when
     // the (failed) start began. A disable/remove during connect must win over
     // the closure, and the restart itself must use the current command/policy.
@@ -369,7 +409,7 @@ export class McpManager extends EventEmitter {
 
   private isCurrentClient(client: McpClient): boolean {
     const config = this.currentConfig?.servers[client.name]
-    return this.currentConfig?.enabled === true && config?.enabled === true &&
+    return !this.shuttingDown && !this.retiringClients.has(client.name) && this.currentConfig?.enabled === true && config?.enabled === true &&
       this.clients.get(client.name) === client && !requiresRestart(client.config, config)
   }
 
@@ -505,7 +545,16 @@ export class McpManager extends EventEmitter {
     const seen = new Set<string>()
 
     for (const [name, client] of this.clients) {
-      metas.push(client.getMeta())
+      const meta = client.getMeta()
+      metas.push(this.retiringClients.has(name) ? { ...meta,
+        enabled: this.currentConfig?.enabled === true && this.currentConfig.servers[name]?.enabled === true,
+        tools: [], resources: [], prompts: [],
+      } : meta)
+      seen.add(name)
+    }
+    for (const [name, entry] of this.retiringClients) {
+      if (seen.has(name)) continue
+      metas.push({ ...entry.client.getMeta(), enabled: false, tools: [], resources: [], prompts: [] })
       seen.add(name)
     }
 
@@ -546,6 +595,7 @@ export class McpManager extends EventEmitter {
         throw new Error("MCP allow-dir authorization changed or revoked while reconnecting")
       }
       const client = this.clients.get(name)
+      if (this.retiringClients.get(name)?.failed) throw new Error(`MCP server ${name} owned teardown is unconfirmed; reconnect blocked`)
       if (!this.startingPromises.has(name) && !this.restartTimers.has(name)) {
         const identity = this.getAuthorizationIdentity(name)
         if (identity) {

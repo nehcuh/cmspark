@@ -17,6 +17,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import { createTransport, extractPid } from "./transport.js"
+import { McpStdioTeardownError } from "./stdio-transport.js"
 import { isLocalOfficialFilesystem, normalizeFilesystemToolArgs, waitForFilesystemNormalization } from "./filesystem-short-path.js"
 import { logger } from "../logger.js"
 import {
@@ -154,6 +155,13 @@ export class McpClient extends EventEmitter {
       transport.onerror = (err: Error) => {
         logger.error("mcp.client.transport_error", { server: this.name, error: err.message })
         this._connection.last_error = err.message
+        if (err instanceof McpStdioTeardownError) {
+          // Protocol closure must settle SDK requests, but an unconfirmed
+          // owned-process teardown must not trigger a replacement/restart.
+          this._closing = true
+          this.setStatus("error", err.message)
+          return
+        }
         // A lost HTTP session cannot recover by resending its old session id.
         // Revoke the live identity and let the manager's bounded restart policy
         // create a fresh transport. Never replay the failed tool invocation.
@@ -204,7 +212,20 @@ export class McpClient extends EventEmitter {
       // listener (double-counting restartAttempts for a single failure).
       this._closing = true
       this.setStatus("error", fullMsg)
-      await this.cleanupTransport()
+      try {
+        await this.cleanupTransport()
+      } catch (teardownError) {
+        // Keep teardown primary so the manager fences replacement, while
+        // retaining the original startup failure for diagnosis.
+        if (teardownError instanceof McpStdioTeardownError && teardownError !== err) {
+          teardownError.cause ??= err
+        }
+        throw teardownError
+      } finally {
+        // onclose settles SDK RPCs even when the owned process receipt failed.
+        // Keep the transport itself tracked; only the closed SDK ref is cleared.
+        if (!this.client?.transport) this.client = null
+      }
       this.client = null
       throw err
     }
@@ -260,9 +281,15 @@ export class McpClient extends EventEmitter {
         await this.client.close().catch(() => {})
       }
     } finally {
-      await this.cleanupTransport()
-      this.client = null
-      this.setStatus("disconnected")
+      try {
+        await this.cleanupTransport()
+        this.client = null
+        this.setStatus("disconnected")
+      } catch (error: any) {
+        const message = error?.message || String(error)
+        if (this._connection.status !== "error" || this._connection.last_error !== message) this.setStatus("error", message)
+        throw error
+      }
     }
   }
 
@@ -270,8 +297,10 @@ export class McpClient extends EventEmitter {
     if (!this.transport) return
     try {
       await (this.transport as any).close?.()
-    } catch {
-      // ignore
+    } catch (error) {
+      // A stdio teardown deadline is not evidence that the owned process has
+      // released its resources. Keep its receipt and let callers observe it.
+      if (this._config.transport === "stdio") throw error
     }
     this.transport = null
   }

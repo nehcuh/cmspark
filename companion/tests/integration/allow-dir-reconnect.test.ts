@@ -44,7 +44,14 @@ for (const action of ["ready", "abort", "off-on", "contract-change"] as const) {
       })
       const [ct, st] = InMemoryTransport.createLinkedPair(); await server.connect(st); await connect.call(this, ct)
     })
-    const listener = (cfg: ReturnType<typeof getConfig>) => { void manager.applyConfig(cfg.mcp) }
+    const configUpdates: Promise<void>[] = []
+    const listener = (cfg: ReturnType<typeof getConfig>) => {
+      const update = manager.applyConfig(cfg.mcp)
+      configUpdates.push(update)
+      // Observe immediately; the awaited original promises below still fail
+      // the test if any teardown/config reconciliation rejects.
+      void update.catch(() => {})
+    }
     try {
       saveConfig({ security: { ...getConfig().security, allow_all_schemes: false, auto_approve_dangerous: false, auto_approve_enterprise_tools: false },
         mcp: { enabled: true, servers: { filesystem: { transport: "stdio", command: process.execPath, args: [require.resolve("@modelcontextprotocol/server-filesystem/dist/index.js"), initial], enabled: true, trust_level: "trusted", security_capabilities: ["read-only"] } } } })
@@ -75,9 +82,11 @@ for (const action of ["ready", "abort", "off-on", "contract-change"] as const) {
       if (action === "contract-change") assert.match(result.error!, /contract changed/i)
       assert.ok((getConfig().mcp!.servers.filesystem as any).args.some((arg: string) => normalizeAllowDirKey(arg) === normalizeAllowDirKey(offered)), "approved commit is preserved")
       assert.equal(confirmations.pendingCount(), 0)
+      await Promise.all(configUpdates)
     } finally {
       release(); controller.abort(); confirmations.rejectAll()
       configEvents.off(CONFIG_CHANGE_EVENT, listener); bindMcpDispatchRuntime(null)
+      await Promise.allSettled(configUpdates)
       await manager.applyConfig({ enabled: false, servers: {} })
       for (const server of servers) await server.close()
       fs.rmSync(root, { recursive: true, force: true })
