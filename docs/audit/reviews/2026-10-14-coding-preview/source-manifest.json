@@ -1,0 +1,196 @@
+{
+  "base": "04353ca73b06e245cf0f114ec1ec946b90173dad",
+  "groups": {
+    "coding_ui": {
+      "revision": "r3-final-compacted-and-typed-boundary",
+      "branch": "codex/coding-ui-484-522",
+      "base": "e5b3511bc6e3ed36aca9c71314ec21ae1f3bf5a8",
+      "worktree": "/Users/huchen/.codex/worktrees/cooperation-convergence/cmspark",
+      "complete_diff": "/tmp/cmspark-coding-ui-484-522.diff",
+      "complete_diff_sha256": "8ef010e505083f67cb727257c2896e49030308408933e69602754627ec4d6567",
+      "files": [
+        {
+          "path": "chrome-extension/scripts/render-workspace-fixture.cjs",
+          "sha256": "5d81f1c1f489b9684ee7c987f8029c04a98ab195711a4ff1d6141b9562d8c401",
+          "lines": 31
+        },
+        {
+          "path": "chrome-extension/scripts/test-coding-feedback-ui.py",
+          "sha256": "279c91f6338e9895fe4abc765220b325f27ff5f947ec4951425cd74bbe377e22",
+          "lines": 222
+        },
+        {
+          "path": "chrome-extension/src/sidepanel/components/CodingAgentPanel.tsx",
+          "sha256": "f263d6c1ba51a91e4bea18ee5364e5eadd032362f12e0b755abebe38e993df33",
+          "lines": 1748
+        },
+        {
+          "path": "chrome-extension/src/sidepanel/components/CodingSessionChip.tsx",
+          "sha256": "bbce4e5dfb6f8566f98c8732ec5a5f7ce869cf3faa6b096297ef7b1c1a59df9d",
+          "lines": 183
+        },
+        {
+          "path": "chrome-extension/src/sidepanel/hooks/useCodingStop.ts",
+          "sha256": "2be72b1ee4a7b12d3649e328d2b78577d7021f4ad72cb70a0203168133c5f5d9",
+          "lines": 38
+        },
+        {
+          "path": "chrome-extension/src/sidepanel/hooks/useWebSocket.ts",
+          "sha256": "51815f9d8dc7397b81c582690ce6866a6906d06f8088242750aa79b0297273cb",
+          "lines": 2541
+        },
+        {
+          "path": "chrome-extension/src/sidepanel/store/agentStore.tsx",
+          "sha256": "d813d6274d23bf20dfabfa91774723ed7d6acba80fe524e1ff1c708764261dc9",
+          "lines": 2118
+        },
+        {
+          "path": "chrome-extension/src/sidepanel/utils/coding-control-message.ts",
+          "sha256": "14486a9798cbab4f61d614d493021c4776b082f0c59559fecf535b1a291d20b3",
+          "lines": 22
+        },
+        {
+          "path": "chrome-extension/src/sidepanel/utils/coding-session-cache.ts",
+          "sha256": "5ed14986eae213e9c88c2ce78c3966fc3342978609d51ebc415d7e6b1f04b17c",
+          "lines": 40
+        },
+        {
+          "path": "chrome-extension/tests/coding-control-522.test.ts",
+          "sha256": "2afab710c48159e9cefe5f013610f82615463db8dbbdda28d46629ce8fd7b2e9",
+          "lines": 128
+        },
+        {
+          "path": "chrome-extension/tests/coding-session-cache-484.test.ts",
+          "sha256": "68f8a42da8569d823050c7764de4e2d555c7b006820d60abdcc17cda5b40cb08",
+          "lines": 60
+        },
+        {
+          "path": "chrome-extension/tests/fixtures/coding-control-522.json",
+          "sha256": "48c84063fac2e4d390da4b0d61c978717d77c97a578ae17baf91fd5272ad39a4",
+          "lines": 186
+        },
+        {
+          "path": "chrome-extension/tests/fixtures/coding-control-522.md",
+          "sha256": "5f1e038ba548272dae1cec879aa0f4445ed7cb28228230f9dd33e2fd2ce4edde",
+          "lines": 5
+        },
+        {
+          "path": "companion/src/acp/handlers.ts",
+          "sha256": "cbd99857b6ffe63d95277bdcf21e0f2c2c389b33487c146f5db44e99705585eb",
+          "lines": 431
+        },
+        {
+          "path": "companion/src/acp/manager.ts",
+          "sha256": "32c60e15324531422be664e6b3fe1ab81ca7a68b7164e823662c7d03439d3aa5",
+          "lines": 1156
+        },
+        {
+          "path": "companion/src/acp/progress-caps.ts",
+          "sha256": "6661551656525e285b5dad8e7c19c79eab47ab18b97ce1b00e1d693fd260e8a5",
+          "lines": 28
+        },
+        {
+          "path": "companion/src/acp/types.ts",
+          "sha256": "296acba4e3d870b47e2bfe8cdcc4735f33c23bbafd1d305008d1da53a215874e",
+          "lines": 198
+        },
+        {
+          "path": "companion/src/acp/ui-progress.ts",
+          "sha256": "2b999c6bd8eb77550a1898396eea457098671973dfac1f0d2ff9638d2245f8e2",
+          "lines": 69
+        },
+        {
+          "path": "companion/src/acp/win-spawn.ts",
+          "sha256": "e13987425ca99b9a3ea406351dcc7c706046bbea45fe913bf9335fbf71100363",
+          "lines": 450
+        },
+        {
+          "path": "companion/src/ws/lifecycle.ts",
+          "sha256": "5286642ed74559be663a5337e1031cccd52b58cfec9a88a36a08ec3686f039ef",
+          "lines": 1648
+        },
+        {
+          "path": "companion/tests/acp-coding-feedback-522.test.ts",
+          "sha256": "7353886dfddc595350528597a703475e33919223f1dcb5fe1cab1f7c938574dd",
+          "lines": 207
+        },
+        {
+          "path": "docs/superpowers/specs/2026-10-14-coding-session-feedback-cache.md",
+          "sha256": "8676b77dd88e1f7463ea359cb87564671593c1aeb2815c5eab8951a74101800f",
+          "lines": 33
+        }
+      ]
+    },
+    "preview": {
+      "base": "04353ca73b06e245cf0f114ec1ec946b90173dad",
+      "branch": "codex/confirmation-preview-532",
+      "worktree": "/Users/huchen/.codex/worktrees/issue-convergence/cmspark",
+      "complete_diff": "/tmp/cmspark-532-full.diff",
+      "diff_sha256": "bd18af1a8ffa3530320acad35403d3478b37372aecf653a9889b499adf764a12",
+      "files": {
+        "chrome-extension/scripts/render-confirmation-preview-fixture.cjs": "30a009988a8fc6b20536786756ab900e8058b5a0e7e169fefd940393b0866b16",
+        "chrome-extension/scripts/test-confirmation-preview-ui.py": "9e7c679918d668078d1460a39a1826896a8103d54b70e70d7ebffec7c0eff756",
+        "chrome-extension/src/cockpit/CockpitApp.tsx": "8723454ea3ea9df4668c088e20fb2f3f6b4d06d674547311edacccbe974fbbfd",
+        "chrome-extension/src/cockpit/ConfirmationPreview.tsx": "205b0eec3774134ca216d5e6827b2da6bf500443207ad9e5bcfad042501c0f73",
+        "chrome-extension/src/sidepanel/hooks/useWebSocket.ts": "728b119d0ab9a7b213834f02459272748086c2b0ca66a33b907fd8a11ac0bfa0",
+        "chrome-extension/src/sidepanel/types.ts": "873040dab653eac890ec7ff0e76aa69fcdb32be3c43d898ca20ab96dbc867865",
+        "chrome-extension/src/sidepanel/utils/confirmation-preview.ts": "f1aae8896623265303756386cd45d7c88a926cae7eb088e3e1bb1a6449da4d49",
+        "chrome-extension/tests/confirmation-preview-532.test.ts": "4df38448ac191bf86b8f87d6a275618ed32c95731fcd903ac59e995a6aa4d288",
+        "chrome-extension/tests/fixtures/confirmation-preview-532.json": "62c4fd6185615700fd796a054c2f2a258ee297741ef16a0e530890d705b578a6",
+        "companion/src/computer/l2-preview-image.ts": "3e45fdc435d357beff9e94627721ab9c4b87d1cce9441972dac54ca3560f5fd0",
+        "companion/src/computer/preview-availability.ts": "8ad05105e07a16a09f15f4b32163f77d2bcf43419267603dda3d699ba0b5735d",
+        "companion/src/security-confirmation.ts": "95afb9f42fb377cd331723666ca4f9fa083d0c53671de6252820151490aff2fb",
+        "companion/src/tool/l2-admission.ts": "700f28bf283bcdf1a8bdbbb0c6df74455c9f03857a251533defeb9242519904f",
+        "companion/tests/computer-l2-preview-image.test.ts": "459129e969205e4fd4244e0b9fff9fbaf4a1b1d56dc5842a58548c4da2b6abd8",
+        "companion/tests/integration/confirmation-preview-532.test.ts": "a6947f391f1107bf8f1e33a7925681bfd176d0b80ba2a98762b3d1ca6c36e494",
+        "docs/superpowers/specs/2026-10-14-confirmation-preview-532.md": "2d011351df8f6ec67a8c556963ca83c5310274eedfd89bce75f1990c3c5f9783"
+      }
+    }
+  },
+  "paths": 37,
+  "files": {
+    "chrome-extension/scripts/render-confirmation-preview-fixture.cjs": "30a009988a8fc6b20536786756ab900e8058b5a0e7e169fefd940393b0866b16",
+    "chrome-extension/scripts/render-workspace-fixture.cjs": "5d81f1c1f489b9684ee7c987f8029c04a98ab195711a4ff1d6141b9562d8c401",
+    "chrome-extension/scripts/test-coding-feedback-ui.py": "279c91f6338e9895fe4abc765220b325f27ff5f947ec4951425cd74bbe377e22",
+    "chrome-extension/scripts/test-confirmation-preview-ui.py": "9e7c679918d668078d1460a39a1826896a8103d54b70e70d7ebffec7c0eff756",
+    "chrome-extension/src/cockpit/CockpitApp.tsx": "8723454ea3ea9df4668c088e20fb2f3f6b4d06d674547311edacccbe974fbbfd",
+    "chrome-extension/src/cockpit/ConfirmationPreview.tsx": "205b0eec3774134ca216d5e6827b2da6bf500443207ad9e5bcfad042501c0f73",
+    "chrome-extension/src/sidepanel/components/CodingAgentPanel.tsx": "f263d6c1ba51a91e4bea18ee5364e5eadd032362f12e0b755abebe38e993df33",
+    "chrome-extension/src/sidepanel/components/CodingSessionChip.tsx": "bbce4e5dfb6f8566f98c8732ec5a5f7ce869cf3faa6b096297ef7b1c1a59df9d",
+    "chrome-extension/src/sidepanel/hooks/useCodingStop.ts": "2be72b1ee4a7b12d3649e328d2b78577d7021f4ad72cb70a0203168133c5f5d9",
+    "chrome-extension/src/sidepanel/hooks/useWebSocket.ts": "895e8ad8d9bdfee1d9dda5a211568afe2a4df87b1503c43abfa473644a9b29a6",
+    "chrome-extension/src/sidepanel/store/agentStore.tsx": "d813d6274d23bf20dfabfa91774723ed7d6acba80fe524e1ff1c708764261dc9",
+    "chrome-extension/src/sidepanel/types.ts": "873040dab653eac890ec7ff0e76aa69fcdb32be3c43d898ca20ab96dbc867865",
+    "chrome-extension/src/sidepanel/utils/coding-control-message.ts": "14486a9798cbab4f61d614d493021c4776b082f0c59559fecf535b1a291d20b3",
+    "chrome-extension/src/sidepanel/utils/coding-session-cache.ts": "5ed14986eae213e9c88c2ce78c3966fc3342978609d51ebc415d7e6b1f04b17c",
+    "chrome-extension/src/sidepanel/utils/confirmation-preview.ts": "f1aae8896623265303756386cd45d7c88a926cae7eb088e3e1bb1a6449da4d49",
+    "chrome-extension/tests/coding-control-522.test.ts": "2afab710c48159e9cefe5f013610f82615463db8dbbdda28d46629ce8fd7b2e9",
+    "chrome-extension/tests/coding-session-cache-484.test.ts": "68f8a42da8569d823050c7764de4e2d555c7b006820d60abdcc17cda5b40cb08",
+    "chrome-extension/tests/confirmation-preview-532.test.ts": "4df38448ac191bf86b8f87d6a275618ed32c95731fcd903ac59e995a6aa4d288",
+    "chrome-extension/tests/fixtures/coding-control-522.json": "48c84063fac2e4d390da4b0d61c978717d77c97a578ae17baf91fd5272ad39a4",
+    "chrome-extension/tests/fixtures/coding-control-522.md": "5f1e038ba548272dae1cec879aa0f4445ed7cb28228230f9dd33e2fd2ce4edde",
+    "chrome-extension/tests/fixtures/confirmation-preview-532.json": "62c4fd6185615700fd796a054c2f2a258ee297741ef16a0e530890d705b578a6",
+    "companion/src/acp/handlers.ts": "cbd99857b6ffe63d95277bdcf21e0f2c2c389b33487c146f5db44e99705585eb",
+    "companion/src/acp/manager.ts": "32c60e15324531422be664e6b3fe1ab81ca7a68b7164e823662c7d03439d3aa5",
+    "companion/src/acp/progress-caps.ts": "6661551656525e285b5dad8e7c19c79eab47ab18b97ce1b00e1d693fd260e8a5",
+    "companion/src/acp/types.ts": "296acba4e3d870b47e2bfe8cdcc4735f33c23bbafd1d305008d1da53a215874e",
+    "companion/src/acp/ui-progress.ts": "2b999c6bd8eb77550a1898396eea457098671973dfac1f0d2ff9638d2245f8e2",
+    "companion/src/acp/win-spawn.ts": "e13987425ca99b9a3ea406351dcc7c706046bbea45fe913bf9335fbf71100363",
+    "companion/src/computer/l2-preview-image.ts": "3e45fdc435d357beff9e94627721ab9c4b87d1cce9441972dac54ca3560f5fd0",
+    "companion/src/computer/preview-availability.ts": "8ad05105e07a16a09f15f4b32163f77d2bcf43419267603dda3d699ba0b5735d",
+    "companion/src/security-confirmation.ts": "95afb9f42fb377cd331723666ca4f9fa083d0c53671de6252820151490aff2fb",
+    "companion/src/tool/l2-admission.ts": "700f28bf283bcdf1a8bdbbb0c6df74455c9f03857a251533defeb9242519904f",
+    "companion/src/ws/lifecycle.ts": "5286642ed74559be663a5337e1031cccd52b58cfec9a88a36a08ec3686f039ef",
+    "companion/tests/acp-coding-feedback-522.test.ts": "7353886dfddc595350528597a703475e33919223f1dcb5fe1cab1f7c938574dd",
+    "companion/tests/computer-l2-preview-image.test.ts": "459129e969205e4fd4244e0b9fff9fbaf4a1b1d56dc5842a58548c4da2b6abd8",
+    "companion/tests/integration/confirmation-preview-532.test.ts": "a6947f391f1107bf8f1e33a7925681bfd176d0b80ba2a98762b3d1ca6c36e494",
+    "docs/superpowers/specs/2026-10-14-coding-session-feedback-cache.md": "8676b77dd88e1f7463ea359cb87564671593c1aeb2815c5eab8951a74101800f",
+    "docs/superpowers/specs/2026-10-14-confirmation-preview-532.md": "2d011351df8f6ec67a8c556963ca83c5310274eedfd89bce75f1990c3c5f9783"
+  },
+  "shared_ws": {
+    "path": "chrome-extension/src/sidepanel/hooks/useWebSocket.ts",
+    "method": "git merge-file threeway clean, both import/differenthandler deltas retained",
+    "sha256": "895e8ad8d9bdfee1d9dda5a211568afe2a4df87b1503c43abfa473644a9b29a6"
+  },
+  "ui_incremental_diff_sha256": "4b3c75dc8b0d8f4ca79086c601381291d03fbea02b288330d25f4cb34991acdc"
+}
