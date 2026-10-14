@@ -1,8 +1,10 @@
 // WebSocket hook for Side Panel — communicates with background service worker
 
 import { useEffect, useRef } from "react"
+import { confirmationPreviewFromMessage } from "../utils/confirmation-preview"
 import { overlayStandbyFromError, useAgentStore, type AgentAction } from "../store/agentStore"
 import { normalizeDocumentWarning, parseDocumentNotices } from "../utils/document-warning"
+import { codingControlAction } from "../utils/coding-control-message"
 import type { ComputerTaskEventView, LLMConfig, Message, MessageAttachment } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
@@ -923,9 +925,7 @@ export function useWebSocket() {
               nonce_challenge: typeof msg.nonce_challenge === "string" ? msg.nonce_challenge : undefined,
               // 坐标 computer-use(WP4):L2 标注截图 + 三段式 caption + P1 完整预览
               // 文本(绕过 code_preview 的 1200 截断)——全部可选,旧 companion 不下发。
-              preview_image: typeof msg.preview_image === "string" ? msg.preview_image : undefined,
-              preview_caption: typeof msg.preview_caption === "string" ? msg.preview_caption : undefined,
-              full_preview: typeof msg.full_preview === "string" ? msg.full_preview : undefined,
+              ...confirmationPreviewFromMessage(msg),
               // ADR-015 multi-agent Confirm Center + #507 thread owner
               thread_id: typeof msg.thread_id === "string" ? msg.thread_id : undefined,
               worker_id: typeof msg.worker_id === "string" ? msg.worker_id : undefined,
@@ -1672,6 +1672,10 @@ export function useWebSocket() {
           }
           break
 
+        case "acp.session.cancel.ack":
+          { const action = codingControlAction(msg); if (action) dispatch(action) }
+          break
+
         case "acp.list":
           // Same request-echo trap as thread.list — missing array is a command,
           // not a hydrate (echo must not clear agents / force acpEnabled=false).
@@ -1718,6 +1722,7 @@ export function useWebSocket() {
                 mode: msg.mode,
                 pending_diffs: msg.pending_diffs,
                 handback: msg.message?.content,
+                output_truncated: msg.output_truncated === true,
               },
             })
           }
@@ -2410,6 +2415,8 @@ export function useWebSocket() {
               (/^acp[:.]|acp:\s|编程助手|cloud_disclosure|feature disabled/i.test(msg.error) ||
                 /\bacp\b/i.test(msg.error) && /disabled|未启用|disclosure/i.test(msg.error)))
           ) {
+            const controlAction = codingControlAction(msg)
+            if (controlAction) { dispatch(controlAction); break }
             if ((msg.session_id !== undefined || msg.thread_id !== undefined) &&
                 !codingMessageTargetsThread(msg, activeThreadRef.current)) break
             dispatch({

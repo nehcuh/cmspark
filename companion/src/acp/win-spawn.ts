@@ -380,7 +380,8 @@ export function writeExclusiveUtf8(
 }
 
 /** Best-effort delayed unlink (Mode C PS1/task must stay until the new window reads them). */
-export function scheduleUnlink(paths: string[], delayMs = 60_000): void {
+export const MODE_C_TEMPFILE_TTL_MS = 60_000
+export function scheduleUnlink(paths: string[], delayMs = MODE_C_TEMPFILE_TTL_MS): void {
   const t = setTimeout(() => {
     for (const p of paths) {
       try {

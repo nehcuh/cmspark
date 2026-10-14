@@ -21,6 +21,7 @@
 // 降级「无图」,绝不影响确认门。
 
 import * as fs from "fs"
+import type { PreviewUnavailableReason } from "./preview-availability"
 
 import { scanDanger } from "./danger"
 import { sanitizeComputerCaption, type PreviewBuilder } from "./preview"
@@ -50,6 +51,8 @@ export interface L2PreviewImageOptions {
   actions: ComputerAction[]
   /** 确认门延迟预算(默认 5000ms)——超时降级「无图」。 */
   timeoutMs?: number
+  /** One settled diagnostic; late capture cleanup cannot change the sent prompt. */
+  onUnavailable?: (reason: PreviewUnavailableReason) => void
   sleep?: (ms: number) => Promise<void>
 }
 
@@ -94,18 +97,22 @@ export async function buildComputerL2PreviewImage(
 
   // pipeline 内部 try/catch 兜底(绝不 reject),finally 负责删 raw——
   // P5 的顺序由 async fn 语义结构性保证:finally 只在所有 await 结算后运行。
-  const pipeline = (async (): Promise<L2PreviewImageResult | null> => {
+  type Outcome = L2PreviewImageResult | { unavailable: PreviewUnavailableReason }
+  const pipeline = (async (): Promise<Outcome> => {
     let rawPath: string | null = null
+    let failureReason: PreviewUnavailableReason = "target_unavailable"
     try {
       // hwnd 解析(与 executor 同一规则:目标 exe 的最大可见窗口)。
       const wins = await deps.windows.enumerateByExe(opts.exePath)
-      if (!Array.isArray(wins) || wins.length === 0) return null
+      if (!Array.isArray(wins) || wins.length === 0) return { unavailable: "target_unavailable" }
       const win = [...wins].sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)[0]
       // 截图(raw 帧立即纳入追踪)。
+      failureReason = "capture_failed"
       const shot = await deps.capturer.captureWindow(win.hwnd)
       rawPath = shot.path || null
-      if (!rawPath) return null
+      if (!rawPath) return { unavailable: "capture_failed" }
       // OCR:凭证区黑化(与 executor 只读帧同一扫描)+ 首动作锚文本定位。
+      failureReason = "ocr_failed"
       const ocr = await deps.locator.ocr(shot.path)
       const wholeImg: RectPx = { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height }
       const blur = scanDanger(ocr.words, wholeImg, REGION_CROP_SIZE).credentialRects
@@ -124,15 +131,16 @@ export async function buildComputerL2PreviewImage(
           point = { x: shot.client.x + first.x, y: shot.client.y + first.y }
         }
       }
+      failureReason = "render_failed"
       const image = await deps.previewBuilder.build(shot.path, point, blur)
-      if (!image) return null
+      if (!image) return { unavailable: "render_failed" }
       return {
         image,
         caption: buildL2PreviewCaption(opts.appDisplayName, Array.isArray(opts.actions) ? opts.actions.length : 0),
       }
     } catch (err) {
       log("computer.l2preview.failed", { error: String((err as Error)?.message ?? err) })
-      return null
+      return { unavailable: failureReason }
     } finally {
       // P5:raw 帧必删;且只在这里(全部 ps1 结算之后)删——被杀的 capture/OCR
       // ps1 不可能在删除之后完成写盘。Best-effort:删除失败由 WP2 sweep 兜底。
@@ -148,9 +156,10 @@ export async function buildComputerL2PreviewImage(
 
   // 超时降级:确认门最多等 timeoutMs。超时返回 null 后,pipeline 仍后台结算,
   // raw 由其 finally 删除(杀 → 等 exit → 删的顺序不变)。
-  const winner = await Promise.race([pipeline, sleep(timeoutMs).then(() => null as L2PreviewImageResult | null)])
-  if (winner === null) {
-    log("computer.l2preview.degraded", { timeoutMs })
+  const winner = await Promise.race([pipeline, sleep(timeoutMs).then((): Outcome => ({ unavailable: "timeout" }))])
+  if ("unavailable" in winner) {
+    log("computer.l2preview.degraded", { timeoutMs, reason: winner.unavailable })
+    try { opts.onUnavailable?.(winner.unavailable) } catch { /* diagnostics cannot block confirmation */ }
     // pipeline 内部已 catch 兜底不会 reject;这里再接一层保险,杜绝 unhandled。
     pipeline.catch(() => {})
     return null

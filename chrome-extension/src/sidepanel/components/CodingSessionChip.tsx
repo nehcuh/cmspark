@@ -5,7 +5,8 @@ import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import { isModeCInvolved, modeCBannerText, modeCStopLabel, modeCStopTitle } from "../coding-handoff/embed-entry"
 import type { CodingSessionState } from "../store/agentStore"
-import { useAgentStore, codingSessionBelongsToThread } from "../store/agentStore"
+import { useAgentStore, codingSessionBelongsToThread, selectCodingOperationError } from "../store/agentStore"
+import { useCodingStop } from "../hooks/useCodingStop"
 
 export function CodingSessionChip({
   session,
@@ -15,17 +16,20 @@ export function CodingSessionChip({
   compact?: boolean
 }) {
   const { state, dispatch } = useAgentStore()
-  const live = session.state === "running" || session.state === "offered"
+  const live = session.state === "running" || session.state === "offered" || session.state === "confirmed"
+  const stopControl = useCodingStop(session)
+  const actionError = selectCodingOperationError(state, session)
 
   useEffect(() => {
     if (session.state !== "closed") return
+    if (actionError) return
     // Do not auto-dismiss while applyable diffs remain (UX: 应用 diff must stay reachable)
     if (session.hasPendingDiff) return
     const t = window.setTimeout(() => {
       dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })
     }, 12_000)
     return () => window.clearTimeout(t)
-  }, [session.state, session.sessionId, session.hasPendingDiff, dispatch])
+  }, [session.state, session.sessionId, session.hasPendingDiff, actionError, dispatch])
   const label = session.displayName || session.agentId || "Agent"
   const modeBadge =
     session.mode === "propose_diff"
@@ -40,20 +44,11 @@ export function CodingSessionChip({
   // owns that override. Both ladders live in coding-handoff/embed-entry.
   const modeCHint = isModeCInvolved(session.localTerminal, session.openLocalTerminal)
 
-  const onStop = () => {
-    if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
-    chrome.runtime.sendMessage(
-      { type: "acp.session.cancel", session_id: session.sessionId, thread_id: session.threadId },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
-  }
-
   const onFollowup = () => {
     if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
     const goal = window.prompt("继续追问编程助手（将开新一轮并确认）")
     if (!goal?.trim()) return
+    dispatch({ type: "ACP_OPERATION_REQUEST", sessionId: session.sessionId, threadId: session.threadId })
     chrome.runtime.sendMessage(
       {
         type: "acp.session.followup",
@@ -69,6 +64,7 @@ export function CodingSessionChip({
 
   const onApply = () => {
     if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
+    dispatch({ type: "ACP_OPERATION_REQUEST", sessionId: session.sessionId, threadId: session.threadId })
     chrome.runtime.sendMessage(
       { type: "acp.apply_diff", session_id: session.sessionId, thread_id: session.threadId },
       () => {
@@ -84,8 +80,8 @@ export function CodingSessionChip({
         <span style={styles.title}>
           {codingHandoffCopy.productName} · {label} · {modeBadge}
           {session.transport ? ` · ${session.transport}` : ""}
-          {live
-            ? ` · ${codingHandoffCopy.statusRunning}`
+          {session.cancelConfirmed || session.cancelled ? " · 已停止" : live
+            ? session.state === "running" ? ` · ${codingHandoffCopy.statusRunning}` : " · 待启动"
             : session.state === "closed"
               ? ` · ${codingHandoffCopy.statusDone}`
               : ` · ${session.state}`}
@@ -93,6 +89,9 @@ export function CodingSessionChip({
       </div>
       {!compact && tail ? <div style={styles.tail}>{tail}</div> : null}
       {session.error ? <div style={styles.err}>{session.error}</div> : null}
+      {stopControl.error ? <div style={styles.err} role="alert">{stopControl.error}</div> : null}
+      {actionError ? <div style={styles.err} role="alert">{actionError}</div> : null}
+      {stopControl.pending ? <div role="status">停止请求已发送，等待本机会话确认。</div> : null}
       {live && modeCHint ? (
         <div style={styles.modeCHint}>{modeCBannerText(session.localTerminal)}</div>
       ) : null}
@@ -101,7 +100,8 @@ export function CodingSessionChip({
           <button
             type="button"
             style={styles.stop}
-            onClick={onStop}
+            onClick={stopControl.stop}
+            disabled={stopControl.pending}
             title={modeCStopTitle(session.localTerminal, session.openLocalTerminal)}
           >
             {modeCStopLabel(session.localTerminal, session.openLocalTerminal)}
