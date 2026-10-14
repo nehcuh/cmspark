@@ -1,0 +1,17 @@
+{
+  "kimi.md": {
+    "exact_original_sha256": "d2063fc0419fb7639908009a7e7cfecc694b1189aecc6ac8f454db03da2fbdc1",
+    "public_whitespace_normalized_sha256": "8e0599e29b02be5f03eba509a27a73db3637af621f74fdf0f9c3436b3d6b3f00",
+    "changed": "onlylineendwhitespace/extraEOFblank; fullcontent/findings retained; private originalexactbytefile retained"
+  },
+  "grok-r2.md": {
+    "exact_original_sha256": "30256707dcb44440cc2ebeac626af6a8077f91f249a6ab6a9f791902f8d1d0b6",
+    "public_whitespace_normalized_sha256": "8570802de4216e9db41cbe7e3bfbdbdabe4df80980ba4ad4a3b4c381919cd17e",
+    "changed": "onlylineendwhitespace/extraEOFblank; fullcontent/findings retained; private originalexactbytefile retained"
+  },
+  "grok-r3.md": {
+    "exact_original_sha256": "2725875cea0e97fdb9d808c9b8aadf3a32c5981ad9105e1953cb44036b8504d5",
+    "public_whitespace_normalized_sha256": "6c0010e720db98d9c93534fdc19382b900073e0b332f2336918b7bf5a64b9f1c",
+    "changed": "onlylineendwhitespace/extraEOFblank; fullcontent/findings retained; private originalexactbytefile retained"
+  }
+}
