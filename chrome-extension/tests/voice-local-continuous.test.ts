@@ -21,6 +21,55 @@ test("maxListenMsForSession continuous local uses hard cap (D1c)", () => {
   assert.equal(maxListenMsForSession("classic", "local"), VOICE_MAX_LISTEN_MS)
 })
 
+for (const cancellation of ["none", "stop", "abort", "destroy"] as const) {
+  test(`#486: nonstream capture readiness precedes onStart; late ${cancellation} cannot enter listening`, async () => {
+    let starts = 0
+    let aborts = 0
+    let ready: ((handle: any) => void) | undefined
+    const adapter = createLocalSttAdapter(
+      { onStart: () => { starts++ }, onResult: () => {}, onError: () => {}, onEnd: () => {} },
+      { modelId: "medium", send: () => {}, onMessage: () => () => {},
+        startCapture: () => new Promise(resolve => { ready = resolve }) },
+    )
+    try {
+      adapter.start({ sessionId: "capture-ready", mode: "continuous", streamPartial: false, hardCapMs: 5000, segmentMs: 1000 })
+      assert.equal(starts, 0, "a pending microphone permission is not listening")
+      assert.ok(ready)
+      if (cancellation !== "none") adapter[cancellation]()
+      ready!({ stop: async () => new Uint8Array([1]), abort: () => { aborts++ } })
+      await Promise.resolve()
+      await Promise.resolve()
+      assert.equal(starts, cancellation === "none" ? 1 : 0)
+      if (cancellation !== "none") assert.equal(aborts, 1, "late acquired capture must be released")
+    } finally { adapter.destroy() }
+  })
+}
+
+test("#486: a previous pending capture cannot start or reset a replacement session", async () => {
+  let starts = 0
+  let oldAborts = 0
+  const ready: Array<(handle: any) => void> = []
+  const adapter = createLocalSttAdapter(
+    { onStart: () => { starts++ }, onResult: () => {}, onError: () => {}, onEnd: () => {} },
+    { modelId: "medium", send: () => {}, onMessage: () => () => {},
+      startCapture: () => new Promise(resolve => { ready.push(resolve) }) },
+  )
+  try {
+    adapter.start({ sessionId: "capture-old", mode: "continuous", streamPartial: false })
+    adapter.abort()
+    adapter.start({ sessionId: "capture-new", mode: "continuous", streamPartial: false })
+    assert.equal(starts, 0)
+    ready[1]({ stop: async () => new Uint8Array([2]), abort: () => {} })
+    await Promise.resolve()
+    assert.equal(starts, 1)
+    ready[0]({ stop: async () => new Uint8Array([1]), abort: () => { oldAborts++ } })
+    await Promise.resolve()
+    await Promise.resolve()
+    assert.equal(starts, 1)
+    assert.equal(oldAborts, 1)
+  } finally { adapter.destroy() }
+})
+
 test("SEGMENT_CONTINUE resumes listening from processing", () => {
   let s = initialVoiceSession(true)
   s = reduceVoiceSession(s, {
