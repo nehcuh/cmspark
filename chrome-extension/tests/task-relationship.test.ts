@@ -54,20 +54,14 @@ test("restored multi-level data returns the direct parent and detects longer cyc
   assert.equal(cyclic.kind === "child" && cyclic.availability, "invalid")
 })
 
-test("actual presentation exposes visible parent/child and click selects only its direct parent", () => {
+test("actual presentation exposes visible parent/child and accessible direct-parent action", () => {
   const relation = resolveTaskRelationship(worker.id, [parent], [worker])
-  const calls: string[] = []
-  const html = renderToStaticMarkup(createElement(TaskRelationshipNav, { relationship: relation, onNavigate: id => calls.push(id) }))
+  const html = renderToStaticMarkup(createElement(TaskRelationshipNav, { relationship: relation, onNavigate: () => {} }))
   assert.match(html, />主任务 · Office 文档兼容性<\/span>/)
   assert.match(html, />子任务 · 格式入口<\/span>/)
   assert.match(html, /aria-label="返回主任务 Office 文档兼容性"/)
-  const element = TaskRelationshipNav({ relationship: relation, onNavigate: id => calls.push(id) })
-  const button = element.props.children[0]
-  button.props.onClick()
-  assert.deepEqual(calls, [parent.id])
-  const unavailable = TaskRelationshipNav({ relationship: { kind: "child", title: "格式入口", availability: "missing" }, onNavigate: id => calls.push(id) })
-  unavailable.props.children[0].props.onClick()
-  assert.deepEqual(calls, [parent.id])
+  // Click/Enter/Space and disabled refusal use real DOM role/name queries in
+  // companion/scripts/test-task-navigation-ui.py, not JSX child positions.
 })
 
 test("return selection preserves both message caches, work state and composer requests", () => {

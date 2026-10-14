@@ -2,7 +2,7 @@
 // Spawns configured stdio agent; streams progress via onEvent → WS broadcast.
 
 import type { ChildProcessWithoutNullStreams } from "child_process"
-import { spawnAcpChild, killAcpChild, closeAcpChild } from "./win-spawn"
+import { spawnAcpChild, killAcpChild, closeAcpChild, MODE_C_TEMPFILE_TTL_MS } from "./win-spawn"
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
@@ -23,10 +23,12 @@ import { formatModeCOpenedLabel, openLocalTerminalForAgent } from "./open-local-
 import {
   PROGRESS_TAIL_CLI_CHARS,
   PROGRESS_TAIL_ACP_CHARS,
+  retainTerminalCommandLine,
 } from "./progress-caps"
 import { buildAcpAgentEnv } from "./agent-env"
 import { onPtyAgentSpawned } from "../pty/session"
 import { prepareWindowsJob } from "../process/windows-job"
+import { boundCodingProgress } from "./ui-progress"
 
 export type AcpHandbackSink = (info: {
   session: AcpSessionRecord
@@ -56,6 +58,9 @@ export type AcpLiveEvent = {
   /** Mode C host terminal outcome (`embed_intent` = recorded, awaiting the user's panel click;
    *  `embed_running` = the embedded agent PTY is live; Stop does not end that process) */
   local_terminal?: "pending" | "opened" | "opened_l0" | "failed" | "skipped" | "embed_intent" | "embed_running"
+  terminal_command_line?: string
+  terminal_command_expires_at?: number
+  output_truncated?: boolean
 }
 
 export type AcpEventListener = (ev: AcpLiveEvent) => void
@@ -197,7 +202,7 @@ export class AcpManager {
         : session.open_local_terminal_snapshot === false
           ? "skipped"
           : undefined)
-    this.emit({
+    const event = boundCodingProgress({
       type: "acp.session.event",
       session_id: session.session_id,
       thread_id: session.thread_id,
@@ -210,13 +215,18 @@ export class AcpManager {
       partial: session.partial,
       error: session.error,
       handback: handbackPreview,
+      output_truncated: session.state === "closed" && (session.handback_text?.length || 0) > 8000 ? true : undefined,
       mode: session.mode,
       transport: session.transport,
       timeline: session.timeline ? session.timeline.slice(-60) : undefined,
       pending_diffs: session.pending_diffs,
       open_local_terminal: session.open_local_terminal_snapshot === true,
       local_terminal: localTerm,
+      terminal_command_line: session.terminal_command_line,
+      terminal_command_expires_at: session.terminal_command_expires_at,
     })
+    if (event) this.emit(event)
+    else logger.warn("acp.ui_progress_oversized_metadata", { state: session.state })
   }
 
   private pushTimeline(session: AcpSessionRecord, items: TimelineItem[], progress?: string): void {
@@ -273,6 +283,9 @@ export class AcpManager {
     const modeCPrompt = this.buildUserPrompt(session)
     const terminalApp =
       getConfig().coding_handoff?.local_terminal_app || "auto"
+    // Conservative deadline: existing temporary-file cleanup is scheduled only after the opener
+    // settles. Starting the UI deadline earlier never extends secret-bearing file retention.
+    const commandDeadline = Date.now() + MODE_C_TEMPFILE_TTL_MS
     void openLocalTerminalForAgent({
       command: server.command,
       cwd,
@@ -308,6 +321,8 @@ export class AcpManager {
           ])
           return
         }
+        session.terminal_command_line = retainTerminalCommandLine(r.commandLine)
+        session.terminal_command_expires_at = session.terminal_command_line ? commandDeadline : undefined
         session.local_terminal = r.level === "L0" ? "opened_l0" : "opened"
         const label = formatModeCOpenedLabel(r.level, r.app, terminalApp)
         this.pushTimeline(session, [
@@ -317,6 +332,8 @@ export class AcpManager {
           }),
         ])
       } else {
+        session.terminal_command_line = retainTerminalCommandLine(r.commandLine)
+        session.terminal_command_expires_at = session.terminal_command_line ? commandDeadline : undefined
         session.local_terminal = "failed"
         this.pushTimeline(session, [
           timelineItem("status", `本机终端未打开[${terminalApp}]: ${r.detail}`, {

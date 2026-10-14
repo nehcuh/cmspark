@@ -10,12 +10,20 @@ import { prepareWindowsJob, spawnWindowsJob } from "../process/windows-job"
 
 const spawn: (command: string, args: string[], opts: SpawnOptions) => ChildProcess = require("cross-spawn")
 
+export class McpStdioTeardownError extends Error {
+  constructor() {
+    super("MCP stdio subprocess teardown timed out")
+    this.name = "McpStdioTeardownError"
+  }
+}
+
 export class OwnedStdioTransport implements Transport {
   onclose?: () => void
   onerror?: (error: Error) => void
   onmessage?: (message: JSONRPCMessage) => void
   readonly stderr = new PassThrough()
   private child?: ChildProcess
+  private childClose?: Promise<void>
   private started = false
   private closed = false
   private closing?: Promise<void>
@@ -47,10 +55,14 @@ export class OwnedStdioTransport implements Transport {
       throw error
     }
     this.child = child
+    // Register before killing or observing exit: exit can precede closure of
+    // stdio inherited by a Windows Job target. Destroying our streams first
+    // would manufacture a close receipt before that target releases its cwd.
+    this.childClose = new Promise(resolve => child.once("close", resolve))
     child.stderr?.pipe(this.stderr)
     const streamError = (error: Error) => {
       this.onerror?.(error)
-      void this.close()
+      void this.close().catch(() => {}) // close reports teardown errors via onerror
     }
     child.stdin?.on("error", streamError)
     child.stdout?.on("error", streamError)
@@ -61,35 +73,35 @@ export class OwnedStdioTransport implements Transport {
         for (let message; (message = this.buffer.readMessage()) !== null;) this.onmessage?.(message)
       } catch (error) {
         this.onerror?.(error instanceof Error ? error : new Error(String(error)))
-        void this.close()
+        void this.close().catch(() => {})
       }
     })
     // Exit can precede the last stdout data event. Drain with a deadline so an
     // inherited pipe cannot hold the connection open indefinitely.
-    child.once("exit", () => { void this.beginClose(true) })
+    child.once("exit", () => { void this.beginClose().catch(() => {}) })
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", resolve)
       child.on("error", error => {
-        this.onerror?.(error); reject(error); void this.close()
+        this.onerror?.(error); reject(error); void this.close().catch(() => {})
       })
     })
   }
 
   close(): Promise<void> {
-    return this.beginClose(false)
+    return this.beginClose()
   }
 
-  private beginClose(drain: boolean): Promise<void> {
+  private beginClose(): Promise<void> {
     if (!this.closing) {
       this.closed = true
       this.startup.abort()
       // Publish the promise before closeChild can synchronously invoke onclose.
-      this.closing = Promise.resolve().then(() => this.closeChild(drain))
+      this.closing = Promise.resolve().then(() => this.closeChild())
     }
     return this.closing
   }
 
-  private async closeChild(drain: boolean): Promise<void> {
+  private async closeChild(): Promise<void> {
     await this.preparing?.catch(() => {})
     const child = this.child
     if (child?.pid) {
@@ -106,25 +118,27 @@ export class OwnedStdioTransport implements Transport {
         try { process.kill(-pid, "SIGKILL") }
         catch { if (child.exitCode == null && child.signalCode == null) child.kill("SIGKILL") }
       }
-      if (child.exitCode == null && child.signalCode == null) {
-        await new Promise<void>(resolve => {
-          const done = () => { clearTimeout(timer); child.off("exit", done); resolve() }
-          const timer = setTimeout(done, 1000)
-          child.once("exit", done)
-        })
-      }
     }
-    const output = child?.stdout
-    if (drain && output && !output.readableEnded && !output.destroyed) {
-      await new Promise<void>(resolve => {
-        const done = () => {
-          clearTimeout(timer)
-          output.off("end", done); output.off("close", done); output.off("error", done)
-          resolve()
-        }
-        const timer = setTimeout(done, 1000)
-        output.once("end", done); output.once("close", done); output.once("error", done)
-      })
+    // Both explicit and natural exit retain the existing one-second bound.
+    // Reading remains active until close, so final stdout is drained without
+    // treating root exit (or the deadline) as successful process teardown.
+    if (this.childClose) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([this.childClose, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new McpStdioTeardownError()), 1000)
+        })])
+      } catch (error) {
+        child?.stdin?.destroy(); child?.stdout?.destroy(); child?.stderr?.destroy()
+        child?.unref()
+        this.stderr.end(); this.buffer.clear()
+        this.onerror?.(error instanceof Error ? error : new Error(String(error)))
+        // The protocol is unusable even when process reclamation is unknown.
+        // SDK onerror alone does not reject its pending RPCs; onclose does.
+        // The shared close promise still rejects, so this is no process receipt.
+        this.onclose?.()
+        throw error
+      } finally { if (timer) clearTimeout(timer) }
     }
     child?.stdin?.destroy(); child?.stdout?.destroy(); child?.stderr?.destroy()
     child?.unref()

@@ -1,0 +1,186 @@
+{
+  "proposed": {
+    "type": "acp.session.event",
+    "session_id": "fixture-session",
+    "thread_id": "owner-522",
+    "agent_id": "fixture",
+    "state": "offered",
+    "progress_tail": "offered — waiting to start",
+    "goal": "Synthetic copy-command regression",
+    "workspace_root": "/fixture/workspace",
+    "display_name": "fixture",
+    "partial": false,
+    "mode": "review_readonly",
+    "open_local_terminal": true,
+    "local_terminal": "pending"
+  },
+  "initial": {
+    "type": "acp.session.event",
+    "session_id": "fixture-session",
+    "thread_id": "owner-522",
+    "agent_id": "fixture",
+    "state": "running",
+    "progress_tail": "CLI pid 73825",
+    "goal": "Synthetic copy-command regression",
+    "workspace_root": "/fixture/workspace",
+    "display_name": "fixture",
+    "partial": false,
+    "mode": "review_readonly",
+    "transport": "cli",
+    "timeline": [
+      {
+        "id": "tl_mv7q489k_1",
+        "kind": "status",
+        "label": "starting…",
+        "status": "running",
+        "at": "2026-10-14T06:23:13.112Z"
+      },
+      {
+        "id": "tl_mv7q48xf_2",
+        "kind": "status",
+        "label": "CLI pid 73825",
+        "status": "running",
+        "at": "2026-10-14T06:23:13.971Z"
+      }
+    ],
+    "open_local_terminal": true,
+    "local_terminal": "pending"
+  },
+  "progress": {
+    "type": "acp.session.event",
+    "session_id": "fixture-session",
+    "thread_id": "owner-522",
+    "agent_id": "fixture",
+    "state": "running",
+    "progress_tail": "已打开本机终端（owned-fixture · 交互）",
+    "goal": "Synthetic copy-command regression",
+    "workspace_root": "/fixture/workspace",
+    "display_name": "fixture",
+    "partial": false,
+    "mode": "review_readonly",
+    "transport": "cli",
+    "timeline": [
+      {
+        "id": "tl_mv7q489k_1",
+        "kind": "status",
+        "label": "starting…",
+        "status": "running",
+        "at": "2026-10-14T06:23:13.112Z"
+      },
+      {
+        "id": "tl_mv7q48xf_2",
+        "kind": "status",
+        "label": "CLI pid 73825",
+        "status": "running",
+        "at": "2026-10-14T06:23:13.971Z"
+      },
+      {
+        "id": "tl_mv7q48xg_3",
+        "kind": "status",
+        "label": "已打开本机终端（owned-fixture · 交互）",
+        "detail": "opened owned-fixture with interactive agent + task prompt",
+        "status": "done",
+        "at": "2026-10-14T06:23:13.972Z"
+      }
+    ],
+    "open_local_terminal": true,
+    "local_terminal": "opened",
+    "terminal_command_line": "cd '/fixture/workspace' || exit 1 && echo '' && echo '════════════════════════════════════════' && echo ' CMspark 编程接力 · 本机交互窗口' && echo ' 侧栏另有监视会话（桥接）—— 不是同一会话' && echo ' Agent: fixture' && echo ' 任务: Synthetic copy-command regression' && echo '════════════════════════════════════════' && echo '' && CMSPARK_TASK=$(cat '/fixture/prompt/task.md') && exec '/fixture/node' \"${CMSPARK_TASK}\"",
+    "terminal_command_expires_at": 1791959053971
+  },
+  "livePromptRefused": {
+    "type": "error",
+    "error": "ACP_SESSION_BUSY: only one ACP session at a time",
+    "family": "acp",
+    "request_type": "acp.session.prompt",
+    "thread_id": "owner-522",
+    "session_id": "fixture-session"
+  },
+  "refused": {
+    "type": "error",
+    "family": "acp",
+    "error": "acp: session does not belong to the requested conversation",
+    "request_type": "acp.session.cancel",
+    "session_id": "fixture-session",
+    "thread_id": "owner-522"
+  },
+  "receipt": {
+    "type": "acp.session.cancel.ack",
+    "session_id": "fixture-session",
+    "thread_id": "owner-522"
+  },
+  "stopped": {
+    "type": "acp.session.event",
+    "session_id": "fixture-session",
+    "thread_id": "owner-522",
+    "agent_id": "fixture",
+    "state": "closed",
+    "progress_tail": "cancelled",
+    "goal": "Synthetic copy-command regression",
+    "workspace_root": "/fixture/workspace",
+    "display_name": "fixture",
+    "partial": true,
+    "error": "cancelled",
+    "mode": "review_readonly",
+    "transport": "cli",
+    "timeline": [
+      {
+        "id": "tl_mv7q489k_1",
+        "kind": "status",
+        "label": "starting…",
+        "status": "running",
+        "at": "2026-10-14T06:23:13.112Z"
+      },
+      {
+        "id": "tl_mv7q48xf_2",
+        "kind": "status",
+        "label": "CLI pid 73825",
+        "status": "running",
+        "at": "2026-10-14T06:23:13.971Z"
+      },
+      {
+        "id": "tl_mv7q48xg_3",
+        "kind": "status",
+        "label": "已打开本机终端（owned-fixture · 交互）",
+        "detail": "opened owned-fixture with interactive agent + task prompt",
+        "status": "done",
+        "at": "2026-10-14T06:23:13.972Z"
+      },
+      {
+        "id": "tl_mv7q4907_4",
+        "kind": "status",
+        "label": "监视已停止（本机终端 Agent 可能仍在运行）",
+        "status": "error",
+        "at": "2026-10-14T06:23:14.071Z"
+      }
+    ],
+    "open_local_terminal": true,
+    "local_terminal": "opened",
+    "terminal_command_line": "cd '/fixture/workspace' || exit 1 && echo '' && echo '════════════════════════════════════════' && echo ' CMspark 编程接力 · 本机交互窗口' && echo ' 侧栏另有监视会话（桥接）—— 不是同一会话' && echo ' Agent: fixture' && echo ' 任务: Synthetic copy-command regression' && echo '════════════════════════════════════════' && echo '' && CMSPARK_TASK=$(cat '/fixture/prompt/task.md') && exec '/fixture/node' \"${CMSPARK_TASK}\"",
+    "terminal_command_expires_at": 1791959053971
+  },
+  "followupRefused": {
+    "type": "error",
+    "error": "acp: feature disabled — enable in 设置 → 编程助手",
+    "family": "acp",
+    "request_type": "acp.session.followup",
+    "thread_id": "owner-522",
+    "session_id": "fixture-session"
+  },
+  "promptRefused": {
+    "type": "error",
+    "error": "acp: feature disabled (config.acp.enabled=false)",
+    "family": "acp",
+    "request_type": "acp.session.prompt",
+    "thread_id": "owner-522",
+    "session_id": "fixture-session"
+  },
+  "applyRefused": {
+    "type": "error",
+    "error": "session is not propose_diff",
+    "family": "acp",
+    "request_type": "acp.apply_diff",
+    "thread_id": "owner-522",
+    "session_id": "fixture-session"
+  }
+}

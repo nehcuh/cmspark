@@ -260,6 +260,8 @@ interface Message {
   created_at: string
   /** Image attachments (metadata only; bytes live in `threads/<id>.files/`). */
   attachments?: ImageAttachmentMeta[]
+  /** Bounded document import notices; kept separate from model-facing content. */
+  files?: Array<{ filename: string; warning: string }>
   /** Companion-attached knowledge ledger for this assistant turn (Wave 1). */
   retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number }>
   /** Length-stop / truncated-tool-batch honesty (hydrate chip). */

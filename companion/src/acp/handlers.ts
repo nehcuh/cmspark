@@ -66,6 +66,7 @@ export async function handleAcpWsMessage(
       (typeof claimedOwner !== "string" || !claimedOwner || (session && session.thread_id !== claimedOwner))) {
     return {
       type: "error", family: "acp", error: "acp: session does not belong to the requested conversation",
+      request_type: type,
       session_id: sid, ...(session ? { thread_id: session.thread_id } : {}),
     }
   }
@@ -85,7 +86,7 @@ export async function handleAcpWsMessage(
     startOwner
   return {
     ...result,
-    ...(result.type === "error" ? { family: "acp" } : {}),
+    ...(result.type === "error" ? { family: "acp", request_type: type } : {}),
     ...(owner ? { thread_id: owner } : {}),
     ...(!result.session_id && sid ? { session_id: sid } : {}),
   }

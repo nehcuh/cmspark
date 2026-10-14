@@ -1,0 +1,20 @@
+{
+  "provider": "deepseek",
+  "model": "deepseek-v4-pro",
+  "stopReason": "stop",
+  "usage": {
+    "input": 501,
+    "output": 1910,
+    "cacheRead": 184064,
+    "cacheWrite": 0,
+    "reasoning": 243,
+    "totalTokens": 186475,
+    "cost": {
+      "input": 0.0006613200000000001,
+      "output": 0.0075636,
+      "cacheRead": 0.008098816,
+      "cacheWrite": 0,
+      "total": 0.016323736
+    }
+  }
+}

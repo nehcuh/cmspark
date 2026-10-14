@@ -9,6 +9,7 @@ import markedKatex from "marked-katex-extension"
 import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
 import { extractComputerCardData } from "../utils/computer-utils"
+import { DocumentWarning } from "./DocumentWarning"
 import {
   SETTINGS_POINTER_CTA,
   extractSettingsPointer,
@@ -860,6 +861,9 @@ const MessageRow = memo(function MessageRow({
             {!isUser && Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0 ? (
               <RetrievedSourcesChips sources={msg.retrieved_sources} routing={msg.knowledge_routing} />
             ) : null}
+            {isUser && msg.files?.map((file, index) => (
+              <DocumentWarning key={`${file.filename}-${index}`} filename={file.filename} warning={file.warning} />
+            ))}
             {isUser && Array.isArray(msg.attachments) && msg.attachments.length > 0 ? (
               <>
               <div style={styles.thumbRow} aria-label="附图">
@@ -951,6 +955,7 @@ const MessageRow = memo(function MessageRow({
     prev.msg.reasoning_content === next.msg.reasoning_content &&
     prev.msg.tool_calls === next.msg.tool_calls &&
     prev.msg.attachments === next.msg.attachments &&
+    prev.msg.files === next.msg.files &&
     prev.activeThreadId === next.activeThreadId &&
     prev.sendShortcut === next.sendShortcut &&
     prev.isLast === next.isLast &&

@@ -397,3 +397,48 @@ test("end-to-end:helper 返回的 caption 即三段式清洗文案", async () =>
   assert.ok(r.caption.includes("①"))
   assert.equal(r.image, "BASE64JPEG")
 })
+
+test("#532 settled failure callback supplies only stage reason and never late raw text", async () => {
+  const reasons: string[] = []
+  const removed: string[] = []
+  const r = await buildComputerL2PreviewImage({
+    windows: new FakeWindows([winInfo()]), capturer: new FakeCapturer(),
+    locator: new FakeLocator(OK_WORDS), previewBuilder: new FakePreviewBuilder(null, new Error("secret /private/raw.png")),
+    removeFile: async p => { removed.push(p) },
+  }, makeOpts({ onUnavailable: r => { reasons.push(r) } }))
+  assert.equal(r, null)
+  assert.deepEqual(reasons, ["render_failed"])
+  assert.deepEqual(removed, [RAW])
+})
+
+test("#532 timeout reason settles once while late OCR/raw cleanup cannot update it", async () => {
+  const reasons: string[] = [], removed: string[] = []
+  const pendingOcr = deferred<OcrResult>()
+  const locator = new FakeLocator(OK_WORDS)
+  locator.ocr = () => pendingOcr.promise
+  const result = await buildComputerL2PreviewImage({
+    windows: new FakeWindows([winInfo()]), capturer: new FakeCapturer(), locator,
+    previewBuilder: new FakePreviewBuilder(), removeFile: async p => { removed.push(p) },
+  }, makeOpts({ timeoutMs: 10, onUnavailable: r => { reasons.push(r) } }))
+  assert.equal(result, null)
+  assert.deepEqual(reasons, ["timeout"])
+  assert.deepEqual(removed, [])
+  pendingOcr.resolve({ language: "zh", words: OK_WORDS })
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(removed, [RAW])
+  assert.deepEqual(reasons, ["timeout"])
+})
+
+test("#532 capture error and OCR error stay distinct; successful callback remains absent", async () => {
+  for (const stage of ["capture", "ocr", "success"] as const) {
+    const reasons: string[] = []
+    const capturer = new FakeCapturer(), locator = new FakeLocator(OK_WORDS)
+    if (stage === "capture") capturer.captureWindow = async () => { throw new Error("opaque sensitive error") }
+    if (stage === "ocr") locator.ocr = async () => { throw new Error("opaque sensitive error") }
+    const r = await buildComputerL2PreviewImage({ windows: new FakeWindows([winInfo()]), capturer, locator,
+      previewBuilder: new FakePreviewBuilder(), removeFile: async () => {},
+    }, makeOpts({ onUnavailable: reason => { reasons.push(reason) } }))
+    assert.deepEqual(reasons, stage === "success" ? [] : [stage + "_failed"])
+    assert.equal(r !== null, stage === "success")
+  }
+})

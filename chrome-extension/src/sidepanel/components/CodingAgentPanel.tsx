@@ -10,6 +10,7 @@ import {
   type CSSProperties,
 } from "react"
 import { tokens } from "../ui/tokens"
+import { useCodingStop } from "../hooks/useCodingStop"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import {
   isEmbeddedTerminalSupported,
@@ -29,7 +30,7 @@ import {
   formatPageContext,
   cloneCommand,
 } from "../coding-handoff/repo-context"
-import { useAgentStore, selectCodingSession, codingSessionBelongsToThread } from "../store/agentStore"
+import { useAgentStore, selectCodingSession, codingSessionBelongsToThread, selectCodingOperationError } from "../store/agentStore"
 import { MinimalConfirm } from "./MinimalConfirm"
 
 /**
@@ -142,6 +143,7 @@ export function CodingAgentPanel({
 }: Props) {
   const { state, dispatch } = useAgentStore()
   const session = threadId === state.activeThreadId ? selectCodingSession(state, threadId) : null
+  const actionError = selectCodingOperationError(state, session)
   const confirmQueue = state.pendingSecurityConfirmations
   const pendingConfirm = confirmQueue.length > 0
   const headConfirm = confirmQueue[0]
@@ -172,6 +174,23 @@ export function CodingAgentPanel({
   const [embedOpenError, setEmbedOpenError] = useState("")
   /** #543: workspace-pick failures stay visible (with retry hint) instead of a 6s flash. */
   const [pickError, setPickError] = useState("")
+  const [controlError, setControlError] = useState("")
+  const [commandClock, setCommandClock] = useState(Date.now())
+  useEffect(() => {
+    setCommandClock(Date.now())
+    const deadline = session?.terminalCommandExpiresAt
+    if (!deadline || deadline <= Date.now()) return
+    const timer = window.setTimeout(() => { setCommandClock(Date.now()); setStatus("") }, deadline - Date.now() + 1)
+    return () => window.clearTimeout(timer)
+  }, [session?.sessionId, session?.terminalCommandExpiresAt])
+  const commandAvailable = !!session?.terminalCommandLine && typeof session.terminalCommandExpiresAt === "number" && session.terminalCommandExpiresAt > commandClock
+  const stopControl = useCodingStop(session)
+  const currentSessionRef = useRef(session)
+  currentSessionRef.current = session
+  useEffect(() => {
+    setControlError("")
+    setStatus("")
+  }, [session?.sessionId, threadId, open])
   // kimi P2-1: closing the panel must clear the stale pick error (thread switch is
   // already covered by the App.tsx `key` remount, but open→false is not).
   useEffect(() => {
@@ -229,7 +248,7 @@ export function CodingAgentPanel({
     }
   }, [readyAgents, agentId])
   const repoHint = useMemo(() => parseRepoFromUrl(pageUrl), [pageUrl])
-  const live = session?.state === "running" || session?.state === "offered"
+  const live = session?.state === "running" || session?.state === "offered" || session?.state === "confirmed"
   const timeline = (session?.timeline || []) as TimelineRow[]
 
   // P0-3: seed form only on open rising edge (optional seedGoal when open transitions).
@@ -706,6 +725,7 @@ export function CodingAgentPanel({
     if (composerDisabled) return
     const t = input.trim()
     if (!t || !session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
+    dispatch({ type: "ACP_OPERATION_REQUEST", sessionId: session.sessionId, threadId: session.threadId })
     chrome.runtime.sendMessage(
       { type: "acp.session.prompt", session_id: session.sessionId, thread_id: session.threadId, text: t },
       () => {
@@ -732,18 +752,9 @@ export function CodingAgentPanel({
     })
   }, [dispatch, state.config])
 
-  const onStop = () => {
-    if (!session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
-    chrome.runtime.sendMessage(
-      { type: "acp.session.cancel", session_id: session.sessionId, thread_id: session.threadId },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
-  }
-
   const onApply = () => {
     if (!session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
+    dispatch({ type: "ACP_OPERATION_REQUEST", sessionId: session.sessionId, threadId: session.threadId })
     chrome.runtime.sendMessage(
       { type: "acp.apply_diff", session_id: session.sessionId, thread_id: session.threadId },
       () => {
@@ -1074,6 +1085,12 @@ export function CodingAgentPanel({
         {/* Live session shell (main surface) */}
         {session ? (
           <div style={styles.session}>
+            {session.cacheCompacted ? <p role="status" style={styles.footnote}>此会话输出已收起，请返回所属主对话查看已保存的结果。</p> : null}
+            {session.outputTruncated && !session.cacheCompacted ? <p role="status" style={styles.footnote}>此处仅显示部分输出；请返回所属主对话查看已保存的结果。</p> : null}
+            {actionError ? <p role="alert" style={styles.err}>{actionError}</p> : null}
+            {controlError ? <p role="alert" style={styles.err}>{controlError}</p> : null}
+            {stopControl.error ? <p role="alert" style={styles.err}>{stopControl.error}</p> : null}
+            {stopControl.pending ? <p role="status" style={styles.footnote}>停止请求已发送，等待本机会话确认。</p> : null}
             {modeCLikely ? (
               <div style={styles.modeCBanner} role="status">
                 {modeCBannerText(session?.localTerminal, { hasEntryButton: showEmbedEntry })}
@@ -1102,7 +1119,7 @@ export function CodingAgentPanel({
               style={styles.backToChat}
               onClick={onClose}
             >
-              ← 返回主对话（本会话继续运行）
+              {session.state === "running" ? "← 返回主对话（本会话继续运行）" : live ? "← 返回主对话（会话尚未开始运行）" : "← 返回主对话"}
             </button>
             <div style={styles.sessionHead}>
               <span>
@@ -1111,14 +1128,15 @@ export function CodingAgentPanel({
                   ? codingHandoffCopy.modeBadgeDraft
                   : codingHandoffCopy.modeBadgeReview}
                 {session.transport ? ` · ${session.transport}` : ""}
-                {live ? ` · ${codingHandoffCopy.statusRunning}` : ` · ${codingHandoffCopy.statusDone}`}
+                {session.cancelConfirmed || session.cancelled ? " · 已停止" : live ? session.state === "running" ? ` · ${codingHandoffCopy.statusRunning}` : " · 待启动" : ` · ${codingHandoffCopy.statusDone}`}
               </span>
               <div style={styles.sessionBtns}>
                 {live ? (
                   <button
                     type="button"
                     style={styles.dangerBtn}
-                    onClick={onStop}
+                    onClick={stopControl.stop}
+                    disabled={stopControl.pending}
                     title={modeCStopTitle(session?.localTerminal, session?.openLocalTerminal)}
                   >
                     {modeCStopLabel(session?.localTerminal, session?.openLocalTerminal)}
@@ -1142,6 +1160,30 @@ export function CodingAgentPanel({
             </div>
 
             {session.error ? <div style={styles.err}>{session.error}</div> : null}
+            {session.transport === "cli" && !session.cacheCompacted ? (
+              <div style={styles.transportNote}>
+                {commandAvailable ? <>
+                  <button type="button" style={styles.secondary} onClick={async () => {
+                    const target = session
+                    setControlError("")
+                    setStatus("")
+                    if (!target.terminalCommandExpiresAt || target.terminalCommandExpiresAt <= Date.now()) {
+                      setCommandClock(Date.now())
+                      setControlError("临时启动命令已过期，请自行切换到已有外部终端。")
+                      return
+                    }
+                    const ok = await copyTextToClipboard(target.terminalCommandLine!)
+                    if (mountedRef.current && currentSessionRef.current?.sessionId === target.sessionId && currentSessionRef.current.threadId === target.threadId) {
+                      setControlError(ok ? "" : "复制启动命令失败，请检查剪贴板权限后重试。")
+                      if (ok) setStatus(target.terminalCommandExpiresAt > Date.now()
+                        ? "已复制本次临时命令，请在有效期内执行；不会切换到已运行的终端。"
+                        : "临时启动命令已过期，请自行切换到已有外部终端。")
+                    }
+                  }}>复制本次启动命令</button>
+                  <p style={styles.footnote}>临时命令只在生成后 60 秒内可复制，请及时执行。手动执行会启动 Agent；已有外部终端请自行切换。</p>
+                </> : <p style={styles.footnote}>{session.terminalCommandLine ? "临时启动命令已过期；请自行切换到已有外部终端。" : "本次启动命令不可用；请自行切换到已有外部终端。"}</p>}
+              </div>
+            ) : null}
 
             {/* Transport honesty: CLI bridge ≠ embedded Claude TUI */}
             {session.transport === "cli" ? (

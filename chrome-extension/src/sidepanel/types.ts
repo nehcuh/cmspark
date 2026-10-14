@@ -1,3 +1,4 @@
+import type { PreviewUnavailableReason } from "./utils/confirmation-preview"
 // Shared types for Side Panel
 
 export type ConnectionState = "connected" | "connecting" | "disconnected"
@@ -332,6 +333,8 @@ export interface Message {
   created_at: string
   streaming?: boolean
   attachments?: MessageAttachment[]
+  /** Parser-generated document notices, separate from message/model content. */
+  files?: Array<{ filename: string; warning: string }>
   /**
    * Companion chat.user persist echo correlation (F1): the optimistic bubble's
    * temp id from the chat.create/file.upload frame's clientMessageId. Lets the
@@ -385,6 +388,8 @@ export interface SecurityConfirmationRequest {
   preview_image?: string
   /** 截图说明行(三段式非绑定声明文案,companion 侧已做字符类清洗)。 */
   preview_caption?: string
+  /** Fixed operator diagnostic; absent for success, unattempted, and old peers. */
+  preview_unavailable_reason?: PreviewUnavailableReason
   /**
    * P1:computer 类确认的完整预览文本独立字段——绕过 code_preview 的
    * CODE_PREVIEW_LIMIT=1200 截断,保证 30 动作 + 2000 语料逐字对人可见。

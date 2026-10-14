@@ -375,6 +375,63 @@ test("exhausted planned failure recommends revision without changing resume or u
   assert.equal(runtime.clampPlannedRecovery(c.tm, c.parent.id, unplanned), unplanned)
 })
 
+test("same-report recovery key order does not write a checkpoint or disturb accepted siblings", async () => {
+  const c = setup(), p = await plan(c, [task("a"), task("sibling")])
+  const results = []
+  for (const id of ["a", "sibling"]) {
+    const worker = (await spawn(c, p, id)).data.worker_id
+    const result = await finish(c, worker)
+    assert.equal((await review(c, p, id, result)).success, true)
+    results.push(result)
+  }
+  const before = structuredClone(c.tm.get(c.parent.id)!.cooperation_plan!)
+  const result = results[0]
+  // Reorder the real collect_handback producer's metadata, without inventing fields.
+  const reordered = { ...result, recovery: Object.fromEntries(Object.entries(result.recovery).reverse()) as typeof result.recovery }
+  assert.notEqual(JSON.stringify(result.recovery), JSON.stringify(reordered.recovery))
+  const update = c.tm.update.bind(c.tm)
+  let writes = 0
+  c.tm.update = (id, patch) => {
+    if (id === c.parent.id && patch.cooperation_plan) writes++
+    return update(id, patch)
+  }
+  runtime.checkpointCooperationResult(c.tm, c.parent.id, reordered)
+  assert.equal(writes, 0, "key order alone is not a semantic checkpoint change")
+  assert.deepEqual(c.tm.get(c.parent.id)!.cooperation_plan, before)
+  assert.deepEqual(new ThreadManager().get(c.parent.id)!.cooperation_plan, before)
+  assert.ok((await c.call("cooperation_status")).data.plan.tasks.every((task: any) => task.accepted))
+})
+
+test("same-report recovery budget repair writes once and retains recorded judgments", async () => {
+  const c = setup(), p = await plan(c)
+  let current!: Awaited<ReturnType<typeof finish>>
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const worker = (await spawn(c, p, "a")).data.worker_id
+    current = await finish(c, worker, attempt === 3 ? null : "error")
+    await review(c, p, "a", current, attempt === 3)
+  }
+  const { browserTaskResult } = await import("../src/orchestrator/cooperation-result")
+  const read = await c.call("collect_handback", { worker_id: current.source.thread_id })
+  const legacy = browserTaskResult(c.tm.get(current.source.thread_id)!, read)
+  assert.equal(legacy.recovery.budget_remaining, 2)
+  assert.equal(current.recovery.budget_remaining, 0)
+  const parent = c.tm.get(c.parent.id)!, before = structuredClone(parent.cooperation_plan!)
+  c.tm.update(parent.id, { cooperation_plan: { ...before, tasks: before.tasks.map(task => ({ ...task,
+    attempts: task.attempts.map(attempt => attempt.worker_id === current.source.thread_id ? { ...attempt, result: legacy } : attempt),
+  })) } })
+  const update = c.tm.update.bind(c.tm)
+  let writes = 0
+  c.tm.update = (id, patch) => {
+    if (id === c.parent.id && patch.cooperation_plan) writes++
+    return update(id, patch)
+  }
+  runtime.checkpointCooperationResult(c.tm, parent.id, current)
+  assert.equal(writes, 1, "changed recovery must still reach disk")
+  assert.deepEqual(new ThreadManager().get(parent.id)!.cooperation_plan, before)
+  runtime.checkpointCooperationResult(c.tm, parent.id, current)
+  assert.equal(writes, 1, "repaired metadata is idempotent")
+})
+
 test("live source ownership or run changes reject failed review and invalidate prior acceptance", async () => {
   for (const change of ["owner", "run"] as const) {
     for (const terminal of [null, "error"]) {

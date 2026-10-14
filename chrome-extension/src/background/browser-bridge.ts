@@ -471,7 +471,7 @@ export class BrowserBridge {
 
   private getTabId(params: Record<string, any>): number {
     if (params.tabId) return params.tabId
-    throw new Error("tabId is required")
+    throw new Error("TAB_ID_REQUIRED: tabId is required")
   }
 
   private async getTabUrl(tabId: number): Promise<string | undefined> {
@@ -1835,7 +1835,9 @@ export class BrowserBridge {
     const decision = resolveEvaluateExecution(params)
     // Use `=== false` so TS narrows EvaluateExecutionDecision union.
     if (decision.allowed === false) {
-      return { success: false, error: decision.error }
+      // Returned refusals do not pass through executeInner's thrown-prefix
+      // translation; carry the host code to the classifier explicitly.
+      return { success: false, error: decision.error, data: { error_code: "EVALUATE_AUTH_REQUIRED" } }
     }
 
     // ADVISORY ONLY (audit H9): detectDangerousApis annotates the result with

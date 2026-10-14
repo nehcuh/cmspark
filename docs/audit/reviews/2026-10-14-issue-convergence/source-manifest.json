@@ -1,0 +1,76 @@
+{
+  "base": "6594c053e4485182fec100b178df40ff8bf16a95",
+  "groups": {
+    "ci": {
+      "source": "/Users/huchen/.codex/worktrees/issue-convergence/cmspark",
+      "branch": "codex/stdio-close-settle",
+      "files": {
+        "companion/src/mcp/client.ts": "03abdd97dc92eb4c95d276f8b8447c38b57d257034549a3ae1ad99e097f11d4b",
+        "companion/src/mcp/manager.ts": "96e37fea4199471c611e59f6c023a01920472012651871eefa41e2a287e92686",
+        "companion/src/mcp/stdio-transport.ts": "909df9cb4d76ca9cd5f34cf15cf0f26472e9a769de94854bc16c3f474ac4c2c2",
+        "companion/tests/mcp-compatibility-602.test.ts": "831c3e7f7a990d11136d868f307be5eba974060f1372d06d43ded5e4df2ee0c8",
+        "companion/tests/mcp-stdio-tree.test.ts": "49684869a08590a1070a824659a97df32f484ffd30649cffd675510d01ad5414",
+        "companion/tests/integration/allow-dir-reconnect.test.ts": "25a07a77c45052aca20b04e620abefff2f74c46c5ccd872c0cb76a72e13291d0"
+      },
+      "tracked_diff_sha256": "e41aecf513b5c72b71af1e23a85c7160d14c28c5ad50125faaec2307c5f3f605",
+      "review_complete_diff_sha256": "e41aecf513b5c72b71af1e23a85c7160d14c28c5ad50125faaec2307c5f3f605"
+    },
+    "office": {
+      "source": "/Users/huchen/.codex/worktrees/office-font-warnings/cmspark",
+      "branch": "codex/office-font-warnings",
+      "files": {
+        "README.md": "aa38492dce6da911f80d68448a1077aa56ebea8f354d54ae84bec77fde8653fa",
+        "chrome-extension/src/sidepanel/components/ChatView.tsx": "85dbd558e895a46f866637945ca008a947c37d3e99823fd9f630787297b5ecfc",
+        "chrome-extension/src/sidepanel/components/KnowledgeImportModal.tsx": "175be5542019f4bbfa1dc435459800568f68b24ca094e27cb1a00da25af913fe",
+        "chrome-extension/src/sidepanel/hooks/useWebSocket.ts": "d30a8cc5af7fc24f48ab0e5f8db69d12a86a5dd9fd9390983409b08b4e6fb1b0",
+        "chrome-extension/src/sidepanel/store/agentStore.tsx": "89aba9e19157ad894ad9dffd9b2c9f8457f037e8805b66607d5c3c3c6c1db807",
+        "chrome-extension/src/sidepanel/types.ts": "c858bfc01c4c91724abb18ff46e5aedeb3c5e2bb13368375339bfcddbf5546cd",
+        "companion/src/file-formats.ts": "9c473160d50dfe2db0d7a2bcc1194289027b0aeb8111c109a21aa0549d5e00f6",
+        "companion/src/llm/adapter.ts": "01becf4443666e97db9e5c26975ef9935134661692086624211c4486b81749db",
+        "companion/src/message-router.ts": "5e733097934577a0f548d635f52135f868efbf11f12764eff38ef011d1c1834f",
+        "companion/src/odf-expansion.ts": "6b26d45d8affe3a926bb88c9ecc9840e155753e2795d6197fbf60a60565f1f69",
+        "companion/src/threads/thread-manager.ts": "ac0512a7ca28c7b64c06bed9dc54ecd7e07622d503fa3af0bdfef12da865ff52",
+        "companion/tests/file-parser-safe-name.test.ts": "b3fd98830ca1eeae0a23971a6724f48e13b328ebffb9807b7f4b9e48f9c558c2",
+        "companion/tests/odf-expansion.test.ts": "927587e60e49ec53ef05b198b0194209cf770341e7573ac5f3aad6498f62ca98",
+        "companion/tests/office-import-entry.test.ts": "ba6e60d51fde2c4a1360b0069892a5a89c4ba46fa177d4338a9a925964be8534",
+        "chrome-extension/src/sidepanel/components/DocumentWarning.tsx": "dd9e15b2860c9cbcbb4401e5cae44b5028c63d6024cc0118093b9973f0b590c4",
+        "chrome-extension/src/sidepanel/utils/document-warning.ts": "002700bf0341548b6e672c3b873d98ee14d8be6878da1bc07fba145a63b98847",
+        "chrome-extension/tests/document-warning.test.ts": "c0faf5b4591e4811d0e909209efa927ae223fef5af628bafc58a81d14685c2f0",
+        "chrome-extension/tests/fixtures/office-warning-614/README.md": "0ac83a1c956b5028cc0e3fb274f360abd405cc3b0173c1c0c6b0e9cda281c711",
+        "chrome-extension/tests/fixtures/office-warning-614/router-responses.json": "0e7bbb49f3b8e90d905070da60b0eb19609e4eb5187f3d7eebc2d0cb4083454a",
+        "docs/office-import-contract.md": "cc5ed0ad0037b104943fef2e8a94730f2f07d417a64a2f3982a7a592ec3223fc"
+      },
+      "tracked_diff_sha256": "df44c68452df77fbe17cdf13daf288f296b869be5d73c1e4992b3e9e27504c62",
+      "review_complete_diff_sha256": "0d6905cc055a4a9eba72cbf185edd5e57229b9458aff31ea2834f568d63ef8a6"
+    },
+    "cooperation": {
+      "source": "/Users/huchen/.codex/worktrees/cooperation-convergence/cmspark",
+      "branch": "codex/cooperation-convergence",
+      "files": {
+        "chrome-extension/tests/task-relationship.test.ts": "36659c42b332009f0daeebd1ca8fbfdc864b434fd096bd7154412babdb20bd84",
+        "companion/scripts/fleet-assessment-eval.cjs": "bcced0fdabe35f4d15a8e4ba480ebdd49663981c72e756b63ec126236f2623e8",
+        "companion/scripts/render-task-navigation-fixture.cjs": "982bc039c8533331447d059a6893a79aaea8b0a1ac5a83d3e278b6a2b0df6b17",
+        "companion/scripts/test-task-navigation-ui.py": "361c3d89450fee95c558f12ad10fc458d816b18badc09bef34ff4c6647c8d27a",
+        "companion/src/orchestrator/cooperation-plan.ts": "9e6223763ceec9c7d5e0325750e0c55a14f6adb4863f2d71a9dd59fc80999046",
+        "companion/src/orchestrator/fleet-assessment.ts": "9a03a54fc44699a75681cd675fc18ef8044eb76c45348c230bdae39bfc5a0512",
+        "companion/tests/cooperation-plan.test.ts": "118e64881be0c2d3cf5b6e89f3c68f50eda8e3617821f8543cde687796c04355",
+        "companion/tests/fleet-assessment.test.ts": "0e61947f7337eb76ea3379678f94b9da93c8956d4345d597bd2357ea12dec214"
+      },
+      "tracked_diff_sha256": "11725378cee29dedf5c239ff015c327056df343f100ba5bdbc7c05c33372004f",
+      "review_complete_diff_sha256": "11725378cee29dedf5c239ff015c327056df343f100ba5bdbc7c05c33372004f"
+    },
+    "availability": {
+      "source": "/Users/huchen/.codex/worktrees/availability-convergence/cmspark",
+      "branch": "codex/availability-convergence",
+      "files": {
+        "chrome-extension/src/sidepanel/voice/local-stt-adapter.ts": "7cf1cfc6b1c6c1a07b898b6d6ef8d44ce2b84bdc14dbff8bdef038c8b6ead616",
+        "chrome-extension/tests/voice-local-continuous.test.ts": "ca2870d3d1bdf8753195bed98f722debf829eeeca3272dae5add54b781be9afc",
+        "companion/src/skills/skill-engine.ts": "98858543059b2eca49c0bced1b3927a4753184a4d2a2a18c54e47c051ba9bf90",
+        "companion/tests/knowledge-clusters.test.ts": "cf44cb131ab58043c5c5eb01e62129601d10f2678378f99f742f57f05ab36671",
+        "companion/tests/knowledge-graph.test.ts": "fc72ac5cbd21e9236e925d515029625213be6e7e5775a7f63d758e1c366b32de"
+      },
+      "tracked_diff_sha256": "73102906de4a330282f60165a72433a12fb082ac352d385e1863a1e5445367e7",
+      "review_complete_diff_sha256": "73102906de4a330282f60165a72433a12fb082ac352d385e1863a1e5445367e7"
+    }
+  }
+}

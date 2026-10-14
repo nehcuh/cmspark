@@ -477,9 +477,9 @@ export function createLocalSttAdapter(
   /**
    * Record one segment: wait segmentMs or user stop(), then return WAV.
    */
-  const recordSegment = async (segmentMs: number): Promise<Uint8Array | null> => {
+  const recordSegment = async (segmentMs: number, gen: number, onReady: () => void): Promise<Uint8Array | null> => {
     const handle = await beginCapture({ maxMs: segmentMs, onLevel: handlers.onLevel })
-    if (dead || aborted || !wantListening) {
+    if (dead || aborted || !wantListening || gen !== loopGen) {
       try {
         handle.abort()
       } catch {
@@ -500,10 +500,13 @@ export function createLocalSttAdapter(
       }
       segmentStopTrigger = done
       segmentTimer = setTimeout(done, segmentMs)
+      // Install stop/abort handling before announcing a ready microphone.
+      onReady()
+      if (!wantListening || pendingSoftStop || dead || aborted || gen !== loopGen) done()
     })
 
-    capture = null
-    if (dead || aborted) {
+    if (capture === handle) capture = null
+    if (dead || aborted || gen !== loopGen) {
       try {
         handle.abort()
       } catch {
@@ -820,7 +823,7 @@ export function createLocalSttAdapter(
       return
     }
     try {
-      handlers.onStart()
+      let captureStarted = false
       while (!dead && wantListening && gen === loopGen) {
         const remaining = hardCapMs - (Date.now() - wallStart)
         // Allow short test segments (<800ms wall hardCap with tiny segmentCapMs)
@@ -836,7 +839,12 @@ export function createLocalSttAdapter(
         // with zero chunks during record → forceAbort (Pi D1c blocker #2).
         let wav: Uint8Array | null
         try {
-          wav = await recordSegment(segmentMs)
+          wav = await recordSegment(segmentMs, gen, () => {
+            if (!captureStarted) {
+              captureStarted = true
+              handlers.onStart()
+            }
+          })
         } catch (e: any) {
           if (dead || gen !== loopGen) return
           handlers.onError(e?.code === "aborted" ? "aborted" : "audio-capture")

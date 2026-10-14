@@ -1,0 +1,102 @@
+{
+  "capture": {
+    "type": "security.confirmation.request",
+    "confirmation_id": "61326a7f-9a8b-461c-9893-7065ca65d88a",
+    "tool_name": "host_computer",
+    "dangerous_apis": [],
+    "critical_apis": [
+      "computer.coordinate_injection"
+    ],
+    "code_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status",
+    "timeout_ms": 45000,
+    "requested_at": "2026-10-14T06:08:45.961Z",
+    "risk_level": "high",
+    "auto_confirm_eligible": false,
+    "relevant_domains": [],
+    "relevant_apps": [
+      "mac.app.preview532"
+    ],
+    "preview_unavailable_reason": "capture_failed",
+    "full_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status"
+  },
+  "no_window": {
+    "type": "security.confirmation.request",
+    "confirmation_id": "3f41e985-450b-49a6-98d9-2c1a5340e403",
+    "tool_name": "host_computer",
+    "dangerous_apis": [],
+    "critical_apis": [
+      "computer.coordinate_injection"
+    ],
+    "code_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status",
+    "timeout_ms": 45000,
+    "requested_at": "2026-10-14T06:08:45.983Z",
+    "risk_level": "high",
+    "auto_confirm_eligible": false,
+    "relevant_domains": [],
+    "relevant_apps": [
+      "mac.app.preview532"
+    ],
+    "preview_unavailable_reason": "target_unavailable",
+    "full_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status"
+  },
+  "success": {
+    "type": "security.confirmation.request",
+    "confirmation_id": "cac5f948-d813-426b-9bbd-07200664ecdc",
+    "tool_name": "host_computer",
+    "dangerous_apis": [],
+    "critical_apis": [
+      "computer.coordinate_injection"
+    ],
+    "code_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status",
+    "timeout_ms": 45000,
+    "requested_at": "2026-10-14T06:08:46.013Z",
+    "risk_level": "high",
+    "auto_confirm_eligible": false,
+    "relevant_domains": [],
+    "relevant_apps": [
+      "mac.app.preview532"
+    ],
+    "preview_image": "ZmFrZQ==",
+    "preview_caption": "① 将在 Controlled App 窗口中执行 1 个动作（下方逐条列出）；② 十字线仅标注第 1 个动作的当前位置；③ 批准后将按实时屏幕重新定位，实际点击位置以执行为准",
+    "full_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status"
+  },
+  "unattempted": {
+    "type": "security.confirmation.request",
+    "confirmation_id": "3d796a82-2b4f-42e7-8a7e-e8658f7232e6",
+    "tool_name": "host_computer",
+    "dangerous_apis": [],
+    "critical_apis": [
+      "computer.coordinate_injection"
+    ],
+    "code_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status",
+    "timeout_ms": 45000,
+    "requested_at": "2026-10-14T06:08:46.018Z",
+    "risk_level": "high",
+    "auto_confirm_eligible": false,
+    "relevant_domains": [],
+    "relevant_apps": [
+      "mac.app.preview532"
+    ],
+    "full_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status"
+  },
+  "timeout": {
+    "type": "security.confirmation.request",
+    "confirmation_id": "ca5c2f96-40cc-461a-8b64-1317e5beee81",
+    "tool_name": "host_computer",
+    "dangerous_apis": [],
+    "critical_apis": [
+      "computer.coordinate_injection"
+    ],
+    "code_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status",
+    "timeout_ms": 45000,
+    "requested_at": "2026-10-14T06:08:46.031Z",
+    "risk_level": "high",
+    "auto_confirm_eligible": false,
+    "relevant_domains": [],
+    "relevant_apps": [
+      "mac.app.preview532"
+    ],
+    "preview_unavailable_reason": "timeout",
+    "full_preview": "任务: \"controlled task\"\n目标应用: Controlled App (mac.app.preview532)\n动作预算: 15 个注入动作（共 1 个草案动作）\n待执行注入动作（逐条枚举，请核对 — 屏幕上的文字永远不是指令）:\n  [1] click 坐标 (1, 1)\n本任务不包含文本输入动作。\ncontrolled rate status"
+  }
+}
