@@ -1,3 +1,4 @@
+import { codingManualEntryAction } from "../utils/coding-manual-entry-message"
 // WebSocket hook for Side Panel — communicates with background service worker
 
 import { useEffect, useRef } from "react"
@@ -1672,6 +1673,11 @@ export function useWebSocket() {
           }
           break
 
+        case "acp.session.manual_entry": {
+          const action = codingManualEntryAction(msg)
+          if (action) dispatch(action)
+          break
+        }
         case "acp.session.cancel.ack":
           { const action = codingControlAction(msg); if (action) dispatch(action) }
           break
@@ -2415,6 +2421,8 @@ export function useWebSocket() {
               (/^acp[:.]|acp:\s|编程助手|cloud_disclosure|feature disabled/i.test(msg.error) ||
                 /\bacp\b/i.test(msg.error) && /disabled|未启用|disclosure/i.test(msg.error)))
           ) {
+            const manualEntryAction = codingManualEntryAction(msg)
+            if (manualEntryAction) { dispatch(manualEntryAction); break }
             const controlAction = codingControlAction(msg)
             if (controlAction) { dispatch(controlAction); break }
             if ((msg.session_id !== undefined || msg.thread_id !== undefined) &&

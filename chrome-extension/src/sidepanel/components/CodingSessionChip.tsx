@@ -5,8 +5,9 @@ import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import { isModeCInvolved, modeCBannerText, modeCStopLabel, modeCStopTitle } from "../coding-handoff/embed-entry"
 import type { CodingSessionState } from "../store/agentStore"
-import { useAgentStore, codingSessionBelongsToThread, selectCodingOperationError } from "../store/agentStore"
+import { useAgentStore, codingSessionBelongsToThread, selectCodingOperationError, selectCodingManualEntry } from "../store/agentStore"
 import { useCodingStop } from "../hooks/useCodingStop"
+import { sendCodingOperation } from "../utils/coding-operation-send"
 
 export function CodingSessionChip({
   session,
@@ -19,17 +20,18 @@ export function CodingSessionChip({
   const live = session.state === "running" || session.state === "offered" || session.state === "confirmed"
   const stopControl = useCodingStop(session)
   const actionError = selectCodingOperationError(state, session)
+  const manualEntry = selectCodingManualEntry(state, session)
 
   useEffect(() => {
     if (session.state !== "closed") return
-    if (actionError) return
+    if (actionError || manualEntry) return
     // Do not auto-dismiss while applyable diffs remain (UX: 应用 diff must stay reachable)
     if (session.hasPendingDiff) return
     const t = window.setTimeout(() => {
       dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })
     }, 12_000)
     return () => window.clearTimeout(t)
-  }, [session.state, session.sessionId, session.hasPendingDiff, actionError, dispatch])
+  }, [session.state, session.sessionId, session.hasPendingDiff, actionError, manualEntry, dispatch])
   const label = session.displayName || session.agentId || "Agent"
   const modeBadge =
     session.mode === "propose_diff"
@@ -48,29 +50,15 @@ export function CodingSessionChip({
     if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
     const goal = window.prompt("继续追问编程助手（将开新一轮并确认）")
     if (!goal?.trim()) return
-    dispatch({ type: "ACP_OPERATION_REQUEST", sessionId: session.sessionId, threadId: session.threadId })
-    chrome.runtime.sendMessage(
-      {
-        type: "acp.session.followup",
-        session_id: session.sessionId, thread_id: session.threadId,
-        goal: goal.trim(),
-        mode: session.mode === "propose_diff" ? "propose_diff" : "review_readonly",
-      },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
+    sendCodingOperation(session, dispatch, {
+      type: "acp.session.followup", goal: goal.trim(),
+      mode: session.mode === "propose_diff" ? "propose_diff" : "review_readonly",
+    })
   }
 
   const onApply = () => {
     if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
-    dispatch({ type: "ACP_OPERATION_REQUEST", sessionId: session.sessionId, threadId: session.threadId })
-    chrome.runtime.sendMessage(
-      { type: "acp.apply_diff", session_id: session.sessionId, thread_id: session.threadId },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
+    sendCodingOperation(session, dispatch, { type: "acp.apply_diff" })
   }
 
   return (
@@ -88,7 +76,7 @@ export function CodingSessionChip({
         </span>
       </div>
       {!compact && tail ? <div style={styles.tail}>{tail}</div> : null}
-      {session.error ? <div style={styles.err}>{session.error}</div> : null}
+      {session.error && !(session.state === "closed" && session.error === "cancelled") ? <div style={styles.err}>{session.error}</div> : null}
       {stopControl.error ? <div style={styles.err} role="alert">{stopControl.error}</div> : null}
       {actionError ? <div style={styles.err} role="alert">{actionError}</div> : null}
       {stopControl.pending ? <div role="status">停止请求已发送，等待本机会话确认。</div> : null}

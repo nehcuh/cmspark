@@ -29,7 +29,7 @@ async function runBridge(options: { remote?: any; cdpFails?: boolean; scripted?:
   ;(globalThis as any).chrome = {
     tabs: { get: async (id: number) => ({ id, url: "https://synthetic.example/page" }) },
     debugger: {
-      onDetach: { addListener() {} }, attach: async () => {},
+      onDetach: { addListener() {} }, getTargets: async () => [{ tabId: 7, attached: false }], attach: async () => {},
       sendCommand: async (_target: any, method: string, params: any) => {
         if (method !== "Runtime.evaluate") return {}
         expressions.push(params.expression)

@@ -3409,6 +3409,7 @@ export async function handleMessage(
     case "acp.list":
     case "acp.rediscover":
     case "acp.adopt_discovered":
+    case "acp.session.prepare_manual_entry":
     case "acp.session.cancel":
     case "acp.session.followup":
     case "acp.session.prompt":

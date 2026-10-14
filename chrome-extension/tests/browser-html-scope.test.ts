@@ -10,6 +10,7 @@ for (const tool of ["get_page_text", "get_page_html"]) {
     ;(globalThis as any).chrome = {
       tabs: { get: async () => ({ url }) },
       debugger: {
+        getTargets: async () => [{ tabId: 7, attached: false }],
         onDetach: { addListener() {} }, attach: async () => {},
         async sendCommand(_target: unknown, method: string, params: any) {
           if (method === "Page.enable" || method === "DOM.enable") return {}
@@ -59,6 +60,7 @@ for (const mode of ["runtime", "isolated", "main", "dom"] as const) {
       ;(globalThis as any).chrome = {
         tabs: { get: async () => ({ url: "https://example.test/page" }) },
         debugger: {
+          getTargets: async () => [{ tabId: 7, attached: false }],
           onDetach: { addListener() {} }, attach: async () => {},
           async sendCommand(_target: unknown, method: string, params: any) {
             if (method === "Page.enable" || method === "DOM.enable") return {}

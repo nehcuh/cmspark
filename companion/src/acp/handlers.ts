@@ -57,6 +57,23 @@ export async function handleAcpWsMessage(
   ctx: AcpHandlerContext,
 ): Promise<any> {
   const mgr = getAcpManager()
+  if (type === "acp.session.prepare_manual_entry") {
+    const sid = typeof msg.session_id === "string" ? msg.session_id : ""
+    const session = sid ? mgr.getSession(sid) : undefined
+    const requestId = typeof msg.request_id === "string" && /^[A-Za-z0-9:_-]{1,100}$/.test(msg.request_id) ? msg.request_id : undefined
+    const reject = (error: string) => ({ type: "error", family: "acp", request_type: type, error,
+      ...(sid ? { session_id: sid } : {}), ...(session ? { thread_id: session.thread_id } : {}),
+      ...(requestId ? { request_id: requestId } : {}) })
+    if (!sid || !requestId || typeof msg.thread_id !== "string" || !msg.thread_id || msg.user_gesture !== true)
+      return reject("acp: 交互入口需要有效会话、所属对话、请求标识和明确用户点击。")
+    if (!session || session.thread_id !== msg.thread_id || (ctx.threadId !== undefined && ctx.threadId !== session.thread_id))
+      return reject("acp: session does not belong to the requested conversation")
+    if (!getConfig().acp?.enabled) return reject("acp: feature disabled — enable in 设置 → 编程助手")
+    if (ctx.getAgentRole?.(session.thread_id) === "worker") return reject("acp: worker threads cannot prepare interactive entry")
+    const result = mgr.prepareManualEntry(sid)
+    return result.ok ? { type: "acp.session.manual_entry", session_id: sid, thread_id: session.thread_id,
+      request_id: requestId, command_line: result.commandLine, shell: result.shell } : reject(result.error)
+  }
   const controlsSession = ["acp.session.cancel", "acp.session.prompt", "acp.session.followup", "acp.apply_diff"].includes(type)
   const sid = typeof msg.session_id === "string" && msg.session_id ? msg.session_id
     : type === "acp.session.followup" && typeof msg.parent_session_id === "string" ? msg.parent_session_id : ""

@@ -14,7 +14,7 @@ CLI retains the exact existing outer-terminal producer's generated command (at m
 
 The original command may reference an existing temporary task file. Its conservative copy deadline begins at the opener request and uses the existing 60-second unlink TTL; the timer hides Copy on expiry and the click rechecks the deadline. No task-file lifetime is extended. After expiry the UI directs the user to their existing terminal, with no claim of a reusable launch or resume command.
 
-This is still partial #522 entry coverage: default `open_local_terminal=false`, missing/oversize command and expired command have no usable CLI entry in this batch. A manual-switch instruction is not an entry implementation. ACP same-session input and optional independent embedded-terminal work are not substitutes for CLI entry. No `Closes #522` claim until its remaining entry route is delivered and verified.
+Parent R3 alone has partial #522 entry coverage: default `open_local_terminal=false`, missing/oversize command and expired command have no usable CLI entry in this batch. A manual-switch instruction is not an entry implementation. ACP same-session input and optional independent embedded-terminal work are not substitutes for CLI entry. No `Closes #522` claim until its remaining entry route is delivered and verified.
 
 ## Retirement policy (#484)
 
@@ -31,3 +31,17 @@ Before live WS listeners, ACP progress and live handback messages use a 128KiB U
 Actual producer outputs feed contract fixtures (only synthetic task/identities, normalized opaque IDs/owned paths; keys preserved). Reducer tests cover count/UTF-8 bytes, protected records, clear/late event/non-resurrection, immutable owner and A/B return. Real React DOM tests cover click/keyboard Stop transport error vs receipt, stale callback after owner switch, CLI copy exact command, safe Mode C text, compacted history notice and independent drafts.
 
 Focused red→green then shared final host/Linux/build/exact-CI. #484 requires actual independent Grok4.6 + DeepSeekV4Pro reviews of the same frozen batch; implementation isn't self-approval. No release/merge claim before root completes those gates.
+
+## #522 leaf: fresh manual interactive entry
+
+Foundation: immutable root R3 + #532 manifest37 (04353ca7); leaf changes do not imply approval of the foundation or duplicate its feature scope. Existing issue522 authorizes completing the missing CLI entry.
+
+An explicit current-owner/session UI gesture requests `acp.session.prepare_manual_entry`; a separate explicit Copy copies the prepared command. It is read-only text preparation, never native focus/open, process start, PTY, task-file write or master toggle. The UI says this starts a **new interactive Agent**, not resume/attach of the monitored bridge. Default outer=false and expired/missing original command use this independent path.
+
+At an actual successful CLI child spawn, retain a private immutable descriptor: absolute executable alias with matching known CLI kind, real executable stat identity and workspace directory dev/ino identity (ordinary contents may change), actual canonical workspace/cwd, platform and safe shell. Known conventions come from the existing production launch presets; arbitrary executables/Node wrappers, custom configured args, unknown kinds and absent legacy descriptors are visibly unsupported. No env, task, startup flags, task-file path or secret args are stored/exported. Descriptor never enters session records/events/report/handback/model tools. Live config changes cannot redirect a prepared command. Missing/replaced executable or workspace is refused.
+
+Reuse existing no-prompt/no-file builders for verified POSIX paths and Windows **cmd.exe** syntax; do not label it PowerShell. Both identity paths and shell metacharacters must be safe: control characters/apostrophes are refused on the POSIX path because the existing builder does not safely quote apostrophes; Windows expansion/control/quote/meta characters are refused conservatively. Bounded whole command <=32KiB UTF-8; no partial command and no old60s task-file reference/lifetime change.
+
+RPC requires strict string session/thread/request IDs, literal user_gesture=true, enabled ACP, known stored owner matching the requested current owner and non-worker policy. UI accepts only its pending request, selected session and active immutable owner; retries/navigation/dismissal invalidate prior replies and cached commands. Runtime forwarding failure, authoritative refusal and missing response are visible; forwarding ok is not preparation. Copy is local clipboard only and stale controller cannot copy. No new tool is registered and `acp_get_status`/report/propose/handback omit descriptor/prepared command.
+
+Evidence must originate from the real CLI start and real handler reply. Synthetic known-CLI executable fixtures are inert print/stdio agents (not Node REPL claimed to be a product Agent); source/protocol output shape is captured. Focused negatives cover missing/expired old task file, default outer=false, unknown/legacy/unsafe paths, wrong owner, disabled/worker/structured type, later config change, no subprocess/fswrite during prepare, no model exports, real App prepare/copy and late reply/navigation. Native Windows command execution remains a separate gate; pure cross-platform construction is not native acceptance.

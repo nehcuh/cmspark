@@ -105,6 +105,8 @@ function pageExceptionError(context: string, pageText?: string): Error & { pageT
 
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
+  /** Implicit image tools resolve active tab after TabQueue; share each tab's attach lifetime. */
+  private attachInflight = new Map<number, Promise<void>>()
   private sanitizer: PageSanitizer
   /** ADR-015 defense-in-depth: serialize concurrent ops per tabId (see tab-queue.ts). */
   private tabQueue = new TabQueue()
@@ -227,6 +229,17 @@ export class BrowserBridge {
       }
     } catch (e: any) {
       const msg = e?.message || String(e)
+      // These exact attach preflight refusals are our fixed infrastructure
+      // messages. Direct CDP producers (analyze_image) bypass failInteractive:
+      // keep its registered recoverable envelope rather than halt the turn.
+      // No raw protocol/page wording or unknown prefix is normalized here.
+      if (msg === "DEBUGGER_TARGET_UNAVAILABLE: debugger target availability could not be verified." ||
+          msg === "DEBUGGER_OWNER_UNVERIFIED: existing debugger ownership could not be verified.") {
+        return codedToolError("CDP_ATTACH_FAILED", msg, {
+          refusal_code: msg.startsWith("DEBUGGER_TARGET_UNAVAILABLE:") ? "DEBUGGER_TARGET_UNAVAILABLE" : "DEBUGGER_OWNER_UNVERIFIED",
+          suggested_action: "list_tabs",
+        })
+      }
       const m = /^([A-Z][A-Z0-9_]+):/.exec(msg)
       if (m) return { success: false, error: msg, data: { error_code: m[1] } }
       return { success: false, error: msg }
@@ -236,8 +249,19 @@ export class BrowserBridge {
   // --- CDP helpers ---
 
   private async ensureAttached(tabId: number): Promise<void> {
+    const inflight = this.attachInflight.get(tabId)
+    if (inflight) return inflight
     if (this.attachedTabs.has(tabId)) return
 
+    const sequence = this.attachSequence(tabId).finally(() => {
+      // Success and refusal both release only this sequence; a later retry owns its own entry.
+      if (this.attachInflight.get(tabId) === sequence) this.attachInflight.delete(tabId)
+    })
+    this.attachInflight.set(tabId, sequence)
+    return sequence
+  }
+
+  private async attachSequence(tabId: number): Promise<void> {
     // Verify tab exists and is accessible
     try {
       // Retry up to 10 times with delay — tab URL may be blank during creation/navigation
@@ -261,18 +285,39 @@ export class BrowserBridge {
       throw new Error(`TAB_NOT_FOUND: No tab with given id ${tabId}.`)
     }
 
+    let target: chrome.debugger.TargetInfo | undefined
     try {
-      await chrome.debugger.attach({ tabId }, "1.3")
-      this.attachedTabs.add(tabId)
-      try {
-        await chrome.debugger.sendCommand({ tabId }, "Page.enable")
-      } catch { /* ignore */ }
-    } catch (e: any) {
-      // Debugger path unavailable. This layer reports the reason only; callers
-      // that can serve the request without CDP must fall back to
-      // chrome.scripting themselves (see scriptingProbeSelector / #554).
-      throw new Error(`Debugger attach failed for tab ${tabId}: ${e.message}`)
+      const matches = (await chrome.debugger.getTargets()).filter(t => t.tabId === tabId)
+      if (matches.length === 1) target = matches[0]
+    } catch { /* unavailable metadata is not permission to attach */ }
+    if (!target || typeof target.attached !== "boolean") {
+      throw new Error("DEBUGGER_TARGET_UNAVAILABLE: debugger target availability could not be verified.")
     }
+    if (target.attached) {
+      // attached is not ownership. Chrome's sendCommand client lookup binds the
+      // exact target AND extension ID; only this non-mutating command's success
+      // proves our surviving session. Never detach or use attach as a harmless
+      // ownership probe against an already occupied target.
+      let owned = false
+      try {
+        const proof: any = await chrome.debugger.sendCommand({ tabId }, "Page.getFrameTree")
+        owned = typeof proof?.frameTree?.frame?.id === "string" && proof.frameTree.frame.id.length > 0
+      } catch { /* no raw protocol/page detail becomes trusted refusal text */ }
+      if (!owned) throw new Error("DEBUGGER_OWNER_UNVERIFIED: existing debugger ownership could not be verified.")
+    } else {
+      // This observation and attach are not atomic. Chrome exposes no
+      // compare-and-attach API; do not claim protection against a new owner
+      // arriving in this window or add an automatic takeover/retry.
+      try {
+        await chrome.debugger.attach({ tabId }, "1.3")
+      } catch (e: any) {
+        throw new Error(`Debugger attach failed for tab ${tabId}: ${e.message}`)
+      }
+    }
+    this.attachedTabs.add(tabId)
+    try {
+      await chrome.debugger.sendCommand({ tabId }, "Page.enable")
+    } catch { /* original best-effort semantics; full sequence stays shared */ }
   }
 
   private async sendCdp(tabId: number, method: string, params?: any): Promise<any> {

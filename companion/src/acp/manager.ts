@@ -28,6 +28,7 @@ import {
 import { buildAcpAgentEnv } from "./agent-env"
 import { onPtyAgentSpawned } from "../pty/session"
 import { prepareWindowsJob } from "../process/windows-job"
+import { captureManualEntryLaunch, prepareManualEntry, type ManualEntryLaunch } from "./manual-entry"
 import { boundCodingProgress } from "./ui-progress"
 
 export type AcpHandbackSink = (info: {
@@ -71,6 +72,7 @@ function newSessionId(): string {
 
 export class AcpManager {
   private sessions = new Map<string, AcpSessionRecord>()
+  private manualEntryLaunches = new Map<string, ManualEntryLaunch>()
   private processes = new Map<string, ChildProcessWithoutNullStreams>()
   private ownedChildren = new Set<ChildProcessWithoutNullStreams>()
   private startupPreparations = new Map<string, { controller: AbortController; done: Promise<void> }>()
@@ -851,6 +853,12 @@ export class AcpManager {
         return
       }
 
+      const launchInput = { agentId: session.agent_id, command: server.command,
+        cwd: session.workspace_root, args: server.args ? [...server.args] : undefined }
+      child.once("spawn", () => {
+        // A successful real CLI spawn is the sole provenance for this UI-only private descriptor.
+        if (!this.shuttingDown) this.manualEntryLaunches.set(sessionId, captureManualEntryLaunch(launchInput))
+      })
       session.pid = child.pid
       this.trackChild(sessionId, child)
       this.pushTimeline(session, [
@@ -970,6 +978,14 @@ export class AcpManager {
         child.stdin.end()
       } catch (err) { fail(err instanceof Error ? err : new Error(String(err))) }
     })
+  }
+
+  /** Private launch data is never projected by getStatus/events/handback or model tools. */
+  prepareManualEntry(sessionId: string): ReturnType<typeof prepareManualEntry> {
+    if (this.shuttingDown) return { ok: false, error: "acp: manager shutting down" }
+    const session = this.sessions.get(sessionId)
+    if (!session || session.transport !== "cli") return { ok: false, error: "此会话没有已验证的 CLI 启动记录。" }
+    return prepareManualEntry(this.manualEntryLaunches.get(sessionId))
   }
 
   /**
@@ -1132,6 +1148,7 @@ export class AcpManager {
   }
 
   async shutdown(): Promise<void> {
+    this.manualEntryLaunches.clear()
     this.shuttingDown = true
     this.unsubscribeEmbedSpawn()
     const children = [...this.ownedChildren]

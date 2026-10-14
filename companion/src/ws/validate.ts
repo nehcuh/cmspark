@@ -329,6 +329,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "acp.list": () => ({ valid: true }),
     "acp.rediscover": () => ({ valid: true }),
     "acp.adopt_discovered": () => ({ valid: true }),
+    "acp.session.prepare_manual_entry": (m) => {
+      if (typeof m.session_id !== "string" || !m.session_id || typeof m.thread_id !== "string" || !m.thread_id ||
+          typeof m.request_id !== "string" || !/^[A-Za-z0-9:_-]{1,100}$/.test(m.request_id) || m.user_gesture !== true)
+        return { valid: false, error: "acp.session.prepare_manual_entry requires session/thread/request and explicit user gesture" }
+      return { valid: true }
+    },
     "acp.session.cancel": (m) => {
       if (typeof m.session_id !== "string" || !m.session_id) {
         return { valid: false, error: "acp.session.cancel requires session_id" }
