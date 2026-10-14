@@ -251,7 +251,9 @@ export function checkpointCooperationResult(tm: ThreadManager, ownerId: string, 
   result = clampPlannedRecovery(tm, ownerId, result)
   const old = latest(task)!
   const sameReport = old.result?.source.version === result.source.version && old.result.status === result.status
-  if (sameReport && JSON.stringify(old.result!.recovery) === JSON.stringify(result.recovery)) return
+  const previous = old.result?.recovery, incoming = result.recovery
+  if (sameReport && previous?.action === incoming.action && previous.automatic === incoming.automatic &&
+      previous.requires_confirmation === incoming.requires_confirmation && previous.budget_remaining === incoming.budget_remaining) return
   write(tm, ownerId, { ...plan, tasks: plan.tasks.map(t => t.id !== task.id ? t : { ...t,
     // A changed report invalidates judgments about that attempt, not accepted siblings.
     decisions: sameReport ? t.decisions : t.decisions.filter(d => d.attempt !== old.number),

@@ -18,12 +18,18 @@ const child = {id:'child',alias:'入口诊断',worker_role_label:'格式入口�
 const root = createRoot(document.getElementById('task'));
 window.navigationCalls = [];
 window.showCase = kind => {
-  const rows = kind==='missing' ? [] : [{...parent, ...(kind==='trashed' ? {trashed_at:'2026-10-13'} : kind==='cycle' ? {parent_thread_id:'child'} : {})}];
-  const relation = resolveTaskRelationship('child',rows,[child]);
+  const directParent = kind==='multilevel' ? {...parent,id:'middle',alias:'上级子任务',agent_role:'worker',parent_thread_id:'parent'} : parent;
+  const currentChild = kind==='multilevel' ? {...child,parent_thread_id:'middle'} : child;
+  const rows = kind==='missing' ? [] : kind==='multilevel' ? [parent,directParent] : [{...parent, ...(kind==='trashed' ? {trashed_at:'2026-10-13'} : kind==='cycle' ? {parent_thread_id:'child'} : {})}];
+  const relation = resolveTaskRelationship('child',rows,[currentChild]);
   root.render(createElement(TaskRelationshipNav,{relationship:relation,onNavigate:id=>{
-    let state = {...initialState,threads:rows,activeThreadId:'child',threadBusyById:{parent:true,child:true}};
+    const parentMessage = {id:'main-message',thread_id:directParent.id,role:'user',content:'主任务消息',created_at:'2026-10-13'};
+    const childMessage = {...parentMessage,id:'child-message',thread_id:'child',content:'子任务消息'};
+    let state = {...initialState,threads:[...rows,{...parent,...currentChild}],activeThreadId:directParent.id,messages:[parentMessage],threadBusyById:{parent:true,child:true},composerRestore:{text:'待发送草稿',token:1}};
+    state = agentReducer(state,{type:'SET_ACTIVE_THREAD',threadId:'child'});
+    state = agentReducer(state,{type:'SET_MESSAGES',messages:[childMessage]});
     state = agentReducer(state,{type:'SET_ACTIVE_THREAD',threadId:id});
-    window.navigationCalls.push({type:'thread.select',threadId:state.activeThreadId,busy:state.threadBusyById});
+    window.navigationCalls.push({type:'thread.select',threadId:state.activeThreadId,busy:state.threadBusyById,message:state.messages[0]?.content,childCache:state.messagesByThreadId.child?.[0]?.content,draft:state.composerRestore?.text,uploadClearSeq:state.composerUploadClearSeq});
   }}));
 };
 window.showCase('available');

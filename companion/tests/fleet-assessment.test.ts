@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { assessFleetTask, parseFleetAssessment, shouldAssessFleetTask } from "../src/orchestrator/fleet-assessment"
+import { assessFleetTask, FLEET_DISPATCH_HINT, parseFleetAssessment, shouldAssessFleetTask } from "../src/orchestrator/fleet-assessment"
 import { clearFleetSuggestState, fleetSuggestGate, peekFleetSuggestGate, recordFleetSuggestDismiss } from "../src/orchestrator/fleet-suggest"
 
 const tools = ["create_tab", "get_page_text"]
@@ -46,6 +46,10 @@ test("assessment is read-only, fences task data and preserves usage", async () =
   assert.equal(result.usage?.total_tokens, 12)
   assert.match(request.messages[1].content, /untrusted/)
   assert.equal(request.tools, undefined)
+  assert.ok(request.messages[0].content.includes(FLEET_DISPATCH_HINT), "production preflight receives the same advisory contract as execution")
+  assert.match(request.messages[0].content, /unnamed\/ambiguous definite entity is missing input/)
+  assert.match(request.messages[0].content, /never guess, make workers identify it first, or wait for parent output/)
+  // Structural transport contract only; real-model semantics use the pinned eval corpus.
 })
 
 test("ignored abort / transport failure / invalid JSON fail open without blocking main task", async () => {

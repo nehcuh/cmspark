@@ -3,6 +3,8 @@
 const fs = require("node:fs")
 const path = require("node:path")
 const assert = require("node:assert/strict")
+const { createHash } = require("node:crypto")
+const digest = value => createHash("sha256").update(value).digest("hex")
 const src = path.resolve(__dirname, "../.test-dist/src")
 const { getConfig } = require(path.join(src, "config"))
 const { createProvider } = require(path.join(src, "llm/provider"))
@@ -28,25 +30,50 @@ const cases = [
   ["dependent-analysis", false, "读下面的一段话先选出唯一核心命题，再以这唯一命题写标题，再根据那个标题写一句摘要：团队明天开会。"],
 ]
 
+// Additional semantic regressions: keep the original 16-case corpus/thresholds intact.
+const semanticCases = [
+  ["missing-entity-only", false, "请分别分析这家公司的竞争对手和这家公司的近期监管处罚，两项均要针对同一公司。暂未提供公司的名字或标识，也没有现成资料。不能挑选别的公司或换成行业分析。"],
+  ["known-industry-independent", true, "分别查公开复合肥行业近期产能变化和磷矿原料供应趋势，给出两份独立资料要点。我未指定某家公司；这两项均只需行业公开资料，无须公司身份。"],
+]
+
 async function main() {
   const config = getConfig(), provider = createProvider(config.llm)
   const allowedTools = computeWorkerWhitelist({ parentWhitelist: null, roleAllow: null })
-  const results = new Array(cases.length)
+  const systemPromptHashes = new Set()
+  const observedProvider = { complete(params) {
+    // Hash the exact production assessor envelope, not a hand-built copy.
+    systemPromptHashes.add(digest(params.messages[0].content))
+    return provider.complete(params)
+  } }
+  const allCases = [...cases, ...semanticCases]
+  const results = new Array(allCases.length)
   let cursor = 0
   async function lane() {
-    while (cursor < cases.length) {
-      const index = cursor++, [id, expected, task] = cases[index], started = Date.now()
-      const result = await assessFleetTask({ provider, task, allowedTools })
+    while (cursor < allCases.length) {
+      const index = cursor++, [id, expected, task] = allCases[index], started = Date.now()
+      const result = await assessFleetTask({ provider: observedProvider, task, allowedTools })
       results[index] = { id, expected, ...result, latency_ms: Date.now() - started }
       console.log(JSON.stringify({ id, expected, status: result.status, latency_ms: results[index].latency_ms }))
     }
   }
   await Promise.all([lane(), lane(), lane()])
-  const positive = results.filter(r => r.expected && r.status === "suggest").length
-  const falsePositive = results.filter(r => !r.expected && r.status === "suggest").length
-  const report = { date: new Date().toISOString(), model: config.llm.model_name, protocol: config.llm.protocol ?? "openai", positive, falsePositive, cases: results }
+  const originalResults = results.slice(0, cases.length)
+  const semanticResults = results.slice(cases.length)
+  const positive = originalResults.filter(r => r.expected && r.status === "suggest").length
+  const falsePositive = originalResults.filter(r => !r.expected && r.status === "suggest").length
+  const unevaluated = results.filter(r => !["suggest", "solo"].includes(r.status)).length
+  const semanticPassed = semanticResults.every(r => r.status === (r.expected ? "suggest" : "solo"))
+  const report = { date: new Date().toISOString(), model: config.llm.model_name, protocol: config.llm.protocol ?? "openai",
+    assessor_source_sha256: digest(fs.readFileSync(path.join(__dirname, "../src/orchestrator/fleet-assessment.ts"))),
+    corpus_sha256: digest(JSON.stringify(cases)), tool_envelope_sha256: digest(JSON.stringify(allowedTools)),
+    semantic_corpus_sha256: digest(JSON.stringify(semanticCases)),
+    system_prompt_sha256: [...systemPromptHashes], timeout_ms: 12000,
+    thresholds: { minimum_positive: 6, maximum_false_positive: 2 },
+    positive, falsePositive, unevaluated, semanticPassed, cases: originalResults, semantic_cases: semanticResults }
   if (process.argv[2]) fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + "\n")
-  console.log(JSON.stringify({ positive, total_positive: 8, falsePositive, total_negative: 8 }))
+  console.log(JSON.stringify({ positive, total_positive: 8, falsePositive, total_negative: 8, unevaluated }))
+  assert.equal(unevaluated, 0, "failed or invalid assessments are not negative predictions")
+  assert.ok(semanticPassed, "missing-entity and independent industry semantic cases must both pass")
   assert.ok(positive >= 6, "positive detection below 6/8")
   assert.ok(falsePositive <= 2, "false positives above 2/8")
 }
