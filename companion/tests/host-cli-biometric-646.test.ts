@@ -202,6 +202,13 @@ for (const variant of ["cancel", "error", "deny", "wrong-nonce", "timeout", "dis
   "unknown", "injection", "expired-auth", "prevalidated-nonce"] as const) test(`#646 actual preauthorized dangerous ${variant} leaves the child boundary untouched`, async t => {
   const r = await run(t, variant)
   assert.equal(r.children.length, 0); assert.equal(r.wire.success, false)
+  if (variant === "expired-auth") {
+    // Scoped non-effective binding marker reaches the real second validation;
+    // this is neither a native token nor an actual human biometric approval.
+    assert.equal(r.fixtureValidations, 2)
+    assert.equal(r.wire.error, "Invalid or expired security token for host_cli")
+    assert.equal(r.wire.data?.error_code, "SECURITY_TOKEN_INVALID")
+  }
   if (["cancel", "error", "no-channel", "invalid-auth", "no-auth", "abort-before", "unknown", "injection", "prevalidated-nonce"].includes(variant)) {
     assert.equal(r.frames.filter(f => f.nonce_challenge !== undefined).length, 0)
   }

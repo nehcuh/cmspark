@@ -1007,6 +1007,8 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["COOKIE_TRUST_DENIED", "security"],
 
   // ── non_recoverable ───────────────────────────────────────────────────────
+  // #563: actual invalid-token refusals already halt; retain that hard grade.
+  ["SECURITY_TOKEN_INVALID", "non_recoverable"],
   // #563 F2: trusted host/schema reconstruction is not repairable by the model.
   // Intrinsic grading tightens diagnostic-text fallback (timeout/locator words)
   // and disables an unrelated locator pivot; F1 dependency recovery is separate.
@@ -1035,6 +1037,17 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["FOCUS_LOST", "non_recoverable"],
   // #563 D4: executable integrity/hash-read refusal cannot be weakened by diagnostic text.
   ["APP_EXE_DRIFT", "non_recoverable"],
+  // #563: existing fixed IL/user-stop/self-UI/danger/corpus refusals are hard.
+  // Typed diagnostic variants now retain that refusal instead of word-based
+  // recovery; native admission and the separate TYPE_NO_EFFECT wrapper stay put.
+  ["INTEGRITY_LEVEL_DENIED", "non_recoverable"],
+  ["TASK_ABORTED", "non_recoverable"],
+  ["COMPANION_UI_CLICK_DENIED", "non_recoverable"],
+  ["DANGER_HARD_DENY", "non_recoverable"],
+  ["TYPE_TEXT_NOT_CONFIRMED", "non_recoverable"],
+  // Bounds rejection permits re-locating, never clamping or new authority.
+  // Explicit recovery also replaces hard-word/neutral diagnostic fallback.
+  ["OUT_OF_BOUNDS", "recoverable"],
 
   // ── recoverable ───────────────────────────────────────────────────────────
   // Authorization refusal permits a different tool or fresh human approval;
