@@ -173,22 +173,23 @@ export function assertFileOpenOfferable(
     homeReal = homeResolved
   }
 
-  let real = resolved
+  // existsSync follows links, so a dangling entry must not become an ordinary
+  // missing file. Only genuine missing-path errors may use the lexical branch.
+  let existedFile = false
   try {
-    if (fs.existsSync(resolved)) {
-      const st = fs.lstatSync(resolved)
-      if (st.isSymbolicLink()) {
-        try {
-          real = fs.realpathSync(resolved)
-        } catch {
-          return { ok: false, error: cage }
-        }
-      } else {
-        real = fs.realpathSync(resolved)
-      }
+    fs.lstatSync(resolved)
+    existedFile = true
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code !== "ENOENT" && code !== "ENOTDIR") return { ok: false, error: cage }
+  }
+  let real = resolved
+  if (existedFile) {
+    try {
+      real = fs.realpathSync(resolved)
+    } catch {
+      return { ok: false, error: cage }
     }
-  } catch {
-    real = resolved
   }
 
   if (isUncPath(real) || isVolumeOrFsRoot(real)) {
@@ -216,13 +217,6 @@ export function assertFileOpenOfferable(
   const underHomeReal = under(real, homeReal)
   const underHomeLexical = under(resolved, homeResolved) || under(resolved, homeReal)
 
-  let existedFile = false
-  try {
-    existedFile = fs.existsSync(resolved)
-  } catch {
-    existedFile = false
-  }
-
   if (existedFile) {
     // Existing path (incl. symlink): realpath must stay inside home.
     if (!underHomeReal) return { ok: false, error: cage }
@@ -241,7 +235,16 @@ export function assertFileOpenOfferable(
     // the not-yet-created leaf outside home (TOCTOU between check and open).
     // Realpath the deepest existing ancestor and cage it the same way.
     let anchor: string | null = path.dirname(resolved)
-    while (anchor && !fs.existsSync(anchor)) {
+    while (anchor) {
+      try {
+        // A dangling ancestor is an existing directory entry too. Its failed
+        // realpath below must refuse the offer, rather than climb past it.
+        fs.lstatSync(anchor)
+        break
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code !== "ENOENT" && code !== "ENOTDIR") return { ok: false, error: cage }
+      }
       const parent = path.dirname(anchor)
       anchor = parent === anchor ? null : parent
     }
