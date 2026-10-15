@@ -12,17 +12,25 @@ import { convertOfficeDocument, renderDocumentPages, __testOfficeRuntimeState } 
 const fixtures = path.resolve(process.cwd(), "tests/fixtures/office-611")
 const WORD = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const SHEET = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+// Observe only the immutable first public DOC fixture, once in this worker.
+// Same default parser/assertions; no paths, payloads or worker messages logged.
+const { observeOfficeIntegrationParse } = require(path.resolve(process.cwd(), "../scripts/office-smoke-observer.cjs")) as {
+  observeOfficeIntegrationParse<T>(operation: () => Promise<T>): Promise<T>
+}
 
 function fixture(name: string): Buffer {
   return fs.readFileSync(path.join(fixtures, name))
 }
 
 async function parsed(bytes: Buffer, name: string, mime = "application/octet-stream"): Promise<FileParseResult> {
-  const result = await parseFile(bytes, name, mime)
-  assert.equal(result.success, true, JSON.stringify(result))
-  assert.equal(result.filename, name, "conversion must preserve source filename")
-  assert.equal(result.fileSize, bytes.length, "conversion must preserve source byte length")
-  return result
+  const operation = async () => {
+    const result = await parseFile(bytes, name, mime)
+    assert.equal(result.success, true, JSON.stringify(result))
+    assert.equal(result.filename, name, "conversion must preserve source filename")
+    assert.equal(result.fileSize, bytes.length, "conversion must preserve source byte length")
+    return result
+  }
+  return name === "one-page.doc" ? observeOfficeIntegrationParse(operation) : operation()
 }
 
 function officeZip(parts: Record<string, string>): Buffer {

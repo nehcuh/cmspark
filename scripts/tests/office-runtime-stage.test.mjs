@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { officeTarget, verifyOfficeEngine, stageOfficeRuntime } from '../stage-office-runtime.mjs'
 import { removeOfficeSmokeRuntime } from '../office-smoke-cleanup.mjs'
 import './office-smoke-fonts-666.test.mjs'
-const { createOfficeSmokeObserver } = createRequire(import.meta.url)('../office-smoke-observer.cjs')
+const { createOfficeSmokeObserver, observeOfficeIntegrationParse } = createRequire(import.meta.url)('../office-smoke-observer.cjs')
 
 test('Office target selects published Linux WASM and exact native architecture', () => {
   assert.equal(officeTarget('linux-arm64').engine, '@deepseek-ai/libreoffice-kit-wasm')
@@ -358,4 +358,69 @@ test('The generated relocated probe preserves success, conversion failure and di
       if (process.platform !== 'linux') fs.rmdirSync(path.join(owned,'smoke-fonts'))
     }
   } finally { removeOfficeSmokeRuntime(owned) }
+})
+
+
+test('default Office parser observation preserves real owned lifecycle, value and rejection', { timeout: 10_000 }, async () => {
+  const originalError = console.error, records = [], marker = 'OWNED_OFFICE_PRIVATE_MESSAGE_NEVER_LOG'
+  const sibling = () => {}, value = Object.freeze({ success: true }), failure = new Error('OWNED_PARSE_ORIGINAL_FAILURE')
+  dc.subscribe('worker_threads', sibling)
+  console.error = line => { records.push(JSON.parse(line)) }
+  try {
+    let called = 0
+    const result = await observeOfficeIntegrationParse(async () => {
+      called++
+      const worker = new Worker(`require('node:worker_threads').parentPort.postMessage(${JSON.stringify(marker)})`, { eval: true })
+      const workerExit = once(worker, 'exit')
+      const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { env: {}, stdio: 'ignore' })
+      await Promise.all([workerExit, once(child, 'close')])
+      return value
+    })
+    assert.equal(result, value); assert.equal(called, 1)
+    const summary = records.filter(x => x.kind === 'summary')
+    assert.equal(summary.length, 1); assert.equal(summary[0].scope, 'default-parser')
+    assert.equal(summary[0].objects, 2); assert.equal(summary[0].open_objects, 0)
+    assert.equal(summary[0].status, 'complete'); assert.equal(summary[0].events, undefined)
+    assert.ok(records.some(x => x.role === 'worker' && x.event === 'first-message'))
+    assert.ok(records.some(x => x.role === 'child' && x.event === 'close'))
+    assert.equal(JSON.stringify(records).includes(marker), false)
+    assert.equal(records.length <= 65, true)
+    assert.equal(dc.hasSubscribers('worker_threads'), true, 'sibling subscriber must survive cleanup')
+    await assert.rejects(observeOfficeIntegrationParse(async () => { throw failure }), e => e === failure)
+    await assert.rejects(observeOfficeIntegrationParse(async () => { assert.fail('UNCHANGED_PARSE_ASSERTION') }), /UNCHANGED_PARSE_ASSERTION/)
+    assert.equal(records.filter(x => x.kind === 'summary').length, 3)
+  } finally { console.error = originalError; dc.unsubscribe('worker_threads', sibling) }
+})
+
+test('default Office parser observer output faults preserve success and original error', async () => {
+  const originalError = console.error, value = Object.freeze({ success: true }), failure = new Error('OWNED_PARSE_REJECTION')
+  console.error = () => { throw new Error('OWNED_DIAGNOSTIC_OUTPUT_FAILURE') }
+  try {
+    assert.equal(await observeOfficeIntegrationParse(async () => value), value)
+    await assert.rejects(observeOfficeIntegrationParse(async () => { throw failure }), e => e === failure)
+  } finally { console.error = originalError }
+})
+
+
+test('default Office observation selects only the immutable first DOC fixture', async () => {
+  const ts = createRequire(new URL('../../companion/package.json', import.meta.url))('typescript')
+  const vm = await import('node:vm')
+  const source = fs.readFileSync(new URL('../../companion/tests/office-format-compatibility.test.ts', import.meta.url), 'utf8')
+  const ast = ts.createSourceFile('office.ts', source, ts.ScriptTarget.Latest, true)
+  const declarations = ast.statements.filter(n => ts.isFunctionDeclaration(n) && n.name?.text === 'parsed')
+  assert.equal(declarations.length, 1)
+  const code = ts.transpileModule(declarations[0].getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
+  let observed = 0, calls = 0
+  const context = vm.createContext({ assert,
+    observeOfficeIntegrationParse: async operation => { observed++; return operation() },
+    parseFile: async (bytes, filename, mimeType) => { calls++; return { success: true, filename, mimeType, fileSize: bytes.length } },
+  })
+  vm.runInContext(code, context)
+  const bytes = Buffer.from('OWNED_PUBLIC_BYTES')
+  for (const name of ['one-page.doc', 'other.doc', 'renamed.docx', 'one-sheet.xls', 'one-slide.ppt', 'WPS-export.pdf']) {
+    const result = await context.parsed(bytes, name, 'owned/mime')
+    assert.equal(result.filename, name); assert.equal(result.fileSize, bytes.length)
+    assert.equal(result.mimeType, 'owned/mime')
+  }
+  assert.equal(calls, 6); assert.equal(observed, 1)
 })
