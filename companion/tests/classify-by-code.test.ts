@@ -67,6 +67,11 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   COOKIE_TRUST_DENIED: "security",
   ACP_OWNER_MISMATCH: "security", // cross-thread session access is an ownership boundary violation
   // non_recoverable
+  // #563 F2: host reconstruction cannot be repaired by the model; diagnostic
+  // timeout/locator text now remains hard and cannot pivot to webpage locators.
+  BOARD_SCHEMA_INVALID: "non_recoverable",
+  BOARD_FACT_INVALID: "non_recoverable",
+  BOARD_INTENT_INVALID: "non_recoverable",
   BROWSER_UNAVAILABLE: "non_recoverable",
   DOWNLOADS_API_UNAVAILABLE: "non_recoverable", // 下载 API 不可用（权限/环境）不是 agent 能自修的
   APP_COORDINATE_DENIED: "non_recoverable", // #563 D1: metadata must not turn app opt-out into recovery

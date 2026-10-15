@@ -130,5 +130,5 @@ test("#563 F1 actual missing-L2 board_complete guard and registry are unchanged"
   assert.ok(DEFAULT_NON_RECOVERABLE_CODES.includes(protectedCode))
  }
  assert.equal(ERROR_CODE_LEVELS.get("INTENT_DEPENDENCY_BLOCKED"), "recoverable")
- assert.equal(ERROR_CODE_LEVELS.has("BOARD_INTENT_INVALID"), false)
+ assert.equal(ERROR_CODE_LEVELS.get("BOARD_INTENT_INVALID"), "non_recoverable")
 })

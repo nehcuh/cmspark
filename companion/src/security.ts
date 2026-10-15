@@ -1007,6 +1007,12 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["COOKIE_TRUST_DENIED", "security"],
 
   // ── non_recoverable ───────────────────────────────────────────────────────
+  // #563 F2: trusted host/schema reconstruction is not repairable by the model.
+  // Intrinsic grading tightens diagnostic-text fallback (timeout/locator words)
+  // and disables an unrelated locator pivot; F1 dependency recovery is separate.
+  ["BOARD_SCHEMA_INVALID", "non_recoverable"],
+  ["BOARD_FACT_INVALID", "non_recoverable"],
+  ["BOARD_INTENT_INVALID", "non_recoverable"],
   // Typed missing-peer must not retry even if the message contains timeout/disconnected/not found.
   ["BROWSER_UNAVAILABLE", "non_recoverable"],
   // 真实报文不含码名（"downloads API unavailable"）→ 今天无子串命中、落默认桶。

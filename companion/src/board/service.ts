@@ -225,7 +225,7 @@ export async function mutateMissionBoard(
         ok: false,
         error: validated.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
         error_code: "BOARD_SCHEMA_INVALID",
-        recoverable: true,
+        recoverable: false,
       }
     }
 
@@ -560,7 +560,7 @@ export async function applyHandbackPayload(
             ok: false,
             error: fr.error.issues.map((i) => i.message).join("; "),
             error_code: "BOARD_FACT_INVALID",
-            recoverable: true,
+            recoverable: false,
           }
         }
         added_facts.push(fr.data)
@@ -602,7 +602,7 @@ export async function applyHandbackPayload(
             ok: false,
             error: ir.error.issues.map((i) => i.message).join("; "),
             error_code: "BOARD_INTENT_INVALID",
-            recoverable: true,
+            recoverable: false,
           }
         }
         added_intents.push(ir.data)
