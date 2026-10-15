@@ -89,6 +89,14 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   COMPANION_UI_CLICK_DENIED: "non_recoverable", // S23 hard refusal, finite owned surfaces
   DANGER_HARD_DENY: "non_recoverable", // A4 no re-confirm path
   TYPE_TEXT_NOT_CONFIRMED: "non_recoverable", // A3 outside the confirmed corpus
+  // #563: finite existing refusals cannot be retried into configuration/approval.
+  COMPUTER_DISABLED: "non_recoverable",
+  APP_NOT_WHITELISTED: "non_recoverable",
+  DANGER_DENIED_BY_USER: "non_recoverable",
+  DIALOG_PAUSED_DENIED: "non_recoverable",
+  BUDGET_DENIED: "non_recoverable",
+  UNCROSS_DENIED: "non_recoverable",
+  EMERGENCY_STOP_LOST: "non_recoverable",
   OUT_OF_BOUNDS: "recoverable", // retain coordinate correction without permitting injection
   NETSEC_TARGETS_DENIED: "non_recoverable", // #563 E1: ordinary denial already halted; timeout/locator names now halt too.
   // recoverable（#560 第二半改过下面前三条，原 non_recoverable）

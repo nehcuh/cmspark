@@ -61,7 +61,13 @@ export async function tryStartProtocolSession(opts: {
   }
 
   const client = new JsonRpcStdioClient(child)
-  opts.hooks.onSpawn?.(child)
+  try {
+    opts.hooks.onSpawn?.(child)
+  } catch (error) {
+    client.kill()
+    await closeAcpChild(child)
+    throw error
+  }
   const timeline: TimelineItem[] = []
   const push = (items: TimelineItem[], progress?: string) => {
     for (const it of items) timeline.push(it)
@@ -144,14 +150,31 @@ export async function tryStartProtocolSession(opts: {
     }
   })
 
-  push([timelineItem("status", "ACP initialize…", { status: "running" })])
-  const init = await tryAcpInitialize(client, 5000)
-  if (!init.ok) {
+  try {
+    push([timelineItem("status", "ACP initialize…", { status: "running" })])
+  } catch (error) {
     client.kill()
     await closeAcpChild(child)
+    throw error
+  }
+  const init = await tryAcpInitialize(client, 5000)
+  if (!init.ok) {
+    try {
+      push([timelineItem("error", init.error, { status: "error" })])
+    } finally {
+      // A failed timeline sink must not bypass the original probe teardown.
+      client.kill()
+      await closeAcpChild(child)
+    }
     return null
   }
-  push([timelineItem("status", "ACP initialized", { status: "done" })])
+  try {
+    push([timelineItem("status", "ACP initialized", { status: "done" })])
+  } catch (error) {
+    client.kill()
+    await closeAcpChild(child)
+    throw error
+  }
 
   let agentSessionId: string | null = null
   try {
