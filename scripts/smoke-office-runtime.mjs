@@ -6,6 +6,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { stageOfficeRuntime, verifyOfficeEngine, officeTarget } from './stage-office-runtime.mjs'
+import { removeOfficeSmokeRuntime } from './office-smoke-cleanup.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const options = {}
@@ -63,4 +64,4 @@ const kit = createRequire(process.execPath)('@deepseek-ai/libreoffice-kit');
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`Relocated Office smoke failed: ${result.status ?? result.signal}`)
   console.log(`Verified ${record.engine} without source module resolution`)
-} finally { fs.rmSync(temporary, { recursive: true, force: true }) }
+} finally { removeOfficeSmokeRuntime(temporary) }
