@@ -18,7 +18,34 @@ export function childEnvironment(input, workspace, temp) {
     const actual = Object.keys(input).find(k => k.toLowerCase() === key.toLowerCase())
     if (actual && typeof input[actual] === 'string') env[key] = input[actual]
   }
-  return { ...env, CI: 'true', GITHUB_ACTIONS: 'true', RUNNER_OS: 'Windows', RUNNER_TEMP: temp, GITHUB_WORKSPACE: workspace }
+  return { ...env, CI: 'true', GITHUB_ACTIONS: 'true', RUNNER_OS: 'Windows', RUNNER_TEMP: temp, GITHUB_WORKSPACE: workspace,
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(temp, 'empty.gitconfig') }
+}
+// Root-approved R4: isolate ambient Git sources; local credential admission stays strict.
+// Validation never reads or hashes possible credential bytes.
+export function prepareOwnedGitConfig(owned) {
+  const file = path.join(owned, 'empty.gitconfig')
+  try {
+    const directory = fs.lstatSync(owned, { bigint: true })
+    if (!directory.isDirectory() || directory.isSymbolicLink()) throw Error('invalid directory')
+    const fd = fs.openSync(file, 'wx', 0o600)
+    let opened
+    try { opened = fs.fstatSync(fd, { bigint: true }) } finally { fs.closeSync(fd) }
+    const same = (a, b) => a.dev === b.dev && a.ino === b.ino
+    const initial = fs.lstatSync(file, { bigint: true })
+    if (!same(opened, initial)) throw Error('replaced input')
+    const validate = () => {
+      try {
+        const dir = fs.lstatSync(owned, { bigint: true }), current = fs.lstatSync(file, { bigint: true })
+        if (!dir.isDirectory() || dir.isSymbolicLink() || !same(dir, directory) ||
+          !current.isFile() || current.isSymbolicLink() || current.nlink !== 1n || current.size !== 0n ||
+          !same(current, initial) || current.mtimeNs !== initial.mtimeNs || current.ctimeNs !== initial.ctimeNs ||
+          (process.platform !== 'win32' && (current.mode & 0o077n) !== 0n)) throw Error('changed input')
+      } catch { throw Error('CENSUS_OWNED_GIT_CONFIG_INVALID') }
+    }
+    validate()
+    return { file, validate }
+  } catch { throw Error('CENSUS_OWNED_GIT_CONFIG_INVALID') }
 }
 function command(command, args, cwd, env) {
   const r = spawnSync(command, args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 })
@@ -213,8 +240,11 @@ export async function main() {
   let evidenceIdentity = null
   let result = { outcome: 'INCOMPLETE', error_code: null, stages, raw_publish: 'RESTRICTED_LOCAL_ONLY_UNREVIEWED', raw_durability: 'HOSTED_EPHEMERAL_NOT_GUARANTEED' }
   try {
+    const gitConfig = prepareOwnedGitConfig(owned)
+    gitConfig.validate()
     const credentials = spawnSync('git', ['config', '--get-regexp', '^(http\\..*extraheader|http\\.extraheader|credential\\..*|remote\\..*\\.url)$'], { cwd: root, env, encoding: 'utf8', windowsHide: true })
     if (credentials.error || ![0, 1].includes(credentials.status)) throw Error('CENSUS_CHECKOUT_CONFIG_FAILED')
+    gitConfig.validate()
     rejectCheckoutCredentials(credentials.stdout)
     const names = command('git', ['ls-files', '-z'], root, env).split('\0').filter(Boolean)
     const before = inventory(root, names)
@@ -227,9 +257,11 @@ export async function main() {
     evidenceIdentity = { head: command('git', ['rev-parse', 'HEAD'], root, env).trim(), tree: command('git', ['rev-parse', 'HEAD^{tree}'], root, env).trim(), run: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT, namespace }
     write('identity.json', { ...evidenceIdentity, node: nodeVersion, npm: npmVersion, git: gitVersion, platform: process.platform, arch: process.arch, os_release: os.release(), started_utc: new Date().toISOString(), allowed_env_keys: Object.keys(env).sort(), inputs: inventory(root, inputs) })
     for (const [name, args] of [['install', ['ci']], ['build', ['run', 'build']], ['stage', ['run', 'stage:win-scripts']], ['tests', ['test']]]) {
+      gitConfig.validate()
       const childEnv = name === 'tests' ? { ...env, CMSPARK_CENSUS_DIR: receipts, NODE_OPTIONS: `--test-reporter=${JSON.stringify(pathToFileURL(path.join(root, 'scripts', 'windows-census-reporter.mjs')).href)}` } : env
       const stage = await capture(process.execPath, [npmPath, ...args], { cwd: companion, env: childEnv, raw, name })
       stages.push({ ...stage, argv: ['node', 'npm-cli.js', ...args], cwd: 'companion' })
+      gitConfig.validate()
       if (!stageSucceeded(stage)) { result = { ...result, outcome: 'FAIL', error_code: 'CENSUS_STAGE_FAILED' }; break }
     }
     const tests = stages.find(s => s.name === 'tests')

@@ -30,10 +30,49 @@ function childFixture(root: string, mode: string) {
   const script = path.join(root, "owned wrapper.cjs"), marker = path.join(root, "descendant.pid")
   fs.writeFileSync(script, `const cp=require('node:child_process'),fs=require('node:fs');
     const child=cp.spawn(process.execPath,['-e','setTimeout(()=>{},20000)'],{stdio:'ignore',windowsHide:true});
-    fs.writeFileSync(${JSON.stringify(marker)},String(child.pid));
+    child.once('error',()=>process.exit(1));
+    child.once('spawn',()=>{
+      if(!Number.isSafeInteger(child.pid)||child.pid<=0)throw Error('OWNED_CHILD_PID_UNAVAILABLE');
+      fs.writeFileSync(${JSON.stringify(marker + ".pending")},String(child.pid),{flag:'wx',mode:0o600});
+      fs.renameSync(${JSON.stringify(marker + ".pending")},${JSON.stringify(marker)});
+    });
     ${mode === "complete" ? "setTimeout(()=>process.exit(0),300);" : "process.stdin.resume();setTimeout(()=>{},20000);"}`)
   return { script, marker }
 }
+
+test("owned descendant PID marker is absent until its complete native publication", { timeout: 30000 }, async () => {
+  const root = ownedRoot(), f = childFixture(root, "shutdown"), release = path.join(root, "release")
+  const preload = path.join(root, "hold-publication.cjs")
+  fs.writeFileSync(preload, `const fs=require('node:fs'),write=fs.writeFileSync;
+    fs.writeFileSync=function(file,data,options){
+      if(file!==${JSON.stringify(f.marker)} && file!==${JSON.stringify(f.marker + ".pending")})return write.apply(this,arguments);
+      const fd=fs.openSync(file,options?.flag||'w',options?.mode||0o600);
+      try{process.send({phase:'opened',pid:Number(data),finalVisible:fs.existsSync(${JSON.stringify(f.marker)})});
+        while(!fs.existsSync(${JSON.stringify(release)}))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);
+        fs.writeSync(fd,String(data));
+      }finally{fs.closeSync(fd)}
+    };`)
+  let wrapper: ChildProcess | undefined, descendant = 0, opened: any
+  try {
+    wrapper = spawn(process.execPath, ["--require", preload, f.script], { stdio: ["ignore", "ignore", "pipe", "ipc"], windowsHide: true })
+    wrapper.on("message", message => { opened = message })
+    await until(() => opened?.phase === "opened")
+    descendant = opened.pid
+    assert.ok(Number.isSafeInteger(descendant) && descendant > 0)
+    assert.ok(alive(descendant)); assert.ok(alive(wrapper.pid))
+    assert.equal(opened.finalVisible, false, "opening an incomplete PID must not publish the final marker")
+    assert.equal(fs.existsSync(f.marker), false)
+    fs.writeFileSync(release, "release", { flag: "wx" })
+    await until(() => fs.existsSync(f.marker))
+    assert.equal(Number(fs.readFileSync(f.marker, "utf8")), descendant)
+    assert.ok(alive(descendant), "the same real child survives complete publication")
+  } finally {
+    if (!fs.existsSync(release)) fs.writeFileSync(release, "release", { flag: "wx" })
+    await stop(wrapper)
+    if (alive(descendant)) try { process.kill(descendant, "SIGKILL") } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
 
 for (const mode of ["cancel", "timeout", "complete", "shutdown"] as const) {
   test(`public ACP ${mode} reclaims its native process tree`, { timeout: 30000 }, async () => {

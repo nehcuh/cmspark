@@ -5,7 +5,8 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { pathToFileURL } from 'node:url'
-import { childEnvironment, rejectCheckoutCredentials, capture, discover, reconcile, scheduledBatches, inventory, stageSucceeded } from '../windows-census.mjs'
+import { spawnSync } from 'node:child_process'
+import { childEnvironment, prepareOwnedGitConfig, rejectCheckoutCredentials, capture, discover, reconcile, scheduledBatches, inventory, stageSucceeded } from '../windows-census.mjs'
 
 const root = path.resolve(import.meta.dirname, '../..')
 const reporter = path.join(root, 'scripts/windows-census-reporter.mjs')
@@ -38,6 +39,8 @@ const normalize = raw => raw.replace(/^\s*duration_ms: .*\n/gm, '').replace(/^# 
 test('constructed environment and checkout admission reject inherited credentials without values in errors', () => {
   const env = childEnvironment({ Path: 'owned-path', GITHUB_TOKEN: 'secret', NODE_OPTIONS: '--require secret', NPM_TOKEN: 'secret', CMSPARK_DATA_DIR: 'secret' }, 'owned-workspace', 'owned-temp')
   assert.equal(env.PATH, 'owned-path'); assert.equal(env.CI, 'true'); assert.equal('RUNNER_TRACKING_ID' in env, false)
+  assert.equal(env.GIT_CONFIG_NOSYSTEM, '1')
+  assert.equal(env.GIT_CONFIG_GLOBAL, path.join('owned-temp', 'empty.gitconfig'))
   assert.equal(childEnvironment({ RUNNER_TRACKING_ID: 'OWNED_TRACKING_INERT_ONLY' }, 'w', 't').RUNNER_TRACKING_ID, 'OWNED_TRACKING_INERT_ONLY')
   for (const key of ['GITHUB_TOKEN', 'NPM_TOKEN', 'NODE_OPTIONS', 'CMSPARK_DATA_DIR']) assert.equal(key in env, false)
   rejectCheckoutCredentials('remote.origin.url https://github.com/nehcuh/cmspark\n')
@@ -196,4 +199,59 @@ test('real npm → unchanged runner → worker → grandchild drain after actual
     // Original process exit0 is retained, but accounting may not certify a truncated TAP.
     await assert.rejects(reconcile({ companion: f.companion, receipts, rawFile: path.join(raw, 'tests.stdout'), discovery: discover(f.companion), execution }))
   } finally { retire(f) }
+})
+
+
+test('fixed owned Git isolation keeps actual local credential refusal and ambient helper inert', () => {
+  const owned = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-census-git-')))
+  try {
+    const global = prepareOwnedGitConfig(owned), repo = path.join(owned, 'repo')
+    fs.mkdirSync(repo)
+    const env = childEnvironment({ ...process.env, GIT_CONFIG_SYSTEM: 'FORBIDDEN_CONFIG', GIT_CONFIG_GLOBAL: 'FORBIDDEN_CONFIG', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: 'FORBIDDEN_HELPER' }, repo, owned)
+    assert.equal(env.GIT_CONFIG_NOSYSTEM, '1'); assert.equal(env.GIT_CONFIG_GLOBAL, global.file)
+    for (const name of ['GIT_CONFIG_SYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']) assert.equal(name in env, false)
+    const git = args => { const r = spawnSync('git', args, { cwd: repo, env, encoding: 'utf8', windowsHide: true }); assert.equal(r.error, undefined); assert.ok([0, 1].includes(r.status)); return r }
+    git(['init', '-q'])
+    const query = () => git(['config', '--get-regexp', '^(http\\..*extraheader|http\\.extraheader|credential\\..*|remote\\..*\\.url)$'])
+    const clean = query(); assert.equal(clean.status, 1); rejectCheckoutCredentials(clean.stdout)
+    const helperFile = path.join(owned, 'ambient.gitconfig')
+    fs.writeFileSync(helperFile, '[credential]\nhelper=OWNED_NEVER_EXECUTE\n')
+    // Explicit owned source seam models ambient config; old launcher did not forward this override.
+    const ambient = spawnSync('git', ['config', '--get-regexp', '^credential\\.'], { cwd: repo, env: { ...env, GIT_CONFIG_NOSYSTEM: '0', GIT_CONFIG_SYSTEM: helperFile }, encoding: 'utf8', windowsHide: true })
+    assert.equal(ambient.status, 0); assert.throws(() => rejectCheckoutCredentials(ambient.stdout), { message: 'CENSUS_CHECKOUT_CREDENTIALS_PRESENT' })
+    for (const [key, value] of [['credential.helper', 'OWNED_NEVER_EXECUTE'], ['http.https://owned.invalid/.extraheader', 'OWNED_NOT_AUTHORIZATION'], ['remote.origin.url', 'https://owned-not-valid@owned.invalid/repo']]) {
+      git(['config', '--local', key, value])
+      assert.throws(() => rejectCheckoutCredentials(query().stdout), { message: 'CENSUS_CHECKOUT_CREDENTIALS_PRESENT' })
+      git(['config', '--local', '--unset-all', key])
+    }
+    git(['config', '--local', 'include.path', helperFile])
+    assert.throws(() => rejectCheckoutCredentials(query().stdout), { message: 'CENSUS_CHECKOUT_CREDENTIALS_PRESENT' })
+    global.validate()
+  } finally { fs.rmSync(owned, { recursive: true, force: true }) }
+})
+
+test('owned empty Git config is exclusive and rejects replacement, contents and namespace aliases', () => {
+  for (const mode of ['file-collision', 'hardlink-collision', 'contents', 'replacement', 'parent-alias']) {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-census-git-input-')))
+    const owned = path.join(root, 'owned'); fs.mkdirSync(owned)
+    try {
+      const file = path.join(owned, 'empty.gitconfig')
+      if (mode.endsWith('collision')) {
+        const original = path.join(root, 'original'); fs.writeFileSync(original, 'OWNED_NOT_SECRET')
+        if (mode === 'file-collision') fs.writeFileSync(file, 'OWNED_NOT_SECRET')
+        else fs.linkSync(original, file)
+        assert.throws(() => prepareOwnedGitConfig(owned), { message: 'CENSUS_OWNED_GIT_CONFIG_INVALID' })
+        assert.equal(fs.readFileSync(file, 'utf8'), 'OWNED_NOT_SECRET')
+      } else if (mode === 'parent-alias') {
+        const alias = path.join(root, 'alias'); fs.symlinkSync(owned, alias, process.platform === 'win32' ? 'junction' : 'dir')
+        assert.throws(() => prepareOwnedGitConfig(alias), { message: 'CENSUS_OWNED_GIT_CONFIG_INVALID' })
+        assert.equal(fs.existsSync(file), false)
+      } else {
+        const input = prepareOwnedGitConfig(owned); input.validate()
+        if (mode === 'contents') fs.writeFileSync(file, 'OWNED_NOT_SECRET')
+        else { fs.renameSync(file, path.join(root, 'original-empty')); fs.writeFileSync(file, '', { flag: 'wx', mode: 0o600 }) }
+        assert.throws(() => input.validate(), { message: 'CENSUS_OWNED_GIT_CONFIG_INVALID' })
+      }
+    } finally { fs.rmSync(root, { recursive: true, force: true }) }
+  }
 })
