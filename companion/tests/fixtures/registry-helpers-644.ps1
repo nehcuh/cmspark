@@ -63,8 +63,14 @@ foreach ($f in $ast.FindAll({param($n) $n -is [Management.Automation.Language.Fu
 if ($Mode -eq 'primitives') {
  $cases=[RegistryFaults644]::Run()
  $good=Join-Path $Directory 'App.exe'
- if ((Get-RegistryExe644 ('"'+$good+'",-1')).path -ne $good) { throw 'OWNED_LITERAL_POSITIVE' }
- if ($good -match '\s' -or (Get-RegistryExe644 ($good+',1')).path -ne $good) { throw 'OWNED_UNQUOTED_LITERAL_POSITIVE' }
+ # Expected path comes from Node's native filesystem oracle for this owned file,
+ # independently of Get-RegistryExe644. Raw input grammar still uses $good.
+ $expected=(ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $Directory 'owned-native-files.json')))).app
+ if ([string]::IsNullOrEmpty($expected)) { throw 'OWNED_NATIVE_FILE_ORACLE_REQUIRED' }
+ $quoted=(Get-RegistryExe644 ('"'+$good+'",-1')).path
+ $unquoted=(Get-RegistryExe644 ($good+',1')).path
+ if ($quoted -ne $expected) { throw 'OWNED_LITERAL_POSITIVE' }
+ if ($good -match '\s' -or $unquoted -ne $expected) { throw 'OWNED_UNQUOTED_LITERAL_POSITIVE' }
  foreach ($bad in @('relative.exe','%SystemRoot%\App.exe','\\remote\App.exe','C:\x.exe:stream',('"'+$good+'" /quiet'),($good+' --arg'),('"'+(Join-Path $Directory 'App.dll')+'",0'),('"'+(Join-Path $Directory 'Folder.exe')+'",0'))) {
   if ((Get-RegistryExe644 $bad).path) { throw 'OWNED_LITERAL_NEGATIVE' }
  }
@@ -80,7 +86,7 @@ if ($Mode -eq 'primitives') {
  $legacy=16777216-200-$cost-1
  if ((Get-RegistryCandidateBudget644 0 2 $rowJson 1048576 1 $legacy 200).reason) { throw 'OWNED_TOTAL_EXACT' }
  if ((Get-RegistryCandidateBudget644 0 2 $rowJson 1048576 1 ($legacy+1) 200).reason -ne 'OUTPUT_LIMIT') { throw 'OWNED_TOTAL_OVER' }
- Write-Output (ConvertTo-Json -Compress -InputObject @{admission_boundaries=6;cases=$cases;native_ps51=$true;declared_query_fault_seam=$true;literal_controls=$true})
+ Write-Output (ConvertTo-Json -Compress -InputObject @{admission_boundaries=6;cases=$cases;native_ps51=$true;declared_query_fault_seam=$true;literal_controls=$true;quoted_path=$quoted;unquoted_path=$unquoted})
  exit 0
 }
 if ($Mode -eq 'owned-precedence') {
