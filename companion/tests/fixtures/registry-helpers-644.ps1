@@ -101,7 +101,7 @@ $row=@{name='';source='startapps';aumid='Owned644!Legacy'}
 if ($Mode -eq 'small-wire' -or $Mode -eq 'measure-small') {
  $row.name='Unicode '+[char]0x6c49+[char]0x5b57+' " \'
  $body=Get-AppsJson644 -Rows @($row)
- if ($Mode -eq 'measure-small') { Write-Output (ConvertTo-Json -Compress -InputObject @{wire_bytes=(Get-AppsWireBytes644 $body);native_ps51=$true});exit 0 }
+ if ($Mode -eq 'measure-small') { Write-Output (ConvertTo-Json -Compress -InputObject @{wire_bytes=(Get-AppsWireBytes644 $body);body_bytes=([Console]::Out.Encoding.GetByteCount($body));newline_bytes=([Console]::Out.Encoding.GetByteCount([Console]::Out.NewLine));configured_preamble_bytes=([Console]::Out.Encoding.GetPreamble().Length);encoding_codepage=([Console]::Out.Encoding.CodePage);native_ps51=$true});exit 0 }
  Write-Output $body;exit 0
 }
 $small=@{status='partial';reasons=[string[]]@('OUTPUT_LIMIT')}
