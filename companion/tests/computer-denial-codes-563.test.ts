@@ -67,7 +67,7 @@ for (const kind of ["app", "hwnd"] as const) {
 }
 
 test("#563 Computer denial registration leaves correction and unknown-message fallback unchanged", () => {
-  assert.equal(ERROR_CODE_LEVELS.has("OUT_OF_BOUNDS"), false)
+  assert.equal(ERROR_CODE_LEVELS.has("OUT_OF_BOUNDS"), true)
   assert.equal(classifyError("computer: (9999,0) outside client rect 620x430", { error_code: "OUT_OF_BOUNDS" }), "recoverable")
   assert.equal(classifyError("timeout", { error_code: "UNKNOWN_COMPUTER_REFUSAL" }), "recoverable")
   assert.equal(classifyError("neutral refusal", { error_code: "UNKNOWN_COMPUTER_REFUSAL" }), "non_recoverable")

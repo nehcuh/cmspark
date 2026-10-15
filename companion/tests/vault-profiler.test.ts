@@ -33,7 +33,7 @@ test("scanVault: collects .md, skips dot-dirs + non-md, parses frontmatter/body"
     assert.equal(samples.length, 2)
     assert.deepEqual(
       samples.map(s => s.relPath).sort(),
-      ["a.md", "notes/b.md"],
+      ["a.md", path.join("notes", "b.md")],
     )
     const a = samples.find(s => s.relPath === "a.md")!
     assert.deepEqual(a.frontmatter, { tags: ["项目/a"], title: "Apple" })

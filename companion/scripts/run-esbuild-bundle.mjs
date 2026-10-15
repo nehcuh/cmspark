@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { desktopIntegrity } from "./desktop-artifacts.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const companionRoot = path.resolve(__dirname, "..")
@@ -19,9 +20,17 @@ const externals = Array.isArray(argsJson.externals) ? argsJson.externals : []
 const platform = argsJson.platform || "node"
 const target = argsJson.target || "node22"
 
+let desktopDefinition = "undefined"
+if (["darwin", "win32"].includes(process.platform)) {
+  const source = path.join(companionRoot, "dist", "desktop-native")
+  const expected = JSON.parse(readFileSync(path.join(source, "integrity.json"), "utf8"))
+  if (JSON.stringify(desktopIntegrity(source)) !== JSON.stringify(expected)) throw new Error("Desktop native artifacts changed after final signing")
+  desktopDefinition = JSON.stringify(expected)
+}
 const argv = [
   path.join(companionRoot, "dist", "index.js"),
   "--bundle",
+  `--define:__CMSPARK_DESKTOP_INTEGRITY__=${desktopDefinition}`,
   `--platform=${platform}`,
   `--target=${target}`,
   ...externals.map((e) => `--external:${e}`),

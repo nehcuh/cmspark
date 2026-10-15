@@ -1953,7 +1953,15 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       await openSummonerWebShell("")
       break
     case "summoner-toggle":
-      await toggleSummonerWebShell("")
+    case "desktop":
+      if (!companionClient) {
+        safeNotify({ title: "CMspark 工作台", message: "Companion 未连接，无法打开工作台", timeout: 5 })
+      } else {
+        try {
+          const reply = await companionClient.sendAppRequest("desktop.open", { view: "compact" }, 30_000)
+          if (reply?.ok !== true) safeNotify({ title: "CMspark 工作台", message: "无法打开原生工作台，请检查程序包是否完整。", timeout: 5 })
+        } catch { safeNotify({ title: "CMspark 工作台", message: "工作台连接失败，请重试。", timeout: 5 }) }
+      }
       break
     case "autostart": await toggleAutoStart(); break
     case "quick-action":

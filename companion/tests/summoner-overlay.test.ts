@@ -332,7 +332,7 @@ test("Tray.swift stdin handles summoner.open/hydrate/token/done/error/close", ()
   ]) {
     assert.ok(src.includes(`"${cmd}"`), `missing stdin cmd ${cmd}`)
   }
-  assert.match(src, /召唤器（实验）…/)
+  assert.match(src, /对话浮窗（旧版）…/)
 })
 
 test("swift-tray-bridge send/recv Task 7 summoner protocol", () => {
@@ -525,7 +525,7 @@ test("handleSummonerFiles claims overlay lease and coerces empty MIME", () => {
 })
 
 test("menu-bar-agent inbound close does not chat.abort", () => {
-  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8")
+  const src = fs.readFileSync(srcFile("menu-bar-agent.ts"), "utf8").replace(/\r\n/g, "\n")
   const start = src.indexOf("export function handleSummonerInbound")
   assert.ok(start >= 0)
   const body = src.slice(start, start + 2800)

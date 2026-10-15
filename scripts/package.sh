@@ -168,6 +168,13 @@ if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ]; then
   exit 0
 fi
 
+# Native desktop is an actual same-platform build; cross-package guessing is forbidden.
+case "${PLATFORM}" in
+  macos-*|windows-*)
+    ( cd "${ROOT_DIR}/companion" && node scripts/build-desktop-native.mjs "--target=${PLATFORM}" )
+    ;;
+esac
+
 # --- Step 2: Bundle ---
 echo "[3/9] Bundling with esbuild..."
 cd "${ROOT_DIR}/companion"
@@ -184,6 +191,11 @@ mkdir -p "${STAGING}"
 
 # Main bundle
 cp companion/dist/cmspark-agent.js "${STAGING}/"
+case "${PLATFORM}" in
+  macos-*) node companion/scripts/desktop-artifacts.mjs stage companion/dist/desktop-native "${STAGING}" darwin ;;
+  windows-*) node companion/scripts/desktop-artifacts.mjs stage companion/dist/desktop-native "${STAGING}" win32 ;;
+esac
+
 
 # Qwen3-VL Python worker sidecar — MUST sit next to cmspark-agent.js so
 # resolveQwenVlWorkerScript() finds Resources/qwen-vl-worker.py in the .app

@@ -3,12 +3,14 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { capture, childEnvironment, prepareOwnedGitConfig } from '../windows-census.mjs'
 import * as census from '../windows-census.mjs'
 import { installLockedDependencies } from '../windows-census-install.mjs'
 
 const root = fs.realpathSync(path.resolve(import.meta.dirname, '../..'))
+const ownedSmbFile = new URL('../windows-census-owned-smb.mjs', import.meta.url)
+const ownedSmb = fs.existsSync(ownedSmbFile) ? await import(ownedSmbFile.href) : {}
 const owned = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-census-cli-')))
 fs.chmodSync(owned, 0o700)
 const raw = path.join(owned, 'raw'); fs.mkdirSync(raw, { mode: 0o700 })
@@ -260,4 +262,131 @@ test('the four Windows-required keys do not extend other platforms environment a
     const actual = childEnvironment(input, owned, raw)
     for (const name of requiredWindowsKeys) assert.equal(name in actual, false)
   })
+})
+
+// #650 existing mandatory UNC test requires a separately owned current-run fixture.
+const smbRun = '38801448357', smbAttempt = '1', smbGuid = '0123456789abcdef0123456789abcdef'
+const smbName = `cmspark650_${smbRun}_${smbAttempt}_${smbGuid}`
+const smbLocator = '\\\\127.0.0.1\\' + smbName
+function smbFixture() {
+  const temp = fs.realpathSync.native(fs.mkdtempSync(path.join(owned, 'smb-directory-')))
+  return { temp, name: smbName, run: smbRun, attempt: smbAttempt }
+}
+const smbCreate = f => ownedSmb.createOwnedUncDirectory(f.temp, f.name, f.run, f.attempt)
+const smbVerify = (f, identity, binding = { name: f.name, path: identity.path }) =>
+  ownedSmb.verifyOwnedUncDirectory(f.temp, f.name, f.run, f.attempt, identity, binding)
+
+test('owned UNC locator is exact current-run loopback, not a decoded or nested resource', () => {
+  assert.equal(typeof census.validateOwnedUncShare, 'function')
+  assert.equal(census.validateOwnedUncShare(smbLocator, smbRun, smbAttempt), smbLocator)
+  for (const value of [undefined, '', smbLocator + '\\child', smbLocator + '\\', smbLocator + '\n', smbLocator + '\r\n', smbLocator + '\0',
+    smbLocator.replace('127.0.0.1', 'localhost'), smbLocator.replace('127.0.0.1', 'foreign.invalid'), smbLocator.replace(smbRun, '38801448358'),
+    smbLocator.replace('_1_', '_2_'), smbLocator.replace('cmspark650_', 'cmspark603_'), smbLocator.replace(smbGuid, '%30' + smbGuid.slice(1)),
+    smbLocator.replace(smbGuid, '01234567-89ab-cdef-0123-456789abcdef'), '//127.0.0.1/' + smbName]) {
+    assert.throws(() => census.validateOwnedUncShare(value, smbRun, smbAttempt), { message: 'CENSUS_OWNED_UNC_INVALID' })
+  }
+  for (const [run, attempt] of [['', '1'], ['123\n', '1'], ['123', '1\n'], ['0', '1']]) {
+    assert.throws(() => census.validateOwnedUncShare(smbLocator, run, attempt), { message: 'CENSUS_OWNED_UNC_INVALID' })
+  }
+})
+
+test('owned UNC locator enters only tests-stage while generic environment remains strict', () => {
+  assert.equal(typeof census.censusStageEnvironment, 'function')
+  const base = childEnvironment({ PATH: 'owned', CMSPARK_TEST_UNC_SHARE: smbLocator, SECRET_CANARY: 'FORBIDDEN' }, 'workspace', 'temp')
+  const initial = JSON.stringify(base), options = { uncShare: smbLocator, run: smbRun, attempt: smbAttempt, receipts: 'owned-receipts', reporter: 'file:///owned/reporter.mjs' }
+  assert.equal('CMSPARK_TEST_UNC_SHARE' in base, false)
+  for (const name of ['install', 'build', 'stage']) assert.equal(census.censusStageEnvironment(name, base, options), base)
+  const tests = census.censusStageEnvironment('tests', base, options)
+  assert.equal(tests.CMSPARK_TEST_UNC_SHARE, smbLocator)
+  assert.equal(tests.CMSPARK_CENSUS_DIR, options.receipts)
+  assert.equal(tests.NODE_OPTIONS, '--test-reporter="file:///owned/reporter.mjs"')
+  assert.equal('SECRET_CANARY' in tests, false); assert.equal(JSON.stringify(base), initial)
+  assert.throws(() => census.censusStageEnvironment('tests', base, { ...options, uncShare: undefined }), { message: 'CENSUS_OWNED_UNC_INVALID' })
+  assert.throws(() => census.censusStageEnvironment('unknown', base, options), { message: 'CENSUS_STAGE_INVALID' })
+})
+
+test('owned UNC directory create and cleanup binding use real original inode and exact share path', () => {
+  assert.equal(typeof ownedSmb.createOwnedUncDirectory, 'function')
+  const f = smbFixture(), identity = smbCreate(f)
+  assert.equal(identity.path, fs.realpathSync.native(path.join(f.temp, f.name)))
+  assert.equal(smbVerify(f, identity), identity.path)
+  assert.throws(() => smbCreate(f), { message: 'CENSUS_OWNED_SMB_SETUP_FAILED' })
+  assert.equal(smbVerify(f, identity), identity.path, 'exclusive collision must not overwrite original')
+})
+
+test('owned UNC share name or path mismatch refuses both resources before removal', () => {
+  const f = smbFixture(), identity = smbCreate(f), sibling = path.join(f.temp, 'foreign-sibling')
+  fs.mkdirSync(sibling); fs.writeFileSync(path.join(sibling, 'sentinel'), 'KEEP')
+  for (const binding of [{ name: f.name + '_foreign', path: identity.path }, { name: f.name, path: sibling }, null]) {
+    assert.throws(() => smbVerify(f, identity, binding), { message: 'CENSUS_OWNED_SMB_IDENTITY_INVALID' })
+    assert.equal(fs.readFileSync(path.join(sibling, 'sentinel'), 'utf8'), 'KEEP')
+    assert.ok(fs.existsSync(identity.path))
+  }
+})
+
+test('owned UNC replacement directory and reparse projection cannot reuse creation history', () => {
+  const f = smbFixture(), identity = smbCreate(f), original = identity.path + '-original'
+  fs.renameSync(identity.path, original); fs.mkdirSync(identity.path)
+  assert.throws(() => smbVerify(f, identity), { message: 'CENSUS_OWNED_SMB_IDENTITY_INVALID' })
+  fs.rmdirSync(identity.path); fs.symlinkSync(original, identity.path, process.platform === 'win32' ? 'junction' : 'dir')
+  assert.throws(() => smbVerify(f, identity), { message: 'CENSUS_OWNED_SMB_IDENTITY_INVALID' })
+  assert.ok(fs.statSync(original).isDirectory())
+})
+
+test('owned UNC malformed identity and directory name never broaden the fixture root', () => {
+  const f = smbFixture(), identity = smbCreate(f)
+  for (const invalid of [{ ...identity, dev: '0' + identity.dev }, { ...identity, ino: '-1' }, { ...identity, ino: identity.ino + '\n' },
+    { ...identity, path: path.join(f.temp, 'sibling') }, { ...identity, unknown: true }]) {
+    assert.throws(() => smbVerify(f, invalid), { message: 'CENSUS_OWNED_SMB_IDENTITY_INVALID' })
+  }
+  for (const name of ['../sibling', f.name + '/child', f.name + '\\child']) {
+    assert.throws(() => ownedSmb.createOwnedUncDirectory(f.temp, name, f.run, f.attempt), { message: 'CENSUS_OWNED_SMB_SETUP_FAILED' })
+  }
+})
+
+test('owned UNC helper import remains inert and off-Windows CLI cannot create a fixture', async () => {
+  assert.equal(typeof ownedSmb.createOwnedUncDirectory, 'function')
+  const result = await capture(process.execPath, [fileURLToPath(ownedSmbFile), 'create', smbName], { cwd: owned, env: { ...env, RUNNER_TEMP: owned, GITHUB_RUN_ID: smbRun, GITHUB_RUN_ATTEMPT: smbAttempt }, raw, name: 'owned-smb-cli-denied' })
+  assert.equal(result.code, 1)
+  assert.equal(fs.existsSync(path.join(owned, smbName)), false)
+  assert.equal(fs.readFileSync(path.join(raw, 'owned-smb-cli-denied.stdout'), 'utf8'), '')
+  assert.match(fs.readFileSync(path.join(raw, 'owned-smb-cli-denied.stderr'), 'utf8'), /^CENSUS_OWNED_SMB_SETUP_FAILED\r?\n$/)
+})
+
+test('owned UNC stage projection reaches real inert children only for canonical tests', async () => {
+  assert.equal(typeof census.censusStageEnvironment, 'function')
+  const source = fs.readFileSync(new URL('../windows-census.mjs', import.meta.url), 'utf8')
+  assert.match(source, /const uncShare = validateOwnedUncShare\(process.env.CMSPARK_TEST_UNC_SHARE, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT\)/)
+  assert.match(source, /const childEnv = censusStageEnvironment\(name, env, \{ uncShare/)
+  const options = { uncShare: smbLocator, run: smbRun, attempt: smbAttempt, receipts: 'owned-unused', reporter: 'file:///owned-unused-reporter.mjs' }
+  for (const stage of ['install', 'build', 'stage', 'tests']) {
+    const base = childEnvironment({ PATH: process.env.PATH, NPM_TOKEN: 'FORBIDDEN_SECRET', CMSPARK_TEST_UNC_SHARE: 'FOREIGN_INPUT' }, owned, raw)
+    const child = census.censusStageEnvironment(stage, base, options)
+    // Ordinary Node does not load a test reporter, so this checks the true env
+    // handoff without starting a test runner, SMB, network or credentials.
+    const result = await capture(process.execPath, ['-e', 'console.log(JSON.stringify({locator:process.env.CMSPARK_TEST_UNC_SHARE===process.argv[1],absent:process.env.CMSPARK_TEST_UNC_SHARE===undefined,secret:process.env.NPM_TOKEN!==undefined}))', smbLocator], { cwd: owned, env: child, raw, name: 'owned-smb-stage-' + stage })
+    assert.equal(result.code, 0)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(raw, 'owned-smb-stage-' + stage + '.stdout'), 'utf8')),
+      { locator: stage === 'tests', absent: stage !== 'tests', secret: false })
+  }
+})
+
+test('owned UNC actual fixed helper CLI creates and verifies filesystem metadata through a declared platform seam', async () => {
+  assert.equal(typeof ownedSmb.createOwnedUncDirectory, 'function')
+  const f = smbFixture(), helper = fileURLToPath(ownedSmbFile)
+  const bootstrap = 'Object.defineProperty(process,"platform",{value:"win32"});const helper=process.argv[1];process.argv=[process.execPath,helper,...process.argv.slice(2)];await import((await import("node:url")).pathToFileURL(helper).href);'
+  const cliEnv = { ...env, GITHUB_ACTIONS: 'true', RUNNER_OS: 'Windows', RUNNER_TEMP: f.temp, GITHUB_RUN_ID: f.run, GITHUB_RUN_ATTEMPT: f.attempt }
+  const invoke = (label, args) => capture(process.execPath, ['--input-type=module', '-e', bootstrap, helper, ...args],
+    { cwd: owned, env: cliEnv, raw, name: 'owned-smb-projected-cli-' + label })
+  const create = await invoke('create', ['create', f.name])
+  assert.equal(create.code, 0)
+  const identity = JSON.parse(fs.readFileSync(path.join(raw, 'owned-smb-projected-cli-create.stdout'), 'utf8'))
+  assert.equal(fs.lstatSync(identity.path).isDirectory(), true)
+  const verify = await invoke('verify', ['verify', f.name, f.name, identity.path, identity.dev, identity.ino])
+  assert.equal(verify.code, 0)
+  assert.equal(fs.readFileSync(path.join(raw, 'owned-smb-projected-cli-verify.stdout'), 'utf8'), '')
+  const foreign = await invoke('foreign', ['verify', f.name, f.name, path.join(f.temp, 'foreign'), identity.dev, identity.ino])
+  assert.equal(foreign.code, 1)
+  assert.equal(fs.readFileSync(path.join(raw, 'owned-smb-projected-cli-foreign.stderr'), 'utf8').trim(), 'CENSUS_OWNED_SMB_IDENTITY_INVALID')
+  assert.ok(fs.existsSync(identity.path), 'metadata validation never removes either resource')
 })

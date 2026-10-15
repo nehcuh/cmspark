@@ -145,7 +145,8 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     console.log(`[${idx++}] 打开日志目录`)
     console.log(`[${idx++}] 打开 Chrome`)
     console.log(`[${idx++}] 显示配对码`)
-    console.log(`[${idx++}] 召唤器（实验）…`)
+    console.log(`[${idx++}] 对话浮窗（旧版）…`)
+    console.log(`[${idx++}] 只读工作台…`)
     console.log(`[${idx}] 退出（停止服务）`)
 
     console.log("")
@@ -185,6 +186,7 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     if (this.parseInt(choice) === idx++) { this.emit("chrome"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("show-pairing"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("summoner"); this.pause(); return }
+    if (this.parseInt(choice) === idx++) { this.emit("desktop"); this.pause(); return }
     if (this.parseInt(choice) === idx || choice === "q" || choice === "quit") {
       this.emit("quit")
       return

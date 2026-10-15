@@ -1007,6 +1007,8 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["COOKIE_TRUST_DENIED", "security"],
 
   // ── non_recoverable ───────────────────────────────────────────────────────
+  // #563: actual invalid-token refusals already halt; retain that hard grade.
+  ["SECURITY_TOKEN_INVALID", "non_recoverable"],
   // #563 F2: trusted host/schema reconstruction is not repairable by the model.
   // Intrinsic grading tightens diagnostic-text fallback (timeout/locator words)
   // and disables an unrelated locator pivot; F1 dependency recovery is separate.
@@ -1033,6 +1035,19 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // self-UI re-L2, or the separate TYPE_NO_EFFECT one-refocus/retype path.
   ["CLICK_OCCLUDED", "non_recoverable"],
   ["FOCUS_LOST", "non_recoverable"],
+  // #563 D4: executable integrity/hash-read refusal cannot be weakened by diagnostic text.
+  ["APP_EXE_DRIFT", "non_recoverable"],
+  // #563: existing fixed IL/user-stop/self-UI/danger/corpus refusals are hard.
+  // Typed diagnostic variants now retain that refusal instead of word-based
+  // recovery; native admission and the separate TYPE_NO_EFFECT wrapper stay put.
+  ["INTEGRITY_LEVEL_DENIED", "non_recoverable"],
+  ["TASK_ABORTED", "non_recoverable"],
+  ["COMPANION_UI_CLICK_DENIED", "non_recoverable"],
+  ["DANGER_HARD_DENY", "non_recoverable"],
+  ["TYPE_TEXT_NOT_CONFIRMED", "non_recoverable"],
+  // Bounds rejection permits re-locating, never clamping or new authority.
+  // Explicit recovery also replaces hard-word/neutral diagnostic fallback.
+  ["OUT_OF_BOUNDS", "recoverable"],
 
   // ── recoverable ───────────────────────────────────────────────────────────
   // Authorization refusal permits a different tool or fresh human approval;
@@ -1056,6 +1071,10 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["COOPERATION_REJECTED", "recoverable"],
   ["COOPERATION_STALE_ATTEMPT", "recoverable"],
   ["COOPERATION_INTERRUPTED", "recoverable"],
+  // #563: these codes describe only the finite pre-execution input refusals.
+  // Module, command-policy, L2 and native/runtime failures keep their own grades.
+  ["SHELL_INPUT_INVALID", "recoverable"],
+  ["WORKSPACE_FILE_UNSUPPORTED", "recoverable"],
   ["ACP_OWNER_MISMATCH", "security"],
   // 另一个 worker 已持有 tab。报文是 "tab N held by <id> (HARD_HELD)"，**不含** "tab_locked"，
   // 所以子串表永远匹配不到，父轮次被中止过（bqn39n vs xdigpo, tab 1492102817）。

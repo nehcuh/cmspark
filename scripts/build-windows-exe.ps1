@@ -113,6 +113,9 @@ try {
     if ($LASTEXITCODE -ne 0) { Fail "TypeScript compilation failed" }
     Ok "TypeScript compiled to dist/"
 
+    node scripts/build-desktop-native.mjs
+    if ($LASTEXITCODE -ne 0) { Fail "Native desktop build failed" }
+
     # SoT: companion/scripts/esbuild-bundle-args.json (shared with package.sh / package.json)
     node scripts/run-esbuild-bundle.mjs
     if ($LASTEXITCODE -ne 0) { Fail "esbuild bundle failed" }
@@ -321,6 +324,8 @@ New-Item -ItemType Directory -Force $StagingDir | Out-Null
 
 # Core exe
 Copy-Item "$CompanionDir\dist\cmspark-agent.exe" $StagingDir
+node "$CompanionDir\scripts\desktop-artifacts.mjs" stage "$CompanionDir\dist\desktop-native" $StagingDir win32
+if ($LASTEXITCODE -ne 0) { Fail "Native desktop staging failed" }
 Ok "cmspark-agent.exe"
 
 # Qwen3-VL Python worker (experimental locate). Weights download on demand to

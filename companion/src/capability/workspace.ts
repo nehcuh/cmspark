@@ -298,12 +298,13 @@ export function workspaceReadFile(
       return {
         success: false,
         error: `file too large (${st.size} > ${MAX_READ_BYTES}); use a smaller file or external tools`,
+        data: { error_code: "WORKSPACE_FILE_UNSUPPORTED" },
       }
     }
     const buf = fs.readFileSync(resolved.abs)
     // reject obvious binary
     if (buf.includes(0)) {
-      return { success: false, error: "binary file not supported for workspace_read_file" }
+      return { success: false, error: "binary file not supported for workspace_read_file", data: { error_code: "WORKSPACE_FILE_UNSUPPORTED" } }
     }
     return {
       success: true,

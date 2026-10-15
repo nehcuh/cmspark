@@ -65,7 +65,7 @@ test("#563 D3 unknown/no-code fallback, default59 and safety/correction families
  for(const errorCode of [undefined,"OWNED_UNKNOWN_CODE"]){assert.equal(security.classifyError("timeout element_not_found",{error_code:errorCode}),"recoverable");assert.equal(guard.decideSameToolFailure({failCount:3,threshold,errorCode,errorText:"timeout element_not_found",alreadyPivoted:false}).action,"pivot");assert.equal(guard.decideSameToolFailure({failCount:3,threshold,errorCode,errorText:"timeout element_not_found",alreadyPivoted:true}).action,"stop")}
  for(const message of ["user_gesture required","task authorization required","host_read requires L2 security_token confirmation"])assert.equal(security.classifyError(message),"non_recoverable")
  assert.equal(security.classifyError("Security Block",{error_code:"COOKIE_TRUST_DENIED"}),"security")
- assert.equal(security.ERROR_CODE_LEVELS.has("OUT_OF_BOUNDS"),false);assert.equal(security.ERROR_CODE_LEVELS.has("TYPE_NO_EFFECT"),false)
+ assert.equal(security.ERROR_CODE_LEVELS.has("OUT_OF_BOUNDS"),true);assert.equal(security.ERROR_CODE_LEVELS.has("TYPE_NO_EFFECT"),false)
 })
 test("#563 D3 actual dispatcher denies missing/invalid tokens before native admission",async()=>{
  const api=await import("../src/tool/companion-dispatch")

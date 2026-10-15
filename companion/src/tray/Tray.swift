@@ -140,6 +140,7 @@ enum MenuTag: Int {
   case pairing = 203
   case summoner = 204
   case summonerHotkey = 205
+  case desktop = 206
   case autostart = 300
   case quit = 999
   // Dynamic ranges
@@ -247,10 +248,15 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   pairingItem.tag = MenuTag.pairing.rawValue
   menu.addItem(pairingItem)
 
-  let summonerItem = NSMenuItem(title: "召唤器（实验）…", action: action, keyEquivalent: "")
+  let summonerItem = NSMenuItem(title: "对话浮窗（旧版）…", action: action, keyEquivalent: "")
   summonerItem.target = target
   summonerItem.tag = MenuTag.summoner.rawValue
   menu.addItem(summonerItem)
+
+  let desktopItem = NSMenuItem(title: "只读工作台…", action: action, keyEquivalent: "")
+  desktopItem.target = target
+  desktopItem.tag = MenuTag.desktop.rawValue
+  menu.addItem(desktopItem)
 
   let summonerHotkeyItem = NSMenuItem(title: "召唤器快捷键…", action: action, keyEquivalent: "")
   summonerHotkeyItem.target = target
@@ -360,6 +366,8 @@ class TrayDelegate: NSObject {
     } else if tag == MenuTag.summoner.rawValue {
       // Same Capture card as Side Panel 「弹出对话框」 (Node openSummonerWebShell).
       jsonLine(["type": "click", "action": "summoner"])
+    } else if tag == MenuTag.desktop.rawValue {
+      jsonLine(["type": "click", "action": "desktop"])
     } else if tag == MenuTag.summonerHotkey.rawValue {
       summonerController.open(threadId: "")
       summonerController.showHotkeyPicker()
@@ -1472,7 +1480,7 @@ func handleSummonerHotKeyPressed() {
     jsonLine(["type": "summoner.composing", "on": true])
     return
   }
-  // Same Capture card as tray menu / Side Panel 「弹出对话框」, but toggle hide.
+  // Existing configured hotkey opens/focuses the same read-only native workbench as its tray menu.
   jsonLine(["type": "click", "action": "summoner-toggle"])
 }
 

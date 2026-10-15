@@ -43,6 +43,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
 
   // Known message types with required field validation
   const validators: Record<string, (m: any) => WsValidationResult> = {
+    "desktop.open": m => Object.keys(m).some(k => !["type", "view", "id"].includes(k)) || (m.view !== undefined && m.view !== "compact" && m.view !== "workspace") || (m.id !== undefined && (typeof m.id !== "string" || m.id.length > 200))
+      ? { valid: false, error: "Invalid desktop window request" } : { valid: true },
     "project.list": (m) => projectSchema(m),
     "project.create": (m) => projectSchema(m),
     "project.rename": (m) => projectSchema(m),

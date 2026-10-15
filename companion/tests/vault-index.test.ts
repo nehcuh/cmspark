@@ -82,10 +82,19 @@ test("queryRelatedNotes: respects top-K cap and clamps negative k", () => {
 test("queryRelatedNotes: skips names unsafe as [[wikilinks]] (brackets/pipe/hash)", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-"))
   try {
-    fs.writeFileSync(path.join(dir, "Topic|pipe.md"), "shared topic content here") // unsafe name
+    fs.writeFileSync(path.join(dir, "Topic pipe.md"), "shared topic content here") // Windows-valid disk seed for the poisoned index row below
     fs.writeFileSync(path.join(dir, "Topic [bracket].md"), "shared topic content here") // unsafe name
     fs.writeFileSync(path.join(dir, "Topic safe.md"), "shared topic content here") // safe name
     const index = buildVaultIndex(dir)
+    // A literal | cannot be created on Windows. Mutate the real built index
+    // into the same unsafe note-name input; retain its actual token vector.
+    const pipe = index.entries.find(e => e.name === "Topic pipe")!
+    assert.ok(pipe, "the real disk seed must enter the index")
+    const pipeVector = index.vectors[pipe.name]
+    delete index.vectors[pipe.name]
+    pipe.name = "Topic|pipe"
+    pipe.relPath = "Topic|pipe.md"
+    index.vectors[pipe.name] = pipeVector
     const related = queryRelatedNotes(index, "shared topic content", 5)
     assert.ok(related.includes("Topic safe"))
     assert.ok(!related.some(n => n.includes("|")), "pipe-containing name must be filtered")

@@ -123,6 +123,9 @@ if [[ -z "${HASH_MAIN}" || "${HASH_MAIN}" != "${HASH_HOST}" ]]; then
   exit 1
 fi
 echo "[create-dmg] A6 OK: single CDHash ${HASH_MAIN}"
+# Deep signing must not silently change the native bytes embedded in the daemon table.
+node "${ROOT_DIR}/companion/scripts/desktop-artifacts.mjs" verify "${RESOURCES}/bin/desktop-native" darwin
+
 
 # --- Step 4: Create DMG ---
 echo "[5/6] Creating DMG..."

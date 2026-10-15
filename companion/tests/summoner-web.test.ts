@@ -1708,10 +1708,10 @@ test("systray2 and readline expose 召唤器 menu and openSummoner emits summone
   const readline = fs.readFileSync(srcFile("tray", "readline-tray.ts"), "utf8")
   const adapter = fs.readFileSync(srcFile("tray", "tray-adapter.ts"), "utf8")
   assert.match(adapter, /"summoner"/)
-  assert.match(systray, /召唤器（实验）/)
+  assert.match(systray, /对话浮窗（旧版）…/)
   assert.match(systray, /type:\s*"summoner"/)
   assert.match(systray, /openSummoner[\s\S]{0,400}type:\s*"summoner"/)
-  assert.match(readline, /召唤器（实验）/)
+  assert.match(readline, /对话浮窗（旧版）…/)
   assert.doesNotMatch(systray, /跨平台召唤窗开发中/)
 })
 

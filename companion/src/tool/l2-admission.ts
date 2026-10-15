@@ -1071,7 +1071,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           return {
             success: false,
             error: scope.error,
-            data: { error_code: "SHELL_SCOPE_DENIED" },
+            data: { error_code: scope.error_code || "SHELL_SCOPE_DENIED" },
           }
         }
       }

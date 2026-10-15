@@ -153,7 +153,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.2'
           cache: 'npm'
           cache-dependency-path: companion/package-lock.json
 
@@ -162,6 +162,19 @@ jobs:
           cd companion
           npm ci
           npm run build
+
+      - name: Desktop build helper controls (#480)
+        run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs
+
+      - name: Actual native desktop build and isolated connection (#480)
+        if: matrix.os != 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd companion
+          node scripts/build-desktop-native.mjs --test-fixtures
+          ./node_modules/.bin/tsc -p tsconfig.test.json
+          node scripts/run-tests.mjs .test-dist/tests/desktop-native-macos-480.test.js .test-dist/tests/desktop-native-windows-480.test.js
 
       - name: Pinned NSIS dependency transport and integrity (#633)
         run: node --test scripts/tests/nsis-ci-setup.test.mjs
@@ -211,10 +224,42 @@ jobs:
         if: ${{ !cancelled() && matrix.os == 'windows-latest' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}
         shell: pwsh
         run: |
-          node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/windows-census.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:GITHUB_RUN_ID -cnotmatch '\A[1-9][0-9]*\z' -or $env:GITHUB_RUN_ATTEMPT -cnotmatch '\A[1-9][0-9]*\z') { throw 'CENSUS_OWNED_SMB_SETUP_FAILED' }
+          $share = 'cmspark650_{0}_{1}_{2}' -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT, ([Guid]::NewGuid().ToString('N'))
+          $directoryCreated = $false
+          $shareCreated = $false
+          try {
+            Start-Service LanmanServer -ErrorAction Stop
+            $created = (& node scripts/windows-census-owned-smb.mjs create $share | ConvertFrom-Json -ErrorAction Stop)
+            if ($LASTEXITCODE -ne 0) { throw 'CENSUS_OWNED_SMB_SETUP_FAILED' }
+            $directoryCreated = $true
+            $fixture = $created.path
+            $owner = [Security.Principal.WindowsIdentity]::GetCurrent()
+            try { New-SmbShare -Name $share -Path $fixture -FullAccess $owner.Name -ErrorAction Stop | Out-Null } finally { $owner.Dispose() }
+            $shareCreated = $true
+            # CMSPARK_650_ORIGINAL_COMMANDS_BEGIN
+            node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $env:CMSPARK_TEST_UNC_SHARE = '\\127.0.0.1\' + $share
+            node scripts/windows-census.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            # CMSPARK_650_ORIGINAL_COMMANDS_END
+          } catch { throw 'CENSUS_OWNED_SMB_STEP_FAILED' } finally {
+            try {
+              if ($directoryCreated) {
+                # Uncertain/partial ownership is failure, never remove-by-name.
+                if (-not $shareCreated) { throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' }
+                $current = @(Get-SmbShare -Name $share -ErrorAction Stop)
+                if ($current.Count -ne 1) { throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' }
+                & node scripts/windows-census-owned-smb.mjs verify $share $current[0].Name $current[0].Path $created.dev $created.ino
+                if ($LASTEXITCODE -ne 0) { throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' }
+                Remove-SmbShare -Name $share -Force -ErrorAction Stop
+                Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction Stop
+              }
+            } catch { throw 'CENSUS_OWNED_SMB_CLEANUP_FAILED' } finally {
+              if (Test-Path Env:CMSPARK_TEST_UNC_SHARE) { Remove-Item Env:CMSPARK_TEST_UNC_SHARE -ErrorAction Stop }
+            }
+          }
 
       - name: "Windows census finite public receipts (#650)"
         if: always() && matrix.os == 'windows-latest' && steps.windows-census.outputs.public_dir != ''

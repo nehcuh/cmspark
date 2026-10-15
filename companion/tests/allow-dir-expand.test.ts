@@ -24,6 +24,11 @@ process.env.USERPROFILE = tempHome
 process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
 delete process.env.DEEPSEEK_API_KEY
 
+// Match the production Windows native realpath contract, including short-name aliases.
+function canonicalFixturePath(p: string): string {
+  return process.platform === "win32" ? fs.realpathSync.native(p) : fs.realpathSync(p)
+}
+
 let initDataDir: typeof import("../src/config").initDataDir
 let saveConfig: typeof import("../src/config").saveConfig
 let clearConfigCache: typeof import("../src/config").clearConfigCache
@@ -62,7 +67,7 @@ test("resolveAllowDirToOffer under home; refuses home root", () => {
   const ok = resolveAllowDirToOffer(path.join(sub, "x"), home)
   assert.equal(ok.ok, true)
   if (ok.ok) {
-    assert.notEqual(ok.dir, fs.realpathSync(home))
+    assert.notEqual(ok.dir, canonicalFixturePath(home))
   }
   const wholeHome = resolveAllowDirToOffer(home, home)
   assert.equal(wholeHome.ok, false)
@@ -76,7 +81,7 @@ test("resolveAllowDirToOffer allows paths outside home (existing dir)", () => {
     const r = resolveAllowDirToOffer(path.join(outside, "a.txt"), fakeHome)
     assert.equal(r.ok, true, r.ok ? "" : r.error)
     if (r.ok) {
-      assert.equal(r.dir, fs.realpathSync(outside))
+      assert.equal(r.dir, canonicalFixturePath(outside))
     }
   } finally {
     fs.rmSync(fakeHome, { recursive: true, force: true })
@@ -221,7 +226,7 @@ test("canOfferAllowDirExpand requires filesystem server (pre-L2 gate)", () => {
   })
   assert.equal(good.offer, true)
   if (good.offer) {
-    assert.ok(good.dir.includes("proj") || good.dir === fs.realpathSync(sub))
+    assert.ok(good.dir.includes("proj") || good.dir === canonicalFixturePath(sub))
   }
 
   const parentMissing = canOfferAllowDirExpand({
@@ -266,7 +271,7 @@ test("canOfferAllowDirExpand offers outside-home path on access denied", () => {
     })
     assert.equal(offer.offer, true, offer.offer ? "" : offer.reason)
     if (offer.offer) {
-      assert.equal(offer.dir, fs.realpathSync(outside))
+      assert.equal(offer.dir, canonicalFixturePath(outside))
     }
   } finally {
     fs.rmSync(outside, { recursive: true, force: true })

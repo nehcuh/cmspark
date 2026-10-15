@@ -206,12 +206,14 @@ test("applyTemplate: CRLF template frontmatter does not leak \\r into values", (
   assert.ok(!JSON.stringify(applied.frontmatter).includes("\\r"), "no CR leaked into values")
 })
 
-test("isStrictlyInside: handles filesystem root '/' without producing '//' prefix", () => {
-  assert.equal(isStrictlyInside("/templates", "/"), true)
-  assert.equal(isStrictlyInside("/", "/"), false)
-  assert.equal(isStrictlyInside("/tmp", "/"), true)
-  assert.equal(isStrictlyInside("/templates/sub", "/templates"), true)
-  assert.equal(isStrictlyInside("/templates", "/templates"), false)
+test("isStrictlyInside: handles native filesystem root without a doubled separator", () => {
+  const root = path.parse(path.resolve(os.tmpdir())).root
+  const templates = path.join(root, "templates")
+  assert.equal(isStrictlyInside(templates, root), true)
+  assert.equal(isStrictlyInside(root, root), false)
+  assert.equal(isStrictlyInside(path.join(root, "tmp"), root), true)
+  assert.equal(isStrictlyInside(path.join(templates, "sub"), templates), true)
+  assert.equal(isStrictlyInside(templates, templates), false)
 })
 
 test("detectTemplates: a file inside the template folder that is a symlink to outside is not read", () => {

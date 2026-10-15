@@ -25,6 +25,22 @@ export function childEnvironment(input, workspace, temp) {
   return { ...env, CI: 'true', GITHUB_ACTIONS: 'true', RUNNER_OS: 'Windows', RUNNER_TEMP: temp, GITHUB_WORKSPACE: workspace,
     GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(temp, 'empty.gitconfig') }
 }
+// Only the current workflow's fixed owned loopback fixture enters tests. This
+// locator is not a production filesystem grant and never joins generic env.
+export function validateOwnedUncShare(value, run, attempt) {
+  const decimal = v => typeof v === 'string' && /^[1-9][0-9]*$/.test(v) && !/[\r\n]/.test(v)
+  if (!decimal(run) || !decimal(attempt) || typeof value !== 'string') throw Error('CENSUS_OWNED_UNC_INVALID')
+  const prefix = `\\\\127.0.0.1\\cmspark650_${run}_${attempt}_`
+  const suffix = value.startsWith(prefix) ? value.slice(prefix.length) : ''
+  if (suffix.length !== 32 || !/^[0-9a-f]{32}$/.test(suffix)) throw Error('CENSUS_OWNED_UNC_INVALID')
+  return value
+}
+export function censusStageEnvironment(name, env, { uncShare, run, attempt, receipts, reporter }) {
+  if (!['install', 'build', 'stage', 'tests'].includes(name)) throw Error('CENSUS_STAGE_INVALID')
+  if (name !== 'tests') return env
+  return { ...env, CMSPARK_TEST_UNC_SHARE: validateOwnedUncShare(uncShare, run, attempt),
+    CMSPARK_CENSUS_DIR: receipts, NODE_OPTIONS: `--test-reporter=${JSON.stringify(reporter)}` }
+}
 // Root-approved R4: isolate ambient Git sources; local credential admission stays strict.
 // Validation never reads or hashes possible credential bytes.
 export function prepareOwnedGitConfig(owned) {
@@ -260,6 +276,7 @@ function safeError(error) {
 }
 export async function main() {
   if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_OS !== 'Windows' || process.argv.length !== 2) throw Error('CENSUS_OWNED_WINDOWS_CI_REQUIRED')
+  const uncShare = validateOwnedUncShare(process.env.CMSPARK_TEST_UNC_SHARE, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT)
   const root = fs.realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'))
   const companion = path.join(root, 'companion')
   const owned = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-census-650-'))
@@ -292,7 +309,8 @@ export async function main() {
     write('identity.json', { ...evidenceIdentity, node: nodeVersion, npm: npmVersion, git: gitVersion, platform: process.platform, arch: process.arch, os_release: os.release(), started_utc: new Date().toISOString(), allowed_env_keys: Object.keys(env).sort(), inputs: inventory(root, inputs) })
     for (const [name, args] of [['install', ['ci']], ['build', ['run', 'build']], ['stage', ['run', 'stage:win-scripts']], ['tests', ['test']]]) {
       gitConfig.validate()
-      const childEnv = name === 'tests' ? { ...env, CMSPARK_CENSUS_DIR: receipts, NODE_OPTIONS: `--test-reporter=${JSON.stringify(pathToFileURL(path.join(root, 'scripts', 'windows-census-reporter.mjs')).href)}` } : env
+      const childEnv = censusStageEnvironment(name, env, { uncShare, run: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT,
+        receipts, reporter: pathToFileURL(path.join(root, 'scripts', 'windows-census-reporter.mjs')).href })
       const invocation = name === 'install' ? [path.join(root, 'scripts', 'windows-census-install.mjs')] : [npmPath, ...args]
       const stage = await captureStage(process.execPath, invocation, { cwd: companion, env: childEnv, raw, name }, progress)
       stages.push({ ...stage, argv: name === 'install' ? ['node', '../scripts/windows-census-install.mjs'] : ['node', 'npm-cli.js', ...args], cwd: 'companion' })
