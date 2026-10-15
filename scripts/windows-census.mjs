@@ -148,6 +148,35 @@ export async function capture(commandPath, args, { cwd, env, raw, name }, io = f
   return { name, pid: child.pid ?? null, ...exit, spawn_error: spawnError, capture_error: targets.some(t => t.error), files }
 }
 export function stageSucceeded(stage) { return stage.code === 0 && !stage.signal && !stage.spawn_error && !stage.capture_error }
+// A start is only STARTED_UNSETTLED, never evidence of spawn or closed raw.
+// Publish no child data: these eight fixed transitions locate an incomplete run.
+export function createStageProgress(write, emit = line => fs.writeFileSync(1, line)) {
+  const names = ['install', 'build', 'stage', 'tests']
+  let sequence = 0, pending = null, failed = false
+  function record(name, state, stage) {
+    if (failed) throw Error('CENSUS_PROGRESS_WRITE_FAILED')
+    if (sequence >= 8 || name !== names[Math.floor(sequence / 2)] ||
+      (state === 'start' ? pending !== null || sequence % 2 !== 0 :
+        state !== 'end' || pending !== name || sequence % 2 !== 1 || stage?.name !== name)) {
+      throw Error('CENSUS_PROGRESS_INVALID')
+    }
+    const value = { version: 1, sequence, stage: name, state,
+      ...(state === 'end' ? { outcome: stageSucceeded(stage) ? 'PASS' : 'FAIL' } : {}) }
+    try {
+      write(`progress-${name}-${state}.json`, value)
+      emit(`CENSUS_650_PROGRESS ${JSON.stringify(value)}\n`)
+    } catch { failed = true; throw Error('CENSUS_PROGRESS_WRITE_FAILED') }
+    pending = state === 'start' ? name : null
+    sequence++
+  }
+  return { start: name => record(name, 'start'), end: stage => record(stage?.name, 'end', stage) }
+}
+export async function captureStage(commandPath, args, options, progress, io = fsp) {
+  progress.start(options.name)
+  const stage = await capture(commandPath, args, options, io)
+  progress.end(stage)
+  return stage
+}
 export async function tapBlocks(file) {
   const blocks = []; let current = null
   for await (const line of createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity })) {
@@ -235,6 +264,7 @@ export async function main() {
   for (const dir of [raw, receipts, publicDir]) fs.mkdirSync(dir, { mode: 0o700 })
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `public_dir=${publicDir}\n`)
   const write = (file, data) => fs.writeFileSync(path.join(publicDir, file), JSON.stringify(data, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
+  const progress = createStageProgress(write)
   const env = childEnvironment(process.env, root, owned), stages = []
   const namespace = randomUUID()
   let evidenceIdentity = null
@@ -251,7 +281,7 @@ export async function main() {
     write('source-before.json', before)
     const npmPath = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
     if (!fs.existsSync(npmPath)) throw Error('CENSUS_NPM_CLI_MISSING')
-    const inputs = ['package-lock.json', 'companion/package-lock.json', 'chrome-extension/package-lock.json', 'companion/package.json', 'chrome-extension/package.json', 'companion/scripts/run-tests.mjs', 'companion/scripts/test-data-dir.cjs', 'companion/tsconfig.test.json']
+    const inputs = ['package-lock.json', 'companion/package-lock.json', 'chrome-extension/package-lock.json', 'companion/package.json', 'chrome-extension/package.json', 'companion/scripts/run-tests.mjs', 'companion/scripts/test-data-dir.cjs', 'companion/tsconfig.test.json', 'scripts/windows-census-install.mjs']
     const nodeVersion = process.version, npmVersion = command(process.execPath, [npmPath, '--version'], root, env).trim(), gitVersion = command('git', ['--version'], root, env).trim()
     if (!/^\d+\.\d+\.\d+$/.test(npmVersion) || !/^git version [\d.a-zA-Z.() -]+$/.test(gitVersion)) throw Error('CENSUS_TOOL_VERSION_INVALID')
     evidenceIdentity = { head: command('git', ['rev-parse', 'HEAD'], root, env).trim(), tree: command('git', ['rev-parse', 'HEAD^{tree}'], root, env).trim(), run: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT, namespace }
@@ -259,8 +289,9 @@ export async function main() {
     for (const [name, args] of [['install', ['ci']], ['build', ['run', 'build']], ['stage', ['run', 'stage:win-scripts']], ['tests', ['test']]]) {
       gitConfig.validate()
       const childEnv = name === 'tests' ? { ...env, CMSPARK_CENSUS_DIR: receipts, NODE_OPTIONS: `--test-reporter=${JSON.stringify(pathToFileURL(path.join(root, 'scripts', 'windows-census-reporter.mjs')).href)}` } : env
-      const stage = await capture(process.execPath, [npmPath, ...args], { cwd: companion, env: childEnv, raw, name })
-      stages.push({ ...stage, argv: ['node', 'npm-cli.js', ...args], cwd: 'companion' })
+      const invocation = name === 'install' ? [path.join(root, 'scripts', 'windows-census-install.mjs')] : [npmPath, ...args]
+      const stage = await captureStage(process.execPath, invocation, { cwd: companion, env: childEnv, raw, name }, progress)
+      stages.push({ ...stage, argv: name === 'install' ? ['node', '../scripts/windows-census-install.mjs'] : ['node', 'npm-cli.js', ...args], cwd: 'companion' })
       gitConfig.validate()
       if (!stageSucceeded(stage)) { result = { ...result, outcome: 'FAIL', error_code: 'CENSUS_STAGE_FAILED' }; break }
     }
