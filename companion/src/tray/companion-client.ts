@@ -24,6 +24,7 @@ import {
   releaseOverlayLeaseCas,
 } from "../ws/composer-lease"
 import { PROTOCOL_VERSION, authOkProtocolMatchesLocal } from "../protocol"
+import { checkedMeetingPcmReply } from "../voice/meeting-pcm-contract"
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -47,6 +48,8 @@ export interface CompanionClientOptions {
   /** Override the shared-secret source (defaults to getOrCreateSharedSecret).
    *  Mainly a test seam for simulating the unpaired (no-secret) state. */
   secretLoader?: () => string
+  /** Owned transport seam. Production always constructs the existing WS client. */
+  socketFactory?: (url: string, options: WebSocket.ClientOptions) => WebSocket
 }
 
 export type ConnectionState = "connected" | "connecting" | "disconnected"
@@ -55,7 +58,11 @@ interface PendingRequest {
   resolve: (value: any) => void
   reject: (reason: any) => void
   timer: ReturnType<typeof setTimeout>
+  meetingSocket?: WebSocket
+  meetingAuth?: object
 }
+/** Internal observation only; never serialized to the page or used as an auth grant. */
+export type MeetingPcmObservation = { readonly socket: WebSocket; readonly auth: object }
 
 // ---------------------------------------------------------------------------
 // Default Quick Actions (used when companion is unreachable)
@@ -84,6 +91,9 @@ export class CompanionClient {
   /** Authenticated = companion accepted our HMAC handshake. App sends + data
    *  fetches are gated on this; promoted to "connected" only after auth.ok. */
   private authenticated = false
+  private meetingAuth: object = {}
+  private meetingObservation: MeetingPcmObservation | null = null
+  private meetingCapture: { captureId: string; binding: MeetingPcmObservation } | null = null
   /** No shared secret available (first run, not paired). Suppresses reconnect storm. */
   private unpaired = false
   /** Resolver for the in-flight connect() promise (fired once on auth.ok or close). */
@@ -117,6 +127,7 @@ export class CompanionClient {
     if (this._state === "connected" || this._state === "connecting") return
     this._state = "connecting"
     this.authenticated = false
+    this.invalidateMeetingPcm()
 
     const url = `ws://${this.options.host}:${this.options.port}`
     const origin = this.options.origin ?? DEFAULT_TRAY_ORIGIN
@@ -124,9 +135,12 @@ export class CompanionClient {
     return new Promise((resolve) => {
       this.connectResolve = resolve
 
-      const ws = new WebSocket(url, { handshakeTimeout: 3000, origin })
+      const ws = this.options.socketFactory
+        ? this.options.socketFactory(url, { handshakeTimeout: 3000, origin })
+        : new WebSocket(url, { handshakeTimeout: 3000, origin })
 
       ws.on("open", () => {
+        if (this.ws !== ws) return
         // WS open ≠ authenticated. The companion sends auth.challenge immediately;
         // we stay "connecting" and promote to "connected" only on auth.ok. Sending
         // any app message now is terminated by the companion (unauthenticated).
@@ -145,6 +159,7 @@ export class CompanionClient {
       })
 
       ws.on("message", (raw: WebSocket.Data) => {
+        if (this.ws !== ws) return
         this.lastActivityAt = Date.now()
         this.handleMessage(raw.toString())
       })
@@ -154,11 +169,13 @@ export class CompanionClient {
       })
 
       ws.on("close", () => {
+        if (this.ws !== ws) return
         this.handleDisconnect()
         this.settleConnect()
       })
 
       ws.on("error", () => {
+        if (this.ws !== ws) return
         this.handleDisconnect()
         this.settleConnect()
       })
@@ -182,6 +199,7 @@ export class CompanionClient {
   }
 
   disconnect(): void {
+    this.invalidateMeetingPcm()
     this.stopHeartbeat()
     this.clearReconnect()
     if (this.ws) {
@@ -202,6 +220,7 @@ export class CompanionClient {
    */
   updateEndpoint(host: string, port: number): void {
     if (this.options.host === host && this.options.port === port) return
+    this.invalidateMeetingPcm()
     this.options.host = host
     this.options.port = port
     this.clearReconnect()
@@ -485,6 +504,65 @@ export class CompanionClient {
     return this.sendRequest(type, params, timeoutMs)
   }
 
+  getMeetingPcmObservation(): MeetingPcmObservation | null {
+    const seen = this.meetingObservation
+    return seen && this.isMeetingConnection(seen) ? seen : null
+  }
+
+  async observeMeetingPcm(): Promise<1 | null> {
+    if (this.getMeetingPcmObservation()) return 1
+    const connection = this.ws ? { socket: this.ws, auth: this.meetingAuth } : null
+    this.meetingObservation = null
+    if (!connection || !this.isMeetingConnection(connection)) return null
+    try {
+      const pong = await this.sendMeetingBoundRequest("system.ping", {}, 5000, connection, false)
+      if (!this.isMeetingConnection(connection) || pong?.type !== "system.pong" || pong.meeting_pcm_contract !== 1) return null
+      this.meetingObservation = Object.freeze(connection)
+      return 1
+    } catch { return null }
+  }
+
+  sendMeetingPcmRequest(type: string, params: Record<string, unknown>, observation: MeetingPcmObservation | null, timeoutMs = 5000): Promise<any> {
+    if (!observation || params.queue_contract !== 1 || !["meeting.start", "meeting.end", "voice.stt.start", "voice.stt.chunk", "voice.stt.end", "voice.stt.abort", "voice.stt.partial_request"].includes(type)) return Promise.reject(new Error("contract_unavailable"))
+    if (type !== "meeting.start" && (!this.meetingCapture || this.meetingCapture.captureId !== (params.sessionId ?? params.capture_id) ||
+        this.meetingCapture.binding !== observation)) return Promise.reject(new Error("contract_unavailable"))
+    return this.sendMeetingBoundRequest(type, params, timeoutMs, observation, true).then(reply => {
+      if (!this.isMeetingConnection(observation)) throw new Error("contract_unavailable")
+      const checked: any = checkedMeetingPcmReply(type, params, reply)
+      if (type === "meeting.start" && checked?.type === "meeting.started") this.meetingCapture = { captureId: String(params.capture_id), binding: observation }
+      return checked
+    })
+  }
+
+  private invalidateMeetingPcm(): void {
+    this.meetingObservation = null; this.meetingAuth = {}
+    this.meetingCapture = null
+    for (const [id, pending] of this.pendingRequests) if (pending.meetingSocket) {
+      clearTimeout(pending.timer); this.pendingRequests.delete(id); pending.reject(new Error("network_unknown"))
+    }
+  }
+
+  private isMeetingConnection(binding: MeetingPcmObservation): boolean {
+    return this.ws === binding.socket && this.meetingAuth === binding.auth && this.authenticated && binding.socket.readyState === WebSocket.OPEN
+  }
+
+  private sendMeetingBoundRequest(type: string, params: Record<string, unknown>, timeoutMs: number, binding: MeetingPcmObservation, requireObserved: boolean): Promise<any> {
+    const rpcId = `tray-${++this.requestId}`
+    const msg = { ...params, type, ...(type.startsWith("meeting.") && params.id ? { meeting_id: params.id } : {}), id: rpcId }
+    const wire = JSON.stringify(msg)
+    return new Promise((resolve, reject) => {
+      // Last fence, pending registration and exact socket send are synchronous.
+      // In particular no generic send can switch this operation to a new socket.
+      if (!this.isMeetingConnection(binding) || (requireObserved && this.meetingObservation !== binding)) {
+        reject(new Error("contract_unavailable")); return
+      }
+      const timer = setTimeout(() => { this.pendingRequests.delete(rpcId); reject(new Error("network_unknown")) }, timeoutMs)
+      this.pendingRequests.set(rpcId, { resolve, reject, timer, meetingSocket: binding.socket, meetingAuth: binding.auth })
+      try { binding.socket.send(wire) }
+      catch { clearTimeout(timer); this.pendingRequests.delete(rpcId); reject(new Error("network_unknown")) }
+    })
+  }
+
   // --- Accessors for cached data ---
 
   get quickActions(): QuickActionItem[] { return this.cachedQuickActions }
@@ -539,10 +617,13 @@ export class CompanionClient {
 
     // --- Auth handshake (handled inline, never matched as request/response) ---
     if (msg.type === "auth.challenge") {
+      this.invalidateMeetingPcm()
+      this.authenticated = false
       this.respondToChallenge(msg.nonce).catch(() => {})
       return
     }
     if (msg.type === "auth.ok") {
+      this.invalidateMeetingPcm()
       // Missing protocol fields = MIN (mocks). Mismatch → close (honesty; MAX=1 rarely fires).
       if (!authOkProtocolMatchesLocal(msg)) {
         this.debug(`auth.ok protocol mismatch (local ${PROTOCOL_VERSION})`)
@@ -565,10 +646,12 @@ export class CompanionClient {
     }
     // auth.failed / handshake timeout → companion terminates the socket; the
     // "close" handler resets state and schedules a reconnect.
+    if (msg.type === "auth.failed") { this.invalidateMeetingPcm(); this.authenticated = false; return }
 
     // Match response to pending request
     if (msg.id && this.pendingRequests.has(msg.id)) {
       const pending = this.pendingRequests.get(msg.id)!
+      if (pending.meetingSocket && (!this.authenticated || this.ws !== pending.meetingSocket || this.meetingAuth !== pending.meetingAuth)) return
       clearTimeout(pending.timer)
       this.pendingRequests.delete(msg.id)
 
@@ -667,6 +750,7 @@ export class CompanionClient {
   }
 
   private handleDisconnect(): void {
+    this.invalidateMeetingPcm()
     if (this._state === "disconnected") return
     this._state = "disconnected"
     this.authenticated = false

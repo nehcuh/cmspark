@@ -55,6 +55,11 @@ export class WSClient {
 
   /** Authenticated = companion accepted our handshake. App sends are gated on this. */
   private authenticated = false
+  private meetingAuth: object = {}
+  private meetingObserved: { socket: WebSocket; gen: number; auth: object } | null = null
+  private meetingPing: { socket: WebSocket; gen: number; auth: object; id: string } | null = null
+  private meetingOwner: { captureId: string; socket: WebSocket; gen: number; auth: object } | null = null
+  private meetingBegin: { id: unknown; captureId: string; socket: WebSocket; gen: number; auth: object } | null = null
   /** Messages sent before auth.ok; flushed once authenticated. */
   private pending: object[] = []
   /** No secret stored yet (first run, not paired). Suppress reconnect storm. */
@@ -82,6 +87,7 @@ export class WSClient {
     }
 
     this.setState("connecting", silent)
+    this.invalidateMeetingPcm()
 
     try {
       this.ws = new WebSocket(this.url)
@@ -117,10 +123,13 @@ export class WSClient {
 
       // Auth handshake messages are handled inline, never forwarded to the app.
       if (msg.type === "auth.challenge") {
+        this.authenticated = false
+        this.invalidateMeetingPcm()
         void this.handleChallenge(msg.nonce, socket, gen)
         return
       }
       if (msg.type === "auth.ok") {
+        this.invalidateMeetingPcm()
         // Lock-step with companion/src/protocol.ts PROTOCOL_VERSION. Missing = accept (MIN).
         const advertised = msg.negotiated_protocol_version ?? msg.protocol_version
         if (advertised !== undefined && advertised !== null && advertised !== 1) {
@@ -135,12 +144,29 @@ export class WSClient {
       if (msg.type === "auth.failed") {
         // Companion terminates the socket after this; onclose handles state.
         this.authenticated = false
+        this.invalidateMeetingPcm()
         return
       }
 
       // App-level message. Defense-in-depth: the companion only emits app
       // messages after auth.ok, but never trust wire state alone.
       if (!this.authenticated) return
+      if (msg.type === "system.pong" && this.meetingPing && this.meetingPing.id === msg.id) {
+        const probe = this.meetingPing
+        this.meetingPing = null
+        if (probe.socket === socket && probe.gen === gen && probe.auth === this.meetingAuth && msg.meeting_pcm_contract === 1) {
+          this.meetingObserved = { socket, gen, auth: this.meetingAuth }
+        } else this.meetingObserved = null
+      }
+      if (this.meetingBegin && this.meetingBegin.id === msg.id) {
+        const begin = this.meetingBegin; this.meetingBegin = null
+        if (msg.type === "meeting.started" && msg.continuous_capture?.capture_id === begin.captureId &&
+            begin.socket === socket && begin.gen === gen && begin.auth === this.meetingAuth) {
+          this.meetingOwner = { captureId: begin.captureId, socket, gen, auth: this.meetingAuth }
+        }
+      }
+      if (this.meetingBegin && msg.type === "meeting.capture.status" &&
+          msg.capture_id === this.meetingBegin.captureId && ["finished", "failed"].includes(msg.phase)) this.meetingBegin = null
       try {
         this.onMessage(msg)
       } catch {
@@ -160,6 +186,8 @@ export class WSClient {
     }
 
     socket.onerror = () => {
+      if (stale()) return
+      this.invalidateMeetingPcm()
       // onclose will fire after this
     }
   }
@@ -233,6 +261,7 @@ export class WSClient {
   }
 
   send(data: object): boolean {
+    if ((data as any)?.queue_contract !== undefined) return this.sendMeetingPcm(data)
     // Not paired yet — don't open a connection just to have it rejected; the
     // WSClient stays parked until setSecret() supplies a secret.
     if (this.unpaired) return false
@@ -258,6 +287,41 @@ export class WSClient {
 
   ping() {
     this.send({ type: "system.ping" })
+  }
+
+  /** Actual backend observation, not a local extension-version advertisement. */
+  observeMeetingPcm(correlationId?: unknown): boolean {
+    const socket = this.ws
+    if (!socket || !this.authenticated || socket.readyState !== WebSocket.OPEN) return false
+    const id = typeof correlationId === "string" && correlationId.length <= 200 ? correlationId : `meeting-pcm-${crypto.randomUUID()}`
+    this.meetingPing = { socket, gen: this.generation, auth: this.meetingAuth, id }
+    try { socket.send(JSON.stringify({ type: "system.ping", id })); return true }
+    catch { this.invalidateMeetingPcm(); return false }
+  }
+
+  private sendMeetingPcm(data: object): boolean {
+    const observation = this.meetingObserved
+    const wire = JSON.stringify(data)
+    // Serialization/preparation precedes the last synchronous fence. q1 never
+    // enters pending or flushPending and never triggers automatic replay.
+    if (!observation || this.ws !== observation.socket || this.generation !== observation.gen ||
+        this.meetingAuth !== observation.auth || !this.authenticated || observation.socket.readyState !== WebSocket.OPEN) return false
+    const m = data as any
+    if (m.queue_contract !== 1) return false
+    if (m.type === "meeting.start") {
+      if (this.meetingBegin || typeof m.capture_id !== "string" || !m.id) return false
+      this.meetingBegin = { id: m.id, captureId: m.capture_id, ...observation }
+    } else if (!this.meetingOwner || this.meetingOwner.captureId !== (m.sessionId ?? m.capture_id) ||
+        this.meetingOwner.socket !== observation.socket || this.meetingOwner.auth !== observation.auth) return false
+    try { observation.socket.send(wire); return true }
+    catch { this.invalidateMeetingPcm(); return false }
+  }
+
+  private invalidateMeetingPcm(): void {
+    const hadMeeting = !!(this.meetingObserved || this.meetingPing || this.meetingOwner || this.meetingBegin)
+    this.meetingObserved = null; this.meetingPing = null; this.meetingAuth = {}; this.meetingOwner = null; this.meetingBegin = null
+    // Auth resets can precede socket close; end only the explicitly observed meeting actor now.
+    if (hadMeeting) { try { this.onMessage({ type: "thread.mutation.connection", state: "disconnected" }) } catch { /* local cleanup only */ } }
   }
 
   getState(): ConnectionState {
@@ -328,6 +392,7 @@ export class WSClient {
   }
 
   private discardSocket(close = true) {
+    this.invalidateMeetingPcm()
     const socket = this.ws
     this.ws = null
     this.authenticated = false

@@ -1,15 +1,99 @@
 /** Native meeting page workflow. Uses the shell's authenticated HTTP API only. */
 export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
-  var meetingEnding=null,meetingWorkBusy=false,meetingFailure=null;
+  var meetingEnding=null,meetingWorkBusy=false,meetingFailure=null,meetingContinuous=null;
   var meetingReferenceName="",meetingCapture=null,meetingConsentResume=null,pendingMeetingSegment=null,meetingViewRev=0;
+  function continuousMeetingRequest(message){
+    var route={"voice.stt.start":"/api/stt/start","voice.stt.chunk":"/api/stt/chunk","voice.stt.end":"/api/stt/end","voice.stt.abort":"/api/stt/abort"}[message.type];
+    if(!route)return Promise.reject(new Error("连续录制消息无效"));
+    var body=Object.assign({},message);delete body.type;
+    return meetingPost(route,body);
+  }
+  function continuousMeetingLost(s,e){
+    if(meetingContinuous!==s || s.lost)return;
+    s.lost=true;meetingFailure=e;stopRecClock();s.capture&&s.capture.destroy();
+    s.reject(e);meetingContinuous=null;meetingId="";setRecordingUi(false);meetingControls(meetingWorkBusy);
+    $("meetingCancel").hidden=true;$("meetingHint").textContent="采集已停止；服务端未确认范围不属于完整转写";meetingProblem(e);
+  }
+  function syncContinuousMeeting(s){
+    if(s.syncing)return s.syncing;
+    s.syncing=Promise.resolve().then(async function(){
+      do{
+        var target=s.wanted,d=await meetingRequest("/api/meeting?id="+encodeURIComponent(s.owner)),m=d.meeting;
+        if(meetingContinuous!==s || s.lost || meetingId!==s.owner)return;
+        if(!m || m.id!==s.owner || m.capture_epoch!==s.epoch)throw new Error("原稿读取回执不匹配");
+        (m.original_transcript||[]).forEach(function(line){if(line.segment_id && !s.seen.has(line.segment_id)){s.seen.add(line.segment_id);appendMeetingLive(line.text,line.speaker||"")}});
+        applyMeetingMaterials(m);s.synced=target;
+      }while(meetingContinuous===s && !s.lost && s.synced<s.wanted);
+    }).finally(function(){s.syncing=null});return s.syncing;
+  }
+  function continuousMeetingStatus(s,status){
+    if(meetingContinuous!==s || s.lost)return;
+    s.wanted=Math.max(s.wanted,status.committed_end||0);
+    var backlog=Math.max(0,(status.server_received_end-status.committed_end)/16000);
+    $("meetingQueue").textContent=(s.active?"采集中":"已停采，正在排空")+(status.inflight_segment!==null?" · 识别第"+(status.inflight_segment+1)+"段":"")+" · 积压 "+backlog.toFixed(1)+" 秒 · 已处理到 "+(status.processed_end/16000).toFixed(1)+" 秒 · 原稿 "+status.saved_text_segments+" 段已保存"+(status.eta_seconds===null?" · 预计延迟未知":" · 若现在停止，预计约 "+Math.ceil(status.eta_seconds)+" 秒排空")+(status.high_water?" · 接近积压上限":"")+(status.stop_reason && status.stop_reason!=="user_stop"?" · 提前停采："+CMsparkMeetingPcm.meetingCaptureStopLabel(status.stop_reason):"");
+    if(s.synced<s.wanted)syncContinuousMeeting(s).catch(function(e){if(meetingContinuous===s)meetingProblem(e)});
+  }
+  async function beginContinuousMeeting(){
+    if(meetingId || meetingContinuous || meetingWorkBusy || meetingEnding)return;
+    if(!meetingAck || !voiceAck){requestMeetingConsent(beginContinuousMeeting);return}
+    if(!lastMeetingId){showMeetingDesk(true);meetingSay("请先点击新会议或选择历史会议，再开始连续录制");return}
+    var s={owner:lastMeetingId,sid:crypto.randomUUID(),epoch:null,active:false,lost:false,capture:null,wanted:0,synced:-1,syncing:null,seen:new Set(),resolve:null,reject:null};
+    s.done=new Promise(function(resolve,reject){s.resolve=resolve;s.reject=reject});s.done.catch(function(){});
+    meetingContinuous=s;meetingFailure=null;meetingViewRev++;showMeetingDesk(true);meetingControls(true);$("meetingCancel").hidden=false;$("meetingHint").textContent="正在准备连续录制…";
+    try{
+      if(summonerVoice)summonerVoice.cancel();
+      await loadVoiceSettings(s.sid);
+      if(meetingContinuous!==s || s.lost)return;
+      if(voiceSettings.meeting_pcm_contract!==1)throw new Error("当前连接不支持连续会议；请更新后重新显式开始");
+      if(voiceSettings.sttEngine!=="local")throw new Error(STT_NEED_MODEL);
+      var loaded=await meetingRequest("/api/meeting?id="+encodeURIComponent(s.owner));
+      if(meetingContinuous!==s || s.lost)return;
+      if(loaded.meeting&&loaded.meeting.privacy&&loaded.meeting.privacy.audio_retained)throw new Error("连续录制暂不支持保留原始音频；现有选择未改变");
+      var started=await meetingPost("/api/meeting/start",{v:1,id:s.owner,queue_contract:1,capture_id:s.sid,expected_capture_epoch:loaded.meeting&&loaded.meeting.capture_epoch||0,privacy_ack_v1:true,privacy_ack_v2:true,audio_retained:false});
+      var status=started.continuous_capture;
+      if(meetingContinuous!==s || s.lost)return;
+      if(started.type!=="meeting.started" || !started.meeting || started.meeting.id!==s.owner || !status || status.capture_id!==s.sid || status.meeting_id!==s.owner || status.queue_contract!==1)throw new Error("连续开始回执不匹配");
+      s.epoch=status.capture_epoch;meetingId=s.owner;lastMeetingId=s.owner;
+      (started.meeting.original_transcript||[]).forEach(function(line){if(line.segment_id)s.seen.add(line.segment_id)});
+      s.capture=CMsparkMeetingPcm.createMeetingContinuousCapture({meetingId:s.owner,captureId:s.sid,epoch:s.epoch,modelId:voiceSettings.localModelId||"medium",lang:voiceSettings.lang||"zh",request:continuousMeetingRequest,
+        onStart:function(){if(meetingContinuous!==s)return;s.active=true;setRecordingUi(true);$("meetingRec").disabled=false;startRecClock();$("meetingHint").textContent="持续采集中"},
+        onStopped:function(){if(meetingContinuous!==s)return;s.active=false;stopRecClock();$("meetingRec").disabled=true;$("meetingHint").textContent="已停止采集，正在排空此前音频"},
+        onStatus:function(value){continuousMeetingStatus(s,value)},
+        onError:function(code){continuousMeetingLost(s,new Error(CMsparkMeetingPcm.meetingCaptureErrorMessage(code)))},
+        onEnd:function(value){
+          if(meetingContinuous!==s)return;s.active=false;stopRecClock();s.wanted=Math.max(s.wanted,value.committed_end||0);
+          syncContinuousMeeting(s).then(function(){
+            if(meetingContinuous!==s)return;
+            $("meetingCancel").hidden=true;$("meetingQueue").textContent=value.completion&&value.completion.outcome==="complete"?"已保存全部采集前缀":"已保存部分前缀；未处理范围已取消或录制提前停止";
+            if(!value.completion || value.completion.outcome!=="complete")meetingFailure=new Error("录制提前停止或取消；未处理范围不属于完整转写");
+            s.resolve(value);
+            if(!meetingEnding){meetingContinuous=null;meetingId="";setRecordingUi(false);meetingControls(meetingWorkBusy);meetingSay(meetingFailure?meetingFailure.message:"录制已结束，转写已保存");loadMeetingHistory()}
+          }).catch(function(e){continuousMeetingLost(s,e)});
+        }});
+      await s.capture.start();
+    }catch(e){continuousMeetingLost(s,e)}
+  }
   function requestMeetingConsent(resume){
     meetingConsentResume=resume;$("meetingVoiceSection").hidden=voiceAck;$("meetingPrivacy").hidden=false;
   }
   $("meetingOpen").onclick=function(){showMeetingDesk(true)};
-  $("meetingNew").onclick=async function(){
-    if(meetingWorkBusy)return;meetingWorkBusy=true;meetingControls(true);
-    try{await prepareMeetingSwitch();meetingViewRev++;lastMeetingId="";meetingReferenceName="";meetingFailure=null;pendingMeetingSegment=null;$("meetingReferenceName").textContent="";$("meetingReferenceNotes").value="";paintTranscript([]);$("meetingMinutes").hidden=true;$("meetingEvidence").hidden=true;$("meetingOriginal").hidden=true;$("meetingRetry").hidden=true;setRecordingUi(false);meetingSay("新会议：可开始录制或导入材料")}catch(e){meetingProblem(e)}finally{meetingWorkBusy=false;meetingControls(false)}
-  };
+  async function createNewMeeting(){
+    if(meetingWorkBusy || meetingContinuous)return;
+    var viewRev=++meetingViewRev;
+    meetingWorkBusy=true;meetingControls(true);
+    try{
+      await prepareMeetingSwitch();
+      if(viewRev!==meetingViewRev || meetingContinuous)return;
+      var created=await meetingPost("/api/meeting/create",{title:"新会议"});
+      if(viewRev!==meetingViewRev || meetingContinuous || meetingId)return;
+      if(!created.meeting || typeof created.meeting.id!=="string" || created.meeting.id.indexOf("mtg_")!==0)throw new Error("新会议创建回执不匹配");
+      lastMeetingId=created.meeting.id;meetingReferenceName="";meetingFailure=null;pendingMeetingSegment=null;
+      $("meetingReferenceName").textContent="";$("meetingReferenceNotes").value="";paintTranscript([]);
+      $("meetingMinutes").hidden=true;$("meetingEvidence").hidden=true;$("meetingOriginal").hidden=true;$("meetingRetry").hidden=true;
+      setRecordingUi(false);meetingSay("新会议已创建：可开始录制或导入材料");loadMeetingHistory();
+    }catch(e){meetingProblem(e)}finally{meetingWorkBusy=false;meetingControls(false)}
+  }
+  $("meetingNew").onclick=createNewMeeting;
   async function prepareMeetingSwitch(){
     await endMeetingCapture();
     if(lastMeetingId || $("meetingReferenceNotes").value){await saveMeetingReference(await ensureMeeting())}
@@ -23,7 +107,7 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     return d;
   }
   function meetingRequest(path,body){
-    var controller=new AbortController(),ms=path==="/api/stt/end"?305000:path==="/api/meeting/minutes"?100000:15000;
+    var controller=new AbortController(),ms=path==="/api/stt/end"&&!(body&&body.queue_contract===1)?305000:path==="/api/meeting/minutes"?100000:15000;
     var timer=setTimeout(function(){controller.abort()},ms);
     var opts={signal:controller.signal};
     if(body!==undefined){opts.method="POST";opts.headers={"Content-Type":"application/json"};opts.body=JSON.stringify(body)}
@@ -40,6 +124,7 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     $("meetingReferenceNotes").value=m.reference_notes||"";
     var original=(m.original_transcript||[]).map(function(l){return l.text||""}).join("\n");
     $("meetingOriginal").hidden=!original;$("meetingOriginalText").textContent=original;
+    $("meetingSourceRange").textContent=CMsparkMeetingPcm.meetingSourceRangeLabel(m.capture_summary);
     renderMeetingEvidence(m.minutes);
   }
   function renderMeetingEvidence(minutes){
@@ -91,6 +176,7 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     }catch(e){meetingProblem(e)}finally{meetingWorkBusy=false;meetingControls(false)}
   };
   function meetingSttEvent(d){
+    if(meetingContinuous && d.queue_contract===1){meetingContinuous.capture&&meetingContinuous.capture.handleStatus(d);return}
     var s=meetingCapture;if(!s || d.sessionId!==s.sid)return;
     if(d.type==="voice.stt.partial"){$("meetingPartial").textContent=d.text||"";return}
     if(d.type==="voice.stt.error"){captureFailure(s,{code:d.code,message:d.message||d.error});return}
@@ -113,6 +199,8 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     }
   }
   function stopStt(abort){
+    var continuous=meetingContinuous;
+    if(continuous){if(!continuous.capture){continuousMeetingLost(continuous,new Error("开始已取消"));return Promise.resolve()}return Promise.resolve(abort?continuous.capture.abort():continuous.capture.stop()).then(function(){return continuous.done})}
     var s=meetingCapture;if(!s)return Promise.resolve();
     if(s.finishing)return s.finishing;
     if(!abort)flushStt(true);
@@ -123,31 +211,12 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
       return meetingPost("/api/stt/end",{sessionId:s.sid,totalSeq:s.seq}).then(function(d){return commitMeetingSegment(s,d)});
     }).then(function(){if(s.failed)throw s.failed}).catch(function(e){captureFailure(s,e);return meetingPost("/api/stt/abort",{sessionId:s.sid}).catch(function(){}).then(function(){throw e})}).finally(function(){
       if(meetingCapture===s)meetingCapture=null;
-      if(meetingId===s.owner && !meetingEnding && !meetingFailure)startStt();
+      // Legacy import never starts a live recording automatically.
     });
     s.finishing.catch(function(){});
     return s.finishing;
   }
-  function startStt(){
-    if(meetingCapture || meetingEnding || !meetingId)return;
-    if(summonerVoice)summonerVoice.cancel();
-    var s={owner:meetingId,sid:"ov-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,10),seq:0,failed:null,committed:null,finishing:null};
-    meetingCapture=s;$("meetingHint").textContent="正在准备下一段录音…";sttSid=s.sid;sttSeq=0;sttBuf=new Uint8Array(0);sttFloat=new Float32Array(0);sttLive=true;
-    s.queue=Promise.resolve().then(function(){
-      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)throw new Error(STT_MIC_FAIL);
-      return new Promise(function(resolve,reject){
-        var expired=false,timer=setTimeout(function(){expired=true;reject(new Error("等待麦克风授权超时，请允许麦克风后重试"))},30000);
-        navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}}).then(function(stream){
-          clearTimeout(timer);if(expired || !sttLive || sttSid!==s.sid){stream.getTracks().forEach(function(t){t.stop()});reject(new Error("录制已停止"));return}resolve(stream);
-        },function(e){clearTimeout(timer);reject(e)});
-      });
-    }).then(function(stream){
-      if(!sttLive || sttSid!==s.sid){stream.getTracks().forEach(function(t){t.stop()});throw new Error("录制尚未就绪，已停止")}
-      sttStream=stream;
-      return meetingPost("/api/stt/start",{sessionId:s.sid,modelId:voiceSettings.localModelId||"medium",privacy_ack_v2:true,lang:voiceSettings.lang||"zh",maxMs:STT_MEETING_MS});
-    }).then(function(){if(sttLive && sttSid===s.sid){$("meetingHint").textContent="录制中";beginPcm(s.sid,sttStream)}});
-    s.queue.catch(function(e){captureFailure(s,e)});
-  }
+  function startStt(){return beginContinuousMeeting()}
   function endMeetingCapture(){
     if(meetingEnding)return meetingEnding;
     if(!meetingId)return Promise.resolve();
@@ -161,7 +230,7 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
       if(!d.meeting || d.meeting.id!==id)throw new Error("结束会议回执不匹配");
       lastMeetingId=id;meetingId="";setRecordingUi(false);
       $("meetingHint").textContent="已结束 · 可生成纪要";meetingSay("录制已结束，转写已保存");loadMeetingHistory();
-    }).catch(function(e){meetingProblem(e);throw e}).finally(function(){meetingEnding=null;meetingControls(meetingWorkBusy)});
+    }).catch(function(e){meetingProblem(e);throw e}).finally(function(){meetingContinuous=null;$("meetingCancel").hidden=true;meetingEnding=null;meetingControls(meetingWorkBusy)});
     meetingEnding.catch(function(){});return meetingEnding;
   }
   async function ensureMeeting(){
@@ -194,6 +263,7 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     }catch(e){meetingProblem(e);$("meetingHint").textContent="纪要生成失败"}
     finally{meetingWorkBusy=false;meetingControls(false)}
   }
+  $("meetingCancel").onclick=function(){var s=meetingContinuous;if(!s)return;if(!s.capture){continuousMeetingLost(s,new Error("开始已取消"));return}s.active=false;stopRecClock();s.capture.abort()};
   $("meetingReferenceImport").onclick=function(){if(!meetingWorkBusy)$("meetingReferenceFile").click()};
   $("meetingReferenceFile").onchange=async function(){
     var file=this.files&&this.files[0];this.value="";if(!file || meetingWorkBusy)return;

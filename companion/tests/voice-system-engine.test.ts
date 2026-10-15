@@ -219,6 +219,7 @@ function fakeService(capture: { startReq?: any }) {
     forceAbort: () => {},
     getActive: () => null,
     getBoundPeerId: () => null,
+    getMeetingCapture: () => null,
   } as any
 }
 

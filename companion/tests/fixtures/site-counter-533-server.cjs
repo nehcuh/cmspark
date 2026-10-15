@@ -16,7 +16,22 @@ let busy;
  initServices:async()=>{},getThreadManager:()=>tm,getSkillEngine:()=>skills,getHistoryStore:()=>({close(){}}),securityConfirmations:server.securityConfirmations,
  handleComputerTaskAbort:()=>{throw Error('OWNED_EFFECT_FORBIDDEN')},flipAllComputerTaskAborts:()=>0,probeChatModel:async()=>{},getMcpSessionId:server.getSessionIdForTests,
  clearMcpSession:()=>{},getActiveMcpSessions:()=>new Set(),activeTrayConfirmsByWs:new WeakMap()});
- await life.startServer();process.send?.({type:'ready',thread_id:thread.id,other_thread_id:other.id});
+ // startServer schedules listen; await the actual owned HTTP listening event
+ // before advertising readiness to the integration-test parent. No polling/retry.
+ const http=require('node:http'),assert=require('node:assert/strict'),createServer=http.createServer;
+ let ownedServer,resolveListening,rejectListening;
+ const listening=new Promise((resolve,reject)=>{resolveListening=resolve;rejectListening=reject});
+ listening.catch(()=>{});
+ http.createServer=function(...args){
+  assert.equal(ownedServer,undefined,'OWNED_HTTP_SERVER_CREATED_ONCE');
+  const instance=createServer.apply(this,args);ownedServer=instance;
+  const onError=error=>{instance.removeListener('listening',onListening);rejectListening(error)};
+  const onListening=()=>{instance.removeListener('error',onError);resolveListening()};
+  instance.once('listening',onListening);instance.once('error',onError);return instance;
+ };
+ try { await life.startServer();assert.ok(ownedServer,'OWNED_HTTP_SERVER_REQUIRED');await listening }
+ finally { http.createServer=createServer }
+ process.send?.({type:'ready',thread_id:thread.id,other_thread_id:other.id});
  process.on('message',msg=>{
   if(msg.type==='stats')process.send?.({type:'stats',id:msg.id,count:memory.getOriginFailCount(thread.id,'https://scope533.test:8443'),other_count:memory.getOriginFailCount(other.id,'https://scope533.test:8443'),authenticated:[...life.getWsClients()].filter(ws=>life.getWsAuthState(ws)?.authenticated===true).length});
   if(msg.type==='busy'){if(msg.active)busy=router.installKickAbortController(thread.id);else{router.releaseKickAbortController(thread.id,busy);busy=undefined}process.send?.({type:'busy',id:msg.id,active:!!busy})}

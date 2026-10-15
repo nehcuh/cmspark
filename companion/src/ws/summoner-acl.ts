@@ -1,3 +1,4 @@
+import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import { isUiCommandAction } from "../ui-command"
 import { summonerThreadMetadata } from "../threads/metadata-patch"
 import { PROJECT_METHODS, validateProjectRequest } from "../threads/project-store"
@@ -147,6 +148,9 @@ export function applySummonerPayloadPolicy(
     msg.thread_id = threadId
     msg.user_gesture = true
     return { ok: true }
+  }
+  if ((type === "meeting.start" || type === "meeting.end" || (typeof type === "string" && type.startsWith("voice.stt."))) && hasMeetingPcmFields(msg)) {
+    return validMeetingPcmMessage(msg) ? { ok: true } : { ok: false, error_code: "SUMMONER_ACL", error: "invalid continuous PCM message" }
   }
   if (type === "meeting.start") {
     msg.audio_retained = false

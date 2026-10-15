@@ -291,7 +291,11 @@ function init() {
     url: "ws://127.0.0.1:23401",
     onMessage: handleCompanionMessage,
     onStateChange: handleStateChange,
-    onConnectionLost: () => { browserBridge?.clearInteractiveSnapshots(); terminalRelay?.handleConnectionLost() },
+    onConnectionLost: () => {
+      browserBridge?.clearInteractiveSnapshots()
+      terminalRelay?.handleConnectionLost()
+      chrome.runtime.sendMessage({ type: "thread.mutation.connection", state: "disconnected" }).catch(() => {})
+    },
   })
 
   wsClient.connect()
@@ -1639,6 +1643,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "voice.dictation.hold_state":
       // Meeting minutes scene (Mtg0 paste + Mtg1 live capture)
       case "meeting.create":
+      case "system.ping":
       case "meeting.start":
       case "meeting.end":
       case "meeting.list":
@@ -1679,7 +1684,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
             sendResponse({ ok: false, error: "Service worker 未初始化，请重载扩展" })
             return true
           }
-          const sent = wsClient.send(message)
+          const sent = message.type === "system.ping" ? wsClient.observeMeetingPcm(message.id) : wsClient.send(message)
           if (!sent) {
             sendResponse({
               ok: false,
