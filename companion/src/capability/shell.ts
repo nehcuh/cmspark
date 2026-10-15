@@ -396,12 +396,12 @@ export function commandAllowedByPolicy(command: string): { ok: true } | { ok: fa
 /**
  * Pure pre-L2 / pre-exec scope check for shell_exec (Plan A/B G2).
  */
-export function checkShellScope(command: string): { ok: true } | { ok: false; error: string } {
+export function checkShellScope(command: string): { ok: true } | { ok: false; error: string; error_code?: "SHELL_INPUT_INVALID" } {
   const gate = requireModule("shell")
   if (!gate.ok) return gate
   const cmd = (command || "").trim()
-  if (!cmd) return { ok: false, error: "command required" }
-  if (cmd.length > 8000) return { ok: false, error: "command too long" }
+  if (!cmd) return { ok: false, error: "command required", error_code: "SHELL_INPUT_INVALID" }
+  if (cmd.length > 8000) return { ok: false, error: "command too long", error_code: "SHELL_INPUT_INVALID" }
   return commandAllowedByPolicy(cmd)
 }
 
@@ -651,8 +651,8 @@ export async function shellExec(opts: {
   if (!gate.ok) return { success: false, error: gate.error }
 
   const command = (opts.command || "").trim()
-  if (!command) return { success: false, error: "command required" }
-  if (command.length > 8000) return { success: false, error: "command too long" }
+  if (!command) return { success: false, error: "command required", data: { error_code: "SHELL_INPUT_INVALID" } }
+  if (command.length > 8000) return { success: false, error: "command too long", data: { error_code: "SHELL_INPUT_INVALID" } }
 
   const policyOk = commandAllowedByPolicy(command)
   if (!policyOk.ok) return { success: false, error: policyOk.error }
@@ -671,10 +671,10 @@ export async function shellExec(opts: {
     try {
       cwd = fs.realpathSync(path.resolve(opts.cwd))
       if (!fs.statSync(cwd).isDirectory()) {
-        return { success: false, error: "cwd is not a directory" }
+        return { success: false, error: "cwd is not a directory", data: { error_code: "SHELL_INPUT_INVALID" } }
       }
     } catch {
-      return { success: false, error: `invalid cwd: ${opts.cwd}` }
+      return { success: false, error: `invalid cwd: ${opts.cwd}`, data: { error_code: "SHELL_INPUT_INVALID" } }
     }
   }
 

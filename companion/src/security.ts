@@ -1058,6 +1058,10 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["COOPERATION_REJECTED", "recoverable"],
   ["COOPERATION_STALE_ATTEMPT", "recoverable"],
   ["COOPERATION_INTERRUPTED", "recoverable"],
+  // #563: these codes describe only the finite pre-execution input refusals.
+  // Module, command-policy, L2 and native/runtime failures keep their own grades.
+  ["SHELL_INPUT_INVALID", "recoverable"],
+  ["WORKSPACE_FILE_UNSUPPORTED", "recoverable"],
   ["ACP_OWNER_MISMATCH", "security"],
   // 另一个 worker 已持有 tab。报文是 "tab N held by <id> (HARD_HELD)"，**不含** "tab_locked"，
   // 所以子串表永远匹配不到，父轮次被中止过（bqn39n vs xdigpo, tab 1492102817）。
