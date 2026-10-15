@@ -102,4 +102,20 @@ function createOfficeSmokeObserver() {
   })
 }
 
-module.exports = { createOfficeSmokeObserver }
+// Only the public-fixture integration test opts in. Observation does not set
+// converter options or replace parser assertions, deadlines or cancellation.
+async function observeOfficeIntegrationParse(operation) {
+  let observer
+  try { observer = createOfficeSmokeObserver() } catch { /* observation cannot deny parsing */ }
+  try { return await operation() }
+  finally {
+    try {
+      if (observer) {
+        const { events, ...summary } = observer.finish()
+        console.error(JSON.stringify({ ...summary, kind: 'summary', scope: 'default-parser' }))
+      }
+    } catch { /* preserve the original operation's result/error */ }
+  }
+}
+
+module.exports = { createOfficeSmokeObserver, observeOfficeIntegrationParse }
