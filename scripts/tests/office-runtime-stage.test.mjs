@@ -4,7 +4,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
+import { spawn } from 'node:child_process'
 import { officeTarget, verifyOfficeEngine, stageOfficeRuntime } from '../stage-office-runtime.mjs'
+import { removeOfficeSmokeRuntime } from '../office-smoke-cleanup.mjs'
 
 test('Office target selects published Linux WASM and exact native architecture', () => {
   assert.equal(officeTarget('linux-arm64').engine, '@deepseek-ai/libreoffice-kit-wasm')
@@ -77,4 +79,79 @@ test('Engine integrity gate detects corruption, missing resources and wrong vers
     fs.rmSync(path.join(root, 'licenses'), { recursive: true })
     assert.throws(() => verifyOfficeEngine(root, target.engine, target), /ENOENT|missing/)
   } finally { fs.rmSync(root, { recursive: true, force: true }) }
+})
+
+test('Owned Office cleanup removes nested files without swallowing a conversion failure', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'office cleanup '))
+  const failure = new Error('owned conversion failure')
+  try {
+    fs.mkdirSync(path.join(directory, 'nested'))
+    fs.writeFileSync(path.join(directory, 'nested', 'fixture.txt'), 'owned')
+    assert.throws(() => {
+      try { throw failure } finally { removeOfficeSmokeRuntime(directory) }
+    }, error => error === failure)
+    assert.equal(fs.existsSync(directory), false)
+    removeOfficeSmokeRuntime(directory)
+  } finally { fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+for (const release of [true, false]) test(`Windows owned executable lock ${release ? 'releases within cleanup budget' : 'remains a cleanup failure'}`, {
+  skip: process.platform !== 'win32', timeout: 15_000,
+}, async () => {
+  const owned = fs.mkdtempSync(path.join(os.tmpdir(), 'office lock '))
+  const directory = path.join(owned, 'runtime')
+  const releaseFile = path.join(owned, 'release')
+  fs.mkdirSync(directory)
+  const runtime = path.join(directory, 'libreoffice-kit.exe')
+  fs.writeFileSync(runtime, 'owned lock fixture; never executed')
+  // A real exclusive Windows file handle gives a deterministic sharing lock,
+  // independently of image-mapping deletion semantics. The signal stays outside
+  // the directory being removed. No Office conversion or user process is faked.
+  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `
+    $ErrorActionPreference = 'Stop'
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    $handle = [IO.File]::Open($env:CMSPARK_TEST_OFFICE_LOCK, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+    try {
+      $clock = [Diagnostics.Stopwatch]::StartNew()
+      [Console]::Out.WriteLine('ready'); [Console]::Out.Flush()
+      while (-not [IO.File]::Exists($env:CMSPARK_TEST_OFFICE_RELEASE)) {
+        if ($clock.ElapsedMilliseconds -gt 10000) { throw 'Owned lock release timed out' }
+        Start-Sleep -Milliseconds 10
+      }
+    } finally { $handle.Dispose() }
+  `], { cwd: owned, env: { ...process.env, CMSPARK_TEST_OFFICE_LOCK: runtime, CMSPARK_TEST_OFFICE_RELEASE: releaseFile },
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+  const closed = new Promise(resolve => child.once('close', resolve))
+  try {
+    await new Promise((resolve, reject) => {
+      let text = ''
+      child.stdout.on('data', chunk => {
+        text += chunk.toString().replace(/\r/g, '')
+        if (text.includes('\n')) {
+          if (text === 'ready\n') resolve()
+          else reject(new Error('Unexpected owned lock readiness'))
+        }
+      })
+      child.once('error', reject)
+      child.once('exit', () => reject(new Error('Owned lock exited before readiness')))
+    })
+    assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0)
+    assert.throws(() => fs.rmSync(directory, { recursive: true, force: true }), { code: 'EBUSY' }, 'original immediate removal must observe the exclusive Windows handle')
+    if (release) {
+      fs.writeFileSync(releaseFile, 'release', { flag: 'wx' })
+      removeOfficeSmokeRuntime(directory)
+      assert.equal(fs.existsSync(directory), false)
+    } else {
+      assert.throws(() => removeOfficeSmokeRuntime(directory), { code: 'EBUSY' })
+      assert.equal(fs.existsSync(runtime), true, 'a persistent lock is not silently ignored')
+      assert.doesNotThrow(() => process.kill(child.pid, 0), 'cleanup must not terminate the owned process')
+    }
+  } finally {
+    // The object came directly from this spawn, never a discovered/user PID.
+    if (child.exitCode === null) {
+      fs.writeFileSync(releaseFile, 'release')
+    }
+    await closed
+    fs.rmSync(owned, { recursive: true, force: true })
+  }
 })
