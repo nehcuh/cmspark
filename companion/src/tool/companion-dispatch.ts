@@ -582,7 +582,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         return { success: false, error: "Invalid or expired security token for acp_start_session" }
       }
       const sid = String(params.session_id || "")
-      if (!sid) return { success: false, error: "session_id required" }
+      if (!sid) return acpSessionLookupFailure(params, sid)
       const { getAcpManager } = await import("../acp")
       const sessionOwner = getAcpManager().getSession(sid)
       if (sessionOwner && sessionOwner.thread_id !== (params.__thread_id || params._thread_id)) return { success: false, error: "ACP session is not owned by this thread", error_code: "ACP_OWNER_MISMATCH" }
@@ -686,7 +686,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         return { success: false, error: "Invalid or expired security token for acp_apply_diff" }
       }
       const sid = String(params.session_id || "")
-      if (!sid) return { success: false, error: "session_id required" }
+      if (!sid) return acpSessionLookupFailure(params, sid)
       const { getAcpManager } = await import("../acp")
       const sessionOwner = getAcpManager().getSession(sid)
       if (sessionOwner && sessionOwner.thread_id !== (params.__thread_id || params._thread_id)) return { success: false, error: "ACP session is not owned by this thread", error_code: "ACP_OWNER_MISMATCH" }
@@ -695,7 +695,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         paths,
         allowDelete: params.allow_delete === true,
       })
-      if (!r.ok && r.error) return { success: false, error: r.error, data: r }
+      if (!r.ok && r.error) return r.error === "unknown session"
+        ? acpSessionLookupFailure(params, sid) : { success: false, error: r.error, data: r }
       return { success: true, data: r }
     }
     case "ask_user": {
