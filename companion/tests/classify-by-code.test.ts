@@ -54,6 +54,15 @@ test("#560 每个已登记的码：等级与 message 内容完全无关（属性
  * （#562 只做「与文案解耦」，等级按既有行为原样固定；#560 第二半改过 3 条，见下）。
  */
 const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "security"> = {
+  // #521 new ephemeral addressing refusals; fixed intrinsic recovery, no authority.
+  SNAPSHOT_SCOPE_REQUIRED: "recoverable",
+  SNAPSHOT_STALE: "recoverable",
+  SNAPSHOT_INCOMPLETE: "recoverable",
+  SNAPSHOT_CAPACITY: "recoverable",
+  SNAPSHOT_UNSUPPORTED_DOCUMENT: "recoverable",
+  SNAPSHOT_UNSUPPORTED_CONTROL: "recoverable",
+  ELEMENT_OCCLUDED: "recoverable",
+  SNAPSHOT_FAILED: "recoverable",
   // security
   COOKIE_TRUST_DENIED: "security",
   ACP_OWNER_MISMATCH: "security", // cross-thread session access is an ownership boundary violation

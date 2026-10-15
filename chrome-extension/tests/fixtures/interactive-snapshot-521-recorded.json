@@ -1,0 +1,47 @@
+{
+  "success": true,
+  "data": {
+    "snapshot_id": "ce1efd55-108b-48ff-ba52-90d0f87c63ee",
+    "expires_in_ms": 29992,
+    "complete": true,
+    "rows": [
+      {
+        "id": 1,
+        "role": "button",
+        "label": "Save",
+        "state": "ready",
+        "can_click": true,
+        "can_type": false,
+        "ambiguous": false
+      },
+      {
+        "id": 2,
+        "role": "combobox",
+        "label": "Destination",
+        "state": "empty",
+        "can_click": true,
+        "can_type": true,
+        "ambiguous": false
+      },
+      {
+        "id": 3,
+        "role": "textbox",
+        "label": "FilledControl",
+        "state": "filled",
+        "can_click": true,
+        "can_type": true,
+        "ambiguous": false
+      },
+      {
+        "id": 4,
+        "role": "textbox",
+        "label": "Notes",
+        "state": "filled",
+        "can_click": true,
+        "can_type": true,
+        "ambiguous": false
+      }
+    ],
+    "table": "[1] button \"Save\" · ready\n[2] combobox \"Destination\" · empty\n[3] textbox \"FilledControl\" · filled\n[4] textbox \"Notes\" · filled"
+  }
+}

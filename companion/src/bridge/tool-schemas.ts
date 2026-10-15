@@ -64,6 +64,27 @@ const urlSchema = z.string().min(1).refine(
 
 const tabIdSchema = z.number().int().positive()
 
+export const LEGACY_CLICK_ARG_SCHEMA = z.object({
+    tabId: tabIdSchema,
+    selector: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    exact: z.boolean().optional(),
+  }).refine((v) => !!(v.selector || v.text), { message: "click requires text or selector" })
+export const LEGACY_TYPE_ARG_SCHEMA = z.object({
+    tabId: tabIdSchema,
+    value: z.string(),
+    selector: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    exact: z.boolean().optional(),
+  })
+
+const snapshotPair = { snapshot_id: z.string().uuid().optional(), element_id: z.number().int().min(1).max(64).optional() }
+function numericLocator(v: Record<string, unknown>): boolean { return Object.hasOwn(v, "snapshot_id") || Object.hasOwn(v, "element_id") }
+function validLocatorMode(v: Record<string, unknown>, click: boolean): boolean {
+  if (!numericLocator(v)) return !click || !!(v.selector || v.text)
+  return Number.isSafeInteger(v.tabId) && typeof v.snapshot_id === "string" && typeof v.element_id === "number" && !Object.hasOwn(v, "text") && !Object.hasOwn(v, "selector") && !Object.hasOwn(v, "exact")
+}
+
 export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
   // --- Page evaluation (high-risk: arbitrary JS in a real Chrome tab) ---
   evaluate: z.object({
@@ -73,25 +94,15 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
-  click: z.object({
-    tabId: tabIdSchema,
-    selector: z.string().min(1).optional(),
-    text: z.string().min(1).optional(),
-    exact: z.boolean().optional(),
-  }).refine((v) => !!(v.selector || v.text), { message: "click requires text or selector" }),
+  get_interactive_snapshot: z.object({ tabId: tabIdSchema.safe() }).strict(),
+  click: LEGACY_CLICK_ARG_SCHEMA.innerType().extend(snapshotPair).refine(v => validLocatorMode(v, true), { message: "click requires legacy locator or exclusive paired snapshot IDs" }),
   dblclick: z.object({
     tabId: tabIdSchema,
     selector: z.string().min(1).optional(),
     text: z.string().min(1).optional(),
     exact: z.boolean().optional(),
   }).refine((v) => !!(v.selector || v.text), { message: "dblclick requires text or selector" }),
-  type: z.object({
-    tabId: tabIdSchema,
-    value: z.string(),
-    selector: z.string().min(1).optional(),
-    text: z.string().min(1).optional(),
-    exact: z.boolean().optional(),
-  }),
+  type: LEGACY_TYPE_ARG_SCHEMA.extend(snapshotPair).refine(v => validLocatorMode(v, false), { message: "type requires exclusive paired snapshot IDs" }).refine(v => !numericLocator(v) || new TextEncoder().encode(v.value).length <= 16384, { message: "numbered type value exceeds 16KiB" }),
   fill_form: z.object({
     tabId: tabIdSchema,
     fields: z.array(z.object({

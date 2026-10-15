@@ -14,6 +14,27 @@
   {
     "type": "function",
     "function": {
+      "name": "get_interactive_snapshot",
+      "description": "本地Chat读取当前明确HTTP(S)顶层HTML页有界可见控件编号表；complete=false或ambiguous不得编号执行。不执行页面操作，不提供eval/权限，不支持iframe/shadow/外部MCP。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tabId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "明确标签页ID，不默认活跃页"
+          }
+        },
+        "required": [
+          "tabId"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "create_tab",
       "description": "打开新标签页。url 用 http/https。不要用 file: 来「读」本地 PDF/文档（请用户把文件拖进对话）。仅当用户明确要求在浏览器里打开本机文件时才用 file:，届时会弹出「仅这一次」确认，不会加入 MCP 目录或域名白名单。",
       "parameters": {
@@ -200,7 +221,7 @@
     "type": "function",
     "function": {
       "name": "click",
-      "description": "点击页面元素。定位用可见文字 text 或 CSS selector（有 text 时只走文字，例如 click({text:\"员工管理\"})；多处匹配会 ELEMENT_AMBIGUOUS 而不是点第一个）。",
+      "description": "点击页面元素。定位用可见文字 text 或 CSS selector（有 text 时只走文字，例如 click({text:\"员工管理\"})；多处匹配会 ELEMENT_AMBIGUOUS 而不是点第一个）。 本地Chat可用get_interactive_snapshot返回的snapshot_id/element_id一次性编号；不得与text/selector/exact混用。失效或歧义不自动fallback；编号type替换完整值。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -219,10 +240,38 @@
           "exact": {
             "type": "boolean",
             "description": "text 精确匹配（默认 false）"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "description": "本地Chat当前一次性snapshot UUID；必须与element_id配对"
+          },
+          "element_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 64,
+            "description": "当前snapshot行编号；不能替代授权"
           }
         },
         "required": [
           "tabId"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "text"
+            ]
+          },
+          {
+            "required": [
+              "selector"
+            ]
+          },
+          {
+            "required": [
+              "snapshot_id",
+              "element_id"
+            ]
+          }
         ]
       }
     }
@@ -262,7 +311,7 @@
     "type": "function",
     "function": {
       "name": "type",
-      "description": "在输入框中输入文本。可省略 locator（先 click 再 type 到当前焦点）；也可传 text 或 selector 定位。contenteditable 不走 el.value。",
+      "description": "在输入框中输入文本。可省略 locator（先 click 再 type 到当前焦点）；也可传 text 或 selector 定位。contenteditable 不走 el.value。 本地Chat可用get_interactive_snapshot返回的snapshot_id/element_id一次性编号；不得与text/selector/exact混用。失效或歧义不自动fallback；编号type替换完整值。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -285,6 +334,16 @@
           "value": {
             "type": "string",
             "description": "要输入的文本"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "description": "本地Chat当前一次性snapshot UUID；必须与element_id配对"
+          },
+          "element_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 64,
+            "description": "当前snapshot行编号；不能替代授权"
           }
         },
         "required": [

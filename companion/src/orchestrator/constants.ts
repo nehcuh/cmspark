@@ -84,6 +84,7 @@ export const ORCHESTRATOR_TOOL_ALLOWLIST = [
  * only TAB_MUTATION_LEASE_TOOLS take a per-call exclusive lease.
  */
 export const TAB_LEASE_TOOLS = new Set([
+  "get_interactive_snapshot",
   "navigate",
   "set_tab_url",
   "close_tab",

@@ -774,3 +774,9 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 | MCP | `mcp__…` · meta resources/prompts | Companion → MCP server |
 
 具体 schema：`bridge/tool-definitions.ts` · `tool-schemas.ts`。数量随 MCP/模块动态变化，**不以固定 N 计数**。
+
+### 本地 Chat 编号控件观察（#521）
+
+`get_interactive_snapshot({tabId})` 读取当前顶层 HTTP(S) HTML 页的有界可见控件表。只有完整表中非歧义且 `can_click`/`can_type` 为真的行可用于 `click`/`type`，参数为返回的 `snapshot_id` 与该行 `element_id`；不能同时给 text、selector 或 exact。编号最多保留30秒，每次动作尝试消费一次，失败不会自动切换定位器；重新观察或独立使用旧 text/selector。
+
+编号 type **替换控件完整值**；旧 type 的焦点/insertText路径不变。同名控件、过期/变化的文档/节点、遮挡、部分表和错误线程/标签页均拒绝，不能拿编号当权限。iframe/shadow、自定义编辑器、默认 outbound、Jev/kev/默认CU与性能SLA不在本刀。完整限制与验收见[合同](superpowers/specs/2026-10-15-numbered-browser-snapshot-521.md)。

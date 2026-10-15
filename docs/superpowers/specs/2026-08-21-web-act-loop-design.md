@@ -241,3 +241,7 @@ W2 snapshot · click 进 L2 · 禁 http osascript · CU 网页默认 · Windows 
 | win32 | REJECT | evaluate 不是 attach 失败的退路；无第三条 JS；Rule 12 NEVER host_computer for DOM；fill_form Ctrl 真生效 |
 
 实现前若再改 5.3 阈值或 5.4 矩阵，必须重跑对应对抗路。
+
+## 2026-10-15 后继范围说明
+
+本文件的 W2「禁止本波」保留为2026-08-21历史波次决定；现有 #521 明确重开其有界编号观察/定位第一刀，独立[后继合同](2026-10-15-numbered-browser-snapshot-521.md)约束实现。W1歧义/兼容、L2与预算、非默认CU/outbound等原边界没有被解除。合同批准不等于功能通过或整票关闭，源级复审与实际验收另行记录。

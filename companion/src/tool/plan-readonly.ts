@@ -33,6 +33,7 @@ export const PLAN_READONLY_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   // --- browser/tab observation (no page interaction, no navigation) ---
   "list_tabs",
   "screenshot",
+  "get_interactive_snapshot",
   "get_page_text",
   "get_page_html",
   "get_element_info",
