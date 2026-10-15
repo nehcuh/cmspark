@@ -10,6 +10,18 @@ import { DesktopIdentityRegistry } from "../src/desktop/identity"
 import { createDesktopChannel, attachDesktopUpgrade } from "../src/desktop/channel"
 import type { DesktopNativeBinding, DesktopNativeChild } from "../src/desktop/host-launcher"
 const native=path.resolve(__dirname,"../../dist/desktop-native")
+// Test-build-only fixed IDs; observe accepted existing pong responses, never incoming/global auth.
+const nativePhaseNames=["ready_accepted","env_callback","controller_callback","navigation_callback","document_post_attempted","renderer_callback","renderer_admitted","renderer_send_attempted"] as const
+function recordNativePhaseResponse(data:unknown,phases:Set<string>):void{
+ if(phases.size>=8||!(typeof data==="string"||Buffer.isBuffer(data)))return
+ let frame:any;try{frame=JSON.parse(String(data))}catch{return}
+ if(!frame||typeof frame!=="object"||Array.isArray(frame)||Object.keys(frame).length!==2||frame.type!=="system.pong"||typeof frame.id!=="string")return
+ for(const phase of nativePhaseNames)if(frame.id===`DESKTOP_480_PHASE_${phase}`){phases.add(phase);return}
+}
+function observeNativePhaseResponses(ws:any,phases:Set<string>):void{
+ const original=ws.send
+ ws.send=function(this:unknown,...args:unknown[]){const result=Reflect.apply(original,this,args);try{recordNativePhaseResponse(args[0],phases)}catch{/* Preserve original send, callback, return and throw behavior. */}return result}
+}
 test("Windows real SYNCHRONIZE-only process handle API rejects extra rights, other objects and dead handles",{skip:process.platform!=="win32",timeout:20000},()=>{
  const result=spawnSync(path.join(native,"desktop-synchronize-handle-probe.exe"),[],{encoding:"utf8",timeout:10000,windowsHide:true})
  assert.equal(result.status,0,"Actual Windows API fixture must compile and run, not skip")
@@ -18,14 +30,14 @@ test("Windows real SYNCHRONIZE-only process handle API rejects extra rights, oth
 test("real Windows binding inherited bootstrap and minimal parent handle authenticate native WebView2 and metadata",{skip:process.platform!=="win32",timeout:20000},async(t)=>{
  assert.equal(fs.existsSync(path.join(native,"cmspark-desktop.exe")),true,"Actual native Windows build is mandatory")
  const binding=require(path.join(native,"desktop-launcher.node")) as DesktopNativeBinding,registry=new DesktopIdentityRegistry(),boot=registry.issue("owned-windows-host")
- let phase="setup",childExitCode:number|undefined,diagnosticFailed=false
+ let phase="setup",childExitCode:number|undefined,diagnosticFailed=false;const nativePhases=new Set<string>()
  let complete!:()=>void,exited!:(code:number)=>void;const methods=new Set<string>(),done=new Promise<void>(r=>complete=r),exit=new Promise<number>(r=>exited=code=>{childExitCode=code;r(code)})
  const note=(name:string)=>{methods.add(name);if(methods.size===4)complete()}
  const services={threads:{desktopMetadataSnapshot:()=>{note("thread");return[{id:"owned",alias:"Native Windows fixture",updated_at:"2026-10-15"}]},get:()=>undefined,getMessages:()=>[]},skills:{list:()=>{note("skill");return[]},listKnowledge:()=>{note("knowledge");return[]}},mcp:{listServers:()=>{note("mcp");return[]}}}
- let auth=false,windowRequested=false;const channel=createDesktopChannel({registry,services,maxPayload:10*1024*1024,onAuthenticated:host=>{auth=true;windowRequested=channel.window(host,"compact")}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer();attachDesktopUpgrade(server,legacy,channel.wss,()=>false);server.listen(0,"127.0.0.1");await once(server,"listening")
+ let auth=false,windowRequested=false;const channel=createDesktopChannel({registry,services,maxPayload:10*1024*1024,onAuthenticated:host=>{auth=true;windowRequested=channel.window(host,"compact")}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer();attachDesktopUpgrade(server,legacy,channel.wss,()=>false);channel.wss.on("connection",ws=>observeNativePhaseResponses(ws,nativePhases));server.listen(0,"127.0.0.1");await once(server,"listening")
  // Fixed test-only fields: never expose bootstrap identity, profile or wire bodies.
  function diagnostic(reason:"deadline"|"cleanup"|"cleanup-complete"){
-  const receipt={reason,phase:["setup","launch","waiting-metadata","closing","complete"].includes(phase)?phase:"unknown",authenticated:auth===true,readFamilies:["thread","skill","knowledge","mcp"].filter(name=>methods.has(name)),childExited:childExitCode!==undefined,exitCode:childExitCode===undefined?null:Number.isInteger(childExitCode)&&childExitCode>=0&&childExitCode<=255?childExitCode:"OTHER"}
+  const receipt={reason,phase:["setup","launch","waiting-metadata","closing","complete"].includes(phase)?phase:"unknown",authenticated:auth===true,nativePhases:nativePhaseNames.filter(name=>nativePhases.has(name)),readFamilies:["thread","skill","knowledge","mcp"].filter(name=>methods.has(name)),childExited:childExitCode!==undefined,exitCode:childExitCode===undefined?null:Number.isInteger(childExitCode)&&childExitCode>=0&&childExitCode<=255?childExitCode:"OTHER"}
   try{fs.writeFileSync(1,`DESKTOP_480_NATIVE ${JSON.stringify(receipt)}\n`)}catch{diagnosticFailed=true}
  }
  let child:DesktopNativeChild|undefined

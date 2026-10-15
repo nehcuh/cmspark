@@ -71,6 +71,11 @@ static bool sync_parent(HANDLE handle){
 }
 struct Pending{std::wstring native_id,ui_id,generation,thread;};
 struct Frame{unsigned long epoch;std::wstring value;};
+#ifdef CMSPARK_DESKTOP_TEST_PHASES
+#define DESKTOP_TEST_NOTE(name) test_note(TestPhase::name);
+#else
+#define DESKTOP_TEST_NOTE(name)
+#endif
 class Desktop {
  HWND window=nullptr;std::wstring cap,secret,root,generation,view=L"compact";INTERNET_PORT port=0;
  ComPtr<ICoreWebView2Environment> environment;ComPtr<ICoreWebView2Controller> controller;ComPtr<ICoreWebView2> web;
@@ -78,8 +83,17 @@ class Desktop {
  std::wstring phase=L"initial";std::map<std::wstring,Pending> requests;SIZE compact{360,420},workspace{1040,760};
  void post(UINT type,unsigned long id,std::wstring const& value=L""){auto frame=new Frame{id,value};if(!PostMessageW(window,type,0,(LPARAM)frame))delete frame;}
  bool send(JsonObject const& value){auto bytes=utf8(std::wstring(value.Stringify()));std::lock_guard<std::mutex> lock(socket_lock);return socket&&WinHttpWebSocketSend(socket,WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,bytes.data(),(DWORD)bytes.size())==NO_ERROR;}
+#ifdef CMSPARK_DESKTOP_TEST_PHASES
+ enum class TestPhase : unsigned { ready_accepted, env_callback, controller_callback, navigation_callback, document_post_attempted, renderer_callback, renderer_admitted, renderer_send_attempted };
+ unsigned test_phase_attempts=0;
+ void test_note(TestPhase value) noexcept {
+  auto index=static_cast<unsigned>(value);if(!ready||index>=8||(test_phase_attempts&(1u<<index)))return;
+  test_phase_attempts|=1u<<index; // Lifetime bound, mark before send; no reconnect reset or retry.
+  try{static wchar_t const* names[]={L"ready_accepted",L"env_callback",L"controller_callback",L"navigation_callback",L"document_post_attempted",L"renderer_callback",L"renderer_admitted",L"renderer_send_attempted"};JsonObject frame;put(frame,L"type",L"system.ping");put(frame,L"id",std::wstring(L"DESKTOP_480_PHASE_")+names[index]);(void)send(frame);}catch(...){/* Diagnostic failure cannot change native behavior. */}
+ }
+#endif
  void deliver(JsonObject const& frame){if(web&&ready&&!generation.empty())web->PostWebMessageAsJson(frame.Stringify().c_str());}
- void document(){requests.clear();generation=random_id();JsonObject frame;put(frame,L"type",L"desktop.document");put(frame,L"generation",generation);deliver(frame);}
+ void document(){requests.clear();generation=random_id();JsonObject frame;put(frame,L"type",L"desktop.document");put(frame,L"generation",generation);deliver(frame);DESKTOP_TEST_NOTE(document_post_attempted)}
  void start_network(){std::thread([this](){winrt::init_apartment(winrt::apartment_type::multi_threaded);while(true){
    auto id=++epoch;ready=false;post(native_connect,id);
    HINTERNET session=WinHttpOpen(L"CMsparkDesktop/1",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0),connection=nullptr,request=nullptr,ws=nullptr;
@@ -101,20 +115,20 @@ class Desktop {
   auto frame=phase==L"ready"?parse(body):flat(body);auto type=text(frame,L"type");
   if(phase==L"initial"&&type==L"desktop.challenge.request"&&keys(frame,{L"type"})){JsonObject hello;put(hello,L"type",L"desktop.hello");put(hello,L"capability_id",cap);hello.Insert(L"protocol_version",JsonValue::CreateNumberValue(1));phase=L"hello";if(!send(hello))throw std::runtime_error("SEND");return;}
   if(phase==L"hello"&&type==L"desktop.challenge"&&keys(frame,{L"type",L"capability_id",L"connection_id",L"protocol_version",L"nonce"})&&text(frame,L"capability_id")==cap&&exact_one(frame,L"protocol_version")){auto cid=text(frame,L"connection_id"),nonce=text(frame,L"nonce");if(!hex(cid,32)||!hex(nonce,64))throw std::runtime_error("CHALLENGE");auto input=L"[\"cmspark.desktop.auth.v1\",\""+cap+L"\",\""+cid+L"\",1,\""+nonce+L"\"]";JsonObject proof;put(proof,L"type",L"desktop.authenticate");put(proof,L"capability_id",cap);proof.Insert(L"protocol_version",JsonValue::CreateNumberValue(1));put(proof,L"proof",hmac(secret,input));phase=L"proof";if(!send(proof))throw std::runtime_error("SEND");return;}
-  if(phase==L"proof"&&type==L"desktop.ready"&&keys(frame,{L"type",L"protocol_version"})&&exact_one(frame,L"protocol_version")){phase=L"ready";ready=true;if(!web)build_webview();else document();return;}
+  if(phase==L"proof"&&type==L"desktop.ready"&&keys(frame,{L"type",L"protocol_version"})&&exact_one(frame,L"protocol_version")){phase=L"ready";ready=true;DESKTOP_TEST_NOTE(ready_accepted)if(!web)build_webview();else document();return;}
   if(!ready||phase!=L"ready")throw std::runtime_error("PHASE");
   if(type==L"desktop.window"){frame=flat(body);if(!keys(frame,{L"type",L"view"}))throw std::runtime_error("CONTROL");auto next=text(frame,L"view");if(next!=L"compact"&&next!=L"workspace")throw std::runtime_error("VIEW");show(next);return;}
   if(type==L"desktop.close"){flat(body);if(!keys(frame,{L"type"}))throw std::runtime_error("CONTROL");DestroyWindow(window);return;}
   auto request=std::find_if(requests.begin(),requests.end(),[&](auto const& r){return r.second.native_id==text(frame,L"id");});if(request==requests.end()||request->second.generation!=generation)return;auto pending=request->second;auto name=request->first;requests.erase(request);if(name==L"thread.peek"&&type==L"thread.peek_result"&&text(frame,L"thread_id")!=pending.thread)return;put(frame,L"id",pending.ui_id);deliver(frame);
  }
  void renderer(std::wstring const& source,std::wstring const& body){if(!ready||source!=document_origin||generation.empty())return;auto frame=flat(body);if(text(frame,L"generation")!=generation)return;auto type=text(frame,L"type");if(type==L"desktop.view"&&keys(frame,{L"type",L"view",L"generation"})){auto next=text(frame,L"view");if(next==L"compact"||next==L"workspace")show(next);return;}
-  std::set<std::wstring> allowed{L"type",L"id",L"generation"};if(type==L"thread.peek")allowed.insert(L"thread_id");for(auto const& item:frame)if(!allowed.count(std::wstring(item.Key())))return;if(!method(type))return;auto original=frame.TryLookup(L"id");if(original&&original.ValueType()!=JsonValueType::String)return;if(type==L"thread.peek"&&text(frame,L"thread_id").empty())return;auto id=random_id();requests[type]={id,text(frame,L"id"),generation,text(frame,L"thread_id")};frame.Remove(L"generation");put(frame,L"id",id);send(frame);
+  std::set<std::wstring> allowed{L"type",L"id",L"generation"};if(type==L"thread.peek")allowed.insert(L"thread_id");for(auto const& item:frame)if(!allowed.count(std::wstring(item.Key())))return;if(!method(type))return;auto original=frame.TryLookup(L"id");if(original&&original.ValueType()!=JsonValueType::String)return;if(type==L"thread.peek"&&text(frame,L"thread_id").empty())return;DESKTOP_TEST_NOTE(renderer_admitted)auto id=random_id();requests[type]={id,text(frame,L"id"),generation,text(frame,L"thread_id")};frame.Remove(L"generation");put(frame,L"id",id);send(frame);DESKTOP_TEST_NOTE(renderer_send_attempted)
  }
  void build_webview(){
   // UDF is exclusively owned by this host. No existing browser profile is opened.
   wchar_t temporary[MAX_PATH];DWORD temporary_length=GetTempPathW(MAX_PATH,temporary);if(!temporary_length||temporary_length>=MAX_PATH)throw std::runtime_error("PROFILE");profile=std::wstring(temporary)+L"cmspark-desktop-"+random_id();if(!CreateDirectoryW(profile.c_str(),nullptr))throw std::runtime_error("PROFILE");
-  auto result=CreateCoreWebView2EnvironmentWithOptions(nullptr,profile.c_str(),nullptr,Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>([this](HRESULT hr,ICoreWebView2Environment* env)->HRESULT{if(FAILED(hr)||!env){ExitProcess(51);return E_FAIL;}environment=env;
-   return env->CreateCoreWebView2Controller(window,Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>([this](HRESULT code,ICoreWebView2Controller* host)->HRESULT{if(FAILED(code)||!host){ExitProcess(52);return E_FAIL;}controller=host;if(FAILED(host->get_CoreWebView2(&web))||!web){ExitProcess(53);return E_FAIL;}
+  auto result=CreateCoreWebView2EnvironmentWithOptions(nullptr,profile.c_str(),nullptr,Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>([this](HRESULT hr,ICoreWebView2Environment* env)->HRESULT{DESKTOP_TEST_NOTE(env_callback)if(FAILED(hr)||!env){ExitProcess(51);return E_FAIL;}environment=env;
+   return env->CreateCoreWebView2Controller(window,Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>([this](HRESULT code,ICoreWebView2Controller* host)->HRESULT{DESKTOP_TEST_NOTE(controller_callback)if(FAILED(code)||!host){ExitProcess(52);return E_FAIL;}controller=host;if(FAILED(host->get_CoreWebView2(&web))||!web){ExitProcess(53);return E_FAIL;}
     ComPtr<ICoreWebView2Settings> settings;web->get_Settings(&settings);settings->put_AreDevToolsEnabled(FALSE);settings->put_AreDefaultContextMenusEnabled(FALSE);settings->put_AreDefaultScriptDialogsEnabled(FALSE);settings->put_IsStatusBarEnabled(FALSE);settings->put_IsWebMessageEnabled(TRUE);
     ComPtr<ICoreWebView2_3> mapping;if(FAILED(web.As(&mapping))||FAILED(mapping->SetVirtualHostNameToFolderMapping(L"cmspark-desktop.invalid",(root+L"\\assets").c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS))){ExitProcess(54);return E_FAIL;}
     EventRegistrationToken token{};
@@ -126,8 +140,8 @@ class Desktop {
     web->AddWebResourceRequestedFilter(L"*",COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
     web->add_WebResourceRequested(Callback<ICoreWebView2WebResourceRequestedEventHandler>([this](ICoreWebView2*,ICoreWebView2WebResourceRequestedEventArgs* args)->HRESULT{ComPtr<ICoreWebView2WebResourceRequest> request;args->get_Request(&request);LPWSTR uri=nullptr;request->get_Uri(&uri);std::wstring u=uri?uri:L"";CoTaskMemFree(uri);std::map<std::wstring,std::pair<std::wstring,std::wstring>> resources{{document_origin,{L"index.html",L"text/html"}},{std::wstring(document_origin)+L"app.css",{L"app.css",L"text/css"}},{std::wstring(document_origin)+L"app.js",{L"app.js",L"text/javascript"}}};auto found=resources.find(u);ComPtr<ICoreWebView2WebResourceResponse> response;
       if(found==resources.end())environment->CreateWebResourceResponse(nullptr,403,L"Denied",L"",&response);else{std::ifstream file(std::filesystem::path(root+L"\\assets\\"+found->second.first),std::ios::binary);std::string data((std::istreambuf_iterator<char>(file)),{});ComPtr<IStream> stream;stream.Attach(SHCreateMemStream((BYTE const*)data.data(),(UINT)data.size()));environment->CreateWebResourceResponse(stream.Get(),file?200:404,file?L"OK":L"Missing",(L"Content-Type: "+found->second.second+L"; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\n").c_str(),&response);}args->put_Response(response.Get());return S_OK;}).Get(),&token);
-    web->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs* args)->HRESULT{BOOL ok=FALSE;args->get_IsSuccess(&ok);LPWSTR uri=nullptr;web->get_Source(&uri);bool own=uri&&std::wstring(uri)==document_origin;CoTaskMemFree(uri);if(ok&&own&&ready)document();return S_OK;}).Get(),&token);
-    web->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>([this](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args)->HRESULT{LPWSTR source=nullptr,value=nullptr;args->get_Source(&source);args->get_WebMessageAsJson(&value);try{renderer(source?source:L"",value?value:L"");}catch(...){/* Reject invalid renderer protocol without authority fallback. */}CoTaskMemFree(source);CoTaskMemFree(value);return S_OK;}).Get(),&token);
+    web->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs* args)->HRESULT{DESKTOP_TEST_NOTE(navigation_callback)BOOL ok=FALSE;args->get_IsSuccess(&ok);LPWSTR uri=nullptr;web->get_Source(&uri);bool own=uri&&std::wstring(uri)==document_origin;CoTaskMemFree(uri);if(ok&&own&&ready)document();return S_OK;}).Get(),&token);
+    web->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>([this](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args)->HRESULT{DESKTOP_TEST_NOTE(renderer_callback)LPWSTR source=nullptr,value=nullptr;args->get_Source(&source);args->get_WebMessageAsJson(&value);try{renderer(source?source:L"",value?value:L"");}catch(...){/* Reject invalid renderer protocol without authority fallback. */}CoTaskMemFree(source);CoTaskMemFree(value);return S_OK;}).Get(),&token);
     RECT bounds{};GetClientRect(window,&bounds);controller->put_Bounds(bounds);return web->Navigate(document_origin);
    }).Get());
   }).Get());if(FAILED(result))ExitProcess(50);

@@ -101,12 +101,12 @@ export async function prepareDesktopNodeHeaders({ dest }) {
   return path.join(extractDesktopSdk("headers", bytes, cache), `node-v${NODE_VERSION}`, "include", "node")
 }
 
-export function desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib }) {
+export function desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib, testFixtures = false }) {
   const p = path.win32
   const addon = p.join(output, "desktop-launcher.node"), host = p.join(output, "cmspark-desktop.exe")
   return [
     [cl, ["/nologo", "/std:c11", "/W4", "/WX", "/MD", "/LD", "/DBUILDING_NODE_EXTENSION", "/DNODE_GYP_MODULE_NAME=desktop_launcher", `/I${headers}`, p.join(root, "src/desktop/native/launcher.c"), "/link", nodeLib, `/OUT:${addon}`]],
-    [cl, ["/nologo", "/std:c++20", "/EHsc", "/DUNICODE", "/D_UNICODE", `/I${p.join(sdk, "build/native/include")}`, `/I${generated}`, p.join(root, "src/desktop/native/DesktopHost.cpp"), "/link", "/SUBSYSTEM:WINDOWS", p.join(sdk, "build/native/x64/WebView2LoaderStatic.lib"), "version.lib", "windowsapp.lib", "winhttp.lib", "bcrypt.lib", "shlwapi.lib", "ole32.lib", "user32.lib", "advapi32.lib", `/OUT:${host}`]],
+    [cl, ["/nologo", "/std:c++20", "/EHsc", "/DUNICODE", "/D_UNICODE", ...(testFixtures ? ["/DCMSPARK_DESKTOP_TEST_PHASES"] : []), `/I${p.join(sdk, "build/native/include")}`, `/I${generated}`, p.join(root, "src/desktop/native/DesktopHost.cpp"), "/link", "/SUBSYSTEM:WINDOWS", p.join(sdk, "build/native/x64/WebView2LoaderStatic.lib"), "version.lib", "windowsapp.lib", "winhttp.lib", "bcrypt.lib", "shlwapi.lib", "ole32.lib", "user32.lib", "advapi32.lib", `/OUT:${host}`]],
   ]
 }
 function toolchain() {
@@ -144,7 +144,7 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
   const [headers, webview, nodeLib] = await Promise.all([prepareDesktopNodeHeaders({ dest }), download("webview", cache), download("nodeLib", cache)])
   const sdk = extractDesktopSdk("webview", webview, cache), output = fs.mkdtempSync(path.join(cache, "objects-"))
   const lib = path.join(output, "node.lib"); fs.writeFileSync(lib, nodeLib, { flag: "wx", mode: 0o600 })
-  for (const [binary, args] of desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib: lib })) checked(binary, args, { env, cwd: output, buildDiagnostic: true })
+  for (const [binary, args] of desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib: lib, testFixtures })) checked(binary, args, { env, cwd: output, buildDiagnostic: true })
   if (testFixtures) {
     checked(cl, ["/nologo", "/std:c11", "/W4", "/WX", path.join(root, "tests", "fixtures", "desktop-480", "synchronize-handle-probe.c"), "/link", `/OUT:${path.join(output, "desktop-synchronize-handle-probe.exe")}`], { env, cwd: output, buildDiagnostic: true })
     regular(path.join(output, "desktop-synchronize-handle-probe.exe"))
