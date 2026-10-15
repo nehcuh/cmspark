@@ -175,6 +175,39 @@ describe("assertFileOpenOfferable", () => {
     if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
   })
 
+
+  it("cages a dangling leaf symlink instead of offering its missing target", () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-file-dangling-leaf-"))
+    const link = path.join(downloads, "dangling-leaf.pdf")
+    try {
+      fs.symlinkSync(path.join(outside, "not-yet.pdf"), link, "file")
+      assert.equal(fs.existsSync(link), false)
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true)
+      const r = assertFileOpenOfferable(link, tmpHome)
+      assert.equal(r.ok, false)
+      if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
+    } finally {
+      fs.rmSync(link, { force: true })
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("cages a missing leaf below a dangling ancestor symlink or junction", () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-file-dangling-dir-"))
+    const link = path.join(downloads, "dangling-ancestor")
+    try {
+      fs.symlinkSync(path.join(outside, "not-yet-dir"), link, process.platform === "win32" ? "junction" : "dir")
+      assert.equal(fs.existsSync(link), false)
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true)
+      const r = assertFileOpenOfferable(path.join(link, "not-yet.pdf"), tmpHome)
+      assert.equal(r.ok, false)
+      if (!r.ok) assert.ok(r.error.includes(FILE_OPEN_CAGE_TOKEN))
+    } finally {
+      fs.rmSync(link, { recursive: true, force: true })
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
   it("hard-refuses drive-relative input on every platform (F1)", () => {
     const r = assertFileOpenOfferable("C:Windows\\System32", tmpHome)
     assert.equal(r.ok, false)

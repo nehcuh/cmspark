@@ -129,7 +129,7 @@ test("#563 real dispatcher refuses missing/invalid token before any scan", async
     const wire = await dispatch.executeCompanionTool("netsec_port_scan", { targets: ["owned.test"], security_token: token })
     assert.equal(wire.success, false)
     assert.match(wire.error, token ? /Invalid or expired security token/ : /requires L2 security_token/)
-    assert.equal(wire.data, undefined)
+    assert.deepEqual(wire.data, token ? { error_code: "SECURITY_TOKEN_INVALID" } : undefined)
   }
   assert.deepEqual(effects, { process: 0, network: 0, token: 0 })
   assert.equal(JSON.stringify(cfg.getConfig()), baseline)
