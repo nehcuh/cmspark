@@ -1033,6 +1033,8 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // self-UI re-L2, or the separate TYPE_NO_EFFECT one-refocus/retype path.
   ["CLICK_OCCLUDED", "non_recoverable"],
   ["FOCUS_LOST", "non_recoverable"],
+  // #563 D4: executable integrity/hash-read refusal cannot be weakened by diagnostic text.
+  ["APP_EXE_DRIFT", "non_recoverable"],
 
   // ── recoverable ───────────────────────────────────────────────────────────
   // Authorization refusal permits a different tool or fresh human approval;

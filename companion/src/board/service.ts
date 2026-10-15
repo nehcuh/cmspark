@@ -154,7 +154,7 @@ function checkBoardSize(board: MissionBoard): BoardMutationError | null {
       ok: false,
       error: `board exceeds max_board_json_bytes (${BOARD_CAPS.max_board_json_bytes})`,
       error_code: "BOARD_TOO_LARGE",
-      recoverable: true,
+      recoverable: false,
     }
   }
   return null
@@ -347,7 +347,7 @@ function resolveTrustForFact(
       ok: false,
       error: "trust user_confirmed rejected for non-user actor",
       error_code: "BOARD_TRUST_REJECTED",
-      recoverable: true,
+      recoverable: false,
     }
   }
 
@@ -372,7 +372,7 @@ function resolveTrustForFact(
         ok: false,
         error: "tool_verified requires evidence with resolvable tool_call_id",
         error_code: "BOARD_TRUST_REJECTED",
-        recoverable: true,
+        recoverable: false,
       }
     }
     if (resolveToolCall) {
@@ -392,7 +392,7 @@ function resolveTrustForFact(
           ok: false,
           error: "tool_verified tool_call_id not resolvable on host/worker thread",
           error_code: "BOARD_TRUST_REJECTED",
-          recoverable: true,
+          recoverable: false,
         }
       }
     } else {
@@ -411,7 +411,7 @@ function resolveTrustForFact(
         ok: false,
         error: "tool_verified requires resolvable tool_call_id (no resolver)",
         error_code: "BOARD_TRUST_REJECTED",
-        recoverable: true,
+        recoverable: false,
       }
     }
     return { trust: "tool_verified" }
@@ -513,7 +513,7 @@ export async function applyHandbackPayload(
           ok: false,
           error: `max_facts (${BOARD_CAPS.max_facts}) would be exceeded`,
           error_code: "BOARD_CAP_FACTS",
-          recoverable: true,
+          recoverable: false,
         }
       }
       if (board.intents.length + payload.intents.length > BOARD_CAPS.max_intents) {
@@ -521,7 +521,7 @@ export async function applyHandbackPayload(
           ok: false,
           error: `max_intents (${BOARD_CAPS.max_intents}) would be exceeded`,
           error_code: "BOARD_CAP_INTENTS",
-          recoverable: true,
+          recoverable: false,
         }
       }
 
