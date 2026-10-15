@@ -1,3 +1,4 @@
+import { isBoardHintReply } from "../utils/board-hint-request"
 import { codingManualEntryAction } from "../utils/coding-manual-entry-message"
 // WebSocket hook for Side Panel — communicates with background service worker
 
@@ -2357,6 +2358,8 @@ export function useWebSocket() {
           break
 
         case "error": {
+          // BoardPanel consumes correlated Hint results (also legacy typed errors).
+          if (isBoardHintReply(msg)) break
           // A management failure must not stop or append errors to unrelated chat.
           if (isManagedThreadMutationReply(msg)) break
           const overlayCode = typeof msg.error_code === "string" ? msg.error_code : ""

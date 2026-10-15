@@ -1684,7 +1684,15 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
             sendResponse({ ok: false, error: "Service worker 未初始化，请重载扩展" })
             return true
           }
-          const sent = message.type === "system.ping" ? wsClient.observeMeetingPcm(message.id) : wsClient.send(message)
+          if (message.type === "board.add_hint" && message.require_connected && wsClient.getState() !== "connected") {
+            sendResponse({ ok: false, error: "Companion 尚未鉴权连接，Hint 未发送" })
+            return true
+          }
+          // New Hint UI requests must not survive in the pre-auth send queue.
+          // Legacy requests retain their existing forwarding contract.
+          const { require_connected: _connection, ...hintFrame } = message
+          const frame = message.type === "board.add_hint" && message.require_connected ? hintFrame : message
+          const sent = message.type === "system.ping" ? wsClient.observeMeetingPcm(message.id) : wsClient.send(frame)
           if (!sent) {
             sendResponse({
               ok: false,
