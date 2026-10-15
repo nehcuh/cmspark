@@ -126,13 +126,16 @@ test("handback insertion rejects missing dependencies and premature done without
     const actor = { actor_type: "worker" as const, worker_id: "w", thread_id: "w" }
     const missing = await applyHandbackPayload(tm, parent.id, { schema_version: 1, facts: [], intents: [{ description: "blocked", depends_on_intent_ids: ["ghost"] }] }, actor)
     assert.equal(missing.ok, false)
-    if (!missing.ok) assert.equal(missing.error_code, "BOARD_INTENT_INVALID")
+    if (!missing.ok) assert.equal(missing.error_code, "INTENT_DEPENDENCY_BLOCKED")
     assert.equal(tm.get(parent.id)?.mission_board?.intents.length, 0)
     assert.equal((await applyHandbackPayload(tm, parent.id, { schema_version: 1, facts: [], intents: [{ description: "first" }] }, actor)).ok, true)
     const first = tm.get(parent.id)!.mission_board!.intents[0].id
     const premature = await applyHandbackPayload(tm, parent.id, { schema_version: 1, facts: [], intents: [{ description: "second", status: "done", depends_on_intent_ids: [first] }] }, actor)
     assert.equal(premature.ok, false)
-    if (!premature.ok) assert.match(premature.error, /cannot finish before/)
+    if (!premature.ok) {
+      assert.match(premature.error, /cannot finish before/)
+      assert.equal(premature.error_code, "INTENT_DEPENDENCY_BLOCKED")
+    }
     assert.equal(tm.get(parent.id)?.mission_board?.intents.length, 1)
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
