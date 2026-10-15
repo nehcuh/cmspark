@@ -19,7 +19,7 @@ export function renderReviewMaterial(dataDir: string, scope: EvidenceScope, inpu
   const commitKey = draft.draft.kind === "change_material.v1" ? "release.commit_id" : "code.commit_id"
   if (draft.fields[commitKey]?.state !== "supported") gaps.push("MATERIAL_CODE_UNVERIFIED")
   const commit = draft.draft.fields[commitKey]?.value
-  if (typeof commit === "string" && commit !== review.head) gaps.push("MATERIAL_COMMIT_MISMATCH")
+  if (typeof commit === "string" && commit.trim().length > 0 && commit !== review.head) gaps.push("MATERIAL_COMMIT_MISMATCH")
   if (draft.draft.kind === "development_trace.v1") {
     let repository: string | undefined
     try { repository = canonicalRepository(String(draft.draft.fields["code.repository_id"]?.value || "")) } catch {}
