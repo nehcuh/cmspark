@@ -8,6 +8,7 @@
 #include <shlwapi.h>
 #include <wrl.h>
 #include <winrt/base.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Data.Json.h>
 #include <WebView2.h>
 #include <algorithm>
