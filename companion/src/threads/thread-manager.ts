@@ -825,6 +825,12 @@ export class ThreadManager {
     return deletedIds
   }
 
+  /** #480: metadata-only snapshot; never purge/repair/save or expose mutable index rows. */
+  desktopMetadataSnapshot(): Array<{ id: string; alias: string; updated_at: string }> {
+    return uniqueIndexThreads(this.index.threads).filter(t => !this.isTrashed(t))
+      .map(t => ({ id: t.id, alias: t.alias, updated_at: t.updated_at }))
+  }
+
   list(opts?: { include_trashed?: boolean; only_trashed?: boolean }): Thread[] {
     const all = uniqueIndexThreads(this.index.threads)
     if (all.length !== this.index.threads.length) {
