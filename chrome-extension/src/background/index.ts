@@ -291,7 +291,11 @@ function init() {
     url: "ws://127.0.0.1:23401",
     onMessage: handleCompanionMessage,
     onStateChange: handleStateChange,
-    onConnectionLost: () => { browserBridge?.clearInteractiveSnapshots(); terminalRelay?.handleConnectionLost() },
+    onConnectionLost: () => {
+      browserBridge?.clearInteractiveSnapshots()
+      terminalRelay?.handleConnectionLost()
+      chrome.runtime.sendMessage({ type: "thread.mutation.connection", state: "disconnected" }).catch(() => {})
+    },
   })
 
   wsClient.connect()
@@ -1639,6 +1643,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "voice.dictation.hold_state":
       // Meeting minutes scene (Mtg0 paste + Mtg1 live capture)
       case "meeting.create":
+      case "system.ping":
       case "meeting.start":
       case "meeting.end":
       case "meeting.list":
@@ -1679,7 +1684,15 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
             sendResponse({ ok: false, error: "Service worker 未初始化，请重载扩展" })
             return true
           }
-          const sent = wsClient.send(message)
+          if (message.type === "board.add_hint" && message.require_connected && wsClient.getState() !== "connected") {
+            sendResponse({ ok: false, error: "Companion 尚未鉴权连接，Hint 未发送" })
+            return true
+          }
+          // New Hint UI requests must not survive in the pre-auth send queue.
+          // Legacy requests retain their existing forwarding contract.
+          const { require_connected: _connection, ...hintFrame } = message
+          const frame = message.type === "board.add_hint" && message.require_connected ? hintFrame : message
+          const sent = message.type === "system.ping" ? wsClient.observeMeetingPcm(message.id) : wsClient.send(frame)
           if (!sent) {
             sendResponse({
               ok: false,

@@ -22,8 +22,10 @@ jobs:
           cache-dependency-path: companion/package-lock.json
 
       - name: Install dependencies
+        # Actual MeetingPanel SSR controls require the locked frontend React dependencies.
         run: |
           cd companion && npm ci
+          cd ../chrome-extension && npm ci
 
       - name: Verify systray2 binary integrity
         run: |
@@ -78,7 +80,7 @@ jobs:
 
       - name: Build + typecheck chrome-extension (audit H7)
         run: |
-          cd chrome-extension && npm ci && npm run build
+          cd chrome-extension && npm run build
 
       - name: Sidepanel visual-hygiene gate (#321 PR-1)
         # Color-aware static gate: fails on raw hex/rgb() in CSS-property
@@ -181,7 +183,8 @@ jobs:
             tests/tool-catalog-lockstep.test.ts \
             tests/p2-deep-diagnosis-batch.test.ts \
             tests/security/security-policy.test.ts \
-            tests/ws-router-validator-lockstep.test.ts
+            tests/ws-router-validator-lockstep.test.ts \
+            tests/meeting-pcm-generated.test.ts
 
       - name: Swift host typecheck (macOS only)
         # WHY THIS EXISTS: the native host binaries are built by build-host*.sh, which CI

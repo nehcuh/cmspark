@@ -16,7 +16,8 @@ export function observeWindowsOwnerFailures(t: TestContext): void {
         phase: typeof data.phase === "string" && ["exec", "launch", "probe"].includes(data.phase) ? data.phase : null,
         timeout_ms: data.timeout_ms === 10000 ? 10000 : null,
       }
-      for (const key of ["spawn_elapsed_ms", "callback_elapsed_ms", "close_elapsed_ms", "returned_elapsed_ms"])
+      for (const key of ["spawn_elapsed_ms", "callback_elapsed_ms", "close_elapsed_ms", "returned_elapsed_ms",
+        "stdout_first_data_elapsed_ms", "stdout_filetime_line_elapsed_ms", "stdout_end_elapsed_ms", "stderr_first_data_elapsed_ms"])
         facts[key] = typeof data[key] === "number" && Number.isFinite(data[key]) && data[key] >= 0 ? data[key] : null
       for (const key of ["close_exit_status", "error_code"]) {
         const value = data[key]

@@ -26,6 +26,34 @@ export function queryWindowsOwner(signal: AbortSignal): Promise<string> {
     let spawnedAt: number | null = null, returnedAt: number | null = null, closedAt: number | null = null
     let closeStatus: number | null = null, closeSignal: string | null = null
     let result: { error: Error | null; value: string } | undefined
+    let stdoutFirst: number | null = null, stdoutLine: number | null = null, stdoutEnd: number | null = null, stderrFirst: number | null = null
+    let stdoutBytes = 0, line = "", lineDone = false, stdoutInvalid = false
+    // Passive arrival observations only. Never alter/read/replace the original
+    // stream, identity result, execFile buffer or PowerShell command.
+    const onStdoutData = (chunk: unknown) => {
+      try {
+        if (closed || (!Buffer.isBuffer(chunk) && typeof chunk !== "string")) return
+        const bytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk)
+        if (!bytes) return
+        stdoutFirst ??= elapsed()
+        if (stdoutInvalid) return
+        if (stdoutBytes + bytes > 64) { stdoutInvalid = true; line = ""; stdoutLine = null; return }
+        stdoutBytes += bytes
+        for (const byte of Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)) {
+          if (lineDone) { stdoutInvalid = true; stdoutLine = null; return }
+          if (byte === 10) {
+            const value = line.endsWith("\r") ? line.slice(0, -1) : line
+            if (/^[0-9]{1,20}$/.test(value) && BigInt(value) > 0n && BigInt(value) <= 0xffffffffffffffffn) stdoutLine = elapsed()
+            else stdoutInvalid = true
+            lineDone = true; line = ""
+          } else line += String.fromCharCode(byte)
+        }
+      } catch { stdoutInvalid = true; line = ""; stdoutLine = null }
+    }
+    const onStdoutEnd = () => { if (!closed) stdoutEnd ??= elapsed() }
+    const onStderrData = (chunk: unknown) => {
+      if (!closed && ((Buffer.isBuffer(chunk) && chunk.length > 0) || (typeof chunk === "string" && chunk.length > 0))) stderrFirst ??= elapsed()
+    }
     const reportFailure = (error: unknown, phase: "exec" | "launch" | "probe") => {
       const facts = error as { code?: unknown; killed?: unknown; signal?: unknown } | null
       const rawCode = facts?.code
@@ -40,6 +68,8 @@ export function queryWindowsOwner(signal: AbortSignal): Promise<string> {
         error_code: errorCode, error_killed: typeof facts?.killed === "boolean" ? facts.killed : null,
         error_signal: diagnosticSignal(facts?.signal), child_killed: typeof child?.killed === "boolean" ? child.killed : null,
         aborted: signal.aborted,
+        stdout_first_data_elapsed_ms: stdoutFirst, stdout_filetime_line_elapsed_ms: stdoutLine,
+        stdout_end_elapsed_ms: stdoutEnd, stderr_first_data_elapsed_ms: stderrFirst,
       })
     }
     const settle = () => {
@@ -62,10 +92,14 @@ export function queryWindowsOwner(signal: AbortSignal): Promise<string> {
       reject(error)
       return
     }
+    try { child.stdout?.on("data", onStdoutData); child.stdout?.once("end", onStdoutEnd) } catch { /* observation only */ }
+    try { child.stderr?.on("data", onStderrData) } catch { /* observation only */ }
     child.once("spawn", () => { spawnedAt = elapsed() })
     // AbortError can invoke execFile's callback before the killed process has
     // closed. Await the handle's close as well before releasing its lifetime.
     child.once("close", (code, endedSignal) => {
+      try { child?.stdout?.removeListener("data", onStdoutData); child?.stdout?.removeListener("end", onStdoutEnd) } catch { /* observation only */ }
+      try { child?.stderr?.removeListener("data", onStderrData) } catch { /* observation only */ }
       closedAt = elapsed(); closeStatus = diagnosticStatus(code); closeSignal = diagnosticSignal(endedSignal)
       closed = true; settle()
     })

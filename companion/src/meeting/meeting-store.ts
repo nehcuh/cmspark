@@ -9,6 +9,13 @@ import * as crypto from "crypto"
 import { DATA_DIR } from "../config"
 import { logger } from "../logger"
 import { MEETING_MINUTES_MAX_INPUT_CHARS } from "./minutes-prompt"
+import type { CaptureStatus } from "../voice/meeting-pcm-contract"
+
+export type MeetingCaptureSummary = {
+  capture_epoch: number; last_capture_id: string; phase: string; outcome: string | null;
+  server_received_end: number; committed_end: number; known_unprocessed_end: number | null;
+  reason: string | null; sticky_incomplete: boolean;
+}
 
 export type TranscriptSource = "stt" | "user_edit" | "paste" | "asr_refiner"
 
@@ -69,6 +76,8 @@ export type MeetingMeta = {
   /** Mtg3: last auto-diarize run (anonymous labels only). */
   diarize?: MeetingDiarizeMeta | null
   error?: string | null
+  capture_epoch?: number
+  capture_summary?: MeetingCaptureSummary
 }
 
 export type MeetingSession = MeetingMeta & {
@@ -86,6 +95,15 @@ export class MeetingTranscriptLimitError extends Error {
 
 export class MeetingTranscriptSegmentCollisionError extends Error {
   constructor() { super("同一转写段标识对应不同内容，请保留当前稿并核对") }
+}
+
+/** Fixed source-range disclosure, never renderer authority or an ASR accuracy claim. */
+export function meetingCaptureSourceNotice(summary?: MeetingCaptureSummary): string {
+  if (!summary || !Number.isSafeInteger(summary.committed_end) || summary.committed_end < 0) return "采集范围未知；本纪要仅基于已保存文字。"
+  const seconds = (summary.committed_end / 16000).toFixed(3)
+  if (summary.sticky_incomplete) return `采集曾提前停止或取消，范围不完整；本次已保存前缀到 ${seconds} 秒，本纪要仅基于已保存文字。`
+  if (summary.outcome === "complete") return `已采集前缀已处理并保存到 ${seconds} 秒；此状态不独立证明物理麦克风连续，本纪要仅基于已保存文字。`
+  return `采集边界尚未完整确认；本次已保存前缀到 ${seconds} 秒，本纪要仅基于已保存文字。`
 }
 
 /** Material identity, independent of recording status and generated artifacts. */
@@ -211,6 +229,10 @@ export function reconcileStaleRecordings(dataDir = DATA_DIR): { demoted: string[
       if (!full || full.status !== "recording") continue
       full.status = "ready"
       full.ended_at = full.ended_at || new Date().toISOString()
+      if (full.capture_summary && full.capture_summary.phase !== "finished") {
+        full.capture_summary = { ...full.capture_summary, phase: "failed", outcome: "interrupted",
+          reason: "network_unknown", sticky_incomplete: true, known_unprocessed_end: null }
+      }
       saveMeeting(full, dataDir)
       demoted.push(m.id)
       logger.info("meeting.recording_reconciled", { id: m.id })
@@ -273,6 +295,8 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
     privacy: session.privacy,
     diarize: session.diarize ?? null,
     error: session.error ?? null,
+    capture_epoch: session.capture_epoch,
+    capture_summary: session.capture_summary,
   }
   writeJsonAtomic(path.join(dir, "meta.json"), meta)
   writeJsonAtomic(path.join(dir, "transcript.json"), session.transcript)
@@ -283,6 +307,45 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
     const mdPath = path.join(dir, "minutes.md")
     fs.writeFileSync(mdPath, session.minutes.raw_md || "", { encoding: "utf8", mode: 0o600 })
   }
+}
+
+/** Begin metadata is one atomic meta write after the original global slot was reserved. */
+export function beginMeetingCapture(id: string, captureId: string, expectedEpoch: number, dataDir = DATA_DIR): MeetingSession | null {
+  const s = loadMeeting(id, dataDir)
+  if (!s || (s.capture_epoch ?? 0) !== expectedEpoch || s.status === "recording") return null
+  const dir = resolveContained(id, dataDir)
+  if (!dir) return null
+  const { transcript: _transcript, original_transcript: _original, reference_notes: _notes,
+    reference_name: _name, minutes: _minutes, ...meta } = s
+  meta.capture_epoch = expectedEpoch + 1
+  meta.capture_summary = { capture_epoch: meta.capture_epoch, last_capture_id: captureId,
+    phase: "starting", outcome: null, server_received_end: 0, committed_end: 0,
+    known_unprocessed_end: null, reason: null, sticky_incomplete: s.capture_summary?.sticky_incomplete ?? false }
+  meta.status = "recording"; meta.ended_at = null; meta.error = null
+  writeJsonAtomic(path.join(dir, "meta.json"), meta)
+  return { ...s, ...meta }
+}
+
+/** Only the owning lease checkpoints its bounded latest summary; never per PCM block. */
+export function checkpointMeetingCapture(status: CaptureStatus, dataDir = DATA_DIR): void {
+  const s = loadMeeting(status.meeting_id, dataDir)
+  if (!s || s.capture_epoch !== status.capture_epoch || s.capture_summary?.last_capture_id !== status.capture_id) throw new Error("stale_capture")
+  const dir = resolveContained(s.id, dataDir)!
+  const { transcript: _transcript, original_transcript: _original, reference_notes: _notes,
+    reference_name: _name, minutes: _minutes, ...meta } = s
+  const terminal = status.phase === "finished" || status.phase === "failed"
+  const received = Math.max(s.capture_summary.server_received_end, status.server_received_end)
+  const committed = Math.max(s.capture_summary.committed_end, status.committed_end)
+  meta.capture_summary = { capture_epoch: status.capture_epoch, last_capture_id: status.capture_id,
+    phase: status.phase, outcome: status.completion.outcome,
+    server_received_end: received, committed_end: committed,
+    known_unprocessed_end: received > committed ? received : null,
+    reason: status.code ?? status.stop_reason,
+    sticky_incomplete: s.capture_summary.sticky_incomplete ||
+      (status.stop_reason !== null && status.stop_reason !== "user_stop") ||
+      status.completion.outcome === "failed" || status.completion.outcome === "interrupted" || status.completion.outcome === "cancelled" }
+  if (terminal) { meta.status = "ready"; meta.ended_at = new Date().toISOString() }
+  writeJsonAtomic(path.join(dir, "meta.json"), meta)
 }
 
 export function loadMeeting(id: string, dataDir = DATA_DIR): MeetingSession | null {
@@ -359,7 +422,8 @@ export function appendTranscript(
     const archived = (s.original_transcript || []).find(item => item.segment_id === line.segment_id)
     const existing = archived || s.transcript.find(item => item.segment_id === line.segment_id)
     if (existing) {
-      if (existing.text !== line.text || existing.source !== line.source || (existing.speaker || "") !== (line.speaker || "")) {
+      if (existing.text !== line.text || existing.source !== line.source || (existing.speaker || "") !== (line.speaker || "") ||
+          (/^[0-9a-f-]{36}-\d+-s\d+$/i.test(line.segment_id) && (existing.t0 !== line.t0 || existing.t1 !== line.t1))) {
         throw new MeetingTranscriptSegmentCollisionError()
       }
       if (!archived && existing.source === "stt") {

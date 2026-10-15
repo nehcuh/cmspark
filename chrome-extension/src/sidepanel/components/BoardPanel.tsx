@@ -1,8 +1,9 @@
 // ADR-016 Stage 4 — MissionBoard Facts / Intents / Hints list (trust badges)
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
+import { submitBoardHint } from "../utils/board-hint-request"
 
 type BoardSnap = {
   origin?: string | null
@@ -17,6 +18,8 @@ type BoardSnap = {
   }>
   hints?: Array<{ id: string; text: string }>
 }
+type HintSubmission = { controller: AbortController; threadId: string; selectionRevision: number }
+type HintReceipt = { request: HintSubmission; result: Awaited<ReturnType<typeof submitBoardHint>>; submittedDraft: string; revision: number }
 
 function trustBadge(trust?: string): { bg: string; label: string } {
   if (trust === "user_confirmed") return { bg: "#16a34a", label: "用户确认" }
@@ -29,7 +32,27 @@ export function BoardPanel() {
   const [board, setBoard] = useState<BoardSnap | null>(null)
   const [err, setErr] = useState("")
   const [hint, setHint] = useState("")
+  const [hintError, setHintError] = useState("")
+  const [hintWaiting, setHintWaiting] = useState(false)
+  const [hintReceipt, setHintReceipt] = useState<HintReceipt | null>(null)
   const threadId = state.activeThreadId
+  const selectionRevision = state.activeThreadSelectionRevision
+  const owner = useRef({ threadId, selectionRevision })
+  owner.current = { threadId, selectionRevision }
+  const draft = useRef(hint); draft.current = hint
+  const draftRevision = useRef(0)
+  const pending = useRef<HintSubmission | null>(null)
+  useEffect(() => () => {
+    const request = pending.current; pending.current = null
+    request?.controller.abort()
+  }, [])
+  useEffect(() => {
+    const request = pending.current
+    if (request && (request.threadId !== threadId || request.selectionRevision !== selectionRevision)) {
+      request.controller.abort(); pending.current = null; setHintWaiting(false)
+    }
+    setHintError("")
+  }, [threadId, selectionRevision])
 
   // PacksPanel pattern: SW fire-and-forgets to Companion; response arrives as a
   // chrome.runtime.onMessage push (handleCompanionMessage forwards board.get).
@@ -73,6 +96,32 @@ export function BoardPanel() {
       chrome.runtime.onMessage.removeListener(onMsg)
     }
   }, [refresh, threadId])
+
+  useEffect(() => {
+    if (!hintReceipt) return
+    setHintReceipt(null)
+    const { request, result, submittedDraft, revision } = hintReceipt
+    if (pending.current !== request) return
+    pending.current = null; setHintWaiting(false)
+    // Reconcile only after React commits the canonical selection. A Promise
+    // continuation can run before queued A→B→A reducer actions render.
+    if (request.controller.signal.aborted || threadId !== request.threadId ||
+        selectionRevision !== request.selectionRevision || draftRevision.current !== revision ||
+        draft.current !== submittedDraft) return
+    if (result.ok === true) { draftRevision.current++; draft.current = ""; setHint(""); refresh() }
+    else setHintError(result.error)
+  }, [hintReceipt, threadId, selectionRevision, refresh])
+
+  async function addHint() {
+    const owned = owner.current
+    const submittedDraft = draft.current, revision = draftRevision.current
+    if (!owned.threadId || !submittedDraft.trim() || pending.current) return
+    const request = { controller: new AbortController(), threadId: owned.threadId, selectionRevision: owned.selectionRevision }
+    pending.current = request; setHintWaiting(true); setHintError("")
+    const result = await submitBoardHint(chrome.runtime, request.threadId, submittedDraft.trim(), request.controller.signal)
+    if (pending.current !== request) return
+    setHintReceipt({ request, result, submittedDraft, revision })
+  }
 
   if (!threadId) {
     return <div style={s.empty}>选择线程以查看任务板</div>
@@ -155,25 +204,18 @@ export function BoardPanel() {
                 style={s.input}
                 placeholder="添加 Hint（人类判断）"
                 value={hint}
-                onChange={(e) => setHint(e.target.value)}
+                onChange={(e) => { draftRevision.current++; draft.current = e.target.value; setHint(e.target.value); setHintError("") }}
               />
               <button
                 type="button"
                 style={s.btn}
-                onClick={() => {
-                  if (!hint.trim()) return
-                  chrome.runtime.sendMessage(
-                    { type: "board.add_hint", thread_id: threadId, text: hint.trim() },
-                    () => {
-                      setHint("")
-                      refresh()
-                    },
-                  )
-                }}
+                disabled={hintWaiting}
+                onClick={addHint}
               >
                 添加
               </button>
             </div>
+            {hintError && <div role="alert" style={s.err}>{hintError}</div>}
           </Section>
         </>
       )}

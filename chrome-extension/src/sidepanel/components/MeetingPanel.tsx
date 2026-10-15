@@ -8,10 +8,10 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
-import { createLocalSttAdapter } from "../voice/local-stt-adapter"
+import { meetingSourceRangeLabel, meetingCaptureErrorMessage, meetingCaptureStopLabel } from "../voice/meeting-continuous-pcm"
+import { createPanelMeetingCapture } from "../voice/meeting-panel-continuous"
 import {
   detectLocalMediaCapture,
-  LOCAL_STT_NEAR_REALTIME_SEGMENT_MS,
 } from "../voice/local-stt-detect"
 import {
   fileToWavSegments,
@@ -195,6 +195,9 @@ export function MeetingPanel(props: {
   const [refinePending, setRefinePending] = useState(0)
 
   const adapterRef = useRef<SpeechAdapter | null>(null)
+  const continuousRef = useRef<{ actor: ReturnType<typeof createPanelMeetingCapture>; id: string; seen: Set<string>; wanted: number; synced: number; syncing: Promise<void> | null } | null>(null)
+  const [continuousStatus, setContinuousStatus] = useState<any>(null)
+  const [captureSourceLabel, setCaptureSourceLabel] = useState(meetingSourceRangeLabel(undefined))
   const captureStartRef = useRef<number | null>(null)
   const meetingIdRef = useRef<string | null>(null)
   const phaseRef = useRef<CapturePhase>("idle")
@@ -387,13 +390,13 @@ export function MeetingPanel(props: {
    * Pin meeting id at enqueue so late refine never appends to a newer meeting (Pi nit).
    */
   const commitLiveSegment = useCallback(
-    (finalChunk: string, meetingIdForAppend: string) => {
+    (finalChunk: string, meetingIdForAppend: string, append = true) => {
       const raw = finalChunk.trim()
       if (!raw) return
       const pinnedId = meetingIdForAppend
       const prior = transcriptRef.current
       const epoch = recordingEpochRef.current
-      appendLocalAndRemote(raw, pinnedId, "stt")
+      if (append) appendLocalAndRemote(raw, pinnedId, "stt")
       if (!asrRefinerEnabledRef.current) return
       refineGenRef.current += 1
       const gen = refineGenRef.current
@@ -493,6 +496,7 @@ export function MeetingPanel(props: {
       setPhase("idle")
       setSoftCapHint(false)
       destroyAdapter()
+      continuousRef.current = null
       dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
 
       const id = opts.id || meetingIdRef.current
@@ -533,7 +537,7 @@ export function MeetingPanel(props: {
   // Companion restart mid-window used to leave phase=stopping forever
   // (adapter awaited a voice.stt.end ACK that never arrived). Force-finalize.
   useEffect(() => {
-    if (capturePhase !== "stopping") return
+    if (capturePhase !== "stopping" || continuousRef.current) return
     const t = setTimeout(() => {
       if (phaseRef.current !== "stopping" || finalizedRef.current) return
       closeFailureRef.current = true
@@ -548,7 +552,7 @@ export function MeetingPanel(props: {
   // Debounced disconnect: WS auth blips (~1s) must not kill capture; a real
   // Companion death (SIGTERM ~18s this incident) must not leave 「正在听」.
   useEffect(() => {
-    if (companionConnected) return
+    if (companionConnected || continuousRef.current) return
     if (phaseRef.current === "idle") return
     const t = setTimeout(() => {
       if (finalizedRef.current) return
@@ -582,117 +586,80 @@ export function MeetingPanel(props: {
     return () => clearTimeout(t)
   }, [pendingGenerate])
 
-  const startLocalSegments = useCallback(
-    (id: string) => {
-      closeMeetingIdRef.current = id
-      destroyAdapter()
-      finalizedRef.current = false
-
-      if (!localMedia.ok) {
-        setError("当前环境无法访问麦克风（getUserMedia）")
-        setPhase("idle")
-        sendViaRuntime({ type: "meeting.end", v: 1, id })
-        return
-      }
-      if (!state.voicePrivacyAckV2) {
-        setError("请先确认下方「本机语音隐私说明」（或：设置 → 输入与语音 → 启用本机转写）")
-        setPhase("idle")
-        sendViaRuntime({ type: "meeting.end", v: 1, id })
-        return
-      }
-      if (!localModelReady || !localBinaryReady || !localEngineReady) {
-        setError("本机转写模型或二进制未就绪。请到设置 → 输入与语音 下载模型后再开始会议录音。")
-        setPhase("idle")
-        sendViaRuntime({ type: "meeting.end", v: 1, id })
-        return
-      }
-
-      const adapter = createLocalSttAdapter(
-        {
-          onStart: () => {
-            captureStartRef.current = Date.now()
-            setPhase("recording")
-            setElapsedMs(0)
-            setError(null)
-            setInterimText("")
-          },
-          onResult: ({ interim, finalChunk }) => {
-            if (finalChunk?.trim()) {
-              setInterimText("")
-              commitLiveSegment(finalChunk, id)
-              return
-            }
-            // Progressive hypothesis only (M2); do not append until window final.
-            // Empty interim is a soft/empty window — keep last visible text.
-            if (typeof interim === "string" && interim.trim()) {
-              setInterimText(interim)
-            }
-          },
-          onError: (code) => {
-            if (code === "aborted") return
-            const mapped = mapLocalSttError(code)
-            if (mapped.severity === "silent") return
-            if (closePendingRef.current) closeFailureRef.current = true
-            // Soft = adapter continues; honest copy (segment+audio irreversibly lost).
-            const soft = isMeetingSoftSegmentBanner(code)
-            const msg = mapped.message || `转写错误: ${code}`
-            setError(soft ? formatMeetingSoftSegmentError(msg) : msg)
-          },
-          onEnd: () => {
-            setInterimText("")
-            const gen = wantGenerateRef.current
-            wantGenerateRef.current = false
-            if (phaseRef.current === "idle" && finalizedRef.current) return
-            finalizeCapture({ generate: gen, id })
-          },
-          onSegmentContinue: () => {
-            if (phaseRef.current !== "stopping") setPhase("recording")
-          },
-          onCaptureStopped: () => {
-            if (phaseRef.current !== "stopping") setPhase("processing")
-          },
-        },
-        {
-          send: sendViaRuntime,
-          onMessage: subscribeVoiceStt,
-          modelId: activeModelId,
-          // The panel owns the visible stop deadline. Do not let the adapter's
-          // shorter quiet-empty timeout turn an unfinished final into success.
-          stopGraceMs: MEETING_STOP_FAILSAFE_MS + 1_000,
-        },
-      )
-      adapterRef.current = adapter
-      const sid = `mtg-${id}-${Date.now().toString(36)}`
-      // STT slot is force-aborted on companion by meeting.start — do not send
-      // voice.stt.abort with a fake sessionId (e.g. "mtg-preempt") from the client.
-      // P1 near-rt: streamPartial + ~8s windows; P2 hard cap independent of dictation 15/30m.
-      adapter.start({
-        lang: VOICE_DEFAULT_LANG,
-        sessionId: sid,
-        modelId: activeModelId,
-        mode: "continuous",
-        hardCapMs: MEETING_LIVE_HARD_CAP_MS,
-        segmentMs: nearRealtime ? LOCAL_STT_NEAR_REALTIME_SEGMENT_MS : undefined,
-        streamPartial: nearRealtime,
-      })
-    },
-    [
-      activeModelId,
-      commitLiveSegment,
-      destroyAdapter,
-      finalizeCapture,
-      localBinaryReady,
-      localEngineReady,
-      localMedia.ok,
-      localModelReady,
-      nearRealtime,
-      setPhase,
-      state.voicePrivacyAckV2,
-    ],
-  )
-
-  const startLocalSegmentsRef = useRef(startLocalSegments)
-  startLocalSegmentsRef.current = startLocalSegments
+  const startContinuousCapture = (id: string, speaker: string) => {
+    destroyAdapter()
+    const owner = { actor: null as unknown as ReturnType<typeof createPanelMeetingCapture>, id,
+      seen: new Set<string>(), wanted: 0, synced: -1, syncing: null as Promise<void> | null }
+    continuousRef.current = owner
+    closeMeetingIdRef.current = id
+    const current = () => mountedRef.current && continuousRef.current === owner && meetingIdRef.current === id
+    const syncSaved = (): Promise<void> => {
+      if (owner.syncing) return owner.syncing
+      owner.syncing = (async () => {
+        do {
+          const target = owner.wanted
+          const meeting = await persistenceRef.current.request(id, "meeting.get", "meeting.get_result")
+          if (!current()) return
+          const fresh = (meeting.original_transcript || []).filter((line: any) => line.segment_id && !owner.seen.has(line.segment_id))
+          for (const line of fresh) {
+            owner.seen.add(line.segment_id)
+            const display = formatLinesFromMeeting([line])
+            if (!display) continue
+            const next = transcriptRef.current ? `${transcriptRef.current}\n\n${display}` : display
+            transcriptRef.current = next; setTranscript(next)
+            transcriptDirtyRef.current = true
+            commitLiveSegment(line.text, id, false)
+          }
+          setOriginalTranscript(formatLinesFromMeeting(meeting.original_transcript || []))
+          setCaptureSourceLabel(meetingSourceRangeLabel(meeting.capture_summary))
+          setStatus(meeting.status || "")
+          owner.synced = target
+        } while (current() && owner.synced < owner.wanted)
+      })().finally(() => { owner.syncing = null })
+      return owner.syncing
+    }
+    owner.actor = createPanelMeetingCapture({ meetingId: id, modelId: activeModelId, lang: VOICE_DEFAULT_LANG, speaker,
+      onStarted: meeting => {
+        if (!current()) return
+        for (const line of meeting.original_transcript || []) if (line.segment_id) owner.seen.add(line.segment_id)
+        setStatus(meeting.status || "recording")
+      },
+      onStart: () => { if (!current()) return; captureStartRef.current = Date.now(); setElapsedMs(0); setPhase("recording") },
+      onStopped: () => { if (current()) { captureStartRef.current = null; setPhase("stopping") } },
+      onStatus: status => {
+        if (!current()) return
+        setContinuousStatus(status)
+        owner.wanted = Math.max(owner.wanted, status.committed_end || 0)
+        if (owner.synced < owner.wanted) void syncSaved().catch(() => { if (current()) setError("原稿已在服务端保存；本地刷新未确认，请重试读取") })
+      },
+      onError: code => {
+        if (!current()) return
+        closeFailureRef.current = true; wantGenerateRef.current = false
+        setError(meetingCaptureErrorMessage(code))
+        if (code === "network_unknown" || code === "contract_unavailable" || phaseRef.current === "starting") {
+          finalizedRef.current = true; captureStartRef.current = null; setPhase("idle")
+          owner.actor.destroy(); continuousRef.current = null; adapterRef.current = null
+          captureFinishedRef.current?.(false); captureFinishedRef.current = null
+        }
+      },
+      onEnd: status => {
+        if (!current()) return
+        owner.wanted = Math.max(owner.wanted, status.committed_end || 0)
+        if (status.completion?.outcome !== "complete") {
+          closeFailureRef.current = true; wantGenerateRef.current = false
+          setError("录制提前停止或取消；已保存前缀保留，未处理范围不属于完整转写。")
+        }
+        void syncSaved().then(() => {
+          if (!current()) return
+          const generate = wantGenerateRef.current; wantGenerateRef.current = false
+          finalizeCapture({ generate, id })
+          continuousRef.current = null
+        }).catch(() => { if (current()) { closeFailureRef.current = true; setError("服务端已结束，本地原稿刷新未确认；请重试读取"); setPhase("idle"); owner.actor.destroy(); continuousRef.current = null; adapterRef.current = null } })
+      },
+    })
+    adapterRef.current = { start() { void owner.actor.start() }, stop() { void owner.actor.stop() }, abort() { void owner.actor.abort() }, destroy() { owner.actor.destroy() } }
+    adapterRef.current.start()
+  }
 
   // Unmount / ContextPanelHost 收起: always end server session if still capturing
   // (destroy() is silent and would otherwise leave status=recording — dual-review nit).
@@ -706,25 +673,31 @@ export function MeetingPanel(props: {
       captureFinishedRef.current?.(false)
       captureFinishedRef.current = null
       const stillLive = phaseRef.current !== "idle" && !finalizedRef.current
-      if (stillLive && id) {
+      if (stillLive && id && !continuousRef.current) {
         finalizedRef.current = true
         sendViaRuntime({ type: "meeting.end", v: 1, id })
       }
       destroyAdapter()
+      continuousRef.current = null
       dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
     }
   }, [destroyAdapter, dispatch])
 
   const onMsg = useCallback(
     (msg: any) => {
+      const owner = continuousRef.current
+      if (owner && ((msg.meeting?.id && msg.meeting.id !== owner.id) || msg.type === "meeting.error" || msg.type === "meeting.started")) return
+      if (msg.meeting?.id === meetingIdRef.current) setCaptureSourceLabel(meetingSourceRangeLabel(msg.meeting.capture_summary))
       if (msg.meeting?.id === meetingIdRef.current && Array.isArray(msg.meeting.original_transcript) &&
           phaseRef.current === "idle" && !persistenceRef.current.hasUnconfirmedWrites(msg.meeting.id)) {
         setOriginalTranscript(formatLinesFromMeeting(msg.meeting.original_transcript))
       }
+      // This explicit Begin actor owns its q1 responses; late actors cannot retarget the panel.
+      if (typeof msg.id === "string" && msg.id.startsWith("meeting-pcm-")) return
       // Correlated persistence operations own their errors and busy lifecycle.
       // An append failure is recoverable text, not a failed PCM finalization.
       if (typeof msg.id === "string" && msg.id.startsWith("meeting-rpc-") &&
-          (msg.type === "meeting.updated" || msg.type === "meeting.error")) return
+          (msg.type === "meeting.updated" || msg.type === "meeting.error" || msg.type === "meeting.created")) return
       if (msg.type === "meeting.created" && msg.meeting) {
         setOriginalTranscript(formatLinesFromMeeting(msg.meeting.original_transcript || []))
         setMeetingId(msg.meeting.id)
@@ -744,7 +717,7 @@ export function MeetingPanel(props: {
           finalizedRef.current = false
           finalizeCapture({ generate: false, id: msg.meeting.id })
         } else if (phaseRef.current === "starting") {
-          startLocalSegmentsRef.current(msg.meeting.id)
+          setError("旧会议开始回执不能启动连续录制；请重新显式开始")
         }
       }
       if (msg.type === "meeting.ended" && msg.meeting) {
@@ -877,14 +850,17 @@ export function MeetingPanel(props: {
   }
 
   const createMeeting = () => {
-    setBusy(true)
-    setError(null)
-    sendViaRuntime({
-      type: "meeting.create",
-      v: 1,
-      title: title || undefined,
-      thread_id: state.activeThreadId || undefined,
-    })
+    if (capturing || busy) return
+    const previousId = meetingIdRef.current, epoch = recordingEpochRef.current
+    setBusy(true); setError(null)
+    void persistenceRef.current.create({ title: title || undefined, thread_id: state.activeThreadId || undefined }).then(created => {
+      if (!mountedRef.current || meetingIdRef.current !== previousId || recordingEpochRef.current !== epoch || phaseRef.current !== "idle") return
+      setMeetingId(created.id); meetingIdRef.current = created.id
+      setTitle(created.title || ""); setStatus(created.status || "draft")
+      setOriginalTranscript(formatLinesFromMeeting(created.original_transcript || []))
+      setCaptureSourceLabel(meetingSourceRangeLabel(created.capture_summary))
+    }).catch(() => { if (mountedRef.current) setError("新会议创建未确认；未开始录制，请重试") })
+      .finally(() => { if (mountedRef.current) setBusy(false) })
   }
 
   const startLiveCapture = () => {
@@ -935,15 +911,14 @@ export function MeetingPanel(props: {
     liveTextRef.current = []
     cancelStartingRef.current = false
 
-    sendViaRuntime({
-      type: "meeting.start",
-      v: 1,
-      id: meetingId || undefined,
-      title: title || undefined,
-      thread_id: state.activeThreadId || undefined,
-      privacy_ack_v1: true,
-      audio_retained: false,
-    })
+    setContinuousStatus(null)
+    if (!meetingId) {
+      setPhase("idle")
+      finalizedRef.current = true
+      setError("请先新建或选择会议会话，再开始连续录制")
+      return
+    }
+    startContinuousCapture(meetingId, defaultSpeakerRef.current.trim().slice(0, 32))
   }
 
   const stopLiveCapture = (andGenerate: boolean) => {
@@ -986,7 +961,7 @@ export function MeetingPanel(props: {
         if (phaseRef.current !== "idle" || finalizingRef.current) {
           const finished = new Promise<boolean>(resolve => { captureFinishedRef.current = resolve })
           if (phaseRef.current === "starting" && !adapterRef.current) {
-            // Wait for meeting.started, then end without opening the microphone.
+            // Wait for a pending legacy receipt without opening the microphone.
             cancelStartingRef.current = true
             setPhase("stopping")
           } else {
@@ -1574,11 +1549,7 @@ export function MeetingPanel(props: {
 
       <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
         开始录制或导入录音后，本机识别的原文会显示在下方。参考笔记独立保存，用于明确生成时的纠错与核对。
-        {nearRealtime
-          ? " 默认近实时出字（渐进假设，约 8 秒定稿；large 模型仅终稿）。"
-          : activeModelId === "large-v3-turbo"
-            ? " 当前大模型仅分段终稿：最长约 45 秒录音后还需本机推理。需要更快出字，可在语音设置选 medium 等模型。"
-            : " 当前为分段终稿模式：最长约 45 秒录音后出字，可在语音设置开启实时出字。"}
+        持续采集，每 8 秒依次识别；识别期间继续录音。停止后会排空已采集音频，接近 60 秒积压上限时会提前停采。
         仅录麦克风，不含系统声音；录音与听写互斥。AI 建议和校正稿不会覆盖原始转写。
       </div>
 
@@ -1848,6 +1819,9 @@ export function MeetingPanel(props: {
             >
               仅结束录制
             </button>
+            <button type="button" data-testid="meeting-cancel-unprocessed" onClick={() => { wantGenerateRef.current = false; setPhase("stopping"); adapterRef.current?.abort() }} style={btnStyle(false)}>
+              取消未处理音频
+            </button>
           </>
         )}
         {meetingId && (
@@ -1856,6 +1830,17 @@ export function MeetingPanel(props: {
           </span>
         )}
       </div>
+
+      {continuousStatus && <div role="status" aria-live="polite" data-testid="meeting-queue-status" style={{ fontSize: 12, color: tokens.textSecondary }}>
+        {capturePhase === "recording" ? "采集中" : continuousStatus.phase === "finished" || continuousStatus.phase === "failed" ? "采集已停止" : "已停采，正在排空"}
+        {continuousStatus.inflight_segment !== null ? ` · 识别第${continuousStatus.inflight_segment + 1}段` : ""}
+        {` · 积压 ${Math.max(0, (continuousStatus.server_received_end - continuousStatus.committed_end) / 16000).toFixed(1)} 秒 · 已处理到 ${(continuousStatus.processed_end / 16000).toFixed(1)} 秒 · 原稿 ${continuousStatus.saved_text_segments} 段已保存`}
+        {continuousStatus.eta_seconds === null ? " · 预计延迟未知" : ` · 若现在停止，预计约 ${Math.ceil(continuousStatus.eta_seconds)} 秒排空`}
+        {continuousStatus.high_water ? " · 接近积压上限" : ""}
+        {continuousStatus.stop_reason && continuousStatus.stop_reason !== "user_stop" ? ` · 提前停采：${meetingCaptureStopLabel(continuousStatus.stop_reason)}` : ""}
+      </div>}
+
+      <div role="status" data-testid="meeting-source-range" style={{ fontSize: 11, color: tokens.textSecondary }}>{captureSourceLabel}</div>
 
       {/* Mtg2: speaker + import */}
       <details
@@ -2061,12 +2046,9 @@ export function MeetingPanel(props: {
               whiteSpace: "pre-wrap",
             }}
           >
-            {meetingLiveInterimHint({
-              phase: capturePhase,
-              interimText,
-              nearRealtime,
-              refinePending,
-            })}
+            {continuousRef.current
+              ? (capturePhase === "starting" ? "正在准备持续采集…" : capturePhase === "stopping" ? "已停止采集，正在依次识别并保存已收到的音频…" : "持续采集中；按段依次识别，出字延迟取决于本机处理速度") + (refinePending > 0 ? ` · AI 纠错中(${refinePending})` : "")
+              : meetingLiveInterimHint({ phase: capturePhase, interimText, nearRealtime, refinePending })}
           </div>
         ) : null}
       </label>

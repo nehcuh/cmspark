@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
+import ts from "typescript"
 
 // #274 — 知识文件夹视图：筛选 bag（AC-10）、文件夹树构建、视图默认、copy 禁令
 // Spec: docs/superpowers/specs/2026-09-02-knowledge-folders-design.md §5/§6/§10
@@ -131,24 +132,85 @@ test("copy: 移到… menu item, honest import confirm, stale badge wording", ()
 
 test("Gate8 B-1: all six folder verbs are in the background SW bulk-forward list", () => {
   const bg = readFileSync(join(SRC_ROOT, "background/index.ts"), "utf8")
-  // The bulk-forward region: from the knowledge family to the thread_graph case
-  // (the forward group's shared tail does wsClient.send(message)).
-  const slice = bg.slice(
-    bg.indexOf('case "knowledge.list"'),
-    bg.indexOf('case "thread_graph.prepare"'),
-  )
-  for (const verb of [
+  const verbs = [
     "knowledge.folder_create",
     "knowledge.folder_rename",
     "knowledge.folder_update",
     "knowledge.folder_suggest",
     "knowledge.folder_delete",
     "knowledge.move",
-  ]) {
-    assert.ok(slice.includes(`case "${verb}":`), `${verb} must be bulk-forwarded to the companion WS`)
+  ]
+  // Execute the real fall-through group, retaining its labels and shared body.
+  // A literal send(message) check rejects an equivalent send(frame) alias and
+  // cannot prove that a folder request actually reaches that call unchanged.
+  const source = ts.createSourceFile("background.ts", bg, ts.ScriptTarget.Latest, true)
+  const groups: ts.CaseClause[][] = []
+  function visit(node: ts.Node): void {
+    if (ts.isSwitchStatement(node)) {
+      let group: ts.CaseClause[] = []
+      for (const clause of node.caseBlock.clauses) {
+        if (!ts.isCaseClause(clause)) { group = []; continue }
+        group.push(clause)
+        if (clause.statements.length) { groups.push(group); group = [] }
+      }
+    }
+    ts.forEachChild(node, visit)
   }
-  // The forward group's tail sends the message verbatim over the WS.
-  assert.match(slice, /wsClient\.send\(message\)/)
+  visit(source)
+  const candidates = groups.filter(group => group.some(clause =>
+    ts.isStringLiteral(clause.expression) && clause.expression.text === verbs[0]))
+  assert.equal(candidates.length, 1, "one actual folder forwarding group")
+  const group = candidates[0]
+  for (const verb of verbs) {
+    assert.ok(group.some(clause => ts.isStringLiteral(clause.expression) &&
+      clause.expression.text === verb), `${verb} must share the forwarding body`)
+  }
+  const groupSource = group.map(clause => clause.getText(source)).join("\n")
+  function compile(text: string) {
+    return new Function("wsClient", "message", "sendResponse", ts.transpileModule(
+      `switch (message.type) { ${text} }`,
+      { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+    ).outputText)
+  }
+  function assertForward(forward: ReturnType<typeof compile>, verb: string) {
+    for (const mode of ["sent", "refused", "throws", "uninitialized"]) {
+      const message = Object.freeze({ type: verb, id: "owned-folder-request",
+        bucket: "global", path: "owned/folder", title: "owned title",
+        // Unrelated messages must retain even this Hint-specific field.
+        require_connected: true })
+      const calls: unknown[] = [], acks: Array<{ ok: boolean; error?: string }> = []
+      const client = mode === "uninitialized" ? null : {
+        getState() { throw new Error("folder forwarding must not use the Hint connection gate") },
+        observeMeetingPcm() { throw new Error("folder forwarding must not use the PCM observer") },
+        send(frame: unknown) {
+          calls.push(frame)
+          if (mode === "throws") throw new Error("OWNED_SEND_FAILURE")
+          return mode === "sent"
+        },
+      }
+      assert.equal(forward(client, message, (ack: typeof acks[number]) => acks.push(ack)), true)
+      assert.equal(calls.length, mode === "uninitialized" ? 0 : 1)
+      if (calls.length) assert.equal(calls[0], message, "original folder frame identity")
+      assert.equal(acks.length, 1, "exactly one transport receipt")
+      assert.equal(acks[0].ok, mode === "sent")
+      if (mode !== "sent") assert.ok(acks[0].error)
+    }
+  }
+  const forward = compile(groupSource)
+  for (const verb of verbs) assertForward(forward, verb)
+  function rejectsBrokenForward(text: string) {
+    const brokenForward = compile(text)
+    let rejected = false
+    try { assertForward(brokenForward, verbs[0]) } catch { rejected = true }
+    assert.ok(rejected, "behavioral oracle must reject the forwarding mutation")
+  }
+  // Make the oracle fail on a dropped verb or a rewritten payload, even when
+  // the forwarding group still contains a wsClient.send(...) call.
+  rejectsBrokenForward(groupSource.replace(
+    `case "${verbs[0]}":`, 'case "owned.missing_folder_verb":'))
+  assert.ok(groupSource.includes("wsClient.send(frame)"), "mutation anchor exists")
+  rejectsBrokenForward(groupSource.replace(
+    "wsClient.send(frame)", "wsClient.send({ ...frame })"))
 })
 
 test("Gate8 M-6/N-1/N-8: panel checks send acks, renders suggest errors, drafts never clobber a dirty editor", () => {

@@ -131,6 +131,45 @@ function watchGrantSubject(token: string, entry: AppEntry) {
   }
 }
 
+/** #665: pending additions must not commit an older App authority snapshot. */
+function addSubject(config: ReturnType<typeof getConfig>): string {
+  const apps = config.apps
+  const entries = apps?.entries ?? {}
+  return JSON.stringify([apps?.enabled ?? true,
+    Object.keys(entries).sort().map(token => [token, grantSubject(entries[token], true)])])
+}
+
+function watchAddSubject() {
+  const captured = addSubject(getConfig())
+  let stale = false
+  const onChange = (config: ReturnType<typeof getConfig>) => {
+    if (addSubject(config) !== captured) stale = true
+  }
+  configEvents.on(CONFIG_CHANGE_EVENT, onChange)
+  return {
+    current() {
+      // Actual file reloads need not emit a change event. Compare current state
+      // as well as the event latch; emitted ABA cannot revive this request.
+      const config = getConfig()
+      onChange(config)
+      return stale ? undefined : { entries: config.apps?.entries ?? {} }
+    },
+    close() { configEvents.off(CONFIG_CHANGE_EVENT, onChange) },
+  }
+}
+
+function staleAddError() {
+  return appsError("App settings changed while this addition was pending — review the current app list and add again", {
+    code: "APP_ADD_STALE",
+  })
+}
+
+function sameAppIdentity(left: AppEntry, right: AppEntry): boolean {
+  return !!((left.exe?.path && right.exe?.path && left.exe.path.toLowerCase() === right.exe.path.toLowerCase()) ||
+    (left.aumid && right.aumid && left.aumid.toLowerCase() === right.aumid.toLowerCase()) ||
+    (left.bundleId && right.bundleId && left.bundleId === right.bundleId))
+}
+
 function staleGrantError() {
   return appsError("App changed while approval was pending — review the current app before granting again", {
     code: "APP_GRANT_STALE",
@@ -191,27 +230,45 @@ export async function handleAppsMessage(
   switch (type) {
     // --- apps.list: sanitized entries + enabled flag + lazy preset seeding ---
     case "apps.list": {
-      const appsCfg = getConfig().apps ?? { enabled: true, entries: {} }
-      const { entries, added, presets } = await materializePresets(appsCfg.entries, {
-        exists: deps.exists,
-        realpath: deps.realpath,
-        signerProbe: deps.signerProbe,
-      })
-      if (added.length > 0) {
-        replaceAppsEntries(entries)
-        logger.info("apps.preset_detected", { tokens: added })
-      }
-      const after = getConfig().apps ?? { enabled: true, entries }
-      return {
-        type: "apps.list",
-        enabled: after.enabled,
-        entries: entriesList(after.entries),
-        presets,
-        // WP6a (Finding 2): the extension can't see process.platform — ship it
-        // so the panel renders an honest「仅 Windows 可用」state off win32
-        // instead of a dead add button.
-        platform: deps.platform ?? os.platform(),
-      }
+      // #655: detection may await a signer. A host change (including ABA or a
+      // concurrent first list) defers seeding; the read still returns current state.
+      let stale = false
+      const onChange = () => { stale = true }
+      configEvents.on(CONFIG_CHANGE_EVENT, onChange)
+      try {
+        const appsCfg = getConfig().apps ?? { enabled: true, entries: {} }
+        const initialTokens = new Set(Object.keys(appsCfg.entries))
+        const { entries, added, presets } = await materializePresets(appsCfg.entries, {
+          exists: deps.exists,
+          realpath: deps.realpath,
+          signerProbe: deps.signerProbe,
+        })
+        const current = getConfig().apps?.entries ?? {}
+        let merged = current
+        const inserted: string[] = []
+        if (!stale) for (const token of added) {
+          if (initialTokens.has(token) || Object.hasOwn(current, token)) continue
+          if (merged === current) merged = { ...current }
+          merged[token] = entries[token]
+          inserted.push(token)
+        }
+        // No await between the current-state fence and its synchronous commit.
+        if (inserted.length > 0) {
+          replaceAppsEntries(merged)
+          logger.info("apps.preset_detected", { tokens: inserted })
+        }
+        const after = getConfig().apps ?? { enabled: true, entries: {} }
+        return {
+          type: "apps.list",
+          enabled: after.enabled,
+          entries: entriesList(after.entries),
+          presets: presets.map(p => ({ ...p, persisted: Object.hasOwn(after.entries, p.token) })),
+          // WP6a (Finding 2): the extension can't see process.platform — ship it
+          // so the panel renders an honest「仅 Windows 可用」state off win32
+          // instead of a dead add button.
+          platform: deps.platform ?? os.platform(),
+        }
+      } finally { configEvents.off(CONFIG_CHANGE_EVENT, onChange) }
     }
 
     // --- apps.enumerate: merged running/startapps candidates (Windows: exe; macOS: .app bundles) ---
@@ -274,90 +331,105 @@ export async function handleAppsMessage(
           ? rest.origin
           : (rest.path || rest.bundleId ? "manual-paste" : "enumerate")
 
-      const existing = getConfig().apps?.entries ?? {}
-      let entry: AppEntry
-      let warnings: AddFlowWarning[]
+      const addition = watchAddSubject()
       try {
-        const built = await buildAppEntry(
-          {
-            kind,
-            path: typeof rest.path === "string" ? rest.path : undefined,
-            aumid: typeof rest.aumid === "string" ? rest.aumid : undefined,
-            bundleId: typeof rest.bundleId === "string" ? rest.bundleId : undefined,
-            displayName: typeof rest.display_name === "string" ? rest.display_name : undefined,
-            origin,
-            existingEntries: existing,
-            policy: "manual", // requested policy applied only after the gates below
-            cli_manifest: rest.cli_manifest ?? rest.cliManifest,
-          },
-          deps,
-        )
-        entry = built.entry
-        warnings = built.warnings
-      } catch (e: any) {
-        if (e instanceof AddFlowError) {
-          logger.warn("apps.add_denied", { code: e.code, error: e.message })
-          return appsError(e.message, { code: e.code })
+        const initial = addition.current()
+        if (!initial) return staleAddError()
+        const existing = initial.entries
+        let entry: AppEntry
+        let warnings: AddFlowWarning[]
+        try {
+          const built = await buildAppEntry(
+            {
+              kind,
+              path: typeof rest.path === "string" ? rest.path : undefined,
+              aumid: typeof rest.aumid === "string" ? rest.aumid : undefined,
+              bundleId: typeof rest.bundleId === "string" ? rest.bundleId : undefined,
+              displayName: typeof rest.display_name === "string" ? rest.display_name : undefined,
+              origin,
+              existingEntries: existing,
+              policy: "manual", // requested policy applied only after the gates below
+              cli_manifest: rest.cli_manifest ?? rest.cliManifest,
+            },
+            deps,
+          )
+          entry = built.entry
+          warnings = built.warnings
+        } catch (e: any) {
+          if (e instanceof AddFlowError) {
+            logger.warn("apps.add_denied", { code: e.code, error: e.message })
+            return appsError(e.message, { code: e.code })
+          }
+          throw e
         }
-        throw e
-      }
 
-      // Policy ceiling re-checked at write time (WP1 review note ④). AUMID
-      // entries always cap "ai" (note ⑤) — maxPolicyForEntry encodes both.
-      const cap = maxPolicyForEntry(entry)
-      if (POLICY_RANK[policy as AppPolicy] > POLICY_RANK[cap]) {
-        return appsError(
-          `policy "${policy}" exceeds the maximum allowed for this app ("${cap}" — unsigned binary, user-writable directory, or AUMID)`,
-          { code: "POLICY_CAP_EXCEEDED", cap },
-        )
-      }
+        // A changed build result must not start another approval request.
+        if (!addition.current()) return staleAddError()
 
-      // D2: auto is a persistent grant → biometric gate (Hello + manual-nonce
-      // fallback; cancel → hard deny, never L2, no confirmation → no grant).
-      if (policy === "auto") {
-        if (!ctx.requestConfirmation) {
-          return appsError("apps.add with policy \"auto\" requires an interactive confirmation channel", {
-            code: "NO_CONFIRMATION_CHANNEL",
-          })
-        }
-        const gate = deps.gate ?? requireAppsBiometric
-        const outcome = await gate({
-          action: "apps.add",
-          reason: `Add "${entry.display_name}" as an auto-launch app`,
-          requestConfirmation: ctx.requestConfirmation,
-        })
-        if (!outcome.approved) {
-          logger.warn("apps.add_auto_denied", { token: entry.token, reason: outcome.reason })
+        // Policy ceiling re-checked at write time (WP1 review note ④). AUMID
+        // entries always cap "ai" (note ⑤) — maxPolicyForEntry encodes both.
+        const cap = maxPolicyForEntry(entry)
+        if (POLICY_RANK[policy as AppPolicy] > POLICY_RANK[cap]) {
           return appsError(
-            `auto policy ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — app was NOT added`,
-            { code: "BIOMETRIC_DENIED", reason: outcome.reason },
+            `policy "${policy}" exceeds the maximum allowed for this app ("${cap}" — unsigned binary, user-writable directory, or AUMID)`,
+            { code: "POLICY_CAP_EXCEEDED", cap },
           )
         }
-        logger.info("apps.add_auto_approved", {
-          token: entry.token,
-          display_name: entry.display_name,
-          method: outcome.method,
-        })
-      }
 
-      const finalEntry = normalizeAppEntry({ ...entry, policy: policy as AppPolicy })
-      const schemaErr = validateAppEntry(finalEntry)
-      if (schemaErr) return appsError(schemaErr) // belt — unreachable
-      const newEntries = { ...existing, [finalEntry.token]: finalEntry }
-      replaceAppsEntries(newEntries)
-      logger.info("apps.added", {
-        token: finalEntry.token,
-        kind: finalEntry.kind,
-        source: finalEntry.source,
-        policy: finalEntry.policy,
-        origin,
-        warnings: warnings.map((w) => w.code),
-      })
-      return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), {
-        added: finalEntry.token,
-        entry: finalEntry,
-        warnings,
-      })
+        // D2: auto is a persistent grant → biometric gate (Hello + manual-nonce
+        // fallback; cancel → hard deny, never L2, no confirmation → no grant).
+        if (policy === "auto") {
+          if (!ctx.requestConfirmation) {
+            return appsError("apps.add with policy \"auto\" requires an interactive confirmation channel", {
+              code: "NO_CONFIRMATION_CHANNEL",
+            })
+          }
+          const gate = deps.gate ?? requireAppsBiometric
+          const outcome = await gate({
+            action: "apps.add",
+            reason: `Add "${entry.display_name}" as an auto-launch app`,
+            requestConfirmation: ctx.requestConfirmation,
+          })
+          if (!outcome.approved) {
+            logger.warn("apps.add_auto_denied", { token: entry.token, reason: outcome.reason })
+            return appsError(
+              `auto policy ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — app was NOT added`,
+              { code: "BIOMETRIC_DENIED", reason: outcome.reason },
+            )
+          }
+          if (!addition.current()) return staleAddError()
+          logger.info("apps.add_auto_approved", {
+            token: entry.token,
+            display_name: entry.display_name,
+            method: outcome.method,
+          })
+        }
+
+        const finalEntry = normalizeAppEntry({ ...entry, policy: policy as AppPolicy })
+        const schemaErr = validateAppEntry(finalEntry)
+        if (schemaErr) return appsError(schemaErr) // belt — unreachable
+        const current = addition.current()
+        if (!current) return staleAddError()
+        if (Object.hasOwn(current.entries, finalEntry.token) || Object.values(current.entries).some(other => sameAppIdentity(finalEntry, other))) {
+          return appsError("This app is already registered — review the current app list", { code: "duplicate_app" })
+        }
+        // No await between the last current-state fence and synchronous commit.
+        const newEntries = { ...current.entries, [finalEntry.token]: finalEntry }
+        replaceAppsEntries(newEntries)
+        logger.info("apps.added", {
+          token: finalEntry.token,
+          kind: finalEntry.kind,
+          source: finalEntry.source,
+          policy: finalEntry.policy,
+          origin,
+          warnings: warnings.map((w) => w.code),
+        })
+        return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), {
+          added: finalEntry.token,
+          entry: finalEntry,
+          warnings,
+        })
+      } finally { addition.close() }
     }
 
     // --- apps.remove: immediate; preset entries can only be disabled ---------

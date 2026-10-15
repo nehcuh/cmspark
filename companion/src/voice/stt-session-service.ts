@@ -50,6 +50,9 @@ import {
   type WhisperRunResult,
 } from "./whisper-runner"
 import { runWinSapiTranscribe, SAPI_HELPER_TIMEOUT_MS, WinSapiError } from "./win-sapi"
+import { MeetingPcmCapture, type MeetingPcmCaptureDeps } from "./meeting-pcm-capture"
+import { type CaptureIdentity } from "./meeting-pcm-contract"
+import type { PcmSegment } from "./meeting-pcm-queue"
 
 // --- result types -------------------------------------------------------------
 
@@ -145,6 +148,7 @@ export class SttSessionService {
   private readonly core: SttSessionCore
   private readonly deps: SttSessionServiceDeps
   private bound: BoundSession | null = null
+  private continuous: MeetingPcmCapture | null = null
 
   constructor(deps: SttSessionServiceDeps) {
     if (!deps.dataDir) throw new Error("SttSessionService requires dataDir")
@@ -157,7 +161,61 @@ export class SttSessionService {
   }
 
   getBoundPeerId(): string | null {
-    return this.bound?.peerId ?? null
+    return this.continuous?.peerId ?? this.bound?.peerId ?? null
+  }
+
+  getMeetingCapture(): MeetingPcmCapture | null { return this.continuous }
+
+  reserveMeetingCapture(identity: CaptureIdentity, peerId: string,
+    deps: Pick<MeetingPcmCaptureDeps, "persist" | "checkpoint" | "send">, speaker?: string): MeetingPcmCapture | null {
+    if (!peerId || this.continuous || this.bound || this.core.getActive()) return null
+    const capture: MeetingPcmCapture = new MeetingPcmCapture(identity, peerId, {
+      ...deps, now: this.deps.now,
+      run: (segment, request) => this.runMeetingSegment(capture, segment, request),
+      abortRun: () => {
+        if (this.continuous !== capture) return
+        // Keep the bound and protected reservation until the actual runner settles.
+        this.bound?.abortController.abort()
+      },
+      retired: () => { if (this.continuous === capture) this.continuous = null },
+    }, speaker)
+    this.continuous = capture
+    return capture
+  }
+
+  prepareMeetingCapture(req: SttStartRequest, peerId: string, captureId: string, epoch: number): SttServiceResult {
+    const capture = this.continuous
+    if (!capture?.owns(peerId, captureId, epoch)) return { ok: false, code: "peer_mismatch", message: "capture not owned" }
+    if (!capture.matchesRequest(req)) return { ok: false, code: "invalid_format", message: "capture model/engine request changed" }
+    const ready = this.checkMeetingModelReady(req)
+    if (!ready.ok) return ready
+    capture.activate(req)
+    return { ok: true }
+  }
+
+  checkMeetingModelReady(req: SttStartRequest): SttServiceResult {
+    if (req.format !== "pcm_s16le" || req.sampleRate !== 16000 || req.channels !== 1 || req.maxMs !== undefined) {
+      return { ok: false, code: "invalid_format", message: "q1 requires fixed PCM format" }
+    }
+    if (req.engine !== "system") {
+      if (!isSttModelId(req.modelId)) return { ok: false, code: "invalid_model", message: "invalid model" }
+      const p = (this.deps.probeModel ?? ((id, root) => probeWhisperModelDir(id, root, this.deps.manifest)))(req.modelId, this.whisperRoot())
+      if (p.status !== "ready") return { ok: false, code: "model_missing", message: "model not ready" }
+    }
+    return { ok: true }
+  }
+
+  private async runMeetingSegment(capture: MeetingPcmCapture, segment: PcmSegment, request: SttStartRequest): Promise<SttServiceResult> {
+    if (this.continuous !== capture) return { ok: false, code: "aborted", message: "capture retired" }
+    const sessionId = `${capture.identity.capture_id}-${capture.identity.capture_epoch}-s${segment.index}`
+    const start = this.startBound({ ...request, sessionId, format: "wav", maxMs: 8000 }, capture.peerId, capture)
+    if (!start.ok) return start
+    this.clearTimersOnly()
+    const bound = this.bound!
+    // The queue owns one immutable WAV. Do not concat PCM into the legacy core
+    // and then wrap another copy; preserve the one-segment allocation bound.
+    this.core.end(sessionId, 0)
+    return this.transcribeAudio(segment.wav, bound)
   }
 
   /**
@@ -165,6 +223,13 @@ export class SttSessionService {
    * Probes model readiness; rejects unsafe sessionId.
    */
   start(req: SttStartRequest, peerId: string): SttServiceResult {
+    return this.startBound(req, peerId)
+  }
+
+  private startBound(req: SttStartRequest, peerId: string, owner?: MeetingPcmCapture): SttServiceResult {
+    if (this.continuous && this.continuous !== owner) {
+      return { ok: false, code: "resource_conflict", message: "continuous meeting owns STT slot" }
+    }
     if (!peerId) {
       return { ok: false, code: "peer_mismatch", message: "peerId required" }
     }
@@ -222,6 +287,7 @@ export class SttSessionService {
   }
 
   chunk(sessionId: string, seq: number, data: Buffer, peerId: string): SttServiceResult {
+    if (this.continuous) return { ok: false, code: "resource_conflict", message: "protected continuous capture" }
     const peer = this.requirePeer(peerId, sessionId)
     if (!peer.ok) return peer
     const r = this.core.appendChunk(sessionId, seq, data)
@@ -235,6 +301,7 @@ export class SttSessionService {
    * Not decoder-token streaming — offline re-decode of cumulative audio so far.
    */
   async partial(sessionId: string, peerId: string): Promise<SttServiceResult> {
+    if (this.continuous) return { ok: false, code: "partial_skipped", message: "continuous status only" }
     const peer = this.requirePeer(peerId, sessionId)
     if (!peer.ok) return peer
     const bound = this.bound!
@@ -365,6 +432,7 @@ export class SttSessionService {
    * End session: reassemble audio → tmp file → whisper → unlink → text.
    */
   async end(sessionId: string, totalSeq: number, peerId: string): Promise<SttServiceResult> {
+    if (this.continuous) return { ok: false, code: "resource_conflict", message: "protected continuous capture" }
     const peer = this.requirePeer(peerId, sessionId)
     if (!peer.ok) return peer
 
@@ -386,8 +454,11 @@ export class SttSessionService {
       return end
     }
 
-    const audio = end.audio!
-    const bound = this.bound!
+    return this.transcribeAudio(end.audio!, this.bound!)
+  }
+
+  private async transcribeAudio(audio: Buffer, bound: BoundSession): Promise<SttServiceResult> {
+    const sessionId = bound.sessionId
     const modelId = bound.modelId
     const format = bound.format
     const ac = bound.abortController
@@ -542,6 +613,7 @@ export class SttSessionService {
   }
 
   abort(sessionId: string | undefined, peerId: string): SttServiceResult {
+    if (this.continuous) return { ok: false, code: "peer_mismatch", message: "protected capture requires exact epoch" }
     if (this.bound) {
       if (this.bound.peerId !== peerId) {
         return { ok: false, code: "peer_mismatch", message: "peer does not own session" }
@@ -578,6 +650,10 @@ export class SttSessionService {
 
   /** Abort without peer check (WS close / shutdown / record-idle timeout). */
   forceAbort(): void {
+    if (this.continuous) {
+      this.continuous.fail("network_unknown")
+      return
+    }
     if (this.bound) {
       try {
         this.bound.abortController.abort()

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { stageOfficeRuntime, verifyOfficeEngine, officeTarget } from './stage-office-runtime.mjs'
+import { removeOfficeSmokeRuntime } from './office-smoke-cleanup.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const options = {}
@@ -37,6 +38,7 @@ try {
   fs.copyFileSync(path.resolve(options.runtime ?? process.execPath), runtime)
   if (process.platform !== 'win32') fs.chmodSync(runtime, 0o755)
   fs.copyFileSync(path.join(source, 'tests', 'fixtures', 'office-611', 'one-page.doc'), path.join(temporary, 'input.doc'))
+  fs.copyFileSync(path.join(root, 'scripts', 'office-smoke-observer.cjs'), path.join(temporary, 'office-smoke-observer.cjs'))
   const probe = path.join(temporary, 'probe.cjs')
   fs.writeFileSync(probe, `
 const assert = require('node:assert/strict');
@@ -44,18 +46,45 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {createRequire} = require('node:module');
 const directory = path.dirname(process.execPath);
-const kit = createRequire(process.execPath)('@deepseek-ai/libreoffice-kit');
+const observer = require('./office-smoke-observer.cjs').createOfficeSmokeObserver();
+const emitEvidence = () => { try {
+  const {events, ...summary} = observer.finish();
+  console.error(JSON.stringify({...summary,kind:'summary',events_recorded:events.length}));
+} catch {} };
+let kit;
+try {
+  observer.phase('kit-load-start');
+  kit = createRequire(process.execPath)('@deepseek-ai/libreoffice-kit');
+  observer.phase('kit-load-ready');
+} catch (error) { observer.phase('operation-failure'); emitEvidence(); throw error; }
 (async () => {
+try {
   assert.equal(kit.ENGINE_VERSION, '0.1.5');
-  const converter = await kit.createConverter({timeoutMs:30000,maxInputBytes:10485760,maxOutputBytes:33554432,fontMetadataCacheDirectory:false});
+  observer.phase('create-start');
+  // Native TXT relocation tests transport, not the host's full font catalog.
+  // WASM still needs its declared usable fonts; production defaults are separate.
+  const fonts = path.join(directory,'smoke-fonts');
+  if (process.platform !== 'linux') fs.mkdirSync(fonts,{mode:0o700});
+  const converter = await kit.createConverter({timeoutMs:30000,maxInputBytes:10485760,maxOutputBytes:33554432,fontMetadataCacheDirectory:false,
+    ...(process.platform === 'linux' ? {} : {fontDirectories:[fonts]})});
+  observer.phase('create-ready');
   try {
     assert.equal(converter.backend, process.platform === 'linux' ? 'wasm' : 'native');
+    observer.phase('convert-start');
     await converter.convert({inputPath:path.join(directory,'input.doc'),outputPath:path.join(directory,'output.txt')});
+    observer.phase('convert-resolved');
     const text = fs.readFileSync(path.join(directory,'output.txt'),'utf8');
     assert.match(text, /Office preview/);
     assert.match(text, /中文文档/);
+    observer.phase('assertions-pass');
     console.log('Relocated Office sidecar: actual bilingual DOC conversion passed ('+converter.backend+')');
-  } finally { await converter.dispose(); }
+  } finally {
+    observer.phase('dispose-start');
+    await converter.dispose();
+    observer.phase('dispose-settled');
+  }
+} catch (error) { observer.phase('operation-failure'); throw error; }
+finally { emitEvidence(); }
 })().catch(error => {console.error(error);process.exitCode=1});
 `)
   const env = { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' }
@@ -63,4 +92,4 @@ const kit = createRequire(process.execPath)('@deepseek-ai/libreoffice-kit');
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`Relocated Office smoke failed: ${result.status ?? result.signal}`)
   console.log(`Verified ${record.engine} without source module resolution`)
-} finally { fs.rmSync(temporary, { recursive: true, force: true }) }
+} finally { removeOfficeSmokeRuntime(temporary) }
