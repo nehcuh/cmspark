@@ -60,9 +60,12 @@ test('Windows compile plan keeps pinned inputs and spaced paths as argv, not she
 // Execute the complete private discovery function with controlled Windows API
 // outlets. These are discovery contracts; real MSVC/native execution is CI-only.
 const helperSource = fs.readFileSync(new URL('../build-desktop-windows.mjs', import.meta.url), 'utf8')
-const discovery = helperSource.match(/function toolchain\(\) \{([\s\S]*?)\n\}\nexport async function buildDesktopWindows/)
-assert.ok(discovery, 'one complete production toolchain function')
-const discover = new Function('path', 'process', 'checked', 'fs', discovery[1])
+function loadDiscovery(source) {
+  const discovery = source.replace(/\r\n/g, '\n').match(/function toolchain\(\) \{([\s\S]*?)\n\}\nexport async function buildDesktopWindows/)
+  assert.ok(discovery, 'one complete production toolchain function')
+  return new Function('path', 'process', 'checked', 'fs', discovery[1])
+}
+const discover = loadDiscovery(helperSource)
 
 function controlledDiscovery(major, override = {}) {
   const installation = override.installation ?? `C:\\Program Files\\Microsoft Visual Studio\\${major}\\Enterprise`
@@ -84,7 +87,7 @@ function controlledDiscovery(major, override = {}) {
     assert.equal(options.windowsVerbatimArguments, true)
     return `Path=OWNED_CAPTURED_PATH\r\nVCToolsInstallDir=${tools}\r\nINCLUDE=OWNED_INCLUDE\r\nOWNED_UNRELATED=not_imported\r\n`
   }
-  const result = discover(path.win32, {env}, checked, {
+  const result = (override.discover ?? discover)(path.win32, {env}, checked, {
     existsSync: file => [vcvars, cl].includes(file),
     realpathSync: file => file,
   })
@@ -114,3 +117,12 @@ for (const installation of ['relative\\VS', 'C:\\VS"quoted', 'C:\\VS%expanded', 
 test('selected compiler tools must remain inside the discovered installation', () => {
   assert.throws(() => controlledDiscovery(17, {tools: 'C:\\unrelated\\Tools'}), /DESKTOP_WINDOWS_TOOLCHAIN_PATH/)
 })
+
+for (const [name, newline] of [['LF', '\n'], ['CRLF', '\r\n']]) {
+  test(`production discovery is complete under ${name} checkout newlines`, () => {
+    const source = helperSource.replace(/\r\n/g, '\n').replace(/\n/g, newline)
+    const discover = loadDiscovery(source)
+    for (const major of [17, 18]) controlledDiscovery(major, {discover})
+    for (const major of [16, 19]) assert.throws(() => controlledDiscovery(major, {discover}), /DESKTOP_WINDOWS_TOOLCHAIN_PATH/)
+  })
+}
