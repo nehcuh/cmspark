@@ -1043,7 +1043,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                 }),
               )
             } else {
-              ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}` }))
+              ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}`,
+                ...(msg?.type === "board.add_hint" ? { family: "board", request_type: "board.add_hint",
+                  id: msg.id, thread_id: msg.thread_id } : {}),
+              }))
             }
           }
           return
@@ -1497,7 +1500,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       } catch (e: any) {
         logger.error("ws.message_error", { error: e.message || String(e) })
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "error", id: msg?.id, error: e.message }))
+          ws.send(JSON.stringify({ type: "error", id: msg?.id,
+            error: msg?.type === "board.add_hint" ? `Hint 提交结果未知，请刷新任务板核实：${e.message}` : e.message,
+            ...(msg?.type === "board.add_hint" ? { family: "board", request_type: "board.add_hint", thread_id: msg.thread_id } : {}),
+          }))
         }
       }
     })
