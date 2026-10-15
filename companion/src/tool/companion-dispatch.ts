@@ -632,7 +632,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     }
     case "acp_cancel_session": {
       const sid = String(params.session_id || "")
-      if (!sid) return { success: false, error: "session_id required" }
+      if (!sid) return acpSessionLookupFailure(params, sid)
       const { getAcpManager } = await import("../acp")
       const sessionOwner = getAcpManager().getSession(sid)
       if (sessionOwner && sessionOwner.thread_id !== (params.__thread_id || params._thread_id)) return { success: false, error: "ACP session is not owned by this thread", error_code: "ACP_OWNER_MISMATCH" }
