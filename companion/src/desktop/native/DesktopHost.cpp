@@ -73,8 +73,14 @@ struct Pending{std::wstring native_id,ui_id,generation,thread;};
 struct Frame{unsigned long epoch;std::wstring value;};
 #ifdef CMSPARK_DESKTOP_TEST_PHASES
 #define DESKTOP_TEST_NOTE(name) test_note(TestPhase::name);
+#define DESKTOP_TEST_NAV_LOCALS HRESULT success_hr=E_FAIL,source_hr=E_FAIL;
+#define DESKTOP_TEST_CAPTURE(name) name=
+#define DESKTOP_TEST_NAV() test_navigation(success_hr,ok,source_hr,own,ready.load(),args);
 #else
 #define DESKTOP_TEST_NOTE(name)
+#define DESKTOP_TEST_NAV_LOCALS
+#define DESKTOP_TEST_CAPTURE(name)
+#define DESKTOP_TEST_NAV()
 #endif
 class Desktop {
  HWND window=nullptr;std::wstring cap,secret,root,generation,view=L"compact";INTERNET_PORT port=0;
@@ -87,10 +93,20 @@ class Desktop {
  enum class TestPhase : unsigned { ready_accepted, env_callback, controller_callback, navigation_callback, document_post_attempted, renderer_callback, renderer_admitted, renderer_send_attempted };
  unsigned test_phase_attempts=0;
  void test_note(TestPhase value) noexcept {
-  auto index=static_cast<unsigned>(value);if(!ready||index>=8||(test_phase_attempts&(1u<<index)))return;
+  auto index=static_cast<unsigned>(value);if(!ready||index>=8||index==3||(test_phase_attempts&(1u<<index)))return;
   test_phase_attempts|=1u<<index; // Lifetime bound, mark before send; no reconnect reset or retry.
   try{static wchar_t const* names[]={L"ready_accepted",L"env_callback",L"controller_callback",L"navigation_callback",L"document_post_attempted",L"renderer_callback",L"renderer_admitted",L"renderer_send_attempted"};JsonObject frame;put(frame,L"type",L"system.ping");put(frame,L"id",std::wstring(L"DESKTOP_480_PHASE_")+names[index]);(void)send(frame);}catch(...){/* Diagnostic failure cannot change native behavior. */}
  }
+ void test_navigation(HRESULT success_hr,BOOL ok,HRESULT source_hr,bool own,bool ready_sample,ICoreWebView2NavigationCompletedEventArgs* args) noexcept {
+  constexpr unsigned index=3;if(!ready||(test_phase_attempts&(1u<<index)))return;
+  test_phase_attempts|=1u<<index; // The existing navigation slot is consumed before getter/encoding/send.
+  try{COREWEBVIEW2_WEB_ERROR_STATUS status=COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;auto error_hr=args->get_WebErrorStatus(&status);
+   std::wstring id=L"DESKTOP_480_NAV_H";id+=SUCCEEDED(success_hr)?L'1':L'0';id+=L"B";id+=ok?L'1':L'0';id+=L"S";id+=SUCCEEDED(source_hr)?L'1':L'0';id+=L"O";id+=own?L'1':L'0';id+=L"R";id+=ready_sample?L'1':L'0';id+=L"E";id+=SUCCEEDED(error_hr)?L'1':L'0';id+=L"W";
+   auto code=static_cast<int>(status);if(SUCCEEDED(error_hr)&&code>=0&&code<=18){if(code<10)id+=L'0';id+=std::to_wstring(code);}else id+=L'u';
+   JsonObject frame;put(frame,L"type",L"system.ping");put(frame,L"id",id);(void)send(frame);
+  }catch(...){/* No diagnostic error may suppress the original navigation condition. */}
+ }
+
 #endif
  void deliver(JsonObject const& frame){if(web&&ready&&!generation.empty())web->PostWebMessageAsJson(frame.Stringify().c_str());}
  void document(){requests.clear();generation=random_id();JsonObject frame;put(frame,L"type",L"desktop.document");put(frame,L"generation",generation);deliver(frame);DESKTOP_TEST_NOTE(document_post_attempted)}
@@ -140,7 +156,7 @@ class Desktop {
     web->AddWebResourceRequestedFilter(L"*",COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
     web->add_WebResourceRequested(Callback<ICoreWebView2WebResourceRequestedEventHandler>([this](ICoreWebView2*,ICoreWebView2WebResourceRequestedEventArgs* args)->HRESULT{ComPtr<ICoreWebView2WebResourceRequest> request;args->get_Request(&request);LPWSTR uri=nullptr;request->get_Uri(&uri);std::wstring u=uri?uri:L"";CoTaskMemFree(uri);std::map<std::wstring,std::pair<std::wstring,std::wstring>> resources{{document_origin,{L"index.html",L"text/html"}},{std::wstring(document_origin)+L"app.css",{L"app.css",L"text/css"}},{std::wstring(document_origin)+L"app.js",{L"app.js",L"text/javascript"}}};auto found=resources.find(u);ComPtr<ICoreWebView2WebResourceResponse> response;
       if(found==resources.end())environment->CreateWebResourceResponse(nullptr,403,L"Denied",L"",&response);else{std::ifstream file(std::filesystem::path(root+L"\\assets\\"+found->second.first),std::ios::binary);std::string data((std::istreambuf_iterator<char>(file)),{});ComPtr<IStream> stream;stream.Attach(SHCreateMemStream((BYTE const*)data.data(),(UINT)data.size()));environment->CreateWebResourceResponse(stream.Get(),file?200:404,file?L"OK":L"Missing",(L"Content-Type: "+found->second.second+L"; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\n").c_str(),&response);}args->put_Response(response.Get());return S_OK;}).Get(),&token);
-    web->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs* args)->HRESULT{DESKTOP_TEST_NOTE(navigation_callback)BOOL ok=FALSE;args->get_IsSuccess(&ok);LPWSTR uri=nullptr;web->get_Source(&uri);bool own=uri&&std::wstring(uri)==document_origin;CoTaskMemFree(uri);if(ok&&own&&ready)document();return S_OK;}).Get(),&token);
+    web->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs* args)->HRESULT{DESKTOP_TEST_NAV_LOCALS BOOL ok=FALSE;DESKTOP_TEST_CAPTURE(success_hr)args->get_IsSuccess(&ok);LPWSTR uri=nullptr;DESKTOP_TEST_CAPTURE(source_hr)web->get_Source(&uri);bool own=uri&&std::wstring(uri)==document_origin;CoTaskMemFree(uri);DESKTOP_TEST_NAV()if(ok&&own&&ready)document();return S_OK;}).Get(),&token);
     web->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>([this](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args)->HRESULT{DESKTOP_TEST_NOTE(renderer_callback)LPWSTR source=nullptr,value=nullptr;args->get_Source(&source);args->get_WebMessageAsJson(&value);try{renderer(source?source:L"",value?value:L"");}catch(...){/* Reject invalid renderer protocol without authority fallback. */}CoTaskMemFree(source);CoTaskMemFree(value);return S_OK;}).Get(),&token);
     RECT bounds{};GetClientRect(window,&bounds);controller->put_Bounds(bounds);return web->Navigate(document_origin);
    }).Get());
