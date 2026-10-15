@@ -63,6 +63,46 @@ test('actual unchanged runner: baseline success has no census; passive observati
   } finally { retire(f) }
 })
 
+test('actual Node reporter binds a filesystem alias to the same physical discovered test', async () => {
+  const f = fixture({ 'a.test.js': cases + 'test("owned alias",()=>{});' })
+  const alias = path.join(f.owned, 'same-physical-companion')
+  fs.symlinkSync(f.companion, alias, process.platform === 'win32' ? 'junction' : 'dir')
+  const file = path.join(alias, '.test-dist/tests/a.test.js')
+  assert.equal(fs.realpathSync.native(file), fs.realpathSync.native(path.join(f.companion, '.test-dist/tests/a.test.js')))
+  const raw = path.join(f.owned, 'alias-observed'), receipts = path.join(raw, 'receipts')
+  fs.mkdirSync(receipts, { recursive: true })
+  const env = { ...childEnvironment(process.env, f.owned, raw),
+    NODE_OPTIONS: `--test-reporter=${JSON.stringify(pathToFileURL(reporter).href)}`, CMSPARK_CENSUS_DIR: receipts }
+  try {
+    // This directly exercises Node's real alias argv, not the canonical runner's
+    // own realpath-normalized argv. Receipt bodies are actual reporter output.
+    const execution = await capture(process.execPath, ['--test', file], { cwd: f.companion, env, raw, name: 'tests' })
+    assert.equal(execution.code, 0)
+    const result = await reconcile({ companion: f.companion, receipts, rawFile: path.join(raw, 'tests.stdout'), discovery: discover(f.companion), execution })
+    assert.equal(result.outcome, 'PASS'); assert.equal(result.files.length, 1)
+    assert.equal(result.files[0].file, '.test-dist/tests/a.test.js')
+  } finally { fs.unlinkSync(alias); retire(f) }
+})
+
+test('actual Node reporter refuses an internal alias whose physical file is outside the test root', async () => {
+  const f = fixture({ 'a.test.js': cases + 'test("owned internal",()=>{});' })
+  const foreign = path.join(f.owned, 'foreign')
+  fs.mkdirSync(foreign); fs.writeFileSync(path.join(foreign, 'foreign.test.js'), cases + 'test("owned outside",()=>{});')
+  const alias = path.join(f.companion, 'foreign-alias')
+  fs.symlinkSync(foreign, alias, process.platform === 'win32' ? 'junction' : 'dir')
+  const raw = path.join(f.owned, 'outside-observed'), receipts = path.join(raw, 'receipts')
+  fs.mkdirSync(receipts, { recursive: true })
+  const env = { ...childEnvironment(process.env, f.owned, raw),
+    NODE_OPTIONS: `--test-reporter=${JSON.stringify(pathToFileURL(reporter).href)}`, CMSPARK_CENSUS_DIR: receipts }
+  try {
+    const execution = await capture(process.execPath, ['--test', path.join(alias, 'foreign.test.js')], { cwd: f.companion, env, raw, name: 'tests' })
+    assert.equal(execution.code, 0)
+    const begins = fs.readdirSync(receipts).map(file => JSON.parse(fs.readFileSync(path.join(receipts, file), 'utf8').split('\n')[0]))
+    assert.ok(begins.length > 0); assert.equal(begins.every(b => b.outside_argv), true)
+    await assert.rejects(reconcile({ companion: f.companion, receipts, rawFile: path.join(raw, 'tests.stdout'), discovery: discover(f.companion), execution }), { message: 'CENSUS_CANONICAL_PARENT_UNRESOLVED' })
+  } finally { fs.unlinkSync(alias); retire(f) }
+})
+
 for (const [name, body] of Object.entries({ assertion: cases + 'test("bad",()=>assert.fail("ACTUAL_ASSERTION"));', import: 'throw Error("ACTUAL_IMPORT_FAILURE");', terminated: 'process.kill(process.pid,"SIGKILL");', cancelled: cases + 'test("parent",t=>{t.test("pending",()=>new Promise(()=>{}));});' })) {
   test(`actual ${name} failure remains nonzero; settings is not-run, not skip`, async () => {
     const f = fixture({ 'a.test.js': body, 'settings-web.test.js': settings })
