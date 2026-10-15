@@ -191,27 +191,45 @@ export async function handleAppsMessage(
   switch (type) {
     // --- apps.list: sanitized entries + enabled flag + lazy preset seeding ---
     case "apps.list": {
-      const appsCfg = getConfig().apps ?? { enabled: true, entries: {} }
-      const { entries, added, presets } = await materializePresets(appsCfg.entries, {
-        exists: deps.exists,
-        realpath: deps.realpath,
-        signerProbe: deps.signerProbe,
-      })
-      if (added.length > 0) {
-        replaceAppsEntries(entries)
-        logger.info("apps.preset_detected", { tokens: added })
-      }
-      const after = getConfig().apps ?? { enabled: true, entries }
-      return {
-        type: "apps.list",
-        enabled: after.enabled,
-        entries: entriesList(after.entries),
-        presets,
-        // WP6a (Finding 2): the extension can't see process.platform — ship it
-        // so the panel renders an honest「仅 Windows 可用」state off win32
-        // instead of a dead add button.
-        platform: deps.platform ?? os.platform(),
-      }
+      // #655: detection may await a signer. A host change (including ABA or a
+      // concurrent first list) defers seeding; the read still returns current state.
+      let stale = false
+      const onChange = () => { stale = true }
+      configEvents.on(CONFIG_CHANGE_EVENT, onChange)
+      try {
+        const appsCfg = getConfig().apps ?? { enabled: true, entries: {} }
+        const initialTokens = new Set(Object.keys(appsCfg.entries))
+        const { entries, added, presets } = await materializePresets(appsCfg.entries, {
+          exists: deps.exists,
+          realpath: deps.realpath,
+          signerProbe: deps.signerProbe,
+        })
+        const current = getConfig().apps?.entries ?? {}
+        let merged = current
+        const inserted: string[] = []
+        if (!stale) for (const token of added) {
+          if (initialTokens.has(token) || Object.hasOwn(current, token)) continue
+          if (merged === current) merged = { ...current }
+          merged[token] = entries[token]
+          inserted.push(token)
+        }
+        // No await between the current-state fence and its synchronous commit.
+        if (inserted.length > 0) {
+          replaceAppsEntries(merged)
+          logger.info("apps.preset_detected", { tokens: inserted })
+        }
+        const after = getConfig().apps ?? { enabled: true, entries: {} }
+        return {
+          type: "apps.list",
+          enabled: after.enabled,
+          entries: entriesList(after.entries),
+          presets: presets.map(p => ({ ...p, persisted: Object.hasOwn(after.entries, p.token) })),
+          // WP6a (Finding 2): the extension can't see process.platform — ship it
+          // so the panel renders an honest「仅 Windows 可用」state off win32
+          // instead of a dead add button.
+          platform: deps.platform ?? os.platform(),
+        }
+      } finally { configEvents.off(CONFIG_CHANGE_EVENT, onChange) }
     }
 
     // --- apps.enumerate: merged running/startapps candidates (Windows: exe; macOS: .app bundles) ---
