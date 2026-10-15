@@ -5,6 +5,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { capture, childEnvironment, discover, reconcile } from '../windows-census.mjs'
 
@@ -167,4 +168,52 @@ test('actual withheld closed stage streams remain explicitly missing, sorted and
   assert.deepEqual(sealed.status.missing_raw, ['raw/install.stderr', 'raw/install.stdout'])
   assert.equal((await recover(f)).status.complete, false)
   assert.equal(fs.existsSync(path.join(f.owned, 'withheld-install.stdout')), true)
+})
+
+
+test('actual autocrlf Git checkout preserves the fixed public recipient and production sealing still rejects tampering', async () => {
+  const directory = fs.mkdtempSync(path.join(retained, 'recipient-checkout-'))
+  const seed = path.join(directory, 'seed'), checkout = path.join(directory, 'checkout')
+  const emptyConfig = path.join(directory, 'empty.gitconfig'), hooks = path.join(directory, 'hooks'), template = path.join(directory, 'template')
+  fs.mkdirSync(seed); fs.mkdirSync(hooks); fs.mkdirSync(template); fs.writeFileSync(emptyConfig, '', { flag: 'wx', mode: 0o600 })
+  const env = { ...childEnvironment(process.env, directory, directory), GIT_ATTR_NOSYSTEM: '1' }
+  const git = (cwd, args) => {
+    const r = spawnSync('git', ['-c', 'core.hooksPath=' + hooks, '-c', 'core.attributesFile=' + emptyConfig, ...args],
+      { cwd, env, encoding: 'utf8', windowsHide: true, timeout: 10_000 })
+    assert.equal(r.error, undefined); assert.equal(r.status, 0, r.stderr)
+    return r.stdout
+  }
+  const files = ['.gitattributes', 'scripts/windows-census-evidence.mjs', 'scripts/windows-census-recipient-650.pem']
+  for (const file of files) {
+    const target = path.join(seed, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.copyFileSync(path.join(root, file), target)
+  }
+  fs.writeFileSync(path.join(seed, 'unrelated.txt'), 'Unpinned owned fixture\n')
+  git(seed, ['init', '--quiet', '--template=' + template])
+  git(seed, ['-c', 'core.autocrlf=false', 'add', '--', ...files, 'unrelated.txt'])
+  git(seed, ['-c', 'user.name=Owned fixture', '-c', 'user.email=fixture@invalid', 'commit', '--quiet', '-m', 'owned public recipient checkout'])
+  git(directory, ['-c', 'core.autocrlf=true', 'clone', '--quiet', '--no-local', '--template=' + template, seed, checkout])
+  const checkedPem = path.join(checkout, files[2]), original = fs.readFileSync(path.join(root, files[2]))
+  // No fingerprint substitution or private key: exercise the fixed production
+  // module after a real Git checkout, then preserve the original refusal on tamper.
+  const production = await import(pathToFileURL(path.join(checkout, files[1])))
+  const f = await fixture(), sealed = await production.sealEvidence(f)
+  assert.equal(sealed.status.complete, true)
+  assert.equal(sealed.recipient_sha256, '3adfed76775c539aa40b2f8b0faee00592a5ad3f362687ff637296174cb0da78')
+  assert.deepEqual(fs.readFileSync(checkedPem), original)
+  assert.equal(hash(original), 'be77436ea653fe38e5741659ce5b5421f4aabf92f80b9db85818d6af2dbc2a23')
+  assert.equal(fs.readFileSync(checkedPem, 'utf8').includes('\r'), false)
+  assert.equal(fs.readFileSync(path.join(checkout, 'unrelated.txt'), 'utf8').includes('\r\n'), true)
+  assert.equal(fs.readFileSync(path.join(checkout, files[1]), 'utf8').replaceAll('\r\n', '\n'), realSource.replaceAll('\r\n', '\n'))
+  const e = JSON.parse(fs.readFileSync(path.join(f.bundleDir, 'envelope.json'), 'utf8'))
+  assert.equal(Buffer.from(e.body.wrapped_key, 'base64').length, 384)
+  assert.equal(fs.existsSync(path.join(f.owned, 'restored')), false)
+  fs.appendFileSync(checkedPem, '\n')
+  const tampered = await fixture()
+  await assert.rejects(production.sealEvidence(tampered), { message: 'CENSUS_EVIDENCE_RECIPIENT' })
+  assert.equal(fs.existsSync(tampered.bundleDir), false)
+  assert.equal(fs.existsSync(path.join(tampered.raw, 'tests.stdout')), true)
+  fs.writeFileSync(path.join(directory, 'proof.json'), JSON.stringify({
+    actual_git_checkout: true, autocrlf: true, public_pem_sha256: hash(original), production_module_fingerprint_rewritten: false,
+    production_public_only_seal: sealed, tampered_recipient_refused: true, private_key_read_or_written: false, recovery_invoked: false,
+  }, null, 2))
 })

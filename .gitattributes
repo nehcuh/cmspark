@@ -4,3 +4,5 @@
 /chrome-extension/src/sidepanel/voice/meeting-pcm-worklet-generated.ts text eol=lf
 /chrome-extension/src/sidepanel/voice/meeting-continuous-capture.ts text eol=lf
 /companion/src/summoner/meeting-continuous-generated.ts text eol=lf
+# The evidence recipient is fingerprinted from its exact committed PEM bytes.
+/scripts/windows-census-recipient-650.pem text eol=lf
