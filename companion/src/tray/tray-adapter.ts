@@ -22,6 +22,7 @@ export type TrayActionType =
   | "show-pairing"
   | "summoner"
   | "summoner-toggle"
+  | "desktop"
 
 export interface TrayMenuAction {
   type: TrayActionType

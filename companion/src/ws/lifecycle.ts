@@ -14,6 +14,10 @@ import { WebSocketServer, WebSocket } from "ws"
 import { bindProjectConfirmationProbe } from "../threads/project-activity"
 import { codingHandbackView } from "../acp/ui-progress"
 import { randomUUID } from "crypto"
+import { DesktopIdentityRegistry } from "../desktop/identity"
+import { createDesktopChannel, attachDesktopUpgrade } from "../desktop/channel"
+import { DesktopHostLauncher } from "../desktop/host-launcher"
+import { requestDesktopOpen } from "../desktop/open"
 import http from "http"
 import {
   getConfig,
@@ -794,12 +798,22 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     }
   })
 
+  const desktopRegistry = new DesktopIdentityRegistry()
+  let desktopLauncher: DesktopHostLauncher
+  const desktopChannel = createDesktopChannel({
+    registry: desktopRegistry,
+    services: { threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), mcp: mcpManager },
+    maxPayload: MAX_WS_MESSAGE_SIZE,
+    onAuthenticated: host => desktopLauncher.authenticated(host),
+    onDisconnect: ws => requireRt().securityConfirmations.rejectAll("disconnect", ws),
+  })
+  desktopLauncher = new DesktopHostLauncher(desktopRegistry, `ws://127.0.0.1:${port}/desktop`, (host, view) => desktopChannel.window(host, view))
   wss = attachWssListenThenStartMcp({
     httpServer,
     port,
-    createWss: (server) =>
+    createWss: () =>
       new WebSocketServer({
-        server,
+        noServer: true,
         // Reject frames above MAX_WS_MESSAGE_SIZE before full buffering (handler also checks).
         maxPayload: MAX_WS_MESSAGE_SIZE,
         // P0-2 (audit C1): reject non-extension origins to close the web-page attack vector —
@@ -825,6 +839,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           }
         },
       }),
+    onWss: legacy => attachDesktopUpgrade(httpServer, legacy, desktopChannel.wss, isAllowedWsOrigin),
     startMcp: () => mcpManager.start(config.mcp),
   })
 
@@ -1153,6 +1168,11 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         if (!authState?.authenticated) {
           logger.warn("ws.unauthenticated_message", { type: msg.type })
           try { ws.terminate() } catch { /* closing */ }
+          return
+        }
+        if (msg.type === "desktop.open") {
+          const result = await requestDesktopOpen(msg, authState, desktopLauncher)
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(result))
           return
         }
         // S21: per-connection ACL keyed off handshake surface. Do not origin-cleave
@@ -1615,6 +1635,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   const shutdown = async (signal: string) => {
     // Stop enterprise admission and fence late work before any awaited teardown.
     try { closeEnterpriseHttp() } catch { logger.warn("enterprise.shutdown_failed") }
+    desktopLauncher.close()
+    desktopRegistry.revokeAll()
+    for (const ws of desktopChannel.wss.clients) ws.terminate()
+    desktopChannel.wss.close()
     console.log(`\n[cmspark-agent] Shutting down (${signal})...`)
     logger.info("server.shutdown", { signal })
     // Stop ACP admission and await owned subprocess teardown before exiting.

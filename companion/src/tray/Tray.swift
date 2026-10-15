@@ -140,6 +140,7 @@ enum MenuTag: Int {
   case pairing = 203
   case summoner = 204
   case summonerHotkey = 205
+  case desktop = 206
   case autostart = 300
   case quit = 999
   // Dynamic ranges
@@ -252,6 +253,11 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   summonerItem.tag = MenuTag.summoner.rawValue
   menu.addItem(summonerItem)
 
+  let desktopItem = NSMenuItem(title: "只读工作台…", action: action, keyEquivalent: "")
+  desktopItem.target = target
+  desktopItem.tag = MenuTag.desktop.rawValue
+  menu.addItem(desktopItem)
+
   let summonerHotkeyItem = NSMenuItem(title: "召唤器快捷键…", action: action, keyEquivalent: "")
   summonerHotkeyItem.target = target
   summonerHotkeyItem.tag = MenuTag.summonerHotkey.rawValue
@@ -360,6 +366,8 @@ class TrayDelegate: NSObject {
     } else if tag == MenuTag.summoner.rawValue {
       // Same Capture card as Side Panel 「弹出对话框」 (Node openSummonerWebShell).
       jsonLine(["type": "click", "action": "summoner"])
+    } else if tag == MenuTag.desktop.rawValue {
+      jsonLine(["type": "click", "action": "desktop"])
     } else if tag == MenuTag.summonerHotkey.rawValue {
       summonerController.open(threadId: "")
       summonerController.showHotkeyPicker()

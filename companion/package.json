@@ -24,8 +24,9 @@
     "build:host": "bash src/host-use/darwin/build-host.sh",
     "stage:win-scripts": "node -e \"const fs=require('fs'),path=require('path');const src=path.join('src','host-use','win','scripts');const dst=path.join('dist','host-scripts-win');fs.mkdirSync(dst,{recursive:true});for(const f of fs.readdirSync(src)){if(f.endsWith('.ps1'))fs.copyFileSync(path.join(src,f),path.join(dst,f))}console.log('staged win scripts -> '+dst)\"",
     "postinstall": "node ../scripts/verify-systray2.js && node ../scripts/build-swift-tray.js",
+    "build:desktop": "node scripts/build-desktop-native.mjs",
     "bundle:exe": "node scripts/run-esbuild-bundle.mjs",
-    "build:exe": "npm run build && npm run stage:win-scripts && npm run bundle:exe"
+    "build:exe": "npm run build && npm run stage:win-scripts && npm run build:desktop && npm run bundle:exe"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.3.0",
