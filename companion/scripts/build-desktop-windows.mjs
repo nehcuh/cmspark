@@ -114,7 +114,7 @@ function toolchain() {
   const pf = process.env["ProgramFiles(x86)"]
   if (!system || !pf) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_MISSING")
   const vswhere = path.join(pf, "Microsoft Visual Studio", "Installer", "vswhere.exe")
-  const installation = checked(vswhere, ["-latest", "-version", "[17.0,18.0)", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"]).trim()
+  const installation = checked(vswhere, ["-latest", "-version", "[17.0,19.0)", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"]).trim()
   if (!path.isAbsolute(installation) || /["%!\r\n]/.test(installation)) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_PATH")
   const vcvars = path.join(installation, "VC", "Auxiliary", "Build", "vcvarsall.bat")
   if (!fs.existsSync(vcvars)) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_MISSING")
