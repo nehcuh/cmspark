@@ -78,10 +78,11 @@ function Get-AppsJson644 {
 }
 function Get-AppsWireBytes644 {
   param([string]$Json)
-  # Use the actual Console writer encoding/newline, not UTF-16 character count.
-  # Native PS5.1 fixture pins this calculation to emitted stdout (incl preamble).
+  # Count actual Console stdout bytes, not UTF-16 chars or an encoding's optional
+  # preamble: .NET Framework Console.Out suppresses that preamble. The native
+  # PS5.1 fixture verifies the raw prefix, encoding and emitted newline exactly.
   $writer=[Console]::Out
-  return $writer.Encoding.GetByteCount($Json) + $writer.Encoding.GetPreamble().Length + $writer.Encoding.GetByteCount($writer.NewLine)
+  return $writer.Encoding.GetByteCount($Json) + $writer.Encoding.GetByteCount($writer.NewLine)
 }
 function Get-RegistryExe644 {
   param([string]$Value)
