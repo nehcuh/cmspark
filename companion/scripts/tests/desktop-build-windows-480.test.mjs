@@ -126,3 +126,14 @@ for (const [name, newline] of [['LF', '\n'], ['CRLF', '\r\n']]) {
     for (const major of [16, 19]) assert.throws(() => controlledDiscovery(major, {discover}), /DESKTOP_WINDOWS_TOOLCHAIN_PATH/)
   })
 }
+
+test('native phase diagnostics are enabled only by explicit testFixtures compile plan', () => {
+  const inputs={cl:'C:\\VS\\cl.exe',root:'C:\\repo',output:'C:\\out',headers:'C:\\headers',generated:'C:\\generated',sdk:'C:\\SDK',nodeLib:'C:\\node.lib'}
+  const ordinary=desktopWindowsCompilePlan(inputs),disabled=desktopWindowsCompilePlan({...inputs,testFixtures:false}),diagnostic=desktopWindowsCompilePlan({...inputs,testFixtures:true})
+  assert.deepEqual(disabled,ordinary)
+  assert.deepEqual(diagnostic[0],ordinary[0],'no launcher/handle/bootstrap change')
+  const flag='/DCMSPARK_DESKTOP_TEST_PHASES'
+  assert.equal(ordinary[1][1].includes(flag),false)
+  assert.equal(diagnostic[1][1].filter(value=>value===flag).length,1)
+  assert.deepEqual(diagnostic[1][1].filter(value=>value!==flag),ordinary[1][1])
+})
