@@ -7,6 +7,7 @@
 
 import { randomUUID } from "crypto"
 import type { PreviewUnavailableReason } from "../computer/preview-availability"
+import { ComputerError } from "../computer/types"
 import os from "os"
 import { WebSocket } from "ws"
 import { getConfig } from "../config"
@@ -563,8 +564,8 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // JSON-escaped against layout spoofing, every injectable action
       // enumerated verbatim; unit-tested in computer-preview.test.ts.
       const { buildComputerL2Preview } = await import("../computer/preview")
-      const failC = (error: string) => {
-        const result = { success: false, error }
+      const failC = (error: string, errorCode?: "APP_COORDINATE_DENIED" | "APP_COORDINATE_STRUCTURAL") => {
+        const result = { success: false, error, ...(errorCode ? { error_code: errorCode } : {}) }
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
@@ -864,7 +865,13 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           }
         }
       } catch (err: any) {
-        return failC(err?.message || String(err))
+        // Preserve these existing hard-denial codes before the L2 dialog too.
+        // App metadata must not turn a typed policy denial into text recovery.
+        // Other errors retain their existing message-only fallback.
+        const errorCode = err instanceof ComputerError &&
+          (err.code === "APP_COORDINATE_DENIED" || err.code === "APP_COORDINATE_STRUCTURAL")
+          ? err.code : undefined
+        return failC(err?.message || String(err), errorCode)
       }
     }
     const securityConfig = getConfig().security
