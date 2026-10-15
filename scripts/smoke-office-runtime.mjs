@@ -61,7 +61,12 @@ try {
 try {
   assert.equal(kit.ENGINE_VERSION, '0.1.5');
   observer.phase('create-start');
-  const converter = await kit.createConverter({timeoutMs:30000,maxInputBytes:10485760,maxOutputBytes:33554432,fontMetadataCacheDirectory:false});
+  // Native TXT relocation tests transport, not the host's full font catalog.
+  // WASM still needs its declared usable fonts; production defaults are separate.
+  const fonts = path.join(directory,'smoke-fonts');
+  if (process.platform !== 'linux') fs.mkdirSync(fonts,{mode:0o700});
+  const converter = await kit.createConverter({timeoutMs:30000,maxInputBytes:10485760,maxOutputBytes:33554432,fontMetadataCacheDirectory:false,
+    ...(process.platform === 'linux' ? {} : {fontDirectories:[fonts]})});
   observer.phase('create-ready');
   try {
     assert.equal(converter.backend, process.platform === 'linux' ? 'wasm' : 'native');

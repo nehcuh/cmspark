@@ -12,6 +12,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { officeTarget, verifyOfficeEngine, stageOfficeRuntime } from '../stage-office-runtime.mjs'
 import { removeOfficeSmokeRuntime } from '../office-smoke-cleanup.mjs'
+import './office-smoke-fonts-666.test.mjs'
 const { createOfficeSmokeObserver } = createRequire(import.meta.url)('../office-smoke-observer.cjs')
 
 test('Office target selects published Linux WASM and exact native architecture', () => {
@@ -317,7 +318,9 @@ test('The generated relocated probe preserves success, conversion failure and di
       const {Worker}=require('node:worker_threads'); const {spawn}=require('node:child_process');
       exports.ENGINE_VERSION='0.1.5';
       exports.createConverter=async options=>{
-        assert.deepEqual(options,{timeoutMs:30000,maxInputBytes:10485760,maxOutputBytes:33554432,fontMetadataCacheDirectory:false});
+        const expected={timeoutMs:30000,maxInputBytes:10485760,maxOutputBytes:33554432,fontMetadataCacheDirectory:false};
+        if(process.platform!=='linux')expected.fontDirectories=[path.join(path.dirname(process.execPath),'smoke-fonts')];
+        assert.deepEqual(options,expected);
         return {backend:process.platform==='linux'?'wasm':'native',
           async convert(request){
             const worker=new Worker('require("node:worker_threads").parentPort.postMessage({ok:true,snapshot:{secret:"${secret}"}})',{eval:true,execArgv:[],env:{}});
@@ -352,6 +355,7 @@ test('The generated relocated probe preserves success, conversion failure and di
       assert.equal(JSON.stringify(records).includes(secret), false)
       assert.equal(records.length <= 65, true)
       fs.rmSync(path.join(owned,'disposed'))
+      if (process.platform !== 'linux') fs.rmdirSync(path.join(owned,'smoke-fonts'))
     }
   } finally { removeOfficeSmokeRuntime(owned) }
 })
