@@ -1,3 +1,4 @@
+import { isSnapshotLocatorRefusal, snapshotHistory } from "../tool/snapshot-locator"
 // LLM adapter — chat + tool loop via LlmProvider (OpenAI / Anthropic wire)
 
 import os from "os"
@@ -806,7 +807,7 @@ CRITICAL RULES:
 4. Use navigate(tabId, url) to change a tab's URL — check list_tabs for existing tabs first.
 5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
 6. Wait for pages to load before extracting content. After create_tab/navigate, wait_for({tabId}) or wait_for({tabId, network_idle:true}) waits for load (tabId-only is treated as network_idle). Use wait_for({tabId, selector}) when waiting for a specific element.
-7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate. For clicking visible labels use click({text}) or click({selector}) — text is exclusive when provided. If a tool returns CDP_ATTACH_FAILED, call list_tabs / ask the user to focus the tab; do NOT retry via evaluate (same debugger). host_computer is NOT a substitute for a missed debugger — only after TAB_ATTACH_FROZEN / DOM-script volume cap, or an explicit user 模拟点击, MAY you call host_computer on a browser token (Rule 12; ALWAYS pops a confirm).
+7. Local Chat may first use get_interactive_snapshot({tabId}) for a bounded visible-control table, then click/type with its paired snapshot_id/element_id only when complete and not ambiguous. IDs expire and are single-use; numbered type replaces the whole value. A refusal does not execute or automatically fall back: obtain a fresh snapshot or make an independent legacy text/selector call, under the same gates. Never use IDs as grants or durable locators. For reading page content: use get_page_text (preferred, cross-platform) or evaluate. For clicking visible labels use click({text}) or click({selector}) — text is exclusive when provided. If a tool returns CDP_ATTACH_FAILED, call list_tabs / ask the user to focus the tab; do NOT retry via evaluate (same debugger). host_computer is NOT a substitute for a missed debugger — only after TAB_ATTACH_FROZEN / DOM-script volume cap, or an explicit user 模拟点击, MAY you call host_computer on a browser token (Rule 12; ALWAYS pops a confirm).
 8. ${
   // #529: osascript_eval was removed from the LLM-visible tool set on every
   // platform (deterministic dead path on modern Chrome — AppleScript JS is off
@@ -2028,13 +2029,14 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           const durationMs = Date.now() - startTime
 
           // Record to history. C-P0-4: record is async (awaits init).
+          const snapshotRecord = snapshotHistory(toolName, params, toolResult)
           await historyStore.record({
             thread_id: threadId,
             tool_name: toolName,
-            params: JSON.stringify(params),
-            result_summary: toolResult.success
+            params: snapshotRecord?.params ?? JSON.stringify(params),
+            result_summary: snapshotRecord?.result_summary ?? (toolResult.success
               ? JSON.stringify(toolResult.data || {}).substring(0, 500)
-              : "",
+              : ""),
             error: toolResult.error || null,
             success: toolResult.success ? 1 : 0,
             duration_ms: durationMs,
@@ -2240,6 +2242,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                 : /^([A-Z][A-Z0-9_]+):/.exec(toolResult.error || "")?.[1]
             if (
               isCdpInteractiveTool(toolName) &&
+              !isSnapshotLocatorRefusal(toolName, execParams, failCode) &&
               failCode !== "SITE_OP_BANNED" &&
               failCode !== "TAB_ATTACH_FROZEN" &&
               failCode !== "SITE_OP_ESCALATE" &&

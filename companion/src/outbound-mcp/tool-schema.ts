@@ -1,7 +1,7 @@
 import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js"
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv-provider.js"
 import { getToolDefinitions } from "../bridge/tool-definitions"
-import { TOOL_ARG_SCHEMAS, tryParseToolArgs } from "../bridge/tool-schemas"
+import { TOOL_ARG_SCHEMAS, LEGACY_CLICK_ARG_SCHEMA, LEGACY_TYPE_ARG_SCHEMA, tryParseToolArgs } from "../bridge/tool-schemas"
 import { outboundContextRequestSchema } from "./context-projection"
 import { outboundToInternalName } from "./profile"
 import { outboundNeedsTabLease } from "./dual-entry"
@@ -19,7 +19,8 @@ export function outboundToolArgumentSchema(canonical: string): Schema {
   if (cached) return structuredClone(cached)
   const internal = outboundToInternalName(canonical)
   const definition = getToolDefinitions().find(tool => tool.function.name === internal)
-  const zod = internal === "site_context" ? outboundContextRequestSchema : TOOL_ARG_SCHEMAS[internal ?? ""]
+  const zod = internal === "site_context" ? outboundContextRequestSchema
+    : internal === "click" ? LEGACY_CLICK_ARG_SCHEMA : internal === "type" ? LEGACY_TYPE_ARG_SCHEMA : TOOL_ARG_SCHEMAS[internal ?? ""]
   let schema: Schema
   if (canonical === "cmspark__accept_data_disclosure") {
     schema = { type: "object", properties: { acknowledge: { type: "boolean" } }, required: ["acknowledge"] }

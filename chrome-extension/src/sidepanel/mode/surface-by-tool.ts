@@ -19,6 +19,7 @@ export const SURFACE_BY_TOOL: Readonly<Record<string, SurfaceLevel>> = {
   close_tab: "L1",
   navigate: "L1",
   screenshot: "L1",
+  get_interactive_snapshot: "L1",
   get_page_text: "L1",
   get_page_html: "L1",
   get_element_info: "L1",

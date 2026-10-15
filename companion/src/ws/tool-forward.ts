@@ -287,6 +287,8 @@ export type ForwardToolToExtensionCtx = {
   finalParams: Record<string, any>
   ws: WebSocket
   actingThreadId?: string
+  /** Server-derived metadata, never recovered from model parameters. */
+  locatorScope?: { scope_id: string; thread_id: string }
   startedAt: number
   /** True when pregate incremented mutationHolds for this call. */
   mutationHold?: boolean
@@ -309,6 +311,7 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
     finalParams,
     ws,
     actingThreadId,
+    locatorScope,
     startedAt,
     mutationHold,
     logToolFinish,
@@ -451,6 +454,7 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
           tool_call_id: toolCallId,
           tool_name: toolName,
           params: finalParams,
+          ...(locatorScope ? { locator_scope: { scope_id: locatorScope.scope_id, thread_id: locatorScope.thread_id } } : {}),
         }))
       } catch (err: any) {
         clearTimeout(timer)

@@ -1,5 +1,7 @@
 // Browser Bridge — executes tool calls via Chrome APIs and CDP
 
+import { InteractiveSnapshotController } from "./interactive-snapshot-controller"
+import { SnapshotRefusal, hasSnapshotLocator, snapshotOwner, type SnapshotOwner, type SnapshotSlot } from "./interactive-snapshot-cache"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { fetchImageAsBase64, promoteFetchSrc, sanitizeImageDim } from "./image-extract-utils"
 import { selectorJsLiteral } from "./selector-js-literal"
@@ -30,6 +32,7 @@ import {
 } from "./find-element-by-text"
 import {
   codedToolError,
+  classifyAttachFailure,
   planLocator,
   classifyInteractiveFailure,
   isInvalidSelectorMessage,
@@ -104,6 +107,8 @@ function pageExceptionError(context: string, pageText?: string): Error & { pageT
 }
 
 export class BrowserBridge {
+  private snapshots = new InteractiveSnapshotController((tabId, method, params) => chrome.debugger.sendCommand({ tabId }, method, params), tabId => chrome.tabs.get(tabId))
+  private snapshotEventsReady = false
   private attachedTabs: Set<number> = new Set()
   /** Implicit image tools resolve active tab after TabQueue; share each tab's attach lifetime. */
   private attachInflight = new Map<number, Promise<void>>()
@@ -120,10 +125,24 @@ export class BrowserBridge {
     chrome.debugger.onDetach.addListener((source) => {
       if (source.tabId) {
         this.attachedTabs.delete(source.tabId)
+        this.snapshots.cache.invalidateTab(source.tabId)
         console.log(`[BrowserBridge] Tab ${source.tabId} detached externally from debugger.`)
       }
     })
+    if (chrome.debugger.onEvent?.addListener && chrome.tabs.onRemoved?.addListener) {
+      this.snapshotEventsReady = true
+      chrome.debugger.onEvent.addListener((source, method) => {
+        if (typeof source.tabId !== "number") return
+        if (method === "Runtime.executionContextsCleared") this.snapshots.cache.destroyedContext(source.tabId)
+        else if (["Page.frameNavigated", "Page.navigatedWithinDocument", "DOM.documentUpdated", "Runtime.executionContextDestroyed"].includes(method)) this.snapshots.cache.invalidateTab(source.tabId, true)
+      })
+      chrome.tabs.onRemoved.addListener(tabId => this.snapshots.cache.invalidateTab(tabId))
+    }
   }
+
+  clearInteractiveSnapshots() { this.snapshots.cache.clear() }
+  invalidateInteractiveSnapshots(tabId: number) { this.snapshots.cache.invalidateTab(tabId) }
+  invalidateInteractiveSnapshotThread(threadId: string) { this.snapshots.cache.invalidateThread(threadId) }
 
   getConfig() {
     return {
@@ -131,21 +150,55 @@ export class BrowserBridge {
     }
   }
 
-  async execute(toolName: string, params: Record<string, any>): Promise<ToolResult> {
+  async execute(toolName: string, params: Record<string, any>, locatorScope?: unknown): Promise<ToolResult> {
+    const owner = snapshotOwner(locatorScope)
     const tabId = coerceTabId(params?.tabId)
+    let observation: SnapshotSlot | undefined
+    if (toolName === "get_interactive_snapshot") {
+      try {
+        if (!owner || params?.__enterprise_guard !== undefined) throw new SnapshotRefusal("SNAPSHOT_SCOPE_REQUIRED")
+        if (!Number.isSafeInteger(tabId) || !tabId || tabId <= 0) throw new SnapshotRefusal("SNAPSHOT_STALE")
+        observation = await this.snapshots.cache.begin(owner, tabId)
+      } catch (e) {
+        const code = e instanceof SnapshotRefusal ? e.code : "SNAPSHOT_FAILED"
+        return codedToolError(code, "Numbered observation was refused.", { suggested_action: code === "SNAPSHOT_CAPACITY" ? "wait_or_independently_use_legacy_locator_no_automatic_reset" : "refresh_snapshot_or_use_legacy_locator" })
+      }
+    }
     // D13 / BD-D13: production busy-before-TabQueue lives in runWithDownloadBusyBeforeQueue
     // (unit-tested). Concurrent same-tab browser_download rejects DOWNLOAD_BUSY, not queue.
-    return runWithDownloadBusyBeforeQueue({
+    try { return await runWithDownloadBusyBeforeQueue({
       toolName,
       params,
       tabId,
       downloadBusyTabs: this.downloadBusyTabs,
       tabQueueRun: (id, fn) => this.tabQueue.run(id, fn),
-      executeInner: (name, p) => this.executeInner(name, p),
-    })
+      executeInner: (name, p) => this.executeInner(name, p, owner, observation),
+    }) } finally { if (observation?.state === "capturing") await this.snapshots.cache.finish(observation) }
   }
 
-  private async executeInner(toolName: string, params: Record<string, any>): Promise<ToolResult> {
+  private async executeInner(toolName: string, params: Record<string, any>, owner?: SnapshotOwner, observation?: SnapshotSlot): Promise<ToolResult> {
+    const numbered = (toolName === "click" || toolName === "type") && hasSnapshotLocator(params)
+    if (toolName === "get_interactive_snapshot" || numbered) {
+      try {
+        if (!owner || params.__enterprise_guard !== undefined) throw new SnapshotRefusal("SNAPSHOT_SCOPE_REQUIRED")
+        if (!Number.isSafeInteger(params.tabId) || params.tabId <= 0) throw new SnapshotRefusal("SNAPSHOT_STALE")
+        if (numbered) return await this.snapshots.act(owner, params.tabId, toolName as "click" | "type", params)
+        if (!this.snapshotEventsReady || Object.keys(params).some(k => !["tabId", "__thread_id"].includes(k))) throw new SnapshotRefusal("SNAPSHOT_FAILED")
+        if (!observation) throw new SnapshotRefusal("SNAPSHOT_FAILED")
+        this.snapshots.cache.check(observation)
+        const target = await chrome.tabs.get(params.tabId)
+        this.snapshots.cache.check(observation)
+        if (!target.url || !/^https?:\/\//.test(target.url)) throw new SnapshotRefusal("SNAPSHOT_UNSUPPORTED_DOCUMENT")
+        await this.ensureAttached(params.tabId)
+        this.snapshots.cache.check(observation)
+        return await this.snapshots.collect(owner, params.tabId, observation)
+      } catch (e) {
+        if (e instanceof SnapshotRefusal) return codedToolError(e.code, "Numbered control request was refused.", { suggested_action: e.code === "SNAPSHOT_CAPACITY" ? "wait_or_independently_use_legacy_locator_no_automatic_reset" : "refresh_snapshot_or_use_legacy_locator" })
+        const channel = classifyAttachFailure(await this.getTabUrl(params.tabId))
+        return codedToolError(channel.error_code, "Browser control channel is unavailable.", { suggested_action: "list_tabs" })
+      }
+    }
+    if (typeof params.tabId === "number" && ["navigate", "set_tab_url", "close_tab", "click", "dblclick", "type", "fill_form", "scroll", "scroll_to", "press_key", "hover", "select_option", "drag_and_drop", "evaluate", "upload_file", "browser_download", "download"].includes(toolName)) this.snapshots.cache.invalidateTab(params.tabId)
     if (params.__enterprise_guard !== undefined) return executeEnterpriseBrowser(toolName, params, p => this.screenshot(p))
     try {
       switch (toolName) {

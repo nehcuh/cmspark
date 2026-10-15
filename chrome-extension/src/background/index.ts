@@ -291,7 +291,7 @@ function init() {
     url: "ws://127.0.0.1:23401",
     onMessage: handleCompanionMessage,
     onStateChange: handleStateChange,
-    onConnectionLost: () => terminalRelay?.handleConnectionLost(),
+    onConnectionLost: () => { browserBridge?.clearInteractiveSnapshots(); terminalRelay?.handleConnectionLost() },
   })
 
   wsClient.connect()
@@ -520,6 +520,8 @@ async function handleCompanionMessage(msg: any) {
     return
   }
 
+  if ((msg.type === "chat.aborted" || msg.type === "thread.deleted") && typeof msg.thread_id === "string") browserBridge?.invalidateInteractiveSnapshotThread(msg.thread_id)
+
   if (msg.type === "tool.execute") {
     const toolMeta = {
       tool_call_id: msg.tool_call_id,
@@ -527,7 +529,7 @@ async function handleCompanionMessage(msg: any) {
     }
     logToCompanion("info", "extension.tool.start", toolMeta)
     try {
-      const result = await browserBridge.execute(msg.tool_name, msg.params)
+      const result = await browserBridge.execute(msg.tool_name, msg.params, msg.locator_scope)
       logToCompanion(result?.success === true ? "info" : "warn", "extension.tool.finish", {
         ...toolMeta,
         success: result?.success === true,
@@ -1921,6 +1923,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, _tab) => {
   // onUpdated also fires for title/favicon/status; only a URL change is trust-relevant.
   if (typeof changeInfo.url !== "string" || !changeInfo.url) return
+  browserBridge?.invalidateInteractiveSnapshots(tabId)
   try {
     if (wsClient?.getState() === "connected") {
       wsClient.send({ type: "tab.navigated", tabId, url: changeInfo.url })

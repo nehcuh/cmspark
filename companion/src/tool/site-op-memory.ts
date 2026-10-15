@@ -23,6 +23,7 @@
  * (this ticket does not write files; persist stays #358).
  */
 
+import { isSnapshotRequest, isSnapshotLocatorRefusal } from "./snapshot-locator"
 import { platform } from "node:os"
 import { originKeyFromUrl } from "./dom-script-budget.js"
 import { isDurableSiteOpFailureCode, parsePersistedSiteOpLine } from "./site-op-provenance"
@@ -82,6 +83,7 @@ export const NON_AGGREGATING_SITE_OP_CODES: ReadonlySet<string> = new Set([
 ])
 
 const CDP_INTERACTIVE = new Set([
+  "get_interactive_snapshot",
   "click",
   "dblclick",
   "type",
@@ -378,6 +380,7 @@ export function peekSiteOpBan(
       return { banned: true, error_code: "SITE_OP_ESCALATE", locator: "origin" }
     }
   }
+  if (isSnapshotRequest(toolName, params)) return { banned: false }
   const locator = locatorKeyForTool(toolName, params)
   const restored = s.restoredLocators[locatorMapKey(origin, "*", locator)]
   if (restored && restored.expiresAt > Date.now()) {
@@ -425,7 +428,7 @@ export function recordSiteOpFailure(
     originEscalateDue: false,
     originPersistDue: false,
   }
-  if (!isCdpInteractiveTool(toolName)) return empty
+  if (!isCdpInteractiveTool(toolName) || isSnapshotLocatorRefusal(toolName, params, errorCode)) return empty
   // #528: parameter/authorization refusals are model-correctable, not CDP-health
   // signals — never aggregate them toward locator bans or the origin streak.
   // (adapter.ts also gates the call site; this keeps the invariant testable here.)
@@ -448,12 +451,11 @@ export function recordSiteOpFailure(
       originPersistDue: false,
     }
   }
+  const ephemeral = isSnapshotRequest(toolName, params)
   const k = locatorMapKey(origin, toolName, locator)
-  const prev = s.locators[k] || { fails: 0, lastCode: code }
-  prev.fails += 1
-  prev.lastCode = code
-  s.locators[k] = prev
-  if (locator !== "none" && locator !== "attach") {
+  const prev = ephemeral ? { fails: 0, lastCode: code } : (s.locators[k] || { fails: 0, lastCode: code })
+  if (!ephemeral) { prev.fails += 1; prev.lastCode = code; s.locators[k] = prev }
+  if (!ephemeral && locator !== "none" && locator !== "attach") {
     const anyK = locatorMapKey(origin, "*", locator)
     const any = s.locators[anyK] || { fails: 0, lastCode: code }
     any.fails += 1

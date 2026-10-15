@@ -1,7 +1,9 @@
 // Companion server — WebSocket server, message routing, tool execution bridge
 
 import { WebSocket } from "ws"
-import { randomUUID } from "crypto"
+import { randomUUID, createHash } from "crypto"
+import { isSnapshotRequest } from "./tool/snapshot-locator"
+import { resolveEffectiveExecutionPolicy, isPlanReadonlyAllowed, planReadonlyBlockedResult } from "./tool/plan-readonly"
 import { URL } from "url"
 import { contextReadParams } from "./site-context/admission"
 import { checkEnterprisePermit, claimEnterpriseDispatch, type EnterprisePermit } from "./outbound-mcp/enterprise-permit"
@@ -472,6 +474,9 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   ): Promise<{ success: boolean; data?: any; error?: string }> => {
     if (signal?.aborted) return { success: false, error: "Tool call cancelled before dispatch" }
     let finalParams = contextReadParams(toolName, params || {}, invokeOpts?.siteContextTabId, invokeOpts?.siteContextRequireActive)
+    delete finalParams.locator_scope
+    delete finalParams.__locator_scope
+    delete finalParams.__snapshot_scope
     delete finalParams.__enterprise_guard
     const enterprisePermit = invokeOpts?.enterprisePermit
     if (enterprisePermit && !checkEnterprisePermit(enterprisePermit, toolName, finalParams, ws)) return { success: false, error: "PERMIT_INVALID" }
@@ -872,6 +877,13 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     // ws/tool-forward.ts (C10-G). createToolExecutor stays pure orchestration.
     // L1 actuator is the Chrome extension peer, never tray/summoner (tool.execute).
     if (signal?.aborted) return { success: false, error: "Tool call cancelled before extension dispatch" }
+    let locatorScope: { scope_id: string; thread_id: string } | undefined
+    const needsSnapshotScope = isSnapshotRequest(toolName, finalParams) || ((toolName === "click" || toolName === "type") && (Object.hasOwn(finalParams, "snapshot_id") || Object.hasOwn(finalParams, "element_id")))
+    if (needsSnapshotScope) {
+      if (!evidenceScope || enterprisePermit || invokeOpts?.trustedOutbound || !threadManager.get(evidenceScope.threadId) || getWsAuthState(ws)?.authenticated !== true) return { success: false, error: "SNAPSHOT_SCOPE_REQUIRED: Local Chat execution scope is required.", data: { error_code: "SNAPSHOT_SCOPE_REQUIRED" } }
+      if (resolveEffectiveExecutionPolicy(evidenceScope.threadId, id => threadManager.get(id)) === "plan_readonly" && !isPlanReadonlyAllowed(toolName)) return planReadonlyBlockedResult(toolName, evidenceScope.threadId)
+      locatorScope = { scope_id: createHash("sha256").update(sessionId + "\0" + evidenceScope.threadId).digest("hex"), thread_id: evidenceScope.threadId }
+    }
     if (enterprisePermit) claimEnterpriseDispatch(enterprisePermit, toolName, finalParams, ws)
     const result = await forwardL1OrUnavailable({
       originatingWs: ws,
@@ -890,6 +902,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           actingThreadId,
           startedAt,
           mutationHold: !!mutationHold,
+          locatorScope,
           logToolFinish,
         }),
     })

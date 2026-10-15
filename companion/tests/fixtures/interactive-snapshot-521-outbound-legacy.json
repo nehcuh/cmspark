@@ -1,0 +1,77 @@
+{
+  "cmspark__click": {
+    "type": "object",
+    "properties": {
+      "tabId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "description": "标签页 ID",
+        "minimum": 1
+      },
+      "selector": {
+        "type": "string",
+        "minLength": 1,
+        "description": "CSS 选择器（与 text 二选一；有 text 时忽略）"
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "description": "可见文字（trim 后非空则独占）"
+      },
+      "exact": {
+        "type": "boolean",
+        "description": "text 精确匹配（默认 false）"
+      }
+    },
+    "required": [
+      "tabId"
+    ],
+    "additionalProperties": false,
+    "anyOf": [
+      {
+        "required": [
+          "selector"
+        ]
+      },
+      {
+        "required": [
+          "text"
+        ]
+      }
+    ]
+  },
+  "cmspark__type": {
+    "type": "object",
+    "properties": {
+      "tabId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "description": "标签页 ID",
+        "minimum": 1
+      },
+      "value": {
+        "type": "string",
+        "description": "要输入的文本"
+      },
+      "selector": {
+        "type": "string",
+        "minLength": 1,
+        "description": "CSS 选择器（可选；与 text 二选一，有 text 时忽略）"
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "description": "可见文字定位（可选）"
+      },
+      "exact": {
+        "type": "boolean",
+        "description": "text 精确匹配（默认 false）"
+      }
+    },
+    "required": [
+      "tabId",
+      "value"
+    ],
+    "additionalProperties": false
+  }
+}
