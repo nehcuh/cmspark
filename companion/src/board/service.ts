@@ -633,8 +633,8 @@ export async function applyHandbackPayload(
       }
       for (const intent of added_intents) {
         const deps = dependencyReadiness(intent.id, next.intents)
-        if (deps.reason === "missing" || deps.reason === "cycle") return { ok: false, error: `intent dependency ${deps.reason}`, error_code: "BOARD_INTENT_INVALID", recoverable: true }
-        if (intent.status === "done" && !deps.ready) return { ok: false, error: "intent cannot finish before its dependencies", error_code: "BOARD_INTENT_INVALID", recoverable: true }
+        if (deps.reason === "missing" || deps.reason === "cycle") return { ok: false, error: `intent dependency ${deps.reason}`, error_code: "INTENT_DEPENDENCY_BLOCKED", recoverable: true }
+        if (intent.status === "done" && !deps.ready) return { ok: false, error: "intent cannot finish before its dependencies", error_code: "INTENT_DEPENDENCY_BLOCKED", recoverable: true }
       }
 
       audit(
