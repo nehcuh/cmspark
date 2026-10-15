@@ -178,7 +178,8 @@ jobs:
             tests/tool-catalog-lockstep.test.ts \
             tests/p2-deep-diagnosis-batch.test.ts \
             tests/security/security-policy.test.ts \
-            tests/ws-router-validator-lockstep.test.ts
+            tests/ws-router-validator-lockstep.test.ts \
+            tests/meeting-pcm-generated.test.ts
 
       - name: Swift host typecheck (macOS only)
         # WHY THIS EXISTS: the native host binaries are built by build-host*.sh, which CI
