@@ -18,15 +18,21 @@ test("Windows real SYNCHRONIZE-only process handle API rejects extra rights, oth
 test("real Windows binding inherited bootstrap and minimal parent handle authenticate native WebView2 and metadata",{skip:process.platform!=="win32",timeout:20000},async(t)=>{
  assert.equal(fs.existsSync(path.join(native,"cmspark-desktop.exe")),true,"Actual native Windows build is mandatory")
  const binding=require(path.join(native,"desktop-launcher.node")) as DesktopNativeBinding,registry=new DesktopIdentityRegistry(),boot=registry.issue("owned-windows-host")
- let complete!:()=>void,exited!:(code:number)=>void;const methods=new Set<string>(),done=new Promise<void>(r=>complete=r),exit=new Promise<number>(r=>exited=r)
+ let phase="setup",childExitCode:number|undefined,diagnosticFailed=false
+ let complete!:()=>void,exited!:(code:number)=>void;const methods=new Set<string>(),done=new Promise<void>(r=>complete=r),exit=new Promise<number>(r=>exited=code=>{childExitCode=code;r(code)})
  const note=(name:string)=>{methods.add(name);if(methods.size===4)complete()}
  const services={threads:{desktopMetadataSnapshot:()=>{note("thread");return[{id:"owned",alias:"Native Windows fixture",updated_at:"2026-10-15"}]},get:()=>undefined,getMessages:()=>[]},skills:{list:()=>{note("skill");return[]},listKnowledge:()=>{note("knowledge");return[]}},mcp:{listServers:()=>{note("mcp");return[]}}}
  let auth=false;const channel=createDesktopChannel({registry,services,maxPayload:10*1024*1024,onAuthenticated:()=>{auth=true}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer();attachDesktopUpgrade(server,legacy,channel.wss,()=>false);server.listen(0,"127.0.0.1");await once(server,"listening")
+ // Fixed test-only fields: never expose bootstrap identity, profile or wire bodies.
+ function diagnostic(reason:"deadline"|"cleanup"|"cleanup-complete"){
+  const receipt={reason,phase:["setup","launch","waiting-metadata","closing","complete"].includes(phase)?phase:"unknown",authenticated:auth===true,readFamilies:["thread","skill","knowledge","mcp"].filter(name=>methods.has(name)),childExited:childExitCode!==undefined,exitCode:childExitCode===undefined?null:Number.isInteger(childExitCode)&&childExitCode>=0&&childExitCode<=255?childExitCode:"OTHER"}
+  try{fs.writeFileSync(1,`DESKTOP_480_NATIVE ${JSON.stringify(receipt)}\n`)}catch{diagnosticFailed=true}
+ }
  let child:DesktopNativeChild|undefined
- try{child=binding.launch(path.join(native,"cmspark-desktop.exe"),boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address() as any).port}/desktop`,exited)
-  await Promise.race([done,exit.then(code=>{throw Error(`Native Windows host exit ${code}; authenticated=${auth}; readFamilies=${methods.size}`)}),new Promise<never>((_,reject)=>t.signal.addEventListener("abort",()=>reject(Error("Owned Windows native outer deadline")),{once:true}))]);assert.equal(auth,true);assert.equal(legacy.clients.size,0);assert.equal(channel.wss.clients.size,1)
-  const ws=[...channel.wss.clients][0];ws.send(JSON.stringify({type:"desktop.close"}));assert.equal(await exit,0)
- }finally{child?.terminate();for(const ws of channel.wss.clients)ws.terminate();await exit;await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()))}
+ try{phase="launch";child=binding.launch(path.join(native,"cmspark-desktop.exe"),boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address() as any).port}/desktop`,exited);phase="waiting-metadata"
+  await Promise.race([done,exit.then(code=>{throw Error(`Native Windows host exit ${code}; authenticated=${auth}; readFamilies=${methods.size}`)}),new Promise<never>((_,reject)=>t.signal.addEventListener("abort",()=>{diagnostic("deadline");reject(Error("Owned Windows native outer deadline"))},{once:true}))]);assert.equal(auth,true);assert.equal(legacy.clients.size,0);assert.equal(channel.wss.clients.size,1)
+  phase="closing";const ws=[...channel.wss.clients][0];ws.send(JSON.stringify({type:"desktop.close"}));assert.equal(await exit,0);phase="complete"
+ }finally{diagnostic("cleanup");child?.terminate();for(const ws of channel.wss.clients)ws.terminate();await exit;await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));diagnostic("cleanup-complete");assert.equal(diagnosticFailed,false,"Owned native diagnostic capture failed")}
 })
 test("actual Windows native parser refuses boolean and decoded duplicate fields before parent/WS use",{skip:process.platform!=="win32",timeout:20000},()=>{
  const base={capability_id:"11".repeat(16),secret:"22".repeat(32),url:"ws://127.0.0.1:1/desktop",protocol_version:1,issued_method_set_version:1,parent_handle:"0"};const canonical=JSON.stringify(base)
