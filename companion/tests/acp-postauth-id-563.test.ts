@@ -58,8 +58,9 @@ for (const tool of ["acp_start_session", "acp_apply_diff"]) {
     for (const security_token of [undefined, "OWNED_INVALID_NOT_TOKEN"]) {
       const result = await call(tool, { session_id: "", __thread_id: "owned-thread", security_token })
       assert.equal(result.success, false); assert.match(result.error, /L2 security_token|Invalid or expired security token/)
-      assert.equal(result.data, undefined); assert.notEqual(result.error_code, "ACP_SESSION_ID_REQUIRED")
-      assert.equal(classifyError(result.error, { toolName: tool, error_code: result.error_code }), "non_recoverable")
+      assert.deepEqual(result.data, security_token ? { error_code: "SECURITY_TOKEN_INVALID" } : undefined)
+      assert.notEqual(result.error_code, "ACP_SESSION_ID_REQUIRED")
+      assert.equal(classifyError(result.error, { toolName: tool, error_code: result.data?.error_code ?? result.error_code }), "non_recoverable")
     }
   })
   test(`${tool} valid token does not bypass a foreign session owner`, async () => {
@@ -78,7 +79,8 @@ for (const tool of ["acp_start_session", "acp_apply_diff"]) {
     const params = signed(tool, { session_id: "", __thread_id: "owned-thread" })
     feedback(tool, await call(tool, params))
     const replay = await call(tool, params)
-    assert.match(replay.error, /Invalid or expired security token/); assert.equal(replay.data, undefined)
+    assert.match(replay.error, /Invalid or expired security token/)
+    assert.deepEqual(replay.data, { error_code: "SECURITY_TOKEN_INVALID" })
   })
 }
 test("signed current-owner nonempty IDs still reach the original start and apply outlets", async () => {
@@ -116,7 +118,8 @@ test("unknown apply lookup still consumes its genuine single-use policy token", 
   const params = signed("acp_apply_diff", { session_id: "owned-missing-id", __thread_id: "owned-thread" })
   assert.equal((await call("acp_apply_diff", params)).error_code, "ACP_SESSION_NOT_FOUND")
   const replay = await call("acp_apply_diff", params)
-  assert.match(replay.error, /Invalid or expired security token/); assert.equal(replay.data, undefined)
+  assert.match(replay.error, /Invalid or expired security token/)
+  assert.deepEqual(replay.data, { error_code: "SECURITY_TOKEN_INVALID" })
 })
 test("real non-propose_diff apply refusal retains its original hard error and result data", async () => {
   const own = offer("owned-thread")

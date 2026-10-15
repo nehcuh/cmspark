@@ -88,7 +88,7 @@ test("#563 D4 structural LOLBIN rejection still precedes hashing or native actio
 })
 test("#563 D4 does not remap correction, unknown or HITL denials", () => {
   assert.equal(DEFAULT_NON_RECOVERABLE_CODES.length, 59)
-  assert.equal(ERROR_CODE_LEVELS.has("OUT_OF_BOUNDS"), false)
+  assert.equal(ERROR_CODE_LEVELS.has("OUT_OF_BOUNDS"), true)
   assert.equal(classifyError("outside client rect", { error_code: "OUT_OF_BOUNDS" }), "recoverable")
   assert.equal(classifyError("timeout", { error_code: "OWNED_UNKNOWN_CODE" }), "recoverable")
   assert.equal(classifyError("neutral refusal", { error_code: "OWNED_UNKNOWN_CODE" }), "non_recoverable")

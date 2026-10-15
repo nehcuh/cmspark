@@ -54,6 +54,8 @@ test("#560 每个已登记的码：等级与 message 内容完全无关（属性
  * （#562 只做「与文案解耦」，等级按既有行为原样固定；#560 第二半改过 3 条，见下）。
  */
 const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "security"> = {
+  // #563: real invalid-token guards already hard-stop; only their wire gains a code.
+  SECURITY_TOKEN_INVALID: "non_recoverable",
   // #521 new ephemeral addressing refusals; fixed intrinsic recovery, no authority.
   SNAPSHOT_SCOPE_REQUIRED: "recoverable",
   SNAPSHOT_STALE: "recoverable",
@@ -82,6 +84,12 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   CLICK_OCCLUDED: "non_recoverable", // #563 D3: foreign landing refusal is intrinsic, not process-name text
   FOCUS_LOST: "non_recoverable", // #563 D3: failed outward foreground refusal; post-success/type recovery unchanged
   APP_EXE_DRIFT: "non_recoverable", // #563 D4: intrinsic integrity/hash-read denial; tightens poisoned diagnostics
+  INTEGRITY_LEVEL_DENIED: "non_recoverable", // fixed cross-IL refusal; diagnostic text cannot downgrade it
+  TASK_ABORTED: "non_recoverable", // explicit user stop must not become transient retry
+  COMPANION_UI_CLICK_DENIED: "non_recoverable", // S23 hard refusal, finite owned surfaces
+  DANGER_HARD_DENY: "non_recoverable", // A4 no re-confirm path
+  TYPE_TEXT_NOT_CONFIRMED: "non_recoverable", // A3 outside the confirmed corpus
+  OUT_OF_BOUNDS: "recoverable", // retain coordinate correction without permitting injection
   NETSEC_TARGETS_DENIED: "non_recoverable", // #563 E1: ordinary denial already halted; timeout/locator names now halt too.
   // recoverable（#560 第二半改过下面前三条，原 non_recoverable）
   // #563: only six finite pre-execution input refusals become recoverable.

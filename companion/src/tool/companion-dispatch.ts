@@ -84,6 +84,14 @@ function requireRt(): CompanionDispatchRuntime {
   return _rt
 }
 
+// #563: these fixed refusals keep their existing hard level independently of copy.
+// Validation/issuance/confirmation remains at each original call site.
+function invalidSecurityTokenResult(error: string): {
+  success: false; error: string; data: { error_code: "SECURITY_TOKEN_INVALID" }
+} {
+  return { success: false, error, data: { error_code: "SECURITY_TOKEN_INVALID" } }
+}
+
 /**
  * Optional execution context for companion tools. Phase 1 W8-windows uses
  * this for the manual-nonce fallback routing (adversary amendment A3):
@@ -233,7 +241,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       }
       const tokenOk = securityPolicy.validateTokenFor(String(params.security_token), "spawn_worker", params)
       if (!tokenOk) {
-        return { success: false, error: "Invalid or expired security token for spawn_worker" }
+        return invalidSecurityTokenResult("Invalid or expired security token for spawn_worker")
       }
       // #369: operator-disabled pack — spawn_worker(pack_id) refuses with a stable code
       // (before any worker/promotion side effects; editor stays read-only openable).
@@ -471,7 +479,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       }
       const tokenOk = securityPolicy.validateTokenFor(String(params.security_token), "spawn_expert_team", params)
       if (!tokenOk) {
-        return { success: false, error: "Invalid or expired security token for spawn_expert_team" }
+        return invalidSecurityTokenResult("Invalid or expired security token for spawn_expert_team")
       }
       const { spawnExpertTeam } = await import("../orchestrator/expert-team")
       const r = await spawnExpertTeam({
@@ -541,7 +549,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         boundParams,
       )
       if (!tokenOk) {
-        return { success: false, error: "Invalid or expired security token for acp_propose_session" }
+        return invalidSecurityTokenResult("Invalid or expired security token for acp_propose_session")
       }
       const { getAcpManager } = await import("../acp")
       const r = getAcpManager().propose({
@@ -579,7 +587,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         params,
       )
       if (!startOk) {
-        return { success: false, error: "Invalid or expired security token for acp_start_session" }
+        return invalidSecurityTokenResult("Invalid or expired security token for acp_start_session")
       }
       const sid = String(params.session_id || "")
       if (!sid) return acpSessionLookupFailure(params, sid)
@@ -683,7 +691,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         params,
       )
       if (!applyTok) {
-        return { success: false, error: "Invalid or expired security token for acp_apply_diff" }
+        return invalidSecurityTokenResult("Invalid or expired security token for acp_apply_diff")
       }
       const sid = String(params.session_id || "")
       if (!sid) return acpSessionLookupFailure(params, sid)
@@ -711,7 +719,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       if (!q.trim()) return { success: false, error: "ask_user requires non-empty question" }
       const askOk = securityPolicy.validateTokenFor(String(params.security_token), "ask_user", params)
       if (!askOk) {
-        return { success: false, error: "Invalid or expired security token for ask_user" }
+        return invalidSecurityTokenResult("Invalid or expired security token for ask_user")
       }
       return {
         success: true,
@@ -930,7 +938,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         params,
       )
       if (!tokenOk) {
-        return { success: false, error: "Invalid or expired security token for board_complete" }
+        return invalidSecurityTokenResult("Invalid or expired security token for board_complete")
       }
       const {
         completeBoard,
@@ -1180,7 +1188,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           params,
         )
         if (!valid) {
-          return { success: false, error: "Invalid or expired security token for skill_install" }
+          return invalidSecurityTokenResult("Invalid or expired security token for skill_install")
         }
       } else {
         return { success: false, error: "skill_install requires L2 security_token confirmation" }
@@ -1235,7 +1243,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           "shell_exec",
           params as Record<string, any>,
         )
-        if (!valid) return { success: false, error: "Invalid or expired security token for shell_exec" }
+        if (!valid) return invalidSecurityTokenResult("Invalid or expired security token for shell_exec")
       } else {
         return { success: false, error: "shell_exec requires L2 security_token confirmation" }
       }
@@ -1297,7 +1305,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           "netsec_port_scan",
           params as Record<string, any>,
         )
-        if (!valid) return { success: false, error: "Invalid or expired security token for netsec_port_scan" }
+        if (!valid) return invalidSecurityTokenResult("Invalid or expired security token for netsec_port_scan")
       } else {
         return { success: false, error: "netsec_port_scan requires L2 security_token confirmation" }
       }
@@ -1484,7 +1492,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           params,
         )
         if (!valid) {
-          return { success: false, error: "Invalid or expired security token" }
+          return invalidSecurityTokenResult("Invalid or expired security token")
         }
       }
       // L2 already confirmed. Regex hits (fetch, cookie, …) are preview-only —
@@ -1568,7 +1576,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           params,
         )
         if (!valid) {
-          return { success: false, error: "Invalid or expired security token for host_read" }
+          return invalidSecurityTokenResult("Invalid or expired security token for host_read")
         }
       }
       try {
@@ -1610,7 +1618,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           params,
         )
         if (!valid) {
-          return { success: false, error: "Invalid or expired security token for host_write" }
+          return invalidSecurityTokenResult("Invalid or expired security token for host_write")
         }
       }
       const hostPlatform = os.platform()
@@ -1837,7 +1845,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           params,
         )
         if (!valid) {
-          return { success: false, error: "Invalid or expired security token for host_app" }
+          return invalidSecurityTokenResult("Invalid or expired security token for host_app")
         }
       }
       const isMac = os.platform() === "darwin"
@@ -1923,7 +1931,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           params,
         )
         if (!valid) {
-          return { success: false, error: "Invalid or expired security token for host_cli" }
+          return invalidSecurityTokenResult("Invalid or expired security token for host_cli")
         }
       } else {
         return { success: false, error: "host_cli requires L2 security_token confirmation" }
@@ -2012,7 +2020,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             return { success: false, error: "host_cli: approved CLI operation changed during biometric approval" }
           }
           if (!securityPolicy.validateTokenFor(String(params.security_token), "host_cli", params)) {
-            return { success: false, error: "Invalid or expired security token for host_cli" }
+            return invalidSecurityTokenResult("Invalid or expired security token for host_cli")
           }
           execOpts.signal?.throwIfAborted()
           prepared = currentPrepared
@@ -2079,7 +2087,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           params,
         )
         if (!valid) {
-          return { success: false, error: "Invalid or expired security token for host_computer" }
+          return invalidSecurityTokenResult("Invalid or expired security token for host_computer")
         }
       }
       const isMac = os.platform() === "darwin"
