@@ -4,6 +4,7 @@
 // Delegates: tray UI to UnifiedTray backend (Swift / systray2 / readline).
 
 import * as child_process from "child_process"
+import { checkedMeetingPcmReply } from "./voice/meeting-pcm-contract"
 import * as net from "net"
 import * as path from "path"
 import * as fs from "fs"
@@ -1815,10 +1816,14 @@ async function openSettingsUI(): Promise<void> {
 function dispatchSummonerWeb(
   client: CompanionClient,
   msg: Record<string, unknown>,
+  meetingObservation?: unknown,
 ): Promise<unknown> {
   const type = String(msg.type || "")
   const params = { ...msg }
   delete params.type
+  if (msg.queue_contract !== undefined) {
+    return client.sendMeetingPcmRequest(type, params, meetingObservation as ReturnType<CompanionClient["getMeetingPcmObservation"]>).then(reply => checkedMeetingPcmReply(type, params, reply))
+  }
   if (
     type === "chat.create" ||
     type === "chat.steer" ||
@@ -1871,7 +1876,18 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
       openLoopbackPage,
     } = require("./summoner-web") as typeof import("./summoner-web")
     const { port, token } = await startSummonerWebServer({
-      dispatch: (msg) => dispatchSummonerWeb(client, msg),
+      dispatch: (msg, observation) => {
+        const current = summonerClient
+        if (!current) return Promise.reject(new Error("contract_unavailable"))
+        return dispatchSummonerWeb(current, msg, observation)
+      },
+      meetingPcmConnection: () => summonerClient?.getMeetingPcmObservation() ?? null,
+      observeMeetingPcm: async () => {
+        const current = summonerClient
+        if (!current) return null
+        const contract = await current.observeMeetingPcm()
+        return current === summonerClient && current.getMeetingPcmObservation() ? contract : null
+      },
       requestOpenSidePanel: () => {
         if (!companionClient) return Promise.reject(new Error("not connected"))
         return companionClient.sendAppRequest("ui.open_sidepanel", {}, 8_000)

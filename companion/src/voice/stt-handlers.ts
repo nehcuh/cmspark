@@ -17,6 +17,8 @@ import {
 } from "./stt-session-service"
 import { applyVoicePostprocess, defaultVoicePostprocessPrefs } from "./stt-postprocess"
 import { resolveWinSapiHelper } from "./win-sapi"
+import { MEETING_PCM, type CaptureStopReason } from "./meeting-pcm-contract"
+import { hasMeetingPcmFields, validMeetingPcmMessage } from "./meeting-pcm-schema"
 
 // --- types --------------------------------------------------------------------
 
@@ -102,7 +104,7 @@ function sttPartial(
   }
 }
 
-function sttResult(sessionId: string, text: string, ms: number | undefined, modelId: string | undefined) {
+export function sttResult(sessionId: string, text: string, ms: number | undefined, modelId: string | undefined) {
   const voice = getConfig().voice
   const prefs = {
     ...defaultVoicePostprocessPrefs(),
@@ -182,6 +184,35 @@ export async function handleVoiceSttMessage(
   }
 
   const service = resolveService(deps)
+  if (hasMeetingPcmFields(msg) && !validMeetingPcmMessage(msg)) return sttError(sessionId, "queue_protocol_error", "invalid continuous message")
+  const q1 = rest.queue_contract === 1
+  const capture = service.getMeetingCapture()
+  if ((rest.queue_contract !== undefined && !q1) ||
+      (!q1 && ["capture_epoch", "credit_id", "sample_offset", "frame_count", "final_sample_end"].some(k => k in rest))) {
+    return sttError(sessionId, "queue_protocol_error", "invalid continuous contract")
+  }
+  if (q1) {
+    if (!capture?.owns(peerId, sessionId ?? "", rest.capture_epoch)) return sttError(sessionId, "stale_capture", "capture not owned")
+    if (type === "voice.stt.chunk") {
+      if (typeof rest.data !== "string" || rest.data.length > Math.ceil(MEETING_PCM.blockFrames * 2 / 3) * 4 ||
+          !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(rest.data)) {
+        capture.fail("queue_protocol_error"); return sttError(sessionId, "queue_protocol_error", "invalid PCM block")
+      }
+      const pcm = Buffer.from(rest.data, "base64")
+      try { return capture.append(rest.credit_id, rest.sample_offset, rest.frame_count, pcm) }
+      catch (error) { return sttError(sessionId, error instanceof Error && error.message === "stale_capture" ? "stale_capture" : "queue_protocol_error", "invalid PCM credit or range") }
+    }
+    if (type === "voice.stt.end") {
+      const reasons: CaptureStopReason[] = ["user_stop", "capacity", "hard_limit", "input_gap", "permission_revoked", "suspended", "transport_backpressure", "unload"]
+      if (!Number.isSafeInteger(rest.final_sample_end) || rest.final_sample_end < 0 ||
+          rest.last_credit_id !== Math.ceil(rest.final_sample_end / MEETING_PCM.blockFrames) || !reasons.includes(rest.stop_reason)) {
+        capture.fail("queue_protocol_error"); return sttError(sessionId, "queue_protocol_error", "invalid seal barrier")
+      }
+      return capture.seal(rest.final_sample_end, rest.stop_reason)
+    }
+    if (type === "voice.stt.abort") return capture.cancel()
+    if (type === "voice.stt.partial_request") return capture.status()
+  }
 
   switch (type) {
     case "voice.stt.start": {
@@ -236,7 +267,7 @@ export async function handleVoiceSttMessage(
           channels: typeof channels === "number" ? channels : 0,
           ...(typeof maxMs === "number" ? { maxMs } : {}),
         }
-        const r = service.start(startReq, peerId)
+        const r = q1 ? service.prepareMeetingCapture(startReq, peerId, sessionId, rest.capture_epoch) : service.start(startReq, peerId)
         if (!r.ok) {
           logger.info("voice.stt.start.rejected", { sessionId, code: r.code, engine: "system" })
           return sttError(sessionId, r.code, r.message)
@@ -247,7 +278,7 @@ export async function handleVoiceSttMessage(
           format: typeof format === "string" ? format : undefined,
           lang: typeof lang === "string" ? lang : undefined,
         })
-        const partial = sttPartial(sessionId, "receiving")
+        const partial = q1 ? { ...capture!.status(), ...sttPartial(sessionId, "receiving") } : sttPartial(sessionId, "receiving")
         ctx.send?.(partial)
         return partial
       }
@@ -276,7 +307,7 @@ export async function handleVoiceSttMessage(
         ...(typeof maxMs === "number" ? { maxMs } : {}),
       }
 
-      const r = service.start(startReq, peerId)
+      const r = q1 ? service.prepareMeetingCapture(startReq, peerId, sessionId, rest.capture_epoch) : service.start(startReq, peerId)
       if (!r.ok) {
         logger.info("voice.stt.start.rejected", {
           sessionId,
@@ -292,7 +323,7 @@ export async function handleVoiceSttMessage(
         format: typeof format === "string" ? format : undefined,
         lang: typeof lang === "string" ? lang : undefined,
       })
-      const partial = sttPartial(sessionId, "receiving")
+      const partial = q1 ? { ...capture!.status(), ...sttPartial(sessionId, "receiving") } : sttPartial(sessionId, "receiving")
       ctx.send?.(partial)
       return partial
     }

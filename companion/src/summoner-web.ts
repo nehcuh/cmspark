@@ -41,14 +41,18 @@ import { getChromeOpener } from "./platform"
 import { getConfig } from "./config"
 import { OVERLAY_RENDER_MD_JS } from "./summoner/overlay-md"
 import { currentOverlayCruiseChipLabel } from "./summoner/hydrate"
+import { MeetingPcmHttpBegin } from "./voice/meeting-pcm-http-begin"
+import { MEETING_PCM_BROWSER_JS } from "./summoner/meeting-continuous-generated"
 import { SUMMONER_MEETING_WORKFLOW_JS } from "./summoner/meeting-workflow"
 import { SUMMONER_DICTATION_JS } from "./summoner/voice-input"
 import { SUMMONER_THREAD_MANAGEMENT_JS } from "./summoner/thread-management"
 import { summonerThreadMetadata } from "./threads/metadata-patch"
 import { PROJECT_METHODS } from "./threads/project-store"
 import { SUMMONER_PROJECT_HTML, SUMMONER_PROJECT_JS } from "./summoner/projects"
+import { projectCaptureStatus } from "./voice/meeting-pcm-contract"
+import { validMeetingPcmMessage } from "./voice/meeting-pcm-schema"
 
-export type SummonerWebDispatch = (msg: Record<string, unknown>) => Promise<unknown>
+export type SummonerWebDispatch = (msg: Record<string, unknown>, meetingObservation?: unknown) => Promise<unknown>
 export type SummonerWebAttachChrome = (opts?: { foreground?: boolean }) => string
 export type SummonerWebRequestOpenSidePanel = () => Promise<{ error_code?: string } | void>
 export type SummonerWebHasExtensionPeer = () => boolean
@@ -115,6 +119,7 @@ export const SUMMONER_WEB_EVENT_ALLOW = new Set([
   "voice.stt.partial",
   "voice.stt.result",
   "voice.stt.error",
+  "meeting.capture.status",
   "meeting.created",
   "meeting.started",
   "meeting.ended",
@@ -144,6 +149,8 @@ let activeServer: http.Server | null = null
 let activePort: number | null = null
 let sessionToken: string | null = null
 let activeDispatch: SummonerWebDispatch | null = null
+let activeMeetingPcmConnection: (() => unknown) | null = null
+let activeObserveMeetingPcm: (() => Promise<1 | null>) | null = null
 let activeAttachChrome: SummonerWebAttachChrome | null = null
 let activeRequestOpenSidePanel: SummonerWebRequestOpenSidePanel | null = null
 let activeHasExtensionPeer: SummonerWebHasExtensionPeer | null = null
@@ -262,7 +269,7 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
   })
 }
 
-async function dispatchAllowed(type: string, payload: Record<string, unknown>): Promise<unknown> {
+async function dispatchAllowed(type: string, payload: Record<string, unknown>, meetingObservation?: unknown): Promise<unknown> {
   if (!SUMMONER_WEB_DISPATCH_ALLOW.has(type)) {
     throw Object.assign(new Error(`not allowed: ${type}`), { status: 403 })
   }
@@ -272,7 +279,20 @@ async function dispatchAllowed(type: string, payload: Record<string, unknown>): 
     throw Object.assign(new Error(gate.error), { status: 403, error_code: gate.error_code })
   }
   if (!activeDispatch) throw Object.assign(new Error("summoner dispatch unavailable"), { status: 503 })
-  return activeDispatch(msg)
+  return activeDispatch(msg, meetingObservation)
+}
+
+async function dispatchMeetingPcmHttp(type: string, body: Record<string, unknown>, observation: unknown): Promise<unknown> {
+  const payload = { ...body, type }
+  if (!observation || !validMeetingPcmMessage(payload)) return { type: "error", code: "contract_unavailable", error: "连续录音未就绪" }
+  if (type === "voice.stt.start") {
+    const engine = getConfig().voice?.sttEngine
+    if (engine !== "local" && engine !== "system") return { type: "error", code: "engine_not_local", error: "本机引擎未启用" }
+    if (engine === "system") Object.assign(payload, { engine: "system" })
+    else if (body.engine !== undefined) return { type: "error", code: "queue_protocol_error", error: "引擎字段无效" }
+  }
+  const { type: _type, ...params } = payload
+  return dispatchAllowed(type, params, observation)
 }
 
 /** The overlay displays names/state only; do not send MCP configs or env names to its page. */
@@ -331,7 +351,17 @@ export function pushSummonerWebEvent(msg: unknown): boolean {
   const type = (msg as { type?: unknown }).type
   if (typeof type !== "string" || !SUMMONER_WEB_EVENT_ALLOW.has(type)) return false
   if (/confirm/i.test(type) && type !== "mcp.confirm.pending") return false
-  const line = `data: ${JSON.stringify(msg)}\n\n`
+  const projected = type === "meeting.capture.status" ? projectCaptureStatus(msg) : msg
+  if (!projected) return false
+  if (type === "meeting.capture.status") {
+    const status = projected as ReturnType<typeof projectCaptureStatus>
+    const owner = overlayContinuousCapture
+    if (owner && status && status.capture_id === owner.captureId && status.capture_epoch === owner.epoch && ["finished", "failed"].includes(status.phase)) {
+      meetingHttpBegin.terminal(owner.captureId, owner.observation)
+      if (overlayContinuousCapture === owner) overlayContinuousCapture = null
+    }
+  }
+  const line = `data: ${JSON.stringify(projected)}\n\n`
   for (const res of sseClients) {
     try {
       res.write(line)
@@ -400,6 +430,8 @@ let overlayShellCloseGen = 0
 let overlayCloseRequested = false
 let overlaySttSessionId = ""
 let overlayMeetingId = ""
+const meetingHttpBegin = new MeetingPcmHttpBegin()
+let overlayContinuousCapture: { meetingId: string; captureId: string; epoch: number; observation: unknown } | null = null
 
 function overlayLaunchInGrace(): boolean {
   return !!(overlayLaunchAt && Date.now() - overlayLaunchAt < overlayLaunchGraceMs)
@@ -465,6 +497,12 @@ function readMeetingIdFromDispatch(result: unknown, fallback: string): string {
 
 /** Hide / last-SSE / idle-stop: stop overlay capture even if HTML pagehide never ran. */
 function abortOverlayCaptureSessions(): void {
+  const continuous = overlayContinuousCapture
+  overlayContinuousCapture = null
+  if (continuous) {
+    meetingHttpBegin.terminal(continuous.captureId, continuous.observation)
+    void dispatchAllowed("voice.stt.abort", { v: 1, queue_contract: 1, sessionId: continuous.captureId, capture_epoch: continuous.epoch }, continuous.observation).catch(() => {})
+  }
   const sid = overlaySttSessionId
   const mid = overlayMeetingId
   overlaySttSessionId = ""
@@ -599,9 +637,13 @@ export async function startSummonerWebServer(opts: {
   attachChrome?: SummonerWebAttachChrome
   requestOpenSidePanel?: SummonerWebRequestOpenSidePanel
   hasExtensionPeer?: SummonerWebHasExtensionPeer
+  meetingPcmConnection?: () => unknown
+  observeMeetingPcm?: () => Promise<1 | null>
   onShellClosed?: () => void
 }): Promise<{ port: number; token: string }> {
   activeDispatch = opts.dispatch
+  activeMeetingPcmConnection = opts.meetingPcmConnection ?? null
+  activeObserveMeetingPcm = opts.observeMeetingPcm ?? null
   activeAttachChrome = opts.attachChrome ?? defaultAttachChrome
   activeRequestOpenSidePanel = opts.requestOpenSidePanel ?? null
   activeHasExtensionPeer = opts.hasExtensionPeer ?? null
@@ -651,12 +693,16 @@ export function stopSummonerWebServer(): void {
     activePort = null
     sessionToken = null
     activeDispatch = null
+    activeMeetingPcmConnection = null
+    activeObserveMeetingPcm = null
     activeAttachChrome = null
     activeRequestOpenSidePanel = null
     activeHasExtensionPeer = null
     activeOnShellClosed = null
     overlaySttSessionId = ""
     overlayMeetingId = ""
+    overlayContinuousCapture = null
+    meetingHttpBegin.reset()
     overlayLaunchGraceMs = OVERLAY_LAUNCH_GRACE_MS_DEFAULT
     overlaySseReconnectGraceMs = OVERLAY_SSE_RECONNECT_GRACE_MS_DEFAULT
     overlayCloseRequested = false
@@ -717,6 +763,9 @@ async function handleRequest(
     return
   }
 
+  // Before any readBody await: the q1 operation cannot migrate to a replacement connection.
+  const meetingObservation = activeMeetingPcmConnection?.() ?? null
+  meetingHttpBegin.invalidateIfChanged(meetingObservation)
   try {
     if ((pathOnly === "/" || pathOnly === "/summoner") && req.method === "GET") {
       const nonce = crypto.randomBytes(16).toString("base64")
@@ -769,7 +818,11 @@ async function handleRequest(
           ? voice.localModelId
           : "medium"
       const sttEngine = voice?.sttEngine === "local" ? "local" : voice?.sttEngine === "system" ? "system" : "browser"
-      jsonResponse(res, { sttEngine, localModelId, lang: "zh-CN" })
+      const beginCaptureId = query.get("capture_id")
+      const contract = beginCaptureId !== undefined
+        ? (await meetingHttpBegin.observe(beginCaptureId, () => activeMeetingPcmConnection?.() ?? null, async () => await activeObserveMeetingPcm?.() ?? null) ? 1 : null)
+        : await activeObserveMeetingPcm?.()
+      jsonResponse(res, { sttEngine, localModelId, lang: "zh-CN", ...(contract === 1 && activeMeetingPcmConnection?.() ? { meeting_pcm_contract: 1 } : {}) })
       return
     }
 
@@ -1068,6 +1121,12 @@ async function handleRequest(
 
     if (pathOnly === "/api/stt/start" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
+        const reply: any = await dispatchMeetingPcmHttp("voice.stt.start", body, meetingObservation)
+        if (reply?.type === "voice.stt.partial" && reply.status === "receiving" && reply.capture_id === body.sessionId) meetingHttpBegin.receiving(body.sessionId, meetingObservation)
+        jsonResponse(res, reply)
+        return
+      }
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
       const cfgModel = getConfig().voice?.localModelId
       const modelId =
@@ -1101,6 +1160,11 @@ async function handleRequest(
 
     if (pathOnly === "/api/stt/chunk" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, STT_CHUNK_BODY_MAX)) as Record<string, unknown>
+      if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
+        const reply = await dispatchMeetingPcmHttp("voice.stt.chunk", body, meetingObservation)
+        jsonResponse(res, reply)
+        return
+      }
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
       const seq = Number.isInteger(body.seq) ? body.seq : 0
       const data = typeof body.data === "string" ? body.data : ""
@@ -1113,6 +1177,11 @@ async function handleRequest(
 
     if (pathOnly === "/api/stt/end" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
+        const reply = await dispatchMeetingPcmHttp("voice.stt.end", body, meetingObservation)
+        jsonResponse(res, reply)
+        return
+      }
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
       const totalSeq = Number.isInteger(body.totalSeq) ? body.totalSeq : 0
       jsonResponse(res, await dispatchAllowed("voice.stt.end", { v: 1, sessionId, totalSeq }))
@@ -1122,6 +1191,11 @@ async function handleRequest(
 
     if (pathOnly === "/api/stt/abort" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
+        const reply = await dispatchMeetingPcmHttp("voice.stt.abort", body, meetingObservation)
+        jsonResponse(res, reply)
+        return
+      }
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
       jsonResponse(res, await dispatchAllowed("voice.stt.abort", { v: 1, sessionId }))
       if (sessionId && overlaySttSessionId === sessionId) overlaySttSessionId = ""
@@ -1130,6 +1204,11 @@ async function handleRequest(
 
     if (pathOnly === "/api/stt/partial" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
+        const reply = await dispatchMeetingPcmHttp("voice.stt.partial_request", body, meetingObservation)
+        jsonResponse(res, reply)
+        return
+      }
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
       jsonResponse(
         res,
@@ -1165,6 +1244,17 @@ async function handleRequest(
 
     if (pathOnly === "/api/meeting/start" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
+        const binding = meetingHttpBegin.binding(body.capture_id, meetingObservation, activeMeetingPcmConnection?.() ?? null)
+        if (!binding) { jsonResponse(res, { type: "error", code: "contract_unavailable", error: "连续开始观测已失效，请重新显式开始" }); return }
+        const reply: any = await dispatchMeetingPcmHttp("meeting.start", body, binding)
+        if (reply?.type === "meeting.started" && reply.continuous_capture?.capture_id === body.capture_id && reply.meeting?.id === (body.meeting_id ?? body.id)) {
+          meetingHttpBegin.accepted(body.capture_id, binding)
+          overlayContinuousCapture = { meetingId: reply.meeting.id, captureId: String(body.capture_id), epoch: reply.continuous_capture.capture_epoch, observation: binding }
+        } else if (["error", "meeting.error", "voice.stt.error"].includes(reply?.type)) meetingHttpBegin.terminal(body.capture_id, binding)
+        jsonResponse(res, reply)
+        return
+      }
       const payload: Record<string, unknown> = {
         v: 1,
         privacy_ack_v1: true,
@@ -1184,6 +1274,11 @@ async function handleRequest(
 
     if (pathOnly === "/api/meeting/end" && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
+      if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
+        const reply = await dispatchMeetingPcmHttp("meeting.end", body, meetingObservation)
+        jsonResponse(res, reply)
+        return
+      }
       const id = typeof body.id === "string" ? body.id : ""
       jsonResponse(res, await dispatchAllowed("meeting.end", { v: 1, id }))
       if (id && overlayMeetingId === id) overlayMeetingId = ""
@@ -1718,12 +1813,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     <div class="meeting-live" id="meetingLive" role="log" aria-live="polite">
       <div class="empty-live" id="meetingEmpty">录音分段转写，首段需等待本机推理。原始识别文字会保留；AI 纪要草稿请核对。</div>
     </div>
-    <div class="meeting-partial" id="meetingPartial"></div>
+    <div class="meeting-partial" id="meetingQueue" role="status" aria-live="polite"></div>
+    <div id="meetingSourceRange" role="status" aria-live="polite"></div>
+    <div id="meetingPartial"></div>
     <div class="meeting-minutes" id="meetingMinutes" hidden></div>
     <details id="meetingOriginal" hidden><summary>原始语音识别存档</summary><pre id="meetingOriginalText"></pre></details>
     <div id="meetingEvidence" hidden></div>
     <div class="meeting-actions">
       <button type="button" id="meetingRec" aria-pressed="false">开始录制</button>
+      <button type="button" id="meetingCancel" hidden>取消未处理音频</button>
       <button type="button" id="meetingMinutesBtn" hidden>生成会议纪要</button>
     </div>
   </div>
@@ -1748,12 +1846,14 @@ try{
     var engine=voiceSettings.sttEngine==="local"?"本机":voiceSettings.sttEngine==="system"?"系统":"浏览器";
     el.textContent=engine+" · "+voiceSettings.localModelId;
   }
-  function loadVoiceSettings(){
-    return api("/api/voice-settings").then(function(d){
+  function loadVoiceSettings(captureId){
+    delete voiceSettings.meeting_pcm_contract;
+    return api("/api/voice-settings"+(captureId?"?capture_id="+encodeURIComponent(captureId):"")).then(function(d){
       if(!d||typeof d!=="object") return;
       if(d.sttEngine==="browser"||d.sttEngine==="local"||d.sttEngine==="system") voiceSettings.sttEngine=d.sttEngine;
       if(d.localModelId==="small"||d.localModelId==="medium"||d.localModelId==="large-v3-turbo") voiceSettings.localModelId=d.localModelId;
       if(typeof d.lang==="string"&&d.lang) voiceSettings.lang=d.lang;
+      if(d.meeting_pcm_contract===1)voiceSettings.meeting_pcm_contract=1;
       paintMeetingVoiceMeta();
     }).catch(function(){});
   }
@@ -2409,75 +2509,8 @@ try{
     box.scrollTop=box.scrollHeight;
     meetingLines.push({text:text,speaker:speaker||""});
   }
-  function startMeetingCapture(){
-    if(meetingId || meetingWorkBusy || meetingEnding) return;
-    if(!meetingAck || !voiceAck){requestMeetingConsent(startMeetingCapture);return;}
-    meetingViewRev++;
-    var rec=$("meetingRec");
-    if(rec) rec.disabled=true;
-    return loadVoiceSettings().then(function(){
-    if(voiceSettings.sttEngine!=="local"){
-      var need=STT_NEED_MODEL;
-      setStatus(need);
-      var h0=$("meetingHint");
-      if(h0) h0.textContent="请在侧栏设置启用本机转写";
-      if(rec) rec.disabled=false;
-      return;
-    }
-    meetingFeats=[];
-    if(!lastMeetingId)meetingLines=[];
-    sttFeatsBySid={};
-    showMeetingHistory(false);
-    var part=$("meetingPartial");
-    if(part) part.textContent="";
-    var mins=$("meetingMinutes");
-    if(mins){ mins.hidden=true; mins.innerHTML=""; }
-    var live=$("meetingLive");
-    if(live && !lastMeetingId) live.innerHTML="<div class=\\"empty-live\\" id=\\"meetingEmpty\\">正在听…首段需等待本机推理。</div>";
-    showMeetingDesk(true);
-    var hint=$("meetingHint");
-    if(hint) hint.textContent="正在开始…";
-    var payload={};
-    if(lastMeetingId)payload.id=lastMeetingId;
-    if(threadId) payload.thread_id=threadId;
-    return api("/api/meeting/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(d){
-      if(d && (d.type==="meeting.error" || d.type==="error" || d.error)){
-        var msg=sttUserCopy(d.code||d.error_code, d.message||d.error||"会议开始失败");
-        setStatus(msg);
-        if(hint) hint.textContent=msg;
-        if(rec) rec.disabled=false;
-        return;
-      }
-      var mid=(d&&d.meeting&&d.meeting.id)||(d&&d.data&&d.data.meeting&&d.data.meeting.id)||"";
-      if(typeof mid!=="string" || mid.indexOf("tray-")===0 || mid.indexOf("mtg_")!==0) mid="";
-      meetingId=mid;
-      if(!meetingId){
-        var fail="会议开始失败";
-        setStatus(fail);
-        if(hint) hint.textContent=fail;
-        if(rec) rec.disabled=false;
-        return;
-      }
-      lastMeetingId=meetingId;
-      meetingFailure=null;
-      $("meetingEvidence").hidden=true;
-      $("meetingOriginal").hidden=true;
-      setRecordingUi(true);
-      if(hint) hint.textContent="录制中 00:00";
-      startRecClock();
-      if(!sttLive) startStt();
-    }).catch(function(e){
-      var msg=String(e&&e.message||e);
-      setStatus(msg);
-      if(hint) hint.textContent=msg;
-      if(rec) rec.disabled=false;
-    });
-    }).catch(function(e){
-      var rec2=$("meetingRec");
-      if(rec2) rec2.disabled=false;
-      setStatus(String(e&&e.message||e));
-    });
-  }
+  function startMeetingCapture(){return beginContinuousMeeting()}
+  ${MEETING_PCM_BROWSER_JS}
   ${SUMMONER_MEETING_WORKFLOW_JS}
   $("meetingStart").onclick=function(){
     if(!meetingAck){
@@ -2698,6 +2731,7 @@ try{
   }
   window.addEventListener("pagehide", function(){
     summonerVoice.cancel();
+    if(meetingContinuous&&meetingContinuous.capture)meetingContinuous.capture.destroy();
     if(sttLive) stopStt(true);
     if(meetingId){
       try{
@@ -2732,6 +2766,7 @@ try{
   }
   try{
     var es=new EventSource(url("/api/events"));
+    es.onerror=function(){var owner=meetingContinuous;if(owner)continuousMeetingLost(owner,new Error("连接中断，采集已停止；请重连查看已存原稿，并重新显式开始"))};
     es.onmessage=function(ev){
       var d; try{d=JSON.parse(ev.data)}catch(e){return}
       var t=d&&d.type;
@@ -2766,6 +2801,7 @@ try{
         startPoll();
         return;
       }
+      if(t==="meeting.capture.status"){meetingSttEvent(d);return}
       if(t.indexOf("voice.stt.")===0 && summonerVoice.onEvent(d)) return;
       if(t==="voice.stt.partial" || t==="voice.stt.result"){
         meetingSttEvent(d);

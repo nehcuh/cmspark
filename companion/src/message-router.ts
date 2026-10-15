@@ -7,6 +7,7 @@
 // Deferred: full family split for chat/thread/skill/pack/mcp/…
 
 import { handleSiteCounterMessage, noteSiteCounterThreadSelection } from "./message-router/handlers/site-counter"
+import { meetingPcmPong } from "./voice/meeting-pcm-contract"
 import os from "os"
 import { handleProjectMessage, projectReplyProjection } from "./message-router/handlers/projects"
 import { beginProjectRunAdmission } from "./threads/project-activity"
@@ -5823,7 +5824,7 @@ async function dispatchMessage(
 
     // --- Original System ---
     case "system.ping":
-      return { type: "system.pong" }
+      return meetingPcmPong()
 
     case "terminal.review.submit":
     case "terminal.open":

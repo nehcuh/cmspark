@@ -1,0 +1,590 @@
+{
+  "provenance": "actual final production plugin Begin/runtime/schema/handlers/service/store serializer with owned audio/config/auth/runner seams; no real browser/model/token",
+  "producer_source": [
+    {
+      "path": "companion/src/meeting/meeting-store.ts",
+      "sha256": "5ec91114f3aedad17e5eac223ea2f02f4bc717e65444188bf6a94440f41d9144"
+    },
+    {
+      "path": "companion/src/config.ts",
+      "sha256": "e8a493023b82592912b9a3d1929c7092e74b1cc868eb353ed6e004e22458db19"
+    },
+    {
+      "path": "companion/src/platform.ts",
+      "sha256": "9558fd062bc92246694c883099d8bc386a68d81ae691a6660d7ef11e397a57e8"
+    },
+    {
+      "path": "companion/src/process-path.ts",
+      "sha256": "fa5159abb53df72428707723944852c97d4806feb15bbaa32f40f122e6684f5f"
+    },
+    {
+      "path": "companion/src/path-sandbox.ts",
+      "sha256": "603354b68ec7041475391951ee618f8989de955abe0cfe93ff0c645b03e046e9"
+    },
+    {
+      "path": "companion/src/paths.ts",
+      "sha256": "fcb298dcae9471ea9b3f0636c85a71ea9a2c19032c6f73827a33ba63701e6eb3"
+    },
+    {
+      "path": "companion/src/io.ts",
+      "sha256": "63d20117e9030cda41d5dc44f4903a7453f24f4822701bfe71483ac3109a1283"
+    },
+    {
+      "path": "companion/src/mcp/filesystem-home.ts",
+      "sha256": "76acb5c48399d8232b63d08c6d49d04cb51491807799caa85fab2b92486534d5"
+    },
+    {
+      "path": "companion/src/mcp/filesystem-identity.ts",
+      "sha256": "c23858211977c1643b3c790724aedee2873a5b0d84096105d6302996ec028e25"
+    },
+    {
+      "path": "companion/src/apps/types.ts",
+      "sha256": "5f9633ca258b9372bfeabdd5969a705a01a692696758eef554df633fdd7d437c"
+    },
+    {
+      "path": "companion/src/apps/guards.ts",
+      "sha256": "a902315ddd7651fe31f654ab29f6c78e7afbbb98332904e703812403c5337d86"
+    },
+    {
+      "path": "companion/src/host-use/win/blacklist.ts",
+      "sha256": "7b9290b4fea8dd2e2fade338337bed57672b3c16c1275ca6a83d744c3fac12c4"
+    },
+    {
+      "path": "companion/src/apps/cli-manifest.ts",
+      "sha256": "84028f4e49124c9bd61096e7984d2dcb41068559f5288c60952378f455384646"
+    },
+    {
+      "path": "companion/src/llm/vision-reuse-inherit.ts",
+      "sha256": "f0e92705fbc8c332a9452e47306355a43a4024c4c265d26af84c390c4e16a23f"
+    },
+    {
+      "path": "companion/src/file-formats.ts",
+      "sha256": "9c473160d50dfe2db0d7a2bcc1194289027b0aeb8111c109a21aa0549d5e00f6"
+    },
+    {
+      "path": "companion/src/logger.ts",
+      "sha256": "47550bbac538f82f5dda791ed4db772757895288de5e0af017d229fa8f70ab15"
+    },
+    {
+      "path": "companion/src/log-rotation.ts",
+      "sha256": "5c5835bd6a16593330d64afd6a543ddfaa141cdb2b76b5e7c6da879b70ecad65"
+    },
+    {
+      "path": "companion/src/meeting/minutes-prompt.ts",
+      "sha256": "aced23821603ae7e886cb0865571d9f004fc109f60c1a6ee2d04b5447ff00c23"
+    },
+    {
+      "path": "companion/src/meeting/meeting-handlers.ts",
+      "sha256": "04ba6f5042954d887313ce3132a6cd345c376caccf79cb3a8782bc2f67955d97"
+    },
+    {
+      "path": "companion/src/voice/stt-session-service.ts",
+      "sha256": "ec94c8b354df5e0ae4370441d46e2e03c45bf15bd9cc97f24add38b092265375"
+    },
+    {
+      "path": "companion/src/voice/binary-resolve.ts",
+      "sha256": "4c58c835845ec905ce9596d86ccf41d6dfa80a56612da67355fbcf0e9db74321"
+    },
+    {
+      "path": "companion/src/voice/whisper-binary-pins.ts",
+      "sha256": "852573c85793f923ef860fbaee6d01de317d8ddd0a50521e05d542f934591ae6"
+    },
+    {
+      "path": "companion/src/voice/session-caps.ts",
+      "sha256": "6411a4621640a9e2b82badd8b8860d85b5b45d5d2d572dd479891563b5e127f5"
+    },
+    {
+      "path": "companion/src/voice/pcm-wav.ts",
+      "sha256": "3e3c6fbe1a94502a8588008f70838aa722b1e37ac4e27434d81d9b9e4f1d168d"
+    },
+    {
+      "path": "companion/src/voice/stt-session-core.ts",
+      "sha256": "f9ae78faca1592bf35211729cafa158488703d0bca59ade9629eadaba595ba30"
+    },
+    {
+      "path": "companion/src/voice/stt-tmp.ts",
+      "sha256": "eb6febc32fdbe872c16a15b4be7b0687849df614e59d36566010fa1acf2c70ad"
+    },
+    {
+      "path": "companion/src/voice/whisper-catalog.ts",
+      "sha256": "ebb98ce91f0ca5daf466e544e2e16b837fb698b863263160191c95e63e36d1e8"
+    },
+    {
+      "path": "companion/src/voice/whisper-download.ts",
+      "sha256": "f2263401e8daff54c372b925ebe2f3616ca7611b3554617f5c840ba9be9f6e0e"
+    },
+    {
+      "path": "companion/src/voice/models-roots.ts",
+      "sha256": "3d85bc3b020ffb0084327ce8707213cfce09806207c70f2b28c34ddeff8c2987"
+    },
+    {
+      "path": "companion/src/voice/whisper-manifest.ts",
+      "sha256": "73d8c149b9930fb9769786743ffbf0dcc2a4444514c6038f94b635857dd18483"
+    },
+    {
+      "path": "companion/src/voice/whisper-runner.ts",
+      "sha256": "ad8c7cc46fcb9c9081ce3798a5b71b30df2bb8decc2037acb1dfe3d4ec577983"
+    },
+    {
+      "path": "companion/src/voice/win-sapi.ts",
+      "sha256": "6865bb6c175b94439b7f2f8ae1bb5cf219d87b430b92962d672fd629f887b46d"
+    },
+    {
+      "path": "companion/src/voice/meeting-pcm-capture.ts",
+      "sha256": "cb54ce6732dc89945a438d7c1d1608572f3ffc389304e13a16b8d12965994e0c"
+    },
+    {
+      "path": "companion/src/voice/meeting-pcm-contract.ts",
+      "sha256": "64ffe536db19eb602d31ea8492ef80ad43547a0093272464c83dce1329fcca9c"
+    },
+    {
+      "path": "companion/src/voice/meeting-pcm-queue.ts",
+      "sha256": "3b365897e9ec5cef54b8abad5c9b9c698ff37d0c6f2fcbec142d3b0db92f193d"
+    },
+    {
+      "path": "companion/src/voice/stt-handlers.ts",
+      "sha256": "1b3abce772ba9d70afb8b57b57dbeec612e68a5ded020ee24e6e3b11df902b44"
+    },
+    {
+      "path": "companion/src/voice/stt-postprocess.ts",
+      "sha256": "b24d92c46d9a7543653f0d07367553216489650e532baf2760b30f8fb0b84a31"
+    },
+    {
+      "path": "companion/src/voice/meeting-pcm-schema.ts",
+      "sha256": "d2407e055f44595973c1fefd76e0e22a5a58d4c04861ade557a849f99af7e95c"
+    },
+    {
+      "path": "companion/src/meeting/meeting-minutes.ts",
+      "sha256": "1a655812edc9bd1103449aa11a6ddb747e3488b70030b78e2c2a045e6753043c"
+    },
+    {
+      "path": "companion/src/llm/llm-extract.ts",
+      "sha256": "ff4e64ebcec449b9581bbc3378309ecbc45674b60c9c4ddfa3ef954a0df9a7cb"
+    },
+    {
+      "path": "companion/src/llm/provider.ts",
+      "sha256": "72f2354986b6c29d785a22327c8391ff67a0aefd85879313e65c6489bac87840"
+    },
+    {
+      "path": "companion/src/llm/providers/openai.ts",
+      "sha256": "55b17b515d436b7bdb81fca36893cdbefe26f2840f9088b4691bb25b79e17aa4"
+    },
+    {
+      "path": "companion/src/security.ts",
+      "sha256": "f7a2df20631ed65bb32e9666a07bcb689a55210a56652e05ce1da41a01d29c89"
+    },
+    {
+      "path": "companion/src/llm/transport-error.ts",
+      "sha256": "7be49c99c451820273ffcf124f58cdb5443f22d130ad48e592b30777f5c00097"
+    },
+    {
+      "path": "companion/src/llm/providers/headers.ts",
+      "sha256": "45c0a0687ca2f3763bc449eaab8a4f13507e5de37f0e7319ea8ae0f55fe03484"
+    },
+    {
+      "path": "companion/src/llm/providers/anthropic.ts",
+      "sha256": "24eab141f35a62dae72e74d88ffc3db7ca4d0bf47e2d5d9030a5e2ebe7e09ad2"
+    },
+    {
+      "path": "companion/src/llm/providers/anthropic-convert.ts",
+      "sha256": "1bb4e49161816e928eda591689c287f49a1a07db4060d603e65ecead53c572f2"
+    },
+    {
+      "path": "companion/src/llm/text-sanitize.ts",
+      "sha256": "af9aaf12e0395f5e222a3f5e716dd85387c0e3cb4eb6a90967134be7c8682668"
+    },
+    {
+      "path": "companion/src/meeting/meeting-reference.ts",
+      "sha256": "c9dfb0ea61c2eb9f25f4c752f1eccaafa9e0033975cc273c0bcc6ca46a7f11f5"
+    },
+    {
+      "path": "companion/src/file-parser.ts",
+      "sha256": "67c705f09eeb7337eaddce475af362eb2c9a666c9ffb343b51c4698bb06fb47e"
+    },
+    {
+      "path": "companion/src/office-runtime.ts",
+      "sha256": "2ccfab494b7d2e2a694d8ccc2f7c4b3bc39cc8a1ad4d8c3faa042b521c61b9e2"
+    },
+    {
+      "path": "companion/src/odf-expansion.ts",
+      "sha256": "6b26d45d8affe3a926bb88c9ecc9840e155753e2795d6197fbf60a60565f1f69"
+    },
+    {
+      "path": "companion/src/file-chunker.ts",
+      "sha256": "7e55efc411a680643892c621c1d8afb61a5f4bf3ffd62eb01f2e9a7170e6ecf0"
+    },
+    {
+      "path": "companion/src/meeting/silence-cut.ts",
+      "sha256": "82afcfd593b016410fd84c2aa8186c44f5dfdbdb8e7330d1846e34668568b18e"
+    },
+    {
+      "path": "companion/src/meeting/auto-diarize.ts",
+      "sha256": "bd92314602d3bcc703ca2f632b9da21cc75e4cb4b61aa31ac4120e4a05d638e1"
+    },
+    {
+      "path": "companion/src/meeting/diarize-cluster.ts",
+      "sha256": "c468c9f5fed4605f40bb6684f22ca25206da0e7bdc75c96786efd34f4c6ae381"
+    },
+    {
+      "path": "companion/src/meeting/diarize-embed.ts",
+      "sha256": "f8d9cc39b9d5fa6206d9c9f82c704a8db1c6e1d62f7dc5a54efc952ef9ff0315"
+    },
+    {
+      "path": "companion/src/voice/diarize-model.ts",
+      "sha256": "7c4ef9f0eaee9dd66f9dc3cf323678cb94567027bf48902d3558b1e0775d44ff"
+    },
+    {
+      "path": "companion/src/voice/diarize-manifest.ts",
+      "sha256": "22e9e380ac696bfa9a3710a5398cb7cf42fb3cb8f022d74b991607d4914283fb"
+    },
+    {
+      "path": "companion/src/meeting/fbank.ts",
+      "sha256": "1efea338e729c6fabafc5a6a4da4a4bed1e9c1311ecd9e94271ef1cf54e9e7bc"
+    },
+    {
+      "path": "companion/src/meeting/diarize-pcm-store.ts",
+      "sha256": "3a441bd9ef80414a039cdca7f41a8e51d104cf52cd93f96d0610859bd4d43c76"
+    },
+    {
+      "path": "companion/src/ws/validate.ts",
+      "sha256": "0d1ebe5870a31e7d000efc880d148c3a81d414c176430cdb397498558625fb52"
+    },
+    {
+      "path": "companion/src/message-router/handlers/site-counter.ts",
+      "sha256": "8a4d71907aced25cafe60420ae2ece11a16fc063d55dc23b676bc0358f8374f1"
+    },
+    {
+      "path": "companion/src/ws/handshake-surface.ts",
+      "sha256": "c26361722fe0d9be8f24ebfeddca5287f152367eec90fb01a557131019006fb9"
+    },
+    {
+      "path": "companion/src/site-context/browser-resolver.ts",
+      "sha256": "ab951d86329a936d21d3dbd2c5cdfcf985daed1ea71252da75c131087d72562e"
+    },
+    {
+      "path": "companion/src/site-context/target.ts",
+      "sha256": "2f65f9e47dbab3f94db5dcd3369a68b8efa513e53a6a25a45842030485d13f1e"
+    },
+    {
+      "path": "companion/src/ws/tab-url-cache.ts",
+      "sha256": "5cf2f7a839e888c8632744baaba9919c94702f629290a1026fa2d184f7818227"
+    },
+    {
+      "path": "companion/src/tool/site-op-memory.ts",
+      "sha256": "bd8c5ad9679b5d90f1a63280f1dafabea62a3fb0b0c8de82959d760d3727424d"
+    },
+    {
+      "path": "companion/src/tool/dom-script-budget.ts",
+      "sha256": "b7ccf66c4f65cd2fcc00a4325d2ce1c31ca9896c91f83ac15e2a8f1a2ecd6db4"
+    },
+    {
+      "path": "companion/src/tool/site-op-provenance.ts",
+      "sha256": "40334390809f6ac745263f3e0cbe0fc617bf5ad403dbcb4de8f14dbf6eac26c9"
+    },
+    {
+      "path": "companion/src/threads/project-store.ts",
+      "sha256": "796512fa82194faf858b675ff46b00738d0e603bdd741ceae145b0417422c2dd"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/voice/meeting-panel-continuous.ts",
+      "sha256": "72cfc0c1c362217a459eb395d940d26e9786fba5e994ff440d4d8895f8edbb9a"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/voice/meeting-continuous-capture.ts",
+      "sha256": "efef7bb72e72e8f1562ad04ceb5118e22fd8ae5c5c13fd4784325fef4fd41aa1"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/voice/meeting-continuous-pcm.ts",
+      "sha256": "fcd9a4c63c029180e01ac52fec2fe12790a2a1e49ae372752f673a083283552b"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/voice/meeting-pcm-worklet-generated.ts",
+      "sha256": "1b1153bdf671fe442c67e194b4643cad1a21390a04192e6b63c9bff7c3f3695b"
+    },
+    {
+      "path": "chrome-extension/src/sidepanel/voice/meeting-runtime-channel.ts",
+      "sha256": "36119f4602122661d80fd7ca496ced4ecafe293b83d996ceb40b8f0af2702c8e"
+    },
+    {
+      "path": "companion/src/summoner/meeting-workflow.ts",
+      "sha256": "a660587a4396e073d2ddd3031ddc8d41e5e08d2c3ca7f695107124206c78339c"
+    },
+    {
+      "path": "companion/src/summoner/meeting-continuous-generated.ts",
+      "sha256": "2f987b56e0ae7739d69ac1b977ad8599b5ebe45b995d1e1d122a1fb4704fa918"
+    }
+  ],
+  "probe_sha256": "c6d1639474701ae21faecb1cfc29b51adce9aeb576cf283520455272f59d7e47",
+  "responses": {
+    "pong": {
+      "type": "system.pong",
+      "meeting_pcm_contract": 1
+    },
+    "meeting.get": {
+      "type": "meeting.get_result",
+      "v": 1,
+      "meeting": {
+        "id": "mtg_64283b8bf5429355",
+        "thread_id": null,
+        "title": "owned continuous plugin",
+        "started_at": "2026-10-15T02:51:34.739Z",
+        "ended_at": null,
+        "status": "draft",
+        "privacy": {
+          "stt_engine": "none",
+          "audio_retained": false,
+          "retain_until": null
+        },
+        "diarize": null,
+        "error": null,
+        "transcript": [],
+        "original_transcript": [],
+        "reference_notes": "",
+        "reference_name": "",
+        "minutes": null
+      }
+    },
+    "meeting.start": {
+      "type": "meeting.started",
+      "v": 1,
+      "meeting": {
+        "id": "mtg_64283b8bf5429355",
+        "thread_id": null,
+        "title": "owned continuous plugin",
+        "started_at": "2026-10-15T02:51:34.739Z",
+        "ended_at": null,
+        "status": "recording",
+        "privacy": {
+          "stt_engine": "none",
+          "audio_retained": false,
+          "retain_until": null
+        },
+        "diarize": null,
+        "error": null,
+        "transcript": [],
+        "original_transcript": [],
+        "reference_notes": "",
+        "reference_name": "",
+        "minutes": null,
+        "capture_epoch": 1,
+        "capture_summary": {
+          "capture_epoch": 1,
+          "last_capture_id": "6a52d35b-c6e3-45a2-aad6-df3edca93f88",
+          "phase": "starting",
+          "outcome": null,
+          "server_received_end": 0,
+          "committed_end": 0,
+          "known_unprocessed_end": null,
+          "reason": null,
+          "sticky_incomplete": false
+        }
+      },
+      "continuous_capture": {
+        "type": "meeting.capture.status",
+        "v": 1,
+        "queue_contract": 1,
+        "meeting_id": "mtg_64283b8bf5429355",
+        "capture_id": "6a52d35b-c6e3-45a2-aad6-df3edca93f88",
+        "capture_epoch": 1,
+        "phase": "starting",
+        "input_open": false,
+        "server_received_end": 0,
+        "processed_end": 0,
+        "committed_end": 0,
+        "saved_text_segments": 0,
+        "resident_seconds": 0,
+        "sealed_segments": 0,
+        "inflight_segment": null,
+        "high_water": false,
+        "eta_seconds": null,
+        "stop_reason": null,
+        "completion": {
+          "outcome": null,
+          "prefix_complete": false
+        },
+        "credits": []
+      },
+      "meeting_pcm_contract": 1,
+      "meeting_pcm_caps": {
+        "contract": 1,
+        "rate": 16000,
+        "sampleBytes": 2,
+        "segmentFrames": 128000,
+        "capacityFrames": 960000,
+        "blockFrames": 640,
+        "credits": 8,
+        "recentAcks": 16,
+        "highWaterFrames": 768000,
+        "captureMs": 10800000,
+        "captureFrames": 172800000,
+        "startupMs": 30000,
+        "flushMs": 2000,
+        "idleMs": 10000,
+        "jobMs": 330000,
+        "drainMs": 3600000,
+        "cleanupMs": 5000
+      }
+    },
+    "voice.stt.start": {
+      "type": "voice.stt.partial",
+      "v": 1,
+      "queue_contract": 1,
+      "meeting_id": "mtg_64283b8bf5429355",
+      "capture_id": "6a52d35b-c6e3-45a2-aad6-df3edca93f88",
+      "capture_epoch": 1,
+      "phase": "capturing",
+      "input_open": true,
+      "server_received_end": 0,
+      "processed_end": 0,
+      "committed_end": 0,
+      "saved_text_segments": 0,
+      "resident_seconds": 0.32,
+      "sealed_segments": 0,
+      "inflight_segment": null,
+      "high_water": false,
+      "eta_seconds": null,
+      "stop_reason": null,
+      "completion": {
+        "outcome": null,
+        "prefix_complete": false
+      },
+      "credits": [
+        {
+          "credit_id": 1,
+          "sample_offset": 0,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 2,
+          "sample_offset": 640,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 3,
+          "sample_offset": 1280,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 4,
+          "sample_offset": 1920,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 5,
+          "sample_offset": 2560,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 6,
+          "sample_offset": 3200,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 7,
+          "sample_offset": 3840,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 8,
+          "sample_offset": 4480,
+          "max_frames": 640
+        }
+      ],
+      "sessionId": "6a52d35b-c6e3-45a2-aad6-df3edca93f88",
+      "status": "receiving"
+    },
+    "voice.stt.chunk": {
+      "type": "meeting.capture.status",
+      "v": 1,
+      "queue_contract": 1,
+      "meeting_id": "mtg_64283b8bf5429355",
+      "capture_id": "6a52d35b-c6e3-45a2-aad6-df3edca93f88",
+      "capture_epoch": 1,
+      "phase": "capturing",
+      "input_open": true,
+      "server_received_end": 640,
+      "processed_end": 0,
+      "committed_end": 0,
+      "saved_text_segments": 0,
+      "resident_seconds": 0.36,
+      "sealed_segments": 1,
+      "inflight_segment": null,
+      "high_water": false,
+      "eta_seconds": null,
+      "stop_reason": null,
+      "completion": {
+        "outcome": null,
+        "prefix_complete": false
+      },
+      "credits": [
+        {
+          "credit_id": 2,
+          "sample_offset": 640,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 3,
+          "sample_offset": 1280,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 4,
+          "sample_offset": 1920,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 5,
+          "sample_offset": 2560,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 6,
+          "sample_offset": 3200,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 7,
+          "sample_offset": 3840,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 8,
+          "sample_offset": 4480,
+          "max_frames": 640
+        },
+        {
+          "credit_id": 9,
+          "sample_offset": 5120,
+          "max_frames": 640
+        }
+      ],
+      "credit_id": 1,
+      "accepted_through": 640
+    },
+    "voice.stt.end": {
+      "type": "meeting.capture.status",
+      "v": 1,
+      "queue_contract": 1,
+      "meeting_id": "mtg_64283b8bf5429355",
+      "capture_id": "6a52d35b-c6e3-45a2-aad6-df3edca93f88",
+      "capture_epoch": 1,
+      "phase": "draining",
+      "input_open": false,
+      "server_received_end": 128064,
+      "processed_end": 0,
+      "committed_end": 0,
+      "saved_text_segments": 0,
+      "resident_seconds": 8.004,
+      "sealed_segments": 2,
+      "inflight_segment": 0,
+      "high_water": false,
+      "eta_seconds": null,
+      "stop_reason": "user_stop",
+      "completion": {
+        "outcome": null,
+        "prefix_complete": false
+      },
+      "credits": []
+    }
+  }
+}

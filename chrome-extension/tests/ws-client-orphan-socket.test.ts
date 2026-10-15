@@ -2,6 +2,7 @@
 // stale socket handlers (onclose/onmessage/challenge reply) must never
 // crosstalk with the new connection after a reconnect.
 
+import { readFileSync } from "node:fs"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { WSClient } from "../src/background/ws-client"
@@ -214,4 +215,50 @@ test("checkAndReconnect closes a dead socket before discarding it", async () => 
   await flush()
   // The late onclose from s1 is stale: it must not kill the new socket.
   assert.equal(client.getDiag().readyState, MockWebSocket.instances[1].readyState)
+})
+
+test("q1 uses the actual backend response fixture, clears on auth reset, and never enters legacy pending/flush", () => {
+  installGlobals(null)
+  const received: any[] = []
+  const client = new WSClient({ url: "ws://OWNED_NO_NETWORK", onStateChange() {}, onMessage: message => received.push(message) })
+  client.connect(); const first = MockWebSocket.instances[0]; first.simulateOpen()
+  const fixture = JSON.parse(readFileSync(`${process.cwd()}/tests/fixtures/meeting-pcm-responses.json`, "utf8")).responses
+  const status = fixture["meeting.start"].continuous_capture, capture = status.capture_id
+  const begin = { type: "meeting.start", v: 1, id: "owned-begin", meeting_id: status.meeting_id,
+    queue_contract: 1, capture_id: capture, expected_capture_epoch: status.capture_epoch - 1, privacy_ack_v1: true, privacy_ack_v2: true }
+  assert.equal(client.send(begin), false, "preauth q1 must not enqueue")
+  assert.equal(client.getDiag().pending, 0)
+  first.simulateMessage({ type: "auth.ok" })
+  assert.equal(first.sent.length, 0, "auth cannot flush a q1 Begin")
+  assert.equal(client.observeMeetingPcm("observed-current"), true)
+  first.simulateMessage({ ...fixture.pong, id: "observed-current" })
+  assert.equal(client.send(begin), true)
+  first.simulateMessage({ ...fixture["meeting.start"], id: "owned-begin" })
+  assert.equal(client.send({ type: "voice.stt.chunk", v: 1, id: "owned-chunk", queue_contract: 1, sessionId: capture, capture_epoch: status.capture_epoch,
+    credit_id: 1, sample_offset: 0, frame_count: 1, data: "AAA=" }), true)
+  first.simulateMessage({ type: "auth.failed" })
+  assert.equal(received.filter(m => m.type === "thread.mutation.connection" && m.state === "disconnected").length, 1)
+  assert.equal(client.send(begin), false); assert.equal(client.getDiag().pending, 0)
+  first.readyState = MockWebSocket.CLOSED; client.connect()
+  const replacement = MockWebSocket.instances.at(-1)!; replacement.simulateOpen(); replacement.simulateMessage({ type: "auth.ok" })
+  assert.equal(replacement.sent.length, 0)
+  client.observeMeetingPcm("new-current"); replacement.simulateMessage({ ...fixture.pong, id: "new-current" })
+  assert.equal(client.send({ type: "voice.stt.abort", v: 1, queue_contract: 1, sessionId: capture, capture_epoch: status.capture_epoch }), false,
+    "new capability does not transfer the accepted old owner")
+})
+
+test("q1 serialization completes before the final actual-socket fence", () => {
+  installGlobals(null)
+  const client = new WSClient({ url: "ws://OWNED_NO_NETWORK", onStateChange() {}, onMessage() {} })
+  client.connect(); const first = MockWebSocket.instances[0]; first.simulateOpen(); first.simulateMessage({ type: "auth.ok" })
+  const fixture = JSON.parse(readFileSync(`${process.cwd()}/tests/fixtures/meeting-pcm-responses.json`, "utf8")).responses
+  client.observeMeetingPcm("old-pong"); first.simulateMessage({ ...fixture.pong, id: "old-pong" })
+  const before = first.sent.length
+  const begin = { type: "meeting.start", queue_contract: 1, id: "owned-begin", capture_id: fixture["meeting.start"].continuous_capture.capture_id,
+    get meeting_id() { client.forceReconnect(); return "mtg_owned" } }
+  assert.equal(client.send(begin), false)
+  assert.equal(first.sent.length, before, "replacement during serialization must cause zero q1 send")
+  assert.equal(client.getDiag().pending, 0)
+  const replacement = MockWebSocket.instances.at(-1)!; replacement.simulateOpen(); replacement.simulateMessage({ type: "auth.ok" })
+  assert.equal(replacement.sent.length, 0, "reconnect cannot replay the refused operation")
 })

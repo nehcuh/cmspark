@@ -5,15 +5,22 @@
  * auto_diarize / import_text remain extension-only.
  */
 
-import { getConfig } from "../config"
+import { DATA_DIR, getConfig } from "../config"
+import { getSttSessionService, type SttSessionService } from "../voice/stt-session-service"
+import { isCaptureId, isCaptureEpoch, meetingPcmCapsSnapshot, MEETING_PCM } from "../voice/meeting-pcm-contract"
+import type { MeetingPcmCapture } from "../voice/meeting-pcm-capture"
+import { resolveWinSapiHelper } from "../voice/win-sapi"
 import { logger } from "../logger"
-import { isChromeExtensionOrigin, isVoiceSttOriginAllowed } from "../voice/stt-handlers"
+import { isChromeExtensionOrigin, isVoiceSttOriginAllowed, sttResult } from "../voice/stt-handlers"
+import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import type { LlmExtractConfig } from "../llm/llm-extract"
 import { generateMeetingMinutes } from "./meeting-minutes"
 import { importMeetingReference, MEETING_REFERENCE_MAX_CHARS, MEETING_REFERENCE_MAX_NAME_CHARS } from "./meeting-reference"
 import { MEETING_MINUTES_MAX_INPUT_CHARS } from "./minutes-prompt"
 import {
   appendTranscript,
+  beginMeetingCapture,
+  checkpointMeetingCapture,
   createMeeting,
   endMeetingRecording,
   loadMeeting,
@@ -27,6 +34,7 @@ import {
   setReference,
   saveMeeting,
   meetingSourceFingerprint,
+  meetingCaptureSourceNotice,
   MeetingTranscriptLimitError,
   MeetingTranscriptSegmentCollisionError,
   isSafeMeetingId,
@@ -73,6 +81,7 @@ export interface MeetingHandlerDeps {
   clearSttSessions?: () => void
   /** #260 test seam: override speaker-embedding runtime. */
   embedSegments?: typeof embedSegmentsForDiarize
+  sttService?: SttSessionService
 }
 
 function llmConfigFromCompanion(): LlmExtractConfig | null {
@@ -159,6 +168,7 @@ export async function handleMeetingMessage(
     })
     return err("origin_denied", "chrome-extension origin required")
   }
+  if ((type === "meeting.start" || type === "meeting.end") && hasMeetingPcmFields(msg) && !validMeetingPcmMessage(msg)) return err("queue_protocol_error", "invalid continuous meeting message")
 
   if (type === "meeting.create") {
     const session = createMeeting({
@@ -177,6 +187,61 @@ export async function handleMeetingMessage(
     if (msg.privacy_ack_v1 !== true) {
       return err("need_privacy_ack", "meeting_privacy_ack_v1 required before start")
     }
+    const service = deps.sttService ?? getSttSessionService({ dataDir: DATA_DIR })
+    if (msg.queue_contract !== undefined) {
+      const id = resolveMeetingId(msg)
+      const existing = id ? loadMeeting(id) : null
+      if (msg.queue_contract !== 1 || !isCaptureId(msg.capture_id) || !isCaptureEpoch(msg.expected_capture_epoch) ||
+          msg.expected_capture_epoch >= Number.MAX_SAFE_INTEGER || !ctx.peerId || msg.privacy_ack_v2 !== true ||
+          msg.audio_retained === true || msg.retain_days !== undefined) return err("queue_protocol_error", "invalid continuous begin")
+      if (!existing) return err("not_found", "existing meeting required")
+      if (existing.privacy.audio_retained) return err("queue_protocol_error", "continuous capture does not support retained audio")
+      const speaker = typeof msg.speaker === "string" && msg.speaker.trim() ? msg.speaker.slice(0, 32) : undefined
+      const previous = service.getMeetingCapture()
+      if (previous?.owns(ctx.peerId, msg.capture_id, existing.capture_epoch ?? 0) && previous.identity.meeting_id === id) {
+        if (previous.identity.capture_epoch !== msg.expected_capture_epoch + 1) return err("stale_capture", "capture operation epoch changed")
+        if (previous.speaker !== speaker) return err("segment_id_conflict", "capture operation label changed")
+        return { type: "meeting.started", v: 1, meeting: existing, continuous_capture: previous.status(), meeting_pcm_contract: 1, meeting_pcm_caps: meetingPcmCapsSnapshot() }
+      }
+      if ((existing.capture_epoch ?? 0) !== msg.expected_capture_epoch) return err("stale_capture", "capture epoch changed")
+      const voice = getConfig().voice
+      if (voice?.sttEngine !== "local" && voice?.sttEngine !== "system") return err("engine_not_local", "trusted STT engine required")
+      if (voice.sttEngine === "system" && (process.platform !== "win32" || !resolveWinSapiHelper().ok)) return err("system_unavailable", "system STT is unavailable")
+      const ready = service.checkMeetingModelReady({ sessionId: msg.capture_id, modelId: voice.localModelId ?? "medium",
+        ...(voice.sttEngine === "system" ? { engine: "system" as const } : {}), format: "pcm_s16le", sampleRate: 16000, channels: 1 })
+      if (!ready.ok) return err(ready.code, "model not ready")
+      let published = false
+      const capture: MeetingPcmCapture | null = service.reserveMeetingCapture({ meeting_id: id, capture_id: msg.capture_id, capture_epoch: msg.expected_capture_epoch + 1 }, ctx.peerId, {
+        persist: (segment, result) => {
+          const current = loadMeeting(id)
+          if (!current || current.capture_epoch !== capture!.identity.capture_epoch || current.capture_summary?.last_capture_id !== msg.capture_id) throw new Error("stale_capture")
+          let savedText = false
+          if (result.text?.trim()) {
+            const formatted = sttResult(msg.capture_id, result.text, result.ms, result.modelId)
+            const saved = formatted.text?.trim() ? appendTranscript(id, { segment_id: `${msg.capture_id}-${capture!.identity.capture_epoch}-s${segment.index}`,
+              t0: segment.start / MEETING_PCM.rate, t1: segment.end / MEETING_PCM.rate, text: formatted.text, source: "stt", ...(capture!.speaker ? { speaker: capture!.speaker } : {}) }) : null
+            if (formatted.text?.trim() && !saved) throw new Error("save_failed")
+            savedText = !!saved
+          }
+          // Durable range checkpoint precedes PCM release, also for empty ASR.
+          checkpointMeetingCapture({ ...capture!.status(), processed_end: segment.end, committed_end: segment.end })
+          return savedText
+        },
+        checkpoint: status => { if (published) checkpointMeetingCapture(status) },
+        send: status => { if (published) ctx.send?.(status) },
+      }, speaker)
+      if (!capture) return err("resource_conflict", "STT slot is owned")
+      try {
+        const started = beginMeetingCapture(id, msg.capture_id, msg.expected_capture_epoch)
+        if (!started) { capture.cancel(); return err("stale_capture", "meeting changed") }
+        published = true
+        return { type: "meeting.started", v: 1, meeting: started, continuous_capture: capture.status(), meeting_pcm_contract: 1, meeting_pcm_caps: meetingPcmCapsSnapshot() }
+      } catch {
+        capture.cancel()
+        return err("save_failed", "capture metadata was not committed")
+      }
+    }
+    if (service.getMeetingCapture()) return err("resource_conflict", "continuous meeting owns STT slot")
     let id = resolveMeetingId(msg)
     if (!id) {
       const session = createMeeting({
@@ -214,6 +279,13 @@ export async function handleMeetingMessage(
   if (type === "meeting.end") {
     const id = resolveMeetingId(msg)
     if (!id) return err("invalid_id", "meeting.end requires id")
+    const active = (deps.sttService ?? getSttSessionService({ dataDir: DATA_DIR })).getMeetingCapture()
+    if (active?.identity.meeting_id === id) return err("resource_conflict", "continuous capture has not retired")
+    if (msg.queue_contract === 1) {
+      const existing = loadMeeting(id)
+      if (!existing || existing.capture_epoch !== msg.capture_epoch || !existing.capture_summary || existing.capture_summary.last_capture_id !== msg.capture_id ||
+          !["finished", "failed"].includes(existing.capture_summary.phase)) return err("stale_capture", "capture has not finished")
+    }
     const result = endMeetingRecording(id)
     if (!result) return err("not_found", "meeting not found", { id })
     logger.info("meeting.end.ok", {
@@ -636,7 +708,7 @@ export async function handleMeetingMessage(
         if (id) setMeetingStatus(id, "error", result.message)
         return err(result.code, result.message, { id })
       }
-      const minutes = { ...result.minutes, source_transcript: transcriptText, source_fingerprint: fingerprint, stale: false }
+      const minutes = { ...result.minutes, raw_md: `> ${meetingCaptureSourceNotice(meeting?.capture_summary)}\n\n${result.minutes.raw_md}`, source_transcript: transcriptText, source_fingerprint: fingerprint, stale: false }
       if (id) {
         // setMinutes rechecks live materials: edits during inference stay marked stale.
         const updated = setMinutes(id, minutes)

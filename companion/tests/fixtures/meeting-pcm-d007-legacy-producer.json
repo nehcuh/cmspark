@@ -1,0 +1,20 @@
+{
+  "base": "d00772eda2d430253845595f11f1c491930685aa",
+  "source_objects": [
+    {
+      "rel": "companion/src/meeting/meeting-handlers.ts",
+      "bytes": 26914,
+      "sha256": "b542312a9fa2f53e6c19b347eb857f871f8486148e4a76f92320d60b257ed38c",
+      "git_blob": "438db2540581dbd7f5ce2a11b9b8c83fd4758fc8"
+    },
+    {
+      "rel": "companion/src/message-router.ts",
+      "bytes": 252545,
+      "sha256": "64e16bb8b208b6db2340aa30646c88cf6f036a26b2d92a9732477180e2edd681",
+      "git_blob": "ea6decfd1bbbb73c5f2b0e1ba20cb12571809595"
+    }
+  ],
+  "meeting_start_statement": "if (type === \"meeting.start\") {\n    if (msg.privacy_ack_v1 !== true) {\n      return err(\"need_privacy_ack\", \"meeting_privacy_ack_v1 required before start\")\n    }\n    let id = resolveMeetingId(msg)\n    if (!id) {\n      const session = createMeeting({\n        title: typeof msg.title === \"string\" ? msg.title : undefined,\n        thread_id: typeof msg.thread_id === \"string\" ? msg.thread_id : null,\n      })\n      id = session.id\n    } else {\n      const existing = loadMeeting(id)\n      if (!existing) return err(\"not_found\", \"meeting not found\", { id })\n      if (existing.status === \"recording\") {\n        return err(\"already_recording\", \"meeting already recording\", { id })\n      }\n    }\n    const started = startMeetingRecording(id, {\n      audio_retained: msg.audio_retained === true,\n      retain_days: typeof msg.retain_days === \"number\" ? msg.retain_days : undefined,\n    })\n    if (!started) return err(\"not_found\", \"meeting not found\", { id })\n    // Free STT max-1 slot so extension voice.stt.* for this meeting is not blocked\n    // by a prior dictation/meeting segment still inferring (resource_conflict).\n    try {\n      deps.clearSttSessions?.()\n    } catch {\n      /* best-effort */\n    }\n    logger.info(\"meeting.start.ok\", {\n      id: started.id,\n      audio_retained: started.privacy.audio_retained,\n    })\n    return { type: \"meeting.started\", v: 1, meeting: started }\n  }",
+  "system_ping_statements": "return { type: \"system.pong\" }",
+  "error_serializer": "function err(code: string, message: string, extra?: Record<string, unknown>) {\n  return { type: \"meeting.error\", v: 1, code, message, ...extra }\n}"
+}

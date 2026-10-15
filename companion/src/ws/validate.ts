@@ -8,6 +8,7 @@
 import { validateSiteCounterMessage } from "../message-router/handlers/site-counter"
 import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "../voice/session-caps"
 import { validateProjectRequest } from "../threads/project-store"
+import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 function projectSchema(message: any): WsValidationResult {
   const { type, id, ...rest } = message
   if (id !== undefined && (typeof id !== "string" || id.length > 200)) return { valid: false, error: "Invalid project correlation" }
@@ -28,6 +29,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
   }
   if (typeof msg.type !== "string" || !msg.type) {
     return { valid: false, error: "Message type must be a non-empty string" }
+  }
+  if (msg.queue_contract !== undefined || (hasMeetingPcmFields(msg) && (msg.type.startsWith("voice.stt.") || msg.type === "meeting.start" || msg.type === "meeting.end"))) {
+    if (!validMeetingPcmMessage(msg)) return { valid: false, error: "Invalid continuous meeting PCM message" }
+    if (msg.type !== "voice.stt.start") return { valid: true }
   }
 
   if (["chat.create", "chat.regenerate", "file.upload"].includes(msg.type) && msg.context_tab_id !== undefined) {
