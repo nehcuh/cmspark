@@ -97,16 +97,55 @@ test("receipt reader is bounded, finite and permanently checked in the owned Win
   assert.equal((stopSmoke.match(/NSIS_STOP_SMOKE_STATE=/g) ?? []).length, 2)
 })
 
-test("Registry, full census and sealed upload retain their exact block before NSIS", () => {
-  const raw = fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n")
-  const start = raw.indexOf('      - name: "Native Windows read-only Registry discovery (#644)"')
-  const end = raw.indexOf('      - name: "Windows reliability and confirmation regressions (#592, #595, #598, #599)"', start)
-  assert(start >= 0 && end > start)
-  assert.equal(createHash("sha256").update(raw.slice(start, end)).digest("hex"), "f0658cfa774f73098f564d9621e696921e709fcf3608463a513b4254e2818f37")
+const registryReady = "Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'ready=true' -Encoding utf8\n"
+const censusCondition = "${{ !cancelled() && matrix.os == 'windows-latest' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}"
+const digest = text => createHash("sha256").update(text).digest("hex")
+function assertCensusSchedule(raw) {
   const steps = workflowYaml.load(raw).jobs['smoke-os'].steps
   const names = steps.map(s => s.name)
   const i = names.indexOf('Native Windows read-only Registry discovery (#644)')
-  assert.deepEqual(names.slice(i, i + 4), ['Native Windows read-only Registry discovery (#644)', 'Complete Windows Companion census (#650)', 'Windows census finite public receipts (#650)', 'Windows reliability and confirmation regressions (#592, #595, #598, #599)'])
-  assert(names.indexOf('Office compatibility and relocated runtime (#611)') < i)
-  assert.match(steps.find(s => s.name === 'Office compatibility and relocated runtime (#611)').run, /npx tsc -p tsconfig\.test\.json/)
+  assert.deepEqual(names.slice(i - 1, i + 4), ['Compile shared companion test inputs (#650)', 'Native Windows read-only Registry discovery (#644)', 'Complete Windows Companion census (#650)', 'Windows census finite public receipts (#650)', 'Office compatibility and relocated runtime (#611)'])
+  assert.equal(names[i - 2], 'Pinned NSIS dependency transport and integrity (#633)')
+  const [compile, registry, census, artifact, office] = steps.slice(i - 1, i + 4)
+  assert.deepEqual(compile, { name: names[i - 1], id: 'windows-census-compile', shell: 'bash', run: 'cd companion\nnpx tsc -p tsconfig.test.json\n' })
+  assert.equal(registry.id, 'windows-registry-prerequisites')
+  assert.equal(registry.if, "matrix.os == 'windows-latest'")
+  assert.equal(registry['continue-on-error'], undefined)
+  assert.equal(registry.run.split(registryReady).length, 2, 'one finite output, not per-view readiness')
+  assert(registry.run.includes('}\n' + registryReady + 'cd companion\n'), 'readiness follows the complete original view loop')
+  assert.equal(digest(registry.run.replace(registryReady, '')), 'a2bb4df47a70ee0e4dc6d70a73097332f92b1a6e76d4194e215fba5a2b199c9a', 'original Registry body and failure exit remain exact')
+  assert.equal(census.if, censusCondition)
+  assert.equal(census['continue-on-error'], undefined)
+  assert.equal(digest(census.run), 'b6aba13f90e3e4567e0b80f21c8585a223383200e26237514d53caafd80836a6')
+  assert.equal(digest(JSON.stringify(artifact)), 'bf504e85964e900151325fca797443741ab84ad49d746b0257af2a269fc64697', 'sealed artifact condition and paths stay exact')
+  assert.equal(digest(office.run), '8fb06555123eebe638397b5bc81d5074db606f3aa9192d499b5914095b130402', 'Office loses only its extracted compiler line')
+  for (const step of [compile, office]) {
+    assert.equal(step.if, undefined); assert.equal(step['continue-on-error'], undefined)
+  }
+  assert.equal(steps.filter(s => s.name === compile.name).length, 1)
+}
+test("full census follows verified prerequisites before targeted Office and preserves every native gate", () => {
+  assertCensusSchedule(fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n"))
+})
+test("scheduling contract rejects missing compilation, premature readiness and waived native failures", () => {
+  const raw = fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n")
+  assertCensusSchedule(raw)
+  for (const [from, to] of [
+    ['id: windows-census-compile', 'id: missing-compile'],
+    ["steps.windows-registry-prerequisites.outputs.ready == 'true'", "steps.windows-registry-prerequisites.outputs.ready == 'false'"],
+    ['          ' + registryReady + '          cd companion', '          cd companion'],
+    ['          foreach ($view in $views) {', '          ' + registryReady + '          foreach ($view in $views) {'],
+    ['.test-dist/tests/integration/registry-apps-644.test.js', '.test-dist/tests/integration/omitted-registry.test.js'],
+    ['node scripts/windows-census.mjs', 'echo census-not-executed'],
+    ["        id: windows-registry-prerequisites\n", "        id: windows-registry-prerequisites\n        continue-on-error: true\n"],
+  ]) {
+    assert(raw.includes(from), 'mutant must target the actual source')
+    assert.throws(() => assertCensusSchedule(raw.replace(from, to)))
+  }
+  const premature = raw.replace('          ' + registryReady, '').replace('          foreach ($view in $views) {', '          ' + registryReady + '          foreach ($view in $views) {')
+  assert.throws(() => assertCensusSchedule(premature), 'a single readiness output inside/before the view loop is insufficient')
+  const late = workflowYaml.load(raw), steps = late.jobs['smoke-os'].steps
+  const office = steps.splice(steps.findIndex(s => s.name === 'Office compatibility and relocated runtime (#611)'), 1)[0]
+  steps.splice(steps.findIndex(s => s.id === 'windows-census-compile'), 0, office)
+  assert.throws(() => assertCensusSchedule(workflowYaml.dump(late)), 'targeted Office cannot precede forensic census again')
 })

@@ -166,13 +166,74 @@ jobs:
       - name: Pinned NSIS dependency transport and integrity (#633)
         run: node --test scripts/tests/nsis-ci-setup.test.mjs
 
+      - name: Compile shared companion test inputs (#650)
+        id: windows-census-compile
+        shell: bash
+        run: |
+          cd companion
+          npx tsc -p tsconfig.test.json
+
+      - name: "Native Windows read-only Registry discovery (#644)"
+        id: windows-registry-prerequisites
+        # Actual in-box PS5.1 -> runPs -> parser, isolated nonce-owned HKCU keys.
+        # Does not execute candidates or mutate application permissions/config.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          # CI-only owned runner prerequisite: fixtures/collector never create parents.
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_REQUIRED' }
+          $uninstall = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+          $views = @([Microsoft.Win32.RegistryView]::Registry32)
+          if ([Environment]::Is64BitOperatingSystem) { $views = @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32) }
+          foreach ($view in $views) {
+            $base = $null; $key = $null
+            try {
+              $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $view)
+              $key = $base.OpenSubKey($uninstall, $false)
+              $state = 'present'
+              if ($null -eq $key) { $key = $base.CreateSubKey($uninstall); $state = 'created' }
+              if ($null -eq $key) { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_FAILED' }
+              $tag = 32; if ($view -eq [Microsoft.Win32.RegistryView]::Registry64) { $tag = 64 }
+              Write-Output ('OWNED_GHA_REGISTRY_PREREQUISITE view={0} state={1}' -f $tag, $state)
+            } finally {
+              if ($null -ne $key) { $key.Dispose() }
+              if ($null -ne $base) { $base.Dispose() }
+            }
+          }
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'ready=true' -Encoding utf8
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/integration/registry-apps-644.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Complete Windows Companion census (#650)"
+        id: windows-census
+        if: ${{ !cancelled() && matrix.os == 'windows-latest' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}
+        shell: pwsh
+        run: |
+          node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/windows-census.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Windows census finite public receipts (#650)"
+        if: always() && matrix.os == 'windows-latest' && steps.windows-census.outputs.public_dir != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-census-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.windows-census.outputs.public_dir }}/*.json
+            ${{ steps.windows-census.outputs.public_dir }}/sealed/envelope.json
+            ${{ steps.windows-census.outputs.public_dir }}/sealed/*.enc
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Office compatibility and relocated runtime (#611)
         shell: bash
         run: |
           node --test scripts/tests/office-runtime-stage.test.mjs
           node scripts/smoke-office-runtime.mjs
           cd companion
-          npx tsc -p tsconfig.test.json
           node scripts/run-tests.mjs .test-dist/tests/office-format-compatibility.test.js .test-dist/tests/office-import-entry.test.js .test-dist/tests/odf-expansion.test.js
 
       - name: Smoke pure tests (no native host required)
@@ -258,59 +319,6 @@ jobs:
         run: |
           cd companion
           node scripts/run-tests.mjs .test-dist/tests/windows-owner.test.js .test-dist/tests/integration/windows-owner-609.test.js
-
-      - name: "Native Windows read-only Registry discovery (#644)"
-        # Actual in-box PS5.1 -> runPs -> parser, isolated nonce-owned HKCU keys.
-        # Does not execute candidates or mutate application permissions/config.
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          # CI-only owned runner prerequisite: fixtures/collector never create parents.
-          $ErrorActionPreference = 'Stop'
-          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_REQUIRED' }
-          $uninstall = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
-          $views = @([Microsoft.Win32.RegistryView]::Registry32)
-          if ([Environment]::Is64BitOperatingSystem) { $views = @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32) }
-          foreach ($view in $views) {
-            $base = $null; $key = $null
-            try {
-              $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $view)
-              $key = $base.OpenSubKey($uninstall, $false)
-              $state = 'present'
-              if ($null -eq $key) { $key = $base.CreateSubKey($uninstall); $state = 'created' }
-              if ($null -eq $key) { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_FAILED' }
-              $tag = 32; if ($view -eq [Microsoft.Win32.RegistryView]::Registry64) { $tag = 64 }
-              Write-Output ('OWNED_GHA_REGISTRY_PREREQUISITE view={0} state={1}' -f $tag, $state)
-            } finally {
-              if ($null -ne $key) { $key.Dispose() }
-              if ($null -ne $base) { $base.Dispose() }
-            }
-          }
-          cd companion
-          node scripts/run-tests.mjs .test-dist/tests/integration/registry-apps-644.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: "Complete Windows Companion census (#650)"
-        id: windows-census
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/windows-census.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: "Windows census finite public receipts (#650)"
-        if: always() && matrix.os == 'windows-latest' && steps.windows-census.outputs.public_dir != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-census-${{ github.sha }}-${{ github.run_attempt }}
-          path: |
-            ${{ steps.windows-census.outputs.public_dir }}/*.json
-            ${{ steps.windows-census.outputs.public_dir }}/sealed/envelope.json
-            ${{ steps.windows-census.outputs.public_dir }}/sealed/*.enc
-          if-no-files-found: error
-          retention-days: 7
 
       - name: "Windows reliability and confirmation regressions (#592, #595, #598, #599)"
         if: matrix.os == 'windows-latest'
