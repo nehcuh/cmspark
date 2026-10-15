@@ -228,3 +228,36 @@ for (const mode of ['config-nonempty', 'config-replaced', 'config-missing', 'con
   assert.notEqual(result.code, 0)
   assert.deepEqual(installEvents(f).filter(x => x.phase === 'start').map(x => x.name), ['companion'])
 })
+
+// Pure environment construction seams only; these do not emulate Windows spawn.
+function withEnvironmentPlatform(platform, body) {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')
+  try { Object.defineProperty(process, 'platform', { value: platform }); return body() }
+  finally { Object.defineProperty(process, 'platform', original) }
+}
+const requiredWindowsKeys = ['LOGONSERVER', 'SYSTEMDRIVE', 'USERDOMAIN', 'USERNAME']
+test('Windows required OS keys are explicitly constructed without admitting unrelated ambient keys', () => {
+  withEnvironmentPlatform('win32', () => {
+    const input = Object.fromEntries(requiredWindowsKeys.map((name, i) => [name.toLowerCase(), `OWNED_OS_${i}`]))
+    input.NPM_TOKEN = 'OWNED_NOT_A_CREDENTIAL'; input.PRIVATE_INSTALL_ENV = 'OWNED_CANARY'
+    const actual = childEnvironment(input, owned, raw)
+    for (const [i, name] of requiredWindowsKeys.entries()) assert.equal(actual[name], `OWNED_OS_${i}`)
+    assert.equal('NPM_TOKEN' in actual, false); assert.equal('PRIVATE_INSTALL_ENV' in actual, false)
+    assert.deepEqual(Object.keys(actual).sort(), [...requiredWindowsKeys, 'CI', 'GITHUB_ACTIONS', 'RUNNER_OS', 'RUNNER_TEMP', 'GITHUB_WORKSPACE', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL'].sort())
+  })
+})
+test('Windows OS-key construction neither invents missing values nor expands explicitly empty values', () => {
+  withEnvironmentPlatform('win32', () => {
+    const missing = childEnvironment({}, owned, raw)
+    for (const name of requiredWindowsKeys) assert.equal(name in missing, false)
+    const empty = childEnvironment(Object.fromEntries(requiredWindowsKeys.map(name => [name, ''])), owned, raw)
+    for (const name of requiredWindowsKeys) assert.equal(empty[name], '')
+  })
+})
+test('the four Windows-required keys do not extend other platforms environment admission', () => {
+  const input = Object.fromEntries(requiredWindowsKeys.map(name => [name, 'OWNED_PLATFORM_ONLY']))
+  for (const platform of ['darwin', 'linux']) withEnvironmentPlatform(platform, () => {
+    const actual = childEnvironment(input, owned, raw)
+    for (const name of requiredWindowsKeys) assert.equal(name in actual, false)
+  })
+})

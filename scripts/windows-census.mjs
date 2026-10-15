@@ -12,9 +12,13 @@ import { sealEvidence } from './windows-census-evidence.mjs'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const envKeys = ['PATH', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS', 'LANG', 'HOME', 'RUNNER_TRACKING_ID']
+// libuv's Windows required_vars fills these from the parent even when omitted.
+// Admit the same finite OS names explicitly so the helper can validate its CLI
+// environment without accepting arbitrary inherited keys or logging values.
+const windowsRequiredEnvKeys = ['LOGONSERVER', 'SYSTEMDRIVE', 'USERDOMAIN', 'USERNAME']
 export function childEnvironment(input, workspace, temp) {
   const env = {}
-  for (const key of envKeys) {
+  for (const key of process.platform === 'win32' ? [...envKeys, ...windowsRequiredEnvKeys] : envKeys) {
     const actual = Object.keys(input).find(k => k.toLowerCase() === key.toLowerCase())
     if (actual && typeof input[actual] === 'string') env[key] = input[actual]
   }
