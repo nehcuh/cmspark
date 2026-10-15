@@ -124,7 +124,8 @@ test("owner timeout diagnostics expose only sanitized phase/timing and kill fact
   }
   assert.ok(Number(fields.returned_elapsed_ms) >= Number(fields.close_elapsed_ms))
   assert.ok(!JSON.stringify(records).includes(secret))
-  assert.deepEqual(Object.keys(fields).sort(), ["aborted", "callback_elapsed_ms", "child_killed", "close_elapsed_ms", "close_exit_status", "close_signal", "error_code", "error_killed", "error_signal", "phase", "returned_elapsed_ms", "spawn_elapsed_ms", "timeout_ms"].sort())
+  assert.deepEqual(Object.keys(fields).sort(), ["aborted", "callback_elapsed_ms", "child_killed", "close_elapsed_ms", "close_exit_status", "close_signal", "error_code", "error_killed", "error_signal", "phase", "returned_elapsed_ms", "spawn_elapsed_ms", "timeout_ms",
+    "stdout_first_data_elapsed_ms", "stdout_filetime_line_elapsed_ms", "stdout_end_elapsed_ms", "stderr_first_data_elapsed_ms"].sort())
   assert.equal(fields.timeout_ms, 10000)
 })
 
