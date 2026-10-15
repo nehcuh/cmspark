@@ -1,0 +1,6 @@
+# The capture generator hashes source bytes and checks committed output exactly.
+/chrome-extension/src/sidepanel/voice/meeting-continuous-pcm.ts text eol=lf
+/chrome-extension/src/sidepanel/voice/meeting-pcm-worklet.ts text eol=lf
+/chrome-extension/src/sidepanel/voice/meeting-pcm-worklet-generated.ts text eol=lf
+/chrome-extension/src/sidepanel/voice/meeting-continuous-capture.ts text eol=lf
+/companion/src/summoner/meeting-continuous-generated.ts text eol=lf
