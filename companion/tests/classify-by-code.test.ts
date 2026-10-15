@@ -84,6 +84,10 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   APP_EXE_DRIFT: "non_recoverable", // #563 D4: intrinsic integrity/hash-read denial; tightens poisoned diagnostics
   NETSEC_TARGETS_DENIED: "non_recoverable", // #563 E1: ordinary denial already halted; timeout/locator names now halt too.
   // recoverable（#560 第二半改过下面前三条，原 non_recoverable）
+  // #563: only six finite pre-execution input refusals become recoverable.
+  // The two pre-L2 shell argument guards preserve the same code; policy/L2 do not.
+  SHELL_INPUT_INVALID: "recoverable",
+  WORKSPACE_FILE_UNSUPPORTED: "recoverable",
   // 判据是「**agent 本回合能否自修**」，不是「结果里有没有 suggested_action」
   // （pi 指出：同带 suggested_action 的 DOWNLOADS_API_UNAVAILABLE 就留在 non_recoverable）。
   HINT_REQUIRED: "recoverable",   // agent 补上 filenameHint/urlContains 即可自修
