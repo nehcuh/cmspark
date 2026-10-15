@@ -4515,8 +4515,12 @@ async function dispatchMessage(
     case "board.add_hint": {
       const tid = typeof rest.thread_id === "string" ? rest.thread_id : null
       const text = typeof rest.text === "string" ? rest.text : ""
-      if (!tid) return { type: "error", error: "board.add_hint requires thread_id" }
-      if (!text.trim()) return { type: "error", error: "board.add_hint requires text" }
+      // Correlation is UI feedback only; existing authentication/owner/service
+      // checks remain authoritative, including legacy requests without an id.
+      const hintReply = { family: "board", request_type: "board.add_hint", thread_id: tid,
+        ...(typeof rest.id === "string" ? { id: rest.id } : {}) }
+      if (!tid) return { type: "error", error: "board.add_hint requires thread_id", ...hintReply }
+      if (!text.trim()) return { type: "error", error: "board.add_hint requires text", ...hintReply }
       const { addHint, resolveBoardHostThreadId, ensureBoard } = await import("./board")
       const hostId = resolveBoardHostThreadId(threadManager, tid) || tid
       const host = threadManager.get(hostId) as any
@@ -4527,9 +4531,10 @@ async function dispatchMessage(
         actor_type: "user",
         thread_id: hostId,
       })
-      if (!r.ok) return { type: "error", error: r.error }
+      if (!r.ok) return { type: "error", error: r.error, ...hintReply }
       return {
         type: "board.add_hint_result",
+        ...hintReply,
         thread_id: tid,
         host_thread_id: hostId,
         raw_board: r.board,
