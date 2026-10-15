@@ -243,7 +243,7 @@ export class SysTray2Adapter implements UnifiedTray {
     push("打开日志目录", { type: "logs" })
     push("打开 Chrome", { type: "chrome" })
     push("显示配对码", { type: "show-pairing" })
-    push("召唤器（实验）…", { type: "summoner" })
+    push("对话浮窗（旧版）…", { type: "summoner" })
     push("只读工作台…", { type: "desktop" })
     push("设置", { type: "settings" })
 

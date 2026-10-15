@@ -248,7 +248,7 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   pairingItem.tag = MenuTag.pairing.rawValue
   menu.addItem(pairingItem)
 
-  let summonerItem = NSMenuItem(title: "召唤器（实验）…", action: action, keyEquivalent: "")
+  let summonerItem = NSMenuItem(title: "对话浮窗（旧版）…", action: action, keyEquivalent: "")
   summonerItem.target = target
   summonerItem.tag = MenuTag.summoner.rawValue
   menu.addItem(summonerItem)
@@ -1480,7 +1480,7 @@ func handleSummonerHotKeyPressed() {
     jsonLine(["type": "summoner.composing", "on": true])
     return
   }
-  // Same Capture card as tray menu / Side Panel 「弹出对话框」, but toggle hide.
+  // Existing configured hotkey opens/focuses the same read-only native workbench as its tray menu.
   jsonLine(["type": "click", "action": "summoner-toggle"])
 }
 

@@ -332,7 +332,7 @@ test("Tray.swift stdin handles summoner.open/hydrate/token/done/error/close", ()
   ]) {
     assert.ok(src.includes(`"${cmd}"`), `missing stdin cmd ${cmd}`)
   }
-  assert.match(src, /召唤器（实验）…/)
+  assert.match(src, /对话浮窗（旧版）…/)
 })
 
 test("swift-tray-bridge send/recv Task 7 summoner protocol", () => {
