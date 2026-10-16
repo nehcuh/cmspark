@@ -252,3 +252,20 @@ test("acceptance source receipts require the current authenticated owned respons
     await Promise.all([new Promise<void>(r => channel.wss.close(() => r())), new Promise<void>(r => legacy.close(() => r())), new Promise<void>(r => server.close(() => r()))])
   }
 })
+
+test("acceptance source callbacks capture the owning desktop for instrumented popup and download refusal",()=>{
+ const sourceRoot=path.resolve(__dirname,"../.."),build=require(path.join(sourceRoot,"scripts/build-desktop-windows.mjs"))
+ const original=fs.readFileSync(path.join(sourceRoot,"src/desktop/native/DesktopHost.cpp"),"utf8"),fixture=fs.readFileSync(path.join(sourceRoot,"tests/fixtures/desktop-480/native-acceptance.cpp"),"utf8")
+ const variant:{source:string;inverse:string}=build.desktopAcceptanceVariant("cpp",original,fixture)
+ assert.equal(variant.inverse,original)
+ for(const [handler,argsType,refusal,receipt] of[
+  ["ICoreWebView2NewWindowRequestedEventHandler","ICoreWebView2NewWindowRequestedEventArgs","put_Handled","newWindow"],
+  ["ICoreWebView2DownloadStartingEventHandler","ICoreWebView2DownloadStartingEventArgs","put_Cancel","download"],
+ ]){
+  const before=`Callback<${handler}>([](ICoreWebView2*,${argsType}* args)->HRESULT{args->${refusal}(TRUE);return S_OK;}`
+  const after=`Callback<${handler}>([this](ICoreWebView2*,${argsType}* args)->HRESULT{args->${refusal}(TRUE);D480Acceptance::${receipt}(*this);return S_OK;}`
+  assert.equal(original.includes(before),true,"Shipped handler stays capture-free and refuses the action")
+  assert.equal(variant.source.includes(after),true,"Only the unshipped acceptance callback captures its own Desktop")
+  assert.equal(variant.source.includes(before),false,"No uninstrumented callback can satisfy acceptance")
+ }
+})
