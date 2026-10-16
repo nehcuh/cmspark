@@ -180,6 +180,8 @@ export type ComputerErrorCode =
   | "CAPTURE_FAILED"
   | "INJECT_FAILED"
   | "EVIDENCE_ERROR"
+  | "COMPUTER_INPUT_INVALID" // only ordinary validateDraft refusals; native INVALID_ACTION stays mixed
+  | "COMPUTER_WINDOW_ABSENT" // successful enumeration found no window; arbitrary enumerator errors remain mixed
   | "INVALID_ACTION"
   | "CONFIRMATION_UNAVAILABLE"
   | "TASK_ABORTED" // WP2: emergency stop fired (hotkey flag / panel abort) mid-task

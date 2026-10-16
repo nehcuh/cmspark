@@ -450,7 +450,9 @@ export async function runComputerTask(
   }
 
   const draftErr = validateDraft(params)
-  if (draftErr) return fail(draftErr)
+  if (draftErr) return fail(draftErr.code === "INVALID_ACTION"
+    ? new ComputerError("COMPUTER_INPUT_INVALID", draftErr.message, draftErr.detail)
+    : draftErr)
 
   // A10 + §E.2 gate (executor-side belt; the server gate already checked).
   let entry
@@ -487,7 +489,7 @@ export async function runComputerTask(
     }
     const wins = await deps.windows.enumerateByExe(exeId)
     if (wins.length === 0) {
-      throw new ComputerError("APP_WINDOW_NOT_FOUND", `computer: no visible window for "${entry.display_name}" — is it running?`)
+      throw new ComputerError("COMPUTER_WINDOW_ABSENT", `computer: no visible window for "${entry.display_name}" — is it running?`)
     }
     // Prefer real UI windows: titled, on-screen, non-menu-strip. WeChat/Electron
     // expose many empty-name aux layers (500×500 panels, 1728×33 bars); pure

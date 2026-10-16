@@ -197,6 +197,8 @@ export type SkillInstallOverwritePreview = {
   overwrite: boolean
   /** Set when zip cannot be previewed/installed (e.g. multi SKILL.md). */
   error?: string
+  /** Only actual shared-picker ambiguity; all other preview failures retain their existing wrapper. */
+  errorCode?: "SKILL_INSTALL_INPUT_AMBIGUOUS"
   candidates?: string[]
 }
 
@@ -258,6 +260,9 @@ export function skillInstallOverwritePreview(
             dest_path: null,
             overwrite: false,
             error: picked.error || "Zip must contain a SKILL.md file",
+            ...(picked.candidates && picked.candidates.length > 1
+              ? { errorCode: "SKILL_INSTALL_INPUT_AMBIGUOUS" as const }
+              : {}),
             candidates: picked.candidates,
           }
         }
