@@ -764,7 +764,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     }
     case "get_worker_status": {
       const wid = params.worker_id || params.thread_id
-      if (!wid) return { success: false, error: "worker_id required" }
+      if (!wid) return { success: false, error: "worker_id required", data: { error_code: "WORKER_INPUT_INVALID" } }
       const w = threadManager.get(String(wid)) as any
       if (!w) return { success: false, error: `worker not found: ${wid}` }
       const { listTabLocks } = await import("../orchestrator/tab-lease")
@@ -794,7 +794,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       // free-form-only rejected with recoverable HANDBACK_MISSING_STRUCTURE.
       // G3: wire resolveToolCall from worker/host recorded tool results (fail-closed).
       const wid = params.worker_id
-      if (!wid) return { success: false, error: "worker_id required" }
+      if (!wid) return { success: false, error: "worker_id required", data: { error_code: "WORKER_INPUT_INVALID" } }
       const callerId = params.__thread_id || params._thread_id || null
       const {
         collectWorkerHandback,
@@ -873,7 +873,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const intentId = String(params.intent_id || "")
       const workerId = String(params.worker_id || "")
       if (!intentId || !workerId) {
-        return { success: false, error: "intent_id and worker_id required" }
+        return { success: false, error: "intent_id and worker_id required", data: { error_code: "WORKER_INPUT_INVALID" } }
       }
       const { claimIntent } = await import("../board/intent-claim")
       const r = await claimIntent(threadManager, {
@@ -1056,7 +1056,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     }
     case "worker_cancel": {
       const wid = params.worker_id
-      if (!wid) return { success: false, error: "worker_id required" }
+      if (!wid) return { success: false, error: "worker_id required", data: { error_code: "WORKER_INPUT_INVALID" } }
       const w = threadManager.get(String(wid)) as any
       if (!w) return { success: false, error: `worker not found: ${wid}` }
       // P0 ISO-01: only parent/orchestrator host (or the worker itself) may cancel
