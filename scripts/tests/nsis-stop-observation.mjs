@@ -115,6 +115,9 @@ export function buildObservedMacro(bytes) {
   const calls=text.match(/^  nsExec::ExecToLog [^\r\n]+\r?\n/gm)??[];
   if(calls.length!==1)fail();
   const exec=calls[0],pop='  Pop $1'+eol;
+  // Count complete anchor lines independently of EOL style before exact insertion.
+  const lines=text.split(/\r?\n/);
+  for(const anchor of [init,file,pop])if(lines.filter(line=>line===anchor.slice(0,-eol.length)).length!==1)fail();
   // Validate the existing Pop anchor even though no instruction is added after it.
   once(text,pop,pop);
   let observed=once(text,init,init+macroBlock('plugin-dir-ready',eol));

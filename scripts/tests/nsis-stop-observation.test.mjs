@@ -241,7 +241,8 @@ test('actual emitted phase writer appends real helper records and bounds seek fa
 })
 
 test('actual whole macro producer has strict byte inverse for BOM and CRLF and only four added calls', () => {
-  for (const bytes of [originalMacro, Buffer.concat([Buffer.from([239, 187, 191]), originalMacro]), Buffer.from(originalMacro.toString().replaceAll('\n', '\r\n'))]) {
+  // Only construct the synthetic CRLF variant; retain the actual source bytes above.
+  for (const bytes of [originalMacro, Buffer.concat([Buffer.from([239, 187, 191]), originalMacro]), Buffer.from(originalMacro.toString().replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'))]) {
     const observed = observation.buildObservedMacro(bytes)
     assert.deepEqual(observation.restoreOriginalMacro(observed), bytes)
     const text = observed.toString()
@@ -273,6 +274,16 @@ test('macro producer refuses missing/duplicate anchors, malformed blocks and pre
   assert.throws(() => observation.buildObservedMacro(observed), invalid)
   for (const value of [observed.toString().replace('"exec-enter"', '"other"'), observed.toString().replace('END:exec-enter', 'END:other'), observed.toString() + '\n; CMSPARK_NSIS_MACRO_OBSERVE_V1_BEGIN:exec-enter\n']) {
     assert.throws(() => observation.restoreOriginalMacro(Buffer.from(value)), invalid)
+  }
+})
+
+test('mixed-EOL duplicate macro anchors cannot bypass the exactly-once checks', () => {
+  const text = originalMacro.toString().replaceAll('\r\n', '\n').replaceAll('\n', '\r\n')
+  const exec = text.match(/^  nsExec::ExecToLog [^\r\n]+/m)[0]
+  for (const anchor of ['  InitPluginsDir', '  File /oname=$PLUGINSDIR\\cmspark-stop.ps1 "${CMSPARK_STOP_SCRIPT}"', exec, '  Pop $1']) {
+    const duplicate = text.replace(anchor, anchor + '\n' + anchor)
+    assert.notEqual(duplicate, text, 'the mutation must actually duplicate an anchor')
+    assert.throws(() => observation.buildObservedMacro(Buffer.from(duplicate)), invalid)
   }
 })
 
