@@ -129,3 +129,35 @@ test("file identity keeps distinct 64-bit Windows inode values beyond Number pre
   assert.throws(snapshot.recheck)
  } finally { a.close() }
 })
+
+// Ancestor directories are identity boundaries, not snapshots of every sibling.
+for (const [label, sibling, directory] of [
+ ["ancestor file", "C:\\unrelated.txt", false],
+ ["ancestor directory", "C:\\unrelated", true],
+ ["profile sibling", "C:\\Portable\\unrelated.txt", false],
+ ["file-directory sibling", "C:\\文档\\unrelated.txt", false],
+] as const) test(`unrelated directory entry keeps the approved file/profile: ${label}`, async () => {
+ const a = owned()
+ try {
+  const snapshot = await prepareGuiTemplateFiles(a.entry, a.file, a.checkpoint, a.deps)
+  if (directory) fs.mkdirSync(a.map(sibling)); else fs.writeFileSync(a.map(sibling), "owned unrelated data")
+  snapshot.recheck()
+  assert.equal(a.counts().targetReads, 0)
+ } finally { a.close() }
+})
+for (const field of ["ino", "mode", "birthtimeNs"] as const) test(`ancestor identity remains strict after directory metadata projection: ${field}`, async () => {
+ const a = owned()
+ try {
+  let changed = false
+  const original = a.io.lstatSync.bind(a.io)
+  a.deps.fs = { ...a.io, lstatSync: ((value: fs.PathLike, options?: { bigint?: boolean }) => {
+   const stat = original(value, options as any)
+   if (!changed || String(value) !== "C:\\Portable") return stat
+   return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { [field]: stat[field] + 1n })
+  }) as typeof fs.lstatSync }
+  const snapshot = await prepareGuiTemplateFiles(a.entry, a.file, a.checkpoint, a.deps)
+  changed = true
+  assert.throws(snapshot.recheck)
+  assert.equal(a.counts().targetReads, 0)
+ } finally { a.close() }
+})

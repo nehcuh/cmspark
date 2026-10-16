@@ -78,6 +78,7 @@ test("#686 actual manager and executor private receipt launch exact owned NPP pa
   const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-template686-native-")))
   const owner: any = {}, stranger: any = {}, manager = new SecurityConfirmationManager()
   let owned: ChildProcess | undefined, closed: Promise<void> | undefined, launches = 0
+  let spawnPhase = "not-entered"
   try {
     const exe = await ownedTarget(directory), name = `中文 with space ${randomUUID()}.txt`, file = path.join(directory, name)
     fs.writeFileSync(file, "OWNED_NON_PRIVATE_TEXT_686")
@@ -91,10 +92,12 @@ test("#686 actual manager and executor private receipt launch exact owned NPP pa
     const shown = new Promise<void>((resolve, reject) => { show = resolve; showFailed = reject })
     const pending = admitGuiTemplate({ params, ownerCurrent: () => true, requestConfirmation: details => manager.request(data => { payload = data; show() }, details, { originWs: owner }) }, {
       spawn: ((target: string, argv: string[], options: any) => {
+        spawnPhase = "entered"
         assert.equal(target.toLowerCase(), exe.toLowerCase()); assert.equal(argv.length, 5); assert.deepEqual(argv.slice(0, 4), ["-multiInst", "-nosession", "-noPlugin", "-ro"])
         assert.equal(argv[4].toLowerCase(), fs.realpathSync.native(file).toLowerCase())
         assert.equal(fs.statSync(argv[4], { bigint: true }).ino, fs.statSync(file, { bigint: true }).ino)
         assert.ok(payload.full_preview.includes(`argv[4]: ${JSON.stringify(argv[4])}`))
+        spawnPhase = "validated-before-spawn"
         launches++; owned = spawn(target, argv, options); closed = new Promise<void>(resolve => owned!.once("close", () => resolve())); return owned
       }) as typeof spawn,
     })
@@ -104,7 +107,7 @@ test("#686 actual manager and executor private receipt launch exact owned NPP pa
     assert.ok(payload.full_preview.includes(name)); assert.equal(manager.respondFrom(payload.confirmation_id, true, stranger).outcome, "origin_mismatch")
     assert.equal(launches, 0); assert.equal(manager.respondFrom(payload.confirmation_id, true, owner).outcome, "resolved")
     const accepted = await pending; const result = await accepted.receipt.execute(accepted.finalParams)
-    assert.equal(result.success, true); assert.equal(launches, 1); assert.ok(owned?.pid)
+    assert.equal(result.success, true, `receipt-execute success=${result.success} spawn-phase=${spawnPhase} launches=${launches}`); assert.equal(launches, 1); assert.ok(owned?.pid)
     const observation = JSON.parse((await runPs(path.resolve(__dirname, "../../../tests/fixtures/apps-template-native-686.ps1"),
       ["-OwnedPid", String(owned.pid), "-OwnedExe", exe, "-OwnedName", name], { timeoutMs: 20000 })).trim())
     assert.deepEqual(observation, { native_ps51: true, owned_window: true, matching_file_title: true, open_files: 1, actual_target_parser: true })

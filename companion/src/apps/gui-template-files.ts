@@ -71,7 +71,12 @@ export interface GuiTemplateFileDeps {
   runner?: PsRunner
   hashExe?: (file: string) => Promise<string>
 }
-const identity = (s: fs.BigIntStats): string => JSON.stringify([s.dev, s.ino, s.mode, s.nlink, s.size, s.mtimeNs, s.ctimeNs, s.birthtimeNs].map(String))
+// Directory entries can change while approval is open without replacing the
+// directory or any approved leaf. Keep directory identity/type/permissions and
+// creation time strict; file/profile metadata remains an exact snapshot.
+const identity = (s: fs.BigIntStats): string => JSON.stringify((s.isDirectory()
+  ? [s.dev, s.ino, s.mode, s.birthtimeNs]
+  : [s.dev, s.ino, s.mode, s.nlink, s.size, s.mtimeNs, s.ctimeNs, s.birthtimeNs]).map(String))
 function pathChain(value: string): string[] {
   const result: string[] = [value]
   let cursor = value
