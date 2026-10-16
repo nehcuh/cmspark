@@ -69,7 +69,62 @@ test('original eighty-five control families remain, followed only by this new di
 })
 // Fixed progress is separate from the five formatter receipts; nothing arbitrary is public.
 const probePrefix = 'CENSUS_650_PROBE '
-const probePlan = ['bootstrap', 'defined', 'unknown_before', 0, 'unknown_after', 'smb_setup_before', 1, 'smb_setup_after', 'smb_identity_before', 2, 'smb_identity_after', 'short_root_before', 3, 'short_root_after', 'cleanup_before', 4, 'cleanup_after', 'complete']
+const outerProbePlan = ['bootstrap', 'defined', 'unknown_before', 0, 'unknown_after', 'smb_setup_before', 1, 'smb_setup_after', 'smb_identity_before', 2, 'smb_identity_after', 'short_root_before', 3, 'short_root_after', 'cleanup_before', 4, 'cleanup_after', 'complete']
+const formatterInnerStages = ['inner_param','inner_stage','inner_phase','inner_reason','inner_location','inner_receipt','inner_emitted']
+const probePlan = outerProbePlan.flatMap(token => typeof token === 'number' ? [...formatterInnerStages.slice(0,6), token, formatterInnerStages[6]] : [token])
+const formatterInnerAnchors = [
+  {
+    "stage": "inner_param",
+    "before": "  param([string]$Stage, [string]$Phase, [System.Management.Automation.ErrorRecord]$Record)\n",
+    "after": "  param([string]$Stage, [string]$Phase, [System.Management.Automation.ErrorRecord]$Record)\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_param')\n"
+  },
+  {
+    "stage": "inner_stage",
+    "before": "  if ($Stage -cin @('primary', 'cleanup')) { $safeStage = $Stage }\n",
+    "after": "  if ($Stage -cin @('primary', 'cleanup')) { $safeStage = $Stage }\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_stage')\n"
+  },
+  {
+    "stage": "inner_phase",
+    "before": "  if ($Phase -cin @('service', 'directory_create', 'share_owner', 'share_create', 'controls', 'short_join', 'short_directory', 'short_type', 'long_buffer', 'short_buffer', 'long_call', 'long_check', 'short_call', 'short_check', 'roots_long', 'roots_short', 'roots_unc', 'launcher', 'cleanup_identity', 'cleanup_lookup', 'cleanup_verify', 'cleanup_share', 'cleanup_directory', 'cleanup_unc_env', 'cleanup_long_env', 'cleanup_short_env')) { $safePhase = $Phase }\n",
+    "after": "  if ($Phase -cin @('service', 'directory_create', 'share_owner', 'share_create', 'controls', 'short_join', 'short_directory', 'short_type', 'long_buffer', 'short_buffer', 'long_call', 'long_check', 'short_call', 'short_check', 'roots_long', 'roots_short', 'roots_unc', 'launcher', 'cleanup_identity', 'cleanup_lookup', 'cleanup_verify', 'cleanup_share', 'cleanup_directory', 'cleanup_unc_env', 'cleanup_long_env', 'cleanup_short_env')) { $safePhase = $Phase }\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_phase')\n"
+  },
+  {
+    "stage": "inner_reason",
+    "before": "  }\n  $line = 0; $column = 0\n",
+    "after": "  }\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_reason')\n  $line = 0; $column = 0\n"
+  },
+  {
+    "stage": "inner_location",
+    "before": "  }\n  $receipt = [ordered]@{ version = 1; stage = $safeStage; phase = $safePhase; reason = $reason; line = $line; column = $column }\n",
+    "after": "  }\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_location')\n  $receipt = [ordered]@{ version = 1; stage = $safeStage; phase = $safePhase; reason = $reason; line = $line; column = $column }\n"
+  },
+  {
+    "stage": "inner_receipt",
+    "before": "  $receipt = [ordered]@{ version = 1; stage = $safeStage; phase = $safePhase; reason = $reason; line = $line; column = $column }\n",
+    "after": "  $receipt = [ordered]@{ version = 1; stage = $safeStage; phase = $safePhase; reason = $reason; line = $line; column = $column }\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_receipt')\n"
+  },
+  {
+    "stage": "inner_emitted",
+    "before": "  Write-Output ('CENSUS_650_SETUP ' + ($receipt | ConvertTo-Json -Compress))\n",
+    "after": "  Write-Output ('CENSUS_650_SETUP ' + ($receipt | ConvertTo-Json -Compress))\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_emitted')\n"
+  }
+]
+function instrumentedFormatter(original = formatter()) {
+  assert.equal(original.includes('CENSUS_650_PROBE inner_'), false, 'actual formatter already has inner diagnostics')
+  let instrumented = original
+  for (const {before, after} of formatterInnerAnchors) {
+    assert.equal(instrumented.split(before).length - 1, 1, 'fixed formatter anchor must occur exactly once')
+    instrumented = instrumented.replace(before, after)
+  }
+  let restored = instrumented
+  for (const stage of formatterInnerStages) {
+    const line = `  [Console]::Out.WriteLine('${probePrefix}${stage}')\n`
+    assert.equal(restored.split(line).length - 1, 1, 'fixed inner marker must occur exactly once')
+    restored = restored.replace(line, '')
+  }
+  assert.equal(restored, original, 'test-only inner markers must invert to actual formatter bytes')
+  return instrumented
+}
 const probeMarker = 'PRIVATE_DIAGNOSTIC_MARKER'
 function inspectProbeOutput(stdout) {
   const result = { stages: [], rows: [], validPrefix: true, complete: false, markerSeen: typeof stdout === 'string' && stdout.includes(probeMarker) }
@@ -109,7 +164,7 @@ function finiteProbeOutcome(actual, observed) {
   }
 }
 function declaredProbeScript() {
-  const f = formatter(), mark = stage => `[Console]::Out.WriteLine('${probePrefix}${stage}')\n`
+  const f = instrumentedFormatter(), mark = stage => `[Console]::Out.WriteLine('${probePrefix}${stage}')\n`
   let script = mark('bootstrap') + "if ($PSVersionTable.PSEdition -cne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'CENSUS_DIAGNOSTIC_PS51_REQUIRED' }\n" + f + '\n' + mark('defined')
   script += `$unknown = [System.Management.Automation.ErrorRecord]::new([Exception]::new('${probeMarker}'), '${probeMarker}', [System.Management.Automation.ErrorCategory]::InvalidOperation, '${probeMarker}')\n` + mark('unknown_before')
   script += `Write-Cmspark650SetupDiagnostic -Stage '${probeMarker}' -Phase '${probeMarker}' -Record $unknown\n` + mark('unknown_after')
@@ -162,7 +217,9 @@ test('portable real parent callback admits only the exact complete stages and or
   assert.deepEqual(Object.keys(options.env),['SystemRoot','WINDIR','TEMP','TMP','PATH'])
   const decoded=Buffer.from(args[3],'base64').toString('utf16le')
   assert.equal(decoded,declaredProbeScript())
-  assert.deepEqual([...decoded.matchAll(/\[Console\]::Out\.WriteLine\('CENSUS_650_PROBE ([a-z_]+)'\)/g)].map(x=>x[1]),probePlan.filter(x=>typeof x==='string'))
+  const lexicalStages=[...decoded.matchAll(/\[Console\]::Out\.WriteLine\('CENSUS_650_PROBE ([a-z_]+)'\)/g)].map(x=>x[1])
+  assert.deepEqual(lexicalStages.filter(x=>!formatterInnerStages.includes(x)),outerProbePlan.filter(x=>typeof x==='string'))
+  for(const stage of formatterInnerStages)assert.equal(lexicalStages.filter(x=>x===stage).length,1)
   assert.equal((decoded.match(/^Write-Cmspark650SetupDiagnostic /gm)??[]).length,1)
   assert.equal((decoded.match(/catch \{ Write-Cmspark650SetupDiagnostic /g)??[]).length,4)
   assert.equal(inspectProbeOutput(stdout).rows.length,5)
@@ -188,7 +245,7 @@ test('portable parser and real parent reject unknown forged duplicated out-of-or
 })
 test('portable parser rejects arbitrary marker malformed extra-field and incorrectly classified receipts', () => {
   for (const poison of [probeMarker, '{', JSON.stringify({version:1}), JSON.stringify({version:1,stage:'UNKNOWN',phase:'UNKNOWN',reason:'OTHER',line:0,column:0,extra:probeMarker}), JSON.stringify({version:1,stage:'UNKNOWN',phase:'UNKNOWN',reason:'SMB_SETUP',line:0,column:0})]) {
-    const lines=completeProbeLines();lines[3]='CENSUS_650_SETUP '+poison
+    const lines=completeProbeLines();lines[probePlan.findIndex(x=>typeof x==='number')]='CENSUS_650_SETUP '+poison
     const stdout=lines.join('\n')+'\n';assert.equal(inspectProbeOutput(stdout).complete,false)
     const actual=controlledNativeCallback({stdout,stderr:'',status:0,signal:null})
     assert.ok(actual.failure);assert.equal(actual.failure.message.includes(probeMarker),false)
@@ -201,4 +258,60 @@ test('portable failure categories never publish unknown signal error status or s
     assert.ok(result.failure);assert.equal(result.failure.message.includes(probeMarker),false)
     assert.match(result.failure.message,/CENSUS_650_FORMATTER /)
   }
+})
+
+// Independent finite expected protocol; this fixture is not Windows output.
+function expectedInnerProtocolLines() {
+  const outer=['bootstrap','defined','unknown_before',0,'unknown_after','smb_setup_before',1,'smb_setup_after','smb_identity_before',2,'smb_identity_after','short_root_before',3,'short_root_after','cleanup_before',4,'cleanup_after','complete']
+  const inner=['inner_param','inner_stage','inner_phase','inner_reason','inner_location','inner_receipt']
+  return outer.flatMap(token => {
+    if(typeof token==='string')return[probePrefix+token]
+    const row={version:1,stage:token===0?'UNKNOWN':token===4?'cleanup':'primary',phase:token===0?'UNKNOWN':token===4?'cleanup_verify':'short_check',reason:['OTHER','SMB_SETUP','SMB_IDENTITY','SHORT_ROOT','OTHER'][token],line:token===0?0:1,column:token===0?0:1}
+    return[...inner.map(stage=>probePrefix+stage),'CENSUS_650_SETUP '+JSON.stringify(row),probePrefix+'inner_emitted']
+  })
+}
+test('portable inner protocol real parent requires every fixed inner stage in all five calls',()=>{
+  const lines=expectedInnerProtocolLines();assert.equal(lines.length,53)
+  const result=controlledNativeCallback({stdout:lines.join('\r\n')+'\r\n',stderr:'',status:0,signal:null})
+  assert.equal(result.failure,undefined);assert.equal(result.calls.length,1)
+  assert.deepEqual(completeProbeLines(),lines)
+  const decoded=Buffer.from(result.calls[0][1][3],'base64').toString('utf16le')
+  for(const stage of ['inner_param','inner_stage','inner_phase','inner_reason','inner_location','inner_receipt','inner_emitted'])assert.equal((decoded.match(new RegExp("\\[Console\\]::Out\\.WriteLine\\('CENSUS_650_PROBE "+stage+"'\\)",'g'))??[]).length,1)
+})
+test('portable inner TIMEOUT preserves each actually validated call prefix and remains failure',()=>{
+  const lines=expectedInnerProtocolLines()
+  for(let end=0;end<lines.length;end++){
+    if(!/^CENSUS_650_PROBE inner_/.test(lines[end]))continue
+    const partial=lines.slice(0,end+1),error=Object.assign(new Error(probeMarker),{code:'ETIMEDOUT',spawnargs:[probeMarker]})
+    const result=controlledNativeCallback({stdout:partial.join('\n')+'\n',stderr:'',status:null,signal:'SIGTERM',error})
+    assert.ok(result.failure);assert.equal(result.calls.length,1);assert.equal(result.failure.message.includes(probeMarker),false)
+    const match=result.failure.message.match(/CENSUS_650_FORMATTER (\{[^\n]+\})/);assert.ok(match)
+    const summary=JSON.parse(match[1]);assert.equal(summary.error,'TIMEOUT');assert.equal(summary.complete,false);assert.equal(summary.validPrefix,true)
+    assert.deepEqual(summary.stages,partial.filter(x=>x.startsWith(probePrefix)).map(x=>x.slice(probePrefix.length)))
+    assert.equal(summary.receipts,partial.filter(x=>x.startsWith('CENSUS_650_SETUP ')).length)
+  }
+})
+test('portable test-copy inner instrumentation is exactly reversible and every anchor fails before spawn',()=>{
+  const original=formatter(),instrumented=instrumentedFormatter(original)
+  const markers=['inner_param','inner_stage','inner_phase','inner_reason','inner_location','inner_receipt','inner_emitted']
+  let restored=instrumented
+  for(const marker of markers){const line=`  [Console]::Out.WriteLine('${probePrefix}${marker}')\n`;assert.equal(restored.split(line).length-1,1);restored=restored.replace(line,'')}
+  assert.equal(restored,original)
+  assert.ok(instrumented.includes("  Write-Output ('CENSUS_650_SETUP ' + ($receipt | ConvertTo-Json -Compress))\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_emitted')\n"), 'emitted marker follows the intact original output expression')
+  assert.equal(instrumented.replace(/^  \[Console\]::Out\.WriteLine\('CENSUS_650_PROBE inner_[a-z]+'\)\n/gm,''),original)
+  const nativeSource=fs.readFileSync(new URL(import.meta.url),'utf8')
+  assert.ok(nativeSource.includes('const f = instrumentedFormatter()'))
+  for(const anchor of formatterInnerAnchors){
+    for(const mutated of [original.replace(anchor.before,''),original.replace(anchor.before,anchor.before+anchor.before),original.replace(anchor.before,anchor.before.replace(/\n$/, ' # changed\n'))]){
+      assert.notEqual(mutated,original);assert.throws(()=>instrumentedFormatter(mutated))
+      const changedSource=nativeSource.replace('const f = instrumentedFormatter()',`const f = instrumentedFormatter(${JSON.stringify(mutated)})`)
+      const result=controlledNativeCallback({stdout:'',stderr:'',status:0,signal:null},changedSource)
+      assert.ok(result.failure);assert.equal(result.calls.length,0,'invalid anchor refuses before actual child call')
+    }
+  }
+})
+test('portable inner protocol rejects unknown duplicate wrong-order missing or poisoned inner events',()=>{
+  const good=expectedInnerProtocolLines(),first=good.indexOf(probePrefix+'inner_param'),receipt=good.findIndex(x=>x.startsWith('CENSUS_650_SETUP '))
+  const variants=[good.with(first,probePrefix+'inner_unknown'),[...good.slice(0,first),good[first],...good.slice(first)],good.with(first,probePrefix+'inner_phase'),good.filter((_,i)=>i!==first),good.with(receipt,'CENSUS_650_SETUP '+probeMarker),good.with(first,probePrefix+probeMarker)]
+  for(const lines of variants){const result=controlledNativeCallback({stdout:lines.join('\n')+'\n',stderr:'',status:0,signal:null});assert.ok(result.failure);assert.equal(result.failure.message.includes(probeMarker),false)}
 })
