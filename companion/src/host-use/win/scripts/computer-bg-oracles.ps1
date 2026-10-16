@@ -103,8 +103,30 @@ if ($null -eq $b.foreground -or $null -eq $a.foreground) {
   Fail "ORACLE_UNREADABLE_SNAPSHOT" "snapshot missing 'foreground'" 4
 }
 
+function Test-FiniteCoordinate($value) {
+  # ConvertFrom-Json must have produced a number, not a coercible string,
+  # boolean, collection or null. Zero and negative desktop coordinates are valid.
+  $numeric = ($value -is [byte]) -or ($value -is [sbyte]) -or
+    ($value -is [int16]) -or ($value -is [uint16]) -or
+    ($value -is [int32]) -or ($value -is [uint32]) -or
+    ($value -is [int64]) -or ($value -is [uint64]) -or
+    ($value -is [single]) -or ($value -is [double]) -or ($value -is [decimal])
+  if (-not $numeric) { return $false }
+  return (-not [double]::IsNaN([double]$value)) -and (-not [double]::IsInfinity([double]$value))
+}
+
+function Test-CursorObservation($cursor) {
+  return ($cursor -is [System.Management.Automation.PSCustomObject]) -and
+    ($cursor.got -is [bool]) -and ($cursor.got -eq $true) -and
+    (Test-FiniteCoordinate $cursor.x) -and (Test-FiniteCoordinate $cursor.y)
+}
+
+if (-not (Test-CursorObservation $b.cursor) -or -not (Test-CursorObservation $a.cursor)) {
+  Fail "ORACLE_UNREADABLE_SNAPSHOT" "cursor requires got=true and finite numeric x/y in both snapshots" 4
+}
+
 $focusKept = ([int64]$b.foreground -eq [int64]$a.foreground)
-$cursorKept = ([int]$b.cursor.x -eq [int]$a.cursor.x) -and ([int]$b.cursor.y -eq [int]$a.cursor.y)
+$cursorKept = ($b.cursor.x -eq $a.cursor.x) -and ($b.cursor.y -eq $a.cursor.y)
 
 # z-order: compare the same prefix; a window appearing/disappearing is a real change, but a
 # window that merely got destroyed behind us should not be reported as "the order changed".

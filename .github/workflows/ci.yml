@@ -299,6 +299,16 @@ jobs:
           node scripts/run-tests.mjs .test-dist/tests/acp-cleanup.test.js .test-dist/tests/mcp-roots-reload.test.js .test-dist/tests/mcp-stdio-tree.test.js .test-dist/tests/mcp-http-recovery.test.js .test-dist/tests/integration/allow-dir-reconnect.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: "Actual Windows background oracle comparator (#572)"
+        # Synthetic snapshots, real PS5.1: historical false-positive + current refusal.
+        # Does not operate a target GUI or certify real background delivery.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/computer-bg-oracles.test.js .test-dist/tests/integration/computer-bg-oracle-counterfactual-572.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: "Native Windows read-only Registry discovery (#644)"
         # Actual in-box PS5.1 -> runPs -> parser, isolated nonce-owned HKCU keys.
         # Does not execute candidates or mutate application permissions/config.
