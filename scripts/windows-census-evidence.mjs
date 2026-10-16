@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { Transform } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
+import { pipeline, finished } from 'node:stream/promises'
 import { createInterface } from 'node:readline'
 
 const PURPOSE = 'CMSPARK_WINDOWS_CENSUS_650'
@@ -227,7 +227,11 @@ export async function recoverEvidence({ bundleDir, outputDir, privateKey, expect
       } catch { fail('RESTORE_FAILED') }
       finally { await handle.close() }
       snapshots.push({ input, before })
-      if (row.path.startsWith('receipts/') && row.complete && !await receiptComplete(fs.createReadStream(output))) fail('RECEIPT_EOF')
+      if (row.path.startsWith('receipts/') && row.complete) {
+        const reader = fs.createReadStream(output)
+        const [complete] = await Promise.all([receiptComplete(reader), finished(reader, { cleanup: true })])
+        if (!complete) fail('RECEIPT_EOF')
+      }
     }
     if (JSON.stringify(fs.readdirSync(bundleDir).sort()) !== JSON.stringify(listing)) fail('BUNDLE_LIST')
     for (const { input, before } of snapshots) if (!same(before, fs.lstatSync(input, { bigint: true }))) fail('INPUT_CHANGED')

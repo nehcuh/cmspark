@@ -55,10 +55,28 @@ const rewrite = (f, value) => fs.writeFileSync(path.join(f.bundleDir, 'envelope.
 const evidenceError = error => /^CENSUS_EVIDENCE_/.test(error.message)
 test.after(() => console.log('CENSUS_EVIDENCE_CONTROL_RETAINED ' + retained))
 
-test('actual capture → canonical accounting → sealed serializer → recovery roundtrip; publication has no plaintext/private key', async () => {
+test('actual capture → canonical accounting → sealed serializer → recovery roundtrip; publication has no plaintext/private key', async t => {
   const f = await fixture(), sealed = await sealEvidence(f)
   assert.equal(sealed.status.complete, true)
+  // Publication waits for actual receipt-reader close, not merely readline EOF.
+  // Windows may deny directory rename while asynchronous close is still pending.
+  const receiptReaders = [], create = fs.createReadStream, rename = fs.renameSync
+  t.mock.method(fs, 'createReadStream', function (file, ...args) {
+    const stream = Reflect.apply(create, this, [file, ...args])
+    if (typeof file === 'string' && path.dirname(file) === path.join(f.owned, 'restored/partial/receipts')) receiptReaders.push(stream)
+    return stream
+  })
+  let observedPublication = false
+  t.mock.method(fs, 'renameSync', function (from, to) {
+    if (from === path.join(f.owned, 'restored/partial')) {
+      observedPublication = true
+      assert.ok(receiptReaders.length > 0)
+      assert.ok(receiptReaders.every(stream => stream.closed), 'All actual receipt reader closes must complete before publication')
+    }
+    return Reflect.apply(rename, this, [from, to])
+  })
   const restored = await recover(f); assert.equal(restored.status.complete, true)
+  assert.equal(observedPublication, true)
   for (const row of envelope(f).body.files) assert.deepEqual(fs.readFileSync(path.join(f.owned, row.path)), fs.readFileSync(path.join(f.owned, 'restored/recovered', row.path)))
   for (const file of fs.readdirSync(f.bundleDir)) {
     const b = fs.readFileSync(path.join(f.bundleDir, file))
