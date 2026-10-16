@@ -34,16 +34,53 @@ int main(void){
 #define FIXTURE_BUDGET 20000
 
 #if defined(DESKTOP_FIXTURE_PARENT_LOCK_PROBE)
-int wmain(void){
- wchar_t file[32768];DWORD count=GetModuleFileNameW(NULL,file,32768);if(!count||count==32768)return 210;wchar_t *slash=wcsrchr(file,L'\\');if(!slash)slash=wcsrchr(file,L'/');if(!slash)return 211;slash[1]=0;if(wcscat_s(file,32768,L"parent-exit.receipt"))return 212;
- HANDLE fd=CreateFileW(file,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);if(fd==INVALID_HANDLE_VALUE)return 213;
- BY_HANDLE_FILE_INFORMATION before,after;OVERLAPPED lock;memset(&lock,0,sizeof(lock));
- if(!GetFileInformationByHandle(fd,&before)||(before.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))||before.nNumberOfLinks!=1||before.nFileSizeHigh||before.nFileSizeLow)return 214;
- if(LockFileEx(fd,LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,0,1,0,&lock))return 215;if(GetLastError()!=ERROR_LOCK_VIOLATION)return 216;
+_Static_assert(sizeof(DWORD)==4,"D480 fixed process receipt uses four 32-bit fields");
+static int fixture_same_file(const BY_HANDLE_FILE_INFORMATION *a,const BY_HANDLE_FILE_INFORMATION *b) {
+ return a->dwVolumeSerialNumber==b->dwVolumeSerialNumber&&a->nFileIndexHigh==b->nFileIndexHigh&&a->nFileIndexLow==b->nFileIndexLow;
+}
+static HANDLE fixture_parent_process(int wrong_time,int wrong_image) {
+ wchar_t path[32768],image[32768];DWORD size=GetModuleFileNameW(NULL,path,32768);
+ if(!size||size==32768)return NULL;wchar_t *slash=wcsrchr(path,L'\\');if(!slash)slash=wcsrchr(path,L'/');if(!slash)return NULL;slash[1]=0;
+ size_t prefix=wcslen(path);if(wcscat_s(path,32768,L"parent-process.receipt"))return NULL;
+ HANDLE record=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);
+ if(record==INVALID_HANDLE_VALUE)return NULL;
+ DWORD values[4]={0},got=0;BY_HANDLE_FILE_INFORMATION before,after;
+ int valid=GetFileInformationByHandle(record,&before)&&!(before.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))&&before.nNumberOfLinks==1&&!before.nFileSizeHigh&&before.nFileSizeLow==sizeof(values)&&ReadFile(record,values,sizeof(values),&got,NULL)&&got==sizeof(values)&&GetFileInformationByHandle(record,&after)&&fixture_same_file(&before,&after)&&after.nNumberOfLinks==1&&!after.nFileSizeHigh&&after.nFileSizeLow==sizeof(values);
+ CloseHandle(record);if(!valid||values[0]!=0x44343830u||!values[1]||values[1]==GetCurrentProcessId())return NULL;
+ HANDLE process=OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,values[1]);if(!process)return NULL;
+ FILETIME created,ended,kernel,user;
+ if(wrong_time)values[2]^=1u;
+ valid=GetProcessTimes(process,&created,&ended,&kernel,&user)&&created.dwLowDateTime==values[2]&&created.dwHighDateTime==values[3]&&WaitForSingleObject(process,0)==WAIT_TIMEOUT;
+ DWORD imageLength=32768;valid=valid&&QueryFullProcessImageNameW(process,0,image,&imageLength)&&imageLength>0&&imageLength<32768;
+ path[prefix]=0;if(wcscat_s(path,32768,wrong_image?L"desktop-parent-probe.exe":L"cmspark-desktop.exe"))valid=0;
+ HANDLE expected=INVALID_HANDLE_VALUE,actual=INVALID_HANDLE_VALUE;
+ if(valid){expected=CreateFileW(path,FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);actual=CreateFileW(image,FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);}
+ valid=valid&&expected!=INVALID_HANDLE_VALUE&&actual!=INVALID_HANDLE_VALUE&&GetFileInformationByHandle(expected,&before)&&GetFileInformationByHandle(actual,&after)&&!(before.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))&&!(after.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))&&before.nNumberOfLinks==1&&after.nNumberOfLinks==1&&fixture_same_file(&before,&after);
+ if(expected!=INVALID_HANDLE_VALUE)CloseHandle(expected);if(actual!=INVALID_HANDLE_VALUE)CloseHandle(actual);
+ if(!valid){CloseHandle(process);return NULL;}return process;
+}
+int wmain(int argc,wchar_t **argv){
+ int wrong_time=argc==2&&!wcscmp(argv[1],L"--wrong-parent-creation"),wrong_image=argc==2&&!wcscmp(argv[1],L"--wrong-parent-image");
+ if(argc!=1&&!wrong_time&&!wrong_image)return 219;
+ ULONGLONG started=GetTickCount64();HANDLE process=fixture_parent_process(wrong_time,wrong_image);if(!process)return 219;
+ wchar_t file[32768];DWORD count=GetModuleFileNameW(NULL,file,32768);if(!count||count==32768){CloseHandle(process);return 210;}wchar_t *slash=wcsrchr(file,L'\\');if(!slash)slash=wcsrchr(file,L'/');if(!slash){CloseHandle(process);return 211;}slash[1]=0;if(wcscat_s(file,32768,L"parent-exit.receipt")){CloseHandle(process);return 212;}
+ HANDLE fd=CreateFileW(file,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);if(fd==INVALID_HANDLE_VALUE){CloseHandle(process);return 213;}
+ BY_HANDLE_FILE_INFORMATION before,after;OVERLAPPED lock;memset(&lock,0,sizeof(lock));int result=214;
+ char byte=0;DWORD got=0,remaining=0,exit_code=0;BOOL valid=FALSE;ULONGLONG elapsed=0;
+ if(!GetFileInformationByHandle(fd,&before)||(before.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))||before.nNumberOfLinks!=1||before.nFileSizeHigh||before.nFileSizeLow)goto done;
+ if(LockFileEx(fd,LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,0,1,0,&lock)){result=215;goto done;}if(GetLastError()!=ERROR_LOCK_VIOLATION){result=216;goto done;}
  puts("D480_PARENT_LOCK_WAITING");fflush(stdout);
- if(!LockFileEx(fd,LOCKFILE_EXCLUSIVE_LOCK,0,1,0,&lock))return 217;
- char byte=0;DWORD got=0;BOOL valid=ReadFile(fd,&byte,1,&got,NULL)&&got==1&&byte=='1'&&GetFileInformationByHandle(fd,&after)&&after.dwVolumeSerialNumber==before.dwVolumeSerialNumber&&after.nFileIndexHigh==before.nFileIndexHigh&&after.nFileIndexLow==before.nFileIndexLow&&after.nNumberOfLinks==1&&!after.nFileSizeHigh&&after.nFileSizeLow==1;CloseHandle(fd);
- if(!valid)return 218;puts("D480_PARENT_NATIVE_EXIT_OBSERVED");return 0;
+ if(!LockFileEx(fd,LOCKFILE_EXCLUSIVE_LOCK,0,1,0,&lock)){result=217;goto done;}
+ valid=ReadFile(fd,&byte,1,&got,NULL)&&got==1&&byte=='1'&&GetFileInformationByHandle(fd,&after)&&fixture_same_file(&before,&after)&&after.nNumberOfLinks==1&&!after.nFileSizeHigh&&after.nFileSizeLow==1;
+ if(!valid){result=218;goto done;}
+ // A released file lock is not a signaled process. Use the already bound exact
+ // process HANDLE, within the original case budget, before announcing settlement.
+ elapsed=GetTickCount64()-started;if(elapsed>=FIXTURE_BUDGET){result=220;goto done;}remaining=(DWORD)(FIXTURE_BUDGET-elapsed);
+ if(WaitForSingleObject(process,remaining)!=WAIT_OBJECT_0||GetTickCount64()-started>=FIXTURE_BUDGET){result=220;goto done;}
+ if(!GetExitCodeProcess(process,&exit_code)||exit_code!=1){result=221;goto done;}
+ puts("D480_PARENT_NATIVE_EXIT_OBSERVED");result=0;
+done:
+ CloseHandle(fd);CloseHandle(process);return result;
 }
 #else
 #ifndef DESKTOP_FIXTURE_ADDON

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import http from "node:http"
-import { spawn, type ChildProcess } from "node:child_process"
+import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import { once } from "node:events"
 import type { TestContext } from "node:test"
 import { WebSocket, WebSocketServer } from "ws"
@@ -256,6 +256,7 @@ export async function nativeParentDeath(t: TestContext): Promise<void> {
   const data=ownDataRoot(),directory=fs.mkdtempSync(path.join(data,"native-parent-")),identity=ownedDirectoryIdentity(directory)
   const file=path.join(directory,"parent-exit.receipt"),fd=fs.openSync(file,"wx+",0o600),before=fs.fstatSync(fd)
   assert.equal(before.isFile(),true);assert.equal(before.nlink,1);assert.equal(before.size,0)
+  if(process.platform==="win32"){const processFile=fs.openSync(path.join(directory,"parent-process.receipt"),"wx",0o600);fs.closeSync(processFile)}
   let issuer:ChildProcess|undefined,probe:ChildProcess|undefined,nativeTeardownObserved=false
   const exited=(child:ChildProcess)=>new Promise<{code:number|null;signal:NodeJS.Signals|null}>(resolve=>{if(child.exitCode!==null||child.signalCode!==null)resolve({code:child.exitCode,signal:child.signalCode});else child.once("close",(code,signal)=>resolve({code,signal}))})
   try{
@@ -267,6 +268,14 @@ export async function nativeParentDeath(t: TestContext): Promise<void> {
     // This is the actual owned issuer, not a secret-forwarding intermediary. Registry/native/bootstrap remain inside it.
     issuer=spawn(process.execPath,["--require",path.resolve("scripts/test-data-dir.cjs"),__filename,"--owned-parent",directory],{stdio:["ignore","pipe","pipe"],env});issuer.stderr?.resume()
     const issuerExit=exited(issuer);await fixedLine(issuer,"D480_PARENT_ISSUER_READY",t.signal)
+    if(process.platform==="win32"){
+      // Fixed negative observations bind neither another image nor a reused PID.
+      for(const mode of ["--wrong-parent-creation","--wrong-parent-image"]){
+        const negative=spawnSync(path.join(directory,checker),[mode],{stdio:"ignore",env,timeout:10000,windowsHide:true})
+        assert.equal(negative.status,219,"Exact owned process identity mismatch must be refused before lock waiting")
+        assert.equal(negative.signal,null)
+      }
+    }
     probe=spawn(path.join(directory,checker),[],{stdio:["ignore","pipe","pipe"],env});probe.stderr?.resume()
     const probeExit=exited(probe);await fixedLine(probe,"D480_PARENT_LOCK_WAITING",t.signal)
     const nativeExit=fixedLine(probe,"D480_PARENT_NATIVE_EXIT_OBSERVED",t.signal)
