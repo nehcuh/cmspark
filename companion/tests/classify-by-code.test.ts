@@ -100,6 +100,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   OUT_OF_BOUNDS: "recoverable", // retain coordinate correction without permitting injection
   NETSEC_TARGETS_DENIED: "non_recoverable", // #563 E1: ordinary denial already halted; timeout/locator names now halt too.
   // recoverable（#560 第二半改过下面前三条，原 non_recoverable）
+  WORKER_INPUT_INVALID: "recoverable", // only four ordinary missing-argument returns; owner/security gates unchanged
   // #563: only six finite pre-execution input refusals become recoverable.
   // The two pre-L2 shell argument guards preserve the same code; policy/L2 do not.
   SHELL_INPUT_INVALID: "recoverable",

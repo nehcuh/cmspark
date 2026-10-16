@@ -1059,6 +1059,8 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["OUT_OF_BOUNDS", "recoverable"],
 
   // ── recoverable ───────────────────────────────────────────────────────────
+  // #563: four early missing worker/intent arguments are model-repairable, not authority refusals.
+  ["WORKER_INPUT_INVALID", "recoverable"],
   // Authorization refusal permits a different tool or fresh human approval;
   // it never validates/mints a token or relaxes the evaluate admission gate.
   ["EVALUATE_AUTH_REQUIRED", "recoverable"],
