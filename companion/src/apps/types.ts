@@ -14,6 +14,7 @@ import * as path from "path"
 import { basenameToVault, isLolbinPath } from "./guards"
 import { validateCliManifest } from "./cli-manifest"
 import { guiTemplateConfigError, type GuiFileTemplate } from "./gui-templates"
+import { binaryDriftRecordError, type BinaryDriftRecord } from "./binary-drift-state"
 
 export type AppKind = "gui" | "cli"
 export type AppSource = "preset" | "user"
@@ -35,6 +36,8 @@ export interface AppEntry {
   policy: AppPolicy
   enabled: boolean
   added_at: string
+  /** #689 explicit owner-check suspension; never a reusable approval. */
+  binary_drift?: BinaryDriftRecord
   exe?: AppExeBlock
   aumid?: string
   /** macOS bundle identifier (e.g. "com.apple.Notes") for coordinate computer-use WP3. */
@@ -102,6 +105,8 @@ function hasPrototypePollutionKey(obj: any): boolean {
 export function validateAppEntry(raw: unknown): string | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "app entry must be an object"
   const e = raw as Record<string, any>
+  const driftError = binaryDriftRecordError(e)
+  if (driftError) return driftError
   if (hasPrototypePollutionKey(e)) return "Invalid app entry keys"
   if (typeof e.token !== "string" || !APP_TOKEN_PATTERN.test(e.token)) {
     return `Invalid app token "${e.token}" (must match [win|mac].app.<slug> / [win|mac].cli.<slug>)`

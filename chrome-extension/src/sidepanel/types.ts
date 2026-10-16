@@ -655,6 +655,9 @@ export interface AppEntry {
   bundleId?: string
   /** Policy ceiling attached by the backend (unsigned/user-writable/AUMID → "ai"). */
   max_policy?: "auto" | "ai"
+  /** #689 server-owned suspension metadata; hashes are observations, not grants. */
+  binary_drift?: { schema_version: 1; status: "suspended" | "invalidated"; approved_sha256: string;
+    observed_sha256: string; restore_policy: AppPolicy; subject_digest: string }
   /** #686 display-only owner configuration, never an editor or argv surface. */
   templates?: Array<{ id: string; name: string; profile: string; risk: "state-changing" | "dangerous" }>
   template_unavailable?: string

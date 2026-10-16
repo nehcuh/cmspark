@@ -6,7 +6,7 @@
 // WS messages; the companion validates, gates (D2 biometric for auto), and
 // broadcasts apps.updated to every client.
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { AppEntry, AppEnumerateCandidate, AppPolicy } from "../types"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
@@ -71,7 +71,7 @@ export function AppsPanel() {
 
   const handleSetPolicy = (entry: AppEntry, policy: AppPolicy) => {
     setMenuOpen(null)
-    if (policy === entry.policy) return
+    if (policy === entry.policy && !(policy === "manual" && entry.binary_drift)) return
     clearFeedback()
     // Downgrades are free; →auto triggers the companion's D2 biometric gate
     // (existing security.confirmation.request dialog, nonce fallback).
@@ -309,6 +309,8 @@ export function AppsPanel() {
                 onSetPolicy={(p) => handleSetPolicy(entry, p)}
                 onToggleCoordinate={() => handleToggleCoordinate(entry)}
                 onDelete={() => handleDelete(entry)}
+                driftConnected={state.connectionState === "connected"}
+                driftEnabled={appsEnabled && entry.enabled && state.appsPlatform === "win32"}
               />
             ))}
           </>
@@ -485,6 +487,8 @@ interface AppCardProps {
   onSetPolicy: (p: AppPolicy) => void
   onToggleCoordinate: () => void
   onDelete: () => void
+  driftConnected: boolean
+  driftEnabled: boolean
 }
 
 function AppCard(props: AppCardProps) {
@@ -535,6 +539,7 @@ function AppCard(props: AppCardProps) {
             </div>
           ))}
           {entry.template_unavailable && <div style={styles.cardMeta}>{entry.template_unavailable}</div>}
+          <BinaryDriftControls entry={entry} connected={props.driftConnected} enabled={props.driftEnabled} />
           <div style={styles.cardMeta}>
             {entry.exe?.path && (
               <span title={entry.exe.path} style={{ fontFamily: "ui-monospace, monospace" }}>
@@ -573,7 +578,7 @@ function AppCard(props: AppCardProps) {
             <div style={styles.menuSectionTitle}>策略</div>
             {(["manual", "ai", "auto"] as const).map((p) => {
               const b = policyBadge(p)
-              const disabled = p === "auto" && !autoOk
+              const disabled = (p === "auto" && !autoOk) || (!!entry.binary_drift && p !== "manual")
               const current = entry.policy === p
               return (
                 <button
@@ -586,7 +591,7 @@ function AppCard(props: AppCardProps) {
                   disabled={disabled}
                   title={
                     disabled
-                      ? "未签名 / 用户目录 / UWP 应用最高只能设为「AI 判断」"
+                      ? entry.binary_drift ? "须先检查并重新批准文件指纹；手工策略会放弃原恢复意图" : "未签名 / 用户目录 / UWP 应用最高只能设为「AI 判断」"
                       : b.title
                   }
                   onClick={() => props.onSetPolicy(p)}
@@ -630,6 +635,71 @@ function AppCard(props: AppCardProps) {
       </div>
     </div>
   )
+}
+
+/** Status is configuration-only. No render/effect invokes a file measurement. */
+function BinaryDriftControls({ entry, connected, enabled }: { entry: AppEntry; connected: boolean; enabled: boolean }) {
+  const [busy, setBusy] = useState(false)
+  const [feedback, setFeedback] = useState("")
+  const pending = useRef<{ id: string; type: string } | null>(null)
+  const unknown = "提交结果未知，请刷新当前状态核对；不会自动重试或复用批准。"
+  useEffect(() => {
+    const listener = (msg: any) => {
+      const request = pending.current
+      if (!request || msg?.id !== request.id || msg?.family !== "apps" || !["error", "apps.drift.result"].includes(msg?.type)) return
+      pending.current = null; setBusy(false)
+      if (msg.type === "error") {
+        setFeedback(msg.outcome === "unknown" ? unknown : msg.outcome === "committed"
+          ? "手工悬置已提交，但信任清理未完成；请刷新核对。"
+          : "操作未完成，请刷新当前状态核对。检查失败时可能尚未建立悬置，请勿据此信任当前文件。")
+      } else {
+        setFeedback(msg.status === "reapproved" ? "新指纹已登记；应用策略已按确认恢复。文件模板仍受已支持版本/profile限制。"
+          : msg.status === "matches_pin" ? "本次检查与登记指纹相同；这不是持续监测。"
+          : msg.status === "suspended" ? "已手工悬置，请核对原指纹、上次检查值与恢复策略。"
+          : msg.status === "review_again" ? "原恢复意图已失效，请重新检查；不会恢复旧策略。"
+          : msg.status === "unsupported" ? "此应用不支持文件指纹重新批准。" : "磁盘当前状态未知；需要显式检查文件。")
+      }
+    }
+    chrome.runtime.onMessage.addListener(listener)
+    return () => { pending.current = null; chrome.runtime.onMessage.removeListener(listener) }
+  }, [])
+  useEffect(() => {
+    if (!connected && pending.current) { pending.current = null; setBusy(false); setFeedback(unknown) }
+  }, [connected])
+  const send = async (type: string) => {
+    if (!connected || (busy && type !== "apps.drift_status")) return
+    if (pending.current) setFeedback(unknown)
+    const id = crypto.randomUUID()
+    pending.current = { id, type }; setBusy(true)
+    const record = entry.binary_drift
+    try {
+      const sent = await chrome.runtime.sendMessage({ type, id, token: entry.token,
+        ...(type === "apps.reapprove" ? { expected_old_sha256: entry.exe?.sha256, expected_observed_sha256: record?.observed_sha256 } : {}) })
+      if (pending.current?.id === id && sent?.ok !== true) { pending.current = null; setBusy(false); setFeedback(unknown) }
+    } catch { if (pending.current?.id === id) { pending.current = null; setBusy(false); setFeedback(unknown) } }
+  }
+  if (entry.kind !== "gui" || !entry.token.startsWith("win.app.") || !/^[a-f0-9]{64}$/i.test(entry.exe?.sha256 ?? "")
+    || entry.aumid || entry.bundleId) return null
+  const record = entry.binary_drift
+  if (record && (record.schema_version !== 1 || !["suspended", "invalidated"].includes(record.status)
+    || !["manual", "ai", "auto"].includes(record.restore_policy)
+    || [record.approved_sha256, record.observed_sha256, record.subject_digest].some(v => typeof v !== "string" || !/^[a-f0-9]{64}$/.test(v))))
+    return <div role="status" style={styles.cardMeta}>应用漂移记录无效；请检查当前配置，不能重新批准。</div>
+  return <div style={{ ...styles.cardMeta, display: "flex", flexDirection: "column", gap: 4 }}>
+    <span>登记指纹：<code style={{ overflowWrap: "anywhere" }}>{entry.exe!.sha256}</code></span>
+    {record && <>
+      <span>上次检查值（批准前会重新检查）：<code style={{ overflowWrap: "anywhere" }}>{record.observed_sha256}</code></span>
+      <span>保存的恢复策略：{policyBadge(record.restore_policy).label}；{record.status === "invalidated" ? "原恢复意图已失效，需要重新检查" : "当前为手工悬置"}</span>
+    </>}
+    <span>检查只测量此文件；重新批准不会扩大文件模板支持的版本/profile。</span>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      <button type="button" disabled={!connected} onClick={() => { void send("apps.drift_status"); chrome.runtime.sendMessage({ type: "apps.list" }) }}>刷新当前状态</button>
+      <button type="button" disabled={!connected || !enabled || busy} onClick={() => void send("apps.check_drift")}>检查文件</button>
+      <button type="button" disabled={!connected || !enabled || busy || record?.status !== "suspended"} onClick={() => void send("apps.reapprove")}>重新批准指纹（需验证）</button>
+    </div>
+    {busy && <span role="status">等待检查或验证结果；丢失回应时请刷新核对，勿重复批准。</span>}
+    {feedback && <span role="status">{feedback}</span>}
+  </div>
 }
 
 // --- Enumerate candidate row ---

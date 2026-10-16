@@ -46,7 +46,7 @@ export function guiTemplateSubject(entry: AppEntry | undefined, enabled: boolean
   return JSON.stringify([enabled, entry.token, entry.kind, entry.source, entry.display_name,
     entry.added_at, entry.policy, entry.enabled, entry.aumid, entry.bundleId, entry.coordinateAllowed,
     entry.exe?.path, entry.exe?.sha256, entry.exe?.signer, entry.exe?.user_writable_dir,
-    entry.templates, entry.cli_manifest])
+    entry.templates, entry.cli_manifest, entry.binary_drift])
 }
 /** A caller cannot manufacture native argv, risk or an execution receipt. */
 export function guiTemplateCall(params: Record<string, any>): { app: string; template: string; file: string } {

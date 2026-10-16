@@ -340,6 +340,14 @@ jobs:
           node scripts/run-tests.mjs .test-dist/tests/apps-gui-template-686.test.js .test-dist/tests/apps-gui-template-files-686.test.js .test-dist/tests/integration/apps-gui-template-native-686.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: "Native Windows explicit App binary drift (#689)"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/apps-binary-drift-689.test.js .test-dist/tests/apps-binary-drift-files-689.test.js .test-dist/tests/integration/apps-drift-owner-689.test.js .test-dist/tests/integration/apps-drift-native-689.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: "Native Windows manual CLI entry (#522)"
         if: matrix.os == 'windows-latest'
         shell: pwsh

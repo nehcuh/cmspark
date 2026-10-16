@@ -335,6 +335,8 @@ interface Services {
 }
 
 interface SessionCallbacks {
+  /** #689 current originating socket/auth identity, not caller-controlled. */
+  appsOwnerCurrent?: () => boolean
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal, options?: { siteContextTabId?: number; siteContextRequireActive?: boolean }) => Promise<{ success: boolean; data?: any; error?: string }>
   broadcast?: (data: any) => void
@@ -3486,6 +3488,9 @@ async function dispatchMessage(
     }
 
     case "apps.list":
+    case "apps.drift_status":
+    case "apps.check_drift":
+    case "apps.reapprove":
     case "apps.enumerate":
     case "apps.add":
     case "apps.remove":
@@ -3493,6 +3498,7 @@ async function dispatchMessage(
     case "apps.set_enabled":
     case "apps.set_coordinate_allowed":
       return handleAppsMessage(msg, {
+        ownerCurrent: session?.appsOwnerCurrent,
         requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
       })

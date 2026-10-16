@@ -1096,6 +1096,19 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         return true
       }
 
+      case "apps.drift_status":
+      case "apps.check_drift":
+      case "apps.reapprove": {
+        // Explicit owner actions never enter the legacy pre-auth replay queue.
+        if (!projectMetadataSenderAllowed(sender, chrome.runtime.id) || !wsClient || wsClient.getState() !== "connected") {
+          sendResponse({ ok: false, error: "连接不可用，未发送；请刷新当前应用状态后核对。" })
+          return true
+        }
+        try { sendResponse({ ok: wsClient.send(message) }) }
+        catch { sendResponse({ ok: false, error: "发送结果未知，请刷新当前应用状态后核对。" }) }
+        return true
+      }
+
       case "thread.list": {
         wsClient.send({
           type: "thread.list",
