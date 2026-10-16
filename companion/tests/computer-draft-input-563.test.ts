@@ -103,7 +103,7 @@ test("#563 missing and invalid token still deny before Computer effects",async()
  for(const token of [undefined,"owned-invalid-token-not-issued"]){const wire=JSON.parse(JSON.stringify(await dispatch.executeCompanionTool("host_computer",{...base,security_token:token})));assert.equal(wire.success,false);assert.match(wire.error,token?/Invalid or expired security token/:/requires L2 security_token/);assert.equal(consume(wire,"host_computer",classifyError).errorLevel,"non_recoverable");receipts.push({authorizationNegative:true,tokenPresent:!!token,wire})}
 })
 test("#563 draft provenance remains corrective in the current intrinsic map, default59/generic controls retained",()=>{
- assert.equal(ERROR_CODE_LEVELS.size,164);assert.equal(DEFAULT_NON_RECOVERABLE_CODES.length,59);assert.equal(ERROR_CODE_LEVELS.get("COMPUTER_INPUT_INVALID"),"recoverable")
+ assert.equal(ERROR_CODE_LEVELS.size,165);assert.equal(DEFAULT_NON_RECOVERABLE_CODES.length,59);assert.equal(ERROR_CODE_LEVELS.get("COMPUTER_INPUT_INVALID"),"recoverable")
  for(const error_code of ["COMPUTER_DISABLED","APP_NOT_WHITELISTED","APP_COORDINATE_DENIED","APP_COORDINATE_STRUCTURAL","SECURITY_TOKEN_INVALID","TYPE_TEXT_NOT_CONFIRMED"])assert.equal(classifyError("timeout element_not_found",{error_code}),"non_recoverable")
  assert.equal(ERROR_CODE_LEVELS.has("INVALID_ACTION"),false);assert.equal(ERROR_CODE_LEVELS.has("TYPE_TEXT_TOO_LONG"),false)
 })

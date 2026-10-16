@@ -86,6 +86,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   PACK_ENTERPRISE_PROFILE_REQUIRED: "non_recoverable", // #563 B2: preserve the fixed enterprise composition refusal
   CLICK_OCCLUDED: "non_recoverable", // #563 D3: foreign landing refusal is intrinsic, not process-name text
   FOCUS_LOST: "non_recoverable", // #563 D3: failed outward foreground refusal; post-success/type recovery unchanged
+  STALE_SCREENSHOT: "non_recoverable", // #563: invalidated coordinates cannot retry or pivot based on target text
   APP_EXE_DRIFT: "non_recoverable", // #563 D4: intrinsic integrity/hash-read denial; tightens poisoned diagnostics
   INTEGRITY_LEVEL_DENIED: "non_recoverable", // fixed cross-IL refusal; diagnostic text cannot downgrade it
   TASK_ABORTED: "non_recoverable", // explicit user stop must not become transient retry
