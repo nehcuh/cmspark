@@ -267,24 +267,58 @@ jobs:
             $shareCreated = $true
             # CMSPARK_650_ORIGINAL_COMMANDS_BEGIN
             $phase = 'controls'
-            node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs scripts/tests/windows-census-setup-diagnostics.test.mjs
+            node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs scripts/tests/windows-census-setup-diagnostics.test.mjs scripts/tests/windows-census-short-provision.test.mjs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $phase = 'short_join'
             $shortFixture = Join-Path $fixture 'canonical short alias owned'
             $phase = 'short_directory'
-            New-Item -ItemType Directory -Path $shortFixture -ErrorAction Stop | Out-Null
+            $shortCreated = (& node scripts/windows-census-owned-smb.mjs create-short $share $created.dev $created.ino | ConvertFrom-Json -ErrorAction Stop)
+            if ($LASTEXITCODE -ne 0 -or $shortCreated.path -cne $shortFixture) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
             $phase = 'short_type'
             Add-Type @'
           using System;
           using System.Text;
           using System.Runtime.InteropServices;
           public static class Cmspark650OwnedPaths {
+            [StructLayout(LayoutKind.Sequential)]
+            public struct OwnedInfo {
+              public uint Attributes;
+              public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
+              public uint VolumeSerialNumber, SizeHigh, SizeLow, Links, FileIndexHigh, FileIndexLow;
+            }
+            [DllImport("kernel32.dll", EntryPoint="CreateFileW", CharSet=CharSet.Unicode, SetLastError=true, ExactSpelling=true)]
+            private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(string source, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+            [DllImport("kernel32.dll", SetLastError=true, ExactSpelling=true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle, out OwnedInfo info);
+            [DllImport("kernel32.dll", EntryPoint="SetFileShortNameW", CharSet=CharSet.Unicode, SetLastError=true, ExactSpelling=true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool SetFileShortName(Microsoft.Win32.SafeHandles.SafeFileHandle handle, string name);
+            public static int PrepareShortName(string source, string dev, string ino) {
+              Microsoft.Win32.SafeHandles.SafeFileHandle handle = CreateFile(source, 0x10080, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+              try {
+                if (handle.IsInvalid) return AliasResult(1, Marshal.GetLastWin32Error());
+                OwnedInfo info = new OwnedInfo();
+                if (!GetFileInformationByHandle(handle, out info)) return AliasResult(2, Marshal.GetLastWin32Error());
+                ulong fileId = ((ulong)info.FileIndexHigh << 32) | info.FileIndexLow;
+                if ((info.Attributes & 0x10) == 0 || (info.Attributes & 0x400) != 0 || fileId == 0 || info.VolumeSerialNumber.ToString(System.Globalization.CultureInfo.InvariantCulture) != dev || fileId.ToString(System.Globalization.CultureInfo.InvariantCulture) != ino) return AliasResult(3, 0);
+                if (!SetFileShortName(handle, "CNSUS~1")) return AliasResult(4, Marshal.GetLastWin32Error());
+                return AliasResult(0, 0);
+              } finally { handle.Dispose(); }
+            }
+            private static int AliasResult(int stage, int error) {
+              if (error < 0 || error > 65535) error = 0;
+              Console.WriteLine("CENSUS_650_SHORT {{\"stage\":{0},\"error\":{1}}}", stage, error);
+              return stage;
+            }
             [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
             public static extern uint GetShortPathName(string source, StringBuilder dest, uint size);
             [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
             public static extern uint GetLongPathName(string source, StringBuilder dest, uint size);
           }
           '@
+            $shortSetStatus = [Cmspark650OwnedPaths]::PrepareShortName($shortFixture, $shortCreated.dev, $shortCreated.ino)
+            if ($shortSetStatus -ne 0) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
             $phase = 'long_buffer'
             $longBuffer = [System.Text.StringBuilder]::new(32768)
             $phase = 'short_buffer'
@@ -297,6 +331,7 @@ jobs:
             $shortLength = [Cmspark650OwnedPaths]::GetShortPathName($longBuffer.ToString(), $shortBuffer, 32768)
             $phase = 'short_check'
             if ($shortLength -eq 0 -or $shortLength -ge 32768 -or $shortBuffer.ToString() -notmatch '~[0-9]' -or $shortBuffer.ToString() -eq $longBuffer.ToString()) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            if ([System.IO.Path]::GetFileName($shortBuffer.ToString()) -ine 'CNSUS~1') { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
             $phase = 'roots_long'
             $env:CMSPARK_TEST_LONG_ROOT = $longBuffer.ToString()
             $phase = 'roots_short'

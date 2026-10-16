@@ -222,7 +222,37 @@ const reviewedSetupDiagnosticPairs = [
   ]
 ]
 const diagnosticControlCommand = reviewedControlCommand + " scripts/tests/windows-census-setup-diagnostics.test.mjs"
+const reviewedShortProvisionPairs = [
+  [
+    "  $shortCreated = (& node scripts/windows-census-owned-smb.mjs create-short $share $created.dev $created.ino | ConvertFrom-Json -ErrorAction Stop)\n  if ($LASTEXITCODE -ne 0 -or $shortCreated.path -cne $shortFixture) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n",
+    "  New-Item -ItemType Directory -Path $shortFixture -ErrorAction Stop | Out-Null\n"
+  ],
+  [
+    "  [StructLayout(LayoutKind.Sequential)]\n  public struct OwnedInfo {\n    public uint Attributes;\n    public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;\n    public uint VolumeSerialNumber, SizeHigh, SizeLow, Links, FileIndexHigh, FileIndexLow;\n  }\n  [DllImport(\"kernel32.dll\", EntryPoint=\"CreateFileW\", CharSet=CharSet.Unicode, SetLastError=true, ExactSpelling=true)]\n  private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(string source, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);\n  [DllImport(\"kernel32.dll\", SetLastError=true, ExactSpelling=true)]\n  [return: MarshalAs(UnmanagedType.Bool)]\n  private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle, out OwnedInfo info);\n  [DllImport(\"kernel32.dll\", EntryPoint=\"SetFileShortNameW\", CharSet=CharSet.Unicode, SetLastError=true, ExactSpelling=true)]\n  [return: MarshalAs(UnmanagedType.Bool)]\n  private static extern bool SetFileShortName(Microsoft.Win32.SafeHandles.SafeFileHandle handle, string name);\n  public static int PrepareShortName(string source, string dev, string ino) {\n    Microsoft.Win32.SafeHandles.SafeFileHandle handle = CreateFile(source, 0x10080, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);\n    try {\n      if (handle.IsInvalid) return AliasResult(1, Marshal.GetLastWin32Error());\n      OwnedInfo info = new OwnedInfo();\n      if (!GetFileInformationByHandle(handle, out info)) return AliasResult(2, Marshal.GetLastWin32Error());\n      ulong fileId = ((ulong)info.FileIndexHigh << 32) | info.FileIndexLow;\n      if ((info.Attributes & 0x10) == 0 || (info.Attributes & 0x400) != 0 || fileId == 0 || info.VolumeSerialNumber.ToString(System.Globalization.CultureInfo.InvariantCulture) != dev || fileId.ToString(System.Globalization.CultureInfo.InvariantCulture) != ino) return AliasResult(3, 0);\n      if (!SetFileShortName(handle, \"CNSUS~1\")) return AliasResult(4, Marshal.GetLastWin32Error());\n      return AliasResult(0, 0);\n    } finally { handle.Dispose(); }\n  }\n  private static int AliasResult(int stage, int error) {\n    if (error < 0 || error > 65535) error = 0;\n    Console.WriteLine(\"CENSUS_650_SHORT {{\\\"stage\\\":{0},\\\"error\\\":{1}}}\", stage, error);\n    return stage;\n  }\n",
+    ""
+  ],
+  [
+    "  $shortSetStatus = [Cmspark650OwnedPaths]::PrepareShortName($shortFixture, $shortCreated.dev, $shortCreated.ino)\n  if ($shortSetStatus -ne 0) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n",
+    ""
+  ],
+  [
+    "  if ([System.IO.Path]::GetFileName($shortBuffer.ToString()) -ine 'CNSUS~1') { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n",
+    ""
+  ],
+  [
+    "scripts/tests/windows-census-setup-diagnostics.test.mjs scripts/tests/windows-census-short-provision.test.mjs\n",
+    "scripts/tests/windows-census-setup-diagnostics.test.mjs\n"
+  ]
+]
+function censusWithoutReviewedShortProvision(run) {
+  for (const [current, previous] of reviewedShortProvisionPairs) {
+    assert.equal(run.split(current).length, 2, "one exact owned alias prerequisite delta");
+    run = run.replace(current, previous)
+  }
+  return run
+}
 function censusWithoutReviewedSetupDiagnostics(run) {
+  run = censusWithoutReviewedShortProvision(run)
   assert.equal(run.split(reviewedSetupDiagnosticPrelude).length, 2, "one exact finite diagnostic formatter")
   run = run.replace(reviewedSetupDiagnosticPrelude, "")
   assert.equal(run.split(diagnosticControlCommand).length, 2, "original eighty-five controls plus diagnostic family exactly once")
@@ -373,4 +403,17 @@ test('setup diagnostics normalize only their exact reviewed delta and retain the
     ["$candidateLine -le 4096", "$candidateLine -le 4097"],
     ["scripts/tests/windows-census-setup-diagnostics.test.mjs", "scripts/tests/omitted-setup-diagnostics.test.mjs"],
   ]) { assert.ok(raw.includes(from)); assert.throws(() => assertCensusSchedule(raw.replace(from,to))) }
+})
+
+
+test('owned alias provisioning inverse rejects omission/mutation/duplication without weakening original lifecycle pins', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  const run = workflowYaml.load(raw).jobs['smoke-os'].steps.find(s => s.id === 'windows-census').run
+  for (const [current] of reviewedShortProvisionPairs) {
+    assert.throws(() => censusWithoutReviewedShortProvision(run.replace(current, '')))
+    assert.throws(() => censusWithoutReviewedShortProvision(run + current))
+  }
+  for (const [from,to] of [['0x10080','0x10081'],['0x02200000','0x02000000'],['CNSUS~1','OTHER~1'],['$shortCreated.ino','$created.ino'],['fileId == 0','fileId != 0']]) {
+    assert.ok(run.includes(from)); assert.throws(() => censusWithoutReviewedShortProvision(run.replace(from,to)))
+  }
 })

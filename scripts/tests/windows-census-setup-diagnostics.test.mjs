@@ -62,9 +62,9 @@ test('original short-root and SMB failures still reject, without diagnostic fall
   assert.match(run, /if \(\$current.Count -ne 1\) \{ throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' \}/)
   assert.doesNotMatch(run, /SilentlyContinue|continue-on-error|Start-Sleep/)
 })
-test('original eighty-five control families remain, followed only by this new diagnostic family', () => {
+test('original eighty-five control families and diagnostic family remain before the new owned-alias family', () => {
   formatter()
-  assert.match(run, /^  node --test scripts\/tests\/windows-census\.test\.mjs scripts\/tests\/windows-census-evidence\.test\.mjs scripts\/tests\/windows-census-cli\.test\.mjs scripts\/tests\/windows-census-short-path\.test\.mjs scripts\/tests\/windows-census-setup-diagnostics\.test\.mjs$/m)
+  assert.match(run, /^  node --test scripts\/tests\/windows-census\.test\.mjs scripts\/tests\/windows-census-evidence\.test\.mjs scripts\/tests\/windows-census-cli\.test\.mjs scripts\/tests\/windows-census-short-path\.test\.mjs scripts\/tests\/windows-census-setup-diagnostics\.test\.mjs scripts\/tests\/windows-census-short-provision\.test\.mjs$/m)
   assert.match(run, /node --test[^\n]+\n  if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/)
 })
 // Fixed progress is separate from the five formatter receipts; nothing arbitrary is public.

@@ -34,12 +34,26 @@ export function verifyOwnedUncDirectory(temp, name, run, attempt, identity, bind
     return directory
   } catch { throw Error('CENSUS_OWNED_SMB_IDENTITY_INVALID') }
 }
+export function createOwnedShortDirectory(temp, name, run, attempt, identity) {
+  try {
+    const parent = directoryPath(temp, name, run, attempt)
+    verifyOwnedUncDirectory(temp, name, run, attempt, identity, { name, path: parent })
+    const directory = path.join(parent, 'canonical short alias owned')
+    fs.mkdirSync(directory, { recursive: false, mode: 0o700 })
+    const child = snapshot(directory)
+    verifyOwnedUncDirectory(temp, name, run, attempt, identity, { name, path: parent })
+    return child
+  } catch { throw Error('CENSUS_OWNED_SHORT_ROOT_INVALID') }
+}
 function main() {
   if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_OS !== 'Windows') throw Error('CENSUS_OWNED_SMB_SETUP_FAILED')
   const [mode, name, currentName, currentPath, dev, ino] = process.argv.slice(2)
   const { RUNNER_TEMP: temp, GITHUB_RUN_ID: run, GITHUB_RUN_ATTEMPT: attempt } = process.env
   if (mode === 'create' && process.argv.length === 4) {
     console.log(JSON.stringify(createOwnedUncDirectory(temp, name, run, attempt)))
+  } else if (mode === 'create-short' && process.argv.length === 6) {
+    const directory = directoryPath(temp, name, run, attempt)
+    console.log(JSON.stringify(createOwnedShortDirectory(temp, name, run, attempt, { path: directory, dev: currentName, ino: currentPath })))
   } else if (mode === 'verify' && process.argv.length === 8) {
     const directory = directoryPath(temp, name, run, attempt)
     verifyOwnedUncDirectory(temp, name, run, attempt, { path: directory, dev, ino }, { name: currentName, path: currentPath })
@@ -49,7 +63,7 @@ let direct = false
 try { direct = Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)) } catch { /* import-only */ }
 if (direct) {
   try { main() } catch (error) {
-    console.error(error?.message === 'CENSUS_OWNED_SMB_IDENTITY_INVALID' ? error.message : 'CENSUS_OWNED_SMB_SETUP_FAILED')
+    console.error(['CENSUS_OWNED_SMB_IDENTITY_INVALID', 'CENSUS_OWNED_SHORT_ROOT_INVALID'].includes(error?.message) ? error.message : 'CENSUS_OWNED_SMB_SETUP_FAILED')
     process.exitCode = 1
   }
 }
