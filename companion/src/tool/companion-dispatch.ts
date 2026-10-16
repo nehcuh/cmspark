@@ -1347,14 +1347,14 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         return { success: false, error: "thread_recall requires active thread" }
       }
       const q = typeof params.query === "string" ? params.query.trim() : ""
-      if (!q) return { success: false, error: "query required" }
+      if (!q) return { success: false, error: "query required", data: { error_code: "READ_QUERY_INPUT_INVALID" } }
       const {
         searchAndRedact,
         RECALL_QUERY_MAX_LEN,
         clampMaxHits,
       } = await import("../threads/thread-recall")
       if (q.length > RECALL_QUERY_MAX_LEN) {
-        return { success: false, error: `query too long (max ${RECALL_QUERY_MAX_LEN})` }
+        return { success: false, error: `query too long (max ${RECALL_QUERY_MAX_LEN})`, data: { error_code: "READ_QUERY_INPUT_INVALID" } }
       }
       const maxHits = clampMaxHits(params.max_hits)
       const msgs = threadManager.getMessages(tid) as any[]
@@ -1381,7 +1381,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       // #439: cross-thread card search (title/digest). Companion-local; never forward.
       const { runSearchThreads } = await import("./llm-search")
       const result = runSearchThreads(threadManager.list() as any, params.query, params.limit)
-      if (!result.ok) return { success: false, error: result.error }
+      if (!result.ok) return { success: false, error: result.error, ...(result.error_code === "READ_QUERY_INPUT_INVALID" ? { data: { error_code: result.error_code } } : {}) }
       try {
         logger.info("search_threads", {
           hit_count: result.hits.length,
@@ -1404,7 +1404,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         folder: d.folder,
       }))
       const result = runSearchKnowledge(docs, params.query, params.limit)
-      if (!result.ok) return { success: false, error: result.error }
+      if (!result.ok) return { success: false, error: result.error, ...(result.error_code === "READ_QUERY_INPUT_INVALID" ? { data: { error_code: result.error_code } } : {}) }
       try {
         logger.info("search_knowledge", {
           hit_count: result.hits.length,

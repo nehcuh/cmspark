@@ -205,7 +205,7 @@ test("#563 task-auth matching target remains admitted; unknown refusal stays gen
   const wire = JSON.parse(JSON.stringify(envelope({ ok: false, error: "timeout", reason: "OWNED_UNKNOWN" }, settings.settingsRequiredResult)))
   assert.equal(readCode(wire), "NETSEC_SCOPE_DENIED")
   assert.equal(sec.classifyError(wire.error, { error_code: readCode(wire) }), "recoverable")
-  assert.equal(sec.ERROR_CODE_LEVELS.size, 163)
+  assert.equal(sec.ERROR_CODE_LEVELS.size, 164)
   assert.equal(sec.DEFAULT_NON_RECOVERABLE_CODES.length, 59)
   assert.deepEqual(effects, { process: 0, network: 0, token: 0 })
 })

@@ -42,7 +42,7 @@ export type LlmKnowledgeHit = {
 }
 
 export type LlmSearchOk<T> = { ok: true; query: string; hits: T[] }
-export type LlmSearchErr = { ok: false; error: string }
+export type LlmSearchErr = { ok: false; error: string; error_code?: "READ_QUERY_INPUT_INVALID" }
 export type LlmSearchResult<T> = LlmSearchOk<T> | LlmSearchErr
 
 function redactSnippet(raw: string): string {
@@ -93,7 +93,7 @@ export function runSearchThreads(
   limitRaw?: unknown,
 ): LlmSearchResult<LlmThreadHit> {
   const query = normalizeSearchQuery(queryRaw)
-  if (!query) return { ok: false, error: "query required" }
+  if (!query) return { ok: false, error: "query required", error_code: "READ_QUERY_INPUT_INVALID" }
   const limit = clampLlmSearchLimit(limitRaw)
   const pool = rows.filter(isSearchableThreadRow)
   const hits = searchThreadRows(pool, query, limit).map(toLlmThreadHit)
@@ -106,7 +106,7 @@ export function runSearchKnowledge(
   limitRaw?: unknown,
 ): LlmSearchResult<LlmKnowledgeHit> {
   const query = normalizeSearchQuery(queryRaw)
-  if (!query) return { ok: false, error: "query required" }
+  if (!query) return { ok: false, error: "query required", error_code: "READ_QUERY_INPUT_INVALID" }
   const limit = clampLlmSearchLimit(limitRaw)
   const hits = knowledgeSearchRows(docs, query, limit).map(toLlmKnowledgeHit)
   return { ok: true, query, hits }
