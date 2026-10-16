@@ -92,13 +92,15 @@ for (const target of ["denied.example.test", "timeout.example.test", "element_no
     assert.equal(guard.decideSameToolFailure({ failCount: 3, threshold: 3, errorCode: code, errorText: wire.error, alreadyPivoted: false }).action, "stop")
   })
 }
-test("#563 task auth / internal blank failures remain generic, not new finite denial", () => {
+test("#563 missing task auth / internal blank stay generic; per-task target refusal is typed", () => {
   for (const [target, more, reason] of [["allowed.example.test", {}, "task_auth_missing"],
     // Pure scope input only; never persisted or converted to a token/grant.
     ["allowed.example.test", { taskAuth: { authorized: true, targets: ["other.example.test"] } }, "target_not_in_task_auth"],
     ["   ", {}, undefined]] as const) {
     const { s, wire, code } = receipt(target, more); assert.equal((s as any).reason, reason)
-    assert.equal(code, "NETSEC_SCOPE_DENIED"); assert.equal(sec.ERROR_CODE_LEVELS.has(code!), false)
+    const perTaskTarget = reason === "target_not_in_task_auth"
+    assert.equal(code, perTaskTarget ? "NETSEC_TARGETS_DENIED" : "NETSEC_SCOPE_DENIED")
+    assert.equal(sec.ERROR_CODE_LEVELS.has(code!), perTaskTarget)
     assert.equal(sec.classifyError(wire.error, { error_code: code }), "non_recoverable")
   }
 })
@@ -176,3 +178,34 @@ for (const [target, blank] of [["\u3000", true], ["denied.example.test", false],
     assert.equal(JSON.stringify(cfg.getConfig()), baseline)
   })
 }
+
+// Root #563: actual per-task target refusal must not inherit a target's metadata grade.
+for (const target of ["owned.example.test", "timeout.example.test", "element_not_found.example.test",
+  "econnrefused.example.test", "503.example.test", "429.example.test"]) {
+  test(`#563 task-auth target ${target} has intrinsic hard refusal`, t => {
+    const { s, wire, code } = receipt(target, { allowlist: [target],
+      taskAuth: { authorized: true, targets: ["other.example.test"] } })
+    const level = sec.classifyError(wire.error, { toolName: "netsec_port_scan", error_code: code })
+    t.diagnostic(JSON.stringify({ reason: (s as any).reason, code, level, error: wire.error }))
+    assert.equal((s as any).reason, "target_not_in_task_auth")
+    assert.equal(wire.error, (s as any).error)
+    assert.deepEqual(Object.keys(wire.data), ["error_code"])
+    assert.equal(code, "NETSEC_TARGETS_DENIED")
+    assert.equal(level, "non_recoverable")
+    assert.equal(guard.decideSameToolFailure({ failCount: 3, threshold: 3, errorCode: code,
+      errorText: wire.error, alreadyPivoted: false }).action, "stop")
+    assert.deepEqual(effects, { process: 0, network: 0, token: 0 })
+  })
+}
+
+test("#563 task-auth matching target remains admitted; unknown refusal stays generic", () => {
+  assert.deepEqual(scope.checkNetsecScope({ targets: ["owned.example.test"], allowlist: ["owned.example.test"],
+    moduleEnabled: true, requireTaskAuth: true, taskAuth: { authorized: true, targets: ["owned.example.test"] } }),
+    { ok: true, targets: ["owned.example.test"], allowlist: ["owned.example.test"] })
+  const wire = JSON.parse(JSON.stringify(envelope({ ok: false, error: "timeout", reason: "OWNED_UNKNOWN" }, settings.settingsRequiredResult)))
+  assert.equal(readCode(wire), "NETSEC_SCOPE_DENIED")
+  assert.equal(sec.classifyError(wire.error, { error_code: readCode(wire) }), "recoverable")
+  assert.equal(sec.ERROR_CODE_LEVELS.size, 160)
+  assert.equal(sec.DEFAULT_NON_RECOVERABLE_CODES.length, 59)
+  assert.deepEqual(effects, { process: 0, network: 0, token: 0 })
+})
