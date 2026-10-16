@@ -25,6 +25,10 @@
 #include <thread>
 #include <vector>
 #include "desktop-capabilities.h"
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
+#define CMSPARK_BOOTSTRAP_CHILD
+#include "windows-bootstrap.h"
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 using namespace winrt::Windows::Data::Json;
@@ -58,18 +62,9 @@ static std::wstring hmac(std::wstring const& keyhex,std::wstring const& message)
  if(BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,BCRYPT_ALG_HANDLE_HMAC_FLAG)<0||BCryptGetProperty(algorithm,BCRYPT_OBJECT_LENGTH,(PUCHAR)&size,sizeof(size),&got,0)<0){cleanup();throw std::runtime_error("HMAC");}
  object.resize(size);if(BCryptCreateHash(algorithm,&hash,object.data(),size,key.data(),(ULONG)key.size(),0)<0||BCryptHashData(hash,(PUCHAR)input.data(),(ULONG)input.size(),0)<0||BCryptFinishHash(hash,digest,sizeof(digest),0)<0){cleanup();throw std::runtime_error("HMAC");}cleanup();static wchar_t const d[]=L"0123456789abcdef";std::wstring out;for(auto b:digest){out+=d[b>>4];out+=d[b&15];}SecureZeroMemory(digest,sizeof(digest));return out;
 }
-// Query only the handle already explicitly inherited; never OpenProcess/PID lookup.
-static bool sync_parent(HANDLE handle){
- using Query=NTSTATUS(NTAPI*)(HANDLE,OBJECT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
- auto query=(Query)GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"NtQueryObject");
- struct Basic{ULONG attributes;ACCESS_MASK access;ULONG handles,pointers,reserved[10];}basic{};
- union Storage{void* alignment;unsigned char bytes[4096];} storage{};ULONG returned=0;
- if(!query||!handle||handle==INVALID_HANDLE_VALUE||query(handle,(OBJECT_INFORMATION_CLASS)0,&basic,sizeof(basic),&returned)<0||returned<sizeof(basic)||basic.access!=SYNCHRONIZE)return false;
- if(query(handle,(OBJECT_INFORMATION_CLASS)2,&storage,sizeof(storage),&returned)<0||returned<sizeof(UNICODE_STRING)||returned>sizeof(storage))return false;
- auto name=(UNICODE_STRING*)storage.bytes;auto first=(uintptr_t)storage.bytes,last=first+returned,start=(uintptr_t)name->Buffer;
- if(name->Length!=7*sizeof(wchar_t)||name->MaximumLength<name->Length||start<first||start>last||name->Length>last-start||memcmp(name->Buffer,L"Process",name->Length))return false;
- return WaitForSingleObject(handle,0)==WAIT_TIMEOUT;
-}
+// Exact target-context SYNCHRONIZE-only capability, never a PID-derived permanent watcher.
+static bool sync_parent(HANDLE handle){return d480_sync_parent(handle)!=0;}
+
 struct Pending{std::wstring native_id,ui_id,generation,thread;};
 struct Frame{unsigned long epoch;std::wstring value;};
 #ifdef CMSPARK_DESKTOP_TEST_PHASES
@@ -175,12 +170,19 @@ class Desktop {
 };
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){try{
  winrt::init_apartment(winrt::apartment_type::single_threaded);
- HANDLE input=GetStdHandle(STD_INPUT_HANDLE);if(!input||input==INVALID_HANDLE_VALUE||GetFileType(input)!=FILE_TYPE_PIPE)return 11;
- std::string data;char buffer[4097];while(true){DWORD got=0;if(!ReadFile(input,buffer,(DWORD)(sizeof(buffer)-data.size()),&got,nullptr)){if(GetLastError()==ERROR_BROKEN_PIPE)break;CloseHandle(input);return 13;}if(!got)break;data.append(buffer,got);if(data.size()>4096){CloseHandle(input);return 14;}}CloseHandle(input);SetStdHandle(STD_INPUT_HANDLE,nullptr);
+ int argc=0;LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);if(!argv)return 11;
+ CmsparkBootstrapClient bootstrap;bool opened=d480_client_open(argc,argv,&bootstrap)!=0;LocalFree(argv);if(!opened)return 11;
+ struct BootstrapCleanup{CmsparkBootstrapClient* value;~BootstrapCleanup(){d480_client_close(value);}} bootstrap_cleanup{&bootstrap};
+ HANDLE input=bootstrap.pipe;
+ struct BootBuffer{char bytes[CMSPARK_BOOT_MAX+1]{};~BootBuffer(){SecureZeroMemory(bytes,sizeof(bytes));}} buffer;DWORD body_length=0;if(!d480_client_body(&bootstrap,buffer.bytes,&body_length))return 13;
+ std::string data(buffer.bytes,body_length);SecureZeroMemory(buffer.bytes,sizeof(buffer.bytes));
+ struct DataWipe{std::string& value;~DataWipe(){if(!value.empty())SecureZeroMemory(value.data(),value.size());}} data_wipe{data};
  auto boot=flat(wide(data));SecureZeroMemory(data.data(),data.size());if(!keys(boot,{L"capability_id",L"secret",L"url",L"protocol_version",L"issued_method_set_version",L"parent_handle"})||!hex(text(boot,L"capability_id"),32)||!hex(text(boot,L"secret"),64)||!exact_one(boot,L"protocol_version")||!exact_one(boot,L"issued_method_set_version")||desktop_method_set_version!=1)return 15;
- auto parent_text=text(boot,L"parent_handle");if(parent_text.empty()||parent_text[0]==L'0'||!std::all_of(parent_text.begin(),parent_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 16;size_t used=0;auto number=std::stoull(parent_text,&used,10);if(used!=parent_text.size()||number>(uintptr_t)-1)return 16;HANDLE parent=(HANDLE)(uintptr_t)number;if(!sync_parent(parent))return 16;if(!SetHandleInformation(parent,HANDLE_FLAG_INHERIT,0))return 16;
- std::thread([parent](){if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)ExitProcess(1);ExitProcess(17);}).detach();
  auto url=text(boot,L"url");std::wstring prefix=L"ws://127.0.0.1:";if(url.rfind(prefix,0)!=0||url.size()<prefix.size()+9||url.substr(url.size()-8)!=L"/desktop")return 15;auto port_text=url.substr(prefix.size(),url.size()-prefix.size()-8);if(port_text.empty()||port_text.size()>5||!std::all_of(port_text.begin(),port_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 15;unsigned port=std::stoul(port_text);if(!port||port>65535)return 15;
+ auto parent_text=text(boot,L"parent_handle");if(parent_text.empty()||parent_text[0]==L'0'||!std::all_of(parent_text.begin(),parent_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 16;size_t used=0;auto number=std::stoull(parent_text,&used,10);if(used!=parent_text.size()||number>(uintptr_t)-1)return 16;HANDLE parent=(HANDLE)(uintptr_t)number;if(!sync_parent(parent))return 16;if(!d480_client_finish(&bootstrap,parent))return 16;
+ CloseHandle(input);bootstrap.pipe=nullptr;
+ d480_client_close(&bootstrap);
+ std::thread([parent](){if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)ExitProcess(1);ExitProcess(17);}).detach();
  wchar_t binary[32768];DWORD length=GetModuleFileNameW(nullptr,binary,32768);if(!length||length==32768)return 18;std::wstring root(binary,length);auto slash=root.find_last_of(L"\\/");if(slash==std::wstring::npos)return 18;root.resize(slash);
  Desktop app(text(boot,L"capability_id"),text(boot,L"secret"),(INTERNET_PORT)port,root);return app.run(instance);
  }catch(...){return 15;}}

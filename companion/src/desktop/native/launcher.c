@@ -8,6 +8,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <process.h>
+#define CMSPARK_BOOTSTRAP_PARENT
+#include "windows-bootstrap.h"
 #else
 #include <pthread.h>
 #include <spawn.h>
@@ -178,28 +180,21 @@ static napi_value launch(napi_env env, napi_callback_info info) {
   c = calloc(1, sizeof(*c)); if (!c) goto error; c->env = env; c->refs = 2;
 #ifdef _WIN32
   InitializeCriticalSection(&c->lock);
-  HANDLE rd = NULL, wr = NULL, parent = NULL; PROCESS_INFORMATION pi; STARTUPINFOEXW startup; SIZE_T size = 0;
-  SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
-  memset(&pi, 0, sizeof(pi)); memset(&startup, 0, sizeof(startup)); startup.StartupInfo.cb = sizeof(startup);
-  if (!CreatePipe(&rd, &wr, &sa, 0) || !SetHandleInformation(wr, HANDLE_FLAG_INHERIT, 0) || !DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(), &parent, SYNCHRONIZE, TRUE, 0)) goto win_error;
-  length = snprintf(boot, sizeof(boot), "{\"capability_id\":\"%s\",\"secret\":\"%s\",\"url\":\"%s\",\"protocol_version\":1,\"issued_method_set_version\":1,\"parent_handle\":\"%llu\"}\n", cap, secret, url, (unsigned long long)(uintptr_t)parent);
-  if (length < 0 || length > BOOT_MAX) goto win_error;
-  InitializeProcThreadAttributeList(NULL, 1, 0, &size); startup.lpAttributeList = malloc(size);
-  if (!startup.lpAttributeList || !InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &size)) goto win_error;
-  HANDLE inherited[] = { rd, parent };
-  if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited), NULL, NULL)) goto win_error;
-  startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES; startup.StartupInfo.hStdInput = rd;
+  CmsparkBootstrapServer channel; memset(&channel, 0, sizeof(channel));
+  PROCESS_INFORMATION pi; STARTUPINFOW startup; memset(&pi, 0, sizeof(pi)); memset(&startup, 0, sizeof(startup)); startup.cb = sizeof(startup);
+  if (!d480_server_open(&channel)) goto win_error;
   int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, binary, -1, NULL, 0); wchar_t *exe = n ? malloc((size_t)n * sizeof(wchar_t)) : NULL;
-  if (!exe || !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, binary, -1, exe, n)) { free(exe); goto win_error; }
+  wchar_t command[4608];
+  if (!exe || !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, binary, -1, exe, n) || !d480_server_command(&channel, exe, command, sizeof(command) / sizeof(command[0]))) { free(exe); goto win_error; }
   wchar_t *environment = host_environment();
   if (!environment) { free(exe); goto win_error; }
-  BOOL created = CreateProcessW(exe, NULL, NULL, NULL, TRUE, EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, environment, NULL, &startup.StartupInfo, &pi); free(environment); free(exe);
+  BOOL created = CreateProcessW(exe, command, NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, environment, NULL, &startup, &pi); free(environment); free(exe);
   if (!created) goto win_error;
   CloseHandle(pi.hThread); c->process = pi.hProcess; c->alive = 1;
-  CloseHandle(rd); rd = NULL; CloseHandle(parent); parent = NULL;
-  DWORD wrote = 0; BOOL written = WriteFile(wr, boot, (DWORD)length, &wrote, NULL); CloseHandle(wr); wr = NULL;
-  DeleteProcThreadAttributeList(startup.lpAttributeList); free(startup.lpAttributeList); startup.lpAttributeList = NULL;
-  if (!written || wrote != (DWORD)length) { TerminateProcess(c->process, 1); WaitForSingleObject(c->process, INFINITE); CloseHandle(c->process); c->alive = 0; goto error; }
+  HANDLE target_parent = NULL;
+  if (!d480_server_bind(&channel, c->process, pi.dwProcessId, &target_parent)) goto win_error;
+  length = snprintf(boot, sizeof(boot), "{\"capability_id\":\"%s\",\"secret\":\"%s\",\"url\":\"%s\",\"protocol_version\":1,\"issued_method_set_version\":1,\"parent_handle\":\"%llu\"}\n", cap, secret, url, (unsigned long long)(uintptr_t)target_parent);
+  if (length < 0 || length > BOOT_MAX || !d480_server_send(&channel, c->process, pi.dwProcessId, boot, (DWORD)length)) goto win_error;
 #else
   pthread_mutex_init(&c->lock, NULL);
   int initial[2]; if (pipe(initial)) goto error;
@@ -248,8 +243,8 @@ static napi_value launch(napi_env env, napi_callback_info info) {
   return object;
 #ifdef _WIN32
 win_error:
-  if (rd) CloseHandle(rd); if (wr) CloseHandle(wr); if (parent) CloseHandle(parent);
-  if (startup.lpAttributeList) { DeleteProcThreadAttributeList(startup.lpAttributeList); free(startup.lpAttributeList); }
+  d480_server_close(&channel);
+  if (c->alive) reap_unwatched(c);
 #endif
 error:
   memset(boot, 0, sizeof(boot)); if (secret) { memset(secret, 0, strlen(secret)); free(secret); } free(binary); free(cap); free(url);

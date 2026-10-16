@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#define CMSPARK_BOOTSTRAP_CHILD
+#include "../../../src/desktop/native/windows-bootstrap.h"
 
 typedef NTSTATUS (NTAPI *query_object_fn)(HANDLE, OBJECT_INFORMATION_CLASS,
                                          PVOID, ULONG, PULONG);
@@ -42,22 +44,24 @@ static int accepts(query_object_fn query, HANDLE handle) {
   return WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
 }
 
-int main(void) {
-  /* With bootstrap input this is an inert addon receiver; never authenticate or emit values. */
-  HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-  if (input && input != INVALID_HANDLE_VALUE && GetFileType(input) == FILE_TYPE_PIPE) {
-    char bytes[4097]; DWORD got = 0; size_t count = 0;
-    while (ReadFile(input, bytes, (DWORD)sizeof(bytes), &got, NULL) && got) {
-      count += got; if (count > 4096) return 71;
-    }
-    CloseHandle(input);
-    if (count) {
-      int denied = GetEnvironmentVariableW(L"CMSPARK_DESKTOP_INERT_SECRET", NULL, 0) ||
-        GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", NULL, 0);
-      int required = GetEnvironmentVariableW(L"SystemRoot", NULL, 0) &&
-        GetEnvironmentVariableW(L"PATH", NULL, 0) && GetEnvironmentVariableW(L"TEMP", NULL, 0);
-      SecureZeroMemory(bytes, sizeof(bytes)); return denied || !required ? 72 : 0;
-    }
+int wmain(int argc,wchar_t **argv) {
+  /* This inert receiver shares actual metadata/framing/ACK/EOF, never a daemon session. */
+  if(argc!=1){
+    CmsparkBootstrapClient bootstrap;if(!d480_client_open(argc,argv,&bootstrap))return 71;
+    char bytes[CMSPARK_BOOT_MAX+1];DWORD count=0;HANDLE parent=NULL;int result=71;
+    if(!d480_client_body(&bootstrap,bytes,&count))goto receiver_done;
+    const char* field=strstr(bytes,"\"parent_handle\":\"");if(!field)goto receiver_done;field+=strlen("\"parent_handle\":\"");
+    if(*field<'1'||*field>'9')goto receiver_done;uint64_t number=0;
+    while(*field>='0'&&*field<='9'){unsigned digit=(unsigned)(*field++-'0');if(number>(UINT64_MAX-digit)/10)goto receiver_done;number=number*10+digit;}
+    if(strcmp(field,"\"}\n")||number>(uintptr_t)-1)goto receiver_done;parent=(HANDLE)(uintptr_t)number;
+    char expected[CMSPARK_BOOT_MAX+1];int length=snprintf(expected,sizeof(expected),"{\"capability_id\":\"11111111111111111111111111111111\",\"secret\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"url\":\"ws://127.0.0.1:1/desktop\",\"protocol_version\":1,\"issued_method_set_version\":1,\"parent_handle\":\"%llu\"}\n",(unsigned long long)number);
+    if(length<=0||(DWORD)length!=count||memcmp(bytes,expected,count)||!d480_sync_parent(parent))goto receiver_done;
+    int denied=GetEnvironmentVariableW(L"CMSPARK_DESKTOP_INERT_SECRET",NULL,0)||GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",NULL,0);
+    int required=GetEnvironmentVariableW(L"SystemRoot",NULL,0)&&GetEnvironmentVariableW(L"PATH",NULL,0)&&GetEnvironmentVariableW(L"TEMP",NULL,0);
+    if(denied||!required){result=72;goto receiver_done;}
+    if(d480_client_finish(&bootstrap,parent))result=0;
+receiver_done:
+    SecureZeroMemory(bytes,sizeof(bytes));d480_client_close(&bootstrap);if(parent)CloseHandle(parent);return result;
   }
   HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
   query_object_fn query = ntdll ? (query_object_fn)GetProcAddress(ntdll, "NtQueryObject") : NULL;
