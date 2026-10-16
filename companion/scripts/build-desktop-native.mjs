@@ -22,7 +22,7 @@ function write(file,content){replacement(file);fs.writeFileSync(file,content,{fl
 directory(dest);directory(generated)
 if (!["darwin", "win32"].includes(process.platform)) throw new Error("Native platform build command not implemented for this OS")
 if (process.version !== "v22.23.2") throw new Error("Pinned Node22.23.2 build runtime required")
-const { prepareDesktopNodeHeaders } = await import("./build-desktop-windows.mjs")
+const { prepareDesktopNodeHeaders, desktopAcceptanceVariant } = await import("./build-desktop-windows.mjs")
 const headers = process.platform === "darwin" ? await prepareDesktopNodeHeaders({dest}) : undefined
 // Erasable TypeScript is supported by pinned Node22.23.2. This is the sole editable method table.
 const { DESKTOP_READ_METHODS, DESKTOP_METHOD_SET_VERSION } = await import(pathToFileURL(path.join(root, "src/desktop/capabilities.ts")))
@@ -45,6 +45,18 @@ run("/usr/bin/swiftc", ["-O", main, path.join(generated,"DesktopCapabilities.swi
 run("/usr/bin/codesign", ["--force", "--sign", "-", path.join(dest,"desktop-launcher.node")])
 run("/usr/bin/codesign", ["--force", "--sign", "-", path.join(dest,"cmspark-desktop")])
 if(process.argv.includes("--test-fixtures")) {
+ for (const mode of ["visual", "hostile", "parent"]) {
+  const fixtureDest=path.join(dest,"acceptance",mode),fixtureGenerated=path.join(generated,`acceptance-${mode}`)
+  directory(path.join(dest,"acceptance"));directory(fixtureDest);directory(fixtureGenerated);directory(path.join(fixtureDest,"assets"))
+  for(const name of ["index.html","app.css","app.js"]){const target=path.join(fixtureDest,"assets",name);replacement(target);fs.copyFileSync(path.join(root,"src/desktop/assets",name),target,fs.constants.COPYFILE_EXCL)}
+  const original=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.swift"),"utf8"),controller=fs.readFileSync(path.join(root,"tests/fixtures/desktop-480/native-acceptance.swift"),"utf8")
+  const variant=desktopAcceptanceVariant("swift",original,controller);if(variant.inverse!==original)throw new Error("DESKTOP_ACCEPTANCE_SOURCE_DRIFT")
+  const source=path.join(fixtureGenerated,"main.swift"),binary=path.join(fixtureDest,"cmspark-desktop");write(source,variant.source);replacement(binary)
+  run("/usr/bin/swiftc",["-O","-D",mode==="hostile"?"D480_HOSTILE":mode==="parent"?"D480_PARENT":"D480_VISUAL",source,path.join(generated,"DesktopCapabilities.swift"),"-framework","AppKit","-framework","WebKit","-framework","CryptoKit","-o",binary])
+  run("/usr/bin/codesign",["--force","--sign","-",binary])
+ }
+ const parentProbe=path.join(dest,"acceptance","parent","desktop-parent-probe");replacement(parentProbe)
+ run("/usr/bin/clang",["-std=c11","-Wall","-Wextra","-Werror","-DDESKTOP_FIXTURE_MAC_PARENT_PROBE",path.join(root,"tests/fixtures/desktop-480/windows-inheritance.c"),"-o",parentProbe])
  replacement(path.join(dest,"desktop-inheritance-probe"));replacement(path.join(dest,"inheritable-sentinel.node"))
  run("/usr/bin/clang",["-std=c11","-Wall","-Wextra","-Werror",path.join(root,"tests/fixtures/desktop-480/inheritance-probe.c"),"-o",path.join(dest,"desktop-inheritance-probe")])
  run("/usr/bin/clang",["-std=c11","-Wall","-Wextra","-Werror","-shared","-fPIC","-undefined","dynamic_lookup","-I",headers,path.join(root,"tests/fixtures/desktop-480/inheritable-sentinel.c"),"-o",path.join(dest,"inheritable-sentinel.node")])
