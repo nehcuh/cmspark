@@ -30,7 +30,7 @@ test('actual workflow formatter publishes only six fixed fields and bounded nume
   assert.match(f, /\$receipt = \[ordered\]@\{ version = 1; stage = \$safeStage; phase = \$safePhase; reason = \$reason; line = \$line; column = \$column \}/)
   assert.match(f, /\$candidateLine -ge 1 -and \$candidateLine -le 4096/)
   assert.match(f, /\$candidateColumn -ge 1 -and \$candidateColumn -le 4096/)
-  assert.match(f, /Write-Output \('CENSUS_650_SETUP ' \+ \(\$receipt \| ConvertTo-Json -Compress\)\)/)
+  assert.ok(f.includes("  [Console]::Out.WriteLine([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, 'CENSUS_650_SETUP {{\"version\":1,\"stage\":\"{0}\",\"phase\":\"{1}\",\"reason\":\"{2}\",\"line\":{3},\"column\":{4}}}', [object[]]@($receipt.stage, $receipt.phase, $receipt.reason, $receipt.line, $receipt.column)))\n"))
   assert.doesNotMatch(f, /\.Message|\.Exception|PositionMessage|ScriptStackTrace|\.Line\b|\$env:|Get-Content|Write-Host|Format-/)
 })
 test('actual declaration projection preserves exact three reasons and refuses marker-bearing IDs and unknown phases', () => {
@@ -105,8 +105,8 @@ const formatterInnerAnchors = [
   },
   {
     "stage": "inner_emitted",
-    "before": "  Write-Output ('CENSUS_650_SETUP ' + ($receipt | ConvertTo-Json -Compress))\n",
-    "after": "  Write-Output ('CENSUS_650_SETUP ' + ($receipt | ConvertTo-Json -Compress))\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_emitted')\n"
+    "before": "  [Console]::Out.WriteLine([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, 'CENSUS_650_SETUP {{\"version\":1,\"stage\":\"{0}\",\"phase\":\"{1}\",\"reason\":\"{2}\",\"line\":{3},\"column\":{4}}}', [object[]]@($receipt.stage, $receipt.phase, $receipt.reason, $receipt.line, $receipt.column)))\n",
+    "after": "  [Console]::Out.WriteLine([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, 'CENSUS_650_SETUP {{\"version\":1,\"stage\":\"{0}\",\"phase\":\"{1}\",\"reason\":\"{2}\",\"line\":{3},\"column\":{4}}}', [object[]]@($receipt.stage, $receipt.phase, $receipt.reason, $receipt.line, $receipt.column)))\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_emitted')\n"
   }
 ]
 function instrumentedFormatter(original = formatter()) {
@@ -297,7 +297,7 @@ test('portable test-copy inner instrumentation is exactly reversible and every a
   let restored=instrumented
   for(const marker of markers){const line=`  [Console]::Out.WriteLine('${probePrefix}${marker}')\n`;assert.equal(restored.split(line).length-1,1);restored=restored.replace(line,'')}
   assert.equal(restored,original)
-  assert.ok(instrumented.includes("  Write-Output ('CENSUS_650_SETUP ' + ($receipt | ConvertTo-Json -Compress))\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_emitted')\n"), 'emitted marker follows the intact original output expression')
+  assert.ok(instrumented.includes("  [Console]::Out.WriteLine([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, 'CENSUS_650_SETUP {{\"version\":1,\"stage\":\"{0}\",\"phase\":\"{1}\",\"reason\":\"{2}\",\"line\":{3},\"column\":{4}}}', [object[]]@($receipt.stage, $receipt.phase, $receipt.reason, $receipt.line, $receipt.column)))\n  [Console]::Out.WriteLine('CENSUS_650_PROBE inner_emitted')\n"), 'emitted marker follows the intact original output expression')
   assert.equal(instrumented.replace(/^  \[Console\]::Out\.WriteLine\('CENSUS_650_PROBE inner_[a-z]+'\)\n/gm,''),original)
   const nativeSource=fs.readFileSync(new URL(import.meta.url),'utf8')
   assert.ok(nativeSource.includes('const f = instrumentedFormatter()'))
@@ -314,4 +314,26 @@ test('portable inner protocol rejects unknown duplicate wrong-order missing or p
   const good=expectedInnerProtocolLines(),first=good.indexOf(probePrefix+'inner_param'),receipt=good.findIndex(x=>x.startsWith('CENSUS_650_SETUP '))
   const variants=[good.with(first,probePrefix+'inner_unknown'),[...good.slice(0,first),good[first],...good.slice(first)],good.with(first,probePrefix+'inner_phase'),good.filter((_,i)=>i!==first),good.with(receipt,'CENSUS_650_SETUP '+probeMarker),good.with(first,probePrefix+probeMarker)]
   for(const lines of variants){const result=controlledNativeCallback({stdout:lines.join('\n')+'\n',stderr:'',status:0,signal:null});assert.ok(result.failure);assert.equal(result.failure.message.includes(probeMarker),false)}
+})
+
+
+// CPU source projection is not PowerShell execution; actual hosted callback still gates all five receipts.
+function fixedEmissionFormat(source = formatter()) {
+  const match = source.match(/^  \[Console\]::Out\.WriteLine\(\[string\]::Format\(\[System\.Globalization\.CultureInfo\]::InvariantCulture, '([^'\n]+)', \[object\[\]\]@\(\$receipt\.stage, \$receipt\.phase, \$receipt\.reason, \$receipt\.line, \$receipt\.column\)\)\)\n/m)
+  assert.ok(match, 'actual closed formatter must use invariant fixed-format direct Console emission')
+  return match[1]
+}
+test('cmdlet-free actual formatter output has no pipeline or module-dependent emitter',()=>{
+ const f=formatter();fixedEmissionFormat(f)
+ assert.doesNotMatch(f,/Write-Output|ConvertTo-Json|\|/)
+ assert.match(f,/\$receipt = \[ordered\]@\{ version = 1; stage = \$safeStage; phase = \$safePhase; reason = \$reason; line = \$line; column = \$column \}/)
+})
+test('cmdlet-free fixed emission source projects canonical six-key JSON for every closed declaration',()=>{
+ const format=fixedEmissionFormat(),marker='PRIVATE_DIAGNOSTIC_MARKER'
+ for(const stage of['primary','cleanup',marker])for(const phase of[...phases,marker])for(const id of['CENSUS_OWNED_SMB_SETUP_FAILED','CENSUS_OWNED_SMB_IDENTITY_INVALID','CENSUS_OWNED_SHORT_ROOT_INVALID',marker])for(const position of[0,1,4096]){
+  const closed=declarationProjection(formatter(),stage,phase,id),args=[closed.stage,closed.phase,closed.reason,String(position),String(position)]
+  // Decode ONLY the real invariant-format literal and its closed scalar positions; not a PS runtime claim.
+  const wire=format.replace(/\{\{|\}\}|\{([0-4])\}/g,(literal,index)=>index===undefined?(literal==='{{'?'{':'}'):args[Number(index)])
+  assert.equal(wire,'CENSUS_650_SETUP '+JSON.stringify({version:1,...closed,line:position,column:position}));assert.equal(wire.includes(marker),false)
+ }
 })
