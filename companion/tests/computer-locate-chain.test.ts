@@ -1182,3 +1182,113 @@ test("#572: an injector without the capability behaves exactly as before", async
   assert.equal(r.success, true)
   assert.equal(injector.clicks.length, 1)
 })
+
+// Real executor, inert desktop effects: these are not native background-oracle results.
+function backgroundForegroundCase(options: {
+  owner?: "chrome" | "foreign"
+  before?: number | "throws"
+  after?: number
+  popup?: "top-level" | "uia-opened" | "whole" | "zone" | "blob"
+  fallback?: boolean
+  legacy?: boolean
+  abortDuringProbe?: boolean
+} = {}) {
+  const before = options.before ?? 700001, after = options.after ?? 700001
+  let injected = false, aborted = false, probes = 0, raised = 0, confirms = 0, rate = 0
+  const events: any[] = [], logs: string[] = [], evidence = new RecordEvidence()
+  const injector = uiaInjector(options.fallback
+    ? { ok: false, reason: "pattern_unavailable", detail: "owned unavailable pattern" }
+    : invokeOk())
+  const invoke = injector.invokeUia.bind(injector)
+  injector.invokeUia = async (...args) => { injected = true; return invoke(...args) }
+  injector.foregroundHwnd = async () => {
+    probes++
+    if (!injected) {
+      if (options.abortDuringProbe) aborted = true
+      if (before === "throws") throw new Error("owned foreground observation unavailable")
+      return before
+    }
+    return after
+  }
+  injector.forceForeground = async () => { raised++; return true }
+  if (options.legacy) delete (injector as Partial<typeof injector>).invokeUia
+  const click = injector.click.bind(injector)
+  injector.click = async (...args) => { injected = true; return click(...args) }
+  const capturer = new DiffCountingCapturer()
+  capturer.diff = async () => {
+    capturer.diffs++
+    return { diffRatio: options.popup === "whole" ? 0.5 : 0,
+      maxZoneRatio: options.popup === "zone" ? 0.8 : 0,
+      maxBlobRatio: options.popup === "blob" ? 0.8 : 0 }
+  }
+  const deps = bgDeps({
+    injector: injector as InputInjector, capturer, uiaLocator: new FakeUia([uiaButtonHit()]),
+    windows: {
+      async enumerateByExe() { return injected && options.popup === "top-level" ? [winInfo(), { ...winInfo(), hwnd: 700003 }] : [winInfo()] },
+      async infoForHwnd(hwnd) { return hwnd === HWND ? winInfo() : { ...winInfo(), hwnd,
+        exePath: options.owner === "chrome" ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" : "C:\\Owned\\foreign.exe" } },
+    },
+    confirm: async () => { confirms++; return { confirmationId: "", approved: false } as any },
+    abortCheck: () => aborted ? "panel" : null,
+    onActionInjected: () => { rate++ }, onEvent: event => events.push(event),
+    log: event => logs.push(event),
+    ...(options.popup === "uia-opened" ? { uiaWatcherFactory: async () => ({
+      dead: false, exitCode: null, dispose() {},
+      drain: () => injected ? [{ controlType: "Window", className: "OwnedPopup", pid: 1234, at: "2026-10-17T00:00:00Z" }] : [],
+    }) } : {}),
+  }, evidence)
+  deps.config.security = { companion_ui_exe_basenames: ["chrome"] } as any
+  return { deps, injector, capturer, evidence, events, logs,
+    counts: () => ({ probes, raised, confirms, rate }) }
+}
+
+for (const owner of ["chrome", "foreign"] as const) test(`#572 unchanged non-target ${owner} foreground survives a successful UIA action`, async () => {
+  const f = backgroundForegroundCase({ owner })
+  const r = await runComputerTask({ ...CLICK_OK, budget: 10 }, f.deps)
+  assert.equal(r.success, true, r.error)
+  assert.equal(f.counts().raised, 0, "background success must not raise the target")
+  assert.equal(f.counts().confirms, 0, "unchanged foreground is not a takeover")
+  assert.equal(f.injector.invokes.length, 1); assert.equal(f.injector.clicks.length, 0)
+  assert.equal(f.counts().rate, 1); assert.equal(r.completedActions, 1)
+  assert.ok(f.capturer.diffs > 0, "A2.1 still observes the post-action frame")
+  assert.equal(f.evidence.records[0].delivery, "uia_pattern")
+  assert.equal(f.events.find(event => event.event === "step")?.budgetLeft, 9)
+})
+
+for (const owner of ["chrome", "foreign"] as const) test(`#572 changed non-target ${owner} foreground retains the existing conservative response`, async () => {
+  const f = backgroundForegroundCase({ owner, after: 700002 })
+  const r = await runComputerTask(CLICK_OK, f.deps)
+  assert.equal(f.injector.invokes.length, 1); assert.equal(f.injector.clicks.length, 0)
+  if (owner === "chrome") { assert.equal(f.counts().raised, 1); assert.equal(r.success, true) }
+  else { assert.equal(f.counts().confirms, 1); assert.equal(r.success, false) }
+})
+
+for (const before of [0, -1, NaN, "throws"] as const) test(`#572 unavailable pre-invoke foreground ${String(before)} cannot excuse a foreign foreground`, async () => {
+  const f = backgroundForegroundCase({ before, owner: "foreign" })
+  const r = await runComputerTask(CLICK_OK, f.deps)
+  assert.equal(f.injector.invokes.length, 1); assert.equal(f.counts().confirms, 1)
+  assert.equal(r.success, false); assert.equal(f.injector.clicks.length, 0)
+})
+
+for (const popup of ["top-level", "uia-opened", "whole", "zone", "blob"] as const) test(`#572 unchanged background foreground does not hide a ${popup} dialog channel`, async () => {
+  const f = backgroundForegroundCase({ owner: "chrome", popup })
+  const r = await runComputerTask(CLICK_OK, f.deps)
+  assert.equal(r.success, false); assert.equal(f.counts().confirms, 1)
+  assert.equal(f.counts().raised, 0); assert.ok(f.capturer.diffs > 0)
+  assert.equal(f.injector.invokes.length, 1); assert.equal(f.injector.clicks.length, 0)
+})
+
+for (const legacy of [false, true]) test(`#572 ${legacy ? "legacy injector" : "UIA refusal"} keeps foreground-path protection`, async () => {
+  const f = backgroundForegroundCase({ owner: "foreign", fallback: true, legacy })
+  const r = await runComputerTask(CLICK_OK, f.deps)
+  assert.equal(r.success, false); assert.equal(f.counts().confirms, 1)
+  assert.equal(f.injector.clicks.length, 1); assert.equal(f.counts().rate, 1)
+  assert.equal(f.evidence.records[0].delivery, legacy ? "sendinput" : "uia_fallback")
+})
+
+test("#572 a stop during the new foreground observation still prevents UIA delivery", async () => {
+  const f = backgroundForegroundCase({ abortDuringProbe: true })
+  const r = await runComputerTask(CLICK_OK, f.deps)
+  assert.equal(r.success, false); assert.equal(f.injector.invokes.length, 0)
+  assert.equal(f.injector.clicks.length, 0); assert.equal(f.counts().rate, 0)
+})
