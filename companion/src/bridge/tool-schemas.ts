@@ -204,6 +204,25 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
       message: "downloads_find requires filenameHint and/or urlContains",
     }),
 
+  // MCP meta tools are catalogued separately; invalid fields use adapter correction.
+  // Preserve optional/server-specific arguments; selection, auth and confirmation stay in dispatch.
+  mcp_list_resources: z.object({
+    server: z.string().min(1).refine((value) => value.trim().length > 0, "server must not be blank"),
+  }).passthrough(),
+  mcp_read_resource: z.object({
+    server: z.string().min(1).refine((value) => value.trim().length > 0, "server must not be blank"),
+    uri: z.string().min(1).refine((value) => value.trim().length > 0, "uri must not be blank"),
+  }).passthrough(),
+  mcp_get_prompt: z.object({
+    server: z.string().min(1).refine((value) => value.trim().length > 0, "server must not be blank"),
+    name: z.string().min(1).refine((value) => value.trim().length > 0, "name must not be blank"),
+  }).passthrough(),
+
+  // Existing read-only skill input: reject before dispatch, preserve accepted name bytes.
+  use_skill: z.object({
+    name: z.string().min(1).refine((value) => value.trim().length > 0, "name must not be blank"),
+  }),
+
   // --- DevSec / Shell / NetSec (Mission Pack enterprise modules) ---
   workspace_list_dir: z.object({
     path: z.string().optional(),
@@ -229,7 +248,7 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
   loop_declare_blocked: z.object({
-    item_id: z.string().min(1),
+    item_id: z.string().min(1).refine((value) => value.trim().length > 0, "item_id must not be blank"),
     reason: z.string().optional(),
   }),
   propose_expert_team: z.object({
