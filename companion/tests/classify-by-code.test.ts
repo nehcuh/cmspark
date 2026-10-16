@@ -106,6 +106,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   WORKER_INPUT_INVALID: "recoverable", // only four ordinary missing-argument returns; owner/security gates unchanged
   COMPUTER_INPUT_INVALID: "recoverable", // only validateDraft INVALID_ACTION provenance
   COMPUTER_WINDOW_ABSENT: "recoverable", // only successful empty window enumeration
+  READ_QUERY_INPUT_INVALID: "recoverable", // only finite local read-query input refusals
   SKILL_INSTALL_INPUT_AMBIGUOUS: "recoverable", // only actual shared ZIP picker ambiguity
   // #563: only six finite pre-execution input refusals become recoverable.
   // The two pre-L2 shell argument guards preserve the same code; policy/L2 do not.

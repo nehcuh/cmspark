@@ -1064,6 +1064,7 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // ── recoverable ───────────────────────────────────────────────────────────
   // #563: four early missing worker/intent arguments are model-repairable, not authority refusals.
   ["WORKER_INPUT_INVALID", "recoverable"],
+  ["READ_QUERY_INPUT_INVALID", "recoverable"], // only local read-query blank/existing length refusal; context/auth stay hard
   ["COMPUTER_INPUT_INVALID", "recoverable"], // finite draft validator only; native/generic INVALID_ACTION unchanged
   ["COMPUTER_WINDOW_ABSENT", "recoverable"], // only successful empty window enumeration; no launch/input authority
   ["SKILL_INSTALL_INPUT_AMBIGUOUS", "recoverable"], // only the shared picker's multiple-SKILL ZIP refusal
