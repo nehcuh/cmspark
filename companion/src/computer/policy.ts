@@ -12,7 +12,7 @@ import * as path from "path"
 import * as os from "os"
 import type { CompanionConfig } from "../config"
 import type { AppEntry } from "../apps/types"
-import { basenameToVault, isLolbinPath } from "../apps/guards"
+import { aumidToVault, basenameToVault, isLolbinPath } from "../apps/guards"
 import { APP_TOKEN_PATTERN } from "../apps/types"
 import { ComputerError, type WindowInfo } from "./types"
 
@@ -106,11 +106,14 @@ function vaultPathIsBrowser(p: string): boolean {
 /**
  * True when the AppEntry is a browser vault surface (Chrome/Safari/…).
  * Identity is platform-native (Trust REJECT 2026-08-22 nits fold):
- *   win32  → exe path only (pasted mac bundleId on notepad.exe is not a browser)
+ *   win32  → exe browser identity, except known terminal AUMIDs (not a browser)
+ *            (a pasted mac bundleId on notepad.exe is not a browser)
  *   darwin → bundleId wins when present (dummy.exe must not un-vault Chrome)
  */
 export function isVaultBrowserEntry(entry: AppEntry, platform: string = os.platform()): boolean {
   if (platform === "win32") {
+    // A protected terminal cannot borrow a browser EXE's one-shot exception.
+    if (aumidToVault(entry.aumid) !== null) return false
     return entry.exe?.path ? vaultPathIsBrowser(entry.exe.path) : false
   }
   if (bundleIdInSet(entry.bundleId, MAC_BROWSER_VAULT_BUNDLE_IDS)) return true
@@ -157,6 +160,8 @@ export type CoordinateAssertOpts = {
  */
 export function canEverCoordinate(entry: AppEntry, platform: string = os.platform()): boolean {
   if (platform === "win32") {
+    // Union of known identities: an ordinary EXE cannot wash out a vault AUMID.
+    if (aumidToVault(entry.aumid) !== null) return false
     // Exe path is the identity — ignore a pasted mac bundleId.
     if (entry.exe?.path) {
       if (isLolbinPath(entry.exe.path)) return false
