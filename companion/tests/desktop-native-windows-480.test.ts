@@ -63,3 +63,27 @@ test("actual Windows native parser refuses boolean and decoded duplicate fields 
 test("actual Windows launcher forwards OS environment only, excluding provider-like and WebView2 overrides",{skip:process.platform!=="win32",timeout:20000},()=>{
  const driver=path.resolve(process.cwd(),"tests/fixtures/desktop-480/environment-controller.cjs");const result=spawnSync(process.execPath,[driver,path.join(native,"desktop-launcher.node"),path.join(native,"desktop-synchronize-handle-probe.exe")],{stdio:"ignore",timeout:10000,windowsHide:true,env:{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,PATH:process.env.SystemRoot+"\\System32",CMSPARK_DESKTOP_INERT_SECRET:"inert-not-a-credential",WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:"--owned-inert-override"}});assert.equal(result.status,0)
 })
+
+import { nativeAcceptance, requireInheritance, ownedDirectoryIdentity, requireOwnedDirectory } from "./fixtures/desktop-480/native-acceptance-controller"
+for(const mode of ["visual","hostile","reconnect","relaunch","inheritance"] as const)test(`actual Windows acceptance ${mode}: real owned window/engine/lifecycle`,{skip:process.platform!=="win32",timeout:20000},t=>nativeAcceptance(t,mode))
+test("actual Windows inheritance: sentinel checker positive and exact production sibling protected endpoints absent",{skip:process.platform!=="win32",timeout:20000},async(t)=>{
+ const source=path.resolve("dist/desktop-native/acceptance/inheritance"),run=fs.mkdtempSync(path.join(fs.realpathSync(path.dirname(source)),"owned-inheritance-"))
+ const runIdentity=ownedDirectoryIdentity(run)
+ let child:import("../src/desktop/host-launcher").DesktopNativeChild|undefined
+ let finish!:(code:number)=>void;const exit=new Promise<number>(r=>finish=r)
+ try{
+  for(const name of ["desktop-inheritance.node","desktop-inheritance.exe"])fs.copyFileSync(path.join(source,name),path.join(run,name),fs.constants.COPYFILE_EXCL)
+  const binary=path.join(run,"desktop-inheritance.exe"),addon=require(path.join(run,"desktop-inheritance.node"))
+  child=addon.launch(binary,"01".repeat(16),"02".repeat(32),"ws://127.0.0.1:1/desktop",finish)
+  const code=await new Promise<number>((resolve,reject)=>{const abort=()=>reject(t.signal.reason);t.signal.addEventListener("abort",abort,{once:true});exit.then(value=>{t.signal.removeEventListener("abort",abort);resolve(value)})})
+  assert.equal(code,0,"Actual protected intended child must consume legal bootstrap without sentinel")
+  const observed=addon.inspectOwned();assert.equal(observed.sidecar_valid,true);assert.equal(observed.control_mask,4,"Unrestricted sentinel positive proves checker sensitivity")
+  // No same-user waiver: a protected rd/parent present in the real sibling is a genuine RED.
+  requireInheritance(observed)
+  const sidecar=fs.lstatSync(binary+".handles");assert.equal(sidecar.isFile(),true);assert.equal(sidecar.isSymbolicLink(),false);assert.equal(sidecar.nlink,1)
+  console.log("DESKTOP_480_INHERITANCE "+JSON.stringify({intendedExit:code,sentinelControl:true,protectedSiblingAbsent:true}))
+ }finally{child?.terminate();if(child)await exit;requireOwnedDirectory(run,runIdentity);fs.rmSync(run,{recursive:true,force:true})}
+})
+
+import { nativeParentDeath } from "./fixtures/desktop-480/native-acceptance-controller"
+test("actual win32 native parent watcher releases owned lock only after issuer death",{skip:process.platform!=="win32",timeout:20000},t=>nativeParentDeath(t))
