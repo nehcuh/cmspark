@@ -72,8 +72,8 @@ test("actual Windows inheritance: sentinel checker positive and exact production
  let child:import("../src/desktop/host-launcher").DesktopNativeChild|undefined
  let finish!:(code:number)=>void;const exit=new Promise<number>(r=>finish=r)
  try{
-  for(const name of ["desktop-inheritance.node","desktop-inheritance.exe"])fs.copyFileSync(path.join(source,name),path.join(run,name),fs.constants.COPYFILE_EXCL)
-  const binary=path.join(run,"desktop-inheritance.exe"),addon=require(path.join(run,"desktop-inheritance.node"))
+  for(const name of ["desktop-inheritance.exe"])fs.copyFileSync(path.join(source,name),path.join(run,name),fs.constants.COPYFILE_EXCL)
+  const binary=path.join(run,"desktop-inheritance.exe"),addon=require(path.join(source,"desktop-inheritance.node"))
   child=addon.launch(binary,"01".repeat(16),"02".repeat(32),"ws://127.0.0.1:1/desktop",finish)
   const code=await new Promise<number>((resolve,reject)=>{const abort=()=>reject(t.signal.reason);t.signal.addEventListener("abort",abort,{once:true});exit.then(value=>{t.signal.removeEventListener("abort",abort);resolve(value)})})
   assert.equal(code,0,"Actual protected intended child must consume legal bootstrap without sentinel")
