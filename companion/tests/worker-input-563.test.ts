@@ -126,7 +126,7 @@ test("#563 collect_handback foreign owner still refuses without collecting/mutat
   assert.ok(effects.threadRead > 0 && effects.threadRead < 10)
 })
 test("#563 only worker input code is recoverable; old hard codes/default59 and unknown fallback stay", () => {
-  assert.equal(security.ERROR_CODE_LEVELS.size, 164); assert.equal(security.DEFAULT_NON_RECOVERABLE_CODES.length, 59)
+  assert.equal(security.ERROR_CODE_LEVELS.size, 165); assert.equal(security.DEFAULT_NON_RECOVERABLE_CODES.length, 59)
   assert.equal(security.ERROR_CODE_LEVELS.get("WORKER_INPUT_INVALID"), "recoverable")
   for (const code of ["INVALID_ARGS", "THREAD_REQUIRED", "WORKER_NOT_OWNED"])
     for (const error of ["", "timeout disconnected", "permission denied"])
