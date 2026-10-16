@@ -32,6 +32,7 @@ import { multiAgentLlmLoopSnapshot, releaseMultiAgentLlmLoop, tryAcquireMultiAge
 import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
 import type { AppsConfig } from "../apps/types"
+import { guiTemplateConfigError } from "../apps/gui-templates"
 import {
   createProvider,
   type CanonicalChatMessage,
@@ -573,7 +574,13 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
   if (guiTake.length > 0) {
     const lines = guiTake.map((e) => {
       const name = scrub(e.display_name)
-      return `- ${e.token} — ${name} (policy: ${e.policy}) [launch only, no args]`
+      const template = platform === "win32" && !guiTemplateConfigError(e.templates ?? [], e)
+        && Array.isArray(e.templates) && e.templates.length === 1 ? e.templates[0] : undefined
+      const templateHint = template && /^[a-z][a-z0-9_-]{0,31}$/.test(template.id)
+        && (template.risk === "state-changing" || template.risk === "dangerous")
+        ? ` [run_template: ${template.id}(${template.risk}), file slot; every call requires confirmation; profile checked on use]`
+        : ""
+      return `- ${e.token} — ${name} (policy: ${e.policy}) [launch only, no args]${templateHint}`
     })
     sections.push(`## Whitelisted apps (host_app)\n${lines.join("\n")}`)
   }

@@ -655,6 +655,9 @@ export interface AppEntry {
   bundleId?: string
   /** Policy ceiling attached by the backend (unsigned/user-writable/AUMID → "ai"). */
   max_policy?: "auto" | "ai"
+  /** #686 display-only owner configuration, never an editor or argv surface. */
+  templates?: Array<{ id: string; name: string; profile: string; risk: "state-changing" | "dangerous" }>
+  template_unavailable?: string
   /**
    * 坐标 computer-use(WP4)—— UIA 探测能力提示(非权限位,WP3 §K.5):
    * true=支持 UIA 定位 / false=UIA 不可用走 OCR / undefined=未探测。

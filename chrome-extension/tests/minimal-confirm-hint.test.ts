@@ -4,7 +4,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { minimalConfirmHint } from "../src/sidepanel/components/MinimalConfirm"
+import { minimalConfirmHint, guiTemplateNeedsFullPreview } from "../src/sidepanel/components/MinimalConfirm"
 import type { SecurityConfirmationRequest } from "../src/sidepanel/types"
 
 function req(extra: Partial<SecurityConfirmationRequest>): SecurityConfirmationRequest {
@@ -65,4 +65,13 @@ test("#371 expert team confirm points at 确认台 for editable slices", () => {
   )
   assert.match(hint, /确认台/)
   assert.match(hint, /切片/)
+})
+
+// #686 full file argv cannot be approved from a no-preview compact card.
+test("GUI file template requires full confirmation preview and never offers launch trust", () => {
+  const request = req({ tool_name: "host_app", full_preview: "Owned file\nargv[4]: 中文.txt", relevant_apps: [] })
+  assert.equal(guiTemplateNeedsFullPreview(request), true)
+  assert.match(minimalConfirmHint(request), /完整目标与参数/)
+  assert.equal(guiTemplateNeedsFullPreview(req({ tool_name: "host_app" })), false)
+  assert.equal(guiTemplateNeedsFullPreview(req({ tool_name: "host_read", full_preview: "old" })), false)
 })

@@ -41,6 +41,7 @@ import { enumerateAppsDetailed, enumerateMacApps, type EnumeratedAppCandidate, t
 import { basenameToVault, isLolbinPath } from "./guards"
 import { materializePresets } from "./presets"
 import { requireAppsBiometric } from "./biometric-gate"
+import { guiTemplateConfigError } from "./gui-templates"
 
 export interface AppsHandlerContext {
   /** Origin-bound confirmation channel (server.ts wires { originWs: ws }). */
@@ -103,7 +104,7 @@ function grantSubject(entry: AppEntry | undefined, enabled: boolean): string {
   return JSON.stringify([enabled, entry.token, entry.kind, entry.source, entry.display_name,
     entry.added_at, entry.policy, entry.enabled, entry.aumid, entry.bundleId,
     entry.coordinateAllowed, entry.exe?.path, entry.exe?.sha256, entry.exe?.signer,
-    entry.exe?.user_writable_dir])
+    entry.exe?.user_writable_dir, entry.templates])
 }
 
 /**
@@ -192,7 +193,15 @@ function hasPrototypePollutionKey(obj: any): boolean {
 /** entries map → sorted array with the policy ceiling attached (WP4 badge). */
 function entriesList(entries: Record<string, AppEntry>) {
   return Object.values(entries)
-    .map((e) => ({ ...e, max_policy: maxPolicyForEntry(e) }))
+    .map((e) => {
+      const { templates, ...rest } = e
+      if (templates === undefined) return { ...rest, max_policy: maxPolicyForEntry(e) }
+      const error = guiTemplateConfigError(templates, e)
+      return { ...rest, max_policy: maxPolicyForEntry(e),
+        templates: error ? [] : templates.map(({ id, name, profile, risk }) => ({ id, name, profile, risk })),
+        ...(error ? { template_unavailable: "模板配置不支持；请检查现有应用配置。" } : {}),
+      }
+    })
     .sort((a, b) => a.added_at.localeCompare(b.added_at))
 }
 

@@ -495,6 +495,8 @@ function AppCard(props: AppCardProps) {
   const isPreset = entry.source === "preset"
   // WP4 (WI-6): uiaCapable 三态徽标——中性能力措辞,绝不渲染成安全背书。
   const uiaBadge = uiaCapableBadge(entry)
+  const templates = Array.isArray(entry.templates) ? entry.templates.filter(t => t && typeof t.id === "string"
+    && typeof t.name === "string" && (t.risk === "state-changing" || t.risk === "dangerous")) : []
 
   return (
     <div style={{ ...styles.serverCard, opacity: entry.enabled ? 1 : 0.55 }}>
@@ -526,6 +528,13 @@ function AppCard(props: AppCardProps) {
               </span>
             ))}
           </div>
+          {templates.map(template => (
+            <div key={template.id} style={styles.cardMeta}>
+              文件模板：{template.name} · {template.risk === "dangerous" ? "每次确认 + 第二因素" : "每次确认"}
+              <span title="仅支持已审核的 Windows 本地文件打开方式；每次运行重新验证当前应用、文件与配置。">（配置只读）</span>
+            </div>
+          ))}
+          {entry.template_unavailable && <div style={styles.cardMeta}>{entry.template_unavailable}</div>}
           <div style={styles.cardMeta}>
             {entry.exe?.path && (
               <span title={entry.exe.path} style={{ fontFamily: "ui-monospace, monospace" }}>

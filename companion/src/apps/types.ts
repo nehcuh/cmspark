@@ -13,6 +13,7 @@
 import * as path from "path"
 import { basenameToVault, isLolbinPath } from "./guards"
 import { validateCliManifest } from "./cli-manifest"
+import { guiTemplateConfigError, type GuiFileTemplate } from "./gui-templates"
 
 export type AppKind = "gui" | "cli"
 export type AppSource = "preset" | "user"
@@ -38,8 +39,8 @@ export interface AppEntry {
   aumid?: string
   /** macOS bundle identifier (e.g. "com.apple.Notes") for coordinate computer-use WP3. */
   bundleId?: string
-  /** Phase-2 (adversary D12): P1 ships no templates — empty array when present. */
-  templates?: []
+  /** #686: one exact Windows GUI local-file profile; absent/[] preserve L0. */
+  templates?: GuiFileTemplate[]
   /** Phase-2 placeholder: may be an empty object until the CLI track lands. */
   cli_manifest?: Record<string, unknown> | null
   /**
@@ -168,10 +169,8 @@ export function validateAppEntry(raw: unknown): string | null {
     }
   }
   if (e.templates !== undefined) {
-    if (!Array.isArray(e.templates)) return `app "${e.token}" templates must be an array`
-    if (e.templates.length > 0) {
-      return `app "${e.token}" templates are Phase-2 (P1 ships none)`
-    }
+    const templateError = guiTemplateConfigError(e.templates, e as AppEntry)
+    if (templateError) return `app "${e.token}" ${templateError}`
   }
   if (e.cli_manifest !== undefined && e.cli_manifest !== null) {
     if (typeof e.cli_manifest !== "object" || Array.isArray(e.cli_manifest)) {

@@ -257,6 +257,7 @@ export function releaseReadData(data: unknown): unknown {
  */
 export function redactCodeishParams(
   params: Record<string, unknown>,
+  toolName?: string,
 ): Record<string, unknown> {
   const redacted: Record<string, unknown> = { ...params }
   for (const key of ["code", "expression", "security_token", "command", "body"]) {
@@ -264,6 +265,15 @@ export function redactCodeishParams(
       const val = redacted[key] as string
       redacted[key] = `<redacted:hash=${shortHash(val)},len=${val.length}>`
     }
+  }
+  // #686: the file path is a confirmation input, never a durable audit field.
+  // Both thread JSON and history.db use this exact scoped projection, including
+  // the explicit full-history mode; old launch and other exec tools are unchanged.
+  if (toolName === "host_app" && params.action === "run_template") {
+    const file = params.params && typeof params.params === "object"
+      ? (params.params as Record<string, unknown>).file : undefined
+    redacted.params = typeof file === "string"
+      ? { file: `<redacted:hash=${shortHash(file)},len=${file.length}>` } : {}
   }
   return redacted
 }

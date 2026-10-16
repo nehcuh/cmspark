@@ -558,6 +558,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       finalParams.tabId = Number.isFinite(n) ? n : undefined
     }
     const startedAt = Date.now()
+    let guiTemplateReceipt: import("./apps/gui-template-runtime").GuiTemplateReceipt | undefined
     // --- ADR-015 multi-agent gates (before L2 / cookie / dispatch) ---
     // Resolve acting thread first so tool.start carries thread_id (run-state W0/W2).
     const actingThreadId =
@@ -673,6 +674,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     finalParams = l2Outcome.finalParams
     const winL2NonceChallenge = l2Outcome.winL2NonceChallenge
     const hostAppTier = l2Outcome.hostAppTier
+    guiTemplateReceipt = l2Outcome.guiTemplateReceipt
 
     // URL scheme+domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
     const urlOutcome = await runUrlNavigateAdmission({
@@ -753,6 +755,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           prevalidatedNonce: winL2NonceChallenge,
           // App tab WP3: tier the gate decided for host_app (audit only).
           appLaunchTier: hostAppTier,
+          guiTemplateReceipt,
           // WP2 (§E.4): computer-task progress events go to every
           // authenticated panel (the owner's own live view).
           broadcast: broadcastToClients,
@@ -910,6 +913,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     return captureLocalPageResult(getConfigDir(), currentEvidenceThread ? evidenceScope : undefined, toolCallId, toolName, result, signal,
       captureWritesAllowedAtStart && currentEvidenceThread?.execution_policy !== "plan_readonly")
     } finally {
+      guiTemplateReceipt?.close()
       if (mutationHold) {
         try {
           const { releaseMutationHold } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")

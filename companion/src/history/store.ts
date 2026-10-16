@@ -107,7 +107,7 @@ export function redactForStorage(
     // closed to a collapse marker — lock-step with the thread-JSON redactor
     // (tests/redact-scope-lockstep).
     if (toolName === "evaluate") {
-      params = redactCodeParams(params)
+      params = redactCodeParams(params, toolName)
     } else {
       const redactedParams = rewriteJson(params, redactSensitiveKeysDeep)
       if (redactedParams !== null) params = redactedParams
@@ -122,7 +122,7 @@ export function redactForStorage(
       result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
     }
   } else if (EXEC_FOLD_TOOLS.has(toolName)) {
-    params = redactCodeParams(params)
+    params = redactCodeParams(params, toolName)
     // Exec tier stays fully collapsed: secret density is high and usually at
     // the head, so truncation buys nothing.
     result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
@@ -205,7 +205,7 @@ function redactCookieSummary(raw: string): string {
   }
 }
 
-function redactCodeParams(raw: string): string {
+function redactCodeParams(raw: string, toolName?: string): string {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>
     // Shared folder (security/redact-rules.ts): evaluate/osascript code or
@@ -213,7 +213,7 @@ function redactCodeParams(raw: string): string {
     // security_token that grants re-execution all collapse to hash + length
     // so the historical record shows "this ran" without persisting the
     // secret material itself. Lock-step with the thread-JSON redactor.
-    return JSON.stringify(redactCodeishParams(parsed))
+    return JSON.stringify(redactCodeishParams(parsed, toolName))
   } catch {
     return "{}"
   }

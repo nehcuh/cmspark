@@ -330,6 +330,16 @@ jobs:
           node scripts/run-tests.mjs .test-dist/tests/integration/registry-apps-644.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: "Native Windows GUI file template admission (#686)"
+        # Exact pinned portable target in owned CI data; software approval is synthetic.
+        # Real PS5.1 metadata + argv/parser evidence; no installation/default registration.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/apps-gui-template-686.test.js .test-dist/tests/apps-gui-template-files-686.test.js .test-dist/tests/integration/apps-gui-template-native-686.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: "Native Windows manual CLI entry (#522)"
         if: matrix.os == 'windows-latest'
         shell: pwsh
