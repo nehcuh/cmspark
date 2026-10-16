@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
+import vm from 'node:vm'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -66,17 +67,138 @@ test('original eighty-five control families remain, followed only by this new di
   assert.match(run, /^  node --test scripts\/tests\/windows-census\.test\.mjs scripts\/tests\/windows-census-evidence\.test\.mjs scripts\/tests\/windows-census-cli\.test\.mjs scripts\/tests\/windows-census-short-path\.test\.mjs scripts\/tests\/windows-census-setup-diagnostics\.test\.mjs$/m)
   assert.match(run, /node --test[^\n]+\n  if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/)
 })
+// Fixed progress is separate from the five formatter receipts; nothing arbitrary is public.
+const probePrefix = 'CENSUS_650_PROBE '
+const probePlan = ['bootstrap', 'defined', 'unknown_before', 0, 'unknown_after', 'smb_setup_before', 1, 'smb_setup_after', 'smb_identity_before', 2, 'smb_identity_after', 'short_root_before', 3, 'short_root_after', 'cleanup_before', 4, 'cleanup_after', 'complete']
+const probeMarker = 'PRIVATE_DIAGNOSTIC_MARKER'
+function inspectProbeOutput(stdout) {
+  const result = { stages: [], rows: [], validPrefix: true, complete: false, markerSeen: typeof stdout === 'string' && stdout.includes(probeMarker) }
+  if (typeof stdout !== 'string') { result.validPrefix = false; return result }
+  const lines = stdout === '' ? [] : stdout.split(/\r?\n/)
+  if (lines.at(-1) === '') lines.pop()
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index], expected = probePlan[index]
+    if (line.includes(probeMarker) || expected === undefined) { result.validPrefix = false; break }
+    if (typeof expected === 'string') {
+      if (line !== probePrefix + expected) { result.validPrefix = false; break }
+      result.stages.push(expected)
+    } else {
+      let row
+      try { if (!line.startsWith('CENSUS_650_SETUP ')) throw new Error('FORMAT'); row = JSON.parse(line.slice(17)) } catch { result.validPrefix = false; break }
+      const reason = ['OTHER', 'SMB_SETUP', 'SMB_IDENTITY', 'SHORT_ROOT', 'OTHER'][expected]
+      const valid = row !== null && typeof row === 'object' && !Array.isArray(row) &&
+        JSON.stringify(Object.keys(row)) === JSON.stringify(['version','stage','phase','reason','line','column']) &&
+        row.version === 1 && row.stage === (expected === 0 ? 'UNKNOWN' : expected === 4 ? 'cleanup' : 'primary') &&
+        row.phase === (expected === 0 ? 'UNKNOWN' : expected === 4 ? 'cleanup_verify' : 'short_check') && row.reason === reason &&
+        ['line','column'].every(key => Number.isInteger(row[key]) && row[key] >= (expected === 0 ? 0 : 1) && row[key] <= 4096) &&
+        (expected !== 0 || (row.line === 0 && row.column === 0))
+      if (!valid) { result.validPrefix = false; break }
+      result.rows.push(row)
+    }
+  }
+  result.complete = result.validPrefix && lines.length === probePlan.length && !result.markerSeen
+  return result
+}
+function finiteProbeOutcome(actual, observed) {
+  return {
+    error: actual.error === undefined ? 'NONE' : actual.error?.code === 'ETIMEDOUT' ? 'TIMEOUT' : 'OTHER',
+    status: actual.status === 0 ? 'ZERO' : Number.isInteger(actual.status) ? 'NONZERO' : 'NONE',
+    signal: actual.signal == null ? 'NONE' : actual.signal === 'SIGTERM' ? 'TERM' : actual.signal === 'SIGKILL' ? 'KILL' : 'OTHER',
+    stages: observed.stages, receipts: observed.rows.length, validPrefix: observed.validPrefix,
+    complete: observed.complete, markerSeen: observed.markerSeen, stderrEmpty: actual.stderr === '',
+  }
+}
+function declaredProbeScript() {
+  const f = formatter(), mark = stage => `[Console]::Out.WriteLine('${probePrefix}${stage}')\n`
+  let script = mark('bootstrap') + "if ($PSVersionTable.PSEdition -cne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'CENSUS_DIAGNOSTIC_PS51_REQUIRED' }\n" + f + '\n' + mark('defined')
+  script += `$unknown = [System.Management.Automation.ErrorRecord]::new([Exception]::new('${probeMarker}'), '${probeMarker}', [System.Management.Automation.ErrorCategory]::InvalidOperation, '${probeMarker}')\n` + mark('unknown_before')
+  script += `Write-Cmspark650SetupDiagnostic -Stage '${probeMarker}' -Phase '${probeMarker}' -Record $unknown\n` + mark('unknown_after')
+  for (const [id, stage] of [['CENSUS_OWNED_SMB_SETUP_FAILED','smb_setup'],['CENSUS_OWNED_SMB_IDENTITY_INVALID','smb_identity'],['CENSUS_OWNED_SHORT_ROOT_INVALID','short_root']]) {
+    script += mark(stage + '_before') + `try { throw '${id}' } catch { Write-Cmspark650SetupDiagnostic -Stage 'primary' -Phase 'short_check' -Record $_ }\n` + mark(stage + '_after')
+  }
+  script += mark('cleanup_before') + `try { throw '${probeMarker}' } catch { Write-Cmspark650SetupDiagnostic -Stage 'cleanup' -Phase 'cleanup_verify' -Record $_ }\n` + mark('cleanup_after') + mark('complete')
+  return script
+}
 test('hosted Windows executes actual PS formatter with unknown marker and fixed known IDs; no SMB/native application', { skip: process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' ? 'actual hosted Windows PowerShell formatter required' : false }, () => {
-  const f = formatter(), marker='PRIVATE_DIAGNOSTIC_MARKER'
-  const script="if ($PSVersionTable.PSEdition -cne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'CENSUS_DIAGNOSTIC_PS51_REQUIRED' }\n"+f+`\n$unknown = [System.Management.Automation.ErrorRecord]::new([Exception]::new('${marker}'), '${marker}', [System.Management.Automation.ErrorCategory]::InvalidOperation, '${marker}')\nWrite-Cmspark650SetupDiagnostic -Stage '${marker}' -Phase '${marker}' -Record $unknown\nforeach ($id in @('CENSUS_OWNED_SMB_SETUP_FAILED','CENSUS_OWNED_SMB_IDENTITY_INVALID','CENSUS_OWNED_SHORT_ROOT_INVALID')) {\n  try { throw $id } catch { Write-Cmspark650SetupDiagnostic -Stage 'primary' -Phase 'short_check' -Record $_ }\n}\ntry { throw '${marker}' } catch { Write-Cmspark650SetupDiagnostic -Stage 'cleanup' -Phase 'cleanup_verify' -Record $_ }\n`
+  const script = declaredProbeScript(), marker = probeMarker
   const env={};for(const key of ['SystemRoot','WINDIR','TEMP','TMP','PATH'])if(typeof process.env[key]==='string')env[key]=process.env[key]
   const actual=spawnSync(path.join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{env,encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:65536})
-  assert.equal(actual.error,undefined,'formatter process must settle');assert.equal(actual.status,0,'actual Desktop PS formatter must succeed');assert.equal(actual.stderr,'')
+  const observed = inspectProbeOutput(actual.stdout), summary = 'CENSUS_650_FORMATTER ' + JSON.stringify(finiteProbeOutcome(actual, observed))
+  // Boolean assertions keep Node from formatting the original Error/argv/stream bodies.
+  assert.equal(actual.error === undefined,true,summary);assert.equal(actual.status === 0,true,summary);assert.equal(actual.stderr === '',true,summary)
+  assert.equal(observed.complete,true,summary)
   assert.equal(actual.stdout.includes(marker),false,'arbitrary ErrorRecord contents never publish')
-  const rows=actual.stdout.trim().split(/\r?\n/).map(line=>{assert.ok(line.startsWith('CENSUS_650_SETUP '));return JSON.parse(line.slice(17))})
+  const rows=observed.rows
   assert.equal(rows.length,5)
   for(const row of rows){assert.deepEqual(Object.keys(row),['version','stage','phase','reason','line','column']);assert.equal(row.version,1);for(const key of ['line','column'])assert.ok(Number.isInteger(row[key])&&row[key]>=0&&row[key]<=4096)}
   assert.deepEqual(rows[0],{version:1,stage:'UNKNOWN',phase:'UNKNOWN',reason:'OTHER',line:0,column:0})
   assert.deepEqual(rows.slice(1,4).map(x=>x.reason),['SMB_SETUP','SMB_IDENTITY','SHORT_ROOT'])
   assert.ok(rows.slice(1).every(x=>x.line>0&&x.column>0));assert.equal(rows[4].stage,'cleanup');assert.equal(rows[4].phase,'cleanup_verify');assert.equal(rows[4].reason,'OTHER')
+})
+// Portable controls invoke the registered real parent callback with a child-process seam.
+// They execute no PowerShell/native process and make no Windows startup claim.
+function controlledNativeCallback(actual, source = fs.readFileSync(new URL(import.meta.url), 'utf8')) {
+  const callbacks = [], calls = []
+  const register = (name, options, callback) => callbacks.push({ name, callback: typeof options === 'function' ? options : callback })
+  const fixtureURL = new URL(import.meta.url).href
+  vm.runInNewContext(source.replace(/^import .*$/gm, '').replaceAll('import.meta.url', 'fixtureURL'), {
+    test: register, assert, fs, os, path, vm, Buffer, URL, createRequire, fixtureURL,
+    process: { platform: 'win32', env: { GITHUB_ACTIONS:'true', SystemRoot:'C:\\Windows', WINDIR:'C:\\Windows', TEMP:'C:\\Owned', TMP:'C:\\Owned', PATH:'C:\\Windows' } },
+    spawnSync: (...args) => { calls.push(args); return actual },
+  }, { timeout:1000 })
+  let failure
+  try { callbacks.find(x => x.name.startsWith('hosted Windows executes actual PS formatter')).callback() } catch (error) { failure = error }
+  return { failure, calls }
+}
+function completeProbeLines() {
+  return probePlan.map(token => typeof token === 'string' ? probePrefix + token : 'CENSUS_650_SETUP ' + JSON.stringify({ version:1, stage:token === 0 ? 'UNKNOWN' : token === 4 ? 'cleanup' : 'primary', phase:token === 0 ? 'UNKNOWN' : token === 4 ? 'cleanup_verify' : 'short_check', reason:['OTHER','SMB_SETUP','SMB_IDENTITY','SHORT_ROOT','OTHER'][token], line:token === 0 ? 0 : 1, column:token === 0 ? 0 : 1 }))
+}
+test('portable real parent callback admits only the exact complete stages and original five receipts', () => {
+  const stdout = completeProbeLines().join('\r\n') + '\r\n', result = controlledNativeCallback({ stdout, stderr:'', status:0, signal:null })
+  assert.equal(result.failure,undefined);assert.equal(result.calls.length,1)
+  const [program,args,options] = result.calls[0]
+  assert.ok(program.endsWith('powershell.exe'));assert.deepEqual(Array.from(args.slice(0,3)),['-NoProfile','-NonInteractive','-EncodedCommand'])
+  assert.equal(options.timeout,15000);assert.equal(options.maxBuffer,65536);assert.equal(options.windowsHide,true)
+  assert.deepEqual(Object.keys(options.env),['SystemRoot','WINDIR','TEMP','TMP','PATH'])
+  const decoded=Buffer.from(args[3],'base64').toString('utf16le')
+  assert.equal(decoded,declaredProbeScript())
+  assert.deepEqual([...decoded.matchAll(/\[Console\]::Out\.WriteLine\('CENSUS_650_PROBE ([a-z_]+)'\)/g)].map(x=>x[1]),probePlan.filter(x=>typeof x==='string'))
+  assert.equal((decoded.match(/^Write-Cmspark650SetupDiagnostic /gm)??[]).length,1)
+  assert.equal((decoded.match(/catch \{ Write-Cmspark650SetupDiagnostic /g)??[]).length,4)
+  assert.equal(inspectProbeOutput(stdout).rows.length,5)
+})
+test('portable real timeout retains fixed partial stages without printing raw error argv or stream bodies', () => {
+  const stdout = completeProbeLines().slice(0,3).join('\r\n') + '\r\n'
+  const error = Object.assign(new Error(probeMarker), { code:'ETIMEDOUT', spawnargs:[probeMarker], path:probeMarker })
+  const result = controlledNativeCallback({ error, stdout, stderr:probeMarker, status:null, signal:'SIGTERM' })
+  assert.ok(result.failure);assert.equal(result.failure.message.includes(probeMarker),false)
+  assert.match(result.failure.message, /CENSUS_650_FORMATTER .*"error":"TIMEOUT"/)
+  assert.match(result.failure.message, /"stages":\["bootstrap","defined","unknown_before"\]/)
+  assert.match(result.failure.message, /"receipts":0,"validPrefix":true,"complete":false/)
+})
+test('portable parser and real parent reject unknown forged duplicated out-of-order or extra stages without echo', () => {
+  const good = completeProbeLines()
+  const variants = [ ['CENSUS_650_PROBE arbitrary',...good.slice(1)], [good[1],good[0],...good.slice(2)], [good[0],...good], [...good,'CENSUS_650_PROBE complete'], [...good.slice(0,4),'CENSUS_650_PROBE '+probeMarker,...good.slice(5)], good.filter((_,i)=>i!==3) ]
+  for (const lines of variants) {
+    const stdout = lines.join('\n')+'\n', observed = inspectProbeOutput(stdout)
+    assert.equal(observed.complete,false)
+    const actual = controlledNativeCallback({ stdout, stderr:'', status:0, signal:null })
+    assert.ok(actual.failure);assert.equal(actual.failure.message.includes(probeMarker),false)
+  }
+})
+test('portable parser rejects arbitrary marker malformed extra-field and incorrectly classified receipts', () => {
+  for (const poison of [probeMarker, '{', JSON.stringify({version:1}), JSON.stringify({version:1,stage:'UNKNOWN',phase:'UNKNOWN',reason:'OTHER',line:0,column:0,extra:probeMarker}), JSON.stringify({version:1,stage:'UNKNOWN',phase:'UNKNOWN',reason:'SMB_SETUP',line:0,column:0})]) {
+    const lines=completeProbeLines();lines[3]='CENSUS_650_SETUP '+poison
+    const stdout=lines.join('\n')+'\n';assert.equal(inspectProbeOutput(stdout).complete,false)
+    const actual=controlledNativeCallback({stdout,stderr:'',status:0,signal:null})
+    assert.ok(actual.failure);assert.equal(actual.failure.message.includes(probeMarker),false)
+  }
+})
+test('portable failure categories never publish unknown signal error status or stderr values', () => {
+  for (const actual of [ {error:Object.assign(new Error(probeMarker),{code:probeMarker}),status:null,signal:probeMarker}, {status:1,signal:null}, {status:0,signal:null} ]) {
+    actual.stdout=completeProbeLines().join('\n')+'\n';actual.stderr=probeMarker
+    const result=controlledNativeCallback(actual)
+    assert.ok(result.failure);assert.equal(result.failure.message.includes(probeMarker),false)
+    assert.match(result.failure.message,/CENSUS_650_FORMATTER /)
+  }
 })
