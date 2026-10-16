@@ -1058,8 +1058,11 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             success: false,
             error: scope.error,
             // Only the host scope discriminator owns this grade. Target text must
-            // not turn an allowlist refusal into timeout/locator recovery (#563 E1).
-            data: { error_code: scope.reason === "targets_denied" ? "NETSEC_TARGETS_DENIED" : "NETSEC_SCOPE_DENIED" },
+            // not turn an allowlist or per-task target refusal into timeout/locator recovery (#563 E1).
+            data: {
+              error_code: scope.reason === "targets_denied" || scope.reason === "target_not_in_task_auth"
+                ? "NETSEC_TARGETS_DENIED" : "NETSEC_SCOPE_DENIED",
+            },
           }
         }
         enterpriseScopeFingerprint = netsecScopeFingerprint(
