@@ -79,6 +79,19 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
   }
 }
 
+// Fixed test-only observations: no capability, secret, proof, endpoint or wire data.
+export function acceptanceDiagnostic(reason: string, phase: string, mode: string, counts: { auths: number; issues: number; launches: number; exits: number; listReads: number }, observations: AcceptanceReceipt[]) {
+  const finiteCount = (n: number) => Number.isSafeInteger(n) && n >= 0 && n <= 1000 ? n : null
+  return {
+    reason: ["deadline", "cleanup"].includes(reason) ? reason : "unknown",
+    phase: ["starting", "waiting-auth-metadata", "waiting-reconnect-auth", "waiting-replay-close", "waiting-relaunch", "complete"].includes(phase) ? phase : "unknown",
+    mode: ["visual", "hostile", "reconnect", "relaunch", "inheritance", "parent"].includes(mode) ? mode : "unknown",
+    auths: finiteCount(counts.auths), issues: finiteCount(counts.issues), launches: finiteCount(counts.launches), exits: finiteCount(counts.exits), listReads: finiteCount(counts.listReads),
+    fixed: [...new Set(observations.filter(r => r.kind === "fixed" && (fixed.has(r.name) || failures.has(r.name))).map(r => (r as { name: string }).name))].sort(),
+    windows: finiteCount(observations.filter(r => r.kind === "window").length),
+  }
+}
+
 function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason)
   return new Promise((resolve, reject) => {
@@ -149,6 +162,13 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     await bounded(pending, t.signal)
   }
   const has = (name: string) => observations.some(r => r.kind === "fixed" && r.name === name)
+  let diagnosticPhase = "starting"
+  const diagnostic = (reason: "deadline" | "cleanup") => {
+    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify(acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads }, observations)) + "\n") }
+    catch { /* Observation must not replace the original test failure. */ }
+  }
+  const deadlineDiagnostic = () => diagnostic("deadline")
+  t.signal.addEventListener("abort", deadlineDiagnostic, { once: true })
   try {
     server.listen(0, "127.0.0.1"); await once(server, "listening", { signal: t.signal })
     const endpoint = `ws://127.0.0.1:${(server.address() as any).port}/desktop`
@@ -157,6 +177,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     } }))
     const a = launcher.open("compact"), b = launcher.open("compact")
     await bounded(Promise.all([a, b]).then(results => { for (const result of results) assert.equal(result.ok, true) }), t.signal)
+    diagnosticPhase = "waiting-auth-metadata"
     await until(() => has("AUTH_1") && listReads > 0)
     assert.equal(issues, 1); assert.equal(launches, 1); assert.equal(legacy.clients.size, 0)
     if (mode === "visual") {
@@ -179,9 +200,11 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     } else if (mode === "inheritance") {
       await until(() => has("CONSUMED_HANDLES_DENIED")); assert.equal(issues, 1); assert.equal(launches, 1)
     } else if (mode === "reconnect") {
+      diagnosticPhase = "waiting-reconnect-auth"
       const old = observer.currentSocket(); assert.ok(old, "Owned authenticated current socket required"); old.terminate()
       await until(() => has("AUTH_2") && auths === 2)
       assert.equal(issues, 1); assert.equal(launches, 1)
+      diagnosticPhase = "waiting-replay-close"
       const replay = new WebSocket(endpoint, { origin: DESKTOP_NATIVE_ORIGIN })
       try {
         replay.on("error", () => {})
@@ -190,16 +213,20 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
         assert.equal(auths, 2); assert.equal(channel.wss.clients.size, 1)
       } finally { replay.terminate() }
     } else {
+      diagnosticPhase = "waiting-relaunch"
       launcher.close(); await until(() => exits === 1)
       observations.length = 0
       assert.equal((await bounded(launcher.open("compact"), t.signal)).ok, true)
       await until(() => has("AUTH_1") && auths === 2)
       assert.equal(issues, 2); assert.equal(launches, 2)
     }
+    diagnosticPhase = "complete"
     // A token is never returned, logged or persisted. Keep only finite scoped counts.
     assert.equal(secret.length, 64)
     console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
   } finally {
+    diagnostic("cleanup")
+    t.signal.removeEventListener("abort", deadlineDiagnostic)
     launcher?.close(); registry.revokeAll()
     for (const ws of [...channel.wss.clients, ...legacy.clients]) ws.terminate()
     const settled = new Promise<void>(resolve => { const check = () => { if (exits === launches) { waiters.delete(check); resolve() } }; waiters.add(check); check() })
