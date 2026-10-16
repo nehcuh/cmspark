@@ -188,6 +188,8 @@ function publish(source, destination) {
 /** Build-only same-source acceptance variant. Never included in the shipped manifest. */
 export function desktopAcceptanceVariant(language, original, fixture) {
   if (!['swift', 'cpp'].includes(language) || typeof original !== 'string' || typeof fixture !== 'string') throw new Error('DESKTOP_ACCEPTANCE_SOURCE_INVALID')
+  const cppParts = language === 'cpp' ? fixture.split(/^\/\/ D480_IMPLEMENTATION\r?\n/m) : null
+  if (cppParts && (cppParts.length !== 2 || !cppParts[1].length)) throw new Error('DESKTOP_ACCEPTANCE_FIXTURE_INVALID')
   const patches = language === 'swift' ? [
     ['let parent=getppid();guard parent>1,isatty(STDIN_FILENO)==0 else{exit(11)}', 'd480AcceptanceSafetyWatchdog();let parent=getppid();guard parent>1,isatty(STDIN_FILENO)==0 else{exit(11)}'],
     ['func applicationDidFinishLaunching(_ notification: Notification) { connect() }', 'func applicationDidFinishLaunching(_ notification: Notification) { if !d480AcceptanceParentArm() { exit(71) };connect() }'],
@@ -200,7 +202,7 @@ export function desktopAcceptanceVariant(language, original, fixture) {
     ['didReceive message:WKScriptMessage) {', 'didReceive message:WKScriptMessage) {\n        d480AcceptanceMessage(self,message)'],
     ['var out=f;out.removeValue(forKey:"generation");', 'd480AcceptanceForward(self,f);var out=f;out.removeValue(forKey:"generation");'],
   ] : [
-    ['class Desktop {', '/* D480 acceptance declarations */\n'+fixture.split('// D480_IMPLEMENTATION\n')[0]+'\nclass Desktop {\n friend class D480Acceptance;'],
+    ['class Desktop {', '/* D480 acceptance declarations */\n'+cppParts[0]+'\nclass Desktop {\n friend class D480Acceptance;'],
     ['winrt::init_apartment(winrt::apartment_type::single_threaded);', 'D480Acceptance::safetyWatchdog();winrt::init_apartment(winrt::apartment_type::single_threaded);'],
     ['if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)ExitProcess(1);', 'if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0){D480Acceptance::parentObserved();ExitProcess(1);}'],
     ['std::string data;char buffer[4097];', 'D480Acceptance::preConsume(input);std::string data;char buffer[4097];'],
@@ -223,7 +225,7 @@ export function desktopAcceptanceVariant(language, original, fixture) {
     if (source.split(before).length !== 2) throw new Error('DESKTOP_ACCEPTANCE_ANCHOR_AMBIGUOUS')
     source = source.replace(before, after)
   }
-  const tail = language === 'swift' ? fixture : fixture.split('// D480_IMPLEMENTATION\n')[1]
+  const tail = language === 'swift' ? fixture : cppParts[1]
   if (typeof tail !== 'string' || !tail.length) throw new Error('DESKTOP_ACCEPTANCE_FIXTURE_INVALID')
   const suffix='\n/* D480 unshipped acceptance fixture */\n'+tail
   source += suffix

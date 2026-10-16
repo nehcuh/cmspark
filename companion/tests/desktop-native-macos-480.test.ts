@@ -112,6 +112,16 @@ test("acceptance source variants invert byte-exact and reject missing or duplica
   const result=build.desktopAcceptanceVariant(language,original,controller);assert.equal(result.inverse,original);assert.notEqual(result.source,original)
   assert.throws(()=>build.desktopAcceptanceVariant(language,"",controller),/ANCHOR/)
   assert.throws(()=>build.desktopAcceptanceVariant(language,original+original,controller),/ANCHOR/)
+  if(language==="cpp"){
+   const originalLf=original.replace(/\r\n/g,"\n"),fixtureLf=controller.replace(/\r\n/g,"\n")
+   for(const hostCrLf of[false,true])for(const fixtureCrLf of[false,true]){
+    const hostBytes=hostCrLf?originalLf.replace(/\n/g,"\r\n"):originalLf,fixtureBytes=fixtureCrLf?fixtureLf.replace(/\n/g,"\r\n"):fixtureLf
+    const variant:{source:string;inverse:string}=build.desktopAcceptanceVariant(language,hostBytes,fixtureBytes)
+    assert.equal(variant.inverse,hostBytes,"Every original LF/CRLF byte must survive the inverse")
+   }
+   assert.throws(()=>build.desktopAcceptanceVariant(language,original,fixtureLf.replace("// D480_IMPLEMENTATION\n","")),/FIXTURE_INVALID/)
+   assert.throws(()=>build.desktopAcceptanceVariant(language,original,fixtureLf+"\n// D480_IMPLEMENTATION\r\nduplicate"),/FIXTURE_INVALID/)
+  }
  }
  assert.throws(()=>build.desktopAcceptanceVariant("unknown","",""),/INVALID/)
 })
