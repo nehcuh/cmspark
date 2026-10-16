@@ -25,6 +25,7 @@ int main(void){
 /* Unshipped Windows-only #480 fixture. Known owned handles only; no scans or secret reads. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <winternl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +47,8 @@ int wmain(void){
 }
 #else
 #ifndef DESKTOP_FIXTURE_ADDON
+#define CMSPARK_BOOTSTRAP_CHILD
+#include "../../../src/desktop/native/windows-bootstrap.h"
 static int fixture_read_known(HANDLE known[3]) {
   wchar_t name[32768]; DWORD n=GetModuleFileNameW(NULL,name,32768);
   if(!n||n>32750)return 0;
@@ -94,22 +97,44 @@ static int fixture_sidecar(const wchar_t *binary) {
   char bytes[256];int n=snprintf(bytes,sizeof(bytes),"D480_OWNED_HANDLES_V1\n%llu\n%llu\n%llu\n",(unsigned long long)(uintptr_t)fixture_known[0],(unsigned long long)(uintptr_t)fixture_known[1],(unsigned long long)(uintptr_t)fixture_known[2]);
   DWORD wrote=0;BOOL ok=n>0&&n<(int)sizeof(bytes)&&WriteFile(file,bytes,(DWORD)n,&wrote,NULL)&&wrote==(DWORD)n&&FlushFileBuffers(file);CloseHandle(file);return ok;
 }
-static BOOL WINAPI fixture_attribute(LPPROC_THREAD_ATTRIBUTE_LIST list,DWORD flags,DWORD_PTR attribute,PVOID value,SIZE_T bytes,PVOID previous,PSIZE_T returned) {
-  if(attribute==PROC_THREAD_ATTRIBUTE_HANDLE_LIST&&bytes==2*sizeof(HANDLE)){HANDLE *handles=(HANDLE*)value;fixture_known[0]=handles[0];fixture_known[1]=handles[1];}
-  return UpdateProcThreadAttribute(list,flags,attribute,value,bytes,previous,returned);
+static unsigned fixture_pipe_captures,fixture_parent_captures;
+static HANDLE WINAPI fixture_pipe(LPCWSTR name,DWORD access,DWORD mode,DWORD instances,DWORD out_size,DWORD in_size,DWORD timeout,LPSECURITY_ATTRIBUTES sa) {
+  HANDLE result=CreateNamedPipeW(name,access,mode,instances,out_size,in_size,timeout,sa);
+  if(result!=INVALID_HANDLE_VALUE){fixture_known[0]=result;fixture_pipe_captures++;}return result;
+}
+static BOOL WINAPI fixture_duplicate(HANDLE source_process,HANDLE source,HANDLE target_process,LPHANDLE target,DWORD access,BOOL inherit,DWORD options) {
+  BOOL result=DuplicateHandle(source_process,source,target_process,target,access,inherit,options);
+  if(result&&source_process==GetCurrentProcess()&&source==GetCurrentProcess()&&target_process==GetCurrentProcess()&&access==SYNCHRONIZE&&!inherit&&!options){fixture_known[1]=*target;fixture_parent_captures++;}return result;
+}
+static int fixture_capture_valid(void) {
+  DWORD pipe_flags=0,parent_flags=0;ULONG returned=0;
+  typedef NTSTATUS (NTAPI *Query)(HANDLE,OBJECT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+  Query query=(Query)GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"NtQueryObject");
+  struct Basic{ULONG attributes;ACCESS_MASK access;ULONG handles,pointers,reserved[10];} basic;
+  union Storage{void* alignment;unsigned char bytes[4096];} storage;
+  memset(&basic,0,sizeof(basic));memset(&storage,0,sizeof(storage));
+  if(fixture_pipe_captures!=1||fixture_parent_captures!=1||!fixture_known[0]||!fixture_known[1]||
+     GetFileType(fixture_known[0])!=FILE_TYPE_PIPE||!GetHandleInformation(fixture_known[0],&pipe_flags)||(pipe_flags&HANDLE_FLAG_INHERIT)||
+     !GetHandleInformation(fixture_known[1],&parent_flags)||(parent_flags&HANDLE_FLAG_INHERIT)||!query||
+     query(fixture_known[1],(OBJECT_INFORMATION_CLASS)0,&basic,(ULONG)sizeof(basic),&returned)<0||returned<sizeof(basic)||basic.access!=SYNCHRONIZE||
+     query(fixture_known[1],(OBJECT_INFORMATION_CLASS)2,&storage,(ULONG)sizeof(storage),&returned)<0||returned<sizeof(UNICODE_STRING)||returned>sizeof(storage))return 0;
+  UNICODE_STRING* type=(UNICODE_STRING*)storage.bytes;uintptr_t first=(uintptr_t)storage.bytes,last=first+returned,start=(uintptr_t)type->Buffer;
+  return type->Length==7*sizeof(wchar_t)&&type->MaximumLength>=type->Length&&start>=first&&start<=last&&type->Length<=last-start&&!memcmp(type->Buffer,L"Process",type->Length)&&WaitForSingleObject(fixture_known[1],0)==WAIT_TIMEOUT;
 }
 static BOOL WINAPI fixture_create(LPCWSTR app,LPWSTR command,LPSECURITY_ATTRIBUTES process,LPSECURITY_ATTRIBUTES thread,BOOL inherit,DWORD flags,LPVOID environment,LPCWSTR cwd,LPSTARTUPINFOW startup,LPPROCESS_INFORMATION pi) {
-  /* Exact original inheritance window: rd/parent still inheritable; intended call unchanged. */
-  fixture_sidecar_ok=fixture_sidecar(app);
-  if(fixture_sidecar_ok){fixture_control=fixture_checker(app,L"--sentinel");fixture_sibling=fixture_checker(app,L"--sibling");}
+  /* Both actual protected handles must be live before this exact sibling boundary. */
+  fixture_sidecar_ok=!inherit&&fixture_capture_valid()&&fixture_sidecar(app);
+  if(fixture_sidecar_ok){fixture_control=fixture_checker(app,L"--sentinel");fixture_sibling=fixture_checker(app,L"--sibling");fixture_sidecar_ok=fixture_capture_valid();}
   return CreateProcessW(app,command,process,thread,inherit,flags,environment,cwd,startup,pi);
 }
-#define UpdateProcThreadAttribute fixture_attribute
+#define CreateNamedPipeW fixture_pipe
+#define DuplicateHandle fixture_duplicate
 #define CreateProcessW fixture_create
 #undef NAPI_MODULE
 #define NAPI_MODULE(module_name, register_function)
 #include "../../../src/desktop/native/launcher.c"
-#undef UpdateProcThreadAttribute
+#undef CreateNamedPipeW
+#undef DuplicateHandle
 #undef CreateProcessW
 static napi_value fixture_inspect(napi_env env,napi_callback_info info) {
   (void)info;napi_value object,value;napi_create_object(env,&object);
@@ -130,16 +155,18 @@ int wmain(int argc,wchar_t **argv) {
   HANDLE known[3];if(!fixture_read_known(known))return 240;
   if(argc==2&&!wcscmp(argv[1],L"--sentinel"))return (int)(fixture_mask(known)&4u);
   if(argc==2&&(!wcscmp(argv[1],L"--sibling")||!wcscmp(argv[1],L"--descendant")))return (int)fixture_mask(known);
-  if(argc!=1)return 241;
-  HANDLE input=GetStdHandle(STD_INPUT_HANDLE);char bytes[4097];DWORD total=0;
-  for(;;){DWORD got=0;if(!ReadFile(input,bytes+total,(DWORD)sizeof(bytes)-total,&got,NULL)){if(GetLastError()==ERROR_BROKEN_PIPE)break;return 242;}if(!got)break;total+=got;if(total>4096)return 243;}
-  bytes[total]=0;
-  int shape=total>0&&strstr(bytes,"\"capability_id\":")&&strstr(bytes,"\"parent_handle\":")&&strstr(bytes,"\"secret\":");
-  SecureZeroMemory(bytes,sizeof(bytes));CloseHandle(input);SetStdHandle(STD_INPUT_HANDLE,NULL);
-  DWORD parent_flags=0;int parent_present=GetHandleInformation(known[1],&parent_flags)!=0;
-  if(!SetHandleInformation(known[1],HANDLE_FLAG_INHERIT,0))return 245;
-  if(!shape||!parent_present)return 246;
-  return (fixture_mask(known)&4u)?247:0;
+  CmsparkBootstrapClient bootstrap;if(!d480_client_open(argc,argv,&bootstrap))return 241;
+  char bytes[CMSPARK_BOOT_MAX+1];DWORD total=0;HANDLE parent=NULL;int result=242;
+  if(!d480_client_body(&bootstrap,bytes,&total))goto done;
+  const char* field=strstr(bytes,"\"parent_handle\":\"");if(!field)goto done;field+=strlen("\"parent_handle\":\"");
+  if(*field<'1'||*field>'9')goto done;uint64_t number=0;
+  while(*field>='0'&&*field<='9'){unsigned digit=(unsigned)(*field++-'0');if(number>(UINT64_MAX-digit)/10)goto done;number=number*10+digit;}
+  if(strcmp(field,"\"}\n")||number>(uintptr_t)-1)goto done;parent=(HANDLE)(uintptr_t)number;
+  char expected[CMSPARK_BOOT_MAX+1];int length=snprintf(expected,sizeof(expected),"{\"capability_id\":\"01010101010101010101010101010101\",\"secret\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"url\":\"ws://127.0.0.1:1/desktop\",\"protocol_version\":1,\"issued_method_set_version\":1,\"parent_handle\":\"%llu\"}\n",(unsigned long long)number);
+  if(length<=0||(DWORD)length!=total||memcmp(bytes,expected,total)||!d480_sync_parent(parent)||(fixture_mask(known)&4u)||!d480_client_finish(&bootstrap,parent))goto done;
+  result=0;
+done:
+  SecureZeroMemory(bytes,sizeof(bytes));d480_client_close(&bootstrap);if(parent)CloseHandle(parent);return result;
 }
 #endif
 

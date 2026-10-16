@@ -105,7 +105,7 @@ export function desktopWindowsCompilePlan({ cl, root, output, headers, generated
   const p = path.win32
   const addon = p.join(output, "desktop-launcher.node"), host = p.join(output, "cmspark-desktop.exe")
   return [
-    [cl, ["/nologo", "/std:c11", "/W4", "/WX", "/MD", "/LD", "/DBUILDING_NODE_EXTENSION", "/DNODE_GYP_MODULE_NAME=desktop_launcher", `/I${headers}`, p.join(root, "src/desktop/native/launcher.c"), "/link", nodeLib, `/OUT:${addon}`]],
+    [cl, ["/nologo", "/std:c11", "/W4", "/WX", "/MD", "/LD", "/DBUILDING_NODE_EXTENSION", "/DNODE_GYP_MODULE_NAME=desktop_launcher", `/I${headers}`, p.join(root, "src/desktop/native/launcher.c"), "/link", nodeLib, "bcrypt.lib", `/OUT:${addon}`]],
     [cl, ["/nologo", "/std:c++20", "/EHsc", "/DUNICODE", "/D_UNICODE", ...(testFixtures ? ["/DCMSPARK_DESKTOP_TEST_PHASES"] : []), `/I${p.join(sdk, "build/native/include")}`, `/I${generated}`, p.join(root, "src/desktop/native/DesktopHost.cpp"), "/link", "/SUBSYSTEM:WINDOWS", p.join(sdk, "build/native/x64/WebView2LoaderStatic.lib"), "version.lib", "windowsapp.lib", "winhttp.lib", "bcrypt.lib", "shlwapi.lib", "ole32.lib", "user32.lib", "advapi32.lib", `/OUT:${host}`]],
   ]
 }
@@ -149,6 +149,12 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
     checked(cl, ["/nologo", "/std:c11", "/W4", "/WX", path.join(root, "tests", "fixtures", "desktop-480", "synchronize-handle-probe.c"), "/link", `/OUT:${path.join(output, "desktop-synchronize-handle-probe.exe")}`], { env, cwd: output, buildDiagnostic: true })
     regular(path.join(output, "desktop-synchronize-handle-probe.exe"))
     publish(path.join(output, "desktop-synchronize-handle-probe.exe"), path.join(finalDest, "desktop-synchronize-handle-probe.exe"))
+    checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_malformed_bootstrap",`/I${headers}`,path.join(root,"tests/fixtures/desktop-480/windows-malformed-bootstrap.c"),"/link",lib,"bcrypt.lib",`/OUT:${path.join(output,"desktop-malformed-bootstrap.node")}`],{env,cwd:output,buildDiagnostic:true})
+    publish(path.join(output,"desktop-malformed-bootstrap.node"),path.join(finalDest,"desktop-malformed-bootstrap.node"))
+    const bootstrapControls=path.join(root,"tests/fixtures/desktop-480/windows-bootstrap-controls.c")
+    checked(cl,["/nologo","/std:c11","/W4","/WX",bootstrapControls,"/link","bcrypt.lib",`/OUT:${path.join(output,"desktop-bootstrap-controls.exe")}`],{env,cwd:output,buildDiagnostic:true})
+    checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_bootstrap_refusal","/DDESKTOP_BOOTSTRAP_REFUSAL_ADDON",`/I${headers}`,bootstrapControls,"/link",lib,"bcrypt.lib",`/OUT:${path.join(output,"desktop-bootstrap-refusal.node")}`],{env,cwd:output,buildDiagnostic:true})
+    for(const name of["desktop-bootstrap-controls.exe","desktop-bootstrap-refusal.node"])publish(path.join(output,name),path.join(finalDest,name))
     const acceptanceRoot=path.join(finalDest,"acceptance");fs.mkdirSync(acceptanceRoot,{recursive:true});if(!fs.lstatSync(acceptanceRoot).isDirectory()||fs.lstatSync(acceptanceRoot).isSymbolicLink())throw new Error("DESKTOP_ACCEPTANCE_DIRECTORY")
     for(const mode of ["visual","hostile","inheritance","parent"]){
       const directory=path.join(acceptanceRoot,mode);fs.mkdirSync(directory,{recursive:true});if(!fs.lstatSync(directory).isDirectory()||fs.lstatSync(directory).isSymbolicLink())throw new Error("DESKTOP_ACCEPTANCE_DIRECTORY")
@@ -157,11 +163,11 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
       const original=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),fixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-480/native-acceptance.cpp"),"utf8"),variant=desktopAcceptanceVariant("cpp",original,fixture)
       if(variant.inverse!==original)throw new Error("DESKTOP_ACCEPTANCE_SOURCE_DRIFT")
       const source=path.join(output,`acceptance-${mode}.cpp`),binary=path.join(output,`acceptance-${mode}.exe`);fs.writeFileSync(source,variant.source,{flag:"wx"})
-      checked(cl,["/nologo","/std:c++20","/EHsc","/DUNICODE","/D_UNICODE",mode==="hostile"?"/DD480_HOSTILE":mode==="inheritance"?"/DD480_INHERITANCE":mode==="parent"?"/DD480_PARENT":"/DD480_VISUAL",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,source,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${binary}`],{env,cwd:output,buildDiagnostic:true})
+      checked(cl,["/nologo","/std:c++20","/EHsc","/DUNICODE","/D_UNICODE",mode==="hostile"?"/DD480_HOSTILE":mode==="inheritance"?"/DD480_INHERITANCE":mode==="parent"?"/DD480_PARENT":"/DD480_VISUAL",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,source,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${binary}`],{env,cwd:output,buildDiagnostic:true})
       publish(binary,path.join(directory,"cmspark-desktop.exe"))
     }
     const inherit=path.join(acceptanceRoot,"inheritance"),fixture=path.join(root,"tests/fixtures/desktop-480/windows-inheritance.c")
-    checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_inheritance","/DDESKTOP_FIXTURE_ADDON",`/I${headers}`,fixture,"/link",lib,`/OUT:${path.join(output,"desktop-inheritance.node")}`],{env,cwd:output,buildDiagnostic:true})
+    checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_inheritance","/DDESKTOP_FIXTURE_ADDON",`/I${headers}`,fixture,"/link",lib,"bcrypt.lib",`/OUT:${path.join(output,"desktop-inheritance.node")}`],{env,cwd:output,buildDiagnostic:true})
     checked(cl,["/nologo","/std:c11","/W4","/WX",fixture,"/link",`/OUT:${path.join(output,"desktop-inheritance.exe")}`],{env,cwd:output,buildDiagnostic:true})
     checked(cl,["/nologo","/std:c11","/W4","/WX","/DDESKTOP_FIXTURE_PARENT_LOCK_PROBE",fixture,"/link",`/OUT:${path.join(output,"desktop-parent-probe.exe")}`],{env,cwd:output,buildDiagnostic:true})
     publish(path.join(output,"desktop-parent-probe.exe"),path.join(acceptanceRoot,"parent","desktop-parent-probe.exe"))
@@ -205,9 +211,9 @@ export function desktopAcceptanceVariant(language, original, fixture) {
     ['class Desktop {', '/* D480 acceptance declarations */\n'+cppParts[0]+'\nclass Desktop {\n friend class D480Acceptance;'],
     ['winrt::init_apartment(winrt::apartment_type::single_threaded);', 'D480Acceptance::safetyWatchdog();winrt::init_apartment(winrt::apartment_type::single_threaded);'],
     ['if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)ExitProcess(1);', 'if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0){D480Acceptance::parentObserved();ExitProcess(1);}'],
-    ['std::string data;char buffer[4097];', 'D480Acceptance::preConsume(input);std::string data;char buffer[4097];'],
-    ['CloseHandle(input);SetStdHandle(STD_INPUT_HANDLE,nullptr);', 'CloseHandle(input);SetStdHandle(STD_INPUT_HANDLE,nullptr);D480Acceptance::inputClosed(input);'],
-    ['if(!SetHandleInformation(parent,HANDLE_FLAG_INHERIT,0))return 16;', 'if(!SetHandleInformation(parent,HANDLE_FLAG_INHERIT,0))return 16;D480Acceptance::parentCleared(parent);'],
+    ['HANDLE input=bootstrap.pipe;', 'HANDLE input=bootstrap.pipe;D480Acceptance::preConsume(input);'],
+    ['CloseHandle(input);bootstrap.pipe=nullptr;', 'CloseHandle(input);D480Acceptance::inputClosed(input);bootstrap.pipe=nullptr;'],
+    ['d480_client_close(&bootstrap);', 'd480_client_close(&bootstrap);D480Acceptance::parentCleared(parent);'],
     ['if(!window)return 61;start_network();', 'if(!window)return 61;D480Acceptance::created(*this);start_network();'],
     ['SetForegroundWindow(window);}', 'SetForegroundWindow(window);D480Acceptance::window(*this);}'],
     ['phase=L"ready";ready=true;', 'phase=L"ready";ready=true;D480Acceptance::auth(*this);'],
