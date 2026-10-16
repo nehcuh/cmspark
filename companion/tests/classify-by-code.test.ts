@@ -54,6 +54,9 @@ test("#560 每个已登记的码：等级与 message 内容完全无关（属性
  * （#562 只做「与文案解耦」，等级按既有行为原样固定；#560 第二半改过 3 条，见下）。
  */
 const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "security"> = {
+  // #563: busy is temporary availability, not a permission or concurrency override.
+  SHELL_BUSY: "recoverable",
+  NETSEC_BUSY: "recoverable",
   // #563: real invalid-token guards already hard-stop; only their wire gains a code.
   SECURITY_TOKEN_INVALID: "non_recoverable",
   // #521 new ephemeral addressing refusals; fixed intrinsic recovery, no authority.
