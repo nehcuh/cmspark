@@ -996,7 +996,7 @@ test("executor WP2: key chord dispatches to the injector (whitelist chord)", asy
   assert.equal(injector.clicks.length, 0)
 })
 
-test("executor WP2: non-whitelist / empty / over-length key chords -> INVALID_ACTION, nothing injected", async () => {
+test("executor WP2: non-whitelist / empty / over-length key chords -> COMPUTER_INPUT_INVALID, nothing injected", async () => {
   for (const keys of [["a"], [], ["ctrl", "alt", "shift", "win", "enter"]]) {
     const injector = new RecordingInjector()
     const deps = makeDeps({ injector })
@@ -1004,7 +1004,7 @@ test("executor WP2: non-whitelist / empty / over-length key chords -> INVALID_AC
       { task: "t", app: "win.app.test", actions: [{ action: "key", keys }] as any },
       deps,
     )
-    assert.equal(r.errorCode, "INVALID_ACTION", `keys=${JSON.stringify(keys)}`)
+    assert.equal(r.errorCode, "COMPUTER_INPUT_INVALID", `keys=${JSON.stringify(keys)}`)
     assert.equal(injector.keyChords.length, 0)
   }
 })
@@ -1051,7 +1051,7 @@ test("executor WP2: scroll dispatches with point + delta; uncrossverified bookke
   assert.equal(evidence.records[0].uncrossverified, true, "explicit coords consume the A1.3 sub-budget")
 })
 
-test("executor WP2: scroll delta 0 / beyond ±1200 -> INVALID_ACTION", async () => {
+test("executor WP2: scroll delta 0 / beyond ±1200 -> COMPUTER_INPUT_INVALID", async () => {
   for (const delta of [0, 1201, -1201]) {
     const injector = new RecordingInjector()
     const deps = makeDeps({ injector })
@@ -1059,7 +1059,7 @@ test("executor WP2: scroll delta 0 / beyond ±1200 -> INVALID_ACTION", async () 
       { task: "t", app: "win.app.test", actions: [{ action: "scroll", x: 1, y: 1, delta }] },
       deps,
     )
-    assert.equal(r.errorCode, "INVALID_ACTION", `delta=${delta}`)
+    assert.equal(r.errorCode, "COMPUTER_INPUT_INVALID", `delta=${delta}`)
     assert.equal(injector.scrolls.length, 0)
   }
 })

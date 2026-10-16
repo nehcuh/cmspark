@@ -419,7 +419,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
               success: false as const,
               error: prev.error,
               data: {
-                error_code: "SKILL_INSTALL_PREVIEW_FAILED",
+                error_code: prev.errorCode || "SKILL_INSTALL_PREVIEW_FAILED",
                 candidates: prev.candidates || [],
                 hint_zh:
                   "ZIP 含多个 SKILL.md 或无法解析安装目标。请解压后 skill_install({ path: 单个 skills/<name> 目录 })。",

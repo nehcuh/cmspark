@@ -641,3 +641,22 @@ test("host_computer: click target at the 500-char cap passes; 501 rejected (Y1)"
   })
   assert.equal(bad.ok, false)
 })
+
+// #563: a schema-accepted blank name formerly reached uncoded hard failure.
+for (const [label, name] of [["spaces", " "], ["tab", "\t"], ["mixed Unicode whitespace", "\n\u3000"]]) {
+  test(`ensure_project_dir: blank ${label} returns argument correction before dispatch`, () => {
+    assert.equal(tryParseToolArgs("ensure_project_dir", { name }).ok, false)
+  })
+}
+for (const name of ["x", "  owned name  ", "中文名称", "x".repeat(120)]) {
+  test(`ensure_project_dir: nonblank name bytes remain unchanged (${name.length})`, () => {
+    const result = tryParseToolArgs("ensure_project_dir", { name, prefer: "workspace" })
+    assert.equal(result.ok, true)
+    if (result.ok) assert.equal(result.args.name, name)
+  })
+}
+test("ensure_project_dir: original empty, oversized and wrong-type boundaries stay rejected", () => {
+  for (const name of ["", "x".repeat(121), 1, null, undefined]) {
+    assert.equal(tryParseToolArgs("ensure_project_dir", { name }).ok, false)
+  }
+})
