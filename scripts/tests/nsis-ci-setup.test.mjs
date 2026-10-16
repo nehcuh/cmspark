@@ -100,6 +100,19 @@ test("receipt reader is bounded, finite and permanently checked in the owned Win
 const registryReady = "Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'ready=true' -Encoding utf8\n"
 const censusCondition = "${{ !cancelled() && matrix.os == 'windows-latest' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}"
 const digest = text => createHash("sha256").update(text).digest("hex")
+// #650: keep the legacy full lifecycle pin after removing only reviewed short-root additions.
+const reviewedShortSetup = "  $shortFixture = Join-Path $fixture 'canonical short alias owned'\n  New-Item -ItemType Directory -Path $shortFixture -ErrorAction Stop | Out-Null\n  Add-Type @'\nusing System;\nusing System.Text;\nusing System.Runtime.InteropServices;\npublic static class Cmspark650OwnedPaths {\n  [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)]\n  public static extern uint GetShortPathName(string source, StringBuilder dest, uint size);\n  [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)]\n  public static extern uint GetLongPathName(string source, StringBuilder dest, uint size);\n}\n'@\n  $longBuffer = [System.Text.StringBuilder]::new(32768)\n  $shortBuffer = [System.Text.StringBuilder]::new(32768)\n  $longLength = [Cmspark650OwnedPaths]::GetLongPathName($shortFixture, $longBuffer, 32768)\n  if ($longLength -eq 0 -or $longLength -ge 32768) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n  $shortLength = [Cmspark650OwnedPaths]::GetShortPathName($longBuffer.ToString(), $shortBuffer, 32768)\n  if ($shortLength -eq 0 -or $shortLength -ge 32768 -or $shortBuffer.ToString() -notmatch '~[0-9]' -or $shortBuffer.ToString() -eq $longBuffer.ToString()) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n  $env:CMSPARK_TEST_LONG_ROOT = $longBuffer.ToString()\n  $env:CMSPARK_TEST_SHORT_ROOT = $shortBuffer.ToString()\n"
+const reviewedShortCleanup = ["    if (Test-Path Env:CMSPARK_TEST_LONG_ROOT) { Remove-Item Env:CMSPARK_TEST_LONG_ROOT -ErrorAction Stop }\n","    if (Test-Path Env:CMSPARK_TEST_SHORT_ROOT) { Remove-Item Env:CMSPARK_TEST_SHORT_ROOT -ErrorAction Stop }\n"]
+const legacyControlCommand = "node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs"
+const reviewedControlCommand = "node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs"
+function legacyCensusWithoutReviewedShortRoots(run) {
+  for (const addition of [reviewedShortSetup, ...reviewedShortCleanup]) {
+    assert.equal(run.split(addition).length, 2, 'each reviewed short-root addition is present exactly once')
+    run = run.replace(addition, '')
+  }
+  assert.equal(run.split(reviewedControlCommand).length, 2, 'the reviewed short-path controls run exactly once')
+  return run.replace(reviewedControlCommand, legacyControlCommand)
+}
 function originalCensusCommands(run) {
   const match = run.match(/^  # CMSPARK_650_ORIGINAL_COMMANDS_BEGIN\n([\s\S]*?)^  # CMSPARK_650_ORIGINAL_COMMANDS_END$/m)
   assert.ok(match, 'one bounded original command block')
@@ -123,8 +136,10 @@ function assertCensusSchedule(raw) {
   assert.equal(digest(registry.run.replace(registryReady, '')), 'a2bb4df47a70ee0e4dc6d70a73097332f92b1a6e76d4194e215fba5a2b199c9a', 'original Registry body and failure exit remain exact')
   assert.equal(census.if, censusCondition)
   assert.equal(census['continue-on-error'], undefined)
-  assert.equal(digest(census.run), '75ea0a66638629f8f3d5a162122e94ce626dec9ede490596afbf80cdb303ac4b', 'fixed owned SMB lifecycle changes require explicit review')
-  assert.equal(digest(originalCensusCommands(census.run)), 'b6aba13f90e3e4567e0b80f21c8585a223383200e26237514d53caafd80836a6', 'the original control/census commands and exits remain exact')
+  assert.equal(digest(census.run), 'd6652f9fed162dee00a77a7053b5f6ff42730c7ba139b1eb4df0985680999405', 'reviewed owned SMB and short-root lifecycle stays exact')
+  const legacyRun = legacyCensusWithoutReviewedShortRoots(census.run)
+  assert.equal(digest(legacyRun), '75ea0a66638629f8f3d5a162122e94ce626dec9ede490596afbf80cdb303ac4b', 'the full original lifecycle stays exact outside reviewed insertions')
+  assert.equal(digest(originalCensusCommands(legacyRun)), 'b6aba13f90e3e4567e0b80f21c8585a223383200e26237514d53caafd80836a6', 'the original control/census commands and exits remain exact')
   assert.equal(digest(JSON.stringify(artifact)), 'bf504e85964e900151325fca797443741ab84ad49d746b0257af2a269fc64697', 'sealed artifact condition and paths stay exact')
   assert.equal(digest(office.run), '8fb06555123eebe638397b5bc81d5074db606f3aa9192d499b5914095b130402', 'Office loses only its extracted compiler line')
   for (const step of [compile, office]) {
@@ -194,5 +209,26 @@ test('owned UNC lifecycle guards reject missing verify, waived cleanup, foreign 
   ]) {
     assert.ok(raw.includes(from))
     assert.throws(() => assertCensusSchedule(raw.replace(from, to)))
+  }
+})
+
+test('reviewed short-root additions normalize to the complete original pinned lifecycle', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  const run = workflowYaml.load(raw).jobs['smoke-os'].steps.find(s => s.id === 'windows-census').run
+  assert.equal(digest(legacyCensusWithoutReviewedShortRoots(run)), '75ea0a66638629f8f3d5a162122e94ce626dec9ede490596afbf80cdb303ac4b')
+  for (const addition of [reviewedShortSetup, ...reviewedShortCleanup]) {
+    assert.throws(() => legacyCensusWithoutReviewedShortRoots(run.replace(addition, '')), 'missing additions cannot silently normalize')
+    assert.throws(() => legacyCensusWithoutReviewedShortRoots(run + addition), 'duplicate additions cannot silently normalize')
+  }
+  assert.throws(() => legacyCensusWithoutReviewedShortRoots(run.replace(reviewedControlCommand, legacyControlCommand)))
+  for (const [from, to] of [
+    ['32768', '32769'],
+    ["'canonical short alias owned'", "'foreign short alias'"],
+    ['GetShortPathName($longBuffer.ToString()', 'GetShortPathName($fixture'],
+    ['Remove-Item Env:CMSPARK_TEST_SHORT_ROOT -ErrorAction Stop', "Write-Output 'cleanup-waived'"],
+    ['scripts/tests/windows-census-short-path.test.mjs', 'scripts/tests/omitted-short-path.test.mjs'],
+  ]) {
+    assert.ok(raw.includes(from), 'mutants target actual reviewed workflow')
+    assert.throws(() => assertCensusSchedule(raw.replace(from, to)), 'reviewed additions cannot bypass lifecycle pin')
   }
 })
