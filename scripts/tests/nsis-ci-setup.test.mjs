@@ -105,6 +105,134 @@ const reviewedShortSetup = "  $shortFixture = Join-Path $fixture 'canonical shor
 const reviewedShortCleanup = ["    if (Test-Path Env:CMSPARK_TEST_LONG_ROOT) { Remove-Item Env:CMSPARK_TEST_LONG_ROOT -ErrorAction Stop }\n","    if (Test-Path Env:CMSPARK_TEST_SHORT_ROOT) { Remove-Item Env:CMSPARK_TEST_SHORT_ROOT -ErrorAction Stop }\n"]
 const legacyControlCommand = "node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs"
 const reviewedControlCommand = "node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs"
+// #650: only the complete reviewed diagnostic insertions may normalize away.
+const reviewedSetupDiagnosticPrelude = "# CMSPARK_650_SETUP_DIAGNOSTIC_BEGIN\nfunction Write-Cmspark650SetupDiagnostic {\n  param([string]$Stage, [string]$Phase, [System.Management.Automation.ErrorRecord]$Record)\n  $safeStage = 'UNKNOWN'\n  if ($Stage -cin @('primary', 'cleanup')) { $safeStage = $Stage }\n  $safePhase = 'UNKNOWN'\n  if ($Phase -cin @('service', 'directory_create', 'share_owner', 'share_create', 'controls', 'short_join', 'short_directory', 'short_type', 'long_buffer', 'short_buffer', 'long_call', 'long_check', 'short_call', 'short_check', 'roots_long', 'roots_short', 'roots_unc', 'launcher', 'cleanup_identity', 'cleanup_lookup', 'cleanup_verify', 'cleanup_share', 'cleanup_directory', 'cleanup_unc_env', 'cleanup_long_env', 'cleanup_short_env')) { $safePhase = $Phase }\n  $reason = 'OTHER'\n  switch -CaseSensitive ([string]$Record.FullyQualifiedErrorId) {\n    'CENSUS_OWNED_SMB_SETUP_FAILED' { $reason = 'SMB_SETUP'; break }\n    'CENSUS_OWNED_SMB_IDENTITY_INVALID' { $reason = 'SMB_IDENTITY'; break }\n    'CENSUS_OWNED_SHORT_ROOT_INVALID' { $reason = 'SHORT_ROOT'; break }\n  }\n  $line = 0; $column = 0\n  if ($null -ne $Record.InvocationInfo) {\n    $candidateLine = $Record.InvocationInfo.ScriptLineNumber\n    $candidateColumn = $Record.InvocationInfo.OffsetInLine\n    if ($candidateLine -ge 1 -and $candidateLine -le 4096) { $line = [int]$candidateLine }\n    if ($candidateColumn -ge 1 -and $candidateColumn -le 4096) { $column = [int]$candidateColumn }\n  }\n  $receipt = [ordered]@{ version = 1; stage = $safeStage; phase = $safePhase; reason = $reason; line = $line; column = $column }\n  Write-Output ('CENSUS_650_SETUP ' + ($receipt | ConvertTo-Json -Compress))\n}\n# CMSPARK_650_SETUP_DIAGNOSTIC_END\n"
+const reviewedSetupDiagnosticPairs = [
+  [
+    "  $phase = 'service'\n  Start-Service LanmanServer -ErrorAction Stop\n",
+    "  Start-Service LanmanServer -ErrorAction Stop\n"
+  ],
+  [
+    "  $phase = 'directory_create'\n  $created = (& node scripts/windows-census-owned-smb.mjs create $share | ConvertFrom-Json -ErrorAction Stop)\n",
+    "  $created = (& node scripts/windows-census-owned-smb.mjs create $share | ConvertFrom-Json -ErrorAction Stop)\n"
+  ],
+  [
+    "  $phase = 'share_owner'\n  $owner = [Security.Principal.WindowsIdentity]::GetCurrent()\n",
+    "  $owner = [Security.Principal.WindowsIdentity]::GetCurrent()\n"
+  ],
+  [
+    "  $phase = 'share_create'\n  try { New-SmbShare -Name $share -Path $fixture -FullAccess $owner.Name -ErrorAction Stop | Out-Null } finally { $owner.Dispose() }\n",
+    "  try { New-SmbShare -Name $share -Path $fixture -FullAccess $owner.Name -ErrorAction Stop | Out-Null } finally { $owner.Dispose() }\n"
+  ],
+  [
+    "  $phase = 'controls'\n  node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs\n",
+    "  node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs\n"
+  ],
+  [
+    "  $phase = 'short_join'\n  $shortFixture = Join-Path $fixture 'canonical short alias owned'\n",
+    "  $shortFixture = Join-Path $fixture 'canonical short alias owned'\n"
+  ],
+  [
+    "  $phase = 'short_directory'\n  New-Item -ItemType Directory -Path $shortFixture -ErrorAction Stop | Out-Null\n",
+    "  New-Item -ItemType Directory -Path $shortFixture -ErrorAction Stop | Out-Null\n"
+  ],
+  [
+    "  $phase = 'short_type'\n  Add-Type @'\n",
+    "  Add-Type @'\n"
+  ],
+  [
+    "  $phase = 'long_buffer'\n  $longBuffer = [System.Text.StringBuilder]::new(32768)\n",
+    "  $longBuffer = [System.Text.StringBuilder]::new(32768)\n"
+  ],
+  [
+    "  $phase = 'short_buffer'\n  $shortBuffer = [System.Text.StringBuilder]::new(32768)\n",
+    "  $shortBuffer = [System.Text.StringBuilder]::new(32768)\n"
+  ],
+  [
+    "  $phase = 'long_call'\n  $longLength = [Cmspark650OwnedPaths]::GetLongPathName($shortFixture, $longBuffer, 32768)\n",
+    "  $longLength = [Cmspark650OwnedPaths]::GetLongPathName($shortFixture, $longBuffer, 32768)\n"
+  ],
+  [
+    "  $phase = 'long_check'\n  if ($longLength -eq 0 -or $longLength -ge 32768) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n",
+    "  if ($longLength -eq 0 -or $longLength -ge 32768) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n"
+  ],
+  [
+    "  $phase = 'short_call'\n  $shortLength = [Cmspark650OwnedPaths]::GetShortPathName($longBuffer.ToString(), $shortBuffer, 32768)\n",
+    "  $shortLength = [Cmspark650OwnedPaths]::GetShortPathName($longBuffer.ToString(), $shortBuffer, 32768)\n"
+  ],
+  [
+    "  $phase = 'short_check'\n  if ($shortLength -eq 0 -or $shortLength -ge 32768 -or $shortBuffer.ToString() -notmatch '~[0-9]' -or $shortBuffer.ToString() -eq $longBuffer.ToString()) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n",
+    "  if ($shortLength -eq 0 -or $shortLength -ge 32768 -or $shortBuffer.ToString() -notmatch '~[0-9]' -or $shortBuffer.ToString() -eq $longBuffer.ToString()) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n"
+  ],
+  [
+    "  $phase = 'roots_long'\n  $env:CMSPARK_TEST_LONG_ROOT = $longBuffer.ToString()\n",
+    "  $env:CMSPARK_TEST_LONG_ROOT = $longBuffer.ToString()\n"
+  ],
+  [
+    "  $phase = 'roots_short'\n  $env:CMSPARK_TEST_SHORT_ROOT = $shortBuffer.ToString()\n",
+    "  $env:CMSPARK_TEST_SHORT_ROOT = $shortBuffer.ToString()\n"
+  ],
+  [
+    "  $phase = 'roots_unc'\n  $env:CMSPARK_TEST_UNC_SHARE = '\\\\127.0.0.1\\' + $share\n",
+    "  $env:CMSPARK_TEST_UNC_SHARE = '\\\\127.0.0.1\\' + $share\n"
+  ],
+  [
+    "  $phase = 'launcher'\n  node scripts/windows-census.mjs\n",
+    "  node scripts/windows-census.mjs\n"
+  ],
+  [
+    "    $phase = 'cleanup_identity'\n    if ($directoryCreated) {\n",
+    "    if ($directoryCreated) {\n"
+  ],
+  [
+    "      $phase = 'cleanup_lookup'\n      $current = @(Get-SmbShare -Name $share -ErrorAction Stop)\n",
+    "      $current = @(Get-SmbShare -Name $share -ErrorAction Stop)\n"
+  ],
+  [
+    "      $phase = 'cleanup_verify'\n      & node scripts/windows-census-owned-smb.mjs verify $share $current[0].Name $current[0].Path $created.dev $created.ino\n",
+    "      & node scripts/windows-census-owned-smb.mjs verify $share $current[0].Name $current[0].Path $created.dev $created.ino\n"
+  ],
+  [
+    "      $phase = 'cleanup_share'\n      Remove-SmbShare -Name $share -Force -ErrorAction Stop\n",
+    "      Remove-SmbShare -Name $share -Force -ErrorAction Stop\n"
+  ],
+  [
+    "      $phase = 'cleanup_directory'\n      Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction Stop\n",
+    "      Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction Stop\n"
+  ],
+  [
+    "    $phase = 'cleanup_unc_env'\n    if (Test-Path Env:CMSPARK_TEST_UNC_SHARE) { Remove-Item Env:CMSPARK_TEST_UNC_SHARE -ErrorAction Stop }\n",
+    "    if (Test-Path Env:CMSPARK_TEST_UNC_SHARE) { Remove-Item Env:CMSPARK_TEST_UNC_SHARE -ErrorAction Stop }\n"
+  ],
+  [
+    "    $phase = 'cleanup_long_env'\n    if (Test-Path Env:CMSPARK_TEST_LONG_ROOT) { Remove-Item Env:CMSPARK_TEST_LONG_ROOT -ErrorAction Stop }\n",
+    "    if (Test-Path Env:CMSPARK_TEST_LONG_ROOT) { Remove-Item Env:CMSPARK_TEST_LONG_ROOT -ErrorAction Stop }\n"
+  ],
+  [
+    "    $phase = 'cleanup_short_env'\n    if (Test-Path Env:CMSPARK_TEST_SHORT_ROOT) { Remove-Item Env:CMSPARK_TEST_SHORT_ROOT -ErrorAction Stop }\n",
+    "    if (Test-Path Env:CMSPARK_TEST_SHORT_ROOT) { Remove-Item Env:CMSPARK_TEST_SHORT_ROOT -ErrorAction Stop }\n"
+  ],
+  [
+    "} catch {\n  Write-Cmspark650SetupDiagnostic -Stage 'primary' -Phase $phase -Record $_\n  throw 'CENSUS_OWNED_SMB_STEP_FAILED'\n} finally {\n",
+    "} catch { throw 'CENSUS_OWNED_SMB_STEP_FAILED' } finally {\n"
+  ],
+  [
+    "  } catch {\n    Write-Cmspark650SetupDiagnostic -Stage 'cleanup' -Phase $phase -Record $_\n    throw 'CENSUS_OWNED_SMB_CLEANUP_FAILED'\n  } finally {\n",
+    "  } catch { throw 'CENSUS_OWNED_SMB_CLEANUP_FAILED' } finally {\n"
+  ]
+]
+const diagnosticControlCommand = reviewedControlCommand + " scripts/tests/windows-census-setup-diagnostics.test.mjs"
+function censusWithoutReviewedSetupDiagnostics(run) {
+  assert.equal(run.split(reviewedSetupDiagnosticPrelude).length, 2, "one exact finite diagnostic formatter")
+  run = run.replace(reviewedSetupDiagnosticPrelude, "")
+  assert.equal(run.split(diagnosticControlCommand).length, 2, "original eighty-five controls plus diagnostic family exactly once")
+  run = run.replace(diagnosticControlCommand, reviewedControlCommand)
+  for (const [reviewed, original] of reviewedSetupDiagnosticPairs) {
+    assert.equal(run.split(reviewed).length, 2, "each exact phase/receipt insertion occurs once at its original command")
+    run = run.replace(reviewed, original)
+  }
+  return run
+}
 function legacyCensusWithoutReviewedShortRoots(run) {
   for (const addition of [reviewedShortSetup, ...reviewedShortCleanup]) {
     assert.equal(run.split(addition).length, 2, 'each reviewed short-root addition is present exactly once')
@@ -136,8 +264,9 @@ function assertCensusSchedule(raw) {
   assert.equal(digest(registry.run.replace(registryReady, '')), 'a2bb4df47a70ee0e4dc6d70a73097332f92b1a6e76d4194e215fba5a2b199c9a', 'original Registry body and failure exit remain exact')
   assert.equal(census.if, censusCondition)
   assert.equal(census['continue-on-error'], undefined)
-  assert.equal(digest(census.run), 'd6652f9fed162dee00a77a7053b5f6ff42730c7ba139b1eb4df0985680999405', 'reviewed owned SMB and short-root lifecycle stays exact')
-  const legacyRun = legacyCensusWithoutReviewedShortRoots(census.run)
+  const originalRun = censusWithoutReviewedSetupDiagnostics(census.run)
+  assert.equal(digest(originalRun), 'd6652f9fed162dee00a77a7053b5f6ff42730c7ba139b1eb4df0985680999405', 'reviewed owned SMB and short-root lifecycle stays exact')
+  const legacyRun = legacyCensusWithoutReviewedShortRoots(originalRun)
   assert.equal(digest(legacyRun), '75ea0a66638629f8f3d5a162122e94ce626dec9ede490596afbf80cdb303ac4b', 'the full original lifecycle stays exact outside reviewed insertions')
   assert.equal(digest(originalCensusCommands(legacyRun)), 'b6aba13f90e3e4567e0b80f21c8585a223383200e26237514d53caafd80836a6', 'the original control/census commands and exits remain exact')
   assert.equal(digest(JSON.stringify(artifact)), 'bf504e85964e900151325fca797443741ab84ad49d746b0257af2a269fc64697', 'sealed artifact condition and paths stay exact')
@@ -175,7 +304,7 @@ test("scheduling contract rejects missing compilation, premature readiness and w
 
 test('owned UNC workflow checks current binding before either delete and keeps the later603 lifecycle', () => {
   const steps = workflowYaml.load(fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')).jobs['smoke-os'].steps
-  const run = steps.find(s => s.id === 'windows-census').run
+  const run = censusWithoutReviewedSetupDiagnostics(steps.find(s => s.id === 'windows-census').run)
   assertCensusSchedule(fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8'))
   const create = run.indexOf('node scripts/windows-census-owned-smb.mjs create $share')
   const directoryFlag = run.indexOf('$directoryCreated = $true')
@@ -214,7 +343,7 @@ test('owned UNC lifecycle guards reject missing verify, waived cleanup, foreign 
 
 test('reviewed short-root additions normalize to the complete original pinned lifecycle', () => {
   const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
-  const run = workflowYaml.load(raw).jobs['smoke-os'].steps.find(s => s.id === 'windows-census').run
+  const run = censusWithoutReviewedSetupDiagnostics(workflowYaml.load(raw).jobs['smoke-os'].steps.find(s => s.id === 'windows-census').run)
   assert.equal(digest(legacyCensusWithoutReviewedShortRoots(run)), '75ea0a66638629f8f3d5a162122e94ce626dec9ede490596afbf80cdb303ac4b')
   for (const addition of [reviewedShortSetup, ...reviewedShortCleanup]) {
     assert.throws(() => legacyCensusWithoutReviewedShortRoots(run.replace(addition, '')), 'missing additions cannot silently normalize')
@@ -231,4 +360,17 @@ test('reviewed short-root additions normalize to the complete original pinned li
     assert.ok(raw.includes(from), 'mutants target actual reviewed workflow')
     assert.throws(() => assertCensusSchedule(raw.replace(from, to)), 'reviewed additions cannot bypass lifecycle pin')
   }
+})
+
+// Exact inverse must reject changed or missing diagnostics as well as every old native gate.
+test('setup diagnostics normalize only their exact reviewed delta and retain the d6652 full-body pin', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  assertCensusSchedule(raw)
+  for (const [from,to] of [
+    ["$phase = 'short_call'", "$phase = 'long_call'"],
+    ["-Stage 'primary' -Phase $phase -Record $_", "-Stage 'cleanup' -Phase $phase -Record $_"],
+    ["$reason = 'OTHER'", "$reason = [string]$Record.FullyQualifiedErrorId"],
+    ["$candidateLine -le 4096", "$candidateLine -le 4097"],
+    ["scripts/tests/windows-census-setup-diagnostics.test.mjs", "scripts/tests/omitted-setup-diagnostics.test.mjs"],
+  ]) { assert.ok(raw.includes(from)); assert.throws(() => assertCensusSchedule(raw.replace(from,to))) }
 })

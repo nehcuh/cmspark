@@ -224,24 +224,56 @@ jobs:
         if: ${{ !cancelled() && matrix.os == 'windows-latest' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}
         shell: pwsh
         run: |
+          # CMSPARK_650_SETUP_DIAGNOSTIC_BEGIN
+          function Write-Cmspark650SetupDiagnostic {
+            param([string]$Stage, [string]$Phase, [System.Management.Automation.ErrorRecord]$Record)
+            $safeStage = 'UNKNOWN'
+            if ($Stage -cin @('primary', 'cleanup')) { $safeStage = $Stage }
+            $safePhase = 'UNKNOWN'
+            if ($Phase -cin @('service', 'directory_create', 'share_owner', 'share_create', 'controls', 'short_join', 'short_directory', 'short_type', 'long_buffer', 'short_buffer', 'long_call', 'long_check', 'short_call', 'short_check', 'roots_long', 'roots_short', 'roots_unc', 'launcher', 'cleanup_identity', 'cleanup_lookup', 'cleanup_verify', 'cleanup_share', 'cleanup_directory', 'cleanup_unc_env', 'cleanup_long_env', 'cleanup_short_env')) { $safePhase = $Phase }
+            $reason = 'OTHER'
+            switch -CaseSensitive ([string]$Record.FullyQualifiedErrorId) {
+              'CENSUS_OWNED_SMB_SETUP_FAILED' { $reason = 'SMB_SETUP'; break }
+              'CENSUS_OWNED_SMB_IDENTITY_INVALID' { $reason = 'SMB_IDENTITY'; break }
+              'CENSUS_OWNED_SHORT_ROOT_INVALID' { $reason = 'SHORT_ROOT'; break }
+            }
+            $line = 0; $column = 0
+            if ($null -ne $Record.InvocationInfo) {
+              $candidateLine = $Record.InvocationInfo.ScriptLineNumber
+              $candidateColumn = $Record.InvocationInfo.OffsetInLine
+              if ($candidateLine -ge 1 -and $candidateLine -le 4096) { $line = [int]$candidateLine }
+              if ($candidateColumn -ge 1 -and $candidateColumn -le 4096) { $column = [int]$candidateColumn }
+            }
+            $receipt = [ordered]@{ version = 1; stage = $safeStage; phase = $safePhase; reason = $reason; line = $line; column = $column }
+            Write-Output ('CENSUS_650_SETUP ' + ($receipt | ConvertTo-Json -Compress))
+          }
+          # CMSPARK_650_SETUP_DIAGNOSTIC_END
           if ($env:GITHUB_RUN_ID -cnotmatch '\A[1-9][0-9]*\z' -or $env:GITHUB_RUN_ATTEMPT -cnotmatch '\A[1-9][0-9]*\z') { throw 'CENSUS_OWNED_SMB_SETUP_FAILED' }
           $share = 'cmspark650_{0}_{1}_{2}' -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT, ([Guid]::NewGuid().ToString('N'))
           $directoryCreated = $false
           $shareCreated = $false
           try {
+            $phase = 'service'
             Start-Service LanmanServer -ErrorAction Stop
+            $phase = 'directory_create'
             $created = (& node scripts/windows-census-owned-smb.mjs create $share | ConvertFrom-Json -ErrorAction Stop)
             if ($LASTEXITCODE -ne 0) { throw 'CENSUS_OWNED_SMB_SETUP_FAILED' }
             $directoryCreated = $true
             $fixture = $created.path
+            $phase = 'share_owner'
             $owner = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $phase = 'share_create'
             try { New-SmbShare -Name $share -Path $fixture -FullAccess $owner.Name -ErrorAction Stop | Out-Null } finally { $owner.Dispose() }
             $shareCreated = $true
             # CMSPARK_650_ORIGINAL_COMMANDS_BEGIN
-            node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs
+            $phase = 'controls'
+            node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs scripts/tests/windows-census-setup-diagnostics.test.mjs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $phase = 'short_join'
             $shortFixture = Join-Path $fixture 'canonical short alias owned'
+            $phase = 'short_directory'
             New-Item -ItemType Directory -Path $shortFixture -ErrorAction Stop | Out-Null
+            $phase = 'short_type'
             Add-Type @'
           using System;
           using System.Text;
@@ -253,33 +285,57 @@ jobs:
             public static extern uint GetLongPathName(string source, StringBuilder dest, uint size);
           }
           '@
+            $phase = 'long_buffer'
             $longBuffer = [System.Text.StringBuilder]::new(32768)
+            $phase = 'short_buffer'
             $shortBuffer = [System.Text.StringBuilder]::new(32768)
+            $phase = 'long_call'
             $longLength = [Cmspark650OwnedPaths]::GetLongPathName($shortFixture, $longBuffer, 32768)
+            $phase = 'long_check'
             if ($longLength -eq 0 -or $longLength -ge 32768) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            $phase = 'short_call'
             $shortLength = [Cmspark650OwnedPaths]::GetShortPathName($longBuffer.ToString(), $shortBuffer, 32768)
+            $phase = 'short_check'
             if ($shortLength -eq 0 -or $shortLength -ge 32768 -or $shortBuffer.ToString() -notmatch '~[0-9]' -or $shortBuffer.ToString() -eq $longBuffer.ToString()) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            $phase = 'roots_long'
             $env:CMSPARK_TEST_LONG_ROOT = $longBuffer.ToString()
+            $phase = 'roots_short'
             $env:CMSPARK_TEST_SHORT_ROOT = $shortBuffer.ToString()
+            $phase = 'roots_unc'
             $env:CMSPARK_TEST_UNC_SHARE = '\\127.0.0.1\' + $share
+            $phase = 'launcher'
             node scripts/windows-census.mjs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             # CMSPARK_650_ORIGINAL_COMMANDS_END
-          } catch { throw 'CENSUS_OWNED_SMB_STEP_FAILED' } finally {
+          } catch {
+            Write-Cmspark650SetupDiagnostic -Stage 'primary' -Phase $phase -Record $_
+            throw 'CENSUS_OWNED_SMB_STEP_FAILED'
+          } finally {
             try {
+              $phase = 'cleanup_identity'
               if ($directoryCreated) {
                 # Uncertain/partial ownership is failure, never remove-by-name.
                 if (-not $shareCreated) { throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' }
+                $phase = 'cleanup_lookup'
                 $current = @(Get-SmbShare -Name $share -ErrorAction Stop)
                 if ($current.Count -ne 1) { throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' }
+                $phase = 'cleanup_verify'
                 & node scripts/windows-census-owned-smb.mjs verify $share $current[0].Name $current[0].Path $created.dev $created.ino
                 if ($LASTEXITCODE -ne 0) { throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' }
+                $phase = 'cleanup_share'
                 Remove-SmbShare -Name $share -Force -ErrorAction Stop
+                $phase = 'cleanup_directory'
                 Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction Stop
               }
-            } catch { throw 'CENSUS_OWNED_SMB_CLEANUP_FAILED' } finally {
+            } catch {
+              Write-Cmspark650SetupDiagnostic -Stage 'cleanup' -Phase $phase -Record $_
+              throw 'CENSUS_OWNED_SMB_CLEANUP_FAILED'
+            } finally {
+              $phase = 'cleanup_unc_env'
               if (Test-Path Env:CMSPARK_TEST_UNC_SHARE) { Remove-Item Env:CMSPARK_TEST_UNC_SHARE -ErrorAction Stop }
+              $phase = 'cleanup_long_env'
               if (Test-Path Env:CMSPARK_TEST_LONG_ROOT) { Remove-Item Env:CMSPARK_TEST_LONG_ROOT -ErrorAction Stop }
+              $phase = 'cleanup_short_env'
               if (Test-Path Env:CMSPARK_TEST_SHORT_ROOT) { Remove-Item Env:CMSPARK_TEST_SHORT_ROOT -ErrorAction Stop }
             }
           }
