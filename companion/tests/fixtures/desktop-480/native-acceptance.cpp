@@ -141,7 +141,17 @@ void D480Acceptance::preConsume(HANDLE input){
  wchar_t raw[32768];DWORD count=GetModuleFileNameW(nullptr,raw,32768);
  if(count&&count<32768){std::wstring file(raw,count);auto slash=file.find_last_of(L"\\/");if(slash!=std::wstring::npos){file.resize(slash+1);file+=L"parent-exit.receipt";
   HANDLE fd=CreateFileW(file.c_str(),GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr);OVERLAPPED lock{};
-  if(fd!=INVALID_HANDLE_VALUE){BY_HANDLE_FILE_INFORMATION info{};if(GetFileInformationByHandle(fd,&info)&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))&&info.nNumberOfLinks==1&&!info.nFileSizeHigh&&!info.nFileSizeLow&&LockFileEx(fd,LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,0,1,0,&lock)){parentReceipt=fd;parentReceiptInfo=info;}else CloseHandle(fd);}
+  if(fd!=INVALID_HANDLE_VALUE){BY_HANDLE_FILE_INFORMATION info{};if(GetFileInformationByHandle(fd,&info)&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))&&info.nNumberOfLinks==1&&!info.nFileSizeHigh&&!info.nFileSizeLow&&LockFileEx(fd,LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,0,1,0,&lock)){// Separate fixed, coordinator-created metadata binds the probe's process HANDLE.
+    // This test-only record is neither an authentication proof nor a PID scan.
+    std::wstring processFile=file.substr(0,file.find_last_of(L"\\/")+1)+L"parent-process.receipt";
+    HANDLE processRecord=CreateFileW(processFile.c_str(),GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    FILETIME created{},ended{},kernel{},user{};BY_HANDLE_FILE_INFORMATION recordInfo{};DWORD wrote=0;
+    bool valid=processRecord!=INVALID_HANDLE_VALUE&&GetFileInformationByHandle(processRecord,&recordInfo)&&!(recordInfo.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))&&recordInfo.nNumberOfLinks==1&&!recordInfo.nFileSizeHigh&&!recordInfo.nFileSizeLow&&GetProcessTimes(GetCurrentProcess(),&created,&ended,&kernel,&user);
+    DWORD record[4]={0x44343830u,GetCurrentProcessId(),created.dwLowDateTime,created.dwHighDateTime};
+    static_assert(sizeof(record)==16,"D480 fixed process receipt is exactly 16 bytes");
+    valid=valid&&WriteFile(processRecord,record,sizeof(record),&wrote,nullptr)&&wrote==sizeof(record)&&FlushFileBuffers(processRecord);
+    if(processRecord!=INVALID_HANDLE_VALUE)CloseHandle(processRecord);
+    if(valid){parentReceipt=fd;parentReceiptInfo=info;}else CloseHandle(fd);}else CloseHandle(fd);}
  }}
 #endif
 #ifdef D480_INHERITANCE

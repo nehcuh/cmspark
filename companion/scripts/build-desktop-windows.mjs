@@ -202,6 +202,8 @@ export function desktopAcceptanceVariant(language, original, fixture) {
     ['parentWatch?.setEventHandler { exit(1) }', 'parentWatch?.setEventHandler { d480AcceptanceParentObserved();exit(1) }'],
     ['phase="ready";authenticated=true;', 'phase="ready";authenticated=true;d480AcceptanceAuth(self);'],
     ['win.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)', 'win.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true);d480AcceptanceWindow(self)'],
+    ['let wasAuthenticated=authenticated;socket=nil;', 'let wasAuthenticated=authenticated;d480AcceptanceWindowStop(self);socket=nil;'],
+    ['func applicationWillTerminate(_ notification:Notification) { socket?.cancel', 'func applicationWillTerminate(_ notification:Notification) { d480AcceptanceWindowStop(self);socket?.cancel'],
     ['if allowed { generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)', 'if allowed { generation=nil;requests.removeAll() };d480AcceptanceNavigation(self,navigationAction,allowed);decisionHandler(allowed ? .allow:.cancel)'],
     ['guard authenticated,webView.url?.absoluteString==origin else{return};generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!])', 'guard authenticated,webView.url?.absoluteString==origin else{return};generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!]);d480AcceptanceDocument(self)'],
     ['windowFeatures:WKWindowFeatures)->WKWebView? { nil }', 'windowFeatures:WKWindowFeatures)->WKWebView? { d480AcceptanceNewWindow(self);return nil }'],
