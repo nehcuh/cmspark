@@ -2,6 +2,15 @@
 private final class D480Acceptance {
     static let shared=D480Acceptance()
     var firstWindow:Int?;var auths=0;var phase="initial";var admitted=0;var oldGeneration:String?
+    var windowObservers=[NSObjectProtocol]();var windowObservation:(()->Void)?
+    func stopWindow() {
+        windowObservation=nil
+        for observer in windowObservers { NotificationCenter.default.removeObserver(observer) }
+        windowObservers.removeAll()
+    }
+    func windowCurrent(_ host:NativeDesktop,_ win:NSWindow,_ socket:URLSessionWebSocketTask,_ view:String)->Bool {
+        return host.window === win && host.socket === socket && host.view==view && host.authenticated && host.phase=="ready"
+    }
     func emit(_ host:NativeDesktop,_ value:String) { if let socket=host.socket { host.transmit(["type":"system.ping","id":"D480A_"+value],to:socket) } }
     func script(_ host:NativeDesktop,_ literal:String,_ generation:String?=nil) {
         guard let web=host.web,let g=generation ?? host.generation else { emit(host,"FAIL_NO_DOCUMENT");return }
@@ -10,17 +19,32 @@ private final class D480Acceptance {
         } } else { emit(host,"FAIL_ENGINE_API") }
     }
     func window(_ host:NativeDesktop) {
-        DispatchQueue.main.async {
-            guard let win=host.window,let screen=win.screen else { self.emit(host,"FAIL_WINDOW");return }
-            if self.firstWindow==nil { self.firstWindow=win.windowNumber }
+        stopWindow()
+        guard let win=host.window,let socket=host.socket else { emit(host,"FAIL_WINDOW");return }
+        let view=host.view
+        if firstWindow==nil { firstWindow=win.windowNumber }
+        windowObservation={ [weak self,weak host,weak win,weak socket] in
+            guard let self=self else{return}
+            guard let host=host,let win=win,let socket=socket else{self.stopWindow();return}
+            guard self.windowCurrent(host,win,socket,view) else {self.stopWindow();return}
+            // Activation is a request. Observe actual native transitions rather
+            // than treating one queued CPU block as AppKit completion.
+            guard win.isKeyWindow && NSApp.isActive else{return}
+            guard let screen=win.screen else {self.stopWindow();self.emit(host,"FAIL_WINDOW");return}
             let client=win.contentLayoutRect, frame=win.frame,work=screen.visibleFrame
             let desired=host.view=="compact" ? NSSize(width:360,height:420):NSSize(width:1040,height:760)
             let chrome=NSSize(width:frame.width-client.width,height:frame.height-client.height)
             let expected=NSSize(width:min(desired.width,work.width-chrome.width),height:min(desired.height,work.height-chrome.height))
             let ownCount=NSApp.windows.filter{($0.delegate as AnyObject?) === host}.count
             let bits=[win.isVisible,win.isKeyWindow,NSApp.isActive,self.firstWindow==win.windowNumber,ownCount==1,client.width==expected.width&&client.height==expected.height,work.contains(frame)].map{$0 ? "1":"0"}.joined()
-            self.emit(host,"WINDOW_"+(host.view=="compact" ? "C":"W")+"_\(Int(client.width))_\(Int(client.height))_\(Int(expected.width))_\(Int(expected.height))_"+bits)
+            self.stopWindow()
+            self.emit(host,"WINDOW_"+(view=="compact" ? "C":"W")+"_\(Int(client.width))_\(Int(client.height))_\(Int(expected.width))_\(Int(expected.height))_"+bits)
         }
+        for (name,object) in [(NSApplication.didBecomeActiveNotification,NSApplication.shared as AnyObject),(NSWindow.didBecomeKeyNotification,win as AnyObject)] {
+            windowObservers.append(NotificationCenter.default.addObserver(forName:name,object:object,queue:.main){ [weak self] _ in self?.windowObservation?() })
+        }
+        // Covers transitions already completed before these observers were armed.
+        DispatchQueue.main.async { [weak self] in self?.windowObservation?() }
     }
     func document(_ host:NativeDesktop) {
 #if D480_HOSTILE
@@ -72,6 +96,7 @@ private func d480AcceptanceAuth(_ host:NativeDesktop){let s=D480Acceptance.share
 #endif
 }
 private func d480AcceptanceWindow(_ host:NativeDesktop){D480Acceptance.shared.window(host)}
+private func d480AcceptanceWindowStop(_ host:NativeDesktop){D480Acceptance.shared.stopWindow()}
 private func d480AcceptanceDocument(_ host:NativeDesktop){D480Acceptance.shared.document(host)}
 private func d480AcceptanceMessage(_ host:NativeDesktop,_ message:WKScriptMessage){D480Acceptance.shared.message(host,message)}
 private func d480AcceptanceForward(_ host:NativeDesktop,_ f:[String:Any]){D480Acceptance.shared.forwarded(f)}

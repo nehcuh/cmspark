@@ -80,13 +80,14 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
 }
 
 // Fixed test-only observations: no capability, secret, proof, endpoint or wire data.
-export function acceptanceDiagnostic(reason: string, phase: string, mode: string, counts: { auths: number; issues: number; launches: number; exits: number; listReads: number }, observations: AcceptanceReceipt[]) {
+export function acceptanceDiagnostic(reason: string, phase: string, mode: string, counts: { auths: number; issues: number; launches: number; exits: number; listReads: number; lastExitCode?: number | null }, observations: AcceptanceReceipt[]) {
   const finiteCount = (n: number) => Number.isSafeInteger(n) && n >= 0 && n <= 1000 ? n : null
   return {
     reason: ["deadline", "cleanup"].includes(reason) ? reason : "unknown",
     phase: ["starting", "waiting-auth-metadata", "waiting-reconnect-auth", "waiting-replay-close", "waiting-relaunch", "complete"].includes(phase) ? phase : "unknown",
     mode: ["visual", "hostile", "reconnect", "relaunch", "inheritance", "parent"].includes(mode) ? mode : "unknown",
     auths: finiteCount(counts.auths), issues: finiteCount(counts.issues), launches: finiteCount(counts.launches), exits: finiteCount(counts.exits), listReads: finiteCount(counts.listReads),
+    lastExitCode: Number.isSafeInteger(counts.lastExitCode) && counts.lastExitCode! >= -0x80000000 && counts.lastExitCode! <= 0xffffffff ? counts.lastExitCode : null,
     fixed: [...new Set(observations.filter(r => r.kind === "fixed" && (fixed.has(r.name) || failures.has(r.name))).map(r => (r as { name: string }).name))].sort(),
     windows: finiteCount(observations.filter(r => r.kind === "window").length),
   }
@@ -136,6 +137,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: owned-native-acceptance\ndescription: inert owned fixture\n---\nInert fixture.\n")
   const skills = new SkillEngine(), mcp = new McpManager()
   let issues = 0, launches = 0, exits = 0, auths = 0, listReads = 0
+  let lastExitCode: number | null = null
   let capabilityId = "", secret = "", oldProof = "", ownedHost = ""
   const registry = new DesktopIdentityRegistry(), issue = registry.issue.bind(registry)
   registry.issue = host => { issues++; const boot = issue(host); ownedHost = host; capabilityId = boot.capabilityId; secret = boot.secret; return boot }
@@ -164,7 +166,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   const has = (name: string) => observations.some(r => r.kind === "fixed" && r.name === name)
   let diagnosticPhase = "starting"
   const diagnostic = (reason: "deadline" | "cleanup") => {
-    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify(acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads }, observations)) + "\n") }
+    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify(acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads, lastExitCode }, observations)) + "\n") }
     catch { /* Observation must not replace the original test failure. */ }
   }
   const deadlineDiagnostic = () => diagnostic("deadline")
@@ -173,7 +175,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     server.listen(0, "127.0.0.1"); await once(server, "listening", { signal: t.signal })
     const endpoint = `ws://127.0.0.1:${(server.address() as any).port}/desktop`
     launcher = new DesktopHostLauncher(registry, endpoint, (host, view) => channel.window(host, view), () => ({ binary, binding: {
-      launch: (file, cap, key, url, onExit) => { const child = addon.launch(file, cap, key, url, code => { exits++; onExit(code); for (const wake of waiters) wake() }); launches++; return child },
+      launch: (file, cap, key, url, onExit) => { const child = addon.launch(file, cap, key, url, code => { lastExitCode = code; exits++; onExit(code); for (const wake of waiters) wake() }); launches++; return child },
     } }))
     const a = launcher.open("compact"), b = launcher.open("compact")
     await bounded(Promise.all([a, b]).then(results => { for (const result of results) assert.equal(result.ok, true) }), t.signal)
