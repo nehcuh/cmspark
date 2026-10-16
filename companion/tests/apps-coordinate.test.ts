@@ -8,6 +8,7 @@ import "./_config-router-setup" // MUST be first — pins DATA_DIR before config
 
 import test, { before } from "node:test"
 import * as assert from "node:assert/strict"
+import os from "node:os"
 
 import { handleAppsMessage, type AppsHandlerDeps } from "../src/apps/handlers"
 import { EvidenceOpenRateLimiter, handleComputerMessage } from "../src/computer/handlers"
@@ -101,7 +102,8 @@ test("apps.set_coordinate_allowed: unknown token -> NOT_FOUND", async () => {
   assert.equal(r.code, "NOT_FOUND")
 })
 
-test("apps.set_coordinate_allowed: mac Chrome + dummy.exe still STRUCTURAL (Trust nits REJECT)", async () => {
+test("apps.set_coordinate_allowed: mac Chrome + dummy.exe still STRUCTURAL (Trust nits REJECT)", async t => {
+  t.mock.method(os, "platform", () => "darwin")
   reset()
   replaceAppsEntries({
     "mac.app.google_chrome": seedEntry({
@@ -122,7 +124,8 @@ test("apps.set_coordinate_allowed: mac Chrome + dummy.exe still STRUCTURAL (Trus
   assert.equal(getConfig().apps?.entries["mac.app.google_chrome"]?.coordinateAllowed, undefined)
 })
 
-test("apps.set_coordinate_allowed: mac Chrome bundleId-only -> COORDINATE_STRUCTURAL_DENY (Trust REJECT fold)", async () => {
+test("apps.set_coordinate_allowed: mac Chrome bundleId-only -> COORDINATE_STRUCTURAL_DENY (Trust REJECT fold)", async t => {
+  t.mock.method(os, "platform", () => "darwin")
   reset()
   replaceAppsEntries({
     "mac.app.google_chrome": seedEntry({

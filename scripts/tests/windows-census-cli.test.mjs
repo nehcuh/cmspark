@@ -293,7 +293,7 @@ test('owned UNC locator is exact current-run loopback, not a decoded or nested r
 test('owned UNC locator enters only tests-stage while generic environment remains strict', () => {
   assert.equal(typeof census.censusStageEnvironment, 'function')
   const base = childEnvironment({ PATH: 'owned', CMSPARK_TEST_UNC_SHARE: smbLocator, SECRET_CANARY: 'FORBIDDEN' }, 'workspace', 'temp')
-  const initial = JSON.stringify(base), options = { uncShare: smbLocator, run: smbRun, attempt: smbAttempt, receipts: 'owned-receipts', reporter: 'file:///owned/reporter.mjs' }
+  const initial = JSON.stringify(base), options = { uncShare: smbLocator, run: smbRun, attempt: smbAttempt, receipts: 'owned-receipts', reporter: 'file:///owned/reporter.mjs', shortRoots: { longRoot: 'owned-long', shortRoot: 'OWNED~1', validate() {} } }
   assert.equal('CMSPARK_TEST_UNC_SHARE' in base, false)
   for (const name of ['install', 'build', 'stage']) assert.equal(census.censusStageEnvironment(name, base, options), base)
   const tests = census.censusStageEnvironment('tests', base, options)
@@ -358,7 +358,7 @@ test('owned UNC stage projection reaches real inert children only for canonical 
   const source = fs.readFileSync(new URL('../windows-census.mjs', import.meta.url), 'utf8')
   assert.match(source, /const uncShare = validateOwnedUncShare\(process.env.CMSPARK_TEST_UNC_SHARE, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT\)/)
   assert.match(source, /const childEnv = censusStageEnvironment\(name, env, \{ uncShare/)
-  const options = { uncShare: smbLocator, run: smbRun, attempt: smbAttempt, receipts: 'owned-unused', reporter: 'file:///owned-unused-reporter.mjs' }
+  const options = { uncShare: smbLocator, run: smbRun, attempt: smbAttempt, receipts: 'owned-unused', reporter: 'file:///owned-unused-reporter.mjs', shortRoots: { longRoot: 'owned-long', shortRoot: 'OWNED~1', validate() {} } }
   for (const stage of ['install', 'build', 'stage', 'tests']) {
     const base = childEnvironment({ PATH: process.env.PATH, NPM_TOKEN: 'FORBIDDEN_SECRET', CMSPARK_TEST_UNC_SHARE: 'FOREIGN_INPUT' }, owned, raw)
     const child = census.censusStageEnvironment(stage, base, options)

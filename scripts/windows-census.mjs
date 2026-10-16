@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { relativeFile } from './windows-census-reporter.mjs'
 import { sealEvidence } from './windows-census-evidence.mjs'
+import { prepareOwnedShortRoots } from './windows-census-owned-short-path.mjs'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const envKeys = ['PATH', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS', 'LANG', 'HOME', 'RUNNER_TRACKING_ID']
@@ -35,10 +36,12 @@ export function validateOwnedUncShare(value, run, attempt) {
   if (suffix.length !== 32 || !/^[0-9a-f]{32}$/.test(suffix)) throw Error('CENSUS_OWNED_UNC_INVALID')
   return value
 }
-export function censusStageEnvironment(name, env, { uncShare, run, attempt, receipts, reporter }) {
+export function censusStageEnvironment(name, env, { uncShare, run, attempt, receipts, reporter, shortRoots }) {
   if (!['install', 'build', 'stage', 'tests'].includes(name)) throw Error('CENSUS_STAGE_INVALID')
   if (name !== 'tests') return env
-  return { ...env, CMSPARK_TEST_UNC_SHARE: validateOwnedUncShare(uncShare, run, attempt),
+  if (!shortRoots || typeof shortRoots.validate !== 'function') throw Error('CENSUS_OWNED_SHORT_ROOT_INVALID')
+  shortRoots.validate()
+  return { ...env, CMSPARK_TEST_LONG_ROOT: shortRoots.longRoot, CMSPARK_TEST_SHORT_ROOT: shortRoots.shortRoot, CMSPARK_TEST_UNC_SHARE: validateOwnedUncShare(uncShare, run, attempt),
     CMSPARK_CENSUS_DIR: receipts, NODE_OPTIONS: `--test-reporter=${JSON.stringify(reporter)}` }
 }
 // Root-approved R4: isolate ambient Git sources; local credential admission stays strict.
@@ -291,6 +294,8 @@ export async function main() {
   let evidenceIdentity = null
   let result = { outcome: 'INCOMPLETE', error_code: null, stages, raw_publish: 'RESTRICTED_LOCAL_ONLY_UNREVIEWED', raw_durability: 'HOSTED_EPHEMERAL_NOT_GUARANTEED' }
   try {
+    const shortRoots = prepareOwnedShortRoots(process.env.CMSPARK_TEST_LONG_ROOT, process.env.CMSPARK_TEST_SHORT_ROOT,
+      path.join(fs.realpathSync.native(process.env.RUNNER_TEMP), uncShare.split('\\').at(-1), 'canonical short alias owned'))
     const gitConfig = prepareOwnedGitConfig(owned)
     gitConfig.validate()
     const credentials = spawnSync('git', ['config', '--get-regexp', '^(http\\..*extraheader|http\\.extraheader|credential\\..*|remote\\..*\\.url)$'], { cwd: root, env, encoding: 'utf8', windowsHide: true })
@@ -310,10 +315,12 @@ export async function main() {
     for (const [name, args] of [['install', ['ci']], ['build', ['run', 'build']], ['stage', ['run', 'stage:win-scripts']], ['tests', ['test']]]) {
       gitConfig.validate()
       const childEnv = censusStageEnvironment(name, env, { uncShare, run: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT,
-        receipts, reporter: pathToFileURL(path.join(root, 'scripts', 'windows-census-reporter.mjs')).href })
+        receipts, shortRoots, reporter: pathToFileURL(path.join(root, 'scripts', 'windows-census-reporter.mjs')).href })
       const invocation = name === 'install' ? [path.join(root, 'scripts', 'windows-census-install.mjs')] : [npmPath, ...args]
+      shortRoots.validate()
       const stage = await captureStage(process.execPath, invocation, { cwd: companion, env: childEnv, raw, name }, progress)
       stages.push({ ...stage, argv: name === 'install' ? ['node', '../scripts/windows-census-install.mjs'] : ['node', 'npm-cli.js', ...args], cwd: 'companion' })
+      shortRoots.validate()
       gitConfig.validate()
       if (!stageSucceeded(stage)) { result = { ...result, outcome: 'FAIL', error_code: 'CENSUS_STAGE_FAILED' }; break }
     }

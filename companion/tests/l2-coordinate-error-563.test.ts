@@ -98,13 +98,13 @@ for (const kind of ["optout", "structural"] as const)
   }
 
 for (const label of ["ordinary", "timeout", "disconnected"])
-  test(`#563 unregistered unknown-app refusal retains legacy fallback with ${label}`, async t => {
+  test(`#563 genuine unknown-app refusal preserves its finite hard code with ${label}`, async t => {
     const { wire, typed } = await run(t, "unknown", label)
     assert.ok(typed instanceof computer.ComputerError)
     assert.equal(typed.code, "APP_NOT_WHITELISTED")
-    assert.equal(security.ERROR_CODE_LEVELS.has(typed.code), false)
-    assert.equal(Object.hasOwn(wire, "error_code"), false)
-    assert.equal(security.classifyError(wire.error, { error_code: wire.error_code }), security.classifyError(typed.message))
+    assert.equal(security.ERROR_CODE_LEVELS.get(typed.code), "non_recoverable")
+    assert.equal(wire.error_code, typed.code)
+    assert.equal(security.classifyError(wire.error, { error_code: wire.error_code }), "non_recoverable")
   })
 
 test("#563 ordinary Errors cannot forge a registered computer code", async t => {

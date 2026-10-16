@@ -63,7 +63,8 @@ test("actual outer-terminal result retains the complete original command in owne
     running = mgr.start(offered.session.session_id)
     void running.catch(() => {})
     const deadline = Date.now() + 5000
-    while (offered.session.local_terminal === "pending" && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
+    // Windows owner preparation can yield before local_terminal becomes pending.
+    while ((!launched || offered.session.local_terminal === "pending") && offered.session.state !== "closed" && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
     assert.ok(launched.length > 0)
     const last = events.at(-1)
     assert.equal(last.session_id, offered.session.session_id)

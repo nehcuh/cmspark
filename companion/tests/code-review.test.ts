@@ -198,3 +198,38 @@ test("business claims at another commit cannot disappear into passing model pros
   assert.equal(assessed.review_ready, false)
   assert.throws(() => f.service.receive({ ...report, mappings: [{ ...report.mappings[0], external_id: "OTHER" }] }), /CONTEXT_MISMATCH/)
 })
+
+
+test("tool declaration bounds existing material IDs and review UUIDs", () => {
+  const definitions = Object.fromEntries(CODE_REVIEW_TOOL_DEFINITIONS.map(tool => [tool.function.name, tool.function.parameters])) as Record<string, any>
+  for (const schema of [definitions.code_review_create.properties.materials.items.properties.draft_id, definitions.code_review_render.properties.draft_id]) {
+    assert.equal(schema.minLength, 1)
+    assert.equal(schema.maxLength, 128)
+  }
+  for (const name of ["code_review_read", "code_review_assess", "code_review_render"]) {
+    const schema = definitions[name].properties.review_id
+    assert.equal(schema.type, "string")
+    assert.equal(new RegExp(schema.pattern).test("not-a-uuid"), false)
+    assert.equal(new RegExp(schema.pattern).test("42c287fe-34ee-4bc1-9bb4-123456789abc"), true)
+  }
+})
+
+for (const kind of ["change_material.v1", "development_trace.v1"] as const) {
+  for (const [label, value, mismatch] of [
+    ["absent", undefined, false], ["empty", "", false], ["blank", " \t ", false],
+    ["matching", fixture.git.head, false], ["wrong", fixture.git.base, true], ["padded", ` ${fixture.git.head} `, true],
+  ] as const) {
+    test(`${kind} ${label} commit keeps missing and mismatch distinct`, t => {
+      const f = setup(t), service = new BusinessEvidenceService(f.dir, f.scope)
+      const created = service.create({ kind, title: "Owned missing-commit control", target: { environment: "owned", ...(kind === "change_material.v1" ? { business_system_id: "OWNED" } : {}) }, request_id: "draft" })
+      const commitKey = kind === "change_material.v1" ? "release.commit_id" : "code.commit_id"
+      const draft = value === undefined ? created : service.update({ draft_id: created.draft_id, expected_revision: created.revision, request_id: "commit", fields: { [commitKey]: { value, citations: [] } } })
+      const review = f.service.create({ ...f.input, materials: [{ draft_id: draft.draft_id, revision: draft.revision }] })
+      const rendered = renderReviewMaterial(f.dir, f.scope, { review_id: review.review_id, draft_id: draft.draft_id })
+      assert.ok(rendered.json.gaps.includes("MATERIAL_CODE_UNVERIFIED"))
+      assert.equal(rendered.json.gaps.includes("MATERIAL_COMMIT_MISMATCH"), mismatch)
+      assert.equal(rendered.json.combined_ready, false)
+      assert.equal(rendered.json.review_ready, false)
+    })
+  }
+}

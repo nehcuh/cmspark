@@ -226,8 +226,39 @@ describe("quotePowerShellLiteral / buildWindowsModeCScript", () => {
         return String(e.stdout || e.stderr || e.message)
       }
     }
+    const parseDecoded = (file: string, encoding: "ansi1252" | "utf8") => {
+      const lit = file.replace(/'/g, "''")
+      const decoder = encoding === "ansi1252"
+        ? "[System.Text.Encoding]::GetEncoding(1252)"
+        : "[System.Text.UTF8Encoding]::new($false, $true)"
+      const cmd = `$bytes=[System.IO.File]::ReadAllBytes('${lit}'); $source=(${decoder}).GetString($bytes); $e=$null; $t=$null; [void][System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$t, [ref]$e); if ($e -and $e.Count) { $e[0].ToString(); exit 1 }; 'PARSE_OK'`
+      try {
+        return execFileSync(ps, ["-NoProfile", "-Command", cmd], {
+          encoding: "utf8",
+          timeout: 15000,
+          windowsHide: true,
+        }).trim()
+      } catch (e: any) {
+        return String(e.stdout || e.stderr || e.message)
+      }
+    }
     try {
-      assert.match(parse(nobom), /claude\.exe' \$task/)
+      const plainBytes = fs.readFileSync(nobom)
+      const bomBytes = fs.readFileSync(bom)
+      const prefix = Buffer.from([0xef, 0xbb, 0xbf])
+      assert.notDeepEqual(plainBytes.subarray(0, 3), prefix)
+      assert.deepEqual(bomBytes.subarray(0, 3), prefix)
+      assert.deepEqual(bomBytes.subarray(3), Buffer.from(body, "utf8"))
+      const runtime = execFileSync(ps, ["-NoProfile", "-Command", "$v=$PSVersionTable.PSVersion; if ($v.Major -ne 5 -or $v.Minor -ne 1 -or $PSVersionTable.PSEdition -ne 'Desktop') { throw 'EXPECTED_DESKTOP_POWERSHELL_5_1' }; 'DESKTOP_5_1'"], {
+        encoding: "utf8",
+        timeout: 15000,
+        windowsHide: true,
+      }).trim()
+      assert.equal(runtime, "DESKTOP_5_1")
+      // Unmarked UTF-8 may parse on a UTF-8 ACP host. Pin the legacy decoder
+      // for this negative, without weakening the actual BOM-file positive.
+      assert.match(parseDecoded(nobom, "ansi1252"), /claude\.exe' \$task/)
+      assert.equal(parseDecoded(nobom, "utf8"), "PARSE_OK")
       assert.equal(parse(bom), "PARSE_OK")
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })

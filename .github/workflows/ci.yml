@@ -238,8 +238,29 @@ jobs:
             try { New-SmbShare -Name $share -Path $fixture -FullAccess $owner.Name -ErrorAction Stop | Out-Null } finally { $owner.Dispose() }
             $shareCreated = $true
             # CMSPARK_650_ORIGINAL_COMMANDS_BEGIN
-            node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs
+            node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $shortFixture = Join-Path $fixture 'canonical short alias owned'
+            New-Item -ItemType Directory -Path $shortFixture -ErrorAction Stop | Out-Null
+            Add-Type @'
+          using System;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          public static class Cmspark650OwnedPaths {
+            [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+            public static extern uint GetShortPathName(string source, StringBuilder dest, uint size);
+            [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+            public static extern uint GetLongPathName(string source, StringBuilder dest, uint size);
+          }
+          '@
+            $longBuffer = [System.Text.StringBuilder]::new(32768)
+            $shortBuffer = [System.Text.StringBuilder]::new(32768)
+            $longLength = [Cmspark650OwnedPaths]::GetLongPathName($shortFixture, $longBuffer, 32768)
+            if ($longLength -eq 0 -or $longLength -ge 32768) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            $shortLength = [Cmspark650OwnedPaths]::GetShortPathName($longBuffer.ToString(), $shortBuffer, 32768)
+            if ($shortLength -eq 0 -or $shortLength -ge 32768 -or $shortBuffer.ToString() -notmatch '~[0-9]' -or $shortBuffer.ToString() -eq $longBuffer.ToString()) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            $env:CMSPARK_TEST_LONG_ROOT = $longBuffer.ToString()
+            $env:CMSPARK_TEST_SHORT_ROOT = $shortBuffer.ToString()
             $env:CMSPARK_TEST_UNC_SHARE = '\\127.0.0.1\' + $share
             node scripts/windows-census.mjs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -258,6 +279,8 @@ jobs:
               }
             } catch { throw 'CENSUS_OWNED_SMB_CLEANUP_FAILED' } finally {
               if (Test-Path Env:CMSPARK_TEST_UNC_SHARE) { Remove-Item Env:CMSPARK_TEST_UNC_SHARE -ErrorAction Stop }
+              if (Test-Path Env:CMSPARK_TEST_LONG_ROOT) { Remove-Item Env:CMSPARK_TEST_LONG_ROOT -ErrorAction Stop }
+              if (Test-Path Env:CMSPARK_TEST_SHORT_ROOT) { Remove-Item Env:CMSPARK_TEST_SHORT_ROOT -ErrorAction Stop }
             }
           }
 

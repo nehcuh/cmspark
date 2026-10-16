@@ -1,12 +1,41 @@
 // Tests for companion/src/config.ts API-key resolution and persistence logic.
 
-import test, { before, after, describe } from "node:test"
+import test, { before, after, describe, type TestContext } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
+import fsNative from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-config-"))
+
+// Windows mode bits cannot prove a POSIX owner-only mode or a DACL. Observe
+// each real atomic writer transaction, without replacing its filesystem work.
+function observeConfigMode(t: TestContext, write: () => void) {
+  const p = path.join(tempHome, "config.json"), tmp = `${p}.tmp-${process.pid}`
+  const calls: Array<{ op: string; mode?: string | number }> = []
+  const restore: Array<() => void> = []
+  if (process.platform === "win32") {
+    const originalWrite = fsNative.writeFileSync, rename = fsNative.renameSync, chmod = fsNative.chmodSync
+    const w = t.mock.method(fsNative, "writeFileSync", function (this: typeof fsNative, ...args: Parameters<typeof originalWrite>) {
+      if (args[0] === tmp) calls.push({ op: "write", mode: typeof args[2] === "object" ? args[2]?.mode : undefined })
+      return Reflect.apply(originalWrite, this, args)
+    })
+    restore.push(() => w.mock.restore())
+    const r = t.mock.method(fsNative, "renameSync", function (this: typeof fsNative, ...args: Parameters<typeof rename>) {
+      if (args[0] === tmp && args[1] === p) calls.push({ op: "rename" })
+      return Reflect.apply(rename, this, args)
+    })
+    restore.push(() => r.mock.restore())
+    const c = t.mock.method(fsNative, "chmodSync", function (this: typeof fsNative, ...args: Parameters<typeof chmod>) {
+      if (args[0] === p) calls.push({ op: "chmod", mode: args[1] })
+      return Reflect.apply(chmod, this, args)
+    })
+    restore.push(() => c.mock.restore())
+  }
+  try { write() } finally { for (const undo of restore.reverse()) undo() }
+  return calls
+}
 
 let getConfig: typeof import("../src/config").getConfig
 let saveConfig: typeof import("../src/config").saveConfig
@@ -290,9 +319,9 @@ describe("saveConfig vision API key", { concurrency: 1 }, () => {
 
   // --- audit H3: atomic writes ---
 
-  test("H3: saveConfig writes atomically — no leftover .tmp, file valid + 0o600", async () => {
+  test("H3: saveConfig writes atomically — no leftover .tmp, file valid + 0o600", async t => {
     await resetConfigFile()
-    saveConfig({ trusted_domains: ["atomic.example.com"] })
+    const calls = observeConfigMode(t, () => { saveConfig({ trusted_domains: ["atomic.example.com"] }) })
     const tmpFiles = fs.readdirSync(tempHome).filter(f => f.includes(".tmp-"))
     assert.equal(tmpFiles.length, 0, "atomic write must not leave a .tmp file behind")
     clearConfigCache()
@@ -300,8 +329,12 @@ describe("saveConfig vision API key", { concurrency: 1 }, () => {
       getConfig().trusted_domains.includes("atomic.example.com"),
       "saved value must persist + reload",
     )
-    const mode = fs.statSync(path.join(tempHome, "config.json")).mode & 0o777
-    assert.equal(mode, 0o600, "config.json must be owner-only (0o600)")
+    if (process.platform === "win32") {
+      assert.deepEqual(calls, [{ op: "write", mode: 0o600 }, { op: "rename" }, { op: "chmod", mode: 0o600 }])
+    } else {
+      const mode = fs.statSync(path.join(tempHome, "config.json")).mode & 0o777
+      assert.equal(mode, 0o600, "config.json must be owner-only (0o600)")
+    }
   })
 })
 
@@ -461,12 +494,19 @@ describe("migrateLegacyModelName (DeepSeek 2026-07-24 deprecation)", { concurren
     assert.equal(getConfig().llm.model_name, "deepseek-v4-flash")
   })
 
-  test("migrated config.json stays owner-only (0o600) after rewrite", async () => {
+  test("migrated config.json stays owner-only (0o600) after rewrite", async t => {
     await resetConfigFile()
-    saveConfig({ llm: { model_name: "deepseek-chat" } as any })
-    migrateLegacyModelName()
-    const mode = fs.statSync(path.join(tempHome, "config.json")).mode & 0o777
-    assert.equal(mode, 0o600, "migration must preserve the 0o600 mode (holds api_key)")
+    const calls = observeConfigMode(t, () => {
+      saveConfig({ llm: { model_name: "deepseek-chat" } as any })
+      migrateLegacyModelName()
+    })
+    if (process.platform === "win32") {
+      const transaction = [{ op: "write", mode: 0o600 }, { op: "rename" }, { op: "chmod", mode: 0o600 }]
+      assert.deepEqual(calls, [...transaction, ...transaction])
+    } else {
+      const mode = fs.statSync(path.join(tempHome, "config.json")).mode & 0o777
+      assert.equal(mode, 0o600, "migration must preserve the 0o600 mode (holds api_key)")
+    }
   })
 })
 

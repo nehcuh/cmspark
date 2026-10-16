@@ -3,9 +3,10 @@
 // 重跑分组 + truncated、边 top-5 + 对称去重 + 确定性、display round-trip 与
 // 缺失容忍、surface 门（panel-only）、LLM 失败回退 + 长度钳制 + 重生成。
 
-import test, { after, before } from "node:test"
+import test, { after, before, type TestContext } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "fs"
+import fsNative from "node:fs"
 import * as os from "os"
 import * as path from "path"
 
@@ -475,7 +476,9 @@ test("#296 no llm_labels → no LLM call at all (default off)", async () => {
 
 // --- display round-trip / 容忍 ---
 
-test("#296 display round-trip via engine + file (0o600)", async () => {
+test("#296 display round-trip via engine + file (0o600)", async t => {
+  const mode = observeGraphMode(t)
+  try {
   resetKnowledgeState()
   const se = new SkillEngine()
   seedThemed(se, 25)
@@ -503,8 +506,42 @@ test("#296 display round-trip via engine + file (0o600)", async () => {
     assert.equal(v.summary, "AI 摘要")
   }
   const st = fs.statSync(p)
-  assert.equal(st.mode & 0o777, 0o600)
+  if (process.platform === "win32") {
+    // Every real cache transaction must request 0600; this is not a DACL check.
+    assert.ok(mode.calls.length >= 3)
+    assert.equal(mode.calls.length % 3, 0)
+    for (let i = 0; i < mode.calls.length; i += 3) {
+      assert.deepEqual(mode.calls.slice(i, i + 3), [{ op: "write", mode: 0o600 }, { op: "rename" }, { op: "chmod", mode: 0o600 }])
+    }
+  } else {
+    assert.equal(st.mode & 0o777, 0o600)
+  }
+  } finally { mode.restore() }
 })
+
+function observeGraphMode(t: TestContext) {
+  const p = clusters.knowledgeIndexPath(), tmp = `${p}.tmp-${process.pid}`
+  const calls: Array<{ op: string; mode?: string | number }> = [], restore: Array<() => void> = []
+  if (process.platform === "win32") {
+    const write = fsNative.writeFileSync, rename = fsNative.renameSync, chmod = fsNative.chmodSync
+    const w = t.mock.method(fsNative, "writeFileSync", function (this: typeof fsNative, ...args: Parameters<typeof write>) {
+      if (args[0] === tmp) calls.push({ op: "write", mode: typeof args[2] === "object" ? args[2]?.mode : undefined })
+      return Reflect.apply(write, this, args)
+    })
+    restore.push(() => w.mock.restore())
+    const r = t.mock.method(fsNative, "renameSync", function (this: typeof fsNative, ...args: Parameters<typeof rename>) {
+      if (args[0] === tmp && args[1] === p) calls.push({ op: "rename" })
+      return Reflect.apply(rename, this, args)
+    })
+    restore.push(() => r.mock.restore())
+    const c = t.mock.method(fsNative, "chmodSync", function (this: typeof fsNative, ...args: Parameters<typeof chmod>) {
+      if (args[0] === p) calls.push({ op: "chmod", mode: args[1] })
+      return Reflect.apply(chmod, this, args)
+    })
+    restore.push(() => c.mock.restore())
+  }
+  return { calls, restore: () => { for (const undo of restore.reverse()) undo() } }
+}
 
 test("#296 readKnowledgeIndexFile tolerates missing / malformed display", () => {
   const p = path.join(DATA_DIR, "cache", "kg-tolerance-test.json")

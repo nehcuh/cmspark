@@ -564,7 +564,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // JSON-escaped against layout spoofing, every injectable action
       // enumerated verbatim; unit-tested in computer-preview.test.ts.
       const { buildComputerL2Preview } = await import("../computer/preview")
-      const failC = (error: string, errorCode?: "APP_COORDINATE_DENIED" | "APP_COORDINATE_STRUCTURAL") => {
+      const failC = (error: string, errorCode?: "APP_COORDINATE_DENIED" | "APP_COORDINATE_STRUCTURAL" | "COMPUTER_DISABLED" | "APP_NOT_WHITELISTED") => {
         const result = { success: false, error, ...(errorCode ? { error_code: errorCode } : {}) }
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
@@ -869,7 +869,8 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         // App metadata must not turn a typed policy denial into text recovery.
         // Other errors retain their existing message-only fallback.
         const errorCode = err instanceof ComputerError &&
-          (err.code === "APP_COORDINATE_DENIED" || err.code === "APP_COORDINATE_STRUCTURAL")
+          (err.code === "APP_COORDINATE_DENIED" || err.code === "APP_COORDINATE_STRUCTURAL" ||
+            err.code === "COMPUTER_DISABLED" || err.code === "APP_NOT_WHITELISTED")
           ? err.code : undefined
         return failC(err?.message || String(err), errorCode)
       }

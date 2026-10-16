@@ -1045,11 +1045,22 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["COMPANION_UI_CLICK_DENIED", "non_recoverable"],
   ["DANGER_HARD_DENY", "non_recoverable"],
   ["TYPE_TEXT_NOT_CONFIRMED", "non_recoverable"],
+  // #563: existing feature/app/human/budget/estop refusals keep their ordinary
+  // hard stop even when metadata contains timeout or security wording.
+  ["COMPUTER_DISABLED", "non_recoverable"],
+  ["APP_NOT_WHITELISTED", "non_recoverable"],
+  ["DANGER_DENIED_BY_USER", "non_recoverable"],
+  ["DIALOG_PAUSED_DENIED", "non_recoverable"],
+  ["BUDGET_DENIED", "non_recoverable"],
+  ["UNCROSS_DENIED", "non_recoverable"],
+  ["EMERGENCY_STOP_LOST", "non_recoverable"],
   // Bounds rejection permits re-locating, never clamping or new authority.
   // Explicit recovery also replaces hard-word/neutral diagnostic fallback.
   ["OUT_OF_BOUNDS", "recoverable"],
 
   // ── recoverable ───────────────────────────────────────────────────────────
+  // #563: four early missing worker/intent arguments are model-repairable, not authority refusals.
+  ["WORKER_INPUT_INVALID", "recoverable"],
   // Authorization refusal permits a different tool or fresh human approval;
   // it never validates/mints a token or relaxes the evaluate admission gate.
   ["EVALUATE_AUTH_REQUIRED", "recoverable"],

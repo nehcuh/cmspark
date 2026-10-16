@@ -186,6 +186,10 @@ export async function tryAcpInitialize(
       },
       timeoutMs,
     )
+    if (!result || typeof result !== "object" || Array.isArray(result) ||
+        (result as { protocolVersion?: unknown }).protocolVersion !== 1) {
+      return { ok: false, error: "ACP initialize returned an unsupported protocol version (expected 1)" }
+    }
     return { ok: true, result }
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) }
