@@ -17,11 +17,14 @@ import { DESKTOP_NATIVE_ORIGIN } from "../../../src/desktop/capabilities"
 
 const fixed = new Set(["AUTH_1", "AUTH_2", "CONSUMED_HANDLES_DENIED", "PARENT_LOCK_ARMED", "DEVTOOLS_DENIED", "FRAME_DENIED", "REMOTE_DENIED", "NEW_WINDOW_DENIED", "DOWNLOAD_DENIED", "DOCUMENT_FRESH", "STALE_DENIED"])
 const failures = new Set(["FAIL_NO_DOCUMENT", "FAIL_SCRIPT", "FAIL_ENGINE_API", "FAIL_WINDOW", "FAIL_DEVTOOLS", "FAIL_FRAME_FORWARDED", "FAIL_STALE_FORWARDED", "FAIL_REMOTE", "FAIL_DOWNLOAD", "FAIL_GENERATION", "FAIL_HOSTILE_FORWARDED", "FAIL_FRAME_NOT_OBSERVED", "FAIL_DESCENDANT_NOT_OBSERVED", "FAIL_PARENT_LOCK"])
-export type AcceptanceReceipt = { kind: "fixed"; name: string } | { kind: "window"; view: "compact" | "workspace"; width: number; height: number; expectedWidth: number; expectedHeight: number; bits: string }
+export type AcceptanceReceipt = { kind: "inheritance"; checks: string; stage: number; control: number; descendant: number } | { kind: "fixed"; name: string } | { kind: "window"; view: "compact" | "workspace"; width: number; height: number; expectedWidth: number; expectedHeight: number; bits: string }
 export function acceptanceReceipt(value: unknown): AcceptanceReceipt | null {
   if (typeof value !== "string" || value.length > 200 || !value.startsWith("D480A_")) return null
   const name = value.slice(6)
   if (fixed.has(name) || failures.has(name)) return { kind: "fixed", name }
+  const inheritance = /^INHERITANCE_([01]{4})_([0-7])_(0|[1-9]\d{0,2})_(0|[1-9]\d{0,2})$/.exec(name)
+  const checkerCode = (value: number) => value <= 7 || (value >= 240 && value <= 257)
+  if (inheritance && inheritance[0] === name && checkerCode(Number(inheritance[3])) && checkerCode(Number(inheritance[4]))) return { kind: "inheritance", checks: inheritance[1], stage: Number(inheritance[2]), control: Number(inheritance[3]), descendant: Number(inheritance[4]) }
   const m = /^WINDOW_([CW])_([1-9]\d*)_([1-9]\d*)_([1-9]\d*)_([1-9]\d*)_([01]{7})$/.exec(name)
   if (!m) return null
   const values = m.slice(2, 6).map(Number)
@@ -89,6 +92,7 @@ export function acceptanceDiagnostic(reason: string, phase: string, mode: string
     auths: finiteCount(counts.auths), issues: finiteCount(counts.issues), launches: finiteCount(counts.launches), exits: finiteCount(counts.exits), listReads: finiteCount(counts.listReads),
     lastExitCode: Number.isSafeInteger(counts.lastExitCode) && counts.lastExitCode! >= -0x80000000 && counts.lastExitCode! <= 0xffffffff ? counts.lastExitCode : null,
     fixed: [...new Set(observations.filter(r => r.kind === "fixed" && (fixed.has(r.name) || failures.has(r.name))).map(r => (r as { name: string }).name))].sort(),
+    inheritance: observations.filter(r => r.kind === "inheritance").slice(0, 1),
     windows: finiteCount(observations.filter(r => r.kind === "window").length),
   }
 }
@@ -151,6 +155,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   let observedFailure: Error | undefined
   observer = observeAcceptanceResponses(channel.wss, () => ({ host: ownedHost, capabilityId }), registry, receipt => {
     if (receipt.kind === "fixed" && observations.some(r => r.kind === "fixed" && r.name === receipt.name)) observedFailure = Error("OWNED_NATIVE_DUPLICATE_PHASE")
+    if (receipt.kind === "inheritance" && observations.some(r => r.kind === "inheritance")) observedFailure = Error("OWNED_NATIVE_DUPLICATE_PHASE")
     observations.push(receipt)
     if (receipt.kind === "fixed" && receipt.name.startsWith("FAIL_")) observedFailure = Error(receipt.name)
     for (const wake of waiters) wake()

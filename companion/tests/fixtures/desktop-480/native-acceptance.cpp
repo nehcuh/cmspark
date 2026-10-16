@@ -10,6 +10,8 @@ class D480Acceptance {
  inline static HANDLE oldInput=nullptr,ownedSentinel=nullptr;
  inline static bool inputWasClosed=false,parentWasCleared=false,descendantDenied=false,checkerPositive=false;
  inline static ULONGLONG inheritanceStarted=0;
+ // Test-only finite observations: 257=not run, 256=unexpected status; no raw HANDLE/path/error.
+ inline static unsigned inheritanceStage=0,controlResult=257,descendantResult=257;
  inline static HANDLE parentReceipt=nullptr;
  inline static BY_HANDLE_FILE_INFORMATION parentReceiptInfo{};
  static DWORD inheritedChecker(std::wstring const&,wchar_t const*);
@@ -46,6 +48,8 @@ void D480Acceptance::auth(Desktop& h){auths++;emit(h,L"AUTH_"+std::to_wstring(au
  emit(h,parentReceipt?L"PARENT_LOCK_ARMED":L"FAIL_PARENT_LOCK");
 #endif
 #ifdef D480_INHERITANCE
+ bool checkBits[]={inputWasClosed,parentWasCleared,checkerPositive,descendantDenied};std::wstring checks;for(bool bit:checkBits)checks+=bit?L'1':L'0';
+ emit(h,L"INHERITANCE_"+checks+L"_"+std::to_wstring(inheritanceStage)+L"_"+std::to_wstring(controlResult)+L"_"+std::to_wstring(descendantResult));
  emit(h,inputWasClosed&&parentWasCleared&&descendantDenied&&checkerPositive?L"CONSUMED_HANDLES_DENIED":L"FAIL_DESCENDANT_NOT_OBSERVED");
 #endif
 }
@@ -155,7 +159,7 @@ void D480Acceptance::preConsume(HANDLE input){
  }}
 #endif
 #ifdef D480_INHERITANCE
- oldInput=input;inheritanceStarted=GetTickCount64();SECURITY_ATTRIBUTES sa{sizeof(sa),nullptr,TRUE};ownedSentinel=CreateEventW(&sa,TRUE,FALSE,nullptr);
+ oldInput=input;inheritanceStarted=GetTickCount64();SECURITY_ATTRIBUTES sa{sizeof(sa),nullptr,TRUE};ownedSentinel=CreateEventW(&sa,TRUE,FALSE,nullptr);inheritanceStage=1;
 #else
  (void)input;
 #endif
@@ -181,15 +185,18 @@ DWORD D480Acceptance::inheritedChecker(std::wstring const& binary,wchar_t const*
 void D480Acceptance::parentCleared(HANDLE parent){
 #ifdef D480_INHERITANCE
  struct SentinelCleanup{~SentinelCleanup(){if(D480Acceptance::ownedSentinel){CloseHandle(D480Acceptance::ownedSentinel);D480Acceptance::ownedSentinel=nullptr;}}} cleanup;
- DWORD flags=0;parentWasCleared=GetHandleInformation(parent,&flags)&&!(flags&HANDLE_FLAG_INHERIT);
+ DWORD flags=0;parentWasCleared=GetHandleInformation(parent,&flags)&&!(flags&HANDLE_FLAG_INHERIT);inheritanceStage=2;
  if(!inputWasClosed||!parentWasCleared||!ownedSentinel)return;
  wchar_t self[32768];DWORD length=GetModuleFileNameW(nullptr,self,32768);if(!length||length==32768)return;
  std::wstring file(self,length);auto slash=file.find_last_of(L"\\/");if(slash==std::wstring::npos)return;
- std::wstring receiver=file.substr(0,slash+1)+L"desktop-inheritance.exe",sidecar=receiver+L".handles";
- HANDLE output=CreateFileW(sidecar.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);if(output==INVALID_HANDLE_VALUE)return;
+ std::wstring receiver=file.substr(0,slash+1)+L"desktop-inheritance.exe",sidecar=receiver+L".handles";inheritanceStage=3;
+ HANDLE output=CreateFileW(sidecar.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);if(output==INVALID_HANDLE_VALUE)return;inheritanceStage=4;
  char bytes[256];int size=snprintf(bytes,sizeof(bytes),"D480_OWNED_HANDLES_V1\n%llu\n%llu\n%llu\n",(unsigned long long)(uintptr_t)oldInput,(unsigned long long)(uintptr_t)parent,(unsigned long long)(uintptr_t)ownedSentinel);
  BY_HANDLE_FILE_INFORMATION info{};DWORD wrote=0;bool valid=size>0&&size<(int)sizeof(bytes)&&GetFileInformationByHandle(output,&info)&&info.nNumberOfLinks==1&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))&&WriteFile(output,bytes,(DWORD)size,&wrote,nullptr)&&wrote==(DWORD)size&&FlushFileBuffers(output);CloseHandle(output);
- if(valid){checkerPositive=inheritedChecker(receiver,L"--sentinel")==4;descendantDenied=inheritedChecker(receiver,L"--descendant")==4;}
+ if(valid){inheritanceStage=5;
+  DWORD result=inheritedChecker(receiver,L"--sentinel");controlResult=(result<=7||(result>=240&&result<=255))?(unsigned)result:256;checkerPositive=result==4;inheritanceStage=6;
+  result=inheritedChecker(receiver,L"--descendant");descendantResult=(result<=7||(result>=240&&result<=255))?(unsigned)result:256;descendantDenied=result==4;inheritanceStage=7;
+ }
  CloseHandle(ownedSentinel);ownedSentinel=nullptr;
 #else
  (void)parent;
