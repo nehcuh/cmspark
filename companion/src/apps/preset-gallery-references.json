@@ -1,0 +1,58 @@
+[
+  {
+    "token": "win.app.notepadpp",
+    "displayName": "Notepad++",
+    "detectCandidates": [
+      "%ProgramFiles%\\Notepad++\\notepad++.exe"
+    ],
+    "reference": {
+      "release": "8.9.8.1",
+      "architecture": "Windows x64",
+      "artifactURL": "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8.1/npp.8.9.8.1.portable.x64.zip",
+      "packageSHA256": "beddf5548e75c97930d1575ba1c7d113e6e2b33d0a200310e734ca08e225f414",
+      "referenceEXERelativePath": "notepad++.exe",
+      "referenceEXESHA256": "c52c9ed2ec6d0b5b3f243b29f2124f98db56b6ba92bb42a9af2665709464b3cf",
+      "expectedCertificateSHA256DER": null,
+      "observedSubject": null,
+      "observedSignatureStatus": null,
+      "collectedAtUTC": null,
+      "pathEvidence": [
+        "https://github.com/notepad-plus-plus/notepad-plus-plus/blob/dd40fe45598791e9aa38f3aeb200e10fb3d6338a/PowerEditor/installer/nsisInclude/globalDef.nsh#L70",
+        "https://npp-user-manual.org/docs/config-files/"
+      ],
+      "advice": "建议保持手动策略，用于本地文本编辑；文件模板仍按现有逐次确认与第二因素门禁执行。",
+      "typicalPaths": [
+        "%ProgramFiles%\\Notepad++\\notepad++.exe"
+      ]
+    }
+  },
+  {
+    "token": "win.app.vscode",
+    "displayName": "Visual Studio Code Stable",
+    "detectCandidates": [
+      "%ProgramFiles%\\Microsoft VS Code\\Code.exe",
+      "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"
+    ],
+    "reference": {
+      "release": "1.142.0",
+      "architecture": "Windows x64",
+      "artifactURL": "https://vscode.download.prss.microsoft.com/dbazure/download/stable/6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1/VSCode-win32-x64-1.142.0.zip",
+      "packageSHA256": "ace1da7d1432d43c1ab4b2bbf643f6494f6d25dec07494976755eac522cd50d9",
+      "referenceEXERelativePath": "Code.exe",
+      "referenceEXESHA256": null,
+      "expectedCertificateSHA256DER": null,
+      "observedSubject": null,
+      "observedSignatureStatus": null,
+      "collectedAtUTC": null,
+      "pathEvidence": [
+        "https://code.visualstudio.com/docs/setup/windows",
+        "https://code.visualstudio.com/docs/setup/portable"
+      ],
+      "advice": "建议保持手动策略；编辑器任务、终端和扩展可能执行代码，确认操作范围后再通过现有人工流程调整。",
+      "typicalPaths": [
+        "%ProgramFiles%\\Microsoft VS Code\\Code.exe",
+        "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"
+      ]
+    }
+  }
+]
