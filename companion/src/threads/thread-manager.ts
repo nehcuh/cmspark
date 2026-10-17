@@ -8,6 +8,7 @@ import type { MissionBoard } from "../board/schema"
 import type { ThreadDigest } from "./digest"
 import { isDigestStale, sanitizeDigest } from "./digest"
 import { sanitizeUserTags } from "./user-tags"
+import { summonerThreadMetadata } from "./metadata-patch"
 import { sanitizeTopicFolder } from "./distill"
 import { inspectThreadMessages } from "./thread-inspect"
 import {
@@ -826,9 +827,9 @@ export class ThreadManager {
   }
 
   /** #480: metadata-only snapshot; never purge/repair/save or expose mutable index rows. */
-  desktopMetadataSnapshot(): Array<{ id: string; alias: string; updated_at: string }> {
+  desktopMetadataSnapshot(): Array<{ id: string; alias: string; updated_at: string; user_tags: string[]; topic_folder: string | null }> {
     return uniqueIndexThreads(this.index.threads).filter(t => !this.isTrashed(t))
-      .map(t => ({ id: t.id, alias: t.alias, updated_at: t.updated_at }))
+      .map(t => ({ id: t.id, alias: t.alias, updated_at: t.updated_at, user_tags: Array.isArray(t.user_tags) ? t.user_tags.filter(v => typeof v === "string") : [], topic_folder: t.topic_folder || null }))
   }
 
   list(opts?: { include_trashed?: boolean; only_trashed?: boolean }): Thread[] {
@@ -956,6 +957,23 @@ export class ThreadManager {
       }
     }
     return thread
+  }
+
+  /** Native metadata only. No await between the target snapshot and persistence;
+   * a failed write restores this target, never the index or other conversations. */
+  updateDesktopMetadata(threadId: string, raw: unknown): Thread | undefined {
+    if (!ThreadManager.isSafeThreadId(threadId)) return undefined
+    const updates = summonerThreadMetadata(raw)
+    const target = this.index.threads.find(t => t.id === threadId)
+    if (!target || this.isTrashed(target)) return undefined
+    const previous = Object.getOwnPropertyDescriptors(target)
+    try { return this.update(threadId, updates) }
+    catch (error) {
+      // update() can also seed target run_progress or merge peer metadata.
+      for (const key of Object.keys(target)) if (!Object.prototype.hasOwnProperty.call(previous, key)) delete (target as any)[key]
+      Object.defineProperties(target, previous)
+      throw error
+    }
   }
 
   update(threadId: string, updates: Partial<Thread>): Thread | undefined {

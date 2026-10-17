@@ -6,6 +6,7 @@ import { DESKTOP_NATIVE_ORIGIN, DESKTOP_CHALLENGE_TTL_MS } from "./capabilities"
 import { desktopRead, type DesktopReadServices } from "./read"
 import { parseDesktopFrame } from "./flat-json"
 import { createDesktopMcpSave } from "./mcp-save"
+import { desktopThreadMetadata } from "./thread-metadata"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 
 const hexId = /^[0-9a-f]{32}$/
@@ -57,6 +58,14 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
           send(ws, { type: "desktop.ready", protocol_version: 1 }); opts.onAuthenticated?.(principal.hostSessionId); return
         }
         ws.terminate(); return
+      }
+      if (["desktop.thread.metadata.edit", "desktop.thread.metadata.save"].includes(String(frame.type))) {
+        const owner = principal
+        const current = () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner!, String(frame.type))
+        if (!current()) { send(ws, { type: String(frame.type) + ".result", id: frame.id, thread_id: frame.thread_id, ok: false, ...(frame.type === "desktop.thread.metadata.save" ? { saved: false } : {}), error_code: "DESKTOP_METHOD_DENIED" }); return }
+        const result = desktopThreadMetadata(frame, opts.services, current)
+        if (current()) send(ws, result)
+        return
       }
       if (["desktop.mcp.edit", "desktop.mcp.save", "desktop.confirmation.decision"].includes(String(frame.type))) {
         if (!mcpSave || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", error_code: "DESKTOP_METHOD_DENIED", ...(typeof frame.id === "string" ? { id: frame.id } : {}) }); return }
