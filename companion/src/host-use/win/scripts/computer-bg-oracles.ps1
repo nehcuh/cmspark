@@ -43,6 +43,8 @@ function Fail([string]$prefix, [string]$detail, [int]$code) {
   exit $code
 }
 
+# Compare consumes recorded JSON only; Win32 compilation belongs to snapshots.
+if ($Mode -eq 'snapshot') {
 Add-Type -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
@@ -52,6 +54,7 @@ Add-Type -MemberDefinition @'
 [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
 public delegate bool EnumProc(IntPtr h, IntPtr l);
 '@ -Name Bg -Namespace CU | Out-Null
+}
 
 if ($ZOrderDepth -lt 1 -or $ZOrderDepth -gt 128) { Fail "BADARGS" "ZOrderDepth $ZOrderDepth out of range 1..128" 2 }
 if ($Mode -eq 'compare') {
