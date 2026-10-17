@@ -31,7 +31,7 @@ while ($clock.ElapsedMilliseconds -lt 10000) {
    if ($windowPid -ne $OwnedPid) { throw 'OWNED_WINDOW_MISMATCH' }
    $title=New-Object System.Text.StringBuilder -ArgumentList 512
    [UIntPtr]$titleLength=[UIntPtr]::Zero;[UIntPtr]$count=[UIntPtr]::Zero
-   $a=[OwnedNpp686]::Text($window,13,[UIntPtr]512,$title,2,200,[ref]$titleLength)
+   $a=[OwnedNpp686]::Text($window,13,[UIntPtr]::new([uint32]512),$title,2,200,[ref]$titleLength)
    $b=[OwnedNpp686]::Count($window,2031,[UIntPtr]::Zero,[IntPtr]::Zero,2,200,[ref]$count)
    if ($a -ne [IntPtr]::Zero -and $b -ne [IntPtr]::Zero -and $count.ToUInt64() -eq 1 -and $title.ToString().Contains($OwnedName)) {
     @{native_ps51=$true;owned_window=$true;matching_file_title=$true;open_files=1;actual_target_parser=$true} | ConvertTo-Json -Compress
