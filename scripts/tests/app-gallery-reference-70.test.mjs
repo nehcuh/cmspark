@@ -83,7 +83,9 @@ test('#70 malformed/unsigned wire cannot be promoted to certificate evidence', (
 test('#70 production PS source binds exact entry, same archive handle and leaf DER, never whole extracts or launches', () => {
   // Static binding only. This is explicitly not PowerShell parsing or native execution.
   const ps = fs.readFileSync(path.join(root, 'scripts/fixtures/app-gallery-reference-70.ps1'), 'utf8')
-  assert.ok(ps.includes('$_.FullName -ceq $EntryName'))
+  assert.ok(ps.includes('$candidate.FullName -ceq $EntryName'))
+  assert.ok(ps.includes("if ($matchCount -ne 1) { throw 'EXACT_ONE_ENTRY_REQUIRED' }"))
+  assert.ok(ps.includes('foreach ($candidate in $zip.Entries)'))
   assert.ok(ps.includes('$hash.ComputeHash($archive)'))
   assert.ok(ps.includes('$archive.Position = 0'))
   assert.ok(ps.includes('[IO.FileMode]::CreateNew'))
@@ -149,9 +151,11 @@ test('#70 entry identity refuses missing/unsupported metadata and accepts an act
 // decides whether fixed module discovery and signature sampling succeed.
 test('#70 sampler fixes Utility/Security discovery without changing the 15s runner', () => {
   const ps = fs.readFileSync(path.join(root, 'scripts/fixtures/app-gallery-reference-70.ps1'), 'utf8')
-  for (const command of ['Add-Type', 'New-Object', 'ConvertTo-Json']) {
+  for (const command of ['Add-Type', 'ConvertTo-Json']) {
     assert.ok(ps.includes('Microsoft.PowerShell.Utility\\' + command), command)
   }
+  assert.ok(ps.includes('$buffer = [byte[]]::new(65536)'))
+  assert.doesNotMatch(ps, /\|\s*Where-Object|\bNew-Object\b/)
   assert.ok(ps.includes('Microsoft.PowerShell.Security\\Get-AuthenticodeSignature'))
   const source = fs.readFileSync(path.join(root, 'scripts/collect-app-gallery-reference-70.mjs'), 'utf8')
   assert.match(source, /const raw = await runPs\(/)
@@ -196,4 +200,20 @@ test('#70 finite failure fields snapshot actual accessors once before admission'
   assert.equal(result.signal, 'SIGTERM')
   assert.deepEqual(result.phases, [{ phase: 'ENTERED', elapsed_ms: 1 }])
   assert.equal(JSON.stringify(result).includes('OWNED_INERT_SENTINEL_DO_NOT_ECHO'), false)
+})
+
+test('#70 extraction boundary reports a strict prefix through buffer readiness', () => {
+  const phases = ['ENTERED', 'ASSEMBLY_READY', 'ARCHIVE_VERIFIED', 'ZIP_OPENED',
+    'ENTRY_SELECTED', 'ENTRY_OPENED', 'OUTPUT_OPENED', 'BUFFER_READY', 'ENTRY_WRITTEN',
+    'EXE_VERIFIED', 'SIGNATURE_ENTERED', 'SIGNATURE_RETURNED', 'COMPLETE']
+  for (let length = 1; length <= phases.length; length++) {
+    const prefix = phases.slice(0, length)
+    const stderr = prefix.map((phase, i) => `GALLERY70_PHASE=${phase}:${i}`).join('\r\n')
+    assert.deepEqual(collector.sampleFailureDiagnostic({ stderr }).phases,
+      prefix.map((phase, i) => ({ phase, elapsed_ms: i })))
+  }
+  for (const stderr of [
+    'GALLERY70_PHASE=ENTERED:0\nGALLERY70_PHASE=ZIP_OPENED:1',
+    phases.slice(0, 4).map((phase, i) => `GALLERY70_PHASE=${phase}:${i}`).join('\n') + '\nGALLERY70_PHASE=ZIP_OPENED:4',
+  ]) assert.deepEqual(collector.sampleFailureDiagnostic({ stderr }).phases, [])
 })
