@@ -36,3 +36,21 @@ Review comments and source packets are distinct from real enterprise acceptance.
 - Isolated real Chrome/React/xterm UI test passes: copy sends no shell input, report explicitly submits and receives receipt, both panes visible, disconnect disables input/import.
 - Actual Grok 4.6 and DeepSeek V4 Pro independently reviewed design, web source, terminal, return UI, and material checkpoints; reports and dispositions under `docs/audit/reviews/464-20260907/`.
 - Real code-platform split views, Agent compatibility and both enterprise scenarios remain #450/#452/#454/#455/#457 gates, not synthetic-test claims.
+
+## #464 finite text-rename extension (2026-10-17)
+
+Existing #464 precedes this original-scope extension. The root-approved finite
+contract accepts only explicit unquoted rename metadata with complete changed
+text hunks; both actual paths, side-specific lines and immutable citations are
+retained. Pure rename/copy/binary/combined/mode-only forms stay unsupported.
+
+The permanent fixture is the exact public Git R064 patch at bdc05e61 with pinned
+source and independent hunk inventory digests. Validate it through the current
+parser, EvidenceStore/CodeReviewService and report old/new fences, using an
+explicit synthetic mutation of the recorded BrowserBridge wire. Preserve
+missing-side, forged-citation, rewritten-observation and capacity refusals.
+Run the related canonical test family and build, locked ARM, genuine nonauthor
+review, the original named Grok4.6 + DeepSeekV4Pro gates (direct HTTP, no Pi),
+Kimi/configured Claude and exact head/main CI. Host completeness, actual
+Agent/business acceptance and review_ready=false remain unchanged; this leaf
+does not close all of #464.

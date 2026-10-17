@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/nehcuh/cmspark",
+  "base": "52c14c27cd7bb6831c6089e6db0a292c48c63516",
+  "head": "bdc05e61ffc6d878a246a552f40e26ec48c53010",
+  "patchSHA256": "205a01bb9e6b1f0792afbf70fbddef89a8d68d4b9fa92563b5c969f46fec2f81",
+  "oldPath": "chrome-extension/src/sidepanel/components/SceneStatusBar.tsx",
+  "newPath": "chrome-extension/src/sidepanel/components/SceneStatusRow.tsx",
+  "lines": 174,
+  "lineInventorySHA256": "1f02051ae5eb1eb67186c034d15fd88a2235f41d0cab097898be624beec14a2a"
+}
