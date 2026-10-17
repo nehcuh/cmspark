@@ -1,3 +1,4 @@
+import { registerNoFocusNativeTests572 } from "./helpers/uia-no-focus-native-572"
 // #572 — REAL integration: the compiled adapter driving the REAL PowerShell script.
 //
 // WHY THIS FILE EXISTS (read before deleting it):
@@ -219,7 +220,7 @@ ${call("BEFORE_FROM_HANDLE")}
 `.replace(/\n/g, eol)
   const declaration = "public static extern bool IsWindow(System.IntPtr h);"
   const fromHandle = "try { $rootEl = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$Hwnd) }"
-  const action = '  try { & $act $obj; [void]$tried.Add("${pname}:ok"); return $true }'
+  const action = '  try { $status = & $act $obj }'
   const exit = "exit 0"
   for (const anchor of [declaration, fromHandle, action, exit]) {
     assert.equal(text.split(anchor).length, 2, "every source anchor must be unique")
@@ -227,8 +228,8 @@ ${call("BEFORE_FROM_HANDLE")}
   const inserts = [
     { at: text.indexOf(declaration) + declaration.length, value: '/*WPF572_CLIENT_PROBE_DECL_BEGIN*/ [DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow(); /*WPF572_CLIENT_PROBE_DECL_END*/' },
     { at: text.indexOf(fromHandle), value: marked("FUNCTION", functionBody) },
-    { at: text.indexOf(action) + action.indexOf("& $act"), value: marked("PRE", `if ($pname -eq 'invoke') { ${call("PRE_INVOKE")} }; `) },
-    { at: text.indexOf(action) + action.indexOf("[void]$tried"), value: marked("POST", `if ($pname -eq 'invoke') { ${call("POST_INVOKE")} }; `) },
+    { at: text.indexOf(action) + action.indexOf("$status"), value: marked("PRE", `if ($pname -eq 'invoke') { ${call("PRE_INVOKE")} }; `) },
+    { at: text.indexOf(action) + action.lastIndexOf("}"), value: marked("POST", `; if ($pname -eq 'invoke') { ${call("POST_INVOKE")} }; `) },
     { at: text.indexOf(exit), value: marked("EXIT", call("PRE_EXIT")) },
   ]
   let output = text
@@ -603,3 +604,6 @@ test("#572 client route selection keeps normal acceptance on the actual default 
   assert.equal(stopOf(observed.injector), stopOf(normal.injector))
   assert.equal(observed.probe.status(), "NOT_RUN")
 })
+
+// Keep all foreground-owning #572 cases in this one canonical file worker.
+registerNoFocusNativeTests572()

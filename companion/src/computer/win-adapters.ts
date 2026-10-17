@@ -11,7 +11,7 @@ import * as fs from "fs"
 import * as crypto from "crypto"
 import { spawn } from "child_process"
 import { parsePsJson, resolvePowerShellExe, runPs, type PsRunner } from "../host-use/win/powershell"
-import { resolveWinScript } from "../host-use/win/powershell"
+import { resolveWinScript, resolveComputerUiaNoFocusDll } from "../host-use/win/powershell"
 import type { PreviewBuilder } from "./preview"
 import {
   ComputerError,
@@ -78,7 +78,7 @@ export function rethrowComputerPsError(err: any, label: string): never {
   throw err
 }
 
-/** #572: computer-uia-invoke.ps1 stderr prefix → the caller-facing fallback reason. */
+/** #572: fixed PS failure vocabulary; terminal frames additionally forbid coordinate retry. */
 const UIA_PS_FAILURE: Record<string, Extract<UiaInvokeResult, { ok: false }>["reason"]> = {
   UIA_WINDOW_GONE: "window_gone",
   UIA_ELEMENT_GONE: "element_gone",
@@ -101,15 +101,18 @@ function uiaFailureFromPsError(err: any): Extract<UiaInvokeResult, { ok: false }
   const stderr = err && typeof err === "object" && "stderr" in err && err.stderr ? String(err.stderr) : ""
   const line = stderr.split(/\r?\n/).find((l) => PS_ERR_LINE.test(l))
   if (line) {
+    // Closed internal terminal frame; never infer it from arbitrary detail text.
+    const terminal = /^UIA_TERMINAL:(STOPPED|UIA_WINDOW_GONE|UIA_ELEMENT_GONE|UIA_ELEMENT_MISMATCH|UIA_PATTERN_UNAVAILABLE|UIA_METHOD_FAILED)$/.exec(line)
+    if (terminal) return { ok: false, reason: UIA_PS_FAILURE[terminal[1]], detail: "background UIA terminal refusal", terminal: true }
     const sep = line.indexOf(":")
     const prefix = line.slice(0, sep)
     const detail = line.slice(sep + 1).trim()
     const reason = UIA_PS_FAILURE[prefix]
-    if (reason) return { ok: false, reason, detail }
-    return { ok: false, reason: "bad_output", detail: `${prefix}: ${detail}` }
+    if (reason) return { ok: false, reason, detail, ...(reason === "method_failed" ? { terminal: true as const } : {}) }
+    return { ok: false, reason: "bad_output", detail: `${prefix}: ${detail}`, terminal: true }
   }
   const msg = err?.message ? String(err.message) : String(err)
-  return { ok: false, reason: "method_failed", detail: msg.slice(0, 300) }
+  return { ok: false, reason: "method_failed", detail: msg.slice(0, 300), terminal: true }
 }
 
 export const COMPUTER_TEMP_DIR_NAME = "cmspark-computer"
@@ -449,6 +452,7 @@ export class PsInputInjector implements InputInjector {
       "-Hwnd", String(hwnd),
       "-Name", name,
       "-Mode", mode,
+      "-NoFocusLibrary", resolveComputerUiaNoFocusDll(),
       ...(opts.value !== undefined && opts.value !== "" ? ["-Value", opts.value] : []),
       ...(opts.direction ? ["-Direction", opts.direction] : []),
       ...(opts.scrollAmount !== undefined ? ["-ScrollAmount", String(opts.scrollAmount)] : []),
@@ -465,10 +469,13 @@ export class PsInputInjector implements InputInjector {
     try {
       parsed = JSON.parse(stdout)
     } catch (e: any) {
-      return { ok: false, reason: "bad_output", detail: `unparseable stdout: ${String(e?.message ?? e)}` }
+      return { ok: false, reason: "bad_output", detail: `unparseable stdout: ${String(e?.message ?? e)}`, terminal: true }
     }
     if (!parsed || parsed.ok !== true) {
-      return { ok: false, reason: "bad_output", detail: "script exited 0 without reporting ok:true" }
+      return { ok: false, reason: "bad_output", detail: "script exited 0 without reporting ok:true", terminal: true }
+    }
+    if ((mode !== "auto" && parsed.mode !== mode) || !["invoke", "setvalue", "select", "toggle", "scroll"].includes(parsed.mode)) {
+      return { ok: false, reason: "bad_output", detail: "script reported an unexpected action mode", terminal: true }
     }
     const bbox = parsed.bbox && typeof parsed.bbox === "object" ? parsed.bbox : { x: 0, y: 0, w: 0, h: 0 }
     return {
