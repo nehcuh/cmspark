@@ -108,8 +108,8 @@ export function getServiceCommands(): ServiceCommands {
 export interface ChromeOpener {
   /** Open Chrome and focus it (best effort) */
   openChrome(): void
-  /** Launch Chrome without stealing focus (`open -ga` on macOS). */
-  openChromeSilent(): void
+  /** Request a background launch; false means unsupported, with no foreground fallback. */
+  openChromeSilent(): boolean
   /** Open Chrome extension management page */
   openExtensions(): void
   /** Open Chrome side panel for CMspark (best effort) */
@@ -134,8 +134,9 @@ class MacOSChromeOpener implements ChromeOpener {
     ])
   }
 
-  openChromeSilent(): void {
+  openChromeSilent(): boolean {
     runSilent("open", ["-ga", "Google Chrome"])
+    return true
   }
 
   openExtensions(): void {
@@ -166,8 +167,8 @@ class WindowsChromeOpener implements ChromeOpener {
     }
   }
 
-  openChromeSilent(): void {
-    this.openChrome()
+  openChromeSilent(): boolean {
+    return false
   }
 
   openExtensions(): void {
@@ -206,8 +207,8 @@ class LinuxChromeOpener implements ChromeOpener {
     runSilent("xdg-open", ["chrome://newtab/"])
   }
 
-  openChromeSilent(): void {
-    this.openChrome()
+  openChromeSilent(): boolean {
+    return false
   }
 
   openExtensions(): void {

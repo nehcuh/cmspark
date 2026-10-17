@@ -391,6 +391,7 @@ jobs:
         shell: bash
         run: |
           node --test scripts/tests/office-runtime-stage.test.mjs
+          node --test scripts/tests/office-lock-passive.test.mjs
           node scripts/smoke-office-runtime.mjs
           cd companion
           node scripts/run-tests.mjs .test-dist/tests/office-format-compatibility.test.js .test-dist/tests/office-import-entry.test.js .test-dist/tests/odf-expansion.test.js
