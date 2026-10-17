@@ -4,8 +4,9 @@ import { redactSecrets } from "../threads/distill"
 
 export type DesktopReadServices = {
   threads: {
-    desktopMetadataSnapshot(): Array<{ id: string; alias: string; updated_at: string }>
-    get(id: string): { alias?: string | null; digest?: any } | undefined
+    desktopMetadataSnapshot(): Array<{ id: string; alias: string; updated_at: string; user_tags?: string[]; topic_folder?: string | null }>
+    get(id: string): { alias?: string | null; digest?: any; user_tags?: string[]; topic_folder?: string | null; trashed_at?: string | null } | undefined
+    updateDesktopMetadata?(id: string, patch: Record<string, unknown>): { alias?: string | null; user_tags?: string[]; topic_folder?: string | null } | undefined
     getMessages(id: string): Array<{ role?: string; content?: unknown }>
   }
   skills: { list(): unknown[]; listKnowledge(): unknown[] }
@@ -20,7 +21,7 @@ function listed(type: string, key: string, rows: unknown[], map: (v: any) => unk
 export function desktopRead(type: string, threadId: string | undefined, s: DesktopReadServices): Record<string, unknown> {
   switch (type) {
     case "system.ping": return { type: "system.pong" }
-    case "thread.list": return listed(type, "threads", s.threads.desktopMetadataSnapshot(), v => ({ id: text(v.id), title: text(v.alias || v.id), updated_at: text(v.updated_at) }))
+    case "thread.list": return listed(type, "threads", s.threads.desktopMetadataSnapshot(), v => ({ id: text(v.id), title: text(v.alias || v.id), updated_at: text(v.updated_at), user_tags: Array.isArray(v.user_tags) ? v.user_tags.slice(0, 20).map(text) : [], topic_folder: typeof v.topic_folder === "string" ? text(v.topic_folder) : null }))
     case "thread.peek": {
       const thread = threadId ? s.threads.get(threadId) : undefined
       if (!thread || !threadId) return { type: "desktop.error", error_code: "DESKTOP_THREAD_NOT_FOUND" }

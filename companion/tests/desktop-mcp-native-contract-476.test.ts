@@ -6,10 +6,20 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { DESKTOP_READ_METHODS, DESKTOP_RENDERER_METHODS, DESKTOP_NATIVE_METHODS, DESKTOP_METHOD_SET_VERSION } from "../src/desktop/capabilities"
 const root=path.resolve(__dirname,"../.."),read=(p:string)=>fs.readFileSync(path.join(root,p),"utf8")
-test("#476 issued method set2 keeps six reads and controller-only decision outside renderer",()=>{
- assert.equal(DESKTOP_READ_METHODS.length,6);assert.equal(DESKTOP_METHOD_SET_VERSION,2);assert.deepEqual([...DESKTOP_RENDERER_METHODS],[...DESKTOP_READ_METHODS,"desktop.mcp.edit","desktop.mcp.save"]);assert.deepEqual([...DESKTOP_NATIVE_METHODS],[...DESKTOP_RENDERER_METHODS,"desktop.confirmation.decision"])
+for (const language of ["cpp", "swift"] as const) test(`#476 ${language} metadata controller bounds the renderer id before UUID replacement`,()=>{
+ const source=read("src/desktop/native/DesktopHost."+language)
+ const guard=source.split("\n").find(line=>language==="cpp"
+  ? line.includes('if(type==L"desktop.thread.metadata.edit"||type==L"desktop.thread.metadata.save")')
+  : line.includes('if ["desktop.thread.metadata.edit","desktop.thread.metadata.save"].contains(type)'))
+ assert.ok(guard,"the actual metadata admission guard must exist")
+ // CPU source contract only. UTF-16 matches the Companion id.length boundary;
+ // no native execution or security approval is implied by this projection.
+ assert.ok(guard.includes(language==="cpp" ? 'text(frame,L"id").size()>200' : 'id.utf16.count<=200'))
+})
+test("#476 issued method set3 keeps six reads and controller-only decision outside renderer",()=>{
+ assert.equal(DESKTOP_READ_METHODS.length,6);assert.equal(DESKTOP_METHOD_SET_VERSION,3);assert.deepEqual([...DESKTOP_RENDERER_METHODS],[...DESKTOP_READ_METHODS,"desktop.mcp.edit","desktop.mcp.save","desktop.thread.metadata.edit","desktop.thread.metadata.save"]);assert.deepEqual([...DESKTOP_NATIVE_METHODS],[...DESKTOP_RENDERER_METHODS,"desktop.confirmation.decision"])
  const builder=read("scripts/build-desktop-native.mjs");assert.equal(builder.includes("DESKTOP_RENDERER_METHODS.map"),true);assert.equal(builder.includes("DESKTOP_READ_METHODS.map"),false)
- const launcher=read("src/desktop/native/launcher.c");assert.equal((launcher.match(/issued_method_set_version\\":2/g)||[]).length,2);assert.equal((launcher.match(/protocol_version\\":1/g)||[]).length,2)
+ const launcher=read("src/desktop/native/launcher.c");assert.equal((launcher.match(/issued_method_set_version\\":3/g)||[]).length,2);assert.equal((launcher.match(/protocol_version\\":1/g)||[]).length,2)
 })
 test("#476 two unshipped native acceptance variants preserve complete production bytes",async()=>{
  const {desktopMcpFixture}=await (new Function("u","return import(u)"))(pathToFileURL(path.join(root,"scripts/desktop-mcp-fixture.mjs")).href)

@@ -141,6 +141,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         guard let id=f["id"] as? String,let pair=requests.first(where:{$0.value.nativeId==id}),pair.value.generation==generation else { return }
         requests.removeValue(forKey:pair.key)
         if pair.key=="thread.peek",f["type"] as? String=="thread.peek_result",f["thread_id"] as? String != pair.value.thread { return }
+        if ["desktop.thread.metadata.edit","desktop.thread.metadata.save"].contains(pair.key),f["type"] as? String != pair.key+".result" || f["thread_id"] as? String != pair.value.thread { return }
         var reply=f;reply["id"]=pair.value.uiId;deliver(reply)
     }
     func offline(_ task:URLSessionWebSocketTask, code:Int = 0) {
@@ -185,11 +186,14 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         let allowed:Set<String>
         if type=="desktop.mcp.edit" {allowed=["type","id","name","thread_id","generation"]}
         else if type=="desktop.mcp.save" {allowed=["type","id","name","thread_id","action","payload_json","generation"]}
+        else if type=="desktop.thread.metadata.edit" {allowed=["type","id","thread_id","generation"]}
+        else if type=="desktop.thread.metadata.save" {allowed=["type","id","thread_id","payload_json","generation"]}
         else {allowed=type=="thread.peek" ? ["type","id","thread_id","generation"]:["type","id","generation"]}
         if type.hasPrefix("desktop.mcp.") {
             guard Set(f.keys)==allowed,f["name"] is String,f["thread_id"] is NSNull || f["thread_id"] is String,requests["desktop.mcp.save"]==nil else{return}
             if type=="desktop.mcp.save" {guard f["payload_json"] is String,let action=f["action"] as? String,["add","update"].contains(action) else{return}}
         }
+        if ["desktop.thread.metadata.edit","desktop.thread.metadata.save"].contains(type) {guard Set(f.keys)==allowed,let id=f["id"] as? String,!id.isEmpty,id.utf16.count<=200,let target=f["thread_id"] as? String,!target.isEmpty else{return};if type=="desktop.thread.metadata.save" {guard let payload=f["payload_json"] as? String,!payload.isEmpty else{return}}}
         guard Set(f.keys).isSubset(of:allowed),methods.contains(type),f["id"]==nil || f["id"] is String,let socket=socket else{return}
         if type=="thread.peek" { guard let id=f["thread_id"] as? String,!id.isEmpty else{return} }
         let id=UUID().uuidString;requests[type]=(id,f["id"] as? String,g,f["thread_id"] as? String)
@@ -210,6 +214,6 @@ let bootstrapWatch=DispatchSource.makeProcessSource(identifier:parent,eventMask:
 var data=Data()
 while true { do { guard let part=try FileHandle.standardInput.read(upToCount:4097-data.count),!part.isEmpty else{break};data.append(part);if data.count>4096{exit(14)} } catch {exit(13)} }
 try? FileHandle.standardInput.close()
-guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==2,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
+guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==3,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
 data.resetBytes(in:0..<data.count)
 let app=NSApplication.shared;private let delegate=NativeDesktop(bootstrap,parent:parent);app.delegate=delegate;app.setActivationPolicy(.regular);bootstrapWatch.cancel();app.run()
