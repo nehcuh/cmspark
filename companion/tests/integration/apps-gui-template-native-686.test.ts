@@ -118,9 +118,9 @@ test("#686 actual manager and executor private receipt launch exact owned NPP pa
     assert.equal(result.success, true, `receipt-execute success=${result.success} spawn-phase=${spawnPhase} launches=${launches}`); assert.equal(launches, 1); assert.ok(owned?.pid)
     const observation = JSON.parse((await runPs(path.resolve(__dirname, "../../../tests/fixtures/apps-template-native-686.ps1"),
       ["-OwnedPid", String(owned.pid), "-OwnedExe", exe, "-OwnedName", name], { timeoutMs: 20000 })).trim())
-    assert.deepEqual(observation, { native_ps51: true, owned_window: true, matching_file_title: true, open_files: 1, actual_target_parser: true })
+    assert.deepEqual(observation, { native_ps51: true, owned_window: true, matching_file_title: true, visible_files: 1, total_tabs: 2, hidden_secondary_placeholder: true, actual_target_parser: true })
     assert.equal((await accepted.receipt.execute(accepted.finalParams)).success, false); assert.equal(launches, 1)
-    t.diagnostic("NATIVE_TEMPLATE686 actual_target_sha=true software_manager_origin=true owned_parser_single_file=true argv5=true replay_launch0=true synthetic_approval_not_human=true")
+    t.diagnostic("NATIVE_TEMPLATE686 actual_target_sha=true software_manager_origin=true owned_parser_single_visible_file=true total_tabs2=true hidden_secondary_placeholder=true argv5=true replay_launch0=true synthetic_approval_not_human=true")
   } finally {
     if (owned && owned.exitCode === null && owned.signalCode === null) { owned.ref(); owned.kill() }
     if (closed) await closed
