@@ -9,3 +9,5 @@
 # Corpus generators compare their committed JSON bytes exactly.
 /companion/tests/fixtures/cu-locate-eval/corpus.json text eol=lf
 /companion/tests/fixtures/cu-redteam/corpus.json text eol=lf
+# This recorded Git patch is checked against its independent byte fingerprint.
+/companion/tests/fixtures/code-review-rename-464.patch text eol=lf
