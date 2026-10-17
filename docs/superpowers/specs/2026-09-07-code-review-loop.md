@@ -26,6 +26,12 @@ to the originating task. Both routes preserve the exact comparison and sources.
   completeness contract exists. Valid hunk counts prove syntax, not that the host
   loaded all files. Binary, combined diff, unknown headers, missing hunks, truncated
   observations and omitted files never become a complete review.
+  The #464 text-rename extension accepts only explicit unquoted `similarity index`,
+  `rename from` and `rename to` metadata matching both Git headers and non-null
+  old/new text headers, followed by complete changed hunks. Both paths and their
+  side-specific lines remain distinct. Pure rename, copy, binary, combined,
+  quoted and mode-only forms stay unsupported; capacity, citation, host-coverage
+  and `review_ready=false` rules are unchanged.
 - Identity supplied at job creation is a requested scope, not proven release
   provenance. Page citations must support identity before claiming it observed;
   otherwise display unverified. No model boolean can promote completeness.

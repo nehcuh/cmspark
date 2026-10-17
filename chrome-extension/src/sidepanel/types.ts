@@ -678,6 +678,22 @@ export interface AppPresetStatus {
   display_name: string
   detected: boolean
   persisted: boolean
+  /** Fixed-release witness only; never an installed-file comparison or trust grant. */
+  reference?: {
+    release: string
+    architecture: string
+    artifactURL: string
+    packageSHA256: string
+    referenceEXERelativePath: string
+    referenceEXESHA256: string | null
+    expectedCertificateSHA256DER: string | null
+    observedSubject: string | null
+    observedSignatureStatus: string | null
+    collectedAtUTC: string | null
+    pathEvidence: string[]
+    typicalPaths: string[]
+    advice: string
+  }
 }
 
 /** Candidate from apps.enumerate.result, annotated by the backend guards. */

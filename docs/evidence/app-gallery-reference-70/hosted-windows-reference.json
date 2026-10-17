@@ -1,0 +1,44 @@
+{
+  "issue": 70,
+  "meaning": "Fixed-release witness; installed file not compared; no authorization",
+  "samples": [
+    {
+      "token": "win.app.notepadpp",
+      "release": "8.9.8.1",
+      "architecture": "Windows x64",
+      "artifactURL": "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8.1/npp.8.9.8.1.portable.x64.zip",
+      "packageBytes": 8250001,
+      "packageSHA256": "beddf5548e75c97930d1575ba1c7d113e6e2b33d0a200310e734ca08e225f414",
+      "entry": "notepad++.exe",
+      "exeBytes": 8546288,
+      "exeSHA256": "c52c9ed2ec6d0b5b3f243b29f2124f98db56b6ba92bb42a9af2665709464b3cf",
+      "signatureStatus": "Valid",
+      "certificateSHA256DER": "5ce5facb7718ea2dec009f2f0974b7b4336cd40ad0fe21e2c7986747ae7ccfef",
+      "subject": "E=don.h@free.fr, CN=\"NOTEPAD++\", O=\"NOTEPAD++\", L=Paris, S=Ile-de-France, C=FR",
+      "collectedAtUTC": "2026-10-17T05:44:56.3817978Z",
+      "psVersion": "5.1.26100.33438",
+      "machine": "x64",
+      "fileVersion": "8.9.8.1",
+      "nativeStdout": "{\"entry\":\"notepad++.exe\",\"exeBytes\":8546288,\"exeSHA256\":\"c52c9ed2ec6d0b5b3f243b29f2124f98db56b6ba92bb42a9af2665709464b3cf\",\"signatureStatus\":\"Valid\",\"certificateSHA256DER\":\"5ce5facb7718ea2dec009f2f0974b7b4336cd40ad0fe21e2c7986747ae7ccfef\",\"subject\":\"E=don.h@free.fr, CN=\\\"NOTEPAD++\\\", O=\\\"NOTEPAD++\\\", L=Paris, S=Ile-de-France, C=FR\",\"collectedAtUTC\":\"2026-10-17T05:44:56.3817978Z\",\"psVersion\":\"5.1.26100.33438\",\"machine\":\"x64\",\"fileVersion\":\"8.9.8.1\"}\r\n"
+    },
+    {
+      "token": "win.app.vscode",
+      "release": "1.142.0",
+      "architecture": "Windows x64",
+      "artifactURL": "https://vscode.download.prss.microsoft.com/dbazure/download/stable/6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1/VSCode-win32-x64-1.142.0.zip",
+      "packageBytes": 351679077,
+      "packageSHA256": "ace1da7d1432d43c1ab4b2bbf643f6494f6d25dec07494976755eac522cd50d9",
+      "entry": "Code.exe",
+      "exeBytes": 238247784,
+      "exeSHA256": "5ca701a1facb91fec1ac6bbae11fc837821a1da34ddebb91a0bad7e87ab88144",
+      "signatureStatus": "Valid",
+      "certificateSHA256DER": "c30b441672c82883d92eddac6d24cb57e9960bda4486c7fb5865e74157f35850",
+      "subject": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+      "collectedAtUTC": "2026-10-17T05:45:03.0220112Z",
+      "psVersion": "5.1.26100.33438",
+      "machine": "x64",
+      "fileVersion": "1.142.0",
+      "nativeStdout": "{\"entry\":\"Code.exe\",\"exeBytes\":238247784,\"exeSHA256\":\"5ca701a1facb91fec1ac6bbae11fc837821a1da34ddebb91a0bad7e87ab88144\",\"signatureStatus\":\"Valid\",\"certificateSHA256DER\":\"c30b441672c82883d92eddac6d24cb57e9960bda4486c7fb5865e74157f35850\",\"subject\":\"CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US\",\"collectedAtUTC\":\"2026-10-17T05:45:03.0220112Z\",\"psVersion\":\"5.1.26100.33438\",\"machine\":\"x64\",\"fileVersion\":\"1.142.0\"}\r\n"
+    }
+  ]
+}
