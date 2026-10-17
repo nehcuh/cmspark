@@ -72,17 +72,36 @@ import { createRequire } from "node:module"
 const workflowYaml = createRequire(new URL("../../companion/package.json", import.meta.url))("js-yaml")
 const stopSmoke = fs.readFileSync(new URL("./win-installer-stop-smoke.ps1", import.meta.url), "utf8").replaceAll("\r\n", "\n")
 
+function assertStopSmokeContract(source) {
+  const section = source.match(/Section\n([\s\S]*?)SectionEnd/)[1]
+  assert.equal(section, '  ReadEnvStr $INSTDIR "CMSPARK_SMOKE_INSTALL_ROOT"\n  FileOpen $9 "$EXEDIR\\stop-phase.txt" w\n  FileWrite $9 "entered"\n  FileClose $9\n__OBSERVATION_ENTER__\n  !insertmacro StopInstalledAgentUnshared\n  FileOpen $9 "$EXEDIR\\stop-phase.txt" w\n  FileWrite $9 "returned"\n  FileClose $9\n__OBSERVATION_AFTER__\n')
+  const transport = "$harness.Replace('__OBSERVATION_PREAMBLE__', $observation.nsisPreamble).Replace('__OBSERVATION_ENTER__', $observation.nsisEnter).Replace('__OBSERVATION_AFTER__', $observation.nsisAfterMacro)"
+  assert.equal(source.split(transport).length, 2, 'the three fixed observation fields reach the harness exactly once')
+  assert.ok(source.includes("    if ($restoredMacro -cne $macro) { throw 'NSIS observed macro differs from production' }"), 'the complete restored production macro is still checked')
+  assert.match(source, /\/DCMSPARK_STOP_SCRIPT=/)
+  assert.match(source, /\$stop\.WaitForExit\(30000\)/)
+  assert.match(source, /Stop-Process -Id \$stop\.Id -Force/)
+  assert.match(source, /installed fixture was not stopped/)
+  assert.match(source, /sibling installation was incorrectly stopped/)
+  assert.match(source, /system Node agent was not stopped/)
+  assert.match(source, /unrelated system Node process was stopped/)
+}
 test("NSIS observation brackets the complete original macro without changing its inputs or wait", () => {
-  const section = stopSmoke.match(/Section\n([\s\S]*?)SectionEnd/)[1]
-  assert.equal(section, '  ReadEnvStr $INSTDIR "CMSPARK_SMOKE_INSTALL_ROOT"\n  FileOpen $9 "$EXEDIR\\stop-phase.txt" w\n  FileWrite $9 "entered"\n  FileClose $9\n  !insertmacro StopInstalledAgentUnshared\n  FileOpen $9 "$EXEDIR\\stop-phase.txt" w\n  FileWrite $9 "returned"\n  FileClose $9\n')
-  assert.match(stopSmoke, /\$harness\.Replace\('__MACRO__', \$macro\)/)
-  assert.match(stopSmoke, /\/DCMSPARK_STOP_SCRIPT=/)
-  assert.match(stopSmoke, /\$stop\.WaitForExit\(30000\)/)
-  assert.match(stopSmoke, /Stop-Process -Id \$stop\.Id -Force/)
-  assert.match(stopSmoke, /installed fixture was not stopped/)
-  assert.match(stopSmoke, /sibling installation was incorrectly stopped/)
-  assert.match(stopSmoke, /system Node agent was not stopped/)
-  assert.match(stopSmoke, /unrelated system Node process was stopped/)
+  assertStopSmokeContract(stopSmoke)
+})
+test('observed NSIS harness refuses missing phases, changed transport, macro guard and original timeout', () => {
+  for (const [from, to] of [
+    ['__OBSERVATION_ENTER__\n', ''],
+    ['__OBSERVATION_AFTER__\n', ''],
+    ['__OBSERVATION_ENTER__\n', '__OBSERVATION_ENTER__\n__OBSERVATION_ENTER__\n'],
+    [".Replace('__OBSERVATION_PREAMBLE__', $observation.nsisPreamble)", ".Replace('__OBSERVATION_PREAMBLE__', $macro)"],
+    [".Replace('__OBSERVATION_AFTER__', $observation.nsisAfterMacro)", ''],
+    ['$restoredMacro -cne $macro', '$restoredMacro -ceq $macro'],
+    ['$stop.WaitForExit(30000)', '$stop.WaitForExit(30001)'],
+  ]) {
+    assert.ok(stopSmoke.includes(from))
+    assert.throws(() => assertStopSmokeContract(stopSmoke.replace(from, to)))
+  }
 })
 
 test("receipt reader is bounded, finite and permanently checked in the owned Windows smoke", () => {
@@ -300,7 +319,10 @@ function assertCensusSchedule(raw) {
   assert.equal(digest(legacyRun), '75ea0a66638629f8f3d5a162122e94ce626dec9ede490596afbf80cdb303ac4b', 'the full original lifecycle stays exact outside reviewed insertions')
   assert.equal(digest(originalCensusCommands(legacyRun)), 'b6aba13f90e3e4567e0b80f21c8585a223383200e26237514d53caafd80836a6', 'the original control/census commands and exits remain exact')
   assert.equal(digest(JSON.stringify(artifact)), 'bf504e85964e900151325fca797443741ab84ad49d746b0257af2a269fc64697', 'sealed artifact condition and paths stay exact')
-  assert.equal(digest(office.run), '8fb06555123eebe638397b5bc81d5074db606f3aa9192d499b5914095b130402', 'Office loses only its extracted compiler line')
+  const passiveOfficeCommand = 'node --test scripts/tests/office-lock-passive.test.mjs\n'
+  assert.equal(office.run.split(passiveOfficeCommand).length, 2, 'the delivered passive Office controls run exactly once')
+  assert.ok(office.run.includes('node --test scripts/tests/office-runtime-stage.test.mjs\n' + passiveOfficeCommand), 'passive controls follow the original Office controls')
+  assert.equal(digest(office.run.replace(passiveOfficeCommand, '')), '8fb06555123eebe638397b5bc81d5074db606f3aa9192d499b5914095b130402', 'Office retains its original body outside the exact delivered passive command')
   for (const step of [compile, office]) {
     assert.equal(step.if, undefined); assert.equal(step['continue-on-error'], undefined)
   }
@@ -308,6 +330,30 @@ function assertCensusSchedule(raw) {
 }
 test("full census follows verified prerequisites before targeted Office and preserves every native gate", () => {
   assertCensusSchedule(fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n"))
+})
+test('delivered passive Office controls cannot be omitted, duplicated, moved or waived', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  const command = 'node --test scripts/tests/office-lock-passive.test.mjs\n'
+  assertCensusSchedule(raw)
+  for (const change of [
+    run => run.replace(command, ''),
+    run => run.replace(command, command + command),
+    run => run.replace(command, command.trimEnd() + ' || true\n'),
+    run => run.replace(command, '') + command,
+    run => run.replace('office-runtime-stage.test.mjs', 'omitted-office-controls.test.mjs'),
+    run => run.replace('node scripts/smoke-office-runtime.mjs', 'echo smoke-not-executed'),
+    run => run + 'echo unreviewed-command\n',
+  ]) {
+    const document = workflowYaml.load(raw)
+    const office = document.jobs['smoke-os'].steps.find(s => s.name === 'Office compatibility and relocated runtime (#611)')
+    const changed = change(office.run)
+    assert.notEqual(changed, office.run, 'mutants change the actual command body')
+    office.run = changed
+    assert.throws(() => assertCensusSchedule(workflowYaml.dump(document)))
+  }
+  const document = workflowYaml.load(raw)
+  document.jobs['smoke-os'].steps.find(s => s.name === 'Office compatibility and relocated runtime (#611)')['continue-on-error'] = true
+  assert.throws(() => assertCensusSchedule(workflowYaml.dump(document)))
 })
 test("scheduling contract rejects missing compilation, premature readiness and waived native failures", () => {
   const raw = fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n")
