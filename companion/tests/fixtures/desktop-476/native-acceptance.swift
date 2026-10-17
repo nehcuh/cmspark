@@ -15,4 +15,11 @@ private enum D476Acceptance {
             emit(h,"D476_NATIVE_WINDOW_"+String(number));p.alert.buttons[number==2 ? 0:1].performClick(nil) // Actual NSButton synthetic activation; not human evidence.
         }
     }
+    // Observe only fixed test receipts after the real renderer admission guards.
+    // The normal production request still gets its native UUID and is sent.
+    static func renderer(_ h:NativeDesktop,_ f:[String:Any]){
+        let names:Set<String>=["D476_SAVE_APPROVED","D476_SAVE_DENIED","D476_NATIVE_DONE","D476_FAIL_ROW","D476_FAIL_APPROVE","D476_FAIL_DENY","D476_FAIL_ADD","D476_FAIL_RENDERER_SECRET"]
+        guard f["type"] as? String=="system.ping",let id=f["id"] as? String,names.contains(id) else{return}
+        emit(h,id)
+    }
 }

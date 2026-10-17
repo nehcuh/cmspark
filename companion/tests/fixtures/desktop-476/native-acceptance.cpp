@@ -1,5 +1,5 @@
 class Desktop;
-struct D476Acceptance {static unsigned count;static void document(Desktop&);static void confirmation(Desktop&);static void emit(Desktop&,wchar_t const*);};
+struct D476Acceptance {static unsigned count;static void document(Desktop&);static void confirmation(Desktop&);static void emit(Desktop&,wchar_t const*);static void renderer(Desktop&,JsonObject const&);};
 /* D476 IMPLEMENTATION */
 unsigned D476Acceptance::count=0;
 void D476Acceptance::emit(Desktop& h,wchar_t const* id){JsonObject frame;put(frame,L"type",L"system.ping");put(frame,L"id",id);h.send(frame);}
@@ -16,4 +16,10 @@ void D476Acceptance::confirmation(Desktop& h){
  if(full!=p.full||(count<3&&full.find(L"OWNED_PRIVATE_476")==std::wstring::npos)){emit(h,L"D476_FAIL_FULL_VIEW");return;}
  std::wstring receipt=L"D476_NATIVE_WINDOW_"+std::to_wstring(count);emit(h,receipt.c_str());
  auto button=GetDlgItem(p.window,count==2?2:1);if(!button){emit(h,L"D476_FAIL_BUTTON");return;}SendMessageW(button,BM_CLICK,0,0); // Synthetic activation of actual native button; not human evidence.
+}
+// Fixed test receipts only, after real renderer admission; ordinary send remains.
+void D476Acceptance::renderer(Desktop& h,JsonObject const& frame){
+ static wchar_t const* names[]={L"D476_SAVE_APPROVED",L"D476_SAVE_DENIED",L"D476_NATIVE_DONE",L"D476_FAIL_ROW",L"D476_FAIL_APPROVE",L"D476_FAIL_DENY",L"D476_FAIL_ADD",L"D476_FAIL_RENDERER_SECRET"};
+ if(text(frame,L"type")!=L"system.ping")return;auto id=text(frame,L"id");
+ for(auto name:names)if(id==name){emit(h,name);return;}
 }
