@@ -603,3 +603,19 @@ jobs:
         run: |
           & scripts/tests/win-mcp-short-path-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Post-census isolated module-scope diagnostic (#650)"
+        # After every original step, including census sealing and public upload.
+        # A diagnostic PASS cannot replace the original census/job result.
+        if: ${{ always() && !cancelled() && matrix.os == 'windows-latest' }}
+        shell: pwsh
+        env:
+          CMSPARK_650_FINISHED_PUBLIC_DIR: ${{ steps.windows-census.outputs.public_dir }}
+        run: |
+          cd companion
+          if (-not [IO.File]::Exists('.test-dist/tests/fixtures/computer-bg-module-scope-650.probe.js')) {
+            [Console]::Out.WriteLine('MODULE_SCOPE_650 {"version":1,"state":"INCOMPLETE","reason":"CALLER_MISSING"}')
+            exit 1
+          }
+          node .test-dist/tests/fixtures/computer-bg-module-scope-650.probe.js "$env:CMSPARK_650_FINISHED_PUBLIC_DIR"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
