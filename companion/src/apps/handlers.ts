@@ -41,8 +41,13 @@ import { enumerateAppsDetailed, enumerateMacApps, type EnumeratedAppCandidate, t
 import { basenameToVault, isLolbinPath } from "./guards"
 import { materializePresets } from "./presets"
 import { requireAppsBiometric } from "./biometric-gate"
+import { guiTemplateConfigError } from "./gui-templates"
+import { handleBinaryDrift, type BinaryDriftDeps } from "./binary-drift"
+import { binaryDriftRecordError, invalidateBinaryDrift } from "./binary-drift-state"
 
 export interface AppsHandlerContext {
+  /** Actual originating authenticated socket; never a client message field. */
+  ownerCurrent?: () => boolean
   /** Origin-bound confirmation channel (server.ts wires { originWs: ws }). */
   requestConfirmation?: (
     details: SecurityConfirmationDetails,
@@ -51,6 +56,8 @@ export interface AppsHandlerContext {
 }
 
 export interface AppsHandlerDeps extends AddFlowDeps {
+  measure?: BinaryDriftDeps["measure"]
+  persistEntries?: typeof replaceAppsEntries
   enumerate?: () => Promise<EnumeratedAppCandidate[]>
   enumerateDetailed?: () => Promise<WindowsAppEnumeration>
   gate?: typeof requireAppsBiometric
@@ -103,7 +110,7 @@ function grantSubject(entry: AppEntry | undefined, enabled: boolean): string {
   return JSON.stringify([enabled, entry.token, entry.kind, entry.source, entry.display_name,
     entry.added_at, entry.policy, entry.enabled, entry.aumid, entry.bundleId,
     entry.coordinateAllowed, entry.exe?.path, entry.exe?.sha256, entry.exe?.signer,
-    entry.exe?.user_writable_dir])
+    entry.exe?.user_writable_dir, entry.templates, entry.cli_manifest, entry.binary_drift])
 }
 
 /**
@@ -192,7 +199,15 @@ function hasPrototypePollutionKey(obj: any): boolean {
 /** entries map → sorted array with the policy ceiling attached (WP4 badge). */
 function entriesList(entries: Record<string, AppEntry>) {
   return Object.values(entries)
-    .map((e) => ({ ...e, max_policy: maxPolicyForEntry(e) }))
+    .map((e) => {
+      const { templates, ...rest } = e
+      if (templates === undefined) return { ...rest, max_policy: maxPolicyForEntry(e) }
+      const error = guiTemplateConfigError(templates, e)
+      return { ...rest, max_policy: maxPolicyForEntry(e),
+        templates: error ? [] : templates.map(({ id, name, profile, risk }) => ({ id, name, profile, risk })),
+        ...(error ? { template_unavailable: "模板配置不支持；请检查现有应用配置。" } : {}),
+      }
+    })
     .sort((a, b) => a.added_at.localeCompare(b.added_at))
 }
 
@@ -228,6 +243,12 @@ export async function handleAppsMessage(
   const { type, ...rest } = msg
 
   switch (type) {
+    case "apps.drift_status":
+    case "apps.check_drift":
+    case "apps.reapprove":
+      return handleBinaryDrift(msg, ctx, { platform: deps.platform, measure: deps.measure, gate: deps.gate,
+        persistEntries: deps.persistEntries, clearTrust: token => (deps.clearAppTrust ?? defaultClearAppTrust)(token),
+        watch: watchGrantSubject, notify: entries => { ctx.broadcast?.(appsUpdatedPayload(entries)) } })
     // --- apps.list: sanitized entries + enabled flag + lazy preset seeding ---
     case "apps.list": {
       // #655: detection may await a signer. A host change (including ABA or a
@@ -471,6 +492,14 @@ export async function handleAppsMessage(
       const entry = existing[token]
       if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
       const current = entry.policy
+      if (entry.binary_drift !== undefined) {
+        if (binaryDriftRecordError(entry)) return appsError("Invalid App drift record", { code: "APP_DRIFT_STATE_INVALID" })
+        if (policy !== "manual") return appsError("Binary drift requires a fresh App re-approval", { code: "APP_DRIFT_REAPPROVAL_REQUIRED" })
+        const next = invalidateBinaryDrift(entry)
+        replaceAppsEntries({ ...existing, [token]: next })
+        clearAppLaunchTrust(token, deps, "apps.set_policy")
+        return broadcastAndReturn(ctx, appsUpdatedPayload(getConfig().apps?.entries ?? {}), { token, policy: "manual", changed: true })
+      }
       if (current === policy) {
         return broadcastAndReturn(ctx, appsUpdatedPayload(existing), { token, policy, changed: false })
       }
@@ -545,7 +574,9 @@ const cap = maxPolicyForEntry(entry)
       const existing = getConfig().apps?.entries ?? {}
       const entry = existing[token]
       if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
-      const newEntries = { ...existing, [token]: { ...entry, enabled: rest.enabled } }
+      if (rest.enabled === true && binaryDriftRecordError(entry)) return appsError("Invalid App drift record", { code: "APP_DRIFT_STATE_INVALID" })
+      const changedEntry = rest.enabled === false ? invalidateBinaryDrift(entry) : entry
+      const newEntries = { ...existing, [token]: { ...changedEntry, enabled: rest.enabled } }
       replaceAppsEntries(newEntries)
       logger.info("apps.enabled_changed", { token, enabled: rest.enabled })
       // WP3 obligation: disabling clears "app-launch" trust — re-enabling
@@ -569,6 +600,10 @@ const cap = maxPolicyForEntry(entry)
       const existing = getConfig().apps?.entries ?? {}
       const entry = existing[token]
       if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
+      if (entry.binary_drift !== undefined && rest.allowed === true) {
+        if (binaryDriftRecordError(entry)) return appsError("Invalid App drift record", { code: "APP_DRIFT_STATE_INVALID" })
+        return appsError("Binary drift requires a fresh App re-approval", { code: "APP_DRIFT_REAPPROVAL_REQUIRED" })
+      }
       const watch = rest.allowed === true ? watchGrantSubject(token, entry) : undefined
       let coordinateCheck: typeof import("../computer/policy").canEverCoordinate | undefined
       try {
@@ -627,7 +662,8 @@ const cap = maxPolicyForEntry(entry)
         }
         // The dynamic import above has completed; no async boundary remains
         // between the final subject check and synchronous persistence.
-        const newEntries = { ...currentEntries, [token]: { ...currentEntry, coordinateAllowed: rest.allowed } }
+        const next = rest.allowed === false ? invalidateBinaryDrift(currentEntry) : currentEntry
+        const newEntries = { ...currentEntries, [token]: { ...next, coordinateAllowed: rest.allowed } }
         replaceAppsEntries(newEntries)
         return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), {
           token,

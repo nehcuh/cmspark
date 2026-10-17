@@ -6,6 +6,7 @@
 // Cookie + URL gates → tool/url-cookie-admission.ts (C10-C).
 
 import { randomUUID } from "crypto"
+import { admitGuiTemplate, type GuiTemplateReceipt } from "../apps/gui-template-runtime"
 import type { PreviewUnavailableReason } from "../computer/preview-availability"
 import { ComputerError } from "../computer/types"
 import os from "os"
@@ -211,6 +212,7 @@ export type L2AdmissionResult =
       finalParams: Record<string, any>
       winL2NonceChallenge?: string
       hostAppTier?: string
+      guiTemplateReceipt?: GuiTemplateReceipt
     }
   | {
       ok: false
@@ -222,6 +224,37 @@ export type L2AdmissionResult =
  * On ok:false, caller must return result immediately (already logToolFinish'd inside when appropriate — match current code).
  */
 export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2AdmissionResult> {
+  // #686: an action-specific interactive floor precedes enterprise/token/skip branches.
+  if (ctx.toolName === "host_app" && ctx.finalParams.action === "run_template") {
+    try {
+      const auth = ctx.wsAuthGet(ctx.ws)
+      // A summoner/outbound caller never receives approval authority. Reuse an
+      // already authenticated extension owner; do not auto-launch a browser.
+      const confirmWs = ctx.isOutboundMcpCall || auth?.surface === "summoner"
+        ? pickExtensionWsFromAuth(ctx.clients, ctx.wsAuthGet) : ctx.ws
+      if (!confirmWs) throw new Error("No template confirmation owner")
+      const authProjection = (peer: WebSocket) => {
+        const state = ctx.wsAuthGet(peer)
+        return JSON.stringify([state?.authenticated, state?.origin, state?.surface])
+      }
+      const callerAuth = authProjection(ctx.ws), confirmationAuth = authProjection(confirmWs)
+      const ownerCurrent = () => authProjection(ctx.ws) === callerAuth && authProjection(confirmWs) === confirmationAuth
+        && ctx.ws.readyState === WebSocket.OPEN && ctx.wsAuthGet(ctx.ws)?.authenticated === true
+        && confirmWs.readyState === WebSocket.OPEN && ctx.wsAuthGet(confirmWs)?.authenticated === true
+        && ctx.wsAuthGet(confirmWs)?.surface !== "summoner"
+      const admitted = await admitGuiTemplate({
+        params: ctx.finalParams,
+        signal: ctx.signal,
+        ownerCurrent,
+        requestConfirmation: details => ctx.securityConfirmations.request(data => {
+          if (ownerCurrent()) confirmWs.send(JSON.stringify(data))
+        }, details, { originWs: confirmWs, signal: ctx.signal }),
+      })
+      return { ok: true, finalParams: admitted.finalParams, hostAppTier: "l2", guiTemplateReceipt: admitted.receipt }
+    } catch {
+      return { ok: false, result: { success: false, error: "App file template unavailable or denied; review its configuration and approve again." } }
+    }
+  }
   if (ctx.enterprisePermit) {
     const { checkEnterprisePermit } = await import("../outbound-mcp/enterprise-permit")
     if (!checkEnterprisePermit(ctx.enterprisePermit, ctx.toolName, ctx.finalParams, ctx.ws)) return { ok: false, result: { success: false, error: "PERMIT_INVALID" } }

@@ -184,7 +184,7 @@ export function redactToolPayloadForPersistence(
     // Params are ALWAYS folded (evaluate code / security_token); page read
     // tools carry only selector/tabId — deep-key scan suffices.
     if (name === "evaluate" && params && typeof params === "object") {
-      safeParams = redactCodeishParams(params as Record<string, unknown>)
+      safeParams = redactCodeishParams(params as Record<string, unknown>, name)
     } else if (params !== undefined) {
       safeParams = redactSensitiveKeysDeep(params)
     }
@@ -223,7 +223,7 @@ export function redactToolPayloadForPersistence(
 
   if (EXEC_FOLD_TOOLS.has(name)) {
     if (params && typeof params === "object") {
-      safeParams = redactCodeishParams(params as Record<string, unknown>)
+      safeParams = redactCodeishParams(params as Record<string, unknown>, name)
     }
     // Keep success/error structure; collapse large data
     if (result && typeof result === "object") {

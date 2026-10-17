@@ -27,8 +27,9 @@ try {
     }
     $system = New-OwnedSystemNodeFixtures $root $inside $sibling
     $processes += @($system.Stop) + @($system.Survive)
-    # Prepare only an owned helper copy. Its strict inverse must retain every
-    # original production byte; neither the shipped helper nor macro is edited.
+    # Prepare owned helper and macro copies. Their strict inverses retain every
+    # original production byte; neither shipped source is edited. The existing
+    # preamble field now transports the logger plus exactly one observed macro.
     $prepareOutput = & $node $observationModule prepare $root
     if ($LASTEXITCODE -ne 0) { throw 'NSIS stop observation preparation failed' }
     $observationJson = $prepareOutput -join [Environment]::NewLine
@@ -41,6 +42,13 @@ try {
     if (-not $match.Success) { throw 'NSIS stop macro not found' }
     $macro = $match.Value
     if ($macro -match 'daemon\s+stop|/IM\s+cmspark-agent') { throw 'stop macro must not use global PID/image termination' }
+    # Keep the whole-production guard meaningful across the new transport:
+    # strip only the four fixed observer blocks and compare the complete macro.
+    # The Node producer separately enforces exact block bodies and byte inverse.
+    $observedMacros = [regex]::Matches($observation.nsisPreamble, '(?ms)^!macro StopInstalledAgentUnshared\r?\n.*?^!macroend')
+    if ($observedMacros.Count -ne 1) { throw 'NSIS observation requires one production macro' }
+    $restoredMacro = [regex]::Replace($observedMacros[0].Value, '(?ms)^; CMSPARK_NSIS_MACRO_OBSERVE_V1_BEGIN:(plugin-dir-ready|script-extracted|exec-enter|exec-return)\r?\n.*?^; CMSPARK_NSIS_MACRO_OBSERVE_V1_END:\1\r?\n', '')
+    if ($restoredMacro -cne $macro) { throw 'NSIS observed macro differs from production' }
     $makensis = @(
         (Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'),
         (Join-Path $env:ProgramFiles 'NSIS\makensis.exe')
@@ -54,7 +62,6 @@ RequestExecutionLevel user
 SilentInstall silent
 !include "LogicLib.nsh"
 __OBSERVATION_PREAMBLE__
-__MACRO__
 Section
   ReadEnvStr $INSTDIR "CMSPARK_SMOKE_INSTALL_ROOT"
 __OBSERVATION_ENTER__
@@ -62,7 +69,7 @@ __OBSERVATION_ENTER__
 __OBSERVATION_AFTER__
 SectionEnd
 '@
-    Set-Content -LiteralPath (Join-Path $root 'stop-smoke.nsi') -Value $harness.Replace('__MACRO__', $macro).Replace('__OBSERVATION_PREAMBLE__', $observation.nsisPreamble).Replace('__OBSERVATION_ENTER__', $observation.nsisEnter).Replace('__OBSERVATION_AFTER__', $observation.nsisAfterMacro) -Encoding utf8BOM
+    Set-Content -LiteralPath (Join-Path $root 'stop-smoke.nsi') -Value $harness.Replace('__OBSERVATION_PREAMBLE__', $observation.nsisPreamble).Replace('__OBSERVATION_ENTER__', $observation.nsisEnter).Replace('__OBSERVATION_AFTER__', $observation.nsisAfterMacro) -Encoding utf8BOM
     & $makensis /V2 ('/DCMSPARK_STOP_SCRIPT=' + $observation.helperPath) (Join-Path $root 'stop-smoke.nsi')
     if ($LASTEXITCODE -ne 0) { throw "NSIS smoke compilation failed: $LASTEXITCODE" }
     $env:CMSPARK_SMOKE_INSTALL_ROOT = $inside

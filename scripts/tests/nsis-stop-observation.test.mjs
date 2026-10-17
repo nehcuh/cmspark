@@ -7,14 +7,17 @@ import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { buildObservedHelper, restoreOriginalHelper, createObservation, collectObservation } from './nsis-stop-observation.mjs'
+import * as observation from './nsis-stop-observation.mjs'
 
 const repo = fileURLToPath(new URL('../../', import.meta.url))
 const modulePath = fileURLToPath(new URL('./nsis-stop-observation.mjs', import.meta.url))
 const original = fs.readFileSync(path.join(repo, 'companion/stop-installed-agent.ps1'))
+const installer = fs.readFileSync(path.join(repo, 'scripts/installer.nsi'), 'utf8')
+const originalMacro = Buffer.from(installer.match(/^!macro StopInstalledAgentUnshared\r?\n[\s\S]*?^!macroend/gm)[0])
 const insideName = "space 中文 & O'Brien ! (test)"
 const receipt = '.cmspark-stop-smoke.receipt'
-const phases = ['section-enter', 'helper-enter', 'cim-enter', 'first-row', 'pipeline-return', 'helper-end', 'macro-return']
-const complete = phases.slice(0, 5).map(p => `phase:${p}\r\n`).join('') + 'attempts:2\r\nphase:helper-end\r\nphase:macro-return\r\n'
+const phases = ['section-enter', 'plugin-dir-ready', 'script-extracted', 'exec-enter', 'helper-enter', 'cim-enter', 'first-row', 'pipeline-return', 'helper-end', 'exec-return', 'macro-return']
+const complete = phases.slice(0, 8).map(p => `phase:${p}\r\n`).join('') + 'attempts:2\r\n' + phases.slice(8).map(p => `phase:${p}\r\n`).join('')
 const invalid = /NSIS_STOP_OBSERVATION_INVALID/
 function owned(fn) {
   const root = path.join(os.tmpdir(), `cmspark-stop-${crypto.randomUUID().replaceAll('-', '')}`)
@@ -106,7 +109,8 @@ test('smoke integrates passive instrumented helper while retaining the whole mac
   assert.match(smoke, /\$node \$observationModule prepare \$root/)
   assert.match(smoke, /\$node \$observationModule collect \$root \$observationDescriptor/)
   assert.match(smoke, /\/DCMSPARK_STOP_SCRIPT=' \+ \$observation\.helperPath/)
-  assert.match(smoke, /\.Replace\('__MACRO__', \$macro\)/)
+  assert.equal(smoke.includes('__MACRO__'), false, 'the preamble owns exactly one macro definition')
+  assert.match(smoke, /\$restoredMacro -cne \$macro/)
   assert.ok(smoke.indexOf('ReadEnvStr $INSTDIR') < smoke.indexOf('__OBSERVATION_ENTER__'))
   assert.match(smoke, /NATIVE_TEST_PASSIVE_INSTRUMENTED_EXACT_ORIGINAL_BODY/)
   for (const old of ["$macro -match 'daemon\\s+stop|/IM\\s+cmspark-agent'", '$stop.WaitForExit(30000)', '$stop.ExitCode -ne 0', '$processes[0].WaitForExit(10000)', "$processes[1].HasExited", '$p.WaitForExit(10000)', '$p.HasExited', 'installed fixture was not stopped', 'sibling installation was incorrectly stopped', 'system Node agent was not stopped', 'unrelated system Node process was stopped']) assert.ok(smoke.includes(old), old)
@@ -121,7 +125,8 @@ test('emitted NSIS phase branches restore registers and prior error state while 
   const body = descriptor.nsisPreamble.match(/!macro CMSparkSmokePhase PHASE\n([\s\S]*?)!macroend/)[1]
   const instructions = body.split('\n').map(s => s.trim()).filter(Boolean)
   for (const previousError of [false, true]) for (const failure of ['none', 'open', 'seek', 'write']) {
-    const registers = { '$7': 'old-seven', '$8': 'old-eight', '$9': 'old-nine', '$CMSparkSmokeObservationGap': '0' }, stack = []
+    const registers = { '$7': 'old-seven', '$8': 'old-eight', '$9': 'old-nine', '$CMSparkSmokeObservationGap': '0' }, stack = ['outer-sentinel', 'nsExec-return-23']
+    for (let invocation = 0; invocation < 2; invocation++) {
     let error = previousError, pc = 0, executed = 0, closes = 0, writes = 0
     while (pc < instructions.length) {
       assert.ok(executed++ < 80, 'finite emitted control flow')
@@ -143,10 +148,11 @@ test('emitted NSIS phase branches restore registers and prior error state while 
       else assert.fail('unexpected emitted instruction ' + op)
     }
     assert.equal(registers['$7'], 'old-seven'); assert.equal(registers['$8'], 'old-eight'); assert.equal(registers['$9'], 'old-nine')
-    assert.equal(error, previousError); assert.equal(stack.length, 0)
+    assert.equal(error, previousError); assert.deepEqual(stack, ['outer-sentinel', 'nsExec-return-23'])
     assert.equal(registers['$CMSparkSmokeObservationGap'], failure === 'none' ? '0' : '1')
     assert.equal(closes, failure === 'open' ? 0 : 1)
     assert.equal(writes, failure === 'open' || failure === 'seek' ? 0 : 1)
+    }
   }
   assert.ok(descriptor.nsisPreamble.indexOf('StrCmp $CMSparkSmokeSectionEntered "1"') < descriptor.nsisPreamble.indexOf('"nsis-failed"'))
 }))
@@ -174,11 +180,11 @@ test('attempt counter is exactly after pipeline-return and before helper-end, ne
 // returns its position rather than setting the error flag, and FileClose also
 // does not set that flag. These are explicit primitive-contract projections,
 // not execution of an NSIS binary. Real Node files supply write position/bytes.
-function replayEmittedPhase(descriptor, trace, seekFailure = false) {
+function replayEmittedPhase(descriptor, trace, seekFailure = false, priorError = false) {
   const body = descriptor.nsisPreamble.match(/!macro CMSparkSmokePhase PHASE\n([\s\S]*?)!macroend/)[1]
   const instructions = body.split('\n').map(s => s.trim()).filter(Boolean)
-  const registers = { '$7': 'previous-seven', '$8': 'previous-eight', '$9': 'previous-nine', '$CMSparkSmokeObservationGap': '0' }, stack = []
-  let error = false, pc = 0, fd = null, position = 0, steps = 0, writes = 0
+  const registers = { '$7': 'previous-seven', '$8': 'previous-eight', '$9': 'previous-nine', '$CMSparkSmokeObservationGap': '0' }, stack = ['outer-sentinel', 'nsExec-return-23']
+  let error = priorError, pc = 0, fd = null, position = 0, steps = 0, writes = 0
   try {
     while (pc < instructions.length) {
       assert.ok(steps++ < 80)
@@ -210,7 +216,7 @@ function replayEmittedPhase(descriptor, trace, seekFailure = false) {
       else assert.fail('unexpected emitted instruction ' + op)
     }
   } finally { if (fd !== null) fs.closeSync(fd) }
-  assert.equal(registers['$7'], 'previous-seven'); assert.equal(registers['$8'], 'previous-eight'); assert.equal(registers['$9'], 'previous-nine'); assert.equal(error, false); assert.equal(stack.length, 0)
+  assert.equal(registers['$7'], 'previous-seven'); assert.equal(registers['$8'], 'previous-eight'); assert.equal(registers['$9'], 'previous-nine'); assert.equal(error, priorError); assert.deepEqual(stack, ['outer-sentinel', 'nsExec-return-23'])
   return { gap: registers['$CMSparkSmokeObservationGap'], writes }
 }
 
@@ -232,4 +238,91 @@ test('actual emitted phase writer appends real helper records and bounds seek fa
   })
   // NSIS FileClose has no failure-result/error-flag contract. We claim no
   // direct close-failure observation; the real collector still validates data.
+})
+
+test('actual whole macro producer has strict byte inverse for BOM and CRLF and only four added calls', () => {
+  // Only construct the synthetic CRLF variant; retain the actual source bytes above.
+  for (const bytes of [originalMacro, Buffer.concat([Buffer.from([239, 187, 191]), originalMacro]), Buffer.from(originalMacro.toString().replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'))]) {
+    const observed = observation.buildObservedMacro(bytes)
+    assert.deepEqual(observation.restoreOriginalMacro(observed), bytes)
+    const text = observed.toString()
+    for (const [phase, anchor, after] of [
+      ['plugin-dir-ready', '  InitPluginsDir', true],
+      ['script-extracted', '  File /oname=', true],
+      ['exec-enter', '  nsExec::ExecToLog', false],
+      ['exec-return', '  nsExec::ExecToLog', true],
+    ]) {
+      const call = `  !insertmacro CMSparkSmokePhase "${phase}"`
+      assert.equal(text.split(call).length - 1, 1)
+      assert.equal(text.indexOf(call) > text.indexOf(anchor), after)
+    }
+    assert.ok(text.indexOf('"exec-return"') < text.indexOf('  Pop $1'), 'preserve original plugin result on the stack')
+    assert.equal((text.match(/!insertmacro CMSparkSmokePhase/g) ?? []).length, 4)
+  }
+})
+
+test('macro producer refuses missing/duplicate anchors, malformed blocks and pre-instrumented input', () => {
+  const exec = originalMacro.toString().match(/^  nsExec::ExecToLog .+$/m)[0]
+  for (const anchor of ['  InitPluginsDir', '  File /oname=$PLUGINSDIR\\cmspark-stop.ps1 "${CMSPARK_STOP_SCRIPT}"', exec, '  Pop $1']) {
+    assert.throws(() => observation.buildObservedMacro(Buffer.from(originalMacro.toString().replace(anchor, 'REMOVED'))), invalid)
+    // Duplicates are inside the complete actual macro, not only extra text
+    // outside its end marker that a wrapper-shape check would already reject.
+    assert.throws(() => observation.buildObservedMacro(Buffer.from(originalMacro.toString().replace(anchor, anchor+'\n'+anchor))), invalid)
+    assert.throws(() => observation.buildObservedMacro(Buffer.concat([originalMacro, Buffer.from('\n' + anchor)])), invalid)
+  }
+  const observed = observation.buildObservedMacro(originalMacro)
+  assert.throws(() => observation.buildObservedMacro(observed), invalid)
+  for (const value of [observed.toString().replace('"exec-enter"', '"other"'), observed.toString().replace('END:exec-enter', 'END:other'), observed.toString() + '\n; CMSPARK_NSIS_MACRO_OBSERVE_V1_BEGIN:exec-enter\n']) {
+    assert.throws(() => observation.restoreOriginalMacro(Buffer.from(value)), invalid)
+  }
+})
+
+test('mixed-EOL duplicate macro anchors cannot bypass the exactly-once checks', () => {
+  const text = originalMacro.toString().replaceAll('\r\n', '\n').replaceAll('\n', '\r\n')
+  const exec = text.match(/^  nsExec::ExecToLog [^\r\n]+/m)[0]
+  for (const anchor of ['  InitPluginsDir', '  File /oname=$PLUGINSDIR\\cmspark-stop.ps1 "${CMSPARK_STOP_SCRIPT}"', exec, '  Pop $1']) {
+    const duplicate = text.replace(anchor, anchor + '\n' + anchor)
+    assert.notEqual(duplicate, text, 'the mutation must actually duplicate an anchor')
+    assert.throws(() => observation.buildObservedMacro(Buffer.from(duplicate)), invalid)
+  }
+})
+
+test('real prepare reads the fixed production macro and preamble transports exactly one strict-inverse copy', () => owned(root => {
+  const descriptor = createObservation(root)
+  const matches = descriptor.nsisPreamble.match(/^!macro StopInstalledAgentUnshared\r?\n[\s\S]*?^!macroend/gm) ?? []
+  assert.equal(matches.length, 1)
+  assert.deepEqual(observation.restoreOriginalMacro(Buffer.from(matches[0])), originalMacro)
+  assert.deepEqual(Object.keys(descriptor).sort(), ['schema','kind','rootIdentity','insideIdentity','traceIdentity','helperPath','helperIdentity','sourceSHA256','observedSHA256','nsisPreamble','nsisEnter','nsisAfterMacro'].sort())
+  assert.throws(() => collectObservation(root, { ...descriptor, nsisPreamble: descriptor.nsisPreamble.replace('"exec-enter"', '"other"') }), invalid)
+}))
+
+test('new finite macro phase absence/reorder never becomes acceptance and attempts retain pipeline position', () => {
+  for (const value of [complete.replace('phase:script-extracted\r\n',''), complete.replace('phase:exec-enter\r\n',''), complete.replace('phase:exec-return\r\n',''), complete.replace('phase:exec-enter\r\n','').replace('phase:helper-enter\r\n','phase:helper-enter\r\nphase:exec-enter\r\n')]) {
+    owned(root => {
+      const descriptor = createObservation(root); write(root,value)
+      try { const summary = collectObservation(root,descriptor); assert.equal(summary.complete,false); assert.equal(summary.gap,true) }
+      catch (error) { assert.match(String(error),invalid) }
+    })
+  }
+  owned(root => {
+    const descriptor = createObservation(root);write(root,'phase:section-enter\r\nphase:plugin-dir-ready\r\n')
+    const summary=collectObservation(root,descriptor)
+    assert.equal(summary.complete,false);assert.equal(summary.stopAttempts,null);assert.equal(summary.stopOrSiblingAcceptanceProvided,false)
+  })
+  for (const value of ['phase:exec-enter\r\nphase:script-extracted\r\n','phase:section-enter\r\nphase:nsis-failed\r\nphase:plugin-dir-ready\r\n']) owned(root => {
+    const descriptor=createObservation(root);write(root,value)
+    assert.throws(()=>collectObservation(root,descriptor),invalid)
+  })
+})
+
+test('real file replay of emitted logger retains plugin-result sentinel, prior errors and bound on repeated entry', () => {
+  for (const priorError of [false,true]) for (const state of ['normal','seek-failure','overflow']) owned(root => {
+    const descriptor=createObservation(root),trace=path.join(root,insideName,receipt)
+    for(let invocation=0;invocation<2;invocation++){
+      const data=state==='overflow'?'x'.repeat(4096):'';write(root,data)
+      const result=replayEmittedPhase(descriptor,trace,state==='seek-failure',priorError)
+      assert.deepEqual(result,{gap:state==='normal'?'0':'1',writes:state==='normal'?1:0})
+      if(state!=='normal')assert.equal(fs.readFileSync(trace,'utf8'),data)
+    }
+  })
 })

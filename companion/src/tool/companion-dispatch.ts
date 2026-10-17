@@ -110,6 +110,8 @@ export interface CompanionToolExecOptions {
   prevalidatedNonce?: string
   /** App tab WP3: tier the L2 gate assigned to a host_app call (apps.launch audit). */
   appLaunchTier?: string
+  /** #686 opaque request-local capability, never supplied by tool JSON. */
+  guiTemplateReceipt?: import("../apps/gui-template-runtime").GuiTemplateReceipt
   /** WP2 (§E.4): broadcast channel for computer-task progress events. */
   broadcast?: (data: any) => void
   /**
@@ -1831,6 +1833,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       }
     }
     case "host_app": {
+      // #686: only the actual interactive gate can hand the executor this closure.
+      if (params.action === "run_template") {
+        if (!execOpts?.guiTemplateReceipt) return { success: false, error: "App file template requires a fresh interactive approval" }
+        return execOpts.guiTemplateReceipt.execute(params)
+      }
       // App tab WP3 — L0 no-arg launch of a user-whitelisted app (win32, P1).
       // Adversary 接线警示 ③: THIS is the executor validate branch of the
       // three-place gate wiring (① L2 gate tool list, ② bindingPayloadFor).

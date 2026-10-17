@@ -42,19 +42,16 @@ not from a successful driver response alone."*
 |---|---|---|
 | **选择（怎么找到目标）** | 像素坐标（`click{x,y}` 客户端逻辑点）**或** OCR 文本锚点**或** UIA accessible-Name 锚点 | `tool-definitions-catalog.json` 的 `host_computer.actions` |
 | **UIA 定位** | **只读**。按 accessible-Name 锚点定位，返回元素中心 + 屏幕物理像素 rect；置信度 1.0(唯一) / 0.9(同名取树序首) / 0.8(子串)；离屏/零 rect 不返回 | `computer-uia-locate.ps1` 头部契约 |
-| **投递（怎么把输入送进去）** | **`SendInput`，且必须先 `SetForegroundWindow`**（重试 3 次；失败即 `FOCUSLOST` 拒绝，绝不盲注入） | `computer-input.ps1`（26KB，WP1/WP2） |
-| **UIA 动作模式** | **全仓为空**（`InvokePattern` / `ValuePattern` / `LegacyIAccessiblePattern` / `ScrollPattern` / `SelectionItemPattern` / `TogglePattern` 均无引用） | 全仓 grep = 0 |
+| **前台投递** | **`SendInput`，且必须先 `SetForegroundWindow`**（重试 3 次；失败即 `FOCUSLOST` 拒绝，绝不盲注入） | `computer-input.ps1`（26KB，WP1/WP2） |
+| **UIA 动作模式** | 已有 `InvokePattern` / `ValuePattern.SetValue` / `ScrollPattern` / `SelectionItemPattern.Select` / `TogglePattern`；executor 只接窄条件的左键 `Invoke` | `computer-uia-invoke.ps1`、`executor.ts`；逐靶子证据见 §3.3 |
 
-### ⚠️ 这张事实表说明的结构性限制
+### ⚠️ 两条投递路线的边界
 
-**我们对 UIA 的用法只到「定位」，投递一律走 `SendInput` ⇒ 目标必须在**前台**。**
+**前台坐标路径使用 `SendInput`；已有的后台路径使用 UIA 动作模式。**
 
-于是每一次坐标操作都要把窗口提到前台，而**提前台本身需要人工确认**（一次性 L2，窗口 5 秒）。
-两者相乘 = **多步任务实际上不可达**（#534 / #530）。
-
-cua 的做法不同：既然已经通过 UIA 找到了元素，就**用 UIA 投递动作**
-（`Invoke()` / `SetValue()` 等），**不需要前台**。
-→ 这正是本台账要记录、并要补上的那条轴（见 §6）。
+坐标路径仍保留前台提升与既有人工确认要求（#534 / #530）。后台接线仅在左键、
+非空 target、`uia+ocr` 互证等现有条件成立时尝试 `Invoke`，不绕过动作闸门。
+脚本支持的其它模式不等于 executor 已接线，也不等于所有工具包已验收（见 §3.3 / §6）。
 
 ---
 
@@ -68,7 +65,7 @@ cua 的做法不同：既然已经通过 UIA 找到了元素，就**用 UIA 投�
 | 路线 | 状态 | 精确拒绝码 | 证据 |
 |---|---|---|---|
 | 前台 `SendInput`（坐标键鼠） | **Delivered**（机制存在且被使用） | `FOCUSLOST`（提前台 3 次失败）、`SENDFAILED`（注入事件数不符） | `computer-input.ps1` |
-| **后台投递（不经前台）** | **Gap** | — | 未实现（无 UIA 动作模式） |
+| **后台 UIA 投递（不经前台）** | **Delivered（WPF 左键的历史实测，见 §3.3）**；其它靶子仍按行记 Gap | `UIA_ELEMENT_GONE` / `UIA_ELEMENT_MISMATCH` / `UIA_PATTERN_UNAVAILABLE` 等脚本精确码 | `computer-uia-invoke.ps1`、executor 左键接线、WPF 夹具 |
 
 ### 3.2 结构与策略性拒绝（**不是**未实现，是**有意拒绝**）
 
@@ -82,6 +79,7 @@ cua 的做法不同：既然已经通过 UIA 找到了元素，就**用 UIA 投�
 | 靶子/框架 | 前台左键 | 后台左键 | 后台键盘 | 后台滚动 | 后台拖拽 |
 |---|---|---|---|---|---|
 | **WPF** | Gap | **Delivered（后台已验证）** ✅ | Gap | Gap | Gap |
+| WinForms（下述历史夹具） | Gap | **Refused（`UIA_PATTERN_UNAVAILABLE`）** | Gap | Gap | Gap |
 | WinUI3 | Gap | Gap | Gap | Gap | Gap |
 | WebView2 | Gap | Gap | Gap | Gap | Gap |
 | Electron | Gap | Gap | Gap | Gap | Gap |
@@ -121,7 +119,8 @@ oracle 脚本：`computer-bg-oracles.ps1`（`snapshot` / `compare` 两模式）�
 UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tried=[invoke:unsupported]
 ```
 
-⇒ 该靶子此行应为 **Refused**（精确码），**不是** Delivered。夹具 `uia-winforms-fixture.ps1`。
+⇒ 表中该历史夹具记为 **Refused**（精确码），**不是** Delivered。夹具 `uia-winforms-fixture.ps1`。
+此结论限于该轮暴露为 `Pane` 的控件，不代表所有 WinForms 控件或模式都不可用。
 **这就是「UIA 暴露面取决于工具包」的实证** —— 也是 cua 自建原生夹具的原因。
 
 **其余行仍是 Gap**：填它们需要可复现夹具（§5③）+ 后台 oracle（§5②）。在那之前不填 —— **不许猜**。
@@ -158,7 +157,8 @@ UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tri
 | **光标保持** | ✅ **有**（已实测） | 同上（`cursor_kept`，GetCursorPos） |
 
 ⚠️ **注意区分**：前两项服务于**安全**（别在弹窗上乱点），后四项才能证明**「后台」真的成立**。
-我们**有机制，缺后四项** —— 而它们恰恰是「不抢焦点」这件事的验收条件。
+后四项已有实现及 WPF 历史验收记录，其中输入泄漏仍为 **derived**。
+其它靶子的后台结论仍须各自夹具与同轮 oracle 支持，不能借用 WPF 的结果。
 
 **另有两项既有资产值得记名**（比 cua 更强的部分）：
 - `computer-evidence-seal.ps1`：凭据区域**先打码**（原始像素**永不落盘**）→ DPAPI 加密 → 删原始输入。
@@ -172,7 +172,7 @@ UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tri
 | # | 事项 | 状态 |
 |---|---|---|
 | 1 | **本台账** | ✅ 本文件 |
-| 2 | **补 4 个后台 oracle** | ✅ 已做（`computer-bg-oracles.ps1` + 5 项测试；`no_leaked_input` 为 derived） |
+| 2 | **补 4 个后台 oracle** | ✅ 已做（`computer-bg-oracles.ps1`；基础 5 项比较测试，Windows 门禁另设 56 项校验＋1 项真实新旧脚本对照，按实际回执验收；`no_leaked_input` 为 derived） |
 | 3 | **Windows 后台投递**：UIA 动作模式 —— 脚本已落地并在 WPF 实测；**executor 已接线**（仅左键，条件窄；不绕过 A2.1/预算/速率窗） | ✅ |
 | 4 | **GUI 夹具** | 🟡 已有 WPF（正）+ WinForms（反）两个；其余靶子待做 |
 | 5 | **逐靶子回填**：WinUI3 / WebView2 / Electron / Tauri / 原生 Win32 | 待做 —— 目前**只有 WPF 左键**被证实 |

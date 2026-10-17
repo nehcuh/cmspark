@@ -308,11 +308,16 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
   }),
 
   // --- Windows host_app (App tab WP3: L0 no-arg launch of whitelisted apps) ---
-  host_app: z.object({
-    app: z.string().min(1),
-    action: z.enum(["launch"]),
-    security_token: z.string().optional(),
-  }),
+  host_app: z.discriminatedUnion("action", [
+    z.object({ app: z.string().min(1), action: z.literal("launch"), security_token: z.string().optional() }),
+    z.object({
+      app: z.string().regex(/^win\.app\.[a-z0-9][a-z0-9_-]{1,31}$/),
+      action: z.literal("run_template"),
+      template: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+      params: z.object({ file: z.string().min(1).max(259) }).strict(),
+      security_token: z.string().optional(),
+    }).strict(),
+  ]),
 
   // Apps Phase-2 structured CLI (no free-args; fixed positionals from manifest)
   host_cli: z.object({

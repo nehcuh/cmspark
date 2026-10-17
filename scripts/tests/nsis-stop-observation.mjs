@@ -8,10 +8,13 @@ const KIND = 'NATIVE_TEST_PASSIVE_INSTRUMENTED_EXACT_ORIGINAL_BODY';
 const INSIDE = "space 中文 & O'Brien ! (test)";
 const TRACE = '.cmspark-stop-smoke.receipt';
 const MAX_BYTES = 4096;
-const NSIS_MAX_RECORD_BYTES = Math.max(...['section-enter', 'macro-return', 'nsis-failed'].map(value => Buffer.byteLength(`phase:${value}\r\n`, 'ascii')));
+const MACRO_PHASES = ['plugin-dir-ready', 'script-extracted', 'exec-enter', 'exec-return'];
+const NSIS_MAX_RECORD_BYTES = Math.max(...['section-enter', ...MACRO_PHASES, 'macro-return', 'nsis-failed'].map(value => Buffer.byteLength(`phase:${value}\r\n`, 'ascii')));
 const PREFIX = '# CMSPARK_NSIS_OBSERVE_V1_';
-const PHASES = ['section-enter', 'helper-enter', 'cim-enter', 'first-row', 'pipeline-return', 'helper-end', 'macro-return'];
+const MACRO_PREFIX = '; CMSPARK_NSIS_MACRO_OBSERVE_V1_';
+const PHASES = ['section-enter', 'plugin-dir-ready', 'script-extracted', 'exec-enter', 'helper-enter', 'cim-enter', 'first-row', 'pipeline-return', 'helper-end', 'exec-return', 'macro-return'];
 const originalPath = fileURLToPath(new URL('../../companion/stop-installed-agent.ps1', import.meta.url));
+const originalInstallerPath = fileURLToPath(new URL('../installer.nsi', import.meta.url));
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const fail = () => { throw new Error('NSIS_STOP_OBSERVATION_INVALID'); };
 const identity = st => Object.fromEntries(['dev','ino','mode','nlink','birthtimeNs'].map(k => [k,String(st[k])]));
@@ -93,6 +96,57 @@ export function restoreOriginalHelper(bytes) {
   return Buffer.from((originalBOM?'\ufeff':'')+text,'utf8');
 }
 
+function macroText(bytes) {
+  if (!Buffer.isBuffer(bytes)) fail();
+  const bom=bytes.subarray(0,3).equals(Buffer.from([239,187,191]));
+  const text=bytes.subarray(bom?3:0).toString('utf8');
+  if (!Buffer.from(text,'utf8').equals(bytes.subarray(bom?3:0))) fail();
+  return {bom,text,eol:text.includes('\r\n')?'\r\n':'\n'};
+}
+function macroBlock(phase,eol) {
+  return `${MACRO_PREFIX}BEGIN:${phase}${eol}  !insertmacro CMSparkSmokePhase "${phase}"${eol}${MACRO_PREFIX}END:${phase}${eol}`;
+}
+export function buildObservedMacro(bytes) {
+  const {bom,text,eol}=macroText(bytes);
+  const matches=text.match(/^!macro StopInstalledAgentUnshared\r?\n[\s\S]*?^!macroend/gm)??[];
+  if(matches.length!==1||matches[0]!==text||text.includes(MACRO_PREFIX)||text.includes('CMSparkSmokePhase'))fail();
+  const init='  InitPluginsDir'+eol;
+  const file='  File /oname=$PLUGINSDIR\\cmspark-stop.ps1 "${CMSPARK_STOP_SCRIPT}"'+eol;
+  const calls=text.match(/^  nsExec::ExecToLog [^\r\n]+\r?\n/gm)??[];
+  if(calls.length!==1)fail();
+  const exec=calls[0],pop='  Pop $1'+eol;
+  // Count complete anchor lines independently of EOL style before exact insertion.
+  const lines=text.split(/\r?\n/);
+  for(const anchor of [init,file,pop])if(lines.filter(line=>line===anchor.slice(0,-eol.length)).length!==1)fail();
+  // Validate the existing Pop anchor even though no instruction is added after it.
+  once(text,pop,pop);
+  let observed=once(text,init,init+macroBlock('plugin-dir-ready',eol));
+  observed=once(observed,file,file+macroBlock('script-extracted',eol));
+  observed=once(observed,exec,macroBlock('exec-enter',eol)+exec+macroBlock('exec-return',eol));
+  const result=Buffer.from((bom?'\ufeff':'')+observed,'utf8');
+  if(!restoreOriginalMacro(result).equals(bytes))fail();
+  return result;
+}
+export function restoreOriginalMacro(bytes) {
+  const {bom,eol}=macroText(bytes);let {text}=macroText(bytes);
+  for(const phase of MACRO_PHASES){
+    const exact=macroBlock(phase,eol);
+    text=once(text,exact,'');
+  }
+  if(text.includes(MACRO_PREFIX))fail();
+  return Buffer.from((bom?'\ufeff':'')+text,'utf8');
+}
+function observedPreamble() {
+  // Fixed production input, not a caller-provided macro or replacement body.
+  const source=fs.readFileSync(originalInstallerPath,'utf8');
+  const matches=source.match(/^!macro StopInstalledAgentUnshared\r?\n[\s\S]*?^!macroend/gm)??[];
+  if(matches.length!==1)fail();
+  const original=Buffer.from(matches[0],'utf8'),observed=buildObservedMacro(original);
+  if(!restoreOriginalMacro(observed).equals(original))fail();
+  // Reuse the existing transport field; no extra CLI mode or descriptor key.
+  return nsisPreamble+'\n'+observed.toString('utf8');
+}
+
 const nsisPreamble = `Var CMSparkSmokeObservationGap
 Var CMSparkSmokeSectionEntered
 !macro CMSparkSmokePhase PHASE
@@ -154,14 +208,15 @@ function readStableBounded(file, expectedIdentity, maxBytes, exactBytes) {
 }
 export function createObservation(input) {
   const root=ownedRoot(input),inside=path.join(root,INSIDE),trace=path.join(inside,TRACE),helperPath=path.join(root,'observed-stop.ps1');
-  const original=fs.readFileSync(originalPath),observed=buildObservedHelper(original);
+  const original=fs.readFileSync(originalPath),observed=buildObservedHelper(original),preamble=observedPreamble();
   const fd=fs.openSync(trace,'wx',0o600);fs.closeSync(fd);
   fs.writeFileSync(helperPath,observed,{flag:'wx',mode:0o600});
-  return {schema:1,kind:KIND,rootIdentity:identity(ordinary(root,true)),insideIdentity:identity(ordinary(inside,true)),traceIdentity:identity(ordinary(trace)),helperPath,helperIdentity:identity(ordinary(helperPath)),sourceSHA256:hash(original),observedSHA256:hash(observed),nsisPreamble,nsisEnter,nsisAfterMacro};
+  return {schema:1,kind:KIND,rootIdentity:identity(ordinary(root,true)),insideIdentity:identity(ordinary(inside,true)),traceIdentity:identity(ordinary(trace)),helperPath,helperIdentity:identity(ordinary(helperPath)),sourceSHA256:hash(original),observedSHA256:hash(observed),nsisPreamble:preamble,nsisEnter,nsisAfterMacro};
 }
 export function collectObservation(input, expected) {
   const root=ownedRoot(input),inside=path.join(root,INSIDE),trace=path.join(inside,TRACE),helperPath=path.join(root,'observed-stop.ps1');
   if (!expected || expected.schema!==1 || expected.kind!==KIND || expected.helperPath!==helperPath || !equalIdentity(identity(ordinary(root,true)),expected.rootIdentity) || !equalIdentity(identity(ordinary(inside,true)),expected.insideIdentity)) fail();
+  if(expected.nsisPreamble!==observedPreamble()||expected.nsisEnter!==nsisEnter||expected.nsisAfterMacro!==nsisAfterMacro)fail();
   const original=fs.readFileSync(originalPath),expectedObserved=buildObservedHelper(original);
   if(hash(original)!==expected.sourceSHA256||hash(expectedObserved)!==expected.observedSHA256)fail();
   const observed=readStableBounded(helperPath,expected.helperIdentity,expectedObserved.length,expectedObserved.length);
@@ -172,9 +227,16 @@ export function collectObservation(input, expected) {
   const lines=text?text.replace(/\r\n/g,'\n').slice(0,-1).split('\n'):[];
   const phases=[];let attempts=null,gap=false;
   for(const line of lines){
-    if(line.startsWith('phase:')){const value=line.slice(6);if(![...PHASES,'nsis-failed'].includes(value)||phases.includes(value))fail();phases.push(value);}
+    if(line.startsWith('phase:')){
+      const value=line.slice(6);
+      if(![...PHASES,'nsis-failed'].includes(value)||phases.includes(value)||phases.includes('nsis-failed'))fail();
+      // Missing captures may leave an incomplete subsequence, but a reordered
+      // phase cannot describe this producer's actual instruction order.
+      if(value!=='nsis-failed'&&PHASES.indexOf(value)<=PHASES.indexOf(phases.at(-1)))fail();
+      phases.push(value);
+    }
     else if(/^attempts:(?:0|[1-9][0-9]{0,9})$/.test(line)&&attempts===null){
-      if(JSON.stringify(phases)!==JSON.stringify(PHASES.slice(0,5)))fail();
+      if(JSON.stringify(phases)!==JSON.stringify(PHASES.slice(0,PHASES.indexOf('pipeline-return')+1)))fail();
       attempts=Number(line.slice(9));if(attempts>2147483647)fail();
     }
     else fail();

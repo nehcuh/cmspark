@@ -33,16 +33,16 @@ const run = (args: string[]) =>
     execFile(
       PS,
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", ...args],
-      { encoding: "utf8", windowsHide: true },
+      { encoding: "utf8", windowsHide: true, timeout: 15_000 },
       (err, _stdout, stderr) => res({ err, stderr: String(stderr || "") }),
     )
   })
 
-/** Run the comparator on two synthetic snapshots and return its verdict. */
-async function compare(
+/** Invoke the actual PS comparator, including malformed snapshot negative controls. */
+async function runCompare(
   dir: string,
-  before: Snap,
-  after: Snap,
+  before: unknown,
+  after: unknown,
   delivery: "uia-pattern" | "sendinput" = "uia-pattern",
 ) {
   const b = path.join(dir, "b.json")
@@ -54,6 +54,17 @@ async function compare(
   const { err, stderr } = await run([
     "-File", SCRIPT, "-Mode", "compare", "-Before", b, "-After", a, "-Out", r, "-Delivery", delivery,
   ])
+  return { err, stderr, output: r }
+}
+
+/** Run the comparator on two synthetic snapshots and return its verdict. */
+async function compare(
+  dir: string,
+  before: Snap,
+  after: Snap,
+  delivery: "uia-pattern" | "sendinput" = "uia-pattern",
+) {
+  const { err, stderr, output: r } = await runCompare(dir, before, after, delivery)
   assert.equal(err, null, `comparator failed: ${stderr}`)
   assert.ok(existsSync(r), "comparator wrote no result")
   return JSON.parse(readFileSync(r, "utf8"))
@@ -124,6 +135,93 @@ test("#572 background oracle: SendInput delivery cannot claim background, even i
     assert.equal(r.cursor_kept, true)
     assert.equal(r.no_leaked_input, false, "the foreground path must never pass the leak oracle")
     assert.equal(r.background_verified, false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// These call the production PowerShell comparator, not a JS reimplementation.
+// They are also counterfactual controls: running this same compiled test against
+// the exact old PS source must fail on invalid sampling instead of certifying it.
+for (const cursor of [
+  { label: "zero", x: 0, y: 0 },
+  { label: "negative virtual-screen coordinates", x: -1920, y: -120 },
+]) {
+  test(`#572 background oracle: valid ${cursor.label} remains a usable observation`, { skip: !available }, async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "bg-oracle-"))
+    try {
+      const snap: Snap = { ...BASE, cursor: { x: cursor.x, y: cursor.y, got: true } }
+      const r = await compare(dir, snap, snap)
+      assert.equal(r.cursor_kept, true)
+      assert.equal(r.background_verified, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+}
+
+const invalidCursorSamples: Array<{ label: string; cursor: unknown }> = [
+  { label: "failed got", cursor: { x: 10, y: 10, got: false } },
+  { label: "missing got", cursor: { x: 10, y: 10 } },
+  { label: "null got", cursor: { x: 10, y: 10, got: null } },
+  { label: "string got", cursor: { x: 10, y: 10, got: "true" } },
+  { label: "numeric got", cursor: { x: 10, y: 10, got: 1 } },
+  { label: "array got", cursor: { x: 10, y: 10, got: [true] } },
+  { label: "object got", cursor: { x: 10, y: 10, got: {} } },
+  { label: "missing cursor", cursor: undefined },
+  { label: "null cursor", cursor: null },
+  { label: "array cursor", cursor: [{ x: 10, y: 10, got: true }] },
+]
+for (const axis of ["x", "y"] as const) {
+  for (const invalid of [
+    { label: "missing", value: undefined },
+    { label: "null", value: null },
+    { label: "string", value: "10" },
+    { label: "boolean", value: true },
+    { label: "array", value: [10] },
+    { label: "object", value: {} },
+    // JSON.stringify writes these non-finite numbers as null. This asserts
+    // invalid serialized observations, not a claim that JSON represents NaN.
+    { label: "serialized non-finite", value: Number.POSITIVE_INFINITY },
+  ]) {
+    invalidCursorSamples.push({
+      label: `${axis} ${invalid.label}`,
+      cursor: { x: 10, y: 10, got: true, [axis]: invalid.value },
+    })
+  }
+}
+
+for (const invalid of invalidCursorSamples) {
+  for (const side of ["before", "after"] as const) {
+    test(`#572 background oracle: ${side} ${invalid.label} refuses unreadable sampling`, { skip: !available }, async () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "bg-oracle-"))
+      try {
+        const bad = { ...BASE, cursor: invalid.cursor }
+        const { err, stderr, output } = await runCompare(
+          dir,
+          side === "before" ? bad : BASE,
+          side === "after" ? bad : BASE,
+        )
+        assert.ok(err, "invalid sampling must not exit successfully")
+        assert.equal((err as { code?: number }).code, 4, `wrong failure: ${stderr}`)
+        assert.match(stderr, /ORACLE_UNREADABLE_SNAPSHOT:/)
+        assert.equal(existsSync(output), false, "invalid sampling must not write a verification result")
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+  }
+}
+
+test("#572 background oracle: two failed cursor samples cannot certify an unchanged cursor", { skip: !available }, async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "bg-oracle-"))
+  try {
+    const bad = { ...BASE, cursor: { x: 0, y: 0, got: false } }
+    const { err, stderr, output } = await runCompare(dir, bad, bad)
+    assert.ok(err)
+    assert.equal((err as { code?: number }).code, 4, `wrong failure: ${stderr}`)
+    assert.match(stderr, /ORACLE_UNREADABLE_SNAPSHOT:/)
+    assert.equal(existsSync(output), false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
