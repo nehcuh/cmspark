@@ -15,7 +15,9 @@ param(
   [int]$Seconds = 45,
   # Test-only finite receipt, not a production control/authorization channel.
   [string]$AcceptanceReady = '',
-  [switch]$OwnForeground
+  [switch]$OwnForeground,
+  [string]$AcceptanceTrace = '',
+  [string]$AcceptanceRole = ''
 )
 Microsoft.PowerShell.Utility\Add-Type -AssemblyName PresentationFramework
 Microsoft.PowerShell.Utility\Add-Type -AssemblyName PresentationCore
@@ -31,6 +33,7 @@ $btn.Content = $ButtonText
 $btn.Name = 'cmspark_fixture_button'
 $btn.Width = 180; $btn.Height = 44
 $btn.Add_Click({
+  Write-WpfEvent572 'Click' 'enter'
   # The oracle, in two channels: a marker file (machine-checkable) and a visible label
   # change (eye-checkable — a screenshot can show the target-owned state change without
   # trusting any file the harness wrote).
@@ -44,6 +47,7 @@ $btn.Add_Click({
     }
   } catch {}
   try { $btn.Content = "Clicked OK" } catch {}
+  Write-WpfEvent572 'Click' 'exit'
 })
 $win.Content = $btn
 
@@ -61,7 +65,27 @@ public static class WpfAcceptanceForeground572 {
 }
 '@
 }
+# Test-only bounded observations; no HWND/path/text is serialized and no focus API is called.
+$script:wpfEventSequence572 = 0
+function Write-WpfEvent572([string]$EventName, [string]$PhaseName) {
+  try {
+    if ($AcceptanceReady -eq '' -or $AcceptanceTrace -eq '' -or $AcceptanceRole -notin @('target','sibling')) { return }
+    if ($script:wpfEventSequence572 -ge 16) { return }
+    if (($EventName -eq 'Click' -and $PhaseName -notin @('enter','exit')) -or ($EventName -ne 'Click' -and ($EventName -notin @('Activated','Deactivated','ContentRendered') -or $PhaseName -ne 'event'))) { return }
+    $script:wpfEventSequence572++
+    $observedHandle = (Microsoft.PowerShell.Utility\New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
+    $known = $observedHandle -ne [IntPtr]::Zero
+    $own = $known -and ([WpfAcceptanceForeground572]::GetForegroundWindow() -eq $observedHandle)
+    $record = [ordered]@{ sequence = $script:wpfEventSequence572; event = $EventName; phase = $PhaseName; active = [bool]$win.IsActive; foregroundKnown = [bool]$known; foregroundOwn = [bool]$own }
+    $line = $record | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress
+    [IO.File]::AppendAllText($AcceptanceTrace, $line + [Environment]::NewLine)
+  } catch { # Passive observation must not replace the original event or acceptance.
+  }
+}
+$win.Add_Activated({ Write-WpfEvent572 'Activated' 'event' })
+$win.Add_Deactivated({ Write-WpfEvent572 'Deactivated' 'event' })
 $win.Add_ContentRendered({
+  Write-WpfEvent572 'ContentRendered' 'event'
   try {
     $h = (Microsoft.PowerShell.Utility\New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
     [IO.File]::WriteAllText($Ready, [string]$h.ToInt64())

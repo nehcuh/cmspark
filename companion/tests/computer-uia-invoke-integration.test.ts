@@ -136,6 +136,50 @@ function assertCurrentWpfProof572(
   assert.equal(siblingMarker, false, "owned foreground sibling must receive no click")
 }
 
+type WpfEvent572 = {
+  sequence: number
+  event: "Activated" | "Deactivated" | "ContentRendered" | "Click"
+  phase: "event" | "enter" | "exit"
+  active: boolean
+  foregroundKnown: boolean
+  foregroundOwn: boolean
+}
+
+/** Untrusted owned receipt bytes never flow directly to public diagnostics. */
+function projectWpfEvents572(text: string, role: "target" | "sibling"): {
+  schema: 1; role: "target" | "sibling"; stage: "before_cleanup"; valid: boolean; atLimit: boolean; events: WpfEvent572[]
+} {
+  const empty = { schema: 1 as const, role, stage: "before_cleanup" as const, valid: false, atLimit: false, events: [] as WpfEvent572[] }
+  if (role !== "target" && role !== "sibling") throw new Error("WPF572_EVENT_ROLE_INVALID")
+  if (Buffer.byteLength(text, "utf8") > 4096 || text.trim() === "") return empty
+  const lines = text.trim().split(/\r?\n/)
+  if (lines.length > 16) return empty
+  const events: WpfEvent572[] = []
+  try {
+    for (const line of lines) {
+      const value = JSON.parse(line) as Record<string, unknown>
+      if (!value || typeof value !== "object" || Array.isArray(value)) return empty
+      if (Object.keys(value).sort().join(",") !== "active,event,foregroundKnown,foregroundOwn,phase,sequence") return empty
+      if (value.sequence !== events.length + 1 || typeof value.active !== "boolean" || typeof value.foregroundKnown !== "boolean" || typeof value.foregroundOwn !== "boolean") return empty
+      if (value.foregroundOwn && !value.foregroundKnown) return empty
+      if (value.event === "Click") {
+        if (value.phase !== "enter" && value.phase !== "exit") return empty
+      } else if (!["Activated", "Deactivated", "ContentRendered"].includes(value.event as string) || value.phase !== "event") return empty
+      events.push({ sequence: value.sequence as number, event: value.event as WpfEvent572["event"], phase: value.phase as WpfEvent572["phase"],
+        active: value.active, foregroundKnown: value.foregroundKnown, foregroundOwn: value.foregroundOwn })
+    }
+  } catch { return empty }
+  return { schema: 1, role, stage: "before_cleanup", valid: true, atLimit: events.length === 16, events }
+}
+
+function emitWpfEvents572(role: "target" | "sibling", read: () => string, sink: (value: string) => void): void {
+  try {
+    let text = ""
+    try { text = read() } catch { /* no free error/path output */ }
+    sink("WPF572_EVENT_OBSERVATION " + JSON.stringify(projectWpfEvents572(text, role)))
+  } catch { /* diagnostics cannot replace acceptance or prevent owned cleanup */ }
+}
+
 function startOwnedWpf572(fixture: string, args: string[], remaining: number): WpfChild572 {
   let ended = false
   let failure: Error | undefined
@@ -209,7 +253,8 @@ test("#572 current WPF background Invoke changes only the target while all four 
       const receipt = path.join(dir, `${role}.acceptance.json`)
       const owner = startOwnedWpf572(fixture, ["-Marker", role === "target" ? marker : siblingMarker,
         "-Ready", ready, "-ButtonText", role === "target" ? "SubmitTest" : "ForegroundSibling",
-        "-AcceptanceReady", receipt, ...(role === "sibling" ? ["-OwnForeground"] : [])], remaining())
+        "-AcceptanceReady", receipt, "-AcceptanceTrace", path.join(dir, `${role}.events.jsonl`), "-AcceptanceRole", role,
+        ...(role === "sibling" ? ["-OwnForeground"] : [])], remaining())
       children.push(owner)
       const value = await waitOwnedFile572(receipt, owner, deadline, text => JSON.parse(text) as { hwnd: number; foreground: number; active: boolean })
       assert.ok(Number.isSafeInteger(value.hwnd) && value.hwnd > 0)
@@ -261,7 +306,13 @@ test("#572 current WPF background Invoke changes only the target while all four 
     assert.equal(changed.automationId, hit.automationId)
     assert.ok(children.every(owner => !owner.isClosed()), "both fixtures must remain alive through the assertions")
   } catch (error) { primary = error }
-  finally { await cleanupOwnedWpf572(children, () => rmSync(dir, { recursive: true, force: true }), primary) }
+  finally {
+    // Observe before termination so cleanup-induced deactivation is not mistaken for Invoke behavior.
+    for (const role of ["target", "sibling"] as const) {
+      emitWpfEvents572(role, () => readFileSync(path.join(dir, `${role}.events.jsonl`), "utf8"), value => t.diagnostic(value))
+    }
+    await cleanupOwnedWpf572(children, () => rmSync(dir, { recursive: true, force: true }), primary)
+  }
   assert.ok(children.length === 2 && children.every(owner => owner.isClosed()), "both owned WPF handles must be closed")
   console.log(JSON.stringify({ schema: 1, kind: "WPF572_CURRENT_REAL_BACKGROUND", targetChanged: true,
     siblingUnchanged: true, actualForegroundSibling: true, focusKept: true, zorderKept: true,
@@ -278,3 +329,53 @@ test("#650 shipped UIA source parses as Unicode in actual Desktop PowerShell 5.1
   assert.ok(Number.isSafeInteger(proof.ansi_counterfactual_errors) && proof.ansi_counterfactual_errors >= 1 && proof.ansi_counterfactual_errors <= 100)
 })
 
+
+// Portable controls exercise the exact diagnostic projection; WPF event delivery remains native-only.
+test("#572 WPF event diagnostics accept only bounded fixed event records", () => {
+  const row = { sequence: 1, event: "Activated", phase: "event", active: true, foregroundKnown: true, foregroundOwn: true }
+  const valid = projectWpfEvents572(JSON.stringify(row) + "\n", "target")
+  assert.equal(valid.valid, true)
+  assert.equal(valid.role, "target")
+  assert.deepEqual(valid.events, [row])
+  assert.equal(projectWpfEvents572("", "target").valid, false)
+  const rows = Array.from({ length: 16 }, (_, i) => ({ ...row, sequence: i + 1 }))
+  assert.equal(projectWpfEvents572(rows.map(value => JSON.stringify(value)).join("\n") + "\n", "sibling").atLimit, true)
+  assert.equal(projectWpfEvents572([...rows, { ...row, sequence: 17 }].map(value => JSON.stringify(value)).join("\n"), "target").valid, false)
+  for (const change of [
+    { event: "UNKNOWN_SECRET_PATH" }, { phase: "UNKNOWN_SECRET_BODY" }, { event: "Click", phase: "event" },
+    { phase: "enter" }, { sequence: 2 }, { active: "secret" }, { foregroundOwn: 1 },
+    { foregroundKnown: false }, { extra: "SECRET_BODY" },
+  ]) {
+    const output = projectWpfEvents572(JSON.stringify({ ...row, ...change }), "target")
+    assert.equal(output.valid, false)
+    assert.deepEqual(output.events, [])
+    assert.doesNotMatch(JSON.stringify(output), /SECRET|UNKNOWN/)
+  }
+  for (const phase of ["enter", "exit"]) assert.equal(projectWpfEvents572(JSON.stringify({ ...row, event: "Click", phase }), "target").valid, true)
+  for (const event of ["Deactivated", "ContentRendered"]) assert.equal(projectWpfEvents572(JSON.stringify({ ...row, event }), "target").valid, true)
+  for (const text of ["not-json SECRET", "null", "[]", "x".repeat(4097)]) {
+    assert.equal(projectWpfEvents572(text, "target").valid, false)
+    assert.doesNotMatch(JSON.stringify(projectWpfEvents572(text, "target")), /SECRET/)
+  }
+})
+
+test("#572 WPF event diagnostic sink failures preserve cleanup and original acceptance", async () => {
+  const row = { sequence: 1, event: "Activated", phase: "event", active: true, foregroundKnown: true, foregroundOwn: true }
+  const emitted: string[] = []
+  emitWpfEvents572("target", () => JSON.stringify(row), value => { emitted.push(value) })
+  assert.equal(emitted.length, 1)
+  assert.match(emitted[0], /^WPF572_EVENT_OBSERVATION /)
+  assert.equal(JSON.parse(emitted[0].slice("WPF572_EVENT_OBSERVATION ".length)).valid, true)
+  emitWpfEvents572("target", () => { throw new Error("SECRET_PATH") }, value => { emitted.push(value) })
+  assert.doesNotMatch(emitted.join("\n"), /SECRET_PATH/)
+  emitWpfEvents572("sibling", () => JSON.stringify(row), () => { throw new Error("sink") })
+  const primary = new Error("original assertion")
+  let removed = 0, killed = 0
+  const owner = { child: { kill() { killed++; return true } }, closed: Promise.resolve(), isClosed: () => false, launchError: () => undefined } as unknown as WpfChild572
+  await assert.rejects(cleanupOwnedWpf572([owner], () => {
+    emitWpfEvents572("target", () => JSON.stringify(row), () => { throw new Error("sink") })
+    removed++
+  }, primary), error => error === primary)
+  assert.equal(killed, 1)
+  assert.equal(removed, 1)
+})
