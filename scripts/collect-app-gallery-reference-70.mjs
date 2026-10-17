@@ -92,6 +92,36 @@ export function parseSample(stdout, app) {
   return value
 }
 
+// Error-only, fixed source stages. Never echo native stderr, paths, argv or
+// exception text; this is a failure locator, not a signature-success receipt.
+export function sampleFailureDiagnostic(error) {
+  const order = ['ENTERED', 'ASSEMBLY_READY', 'ARCHIVE_VERIFIED', 'ZIP_OPENED',
+    'ENTRY_SELECTED', 'ENTRY_OPENED', 'OUTPUT_OPENED', 'BUFFER_READY', 'ENTRY_WRITTEN',
+    'EXE_VERIFIED', 'SIGNATURE_ENTERED', 'SIGNATURE_RETURNED', 'COMPLETE']
+  const phases = []
+  let last = -1, lastElapsed = -1
+  const observedStderr = error?.stderr
+  const stderr = typeof observedStderr === 'string' ? observedStderr : ''
+  if (stderr.length <= 16 * 1024 * 1024) {
+    for (const line of stderr.split(/\r?\n/)) {
+      if (!line.startsWith('GALLERY70_PHASE=')) continue
+      const match = /^GALLERY70_PHASE=([A-Z_]+):(0|[1-9]\d{0,8})$/.exec(line)
+      const index = match ? order.indexOf(match[1]) : -1
+      const elapsed = match ? Number(match[2]) : -1
+      if (index !== last + 1 || elapsed < lastElapsed) { phases.length = 0; break }
+      phases.push({ phase: order[index], elapsed_ms: elapsed })
+      last = index; lastElapsed = elapsed
+    }
+  }
+  const code = error?.code
+  const signal = error?.signal
+  return { kind: 'GALLERY70_SAMPLE_FAILURE', phases,
+    code: Number.isInteger(code) && code >= -2147483648 && code <= 4294967295 ? code
+      : ['ENOENT', 'EACCES', 'EPERM', 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'].includes(code) ? code : null,
+    killed: error?.killed === true,
+    signal: ['SIGTERM', 'SIGKILL'].includes(signal) ? signal : null }
+}
+
 export async function main(output) {
   requireHostedWindows()
   if (!output || !path.isAbsolute(output)) throw new Error('ABSOLUTE_NEW_OUTPUT_REQUIRED')
@@ -143,6 +173,7 @@ if (isCLIEntrypoint(process.argv[1])) {
       'PE_REJECTED', 'X64_REQUIRED', 'SIGNATURE_NOT_VALID', 'EXE_SHA_MISMATCH', 'SAMPLE_WIRE', 'REDIRECT_REJECTED', 'DOWNLOAD_REJECTED']
     const code = known.find(c => err?.message === c || String(err?.stderr || '').includes("'" + c + "'")) || 'GALLERY_REFERENCE_COLLECTION_FAILED'
     console.error(code)
+    console.error(JSON.stringify(sampleFailureDiagnostic(err)))
     process.exitCode = 1
   })
 }

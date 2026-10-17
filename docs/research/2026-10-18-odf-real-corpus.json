@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "issue": 615,
+  "observedOn": "2026-10-18",
+  "baseline": "c21be9ba6bcdee26160260c0ac47aa7b4e6ea37b",
+  "licence": "Contains UK public sector information licensed under the Open Government Licence v3.0, except where otherwise stated. Sources are attributed below; no endorsement is implied.",
+  "licenceURL": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+  "samples": [
+    {
+      "title": "Communities and Households Supplementary Data Tables",
+      "publication": "https://www.gov.uk/government/statistics/communities-and-households-statistics-for-rural-england",
+      "downloadURL": "https://assets.publishing.service.gov.uk/media/6a0c7f6d229555d0fe826899/4_Communities_and_Households_supplementary_tables_20_05_2026.ods",
+      "bytes": 1143326,
+      "sha256": "4239ea0f01d0d8fb74741c4949575d03fbbad501c66a3a231cbf508fb8dc5e37",
+      "name": "public-1.ods",
+      "source": "ACTUAL_PUBLIC_OFFICIAL_ODS_NOT_SYNTHETIC"
+    },
+    {
+      "title": "Supplementary Dataset: Relative deprivation in rural areas based on the Indices of Deprivation 2025",
+      "publication": "https://www.gov.uk/government/statistics/communities-and-households-statistics-for-rural-england",
+      "downloadURL": "https://assets.publishing.service.gov.uk/media/69387ae66a12691d48491ce3/4_Communities_and_Households_supplementary_dataset_indices_of_deprivation_10_12_2025.ods",
+      "bytes": 1151613,
+      "sha256": "ab8d159f9c674b8f80bf119e4a44900136171d92345da02a21fc4c81a35e57a3",
+      "name": "public-2.ods",
+      "source": "ACTUAL_PUBLIC_OFFICIAL_ODS_NOT_SYNTHETIC"
+    },
+    {
+      "title": "Table 100: number of dwellings by tenure and district, England",
+      "publication": "https://www.gov.uk/government/statistical-data-sets/live-tables-on-dwelling-stock-including-vacants",
+      "downloadURL": "https://assets.publishing.service.gov.uk/media/6a0dcbb05c3c79da61662e38/LiveTable100.ods",
+      "bytes": 530734,
+      "sha256": "4c6a22b92aa579d725eefe82765c4b340e1c9b154961a69b97f6ec4f28bae16a",
+      "name": "public-3.ods",
+      "source": "ACTUAL_PUBLIC_OFFICIAL_ODS_NOT_SYNTHETIC"
+    },
+    {
+      "name": "public-4.ods",
+      "title": "Table 104: by tenure, England (historical series)",
+      "publication": "https://www.gov.uk/government/statistical-data-sets/live-tables-on-dwelling-stock-including-vacants",
+      "downloadURL": "https://assets.publishing.service.gov.uk/media/6a0dcbcc40a9c699fd826eec/LiveTable104.ods",
+      "bytes": 13637,
+      "sha256": "ecd02eb8e520e4fef7878bda35db002ca2360cb45112416db6619863b211a1fa",
+      "source": "ACTUAL_PUBLIC_OFFICIAL_ODS_NOT_SYNTHETIC"
+    }
+  ]
+}

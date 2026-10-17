@@ -83,7 +83,9 @@ test('#70 malformed/unsigned wire cannot be promoted to certificate evidence', (
 test('#70 production PS source binds exact entry, same archive handle and leaf DER, never whole extracts or launches', () => {
   // Static binding only. This is explicitly not PowerShell parsing or native execution.
   const ps = fs.readFileSync(path.join(root, 'scripts/fixtures/app-gallery-reference-70.ps1'), 'utf8')
-  assert.ok(ps.includes('$_.FullName -ceq $EntryName'))
+  assert.ok(ps.includes('$candidate.FullName -ceq $EntryName'))
+  assert.ok(ps.includes("if ($matchCount -ne 1) { throw 'EXACT_ONE_ENTRY_REQUIRED' }"))
+  assert.ok(ps.includes('foreach ($candidate in $zip.Entries)'))
   assert.ok(ps.includes('$hash.ComputeHash($archive)'))
   assert.ok(ps.includes('$archive.Position = 0'))
   assert.ok(ps.includes('[IO.FileMode]::CreateNew'))
@@ -143,4 +145,75 @@ test('#70 entry identity refuses missing/unsupported metadata and accepts an act
   assert.equal(collector.isCLIEntrypoint(f.missing, pathToFileURL(f.entry).href), false)
   assert.equal(collector.isCLIEntrypoint(f.entry, 'https://example.invalid/entry.mjs'), false)
   assert.equal(collector.isCLIEntrypoint(f.aliasEntry, pathToFileURL(f.entry).href), true)
+})
+
+// Static/source and real JS producer controls only: hosted Desktop PS5.1 still
+// decides whether fixed module discovery and signature sampling succeed.
+test('#70 sampler fixes Utility/Security discovery without changing the 15s runner', () => {
+  const ps = fs.readFileSync(path.join(root, 'scripts/fixtures/app-gallery-reference-70.ps1'), 'utf8')
+  for (const command of ['Add-Type', 'ConvertTo-Json']) {
+    assert.ok(ps.includes('Microsoft.PowerShell.Utility\\' + command), command)
+  }
+  assert.ok(ps.includes('$buffer = [byte[]]::new(65536)'))
+  assert.doesNotMatch(ps, /\|\s*Where-Object|\bNew-Object\b/)
+  assert.ok(ps.includes('Microsoft.PowerShell.Security\\Get-AuthenticodeSignature'))
+  const source = fs.readFileSync(path.join(root, 'scripts/collect-app-gallery-reference-70.mjs'), 'utf8')
+  assert.match(source, /const raw = await runPs\(/)
+  assert.doesNotMatch(source, /timeoutMs\s*:/)
+})
+test('#70 actual failure projection retains only fixed stages and finite child facts', () => {
+  assert.equal(typeof collector.sampleFailureDiagnostic, 'function')
+  const secret = 'OWNED_INERT_SENTINEL_DO_NOT_ECHO'
+  const result = collector.sampleFailureDiagnostic({
+    stderr: 'GALLERY70_PHASE=ENTERED:1\r\n' + secret + '\nGALLERY70_PHASE=ASSEMBLY_READY:9\n',
+    stdout: secret, message: secret, code: secret, killed: true, signal: 'SIGTERM',
+  })
+  assert.deepEqual(result, { kind: 'GALLERY70_SAMPLE_FAILURE',
+    phases: [{ phase: 'ENTERED', elapsed_ms: 1 }, { phase: 'ASSEMBLY_READY', elapsed_ms: 9 }],
+    code: null, killed: true, signal: 'SIGTERM' })
+  assert.equal(JSON.stringify(result).includes(secret), false)
+})
+test('#70 failure projection refuses unknown, reordered, duplicate, oversized and injected markers', () => {
+  assert.equal(typeof collector.sampleFailureDiagnostic, 'function')
+  for (const stderr of [
+    'GALLERY70_PHASE=UNKNOWN_SECRET:4', 'prefix GALLERY70_PHASE=ENTERED:1',
+    'GALLERY70_PHASE=ASSEMBLY_READY:9\nGALLERY70_PHASE=ENTERED:10',
+    'GALLERY70_PHASE=ENTERED:1\nGALLERY70_PHASE=ENTERED:2',
+    'GALLERY70_PHASE=ENTERED:999999999999999999999',
+    'GALLERY70_PHASE=ENTERED:1 extra', 'x'.repeat(16 * 1024 * 1024 + 1),
+  ]) assert.deepEqual(collector.sampleFailureDiagnostic({ stderr }).phases, [])
+  assert.deepEqual(collector.sampleFailureDiagnostic(null), {
+    kind: 'GALLERY70_SAMPLE_FAILURE', phases: [], code: null, killed: false, signal: null })
+  assert.equal(collector.sampleFailureDiagnostic({ code: 1 }).code, 1)
+  assert.equal(collector.sampleFailureDiagnostic({ code: 'ENOENT' }).code, 'ENOENT')
+  assert.equal(collector.sampleFailureDiagnostic({ signal: 'OWNED_UNKNOWN' }).signal, null)
+})
+
+test('#70 finite failure fields snapshot actual accessors once before admission', () => {
+  let signalReads = 0, stderrReads = 0
+  const error = {
+    get signal() { return ++signalReads === 1 ? 'SIGTERM' : 'OWNED_INERT_SENTINEL_DO_NOT_ECHO' },
+    get stderr() { return ++stderrReads === 1 ? 'GALLERY70_PHASE=ENTERED:1' : 'GALLERY70_PHASE=UNKNOWN_SECRET:2' },
+  }
+  const result = collector.sampleFailureDiagnostic(error)
+  assert.equal(signalReads, 1); assert.equal(stderrReads, 1)
+  assert.equal(result.signal, 'SIGTERM')
+  assert.deepEqual(result.phases, [{ phase: 'ENTERED', elapsed_ms: 1 }])
+  assert.equal(JSON.stringify(result).includes('OWNED_INERT_SENTINEL_DO_NOT_ECHO'), false)
+})
+
+test('#70 extraction boundary reports a strict prefix through buffer readiness', () => {
+  const phases = ['ENTERED', 'ASSEMBLY_READY', 'ARCHIVE_VERIFIED', 'ZIP_OPENED',
+    'ENTRY_SELECTED', 'ENTRY_OPENED', 'OUTPUT_OPENED', 'BUFFER_READY', 'ENTRY_WRITTEN',
+    'EXE_VERIFIED', 'SIGNATURE_ENTERED', 'SIGNATURE_RETURNED', 'COMPLETE']
+  for (let length = 1; length <= phases.length; length++) {
+    const prefix = phases.slice(0, length)
+    const stderr = prefix.map((phase, i) => `GALLERY70_PHASE=${phase}:${i}`).join('\r\n')
+    assert.deepEqual(collector.sampleFailureDiagnostic({ stderr }).phases,
+      prefix.map((phase, i) => ({ phase, elapsed_ms: i })))
+  }
+  for (const stderr of [
+    'GALLERY70_PHASE=ENTERED:0\nGALLERY70_PHASE=ZIP_OPENED:1',
+    phases.slice(0, 4).map((phase, i) => `GALLERY70_PHASE=${phase}:${i}`).join('\n') + '\nGALLERY70_PHASE=ZIP_OPENED:4',
+  ]) assert.deepEqual(collector.sampleFailureDiagnostic({ stderr }).phases, [])
 })
