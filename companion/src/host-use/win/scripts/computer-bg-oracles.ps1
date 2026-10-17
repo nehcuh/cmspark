@@ -44,7 +44,7 @@ if ($script:oracleTestTrace650) {
 }
 function Write-OracleTestPhase650([string]$phase) {
   if (-not $script:oracleTestTrace650 -or $null -eq $script:oracleTestClock650) { return }
-  if (@('SCRIPT_ENTERED','COMPARE_ENTERED','BEFORE_JSON_READ','BEFORE_SECOND_JSON_READ','JSON_LOADED','REFUSED_4','CURSOR_VALID','RESULT_WRITTEN') -notcontains $phase) { return }
+  if (@('SCRIPT_ENTERED','COMPARE_ENTERED','BEFORE_JSON_READ','BEFORE_JSON_PARSE','BEFORE_SECOND_JSON_READ','JSON_LOADED','REFUSED_4','CURSOR_VALID','RESULT_WRITTEN') -notcontains $phase) { return }
   try { [Console]::Error.WriteLine("CMSPARK_ORACLE_PHASE_V1:${phase}:$($script:oracleTestClock650.ElapsedMilliseconds)") } catch { }
 }
 Write-OracleTestPhase650 'SCRIPT_ENTERED'
@@ -115,7 +115,9 @@ if ($Mode -eq 'snapshot') {
 Write-OracleTestPhase650 'COMPARE_ENTERED'
 try {
   Write-OracleTestPhase650 'BEFORE_JSON_READ'
-  $b = Get-Content -Raw $Before | ConvertFrom-Json
+  $beforeText650 = Get-Content -Raw $Before
+  Write-OracleTestPhase650 'BEFORE_JSON_PARSE'
+  $b = $beforeText650 | ConvertFrom-Json
   Write-OracleTestPhase650 'BEFORE_SECOND_JSON_READ'
   $a = Get-Content -Raw $After  | ConvertFrom-Json
   Write-OracleTestPhase650 'JSON_LOADED'

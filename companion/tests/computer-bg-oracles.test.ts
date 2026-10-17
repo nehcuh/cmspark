@@ -22,13 +22,13 @@ const SCRIPT_REL = "src/host-use/win/scripts/computer-bg-oracles.ps1"
 const SCRIPT = [SCRIPT_REL, path.join("companion", SCRIPT_REL)].find((p) => existsSync(p)) ?? SCRIPT_REL
 const available = process.platform === "win32" && existsSync(PS) && existsSync(SCRIPT)
 
-const oraclePhases650 = new Set(["SCRIPT_ENTERED", "COMPARE_ENTERED", "BEFORE_JSON_READ", "BEFORE_SECOND_JSON_READ", "JSON_LOADED", "REFUSED_4", "CURSOR_VALID", "RESULT_WRITTEN"])
+const oraclePhases650 = new Set(["SCRIPT_ENTERED", "COMPARE_ENTERED", "BEFORE_JSON_READ", "BEFORE_JSON_PARSE", "BEFORE_SECOND_JSON_READ", "JSON_LOADED", "REFUSED_4", "CURSOR_VALID", "RESULT_WRITTEN"])
 function oracleObservation650(err: unknown, stdout: string, stderr: string, elapsed: number | null) {
   const error = err !== null && typeof err === "object" ? err as Record<string, unknown> : {}
   const code = error.code, signal = error.signal
   const phases: Array<{ phase: string; elapsed_ms: number }> = []
   const seen = new Set<string>()
-  for (const m of stderr.matchAll(/^CMSPARK_ORACLE_PHASE_V1:([A-Z_]+):([0-9]{1,9})\r?$/gm)) {
+  for (const m of stderr.matchAll(/^CMSPARK_ORACLE_PHASE_V1:([A-Z0-9_]+):([0-9]{1,9})\r?$/gm)) {
     if (oraclePhases650.has(m[1]) && !seen.has(m[1])) {
       phases.push({ phase: m[1], elapsed_ms: Number(m[2]) })
       seen.add(m[1])
@@ -88,6 +88,24 @@ test("#650 comparator callback observation retains only finite error and phase f
   assert.equal(r.signal, "SIGTERM")
   assert.equal(r.stdout_bytes, 5)
   assert.deepEqual(r.stderr_phase_markers, [{ phase: "SCRIPT_ENTERED", elapsed_ms: 0 }, { phase: "JSON_LOADED", elapsed_ms: 21 }])
+})
+test("#650 comparator observation distinguishes first-file read from JSON parsing", () => {
+  const stderr = "CMSPARK_ORACLE_PHASE_V1:BEFORE_JSON_READ:3\nCMSPARK_ORACLE_PHASE_V1:BEFORE_JSON_PARSE:4\n"
+  const r = oracleObservation650({ code: null, killed: true, signal: "SIGTERM" }, "", stderr, 15000)
+  assert.deepEqual(r.stderr_phase_markers, [
+    { phase: "BEFORE_JSON_READ", elapsed_ms: 3 },
+    { phase: "BEFORE_JSON_PARSE", elapsed_ms: 4 },
+  ])
+  assert.equal(r.killed, true)
+  assert.equal(r.code, null)
+  assert.equal(r.stdout_bytes, 0)
+})
+test("#650 comparator observation preserves the existing digit-bearing refusal marker only", () => {
+  const stderr = "CMSPARK_ORACLE_PHASE_V1:REFUSED_4:1\nCMSPARK_ORACLE_PHASE_V1:UNKNOWN_9:2\n"
+  const r = oracleObservation650({ code: 4 }, "", stderr, 2)
+  assert.deepEqual(r.stderr_phase_markers, [{ phase: "REFUSED_4", elapsed_ms: 1 }])
+  assert.equal(r.code, 4)
+  assert.equal(r.error_present, true)
 })
 test("#650 comparator observation excludes arbitrary child strings, bodies and duplicate/unknown markers", () => {
   const privateMarker = "owned_private_marker_not_for_logging"
