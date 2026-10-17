@@ -4,7 +4,7 @@
  * lifecycle can import redactMcpServersForBroadcast without the router god-file.
  */
 import { URL } from "url"
-import { getConfig, replaceMcpServers, setMcpEnabled } from "../../config"
+import { CONFIG_CHANGE_EVENT, configEvents, getConfig, getConfigDir, replaceMcpServers, setMcpEnabled } from "../../config"
 import { getMcpManager } from "../../mcp"
 import type { McpServerConfig, McpServerMeta } from "../../mcp/types"
 import { hasPrototypePollutionKey } from "./config"
@@ -24,6 +24,33 @@ export type McpSession = {
 const MCP_VALID_TRUST_LEVELS = new Set(["manual", "first-use", "trusted"])
 const MCP_VALID_TRANSPORTS = new Set(["stdio", "http"])
 const MCP_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/
+
+/** Keep a confirmation scoped to its original target, while retaining sibling edits. */
+async function withPendingMcpConfig(
+  name: string,
+  original: ReturnType<typeof getConfig>,
+  run: (current: () => ReturnType<typeof getConfig> | null) => Promise<any>,
+): Promise<any> {
+  const dataDir = getConfigDir()
+  const subject = (config: ReturnType<typeof getConfig>) =>
+    JSON.stringify([config.mcp?.enabled ?? false, config.mcp?.servers?.[name] ?? null])
+  const expected = subject(original)
+  let stale = false
+  const current = () => {
+    const config = getConfig()
+    if (getConfigDir() !== dataDir || subject(config) !== expected) stale = true
+    return stale ? null : config
+  }
+  // Remember observed changes even if a later write restores the original target.
+  const changed = () => { try { current() } catch { stale = true } }
+  configEvents.on(CONFIG_CHANGE_EVENT, changed)
+  try { return await run(current) }
+  finally { configEvents.off(CONFIG_CHANGE_EVENT, changed) }
+}
+
+function staleMcpConfig() {
+  return { type: "error", error: "MCP configuration changed while confirmation was pending; review and save again" }
+}
 
 /**
  * SEC-B: authenticated mcp.add/update stdio must not spawn without L2.
@@ -258,7 +285,7 @@ export async function handleMcpFamily(
 
       const name = String(rest.name || "").trim()
 
-      const serverCfg = rest.server as McpServerConfig
+      const serverCfg = structuredClone(rest.server) as McpServerConfig
 
       const validation = validateMcpServerConfig(name, serverCfg)
 
@@ -272,41 +299,48 @@ export async function handleMcpFamily(
 
       }
 
-      // SEC-B: stdio = arbitrary local spawn; require origin-bound L2 (force high)
+      return withPendingMcpConfig(name, config, async current => {
 
-      // before replaceMcpServers → applyConfig → StdioClientTransport.
+        // SEC-B: stdio = arbitrary local spawn; require origin-bound L2 (force high)
 
-      const stdioGate = await requireMcpStdioSpawnConfirm(session, name, serverCfg, "add")
+        // before replaceMcpServers → applyConfig → StdioClientTransport.
 
-      if (stdioGate) return stdioGate
+        const stdioGate = await requireMcpStdioSpawnConfirm(session, name, serverCfg, "add")
 
-      const wasEmpty = Object.keys(config.mcp?.servers || {}).length === 0
+        if (stdioGate) return stdioGate
 
-      const newServers = { ...(config.mcp?.servers || {}), [name]: serverCfg }
+        const latest = current()
+        if (!latest) return staleMcpConfig()
 
-      replaceMcpServers(newServers)
+        const wasEmpty = Object.keys(latest.mcp?.servers || {}).length === 0
 
-      // Auto-enable the global kill-switch when the user adds their first server
+        const newServers = { ...(latest.mcp?.servers || {}), [name]: serverCfg }
 
-      // after clearing all servers (or on older configs that still had mcp.enabled=false).
+        replaceMcpServers(newServers)
 
-      // Without this, a user-disabled kill-switch leaves the new server disconnected
+        // Auto-enable the global kill-switch when the user adds their first server
 
-      // with no UI surface to recover (see mcp.toggle_enabled UI gap).
+        // after clearing all servers (or on older configs that still had mcp.enabled=false).
 
-      if (wasEmpty && !config.mcp?.enabled) {
+        // Without this, a user-disabled kill-switch leaves the new server disconnected
 
-        setMcpEnabled(true)
+        // with no UI surface to recover (see mcp.toggle_enabled UI gap).
 
-      }
+        if (wasEmpty && !latest.mcp?.enabled) {
 
-      return {
+          setMcpEnabled(true)
 
-        type: "mcp.servers.updated",
+        }
 
-        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+        return {
 
-      }
+          type: "mcp.servers.updated",
+
+          servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+
+        }
+
+      })
 
     }
 
@@ -314,7 +348,7 @@ export async function handleMcpFamily(
 
       const name = String(rest.name || "").trim()
 
-      const patch = rest.patch as Partial<McpServerConfig>
+      const patch = structuredClone(rest.patch) as Partial<McpServerConfig>
 
       const config = getConfig()
 
@@ -330,7 +364,7 @@ export async function handleMcpFamily(
 
       // Pi REJECT #2: UI re-sends "***" for redacted env/headers — restore disk secrets
 
-      const merged = mergeMcpServerPreservingSecrets(existing, patch)
+      const merged = structuredClone(mergeMcpServerPreservingSecrets(existing, patch))
 
       // Re-validate after merge
 
@@ -338,27 +372,34 @@ export async function handleMcpFamily(
 
       if (validation) return { type: "error", error: validation }
 
-      // SEC-B: re-confirm when stdio spawn surface changes (incl. enable false→true)
+      return withPendingMcpConfig(name, config, async current => {
 
-      if (mcpStdioSpawnSurfaceChanged(existing, merged)) {
+        // SEC-B: re-confirm when stdio spawn surface changes (incl. enable false→true)
 
-        const stdioGate = await requireMcpStdioSpawnConfirm(session, name, merged, "update")
+        if (mcpStdioSpawnSurfaceChanged(existing, merged)) {
 
-        if (stdioGate) return stdioGate
+          const stdioGate = await requireMcpStdioSpawnConfirm(session, name, merged, "update")
 
-      }
+          if (stdioGate) return stdioGate
 
-      const newServers = { ...(config.mcp?.servers || {}), [name]: merged }
+        }
 
-      replaceMcpServers(newServers)
+        const latest = current()
+        if (!latest) return staleMcpConfig()
 
-      return {
+        const newServers = { ...(latest.mcp?.servers || {}), [name]: merged }
 
-        type: "mcp.servers.updated",
+        replaceMcpServers(newServers)
 
-        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+        return {
 
-      }
+          type: "mcp.servers.updated",
+
+          servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+
+        }
+
+      })
 
     }
 
@@ -402,37 +443,44 @@ export async function handleMcpFamily(
 
       if (!existing) return { type: "error", error: `MCP server "${name}" not found` }
 
-      const newServers = { ...(config.mcp?.servers || {}), [name]: { ...existing, enabled } }
+      const updated = { ...structuredClone(existing), enabled }
 
-      // Enabling a previously disabled stdio server spawns the process — same trust as add.
+      return withPendingMcpConfig(name, config, async current => {
 
-      if (enabled && existing.enabled === false && existing.transport === "stdio") {
+        // Enabling a previously disabled stdio server spawns the process — same trust as add.
 
-        const stdioGate = await requireMcpStdioSpawnConfirm(
+        if (enabled && existing.enabled === false && existing.transport === "stdio") {
 
-          session,
+          const stdioGate = await requireMcpStdioSpawnConfirm(
 
-          name,
+            session,
 
-          { ...existing, enabled: true },
+            name,
 
-          "update",
+            updated,
 
-        )
+            "update",
 
-        if (stdioGate) return stdioGate
+          )
 
-      }
+          if (stdioGate) return stdioGate
 
-      replaceMcpServers(newServers)
+        }
 
-      return {
+        const latest = current()
+        if (!latest) return staleMcpConfig()
 
-        type: "mcp.servers.updated",
+        replaceMcpServers({ ...(latest.mcp?.servers || {}), [name]: updated })
 
-        servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+        return {
 
-      }
+          type: "mcp.servers.updated",
+
+          servers: redactMcpServersForBroadcast(getMcpManager().listServers()),
+
+        }
+
+      })
 
     }
 

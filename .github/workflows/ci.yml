@@ -23,6 +23,9 @@ jobs:
 
       - name: Install dependencies
         # Actual MeetingPanel SSR controls require the locked frontend React dependencies.
+        # Hosted jobs use bundled CPU ORT; CUDA/TensorRT downloads are not required.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: |
           cd companion && npm ci
           cd ../chrome-extension && npm ci
@@ -158,6 +161,9 @@ jobs:
           cache-dependency-path: companion/package-lock.json
 
       - name: Install + build companion
+        # Keep all npm lifecycle scripts; only optional external ORT GPU files are omitted.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: |
           cd companion
           npm ci
