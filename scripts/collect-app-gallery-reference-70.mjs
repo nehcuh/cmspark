@@ -95,7 +95,8 @@ export function parseSample(stdout, app) {
 // Error-only, fixed source stages. Never echo native stderr, paths, argv or
 // exception text; this is a failure locator, not a signature-success receipt.
 export function sampleFailureDiagnostic(error) {
-  const order = ['ENTERED', 'ASSEMBLY_READY', 'ARCHIVE_VERIFIED', 'ENTRY_WRITTEN',
+  const order = ['ENTERED', 'ASSEMBLY_READY', 'ARCHIVE_VERIFIED', 'ZIP_OPENED',
+    'ENTRY_SELECTED', 'ENTRY_OPENED', 'OUTPUT_OPENED', 'BUFFER_READY', 'ENTRY_WRITTEN',
     'EXE_VERIFIED', 'SIGNATURE_ENTERED', 'SIGNATURE_RETURNED', 'COMPLETE']
   const phases = []
   let last = -1, lastElapsed = -1

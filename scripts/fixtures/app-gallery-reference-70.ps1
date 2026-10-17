@@ -27,14 +27,24 @@ try {
   [Console]::Error.WriteLine('GALLERY70_PHASE=ARCHIVE_VERIFIED:' + $phaseClock.ElapsedMilliseconds)
   $archive.Position = 0
   $zip = [IO.Compression.ZipArchive]::new($archive, [IO.Compression.ZipArchiveMode]::Read, $true)
-  $matches = @($zip.Entries | Where-Object { $_.FullName -ceq $EntryName })
-  if ($matches.Count -ne 1) { throw 'EXACT_ONE_ENTRY_REQUIRED' }
-  $entry = $matches[0]
+  [Console]::Error.WriteLine('GALLERY70_PHASE=ZIP_OPENED:' + $phaseClock.ElapsedMilliseconds)
+  # A language loop and a CLR array keep extraction free of command lookup.
+  # Still count every exact-case match; duplicate names must never pick a winner.
+  $entry = $null
+  [int]$matchCount = 0
+  foreach ($candidate in $zip.Entries) {
+    if ($candidate.FullName -ceq $EntryName) { $entry = $candidate; $matchCount++ }
+  }
+  if ($matchCount -ne 1) { throw 'EXACT_ONE_ENTRY_REQUIRED' }
   $unixType = ($entry.ExternalAttributes -shr 16) -band 61440
   if ($unixType -eq 40960 -or $unixType -eq 16384 -or ($entry.ExternalAttributes -band 1024) -ne 0 -or $entry.Length -le 0 -or $entry.Length -gt 268435456) { throw 'ENTRY_REJECTED' }
+  [Console]::Error.WriteLine('GALLERY70_PHASE=ENTRY_SELECTED:' + $phaseClock.ElapsedMilliseconds)
   $entryStream = $entry.Open()
+  [Console]::Error.WriteLine('GALLERY70_PHASE=ENTRY_OPENED:' + $phaseClock.ElapsedMilliseconds)
   $output = [IO.File]::Open($OutputPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-  $buffer = Microsoft.PowerShell.Utility\New-Object byte[] 65536
+  [Console]::Error.WriteLine('GALLERY70_PHASE=OUTPUT_OPENED:' + $phaseClock.ElapsedMilliseconds)
+  $buffer = [byte[]]::new(65536)
+  [Console]::Error.WriteLine('GALLERY70_PHASE=BUFFER_READY:' + $phaseClock.ElapsedMilliseconds)
   [long]$written = 0
   while (($count = $entryStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
     $written += $count
