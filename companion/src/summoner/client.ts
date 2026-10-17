@@ -232,7 +232,10 @@ export function buildContinueChatCreate(thread_id: string): {
 }
 
 export const ATTACH_SILENT_COPY =
-  `已在后台打开浏览器。${SUMMONER_ATTACH_FOOTNOTE}` as const
+  `已请求在后台打开浏览器。${SUMMONER_ATTACH_FOOTNOTE}` as const
+
+export const ATTACH_BACKGROUND_UNAVAILABLE_COPY =
+  `当前不支持后台打开浏览器。请明确选择「展示浏览器」或「打开并前置浏览器」。${SUMMONER_ATTACH_FOOTNOTE}` as const
 
 
 /** Badge before hydrate must not claim 未连接 (pair may already be attached). */
@@ -283,17 +286,21 @@ export function resolveSummonerOpenTarget(args: {
 }
 
 /**
- * Honest attach: never openSidePanel. Default is silent launch (no focus steal).
+ * Honest attach: never openSidePanel or fall back from background to foreground.
+ * Legacy void silent openers remain compatible; this reports a request, not OS focus.
  */
 export function attachChromeOnly(
-  opener: { openChrome: () => void; openChromeSilent?: () => void },
+  opener: { openChrome: () => void; openChromeSilent?: () => void | boolean },
   opts?: { foreground?: boolean },
 ): string {
-  const foreground = opts?.foreground === true
-  if (foreground) opener.openChrome()
-  else if (opener.openChromeSilent) opener.openChromeSilent()
-  else opener.openChrome()
-  return foreground ? ATTACH_NOTIFY_COPY : ATTACH_SILENT_COPY
+  if (opts?.foreground === true) {
+    opener.openChrome()
+    return ATTACH_NOTIFY_COPY
+  }
+  if (!opener.openChromeSilent || opener.openChromeSilent() === false) {
+    return ATTACH_BACKGROUND_UNAVAILABLE_COPY
+  }
+  return ATTACH_SILENT_COPY
 }
 
 /**
