@@ -22,6 +22,8 @@ import assert from "node:assert/strict"
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 
 import { PsInputInjector } from "../src/computer/win-adapters"
 
@@ -32,6 +34,16 @@ const available = process.platform === "win32" && existsSync(PS) && !!SCRIPT
 
 /** A handle that is guaranteed not to be a window, so the script exits at its first check. */
 const DEAD_HWND = 1
+
+test("#650 shipped UIA source parses as Unicode in actual Desktop PowerShell 5.1", { skip: !available }, async () => {
+  const fixture = path.resolve("tests/fixtures/uia-script-encoding-650.ps1")
+  const result = await promisify(execFile)(PS, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture, "-ScriptPath", path.resolve(SCRIPT!)], { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 })
+  const proof = JSON.parse(result.stdout.trim())
+  assert.equal(proof.desktop51, true)
+  assert.equal(proof.current_errors, 0)
+  assert.equal(proof.stop_literal_exact, true)
+  assert.ok(Number.isSafeInteger(proof.ansi_counterfactual_errors) && proof.ansi_counterfactual_errors >= 1 && proof.ansi_counterfactual_errors <= 100)
+})
 
 test("#572 integration: the real script accepts -StopFile (the argv production actually sends)", { skip: !available }, async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "uia-int-"))

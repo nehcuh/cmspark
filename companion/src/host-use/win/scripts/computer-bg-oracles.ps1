@@ -35,14 +35,30 @@ param(
   # Top-N visible top-level windows to compare for z-order.
   [int]$ZOrderDepth = 16
 )
+# Test-only, finite phase receipts; no script arguments, snapshots or error bodies.
+# Ordinary production callers leave this unset. Observation must never fail a run.
+$script:oracleTestTrace650 = ($Mode -eq 'compare' -and $env:CMSPARK_ORACLE_TEST_PHASES_650 -eq '1')
+$script:oracleTestClock650 = $null
+if ($script:oracleTestTrace650) {
+  try { $script:oracleTestClock650 = [Diagnostics.Stopwatch]::StartNew() } catch { }
+}
+function Write-OracleTestPhase650([string]$phase) {
+  if (-not $script:oracleTestTrace650 -or $null -eq $script:oracleTestClock650) { return }
+  if (@('SCRIPT_ENTERED','COMPARE_ENTERED','BEFORE_JSON_READ','BEFORE_JSON_PARSE','BEFORE_SECOND_JSON_READ','JSON_LOADED','REFUSED_4','CURSOR_VALID','RESULT_WRITTEN') -notcontains $phase) { return }
+  try { [Console]::Error.WriteLine("CMSPARK_ORACLE_PHASE_V1:${phase}:$($script:oracleTestClock650.ElapsedMilliseconds)") } catch { }
+}
+Write-OracleTestPhase650 'SCRIPT_ENTERED'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 
 function Fail([string]$prefix, [string]$detail, [int]$code) {
+  if ($code -eq 4) { Write-OracleTestPhase650 'REFUSED_4' }
   [Console]::Error.WriteLine("${prefix}:$detail")
   exit $code
 }
 
+# Compare consumes recorded JSON only; Win32 compilation belongs to snapshots.
+if ($Mode -eq 'snapshot') {
 Add-Type -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
@@ -52,6 +68,7 @@ Add-Type -MemberDefinition @'
 [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
 public delegate bool EnumProc(IntPtr h, IntPtr l);
 '@ -Name Bg -Namespace CU | Out-Null
+}
 
 if ($ZOrderDepth -lt 1 -or $ZOrderDepth -gt 128) { Fail "BADARGS" "ZOrderDepth $ZOrderDepth out of range 1..128" 2 }
 if ($Mode -eq 'compare') {
@@ -84,7 +101,7 @@ function Get-Snapshot {
 }
 
 function Write-Json([string]$path, $obj) {
-  try { [IO.File]::WriteAllText($path, (ConvertTo-Json -Compress -Depth 6 -InputObject $obj)) }
+  try { [IO.File]::WriteAllText($path, (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -Depth 6 -InputObject $obj)) }
   catch { Fail "ORACLE_READ_FAILED" "cannot write $path : $($_.Exception.Message)" 3 }
 }
 
@@ -95,9 +112,15 @@ if ($Mode -eq 'snapshot') {
 }
 
 # --- compare ---------------------------------------------------------------
+Write-OracleTestPhase650 'COMPARE_ENTERED'
 try {
-  $b = Get-Content -Raw $Before | ConvertFrom-Json
-  $a = Get-Content -Raw $After  | ConvertFrom-Json
+  Write-OracleTestPhase650 'BEFORE_JSON_READ'
+  $beforeText650 = Microsoft.PowerShell.Management\Get-Content -Raw $Before
+  Write-OracleTestPhase650 'BEFORE_JSON_PARSE'
+  $b = $beforeText650 | Microsoft.PowerShell.Utility\ConvertFrom-Json
+  Write-OracleTestPhase650 'BEFORE_SECOND_JSON_READ'
+  $a = Microsoft.PowerShell.Management\Get-Content -Raw $After  | Microsoft.PowerShell.Utility\ConvertFrom-Json
+  Write-OracleTestPhase650 'JSON_LOADED'
 } catch { Fail "ORACLE_UNREADABLE_SNAPSHOT" "$($_.Exception.Message)" 4 }
 if ($null -eq $b.foreground -or $null -eq $a.foreground) {
   Fail "ORACLE_UNREADABLE_SNAPSHOT" "snapshot missing 'foreground'" 4
@@ -124,6 +147,7 @@ function Test-CursorObservation($cursor) {
 if (-not (Test-CursorObservation $b.cursor) -or -not (Test-CursorObservation $a.cursor)) {
   Fail "ORACLE_UNREADABLE_SNAPSHOT" "cursor requires got=true and finite numeric x/y in both snapshots" 4
 }
+Write-OracleTestPhase650 'CURSOR_VALID'
 
 $focusKept = ([int64]$b.foreground -eq [int64]$a.foreground)
 $cursorKept = ($b.cursor.x -eq $a.cursor.x) -and ($b.cursor.y -eq $a.cursor.y)
@@ -157,4 +181,5 @@ $result = [ordered]@{
   ms = 0
 }
 Write-Json $Out $result
+Write-OracleTestPhase650 'RESULT_WRITTEN'
 exit 0

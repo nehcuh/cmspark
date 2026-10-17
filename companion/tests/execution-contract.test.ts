@@ -115,7 +115,7 @@ describe("static heuristics", () => {
   test("extractShellWrites: redirections resolved against cwd", () => {
     const writes = ec.extractShellWrites("echo hi > out.txt && cat x >> /abs/log.txt", "/work/dir")
     assert.ok(writes.includes(path.resolve("/work/dir", "out.txt")))
-    assert.ok(writes.includes("/abs/log.txt"))
+    assert.ok(writes.includes(path.resolve("/abs/log.txt")))
   })
 
   test("extractShellWrites: fd dup (2>&1) and /dev/null are not writes", () => {

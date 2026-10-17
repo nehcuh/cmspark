@@ -14,12 +14,14 @@
 // Plus the release property: abnormal exit (estop preflight refusal) frees
 // the slot via the handler's finally, and the next task is admitted.
 //
-// The estop preflight is substituted via setComputerEstopEnsureForTests so
-// no real ps helper is spawned and no injection ever happens. All tests are
+// The L2 preview returns controlled no-image immediately; this suite tests
+// confirmation/mutex behavior, not the separate best-effort screenshot path.
+// The estop preflight is also substituted via setComputerEstopEnsureForTests
+// so neither path spawns a real PS helper and no injection happens. Tests are
 // win32-only (the gate skips host_computer elsewhere).
 
 import "./_security-gates-setup.js"
-import test, { before, after, beforeEach, afterEach } from "node:test"
+import test, { before, after, beforeEach, afterEach, mock } from "node:test"
 import assert from "node:assert/strict"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -35,9 +37,11 @@ import {
   getComputerTaskRegistryForTests,
   setComputerEstopEnsureForTests,
   seedExtensionWsAuthForTests,
+  seedThreadManagerForTests,
 } from "../../src/server.js"
 import { saveConfig, getConfig, replaceAppsEntries } from "../../src/config.js"
 import type { AppEntry } from "../../src/apps/types.js"
+import * as previewHelper from "../../src/computer/l2-preview-image.js"
 
 const WIN = process.platform === "win32"
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mutex-"))
@@ -46,6 +50,7 @@ let wss: WebSocketServer
 let serverSideWs: WebSocket
 let clientSideWs: WebSocket
 let serverPort: number
+let previewStub: { mock: { callCount(): number } }
 
 const COMPUTER_PARAMS = {
   task: "click the button",
@@ -77,6 +82,7 @@ after(() => {
 })
 
 beforeEach(async () => {
+  previewStub = mock.method(previewHelper, "buildComputerL2PreviewImage", async () => null)
   for (const id of Array.from(pendingToolCalls.keys())) {
     const pending = pendingToolCalls.get(id)!
     clearTimeout(pending.timer)
@@ -123,6 +129,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  mock.restoreAll()
   for (const id of Array.from(pendingToolCalls.keys())) {
     const pending = pendingToolCalls.get(id)!
     clearTimeout(pending.timer)
@@ -207,6 +214,7 @@ test("R1 gate: second task refused BEFORE the L2 dialog while one is executing; 
   // The running task's registry entry is NOT disturbed by the refusal.
   assert.equal(registry.size, 1)
   assert.ok(registry.has("fake-running-task"))
+  assert.equal(previewStub.mock.callCount(), 0, "busy denial must precede preview")
 })
 
 test("R1 gate: with no task running the task is admitted to the L2 dialog (sequential)", { skip: !WIN }, async () => {
@@ -226,10 +234,13 @@ test("R1 gate: with no task running the task is admitted to the L2 dialog (seque
   assert.equal(result.success, false)
   assert.doesNotMatch(result.error!, /COMPUTER_TASK_BUSY/)
   assert.equal(registry.size, 0)
+  assert.equal(previewStub.mock.callCount(), 1, "real L2 admission must use the isolated preview")
 })
 
 test("R1 property: concurrent loser refused by handler check-and-set; abnormal exit releases; next admitted", { skip: !WIN }, async () => {
   const registry = getComputerTaskRegistryForTests()
+  const threadManager = seedThreadManagerForTests()
+  const ownedThreadIds: string[] = []
   // A's estop preflight parks on a latch we control — A holds the single-task
   // slot WITHOUT any real ps helper / injection ever happening.
   let releaseA: (s: { ok: boolean; reason?: string }) => void = () => {}
@@ -239,15 +250,24 @@ test("R1 property: concurrent loser refused by handler check-and-set; abnormal e
     return new Promise((resolve) => { releaseA = resolve })
   })
   try {
+    // Distinct real threads retain per-run L2 admission instead of queueing
+    // both requests under the same anonymous run before the mutex race.
+    const threadA = threadManager.create("mutex race A")
+    ownedThreadIds.push(threadA.id)
+    const threadB = threadManager.create("mutex race B")
+    ownedThreadIds.push(threadB.id)
+    const threadC = threadManager.create("mutex next C")
+    ownedThreadIds.push(threadC.id)
+    assert.equal(new Set(ownedThreadIds).size, 3)
     const executeA = createToolExecutor(serverSideWs)
     const executeB = createToolExecutor(serverSideWs)
     // BOTH tasks pass the pre-dialog gate while the registry is EMPTY — the
     // exact race the handler-level check-and-set must close.
     const confAPromise = expectClientMessage("security.confirmation.request")
-    const resultAPromise = executeA("tc_race_A", "host_computer", { ...COMPUTER_PARAMS })
+    const resultAPromise = executeA("tc_race_A", "host_computer", { ...COMPUTER_PARAMS, _thread_id: threadA.id })
     const confA = await confAPromise
     const confBPromise = expectClientMessage("security.confirmation.request")
-    const resultBPromise = executeB("tc_race_B", "host_computer", { ...COMPUTER_PARAMS })
+    const resultBPromise = executeB("tc_race_B", "host_computer", { ...COMPUTER_PARAMS, _thread_id: threadB.id })
     const confB = await confBPromise
 
     // Approve A first: its handler registers the slot, then parks at the
@@ -283,7 +303,7 @@ test("R1 property: concurrent loser refused by handler check-and-set; abnormal e
     })
     const executeC = createToolExecutor(serverSideWs)
     const confCPromise = expectClientMessage("security.confirmation.request")
-    const resultCPromise = executeC("tc_race_C", "host_computer", { ...COMPUTER_PARAMS })
+    const resultCPromise = executeC("tc_race_C", "host_computer", { ...COMPUTER_PARAMS, _thread_id: threadC.id })
     const confC = await confCPromise
     approve(confC.confirmation_id)
     const resultC = await resultCPromise
@@ -292,8 +312,10 @@ test("R1 property: concurrent loser refused by handler check-and-set; abnormal e
     assert.equal(resultC?.data?.error_code, "EMERGENCY_STOP_UNAVAILABLE")
     assert.equal(estopCallsC, 1, "C must reach the estop preflight — the slot was free")
     assert.equal(registry.size, 0, "C's refusal must also release the slot")
+    assert.equal(previewStub.mock.callCount(), 3, "A, B and C must retain real L2 admission")
   } finally {
     setComputerEstopEnsureForTests(null)
     registry.clear()
+    for (const id of ownedThreadIds) threadManager.delete(id)
   }
 })

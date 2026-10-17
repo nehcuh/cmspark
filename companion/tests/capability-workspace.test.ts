@@ -5,9 +5,11 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { CMSPARK_PROJECTS_DIRNAME } from "../src/capability/project-dir"
 
+const originalEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CMSPARK_DATA_DIR: process.env.CMSPARK_DATA_DIR }
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-ws-"))
 process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
 process.env.HOME = tempHome
+if (process.platform === "win32") process.env.USERPROFILE = tempHome
 
 let initDataDir: any
 let clearConfigCache: any
@@ -15,6 +17,7 @@ let saveConfig: any
 let workspace: typeof import("../src/capability/workspace")
 
 before(async () => {
+  assert.equal(fs.realpathSync(os.homedir()), fs.realpathSync(tempHome), "workspace fixture owns the platform home before config import")
   const configMod = await import("../src/config")
   initDataDir = configMod.initDataDir
   clearConfigCache = configMod.clearConfigCache
@@ -31,7 +34,14 @@ before(async () => {
 })
 
 after(() => {
-  fs.rmSync(tempHome, { recursive: true, force: true })
+  try {
+    fs.rmSync(tempHome, { recursive: true, force: true })
+  } finally {
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
 })
 
 test("path containment rejects escape", () => {

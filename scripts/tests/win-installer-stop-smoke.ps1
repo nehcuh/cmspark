@@ -3,6 +3,55 @@
 #Requires -Version 7.0
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# Read only this fixture's fixed marker; never print captured bytes/errors/paths.
+function Get-OwnedStopReceiptState($Receipt) {
+    try { $item = Get-Item -LiteralPath $Receipt -Force -ErrorAction Stop }
+    catch [System.Management.Automation.ItemNotFoundException] { return 'absent' }
+    catch { return 'unreadable' }
+    if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return 'unreadable' }
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($Receipt, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $bytes = New-Object byte[] 17
+        $count = 0
+        while ($count -lt 17) {
+            $read = $stream.Read($bytes, $count, 17 - $count)
+            if ($read -eq 0) { break }
+            $count += $read
+        }
+        if ($count -gt 16) { return 'invalid' }
+        $state = [Text.Encoding]::ASCII.GetString($bytes, 0, $count)
+        if ($state -ceq 'entered' -or $state -ceq 'returned') { return $state }
+        return 'invalid'
+    } catch { return 'unreadable' }
+    finally { if ($null -ne $stream) { $stream.Dispose() } }
+}
+# These real reader controls run on Windows in this existing owned smoke, not a
+# second PowerShell process or a parser mirror in the cross-platform Node suite.
+function Test-OwnedStopReceiptParser($Root) {
+    $directory = Join-Path $Root 'receipt-parser'
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $receipt = Join-Path $directory 'phase.txt'
+    if ((Get-OwnedStopReceiptState $receipt) -cne 'absent') { throw 'NSIS receipt absent control failed' }
+    foreach ($case in @(
+        @{ Bytes = [Text.Encoding]::ASCII.GetBytes('entered'); Expected = 'entered' },
+        @{ Bytes = [Text.Encoding]::ASCII.GetBytes('returned'); Expected = 'returned' },
+        @{ Bytes = [Text.Encoding]::ASCII.GetBytes('unknown'); Expected = 'invalid' },
+        @{ Bytes = [byte[]]@(); Expected = 'invalid' },
+        @{ Bytes = [byte[]](0..15); Expected = 'invalid' },
+        @{ Bytes = [byte[]](0..16); Expected = 'invalid' },
+        @{ Bytes = [byte[]]@(255); Expected = 'invalid' }
+    )) {
+        [IO.File]::WriteAllBytes($receipt, $case.Bytes)
+        if ((Get-OwnedStopReceiptState $receipt) -cne $case.Expected) { throw 'NSIS receipt finite-byte control failed' }
+    }
+    if ((Get-OwnedStopReceiptState $directory) -cne 'unreadable') { throw 'NSIS receipt nonregular control failed' }
+    # A locked owned file must never expose an exception or be mistaken as absent.
+    $locked = [IO.File]::Open($receipt, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        if ((Get-OwnedStopReceiptState $receipt) -cne 'unreadable') { throw 'NSIS receipt unreadable control failed' }
+    } finally { $locked.Dispose() }
+}
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $root = Join-Path ([IO.Path]::GetTempPath()) ('cmspark-stop-' + [guid]::NewGuid().ToString('N'))
 $inside = Join-Path $root "space 中文 & O'Brien ! (test)"
@@ -15,6 +64,7 @@ $observationModule = Join-Path $PSScriptRoot 'nsis-stop-observation.mjs'
 $observationTests = Join-Path $PSScriptRoot 'nsis-stop-observation.test.mjs'
 . (Join-Path $PSScriptRoot 'win-system-node-fixtures.ps1')
 try {
+    Test-OwnedStopReceiptParser $root
     $node = (Get-Command node).Source
     # CPU-only controls run in the same CI step before any native smoke.
     & $node --test $observationTests
@@ -64,8 +114,14 @@ SilentInstall silent
 __OBSERVATION_PREAMBLE__
 Section
   ReadEnvStr $INSTDIR "CMSPARK_SMOKE_INSTALL_ROOT"
+  FileOpen $9 "$EXEDIR\stop-phase.txt" w
+  FileWrite $9 "entered"
+  FileClose $9
 __OBSERVATION_ENTER__
   !insertmacro StopInstalledAgentUnshared
+  FileOpen $9 "$EXEDIR\stop-phase.txt" w
+  FileWrite $9 "returned"
+  FileClose $9
 __OBSERVATION_AFTER__
 SectionEnd
 '@
@@ -75,10 +131,14 @@ SectionEnd
     $env:CMSPARK_SMOKE_INSTALL_ROOT = $inside
     $stop = Start-Process -FilePath (Join-Path $root 'stop-smoke.exe') -PassThru
     if (-not $stop.WaitForExit(30000)) {
+        try { Write-Output ('NSIS_STOP_SMOKE_STATE={0}' -f (Get-OwnedStopReceiptState (Join-Path $root 'stop-phase.txt'))) } catch {}
         Stop-Process -Id $stop.Id -Force -ErrorAction SilentlyContinue
         throw 'NSIS stop macro timed out'
     }
-    if ($stop.ExitCode -ne 0) { throw "NSIS stop macro failed: $($stop.ExitCode)" }
+    if ($stop.ExitCode -ne 0) {
+        try { Write-Output ('NSIS_STOP_SMOKE_STATE={0}' -f (Get-OwnedStopReceiptState (Join-Path $root 'stop-phase.txt'))) } catch {}
+        throw "NSIS stop macro failed: $($stop.ExitCode)"
+    }
     $summaryOutput = & $node $observationModule collect $root $observationDescriptor
     $summaryExit = $LASTEXITCODE
     $summaryJson = $summaryOutput -join [Environment]::NewLine

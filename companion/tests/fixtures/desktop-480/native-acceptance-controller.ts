@@ -17,11 +17,13 @@ import { DESKTOP_NATIVE_ORIGIN } from "../../../src/desktop/capabilities"
 
 const fixed = new Set(["AUTH_1", "AUTH_2", "CONSUMED_HANDLES_DENIED", "PARENT_LOCK_ARMED", "DEVTOOLS_DENIED", "FRAME_DENIED", "REMOTE_DENIED", "NEW_WINDOW_DENIED", "DOWNLOAD_DENIED", "DOCUMENT_FRESH", "STALE_DENIED"])
 const failures = new Set(["FAIL_NO_DOCUMENT", "FAIL_SCRIPT", "FAIL_ENGINE_API", "FAIL_WINDOW", "FAIL_DEVTOOLS", "FAIL_FRAME_FORWARDED", "FAIL_STALE_FORWARDED", "FAIL_REMOTE", "FAIL_DOWNLOAD", "FAIL_GENERATION", "FAIL_HOSTILE_FORWARDED", "FAIL_FRAME_NOT_OBSERVED", "FAIL_DESCENDANT_NOT_OBSERVED", "FAIL_PARENT_LOCK"])
-export type AcceptanceReceipt = { kind: "inheritance"; checks: string; stage: number; control: number; descendant: number } | { kind: "fixed"; name: string } | { kind: "window"; view: "compact" | "workspace"; width: number; height: number; expectedWidth: number; expectedHeight: number; bits: string }
+export type AcceptanceReceipt = { kind: "identity"; control: number; descendant: number } | { kind: "inheritance"; checks: string; stage: number; control: number; descendant: number } | { kind: "fixed"; name: string } | { kind: "window"; view: "compact" | "workspace"; width: number; height: number; expectedWidth: number; expectedHeight: number; bits: string }
 export function acceptanceReceipt(value: unknown): AcceptanceReceipt | null {
   if (typeof value !== "string" || value.length > 200 || !value.startsWith("D480A_")) return null
   const name = value.slice(6)
   if (fixed.has(name) || failures.has(name)) return { kind: "fixed", name }
+  const identity = /^IDENTITY_(0|[1-7]|256|257)_(0|[1-7]|256|257)$/.exec(name)
+  if (identity && identity[0] === name) return { kind: "identity", control: Number(identity[1]), descendant: Number(identity[2]) }
   const inheritance = /^INHERITANCE_([01]{4})_([0-7])_(0|[1-9]\d{0,2})_(0|[1-9]\d{0,2})$/.exec(name)
   const checkerCode = (value: number) => value <= 7 || (value >= 240 && value <= 257)
   if (inheritance && inheritance[0] === name && checkerCode(Number(inheritance[3])) && checkerCode(Number(inheritance[4]))) return { kind: "inheritance", checks: inheritance[1], stage: Number(inheritance[2]), control: Number(inheritance[3]), descendant: Number(inheritance[4]) }
@@ -31,6 +33,16 @@ export function acceptanceReceipt(value: unknown): AcceptanceReceipt | null {
   if (!values.every(Number.isSafeInteger)) return null
   return { kind: "window", view: m[1] === "C" ? "compact" : "workspace", width: values[0], height: values[1], expectedWidth: values[2], expectedHeight: values[3], bits: m[6] }
 }
+export function requireInheritanceIdentity(observations: AcceptanceReceipt[]): void {
+  const identity = observations.filter((r): r is Extract<AcceptanceReceipt, { kind: "identity" }> => r.kind === "identity")
+  const raw = observations.filter((r): r is Extract<AcceptanceReceipt, { kind: "inheritance" }> => r.kind === "inheritance")
+  assert.equal(identity.length, 1, "One exact object-identity receipt required")
+  assert.equal(raw.length, 1, "One original raw checker receipt required")
+  assert.deepEqual(identity[0], { kind: "identity", control: 4, descendant: 4 })
+  assert.equal(raw[0].checks, "1111"); assert.equal(raw[0].stage, 7); assert.equal(raw[0].control, 4)
+  assert.ok(Number.isSafeInteger(raw[0].descendant) && raw[0].descendant >= 0 && raw[0].descendant <= 7, "Real checker must complete its sidecar/mask path")
+}
+
 export function requireWindow(r: AcceptanceReceipt | undefined, view: "compact" | "workspace"): void {
   assert.ok(r && r.kind === "window", "Actual owned window observation required")
   assert.equal(r.view, view); assert.equal(r.width, r.expectedWidth); assert.equal(r.height, r.expectedHeight)
@@ -93,6 +105,7 @@ export function acceptanceDiagnostic(reason: string, phase: string, mode: string
     lastExitCode: Number.isSafeInteger(counts.lastExitCode) && counts.lastExitCode! >= -0x80000000 && counts.lastExitCode! <= 0xffffffff ? counts.lastExitCode : null,
     fixed: [...new Set(observations.filter(r => r.kind === "fixed" && (fixed.has(r.name) || failures.has(r.name))).map(r => (r as { name: string }).name))].sort(),
     inheritance: observations.filter(r => r.kind === "inheritance").slice(0, 1),
+    identity: observations.filter(r => r.kind === "identity").slice(0, 1),
     windows: finiteCount(observations.filter(r => r.kind === "window").length),
   }
 }
@@ -155,7 +168,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   let observedFailure: Error | undefined
   observer = observeAcceptanceResponses(channel.wss, () => ({ host: ownedHost, capabilityId }), registry, receipt => {
     if (receipt.kind === "fixed" && observations.some(r => r.kind === "fixed" && r.name === receipt.name)) observedFailure = Error("OWNED_NATIVE_DUPLICATE_PHASE")
-    if (receipt.kind === "inheritance" && observations.some(r => r.kind === "inheritance")) observedFailure = Error("OWNED_NATIVE_DUPLICATE_PHASE")
+    if ((receipt.kind === "inheritance" || receipt.kind === "identity") && observations.some(r => r.kind === receipt.kind)) observedFailure = Error("OWNED_NATIVE_DUPLICATE_PHASE")
     observations.push(receipt)
     if (receipt.kind === "fixed" && receipt.name.startsWith("FAIL_")) observedFailure = Error(receipt.name)
     for (const wake of waiters) wake()
@@ -205,7 +218,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
       await until(() => has("PARENT_LOCK_ARMED")); process.stdout.write("D480_PARENT_ISSUER_READY\n")
       await bounded(new Promise<void>(() => {}), t.signal)
     } else if (mode === "inheritance") {
-      await until(() => has("CONSUMED_HANDLES_DENIED")); assert.equal(issues, 1); assert.equal(launches, 1)
+      await until(() => has("CONSUMED_HANDLES_DENIED")); requireInheritanceIdentity(observations); assert.equal(issues, 1); assert.equal(launches, 1)
     } else if (mode === "reconnect") {
       diagnosticPhase = "waiting-reconnect-auth"
       const old = observer.currentSocket(); assert.ok(old, "Owned authenticated current socket required"); old.terminate()

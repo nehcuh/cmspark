@@ -6,14 +6,14 @@ $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($Script,[ref]$tokens,[ref]$errors)
 if ($errors.Count -ne 0) {
  # Public parser identities/locations only; never Message, Extent.Text or source.
- foreach ($parseError in @($errors | Select-Object -First 8)) {
+ foreach ($parseError in @($errors | Microsoft.PowerShell.Utility\Select-Object -First 8)) {
   $errorId=[string]$parseError.ErrorId
   if ($errorId -notmatch '^[A-Za-z][A-Za-z0-9]{0,63}$') { $errorId='UNKNOWN' }
   [Console]::Error.WriteLine(('OWNED_PRODUCTION_PS_SYNTAX ErrorId={0} Line={1} Column={2}' -f $errorId,[int]$parseError.Extent.StartLineNumber,[int]$parseError.Extent.StartColumnNumber))
  }
  throw 'OWNED_PRODUCTION_PS_SYNTAX'
 }
-$add=$ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Add-Type'},$true)
+$add=$ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -in @('Add-Type','Microsoft.PowerShell.Utility\Add-Type')},$true)
 if ($add.Count -ne 1 -or $add[0].CommandElements[2] -isnot [Management.Automation.Language.StringConstantExpressionAst]) { throw 'OWNED_NATIVE_LITERAL_REQUIRED' }
 $code=$add[0].CommandElements[2].Value
 $faults=@'
@@ -55,27 +55,27 @@ public static class RegistryFaults644 {
  }
 }
 '@
-Add-Type -TypeDefinition ($code+$faults) | Out-Null
+Microsoft.PowerShell.Utility\Add-Type -TypeDefinition ($code+$faults) | Microsoft.PowerShell.Core\Out-Null
 $wanted=@('Get-AppsJson644','Get-AppsWireBytes644','Get-RegistryExe644','Get-RegistryCandidateBudget644','Get-AppsRegistryJson644')
 foreach ($f in $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$true)) {
- if ($wanted -contains $f.Name) { Set-Item -Path ('function:global:'+$f.Name) -Value $f.Body.GetScriptBlock() }
+ if ($wanted -contains $f.Name) { Microsoft.PowerShell.Management\Set-Item -Path ('function:global:'+$f.Name) -Value $f.Body.GetScriptBlock() }
 }
 if ($Mode -eq 'primitives') {
  $cases=[RegistryFaults644]::Run()
- $good=Join-Path $Directory 'App.exe'
+ $good=Microsoft.PowerShell.Management\Join-Path $Directory 'App.exe'
  # Expected path comes from Node's native filesystem oracle for this owned file,
  # independently of Get-RegistryExe644. Raw input grammar still uses $good.
- $expected=(ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $Directory 'owned-native-files.json')))).app
+ $expected=(Microsoft.PowerShell.Utility\ConvertFrom-Json ([IO.File]::ReadAllText((Microsoft.PowerShell.Management\Join-Path $Directory 'owned-native-files.json')))).app
  if ([string]::IsNullOrEmpty($expected)) { throw 'OWNED_NATIVE_FILE_ORACLE_REQUIRED' }
  $quoted=(Get-RegistryExe644 ('"'+$good+'",-1')).path
  $unquoted=(Get-RegistryExe644 ($good+',1')).path
  if ($quoted -ne $expected) { throw 'OWNED_LITERAL_POSITIVE' }
  if ($good -match '\s' -or $unquoted -ne $expected) { throw 'OWNED_UNQUOTED_LITERAL_POSITIVE' }
- foreach ($bad in @('relative.exe','%SystemRoot%\App.exe','\\remote\App.exe','C:\x.exe:stream',('"'+$good+'" /quiet'),($good+' --arg'),('"'+(Join-Path $Directory 'App.dll')+'",0'),('"'+(Join-Path $Directory 'Folder.exe')+'",0'))) {
+ foreach ($bad in @('relative.exe','%SystemRoot%\App.exe','\\remote\App.exe','C:\x.exe:stream',('"'+$good+'" /quiet'),($good+' --arg'),('"'+(Microsoft.PowerShell.Management\Join-Path $Directory 'App.dll')+'",0'),('"'+(Microsoft.PowerShell.Management\Join-Path $Directory 'Folder.exe')+'",0'))) {
   if ((Get-RegistryExe644 $bad).path) { throw 'OWNED_LITERAL_NEGATIVE' }
  }
  if ((Get-RegistryExe644 ('C:\'+('x'*1024)+'.exe')).reason -ne 'VALUE_LIMIT') { throw 'OWNED_PATH_FIELD_LIMIT' }
- $rowJson=ConvertTo-Json -Compress -InputObject @{name=([string][char]0x6c49+' " \');source='registry';path=$good}
+ $rowJson=Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject @{name=([string][char]0x6c49+' " \');source='registry';path=$good}
  $cost=[Console]::Out.Encoding.GetByteCount($rowJson)
  # Actual append primitive: inclusive count/segment/full-envelope boundaries,
  # existing-source comma and escaped UTF-8, without thousands of Registry keys.
@@ -86,23 +86,23 @@ if ($Mode -eq 'primitives') {
  $legacy=16777216-200-$cost-1
  if ((Get-RegistryCandidateBudget644 0 2 $rowJson 1048576 1 $legacy 200).reason) { throw 'OWNED_TOTAL_EXACT' }
  if ((Get-RegistryCandidateBudget644 0 2 $rowJson 1048576 1 ($legacy+1) 200).reason -ne 'OUTPUT_LIMIT') { throw 'OWNED_TOTAL_OVER' }
- Write-Output (ConvertTo-Json -Compress -InputObject @{admission_boundaries=6;cases=$cases;native_ps51=$true;declared_query_fault_seam=$true;literal_controls=$true;quoted_path=$quoted;unquoted_path=$unquoted})
+ Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject @{admission_boundaries=6;cases=$cases;native_ps51=$true;declared_query_fault_seam=$true;literal_controls=$true;quoted_path=$quoted;unquoted_path=$unquoted})
  exit 0
 }
 if ($Mode -eq 'owned-precedence') {
- $item=(ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $Directory 'values.json')))) | Where-Object {$_.kind -eq 'good'} | Select-Object -First 1
+ $item=(Microsoft.PowerShell.Utility\ConvertFrom-Json ([IO.File]::ReadAllText((Microsoft.PowerShell.Management\Join-Path $Directory 'values.json')))) | Microsoft.PowerShell.Core\Where-Object {$_.kind -eq 'good'} | Microsoft.PowerShell.Utility\Select-Object -First 1
  $file=Get-RegistryExe644 ([string]$item.value)
  if (!$file.path) { throw 'OWNED_PRECEDENCE_PATH_REQUIRED' }
  $old=@{name='OwnedLegacy644';source='running';path=$file.path}
  $seen=@{};$seen[$file.path.ToLowerInvariant()]=$true
- Write-Output (Get-AppsRegistryJson644 -OldRows @($old) -Seen $seen);exit 0
+ Microsoft.PowerShell.Utility\Write-Output (Get-AppsRegistryJson644 -OldRows @($old) -Seen $seen);exit 0
 }
 $row=@{name='';source='startapps';aumid='Owned644!Legacy'}
 if ($Mode -eq 'small-wire' -or $Mode -eq 'measure-small') {
  $row.name='Unicode '+[char]0x6c49+[char]0x5b57+' " \'
  $body=Get-AppsJson644 -Rows @($row)
- if ($Mode -eq 'measure-small') { Write-Output (ConvertTo-Json -Compress -InputObject @{wire_bytes=(Get-AppsWireBytes644 $body);body_bytes=([Console]::Out.Encoding.GetByteCount($body));newline_bytes=([Console]::Out.Encoding.GetByteCount([Console]::Out.NewLine));configured_preamble_bytes=([Console]::Out.Encoding.GetPreamble().Length);encoding_codepage=([Console]::Out.Encoding.CodePage);native_ps51=$true});exit 0 }
- Write-Output $body;exit 0
+ if ($Mode -eq 'measure-small') { Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject @{wire_bytes=(Get-AppsWireBytes644 $body);body_bytes=([Console]::Out.Encoding.GetByteCount($body));newline_bytes=([Console]::Out.Encoding.GetByteCount([Console]::Out.NewLine));configured_preamble_bytes=([Console]::Out.Encoding.GetPreamble().Length);encoding_codepage=([Console]::Out.Encoding.CodePage);native_ps51=$true});exit 0 }
+ Microsoft.PowerShell.Utility\Write-Output $body;exit 0
 }
 $small=@{status='partial';reasons=[string[]]@('OUTPUT_LIMIT')}
 $base=Get-AppsJson644 -Rows @($row)
@@ -112,9 +112,9 @@ if ($Mode -eq 'partial-wire') { $target-=$overhead }
 if ($Mode -eq 'overflow-wire') { $target++ }
 $row.name='L'*($target-(Get-AppsWireBytes644 $base))
 $result=Get-AppsRegistryJson644 -OldRows @($row) -Seen @{}
-$parsed=ConvertFrom-Json $result
+$parsed=Microsoft.PowerShell.Utility\ConvertFrom-Json $result
 if ($Mode -eq 'partial-wire') {
  if ($parsed.registry_summary.status -ne 'partial' -or $parsed.registry_summary.reasons[0] -ne 'OUTPUT_LIMIT' -or $parsed.apps.Count -ne 1) { throw 'OWNED_PARTIAL_ZERO' }
 } elseif ($parsed.PSObject.Properties.Name -contains 'registry_summary') { throw 'OWNED_LEGACY_SHAPE_REQUIRED' }
 if ($parsed.apps[0].name -cne $row.name) { throw 'OWNED_LEGACY_ROWS_CHANGED' }
-Write-Output $result
+Microsoft.PowerShell.Utility\Write-Output $result

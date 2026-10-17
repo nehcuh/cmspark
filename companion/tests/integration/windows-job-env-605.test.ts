@@ -10,6 +10,7 @@ import { prepareWindowsJob, spawnWindowsJob } from "../../src/process/windows-jo
 import { buildMcpStdioEnv } from "../../src/mcp/transport"
 import { McpClient } from "../../src/mcp/client"
 import { observeWindowsOwnerFailures } from "../fixtures/windows-owner-diagnostics"
+import { observeWindowsJobPhases } from "../fixtures/windows-job-phase-diagnostics"
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 function assertProtocol(condition: boolean, details: () => string): asserts condition {
@@ -91,12 +92,14 @@ for (const environment of ["full", "minimal"] as const) {
           process.stdout.write(JSON.stringify({echo:JSON.parse(line)})+'\n');
         });setTimeout(()=>{},20000);`)
       let child: ChildProcess | undefined, output = "", errors = ""
+      let phases: ReturnType<typeof observeWindowsJobPhases> | undefined
       const details = () => JSON.stringify({ environment, timing, exit: child?.exitCode, output, errors,
-        target: fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, "utf8")) : "not started" })
+        target: fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, "utf8")) : "not started", phases: phases?.snapshot() })
       const previousSecret = process.env.CMSPARK_ENV_HOST_SECRET
       const observation = observeProtocolStartup()
       process.env.CMSPARK_ENV_HOST_SECRET = "owned-probe-secret"
       try {
+        phases = observeWindowsJobPhases(t, root)
         const env = { ...(environment === "minimal" ? buildMcpStdioEnv() : process.env), CMSPARK_ENV_VALUE: "中文=x&literal", CMSPARK_ENV_EMPTY: "", CMSPARK_ENV_LARGE: "中".repeat(20000) }
         await prepareWindowsJob()
         observation.prepared()
@@ -111,6 +114,7 @@ for (const environment of ["full", "minimal"] as const) {
         const actual = JSON.parse(fs.readFileSync(marker, "utf8"))
         assert.equal(actual.stage, "input")
         assert.deepEqual(actual.env, { ...(environment === "full" ? { secret: "owned-probe-secret" } : {}), configured: "中文=x&literal", empty: "", largeLength: 20000, carrier: false })
+        assert.equal(phases.snapshot().capture_state, "complete", details())
       } catch (error) {
         observation.emit(t, environment, timing)
         throw error

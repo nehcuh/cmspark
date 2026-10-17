@@ -67,12 +67,49 @@ beforeEach(() => {
 // =============================================================================
 
 test("secret: generated on first use, persisted at 0o600", () => {
-  const s = getOrCreateSharedSecret()
+  const calls: Array<{ op: string; mode?: unknown; exact?: boolean }> = []
+  const tmp = `${SECRET_PATH}.tmp-${process.pid}`
+  const fsNative: typeof import("node:fs") = require("node:fs")
+  const originalWrite = fsNative.writeFileSync
+  const originalRename = fsNative.renameSync
+  const originalChmod = fsNative.chmodSync
+  if (process.platform === "win32") {
+    ;(fsNative as any).writeFileSync = function (...args: any[]) {
+      if (args[0] === tmp) calls.push({ op: "write", mode: args[2]?.mode })
+      return Reflect.apply(originalWrite, this, args)
+    }
+    ;(fsNative as any).renameSync = function (...args: any[]) {
+      if (args[0] === tmp || args[1] === SECRET_PATH) calls.push({ op: "rename", exact: args[0] === tmp && args[1] === SECRET_PATH })
+      return Reflect.apply(originalRename, this, args)
+    }
+    ;(fsNative as any).chmodSync = function (...args: any[]) {
+      if (args[0] === SECRET_PATH) calls.push({ op: "chmod", mode: args[1] })
+      return Reflect.apply(originalChmod, this, args)
+    }
+  }
+  let s: string
+  try { s = getOrCreateSharedSecret() }
+  finally {
+    if (process.platform === "win32") {
+      ;(fsNative as any).writeFileSync = originalWrite
+      ;(fsNative as any).renameSync = originalRename
+      ;(fsNative as any).chmodSync = originalChmod
+    }
+  }
   assert.ok(s && s.length === 64, "32 random bytes as hex = 64 chars")
   assert.ok(fs.existsSync(SECRET_PATH), "secret persisted to disk")
-  const stat = fs.statSync(SECRET_PATH)
-  // Owner-only (0o600). Mask away file-type bits.
-  assert.equal(stat.mode & 0o777, 0o600, "secret file must be owner-only")
+  if (process.platform === "win32") {
+    // Strict real API intent, not a claim about NTFS owner-only DACLs.
+    assert.deepEqual(calls, [
+      { op: "write", mode: 0o600 },
+      { op: "rename", exact: true },
+      { op: "chmod", mode: 0o600 },
+    ])
+  } else {
+    const stat = fs.statSync(SECRET_PATH)
+    // Owner-only (0o600). Mask away file-type bits.
+    assert.equal(stat.mode & 0o777, 0o600, "secret file must be owner-only")
+  }
   assert.equal(fs.readFileSync(SECRET_PATH, "utf8").trim(), s, "persisted value matches")
 })
 

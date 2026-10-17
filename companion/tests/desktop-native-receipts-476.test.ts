@@ -24,7 +24,7 @@ for(const language of ["cpp","swift"])test(`#476 ${language} acceptance observes
  assert.ok(body.includes(language==="cpp"?'text(frame,L"type")!=L"system.ping"':'f["type"] as? String=="system.ping"'))
  // Execute the actual form's post helper. A production UUID is deliberately
  // different: backend D476 filtering alone loses every renderer receipt.
- const form=read("tests/fixtures/desktop-476/native-form.js"),post=form.match(/const post=id=>(.+);\n/);assert.ok(post)
+ const form=read("tests/fixtures/desktop-476/native-form.js"),post=form.match(/const post=id=>(.+);\r?\n/);assert.ok(post)
  const emitted:string[]=[],normal:string[]=[],window={webkit:{messageHandlers:{desktop:{postMessage:(f:any)=>{if(f.type==="system.ping"&&ids.includes(f.id))emitted.push(f.id);normal.push("owned-remapped-uuid")}}}}}
  const context=vm.createContext({window,documentGeneration:"owned-current"});vm.runInContext("const post=id=>"+post[1]+";",context,{timeout:1000})
  for(const id of expected)vm.runInContext("post("+JSON.stringify(id)+")",context,{timeout:1000})
@@ -41,7 +41,7 @@ test("#476 hosted scenario explicitly requests its real authenticated window wit
  assert.ok(read("tests/fixtures/desktop-476/native-acceptance.cpp").includes('IsWindowVisible(h.confirmation->window)'))
 })
 for(const diagnosticThrows of [false,true])test(`#476 actual native finally preserves primary failure and all cleanup when diagnosticThrows=${diagnosticThrows}`,async()=>{
- const source=read("tests/desktop-native-mcp-476.test.ts"),match=source.match(/}finally\{\n([\s\S]*)\n }\n\}\)\n$/);assert.ok(match)
+ const source=read("tests/desktop-native-mcp-476.test.ts"),match=source.match(/}finally\{\r?\n([\s\S]*)\r?\n }\r?\n\}\)\r?\n$/);assert.ok(match)
  const calls:string[]=[],primary=new Error("owned-primary"),diagnostic=new Error("owned-diagnostic")
  const process={stdout:{write:()=>{calls.push("diagnostic");if(diagnosticThrows)throw diagnostic}},env:{CMSPARK_DATA_DIR:"owned-current"}}
  const ctx={process,primary,auth:false,windowRequested:false,receipts:new Set(),settled:true,exit:Promise.resolve(0),old:"owned-original",dir:"owned-current",

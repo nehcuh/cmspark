@@ -12,6 +12,7 @@ const originalFs = { ...fs }
 
 // We'll use a temporary directory as our mock filesystem root
 let tempHome: string
+const originalUserProfile = process.env.USERPROFILE
 let mockConfigDir: string
 let skillsDir: string
 let builtinDir: string
@@ -31,6 +32,8 @@ function resetMockDirs() {
 
   // Point config at our temp directory so skill-engine loads from the mock fs
   process.env.CMSPARK_DATA_DIR = mockConfigDir
+  // Node os.homedir() uses USERPROFILE on Windows; keep ~ imports in owned fixtures.
+  if (process.platform === "win32") process.env.USERPROFILE = tempHome
 
   // Write a default config
   fs.writeFileSync(path.join(mockConfigDir, "config.json"), JSON.stringify({
@@ -248,6 +251,10 @@ before(async () => {
 })
 
 after(() => {
+  if (process.platform === "win32") {
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = originalUserProfile
+  }
   if (tempHome && fs.existsSync(tempHome)) {
     fs.rmSync(tempHome, { recursive: true, force: true })
   }
@@ -1092,6 +1099,7 @@ test("skill-engine: importSkillFromPath imports from outside config dir (e.g. ~/
   resetMockDirs()
   process.env.HOME = tempHome
 
+  assert.equal(os.homedir(), tempHome, "tilde import must use the owned fixture home")
   const externalRoot = path.join(tempHome, ".claude", "skills", "datayes-api-search")
   fs.mkdirSync(path.join(externalRoot, "references"), { recursive: true })
   fs.writeFileSync(

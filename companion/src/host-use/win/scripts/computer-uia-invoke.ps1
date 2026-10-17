@@ -1,4 +1,4 @@
-# computer-uia-invoke.ps1 — #572 background delivery via UIA **action patterns**.
+﻿# computer-uia-invoke.ps1 — #572 background delivery via UIA **action patterns**.
 #
 # WHY: locate (computer-uia-locate.ps1) already finds elements through UIA, but the
 # delivery path is computer-input.ps1 = SendInput, which requires the window to be
@@ -51,7 +51,7 @@ param(
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 
-Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr v);' -Name DPI -Namespace CU | Out-Null
+Microsoft.PowerShell.Utility\Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr v);' -Name DPI -Namespace CU | Out-Null
 try { [CU.DPI]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) | Out-Null } catch {}
 
 function Fail([string]$prefix, [string]$detail, [int]$code) {
@@ -64,15 +64,15 @@ if ($MaxNodes -lt 1 -or $MaxNodes -gt 50000) { Fail "BADARGS" "MaxNodes $MaxNode
 if ($Mode -eq 'setvalue' -and $Value -eq '') { Fail "BADARGS" "setvalue requires -Value" 2 }
 if ($Mode -eq 'scroll' -and ($ScrollAmount -lt 1 -or $ScrollAmount -gt 50)) { Fail "BADARGS" "ScrollAmount $ScrollAmount out of range 1..50" 2 }
 
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h);' -Name W32 -Namespace CU | Out-Null
+Microsoft.PowerShell.Utility\Add-Type -AssemblyName UIAutomationClient
+Microsoft.PowerShell.Utility\Add-Type -AssemblyName UIAutomationTypes
+Microsoft.PowerShell.Utility\Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h);' -Name W32 -Namespace CU | Out-Null
 
 # WP2 (E.6): emergency-stop flag — its mere presence aborts, fail-closed. Mirrors
 # computer-input.ps1's Test-StopFlag (same prefix, same exit code) so the caller sees one
 # vocabulary on both delivery paths.
 function Test-StopFlag {
-  if ($StopFile -ne '' -and (Test-Path -LiteralPath $StopFile)) {
+  if ($StopFile -ne '' -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $StopFile)) {
     Fail "STOPPED" "emergency-stop flag present — delivery aborted" 11
   }
 }
@@ -98,9 +98,9 @@ if ($null -eq $rootEl) { Fail "UIA_WINDOW_GONE" "FromHandle returned null" 3 }
 $wv = [System.Windows.Automation.TreeWalker]::ControlViewWalker
 $nodes = 0
 $oversized = 0
-$exact = New-Object System.Collections.ArrayList
-$subs = New-Object System.Collections.ArrayList
-$stack = New-Object System.Collections.Stack
+$exact = Microsoft.PowerShell.Utility\New-Object System.Collections.ArrayList
+$subs = Microsoft.PowerShell.Utility\New-Object System.Collections.ArrayList
+$stack = Microsoft.PowerShell.Utility\New-Object System.Collections.Stack
 $stack.Push(@($rootEl, 0))
 while ($stack.Count -gt 0) {
   $pair = $stack.Pop()
@@ -180,7 +180,7 @@ if ($ExpectAutomationId -ne '' -and $hit.automationId -ne $ExpectAutomationId) {
 # `auto` tries the least-destructive, most-specific semantic route first. We never
 # synthesize input here — these are UIA action patterns, which is exactly why the
 # foreground is not needed.
-$tried = New-Object System.Collections.Generic.List[string]
+$tried = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[string]
 
 function Try-Pattern([string]$pname, [System.Windows.Automation.AutomationPattern]$pattern, [scriptblock]$act) {
   $obj = $null
@@ -234,7 +234,7 @@ if ($null -eq $used) {
   Fail "UIA_PATTERN_UNAVAILABLE" "no usable UIA action pattern for '$($hit.name)' ($($hit.controlType)) tried=[$($tried -join ', ')]" 6
 }
 
-Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
+Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject ([ordered]@{
   ok = $true; mode = $used; name = $hit.name; controlType = $hit.controlType
   automationId = $hit.automationId; x = $hit.x; y = $hit.y; bbox = $hit.bbox
   tried = @($tried); foreground = $false; ms = [int]$sw.ElapsedMilliseconds
