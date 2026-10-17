@@ -103,6 +103,30 @@ export function resolveWinScript(name: string): string {
   return candidates[0]
 }
 
+/** Fixed first-party built DLL; never search PATH or the source scripts directory.
+ * Missing output still yields the deterministic staged path for fake runners;
+ * the real PS loader validates/refuses before any action.
+ */
+export function resolveComputerUiaNoFocusDll(): string {
+  const name = "computer-uia-no-focus.dll"
+  if (process.env.CMSPARK_WIN_SCRIPTS) {
+    if (process.env.CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE !== "1") throw new Error("host-use/win: DLL override requires CMSPARK_ALLOW_WIN_SCRIPTS_OVERRIDE=1")
+    return path.resolve(process.env.CMSPARK_WIN_SCRIPTS, name)
+  }
+  const candidates = [
+    path.resolve(path.dirname(process.execPath), "host-scripts-win", name),
+    path.resolve(__dirname, "host-scripts-win", name),
+    path.resolve(__dirname, "../../host-scripts-win", name),
+    path.resolve(__dirname, "../host-scripts-win", name),
+    path.resolve(__dirname, "../../../dist/host-scripts-win", name),
+    path.resolve(__dirname, "../../../../dist/host-scripts-win", name),
+  ]
+  for (const candidate of candidates) {
+    try { if (fs.existsSync(candidate)) return candidate } catch { /* try next fixed built layout */ }
+  }
+  return candidates[0]
+}
+
 /**
  * Default PsRunner. Spawns Windows PowerShell 5.1 (guaranteed on Win10/11 —
  * no pwsh dependency) with the hardened flag set. Resolves with stdout on

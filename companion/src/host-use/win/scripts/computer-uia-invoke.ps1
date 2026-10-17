@@ -1,4 +1,4 @@
-# computer-uia-invoke.ps1 — #572 background delivery via UIA **action patterns**.
+﻿# computer-uia-invoke.ps1 — #572 background delivery via UIA **action patterns**.
 #
 # WHY: locate (computer-uia-locate.ps1) already finds elements through UIA, but the
 # delivery path is computer-input.ps1 = SendInput, which requires the window to be
@@ -46,12 +46,14 @@ param(
   # foreground path. That is exactly what shipped in the first cut of #572 and was caught
   # only by review, because the adapter tests use a fake runner (no argv binding) and the
   # manual E2E drove this script without the flag. Keep it, and keep it checked.
-  [string]$StopFile = ''
+  [string]$StopFile = '',
+  # Private first-party built DLL; Companion supplies this, never the model.
+  [string]$NoFocusLibrary = ''
 )
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 
-Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr v);' -Name DPI -Namespace CU | Out-Null
+Microsoft.PowerShell.Utility\Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr v);' -Name DPI -Namespace CU | Out-Null
 try { [CU.DPI]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) | Out-Null } catch {}
 
 function Fail([string]$prefix, [string]$detail, [int]$code) {
@@ -64,15 +66,15 @@ if ($MaxNodes -lt 1 -or $MaxNodes -gt 50000) { Fail "BADARGS" "MaxNodes $MaxNode
 if ($Mode -eq 'setvalue' -and $Value -eq '') { Fail "BADARGS" "setvalue requires -Value" 2 }
 if ($Mode -eq 'scroll' -and ($ScrollAmount -lt 1 -or $ScrollAmount -gt 50)) { Fail "BADARGS" "ScrollAmount $ScrollAmount out of range 1..50" 2 }
 
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h);' -Name W32 -Namespace CU | Out-Null
+Microsoft.PowerShell.Utility\Add-Type -AssemblyName UIAutomationClient
+Microsoft.PowerShell.Utility\Add-Type -AssemblyName UIAutomationTypes
+Microsoft.PowerShell.Utility\Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint pid);' -Name W32 -Namespace CU | Out-Null
 
 # WP2 (E.6): emergency-stop flag — its mere presence aborts, fail-closed. Mirrors
 # computer-input.ps1's Test-StopFlag (same prefix, same exit code) so the caller sees one
 # vocabulary on both delivery paths.
 function Test-StopFlag {
-  if ($StopFile -ne '' -and (Test-Path -LiteralPath $StopFile)) {
+  if ($StopFile -ne '' -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $StopFile)) {
     Fail "STOPPED" "emergency-stop flag present — delivery aborted" 11
   }
 }
@@ -83,6 +85,8 @@ $sw = [Diagnostics.Stopwatch]::StartNew()
 # action; this one covers the trivial case where the flag was already up on arrival.)
 Test-StopFlag
 if (-not [CU.W32]::IsWindow([IntPtr]$Hwnd)) { Fail "UIA_WINDOW_GONE" "Hwnd $Hwnd is not a window" 3 }
+[uint32]$rootOwnerPid = 0
+if ([CU.W32]::GetWindowThreadProcessId([IntPtr]$Hwnd, [ref]$rootOwnerPid) -eq 0 -or $rootOwnerPid -eq 0) { Fail "UIA_WINDOW_GONE" "window owner unavailable" 3 }
 
 # NFKC + case-insensitive anchor normalisation (mirrors locate).
 function Normalize-Anchor([string]$s) {
@@ -98,9 +102,9 @@ if ($null -eq $rootEl) { Fail "UIA_WINDOW_GONE" "FromHandle returned null" 3 }
 $wv = [System.Windows.Automation.TreeWalker]::ControlViewWalker
 $nodes = 0
 $oversized = 0
-$exact = New-Object System.Collections.ArrayList
-$subs = New-Object System.Collections.ArrayList
-$stack = New-Object System.Collections.Stack
+$exact = Microsoft.PowerShell.Utility\New-Object System.Collections.ArrayList
+$subs = Microsoft.PowerShell.Utility\New-Object System.Collections.ArrayList
+$stack = Microsoft.PowerShell.Utility\New-Object System.Collections.Stack
 $stack.Push(@($rootEl, 0))
 while ($stack.Count -gt 0) {
   $pair = $stack.Pop()
@@ -176,11 +180,84 @@ if ($ExpectAutomationId -ne '' -and $hit.automationId -ne $ExpectAutomationId) {
   Fail "UIA_ELEMENT_MISMATCH" "automationId expected '$ExpectAutomationId' got '$($hit.automationId)'" 5
 }
 
+# Freeze independent root/selected identities in this request. RuntimeId is opaque,
+# desktop-scoped and reusable; it does not replace the existing authority checks.
+try {
+  [int[]]$selectedRuntime = $el.GetRuntimeId()
+  [uint32]$selectedPid = $el.Current.ProcessId
+  $selectedControlType = $el.Current.ControlType
+  [int]$selectedType = $selectedControlType.Id
+  [string]$selectedAutomationId = $el.Current.AutomationId
+  [string]$selectedTypeName = $selectedControlType.ProgrammaticName -replace '^ControlType\.', ''
+} catch { Fail "UIA_TERMINAL" "UIA_ELEMENT_GONE" 4 }
+# Preserve the original locate/hit binding: a renamed or retyped current element
+# must not replace the already verified expected identity with its new identity.
+if (-not [string]::Equals($selectedAutomationId, [string]$hit.automationId, [StringComparison]::Ordinal) -or -not [string]::Equals($selectedTypeName, [string]$hit.controlType, [StringComparison]::Ordinal)) {
+  Fail "UIA_TERMINAL" "UIA_ELEMENT_MISMATCH" 5
+}
+if ($null -eq $selectedRuntime -or $selectedRuntime.Length -lt 1 -or $selectedRuntime.Length -gt 64) {
+  Fail "UIA_TERMINAL" "UIA_ELEMENT_MISMATCH" 5
+}
+
+$script:noFocusReady = $false
+function Invoke-NoFocusAction([string]$action) {
+  Test-StopFlag
+  if (-not $script:noFocusReady) {
+    try {
+      if (-not [IO.Path]::IsPathRooted($NoFocusLibrary) -or [IO.Path]::GetExtension($NoFocusLibrary) -ne '.dll') { throw 'invalid' }
+      $libraryInfo = [IO.FileInfo]::new($NoFocusLibrary)
+      if (-not $libraryInfo.Exists -or ($libraryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'invalid' }
+      $literal = $libraryInfo.FullName.Replace('"','""')
+      $definition = @"
+using System;
+using System.Runtime.InteropServices;
+namespace CU {
+  public static class NoFocus {
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [DllImport(@"$literal", EntryPoint="CUiAction", ExactSpelling=true, CallingConvention=CallingConvention.Winapi, CharSet=CharSet.Unicode)]
+    public static extern int Act(IntPtr root, uint rootPid, uint selectedPid, int mode,
+      [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex=5)] int[] runtime, int runtimeCount, int controlType,
+      [MarshalAs(UnmanagedType.LPWStr)] string automationId, int automationLength,
+      [MarshalAs(UnmanagedType.LPWStr)] string value, int valueLength, int direction, int count,
+      int depth, int nodes, [MarshalAs(UnmanagedType.LPWStr)] string stop, int stopLength);
+  }
+}
+"@
+      Microsoft.PowerShell.Utility\Add-Type -TypeDefinition $definition
+      $script:noFocusReady = $true
+    } catch { Fail "UIA_TERMINAL" "UIA_PATTERN_UNAVAILABLE" 6 }
+  }
+  $actionCode = switch ($action) { 'invoke' {1} 'setvalue' {2} 'select' {3} 'toggle' {4} 'scroll' {5} default {0} }
+  $directionCode = switch ($Direction) { 'up' {1} 'down' {2} 'left' {3} 'right' {4} }
+  try {
+    return [CU.NoFocus]::Act([IntPtr]$Hwnd, $rootOwnerPid, $selectedPid, $actionCode,
+      $selectedRuntime, $selectedRuntime.Length, $selectedType,
+      $selectedAutomationId, $selectedAutomationId.Length, $Value, $Value.Length,
+      $directionCode, $ScrollAmount, $MaxDepth, $MaxNodes, $StopFile, $StopFile.Length)
+  } catch { Fail "UIA_TERMINAL" "UIA_PATTERN_UNAVAILABLE" 6 }
+}
+
+# Terminal dispatch is outside the generic action catch. Only unsupported may
+# advance auto. In particular, uncertain method failure cannot cause a second action.
+function Complete-NoFocusAction([int]$status, [string]$pname) {
+  switch ($status) {
+    0 { [void]$tried.Add("${pname}:ok"); return $true }
+    1 { [void]$tried.Add("${pname}:unsupported"); return $false }
+    2 { Fail "UIA_TERMINAL" "STOPPED" 11 }
+    3 { Fail "UIA_TERMINAL" "UIA_WINDOW_GONE" 3 }
+    4 { Fail "UIA_TERMINAL" "UIA_ELEMENT_GONE" 4 }
+    5 { Fail "UIA_TERMINAL" "UIA_ELEMENT_MISMATCH" 5 }
+    6 { Fail "UIA_TERMINAL" "UIA_METHOD_FAILED" 7 }
+    7 { Fail "UIA_TERMINAL" "UIA_PATTERN_UNAVAILABLE" 6 }
+    default { Fail "UIA_TERMINAL" "UIA_METHOD_FAILED" 7 }
+  }
+}
+
 # --- pattern delivery -------------------------------------------------------
 # `auto` tries the least-destructive, most-specific semantic route first. We never
 # synthesize input here — these are UIA action patterns, which is exactly why the
 # foreground is not needed.
-$tried = New-Object System.Collections.Generic.List[string]
+$tried = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[string]
 
 function Try-Pattern([string]$pname, [System.Windows.Automation.AutomationPattern]$pattern, [scriptblock]$act) {
   $obj = $null
@@ -188,8 +265,9 @@ function Try-Pattern([string]$pname, [System.Windows.Automation.AutomationPatter
     if (-not $el.TryGetCurrentPattern($pattern, [ref]$obj)) { [void]$tried.Add("${pname}:unsupported"); return $false }
   } catch { [void]$tried.Add("${pname}:threw(" + $_.Exception.Message.Replace([char]10, [char]32).Replace([char]13, [char]32) + ")"); return $false }
   if ($null -eq $obj) { [void]$tried.Add("${pname}:null"); return $false }
-  try { & $act $obj; [void]$tried.Add("${pname}:ok"); return $true }
-  catch { [void]$tried.Add("${pname}:failed(" + $_.Exception.Message.Replace([char]10, [char]32).Replace([char]13, [char]32) + ")"); return $false }
+  try { $status = & $act $obj }
+  catch { Fail "UIA_TERMINAL" "UIA_METHOD_FAILED" 7 }
+  return Complete-NoFocusAction $status $pname
 }
 
 # Last check immediately before the ACT: a stop raised while we were re-verifying identity
@@ -199,13 +277,13 @@ Test-StopFlag
 $used = $null
 
 if ($Mode -eq 'invoke') {
-  if (Try-Pattern 'invoke' ([System.Windows.Automation.InvokePattern]::Pattern) { param($o) ([System.Windows.Automation.InvokePattern]$o).Invoke() }) { $used = 'invoke' }
+  if (Try-Pattern 'invoke' ([System.Windows.Automation.InvokePattern]::Pattern) { param($o) Invoke-NoFocusAction 'invoke' }) { $used = 'invoke' }
 } elseif ($Mode -eq 'setvalue') {
-  if (Try-Pattern 'setvalue' ([System.Windows.Automation.ValuePattern]::Pattern) { param($o) ([System.Windows.Automation.ValuePattern]$o).SetValue($Value) }) { $used = 'setvalue' }
+  if (Try-Pattern 'setvalue' ([System.Windows.Automation.ValuePattern]::Pattern) { param($o) Invoke-NoFocusAction 'setvalue' }) { $used = 'setvalue' }
 } elseif ($Mode -eq 'select') {
-  if (Try-Pattern 'select' ([System.Windows.Automation.SelectionItemPattern]::Pattern) { param($o) ([System.Windows.Automation.SelectionItemPattern]$o).Select() }) { $used = 'select' }
+  if (Try-Pattern 'select' ([System.Windows.Automation.SelectionItemPattern]::Pattern) { param($o) Invoke-NoFocusAction 'select' }) { $used = 'select' }
 } elseif ($Mode -eq 'toggle') {
-  if (Try-Pattern 'toggle' ([System.Windows.Automation.TogglePattern]::Pattern) { param($o) ([System.Windows.Automation.TogglePattern]$o).Toggle() }) { $used = 'toggle' }
+  if (Try-Pattern 'toggle' ([System.Windows.Automation.TogglePattern]::Pattern) { param($o) Invoke-NoFocusAction 'toggle' }) { $used = 'toggle' }
 } elseif ($Mode -eq 'scroll') {
   $hAmt = [System.Windows.Automation.ScrollAmount]::NoAmount
   $vAmt = [System.Windows.Automation.ScrollAmount]::NoAmount
@@ -214,19 +292,19 @@ if ($Mode -eq 'invoke') {
   elseif ($Direction -eq 'right') { $hAmt = [System.Windows.Automation.ScrollAmount]::SmallIncrement }
   elseif ($Direction -eq 'left') { $hAmt = [System.Windows.Automation.ScrollAmount]::SmallDecrement }
   $n = $ScrollAmount
-  if (Try-Pattern 'scroll' ([System.Windows.Automation.ScrollPattern]::Pattern) { param($o) $sp = [System.Windows.Automation.ScrollPattern]$o; for ($i = 0; $i -lt $n; $i++) { $sp.Scroll($hAmt, $vAmt) } }) { $used = 'scroll' }
+  if (Try-Pattern 'scroll' ([System.Windows.Automation.ScrollPattern]::Pattern) { param($o) Invoke-NoFocusAction 'scroll' }) { $used = 'scroll' }
 } else {
   # auto
-  if (Try-Pattern 'invoke' ([System.Windows.Automation.InvokePattern]::Pattern) { param($o) ([System.Windows.Automation.InvokePattern]$o).Invoke() }) {
+  if (Try-Pattern 'invoke' ([System.Windows.Automation.InvokePattern]::Pattern) { param($o) Invoke-NoFocusAction 'invoke' }) {
     $used = 'invoke'
   } elseif ($Value -ne '') {
-    if (Try-Pattern 'setvalue' ([System.Windows.Automation.ValuePattern]::Pattern) { param($o) ([System.Windows.Automation.ValuePattern]$o).SetValue($Value) }) { $used = 'setvalue' }
+    if (Try-Pattern 'setvalue' ([System.Windows.Automation.ValuePattern]::Pattern) { param($o) Invoke-NoFocusAction 'setvalue' }) { $used = 'setvalue' }
   }
   if ($null -eq $used) {
-    if (Try-Pattern 'select' ([System.Windows.Automation.SelectionItemPattern]::Pattern) { param($o) ([System.Windows.Automation.SelectionItemPattern]$o).Select() }) { $used = 'select' }
+    if (Try-Pattern 'select' ([System.Windows.Automation.SelectionItemPattern]::Pattern) { param($o) Invoke-NoFocusAction 'select' }) { $used = 'select' }
   }
   if ($null -eq $used) {
-    if (Try-Pattern 'toggle' ([System.Windows.Automation.TogglePattern]::Pattern) { param($o) ([System.Windows.Automation.TogglePattern]$o).Toggle() }) { $used = 'toggle' }
+    if (Try-Pattern 'toggle' ([System.Windows.Automation.TogglePattern]::Pattern) { param($o) Invoke-NoFocusAction 'toggle' }) { $used = 'toggle' }
   }
 }
 
@@ -234,7 +312,7 @@ if ($null -eq $used) {
   Fail "UIA_PATTERN_UNAVAILABLE" "no usable UIA action pattern for '$($hit.name)' ($($hit.controlType)) tried=[$($tried -join ', ')]" 6
 }
 
-Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
+Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject ([ordered]@{
   ok = $true; mode = $used; name = $hit.name; controlType = $hit.controlType
   automationId = $hit.automationId; x = $hit.x; y = $hit.y; bbox = $hit.bbox
   tried = @($tried); foreground = $false; ms = [int]$sw.ElapsedMilliseconds

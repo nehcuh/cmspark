@@ -25,7 +25,7 @@ param(
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 
-Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr v);' -Name DPI -Namespace CU
+Microsoft.PowerShell.Utility\Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr v);' -Name DPI -Namespace CU
 try { [CU.DPI]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) | Out-Null } catch {}
 
 function Fail([string]$prefix, [string]$detail, [int]$code) {
@@ -36,10 +36,10 @@ if ($Name.Trim() -eq '') { Fail "BADARGS" "Name must be non-empty" 2 }
 if ($MaxDepth -lt 1 -or $MaxDepth -gt 64) { Fail "BADARGS" "MaxDepth $MaxDepth out of range 1..64" 2 }
 if ($MaxNodes -lt 1 -or $MaxNodes -gt 50000) { Fail "BADARGS" "MaxNodes $MaxNodes out of range 1..50000" 2 }
 
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
+Microsoft.PowerShell.Utility\Add-Type -AssemblyName UIAutomationClient
+Microsoft.PowerShell.Utility\Add-Type -AssemblyName UIAutomationTypes
 
-Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h);' -Name W32 -Namespace CUUiaLocate
+Microsoft.PowerShell.Utility\Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h);' -Name W32 -Namespace CUUiaLocate
 $hwndPtr = [IntPtr]::new($Hwnd)
 if (-not [CUUiaLocate.W32]::IsWindow($hwndPtr)) { Fail "HWNDDEAD" "hwnd $Hwnd is not a live window" 4 }
 
@@ -62,11 +62,11 @@ try { $winRect = $rootEl.Current.BoundingRectangle } catch { $winRect = $null }
 
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $wv = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-$stack = New-Object System.Collections.Stack
+$stack = Microsoft.PowerShell.Utility\New-Object System.Collections.Stack
 $stack.Push(@{ el = $rootEl; depth = 0 })
 $nodes = 0
 $oversized = 0
-$exactHits = New-Object System.Collections.ArrayList
+$exactHits = Microsoft.PowerShell.Utility\New-Object System.Collections.ArrayList
 $subHit = $null
 while ($stack.Count -gt 0 -and $nodes -lt $MaxNodes) {
   $node = $stack.Pop(); $cur = $node.el
@@ -128,7 +128,7 @@ $sw.Stop()
 if ($exactHits.Count -gt 0) {
   $hit = $exactHits[0]
   $conf = if ($exactHits.Count -eq 1) { 1.0 } else { 0.9 }
-  Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
+  Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject ([ordered]@{
     ok = $true; found = $true; exact = $true; candidates = $exactHits.Count
     x = $hit.x; y = $hit.y; bbox = $hit.bbox
     name = $hit.name; controlType = $hit.controlType; automationId = $hit.automationId
@@ -137,7 +137,7 @@ if ($exactHits.Count -gt 0) {
   exit 0
 }
 if ($null -ne $subHit) {
-  Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
+  Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject ([ordered]@{
     ok = $true; found = $true; exact = $false; candidates = 1
     x = $subHit.x; y = $subHit.y; bbox = $subHit.bbox
     name = $subHit.name; controlType = $subHit.controlType; automationId = $subHit.automationId
@@ -145,7 +145,7 @@ if ($null -ne $subHit) {
   }))
   exit 0
 }
-Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
+Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject ([ordered]@{
   ok = $true; found = $false; candidates = 0; nodes = $nodes; oversized = $oversized; ms = [int]$sw.ElapsedMilliseconds
 }))
 exit 0

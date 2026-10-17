@@ -433,6 +433,7 @@ case "${PLATFORM}" in
       exit 1
     fi
     echo "  host-scripts-win/: ${win_ps1_count} ps1 scripts"
+    node "${ROOT_DIR}/companion/scripts/build-computer-uia-no-focus.mjs" --stage "${STAGING}/host-scripts-win"
     # No ORT/tinyclick hard-gate — Qwen3-VL worker staged above for all platforms.
     # Path B: cmspark-whisper (win-x64) + DLLs. Auto-fetch when missing unless AUTO_FETCH=0.
     if [ ! -f "companion/dist/bin/cmspark-whisper-win-x64.exe" ] && [ ! -f "companion/dist/bin/cmspark-whisper-win-x64" ]; then

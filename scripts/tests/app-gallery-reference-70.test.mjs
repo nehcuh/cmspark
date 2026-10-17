@@ -151,9 +151,12 @@ test('#70 entry identity refuses missing/unsupported metadata and accepts an act
 // decides whether fixed module discovery and signature sampling succeed.
 test('#70 sampler fixes Utility/Security discovery without changing the 15s runner', () => {
   const ps = fs.readFileSync(path.join(root, 'scripts/fixtures/app-gallery-reference-70.ps1'), 'utf8')
-  for (const command of ['Add-Type', 'ConvertTo-Json']) {
-    assert.ok(ps.includes('Microsoft.PowerShell.Utility\\' + command), command)
-  }
+  assert.ok(ps.includes("$compressionIdentity = 'System.IO.Compression, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'"))
+  assert.ok(ps.includes('$compressionAssembly = [Reflection.Assembly]::Load($compressionIdentity)'))
+  assert.ok(ps.includes('$compressionAssembly.FullName -cne $compressionIdentity'))
+  assert.ok(ps.includes("[object]::ReferenceEquals($compressionAssembly.GetType('System.IO.Compression.ZipArchive', $true).Assembly, $compressionAssembly)"))
+  assert.doesNotMatch(ps, /Add-Type|LoadWithPartialName|LoadFrom|LoadFile/)
+  assert.ok(ps.includes('Microsoft.PowerShell.Utility\\ConvertTo-Json'))
   assert.ok(ps.includes('$buffer = [byte[]]::new(65536)'))
   assert.doesNotMatch(ps, /\|\s*Where-Object|\bNew-Object\b/)
   assert.ok(ps.includes('Microsoft.PowerShell.Security\\Get-AuthenticodeSignature'))

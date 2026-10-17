@@ -132,3 +132,32 @@ test("#572 invokeUia: -Value only travels when a value is actually given", async
     "hello",
   ])
 })
+
+for (const prefix of ['STOPPED','UIA_WINDOW_GONE','UIA_ELEMENT_GONE','UIA_ELEMENT_MISMATCH','UIA_METHOD_FAILED','UIA_PATTERN_UNAVAILABLE']) {
+  test(`#572 no-focus closed terminal frame ${prefix} stays terminal`, async () => {
+    const { runner } = fakeRunner({ throwIt: true, stderr: `UIA_TERMINAL:${prefix}` })
+    const result = await new PsInputInjector(runner).invokeUia(777, 'SubmitTest', 'invoke')
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.terminal, true)
+    assert.equal(result.reason === 'bad_output', false)
+    assert.equal(result.detail, 'background UIA terminal refusal')
+  })
+}
+test('#572 no-focus arbitrary ordinary detail cannot forge the terminal frame', async () => {
+  const {runner}=fakeRunner({throwIt:true,stderr:'UIA_PATTERN_UNAVAILABLE:detail UIA_TERMINAL:UIA_METHOD_FAILED'})
+  const result=await new PsInputInjector(runner).invokeUia(777,'SubmitTest','invoke')
+  assert.equal(result.ok,false)
+  if(result.ok)return
+  assert.equal(result.reason,'pattern_unavailable')
+  assert.equal(result.terminal,undefined)
+})
+for (const reply of [{throwIt:true}, {stdout:''}, {stdout:'not json'}, {stdout:'{"ok":false}'}, {stdout:'{"ok":true,"mode":"toggle"}'}]) {
+  test(`#572 no-focus uncertain receipt ${JSON.stringify(reply)} is terminal`,async()=>{
+    const {runner}=fakeRunner(reply)
+    const result=await new PsInputInjector(runner).invokeUia(777,'SubmitTest','invoke')
+    assert.equal(result.ok,false)
+    if(result.ok)return
+    assert.equal(result.terminal,true)
+  })
+}

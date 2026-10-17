@@ -43,7 +43,7 @@ function Fail([string]$prefix, [string]$detail, [int]$code) {
   exit $code
 }
 
-Add-Type -MemberDefinition @'
+Microsoft.PowerShell.Utility\Add-Type -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
@@ -60,7 +60,7 @@ if ($Mode -eq 'compare') {
 
 function Get-ZOrder([int]$depth) {
   # EnumWindows enumerates in z-order, top-most first.
-  $list = New-Object System.Collections.Generic.List[int64]
+  $list = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[int64]
   $cb = [CU.Bg+EnumProc]{
     param($h, $l)
     if ($list.Count -ge $depth) { return $false }
@@ -73,7 +73,7 @@ function Get-ZOrder([int]$depth) {
 
 function Get-Snapshot {
   $fg = [CU.Bg]::GetForegroundWindow()
-  $p = New-Object CU.Bg+POINT
+  $p = Microsoft.PowerShell.Utility\New-Object CU.Bg+POINT
   $gotPos = [CU.Bg]::GetCursorPos([ref]$p)
   return [ordered]@{
     ts = [DateTime]::UtcNow.ToString('o')
@@ -84,7 +84,7 @@ function Get-Snapshot {
 }
 
 function Write-Json([string]$path, $obj) {
-  try { [IO.File]::WriteAllText($path, (ConvertTo-Json -Compress -Depth 6 -InputObject $obj)) }
+  try { [IO.File]::WriteAllText($path, (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -Depth 6 -InputObject $obj)) }
   catch { Fail "ORACLE_READ_FAILED" "cannot write $path : $($_.Exception.Message)" 3 }
 }
 
@@ -96,8 +96,8 @@ if ($Mode -eq 'snapshot') {
 
 # --- compare ---------------------------------------------------------------
 try {
-  $b = Get-Content -Raw $Before | ConvertFrom-Json
-  $a = Get-Content -Raw $After  | ConvertFrom-Json
+  $b = Microsoft.PowerShell.Management\Get-Content -Raw $Before | Microsoft.PowerShell.Utility\ConvertFrom-Json
+  $a = Microsoft.PowerShell.Management\Get-Content -Raw $After  | Microsoft.PowerShell.Utility\ConvertFrom-Json
 } catch { Fail "ORACLE_UNREADABLE_SNAPSHOT" "$($_.Exception.Message)" 4 }
 if ($null -eq $b.foreground -or $null -eq $a.foreground) {
   Fail "ORACLE_UNREADABLE_SNAPSHOT" "snapshot missing 'foreground'" 4

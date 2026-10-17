@@ -1292,3 +1292,35 @@ test("#572 a stop during the new foreground observation still prevents UIA deliv
   assert.equal(r.success, false); assert.equal(f.injector.invokes.length, 0)
   assert.equal(f.injector.clicks.length, 0); assert.equal(f.counts().rate, 0)
 })
+
+for (const reason of ['method_failed','element_mismatch','window_gone','element_gone','pattern_unavailable','bad_output'] as const) {
+  test(`#572 no-focus terminal ${reason} never retries with coordinate input`, async () => {
+    const injector = uiaInjector({ ok: false, reason, detail: 'fixed terminal refusal', terminal: true } as UiaInvokeResult)
+    const evidence = new RecordEvidence()
+    const deps = bgDeps({ injector: injector as unknown as InputInjector, uiaLocator: new FakeUia([uiaButtonHit()]) }, evidence)
+    const result = await runComputerTask(CLICK_OK, deps)
+    assert.equal(injector.invokes.length, 1)
+    assert.equal(injector.clicks.length, 0, 'uncertain first action must not cause a second coordinate action')
+    assert.equal(result.success, false)
+  })
+}
+
+for(const reply of ['timeout','bad-json','terminal-method'] as const){
+  test(`#572 actual adapter to executor ${reply} has no coordinate retry`,async()=>{
+    const {PsInputInjector}=await import('../src/computer/win-adapters')
+    let calls=0
+    const adapter=new PsInputInjector(async()=>{
+      calls++
+      if(reply==='timeout'){const err=Object.assign(new Error('owned transport timeout'),{killed:true,signal:'SIGTERM'});throw err}
+      if(reply==='terminal-method'){throw Object.assign(new Error('owned refusal'),{stderr:'UIA_TERMINAL:UIA_METHOD_FAILED'})}
+      return 'not-json'
+    })
+    const injector=uiaInjector(invokeOk())
+    injector.invokeUia=adapter.invokeUia.bind(adapter)
+    const evidence=new RecordEvidence()
+    const result=await runComputerTask(CLICK_OK,bgDeps({injector:injector as unknown as InputInjector,uiaLocator:new FakeUia([uiaButtonHit()])},evidence))
+    assert.equal(calls,1)
+    assert.equal(result.success,false)
+    assert.equal(injector.clicks.length,0)
+  })
+}
