@@ -21,6 +21,7 @@ import {
 } from "../utils/apps-utils"
 import { uiaCapableBadge } from "../utils/computer-utils"
 import { tokens } from "../ui/tokens"
+import { PresetReference } from "./PresetReference"
 
 export function AppsPanel() {
   const { state, dispatch } = useAgentStore()
@@ -264,29 +265,32 @@ export function AppsPanel() {
                 {state.appPresets.map((p) => {
                   const entry = entryForPreset(p.token)
                   return (
-                    <div key={p.token} style={{ ...styles.presetRow, opacity: p.detected ? 1 : 0.5 }}>
-                      <span style={{ flex: 1, fontSize: 12 }}>{p.display_name}</span>
-                      {p.detected ? (
-                        <>
-                          <span style={styles.presetDetectedBadge}>{p.persisted ? "已检测" : "可启用"}</span>
-                          {entry && (
-                            <label
-                              style={styles.enabledToggle}
-                              title={entry.enabled ? "已启用（点击关闭）" : "已停用（点击启用）"}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={entry.enabled}
-                                onChange={() => handleToggleEntry(entry)}
-                                style={{ marginRight: 4 }}
-                              />
-                              启用
-                            </label>
-                          )}
-                        </>
-                      ) : (
-                        <span style={styles.presetUndetectedBadge}>未检测到</span>
-                      )}
+                    <div key={p.token}>
+                      <div style={{ ...styles.presetRow, opacity: p.detected ? 1 : 0.5 }}>
+                        <span style={{ flex: 1, fontSize: 12 }}>{p.display_name}</span>
+                        {p.detected ? (
+                          <>
+                            <span style={styles.presetDetectedBadge}>{p.persisted ? "已检测" : "可启用"}</span>
+                            {entry && (
+                              <label
+                                style={styles.enabledToggle}
+                                title={entry.enabled ? "已启用（点击关闭）" : "已停用（点击启用）"}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={entry.enabled}
+                                  onChange={() => handleToggleEntry(entry)}
+                                  style={{ marginRight: 4 }}
+                                />
+                                启用
+                              </label>
+                            )}
+                          </>
+                        ) : (
+                          <span style={styles.presetUndetectedBadge}>未检测到</span>
+                        )}
+                      </div>
+                      <PresetReference reference={p.reference} />
                     </div>
                   )
                 })}

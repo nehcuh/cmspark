@@ -160,6 +160,23 @@ jobs:
           npm ci
           npm run build
 
+      - name: "Fixed gallery collector CPU controls (#70; no native signature claim)"
+        run: node --test scripts/tests/app-gallery-reference-70.test.mjs
+
+      - name: "Read-only fixed-release gallery certificate sampling (#70)"
+        if: matrix.os == 'windows-latest'
+        # Exact two official ZIPs, streamed/pinned; sole root EXE metadata only.
+        # No app execution/install. A failed collection fails this job.
+        run: node scripts/collect-app-gallery-reference-70.mjs "${{ runner.temp }}/gallery70-reference-metadata.json"
+
+      - name: "Publish only gallery certificate metadata (#70)"
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gallery70-reference-metadata
+          path: ${{ runner.temp }}/gallery70-reference-metadata.json
+          if-no-files-found: error
+
       - name: Desktop build helper controls (#480)
         run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs
 

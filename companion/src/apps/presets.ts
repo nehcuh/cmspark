@@ -1,6 +1,6 @@
 // App tab (WP2) — D5 preset seeding (minimal, detection-based).
 //
-// Exactly one preset ships in P1: 网易云音乐 (win.app.cloudmusic). Presets are
+// Bundled presets include fixed-release references (#70). Presets are
 // NEVER persisted undetected (an entry without exe/aumid would fail the WP1
 // schema); instead apps.list runs a lazy filesystem probe — the first time a
 // known install path exists, the preset entry materializes with:
@@ -23,12 +23,31 @@ import * as path from "path"
 import type { AppEntry } from "./types"
 import { isUserWritablePath } from "./types"
 import { probeSigner } from "./add-flow"
+import galleryReferences from "./preset-gallery-references.json"
+
+/** Release witness only. Never compared with the installed file or used for policy. */
+export interface PresetReference {
+  release: string
+  architecture: string
+  artifactURL: string
+  packageSHA256: string
+  referenceEXERelativePath: string
+  referenceEXESHA256: string | null
+  expectedCertificateSHA256DER: string | null
+  observedSubject: string | null
+  observedSignatureStatus: string | null
+  collectedAtUTC: string | null
+  pathEvidence: string[]
+  typicalPaths: string[]
+  advice: string
+}
 
 export interface PresetAppDef {
   token: string
   displayName: string
   /** Candidate exe paths, first existing wins. %VAR% env expansion applied. */
   detectCandidates: string[]
+  reference?: PresetReference
 }
 
 export const PRESET_CLOUDMUSIC_TOKEN = "win.app.cloudmusic"
@@ -44,6 +63,7 @@ export const PRESET_APPS: readonly PresetAppDef[] = [
       "C:\\Program Files (x86)\\Netease\\CloudMusic\\cloudmusic.exe",
     ],
   },
+  ...galleryReferences.map(({ reference, ...app }) => ({ ...app, reference })),
 ]
 
 function expandEnv(p: string): string {
@@ -75,6 +95,7 @@ export interface PresetStatus {
   detected: boolean
   /** True when the entry has materialized into the persisted entries map. */
   persisted: boolean
+  reference?: PresetReference
 }
 
 export interface MaterializePresetsDeps {
@@ -106,6 +127,7 @@ export async function materializePresets(
   const presets: PresetStatus[] = []
 
   for (const def of PRESET_APPS) {
+    const reference = def.reference ? { reference: def.reference } : {}
     const persistedEntry = entries[def.token]
     if (persistedEntry) {
       let detected = false
@@ -116,12 +138,12 @@ export async function materializePresets(
           detected = false
         }
       }
-      presets.push({ token: def.token, display_name: def.displayName, detected, persisted: true })
+      presets.push({ token: def.token, display_name: def.displayName, detected, persisted: true, ...reference })
       continue
     }
     const exePath = detectPresetExe(def, exists)
     if (!exePath) {
-      presets.push({ token: def.token, display_name: def.displayName, detected: false, persisted: false })
+      presets.push({ token: def.token, display_name: def.displayName, detected: false, persisted: false, ...reference })
       continue
     }
     // Canonicalize (junction/8.3 — same boundary rigor as the user add-flow).
@@ -129,7 +151,7 @@ export async function materializePresets(
     try {
       canonical = realpath(exePath)
     } catch {
-      presets.push({ token: def.token, display_name: def.displayName, detected: false, persisted: false })
+      presets.push({ token: def.token, display_name: def.displayName, detected: false, persisted: false, ...reference })
       continue
     }
     // One-time signer probe; failure fails safe to unsigned (cap "ai").
@@ -157,7 +179,7 @@ export async function materializePresets(
     }
     out[def.token] = entry
     added.push(def.token)
-    presets.push({ token: def.token, display_name: def.displayName, detected: true, persisted: true })
+    presets.push({ token: def.token, display_name: def.displayName, detected: true, persisted: true, ...reference })
   }
 
   return { entries: out, added, presets }
