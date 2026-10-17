@@ -93,9 +93,17 @@ test("#686 actual manager and executor private receipt launch exact owned NPP pa
     const pending = admitGuiTemplate({ params, ownerCurrent: () => true, requestConfirmation: details => manager.request(data => { payload = data; show() }, details, { originWs: owner }) }, {
       spawn: ((target: string, argv: string[], options: any) => {
         spawnPhase = "entered"
-        assert.equal(target.toLowerCase(), exe.toLowerCase()); assert.equal(argv.length, 5); assert.deepEqual(argv.slice(0, 4), ["-multiInst", "-nosession", "-noPlugin", "-ro"])
+        spawnPhase = "target"
+        assert.equal(target.toLowerCase(), exe.toLowerCase())
+        spawnPhase = "argv-count"
+        assert.equal(argv.length, 5)
+        spawnPhase = "argv-flags"
+        assert.deepEqual(argv.slice(0, 4), ["-multiInst", "-nosession", "-noPlugin", "-ro"])
+        spawnPhase = "file-realpath"
         assert.equal(argv[4].toLowerCase(), fs.realpathSync.native(file).toLowerCase())
+        spawnPhase = "file-identity"
         assert.equal(fs.statSync(argv[4], { bigint: true }).ino, fs.statSync(file, { bigint: true }).ino)
+        spawnPhase = "preview-binding"
         assert.ok(payload.full_preview.includes(`argv[4]: ${JSON.stringify(argv[4])}`))
         spawnPhase = "validated-before-spawn"
         launches++; owned = spawn(target, argv, options); closed = new Promise<void>(resolve => owned!.once("close", () => resolve())); return owned
