@@ -186,7 +186,7 @@ async function cleanupOwnedWpf572(children: WpfChild572[], removeOwned: () => vo
   if (cleanupError !== undefined) throw cleanupError
 }
 
-test("#572 current WPF background Invoke changes only the target while all four desktop oracles hold", { skip: !available }, async () => {
+test("#572 current WPF background Invoke changes only the target while all four desktop oracles hold", { skip: !available }, async (t) => {
   const fixture = path.resolve("tests/fixtures/win/uia-wpf-fixture.ps1")
   const dir = mkdtempSync(path.join(tmpdir(), "uia-current-wpf-572-"))
   const children: WpfChild572[] = []
@@ -243,6 +243,18 @@ test("#572 current WPF background Invoke changes only the target while all four 
     await runOracle(["-Mode", "compare", "-Before", beforePath, "-After", afterPath, "-TargetHwnd", String(target), "-Delivery", "uia-pattern", "-Out", verdictPath])
     const after = JSON.parse(readFileSync(afterPath, "utf8")) as WpfSnapshot572
     const verdict = JSON.parse(readFileSync(verdictPath, "utf8")) as Record<string, unknown>
+    // Closed role/boolean observations only. A diagnostic sink cannot alter acceptance or cleanup.
+    try {
+      const role = (handle: number) => handle === target ? "TARGET" : handle === sibling ? "SIBLING" : handle === 0 ? "NONE" : "OTHER"
+      t.diagnostic("WPF572_NATIVE_OBSERVATION " + JSON.stringify({ schema: 1,
+        beforeForegroundRole: role(before.foreground), afterForegroundRole: role(after.foreground),
+        targetChanged: /^clicked \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/.test(targetMarker),
+        siblingMarkerPresent: existsSync(siblingMarker),
+        focusKept: verdict.focus_kept === true, zorderKept: verdict.zorder_kept === true,
+        cursorKept: verdict.cursor_kept === true, noLeakedInput: verdict.no_leaked_input === true,
+        backgroundVerified: verdict.background_verified === true,
+      }))
+    } catch { /* passive diagnostics never replace the primary acceptance result */ }
     assertCurrentWpfProof572(target, sibling, before, after, verdict, targetMarker, existsSync(siblingMarker))
     const changed = await new PsUiaLocator().locate(target, "Clicked OK")
     assert.ok(changed)
