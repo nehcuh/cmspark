@@ -1,6 +1,6 @@
 # Test-owned #650 diagnostic only. Never used as a replacement for the production comparator.
 # Exactly one owned inert file; no UI, native compilation, environment change or module import.
-param([Parameter(Mandatory=$true)][string]$InputPath)
+param([Parameter(Mandatory=$true)][string]$InputPath, [switch]$QualifiedLookup)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $script:clock650 = [Diagnostics.Stopwatch]::StartNew()
@@ -31,8 +31,9 @@ try {
   $direct = [IO.File]::ReadAllText($InputPath, [Text.Encoding]::UTF8)
   Mark-ReadBoundary650 'DIRECT_READ_RETURNED'
   if ($direct -cne $expected) { [Console]::Error.WriteLine('CMSPARK_READ_FAILURE_650:CONTENT'); exit 1 }
+  $lookupName = if ($QualifiedLookup) { 'Microsoft.PowerShell.Management\Get-Content' } else { 'Get-Content' }
   Mark-ReadBoundary650 'DISCOVERY_ENTERED'
-  $command = $ExecutionContext.InvokeCommand.GetCommand('Get-Content', [System.Management.Automation.CommandTypes]::Cmdlet)
+  $command = $ExecutionContext.InvokeCommand.GetCommand($lookupName, [System.Management.Automation.CommandTypes]::Cmdlet)
   Mark-ReadBoundary650 'DISCOVERY_RETURNED'
   if ($null -eq $command -or $command.Name -cne 'Get-Content' -or $command.ModuleName -cne 'Microsoft.PowerShell.Management' -or $command.CommandType -ne [System.Management.Automation.CommandTypes]::Cmdlet) {
     [Console]::Error.WriteLine('CMSPARK_READ_FAILURE_650:COMMAND_IDENTITY'); exit 1

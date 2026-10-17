@@ -197,7 +197,7 @@ jobs:
           cd companion
           node scripts/build-desktop-native.mjs --test-fixtures
           ./node_modules/.bin/tsc -p tsconfig.test.json
-          node scripts/run-tests.mjs .test-dist/tests/desktop-native-macos-480.test.js .test-dist/tests/desktop-native-windows-480.test.js
+          node scripts/run-tests.mjs .test-dist/tests/desktop-native-macos-480.test.js .test-dist/tests/desktop-native-windows-480.test.js .test-dist/tests/desktop-native-mcp-476.test.js
 
       - name: Pinned NSIS dependency transport and integrity (#633)
         run: node --test scripts/tests/nsis-ci-setup.test.mjs

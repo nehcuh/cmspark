@@ -101,7 +101,7 @@ function Get-Snapshot {
 }
 
 function Write-Json([string]$path, $obj) {
-  try { [IO.File]::WriteAllText($path, (ConvertTo-Json -Compress -Depth 6 -InputObject $obj)) }
+  try { [IO.File]::WriteAllText($path, (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -Depth 6 -InputObject $obj)) }
   catch { Fail "ORACLE_READ_FAILED" "cannot write $path : $($_.Exception.Message)" 3 }
 }
 
@@ -115,11 +115,11 @@ if ($Mode -eq 'snapshot') {
 Write-OracleTestPhase650 'COMPARE_ENTERED'
 try {
   Write-OracleTestPhase650 'BEFORE_JSON_READ'
-  $beforeText650 = Get-Content -Raw $Before
+  $beforeText650 = Microsoft.PowerShell.Management\Get-Content -Raw $Before
   Write-OracleTestPhase650 'BEFORE_JSON_PARSE'
-  $b = $beforeText650 | ConvertFrom-Json
+  $b = $beforeText650 | Microsoft.PowerShell.Utility\ConvertFrom-Json
   Write-OracleTestPhase650 'BEFORE_SECOND_JSON_READ'
-  $a = Get-Content -Raw $After  | ConvertFrom-Json
+  $a = Microsoft.PowerShell.Management\Get-Content -Raw $After  | Microsoft.PowerShell.Utility\ConvertFrom-Json
   Write-OracleTestPhase650 'JSON_LOADED'
 } catch { Fail "ORACLE_UNREADABLE_SNAPSHOT" "$($_.Exception.Message)" 4 }
 if ($null -eq $b.foreground -or $null -eq $a.foreground) {

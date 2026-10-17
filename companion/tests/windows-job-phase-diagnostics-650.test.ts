@@ -35,6 +35,7 @@ test("actual public bootstrap gains only four ordered file observations and reta
   const f = fixture(t), phases = createWindowsJobPhaseDiagnostics(f.root)
   const original = actualJobArgs(t), source = decode(original), decorated = phases.decorateSpawnArgs(original), script = decode(decorated)
   assert.equal(original[0], windowsPowerShellExePath())
+  assert.ok(source.includes("; Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition @\'\n"), "the actual first cmdlet is pinned to the standard Utility module before compilation")
   assert.equal(decorated[0], original[0]); assert.equal(decorated[2], original[2])
   assert.deepEqual((decorated[1] as string[]).slice(0, 4), (original[1] as string[]).slice(0, 4))
   assert.ok(String(decorated[0]).length + (decorated[1] as string[]).reduce((total, value) => total + value.length + 3, 0) < 32767, "this actual fixture's added observation stays within CreateProcess argv capacity")
@@ -73,6 +74,7 @@ test("missing, duplicated or reordered real bootstrap seams refuse the owned fix
   const mutations = [
     source.replace("Add-Type -TypeDefinition @'\n", "Add-Type -TypeDefinition @'\r\n"),
     source + "; Add-Type -TypeDefinition @'\n",
+    source + "; Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition @'\n",
     source.replace("exit ([CMsparkOwnedJob]::Run(", "exit ([Other]::Run("),
     source + "\n'@; exit ([CMsparkOwnedJob]::Run(",
     source.replace("try { $targetEnvironment=[Text.StringBuilder]::new();", "try { $targetEnvironment=0;"),

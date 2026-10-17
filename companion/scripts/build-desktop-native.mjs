@@ -3,6 +3,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { spawnSync } from "node:child_process"
+import { desktopMcpFixture } from "./desktop-mcp-fixture.mjs"
 import { desktopIntegrity } from "./desktop-artifacts.mjs"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const dest = path.join(root, "dist", "desktop-native")
@@ -25,10 +26,11 @@ if (process.version !== "v22.23.2") throw new Error("Pinned Node22.23.2 build ru
 const { prepareDesktopNodeHeaders, desktopAcceptanceVariant } = await import("./build-desktop-windows.mjs")
 const headers = process.platform === "darwin" ? await prepareDesktopNodeHeaders({dest}) : undefined
 // Erasable TypeScript is supported by pinned Node22.23.2. This is the sole editable method table.
-const { DESKTOP_READ_METHODS, DESKTOP_METHOD_SET_VERSION } = await import(pathToFileURL(path.join(root, "src/desktop/capabilities.ts")))
+const { DESKTOP_READ_METHODS, DESKTOP_RENDERER_METHODS, DESKTOP_NATIVE_METHODS, DESKTOP_METHOD_SET_VERSION } = await import(pathToFileURL(path.join(root, "src/desktop/capabilities.ts")))
 if (!DESKTOP_READ_METHODS.every(v => typeof v === "string" && /^[a-z]+\.[a-z]+$/.test(v))) throw new Error("Invalid native method table")
-write(path.join(generated, "DesktopCapabilities.swift"), `// Generated from desktop/capabilities.ts. Do not edit.\nimport Foundation\nenum DesktopCapabilities { static let version = ${DESKTOP_METHOD_SET_VERSION}; static let methods: Set<String> = [${DESKTOP_READ_METHODS.map(v => JSON.stringify(v)).join(",")} ] }\n`)
-write(path.join(generated, "desktop-capabilities.h"), `/* Generated from desktop/capabilities.ts. Do not edit. */\nstatic const unsigned desktop_method_set_version = ${DESKTOP_METHOD_SET_VERSION};\nstatic const wchar_t *desktop_read_methods[] = {${DESKTOP_READ_METHODS.map(v => "L" + JSON.stringify(v)).join(",")}};\n`)
+if (DESKTOP_METHOD_SET_VERSION !== 2 || JSON.stringify(DESKTOP_NATIVE_METHODS) !== JSON.stringify([...DESKTOP_RENDERER_METHODS,"desktop.confirmation.decision"]) || JSON.stringify(DESKTOP_RENDERER_METHODS) !== JSON.stringify([...DESKTOP_READ_METHODS,"desktop.mcp.edit","desktop.mcp.save"])) throw new Error("Invalid controller method table")
+write(path.join(generated, "DesktopCapabilities.swift"), `// Generated from desktop/capabilities.ts. Do not edit.\nimport Foundation\nenum DesktopCapabilities { static let version = ${DESKTOP_METHOD_SET_VERSION}; static let methods: Set<String> = [${DESKTOP_RENDERER_METHODS.map(v => JSON.stringify(v)).join(",")} ] }\n`)
+write(path.join(generated, "desktop-capabilities.h"), `/* Generated from desktop/capabilities.ts. Do not edit. */\nstatic const unsigned desktop_method_set_version = ${DESKTOP_METHOD_SET_VERSION};\nstatic const wchar_t *desktop_read_methods[] = {${DESKTOP_RENDERER_METHODS.map(v => "L" + JSON.stringify(v)).join(",")}};\n`)
 directory(path.join(dest,"assets"))
 for(const name of ["index.html","app.css","app.js"]){const target=path.join(dest,"assets",name);replacement(target);fs.copyFileSync(path.join(root,"src/desktop/assets",name),target,fs.constants.COPYFILE_EXCL)}
 function run(bin, args) { const r=spawnSync(bin,args,{stdio:"inherit"});if(r.error||r.status!==0)process.exit(r.status||1) }
@@ -55,6 +57,14 @@ if(process.argv.includes("--test-fixtures")) {
   run("/usr/bin/swiftc",["-O","-D",mode==="hostile"?"D480_HOSTILE":mode==="parent"?"D480_PARENT":"D480_VISUAL",source,path.join(generated,"DesktopCapabilities.swift"),"-framework","AppKit","-framework","WebKit","-framework","CryptoKit","-o",binary])
   run("/usr/bin/codesign",["--force","--sign","-",binary])
  }
+ const mcpDest=path.join(dest,"acceptance","mcp"),mcpGenerated=path.join(generated,"acceptance-mcp")
+ directory(mcpDest);directory(mcpGenerated);directory(path.join(mcpDest,"assets"))
+ for(const name of ["index.html","app.css","app.js"]){const target=path.join(mcpDest,"assets",name);replacement(target);fs.copyFileSync(path.join(root,"src/desktop/assets",name),target,fs.constants.COPYFILE_EXCL)}
+ const mcpOriginal=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.swift"),"utf8"),mcpFixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/native-acceptance.swift"),"utf8"),mcpForm=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/native-form.js"),"utf8")
+ const mcpVariant=desktopMcpFixture("swift",mcpOriginal,mcpFixture,mcpForm);if(mcpVariant.inverse!==mcpOriginal)throw Error("DESKTOP_MCP_SOURCE_DRIFT")
+ const mcpSource=path.join(mcpGenerated,"main.swift"),mcpBinary=path.join(mcpDest,"cmspark-desktop");write(mcpSource,mcpVariant.source);replacement(mcpBinary)
+ run("/usr/bin/swiftc",["-O",mcpSource,path.join(generated,"DesktopCapabilities.swift"),"-framework","AppKit","-framework","WebKit","-framework","CryptoKit","-o",mcpBinary])
+ run("/usr/bin/codesign",["--force","--sign","-",mcpBinary])
  const parentProbe=path.join(dest,"acceptance","parent","desktop-parent-probe");replacement(parentProbe)
  run("/usr/bin/clang",["-std=c11","-Wall","-Wextra","-Werror","-DDESKTOP_FIXTURE_MAC_PARENT_PROBE",path.join(root,"tests/fixtures/desktop-480/windows-inheritance.c"),"-o",parentProbe])
  replacement(path.join(dest,"desktop-inheritance-probe"));replacement(path.join(dest,"inheritable-sentinel.node"))

@@ -1,6 +1,7 @@
 // #650: one owned Windows-only read/discovery diagnostic; never replaces #572's comparator.
 import test from "node:test"
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -45,9 +46,9 @@ function observe(stdout: string, stderr: string) {
   return { complete: valid && preflight !== null && phases.length === PHASES.length && receipt, phases, preflight, receipt }
 }
 
-function run(input: string) {
+function run(input: string, qualifiedLookup = false) {
   return new Promise<{ err: unknown; observation: ReturnType<typeof observe>; error_present: boolean; code: number | string | null; killed: boolean; signal: string | null; stdout_bytes: number; stderr_bytes: number }>(resolve => {
-    execFile(PS, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-InputPath", input],
+    execFile(PS, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-InputPath", input, ...(qualifiedLookup ? ["-QualifiedLookup"] : [])],
       { encoding: "utf8", windowsHide: true, timeout: 15_000, env: { ...process.env, CMSPARK_ORACLE_TEST_PHASES_650: "1" } },
       (err, stdout, stderr) => {
         const e = err as (Error & { code?: unknown; signal?: unknown; killed?: unknown }) | null
@@ -140,6 +141,45 @@ test("#650 read-boundary CPU: transport failure preserves primary result and can
   })
 })
 
+test("#650 read-boundary CPU: exact builtin qualification retains the entire original oracle body", () => {
+  const rel = "src/host-use/win/scripts/computer-bg-oracles.ps1"
+  const file = [rel, path.join("companion", rel)].find(p => existsSync(p)) ?? rel
+  const source = readFileSync(file, "utf8").replace(/\r\n/g, "\n")
+  const replacements: Array<[string, string, number]> = [
+    ["Microsoft.PowerShell.Management\\Get-Content", "Get-Content", 2],
+    ["Microsoft.PowerShell.Utility\\ConvertFrom-Json", "ConvertFrom-Json", 2],
+    ["Microsoft.PowerShell.Utility\\ConvertTo-Json", "ConvertTo-Json", 1],
+  ]
+  let inverse = source
+  for (const [qualified, original, count] of replacements) {
+    assert.equal(source.split(qualified).length - 1, count, "all and only approved builtin call sites")
+    inverse = inverse.split(qualified).join(original)
+  }
+  assert.equal(createHash("sha256").update(inverse).digest("hex"), "c78a0ec6e44f768f7c2270b9eb405fd72eca17ad864f2263943040a854977592", "removing only the five qualifications restores the complete exact bd6 oracle")
+})
+test("#650 read-boundary CPU: qualified cold child changes only the fixed explicit switch", async t => {
+  const source = readFileSync(SCRIPT, "utf8").replace(/\r\n/g, "\n")
+  assert.ok(source.includes("[switch]$QualifiedLookup"))
+  assert.ok(source.includes("$lookupName = if ($QualifiedLookup) { 'Microsoft.PowerShell.Management\\Get-Content' } else { 'Get-Content' }"))
+  assert.equal(source.split("$ExecutionContext.InvokeCommand.GetCommand($lookupName,").length - 1, 1)
+  const child = require("node:child_process") as typeof import("node:child_process")
+  let calls = 0
+  t.mock.method(child, "execFile", (command: string, args: string[], options: any, callback: Function) => {
+    assert.equal(command, PS)
+    const ordinary = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-InputPath", "OWNED_NOT_EXECUTED"]
+    assert.deepEqual(args, calls === 0 ? ordinary : [...ordinary, "-QualifiedLookup"])
+    assert.equal(options.timeout, 15_000); assert.equal(options.windowsHide, true); assert.equal(options.encoding, "utf8")
+    assert.ok(options.env !== process.env)
+    assert.deepEqual(Object.keys(options.env).sort(), [...new Set([...Object.keys(process.env), "CMSPARK_ORACLE_TEST_PHASES_650"])].sort())
+    assert.ok(Object.entries(process.env).every(([key, value]) => key === "CMSPARK_ORACLE_TEST_PHASES_650" || options.env[key] === value))
+    assert.equal(options.env.CMSPARK_ORACLE_TEST_PHASES_650, "1")
+    calls++; callback(null, sourceReceipt(), successfulDiagnostics()); return {}
+  })
+  requireComplete(await run("OWNED_NOT_EXECUTED"))
+  requireComplete(await run("OWNED_NOT_EXECUTED", true))
+  assert.equal(calls, 2)
+})
+
 test("#650 native Windows owned Get-Content read/discovery boundary", { skip: process.platform !== "win32" }, async t => {
   assert.ok(existsSync(PS), "pinned Windows PowerShell must exist")
   assert.ok(existsSync(SCRIPT), "owned diagnostic fixture must exist")
@@ -149,6 +189,25 @@ test("#650 native Windows owned Get-Content read/discovery boundary", { skip: pr
     const before = lstatSync(input, { bigint: true })
     assert.ok(before.isFile() && !before.isSymbolicLink() && before.nlink === 1n)
     const result = await run(input)
+    const { err, ...finite } = result
+    t.diagnostic(JSON.stringify({ kind: "OWNED_READ_BOUNDARY_650", ...finite }))
+    requireComplete(result)
+    const after = lstatSync(input, { bigint: true })
+    assert.ok(after.isFile() && !after.isSymbolicLink() && after.nlink === 1n && after.dev === before.dev && after.ino === before.ino && after.size === before.size && after.mtimeNs === before.mtimeNs && after.ctimeNs === before.ctimeNs)
+    assert.equal(readFileSync(input, "utf8"), CONTENT)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+// Independent child: qualification is its first cmdlet lookup, never a warmup of the original B child.
+test("#650 native Windows owned qualified Get-Content cold read/discovery boundary", { skip: process.platform !== "win32" }, async t => {
+  assert.ok(existsSync(PS), "pinned Windows PowerShell must exist")
+  assert.ok(existsSync(SCRIPT), "owned diagnostic fixture must exist")
+  const dir = mkdtempSync(path.join(tmpdir(), "cmspark-read-650-")), input = path.join(dir, "owned-read.txt")
+  try {
+    writeFileSync(input, CONTENT, { flag: "wx", mode: 0o600 })
+    const before = lstatSync(input, { bigint: true })
+    assert.ok(before.isFile() && !before.isSymbolicLink() && before.nlink === 1n)
+    const result = await run(input, true)
     const { err, ...finite } = result
     t.diagnostic(JSON.stringify({ kind: "OWNED_READ_BOUNDARY_650", ...finite }))
     requireComplete(result)

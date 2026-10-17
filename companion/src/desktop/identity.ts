@@ -4,7 +4,7 @@
  */
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 
-import { DESKTOP_READ_METHODS, DESKTOP_METHOD_SET_VERSION } from "./capabilities"
+import { DESKTOP_NATIVE_METHODS, DESKTOP_METHOD_SET_VERSION } from "./capabilities"
 export { DESKTOP_READ_METHODS } from "./capabilities"
 
 export type DesktopPrincipal = Readonly<{ hostSessionId: string; connectionId: string }>
@@ -54,7 +54,7 @@ export class DesktopIdentityRegistry {
     const capabilityId = randomBytes(16).toString("hex")
     const secret = randomBytes(32)
     this.capabilities.set(capabilityId, {
-      hostSessionId, secret, methods: Object.freeze([...DESKTOP_READ_METHODS]), methodSetVersion: DESKTOP_METHOD_SET_VERSION, activated: false,
+      hostSessionId, secret, methods: Object.freeze([...DESKTOP_NATIVE_METHODS]), methodSetVersion: DESKTOP_METHOD_SET_VERSION, activated: false,
       bootstrapExpiresAt: this.now() + BOOTSTRAP_TTL_MS,
     })
     return Object.freeze({ capabilityId, secret: secret.toString("hex") })

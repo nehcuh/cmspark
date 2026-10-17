@@ -137,3 +137,27 @@ test('native phase diagnostics are enabled only by explicit testFixtures compile
   assert.equal(diagnostic[1][1].filter(value=>value===flag).length,1)
   assert.deepEqual(diagnostic[1][1].filter(value=>value!==flag),ordinary[1][1])
 })
+
+test('production C++ compile plan preserves UTF-8 native strings independently of the runner code page', () => {
+  const inputs={cl:'C:\\VS\\cl.exe',root:'C:\\repo',output:'C:\\out',headers:'C:\\headers',generated:'C:\\generated',sdk:'C:\\SDK',nodeLib:'C:\\node.lib'}
+  for(const testFixtures of [false,true]) {
+    const plan=desktopWindowsCompilePlan({...inputs,testFixtures})
+    assert.equal(plan[1][1].filter(arg=>arg==='/utf-8').length,1,'UTF-8 C++ source must not depend on the Windows ANSI code page')
+    assert.equal(plan[0][1].includes('/utf-8'),false,'the unchanged C launcher has no encoding change')
+  }
+})
+
+test('all actual C++ acceptance compiler arguments preserve Unicode input without weakening its assertion', () => {
+  // Evaluate only the two actual argv expressions; never invoke a compiler.
+  const calls=[...helperSource.matchAll(/checked\(cl,(\["\/nologo","\/std:c\+\+20"[^\n]+?\]),\{env,cwd:output,buildDiagnostic:true\}\)/g)]
+  assert.equal(calls.length,2,'all actual native acceptance compile sites')
+  for(const match of calls) for(const mode of ['visual','hostile','inheritance','parent']) {
+    const argv=new Function('path','mode','sdk','generated','root','source','mcpSource','binary','mcpBinary',`return ${match[1]}`)(path.win32,mode,'C:\\sdk','C:\\generated','C:\\repo','C:\\owned.cpp','C:\\owned-mcp.cpp','C:\\owned.exe','C:\\owned-mcp.exe')
+    assert.equal(argv.filter(arg=>arg==='/utf-8').length,1,'acceptance C++ has the same explicit source encoding as production')
+    assert.ok(argv.includes('/DUNICODE')&&argv.includes('/D_UNICODE'))
+  }
+  const nativeTest=fs.readFileSync(new URL('../../tests/desktop-native-mcp-476.test.ts',import.meta.url),'utf8')
+  const form=fs.readFileSync(new URL('../../tests/fixtures/desktop-476/native-form.js',import.meta.url),'utf8')
+  assert.ok(nativeTest.includes('assert.deepEqual((stored.owned_added_476 as any).args,["中文 空格"])'))
+  assert.ok(form.includes('中文 空格'))
+})

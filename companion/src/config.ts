@@ -1053,7 +1053,14 @@ export function getConfig(): CompanionConfig {
  * preserve stale server entries), this performs a wholesale swap so removed servers
  * actually disappear from the persisted config. Triggers CONFIG_CHANGE_EVENT.
  */
-export function replaceMcpServers(servers: McpConfig["servers"]): CompanionConfig {
+export function replaceMcpServers(servers: McpConfig["servers"], options?: Readonly<{ enabled: boolean }>): CompanionConfig {
+  // Internal commit option: persist a confirmed servers/global-enable mutation
+  // with the existing single atomic writer. Original callers keep the old flag.
+  if (options !== undefined && (options === null || typeof options !== "object" ||
+      Array.isArray(options) || Object.keys(options).length !== 1 ||
+      !Object.prototype.hasOwnProperty.call(options, "enabled") || typeof options.enabled !== "boolean")) {
+    throw new Error("MCP_COMMIT_OPTIONS_INVALID")
+  }
   const current = getConfig()
   // Bypass deepMerge for the servers map: deepMerge(target.servers, source.servers)
   // preserves keys when source.servers is {} (empty object has no keys to overwrite).
@@ -1061,7 +1068,7 @@ export function replaceMcpServers(servers: McpConfig["servers"]): CompanionConfi
   const updated: CompanionConfig = {
     ...current,
     mcp: {
-      enabled: current.mcp?.enabled ?? false,
+      enabled: options?.enabled ?? current.mcp?.enabled ?? false,
       servers: { ...servers },
     },
   }

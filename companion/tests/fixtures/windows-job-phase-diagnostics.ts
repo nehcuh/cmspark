@@ -101,14 +101,15 @@ function __CmsparkPhase650([string]$phase) {
     const source = buffer.toString("utf16le")
     if (!source.includes("CMsparkOwnedJob") && !source.includes("$targetEnvironment=[Text.StringBuilder]::new()")) return args
     const entry = "try { $targetEnvironment=[Text.StringBuilder]::new();"
-    const addType = "; Add-Type -TypeDefinition @'\n"
+    const addType = "; Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition @'\n"
     const afterType = "\n'@; exit ([CMsparkOwnedJob]::Run("
     const run = "exit ([CMsparkOwnedJob]::Run("
+    once(source, "Add-Type -TypeDefinition @'\n")
     for (const seam of [entry, addType, afterType, run]) once(source, seam)
     if (!(source.indexOf(entry) < source.indexOf(addType) && source.indexOf(addType) < source.indexOf(afterType))) throw Error("OWNED_PHASE_BOOTSTRAP_ORDER_INVALID")
     const decorated = source
       .replace(entry, "try { " + observer + "__CmsparkPhase650 'wrapper_entered'; $targetEnvironment=[Text.StringBuilder]::new();")
-      .replace(addType, "; __CmsparkPhase650 'before_add_type'; Add-Type -TypeDefinition @'\n")
+      .replace(addType, "; __CmsparkPhase650 'before_add_type'; " + addType.slice(2))
       .replace(afterType, "\n'@; __CmsparkPhase650 'after_add_type'; " + run)
       .replace(run, "__CmsparkPhase650 'before_run'; " + run)
     return [args[0], [...argv.slice(0, 4), Buffer.from(decorated, "utf16le").toString("base64")], ...args.slice(2)]

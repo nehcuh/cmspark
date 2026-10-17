@@ -1,5 +1,6 @@
 // #480 build-only SDK acquisition. No production download, installer or PATH fallback.
 import fs from "node:fs"
+import { desktopMcpFixture } from "./desktop-mcp-fixture.mjs"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
@@ -106,7 +107,7 @@ export function desktopWindowsCompilePlan({ cl, root, output, headers, generated
   const addon = p.join(output, "desktop-launcher.node"), host = p.join(output, "cmspark-desktop.exe")
   return [
     [cl, ["/nologo", "/std:c11", "/W4", "/WX", "/MD", "/LD", "/DBUILDING_NODE_EXTENSION", "/DNODE_GYP_MODULE_NAME=desktop_launcher", `/I${headers}`, p.join(root, "src/desktop/native/launcher.c"), "/link", nodeLib, "bcrypt.lib", `/OUT:${addon}`]],
-    [cl, ["/nologo", "/std:c++20", "/EHsc", "/DUNICODE", "/D_UNICODE", ...(testFixtures ? ["/DCMSPARK_DESKTOP_TEST_PHASES"] : []), `/I${p.join(sdk, "build/native/include")}`, `/I${generated}`, p.join(root, "src/desktop/native/DesktopHost.cpp"), "/link", "/SUBSYSTEM:WINDOWS", p.join(sdk, "build/native/x64/WebView2LoaderStatic.lib"), "version.lib", "windowsapp.lib", "winhttp.lib", "bcrypt.lib", "shlwapi.lib", "ole32.lib", "user32.lib", "advapi32.lib", `/OUT:${host}`]],
+    [cl, ["/nologo", "/std:c++20", "/EHsc", "/utf-8", "/DUNICODE", "/D_UNICODE", ...(testFixtures ? ["/DCMSPARK_DESKTOP_TEST_PHASES"] : []), `/I${p.join(sdk, "build/native/include")}`, `/I${generated}`, p.join(root, "src/desktop/native/DesktopHost.cpp"), "/link", "/SUBSYSTEM:WINDOWS", p.join(sdk, "build/native/x64/WebView2LoaderStatic.lib"), "version.lib", "windowsapp.lib", "winhttp.lib", "bcrypt.lib", "shlwapi.lib", "ole32.lib", "user32.lib", "advapi32.lib", `/OUT:${host}`]],
   ]
 }
 function toolchain() {
@@ -163,9 +164,17 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
       const original=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),fixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-480/native-acceptance.cpp"),"utf8"),variant=desktopAcceptanceVariant("cpp",original,fixture)
       if(variant.inverse!==original)throw new Error("DESKTOP_ACCEPTANCE_SOURCE_DRIFT")
       const source=path.join(output,`acceptance-${mode}.cpp`),binary=path.join(output,`acceptance-${mode}.exe`);fs.writeFileSync(source,variant.source,{flag:"wx"})
-      checked(cl,["/nologo","/std:c++20","/EHsc","/DUNICODE","/D_UNICODE",mode==="hostile"?"/DD480_HOSTILE":mode==="inheritance"?"/DD480_INHERITANCE":mode==="parent"?"/DD480_PARENT":"/DD480_VISUAL",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,source,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${binary}`],{env,cwd:output,buildDiagnostic:true})
+      checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE",mode==="hostile"?"/DD480_HOSTILE":mode==="inheritance"?"/DD480_INHERITANCE":mode==="parent"?"/DD480_PARENT":"/DD480_VISUAL",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,source,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${binary}`],{env,cwd:output,buildDiagnostic:true})
       publish(binary,path.join(directory,"cmspark-desktop.exe"))
     }
+    const mcpDirectory=path.join(acceptanceRoot,"mcp");fs.mkdirSync(mcpDirectory,{recursive:true});if(!fs.lstatSync(mcpDirectory).isDirectory()||fs.lstatSync(mcpDirectory).isSymbolicLink())throw Error("DESKTOP_ACCEPTANCE_DIRECTORY")
+    const mcpAssets=path.join(mcpDirectory,"assets");fs.mkdirSync(mcpAssets,{recursive:true});if(!fs.lstatSync(mcpAssets).isDirectory()||fs.lstatSync(mcpAssets).isSymbolicLink())throw Error("DESKTOP_ACCEPTANCE_DIRECTORY")
+    for(const name of ["index.html","app.css","app.js"])publish(path.join(root,"src/desktop/assets",name),path.join(mcpAssets,name))
+    const mcpOriginal=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),mcpFixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/native-acceptance.cpp"),"utf8"),mcpForm=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/native-form.js"),"utf8"),mcpVariant=desktopMcpFixture("cpp",mcpOriginal,mcpFixture,mcpForm)
+    if(mcpVariant.inverse!==mcpOriginal)throw Error("DESKTOP_MCP_SOURCE_DRIFT")
+    const mcpSource=path.join(output,"acceptance-mcp.cpp"),mcpBinary=path.join(output,"acceptance-mcp.exe");fs.writeFileSync(mcpSource,mcpVariant.source,{flag:"wx"})
+    checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,mcpSource,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${mcpBinary}`],{env,cwd:output,buildDiagnostic:true})
+    publish(mcpBinary,path.join(mcpDirectory,"cmspark-desktop.exe"))
     const inherit=path.join(acceptanceRoot,"inheritance"),fixture=path.join(root,"tests/fixtures/desktop-480/windows-inheritance.c")
     checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_inheritance","/DDESKTOP_FIXTURE_ADDON",`/I${headers}`,fixture,"/link",lib,"bcrypt.lib",`/OUT:${path.join(output,"desktop-inheritance.node")}`],{env,cwd:output,buildDiagnostic:true})
     checked(cl,["/nologo","/std:c11","/W4","/WX",fixture,"/link",`/OUT:${path.join(output,"desktop-inheritance.exe")}`],{env,cwd:output,buildDiagnostic:true})
@@ -202,9 +211,9 @@ export function desktopAcceptanceVariant(language, original, fixture) {
     ['parentWatch?.setEventHandler { exit(1) }', 'parentWatch?.setEventHandler { d480AcceptanceParentObserved();exit(1) }'],
     ['phase="ready";authenticated=true;', 'phase="ready";authenticated=true;d480AcceptanceAuth(self);'],
     ['win.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)', 'win.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true);d480AcceptanceWindow(self)'],
-    ['let wasAuthenticated=authenticated;socket=nil;', 'let wasAuthenticated=authenticated;d480AcceptanceWindowStop(self);socket=nil;'],
-    ['func applicationWillTerminate(_ notification:Notification) { socket?.cancel', 'func applicationWillTerminate(_ notification:Notification) { d480AcceptanceWindowStop(self);socket?.cancel'],
-    ['if allowed { generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)', 'if allowed { generation=nil;requests.removeAll() };d480AcceptanceNavigation(self,navigationAction,allowed);decisionHandler(allowed ? .allow:.cancel)'],
+    ['let wasAuthenticated=authenticated;retireConfirmation(nil);socket=nil;', 'let wasAuthenticated=authenticated;d480AcceptanceWindowStop(self);retireConfirmation(nil);socket=nil;'],
+    ['func applicationWillTerminate(_ notification:Notification) { retireConfirmation(false);socket?.cancel', 'func applicationWillTerminate(_ notification:Notification) { d480AcceptanceWindowStop(self);retireConfirmation(false);socket?.cancel'],
+    ['if allowed { retireConfirmation(false);generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)', 'if allowed { retireConfirmation(false);generation=nil;requests.removeAll() };d480AcceptanceNavigation(self,navigationAction,allowed);decisionHandler(allowed ? .allow:.cancel)'],
     ['guard authenticated,webView.url?.absoluteString==origin else{return};generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!])', 'guard authenticated,webView.url?.absoluteString==origin else{return};generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!]);d480AcceptanceDocument(self)'],
     ['windowFeatures:WKWindowFeatures)->WKWebView? { nil }', 'windowFeatures:WKWindowFeatures)->WKWebView? { d480AcceptanceNewWindow(self);return nil }'],
     ['didReceive message:WKScriptMessage) {', 'didReceive message:WKScriptMessage) {\n        d480AcceptanceMessage(self,message)'],

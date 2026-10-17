@@ -111,6 +111,6 @@ test("desktop readonly errors: offline and reconnect retain the existing read-on
   const f = fixture(); f.receive({ type: "desktop.offline" }); assert.equal(f.ids.status.textContent, "连接已断开")
   assert.equal(f.ids.notice.textContent, "等待原生宿主重新连接。"); const count = f.posted.length
   f.nav[2].events.click(); assert.equal(f.posted.length, count)
-  f.receive({ type: "desktop.document", generation: "owned-next-document" }); assert.equal(f.ids.status.textContent, "已连接 · 只读")
+  f.receive({ type: "desktop.document", generation: "owned-next-document" }); assert.equal(f.ids.status.textContent, "已连接 · MCP 保存需确认")
   assert.equal(f.posted.at(-1).generation, "owned-next-document")
 })
