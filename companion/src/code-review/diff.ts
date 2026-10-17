@@ -17,15 +17,24 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
   while (i < rows.length) {
     const header = /^diff --git a\/(.+) b\/(.+)$/.exec(rows[i++])
     if (!header || !validDiffPath(header[1]) || !validDiffPath(header[2]) || files.length >= 128) fail()
-    // Renames, binary, mode-only and quoted names require explicit future adapters.
-    if (header[1] !== header[2]) fail()
-    while (/^(index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?|(?:new|deleted) file mode [0-7]{6})$/.test(rows[i] || "")) i++
+    // Explicit text renames bind both metadata paths to the same header; copy,
+    // binary, mode-only, pure rename and quoted names remain unsupported.
+    const renamed = header[1] !== header[2]
+    if (renamed) {
+      if (!/^similarity index (?:100|[1-9]?\d)%$/.test(rows[i++] || "")
+        || rows[i++] !== `rename from ${header[1]}` || rows[i++] !== `rename to ${header[2]}`) fail()
+      if (/^index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?$/.test(rows[i] || "")) i++
+    } else {
+      while (/^(index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?|(?:new|deleted) file mode [0-7]{6})$/.test(rows[i] || "")) i++
+    }
     const old = rows[i++], next = rows[i++]
     if (old !== `--- a/${header[1]}` && old !== "--- /dev/null") fail()
     if (next !== `+++ b/${header[2]}` && next !== "+++ /dev/null") fail()
+    if (renamed && (old === "--- /dev/null" || next === "+++ /dev/null")) fail()
     const file: DiffFile = { old_path: old === "--- /dev/null" ? null : header[1], new_path: next === "+++ /dev/null" ? null : header[2], lines: [] }
     if (!file.old_path && !file.new_path) fail()
-    if (files.some(item => item.old_path === file.old_path && item.new_path === file.new_path)) fail()
+    if (files.some(item => file.old_path !== null && item.old_path === file.old_path
+      || file.new_path !== null && item.new_path === file.new_path)) fail()
     let previousOldEnd = -1, previousNewEnd = -1, hunks = 0
     while (i < rows.length && !rows[i].startsWith("diff --git ")) {
       const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$/.exec(rows[i++])
