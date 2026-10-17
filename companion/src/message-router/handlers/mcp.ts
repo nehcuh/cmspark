@@ -14,7 +14,11 @@ import type {
   SecurityConfirmationDetails,
 } from "../../security-confirmation"
 
+export type DesktopMcpSaveAction = { action: "add" | "update"; name: string; server: McpServerConfig; enable_global: boolean }
+
 export type McpSession = {
+  /** Private authenticated-native closures; never read from a wire payload. */
+  desktopSave?: { confirm: (action: DesktopMcpSaveAction) => Promise<boolean>; current: () => boolean; stale: () => void }
   requestConfirmation?: (
     details: SecurityConfirmationDetails,
   ) => Promise<SecurityConfirmationDecision>
@@ -29,22 +33,23 @@ const MCP_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/
 async function withPendingMcpConfig(
   name: string,
   original: ReturnType<typeof getConfig>,
-  run: (current: () => ReturnType<typeof getConfig> | null) => Promise<any>,
+  run: (current: () => ReturnType<typeof getConfig> | null, stop: () => void) => Promise<any>,
+  desktop?: { observeEmpty: boolean; stale: () => void },
 ): Promise<any> {
   const dataDir = getConfigDir()
   const subject = (config: ReturnType<typeof getConfig>) =>
-    JSON.stringify([config.mcp?.enabled ?? false, config.mcp?.servers?.[name] ?? null])
+    JSON.stringify([config.mcp?.enabled ?? false, config.mcp?.servers?.[name] ?? null, ...(desktop?.observeEmpty ? [Object.keys(config.mcp?.servers || {}).length === 0] : [])])
   const expected = subject(original)
   let stale = false
   const current = () => {
     const config = getConfig()
-    if (getConfigDir() !== dataDir || subject(config) !== expected) stale = true
+    if (getConfigDir() !== dataDir || subject(config) !== expected) { stale = true; desktop?.stale() }
     return stale ? null : config
   }
   // Remember observed changes even if a later write restores the original target.
-  const changed = () => { try { current() } catch { stale = true } }
+  const changed = () => { try { current() } catch { stale = true; desktop?.stale() } }
   configEvents.on(CONFIG_CHANGE_EVENT, changed)
-  try { return await run(current) }
+  try { return await run(current, () => configEvents.off(CONFIG_CHANGE_EVENT, changed)) }
   finally { configEvents.off(CONFIG_CHANGE_EVENT, changed) }
 }
 
@@ -299,24 +304,28 @@ export async function handleMcpFamily(
 
       }
 
-      return withPendingMcpConfig(name, config, async current => {
+      return withPendingMcpConfig(name, config, async (current, stop) => {
 
         // SEC-B: stdio = arbitrary local spawn; require origin-bound L2 (force high)
 
         // before replaceMcpServers → applyConfig → StdioClientTransport.
 
-        const stdioGate = await requireMcpStdioSpawnConfirm(session, name, serverCfg, "add")
+        const enableGlobal = Object.keys(config.mcp?.servers || {}).length === 0 && !config.mcp?.enabled
+        const stdioGate = session?.desktopSave
+          ? (await session.desktopSave.confirm({ action: "add", name, server: serverCfg, enable_global: enableGlobal }) ? null : { type: "error", error: "MCP save denied" })
+          : await requireMcpStdioSpawnConfirm(session, name, serverCfg, "add")
 
         if (stdioGate) return stdioGate
 
         const latest = current()
-        if (!latest) return staleMcpConfig()
+        if (!latest || (session?.desktopSave && !session.desktopSave.current())) return staleMcpConfig()
 
         const wasEmpty = Object.keys(latest.mcp?.servers || {}).length === 0
 
         const newServers = { ...(latest.mcp?.servers || {}), [name]: serverCfg }
 
-        replaceMcpServers(newServers)
+        if (session?.desktopSave) stop()
+        replaceMcpServers(newServers, session?.desktopSave && enableGlobal ? { enabled: true } : undefined)
 
         // Auto-enable the global kill-switch when the user adds their first server
 
@@ -326,11 +335,14 @@ export async function handleMcpFamily(
 
         // with no UI surface to recover (see mcp.toggle_enabled UI gap).
 
-        if (wasEmpty && !latest.mcp?.enabled) {
+        if (!session?.desktopSave && wasEmpty && !latest.mcp?.enabled) {
 
           setMcpEnabled(true)
 
         }
+
+        // Native ACK records persistence only; connection status is a separate read.
+        if (session?.desktopSave) return { type: "mcp.servers.updated", servers: [] }
 
         return {
 
@@ -340,7 +352,7 @@ export async function handleMcpFamily(
 
         }
 
-      })
+      }, session?.desktopSave ? { observeEmpty: Object.keys(config.mcp?.servers || {}).length === 0 && !config.mcp?.enabled, stale: session.desktopSave.stale } : undefined)
 
     }
 
@@ -372,11 +384,13 @@ export async function handleMcpFamily(
 
       if (validation) return { type: "error", error: validation }
 
-      return withPendingMcpConfig(name, config, async current => {
+      return withPendingMcpConfig(name, config, async (current, stop) => {
 
         // SEC-B: re-confirm when stdio spawn surface changes (incl. enable false→true)
 
-        if (mcpStdioSpawnSurfaceChanged(existing, merged)) {
+        if (session?.desktopSave) {
+          if (!await session.desktopSave.confirm({ action: "update", name, server: merged, enable_global: false })) return { type: "error", error: "MCP save denied" }
+        } else if (mcpStdioSpawnSurfaceChanged(existing, merged)) {
 
           const stdioGate = await requireMcpStdioSpawnConfirm(session, name, merged, "update")
 
@@ -385,11 +399,15 @@ export async function handleMcpFamily(
         }
 
         const latest = current()
-        if (!latest) return staleMcpConfig()
+        if (!latest || (session?.desktopSave && !session.desktopSave.current())) return staleMcpConfig()
 
         const newServers = { ...(latest.mcp?.servers || {}), [name]: merged }
 
+        if (session?.desktopSave) stop()
         replaceMcpServers(newServers)
+
+        // Native ACK records persistence only; connection status is a separate read.
+        if (session?.desktopSave) return { type: "mcp.servers.updated", servers: [] }
 
         return {
 
@@ -399,7 +417,7 @@ export async function handleMcpFamily(
 
         }
 
-      })
+      }, session?.desktopSave ? { observeEmpty: false, stale: session.desktopSave.stale } : undefined)
 
     }
 
