@@ -19,7 +19,7 @@ test("#476 actual native grouped thread metadata UI persists all fields in the c
   let complete!:()=>void,exitResolve!:(n:number)=>void,settled=false,authenticated=false,windowRequested=false,failed=false,child:DesktopNativeChild|undefined
   const done=new Promise<void>(r=>complete=r),exit=new Promise<number>(r=>exitResolve=r)
   const required=["D476_META_FIRST_SAVED","D476_META_REOPEN_OK","D476_META_ESCAPE_OK","D476_META_ENTER_OK","D476_META_BEFORE_LOST_ACK"],receipts=new Set<string>()
-  let saveAttempts=0,droppedAck=false,initialSaved=false,connections=0
+  let saveAttempts=0,droppedAck=false,initialSaved=false,connections=0,failureCode=0
   const channel=createDesktopChannel({registry,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},maxPayload:10*1024*1024,onAuthenticated:host=>{authenticated=true;windowRequested=channel.window(host,"workspace")}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer()
   attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
   channel.wss.on("connection",ws=>{
@@ -37,7 +37,7 @@ test("#476 actual native grouped thread metadata UI persists all fields in the c
     ws.on("message",raw=>{
       let f:any;try{f=JSON.parse(String(raw))}catch{return}
       if(!authenticated||f.type!=="system.ping")return
-      if(typeof f.id==="string"&&f.id.startsWith("D476_FAIL_")){failed=true;complete()}
+      if(typeof f.id==="string"&&f.id.startsWith("D476_FAIL_")){failureCode=(["D476_FAIL_SCRIPT","D476_FAIL_METADATA_PHASE","D476_FAIL_NATIVE_WINDOW","D476_FAIL_DEFAULT_SECRET","D476_FAIL_FULL_VIEW","D476_FAIL_BUTTON"]as string[]).indexOf(f.id)+1;failed=true;complete()}
       if(required.includes(f.id)){if(receipts.has(f.id)){failed=true;complete()}receipts.add(f.id)}
     })
   })
@@ -53,6 +53,8 @@ test("#476 actual native grouped thread metadata UI persists all fields in the c
     const disk=new ThreadManager(),saved=disk.get("native-metadata-A")!;assert.equal(saved.alias,"未确认 中文草稿");assert.deepEqual(saved.user_tags,["Review","付款"]);assert.equal(saved.topic_folder,"项目资料");assert.equal(disk.get("native-metadata-B")!.alias,"另一对话")
     process.stdout.write('DESKTOP_THREAD_METADATA_476 {"native":true,"persisted":true,"fields":3,"otherThreadUnchanged":true,"uiReopened":true,"nativeKeys":2,"lostAck":true,"offlineDraftUnconfirmed":true}\n')
   }finally{
+    // Fixed public receipt only: never renderer text, frame bodies, paths or credentials.
+    try{t.diagnostic("D476_METADATA_NATIVE_PHASE "+JSON.stringify({schema:1,failed,failureCode,receiptMask:required.reduce((mask,id,index)=>mask|(receipts.has(id)?1<<index:0),0),saveAttempts,droppedAck,initialSaved,connections,authenticated,windowRequested,childExited:settled}))}catch{} // Observation cannot replace primary failure or skip cleanup.
     child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true})
   }
 })
