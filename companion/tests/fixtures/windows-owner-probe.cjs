@@ -10,7 +10,7 @@ process.env.HOME = process.env.USERPROFILE = root;
 process.env.CMSPARK_SKIP_LOGIN_ENV = '1';
 process.env.DEEPSEEK_API_KEY = process.env.OPENAI_API_KEY = '';
 const realExec = cp.execFile, realSync = cp.execFileSync, realSpawn = cp.spawn;
-let queries = 0, targets = 0, firstQuery = 0, heartbeat = 0, stopped;
+let queries = 0, targets = 0, firstQuery = 0, firstQueryClosedAt = 0, heartbeat = 0, stopped;
 const queryChildren = [];
 const interval = setInterval(() => { if (firstQuery && !heartbeat) heartbeat = performance.now() - firstQuery }, 10);
 const slow = !['native-positive', 'native-mismatch', 'owner-failure'].includes(mode);
@@ -30,7 +30,10 @@ function proxyQuery(file, args, options, callback) {
     ? realExec(file, [...args.slice(0, -1), command], options, finish)
     : realExec(process.execPath, ['-e', mode === 'owner-failure' ? 'process.exit(2)' : `setTimeout(()=>console.log('134046125350000001'),${slow ? 450 : 0})`], options, finish);
   const entry = { pid: query.pid, closed: false }; queryChildren.push(entry);
-  query.once('close', () => { entry.closed = true });
+  query.once('close', () => {
+    entry.closed = true;
+    if (queryChildren[0] === entry && !firstQueryClosedAt) firstQueryClosedAt = performance.now();
+  });
   function finish(error, stdout, stderr) {
     if (!error && mode === 'native-mismatch') stdout = String(BigInt(stdout.trim()) + 1n) + '\n';
     callback(error, stdout, stderr);
@@ -91,7 +94,12 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(queries, 1);
     assert.ok(firstQuery >= before && firstQuery > 0 && firstQuery <= settled);
     assert.equal(targets, 0); assert.ok(heartbeat > 0 && heartbeat < 200, String(heartbeat));
-    assert.ok(extra.ownerElapsed < 400, String(extra.ownerElapsed));
+    // Caller/SDK cleanup after this query has closed is separate from the
+    // owner query's original cancellation-through-close budget.
+    assert.ok(Number.isFinite(firstQueryClosedAt) && firstQueryClosedAt >= firstQuery && firstQueryClosedAt <= settled);
+    assert.equal(queryChildren[0].closed, true);
+    extra.ownerCloseElapsed = firstQueryClosedAt - firstQuery;
+    assert.ok(extra.ownerCloseElapsed < 400, String(extra.ownerCloseElapsed));
   } else if (mode === 'mcp-close') {
     const { OwnedStdioTransport } = require(path.join(base, 'mcp/stdio-transport.js'));
     const transport = new OwnedStdioTransport({ command, args: [] });
