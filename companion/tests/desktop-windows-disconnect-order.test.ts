@@ -10,7 +10,7 @@ assert.ok(network, "native disconnect guard must be explicitly modeled")
 const offline = cpp.match(/else if\(message==native_offline\)\{([^{}]*?)if\(self->web\)/)?.[1]
 assert.ok(offline)
 const statements = offline.split(";").map(x => x.trim()).filter(Boolean)
-assert.ok(statements.every(x => ["self->ready=false", "self->generation.clear()", "self->requests.clear()"].includes(x)))
+assert.ok(statements.every(x => ["self->retire_confirmation()", "self->ready=false", "self->generation.clear()", "self->requests.clear()"].includes(x)))
 const retiredEpochRecheck = cpp.includes('if(!ready||phase!=L"ready"){if(frame_epoch!=epoch)return;throw std::runtime_error("PHASE");}')
 assert.ok(retiredEpochRecheck || cpp.includes('if(!ready||phase!=L"ready")throw std::runtime_error("PHASE");'))
 if (retiredEpochRecheck) {
@@ -38,6 +38,7 @@ function frame(s: State, epoch: number, networkAfterEpochCheck?: () => void): vo
 function offlineMessage(s: State, epoch: number): void {
   if (epoch !== s.epoch) return
   for (const statement of statements) {
+    // Native prompt retirement does not alter the existing readiness/order projection.
     if (statement === "self->ready=false") s.ready = false
     else if (statement === "self->generation.clear()") s.generation = false
     else if (statement === "self->requests.clear()") s.pending = false

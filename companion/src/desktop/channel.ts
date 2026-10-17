@@ -5,6 +5,8 @@ import { DesktopIdentityRegistry, type DesktopPrincipal } from "./identity"
 import { DESKTOP_NATIVE_ORIGIN, DESKTOP_CHALLENGE_TTL_MS } from "./capabilities"
 import { desktopRead, type DesktopReadServices } from "./read"
 import { parseDesktopFrame } from "./flat-json"
+import { createDesktopMcpSave } from "./mcp-save"
+import type { SecurityConfirmationManager } from "../security-confirmation"
 
 const hexId = /^[0-9a-f]{32}$/
 function exact(frame: Record<string, unknown>, keys: string[]): boolean { return Object.keys(frame).every(k => keys.includes(k)) && keys.filter(k => k !== "id").every(k => k in frame) }
@@ -18,7 +20,7 @@ export function attachDesktopUpgrade(server: http.Server, legacy: WebSocketServe
     target.handleUpgrade(req, socket, head, ws => target.emit("connection", ws, req))
   })
 }
-export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; services: DesktopReadServices; maxPayload: number; onDisconnect?: (ws: WebSocket) => void; onAuthenticated?: (host: string) => void }) {
+export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; services: DesktopReadServices; maxPayload: number; securityConfirmations?: SecurityConfirmationManager; onDisconnect?: (ws: WebSocket) => void; onAuthenticated?: (host: string) => void }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: opts.maxPayload })
   const active = new Map<WebSocket, DesktopPrincipal>()
   const pending = new Map<WebSocket, string>()
@@ -30,6 +32,7 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
     const connectionId = randomBytes(16).toString("hex")
     let capabilityId: string | undefined
     let principal: DesktopPrincipal | undefined
+    let mcpSave: ReturnType<typeof createDesktopMcpSave> | undefined
     const timer = setTimeout(() => ws.terminate(), DESKTOP_CHALLENGE_TTL_MS)
     ws.on("error", () => {})
     send(ws, { type: "desktop.challenge.request" })
@@ -50,9 +53,17 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
           // Reconnect closes old sockets, not merely their privilege bit.
           for (const [old, p] of active) if (p.hostSessionId === principal.hostSessionId) { active.delete(old); old.terminate() }
           active.set(ws, principal); clearTimeout(timer)
+          if (opts.securityConfirmations) { const owner = principal; mcpSave = createDesktopMcpSave({ ws, services: opts.services, manager: opts.securityConfirmations, current: () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.mcp.save"), send: frame => send(ws, frame) }) }
           send(ws, { type: "desktop.ready", protocol_version: 1 }); opts.onAuthenticated?.(principal.hostSessionId); return
         }
         ws.terminate(); return
+      }
+      if (["desktop.mcp.edit", "desktop.mcp.save", "desktop.confirmation.decision"].includes(String(frame.type))) {
+        if (!mcpSave || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", error_code: "DESKTOP_METHOD_DENIED", ...(typeof frame.id === "string" ? { id: frame.id } : {}) }); return }
+        if (frame.type === "desktop.confirmation.decision") { mcpSave.decide(frame); return }
+        const owner = principal
+        void mcpSave.handle(frame).then(result => { if (opts.registry.allows(owner, String(frame.type))) send(ws, result) }).catch(() => { if (opts.registry.allows(owner, String(frame.type))) send(ws, { type: "desktop.error", error_code: "DESKTOP_MCP_SAVE_FAILED", ...(typeof frame.id === "string" ? { id: frame.id } : {}) }) })
+        return
       }
       const keys = frame.type === "thread.peek" ? ["type", "thread_id", "id"] : ["type", "id"]
       if (typeof frame.type !== "string" || !exact(frame, keys) || (frame.id !== undefined && (typeof frame.id !== "string" || frame.id.length > 200)) || (frame.type === "thread.peek" && (typeof frame.thread_id !== "string" || !frame.thread_id.trim())) || !opts.registry.allows(principal, frame.type)) {
@@ -63,7 +74,7 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
         if (opts.registry.allows(principal, frame.type)) send(ws, { ...result, ...(frame.id === undefined ? {} : { id: frame.id }) })
       } catch { if (opts.registry.allows(principal, frame.type)) send(ws, { type: "desktop.error", error_code: "DESKTOP_READ_FAILED", ...(frame.id === undefined ? {} : { id: frame.id }) }) }
     })
-    ws.on("close", () => { clearTimeout(timer); pending.delete(ws); active.delete(ws); if (principal) opts.registry.disconnect(principal); if (capabilityId) opts.registry.cancelChallenge(capabilityId, connectionId); opts.onDisconnect?.(ws) })
+    ws.on("close", () => { mcpSave?.cancel(); clearTimeout(timer); pending.delete(ws); active.delete(ws); if (principal) opts.registry.disconnect(principal); if (capabilityId) opts.registry.cancelChallenge(capabilityId, connectionId); opts.onDisconnect?.(ws) })
   })
   return {
     wss,

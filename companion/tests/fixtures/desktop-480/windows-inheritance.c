@@ -199,7 +199,7 @@ int wmain(int argc,wchar_t **argv) {
   if(*field<'1'||*field>'9')goto done;uint64_t number=0;
   while(*field>='0'&&*field<='9'){unsigned digit=(unsigned)(*field++-'0');if(number>(UINT64_MAX-digit)/10)goto done;number=number*10+digit;}
   if(strcmp(field,"\"}\n")||number>(uintptr_t)-1)goto done;parent=(HANDLE)(uintptr_t)number;
-  char expected[CMSPARK_BOOT_MAX+1];int length=snprintf(expected,sizeof(expected),"{\"capability_id\":\"01010101010101010101010101010101\",\"secret\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"url\":\"ws://127.0.0.1:1/desktop\",\"protocol_version\":1,\"issued_method_set_version\":1,\"parent_handle\":\"%llu\"}\n",(unsigned long long)number);
+  char expected[CMSPARK_BOOT_MAX+1];int length=snprintf(expected,sizeof(expected),"{\"capability_id\":\"01010101010101010101010101010101\",\"secret\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"url\":\"ws://127.0.0.1:1/desktop\",\"protocol_version\":1,\"issued_method_set_version\":2,\"parent_handle\":\"%llu\"}\n",(unsigned long long)number);
   if(length<=0||(DWORD)length!=total||memcmp(bytes,expected,total)||!d480_sync_parent(parent)||(fixture_mask(known)&4u)||!d480_client_finish(&bootstrap,parent))goto done;
   result=0;
 done:

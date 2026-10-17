@@ -804,6 +804,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     registry: desktopRegistry,
     services: { threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), mcp: mcpManager },
     maxPayload: MAX_WS_MESSAGE_SIZE,
+    securityConfirmations: requireRt().securityConfirmations,
     onAuthenticated: host => desktopLauncher.authenticated(host),
     onDisconnect: ws => requireRt().securityConfirmations.rejectAll("disconnect", ws),
   })

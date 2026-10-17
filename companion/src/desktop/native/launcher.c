@@ -193,7 +193,7 @@ static napi_value launch(napi_env env, napi_callback_info info) {
   CloseHandle(pi.hThread); c->process = pi.hProcess; c->alive = 1;
   HANDLE target_parent = NULL;
   if (!d480_server_bind(&channel, c->process, pi.dwProcessId, &target_parent)) goto win_error;
-  length = snprintf(boot, sizeof(boot), "{\"capability_id\":\"%s\",\"secret\":\"%s\",\"url\":\"%s\",\"protocol_version\":1,\"issued_method_set_version\":1,\"parent_handle\":\"%llu\"}\n", cap, secret, url, (unsigned long long)(uintptr_t)target_parent);
+  length = snprintf(boot, sizeof(boot), "{\"capability_id\":\"%s\",\"secret\":\"%s\",\"url\":\"%s\",\"protocol_version\":1,\"issued_method_set_version\":2,\"parent_handle\":\"%llu\"}\n", cap, secret, url, (unsigned long long)(uintptr_t)target_parent);
   if (length < 0 || length > BOOT_MAX || !d480_server_send(&channel, c->process, pi.dwProcessId, boot, (DWORD)length)) goto win_error;
 #else
   pthread_mutex_init(&c->lock, NULL);
@@ -203,7 +203,7 @@ static napi_value launch(napi_env env, napi_callback_info info) {
   if (pipes[0] >= 0) pipes[1] = fcntl(initial[1], F_DUPFD_CLOEXEC, 3);
   close(initial[0]); close(initial[1]);
   if (pipes[0] < 0 || pipes[1] < 0) { if (pipes[0] >= 0) close(pipes[0]); if (pipes[1] >= 0) close(pipes[1]); goto error; }
-  length = snprintf(boot, sizeof(boot), "{\"capability_id\":\"%s\",\"secret\":\"%s\",\"url\":\"%s\",\"protocol_version\":1,\"issued_method_set_version\":1}\n", cap, secret, url);
+  length = snprintf(boot, sizeof(boot), "{\"capability_id\":\"%s\",\"secret\":\"%s\",\"url\":\"%s\",\"protocol_version\":1,\"issued_method_set_version\":2}\n", cap, secret, url);
   if (length < 0 || length > BOOT_MAX) { close(pipes[0]); close(pipes[1]); goto error; }
   posix_spawn_file_actions_t actions;
   if (posix_spawn_file_actions_init(&actions)) { close(pipes[0]); close(pipes[1]); goto error; }
