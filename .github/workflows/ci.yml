@@ -180,6 +180,7 @@ jobs:
         shell: bash
         run: |
           node --test scripts/tests/office-runtime-stage.test.mjs
+          node --test scripts/tests/office-lock-passive.test.mjs
           node scripts/smoke-office-runtime.mjs
           cd companion
           npx tsc -p tsconfig.test.json

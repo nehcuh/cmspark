@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { Worker } from 'node:worker_threads'
 import { once } from 'node:events'
@@ -102,12 +102,47 @@ test('Owned Office cleanup removes nested files without swallowing a conversion 
   } finally { fs.rmSync(directory, { recursive: true, force: true }) }
 })
 
+const OFFICE_LOCK_DISPOSE_RECEIPT = 'DISPOSE_RETURNED_V1'
+
+// A single bounded observation, never a wait for the handle to unlock. Absence,
+// partial bytes or IO failure says only NOT_OBSERVED, not that Dispose did not run.
+function readOfficeLockDisposeReceipt(file) {
+  let fd, observed = 'NOT_OBSERVED'
+  try {
+    fd = fs.openSync(file, 'r')
+    const bytes = Buffer.alloc(Buffer.byteLength(OFFICE_LOCK_DISPOSE_RECEIPT) + 1)
+    const size = fs.readSync(fd, bytes, 0, bytes.length, 0)
+    if (size === bytes.length - 1 && bytes.subarray(0, size).equals(Buffer.from(OFFICE_LOCK_DISPOSE_RECEIPT, 'ascii'))) observed = 'DISPOSE_RETURNED'
+  } catch { /* observation unavailable */ }
+  finally {
+    if (fd !== undefined) try { fs.closeSync(fd) } catch { observed = 'NOT_OBSERVED' }
+  }
+  return observed
+}
+
+function officeLockNow() {
+  try { const now = performance.now(); return Number.isFinite(now) ? now : null } catch { return null }
+}
+
+function reportOfficeLock(t, release, stage, started, error, receipt = 'NOT_OBSERVED') {
+  try {
+    if (!['holder-ready', 'lock-proved', 'release-signaled', 'helper-enter', 'helper-return', 'helper-expected-refusal', 'helper-failure', 'body-failure', 'finally-enter', 'finally-close', 'finally-return'].includes(stage)) return
+    const now = officeLockNow(), elapsed = now !== null && started !== null ? Math.max(0, Math.round(now - started)) : null
+    const observedCode = error?.code
+    const code = error === undefined ? 'NONE' : ['EBUSY', 'ERR_ASSERTION', 'ENOENT', 'EACCES', 'EPERM'].includes(observedCode) ? observedCode : 'OTHER'
+    t.diagnostic(JSON.stringify({ schema: 'office-lock-passive-v1', case: release ? 'transient' : 'persistent', stage,
+      elapsed_ms: Number.isSafeInteger(elapsed) ? elapsed : null, code,
+      dispose_receipt: receipt === 'DISPOSE_RETURNED' ? receipt : 'NOT_OBSERVED' }))
+  } catch { /* diagnostics must not replace a body or finally result */ }
+}
+
 for (const release of [true, false]) test(`Windows owned executable lock ${release ? 'releases within cleanup budget' : 'remains a cleanup failure'}`, {
   skip: process.platform !== 'win32', timeout: 15_000,
-}, async () => {
+}, async t => {
   const owned = fs.mkdtempSync(path.join(os.tmpdir(), 'office lock '))
   const directory = path.join(owned, 'runtime')
   const releaseFile = path.join(owned, 'release')
+  const receiptFile = path.join(owned, `dispose-${randomUUID()}.receipt`)
   fs.mkdirSync(directory)
   const runtime = path.join(directory, 'libreoffice-kit.exe')
   fs.writeFileSync(runtime, 'owned lock fixture; never executed')
@@ -125,10 +160,21 @@ for (const release of [true, false]) test(`Windows owned executable lock ${relea
         if ($clock.ElapsedMilliseconds -gt 10000) { throw 'Owned lock release timed out' }
         Start-Sleep -Milliseconds 10
       }
-    } finally { $handle.Dispose() }
-  `], { cwd: owned, env: { ...process.env, CMSPARK_TEST_OFFICE_LOCK: runtime, CMSPARK_TEST_OFFICE_RELEASE: releaseFile },
+    } finally {
+      $handle.Dispose()
+      try {
+        $receipt = [IO.File]::Open($env:CMSPARK_TEST_OFFICE_RECEIPT, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+          $bytes = [Text.Encoding]::ASCII.GetBytes('DISPOSE_RETURNED_V1')
+          $receipt.Write($bytes, 0, $bytes.Length)
+        } finally { $receipt.Dispose() }
+      } catch { } # isolate receipt IO only; the original Dispose/holder error is not caught
+    }
+  `], { cwd: owned, env: { ...process.env, CMSPARK_TEST_OFFICE_LOCK: runtime, CMSPARK_TEST_OFFICE_RELEASE: releaseFile, CMSPARK_TEST_OFFICE_RECEIPT: receiptFile },
     stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   const closed = new Promise(resolve => child.once('close', resolve))
+  const diagnosticStart = officeLockNow()
+  let diagnosticPhase = 'body-failure'
   try {
     await new Promise((resolve, reject) => {
       let text = ''
@@ -142,24 +188,44 @@ for (const release of [true, false]) test(`Windows owned executable lock ${relea
       child.once('error', reject)
       child.once('exit', () => reject(new Error('Owned lock exited before readiness')))
     })
+    reportOfficeLock(t, release, 'holder-ready', diagnosticStart)
     assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0)
     assert.throws(() => fs.rmSync(directory, { recursive: true, force: true }), { code: 'EBUSY' }, 'original immediate removal must observe the exclusive Windows handle')
+    reportOfficeLock(t, release, 'lock-proved', diagnosticStart)
     if (release) {
       fs.writeFileSync(releaseFile, 'release', { flag: 'wx' })
+      reportOfficeLock(t, release, 'release-signaled', diagnosticStart)
+      diagnosticPhase = 'helper-failure'
+      reportOfficeLock(t, release, 'helper-enter', diagnosticStart)
       removeOfficeSmokeRuntime(directory)
+      diagnosticPhase = 'body-failure'
+      reportOfficeLock(t, release, 'helper-return', diagnosticStart)
       assert.equal(fs.existsSync(directory), false)
     } else {
+      diagnosticPhase = 'helper-failure'
+      reportOfficeLock(t, release, 'helper-enter', diagnosticStart)
       assert.throws(() => removeOfficeSmokeRuntime(directory), { code: 'EBUSY' })
+      diagnosticPhase = 'body-failure'
+      reportOfficeLock(t, release, 'helper-expected-refusal', diagnosticStart)
       assert.equal(fs.existsSync(runtime), true, 'a persistent lock is not silently ignored')
       assert.doesNotThrow(() => process.kill(child.pid, 0), 'cleanup must not terminate the owned process')
     }
+  } catch (error) {
+    reportOfficeLock(t, release, diagnosticPhase, diagnosticStart, error)
+    throw error
   } finally {
+    // The only receipt read is here, before finally's release signal/close wait.
+    // Synchronous rmSync may delay stream callbacks; no callback timestamp is used.
+    const receipt = readOfficeLockDisposeReceipt(receiptFile)
+    reportOfficeLock(t, release, 'finally-enter', diagnosticStart, undefined, receipt)
     // The object came directly from this spawn, never a discovered/user PID.
     if (child.exitCode === null) {
       fs.writeFileSync(releaseFile, 'release')
     }
     await closed
+    reportOfficeLock(t, release, 'finally-close', diagnosticStart)
     fs.rmSync(owned, { recursive: true, force: true })
+    reportOfficeLock(t, release, 'finally-return', diagnosticStart)
   }
 })
 
