@@ -6,6 +6,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { project } from '../windows-census-reporter.mjs'
 import { childEnvironment, prepareOwnedGitConfig, rejectCheckoutCredentials, capture, discover, reconcile, scheduledBatches, inventory, stageSucceeded } from '../windows-census.mjs'
 
 const root = path.resolve(import.meta.dirname, '../..')
@@ -254,4 +255,73 @@ test('owned empty Git config is exclusive and rejects replacement, contents and 
       }
     } finally { fs.rmSync(root, { recursive: true, force: true }) }
   }
+})
+
+// #650: actual child errors are wrapped by Node TestsStream in error.cause.
+// Keep diagnostic projection finite; never publish command/output/error text.
+test('census child failure projection preserves finite actual wrapped exit facts and no private strings', async () => {
+  const body = cases + `test('owned child failure',async()=>{await require('node:util').promisify(require('node:child_process').execFile)(process.execPath,['-e',\"process.stdout.write('OWNED_STDOUT_650');process.stderr.write('OWNED_PRIVATE_ERROR_650');process.exit(7)\"],{env:{},timeout:2000});});`
+  const f = fixture({ 'a.test.js': body })
+  try {
+    const observed = await run(f, 'child-failure', true)
+    assert.equal(observed.execution.code, 1)
+    const events = fs.readdirSync(observed.receipts).flatMap(file => fs.readFileSync(path.join(observed.receipts, file), 'utf8').trim().split('\n').map(JSON.parse))
+    const child = events.find(e => e.type === 'test:fail' && e.child_failure_chain?.some(c => c.code === 7))
+    assert.ok(child, 'actual child exit7 must survive Node error.cause wrapper')
+    const entry = child.child_failure_chain.find(c => c.code === 7)
+    assert.equal(entry.killed, false)
+    assert.equal(entry.stdout_bytes, Buffer.byteLength('OWNED_STDOUT_650'))
+    assert.equal(entry.stderr_bytes, Buffer.byteLength('OWNED_PRIVATE_ERROR_650'))
+    const serialized = JSON.stringify(events)
+    for (const value of ['OWNED_STDOUT_650','OWNED_PRIVATE_ERROR_650','process.exit(7)']) assert.equal(serialized.includes(value), false)
+    assert.equal((await reconcile(observed)).outcome, 'FAIL', 'observability never changes original failure')
+  } finally { retire(f) }
+})
+
+test('census child failure projection bounds cycles and refuses getters, text and nonfinite child fields', () => {
+  let getters = 0
+  const hidden = { code: 9, killed: true, signal: 'SIGTERM', stdout: 'OWNED_ONLY', stderr: 'OWNED_ONLY' }
+  Object.defineProperty(hidden, 'cmd', { get() { getters++; throw Error('getter must not run') } })
+  Object.defineProperty(hidden, 'exitCode', { get() { getters++; throw Error('getter must not run') } })
+  hidden.cause = hidden
+  const wrapper = new Error('OWNED_PRIVATE_MESSAGE_650', { cause: hidden })
+  const actual = project({ type: 'test:fail', data: { details: { error: wrapper } } }, 1, root)
+  assert.deepEqual(actual.child_failure_chain, [{ depth: 1, code: 9, killed: true, signal: 'SIGTERM', stdout_bytes: 10, stderr_bytes: 10 }])
+  assert.equal(getters, 0)
+  const invalid = project({ type: 'test:fail', data: { details: { error: { cause: { code: Infinity, killed: 'true', signal: 'OWNED_PRIVATE_SIGNAL', stdout: {}, stderr: null } } } } }, 2, root)
+  assert.equal(invalid.child_failure_chain, undefined)
+  assert.equal(JSON.stringify([actual,invalid]).includes('OWNED_'), false)
+  assert.equal(project({type:'test:pass',data:{}},3,root).child_failure_chain,undefined)
+})
+
+
+test('census child failure projection reads actual Buffer size without overridden getters', () => {
+  let getters = 0
+  const buffer = Buffer.from('OWNED_BUFFER')
+  for (const key of ['length','byteLength']) Object.defineProperty(buffer,key,{get(){getters++;throw Error('OWNED_FORBIDDEN_BUFFER_GETTER')}})
+  const error = new Error('OWNED_PRIVATE_BUFFER_MESSAGE', { cause: { code: 8, stdout: buffer, stderr: buffer } })
+  const actual = project({type:'test:fail',data:{details:{error}}},4,root)
+  assert.deepEqual(actual.child_failure_chain,[{depth:1,code:8,stdout_bytes:12,stderr_bytes:12}])
+  assert.equal(getters,0)
+  assert.equal(JSON.stringify(actual).includes('OWNED_'),false)
+})
+
+
+test('census child failure projection rejects Proxy byte fields without invoking traps', () => {
+  let traps = 0
+  const proxy = new Proxy({}, {getPrototypeOf(){traps++;throw Error('OWNED_FORBIDDEN_PROTO_TRAP')}})
+  const revoked = Proxy.revocable({}, {}); revoked.revoke()
+  const error = new Error('OWNED_PRIVATE_PROXY_MESSAGE', {cause:{code:6,stdout:proxy,stderr:revoked.proxy}})
+  const actual = project({type:'test:fail',data:{details:{error}}},5,root)
+  assert.deepEqual(actual.child_failure_chain,[{depth:1,code:6}])
+  assert.equal(traps,0)
+  const cause = new Proxy({}, {getOwnPropertyDescriptor(){traps++;throw Error('OWNED_FORBIDDEN_DESCRIPTOR_TRAP')}})
+  assert.equal(project({type:'test:fail',data:{details:{error:new Error('owned',{cause})}}},6,root).child_failure_chain,undefined)
+  assert.equal(traps,0)
+  const bytes = new Uint8Array([11,22,33])
+  Object.defineProperty(bytes,'byteLength',{get(){traps++;throw Error('OWNED_FORBIDDEN_VIEW_GETTER')}})
+  const view = project({type:'test:fail',data:{details:{error:{stdout:bytes}}}},6,root)
+  assert.deepEqual(view.child_failure_chain,[{depth:0,stdout_bytes:3}])
+  assert.equal(traps,0)
+  assert.equal(JSON.stringify([actual,view]).includes('OWNED_'),false)
 })
