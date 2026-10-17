@@ -91,9 +91,10 @@ test("#572 integration: with no stop file at all the script still runs (standalo
 // Current #572 positive acceptance. CPU controls extract these exact assertions;
 // only the Windows callback below starts owned WPF processes.
 import { execFile, type ChildProcess } from "node:child_process"
-import { readFileSync, watch } from "node:fs"
+import { readFileSync, watch, mkdirSync, unlinkSync } from "node:fs"
 import { performance } from "node:perf_hooks"
 import { promisify } from "node:util"
+import { createRequire } from "node:module"
 import { PsUiaLocator } from "../src/computer/win-adapters"
 import { resolveWinScript, runPs, type PsRunner } from "../src/host-use/win/powershell"
 
@@ -239,23 +240,35 @@ ${call("BEFORE_FROM_HANDLE")}
   return result
 }
 
-function makeWpfClientProbe572(dir: string, sibling: number, runner: PsRunner): { run: PsRunner; status: () => string } {
+function makeWpfClientProbe572(dir: string, sibling: number, runner: PsRunner): { run: PsRunner; status: () => string; native: () => unknown } {
   let capture = "NOT_RUN", calls = 0
+  let native: unknown = { schema: 1, valid: false, complete: false, overflow: false, rows: [] }
   return {
     status: () => capture,
+    native: () => native,
     run: async (script, args, opts) => {
       // Instrumentation failure cannot change the original action or refusal.
       let selected = script
+      let selectedArgs = args
+      let nativeTools: { generateNativeProbeScript572: (source: Buffer) => Buffer; nativeProbeArgs572: (args: string[], dll: string) => string[]; projectNativeProbe572: (words: unknown) => unknown } | undefined
       try {
         assert.equal(++calls, 1)
         assert.equal(path.basename(script), "computer-uia-invoke.ps1")
-        const observed = buildWpfClientProbe572(readFileSync(script), sibling, path.join(dir, "invoke-client-phases.jsonl"))
+        nativeTools = createRequire(path.join(process.cwd(), "package.json"))(path.resolve("scripts/computer-uia-native-probe-572.mjs"))
+        const library = path.resolve("dist/desktop-native/acceptance/uia572-probe/computer-uia-native-probe-572.dll")
+        assert.ok(existsSync(library), "UIA572_NATIVE_PROBE_DLL_MISSING")
+        selectedArgs = nativeTools!.nativeProbeArgs572(args, library)
+        const observed = nativeTools!.generateNativeProbeScript572(buildWpfClientProbe572(readFileSync(script), sibling, path.join(dir, "invoke-client-phases.jsonl")))
         writeFileSync(path.join(dir, "invoke-client-phases.jsonl"), "", { flag: "wx", mode: 0o600 })
         selected = path.join(dir, "observed-uia-invoke.ps1")
         writeFileSync(selected, observed, { flag: "wx", mode: 0o600 })
         capture = "READY"
-      } catch { selected = script; capture = "UNAVAILABLE" }
-      return runner(selected, args, opts)
+      } catch { selected = script; selectedArgs = args; nativeTools = undefined; capture = "UNAVAILABLE" }
+      const output = await runner(selected, selectedArgs, opts)
+      if (nativeTools) {
+        try { native = nativeTools.projectNativeProbe572((JSON.parse(output) as { probeWords572?: unknown }).probeWords572) } catch { /* invalid observation cannot replace action/cleanup */ }
+      }
+      return output
     },
   }
 }
@@ -420,6 +433,11 @@ async function runCurrentWpf572(t: TestContext, diagnostic = false): Promise<voi
         backgroundVerified: verdict.background_verified === true,
       }))
     } catch { /* passive diagnostics never replace the primary acceptance result */ }
+    if (diagnostic) {
+      const observed = clientProbe?.native() as { valid?: boolean; complete?: boolean } | undefined
+      assert.equal(observed?.valid, true, "diagnostic DLL observation must be valid")
+      assert.equal(observed?.complete, true, "all five native diagnostic stages must actually return")
+    }
     assertCurrentWpfProof572(target, sibling, before, after, verdict, targetMarker, existsSync(siblingMarker))
     const changed = await new PsUiaLocator().locate(target, "Clicked OK")
     assert.ok(changed)
@@ -427,7 +445,10 @@ async function runCurrentWpf572(t: TestContext, diagnostic = false): Promise<voi
     assert.ok(children.every(owner => !owner.isClosed()), "both fixtures must remain alive through the assertions")
   } catch (error) { primary = error }
   finally {
-    if (diagnostic) emitWpfClientProbe572(() => readFileSync(path.join(dir, "invoke-client-phases.jsonl"), "utf8"), value => t.diagnostic(value), clientProbe?.status() ?? "NOT_RUN", parentProbeRole)
+    if (diagnostic) {
+      emitWpfClientProbe572(() => readFileSync(path.join(dir, "invoke-client-phases.jsonl"), "utf8"), value => t.diagnostic(value), clientProbe?.status() ?? "NOT_RUN", parentProbeRole)
+      try { t.diagnostic("UIA572_NATIVE_STAGE_OBSERVATION " + JSON.stringify(clientProbe?.native() ?? { schema: 1, valid: false, complete: false, overflow: false, rows: [] })) } catch { /* passive observation cannot replace original acceptance/cleanup */ }
+    }
     // Observe before termination so cleanup-induced deactivation is not mistaken for Invoke behavior.
     for (const role of ["target", "sibling"] as const) {
       emitWpfEvents572(role, () => readFileSync(path.join(dir, `${role}.events.jsonl`), "utf8"), value => t.diagnostic(value))
@@ -533,17 +554,21 @@ test("#572 client phase copy preserves every shipped byte and refuses ambiguous 
 test("#572 client probe keeps the real runner argv, stdout and rejection on instrumentation failure", async () => {
   assert.ok(SCRIPT)
   const dir = mkdtempSync(path.join(tmpdir(), "uia-client-probe-cpu-"))
+  const library = path.resolve("dist/desktop-native/acceptance/uia572-probe/computer-uia-native-probe-572.dll")
+  let ownedLibrary = false
+  if (!existsSync(library)) { mkdirSync(path.dirname(library), { recursive: true }); writeFileSync(library, "OWNED_INERT_DLL_NOT_EXECUTED", { flag: "wx" }); ownedLibrary = true }
+  const nativeTools = createRequire(path.join(process.cwd(), "package.json"))(path.resolve("scripts/computer-uia-native-probe-572.mjs"))
   try {
     const source = readFileSync(SCRIPT!), script = path.join(dir, "computer-uia-invoke.ps1")
     writeFileSync(script, source)
-    const args = ["-Hwnd", "40", "-Name", "SubmitTest", "-Mode", "invoke", "-StopFile", path.join(dir, "absent.stop")]
+    const args = ["-Hwnd", "40", "-Name", "SubmitTest", "-Mode", "invoke", "-StopFile", path.join(dir, "absent.stop"), "-NoFocusLibrary", path.join(dir, "normal.dll")]
     const opts = { timeoutMs: 15000 }
     let calls = 0
     const probe = makeWpfClientProbe572(dir, 44, async (actual, received, options) => {
       calls++
       assert.notEqual(actual, script)
-      assert.ok(stripWpfClientProbe572(readFileSync(actual)).equals(source))
-      assert.equal(received, args)
+      assert.ok(stripWpfClientProbe572(nativeTools.stripNativeProbeScript572(readFileSync(actual))).equals(source))
+      assert.deepEqual(received, nativeTools.nativeProbeArgs572(args, library))
       assert.equal(options, opts)
       return '{"ok":true}'
     })
@@ -564,7 +589,7 @@ test("#572 client probe keeps the real runner argv, stdout and rejection on inst
     await assert.rejects(refused.run(script, args, opts), error => error === primary)
     assert.equal(refused.status(), "UNAVAILABLE")
     assert.equal(calls, 2)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  } finally { if (ownedLibrary) unlinkSync(library); rmSync(dir, { recursive: true, force: true }) }
 })
 
 test("#572 client phase projection is closed and sink errors preserve primary cleanup", async () => {
