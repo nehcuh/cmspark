@@ -144,3 +144,56 @@ test('#70 entry identity refuses missing/unsupported metadata and accepts an act
   assert.equal(collector.isCLIEntrypoint(f.entry, 'https://example.invalid/entry.mjs'), false)
   assert.equal(collector.isCLIEntrypoint(f.aliasEntry, pathToFileURL(f.entry).href), true)
 })
+
+// Static/source and real JS producer controls only: hosted Desktop PS5.1 still
+// decides whether fixed module discovery and signature sampling succeed.
+test('#70 sampler fixes Utility/Security discovery without changing the 15s runner', () => {
+  const ps = fs.readFileSync(path.join(root, 'scripts/fixtures/app-gallery-reference-70.ps1'), 'utf8')
+  for (const command of ['Add-Type', 'New-Object', 'ConvertTo-Json']) {
+    assert.ok(ps.includes('Microsoft.PowerShell.Utility\\' + command), command)
+  }
+  assert.ok(ps.includes('Microsoft.PowerShell.Security\\Get-AuthenticodeSignature'))
+  const source = fs.readFileSync(path.join(root, 'scripts/collect-app-gallery-reference-70.mjs'), 'utf8')
+  assert.match(source, /const raw = await runPs\(/)
+  assert.doesNotMatch(source, /timeoutMs\s*:/)
+})
+test('#70 actual failure projection retains only fixed stages and finite child facts', () => {
+  assert.equal(typeof collector.sampleFailureDiagnostic, 'function')
+  const secret = 'OWNED_INERT_SENTINEL_DO_NOT_ECHO'
+  const result = collector.sampleFailureDiagnostic({
+    stderr: 'GALLERY70_PHASE=ENTERED:1\r\n' + secret + '\nGALLERY70_PHASE=ASSEMBLY_READY:9\n',
+    stdout: secret, message: secret, code: secret, killed: true, signal: 'SIGTERM',
+  })
+  assert.deepEqual(result, { kind: 'GALLERY70_SAMPLE_FAILURE',
+    phases: [{ phase: 'ENTERED', elapsed_ms: 1 }, { phase: 'ASSEMBLY_READY', elapsed_ms: 9 }],
+    code: null, killed: true, signal: 'SIGTERM' })
+  assert.equal(JSON.stringify(result).includes(secret), false)
+})
+test('#70 failure projection refuses unknown, reordered, duplicate, oversized and injected markers', () => {
+  assert.equal(typeof collector.sampleFailureDiagnostic, 'function')
+  for (const stderr of [
+    'GALLERY70_PHASE=UNKNOWN_SECRET:4', 'prefix GALLERY70_PHASE=ENTERED:1',
+    'GALLERY70_PHASE=ASSEMBLY_READY:9\nGALLERY70_PHASE=ENTERED:10',
+    'GALLERY70_PHASE=ENTERED:1\nGALLERY70_PHASE=ENTERED:2',
+    'GALLERY70_PHASE=ENTERED:999999999999999999999',
+    'GALLERY70_PHASE=ENTERED:1 extra', 'x'.repeat(16 * 1024 * 1024 + 1),
+  ]) assert.deepEqual(collector.sampleFailureDiagnostic({ stderr }).phases, [])
+  assert.deepEqual(collector.sampleFailureDiagnostic(null), {
+    kind: 'GALLERY70_SAMPLE_FAILURE', phases: [], code: null, killed: false, signal: null })
+  assert.equal(collector.sampleFailureDiagnostic({ code: 1 }).code, 1)
+  assert.equal(collector.sampleFailureDiagnostic({ code: 'ENOENT' }).code, 'ENOENT')
+  assert.equal(collector.sampleFailureDiagnostic({ signal: 'OWNED_UNKNOWN' }).signal, null)
+})
+
+test('#70 finite failure fields snapshot actual accessors once before admission', () => {
+  let signalReads = 0, stderrReads = 0
+  const error = {
+    get signal() { return ++signalReads === 1 ? 'SIGTERM' : 'OWNED_INERT_SENTINEL_DO_NOT_ECHO' },
+    get stderr() { return ++stderrReads === 1 ? 'GALLERY70_PHASE=ENTERED:1' : 'GALLERY70_PHASE=UNKNOWN_SECRET:2' },
+  }
+  const result = collector.sampleFailureDiagnostic(error)
+  assert.equal(signalReads, 1); assert.equal(stderrReads, 1)
+  assert.equal(result.signal, 'SIGTERM')
+  assert.deepEqual(result.phases, [{ phase: 'ENTERED', elapsed_ms: 1 }])
+  assert.equal(JSON.stringify(result).includes('OWNED_INERT_SENTINEL_DO_NOT_ECHO'), false)
+})
