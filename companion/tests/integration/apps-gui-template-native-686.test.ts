@@ -90,7 +90,7 @@ test("#686 actual manager and executor private receipt launch exact owned NPP pa
     const params = { app, action: "run_template", template: "open_text", params: { file } }
     let show!: () => void, showFailed!: (error: unknown) => void, payload: any
     const shown = new Promise<void>((resolve, reject) => { show = resolve; showFailed = reject })
-    const pending = admitGuiTemplate({ params, ownerCurrent: () => true, requestConfirmation: details => manager.request(data => { payload = data; show() }, details, { originWs: owner }) }, {
+    const pending = admitGuiTemplate({ params, ownerCurrent: () => true, requestConfirmation: details => manager.request(data => { if (data.type === "security.confirmation.request") { payload = data; show() } }, details, { originWs: owner }) }, {
       spawn: ((target: string, argv: string[], options: any) => {
         spawnPhase = "entered"
         spawnPhase = "target"
