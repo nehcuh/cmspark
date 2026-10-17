@@ -105,7 +105,7 @@ export function desktopWindowsCompilePlan({ cl, root, output, headers, generated
   const p = path.win32
   const addon = p.join(output, "desktop-launcher.node"), host = p.join(output, "cmspark-desktop.exe")
   return [
-    [cl, ["/nologo", "/std:c11", "/W4", "/WX", "/MD", "/LD", "/DBUILDING_NODE_EXTENSION", "/DNODE_GYP_MODULE_NAME=desktop_launcher", `/I${headers}`, p.join(root, "src/desktop/native/launcher.c"), "/link", nodeLib, `/OUT:${addon}`]],
+    [cl, ["/nologo", "/std:c11", "/W4", "/WX", "/MD", "/LD", "/DBUILDING_NODE_EXTENSION", "/DNODE_GYP_MODULE_NAME=desktop_launcher", `/I${headers}`, p.join(root, "src/desktop/native/launcher.c"), "/link", nodeLib, "bcrypt.lib", `/OUT:${addon}`]],
     [cl, ["/nologo", "/std:c++20", "/EHsc", "/DUNICODE", "/D_UNICODE", ...(testFixtures ? ["/DCMSPARK_DESKTOP_TEST_PHASES"] : []), `/I${p.join(sdk, "build/native/include")}`, `/I${generated}`, p.join(root, "src/desktop/native/DesktopHost.cpp"), "/link", "/SUBSYSTEM:WINDOWS", p.join(sdk, "build/native/x64/WebView2LoaderStatic.lib"), "version.lib", "windowsapp.lib", "winhttp.lib", "bcrypt.lib", "shlwapi.lib", "ole32.lib", "user32.lib", "advapi32.lib", `/OUT:${host}`]],
   ]
 }
@@ -149,6 +149,29 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
     checked(cl, ["/nologo", "/std:c11", "/W4", "/WX", path.join(root, "tests", "fixtures", "desktop-480", "synchronize-handle-probe.c"), "/link", `/OUT:${path.join(output, "desktop-synchronize-handle-probe.exe")}`], { env, cwd: output, buildDiagnostic: true })
     regular(path.join(output, "desktop-synchronize-handle-probe.exe"))
     publish(path.join(output, "desktop-synchronize-handle-probe.exe"), path.join(finalDest, "desktop-synchronize-handle-probe.exe"))
+    checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_malformed_bootstrap",`/I${headers}`,path.join(root,"tests/fixtures/desktop-480/windows-malformed-bootstrap.c"),"/link",lib,"bcrypt.lib",`/OUT:${path.join(output,"desktop-malformed-bootstrap.node")}`],{env,cwd:output,buildDiagnostic:true})
+    publish(path.join(output,"desktop-malformed-bootstrap.node"),path.join(finalDest,"desktop-malformed-bootstrap.node"))
+    const bootstrapControls=path.join(root,"tests/fixtures/desktop-480/windows-bootstrap-controls.c")
+    checked(cl,["/nologo","/std:c11","/W4","/WX",bootstrapControls,"/link","bcrypt.lib",`/OUT:${path.join(output,"desktop-bootstrap-controls.exe")}`],{env,cwd:output,buildDiagnostic:true})
+    checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_bootstrap_refusal","/DDESKTOP_BOOTSTRAP_REFUSAL_ADDON",`/I${headers}`,bootstrapControls,"/link",lib,"bcrypt.lib",`/OUT:${path.join(output,"desktop-bootstrap-refusal.node")}`],{env,cwd:output,buildDiagnostic:true})
+    for(const name of["desktop-bootstrap-controls.exe","desktop-bootstrap-refusal.node"])publish(path.join(output,name),path.join(finalDest,name))
+    const acceptanceRoot=path.join(finalDest,"acceptance");fs.mkdirSync(acceptanceRoot,{recursive:true});if(!fs.lstatSync(acceptanceRoot).isDirectory()||fs.lstatSync(acceptanceRoot).isSymbolicLink())throw new Error("DESKTOP_ACCEPTANCE_DIRECTORY")
+    for(const mode of ["visual","hostile","inheritance","parent"]){
+      const directory=path.join(acceptanceRoot,mode);fs.mkdirSync(directory,{recursive:true});if(!fs.lstatSync(directory).isDirectory()||fs.lstatSync(directory).isSymbolicLink())throw new Error("DESKTOP_ACCEPTANCE_DIRECTORY")
+      const assets=path.join(directory,"assets");fs.mkdirSync(assets,{recursive:true});if(!fs.lstatSync(assets).isDirectory()||fs.lstatSync(assets).isSymbolicLink())throw new Error("DESKTOP_ACCEPTANCE_DIRECTORY")
+      for(const name of ["index.html","app.css","app.js"])publish(path.join(root,"src/desktop/assets",name),path.join(assets,name))
+      const original=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),fixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-480/native-acceptance.cpp"),"utf8"),variant=desktopAcceptanceVariant("cpp",original,fixture)
+      if(variant.inverse!==original)throw new Error("DESKTOP_ACCEPTANCE_SOURCE_DRIFT")
+      const source=path.join(output,`acceptance-${mode}.cpp`),binary=path.join(output,`acceptance-${mode}.exe`);fs.writeFileSync(source,variant.source,{flag:"wx"})
+      checked(cl,["/nologo","/std:c++20","/EHsc","/DUNICODE","/D_UNICODE",mode==="hostile"?"/DD480_HOSTILE":mode==="inheritance"?"/DD480_INHERITANCE":mode==="parent"?"/DD480_PARENT":"/DD480_VISUAL",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,source,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${binary}`],{env,cwd:output,buildDiagnostic:true})
+      publish(binary,path.join(directory,"cmspark-desktop.exe"))
+    }
+    const inherit=path.join(acceptanceRoot,"inheritance"),fixture=path.join(root,"tests/fixtures/desktop-480/windows-inheritance.c")
+    checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_inheritance","/DDESKTOP_FIXTURE_ADDON",`/I${headers}`,fixture,"/link",lib,"bcrypt.lib",`/OUT:${path.join(output,"desktop-inheritance.node")}`],{env,cwd:output,buildDiagnostic:true})
+    checked(cl,["/nologo","/std:c11","/W4","/WX",fixture,"/link",`/OUT:${path.join(output,"desktop-inheritance.exe")}`],{env,cwd:output,buildDiagnostic:true})
+    checked(cl,["/nologo","/std:c11","/W4","/WX","/DDESKTOP_FIXTURE_PARENT_LOCK_PROBE",fixture,"/link",`/OUT:${path.join(output,"desktop-parent-probe.exe")}`],{env,cwd:output,buildDiagnostic:true})
+    publish(path.join(output,"desktop-parent-probe.exe"),path.join(acceptanceRoot,"parent","desktop-parent-probe.exe"))
+    for(const name of ["desktop-inheritance.node","desktop-inheritance.exe"])publish(path.join(output,name),path.join(inherit,name))
   }
   for (const name of ["cmspark-desktop.exe", "desktop-launcher.node"]) publish(path.join(output, name), path.join(finalDest, name))
   const licenses = path.join(finalDest, "licenses")
@@ -166,4 +189,59 @@ function publish(source, destination) {
     fs.unlinkSync(destination)
   }
   fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL)
+}
+
+/** Build-only same-source acceptance variant. Never included in the shipped manifest. */
+export function desktopAcceptanceVariant(language, original, fixture) {
+  if (!['swift', 'cpp'].includes(language) || typeof original !== 'string' || typeof fixture !== 'string') throw new Error('DESKTOP_ACCEPTANCE_SOURCE_INVALID')
+  const cppParts = language === 'cpp' ? fixture.split(/^\/\/ D480_IMPLEMENTATION\r?\n/m) : null
+  if (cppParts && (cppParts.length !== 2 || !cppParts[1].length)) throw new Error('DESKTOP_ACCEPTANCE_FIXTURE_INVALID')
+  const patches = language === 'swift' ? [
+    ['let parent=getppid();guard parent>1,isatty(STDIN_FILENO)==0 else{exit(11)}', 'd480AcceptanceSafetyWatchdog();let parent=getppid();guard parent>1,isatty(STDIN_FILENO)==0 else{exit(11)}'],
+    ['func applicationDidFinishLaunching(_ notification: Notification) { connect() }', 'func applicationDidFinishLaunching(_ notification: Notification) { if !d480AcceptanceParentArm() { exit(71) };connect() }'],
+    ['parentWatch?.setEventHandler { exit(1) }', 'parentWatch?.setEventHandler { d480AcceptanceParentObserved();exit(1) }'],
+    ['phase="ready";authenticated=true;', 'phase="ready";authenticated=true;d480AcceptanceAuth(self);'],
+    ['win.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)', 'win.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true);d480AcceptanceWindow(self)'],
+    ['let wasAuthenticated=authenticated;socket=nil;', 'let wasAuthenticated=authenticated;d480AcceptanceWindowStop(self);socket=nil;'],
+    ['func applicationWillTerminate(_ notification:Notification) { socket?.cancel', 'func applicationWillTerminate(_ notification:Notification) { d480AcceptanceWindowStop(self);socket?.cancel'],
+    ['if allowed { generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)', 'if allowed { generation=nil;requests.removeAll() };d480AcceptanceNavigation(self,navigationAction,allowed);decisionHandler(allowed ? .allow:.cancel)'],
+    ['guard authenticated,webView.url?.absoluteString==origin else{return};generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!])', 'guard authenticated,webView.url?.absoluteString==origin else{return};generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!]);d480AcceptanceDocument(self)'],
+    ['windowFeatures:WKWindowFeatures)->WKWebView? { nil }', 'windowFeatures:WKWindowFeatures)->WKWebView? { d480AcceptanceNewWindow(self);return nil }'],
+    ['didReceive message:WKScriptMessage) {', 'didReceive message:WKScriptMessage) {\n        d480AcceptanceMessage(self,message)'],
+    ['var out=f;out.removeValue(forKey:"generation");', 'd480AcceptanceForward(self,f);var out=f;out.removeValue(forKey:"generation");'],
+  ] : [
+    ['class Desktop {', '/* D480 acceptance declarations */\n'+cppParts[0]+'\nclass Desktop {\n friend class D480Acceptance;'],
+    ['winrt::init_apartment(winrt::apartment_type::single_threaded);', 'D480Acceptance::safetyWatchdog();winrt::init_apartment(winrt::apartment_type::single_threaded);'],
+    ['if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)ExitProcess(1);', 'if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0){D480Acceptance::parentObserved();ExitProcess(1);}'],
+    ['HANDLE input=bootstrap.pipe;', 'HANDLE input=bootstrap.pipe;D480Acceptance::preConsume(input);'],
+    ['CloseHandle(input);bootstrap.pipe=nullptr;', 'CloseHandle(input);D480Acceptance::inputClosed(input);bootstrap.pipe=nullptr;'],
+    ['d480_client_close(&bootstrap);', 'd480_client_close(&bootstrap);D480Acceptance::parentCleared(parent);'],
+    ['if(!window)return 61;start_network();', 'if(!window)return 61;D480Acceptance::created(*this);start_network();'],
+    ['SetForegroundWindow(window);}', 'SetForegroundWindow(window);D480Acceptance::window(*this);}'],
+    ['phase=L"ready";ready=true;', 'phase=L"ready";ready=true;D480Acceptance::auth(*this);'],
+    ['deliver(frame);DESKTOP_TEST_NOTE(document_post_attempted)', 'deliver(frame);DESKTOP_TEST_NOTE(document_post_attempted)D480Acceptance::document(*this);'],
+    ['void renderer(std::wstring const& source,std::wstring const& body){', 'void renderer(std::wstring const& source,std::wstring const& body){D480Acceptance::message(*this,source,body);'],
+    ['frame.Remove(L"generation");put(frame,L"id",id);send(frame);', 'D480Acceptance::forward(*this,frame);frame.Remove(L"generation");put(frame,L"id",id);send(frame);'],
+    ['bool allow=uri&&std::wstring(uri)==document_url;CoTaskMemFree(uri);', 'bool allow=uri&&std::wstring(uri)==document_url;D480Acceptance::navigation(*this,allow,uri);CoTaskMemFree(uri);'],
+    ['Callback<ICoreWebView2NewWindowRequestedEventHandler>([](ICoreWebView2*,ICoreWebView2NewWindowRequestedEventArgs* args)->HRESULT{args->put_Handled(TRUE);return S_OK;', 'Callback<ICoreWebView2NewWindowRequestedEventHandler>([this](ICoreWebView2*,ICoreWebView2NewWindowRequestedEventArgs* args)->HRESULT{args->put_Handled(TRUE);D480Acceptance::newWindow(*this);return S_OK;'],
+    ['Callback<ICoreWebView2DownloadStartingEventHandler>([](ICoreWebView2*,ICoreWebView2DownloadStartingEventArgs* args)->HRESULT{args->put_Cancel(TRUE);return S_OK;}).Get(),&token);else{ExitProcess(55);', 'Callback<ICoreWebView2DownloadStartingEventHandler>([this](ICoreWebView2*,ICoreWebView2DownloadStartingEventArgs* args)->HRESULT{args->put_Cancel(TRUE);D480Acceptance::download(*this);return S_OK;}).Get(),&token);else{ExitProcess(55);'],
+    ['RECT bounds{};GetClientRect(window,&bounds);controller->put_Bounds(bounds);return web->Navigate(document_url);', 'D480Acceptance::attach(*this);RECT bounds{};GetClientRect(window,&bounds);controller->put_Bounds(bounds);return web->Navigate(document_url);'],
+    ['if(message==WM_SIZE&&self->controller)', 'if(message==WM_APP+100){D480Acceptance::settled(*self);return 0;}if(message==WM_SIZE&&self->controller)'],
+  ]
+  let source = original
+  for (const [before, after] of patches) {
+    if (source.split(before).length !== 2) throw new Error('DESKTOP_ACCEPTANCE_ANCHOR_AMBIGUOUS')
+    source = source.replace(before, after)
+  }
+  const tail = language === 'swift' ? fixture : cppParts[1]
+  if (typeof tail !== 'string' || !tail.length) throw new Error('DESKTOP_ACCEPTANCE_FIXTURE_INVALID')
+  const suffix='\n/* D480 unshipped acceptance fixture */\n'+tail
+  source += suffix
+  let inverse = source.slice(0, -suffix.length)
+  for (const [before, after] of [...patches].reverse()) {
+    if (inverse.split(after).length !== 2) throw new Error('DESKTOP_ACCEPTANCE_INVERSE_AMBIGUOUS')
+    inverse = inverse.replace(after, before)
+  }
+  if (inverse !== original) throw new Error('DESKTOP_ACCEPTANCE_SOURCE_DRIFT')
+  return { source, inverse }
 }

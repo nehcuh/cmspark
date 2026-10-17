@@ -57,6 +57,7 @@ export class SecurityPolicy {
       case "host_write":
         return String(params?.kind || "")
       case "host_app":
+        if (params?.action === "run_template") throw new Error("GUI template tokens require the private canonical operation binding")
         // App tab WP3 (adversary 接线警示 ②): bind the launch target + action.
         // MUST be non-empty for a well-formed call — an empty payload would
         // make tokens replayable across apps (the `default: ""` footgun).
@@ -188,6 +189,9 @@ export class SecurityPolicy {
    * L2 gate issued.
    */
   validateTokenFor(token: string, toolName: string, params: Record<string, any>, threadId = "default"): boolean {
+    // #686 private receipts validate their canonical binding directly. Generic
+    // caller-token validation remains a non-consuming refusal, including L0 replay.
+    if (toolName === "host_app" && params?.action === "run_template") return false
     return this.validateToken(token, toolName, SecurityPolicy.bindingPayloadFor(toolName, params), threadId)
   }
 

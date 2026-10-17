@@ -1038,6 +1038,10 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // self-UI re-L2, or the separate TYPE_NO_EFFECT one-refocus/retype path.
   ["CLICK_OCCLUDED", "non_recoverable"],
   ["FOCUS_LOST", "non_recoverable"],
+  // #563: invalidated coordinates are a fixed refusal, including a target
+  // lost after re-confirmation. Target/attempt text must not enable retry or
+  // a webpage locator pivot; locate freshness and native admission stay put.
+  ["STALE_SCREENSHOT", "non_recoverable"],
   // #563 D4: executable integrity/hash-read refusal cannot be weakened by diagnostic text.
   ["APP_EXE_DRIFT", "non_recoverable"],
   // #563: existing fixed IL/user-stop/self-UI/danger/corpus refusals are hard.
@@ -1064,6 +1068,10 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // ── recoverable ───────────────────────────────────────────────────────────
   // #563: four early missing worker/intent arguments are model-repairable, not authority refusals.
   ["WORKER_INPUT_INVALID", "recoverable"],
+  ["READ_QUERY_INPUT_INVALID", "recoverable"], // only local read-query blank/existing length refusal; context/auth stay hard
+  ["COMPUTER_INPUT_INVALID", "recoverable"], // finite draft validator only; native/generic INVALID_ACTION unchanged
+  ["COMPUTER_WINDOW_ABSENT", "recoverable"], // only successful empty window enumeration; no launch/input authority
+  ["SKILL_INSTALL_INPUT_AMBIGUOUS", "recoverable"], // only the shared picker's multiple-SKILL ZIP refusal
   // Authorization refusal permits a different tool or fresh human approval;
   // it never validates/mints a token or relaxes the evaluate admission gate.
   ["EVALUATE_AUTH_REQUIRED", "recoverable"],

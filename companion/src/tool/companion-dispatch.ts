@@ -110,6 +110,8 @@ export interface CompanionToolExecOptions {
   prevalidatedNonce?: string
   /** App tab WP3: tier the L2 gate assigned to a host_app call (apps.launch audit). */
   appLaunchTier?: string
+  /** #686 opaque request-local capability, never supplied by tool JSON. */
+  guiTemplateReceipt?: import("../apps/gui-template-runtime").GuiTemplateReceipt
   /** WP2 (§E.4): broadcast channel for computer-task progress events. */
   broadcast?: (data: any) => void
   /**
@@ -1347,14 +1349,14 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         return { success: false, error: "thread_recall requires active thread" }
       }
       const q = typeof params.query === "string" ? params.query.trim() : ""
-      if (!q) return { success: false, error: "query required" }
+      if (!q) return { success: false, error: "query required", data: { error_code: "READ_QUERY_INPUT_INVALID" } }
       const {
         searchAndRedact,
         RECALL_QUERY_MAX_LEN,
         clampMaxHits,
       } = await import("../threads/thread-recall")
       if (q.length > RECALL_QUERY_MAX_LEN) {
-        return { success: false, error: `query too long (max ${RECALL_QUERY_MAX_LEN})` }
+        return { success: false, error: `query too long (max ${RECALL_QUERY_MAX_LEN})`, data: { error_code: "READ_QUERY_INPUT_INVALID" } }
       }
       const maxHits = clampMaxHits(params.max_hits)
       const msgs = threadManager.getMessages(tid) as any[]
@@ -1381,7 +1383,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       // #439: cross-thread card search (title/digest). Companion-local; never forward.
       const { runSearchThreads } = await import("./llm-search")
       const result = runSearchThreads(threadManager.list() as any, params.query, params.limit)
-      if (!result.ok) return { success: false, error: result.error }
+      if (!result.ok) return { success: false, error: result.error, ...(result.error_code === "READ_QUERY_INPUT_INVALID" ? { data: { error_code: result.error_code } } : {}) }
       try {
         logger.info("search_threads", {
           hit_count: result.hits.length,
@@ -1404,7 +1406,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         folder: d.folder,
       }))
       const result = runSearchKnowledge(docs, params.query, params.limit)
-      if (!result.ok) return { success: false, error: result.error }
+      if (!result.ok) return { success: false, error: result.error, ...(result.error_code === "READ_QUERY_INPUT_INVALID" ? { data: { error_code: result.error_code } } : {}) }
       try {
         logger.info("search_knowledge", {
           hit_count: result.hits.length,
@@ -1831,6 +1833,11 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       }
     }
     case "host_app": {
+      // #686: only the actual interactive gate can hand the executor this closure.
+      if (params.action === "run_template") {
+        if (!execOpts?.guiTemplateReceipt) return { success: false, error: "App file template requires a fresh interactive approval" }
+        return execOpts.guiTemplateReceipt.execute(params)
+      }
       // App tab WP3 — L0 no-arg launch of a user-whitelisted app (win32, P1).
       // Adversary 接线警示 ③: THIS is the executor validate branch of the
       // three-place gate wiring (① L2 gate tool list, ② bindingPayloadFor).

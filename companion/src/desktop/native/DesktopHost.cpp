@@ -25,6 +25,10 @@
 #include <thread>
 #include <vector>
 #include "desktop-capabilities.h"
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
+#define CMSPARK_BOOTSTRAP_CHILD
+#include "windows-bootstrap.h"
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 using namespace winrt::Windows::Data::Json;
@@ -58,18 +62,9 @@ static std::wstring hmac(std::wstring const& keyhex,std::wstring const& message)
  if(BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,BCRYPT_ALG_HANDLE_HMAC_FLAG)<0||BCryptGetProperty(algorithm,BCRYPT_OBJECT_LENGTH,(PUCHAR)&size,sizeof(size),&got,0)<0){cleanup();throw std::runtime_error("HMAC");}
  object.resize(size);if(BCryptCreateHash(algorithm,&hash,object.data(),size,key.data(),(ULONG)key.size(),0)<0||BCryptHashData(hash,(PUCHAR)input.data(),(ULONG)input.size(),0)<0||BCryptFinishHash(hash,digest,sizeof(digest),0)<0){cleanup();throw std::runtime_error("HMAC");}cleanup();static wchar_t const d[]=L"0123456789abcdef";std::wstring out;for(auto b:digest){out+=d[b>>4];out+=d[b&15];}SecureZeroMemory(digest,sizeof(digest));return out;
 }
-// Query only the handle already explicitly inherited; never OpenProcess/PID lookup.
-static bool sync_parent(HANDLE handle){
- using Query=NTSTATUS(NTAPI*)(HANDLE,OBJECT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
- auto query=(Query)GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"NtQueryObject");
- struct Basic{ULONG attributes;ACCESS_MASK access;ULONG handles,pointers,reserved[10];}basic{};
- union Storage{void* alignment;unsigned char bytes[4096];} storage{};ULONG returned=0;
- if(!query||!handle||handle==INVALID_HANDLE_VALUE||query(handle,(OBJECT_INFORMATION_CLASS)0,&basic,sizeof(basic),&returned)<0||returned<sizeof(basic)||basic.access!=SYNCHRONIZE)return false;
- if(query(handle,(OBJECT_INFORMATION_CLASS)2,&storage,sizeof(storage),&returned)<0||returned<sizeof(UNICODE_STRING)||returned>sizeof(storage))return false;
- auto name=(UNICODE_STRING*)storage.bytes;auto first=(uintptr_t)storage.bytes,last=first+returned,start=(uintptr_t)name->Buffer;
- if(name->Length!=7*sizeof(wchar_t)||name->MaximumLength<name->Length||start<first||start>last||name->Length>last-start||memcmp(name->Buffer,L"Process",name->Length))return false;
- return WaitForSingleObject(handle,0)==WAIT_TIMEOUT;
-}
+// Exact target-context SYNCHRONIZE-only capability, never a PID-derived permanent watcher.
+static bool sync_parent(HANDLE handle){return d480_sync_parent(handle)!=0;}
+
 struct Pending{std::wstring native_id,ui_id,generation,thread;};
 struct Frame{unsigned long epoch;std::wstring value;};
 #ifdef CMSPARK_DESKTOP_TEST_PHASES
@@ -124,16 +119,17 @@ class Desktop {
    }
    {std::lock_guard<std::mutex> lock(socket_lock);socket=nullptr;if(ws)WinHttpCloseHandle(ws);}
    if(connection)WinHttpCloseHandle(connection);if(session)WinHttpCloseHandle(session);
-   if(!ready.exchange(false))ExitProcess(41);post(native_offline,id);Sleep(5000); // Existing tray reconnect interval; no credential fallback.
+   if(!ready.load())ExitProcess(41);post(native_offline,id);Sleep(5000); // UI drains earlier frames before clearing ready; no credential fallback.
  }}).detach();}
  bool method(std::wstring const& s){for(auto value:desktop_read_methods)if(s==value)return true;return false;}
  void show(std::wstring const& next){RECT old{};GetClientRect(window,&old);if(view==L"compact")compact={old.right,old.bottom};else workspace={old.right,old.bottom};view=next;auto size=view==L"compact"?compact:workspace;RECT rect{0,0,size.cx,size.cy};AdjustWindowRectEx(&rect,WS_OVERLAPPEDWINDOW,FALSE,0);MONITORINFO monitor{sizeof(monitor)};GetMonitorInfoW(MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST),&monitor);int width=std::min(rect.right-rect.left,monitor.rcWork.right-monitor.rcWork.left),height=std::min(rect.bottom-rect.top,monitor.rcWork.bottom-monitor.rcWork.top);RECT current{};GetWindowRect(window,&current);int x=std::clamp((int)current.left,(int)monitor.rcWork.left,(int)monitor.rcWork.right-width),y=std::clamp((int)current.top,(int)monitor.rcWork.top,(int)monitor.rcWork.bottom-height);SetWindowPos(window,nullptr,x,y,width,height,SWP_NOZORDER);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);}
- void accept(std::wstring const& body){
+ void accept(std::wstring const& body,unsigned long frame_epoch){
   auto frame=phase==L"ready"?parse(body):flat(body);auto type=text(frame,L"type");
   if(phase==L"initial"&&type==L"desktop.challenge.request"&&keys(frame,{L"type"})){JsonObject hello;put(hello,L"type",L"desktop.hello");put(hello,L"capability_id",cap);hello.Insert(L"protocol_version",JsonValue::CreateNumberValue(1));phase=L"hello";if(!send(hello))throw std::runtime_error("SEND");return;}
   if(phase==L"hello"&&type==L"desktop.challenge"&&keys(frame,{L"type",L"capability_id",L"connection_id",L"protocol_version",L"nonce"})&&text(frame,L"capability_id")==cap&&exact_one(frame,L"protocol_version")){auto cid=text(frame,L"connection_id"),nonce=text(frame,L"nonce");if(!hex(cid,32)||!hex(nonce,64))throw std::runtime_error("CHALLENGE");auto input=L"[\"cmspark.desktop.auth.v1\",\""+cap+L"\",\""+cid+L"\",1,\""+nonce+L"\"]";JsonObject proof;put(proof,L"type",L"desktop.authenticate");put(proof,L"capability_id",cap);proof.Insert(L"protocol_version",JsonValue::CreateNumberValue(1));put(proof,L"proof",hmac(secret,input));phase=L"proof";if(!send(proof))throw std::runtime_error("SEND");return;}
   if(phase==L"proof"&&type==L"desktop.ready"&&keys(frame,{L"type",L"protocol_version"})&&exact_one(frame,L"protocol_version")){phase=L"ready";ready=true;DESKTOP_TEST_NOTE(ready_accepted)if(!web)build_webview();else document();return;}
-  if(!ready||phase!=L"ready")throw std::runtime_error("PHASE");
+  // The network may retire this epoch after the UI dispatch check.
+  if(!ready||phase!=L"ready"){if(frame_epoch!=epoch)return;throw std::runtime_error("PHASE");}
   if(type==L"desktop.window"){frame=flat(body);if(!keys(frame,{L"type",L"view"}))throw std::runtime_error("CONTROL");auto next=text(frame,L"view");if(next!=L"compact"&&next!=L"workspace")throw std::runtime_error("VIEW");show(next);return;}
   if(type==L"desktop.close"){flat(body);if(!keys(frame,{L"type"}))throw std::runtime_error("CONTROL");DestroyWindow(window);return;}
   auto request=std::find_if(requests.begin(),requests.end(),[&](auto const& r){return r.second.native_id==text(frame,L"id");});if(request==requests.end()||request->second.generation!=generation)return;auto pending=request->second;auto name=request->first;requests.erase(request);if(name==L"thread.peek"&&type==L"thread.peek_result"&&text(frame,L"thread_id")!=pending.thread)return;put(frame,L"id",pending.ui_id);deliver(frame);
@@ -145,7 +141,7 @@ class Desktop {
   // UDF is exclusively owned by this host. No existing browser profile is opened.
   wchar_t temporary[MAX_PATH];DWORD temporary_length=GetTempPathW(MAX_PATH,temporary);if(!temporary_length||temporary_length>=MAX_PATH)throw std::runtime_error("PROFILE");profile=std::wstring(temporary)+L"cmspark-desktop-"+random_id();if(!CreateDirectoryW(profile.c_str(),nullptr))throw std::runtime_error("PROFILE");
   auto result=CreateCoreWebView2EnvironmentWithOptions(nullptr,profile.c_str(),nullptr,Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>([this](HRESULT hr,ICoreWebView2Environment* env)->HRESULT{DESKTOP_TEST_NOTE(env_callback)if(FAILED(hr)||!env){ExitProcess(51);return E_FAIL;}environment=env;
-   return env->CreateCoreWebView2Controller(window,Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>([this](HRESULT code,ICoreWebView2Controller* host)->HRESULT{DESKTOP_TEST_NOTE(controller_callback)if(FAILED(code)||!host){ExitProcess(52);return E_FAIL;}controller=host;if(FAILED(host->get_CoreWebView2(&web))||!web){ExitProcess(53);return E_FAIL;}
+   auto controller_result=env->CreateCoreWebView2Controller(window,Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>([this](HRESULT code,ICoreWebView2Controller* host)->HRESULT{DESKTOP_TEST_NOTE(controller_callback)if(FAILED(code)||!host){ExitProcess(52);return E_FAIL;}controller=host;if(FAILED(host->get_CoreWebView2(&web))||!web){ExitProcess(53);return E_FAIL;}
     ComPtr<ICoreWebView2Settings> settings;web->get_Settings(&settings);settings->put_AreDevToolsEnabled(FALSE);settings->put_AreDefaultContextMenusEnabled(FALSE);settings->put_AreDefaultScriptDialogsEnabled(FALSE);settings->put_IsStatusBarEnabled(FALSE);settings->put_IsWebMessageEnabled(TRUE);
     ComPtr<ICoreWebView2_3> mapping;if(FAILED(web.As(&mapping))||FAILED(mapping->SetVirtualHostNameToFolderMapping(L"cmspark-desktop.invalid",(root+L"\\assets").c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS))){ExitProcess(54);return E_FAIL;}
     EventRegistrationToken token{};
@@ -160,7 +156,7 @@ class Desktop {
     web->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs* args)->HRESULT{DESKTOP_TEST_NAV_LOCALS BOOL ok=FALSE;DESKTOP_TEST_CAPTURE(success_hr)args->get_IsSuccess(&ok);LPWSTR uri=nullptr;DESKTOP_TEST_CAPTURE(source_hr)web->get_Source(&uri);bool own=uri&&std::wstring(uri)==document_url;CoTaskMemFree(uri);DESKTOP_TEST_NAV()if(ok&&own&&ready)document();return S_OK;}).Get(),&token);
     web->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>([this](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args)->HRESULT{DESKTOP_TEST_NOTE(renderer_callback)LPWSTR source=nullptr,value=nullptr;args->get_Source(&source);args->get_WebMessageAsJson(&value);try{renderer(source?source:L"",value?value:L"");}catch(...){/* Reject invalid renderer protocol without authority fallback. */}CoTaskMemFree(source);CoTaskMemFree(value);return S_OK;}).Get(),&token);
     RECT bounds{};GetClientRect(window,&bounds);controller->put_Bounds(bounds);return web->Navigate(document_url);
-   }).Get());
+   }).Get());if(FAILED(controller_result)){ExitProcess(52);return controller_result;}return S_OK;
   }).Get());if(FAILED(result))ExitProcess(50);
  }
  std::wstring profile;
@@ -168,19 +164,26 @@ class Desktop {
  Desktop(std::wstring const& c,std::wstring const& s,INTERNET_PORT p,std::wstring const& r):cap(c),secret(s),root(r),port(p){}
  static LRESULT CALLBACK proc(HWND hwnd,UINT message,WPARAM w,LPARAM l){Desktop* self=(Desktop*)GetWindowLongPtrW(hwnd,GWLP_USERDATA);if(message==WM_NCCREATE){self=(Desktop*)((CREATESTRUCTW*)l)->lpCreateParams;self->window=hwnd;SetWindowLongPtrW(hwnd,GWLP_USERDATA,(LONG_PTR)self);}if(!self)return DefWindowProcW(hwnd,message,w,l);
   if(message==WM_SIZE&&self->controller){RECT bounds{};GetClientRect(hwnd,&bounds);self->controller->put_Bounds(bounds);return 0;}
-  if(message==native_frame||message==native_connect||message==native_offline){std::unique_ptr<Frame> frame((Frame*)l);if(frame->epoch!=self->epoch)return 0;try{if(message==native_connect){self->phase=L"initial";self->generation.clear();self->requests.clear();}else if(message==native_offline){self->generation.clear();self->requests.clear();if(self->web){JsonObject offline;put(offline,L"type",L"desktop.offline");self->web->PostWebMessageAsJson(offline.Stringify().c_str());}}else self->accept(frame->value);}catch(...){ExitProcess(45);}return 0;}
+  if(message==native_frame||message==native_connect||message==native_offline){std::unique_ptr<Frame> frame((Frame*)l);if(frame->epoch!=self->epoch)return 0;try{if(message==native_connect){self->phase=L"initial";self->generation.clear();self->requests.clear();}else if(message==native_offline){self->ready=false;self->generation.clear();self->requests.clear();if(self->web){JsonObject offline;put(offline,L"type",L"desktop.offline");self->web->PostWebMessageAsJson(offline.Stringify().c_str());}}else self->accept(frame->value,frame->epoch);}catch(...){ExitProcess(45);}return 0;}
   if(message==WM_CLOSE){DestroyWindow(hwnd);return 0;}if(message==WM_DESTROY){if(self->controller)self->controller->Close();PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,message,w,l);
  }
  int run(HINSTANCE instance){WNDCLASSW cls{};cls.lpfnWndProc=proc;cls.hInstance=instance;cls.lpszClassName=L"CMsparkDesktopOwnedWindow";cls.hCursor=LoadCursor(nullptr,IDC_ARROW);if(!RegisterClassW(&cls))return 60;RECT rect{0,0,360,420};AdjustWindowRectEx(&rect,WS_OVERLAPPEDWINDOW,FALSE,0);window=CreateWindowExW(0,cls.lpszClassName,L"CMspark 工作台",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,instance,this);if(!window)return 61;start_network();MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}ExitProcess((UINT)msg.wParam);return(int)msg.wParam;}
 };
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){try{
  winrt::init_apartment(winrt::apartment_type::single_threaded);
- HANDLE input=GetStdHandle(STD_INPUT_HANDLE);if(!input||input==INVALID_HANDLE_VALUE||GetFileType(input)!=FILE_TYPE_PIPE)return 11;
- std::string data;char buffer[4097];while(true){DWORD got=0;if(!ReadFile(input,buffer,(DWORD)(sizeof(buffer)-data.size()),&got,nullptr)){if(GetLastError()==ERROR_BROKEN_PIPE)break;CloseHandle(input);return 13;}if(!got)break;data.append(buffer,got);if(data.size()>4096){CloseHandle(input);return 14;}}CloseHandle(input);SetStdHandle(STD_INPUT_HANDLE,nullptr);
+ int argc=0;LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);if(!argv)return 11;
+ CmsparkBootstrapClient bootstrap;bool opened=d480_client_open(argc,argv,&bootstrap)!=0;LocalFree(argv);if(!opened)return 11;
+ struct BootstrapCleanup{CmsparkBootstrapClient* value;~BootstrapCleanup(){d480_client_close(value);}} bootstrap_cleanup{&bootstrap};
+ HANDLE input=bootstrap.pipe;
+ struct BootBuffer{char bytes[CMSPARK_BOOT_MAX+1]{};~BootBuffer(){SecureZeroMemory(bytes,sizeof(bytes));}} buffer;DWORD body_length=0;if(!d480_client_body(&bootstrap,buffer.bytes,&body_length))return 13;
+ std::string data(buffer.bytes,body_length);SecureZeroMemory(buffer.bytes,sizeof(buffer.bytes));
+ struct DataWipe{std::string& value;~DataWipe(){if(!value.empty())SecureZeroMemory(value.data(),value.size());}} data_wipe{data};
  auto boot=flat(wide(data));SecureZeroMemory(data.data(),data.size());if(!keys(boot,{L"capability_id",L"secret",L"url",L"protocol_version",L"issued_method_set_version",L"parent_handle"})||!hex(text(boot,L"capability_id"),32)||!hex(text(boot,L"secret"),64)||!exact_one(boot,L"protocol_version")||!exact_one(boot,L"issued_method_set_version")||desktop_method_set_version!=1)return 15;
- auto parent_text=text(boot,L"parent_handle");if(parent_text.empty()||parent_text[0]==L'0'||!std::all_of(parent_text.begin(),parent_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 16;size_t used=0;auto number=std::stoull(parent_text,&used,10);if(used!=parent_text.size()||number>(uintptr_t)-1)return 16;HANDLE parent=(HANDLE)(uintptr_t)number;if(!sync_parent(parent))return 16;if(!SetHandleInformation(parent,HANDLE_FLAG_INHERIT,0))return 16;
- std::thread([parent](){if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)ExitProcess(1);ExitProcess(17);}).detach();
  auto url=text(boot,L"url");std::wstring prefix=L"ws://127.0.0.1:";if(url.rfind(prefix,0)!=0||url.size()<prefix.size()+9||url.substr(url.size()-8)!=L"/desktop")return 15;auto port_text=url.substr(prefix.size(),url.size()-prefix.size()-8);if(port_text.empty()||port_text.size()>5||!std::all_of(port_text.begin(),port_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 15;unsigned port=std::stoul(port_text);if(!port||port>65535)return 15;
+ auto parent_text=text(boot,L"parent_handle");if(parent_text.empty()||parent_text[0]==L'0'||!std::all_of(parent_text.begin(),parent_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 16;size_t used=0;auto number=std::stoull(parent_text,&used,10);if(used!=parent_text.size()||number>(uintptr_t)-1)return 16;HANDLE parent=(HANDLE)(uintptr_t)number;if(!sync_parent(parent))return 16;if(!d480_client_finish(&bootstrap,parent))return 16;
+ CloseHandle(input);bootstrap.pipe=nullptr;
+ d480_client_close(&bootstrap);
+ std::thread([parent](){if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)ExitProcess(1);ExitProcess(17);}).detach();
  wchar_t binary[32768];DWORD length=GetModuleFileNameW(nullptr,binary,32768);if(!length||length==32768)return 18;std::wstring root(binary,length);auto slash=root.find_last_of(L"\\/");if(slash==std::wstring::npos)return 18;root.resize(slash);
  Desktop app(text(boot,L"capability_id"),text(boot,L"secret"),(INTERNET_PORT)port,root);return app.run(instance);
  }catch(...){return 15;}}

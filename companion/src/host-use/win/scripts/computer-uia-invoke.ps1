@@ -1,4 +1,4 @@
-# computer-uia-invoke.ps1 — #572 background delivery via UIA **action patterns**.
+﻿# computer-uia-invoke.ps1 — #572 background delivery via UIA **action patterns**.
 #
 # WHY: locate (computer-uia-locate.ps1) already finds elements through UIA, but the
 # delivery path is computer-input.ps1 = SendInput, which requires the window to be

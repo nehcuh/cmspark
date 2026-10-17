@@ -83,9 +83,15 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     const client = new McpClient('owned', config), before = performance.now();
     try { await assert.rejects(client.connect(), /startup > 80ms/); }
     finally { await client.close(); }
-    extra.elapsed = performance.now() - before;
-    assert.equal(targets, 0); assert.ok(heartbeat < 200, String(heartbeat));
-    assert.ok(extra.elapsed < 400, String(extra.elapsed));
+    const settled = performance.now();
+    // Keep cold caller latency visible, but measure cancellation through close
+    // from the real owner query rather than unrelated synchronous preparation.
+    extra.elapsed = settled - before;
+    extra.ownerElapsed = settled - firstQuery;
+    assert.equal(queries, 1);
+    assert.ok(firstQuery >= before && firstQuery > 0 && firstQuery <= settled);
+    assert.equal(targets, 0); assert.ok(heartbeat > 0 && heartbeat < 200, String(heartbeat));
+    assert.ok(extra.ownerElapsed < 400, String(extra.ownerElapsed));
   } else if (mode === 'mcp-close') {
     const { OwnedStdioTransport } = require(path.join(base, 'mcp/stdio-transport.js'));
     const transport = new OwnedStdioTransport({ command, args: [] });

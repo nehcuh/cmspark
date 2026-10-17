@@ -58,10 +58,17 @@ $inside = Join-Path $root "space 中文 & O'Brien ! (test)"
 $sibling = $inside + '-other'
 $processes = @()
 $saved = $env:CMSPARK_SMOKE_INSTALL_ROOT
+$observationDescriptor = $null
+$observationCollected = $false
+$observationModule = Join-Path $PSScriptRoot 'nsis-stop-observation.mjs'
+$observationTests = Join-Path $PSScriptRoot 'nsis-stop-observation.test.mjs'
 . (Join-Path $PSScriptRoot 'win-system-node-fixtures.ps1')
 try {
     Test-OwnedStopReceiptParser $root
     $node = (Get-Command node).Source
+    # CPU-only controls run in the same CI step before any native smoke.
+    & $node --test $observationTests
+    if ($LASTEXITCODE -ne 0) { throw 'NSIS stop observation controls failed' }
     foreach ($directory in @($inside, $sibling)) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
         Copy-Item -LiteralPath $node -Destination (Join-Path $directory 'node.exe')
@@ -70,6 +77,14 @@ try {
     }
     $system = New-OwnedSystemNodeFixtures $root $inside $sibling
     $processes += @($system.Stop) + @($system.Survive)
+    # Prepare owned helper and macro copies. Their strict inverses retain every
+    # original production byte; neither shipped source is edited. The existing
+    # preamble field now transports the logger plus exactly one observed macro.
+    $prepareOutput = & $node $observationModule prepare $root
+    if ($LASTEXITCODE -ne 0) { throw 'NSIS stop observation preparation failed' }
+    $observationJson = $prepareOutput -join [Environment]::NewLine
+    $observation = $observationJson | ConvertFrom-Json
+    $observationDescriptor = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($observationJson))
     # Include the whole production macro, so a prepended daemon stop or global
     # taskkill cannot hide outside the tested PowerShell expression.
     $source = Get-Content -LiteralPath (Join-Path $repo 'scripts\installer.nsi') -Raw
@@ -77,6 +92,13 @@ try {
     if (-not $match.Success) { throw 'NSIS stop macro not found' }
     $macro = $match.Value
     if ($macro -match 'daemon\s+stop|/IM\s+cmspark-agent') { throw 'stop macro must not use global PID/image termination' }
+    # Keep the whole-production guard meaningful across the new transport:
+    # strip only the four fixed observer blocks and compare the complete macro.
+    # The Node producer separately enforces exact block bodies and byte inverse.
+    $observedMacros = [regex]::Matches($observation.nsisPreamble, '(?ms)^!macro StopInstalledAgentUnshared\r?\n.*?^!macroend')
+    if ($observedMacros.Count -ne 1) { throw 'NSIS observation requires one production macro' }
+    $restoredMacro = [regex]::Replace($observedMacros[0].Value, '(?ms)^; CMSPARK_NSIS_MACRO_OBSERVE_V1_BEGIN:(plugin-dir-ready|script-extracted|exec-enter|exec-return)\r?\n.*?^; CMSPARK_NSIS_MACRO_OBSERVE_V1_END:\1\r?\n', '')
+    if ($restoredMacro -cne $macro) { throw 'NSIS observed macro differs from production' }
     $makensis = @(
         (Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'),
         (Join-Path $env:ProgramFiles 'NSIS\makensis.exe')
@@ -89,20 +111,22 @@ OutFile "stop-smoke.exe"
 RequestExecutionLevel user
 SilentInstall silent
 !include "LogicLib.nsh"
-__MACRO__
+__OBSERVATION_PREAMBLE__
 Section
   ReadEnvStr $INSTDIR "CMSPARK_SMOKE_INSTALL_ROOT"
   FileOpen $9 "$EXEDIR\stop-phase.txt" w
   FileWrite $9 "entered"
   FileClose $9
+__OBSERVATION_ENTER__
   !insertmacro StopInstalledAgentUnshared
   FileOpen $9 "$EXEDIR\stop-phase.txt" w
   FileWrite $9 "returned"
   FileClose $9
+__OBSERVATION_AFTER__
 SectionEnd
 '@
-    Set-Content -LiteralPath (Join-Path $root 'stop-smoke.nsi') -Value $harness.Replace('__MACRO__', $macro) -Encoding utf8BOM
-    & $makensis /V2 ('/DCMSPARK_STOP_SCRIPT=' + (Join-Path $repo 'companion\stop-installed-agent.ps1')) (Join-Path $root 'stop-smoke.nsi')
+    Set-Content -LiteralPath (Join-Path $root 'stop-smoke.nsi') -Value $harness.Replace('__OBSERVATION_PREAMBLE__', $observation.nsisPreamble).Replace('__OBSERVATION_ENTER__', $observation.nsisEnter).Replace('__OBSERVATION_AFTER__', $observation.nsisAfterMacro) -Encoding utf8BOM
+    & $makensis /V2 ('/DCMSPARK_STOP_SCRIPT=' + $observation.helperPath) (Join-Path $root 'stop-smoke.nsi')
     if ($LASTEXITCODE -ne 0) { throw "NSIS smoke compilation failed: $LASTEXITCODE" }
     $env:CMSPARK_SMOKE_INSTALL_ROOT = $inside
     $stop = Start-Process -FilePath (Join-Path $root 'stop-smoke.exe') -PassThru
@@ -115,13 +139,28 @@ SectionEnd
         try { Write-Output ('NSIS_STOP_SMOKE_STATE={0}' -f (Get-OwnedStopReceiptState (Join-Path $root 'stop-phase.txt'))) } catch {}
         throw "NSIS stop macro failed: $($stop.ExitCode)"
     }
+    $summaryOutput = & $node $observationModule collect $root $observationDescriptor
+    $summaryExit = $LASTEXITCODE
+    $summaryJson = $summaryOutput -join [Environment]::NewLine
+    $summary = $summaryJson | ConvertFrom-Json
+    $observationCollected = $true
+    Write-Host ('NSIS_STOP_OBSERVATION ' + $summaryJson)
+    if ($summaryExit -ne 0 -or $summary.complete -ne $true -or $summary.capture -ne 'complete' -or $summary.gap -ne $false) { throw 'NSIS stop observation incomplete' }
     if (-not $processes[0].WaitForExit(10000)) { throw 'installed fixture was not stopped' }
     $processes[1].Refresh()
     if ($processes[1].HasExited) { throw 'sibling installation was incorrectly stopped' }
     foreach ($p in $system.Stop) { if (-not $p.WaitForExit(10000)) { throw 'system Node agent was not stopped' } }
     foreach ($p in $system.Survive) { $p.Refresh(); if ($p.HasExited) { throw 'unrelated system Node process was stopped' } }
-    Write-Host 'PASS: bundled and system Node agents stopped; sibling/unrelated Node survived'
+    Write-Host 'PASS: NATIVE_TEST_PASSIVE_INSTRUMENTED_EXACT_ORIGINAL_BODY; bundled and system Node agents stopped; sibling/unrelated Node survived'
 } finally {
+    # A timeout/compile/stop assertion remains the primary exception. A final
+    # finite diagnostic must never mask it or reinterpret a missing phase as PASS.
+    if (-not $observationCollected -and $null -ne $observationDescriptor) {
+        try {
+            $failureSummary = & $node $observationModule collect $root $observationDescriptor
+            Write-Host ('NSIS_STOP_OBSERVATION ' + ($failureSummary -join [Environment]::NewLine))
+        } catch { Write-Host 'NSIS_STOP_OBSERVATION {"complete":false,"gap":true}' }
+    }
     $env:CMSPARK_SMOKE_INSTALL_ROOT = $saved
     foreach ($p in $processes) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

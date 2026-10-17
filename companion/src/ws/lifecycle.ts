@@ -1423,6 +1423,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         }
 
         let response: any
+        const appsOwnerAuth = wsAuth.get(ws)
         try {
           response = await handleMessage(
             msg,
@@ -1462,6 +1463,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                 }
               },
               executeTool,
+              appsOwnerCurrent: () => ws.readyState === WebSocket.OPEN && wsAuth.get(ws) === appsOwnerAuth && appsOwnerAuth?.authenticated === true,
               // App tab D2 biometric gates (apps.add/set_policy →auto): same
               // origin-bound confirmation channel as executeTool's
               // sendConfirmation above — nonce-carrying confirmations resolve

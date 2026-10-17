@@ -128,7 +128,9 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
     func windowWillClose(_ notification:Notification) { NSApp.terminate(nil) }
     func applicationWillTerminate(_ notification:Notification) { socket?.cancel(with:.normalClosure,reason:nil);parentWatch?.cancel() }
     func webView(_ webView:WKWebView,decidePolicyFor navigationAction:WKNavigationAction,decisionHandler:@escaping(WKNavigationActionPolicy)->Void) {
-        let allowed=navigationAction.targetFrame?.isMainFrame==true && navigationAction.request.url?.absoluteString==origin
+        var download=false
+        if #available(macOS 11.3,*) { download=navigationAction.shouldPerformDownload }
+        let allowed = !download && navigationAction.targetFrame?.isMainFrame==true && navigationAction.request.url?.absoluteString==origin
         if allowed { generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)
     }
     func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {

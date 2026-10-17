@@ -86,6 +86,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   PACK_ENTERPRISE_PROFILE_REQUIRED: "non_recoverable", // #563 B2: preserve the fixed enterprise composition refusal
   CLICK_OCCLUDED: "non_recoverable", // #563 D3: foreign landing refusal is intrinsic, not process-name text
   FOCUS_LOST: "non_recoverable", // #563 D3: failed outward foreground refusal; post-success/type recovery unchanged
+  STALE_SCREENSHOT: "non_recoverable", // #563: invalidated coordinates cannot retry or pivot based on target text
   APP_EXE_DRIFT: "non_recoverable", // #563 D4: intrinsic integrity/hash-read denial; tightens poisoned diagnostics
   INTEGRITY_LEVEL_DENIED: "non_recoverable", // fixed cross-IL refusal; diagnostic text cannot downgrade it
   TASK_ABORTED: "non_recoverable", // explicit user stop must not become transient retry
@@ -104,6 +105,10 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   NETSEC_TARGETS_DENIED: "non_recoverable", // #563 E1: ordinary denial already halted; timeout/locator names now halt too.
   // recoverable（#560 第二半改过下面前三条，原 non_recoverable）
   WORKER_INPUT_INVALID: "recoverable", // only four ordinary missing-argument returns; owner/security gates unchanged
+  COMPUTER_INPUT_INVALID: "recoverable", // only validateDraft INVALID_ACTION provenance
+  COMPUTER_WINDOW_ABSENT: "recoverable", // only successful empty window enumeration
+  READ_QUERY_INPUT_INVALID: "recoverable", // only finite local read-query input refusals
+  SKILL_INSTALL_INPUT_AMBIGUOUS: "recoverable", // only actual shared ZIP picker ambiguity
   // #563: only six finite pre-execution input refusals become recoverable.
   // The two pre-L2 shell argument guards preserve the same code; policy/L2 do not.
   SHELL_INPUT_INVALID: "recoverable",

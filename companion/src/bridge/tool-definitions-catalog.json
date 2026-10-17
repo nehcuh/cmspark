@@ -1523,7 +1523,7 @@
     "type": "function",
     "function": {
       "name": "host_app",
-      "description": "(Windows / macOS) Launch an application the user has personally whitelisted in the CMspark App tab, referenced by its token (win.app.<slug> on Windows, mac.app.<slug> on macOS). Phase 1 supports action \"launch\" ONLY: a plain no-argument start of the app — you CANNOT pass command-line arguments, open files in it, or read/control it afterwards. Confirmation depends on the app's per-app policy set by the user: 「全自动」(auto) launches silently; 「AI 判断」(ai) asks the user once per thread, then launches without asking again in that thread; 「每次确认」(manual) asks every time. If the app is disabled, unknown, or the Apps feature is off, the call fails with a typed error — do NOT retry in a loop. Only launch an app the user asked for (or that obviously serves their request); NEVER launch speculatively.",
+      "description": "(Windows / macOS) Launch a personally whitelisted app by its exact App-tab token, never speculatively. action launch remains no-argument and uses the existing per-app launch policy. Windows only: run_template may choose a configured reviewed GUI local-file template ID and supply exactly params.file, not free args/exe/cwd/env/URL or CLI. Each template invocation always needs a fresh user confirmation, including auto/trust/cruise; dangerous owner templates additionally require the original second factor. Unsupported profiles/paths/apps fail; a launch request is not proof a file was displayed. No read/control permission is granted.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1534,9 +1534,27 @@
           "action": {
             "type": "string",
             "enum": [
-              "launch"
+              "launch",
+              "run_template"
             ],
-            "description": "Phase 1: only 'launch' (plain no-arg start)."
+            "description": "launch: original no-arg start; run_template: Windows configured GUI file template, always interactive."
+          },
+          "template": {
+            "type": "string",
+            "description": "Only for run_template: exact configured template ID from the App index."
+          },
+          "params": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "description": "Existing local Windows absolute .txt file path, max259 UTF-16 units. No quotes, URI, response file, expansion or extra tokens."
+              }
+            },
+            "required": [
+              "file"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

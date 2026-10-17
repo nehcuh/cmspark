@@ -9,6 +9,7 @@ import { validateSiteCounterMessage } from "../message-router/handlers/site-coun
 import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "../voice/session-caps"
 import { validateProjectRequest } from "../threads/project-store"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
+import { validBinaryDriftMessage } from "../apps/binary-drift-state"
 function projectSchema(message: any): WsValidationResult {
   const { type, id, ...rest } = message
   if (id !== undefined && (typeof id !== "string" || id.length > 200)) return { valid: false, error: "Invalid project correlation" }
@@ -1374,6 +1375,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "apps.list": () => ({ valid: true }),
+    "apps.drift_status": (m) => validBinaryDriftMessage(m) ? { valid: true } : { valid: false, error: "Invalid App drift request" },
+    "apps.check_drift": (m) => validBinaryDriftMessage(m) ? { valid: true } : { valid: false, error: "Invalid App drift request" },
+    "apps.reapprove": (m) => validBinaryDriftMessage(m) ? { valid: true } : { valid: false, error: "Invalid App drift request" },
     "apps.enumerate": () => ({ valid: true }),
     "apps.add": (m) => {
       const hasPath = typeof m.path === "string" && m.path.length > 0

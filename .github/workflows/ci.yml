@@ -509,6 +509,34 @@ jobs:
           node scripts/run-tests.mjs .test-dist/tests/acp-cleanup.test.js .test-dist/tests/mcp-roots-reload.test.js .test-dist/tests/mcp-stdio-tree.test.js .test-dist/tests/mcp-http-recovery.test.js .test-dist/tests/integration/allow-dir-reconnect.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: "Actual Windows background oracle comparator (#572)"
+        # Synthetic snapshots, real PS5.1: historical false-positive + current refusal.
+        # Does not operate a target GUI or certify real background delivery.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/computer-bg-oracles.test.js .test-dist/tests/integration/computer-bg-oracle-counterfactual-572.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Native Windows GUI file template admission (#686)"
+        # Exact pinned portable target in owned CI data; software approval is synthetic.
+        # Real PS5.1 metadata + argv/parser evidence; no installation/default registration.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/apps-gui-template-686.test.js .test-dist/tests/apps-gui-template-files-686.test.js .test-dist/tests/integration/apps-gui-template-native-686.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Native Windows explicit App binary drift (#689)"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/apps-binary-drift-689.test.js .test-dist/tests/apps-binary-drift-files-689.test.js .test-dist/tests/integration/apps-drift-owner-689.test.js .test-dist/tests/integration/apps-drift-native-689.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: "Native Windows manual CLI entry (#522)"
         if: matrix.os == 'windows-latest'
         shell: pwsh

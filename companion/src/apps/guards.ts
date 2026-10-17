@@ -136,6 +136,20 @@ export function basenameToVault(p: string): string | null {
   return token
 }
 
+/** #683: one verified stable package identity; unknown AUMIDs stay unmapped.
+ * Exact ASCII case folding is protective policy, not fuzzy package discovery.
+ */
+export function aumidToVault(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const key = value.replace(/[A-Z]/g, ch => ch.toLowerCase())
+  if (key !== "microsoft.windowsterminal_8wekyb3d8bbwe!app") return null
+  const token = "win.terminal"
+  if (!VAULT_WIN_APPS.has(token)) {
+    throw new Error(`apps guards: vault mapping "${token}" not present in VAULT_WIN_APPS (table drift)`)
+  }
+  return token
+}
+
 export type AddGuardVerdict =
   | { allowed: true; vaultToken: string | null; templatesAllowed: boolean }
   | { allowed: false; reason: "lolbin" | "vault_cli"; vaultToken: string | null; detail: string }

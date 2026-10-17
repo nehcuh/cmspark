@@ -450,7 +450,9 @@ export async function runComputerTask(
   }
 
   const draftErr = validateDraft(params)
-  if (draftErr) return fail(draftErr)
+  if (draftErr) return fail(draftErr.code === "INVALID_ACTION"
+    ? new ComputerError("COMPUTER_INPUT_INVALID", draftErr.message, draftErr.detail)
+    : draftErr)
 
   // A10 + §E.2 gate (executor-side belt; the server gate already checked).
   let entry
@@ -487,7 +489,7 @@ export async function runComputerTask(
     }
     const wins = await deps.windows.enumerateByExe(exeId)
     if (wins.length === 0) {
-      throw new ComputerError("APP_WINDOW_NOT_FOUND", `computer: no visible window for "${entry.display_name}" — is it running?`)
+      throw new ComputerError("COMPUTER_WINDOW_ABSENT", `computer: no visible window for "${entry.display_name}" — is it running?`)
     }
     // Prefer real UI windows: titled, on-screen, non-menu-strip. WeChat/Electron
     // expose many empty-name aux layers (500×500 panels, 1728×33 bars); pure
@@ -876,6 +878,7 @@ export async function runComputerTask(
        * background delivery and a foreground one are indistinguishable in actions.json.
        */
       let deliveryRoute: "uia_pattern" | "sendinput" | "uia_fallback" | undefined
+      let uiaForegroundBefore: number | undefined
       /** Which UIA pattern fired (only meaningful when `deliveryRoute === "uia_pattern"`). */
       let deliveryMode: string | undefined
       // WP3 (§B.1): per-layer degradation log — sealed into the evidence
@@ -1443,6 +1446,20 @@ export async function runComputerTask(
           // Not a background-eligible action — leave the path exactly as it was.
         } else {
           // "invoke" only. "auto" also treats Select/Toggle success as a click.
+          // A background target need not own the foreground before or after
+          // Invoke. Only a valid unchanged observation can excuse that one
+          // post-action channel; every popup/pixel channel still runs below.
+          try {
+            const before = await deps.injector.foregroundHwnd()
+            if (Number.isSafeInteger(before) && before > 0) uiaForegroundBefore = before
+          } catch {
+            // Observation unavailable: retain the existing conservative check.
+          }
+          // This observation adds an await after the common pre-inject fence.
+          const abortedBeforeUia = deps.abortCheck?.() ?? null
+          if (abortedBeforeUia !== null) {
+            throw abortChannelError(abortedBeforeUia, `computer: task aborted by emergency stop (${abortedBeforeUia}) before uia delivery`)
+          }
           const r = await invokeUia(hwnd, uiaIdentity.name, "invoke", {
             expectControlType: uiaIdentity.controlType,
             expectAutomationId: uiaIdentity.automationId,
@@ -1484,6 +1501,14 @@ export async function runComputerTask(
         }
         if (!deliveredInBackground) {
           deliveryRoute = deliveryRoute ?? "sendinput"
+          // UIA delivery awaited above: a stop may have arrived after the common fence.
+          if (deliveryRoute === "uia_fallback") {
+            const abortedBeforeFallback = deps.abortCheck?.() ?? null
+            if (abortedBeforeFallback !== null) {
+              log("computer.task.aborted", { taskId, seq, channel: abortedBeforeFallback, via: "coordinate_fallback" })
+              throw abortChannelError(abortedBeforeFallback, `computer: task aborted by emergency stop (${abortedBeforeFallback}) before coordinate fallback`)
+            }
+          }
           await deps.injector.click(hwnd, pointClient!.x, pointClient!.y, action.action)
         }
       }
@@ -1546,8 +1571,11 @@ export async function runComputerTask(
         }
         uiaWatcher = null
       }
+      const uiaForegroundKept =
+        deliveryRoute === "uia_pattern" && uiaForegroundBefore !== undefined && fg === uiaForegroundBefore
+      const foregroundUnexpected = fg !== 0 && fg !== hwnd && !uiaForegroundKept
       const dialogSuspected =
-        (fg !== 0 && fg !== hwnd) ||
+        foregroundUnexpected ||
         newTopLevel ||
         uiaOpened.length > 0 ||
         diffRatio > DIALOG_DIFF_THRESHOLD ||
@@ -1680,7 +1708,7 @@ export async function runComputerTask(
         // (fail-closed direction).
         let fgYielded = false
         let fgOwnerExe: string | null = null
-        if (fg !== 0 && fg !== hwnd) {
+        if (foregroundUnexpected) {
           try {
             fgOwnerExe = (await deps.windows.infoForHwnd(fg)).exePath
           } catch {
@@ -1696,7 +1724,7 @@ export async function runComputerTask(
         log(fgYielded ? "computer.task.foreground_yielded" : "computer.task.dialog_suspected", {
           taskId,
           seq,
-          fgChanged: fg !== hwnd,
+          fgChanged: fg !== hwnd && !uiaForegroundKept,
           fgOwnerExe,
           newTopLevel,
           uiaWindowOpened: uiaOpened.length,
