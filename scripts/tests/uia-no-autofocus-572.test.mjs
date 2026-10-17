@@ -204,3 +204,40 @@ test('all nine native modes register after original cases in one canonical file 
  assert.ok(!readFileSync(path.join(root,'.github/workflows/ci.yml'),'utf8').includes('.test-dist/tests/computer-uia-no-focus-native-572.test.js'));
  assert.ok(!file.endsWith('.test.ts'));
 });
+
+// This finite source projection checks the SDK BSTR ownership boundary, not a
+// compiled COM call. The hosted SDK build and native value-mode test remain required.
+function nativeValueBstr572(source, options={}) {
+ const branch=body(body(source,'int32_t perform('),'else if(r.mode==2)');
+ assert.match(source,/struct Text \{ BSTR p=nullptr; ~Text\(\)\{if\(p\)SysFreeString\(p\);\} \};/);
+ let js=branch.replace('ComPtr<IUIAutomationValuePattern> p;','')
+  .replace('pattern(el,UIA_ValuePatternId,p)','pattern()')
+  .replace('Text value;','const value={p:null};owned=value;')
+  .replace('SysAllocStringLen(r.value.data(),static_cast<UINT>(r.value.size()))','allocate(r.value)')
+  .replaceAll('p->','p.').replace('r.value.c_str()','r.value');
+ assert.doesNotMatch(js,/\b(?:ComPtr|Text|static_cast|UIA_ValuePatternId|SysAllocStringLen)\b|->/);
+ const calls=[],opts={pattern:0,allocation:true,ready:0,hr:0,text:'提交😀',...options},allocated=new Set();
+ const context={r:{value:opts.text},status:0,hr:-1,OK:0,METHOD_FAILED:6,owned:null,
+  pattern:()=>{calls.push('pattern');return opts.pattern;},
+  allocate:text=>{calls.push('allocate');if(!opts.allocation)return null;const token={text};allocated.add(token);return token;},
+  ready:()=>{calls.push('ready');return opts.ready;},
+  p:{SetValue:token=>{assert.ok(allocated.has(token),'SDK SetValue needs an allocated BSTR, never a const wchar_t pointer');calls.push('set');assert.equal(token.text,opts.text);return opts.hr;}},
+  free:token=>{assert.ok(allocated.delete(token));calls.push('free');}};
+ const run=new vm.Script(`(function(){try{${js}return hr<0?METHOD_FAILED:OK;}finally{if(owned&&owned.p)free(owned.p);}})`).runInNewContext(context);
+ const result=run();assert.equal(allocated.size,0);return {result,calls};
+}
+test('SDK value mode uses length-bound BSTR and a final identity check without a pointer cast',()=>{
+ const b=body(body(cpp,'int32_t perform('),'else if(r.mode==2)');
+ assert.match(b,/Text value;value\.p=SysAllocStringLen\(r\.value\.data\(\),static_cast<UINT>\(r\.value\.size\(\)\)\);/);
+ assert.match(b,/if\(!value\.p\)return METHOD_FAILED;\s*if\(\(status=ready\(\)\)!=OK\)return status;hr=p->SetValue\(value\.p\);/);
+ assert.doesNotMatch(b,/const_cast|reinterpret_cast|SetValue\(r\.value/);
+});
+for(const text of ['', '提交😀', 'quote " line\n$()'])test(`actual BSTR branch retains UTF16 value ${JSON.stringify(text)}`,()=>{
+ assert.deepEqual(nativeValueBstr572(cpp,{text}),{result:0,calls:['pattern','allocate','ready','set','free']});
+});
+for(const [name,options,result,calls] of [
+ ['unsupported',{pattern:1},1,['pattern']],
+ ['allocation failure',{allocation:false},6,['pattern','allocate']],
+ ['late identity refusal',{ready:5},5,['pattern','allocate','ready','free']],
+ ['method failure',{hr:-1},6,['pattern','allocate','ready','set','free']],
+])test(`actual BSTR branch ${name} keeps refusal and scope cleanup`,()=>assert.deepEqual(nativeValueBstr572(cpp,options),{result,calls}));

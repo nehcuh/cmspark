@@ -78,7 +78,10 @@ int32_t perform(Request const& r,IUIAutomationElement* root,IUIAutomationElement
   if(r.mode==1){ComPtr<IUIAutomationInvokePattern> p;status=pattern(el,UIA_InvokePatternId,p);
     if(status!=OK)return status;if((status=ready())!=OK)return status;hr=p->Invoke();}
   else if(r.mode==2){ComPtr<IUIAutomationValuePattern> p;status=pattern(el,UIA_ValuePatternId,p);
-    if(status!=OK)return status;if((status=ready())!=OK)return status;hr=p->SetValue(r.value.c_str());}
+    if(status!=OK)return status;
+    Text value;value.p=SysAllocStringLen(r.value.data(),static_cast<UINT>(r.value.size()));
+    if(!value.p)return METHOD_FAILED;
+    if((status=ready())!=OK)return status;hr=p->SetValue(value.p);}
   else if(r.mode==3){ComPtr<IUIAutomationSelectionItemPattern> p;status=pattern(el,UIA_SelectionItemPatternId,p);
     if(status!=OK)return status;if((status=ready())!=OK)return status;hr=p->Select();}
   else if(r.mode==4){ComPtr<IUIAutomationTogglePattern> p;status=pattern(el,UIA_TogglePatternId,p);
