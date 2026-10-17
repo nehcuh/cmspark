@@ -17,7 +17,7 @@
 // and asserts on the script's OWN error code. A binding failure shows up as `method_failed`
 // with `NamedParameterNotFound`; correct binding shows up as `window_gone`. We assert the
 // latter. Any test here that can pass while the parameter is missing is worthless.
-import test from "node:test"
+import test, { type TestContext } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -94,7 +94,7 @@ import { readFileSync, watch } from "node:fs"
 import { performance } from "node:perf_hooks"
 import { promisify } from "node:util"
 import { PsUiaLocator } from "../src/computer/win-adapters"
-import { resolveWinScript, runPs } from "../src/host-use/win/powershell"
+import { resolveWinScript, runPs, type PsRunner } from "../src/host-use/win/powershell"
 
 type WpfSnapshot572 = {
   foreground: number
@@ -180,6 +180,119 @@ function emitWpfEvents572(role: "target" | "sibling", read: () => string, sink: 
   } catch { /* diagnostics cannot replace acceptance or prevent owned cleanup */ }
 }
 
+// Only the owned acceptance copy is instrumented. Removing the five marked
+// insertions must recover every original byte, including its BOM and EOLs.
+function stripWpfClientProbe572(source: Buffer): Buffer {
+  let text = source.toString("utf8")
+  for (const name of ["DECL", "FUNCTION", "PRE", "POST", "EXIT"]) {
+    const begin = name === "DECL" ? `/*WPF572_CLIENT_PROBE_${name}_BEGIN*/` : `<#WPF572_CLIENT_PROBE_${name}_BEGIN#>`
+    const end = name === "DECL" ? `/*WPF572_CLIENT_PROBE_${name}_END*/` : `<#WPF572_CLIENT_PROBE_${name}_END#>`
+    const first = text.indexOf(begin), last = text.indexOf(end)
+    assert.ok(first >= 0 && last > first && text.indexOf(begin, first + begin.length) < 0 && text.indexOf(end, last + end.length) < 0)
+    text = text.slice(0, first) + text.slice(last + end.length)
+  }
+  return Buffer.from(text, "utf8")
+}
+
+function buildWpfClientProbe572(source: Buffer, sibling: number, receipt: string): Buffer {
+  const text = source.toString("utf8")
+  assert.ok(Buffer.from(text, "utf8").equals(source), "probe requires exact UTF-8 bytes")
+  assert.ok(!text.includes("WPF572_CLIENT_PROBE_"))
+  assert.ok(Number.isSafeInteger(sibling) && sibling > 0 && !receipt.includes("\0"))
+  const eol = text.includes("\r\n") ? "\r\n" : "\n"
+  const marked = (name: string, body: string) => `<#WPF572_CLIENT_PROBE_${name}_BEGIN#>${body}<#WPF572_CLIENT_PROBE_${name}_END#>`
+  const call = (phase: string) => `try { Write-WpfClientProbe572 '${phase}' } catch {}; `
+  const functionBody = String.raw`
+$script:wpfClientProbeSequence572 = 0
+function Write-WpfClientProbe572([string]$Phase) {
+  try {
+    if ($Phase -notin @('BEFORE_FROM_HANDLE','PRE_INVOKE','POST_INVOKE','PRE_EXIT') -or $script:wpfClientProbeSequence572 -ge 4) { return }
+    $foreground = [CU.W32]::GetForegroundWindow()
+    $role = if ($foreground -eq [IntPtr]$Hwnd) { 'TARGET' } elseif ($foreground -eq [IntPtr]::new([long]${sibling})) { 'SIBLING' } elseif ($foreground -eq [IntPtr]::Zero) { 'NONE' } else { 'OTHER' }
+    [void]($script:wpfClientProbeSequence572++)
+    $record = [ordered]@{ sequence = [int]$script:wpfClientProbeSequence572; phase = $Phase; foregroundRole = $role }
+    $line = Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject $record
+    [IO.File]::AppendAllText('${receipt.replace(/'/g, "''")}', $line + [Environment]::NewLine)
+  } catch {}
+}
+${call("BEFORE_FROM_HANDLE")}
+`.replace(/\n/g, eol)
+  const declaration = "public static extern bool IsWindow(System.IntPtr h);"
+  const fromHandle = "try { $rootEl = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$Hwnd) }"
+  const action = '  try { & $act $obj; [void]$tried.Add("${pname}:ok"); return $true }'
+  const exit = "exit 0"
+  for (const anchor of [declaration, fromHandle, action, exit]) {
+    assert.equal(text.split(anchor).length, 2, "every source anchor must be unique")
+  }
+  const inserts = [
+    { at: text.indexOf(declaration) + declaration.length, value: '/*WPF572_CLIENT_PROBE_DECL_BEGIN*/ [DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow(); /*WPF572_CLIENT_PROBE_DECL_END*/' },
+    { at: text.indexOf(fromHandle), value: marked("FUNCTION", functionBody) },
+    { at: text.indexOf(action) + action.indexOf("& $act"), value: marked("PRE", `if ($pname -eq 'invoke') { ${call("PRE_INVOKE")} }; `) },
+    { at: text.indexOf(action) + action.indexOf("[void]$tried"), value: marked("POST", `if ($pname -eq 'invoke') { ${call("POST_INVOKE")} }; `) },
+    { at: text.indexOf(exit), value: marked("EXIT", call("PRE_EXIT")) },
+  ]
+  let output = text
+  for (const insertion of inserts.sort((a, b) => b.at - a.at)) output = output.slice(0, insertion.at) + insertion.value + output.slice(insertion.at)
+  const result = Buffer.from(output, "utf8")
+  assert.ok(stripWpfClientProbe572(result).equals(source), "probe inverse must recover the whole shipped script")
+  return result
+}
+
+function makeWpfClientProbe572(dir: string, sibling: number, runner: PsRunner): { run: PsRunner; status: () => string } {
+  let capture = "NOT_RUN", calls = 0
+  return {
+    status: () => capture,
+    run: async (script, args, opts) => {
+      // Instrumentation failure cannot change the original action or refusal.
+      let selected = script
+      try {
+        assert.equal(++calls, 1)
+        assert.equal(path.basename(script), "computer-uia-invoke.ps1")
+        const observed = buildWpfClientProbe572(readFileSync(script), sibling, path.join(dir, "invoke-client-phases.jsonl"))
+        writeFileSync(path.join(dir, "invoke-client-phases.jsonl"), "", { flag: "wx", mode: 0o600 })
+        selected = path.join(dir, "observed-uia-invoke.ps1")
+        writeFileSync(selected, observed, { flag: "wx", mode: 0o600 })
+        capture = "READY"
+      } catch { selected = script; capture = "UNAVAILABLE" }
+      return runner(selected, args, opts)
+    },
+  }
+}
+
+// The original acceptance always constructs the production/default runner.
+// Only the independently owned diagnostic case selects the observed copy.
+function makeCurrentWpfInjector572(diagnostic: boolean, dir: string, sibling: number) {
+  const probe = diagnostic ? makeWpfClientProbe572(dir, sibling, runPs) : undefined
+  return { injector: new PsInputInjector(probe?.run, path.join(dir, "absent.stop")), probe }
+}
+
+function projectWpfClientProbe572(text: string, capture: string, parentRole: string) {
+  const roles = ["TARGET", "SIBLING", "NONE", "OTHER"]
+  const after = roles.includes(parentRole) ? parentRole : "UNKNOWN"
+  const empty = { schema: 1, capture: ["READY", "NOT_RUN"].includes(capture) ? capture : "UNAVAILABLE", valid: false, complete: false,
+    phases: [] as { sequence: number; phase: string; foregroundRole: string }[],
+    parentSnapshotPhase: after === "UNKNOWN" ? "NOT_OBSERVED" : "AFTER_CLIENT_CLOSE_AND_MARKER", parentForegroundRole: after }
+  if (capture !== "READY" || Buffer.byteLength(text, "utf8") > 4096 || text.trim() === "") return empty
+  try {
+    const rows = text.trim().split(/\r?\n/), expected = ["BEFORE_FROM_HANDLE", "PRE_INVOKE", "POST_INVOKE", "PRE_EXIT"]
+    if (rows.length > 4) return empty
+    const phases = rows.map((line, index) => {
+      const value = JSON.parse(line)
+      if (!value || Array.isArray(value) || Object.keys(value).sort().join(",") !== "foregroundRole,phase,sequence" || value.sequence !== index + 1 || value.phase !== expected[index] || !roles.includes(value.foregroundRole)) throw new Error("WPF572_CLIENT_PROBE_INVALID")
+      return { sequence: value.sequence, phase: value.phase, foregroundRole: value.foregroundRole }
+    })
+    return { ...empty, valid: true, complete: phases.length === 4, phases }
+  } catch { return empty }
+}
+
+function emitWpfClientProbe572(read: () => string, sink: (value: string) => void, capture: string, parentRole: string): void {
+  try {
+    let text = ""
+    try { text = read() } catch {}
+    sink("WPF572_CLIENT_PHASE_OBSERVATION " + JSON.stringify(projectWpfClientProbe572(text, capture, parentRole)))
+  } catch { /* a passive sink cannot replace primary failure or owned cleanup */ }
+}
+
 function startOwnedWpf572(fixture: string, args: string[], remaining: number): WpfChild572 {
   let ended = false
   let failure: Error | undefined
@@ -230,7 +343,7 @@ async function cleanupOwnedWpf572(children: WpfChild572[], removeOwned: () => vo
   if (cleanupError !== undefined) throw cleanupError
 }
 
-test("#572 current WPF background Invoke changes only the target while all four desktop oracles hold", { skip: !available }, async (t) => {
+async function runCurrentWpf572(t: TestContext, diagnostic = false): Promise<void> {
   const fixture = path.resolve("tests/fixtures/win/uia-wpf-fixture.ps1")
   const dir = mkdtempSync(path.join(tmpdir(), "uia-current-wpf-572-"))
   const children: WpfChild572[] = []
@@ -246,6 +359,8 @@ test("#572 current WPF background Invoke changes only the target while all four 
     await runPs(resolveWinScript("computer-bg-oracles.ps1"), args, { timeoutMs: Math.min(15_000, remaining()) })
   }
   let primary: unknown
+  let clientProbe: ReturnType<typeof makeWpfClientProbe572> | undefined
+  let parentProbeRole = "UNKNOWN"
   try {
     const marker = path.join(dir, "target.marker"), siblingMarker = path.join(dir, "sibling.marker")
     const launch = async (role: "target" | "sibling") => {
@@ -276,7 +391,9 @@ test("#572 current WPF background Invoke changes only the target while all four 
     await runOracle(["-Mode", "snapshot", "-TargetHwnd", String(target), "-Out", beforePath])
     const before = JSON.parse(readFileSync(beforePath, "utf8")) as WpfSnapshot572
     assert.equal(before.foreground, sibling, "the target must really be in the background before Invoke")
-    const result = await new PsInputInjector(undefined, path.join(dir, "absent.stop")).invokeUia(target, hit.name, "invoke", {
+    const selected = makeCurrentWpfInjector572(diagnostic, dir, sibling)
+    clientProbe = selected.probe
+    const result = await selected.injector.invokeUia(target, hit.name, "invoke", {
       expectControlType: hit.controlType, expectAutomationId: hit.automationId,
     })
     assert.equal(result.ok, true)
@@ -291,6 +408,8 @@ test("#572 current WPF background Invoke changes only the target while all four 
     // Closed role/boolean observations only. A diagnostic sink cannot alter acceptance or cleanup.
     try {
       const role = (handle: number) => handle === target ? "TARGET" : handle === sibling ? "SIBLING" : handle === 0 ? "NONE" : "OTHER"
+      // This is the existing snapshot after actual client exit AND marker; not an exit-instant sample.
+      parentProbeRole = role(after.foreground)
       t.diagnostic("WPF572_NATIVE_OBSERVATION " + JSON.stringify({ schema: 1,
         beforeForegroundRole: role(before.foreground), afterForegroundRole: role(after.foreground),
         targetChanged: /^clicked \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/.test(targetMarker),
@@ -307,6 +426,7 @@ test("#572 current WPF background Invoke changes only the target while all four 
     assert.ok(children.every(owner => !owner.isClosed()), "both fixtures must remain alive through the assertions")
   } catch (error) { primary = error }
   finally {
+    if (diagnostic) emitWpfClientProbe572(() => readFileSync(path.join(dir, "invoke-client-phases.jsonl"), "utf8"), value => t.diagnostic(value), clientProbe?.status() ?? "NOT_RUN", parentProbeRole)
     // Observe before termination so cleanup-induced deactivation is not mistaken for Invoke behavior.
     for (const role of ["target", "sibling"] as const) {
       emitWpfEvents572(role, () => readFileSync(path.join(dir, `${role}.events.jsonl`), "utf8"), value => t.diagnostic(value))
@@ -314,9 +434,19 @@ test("#572 current WPF background Invoke changes only the target while all four 
     await cleanupOwnedWpf572(children, () => rmSync(dir, { recursive: true, force: true }), primary)
   }
   assert.ok(children.length === 2 && children.every(owner => owner.isClosed()), "both owned WPF handles must be closed")
-  console.log(JSON.stringify({ schema: 1, kind: "WPF572_CURRENT_REAL_BACKGROUND", targetChanged: true,
+  console.log(JSON.stringify({ schema: 1, kind: diagnostic ? "WPF572_CLIENT_PHASE_DIAGNOSTIC" : "WPF572_CURRENT_REAL_BACKGROUND", targetChanged: true,
     siblingUnchanged: true, actualForegroundSibling: true, focusKept: true, zorderKept: true,
     cursorKept: true, noLeakedInput: true, noLeakedInputKind: "derived", ownedChildrenClosed: 2 }))
+}
+
+// Both are mandatory independent cases, each with fresh windows/StopFile and its
+// own original lifetime. Diagnostic success can never replace original acceptance.
+test("#572 current WPF background Invoke changes only the target while all four desktop oracles hold", { skip: !available }, async (t) => {
+  await runCurrentWpf572(t)
+})
+
+test("#572 current WPF background client-phase diagnostic retains the same strict oracles", { skip: !available }, async (t) => {
+  await runCurrentWpf572(t, true)
 })
 
 test("#650 shipped UIA source parses as Unicode in actual Desktop PowerShell 5.1", { skip: !available }, async () => {
@@ -378,4 +508,98 @@ test("#572 WPF event diagnostic sink failures preserve cleanup and original acce
   }, primary), error => error === primary)
   assert.equal(killed, 1)
   assert.equal(removed, 1)
+})
+
+test("#572 client phase copy preserves every shipped byte and refuses ambiguous anchors", () => {
+  assert.ok(SCRIPT)
+  const original = readFileSync(SCRIPT!)
+  for (const source of [original, Buffer.from(original.toString("utf8").replace(/\r?\n/g, "\r\n")), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), original])]) {
+    const observed = buildWpfClientProbe572(source, 44, "C:\\owned space\\O'Hare\\phases.jsonl")
+    assert.ok(stripWpfClientProbe572(observed).equals(source))
+    const before = source.toString("utf8"), after = observed.toString("utf8")
+    assert.equal(after.split("Add-Type").length, before.split("Add-Type").length)
+    assert.equal(after.split("([System.Windows.Automation.InvokePattern]$o).Invoke()").length, before.split("([System.Windows.Automation.InvokePattern]$o).Invoke()").length)
+    assert.ok(after.includes("O''Hare"))
+    assert.ok(after.includes("-ge 4"))
+    assert.equal(after.includes("SetForegroundWindow("), before.includes("SetForegroundWindow("))
+  }
+  for (const source of [Buffer.from(original.toString("utf8").replace("exit 0", "exit 1")), Buffer.concat([original, Buffer.from("\nexit 0\n")])]) {
+    assert.throws(() => buildWpfClientProbe572(source, 44, "owned"))
+  }
+  assert.throws(() => buildWpfClientProbe572(original, 0, "owned"))
+})
+
+test("#572 client probe keeps the real runner argv, stdout and rejection on instrumentation failure", async () => {
+  assert.ok(SCRIPT)
+  const dir = mkdtempSync(path.join(tmpdir(), "uia-client-probe-cpu-"))
+  try {
+    const source = readFileSync(SCRIPT!), script = path.join(dir, "computer-uia-invoke.ps1")
+    writeFileSync(script, source)
+    const args = ["-Hwnd", "40", "-Name", "SubmitTest", "-Mode", "invoke", "-StopFile", path.join(dir, "absent.stop")]
+    const opts = { timeoutMs: 15000 }
+    let calls = 0
+    const probe = makeWpfClientProbe572(dir, 44, async (actual, received, options) => {
+      calls++
+      assert.notEqual(actual, script)
+      assert.ok(stripWpfClientProbe572(readFileSync(actual)).equals(source))
+      assert.equal(received, args)
+      assert.equal(options, opts)
+      return '{"ok":true}'
+    })
+    assert.equal(await probe.run(script, args, opts), '{"ok":true}')
+    assert.equal(probe.status(), "READY")
+    assert.equal(calls, 1)
+    // A source-guard failure still executes the original runner once and
+    // preserves its rejection object; it is not a new action/refusal path.
+    writeFileSync(script, source.toString("utf8").replace("exit 0", "exit 1"))
+    const primary = new Error("OWNED_ORIGINAL_REFUSAL")
+    const refused = makeWpfClientProbe572(dir, 44, async (actual, received, options) => {
+      calls++
+      assert.equal(actual, script)
+      assert.equal(received, args)
+      assert.equal(options, opts)
+      throw primary
+    })
+    await assert.rejects(refused.run(script, args, opts), error => error === primary)
+    assert.equal(refused.status(), "UNAVAILABLE")
+    assert.equal(calls, 2)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test("#572 client phase projection is closed and sink errors preserve primary cleanup", async () => {
+  const names = ["BEFORE_FROM_HANDLE", "PRE_INVOKE", "POST_INVOKE", "PRE_EXIT"]
+  const rows = names.map((phase, index) => ({ sequence: index + 1, phase, foregroundRole: "SIBLING" }))
+  const text = rows.map(value => JSON.stringify(value)).join("\r\n")
+  const proof = projectWpfClientProbe572(text, "READY", "TARGET")
+  assert.equal(proof.complete, true)
+  assert.equal(proof.parentSnapshotPhase, "AFTER_CLIENT_CLOSE_AND_MARKER")
+  assert.equal(proof.parentForegroundRole, "TARGET")
+  assert.equal(projectWpfClientProbe572(JSON.stringify(rows[0]), "READY", "UNKNOWN").complete, false)
+  for (const bad of ["", "x".repeat(4097), JSON.stringify({ ...rows[0], extra: "NEVER_REFLECT" }), JSON.stringify({ ...rows[0], foregroundRole: "NEVER_REFLECT" }), JSON.stringify(rows[1]), text + "\n" + JSON.stringify(rows[0])]) {
+    const output = projectWpfClientProbe572(bad, "READY", "NEVER_REFLECT")
+    assert.equal(output.valid, false)
+    assert.equal(JSON.stringify(output).includes("NEVER_REFLECT"), false)
+  }
+  const primary = new Error("OWNED_PRIMARY"), closed: string[] = []
+  emitWpfClientProbe572(() => text, () => { throw new Error("OWNED_SINK") }, "READY", "TARGET")
+  await assert.rejects(cleanupOwnedWpf572([{ child: { kill: () => { closed.push("kill"); return true } }, closed: Promise.resolve(), isClosed: () => false, launchError: () => undefined } as unknown as WpfChild572], () => { closed.push("remove") }, primary), error => error === primary)
+  assert.deepEqual(closed, ["kill", "remove"])
+})
+
+
+test("#572 client route selection keeps normal acceptance on the actual default runner", () => {
+  const dir = path.join(tmpdir(), "owned-not-created-route-selection")
+  const normal = makeCurrentWpfInjector572(false, dir, 44)
+  const observed = makeCurrentWpfInjector572(true, dir, 44)
+  // Construction only: no PS execution or owned file write occurs here.
+  const runnerOf = (value: PsInputInjector) => (value as unknown as { runner: PsRunner }).runner
+  const stopOf = (value: PsInputInjector) => (value as unknown as { stopFile: string }).stopFile
+  assert.equal(normal.probe, undefined)
+  assert.equal(runnerOf(normal.injector), runPs)
+  assert.ok(observed.probe)
+  assert.equal(runnerOf(observed.injector), observed.probe.run)
+  assert.notEqual(runnerOf(observed.injector), runPs)
+  assert.equal(stopOf(normal.injector), path.join(dir, "absent.stop"))
+  assert.equal(stopOf(observed.injector), stopOf(normal.injector))
+  assert.equal(observed.probe.status(), "NOT_RUN")
 })
