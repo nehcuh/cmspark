@@ -176,7 +176,9 @@ test("#650 module scope CPU: sole workflow invocation is last after original sea
   assert.equal(step.match(/^      - name:/gm)?.length, 1, "nothing may follow this standalone diagnostic")
   assert.match(step, /if: \$\{\{ always\(\) && !cancelled\(\) && matrix\.os == 'windows-latest' \}\}/)
   assert.match(step, /CMSPARK_650_FINISHED_PUBLIC_DIR: \$\{\{ steps\.windows-census\.outputs\.public_dir \}\}/)
-  assert.match(step, /node \.test-dist\/tests\/fixtures\/computer-bg-module-scope-650\.probe\.js "\$env:CMSPARK_650_FINISHED_PUBLIC_DIR"/)
+  assert.match(step, /\$moduleScopeProbe650 = \[IO\.Path\]::Combine\(\$PWD\.Path, '\.test-dist\/tests\/fixtures\/computer-bg-module-scope-650\.probe\.js'\)/)
+  assert.match(step, /\[IO\.File\]::Exists\(\$moduleScopeProbe650\)/)
+  assert.match(step, /^\s+node "\$moduleScopeProbe650" "\$env:CMSPARK_650_FINISHED_PUBLIC_DIR"\r?$/m)
   assert.doesNotMatch(step, /continue-on-error|windows-census\.mjs|run-tests\.mjs|PSModulePath|retry|timeout/)
 })
 test("#650 module scope CPU: wrapper fixes only its process scope before the exact original sibling", () => {

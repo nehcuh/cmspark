@@ -70,7 +70,7 @@ test("windows PowerShell UTF-8 stdout round-trips a Chinese path", {
     const exe = resolveWindowsPowerShell()
     const escaped = dir.replace(/'/g, "''")
     const script = [
-      "$utf8 = New-Object System.Text.UTF8Encoding $false",
+      "$utf8 = Microsoft.PowerShell.Utility\\New-Object System.Text.UTF8Encoding $false",
       "[Console]::OutputEncoding = $utf8",
       "$OutputEncoding = $utf8",
       `[Console]::Out.Write('${escaped}')`,
