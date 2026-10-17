@@ -8,6 +8,15 @@ const root=path.resolve(__dirname,"../..")
 const read=(name:string)=>fs.readFileSync(path.join(root,name),"utf8")
 const build=require(path.join(root,"scripts/build-desktop-windows.mjs"))
 
+function requireBootstrapObservation480(text:string){
+ assert.match(text,/HANDLE input=bootstrap\.pipe;D480Acceptance::InheritanceScope identityScope;D480Acceptance::preConsume\(input\);/)
+ assert.equal(text.split("HANDLE input=bootstrap.pipe;D480Acceptance::InheritanceScope identityScope;D480Acceptance::preConsume(input);").length,2)
+ assert.match(text,/CloseHandle\(input\);D480Acceptance::inputClosed\(input\);bootstrap\.pipe=nullptr;/)
+ const finish=text.indexOf("d480_client_finish(&bootstrap,parent)"),closed=text.indexOf("CloseHandle(input);D480Acceptance::inputClosed(input);"),parent=text.indexOf("d480_client_close(&bootstrap);D480Acceptance::parentCleared(parent);")
+ assert.ok(finish>=0&&closed>finish&&parent>closed)
+ assert.ok(text.indexOf("std::thread([parent]",parent)>parent)
+}
+
 test("Windows bootstrap adaptation observes actual close before any subsequent cleanup and keeps inverse bytes",()=>{
  const original=read("src/desktop/native/DesktopHost.cpp"),fixture=read("tests/fixtures/desktop-480/native-acceptance.cpp")
  const generated=build.desktopAcceptanceVariant("cpp",original,fixture)
@@ -16,12 +25,7 @@ test("Windows bootstrap adaptation observes actual close before any subsequent c
   const host=original.replace(/\r\n/g,"\n").replace(/\n/g,hostCRLF?"\r\n":"\n"),controller=fixture.replace(/\r\n/g,"\n").replace(/\n/g,fixtureCRLF?"\r\n":"\n")
   assert.equal(build.desktopAcceptanceVariant("cpp",host,controller).inverse,host)
  }
- const text=generated.source
- assert.match(text,/HANDLE input=bootstrap\.pipe;D480Acceptance::preConsume\(input\);/)
- assert.match(text,/CloseHandle\(input\);D480Acceptance::inputClosed\(input\);bootstrap\.pipe=nullptr;/)
- const finish=text.indexOf("d480_client_finish(&bootstrap,parent)"),closed=text.indexOf("CloseHandle(input);D480Acceptance::inputClosed(input);"),parent=text.indexOf("d480_client_close(&bootstrap);D480Acceptance::parentCleared(parent);")
- assert.ok(finish>=0&&closed>finish&&parent>closed)
- assert.ok(text.indexOf("std::thread([parent]",parent)>parent)
+ requireBootstrapObservation480(generated.source)
 })
 
 test("normal Windows compile plan links system RNG without shipping a test carrier",()=>{
@@ -90,4 +94,16 @@ test("fixed carrier URL controls reach child validation with numeric foreign and
  }
  const nativeTest=read("tests/desktop-native-windows-480.test.ts")
  assert.match(nativeTest,/for\(const variant of \[3,4,5\]\)/)
+})
+
+test("bootstrap acceptance observation refuses missing, duplicate and reordered lifetime hooks",()=>{
+ const original=read("src/desktop/native/DesktopHost.cpp"),fixture=read("tests/fixtures/desktop-480/native-acceptance.cpp")
+ const source=build.desktopAcceptanceVariant("cpp",original,fixture).source
+ const exact="HANDLE input=bootstrap.pipe;D480Acceptance::InheritanceScope identityScope;D480Acceptance::preConsume(input);"
+ assert.equal(source.split(exact).length,2)
+ for(const replacement of[
+  "HANDLE input=bootstrap.pipe;D480Acceptance::preConsume(input);",
+  exact+exact,
+  "HANDLE input=bootstrap.pipe;D480Acceptance::preConsume(input);D480Acceptance::InheritanceScope identityScope;",
+ ])assert.throws(()=>requireBootstrapObservation480(source.replace(exact,replacement)))
 })

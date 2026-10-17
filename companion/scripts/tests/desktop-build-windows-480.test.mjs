@@ -277,10 +277,11 @@ test('actual captureReference captures a live original with zero access and neve
 for(const fault of ['missingAPI','unknownSubject','duplicateFailure','inheritableRef','compareFailure','badIndex'])test(`actual captureReference ${fault} refuses without retaining a partial reference`,()=>{
   const value=referenceCapture(fault);assert.equal(value.result,false);assert.deepEqual(value.refs,[null,null,null]);assert.equal(value.closed,['inheritableRef','compareFailure'].includes(fault)?1:0)
 })
-test('actual closeReferences is idempotent and cleanup error cannot leave success checks true',()=>{
-  const start=identityFixture.indexOf('void D480Acceptance::closeReferences(){'),end=identityFixture.indexOf('\nD480Acceptance::CheckerResult',start)
-  const source=identityFixture.slice(start,end)
-  const body=source.slice(source.indexOf('{')+1,-1).replace('for(HANDLE& reference:identityRefs){','for(let i=0;i<identityRefs.length;i++){let reference=identityRefs[i];').replace('reference=nullptr;','reference=null;identityRefs[i]=reference;')
+for(const lineEnding of ['LF','CRLF'])test(`actual closeReferences is idempotent and cleanup error cannot leave success checks true (${lineEnding})`,()=>{
+  const fixture=identityFixture.replace(/\r\n/g,'\n').replace(/\n/g,lineEnding==='CRLF'?'\r\n':'\n')
+  const start=fixture.indexOf('void D480Acceptance::closeReferences(){'),end=fixture.indexOf('\nD480Acceptance::CheckerResult',start)
+  const source=fixture.slice(start,end)
+  const body=source.slice(source.indexOf('{')+1,source.lastIndexOf('}')).replace('for(HANDLE& reference:identityRefs){','for(let i=0;i<identityRefs.length;i++){let reference=identityRefs[i];').replace('reference=nullptr;','reference=null;identityRefs[i]=reference;')
   for(const fail of [false,true]){
     const identityRefs=[100,104,108];let calls=0
     const invoke=new Function('identityRefs','CloseHandle','let checkerPositive=true,descendantDenied=true;'+body+';return {checkerPositive,descendantDenied};')
