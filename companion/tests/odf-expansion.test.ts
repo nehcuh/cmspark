@@ -2,6 +2,8 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import path from "node:path"
+import fs from "node:fs"
+import os from "node:os"
 import AdmZip from "adm-zip"
 import { validateOdfExpansion } from "../src/odf-expansion"
 import { parseFile } from "../src/file-parser"
@@ -64,8 +66,8 @@ test("ODT and ODP repeat costs include empty rows, nested tables and text:s", ()
 })
 
 test("empty spans and paragraph newlines materialize repeated ODS rows", () => {
-  refused(table(row("<table:table-cell><text:p><text:span/></text:p></table:table-cell>", "100000")))
-  refused(table(row("<table:table-cell><text:p/><text:p/></table:table-cell>", "100000")))
+  assert.throws(() => validateOdfExpansion(zip(xml(table(row("<table:table-cell><text:p><text:span/></text:p></table:table-cell>", "100000")))), "ods"), /展开节点|展开文本/)
+  assert.throws(() => validateOdfExpansion(zip(xml(table(row("<table:table-cell><text:p/><text:p/></table:table-cell>", "100000")))), "ods"), /展开节点|展开文本/)
 })
 
 test("all repetition attributes require positive safe integers after entity decoding", () => {
@@ -151,8 +153,8 @@ test("real ODS producer materializes paragraph newlines but not bare frames; fra
   assert.equal(frameAst.toText(), "")
   assert.deepEqual(frameAst.content[0]?.children, [])
   assert.deepEqual(frameAst.attachments, [])
-  refused(table(row('<table:table-cell><draw:frame/></table:table-cell>', "100000")))
-  refused(table(row('<table:table-cell><text:p/><text:p/></table:table-cell>', "100000")))
+  assert.throws(() => validateOdfExpansion(zip(xml(table(row('<table:table-cell><draw:frame/></table:table-cell>', "100000")))), "ods"), /展开节点|展开文本/)
+  assert.throws(() => validateOdfExpansion(zip(xml(table(row('<table:table-cell><text:p/><text:p/></table:table-cell>', "100000")))), "ods"), /展开节点|展开文本/)
 })
 
 test("synthetic two-sheet column boundary is measured in a bounded real-parser child", t => {
@@ -272,4 +274,59 @@ test("chart namespaces preserve ordinary ODS blank tails; mixed OOXML chart cach
   archive.updateFile("Object 1/content.xml", invalid)
   // Strict DOM may reject replacement characters before the chart admission step.
   assert.throws(() => validateOdfExpansion(archive.toBuffer(), "ods"), /XML 损坏|图表展开文本/)
+})
+
+// The pinned SAX-to-DOM adapter must preserve the parser's namespace/entity
+// behavior and the shared ODS budget, rather than imposing it on ODT/ODP.
+test("ODS preallocation preserves namespace aliases, attribute replacement and other ODF row semantics", () => {
+  const alias = (first: string, last: string) => `<table:table-cell xmlns:t="${TABLE}" table:number-columns-repeated="${first}" t:number-columns-repeated="${last}"/>`
+  validateOdfExpansion(zip(xml(table(row(alias("60000", "1"))))), "ods")
+  refused(table(row(alias("1", "60000"))))
+  const renamed = (columns: string) => xml(table(row(`<table:table-cell table:number-columns-repeated="${columns}"/>`)))
+    .replaceAll("<table:", "<t:").replaceAll("</table:", "</t:")
+    .replaceAll(" table:", " t:").replace("xmlns:table=", "xmlns:t=")
+  assert.ok(renamed("50000").includes(`xmlns:t="${TABLE}"`), "alias retains the exact TABLE namespace URI")
+  validateOdfExpansion(zip(renamed("50000")), "ods")
+  assert.throws(() => validateOdfExpansion(zip(renamed("50001")), "ods"), /列循环/)
+  refused(table(row(cell("&#x35;0001"))))
+  validateOdfExpansion(zip(xml(table(row('<table:covered-table-cell table:number-columns-repeated="60000"/>')))), "ods")
+  const wrapped = '<wrapper xmlns="urn:owned"><table:table-cell table:number-columns-repeated="30000"/></wrapper>'
+  for (const kind of ["odt", "odp"]) validateOdfExpansion(zip(xml(table(row(wrapped) + row(wrapped)), kind), kind), kind)
+})
+
+test("ODS preallocation counts all selected XML entries under the same column budget", () => {
+  const body = xml(table(row(cell("25000", ""))))
+  validateOdfExpansion(zip(body, "ods", { "styles.xml": body }), "ods")
+  assert.throws(() => validateOdfExpansion(zip(body, "ods", { "styles.xml": xml(table(row(cell("25001", "")))) }), "ods"), /列循环/)
+  const unqualified = '<table:table-cell number-columns-repeated="60000"/>'
+  validateOdfExpansion(zip(xml(table(row(unqualified)))), "ods")
+})
+
+
+test("ODS oversized columns refuse before retaining an otherwise large DOM in a bounded child", () => {
+  const content = xml(table(row(cell("50001") + cell("1").repeat(60000))))
+  const archive = new AdmZip(undefined, { noSort: true })
+  archive.addFile("mimetype", Buffer.from(mime("ods")))
+  archive.addFile("content.xml", Buffer.from(content))
+  // Store fresh entry data before any compression. Merely changing the method
+  // of an already deflated entry would create a corrupt CRC fixture.
+  for (const entry of archive.getEntries()) entry.header.method = 0
+  const bytes = archive.toBuffer()
+  assert.equal(new AdmZip(bytes).getEntry("content.xml")!.getData().toString(), content)
+  assert.ok(bytes.length < 8 * 1024 * 1024)
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "odf-admission-615-"))
+  const fixture = path.join(dir, "owned.ods"), parser = path.join(__dirname, "../src/file-parser.js")
+  fs.writeFileSync(fixture, bytes)
+  try {
+    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, LANG: "C.UTF-8", TMPDIR: dir, TMP: dir, TEMP: dir, CMSPARK_DATA_DIR: dir }
+    if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot
+    const child = spawnSync(process.execPath, ["--max-old-space-size=128", "-e", `
+      require(${JSON.stringify(parser)}).parseFile(require('node:fs').readFileSync(process.argv[1]), 'owned.ods', ${JSON.stringify(mime("ods"))}).then(result => {
+        if (result.success || !/ODF 文档展开.*列循环/.test(result.error || '')) process.exitCode = 1;
+        console.log(JSON.stringify({refused: result.success === false, columns: /列循环/.test(result.error || '')}));
+      });`, fixture], { env, encoding: "utf8", timeout: 6000, killSignal: "SIGKILL", maxBuffer: 16 * 1024 })
+    assert.equal(child.error, undefined, String(child.error))
+    assert.equal(child.status, 0, child.stderr + child.stdout)
+    assert.match(child.stdout, /"refused":true,"columns":true/)
+  } finally { fs.rmSync(dir, { recursive: true, force: true }) }
 })

@@ -205,14 +205,43 @@ function checkObjectReferences(document: Node, references: ObjectReferences): vo
   }
 }
 
-function xmlCost(xml: string, kind: string, xmlNodes: { count: number }, references: ObjectReferences, entryName: string, originalHead: string): Cost {
+function xmlCost(xml: string, kind: string, xmlNodes: { count: number }, references: ObjectReferences, entryName: string, originalHead: string, rawColumns: { count: number }): Cost {
   const sanitized = xml.charCodeAt(0) === 0xFEFF ? xml.slice(1) : xml.trim()
+  interface Attributes {
+    length: number
+    getURI(index: number): string | null
+    getLocalName(index: number): string
+    getValue(index: number): string
+  }
+  interface Builder { startElement(namespace: string, local: string, qualified: string, attributes: Attributes): void }
+  let earlyFailure: unknown
   let document: import("@xmldom/xmldom").Document
   try {
+    // The pinned xmldom builder hook charges the existing ODS column budget
+    // before allocating each cell. Other ODF kinds keep their row semantics.
+    const Base = (new DOMParser() as unknown as { domHandler: new (options: unknown) => Builder }).domHandler
+    class ColumnBoundedBuilder extends Base {
+      startElement(namespace: string, local: string, qualified: string, attributes: Attributes): void {
+        if (kind === "ods" && namespace === TABLE_NS && local === "table-cell") {
+          let value: string | null = null
+          for (let i = 0; i < attributes.length; i++) {
+            if (attributes.getURI(i) === TABLE_NS && attributes.getLocalName(i) === "number-columns-repeated") value = attributes.getValue(i)
+          }
+          try {
+            if (value !== null && !/^[0-9]+$/.test(value)) refuse("非法重复次数 number-columns-repeated")
+            const count = value === null ? 1 : Number(value)
+            if (!Number.isSafeInteger(count) || count <= 0) refuse("非法重复次数 number-columns-repeated")
+            rawColumns.count = bounded(rawColumns.count + count, MAX_COLUMNS, "列循环")
+          } catch (error) { earlyFailure = error; throw error }
+        }
+        super.startElement(namespace, local, qualified, attributes)
+      }
+    }
     // Warnings remain refusals; xmldom may wrap a thrown onError in an English
     // fatalError. Normalize only DOM construction, not later budget/conversion errors.
-    document = new DOMParser({ onError: () => refuse("XML 损坏") }).parseFromString(sanitized, "application/xml")
+    document = new DOMParser({ domHandler: ColumnBoundedBuilder, onError: () => refuse("XML 损坏") }).parseFromString(sanitized, "application/xml")
   } catch {
+    if (earlyFailure) throw earlyFailure
     refuse("XML 损坏")
   }
   const ordered: Node[] = []
@@ -302,6 +331,7 @@ export function validateOdfExpansion(buffer: Buffer, extension: string): void {
   let xmlBytes = 0
   let total = zero()
   const xmlNodes = { count: 0 }
+  const rawColumns = { count: 0 }
   const references: ObjectReferences = { paths: zip.getEntries().filter(entry => !entry.isDirectory && entry.entryName.includes("content.xml")).map(entry => entry.entryName), seen: new Set() }
   for (const entry of zip.getEntries()) {
     // Upstream selects content.xml by substring (including embedded Object documents).
@@ -309,6 +339,6 @@ export function validateOdfExpansion(buffer: Buffer, extension: string): void {
     xmlBytes = bounded(xmlBytes + entry.header.size, MAX_XML_BYTES, "XML 内容大小")
     const data = entry.getData()
     if (data.length !== entry.header.size) refuse("XML 大小不一致")
-    total = add(total, xmlCost(data.toString("utf8"), extension, xmlNodes, references, entry.entryName, data.subarray(0, 500).toString("utf8")))
+    total = add(total, xmlCost(data.toString("utf8"), extension, xmlNodes, references, entry.entryName, data.subarray(0, 500).toString("utf8"), rawColumns))
   }
 }
