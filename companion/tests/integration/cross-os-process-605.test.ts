@@ -24,6 +24,17 @@ async function until(check: () => boolean, budget = 8000, details?: () => string
 // Test-only finite observations. Never emit the launcher command, error message,
 // output bytes, paths or environment; never consume the child's error event.
 function observeHostileJobStartup() {
+  const stderrWords = ["ncrypto::CSPRNG", "uv_thread_create", "node::InitializeOncePerProcessInternal"] as const
+  const stderrFixed = new Set<string>()
+  const stderrTailBound = Math.max(...stderrWords.map(word => word.length)) - 1
+  let stderrTail = ""
+  const observeStderr = (chunk: unknown) => safe(() => {
+    // ASCII literals only. Keep at most the longest literal-minus-one for
+    // split chunks; never emit stderr, paths, environment or an exception.
+    const text = stderrTail + (Buffer.isBuffer(chunk) ? chunk.toString("latin1") : typeof chunk === "string" ? chunk : "")
+    for (const word of stderrWords) if (text.includes(word)) stderrFixed.add(word)
+    stderrTail = text.slice(-stderrTailBound)
+  })
   const facts = {
     spawn_observed: false, error_observed: false, exit_observed: false, close_observed: false,
     error_code: null as string | null,
@@ -57,10 +68,10 @@ function observeHostileJobStartup() {
         facts.close_observed = true; facts.close_code = status(code); facts.close_signal = signal(endedSignal)
       })))
       safe(() => child.stdout?.on("data", (chunk: unknown) => count("stdout_bytes", chunk)))
-      safe(() => child.stderr?.on("data", (chunk: unknown) => count("stderr_bytes", chunk)))
+      safe(() => child.stderr?.on("data", (chunk: unknown) => { count("stderr_bytes", chunk); observeStderr(chunk) }))
     },
     emit(t: Pick<TestContext, "diagnostic">) {
-      safe(() => t.diagnostic(JSON.stringify({ schema: "owned-hostile-job-startup-v1", ...facts })))
+      safe(() => t.diagnostic(JSON.stringify({ schema: "owned-hostile-job-startup-v2", ...facts, stderr_fixed_words: [...stderrFixed].sort() })))
     },
   }
 }
@@ -411,10 +422,10 @@ test("hostile launcher observation keeps only finite fields and does not consume
   child.emit("exit", -2147483648, attack); child.emit("close", 4294967295, "SIGTERM")
   observation.emit({ diagnostic: value => { records.push(value) } })
   const actual = JSON.parse(records[0])
-  assert.deepEqual(actual, { schema: "owned-hostile-job-startup-v1", spawn_observed: true,
+  assert.deepEqual(actual, { schema: "owned-hostile-job-startup-v2", spawn_observed: true,
     error_observed: true, exit_observed: true, close_observed: true, error_code: "OTHER",
     exit_code: -2147483648, exit_signal: "OTHER", close_code: 4294967295, close_signal: "SIGTERM",
-    stdout_bytes: 3, stderr_bytes: 2 })
+    stdout_bytes: 3, stderr_bytes: 2, stderr_fixed_words: [] })
   assert.equal(records[0].includes(attack), false)
   assert.equal(child.listenerCount("error"), 0)
 })
@@ -436,4 +447,24 @@ test("hostile launcher observation distinguishes exited and pending and contains
   observation.attach(child as unknown as ChildProcess); child.emit("exit", 4294967296, "UNKNOWN_SIGNAL")
   let text = ""; observation.emit({ diagnostic: value => { text = value } })
   assert.equal(JSON.parse(text).exit_code, null); assert.equal(JSON.parse(text).exit_signal, "OTHER")
+})
+
+
+test("hostile target fatal observation is bounded closed words across stderr chunks", () => {
+  const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() })
+  const observation = observeHostileJobStartup(); observation.attach(child as unknown as ChildProcess)
+  const words = ["ncrypto::CSPRNG", "uv_thread_create", "node::InitializeOncePerProcessInternal"]
+  for (const word of words) {
+    for (let offset = 1; offset < word.length; offset++) {
+      child.stderr.emit("data", Buffer.from("OWNED_PRIVATE_SENTINEL/" + word.slice(0, offset)))
+      child.stderr.emit("data", Buffer.from(word.slice(offset) + "/OWNED_PRIVATE_SENTINEL"))
+    }
+  }
+  let record = ""; observation.emit({ diagnostic: value => { record = value } })
+  const actual = JSON.parse(record)
+  assert.equal(actual.schema, "owned-hostile-job-startup-v2")
+  assert.deepEqual(actual.stderr_fixed_words, [...words].sort())
+  assert.equal(record.includes("OWNED_PRIVATE_SENTINEL"), false)
+  assert.equal(record.includes("/"), false)
+  assert.equal(child.listenerCount("error"), 0)
 })

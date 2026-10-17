@@ -26,7 +26,7 @@ function body(source, signature) {
 }
 function translate(text) {
   return text.replace(/D476Acceptance::emit/g, 'emit').replace(/L"/g, '"')
-    .replace(/const wchar_t\* id/g, 'const id').replace(/&h\b/g, 'h').replace(/&info\b/g, 'info').replace(/h\.controller->/g, 'h.controller.')
+    .replace(/const wchar_t\* id/g, 'const id').replace(/const BOOL foregroundAccepted/g, 'const foregroundAccepted').replace(/&h\b/g, 'h').replace(/&info\b/g, 'info').replace(/h\.controller->/g, 'h.controller.')
     .replace('GUITHREADINFO info{};info.cbSize=sizeof(info);', 'const info={cbSize:1};')
     .replace('const LPARAM scan=(LPARAM)(MapVirtualKeyW(code,MAPVK_VK_TO_VSC)&0xffu)<<16;', 'const scan=(MapVirtualKeyW(code,MAPVK_VK_TO_VSC)&0xff)<<16;')
     .replace(/\(LPARAM\)1/g, '1')
@@ -38,7 +38,8 @@ assert.ok(key && failure)
 test('the entire native action closure is byte-identical after removing only closed failure labels', () => {
   const combined = 'if(FAILED(h.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC))||GetForegroundWindow()!=h.window){keyFailure(h,2);return;}'
   const split = /if\(FAILED\(h\.controller->MoveFocus\(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC\)\)\)\{keyFailure\(h,2\);return;\}\r?\n if\(GetForegroundWindow\(\)!=h\.window\)\{keyFailure\(h,5\);return;\}/
-  const restored = key.replace(split, combined).replace(/keyFailure\(h,[1-4]\)/g, 'failure(h)')
+  const originalLabels = key.replace('const BOOL foregroundAccepted=SetForegroundWindow(h.window);', 'SetForegroundWindow(h.window);').replace('keyFailure(h,foregroundAccepted?5:6)', 'keyFailure(h,5)')
+  const restored = originalLabels.replace(split, combined).replace(/keyFailure\(h,[1-4]\)/g, 'failure(h)')
   // Exact complete original LF or Git's pure-CRLF checkout; never normalize
   // the executed file or silently accept mixed/different action bodies.
   assert.ok(['0414e39c06bbeb727081fc02eb1be1332b0b436d23840ea98745ada0866a7287',
@@ -55,7 +56,7 @@ function run(changes = {}, code = 27) {
   Object.assign(h, changes.host || {})
   const context = { h, code, owner: changes.foreignOwner ? {} : h, loss: changes.loss || false, document: 'owned-document',
     emit: (_, id) => ids.push(id), IsWindowVisible: () => { calls.push('IsWindowVisible'); return !changes.invisible },
-    SetForegroundWindow: () => { calls.push('SetForegroundWindow'); return false }, FAILED: n => n < 0,
+    SetForegroundWindow: () => { calls.push('SetForegroundWindow'); return !changes.requestDenied }, FAILED: n => n < 0,
     COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC: 0, GetForegroundWindow: () => { calls.push('GetForegroundWindow'); return changes.foreignForeground ? 99 : 10 },
     GetGUIThreadInfo: (_, info) => { calls.push('GetGUIThreadInfo'); info.hwndFocus = changes.noFocus ? 0 : 11; return !changes.guiFailure },
     GetAncestor: () => { calls.push('GetAncestor'); return changes.foreignAncestor ? 99 : 10 }, GA_ROOT: 2,
@@ -69,7 +70,7 @@ const cases = [
   ['foreign owner', { foreignOwner: true }, 7], ['lost connection', { loss: true }, 7],
   ['not ready', { host: { ready: false } }, 7], ['old document', { host: { generation: 'old' } }, 7],
   ['no controller', { host: { controller: null } }, 7], ['no window', { host: { window: 0 } }, 7], ['invisible', { invisible: true }, 7],
-  ['MoveFocus rejected', { moveFailure: true }, 8], ['foreign foreground', { foreignForeground: true }, 11],
+  ['MoveFocus rejected', { moveFailure: true }, 8], ['foreign foreground', { foreignForeground: true }, 11], ['foreground request denied', { foreignForeground: true, requestDenied: true }, 12],
   ['GUI thread rejected', { guiFailure: true }, 9], ['no focused HWND', { noFocus: true }, 9], ['foreign focused root', { foreignAncestor: true }, 9],
   ['keydown rejected', { downFailure: true }, 10], ['keyup rejected', { upFailure: true }, 10],
 ]
@@ -96,4 +97,10 @@ test('existing metadata failure codes and unknown-prefix handling remain unchang
   }
   const ignored = collect('OTHER_PRIVATE_SENTINEL')
   assert.equal(ignored.failed, false); assert.equal(ignored.completed, 0)
+})
+
+test('a refused activation call never replaces actual owned foreground/ancestry checks', () => {
+  const result = run({ requestDenied: true })
+  assert.deepEqual(result.ids, [])
+  assert.deepEqual(result.calls, ['IsWindowVisible', 'SetForegroundWindow', 'MoveFocus', 'GetForegroundWindow', 'GetGUIThreadInfo', 'GetAncestor', 'MapVirtualKeyW', 'PostKeyDown', 'PostKeyUp'])
 })
