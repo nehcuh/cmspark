@@ -2,7 +2,7 @@
 
 GitHub: #70 — https://github.com/nehcuh/cmspark/issues/70
 
-状态：root 已全文审定有限合同并于 2026-10-17 授权实施；真实证书值待 hostedWindows 采集，不代表整个 #70 完成。
+状态：root 已全文审定有限合同并于 2026-10-17 授权实施；真实证书值已按官方 run39007342328 两个固定样本采集并由 root 采纳，不代表整个 #70 完成。
 
 ## 目标与边界
 
@@ -25,7 +25,7 @@ GitHub: #70 — https://github.com/nehcuh/cmspark/issues/70
 
 `expectedCertificateSHA256DER` 的“expected”只针对这份受审固定发行版参考/采样见证；不表示已对用户机器进行运行时比较。UI 使用“发行版叶证书 SHA-256（DER）”标签，旁列版本/采样时间与“本机当前文件未核对”。Subject 标为采样 Subject，不能作为匹配依据。换证/新版本只通过后续人工审定 bundled 数据更新，不在线自动学习证书、不回写用户授权。
 
-准备材料中的真实证书与 Subject 目前均为 UNKNOWN/null。不得用 `CN=Microsoft`、`CN=Notepad++` 或现有测试 mock 填充。不把公开 package/EXE SHA 当证书值。功能可有未知态文案，但本批对原“含签名指纹”子范围的完成声明，必须等两个固定官方样本的真实 hostedWindows 只读采样和回执采纳；缺数据是内部采集余项，不是永久外部阻断。
+初始准备阶段真实证书与 Subject 为 UNKNOWN/null；后续有限数据见 `docs/evidence/app-gallery-reference-70/hosted-windows-reference.json`，只采纳真实 hostedWindows 原始见证。不得用 `CN=Microsoft`、`CN=Notepad++` 或现有测试 mock 填充。不把公开 package/EXE SHA 当证书值。功能可有未知态文案，但本批对原“含签名指纹”子范围的完成声明，必须等两个固定官方样本的真实 hostedWindows 只读采样和回执采纳；缺数据是内部采集余项，不是永久外部阻断。
 
 ## 既有行为保持
 

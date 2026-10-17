@@ -5,17 +5,27 @@ import { materializePresets, PRESET_APPS } from "../src/apps/presets"
 import type { AppEntry } from "../src/apps/types"
 import * as fs from "node:fs"
 import * as path from "node:path"
+const witness = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../docs/evidence/app-gallery-reference-70/hosted-windows-reference.json"), "utf8"))
+const sampleFor = (token: string): any => witness.samples.find((s: any) => s.token === token)
 
-test("#70 actual producer expands the finite gallery with honest unknown certificate references", async () => {
+test("#70 actual producer expands the finite gallery with recorded fixed-release certificate references", async () => {
   const result = await materializePresets({}, { exists: () => false, signerProbe: async () => { throw Error("undetected must not probe") } })
   assert.deepEqual(PRESET_APPS.map(p => p.token), ["win.app.cloudmusic", "win.app.notepadpp", "win.app.vscode"])
   assert.deepEqual(result.entries, {}); assert.deepEqual(result.added, [])
   for (const token of ["win.app.notepadpp", "win.app.vscode"]) {
     const status: any = result.presets.find(p => p.token === token)
     assert.equal(status.detected, false); assert.equal(status.persisted, false)
-    assert.equal(status.reference.expectedCertificateSHA256DER, null)
-    assert.equal(status.reference.observedSubject, null)
-    assert.equal(status.reference.collectedAtUTC, null)
+    const sample = sampleFor(token)
+    const native = JSON.parse(sample.nativeStdout)
+    for (const key of Object.keys(native)) assert.deepEqual(native[key], sample[key], `native witness ${key}`)
+    assert.equal(sample.signatureStatus, "Valid"); assert.equal(sample.machine, "x64")
+    assert.match(sample.psVersion, /^5\.1\./)
+    assert.equal(status.reference.packageSHA256, sample.packageSHA256)
+    assert.equal(status.reference.referenceEXESHA256, sample.exeSHA256)
+    assert.equal(status.reference.expectedCertificateSHA256DER, sample.certificateSHA256DER)
+    assert.equal(status.reference.observedSubject, sample.subject)
+    assert.equal(status.reference.observedSignatureStatus, sample.signatureStatus)
+    assert.equal(status.reference.collectedAtUTC, sample.collectedAtUTC)
     assert.match(status.reference.artifactURL, /^https:\/\//)
     assert.match(status.reference.packageSHA256, /^[a-f0-9]{64}$/)
     assert.match(status.reference.advice, /手动/)
@@ -36,7 +46,9 @@ test("#70 real materialization stays manual and never turns captured Subject int
   assert.equal(entry.exe?.signer, "SYNTHETIC_SUBJECT_SEAM")
   assert.equal(Object.hasOwn(entry, "reference"), false)
   const reference = (result.presets.find(p => p.token === entry.token) as any).reference
-  assert.equal(reference.expectedCertificateSHA256DER, null); assert.equal(reference.observedSubject, null)
+  assert.equal(reference.expectedCertificateSHA256DER, sampleFor(entry.token).certificateSHA256DER)
+  assert.equal(reference.observedSubject, sampleFor(entry.token).subject)
+  assert.notEqual(reference.observedSubject, entry.exe?.signer)
 })
 
 test("#70 persisted owner choices and siblings survive without another signer probe", async () => {
@@ -49,7 +61,7 @@ test("#70 persisted owner choices and siblings survive without another signer pr
   assert.deepEqual(result.added, [])
   const status: any = result.presets.find(p => p.token === app.token)
   assert.equal(status.detected, true); assert.equal(status.persisted, true)
-  assert.equal(status.reference.expectedCertificateSHA256DER, null)
+  assert.equal(status.reference.expectedCertificateSHA256DER, sampleFor(app.token).certificateSHA256DER)
 })
 
 test("#70 actual apps.list exit transports reference metadata without persisting it", async () => {
@@ -63,7 +75,7 @@ test("#70 actual apps.list exit transports reference metadata without persisting
     signerProbe: async () => { throw Error("undetected must not probe") },
   })
   assert.equal(payload.type, "apps.list"); assert.equal(payload.presets.length, 3)
-  assert.equal(payload.presets[1].reference.expectedCertificateSHA256DER, null)
+  assert.equal(payload.presets[1].reference.expectedCertificateSHA256DER, sampleFor("win.app.notepadpp").certificateSHA256DER)
   assert.deepEqual(getConfig().apps?.entries, {})
   assert.equal(Object.hasOwn(payload, "reference"), false)
   // Explicit one-off recorder: the checked-in UI fixture is this exact real exit,

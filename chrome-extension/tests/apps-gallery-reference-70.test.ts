@@ -1,5 +1,5 @@
 // Fixture recorded from actual handleAppsMessage(apps.list) with no detected files.
-// Certificate evidence remains unknown; no fabricated positive signature receipt.
+// Bundled fixed-release metadata comes from the recorded hosted Windows sampler; installed files remain unknown.
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -15,12 +15,16 @@ function render(presets = fixture.presets) {
   store.useAgentStore = () => ({ state: { ...store.initialState, appEntries: fixture.entries, appPresets: presets, appsPlatform: fixture.platform }, dispatch: () => { throw Error("SSR is readonly") } })
   try { return renderToStaticMarkup(React.createElement(AppsPanel)) } finally { store.useAgentStore = old }
 }
-test("#70 actual apps.list payload renders finite release references and honest unknown state", () => {
+test("#70 actual apps.list payload renders recorded release references without an installed-file verdict", () => {
   const html = render()
   for (const name of ["网易云音乐", "Notepad++", "Visual Studio Code Stable"]) assert.ok(html.includes(name))
   assert.equal((html.match(/指定发行版证书参考/g) || []).length, 2)
   assert.equal((html.match(/本机当前文件未核对/g) || []).length, 2)
-  assert.ok(html.includes("发行版叶证书 SHA-256（DER）：尚未采集"))
+  for (const p of fixture.presets.slice(1)) {
+    assert.ok(html.includes(p.reference.expectedCertificateSHA256DER))
+    assert.ok(html.includes(p.reference.collectedAtUTC))
+  }
+  assert.equal((html.match(/采样签名状态：Valid/g) || []).length, 2)
   assert.ok(html.includes("%ProgramFiles%")); assert.ok(html.includes("手动策略"))
   assert.equal(html.includes("签名匹配"), false); assert.equal(html.includes("已验证本机"), false)
 })
