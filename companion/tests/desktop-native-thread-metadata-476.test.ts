@@ -37,7 +37,7 @@ test("#476 actual native grouped thread metadata UI persists all fields in the c
     ws.on("message",raw=>{
       let f:any;try{f=JSON.parse(String(raw))}catch{return}
       if(!authenticated||f.type!=="system.ping")return
-      if(typeof f.id==="string"&&f.id.startsWith("D476_FAIL_")){failureCode=(["D476_FAIL_SCRIPT","D476_FAIL_METADATA_PHASE","D476_FAIL_NATIVE_WINDOW","D476_FAIL_DEFAULT_SECRET","D476_FAIL_FULL_VIEW","D476_FAIL_BUTTON"]as string[]).indexOf(f.id)+1;failed=true;complete()}
+      if(typeof f.id==="string"&&f.id.startsWith("D476_FAIL_")){failureCode=(["D476_FAIL_SCRIPT","D476_FAIL_METADATA_PHASE","D476_FAIL_NATIVE_WINDOW","D476_FAIL_DEFAULT_SECRET","D476_FAIL_FULL_VIEW","D476_FAIL_BUTTON","D476_FAIL_META_KEY_STATE","D476_FAIL_META_KEY_FOCUS","D476_FAIL_META_KEY_ANCESTRY","D476_FAIL_META_KEY_POST"]as string[]).indexOf(f.id)+1;failed=true;complete()}
       if(required.includes(f.id)){if(receipts.has(f.id)){failed=true;complete()}receipts.add(f.id)}
     })
   })

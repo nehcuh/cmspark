@@ -187,7 +187,7 @@ jobs:
           if-no-files-found: error
 
       - name: Desktop build helper controls (#480)
-        run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs
+        run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs scripts/tests/metadata-key-phase-650.test.mjs
 
       - name: Actual native desktop build and isolated connection (#480)
         if: matrix.os != 'ubuntu-latest'
