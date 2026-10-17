@@ -14,7 +14,11 @@ if ([IO.Path]::GetFileName($OutputPath) -cne $EntryName -or [IO.Path]::GetDirect
 # before bounded native signature sampling; no profile/import warm-up or retry.
 $phaseClock = [Diagnostics.Stopwatch]::StartNew()
 [Console]::Error.WriteLine('GALLERY70_PHASE=ENTERED:' + $phaseClock.ElapsedMilliseconds)
-Microsoft.PowerShell.Utility\Add-Type -AssemblyName System.IO.Compression
+# Resolve one fixed framework assembly by its complete identity, without a
+# PowerShell cmdlet/module-discovery round trip or an assembly path override.
+$compressionIdentity = 'System.IO.Compression, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'
+$compressionAssembly = [Reflection.Assembly]::Load($compressionIdentity)
+if ($compressionAssembly.FullName -cne $compressionIdentity -or -not [object]::ReferenceEquals($compressionAssembly.GetType('System.IO.Compression.ZipArchive', $true).Assembly, $compressionAssembly)) { throw 'COMPRESSION_ASSEMBLY_REJECTED' }
 [Console]::Error.WriteLine('GALLERY70_PHASE=ASSEMBLY_READY:' + $phaseClock.ElapsedMilliseconds)
 $archive = $zip = $entryStream = $output = $held = $reader = $hash = $null
 try {

@@ -36,7 +36,9 @@ const failure = body(native, 'void D476MetadataAcceptance::failure(')
 const keyFailure = body(native, 'void D476MetadataAcceptance::keyFailure(')
 assert.ok(key && failure)
 test('the entire native action closure is byte-identical after removing only closed failure labels', () => {
-  const restored = key.replace(/keyFailure\(h,[1-4]\)/g, 'failure(h)')
+  const combined = 'if(FAILED(h.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC))||GetForegroundWindow()!=h.window){keyFailure(h,2);return;}'
+  const split = /if\(FAILED\(h\.controller->MoveFocus\(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC\)\)\)\{keyFailure\(h,2\);return;\}\r?\n if\(GetForegroundWindow\(\)!=h\.window\)\{keyFailure\(h,5\);return;\}/
+  const restored = key.replace(split, combined).replace(/keyFailure\(h,[1-4]\)/g, 'failure(h)')
   // Exact complete original LF or Git's pure-CRLF checkout; never normalize
   // the executed file or silently accept mixed/different action bodies.
   assert.ok(['0414e39c06bbeb727081fc02eb1be1332b0b436d23840ea98745ada0866a7287',
@@ -67,7 +69,7 @@ const cases = [
   ['foreign owner', { foreignOwner: true }, 7], ['lost connection', { loss: true }, 7],
   ['not ready', { host: { ready: false } }, 7], ['old document', { host: { generation: 'old' } }, 7],
   ['no controller', { host: { controller: null } }, 7], ['no window', { host: { window: 0 } }, 7], ['invisible', { invisible: true }, 7],
-  ['MoveFocus rejected', { moveFailure: true }, 8], ['foreign foreground', { foreignForeground: true }, 8],
+  ['MoveFocus rejected', { moveFailure: true }, 8], ['foreign foreground', { foreignForeground: true }, 11],
   ['GUI thread rejected', { guiFailure: true }, 9], ['no focused HWND', { noFocus: true }, 9], ['foreign focused root', { foreignAncestor: true }, 9],
   ['keydown rejected', { downFailure: true }, 10], ['keyup rejected', { upFailure: true }, 10],
 ]

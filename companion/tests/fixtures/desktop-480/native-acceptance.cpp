@@ -151,8 +151,17 @@ void D480Acceptance::attach(Desktop& h){
    LPWSTR body=nullptr;if(SUCCEEDED(message->get_WebMessageAsJson(&body))&&body){try{auto f=flat(body);if(phase==1&&text(f,L"id")==L"D480A_HIT_FRAME")PostMessageW(h.window,WM_APP+100,0,0);}catch(...){}CoTaskMemFree(body);}return S_OK;
   }).Get(),&messageToken);
   if(FAILED(listening)){emit(h,L"FAIL_ENGINE_API");return S_OK;}
-  std::wstring code=L"chrome.webview.postMessage({type:'mcp.list',id:'D480A_HIT_FRAME',generation:"+std::wstring(JsonValue::CreateStringValue(h.generation).Stringify())+L"});";
-  HRESULT executed=bridge->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT status,LPCWSTR)->HRESULT{if(FAILED(status))emit(h,L"FAIL_FRAME_NOT_OBSERVED");return S_OK;}).Get());if(FAILED(executed))emit(h,L"FAIL_FRAME_NOT_OBSERVED");return S_OK;
+  // Frame2 drops ExecuteScript before ContentLoading, even with S_OK/null.
+  // Register while the frame is created, then dispatch once in its ready document.
+  auto attempted=std::make_shared<bool>(false);const std::wstring frameGeneration=h.generation;
+  EventRegistrationToken loadedToken{};
+  HRESULT loading=bridge->add_DOMContentLoaded(Callback<ICoreWebView2FrameDOMContentLoadedEventHandler>([&h,attempted,frameGeneration](ICoreWebView2Frame* sender,ICoreWebView2DOMContentLoadedEventArgs*)->HRESULT{
+   if(phase!=1||*attempted||h.generation!=frameGeneration)return S_OK;*attempted=true;
+   ComPtr<ICoreWebView2Frame> currentFrame=sender;ComPtr<ICoreWebView2Frame2> current;
+   if(!sender||FAILED(currentFrame.As(&current))){emit(h,L"FAIL_FRAME_NOT_OBSERVED");return S_OK;}
+   std::wstring code=L"chrome.webview.postMessage({type:'mcp.list',id:'D480A_HIT_FRAME',generation:"+std::wstring(JsonValue::CreateStringValue(frameGeneration).Stringify())+L"});";
+   HRESULT executed=current->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT status,LPCWSTR)->HRESULT{if(FAILED(status))emit(h,L"FAIL_FRAME_NOT_OBSERVED");return S_OK;}).Get());if(FAILED(executed))emit(h,L"FAIL_FRAME_NOT_OBSERVED");return S_OK;
+  }).Get(),&loadedToken);if(FAILED(loading))emit(h,L"FAIL_ENGINE_API");return S_OK;
  }).Get(),&token);if(FAILED(result))emit(h,L"FAIL_ENGINE_API");
 #else
  (void)h;

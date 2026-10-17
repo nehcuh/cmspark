@@ -13,14 +13,15 @@ void D476MetadataAcceptance::failure(Desktop& h){D476Acceptance::emit(h,L"D476_F
 void D476MetadataAcceptance::keyFailure(Desktop& h,unsigned reason){
  // Failure-only replacement for the existing single failure frame: no new
  // successful-path I/O, action, wait, or acceptance relaxation.
- const wchar_t* id=reason==1?L"D476_FAIL_META_KEY_STATE":reason==2?L"D476_FAIL_META_KEY_FOCUS":reason==3?L"D476_FAIL_META_KEY_ANCESTRY":reason==4?L"D476_FAIL_META_KEY_POST":L"D476_FAIL_METADATA_PHASE";
+ const wchar_t* id=reason==1?L"D476_FAIL_META_KEY_STATE":reason==2?L"D476_FAIL_META_KEY_FOCUS":reason==3?L"D476_FAIL_META_KEY_ANCESTRY":reason==4?L"D476_FAIL_META_KEY_POST":reason==5?L"D476_FAIL_META_KEY_FOREGROUND":L"D476_FAIL_METADATA_PHASE";
  D476Acceptance::emit(h,id);
 }
 void D476MetadataAcceptance::arm(Desktop& h){if(owner){failure(h);return;}owner=&h;document=h.generation;}
 void D476MetadataAcceptance::key(Desktop& h,WORD code){
  if(owner!=&h||loss||!h.ready||h.generation!=document||!h.controller||!h.window||!IsWindowVisible(h.window)){keyFailure(h,1);return;}
  SetForegroundWindow(h.window);
- if(FAILED(h.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC))||GetForegroundWindow()!=h.window){keyFailure(h,2);return;}
+ if(FAILED(h.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC))){keyFailure(h,2);return;}
+ if(GetForegroundWindow()!=h.window){keyFailure(h,5);return;}
  GUITHREADINFO info{};info.cbSize=sizeof(info);if(!GetGUIThreadInfo(0,&info)||!info.hwndFocus||GetAncestor(info.hwndFocus,GA_ROOT)!=h.window){keyFailure(h,3);return;}
  const LPARAM scan=(LPARAM)(MapVirtualKeyW(code,MAPVK_VK_TO_VSC)&0xffu)<<16;
  // Target only the already verified owned WebView focus HWND, never the global
