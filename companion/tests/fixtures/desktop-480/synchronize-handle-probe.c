@@ -54,7 +54,7 @@ int wmain(int argc,wchar_t **argv) {
     if(*field<'1'||*field>'9')goto receiver_done;uint64_t number=0;
     while(*field>='0'&&*field<='9'){unsigned digit=(unsigned)(*field++-'0');if(number>(UINT64_MAX-digit)/10)goto receiver_done;number=number*10+digit;}
     if(strcmp(field,"\"}\n")||number>(uintptr_t)-1)goto receiver_done;parent=(HANDLE)(uintptr_t)number;
-    char expected[CMSPARK_BOOT_MAX+1];int length=snprintf(expected,sizeof(expected),"{\"capability_id\":\"11111111111111111111111111111111\",\"secret\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"url\":\"ws://127.0.0.1:1/desktop\",\"protocol_version\":1,\"issued_method_set_version\":2,\"parent_handle\":\"%llu\"}\n",(unsigned long long)number);
+    char expected[CMSPARK_BOOT_MAX+1];int length=snprintf(expected,sizeof(expected),"{\"capability_id\":\"11111111111111111111111111111111\",\"secret\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"url\":\"ws://127.0.0.1:1/desktop\",\"protocol_version\":1,\"issued_method_set_version\":3,\"parent_handle\":\"%llu\"}\n",(unsigned long long)number);
     if(length<=0||(DWORD)length!=count||memcmp(bytes,expected,count)||!d480_sync_parent(parent))goto receiver_done;
     int denied=GetEnvironmentVariableW(L"CMSPARK_DESKTOP_INERT_SECRET",NULL,0)||GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",NULL,0);
     int required=GetEnvironmentVariableW(L"SystemRoot",NULL,0)&&GetEnvironmentVariableW(L"PATH",NULL,0)&&GetEnvironmentVariableW(L"TEMP",NULL,0);
