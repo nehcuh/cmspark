@@ -110,11 +110,16 @@ export function resolveWinScript(name: string): string {
  * .stderr) otherwise.
  */
 export const runPs: PsRunner = async (script, args, opts) => {
+  // PS7 -> Node -> Windows PowerShell inherits PS7 module search paths. Let
+  // Windows PowerShell rebuild its own defaults; never mutate the parent env.
+  const env = { ...process.env }
+  for (const key of Object.keys(env)) if (key.toUpperCase() === "PSMODULEPATH") delete env[key]
   const result = await execFileAsync(
     resolvePowerShellExe(),
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, ...args],
     {
       encoding: "utf-8",
+      env,
       timeout: opts?.timeoutMs ?? PS_DEFAULT_TIMEOUT_MS,
       // Y6 (WP3): execFile's default maxBuffer is 1MB — a dense full-window
       // OCR JSON (4K, CJK per-char words) can exceed it, and truncation
