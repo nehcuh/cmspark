@@ -122,7 +122,7 @@ test("#686 actual manager and executor private receipt launch exact owned NPP pa
     assert.equal((await accepted.receipt.execute(accepted.finalParams)).success, false); assert.equal(launches, 1)
     t.diagnostic("NATIVE_TEMPLATE686 actual_target_sha=true software_manager_origin=true owned_parser_single_file=true argv5=true replay_launch0=true synthetic_approval_not_human=true")
   } finally {
-    if (owned && owned.exitCode === null && owned.signalCode === null) owned.kill()
+    if (owned && owned.exitCode === null && owned.signalCode === null) { owned.ref(); owned.kill() }
     if (closed) await closed
     replaceAppsEntries({})
     fs.rmSync(directory, { recursive: true, force: true })
