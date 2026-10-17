@@ -390,3 +390,48 @@ test('owned UNC actual fixed helper CLI creates and verifies filesystem metadata
   assert.equal(fs.readFileSync(path.join(raw, 'owned-smb-projected-cli-foreign.stderr'), 'utf8').trim(), 'CENSUS_OWNED_SMB_IDENTITY_INVALID')
   assert.ok(fs.existsSync(identity.path), 'metadata validation never removes either resource')
 })
+
+// One existing image runtime key, not a libuv required key or module search path.
+const runtimeCacheKey = 'PSModuleAnalysisCachePath'
+test('Windows runtime cache key preserves the exact synthetic string and leaves input unchanged', () => {
+  withEnvironmentPlatform('win32', () => {
+    const value = 'OWNED_cache_%TEMP%_$literal_中文', input = { pSmOdUlEaNaLySiScAcHePaTh: value, PATH: 'OWNED_PATH' }
+    const before = structuredClone(input), actual = childEnvironment(input, owned, raw)
+    assert.equal(actual[runtimeCacheKey], value)
+    assert.equal(actual.PATH, 'OWNED_PATH'); assert.deepEqual(input, before)
+    assert.equal(Object.keys(actual).filter(key => key.toLowerCase() === runtimeCacheKey.toLowerCase()).length, 1)
+    assert.equal('pSmOdUlEaNaLySiScAcHePaTh' in actual, false)
+  })
+})
+test('Windows runtime cache key neither invents missing values nor expands empty or nonstring values', () => {
+  withEnvironmentPlatform('win32', () => {
+    assert.equal(runtimeCacheKey in childEnvironment({}, owned, raw), false)
+    assert.equal(childEnvironment({ [runtimeCacheKey]: '' }, owned, raw)[runtimeCacheKey], '')
+    for (const value of [undefined, null, 0, false, {}, []]) assert.equal(runtimeCacheKey in childEnvironment({ [runtimeCacheKey]: value }, owned, raw), false)
+  })
+})
+test('Windows runtime cache key follows existing first-case-match rules without admitting neighboring keys', () => {
+  withEnvironmentPlatform('win32', () => {
+    const input = { psmoduleanalysiscachepath: 'OWNED_FIRST', PSModuleAnalysisCachePath: 'OWNED_SECOND',
+      PSModulePath: 'FORBIDDEN_SEARCH_PATH', PSModuleAnalysisCachePathExtra: 'FORBIDDEN_PREFIX',
+      PSDisableModuleAnalysisCacheCleanup: 'FORBIDDEN_OTHER_CACHE_OPTION', PRIVATE_CACHE_ENV: 'FORBIDDEN' }
+    const actual = childEnvironment(input, owned, raw)
+    assert.equal(actual[runtimeCacheKey], 'OWNED_FIRST')
+    assert.deepEqual(Object.keys(actual).sort(), [runtimeCacheKey, 'CI', 'GITHUB_ACTIONS', 'RUNNER_OS', 'RUNNER_TEMP', 'GITHUB_WORKSPACE', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL'].sort())
+  })
+})
+test('runtime cache key stays excluded from non-Windows child environments', () => {
+  for (const platform of ['darwin', 'linux']) withEnvironmentPlatform(platform, () => {
+    assert.equal(runtimeCacheKey in childEnvironment({ [runtimeCacheKey]: 'OWNED_WINDOWS_ONLY' }, owned, raw), false)
+  })
+})
+test('Windows runtime cache key survives the actual installer environment revalidation without an installation', async () => {
+  const f = installFixture()
+  await withEnvironmentPlatform('win32', () => {
+    const admitted = { ...f.clean, [runtimeCacheKey]: 'OWNED_NOT_A_REAL_CACHE_PATH' }
+    // Reaching the existing missing-CLI guard proves the real environment check
+    // accepted it. No npm/PowerShell/cache access or child launch is involved.
+    return assert.rejects(installLockedDependencies({ root: f.repo, env: admitted, npmCli: path.join(f.directory, 'owned-missing-npm-cli.cjs') }), { message: 'CENSUS_INSTALL_CLI_MISSING' })
+  })
+  assert.deepEqual(installEvents(f), [])
+})

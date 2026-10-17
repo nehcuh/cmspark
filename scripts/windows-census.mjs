@@ -17,9 +17,12 @@ const envKeys = ['PATH', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'TEMP', '
 // Admit the same finite OS names explicitly so the helper can validate its CLI
 // environment without accepting arbitrary inherited keys or logging values.
 const windowsRequiredEnvKeys = ['LOGONSERVER', 'SYSTEMDRIVE', 'USERDOMAIN', 'USERNAME']
+// Preserve the image's existing Windows runtime cache selection, not a module
+// search path or a libuv-required key. Missing/empty values keep their meaning.
+const windowsRuntimeEnvKeys = ['PSModuleAnalysisCachePath']
 export function childEnvironment(input, workspace, temp) {
   const env = {}
-  for (const key of process.platform === 'win32' ? [...envKeys, ...windowsRequiredEnvKeys] : envKeys) {
+  for (const key of process.platform === 'win32' ? [...envKeys, ...windowsRequiredEnvKeys, ...windowsRuntimeEnvKeys] : envKeys) {
     const actual = Object.keys(input).find(k => k.toLowerCase() === key.toLowerCase())
     if (actual && typeof input[actual] === 'string') env[key] = input[actual]
   }
