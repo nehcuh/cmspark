@@ -4,6 +4,12 @@ import path from 'node:path'
 import {createHash} from 'node:crypto'
 import {spawnSync} from 'node:child_process'
 export const WORKSPACE_UI705_ID='com.cmspark.tests.workspace-ui-705.xctrunner'
+// Only the unshipped .app variant uses Resources; the bare acceptance binary stays unchanged.
+export function workspaceUI705BundleSource(original){
+ const bare='executable.deletingLastPathComponent().appendingPathComponent("assets")',bundled='executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/assets")'
+ if(original.split(bare).length!==2||original.includes(bundled))throw Error('OWNED_UI_BUILD_ASSET_SOURCE')
+ const source=original.replace(bare,bundled);return {source,inverse:source.replace(bundled,bare)}
+}
 export function workspaceUI705Plan(root,dest){
  const fixture=path.join(root,'tests/fixtures/workspace-ui-705'),work=path.join(dest,'generated/workspace-ui-705')
  return {fixture,work,package:path.join(dest,'acceptance/workspace-ui'),commands:[
@@ -34,8 +40,12 @@ export function buildWorkspaceUI705(root,dest){
  copy(path.join(products,'Debug'),'Products/Debug',products);copy(path.join(products,descriptors[0]),'Products/OwnedPickerUI.xctestrun',products)
  const app=path.join(plan.package,'OwnedPicker705.app'),mac=path.join(app,'Contents/MacOS');fs.mkdirSync(mac,{recursive:true,mode:0o700})
  fs.copyFileSync(path.join(plan.fixture,'App-Info.plist'),path.join(app,'Contents/Info.plist'),fs.constants.COPYFILE_EXCL)
- fs.copyFileSync(path.join(dest,'acceptance/workspace/cmspark-desktop'),path.join(mac,'cmspark-desktop'),fs.constants.COPYFILE_EXCL)
- const assets=path.join(dest,'acceptance/workspace/assets');fs.cpSync(assets,path.join(mac,'assets'),{recursive:true,errorOnExist:true,force:false,dereference:false})
+ const original=fs.readFileSync(path.join(dest,'generated/acceptance-workspace/main.swift'),'utf8'),variant=workspaceUI705BundleSource(original)
+ if(variant.inverse!==original)throw Error('OWNED_UI_BUILD_ASSET_SOURCE')
+ const appGenerated=path.join(plan.work,'app');fs.mkdirSync(appGenerated,{mode:0o700});const main=path.join(appGenerated,'main.swift')
+ fs.writeFileSync(main,variant.source,{flag:'wx',mode:0o600})
+ run('/usr/bin/swiftc',['-O',main,path.join(dest,'generated/DesktopCapabilities.swift'),'-framework','AppKit','-framework','WebKit','-framework','CryptoKit','-o',path.join(mac,'cmspark-desktop')])
+ const assets=path.join(dest,'acceptance/workspace/assets');fs.cpSync(assets,path.join(app,'Contents/Resources/assets'),{recursive:true,errorOnExist:true,force:false,dereference:false})
  run('/usr/bin/codesign',['--force','--sign','-',app]);run('/usr/bin/codesign',['--verify','--deep','--strict',app])
  // Inventory the fixed newly created app without rewriting its signed bytes.
  function inventory(dir,rel){for(const n of fs.readdirSync(dir)){const file=path.join(dir,n),r=path.posix.join(rel,n),s=fs.lstatSync(file);if(s.isDirectory()){inventory(file,r);continue};if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1)throw Error('OWNED_UI_BUILD_APP_FILE');const b=fs.readFileSync(file);rows.push({path:r,kind:'file',bytes:b.length,mode:s.mode&0o777,sha256:createHash('sha256').update(b).digest('hex')})}}

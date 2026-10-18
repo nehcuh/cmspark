@@ -213,7 +213,7 @@ if(typeof f.id==='string'&&f.id.startsWith('D476_WS_DIAG_')){try{const d=parseNa
    assert.equal(await Promise.race([exit,failure.then(()=>{throw Error('OWNED_WORKSPACE_NATIVE_PHASE_FAILED')}),new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_WORKSPACE_NATIVE_DEADLINE')),{once:true}))]),0)
    if(uiDone)assert.equal((await uiDone).ok,true,'owned acknowledged UI runner must genuinely close quiescent')
    assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,1);assert.equal(picks,2);assert.equal(pickerObserved,2);assert.equal(pickerReturned,1);assert.equal(cancelReturned,1);assert.deepEqual([...receipts].sort(),[...required].sort());assert.equal(manager.pendingCount(),0)
-   const disk=new ThreadManager();assert.equal(disk.get('native-workspace-A')!.workspace_root,root);assert.equal(disk.get('native-workspace-B')!.workspace_root,undefined)
+   const disk=new ThreadManager();assert.equal(sameWorkspaceSelection705(expectedSelection,disk.get('native-workspace-A')!.workspace_root),true);assert.equal(disk.get('native-workspace-B')!.workspace_root,undefined)
    process.stdout.write('DESKTOP_WORKSPACE_476 {"native":true,"actualPicker":true,"controllerConfirmed":true,"persisted":true,"reopened":true,"listed":true,"read":true,"pickerCancelled":true,"otherThreadUnchanged":true}\n')
   }catch(error){primaryFailed=true;throw error}finally{
    surfaceLease.retain();uiOwner?.cancel();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity}))}catch{}
@@ -257,13 +257,20 @@ test('#705 passive lifecycle observes cached real picker close and contains logg
 
 test('#705 passive fixture source retains selection-click order and finite native stages for LF and CRLF',()=>{
  const dir=path.resolve(__dirname,'../../tests/fixtures/desktop-476')
+ const runnerSource=fs.readFileSync(path.resolve(__dirname,'../../tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift'),'utf8')
  for(const eol of ['\n','\r\n']){
   const cpp=fs.readFileSync(path.join(dir,'workspace-acceptance.cpp'),'utf8').replace(/\r?\n/g,eol)
   const swift=fs.readFileSync(path.join(dir,'workspace-acceptance.swift'),'utf8').replace(/\r?\n/g,eol)
   const panel=cpp.slice(cpp.indexOf('void D476Acceptance::panel('),cpp.indexOf('void D476Acceptance::renderer('))
   assert.ok(panel.indexOf('L"D476_WS_PICKER_SELECTED"')<panel.indexOf('note(h,16,'));assert.ok(panel.indexOf('note(h,16,')<panel.indexOf('SendMessageW(button,BM_CLICK,0,0)'));assert.ok(panel.indexOf('SendMessageW(button,BM_CLICK,0,0)')<panel.indexOf('note(h,32,'))
   assert.match(cpp,/diagnosticSends>=16&&!first/);assert.match(cpp,/catch\(\.\.\.\)\{\}/)
-  assert.ok(swift.includes('let panel=p.panel'));assert.equal(swift.includes('NSApp.windows'),false);assert.ok(swift.includes('diagnosticSends<16 || first'));assert.ok(swift.includes('task.send(.string(text)){_ in}'));assert.ok(swift.includes('panel.cancel(nil)'));assert.ok(swift.includes('button.performClick(nil)'))
+  const start=swift.indexOf(' static func panel(_ h:NativeDesktop){'),end=swift.indexOf(' static func renderer(');assert.ok(start>=0&&end>start);const passive=swift.slice(start,end),runner=runnerSource.replace(/\r?\n/g,eol)
+  for(const marker of ['owner === h','h.generation==documentGeneration','h.pickerCurrent(p)','!p.settled','let panel=p.panel','panel.isVisible','panel.sheetParent === h.window','!uiNonce.isEmpty','D476_WS_PICKER_SELECTED','D476_WS_PICKER_CANCELLED'])assert.ok(passive.includes(marker))
+  assert.equal(swift.includes('NSApp.windows'),false);assert.ok(swift.includes('diagnosticSends<16 || first'));assert.ok(swift.includes('task.send(.string(text)){_ in}'))
+  assert.doesNotMatch(passive,/performClick\s*\(|\.cancel\s*\(|\.ok\s*\(|\.directoryURL\s*=|\.finishPicker\s*\(/)
+  for(const marker of ['XCUIApplication(url:scene.appBundle)','app.windows.matching(identifier:scene.nonce)','inputs.element.typeText(scene.selection.path)','["Choose","Open"]','choose.element.click()','cancel.element.click()'])assert.ok(runner.includes(marker))
+  assert.ok(runner.indexOf('let ack=try waitFile(.ack)')<runner.indexOf('XCUIApplication(url:scene.appBundle)'));assert.ok(runner.indexOf('try ready(.first,1)')<runner.indexOf('choose.element.click()'));assert.ok(runner.indexOf('try ready(.second,2)')<runner.indexOf('cancel.element.click()'))
+  assert.doesNotMatch(runner,/\.launch\s*\(|\.activate\s*\(|\.terminate\s*\(|\.finishPicker\s*\(/)
   assert.equal(/SetFocus|SetActiveWindow|AXUIElement|SystemEvents/.test(cpp+swift),false)
  }
 })

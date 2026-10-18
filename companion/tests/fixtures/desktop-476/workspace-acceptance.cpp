@@ -1,22 +1,44 @@
+// Test-only retained identity: path spellings are not directory identities.
+struct D476Directory705 {std::shared_ptr<void> handle;};
+static D476Directory705 d476CaptureDirectory705(std::wstring const& value){
+ if(value.empty()||value.find(L'\0')!=std::wstring::npos||!std::filesystem::path(value).is_absolute())return {};
+ HANDLE raw=CreateFileW(value.c_str(),0,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS,nullptr);
+ if(raw==INVALID_HANDLE_VALUE)return {};
+ D476Directory705 result{std::shared_ptr<void>(raw,[](void* h){CloseHandle(h);})};
+ BY_HANDLE_FILE_INFORMATION info{};
+ if(!GetFileInformationByHandle(raw,&info)||!(info.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)||(info.dwFileAttributes&FILE_ATTRIBUTE_REPARSE_POINT)||(info.nFileIndexHigh==0&&info.nFileIndexLow==0))return {};
+ return result;
+}
+static bool d476SameDirectory705(D476Directory705 const& expected,std::wstring const& root,std::wstring const& value){
+ if(!expected.handle)return false;
+ auto current=d476CaptureDirectory705(root);auto candidate=d476CaptureDirectory705(value);
+ BY_HANDLE_FILE_INFORMATION a{},b{},c{};
+ if(!current.handle||!candidate.handle||!GetFileInformationByHandle(expected.handle.get(),&a)||!GetFileInformationByHandle(current.handle.get(),&b)||!GetFileInformationByHandle(candidate.handle.get(),&c))return false;
+ if(a.dwVolumeSerialNumber!=b.dwVolumeSerialNumber||a.nFileIndexHigh!=b.nFileIndexHigh||a.nFileIndexLow!=b.nFileIndexLow||a.dwVolumeSerialNumber!=c.dwVolumeSerialNumber||a.nFileIndexHigh!=c.nFileIndexHigh||a.nFileIndexLow!=c.nFileIndexLow)return false;
+ std::error_code error;
+ return std::filesystem::equivalent(root,value,error)&&!error;
+}
 class Desktop;
 struct D476Acceptance {
- static Desktop* owner;static std::wstring documentGeneration,selection,pickerNonce;static bool cancelPicker,navigationStarted;static ComPtr<IShellItem> expectedDirectory;static unsigned panels,confirmations,receipts;
+ static Desktop* owner;static std::wstring documentGeneration,selection,pickerNonce;static bool cancelPicker,navigationStarted;static ComPtr<IShellItem> expectedDirectory;static D476Directory705 selectionDirectory;static unsigned panels,confirmations,receipts;
  static unsigned diagnosticMask,diagnosticSite,diagnosticSends,diagnosticLocal,diagnosticOwned,diagnosticFlags,diagnosticKnown;static std::wstring diagnosticLast;static void note(Desktop&,unsigned,unsigned=0,unsigned=99,unsigned=99,unsigned=0,unsigned=0) noexcept;static void fail(Desktop&,unsigned);
  static void document(Desktop&);static void confirmation(Desktop&);static void emit(Desktop&,wchar_t const*);static void renderer(Desktop&,JsonObject const&);static bool picker(Desktop&,JsonObject const&);static void panel(Desktop&);
 };
 /* D476 IMPLEMENTATION */
-Desktop* D476Acceptance::owner=nullptr;std::wstring D476Acceptance::documentGeneration,D476Acceptance::selection,D476Acceptance::pickerNonce;bool D476Acceptance::cancelPicker=false,D476Acceptance::navigationStarted=false;ComPtr<IShellItem> D476Acceptance::expectedDirectory;unsigned D476Acceptance::panels=0,D476Acceptance::confirmations=0,D476Acceptance::receipts=0;
+Desktop* D476Acceptance::owner=nullptr;std::wstring D476Acceptance::documentGeneration,D476Acceptance::selection,D476Acceptance::pickerNonce;bool D476Acceptance::cancelPicker=false,D476Acceptance::navigationStarted=false;ComPtr<IShellItem> D476Acceptance::expectedDirectory;
+D476Directory705 D476Acceptance::selectionDirectory;unsigned D476Acceptance::panels=0,D476Acceptance::confirmations=0,D476Acceptance::receipts=0;
 void D476Acceptance::emit(Desktop& h,wchar_t const* id){JsonObject f;put(f,L"type",L"system.ping");put(f,L"id",id);h.send(f);}
 // #705: finite test-only observation. Transport/allocation failure is never a fixture decision.
 unsigned D476Acceptance::diagnosticMask=0,D476Acceptance::diagnosticSite=0,D476Acceptance::diagnosticSends=0,D476Acceptance::diagnosticLocal=99,D476Acceptance::diagnosticOwned=99,D476Acceptance::diagnosticFlags=0,D476Acceptance::diagnosticKnown=0;std::wstring D476Acceptance::diagnosticLast;
 void D476Acceptance::note(Desktop& h,unsigned bit,unsigned site,unsigned local,unsigned owned,unsigned flags,unsigned known) noexcept {try{diagnosticMask|=bit;bool first=diagnosticSite==0&&site!=0;if(first)diagnosticSite=site;if(local!=99)diagnosticLocal=local>2?2:local;if(owned!=99)diagnosticOwned=owned>2?2:owned;diagnosticFlags=(diagnosticFlags&~known)|(flags&known);diagnosticKnown|=known;auto id=L"D476_WS_DIAG_W_"+std::to_wstring(diagnosticMask)+L"_"+std::to_wstring(diagnosticSite)+L"_"+(diagnosticLocal==99?L"X":std::to_wstring(diagnosticLocal))+L"_"+(diagnosticOwned==99?L"X":std::to_wstring(diagnosticOwned))+L"_"+std::to_wstring(diagnosticFlags&7u)+L"_"+std::to_wstring(diagnosticKnown&7u);if(id==diagnosticLast||(diagnosticSends>=16&&!first))return;diagnosticLast=id;++diagnosticSends;emit(h,id.c_str());}catch(...){}}
 void D476Acceptance::fail(Desktop& h,unsigned site){note(h,0,site);emit(h,L"D476_WS_FAIL");}
 void D476Acceptance::document(Desktop& h){if(owner){fail(h,1);return;}owner=&h;documentGeneration=h.generation;std::wstring code=L"const documentGeneration="+std::wstring(JsonValue::CreateStringValue(h.generation).Stringify())+L";"+D476_FORM_SOURCE;auto result=h.web->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT hr,LPCWSTR)->HRESULT{if(FAILED(hr))fail(h,2);return S_OK;}).Get());if(FAILED(result))fail(h,3);}
-void D476Acceptance::confirmation(Desktop& h){if(owner!=&h||!h.confirmation||h.confirmation->purpose!=L"workspace"||h.generation!=documentGeneration||++confirmations!=1||panels!=1||!IsWindowVisible(h.confirmation->window)||GetWindow(h.confirmation->window,GW_OWNER)!=h.window){fail(h,4);return;}auto& p=*h.confirmation;SendMessageW(p.window,WM_COMMAND,MAKEWPARAM(3,BN_CLICKED),0);auto action=flat(p.full);if(text(action,L"path")!=selection){fail(h,5);return;}int n=GetWindowTextLengthW(p.details);std::wstring shown((size_t)n+1,L'\0');GetWindowTextW(p.details,shown.data(),n+1);shown.resize(n);auto button=GetDlgItem(p.window,1);if(shown!=p.full||!button){fail(h,6);return;}note(h,64);emit(h,L"D476_WS_CONFIRMATION");SendMessageW(button,BM_CLICK,0,0);}
+void D476Acceptance::confirmation(Desktop& h){if(owner!=&h||!h.confirmation||h.confirmation->purpose!=L"workspace"||h.generation!=documentGeneration||++confirmations!=1||panels!=1||!IsWindowVisible(h.confirmation->window)||GetWindow(h.confirmation->window,GW_OWNER)!=h.window){fail(h,4);return;}auto& p=*h.confirmation;SendMessageW(p.window,WM_COMMAND,MAKEWPARAM(3,BN_CLICKED),0);auto action=flat(p.full);if(!d476SameDirectory705(selectionDirectory,selection,text(action,L"path"))){fail(h,5);return;}int n=GetWindowTextLengthW(p.details);std::wstring shown((size_t)n+1,L'\0');GetWindowTextW(p.details,shown.data(),n+1);shown.resize(n);auto button=GetDlgItem(p.window,1);if(shown!=p.full||!button){fail(h,6);return;}note(h,64);emit(h,L"D476_WS_CONFIRMATION");SendMessageW(button,BM_CLICK,0,0);}
 bool D476Acceptance::picker(Desktop& h,JsonObject const& f){
  if(text(f,L"type")!=L"D476.workspace.picker")return false;auto cancel=f.TryLookup(L"cancel");auto p=h.workspace_selection;
  if(owner!=&h||h.generation!=documentGeneration||!p||!h.picker_current(p)||p->settled||!keys(f,{L"type",L"selection",L"pick_id",L"cancel"})||text(f,L"pick_id")!=p->nonce||!cancel||cancel.ValueType()!=JsonValueType::Boolean||panels>=2||!pickerNonce.empty()){fail(h,7);return true;}
  auto root=text(f,L"selection");if(root.empty()||!std::filesystem::path(root).is_absolute()){fail(h,8);return true;}
+ selectionDirectory=d476CaptureDirectory705(root);if(!selectionDirectory.handle){fail(h,8);return true;}
  selection=root;pickerNonce=p->nonce;navigationStarted=false;expectedDirectory.Reset();cancelPicker=cancel.GetBoolean();if(cancelPicker!=(panels==1)){fail(h,9);return true;}note(h,1);
  if(!SetTimer(h.window,476,16,[](HWND,UINT,UINT_PTR,DWORD){if(owner)panel(*owner);})){fail(h,10);}return true;
 }
