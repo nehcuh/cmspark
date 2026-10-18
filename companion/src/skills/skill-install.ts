@@ -18,7 +18,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import matter from "gray-matter"
+import matter from "../passive-frontmatter"
 import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
 import { SkillEngine } from "./skill-engine"
