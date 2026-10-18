@@ -166,3 +166,107 @@ test('705 actual receipt callbacks tolerate absent or empty TMPDIR without mutat
   assert.equal(fallbacks,3,'real FS callback and both Windows-shaped parents use the same private fallback');assert.deepEqual(fs.readdirSync(parent),[])
  }}finally{fs.rmSync(parent,{recursive:true,force:true})}
 })
+
+// Execute the actual passive producer, not a handwritten diagnostic payload.
+function loadXcode705(io:any=fs,localProcess:any=process){
+ const source=fs.readFileSync(helper,'utf8'),ast=ts.createSourceFile(helper,source,ts.ScriptTarget.Latest,true),owner=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='OwnedWorkspaceUI705') as ts.ClassDeclaration,method=owner?.members.find(n=>ts.isMethodDeclaration(n)&&n.name.getText(ast)==='xcodeFailureObservation')
+ assert.ok(method,'the actual owner must retain a bounded Xcode failure observation')
+ const selected=ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&['xcode705Parse','xcode705Snapshot'].includes(n.name!.text)||ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(ast)==='xcode705Unavailable')).map(n=>n.getText(ast)).join('\n'),compiled=ts.transpileModule(selected+'\nclass Actual {'+method.getText(ast)+'};globalThis.observe=(value:any)=>Actual.prototype.xcodeFailureObservation.call(value)',{compilerOptions:{target:ts.ScriptTarget.ES2022},reportDiagnostics:true}),scope:any={fs:io,path,process:localProcess,Buffer,TextDecoder,refused:()=>Error('OWNED_REFUSED')}
+ assert.equal(compiled.diagnostics!.length,0);vm.runInNewContext(compiled.outputText,scope,{timeout:1000});return scope.observe as(value:any)=>any
+}
+function xcodeModel705(){
+ const text=Buffer.from('xcodebuild: error: OWNED_PRIVATE\nError Domain=NSCocoaErrorDomain Code=4 "OWNED_PRIVATE"\n'),files=new Map<string,any>(),root='/owned',fds=new Map<number,string>();let serial=70,reads=0,closes=0,checks=0
+ const stat=(name:string)=>{if(name===root)return{uid:7n,mode:0o40700n,isDirectory:()=>true,isSymbolicLink:()=>false};const item=files.get(name);if(!item)throw Object.assign(Error('OWNED_PRIVATE'),{code:'ENOENT'});return{dev:1n,ino:item.ino??9n,uid:7n,mode:0o100600n,nlink:1n,size:BigInt(item.data.length),mtimeNs:4n,ctimeNs:5n,isFile:()=>true,isSymbolicLink:()=>false,...item.stat}}
+ for(const name of['xcode.stdout','xcode.stderr'])files.set(root+'/'+name,{data:text})
+ const io:any={constants:{O_RDONLY:0,O_NOFOLLOW:16,O_NONBLOCK:32},lstatSync:(name:string)=>stat(name),openSync:(name:string,flags:number)=>{assert.equal(flags,48);stat(name);fds.set(++serial,name);return serial},fstatSync:(fd:number)=>{assert.ok(fds.has(fd));return stat(fds.get(fd)!)},readSync:(fd:number,b:Buffer,off:number,length:number,pos:number)=>{reads++;assert.equal(off,0);assert.equal(length,262145);assert.equal(pos,0);const data=files.get(fds.get(fd)!).data;data.copy(b);return Math.min(data.length,b.length)},closeSync:(fd:number)=>{closes++;assert.ok(fds.delete(fd))}}
+ const state={xcodeClosed:true,scene:{root,check(){checks++}}},observe=()=>loadXcode705(io,{getuid:()=>7})(state)
+ return{io,files,fds,root,state,observe,counts:()=>({reads,closes,checks}),stat}
+}
+test('705 actual Xcode failure producer gates closed state before every scene or FS read',()=>{
+ let reads=0;const state:any={xcodeClosed:false};Object.defineProperty(state,'scene',{get(){reads++;throw Error('OWNED_PRIVATE')}})
+ const out=loadXcode705()(state);assert.equal(reads,0);assert.equal(out.schema,1);assert.equal(out.stdout.status,'NOT_CLOSED');assert.equal(out.stderr.status,'NOT_CLOSED');assert.ok(Buffer.byteLength(JSON.stringify(out))<=1024)
+ const g=xcodeModel705();assert.equal(g.observe().stdout.firstNSError.code,4);assert.deepEqual(g.counts(),{reads:2,closes:2,checks:6});assert.equal(g.fds.size,0)
+})
+test('705 Xcode snapshot emits only the first per-stream closed marker and allowlisted canonical int32 pair',()=>{
+ for(const [domain,label]of[['NSCocoaErrorDomain','COCOA'],['NSPOSIXErrorDomain','POSIX'],['NSMachErrorDomain','MACH'],['NSOSStatusErrorDomain','OSSTATUS'],['com.OWNED_PRIVATE.domain','OTHER']])for(const code of['0','-1','2147483647','-2147483648']){
+  const f=xcodeModel705();f.files.get(f.root+'/xcode.stdout').data=Buffer.from('xcode-select: error: OWNED_PRIVATE\r\nTesting failed:\r\nError Domain='+domain+' Code='+code+' "OWNED_PRIVATE"\r\nError Domain=NSPOSIXErrorDomain Code=99\n')
+  const out=f.observe(),v=out.stdout;assert.equal(v.status,'OBSERVED');assert.equal(v.firstMarker,'XCODE_SELECT_ERROR');assert.equal(v.firstNSError.kind,'PAIR');assert.equal(v.firstNSError.domain,label);assert.equal(v.firstNSError.code,label==='OTHER'?null:Number(code));assert.equal(JSON.stringify(out).includes('OWNED_PRIVATE'),false);assert.ok(Buffer.byteLength(JSON.stringify(out))<=1024)
+ }
+ for(const bad of['+4','04','-0','2147483648','-2147483649','4suffix','4.1','true','1e2']){const f=xcodeModel705();f.files.get(f.root+'/xcode.stdout').data=Buffer.from('Error Domain=NSCocoaErrorDomain Code='+bad+'\n');assert.equal(f.observe().stdout.firstNSError.kind,'UNKNOWN',bad)}
+ const f=xcodeModel705();f.files.get(f.root+'/xcode.stdout').data=Buffer.from(' Testing failed:\nword xcodebuild: error: OWNED_PRIVATE\nError Domain=NSPOSIXErrorDomain Code=4');const out=f.observe().stdout;assert.equal(out.firstMarker,'NONE');assert.equal(out.firstNSError.kind,'NONE','unterminated record is not parsed as a complete line')
+})
+test('705 Xcode snapshot refuses whole oversize invalid UTF8 unsafe metadata and read-count mismatches',()=>{
+ for(const kind of['oversize','plusone','utf8','uid','mode','setid','nlink','directory','symlink','short','long','empty','missing']){
+  const f=xcodeModel705(),item=f.files.get(f.root+'/xcode.stdout');item.stat={}
+  if(kind==='oversize')item.data=Buffer.alloc(262145,65);if(kind==='plusone'){item.data=Buffer.alloc(262144,65);const read=f.io.readSync;f.io.readSync=(...args:any[])=>{read(...args);return 262145}}
+  if(kind==='utf8')item.data=Buffer.from([255]);if(kind==='uid')item.stat.uid=8n;if(kind==='mode')item.stat.mode=0o100644n;if(kind==='setid')item.stat.mode=0o104600n;if(kind==='nlink')item.stat.nlink=2n;if(kind==='directory')item.stat.isFile=()=>false;if(kind==='symlink')item.stat.isSymbolicLink=()=>true
+  if(kind==='short'||kind==='long'){const read=f.io.readSync;f.io.readSync=(...args:any[])=>read(...args)+(kind==='short'?-1:1)}if(kind==='empty')item.data=Buffer.alloc(0);if(kind==='missing')f.files.delete(f.root+'/xcode.stdout')
+  const out=f.observe().stdout;assert.equal(out.status,kind==='empty'?'EMPTY':kind==='missing'?'MISSING':['short','long'].includes(kind)?'CHANGED':['oversize','plusone'].includes(kind)?'OVERSIZE':'INVALID',kind);assert.equal(out.firstMarker,'NONE');assert.equal(out.firstNSError.code,null);assert.equal(f.fds.size,0)
+ }
+ const f=xcodeModel705();f.files.get(f.root+'/xcode.stdout').data=Buffer.alloc(262144,10);assert.equal(f.observe().stdout.status,'OBSERVED')
+})
+test('705 Xcode snapshot checks every final named and descriptor security and mutation attribute',()=>{
+ for(const phase of['after','named','lastNamed','lastFD'])for(const key of['uid','mode','nlink','size','mtimeNs','ctimeNs']){
+  const f=xcodeModel705();let stats=0,named=0;const fdStat=f.io.fstatSync,pathStat=f.io.lstatSync
+  const change=(s:any)=>({...s,[key]:s[key]+1n})
+  f.io.fstatSync=(fd:number)=>{const s=fdStat(fd);if(f.fds.get(fd)!==f.root+'/xcode.stdout')return s;stats++;return(phase==='after'&&stats===2||phase==='lastFD'&&stats===3)?change(s):s}
+  f.io.lstatSync=(p:string)=>{const s=pathStat(p);if(p!==f.root+'/xcode.stdout')return s;named++;return(phase==='named'&&named===1||phase==='lastNamed'&&named===2)?change(s):s}
+  assert.equal(f.observe().stdout.status,'CHANGED',phase+':'+key);assert.equal(f.fds.size,0)
+ }
+})
+test('705 Xcode snapshot isolates FS getters faults and one-close uncertainty without closing observed foreign descriptors',()=>{
+ for(const fault of['initialStat','afterStat','lastStat','named','read','scene','sceneGetter','errorGetter','closeAfterEffect']){
+  const f=xcodeModel705();let calls=0;const stat=f.io.fstatSync,close=f.io.closeSync
+  if(fault.endsWith('Stat'))f.io.fstatSync=(fd:number)=>{calls++;if(calls===({initialStat:1,afterStat:2,lastStat:3}as any)[fault])throw Error('OWNED_PRIVATE');return stat(fd)}
+  if(fault==='named')f.io.lstatSync=(p:string)=>{if(p.endsWith('stdout'))throw Error('OWNED_PRIVATE');return f.stat(p)}
+  if(fault==='read')f.io.readSync=()=>{throw Error('OWNED_PRIVATE')};if(fault==='scene')f.state.scene.check=()=>{throw Error('OWNED_PRIVATE')};if(fault==='sceneGetter')Object.defineProperty(f.state,'scene',{get(){throw Error('OWNED_PRIVATE')}})
+  if(fault==='errorGetter')f.io.openSync=()=>{throw Object.defineProperty({},'code',{get(){throw Error('OWNED_PRIVATE')}})}
+  if(fault==='closeAfterEffect')f.io.closeSync=(fd:number)=>{close(fd);throw Error('OWNED_PRIVATE')}
+  const out=f.observe();assert.equal(out.stdout.status,'READ_FAILED',fault);assert.equal(out.stdout.firstNSError.code,null);assert.equal(JSON.stringify(out).includes('OWNED_PRIVATE'),false);assert.equal(f.fds.size,0)
+  if(fault==='closeAfterEffect')assert.equal(f.counts().closes,2,'one close per owned stream, no retry after effect then throw')
+ }
+ for(const phase of[2,3]){const f=xcodeModel705(),stat=f.io.fstatSync;let calls=0;f.io.fstatSync=(fd:number)=>{const s=stat(fd);calls++;return calls===phase?{...s,ino:99n}:s};if(phase===2){const named=f.io.lstatSync;f.io.lstatSync=(p:string)=>{if(p.endsWith('stdout'))throw Error('OWNED_PRIVATE');return named(p)}}assert.equal(f.observe().stdout.status,'CHANGED');assert.equal(f.counts().closes,1,'observed foreign descriptor never closed');assert.equal(f.fds.size,1)}
+})
+test('705 Xcode passive producer uses real owned files and rejects real links directories and malformed bytes',()=>{
+ const parent=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR||os.tmpdir(),'xcode-snapshot-705-'))),root=path.join(parent,'scene');fs.mkdirSync(root,{mode:0o700})
+ // On Windows the unshipped macOS reader is tested with explicit POSIX mode/UID
+ // projection; real kind/dev/ino/nlink/bytes and all I/O still come from owned files.
+ const uid=fs.lstatSync(root).uid,project=(s:any)=>process.platform==='win32'?Object.assign(Object.create(Object.getPrototypeOf(s)),s,{uid:BigInt(uid),mode:(s.mode&~0o7777n)|(s.isDirectory()?0o700n:0o600n)}):s
+ const io={...fs,lstatSync:(p:fs.PathLike,o?:any)=>{const s=fs.lstatSync(p,o);return o?.bigint?project(s):s},fstatSync:(fd:number,o?:any)=>{const s=fs.fstatSync(fd,o);return o?.bigint?project(s):s}},observe=loadXcode705(io,{getuid:()=>uid}),state={xcodeClosed:true,scene:{root,check(){assert.equal(fs.realpathSync(root),root)}}},name=path.join(root,'xcode.stdout')
+ try{
+  fs.writeFileSync(name,'Testing failed:\nError Domain=NSPOSIXErrorDomain Code=13 "OWNED_PRIVATE"\n',{mode:0o600});assert.equal(observe(state).stdout.firstNSError.code,13);assert.equal(observe(state).stderr.status,'MISSING')
+  fs.linkSync(name,path.join(parent,'inert-hardlink'));assert.equal(observe(state).stdout.status,'INVALID');fs.unlinkSync(path.join(parent,'inert-hardlink'));fs.unlinkSync(name)
+  fs.mkdirSync(name,{mode:0o700});assert.notEqual(observe(state).stdout.status,'OBSERVED');fs.rmdirSync(name)
+  const directory=path.join(parent,'inert-directory');fs.mkdirSync(directory,{mode:0o700});fs.symlinkSync(directory,name,process.platform==='win32'?'junction':'dir');assert.notEqual(observe(state).stdout.status,'OBSERVED');fs.unlinkSync(name)
+  fs.writeFileSync(name,Buffer.from([255]),{mode:0o600});assert.equal(observe(state).stdout.status,'INVALID');fs.unlinkSync(name);fs.writeFileSync(name,Buffer.alloc(262145,65),{mode:0o600});assert.equal(observe(state).stdout.status,'OVERSIZE')
+ }finally{fs.rmSync(parent,{recursive:true,force:true})}
+})
+test('705 actual caught failure emits the producer once within 1024 bytes and preserves primary cancel and cleanup on faults',()=>{
+ const file=path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),source=fs.readFileSync(file,'utf8'),ast=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true);let body:ts.Block|undefined
+ function walk(n:ts.Node){if(ts.isTryStatement(n)&&n.finallyBlock?.getText(ast).includes('D476_WORKSPACE_NATIVE_PHASE'))body=n.finallyBlock;ts.forEachChild(n,walk)}walk(ast);assert.ok(body)
+ const cut=body.statements.findIndex(n=>n.getText(ast).includes('child?.terminate()')),prefix=body.statements.slice(0,cut).map(n=>n.getText(ast)).join('\n'),base=()=>({surfaceLease:{retain(){}},required:[],receipts:new Set(),picks:0,pickerObserved:0,pickerReturned:0,cancelReturned:0,connections:0,authenticated:false,windowRequested:false,settled:false,failed:true,failureSite:9,pickOutcome:0,pickerLifecycle:null,nativeDiagnostic:null,diagnosticInvalid:false,selectedOutcome:null,selectedIdentity:null,cancelClose:null,cancelShow:null,cancelSettled:null,cancelCurrent:null,Buffer})
+ for(const variant of['good','success','readerFault','sinkFault','oversize']){
+  const f=xcodeModel705(),rows:string[]=[],trace:string[]=[],owner={diagnostic:()=>({begun:true}),scene:{receiptMask:()=>0},xcodeFailureObservation(){trace.push('observe');if(variant==='readerFault')throw Error('OWNED_PRIVATE');return variant==='oversize'?'a'.repeat(1025):f.observe()},cancel(){trace.push('cancel')}},scope={...base(),primaryFailed:variant!=='success',uiOwner:owner,t:{diagnostic(s:string){if(s.startsWith('D705_XCODE_FAILURE ')&&variant==='sinkFault')throw Error('OWNED_PRIVATE');rows.push(s)}}}
+  vm.runInNewContext(ts.transpileModule(prefix,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,scope)
+  assert.deepEqual(trace,variant==='success'?['cancel']:['observe','cancel']);const record=rows.filter(s=>s.startsWith('D705_XCODE_FAILURE '));assert.equal(record.length,variant==='good'?1:0);assert.equal(rows.filter(s=>s.startsWith('D476_WORKSPACE_NATIVE_PHASE ')).length,1)
+  if(record.length){const text=record[0].slice('D705_XCODE_FAILURE '.length);assert.ok(Buffer.byteLength(text)<=1024);const out=JSON.parse(text);assert.deepEqual(Object.keys(out).sort(),['schema','stderr','stdout']);assert.equal(out.stdout.firstNSError.code,4);assert.equal(text.includes('OWNED_PRIVATE'),false)}
+ }
+})
+test('705 Xcode real descriptor reuse survives close-after-effect and observed foreign identity without a second close',()=>{
+ const parent=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR||os.tmpdir(),'xcode-fd-705-'))),root=path.join(parent,'scene');fs.mkdirSync(root,{mode:0o700});const name=path.join(root,'xcode.stdout'),other=path.join(parent,'inert-other'),text='Testing failed:\n'
+ fs.writeFileSync(name,text,{mode:0o600});fs.writeFileSync(other,text,{mode:0o600});const uid=fs.lstatSync(root).uid,project=(s:any)=>process.platform==='win32'?Object.assign(Object.create(Object.getPrototypeOf(s)),s,{uid:BigInt(uid),mode:(s.mode&~0o7777n)|(s.isDirectory()?0o700n:0o600n)}):s
+ try{for(const kind of['closeAfterEffect','readReusesFD']){let foreign:number|undefined,closes=0
+  const io={...fs,lstatSync:(p:fs.PathLike,o?:any)=>{const s=fs.lstatSync(p,o);return o?.bigint?project(s):s},fstatSync:(fd:number,o?:any)=>{const s=fs.fstatSync(fd,o);return o?.bigint?project(s):s},closeSync:(fd:number)=>{closes++;fs.closeSync(fd);if(kind==='closeAfterEffect'){foreign=fs.openSync(other,'r');assert.equal(foreign,fd);throw Error('OWNED_AFTER_CLOSE')}},readSync:(fd:number,b:Buffer,offset:number,length:number,position:number)=>{if(kind==='readReusesFD'){fs.closeSync(fd);foreign=fs.openSync(other,'r');assert.equal(foreign,fd)}return fs.readSync(fd,b,offset,length,position)}}
+  try{const out=loadXcode705(io,{getuid:()=>uid})({xcodeClosed:true,scene:{root,check(){assert.equal(fs.realpathSync(root),root)}}});assert.equal(out.stdout.status,kind==='closeAfterEffect'?'READ_FAILED':'CHANGED');assert.equal(closes,kind==='closeAfterEffect'?1:0);assert.notEqual(foreign,undefined);assert.equal(fs.readFileSync(foreign!,'utf8'),text,'foreign replacement descriptor remains usable')}finally{if(foreign!==undefined)fs.closeSync(foreign)}
+ }}finally{fs.rmSync(parent,{recursive:true,force:true})}
+})
+test('705 Xcode real same-sized named replacement and final directory permission change refuse observation',()=>{
+ const parent=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR||os.tmpdir(),'xcode-replace-705-'))),root=path.join(parent,'scene');fs.mkdirSync(root,{mode:0o700});const name=path.join(root,'xcode.stdout'),other=path.join(root,'replacement'),text='Testing failed:\n'
+ const uid=fs.lstatSync(root).uid,project=(s:any)=>process.platform==='win32'?Object.assign(Object.create(Object.getPrototypeOf(s)),s,{uid:BigInt(uid),mode:(s.mode&~0o7777n)|(s.isDirectory()?0o700n:0o600n)}):s
+ try{for(const variant of['replace','directory']){
+  if(process.platform!=='win32')fs.chmodSync(root,0o700)
+  fs.writeFileSync(name,text,{mode:0o600});fs.writeFileSync(other,text,{mode:0o600});let finalRoot=false,closes=0
+  const io={...fs,lstatSync:(p:fs.PathLike,o?:any)=>{const s=fs.lstatSync(p,o);const out=o?.bigint?project(s):s;return finalRoot&&String(p)===root&&o?.bigint?Object.assign(Object.create(Object.getPrototypeOf(out)),out,{mode:0o40755n}):out},fstatSync:(fd:number,o?:any)=>{const s=fs.fstatSync(fd,o);return o?.bigint?project(s):s},readSync:(fd:number,b:Buffer,off:number,length:number,pos:number)=>{const n=fs.readSync(fd,b,off,length,pos);if(variant==='replace'){fs.unlinkSync(name);fs.renameSync(other,name)}else if(process.platform==='win32')finalRoot=true;else fs.chmodSync(root,0o755);return n},closeSync:(fd:number)=>{closes++;fs.closeSync(fd)}}
+  const out=loadXcode705(io,{getuid:()=>uid})({xcodeClosed:true,scene:{root,check(){assert.equal(fs.realpathSync(root),root)}}});assert.equal(out.stdout.status,variant==='replace'?'CHANGED':'READ_FAILED');assert.equal(out.stdout.firstMarker,'NONE');assert.equal(closes,1);assert.equal(fs.readFileSync(name,'utf8'),text)
+ }}finally{fs.rmSync(parent,{recursive:true,force:true})}
+})

@@ -9,6 +9,69 @@ const canonical=(o:any)=>JSON.stringify(Object.fromEntries(Object.keys(o).sort()
 const regular=(s:fs.Stats)=>s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&(s.mode&0o777)===0o600&&s.uid===process.getuid!()
 export const UI705_RUNNER_ID='com.cmspark.tests.workspace-ui-705.xctrunner'
 export const UI705_FILES=['input.json','runner-start.json','owner-ack.json','ui-begin.json','ui-quiescent.json','runner-closed.json','cancel.json','picker-first.json','picker-second.json'] as const
+type Xcode705Status='NOT_CLOSED'|'MISSING'|'EMPTY'|'INVALID'|'CHANGED'|'OVERSIZE'|'READ_FAILED'|'OBSERVED'
+type Xcode705Observation={status:Xcode705Status;firstMarker:'NONE'|'XCODEBUILD_ERROR'|'XCODE_SELECT_ERROR'|'TESTING_FAILED';firstNSError:{kind:'NONE'|'PAIR'|'UNKNOWN';domain:'COCOA'|'POSIX'|'MACH'|'OSSTATUS'|'OTHER'|'UNKNOWN';code:number|null}}
+const xcode705Unavailable=(status:Xcode705Status):Xcode705Observation=>({status,firstMarker:'NONE',firstNSError:{kind:'NONE',domain:'UNKNOWN',code:null}})
+// Closed tokens only. The two streams have no global ordering; a parent close is
+// not inherited-writer EOF. Ignore an unterminated tail rather than parse a prefix.
+function xcode705Parse(text:string):Xcode705Observation {
+ const out=xcode705Unavailable(text.length?'OBSERVED':'EMPTY')
+ for(const line of text.split('\n').slice(0,-1)){
+  const value=line.endsWith('\r')?line.slice(0,-1):line
+  if(out.firstMarker==='NONE'){
+   if(value.startsWith('xcodebuild: error:'))out.firstMarker='XCODEBUILD_ERROR'
+   else if(value.startsWith('xcode-select: error:'))out.firstMarker='XCODE_SELECT_ERROR'
+   else if(value==='Testing failed:')out.firstMarker='TESTING_FAILED'
+  }
+  if(out.firstNSError.kind==='PAIR')continue
+  if(value.includes('Error Domain='))out.firstNSError={kind:'UNKNOWN',domain:'UNKNOWN',code:null}
+  const match=/(?:^|[ \t])Error Domain=([A-Za-z][A-Za-z0-9_.-]{0,127}) Code=(-?(?:0|[1-9][0-9]{0,9}))(?=$|[ \t,;)}])/.exec(value)
+  if(!match||match[2]==='-0')continue
+  const code=Number(match[2]);if(!Number.isInteger(code)||code<-2147483648||code>2147483647)continue
+  const domain:Xcode705Observation['firstNSError']['domain']=match[1]==='NSCocoaErrorDomain'?'COCOA':match[1]==='NSPOSIXErrorDomain'?'POSIX':match[1]==='NSMachErrorDomain'?'MACH':match[1]==='NSOSStatusErrorDomain'?'OSSTATUS':'OTHER'
+  out.firstNSError={kind:'PAIR',domain,code:domain==='OTHER'?null:code}
+ }
+ return out
+}
+// One bounded snapshot of an already-captured fixed log, never an authority or
+// cleanup receipt. Descriptor retirement precedes its sole close attempt.
+function xcode705Snapshot(scene:OwnedUI705Boundary,name:'xcode.stdout'|'xcode.stderr'):Xcode705Observation {
+ let fd:number|undefined,identity:fs.BigIntStats|undefined,out=xcode705Unavailable('READ_FAILED'),foreign=false
+ const sameIdentity=(a:fs.BigIntStats,b:fs.BigIntStats)=>a.dev===b.dev&&a.ino===b.ino
+ const safe=(s:fs.BigIntStats)=>s.isFile()&&!s.isSymbolicLink()&&s.uid===BigInt(process.getuid!())&&(s.mode&0o7777n)===0o600n&&s.nlink===1n&&s.size>=0n
+ const same=(a:fs.BigIntStats,b:fs.BigIntStats)=>sameIdentity(a,b)&&a.isFile()===b.isFile()&&a.isSymbolicLink()===b.isSymbolicLink()&&a.uid===b.uid&&a.mode===b.mode&&a.nlink===b.nlink&&a.size===b.size&&a.mtimeNs===b.mtimeNs&&a.ctimeNs===b.ctimeNs
+ const check=()=>{scene.check();const root=fs.lstatSync(scene.root,{bigint:true});if(!root.isDirectory()||root.isSymbolicLink()||root.uid!==BigInt(process.getuid!())||(root.mode&0o7777n)!==0o700n)throw refused()}
+ try{
+  out=(()=>{
+   check();const file=path.join(scene.root,name)
+   try{fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK)}catch(error){return xcode705Unavailable(error&&typeof error==='object'&&Object.getOwnPropertyDescriptor(error,'code')?.value==='ENOENT'?'MISSING':'READ_FAILED')}
+   identity=fs.fstatSync(fd,{bigint:true})
+   if(!safe(identity))return xcode705Unavailable('INVALID')
+   if(identity.size>262144n)return xcode705Unavailable('OVERSIZE')
+   const data=Buffer.alloc(262145),length=fs.readSync(fd,data,0,data.length,0)
+   if(length>262144)return xcode705Unavailable('OVERSIZE')
+   const after=fs.fstatSync(fd,{bigint:true})
+   if(!sameIdentity(identity,after)){foreign=true;return xcode705Unavailable('CHANGED')}
+   const named=fs.lstatSync(file,{bigint:true})
+   if(BigInt(length)!==identity.size||!same(identity,after)||!same(identity,named))return xcode705Unavailable('CHANGED')
+   check()
+   let text:string;try{text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(data.subarray(0,length))}catch{return xcode705Unavailable('INVALID')}
+   const result=xcode705Parse(text),lastNamed=fs.lstatSync(file,{bigint:true})
+   if(!same(identity,lastNamed))return xcode705Unavailable('CHANGED')
+   check();return result
+  })()
+ }catch{out=xcode705Unavailable('READ_FAILED')}
+ finally{
+  if(fd!==undefined){
+   const owned=fd;fd=undefined
+   if(!foreign){
+    if(identity){try{const last=fs.fstatSync(owned,{bigint:true});if(!sameIdentity(identity,last)){foreign=true;out=xcode705Unavailable('CHANGED')}else if(!same(identity,last))out=xcode705Unavailable('CHANGED')}catch{out=xcode705Unavailable('READ_FAILED')}}
+    if(!foreign)try{fs.closeSync(owned)}catch{out=xcode705Unavailable('READ_FAILED')}
+   }
+  }
+ }
+ return out
+}
 type File705=typeof UI705_FILES[number]
 export class OwnedUI705Boundary {
  readonly identity:{dev:number;ino:number;uid:number}
@@ -89,6 +152,12 @@ export class OwnedWorkspaceUI705 {
  ready(number:1|2){this.scene.write(number===1?'picker-first.json':'picker-second.json',{schema:1,nonce:this.scene.nonce,number})}
  cancel(){try{const v=this.scene.read('cancel.json');if(v)this.scene.fields(v,['schema','nonce']);else this.scene.write('cancel.json',{schema:1,nonce:this.scene.nonce})}catch{this.invalid=true};this.xcode?.kill('SIGTERM');this.notify()}
  diagnostic(){const code=(value:number|null)=>typeof value==='number'&&Number.isInteger(value)&&value>=0&&value<=255?value:null;return{begun:this.begun,invalid:this.invalid,observerClosed:this.observerClosed,observerCode:code(this.observerCode),xcodeClosed:this.xcodeClosed,xcodeCode:code(this.xcodeCode)}}
+ xcodeFailureObservation(){
+  if(!this.xcodeClosed)return{schema:1,stdout:xcode705Unavailable('NOT_CLOSED'),stderr:xcode705Unavailable('NOT_CLOSED')}
+  // Access and per-stream faults cannot replace the existing primary/cleanup.
+  const observe=(name:'xcode.stdout'|'xcode.stderr')=>{try{return xcode705Snapshot(this.scene,name)}catch{return xcode705Unavailable('READ_FAILED')}}
+  return{schema:1,stdout:observe('xcode.stdout'),stderr:observe('xcode.stderr')}
+ }
  canSettle(){if(!this.begun)return true;return !this.invalid&&this.observerCode===0&&this.scene.closure(this.observerClosed,this.xcodeClosed)}
  async complete(){await this.wait(()=>this.canSettle()||this.invalid||(this.xcodeClosed&&this.xcodeCode!==0)||(this.observerClosed&&this.observerCode!==0));if(!this.canSettle()||this.xcodeCode!==0)throw refused()}
  private wait(done:()=>boolean){return new Promise<void>((resolve,reject)=>{const finish=()=>{this.changed.delete(check);this.signal.removeEventListener('abort',abort)},abort=()=>{finish();reject(refused())},check=()=>{try{if(done()){finish();resolve()}else if(this.signal.aborted)abort()}catch{abort()}};this.changed.add(check);this.signal.addEventListener('abort',abort,{once:true});check()})}

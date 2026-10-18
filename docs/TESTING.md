@@ -40,6 +40,10 @@ npm --prefix chrome-extension test
 
 ### 未发行的 macOS picker 验收包（#705）
 
+既有 native workspace 失败诊断点另发出有界 `D705_XCODE_FAILURE` schema1 记录：只有已观察到 xcodebuild 父进程 close 后，才分别读取场景中已有的固定 `xcode.stdout` / `xcode.stderr`，每份最多 256KiB（多读一字节即整份拒绝），严格 UTF-8、私有目录/文件身份、权限、链接数及最终命名文件/FD 全元数据均须稳定。输出仅包含固定状态、每流首个完整行标记，以及首个合法 NSError 域/有符号 int32；仅四种 Foundation 域映射到固定枚举，其他域的 code 恒为 null。不输出原文、路径、userInfo、原始域名或摘要，JSON 最多 1024 字节。读取、解析和输出失败均不替代原错误或清理结果。
+
+这是父进程关闭后的稳定有界快照，不是继承日志句柄的 EOF、完整日志、两流全局顺序或根因证明。未终止的末行不解析；未知格式保持 UNKNOWN/NONE。退出码 65、未观察到启动回执，仍不能说明实际 Xcode 选择、Runner 环境或目标是否启动。原 45 秒、同实例身份/ACK、真实 UI 和关闭门禁保持不变。`companion/tests/desktop-workspace-xctest-705.test.ts` 用实际 AST producer、受控故障及真实 owned 文件验证上述边界；这些 CPU/文件控制不冒充 macOS XCTest 通过。
+
 `companion/scripts/tests/desktop-workspace-ui-705.test.mjs` 覆盖固定 Format1 `OwnedPickerUITests` 的 `UITargetAppPath=__TESTROOT__/../OwnedPicker705.app` 绑定、其它描述字段保留、最终描述文件唯一清单行及坏形状/外部路径/转换失败拒绝。构建器先完成固定 app 的签名校验，再绑定描述文件；原始描述文件和无路径的前后摘要留在 generated 工作目录，不改已签名 app 或 Runner。
 
 这些 Node/owned FS 检查不运行 XCTest，也不证明 Xcode 不会在测试方法之前启动应用。真实 changed-head CI 仍须通过原 addon 启动与身份、owner ACK、实际系统 picker 选择/取消和严格关闭/静默门禁；缺字段和 exit65 的历史因果关系保持 UNKNOWN，不增加权限、等待预算、重试或 skip。该夹具不属于发行应用载荷，开发版本仍为 0.6.14。
