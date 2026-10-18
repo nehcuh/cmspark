@@ -967,6 +967,32 @@ export class ThreadManager {
     return thread
   }
 
+  /** Native workspace-only snapshot. Never invokes get()/list() repair or seeds runtime. */
+  desktopWorkspaceSnapshot(threadId: string): { id: string; workspace_root: string | null; updated_at: string } | undefined {
+    if (!ThreadManager.isSafeThreadId(threadId)) return undefined
+    const target = this.index.threads.find(t => t.id === threadId)
+    if (!target || this.isTrashed(target) || typeof target.updated_at !== "string") return undefined
+    if (target.workspace_root != null && typeof target.workspace_root !== "string") return undefined
+    return { id: target.id, workspace_root: target.workspace_root || null, updated_at: target.updated_at }
+  }
+
+  /** Conditional target-only workspace write; input is private actor state, not renderer data. */
+  updateDesktopWorkspace(expected: { id: string; workspace_root: string | null; updated_at: string }, root: string, current: () => boolean) {
+    const fresh = this.desktopWorkspaceSnapshot(expected.id)
+    if (!fresh || fresh.workspace_root !== expected.workspace_root || fresh.updated_at !== expected.updated_at || !current()) return undefined
+    const target = this.index.threads.find(t => t.id === expected.id)!
+    const previous = Object.getOwnPropertyDescriptors(target)
+    try {
+      if (!current()) return undefined
+      this.update(expected.id, { workspace_root: root })
+      return this.desktopWorkspaceSnapshot(expected.id)
+    } catch (error) {
+      for (const key of Object.keys(target)) if (!Object.prototype.hasOwnProperty.call(previous,key)) delete (target as any)[key]
+      Object.defineProperties(target,previous)
+      throw error
+    }
+  }
+
   /** Native metadata only. No await between the target snapshot and persistence;
    * a failed write restores this target, never the index or other conversations. */
   updateDesktopMetadata(threadId: string, raw: unknown): Thread | undefined {

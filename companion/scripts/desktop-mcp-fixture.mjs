@@ -99,3 +99,20 @@ export function desktopResourceFixture(language, original, fixture, form) {
   if(inverse!==base.source||base.inverse!==original)throw Error('DESKTOP_RESOURCE_SOURCE_DRIFT')
   return{source,inverse:base.inverse}
 }
+
+/** Workspace-only unshipped host: private picker observation never reaches the WebView. */
+export function desktopWorkspaceFixture(language, original, fixture, form) {
+ const base=desktopMcpFixture(language,original,fixture,form)
+ const patches=language==='cpp' ? [
+  ['void accept(std::wstring const& body,unsigned long frame_epoch){','void accept(std::wstring const& body,unsigned long frame_epoch){if(D476Acceptance::picker(*this,parse(body)))return;'],
+ ] : language==='swift' ? [
+  ['func accept(_ f:[String:Any],_ task:URLSessionWebSocketTask) {','func accept(_ f:[String:Any],_ task:URLSessionWebSocketTask) {\n        if D476Acceptance.picker(self,f){return}'],
+ ] : []
+ if(patches.length!==1)throw Error('DESKTOP_WORKSPACE_FIXTURE_KIND')
+ let source=base.source
+ for(const [before,after]of patches){if(source.split(before).length!==2)throw Error('DESKTOP_WORKSPACE_FIXTURE_ANCHOR');source=source.replace(before,after)}
+ let inverse=source
+ for(const [before,after]of [...patches].reverse()){if(inverse.split(after).length!==2)throw Error('DESKTOP_WORKSPACE_FIXTURE_INVERSE');inverse=inverse.replace(after,before)}
+ if(inverse!==base.source||base.inverse!==original)throw Error('DESKTOP_WORKSPACE_SOURCE_DRIFT')
+ return{source,inverse:base.inverse}
+}

@@ -146,3 +146,39 @@ test('#476 actual native resource imports, reopens, edits, denies/removes and pr
   }
  })
 })
+
+// One sequential surface owner, real existing picker + real controller purpose.
+test('#476 actual native workspace picker binds canonical root, reopens lists/reads and cancels the second OS picker',{skip:!['darwin','win32'].includes(process.platform),timeout:45000},async t=>{
+ return withSurface650(t,async(t,surfaceLease)=>{
+  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-workspace-476-'))),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
+  const root=path.join(dir,'selected');fs.mkdirSync(root);fs.writeFileSync(path.join(root,'hello.txt'),'owned workspace text')
+  const {SecurityConfirmationManager}=await import('../src/security-confirmation'),{observeWorkspacePicker476}=await import('./helpers/desktop-workspace-picker-476')
+  const threads=new ThreadManager();threads.create('owned workspace','native-workspace-A');threads.create('untouched sibling','native-workspace-B')
+  const manager=new SecurityConfirmationManager(),registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-native-workspace-476'),pickerAbort=new AbortController();let pickerRun:Promise<any>|undefined
+  const required=['D476_WS_UNBOUND','D476_WS_PICKER_SELECTED','D476_WS_CONFIRMATION','D476_WS_COMMITTED','D476_WS_LISTED','D476_WS_READ','D476_WS_REOPENED','D476_WS_PICKER_CANCELLED','D476_WS_CANCELLED','D476_WS_DONE'],receipts=new Set<string>()
+  let current:any,authenticated=false,windowRequested=false,connections=0,failed=false,picks=0,pickerObserved=0,pickerReturned=0,cancelReturned=0,child:DesktopNativeChild|undefined,settled=false,exitResolve!:(n:number)=>void,failResolve!:()=>void
+  const exit=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r),fail=()=>{failed=true;failResolve()}
+  const channel=createDesktopChannel({registry,securityConfirmations:manager,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},maxPayload:10*1024*1024,workspaceRuntime:{enabled:()=>true,activity:()=> 'idle',pick:async()=>{
+    const number=++picks;if(number>2){fail();return{error:'cancelled'}}
+    let observedThis=0;pickerRun=observeWorkspacePicker476(pid=>{pickerObserved++;observedThis++;if(!authenticated||current?.readyState!==1){fail();return}if(process.platform==='win32'||observedThis===1)current.send(JSON.stringify({type:'D476.workspace.picker',selection:root,pid,cancel:number===2}))},fail,AbortSignal.any([t.signal,pickerAbort.signal]));const actual=await pickerRun
+    if(actual.observed<1||(process.platform==='win32'&&actual.observed!==1))fail()
+    if(number===1){if(actual.result.path!==root)fail();else pickerReturned++}else{if(actual.result.error!=='cancelled')fail();else cancelReturned++}
+    return actual.result
+  }},onAuthenticated:host=>{authenticated=true;windowRequested=channel.window(host,'workspace')}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer()
+  attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
+  channel.wss.on('connection',ws=>{current=ws;connections++;ws.on('message',raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(!authenticated||f.type!=='system.ping')return;if(f.id==='D476_WS_FAIL'){fail();return}if(required.includes(f.id)){if(receipts.has(f.id)){fail();return}receipts.add(f.id);if(f.id==='D476_WS_DONE')channel.revokeHost('owned-native-workspace-476')}})})
+  server.listen(0,'127.0.0.1');await once(server,'listening')
+  try{
+   const native=path.resolve(__dirname,'../../dist/desktop-native'),binary=path.join(native,'acceptance/workspace',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop')
+   assert.ok(fs.existsSync(binary),'actual workspace acceptance binary must be built');surfaceLease.checkpoint()
+   child=(require(path.join(native,'desktop-launcher.node'))as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,n=>{settled=true;exitResolve(n)})
+   assert.equal(await Promise.race([exit,failure.then(()=>{throw Error('OWNED_WORKSPACE_NATIVE_PHASE_FAILED')}),new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_WORKSPACE_NATIVE_DEADLINE')),{once:true}))]),0)
+   assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,1);assert.equal(picks,2);assert.equal(pickerReturned,1);assert.equal(cancelReturned,1);assert.deepEqual([...receipts].sort(),[...required].sort());assert.equal(manager.pendingCount(),0)
+   const disk=new ThreadManager();assert.equal(disk.get('native-workspace-A')!.workspace_root,root);assert.equal(disk.get('native-workspace-B')!.workspace_root,undefined)
+   process.stdout.write('DESKTOP_WORKSPACE_476 {"native":true,"actualPicker":true,"controllerConfirmed":true,"persisted":true,"reopened":true,"listed":true,"read":true,"pickerCancelled":true,"otherThreadUnchanged":true}\n')
+  }finally{
+   surfaceLease.retain();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled}))}catch{}
+   pickerAbort.abort();if(pickerRun)await pickerRun.catch(()=>{});child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();manager.rejectAll('disconnect');await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()
+  }
+ })
+})
