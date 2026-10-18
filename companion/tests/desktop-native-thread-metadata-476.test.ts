@@ -169,12 +169,13 @@ test('#476 actual native workspace picker binds canonical root, reopens lists/re
  return withSurface650(t,async(t,surfaceLease)=>{
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-workspace-476-'))),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
   const requestedRoot=path.join(dir,'selected');fs.mkdirSync(requestedRoot);const root=fs.realpathSync(requestedRoot),expectedSelection=captureWorkspaceSelection705(root);fs.writeFileSync(path.join(root,'hello.txt'),'owned workspace text')
-  const {SecurityConfirmationManager}=await import('../src/security-confirmation'),{parseNativeWorkspaceDiagnostic705}=await import('./helpers/desktop-workspace-picker-476')
+  const {SecurityConfirmationManager}=await import('../src/security-confirmation'),{parseNativeWorkspaceDiagnostic705,parseNativeWorkspaceCancel705}=await import('./helpers/desktop-workspace-picker-476')
   const threads=new ThreadManager();threads.create('owned workspace','native-workspace-A');threads.create('untouched sibling','native-workspace-B')
   const manager=new SecurityConfirmationManager(),registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-native-workspace-476')
   const pickerRequests=new Map<string,{request:string;thread:string;revision:string;number:number}>(),completedPickers=new Set<string>()
   const required=['D476_WS_UNBOUND','D476_WS_PICKER_SELECTED','D476_WS_CONFIRMATION','D476_WS_COMMITTED','D476_WS_LISTED','D476_WS_READ','D476_WS_REOPENED','D476_WS_PICKER_CANCELLED','D476_WS_CANCELLED','D476_WS_DONE'],receipts=new Set<string>()
   let selectedOutcome:boolean|null=null,selectedIdentity:boolean|null=null
+  let cancelClose:0|1|2=0,cancelShow:0|1|2|3=0,cancelSettled:boolean|null=null,cancelCurrent:boolean|null=null
   let failureSite=0,pickOutcome=0,nativeDiagnostic:ReturnType<typeof parseNativeWorkspaceDiagnostic705>=null,diagnosticInvalid=false
   let pickerLifecycle={mode:0 as number,childClosed:false,childExit:null as number|null,childSignal:0 as number,childError:false}
   let uiOwner:import('./helpers/workspace-xctest-owned-705').OwnedWorkspaceUI705|undefined,uiDone:Promise<{ok:boolean}>|undefined,primaryFailed=false
@@ -203,20 +204,21 @@ test('#476 actual native workspace picker binds canonical root, reopens lists/re
     }
     if(f.type!=='system.ping')return;
     if(f.id==='D476_WS_PICKER_SELECTED'||f.id==='D476_WS_PICKER_CANCELLED'){pickerObserved++;try{uiOwner?.ready(f.id==='D476_WS_PICKER_SELECTED'?1:2)}catch{fail(7)}}
+if(typeof f.id==='string'&&f.id.startsWith('D476_WS_CANCEL_')){try{const d=parseNativeWorkspaceCancel705(f.id);if(process.platform!=='win32'||!d)diagnosticInvalid=true;else if('close'in d)cancelClose=d.close;else{cancelShow=d.show;cancelSettled=d.settled;cancelCurrent=d.current}}catch{diagnosticInvalid=true}return}
 if(typeof f.id==='string'&&f.id.startsWith('D476_WS_DIAG_')){try{const d=parseNativeWorkspaceDiagnostic705(f.id);if(d&&d.platform===(process.platform==='win32'?1:2))nativeDiagnostic=d;else diagnosticInvalid=true}catch{diagnosticInvalid=true}return}if(f.id==='D476_WS_FAIL'){fail(7);return}if(required.includes(f.id)){if(receipts.has(f.id)){fail(8);return}receipts.add(f.id);if(f.id==='D476_WS_DONE')channel.revokeHost('owned-native-workspace-476')}})})
   server.listen(0,'127.0.0.1');await once(server,'listening')
   try{
    const native=path.resolve(__dirname,'../../dist/desktop-native');if(process.platform==='darwin'){const {OwnedWorkspaceUI705}=await import('./helpers/workspace-xctest-owned-705');uiOwner=new OwnedWorkspaceUI705(native,dir,uiDeadline,t.signal)};const binary=uiOwner?.appExecutable??path.join(native,'acceptance/workspace',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop')
    assert.ok(fs.existsSync(binary),'actual workspace acceptance binary must be built');surfaceLease.checkpoint()
    child=(require(path.join(native,'desktop-launcher.node'))as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,n=>{settled=true;exitResolve(n)})
-   if(uiOwner){uiOwner.start();uiDone=uiOwner.complete().then(()=>({ok:true}),()=>({ok:false}))}
+   if(uiOwner){uiOwner.start();uiDone=uiOwner.complete().then(()=>({ok:true}),()=>{fail(9);return{ok:false}})}
    assert.equal(await Promise.race([exit,failure.then(()=>{throw Error('OWNED_WORKSPACE_NATIVE_PHASE_FAILED')}),new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_WORKSPACE_NATIVE_DEADLINE')),{once:true}))]),0)
    if(uiDone)assert.equal((await uiDone).ok,true,'owned acknowledged UI runner must genuinely close quiescent')
    assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,1);assert.equal(picks,2);assert.equal(pickerObserved,2);assert.equal(pickerReturned,1);assert.equal(cancelReturned,1);assert.deepEqual([...receipts].sort(),[...required].sort());assert.equal(manager.pendingCount(),0)
    const disk=new ThreadManager();assert.equal(sameWorkspaceSelection705(expectedSelection,disk.get('native-workspace-A')!.workspace_root),true);assert.equal(disk.get('native-workspace-B')!.workspace_root,undefined)
    process.stdout.write('DESKTOP_WORKSPACE_476 {"native":true,"actualPicker":true,"controllerConfirmed":true,"persisted":true,"reopened":true,"listed":true,"read":true,"pickerCancelled":true,"otherThreadUnchanged":true}\n')
   }catch(error){primaryFailed=true;throw error}finally{
-   surfaceLease.retain();uiOwner?.cancel();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity}))}catch{}
+   surfaceLease.retain();let uiLifecycle:Record<string,boolean|number|null>|undefined;try{uiLifecycle=uiOwner?.diagnostic()}catch{};uiOwner?.cancel();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity,uiLifecycle,cancelClose,cancelShow,cancelSettled,cancelCurrent}))}catch{}
    child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();manager.rejectAll('disconnect');await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));let uiClosed=true;try{await uiOwner?.cleanup()}catch{uiClosed=false;try{t.diagnostic('D476_WORKSPACE_UI_LIFETIME_UNKNOWN')}catch{}};if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;if(uiClosed){fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()}else if(!primaryFailed){throw Error('OWNED_WORKSPACE_UI_LIFETIME_UNKNOWN')}
   }
  })
@@ -307,3 +309,13 @@ test('#476 native local-work keys→real PTY/ACP→explicit handback→same hist
   if(primary===undefined&&cleanupError!==undefined)throw cleanupError
  }
 }))
+
+
+test('#705 cancel boundary parser has fixed enums and unknown never implies a return',async()=>{
+ const {parseNativeWorkspaceCancel705:parse}=await import('./helpers/desktop-workspace-picker-476')
+ assert.deepEqual(parse('D476_WS_CANCEL_CLOSE_OK'),{close:1});assert.deepEqual(parse('D476_WS_CANCEL_CLOSE_FAIL'),{close:2})
+ for(const [kind,show]of [['CANCELLED',1],['FAILED',2],['SUCCESS',3]]as const)for(const settled of [0,1])for(const current of [0,1])assert.deepEqual(parse(`D476_WS_CANCEL_SHOW_${kind}_${settled}_${current}`),{show,settled:!!settled,current:!!current})
+ let reads=0;const trap=Object.defineProperty({},'toString',{get(){reads++;throw Error('PRIVATE')}})
+ for(const value of [null,trap,'','D476_WS_CANCEL_CLOSE_OK\n','D476_WS_CANCEL_CLOSE_OK_PRIVATE','D476_WS_CANCEL_SHOW_UNKNOWN_0_1','D476_WS_CANCEL_SHOW_CANCELLED_2_1','D476_WS_CANCEL_SHOW_CANCELLED_0_1\n','D476_WS_CANCEL_SHOW_CANCELLED_0_1_PRIVATE','D476_WS_CANCEL_SHOW_CANCELLED_0_1'.repeat(3)])assert.equal(parse(value),null)
+ assert.equal(reads,0)
+})

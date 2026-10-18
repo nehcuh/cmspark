@@ -29,6 +29,16 @@ export function parseNativeWorkspaceDiagnostic705(value:unknown):{platform:1|2;p
  return {platform:m[1]==='W'?1:2,phaseMask,failureSite,localPanels:m[4]==='X'?null:Number(m[4]),ownedPanels:m[5]==='X'?null:Number(m[5]),flags,flagsKnown}
 }
 
+/** Separate Windows-only cancel boundary. Old diagnostic schema stays unchanged. */
+export function parseNativeWorkspaceCancel705(value:unknown):{close:1|2}|{show:1|2|3;settled:boolean;current:boolean}|null {
+ if(typeof value!=='string'||value.length>64)return null
+ if(value==='D476_WS_CANCEL_CLOSE_OK')return {close:1}
+ if(value==='D476_WS_CANCEL_CLOSE_FAIL')return {close:2}
+ const m=/^D476_WS_CANCEL_SHOW_(CANCELLED|FAILED|SUCCESS)_([01])_([01])$/.exec(value)
+ if(!m||m[0]!==value)return null
+ return {show:m[1]==='CANCELLED'?1:m[1]==='FAILED'?2:3,settled:m[2]==='1',current:m[3]==='1'}
+}
+
 const prompt=WORKSPACE_FOLDER_PROMPT.replace(/\\/g,'\\\\').replace(/"/g,'\\"')
 const macScripts=[`tell application (path to frontmost application as text) to POSIX path of (choose folder with prompt "${prompt}")`,`POSIX path of (choose folder with prompt "${prompt}")`]
 export async function observeWorkspacePicker476(onChild:(pid:number)=>void,onInvalid:()=>void,signal?:AbortSignal,onLifecycle?:(value:WorkspacePickerLifecycle705)=>void) {

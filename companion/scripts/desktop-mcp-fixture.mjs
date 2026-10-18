@@ -105,10 +105,11 @@ export function desktopWorkspaceFixture(language, original, fixture, form) {
  const base=desktopMcpFixture(language,original,fixture,form)
  const patches=language==='cpp' ? [
   ['void accept(std::wstring const& body,unsigned long frame_epoch){','void accept(std::wstring const& body,unsigned long frame_epoch){if(D476Acceptance::picker(*this,parse(body)))return;'],
+  ['HRESULT shown=dialog->Show(window);KillTimer(window,workspace_picker_timer);','HRESULT shown=dialog->Show(window);KillTimer(window,workspace_picker_timer);D476Acceptance::shown(*this,shown,p->settled,picker_current(p));'],
  ] : language==='swift' ? [
   ['func accept(_ f:[String:Any],_ task:URLSessionWebSocketTask) {','func accept(_ f:[String:Any],_ task:URLSessionWebSocketTask) {\n        if D476Acceptance.picker(self,f){return}'],
  ] : []
- if(patches.length!==1)throw Error('DESKTOP_WORKSPACE_FIXTURE_KIND')
+ if(patches.length!==(language==='cpp'?2:1))throw Error('DESKTOP_WORKSPACE_FIXTURE_KIND')
  let source=base.source
  for(const [before,after]of patches){if(source.split(before).length!==2)throw Error('DESKTOP_WORKSPACE_FIXTURE_ANCHOR');source=source.replace(before,after)}
  let inverse=source

@@ -43,3 +43,46 @@ test('705 actual builder stages Resources assets and compiles the matching bundl
   const inventory=JSON.parse(fs.readFileSync(path.join(dest,'acceptance/workspace-ui/package-manifest.json'),'utf8'));assert.ok(inventory.files.some(row=>row.path==='OwnedPicker705.app/Contents/Resources/assets/index.html'));assert.equal(inventory.files.some(row=>row.path.startsWith('OwnedPicker705.app/Contents/MacOS/assets/')),false)
  }finally{fs.rmSync(temp,{recursive:true,force:true})}
 })
+
+// The actual retained dialog/production branch is lowered only for inert CPU execution.
+const workspaceCpp705=()=>fs.readFileSync(path.join(root,'tests/fixtures/desktop-476/workspace-acceptance.cpp'),'utf8')
+function cancelSuffix705(source,hr){
+ const anchor='KillTimer(h.window,476);++panels;pickerNonce.clear();expectedDirectory.Reset();'
+ assert.equal(source.split(anchor).length,2)
+ const start=source.indexOf(anchor),body=source.slice(start,source.indexOf('\n}',start)).replace(/\bL"/g,'"').replace(/\(void\)/g,'').replace(/->/g,'.').replace(/auto closed=/g,'const closed=').replace(/(\d+)u\b/g,'$1')
+ const trace=[],s={panels:1,cancelPicker:true,h:{window:1},dialog:2,button:3,pickerNonce:{clear(){}},expectedDirectory:{Reset(){}},KillTimer(){},emit(_,id){trace.push(id)},note(){},fail(){trace.push('FAIL')},cancelNote(_,id){trace.push(id)},activeDialog:{Close(){trace.push('Close');return hr}},FAILED:v=>v<0,HRESULT_FROM_WIN32:v=>v,ERROR_CANCELLED:1223,SendMessageW(){throw Error('UNEXPECTED_CLICK')},BM_CLICK:0,IsWindow:()=>true}
+ vm.compileFunction(body,Object.keys(s))(...Object.values(s));return trace
+}
+test('705 actual cancellation requires the retained Close result, not the earlier readiness marker',()=>{
+ for(const source of [workspaceCpp705(),workspaceCpp705().replace(/\r?\n/g,'\r\n')]){
+  const ok=cancelSuffix705(source,0),bad=cancelSuffix705(source,-1)
+  assert.ok(ok.indexOf('D476_WS_PICKER_CANCELLED')<ok.indexOf('Close'))
+  assert.ok(ok.includes('D476_WS_CANCEL_CLOSE_OK'));assert.equal(ok.includes('FAIL'),false)
+  assert.ok(bad.includes('D476_WS_CANCEL_CLOSE_FAIL'));assert.ok(bad.includes('FAIL'));assert.equal(bad.includes('D476_WS_CANCEL_CLOSE_OK'),false)
+  assert.equal(ok.filter(x=>x==='Close').length,1);assert.equal(bad.filter(x=>x==='Close').length,1)
+ }
+})
+test('705 generated post-Show observer preserves the actual guard and normal-host inverse',()=>{
+ const original=fs.readFileSync(path.join(root,'src/desktop/native/DesktopHost.cpp'),'utf8'),fixture=workspaceCpp705(),form=fs.readFileSync(path.join(root,'tests/fixtures/desktop-476/workspace-form.js'),'utf8')
+ for(const text of [original,original.replace(/\r?\n/g,'\r\n')]){
+  const result=desktopWorkspaceFixture('cpp',text,fixture,form),anchor='HRESULT shown=dialog->Show(window);KillTimer(window,workspace_picker_timer);',hook='D476Acceptance::shown(*this,shown,p->settled,picker_current(p));'
+  assert.equal(result.inverse,text);assert.equal(result.source.split(hook).length,2)
+  assert.ok(result.source.indexOf(hook)>result.source.indexOf(anchor));assert.ok(result.source.indexOf(hook)<result.source.indexOf('if(p->settled||!picker_current(p))return;'))
+  assert.throws(()=>desktopWorkspaceFixture('cpp',text.replace(anchor,'missing'),fixture,form),/DESKTOP_WORKSPACE_FIXTURE_ANCHOR/)
+  assert.throws(()=>desktopWorkspaceFixture('cpp',text+'\n'+anchor,fixture,form),/DESKTOP_WORKSPACE_FIXTURE_ANCHOR/)
+ }
+})
+test('705 actual Show result observer cannot bypass original stale or settled guards',()=>{
+ const cpp=workspaceCpp705(),match=/void D476Acceptance::shown\(Desktop& h,HRESULT result,bool settled,bool current\) noexcept \{([\s\S]*?)\n\}/.exec(cpp);assert.ok(match)
+ const body=match[1].replace(/\bL"/g,'"').replace(/std::wstring\(/g,'String(').replace(/std::wstring /g,'let ').replace(/\.c_str\(\)/g,'').replace(/catch\(\.\.\.\)/g,'catch').replace(/std::to_wstring\((settled|current)\?1:0\)/g,'String($1?1:0)').replace(/auto /g,'let ')
+ const host=fs.readFileSync(path.join(root,'src/desktop/native/DesktopHost.cpp'),'utf8'),a='if(p->settled||!picker_current(p))return;',b='ComPtr<IShellItem> item;'
+ const branch=host.slice(host.indexOf(a),host.indexOf(b,host.indexOf(a))).replace(/->/g,'.').replace(/\bL"/g,'"')
+ for(const [settled,current,shown,expected,kind]of [[false,true,1223,'cancelled','CANCELLED'],[true,true,1223,null,'CANCELLED'],[false,false,1223,null,'CANCELLED'],[false,true,-1,'unavailable','FAILED'],[false,true,0,null,'SUCCESS']]){
+  const output=[];vm.compileFunction(body,['h','result','settled','current','cancelPicker','HRESULT_FROM_WIN32','ERROR_CANCELLED','FAILED','cancelNote'])({},shown,settled,current,true,x=>x,1223,x=>x<0,(_,id)=>output.push(id))
+  assert.deepEqual(output,[`D476_WS_CANCEL_SHOW_${kind}_${+settled}_${+current}`]);let got=null
+  vm.compileFunction(branch,['p','shown','picker_current','finish_picker','HRESULT_FROM_WIN32','ERROR_CANCELLED','FAILED','wall_ms','deadline'])({settled},shown,()=>current,(_,v)=>got=v,x=>x,1223,x=>x<0,()=>0,1);assert.equal(got,expected)
+ }
+ // Close's success cannot manufacture a Show return; no hook executes in that schedule.
+ assert.equal(cancelSuffix705(cpp,0).some(x=>x.startsWith('D476_WS_CANCEL_SHOW_')),false)
+ const quiet=[];vm.compileFunction(body,['h','result','settled','current','cancelPicker','HRESULT_FROM_WIN32','ERROR_CANCELLED','FAILED','cancelNote'])({},1223,false,true,false,x=>x,1223,x=>x<0,(_,id)=>quiet.push(id));assert.deepEqual(quiet,[])
+})
