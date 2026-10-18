@@ -91,7 +91,7 @@ test("real binding retains bootstrap when only owned subdaemon standard descript
 test("actual native bootstrap refuses boolean protocol and duplicate/escaped duplicate fields before network",{skip:process.platform!=="darwin",timeout:20000},()=>{
  const {spawnSync}=require("node:child_process") as typeof import("node:child_process")
  const binary=path.resolve(__dirname,"../../dist/desktop-native/cmspark-desktop")
- const base={capability_id:"11".repeat(16),secret:"22".repeat(32),url:"ws://127.0.0.1:1/desktop",protocol_version:1,issued_method_set_version:5}
+ const base={capability_id:"11".repeat(16),secret:"22".repeat(32),url:"ws://127.0.0.1:1/desktop",protocol_version:1,issued_method_set_version:6}
  const canonical=JSON.stringify(base)
  for(const body of [JSON.stringify({...base,protocol_version:true}),canonical.replace('"protocol_version":1','"protocol_version":1,"protocol_version":1'),canonical.replace('"protocol_version":1','"protocol_version":1,"\\u0070rotocol_version":1')]){const r=spawnSync(binary,[],{input:body,stdio:["pipe","ignore","ignore"],timeout:5000,env:{PATH:"/usr/bin:/bin"}});assert.equal(r.status,15)}
 })

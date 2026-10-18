@@ -150,13 +150,13 @@ test('read is bound to a socket-local snapshot, not a reusable revision bearer t
 })
 test('native host/controller method-set and purpose are bound at every real bootstrap producer/consumer',()=>{
  const root=path.resolve(__dirname,'../..'),read=(p:string)=>fs.readFileSync(path.join(root,p),'utf8')
- const launcher=read('src/desktop/native/launcher.c');assert.equal((launcher.match(/issued_method_set_version\\":5/g)||[]).length,2)
- for(const name of ['synchronize-handle-probe.c','windows-inheritance.c','windows-malformed-bootstrap.c'])assert.equal((read('tests/fixtures/desktop-480/'+name).match(/issued_method_set_version\\":5/g)||[]).length,1)
+ const launcher=read('src/desktop/native/launcher.c');assert.equal((launcher.match(/issued_method_set_version\\":6/g)||[]).length,2)
+ for(const name of ['synchronize-handle-probe.c','windows-inheritance.c','windows-malformed-bootstrap.c'])assert.equal((read('tests/fixtures/desktop-480/'+name).match(/issued_method_set_version\\":6/g)||[]).length,1)
  const cpp=read('src/desktop/native/DesktopHost.cpp'),swift=read('src/desktop/native/DesktopHost.swift')
- assert.match(cpp,/desktop_method_set_version!=5/);assert.match(swift,/DesktopCapabilities.version==5/)
+ assert.match(cpp,/desktop_method_set_version!=6/);assert.match(swift,/DesktopCapabilities.version==6/)
  assert.match(cpp,/value->purpose==L"resource"\)put\(result,L"purpose",L"resource"\)/);assert.match(swift,/if p.purpose=="resource" \{result\["purpose"\]="resource"\}/)
  assert.match(cpp,/request->second\.target/);assert.match(cpp,/request->second\.revision/);assert.match(swift,/target==request\.target/);assert.match(swift,/request\.revision/)
- const builder=read('scripts/build-desktop-native.mjs');assert.match(builder,/DESKTOP_METHOD_SET_VERSION !== 5/);for(const verb of ['read','import','update','remove'])assert.ok(builder.includes('desktop.resource.'+verb))
+ const builder=read('scripts/build-desktop-native.mjs');assert.match(builder,/DESKTOP_METHOD_SET_VERSION !== 6/);for(const verb of ['read','import','update','remove'])assert.ok(builder.includes('desktop.resource.'+verb))
 })
 for(const docFirst of [true,false])test(`hosted resource form drives actual UI/backend through all six writes, documentFirst=${docFirst}`,async t=>{
  const f=fixture(t),ui=renderer();ui.posted.length=0

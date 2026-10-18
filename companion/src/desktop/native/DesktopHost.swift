@@ -215,7 +215,8 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
               let f=message.body as? [String:Any],let g=f["generation"] as? String,g==generation,let type=f["type"] as? String else{return}
         if type=="desktop.view",Set(f.keys)==["type","view","generation"],let view=f["view"] as? String,["compact","workspace"].contains(view){show(view);return}
         let allowed:Set<String>
-        if type=="desktop.mcp.edit" {allowed=["type","id","name","thread_id","generation"]}
+        if type=="thread.search" {allowed=f["limit"] == nil ? ["type","id","query","generation"]:["type","id","query","limit","generation"]}
+        else if type=="desktop.mcp.edit" {allowed=["type","id","name","thread_id","generation"]}
         else if type=="desktop.mcp.save" {allowed=["type","id","name","thread_id","action","payload_json","generation"]}
         else if type=="desktop.resource.read" {allowed=["type","id","kind","resource_id","generation"]}
         else if type=="desktop.resource.import" {allowed=["type","id","kind","payload_json","generation"]}
@@ -228,6 +229,10 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         else if type=="desktop.chat.send" {allowed=["type","id","thread_id","message","generation"]}
         else if type=="desktop.chat.stop" {allowed=["type","id","thread_id","run_id","generation"]}
         else {allowed=type=="thread.peek" ? ["type","id","thread_id","generation"]:["type","id","generation"]}
+        if type=="thread.search" {
+            guard Set(f.keys)==allowed,let id=f["id"] as? String,id.utf16.count<=200,let query=f["query"] as? String,query.utf16.count<=120 else{return}
+            if let value=f["limit"] {guard let limit=value as? NSNumber,CFGetTypeID(limit) != CFBooleanGetTypeID(),limit.doubleValue.isFinite,limit.doubleValue.rounded(.towardZero)==limit.doubleValue,limit.doubleValue>=1,limit.doubleValue<=20 else{return}}
+        }
         if type.hasPrefix("desktop.mcp.") {
             guard Set(f.keys)==allowed,f["name"] is String,f["thread_id"] is NSNull || f["thread_id"] is String,requests["desktop.mcp.save"]==nil else{return}
             if type=="desktop.mcp.save" {guard f["payload_json"] is String,let action=f["action"] as? String,["add","update"].contains(action) else{return}}
@@ -268,6 +273,6 @@ let bootstrapWatch=DispatchSource.makeProcessSource(identifier:parent,eventMask:
 var data=Data()
 while true { do { guard let part=try FileHandle.standardInput.read(upToCount:4097-data.count),!part.isEmpty else{break};data.append(part);if data.count>4096{exit(14)} } catch {exit(13)} }
 try? FileHandle.standardInput.close()
-guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==5,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
+guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==6,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
 data.resetBytes(in:0..<data.count)
 let app=NSApplication.shared;private let delegate=NativeDesktop(bootstrap,parent:parent);app.delegate=delegate;app.setActivationPolicy(.regular);bootstrapWatch.cancel();app.run()
