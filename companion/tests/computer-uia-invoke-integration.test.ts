@@ -1,5 +1,4 @@
 import { registerNoFocusNativeTests572 } from "./helpers/uia-no-focus-native-572"
-import { registerMixedClientNative572 } from "./helpers/uia-mixed-client-572"
 // #572 — REAL integration: the compiled adapter driving the REAL PowerShell script.
 //
 // WHY THIS FILE EXISTS (read before deleting it):
@@ -28,14 +27,15 @@ import * as path from "node:path"
 import { PsInputInjector } from "../src/computer/win-adapters"
 
 const PS = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-const SCRIPT_REL = "src/host-use/win/scripts/computer-uia-invoke.ps1"
+const SCRIPT_REL = "src/host-use/win/scripts/computer-uia-select.ps1"
+const LEGACY_SCRIPT = path.resolve("tests/fixtures/win/computer-uia-invoke-mixed-before572.ps1")
 const SCRIPT = [SCRIPT_REL, path.join("companion", SCRIPT_REL)].find((p) => existsSync(p))
 const available = process.platform === "win32" && existsSync(PS) && !!SCRIPT
 
 /** A handle that is guaranteed not to be a window, so the script exits at its first check. */
 const DEAD_HWND = 1
 
-test("#650 shipped UIA source parses as Unicode in actual Desktop PowerShell 5.1", { skip: !available }, async () => {
+test("#650 shipped UIA selection source parses as Unicode in actual Desktop PowerShell 5.1", { skip: !available }, async () => {
   const fixture = path.resolve("tests/fixtures/uia-script-encoding-650.ps1")
   const result = await promisify(execFile)(PS, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture, "-ScriptPath", path.resolve(SCRIPT!)], { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 })
   const proof = JSON.parse(result.stdout.trim())
@@ -98,6 +98,14 @@ test("#572 integration: with no stop file at all the script still runs (standalo
   assert.equal(r.reason, "window_gone")
 })
 
+
+
+test("#572 legacy standalone action refuses host_pipeline_required without any action", {skip:!available},async()=>{
+  await assert.rejects(runPs(resolveWinScript("computer-uia-invoke.ps1"),["-Hwnd",String(DEAD_HWND),"-Name","SubmitTest","-Mode","invoke"]),error=>{
+    const e=error as {code?:number;stderr?:string}
+    return e.code===6 && e.stderr?.trim()==="UIA_TERMINAL:UIA_PATTERN_UNAVAILABLE"
+  })
+})
 
 // Current #572 positive acceptance. CPU controls extract these exact assertions;
 // only the Windows callback below starts owned WPF processes.
@@ -284,37 +292,113 @@ function makeWpfClientProbe572(dir: string, sibling: number, runner: PsRunner): 
   }
 }
 
+
+// Version2 explicitly names two processes; the original four phases remain legacy-only.
+function stripPipelineClientProbe572(source: Buffer): Buffer {
+  const text = source.toString("utf8")
+  const stripped = text.replace(/<#WPF572_PIPELINE_\d+_BEGIN#>[\s\S]*?<#WPF572_PIPELINE_\d+_END#>/g, "")
+  assert.equal((text.match(/<#WPF572_PIPELINE_\d+_BEGIN#>/g) ?? []).length, (text.match(/<#WPF572_PIPELINE_\d+_END#>/g) ?? []).length)
+  assert.ok(!stripped.includes("WPF572_PIPELINE_"))
+  return Buffer.from(stripped,"utf8")
+}
+function buildPipelineClientProbe572(source: Buffer, phase: "select" | "act", sibling: number, receipt: string): Buffer {
+  const text=source.toString("utf8"),eol=text.includes("\r\n")?"\r\n":"\n"
+  assert.ok(Buffer.from(text).equals(source)&&!text.includes("WPF572_PIPELINE_"))
+  assert.ok(Number.isSafeInteger(sibling)&&sibling>0&&!receipt.includes("\0"))
+  const inserts:{at:number;body:string}[]=[]
+  const at=(anchor:string)=>{const i=text.indexOf(anchor);assert.ok(i>=0&&text.indexOf(anchor,i+anchor.length)<0);return i}
+  const call=(name:string,sequence:number)=>"try { Write-PipelineProbe572 '"+name+"' "+sequence+" } catch {}; "
+  const functionBody=String.raw`
+Microsoft.PowerShell.Utility\Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();' -Name PipelineProbe572 -Namespace CU | Out-Null
+function Write-PipelineProbe572([string]$Phase,[int]$Sequence) {
+  try {
+    if ($Phase -notin @('SELECT_BEFORE_FROM_HANDLE','SELECT_PRE_EXIT','ACTION_PRE_INVOKE','ACTION_POST_INVOKE','ACTION_PRE_EXIT') -or $Sequence -lt 1 -or $Sequence -gt 5) { return }
+    $fg=[CU.PipelineProbe572]::GetForegroundWindow()
+    $role=if($fg -eq [IntPtr]$Hwnd){'TARGET'}elseif($fg -eq [IntPtr]::new([long]SIBLING_VALUE)){'SIBLING'}elseif($fg -eq [IntPtr]::Zero){'NONE'}else{'OTHER'}
+    $record=[ordered]@{sequence=$Sequence;phase=$Phase;foregroundRole=$role}
+    $line=Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject $record
+    [IO.File]::AppendAllText('RECEIPT_VALUE',$line+[Environment]::NewLine)
+  } catch {}
+}
+`.replace("SIBLING_VALUE",String(sibling)).replace("RECEIPT_VALUE",receipt.replace(/'/g,"''")).replace(/\n/g,eol)
+  if(phase==="select"){
+    const from="try { $rootEl = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$Hwnd) }"
+    inserts.push({at:at(from),body:functionBody+call("SELECT_BEFORE_FROM_HANDLE",1)})
+    inserts.push({at:at("exit 0"),body:call("SELECT_PRE_EXIT",2)})
+  }else{
+    const action="  try { $status = & $act $null }"
+    inserts.push({at:at("$sw = [Diagnostics.Stopwatch]::StartNew()"),body:functionBody})
+    inserts.push({at:at(action)+action.indexOf("$status"),body:call("ACTION_PRE_INVOKE",3)})
+    inserts.push({at:at(action)+action.lastIndexOf("}"),body:"; "+call("ACTION_POST_INVOKE",4)})
+    inserts.push({at:at("exit 0"),body:call("ACTION_PRE_EXIT",5)})
+  }
+  let output=text
+  for(const [id,row] of inserts.map((row,id)=>[id,row] as const).sort((a,b)=>b[1].at-a[1].at))
+    output=output.slice(0,row.at)+"<#WPF572_PIPELINE_"+id+"_BEGIN#>"+row.body+"<#WPF572_PIPELINE_"+id+"_END#>"+output.slice(row.at)
+  const bytes=Buffer.from(output)
+  assert.ok(stripPipelineClientProbe572(bytes).equals(source))
+  return bytes
+}
+function makePipelineClientProbe572(dir:string,sibling:number,runner:PsRunner):{run:PsRunner;status:()=>string;native:()=>unknown}{
+  let capture="NOT_RUN",calls=0,deadline=0
+  let native:unknown={schema:1,valid:false,complete:false,overflow:false,rows:[]}
+  return {status:()=>capture,native:()=>native,run:async(script,args,opts)=>{
+    if(calls===0)deadline=performance.now()+(opts?.timeoutMs??15000)
+    const phase=path.basename(script)==="computer-uia-select.ps1"?"select":"act"
+    let selected=script,selectedArgs=args,tools:any
+    try{
+      assert.equal(++calls,phase==="select"?1:2)
+      assert.equal(path.basename(script),phase==="select"?"computer-uia-select.ps1":"computer-uia-act.ps1")
+      if(phase==="select")writeFileSync(path.join(dir,"invoke-client-phases.jsonl"),"",{flag:"wx",mode:0o600})
+      let observed=buildPipelineClientProbe572(readFileSync(script),phase,sibling,path.join(dir,"invoke-client-phases.jsonl"))
+      if(phase==="act"){
+        tools=createRequire(path.join(process.cwd(),"package.json"))(path.resolve("scripts/computer-uia-native-probe-572.mjs"))
+        const library=path.resolve("dist/desktop-native/acceptance/uia572-probe/computer-uia-native-probe-572.dll")
+        assert.ok(existsSync(library));selectedArgs=tools.nativeProbeArgs572(args,library)
+        observed=tools.generateNativeProbeScript572(observed)
+      }
+      selected=path.join(dir,"observed-uia-"+phase+".ps1")
+      writeFileSync(selected,observed,{flag:"wx",mode:0o600});capture="READY"
+    }catch{selected=script;selectedArgs=args;tools=undefined;capture="UNAVAILABLE"}
+    const remaining=Math.floor(deadline-performance.now())
+    assert.ok(remaining>0,"WPF572_PIPELINE_DEADLINE")
+    const output=await runner(selected,selectedArgs,{timeoutMs:Math.min(opts?.timeoutMs??15000,remaining)})
+    if(tools)try{native=tools.projectNativeProbe572(JSON.parse(output).probeWords572)}catch{}
+    return output
+  }}
+}
+
 // The original acceptance always constructs the production/default runner.
 // Only the independently owned diagnostic case selects the observed copy.
 function makeCurrentWpfInjector572(diagnostic: boolean, dir: string, sibling: number) {
-  const probe = diagnostic ? makeWpfClientProbe572(dir, sibling, runPs) : undefined
+  const probe = diagnostic ? makePipelineClientProbe572(dir, sibling, runPs) : undefined
   return { injector: new PsInputInjector(probe?.run, path.join(dir, "absent.stop")), probe }
 }
 
-function projectWpfClientProbe572(text: string, capture: string, parentRole: string) {
+function projectWpfClientProbe572(text: string, capture: string, parentRole: string, pipeline = false) {
   const roles = ["TARGET", "SIBLING", "NONE", "OTHER"]
   const after = roles.includes(parentRole) ? parentRole : "UNKNOWN"
-  const empty = { schema: 1, capture: ["READY", "NOT_RUN"].includes(capture) ? capture : "UNAVAILABLE", valid: false, complete: false,
+  const empty = { schema: pipeline ? 2 : 1, capture: ["READY", "NOT_RUN"].includes(capture) ? capture : "UNAVAILABLE", valid: false, complete: false,
     phases: [] as { sequence: number; phase: string; foregroundRole: string }[],
     parentSnapshotPhase: after === "UNKNOWN" ? "NOT_OBSERVED" : "AFTER_CLIENT_CLOSE_AND_MARKER", parentForegroundRole: after }
   if (capture !== "READY" || Buffer.byteLength(text, "utf8") > 4096 || text.trim() === "") return empty
   try {
-    const rows = text.trim().split(/\r?\n/), expected = ["BEFORE_FROM_HANDLE", "PRE_INVOKE", "POST_INVOKE", "PRE_EXIT"]
-    if (rows.length > 4) return empty
+    const rows = text.trim().split(/\r?\n/), expected = pipeline ? ["SELECT_BEFORE_FROM_HANDLE","SELECT_PRE_EXIT","ACTION_PRE_INVOKE","ACTION_POST_INVOKE","ACTION_PRE_EXIT"] : ["BEFORE_FROM_HANDLE", "PRE_INVOKE", "POST_INVOKE", "PRE_EXIT"]
+    if (rows.length > expected.length) return empty
     const phases = rows.map((line, index) => {
       const value = JSON.parse(line)
       if (!value || Array.isArray(value) || Object.keys(value).sort().join(",") !== "foregroundRole,phase,sequence" || value.sequence !== index + 1 || value.phase !== expected[index] || !roles.includes(value.foregroundRole)) throw new Error("WPF572_CLIENT_PROBE_INVALID")
       return { sequence: value.sequence, phase: value.phase, foregroundRole: value.foregroundRole }
     })
-    return { ...empty, valid: true, complete: phases.length === 4, phases }
+    return { ...empty, valid: true, complete: phases.length === expected.length, phases }
   } catch { return empty }
 }
 
-function emitWpfClientProbe572(read: () => string, sink: (value: string) => void, capture: string, parentRole: string): void {
+function emitWpfClientProbe572(read: () => string, sink: (value: string) => void, capture: string, parentRole: string, pipeline = false): void {
   try {
     let text = ""
     try { text = read() } catch {}
-    sink("WPF572_CLIENT_PHASE_OBSERVATION " + JSON.stringify(projectWpfClientProbe572(text, capture, parentRole)))
+    sink((pipeline ? "WPF572_CLIENT_PIPELINE_OBSERVATION " : "WPF572_CLIENT_PHASE_OBSERVATION ") + JSON.stringify(projectWpfClientProbe572(text, capture, parentRole, pipeline)))
   } catch { /* a passive sink cannot replace primary failure or owned cleanup */ }
 }
 
@@ -457,7 +541,7 @@ async function runCurrentWpf572(t: TestContext, diagnostic = false): Promise<voi
   } catch (error) { primary = error }
   finally {
     if (diagnostic) {
-      emitWpfClientProbe572(() => readFileSync(path.join(dir, "invoke-client-phases.jsonl"), "utf8"), value => t.diagnostic(value), clientProbe?.status() ?? "NOT_RUN", parentProbeRole)
+      emitWpfClientProbe572(() => readFileSync(path.join(dir, "invoke-client-phases.jsonl"), "utf8"), value => t.diagnostic(value), clientProbe?.status() ?? "NOT_RUN", parentProbeRole, true)
       try { t.diagnostic("UIA572_NATIVE_STAGE_OBSERVATION " + JSON.stringify(clientProbe?.native() ?? { schema: 1, valid: false, complete: false, overflow: false, rows: [] })) } catch { /* passive observation cannot replace original acceptance/cleanup */ }
     }
     // Observe before termination so cleanup-induced deactivation is not mistaken for Invoke behavior.
@@ -482,9 +566,9 @@ test("#572 current WPF background client-phase diagnostic retains the same stric
   await runCurrentWpf572(t, true)
 })
 
-test("#650 shipped UIA source parses as Unicode in actual Desktop PowerShell 5.1", { skip: !available }, async () => {
+test("#650 shipped clean UIA action source parses as Unicode in actual Desktop PowerShell 5.1", { skip: !available }, async () => {
   const fixture = path.resolve("tests/fixtures/uia-script-encoding-650.ps1")
-  const result = await promisify(execFile)(PS, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture, "-ScriptPath", path.resolve(SCRIPT!)], { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 })
+  const result = await promisify(execFile)(PS, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture, "-ScriptPath", resolveWinScript("computer-uia-act.ps1")], { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 })
   const proof = JSON.parse(result.stdout.trim())
   assert.equal(proof.desktop51, true)
   assert.equal(proof.current_errors, 0)
@@ -545,7 +629,7 @@ test("#572 WPF event diagnostic sink failures preserve cleanup and original acce
 
 test("#572 client phase copy preserves every shipped byte and refuses ambiguous anchors", () => {
   assert.ok(SCRIPT)
-  const original = readFileSync(SCRIPT!)
+  const original = readFileSync(LEGACY_SCRIPT)
   for (const source of [original, Buffer.from(original.toString("utf8").replace(/\r?\n/g, "\r\n")), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), original])]) {
     const observed = buildWpfClientProbe572(source, 44, "C:\\owned space\\O'Hare\\phases.jsonl")
     assert.ok(stripWpfClientProbe572(observed).equals(source))
@@ -570,7 +654,7 @@ test("#572 client probe keeps the real runner argv, stdout and rejection on inst
   if (!existsSync(library)) { mkdirSync(path.dirname(library), { recursive: true }); writeFileSync(library, "OWNED_INERT_DLL_NOT_EXECUTED", { flag: "wx" }); ownedLibrary = true }
   const nativeTools = createRequire(path.join(process.cwd(), "package.json"))(path.resolve("scripts/computer-uia-native-probe-572.mjs"))
   try {
-    const source = readFileSync(SCRIPT!), script = path.join(dir, "computer-uia-invoke.ps1")
+    const source = readFileSync(LEGACY_SCRIPT), script = path.join(dir, "computer-uia-invoke.ps1")
     writeFileSync(script, source)
     const args = ["-Hwnd", "40", "-Name", "SubmitTest", "-Mode", "invoke", "-StopFile", path.join(dir, "absent.stop"), "-NoFocusLibrary", path.join(dir, "normal.dll")]
     const opts = { timeoutMs: 15000 }
@@ -642,5 +726,51 @@ test("#572 client route selection keeps normal acceptance on the actual default 
 })
 
 // Keep all foreground-owning #572 cases in this one canonical file worker.
+// Legacy A/B remains in helpers/uia-mixed-client-572.ts and the exact old PS fixture.
+// Its B action demonstrably activates the target; it is history, not current production acceptance.
+
+test("#572 version2 pipeline phases preserve both production scripts wholebytes",()=>{
+  for(const phase of ["select","act"] as const){
+    const original=readFileSync("src/host-use/win/scripts/computer-uia-"+phase+".ps1")
+    for(const bytes of [original,Buffer.from(original.toString().replace(/\r?\n/g,"\r\n"))]){
+      const observed=buildPipelineClientProbe572(bytes,phase,44,"C:\\owned\\receipt")
+      assert.ok(stripPipelineClientProbe572(observed).equals(bytes))
+      assert.equal(observed.toString().includes("SetForegroundWindow("),false)
+    }
+  }
+  const names=["SELECT_BEFORE_FROM_HANDLE","SELECT_PRE_EXIT","ACTION_PRE_INVOKE","ACTION_POST_INVOKE","ACTION_PRE_EXIT"]
+  const rows=names.map((phase,index)=>({sequence:index+1,phase,foregroundRole:"SIBLING"}))
+  const text=rows.map(r=>JSON.stringify(r)).join("\n")
+  const proof=projectWpfClientProbe572(text,"READY","SIBLING",true)
+  assert.equal(proof.schema,2);assert.equal(proof.complete,true)
+  assert.equal(projectWpfClientProbe572(text,"READY","SIBLING").valid,false,"old phases never conflate with pipeline")
+  assert.equal(projectWpfClientProbe572(text.replace("ACTION_PRE_INVOKE","SECRET"),"READY","SIBLING",true).valid,false)
+})
+
+
+test("#572 actual two-stage diagnostic runner preserves each byte/arg/error within one deadline",async()=>{
+  const dir=mkdtempSync(path.join(tmpdir(),"uia-pipeline-probe-cpu-"))
+  const library=path.resolve("dist/desktop-native/acceptance/uia572-probe/computer-uia-native-probe-572.dll")
+  let ownedLibrary=false
+  if(!existsSync(library)){mkdirSync(path.dirname(library),{recursive:true});writeFileSync(library,"OWNED_INERT_NOT_EXECUTED",{flag:"wx"});ownedLibrary=true}
+  const tools=createRequire(path.join(process.cwd(),"package.json"))(path.resolve("scripts/computer-uia-native-probe-572.mjs"))
+  try{
+    const originals={select:readFileSync(resolveWinScript("computer-uia-select.ps1")),act:readFileSync(resolveWinScript("computer-uia-act.ps1"))}
+    let calls=0
+    const probe=makePipelineClientProbe572(dir,44,async(actual,args,opts)=>{
+      const phase=calls++===0?"select":"act"
+      const generated=readFileSync(actual)
+      const withoutNative=phase==="act"?tools.stripNativeProbeScript572(generated):generated
+      assert.ok(stripPipelineClientProbe572(withoutNative).equals(originals[phase]))
+      assert.equal(args[args.indexOf("-StopFile")+1],"owned.stop")
+      assert.ok(opts!.timeoutMs!>0&&opts!.timeoutMs!<=15000)
+      return phase==="select"?'{"selection":"inert"}':JSON.stringify({ok:true,probeWords572:[1,5,0,6,1,...[1,2,3,4,5].flatMap(p=>[p,2,1,0,1,1])]})
+    })
+    const selectArgs=["-Hwnd","40","-Name","SubmitTest","-StopFile","owned.stop"]
+    assert.equal(await probe.run(resolveWinScript("computer-uia-select.ps1"),selectArgs,{timeoutMs:15000}),'{"selection":"inert"}')
+    await probe.run(resolveWinScript("computer-uia-act.ps1"),["-Hwnd","40","-SelectionJson","{}","-NoFocusLibrary","owned.normal.dll","-StopFile","owned.stop"],{timeoutMs:14000})
+    assert.equal(calls,2);assert.equal(probe.status(),"READY")
+    assert.equal((probe.native() as {complete:boolean}).complete,true)
+  }finally{if(ownedLibrary)unlinkSync(library);rmSync(dir,{recursive:true,force:true})}
+})
 registerNoFocusNativeTests572()
-registerMixedClientNative572()

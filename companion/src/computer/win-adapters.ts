@@ -10,6 +10,7 @@ import * as path from "path"
 import * as fs from "fs"
 import * as crypto from "crypto"
 import { spawn } from "child_process"
+import { performance } from "node:perf_hooks"
 import { parsePsJson, resolvePowerShellExe, runPs, type PsRunner } from "../host-use/win/powershell"
 import { resolveWinScript, resolveComputerUiaNoFocusDll } from "../host-use/win/powershell"
 import type { PreviewBuilder } from "./preview"
@@ -395,6 +396,39 @@ export class PsLocator implements Locator {
 
 // ---------------------------------------------------------------------------
 
+type UiaSelection572 = {
+  schema: 1; hwnd: number; rootPid: number; selectedPid: number; runtime: number[]
+  controlTypeId: number; controlType: string; automationId: string; name: string
+  x: number; y: number; bbox: RectPx
+  patterns: { mode: string; state: "ready" | "unsupported" | "null" | "threw" }[]
+}
+/** Private selection receipt, never model authority or persistent state. */
+function parseUiaSelection572(text: string, hwnd: number, mode: UiaInvokeMode,
+  value: string | undefined, expectedType?: string, expectedAid?: string): UiaSelection572 {
+  const invalid = () => { throw new Error("UIA_SELECTION_INVALID") }
+  const keys = (v: any, expected: string[]) => v && typeof v === "object" && !Array.isArray(v) &&
+    Object.keys(v).sort().join(",") === [...expected].sort().join(",")
+  const integer = (v: unknown, min: number, max: number) => typeof v === "number" && Number.isSafeInteger(v) && v >= min && v <= max
+  if (text.length > 8192 || Buffer.byteLength(text, "utf8") > 16384) invalid()
+  let d: any
+  try { d = JSON.parse(text) } catch { invalid() }
+  if (!keys(d, ["schema","hwnd","rootPid","selectedPid","runtime","controlTypeId","controlType","automationId","name","x","y","bbox","patterns"])) invalid()
+  if (d.schema !== 1 || d.hwnd !== hwnd || !integer(d.hwnd, 1, Number.MAX_SAFE_INTEGER)) invalid()
+  if (![d.rootPid, d.selectedPid].every((n: unknown) => integer(n, 1, 0xffffffff))) invalid()
+  if (!Array.isArray(d.runtime) || d.runtime.length < 1 || d.runtime.length > 64 || !d.runtime.every((n: unknown) => integer(n, -0x80000000, 0x7fffffff))) invalid()
+  if (!integer(d.controlTypeId, 1, 0x7fffffff)) invalid()
+  for (const n of ["name","automationId","controlType"]) if (typeof d[n] !== "string" || d[n].length > 4096 || d[n].includes("\0")) invalid()
+  if (d.name.length === 0 || d.controlType.length === 0) invalid()
+  if ((expectedType && d.controlType !== expectedType) || (expectedAid && d.automationId !== expectedAid)) invalid()
+  if (![d.x,d.y].every((n: unknown) => integer(n, -0x80000000, 0x7fffffff)) || !keys(d.bbox, ["x","y","w","h"]) ||
+      !Object.values(d.bbox).every(n => integer(n, -0x80000000, 0x7fffffff)) || d.bbox.w <= 0 || d.bbox.h <= 0 || d.bbox.w * d.bbox.h > 150000) invalid()
+  const modes = mode === "auto" ? ["invoke", ...(value ? ["setvalue"] : []), "select", "toggle"] : [mode]
+  if (!Array.isArray(d.patterns) || d.patterns.length !== modes.length) invalid()
+  for (let i = 0; i < modes.length; i++) if (!keys(d.patterns[i], ["mode","state"]) || d.patterns[i].mode !== modes[i] ||
+      !["ready","unsupported","null","threw"].includes(d.patterns[i].state)) invalid()
+  return d
+}
+
 export class PsInputInjector implements InputInjector {
   /**
    * @param runner ps1 runner (tests inject a fake).
@@ -452,7 +486,6 @@ export class PsInputInjector implements InputInjector {
       "-Hwnd", String(hwnd),
       "-Name", name,
       "-Mode", mode,
-      "-NoFocusLibrary", resolveComputerUiaNoFocusDll(),
       ...(opts.value !== undefined && opts.value !== "" ? ["-Value", opts.value] : []),
       ...(opts.direction ? ["-Direction", opts.direction] : []),
       ...(opts.scrollAmount !== undefined ? ["-ScrollAmount", String(opts.scrollAmount)] : []),
@@ -461,7 +494,19 @@ export class PsInputInjector implements InputInjector {
     ]
     let stdout = ""
     try {
-      stdout = await this.runner(resolveWinScript("computer-uia-invoke.ps1"), this.withStop(args))
+      const deadline = performance.now() + 15_000
+      const remaining = () => {
+        const ms = Math.floor(deadline - performance.now())
+        if (ms <= 0) throw new Error("UIA_REQUEST_DEADLINE_EXHAUSTED")
+        return ms
+      }
+      const selectedText = await this.runner(resolveWinScript("computer-uia-select.ps1"), this.withStop(args), { timeoutMs: remaining() })
+      const selected = parseUiaSelection572(selectedText, hwnd, mode, opts.value, opts.expectControlType, opts.expectAutomationId)
+      // Sequential direct children; neither script spawns another PowerShell.
+      stdout = await this.runner(resolveWinScript("computer-uia-act.ps1"), this.withStop([
+        ...args, "-SelectionJson", JSON.stringify(selected),
+        "-NoFocusLibrary", resolveComputerUiaNoFocusDll(),
+      ]), { timeoutMs: remaining() })
     } catch (err) {
       return uiaFailureFromPsError(err)
     }

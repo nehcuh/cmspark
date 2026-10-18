@@ -61,7 +61,7 @@ test('ABI negative controls reject widths/caps/extra data/unknown enums/reorder 
 
 test('diagnostic PS reads fixed ABI after original Act and before JSON; inverse preserves shipped PS',async()=>{
   const {generateNativeProbeScript572,stripNativeProbeScript572,nativeProbeArgs572}=await import('../computer-uia-native-probe-572.mjs')
-  const originalPs=fs.readFileSync(fileURLToPath(new URL('../../src/host-use/win/scripts/computer-uia-invoke.ps1',import.meta.url)))
+  const originalPs=fs.readFileSync(fileURLToPath(new URL('../../src/host-use/win/scripts/computer-uia-act.ps1',import.meta.url)))
   for(const source of [originalPs,Buffer.from(originalPs.toString().replace(/\r?\n/g,'\r\n'))]){
     const observed=generateNativeProbeScript572(source)
     assert.ok(stripNativeProbeScript572(observed).equals(source))

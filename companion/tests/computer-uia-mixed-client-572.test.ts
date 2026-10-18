@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs"
 import { scripts572, parseIdentity572, observation572, desktop572, sequence572, requireOutcome572, cleanup572, type Arm572, type Control572, type Identity572 } from "./helpers/uia-mixed-client-572"
 import type { PsRunner } from "../src/host-use/win/powershell"
 
-const source = readFileSync("src/host-use/win/scripts/computer-uia-invoke.ps1")
+const source = readFileSync("tests/fixtures/win/computer-uia-invoke-mixed-before572.ps1")
 const identity: Identity572 = { schema: 1, hwnd: 40, rootPid: 10, selectedPid: 11, runtime: [3, -1, 42], controlType: 50000, automationId: "cmspark_fixture_button", name: "SubmitTest" }
 const observed = (arm: Arm572, control: Control572) => ({ schema: 1, arm, control, state: "OBSERVED", entryManagedLoaded: false, preManagedLoaded: arm === "B", postManagedLoaded: arm === "B", invoked: control !== "nop", status: control === "action" ? 0 : control === "nop" ? null : 5 })
 

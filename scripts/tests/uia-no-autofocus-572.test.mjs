@@ -6,7 +6,8 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
-const ps=readFileSync(path.join(root,'companion/src/host-use/win/scripts/computer-uia-invoke.ps1'),'utf8');
+const ps=readFileSync(path.join(root,'companion/src/host-use/win/scripts/computer-uia-act.ps1'),'utf8');
+const selection=readFileSync(path.join(root,'companion/src/host-use/win/scripts/computer-uia-select.ps1'),'utf8');
 const cpp=readFileSync(path.join(root,'companion/src/host-use/win/native/computer-uia-no-focus.cpp'),'utf8');
 function body(source,anchor){const start=source.indexOf(anchor);assert.ok(start>=0,anchor);const brace=source.indexOf('{',start);let depth=1,i=brace+1;for(;depth&&i<source.length;i++){if(source[i]==='{')depth++;if(source[i]==='}')depth--;}assert.equal(depth,0);return source.slice(brace+1,i-1);}
 function completion(){
@@ -39,7 +40,7 @@ test('actual unsupported alone returns false; success records same selected acti
 });
 test('actual Try-Pattern catch cannot turn a native terminal exception into next pattern',()=>{
   const b=body(ps,'function Try-Pattern');
-  assert.match(b,/try \{ \$status = & \$act \$obj \}\s*catch \{ Fail "UIA_TERMINAL" "UIA_METHOD_FAILED" 7 \}\s*return Complete-NoFocusAction \$status \$pname/);
+  assert.match(b,/try \{ \$status = & \$act \$null \}\s*catch \{ Fail "UIA_TERMINAL" "UIA_METHOD_FAILED" 7 \}\s*return Complete-NoFocusAction \$status \$pname/);
   assert.doesNotMatch(ps,/\(\[System\.Windows\.Automation\.(?:Invoke|Value|SelectionItem|Toggle|Scroll)Pattern\]\$o\)\.(?:Invoke|SetValue|Select|Toggle|Scroll)\(/);
   for(const name of ['invoke','setvalue','select','toggle','scroll'])assert.ok(ps.includes(`Invoke-NoFocusAction '${name}'`));
 });
@@ -95,7 +96,7 @@ for(const [name,put,get,value,want] of [['put fails',-1,0,false,7],['get fails',
 });
 
 function freshIdentityGuard572() {
- const line=ps.split(/\r?\n/).find(l=>l.startsWith('if (')&&l.includes('$selectedAutomationId')&&l.includes('$selectedTypeName'));assert.ok(line);
+ const line=selection.split(/\r?\n/).find(l=>l.startsWith('if (')&&l.includes('$selectedAutomationId')&&l.includes('$selectedTypeName'));assert.ok(line);
  let expression=line.slice(4,-3);
  if(expression.includes(' -ne ')) {
   // WMF5.1 -ne is invariant-culture case-insensitive; ASCII controls below
@@ -125,7 +126,7 @@ test('fresh identity comparison is ordinal even for case-only AutomationId and t
 });
 test('native count bound applies only to existing scroll mode',()=>{assert.ok(cpp.includes('(mode==5&&(count<1||count>50))'));});
 
-test('control type id and name use one immutable selected ControlType value',()=>{assert.match(ps,/\$selectedControlType = \$el.Current.ControlType\r?\n\s*\[int\]\$selectedType = \$selectedControlType.Id/);assert.ok(ps.includes('$selectedTypeName = $selectedControlType.ProgrammaticName'));assert.doesNotMatch(ps,/\$selectedTypeName = \$el.Current.ControlType/);});
+test('control type id and name use one immutable selected ControlType value',()=>{assert.match(selection,/\$selectedControlType = \$el.Current.ControlType\r?\n\s*\[int\]\$selectedType = \$selectedControlType.Id/);assert.ok(selection.includes('$selectedTypeName = $selectedControlType.ProgrammaticName'));assert.doesNotMatch(selection,/\$selectedTypeName = \$el.Current.ControlType/);});
 
 test('actual adapter argv binds the fixed DLL and preserves Unicode, values and final StopFile',async()=>{
  const {createRequire}=await import('node:module');
@@ -134,18 +135,21 @@ test('actual adapter argv binds the fixed DLL and preserves Unicode, values and 
  const file=path.join(root,'companion/src/computer/win-adapters.ts'),text=readFileSync(file,'utf8');
  const tree=ts.createSourceFile(file,text,ts.ScriptTarget.Latest,true);
  const declaration=tree.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='PsInputInjector');assert.ok(declaration);
- const whole=declaration.getText(tree).replace('export class','class')+';PsInputInjector;';
+ const parser=tree.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='parseUiaSelection572');assert.ok(parser);
+ const whole=parser.getText(tree)+'\n'+declaration.getText(tree).replace('export class','class')+';PsInputInjector;';
  const fixed='C:\\first-party space\\computer-uia-no-focus.dll';
- const scope={runPs:()=>assert.fail('must not execute runPs'),resolveWinScript:n=>'C:\\scripts\\'+n,resolveComputerUiaNoFocusDll:()=>fixed};
+ const scope={Buffer,performance:{now:()=>0},runPs:()=>assert.fail('must not execute runPs'),resolveWinScript:n=>'C:\\scripts\\'+n,resolveComputerUiaNoFocusDll:()=>fixed};
  const Class=new vm.Script(ts.transpileModule(whole,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText).runInNewContext(scope);
  let called=0;
- const injector=new Class(async(script,args)=>{called++;assert.equal(script,'C:\\scripts\\computer-uia-invoke.ps1');const a=Array.from(args);
+ const injector=new Class(async(script,args)=>{called++;const a=Array.from(args);
+  if(script.endsWith('computer-uia-select.ps1')) return JSON.stringify({schema:1,hwnd:40,rootPid:1,selectedPid:1,runtime:[42],controlTypeId:50000,controlType:'Edit',automationId:'owned',name:'提交',x:1,y:1,bbox:{x:0,y:0,w:2,h:2},patterns:[{mode:'setvalue',state:'ready'}]});
+  assert.ok(script.endsWith('computer-uia-act.ps1'));
   assert.equal(a.filter(v=>v==='-NoFocusLibrary').length,1);assert.equal(a[a.indexOf('-NoFocusLibrary')+1],fixed);
   assert.equal(a[a.indexOf('-Name')+1],'提交 "\n$()');assert.equal(a[a.indexOf('-Value')+1],'原始值\n/secret-not-a-command');
   assert.deepEqual(a.slice(-2),['-StopFile','C:\\owned\\stop.flag']);return JSON.stringify({ok:true,mode:'setvalue'});
  },'C:\\owned\\stop.flag');
  const result=await injector.invokeUia(40,'提交 "\n$()','setvalue',{value:'原始值\n/secret-not-a-command',NoFocusLibrary:'C:\\untrusted\\other.dll'});
- assert.equal(result.ok,true);assert.equal(called,1);
+ assert.equal(result.ok,true);assert.equal(called,2);
 });
 
 // Execute the actual native DFS control flow over inert tree-walker objects.
@@ -292,4 +296,54 @@ test('walker constructor controls reject dropped refusal guards and a different 
  assert.notEqual(nativeWalkerFactory572(noWalkerFailure,{walkerHr:-1}).result,7);
  const different=cpp.replace('condition.Get(),&walker','nullptr,&walker');
  assert.throws(()=>nativeWalkerFactory572(different));
+});
+
+test('clean pipeline selection preserves old whole discovery while standalone entry cannot act',()=>{
+ const legacy=readFileSync(path.join(root,'companion/tests/fixtures/win/computer-uia-invoke-mixed-before572.ps1'),'utf8');
+ const prefix=legacy.slice(legacy.indexOf('param('),legacy.indexOf('$script:noFocusReady = $false'));
+ assert.equal(selection.slice(selection.indexOf('param('),selection.indexOf('param(')+prefix.length),prefix);
+ assert.equal(selection.includes('[CU.NoFocus]::Act'),false);
+ assert.equal(selection.includes('Try-Pattern'),false);
+ assert.ok(selection.includes('runtime = @($selectedRuntime)'));
+ assert.ok(selection.includes('patterns = @($patterns.ToArray())'));
+ const entry=readFileSync(path.join(root,'companion/src/host-use/win/scripts/computer-uia-invoke.ps1'),'utf8');
+ assert.match(entry,/UIA_TERMINAL:UIA_PATTERN_UNAVAILABLE/);
+ assert.match(entry,/host_pipeline_required/);assert.match(entry,/exit 6\s*$/);
+ assert.doesNotMatch(entry,/\b(?:Add-Type|Start-Process|Invoke-NoFocusAction|FromHandle)\b/);
+ assert.doesNotMatch(ps,/\[System\.Windows\.Automation\.|Add-Type -AssemblyName UIAutomation/);
+ assert.ok(Buffer.from(selection).subarray(0,3).equals(Buffer.from([239,187,191])));
+});
+function cleanTry572(state,status,throws=false){
+ let b=body(ps,'function Try-Pattern');
+ b=b.replace('[void]$tried.Add("$($pname):$state")',"tried.push(pname+':'+state)")
+  .replace('return Complete-NoFocusAction $status $pname','return complete(status,pname,tried,fail)')
+  .replace('try { $status = & $act $null }','let status; try { status = act(null) }')
+  .replace('catch { Fail "UIA_TERMINAL" "UIA_METHOD_FAILED" 7 }',"catch { fail('UIA_TERMINAL','UIA_METHOD_FAILED',7) }")
+  .replace('$state = $null','let state = null').replace('foreach ($entry in $selected.patterns)','for (const entry of selected.patterns)')
+  .replaceAll('$entry','entry').replaceAll('$pname','pname').replaceAll('$state','state').replaceAll(' -ceq ',' === ').replaceAll(' -cne ',' !== ').replaceAll('$false','false');
+ assert.doesNotMatch(b,/\$(?!\()|\[void\]| -c(?:eq|ne) /);
+ const tried=[],calls=[];
+ const fn=new vm.Script('(function(){'+b+'})').runInNewContext({selected:{patterns:[{mode:'invoke',state}]},pname:'invoke',tried,complete,
+  act:()=>{calls.push('native');if(throws)throw Error('controlled');return status},
+  fail:(prefix,detail,code)=>{calls.push({prefix,code:code??detail});throw Error('FIXED_TERMINAL')}});
+ let result;try{result=fn()}catch(error){result=error.message}
+ return {result,tried,calls};
+}
+test('actual clean Try-Pattern never acts on unready selection or retries uncertain method',()=>{
+ for(const state of ['unsupported','null','threw'])assert.deepEqual(cleanTry572(state,0),{result:false,tried:['invoke:'+state],calls:[]});
+ assert.deepEqual(cleanTry572('ready',0),{result:true,tried:['invoke:ok'],calls:['native']});
+ assert.deepEqual(cleanTry572('ready',1),{result:false,tried:['invoke:unsupported'],calls:['native']});
+ assert.deepEqual(cleanTry572('ready',6),{result:'FIXED_TERMINAL',tried:[],calls:['native',{prefix:'UIA_TERMINAL',code:7}]});
+ assert.deepEqual(cleanTry572('ready',0,true),{result:'FIXED_TERMINAL',tried:[],calls:['native',{prefix:'UIA_TERMINAL',code:7}]});
+});
+
+test('clean action preserves exact original native ABI and all dispatch semantics',()=>{
+ const legacy=readFileSync(path.join(root,'companion/tests/fixtures/win/computer-uia-invoke-mixed-before572.ps1'),'utf8');
+ const native=s=>s.slice(s.indexOf('$script:noFocusReady = $false'),s.indexOf('# Terminal dispatch is outside the generic action catch.'));
+ assert.equal(native(ps),native(legacy));
+ const dispatch=s=>s.slice(s.indexOf('$used = $null'),s.indexOf("if ($null -eq $used) {\n  Fail"));
+ let original=dispatch(legacy).replace(/\(\[System\.Windows\.Automation\.(?:InvokePattern|ValuePattern|SelectionItemPattern|TogglePattern|ScrollPattern)\]::Pattern\)/g,'$null');
+ const begin=original.indexOf('  $hAmt = [System.Windows.Automation.ScrollAmount]::NoAmount'),end=original.indexOf("  if (Try-Pattern 'scroll'",begin);
+ assert.ok(begin>=0&&end>begin);original=original.slice(0,begin)+original.slice(end);
+ assert.equal(dispatch(ps),original);
 });

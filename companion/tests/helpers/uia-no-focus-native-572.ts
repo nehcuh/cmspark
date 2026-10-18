@@ -124,6 +124,8 @@ async function runMode572(mode:Mode572,loader?:Loader572|"abi-invalid"):Promise<
       // The real adapter still constructs its production argv; only the one private
       // local library value is substituted for these owned negative cases.
       runner=async(script,args,opts)=>{
+        if(path.basename(script)==="computer-uia-select.ps1") return boundedRunner(script,args,opts)
+        assert.equal(path.basename(script),"computer-uia-act.ps1")
         const i=args.indexOf("-NoFocusLibrary");assert.ok(i>=0&&i+1<args.length);actualLibrary=args[i+1]
         const selected=path.join(dir,loader+".dll")
         if(loader==="invalid-pe")writeFileSync(selected,"OWNED_INERT_NOT_PE")

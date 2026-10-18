@@ -192,7 +192,7 @@ async function runNative572(arm: Arm572, control: Control572): Promise<void> {
     catch { throw new Error("MIXED572_CHILD_REFUSED_OR_FAILED") } // Never echo owned identities/paths/argv.
   }
   try {
-    assert.equal(process.arch, "x64"); const scripts = scripts572(readFileSync(resolveWinScript("computer-uia-invoke.ps1")))
+    assert.equal(process.arch, "x64"); const scripts = scripts572(readFileSync(path.resolve("tests/fixtures/win/computer-uia-invoke-mixed-before572.ps1")))
     const marker = path.join(dir, "target.marker"), siblingMarker = path.join(dir, "sibling.marker")
     const launch = async (role: "target" | "sibling") => {
       const ready = path.join(dir, role + ".ready"), receipt = path.join(dir, role + ".json")
@@ -224,7 +224,8 @@ async function runNative572(arm: Arm572, control: Control572): Promise<void> {
   }
   assert.equal(children.length, 2); assert.ok(children.every(owner => owner.isClosed()))
 }
-// Register inside the existing integration module: no second canonical file owns foreground concurrently.
+// Legacy counterfactual only: retains failed mixed-process B assertions/history.
+// Not registered by production acceptance after the process-isolation repair.
 export function registerMixedClientNative572(): void {
   for (const arm of ["A", "B"] as const) for (const control of ["action", "nop", "invalid", "stale"] as const)
     test(`#572 matched mixed-client ${arm} ${control} keeps original owned desktop oracles`, { skip: process.platform !== "win32", timeout: 45_000 }, () => runNative572(arm, control))
