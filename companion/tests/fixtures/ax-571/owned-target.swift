@@ -6,6 +6,43 @@ import Darwin
 
 func ax571Readiness(_ active: Bool, _ key: Bool, _ targetBound: Bool, _ siblingBound: Bool) -> Bool { return active && key && targetBound && siblingBound }
 
+// NSWindow.windowNumber is an application device number, not a CGWindowID.
+// Cocoa screen origin is the primary/menu-bar screen's lower left; CG bounds use
+// its upper left. Use the current screens[0] full frame, never NSScreen.main,
+// visibleFrame, a guessed display size, or a backing-pixel scale.
+private func ax571FiniteFrame(_ frame: CGRect) -> Bool {
+    return frame.origin.x.isFinite && frame.origin.y.isFinite && frame.width.isFinite && frame.height.isFinite && frame.width > 0 && frame.height > 0 && frame.maxX.isFinite && frame.maxY.isFinite
+}
+private func ax571CGFrame(_ frame: CGRect, _ primary: CGRect) -> CGRect? {
+    guard ax571FiniteFrame(frame), ax571FiniteFrame(primary), primary.origin.x == 0, primary.origin.y == 0 else { return nil }
+    let converted = CGRect(x: frame.origin.x, y: primary.maxY - frame.maxY, width: frame.width, height: frame.height)
+    guard ax571FiniteFrame(converted) else { return nil }
+    return converted
+}
+private func ax571CGInteger(_ raw: Any?) -> Int? {
+    guard let raw = raw as? NSNumber, CFGetTypeID(raw) != CFBooleanGetTypeID() else { return nil }
+    let value = raw.doubleValue
+    guard value.isFinite, value.rounded(.towardZero) == value, value >= 0, value <= Double(UInt32.max) else { return nil }
+    return Int(value)
+}
+private func ax571UniqueWindow(_ rows: [[String: Any]], _ pid: pid_t, _ title: String, _ frame: CGRect) -> Int? {
+    guard pid > 0, !title.isEmpty, ax571FiniteFrame(frame) else { return nil }
+    var found: Int?
+    for row in rows {
+        guard let owner = ax571CGInteger(row[kCGWindowOwnerPID as String]) else { return nil }
+        if owner != Int(pid) { continue }
+        guard let name = row[kCGWindowName as String] as? String else { return nil }
+        if !name.utf8.elementsEqual(title.utf8) { continue }
+        guard let rawBounds = row[kCGWindowBounds as String] as? [String: Any],
+              let bounds = CGRect(dictionaryRepresentation: rawBounds as CFDictionary), ax571FiniteFrame(bounds),
+              let number = ax571CGInteger(row[kCGWindowNumber as String]), number > 0 else { return nil }
+        if bounds != frame { continue }
+        guard found == nil else { return nil }
+        found = number
+    }
+    return found
+}
+
 // Test-only LaunchServices owner. No PID lookup, app enumeration or foreign kill.
 // Compare POSIX canonical bytes with Node realpath, not Foundation's display alias.
 private func ax571CanonicalDirectory(_ directory: URL) -> Bool {
@@ -298,13 +335,24 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         DispatchQueue.main.async { [weak self] in
             guard let self=self else { return }; self.readinessQueued = false
             guard !self.published else { return }
-            let pid=ProcessInfo.processInfo.processIdentifier, targetNumber=self.target.windowNumber, siblingNumber=self.sibling.windowNumber
+            let pid=ProcessInfo.processInfo.processIdentifier
+            let primary=NSScreen.screens.first, primaryFrame=primary?.frame
+            let targetTitle=self.target.title, siblingTitle=self.sibling.title
+            let targetFrame=self.target.frame, siblingFrame=self.sibling.frame
             let rows=CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
-            let own = rows?.filter { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid } ?? []
-            let number: ([String: Any]) -> Int? = { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue }
-            // Observe correspondence; never assume that a positive AppKit number is a CG ID.
-            let targetBound=targetNumber>0 && own.filter { number($0)==targetNumber }.count==1
-            let siblingBound=siblingNumber>0 && siblingNumber != targetNumber && own.filter { number($0)==siblingNumber }.count==1
+            let own=rows?.filter { ax571CGInteger($0[kCGWindowOwnerPID as String]) == Int(pid) }
+            let targetCG=primaryFrame.flatMap { ax571CGFrame(targetFrame,$0) }, siblingCG=primaryFrame.flatMap { ax571CGFrame(siblingFrame,$0) }
+            let targetNumber=own.flatMap { list in targetCG.flatMap { ax571UniqueWindow(list,pid,targetTitle,$0) } }
+            let siblingNumber=own.flatMap { list in siblingCG.flatMap { ax571UniqueWindow(list,pid,siblingTitle,$0) } }
+            // Re-observe the exact two objects, screen and CG identities; no retry or fallback.
+            let currentRows=CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+            let currentOwn=currentRows?.filter { ax571CGInteger($0[kCGWindowOwnerPID as String]) == Int(pid) }
+            let currentTarget=currentOwn.flatMap { list in targetCG.flatMap { ax571UniqueWindow(list,pid,targetTitle,$0) } }
+            let currentSibling=currentOwn.flatMap { list in siblingCG.flatMap { ax571UniqueWindow(list,pid,siblingTitle,$0) } }
+            let stable=primary != nil && NSScreen.screens.first === primary && primary?.frame == primaryFrame && targetTitle.utf8.elementsEqual("Owned AX571 target".utf8) && siblingTitle.utf8.elementsEqual("Owned AX571 foreground sibling".utf8) && self.target.title.utf8.elementsEqual(targetTitle.utf8) && self.sibling.title.utf8.elementsEqual(siblingTitle.utf8) && self.target.frame == targetFrame && self.sibling.frame == siblingFrame && currentTarget == targetNumber && currentSibling == siblingNumber
+            let targetBound=stable && targetNumber != nil
+            let siblingBound=stable && siblingNumber != nil && siblingNumber != targetNumber
+            let number: ([String: Any]) -> Int? = { ax571CGInteger($0[kCGWindowNumber as String]) }
             let firstRow=rows?.first(where: { (($0[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0)<=1000 })
             let first=firstRow.flatMap { number($0) }
             let role=rows == nil ? "UNKNOWN" : first == nil ? "NONE" : first == targetNumber ? "TARGET" : first == siblingNumber ? "SIBLING" : "OTHER"
@@ -312,6 +360,7 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             let observation: [String: Any] = ["schema":1,"appActive":active,"siblingKey":key,"targetBound":targetBound,"siblingBound":siblingBound,"firstRole":role]
             self.write(observation, to:self.ready.appendingPathExtension("setup"))
             guard ax571Readiness(active,key,targetBound,siblingBound) else { return }
+            guard let targetNumber=targetNumber, let siblingNumber=siblingNumber else { return }
             self.published = true
             for observer in self.readinessObservers { NotificationCenter.default.removeObserver(observer) }; self.readinessObservers.removeAll()
             self.write(["schema":1,"framework":self.framework,"appPID":Int(getpid()),"target":targetNumber,"sibling":siblingNumber,"setup":observation], to:self.ready)

@@ -1263,14 +1263,93 @@ func cuAXProbe(windowId: UInt32) -> String {
     ]])
 }
 
+// #571 traverse only the actual target window, never the size-less AXApplication root.
+// These are read-only evidence checks. 256 is a new per-call target-window evidence cap.
+private func cuAXOwnedWindows(_ app: AXUIElement) -> [AXUIElement]? {
+    guard let raw = cuFocusAttribute(app, kAXWindowsAttribute as CFString),
+          CFGetTypeID(raw) == CFArrayGetTypeID() else { return nil }
+    let array = raw as! CFArray
+    guard CFArrayGetCount(array) > 0, CFArrayGetCount(array) <= 256,
+          let values = raw as? [AnyObject], values.count == CFArrayGetCount(array) else { return nil }
+    var windows: [AXUIElement] = []
+    for value in values {
+        guard let element = cuFocusElement(value) else { return nil }
+        windows.append(element)
+    }
+    return windows
+}
+
+private func cuAXRawCGMetadata(_ row: [String: Any], _ pid: pid_t) -> CUFocusMetadata? {
+    guard let actualPID = row[kCGWindowOwnerPID as String] as? pid_t, actualPID == pid,
+          let title = row[kCGWindowName as String] as? String,
+          let bounds = row[kCGWindowBounds as String] as? [String: CGFloat],
+          let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"] else { return nil }
+    return cuFocusCGMetadata(["pid": pid, "name": title,
+                              "bounds": ["x": x, "y": y, "width": width, "height": height]], pid)
+}
+
+private func cuAXCGWindowID(_ row: [String: Any]) -> UInt32? {
+    guard let raw = row[kCGWindowNumber as String] as? NSNumber,
+          CFGetTypeID(raw) != CFBooleanGetTypeID() else { return nil }
+    let value = raw.doubleValue
+    guard value.isFinite, value.rounded(.towardZero) == value,
+          value > 0, value <= Double(UInt32.max) else { return nil }
+    return UInt32(value)
+}
+
+private func cuAXTargetCGMetadata(_ windowId: UInt32, _ pid: pid_t) -> CUFocusMetadata? {
+    guard pid > 0, windowId > 0,
+          let rows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else { return nil }
+    let wanted = rows.filter { cuAXCGWindowID($0) == windowId }
+    guard wanted.count == 1, let metadata = cuAXRawCGMetadata(wanted[0], pid) else { return nil }
+    var matches = 0
+    for row in rows {
+        guard let actualPID = row[kCGWindowOwnerPID as String] as? pid_t else { return nil }
+        if actualPID != pid { continue }
+        guard let observed = cuAXRawCGMetadata(row, pid), let id = cuAXCGWindowID(row) else { return nil }
+        if observed == metadata {
+            guard id == windowId else { return nil }
+            matches += 1
+        }
+    }
+    guard matches == 1 else { return nil }
+    return metadata
+}
+
+private func cuAXTargetWindow(_ app: AXUIElement, _ pid: pid_t, _ windowId: UInt32, _ stopped: () -> Bool) -> AXUIElement? {
+    if stopped() { return nil }
+    guard let expected = cuAXTargetCGMetadata(windowId, pid), let before = cuAXOwnedWindows(app) else { return nil }
+    var candidate: AXUIElement? = nil
+    var metadata: [CUFocusMetadata] = []
+    for window in before {
+        if stopped() { return nil }
+        guard let observed = cuFocusMetadata(window, pid) else { return nil }
+        metadata.append(observed)
+        if observed == expected {
+            guard candidate == nil else { return nil }
+            candidate = window
+        }
+    }
+    if stopped() { return nil }
+    guard let result = candidate, let after = cuAXOwnedWindows(app), after.count == before.count,
+          let current = cuAXTargetCGMetadata(windowId, pid), current == expected else { return nil }
+    for index in before.indices {
+        if stopped() { return nil }
+        guard CFEqual(before[index], after[index]),
+              let observed = cuFocusMetadata(after[index], pid), observed == metadata[index] else { return nil }
+    }
+    return result
+}
+
 // MARK: - ax-locate
 
 func cuAXLocate(windowId: UInt32, target: String) -> String {
     let pid = cuPidForWindow(windowId)
-    guard let appElement = cuAppElementForPid(pid) else {
+    guard let appElement = cuAppElementForPid(pid),
+          let windowElement = cuAXTargetWindow(appElement, pid, windowId, { false }) else {
         return cuJson(["found": false])
     }
-    var queue: [AXUIElement] = [appElement]
+    var queue: [AXUIElement] = [windowElement]
     var depth = 0
     while !queue.isEmpty && depth < 50 {
         var nextLevel: [AXUIElement] = []
@@ -1358,7 +1437,12 @@ func cuAXInvoke(windowId: UInt32, target: String, action: String, value: String?
         return cuError("setvalue requires --value", code: "INVALID_ACTION")
     }
 
-    var queue: [AXUIElement] = [appElement]
+    let boundWindow = cuAXTargetWindow(appElement, pid, windowId, stopRaised)
+    if stopRaised() { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
+    guard let windowElement = boundWindow else {
+        return cuError("cannot bind the current AX target window", code: "AX_WINDOW_GONE")
+    }
+    var queue: [AXUIElement] = [windowElement]
     var depth = 0
     var nodes = 0
     while !queue.isEmpty && depth < 50 {

@@ -377,3 +377,85 @@ test('#571 regular policy already satisfied is admitted without a redundant swit
 test('#571 policy transitions require both successful switch and actual regular postcondition',()=>{
  const evaluate=actualRegularPolicy571();for(const initial of ['accessory','prohibited'])for(const result of [false,true])for(const final of ['regular','accessory','prohibited']){let gets=0,sets=0;const ok=evaluate({activationPolicy(){return gets++===0?initial:final},setActivationPolicy(p){sets++;assert.equal(p,'regular');return result}});assert.equal(ok,result&&final==='regular',JSON.stringify({initial,result,final}));assert.equal(sets,1);assert.equal(gets,result?2:1)}
 })
+
+// Source-derived inert projections only: no Swift, AppKit, CG or GUI is executed.
+function ax571OwnedCGProjection(input=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8')){
+ const swift=input.replace(/\r\n/g,'\n')
+ const body=name=>{const a=swift.indexOf('private func '+name+'(');assert.ok(a>=0,name);const b=swift.indexOf('{',a);let depth=1,e=b+1;for(;depth;e++){assert.ok(e<swift.length);if(swift[e]==='{')depth++;if(swift[e]==='}')depth--}return swift.slice(b+1,e-1)}
+ const once=(s,a,b)=>{assert.equal(s.split(a).length,2,a);return s.replace(a,b)}
+ let finite=body('ax571FiniteFrame').trim().replace(/\bframe\.([\w.]+)\.isFinite\b/g,'Number.isFinite(frame.$1)')
+ let frame=body('ax571CGFrame')
+ frame=once(frame,'guard ax571FiniteFrame(frame), ax571FiniteFrame(primary), primary.origin.x == 0, primary.origin.y == 0 else { return nil }','if(!(ax571FiniteFrame(frame)&&ax571FiniteFrame(primary)&&primary.origin.x===0&&primary.origin.y===0))return null')
+ frame=once(frame,'let converted = CGRect(x: frame.origin.x, y: primary.maxY - frame.maxY, width: frame.width, height: frame.height)','const converted = rect(frame.origin.x,primary.maxY-frame.maxY,frame.width,frame.height)')
+ frame=once(frame,'guard ax571FiniteFrame(converted) else { return nil }','if(!ax571FiniteFrame(converted))return null')
+ let integer=body('ax571CGInteger')
+ integer=once(integer,'guard let raw = raw as? NSNumber, CFGetTypeID(raw) != CFBooleanGetTypeID() else { return nil }','if(typeof raw!=="number")return null')
+ integer=once(integer,'let value = raw.doubleValue','const value = raw')
+ integer=once(integer,'guard value.isFinite, value.rounded(.towardZero) == value, value >= 0, value <= Double(UInt32.max) else { return nil }','if(!(Number.isFinite(value)&&Math.trunc(value)===value&&value>=0&&value<=4294967295))return null')
+ integer=once(integer,'return Int(value)','return value')
+ let unique=body('ax571UniqueWindow')
+ for(const [a,b]of [
+ ['guard pid > 0, !title.isEmpty, ax571FiniteFrame(frame) else { return nil }','if(!(pid>0&&title.length>0&&ax571FiniteFrame(frame)))return null'],
+ ['var found: Int?','let found=null'],['for row in rows {','for(const row of rows){'],
+ ['guard let owner = ax571CGInteger(row[kCGWindowOwnerPID as String]) else { return nil }','const owner=ax571CGInteger(row.pid);if(owner==null)return null'],
+ ['if owner != Int(pid) { continue }','if(owner!==pid){continue}'],
+ ['guard let name = row[kCGWindowName as String] as? String else { return nil }','const name=row.name;if(typeof name!=="string")return null'],
+ ['if !name.utf8.elementsEqual(title.utf8) { continue }','if(!utf8Equal(name,title)){continue}'],
+ ['guard let rawBounds = row[kCGWindowBounds as String] as? [String: Any],\n              let bounds = CGRect(dictionaryRepresentation: rawBounds as CFDictionary), ax571FiniteFrame(bounds),\n              let number = ax571CGInteger(row[kCGWindowNumber as String]), number > 0 else { return nil }','const bounds=decode(row.bounds),number=ax571CGInteger(row.id);if(!(bounds&&ax571FiniteFrame(bounds)&&number>0))return null'],
+ ['if bounds != frame { continue }','if(!sameRect(bounds,frame)){continue}'],
+ ['guard found == nil else { return nil }','if(found!=null)return null']])unique=once(unique,a,b)
+ for(const value of [finite,frame,integer,unique])assert.doesNotMatch(value,/\bguard\b|\bnil\b|\bas[?!]?\b|\bvar\b|CGRect\(|\bInt\(|\$0|\.isFinite\b(?!\()/)
+ const rect=(x,y,width,height)=>({origin:{x,y},width,height,maxX:x+width,maxY:y+height}),sameRect=(a,b)=>!!a&&!!b&&['width','height','maxX','maxY'].every(k=>a[k]===b[k])&&a.origin.x===b.origin.x&&a.origin.y===b.origin.y,utf8Equal=(a,b)=>Buffer.from(a).equals(Buffer.from(b))
+ const decode=v=>v&&typeof v==='object'&&!Array.isArray(v)&&['x','y','width','height'].every(k=>typeof v[k]==='number')?rect(v.x,v.y,v.width,v.height):null
+ const context={Number,Math,rect,decode,sameRect,utf8Equal};vm.createContext(context)
+ vm.runInContext('function ax571FiniteFrame(frame){'+finite+'}\nfunction ax571CGFrame(frame,primary){'+frame+'}\nfunction ax571CGInteger(raw){'+integer+'}\nfunction ax571UniqueWindow(rows,pid,title,frame){'+unique+'}\nthis.frame=ax571CGFrame;this.unique=ax571UniqueWindow;',context,{timeout:1000})
+ const stable=swift.match(/            let stable=(.+)/)?.[1];assert.ok(stable)
+ let stableJS=stable.replace('NSScreen.screens.first','currentPrimary').replace('primary?.frame == primaryFrame','sameRect(primary?.frame,primaryFrame)').replace('self.target.frame == targetFrame','sameRect(self.target.frame,targetFrame)').replace('self.sibling.frame == siblingFrame','sameRect(self.sibling.frame,siblingFrame)').replace(/([\w.]+|"[^"]*")\.utf8\.elementsEqual\(([\w.]+|"[^"]*")\.utf8\)/g,'utf8Equal($1,$2)').replace(/\bnil\b/g,'null')
+ const stableRun=vm.runInNewContext('(state)=>{with(state){return '+stableJS+'}}',{sameRect,utf8Equal})
+ return{...context,rect,sameRect,stable:stableRun,swift}
+}
+function ownedCG571(){const h=ax571OwnedCGProjection(),primary=h.rect(0,0,1440,900),frame=h.rect(-300,200,600,422),cg=h.frame(frame,primary),title='Owned AX571 target',rows=[{pid:42,name:title,id:101,bounds:{x:-300,y:278,width:600,height:422}},{pid:42,name:'Owned AX571 foreground sibling',id:102,bounds:{x:-300,y:278,width:600,height:422}}];return{h,primary,frame,cg,title,rows}}
+test('#571 owned mapping uses independent CG identity rather than coincident NS device numbers',()=>{
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8')
+ let mapped
+ if(!swift.includes('private func ax571UniqueWindow(')){
+  // Execute the actual old predicates on two distinct namespaces, rather than
+  // pretending that a missing new helper is itself the old semantic failure.
+  const target=swift.match(/let targetBound=([^\n]+)/)?.[1],sibling=swift.match(/let siblingBound=([^\n]+)/)?.[1];assert.ok(target&&sibling)
+  const expr=x=>x.replace(/own\.filter \{ number\(\$0\)==(targetNumber|siblingNumber) \}\.count/g,'own.filter(row=>number(row)==$1).length')
+  const state={targetNumber:1,siblingNumber:2,own:[{id:101},{id:102}],number:r=>r.id}
+  mapped=vm.runInNewContext('['+expr(target)+'?targetNumber:null,'+expr(sibling)+'?siblingNumber:null]',state)
+ }else{
+  const v=ownedCG571();mapped=[v.h.unique(v.rows,42,v.title,v.cg),v.h.unique(v.rows,42,'Owned AX571 foreground sibling',v.cg)]
+ }
+ assert.deepEqual(Array.from(mapped),[101,102])
+ const tail=swift.slice(swift.indexOf('    func queueReadiness() {'));assert.doesNotMatch(tail,/\.windowNumber|NSScreen\.main|backingScaleFactor|visibleFrame/)
+ assert.match(tail,/guard let targetNumber=targetNumber, let siblingNumber=siblingNumber else \{ return \}/)
+})
+test('#571 current primary-screen conversion retains negative and secondary-display coordinates without pixel scaling',()=>{
+ const {h,primary}=ownedCG571()
+ for(const [f,y]of [[h.rect(180,180,600,422),298],[h.rect(-600,1000,600,422),-522],[h.rect(180,-500,600,422),978]]){
+  const got=h.frame(f,primary);assert.equal(got.origin.x,f.origin.x);assert.equal(got.origin.y,y);assert.equal(got.width,600);assert.equal(got.height,422)
+ }
+ assert.equal(h.frame(h.rect(1,2,3,4),h.rect(0,0,800,600)).origin.y,594)
+ assert.notEqual(h.frame(h.rect(1,2,3,4),primary).origin.y,594) // a different active display's height is not the primary height
+ for(const p of [h.rect(1,0,1440,900),h.rect(0,1,1440,900),h.rect(0,0,0,900),h.rect(0,0,1440,Infinity)])assert.equal(h.frame(h.rect(1,2,3,4),p),null)
+ for(const f of [h.rect(NaN,0,3,4),h.rect(0,0,0,4),h.rect(0,0,3,-4),h.rect(Number.MAX_VALUE,0,Number.MAX_VALUE,4)])assert.equal(h.frame(f,primary),null)
+})
+test('#571 owned CG exact tuple refuses absent, duplicate, malformed, foreign and partial geometry',()=>{
+ const v=ownedCG571();for(const mutate of [r=>r.length=0,r=>r[0].pid=43,r=>r[0].name='Other',r=>r[0].bounds.x+=1,r=>r[0].bounds.width-=1,r=>r[0].bounds.height=NaN,r=>r[0].bounds.width=0,r=>delete r[0].bounds,r=>r[0].id=0,r=>r[0].id=1.5,r=>r[0].id=2**32,r=>r[0].id=true,r=>r[0].pid='42',r=>delete r[0].name,r=>r.push({...r[0],id:103})]){const rows=structuredClone(v.rows);mutate(rows);assert.equal(v.h.unique(rows,42,v.title,v.cg),null)}
+ const rows=structuredClone(v.rows);rows[0].name='Café';assert.equal(v.h.unique(rows,42,'Cafe\u0301',v.cg),null)
+})
+test('#571 actual current-object and second-CG observation stability gate refuses every changed identity',()=>{
+ const {h,primary,frame}=ownedCG571(),screen={frame:primary},base={primary:screen,currentPrimary:screen,primaryFrame:primary,targetTitle:'Owned AX571 target',siblingTitle:'Owned AX571 foreground sibling',targetFrame:frame,siblingFrame:frame,self:{target:{title:'Owned AX571 target',frame},sibling:{title:'Owned AX571 foreground sibling',frame}},targetNumber:101,siblingNumber:102,currentTarget:101,currentSibling:102}
+ assert.equal(h.stable(base),true)
+ for(const alter of [s=>s.primary=null,s=>s.currentPrimary={frame:primary},s=>s.currentTarget=103,s=>s.currentTarget=null,s=>s.currentSibling=103,s=>s.currentSibling=null,s=>s.primaryFrame=h.rect(0,0,1440,901),s=>s.targetTitle='Other',s=>s.siblingTitle='Other',s=>s.self.target.title='Changed',s=>s.self.sibling.title='Changed',s=>s.self.target.frame=h.rect(1,2,3,4),s=>s.self.sibling.frame=h.rect(1,2,3,4)]){const s={...base,self:{target:{...base.self.target},sibling:{...base.self.sibling}}};alter(s);assert.equal(h.stable(s),false)}
+})
+test('#571 owned CG mapping and original readiness remain exact for LF and CRLF source',()=>{
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8')
+ for(const text of [swift,swift.replace(/\r?\n/g,'\r\n')]){const h=ax571OwnedCGProjection(text),v=ownedCG571();assert.equal(h.unique(v.rows,42,v.title,v.cg),101);assert.match(text,/NSScreen\.screens\.first/);assert.match(text,/CGRect\(dictionaryRepresentation: rawBounds as CFDictionary\)/)}
+ const tail=swift.slice(swift.indexOf('    func queueReadiness() {'));assert.equal((tail.match(/CGWindowListCopyWindowInfo\(/g)||[]).length,2);assert.doesNotMatch(tail,/sleep|asyncAfter|self\.queueReadiness\(/g)
+ assert.match(tail,/let active=NSApp\.isActive, key=self\.sibling\.isKeyWindow/);assert.match(tail,/guard ax571Readiness\(active,key,targetBound,siblingBound\) else \{ return \}/)
+})
+
+import './ax-window-root-571.test.mjs'

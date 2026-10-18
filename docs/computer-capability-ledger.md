@@ -202,6 +202,27 @@ sibling 的 before/after 严格断言不变。纯 Node 受控源投影不是 Swi
 OTHER 行的 owner/layer 和唯一原因仍 UNKNOWN。该修正不新增动作、激活、TCC 权限或清理权；
 只有新 head hosted Mac 的实际 marker 和原全部 oracle 通过，才能回填 Delivered/Refused。
 
+### macOS 目标窗口遍历与夹具身份（#571，原生验收待完成）
+
+`ax-locate` / `ax-invoke` 不再从常常没有 AXSize 的 AXApplication 节点遍历：旧实现会在
+读取该节点的子节点之前用零尺寸过滤整棵树。现在先将请求的 CGWindowID 与当前 PID、
+UTF8 精确标题和有限正尺寸几何对应到唯一实际 AXWindows 成员，再从该窗口开始原有遍历。
+请求 ID 必须是正的 UInt32 整数，布尔、分数或截断回绕不能形成新身份。完整目标窗口证据
+使用独立的新 **256窗口上限**，超限、同应用证据缺失/歧义、两次 CG/AX 观察或成员次序变化
+都拒绝，不选第一个窗口，也不以同名 sibling 代替。该读证据过程不激活窗口、不扩 TCC；
+`ax-invoke` 保留原动作/值校验、周期与动作前 E-Stop 检查，并在证据读取阶段检查停止。
+原 hidden/zero-size 过滤、50层遍历、元素 name/role 复核和支持动作条件保留。
+
+owned 夹具中的 `NSWindow.windowNumber` 是应用设备编号，不能与全局 CGWindowID 直接比较。
+夹具改为用当前 `NSScreen.screens.first` 的完整主屏 frame，将实际 NSWindow 全框转换到 CG
+上左原点坐标，再按当前 PID、固定精确标题和有限精确全框唯一选取 CG 行；不使用 keyboard
+screen、Retina 倍率、最近几何或 first-row 猜测。再次观察同一 screen/window 对象、完整 frame
+和 CG 对应，缺失或变化不发布 ready。既有 activation/key、20秒期限和 owner cleanup 不变。
+
+这些对应仍是非原子的保守双读，不承诺排除两次系统调用之间的任意 ABA；无标题或不完整
+暴露的应用可能被拒绝。CPU 源投影不是 Swift SDK/AppKit/CG 执行，已有原生失败的唯一原因
+仍 UNKNOWN。AppKit/WK 的 target marker 与同轮完整 oracle 未通过前，下表继续保留 Gap。
+
 ### 4.1 macOS AX：逐框架 / 动作与证据
 
 当前所有下列行仍是 **Gap**，因为本变更没有运行本机或 hosted AX。原生验收代码的存在、
