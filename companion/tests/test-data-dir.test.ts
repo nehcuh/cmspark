@@ -4,6 +4,7 @@ import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
 import { spawnSync } from "node:child_process"
+import vm from "node:vm"
 
 test("test preload isolates each process before config imports and leaves caller data untouched", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-isolation-contract-"))
@@ -86,4 +87,43 @@ test("test runner isolates workers, supports targeted runs, and cleans data afte
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
+})
+
+
+// Execute the actual complete runner with an inert spawn outlet. No child or
+// platform-native fixture is started by this scheduling contract.
+test("Windows runner serializes original file budgets without changing discovery or case deadlines", () => {
+  const owned=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),"cmspark-schedule-contract-"))),scripts=path.join(owned,"scripts"),fixtures=path.join(owned,".test-dist/tests")
+  fs.mkdirSync(scripts);fs.mkdirSync(fixtures,{recursive:true});fs.mkdirSync(path.join(fixtures,"nested"))
+  const source=fs.readFileSync(path.resolve(__dirname,"../../scripts/run-tests.mjs"),"utf8")
+  const imports=source.match(/^import .*$/gm) || [];assert.equal(imports.length,5)
+  const program=source.replace(/^import .*$/gm,"").replace("import.meta.url",'"owned:runner"')
+  for(const name of ["one.test.js","two.test.js","settings-web.test.js","_ignored.test.js","nested/three.test.js"])fs.writeFileSync(path.join(fixtures,name),"OWNED_INERT_NOT_EXECUTED")
+  const all=["one.test.js","two.test.js","nested/three.test.js","settings-web.test.js"].map(n=>fs.realpathSync(path.join(fixtures,n))).sort()
+  const execute=(platform:string,requested:string[]=[],status=0) => {
+    const calls:{args:string[];options:any}[]=[],end={code:-1},exit=Symbol("owned-exit")
+    const context:any={fs,path,os:{tmpdir:()=>owned},fileURLToPath:()=>path.join(scripts,"run-tests.mjs"),spawnSync:(_bin:string,args:string[],options:any)=>{calls.push({args,options});return {status,signal:null}},console:{error:()=>{}},process:{execPath:"/owned/node",argv:["/owned/node","owned-runner",...requested],platform,versions:{node:"22.23.2"},env:{OWNED_SENTINEL:"inert"},exit(code:number){end.code=code;throw exit}}}
+    vm.createContext(context);try{vm.runInContext(program,context)}catch(error){if(error!==exit)throw error}
+    assert.notEqual(end.code,-1);return {calls,code:end.code,context}
+  }
+  try{
+    for(const platform of ["win32","darwin","linux"]){
+      const result=execute(platform);assert.equal(result.code,0);assert.equal(result.calls.length,2)
+      const main=result.calls[0],settings=result.calls[1],files=result.calls.flatMap(c=>c.args.filter(a=>a.startsWith(fixtures))).sort()
+      assert.deepEqual(files,all);assert.equal(new Set(files).size,all.length)
+      assert.equal(main.args.includes("--test-concurrency=1"),platform==="win32")
+      assert.equal(main.args.includes("--test-timeout"),false);assert.equal(settings.args.includes("--test-concurrency=1"),false)
+      assert.ok(settings.args.includes("--experimental-test-isolation=none"));assert.deepEqual(Array.from(settings.args.filter(a=>a.startsWith(fixtures))),[path.join(fixtures,"settings-web.test.js")])
+      for(const call of result.calls){assert.equal(call.args[0],"--require");assert.equal(call.args[1],path.join(scripts,"test-data-dir.cjs"));assert.equal(call.args[2],"--test");assert.equal(call.options.cwd,owned);assert.equal(call.options.stdio,"inherit");assert.equal(call.options.env.OWNED_SENTINEL,"inert");assert.equal(fs.existsSync(call.options.env.CMSPARK_TEST_RUN_DIR),false)}
+      const fixed=main.args.filter(a=>!a.startsWith(fixtures)),many=Array.from({length:600},(_,i)=>"/owned/"+"x".repeat(100)+i+".test.js")
+      const batches:string[][]=result.context.chunkByArgv("/owned/node",fixed,many)
+      assert.deepEqual(Array.from(batches).flat(),many);assert.ok(batches.length>1)
+      for(const batch of batches)assert.ok(result.context.argvChars("/owned/node",fixed,batch)<=32000)
+    }
+    const requested=[path.join(fixtures,"two.test.js"),path.join(fixtures,"two.test.js")],target=execute("win32",requested)
+    assert.equal(target.calls.length,1);assert.deepEqual(Array.from(target.calls[0].args.filter(a=>a.startsWith(fixtures))),[requested[0]])
+    const failure=execute("win32",[],1);assert.equal(failure.code,1);assert.equal(failure.calls.length,1,"failure must not start settings after failed main")
+    const invalid=execute("win32",[path.join(owned,"foreign.test.js")]);assert.equal(invalid.code,1);assert.equal(invalid.calls.length,0)
+    assert.deepEqual(fs.readdirSync(owned).sort(),[".test-dist","scripts"])
+  }finally{fs.rmSync(owned,{recursive:true,force:true})}
 })
