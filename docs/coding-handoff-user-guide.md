@@ -51,7 +51,7 @@
 4. `acp.servers.<id>.env` 覆盖  
 
 因此 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` 等只要在终端可用，桥接进程也应可用。  
-若仍缺 key：在本机终端 `echo $ANTHROPIC_API_KEY` 自检，或写入 **设置 → 环境变量**。  
+若仍缺 key：在本机终端用 `test -n "$ANTHROPIC_API_KEY" && echo 已配置 || echo 未配置` 检查是否设置，或写入 **设置 → 环境变量**；不要打印或粘贴密钥值。
 调试可设 `CMSPARK_SKIP_LOGIN_ENV=1` 跳过登录 shell 探测。
 
 ---

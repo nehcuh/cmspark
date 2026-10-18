@@ -4,6 +4,13 @@
 
 <!-- handoff:start -->
 
+### 2026-10-18 · 0.6.14 源码版本与文档补齐
+
+- 同步 Companion、扩展、锁文件、CLI/ACP/MCP、Windows 安装器默认版本及 AGENTS/CLAUDE 活版本为 **0.6.14（开发版本，尚未正式发布）**；历史 0.6.13 换装记录保留，不代表本次更新了本机应用。
+- [CHANGELOG](CHANGELOG.md) 汇总 10 月 10 日之后已合并的 Office、协作、浏览器、会议、项目及应用修复；[交付状态](docs/release-status.md) 区分源码、发行包和未完成验收。修正文档中仍把 #494/#615 当作待开发的说明。
+- 本批不创建标签、发布安装包或替换应用。#476 / #571 原生验收、企业真实联调与冻结项仍按各票实际证据跟踪，不因版本号更新声称完成。
+
+
 ### 2026-10-10 S122 · 0.6.12/0.6.13 双切点 · worker-cap 收尾 · win32 内嵌终端 · handback 兜底
 
 - **合并**：#580（worker-cap 评审修复 F1-F4：回收站占位可见性 / 墙钟回拨钳制 / 双闸文案 SSOT / G7-G11 测试绑定）/ #582（collect_handback prose 兜底：fence 降级 + 逐 fence 尝试 + 全可恢复失败兜底 + parse_note 穿透投影；schema_version 字符串 "1" 刻意不容忍）/ #585（#584 win32 内嵌终端端到端：五处 darwin 闸 + 面板按钮 isEmbeddedTerminalSupported + capability 提示词 + pid 如实缺省）/ #587（#586 面板常驻「打开内嵌终端页 →」入口）。全部经 10-11 agent 多路对抗复审。

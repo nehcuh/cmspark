@@ -1,6 +1,6 @@
 # ITCra enterprise browser contract v1
 
-Issue [#618](https://github.com/nehcuh/cmspark/issues/618), [ADR-029](adr/029-itcra-enterprise-browser-authority.md), source handoff v1.1 SHA256 `52010d7a4ba59134e33263b271040e10a762157b177b3073185b4f78adb068b7`. This is an opt-in source feature under review. Installed 0.6.13 and the existing ITCra four-tool adapter do not implement this contract. Discover `contract_version:1`; a version string or successful health response alone is insufficient.
+Issue [#618](https://github.com/nehcuh/cmspark/issues/618), [ADR-029](adr/029-itcra-enterprise-browser-authority.md), source handoff v1.1 SHA256 `52010d7a4ba59134e33263b271040e10a762157b177b3073185b4f78adb068b7`. The opt-in source implementation was merged in PR #626; real enterprise acceptance remains incomplete under #618. The historical installed 0.6.13 build and the existing ITCra four-tool adapter are not evidence of this contract. See [release status](release-status.md); a source merge does not update installed software. Discover `contract_version:1`; a version string or successful health response alone is insufficient.
 
 ## Deployment and authority
 
