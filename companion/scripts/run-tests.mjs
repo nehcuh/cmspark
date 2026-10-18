@@ -128,7 +128,9 @@ function settingsWebIsolationArgs() {
 const testRunDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-test-run-"))
 let code = 1
 try {
-  code = runNodeTest(main)
+  // Native input-desktop owners must not consume another file's test budget
+  // while waiting for its lease. Keep each original case deadline unchanged.
+  code = runNodeTest(main, process.platform === "win32" ? ["--test-concurrency=1"] : [])
   if (code === 0) code = runNodeTest(settings, settingsWebIsolationArgs())
 } finally {
   // SIGKILL/host shutdown may leave a temp root; no production data lives here.
