@@ -18,7 +18,7 @@ const REPO = ROOT
 const hash = x => crypto.createHash('sha256').update(x).digest('hex')
 function refusal(code) { throw new Error(code) }
 export function preflight(env, platform, stat = fs.lstatSync, realpath = fs.realpathSync, uid = process.getuid?.()) {
-  if (platform !== 'linux' || env.GITHUB_ACTIONS !== 'true' || env.RUNNER_OS !== 'Linux' || env.RUNNER_ENVIRONMENT !== 'github-hosted' || !env.RUNNER_TEMP || !path.isAbsolute(env.RUNNER_TEMP)) refusal('HOSTED_ONLY')
+  if (platform !== 'linux' || env.GITHUB_ACTIONS !== 'true' || env.RUNNER_OS !== 'Linux' || env.RUNNER_ENVIRONMENT !== 'github-hosted' || env.ImageOS !== 'ubuntu22' || !env.RUNNER_TEMP || !path.isAbsolute(env.RUNNER_TEMP)) refusal('HOSTED_ONLY')
   const temp = path.resolve(env.RUNNER_TEMP), s = stat(temp)
   if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== uid || realpath(temp) !== temp) refusal('RUNNER_TEMP_NOT_OWNED')
   return temp
@@ -36,19 +36,6 @@ export function chromeArgs(owned, extension) {
   return [`--user-data-dir=${path.join(owned, 'profile')}`, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
     `--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--no-first-run', '--no-default-browser-check', 'about:blank']
 }
-// The hosted image already installs this helper with stable Chrome. Raw snapshot
-// Chromium can use it without disabling Ubuntu restrictions or the sandbox.
-// Never accept an inherited override, install/chmod a helper, or try a fallback.
-export function installedSandboxHelper464(lstat=fs.lstatSync,realpath=fs.realpathSync) {
-  const helper='/opt/google/chrome/chrome-sandbox'
-  for(const name of ['/','/opt','/opt/google','/opt/google/chrome']) {
-    const s=lstat(name)
-    if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==0||(s.mode&0o022)!==0||realpath(name)!==name)refusal('SANDBOX_HELPER_IDENTITY_REFUSED')
-  }
-  const s=lstat(helper)
-  if(!s.isFile()||s.isSymbolicLink()||s.uid!==0||s.gid!==0||s.nlink!==1||(s.mode&0o7777)!==0o4755||realpath(helper)!==helper)refusal('SANDBOX_HELPER_IDENTITY_REFUSED')
-  return helper
-}
 export function compareProduced(actual, expected, parse) {
   assert.deepEqual(parse(actual.diff_text), parse(expected))
   const hunks = s => [...s.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)].map(x => [Number(x[1]), Number(x[2] ?? 1), Number(x[3]), Number(x[4] ?? 1)])
@@ -63,7 +50,7 @@ function startupProjection464(value) {
   if (!value || typeof value !== 'object') return undefined
   const keys=['step','spawnError','exitObserved','exitCode','signal','sandboxUnavailable','namespaceDenied','displayUnavailable','stderrTruncated'], out={}
   for(const key of keys) { const d=Object.getOwnPropertyDescriptor(value,key);if(!d||!Object.hasOwn(d,'value'))return undefined;out[key]=d.value }
-  if (!['SPAWN','SANDBOX_HELPER','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(out.step) ||
+  if (!['SPAWN','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(out.step) ||
       !['NONE','SIGABRT','SIGTRAP','SIGSEGV','SIGTERM','SIGKILL','OTHER'].includes(out.signal) ||
       !(out.exitCode===null||Number.isInteger(out.exitCode)&&out.exitCode>=0&&out.exitCode<=255) ||
       keys.filter(k=>!['step','exitCode','signal'].includes(k)).some(k=>typeof out[k]!=='boolean')) return undefined
@@ -93,7 +80,7 @@ async function waitForFile(filename, ms) {
 export function observeChromiumStartup464() {
   let step='SPAWN',spawnError=false,exitObserved=false,exitCode=null,signal='NONE',text='',bytes=0,stderrTruncated=false
   return {
-    step(value) { if(!['SPAWN','SANDBOX_HELPER','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(value))throw new Error('INVALID_STARTUP_STEP');step=value },
+    step(value) { if(!['SPAWN','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(value))throw new Error('INVALID_STARTUP_STEP');step=value },
     track(child) {
       child.on('error',()=>{spawnError=true})
       child.on('exit',(code,sig)=>{exitObserved=true;exitCode=Number.isInteger(code)&&code>=0&&code<=255?code:null;signal=sig==null?'NONE':['SIGABRT','SIGTRAP','SIGSEGV','SIGTERM','SIGKILL'].includes(sig)?sig:'OTHER'})
@@ -186,11 +173,7 @@ export async function main() {
     const version=execFileSync(binary,['--version'],{env,encoding:'utf8',timeout:5000,stdio:['ignore','pipe','ignore']}).trim()
     if(!/^Chromium [0-9.]+(?: [A-Za-z0-9 ._-]+)?$/.test(version))refusal('CHROMIUM_IDENTITY_REFUSED')
     runtime.chromium=version
-    chromiumStartup.step('SANDBOX_HELPER')
-    const helper=installedSandboxHelper464()
-    const browserEnv={...childEnvironment(owned,env,display),CHROME_DEVEL_SANDBOX:helper}
-    chromiumStartup.step('SPAWN')
-    remaining();chromium=spawn(binary,chromeArgs(owned,extension),{env:browserEnv,stdio:['ignore','ignore','pipe']})
+    remaining();chromium=spawn(binary,chromeArgs(owned,extension),{env:childEnvironment(owned,env,display),stdio:['ignore','ignore','pipe']})
     chromiumStartup.track(chromium);chromiumStartup.step('PORT_FILE')
     const portText=await waitForFile(path.join(owned,'profile/DevToolsActivePort'),10000), parts=portText.trim().split('\n')
     chromiumStartup.step('PORT_PARSE')

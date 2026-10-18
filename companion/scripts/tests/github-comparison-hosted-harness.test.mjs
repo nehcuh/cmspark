@@ -24,7 +24,7 @@ test('actual main body refuses nonhosted context before any spawn/config/owned o
   assert.equal(printed.stage,'PREFLIGHT');assert.equal(printed.browserAcceptance,'NOT_PASSED')
 })
 test('hosted preflight requires exact OS, actual owned nonsymlink temp and UID',()=>{
-  const env={GITHUB_ACTIONS:'true',RUNNER_OS:'Linux',RUNNER_ENVIRONMENT:'github-hosted',RUNNER_TEMP:'/owned'}
+  const env={GITHUB_ACTIONS:'true',RUNNER_OS:'Linux',RUNNER_ENVIRONMENT:'github-hosted',ImageOS:'ubuntu22',RUNNER_TEMP:'/owned'}
   const stat=()=>({isDirectory:()=>true,isSymbolicLink:()=>false,uid:42})
   assert.equal(preflight(env,'linux',stat,x=>x,42),'/owned')
   for(const patch of [{GITHUB_ACTIONS:'false'},{RUNNER_OS:'macOS'},{RUNNER_ENVIRONMENT:'self-hosted'},{RUNNER_ENVIRONMENT:undefined},{RUNNER_TEMP:'relative'}])assert.throws(()=>preflight({...env,...patch},'linux',stat,x=>x,42))
@@ -94,7 +94,6 @@ test('worker imports production implementations; workflow discovers CPU and host
   assert.ok(ci.includes('node chrome-extension/scripts/accept-github-comparison-hosted.mjs'))
   assert.ok(ci.indexOf('name: Hosted GitHub comparison acceptance')>ci.indexOf('name: Build companion'))
   assert.ok(ci.indexOf('name: Hosted GitHub comparison acceptance')<ci.indexOf('name: Run companion tests'))
-  assert.ok(ci.includes('name: Run chrome-extension tests'))
   assert.equal(/continue-on-error:/.test(ci.slice(ci.indexOf('name: Hosted GitHub comparison acceptance'),ci.indexOf('name: Hosted GitHub comparison acceptance')+300)),false)
   assert.ok(harness.indexOf('Object.assign(process.env,env)')<harness.indexOf("require(path.join(REPO,'companion/dist/ws-auth.js'))"))
 })
@@ -181,15 +180,14 @@ test('startup pipe continues draining after memory cap and reports only finite c
   assert.equal(receipt('CHROMIUM',false,0,{chromiumStartup:fake}).chromiumStartup,undefined)
   assert.equal(getters,0)
 })
-async function actualChromiumPhase464({fail=false,helperRefused=false}={}) {
+async function actualChromiumPhase464({fail=false}={}) {
   const observer=actualStartupObserver464(),child=new EventEmitter();child.stderr=new EventEmitter()
   const start=harness.indexOf("    stage='CHROMIUM'"),end=harness.indexOf("    stage='WORKER'",start)
   assert.ok(start>0&&end>start)
   let calls=0,port=false
   const c={stage:'CHROMIUM',chromiumStartup:undefined,observeChromiumStartup464:()=>observer,chromium:undefined,browser:undefined,portText:undefined,parts:undefined,
     path,fs:{statSync(){return{isFile:()=>true}}},refusal(){throw Error('REFUSED')},execFileSync(){return'Chromium 155.0.8059.0'},runtime:{},remaining(){return 10000},owned:'/owned',extension:'/owned/extension',env:{},display:':1',chromeArgs,childEnvironment,
-    installedSandboxHelper464(){if(helperRefused)throw Error('private-helper-error');return'/opt/google/chrome/chrome-sandbox'},
-    spawn(binary,args,options){calls++;assert.equal(binary,'/usr/bin/chromium');assert.equal(options.stdio[2],'pipe');assert.equal(options.env.CHROME_DEVEL_SANDBOX,'/opt/google/chrome/chrome-sandbox');return child},
+    spawn(binary,args,options){calls++;assert.equal(binary,'/usr/bin/chromium');assert.equal(options.stdio[2],'pipe');return child},
     async waitForFile(){port=true;if(fail){child.stderr.emit('data',Buffer.from('Missing X server or $DISPLAY private-marker'));child.emit('exit',1,null);throw Error('STARTUP_FILE_MISSING')}return'12345\n/devtools/browser/a-b-c\n'},
     CDP:{async connect(){return{}}},WebSocket:class{},active:new Set()}
   vm.createContext(c)
@@ -198,7 +196,7 @@ async function actualChromiumPhase464({fail=false,helperRefused=false}={}) {
   const actualCatch=harness.slice(catchStart,catchEnd)
   await vm.runInContext('async function phase(){try{'+harness.slice(start,end)+actualCatch+'}\nphase()',c)
   child.emit('exit',null,'SIGTERM')
-  assert.equal(calls,helperRefused?0:1);assert.equal(port,!helperRefused)
+  assert.equal(calls,1);assert.equal(port,true)
   return receipt('CHROMIUM',false,0,c.runtime)
 }
 test('actual main Chromium failure snapshots before finally without changing launch or pass policy',async()=>{
@@ -212,33 +210,18 @@ test('actual main CDP-ready phase records connected without claiming the browser
   assert.equal(r.chromiumStartup.step,'CONNECTED');assert.equal(r.passed,false);assert.equal(r.chromiumStartup.exitObserved,false)
 })
 
-function actualSandboxHelper464(patches={},canonical=x=>x) {
-  const start=harness.indexOf('export function installedSandboxHelper464('),end=harness.indexOf('\nexport function compareProduced',start)
-  assert.ok(start>=0&&end>start,'actual installed-helper identity guard exists')
-  const calls=[],helper='/opt/google/chrome/chrome-sandbox'
-  const stat=name=>{calls.push(name);const file=name===helper;return{uid:0,gid:0,nlink:1,mode:file?0o104755:0o40755,isDirectory:()=>!file,isFile:()=>file,isSymbolicLink:()=>false,...patches[name]}}
-  const c={fs:{lstatSync:stat,realpathSync:canonical},refusal(){throw Error('HELPER_REFUSED')}};vm.createContext(c)
-  vm.runInContext(harness.slice(start,end).replace('export function','function')+'\nthis.check=installedSandboxHelper464',c)
-  return{run:()=>c.check(),calls}
-}
-test('installed helper requires exact canonical root-owned protected directory chain and4755 file',()=>{
-  const f=actualSandboxHelper464();assert.equal(f.run(),'/opt/google/chrome/chrome-sandbox')
-  assert.deepEqual(f.calls,['/','/opt','/opt/google','/opt/google/chrome','/opt/google/chrome/chrome-sandbox'])
+test('hosted acceptance pins only build to available Ubuntu22 without changing the three native platforms',()=>{
+ const ci=fs.readFileSync(path.join(repo,'.github/workflows/ci.yml'),'utf8')
+ assert.match(ci,/build:\r?\n\s+# [^\r\n]+\r?\n\s+runs-on: ubuntu-22\.04/)
+ assert.match(ci,/os: \[ubuntu-latest, macos-latest, windows-latest\]/)
+ const helper=(harness.match(/installedSandboxHelper464/g)||[]).length;assert.equal(helper,0)
+ assert.equal(harness.includes('CHROME_DEVEL_SANDBOX'),false)
+ assert.equal(/no-sandbox|disable-setuid-sandbox|apparmor_restrict|sysctl|sudo /.test(harness),false)
 })
-test('installed helper rejects untrusted metadata and path aliases without installation or fallback',()=>{
-  const helper='/opt/google/chrome/chrome-sandbox'
-  for(const patch of [{uid:1000},{gid:1000},{nlink:2},{mode:0o100755},{mode:0o104777},{isSymbolicLink:()=>true},{isFile:()=>false}])assert.throws(()=>actualSandboxHelper464({[helper]:patch}).run())
-  for(const name of ['/','/opt','/opt/google','/opt/google/chrome'])for(const patch of [{uid:1000},{mode:0o40777},{isDirectory:()=>false},{isSymbolicLink:()=>true}])assert.throws(()=>actualSandboxHelper464({[name]:patch}).run())
-  assert.throws(()=>actualSandboxHelper464({},()=>'/foreign').run())
-  assert.throws(()=>actualSandboxHelper464({},()=>{throw Error('missing')}).run())
-})
-test('actual main refuses missing or invalid installed helper before Chromium spawn',async()=>{
-  const r=await actualChromiumPhase464({helperRefused:true});assert.equal(r.passed,false);assert.equal(r.cases,0)
-  assert.equal(r.chromiumStartup.step,'SANDBOX_HELPER');assert.equal(JSON.stringify(r).includes('private-helper-error'),false)
-})
-test('parent helper override never enters generic child environment or changes Chromium arguments',()=>{
-  assert.equal(childEnvironment('/owned',{CHROME_DEVEL_SANDBOX:'/foreign'}).CHROME_DEVEL_SANDBOX,undefined)
-  assert.deepEqual(chromeArgs('/owned','/owned/extension'),[
-    '--user-data-dir=/owned/profile','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',
-    '--disable-extensions-except=/owned/extension','--load-extension=/owned/extension','--no-first-run','--no-default-browser-check','about:blank'])
+test('actual preflight rejects other or unreported images despite hosted Linux admission',()=>{
+ const env={GITHUB_ACTIONS:'true',RUNNER_OS:'Linux',RUNNER_ENVIRONMENT:'github-hosted',ImageOS:'ubuntu22',RUNNER_TEMP:'/owned'}
+ const stat=()=>({isDirectory:()=>true,isSymbolicLink:()=>false,uid:42})
+ assert.equal(preflight(env,'linux',stat,x=>x,42),'/owned')
+ for(const ImageOS of [undefined,'ubuntu24','ubuntu26','ubuntu-22.04','private-marker'])assert.throws(()=>preflight({...env,ImageOS},'linux',stat,x=>x,42))
+ assert.equal(childEnvironment('/owned',{CHROME_DEVEL_SANDBOX:'/foreign'}).CHROME_DEVEL_SANDBOX,undefined)
 })

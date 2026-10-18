@@ -8,7 +8,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Raw Chromium keeps its sandbox on this temporary image until its 2027-04-17 retirement; latest-OS native smoke remains.
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
