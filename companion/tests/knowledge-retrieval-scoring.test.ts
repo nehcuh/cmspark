@@ -502,3 +502,19 @@ test("thread-manager: knowledge_smart_match must be boolean; roundtrips and pers
   const reloaded = new ThreadManager()
   assert.equal(reloaded.get(th.id)?.knowledge_smart_match, false, "persists across reload")
 })
+
+// One synchronous resolution uses one fresh view, not a full filesystem scan
+// for every pinned identifier. Subsequent public calls must still see disk edits.
+test("knowledge resolution scans one fresh disk snapshot for pinned and legacy skill ids", t => {
+  resetKnowledgeDirs()
+  for (const id of ["snapshot-a", "snapshot-b", "snapshot-c"]) seedDoc(id, { title: "退款政策", description: "退款政策说明" })
+  const tm = new ThreadManager(), th = makeThread(tm, "snapshot", { active_knowledge_ids: ["snapshot-a", "snapshot-b"], active_skill_ids: ["snapshot-c"] })
+  const se = new SkillEngine(); se.bindThreadManager(tm)
+  let scans = 0; const fingerprint = se.computeDiskFingerprint.bind(se)
+  t.mock.method(se, "computeDiskFingerprint", () => { scans++; return fingerprint() })
+  assert.deepEqual(se.resolveKnowledgeIdsForThread(th.id, "auto", undefined, "退款政策"), ["snapshot-a", "snapshot-b", "snapshot-c"])
+  assert.equal(scans, 1, "one synchronous resolution must not rescan per pinned id")
+  seedDoc("snapshot-d", { title: "new external document", description: "new external document" })
+  const all = se.resolveKnowledgeIdsForThread(th.id, "all", undefined, "", false)
+  assert.ok(all.includes("snapshot-d"), "a new public resolution must refresh external edits")
+})
