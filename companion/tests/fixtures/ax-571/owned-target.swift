@@ -45,7 +45,7 @@ private struct AX571OwnedPaths {
 }
 // Fixed diagnostic categories only. A failed completion still refuses with exit65.
 private enum AX571LaunchGuardFailure {
-    case openError, noReturnedApp, parentChanged, returnedPID, returnedTerminated, bundleID, bundleURL, executableURL
+    case openError, noReturnedApp, parentChanged, returnedPIDNonpositive, returnedPIDSelf, returnedTerminated, bundleID, bundleURL, executableURL
 }
 private func ax571LaunchGuardRefused(_ failure: AX571LaunchGuardFailure) -> Never {
     let marker: String
@@ -53,7 +53,8 @@ private func ax571LaunchGuardRefused(_ failure: AX571LaunchGuardFailure) -> Neve
     case .openError: marker = "AX571_LAUNCH_OPEN_ERROR\n"
     case .noReturnedApp: marker = "AX571_LAUNCH_NO_RETURNED_APP\n"
     case .parentChanged: marker = "AX571_LAUNCH_PARENT_CHANGED\n"
-    case .returnedPID: marker = "AX571_LAUNCH_RETURNED_PID\n"
+    case .returnedPIDNonpositive: marker = "AX571_LAUNCH_RETURNED_PID_NONPOSITIVE\n"
+    case .returnedPIDSelf: marker = "AX571_LAUNCH_RETURNED_PID_SELF\n"
     case .returnedTerminated: marker = "AX571_LAUNCH_RETURNED_TERMINATED\n"
     case .bundleID: marker = "AX571_LAUNCH_BUNDLE_ID\n"
     case .bundleURL: marker = "AX571_LAUNCH_BUNDLE_URL\n"
@@ -129,7 +130,8 @@ private final class AX571OwnedLauncher {
                 guard error == nil else { ax571LaunchGuardRefused(.openError) }
                 guard let returned = returned else { ax571LaunchGuardRefused(.noReturnedApp) }
                 guard paths.current() else { ax571LaunchGuardRefused(.parentChanged) }
-                guard returned.processIdentifier > 0, returned.processIdentifier != getpid() else { ax571LaunchGuardRefused(.returnedPID) }
+                guard returned.processIdentifier > 0 else { ax571LaunchGuardRefused(.returnedPIDNonpositive) }
+                guard returned.processIdentifier != getpid() else { ax571LaunchGuardRefused(.returnedPIDSelf) }
                 guard !returned.isTerminated else { ax571LaunchGuardRefused(.returnedTerminated) }
                 guard returned.bundleIdentifier == "com.cmspark.ax571.owned-target" else { ax571LaunchGuardRefused(.bundleID) }
                 guard returned.bundleURL?.resolvingSymlinksInPath() == bundle else { ax571LaunchGuardRefused(.bundleURL) }

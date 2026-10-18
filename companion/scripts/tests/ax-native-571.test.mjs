@@ -236,3 +236,26 @@ test('#571 public lifetime observation includes only fixed wait stage and decode
  const s={JSON,framework:'APPKIT',ended:true,launcherExit:65,launcherSignal:null,waitStage:'APP_READY',launchBoundary:'BUNDLE_URL'};const text=vm.runInNewContext(expression.getText(ast),s);const result=JSON.parse(text.slice('AX571_LIFETIME '.length));assert.deepEqual(result,{schema:1,framework:'APPKIT',closed:true,prelaunch:'UNPROVEN',signalObserved:false,waitStage:'APP_READY',launchBoundary:'BUNDLE_URL'})
  assert.equal(text.includes('PRIVATE_SENTINEL'),false)
 })
+
+test('#571 PID refusal decoder distinguishes fixed nonpositive and self categories without exposing values',()=>{
+ const parse=launchBoundaryConsumer571()
+ for(const code of ['RETURNED_PID_NONPOSITIVE','RETURNED_PID_SELF','RETURNED_PID'])assert.equal(parse('AX571_LAUNCH_'+code+'\n'),code)
+ for(const value of ['AX571_LAUNCH_RETURNED_PID_SELF_123\n','AX571_LAUNCH_RETURNED_PID_NONPOSITIVE_PRIVATE\n','AX571_LAUNCH_RETURNED_PID_SELF\nAX571_LAUNCH_RETURNED_PID\n','AX571_LAUNCH_RETURNED_PID_SELF\nAX571_LAUNCH_RETURNED_PID_NONPOSITIVE\n'])assert.equal(parse(value),'UNKNOWN')
+})
+test('#571 actual Swift completion preserves all nine predicates and separates the two PID refusal boundaries',()=>{
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),start=swift.indexOf('                guard error == nil else'),end=swift.indexOf('                application = returned;',start);assert.ok(start>=0&&end>start)
+ const guards=[...swift.slice(start,end).matchAll(/guard ([^\n]+) else \{ ax571LaunchGuardRefused\(\.(\w+)\) \}/g)].map(m=>({conditions:m[1].split(',').map(s=>s.trim()),category:m[2]}))
+ const expected=['error == nil','let returned = returned','paths.current()','returned.processIdentifier > 0','returned.processIdentifier != getpid()','!returned.isTerminated','returned.bundleIdentifier == "com.cmspark.ax571.owned-target"','returned.bundleURL?.resolvingSymlinksInPath() == bundle','returned.executableURL?.resolvingSymlinksInPath() == executable']
+ assert.equal(guards.length,9);assert.deepEqual(guards.flatMap(g=>g.conditions),expected)
+ assert.equal(guards[3].category,'returnedPIDNonpositive');assert.equal(guards[4].category,'returnedPIDSelf')
+ const markers=new Map([...swift.matchAll(/case \.(\w+): marker = "AX571_LAUNCH_([A-Z_]+)\\n"/g)].map(m=>[m[1],m[2]]));assert.equal(markers.size,9)
+ const lower=s=>s==='let returned = returned'?'returned !== null':s.replaceAll(' == ',' === ').replaceAll(' != ',' !== ').replaceAll('nil','null')
+ const compiled=guards.map(g=>({category:g.category,tests:g.conditions.map(c=>new Function('error','returned','paths','getpid','bundle','executable','return ('+lower(c)+');'))})),parse=launchBoundaryConsumer571(),seen=new Set();let states=0
+ for(const error of [null,'OWNED_PRIVATE_SENTINEL'])for(const present of [false,true])for(const parent of [false,true])for(const pid of [-1,0,10,42])for(const terminated of [false,true])for(const bundleID of ['com.cmspark.ax571.owned-target','OWNED_PRIVATE_SENTINEL'])for(const bundleURL of [null,'wrong','bundle'])for(const executableURL of [null,'wrong','exe']){
+  const returned=present?{processIdentifier:pid,isTerminated:terminated,bundleIdentifier:bundleID,bundleURL:bundleURL===null?null:{resolvingSymlinksInPath:()=>bundleURL},executableURL:executableURL===null?null:{resolvingSymlinksInPath:()=>executableURL}}:null,args=[error,returned,{current:()=>parent},()=>10,'bundle','exe']
+  let actual='BOUND';for(const group of compiled){if(!group.tests.every(f=>f(...args))){actual=markers.get(group.category);break}}
+  const want=error!==null?'OPEN_ERROR':!present?'NO_RETURNED_APP':!parent?'PARENT_CHANGED':pid<=0?'RETURNED_PID_NONPOSITIVE':pid===10?'RETURNED_PID_SELF':terminated?'RETURNED_TERMINATED':bundleID!=='com.cmspark.ax571.owned-target'?'BUNDLE_ID':bundleURL!=='bundle'?'BUNDLE_URL':executableURL!=='exe'?'EXECUTABLE_URL':'BOUND'
+  assert.equal(actual,want);if(actual!=='BOUND'){assert.equal(parse('AX571_LAUNCH_'+actual+'\n'),actual);assert.equal(actual.includes('SENTINEL'),false);seen.add(actual)}states++
+ }
+ assert.equal(states,1152);assert.equal(seen.size,9)
+})

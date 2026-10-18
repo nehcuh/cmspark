@@ -15,7 +15,7 @@ function ax571Code(value:unknown):string {
 // Fixture diagnostics are a closed category, never native stderr/error text or authority.
 function ax571LaunchBoundary(value:unknown):string {
  if(typeof value!=="string"||Buffer.byteLength(value,"utf8")>4096)return "UNKNOWN"
- const markers=value.match(/^AX571_LAUNCH_(OPEN_ERROR|NO_RETURNED_APP|PARENT_CHANGED|RETURNED_PID|RETURNED_TERMINATED|BUNDLE_ID|BUNDLE_URL|EXECUTABLE_URL)\r?$/gm)
+ const markers=value.match(/^AX571_LAUNCH_(OPEN_ERROR|NO_RETURNED_APP|PARENT_CHANGED|RETURNED_PID(?:_NONPOSITIVE|_SELF)?|RETURNED_TERMINATED|BUNDLE_ID|BUNDLE_URL|EXECUTABLE_URL)\r?$/gm)
  return markers?.length===1?markers[0].trimEnd().slice("AX571_LAUNCH_".length):"UNKNOWN"
 }
 function requireAx571Oracles(before:Ax571Snapshot,after:Ax571Snapshot,verdict:Record<string,unknown>,target:number,sibling:number):void {
