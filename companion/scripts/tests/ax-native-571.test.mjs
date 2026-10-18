@@ -394,6 +394,10 @@ function ax571OwnedCGProjection(input=fs.readFileSync(path.join(root,'companion/
  integer=once(integer,'guard value.isFinite, value.rounded(.towardZero) == value, value >= 0, value <= Double(UInt32.max) else { return nil }','if(!(Number.isFinite(value)&&Math.trunc(value)===value&&value>=0&&value<=4294967295))return null')
  integer=once(integer,'return Int(value)','return value')
  let unique=body('ax571UniqueWindow')
+ // Only these exact passive notes may be removed to reuse the original mapper decision.
+ if(unique.includes('    reason = .invalidInput\n')){
+  for(const [note,replacement]of [['    reason = .invalidInput\n',''],['    var titleMatched = false\n',''],['        titleMatched = true\n',''],['reason = .rowOwnerInvalid; ',''],['reason = .titleUnavailable; ',''],['reason = .geometryOrIDInvalid; ',''],['reason = .ambiguous; ',''],['    reason = found != nil ? .matched : (titleMatched ? .geometryMismatch : .noTitleMatch)\n','']])unique=once(unique,note,replacement)
+ }
  for(const [a,b]of [
  ['guard pid > 0, !title.isEmpty, ax571FiniteFrame(frame) else { return nil }','if(!(pid>0&&title.length>0&&ax571FiniteFrame(frame)))return null'],
  ['var found: Int?','let found=null'],['for row in rows {','for(const row of rows){'],
@@ -459,3 +463,55 @@ test('#571 owned CG mapping and original readiness remain exact for LF and CRLF 
 })
 
 import './ax-window-root-571.test.mjs'
+
+// Execute only the new fixed diagnostic assignments/writer with inert IO; this
+// does not execute Swift, Core Graphics or native window APIs.
+function bindingReason571(input){
+ const text=input.replace(/\r\n/g,'\n'),h=ax571OwnedCGProjection(text),enumBody=text.match(/private enum AX571BindingReason: String \{([\s\S]*?)\n\}/)?.[1];assert.ok(enumBody)
+ const tags=Object.fromEntries(Array.from(enumBody.matchAll(/case (\w+) = "([A-Z_]+)"/g),m=>[m[1],m[2]]));assert.deepEqual(Object.values(tags).sort(),['AMBIGUOUS','GEOMETRY_MISMATCH','GEOMETRY_OR_ID_INVALID','INVALID_INPUT','MATCHED','NO_TITLE_MATCH','ROW_OWNER_INVALID','TITLE_UNAVAILABLE'].sort())
+ const a=text.indexOf('private func ax571UniqueWindow('),b=text.indexOf('\n}',a);assert.ok(a>=0&&b>a);let raw=text.slice(text.indexOf('{',a)+1,b)
+ raw=raw.replace('reason = found != nil','reason.value = found != nil')
+ raw=raw.replace(/reason = \.(\w+)/g,(_,tag)=>{assert.ok(Object.hasOwn(tags,tag));return 'reason.value = '+JSON.stringify(tags[tag])}).replace(/\.(matched|geometryMismatch|noTitleMatch)\b/g,(_,tag)=>JSON.stringify(tags[tag]))
+ const split=s=>{let quote=false,n=0,last=0,out=[];for(let i=0;i<s.length;i++){const c=s[i];if(c==='"'&&s[i-1]!=='\\')quote=!quote;if(!quote){if('(['.includes(c))n++;if(')]'.includes(c))n--;if(c===','&&n===0){out.push(s.slice(last,i).trim());last=i+1}}}out.push(s.slice(last).trim());return out}
+ const expr=s=>s.replace(/\bnil\b/g,'null').replace(/!title\.isEmpty/g,'title.length>0').replace(/row\[kCGWindowOwnerPID as String\]/g,'row.pid').replace(/row\[kCGWindowName as String\]/g,'row.name').replace(/row\[kCGWindowBounds as String\]/g,'row.bounds').replace(/row\[kCGWindowNumber as String\]/g,'row.id').replace(/CGRect\(dictionaryRepresentation: rawBounds as CFDictionary\)/g,'decode(rawBounds)').replace(/Int\(pid\)/g,'pid')
+ raw=raw.replace(/guard ([\s\S]*?) else \{ ([^{}]*?)return nil \}/g,(_,conditions,note)=>{
+  const code=split(conditions).map(c=>{const m=c.match(/^let (\w+) = ([\s\S]+)$/);if(!m)return 'if(!('+expr(c)+')){'+expr(note)+'return null}';let value=m[2];if(value.endsWith(' as? String'))value='string('+expr(value.slice(0,-11))+')';else if(value.endsWith(' as? [String: Any]'))value='dict('+expr(value.slice(0,-18))+')';else value=expr(value);return 'let '+m[1]+'='+value+';if('+m[1]+'==null){'+expr(note)+'return null}'}).join('\n');return code
+ })
+ raw=expr(raw).replace('var found: Int?','let found=null').replace('var titleMatched = false','let titleMatched=false').replace('for row in rows {','for(const row of rows){').replace('if owner != pid { continue }','if(owner!=pid){continue}').replace('if !name.utf8.elementsEqual(title.utf8) { continue }','if(!utf8Equal(name,title)){continue}').replace('if bounds != frame { continue }','if(!sameRect(bounds,frame)){continue}')
+ assert.doesNotMatch(raw,/\bguard\b|\bvar\b|\bnil\b| as\?|\.utf8|CGRect\(|\$0/)
+ const context={...h,string:v=>typeof v==='string'?v:null,dict:v=>v&&typeof v==='object'&&!Array.isArray(v)?v:null,utf8Equal:(a,b)=>Buffer.from(a).equals(Buffer.from(b)),sameRect:h.sameRect};vm.createContext(context);vm.runInContext('function observe(rows,pid,title,frame,reason){'+raw+'};this.observe=observe;',context,{timeout:1000})
+ return{h,tags,run(rows,pid,title,frame){const reason={value:null};const number=context.observe(rows,pid,title,frame,reason);assert.equal(number,h.unique(rows,pid,title,frame),'passive assignment changed original decision');return{number,reason:reason.value}}}
+}
+function bindingWriter571(text,io){const a=text.indexOf('    private func writeBinding('),b=text.indexOf('    func write(',a);assert.ok(a>=0&&b>a);let raw=text.slice(text.indexOf('{',a)+1,b);raw=raw.slice(0,raw.lastIndexOf('}'))
+ for(const [from,to]of [
+ ['do {','try {'],
+ ['let value: [String: Any] = ["schema":1,"firstTarget":firstTarget.rawValue,"firstSibling":firstSibling.rawValue,"secondTarget":secondTarget.rawValue,"secondSibling":secondSibling.rawValue,"stable":stable]','const value={schema:1,firstTarget,firstSibling,secondTarget,secondSibling,stable}'],
+ ['let data = try JSONSerialization.data(withJSONObject:value)','const data=encode(value)'],
+ ['guard data.count <= 512 else { return }','if(!(data.length<=512))return'],
+ ['let file = ready.appendingPathExtension("binding")','const file="binding"'],
+ ['try data.write(to:file,options:.atomic)','write(file,data)'],
+ ['try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:file.path)','chmod(file,0o600)']]){assert.equal(raw.split(from).length,2,from);raw=raw.replace(from,to)}
+ assert.doesNotMatch(raw,/\bdo\b|\blet\b|\bguard\b|\btry [A-Za-z]|FileManager|JSONSerialization|\.rawValue|ready\./)
+ return vm.runInNewContext('(firstTarget,firstSibling,secondTarget,secondSibling,stable)=>{'+raw+'}',io)
+}
+test('#571 passive binding actual assignments distinguish all eight fixed reasons without changing decisions',()=>{
+ const text=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),f=bindingReason571(text),h=f.h,frame=h.rect(180,298,600,422),base=[{pid:42,name:'Owned AX571 target',id:101,bounds:{x:180,y:298,width:600,height:422}}]
+ const check=(rows,pid,title,box,reason,number)=>assert.deepEqual(f.run(rows,pid,title,box),{reason,number})
+ check(base,0,'Owned AX571 target',frame,'INVALID_INPUT',null);check([{...base[0],pid:'42'}],42,'Owned AX571 target',frame,'ROW_OWNER_INVALID',null);check([{...base[0],name:undefined}],42,'Owned AX571 target',frame,'TITLE_UNAVAILABLE',null);check([{...base[0],bounds:null}],42,'Owned AX571 target',frame,'GEOMETRY_OR_ID_INVALID',null);check(base,42,'Different',frame,'NO_TITLE_MATCH',null);check([{...base[0],bounds:{...base[0].bounds,x:181}}],42,'Owned AX571 target',frame,'GEOMETRY_MISMATCH',null);check([base[0],base[0]],42,'Owned AX571 target',frame,'AMBIGUOUS',null);check(base,42,'Owned AX571 target',frame,'MATCHED',101)
+ // A later same-title geometry mismatch cannot overwrite an existing valid decision/reason.
+ check([...base,{...base[0],id:102,bounds:{...base[0].bounds,x:181}}],42,'Owned AX571 target',frame,'MATCHED',101)
+})
+test('#571 actual passive binding writer emits only fixed six-key bounded JSON with explicit final 0600',()=>{
+ const text=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),events=[],emit=bindingWriter571(text,{encode:v=>Buffer.from(JSON.stringify(v)),write:(file,data)=>events.push({file,data}),chmod:(file,mode)=>events.push({file,mode})});emit('MATCHED','NO_TITLE_MATCH','MATCHED','GEOMETRY_MISMATCH',false);assert.equal(events.length,2);assert.equal(events[0].file,'binding');assert.equal(events[1].file,'binding');assert.equal(events[1].mode,0o600);assert.ok(events[0].data.length<=512);assert.deepEqual(JSON.parse(events[0].data),{schema:1,firstTarget:'MATCHED',firstSibling:'NO_TITLE_MATCH',secondTarget:'MATCHED',secondSibling:'GEOMETRY_MISMATCH',stable:false})
+ const section=text.slice(text.indexOf('    private func writeBinding('),text.indexOf('    func write(',text.indexOf('    private func writeBinding(')));assert.doesNotMatch(section,/getpid|getuid|windowNumber|\.title|\.frame|stderr|stdout|print\(|exit\(|self\.write\(/)
+})
+test('#571 actual binding sink or encoder faults never replace the following original primary failure',()=>{
+ const text=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8')
+ for(const fault of ['encode','write','chmod','oversize']){const events=[],primary=Error('OWNED_ORIGINAL_PRIMARY'),emit=bindingWriter571(text,{encode:v=>{if(fault==='encode')throw Error('OWNED_SINK');return fault==='oversize'?Buffer.alloc(513):Buffer.from(JSON.stringify(v))},write:()=>{events.push('WRITE');if(fault==='write')throw Error('OWNED_SINK')},chmod:()=>{events.push('CHMOD');if(fault==='chmod')throw Error('OWNED_SINK')}});assert.throws(()=>{emit('MATCHED','MATCHED','MATCHED','MATCHED',true);events.push('ORIGINAL_PRIMARY');throw primary},e=>e===primary);assert.equal(events.at(-1),'ORIGINAL_PRIMARY');if(fault==='oversize'||fault==='encode')assert.equal(events.includes('WRITE'),false)}
+})
+test('#571 four binding roles reuse existing observations and never alter publication or introduce callbacks',()=>{
+ const text=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),tail=text.slice(text.indexOf('    func queueReadiness() {'),text.indexOf('    private func writeBinding('))
+ assert.match(tail,/ax571UniqueWindow\(list,pid,targetTitle,\$0,&firstTargetReason\)/);assert.match(tail,/ax571UniqueWindow\(list,pid,siblingTitle,\$0,&firstSiblingReason\)/);assert.match(tail,/ax571UniqueWindow\(list,pid,targetTitle,\$0,&secondTargetReason\)/);assert.match(tail,/ax571UniqueWindow\(list,pid,siblingTitle,\$0,&secondSiblingReason\)/)
+ assert.equal((tail.match(/CGWindowListCopyWindowInfo\(/g)||[]).length,2);assert.ok(tail.indexOf('self.writeBinding(firstTargetReason,firstSiblingReason,secondTargetReason,secondSiblingReason,stable)')<tail.indexOf('self.write(observation, to:self.ready.appendingPathExtension("setup"))'));assert.match(tail,/guard ax571Readiness\(active,key,targetBound,siblingBound\) else \{ return \}/);assert.doesNotMatch(tail,/Timer|sleep|asyncAfter|self\??\.queueReadiness\(/)
+ for(const input of [text,text.replace(/\r?\n/g,'\r\n')]){const f=bindingReason571(input);assert.equal(f.run([],42,'Owned AX571 target',f.h.rect(1,2,3,4)).reason,'NO_TITLE_MATCH')}
+})

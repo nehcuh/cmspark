@@ -25,21 +25,35 @@ private func ax571CGInteger(_ raw: Any?) -> Int? {
     guard value.isFinite, value.rounded(.towardZero) == value, value >= 0, value <= Double(UInt32.max) else { return nil }
     return Int(value)
 }
-private func ax571UniqueWindow(_ rows: [[String: Any]], _ pid: pid_t, _ title: String, _ frame: CGRect) -> Int? {
+private enum AX571BindingReason: String {
+    case invalidInput = "INVALID_INPUT"
+    case rowOwnerInvalid = "ROW_OWNER_INVALID"
+    case titleUnavailable = "TITLE_UNAVAILABLE"
+    case geometryOrIDInvalid = "GEOMETRY_OR_ID_INVALID"
+    case noTitleMatch = "NO_TITLE_MATCH"
+    case geometryMismatch = "GEOMETRY_MISMATCH"
+    case ambiguous = "AMBIGUOUS"
+    case matched = "MATCHED"
+}
+private func ax571UniqueWindow(_ rows: [[String: Any]], _ pid: pid_t, _ title: String, _ frame: CGRect, _ reason: inout AX571BindingReason) -> Int? {
+    reason = .invalidInput
     guard pid > 0, !title.isEmpty, ax571FiniteFrame(frame) else { return nil }
     var found: Int?
+    var titleMatched = false
     for row in rows {
-        guard let owner = ax571CGInteger(row[kCGWindowOwnerPID as String]) else { return nil }
+        guard let owner = ax571CGInteger(row[kCGWindowOwnerPID as String]) else { reason = .rowOwnerInvalid; return nil }
         if owner != Int(pid) { continue }
-        guard let name = row[kCGWindowName as String] as? String else { return nil }
+        guard let name = row[kCGWindowName as String] as? String else { reason = .titleUnavailable; return nil }
         if !name.utf8.elementsEqual(title.utf8) { continue }
+        titleMatched = true
         guard let rawBounds = row[kCGWindowBounds as String] as? [String: Any],
               let bounds = CGRect(dictionaryRepresentation: rawBounds as CFDictionary), ax571FiniteFrame(bounds),
-              let number = ax571CGInteger(row[kCGWindowNumber as String]), number > 0 else { return nil }
+              let number = ax571CGInteger(row[kCGWindowNumber as String]), number > 0 else { reason = .geometryOrIDInvalid; return nil }
         if bounds != frame { continue }
-        guard found == nil else { return nil }
+        guard found == nil else { reason = .ambiguous; return nil }
         found = number
     }
+    reason = found != nil ? .matched : (titleMatched ? .geometryMismatch : .noTitleMatch)
     return found
 }
 
@@ -342,13 +356,15 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             let rows=CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
             let own=rows?.filter { ax571CGInteger($0[kCGWindowOwnerPID as String]) == Int(pid) }
             let targetCG=primaryFrame.flatMap { ax571CGFrame(targetFrame,$0) }, siblingCG=primaryFrame.flatMap { ax571CGFrame(siblingFrame,$0) }
-            let targetNumber=own.flatMap { list in targetCG.flatMap { ax571UniqueWindow(list,pid,targetTitle,$0) } }
-            let siblingNumber=own.flatMap { list in siblingCG.flatMap { ax571UniqueWindow(list,pid,siblingTitle,$0) } }
+            var firstTargetReason=AX571BindingReason.invalidInput, firstSiblingReason=AX571BindingReason.invalidInput
+            let targetNumber=own.flatMap { list in targetCG.flatMap { ax571UniqueWindow(list,pid,targetTitle,$0,&firstTargetReason) } }
+            let siblingNumber=own.flatMap { list in siblingCG.flatMap { ax571UniqueWindow(list,pid,siblingTitle,$0,&firstSiblingReason) } }
             // Re-observe the exact two objects, screen and CG identities; no retry or fallback.
             let currentRows=CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
             let currentOwn=currentRows?.filter { ax571CGInteger($0[kCGWindowOwnerPID as String]) == Int(pid) }
-            let currentTarget=currentOwn.flatMap { list in targetCG.flatMap { ax571UniqueWindow(list,pid,targetTitle,$0) } }
-            let currentSibling=currentOwn.flatMap { list in siblingCG.flatMap { ax571UniqueWindow(list,pid,siblingTitle,$0) } }
+            var secondTargetReason=AX571BindingReason.invalidInput, secondSiblingReason=AX571BindingReason.invalidInput
+            let currentTarget=currentOwn.flatMap { list in targetCG.flatMap { ax571UniqueWindow(list,pid,targetTitle,$0,&secondTargetReason) } }
+            let currentSibling=currentOwn.flatMap { list in siblingCG.flatMap { ax571UniqueWindow(list,pid,siblingTitle,$0,&secondSiblingReason) } }
             let stable=primary != nil && NSScreen.screens.first === primary && primary?.frame == primaryFrame && targetTitle.utf8.elementsEqual("Owned AX571 target".utf8) && siblingTitle.utf8.elementsEqual("Owned AX571 foreground sibling".utf8) && self.target.title.utf8.elementsEqual(targetTitle.utf8) && self.sibling.title.utf8.elementsEqual(siblingTitle.utf8) && self.target.frame == targetFrame && self.sibling.frame == siblingFrame && currentTarget == targetNumber && currentSibling == siblingNumber
             let targetBound=stable && targetNumber != nil
             let siblingBound=stable && siblingNumber != nil && siblingNumber != targetNumber
@@ -358,6 +374,7 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             let role=rows == nil ? "UNKNOWN" : first == nil ? "NONE" : first == targetNumber ? "TARGET" : first == siblingNumber ? "SIBLING" : "OTHER"
             let active=NSApp.isActive, key=self.sibling.isKeyWindow
             let observation: [String: Any] = ["schema":1,"appActive":active,"siblingKey":key,"targetBound":targetBound,"siblingBound":siblingBound,"firstRole":role]
+            self.writeBinding(firstTargetReason,firstSiblingReason,secondTargetReason,secondSiblingReason,stable)
             self.write(observation, to:self.ready.appendingPathExtension("setup"))
             guard ax571Readiness(active,key,targetBound,siblingBound) else { return }
             guard let targetNumber=targetNumber, let siblingNumber=siblingNumber else { return }
@@ -365,6 +382,17 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             for observer in self.readinessObservers { NotificationCenter.default.removeObserver(observer) }; self.readinessObservers.removeAll()
             self.write(["schema":1,"framework":self.framework,"appPID":Int(getpid()),"target":targetNumber,"sibling":siblingNumber,"setup":observation], to:self.ready)
         }
+    }
+    // Passive private test observation only. Failure must never replace setup/ready or exit.
+    private func writeBinding(_ firstTarget: AX571BindingReason, _ firstSibling: AX571BindingReason, _ secondTarget: AX571BindingReason, _ secondSibling: AX571BindingReason, _ stable: Bool) {
+        do {
+            let value: [String: Any] = ["schema":1,"firstTarget":firstTarget.rawValue,"firstSibling":firstSibling.rawValue,"secondTarget":secondTarget.rawValue,"secondSibling":secondSibling.rawValue,"stable":stable]
+            let data = try JSONSerialization.data(withJSONObject:value)
+            guard data.count <= 512 else { return }
+            let file = ready.appendingPathExtension("binding")
+            try data.write(to:file,options:.atomic)
+            try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:file.path)
+        } catch {}
     }
     func write(_ value: [String: Any], to url: URL) {
         do { let data = try JSONSerialization.data(withJSONObject: value); try data.write(to: url, options: .atomic) }

@@ -194,3 +194,12 @@ uv run --no-project --with playwright python companion/scripts/test-web-surfaces
 `uv run --no-project --with playwright python chrome-extension/scripts/test-thread-management-ui.py`（先 `nvm use 22`）验证真实 App 在320/390/759/760/1440宽度的创建/管理入口、手动分类保存与拒绝、AI标签保留、AI提取/规则整理/图谱调用，以及320短屏下停止/风险/确认优先级。运行时传输为隔离 fixture，不连接真实 Companion。后端 `thread-digest.test.ts` 验证分类字段通过真实路由写入、AI digest 替换后 reload 仍保留、非法输入拒绝；扩展 `thread-management.test.ts` 验证 ACK/错请求/未回显字段不构成保存成功。
 
 Brand/tray (#474): `node chrome-extension/scripts/generate-icons.mjs` and `node companion/scripts/generate-tray-icons.mjs` generate shared-geometry assets. On macOS, `uv run --no-project --with pillow python companion/scripts/test-brand-rendering.py` renders the production Swift function offscreen and compares 18 size/color combinations to JS PNG output. It does not start the tray. `bash companion/src/tray/build-tray.sh` verifies native compilation. `tray-status-474.test.ts` exercises the actual compatibility menu shape and action map after the title/header removal.
+
+
+## #571 hosted AX 原生失败观测
+
+`companion/scripts/build-ax-native-571.mjs` 仅给未发布的原生验收 host 加 `CMSPARK_AX571_DIAGNOSTICS` 编译条件；普通 host 的 locate JSON 形状不变。同次 locate 结果只附固定 `ax571Reason`，区分 CG/AX 绑定拒绝、完整复核变化与遍历未找到，不输出标题、窗口 ID、几何或任意异常。日志里的固定阶段不是唯一系统根因，也不是动作成功回执。
+
+owned 夹具用现有两次 CG 读取，记录首次/第二次 target、sibling 绑定的八种有限理由和原 stable 布尔值到私有 `ready.json.binding`。父测试只接纳同一 0700 目录、当前用户的 0600 单链接普通文件；长度至多512字节，禁止符号链接，读取前后复核身份与稳定性。缺失、模式不符、字段非法或写入/读取异常仅丢弃观测，原 locate 断言、ready 条件、20秒期限、E-Stop 与后台效果/焦点/光标/z-order 和 owned 清理继续原样生效。
+
+现有 MJS 入口用有界惯性 seams 验证这些路径，不运行 Swift/AppKit 或证明真实原生成功。真实 macOS 编译、AppKit/WK 后台动作及生命周期仍必须通过 hosted 原生步骤；组件绿、日志字段或受控测试不能替代它。不要在用户桌面启动此夹具。

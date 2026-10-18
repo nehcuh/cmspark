@@ -1,4 +1,4 @@
-// Hosted macOS only. Compile the unchanged real host and an unshipped owned target;
+// Hosted macOS only. Compile real host source with a fixed native-only reason field and an unshipped owned target;
 // never rewrite product integrity, package the fixture for users, or change TCC.
 import fs from 'node:fs'
 import path from 'node:path'
@@ -7,7 +7,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url'
 export function ax571BuildPlan(root){
  const dest=path.join(root,'dist/ax-native-571'),source=path.join(root,'src/host-use/darwin'),host=path.join(dest,'cmspark-host'),fixtureBundle=path.join(dest,'OwnedAX571.app'),fixture=path.join(fixtureBundle,'Contents/MacOS/owned-target'),fixtureInfoSource=path.join(root,'tests/fixtures/ax-571/Info.plist'),fixtureInfo=path.join(fixtureBundle,'Contents/Info.plist')
  return {dest,host,fixture,fixtureBundle,fixtureInfoSource,fixtureInfo,commands:[
-  ['/usr/bin/swiftc',['-O',path.join(source,'host.swift'),'-o',host,...['Foundation','ApplicationServices','Vision','Security','Carbon','CoreImage','ImageIO','ScreenCaptureKit'].flatMap(n=>['-framework',n]),'-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',path.join(source,'host-Info.plist')]],
+  ['/usr/bin/swiftc',['-O','-D','CMSPARK_AX571_DIAGNOSTICS',path.join(source,'host.swift'),'-o',host,...['Foundation','ApplicationServices','Vision','Security','Carbon','CoreImage','ImageIO','ScreenCaptureKit'].flatMap(n=>['-framework',n]),'-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',path.join(source,'host-Info.plist')]],
   ['/usr/bin/codesign',['--force','--sign','-','--options','runtime','--entitlements',path.join(source,'host.entitlements'),host]],
   ['/usr/bin/codesign',['--verify','--strict',host]],
   ['/usr/bin/swiftc',['-O',path.join(root,'tests/fixtures/ax-571/owned-target.swift'),'-framework','AppKit','-framework','WebKit','-o',fixture]],

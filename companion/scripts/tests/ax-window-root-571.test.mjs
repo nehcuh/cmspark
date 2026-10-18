@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
 import {fileURLToPath} from 'node:url'
+import {createRequire} from 'node:module'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..')
 const swift=fs.readFileSync(path.join(root,'companion/src/host-use/darwin/host.swift'),'utf8').replace(/\r\n/g,'\n')
 function body(name,source=swift){const a=source.indexOf('func '+name+'(');assert.ok(a>=0,name);const b=source.indexOf('{',a);let d=1,e=b+1;for(;d;e++){assert.ok(e<source.length);if(source[e]==='{')d++;if(source[e]==='}')d--}return source.slice(b+1,e-1)}
@@ -12,19 +13,21 @@ const split=s=>{let quote=false,n=0,a=0,out=[];for(let i=0;i<s.length;i++){const
 // This narrow lexical projection executes the actual Swift guard expressions and
 // control flow with inert typed AX/CF/CG seams. It is not a Swift compiler or SDK.
 function expression(s){return s.replace(/ as CFString| as String/g,'').replace(/ as! (?:AXUIElement|AXValue|CFArray)/g,'').replace(/\bnil\b/g,'null').replace(/\.success\b/g,'SUCCESS').replace(/\.cgPoint\b/g,'POINT').replace(/\.cgSize\b/g,'SIZE').replace(/\.optionAll\b/g,'ALL').replace(/\bCGPoint.zero\b/g,'({x:0,y:0})').replace(/\bCGSize.zero\b/g,'({width:0,height:0})').replace(/\b([a-zA-Z]+(?:\.[a-zA-Z]+)*)\.isFinite\b(?!\()/g,'Number.isFinite($1)').replace(/!title\.isEmpty/g,'title.length>0').replace(/\bInt\(([^)]+)\)/g,'($1)').replace(/Double\(UInt32.max\)/g,'4294967295').replace(/UInt32\(value\)/g,'value').replace(/value\.rounded\(\.towardZero\)/g,'Math.trunc(value)').replace(/raw\.doubleValue/g,'raw').replace(/observed == metadata\[index\]|observed == metadata|observed == expected|current == expected/g,m=>{const parts=m.split(' == ');return 'same('+parts[0]+','+parts[1]+')'}).replace(/observed == metadata\[index\]/g,'same(observed,metadata[index])').replace(/rows\.filter \{ cuAXCGWindowID\(\$0\) == windowId \}/g,'rows.filter(row=>cuAXCGWindowID(row)===windowId)').replace(/\.count\b/g,'.length').replace(/\bCUFocusMetadata\(([^\n]+)\)/g,'({$1})').replace(/AXUIElementGetPid\(([^,]+), &pid\)/g,'AXUIElementGetPid($1,v=>{pid=v})').replace(/AXValueGetValue\(([^,]+), ([^,]+), &(point|dimensions)\)/g,'AXValueGetValue($1,$2,v=>{$3=v})').replace(/AXUIElementCopyAttributeValue\(element, name, &value\)/g,'AXUIElementCopyAttributeValue(element,name,v=>{value=v})')}
-function project(name,args,input=swift){let s=body(name,input).replace(/\/\/[^\n]*/g,'')
+function project(name,args,input=swift,trace=false){let s=body(name,input).replace(/\/\/[^\n]*/g,'')
+ s=trace?s.replace(/cuAX571Note\(\.([A-Za-z]+)\)/g,(_,k)=>'note('+JSON.stringify(k)+')'):s.replace(/cuAX571Note\(\.[A-Za-z]+\); ?/g,'')
  if(name==='cuAXRawCGMetadata')s=once(s,'["pid": pid, "name": title,\n                              "bounds": ["x": x, "y": y, "width": width, "height": height]]','({pid, name:title, bounds:{x,y,width,height}})')
- s=s.replace(/guard ([\s\S]*?) else \{ return nil \}/g,(_all,conditions)=>split(conditions).map(c=>{const m=c.match(/^let (\w+) = ([\s\S]+)$/);if(!m)return 'if (!('+expression(c)+')) return null;';let value=m[2],cast=value.match(/^([\s\S]+) as\? ([\s\S]+)$/);value=cast?'cast('+expression(cast[1])+','+JSON.stringify(cast[2])+')':expression(value);return 'let '+m[1]+' = '+value+'; if ('+m[1]+' == null) return null;'}).join('\n'))
+ s=s.replace(/guard ([\s\S]*?) else \{ (note\(\"[A-Za-z]+\"\); )?return nil \}/g,(_all,conditions,note='')=>split(conditions).map(c=>{const fail='{ '+note+'return null; }',m=c.match(/^let (\w+) = ([\s\S]+)$/);if(!m)return 'if (!('+expression(c)+')) '+fail;let value=m[2],cast=value.match(/^([\s\S]+) as\? ([\s\S]+)$/);value=cast?'cast('+expression(cast[1])+','+JSON.stringify(cast[2])+')':expression(value);return 'let '+m[1]+' = '+value+'; if ('+m[1]+' == null) '+fail;}).join('\n'))
  s=s.replace(/\bvar (\w+): CFTypeRef\?/g,'let $1 = null').replace(/\bvar (\w+): pid_t =/g,'let $1 =').replace(/var candidate: AXUIElement\? = nil/g,'let candidate = null').replace(/var (\w+): \[(?:AXUIElement|CUFocusMetadata)\] = \[\]/g,'let $1 = []').replace(/\bvar matches =/g,'let matches =').replace(/let position = rawPosition as! AXValue, size = rawSize as! AXValue/g,'let position = rawPosition, size = rawSize').replace(/var point = CGPoint.zero, dimensions = CGSize.zero/g,'let point = ({x:0,y:0}), dimensions = ({width:0,height:0})').replace(/for (\w+) in ([^\n]+) \{/g,'for (const $1 of $2) {').replace(/\.append\(/g,'.push(').replace(/before\.indices/g,'before.keys()');s=expression(s).replace('let value = value;','').replace(/\bif (?!\()(.+?) \{/g,'if ($1) {');assert.doesNotMatch(s,/\bguard\b|\bas[?!]\b|\bCFTypeRef\b|\$0|\bvar\b|\breturn nil\b|\.utf8|\bInt\(|\bUInt32\(/,name+' unsupported syntax');return 'function '+name+'('+args.join(',')+'){'+s+'\n}'
 }
-function harness(input=swift){
+function harness(input=swift,trace=false){
  const source=input.replace(/\r\n/g,'\n')
  const app={type:'element',id:'app',pid:42},button={type:'element',id:'button',pid:42,title:'OwnedAX571Press',point:{x:40,y:80},size:{width:280,height:60},role:'AXButton',children:[]},window={type:'element',id:'target',pid:42,title:'Owned AX571 target',point:{x:180,y:298},size:{width:600,height:422},children:[button]},sibling={type:'element',id:'sibling',pid:42,title:'Owned AX571 foreground sibling',point:{x:180,y:298},size:{width:600,height:422},children:[]};app.children=[window,sibling]
  const rows=[{pid:900,title:'Overlay',id:90,bounds:{X:0,Y:0,Width:10,Height:10}},{pid:42,title:window.title,id:101,bounds:{X:180,Y:298,Width:600,Height:422}},{pid:42,title:sibling.title,id:102,bounds:{X:180,Y:298,Width:600,Height:422}}]
- const state={windows:[window,sibling],rows,reads:0,cgReads:0,metadataReads:0,stopCalls:0,stop:false,attributeError:false,pidError:false,valueError:false,hook(){},effects:0}
+ const state={windows:[window,sibling],rows,reads:0,cgReads:0,metadataReads:0,stopCalls:0,reasons:[],stop:false,attributeError:false,pidError:false,valueError:false,hook(){},effects:0}
  const eqStart=source.indexOf('    static func == (lhs: CUFocusMetadata, rhs: CUFocusMetadata) -> Bool {');assert.ok(eqStart>=0);const eq=source.slice(eqStart,source.indexOf('\n    }',eqStart)).split('return ')[1].trim().replace('lhs.title.utf8.elementsEqual(rhs.title.utf8)','Buffer.from(lhs.title).equals(Buffer.from(rhs.title))')
  const same=vm.runInNewContext('(lhs,rhs)=>'+eq,{Buffer})
- const context={SUCCESS:0,POINT:'point',SIZE:'size',ALL:1,kCGNullWindowID:0,Number,Math,same,
+ const reasonMap=Object.fromEntries([...source.slice(source.indexOf('private enum CUAX571LocateReason'),source.indexOf('private func cuAXOwnedWindows')).matchAll(/(\w+) = "([A-Z_]+)"/g)].map(m=>[m[1],m[2]]));
+ const context={note:k=>{assert.ok(reasonMap[k],k);state.reasons.push(reasonMap[k])},SUCCESS:0,POINT:'point',SIZE:'size',ALL:1,kCGNullWindowID:0,Number,Math,same,
  kAXTitleAttribute:'title',kAXPositionAttribute:'position',kAXSizeAttribute:'size',kAXWindowsAttribute:'windows',kCGWindowOwnerPID:'pid',kCGWindowName:'title',kCGWindowBounds:'bounds',kCGWindowNumber:'id',
  cast:(v,t)=>t==='String'?(typeof v==='string'?v:null):t==='pid_t'?(Number.isInteger(v)&&v>=-2147483648&&v<=2147483647?v:null):t==='NSNumber'?(typeof v==='number'||typeof v==='boolean'?v:null):t==='[AnyObject]'||t==='[[String: Any]]'?(Array.isArray(v)?v:null):t==='[String: CGFloat]'?(v&&typeof v==='object'&&!Array.isArray(v)?v:null):v,
  CFGetTypeID:v=>Array.isArray(v)?'array':typeof v==='string'?'string':typeof v==='boolean'?'boolean':v?.type,CFBooleanGetTypeID:()=> 'boolean',AXUIElementGetTypeID:()=> 'element',CFStringGetTypeID:()=> 'string',AXValueGetTypeID:()=> 'value',CFArrayGetTypeID:()=> 'array',CFArrayGetCount:a=>state.arrayCount??a.length,CFEqual:(a,b)=>a?.type==='element'&&b?.type==='element'&&a.id===b.id,
@@ -32,7 +35,7 @@ function harness(input=swift){
  AXUIElementCopyAttributeValue:(e,key,set)=>{state.hook('attribute',e,key,state);if(state.attributeError)return 1;let v;if(key==='windows'){state.reads++;state.hook('windows',e,key,state);v=state.windows}else if(key==='title'){state.metadataReads++;state.hook('metadata',e,key,state);v=e.title}else if(key==='position')v={type:'value',kind:'point',value:e.point};else if(key==='size')v={type:'value',kind:'size',value:e.size};if(v===undefined)return 1;set(v);return 0},
  CGWindowListCopyWindowInfo:(mode,id)=>{assert.equal(mode,1);assert.equal(id,0);state.cgReads++;state.hook('cg',null,null,state);return state.rows}}
  const functions=[['cuFocusAttribute',['element','name']],['cuFocusElement',['value']],['cuFocusMetadata',['element','expectedPID']],['cuFocusCGMetadata',['row','expectedPID']],['cuAXOwnedWindows',['app']],['cuAXRawCGMetadata',['row','pid']],['cuAXCGWindowID',['row']],['cuAXTargetCGMetadata',['windowId','pid']],['cuAXTargetWindow',['app','pid','windowId','stopped']]]
- vm.createContext(context);vm.runInContext(functions.map(([n,a])=>project(n,a,source)).join('\n')+'\nthis.bind=cuAXTargetWindow;this.id=cuAXCGWindowID;',context,{timeout:1000})
+ vm.createContext(context);vm.runInContext(functions.map(([n,a])=>project(n,a,source,trace)).join('\n')+'\nthis.bind=cuAXTargetWindow;this.id=cuAXCGWindowID;',context,{timeout:1000})
  const stopped=()=>{state.stopCalls++;state.hook('stop',null,null,state);return state.stop}
  return{state,app,window,sibling,button,rows,context,stopped,bind:()=>context.bind(app,42,101,stopped)}
 }
@@ -74,3 +77,85 @@ test('#571 actual invoke prefix validates action/value before binding and gives 
 })
 
 test('#571 exact actual helper projection remains valid for LF and CRLF source',()=>{for(const input of [swift,swift.replace(/\r?\n/g,'\r\n')]){const h=harness(input);assert.equal(h.bind(),h.window);h.rows[1].bounds.Width=NaN;assert.equal(h.bind(),null)}})
+
+// New diagnostics execute actual existing guard branches through inert typed seams.
+// These controls neither compile Swift nor establish an SDK/native failure cause.
+test('#571 in-call finite locate evidence distinguishes actual existing binding refusal branches',()=>{
+ for(const [reason,alter]of[
+ ['CG_READ_UNAVAILABLE',h=>h.state.rows=null],['CG_TARGET_COUNT',h=>h.rows.splice(1,1)],
+ ['CG_TARGET_METADATA',h=>delete h.rows[1].bounds],['CG_ROW_PID',h=>h.rows.push({id:900})],
+ ['CG_SAME_APP_METADATA',h=>delete h.rows[2].bounds],['CG_CORRESPONDENCE',h=>h.rows.push({...h.rows[1],id:103})],
+ ['AX_WINDOWS_SHAPE',h=>h.state.windows=null],['AX_WINDOWS_LIMIT',h=>h.state.windows=Array(257).fill(h.window)],
+ ['AX_MEMBER_TYPE',h=>h.state.windows=[{type:'wrong'}]],['AX_MEMBER_METADATA',h=>delete h.window.title],
+ ['AX_AMBIGUOUS',h=>h.state.windows.push({...h.window,id:'duplicate'})],['AX_TARGET_ABSENT',h=>h.state.windows=[h.sibling]],
+ ['AX_RECHECK_CHANGED',h=>h.state.hook=k=>{if(k==='windows'&&h.state.reads===2)h.state.windows.reverse()}],
+ ['STOPPED',h=>h.state.stop=true]]){
+  const h=harness(swift,true);alter(h);assert.equal(h.bind(),null,reason);assert.equal(h.state.reasons.at(-1),reason);assert.equal(h.state.effects,0)
+ }
+ const h=harness(swift,true);assert.equal(h.bind(),h.window);assert.equal(h.state.cgReads,2);assert.equal(h.state.reads,2);assert.deepEqual(h.state.reasons,[])
+})
+test('#571 native-only locate result adds a finite field while shipping serialization remains exact',()=>{
+ const raw=body('cuAX571LocateResult');assert.ok(raw.startsWith('\n#if CMSPARK_AX571_DIAGNOSTICS\n'))
+ const [native,shipping]=raw.slice('\n#if CMSPARK_AX571_DIAGNOSTICS\n'.length).split('\n#else\n');assert.equal(shipping.trim(),'return cuJson(value)\n#endif')
+ const js=native.replace('var result = value','let result = {...value}').replace('cuAX571CurrentReason.rawValue','reason');assert.doesNotMatch(js,/\bvar\b|#if|AXUIElement|CGWindow/)
+ const run=vm.compileFunction(js,['value','reason','cuJson']),value={found:false};assert.equal(run(value,'AX_TARGET_ABSENT',JSON.stringify),'{"found":false,"ax571Reason":"AX_TARGET_ABSENT"}');assert.deepEqual(value,{found:false})
+ const located=body('cuAXLocate');assert.match(located,/cuAX571Note\(\.locateStarted\)/);assert.match(located,/cuAX571Note\(\.elementFound\)\s+return cuAX571LocateResult/);assert.match(located,/cuAX571Note\(\.treeExhausted\)\s+return cuAX571LocateResult/)
+ const build=fs.readFileSync(path.join(root,'companion/scripts/build-ax-native-571.mjs'),'utf8');assert.equal((build.match(/'CMSPARK_AX571_DIAGNOSTICS'/g)||[]).length,1)
+})
+
+function diagnosticConsumer571(overrides={}){
+ const require=createRequire(path.join(root,'companion/package.json')),ts=require('typescript'),source=fs.readFileSync(path.join(root,'companion/tests/computer-ax-native-571.test.ts'),'utf8'),ast=ts.createSourceFile('diagnostic.ts',source,ts.ScriptTarget.Latest,true)
+ const names=['ax571LocateReason','ax571BindingTokens','ax571BindingRead'],functions=names.map(name=>{const n=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);assert.ok(n,'native diagnostic consumer missing: '+name);return n.getText(ast)})
+ const c={Buffer,fs,path,process:{getuid:()=>process.getuid?.()},...overrides};vm.createContext(c);vm.runInContext(ts.transpileModule(functions.join('\n'),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+';this.reason=ax571LocateReason;this.tokens=ax571BindingTokens;this.read=ax571BindingRead;',c);return c
+}
+const bindingFixture571=()=>({schema:1,firstTarget:'MATCHED',firstSibling:'NO_TITLE_MATCH',secondTarget:'MATCHED',secondSibling:'NO_TITLE_MATCH',stable:false})
+function bindingOwned571(run){const dir=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR,'ax-native571-binding-')));fs.chmodSync(dir,0o700);try{return run(dir,fs.lstatSync(dir,{bigint:true}))}finally{fs.rmSync(dir,{recursive:true,force:true})}}
+test('#571 passive diagnostic decoders accept only fixed own data and never invoke getters',()=>{
+ const c=diagnosticConsumer571(),value=bindingFixture571();assert.equal(JSON.stringify(c.tokens(value)),JSON.stringify(value));let getters=0
+ for(const value of[null,[],{},'PRIVATE',Object.create({ax571Reason:'TREE_EXHAUSTED'}),{ax571Reason:'PRIVATE'},Object.defineProperty({},'ax571Reason',{get(){getters++;throw Error('PRIVATE')}})])assert.equal(c.reason(value),'UNKNOWN')
+ assert.equal(getters,0);for(const reason of['CG_TARGET_METADATA','AX_TARGET_ABSENT','TREE_EXHAUSTED','ELEMENT_FOUND'])assert.equal(c.reason({found:false,ax571Reason:reason}),reason)
+ for(const bad of[null,[],{}, {...value,extra:'PRIVATE'}, {...value,schema:'1'}, {...value,stable:0}, {...value,firstTarget:'PRIVATE'},Object.defineProperty({...value},'stable',{get(){getters++;throw Error('PRIVATE')}}),new Proxy(value,{ownKeys(){throw Error('PRIVATE')}})])assert.equal(c.tokens(bad),null)
+ assert.equal(getters,0)
+})
+test('#571 passive binding reader requires exact owned regular private bounded file',()=>bindingOwned571((dir,owned)=>{
+ const c=diagnosticConsumer571(),file=path.join(dir,'ready.json.binding'),data=JSON.stringify(bindingFixture571())
+ assert.equal(c.read(dir,owned),null);fs.writeFileSync(file,data,{mode:0o600});assert.equal(JSON.stringify(c.read(dir,owned)),data)
+ for(const text of['{',data+'PRIVATE',data+'é',' '.repeat(513)]){fs.writeFileSync(file,text);assert.equal(c.read(dir,owned),null)}
+ fs.writeFileSync(file,data);fs.chmodSync(file,0o644);assert.equal(c.read(dir,owned),null);fs.chmodSync(file,0o600)
+ fs.linkSync(file,file+'.link');assert.equal(c.read(dir,owned),null);fs.unlinkSync(file+'.link')
+ fs.renameSync(file,file+'.real');fs.symlinkSync(file+'.real',file);assert.equal(c.read(dir,owned),null);fs.unlinkSync(file);fs.renameSync(file+'.real',file)
+ fs.chmodSync(dir,0o755);assert.equal(c.read(dir,owned),null);fs.chmodSync(dir,0o700);assert.equal(c.read(dir,{...owned,ino:owned.ino+1n}),null)
+ assert.equal(JSON.stringify(c.read(dir,owned)),data)
+}))
+test('#571 passive reader closes its own descriptor on initial fstat faults and rejects changed identities',()=>bindingOwned571((dir,owned)=>{
+ const file=path.join(dir,'ready.json.binding');fs.writeFileSync(file,JSON.stringify(bindingFixture571()),{mode:0o600})
+ let opens=0,closes=0,stats=0
+ const c=diagnosticConsumer571({fs:{...fs,openSync(...a){opens++;return fs.openSync(...a)},closeSync(fd){closes++;return fs.closeSync(fd)},fstatSync(...a){stats++;if(stats===1)throw Error('INERT_STAT');return fs.fstatSync(...a)}}})
+ assert.equal(c.read(dir,owned),null);assert.equal(opens,1);assert.equal(closes,1)
+ let checks=0
+ const changed=diagnosticConsumer571({fs:{...fs,fstatSync(...a){const s=fs.fstatSync(...a);if(++checks===2)return {...s,size:s.size+1n};return s}}});assert.equal(changed.read(dir,owned),null)
+ const original=Error('ACTUAL_PRIMARY');let diagnosed=0
+ assert.throws(()=>{try{diagnosed++;c.read(dir,owned)}catch{}throw original},e=>e===original);assert.equal(diagnosed,1)
+}))
+test('#571 passive diagnostic sinks cannot replace actual locate assertion or finally primary',()=>{
+ const require=createRequire(path.join(root,'companion/package.json')),ts=require('typescript'),source=fs.readFileSync(path.join(root,'companion/tests/computer-ax-native-571.test.ts'),'utf8'),ast=ts.createSourceFile('diagnostic.ts',source,ts.ScriptTarget.Latest,true),blocks=[]
+ function walk(n){if(ts.isCallExpression(n)&&n.expression.getText(ast)==='t.diagnostic'&&['\'AX571_LOCATE \'','\'AX571_BINDING \''].some(x=>n.arguments[0]?.getText(ast).startsWith(x))){assert.ok(ts.isTryStatement(n.parent.parent.parent));blocks.push(n.parent.parent.parent.getText(ast))}ts.forEachChild(n,walk)}walk(ast);assert.equal(blocks.length,2)
+ const c={t:{diagnostic(){throw Error('INERT_SINK')}},JSON,framework:'APPKIT',hit:{found:false},ax571LocateReason:()=> 'TREE_EXHAUSTED',ax571BindingRead:()=>null,dir:'/OWNED',owned:{}}
+ for(const block of blocks){const js=ts.transpileModule(block,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;assert.doesNotThrow(()=>vm.runInNewContext(js,c));const primary=Error('ORIGINAL_ASSERTION');assert.throws(()=>{vm.runInNewContext(js,c);throw primary},e=>e===primary)}
+})
+
+test('#571 passive reader rejects hardlink chmod and append observed by final named or descriptor stat',()=>{
+ const results=[]
+ for(const phase of['linked','closing'])for(const mutation of['hardlink','chmod','append'])bindingOwned571((dir,owned)=>{
+  const file=path.join(dir,'ready.json.binding');fs.writeFileSync(file,JSON.stringify(bindingFixture571()),{mode:0o600});let mutated=false,stats=0
+  function change(){if(mutated)return;mutated=true;if(mutation==='hardlink')fs.linkSync(file,file+'.owned-link');if(mutation==='chmod')fs.chmodSync(file,0o644);if(mutation==='append')fs.appendFileSync(file,'X')}
+  const c=diagnosticConsumer571({fs:{...fs,lstatSync(p,...args){if(p===file&&phase==='linked')change();return fs.lstatSync(p,...args)},fstatSync(...args){if(++stats===3&&phase==='closing')change();return fs.fstatSync(...args)}}});results.push({phase,mutation,value:c.read(dir,owned)})
+ });for(const {phase,mutation,value}of results)assert.equal(value,null,phase+' '+mutation+' observed strictfile change must reject')
+})
+test('#571 passive reader never retries an uncertain close against a reused descriptor number',()=>bindingOwned571((dir,owned)=>{
+ const file=path.join(dir,'ready.json.binding'),other=path.join(dir,'unrelated-owned.txt');fs.writeFileSync(file,JSON.stringify(bindingFixture571()),{mode:0o600});fs.writeFileSync(other,'inert',{mode:0o600});let replacement,reader,closes=0
+ try{
+  const c=diagnosticConsumer571({fs:{...fs,openSync(...args){reader=fs.openSync(...args);return reader},closeSync(fd){closes++;if(closes===1){fs.closeSync(fd);replacement=fs.openSync(other,'r');assert.equal(replacement,fd,'owned reuse precondition');throw Error('OWNED_CLOSE_UNCERTAIN')}return fs.closeSync(fd)}}})
+  assert.equal(c.read(dir,owned),null);assert.equal(closes,1);assert.doesNotThrow(()=>fs.fstatSync(replacement));assert.equal(replacement,reader)
+ }finally{if(replacement!==undefined)try{fs.closeSync(replacement)}catch{}}
+}))

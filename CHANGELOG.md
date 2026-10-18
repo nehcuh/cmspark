@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #571 hosted 原生验收新增同次 locate 的固定阶段理由与夹具四次窗口绑定理由；仅验收构建启用，私有有界观测不改变动作、ready、权限、20秒预算和清理。诊断尚不代表原生失败已修复。
+
 - #571 AX locate/invoke 先用当前 PID、精确标题和有限窗口几何，把请求的 CG 窗口唯一绑定到完整且稳定的 AXWindows 成员，再从该窗口遍历；修复无尺寸 AXApplication 根在读取子节点前被过滤的问题。新目标窗口证据上限256，缺失、歧义或变化仍拒绝；原 hidden/zero-size、动作身份、E-Stop 和权限边界保留。
 - #571 owned 原生夹具不再把 NSWindow 的应用设备编号当 CGWindowID；通过当前主屏坐标转换及完整标题/几何唯一对应，并复核同一窗口对象和两次 CG 观察。只修夹具身份，不代表 WK readiness 或后台动作已通过原生验收。
 - #571 macOS 后台焦点 oracle 改读系统 AX focused app/window，并以完整窗口证据做唯一精确 CG 对应；缺失、歧义、变化或新256窗口上限返回未知，保留完整 z-order/光标/效果断言。仅源码修正，真实 hosted Mac 验收尚待完成，不代表后台动作已交付。

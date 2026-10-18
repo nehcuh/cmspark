@@ -65,6 +65,52 @@ function ax571StartupRead(dir:string,owned:fs.BigIntStats):ReturnType<typeof ax5
  finally{if(fd!==undefined){try{const now=fs.fstatSync(fd,{bigint:true});if(identity&&now.dev===identity.dev&&now.ino===identity.ino)fs.closeSync(fd);else result=null}catch{result=null}}}
  return result
 }
+// Fixed test-only observation; never locate/action/ownership authority.
+function ax571LocateReason(value:unknown):string {
+ try {
+  if(!value||typeof value!=="object"||Array.isArray(value))return "UNKNOWN"
+  const item=Object.getOwnPropertyDescriptor(value,"ax571Reason"),reason=item&&"value"in item?item.value:undefined
+  return typeof reason==="string"&&["NOT_RECORDED","LOCATE_STARTED","CG_READ_UNAVAILABLE","CG_TARGET_COUNT","CG_TARGET_METADATA","CG_ROW_PID","CG_SAME_APP_METADATA","CG_CORRESPONDENCE","AX_WINDOWS_SHAPE","AX_WINDOWS_LIMIT","AX_MEMBER_TYPE","AX_MEMBER_METADATA","AX_AMBIGUOUS","AX_TARGET_ABSENT","AX_RECHECK_CHANGED","STOPPED","ELEMENT_FOUND","TREE_EXHAUSTED"].includes(reason)?reason:"UNKNOWN"
+ }catch{return "UNKNOWN"}
+}
+function ax571BindingTokens(value:unknown):{schema:1;firstTarget:string;firstSibling:string;secondTarget:string;secondSibling:string;stable:boolean}|null {
+ try {
+  if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).sort().join(",")!=="firstSibling,firstTarget,schema,secondSibling,secondTarget,stable")return null
+  const d=Object.getOwnPropertyDescriptors(value),get=(k:string)=>d[k]&&"value"in d[k]?d[k].value:undefined
+  const fields=["firstTarget","firstSibling","secondTarget","secondSibling"],known=["INVALID_INPUT","ROW_OWNER_INVALID","TITLE_UNAVAILABLE","GEOMETRY_OR_ID_INVALID","NO_TITLE_MATCH","GEOMETRY_MISMATCH","AMBIGUOUS","MATCHED"]
+  if(get("schema")!==1||typeof get("stable")!=="boolean"||!fields.every(k=>typeof get(k)==="string"&&known.includes(get(k))))return null
+  return {schema:1,firstTarget:get("firstTarget"),firstSibling:get("firstSibling"),secondTarget:get("secondTarget"),secondSibling:get("secondSibling"),stable:get("stable")}
+ }catch{return null}
+}
+function ax571BindingRead(dir:string,owned:fs.BigIntStats):ReturnType<typeof ax571BindingTokens> {
+ let fd:number|undefined,identity:fs.BigIntStats|undefined,result:ReturnType<typeof ax571BindingTokens>=null
+ try {
+  const current=()=>{const s=fs.lstatSync(dir,{bigint:true});return s.isDirectory()&&!s.isSymbolicLink()&&s.dev===owned.dev&&s.ino===owned.ino&&s.uid===BigInt(process.getuid!())&&(s.mode&0o7777n)===0o700n}
+  if(!current()||fs.realpathSync(dir)!==dir||!path.basename(dir).startsWith('ax-native571-'))return null
+  // Node/libuv fs.open adds O_CLOEXEC itself; it is not a public fs.constants key.
+  const flags=fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK
+  fd=fs.openSync(path.join(dir,'ready.json.binding'),flags)
+  const before=fs.fstatSync(fd,{bigint:true});identity=before
+  if(!before.isFile()||before.uid!==BigInt(process.getuid!())||(before.mode&0o7777n)!==0o600n||before.nlink!==1n||before.size<0n||before.size>512n)return null
+  const b=Buffer.alloc(513);let length=0
+  while(length<b.length){const count=fs.readSync(fd,b,length,b.length-length,null);if(count===0)break;length+=count}
+  const after=fs.fstatSync(fd,{bigint:true})
+  const linked=fs.lstatSync(path.join(dir,'ready.json.binding'),{bigint:true})
+  if(!current()||!linked.isFile()||linked.isSymbolicLink()||linked.dev!==before.dev||linked.ino!==before.ino||linked.uid!==before.uid||linked.mode!==before.mode||linked.nlink!==1n||linked.size!==before.size||linked.mtimeNs!==before.mtimeNs||linked.ctimeNs!==before.ctimeNs||!after.isFile()||after.dev!==before.dev||after.ino!==before.ino||after.uid!==before.uid||after.mode!==before.mode||after.nlink!==1n||after.size!==before.size||after.mtimeNs!==before.mtimeNs||after.ctimeNs!==before.ctimeNs||BigInt(length)!==before.size)return null
+  if(b.subarray(0,length).some(x=>x>127))return null
+  result=ax571BindingTokens(JSON.parse(b.subarray(0,length).toString('ascii')))
+ }catch{return null}
+ finally{if(fd!==undefined){
+  // Retire the local number before a close attempt. An uncertain close is never retried.
+  const closing=fd;fd=undefined;let closeOwned=true
+  try{const now=fs.fstatSync(closing,{bigint:true});if(identity){
+   if(now.dev!==identity.dev||now.ino!==identity.ino){closeOwned=false;result=null}
+   if(!now.isFile()||now.uid!==identity.uid||now.mode!==identity.mode||now.nlink!==1n||now.size!==identity.size||now.mtimeNs!==identity.mtimeNs||now.ctimeNs!==identity.ctimeNs)result=null
+  }}catch{result=null}
+  if(closeOwned)try{fs.closeSync(closing)}catch{result=null}
+ }}
+ return result
+}
 function requireAx571Oracles(before:Ax571Snapshot,after:Ax571Snapshot,verdict:Record<string,unknown>,target:number,sibling:number):void {
  assert.ok(Number.isSafeInteger(target)&&target>0&&Number.isSafeInteger(sibling)&&sibling>0&&target!==sibling,'AX571_OWNED_WINDOWS_INVALID')
  for(const shot of [before,after]){
@@ -141,7 +187,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
    const code=ax571Code(denied);t.diagnostic('AX571_ROW '+JSON.stringify({schema:1,framework,action:'press',status:'Gap',code,permission:false,reason:'ACTUAL_PERMISSION_PRECONDITION_FALSE'}));assert.notEqual(denied.ok,true,'AX571_UNTRUSTED_ACTION');assert.notEqual(code,'UNKNOWN','AX571_UNCLASSIFIED_REFUSAL');assert.equal(fs.existsSync(marker),false,'AX571_UNTRUSTED_EFFECT');throw Error('AX571_PERMISSION_REQUIRED')
   }
   assert.equal(security.secureInput,false,'AX571_SECURE_INPUT_ACTIVE')
-  const hit=await command(['ax-locate','--window-id',String(target),'--target','OwnedAX571Press']);assert.equal(hit.found,true,'AX571_LOCATE_FAILED');assert.ok(hit.name==='OwnedAX571Press','AX571_IDENTITY');assert.equal(typeof hit.role,'string','AX571_IDENTITY')
+  const hit=await command(['ax-locate','--window-id',String(target),'--target','OwnedAX571Press']);try{t.diagnostic('AX571_LOCATE '+JSON.stringify({schema:1,framework,reason:ax571LocateReason(hit)}))}catch{/* Passive observation cannot replace locate/primary. */}assert.equal(hit.found,true,'AX571_LOCATE_FAILED');assert.ok(hit.name==='OwnedAX571Press','AX571_IDENTITY');assert.equal(typeof hit.role,'string','AX571_IDENTITY')
   const args=['ax-invoke','--window-id',String(target),'--target',hit.name,'--action','press','--expect-role',hit.role,'--expect-name',hit.name,'--estop-flag',stop]
   const mismatchArgs=[...args],roleIndex=mismatchArgs.indexOf('--expect-role');assert.ok(roleIndex>=0&&mismatchArgs.lastIndexOf('--expect-role')===roleIndex,'AX571_ROLE_ARGV');mismatchArgs[roleIndex+1]='AX571_WRONG_ROLE'
   const mismatch=await command(mismatchArgs,8000)
@@ -156,13 +202,14 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
   t.diagnostic('AX571_ROW '+JSON.stringify({schema:1,framework,action:'press',status:result.ok===true?'Delivered':'Refused',code:result.ok===true?'OK':code,targetChanged:result.ok===true,focusKept:true,zorderKept:true,cursorKept:true,noLeakedInput:true,noLeakedInputKind:'derived'}))
  }catch(error){failed=true;primary=error}
  finally{
+  try{t.diagnostic('AX571_BINDING '+JSON.stringify({schema:1,framework,observation:ax571BindingRead(dir,owned)}))}catch{/* Passive observation cannot replace primary or cleanup. */}
   try{t.diagnostic('AX571_TARGET_STARTUP '+JSON.stringify({schema:1,framework,observation:ax571StartupRead(dir,owned)}))}catch{/* Passive journal cannot replace primary or cleanup. */}
   let setup:null|ReturnType<typeof ax571Setup>=null;try{const b=fs.readFileSync(ready+'.setup','utf8');if(Buffer.byteLength(b,'utf8')<=2048)setup=ax571Setup(JSON.parse(b))}catch{}
   try{t.diagnostic('AX571_SETUP '+JSON.stringify({schema:1,framework,observed:setup!==null,...(setup??{})}))}catch{/* Diagnostics cannot replace primary or cleanup. */}
   try{t.diagnostic('AX571_LIFETIME '+JSON.stringify({schema:1,framework,closed:ended,prelaunch:launcherExit===78?'ADMISSION_REFUSED':launcherExit===79?'POLICY_REFUSED':'UNPROVEN',signalObserved:launcherSignal!==null,waitStage,launchBoundary,launchLifecycle}))}catch{/* Finite observation cannot replace primary or cleanup. */}
   let cleanup:unknown
   let actualAppClosed=!child
-  try{if(child&&!ended)child.kill();await closed;if(child){if(ax571PrelaunchRefused(ended,launcherExit,launcherSignal,[ready,ready+'.owner-started',ready+'.owner-closed',ready+'.setup',marker,siblingMarker]))actualAppClosed=true;else{const start=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-started','utf8')),framework,false,appPID);assert.ok(start,'AX571_APP_OWNER_REQUIRED');assert.ok(start.pid!==child.pid,'AX571_APP_NOT_LAUNCHER');const receipt=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-closed','utf8')),framework,true,start.pid);assert.ok(receipt,'AX571_APP_NOT_REAPED');actualAppClosed=true}}}catch{cleanup=Error('AX571_OWNER_CLEANUP_FAILED')}
+  try{if(child&&!ended)child.kill();await closed;if(child){if(ax571PrelaunchRefused(ended,launcherExit,launcherSignal,[ready,ready+'.owner-started',ready+'.owner-closed',ready+'.setup',ready+'.binding',marker,siblingMarker]))actualAppClosed=true;else{const start=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-started','utf8')),framework,false,appPID);assert.ok(start,'AX571_APP_OWNER_REQUIRED');assert.ok(start.pid!==child.pid,'AX571_APP_NOT_LAUNCHER');const receipt=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-closed','utf8')),framework,true,start.pid);assert.ok(receipt,'AX571_APP_NOT_REAPED');actualAppClosed=true}}}catch{cleanup=Error('AX571_OWNER_CLEANUP_FAILED')}
   if((!child||ended)&&actualAppClosed){try{const now=fs.lstatSync(dir,{bigint:true});assert.ok(now.isDirectory()&&!now.isSymbolicLink()&&now.dev===owned.dev&&now.ino===owned.ino,'AX571_CLEANUP_IDENTITY');fs.rmSync(dir,{recursive:true});lease.settled()}catch(error){cleanup=error}}
   else cleanup=Error('AX571_OWNER_NOT_REAPED')
   if(failed)throw primary;if(cleanup!==undefined)throw cleanup
