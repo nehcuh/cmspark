@@ -68,13 +68,33 @@ boundedTest("replaced claim aborts the owner and release never deletes the repla
     assert.throws(() => lease!.release(), /OWNED_NATIVE_SURFACE_REFUSED/); assert.equal(fs.readFileSync(o.claim, "utf8"), "b".repeat(64))
   } finally { if (lease) try { lease.release() } catch {} o.cleanup() }
 })
-boundedTest("scope replacement cannot silently rebind an existing lease", async t => {
-  const o = owned()
+boundedTest("observed scope identity replacement cannot silently rebind an existing lease", async t => {
+  const o = owned(), stat = fs.lstatSync, other = path.join(o.root, "replacement-scope")
+  const descriptor = Object.getOwnPropertyDescriptor(fs, "lstatSync")!
+  let lease: Awaited<ReturnType<typeof acquireSurface650>> | undefined, scopeReads = 0
   try {
-    const lease = await acquireSurface650(o.root, o.data, t.signal)
-    fs.renameSync(path.dirname(o.claim), path.join(o.root, "original-scope")); fs.mkdirSync(path.dirname(o.claim)); fs.writeFileSync(o.claim, "c".repeat(64))
-    assert.throws(() => lease.checkpoint(), /OWNED_NATIVE_SURFACE_REFUSED/); assert.throws(() => lease.release(), /OWNED_NATIVE_SURFACE_REFUSED/); assert.equal(fs.readFileSync(o.claim, "utf8"), "c".repeat(64))
-  } finally { o.cleanup() }
+    // Use a different real owned directory identity through the actual stat
+    // boundary. Renaming a directory with a live Windows watch is not portable.
+    fs.mkdirSync(other)
+    const replacement = stat(other, { bigint: true })
+    lease = await acquireSurface650(o.root, o.data, t.signal)
+    const scope = path.dirname(path.join(fs.realpathSync(o.root), "native-surface-650", "claim")), bytes = fs.readFileSync(o.claim)
+    const original = stat(scope, { bigint: true })
+    assert.notDeepEqual([replacement.dev, replacement.ino, replacement.birthtimeNs], [original.dev, original.ino, original.birthtimeNs])
+    Object.defineProperty(fs, "lstatSync", { ...descriptor, value: ((...args: Parameters<typeof fs.lstatSync>) => {
+      if (args[0] === scope) { scopeReads++; return replacement }
+      return Reflect.apply(stat, fs, args)
+    }) as typeof fs.lstatSync })
+    assert.throws(() => lease!.checkpoint(), /OWNED_NATIVE_SURFACE_REFUSED/)
+    assert.equal(lease.signal.aborted, true)
+    assert.throws(() => lease!.release(), /OWNED_NATIVE_SURFACE_REFUSED/)
+    assert.ok(scopeReads >= 2, "both checkpoint and release must validate scope identity")
+    assert.deepEqual(fs.readFileSync(o.claim), bytes, "refusal must not delete or rewrite the original claim")
+  } finally {
+    Object.defineProperty(fs, "lstatSync", descriptor)
+    if (lease) try { lease.release() } catch {}
+    o.cleanup()
+  }
 })
 boundedTest("explicit same-run borrow validates nonce and identity but cannot release the parent's lease", async t => {
   const o = owned(), signal = t.signal
