@@ -3,6 +3,8 @@ import AppKit
 import WebKit
 import Foundation
 
+func ax571Readiness(_ active: Bool, _ key: Bool, _ targetBound: Bool, _ siblingBound: Bool) -> Bool { return active && key && targetBound && siblingBound }
+
 final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKScriptMessageHandler {
     let framework: String
     let ready: URL
@@ -12,6 +14,9 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var sibling: NSWindow!
     var web: WKWebView?
     var published = false
+    var setupStarted = false
+    var readinessQueued = false
+    var readinessObservers: [NSObjectProtocol] = []
     init(_ arguments: [String]) {
         guard arguments.count == 4, ["APPKIT", "WKWEBVIEW"].contains(arguments[0]), arguments.dropFirst().allSatisfy({ $0.hasPrefix("/") && !$0.contains("\0") }) else { exit(64) }
         framework = arguments[0]; ready = URL(fileURLWithPath: arguments[1]); marker = URL(fileURLWithPath: arguments[2]); siblingMarker = URL(fileURLWithPath: arguments[3])
@@ -45,12 +50,37 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { exit(64) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { exit(64) }
     func publishReady() {
-        guard !published else { return }; published = true
-        // Initial owned setup only. No activation/restoration is done after readiness.
+        guard !setupStarted else { return }; setupStarted = true
+        // Only initial owned setup may request activation. A request is not its receipt.
+        for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, sibling as AnyObject)] {
+            readinessObservers.append(NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in self?.queueReadiness() })
+        }
+        if #available(macOS 14.0, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
         sibling.makeKeyAndOrderFront(nil)
-        DispatchQueue.main.async { [self] in
-            guard target.windowNumber > 0, sibling.windowNumber > 0, target.windowNumber != sibling.windowNumber else { exit(64) }
-            write(["schema": 1, "framework": framework, "target": target.windowNumber, "sibling": sibling.windowNumber], to: ready)
+        queueReadiness()
+    }
+    func queueReadiness() {
+        guard setupStarted, !published, !readinessQueued else { return }; readinessQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self=self else { return }; self.readinessQueued = false
+            guard !self.published else { return }
+            let pid=ProcessInfo.processInfo.processIdentifier, targetNumber=self.target.windowNumber, siblingNumber=self.sibling.windowNumber
+            let rows=CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+            let own = rows?.filter { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid } ?? []
+            let number: ([String: Any]) -> Int? = { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue }
+            // Observe correspondence; never assume that a positive AppKit number is a CG ID.
+            let targetBound=targetNumber>0 && own.filter { number($0)==targetNumber }.count==1
+            let siblingBound=siblingNumber>0 && siblingNumber != targetNumber && own.filter { number($0)==siblingNumber }.count==1
+            let firstRow=rows?.first(where: { (($0[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0)<=1000 })
+            let first=firstRow.flatMap { number($0) }
+            let role=rows == nil ? "UNKNOWN" : first == nil ? "NONE" : first == targetNumber ? "TARGET" : first == siblingNumber ? "SIBLING" : "OTHER"
+            let active=NSApp.isActive, key=self.sibling.isKeyWindow
+            let observation: [String: Any] = ["schema":1,"appActive":active,"siblingKey":key,"targetBound":targetBound,"siblingBound":siblingBound,"firstRole":role]
+            self.write(observation, to:self.ready.appendingPathExtension("setup"))
+            guard ax571Readiness(active,key,targetBound,siblingBound) else { return }
+            self.published = true
+            for observer in self.readinessObservers { NotificationCenter.default.removeObserver(observer) }; self.readinessObservers.removeAll()
+            self.write(["schema":1,"framework":self.framework,"target":targetNumber,"sibling":siblingNumber,"setup":observation], to:self.ready)
         }
     }
     func write(_ value: [String: Any], to url: URL) {

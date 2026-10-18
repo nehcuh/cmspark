@@ -23,6 +23,14 @@ function requireAx571Oracles(before:Ax571Snapshot,after:Ax571Snapshot,verdict:Re
  assert.equal(verdict.no_leaked_input_kind,'derived','AX571_LEAK_KIND')
 }
 function ax571Identity(value:unknown):boolean {try{const v=value as Record<string,unknown>;return v?.schema===1&&v.identifierExpected===true&&v.signatureVerified===true&&v.route==='DIRECT_CLI_NODE_PARENT'&&v.tccResponsibility==='UNKNOWN'}catch{return false}}
+function ax571Setup(value:unknown):{schema:1;appActive:boolean;siblingKey:boolean;targetBound:boolean;siblingBound:boolean;firstRole:string}|null {
+ try {
+  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='appActive,firstRole,schema,siblingBound,siblingKey,targetBound')return null
+  const d=Object.getOwnPropertyDescriptors(value),get=(k:string)=>d[k]&&'value'in d[k]?d[k].value:undefined
+  if(get('schema')!==1||!['appActive','siblingKey','targetBound','siblingBound'].every(k=>typeof get(k)==='boolean')||!['UNKNOWN','NONE','TARGET','SIBLING','OTHER'].includes(get('firstRole')))return null
+  return {schema:1,appActive:get('appActive'),siblingKey:get('siblingKey'),targetBound:get('targetBound'),siblingBound:get('siblingBound'),firstRole:get('firstRole')}
+ } catch {return null}
+}
 let delivered571=0
 for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual external AX press ${framework}: target marker and all background oracles`,{skip:process.platform!=='darwin',timeout:20_000},t=>withSurface650(t,async(t,lease)=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ax-native571-')),owned=fs.lstatSync(dir,{bigint:true}),root=path.resolve('dist/ax-native-571'),host=path.join(root,'cmspark-host'),fixture=path.join(root,'owned-target')
@@ -46,10 +54,10 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
   lease.checkpoint();lease.retain()
   child=execFile(fixture,[framework,ready,marker,siblingMarker],{env,timeout:remaining(),maxBuffer:4096,signal:t.signal},()=>{})
   closed=new Promise<void>(resolve=>child!.once('close',()=>{ended=true;resolve()}))
-  const proof=await waitFile(ready);assert.equal(proof.schema,1,'AX571_INVALID_RECEIPT');assert.equal(proof.framework,framework,'AX571_INVALID_RECEIPT');const target=proof.target,sibling=proof.sibling
+  const proof=await waitFile(ready);assert.equal(proof.schema,1,'AX571_INVALID_RECEIPT');assert.equal(proof.framework,framework,'AX571_INVALID_RECEIPT');const setup=ax571Setup(proof.setup);assert.ok(setup&&setup.appActive&&setup.siblingKey&&setup.targetBound&&setup.siblingBound,'AX571_OWNED_READY_REQUIRED');const target=proof.target,sibling=proof.sibling
   assert.ok(Number.isSafeInteger(target)&&target>0&&Number.isSafeInteger(sibling)&&sibling>0&&target!==sibling,'AX571_OWNED_WINDOWS_INVALID')
   const snapshot=async(name:string)=>{const file=path.join(dir,name);await new Promise<void>((resolve,reject)=>execFile('/bin/bash',[path.resolve('../scripts/computer-bg-oracles.sh'),'snapshot','-out',file,'--host-bin',host],{env,timeout:Math.min(15_000,remaining()),maxBuffer:4096,signal:t.signal},error=>error?reject(Error('AX571_SNAPSHOT_FAILED')):resolve()));return JSON.parse(fs.readFileSync(file,'utf8')) as Ax571Snapshot}
-  const before=await snapshot('before.json');assert.ok(before.foreground===sibling,'AX571_INITIAL_SIBLING_REQUIRED');assert.equal(fs.existsSync(marker),false,'AX571_PREEXISTING_MARKER')
+  const before=await snapshot('before.json');t.diagnostic('AX571_INITIAL '+JSON.stringify({schema:1,framework,firstRole:before.foreground===null?'NONE':before.foreground===target?'TARGET':before.foreground===sibling?'SIBLING':'OTHER',targetPresent:before.zorder.includes(target),siblingPresent:before.zorder.includes(sibling)}));assert.ok(before.foreground===sibling,'AX571_INITIAL_SIBLING_REQUIRED');assert.equal(fs.existsSync(marker),false,'AX571_PREEXISTING_MARKER')
   // Entry estop precedes traversal/TCC and must cause no action.
   fs.writeFileSync(stop,'1',{flag:'wx',mode:0o600});const stopped=await command(['ax-invoke','--window-id',String(target),'--target','OwnedAX571Press','--action','press','--estop-flag',stop],8000);assert.equal(ax571Code(stopped),'TASK_ABORTED','AX571_ESTOP_REFUSAL');assert.equal(fs.existsSync(marker),false,'AX571_ESTOP_EFFECT');fs.unlinkSync(stop)
   if(!security.axTrusted){
@@ -72,6 +80,8 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
   t.diagnostic('AX571_ROW '+JSON.stringify({schema:1,framework,action:'press',status:result.ok===true?'Delivered':'Refused',code:result.ok===true?'OK':code,targetChanged:result.ok===true,focusKept:true,zorderKept:true,cursorKept:true,noLeakedInput:true,noLeakedInputKind:'derived'}))
  }catch(error){failed=true;primary=error}
  finally{
+  let setup:null|ReturnType<typeof ax571Setup>=null;try{const b=fs.readFileSync(ready+'.setup','utf8');if(Buffer.byteLength(b,'utf8')<=2048)setup=ax571Setup(JSON.parse(b))}catch{}
+  try{t.diagnostic('AX571_SETUP '+JSON.stringify({schema:1,framework,observed:setup!==null,...(setup??{})}))}catch{/* Diagnostics cannot replace primary or cleanup. */}
   let cleanup:unknown
   try{if(child&&!ended)child.kill();await closed}catch{cleanup=Error('AX571_OWNER_CLEANUP_FAILED')}
   if(!child||ended){try{const now=fs.lstatSync(dir,{bigint:true});assert.ok(now.isDirectory()&&!now.isSymbolicLink()&&now.dev===owned.dev&&now.ino===owned.ino,'AX571_CLEANUP_IDENTITY');fs.rmSync(dir,{recursive:true});lease.settled()}catch(error){cleanup=error}}

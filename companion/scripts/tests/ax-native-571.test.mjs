@@ -24,10 +24,10 @@ test('#571 hosted plan uses real host/identity and only unshipped fixture output
  assert.ok(p.commands[1][1].includes('/OWNED/companion/src/host-use/darwin/host.entitlements'));assert.ok(p.commands[3][1].includes('/OWNED/companion/tests/fixtures/ax-571/owned-target.swift'))
  for(const [bin,args] of p.commands)assert.ok(![bin,...args].some(x=>/tccutil|osascript|performClick|evaluateJavaScript|host-integrity\.ts/.test(x)))
 })
-const require=createRequire(path.join(root,'companion/package.json')),ts=require('typescript'),source=fs.readFileSync(path.join(root,'companion/tests/computer-ax-native-571.test.ts'),'utf8'),ast=ts.createSourceFile('current.ts',source,ts.ScriptTarget.Latest,true),names=['ax571Code','requireAx571Oracles','ax571Identity'],found={}
+const require=createRequire(path.join(root,'companion/package.json')),ts=require('typescript'),source=fs.readFileSync(path.join(root,'companion/tests/computer-ax-native-571.test.ts'),'utf8'),ast=ts.createSourceFile('current.ts',source,ts.ScriptTarget.Latest,true),names=['ax571Code','requireAx571Oracles','ax571Identity','ax571Setup'],found={}
 for(const n of ast.statements)if(ts.isFunctionDeclaration(n)&&n.name&&names.includes(n.name.text))found[n.name.text]=n.getText(ast)
-assert.equal(Object.keys(found).length,3)
-const js=ts.transpileModule(names.map(n=>found[n]).join('\n'),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,scope={assert};vm.createContext(scope);vm.runInContext(js+'\nthis.verify=requireAx571Oracles;this.code=ax571Code;this.identity=ax571Identity;',scope)
+assert.equal(Object.keys(found).length,4)
+const js=ts.transpileModule(names.map(n=>found[n]).join('\n'),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,scope={assert};vm.createContext(scope);vm.runInContext(js+'\nthis.verify=requireAx571Oracles;this.code=ax571Code;this.identity=ax571Identity;this.setup=ax571Setup;',scope)
 test('#571 native row code and responsibility proof never reflect unknown input',()=>{
  for(const value of [{error_code:'PRIVATE_SENTINEL'},{get error_code(){throw Error('PRIVATE_SENTINEL')}},null,{},[]])assert.equal(scope.code(value),'UNKNOWN')
  assert.equal(scope.code({error_code:'TASK_ABORTED'}),'TASK_ABORTED');assert.equal(scope.code({code:'AX_ACTION_UNAVAILABLE'}),'AX_ACTION_UNAVAILABLE')
@@ -45,7 +45,7 @@ test('#571 actual native oracle assertion rejects every missing or changed obser
 test('#571 owned fixture has no direct action/permission/focus restoration shortcut',()=>{
  const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8')
  assert.match(swift,/event\.isTrusted/);assert.match(swift,/message\.webView === web/);assert.match(swift,/message\.frameInfo\.isMainFrame/)
- assert.doesNotMatch(swift,/performClick|evaluateJavaScript|AXUIElementPerformAction|NSApp\.activate|ignoringOtherApps|AXIsProcessTrustedWithOptions|CGEventPost|DispatchQueue\.main\.asyncAfter[^\n]*changed/)
+ assert.doesNotMatch(swift,/performClick|evaluateJavaScript|AXUIElementPerformAction|AXIsProcessTrustedWithOptions|CGEventPost|DispatchQueue\.main\.asyncAfter[^\n]*changed/)
  assert.match(source,/\['ax-locate'/);assert.match(source,/\['ax-invoke'/);assert.match(source,/AX571_PERMISSION_REQUIRED/);assert.match(source,/lease\.settled\(\)/)
 })
 
@@ -70,4 +70,22 @@ test('#571 ledger records native framework/action rows as unproven, keeps permis
  assert.ok(section);for(const framework of ['AppKit NSButton','WKWebView'])assert.ok(section.includes('| '+framework+' | press | **Gap**'))
  for(const fact of ['AX571_ROW','AX571_PERMISSION','TCC','UNKNOWN','executor','至少一条'])assert.ok(section.includes(fact))
  assert.equal(section.includes('| **Delivered**'),false);assert.equal(ledger.includes('我们**只在 Windows 上有实现**'),false);assert.equal(ledger.includes('darwin-estop.ps1'),false)
+})
+
+test('#571 actual initial readiness gate observes active/key and both CG identities before publishing',()=>{
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8')
+ const expression=swift.match(/func ax571Readiness\([^)]*\) -> Bool \{ return ([^}]+) \}/)?.[1];assert.ok(expression)
+ for(let mask=0;mask<16;mask++){const values=Array.from({length:4},(_,i)=>!!(mask&(1<<i))),[active,key,targetBound,siblingBound]=values;assert.equal(vm.runInNewContext(expression,{active,key,targetBound,siblingBound}),mask===15)}
+ const begin=swift.slice(swift.indexOf('    func publishReady() {'),swift.indexOf('    func queueReadiness() {')),tail=swift.slice(swift.indexOf('    func queueReadiness() {'))
+ assert.match(begin,/guard !setupStarted else/);assert.match(begin,/NSApplication\.didBecomeActiveNotification/);assert.match(begin,/NSWindow\.didBecomeKeyNotification/);assert.match(begin,/if #available\(macOS 14.0, \*\)/)
+ assert.equal((begin.match(/NSApp\.activate\(/g)||[]).length,2);assert.doesNotMatch(tail,/NSApp\.activate|makeKeyAndOrderFront|asyncAfter/)
+ assert.ok(tail.indexOf('guard ax571Readiness(active,key,targetBound,siblingBound)')<tail.indexOf('self.published = true'));assert.match(tail,/kCGWindowOwnerPID/);assert.match(tail,/kCGWindowNumber/)
+ assert.match(source,/assert\.ok\(before.foreground===sibling,'AX571_INITIAL_SIBLING_REQUIRED'\)/)
+})
+test('#571 setup diagnostic is a closed enum/boolean projection and never publishes raw identities',()=>{
+ const value={schema:1,appActive:true,siblingKey:true,targetBound:true,siblingBound:true,firstRole:'SIBLING'};assert.deepEqual(JSON.parse(JSON.stringify(scope.setup(value))),value)
+ for(const role of ['UNKNOWN','NONE','TARGET','SIBLING','OTHER'])assert.equal(scope.setup({...value,firstRole:role}).firstRole,role)
+ for(const x of [null,[],{}, {...value,firstRole:'OWNED_PRIVATE_SENTINEL'},{...value,pid:17},{...value,target:18},{...value,appActive:1},{...value,schema:2}])assert.equal(scope.setup(x),null)
+ let reads=0;const access=Object.defineProperty({...value},'appActive',{get(){reads++;throw Error('OWNED_PRIVATE_SENTINEL')}});assert.equal(scope.setup(access),null);assert.equal(reads,0)
+ assert.match(source,/Buffer\.byteLength\(b,'utf8'\)<=2048/);assert.match(source,/Diagnostics cannot replace primary or cleanup/)
 })
