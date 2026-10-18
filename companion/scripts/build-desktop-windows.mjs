@@ -142,6 +142,8 @@ function toolchain() {
 export async function buildDesktopWindows({ root, dest, generated, testFixtures = false }) {
   if (process.platform !== "win32" || process.arch !== "x64") throw new Error("DESKTOP_WINDOWS_BUILD_REQUIRES_X64")
   const { cl, env } = toolchain(), cache = ownedDirectory(dest), finalDest = path.dirname(cache)
+  const { buildComputerUiaNoFocus } = await import("./build-computer-uia-no-focus.mjs")
+  buildComputerUiaNoFocus({ root, toolchain: { cl, env } })
   const [headers, webview, nodeLib] = await Promise.all([prepareDesktopNodeHeaders({ dest }), download("webview", cache), download("nodeLib", cache)])
   const sdk = extractDesktopSdk("webview", webview, cache), output = fs.mkdtempSync(path.join(cache, "objects-"))
   const lib = path.join(output, "node.lib"); fs.writeFileSync(lib, nodeLib, { flag: "wx", mode: 0o600 })
@@ -201,6 +203,9 @@ function publish(source, destination) {
   }
   fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL)
 }
+
+// Shared build-time discovery only; original DesktopHost/launcher plans remain unchanged.
+export { toolchain as desktopWindowsToolchain }
 
 /** Build-only same-source acceptance variant. Never included in the shipped manifest. */
 export function desktopAcceptanceVariant(language, original, fixture) {

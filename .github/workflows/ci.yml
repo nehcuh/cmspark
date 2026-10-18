@@ -187,7 +187,14 @@ jobs:
           if-no-files-found: error
 
       - name: Desktop build helper controls (#480)
-        run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs scripts/tests/metadata-key-phase-650.test.mjs
+        run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs companion/scripts/tests/computer-uia-no-focus-build.test.mjs companion/scripts/tests/computer-uia-no-focus-resolver.test.mjs companion/scripts/tests/computer-uia-native-probe-572.test.mjs scripts/tests/uia-no-autofocus-572.test.mjs scripts/tests/metadata-key-phase-650.test.mjs
+
+      - name: Build fixed no-autofocus UIA DLL (#572)
+        if: matrix.os == 'windows-latest'
+        run: |
+          node companion/scripts/build-computer-uia-no-focus.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node companion/scripts/build-computer-uia-native-probe-572.mjs
 
       - name: Actual native desktop build and isolated connection (#480)
         if: matrix.os != 'ubuntu-latest'
@@ -546,13 +553,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Actual Windows background oracle comparator (#572)"
-        # Synthetic snapshots, real PS5.1: historical false-positive + current refusal.
-        # Does not operate a target GUI or certify real background delivery.
+        # Real PS5.1 comparator/refusal plus owned WPF current-adapter delivery.
+        # UIA requires target state and all four current background oracles.
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           cd companion
-          node scripts/run-tests.mjs .test-dist/tests/computer-bg-oracles.test.js .test-dist/tests/integration/computer-bg-oracle-counterfactual-572.test.js
+          node scripts/run-tests.mjs .test-dist/tests/computer-bg-oracles.test.js .test-dist/tests/integration/computer-bg-oracle-counterfactual-572.test.js .test-dist/tests/computer-uia-invoke-integration.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Native Windows GUI file template admission (#686)"

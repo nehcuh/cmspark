@@ -1486,6 +1486,10 @@ export async function runComputerTask(
             const channel = deps.abortCheck?.() ?? "hotkey"
             log("computer.task.aborted", { taskId, seq, channel, via: "uia_invoke" })
             throw abortChannelError(channel, "computer: task aborted by emergency stop (uia delivery)")
+          } else if (!r.ok && r.terminal === true) {
+            // The action may already have happened or its identity/client is invalid.
+            // Never turn an uncertain first action into a second coordinate action.
+            throw new ComputerError("INJECT_FAILED", "computer: background UIA delivery refused without coordinate retry", { reason: r.reason })
           } else {
             // Fall back to the coordinate path. The reason travels verbatim — a silent
             // downgrade is exactly the failure mode we are trying to eliminate (#532 class),

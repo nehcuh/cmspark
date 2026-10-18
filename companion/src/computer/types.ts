@@ -441,7 +441,9 @@ export type UiaInvokeMode = "auto" | "invoke" | "setvalue" | "select" | "toggle"
  * pattern or a vanished element is a **fallback decision** (use the coordinate path), not a
  * failure to report upward, and the caller must be able to switch routes without unwinding.
  * It also keeps these codes out of `ComputerErrorCode` — they are internal routing signals,
- * not something the model should ever see.
+ * not something the model should ever see. A terminal refusal or uncertain receipt
+ * explicitly forbids a second coordinate action; ordinary definite unsupported keeps
+ * the established fallback decision.
  */
 export type UiaInvokeResult =
   | {
@@ -475,6 +477,8 @@ export type UiaInvokeResult =
          */
         | "aborted"
       detail: string
+      /** Internal no-focus refusal/uncertain receipt: no coordinate retry. Not a tool field or grant. */
+      terminal?: true
     }
 
 /** #571: which AX action to perform. `auto` tries the least-destructive route first. */

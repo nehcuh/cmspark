@@ -388,6 +388,8 @@ if ($WinPs1Count -lt 1) {
     Fail "host-scripts-win/*.ps1 empty after staging — refusing to ship"
 }
 Ok "host-scripts-win/ ($WinPs1Count Windows host-use scripts)"
+node "$CompanionDir\scripts\build-computer-uia-no-focus.mjs" --stage "$StagingDir\host-scripts-win"
+if ($LASTEXITCODE -ne 0) { Fail "Fixed no-autofocus UIA DLL staging failed" }
 
 # systray2 + its full transitive dependency tree.
 # Module.createRequire(process.execPath) resolves from the exe's directory,

@@ -67,3 +67,20 @@ Notes learned while measuring:
   `{"received":"提交测试","len":4,"codes":"25552,20132,27979,35797"}` (all four code points
   match). That module already forbids `-Command` and string interpolation for precisely this
   class of reason. So no product change is needed — just do not test through `-Command`.
+
+## Current #572 host pipeline compatibility
+
+The historical standalone action command above is retained as history. The current
+computer-uia-invoke.ps1 entry refuses with exit6 / UIA_TERMINAL:UIA_PATTERN_UNAVAILABLE
+(host_pipeline_required) before any action. Use production PsInputInjector.invokeUia:
+Companion owns computer-uia-select.ps1 then computer-uia-act.ps1 as two direct
+PowerShell children under one original15000ms remaining budget. It is not nested PS.
+The fixed DLL and original desktop assertions remain mandatory hosted Windows gates.
+
+computer-uia-invoke-mixed-before572.ps1 is a byte-exact6f52 legacy snapshot used only
+by the retained matched A/B counterfactual generator/CPU controls. The real failed B
+observation remains history; its native registration is no longer a production gate.
+No B failure was relabelled a successful production action. Current normal, separate
+pipeline diagnostic, four other modes, loader and ABI negatives exercise the actual
+new production route. The pipeline diagnostic emits schema2 / explicit SELECT_* and
+ACTION_* phases, not the old single-process four-phase meaning.
