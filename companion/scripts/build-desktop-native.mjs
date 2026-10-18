@@ -68,6 +68,7 @@ if(process.argv.includes("--test-fixtures")) {
  run("/usr/bin/swiftc",["-O",mcpSource,path.join(generated,"DesktopCapabilities.swift"),"-framework","AppKit","-framework","WebKit","-framework","CryptoKit","-o",mcpBinary])
  run("/usr/bin/codesign",["--force","--sign","-",mcpBinary])
  }
+ const {buildWorkspaceUI705}=await import("./desktop-workspace-ui-705.mjs");buildWorkspaceUI705(root,dest)
  const parentProbe=path.join(dest,"acceptance","parent","desktop-parent-probe");replacement(parentProbe)
  run("/usr/bin/clang",["-std=c11","-Wall","-Wextra","-Werror","-DDESKTOP_FIXTURE_MAC_PARENT_PROBE",path.join(root,"tests/fixtures/desktop-480/windows-inheritance.c"),"-o",parentProbe])
  replacement(path.join(dest,"desktop-inheritance-probe"));replacement(path.join(dest,"inheritable-sentinel.node"))

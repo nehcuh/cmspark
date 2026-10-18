@@ -165,6 +165,7 @@ function sameWorkspaceSelection705(expected:ReturnType<typeof captureWorkspaceSe
 
 // One sequential surface owner, actual retained native OS panel + original controller purpose.
 test('#476 actual native workspace picker binds canonical root, reopens lists/reads and cancels the second OS picker',{skip:!['darwin','win32'].includes(process.platform),timeout:45000},async t=>{
+ const uiDeadline=Date.now()+45000
  return withSurface650(t,async(t,surfaceLease)=>{
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-workspace-476-'))),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
   const requestedRoot=path.join(dir,'selected');fs.mkdirSync(requestedRoot);const root=fs.realpathSync(requestedRoot),expectedSelection=captureWorkspaceSelection705(root);fs.writeFileSync(path.join(root,'hello.txt'),'owned workspace text')
@@ -176,6 +177,7 @@ test('#476 actual native workspace picker binds canonical root, reopens lists/re
   let selectedOutcome:boolean|null=null,selectedIdentity:boolean|null=null
   let failureSite=0,pickOutcome=0,nativeDiagnostic:ReturnType<typeof parseNativeWorkspaceDiagnostic705>=null,diagnosticInvalid=false
   let pickerLifecycle={mode:0 as number,childClosed:false,childExit:null as number|null,childSignal:0 as number,childError:false}
+  let uiOwner:import('./helpers/workspace-xctest-owned-705').OwnedWorkspaceUI705|undefined,uiDone:Promise<{ok:boolean}>|undefined,primaryFailed=false
   let current:any,authenticated=false,windowRequested=false,connections=0,failed=false,picks=0,pickerObserved=0,pickerReturned=0,cancelReturned=0,child:DesktopNativeChild|undefined,settled=false,exitResolve!:(n:number)=>void,failResolve!:()=>void
   const exit=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r),fail=(site:number)=>{if(!failureSite)failureSite=site;failed=true;failResolve()}
   const channel=createDesktopChannel({registry,securityConfirmations:manager,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},maxPayload:10*1024*1024,workspaceRuntime:{enabled:()=>true,activity:()=> 'idle'},onAuthenticated:host=>{authenticated=true;windowRequested=channel.window(host,'workspace')}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer()
@@ -187,7 +189,7 @@ test('#476 actual native workspace picker binds canonical root, reopens lists/re
      const number=++picks;pickOutcome=1;if(number>2){fail(1);return result}
      pickerRequests.set(request.pick_id,{request:request.request_id,thread:request.thread_id,revision:request.revision,number})
      // Fixture-only instruction operates the actual typed object; it cannot fabricate GetResult/URLs.
-     originalSend(JSON.stringify({type:'D476.workspace.picker',selection:root,pick_id:request.pick_id,cancel:number===2}))
+     originalSend(JSON.stringify({type:'D476.workspace.picker',selection:root,pick_id:request.pick_id,cancel:number===2,...(uiOwner?{ui_nonce:uiOwner.scene.nonce}:{})}))
     }
     return result
    };
@@ -200,20 +202,22 @@ test('#476 actual native workspace picker binds canonical root, reopens lists/re
      return
     }
     if(f.type!=='system.ping')return;
-    if(f.id==='D476_WS_PICKER_SELECTED'||f.id==='D476_WS_PICKER_CANCELLED')pickerObserved++;
+    if(f.id==='D476_WS_PICKER_SELECTED'||f.id==='D476_WS_PICKER_CANCELLED'){pickerObserved++;try{uiOwner?.ready(f.id==='D476_WS_PICKER_SELECTED'?1:2)}catch{fail(7)}}
 if(typeof f.id==='string'&&f.id.startsWith('D476_WS_DIAG_')){try{const d=parseNativeWorkspaceDiagnostic705(f.id);if(d&&d.platform===(process.platform==='win32'?1:2))nativeDiagnostic=d;else diagnosticInvalid=true}catch{diagnosticInvalid=true}return}if(f.id==='D476_WS_FAIL'){fail(7);return}if(required.includes(f.id)){if(receipts.has(f.id)){fail(8);return}receipts.add(f.id);if(f.id==='D476_WS_DONE')channel.revokeHost('owned-native-workspace-476')}})})
   server.listen(0,'127.0.0.1');await once(server,'listening')
   try{
-   const native=path.resolve(__dirname,'../../dist/desktop-native'),binary=path.join(native,'acceptance/workspace',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop')
+   const native=path.resolve(__dirname,'../../dist/desktop-native');if(process.platform==='darwin'){const {OwnedWorkspaceUI705}=await import('./helpers/workspace-xctest-owned-705');uiOwner=new OwnedWorkspaceUI705(native,dir,uiDeadline,t.signal)};const binary=uiOwner?.appExecutable??path.join(native,'acceptance/workspace',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop')
    assert.ok(fs.existsSync(binary),'actual workspace acceptance binary must be built');surfaceLease.checkpoint()
    child=(require(path.join(native,'desktop-launcher.node'))as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,n=>{settled=true;exitResolve(n)})
+   if(uiOwner){uiOwner.start();uiDone=uiOwner.complete().then(()=>({ok:true}),()=>({ok:false}))}
    assert.equal(await Promise.race([exit,failure.then(()=>{throw Error('OWNED_WORKSPACE_NATIVE_PHASE_FAILED')}),new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_WORKSPACE_NATIVE_DEADLINE')),{once:true}))]),0)
+   if(uiDone)assert.equal((await uiDone).ok,true,'owned acknowledged UI runner must genuinely close quiescent')
    assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,1);assert.equal(picks,2);assert.equal(pickerObserved,2);assert.equal(pickerReturned,1);assert.equal(cancelReturned,1);assert.deepEqual([...receipts].sort(),[...required].sort());assert.equal(manager.pendingCount(),0)
    const disk=new ThreadManager();assert.equal(disk.get('native-workspace-A')!.workspace_root,root);assert.equal(disk.get('native-workspace-B')!.workspace_root,undefined)
    process.stdout.write('DESKTOP_WORKSPACE_476 {"native":true,"actualPicker":true,"controllerConfirmed":true,"persisted":true,"reopened":true,"listed":true,"read":true,"pickerCancelled":true,"otherThreadUnchanged":true}\n')
-  }finally{
-   surfaceLease.retain();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity}))}catch{}
-   child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();manager.rejectAll('disconnect');await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()
+  }catch(error){primaryFailed=true;throw error}finally{
+   surfaceLease.retain();uiOwner?.cancel();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity}))}catch{}
+   child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();manager.rejectAll('disconnect');await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));let uiClosed=true;try{await uiOwner?.cleanup()}catch{uiClosed=false;try{t.diagnostic('D476_WORKSPACE_UI_LIFETIME_UNKNOWN')}catch{}};if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;if(uiClosed){fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()}else if(!primaryFailed){throw Error('OWNED_WORKSPACE_UI_LIFETIME_UNKNOWN')}
   }
  })
 })

@@ -1,11 +1,11 @@
 class Desktop;
 struct D476Acceptance {
- static Desktop* owner;static std::wstring documentGeneration,selection,pickerNonce;static bool cancelPicker;static unsigned panels,confirmations,receipts;
+ static Desktop* owner;static std::wstring documentGeneration,selection,pickerNonce;static bool cancelPicker,navigationStarted;static ComPtr<IShellItem> expectedDirectory;static unsigned panels,confirmations,receipts;
  static unsigned diagnosticMask,diagnosticSite,diagnosticSends,diagnosticLocal,diagnosticOwned,diagnosticFlags,diagnosticKnown;static std::wstring diagnosticLast;static void note(Desktop&,unsigned,unsigned=0,unsigned=99,unsigned=99,unsigned=0,unsigned=0) noexcept;static void fail(Desktop&,unsigned);
  static void document(Desktop&);static void confirmation(Desktop&);static void emit(Desktop&,wchar_t const*);static void renderer(Desktop&,JsonObject const&);static bool picker(Desktop&,JsonObject const&);static void panel(Desktop&);
 };
 /* D476 IMPLEMENTATION */
-Desktop* D476Acceptance::owner=nullptr;std::wstring D476Acceptance::documentGeneration,D476Acceptance::selection,D476Acceptance::pickerNonce;bool D476Acceptance::cancelPicker=false;unsigned D476Acceptance::panels=0,D476Acceptance::confirmations=0,D476Acceptance::receipts=0;
+Desktop* D476Acceptance::owner=nullptr;std::wstring D476Acceptance::documentGeneration,D476Acceptance::selection,D476Acceptance::pickerNonce;bool D476Acceptance::cancelPicker=false,D476Acceptance::navigationStarted=false;ComPtr<IShellItem> D476Acceptance::expectedDirectory;unsigned D476Acceptance::panels=0,D476Acceptance::confirmations=0,D476Acceptance::receipts=0;
 void D476Acceptance::emit(Desktop& h,wchar_t const* id){JsonObject f;put(f,L"type",L"system.ping");put(f,L"id",id);h.send(f);}
 // #705: finite test-only observation. Transport/allocation failure is never a fixture decision.
 unsigned D476Acceptance::diagnosticMask=0,D476Acceptance::diagnosticSite=0,D476Acceptance::diagnosticSends=0,D476Acceptance::diagnosticLocal=99,D476Acceptance::diagnosticOwned=99,D476Acceptance::diagnosticFlags=0,D476Acceptance::diagnosticKnown=0;std::wstring D476Acceptance::diagnosticLast;
@@ -17,20 +17,37 @@ bool D476Acceptance::picker(Desktop& h,JsonObject const& f){
  if(text(f,L"type")!=L"D476.workspace.picker")return false;auto cancel=f.TryLookup(L"cancel");auto p=h.workspace_selection;
  if(owner!=&h||h.generation!=documentGeneration||!p||!h.picker_current(p)||p->settled||!keys(f,{L"type",L"selection",L"pick_id",L"cancel"})||text(f,L"pick_id")!=p->nonce||!cancel||cancel.ValueType()!=JsonValueType::Boolean||panels>=2||!pickerNonce.empty()){fail(h,7);return true;}
  auto root=text(f,L"selection");if(root.empty()||!std::filesystem::path(root).is_absolute()){fail(h,8);return true;}
- selection=root;pickerNonce=p->nonce;cancelPicker=cancel.GetBoolean();if(cancelPicker!=(panels==1)){fail(h,9);return true;}note(h,1);
+ selection=root;pickerNonce=p->nonce;navigationStarted=false;expectedDirectory.Reset();cancelPicker=cancel.GetBoolean();if(cancelPicker!=(panels==1)){fail(h,9);return true;}note(h,1);
  if(!SetTimer(h.window,476,16,[](HWND,UINT,UINT_PTR,DWORD){if(owner)panel(*owner);})){fail(h,10);}return true;
 }
 // Exact dialog obtained from this retained COM object, never a global lookup.
 static bool d476OwnedDialog705(HWND dialog,HWND owner){return dialog&&owner&&dialog!=owner&&IsWindow(dialog)&&IsWindowVisible(dialog)&&GetWindow(dialog,GW_OWNER)==owner;}
 void D476Acceptance::panel(Desktop& h){
  auto p=h.workspace_selection;if(owner!=&h||h.generation!=documentGeneration||!p||!h.picker_current(p)||p->nonce!=pickerNonce||p->settled||!p->dialog){KillTimer(h.window,476);return;}
- ComPtr<IOleWindow> owned;HWND dialog=nullptr;if(FAILED(p->dialog.As(&owned))||FAILED(owned->GetWindow(&dialog))||!IsWindowVisible(dialog))return;
- KillTimer(h.window,476);if(!d476OwnedDialog705(dialog,h.window)){fail(h,11);return;}note(h,2,0,1,1,GetForegroundWindow()==dialog?1u:0u,1u);
- if(!cancelPicker){ComPtr<IShellItem> directory;if(FAILED(SHCreateItemFromParsingName(selection.c_str(),nullptr,IID_PPV_ARGS(directory.GetAddressOf())))||FAILED(p->dialog->SetFolder(directory.Get()))){fail(h,12);return;}note(h,4,0,1,1);}
- auto button=GetDlgItem(dialog,IDOK);if(!cancelPicker&&(!button||!IsWindowEnabled(button))){fail(h,13);return;}note(h,8,0,1,1,2u,2u);
- ++panels;pickerNonce.clear();emit(h,panels==1?L"D476_WS_PICKER_SELECTED":L"D476_WS_PICKER_CANCELLED");note(h,16,0,1,1);
+ auto activeDialog=p->dialog;ComPtr<IOleWindow> owned;HWND dialog=nullptr;if(FAILED(activeDialog.As(&owned))||FAILED(owned->GetWindow(&dialog))||!IsWindowVisible(dialog))return;
+ if(!d476OwnedDialog705(dialog,h.window)){KillTimer(h.window,476);fail(h,11);return;}note(h,2,0,1,1,GetForegroundWindow()==dialog?1u:0u,1u);
+ if(!cancelPicker){
+  // SetFolder starts navigation once. The existing timer only observes this same retained dialog.
+  if(!navigationStarted){
+   navigationStarted=true;ComPtr<IShellItem> directory;
+   auto created=SHCreateItemFromParsingName(selection.c_str(),nullptr,IID_PPV_ARGS(directory.GetAddressOf()));
+   if(owner!=&h||h.generation!=documentGeneration||!h.picker_current(p)||p->nonce!=pickerNonce||p->settled||p->dialog.Get()!=activeDialog.Get()){if(h.workspace_selection==p)KillTimer(h.window,476);return;}
+   if(FAILED(created)||!directory.Get()){KillTimer(h.window,476);pickerNonce.clear();fail(h,12);return;}
+   auto navigated=activeDialog->SetFolder(directory.Get());
+   if(owner!=&h||h.generation!=documentGeneration||!h.picker_current(p)||p->nonce!=pickerNonce||p->settled||p->dialog.Get()!=activeDialog.Get()){if(h.workspace_selection==p)KillTimer(h.window,476);return;}
+   if(FAILED(navigated)){KillTimer(h.window,476);pickerNonce.clear();fail(h,12);return;}
+   expectedDirectory=directory;note(h,4,0,1,1);
+  }
+  // An in-flight creation/navigation never publishes a consumable expected item.
+  if(!expectedDirectory.Get())return;
+  if(owner!=&h||h.generation!=documentGeneration||!h.picker_current(p)||p->nonce!=pickerNonce||p->settled||p->dialog.Get()!=activeDialog.Get()){if(h.workspace_selection==p)KillTimer(h.window,476);return;}
+  ComPtr<IShellItem> folder;int order=1;if(activeDialog->GetFolder(folder.GetAddressOf())!=S_OK||!folder||!expectedDirectory||folder->Compare(expectedDirectory.Get(),SICHINT_CANONICAL,&order)!=S_OK||order!=0)return;
+ }
+ if(owner!=&h||h.generation!=documentGeneration||!h.picker_current(p)||p->nonce!=pickerNonce||p->settled||p->dialog.Get()!=activeDialog.Get()){if(h.workspace_selection==p)KillTimer(h.window,476);return;}
+ auto button=GetDlgItem(dialog,IDOK);if(!cancelPicker&&(!button||!IsWindowEnabled(button)))return;note(h,8,0,1,1,2u,2u);
+ KillTimer(h.window,476);++panels;pickerNonce.clear();expectedDirectory.Reset();emit(h,panels==1?L"D476_WS_PICKER_SELECTED":L"D476_WS_PICKER_CANCELLED");note(h,16,0,1,1);
  // Actual typed cancellation or the current real dialog's public OK button. No injected result.
- if(cancelPicker)(void)p->dialog->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));else SendMessageW(button,BM_CLICK,0,0);
+ if(cancelPicker)(void)activeDialog->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));else SendMessageW(button,BM_CLICK,0,0);
  note(h,32,0,1,1,IsWindow(dialog)?4u:0u,4u);
 }
 void D476Acceptance::renderer(Desktop& h,JsonObject const& f){if(owner!=&h||h.generation!=documentGeneration||text(f,L"type")!=L"system.ping")return;auto id=text(f,L"id");static wchar_t const* names[]={L"D476_WS_UNBOUND",L"D476_WS_COMMITTED",L"D476_WS_LISTED",L"D476_WS_READ",L"D476_WS_REOPENED",L"D476_WS_CANCELLED",L"D476_WS_DONE"};for(unsigned i=0;i<7;i++)if(id==names[i]){if(receipts&(1u<<i)){fail(h,14);return;}receipts|=1u<<i;emit(h,names[i]);if(i==6){if(receipts!=127||panels!=2||confirmations!=1)fail(h,15);}return;}if(id==L"D476_WS_FAIL")fail(h,16);}
