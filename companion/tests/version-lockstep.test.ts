@@ -40,3 +40,30 @@ test("version lockstep: AGENTS.md header and footer match package.json", () => {
   assert.match(agents, new RegExp(`> \\*\\*Version\\*\\*: ${v} `), "AGENTS.md header version line")
   assert.match(agents, new RegExp(`\\*CMspark Agent v${v}\\*`), "AGENTS.md footer")
 })
+
+
+test("version lockstep: both npm lock roots match their package version", () => {
+  for (const dir of [ROOT, path.join(ROOT, "..", "chrome-extension")]) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"))
+    const lock = JSON.parse(fs.readFileSync(path.join(dir, "package-lock.json"), "utf8"))
+    assert.equal(lock.version, pkg.version, `${dir}: top-level lock version`)
+    assert.equal(lock.packages[""].version, pkg.version, `${dir}: root package lock version`)
+  }
+})
+
+test("version lockstep: Windows installer fallback matches companion", () => {
+  const installer = fs.readFileSync(path.join(ROOT, "..", "scripts", "installer.nsi"), "utf8")
+  const fallback = installer.match(/^\s*!define PRODUCT_VERSION "([^"]+)"/m)
+  assert.equal(fallback?.[1], VERSION)
+})
+
+test("version lockstep: live docs and changelog identify the source version", () => {
+  const repo = path.join(ROOT, "..")
+  const read = (rel: string) => fs.readFileSync(path.join(repo, rel), "utf8")
+  const liveVersion = `源码开发版本 **${VERSION}（尚未正式发布）**`
+  assert.ok(read("README.md").includes(liveVersion))
+  assert.ok(read("CLAUDE.md").includes(liveVersion))
+  assert.ok(read("docs/README.md").includes(liveVersion))
+  assert.ok(read("docs/release-status.md").includes(liveVersion))
+  assert.ok(read("CHANGELOG.md").split("\n").some(line => line.startsWith(`## [${VERSION}] — `)))
+})
