@@ -105,3 +105,44 @@ test("#476 actual native New Send stream Stop and reopen use the canonical conve
 
  })
 })
+
+// Same native file/surface lease as the existing foreground scenarios, never a
+// new parallel worker. The resource binary is an unshipped source-inverse variant.
+test('#476 actual native resource imports, reopens, edits, denies/removes and preserves unknown lost ACK',{skip:!['darwin','win32'].includes(process.platform),timeout:45000},async t=>{
+ return withSurface650(t,async(t,surfaceLease)=>{
+  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-resource-476-'))),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
+  const {SkillEngine}=await import('../src/skills/skill-engine'),{SecurityConfirmationManager}=await import('../src/security-confirmation')
+  fs.mkdirSync(path.join(dir,'skills'),{recursive:true});fs.mkdirSync(path.join(dir,'knowledge/global'),{recursive:true})
+  const skills=new SkillEngine(),threads=new ThreadManager(),manager=new SecurityConfirmationManager(),registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-native-resource-476')
+  const required=['D476_RES_SKILL_IMPORTED','D476_RES_KNOWLEDGE_IMPORTED','D476_RES_REOPENED','D476_RES_UPDATED','D476_RES_DENIED','D476_RES_REMOVED','D476_RES_BEFORE_LOST_ACK','D476_RES_ESCAPE_OK'],receipts=new Set<string>(),windows=new Set<number>()
+  let authenticated=false,windowRequested=false,connections=0,failed=false,updates=0,dropped=false,child:DesktopNativeChild|undefined,settled=false,exitResolve!:(n:number)=>void,failResolve!:()=>void
+  const exit=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r)
+  const channel=createDesktopChannel({registry,securityConfirmations:manager,services:{threads,skills,mcp:{listServers:()=>[]}},maxPayload:10*1024*1024,onAuthenticated:host=>{authenticated=true;windowRequested=channel.window(host,'workspace')}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer()
+  attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
+  channel.wss.on('connection',ws=>{
+   connections++;const original=ws.send.bind(ws);ws.send=((data:any,...args:any[])=>{let f:any;try{f=JSON.parse(String(data))}catch{return Reflect.apply(original,ws,[data,...args])}
+    if(f.type==='desktop.resource.update.result'&&f.ok===true&&f.outcome==='committed'&&++updates===2){dropped=true;ws.terminate();return}
+    return Reflect.apply(original,ws,[data,...args])
+   })as typeof ws.send
+   ws.on('message',raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(!authenticated||f.type!=='system.ping'||typeof f.id!=='string')return
+    if(f.id==='D476_RES_FAIL'){failed=true;failResolve();return}
+    if(required.includes(f.id)){if(receipts.has(f.id)){failed=true;failResolve()}receipts.add(f.id)}
+    const m=/^D476_RES_WINDOW_([1-6])$/.exec(f.id);if(m){const n=Number(m[1]);if(windows.has(n)){failed=true;failResolve()}windows.add(n)}
+   })
+  })
+  server.listen(0,'127.0.0.1');await once(server,'listening')
+  try{
+   const native=path.resolve(__dirname,'../../dist/desktop-native'),binary=path.join(native,'acceptance/resource',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop')
+   assert.ok(fs.existsSync(binary),'the resource controller acceptance binary must actually be built');surfaceLease.checkpoint()
+   child=(require(path.join(native,'desktop-launcher.node'))as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,n=>{settled=true;exitResolve(n)})
+   assert.equal(await Promise.race([exit,failure.then(()=>{throw Error('OWNED_RESOURCE_NATIVE_PHASE_FAILED')}),new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_RESOURCE_NATIVE_DEADLINE')),{once:true}))]),76,'only the owned native offline terminal observer is success')
+   assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,1);assert.equal(updates,2);assert.equal(dropped,true);assert.equal(manager.pendingCount(),0)
+   assert.deepEqual([...receipts].sort(),[...required].sort());assert.deepEqual([...windows].sort(),[1,2,3,4,5,6])
+   const disk=new SkillEngine();assert.equal(disk.get('native-resource-skill'),undefined);const doc=disk.getKnowledge('native-resource-note')!;assert.equal(doc.title,'已编辑 原生知识');assert.equal(doc.body,'\n未确认的原生知识正文')
+   process.stdout.write('DESKTOP_RESOURCE_476 {"native":true,"kinds":2,"imports":2,"reopened":true,"edits":2,"deniedRemove":true,"removedOnlyTarget":true,"controllerWindows":6,"nativeKeys":1,"lostAck":true,"offlineDraftUnknown":true}\n')
+  }finally{
+   surfaceLease.retain();try{t.diagnostic('D476_RESOURCE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,authenticated,windowRequested,connections,updates,dropped,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),windows:windows.size,childExited:settled}))}catch{}
+   manager.rejectAll('disconnect');child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()
+  }
+ })
+})

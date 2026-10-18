@@ -99,3 +99,119 @@ test("listStemSet: recursive into subdirs; directory names are NOT stems; _folde
   assert.ok(!stems.has("notes"), "non-markdown files are not stems")
   fs.rmSync(dir, { recursive: true, force: true })
 })
+
+
+test("writeRestrictedFile: partial write EIO preserves old bytes and removes owned temp", t => {
+  const native = require("node:fs") as typeof fs
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-write-fail-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "document.md")
+  const old = Buffer.from("original complete body\n")
+  fs.writeFileSync(file, old)
+  const write = native.writeFileSync
+  const eio = Object.assign(new Error("OWNED_WRITE_EIO"), { code: "EIO" })
+  let injected = 0
+  const mock = t.mock.method(native, "writeFileSync", ((dest: any, data: any, options: any) => {
+    injected++
+    const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data)
+    write(dest, bytes.subarray(0, Math.floor(bytes.length / 2)), options)
+    throw eio
+  }) as typeof native.writeFileSync)
+  try { assert.throws(() => writeRestrictedFile(file, "replacement complete body\n"), err => err === eio) }
+  finally { mock.mock.restore() }
+  assert.equal(injected, 1)
+  assert.equal(fs.readFileSync(file).equals(old), true)
+  assert.deepEqual(fs.readdirSync(dir), ["document.md"])
+})
+
+test("writeRestrictedFile: rename refusal preserves old bytes and cleans temp", t => {
+  const native = require("node:fs") as typeof fs
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-rename-fail-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "document.md")
+  fs.writeFileSync(file, "old")
+  const refused = Object.assign(new Error("OWNED_RENAME_REFUSED"), { code: "EACCES" })
+  const mock = t.mock.method(native, "renameSync", () => { throw refused })
+  try { assert.throws(() => writeRestrictedFile(file, Buffer.from("new")), err => err === refused) }
+  finally { mock.mock.restore() }
+  assert.equal(fs.readFileSync(file, "utf8"), "old")
+  assert.deepEqual(fs.readdirSync(dir), ["document.md"])
+})
+
+
+test("writeRestrictedFile: success replaces string and Buffer without leaving temp", t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-write-ok-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "document.md")
+  writeRestrictedFile(file, "first")
+  writeRestrictedFile(file, Buffer.from("second"))
+  assert.equal(fs.readFileSync(file, "utf8"), "second")
+  assert.deepEqual(fs.readdirSync(dir), ["document.md"])
+  if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600)
+})
+
+test("writeRestrictedFile: symlink discovered at commit refuses without touching target", t => {
+  const native = require("node:fs") as typeof fs
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-write-link-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "document.md")
+  fs.writeFileSync(file, "old")
+  const lstat = native.lstatSync
+  let probes = 0
+  const mock = t.mock.method(native, "lstatSync", ((p: any, opts: any) => {
+    const stat = lstat(p, opts)
+    if (String(p) === file && ++probes === 2) return Object.assign(Object.create(stat), { isSymbolicLink: () => true })
+    return stat
+  }) as typeof native.lstatSync)
+  try { assert.throws(() => writeRestrictedFile(file, "new"), /Refusing to write through symlink/) }
+  finally { mock.mock.restore() }
+  assert.equal(probes, 2)
+  assert.equal(fs.readFileSync(file, "utf8"), "old")
+  assert.deepEqual(fs.readdirSync(dir), ["document.md"])
+})
+
+
+test("writeRestrictedFile: failed rename cannot remove a replacement at the temp name", t => {
+  const native = require("node:fs") as typeof fs
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-write-replaced-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "document.md")
+  fs.writeFileSync(file, "old")
+  const rename = native.renameSync
+  const primary = Object.assign(new Error("OWNED_RENAME_REFUSED"), { code: "EACCES" })
+  let temporary = ""
+  const mock = t.mock.method(native, "renameSync", (from: any, to: any) => {
+    temporary = String(from)
+    rename(from, temporary + ".original")
+    fs.writeFileSync(from, "foreign replacement", { flag: "wx" })
+    throw primary
+  })
+  try { assert.throws(() => writeRestrictedFile(file, "new"), err => err === primary) }
+  finally { mock.mock.restore() }
+  assert.equal(fs.readFileSync(file, "utf8"), "old")
+  assert.equal(fs.existsSync(temporary), true, "a replaced temporary pathname is not owned")
+  assert.equal(fs.readFileSync(temporary, "utf8"), "foreign replacement")
+})
+
+test("writeRestrictedFile: close error cannot close a descriptor reused by another file", t => {
+  const native = require("node:fs") as typeof fs
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-write-fd-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "document.md"), otherFile = path.join(dir, "other.md")
+  fs.writeFileSync(file, "old"); fs.writeFileSync(otherFile, "other")
+  const close = native.closeSync
+  const primary = Object.assign(new Error("OWNED_POST_CLOSE_ERROR"), { code: "EIO" })
+  let other: number | undefined, calls = 0
+  const mock = t.mock.method(native, "closeSync", (fd: number) => {
+    calls++
+    close(fd)
+    if (calls === 1) { other = fs.openSync(otherFile, "r"); assert.equal(other, fd); throw primary }
+  })
+  try { assert.throws(() => writeRestrictedFile(file, "new"), err => err === primary) }
+  finally { mock.mock.restore() }
+  try {
+    assert.equal(calls, 1, "do not retry a close whose descriptor ownership is unknown")
+    assert.equal(fs.fstatSync(other!).isFile(), true)
+    assert.equal(fs.readFileSync(file, "utf8"), "old")
+  } finally { if (other !== undefined) { try { close(other) } catch {} } }
+})
