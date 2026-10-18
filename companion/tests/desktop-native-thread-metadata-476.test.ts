@@ -1,3 +1,4 @@
+import { withSurface650 } from "./fixtures/native-surface-650"
 /** Hosted real native metadata UI. Never run local native to obtain CPU evidence. */
 import test from "node:test"
 import assert from "node:assert/strict"
@@ -13,6 +14,7 @@ import { DesktopIdentityRegistry } from "../src/desktop/identity"
 import type { DesktopNativeBinding, DesktopNativeChild } from "../src/desktop/host-launcher"
 
 test("#476 actual native grouped thread metadata UI persists all fields in the canonical manager",{skip:!["darwin","win32"].includes(process.platform),timeout:20000},async t=>{
+ return withSurface650(t, async (t, surfaceLease) => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"native-metadata-476-")),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
   const threads=new ThreadManager();threads.create("原名称","native-metadata-A");threads.create("另一对话","native-metadata-B")
   const registry=new DesktopIdentityRegistry(),boot=registry.issue("owned-native-metadata-476")
@@ -45,6 +47,7 @@ test("#476 actual native grouped thread metadata UI persists all fields in the c
   try{
     const native=path.resolve(__dirname,"../../dist/desktop-native"),binary=path.join(native,"acceptance/metadata",process.platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop")
     assert.ok(fs.existsSync(binary),"the actual metadata acceptance host must be built")
+    surfaceLease.checkpoint();
     child=(require(path.join(native,"desktop-launcher.node")) as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,n=>{settled=true;exitResolve(n)})
     assert.equal(await Promise.race([exit,done.then(()=>{throw Error("OWNED_METADATA_NATIVE_PHASE_FAILED")}),new Promise<never>((_,reject)=>t.signal.addEventListener("abort",()=>reject(Error("OWNED_METADATA_NATIVE_DEADLINE")),{once:true}))]),76,"only the bound native offline observer may end the successful scenario")
     assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true)
@@ -53,8 +56,11 @@ test("#476 actual native grouped thread metadata UI persists all fields in the c
     const disk=new ThreadManager(),saved=disk.get("native-metadata-A")!;assert.equal(saved.alias,"未确认 中文草稿");assert.deepEqual(saved.user_tags,["Review","付款"]);assert.equal(saved.topic_folder,"项目资料");assert.equal(disk.get("native-metadata-B")!.alias,"另一对话")
     process.stdout.write('DESKTOP_THREAD_METADATA_476 {"native":true,"persisted":true,"fields":3,"otherThreadUnchanged":true,"uiReopened":true,"nativeKeys":2,"lostAck":true,"offlineDraftUnconfirmed":true}\n')
   }finally{
+    surfaceLease.retain()
     // Fixed public receipt only: never renderer text, frame bodies, paths or credentials.
     try{t.diagnostic("D476_METADATA_NATIVE_PHASE "+JSON.stringify({schema:1,failed,failureCode,receiptMask:required.reduce((mask,id,index)=>mask|(receipts.has(id)?1<<index:0),0),saveAttempts,droppedAck,initialSaved,connections,authenticated,windowRequested,childExited:settled}))}catch{} // Observation cannot replace primary failure or skip cleanup.
     child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true})
-  }
+  ;surfaceLease.settled()}
+
+ })
 })

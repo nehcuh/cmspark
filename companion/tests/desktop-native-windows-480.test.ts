@@ -1,3 +1,4 @@
+import { withSurface650 } from "./fixtures/native-surface-650"
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -37,6 +38,7 @@ test("Windows real SYNCHRONIZE-only process handle API rejects extra rights, oth
  const receipt=JSON.parse(result.stdout.trim());assert.equal(receipt.native,true);for(const key of ["minimal_accepts","extra_rights_rejected","event_rejected","closed_rejected","invalid_rejected","missing_query_rejected","query_right_absent"])assert.equal(receipt[key],true)
 })
 test("real Windows binding noninherited bootstrap and minimal parent handle authenticate native WebView2 and metadata",{skip:process.platform!=="win32",timeout:20000},async(t)=>{
+ return withSurface650(t, async (t, surfaceLease) => {
  assert.equal(fs.existsSync(path.join(native,"cmspark-desktop.exe")),true,"Actual native Windows build is mandatory")
  const binding=require(path.join(native,"desktop-launcher.node")) as DesktopNativeBinding,registry=new DesktopIdentityRegistry(),boot=registry.issue("owned-windows-host")
  let phase="setup",childExitCode:number|undefined,diagnosticFailed=false;const nativePhases=new Set<string>(),nativeNavigation:{value?:NativeNavigationObservation}={}
@@ -50,10 +52,12 @@ test("real Windows binding noninherited bootstrap and minimal parent handle auth
   try{fs.writeFileSync(1,`DESKTOP_480_NATIVE ${JSON.stringify(receipt)}\n`)}catch{diagnosticFailed=true}
  }
  let child:DesktopNativeChild|undefined
- try{phase="launch";child=binding.launch(path.join(native,"cmspark-desktop.exe"),boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address() as any).port}/desktop`,exited);phase="waiting-metadata"
+ try{surfaceLease.checkpoint();phase="launch";child=binding.launch(path.join(native,"cmspark-desktop.exe"),boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address() as any).port}/desktop`,exited);phase="waiting-metadata"
   await Promise.race([done,exit.then(code=>{throw Error(`Native Windows host exit ${code}; authenticated=${auth}; readFamilies=${methods.size}`)}),new Promise<never>((_,reject)=>t.signal.addEventListener("abort",()=>{diagnostic("deadline");reject(Error("Owned Windows native outer deadline"))},{once:true}))]);assert.equal(auth,true);assert.equal(windowRequested,true);assert.equal(legacy.clients.size,0);assert.equal(channel.wss.clients.size,1)
   phase="closing";const ws=[...channel.wss.clients][0];ws.send(JSON.stringify({type:"desktop.close"}));assert.equal(await exit,0);phase="complete"
- }finally{diagnostic("cleanup");child?.terminate();for(const ws of channel.wss.clients)ws.terminate();await exit;await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));diagnostic("cleanup-complete");assert.equal(diagnosticFailed,false,"Owned native diagnostic capture failed")}
+ }finally{surfaceLease.retain();diagnostic("cleanup");child?.terminate();for(const ws of channel.wss.clients)ws.terminate();if(child)await exit;await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));diagnostic("cleanup-complete");assert.equal(diagnosticFailed,false,"Owned native diagnostic capture failed");surfaceLease.settled()}
+
+ })
 })
 test("actual Windows native parser refuses boolean and decoded duplicate fields before parent/WS use",{skip:process.platform!=="win32",timeout:20000},()=>{
  const carrier=require(path.join(native,"desktop-malformed-bootstrap.node"))

@@ -1,3 +1,4 @@
+import { withSurface650 } from "./fixtures/native-surface-650"
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -37,6 +38,7 @@ test("actual C construction failures reap only their owned child; normal waiter 
 
 // Actual native host+WKWebView+crypto/network test, hidden window (not GUI/installed acceptance).
 test("real Mac native child authenticates over WS and bundled hidden WK document reads the four metadata pages",{skip:process.platform!=="darwin",timeout:20000},async(t)=>{
+ return withSurface650(t, async (t, surfaceLease) => {
  const root=path.resolve(__dirname,"../../dist/desktop-native"),addon=path.join(root,"desktop-launcher.node"),binary=path.join(root,"cmspark-desktop")
  assert.equal(fs.existsSync(addon)&&fs.existsSync(binary),true,"Build actual native desktop artifacts before Mac native gate")
  const binding=require(addon) as DesktopNativeBinding
@@ -49,14 +51,16 @@ test("real Mac native child authenticates over WS and bundled hidden WK document
  channel.wss.on("connection",ws=>ws.on("message",b=>{try{wire.push(String(JSON.parse(String(b)).type))}catch{wire.push("INVALID_JSON")}}));
  attachDesktopUpgrade(server,legacy,channel.wss,()=>false);server.listen(0,"127.0.0.1");await once(server,"listening")
  let child:DesktopNativeChild|undefined
- try{const port=(server.address() as any).port;child=binding.launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${port}/desktop`,exited)
+ try{surfaceLease.checkpoint();const port=(server.address() as any).port;child=binding.launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${port}/desktop`,exited)
    // Authenticated bundled renderer initially refreshes all four read-only metadata families.
    await Promise.race([done,exit.then(code=>{throw Error(`Native owned child exited before metadata completion (${code}); auth=${authority}; types=${wire.join(",")}; reads=${[...methods].join(",")}`)}),new Promise<never>((_,reject)=>t.signal.addEventListener("abort",()=>reject(Error("Owned native outer test deadline")),{once:true}))])
    assert.equal(legacy.clients.size,0);assert.equal(channel.wss.clients.size,1);assert.equal(methods.size,4)
    // Ordered list replies contain arrays; native must consume them and remain owner-connected.
    const ws=[...channel.wss.clients][0];const dropped=new Promise<never>((_,reject)=>ws.once("close",code=>{if(code===1001)reject(Error(`Native disconnected before consuming valid metadata replies (${code})`))}))
    ws.send(JSON.stringify({type:"desktop.close"}));assert.equal(await Promise.race([exit,dropped]),0)
- }finally{child?.terminate();for(const ws of channel.wss.clients)ws.terminate();await exit;await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()))}
+ }finally{surfaceLease.retain();child?.terminate();for(const ws of channel.wss.clients)ws.terminate();if(child)await exit;await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));surfaceLease.settled()}
+
+ })
 })
 
 // These run the actual compiled Swift bootstrap reader with only inert/nonissued input.
