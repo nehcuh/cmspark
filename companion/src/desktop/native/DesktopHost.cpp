@@ -110,7 +110,8 @@ class Desktop {
 
 #endif
  void deliver(JsonObject const& frame){if(web&&ready&&!generation.empty())web->PostWebMessageAsJson(frame.Stringify().c_str());}
- void document(){retire_confirmation(0);requests.clear();generation=random_id();JsonObject frame;put(frame,L"type",L"desktop.document");put(frame,L"generation",generation);deliver(frame);DESKTOP_TEST_NOTE(document_post_attempted)}
+ void retire_dialog(){auto r=requests.find(L"desktop.chat.send");if(r==requests.end())return;if(ready){JsonObject stop;put(stop,L"type",L"desktop.chat.stop");put(stop,L"id",random_id());put(stop,L"thread_id",r->second.thread);put(stop,L"run_id",r->second.native_id);send(stop);}requests.erase(r);}
+ void document(){retire_dialog();retire_confirmation(0);requests.clear();generation=random_id();JsonObject frame;put(frame,L"type",L"desktop.document");put(frame,L"generation",generation);deliver(frame);DESKTOP_TEST_NOTE(document_post_attempted)}
  void start_network(){std::thread([this](){winrt::init_apartment(winrt::apartment_type::multi_threaded);while(true){
    auto id=++epoch;ready=false;post(native_connect,id);
    HINTERNET session=WinHttpOpen(L"CMsparkDesktop/1",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0),connection=nullptr,request=nullptr,ws=nullptr;
@@ -177,12 +178,34 @@ class Desktop {
   if(type==L"desktop.close"){flat(body);if(!keys(frame,{L"type"}))throw std::runtime_error("CONTROL");DestroyWindow(window);return;}
   if(type==L"desktop.confirmation.request"){begin_confirmation(flat(body));return;}
   if(type==L"desktop.confirmation.resolved"){auto terminal=flat(body);if(confirmation&&text(terminal,L"confirmation_id")==confirmation->id)retire_confirmation();return;}
-  auto request=std::find_if(requests.begin(),requests.end(),[&](auto const& r){return r.second.native_id==text(frame,L"id");});if(request==requests.end()||request->second.generation!=generation)return;auto pending=request->second;auto name=request->first;requests.erase(request);if(name==L"thread.peek"&&type==L"thread.peek_result"&&text(frame,L"thread_id")!=pending.thread)return;if((name==L"desktop.thread.metadata.edit"||name==L"desktop.thread.metadata.save")&&(type!=name+L".result"||text(frame,L"thread_id")!=pending.thread))return;put(frame,L"id",pending.ui_id);deliver(frame);
+  auto request=std::find_if(requests.begin(),requests.end(),[&](auto const& r){return r.second.native_id==text(frame,L"id");});if(request==requests.end()||request->second.generation!=generation)return;auto pending=request->second;auto name=request->first;
+  if(name==L"desktop.chat.send"){
+   if(text(frame,L"thread_id")!=pending.thread)return;
+   if(type!=L"desktop.chat.send.result"&&type!=L"desktop.chat.event")return;
+   if(frame.HasKey(L"run_id")&&text(frame,L"run_id")!=pending.native_id)return;
+   if(type==L"desktop.chat.event"){auto kind=text(frame,L"kind");if(!frame.HasKey(L"run_id")||!std::set<std::wstring>{L"user",L"snapshot",L"assistant",L"done",L"aborted",L"error",L"confirmation_unavailable",L"terminal"}.count(kind))return;if(kind==L"terminal")requests.erase(request);}
+   else {auto ok=frame.TryLookup(L"ok");if(!ok||ok.ValueType()!=JsonValueType::Boolean)return;if(!ok.GetBoolean())requests.erase(request);}
+   put(frame,L"id",pending.ui_id);if(frame.HasKey(L"run_id"))put(frame,L"run_id",pending.ui_id);deliver(frame);return;
+  }
+  if(name==L"desktop.thread.create"||name==L"desktop.thread.open"||name==L"desktop.chat.stop"){
+   if(type!=name+L".result")return;if(name!=L"desktop.thread.create"&&text(frame,L"thread_id")!=pending.thread)return;
+   auto active=requests.find(L"desktop.chat.send");
+   if(name==L"desktop.thread.open"&&frame.HasKey(L"owned_run_id")){if(active!=requests.end()&&active->second.generation==generation&&active->second.thread==pending.thread&&text(frame,L"owned_run_id")==active->second.native_id)put(frame,L"owned_run_id",active->second.ui_id);else frame.Insert(L"owned_run_id",JsonValue::CreateNullValue());}
+   if(name==L"desktop.chat.stop"&&frame.HasKey(L"run_id")){if(active==requests.end()||text(frame,L"run_id")!=active->second.native_id)return;put(frame,L"run_id",active->second.ui_id);}
+  }
+  requests.erase(request);if(name==L"thread.peek"&&type==L"thread.peek_result"&&text(frame,L"thread_id")!=pending.thread)return;if((name==L"desktop.thread.metadata.edit"||name==L"desktop.thread.metadata.save")&&(type!=name+L".result"||text(frame,L"thread_id")!=pending.thread))return;put(frame,L"id",pending.ui_id);deliver(frame);
  }
  void renderer(std::wstring const& source,std::wstring const& body){if(!ready||source!=document_url||generation.empty())return;auto frame=flat(body);if(text(frame,L"generation")!=generation)return;auto type=text(frame,L"type");if(type==L"desktop.view"&&keys(frame,{L"type",L"view",L"generation"})){auto next=text(frame,L"view");if(next==L"compact"||next==L"workspace")show(next);return;}
   std::set<std::wstring> allowed{L"type",L"id",L"generation"};if(type==L"thread.peek")allowed.insert(L"thread_id");
   if(type==L"desktop.mcp.edit"||type==L"desktop.mcp.save"){allowed.insert(L"name");allowed.insert(L"thread_id");if(type==L"desktop.mcp.save"){allowed.insert(L"action");allowed.insert(L"payload_json");}if(frame.Size()!=allowed.size()||text(frame,L"name").empty()||requests.count(L"desktop.mcp.save"))return;auto thread=frame.TryLookup(L"thread_id");if(!thread||(thread.ValueType()!=JsonValueType::Null&&thread.ValueType()!=JsonValueType::String))return;if(type==L"desktop.mcp.save"&&(text(frame,L"payload_json").empty()||(text(frame,L"action")!=L"add"&&text(frame,L"action")!=L"update")))return;}
   if(type==L"desktop.thread.metadata.edit"||type==L"desktop.thread.metadata.save"){allowed.insert(L"thread_id");if(type==L"desktop.thread.metadata.save")allowed.insert(L"payload_json");if(frame.Size()!=allowed.size()||text(frame,L"id").empty()||text(frame,L"id").size()>200||text(frame,L"thread_id").empty()||(type==L"desktop.thread.metadata.save"&&text(frame,L"payload_json").empty()))return;}
+  if(type==L"desktop.thread.create"||type==L"desktop.thread.open"||type==L"desktop.chat.send"||type==L"desktop.chat.stop"){
+   if(type!=L"desktop.thread.create")allowed.insert(L"thread_id");if(type==L"desktop.chat.send")allowed.insert(L"message");if(type==L"desktop.chat.stop")allowed.insert(L"run_id");
+   if(frame.Size()!=allowed.size()||text(frame,L"id").empty()||text(frame,L"id").size()>200||(type!=L"desktop.thread.create"&&text(frame,L"thread_id").empty()))return;
+   if(type==L"desktop.chat.send"&&(text(frame,L"message").empty()||requests.count(type)))return;
+   if(type==L"desktop.thread.create"&&requests.count(type))return;
+   if(type==L"desktop.chat.stop"){auto active=requests.find(L"desktop.chat.send");if(active==requests.end()||active->second.generation!=generation||active->second.thread!=text(frame,L"thread_id")||active->second.ui_id!=text(frame,L"run_id"))return;put(frame,L"run_id",active->second.native_id);}
+  }
   for(auto const& item:frame)if(!allowed.count(std::wstring(item.Key())))return;if(!method(type))return;auto original=frame.TryLookup(L"id");if(original&&original.ValueType()!=JsonValueType::String)return;if(type==L"thread.peek"&&text(frame,L"thread_id").empty())return;DESKTOP_TEST_NOTE(renderer_admitted)auto id=random_id();requests[type]={id,text(frame,L"id"),generation,text(frame,L"thread_id")};frame.Remove(L"generation");put(frame,L"id",id);send(frame);DESKTOP_TEST_NOTE(renderer_send_attempted)
  }
  void build_webview(){
@@ -193,7 +216,7 @@ class Desktop {
     ComPtr<ICoreWebView2Settings> settings;web->get_Settings(&settings);settings->put_AreDevToolsEnabled(FALSE);settings->put_AreDefaultContextMenusEnabled(FALSE);settings->put_AreDefaultScriptDialogsEnabled(FALSE);settings->put_IsStatusBarEnabled(FALSE);settings->put_IsWebMessageEnabled(TRUE);
     ComPtr<ICoreWebView2_3> mapping;if(FAILED(web.As(&mapping))||FAILED(mapping->SetVirtualHostNameToFolderMapping(L"cmspark-desktop.invalid",(root+L"\\assets").c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS))){ExitProcess(54);return E_FAIL;}
     EventRegistrationToken token{};
-    web->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs* args)->HRESULT{LPWSTR uri=nullptr;args->get_Uri(&uri);bool allow=uri&&std::wstring(uri)==document_url;CoTaskMemFree(uri);args->put_Cancel(!allow);if(allow){retire_confirmation(0);generation.clear();requests.clear();}return S_OK;}).Get(),&token);
+    web->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs* args)->HRESULT{LPWSTR uri=nullptr;args->get_Uri(&uri);bool allow=uri&&std::wstring(uri)==document_url;CoTaskMemFree(uri);args->put_Cancel(!allow);if(allow){retire_dialog();retire_confirmation(0);generation.clear();requests.clear();}return S_OK;}).Get(),&token);
     web->add_FrameNavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs* args)->HRESULT{args->put_Cancel(TRUE);return S_OK;}).Get(),&token);
     web->add_NewWindowRequested(Callback<ICoreWebView2NewWindowRequestedEventHandler>([](ICoreWebView2*,ICoreWebView2NewWindowRequestedEventArgs* args)->HRESULT{args->put_Handled(TRUE);return S_OK;}).Get(),&token);
     web->add_PermissionRequested(Callback<ICoreWebView2PermissionRequestedEventHandler>([](ICoreWebView2*,ICoreWebView2PermissionRequestedEventArgs* args)->HRESULT{args->put_State(COREWEBVIEW2_PERMISSION_STATE_DENY);return S_OK;}).Get(),&token);
@@ -213,7 +236,7 @@ class Desktop {
  static LRESULT CALLBACK proc(HWND hwnd,UINT message,WPARAM w,LPARAM l){Desktop* self=(Desktop*)GetWindowLongPtrW(hwnd,GWLP_USERDATA);if(message==WM_NCCREATE){self=(Desktop*)((CREATESTRUCTW*)l)->lpCreateParams;self->window=hwnd;SetWindowLongPtrW(hwnd,GWLP_USERDATA,(LONG_PTR)self);}if(!self)return DefWindowProcW(hwnd,message,w,l);
   if(message==WM_SIZE&&self->controller){RECT bounds{};GetClientRect(hwnd,&bounds);self->controller->put_Bounds(bounds);return 0;}
   if(message==native_frame||message==native_connect||message==native_offline){std::unique_ptr<Frame> frame((Frame*)l);if(frame->epoch!=self->epoch)return 0;try{if(message==native_connect){self->retire_confirmation();self->phase=L"initial";self->generation.clear();self->requests.clear();}else if(message==native_offline){self->retire_confirmation();self->ready=false;self->generation.clear();self->requests.clear();if(self->web){JsonObject offline;put(offline,L"type",L"desktop.offline");self->web->PostWebMessageAsJson(offline.Stringify().c_str());}}else self->accept(frame->value,frame->epoch);}catch(...){ExitProcess(45);}return 0;}
-  if(message==WM_CLOSE){self->retire_confirmation(0);DestroyWindow(hwnd);return 0;}if(message==WM_DESTROY){if(self->controller)self->controller->Close();PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,message,w,l);
+  if(message==WM_CLOSE){self->retire_dialog();self->retire_confirmation(0);DestroyWindow(hwnd);return 0;}if(message==WM_DESTROY){if(self->controller)self->controller->Close();PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,message,w,l);
  }
  int run(HINSTANCE instance){WNDCLASSW cls{};cls.lpfnWndProc=proc;cls.hInstance=instance;cls.lpszClassName=L"CMsparkDesktopOwnedWindow";cls.hCursor=LoadCursor(nullptr,IDC_ARROW);if(!RegisterClassW(&cls))return 60;RECT rect{0,0,360,420};AdjustWindowRectEx(&rect,WS_OVERLAPPEDWINDOW,FALSE,0);window=CreateWindowExW(0,cls.lpszClassName,L"CMspark 工作台",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,instance,this);if(!window)return 61;start_network();MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}ExitProcess((UINT)msg.wParam);return(int)msg.wParam;}
 };
@@ -226,7 +249,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){try{
  struct BootBuffer{char bytes[CMSPARK_BOOT_MAX+1]{};~BootBuffer(){SecureZeroMemory(bytes,sizeof(bytes));}} buffer;DWORD body_length=0;if(!d480_client_body(&bootstrap,buffer.bytes,&body_length))return 13;
  std::string data(buffer.bytes,body_length);SecureZeroMemory(buffer.bytes,sizeof(buffer.bytes));
  struct DataWipe{std::string& value;~DataWipe(){if(!value.empty())SecureZeroMemory(value.data(),value.size());}} data_wipe{data};
- auto boot=flat(wide(data));SecureZeroMemory(data.data(),data.size());if(!keys(boot,{L"capability_id",L"secret",L"url",L"protocol_version",L"issued_method_set_version",L"parent_handle"})||!hex(text(boot,L"capability_id"),32)||!hex(text(boot,L"secret"),64)||!exact_one(boot,L"protocol_version")||boot.GetNamedValue(L"issued_method_set_version").ValueType()!=JsonValueType::Number||boot.GetNamedNumber(L"issued_method_set_version")!=desktop_method_set_version||desktop_method_set_version!=3)return 15;
+ auto boot=flat(wide(data));SecureZeroMemory(data.data(),data.size());if(!keys(boot,{L"capability_id",L"secret",L"url",L"protocol_version",L"issued_method_set_version",L"parent_handle"})||!hex(text(boot,L"capability_id"),32)||!hex(text(boot,L"secret"),64)||!exact_one(boot,L"protocol_version")||boot.GetNamedValue(L"issued_method_set_version").ValueType()!=JsonValueType::Number||boot.GetNamedNumber(L"issued_method_set_version")!=desktop_method_set_version||desktop_method_set_version!=4)return 15;
  auto url=text(boot,L"url");std::wstring prefix=L"ws://127.0.0.1:";if(url.rfind(prefix,0)!=0||url.size()<prefix.size()+9||url.substr(url.size()-8)!=L"/desktop")return 15;auto port_text=url.substr(prefix.size(),url.size()-prefix.size()-8);if(port_text.empty()||port_text.size()>5||!std::all_of(port_text.begin(),port_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 15;unsigned port=std::stoul(port_text);if(!port||port>65535)return 15;
  auto parent_text=text(boot,L"parent_handle");if(parent_text.empty()||parent_text[0]==L'0'||!std::all_of(parent_text.begin(),parent_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 16;size_t used=0;auto number=std::stoull(parent_text,&used,10);if(used!=parent_text.size()||number>(uintptr_t)-1)return 16;HANDLE parent=(HANDLE)(uintptr_t)number;if(!sync_parent(parent))return 16;if(!d480_client_finish(&bootstrap,parent))return 16;
  CloseHandle(input);bootstrap.pipe=nullptr;

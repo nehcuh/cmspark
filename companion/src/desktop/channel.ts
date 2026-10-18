@@ -6,6 +6,8 @@ import { DESKTOP_NATIVE_ORIGIN, DESKTOP_CHALLENGE_TTL_MS } from "./capabilities"
 import { desktopRead, type DesktopReadServices } from "./read"
 import { parseDesktopFrame } from "./flat-json"
 import { createDesktopMcpSave } from "./mcp-save"
+import { createDesktopDialog, DESKTOP_DIALOG_METHODS, type NativeDialogRuntime } from "./dialog"
+import type { ThreadManager } from "../threads/thread-manager"
 import { desktopThreadMetadata } from "./thread-metadata"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 
@@ -21,11 +23,12 @@ export function attachDesktopUpgrade(server: http.Server, legacy: WebSocketServe
     target.handleUpgrade(req, socket, head, ws => target.emit("connection", ws, req))
   })
 }
-export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; services: DesktopReadServices; maxPayload: number; securityConfirmations?: SecurityConfirmationManager; onDisconnect?: (ws: WebSocket) => void; onAuthenticated?: (host: string) => void }) {
+export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; services: DesktopReadServices; maxPayload: number; securityConfirmations?: SecurityConfirmationManager; onDisconnect?: (ws: WebSocket) => void; onAuthenticated?: (host: string) => void; dialogRuntime?: (owner: { ws: WebSocket; current(): boolean }) => NativeDialogRuntime }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: opts.maxPayload })
   const active = new Map<WebSocket, DesktopPrincipal>()
   const pending = new Map<WebSocket, string>()
-  const unbind = opts.registry.onRevoke(id => { for (const [ws, cap] of pending) if (cap === id) ws.terminate() })
+  const retire = new Map<WebSocket, () => void>()
+  const unbind = opts.registry.onRevoke(id => { for (const [ws, cap] of pending) if (cap === id) { retire.get(ws)?.(); ws.terminate() } })
   wss.once("close", unbind)
   wss.on("connection", ws => {
     // Reuse the existing legacy admission bound; no unauthenticated desktop growth.
@@ -34,6 +37,8 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
     let capabilityId: string | undefined
     let principal: DesktopPrincipal | undefined
     let mcpSave: ReturnType<typeof createDesktopMcpSave> | undefined
+    let dialog: ReturnType<typeof createDesktopDialog> | undefined
+    retire.set(ws, () => { try { dialog?.cancel() } catch { /* Continue retiring other pending work. */ } try { mcpSave?.cancel() } catch { /* Socket teardown must continue. */ } })
     const timer = setTimeout(() => ws.terminate(), DESKTOP_CHALLENGE_TTL_MS)
     ws.on("error", () => {})
     send(ws, { type: "desktop.challenge.request" })
@@ -52,12 +57,17 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
           principal = opts.registry.authenticate(capabilityId, connectionId, 1, frame.proof) || undefined
           if (!principal) { ws.terminate(); return }
           // Reconnect closes old sockets, not merely their privilege bit.
-          for (const [old, p] of active) if (p.hostSessionId === principal.hostSessionId) { active.delete(old); old.terminate() }
+          for (const [old, p] of active) if (p.hostSessionId === principal.hostSessionId) { active.delete(old); retire.get(old)?.(); old.terminate() }
           active.set(ws, principal); clearTimeout(timer)
           if (opts.securityConfirmations) { const owner = principal; mcpSave = createDesktopMcpSave({ ws, services: opts.services, manager: opts.securityConfirmations, current: () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.mcp.save"), send: frame => send(ws, frame) }) }
+          { const owner = principal; const current = () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.chat.send"); dialog = createDesktopDialog({ threads: opts.services.threads as ThreadManager, runtime: opts.dialogRuntime?.({ ws, current }), current, send: frame => send(ws, frame), maxPayload: opts.maxPayload }) }
           send(ws, { type: "desktop.ready", protocol_version: 1 }); opts.onAuthenticated?.(principal.hostSessionId); return
         }
         ws.terminate(); return
+      }
+      if ((DESKTOP_DIALOG_METHODS as readonly string[]).includes(String(frame.type))) {
+        if (!dialog || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", id: frame.id, error_code: "DESKTOP_METHOD_DENIED" }); return }
+        dialog.handle(frame); return
       }
       if (["desktop.thread.metadata.edit", "desktop.thread.metadata.save"].includes(String(frame.type))) {
         const owner = principal
@@ -83,7 +93,7 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
         if (opts.registry.allows(principal, frame.type)) send(ws, { ...result, ...(frame.id === undefined ? {} : { id: frame.id }) })
       } catch { if (opts.registry.allows(principal, frame.type)) send(ws, { type: "desktop.error", error_code: "DESKTOP_READ_FAILED", ...(frame.id === undefined ? {} : { id: frame.id }) }) }
     })
-    ws.on("close", () => { mcpSave?.cancel(); clearTimeout(timer); pending.delete(ws); active.delete(ws); if (principal) opts.registry.disconnect(principal); if (capabilityId) opts.registry.cancelChallenge(capabilityId, connectionId); opts.onDisconnect?.(ws) })
+    ws.on("close", () => { retire.get(ws)?.(); retire.delete(ws); clearTimeout(timer); pending.delete(ws); active.delete(ws); if (principal) opts.registry.disconnect(principal); if (capabilityId) opts.registry.cancelChallenge(capabilityId, connectionId); opts.onDisconnect?.(ws) })
   })
   return {
     wss,

@@ -177,6 +177,8 @@ function resolveHostUseApp(toolName: string, params: any): string {
 }
 
 export type L2AdmissionContext = {
+  /** Trusted native lifecycle only: no supported native tool-confirmation UI yet. */
+  nativeConfirmationUnavailable?: () => Promise<void>
   enterprisePermit?: import("../outbound-mcp/enterprise-permit").EnterprisePermit
   signal?: AbortSignal
   toolName: string
@@ -224,6 +226,8 @@ export type L2AdmissionResult =
  * On ok:false, caller must return result immediately (already logToolFinish'd inside when appropriate — match current code).
  */
 export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2AdmissionResult> {
+  const nativeUnavailable = async (): Promise<L2AdmissionResult> => { await ctx.nativeConfirmationUnavailable!(); return { ok: false, result: { success: false, error: "DESKTOP_CONFIRMATION_UNAVAILABLE", error_code: "DESKTOP_CONFIRMATION_UNAVAILABLE" } } }
+  if (ctx.nativeConfirmationUnavailable && ctx.toolName === "host_app" && ctx.finalParams.action === "run_template") return nativeUnavailable()
   // #686: an action-specific interactive floor precedes enterprise/token/skip branches.
   if (ctx.toolName === "host_app" && ctx.finalParams.action === "run_template") {
     try {
@@ -1146,6 +1150,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       }
     }
     if ((!skipConfirmation || forceConfirm) && !hostComputerTrustSkip && !enterpriseSkip) {
+      if (ctx.nativeConfirmationUnavailable) { await ctx.nativeConfirmationUnavailable(); return { success: false, error: "DESKTOP_CONFIRMATION_UNAVAILABLE", error_code: "DESKTOP_CONFIRMATION_UNAVAILABLE" } }
       // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
       // interactive confirmation unless whitelisted above. The regex match
       // (safety.dangerousApis) becomes a risk-preview escalation hint shown to

@@ -3,6 +3,8 @@
   let generation=null, page="thread.list", compact=true, selectedThread=null;
   let editAction="add", editRequest=null, saveRequest=null, sequence=0, draftOpen=false;
   let metadataEpoch=0, metadataTarget=null, metadataDocument=null, metadataEdit=null, metadataSave=null, metadataInitial=null, metadataOpen=false, metadataTrigger=null;
+  let dialogEpoch=0,dialogTarget=null,dialogOpen=null,dialogCreate=null,dialogRun=null,dialogSubscription=null,dialogLive=null;
+  const dialogDrafts=new Map();
   const titles={"thread.list":"对话","mcp.list":"MCP","skill.list":"技能","knowledge.list":"知识"};
   const $=id=>document.getElementById(id);
   function post(frame){if(!generation)return;const value={...frame,generation};if(window.webkit?.messageHandlers?.desktop)window.webkit.messageHandlers.desktop.postMessage(value);else if(window.chrome?.webview)window.chrome.webview.postMessage(value)}
@@ -25,11 +27,46 @@
     $("metadata-title").textContent="对话信息 · "+target;$("metadata-editor").hidden=false;fillMetadata(retained||{alias:"",user_tags:[],topic_folder:null});metadataBusy(true);metadataFeedback("正在读取对话信息…");post({type:"desktop.thread.metadata.edit",id:metadataEdit.id,thread_id:target});
   }
   function currentMetadata(p,frame){return p&&page==="thread.list"&&p.id===frame.id&&p.target===frame.thread_id&&p.target===metadataTarget&&p.document===generation&&p.document===metadataDocument&&p.epoch===metadataEpoch&&metadataOpen}
-  function load(retainMetadata=false){if(!retainMetadata)retireMetadata();if($("metadata-editor"))$("metadata-editor").hidden=page!=="thread.list"||!metadataOpen;editRequest=null;if($("mcp-new"))$("mcp-new").hidden=page!=="mcp.list";if($("mcp-editor"))$("mcp-editor").hidden=page!=="mcp.list"||!draftOpen; selectedThread=null; $("title").textContent=titles[page];$("notice").textContent="加载中…";$("list").replaceChildren();$("preview").replaceChildren();document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-current",b.dataset.page===page?"page":"false"));request(page)}
+  function load(retainMetadata=false){if(!retainMetadata){retireMetadata();retireDialog()}if($("dialog-new"))$("dialog-new").hidden=page!=="thread.list";if($("metadata-editor"))$("metadata-editor").hidden=page!=="thread.list"||!metadataOpen;editRequest=null;if($("mcp-new"))$("mcp-new").hidden=page!=="mcp.list";if($("mcp-editor"))$("mcp-editor").hidden=page!=="mcp.list"||!draftOpen; selectedThread=null; $("title").textContent=titles[page];$("notice").textContent="加载中…";$("list").replaceChildren();$("preview").replaceChildren();document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-current",b.dataset.page===page?"page":"false"));request(page)}
+  function dialogFeedback(text){if($("dialog-feedback"))$("dialog-feedback").textContent=text}
+  function dialogBusy(){if($("dialog-send"))$("dialog-send").disabled=!generation||!dialogTarget||!!dialogOpen||!!dialogRun;if($("dialog-stop")){ $("dialog-stop").hidden=!dialogRun;$("dialog-stop").disabled=!generation||!!dialogRun?.stopPending;$("dialog-stop").textContent=dialogRun?"停止对话 · "+dialogRun.target:"停止当前对话" }if($("dialog-new"))$("dialog-new").disabled=!generation||!!dialogCreate}
+  function retireDialog(){if(dialogTarget&&$("dialog-input"))dialogDrafts.set(dialogTarget,$("dialog-input").value);dialogEpoch++;dialogOpen=null;dialogTarget=null;dialogSubscription=null;dialogLive=null;if($("dialog-editor"))$("dialog-editor").hidden=true;dialogBusy()}
+  function openDialog(target){if(!generation||!$("dialog-editor"))return;retireDialog();dialogTarget=target;dialogOpen={id:"desktop-dialog-open-"+(++sequence),target,document:generation,epoch:dialogEpoch};$("dialog-editor").hidden=false;$("dialog-input").value=dialogDrafts.get(target)||"";$("dialog-history").replaceChildren();dialogFeedback("正在读取真实对话历史…");dialogBusy();post({type:"desktop.thread.open",id:dialogOpen.id,thread_id:target})}
+  function dialogRow(content,role){const row=document.createElement("article");row.textContent=(role==="user"?"你\n":"CMspark\n")+content;$("dialog-history").append(row);return row}
+  function receiveDialog(frame){
+    if(frame.type==="desktop.thread.create.result"){
+      if(!dialogCreate||frame.id!==dialogCreate.id||dialogCreate.document!==generation)return true;const intent=dialogCreate,current=intent.page===page&&page==="thread.list"&&intent.epoch===dialogEpoch&&intent.target===dialogTarget;dialogCreate=null;dialogBusy();if(frame.ok===true&&frame.created===true&&typeof frame.thread_id==="string"){if(page==="thread.list")request("thread.list");if(current)openDialog(frame.thread_id);else dialogFeedback("新对话已创建；当前选择保持不变，请从列表打开。")}else dialogFeedback("新建结果未确认，请刷新列表核对；不会自动再建。");return true
+    }
+    if(frame.type==="desktop.thread.open.result"){
+      const p=dialogOpen;if(!p||frame.id!==p.id||frame.thread_id!==p.target||p.document!==generation||p.epoch!==dialogEpoch||dialogTarget!==p.target)return true;dialogOpen=null;dialogBusy();
+      if(frame.ok!==true||!frame.history||!Array.isArray(frame.history.messages)){dialogFeedback("无法读取完整历史，请刷新核对。草稿保留。");return true}
+      $("dialog-history").replaceChildren();for(const row of frame.history.messages)if((row.role==="user"||row.role==="assistant")&&typeof row.content==="string")dialogRow(row.content,row.role);
+      if(dialogRun&&dialogRun.target===p.target&&frame.owned_run_id===dialogRun.id)dialogSubscription={id:dialogRun.id,target:p.target,document:generation,epoch:dialogEpoch};
+      dialogFeedback(frame.history.hidden_messages?"已读取历史；工具/系统详情不在此显示。":"已读取持久历史。");return true
+    }
+    if(frame.type==="desktop.chat.stop.result"){
+      if(dialogRun&&frame.run_id===dialogRun.id&&frame.thread_id===dialogRun.target)dialogFeedback(frame.stopped===true?"停止请求已接收，等待实际运行结束。":"运行已变化，请刷新核对。");return true
+    }
+    if(frame.type==="desktop.chat.send.result"){
+      if(!dialogRun||frame.id!==dialogRun.id||frame.thread_id!==dialogRun.target)return true;
+      if(frame.ok!==true){dialogRun=null;dialogSubscription=null;dialogBusy();dialogFeedback("发送未确认或被策略拒绝，草稿保留。请先核对历史。")}return true
+    }
+    if(frame.type!=="desktop.chat.event")return false;
+    if(!dialogRun||frame.id!==dialogRun.id||frame.run_id!==dialogRun.id||frame.thread_id!==dialogRun.target||dialogRun.document!==generation)return true;
+    const subscribed=dialogSubscription&&dialogSubscription.id===frame.run_id&&dialogSubscription.target===dialogTarget&&dialogSubscription.document===generation&&dialogSubscription.epoch===dialogEpoch;
+    if(frame.kind==="terminal"){const target=dialogRun.target;dialogRun=null;dialogSubscription=null;dialogBusy();if(dialogTarget===target){openDialog(target);dialogFeedback(frame.state==="done"?"运行已结束，正在核对持久历史。":"运行已停止或结果未确认，正在核对历史。草稿不会自动重发。")}return true}
+    if(!subscribed)return true;
+    if(frame.kind==="user"&&frame.persisted===true){dialogRow(frame.content||"","user");if($("dialog-input").value===dialogRun.message){$("dialog-input").value="";dialogDrafts.set(dialogTarget,"")}dialogFeedback("用户消息已持久化；正在生成…")}
+    if(frame.kind==="snapshot"){if(!dialogLive)dialogLive=dialogRow("","assistant");dialogLive.textContent="CMspark\n"+(frame.content||"")}
+    if(frame.kind==="assistant"){if(dialogLive){dialogLive.textContent="CMspark\n"+(frame.content||"");dialogLive=null}else dialogRow(frame.content||"","assistant")}
+    if(frame.kind==="error"||frame.kind==="aborted")dialogFeedback("运行被停止或失败，最终结果请以重开历史核对。");
+    if(frame.kind==="confirmation_unavailable")dialogFeedback("该操作需要确认；当前工作台尚不支持此工具确认，已拒绝执行。");
+    return true;
+  }
   window.cmsparkDesktopReceive=frame=>{
     if(!frame||typeof frame!=="object")return;
-    if(frame.type==="desktop.document"){generation=frame.generation;retireMetadata(true);metadataFeedback(metadataOpen?"连接已恢复，草稿保留；请重新打开原对话信息核对后保存。":"");editRequest=null;saveRequest=null;busy(false);feedback(draftOpen?"连接已恢复，请核对草稿后重新确认保存。":"");$("status").textContent="已连接 · MCP 保存需确认";load(true);for(const type of ["mcp.list","skill.list","knowledge.list"])request(type);return}
-    if(frame.type==="desktop.offline"){generation=null;retireMetadata(true);metadataFeedback("连接断开，保存结果未确认。草稿保留，请重连后核对原对话。");selectedThread=null;editRequest=null;saveRequest=null;busy(false);feedback("连接断开，尚未确认保存。草稿保留，请重新检查后提交。");$("preview").replaceChildren();$("status").textContent="连接已断开";$("notice").textContent="等待原生宿主重新连接。";return}
+    if(frame.type==="desktop.document"){generation=frame.generation;retireDialog();dialogRun=null;dialogCreate=null;dialogBusy();retireMetadata(true);metadataFeedback(metadataOpen?"连接已恢复，草稿保留；请重新打开原对话信息核对后保存。":"");editRequest=null;saveRequest=null;busy(false);feedback(draftOpen?"连接已恢复，请核对草稿后重新确认保存。":"");$("status").textContent="已连接 · MCP 保存需确认";load(true);for(const type of ["mcp.list","skill.list","knowledge.list"])request(type);return}
+    if(frame.type==="desktop.offline"){generation=null;retireDialog();dialogRun=null;dialogCreate=null;dialogBusy();dialogFeedback("连接断开，结果未确认；请重连后核对历史，草稿保留。");retireMetadata(true);metadataFeedback("连接断开，保存结果未确认。草稿保留，请重连后核对原对话。");selectedThread=null;editRequest=null;saveRequest=null;busy(false);feedback("连接断开，尚未确认保存。草稿保留，请重新检查后提交。");$("preview").replaceChildren();$("status").textContent="连接已断开";$("notice").textContent="等待原生宿主重新连接。";return}
     if(frame.type==="desktop.thread.metadata.edit.result"){
       if(!currentMetadata(metadataEdit,frame))return;const retained=metadataEdit.retained;metadataEdit=null;metadataBusy(false);
       if(frame.ok!==true||!validMetadata(frame.metadata)){metadataInitial=null;metadataBusy(true);metadataFeedback(frame.error_code==="DESKTOP_METADATA_REDACTED"?"这条对话信息含隐藏内容，无法在此编辑。":"无法读取这条对话信息，请重新打开。");return}
@@ -40,6 +77,7 @@
       if(frame.ok===true&&frame.saved===true&&validMetadata(frame.metadata)){metadataInitial=frame.metadata;fillMetadata(frame.metadata);metadataFeedback("已保存对话信息。");request("thread.list")}
       else metadataFeedback(frame.error_code==="DESKTOP_METADATA_REDACTED"?"信息含隐藏内容，未保存。请检查草稿。":"保存结果未确认，草稿保留。请刷新核对后重新提交。");return;
     }
+    if(receiveDialog(frame))return;
     // Confirmation payloads belong exclusively to the native controller; the renderer never decides.
     if(frame.type==="desktop.confirmation.request"||frame.type==="desktop.confirmation.resolved")return;
     if(frame.type==="desktop.mcp.edit.result"){if(!editRequest||frame.id!==editRequest)return;editRequest=null;if(frame.config)editor("update",frame.config,frame.name);else feedback("无法编辑该条目；目前仅支持 stdio。");return}
@@ -52,7 +90,7 @@
     if(frame.type==="thread.peek_result"){if(page==="thread.list"&&selectedThread&&frame.thread_id===selectedThread)$("preview").textContent=frame.markdown||"暂无预览。";return}
     if(frame.type!==page)return;
     const rows=frame.threads||frame.servers||frame.skills||frame.docs||[];$("list").replaceChildren();$("notice").textContent=rows.length?(frame.truncated?"仅显示前 64 项。":""):"暂无内容。";
-    for(const row of rows){const li=document.createElement("li"), label=document.createElement(page==="thread.list"?"button":"strong");label.textContent=row.title||row.name||row.id||"未命名";if(page==="thread.list"){label.type="button";label.addEventListener("click",()=>{if(page!=="thread.list")return;retireMetadata();selectedThread=row.id;$("preview").replaceChildren();request("thread.peek",row.id)})}li.append(label);if(page==="thread.list"){const edit=document.createElement("button");edit.type="button";edit.textContent="对话信息";edit.setAttribute("data-thread-metadata",row.id);edit.addEventListener("click",()=>openMetadata(row.id,edit));li.append(edit);if(row.topic_folder||(row.user_tags||[]).length){const tags=document.createElement("p");tags.textContent=[row.topic_folder?"分组 · "+row.topic_folder:"",(row.user_tags||[]).map(v=>"#"+v).join(" ")].filter(Boolean).join(" · ");li.append(tags)}}if(page==="mcp.list"){const edit=document.createElement("button");edit.type="button";edit.textContent="编辑 stdio";edit.addEventListener("click",()=>{if(!generation||saveRequest)return;editRequest="desktop-mcp-edit-"+(++sequence);post({type:"desktop.mcp.edit",id:editRequest,name:row.name||row.id,thread_id:null})});li.append(edit)}if(row.description||row.status){const p=document.createElement("p");p.textContent=row.description||row.status;li.append(p)}$("list").append(li)}
+    for(const row of rows){const li=document.createElement("li"), label=document.createElement(page==="thread.list"?"button":"strong");label.textContent=row.title||row.name||row.id||"未命名";if(page==="thread.list"){label.type="button";label.addEventListener("click",()=>{if(page!=="thread.list")return;retireMetadata();retireDialog();selectedThread=row.id;$("preview").replaceChildren();request("thread.peek",row.id)})}li.append(label);if(page==="thread.list"){const open=document.createElement("button");open.type="button";open.textContent="打开对话";open.setAttribute("data-thread-dialog",row.id);open.addEventListener("click",()=>{if(page!=="thread.list")return;retireMetadata();selectedThread=row.id;$("preview").replaceChildren();openDialog(row.id)});li.append(open);const edit=document.createElement("button");edit.type="button";edit.textContent="对话信息";edit.setAttribute("data-thread-metadata",row.id);edit.addEventListener("click",()=>openMetadata(row.id,edit));li.append(edit);if(row.topic_folder||(row.user_tags||[]).length){const tags=document.createElement("p");tags.textContent=[row.topic_folder?"分组 · "+row.topic_folder:"",(row.user_tags||[]).map(v=>"#"+v).join(" ")].filter(Boolean).join(" · ");li.append(tags)}}if(page==="mcp.list"){const edit=document.createElement("button");edit.type="button";edit.textContent="编辑 stdio";edit.addEventListener("click",()=>{if(!generation||saveRequest)return;editRequest="desktop-mcp-edit-"+(++sequence);post({type:"desktop.mcp.edit",id:editRequest,name:row.name||row.id,thread_id:null})});li.append(edit)}if(row.description||row.status){const p=document.createElement("p");p.textContent=row.description||row.status;li.append(p)}$("list").append(li)}
   };
   if(window.chrome?.webview)window.chrome.webview.addEventListener("message",e=>window.cmsparkDesktopReceive(e.data));
   document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>{page=b.dataset.page;load()}));
@@ -73,5 +111,8 @@
     editRequest=null;saveRequest="desktop-mcp-save-"+(++sequence);busy(true);feedback("等待原生系统确认，尚未保存…");
     post({type:"desktop.mcp.save",id:saveRequest,name,action:editAction,thread_id:null,payload_json:JSON.stringify({command,args,cwd:$("mcp-cwd").value,enabled:$("mcp-enabled").checked})});
   });
+  $("dialog-new")?.addEventListener("click",()=>{if(!generation||dialogCreate)return;dialogCreate={id:"desktop-dialog-new-"+(++sequence),document:generation,page,epoch:dialogEpoch,target:dialogTarget};dialogBusy();post({type:"desktop.thread.create",id:dialogCreate.id})});
+  $("dialog-send")?.addEventListener("click",()=>{if(!generation||!dialogTarget||dialogOpen||dialogRun)return;const message=$("dialog-input").value;if(!message.trim())return;dialogRun={id:"desktop-dialog-send-"+(++sequence),target:dialogTarget,document:generation,message};dialogSubscription={id:dialogRun.id,target:dialogTarget,document:generation,epoch:dialogEpoch};dialogLive=null;dialogBusy();dialogFeedback("发送已提交，尚未确认持久化…");post({type:"desktop.chat.send",id:dialogRun.id,thread_id:dialogRun.target,message})});
+  $("dialog-stop")?.addEventListener("click",()=>{const run=dialogRun;if(!generation||!run||run.stopPending)return;run.stopPending=true;dialogBusy();post({type:"desktop.chat.stop",id:"desktop-dialog-stop-"+(++sequence),thread_id:run.target,run_id:run.id})});
   $("view").addEventListener("click",()=>{compact=!compact;post({type:"desktop.view",view:compact?"compact":"workspace"})});
 })();

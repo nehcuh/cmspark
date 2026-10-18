@@ -9,7 +9,7 @@ import type { ThreadDigest } from "./digest"
 import { isDigestStale, sanitizeDigest } from "./digest"
 import { sanitizeUserTags } from "./user-tags"
 import { summonerThreadMetadata } from "./metadata-patch"
-import { sanitizeTopicFolder } from "./distill"
+import { redactSecrets, sanitizeTopicFolder } from "./distill"
 import { inspectThreadMessages } from "./thread-inspect"
 import {
   sanitizeRuntimeContextBudget,
@@ -273,6 +273,14 @@ interface Message {
   truncated?: boolean
   incomplete_tools?: boolean
   finish_reason?: string | null
+}
+
+/** Narrow native projection; canonical transcripts remain the sole source. */
+export interface DesktopDialogHistory {
+  thread_id: string
+  title: string
+  messages: Array<{ id: string; role: "user" | "assistant"; content: string; created_at: string }>
+  hidden_messages: number
 }
 
 /** Keep the first row per id (index is newest-first). */
@@ -1236,6 +1244,46 @@ export class ThreadManager {
   }
 
   // --- Messages ---
+
+  /** Unlike legacy getMessages, a failed read is never a successful empty history. */
+  readDesktopDialog(threadId: string): DesktopDialogHistory {
+    let fd: number | undefined
+    try {
+      if (!ThreadManager.isSafeThreadId(threadId)) throw Error()
+      // Do not call get(): that compatibility getter can seed runtime metadata.
+      const thread = this.index.threads.find(t => t.id === threadId)
+      if (!thread || thread.trashed_at || typeof thread.alias !== "string") throw Error()
+      const file = this.threadFilePath(threadId), before = fs.lstatSync(file)
+      if (!before.isFile() || before.isSymbolicLink()) throw Error()
+      fd = fs.openSync(file, "r")
+      const opened = fs.fstatSync(fd)
+      if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) throw Error()
+      const data: unknown = JSON.parse(fs.readFileSync(fd, "utf8"))
+      if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray((data as any).messages)) throw Error()
+      const rows: unknown[] = (data as any).messages
+      if (rows.length > MAX_MESSAGES_PER_THREAD) throw Error()
+      const messages: DesktopDialogHistory["messages"] = [], ids = new Set<string>()
+      let hidden = 0
+      for (const value of rows) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw Error()
+        const row = value as Record<string, unknown>
+        if (row.thread_id !== threadId || typeof row.id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(row.id)
+          || redactSecrets(row.id).hits || ids.has(row.id) || typeof row.content !== "string"
+          || typeof row.created_at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(row.created_at)
+          || !Number.isFinite(Date.parse(row.created_at)) || new Date(row.created_at).toISOString() !== row.created_at) throw Error()
+        ids.add(row.id)
+        if (row.role === "tool" || row.role === "system") { hidden++; continue }
+        if (row.role !== "user" && row.role !== "assistant") throw Error()
+        messages.push({ id: row.id, role: row.role, content: redactSecrets(row.content).text, created_at: row.created_at })
+      }
+      return { thread_id: threadId, title: redactSecrets(thread.alias || threadId).text, messages, hidden_messages: hidden }
+    } catch {
+      // No filesystem path, malformed transcript, secret or underlying cause crosses native DTOs.
+      throw new Error("DESKTOP_HISTORY_UNAVAILABLE")
+    } finally {
+      if (fd !== undefined) { try { fs.closeSync(fd) } catch { /* read-only descriptor cleanup */ } }
+    }
+  }
 
   getMessages(threadId: string): Message[] {
     if (!ThreadManager.isSafeThreadId(threadId)) return []
