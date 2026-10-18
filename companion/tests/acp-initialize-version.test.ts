@@ -6,6 +6,31 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process"
 import * as winSpawn from "../src/acp/win-spawn"
 import { tryStartProtocolSession } from "../src/acp/protocol-session"
 import { JsonRpcStdioClient, tryAcpInitialize } from "../src/acp/jsonrpc-stdio"
+import { version as companionVersion } from "../package.json"
+
+test("ACP v1 initialize advertises exact denied client capabilities on actual JSON-RPC stdio", async t => {
+  // Actual production helper + encoder, with only inert owned streams as transport.
+  // A request capture is not proof of a real Agent's compatibility or execution.
+  const child = new EventEmitter() as ChildProcessWithoutNullStreams
+  const stdout = new PassThrough(), stderr = new PassThrough()
+  const captured: unknown[] = []
+  const result = { protocolVersion: 1, agentCapabilities: {}, authMethods: [] }
+  const stdin = new Writable({ write(chunk, _encoding, done) {
+    const request = JSON.parse(String(chunk))
+    captured.push(request)
+    queueMicrotask(() => stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\n"))
+    done()
+  } })
+  Object.assign(child, { stdin, stdout, stderr, pid: undefined, exitCode: null, signalCode: null })
+  const client = new JsonRpcStdioClient(child)
+  t.after(() => { client.shutdown(); stdin.destroy(); stdout.destroy(); stderr.destroy() })
+  assert.deepEqual(await tryAcpInitialize(client, 1234), { ok: true, result })
+  assert.deepEqual(captured, [{ jsonrpc: "2.0", id: 1, method: "initialize", params: {
+    protocolVersion: 1,
+    clientInfo: { name: "cmspark", version: companionVersion },
+    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+  } }])
+})
 
 // The request seam below invokes the complete production initialize helper;
 // owned stdio + protocol-session lifecycle is also exercised in the peer gate.
