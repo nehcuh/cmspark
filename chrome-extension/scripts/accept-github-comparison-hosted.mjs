@@ -50,7 +50,7 @@ function startupProjection464(value) {
   if (!value || typeof value !== 'object') return undefined
   const keys=['step','spawnError','exitObserved','exitCode','signal','sandboxUnavailable','namespaceDenied','displayUnavailable','stderrTruncated','stderrRetainedBytes','devToolsListening','portFileRead'], out={}
   for(const key of keys) { const d=Object.getOwnPropertyDescriptor(value,key);if(!d||!Object.hasOwn(d,'value'))return undefined;out[key]=d.value }
-  if (!['SPAWN','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(out.step) ||
+  if (!['SPAWN','DISPLAY_FD','DISPLAY_PARTIAL','DISPLAY_INVALID','DISPLAY_READY','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(out.step) ||
       !['NONE','SIGABRT','SIGTRAP','SIGSEGV','SIGTERM','SIGKILL','OTHER'].includes(out.signal) ||
       !(out.exitCode===null||Number.isInteger(out.exitCode)&&out.exitCode>=0&&out.exitCode<=255) ||
       !Number.isInteger(out.stderrRetainedBytes) || out.stderrRetainedBytes<0 || out.stderrRetainedBytes>8192 ||
@@ -60,10 +60,11 @@ function startupProjection464(value) {
 }
 export function receipt(stage, passed, cases, runtime = {}) {
   if (!STAGES.has(stage) || typeof passed !== 'boolean' || !Number.isSafeInteger(cases) || cases < 0 || cases > 32) refusal('INVALID_RECEIPT')
-  const startup=startupProjection464(runtime.chromiumStartup)
+  const startup=startupProjection464(runtime.chromiumStartup), xvfbStartup=startupProjection464(runtime.xvfbStartup)
   return { schema: 1, stage, passed, cases, browserAcceptance: passed ? 'REAL_HOSTED_CHROMIUM' : 'NOT_PASSED',
     authBoundary: 'FIXTURE_PRIMITIVES_AND_PRODUCTION_PENDING', fullStartServer: false, reviewReady: false,
     ...(startup?{chromiumStartup:startup}:{}),
+    ...(xvfbStartup?{xvfbStartup}:{}),
     ...Object.fromEntries(Object.entries(runtime).filter(([k,v]) => ['node', 'chromium', 'image', 'source', 'base', 'head', 'expectedDiffSHA256', 'producedDiffSHA256', 'fileCount', 'additions', 'deletions'].includes(k) &&
       (typeof v === 'string' && v.length <= 200 && /^[A-Za-z0-9 ._:/+-]+$/.test(v) || typeof v === 'number' && Number.isSafeInteger(v) && v >= 0))) }
 }
@@ -86,13 +87,13 @@ async function waitForFile(filename, ms, observe = () => {}) {
   }
   refusal('STARTUP_FILE_MISSING')
 }
-// Diagnostics only: fixed categories, never stderr text/paths or success authority.
+// Diagnostics only: shared owned-child observation, never stderr text/paths or success authority.
 // Continue draining the pipe after the memory cap. Snapshot before cleanup so an
 // owned SIGTERM during retirement cannot be reported as the startup result.
 export function observeChromiumStartup464() {
   let step='SPAWN',spawnError=false,exitObserved=false,exitCode=null,signal='NONE',text='',bytes=0,stderrTruncated=false,portFileRead='NOT_ATTEMPTED'
   return {
-    step(value) { if(!['SPAWN','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(value))throw new Error('INVALID_STARTUP_STEP');step=value },
+    step(value) { if(!['SPAWN','DISPLAY_FD','DISPLAY_PARTIAL','DISPLAY_INVALID','DISPLAY_READY','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(value))throw new Error('INVALID_STARTUP_STEP');step=value },
     portFile(value) { if(!['NOT_ATTEMPTED','READ','ENOENT','EACCES','EPERM','EISDIR','OTHER'].includes(value))throw new Error('INVALID_PORT_FILE_OBSERVATION');portFileRead=value },
     track(child) {
       child.on('error',()=>{spawnError=true})
@@ -133,7 +134,7 @@ async function stopped(child, deadline) {
 }
 export async function main() {
   const envInput=process.env, platform=process.platform
-  let stage='PREFLIGHT', cases=0, owned, chromium, chromiumStartup, xvfb, server, browser, peer, timer, esbuild, forward, buildTask, buildSettled=true, expired=false, profileRead=false, runtime={}, cleanupOkay=true
+  let stage='PREFLIGHT', cases=0, owned, chromium, chromiumStartup, xvfb, xvfbStartup, server, browser, peer, timer, esbuild, forward, buildTask, buildSettled=true, expired=false, profileRead=false, runtime={}, cleanupOkay=true
   const active = new Set(), sockets = new Set()
   const deadline=Date.now()+BOUNDS.outer
   const remaining=()=>{const n=deadline-Date.now();if(n<=0||expired)refusal('OUTER_TIMEOUT');return n}
@@ -176,9 +177,12 @@ export async function main() {
     fs.writeFileSync(path.join(extension,'manifest.json'),JSON.stringify({manifest_version:3,name:'Owned comparison acceptance',version:'1.0.0',
       background:{service_worker:'worker.js'},permissions:['tabs','debugger','scripting','storage','alarms'],host_permissions:['https://github.com/*','http://127.0.0.1/*']}))
     stage='XVFB';remaining()
-    xvfb=spawn('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],{env,stdio:['ignore','ignore','ignore','pipe']})
-    let displayText='';const displayReady=deferred();xvfb.stdio[3].on('data',b=>{displayText+=b.toString();if(displayText.length>8)displayReady.reject(new Error('INVALID_DISPLAY'));else if(/^\d+\n$/.test(displayText))displayReady.resolve(':'+displayText.trim())});xvfb.on('error',()=>displayReady.reject(new Error('XVFB_START_FAILED')))
+    xvfbStartup=observeChromiumStartup464()
+    xvfb=spawn('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],{env,stdio:['ignore','ignore','pipe','pipe']})
+    xvfbStartup.track(xvfb);xvfbStartup.step('DISPLAY_FD')
+    let displayText='';const displayReady=deferred();xvfb.stdio[3].on('data',b=>{displayText+=b.toString();if(displayText.length>8){xvfbStartup.step('DISPLAY_INVALID');displayReady.reject(new Error('INVALID_DISPLAY'))}else if(/^\d+\n$/.test(displayText)){xvfbStartup.step('DISPLAY_READY');displayReady.resolve(':'+displayText.trim())}else xvfbStartup.step('DISPLAY_PARTIAL')});xvfb.on('error',()=>displayReady.reject(new Error('XVFB_START_FAILED')))
     const display=await limit(displayReady.promise,5000,'XVFB_START_TIMEOUT')
+    xvfbStartup.step('DISPLAY_READY');runtime.xvfbStartup=xvfbStartup.snapshot()
     stage='CHROMIUM'
     chromiumStartup=observeChromiumStartup464()
     const binary=['/usr/bin/chromium','/usr/bin/chromium-browser'].find(x=>{try{return fs.statSync(x).isFile()}catch{return false}})
@@ -282,6 +286,7 @@ export async function main() {
     remaining();profileRead=true;stage='COMPLETE'
   } catch { /* Nothing from an untrusted page/transport exception is reflected. */
     if(chromiumStartup)runtime.chromiumStartup=chromiumStartup.snapshot()
+    if(xvfbStartup)runtime.xvfbStartup=xvfbStartup.snapshot()
   }
   finally {
     // The same absolute120s bound remains armed through cleanup. Unknown closure

@@ -185,7 +185,7 @@ async function actualChromiumPhase464({fail=false}={}) {
   const start=harness.indexOf("    stage='CHROMIUM'"),end=harness.indexOf("    stage='WORKER'",start)
   assert.ok(start>0&&end>start)
   let calls=0,port=false
-  const c={stage:'CHROMIUM',chromiumStartup:undefined,observeChromiumStartup464:()=>observer,chromium:undefined,browser:undefined,portText:undefined,parts:undefined,
+  const c={stage:'CHROMIUM',chromiumStartup:undefined,xvfbStartup:undefined,observeChromiumStartup464:()=>observer,chromium:undefined,browser:undefined,portText:undefined,parts:undefined,
     path,fs:{statSync(){return{isFile:()=>true}}},refusal(){throw Error('REFUSED')},execFileSync(){return'Chromium 155.0.8059.0'},runtime:{},remaining(){return 10000},owned:'/owned',extension:'/owned/extension',env:{},display:':1',chromeArgs,childEnvironment,
     spawn(binary,args,options){calls++;assert.equal(binary,'/usr/bin/chromium');assert.equal(options.stdio[2],'pipe');return child},
     async waitForFile(){port=true;if(fail){child.stderr.emit('data',Buffer.from('Missing X server or $DISPLAY private-marker'));child.emit('exit',1,null);throw Error('STARTUP_FILE_MISSING')}return'12345\n/devtools/browser/a-b-c\n'},
@@ -249,4 +249,49 @@ test('actual port polling observes closed IO categories without changing25ms dea
  assert.equal(await context.poll('/owned/profile/DevToolsActivePort',10000,x=>values.push(x)),bytes);assert.deepEqual(values,['ENOENT','EACCES','EPERM','EISDIR','OTHER','OTHER','OTHER','READ']);assert.equal(getters,0);assert.equal(reads,8)
  now=0;reads=0;context.fs.readFileSync=()=>{reads++;throw{code:'ENOENT'}}
  await assert.rejects(()=>context.poll('/owned/profile/DevToolsActivePort',10000,x=>seen.push(x)),/STARTUP_FILE_MISSING/);assert.equal(now,10000);assert.equal(reads,400);assert.equal(seen.length,400)
+})
+
+// The actual main Xvfb block and catch execute with inert child/clock schedules.
+async function actualXvfbPhase464(kind) {
+  const child=new EventEmitter();child.stderr=new EventEmitter();child.stdio=[null,null,child.stderr,new EventEmitter()]
+  const start=harness.indexOf("    stage='XVFB';remaining()"),end=harness.indexOf("    stage='CHROMIUM'",start)
+  const catchStart=harness.indexOf('  } catch { /* Nothing from an untrusted page/transport exception'),catchEnd=harness.indexOf('\n  finally {',catchStart)
+  assert.ok(start>0&&end>start&&catchStart>0&&catchEnd>catchStart)
+  let calls=0,budget,displayValue
+  const c={stage:'BUNDLE',xvfb:undefined,xvfbStartup:undefined,chromiumStartup:undefined,observeChromiumStartup464:actualStartupObserver464,
+    deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return{promise,resolve,reject}},runtime:{},remaining(){return 10000},env:{FIXED:'INERT'},
+    spawn(exe,args,options){calls++;if(kind==='spawnthrow')throw Error('INERT_PRIVATE_SYNC_ERROR');assert.equal(exe,'/usr/bin/Xvfb');assert.deepEqual(Array.from(args),['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp']);assert.equal(options.env,c.env);assert.equal(options.stdio[3],'pipe');return child},
+    limit(p,ms){budget=ms;assert.equal(ms,5000)
+      if(kind==='exit'||kind==='timeout'||kind==='partial')return Promise.resolve().then(()=>{if(kind==='exit')child.emit('exit',7,null);if(kind==='partial')child.stdio[3].emit('data',Buffer.from('27'));throw Error('INERT_XVFB_TIMEOUT')})
+      queueMicrotask(()=>{if(kind==='error'){child.stderr.emit('data',Buffer.from('INERT_PRIVATE_ERROR'));child.emit('error',new Error('INERT_PRIVATE_MESSAGE'))}else if(kind==='invalid')child.stdio[3].emit('data',Buffer.from('123456789'));else child.stdio[3].emit('data',Buffer.from('27\n'))});return p},
+    Buffer,Promise,Error}
+  vm.createContext(c)
+  await vm.runInContext('async function phase(){try{'+harness.slice(start,end)+'\nthis.actualDisplay=display;'+harness.slice(catchStart,catchEnd)+'}\nphase.call(this)',c)
+  displayValue=c.actualDisplay
+  const out=receipt('XVFB',false,0,c.runtime)
+  child.emit('exit',null,'SIGTERM') // After catch/success snapshot: cleanup cannot rewrite it.
+  return{out,calls,budget,displayValue,child,c}
+}
+test('actual Xvfb spawn-error observation remains false and excludes stderr/error bodies',async()=>{
+ const {out,calls,budget}=await actualXvfbPhase464('error');assert.equal(calls,1);assert.equal(budget,5000)
+ assert.equal(out.passed,false);assert.equal(out.cases,0);assert.equal(out.xvfbStartup.step,'DISPLAY_FD');assert.equal(out.xvfbStartup.spawnError,true)
+ const sync=await actualXvfbPhase464('spawnthrow');assert.equal(sync.calls,1);assert.equal(sync.budget,undefined);assert.equal(sync.out.passed,false);assert.equal(sync.out.xvfbStartup.step,'SPAWN');assert.equal(sync.out.xvfbStartup.spawnError,false);assert.equal(sync.out.xvfbStartup.exitObserved,false)
+ assert.equal(out.xvfbStartup.stderrRetainedBytes,19);assert.equal(out.xvfbStartup.signal,'NONE');assert.equal(JSON.stringify(out).includes('INERT_PRIVATE'),false)
+})
+test('actual Xvfb pre-ready exit and timeout retain original refusal without claiming readiness',async()=>{
+ const exit=await actualXvfbPhase464('exit');assert.equal(exit.out.passed,false);assert.equal(exit.out.xvfbStartup.exitCode,7);assert.equal(exit.out.xvfbStartup.exitObserved,true);assert.equal(exit.out.xvfbStartup.signal,'NONE')
+ const timeout=await actualXvfbPhase464('timeout');assert.equal(timeout.budget,5000);assert.equal(timeout.out.xvfbStartup.step,'DISPLAY_FD');assert.equal(timeout.out.xvfbStartup.exitObserved,false);assert.equal(timeout.out.passed,false)
+ const partial=await actualXvfbPhase464('partial');assert.equal(partial.budget,5000);assert.equal(partial.out.xvfbStartup.step,'DISPLAY_PARTIAL');assert.equal(partial.out.passed,false)
+})
+test('actual Xvfb invalid display FD remains refused with only closed lifecycle fields',async()=>{
+ const {out,displayValue}=await actualXvfbPhase464('invalid');assert.equal(displayValue,undefined);assert.equal(out.passed,false);assert.equal(out.xvfbStartup.step,'DISPLAY_INVALID');assert.equal(JSON.stringify(out).includes('123456789'),false)
+})
+test('actual Xvfb display ready does not grant acceptance and late cleanup cannot replace snapshot',async()=>{
+ const {out,displayValue}=await actualXvfbPhase464('ready');assert.equal(displayValue,':27');assert.equal(out.passed,false);assert.equal(out.xvfbStartup.step,'DISPLAY_READY');assert.equal(out.xvfbStartup.portFileRead,'NOT_ATTEMPTED');assert.equal(out.xvfbStartup.exitObserved,false);assert.equal(out.xvfbStartup.signal,'NONE')
+})
+test('Xvfb optional DTO preserves capped drain/privacy and rejects accessors or invalid steps',()=>{
+ const observer=actualStartupObserver464(),child=new EventEmitter();child.stderr=new EventEmitter();observer.track(child);observer.step('DISPLAY_FD');child.stderr.emit('data',Buffer.alloc(9000,120));const s=observer.snapshot()
+ const out=receipt('XVFB',false,0,{xvfbStartup:s});assert.equal(out.xvfbStartup.stderrRetainedBytes,8192);assert.equal(out.xvfbStartup.stderrTruncated,true);assert.equal(out.chromiumStartup,undefined);assert.equal(out.passed,false)
+ let gets=0;const fake={...s};Object.defineProperty(fake,'step',{get(){gets++;return'DISPLAY_READY'}});assert.equal(receipt('XVFB',false,0,{xvfbStartup:fake}).xvfbStartup,undefined);assert.equal(gets,0)
+ assert.equal(receipt('XVFB',false,0,{xvfbStartup:{...s,step:'INERT_PRIVATE'}}).xvfbStartup,undefined);assert.equal(receipt('XVFB',false,0).xvfbStartup,undefined)
 })
