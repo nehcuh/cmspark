@@ -1328,6 +1328,18 @@ private func cuAXCGWindowID(_ row: [String: Any]) -> UInt32? {
     return UInt32(value)
 }
 
+// An already-known contradiction cannot be an alias of this complete target tuple.
+// Missing/wrong-type/nonfinite metadata alone never establishes disjointness.
+private func cuAXCGDefinitelyDifferent(_ row: [String: Any], _ metadata: CUFocusMetadata) -> Bool {
+    if let title = row[kCGWindowName as String] as? String, !title.utf8.elementsEqual(metadata.title.utf8) { return true }
+    guard let bounds = row[kCGWindowBounds as String] as? [String: CGFloat] else { return false }
+    if let x = bounds["X"], x.isFinite, x != metadata.x { return true }
+    if let y = bounds["Y"], y.isFinite, y != metadata.y { return true }
+    if let width = bounds["Width"], width.isFinite, width != metadata.width { return true }
+    if let height = bounds["Height"], height.isFinite, height != metadata.height { return true }
+    return false
+}
+
 private func cuAXTargetCGMetadata(_ windowId: UInt32, _ pid: pid_t) -> CUFocusMetadata? {
     guard pid > 0, windowId > 0,
           let rows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else { cuAX571Note(.cgReadUnavailable); return nil }
@@ -1338,6 +1350,7 @@ private func cuAXTargetCGMetadata(_ windowId: UInt32, _ pid: pid_t) -> CUFocusMe
     for row in rows {
         guard let actualPID = row[kCGWindowOwnerPID as String] as? pid_t else { cuAX571Note(.cgRowPID); return nil }
         if actualPID != pid { continue }
+        if cuAXCGDefinitelyDifferent(row, metadata) { continue }
         guard let observed = cuAXRawCGMetadata(row, pid), let id = cuAXCGWindowID(row) else { cuAX571Note(.cgSameAppMetadata); return nil }
         if observed == metadata {
             guard id == windowId else { cuAX571Note(.cgCorrespondence); return nil }

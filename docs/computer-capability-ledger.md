@@ -208,8 +208,10 @@ OTHER 行的 owner/layer 和唯一原因仍 UNKNOWN。该修正不新增动作�
 读取该节点的子节点之前用零尺寸过滤整棵树。现在先将请求的 CGWindowID 与当前 PID、
 UTF8 精确标题和有限正尺寸几何对应到唯一实际 AXWindows 成员，再从该窗口开始原有遍历。
 请求 ID 必须是正的 UInt32 整数，布尔、分数或截断回绕不能形成新身份。完整目标窗口证据
-使用独立的新 **256窗口上限**，超限、同应用证据缺失/歧义、两次 CG/AX 观察或成员次序变化
-都拒绝，不选第一个窗口，也不以同名 sibling 代替。该读证据过程不激活窗口、不扩 TCC；
+使用独立的新 **256窗口上限**，超限、AX 成员证据缺失、仍可能匹配目标的 CG 行证据缺失/歧义、
+两次 CG/AX 观察或成员次序变化都拒绝，不选第一个窗口，也不以同名 sibling 代替。
+只有 CG 行已知的 UTF8 标题字节或有限几何分量与完整目标值相异时，才排除该不可能匹配的行；
+缺失、类型不符或非有限值本身不能证明不匹配。目标 ID/完整元数据仍在此排除之前严格验证。该读证据过程不激活窗口、不扩 TCC；
 `ax-invoke` 保留原动作/值校验、周期与动作前 E-Stop 检查，并在证据读取阶段检查停止。
 原 hidden/zero-size 过滤、50层遍历、元素 name/role 复核和支持动作条件保留。
 
@@ -241,7 +243,8 @@ Swift 类型检查、纯 Node 比较控和 owned fixture 都不能代填 Deliver
 | macOS | selection / scroll / drag | **Gap** | 没有本组对称动作映射与验收；不是本叶新增的全模式关闭前置。 |
 
 **实际运行后如何回填**：hosted `macOS external AX action and background oracles (#571)` 先构建
-未修改的真实 `cmspark-host` 和独立 unshipped owned target，再运行完整 native test。
+真实 `cmspark-host` 源码（仅验收构建启用固定阶段诊断，普通 host 输出不变）和独立 unshipped owned
+target，再运行完整 native test。
 `AX571_PERMISSION` 只包含固定身份/布尔事实；`AX571_ROW` 只包含框架/动作、三态、有限码和 oracle
 布尔。只有 target-owned marker 确变且 focus/z-order/cursor 均 true，才可把对应 press 行改
 Delivered 并附本轮 commit/run/test；真实精确拒绝码且同轮 oracle 全通过才改 Refused。
