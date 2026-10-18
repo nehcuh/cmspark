@@ -159,3 +159,55 @@ test('#571 root never-launched classification cannot erase primary or replace di
 test('#571 root dedicated outcomes occur only before the single launch invocation',()=>{const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),branch=swift.slice(swift.indexOf('if arguments.first == "--launch-owned"'));for(const code of [78,79]){assert.equal((swift.match(new RegExp('exit\\('+code+'\\)','g'))||[]).length,1);assert.ok(branch.indexOf('exit('+code+')')<branch.indexOf('launcher.start()'))}assert.match(source,/once\('close',\(code,signal\)=>/);assert.match(source,/AX571_LIFETIME/)})
 
 test('#571 root no prelaunch proof before actual close or from error-code getters',()=>{const n=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='ax571PrelaunchRefused');assert.ok(n);let calls=0,reads=0;const error=Object.defineProperty(Error('OWNED_UNREADABLE'),'code',{get(){reads++;return'ENOENT'}}),state={Object,fs:{lstatSync(){calls++;throw Object.assign(Error('OWNED_ABSENT'),{code:'ENOENT'})}}};vm.createContext(state);vm.runInContext(ts.transpileModule(n.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+';this.check=ax571PrelaunchRefused;',state);assert.equal(state.check(false,78,null,['/OWNED/ready']),false);assert.equal(calls,0);assert.equal(state.check(true,78,null,['/OWNED/ready']),true);state.fs.lstatSync=()=>{throw error};assert.equal(state.check(true,78,null,['/OWNED/ready']),false);assert.equal(reads,0)})
+
+// Filesystem identity control: no Foundation/AppKit or native executable is run.
+function actualCanonicalParent571(resolvePath,onFree=()=>{}){
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8')
+ const start='private func ax571CanonicalDirectory(_ directory: URL) -> Bool {'
+ if(!swift.includes(start)){
+  const expression=swift.match(/parent\.lastPathComponent\.hasPrefix\("ax-native571-"\), ([^,\n]+),/)?.[1]
+  assert.equal(expression,'parent.resolvingSymlinksInPath() == parent')
+  const code=expression.replace('parent.resolvingSymlinksInPath()','foundationResolve(parent)')
+  return(directory)=>vm.runInNewContext(code,{parent:directory.path,foundationResolve:resolvePath})
+ }
+ assert.equal(swift.split(start).length,2)
+ let body=swift.split(start)[1].split('\n}')[0]
+ const old='    guard directory.isFileURL, directory.path.hasPrefix("/"), !directory.path.contains("\\0"),\n          let resolved = Darwin.realpath(directory.path, nil) else { return false }'
+ assert.equal(body.split(old).length,2)
+ body=body.replace(old,'    if(!directory.isFileURL || !directory.path.startsWith("/") || directory.path.includes("\\0"))return false; const resolved=resolvePath(directory.path);if(resolved===null)return false;try{')
+ assert.equal(body.split('    defer { free(resolved) }').length,2);body=body.replace('    defer { free(resolved) }','')
+ assert.equal(body.split('String(cString: resolved)').length,2);body=body.replace('String(cString: resolved)','String(resolved)')+'\n}finally{onFree(resolved)}'
+ assert.doesNotMatch(body,/\bguard\b|\bdefer\b|Darwin\.|cString:/)
+ return vm.runInNewContext('(directory)=>{'+body+'}',{resolvePath,onFree})
+}
+test('#571 canonical parent accepts the exact POSIX spelling under documented Foundation private display alias',()=>{
+ // Existence-sensitive NSURL rules are a declared API boundary model, not a Darwin runtime observation.
+ const physical='/private/var/owned/ax-native571-model',display=physical.slice('/private'.length)
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),current=swift.includes('private func ax571CanonicalDirectory(')
+ const resolve=()=>current?physical:display
+ assert.equal(actualCanonicalParent571(resolve)({isFileURL:true,path:physical}),true)
+})
+test('#571 actual canonical parent uses real owned POSIX paths with absent receipts and rejects a symlink alias',()=>{
+ const dir=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR,'ax-native571-posix-'))),alias=dir+'-alias'
+ try{
+  const st=fs.lstatSync(dir);assert.equal(st.isDirectory(),true);assert.equal(st.isSymbolicLink(),false);assert.equal(st.mode&0o777,0o700)
+  for(const name of['ready.json','target.json','sibling.json'])assert.equal(fs.existsSync(path.join(dir,name)),false)
+  const resolve=(value)=>{try{return fs.realpathSync(value)}catch{return null}}
+  assert.equal(actualCanonicalParent571(resolve)({isFileURL:true,path:dir}),true)
+  fs.symlinkSync(dir,alias);assert.equal(actualCanonicalParent571(resolve)({isFileURL:true,path:alias}),false)
+ }finally{try{fs.unlinkSync(alias)}catch{};fs.rmSync(dir,{recursive:true,force:true})}
+})
+test('#571 POSIX canonical helper releases one allocated result and refuses unavailable resolution',()=>{
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8');if(!swift.includes('private func ax571CanonicalDirectory('))return
+ let calls=0,freed=0;const check=actualCanonicalParent571(p=>{calls++;return p},()=>freed++)
+ assert.equal(check({isFileURL:true,path:'/owned/ax-native571-inert'}),true);assert.equal(calls,1);assert.equal(freed,1)
+ for(const d of[{isFileURL:false,path:'/owned/x'},{isFileURL:true,path:'relative'},{isFileURL:true,path:'/owned/\0'}])assert.equal(check(d),false)
+ assert.equal(calls,1);assert.equal(freed,1);assert.equal(actualCanonicalParent571(()=>null,()=>freed++)({isFileURL:true,path:'/owned/missing'}),false);assert.equal(freed,1)
+})
+test('#571 both actual owned path guards use the same canonical filesystem check and retain metadata authority',()=>{
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8')
+ const body=swift.slice(swift.indexOf('private struct AX571OwnedPaths'),swift.indexOf('private final class AX571OwnedLauncher'))
+ assert.match(body,/ax571CanonicalDirectory\(parent\)/);assert.match(body,/ax571CanonicalDirectory\(directory\)/)
+ assert.doesNotMatch(body,/resolvingSymlinksInPath/)
+ for(const fact of['attributes[.type] as? FileAttributeType == .typeDirectory','permissions & 0o077 == 0','(attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid()','let dev = (attributes[.systemNumber] as? NSNumber)?.uint64Value','let ino = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value','uint64Value == device','uint64Value == inode'])assert.ok(body.includes(fact))
+})

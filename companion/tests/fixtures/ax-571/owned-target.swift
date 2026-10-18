@@ -7,6 +7,13 @@ import Darwin
 func ax571Readiness(_ active: Bool, _ key: Bool, _ targetBound: Bool, _ siblingBound: Bool) -> Bool { return active && key && targetBound && siblingBound }
 
 // Test-only LaunchServices owner. No PID lookup, app enumeration or foreign kill.
+// Compare POSIX canonical bytes with Node realpath, not Foundation's display alias.
+private func ax571CanonicalDirectory(_ directory: URL) -> Bool {
+    guard directory.isFileURL, directory.path.hasPrefix("/"), !directory.path.contains("\0"),
+          let resolved = Darwin.realpath(directory.path, nil) else { return false }
+    defer { free(resolved) }
+    return String(cString: resolved) == directory.path
+}
 private struct AX571OwnedPaths {
     let framework: String
     let ready: URL
@@ -19,7 +26,7 @@ private struct AX571OwnedPaths {
         guard arguments.count == 4, ["APPKIT", "WKWEBVIEW"].contains(arguments[0]), arguments.dropFirst().allSatisfy({ $0.hasPrefix("/") && !$0.contains("\0") }) else { return nil }
         let urls = arguments.dropFirst().map { URL(fileURLWithPath: $0).standardizedFileURL }
         let parent = urls[0].deletingLastPathComponent()
-        guard parent.lastPathComponent.hasPrefix("ax-native571-"), parent.resolvingSymlinksInPath() == parent,
+        guard parent.lastPathComponent.hasPrefix("ax-native571-"), ax571CanonicalDirectory(parent),
               urls.map({ $0.lastPathComponent }) == ["ready.json", "target.json", "sibling.json"],
               urls.allSatisfy({ $0.deletingLastPathComponent() == parent }),
               let attributes = try? FileManager.default.attributesOfItem(atPath: parent.path),
@@ -31,7 +38,7 @@ private struct AX571OwnedPaths {
         framework = arguments[0]; ready = urls[0]; marker = urls[1]; sibling = urls[2]; directory = parent; device = dev; inode = ino
     }
     func current() -> Bool {
-        guard directory.resolvingSymlinksInPath() == directory,
+        guard ax571CanonicalDirectory(directory),
               let a = try? FileManager.default.attributesOfItem(atPath: directory.path) else { return false }
         return a[.type] as? FileAttributeType == .typeDirectory && (a[.systemNumber] as? NSNumber)?.uint64Value == device && (a[.systemFileNumber] as? NSNumber)?.uint64Value == inode && (a[.ownerAccountID] as? NSNumber)?.uint32Value == getuid()
     }
