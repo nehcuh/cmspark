@@ -1419,6 +1419,12 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
    */
   getActiveKnowledgeForThread(threadId: string): Skill[] {
     this.ensureFresh()
+    return this.activeKnowledgeFromSnapshot(threadId)
+  }
+
+  /** The caller holds a freshly loaded synchronous view; no per-id disk scans. */
+  private activeKnowledgeFromSnapshot(threadId: string): Skill[] {
+    const get = (name: string) => this.skillsCache.find(s => s.name === name || s.id === name)
     let ids: string[] = []
     try {
       const tm = this.threads()
@@ -1429,14 +1435,14 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       // TODO(wave-a-d2): remove skill-path knowledge union after 1 release
       const skillActive = thread?.active_skill_ids || []
       for (const name of skillActive) {
-        const s = this.get(name)
+        const s = get(name)
         if (s && this.isKnowledgeDoc(s) && !ids.includes(name)) ids.push(name)
       }
     } catch {
       /* empty */
     }
     return ids
-      .map((n) => this.get(n))
+      .map((n) => get(n))
       .filter((s): s is Skill => !!s && this.isKnowledgeDoc(s))
   }
 
@@ -1460,7 +1466,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const resolvedMode = mode || "auto"
 
     if (resolvedMode === "manual") {
-      return this.getActiveKnowledgeForThread(threadId).map(s => s.name)
+      return this.activeKnowledgeFromSnapshot(threadId).map(s => s.name)
     }
 
     // Pre-scoring selection behavior (also the byte-identical degradation target).
@@ -1470,7 +1476,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
           .filter(s => this.isKnowledgeDoc(s))
           .map(s => s.name)
       }
-      const active = this.getActiveKnowledgeForThread(threadId).map(s => s.name)
+      const active = this.activeKnowledgeFromSnapshot(threadId).map(s => s.name)
       const site = hostname ? this.getBySite(hostname).map(s => s.name) : []
       return [...new Set([...active, ...site])]
     }
@@ -1479,7 +1485,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     if (!smartMatch || !q) return legacyResolve()
 
     try {
-      const pinned = this.getActiveKnowledgeForThread(threadId)
+      const pinned = this.activeKnowledgeFromSnapshot(threadId)
       const pinnedNames = new Set(pinned.map(s => s.name))
       const pool = this.skillsCache.filter(s => this.isKnowledgeDoc(s))
       const siteNames = new Set(
