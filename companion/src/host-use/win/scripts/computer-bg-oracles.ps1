@@ -59,7 +59,7 @@ function Fail([string]$prefix, [string]$detail, [int]$code) {
 
 # Compare consumes recorded JSON only; Win32 compilation belongs to snapshots.
 if ($Mode -eq 'snapshot') {
-Add-Type -MemberDefinition @'
+Microsoft.PowerShell.Utility\Add-Type -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
@@ -77,7 +77,7 @@ if ($Mode -eq 'compare') {
 
 function Get-ZOrder([int]$depth) {
   # EnumWindows enumerates in z-order, top-most first.
-  $list = New-Object System.Collections.Generic.List[int64]
+  $list = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[int64]
   $cb = [CU.Bg+EnumProc]{
     param($h, $l)
     if ($list.Count -ge $depth) { return $false }
@@ -90,7 +90,7 @@ function Get-ZOrder([int]$depth) {
 
 function Get-Snapshot {
   $fg = [CU.Bg]::GetForegroundWindow()
-  $p = New-Object CU.Bg+POINT
+  $p = Microsoft.PowerShell.Utility\New-Object CU.Bg+POINT
   $gotPos = [CU.Bg]::GetCursorPos([ref]$p)
   return [ordered]@{
     ts = [DateTime]::UtcNow.ToString('o')

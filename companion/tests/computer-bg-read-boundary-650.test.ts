@@ -149,13 +149,15 @@ test("#650 read-boundary CPU: exact builtin qualification retains the entire ori
     ["Microsoft.PowerShell.Management\\Get-Content", "Get-Content", 2],
     ["Microsoft.PowerShell.Utility\\ConvertFrom-Json", "ConvertFrom-Json", 2],
     ["Microsoft.PowerShell.Utility\\ConvertTo-Json", "ConvertTo-Json", 1],
+    ["Microsoft.PowerShell.Utility\\Add-Type", "Add-Type", 1],
+    ["Microsoft.PowerShell.Utility\\New-Object", "New-Object", 2],
   ]
   let inverse = source
   for (const [qualified, original, count] of replacements) {
     assert.equal(source.split(qualified).length - 1, count, "all and only approved builtin call sites")
     inverse = inverse.split(qualified).join(original)
   }
-  assert.equal(createHash("sha256").update(inverse).digest("hex"), "c78a0ec6e44f768f7c2270b9eb405fd72eca17ad864f2263943040a854977592", "removing only the five qualifications restores the complete exact bd6 oracle")
+  assert.equal(createHash("sha256").update(inverse).digest("hex"), "c78a0ec6e44f768f7c2270b9eb405fd72eca17ad864f2263943040a854977592", "removing only the eight qualifications restores the complete exact bd6 oracle")
 })
 test("#650 read-boundary CPU: qualified cold child changes only the fixed explicit switch", async t => {
   const source = readFileSync(SCRIPT, "utf8").replace(/\r\n/g, "\n")
