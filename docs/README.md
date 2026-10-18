@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 产品 **0.6.11** · 入口 README：[仓库根 README.md](../README.md)  
+> 源码开发版本 **0.6.14（尚未正式发布）** · 入口 README：[仓库根 README.md](../README.md)
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
@@ -11,6 +11,7 @@
 
 | 文档 | 坐标（摘要） | 说明 |
 |------|----------------|------|
+| [release-status.md](release-status.md) | **交付状态** | 源码版本、正式发行包、已合并能力与待验收边界 |
 | [workspace-ui.md](workspace-ui.md) | **Operate** | 响应式对话工作区、导航、历史、输入和设置 |
 | [../README.md](../README.md) | 全景 | 家 = 已登录 Chrome；Capture / 租手 / 安装 |
 | [../PRODUCT.md](../PRODUCT.md) | 产品句 | 四面 Capture·Operate·Confirm·租手 |

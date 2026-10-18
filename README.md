@@ -3,6 +3,8 @@
 > 对着**已经登录的 Chrome** 干活的本机手：热键召唤开口，危险走**确认台**，Codex / Claude Code / Grok 可**租同一只手**（Outbound MCP）。家是 **已登录 Chrome + 硬闸**，不是 Side Panel。  
 > 能力叠加：**默认**网页问答与页内操控；**按需** Skills / Knowledge / MCP / 任务包；**opt-in** 桌面 Computer Use 与企业模块。产品句：[PRODUCT.md](PRODUCT.md)。
 
+源码开发版本 **0.6.14（尚未正式发布）**；正式安装包与源码进度请看[版本与交付状态](docs/release-status.md)和[变更记录](CHANGELOG.md)。
+
 ---
 
 ## 项目简介
@@ -68,7 +70,7 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 | **Autonomy** | 巡航档位 · plan_readonly · 无人值守 loop | 发送键旁四档芯片（#325）；线程级只读计划帽（#327）；L-1/L-3/L-5 loop（#386–#391，**默认关**；独立 ADR 待补） | [CHANGELOG `[0.6.0]`](CHANGELOG.md) |
 | **组合面** | 专家团队（`kind: expert`） | 七个预置角色 Pack + 一张 L2 卡组队（#366–#371；persona ≠ 权限） | [CHANGELOG `[0.6.0]`](CHANGELOG.md) · [ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)/[020](docs/adr/020-capability-model-three-axes.md) 修订段 |
 | **L2 · 深层 / opt-in** | Computer Use · Host Use · Apps | 桌面操控、宿主读写/应用白名单；平台相关、默认关。CU 视觉定位仍 **实验**（仅 Qwen3-VL；#363 摘帽门未过） | [computer-use-user-guide](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) |
-| **L2 / opt-in** | 内嵌终端（PTY） | Darwin-only；默认关；Windows/Linux `unsupported`（#432） | [CHANGELOG `[0.6.4]`](CHANGELOG.md) |
+| **L2 / opt-in** | 内嵌终端（PTY） | macOS / Windows；默认关；Linux `unsupported`（#432 / #584） | [编程接力指南](docs/coding-handoff-user-guide.md) |
 | **运维** | Daemon · 托盘 · 配对 | 开机自启；macOS 托盘 + 配对码 | 本页 [后台常驻服务](#后台常驻服务跨平台) |
 
 ### 系统拓扑
