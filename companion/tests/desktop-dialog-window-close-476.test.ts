@@ -17,6 +17,7 @@ function closeBranch(name: "confirmation_proc" | "proc") {
 function calls(name: "confirmation_proc" | "proc", message = 16) {
   const events: string[] = []
   const result = closeBranch(name)(message, 16, {
+    retire_workspace() { events.push("retire-owned-workspace") },
     retire_dialog() { events.push("stop-owned-chat") },
     retire_confirmation(decision: number) { assert.equal(decision, 0); events.push("deny-this-confirmation") },
   }, () => events.push("destroy-main"), 0)
@@ -26,7 +27,7 @@ test("closing only the MCP confirmation title bar denies it without stopping an 
   assert.deepEqual(calls("confirmation_proc"), { result: 0, events: ["deny-this-confirmation"] })
 })
 test("closing the actual main window still retires its captured chat before destroying the host", () => {
-  assert.deepEqual(calls("proc"), { result: 0, events: ["stop-owned-chat", "deny-this-confirmation", "destroy-main"] })
+  assert.deepEqual(calls("proc"), { result: 0, events: ["retire-owned-workspace", "stop-owned-chat", "deny-this-confirmation", "destroy-main"] })
 })
 test("the close branch does not execute its actions for another window message", () => {
   for (const name of ["confirmation_proc", "proc"] as const) assert.deepEqual(calls(name, 5), { result: undefined, events: [] })

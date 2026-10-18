@@ -152,21 +152,24 @@ test('#476 actual native workspace picker binds canonical root, reopens lists/re
  return withSurface650(t,async(t,surfaceLease)=>{
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-workspace-476-'))),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
   const root=path.join(dir,'selected');fs.mkdirSync(root);fs.writeFileSync(path.join(root,'hello.txt'),'owned workspace text')
-  const {SecurityConfirmationManager}=await import('../src/security-confirmation'),{observeWorkspacePicker476}=await import('./helpers/desktop-workspace-picker-476')
+  const {SecurityConfirmationManager}=await import('../src/security-confirmation'),{observeWorkspacePicker476,pickerOutcome705,parseNativeWorkspaceDiagnostic705}=await import('./helpers/desktop-workspace-picker-476')
   const threads=new ThreadManager();threads.create('owned workspace','native-workspace-A');threads.create('untouched sibling','native-workspace-B')
   const manager=new SecurityConfirmationManager(),registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-native-workspace-476'),pickerAbort=new AbortController();let pickerRun:Promise<any>|undefined
   const required=['D476_WS_UNBOUND','D476_WS_PICKER_SELECTED','D476_WS_CONFIRMATION','D476_WS_COMMITTED','D476_WS_LISTED','D476_WS_READ','D476_WS_REOPENED','D476_WS_PICKER_CANCELLED','D476_WS_CANCELLED','D476_WS_DONE'],receipts=new Set<string>()
+  let failureSite=0,pickOutcome=0,nativeDiagnostic:ReturnType<typeof parseNativeWorkspaceDiagnostic705>=null,diagnosticInvalid=false
+  let pickerLifecycle={mode:0 as number,childClosed:false,childExit:null as number|null,childSignal:0 as number,childError:false}
   let current:any,authenticated=false,windowRequested=false,connections=0,failed=false,picks=0,pickerObserved=0,pickerReturned=0,cancelReturned=0,child:DesktopNativeChild|undefined,settled=false,exitResolve!:(n:number)=>void,failResolve!:()=>void
-  const exit=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r),fail=()=>{failed=true;failResolve()}
+  const exit=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r),fail=(site:number)=>{if(!failureSite)failureSite=site;failed=true;failResolve()}
   const channel=createDesktopChannel({registry,securityConfirmations:manager,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},maxPayload:10*1024*1024,workspaceRuntime:{enabled:()=>true,activity:()=> 'idle',pick:async()=>{
-    const number=++picks;if(number>2){fail();return{error:'cancelled'}}
-    let observedThis=0;pickerRun=observeWorkspacePicker476(pid=>{pickerObserved++;observedThis++;if(!authenticated||current?.readyState!==1){fail();return}if(process.platform==='win32'||observedThis===1)current.send(JSON.stringify({type:'D476.workspace.picker',selection:root,pid,cancel:number===2}))},fail,AbortSignal.any([t.signal,pickerAbort.signal]));const actual=await pickerRun
-    if(actual.observed<1||(process.platform==='win32'&&actual.observed!==1))fail()
-    if(number===1){if(actual.result.path!==root)fail();else pickerReturned++}else{if(actual.result.error!=='cancelled')fail();else cancelReturned++}
+    const number=++picks;if(number>2){fail(1);return{error:'cancelled'}}
+    let observedThis=0;pickOutcome=1;pickerRun=observeWorkspacePicker476(pid=>{pickerObserved++;observedThis++;if(!authenticated||current?.readyState!==1){fail(3);return}if(process.platform==='win32'||observedThis===1)current.send(JSON.stringify({type:'D476.workspace.picker',selection:root,pid,cancel:number===2}))},()=>fail(2),AbortSignal.any([t.signal,pickerAbort.signal]),value=>{pickerLifecycle=value});let actual:Awaited<typeof pickerRun>;try{actual=await pickerRun}catch(error){pickOutcome=5;throw error}
+    try{pickOutcome=pickerOutcome705(actual.result,root)}catch{/* Passive classification never replaces the original result. */}
+    if(actual.observed<1||(process.platform==='win32'&&actual.observed!==1))fail(4)
+    if(number===1){if(actual.result.path!==root)fail(5);else pickerReturned++}else{if(actual.result.error!=='cancelled')fail(6);else cancelReturned++}
     return actual.result
   }},onAuthenticated:host=>{authenticated=true;windowRequested=channel.window(host,'workspace')}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer()
   attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
-  channel.wss.on('connection',ws=>{current=ws;connections++;ws.on('message',raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(!authenticated||f.type!=='system.ping')return;if(f.id==='D476_WS_FAIL'){fail();return}if(required.includes(f.id)){if(receipts.has(f.id)){fail();return}receipts.add(f.id);if(f.id==='D476_WS_DONE')channel.revokeHost('owned-native-workspace-476')}})})
+  channel.wss.on('connection',ws=>{current=ws;connections++;ws.on('message',raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(!authenticated||f.type!=='system.ping')return;if(typeof f.id==='string'&&f.id.startsWith('D476_WS_DIAG_')){try{const d=parseNativeWorkspaceDiagnostic705(f.id);if(d&&d.platform===(process.platform==='win32'?1:2))nativeDiagnostic=d;else diagnosticInvalid=true}catch{diagnosticInvalid=true}return}if(f.id==='D476_WS_FAIL'){fail(7);return}if(required.includes(f.id)){if(receipts.has(f.id)){fail(8);return}receipts.add(f.id);if(f.id==='D476_WS_DONE')channel.revokeHost('owned-native-workspace-476')}})})
   server.listen(0,'127.0.0.1');await once(server,'listening')
   try{
    const native=path.resolve(__dirname,'../../dist/desktop-native'),binary=path.join(native,'acceptance/workspace',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop')
@@ -177,8 +180,54 @@ test('#476 actual native workspace picker binds canonical root, reopens lists/re
    const disk=new ThreadManager();assert.equal(disk.get('native-workspace-A')!.workspace_root,root);assert.equal(disk.get('native-workspace-B')!.workspace_root,undefined)
    process.stdout.write('DESKTOP_WORKSPACE_476 {"native":true,"actualPicker":true,"controllerConfirmed":true,"persisted":true,"reopened":true,"listed":true,"read":true,"pickerCancelled":true,"otherThreadUnchanged":true}\n')
   }finally{
-   surfaceLease.retain();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled}))}catch{}
+   surfaceLease.retain();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,diagnosticVersion:1,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid}))}catch{}
    pickerAbort.abort();if(pickerRun)await pickerRun.catch(()=>{});child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();manager.rejectAll('disconnect');await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()
   }
  })
+})
+
+test('#705 passive picker outcomes distinguish ambiguous failure without inspecting private data',async()=>{
+ const {pickerOutcome705}=await import('./helpers/desktop-workspace-picker-476')
+ const expected='/owned-inert/expected';let reads=0
+ assert.equal(pickerOutcome705({path:expected},expected),2)
+ assert.equal(pickerOutcome705({path:'/owned-inert/other'},expected),3)
+ assert.equal(pickerOutcome705({error:'cancelled'},expected),4)
+ assert.equal(pickerOutcome705({error:'OWNED_PRIVATE_MARKER'},expected),5)
+ const accessor=Object.defineProperty({},'path',{get(){reads++;throw Error('MUST_NOT_READ')}})
+ const proxy=new Proxy({}, {ownKeys(){reads++;throw Error('MUST_NOT_TRAP')},getPrototypeOf(){reads++;throw Error('MUST_NOT_TRAP')},get(){reads++;throw Error('MUST_NOT_TRAP')}})
+ const revoked=Proxy.revocable({},{});revoked.revoke()
+ for(const v of [undefined,null,{},[],{path:42},{path:expected,extra:true},{path:expected,error:'cancelled'},accessor,proxy,revoked.proxy,Object.create({path:expected})])assert.equal(pickerOutcome705(v,expected),6)
+ assert.equal(reads,0)
+})
+
+test('#705 passive native frame parser is closed, bounded and represents unobserved fields honestly',async()=>{
+ const {parseNativeWorkspaceDiagnostic705:parse}=await import('./helpers/desktop-workspace-picker-476')
+ assert.deepEqual(parse('D476_WS_DIAG_W_1_0_X_X_0_0'),{platform:1,phaseMask:1,failureSite:0,localPanels:null,ownedPanels:null,flags:0,flagsKnown:0})
+ assert.deepEqual(parse('D476_WS_DIAG_M_1023_10_2_1_15_15'),{platform:2,phaseMask:1023,failureSite:10,localPanels:2,ownedPanels:1,flags:15,flagsKnown:15})
+ for(const v of [null,{},'','D476_WS_DIAG_W_128_0_0_0_0_0','D476_WS_DIAG_M_1024_0_0_0_0_0','D476_WS_DIAG_W_1_32_0_0_0_0','D476_WS_DIAG_W_1_17_0_0_0_0','D476_WS_DIAG_M_1_11_0_0_0_0','D476_WS_DIAG_W_1_0_3_0_0_0','D476_WS_DIAG_W_1_0_0_0_8_8','D476_WS_DIAG_W_1_0_0_0_1_0','D476_WS_DIAG_X_1_0_0_0_0_0','D476_WS_DIAG_W_01_0_0_0_0_0','D476_WS_DIAG_W_1_0_X_X_0_0\n','D476_WS_DIAG_W_1_0_X_X_0_0_OWNED_PRIVATE_MARKER','D476_WS_DIAG_W_1_0_X_X_0_0'.repeat(20)])assert.equal(parse(v),null)
+})
+
+test('#705 passive lifecycle observes cached real picker close and contains logger faults without env inspection',async t=>{
+ const {ChildProcess}=await import('node:child_process'),{PassThrough}=await import('node:stream'),{observeWorkspacePicker476}=await import('./helpers/desktop-workspace-picker-476')
+ const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;Object.defineProperty(process,'platform',{value:'darwin'});t.after(()=>Object.defineProperty(process,'platform',descriptor));t.mock.method(os,'platform',()=> 'darwin')
+ let calls=0,envReads=0,invalid=0;const life:unknown[]=[]
+ const inert=function(this:any,options:any){calls++;Object.defineProperty(options,'envPairs',{get(){envReads++;throw Error('MUST_NOT_READ_ENV')}});this.pid=5900+calls;this.stdin=new PassThrough();this.stdout=new PassThrough();this.stderr=new PassThrough();this.stdio=[this.stdin,this.stdout,this.stderr];process.nextTick(()=>{this.stdout.end('/owned-inert-selected/');this.stderr.end();this.emit('close',0,null)});return this}
+ const installed=t.mock.method(ChildProcess.prototype as any,'spawn',inert as any)
+ const r=await observeWorkspacePicker476(()=>{},()=>invalid++,undefined,v=>life.push(v))
+ assert.equal(r.result.path,'/owned-inert-selected');assert.equal(r.observed,1);assert.deepEqual(life,[{mode:2,childClosed:false,childExit:null,childSignal:0,childError:false},{mode:2,childClosed:true,childExit:0,childSignal:0,childError:false}])
+ const second=await observeWorkspacePicker476(()=>{},()=>invalid++,undefined,()=>{throw Error('OWNED_LOGGER_FAULT')})
+ assert.equal(second.result.path,r.result.path);assert.equal(invalid,0);assert.equal(envReads,0);assert.equal(calls,2);assert.equal((ChildProcess.prototype as any).spawn,installed)
+})
+
+test('#705 passive fixture source retains selection-click order and finite native stages for LF and CRLF',()=>{
+ const dir=path.resolve(__dirname,'../../tests/fixtures/desktop-476')
+ for(const eol of ['\n','\r\n']){
+  const cpp=fs.readFileSync(path.join(dir,'workspace-acceptance.cpp'),'utf8').replace(/\r?\n/g,eol)
+  const swift=fs.readFileSync(path.join(dir,'workspace-acceptance.swift'),'utf8').replace(/\r?\n/g,eol)
+  const panel=cpp.slice(cpp.indexOf('void D476Acceptance::panel('),cpp.indexOf('void D476Acceptance::renderer('))
+  assert.ok(panel.indexOf('L"D476_WS_PICKER_SELECTED"')<panel.indexOf('note(h,16,'));assert.ok(panel.indexOf('note(h,16,')<panel.indexOf('SendMessageW(button,BM_CLICK,0,0)'));assert.ok(panel.indexOf('SendMessageW(button,BM_CLICK,0,0)')<panel.indexOf('note(h,32,'))
+  assert.match(cpp,/diagnosticSends>=16&&!first/);assert.match(cpp,/catch\(\.\.\.\)\{\}/)
+  assert.ok(swift.includes('NSApp.windows.compactMap'));assert.ok(swift.includes('diagnosticSends<16 || first'));assert.ok(swift.includes('task.send(.string(text)){_ in}'));assert.ok(swift.includes('note(h,512,'))
+  assert.equal(/SetFocus|SetActiveWindow|AXUIElement|SystemEvents/.test(cpp+swift),false)
+ }
 })
