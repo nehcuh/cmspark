@@ -28,6 +28,7 @@
 #include <vector>
 #include "desktop-capabilities.h"
 #include <shellapi.h>
+#include <shobjidl.h>
 #pragma comment(lib, "shell32.lib")
 #define CMSPARK_BOOTSTRAP_CHILD
 #include "windows-bootstrap.h"
@@ -112,7 +113,48 @@ class Desktop {
 #endif
  void deliver(JsonObject const& frame){if(web&&ready&&!generation.empty())web->PostWebMessageAsJson(frame.Stringify().c_str());}
  void retire_dialog(){auto r=requests.find(L"desktop.chat.send");if(r==requests.end())return;if(ready){JsonObject stop;put(stop,L"type",L"desktop.chat.stop");put(stop,L"id",random_id());put(stop,L"thread_id",r->second.thread);put(stop,L"run_id",r->second.native_id);send(stop);}requests.erase(r);}
+ struct WorkspaceSelection {
+  ComPtr<IFileOpenDialog> dialog;std::wstring request,thread,revision,nonce,generation;unsigned long epoch=0;double deadline=0;bool settled=false,selected=false;
+ };
+ std::shared_ptr<WorkspaceSelection> workspace_selection;
+ static constexpr UINT_PTR workspace_picker_timer=0x705;
+ bool picker_current(std::shared_ptr<WorkspaceSelection> const& p){
+  auto request=requests.find(L"desktop.workspace.pick");return workspace_selection==p&&ready&&epoch==p->epoch&&generation==p->generation&&request!=requests.end()&&request->second.native_id==p->request&&request->second.thread==p->thread&&request->second.revision==p->revision&&request->second.generation==p->generation;
+ }
+ void retire_picker(){
+  auto p=workspace_selection;workspace_selection.reset();if(!p)return;p->settled=true;KillTimer(window,workspace_picker_timer);
+  if(p->dialog)(void)p->dialog->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));p->dialog.Reset();
+ }
+ void finish_picker(std::shared_ptr<WorkspaceSelection> const& p,std::wstring const& outcome,std::wstring const& selected=L""){
+  if(p->settled)return;bool current=picker_current(p);p->settled=true;p->selected=outcome==L"selected";KillTimer(window,workspace_picker_timer);
+  if(outcome!=L"selected"&&p->dialog)(void)p->dialog->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));p->dialog.Reset();
+  if(!current)return;JsonObject reply;put(reply,L"type",L"desktop.workspace.picker.result");put(reply,L"request_id",p->request);put(reply,L"thread_id",p->thread);put(reply,L"revision",p->revision);put(reply,L"pick_id",p->nonce);put(reply,L"outcome",outcome);if(outcome==L"selected")put(reply,L"path",selected);(void)send(reply);
+ }
+ void begin_picker(JsonObject const& frame){
+  if(workspace_selection||!keys(frame,{L"type",L"request_id",L"thread_id",L"revision",L"pick_id",L"deadline_ms"}))return;
+  auto request=requests.find(L"desktop.workspace.pick");auto id=text(frame,L"request_id"),thread=text(frame,L"thread_id"),revision=text(frame,L"revision"),nonce=text(frame,L"pick_id");auto end=frame.TryLookup(L"deadline_ms");
+  if(id.empty()||id.size()>200||!hex(revision,64)||!hex(nonce,64)||!end||end.ValueType()!=JsonValueType::Number||request==requests.end()||request->second.native_id!=id||request->second.thread!=thread||request->second.revision!=revision||request->second.generation!=generation)return;
+  double deadline=end.GetNumber(),now=wall_ms();if(!std::isfinite(deadline)||std::floor(deadline)!=deadline||deadline<=now||deadline>now+120000)return;
+  auto p=std::make_shared<WorkspaceSelection>();p->request=id;p->thread=thread;p->revision=revision;p->nonce=nonce;p->generation=generation;p->epoch=epoch;p->deadline=deadline;workspace_selection=p;
+  HRESULT created=CoCreateInstance(__uuidof(FileOpenDialog),nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(p->dialog.GetAddressOf()));
+  if(FAILED(created)){finish_picker(p,L"unavailable");return;}
+  FILEOPENDIALOGOPTIONS options{};if(FAILED(p->dialog->GetOptions(&options))||FAILED(p->dialog->SetOptions((options&~(FOS_ALLOWMULTISELECT|FOS_ALLNONSTORAGEITEMS|FOS_FILEMUSTEXIST|FOS_CREATEPROMPT))|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST|FOS_NOCHANGEDIR|FOS_DONTADDTORECENT))||FAILED(p->dialog->SetTitle(L"选择工作区文件夹"))){finish_picker(p,L"unavailable");return;}
+  double remaining=deadline-wall_ms();if(remaining<=0||!SetTimer(window,workspace_picker_timer,(UINT)std::max(1.0,std::floor(remaining)),nullptr)){finish_picker(p,L"unavailable");return;}
+  // Keep a local reference throughout modal reentrancy, even if owner cancellation retires p.
+  auto dialog=p->dialog;HRESULT shown=dialog->Show(window);KillTimer(window,workspace_picker_timer);
+  if(p->settled||!picker_current(p))return;
+  if(shown==HRESULT_FROM_WIN32(ERROR_CANCELLED)){finish_picker(p,L"cancelled");return;}
+  if(FAILED(shown)||wall_ms()>=deadline){finish_picker(p,L"unavailable");return;}
+  ComPtr<IShellItem> item;SFGAOF attributes=0;PWSTR raw=nullptr;
+  if(FAILED(dialog->GetResult(&item))||FAILED(item->GetAttributes(SFGAO_FILESYSTEM|SFGAO_FOLDER,&attributes))||(attributes&(SFGAO_FILESYSTEM|SFGAO_FOLDER))!=(SFGAO_FILESYSTEM|SFGAO_FOLDER)||FAILED(item->GetDisplayName(SIGDN_FILESYSPATH,&raw))){if(raw)CoTaskMemFree(raw);finish_picker(p,L"unavailable");return;}
+  std::unique_ptr<wchar_t,decltype(&CoTaskMemFree)> owned(raw,&CoTaskMemFree);std::wstring selected=raw?raw:L"";
+  if(selected.empty()||!std::filesystem::path(selected).is_absolute()){finish_picker(p,L"unavailable");return;}
+  finish_picker(p,L"selected",selected);
+ }
+ void cancel_picker(JsonObject const& frame){auto p=workspace_selection;if(!p||!keys(frame,{L"type",L"request_id",L"thread_id",L"revision",L"pick_id"})||text(frame,L"request_id")!=p->request||text(frame,L"thread_id")!=p->thread||text(frame,L"revision")!=p->revision||text(frame,L"pick_id")!=p->nonce)return;retire_picker();}
+
  void retire_workspace(bool replace_snapshot=true){
+  retire_picker();
   auto r=requests.find(L"desktop.workspace.pick");if(r!=requests.end()){if(ready){JsonObject stop;put(stop,L"type",L"desktop.workspace.cancel");put(stop,L"id",random_id());put(stop,L"thread_id",r->second.thread);put(stop,L"operation_id",r->second.native_id);send(stop);}requests.erase(r);}
   if(confirmation&&confirmation->purpose==L"workspace")retire_confirmation(0);
   if(replace_snapshot&&!workspace_owner.empty()){if(ready){JsonObject state;put(state,L"type",L"desktop.workspace.state");put(state,L"id",random_id());put(state,L"thread_id",workspace_owner);send(state);}workspace_owner.clear();} // Untracked reply cannot enter the next document.
@@ -168,6 +210,7 @@ class Desktop {
   if(!((thread.ValueType()==JsonValueType::Null&&request->second.thread.empty())||(thread.ValueType()==JsonValueType::String&&!request->second.thread.empty()&&std::wstring(thread.GetString())==request->second.thread)))return;
   auto action=parse(full);JsonObject summary;
   if(workspace){
+   if(!workspace_selection||!workspace_selection->selected||!picker_current(workspace_selection)||workspace_selection->request!=request->second.native_id)return;
    action=flat(full);auto selected=text(action,L"path");
    if(!keys(action,{L"purpose",L"op",L"thread_id",L"revision",L"path"})||text(action,L"purpose")!=L"workspace"||text(action,L"op")!=L"bind"||text(action,L"thread_id")!=request->second.thread||text(action,L"revision")!=request->second.revision||!hex(text(action,L"revision"),64)||selected.empty()||selected.find(L'\0')!=std::wstring::npos||!std::filesystem::path(selected).is_absolute())return;
    summary=action; // Exact selected private directory, native controls only.
@@ -200,7 +243,9 @@ class Desktop {
   // The network may retire this epoch after the UI dispatch check.
   if(!ready||phase!=L"ready"){if(frame_epoch!=epoch)return;throw std::runtime_error("PHASE");}
   if(type==L"desktop.window"){frame=flat(body);if(!keys(frame,{L"type",L"view"}))throw std::runtime_error("CONTROL");auto next=text(frame,L"view");if(next!=L"compact"&&next!=L"workspace")throw std::runtime_error("VIEW");show(next);return;}
-  if(type==L"desktop.close"){flat(body);if(!keys(frame,{L"type"}))throw std::runtime_error("CONTROL");DestroyWindow(window);return;}
+  if(type==L"desktop.close"){flat(body);if(!keys(frame,{L"type"}))throw std::runtime_error("CONTROL");retire_workspace();retire_dialog();retire_confirmation(0);DestroyWindow(window);return;}
+  if(type==L"desktop.workspace.picker.request"){begin_picker(flat(body));return;}
+  if(type==L"desktop.workspace.picker.cancel"){cancel_picker(flat(body));return;}
   if(type==L"desktop.confirmation.request"){begin_confirmation(flat(body));return;}
   if(type==L"desktop.confirmation.resolved"){auto terminal=flat(body);if(confirmation&&text(terminal,L"confirmation_id")==confirmation->id)retire_confirmation();return;}
   auto request=std::find_if(requests.begin(),requests.end(),[&](auto const& r){return r.second.native_id==text(frame,L"id");});if(request==requests.end()||request->second.generation!=generation)return;auto pending=request->second;auto name=request->first;
@@ -221,7 +266,7 @@ class Desktop {
   if(name.rfind(L"desktop.workspace.",0)==0&&(type!=name+L".result"||text(frame,L"thread_id")!=pending.thread))return;
   if(name==L"desktop.workspace.cancel")put(frame,L"operation_id",pending.target);
   if(name.rfind(L"desktop.resource.",0)==0&&type!=name+L".result")return;
-  requests.erase(request);if(name==L"thread.peek"&&type==L"thread.peek_result"&&text(frame,L"thread_id")!=pending.thread)return;if((name==L"desktop.thread.metadata.edit"||name==L"desktop.thread.metadata.save")&&(type!=name+L".result"||text(frame,L"thread_id")!=pending.thread))return;put(frame,L"id",pending.ui_id);deliver(frame);
+  requests.erase(request);if(name==L"desktop.workspace.pick")retire_picker();if(name==L"thread.peek"&&type==L"thread.peek_result"&&text(frame,L"thread_id")!=pending.thread)return;if((name==L"desktop.thread.metadata.edit"||name==L"desktop.thread.metadata.save")&&(type!=name+L".result"||text(frame,L"thread_id")!=pending.thread))return;put(frame,L"id",pending.ui_id);deliver(frame);
  }
  void renderer(std::wstring const& source,std::wstring const& body){if(!ready||source!=document_url||generation.empty())return;auto frame=flat(body);if(text(frame,L"generation")!=generation)return;auto type=text(frame,L"type");if(type==L"desktop.view"&&keys(frame,{L"type",L"view",L"generation"})){auto next=text(frame,L"view");if(next==L"compact"||next==L"workspace")show(next);return;}
   std::set<std::wstring> allowed{L"type",L"id",L"generation"};if(type==L"thread.peek")allowed.insert(L"thread_id");
@@ -248,7 +293,7 @@ class Desktop {
    if(allowed.count(L"path")){auto value=frame.TryLookup(L"path");if(!value||value.ValueType()!=JsonValueType::String)return;}
    if(type==L"desktop.workspace.pick"&&requests.count(type))return;
    if(type==L"desktop.workspace.state")retire_workspace(false);
-   if(type==L"desktop.workspace.cancel"){auto active=requests.find(L"desktop.workspace.pick");if(active==requests.end()||active->second.generation!=generation||active->second.thread!=text(frame,L"thread_id")||active->second.ui_id!=text(frame,L"operation_id")||text(frame,L"operation_id").size()>200)return;auto original=text(frame,L"operation_id");put(frame,L"operation_id",active->second.native_id);requests.erase(active);if(confirmation&&confirmation->purpose==L"workspace")retire_confirmation(0);auto native=random_id();requests[type]={native,text(frame,L"id"),generation,text(frame,L"thread_id"),L"",original,L""};frame.Remove(L"generation"); put(frame,L"id",native);send(frame);return;}
+   if(type==L"desktop.workspace.cancel"){auto active=requests.find(L"desktop.workspace.pick");if(active==requests.end()||active->second.generation!=generation||active->second.thread!=text(frame,L"thread_id")||active->second.ui_id!=text(frame,L"operation_id")||text(frame,L"operation_id").size()>200)return;retire_picker();auto original=text(frame,L"operation_id");put(frame,L"operation_id",active->second.native_id);requests.erase(active);if(confirmation&&confirmation->purpose==L"workspace")retire_confirmation(0);auto native=random_id();requests[type]={native,text(frame,L"id"),generation,text(frame,L"thread_id"),L"",original,L""};frame.Remove(L"generation"); put(frame,L"id",native);send(frame);return;}
   }
   if(type==L"desktop.thread.metadata.edit"||type==L"desktop.thread.metadata.save"){allowed.insert(L"thread_id");if(type==L"desktop.thread.metadata.save")allowed.insert(L"payload_json");if(frame.Size()!=allowed.size()||text(frame,L"id").empty()||text(frame,L"id").size()>200||text(frame,L"thread_id").empty()||(type==L"desktop.thread.metadata.save"&&text(frame,L"payload_json").empty()))return;}
   if(type==L"desktop.thread.create"||type==L"desktop.thread.open"||type==L"desktop.chat.send"||type==L"desktop.chat.stop"){
@@ -287,7 +332,8 @@ class Desktop {
  Desktop(std::wstring const& c,std::wstring const& s,INTERNET_PORT p,std::wstring const& r):cap(c),secret(s),root(r),port(p){}
  static LRESULT CALLBACK proc(HWND hwnd,UINT message,WPARAM w,LPARAM l){Desktop* self=(Desktop*)GetWindowLongPtrW(hwnd,GWLP_USERDATA);if(message==WM_NCCREATE){self=(Desktop*)((CREATESTRUCTW*)l)->lpCreateParams;self->window=hwnd;SetWindowLongPtrW(hwnd,GWLP_USERDATA,(LONG_PTR)self);}if(!self)return DefWindowProcW(hwnd,message,w,l);
   if(message==WM_SIZE&&self->controller){RECT bounds{};GetClientRect(hwnd,&bounds);self->controller->put_Bounds(bounds);return 0;}
-  if(message==native_frame||message==native_connect||message==native_offline){std::unique_ptr<Frame> frame((Frame*)l);if(frame->epoch!=self->epoch)return 0;try{if(message==native_connect){self->retire_confirmation();self->phase=L"initial";self->generation.clear();self->requests.clear();}else if(message==native_offline){self->retire_confirmation();self->ready=false;self->generation.clear();self->requests.clear();if(self->web){JsonObject offline;put(offline,L"type",L"desktop.offline");self->web->PostWebMessageAsJson(offline.Stringify().c_str());}}else self->accept(frame->value,frame->epoch);}catch(...){ExitProcess(45);}return 0;}
+  if(message==native_frame||message==native_connect||message==native_offline){std::unique_ptr<Frame> frame((Frame*)l);if(frame->epoch!=self->epoch)return 0;try{if(message==native_connect){self->retire_picker();self->retire_confirmation();self->phase=L"initial";self->generation.clear();self->requests.clear();}else if(message==native_offline){self->retire_picker();self->retire_confirmation();self->ready=false;self->generation.clear();self->requests.clear();if(self->web){JsonObject offline;put(offline,L"type",L"desktop.offline");self->web->PostWebMessageAsJson(offline.Stringify().c_str());}}else self->accept(frame->value,frame->epoch);}catch(...){ExitProcess(45);}return 0;}
+  if(message==WM_TIMER&&w==workspace_picker_timer){auto p=self->workspace_selection;if(p&&!p->settled&&wall_ms()>=p->deadline)self->finish_picker(p,L"unavailable");return 0;}
   if(message==WM_CLOSE){self->retire_workspace();self->retire_dialog();self->retire_confirmation(0);DestroyWindow(hwnd);return 0;}if(message==WM_DESTROY){if(self->controller)self->controller->Close();PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,message,w,l);
  }
  int run(HINSTANCE instance){WNDCLASSW cls{};cls.lpfnWndProc=proc;cls.hInstance=instance;cls.lpszClassName=L"CMsparkDesktopOwnedWindow";cls.hCursor=LoadCursor(nullptr,IDC_ARROW);if(!RegisterClassW(&cls))return 60;RECT rect{0,0,360,420};AdjustWindowRectEx(&rect,WS_OVERLAPPEDWINDOW,FALSE,0);window=CreateWindowExW(0,cls.lpszClassName,L"CMspark 工作台",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,instance,this);if(!window)return 61;start_network();MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}ExitProcess((UINT)msg.wParam);return(int)msg.wParam;}
@@ -301,7 +347,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){try{
  struct BootBuffer{char bytes[CMSPARK_BOOT_MAX+1]{};~BootBuffer(){SecureZeroMemory(bytes,sizeof(bytes));}} buffer;DWORD body_length=0;if(!d480_client_body(&bootstrap,buffer.bytes,&body_length))return 13;
  std::string data(buffer.bytes,body_length);SecureZeroMemory(buffer.bytes,sizeof(buffer.bytes));
  struct DataWipe{std::string& value;~DataWipe(){if(!value.empty())SecureZeroMemory(value.data(),value.size());}} data_wipe{data};
- auto boot=flat(wide(data));SecureZeroMemory(data.data(),data.size());if(!keys(boot,{L"capability_id",L"secret",L"url",L"protocol_version",L"issued_method_set_version",L"parent_handle"})||!hex(text(boot,L"capability_id"),32)||!hex(text(boot,L"secret"),64)||!exact_one(boot,L"protocol_version")||boot.GetNamedValue(L"issued_method_set_version").ValueType()!=JsonValueType::Number||boot.GetNamedNumber(L"issued_method_set_version")!=desktop_method_set_version||desktop_method_set_version!=7)return 15;
+ auto boot=flat(wide(data));SecureZeroMemory(data.data(),data.size());if(!keys(boot,{L"capability_id",L"secret",L"url",L"protocol_version",L"issued_method_set_version",L"parent_handle"})||!hex(text(boot,L"capability_id"),32)||!hex(text(boot,L"secret"),64)||!exact_one(boot,L"protocol_version")||boot.GetNamedValue(L"issued_method_set_version").ValueType()!=JsonValueType::Number||boot.GetNamedNumber(L"issued_method_set_version")!=desktop_method_set_version||desktop_method_set_version!=8)return 15;
  auto url=text(boot,L"url");std::wstring prefix=L"ws://127.0.0.1:";if(url.rfind(prefix,0)!=0||url.size()<prefix.size()+9||url.substr(url.size()-8)!=L"/desktop")return 15;auto port_text=url.substr(prefix.size(),url.size()-prefix.size()-8);if(port_text.empty()||port_text.size()>5||!std::all_of(port_text.begin(),port_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 15;unsigned port=std::stoul(port_text);if(!port||port>65535)return 15;
  auto parent_text=text(boot,L"parent_handle");if(parent_text.empty()||parent_text[0]==L'0'||!std::all_of(parent_text.begin(),parent_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 16;size_t used=0;auto number=std::stoull(parent_text,&used,10);if(used!=parent_text.size()||number>(uintptr_t)-1)return 16;HANDLE parent=(HANDLE)(uintptr_t)number;if(!sync_parent(parent))return 16;if(!d480_client_finish(&bootstrap,parent))return 16;
  CloseHandle(input);bootstrap.pipe=nullptr;

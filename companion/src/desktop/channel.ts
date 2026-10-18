@@ -44,12 +44,14 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
     let workspace: ReturnType<typeof createDesktopWorkspace> | undefined
     function sendWorkspace(frame: Record<string, unknown>): boolean {
       if (ws.readyState !== WebSocket.OPEN) return false
+      const privatePicker = typeof frame.type === "string" && frame.type.startsWith("desktop.workspace.picker.")
       let encoded: string | undefined
       try { encoded = JSON.stringify(frame) } catch { /* Refuse without inspecting arbitrary errors. */ }
-      if (encoded !== undefined && Buffer.byteLength(encoded, "utf8") <= opts.maxPayload) { try { ws.send(encoded); return true } catch { workspace?.cancel(); return false } }
+      if (encoded !== undefined && Buffer.byteLength(encoded, "utf8") <= opts.maxPayload) { try { ws.send(encoded); return true } catch { if (!privatePicker) workspace?.cancel(); return false } }
+      if (privatePicker) return false // The original actor settles its own unavailable selection once.
       workspace?.cancel()
       // A confirmation notification cannot settle the associated request.
-      if (String(frame.type).startsWith("desktop.confirmation.")) return false
+      if (String(frame.type).startsWith("desktop.confirmation.") || String(frame.type).startsWith("desktop.workspace.picker.")) return false
       const failure = JSON.stringify({ type: frame.type, id: frame.id, thread_id: frame.thread_id, ok: false, error_code: frame.type === "desktop.workspace.pick.result" ? "WORKSPACE_UNCONFIRMED" : "WORKSPACE_UNAVAILABLE", ...(frame.type === "desktop.workspace.pick.result" ? { outcome: "unconfirmed" } : {}) })
       if (Buffer.byteLength(failure, "utf8") <= opts.maxPayload) { try { ws.send(failure) } catch { workspace?.cancel() } }
       else ws.close(1009)
@@ -106,6 +108,10 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
       if ((DESKTOP_DIALOG_METHODS as readonly string[]).includes(String(frame.type))) {
         if (!dialog || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", id: frame.id, error_code: "DESKTOP_METHOD_DENIED" }); return }
         dialog.handle(frame); return
+      }
+      if (frame.type === "desktop.workspace.picker.result") {
+        if (workspace && opts.registry.allows(principal, "desktop.workspace.picker.result")) workspace.selected(frame)
+        return
       }
       if ((DESKTOP_WORKSPACE_METHODS as readonly string[]).includes(String(frame.type))) {
         if (!workspace || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", id: frame.id, error_code: "DESKTOP_METHOD_DENIED" }); return }

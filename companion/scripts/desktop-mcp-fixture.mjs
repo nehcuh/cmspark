@@ -36,7 +36,7 @@ export function desktopMetadataFixture(language, original, fixture, form, metada
     ["D476Acceptance::document(*this);","D476MetadataAcceptance::arm(*this);D476Acceptance::document(*this);"],
     ["D476Acceptance::renderer(*this,frame);","D476Acceptance::renderer(*this,frame);D476MetadataAcceptance::renderer(*this,frame);"],
     ['void renderer(std::wstring const& source,std::wstring const& body){','void renderer(std::wstring const& source,std::wstring const& body){if(D476MetadataAcceptance::observe(*this,source,body))return;'],
-    ['else if(message==native_offline){self->retire_confirmation();','else if(message==native_offline){D476MetadataAcceptance::lost(*self);self->retire_confirmation();'],
+    ['else if(message==native_offline){self->retire_picker();self->retire_confirmation();','else if(message==native_offline){D476MetadataAcceptance::lost(*self);self->retire_picker();self->retire_confirmation();'],
   ] : language==="swift" ? [
     ["D476Acceptance.document(self)","D476MetadataAcceptance.arm(self);D476Acceptance.document(self)"],
     ["D476Acceptance.renderer(self,f);","D476Acceptance.renderer(self,f);D476MetadataAcceptance.renderer(self,f);"],
@@ -64,7 +64,7 @@ export function desktopDialogFixture(language, original, fixture, form, dialog) 
     ["D476Acceptance::document(*this);","D476DialogAcceptance::arm(*this);D476Acceptance::document(*this);"],
     ["D476Acceptance::renderer(*this,frame);","D476Acceptance::renderer(*this,frame);D476DialogAcceptance::renderer(*this,frame);"],
     ['void renderer(std::wstring const& source,std::wstring const& body){','void renderer(std::wstring const& source,std::wstring const& body){if(D476DialogAcceptance::observe(*this,source,body))return;'],
-    ['else if(message==native_offline){self->retire_confirmation();','else if(message==native_offline){D476DialogAcceptance::lost(*self);self->retire_confirmation();'],
+    ['else if(message==native_offline){self->retire_picker();self->retire_confirmation();','else if(message==native_offline){D476DialogAcceptance::lost(*self);self->retire_picker();self->retire_confirmation();'],
   ] : language==="swift" ? [
     ["D476Acceptance.document(self)","D476DialogAcceptance.arm(self);D476Acceptance.document(self)"],
     ["D476Acceptance.renderer(self,f);","D476Acceptance.renderer(self,f);D476DialogAcceptance.renderer(self,f);"],
@@ -86,7 +86,7 @@ export function desktopResourceFixture(language, original, fixture, form) {
   const base=desktopMcpFixture(language,original,fixture,form)
   const patches=language==='cpp' ? [
     ['void renderer(std::wstring const& source,std::wstring const& body){','void renderer(std::wstring const& source,std::wstring const& body){if(D476Acceptance::observe(*this,source,body))return;'],
-    ['else if(message==native_offline){self->retire_confirmation();','else if(message==native_offline){D476Acceptance::lost(*self);self->retire_confirmation();'],
+    ['else if(message==native_offline){self->retire_picker();self->retire_confirmation();','else if(message==native_offline){D476Acceptance::lost(*self);self->retire_picker();self->retire_confirmation();'],
   ] : language==='swift' ? [
     ['func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {','func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {\n        if D476Acceptance.observe(self,message){return}'],
     ['guard socket === task else { return };let wasAuthenticated=authenticated;','guard socket === task else { return };D476Acceptance.lost(self);let wasAuthenticated=authenticated;'],

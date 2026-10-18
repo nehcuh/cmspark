@@ -52,7 +52,7 @@ test("Mac acceptance builder preserves production bytes and arms cleanup only in
   const builder = await (new Function("url", "return import(url)"))(pathToFileURL(path.resolve("scripts/build-desktop-windows.mjs")).href)
   const variant = builder.desktopAcceptanceVariant("swift", original, fixture)
   assert.equal(variant.inverse, original)
-  assert.ok(variant.source.includes("d480AcceptanceWindowStop(self);retireConfirmation(nil);socket=nil;"))
+  assert.ok(variant.source.includes("d480AcceptanceWindowStop(self);retirePicker();retireConfirmation(nil);socket=nil;"))
   assert.ok(variant.source.includes("d480AcceptanceWindowStop(self);retireWorkspace();retireDialog();retireConfirmation(false);socket?.cancel"))
   assert.equal(original.includes("d480AcceptanceWindowStop"), false)
   assert.ok(fixture.includes("NotificationCenter.default.removeObserver(observer)"))

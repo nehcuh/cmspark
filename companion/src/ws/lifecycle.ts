@@ -32,7 +32,6 @@ import {
 import { handleMessage, redactMcpServersForBroadcast, listLlmActiveThreadIds } from "../message-router"
 import { projectThreadActivity } from "../message-router/handlers/projects"
 import { isModuleEnabled } from "../capability/modules"
-import { pickFolderNative, WORKSPACE_FOLDER_PROMPT } from "../obsidian/folder-picker"
 import { redactConfigForWire } from "../config-redact"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
@@ -811,7 +810,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     securityConfirmations: requireRt().securityConfirmations,
     onAuthenticated: host => desktopLauncher.authenticated(host),
     dialogRuntime: owner => createNativeDialogRuntime({ ...owner, threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), history: requireRt().getHistoryStore(), createExecutor: run => requireRt().createToolExecutor(owner.ws, run) }),
-    workspaceRuntime: { pick: () => pickFolderNative(WORKSPACE_FOLDER_PROMPT), enabled: () => isModuleEnabled("devsec-workspace"), activity: id => projectThreadActivity(id, key => listLlmActiveThreadIds().includes(key)) },
+    workspaceRuntime: { enabled: () => isModuleEnabled("devsec-workspace"), activity: id => projectThreadActivity(id, key => listLlmActiveThreadIds().includes(key)) },
     onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws) },
   })
   desktopLauncher = new DesktopHostLauncher(desktopRegistry, `ws://127.0.0.1:${port}/desktop`, (host, view) => desktopChannel.window(host, view))

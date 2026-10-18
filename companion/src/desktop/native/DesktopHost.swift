@@ -80,7 +80,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
                 switch message {case .string(let s): data=Data(s.utf8);case .data(let d):data=d;@unknown default:self.offline(task);return}
                 // Auth/control frames are flat; projected list replies legitimately contain arrays.
                 guard let f=(self.phase == "ready" ? (try? JSONSerialization.jsonObject(with:data)) as? [String:Any] : flatFrame(data)) else { self.offline(task);return }
-                if self.phase == "ready",let kind=f["type"] as? String,["desktop.window","desktop.close","desktop.confirmation.request","desktop.confirmation.resolved"].contains(kind),flatFrame(data)==nil { self.offline(task);return }
+                if self.phase == "ready",let kind=f["type"] as? String,["desktop.window","desktop.close","desktop.confirmation.request","desktop.confirmation.resolved","desktop.workspace.picker.request","desktop.workspace.picker.cancel"].contains(kind),flatFrame(data)==nil { self.offline(task);return }
                 self.accept(f,task);if self.socket === task { self.receive(task) }
             }
         } }
@@ -109,6 +109,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
               let thread=f["thread_id"],(thread is NSNull && request.thread==nil)||(thread as? String != nil && (thread as? String)==request.thread),let generation=generation,let window=window else{return}
         let safe:[String:Any]
         if workspace {
+            guard let selection=workspaceSelection,selection.selected,pickerCurrent(selection),selection.request==request.nativeId else{return}
             guard flatFrame(raw) != nil,Set(action.keys)==["purpose","op","thread_id","revision","path"],action["purpose"] as? String=="workspace",action["op"] as? String=="bind",action["thread_id"] as? String==request.thread,let revision=action["revision"] as? String,revision==request.revision,Self.hex(revision,64),let path=action["path"] as? String,!path.contains("\0"),(path as NSString).isAbsolutePath else{return}
             safe=action // Exact selected private directory, native controls only.
         } else if resource {
@@ -133,7 +134,60 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         p.timer=Timer.scheduledTimer(withTimeInterval:max(0.001,(p.deadline-Date().timeIntervalSince1970*1000)/1000),repeats:false){[weak self,weak p] _ in guard let self=self,let p=p,self.confirmation === p else{return};self.retireConfirmation(nil)}
         p.alert.beginSheetModal(for:window){[weak self,weak p] response in guard let self=self,let p=p,self.confirmation === p else{return};self.retireConfirmation(response == .alertSecondButtonReturn)}
     }
+    final class WorkspaceSelection {
+        let request:String,thread:String,revision:String,nonce:String,generation:String
+        let task:URLSessionWebSocketTask;let owner:NSWindow;let panel=NSOpenPanel();let deadline:Double
+        var timer:Timer?;var settled=false;var selected=false
+        init(_ request:String,_ thread:String,_ revision:String,_ nonce:String,_ generation:String,_ task:URLSessionWebSocketTask,_ owner:NSWindow,_ deadline:Double){self.request=request;self.thread=thread;self.revision=revision;self.nonce=nonce;self.generation=generation;self.task=task;self.owner=owner;self.deadline=deadline}
+    }
+    var workspaceSelection:WorkspaceSelection?
+    func pickerCurrent(_ p:WorkspaceSelection)->Bool {
+        guard workspaceSelection === p,authenticated,socket === p.task,generation==p.generation,window === p.owner,let request=requests["desktop.workspace.pick"] else{return false}
+        return request.nativeId==p.request && request.thread==p.thread && request.revision==p.revision && request.generation==p.generation
+    }
+    func retirePicker() {
+        guard let p=workspaceSelection else{return};workspaceSelection=nil;p.settled=true;p.timer?.invalidate();p.timer=nil
+        p.panel.cancel(nil);p.panel.orderOut(nil) // Exact retained object, never global abortModal.
+    }
+    func finishPicker(_ p:WorkspaceSelection,_ outcome:String,_ selectedPath:String?=nil) {
+        guard !p.settled else{return};let current=pickerCurrent(p);p.settled=true;p.timer?.invalidate();p.timer=nil
+        // AppKit completion may precede physical sheet dismissal. Hide this precise panel before L2.
+        p.panel.orderOut(nil)
+        guard current else{return}
+        p.selected=outcome=="selected"
+        var frame:[String:Any]=["type":"desktop.workspace.picker.result","request_id":p.request,"thread_id":p.thread,"revision":p.revision,"pick_id":p.nonce,"outcome":outcome]
+        if outcome=="selected",let selectedPath=selectedPath {frame["path"]=selectedPath}
+        transmit(frame,to:p.task)
+    }
+    func beginPicker(_ f:[String:Any],_ task:URLSessionWebSocketTask) {
+        guard workspaceSelection==nil,Set(f.keys)==["type","request_id","thread_id","revision","pick_id","deadline_ms"],let request=f["request_id"] as? String,!request.isEmpty,request.utf16.count<=200,
+              let thread=f["thread_id"] as? String,let revision=f["revision"] as? String,Self.hex(revision,64),let nonce=f["pick_id"] as? String,Self.hex(nonce,64),
+              let deadline=f["deadline_ms"] as? NSNumber,CFGetTypeID(deadline) != CFBooleanGetTypeID(),deadline.doubleValue.isFinite,deadline.doubleValue.rounded(.down)==deadline.doubleValue,
+              let entry=requests["desktop.workspace.pick"],entry.nativeId==request,entry.thread==thread,entry.revision==revision,entry.generation==generation,
+              let generation=generation,let owner=window,socket === task,authenticated else{return}
+        let now=Date().timeIntervalSince1970*1000,end=deadline.doubleValue
+        guard end>now,end<=now+120000 else{return}
+        let p=WorkspaceSelection(request,thread,revision,nonce,generation,task,owner,end);workspaceSelection=p
+        p.panel.canChooseDirectories=true;p.panel.canChooseFiles=false;p.panel.allowsMultipleSelection=false;p.panel.message="选择工作区文件夹"
+        p.timer=Timer.scheduledTimer(withTimeInterval:max(0.001,(end-Date().timeIntervalSince1970*1000)/1000),repeats:false){[weak self,weak p] _ in
+            guard let self=self,let p=p,self.pickerCurrent(p),!p.settled else{return}
+            // Logical deadline does not wait for a possibly delayed framework callback.
+            self.finishPicker(p,"unavailable");p.panel.cancel(nil);p.panel.orderOut(nil)
+        }
+        p.panel.beginSheetModal(for:owner){[weak self,weak p] response in
+            guard let self=self,let p=p,!p.settled else{return}
+            if response == .OK,Date().timeIntervalSince1970*1000<p.deadline,p.panel.urls.count==1,let url=p.panel.urls.first,url.isFileURL,!url.path.isEmpty,!url.path.contains("\0"),(url.path as NSString).isAbsolutePath {
+                self.finishPicker(p,"selected",url.path)
+            } else { self.finishPicker(p,response == .cancel ? "cancelled":"unavailable") }
+        }
+    }
+    func cancelPicker(_ f:[String:Any]) {
+        guard Set(f.keys)==["type","request_id","thread_id","revision","pick_id"],let p=workspaceSelection,f["request_id"] as? String==p.request,f["thread_id"] as? String==p.thread,f["revision"] as? String==p.revision,f["pick_id"] as? String==p.nonce else{return}
+        retirePicker()
+    }
+
     func retireWorkspace(replaceSnapshot:Bool=true) {
+        retirePicker()
         if let pick=requests.removeValue(forKey:"desktop.workspace.pick"),authenticated,let socket=socket {transmit(["type":"desktop.workspace.cancel","id":UUID().uuidString,"thread_id":pick.thread ?? "","operation_id":pick.nativeId],to:socket)}
         if confirmation?.purpose=="workspace" {retireConfirmation(false)}
         if replaceSnapshot {if let target=workspaceOwner,authenticated,let socket=socket {transmit(["type":"desktop.workspace.state","id":UUID().uuidString,"thread_id":target],to:socket)};workspaceOwner=nil} // No request mapping: cleanup reply cannot enter the next document.
@@ -162,6 +216,8 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         guard authenticated,phase=="ready" else { offline(task);return }
         if type=="desktop.window",Set(f.keys)==["type","view"],let requested=f["view"] as? String,["compact","workspace"].contains(requested) { show(requested);return }
         if type=="desktop.close",Set(f.keys)==["type"] { NSApp.terminate(nil);return }
+        if type=="desktop.workspace.picker.request" {beginPicker(f,task);return}
+        if type=="desktop.workspace.picker.cancel" {cancelPicker(f);return}
         if type=="desktop.confirmation.request" {beginConfirmation(f,task);return}
         if type=="desktop.confirmation.resolved" {if f["confirmation_id"] as? String==confirmation?.id{retireConfirmation(nil)};return}
         guard let id=f["id"] as? String,let pair=requests.first(where:{$0.value.nativeId==id}),pair.value.generation==generation else { return }
@@ -183,12 +239,13 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         if pair.key=="desktop.workspace.cancel" {mapped["operation_id"]=pair.value.target}
         if pair.key.hasPrefix("desktop.resource.") && type != pair.key+".result" {return}
         requests.removeValue(forKey:pair.key)
+        if pair.key=="desktop.workspace.pick" {retirePicker()}
         if pair.key=="thread.peek",f["type"] as? String=="thread.peek_result",f["thread_id"] as? String != pair.value.thread { return }
         if ["desktop.thread.metadata.edit","desktop.thread.metadata.save"].contains(pair.key),f["type"] as? String != pair.key+".result" || f["thread_id"] as? String != pair.value.thread { return }
         var reply=mapped;reply["id"]=pair.value.uiId;deliver(reply)
     }
     func offline(_ task:URLSessionWebSocketTask, code:Int = 0) {
-        guard socket === task else { return };let wasAuthenticated=authenticated;retireConfirmation(nil);socket=nil;authenticated=false;generation=nil;requests.removeAll();task.cancel(with:.goingAway,reason:nil);session?.invalidateAndCancel();deliver(["type":"desktop.offline"])
+        guard socket === task else { return };let wasAuthenticated=authenticated;retirePicker();retireConfirmation(nil);socket=nil;authenticated=false;generation=nil;requests.removeAll();task.cancel(with:.goingAway,reason:nil);session?.invalidateAndCancel();deliver(["type":"desktop.offline"])
         // Credential stays native; a fresh connection/nonce is required. Never tray fallback.
         if !wasAuthenticated { switch code { case -1022: exit(42);case -1011:exit(43);case -1004:exit(44);case 0:exit(45);default:exit(41) } }
         DispatchQueue.main.asyncAfter(deadline:.now()+5) { if self.socket == nil { self.connect() } }
@@ -268,7 +325,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
             if allowed.contains("path") {guard f["path"] is String else{return}}
             if type=="desktop.workspace.pick",requests[type] != nil{return}
             if type=="desktop.workspace.state" {retireWorkspace(replaceSnapshot:false)}
-            if type=="desktop.workspace.cancel" {guard let active=requests["desktop.workspace.pick"],active.generation==generation,active.thread==target,let operation=f["operation_id"] as? String,!operation.isEmpty,operation.utf16.count<=200,active.uiId==operation,let socket=socket else{return};requests.removeValue(forKey:"desktop.workspace.pick");if confirmation?.purpose=="workspace"{retireConfirmation(false)};let id=UUID().uuidString;requests[type]=(id,f["id"] as? String,g,target,nil,operation,nil);var out=f;out["operation_id"]=active.nativeId;out.removeValue(forKey:"generation");out["id"]=id;transmit(out,to:socket);return}
+            if type=="desktop.workspace.cancel" {guard let active=requests["desktop.workspace.pick"],active.generation==generation,active.thread==target,let operation=f["operation_id"] as? String,!operation.isEmpty,operation.utf16.count<=200,active.uiId==operation,let socket=socket else{return};retirePicker();requests.removeValue(forKey:"desktop.workspace.pick");if confirmation?.purpose=="workspace"{retireConfirmation(false)};let id=UUID().uuidString;requests[type]=(id,f["id"] as? String,g,target,nil,operation,nil);var out=f;out["operation_id"]=active.nativeId;out.removeValue(forKey:"generation");out["id"]=id;transmit(out,to:socket);return}
         }
         if ["desktop.thread.metadata.edit","desktop.thread.metadata.save"].contains(type) {guard Set(f.keys)==allowed,let id=f["id"] as? String,!id.isEmpty,id.utf16.count<=200,let target=f["thread_id"] as? String,!target.isEmpty else{return};if type=="desktop.thread.metadata.save" {guard let payload=f["payload_json"] as? String,!payload.isEmpty else{return}}}
         if ["desktop.thread.create","desktop.thread.open","desktop.chat.send","desktop.chat.stop"].contains(type) {
@@ -299,6 +356,6 @@ let bootstrapWatch=DispatchSource.makeProcessSource(identifier:parent,eventMask:
 var data=Data()
 while true { do { guard let part=try FileHandle.standardInput.read(upToCount:4097-data.count),!part.isEmpty else{break};data.append(part);if data.count>4096{exit(14)} } catch {exit(13)} }
 try? FileHandle.standardInput.close()
-guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==7,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
+guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==8,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
 data.resetBytes(in:0..<data.count)
 let app=NSApplication.shared;private let delegate=NativeDesktop(bootstrap,parent:parent);app.delegate=delegate;app.setActivationPolicy(.regular);bootstrapWatch.cancel();app.run()
