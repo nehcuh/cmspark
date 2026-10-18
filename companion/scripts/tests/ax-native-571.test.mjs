@@ -77,8 +77,8 @@ test('#571 actual initial readiness gate observes active/key and both CG identit
  const expression=swift.match(/func ax571Readiness\([^)]*\) -> Bool \{ return ([^}]+) \}/)?.[1];assert.ok(expression)
  for(let mask=0;mask<16;mask++){const values=Array.from({length:4},(_,i)=>!!(mask&(1<<i))),[active,key,targetBound,siblingBound]=values;assert.equal(vm.runInNewContext(expression,{active,key,targetBound,siblingBound}),mask===15)}
  const begin=swift.slice(swift.indexOf('    func publishReady() {'),swift.indexOf('    func queueReadiness() {')),tail=swift.slice(swift.indexOf('    func queueReadiness() {'))
- assert.match(begin,/guard !setupStarted else/);assert.match(begin,/NSApplication\.didBecomeActiveNotification/);assert.match(begin,/NSWindow\.didBecomeKeyNotification/);assert.match(begin,/if #available\(macOS 14.0, \*\)/)
- assert.equal((begin.match(/NSApp\.activate\(/g)||[]).length,2);assert.doesNotMatch(tail,/NSApp\.activate|makeKeyAndOrderFront|asyncAfter/)
+ assert.match(begin,/guard !setupStarted else/);assert.match(begin,/NSApplication\.didBecomeActiveNotification/);assert.match(begin,/NSWindow\.didBecomeKeyNotification/);assert.doesNotMatch(begin,/NSApp\.activate/)
+ assert.equal((begin.match(/NSApp\.activate\(/g)||[]).length,0);assert.doesNotMatch(tail,/NSApp\.activate|makeKeyAndOrderFront|asyncAfter/)
  assert.ok(tail.indexOf('guard ax571Readiness(active,key,targetBound,siblingBound)')<tail.indexOf('self.published = true'));assert.match(tail,/kCGWindowOwnerPID/);assert.match(tail,/kCGWindowNumber/)
  assert.match(source,/assert\.ok\(before.foreground===sibling,'AX571_INITIAL_SIBLING_REQUIRED'\)/)
 })
@@ -88,4 +88,65 @@ test('#571 setup diagnostic is a closed enum/boolean projection and never publis
  for(const x of [null,[],{}, {...value,firstRole:'OWNED_PRIVATE_SENTINEL'},{...value,pid:17},{...value,target:18},{...value,appActive:1},{...value,schema:2}])assert.equal(scope.setup(x),null)
  let reads=0;const access=Object.defineProperty({...value},'appActive',{get(){reads++;throw Error('OWNED_PRIVATE_SENTINEL')}});assert.equal(scope.setup(access),null);assert.equal(reads,0)
  assert.match(source,/Buffer\.byteLength\(b,'utf8'\)<=2048/);assert.match(source,/Diagnostics cannot replace primary or cleanup/)
+})
+
+// Owned-app launcher regression controls. No AppKit/LaunchServices is executed.
+function actualAx571Finally(){
+ const matches=[];function visit(n){if(ts.isTryStatement(n)&&n.finallyBlock&&n.finallyBlock.getText(ast).includes("AX571_OWNER_CLEANUP_FAILED"))matches.push(n.finallyBlock.getText(ast));ts.forEachChild(n,visit)}visit(ast);assert.equal(matches.length,1);return matches[0].slice(1,-1)
+}
+async function actualAx571Cleanup(terminated,options={}){
+ let removed=false,settled=false;const pid=123,owned={dev:1n,ino:2n},start={schema:1,framework:'APPKIT',pid,urlBound:true,terminated:false},finish={...start,terminated:true,...options.closed};
+ const get=p=>{if(p.endsWith('.owner-started')){if(options.noStart)throw Error('OWNED_MISSING_START');return JSON.stringify(start)};if(p.endsWith('.owner-closed')){if(terminated)return JSON.stringify(finish);throw Object.assign(Error('OWNED_MISSING_CLOSE'),{code:'ENOENT'})}throw Error('OWNED_NO_SETUP')};
+ const helper=ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='ax571OwnerReceipt').map(n=>n.getText(ast)).join('\n'),code=ts.transpileModule(helper+'\nasync function clean(){'+actualAx571Finally()+'};this.clean=clean;',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ const context={assert,fs:{readFileSync:get,lstatSync:()=>({isDirectory:()=>true,isSymbolicLink:()=>false,...owned}),rmSync:()=>{removed=true}},Buffer,t:{diagnostic(){}},child:{pid:99,kill(){throw Error('ALREADY_CLOSED_LAUNCHER')}},closed:Promise.resolve(),ended:true,failed:!!options.primary,primary:options.primary,framework:'APPKIT',dir:'/OWNED_AX571',ready:'/OWNED_AX571/ready.json',owned,appPID:pid,lease:{settled(){settled=true}},ax571Setup:()=>null};vm.createContext(context);vm.runInContext(code,context);let refused=false,primaryKept=false;try{await context.clean()}catch(e){refused=true;primaryKept=e===options.primary}return{removed,settled,refused,primaryKept}
+}
+test('#571 owned bundle plan signs fixed app identity, never substitutes the product host',()=>{
+ const p=ax571BuildPlan('/OWNED/companion');assert.equal(p.fixtureBundle,'/OWNED/companion/dist/ax-native-571/OwnedAX571.app');assert.equal(p.fixture,p.fixtureBundle+'/Contents/MacOS/owned-target');assert.ok(p.fixtureInfoSource.endsWith('/tests/fixtures/ax-571/Info.plist'));assert.equal(p.commands[4][1].at(-1),p.fixtureBundle);assert.equal(p.commands[5][1].at(-1),p.fixtureBundle)
+})
+test('#571 owned app termination is required after launcher close before cleanup or lease release',async()=>{
+ const pending=await actualAx571Cleanup(false);assert.equal(pending.removed,false);assert.equal(pending.settled,false);assert.equal(pending.refused,true)
+ const done=await actualAx571Cleanup(true);assert.equal(done.removed,true);assert.equal(done.settled,true);assert.equal(done.refused,false)
+})
+test('#571 owned launcher only opens one fixed signed app and waits actual returned instance termination',()=>{
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8');assert.equal((swift.match(/NSWorkspace\.shared\.openApplication\(/g)||[]).length,1);assert.match(swift,/configuration\.activates = true/);assert.match(swift,/configuration\.createsNewApplicationInstance = true/);assert.match(swift,/configuration\.allowsRunningApplicationSubstitution = false/);assert.match(swift,/\.observe\(\\\.isTerminated/);assert.match(swift,/returned\.processIdentifier/);assert.match(swift,/returned\.bundleURL/);assert.match(swift,/returned\.executableURL/);assert.doesNotMatch(swift,/runningApplications\(|runningApplication\(processIdentifier|NSApp\.activate\(/)
+})
+test('#571 private app owner receipt rejects unknown, stale PID, wrong framework/phase and getters',()=>{
+ const node=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='ax571OwnerReceipt');assert.ok(node);const s={Object,Number};vm.createContext(s);vm.runInContext(ts.transpileModule(node.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+';this.parse=ax571OwnerReceipt;',s)
+ const good={schema:1,framework:'APPKIT',pid:123,urlBound:true,terminated:true};assert.equal(s.parse(good,'APPKIT',true,123).pid,123)
+ for(const value of [null,{},[],{...good,extra:'SECRET_OWNED'},{...good,pid:124},{...good,pid:0},{...good,pid:2147483648},{...good,framework:'WKWEBVIEW'},{...good,terminated:false},{...good,urlBound:false},{...good,schema:2}])assert.equal(s.parse(value,'APPKIT',true,123),null)
+ let getters=0;const accessor=Object.defineProperty({...good},'pid',{get(){getters++;throw Error('SECRET_OWNED')}});assert.equal(s.parse(accessor,'APPKIT',true,123),null);assert.equal(getters,0)
+})
+test('#571 actual finally cannot use stale app proof or replace primary during unobserved close',async()=>{
+ for(const options of [{noStart:true},{closed:{pid:124}},{closed:{framework:'WKWEBVIEW'}},{closed:{terminated:false}},{closed:{urlBound:false}}]){const r=await actualAx571Cleanup(true,options);assert.equal(r.refused,true);assert.equal(r.removed,false);assert.equal(r.settled,false)}
+ const primary=Error('OWNED_PRIMARY');const r=await actualAx571Cleanup(false,{primary});assert.equal(r.primaryKept,true);assert.equal(r.removed,false);assert.equal(r.settled,false)
+})
+function actualBuild571Fixture(fault){
+ const file=path.join(root,'companion/scripts/build-ax-native-571.mjs'),text=fs.readFileSync(file,'utf8'),sf=ts.createSourceFile(file,text,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),definitions=['ax571BuildPlan','buildAx571'].map(name=>{const n=sf.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);assert.ok(n);return n.getText(sf).replace(/^export /,'')}).join('\n')
+ const dir=fs.mkdtempSync(path.join(process.env.TMPDIR,'ax571-plan-')),r=path.join(dir,'companion'),plist=path.join(r,'tests/fixtures/ax-571/Info.plist');fs.mkdirSync(path.dirname(plist),{recursive:true});fs.copyFileSync(path.join(root,'companion/tests/fixtures/ax-571/Info.plist'),plist)
+ const commands=[];const execute=(bin,args)=>{commands.push([bin,args]);if(bin==='/usr/bin/swiftc'){const dest=args[args.indexOf('-o')+1];fs.writeFileSync(dest,'OWNED_INERT_NOT_MACHO',{flag:'wx'})}if(args.includes('--verify')&&fault==='signature')return{status:1};if(args.includes('-dv')){const id=args.at(-1).endsWith('.app')?(fault==='identifier'?'OWNED_WRONG':'com.cmspark.ax571.owned-target'):'com.cmspark.agent';return{status:0,stderr:'Identifier='+id+'\n'}}return{status:0}}
+ const context={fs,path,spawnSync:execute,process:{platform:'darwin',version:'v22.23.2'}};vm.createContext(context);vm.runInContext(definitions+';this.build=buildAx571;',context)
+ let error;try{context.build(r);const result=JSON.parse(fs.readFileSync(path.join(r,'dist/ax-native-571/identity.json'),'utf8'));assert.equal(result.fixtureBundleVerified,true);assert.equal(result.fixtureIdentifierExpected,true);assert.equal(fs.readFileSync(path.join(r,'dist/ax-native-571/OwnedAX571.app/Contents/Info.plist'),'utf8'),fs.readFileSync(plist,'utf8'))}catch(e){error=e.message}finally{fs.rmSync(dir,{recursive:true,force:true})}return{error,commands}
+}
+test('#571 actual bundle builder writes exclusive fixed plist and checks both real signing identities',()=>{const r=actualBuild571Fixture();assert.equal(r.error,undefined);assert.equal(r.commands.length,8);assert.equal(r.commands.filter(([bin])=>bin==='/usr/bin/swiftc').length,2);for(const [bin,args]of r.commands)assert.ok(['/usr/bin/swiftc','/usr/bin/codesign'].includes(bin))})
+test('#571 actual bundle builder refuses signature or fixture identifier failure',()=>{assert.equal(actualBuild571Fixture('signature').error,'AX571_BUILD_FAILED');assert.equal(actualBuild571Fixture('identifier').error,'AX571_FIXTURE_BUNDLE_IDENTITY')})
+function actualLauncherBodies571(){
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),a=swift.indexOf('    func observedTermination(_ owned: NSRunningApplication) {'),b=swift.indexOf('    func retire() {',a),c=swift.indexOf('    func start() {',b);assert.ok(a>=0&&b>a&&c>b)
+ let observed=swift.slice(a,b).slice(swift.slice(a,b).indexOf('{')+1,swift.slice(a,b).lastIndexOf('}')),retire=swift.slice(b,c).slice(swift.slice(b,c).indexOf('{')+1,swift.slice(b,c).lastIndexOf('}'))
+ const replace=(s,x,y)=>{assert.equal(s.split(x).length,2,x);return s.replace(x,y)}
+ observed=replace(observed,'guard application === owned, owned.isTerminated, !completed else { return }','if(!(application === owned && owned.isTerminated && !completed))return')
+ observed=replace(observed,'guard receipt(true) else { exit(65) }','if(!receipt(true)){exit(65)}');observed=replace(observed,'terminationObservation = nil','terminationObservation = null');observed=replace(observed,'for source in signalSources { source.cancel() }; signalSources.removeAll()','for(const source of signalSources){source.cancel()};signalSources.splice(0)')
+ retire=replace(retire,'guard let owned = application else { return }','const owned=application;if(!owned)return');retire=replace(retire,'if owned.isTerminated { observedTermination(owned); return }','if(owned.isTerminated){observedTermination(owned);return}');retire=replace(retire,'guard !terminationRequested else { return }','if(terminationRequested)return');retire=replace(retire,'_ = owned.forceTerminate()','owned.forceTerminate()')
+ assert.doesNotMatch(observed+retire,/\bguard\b|\bnil\b|for source in|_ =/)
+ return {observe:vm.runInNewContext('(state,owned)=>{with(state){'+observed+'}}'),retire:vm.runInNewContext('(state)=>{with(state){'+retire+'}}')}
+}
+function launcherState571(){const events=[],owner={isTerminated:false,forceTerminate(){events.push('REQUEST');return true}},state={application:owner,completed:false,stopping:false,terminationRequested:false,signalSources:[{cancel(){events.push('SIGNAL_CANCEL')}}],terminationObservation:{invalidate(){events.push('OBSERVATION_INVALIDATE')}},receipt(v){assert.equal(v,true);events.push('ACTUAL_CLOSE_RECEIPT');return true},exit(n){events.push(n);throw Error('OWNED_EXIT')},observedTermination(owned){bodies.observe(state,owned)}};const bodies=actualLauncherBodies571();return{state,owner,events,bodies}}
+test('#571 actual launcher never equates termination request success or foreign close with owned app close',()=>{
+ const f=launcherState571();f.bodies.retire(f.state);assert.deepEqual(f.events,['REQUEST']);f.bodies.retire(f.state);assert.deepEqual(f.events,['REQUEST']);f.bodies.observe(f.state,{isTerminated:true});assert.deepEqual(f.events,['REQUEST']);assert.equal(f.state.completed,false)
+ f.owner.isTerminated=true;assert.throws(()=>f.bodies.observe(f.state,f.owner),/OWNED_EXIT/);assert.deepEqual(f.events,['REQUEST','ACTUAL_CLOSE_RECEIPT','OBSERVATION_INVALIDATE','SIGNAL_CANCEL',177]);f.bodies.observe(f.state,f.owner);assert.equal(f.events.filter(x=>x==='ACTUAL_CLOSE_RECEIPT').length,1)
+})
+test('#571 actual launcher keeps a stop while launch completion is pending and retires only its later owner',()=>{
+ const f=launcherState571();f.state.application=undefined;f.bodies.retire(f.state);assert.equal(f.state.stopping,true);assert.deepEqual(f.events,[]);f.state.application=f.owner;f.bodies.retire(f.state);assert.deepEqual(f.events,['REQUEST']);f.owner.isTerminated=true;assert.throws(()=>f.bodies.observe(f.state,f.owner),/OWNED_EXIT/)
+})
+test('#571 fixed owned app plist has only its closed bundle identity and no URL/document associations',()=>{
+ const plist=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/Info.plist'),'utf8'),keys=[...plist.matchAll(/<key>([^<]+)<\/key>/g)].map(m=>m[1]);assert.deepEqual(keys,['CFBundleIdentifier','CFBundleExecutable','CFBundleName','CFBundlePackageType','CFBundleVersion','CFBundleShortVersionString','NSPrincipalClass','LSUIElement','LSBackgroundOnly']);assert.match(plist,/<key>CFBundleIdentifier<\/key><string>com\.cmspark\.ax571\.owned-target<\/string>/);assert.match(plist,/<key>CFBundleExecutable<\/key><string>owned-target<\/string>/);assert.match(plist,/<key>CFBundlePackageType<\/key><string>APPL<\/string>/);assert.match(plist,/<key>LSUIElement<\/key><false\/>/)
 })
