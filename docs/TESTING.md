@@ -38,6 +38,12 @@ npm --prefix chrome-extension test
 
 要求 **Node.js ≥ 22.19.0**（Office 引擎最低要求；与 CONTRIBUTING 一致，发行 runtime 为 22.23.2）。
 
+### 未发行的 macOS picker 验收包（#705）
+
+`companion/scripts/tests/desktop-workspace-ui-705.test.mjs` 覆盖固定 Format1 `OwnedPickerUITests` 的 `UITargetAppPath=__TESTROOT__/../OwnedPicker705.app` 绑定、其它描述字段保留、最终描述文件唯一清单行及坏形状/外部路径/转换失败拒绝。构建器先完成固定 app 的签名校验，再绑定描述文件；原始描述文件和无路径的前后摘要留在 generated 工作目录，不改已签名 app 或 Runner。
+
+这些 Node/owned FS 检查不运行 XCTest，也不证明 Xcode 不会在测试方法之前启动应用。真实 changed-head CI 仍须通过原 addon 启动与身份、owner ACK、实际系统 picker 选择/取消和严格关闭/静默门禁；缺字段和 exit65 的历史因果关系保持 UNKNOWN，不增加权限、等待预算、重试或 skip。该夹具不属于发行应用载荷，开发版本仍为 0.6.14。
+
 ## Companion 测试地图
 
 ### 代码审阅与终端回传（#464）

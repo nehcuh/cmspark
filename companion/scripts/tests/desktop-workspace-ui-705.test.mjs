@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url'
 import vm from 'node:vm'
 import os from 'node:os'
 import {createHash} from 'node:crypto'
+import {isDeepStrictEqual} from 'node:util'
 import * as ui705 from '../desktop-workspace-ui-705.mjs'
 import {desktopWorkspaceFixture} from '../desktop-mcp-fixture.mjs'
 const {workspaceUI705Plan,WORKSPACE_UI705_ID}=ui705
@@ -25,25 +26,68 @@ test('705 actual builder stages Resources assets and compiles the matching bundl
   const original=fs.readFileSync(path.join(root,'src/desktop/native/DesktopHost.swift'),'utf8'),variant=desktopWorkspaceFixture('swift',original,fs.readFileSync(path.join(root,'tests/fixtures/desktop-476/workspace-acceptance.swift'),'utf8'),fs.readFileSync(path.join(root,'tests/fixtures/desktop-476/workspace-form.js'),'utf8'));assert.equal(variant.inverse,original)
   write(path.join(dest,'generated/acceptance-workspace/main.swift'),variant.source);write(path.join(dest,'generated/DesktopCapabilities.swift'),'// inert generated capability input\n')
   const bare=path.join(dest,'acceptance/workspace/cmspark-desktop'),bareBytes=Buffer.from('inert-bare-binary-not-executable');write(bare,bareBytes);write(path.join(dest,'acceptance/workspace/assets/index.html'),'<p>inert public asset</p>\n')
-  const spawnSync=(bin,args)=>{
+  let convertedDescriptor
+  const spawnSync=(bin,args,options)=>{
    commands.push([bin,[...args]])
    if(bin==='/usr/bin/swiftc'){const output=args[args.indexOf('-o')+1];write(output,'inert-compiled-output-not-executable',0o755);return {status:0,stdout:'',stderr:''}}
    if(bin==='/usr/bin/xcodebuild'){write(path.join(products,'Debug/OwnedPickerUITests-Runner.app/Contents/Info.plist'),'<plist/>');write(path.join(products,'OwnedPickerUI_macosx-owned.xctestrun'),'<plist/>');return {status:0,stdout:'',stderr:''}}
-   if(bin==='/usr/bin/plutil'&&args[0]==='-convert'){assert.deepEqual([...args],['-convert','json','-o','-',path.join(dest,'acceptance/workspace-ui/Products/OwnedPickerUI.xctestrun')]);return {status:0,stdout:Buffer.from(JSON.stringify({OwnedPickerUITests:{TestHostPath:'__TESTROOT__/Debug/OwnedPickerUITests-Runner.app',TestBundlePath:'__TESTHOST__/Contents/PlugIns/OwnedPickerUITests.xctest',UITargetAppPath:'__TESTROOT__/../OwnedPicker705.app'}})),stderr:Buffer.alloc(0)}}
+   if(bin==='/usr/bin/plutil'&&args[0]==='-convert'){
+    assert.equal(options.timeout,5000);assert.equal(options.maxBuffer,65536)
+    if(args[1]==='xml1'){assert.deepEqual([...args],['-convert','xml1','-o','-','-']);convertedDescriptor=JSON.parse(options.input.toString('utf8'));assert.equal(convertedDescriptor.OwnedPickerUITests.UITargetAppPath,'__TESTROOT__/../OwnedPicker705.app');return{status:0,stdout:Buffer.from('<plist>'+JSON.stringify(convertedDescriptor)+'</plist>')}}
+    assert.equal(args[1],'json');assert.ok([path.join(products,'OwnedPickerUI_macosx-owned.xctestrun'),path.join(dest,'acceptance/workspace-ui/Products/OwnedPickerUI.xctestrun')].includes(args[4]))
+    const value=args[4].startsWith(products+'/')||convertedDescriptor===undefined?{OwnedPickerUITests:{TestHostPath:'__TESTROOT__/Debug/OwnedPickerUITests-Runner.app',TestBundlePath:'__TESTHOST__/Contents/PlugIns/OwnedPickerUITests.xctest',Unchanged:'PUBLIC_CONTROL'}}:convertedDescriptor
+    return {status:0,stdout:Buffer.from(JSON.stringify(value)),stderr:Buffer.alloc(0)}
+   }
    if(bin==='/usr/bin/plutil')return {status:0,stdout:args[1]==='CFBundleIdentifier'?WORKSPACE_UI705_ID:'OwnedPickerUITests-Runner',stderr:''}
    if(bin==='/usr/bin/codesign'){if(args[args.length-1].endsWith('OwnedPicker705.app')){assert.equal(fs.existsSync(path.join(args[args.length-1],'Contents/MacOS/assets')),false);assert.equal(fs.readFileSync(path.join(args[args.length-1],'Contents/Resources/assets/index.html'),'utf8'),'<p>inert public asset</p>\n')}return {status:0,stdout:'',stderr:''}}
    assert.fail('unexpected native command plan')
   }
   const source=fs.readFileSync(path.join(root,'scripts/desktop-workspace-ui-705.mjs'),'utf8').replace(/^import .*\n/gm,'').replace(/^export /gm,'')+'\nglobalThis.actualBuild=buildWorkspaceUI705;'
-  const context=vm.createContext({fs:{...fs,writeSync(fd,value){assert.equal(fd,1);observations.push(value);return Buffer.byteLength(value)}},path,createHash,spawnSync,process:{platform:'darwin',stdout:{write(value){observations.push(value)}}},Buffer,TextDecoder});new vm.Script(source).runInContext(context);context.actualBuild(owned,dest)
+  const context=vm.createContext({fs:{...fs,writeSync(fd,value){assert.equal(fd,1);observations.push(value);return Buffer.byteLength(value)}},path,createHash,spawnSync,isDeepStrictEqual,process:{platform:'darwin',stdout:{write(value){observations.push(value)}}},Buffer,TextDecoder});new vm.Script(source).runInContext(context);context.actualBuild(owned,dest)
   assert.deepEqual(fs.readFileSync(bare),bareBytes)
   const app=path.join(dest,'acceptance/workspace-ui/OwnedPicker705.app'),compile=commands.filter(([bin,args])=>bin==='/usr/bin/swiftc'&&args.at(-1)===path.join(app,'Contents/MacOS/cmspark-desktop'));assert.equal(compile.length,1)
   const generated=fs.readFileSync(compile[0][1][1],'utf8'),bundled='executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/assets")',plain='executable.deletingLastPathComponent().appendingPathComponent("assets")';assert.equal(generated.split(bundled).length,2);assert.equal(generated.replace(bundled,plain),variant.source)
   assert.ok(commands.findIndex(c=>c===compile[0])<commands.findIndex(([bin,args])=>bin==='/usr/bin/codesign'&&args.at(-1)===app))
   assert.equal(commands.filter(([bin])=>bin==='/usr/bin/xcodebuild').length,1)
   const inventory=JSON.parse(fs.readFileSync(path.join(dest,'acceptance/workspace-ui/package-manifest.json'),'utf8'));assert.ok(inventory.files.some(row=>row.path==='OwnedPicker705.app/Contents/Resources/assets/index.html'));assert.equal(inventory.files.some(row=>row.path.startsWith('OwnedPicker705.app/Contents/MacOS/assets/')),false)
+  const finalDescriptor=path.join(dest,'acceptance/workspace-ui/Products/OwnedPickerUI.xctestrun'),descriptorRows=inventory.files.filter(row=>row.path==='Products/OwnedPickerUI.xctestrun');assert.equal(descriptorRows.length,1);assert.equal(descriptorRows[0].sha256,createHash('sha256').update(fs.readFileSync(finalDescriptor)).digest('hex'));assert.equal(descriptorRows[0].bytes,fs.statSync(finalDescriptor).size)
+  assert.notEqual(fs.readFileSync(finalDescriptor,'utf8'),'<plist/>','actual generated missing binding must be repaired before final inventory')
+  assert.equal(convertedDescriptor.OwnedPickerUITests.Unchanged,'PUBLIC_CONTROL');assert.equal(fs.readFileSync(path.join(work,'descriptor-original.xctestrun'),'utf8'),'<plist/>');assert.equal(fs.readFileSync(path.join(products,'OwnedPickerUI_macosx-owned.xctestrun'),'utf8'),'<plist/>');const binding=JSON.parse(fs.readFileSync(path.join(work,'descriptor-binding-proof.json'),'utf8'));assert.equal(binding.originalSHA256,createHash('sha256').update('<plist/>').digest('hex'));assert.equal(binding.finalSHA256,descriptorRows[0].sha256)
   assert.equal(observations.length,1,'actual successful builder must emit one closed descriptor observation');assert.ok(observations[0].startsWith('D705_UI_DESCRIPTOR '));const descriptor=JSON.parse(observations[0].slice('D705_UI_DESCRIPTOR '.length));assert.equal(descriptor.schema,1);assert.equal(descriptor.status,'OBSERVED');assert.equal(descriptor.format,1);assert.equal(descriptor.expectedTarget,true);assert.equal(descriptor.targetCount,'ONE');assert.equal(descriptor.TestHostPath.exists,true);assert.equal(descriptor.TestBundlePath.exists,false);assert.equal(descriptor.UITargetAppPath.exists,true);assert.equal(observations[0].includes(temp),false)
  }finally{fs.rmSync(temp,{recursive:true,force:true})}
+})
+
+test('705 fixed Format1 binding preserves every other descriptor semantic for LF and CRLF',()=>{
+ const s=descriptorScene705();try{
+  const original=descriptorInput705();delete original.OwnedPickerUITests.UITargetAppPath;original.OwnedPickerUITests.CommandLineArguments=['unchanged'];original.__xctestrun_metadata__={FormatVersion:1,PublicMarker:'UNCHANGED'}
+  for(const text of [JSON.stringify(original,null,2),JSON.stringify(original,null,2).replace(/\n/g,'\r\n')]){
+   const result=JSON.parse(ui705.workspaceUI705BoundDescriptor(text,s.stage));assert.equal(result.OwnedPickerUITests.UITargetAppPath,'__TESTROOT__/../OwnedPicker705.app');delete result.OwnedPickerUITests.UITargetAppPath;assert.deepEqual(result,original)
+  }
+  const exact=descriptorInput705();assert.deepEqual(JSON.parse(ui705.workspaceUI705BoundDescriptor(JSON.stringify(exact),s.stage)),exact)
+ }finally{s.clean()}
+})
+test('705 fixed Format1 binding refuses unknown target shapes and all nonliteral existing app paths',()=>{
+ const s=descriptorScene705();try{
+  const missing=descriptorInput705();delete missing.OwnedPickerUITests.UITargetAppPath
+  const inputs=['null','[]','{}','{','{"OwnedPickerUITests":{"unchanged":9007199254740993}}','{"OwnedPickerUITests":{"unchanged":-0}}','{"OwnedPickerUITests":{"unchanged":1e400}}',JSON.stringify({Other:missing.OwnedPickerUITests}),JSON.stringify({...missing,Other:{}}),JSON.stringify({OwnedPickerUITests:[]}),JSON.stringify({__xctestrun_metadata__:{FormatVersion:2},...missing}),JSON.stringify({__xctestrun_metadata__:false,...missing})]
+  for(const v of ['/foreign/PRIVATE_SENTINEL','__TESTROOT__/../Other.app','__TESTHOST__/Other.app','',null,1,{}]){const data=structuredClone(missing);data.OwnedPickerUITests.UITargetAppPath=v;inputs.push(JSON.stringify(data))}
+  for(const text of inputs)assert.throws(()=>ui705.workspaceUI705BoundDescriptor(text,s.stage),e=>e.message==='OWNED_UI_BUILD_TARGET_BINDING'&&!String(e).includes('PRIVATE_SENTINEL'))
+ }finally{s.clean()}
+})
+test('705 fixed Format1 binding validates only the known staged app and refuses missing file or symlink aliases',()=>{
+ const s=descriptorScene705();try{
+  const data=descriptorInput705(),app=path.join(s.stage,'OwnedPicker705.app');fs.rmSync(app,{recursive:true});assert.throws(()=>ui705.workspaceUI705BoundDescriptor(JSON.stringify(data),s.stage),/OWNED_UI_BUILD_TARGET_BINDING/)
+  fs.writeFileSync(app,'not-a-directory');assert.throws(()=>ui705.workspaceUI705BoundDescriptor(JSON.stringify(data),s.stage),/OWNED_UI_BUILD_TARGET_BINDING/);fs.unlinkSync(app)
+  fs.mkdirSync(app,{mode:0o700});const moved=app+'-moved';fs.renameSync(app,moved);fs.symlinkSync(moved,app,process.platform==='win32'?'junction':'dir');assert.throws(()=>ui705.workspaceUI705BoundDescriptor(JSON.stringify(data),s.stage),/OWNED_UI_BUILD_TARGET_BINDING/)
+ }finally{s.clean()}
+})
+test('705 fixed binding final descriptor digest distinguishes the stale row from the recomputed row',()=>{
+ const s=descriptorScene705();try{
+  const file=s.descriptor,old=fs.readFileSync(file),oldRow={path:'Products/OwnedPickerUI.xctestrun',bytes:old.length,sha256:createHash('sha256').update(old).digest('hex')},data=descriptorInput705();delete data.OwnedPickerUITests.UITargetAppPath
+  const bound=Buffer.from(ui705.workspaceUI705BoundDescriptor(JSON.stringify(data),s.stage));fs.writeFileSync(file,bound)
+  const actual=(bytes,row)=>bytes.length===row.bytes&&createHash('sha256').update(bytes).digest('hex')===row.sha256
+  assert.equal(actual(fs.readFileSync(file),oldRow),false);const row={...oldRow,bytes:bound.length,sha256:createHash('sha256').update(bound).digest('hex')};assert.equal(actual(fs.readFileSync(file),row),true)
+ }finally{s.clean()}
 })
 
 // The actual retained dialog/production branch is lowered only for inert CPU execution.
@@ -97,7 +141,7 @@ test('705 actual UI app-state gate uses one observation and refuses all nonrunni
 
 const descriptorInput705=()=>({OwnedPickerUITests:{TestHostPath:'__TESTROOT__/Debug/OwnedPickerUITests-Runner.app',TestBundlePath:'__TESTHOST__/Contents/PlugIns/OwnedPickerUITests.xctest',UITargetAppPath:'__TESTROOT__/../OwnedPicker705.app'}})
 function descriptorScene705(){const temp=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'descriptor-705-'))),stage=path.join(temp,'package'),host=path.join(stage,'Products/Debug/OwnedPickerUITests-Runner.app'),bundle=path.join(host,'Contents/PlugIns/OwnedPickerUITests.xctest'),app=path.join(stage,'OwnedPicker705.app');for(const dir of[bundle,app])fs.mkdirSync(dir,{recursive:true,mode:0o700});const descriptor=path.join(stage,'Products/OwnedPickerUI.xctestrun');fs.writeFileSync(descriptor,'<plist/>',{mode:0o600});return{temp,stage,descriptor,clean(){fs.rmSync(temp,{recursive:true,force:true})}}}
-function descriptorFunctions705(overrides={}){const source=fs.readFileSync(path.join(root,'scripts/desktop-workspace-ui-705.mjs'),'utf8').replace(/^import .*\n/gm,'').replace(/^export /gm,''),controlledFS={...(overrides.fs??fs),writeSync(fd,line){assert.equal(fd,1);return overrides.process?.stdout?.write(line)??Buffer.byteLength(line)}},context=vm.createContext({fs,path,createHash,Buffer,TextDecoder,...overrides,fs:controlledFS});new vm.Script(source+'\nglobalThis.classify=workspaceUI705DescriptorObservation;globalThis.observe=observeWorkspaceUI705Descriptor;').runInContext(context);return context}
+function descriptorFunctions705(overrides={}){const source=fs.readFileSync(path.join(root,'scripts/desktop-workspace-ui-705.mjs'),'utf8').replace(/^import .*\n/gm,'').replace(/^export /gm,''),controlledFS={...(overrides.fs??fs),writeSync(fd,line){assert.equal(fd,1);return overrides.process?.stdout?.write(line)??Buffer.byteLength(line)}},context=vm.createContext({fs,path,createHash,Buffer,TextDecoder,isDeepStrictEqual,...overrides,fs:controlledFS});new vm.Script(source+'\nglobalThis.classify=workspaceUI705DescriptorObservation;globalThis.observe=observeWorkspaceUI705Descriptor;globalThis.bind=bindWorkspaceUI705Descriptor;').runInContext(context);return context}
 const plainDescriptor705=value=>JSON.parse(JSON.stringify(value))
 test('705 descriptor classifies only fixed v1 v2 targets paths and bounded enum counts',()=>{
  const s=descriptorScene705();try{
@@ -130,5 +174,30 @@ test('705 actual passive converter and sink failures leave original package byte
   for(const result of cases){const lines=[],f=descriptorFunctions705({spawnSync(bin,args,opts){assert.equal(bin,'/usr/bin/plutil');assert.deepEqual([...args],['-convert','json','-o','-',s.descriptor]);assert.equal(opts.timeout,5000);assert.equal(opts.maxBuffer,65536);if(result==='throw')throw Error('PRIVATE_SENTINEL');return result},process:{stdout:{write(line){lines.push(line)}}}});assert.doesNotThrow(()=>f.observe(s.stage));assert.equal(lines.length,1);assert.ok(lines[0].startsWith('D705_UI_DESCRIPTOR '));const value=JSON.parse(lines[0].slice('D705_UI_DESCRIPTOR '.length));assert.equal(value.status,'UNKNOWN');assert.equal(lines[0].includes('PRIVATE_SENTINEL'),false);assert.equal(lines[0].includes(s.temp),false);assert.deepEqual(fs.readFileSync(s.descriptor),bytes)}
   const silent=descriptorFunctions705({spawnSync(){return{status:0,stdout:Buffer.from(JSON.stringify(descriptorInput705()))}},process:{stdout:{write(){throw Error('PRIVATE_SENTINEL')}}}});assert.doesNotThrow(()=>silent.observe(s.stage));assert.deepEqual(fs.readFileSync(s.descriptor),bytes)
   const dirLink=descriptorFunctions705({fs:{lstatSync(){return{isDirectory:()=>true,isSymbolicLink:()=>true}}},spawnSync(){assert.fail('must not convert linked package')},process:{stdout:{write(line){assert.equal(JSON.parse(line.slice('D705_UI_DESCRIPTOR '.length)).status,'UNKNOWN')}}}});assert.doesNotThrow(()=>dirLink.observe(s.stage))
+ }finally{s.clean()}
+})
+
+test('705 actual binding converter fails closed without reflecting native output or mutating signed bundle bytes',()=>{
+ for(const failure of ['read-failure','read-malformed','read-invalid-utf8','write-failure','roundtrip-change','proof-io']){
+  const s=descriptorScene705();try{
+   fs.unlinkSync(s.descriptor);const original=path.join(s.temp,'original.xctestrun'),work=path.join(s.temp,'work');fs.mkdirSync(work,{mode:0o700});fs.writeFileSync(original,'<plist/>',{mode:0o644})
+   const appFile=path.join(s.stage,'OwnedPicker705.app/public-signed-byte'),runnerFile=path.join(s.stage,'Products/Debug/OwnedPickerUITests-Runner.app/public-signed-byte');fs.writeFileSync(appFile,'APP_UNCHANGED');fs.writeFileSync(runnerFile,'RUNNER_UNCHANGED')
+   const input=descriptorInput705();delete input.OwnedPickerUITests.UITargetAppPath;let calls=0,bound
+   const actual=descriptorFunctions705({fs:{...fs,writeFileSync(file,...args){if(failure==='proof-io'&&file===path.join(work,'descriptor-binding-proof.json'))throw Error('PRIVATE_SENTINEL');return fs.writeFileSync(file,...args)}},spawnSync(bin,args,opts){
+    assert.equal(bin,'/usr/bin/plutil');assert.equal(opts.timeout,5000);assert.equal(opts.maxBuffer,65536);calls++
+    if(calls===1){assert.equal(args[4],original);if(failure==='read-failure')return{status:65,stdout:Buffer.from('PRIVATE_SENTINEL'),stderr:Buffer.from('PRIVATE_SENTINEL')};if(failure==='read-malformed')return{status:0,stdout:Buffer.from('{PRIVATE_SENTINEL')};if(failure==='read-invalid-utf8')return{status:0,stdout:Buffer.from([255])};return{status:0,stdout:Buffer.from(JSON.stringify(input))}}
+    if(calls===2){assert.deepEqual([...args],['-convert','xml1','-o','-','-']);bound=JSON.parse(opts.input.toString('utf8'));return failure==='write-failure'?{status:65,stdout:Buffer.from('PRIVATE_SENTINEL')}:{status:0,stdout:Buffer.from('<inert-xml/>')}}
+    assert.equal(calls,3);assert.equal(args[4],s.descriptor);return{status:0,stdout:Buffer.from(JSON.stringify(failure==='roundtrip-change'?{...bound,Other:'PRIVATE_SENTINEL'}:bound))}
+   }})
+   assert.throws(()=>actual.bind(original,{package:s.stage,work}),e=>e.message==='OWNED_UI_BUILD_TARGET_BINDING'&&!String(e).includes('PRIVATE_SENTINEL'))
+   assert.equal(fs.readFileSync(original,'utf8'),'<plist/>');assert.equal(fs.readFileSync(appFile,'utf8'),'APP_UNCHANGED');assert.equal(fs.readFileSync(runnerFile,'utf8'),'RUNNER_UNCHANGED');assert.equal(fs.existsSync(path.join(s.stage,'package-manifest.json')),false);assert.ok(calls<=3)
+  }finally{s.clean()}
+ }
+})
+test('705 actual binding refuses duplicate final publication and preserves the already inventoried bytes',()=>{
+ const s=descriptorScene705();try{
+  const original=path.join(s.temp,'original.xctestrun'),work=path.join(s.temp,'work');fs.mkdirSync(work,{mode:0o700});fs.writeFileSync(original,'<plist/>',{mode:0o644});const before=fs.readFileSync(s.descriptor);let calls=0
+  const actual=descriptorFunctions705({spawnSync(_,args,opts){calls++;return{status:0,stdout:Buffer.from(args[1]==='json'?JSON.stringify(descriptorInput705()):'<inert-xml/>')}}})
+  assert.throws(()=>actual.bind(original,{package:s.stage,work}),/OWNED_UI_BUILD_TARGET_BINDING/);assert.deepEqual(fs.readFileSync(s.descriptor),before);assert.equal(calls,2);assert.equal(fs.existsSync(path.join(work,'descriptor-binding-proof.json')),false)
  }finally{s.clean()}
 })
