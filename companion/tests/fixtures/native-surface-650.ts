@@ -5,6 +5,9 @@ import { randomBytes } from "node:crypto"
 import type { TestContext } from "node:test"
 
 const namespace = "native-surface-650", filename = "claim"
+// The runner preload owns this process pair. An earlier timed-out native
+// callback may still be restoring only CMSPARK_DATA_DIR during teardown.
+const runnerRoot650 = process.env.CMSPARK_TEST_RUN_DIR, runnerData650 = process.env.CMSPARK_DATA_DIR
 const refused = () => Error("OWNED_NATIVE_SURFACE_REFUSED")
 type Identity = { dev: string; ino: string; birth: string }
 const identity = (s: fs.BigIntStats): Identity => ({ dev: String(s.dev), ino: String(s.ino), birth: String(s.birthtimeNs) })
@@ -148,7 +151,10 @@ export async function acquireSurface650(rootInput: string | undefined, dataInput
 }
 
 export async function withSurface650<T>(t: TestContext, action: (t: TestContext, lease: SurfaceLease650) => Promise<T>, borrowed?: SurfaceBorrow650): Promise<T> {
-  const lease = await acquireSurface650(process.env.CMSPARK_TEST_RUN_DIR, process.env.CMSPARK_DATA_DIR, t.signal, borrowed)
+  const root = process.env.CMSPARK_TEST_RUN_DIR
+  // Explicit other-run fixtures retain their existing acquire contract.
+  const data = root === runnerRoot650 ? runnerData650 : process.env.CMSPARK_DATA_DIR
+  const lease = await acquireSurface650(root, data, t.signal, borrowed)
   const context = new Proxy(t, { get(target, key) { const value = key === "signal" ? lease.signal : Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value } })
   let primary: unknown, failed = false
   try { lease.checkpoint(); return await action(context, lease) } catch (e) { failed = true; primary = e; throw e }

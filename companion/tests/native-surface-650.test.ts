@@ -3,6 +3,8 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
+import vm from "node:vm"
+import * as crypto from "node:crypto"
 import type { TestContext } from "node:test"
 import { acquireSurface650, parseSurfaceBorrow650, withSurface650 } from "./fixtures/native-surface-650"
 
@@ -220,4 +222,28 @@ boundedTest("settlement ownership loss cannot replace the original producer fail
     if(oldData===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=oldData
     o.cleanup()
   }
+})
+
+
+boundedTest("wrapper keeps its preload data binding while a previous native callback restores mutable environment", async t => {
+  const original=owned(),outside=owned(),other=owned(),code=fs.readFileSync(path.join(__dirname,"fixtures/native-surface-650.js"),"utf8")
+  const boot={CMSPARK_TEST_RUN_DIR:original.root,CMSPARK_DATA_DIR:original.data},mod:{exports:any}={exports:{}},allowed:any={"node:fs":fs,"node:path":path,"node:crypto":crypto}
+  vm.runInNewContext(code,{module:mod,exports:mod.exports,require:(name:string)=>{assert.ok(Object.hasOwn(allowed,name));return allowed[name]},process:{env:boot},AbortController,AbortSignal,Buffer})
+  const api=mod.exports as {acquireSurface650:typeof acquireSurface650;withSurface650:typeof withSurface650}
+  let owner:Awaited<ReturnType<typeof acquireSurface650>>|undefined,pending:Promise<unknown>|undefined,entered=0
+  const abort=new AbortController(),context={signal:AbortSignal.any([t.signal,abort.signal])} as TestContext
+  try{
+    owner=await api.acquireSurface650(original.root,original.data,t.signal);const bytes=fs.readFileSync(original.claim)
+    boot.CMSPARK_DATA_DIR=outside.data // Same runner root, old callback still owns its temporary data.
+    pending=api.withSurface650(context,async(_t,lease)=>{entered++;lease.checkpoint();return "OWNED_ENTERED"}).then(value=>({value}),error=>({error}))
+    await Promise.resolve();assert.equal(entered,0);assert.deepEqual(fs.readFileSync(original.claim),bytes)
+    owner.release();owner=undefined;assert.deepEqual(await pending,{value:"OWNED_ENTERED"});pending=undefined;assert.equal(entered,1);assert.equal(fs.existsSync(original.claim),false)
+    // Mutating the data string cannot rebind even to another valid data dir.
+    boot.CMSPARK_DATA_DIR=other.data;await api.withSurface650(context,async(_t,lease)=>{lease.checkpoint();assert.equal(fs.existsSync(original.claim),true);assert.equal(fs.existsSync(other.claim),false)})
+    owner=await api.acquireSurface650(original.root,original.data,t.signal);const kept=fs.readFileSync(original.claim)
+    pending=api.withSurface650(context,async()=>{throw Error("UNEXPECTED_ABORTED_ACTION")}).then(value=>({value}),error=>({error}));abort.abort();const refused:any=await pending;pending=undefined;assert.ok(refused.error);assert.deepEqual(fs.readFileSync(original.claim),kept);owner.checkpoint();owner.release();owner=undefined
+    // Existing explicit other-root test seam remains valid; no new root grant.
+    boot.CMSPARK_TEST_RUN_DIR=other.root;boot.CMSPARK_DATA_DIR=other.data
+    await api.withSurface650({signal:t.signal} as TestContext,async(_t,lease)=>{lease.checkpoint();assert.equal(fs.existsSync(other.claim),true)})
+  }finally{abort.abort();if(owner)try{owner.release()}catch{};if(pending)await pending.catch(()=>{});for(const o of [original,outside,other])o.cleanup()}
 })
