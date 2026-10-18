@@ -116,6 +116,10 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         p.timer=Timer.scheduledTimer(withTimeInterval:max(0.001,(p.deadline-Date().timeIntervalSince1970*1000)/1000),repeats:false){[weak self,weak p] _ in guard let self=self,let p=p,self.confirmation === p else{return};self.retireConfirmation(nil)}
         p.alert.beginSheetModal(for:window){[weak self,weak p] response in guard let self=self,let p=p,self.confirmation === p else{return};self.retireConfirmation(response == .alertSecondButtonReturn)}
     }
+    func retireDialog() {
+        guard let run=requests["desktop.chat.send"] else{return};requests.removeValue(forKey:"desktop.chat.send")
+        if authenticated,let socket=socket {transmit(["type":"desktop.chat.stop","id":UUID().uuidString,"thread_id":run.thread ?? "","run_id":run.nativeId],to:socket)}
+    }
     func accept(_ f:[String:Any],_ task:URLSessionWebSocketTask) {
         guard let type=f["type"] as? String else { offline(task);return }
         if phase=="initial" && type=="desktop.challenge.request" && Set(f.keys)==["type"] {
@@ -139,10 +143,24 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         if type=="desktop.confirmation.request" {beginConfirmation(f,task);return}
         if type=="desktop.confirmation.resolved" {if f["confirmation_id"] as? String==confirmation?.id{retireConfirmation(nil)};return}
         guard let id=f["id"] as? String,let pair=requests.first(where:{$0.value.nativeId==id}),pair.value.generation==generation else { return }
+        if pair.key=="desktop.chat.send" {
+            guard f["thread_id"] as? String==pair.value.thread,["desktop.chat.send.result","desktop.chat.event"].contains(type) else{return}
+            if f["run_id"] != nil && f["run_id"] as? String != pair.value.nativeId{return}
+            if type=="desktop.chat.event" {guard f["run_id"] as? String==pair.value.nativeId,let kind=f["kind"] as? String,["user","snapshot","assistant","done","aborted","error","confirmation_unavailable","terminal"].contains(kind) else{return};if kind=="terminal"{requests.removeValue(forKey:pair.key)}}
+            else {guard let ok=f["ok"] as? Bool else{return};if !ok{requests.removeValue(forKey:pair.key)}}
+            var reply=f;reply["id"]=pair.value.uiId;if f["run_id"] != nil {reply["run_id"]=pair.value.uiId};deliver(reply);return
+        }
+        var mapped=f
+        if ["desktop.thread.create","desktop.thread.open","desktop.chat.stop"].contains(pair.key) {
+            guard type==pair.key+".result",pair.key=="desktop.thread.create" || f["thread_id"] as? String==pair.value.thread else{return}
+            let active=requests["desktop.chat.send"]
+            if pair.key=="desktop.thread.open",f["owned_run_id"] != nil {if let active=active,active.generation==generation,active.thread==pair.value.thread,f["owned_run_id"] as? String==active.nativeId{mapped["owned_run_id"]=active.uiId}else{mapped["owned_run_id"]=NSNull()}}
+            if pair.key=="desktop.chat.stop",f["run_id"] != nil {guard let active=active,f["run_id"] as? String==active.nativeId else{return};mapped["run_id"]=active.uiId}
+        }
         requests.removeValue(forKey:pair.key)
         if pair.key=="thread.peek",f["type"] as? String=="thread.peek_result",f["thread_id"] as? String != pair.value.thread { return }
         if ["desktop.thread.metadata.edit","desktop.thread.metadata.save"].contains(pair.key),f["type"] as? String != pair.key+".result" || f["thread_id"] as? String != pair.value.thread { return }
-        var reply=f;reply["id"]=pair.value.uiId;deliver(reply)
+        var reply=mapped;reply["id"]=pair.value.uiId;deliver(reply)
     }
     func offline(_ task:URLSessionWebSocketTask, code:Int = 0) {
         guard socket === task else { return };let wasAuthenticated=authenticated;retireConfirmation(nil);socket=nil;authenticated=false;generation=nil;requests.removeAll();task.cancel(with:.goingAway,reason:nil);session?.invalidateAndCancel();deliver(["type":"desktop.offline"])
@@ -168,12 +186,12 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         win.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
     }
     func windowWillClose(_ notification:Notification) { NSApp.terminate(nil) }
-    func applicationWillTerminate(_ notification:Notification) { retireConfirmation(false);socket?.cancel(with:.normalClosure,reason:nil);parentWatch?.cancel() }
+    func applicationWillTerminate(_ notification:Notification) { retireDialog();retireConfirmation(false);socket?.cancel(with:.normalClosure,reason:nil);parentWatch?.cancel() }
     func webView(_ webView:WKWebView,decidePolicyFor navigationAction:WKNavigationAction,decisionHandler:@escaping(WKNavigationActionPolicy)->Void) {
         var download=false
         if #available(macOS 11.3,*) { download=navigationAction.shouldPerformDownload }
         let allowed = !download && navigationAction.targetFrame?.isMainFrame==true && navigationAction.request.url?.absoluteString==origin
-        if allowed { retireConfirmation(false);generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)
+        if allowed { retireDialog();retireConfirmation(false);generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)
     }
     func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
         guard authenticated,webView.url?.absoluteString==origin else{return};generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!])
@@ -188,16 +206,27 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         else if type=="desktop.mcp.save" {allowed=["type","id","name","thread_id","action","payload_json","generation"]}
         else if type=="desktop.thread.metadata.edit" {allowed=["type","id","thread_id","generation"]}
         else if type=="desktop.thread.metadata.save" {allowed=["type","id","thread_id","payload_json","generation"]}
+        else if type=="desktop.thread.create" {allowed=["type","id","generation"]}
+        else if type=="desktop.thread.open" {allowed=["type","id","thread_id","generation"]}
+        else if type=="desktop.chat.send" {allowed=["type","id","thread_id","message","generation"]}
+        else if type=="desktop.chat.stop" {allowed=["type","id","thread_id","run_id","generation"]}
         else {allowed=type=="thread.peek" ? ["type","id","thread_id","generation"]:["type","id","generation"]}
         if type.hasPrefix("desktop.mcp.") {
             guard Set(f.keys)==allowed,f["name"] is String,f["thread_id"] is NSNull || f["thread_id"] is String,requests["desktop.mcp.save"]==nil else{return}
             if type=="desktop.mcp.save" {guard f["payload_json"] is String,let action=f["action"] as? String,["add","update"].contains(action) else{return}}
         }
         if ["desktop.thread.metadata.edit","desktop.thread.metadata.save"].contains(type) {guard Set(f.keys)==allowed,let id=f["id"] as? String,!id.isEmpty,id.utf16.count<=200,let target=f["thread_id"] as? String,!target.isEmpty else{return};if type=="desktop.thread.metadata.save" {guard let payload=f["payload_json"] as? String,!payload.isEmpty else{return}}}
+        if ["desktop.thread.create","desktop.thread.open","desktop.chat.send","desktop.chat.stop"].contains(type) {
+            guard Set(f.keys)==allowed,let id=f["id"] as? String,!id.isEmpty,id.utf16.count<=200 else{return}
+            if type != "desktop.thread.create" {guard let target=f["thread_id"] as? String,!target.isEmpty else{return}}
+            if type=="desktop.chat.send" {guard let text=f["message"] as? String,!text.isEmpty,requests[type]==nil else{return}}
+            if type=="desktop.thread.create",requests[type] != nil{return}
+            if type=="desktop.chat.stop" {guard let active=requests["desktop.chat.send"],active.generation==generation,active.thread==f["thread_id"] as? String,active.uiId==f["run_id"] as? String else{return}}
+        }
         guard Set(f.keys).isSubset(of:allowed),methods.contains(type),f["id"]==nil || f["id"] is String,let socket=socket else{return}
         if type=="thread.peek" { guard let id=f["thread_id"] as? String,!id.isEmpty else{return} }
         let id=UUID().uuidString;requests[type]=(id,f["id"] as? String,g,f["thread_id"] as? String)
-        var out=f;out.removeValue(forKey:"generation");out["id"]=id;transmit(out,to:socket)
+        var out=f;if type=="desktop.chat.stop"{out["run_id"]=requests["desktop.chat.send"]?.nativeId};out.removeValue(forKey:"generation");out["id"]=id;transmit(out,to:socket)
     }
     func deliver(_ frame:[String:Any]) {
         guard let w=web,w.url?.absoluteString==origin else{return}
@@ -214,6 +243,6 @@ let bootstrapWatch=DispatchSource.makeProcessSource(identifier:parent,eventMask:
 var data=Data()
 while true { do { guard let part=try FileHandle.standardInput.read(upToCount:4097-data.count),!part.isEmpty else{break};data.append(part);if data.count>4096{exit(14)} } catch {exit(13)} }
 try? FileHandle.standardInput.close()
-guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==3,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
+guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==4,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
 data.resetBytes(in:0..<data.count)
 let app=NSApplication.shared;private let delegate=NativeDesktop(bootstrap,parent:parent);app.delegate=delegate;app.setActivationPolicy(.regular);bootstrapWatch.cancel();app.run()

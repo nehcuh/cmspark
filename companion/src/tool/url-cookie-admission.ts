@@ -131,6 +131,7 @@ export type UrlAdmissionCtx = {
   isOutboundMcpCall: boolean
   logToolFinish: (id: string, name: string, startedAt: number, result: any) => void
   securityConfirmations: SecurityConfirmationManager
+  nativeConfirmationUnavailable?: () => Promise<void>
   clients: Iterable<WebSocket>
   wsAuthGet: (ws: WebSocket) => ConfirmPeerAuth | undefined
 }
@@ -302,6 +303,7 @@ export async function runUrlNavigateAdmission(
     })
     const bound = await bindOverlayConfirmChannel(rawUrl)
     if (!bound.ok) return { ok: false, result: bound.result }
+    if (ctx.nativeConfirmationUnavailable) { await ctx.nativeConfirmationUnavailable(); return { ok: false, result: { success: false, error: "DESKTOP_CONFIRMATION_UNAVAILABLE" } } }
     const decision = await securityConfirmations.request(
       bound.sendConfirm,
       {
@@ -396,6 +398,7 @@ export async function runUrlNavigateAdmission(
     // Panel path stays origin-bound so another peer cannot cross-approve.
     const bound = await bindOverlayConfirmChannel(rawUrl)
     if (!bound.ok) return { ok: false, result: bound.result }
+    if (ctx.nativeConfirmationUnavailable) { await ctx.nativeConfirmationUnavailable(); return { ok: false, result: { success: false, error: "DESKTOP_CONFIRMATION_UNAVAILABLE" } } }
     const decision = await securityConfirmations.request(
       bound.sendConfirm,
       {

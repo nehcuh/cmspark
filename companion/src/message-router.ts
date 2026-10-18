@@ -335,6 +335,9 @@ interface Services {
 }
 
 interface SessionCallbacks {
+  /** #476 private native owner and actual canonical run binding; never JSON fields. */
+  nativeDialog?: { current(): boolean; messageId: string; started(run: Readonly<{ current(): boolean; stop(): boolean }>): void }
+
   /** #689 current originating socket/auth identity, not caller-controlled. */
   appsOwnerCurrent?: () => boolean
   sendToExtension: (data: any) => void
@@ -361,7 +364,7 @@ interface SessionCallbacks {
    */
   origin?: string
   /** Handshake surface from wsAuth. Summoner overlay may run local STT. */
-  surface?: "panel" | "tray" | "summoner"
+  surface?: "panel" | "tray" | "summoner" | "desktop"
   /** Originating WS; PTY kill-on-close is scoped to this peer. */
   originWs?: unknown
   /** Lifecycle-owned liveness/auth check, never a WS JSON flag. */
@@ -1104,7 +1107,7 @@ async function dispatchMessage(
 ): Promise<any> {
   const { type, ...rest } = msg
   // S20: lifecycle stamped this from auth; never forward a client-spoofable field to LLM.
-  const stampedSurface = stripCmsparkSurface(rest)
+  const stampedSurface = session?.nativeDialog ? "desktop" : stripCmsparkSurface(rest)
   stripCmsparkSurface(msg)
   const { threadManager, skillEngine, historyStore } = services
 
@@ -1166,6 +1169,7 @@ async function dispatchMessage(
 
     // --- Chat ---
     case "chat.create": {
+      if (session?.nativeDialog && !session.nativeDialog.current()) return { type: "chat.error", thread_id: rest.thread_id, error: "DESKTOP_SESSION_STALE" }
       if (!session) return { type: "error", error: "No session" }
       // Dual-review residual: do not run LLM against soft-deleted / paused threads
       {
@@ -1203,12 +1207,14 @@ async function dispatchMessage(
       if (rest.enqueue !== true && typeof rest.message === "string" && rest.message.trim()) {
         try {
           const loopKernel = await import("./loop/loop-kernel")
+          if (session.nativeDialog && !session.nativeDialog.current()) return { type: "chat.error", thread_id: rest.thread_id, error: "DESKTOP_SESSION_STALE" }
           const threadForLoop = services.threadManager.get(rest.thread_id)
           if (threadForLoop && threadForLoop.agent_role !== "worker") {
             if (loopKernel.detectLoopIntent(rest.message)) {
               // ② explicit command (also the explicit re-arm gesture after
               // STOPPED_USER / STOPPED_BUDGET — a fresh budget window).
               const { isUnattendedArmed } = await import("./computer/unattended-grant")
+              if (session.nativeDialog && !session.nativeDialog.current()) return { type: "chat.error", thread_id: rest.thread_id, error: "DESKTOP_SESSION_STALE" }
               loopKernel.armLoop(services.threadManager, rest.thread_id, "explicit_command", {
                 unattended: isUnattendedArmed(),
               })
@@ -1219,6 +1225,7 @@ async function dispatchMessage(
               const cur = loopKernel.sanitizeLoopState(threadForLoop.loop_state)
               if (!cur) {
                 const { isUnattendedArmed } = await import("./computer/unattended-grant")
+                if (session.nativeDialog && !session.nativeDialog.current()) return { type: "chat.error", thread_id: rest.thread_id, error: "DESKTOP_SESSION_STALE" }
                 if (isUnattendedArmed()) {
                   loopKernel.armLoop(services.threadManager, rest.thread_id, "unattended_arm", {
                     unattended: true,
@@ -1296,14 +1303,44 @@ async function dispatchMessage(
       // between that check and this set, so no existing controller can be here
       // (chat.regenerate is the only superseding path; it aborts + drains
       // explicitly).
+      if (session.nativeDialog && !session.nativeDialog.current()) return { type: "chat.error", thread_id: rest.thread_id, error: "DESKTOP_SESSION_STALE" }
       const myGeneration = nextLlmGeneration(rest.thread_id)
       const controller = new AbortController()
       abortControllers.set(rest.thread_id, controller)
       if (session?.panelId) llmLoopOwnerPanel.set(rest.thread_id, session.panelId)
+      const nativeOwner = session.nativeDialog
+      const nativeRunCurrent = () => abortControllers.get(rest.thread_id) === controller && llmLoopGeneration.get(rest.thread_id) === myGeneration
+      let nativeStopCleanup: Promise<void> | undefined
+      const stopNativeRun = () => {
+        if (!nativeRunCurrent() || nativeStopCleanup) return false
+        // Abort immediately, but retain this controller's slot while the original
+        // thread-wide cleanup is pending. A successor cannot install underneath
+        // an asynchronous abandon/lease/PTY cleanup from the previous owner.
+        controller.abort()
+        nativeStopCleanup = (async () => {
+          try { const { markLoopStoppedByUser } = require("./loop/loop-kernel") as typeof import("./loop/loop-kernel"); markLoopStoppedByUser(services.threadManager, rest.thread_id, "desktop.chat.stop") } catch { /* same best-effort cleanup as chat.abort */ }
+          try { const { abandonWorkerIntents } = require("./board") as typeof import("./board"); await abandonWorkerIntents(services.threadManager, rest.thread_id, { reason: "desktop.chat.stop", current: nativeRunCurrent }) } catch { /* cleanup must still continue */ }
+          if (!nativeRunCurrent()) return
+          try {
+            const { rejectPendingForThread, hasPendingForTab, rejectPendingForTab, securityConfirmations } = require("./server") as typeof import("./server")
+            securityConfirmations.rejectForWorker(rest.thread_id, "denied")
+            rejectPendingForThread(rest.thread_id, `desktop.chat.stop:${rest.thread_id}`)
+            const { releaseLeasesForThreadPendingAware } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
+            releaseLeasesForThreadPendingAware(rest.thread_id, "desktop.chat.stop", { hasPendingForTab, rejectPendingForTab })
+          } catch { /* retain the original cleanup ordering */ }
+          if (!nativeRunCurrent()) return
+          try { const { killPtyByThreadId } = require("./pty/session") as typeof import("./pty/session"); killPtyByThreadId(rest.thread_id) } catch { /* best effort */ }
+        })().finally(() => { if (nativeRunCurrent()) abortThreadChat(rest.thread_id, { clearQueue: true }) })
+        return true
+      }
+      nativeOwner?.started(Object.freeze({ current: nativeRunCurrent, stop: stopNativeRun }))
+      const assertNativeCurrent = () => { if (nativeOwner && (!nativeOwner.current() || controller.signal.aborted)) { stopNativeRun(); throw Object.assign(new Error("DESKTOP_SESSION_STALE"), { name: "AbortError" }) } }
+
 
       // ADR-015: cap concurrent multi-agent LLM loops (workers + orchestrators)
       const threadForLlmCap = services.threadManager.get(rest.thread_id)
       const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } = await import("./orchestrator/llm-loop-gate")
+      if (nativeOwner && !nativeOwner.current()) { stopNativeRun(); await nativeStopCleanup; return { type: "chat.error", thread_id: rest.thread_id, error: "DESKTOP_SESSION_STALE" } }
       const loopGate = tryAcquireMultiAgentLlmLoop(threadForLlmCap, rest.thread_id)
       if (!loopGate.ok) {
         // Release the slot we just claimed
@@ -1328,6 +1365,7 @@ async function dispatchMessage(
         terminal: null,
       }
       try {
+        assertNativeCurrent()
         // `/技能` pin before resolve so this turn is already manual (no matchSkills union).
         applySlashSkillPin(rest.thread_id, rest.message, services, session)
         // Get thread to determine skill and knowledge selection modes
@@ -1346,6 +1384,7 @@ async function dispatchMessage(
           currentHostname,
         )
 
+        assertNativeCurrent()
         // Resolve knowledge IDs based on mode (#273 Wave A: query 打分 + 智能匹配开关)
         const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
           rest.thread_id,
@@ -1361,6 +1400,7 @@ async function dispatchMessage(
         // For auto mode, notify about auto-matched skills
         if (skillMode === "auto") {
           const matched = await services.skillEngine.matchSkills(rest.message)
+          assertNativeCurrent()
           const domainMatches = matched.filter(m => m.confidence >= 20)
           if (domainMatches.length > 0) {
             session.sendToExtension({
@@ -1423,9 +1463,12 @@ async function dispatchMessage(
 
         // L-2 (#388): runStats declared before this try (see above) so the
         // catch / exit-check below can read the run outcome.
+        assertNativeCurrent()
         await chatCreate({
+          ...(nativeOwner ? { assertCurrentRun: assertNativeCurrent } : {}),
           threadId: rest.thread_id,
-          surface: stampedSurface === "summoner" ? "summoner" : "tray",
+          surface: stampedSurface === "desktop" ? "desktop" : stampedSurface === "summoner" ? "summoner" : "tray",
+          ...(nativeOwner && rest.clientMessageId === nativeOwner.messageId ? { reservedUserMessageId: nativeOwner.messageId } : {}),
           message: rest.message,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
@@ -1445,7 +1488,11 @@ async function dispatchMessage(
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
           historyStore: services.historyStore,
-          sendToExtension: session.sendToExtension,
+          sendToExtension: nativeOwner ? frame => {
+            if (!nativeOwner.current()) { stopNativeRun(); return }
+            session.sendToExtension(frame)
+            if (!nativeOwner.current()) stopNativeRun()
+          } : session.sendToExtension,
           executeTool: bindChatEvidenceScope(session.executeTool, rest.thread_id),
           signal: controller.signal,
           contextRefsSegment,
@@ -1470,6 +1517,7 @@ async function dispatchMessage(
           }
         }
       } finally {
+        if (nativeStopCleanup) await nativeStopCleanup
         // SEC-D generation CAS: predecessor must not free successor controller/gate
         if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
           if (abortControllers.get(rest.thread_id) === controller) {

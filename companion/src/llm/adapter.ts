@@ -201,6 +201,8 @@ interface ChatCreateParams {
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal) => Promise<{ success: boolean; data?: any; error?: string }>
   signal?: AbortSignal
+  /** Trusted native router continuation check; never a renderer/message field. */
+  assertCurrentRun?: () => void
   skipUserMessage?: boolean
   /** Active-tab hostname for site_knowledge + site op-memory (not a trust gate). */
   hostname?: string
@@ -216,7 +218,7 @@ interface ChatCreateParams {
    * Router-stamped handshake surface only (`stampedSurface`). Never a client field.
    * Summoner Capture is L0: native executors are not offered and cannot execute.
    */
-  surface?: "panel" | "tray" | "summoner"
+  surface?: "panel" | "tray" | "summoner" | "desktop"
   /**
    * L-2 (#388): optional run-outcome accumulator for the loop kernel. When
    * provided the adapter fills tool-call counts, token usage and the terminal
@@ -621,6 +623,7 @@ export function runTerminalEpochIsCurrent(threadId: string, epoch: number): bool
 
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, knowledgeDescriptionOnly, knowledgeMode, knowledgeSmartMatch, knowledgeRouteByGroup, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, signal, skipUserMessage, contextRefsSegment, hostname } = params
+  params.assertCurrentRun?.()
   // Before any await. A successor can start once this function yields; if the
   // claim happened later, the older run could become "latest" and overwrite.
   const runEpoch = claimRunTerminalEpoch(threadId)
@@ -732,6 +735,7 @@ export async function chatCreate(params: ChatCreateParams) {
       const warning = normalizeDocumentWarning(file.warning)
       return warning ? [{ filename: file.filename.slice(0, 256), warning }] : []
     }).slice(0, 20)
+    params.assertCurrentRun?.()
     const msg = threadManager.addMessage(threadId, {
       thread_id: threadId,
       role: "user",
@@ -1002,7 +1006,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   ]
 
   // L2: provider abstraction — openai SDK or Anthropic Messages fetch+SSE
-  const provider = createProvider(config)
+  params.assertCurrentRun?.()
+  const rawProvider = createProvider(config)
+  const provider: typeof rawProvider = params.assertCurrentRun ? {
+    streamChat: args => { params.assertCurrentRun!(); return rawProvider.streamChat(args) },
+    complete: args => { params.assertCurrentRun!(); return rawProvider.complete(args) },
+  } : rawProvider
 
   // Native tools + dynamically aggregated MCP tools (mcp__<server>__<tool>).
   // Audit item 7: honor per-thread MCP selection.
@@ -1145,6 +1154,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           prevMeta?.handoff && typeof prevMeta.handoff === "object"
             ? (prevMeta.handoff as ThreadHandoff)
             : null
+        params.assertCurrentRun?.()
         const h1 = await generateThreadHandoff({
           droppedMessages: compact.droppedMessages,
           priorHandoff,
@@ -1168,6 +1178,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           // Pi nit: only fall back to M2 on fast-fail (not timeout/abort)
           if (!h1.slow && shouldRunM2(compact, m2Enabled, phase) && !signal?.aborted) {
             try {
+              params.assertCurrentRun?.()
               const m2 = await generateRollingSummary({
                 droppedMessages: compact.droppedMessages,
                 config: params.config,
@@ -1195,6 +1206,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         /* cascade M2 on non-abort */
         if (!signal?.aborted && shouldRunM2(compact, m2Enabled, phase)) {
           try {
+            params.assertCurrentRun?.()
             const m2 = await generateRollingSummary({
               droppedMessages: compact.droppedMessages,
               config: params.config,
@@ -1221,6 +1233,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
     // S51 P0 / S52 N2 + Wave B: retain prior pre_loop H1/M2 on mid_loop **before** meta I/O.
     // mode "h1"|"m2" after re-attach = request carries prior notice (N7), not a new gen.
+    params.assertCurrentRun?.()
     const droppedForMeta = effectiveDroppedCount(
       compact.droppedCount,
       typeof prevMeta?.dropped_count === "number" ? prevMeta.dropped_count : undefined,
@@ -1530,6 +1543,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         signal,
         max_tokens: outputMaxTokens,
       })) {
+        params.assertCurrentRun?.()
         if (ev.type === "token") {
           const incoming = ev.text
           assistantContent += incoming
@@ -1827,6 +1841,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           ...(isLengthStop(finishReason) ? { truncated: true } : {}),
         })
         // Best-effort auto-alias: generate a short title if thread has no alias yet
+        params.assertCurrentRun?.()
         generateThreadTitle({ threadId, threadManager, config, sendToExtension })
         return
       }
