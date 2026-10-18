@@ -30,6 +30,25 @@ export class OwnedUI705Boundary {
  runner(){return path.join(this.root,'Products/Debug/OwnedPickerUITests-Runner.app')}
  runnerExecutable(){return path.join(this.runner(),'Contents/MacOS/OwnedPickerUITests-Runner')}
  startup(){const v=this.read('runner-start.json');if(!v)return;this.fields(v,['schema','nonce','pid','bundle_url','executable_url','bundle_id']);if(!Number.isSafeInteger(v.pid)||v.pid<=1||v.pid>2147483647||v.pid===process.pid||v.bundle_id!==UI705_RUNNER_ID||v.bundle_url!==pathToFileURL(this.runner()).href||v.executable_url!==pathToFileURL(this.runnerExecutable()).href)throw refused();return v.pid as number}
+ // Passive, non-atomic observation only. Neither a success nor a cleanup receipt.
+ receiptMask():number|null {
+  try{
+   this.check()
+   const observed=(name:File705)=>{const value=this.read(name);if(value===undefined){
+    // read() deliberately hides a two-link publication in progress; that is not absence.
+    try{fs.lstatSync(path.join(this.root,name));throw refused()}catch(error){if(!error||typeof error!=='object'||Object.getOwnPropertyDescriptor(error,'code')?.value!=='ENOENT')throw refused()}
+   };return value}
+   const pid=this.startup();if(pid===undefined&&observed('runner-start.json')!==undefined)return null
+   const ack=observed('owner-ack.json'),begin=observed('ui-begin.json'),returned=observed('ui-quiescent.json'),closed=observed('runner-closed.json')
+   if(pid===undefined&&(ack!==undefined||begin!==undefined||returned!==undefined||closed!==undefined))return null
+   if(begin!==undefined&&ack===undefined||returned!==undefined&&begin===undefined)return null
+   if(ack!==undefined){this.fields(ack,['schema','nonce','pid','identity_bound']);if(ack.pid!==pid||ack.identity_bound!==true)return null}
+   for(const [value,phase]of[[begin,'UI_SEQUENCE_STARTED'],[returned,'UI_SEQUENCE_RETURNED']]as const)if(value!==undefined){this.fields(value,['schema','nonce','pid','phase']);if(value.pid!==pid||value.phase!==phase)return null}
+   if(closed!==undefined){this.fields(closed,['schema','nonce','pid','terminated']);if(closed.pid!==pid||closed.terminated!==true)return null}
+   this.check();if(this.startup()!==pid)return null
+   return(pid===undefined?0:1)|(ack===undefined?0:2)|(begin===undefined?0:4)|(returned===undefined?0:8)|(closed===undefined?0:16)
+  }catch{return null}
+ }
  closure(observerClosed:boolean,xcodeClosed:boolean){
   try{const pid=this.startup();if(!pid)return false;const ack=this.read('owner-ack.json'),closed=this.read('runner-closed.json');if(!ack||!closed)return false;this.fields(ack,['schema','nonce','pid','identity_bound']);this.fields(closed,['schema','nonce','pid','terminated']);if(ack.pid!==pid||ack.identity_bound!==true||closed.pid!==pid||closed.terminated!==true)return false
    const begin=this.read('ui-begin.json'),returned=this.read('ui-quiescent.json');if(returned&&!begin)return false

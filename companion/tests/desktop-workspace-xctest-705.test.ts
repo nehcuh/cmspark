@@ -76,3 +76,82 @@ test('705 actual rejected UI completion signals the existing parent failure whil
  assert.equal(scope.good().ok,true);assert.equal(scope.state().signals,0);assert.equal(scope.bad(Error('PRIVATE_SENTINEL')).ok,false);assert.equal(scope.state().signals,1);assert.equal(scope.state().failed,true);assert.equal(scope.state().failureSite,9);scope.preset();scope.bad();assert.equal(scope.state().failureSite,5)
  assert.match(source,/Promise\.race\(\[exit,failure\.then\(/);assert.match(source,/owned acknowledged UI runner must genuinely close quiescent/)
 })
+
+// Separate passive fixed-file snapshot; never a lifecycle/cleanup authority.
+const receiptNames705=['runner-start.json','owner-ack.json','ui-begin.json','ui-quiescent.json','runner-closed.json']
+test('705 receipt mask observes only valid fixed progression including early cleanup and incomplete UI',()=>{
+ const valid=[0,1,3,7,15,17,19,23,31]
+ for(let mask=0;mask<32;mask++){
+  const f=loadBoundary();f.full();for(let bit=0;bit<5;bit++)if(!(mask&(1<<bit)))f.store.delete(f.root+'/'+receiptNames705[bit])
+  assert.equal(f.api.receiptMask(),valid.includes(mask)?mask:null,String(mask))
+  if(mask===23)assert.equal(f.api.closure(true,true),false,'begin+closed without return cannot settle')
+  if(mask===0)assert.equal(f.api.closure(true,true),false,'not observed is not no execution or closure')
+ }
+})
+test('705 receipt mask rejects exact schema tuple identity malformed and partial files without reflecting values',()=>{
+ const variants=['nonce','pid','boolpid','selfpid','bundle','exe','extra','identity','terminated','phase','duplicate','invalidutf8','nonfile','symlink','hardlink','pending','uid','mode','oversize','empty','unreadable']
+ for(const kind of variants){
+  const f=loadBoundary();f.full();let file='owner-ack.json';if(['boolpid','selfpid','bundle','exe'].includes(kind))file='runner-start.json';if(kind==='terminated')file='runner-closed.json';if(kind==='phase')file='ui-begin.json'
+  const name=f.root+'/'+file,v=f.store.get(name),value=JSON.parse(v.bytes.toString('utf8'))
+  if(kind==='nonce')value.nonce='b'.repeat(64);if(kind==='pid')value.pid=f.pid+1;if(kind==='boolpid')value.pid=true;if(kind==='selfpid')value.pid=123;if(kind==='bundle')value.bundle_id='OWNED_PRIVATE';if(kind==='exe')value.executable_url='file:///OWNED_PRIVATE';if(kind==='extra')value.private='OWNED_PRIVATE';if(kind==='identity')value.identity_bound=false;if(kind==='terminated')value.terminated=false;if(kind==='phase')value.phase='OWNED_PRIVATE'
+  f.put(file,value);const current=f.store.get(name)
+  if(kind==='duplicate')current.bytes=Buffer.from('{"nonce":"'+f.base.nonce+'","pid":321,"schema":1,"schema":1}');if(kind==='invalidutf8')current.bytes=Buffer.from([255]);if(kind==='nonfile')current.nonfile=true;if(kind==='symlink')current.symlink=true;if(kind==='hardlink')current.nlink=2
+  if(kind==='pending'){current.nlink=2;f.store.set(f.root+'/.owner-ack.json.pending',{...current})}
+  if(kind==='uid')current.uid=8;if(kind==='mode')current.mode=0o644;if(kind==='oversize')current.bytes=Buffer.alloc(4097,65);if(kind==='empty')current.bytes=Buffer.alloc(0)
+  if(kind==='unreadable'){const original=f.api.read.bind(f.api);f.api.read=(n:string)=>{if(n==='owner-ack.json')throw Error('OWNED_PRIVATE');return original(n)}}
+  assert.equal(f.api.receiptMask(),null,kind)
+ }
+ // The existing strict reader regards a two-link publishing file as pending/undefined;
+ // the passive snapshot must distinguish that present partial file from ENOENT.
+ const f=loadBoundary();f.full();f.store.get(f.root+'/runner-start.json').nlink=2;f.store.set(f.root+'/.runner-start.json.pending',{...f.store.get(f.root+'/runner-start.json')});assert.equal(f.api.receiptMask(),null)
+})
+function realReceiptBoundary705(){
+ const source=fs.readFileSync(helper,'utf8'),parsed=ts.createSourceFile(helper,source,ts.ScriptTarget.Latest,true),selected=parsed.statements.filter(n=>(ts.isClassDeclaration(n)&&n.name?.text==='OwnedUI705Boundary')||(ts.isVariableStatement(n)&&['refused','canonical','regular','UI705_RUNNER_ID','UI705_FILES'].some(v=>n.declarationList.declarations.some(d=>d.name.getText(parsed)===v)))).map(n=>n.getText(parsed)).join('\n'),out=ts.transpileModule(selected,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}),mod:any={exports:{}}
+ const nonce='b'.repeat(64),parent=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR!,'receipt-mask-705-'))),root=path.join(parent,'cmspark-workspace-ui-705-'+nonce);fs.mkdirSync(root,{mode:0o700})
+ // Test-private POSIX contract projection only: retain real kind/dev/ino/nlink/uid and
+ // I/O; Windows permission bits are not evidence of real POSIX permissions.
+ const testUid=fs.lstatSync(root).uid,fds=new Set<number>(),owned=(name:fs.PathLike)=>{const value=String(name);assert.ok(value===root||value.startsWith(root+path.sep));return value},stat=(s:fs.Stats)=>Object.assign(Object.create(Object.getPrototypeOf(s)),s,{mode:(s.mode&~0o777)|(s.isDirectory()?0o700:s.isFile()?0o600:s.mode&0o777)})
+ const ownedFS={...fs,lstatSync:(name:fs.PathLike)=>stat(fs.lstatSync(owned(name))),openSync:(name:fs.PathLike,flags:fs.OpenMode,mode?:fs.Mode)=>{const fd=fs.openSync(owned(name),flags,mode);fds.add(fd);return fd},fstatSync:(fd:number)=>{assert.ok(fds.has(fd));return stat(fs.fstatSync(fd))},closeSync:(fd:number)=>{try{return fs.closeSync(fd)}finally{fds.delete(fd)}}}
+ vm.runInNewContext(out.outputText,{module:mod,exports:mod.exports,fs:ownedFS,path,pathToFileURL,Buffer,TextDecoder,process:{pid:process.pid,getuid:()=>testUid}})
+ const api=new mod.exports.OwnedUI705Boundary(root,nonce),pid=process.pid===321?322:321,base={schema:1,nonce};return{api,root,parent,base,pid,put:(name:string,value:any)=>api.write(name,value),startup:()=>api.write('runner-start.json',{...base,pid,bundle_id:'com.cmspark.tests.workspace-ui-705.xctrunner',bundle_url:pathToFileURL(api.runner()).href,executable_url:pathToFileURL(api.runnerExecutable()).href})}
+}
+test('705 receipt mask actual strict reader handles owned files links directory and partial publication',()=>{
+ const f=realReceiptBoundary705();try{
+  assert.equal(f.api.receiptMask(),0);f.startup();assert.equal(f.api.receiptMask(),1);f.put('owner-ack.json',{...f.base,pid:f.pid,identity_bound:true});assert.equal(f.api.receiptMask(),3)
+  const closed=path.join(f.root,'runner-closed.json'),foreign=path.join(f.parent,'owned-inert.json');fs.writeFileSync(foreign,'{}',{mode:0o600});const foreignDirectory=path.join(f.parent,'owned-inert-directory');fs.mkdirSync(foreignDirectory,{mode:0o700});fs.symlinkSync(foreignDirectory,closed,process.platform==='win32'?'junction':'dir');assert.equal(f.api.receiptMask(),null);fs.unlinkSync(closed);fs.mkdirSync(closed,{mode:0o700});assert.equal(f.api.receiptMask(),null);fs.rmdirSync(closed)
+  fs.linkSync(foreign,closed);assert.equal(f.api.receiptMask(),null);fs.unlinkSync(closed)
+  f.put('runner-closed.json',{...f.base,pid:f.pid,terminated:true});assert.equal(f.api.receiptMask(),19);assert.equal(f.api.closure(false,true),false)
+  fs.linkSync(closed,path.join(f.root,'.runner-closed.json.pending'));assert.equal(f.api.receiptMask(),null);fs.unlinkSync(path.join(f.root,'.runner-closed.json.pending'));assert.equal(f.api.receiptMask(),19)
+ }finally{fs.rmSync(f.parent,{recursive:true,force:true})}
+})
+test('705 receipt mask is fixed to five strict reads and refuses FIFO-style descriptors without opening child processes',()=>{
+ const f=loadBoundary();f.full();const seen:string[]=[],read=f.api.read.bind(f.api);f.api.read=(name:string)=>{seen.push(name);return read(name)};assert.equal(f.api.receiptMask(),31);assert.deepEqual([...new Set(seen)].sort(),[...receiptNames705].sort())
+ // Source-derived FIFO descriptor model: isFile=false and O_NONBLOCK/O_NOFOLLOW asserted by actual reader seam.
+ const g=loadBoundary();g.full();g.store.get(g.root+'/owner-ack.json').nonfile=true;assert.equal(g.api.receiptMask(),null);assert.ok(g.opens()>0)
+})
+test('705 passive receipt snapshot rechecks startup and leaves all original authority methods byte-exact',()=>{
+ const f=loadBoundary();f.full();let calls=0;const startup=f.api.startup.bind(f.api);f.api.startup=()=>{calls++;return calls===1?startup():f.pid+1};assert.equal(f.api.receiptMask(),null)
+ const g=loadBoundary();g.full();let checks=0;const check=g.api.check.bind(g.api);g.api.check=()=>{checks++;if(checks>1)throw Error('OWNED_ROOT_CHANGED');return check()};assert.equal(g.api.receiptMask(),null)
+ const source=fs.readFileSync(helper,'utf8'),ast=ts.createSourceFile(helper,source,ts.ScriptTarget.Latest,true),owner=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='OwnedWorkspaceUI705') as ts.ClassDeclaration,method=owner.members.find(n=>ts.isMethodDeclaration(n)&&n.name.getText(ast)==='diagnostic');assert.ok(method);assert.equal(method.getText(ast).includes('receiptMask'),false)
+})
+test('705 actual finally receipt mask is a separate scalar and cannot replace primary or explicit cancel',()=>{
+ const file=path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),source=fs.readFileSync(file,'utf8'),ast=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true);let body:ts.Block|undefined
+ function visit(n:ts.Node){if(ts.isTryStatement(n)&&n.finallyBlock?.getText(ast).includes('D476_WORKSPACE_NATIVE_PHASE'))body=n.finallyBlock;ts.forEachChild(n,visit)}visit(ast);assert.ok(body)
+ const nodes=body.statements,cut=nodes.findIndex(n=>n.getText(ast).includes('child?.terminate()'));assert.ok(cut>0);const prefix=nodes.slice(0,cut).map(n=>n.getText(ast)).join('\n'),output=(value:any,throwMask=false,loggerFault=false,sceneFault=false)=>{const rows:string[]=[],trace:string[]=[],owner={diagnostic(){trace.push('lifecycle');return{begun:true}},scene:{receiptMask(){trace.push('mask');if(throwMask)throw Error('OWNED_PRIVATE');return value}},cancel(){trace.push('cancel')}},scope:any={uiOwner:owner,surfaceLease:{retain(){trace.push('retain')}},required:[],receipts:new Set(),picks:0,pickerObserved:0,pickerReturned:0,cancelReturned:0,connections:0,authenticated:false,windowRequested:false,settled:false,failed:true,failureSite:9,pickOutcome:0,pickerLifecycle:null,nativeDiagnostic:null,diagnosticInvalid:false,selectedOutcome:null,selectedIdentity:null,cancelClose:null,cancelShow:null,cancelSettled:null,cancelCurrent:null,t:{diagnostic(s:string){if(loggerFault)throw Error('OWNED_LOGGER');rows.push(s)}}};if(sceneFault)Object.defineProperty(owner,'scene',{get(){throw Error('OWNED_SCENE')}});vm.runInNewContext(ts.transpileModule(prefix,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,scope);return{trace,rows:rows.map(s=>JSON.parse(s.slice('D476_WORKSPACE_NATIVE_PHASE '.length)))}}
+ const good=output(23);assert.equal(good.rows[0].uiReceiptMask,23);assert.equal(good.rows[0].uiLifecycle.begun,true);assert.deepEqual(good.trace,['retain','lifecycle','mask','cancel']);const bad=output(null,true);assert.equal(bad.rows[0].uiReceiptMask,null);assert.equal(bad.rows[0].failureSite,9);assert.deepEqual(bad.trace,['retain','lifecycle','mask','cancel']);const getter=output(null,false,false,true);assert.equal(getter.rows[0].uiReceiptMask,null);assert.deepEqual(getter.trace,['retain','lifecycle','cancel']);const logger=output(31,false,true);assert.equal(logger.rows.length,0);assert.deepEqual(logger.trace,['retain','lifecycle','mask','cancel'])
+})
+
+test('705 actual physical receipt callback is portable without host getuid POSIX modes or file-symlink privilege',()=>{
+ // Execute the complete current test module in a private Windows-shaped context, then
+ // select its real owned-FS callback. This never changes global process/fs or production.
+ const current=fs.readFileSync(path.resolve('tests/desktop-workspace-xctest-705.test.ts'),'utf8'),compiled=ts.transpileModule(current,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText
+ for(const shape of['missing-getuid','windows-mode']){
+  const parent=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR!,'receipt-win-contract-705-'))),fds=new Set<number>(),links:string[]=[],cases=new Map<string,()=>void>()
+  const owned=(name:fs.PathLike)=>{const value=String(name);assert.ok(value===parent||value.startsWith(parent+path.sep));return value}
+  const rawStat=(s:fs.Stats)=>Object.assign(Object.create(Object.getPrototypeOf(s)),s,{uid:0,mode:shape==='windows-mode'?(s.mode&~0o777)|(s.isDirectory()?0o777:0o666):s.mode})
+  const windowsFS={...fs,lstatSync:(name:fs.PathLike)=>rawStat(fs.lstatSync(owned(name))),openSync:(name:fs.PathLike,flags:fs.OpenMode,mode?:fs.Mode)=>{const fd=fs.openSync(owned(name),flags,mode);fds.add(fd);return fd},fstatSync:(fd:number)=>{assert.ok(fds.has(fd));return rawStat(fs.fstatSync(fd))},closeSync:(fd:number)=>{try{return fs.closeSync(fd)}finally{fds.delete(fd)}},symlinkSync:(target:fs.PathLike,name:fs.PathLike,type?:fs.symlink.Type)=>{owned(target);owned(name);links.push(type??'missing');assert.equal(type,'junction','Windows fixture must request only owned directory junction');return fs.symlinkSync(target,name,process.platform==='win32'?'junction':'dir')}}
+  const localProcess={pid:process.pid,platform:'win32',env:{TMPDIR:parent}},mod:any={exports:{}},require=createRequireForReceipt705()
+  try{vm.runInNewContext(compiled,{module:mod,exports:mod.exports,require:(name:string)=>name==='node:fs'?windowsFS:name==='node:test'?(name:string,callback:()=>void)=>cases.set(name,callback):require(name),process:localProcess,Buffer,TextDecoder,URL,console},{timeout:3000});const actual=cases.get('705 receipt mask actual strict reader handles owned files links directory and partial publication');assert.ok(actual);actual();assert.deepEqual(links,['junction']);assert.equal(fds.size,0)}finally{for(const fd of fds)fs.closeSync(fd);fs.rmSync(parent,{recursive:true,force:true})}
+ }
+})
+function createRequireForReceipt705(){return (name:string)=>{if(name==='node:test')return test;if(name==='node:assert/strict')return assert;if(name==='node:fs')return fs;if(name==='node:path')return path;if(name==='node:vm')return vm;if(name==='typescript')return ts;if(name==='node:url')return{pathToFileURL};throw Error('OWNED_TEST_IMPORT_REFUSED')}}
