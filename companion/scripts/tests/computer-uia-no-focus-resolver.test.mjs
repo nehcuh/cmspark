@@ -37,7 +37,19 @@ test('absent output is a deterministic fake-runner argument, not a false native 
  const r=resolve('C:\\repo\\companion\\.test-dist\\src\\host-use\\win');assert.equal(r.value,'C:\\runtime\\host-scripts-win\\'+dll);assert.equal(r.reads.length,6);assert.ok(r.reads.every(p=>p.endsWith('\\host-scripts-win\\'+dll)))
 })
 test('CI compiles before UIA, and both actual packaging producers explicitly stage the DLL',()=>{
- const ci=fs.readFileSync(new URL('../.github/workflows/ci.yml',root),'utf8');const at=ci.indexOf('run: node companion/scripts/build-computer-uia-no-focus.mjs');assert.ok(at>0&&at<ci.indexOf('Actual native desktop build and isolated connection'));assert.ok(at<ci.indexOf('Actual Windows background oracle comparator'))
+ const ci=fs.readFileSync(new URL('../.github/workflows/ci.yml',root),'utf8')
+ const normal='node companion/scripts/build-computer-uia-no-focus.mjs',probe='node companion/scripts/build-computer-uia-native-probe-572.mjs'
+ const guard='if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
+ const assertBuildOrder=value=>{
+  const sequence=/^          node companion\/scripts\/build-computer-uia-no-focus\.mjs\r?\n          if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}\r?\n          node companion\/scripts\/build-computer-uia-native-probe-572\.mjs\r?$/m.exec(value)
+  assert.ok(sequence,'normal build must refuse failure before the probe build')
+  assert.equal(value.split(normal).length,2);assert.equal(value.split(probe).length,2)
+  assert.ok(sequence.index>0&&sequence.index<value.indexOf('Actual native desktop build and isolated connection'))
+  assert.ok(sequence.index<value.indexOf('Actual Windows background oracle comparator'))
+ }
+ const lf=ci.replace(/\r\n/g,'\n')
+ for(const value of [lf,lf.replace(/\n/g,'\r\n')])assertBuildOrder(value)
+ for(const value of [lf.replace(normal,''),lf.replace(guard,''),lf.replace(probe,''),lf.replace(normal,'BUILD_SWAP').replace(probe,normal).replace('BUILD_SWAP',probe),lf.replace(guard,'if ($LASTEXITCODE -eq 0) { exit $LASTEXITCODE }'),lf.replace('Actual native desktop build and isolated connection','MISSING_NATIVE_STEP')])assert.throws(()=>assertBuildOrder(value))
  const sh=fs.readFileSync(new URL('../scripts/package.sh',root),'utf8');assert.ok(sh.includes('node "${ROOT_DIR}/companion/scripts/build-computer-uia-no-focus.mjs" --stage "${STAGING}/host-scripts-win"'))
  const ps=fs.readFileSync(new URL('../scripts/build-windows-exe.ps1',root),'utf8');assert.ok(ps.includes('node "$CompanionDir\\scripts\\build-computer-uia-no-focus.mjs" --stage "$StagingDir\\host-scripts-win"'));assert.ok(ps.includes('if ($LASTEXITCODE -ne 0) { Fail "Fixed no-autofocus UIA DLL staging failed" }'))
 })

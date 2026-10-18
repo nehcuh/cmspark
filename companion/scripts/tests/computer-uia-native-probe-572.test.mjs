@@ -91,8 +91,15 @@ test('probe compile outlet changes only source/output argv; production DLL/sourc
 test('all probe CPU controls execute no OS/compiler/network calls',()=>assert.equal(forbiddenEffects,0))
 test('CI retains normal build refusal before the test outlet and probe survives canonical test-dist cleanup',()=>{
   const workflow=fs.readFileSync(fileURLToPath(new URL('../../../.github/workflows/ci.yml',import.meta.url)),'utf8')
-  assert.equal(workflow.split('node companion/scripts/build-computer-uia-native-probe-572.mjs').length,2)
-  assert.match(workflow,/node companion\/scripts\/build-computer-uia-no-focus\.mjs\n          if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}\n          node companion\/scripts\/build-computer-uia-native-probe-572\.mjs/)
+  const normal='node companion/scripts/build-computer-uia-no-focus.mjs',probe='node companion/scripts/build-computer-uia-native-probe-572.mjs'
+  const guard='if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
+  const assertBuildSequence=value=>{
+    assert.equal(value.split(normal).length,2);assert.equal(value.split(probe).length,2)
+    assert.match(value,/^          node companion\/scripts\/build-computer-uia-no-focus\.mjs\r?\n          if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}\r?\n          node companion\/scripts\/build-computer-uia-native-probe-572\.mjs\r?$/m)
+  }
+  const lf=workflow.replace(/\r\n/g,'\n')
+  for(const value of [lf,lf.replace(/\n/g,'\r\n')])assertBuildSequence(value)
+  for(const value of [lf.replace(normal,''),lf.replace(guard,''),lf.replace(probe,''),lf.replace(normal,'BUILD_SWAP').replace(probe,normal).replace('BUILD_SWAP',probe),lf.replace(guard,'if ($LASTEXITCODE -eq 0) { exit $LASTEXITCODE }')])assert.throws(()=>assertBuildSequence(value))
   const builder=fs.readFileSync(fileURLToPath(new URL('../build-computer-uia-native-probe-572.mjs',import.meta.url)),'utf8')
   assert.match(builder,/path.join\(sourceRoot,'dist\/desktop-native\/acceptance\/uia572-probe'\)/)
   assert.doesNotMatch(builder,/\.test-dist|dist\/host-scripts-win/)
