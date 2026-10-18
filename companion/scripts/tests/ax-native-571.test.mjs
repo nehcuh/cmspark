@@ -225,7 +225,7 @@ test('#571 fixed launch boundary consumer exports only known closed categories',
 })
 test('#571 actual launch callback consumes stderr only without reflecting native error or stdout',()=>{
  const parse=launchBoundaryConsumer571();let call;const walk=n=>{if(ts.isCallExpression(n)&&n.expression.getText(ast)==='execFile'&&n.arguments[0]?.getText(ast)==='fixture')call=n;ts.forEachChild(n,walk)};walk(ast);assert.ok(call)
- const callback=call.arguments.at(-1);assert.ok(ts.isArrowFunction(callback));const s={ax571LaunchBoundary:parse,launchBoundary:'UNKNOWN'};vm.createContext(s);vm.runInContext('this.callback='+ts.transpileModule('const f='+callback.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText.replace(/^const f = /,'').replace(/;\s*$/,''),s)
+ const callback=call.arguments.at(-1);assert.ok(ts.isArrowFunction(callback));const s={ax571LaunchBoundary:parse,ax571LaunchLifecycle:()=>null,launchBoundary:'UNKNOWN',launchLifecycle:null};vm.createContext(s);vm.runInContext('this.callback='+ts.transpileModule('const f='+callback.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText.replace(/^const f = /,'').replace(/;\s*$/,''),s)
  const error=Object.defineProperty({},'message',{get(){throw Error('PRIVATE_ERROR_READ')}})
  s.callback(error,'AX571_LAUNCH_OPEN_ERROR\n','AX571_LAUNCH_BUNDLE_URL\n');assert.equal(s.launchBoundary,'BUNDLE_URL')
  s.callback(error,'AX571_LAUNCH_OPEN_ERROR\n','UNRECOGNIZED_PRIVATE_SENTINEL');assert.equal(s.launchBoundary,'UNKNOWN')
@@ -233,7 +233,7 @@ test('#571 actual launch callback consumes stderr only without reflecting native
 test('#571 public lifetime observation includes only fixed wait stage and decoded launch category',()=>{
  const owner=source.indexOf("await waitFile(ready+'.owner-started')"),ready=source.indexOf('await waitFile(ready)'),ownerPhase=source.indexOf("waitStage='OWNER_STARTED'"),readyPhase=source.indexOf("waitStage='APP_READY'"),actionPhase=source.indexOf("waitStage='ACTION'"),diagnostic=source.indexOf("t.diagnostic('AX571_LIFETIME '");assert.ok(ownerPhase>=0&&ownerPhase<owner&&readyPhase>owner&&readyPhase<ready&&actionPhase>ready&&actionPhase<diagnostic)
  let expression;const walk=n=>{if(ts.isCallExpression(n)&&n.expression.getText(ast)==='t.diagnostic'&&n.arguments[0]?.getText(ast).startsWith("'AX571_LIFETIME '"))expression=n.arguments[0];ts.forEachChild(n,walk)};walk(ast);assert.ok(expression)
- const s={JSON,framework:'APPKIT',ended:true,launcherExit:65,launcherSignal:null,waitStage:'APP_READY',launchBoundary:'BUNDLE_URL'};const text=vm.runInNewContext(expression.getText(ast),s);const result=JSON.parse(text.slice('AX571_LIFETIME '.length));assert.deepEqual(result,{schema:1,framework:'APPKIT',closed:true,prelaunch:'UNPROVEN',signalObserved:false,waitStage:'APP_READY',launchBoundary:'BUNDLE_URL'})
+ const s={JSON,framework:'APPKIT',ended:true,launcherExit:65,launcherSignal:null,waitStage:'APP_READY',launchBoundary:'BUNDLE_URL',launchLifecycle:null};const text=vm.runInNewContext(expression.getText(ast),s);const result=JSON.parse(text.slice('AX571_LIFETIME '.length));assert.deepEqual(result,{schema:1,framework:'APPKIT',closed:true,prelaunch:'UNPROVEN',signalObserved:false,waitStage:'APP_READY',launchBoundary:'BUNDLE_URL',launchLifecycle:null})
  assert.equal(text.includes('PRIVATE_SENTINEL'),false)
 })
 
@@ -244,7 +244,7 @@ test('#571 PID refusal decoder distinguishes fixed nonpositive and self categori
 })
 test('#571 actual Swift completion preserves all nine predicates and separates the two PID refusal boundaries',()=>{
  const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),start=swift.indexOf('                guard error == nil else'),end=swift.indexOf('                application = returned;',start);assert.ok(start>=0&&end>start)
- const guards=[...swift.slice(start,end).matchAll(/guard ([^\n]+) else \{ ax571LaunchGuardRefused\(\.(\w+)\) \}/g)].map(m=>({conditions:m[1].split(',').map(s=>s.trim()),category:m[2]}))
+ const guards=[...swift.slice(start,end).matchAll(/guard ([^\n]+) else \{ (?:ax571LaunchLifecycle\(\.refused, returned\); )?ax571LaunchGuardRefused\(\.(\w+)\) \}/g)].map(m=>({conditions:m[1].split(',').map(s=>s.trim()),category:m[2]}))
  const expected=['error == nil','let returned = returned','paths.current()','returned.processIdentifier > 0','returned.processIdentifier != getpid()','!returned.isTerminated','returned.bundleIdentifier == "com.cmspark.ax571.owned-target"','returned.bundleURL?.resolvingSymlinksInPath() == bundle','returned.executableURL?.resolvingSymlinksInPath() == executable']
  assert.equal(guards.length,9);assert.deepEqual(guards.flatMap(g=>g.conditions),expected)
  assert.equal(guards[3].category,'returnedPIDNonpositive');assert.equal(guards[4].category,'returnedPIDSelf')
@@ -258,4 +258,29 @@ test('#571 actual Swift completion preserves all nine predicates and separates t
   assert.equal(actual,want);if(actual!=='BOUND'){assert.equal(parse('AX571_LAUNCH_'+actual+'\n'),actual);assert.equal(actual.includes('SENTINEL'),false);seen.add(actual)}states++
  }
  assert.equal(states,1152);assert.equal(seen.size,9)
+})
+
+function lifecycleConsumer571(){const n=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='ax571LaunchLifecycle');assert.ok(n,'lifecycle decoder missing');const c={Buffer};vm.createContext(c);vm.runInContext(ts.transpileModule(n.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+';this.parse=ax571LaunchLifecycle;',c);return c.parse}
+function actualLifecycleEmitter571(){
+ const s=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),anchor='private func ax571LaunchLifecycle(_ point: AX571LaunchLifecyclePoint, _ application: NSRunningApplication) {';assert.equal(s.split(anchor).length,2)
+ let body=s.split(anchor)[1].split('\n}')[0];const sink='    do { try FileHandle.standardError.write(contentsOf: Data((marker + String(bits) + "\\n").utf8)) } catch {}';assert.equal(body.split(sink).length,2)
+ body=body.replace(sink,'    try{sink(marker + String(bits) + "\\n")}catch{}').replace('point == .entry',"point === 'entry'")
+ return vm.compileFunction(body,['point','application','sink'])
+}
+test('#571 lifecycle emitter and original nine guards distinguish queue transition without granting admission',()=>{
+ const emit=actualLifecycleEmitter571(),parse=lifecycleConsumer571(),swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8'),entry=swift.indexOf('if error == nil, let observed = returned { ax571LaunchLifecycle(.entry, observed) }'),dispatch=swift.indexOf('DispatchQueue.main.async { [self] in',entry),refused='guard returned.processIdentifier > 0 else { ax571LaunchLifecycle(.refused, returned); ax571LaunchGuardRefused(.returnedPIDNonpositive) }';assert.ok(entry>=0&&dispatch>entry);assert.ok(swift.includes(refused));assert.equal(swift.split('ax571LaunchLifecycle(.entry, observed)').length,2);assert.equal(swift.split('ax571LaunchLifecycle(.refused, returned)').length,2)
+ const results=[]
+ for(const startPositive of [true,false]){let pid=startPositive?42:-1,terminated=false;const lines=[],guardReads=[],app={get processIdentifier(){return pid},get isTerminated(){return terminated},isFinishedLaunching:false};emit('entry',app,x=>lines.push(x));pid=-1;terminated=true;assert.equal(app.processIdentifier>0,false);guardReads.push('pid');emit('refused',app,x=>lines.push(x));const result=parse(lines.join(''));assert.ok(result);assert.equal(result.entry.pidAvailable,startPositive);assert.equal(result.refused.pidAvailable,false);assert.equal(result.refused.terminated,true);assert.deepEqual(guardReads,['pid']);results.push(JSON.stringify(result))}assert.notEqual(results[0],results[1])
+})
+test('#571 lifecycle snapshots have a bounded closed parser and never coerce or accept duplicate tags',()=>{
+ const parse=lifecycleConsumer571();for(const point of ['ENTRY','REFUSED'])for(let bits=0;bits<8;bits++){const r=parse(`AX571_LIFECYCLE_${point}_${bits}\r\n`);assert.ok(r);const actual=r[point.toLowerCase()];assert.equal(actual.pidAvailable,!!(bits&1));assert.equal(actual.terminated,!!(bits&2));assert.equal(actual.finishedLaunching,!!(bits&4))}
+ let reads=0;const trap={toString(){reads++;throw Error('PRIVATE')}}
+ for(const x of [null,undefined,{},[],trap,'','AX571_LIFECYCLE_ENTRY_8\n','AX571_LIFECYCLE_ENTRY_00\n','AX571_LIFECYCLE_OTHER_0\n','AX571_LIFECYCLE_ENTRY_1\nAX571_LIFECYCLE_ENTRY_1\n','AX571_LIFECYCLE_REFUSED_0\nAX571_LIFECYCLE_REFUSED_1\n','AX571_LIFECYCLE_ENTRY_1_PRIVATE\n','prefix AX571_LIFECYCLE_ENTRY_1\n','AX571_LIFECYCLE_ENTRY_1\rPRIVATE\n','x'.repeat(4097)])assert.equal(parse(x),null)
+ assert.equal(reads,0);assert.ok(parse('AX571_LIFECYCLE_ENTRY_1\nAX571_LAUNCH_RETURNED_PID_NONPOSITIVE\nAX571_LIFECYCLE_REFUSED_2\n'))
+})
+test('#571 lifecycle sink failure cannot replace original refusal and actual child callback retains legacy decoder',()=>{
+ const emit=actualLifecycleEmitter571(),parse=lifecycleConsumer571();let reads=0;const app={get processIdentifier(){reads++;return -1},get isTerminated(){reads++;return false},get isFinishedLaunching(){reads++;return false}};assert.doesNotThrow(()=>emit('refused',app,()=>{throw Error('INERT_SINK')}));assert.equal(reads,3)
+ const marker=Error('ACTUAL_REFUSAL');assert.throws(()=>{emit('refused',app,()=>{throw Error('INERT_SINK')});throw marker},e=>e===marker)
+ let call;function walk(n){if(ts.isCallExpression(n)&&n.expression.getText(ast)==='execFile'&&n.arguments[0]?.getText(ast)==='fixture')call=n;ts.forEachChild(n,walk)}walk(ast);assert.ok(call);const state={ax571LaunchBoundary:launchBoundaryConsumer571(),ax571LaunchLifecycle:parse,launchBoundary:'UNKNOWN',launchLifecycle:null};vm.createContext(state);vm.runInContext('this.callback='+ts.transpileModule('const f='+call.arguments.at(-1).getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText.replace(/^const f = /,'').replace(/;\s*$/,''),state)
+ const error=Object.defineProperty({},'message',{get(){throw Error('PRIVATE_ERROR')}});state.callback(error,'PRIVATE_STDOUT','AX571_LIFECYCLE_ENTRY_1\nAX571_LAUNCH_RETURNED_PID_NONPOSITIVE\nAX571_LIFECYCLE_REFUSED_2\n');assert.equal(state.launchBoundary,'RETURNED_PID_NONPOSITIVE');assert.equal(state.launchLifecycle.entry.pidAvailable,true);assert.equal(state.launchLifecycle.refused.terminated,true)
 })

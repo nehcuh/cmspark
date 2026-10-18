@@ -18,6 +18,18 @@ function ax571LaunchBoundary(value:unknown):string {
  const markers=value.match(/^AX571_LAUNCH_(OPEN_ERROR|NO_RETURNED_APP|PARENT_CHANGED|RETURNED_PID(?:_NONPOSITIVE|_SELF)?|RETURNED_TERMINATED|BUNDLE_ID|BUNDLE_URL|EXECUTABLE_URL)\r?$/gm)
  return markers?.length===1?markers[0].trimEnd().slice("AX571_LAUNCH_".length):"UNKNOWN"
 }
+// Two fixed lifecycle snapshots only. Missing/invalid observations confer no authority.
+function ax571LaunchLifecycle(value:unknown):{entry:{pidAvailable:boolean;terminated:boolean;finishedLaunching:boolean}|null;refused:{pidAvailable:boolean;terminated:boolean;finishedLaunching:boolean}|null}|null {
+ if(typeof value!=="string"||Buffer.byteLength(value,"utf8")>4096)return null
+ let entry:{pidAvailable:boolean;terminated:boolean;finishedLaunching:boolean}|null=null,refused:{pidAvailable:boolean;terminated:boolean;finishedLaunching:boolean}|null=null
+ for(const line of value.split(/\r?\n/)){
+  if(!line.includes("AX571_LIFECYCLE_"))continue
+  const m=/^AX571_LIFECYCLE_(ENTRY|REFUSED)_([0-7])$/.exec(line);if(!m)return null
+  const bits=Number(m[2]),shot={pidAvailable:!!(bits&1),terminated:!!(bits&2),finishedLaunching:!!(bits&4)}
+  if(m[1]==="ENTRY"){if(entry!==null)return null;entry=shot}else{if(refused!==null)return null;refused=shot}
+ }
+ return entry!==null||refused!==null?{entry,refused}:null
+}
 function requireAx571Oracles(before:Ax571Snapshot,after:Ax571Snapshot,verdict:Record<string,unknown>,target:number,sibling:number):void {
  assert.ok(Number.isSafeInteger(target)&&target>0&&Number.isSafeInteger(sibling)&&sibling>0&&target!==sibling,'AX571_OWNED_WINDOWS_INVALID')
  for(const shot of [before,after]){
@@ -61,7 +73,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
  const deadline=performance.now()+20_000,remaining=()=>{t.signal.throwIfAborted();const n=Math.floor(deadline-performance.now());assert.ok(n>0,'AX571_DEADLINE');return n}
  const env={PATH:path.dirname(process.execPath)+':/usr/bin:/bin',TMPDIR:dir}
  let child:ChildProcess|undefined,closed:Promise<void>=Promise.resolve(),ended=false,failed=false,primary:unknown,appPID:number|undefined,launcherExit:number|null=null,launcherSignal:NodeJS.Signals|null=null
- let launchBoundary="UNKNOWN",waitStage:"NOT_STARTED"|"OWNER_STARTED"|"APP_READY"|"ACTION"="NOT_STARTED"
+ let launchBoundary="UNKNOWN",launchLifecycle:ReturnType<typeof ax571LaunchLifecycle>=null,waitStage:"NOT_STARTED"|"OWNER_STARTED"|"APP_READY"|"ACTION"="NOT_STARTED"
  const json=async(bin:string,args:string[],limit=15_000)=>new Promise<any>((resolve,reject)=>{execFile(bin,args,{encoding:'utf8',env,timeout:Math.min(limit,remaining()),maxBuffer:65536,signal:t.signal},(error,stdout)=>{if(error){reject(Error('AX571_CHILD_FAILED'));return}try{resolve(JSON.parse(stdout))}catch{reject(Error('AX571_INVALID_JSON'))}})})
  const command=async(args:string[],limit=15_000)=>json(host,args,limit)
  const marker=path.join(dir,'target.json'),siblingMarker=path.join(dir,'sibling.json'),ready=path.join(dir,'ready.json'),stop=path.join(dir,'stop')
@@ -77,7 +89,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
   const security=await command(['security-check']);assert.equal(security.ok,true,'AX571_SECURITY_UNREADABLE');assert.equal(typeof security.axTrusted,'boolean','AX571_SECURITY_UNREADABLE');assert.equal(typeof security.secureInput,'boolean','AX571_SECURITY_UNREADABLE')
   t.diagnostic('AX571_PERMISSION '+JSON.stringify({schema:1,framework,axTrusted:security.axTrusted,secureInput:security.secureInput,identifierExpected:true,route:'DIRECT_CLI_NODE_PARENT',tccResponsibility:'UNKNOWN'}))
   lease.checkpoint();lease.retain()
-  child=execFile(fixture,['--launch-owned',framework,ready,marker,siblingMarker,String(remaining())],{env,timeout:remaining(),maxBuffer:4096,signal:t.signal},(_error,_stdout,stderr)=>{launchBoundary=ax571LaunchBoundary(stderr)})
+  child=execFile(fixture,['--launch-owned',framework,ready,marker,siblingMarker,String(remaining())],{env,timeout:remaining(),maxBuffer:4096,signal:t.signal},(_error,_stdout,stderr)=>{launchBoundary=ax571LaunchBoundary(stderr);launchLifecycle=ax571LaunchLifecycle(stderr)})
   closed=new Promise<void>(resolve=>child!.once('close',(code,signal)=>{launcherExit=code;launcherSignal=signal;ended=true;resolve()}))
   waitStage='OWNER_STARTED'
   const started=ax571OwnerReceipt(await waitFile(ready+'.owner-started'),framework,false);assert.ok(started,'AX571_APP_OWNER_REQUIRED');appPID=started.pid;assert.ok(appPID!==child.pid,'AX571_APP_NOT_LAUNCHER');
@@ -111,7 +123,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
  finally{
   let setup:null|ReturnType<typeof ax571Setup>=null;try{const b=fs.readFileSync(ready+'.setup','utf8');if(Buffer.byteLength(b,'utf8')<=2048)setup=ax571Setup(JSON.parse(b))}catch{}
   try{t.diagnostic('AX571_SETUP '+JSON.stringify({schema:1,framework,observed:setup!==null,...(setup??{})}))}catch{/* Diagnostics cannot replace primary or cleanup. */}
-  try{t.diagnostic('AX571_LIFETIME '+JSON.stringify({schema:1,framework,closed:ended,prelaunch:launcherExit===78?'ADMISSION_REFUSED':launcherExit===79?'POLICY_REFUSED':'UNPROVEN',signalObserved:launcherSignal!==null,waitStage,launchBoundary}))}catch{/* Finite observation cannot replace primary or cleanup. */}
+  try{t.diagnostic('AX571_LIFETIME '+JSON.stringify({schema:1,framework,closed:ended,prelaunch:launcherExit===78?'ADMISSION_REFUSED':launcherExit===79?'POLICY_REFUSED':'UNPROVEN',signalObserved:launcherSignal!==null,waitStage,launchBoundary,launchLifecycle}))}catch{/* Finite observation cannot replace primary or cleanup. */}
   let cleanup:unknown
   let actualAppClosed=!child
   try{if(child&&!ended)child.kill();await closed;if(child){if(ax571PrelaunchRefused(ended,launcherExit,launcherSignal,[ready,ready+'.owner-started',ready+'.owner-closed',ready+'.setup',marker,siblingMarker]))actualAppClosed=true;else{const start=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-started','utf8')),framework,false,appPID);assert.ok(start,'AX571_APP_OWNER_REQUIRED');assert.ok(start.pid!==child.pid,'AX571_APP_NOT_LAUNCHER');const receipt=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-closed','utf8')),framework,true,start.pid);assert.ok(receipt,'AX571_APP_NOT_REAPED');actualAppClosed=true}}}catch{cleanup=Error('AX571_OWNER_CLEANUP_FAILED')}

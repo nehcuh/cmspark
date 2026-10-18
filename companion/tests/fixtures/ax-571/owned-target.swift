@@ -43,6 +43,16 @@ private struct AX571OwnedPaths {
         return a[.type] as? FileAttributeType == .typeDirectory && (a[.systemNumber] as? NSNumber)?.uint64Value == device && (a[.systemFileNumber] as? NSNumber)?.uint64Value == inode && (a[.ownerAccountID] as? NSNumber)?.uint32Value == getuid()
     }
 }
+// Test-only lifecycle observations, never application ownership or cleanup authority.
+private enum AX571LaunchLifecyclePoint { case entry, refused }
+private func ax571LaunchLifecycle(_ point: AX571LaunchLifecyclePoint, _ application: NSRunningApplication) {
+    let pidAvailable = application.processIdentifier > 0
+    let terminated = application.isTerminated
+    let finishedLaunching = application.isFinishedLaunching
+    let bits = (pidAvailable ? 1 : 0) | (terminated ? 2 : 0) | (finishedLaunching ? 4 : 0)
+    let marker = point == .entry ? "AX571_LIFECYCLE_ENTRY_" : "AX571_LIFECYCLE_REFUSED_"
+    do { try FileHandle.standardError.write(contentsOf: Data((marker + String(bits) + "\n").utf8)) } catch {}
+}
 // Fixed diagnostic categories only. A failed completion still refuses with exit65.
 private enum AX571LaunchGuardFailure {
     case openError, noReturnedApp, parentChanged, returnedPIDNonpositive, returnedPIDSelf, returnedTerminated, bundleID, bundleURL, executableURL
@@ -126,11 +136,12 @@ private final class AX571OwnedLauncher {
         configuration.arguments = [paths.framework, paths.ready.path, paths.marker.path, paths.sibling.path]
         configuration.environment = ["PATH":"/usr/bin:/bin","TMPDIR":paths.directory.path]
         NSWorkspace.shared.openApplication(at:bundle,configuration:configuration) { [self] returned, error in
+            if error == nil, let observed = returned { ax571LaunchLifecycle(.entry, observed) }
             DispatchQueue.main.async { [self] in
                 guard error == nil else { ax571LaunchGuardRefused(.openError) }
                 guard let returned = returned else { ax571LaunchGuardRefused(.noReturnedApp) }
                 guard paths.current() else { ax571LaunchGuardRefused(.parentChanged) }
-                guard returned.processIdentifier > 0 else { ax571LaunchGuardRefused(.returnedPIDNonpositive) }
+                guard returned.processIdentifier > 0 else { ax571LaunchLifecycle(.refused, returned); ax571LaunchGuardRefused(.returnedPIDNonpositive) }
                 guard returned.processIdentifier != getpid() else { ax571LaunchGuardRefused(.returnedPIDSelf) }
                 guard !returned.isTerminated else { ax571LaunchGuardRefused(.returnedTerminated) }
                 guard returned.bundleIdentifier == "com.cmspark.ax571.owned-target" else { ax571LaunchGuardRefused(.bundleID) }
