@@ -42,6 +42,7 @@ npm --prefix chrome-extension test
 
 ### 代码审阅与终端回传（#464）
 
+- `chrome-extension/scripts/accept-github-comparison-hosted.mjs` 只在 GitHub 托管 Linux runner 上启动全新 owned Chromium/profile，核验真实比较网页；本机不运行该验收。原始 Chromium 显式使用 image 已安装的固定 `/opt/google/chrome/chrome-sandbox`，先拒绝非规范路径、软链接、非 root 所有或权限不符的 helper/目录；不安装、不改系统策略、不用 `--no-sandbox`。父环境中的 helper 覆盖不会继承，兼容性须由真实 hosted CI 证明。有限启动诊断与 CPU 控制均不能替代该门禁。 该步骤在 Companion 构建后、完整测试前执行，以尽早暴露浏览器初始化失败；完整前后端测试、供应链与原生 CI 门禁仍全部必需。
 - `companion/tests/code-review.test.ts`：来源范围、diff 行、持久化与容量、身份与引用、两类材料及过期/错 SHA。
 - `companion/tests/pty-terminal.test.ts`：原任务/peer 绑定、确认竞态、输入编码、输出上限、报告确认与幂等历史回传。
 - `chrome-extension/tests/terminal-relay.test.ts`、`terminal-wire.test.ts`：扩展页面/会话归属、断线和真实生产者帧格式。
