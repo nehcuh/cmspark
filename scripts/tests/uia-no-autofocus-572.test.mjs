@@ -65,7 +65,7 @@ test('SDK same scoped client must configure false and read back before resolving
  const property=b.indexOf('client->put_AutoSetFocus(FALSE)'),read=b.indexOf('client->get_AutoSetFocus(&autoFocus)'),resolve=b.indexOf('client->ElementFromHandle');
  assert.ok(property>0&&read>property&&resolve>read);
  assert.ok(b.includes('if(FAILED(client->put_AutoSetFocus(FALSE))||FAILED(client->get_AutoSetFocus(&autoFocus))||autoFocus)return CLIENT_UNAVAILABLE;'));
- assert.match(b,/client->get_ControlViewWalker/);assert.match(b,/runtimeEquals\(current.el.Get\(\),r.runtime\)\)return perform\(r,root.Get\(\),current.el.Get\(\)\)/);
+ assert.match(b,/client->get_ControlViewCondition/);assert.match(b,/client->CreateTreeWalker\(condition.Get\(\),&walker\)/);assert.doesNotMatch(b,/get_ControlViewWalker/);assert.match(b,/runtimeEquals\(current.el.Get\(\),r.runtime\)\)return perform\(r,root.Get\(\),current.el.Get\(\)\)/);
  assert.doesNotMatch(cpp,/\b(?:SetFocus|SetForegroundWindow|SwitchToThisWindow|AttachThreadInput|SendInput)\s*\(/);
 });
 test('SDK typed patterns recheck identity immediately before each action including each scroll',()=>{
@@ -241,3 +241,55 @@ for(const [name,options,result,calls] of [
  ['late identity refusal',{ready:5},5,['pattern','allocate','ready','free']],
  ['method failure',{hr:-1},6,['pattern','allocate','ready','set','free']],
 ])test(`actual BSTR branch ${name} keeps refusal and scope cleanup`,()=>assert.deepEqual(nativeValueBstr572(cpp,options),{result,calls}));
+
+// Execute only the actual SDK walker-construction boundary after finite syntax
+// projection. This does not emulate COM internals or prove AutoSetFocus propagation.
+function nativeWalkerFactory572(source, options={}) {
+ const execute=body(source,'int32_t execute(');
+ const start=execute.indexOf('  ComPtr<IUIAutomationCondition> condition;');
+ const end=execute.indexOf('  struct Frame ');
+ assert.ok(start>=0&&end>start,'same-client ControlView condition/factory boundary');
+ let snippet=execute.slice(start,end)
+  .replace('ComPtr<IUIAutomationCondition> condition;','let condition=null;')
+  .replace('ComPtr<IUIAutomationTreeWalker> walker;','let walker=null;')
+  .replaceAll('client->','client.')
+  .replace('client.get_ControlViewCondition(&condition)','client.get_ControlViewCondition(v=>{condition=v})')
+  .replace('client.CreateTreeWalker(condition.Get(),&walker)','client.CreateTreeWalker(condition,v=>{walker=v})');
+ assert.doesNotMatch(snippet,/\bComPtr\b|->|\.Get\(|&(?:condition|walker)/);
+ const calls=[],conditionToken={},walkerToken={};
+ const o={conditionHr:0,condition:true,walkerHr:0,walker:true,...options};
+ const run=new vm.Script(`(function(){${snippet}calls.push('walk');return 0;})`).runInNewContext({
+  CLIENT_UNAVAILABLE:7,FAILED:hr=>hr<0,calls,
+  client:{
+   get_ControlViewCondition:set=>{calls.push('condition');set(o.condition?conditionToken:null);return o.conditionHr;},
+   CreateTreeWalker:(condition,set)=>{assert.equal(condition,conditionToken,'factory must consume this same client condition');calls.push('factory');set(o.walker?walkerToken:null);return o.walkerHr;},
+  },
+ });
+ return {result:run(),calls};
+}
+test('actual SDK walker constructor uses the same client ControlView condition once before DFS',()=>{
+ assert.deepEqual(nativeWalkerFactory572(cpp),{result:0,calls:['condition','factory','walk']});
+});
+for(const [name,options,calls] of [
+ ['condition HRESULT failure',{conditionHr:-1},['condition']],
+ ['condition null',{condition:false},['condition']],
+ ['factory HRESULT failure',{walkerHr:-1},['condition','factory']],
+ ['factory null',{walker:false},['condition','factory']],
+])test(`actual SDK walker constructor refuses ${name} before traversal`,()=>{
+ assert.deepEqual(nativeWalkerFactory572(cpp,options),{result:7,calls});
+});
+test('walker constructor controls reject dropped refusal guards and a different condition',()=>{
+ const conditionGuard='FAILED(client->get_ControlViewCondition(&condition))||!condition';
+ const walkerGuard='FAILED(client->CreateTreeWalker(condition.Get(),&walker))||!walker';
+ assert.ok(cpp.includes(conditionGuard)&&cpp.includes(walkerGuard));
+ const noConditionNull=cpp.replace(conditionGuard,'FAILED(client->get_ControlViewCondition(&condition))');
+ assert.throws(()=>nativeWalkerFactory572(noConditionNull,{condition:false}));
+ const noWalkerNull=cpp.replace(walkerGuard,'FAILED(client->CreateTreeWalker(condition.Get(),&walker))');
+ assert.notEqual(nativeWalkerFactory572(noWalkerNull,{walker:false}).result,7);
+ const noConditionFailure=cpp.replace(conditionGuard,'(client->get_ControlViewCondition(&condition),!condition)');
+ assert.notEqual(nativeWalkerFactory572(noConditionFailure,{conditionHr:-1}).result,7);
+ const noWalkerFailure=cpp.replace(walkerGuard,'(client->CreateTreeWalker(condition.Get(),&walker),!walker)');
+ assert.notEqual(nativeWalkerFactory572(noWalkerFailure,{walkerHr:-1}).result,7);
+ const different=cpp.replace('condition.Get(),&walker','nullptr,&walker');
+ assert.throws(()=>nativeWalkerFactory572(different));
+});

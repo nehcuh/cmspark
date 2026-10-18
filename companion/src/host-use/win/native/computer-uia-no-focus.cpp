@@ -107,8 +107,10 @@ int32_t execute(Request const& r){
   int32_t status=boundary(r);if(status!=OK)return status;
   ComPtr<IUIAutomationElement> root;
   if(FAILED(client->ElementFromHandle(r.root,&root))||!root)return WINDOW_GONE;
+  ComPtr<IUIAutomationCondition> condition;
+  if(FAILED(client->get_ControlViewCondition(&condition))||!condition)return CLIENT_UNAVAILABLE;
   ComPtr<IUIAutomationTreeWalker> walker;
-  if(FAILED(client->get_ControlViewWalker(&walker))||!walker)return CLIENT_UNAVAILABLE;
+  if(FAILED(client->CreateTreeWalker(condition.Get(),&walker))||!walker)return CLIENT_UNAVAILABLE;
   struct Frame {ComPtr<IUIAutomationElement> el;int depth;};
   std::deque<Frame> stack;stack.push_back({root,0});int visited=0;
   while(!stack.empty()){

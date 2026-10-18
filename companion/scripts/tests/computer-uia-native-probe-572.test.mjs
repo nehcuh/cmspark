@@ -104,3 +104,18 @@ test('CI retains normal build refusal before the test outlet and probe survives 
   assert.match(builder,/path.join\(sourceRoot,'dist\/desktop-native\/acceptance\/uia572-probe'\)/)
   assert.doesNotMatch(builder,/\.test-dist|dist\/host-scripts-win/)
 })
+
+test('actual current factory survives diagnostic generation under LF and CRLF without changing normal calls',()=>{
+  for(const source of [original,Buffer.from(original.toString().replace(/\r?\n/g,'\r\n'))]) {
+    const generated=generateNativeProbe572(source),text=generated.toString();
+    assert.ok(stripNativeProbe572(generated).equals(source));
+    const condition=text.indexOf('client->get_ControlViewCondition(&condition)');
+    const factory=text.indexOf('client->CreateTreeWalker(condition.Get(),&walker)');
+    assert.ok(condition>0&&factory>condition);
+    assert.equal((text.match(/client->get_ControlViewCondition\(/g)||[]).length,1);
+    assert.equal((text.match(/client->CreateTreeWalker\(/g)||[]).length,1);
+    assert.doesNotMatch(text,/client->get_ControlViewWalker/);
+    assert.equal((text.match(/probeStage572\(4\);/g)||[]).length,5);
+    assert.equal((text.match(/probeStage572\(5\);/g)||[]).length,5);
+  }
+});
