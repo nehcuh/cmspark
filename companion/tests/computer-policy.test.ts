@@ -4,6 +4,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
+import os from "node:os"
 
 import {
   assertCoordinateAllowed,
@@ -151,7 +152,8 @@ test("policy: chrome one-shot L2 path does not persist the bit and skips STRUCTU
   assert.equal(got.coordinateAllowed, false)
 })
 
-test("policy: mac Chrome bundle one-shot L2 path", () => {
+test("policy: mac Chrome bundle one-shot L2 path", t => {
+  t.mock.method(os, "platform", () => "darwin")
   const chrome = makeEntry({
     bundleId: "com.google.Chrome",
     coordinateAllowed: false,
@@ -223,7 +225,8 @@ test("policy: 1Password cannot use vault-browser one-shot", () => {
   )
 })
 
-test("policy: Chrome Canary bundle is vault-browser one-shot (not persistable)", () => {
+test("policy: Chrome Canary bundle is vault-browser one-shot (not persistable)", t => {
+  t.mock.method(os, "platform", () => "darwin")
   const canary = makeEntry({
     bundleId: "com.google.Chrome.canary",
     coordinateAllowed: false,
@@ -365,7 +368,8 @@ test("policy: hwnd with no exePath -> HWND_NOT_OWNED", () => {
 
 // --- normalizeAppEntry: A10.3 force-clear --------------------------------------
 
-test("policy: normalizeAppEntry force-clears coordinateAllowed on mac Chrome bundleId (no exe path)", () => {
+test("policy: normalizeAppEntry force-clears coordinateAllowed on mac Chrome bundleId (no exe path)", t => {
+  t.mock.method(os, "platform", () => "darwin")
   const tampered = makeEntry({
     bundleId: "com.google.Chrome",
     exe: undefined,

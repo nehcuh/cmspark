@@ -1,3 +1,4 @@
+import { withSurface650, parseSurfaceBorrow650, type SurfaceBorrow650 } from "../native-surface-650"
 /* Owned #480 acceptance coordinator. Imported by tests only, never product runtime. */
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -17,11 +18,13 @@ import { DESKTOP_NATIVE_ORIGIN } from "../../../src/desktop/capabilities"
 
 const fixed = new Set(["AUTH_1", "AUTH_2", "CONSUMED_HANDLES_DENIED", "PARENT_LOCK_ARMED", "DEVTOOLS_DENIED", "FRAME_DENIED", "REMOTE_DENIED", "NEW_WINDOW_DENIED", "DOWNLOAD_DENIED", "DOCUMENT_FRESH", "STALE_DENIED"])
 const failures = new Set(["FAIL_NO_DOCUMENT", "FAIL_SCRIPT", "FAIL_ENGINE_API", "FAIL_WINDOW", "FAIL_DEVTOOLS", "FAIL_FRAME_FORWARDED", "FAIL_STALE_FORWARDED", "FAIL_REMOTE", "FAIL_DOWNLOAD", "FAIL_GENERATION", "FAIL_HOSTILE_FORWARDED", "FAIL_FRAME_NOT_OBSERVED", "FAIL_DESCENDANT_NOT_OBSERVED", "FAIL_PARENT_LOCK"])
-export type AcceptanceReceipt = { kind: "inheritance"; checks: string; stage: number; control: number; descendant: number } | { kind: "fixed"; name: string } | { kind: "window"; view: "compact" | "workspace"; width: number; height: number; expectedWidth: number; expectedHeight: number; bits: string }
+export type AcceptanceReceipt = { kind: "identity"; control: number; descendant: number } | { kind: "inheritance"; checks: string; stage: number; control: number; descendant: number } | { kind: "fixed"; name: string } | { kind: "window"; view: "compact" | "workspace"; width: number; height: number; expectedWidth: number; expectedHeight: number; bits: string }
 export function acceptanceReceipt(value: unknown): AcceptanceReceipt | null {
   if (typeof value !== "string" || value.length > 200 || !value.startsWith("D480A_")) return null
   const name = value.slice(6)
   if (fixed.has(name) || failures.has(name)) return { kind: "fixed", name }
+  const identity = /^IDENTITY_(0|[1-7]|256|257)_(0|[1-7]|256|257)$/.exec(name)
+  if (identity && identity[0] === name) return { kind: "identity", control: Number(identity[1]), descendant: Number(identity[2]) }
   const inheritance = /^INHERITANCE_([01]{4})_([0-7])_(0|[1-9]\d{0,2})_(0|[1-9]\d{0,2})$/.exec(name)
   const checkerCode = (value: number) => value <= 7 || (value >= 240 && value <= 257)
   if (inheritance && inheritance[0] === name && checkerCode(Number(inheritance[3])) && checkerCode(Number(inheritance[4]))) return { kind: "inheritance", checks: inheritance[1], stage: Number(inheritance[2]), control: Number(inheritance[3]), descendant: Number(inheritance[4]) }
@@ -31,6 +34,16 @@ export function acceptanceReceipt(value: unknown): AcceptanceReceipt | null {
   if (!values.every(Number.isSafeInteger)) return null
   return { kind: "window", view: m[1] === "C" ? "compact" : "workspace", width: values[0], height: values[1], expectedWidth: values[2], expectedHeight: values[3], bits: m[6] }
 }
+export function requireInheritanceIdentity(observations: AcceptanceReceipt[]): void {
+  const identity = observations.filter((r): r is Extract<AcceptanceReceipt, { kind: "identity" }> => r.kind === "identity")
+  const raw = observations.filter((r): r is Extract<AcceptanceReceipt, { kind: "inheritance" }> => r.kind === "inheritance")
+  assert.equal(identity.length, 1, "One exact object-identity receipt required")
+  assert.equal(raw.length, 1, "One original raw checker receipt required")
+  assert.deepEqual(identity[0], { kind: "identity", control: 4, descendant: 4 })
+  assert.equal(raw[0].checks, "1111"); assert.equal(raw[0].stage, 7); assert.equal(raw[0].control, 4)
+  assert.ok(Number.isSafeInteger(raw[0].descendant) && raw[0].descendant >= 0 && raw[0].descendant <= 7, "Real checker must complete its sidecar/mask path")
+}
+
 export function requireWindow(r: AcceptanceReceipt | undefined, view: "compact" | "workspace"): void {
   assert.ok(r && r.kind === "window", "Actual owned window observation required")
   assert.equal(r.view, view); assert.equal(r.width, r.expectedWidth); assert.equal(r.height, r.expectedHeight)
@@ -93,6 +106,7 @@ export function acceptanceDiagnostic(reason: string, phase: string, mode: string
     lastExitCode: Number.isSafeInteger(counts.lastExitCode) && counts.lastExitCode! >= -0x80000000 && counts.lastExitCode! <= 0xffffffff ? counts.lastExitCode : null,
     fixed: [...new Set(observations.filter(r => r.kind === "fixed" && (fixed.has(r.name) || failures.has(r.name))).map(r => (r as { name: string }).name))].sort(),
     inheritance: observations.filter(r => r.kind === "inheritance").slice(0, 1),
+    identity: observations.filter(r => r.kind === "identity").slice(0, 1),
     windows: finiteCount(observations.filter(r => r.kind === "window").length),
   }
 }
@@ -119,7 +133,9 @@ function ownDataRoot(): string {
   assert.ok(relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
   return d
 }
-export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile" | "reconnect" | "relaunch" | "inheritance" | "parent", parentCase?: string): Promise<void> {
+export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile" | "reconnect" | "relaunch" | "inheritance" | "parent", parentCase?: string, borrowed?: SurfaceBorrow650): Promise<void> {
+ if ((mode === "parent") !== !!borrowed) throw Error("OWNED_PARENT_SURFACE_BORROW_INVALID")
+ return withSurface650(t, async (t, surfaceLease) => {
   const data = ownDataRoot(), native = path.resolve("dist/desktop-native"), variant = mode === "hostile" ? "hostile" : mode === "inheritance" ? "inheritance" : mode === "parent" ? "parent" : "visual"
   let artifactRoot = path.join(native, "acceptance", variant), ownedClone: string | undefined, cloneIdentity: ReturnType<typeof ownedDirectoryIdentity> | undefined
   if (mode === "inheritance") {
@@ -155,7 +171,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   let observedFailure: Error | undefined
   observer = observeAcceptanceResponses(channel.wss, () => ({ host: ownedHost, capabilityId }), registry, receipt => {
     if (receipt.kind === "fixed" && observations.some(r => r.kind === "fixed" && r.name === receipt.name)) observedFailure = Error("OWNED_NATIVE_DUPLICATE_PHASE")
-    if (receipt.kind === "inheritance" && observations.some(r => r.kind === "inheritance")) observedFailure = Error("OWNED_NATIVE_DUPLICATE_PHASE")
+    if ((receipt.kind === "inheritance" || receipt.kind === "identity") && observations.some(r => r.kind === receipt.kind)) observedFailure = Error("OWNED_NATIVE_DUPLICATE_PHASE")
     observations.push(receipt)
     if (receipt.kind === "fixed" && receipt.name.startsWith("FAIL_")) observedFailure = Error(receipt.name)
     for (const wake of waiters) wake()
@@ -180,7 +196,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     server.listen(0, "127.0.0.1"); await once(server, "listening", { signal: t.signal })
     const endpoint = `ws://127.0.0.1:${(server.address() as any).port}/desktop`
     launcher = new DesktopHostLauncher(registry, endpoint, (host, view) => channel.window(host, view), () => ({ binary, binding: {
-      launch: (file, cap, key, url, onExit) => { const child = addon.launch(file, cap, key, url, code => { lastExitCode = code; exits++; onExit(code); for (const wake of waiters) wake() }); launches++; return child },
+      launch: (file, cap, key, url, onExit) => { surfaceLease.checkpoint(); const child = addon.launch(file, cap, key, url, code => { lastExitCode = code; exits++; onExit(code); for (const wake of waiters) wake() }); launches++; return child },
     } }))
     const a = launcher.open("compact"), b = launcher.open("compact")
     await bounded(Promise.all([a, b]).then(results => { for (const result of results) assert.equal(result.ok, true) }), t.signal)
@@ -205,7 +221,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
       await until(() => has("PARENT_LOCK_ARMED")); process.stdout.write("D480_PARENT_ISSUER_READY\n")
       await bounded(new Promise<void>(() => {}), t.signal)
     } else if (mode === "inheritance") {
-      await until(() => has("CONSUMED_HANDLES_DENIED")); assert.equal(issues, 1); assert.equal(launches, 1)
+      await until(() => has("CONSUMED_HANDLES_DENIED")); requireInheritanceIdentity(observations); assert.equal(issues, 1); assert.equal(launches, 1)
     } else if (mode === "reconnect") {
       diagnosticPhase = "waiting-reconnect-auth"
       const old = observer.currentSocket(); assert.ok(old, "Owned authenticated current socket required"); old.terminate()
@@ -232,6 +248,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     assert.equal(secret.length, 64)
     console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
   } finally {
+    surfaceLease.retain()
     diagnostic("cleanup")
     t.signal.removeEventListener("abort", deadlineDiagnostic)
     launcher?.close(); registry.revokeAll()
@@ -246,7 +263,10 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     assert.equal(server.listening, false); assert.equal(channel.wss.clients.size, 0); assert.equal(legacy.clients.size, 0)
     assert.equal(exits, launches, "Every actually launched owned native process must settle")
     if (ownedClone && cloneIdentity) { requireOwnedDirectory(ownedClone, cloneIdentity); fs.rmSync(ownedClone, { recursive: true, force: true }) }
+    surfaceLease.settled()
   }
+
+ }, borrowed)
 }
 
 export function fixedLine(child: ChildProcess, name: string, signal: AbortSignal): Promise<void> {
@@ -258,6 +278,7 @@ export function fixedLine(child: ChildProcess, name: string, signal: AbortSignal
   })
 }
 export async function nativeParentDeath(t: TestContext): Promise<void> {
+ return withSurface650(t, async (t, surfaceLease) => {
   const data=ownDataRoot(),directory=fs.mkdtempSync(path.join(data,"native-parent-")),identity=ownedDirectoryIdentity(directory)
   const file=path.join(directory,"parent-exit.receipt"),fd=fs.openSync(file,"wx+",0o600),before=fs.fstatSync(fd)
   assert.equal(before.isFile(),true);assert.equal(before.nlink,1);assert.equal(before.size,0)
@@ -268,7 +289,7 @@ export async function nativeParentDeath(t: TestContext): Promise<void> {
     const source=path.resolve("dist/desktop-native/acceptance/parent"),binary=process.platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop",checker=process.platform==="win32"?"desktop-parent-probe.exe":"desktop-parent-probe"
     for(const name of [binary,checker]){const input=path.join(source,name),stat=fs.lstatSync(input);assert.ok(stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1);fs.copyFileSync(input,path.join(directory,name),fs.constants.COPYFILE_EXCL)}
     fs.mkdirSync(path.join(directory,"assets"));for(const name of ["index.html","app.css","app.js"])fs.copyFileSync(path.join(source,"assets",name),path.join(directory,"assets",name),fs.constants.COPYFILE_EXCL)
-    const env:NodeJS.ProcessEnv={CMSPARK_TEST_RUN_DIR:process.env.CMSPARK_TEST_RUN_DIR}
+    const env:NodeJS.ProcessEnv={CMSPARK_TEST_RUN_DIR:process.env.CMSPARK_TEST_RUN_DIR,CMSPARK_NATIVE_SURFACE_650_BORROW:JSON.stringify(surfaceLease.borrow())}
     for(const key of ["SystemRoot","SYSTEMROOT","TEMP","TMP","TMPDIR","PATH"])if(process.env[key])env[key]=process.env[key]
     // This is the actual owned issuer, not a secret-forwarding intermediary. Registry/native/bootstrap remain inside it.
     issuer=spawn(process.execPath,["--require",path.resolve("scripts/test-data-dir.cjs"),__filename,"--owned-parent",directory],{stdio:["ignore","pipe","pipe"],env});issuer.stderr?.resume()
@@ -290,16 +311,20 @@ export async function nativeParentDeath(t: TestContext): Promise<void> {
     const byte=Buffer.alloc(1);assert.equal(fs.readSync(fd,byte,0,1,0),1);assert.equal(byte[0],49)
     console.log("DESKTOP_480_PARENT_EXIT "+JSON.stringify({actualIssuerKilled:true,nativeHeldLockBeforeKill:true,actualNativeTeardownObserved:true,freshSameFileOneBit:true}))
   }finally{
+    surfaceLease.retain()
     for(const child of [issuer,probe])if(child&&child.exitCode===null&&child.signalCode===null)child.kill("SIGKILL")
     await Promise.all([issuer,probe].filter((c):c is ChildProcess=>!!c).map(exited));fs.closeSync(fd);requireOwnedDirectory(directory,identity)
     // A failed/aborted case cannot prove whether the detached native host has exited.
     // Its fixed20s test-only watchdog is only a safety guard, never a positive receipt.
     if(nativeTeardownObserved)fs.rmSync(directory,{recursive:true,force:true})
     else console.log("DESKTOP_480_PARENT_CLEANUP "+JSON.stringify({ownedIssuerAndProbeClosed:true,nativeTeardownObserved:false,ownedCaseRetained:true}))
+    if(nativeTeardownObserved || !issuer)surfaceLease.settled()
   }
+
+ })
 }
 // Only this unshipped owned fixture CLI. No capability/secret travels in argv/env/stdout.
 if(require.main===module){
   if(process.argv.length!==4||process.argv[2]!=="--owned-parent")throw Error("OWNED_PARENT_ARGUMENTS_INVALID")
-  nativeAcceptance({signal:AbortSignal.timeout(20000)} as TestContext,"parent",process.argv[3]).catch(()=>{process.stderr.write("OWNED_PARENT_FIXTURE_FAILED\n");process.exitCode=1})
+  nativeAcceptance({signal:AbortSignal.timeout(20000)} as TestContext,"parent",process.argv[3],parseSurfaceBorrow650(process.env.CMSPARK_NATIVE_SURFACE_650_BORROW)).catch(()=>{process.stderr.write("OWNED_PARENT_FIXTURE_FAILED\n");process.exitCode=1})
 }

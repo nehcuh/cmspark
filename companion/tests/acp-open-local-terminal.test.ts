@@ -38,6 +38,62 @@ import {
 import { windowsCmdExePath, windowsPowerShellExePath, writeExclusiveUtf8 } from "../src/acp/win-spawn"
 import { getConfig } from "../src/config"
 
+// This fixed receipt is emitted only after the actual Desktop PS 5.1 Parser
+// returns. Diagnostic prose, spawn failures and timeouts cannot satisfy it.
+const desktopParserGuard = "$ErrorActionPreference='Stop'; $v=$PSVersionTable.PSVersion; if ($v.Major -ne 5 -or $v.Minor -ne 1 -or $PSVersionTable.PSEdition -ne 'Desktop') { throw 'EXPECTED_DESKTOP_POWERSHELL_5_1' }; "
+const desktopParserExpectedLiteralBase64 = "IOS7u+WKoTog5L+u5LiA5LiL6K6k6K+B"
+const desktopParserReceipt = `$count=0; if ($null -ne $e) { $count=@($e).Count }; if ($null -eq $ast) { throw 'EXPECTED_PARSER_AST' }; $expected=[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${desktopParserExpectedLiteralBase64}')); $literalMatches=@($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $node.Value -ceq $expected }, $true)).Count -gt 0; $literalJson='false'; if ($literalMatches) { $literalJson='true' }; [Console]::Out.WriteLine([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, '{{"edition":"Desktop","major":5,"minor":1,"parseReturned":true,"errorCount":{0},"literalMatches":{1}}}', [object[]]@($count, $literalJson)))`
+function assertDesktopParserReceipt(output: string, expectLiteral: boolean): void {
+  const receipt: unknown = JSON.parse(output.trim())
+  assert.ok(receipt && typeof receipt === "object" && !Array.isArray(receipt))
+  const value = receipt as Record<string, unknown>
+  assert.deepEqual(Object.keys(value).sort(), ["edition", "major", "minor", "parseReturned", "errorCount", "literalMatches"].sort())
+  assert.equal(value.edition, "Desktop")
+  assert.equal(value.major, 5)
+  assert.equal(value.minor, 1)
+  assert.equal(value.parseReturned, true)
+  assert.ok(Number.isSafeInteger(value.errorCount) && (value.errorCount as number) >= 0)
+  assert.equal(typeof value.literalMatches, "boolean")
+  assert.equal(value.literalMatches, expectLiteral)
+  if (expectLiteral) assert.equal(value.errorCount, 0, "positive must parse without errors")
+}
+
+describe("Desktop PS 5.1 parser receipt oracle", () => {
+  const receipt = { edition: "Desktop", major: 5, minor: 1, parseReturned: true, errorCount: 0, literalMatches: true }
+  it("emits fixed semantic JSON with an ASCII expected literal after the actual Parser call", () => {
+    // Model only String.Format's fixed brace/placeholders, not PowerShell execution.
+    assert.equal(Buffer.from(desktopParserExpectedLiteralBase64, "base64").toString("utf8"), " 任务: 修一下认证")
+    assert.match(desktopParserExpectedLiteralBase64, /^[A-Za-z0-9+/]+={0,2}$/)
+    assert.ok([...desktopParserReceipt].every((char) => char.codePointAt(0)! < 128))
+    assert.match(desktopParserReceipt, /StringConstantExpressionAst/)
+    assert.match(desktopParserReceipt, /\$node\.Value -ceq \$expected/)
+    const format = desktopParserReceipt.match(/, '([^']+)', \[object\[\]\]@\(\$count, \$literalJson\)\)\)$/)?.[1]
+    assert.ok(format)
+    for (const literalMatches of [true, false]) {
+      const output = format.replace("{0}", "0").replace("{1}", String(literalMatches)).replaceAll("{{", "{").replaceAll("}}", "}")
+      assertDesktopParserReceipt(output, literalMatches)
+    }
+  })
+  it("accepts the semantic negative with zero syntax errors and requires clean literal positives", () => {
+    assert.doesNotThrow(() => assertDesktopParserReceipt(JSON.stringify(receipt), true))
+    assert.doesNotThrow(() => assertDesktopParserReceipt(JSON.stringify({ ...receipt, literalMatches: false }), false))
+    assert.doesNotThrow(() => assertDesktopParserReceipt(JSON.stringify({ ...receipt, literalMatches: false, errorCount: 1 }), false))
+    assert.throws(() => assertDesktopParserReceipt(JSON.stringify(receipt), false))
+    assert.throws(() => assertDesktopParserReceipt(JSON.stringify({ ...receipt, literalMatches: false }), true))
+    assert.throws(() => assertDesktopParserReceipt(JSON.stringify({ ...receipt, errorCount: 1 }), true))
+  })
+  it("rejects empty, diagnostic, wrong-runtime, unreturned and malformed receipts", () => {
+    const { literalMatches: _missing, ...missingLiteral } = receipt
+    for (const output of ["", "PARSE_OK", "transport failed: claude.exe' $task", "{}", "null", "[]",
+      ...[{ ...receipt, edition: "Core" }, { ...receipt, major: 7 }, { ...receipt, minor: 0 },
+        { ...receipt, parseReturned: false }, { ...receipt, errorCount: -1 }, { ...receipt, errorCount: 0.5 },
+        { ...receipt, errorCount: "0" }, { ...receipt, extra: true }, missingLiteral,
+        { ...receipt, literalMatches: "true" }, { ...receipt, literalMatches: 1 }].map((value) => JSON.stringify(value))]) {
+      assert.throws(() => assertDesktopParserReceipt(output, true), output)
+    }
+  })
+})
+
 describe("shellSingleQuote", () => {
   it("wraps plain strings in single quotes", () => {
     assert.equal(shellSingleQuote("/tmp/ws"), "'/tmp/ws'")
@@ -215,20 +271,43 @@ describe("quotePowerShellLiteral / buildWindowsModeCScript", () => {
     const ps = windowsPowerShellExePath()
     const parse = (file: string) => {
       const lit = file.replace(/'/g, "''")
-      const cmd = `$e=$null; $t=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${lit}', [ref]$t, [ref]$e); if ($e -and $e.Count) { $e[0].ToString(); exit 1 }; 'PARSE_OK'`
-      try {
-        return execFileSync(ps, ["-NoProfile", "-Command", cmd], {
-          encoding: "utf8",
-          timeout: 15000,
-          windowsHide: true,
-        }).trim()
-      } catch (e: any) {
-        return String(e.stdout || e.stderr || e.message)
-      }
+      const cmd = desktopParserGuard + `$e=$null; $t=$null; $ast=[System.Management.Automation.Language.Parser]::ParseFile('${lit}', [ref]$t, [ref]$e); ` + desktopParserReceipt
+      return execFileSync(ps, ["-NoProfile", "-Command", cmd], {
+        encoding: "utf8",
+        timeout: 15000,
+        windowsHide: true,
+      })
+    }
+    const parseDecoded = (file: string, encoding: "ansi1252" | "utf8") => {
+      const lit = file.replace(/'/g, "''")
+      const decoder = encoding === "ansi1252"
+        ? "[System.Text.Encoding]::GetEncoding(1252)"
+        : "[System.Text.UTF8Encoding]::new($false, $true)"
+      const cmd = desktopParserGuard + `$bytes=[System.IO.File]::ReadAllBytes('${lit}'); $source=(${decoder}).GetString($bytes); $e=$null; $t=$null; $ast=[System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$t, [ref]$e); ` + desktopParserReceipt
+      return execFileSync(ps, ["-NoProfile", "-Command", cmd], {
+        encoding: "utf8",
+        timeout: 15000,
+        windowsHide: true,
+      })
     }
     try {
-      assert.match(parse(nobom), /claude\.exe' \$task/)
-      assert.equal(parse(bom), "PARSE_OK")
+      const plainBytes = fs.readFileSync(nobom)
+      const bomBytes = fs.readFileSync(bom)
+      const prefix = Buffer.from([0xef, 0xbb, 0xbf])
+      assert.notDeepEqual(plainBytes.subarray(0, 3), prefix)
+      assert.deepEqual(bomBytes.subarray(0, 3), prefix)
+      assert.deepEqual(bomBytes.subarray(3), Buffer.from(body, "utf8"))
+      const runtime = execFileSync(ps, ["-NoProfile", "-Command", "$v=$PSVersionTable.PSVersion; if ($v.Major -ne 5 -or $v.Minor -ne 1 -or $PSVersionTable.PSEdition -ne 'Desktop') { throw 'EXPECTED_DESKTOP_POWERSHELL_5_1' }; 'DESKTOP_5_1'"], {
+        encoding: "utf8",
+        timeout: 15000,
+        windowsHide: true,
+      }).trim()
+      assert.equal(runtime, "DESKTOP_5_1")
+      // ANSI1252 can be syntactically valid while corrupting the Chinese banner.
+      // Compare actual Parser AST literal semantics rather than diagnostic prose.
+      assertDesktopParserReceipt(parseDecoded(nobom, "ansi1252"), false)
+      assertDesktopParserReceipt(parseDecoded(nobom, "utf8"), true)
+      assertDesktopParserReceipt(parse(bom), true)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

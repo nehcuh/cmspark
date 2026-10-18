@@ -6,6 +6,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import * as os from "node:os"
 import {
   isSummonerLoopbackUrl,
   overlayWindowPosition,
@@ -158,10 +159,12 @@ test("planSummonerShellOpen falls back to system browser without chrome", () => 
 })
 
 test("resolveSummonerBrowserPath picks first existing candidate", () => {
-  const exists = (p: string) => p === "/usr/bin/google-chrome"
+  const binDir = path.resolve(os.tmpdir(), "cmspark-summoner-bin-vector")
+  const browser = path.join(binDir, "google-chrome")
+  const exists = (p: string) => p === browser
   assert.equal(
-    resolveSummonerBrowserPath("linux", exists, "/usr/bin"),
-    "/usr/bin/google-chrome",
+    resolveSummonerBrowserPath("linux", exists, binDir),
+    browser,
   )
   assert.equal(resolveSummonerBrowserPath("linux", () => false, ""), null)
 })

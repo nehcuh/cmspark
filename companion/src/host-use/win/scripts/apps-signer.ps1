@@ -18,17 +18,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 try {
-  if (-not (Test-Path -LiteralPath $TargetPath)) {
+  if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $TargetPath)) {
     [Console]::Error.WriteLine("apps-signer: target not found: $TargetPath")
     exit 2
   }
-  $sig = Get-AuthenticodeSignature -LiteralPath $TargetPath
+  $sig = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $TargetPath
   $status = [string]$sig.Status
   $signer = ""
   if ($status -eq "Valid" -and $null -ne $sig.SignerCertificate) {
     $signer = [string]$sig.SignerCertificate.Subject
   }
-  Write-Output (ConvertTo-Json -Compress -InputObject @{ signer = $signer; status = $status })
+  Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject @{ signer = $signer; status = $status })
   exit 0
 } catch {
   [Console]::Error.WriteLine("apps-signer: $($_.Exception.Message)")

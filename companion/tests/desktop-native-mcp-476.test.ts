@@ -1,3 +1,4 @@
+import { withSurface650 } from "./fixtures/native-surface-650"
 /** Actual hosted macOS/Windows UI and original manager/config vertical.
  * Native NSButton/BM_CLICK activation is synthetic, not human approval evidence. */
 import test from "node:test"
@@ -14,6 +15,7 @@ import { SecurityConfirmationManager } from "../src/security-confirmation"
 import type { DesktopNativeBinding, DesktopNativeChild } from "../src/desktop/host-launcher"
 const native=path.resolve(__dirname,"../../dist/desktop-native")
 test("#476 actual native MCP form + OS-only confirmation approves update/add and denies update",{skip:!["darwin","win32"].includes(process.platform),timeout:20000},async t=>{
+ return withSurface650(t, async (t, surfaceLease) => {
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"cmspark-native-save-476-")),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
  const config=await import("../src/config");config.replaceMcpServers({owned_native_476:{transport:"stdio",command:"owned_original",args:[],enabled:false,trust_level:"manual",env:{OWNED_INERT:"OWNED_PRIVATE_476"}}})
  const manager=new SecurityConfirmationManager(),registry=new DesktopIdentityRegistry(),boot=registry.issue("owned-native-mcp-476"),receipts=new Set<string>()
@@ -25,6 +27,7 @@ test("#476 actual native MCP form + OS-only confirmation approves update/add and
  try{
   const binding=require(path.join(native,"desktop-launcher.node")) as DesktopNativeBinding,binary=path.join(native,"acceptance/mcp",process.platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop")
   assert.equal(fs.existsSync(binary),true,"Actual native test host must be built")
+  surfaceLease.checkpoint();
   child=binding.launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address() as any).port}/desktop`,n=>{settled=true;exited(n)})
   await Promise.race([done,exit.then(n=>{throw Error(`OWNED_NATIVE_MCP_EXIT_${n}`)}),new Promise<never>((_,reject)=>t.signal.addEventListener("abort",()=>reject(Error("OWNED_NATIVE_MCP_DEADLINE")),{once:true}))])
   assert.equal(failed,undefined);assert.equal(auth,true);assert.equal(windowRequested,true);for(const id of ["D476_NATIVE_WINDOW_1","D476_NATIVE_WINDOW_2","D476_NATIVE_WINDOW_3","D476_SAVE_APPROVED","D476_SAVE_DENIED","D476_NATIVE_DONE"])assert.equal(receipts.has(id),true,id)
@@ -33,7 +36,10 @@ test("#476 actual native MCP form + OS-only confirmation approves update/add and
   for(const ws of channel.wss.clients)ws.send(JSON.stringify({type:"desktop.close"}));assert.equal(await exit,0)
   process.stdout.write("DESKTOP_476_NATIVE "+JSON.stringify({native:true,syntheticNativeButtonActivation:true,humanApprovalClaimed:false,windows:3,approved:2,denied:1,persisted:true,rendererPrivatePayload:false})+"\n")
  }finally{
+  surfaceLease.retain()
   try{process.stdout.write("DESKTOP_476_PROGRESS "+JSON.stringify({authenticated:auth,windowRequested,exited:settled,windows:[1,2,3].filter(n=>receipts.has("D476_NATIVE_WINDOW_"+n)).length,approved:receipts.has("D476_SAVE_APPROVED"),denied:receipts.has("D476_SAVE_DENIED"),done:receipts.has("D476_NATIVE_DONE")})+"\n")}catch{/* Passive diagnostics must not skip cleanup or replace the primary test failure. */}
   manager.rejectAll("disconnect");child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true})
- }
+ ;surfaceLease.settled()}
+
+ })
 })

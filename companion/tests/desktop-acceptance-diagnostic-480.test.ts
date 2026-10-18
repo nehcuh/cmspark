@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { acceptanceReceipt, acceptanceDiagnostic } from "./fixtures/desktop-480/native-acceptance-controller"
+import { acceptanceReceipt, acceptanceDiagnostic, requireInheritanceIdentity } from "./fixtures/desktop-480/native-acceptance-controller"
 
 test("inheritance diagnostics retain the four independent checks and finite checker results", () => {
   for (const bits of Array.from({ length: 16 }, (_, i) => i.toString(2).padStart(4, "0"))) {
@@ -23,4 +23,19 @@ test("inheritance diagnostic parser rejects arbitrary data and diagnostics never
   assert.deepEqual(out.fixed, ["FAIL_DESCENDANT_NOT_OBSERVED"])
   assert.equal(out.fixed.includes("CONSUMED_HANDLES_DENIED"), false)
   assert.equal(out.inheritance.length, 1)
+})
+
+
+test("object identity masks remain distinct from raw numeric masks and accept only the exact protected-object absence", () => {
+  const raw = acceptanceReceipt("D480A_INHERITANCE_1111_7_4_5")!
+  const identity = acceptanceReceipt("D480A_IDENTITY_4_4")!
+  assert.deepEqual(identity, { kind: "identity", control: 4, descendant: 4 })
+  requireInheritanceIdentity([raw, identity])
+  assert.deepEqual(acceptanceDiagnostic("cleanup", "complete", "inheritance", { auths: 1, issues: 1, launches: 1, exits: 0, listReads: 1 }, [raw, identity]).identity, [identity])
+  for (const mask of [0, 1, 2, 3, 5, 6, 7, 256, 257]) {
+    assert.throws(() => requireInheritanceIdentity([raw, acceptanceReceipt(`D480A_IDENTITY_4_${mask}`)!]))
+  }
+  for (const value of ["D480A_IDENTITY_8_4", "D480A_IDENTITY_4_255", "D480A_IDENTITY_04_4", "D480A_IDENTITY_4_4\n", "D480A_IDENTITY_private_4"]) assert.equal(acceptanceReceipt(value), null)
+  for (const rawValue of ["D480A_INHERITANCE_1110_7_4_5", "D480A_INHERITANCE_1111_6_4_5", "D480A_INHERITANCE_1111_7_0_5", "D480A_INHERITANCE_1111_7_4_240"]) assert.throws(() => requireInheritanceIdentity([acceptanceReceipt(rawValue)!, identity]))
+  for (const receipts of [[raw], [identity], [raw, identity, identity], [raw, raw, identity]]) assert.throws(() => requireInheritanceIdentity(receipts))
 })

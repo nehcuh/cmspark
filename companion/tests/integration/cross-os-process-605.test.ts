@@ -1,5 +1,6 @@
 import "./_security-gates-setup"
-import test from "node:test"
+import test, { type TestContext } from "node:test"
+import { EventEmitter, errorMonitor } from "node:events"
 import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
@@ -13,6 +14,7 @@ import { getLockPath } from "../../src/platform"
 import { spawnAcpChild } from "../../src/acp/win-spawn"
 import { OwnedStdioTransport } from "../../src/mcp/stdio-transport"
 import { prepareWindowsJob, quoteWindowsJobArg, spawnWindowsJob } from "../../src/process/windows-job"
+import { windowsTargetEnvironment } from "../../src/process/windows-env"
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const alive = (pid?: number) => { if (!pid) return false; try { process.kill(pid, 0); return true } catch { return false } }
@@ -20,6 +22,62 @@ async function until(check: () => boolean, budget = 8000, details?: () => string
   const end = Date.now() + budget
   while (!check()) { assert.ok(Date.now() < end, `owned process condition timed out${details ? ": " + details() : ""}`); await pause(20) }
 }
+// Test-only finite observations. Never emit the launcher command, error message,
+// output bytes, paths or environment; never consume the child's error event.
+function observeHostileJobStartup() {
+  const stderrWords = ["ncrypto::CSPRNG", "uv_thread_create", "node::InitializeOncePerProcessInternal"] as const
+  const stderrFixed = new Set<string>()
+  const stderrTailBound = Math.max(...stderrWords.map(word => word.length)) - 1
+  let stderrTail = ""
+  const observeStderr = (chunk: unknown) => safe(() => {
+    // ASCII literals only. Keep at most the longest literal-minus-one for
+    // split chunks; never emit stderr, paths, environment or an exception.
+    const text = stderrTail + (Buffer.isBuffer(chunk) ? chunk.toString("latin1") : typeof chunk === "string" ? chunk : "")
+    for (const word of stderrWords) if (text.includes(word)) stderrFixed.add(word)
+    stderrTail = text.slice(-stderrTailBound)
+  })
+  const facts = {
+    spawn_observed: false, error_observed: false, exit_observed: false, close_observed: false,
+    error_code: null as string | null,
+    exit_code: null as number | null, exit_signal: null as string | null,
+    close_code: null as number | null, close_signal: null as string | null,
+    stdout_bytes: 0 as number | null, stderr_bytes: 0 as number | null,
+  }
+  const safe = (action: () => void) => { try { action() } catch { /* Observation only. */ } }
+  const status = (value: unknown) => typeof value === "number" && Number.isInteger(value)
+    && value >= -2147483648 && value <= 4294967295 ? value : null
+  const signal = (value: unknown) => value === null ? null
+    : ["SIGTERM", "SIGKILL", "SIGINT", "SIGABRT", "SIGSEGV", "SIGPIPE"].includes(value as string) ? value as string : "OTHER"
+  const count = (role: "stdout_bytes" | "stderr_bytes", chunk: unknown) => safe(() => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk.length : typeof chunk === "string" ? Buffer.byteLength(chunk) : 0
+    if (facts[role] === null) return
+    const sum = facts[role] + bytes
+    facts[role] = Number.isSafeInteger(sum) && sum >= 0 ? sum : null
+  })
+  return {
+    attach(child: ChildProcess) {
+      safe(() => child.once("spawn", () => safe(() => { facts.spawn_observed = true })))
+      safe(() => (child as EventEmitter).once(errorMonitor, (error: unknown) => safe(() => {
+        facts.error_observed = true
+        const code = (error as { code?: unknown } | null)?.code
+        facts.error_code = ["ABORT_ERR", "ENOENT", "EACCES", "EPERM", "ETIMEDOUT", "EINVAL", "ENOMEM", "EIO", "EPIPE"].includes(code as string) ? code as string : "OTHER"
+      })))
+      safe(() => child.once("exit", (code, endedSignal) => safe(() => {
+        facts.exit_observed = true; facts.exit_code = status(code); facts.exit_signal = signal(endedSignal)
+      })))
+      safe(() => child.once("close", (code, endedSignal) => safe(() => {
+        facts.close_observed = true; facts.close_code = status(code); facts.close_signal = signal(endedSignal)
+      })))
+      safe(() => child.stdout?.on("data", (chunk: unknown) => count("stdout_bytes", chunk)))
+      safe(() => child.stderr?.on("data", (chunk: unknown) => { count("stderr_bytes", chunk); observeStderr(chunk) }))
+    },
+    snapshot() { return { ...facts, stderr_fixed_words: [...stderrFixed].sort() } },
+    emit(t: Pick<TestContext, "diagnostic">) {
+      safe(() => t.diagnostic(JSON.stringify({ schema: "owned-hostile-job-startup-v2", ...facts, stderr_fixed_words: [...stderrFixed].sort() })))
+    },
+  }
+}
+
 function ownedRoot() { return fs.mkdtempSync(path.join(os.tmpdir(), "cmspark 605 & 中文 owned-")) }
 async function stop(child?: ChildProcess) {
   if (child && child.exitCode === null && child.signalCode === null) {
@@ -30,10 +88,49 @@ function childFixture(root: string, mode: string) {
   const script = path.join(root, "owned wrapper.cjs"), marker = path.join(root, "descendant.pid")
   fs.writeFileSync(script, `const cp=require('node:child_process'),fs=require('node:fs');
     const child=cp.spawn(process.execPath,['-e','setTimeout(()=>{},20000)'],{stdio:'ignore',windowsHide:true});
-    fs.writeFileSync(${JSON.stringify(marker)},String(child.pid));
+    child.once('error',()=>process.exit(1));
+    child.once('spawn',()=>{
+      if(!Number.isSafeInteger(child.pid)||child.pid<=0)throw Error('OWNED_CHILD_PID_UNAVAILABLE');
+      fs.writeFileSync(${JSON.stringify(marker + ".pending")},String(child.pid),{flag:'wx',mode:0o600});
+      fs.renameSync(${JSON.stringify(marker + ".pending")},${JSON.stringify(marker)});
+    });
     ${mode === "complete" ? "setTimeout(()=>process.exit(0),300);" : "process.stdin.resume();setTimeout(()=>{},20000);"}`)
   return { script, marker }
 }
+
+test("owned descendant PID marker is absent until its complete native publication", { timeout: 30000 }, async () => {
+  const root = ownedRoot(), f = childFixture(root, "shutdown"), release = path.join(root, "release")
+  const preload = path.join(root, "hold-publication.cjs")
+  fs.writeFileSync(preload, `const fs=require('node:fs'),write=fs.writeFileSync;
+    fs.writeFileSync=function(file,data,options){
+      if(file!==${JSON.stringify(f.marker)} && file!==${JSON.stringify(f.marker + ".pending")})return write.apply(this,arguments);
+      const fd=fs.openSync(file,options?.flag||'w',options?.mode||0o600);
+      try{process.send({phase:'opened',pid:Number(data),finalVisible:fs.existsSync(${JSON.stringify(f.marker)})});
+        while(!fs.existsSync(${JSON.stringify(release)}))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);
+        fs.writeSync(fd,String(data));
+      }finally{fs.closeSync(fd)}
+    };`)
+  let wrapper: ChildProcess | undefined, descendant = 0, opened: any
+  try {
+    wrapper = spawn(process.execPath, ["--require", preload, f.script], { stdio: ["ignore", "ignore", "pipe", "ipc"], windowsHide: true })
+    wrapper.on("message", message => { opened = message })
+    await until(() => opened?.phase === "opened")
+    descendant = opened.pid
+    assert.ok(Number.isSafeInteger(descendant) && descendant > 0)
+    assert.ok(alive(descendant)); assert.ok(alive(wrapper.pid))
+    assert.equal(opened.finalVisible, false, "opening an incomplete PID must not publish the final marker")
+    assert.equal(fs.existsSync(f.marker), false)
+    fs.writeFileSync(release, "release", { flag: "wx" })
+    await until(() => fs.existsSync(f.marker))
+    assert.equal(Number(fs.readFileSync(f.marker, "utf8")), descendant)
+    assert.ok(alive(descendant), "the same real child survives complete publication")
+  } finally {
+    if (!fs.existsSync(release)) fs.writeFileSync(release, "release", { flag: "wx" })
+    await stop(wrapper)
+    if (alive(descendant)) try { process.kill(descendant, "SIGKILL") } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
 
 for (const mode of ["cancel", "timeout", "complete", "shutdown"] as const) {
   test(`public ACP ${mode} reclaims its native process tree`, { timeout: 30000 }, async () => {
@@ -189,19 +286,72 @@ test("native Windows job preserves bidirectional protocol pipes and ignored stdi
 })
 
 
-test("native Windows job survives hostile server env and preserves literal argv", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
-  const root = ownedRoot(), marker = path.join(root, "argv.json"), script = path.join(root, "literal argv.cjs")
-  const args = ["", 'space 中文 & % "value"', "C:\\owned path\\", "x".repeat(2048)]
-  fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify({args:process.argv.slice(2),cwd:process.cwd()}));process.stdin.resume();setTimeout(()=>{},20000);`)
-  let child: ChildProcess | undefined
-  try {
-    await prepareWindowsJob()
-    child = spawnWindowsJob(process.execPath, [script, ...args], { env: { ...process.env, SystemRoot: root, ComSpec: path.join(root, "fake.exe") }, cwd: path.relative(process.cwd(), root), stdio: "pipe" })
-    child.stderr?.on("data", () => {})
-    await until(() => fs.existsSync(marker), 15000)
-    const observed = JSON.parse(fs.readFileSync(marker, "utf8"))
-    assert.deepEqual(observed.args, args); assert.equal(fs.realpathSync.native(observed.cwd), fs.realpathSync.native(root))
-  } finally { await stop(child); fs.rmSync(root, { recursive: true, force: true }) }
+// Test-owned overrides must be unique under the actual Windows case-folding
+// rule. Do not rewrite the parent environment or production target semantics.
+function hostileJobEnvironment(runtimeRoot: string, fakeComSpec: string, host: NodeJS.ProcessEnv = process.env) {
+  const env: NodeJS.ProcessEnv = Object.create(null)
+  for (const key of Object.keys(host)) if (!["SYSTEMROOT", "COMSPEC"].includes(key.toUpperCase())) env[key] = host[key]
+  env.SystemRoot = runtimeRoot; env.ComSpec = fakeComSpec
+  const block = windowsTargetEnvironment(env, host).toString("utf16le").split("\0").filter(Boolean)
+  for (const [name, expected] of [["SYSTEMROOT", runtimeRoot], ["COMSPEC", fakeComSpec]]) {
+    const entries = block.filter(entry => entry.slice(0, entry.indexOf("=")).toUpperCase() === name)
+    assert.ok(entries.length === 1 && entries[0].slice(entries[0].indexOf("=") + 1) === expected, "owned target override must reach the effective environment exactly once")
+  }
+  return env
+}
+
+for (const runtime of ["invalid-root", "trusted-root"] as const) {
+  test(`native Windows job ${runtime} keeps explicit env and literal argv`, { skip: process.platform !== "win32", timeout: 30000 }, async t => {
+    const root = ownedRoot(), marker = path.join(root, "argv.json"), script = path.join(root, "literal argv.cjs")
+    const args = ["", 'space 中文 & % "value"', "C:\\owned path\\", "x".repeat(2048)]
+    fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify({args:process.argv.slice(2),cwd:process.cwd()}));process.stdin.resume();setTimeout(()=>{},20000);`)
+    let child: ChildProcess | undefined
+    const observation = observeHostileJobStartup()
+    try {
+      // Node itself needs a valid Windows runtime root before it can execute
+      // the argv marker. The separate invalid-root control is not a retry or
+      // a passing substitute for this required real argv/cwd positive.
+      const hostKey = Object.keys(process.env).sort().find(key => key.toUpperCase() === "SYSTEMROOT")
+      const trustedRoot = hostKey === undefined ? undefined : process.env[hostKey]
+      assert.ok(typeof trustedRoot === "string" && trustedRoot.length > 0, "trusted parent runtime root is required")
+      const env = hostileJobEnvironment(runtime === "invalid-root" ? root : trustedRoot, path.join(root, "fake.exe"))
+      await prepareWindowsJob()
+      child = spawnWindowsJob(process.execPath, [script, ...args], { env, cwd: path.relative(process.cwd(), root), stdio: "pipe" })
+      observation.attach(child)
+      child.stderr?.on("data", () => {})
+      if (runtime === "invalid-root") {
+        await until(() => observation.snapshot().close_observed, 15000)
+        const observed = observation.snapshot()
+        assert.equal(observed.spawn_observed, true); assert.equal(observed.error_observed, false)
+        assert.equal(observed.exit_observed, true); assert.equal(observed.exit_code, 134); assert.equal(observed.exit_signal, null)
+        assert.equal(observed.close_code, 134); assert.equal(observed.close_signal, null)
+        assert.ok(observed.stderr_fixed_words.includes("ncrypto::CSPRNG") && observed.stderr_fixed_words.includes("node::InitializeOncePerProcessInternal"), "invalid runtime must expose the observed fixed startup assertion")
+        assert.equal(fs.existsSync(marker), false, "invalid runtime must fail before target JavaScript")
+      } else {
+        await until(() => fs.existsSync(marker), 15000)
+        const observed = JSON.parse(fs.readFileSync(marker, "utf8"))
+        assert.deepEqual(observed.args, args); assert.equal(fs.realpathSync.native(observed.cwd), fs.realpathSync.native(root))
+      }
+    } finally { observation.emit(t); await stop(child); fs.rmSync(root, { recursive: true, force: true }) }
+  })
+}
+
+test("owned hostile job environment pins effective root and shell across casing collisions", () => {
+  const host = { ...JSON.parse('{"__proto__":"owned-prototype-key"}'), SYSTEMROOT: "C:\\Windows", SystemRoot: "C:\\shadow-root", COMSPEC: "C:\\Windows\\cmd.exe", ComSpec: "C:\\shadow-shell", OWNED: "retained" }
+  const before = { ...host }, fake = "C:\\owned\\fake.exe"
+  const bad = hostileJobEnvironment("C:\\owned", fake, host), good = hostileJobEnvironment("C:\\Windows", fake, host)
+  assert.deepEqual(host, before)
+  for (const [env, root] of [[bad, "C:\\owned"], [good, "C:\\Windows"]] as const) {
+    const rows = windowsTargetEnvironment(env, host).toString("utf16le").split("\0").filter(Boolean)
+    assert.equal(rows.filter(row => /^systemroot=/i.test(row)).length, 1)
+    assert.equal(rows.filter(row => /^comspec=/i.test(row)).length, 1)
+    assert.ok(rows.includes(`SystemRoot=${root}`)); assert.ok(rows.includes(`ComSpec=${fake}`))
+    assert.equal(env.OWNED, "retained")
+    assert.equal(Object.hasOwn(env, "__proto__"), true)
+    assert.ok(rows.includes("__proto__=owned-prototype-key"), "all non-override own keys must survive the actual environment block")
+  }
+  const withoutRoot = (env: NodeJS.ProcessEnv) => Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== "SYSTEMROOT"))
+  assert.deepEqual(withoutRoot(bad), withoutRoot(good), "test-owned pair differs only in the effective runtime root")
 })
 
 test("native Windows owner crash reclaims its job without touching a sentinel", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
@@ -311,4 +461,63 @@ test("daemon stop with no PID distinguishes an absent socket from a live inacces
     if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()))
     fs.rmSync(root, { recursive: true, force: true })
   }
+})
+
+test("hostile launcher observation keeps only finite fields and does not consume errors", () => {
+  const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() })
+  const observation = observeHostileJobStartup(), records: string[] = []
+  observation.attach(child as unknown as ChildProcess)
+  const attack = "UNKNOWN_PRIVATE_MARKER/path/body/env"
+  const error = Object.assign(new Error(attack), { code: attack })
+  assert.equal(child.listenerCount("error"), 0)
+  assert.throws(() => child.emit("error", error), value => value === error)
+  child.emit("spawn"); child.stdout.emit("data", Buffer.from("中")); child.stderr.emit("data", "ab")
+  child.emit("exit", -2147483648, attack); child.emit("close", 4294967295, "SIGTERM")
+  observation.emit({ diagnostic: value => { records.push(value) } })
+  const actual = JSON.parse(records[0])
+  assert.deepEqual(actual, { schema: "owned-hostile-job-startup-v2", spawn_observed: true,
+    error_observed: true, exit_observed: true, close_observed: true, error_code: "OTHER",
+    exit_code: -2147483648, exit_signal: "OTHER", close_code: 4294967295, close_signal: "SIGTERM",
+    stdout_bytes: 3, stderr_bytes: 2, stderr_fixed_words: [] })
+  assert.equal(records[0].includes(attack), false)
+  assert.equal(child.listenerCount("error"), 0)
+})
+
+test("hostile launcher observation distinguishes exited and pending and contains a throwing sink", () => {
+  const record = (exited: boolean) => {
+    const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() })
+    const observation = observeHostileJobStartup(); observation.attach(child as unknown as ChildProcess)
+    if (exited) { child.emit("exit", 1, null); child.emit("close", 1, null) }
+    assert.doesNotThrow(() => observation.emit({ diagnostic() { throw Error("OWNED_SINK_FAILURE") } }))
+    let text = ""; observation.emit({ diagnostic: value => { text = value } }); return JSON.parse(text)
+  }
+  const pending = record(false), exited = record(true)
+  assert.equal(pending.exit_observed, false); assert.equal(pending.close_observed, false)
+  assert.equal(pending.exit_code, null); assert.equal(pending.close_code, null)
+  assert.equal(exited.exit_observed, true); assert.equal(exited.close_observed, true)
+  assert.equal(exited.exit_code, 1); assert.equal(exited.close_code, 1)
+  const child = new EventEmitter(), observation = observeHostileJobStartup()
+  observation.attach(child as unknown as ChildProcess); child.emit("exit", 4294967296, "UNKNOWN_SIGNAL")
+  let text = ""; observation.emit({ diagnostic: value => { text = value } })
+  assert.equal(JSON.parse(text).exit_code, null); assert.equal(JSON.parse(text).exit_signal, "OTHER")
+})
+
+
+test("hostile target fatal observation is bounded closed words across stderr chunks", () => {
+  const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() })
+  const observation = observeHostileJobStartup(); observation.attach(child as unknown as ChildProcess)
+  const words = ["ncrypto::CSPRNG", "uv_thread_create", "node::InitializeOncePerProcessInternal"]
+  for (const word of words) {
+    for (let offset = 1; offset < word.length; offset++) {
+      child.stderr.emit("data", Buffer.from("OWNED_PRIVATE_SENTINEL/" + word.slice(0, offset)))
+      child.stderr.emit("data", Buffer.from(word.slice(offset) + "/OWNED_PRIVATE_SENTINEL"))
+    }
+  }
+  let record = ""; observation.emit({ diagnostic: value => { record = value } })
+  const actual = JSON.parse(record)
+  assert.equal(actual.schema, "owned-hostile-job-startup-v2")
+  assert.deepEqual(actual.stderr_fixed_words, [...words].sort())
+  assert.equal(record.includes("OWNED_PRIVATE_SENTINEL"), false)
+  assert.equal(record.includes("/"), false)
+  assert.equal(child.listenerCount("error"), 0)
 })

@@ -9,7 +9,7 @@ param([Parameter(Mandatory=$true)][int]$OwnedPid,
       [Parameter(Mandatory=$true)][string]$OwnedName)
 $ErrorActionPreference='Stop'
 if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'OWNED_PS51_REQUIRED' }
-Add-Type -TypeDefinition @'
+Microsoft.PowerShell.Utility\Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -36,7 +36,7 @@ while ($clock.ElapsedMilliseconds -lt 10000) {
   if ($window -ne [IntPtr]::Zero) {
    [uint32]$windowPid=0;$null=[OwnedNpp686]::GetWindowThreadProcessId($window,[ref]$windowPid)
    if ($windowPid -ne $OwnedPid) { throw 'OWNED_WINDOW_MISMATCH' }
-   $title=New-Object System.Text.StringBuilder -ArgumentList 512
+   $title=Microsoft.PowerShell.Utility\New-Object System.Text.StringBuilder -ArgumentList 512
    [UIntPtr]$titleLength=[UIntPtr]::Zero;[UIntPtr]$count=[UIntPtr]::Zero
    $a=[OwnedNpp686]::Text($window,13,[UIntPtr]::new([uint32]512),$title,2,200,[ref]$titleLength)
    $b=[OwnedNpp686]::Count($window,2031,[UIntPtr]::Zero,[IntPtr]::Zero,2,200,[ref]$count)
@@ -54,11 +54,11 @@ while ($clock.ElapsedMilliseconds -lt 10000) {
    if ($secondaryIndex.ToUInt64() -eq $hiddenIndex) { $observedMask=$observedMask -bor 128 }
    if ($a -ne [IntPtr]::Zero -and $b -ne [IntPtr]::Zero -and $count.ToUInt64() -eq 2 -and $title.ToString().Contains($OwnedName) -and
        $c -ne [IntPtr]::Zero -and $primaryCount.ToUInt64() -eq 1 -and $d -ne [IntPtr]::Zero -and $secondaryIndex.ToUInt64() -eq $hiddenIndex) {
-    @{native_ps51=$true;owned_window=$true;matching_file_title=$true;visible_files=1;total_tabs=2;hidden_secondary_placeholder=$true;actual_target_parser=$true} | ConvertTo-Json -Compress
+    @{native_ps51=$true;owned_window=$true;matching_file_title=$true;visible_files=1;total_tabs=2;hidden_secondary_placeholder=$true;actual_target_parser=$true} | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress
     exit 0
    }
   }
  } finally { $owned.Dispose() }
- Start-Sleep -Milliseconds 20
+ Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds 20
 }
 throw ('OWNED_TARGET_FILE_NOT_OBSERVED observed_mask={0}' -f $observedMask)

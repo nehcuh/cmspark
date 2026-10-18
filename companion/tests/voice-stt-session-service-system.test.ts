@@ -123,21 +123,24 @@ test("system partial: skipped (SAPI is batch — no progressive hypotheses)", as
 })
 
 test("system end: abort during helper run maps to aborted", async () => {
+  let helperEntered!: () => void
+  const entered = new Promise<void>(resolve => { helperEntered = resolve })
   const { svc } = makeService({
     runSapi: (o) =>
       new Promise((_, reject) => {
         o.signal?.addEventListener("abort", () =>
           reject(new WinSapiError("aborted", "helper run aborted")),
         )
+        helperEntered()
       }),
   })
   startSystem(svc)
   await svc.chunk("sys-1", 0, PCM, "peer-1")
   const p = svc.end("sys-1", 1, "peer-1")
-  // end() is awaiting the helper; abort from the owning peer
-  setTimeout(() => {
-    svc.abort("sys-1", "peer-1")
-  }, 10)
+  // WAV persistence is asynchronous. Abort only after the helper has installed
+  // its listener, so this case tests cancellation during inference on every OS.
+  await entered
+  assert.equal(svc.abort("sys-1", "peer-1").ok, true)
   const r = await p
   assert.equal(r.ok, false)
   if (!r.ok) assert.equal(r.code, "aborted")

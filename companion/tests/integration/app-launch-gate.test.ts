@@ -363,11 +363,11 @@ test("apps.enabled=false kill-switch → typed error, NO confirmation requested"
   assert.match(result.error!, /Apps feature is disabled/)
 })
 
-test("non-launch action → typed error, NO confirmation requested", { skip: !WIN }, async () => {
+test("unknown action → typed error, NO confirmation requested", { skip: !WIN }, async () => {
   seedApps({ "win.app.gated": exeEntry("win.app.gated", "auto") })
   const executeTool = createToolExecutor(serverSideWs)
   const noConfirm = expectNoClientMessage("security.confirmation.request")
-  const result = await executeTool("tc_app_action", "host_app", { app: "win.app.gated", action: "run_template" })
+  const result = await executeTool("tc_app_action", "host_app", { app: "win.app.gated", action: "unknown_owned_action_650" })
   await noConfirm
   assert.equal(result.success, false)
   assert.match(result.error!, /unsupported action/)

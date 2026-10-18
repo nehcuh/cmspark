@@ -11,7 +11,7 @@ import type { AppEntry } from "../src/apps/types"
 const token = "win.app.owned655", preset = "win.app.cloudmusic"
 const entry = (policy: "manual" | "auto" = "auto"): AppEntry => ({ token, kind: "gui", display_name: "Owned inert app", source: "user", policy, enabled: true,
   added_at: "2026-10-15T00:00:00.000Z", exe: { path: "C:\\Program Files\\Owned655\\owned.exe", signer: "CN=Owned fixture", user_writable_dir: false } })
-const deps: AppsHandlerDeps = { exists: p => p.toLowerCase().includes("program files"), realpath: () => "C:\\Program Files\\Netease\\CloudMusic\\cloudmusic.exe",
+const deps: AppsHandlerDeps = { exists: p => p.toLowerCase().includes("program files") && p.toLowerCase().endsWith("\\cloudmusic.exe"), realpath: () => "C:\\Program Files\\Netease\\CloudMusic\\cloudmusic.exe",
   signerProbe: async () => "CN=Owned fixture", clearAppTrust: () => 0, platform: "win32" }
 const listeners = () => configEvents.listenerCount(CONFIG_CHANGE_EVENT)
 function snapshot() {
@@ -54,6 +54,19 @@ before(async () => {
 })
 after(() => { for (const restore of originals.reverse()) restore(); assert.equal(processes, 0); assert.equal(networks, 0) })
 
+test("list: owned detection fixture excludes other Gallery candidates with expanded ProgramFiles", async () => {
+  const previous = process.env.ProgramFiles
+  process.env.ProgramFiles = "C:\\Program Files"
+  try {
+    replaceAppsEntries({})
+    const result = await handleAppsMessage({ type: "apps.list" }, {}, deps)
+    assert.deepEqual(Object.keys(snapshot()), [preset])
+    assert.deepEqual(Object.keys(responseEntries(result)), [preset])
+  } finally {
+    if (previous === undefined) delete process.env.ProgramFiles
+    else process.env.ProgramFiles = previous
+  }
+})
 for (const policy of ["manual", "auto"] as const) {
   test(`list: normal detection seeds manual without changing existing ${policy} entry`, async () => {
     const initial = entry(policy); replaceAppsEntries({ [token]: initial }); const flow = startList(); await flow.ready; flow.release()

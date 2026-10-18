@@ -1501,6 +1501,14 @@ export async function runComputerTask(
         }
         if (!deliveredInBackground) {
           deliveryRoute = deliveryRoute ?? "sendinput"
+          // UIA delivery awaited above: a stop may have arrived after the common fence.
+          if (deliveryRoute === "uia_fallback") {
+            const abortedBeforeFallback = deps.abortCheck?.() ?? null
+            if (abortedBeforeFallback !== null) {
+              log("computer.task.aborted", { taskId, seq, channel: abortedBeforeFallback, via: "coordinate_fallback" })
+              throw abortChannelError(abortedBeforeFallback, `computer: task aborted by emergency stop (${abortedBeforeFallback}) before coordinate fallback`)
+            }
+          }
           await deps.injector.click(hwnd, pointClient!.x, pointClient!.y, action.action)
         }
       }

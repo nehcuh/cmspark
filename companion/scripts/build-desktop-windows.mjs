@@ -224,7 +224,7 @@ export function desktopAcceptanceVariant(language, original, fixture) {
     ['class Desktop {', '/* D480 acceptance declarations */\n'+cppParts[0]+'\nclass Desktop {\n friend class D480Acceptance;'],
     ['winrt::init_apartment(winrt::apartment_type::single_threaded);', 'D480Acceptance::safetyWatchdog();winrt::init_apartment(winrt::apartment_type::single_threaded);'],
     ['if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)ExitProcess(1);', 'if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0){D480Acceptance::parentObserved();ExitProcess(1);}'],
-    ['HANDLE input=bootstrap.pipe;', 'HANDLE input=bootstrap.pipe;D480Acceptance::preConsume(input);'],
+    ['HANDLE input=bootstrap.pipe;', 'HANDLE input=bootstrap.pipe;D480Acceptance::InheritanceScope identityScope;D480Acceptance::preConsume(input);'],
     ['CloseHandle(input);bootstrap.pipe=nullptr;', 'CloseHandle(input);D480Acceptance::inputClosed(input);bootstrap.pipe=nullptr;'],
     ['d480_client_close(&bootstrap);', 'd480_client_close(&bootstrap);D480Acceptance::parentCleared(parent);'],
     ['if(!window)return 61;start_network();', 'if(!window)return 61;D480Acceptance::created(*this);start_network();'],

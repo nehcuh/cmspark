@@ -13,6 +13,7 @@ import { execFile } from "node:child_process"
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
+import { createRequire } from "node:module"
 
 const PS = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 // The .ps1 is NOT compiled into .test-dist (only .ts is), so resolve it against the CWD the
@@ -20,6 +21,40 @@ const PS = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 const SCRIPT_REL = "src/host-use/win/scripts/computer-bg-oracles.ps1"
 const SCRIPT = [SCRIPT_REL, path.join("companion", SCRIPT_REL)].find((p) => existsSync(p)) ?? SCRIPT_REL
 const available = process.platform === "win32" && existsSync(PS) && existsSync(SCRIPT)
+
+const oraclePhases650 = new Set(["SCRIPT_ENTERED", "COMPARE_ENTERED", "BEFORE_JSON_READ", "BEFORE_JSON_PARSE", "BEFORE_SECOND_JSON_READ", "JSON_LOADED", "REFUSED_4", "CURSOR_VALID", "RESULT_WRITTEN"])
+function oracleObservation650(err: unknown, stdout: string, stderr: string, elapsed: number | null) {
+  const error = err !== null && typeof err === "object" ? err as Record<string, unknown> : {}
+  const code = error.code, signal = error.signal
+  const phases: Array<{ phase: string; elapsed_ms: number }> = []
+  const seen = new Set<string>()
+  for (const m of stderr.matchAll(/^CMSPARK_ORACLE_PHASE_V1:([A-Z0-9_]+):([0-9]{1,9})\r?$/gm)) {
+    if (oraclePhases650.has(m[1]) && !seen.has(m[1])) {
+      phases.push({ phase: m[1], elapsed_ms: Number(m[2]) })
+      seen.add(m[1])
+    }
+    if (phases.length === oraclePhases650.size) break
+  }
+  return {
+    kind: "ORACLE_COMPARATOR_CALLBACK_V1", elapsed_ms: typeof elapsed === "number" && Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : null,
+    error_present: err !== null && err !== undefined,
+    code_type: code === null ? "null" : typeof code === "number" ? "number" : typeof code === "string" ? "string" : code === undefined ? "undefined" : "other",
+    code: typeof code === "number" && Number.isInteger(code) && code >= 0 && code <= 255 ? code :
+      typeof code === "string" && ["ETIMEDOUT", "ENOENT", "EACCES", "EPERM", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"].includes(code) ? code : null,
+    killed: error.killed === true,
+    signal: signal === "SIGTERM" || signal === "SIGKILL" ? signal : signal === null || signal === undefined ? null : "OTHER",
+    stdout_bytes: Buffer.byteLength(stdout), stderr_bytes: Buffer.byteLength(stderr),
+    unreadable_snapshot_prefix: stderr.includes("ORACLE_UNREADABLE_SNAPSHOT:"),
+    read_failed_prefix: stderr.includes("ORACLE_READ_FAILED:"), badargs_prefix: stderr.includes("BADARGS:"),
+    stderr_phase_markers: phases,
+  }
+}
+function observeOracleCallback650(err: unknown, stdout: string, stderr: string, elapsed: number | null) {
+  try { console.error(JSON.stringify(oracleObservation650(err, stdout, stderr, elapsed))) } catch { /* observation cannot replace the original child result */ }
+}
+function oracleClock650(): number | null {
+  try { return performance.now() } catch { return null }
+}
 
 type Snap = {
   ts: string
@@ -30,13 +65,94 @@ type Snap = {
 
 const run = (args: string[]) =>
   new Promise<{ err: unknown; stderr: string }>((res) => {
+    const started = oracleClock650()
     execFile(
       PS,
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", ...args],
-      { encoding: "utf8", windowsHide: true, timeout: 15_000 },
-      (err, _stdout, stderr) => res({ err, stderr: String(stderr || "") }),
+      { encoding: "utf8", windowsHide: true, timeout: 15_000, env: { ...process.env, CMSPARK_ORACLE_TEST_PHASES_650: "1" } },
+      (err, stdout, stderr) => {
+        const finished = oracleClock650()
+        observeOracleCallback650(err, String(stdout || ""), String(stderr || ""), started === null || finished === null ? null : finished - started)
+        res({ err, stderr: String(stderr || "") })
+      },
     )
   })
+
+test("#650 comparator callback observation retains only finite error and phase fields", () => {
+  const stderr = "CMSPARK_ORACLE_PHASE_V1:SCRIPT_ENTERED:0\r\nCMSPARK_ORACLE_PHASE_V1:JSON_LOADED:21\n"
+  const r = oracleObservation650({ code: null, killed: true, signal: "SIGTERM" }, "owned", stderr, 15001.9)
+  assert.equal(r.code_type, "null")
+  assert.equal(r.code, null)
+  assert.equal(r.elapsed_ms, 15001)
+  assert.equal(r.killed, true)
+  assert.equal(r.signal, "SIGTERM")
+  assert.equal(r.stdout_bytes, 5)
+  assert.deepEqual(r.stderr_phase_markers, [{ phase: "SCRIPT_ENTERED", elapsed_ms: 0 }, { phase: "JSON_LOADED", elapsed_ms: 21 }])
+})
+test("#650 comparator observation distinguishes first-file read from JSON parsing", () => {
+  const stderr = "CMSPARK_ORACLE_PHASE_V1:BEFORE_JSON_READ:3\nCMSPARK_ORACLE_PHASE_V1:BEFORE_JSON_PARSE:4\n"
+  const r = oracleObservation650({ code: null, killed: true, signal: "SIGTERM" }, "", stderr, 15000)
+  assert.deepEqual(r.stderr_phase_markers, [
+    { phase: "BEFORE_JSON_READ", elapsed_ms: 3 },
+    { phase: "BEFORE_JSON_PARSE", elapsed_ms: 4 },
+  ])
+  assert.equal(r.killed, true)
+  assert.equal(r.code, null)
+  assert.equal(r.stdout_bytes, 0)
+})
+test("#650 comparator observation preserves the existing digit-bearing refusal marker only", () => {
+  const stderr = "CMSPARK_ORACLE_PHASE_V1:REFUSED_4:1\nCMSPARK_ORACLE_PHASE_V1:UNKNOWN_9:2\n"
+  const r = oracleObservation650({ code: 4 }, "", stderr, 2)
+  assert.deepEqual(r.stderr_phase_markers, [{ phase: "REFUSED_4", elapsed_ms: 1 }])
+  assert.equal(r.code, 4)
+  assert.equal(r.error_present, true)
+})
+test("#650 comparator observation excludes arbitrary child strings, bodies and duplicate/unknown markers", () => {
+  const privateMarker = "owned_private_marker_not_for_logging"
+  const stderr = `${privateMarker}\nCMSPARK_ORACLE_PHASE_V1:SCRIPT_ENTERED:0\nCMSPARK_ORACLE_PHASE_V1:SCRIPT_ENTERED:1\nCMSPARK_ORACLE_PHASE_V1:UNKNOWN:2\n`
+  const r = oracleObservation650({ code: privateMarker, signal: privateMarker, message: privateMarker, path: privateMarker }, privateMarker, stderr, 4)
+  assert.equal(r.code, null)
+  assert.equal(r.signal, "OTHER")
+  assert.equal(r.stderr_phase_markers.length, 1)
+  assert.ok(!JSON.stringify(r).includes(privateMarker))
+})
+test("#650 comparator observer getter/logger failures cannot replace the primary callback result", () => {
+  assert.doesNotThrow(() => observeOracleCallback650({ get code() { throw Error("owned getter failure") } }, "", "", 0))
+  const original = console.error
+  console.error = () => { throw Error("owned logger failure") }
+  try { assert.doesNotThrow(() => observeOracleCallback650(null, "", "", 0)) }
+  finally { console.error = original }
+})
+for (const failingRead of [0, 1]) {
+  test(`#650 actual comparator run preserves the original callback after clock read ${failingRead} throws`, async () => {
+    const child = createRequire(__filename)("node:child_process") as typeof import("node:child_process")
+    const originalExec = child.execFile, clockDescriptor = Object.getOwnPropertyDescriptor(performance, "now")
+    const originalLogger = console.error
+    const originalErr = Object.assign(new Error("owned original child error"), { code: 4 })
+    let calls = 0, clockReads = 0
+    const records: string[] = []
+    child.execFile = ((...args: any[]) => { calls++; args.at(-1)(originalErr, "owned stdout", "owned stderr"); return {} }) as any
+    Object.defineProperty(performance, "now", { configurable: true, value: () => {
+      if (clockReads++ === failingRead) throw Error("owned clock failure")
+      return 20
+    } })
+    console.error = value => { records.push(String(value)) }
+    try {
+      const result = await run(["owned_inert_never_executed"])
+      assert.equal(calls, 1)
+      assert.equal(result.err, originalErr)
+      assert.equal(result.stderr, "owned stderr")
+      assert.equal(records.length, 1)
+      assert.equal(JSON.parse(records[0]).elapsed_ms, null)
+      assert.ok(!records[0].includes("owned original child error"))
+    } finally {
+      child.execFile = originalExec
+      if (clockDescriptor) Object.defineProperty(performance, "now", clockDescriptor)
+      else Reflect.deleteProperty(performance, "now")
+      console.error = originalLogger
+    }
+  })
+}
 
 /** Invoke the actual PS comparator, including malformed snapshot negative controls. */
 async function runCompare(
