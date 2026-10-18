@@ -16,6 +16,15 @@ function fakeRunner(reply: { stdout?: string; stderr?: string; throwIt?: boolean
   const calls: Call[] = []
   const runner = async (script: string, args: string[]) => {
     calls.push({ script, args })
+    if (script.endsWith("computer-uia-select.ps1")) {
+      const value = (key: string) => args[args.indexOf(key) + 1]
+      const mode = value("-Mode"), name = value("-Name")
+      const modes = mode === "auto" ? ["invoke", ...(args.includes("-Value") ? ["setvalue"] : []), "select", "toggle"] : [mode]
+      return JSON.stringify({ schema:1, hwnd:Number(value("-Hwnd")),rootPid:10,selectedPid:10,runtime:[42],
+        controlTypeId:50000,controlType:args.includes("-ExpectControlType")?value("-ExpectControlType"):"Button",
+        automationId:args.includes("-ExpectAutomationId")?value("-ExpectAutomationId"):"cmspark_fixture_button",name,
+        x:1920,y:1061,bbox:{x:1785,y:1028,w:270,h:66},patterns:modes.map(mode=>({mode,state:"ready"})) })
+    }
     if (reply.throwIt) {
       const e: any = new Error("boom")
       e.stderr = reply.stderr ?? ""
@@ -53,7 +62,8 @@ test("#572 invokeUia: a successful run parses into ok:true and promises foregrou
   assert.deepEqual(r.tried, ["invoke:ok"])
   assert.equal(r.foreground, false, "the background route must never claim foreground")
   // It must run the invoke script, not the SendInput one.
-  assert.match(calls[0].script, /computer-uia-invoke\.ps1$/)
+  assert.match(calls[0].script, /computer-uia-select\.ps1$/)
+  assert.match(calls[1].script, /computer-uia-act\.ps1$/)
   assert.ok(calls[0].args.includes("-ExpectControlType"), "identity expectation must reach the script")
 })
 
@@ -127,8 +137,37 @@ test("#572 invokeUia: -Value only travels when a value is actually given", async
   await inj.invokeUia(1, "n", "auto")
   assert.ok(!calls[0].args.includes("-Value"), "auto with no value must not send an empty -Value")
   await inj.invokeUia(1, "n", "setvalue", { value: "hello" })
-  assert.deepEqual(calls[1].args.slice(calls[1].args.indexOf("-Value"), calls[1].args.indexOf("-Value") + 2), [
+  assert.deepEqual(calls[2].args.slice(calls[2].args.indexOf("-Value"), calls[2].args.indexOf("-Value") + 2), [
     "-Value",
     "hello",
   ])
 })
+
+for (const prefix of ['STOPPED','UIA_WINDOW_GONE','UIA_ELEMENT_GONE','UIA_ELEMENT_MISMATCH','UIA_METHOD_FAILED','UIA_PATTERN_UNAVAILABLE']) {
+  test(`#572 no-focus closed terminal frame ${prefix} stays terminal`, async () => {
+    const { runner } = fakeRunner({ throwIt: true, stderr: `UIA_TERMINAL:${prefix}` })
+    const result = await new PsInputInjector(runner).invokeUia(777, 'SubmitTest', 'invoke')
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.terminal, true)
+    assert.equal(result.reason === 'bad_output', false)
+    assert.equal(result.detail, 'background UIA terminal refusal')
+  })
+}
+test('#572 no-focus arbitrary ordinary detail cannot forge the terminal frame', async () => {
+  const {runner}=fakeRunner({throwIt:true,stderr:'UIA_PATTERN_UNAVAILABLE:detail UIA_TERMINAL:UIA_METHOD_FAILED'})
+  const result=await new PsInputInjector(runner).invokeUia(777,'SubmitTest','invoke')
+  assert.equal(result.ok,false)
+  if(result.ok)return
+  assert.equal(result.reason,'pattern_unavailable')
+  assert.equal(result.terminal,undefined)
+})
+for (const reply of [{throwIt:true}, {stdout:''}, {stdout:'not json'}, {stdout:'{"ok":false}'}, {stdout:'{"ok":true,"mode":"toggle"}'}]) {
+  test(`#572 no-focus uncertain receipt ${JSON.stringify(reply)} is terminal`,async()=>{
+    const {runner}=fakeRunner(reply)
+    const result=await new PsInputInjector(runner).invokeUia(777,'SubmitTest','invoke')
+    assert.equal(result.ok,false)
+    if(result.ok)return
+    assert.equal(result.terminal,true)
+  })
+}

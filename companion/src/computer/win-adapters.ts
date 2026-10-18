@@ -10,8 +10,9 @@ import * as path from "path"
 import * as fs from "fs"
 import * as crypto from "crypto"
 import { spawn } from "child_process"
+import { performance } from "node:perf_hooks"
 import { parsePsJson, resolvePowerShellExe, runPs, type PsRunner } from "../host-use/win/powershell"
-import { resolveWinScript } from "../host-use/win/powershell"
+import { resolveWinScript, resolveComputerUiaNoFocusDll } from "../host-use/win/powershell"
 import type { PreviewBuilder } from "./preview"
 import {
   ComputerError,
@@ -78,7 +79,7 @@ export function rethrowComputerPsError(err: any, label: string): never {
   throw err
 }
 
-/** #572: computer-uia-invoke.ps1 stderr prefix → the caller-facing fallback reason. */
+/** #572: fixed PS failure vocabulary; terminal frames additionally forbid coordinate retry. */
 const UIA_PS_FAILURE: Record<string, Extract<UiaInvokeResult, { ok: false }>["reason"]> = {
   UIA_WINDOW_GONE: "window_gone",
   UIA_ELEMENT_GONE: "element_gone",
@@ -101,15 +102,18 @@ function uiaFailureFromPsError(err: any): Extract<UiaInvokeResult, { ok: false }
   const stderr = err && typeof err === "object" && "stderr" in err && err.stderr ? String(err.stderr) : ""
   const line = stderr.split(/\r?\n/).find((l) => PS_ERR_LINE.test(l))
   if (line) {
+    // Closed internal terminal frame; never infer it from arbitrary detail text.
+    const terminal = /^UIA_TERMINAL:(STOPPED|UIA_WINDOW_GONE|UIA_ELEMENT_GONE|UIA_ELEMENT_MISMATCH|UIA_PATTERN_UNAVAILABLE|UIA_METHOD_FAILED)$/.exec(line)
+    if (terminal) return { ok: false, reason: UIA_PS_FAILURE[terminal[1]], detail: "background UIA terminal refusal", terminal: true }
     const sep = line.indexOf(":")
     const prefix = line.slice(0, sep)
     const detail = line.slice(sep + 1).trim()
     const reason = UIA_PS_FAILURE[prefix]
-    if (reason) return { ok: false, reason, detail }
-    return { ok: false, reason: "bad_output", detail: `${prefix}: ${detail}` }
+    if (reason) return { ok: false, reason, detail, ...(reason === "method_failed" ? { terminal: true as const } : {}) }
+    return { ok: false, reason: "bad_output", detail: `${prefix}: ${detail}`, terminal: true }
   }
   const msg = err?.message ? String(err.message) : String(err)
-  return { ok: false, reason: "method_failed", detail: msg.slice(0, 300) }
+  return { ok: false, reason: "method_failed", detail: msg.slice(0, 300), terminal: true }
 }
 
 export const COMPUTER_TEMP_DIR_NAME = "cmspark-computer"
@@ -392,6 +396,39 @@ export class PsLocator implements Locator {
 
 // ---------------------------------------------------------------------------
 
+type UiaSelection572 = {
+  schema: 1; hwnd: number; rootPid: number; selectedPid: number; runtime: number[]
+  controlTypeId: number; controlType: string; automationId: string; name: string
+  x: number; y: number; bbox: RectPx
+  patterns: { mode: string; state: "ready" | "unsupported" | "null" | "threw" }[]
+}
+/** Private selection receipt, never model authority or persistent state. */
+function parseUiaSelection572(text: string, hwnd: number, mode: UiaInvokeMode,
+  value: string | undefined, expectedType?: string, expectedAid?: string): UiaSelection572 {
+  const invalid = () => { throw new Error("UIA_SELECTION_INVALID") }
+  const keys = (v: any, expected: string[]) => v && typeof v === "object" && !Array.isArray(v) &&
+    Object.keys(v).sort().join(",") === [...expected].sort().join(",")
+  const integer = (v: unknown, min: number, max: number) => typeof v === "number" && Number.isSafeInteger(v) && v >= min && v <= max
+  if (text.length > 8192 || Buffer.byteLength(text, "utf8") > 16384) invalid()
+  let d: any
+  try { d = JSON.parse(text) } catch { invalid() }
+  if (!keys(d, ["schema","hwnd","rootPid","selectedPid","runtime","controlTypeId","controlType","automationId","name","x","y","bbox","patterns"])) invalid()
+  if (d.schema !== 1 || d.hwnd !== hwnd || !integer(d.hwnd, 1, Number.MAX_SAFE_INTEGER)) invalid()
+  if (![d.rootPid, d.selectedPid].every((n: unknown) => integer(n, 1, 0xffffffff))) invalid()
+  if (!Array.isArray(d.runtime) || d.runtime.length < 1 || d.runtime.length > 64 || !d.runtime.every((n: unknown) => integer(n, -0x80000000, 0x7fffffff))) invalid()
+  if (!integer(d.controlTypeId, 1, 0x7fffffff)) invalid()
+  for (const n of ["name","automationId","controlType"]) if (typeof d[n] !== "string" || d[n].length > 4096 || d[n].includes("\0")) invalid()
+  if (d.name.length === 0 || d.controlType.length === 0) invalid()
+  if ((expectedType && d.controlType !== expectedType) || (expectedAid && d.automationId !== expectedAid)) invalid()
+  if (![d.x,d.y].every((n: unknown) => integer(n, -0x80000000, 0x7fffffff)) || !keys(d.bbox, ["x","y","w","h"]) ||
+      !Object.values(d.bbox).every(n => integer(n, -0x80000000, 0x7fffffff)) || d.bbox.w <= 0 || d.bbox.h <= 0 || d.bbox.w * d.bbox.h > 150000) invalid()
+  const modes = mode === "auto" ? ["invoke", ...(value ? ["setvalue"] : []), "select", "toggle"] : [mode]
+  if (!Array.isArray(d.patterns) || d.patterns.length !== modes.length) invalid()
+  for (let i = 0; i < modes.length; i++) if (!keys(d.patterns[i], ["mode","state"]) || d.patterns[i].mode !== modes[i] ||
+      !["ready","unsupported","null","threw"].includes(d.patterns[i].state)) invalid()
+  return d
+}
+
 export class PsInputInjector implements InputInjector {
   /**
    * @param runner ps1 runner (tests inject a fake).
@@ -457,7 +494,19 @@ export class PsInputInjector implements InputInjector {
     ]
     let stdout = ""
     try {
-      stdout = await this.runner(resolveWinScript("computer-uia-invoke.ps1"), this.withStop(args))
+      const deadline = performance.now() + 15_000
+      const remaining = () => {
+        const ms = Math.floor(deadline - performance.now())
+        if (ms <= 0) throw new Error("UIA_REQUEST_DEADLINE_EXHAUSTED")
+        return ms
+      }
+      const selectedText = await this.runner(resolveWinScript("computer-uia-select.ps1"), this.withStop(args), { timeoutMs: remaining() })
+      const selected = parseUiaSelection572(selectedText, hwnd, mode, opts.value, opts.expectControlType, opts.expectAutomationId)
+      // Sequential direct children; neither script spawns another PowerShell.
+      stdout = await this.runner(resolveWinScript("computer-uia-act.ps1"), this.withStop([
+        ...args, "-SelectionJson", JSON.stringify(selected),
+        "-NoFocusLibrary", resolveComputerUiaNoFocusDll(),
+      ]), { timeoutMs: remaining() })
     } catch (err) {
       return uiaFailureFromPsError(err)
     }
@@ -465,10 +514,13 @@ export class PsInputInjector implements InputInjector {
     try {
       parsed = JSON.parse(stdout)
     } catch (e: any) {
-      return { ok: false, reason: "bad_output", detail: `unparseable stdout: ${String(e?.message ?? e)}` }
+      return { ok: false, reason: "bad_output", detail: `unparseable stdout: ${String(e?.message ?? e)}`, terminal: true }
     }
     if (!parsed || parsed.ok !== true) {
-      return { ok: false, reason: "bad_output", detail: "script exited 0 without reporting ok:true" }
+      return { ok: false, reason: "bad_output", detail: "script exited 0 without reporting ok:true", terminal: true }
+    }
+    if ((mode !== "auto" && parsed.mode !== mode) || !["invoke", "setvalue", "select", "toggle", "scroll"].includes(parsed.mode)) {
+      return { ok: false, reason: "bad_output", detail: "script reported an unexpected action mode", terminal: true }
     }
     const bbox = parsed.bbox && typeof parsed.bbox === "object" ? parsed.bbox : { x: 0, y: 0, w: 0, h: 0 }
     return {
