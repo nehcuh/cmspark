@@ -102,20 +102,34 @@ export function sampleFailureDiagnostic(error) {
   let last = -1, lastElapsed = -1
   const observedStderr = error?.stderr
   const stderr = typeof observedStderr === 'string' ? observedStderr : ''
-  if (stderr.length <= 16 * 1024 * 1024) {
+  const available = typeof observedStderr === 'string' && stderr.length <= 16 * 1024 * 1024
+  let phaseState = observedStderr == null ? 'STDERR_MISSING'
+    : typeof observedStderr !== 'string' ? 'STDERR_NONSTRING'
+    : !available ? 'STDERR_LIMIT' : 'NO_PHASE_MARKERS'
+  let bodyState = available ? 'NOT_OBSERVED' : 'UNAVAILABLE'
+  if (available) {
     for (const line of stderr.split(/\r?\n/)) {
-      if (!line.startsWith('GALLERY70_PHASE=')) continue
+      if (line.includes('GALLERY70_BODY_ENTERED=')) {
+        bodyState = line === 'GALLERY70_BODY_ENTERED=1' && bodyState === 'NOT_OBSERVED'
+          ? 'OBSERVED' : 'INVALID_BODY_MARKER'
+      }
+      if (!line.includes('GALLERY70_PHASE=')) continue
+      // A marker-like rejected line is distinguished from an absent marker.
       const match = /^GALLERY70_PHASE=([A-Z_]+):(0|[1-9]\d{0,8})$/.exec(line)
       const index = match ? order.indexOf(match[1]) : -1
       const elapsed = match ? Number(match[2]) : -1
-      if (index !== last + 1 || elapsed < lastElapsed) { phases.length = 0; break }
+      if (phaseState === 'INVALID_PHASE_CHAIN' || index !== last + 1 || elapsed < lastElapsed) {
+        phases.length = 0; phaseState = 'INVALID_PHASE_CHAIN'; continue
+      }
       phases.push({ phase: order[index], elapsed_ms: elapsed })
+      phaseState = 'VALID_PHASE_PREFIX'
       last = index; lastElapsed = elapsed
     }
   }
   const code = error?.code
   const signal = error?.signal
-  return { kind: 'GALLERY70_SAMPLE_FAILURE', phases,
+  return { kind: 'GALLERY70_SAMPLE_FAILURE', phases, phaseState, bodyState,
+    stderrCodeUnits: available ? stderr.length : null,
     code: Number.isInteger(code) && code >= -2147483648 && code <= 4294967295 ? code
       : ['ENOENT', 'EACCES', 'EPERM', 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'].includes(code) ? code : null,
     killed: error?.killed === true,

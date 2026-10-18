@@ -173,7 +173,8 @@ test('#70 actual failure projection retains only fixed stages and finite child f
   })
   assert.deepEqual(result, { kind: 'GALLERY70_SAMPLE_FAILURE',
     phases: [{ phase: 'ENTERED', elapsed_ms: 1 }, { phase: 'ASSEMBLY_READY', elapsed_ms: 9 }],
-    code: null, killed: true, signal: 'SIGTERM' })
+    code: null, killed: true, signal: 'SIGTERM', phaseState: 'VALID_PHASE_PREFIX', bodyState: 'NOT_OBSERVED',
+    stderrCodeUnits: ('GALLERY70_PHASE=ENTERED:1\r\n' + secret + '\nGALLERY70_PHASE=ASSEMBLY_READY:9\n').length })
   assert.equal(JSON.stringify(result).includes(secret), false)
 })
 test('#70 failure projection refuses unknown, reordered, duplicate, oversized and injected markers', () => {
@@ -186,7 +187,7 @@ test('#70 failure projection refuses unknown, reordered, duplicate, oversized an
     'GALLERY70_PHASE=ENTERED:1 extra', 'x'.repeat(16 * 1024 * 1024 + 1),
   ]) assert.deepEqual(collector.sampleFailureDiagnostic({ stderr }).phases, [])
   assert.deepEqual(collector.sampleFailureDiagnostic(null), {
-    kind: 'GALLERY70_SAMPLE_FAILURE', phases: [], code: null, killed: false, signal: null })
+    kind: 'GALLERY70_SAMPLE_FAILURE', phases: [], code: null, killed: false, signal: null, phaseState: 'STDERR_MISSING', bodyState: 'UNAVAILABLE', stderrCodeUnits: null })
   assert.equal(collector.sampleFailureDiagnostic({ code: 1 }).code, 1)
   assert.equal(collector.sampleFailureDiagnostic({ code: 'ENOENT' }).code, 'ENOENT')
   assert.equal(collector.sampleFailureDiagnostic({ signal: 'OWNED_UNKNOWN' }).signal, null)
@@ -219,4 +220,21 @@ test('#70 extraction boundary reports a strict prefix through buffer readiness',
     'GALLERY70_PHASE=ENTERED:0\nGALLERY70_PHASE=ZIP_OPENED:1',
     phases.slice(0, 4).map((phase, i) => `GALLERY70_PHASE=${phase}:${i}`).join('\n') + '\nGALLERY70_PHASE=ZIP_OPENED:4',
   ]) assert.deepEqual(collector.sampleFailureDiagnostic({ stderr }).phases, [])
+})
+
+// New finite diagnostic controls: empty phases alone never establish startup.
+test('#70 empty phase diagnostic distinguishes unavailable, empty and rejected streams',()=>{
+ const inputs=[[undefined,'STDERR_MISSING',null,'UNAVAILABLE'],[null,'STDERR_MISSING',null,'UNAVAILABLE'],[7,'STDERR_NONSTRING',null,'UNAVAILABLE'],['','NO_PHASE_MARKERS',0,'NOT_OBSERVED'],['opaque inert','NO_PHASE_MARKERS',12,'NOT_OBSERVED'],['A😀B','NO_PHASE_MARKERS',4,'NOT_OBSERVED'],['GALLERY70_PHASE=UNKNOWN:0','INVALID_PHASE_CHAIN','GALLERY70_PHASE=UNKNOWN:0'.length,'NOT_OBSERVED'],['x'.repeat(16*1024*1024+1),'STDERR_LIMIT',null,'UNAVAILABLE']];
+ for(const[stderr,phaseState,units,bodyState]of inputs){const v=collector.sampleFailureDiagnostic({stderr,killed:true,signal:'SIGTERM'});assert.equal(v.phaseState,phaseState);assert.equal(v.stderrCodeUnits,units);assert.equal(v.bodyState,bodyState);assert.deepEqual(v.phases,[])}
+})
+test('#70 clock independent body marker is exact, single and does not reflect arbitrary stderr',()=>{
+ const marker='GALLERY70_BODY_ENTERED=1',secret='OWNED_UNKNOWN_SENTINEL';
+ for(const eol of['\n','\r\n']){const v=collector.sampleFailureDiagnostic({stderr:marker+eol+secret+eol+'GALLERY70_PHASE=ENTERED:0'});assert.equal(v.bodyState,'OBSERVED');assert.equal(v.phaseState,'VALID_PHASE_PREFIX');assert.deepEqual(v.phases,[{phase:'ENTERED',elapsed_ms:0}]);assert.equal(JSON.stringify(v).includes(secret),false)}
+ for(const raw of[marker+'\n'+marker,marker+' extra','prefix '+marker,'GALLERY70_BODY_ENTERED='+secret])assert.equal(collector.sampleFailureDiagnostic({stderr:raw}).bodyState,'INVALID_BODY_MARKER');
+})
+test('#70 phase diagnostic does not equate malformed or BOM markers with a valid empty prefix',()=>{
+ for(const raw of['\uFEFFGALLERY70_PHASE=ENTERED:0','prefix GALLERY70_PHASE=ENTERED:0','GALLERY70_PHASE=ASSEMBLY_READY:1','GALLERY70_PHASE=ENTERED:1\nGALLERY70_PHASE=ENTERED:2']){const v=collector.sampleFailureDiagnostic({stderr:raw});assert.equal(v.phaseState,'INVALID_PHASE_CHAIN');assert.deepEqual(v.phases,[])}
+})
+test('#70 body observation precedes guards and clock but leaves original phase location and PS statements intact',()=>{
+ const ps=fs.readFileSync(path.join(root,'scripts/fixtures/app-gallery-reference-70.ps1'),'utf8'),marker="[Console]::Error.WriteLine('GALLERY70_BODY_ENTERED=1')";assert.equal(ps.split(marker).length,2);assert.ok(ps.indexOf(marker)<ps.indexOf("$ErrorActionPreference = 'Stop'"));assert.ok(ps.indexOf(marker)<ps.indexOf('$phaseClock ='));assert.ok(ps.indexOf("'GALLERY70_PHASE=ENTERED:'")>ps.indexOf('$phaseClock ='));
 })
