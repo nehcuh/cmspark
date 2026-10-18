@@ -3,7 +3,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { spawnSync } from "node:child_process"
-import { desktopMcpFixture, desktopMetadataFixture, desktopDialogFixture, desktopResourceFixture, desktopWorkspaceFixture } from "./desktop-mcp-fixture.mjs"
+import { desktopMcpFixture, desktopMetadataFixture, desktopDialogFixture, desktopResourceFixture, desktopWorkspaceFixture, desktopLocalFixture } from "./desktop-mcp-fixture.mjs"
+import {copyDesktopAssets} from "./desktop-assets.mjs"
 import { desktopIntegrity } from "./desktop-artifacts.mjs"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const dest = path.join(root, "dist", "desktop-native")
@@ -27,12 +28,12 @@ const { prepareDesktopNodeHeaders, desktopAcceptanceVariant } = await import("./
 const headers = process.platform === "darwin" ? await prepareDesktopNodeHeaders({dest}) : undefined
 // Erasable TypeScript is supported by pinned Node22.23.2. This is the sole editable method table.
 const { DESKTOP_READ_METHODS, DESKTOP_RENDERER_METHODS, DESKTOP_NATIVE_METHODS, DESKTOP_METHOD_SET_VERSION } = await import(pathToFileURL(path.join(root, "src/desktop/capabilities.ts")))
-if (!DESKTOP_READ_METHODS.every(v => typeof v === "string" && (/^[a-z]+\.[a-z]+$/.test(v) || ["desktop.workspace.state","desktop.workspace.list","desktop.workspace.read"].includes(v)))) throw new Error("Invalid native method table")
-if (DESKTOP_METHOD_SET_VERSION !== 8 || JSON.stringify(DESKTOP_NATIVE_METHODS) !== JSON.stringify([...DESKTOP_RENDERER_METHODS,"desktop.confirmation.decision","desktop.workspace.picker.result"]) || JSON.stringify(DESKTOP_RENDERER_METHODS) !== JSON.stringify([...DESKTOP_READ_METHODS,"desktop.mcp.edit","desktop.mcp.save","desktop.thread.metadata.edit","desktop.thread.metadata.save","desktop.thread.create","desktop.thread.open","desktop.chat.send","desktop.chat.stop","desktop.resource.read","desktop.resource.import","desktop.resource.update","desktop.resource.remove","desktop.workspace.pick","desktop.workspace.cancel"])) throw new Error("Invalid controller method table")
+if (!DESKTOP_READ_METHODS.every(v => typeof v === "string" && (/^[a-z]+\.[a-z]+$/.test(v) || ["desktop.workspace.state","desktop.workspace.list","desktop.workspace.read","desktop.local.state"].includes(v)))) throw new Error("Invalid native method table")
+if (DESKTOP_METHOD_SET_VERSION !== 9 || JSON.stringify(DESKTOP_NATIVE_METHODS) !== JSON.stringify([...DESKTOP_RENDERER_METHODS,"desktop.confirmation.decision","desktop.workspace.picker.result"]) || JSON.stringify(DESKTOP_RENDERER_METHODS) !== JSON.stringify([...DESKTOP_READ_METHODS,"desktop.mcp.edit","desktop.mcp.save","desktop.thread.metadata.edit","desktop.thread.metadata.save","desktop.thread.create","desktop.thread.open","desktop.chat.send","desktop.chat.stop","desktop.resource.read","desktop.resource.import","desktop.resource.update","desktop.resource.remove","desktop.workspace.pick","desktop.workspace.cancel","desktop.terminal.open","desktop.terminal.input","desktop.terminal.resize","desktop.terminal.ack","desktop.terminal.ping","desktop.terminal.close","desktop.terminal.return","desktop.agent.start","desktop.agent.prompt","desktop.agent.cancel"])) throw new Error("Invalid controller method table")
 write(path.join(generated, "DesktopCapabilities.swift"), `// Generated from desktop/capabilities.ts. Do not edit.\nimport Foundation\nenum DesktopCapabilities { static let version = ${DESKTOP_METHOD_SET_VERSION}; static let methods: Set<String> = [${DESKTOP_RENDERER_METHODS.map(v => JSON.stringify(v)).join(",")} ] }\n`)
 write(path.join(generated, "desktop-capabilities.h"), `/* Generated from desktop/capabilities.ts. Do not edit. */\nstatic const unsigned desktop_method_set_version = ${DESKTOP_METHOD_SET_VERSION};\nstatic const wchar_t *desktop_read_methods[] = {${DESKTOP_RENDERER_METHODS.map(v => "L" + JSON.stringify(v)).join(",")}};\n`)
 directory(path.join(dest,"assets"))
-for(const name of ["index.html","app.css","app.js"]){const target=path.join(dest,"assets",name);replacement(target);fs.copyFileSync(path.join(root,"src/desktop/assets",name),target,fs.constants.COPYFILE_EXCL)}
+copyDesktopAssets(root,path.join(dest,"assets"))
 function run(bin, args) { const r=spawnSync(bin,args,{stdio:"inherit"});if(r.error||r.status!==0)process.exit(r.status||1) }
 if(process.platform === "win32") {
  const { buildDesktopWindows }=await import("./build-desktop-windows.mjs")
@@ -50,19 +51,19 @@ if(process.argv.includes("--test-fixtures")) {
  for (const mode of ["visual", "hostile", "parent"]) {
   const fixtureDest=path.join(dest,"acceptance",mode),fixtureGenerated=path.join(generated,`acceptance-${mode}`)
   directory(path.join(dest,"acceptance"));directory(fixtureDest);directory(fixtureGenerated);directory(path.join(fixtureDest,"assets"))
-  for(const name of ["index.html","app.css","app.js"]){const target=path.join(fixtureDest,"assets",name);replacement(target);fs.copyFileSync(path.join(root,"src/desktop/assets",name),target,fs.constants.COPYFILE_EXCL)}
+  copyDesktopAssets(root,path.join(fixtureDest,"assets"))
   const original=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.swift"),"utf8"),controller=fs.readFileSync(path.join(root,"tests/fixtures/desktop-480/native-acceptance.swift"),"utf8")
   const variant=desktopAcceptanceVariant("swift",original,controller);if(variant.inverse!==original)throw new Error("DESKTOP_ACCEPTANCE_SOURCE_DRIFT")
   const source=path.join(fixtureGenerated,"main.swift"),binary=path.join(fixtureDest,"cmspark-desktop");write(source,variant.source);replacement(binary)
   run("/usr/bin/swiftc",["-O","-D",mode==="hostile"?"D480_HOSTILE":mode==="parent"?"D480_PARENT":"D480_VISUAL",source,path.join(generated,"DesktopCapabilities.swift"),"-framework","AppKit","-framework","WebKit","-framework","CryptoKit","-o",binary])
   run("/usr/bin/codesign",["--force","--sign","-",binary])
  }
- for(const [family,formName]of[["mcp","native-form.js"],["metadata","metadata-form.js"],["dialog","dialog-form.js"],["resource","resource-form.js"],["workspace","workspace-form.js"]]){
+ for(const [family,formName]of[["mcp","native-form.js"],["metadata","metadata-form.js"],["dialog","dialog-form.js"],["resource","resource-form.js"],["workspace","workspace-form.js"],["local","local-form.js"]]){
  const mcpDest=path.join(dest,"acceptance",family),mcpGenerated=path.join(generated,"acceptance-"+family)
  directory(mcpDest);directory(mcpGenerated);directory(path.join(mcpDest,"assets"))
- for(const name of ["index.html","app.css","app.js"]){const target=path.join(mcpDest,"assets",name);replacement(target);fs.copyFileSync(path.join(root,"src/desktop/assets",name),target,fs.constants.COPYFILE_EXCL)}
+ copyDesktopAssets(root,path.join(mcpDest,"assets"))
  const mcpOriginal=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.swift"),"utf8"),mcpFixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/native-acceptance.swift"),"utf8"),mcpForm=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476",formName),"utf8")
- const mcpVariant=(family==="workspace"?desktopWorkspaceFixture("swift",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/workspace-acceptance.swift"),"utf8"),mcpForm):family==="resource"?desktopResourceFixture("swift",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/resource-acceptance.swift"),"utf8"),mcpForm):family==="dialog"?desktopDialogFixture("swift",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/dialog-acceptance.swift"),"utf8")):family==="metadata"?desktopMetadataFixture("swift",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/metadata-acceptance.swift"),"utf8")):desktopMcpFixture("swift",mcpOriginal,mcpFixture,mcpForm));if(mcpVariant.inverse!==mcpOriginal)throw Error("DESKTOP_MCP_SOURCE_DRIFT")
+ const mcpVariant=(family==="local"?desktopLocalFixture("swift",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/local-acceptance.swift"),"utf8"),mcpForm):family==="workspace"?desktopWorkspaceFixture("swift",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/workspace-acceptance.swift"),"utf8"),mcpForm):family==="resource"?desktopResourceFixture("swift",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/resource-acceptance.swift"),"utf8"),mcpForm):family==="dialog"?desktopDialogFixture("swift",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/dialog-acceptance.swift"),"utf8")):family==="metadata"?desktopMetadataFixture("swift",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/metadata-acceptance.swift"),"utf8")):desktopMcpFixture("swift",mcpOriginal,mcpFixture,mcpForm));if(mcpVariant.inverse!==mcpOriginal)throw Error("DESKTOP_MCP_SOURCE_DRIFT")
  const mcpSource=path.join(mcpGenerated,"main.swift"),mcpBinary=path.join(mcpDest,"cmspark-desktop");write(mcpSource,mcpVariant.source);replacement(mcpBinary)
  run("/usr/bin/swiftc",["-O",mcpSource,path.join(generated,"DesktopCapabilities.swift"),"-framework","AppKit","-framework","WebKit","-framework","CryptoKit","-o",mcpBinary])
  run("/usr/bin/codesign",["--force","--sign","-",mcpBinary])

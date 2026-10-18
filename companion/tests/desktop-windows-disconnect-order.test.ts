@@ -10,7 +10,7 @@ assert.ok(network, "native disconnect guard must be explicitly modeled")
 const offline = cpp.match(/else if\(message==native_offline\)\{([^{}]*?)if\(self->web\)/)?.[1]
 assert.ok(offline)
 const statements = offline.split(";").map(x => x.trim()).filter(Boolean)
-assert.ok(statements.every(x => ["self->retire_confirmation()", "self->ready=false", "self->generation.clear()", "self->requests.clear()"].includes(x)))
+assert.ok(statements.every(x => ["self->retire_local()", "self->retire_picker()", "self->retire_confirmation()", "self->ready=false", "self->generation.clear()", "self->requests.clear()"].includes(x)))
 const retiredEpochRecheck = cpp.includes('if(!ready||phase!=L"ready"){if(frame_epoch!=epoch)return;throw std::runtime_error("PHASE");}')
 assert.ok(retiredEpochRecheck || cpp.includes('if(!ready||phase!=L"ready")throw std::runtime_error("PHASE");'))
 if (retiredEpochRecheck) {
@@ -19,8 +19,8 @@ if (retiredEpochRecheck) {
 }
 assert.equal(cpp.includes("if(frame->epoch!=self->epoch)return 0;"), true)
 
-type State = { ready: boolean; phase: string; epoch: number; generation: boolean; pending: boolean; accepted: number }
-function connected(): State { return { ready: true, phase: "ready", epoch: 1, generation: true, pending: true, accepted: 0 } }
+type State = { ready: boolean; phase: string; epoch: number; generation: boolean; pending: boolean; accepted: number; picker: boolean; local: boolean }
+function connected(): State { return { ready: true, phase: "ready", epoch: 1, generation: true, pending: true, accepted: 0, picker: true, local: true } }
 function disconnect(s: State): void {
   const wasReady = s.ready
   if (network![1] === "exchange(false)") s.ready = false
@@ -39,7 +39,9 @@ function offlineMessage(s: State, epoch: number): void {
   if (epoch !== s.epoch) return
   for (const statement of statements) {
     // Native prompt retirement does not alter the existing readiness/order projection.
-    if (statement === "self->ready=false") s.ready = false
+    if (statement === "self->retire_local()") s.local = false
+    else if (statement === "self->retire_picker()") s.picker = false
+    else if (statement === "self->ready=false") s.ready = false
     else if (statement === "self->generation.clear()") s.generation = false
     else if (statement === "self->requests.clear()") s.pending = false
   }
@@ -89,4 +91,14 @@ test("after UI offline and during invalid handshake phases frames still fail clo
   s.ready = true; s.phase = "hello"
   assert.throws(() => frame(s, 1), /EXIT_45_PHASE/)
   assert.equal(s.accepted, 0)
+})
+
+// The actual private panel is retired by the same current-epoch UI branch.
+test("current offline branch retires owned local and picker while stale epochs preserve both", () => {
+  assert.equal(statements.filter(x => x === "self->retire_local()").length, 1)
+  assert.equal(statements.filter(x => x === "self->retire_picker()").length, 1)
+  const current = connected(); offlineMessage(current, 1)
+  assert.equal(current.local, false); assert.equal(current.picker, false); assert.deepEqual([current.ready,current.generation,current.pending], [false,false,false])
+  const newer = connected(); newer.epoch = 2; offlineMessage(newer, 1)
+  assert.equal(newer.local, true); assert.equal(newer.picker, true); assert.deepEqual([newer.ready,newer.generation,newer.pending], [true,true,true])
 })

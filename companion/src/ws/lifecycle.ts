@@ -15,6 +15,8 @@ import { bindProjectConfirmationProbe } from "../threads/project-activity"
 import { codingHandbackView } from "../acp/ui-progress"
 import { randomUUID } from "crypto"
 import { DesktopIdentityRegistry } from "../desktop/identity"
+import {commitNativeLocalHandback} from "../desktop/local-handback"
+import {createNativeLocalWorkRuntime} from "../desktop/local-work-runtime"
 import { createNativeDialogRuntime } from "../desktop/dialog-runtime"
 import { createDesktopChannel, attachDesktopUpgrade } from "../desktop/channel"
 import { DesktopHostLauncher } from "../desktop/host-launcher"
@@ -683,6 +685,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           diffSummary: session.diff_summary || null,
           paths: (session.pending_diffs || []).map((d) => d.relPath).filter(Boolean),
         })
+        if(commitNativeLocalHandback(session,content))return
         const msg = tm.addMessage(session.thread_id, {
           thread_id: session.thread_id,
           role: "assistant",
@@ -810,6 +813,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     securityConfirmations: requireRt().securityConfirmations,
     onAuthenticated: host => desktopLauncher.authenticated(host),
     dialogRuntime: owner => createNativeDialogRuntime({ ...owner, threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), history: requireRt().getHistoryStore(), createExecutor: run => requireRt().createToolExecutor(owner.ws, run) }),
+    localRuntime: createNativeLocalWorkRuntime({threads:requireRt().getThreadManager(),activity:id=>projectThreadActivity(id,key=>listLlmActiveThreadIds().includes(key))}),
     workspaceRuntime: { enabled: () => isModuleEnabled("devsec-workspace"), activity: id => projectThreadActivity(id, key => listLlmActiveThreadIds().includes(key)) },
     onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws) },
   })

@@ -1,9 +1,10 @@
 /** Fixed, build-only desktop package layout. This module never installs or launches a host. */
 import fs from "node:fs"
+import {DESKTOP_ASSET_NAMES} from "./desktop-assets.mjs"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-const names = platform => [platform === "win32" ? "cmspark-desktop.exe" : "cmspark-desktop", "desktop-launcher.node", "assets/index.html", "assets/app.css", "assets/app.js", ...(platform === "win32" ? ["licenses/WebView2.LICENSE.txt"] : [])]
+const names = platform => [platform === "win32" ? "cmspark-desktop.exe" : "cmspark-desktop", "desktop-launcher.node", ...DESKTOP_ASSET_NAMES.map(name=>"assets/"+name), ...(platform === "win32" ? ["licenses/WebView2.LICENSE.txt"] : [])]
 export function desktopIntegrity(source, platform = process.platform) {
   if (platform !== "win32" && platform !== "darwin") throw new Error("DESKTOP_PLATFORM_UNSUPPORTED")
   const files = {}

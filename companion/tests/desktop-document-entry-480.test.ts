@@ -22,7 +22,7 @@ test("Windows virtual folder entry is the explicit existing index.html document"
 })
 test("Navigate, main-frame start/completion, renderer and HTML map use the same exact file identity",()=>{
  assert.deepEqual(documentBindings(),Array(5).fill("document_url"))
- assert.match(cpp,/if\(allow\)\{retire_workspace\(\);retire_dialog\(\);retire_confirmation\(0\);generation.clear\(\);requests.clear\(\);\}/)
+ assert.match(cpp,/if\(allow\)\{retire_local\(\);retire_workspace\(\);retire_dialog\(\);retire_confirmation\(0\);generation.clear\(\);requests.clear\(\);style_nonce=random_id\(\)\+random_id\(\);\}/)
  assert.match(cpp,/if\(ok&&own&&ready\)document\(\);/)
  assert.match(cpp,/if\(!ready\|\|source!=document_url\|\|generation.empty\(\)\)return;/)
 })

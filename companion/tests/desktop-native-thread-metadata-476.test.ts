@@ -147,16 +147,33 @@ test('#476 actual native resource imports, reopens, edits, denies/removes and pr
  })
 })
 
+// Test-only actual directory identity: an OS path spelling is not a second root.
+function captureWorkspaceSelection705(root:string) {
+ const canonical=fs.realpathSync(root),parent=fs.realpathSync(path.dirname(canonical)),a=fs.lstatSync(canonical,{bigint:true}),b=fs.lstatSync(parent,{bigint:true})
+ if(!a.isDirectory()||a.isSymbolicLink()||!b.isDirectory()||b.isSymbolicLink()||a.ino<=0n||b.ino<=0n)throw Error('OWNED_WORKSPACE_IDENTITY_INVALID')
+ return Object.freeze({root:canonical,parent,dev:a.dev,ino:a.ino,parentDev:b.dev,parentIno:b.ino})
+}
+function sameWorkspaceSelection705(expected:ReturnType<typeof captureWorkspaceSelection705>,value:unknown):boolean {
+ try{
+  if(typeof value!=='string'||!path.isAbsolute(value)||value.includes('\0'))return false
+  const now=captureWorkspaceSelection705(expected.root)
+  if(now.root!==expected.root||now.parent!==expected.parent||now.dev!==expected.dev||now.ino!==expected.ino||now.parentDev!==expected.parentDev||now.parentIno!==expected.parentIno)return false
+  const selected=fs.lstatSync(fs.realpathSync(value),{bigint:true})
+  return selected.isDirectory()&&!selected.isSymbolicLink()&&selected.dev===expected.dev&&selected.ino===expected.ino
+ }catch{return false}
+}
+
 // One sequential surface owner, actual retained native OS panel + original controller purpose.
 test('#476 actual native workspace picker binds canonical root, reopens lists/reads and cancels the second OS picker',{skip:!['darwin','win32'].includes(process.platform),timeout:45000},async t=>{
  return withSurface650(t,async(t,surfaceLease)=>{
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-workspace-476-'))),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
-  const root=path.join(dir,'selected');fs.mkdirSync(root);fs.writeFileSync(path.join(root,'hello.txt'),'owned workspace text')
+  const requestedRoot=path.join(dir,'selected');fs.mkdirSync(requestedRoot);const root=fs.realpathSync(requestedRoot),expectedSelection=captureWorkspaceSelection705(root);fs.writeFileSync(path.join(root,'hello.txt'),'owned workspace text')
   const {SecurityConfirmationManager}=await import('../src/security-confirmation'),{parseNativeWorkspaceDiagnostic705}=await import('./helpers/desktop-workspace-picker-476')
   const threads=new ThreadManager();threads.create('owned workspace','native-workspace-A');threads.create('untouched sibling','native-workspace-B')
   const manager=new SecurityConfirmationManager(),registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-native-workspace-476')
   const pickerRequests=new Map<string,{request:string;thread:string;revision:string;number:number}>(),completedPickers=new Set<string>()
   const required=['D476_WS_UNBOUND','D476_WS_PICKER_SELECTED','D476_WS_CONFIRMATION','D476_WS_COMMITTED','D476_WS_LISTED','D476_WS_READ','D476_WS_REOPENED','D476_WS_PICKER_CANCELLED','D476_WS_CANCELLED','D476_WS_DONE'],receipts=new Set<string>()
+  let selectedOutcome:boolean|null=null,selectedIdentity:boolean|null=null
   let failureSite=0,pickOutcome=0,nativeDiagnostic:ReturnType<typeof parseNativeWorkspaceDiagnostic705>=null,diagnosticInvalid=false
   let pickerLifecycle={mode:0 as number,childClosed:false,childExit:null as number|null,childSignal:0 as number,childError:false}
   let current:any,authenticated=false,windowRequested=false,connections=0,failed=false,picks=0,pickerObserved=0,pickerReturned=0,cancelReturned=0,child:DesktopNativeChild|undefined,settled=false,exitResolve!:(n:number)=>void,failResolve!:()=>void
@@ -178,7 +195,7 @@ test('#476 actual native workspace picker binds canonical root, reopens lists/re
     if(f.type==='desktop.workspace.picker.result'){
      const request=pickerRequests.get(f.pick_id);if(!request||completedPickers.has(f.pick_id)||request.request!==f.request_id||request.thread!==f.thread_id||request.revision!==f.revision){fail(2);return}
      completedPickers.add(f.pick_id)
-     if(request.number===1){if(f.outcome!=='selected'||f.path!==root){pickOutcome=3;fail(5)}else{pickOutcome=2;pickerReturned++}}
+     if(request.number===1){selectedOutcome=f.outcome==='selected';selectedIdentity=selectedOutcome?sameWorkspaceSelection705(expectedSelection,f.path):null;if(!selectedOutcome||selectedIdentity!==true){pickOutcome=3;fail(5)}else{pickOutcome=2;pickerReturned++}}
      else if(f.outcome!=='cancelled'||Object.hasOwn(f,'path')){pickOutcome=5;fail(6)}else{pickOutcome=4;cancelReturned++}
      return
     }
@@ -195,7 +212,7 @@ if(typeof f.id==='string'&&f.id.startsWith('D476_WS_DIAG_')){try{const d=parseNa
    const disk=new ThreadManager();assert.equal(disk.get('native-workspace-A')!.workspace_root,root);assert.equal(disk.get('native-workspace-B')!.workspace_root,undefined)
    process.stdout.write('DESKTOP_WORKSPACE_476 {"native":true,"actualPicker":true,"controllerConfirmed":true,"persisted":true,"reopened":true,"listed":true,"read":true,"pickerCancelled":true,"otherThreadUnchanged":true}\n')
   }finally{
-   surfaceLease.retain();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid}))}catch{}
+   surfaceLease.retain();try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity}))}catch{}
    child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();manager.rejectAll('disconnect');await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()
   }
  })
@@ -246,3 +263,36 @@ test('#705 passive fixture source retains selection-click order and finite nativ
   assert.equal(/SetFocus|SetActiveWindow|AXUIElement|SystemEvents/.test(cpp+swift),false)
  }
 })
+
+// Shares the existing foreground worker and surface lease, never a new competing file.
+test('#476 native local-work keys→real PTY/ACP→explicit handback→same history',{skip:!['darwin','win32'].includes(process.platform),timeout:45000},async t=>withSurface650(t,async(t,surfaceLease)=>{
+ const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-local-work-476-'))),previous=process.env.CMSPARK_DATA_DIR,skipLogin=process.env.CMSPARK_SKIP_LOGIN_ENV;process.env.CMSPARK_DATA_DIR=dir;process.env.CMSPARK_SKIP_LOGIN_ENV='1'
+ const {initDataDir,saveConfig}=await import('../src/config'),{createNativeLocalWorkRuntime}=await import('../src/desktop/local-work-runtime'),acp=await import('../src/acp/manager'),{commitNativeLocalHandback}=await import('../src/desktop/local-handback'),{formatHandbackChatMessage}=await import('../src/acp/handback-format'),protocol=await import('../src/acp/protocol-session'),{SecurityConfirmationManager}=await import('../src/security-confirmation')
+ await initDataDir();const permissionFile=path.join(dir,'permission-outcome'),agentScript=path.resolve(__dirname,'../../tests/fixtures/desktop-476/local-agent.cjs')
+ saveConfig({modules:{'devsec-workspace':{available:true,enabled:true}},embedded_terminal:{enabled:true},acp:{enabled:true,policy:{require_workspace:true,force_confirm_session_start:true,default_profile:'review_readonly'},servers:{owned:{enabled:true,display_name:'Owned controlled ACP',transport:'stdio',command:process.execPath,args:[agentScript],protocol:'acp',env:{OWNED_LOCAL_PERMISSION_FILE:permissionFile},policy:{profile:'review_readonly'}}}},coding_handoff:{open_local_terminal:true}} as any)
+ acp._resetAcpManagerForTests();const manager=acp.getAcpManager(),threads=new ThreadManager();threads.create('Native local A','native-local-A');threads.create('Unchanged sibling','native-local-B');threads.update('native-local-A',{workspace_root:dir});let saved=0,protocolStarts=0,inputUnicode=false,resizeCalls=0,terminalStops=0
+ manager.setHandbackSink(({session,handback})=>{saved++;const content=formatHandbackChatMessage({agentId:session.agent_id,mode:session.mode||'review_readonly',partial:session.partial,handback,diffSummary:session.diff_summary||null,paths:[]});assert.equal(commitNativeLocalHandback(session,content),true)})
+ const childClosures:Promise<void>[]=[],realStart=protocol.tryStartProtocolSession;t.mock.method(protocol,'tryStartProtocolSession',async (opts:Parameters<typeof protocol.tryStartProtocolSession>[0])=>{const handle=await realStart(opts);if(handle){protocolStarts++;childClosures.push(new Promise<void>(r=>{if(handle.child.exitCode!==null||handle.child.signalCode!==null)r();else handle.child.once('close',()=>r())}))}return handle})
+ const runtime=createNativeLocalWorkRuntime({threads,activity:()=> 'idle'}),realInput=runtime.input,realResize=runtime.resize,realClose=runtime.close;runtime.input=(id,b64)=>{if(Buffer.from(b64,'base64').toString('utf8').includes('中'))inputUnicode=true;return realInput(id,b64)};runtime.resize=(id,c,r)=>{resizeCalls++;return realResize(id,c,r)};runtime.close=id=>{terminalStops++;return realClose(id)}
+ const registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-local-work-476'),confirmations=new SecurityConfirmationManager(),required=['D476_LOCAL_OUTPUT','D476_LOCAL_RESIZED','D476_LOCAL_STOPPED','D476_LOCAL_SAVED','D476_LOCAL_REOPENED','D476_LOCAL_AGENT_SAVED','D476_LOCAL_AGENT_STOPPED','D476_LOCAL_DONE'],receipts=new Set<string>()
+ let native:DesktopNativeChild|undefined,current:any,authenticated=false,windowRequested=false,settled=false,failed=false,connections=0,completion:Promise<void>|undefined,primary:unknown,exitResolve!:(v:number)=>void,failResolve!:()=>void
+ const exited=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r),channel=createDesktopChannel({registry,securityConfirmations:confirmations,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},maxPayload:10485760,localRuntime:runtime,onAuthenticated:host=>{authenticated=true;windowRequested=channel.window(host,'workspace')}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer();attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
+ const deadline=new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_LOCAL_NATIVE_DEADLINE')),{once:true}));const fail=()=>{failed=true;failResolve()}
+ channel.wss.on('connection',ws=>{current=ws;connections++;ws.on('message',raw=>{let frame:any;try{frame=JSON.parse(String(raw))}catch{return}if(!authenticated||frame.type!=='system.ping')return;if(frame.id==='D476_LOCAL_FAIL'){fail();return}if(!required.includes(frame.id))return;if(receipts.has(frame.id)){fail();return}receipts.add(frame.id);if(frame.id==='D476_LOCAL_DONE'){
+   completion=(async()=>{await Promise.race([Promise.all(childClosures),deadline]);assert.equal(receipts.size,required.length);assert.equal(protocolStarts,2);assert.equal(saved,1);assert.equal(fs.readFileSync(permissionFile,'utf8'),'DENIED');assert.equal(inputUnicode,true);assert.ok(resizeCalls>=2);assert.ok(terminalStops>=1);const disk=new ThreadManager().readDesktopDialog('native-local-A');assert.equal(disk.messages.length,2);assert.ok(disk.messages.some(m=>m.content.includes('D476_LOCAL_中')));assert.ok(disk.messages.some(m=>m.content.includes('D476_AGENT_PERMISSION_DENIED')));assert.equal(new ThreadManager().readDesktopDialog('native-local-B').messages.length,0);assert.equal(manager.hasProjectThreadActivity('native-local-A'),false);ws.send(JSON.stringify({type:'D476.local.complete',result:'COMPLETE'}))})();completion.catch(fail)
+  }})})
+ server.listen(0,'127.0.0.1');await once(server,'listening')
+ try{
+  const output=path.resolve(__dirname,'../../dist/desktop-native'),binary=path.join(output,'acceptance/local',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop');assert.ok(fs.existsSync(binary),'actual local-work acceptance host must be built');surfaceLease.checkpoint();native=(require(path.join(output,'desktop-launcher.node')) as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address() as any).port}/desktop`,code=>{settled=true;exitResolve(code)})
+  assert.equal(await Promise.race([exited,failure.then(()=>{throw Error('OWNED_LOCAL_NATIVE_PHASE_FAILED')}),deadline]),77);if(completion)await completion;assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,1);assert.deepEqual([...receipts].sort(),[...required].sort());assert.equal(confirmations.pendingCount(),0)
+  process.stdout.write('DESKTOP_LOCAL_WORK_476 {"native":true,"ownedPty":true,"unicodeInput":true,"unicodeOutput":true,"resized":true,"stopped":true,"selectedReturn":true,"reopened":true,"ownedAcpProcesses":2,"permissionDenied":true,"savedAgentMessages":1,"siblingUnchanged":true}\n')
+ }catch(error){primary=error;throw error}finally{
+  surfaceLease.retain();try{t.diagnostic('D476_LOCAL_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),protocolStarts,saved,inputUnicode,resizeCalls,terminalStops,authenticated,windowRequested,connections,childExited:settled}))}catch{}
+  let cleanupError:unknown;const clean=async(fn:()=>unknown)=>{try{await fn()}catch(error){cleanupError??=error}}
+  await clean(async()=>{native?.terminate();if(native&&!settled)await exited});await clean(()=>{for(const ws of channel.wss.clients)ws.terminate();confirmations.rejectAll('disconnect')});await clean(()=>manager.shutdown());manager.setHandbackSink(null)
+  await clean(()=>Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]));await clean(()=>new Promise<void>(r=>server.close(()=>r())))
+  if(previous===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=previous;if(skipLogin===undefined)delete process.env.CMSPARK_SKIP_LOGIN_ENV;else process.env.CMSPARK_SKIP_LOGIN_ENV=skipLogin;await clean(()=>fs.rmSync(dir,{recursive:true,force:true}))
+  if((!native||settled)&&!manager.hasProjectThreadActivity('native-local-A'))surfaceLease.settled();else cleanupError??=Error('OWNED_LOCAL_NATIVE_REAP_UNCONFIRMED')
+  if(primary===undefined&&cleanupError!==undefined)throw cleanupError
+ }
+}))

@@ -976,6 +976,15 @@ export class ThreadManager {
     return { id: target.id, workspace_root: target.workspace_root || null, updated_at: target.updated_at }
   }
 
+  /** Private local-work policy snapshot; never seeds get()/list() runtime state. */
+  desktopLocalWorkSnapshot(threadId: string): { id: string; workspace_root: string | null; updated_at: string; title: string; policy: ExecutionPolicy | null; role: string | null; allowed: boolean } | undefined {
+    const workspace = this.desktopWorkspaceSnapshot(threadId)
+    if (!workspace) return undefined
+    const target = this.index.threads.find(t => t.id === threadId)!
+    if (target.execution_policy != null && !isExecutionPolicy(target.execution_policy) || target.agent_role != null && !["normal","orchestrator","worker"].includes(target.agent_role)) return undefined
+    return { ...workspace, title: typeof target.alias === "string" ? target.alias : "", policy: target.execution_policy ?? null, role: target.agent_role ?? null, allowed: target.agent_role !== "worker" && target.execution_policy !== "plan_readonly" }
+  }
+
   /** Conditional target-only workspace write; input is private actor state, not renderer data. */
   updateDesktopWorkspace(expected: { id: string; workspace_root: string | null; updated_at: string }, root: string, current: () => boolean) {
     const fresh = this.desktopWorkspaceSnapshot(expected.id)

@@ -64,6 +64,20 @@ export type AcpLiveEvent = {
   output_truncated?: boolean
 }
 
+/** Trusted server-only capability; never accepted from a renderer payload or serialized. */
+export type NativeLocalContext = {
+  current(): boolean
+  signal: AbortSignal
+  requestPermission(info: { title: string; detail?: string }): Promise<boolean>
+}
+type NativeBinding = {
+  identity: NativeLocalContext
+  current: () => boolean
+  signal: AbortSignal
+  requestPermission: NativeLocalContext["requestPermission"]
+  detach?: () => void
+}
+
 export type AcpEventListener = (ev: AcpLiveEvent) => void
 
 function newSessionId(): string {
@@ -73,18 +87,46 @@ function newSessionId(): string {
 export class AcpManager {
   private sessions = new Map<string, AcpSessionRecord>()
   private manualEntryLaunches = new Map<string, ManualEntryLaunch>()
+  private nativeBindings = new WeakMap<AcpSessionRecord, NativeBinding>()
+
+  private nativeCurrent(session: AcpSessionRecord): boolean {
+    const binding = this.nativeBindings.get(session)
+    if (!binding) return true
+    try { return !binding.signal.aborted && binding.current() === true }
+    catch { return false }
+  }
+
+  private detachNativeAbort(session: AcpSessionRecord): void {
+    this.nativeBindings.get(session)?.detach?.()
+  }
+
+  private nativeBinding(context: NativeLocalContext): NativeBinding | null {
+    try {
+      if (!context || typeof context.current !== "function" ||
+          typeof context.requestPermission !== "function" || !(context.signal instanceof AbortSignal) ||
+          context.signal.aborted || context.current() !== true) return null
+      // Snapshot callbacks so later mutation cannot turn a pending permission into another gate.
+      return { identity: context, signal: context.signal,
+        current: context.current.bind(context), requestPermission: context.requestPermission.bind(context) }
+    } catch { return null }
+  }
   private processes = new Map<string, ChildProcessWithoutNullStreams>()
   private ownedChildren = new Set<ChildProcessWithoutNullStreams>()
   private startupPreparations = new Map<string, { controller: AbortController; done: Promise<void> }>()
   private trackChild(id: string, child: ChildProcessWithoutNullStreams): void {
     this.processes.set(id, child)
     this.ownedChildren.add(child)
-    child.once("close", () => this.ownedChildren.delete(child))
+    child.once("close", () => {
+      this.ownedChildren.delete(child)
+      const session = this.sessions.get(id)
+      if (session && session.state === "closed") this.detachNativeAbort(session)
+    })
   }
   private protocolHandles = new Map<string, ProtocolSessionHandle>()
   private runningCount = 0
   private shuttingDown = false
   private listeners = new Set<AcpEventListener>()
+  private nativeListeners = new WeakMap<NativeLocalContext, Set<AcpEventListener>>()
   private lastProgressAt = new Map<string, number>()
   private handbackSink: AcpHandbackSink | null = null
   private terminalSink:
@@ -139,6 +181,14 @@ export class AcpManager {
     return () => this.listeners.delete(fn)
   }
 
+  /** Private transport subscription; legacy broadcast hooks never receive native progress. */
+  onNativeEvent(context: NativeLocalContext, fn: AcpEventListener): () => void {
+    let listeners = this.nativeListeners.get(context)
+    if (!listeners) { listeners = new Set(); this.nativeListeners.set(context, listeners) }
+    listeners.add(fn)
+    return () => { listeners.delete(fn) }
+  }
+
   /** Inject completed handback into thread history (wired from server boot). */
   setHandbackSink(fn: AcpHandbackSink | null): void {
     this.handbackSink = fn
@@ -165,6 +215,8 @@ export class AcpManager {
     if (this.terminalEmitted.has(session)) return
     session.terminal_kind = kind
     this.terminalEmitted.add(session)
+    const child = this.processes.get(session.session_id)
+    if (!child || child.exitCode != null || child.signalCode != null) this.detachNativeAbort(session)
     if (!this.terminalSink) return
     try {
       this.terminalSink({ session, kind, code })
@@ -227,7 +279,13 @@ export class AcpManager {
       terminal_command_line: session.terminal_command_line,
       terminal_command_expires_at: session.terminal_command_expires_at,
     })
-    if (event) this.emit(event)
+    if (event) {
+      const native = this.nativeBindings.get(session)
+      if (!native) this.emit(event)
+      else if (this.nativeCurrent(session)) for (const listener of this.nativeListeners.get(native.identity) || []) {
+        try { listener(event) } catch { logger.warn("acp.native_listener_failed") }
+      }
+    }
     else logger.warn("acp.ui_progress_oversized_metadata", { state: session.state })
   }
 
@@ -442,16 +500,22 @@ export class AcpManager {
   }
 
   getSession(sessionId: string): AcpSessionRecord | undefined {
-    return this.sessions.get(sessionId)
+    const session = this.sessions.get(sessionId)
+    return session && !this.nativeBindings.has(session) ? session : undefined
+  }
+
+  getNativeSession(sessionId: string, context: NativeLocalContext): AcpSessionRecord | undefined {
+    const session = this.sessions.get(sessionId)
+    return session && this.nativeBindings.get(session)?.identity === context ? session : undefined
   }
 
   listSessionsForThread(threadId: string): AcpSessionRecord[] {
-    return [...this.sessions.values()].filter((s) => s.thread_id === threadId)
+    return [...this.sessions.values()].filter((s) => s.thread_id === threadId && !this.nativeBindings.has(s))
   }
 
   /** Read-only metadata admission; closed UI state does not prove the owned child finished. */
   hasProjectThreadActivity(threadId: string): boolean {
-    return this.listSessionsForThread(threadId).some(session => {
+    return [...this.sessions.values()].filter(session => session.thread_id === threadId).some(session => {
       const child = this.processes.get(session.session_id)
       return ["offered", "confirmed", "running"].includes(session.state) || this.startupPreparations.has(session.session_id) ||
         !!child && child.exitCode === null && child.signalCode === null
@@ -466,6 +530,27 @@ export class AcpManager {
     mode?: "review_readonly" | "propose_diff"
     parentSessionId?: string
   }): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
+    return this.proposeOwned(opts)
+  }
+
+  proposeNative(opts: Parameters<AcpManager["propose"]>[0], context: NativeLocalContext): ReturnType<AcpManager["propose"]> {
+    const binding = this.nativeBinding(context)
+    if (this.shuttingDown) return { ok: false, error: "acp: manager shutting down" }
+    if (!binding || typeof opts.workspaceRoot !== "string" || !opts.workspaceRoot.trim())
+      return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+    if (typeof opts.goal !== "string" || !opts.goal.trim() || opts.goal.length > 8000)
+      return { ok: false, error: "ACP_NATIVE_GOAL_LIMIT" }
+    return this.proposeOwned(opts, binding)
+  }
+
+  private proposeOwned(opts: {
+    threadId: string
+    agentId: string
+    goal: string
+    workspaceRoot?: string | null
+    mode?: "review_readonly" | "propose_diff"
+    parentSessionId?: string
+  }, native?: NativeBinding): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
     const cfg = getConfig()
     if (!cfg.acp?.enabled) {
       return { ok: false, error: "acp: feature disabled (config.acp.enabled=false)" }
@@ -499,7 +584,7 @@ export class AcpManager {
 
     // Snapshot Mode C flag at propose (L2 confirm copy + maybeOpenLocalTerminal both use this).
     const openLocalTerminalSnap =
-      getConfig().coding_handoff?.open_local_terminal === true
+      !native && getConfig().coding_handoff?.open_local_terminal === true
     const session: AcpSessionRecord = {
       session_id: newSessionId(),
       thread_id: opts.threadId,
@@ -514,7 +599,17 @@ export class AcpManager {
       parent_session_id: opts.parentSessionId,
       open_local_terminal_snapshot: openLocalTerminalSnap,
     }
+    if (native) {
+      this.nativeBindings.set(session, native)
+      if (!this.nativeCurrent(session)) return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+    }
     this.sessions.set(session.session_id, session)
+    if (native) {
+      const abort = () => { this.cancelOwned(session.session_id) }
+      native.signal.addEventListener("abort", abort, { once: true })
+      native.detach = () => { native.signal.removeEventListener("abort", abort); native.detach = undefined }
+      if (native.signal.aborted) { abort(); return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" } }
+    }
     logger.info("acp.offer", { session_id: session.session_id, agent: opts.agentId })
     this.emitProgress(session, "offered — waiting to start", true)
     return { ok: true, session }
@@ -555,6 +650,11 @@ export class AcpManager {
     maxOut: number,
     code: number | null,
   ): void {
+    if (this.nativeBindings.has(session) && (!this.nativeCurrent(session) || session.mode_c_open_cancelled)) {
+      // A retired document must not commit a late successful handback.
+      this.cancelOwned(session.session_id)
+      return
+    }
     session.agent_text = body
     // Parse diffs first so 路径 section can list files (empty → still template headers).
     let pathList: string[] = []
@@ -623,6 +723,15 @@ export class AcpManager {
     if (session.state !== "offered" && session.state !== "confirmed") {
       return { ok: false, error: `acp: cannot start from state ${session.state}` }
     }
+    if (!this.nativeCurrent(session)) {
+      this.cancelOwned(sessionId)
+      return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+    }
+    // A legacy offer can predate a native start too: the live slot is global.
+    if (this.runningCount >= 1) {
+      if (this.nativeBindings.has(session)) this.cancelOwned(sessionId)
+      return { ok: false, error: "ACP_SESSION_BUSY: only one ACP session at a time" }
+    }
     const cfg = getConfig()
     if (!cfg.acp?.enabled) return { ok: false, error: "acp: feature disabled" }
     const server = this.resolveServer(session.agent_id)
@@ -644,9 +753,10 @@ export class AcpManager {
     })
 
     // Event observers may synchronously shut down/cancel during starting….
-    if (this.shuttingDown || session.mode_c_open_cancelled) {
+    if (this.shuttingDown || session.mode_c_open_cancelled || !this.nativeCurrent(session)) {
       this.runningCount = Math.max(0, this.runningCount - 1)
       session.state = "closed"
+      if (this.nativeBindings.has(session) && !this.terminalEmitted.has(session)) this.cancelOwned(sessionId)
       return { ok: false, error: "acp: cancelled during startup" }
     }
     if (process.platform === "win32") {
@@ -669,9 +779,10 @@ export class AcpManager {
         clearTimeout(timer)
         this.startupPreparations.delete(sessionId)
       }
-      if (this.shuttingDown || session.mode_c_open_cancelled) {
+      if (this.shuttingDown || session.mode_c_open_cancelled || !this.nativeCurrent(session)) {
         this.runningCount = Math.max(0, this.runningCount - 1)
         session.state = "closed"
+        if (this.nativeBindings.has(session) && !this.terminalEmitted.has(session)) this.cancelOwned(sessionId)
         return { ok: false, error: "acp: cancelled during startup" }
       }
     }
@@ -687,12 +798,15 @@ export class AcpManager {
         session,
         promptTimeoutMs: server.policy.session_timeout_ms,
         hooks: {
-          onSpawn: (child) => { probeChild = child; this.trackChild(sessionId, child) },
+          onSpawn: (child) => {
+            probeChild = child; this.trackChild(sessionId, child)
+            if (!this.nativeCurrent(session)) this.cancelOwned(sessionId)
+          },
           onAgentText: (text) => {
             const next = (session.agent_output_text || "") + text
             if (Buffer.byteLength(next) > 256 * 1024) {
               session.partial = true
-              this.cancel(sessionId)
+              this.cancelOwned(sessionId)
             } else {
               session.agent_output_text = next
               session.agent_text = next
@@ -708,6 +822,14 @@ export class AcpManager {
             session.agent_session_id = id
           },
           onPermission: async ({ title, detail }) => {
+            const native = this.nativeBindings.get(session)
+            if (native) {
+              if (!this.nativeCurrent(session) || session.mode_c_open_cancelled) return "deny"
+              try {
+                const ok = await native.requestPermission({ title, detail })
+                return ok === true && this.nativeCurrent(session) && !session.mode_c_open_cancelled ? "allow" : "deny"
+              } catch { return "deny" }
+            }
             if (!this.permissionGate) return "deny"
             const ok = await this.permissionGate({
               title,
@@ -743,13 +865,14 @@ export class AcpManager {
         if (!handle || this.processes.get(sessionId) === handle.child) this.processes.delete(sessionId)
       }
       handle?.child.once("close", releaseProtocolSlot)
-      if (session.mode_c_open_cancelled) {
+      if (session.mode_c_open_cancelled || !this.nativeCurrent(session)) {
         if (handle) {
           handle.kill()
           try { await closeAcpChild(handle.child) }
           catch (e: any) { return { ok: false, error: e?.message || String(e) } }
         }
         releaseProtocolSlot()
+        if (this.nativeBindings.has(session)) this.cancelOwned(sessionId)
         return { ok: false, error: "acp: cancelled during startup" }
       }
       if (handle) {
@@ -772,6 +895,10 @@ export class AcpManager {
           // A completed ACP turn need not exit the server process. Reclaim it
           // before dropping its handles so successful sessions do not leak children.
           await stopProtocolChild()
+          if (this.nativeBindings.has(session) && (!this.nativeCurrent(session) || session.mode_c_open_cancelled)) {
+            this.cancelOwned(sessionId)
+            return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+          }
           this.finishSession(session, body, server.policy.max_handback_chars ?? 48_000, 0)
           return { ok: true, session }
         } catch (e: any) {
@@ -810,6 +937,11 @@ export class AcpManager {
     server: AcpAgentServerConfig,
     prompt: string,
   ): Promise<{ ok: true; session: AcpSessionRecord } | { ok: false; error: string }> {
+    if (this.nativeBindings.has(session) && (!this.nativeCurrent(session) || session.mode_c_open_cancelled)) {
+      this.runningCount = Math.max(0, this.runningCount - 1)
+      this.cancelOwned(session.session_id)
+      return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+    }
     session.transport = "cli"
     const sessionId = session.session_id
     const promptPath = path.join(os.tmpdir(), `cmspark-acp-${session.session_id}.md`)
@@ -866,7 +998,8 @@ export class AcpManager {
         cwd: session.workspace_root, args: server.args ? [...server.args] : undefined }
       child.once("spawn", () => {
         // A successful real CLI spawn is the sole provenance for this UI-only private descriptor.
-        if (!this.shuttingDown) this.manualEntryLaunches.set(sessionId, captureManualEntryLaunch(launchInput))
+        if (!this.shuttingDown && !this.nativeBindings.has(session))
+          this.manualEntryLaunches.set(sessionId, captureManualEntryLaunch(launchInput))
       })
       session.pid = child.pid
       this.trackChild(sessionId, child)
@@ -966,6 +1099,10 @@ export class AcpManager {
         releaseSlot()
         if (completed) return
         completed = true
+        if (this.nativeBindings.has(session) && (!this.nativeCurrent(session) || session.mode_c_open_cancelled)) {
+          removePrompt(); this.cancelOwned(sessionId)
+          resolve({ ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }); return
+        }
         const body =
           stdout.trim() ||
           stderr.trim() ||
@@ -983,6 +1120,7 @@ export class AcpManager {
       // Register lifecycle handlers before the first write (including streams
       // whose _write callback reports errors asynchronously).
       try {
+        if (!this.nativeCurrent(session)) { this.cancelOwned(sessionId); return }
         child.stdin.write(prompt)
         child.stdin.end()
       } catch (err) { fail(err instanceof Error ? err : new Error(String(err))) }
@@ -1007,6 +1145,7 @@ export class AcpManager {
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const session = this.sessions.get(sessionId)
     if (!session) return { ok: false, error: "unknown session" }
+    if (this.nativeBindings.has(session)) return { ok: false, error: "ACP_NATIVE_CONTEXT_REQUIRED" }
     const t = String(text || "").trim()
     if (!t) return { ok: false, error: "empty prompt" }
 
@@ -1031,6 +1170,28 @@ export class AcpManager {
     }
   }
 
+  /** Native same-process turn. A missing live handle never creates a legacy offer. */
+  async promptNative(sessionId: string, text: string, context: NativeLocalContext): Promise<{ ok: true } | { ok: false; error: string }> {
+    const session = this.sessions.get(sessionId)
+    if (!session || this.nativeBindings.get(session)?.identity !== context ||
+        !this.nativeCurrent(session) || session.mode_c_open_cancelled)
+      return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+    if (typeof text !== "string" || !text.trim() || text.length > 8000)
+      return { ok: false, error: "ACP_NATIVE_GOAL_LIMIT" }
+    const handle = this.protocolHandles.get(sessionId)
+    if (!handle || session.state !== "running") return { ok: false, error: "ACP_NATIVE_FOLLOWUP_REQUIRED" }
+    this.pushTimeline(session, [timelineItem("user_message", text.slice(0, 200), { detail: text })])
+    // An event observer can retire the owner synchronously during the timeline update.
+    if (!this.nativeCurrent(session) || session.mode_c_open_cancelled)
+      return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+    try {
+      await handle.prompt(text)
+      if (!this.nativeCurrent(session) || session.mode_c_open_cancelled)
+        return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+      return { ok: true }
+    } catch { return { ok: false, error: "ACP_NATIVE_PROMPT_FAILED" } }
+  }
+
   /**
    * Multi-turn: start a new session with prior handback context + user follow-up.
    */
@@ -1041,6 +1202,7 @@ export class AcpManager {
   }): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
     const parent = this.sessions.get(opts.parentSessionId)
     if (!parent) return { ok: false, error: "acp: parent session not found" }
+    if (this.nativeBindings.has(parent)) return { ok: false, error: "ACP_NATIVE_CONTEXT_REQUIRED" }
     const prior = (parent.handback_text || "").slice(0, 12_000)
     const goal = [
       "Follow-up on previous coding handoff session.",
@@ -1058,6 +1220,20 @@ export class AcpManager {
     })
   }
 
+  followupNative(opts: Parameters<AcpManager["followup"]>[0], context: NativeLocalContext): ReturnType<AcpManager["propose"]> {
+    const parent = this.sessions.get(opts.parentSessionId)
+    if (!parent || this.nativeBindings.get(parent)?.identity !== context || !this.nativeCurrent(parent))
+      return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+    const goal = ["Follow-up on previous coding handoff session.",
+      parent.handback_text ? `Previous output (untrusted):\n${parent.handback_text}\n` : "",
+      "User follow-up:", opts.goal].join("\n")
+    // Never let the legacy propose slice drop the new user instruction.
+    if (typeof opts.goal !== "string" || !opts.goal.trim() || goal.length > 8000)
+      return { ok: false, error: "ACP_NATIVE_GOAL_LIMIT" }
+    return this.proposeNative({threadId:parent.thread_id, agentId:parent.agent_id, goal,
+      workspaceRoot:parent.workspace_root, mode:opts.mode || parent.mode, parentSessionId:parent.session_id}, context)
+  }
+
   /**
    * Apply pending_diffs from a propose_diff session (caller must enforce L2 HITL).
    */
@@ -1071,7 +1247,7 @@ export class AcpManager {
     error?: string
   } {
     const session = this.sessions.get(sessionId)
-    if (!session) return { ok: false, applied: [], skipped: [], error: "unknown session" }
+    if (!session || this.nativeBindings.has(session)) return { ok: false, applied: [], skipped: [], error: "unknown session" }
     if (session.mode !== "propose_diff") {
       return { ok: false, applied: [], skipped: [], error: "session is not propose_diff mode" }
     }
@@ -1104,6 +1280,20 @@ export class AcpManager {
   }
 
   cancel(sessionId: string): { ok: true } | { ok: false; error: string } {
+    const session = this.sessions.get(sessionId)
+    if (session && this.nativeBindings.has(session)) return { ok: false, error: "ACP_NATIVE_CONTEXT_REQUIRED" }
+    return this.cancelOwned(sessionId)
+  }
+
+  cancelNative(sessionId: string, context: NativeLocalContext): ReturnType<AcpManager["cancel"]> {
+    const session = this.sessions.get(sessionId)
+    if (!session || this.nativeBindings.get(session)?.identity !== context)
+      return { ok: false, error: "ACP_NATIVE_CONTEXT_STALE" }
+    // Stop is allowed for the same private capability even after its document retires.
+    return this.cancelOwned(sessionId)
+  }
+
+  private cancelOwned(sessionId: string): { ok: true } | { ok: false; error: string } {
     const session = this.sessions.get(sessionId)
     if (!session) return { ok: false, error: "acp: unknown session" }
     // Stop must never inject a "完成" handback — bridge killed, work may be partial
@@ -1163,7 +1353,7 @@ export class AcpManager {
     const children = [...this.ownedChildren]
     const preparations = [...this.startupPreparations.values()]
     for (const [id, session] of this.sessions) {
-      if (session.state === "running" || this.processes.has(id)) this.cancel(id)
+      if (session.state === "running" || this.processes.has(id) || this.nativeBindings.has(session)) this.cancelOwned(id)
     }
     await Promise.all([...children.map(closeAcpChild), ...preparations.map(p => p.done.catch(() => {}))])
   }

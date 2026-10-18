@@ -31,11 +31,21 @@ private let origin = "cmspark-desktop://app/"
 private let methods = DesktopCapabilities.methods
 private final class BundledScheme: NSObject, WKURLSchemeHandler {
     let root: URL
+    var styleNonce=""
+    func newDocument(){styleNonce=(UUID().uuidString+UUID().uuidString).replacingOccurrences(of:"-",with:"").lowercased()}
+    static func styledHTML(_ raw:Data,_ nonce:String)->Data? {
+        guard nonce.count==64,nonce.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}),var text=String(data:raw,encoding:.utf8) else{return nil}
+        let markers=["__CMSPARK_STYLE_NONCE_CSP__","__CMSPARK_STYLE_NONCE_META__"]
+        guard markers.allSatisfy({text.components(separatedBy:$0).count==2}) else{return nil}
+        for marker in markers{text=text.replacingOccurrences(of:marker,with:nonce)}
+        guard !text.contains("__CMSPARK_STYLE_NONCE_") else{return nil};return text.data(using:.utf8)
+    }
     init(root: URL) { self.root = root }
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
-        let allowed = [origin: ("index.html", "text/html"), origin + "app.css": ("app.css", "text/css"), origin + "app.js": ("app.js", "text/javascript")]
+        let allowed = [origin: ("index.html", "text/html"), origin + "app.css": ("app.css", "text/css"), origin + "app.js": ("app.js", "text/javascript"), origin + "local-work.js": ("local-work.js", "text/javascript"), origin + "terminal-core.js": ("terminal-core.js", "text/javascript"), origin + "terminal-fit.js": ("terminal-fit.js", "text/javascript"), origin + "terminal.css": ("terminal.css", "text/css")]
         guard let raw = task.request.url?.absoluteString, let resource = allowed[raw], let url = task.request.url,
-              let data = try? Data(contentsOf: root.appendingPathComponent(resource.0)) else { task.didFailWithError(NSError(domain:"DesktopResourceDenied",code:1)); return }
+              var data = try? Data(contentsOf: root.appendingPathComponent(resource.0)) else { task.didFailWithError(NSError(domain:"DesktopResourceDenied",code:1)); return }
+        if resource.0=="index.html" {guard let prepared=Self.styledHTML(data,styleNonce) else{task.didFailWithError(NSError(domain:"DesktopResourceDenied",code:1));return};data=prepared}
         task.didReceive(URLResponse(url:url,mimeType:resource.1,expectedContentLength:data.count,textEncodingName:"utf-8"));task.didReceive(data);task.didFinish()
     }
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
@@ -46,6 +56,10 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
     var phase = "initial"; var connection: String?; var authenticated = false
     var web: WKWebView?; var window: NSWindow?; var generation: String?
     var requests = [String: (nativeId: String, uiId: String?, generation: String, thread: String?, kind: String?, target: String?, revision: String?)]()
+    typealias LocalPending=(nativeId:String,uiId:String?,generation:String,thread:String?,kind:String?,target:String?,revision:String?)
+    var localOperations=[String:LocalPending]()
+    var localRequests=[String:(pending:LocalPending,method:String,operation:String?)]()
+    var bundledScheme:BundledScheme?
     var workspaceOwner:String?
     var confirmation:NativeConfirmation?
     var parentWatch: DispatchSourceProcess?; var view = "compact"
@@ -91,16 +105,17 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         if let parent=p.alert.window.sheetParent{parent.endSheet(p.alert.window,returnCode:.abort)}
         if notify,let approved=approved,authenticated,socket === p.task,p.generation==generation,Date().timeIntervalSince1970*1000<p.deadline {
             var result:[String:Any] = ["type":"desktop.confirmation.decision","confirmation_id":p.id,"action_digest":p.digest,"thread_id":p.thread,"approved":approved]
-            if p.purpose=="resource" || p.purpose=="workspace" {result["purpose"]=p.purpose};transmit(result,to:p.task)
+            if p.purpose=="resource" || p.purpose=="workspace" || p.purpose=="local-work" {result["purpose"]=p.purpose};transmit(result,to:p.task)
         }
     }
     @objc func revealConfirmation(_ sender:Any?) {guard let p=confirmation else{return};p.details?.string=p.full}
     func beginConfirmation(_ f:[String:Any],_ task:URLSessionWebSocketTask) {
-        let resource=f["purpose"] as? String=="resource",workspace=f["purpose"] as? String=="workspace"
-        let method=(resource || workspace) ? f["request_method"] as? String:"desktop.mcp.save"
-        let expected:Set<String> = (resource || workspace) ? ["type","purpose","request_method","request_id","confirmation_id","thread_id","action_digest","action_json","deadline_ms","timeout_ms"]:["type","request_id","confirmation_id","thread_id","action_digest","action_json","deadline_ms","timeout_ms"]
+        let resource=f["purpose"] as? String=="resource",workspace=f["purpose"] as? String=="workspace",local=f["purpose"] as? String=="local-work"
+        let method=(resource || workspace || local) ? f["request_method"] as? String:"desktop.mcp.save"
+        let expected:Set<String> = (resource || workspace || local) ? ["type","purpose","request_method","request_id","confirmation_id","thread_id","action_digest","action_json","deadline_ms","timeout_ms"]:["type","request_id","confirmation_id","thread_id","action_digest","action_json","deadline_ms","timeout_ms"]
+        let binding=local ? localOperations[f["request_id"] as? String ?? ""]:requests[method ?? ""]
         guard confirmation==nil,Set(f.keys)==expected,let method=method,(!resource || ["desktop.resource.import","desktop.resource.update","desktop.resource.remove"].contains(method)),(!workspace || method=="desktop.workspace.pick"),
-              let request=requests[method],request.nativeId==(f["request_id"] as? String),request.generation==generation,
+              let request=binding,request.nativeId==(f["request_id"] as? String),request.generation==generation,
               let id=f["confirmation_id"] as? String,!id.isEmpty,let digest=f["action_digest"] as? String,Self.hex(digest,64),
               let full=f["action_json"] as? String,SHA256.hash(data:Data(full.utf8)).map({String(format:"%02x",$0)}).joined()==digest,
               let raw=full.data(using:.utf8),let action=(try? JSONSerialization.jsonObject(with:raw)) as? [String:Any],
@@ -108,7 +123,14 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
               timeout.doubleValue>0,timeout.doubleValue<=45000,deadline.doubleValue>Date().timeIntervalSince1970*1000,deadline.doubleValue<=Date().timeIntervalSince1970*1000+timeout.doubleValue,
               let thread=f["thread_id"],(thread is NSNull && request.thread==nil)||(thread as? String != nil && (thread as? String)==request.thread),let generation=generation,let window=window else{return}
         let safe:[String:Any]
-        if workspace {
+        if local {
+            guard Set(action.keys)==["purpose","kind","thread_id","operation_id","payload"],action["purpose"] as? String=="local-work",action["thread_id"] as? String==request.thread,action["operation_id"] as? String==request.nativeId,let payload=action["payload"] as? [String:Any],let kind=action["kind"] as? String else{return}
+            let terminal=request.kind=="terminal",valid:[String:String]=terminal ? ["terminal-open":"desktop.terminal.open","terminal-return":"desktop.terminal.return"]:["agent-start":"desktop.agent.start","agent-prompt":"desktop.agent.prompt","agent-permission":"desktop.agent.start"]
+            guard valid[kind]==method else{return}
+            if kind != "agent-permission" {guard localRequests.values.contains(where:{$0.method==method && $0.pending.generation==generation && $0.pending.thread==request.thread && ($0.operation ?? $0.pending.nativeId)==request.nativeId}) else{return}}
+            if ["terminal-open","agent-start"].contains(kind){guard payload["revision"] as? String==request.revision else{return}}
+            safe=action
+        } else if workspace {
             guard let selection=workspaceSelection,selection.selected,pickerCurrent(selection),selection.request==request.nativeId else{return}
             guard flatFrame(raw) != nil,Set(action.keys)==["purpose","op","thread_id","revision","path"],action["purpose"] as? String=="workspace",action["op"] as? String=="bind",action["thread_id"] as? String==request.thread,let revision=action["revision"] as? String,revision==request.revision,Self.hex(revision,64),let path=action["path"] as? String,!path.contains("\0"),(path as NSString).isAbsolutePath else{return}
             safe=action // Exact selected private directory, native controls only.
@@ -121,10 +143,10 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
             guard let server=action["server"] as? [String:Any],let operation=action["action"] as? String,["add","update"].contains(operation),let name=action["name"] as? String else{return}
             safe=["action":operation,"name":name,"command":server["command"] ?? "","args":server["args"] ?? [],"cwd":server["cwd"] ?? "","enabled":server["enabled"] ?? false,"enable_global":action["enable_global"] ?? false,"env":"隐藏；完整操作可在本原生窗口查看"]
         }
-        let p=NativeConfirmation(id:id,digest:digest,thread:thread,deadline:deadline.doubleValue,generation:generation,task:task,full:full);p.purpose=workspace ? "workspace":resource ? "resource":nil;confirmation=p
-        p.alert.messageText=resource ? "确认全局技能／知识变更":"确认保存 MCP stdio 配置"
+        let p=NativeConfirmation(id:id,digest:digest,thread:thread,deadline:deadline.doubleValue,generation:generation,task:task,full:full);p.purpose=local ? "local-work":workspace ? "workspace":resource ? "resource":nil;confirmation=p
+        p.alert.messageText=local ? "确认本地终端／编程接力":resource ? "确认全局技能／知识变更":"确认保存 MCP stdio 配置"
         p.alert.informativeText=resource ? "全局资源变更可能影响后续对话读取；管理许可不授权执行内容。完整操作如下。":"此操作可能启动或重启本地进程。仅原生窗口可批准；凭据默认隐藏。"
-        p.alert.addButton(withTitle:"取消");let approve=p.alert.addButton(withTitle:"确认并保存");approve.keyEquivalent=""
+        p.alert.addButton(withTitle:"取消");let approve=p.alert.addButton(withTitle:local ? "确认操作":"确认并保存");approve.keyEquivalent=""
         let content=NSView(frame:NSRect(x:0,y:0,width:520,height:300)),scroll=NSScrollView(frame:NSRect(x:0,y:38,width:520,height:262))
         scroll.hasVerticalScroller=true;scroll.hasHorizontalScroller=true
         let text=NSTextView(frame:scroll.bounds);text.isEditable=false;text.isRichText=false;text.isSelectable=true
@@ -186,6 +208,44 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         retirePicker()
     }
 
+    static let localMethods:Set<String>=["desktop.local.state","desktop.terminal.open","desktop.terminal.input","desktop.terminal.resize","desktop.terminal.ack","desktop.terminal.ping","desktop.terminal.close","desktop.terminal.return","desktop.agent.start","desktop.agent.prompt","desktop.agent.cancel"]
+    static func localInteger(_ value:Any?,_ maximum:Double)->Bool {guard let n=value as? NSNumber,CFGetTypeID(n) != CFBooleanGetTypeID() else{return false};return n.doubleValue.isFinite && n.doubleValue>=1 && n.doubleValue<=maximum && n.doubleValue.rounded(.towardZero)==n.doubleValue}
+    func retireLocal() {
+        if confirmation?.purpose=="local-work" {retireConfirmation(false)}
+        if authenticated,let socket=socket {for(id,op)in localOperations where op.generation==generation {transmit(["type":op.kind=="terminal" ? "desktop.terminal.close":"desktop.agent.cancel","id":UUID().uuidString,"thread_id":op.thread ?? "","operation_id":id],to:socket)}}
+        localOperations.removeAll();localRequests.removeAll()
+    }
+    func renderLocal(_ f:[String:Any]) {
+        guard let type=f["type"] as? String,Self.localMethods.contains(type),methods.contains(type),let id=f["id"] as? String,!id.isEmpty,id.utf8.count<=200,let thread=f["thread_id"] as? String,!thread.isEmpty,let generation=generation,let socket=socket else{return}
+        let start=["desktop.terminal.open","desktop.agent.start"].contains(type)
+        var expected:Set<String>=["type","id","thread_id","generation"]
+        if start {expected.insert("revision")}
+        if ["desktop.terminal.open","desktop.terminal.resize"].contains(type){expected.formUnion(["cols","rows"]);guard Self.localInteger(f["cols"],500),Self.localInteger(f["rows"],200) else{return}}
+        if type=="desktop.agent.start" {expected.formUnion(["agent_id","goal"]);guard let agent=f["agent_id"] as? String,!agent.isEmpty,let goal=f["goal"] as? String,!goal.isEmpty,goal.utf16.count<=8000 else{return}}
+        if type != "desktop.local.state" && !start {expected.insert("operation_id")}
+        if ["desktop.terminal.input","desktop.terminal.ack"].contains(type){expected.insert("seq");guard Self.localInteger(f["seq"],9007199254740991) else{return}}
+        if type=="desktop.terminal.input" {expected.insert("b64");guard let text=f["b64"] as? String,!text.isEmpty,text.utf8.count<=21848 else{return}}
+        if ["desktop.terminal.return","desktop.agent.prompt"].contains(type){expected.insert("text");guard let text=f["text"] as? String,!text.isEmpty,text.utf16.count<=(type=="desktop.terminal.return" ? 48000:8000) else{return}}
+        guard Set(f.keys)==expected else{return}
+        if start {guard let revision=f["revision"] as? String,Self.hex(revision,64) else{return}}
+        var frame=f,operation:String?
+        if let original=f["operation_id"] {guard let original=original as? String,let found=localOperations.first(where:{$0.value.uiId==original && $0.value.thread==thread && $0.value.generation==generation}),(type.hasPrefix("desktop.terminal."))==(found.value.kind=="terminal") else{return};operation=found.key;frame["operation_id"]=found.key}
+        if type=="desktop.local.state",confirmation?.purpose=="local-work" {retireConfirmation(false)}
+        let native=UUID().uuidString,pending:LocalPending=(native,id,generation,thread,type.hasPrefix("desktop.terminal.") ? "terminal":"agent",nil,f["revision"] as? String)
+        if start {guard !localOperations.values.contains(where:{$0.uiId==id && $0.generation==generation}) else{return};localOperations[native]=pending}
+        localRequests[native]=(pending,type,operation);frame.removeValue(forKey:"generation");frame["id"]=native;transmit(frame,to:socket)
+    }
+    func acceptLocal(_ f:[String:Any])->Bool {
+        guard let type=f["type"] as? String else{return false}
+        if ["desktop.terminal.data","desktop.terminal.closed","desktop.terminal.heartbeat","desktop.agent.event"].contains(type){guard let operation=f["operation_id"] as? String,let op=localOperations[operation],op.generation==generation,f["thread_id"] as? String==op.thread,(type.hasPrefix("desktop.terminal."))==(op.kind=="terminal") else{return true};if type=="desktop.terminal.heartbeat"{if let socket=socket{transmit(["type":"desktop.terminal.ping","id":UUID().uuidString,"thread_id":op.thread ?? "","operation_id":operation],to:socket)};return true};var reply=f;reply["operation_id"]=op.uiId;deliver(reply);return true}
+        guard let id=f["id"] as? String,let request=localRequests[id] else{return false}
+        guard request.pending.generation==generation,type==request.method+".result",f["thread_id"] as? String==request.pending.thread else{return true}
+        var reply=f
+        if f["operation_id"] != nil {let expected=request.operation ?? request.pending.nativeId;guard f["operation_id"] as? String==expected,let op=localOperations[expected] else{return true};reply["operation_id"]=op.uiId}
+        if request.method=="desktop.local.state",var state=f["state"] as? [String:Any],let rows=state["operations"] as? [[String:Any]] {state["operations"]=rows.compactMap { row -> [String:Any]? in guard let operation=row["operation_id"] as? String,let op=localOperations[operation],op.generation==generation,op.thread==request.pending.thread else{return nil};var mapped=row;mapped["operation_id"]=op.uiId;return mapped};reply["state"]=state}
+        if ["desktop.terminal.open","desktop.agent.start"].contains(request.method),let ok=f["ok"] as? Bool,!ok {localOperations.removeValue(forKey:request.pending.nativeId)}
+        localRequests.removeValue(forKey:id);reply["id"]=request.pending.uiId;deliver(reply);return true
+    }
     func retireWorkspace(replaceSnapshot:Bool=true) {
         retirePicker()
         if let pick=requests.removeValue(forKey:"desktop.workspace.pick"),authenticated,let socket=socket {transmit(["type":"desktop.workspace.cancel","id":UUID().uuidString,"thread_id":pick.thread ?? "","operation_id":pick.nativeId],to:socket)}
@@ -211,7 +271,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
             transmit(["type":"desktop.authenticate","capability_id":capability,"protocol_version":1,"proof":proof],to:task);return
         }
         if phase=="proof" && type=="desktop.ready" && Set(f.keys)==["type","protocol_version"] && exactOne(f["protocol_version"]) {
-            phase="ready";authenticated=true;if window == nil { buildWindow() } else if web?.url?.absoluteString==origin { retireWorkspace();generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!]) };return
+            phase="ready";authenticated=true;if window == nil { buildWindow() } else if web?.url?.absoluteString==origin { retireLocal();retireWorkspace();generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!]) };return
         }
         guard authenticated,phase=="ready" else { offline(task);return }
         if type=="desktop.window",Set(f.keys)==["type","view"],let requested=f["view"] as? String,["compact","workspace"].contains(requested) { show(requested);return }
@@ -220,6 +280,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         if type=="desktop.workspace.picker.cancel" {cancelPicker(f);return}
         if type=="desktop.confirmation.request" {beginConfirmation(f,task);return}
         if type=="desktop.confirmation.resolved" {if f["confirmation_id"] as? String==confirmation?.id{retireConfirmation(nil)};return}
+        if acceptLocal(f){return}
         guard let id=f["id"] as? String,let pair=requests.first(where:{$0.value.nativeId==id}),pair.value.generation==generation else { return }
         if pair.key=="desktop.chat.send" {
             guard f["thread_id"] as? String==pair.value.thread,["desktop.chat.send.result","desktop.chat.event"].contains(type) else{return}
@@ -245,7 +306,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         var reply=mapped;reply["id"]=pair.value.uiId;deliver(reply)
     }
     func offline(_ task:URLSessionWebSocketTask, code:Int = 0) {
-        guard socket === task else { return };let wasAuthenticated=authenticated;retirePicker();retireConfirmation(nil);socket=nil;authenticated=false;generation=nil;requests.removeAll();task.cancel(with:.goingAway,reason:nil);session?.invalidateAndCancel();deliver(["type":"desktop.offline"])
+        guard socket === task else { return };let wasAuthenticated=authenticated;retireLocal();retirePicker();retireConfirmation(nil);socket=nil;authenticated=false;generation=nil;requests.removeAll();task.cancel(with:.goingAway,reason:nil);session?.invalidateAndCancel();deliver(["type":"desktop.offline"])
         // Credential stays native; a fresh connection/nonce is required. Never tray fallback.
         if !wasAuthenticated { switch code { case -1022: exit(42);case -1011:exit(43);case -1004:exit(44);case 0:exit(45);default:exit(41) } }
         DispatchQueue.main.asyncAfter(deadline:.now()+5) { if self.socket == nil { self.connect() } }
@@ -253,7 +314,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
     func buildWindow() {
         let config=WKWebViewConfiguration();config.websiteDataStore = .nonPersistent()
         let executable=URL(fileURLWithPath:CommandLine.arguments[0]).resolvingSymlinksInPath()
-        config.setURLSchemeHandler(BundledScheme(root:executable.deletingLastPathComponent().appendingPathComponent("assets")),forURLScheme:"cmspark-desktop")
+        let scheme=BundledScheme(root:executable.deletingLastPathComponent().appendingPathComponent("assets"));bundledScheme=scheme;config.setURLSchemeHandler(scheme,forURLScheme:"cmspark-desktop")
         config.userContentController.add(self,name:"desktop")
         let w=WKWebView(frame:.zero,configuration:config);w.navigationDelegate=self;w.uiDelegate=self
         if #available(macOS 13.3,*) { w.isInspectable=false }
@@ -268,12 +329,12 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         win.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
     }
     func windowWillClose(_ notification:Notification) { NSApp.terminate(nil) }
-    func applicationWillTerminate(_ notification:Notification) { retireWorkspace();retireDialog();retireConfirmation(false);socket?.cancel(with:.normalClosure,reason:nil);parentWatch?.cancel() }
+    func applicationWillTerminate(_ notification:Notification) { retireLocal();retireWorkspace();retireDialog();retireConfirmation(false);socket?.cancel(with:.normalClosure,reason:nil);parentWatch?.cancel() }
     func webView(_ webView:WKWebView,decidePolicyFor navigationAction:WKNavigationAction,decisionHandler:@escaping(WKNavigationActionPolicy)->Void) {
         var download=false
         if #available(macOS 11.3,*) { download=navigationAction.shouldPerformDownload }
         let allowed = !download && navigationAction.targetFrame?.isMainFrame==true && navigationAction.request.url?.absoluteString==origin
-        if allowed { retireWorkspace();retireDialog();retireConfirmation(false);generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)
+        if allowed { retireLocal();retireWorkspace();retireDialog();retireConfirmation(false);generation=nil;requests.removeAll();bundledScheme?.newDocument() };decisionHandler(allowed ? .allow:.cancel)
     }
     func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
         guard authenticated,webView.url?.absoluteString==origin else{return};generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!])
@@ -283,6 +344,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         guard authenticated,let web=web,message.webView === web,message.frameInfo.isMainFrame,message.frameInfo.securityOrigin.protocol=="cmspark-desktop",message.frameInfo.securityOrigin.host=="app",web.url?.absoluteString==origin,
               let f=message.body as? [String:Any],let g=f["generation"] as? String,g==generation,let type=f["type"] as? String else{return}
         if type=="desktop.view",Set(f.keys)==["type","view","generation"],let view=f["view"] as? String,["compact","workspace"].contains(view){show(view);return}
+        if Self.localMethods.contains(type){renderLocal(f);return}
         let allowed:Set<String>
         if type=="thread.search" {allowed=f["limit"] == nil ? ["type","id","query","generation"]:["type","id","query","limit","generation"]}
         else if type=="desktop.mcp.edit" {allowed=["type","id","name","thread_id","generation"]}
@@ -356,6 +418,6 @@ let bootstrapWatch=DispatchSource.makeProcessSource(identifier:parent,eventMask:
 var data=Data()
 while true { do { guard let part=try FileHandle.standardInput.read(upToCount:4097-data.count),!part.isEmpty else{break};data.append(part);if data.count>4096{exit(14)} } catch {exit(13)} }
 try? FileHandle.standardInput.close()
-guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==8,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
+guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==9,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
 data.resetBytes(in:0..<data.count)
 let app=NSApplication.shared;private let delegate=NativeDesktop(bootstrap,parent:parent);app.delegate=delegate;app.setActivationPolicy(.regular);bootstrapWatch.cancel();app.run()
