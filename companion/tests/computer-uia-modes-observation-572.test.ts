@@ -24,20 +24,21 @@ const specifications:any[]=[
  {id:'SINK_THROW_ORIGINAL_ACTION_ERROR',actionThrow:true,sinkThrow:true,expectedPass:false,actions:1,pre:false},
  {id:'NON_NUMERIC_BEFORE_ROLE',beforeSample:'OWNED_SENTINEL_MUST_NOT_LEAK',expectedPass:false,actions:0,pre:true},
 ];
-for(const spec of specifications)test('#572 passive mode observation '+spec.id,async()=>{
+for(const fixturePath of [path.posix,path.win32])for(const spec of specifications)test('#572 passive mode observation '+(fixturePath===path.posix?'posix ':'win32 ')+spec.id,async()=>{
+ const markerPath=fixturePath.join('/OWNED_INERT','target.marker');
  const files=new Map<string,string>(),owners:any[]=[],calls:string[]=[],records:string[]=[],state:any={fg:2,actions:0,prePassed:false,clock:0};
  const actionError=new Error('OWNED_ORIGINAL_ACTION');let originalAssertError:unknown;const controlledAssert:any=Object.assign(function(){},assert);controlledAssert.equal=(...args:any[])=>{try{return (assert.equal as any)(...args)}catch(error){originalAssertError=error;throw error}};
  const shot=()=>({foreground:state.fg,cursor:{got:true,x:0,y:0},zorder:[2,1]});
- const scope:any={assert:controlledAssert,path,performance:{now:()=>state.clock++},process:{arch:'x64'},console:{log:()=>{}},
+ const scope:any={assert:controlledAssert,path:fixturePath,performance:{now:()=>state.clock++},process:{arch:'x64'},console:{log:()=>{}},
   mkdtempSync:()=>'/OWNED_INERT',tmpdir:()=>'/OWNED_INERT',
   existsSync:(p:string)=>p==='/OWNED_PS'||files.has(p),readFileSync:(p:string)=>{assert.ok(files.has(p));return files.get(p)},
   rmSync:()=>calls.push('REMOVE'),modes572:[{mode:'setvalue',name:'OwnedSetValue572',automationId:'owned_setvalue572'}],
   resolvePowerShellExe:()=>'/OWNED_PS',resolveWinScript:(n:string)=>n,resolveComputerUiaNoFocusDll:()=>'/OWNED_INERT/current.dll',
   startMode572:(args:string[])=>{const role=args[args.indexOf('-Role')+1];const owner={dead:false,closed:Promise.resolve(),isClosed(){return this.dead},launchError:()=>undefined,child:{ref:()=>{},kill(){owner.dead=true;calls.push('CLOSE_'+role);return true}}};owners.push(owner);calls.push('LAUNCH_'+role);return owner},
-  waitModeFile572:async(p:string)=>{if(p.endsWith('target.json'))return{schema:1,hwnd:1,foreground:1,active:true,initialUnchanged:true};if(p.endsWith('sibling.json')){state.fg=2;calls.push('READY_SIBLING');if(spec.beforeLocator!==undefined)state.fg=spec.beforeLocator;return{schema:1,hwnd:2,foreground:2,active:true,initialUnchanged:true}};assert.equal(p,'/OWNED_INERT/target.marker');return vm.runInContext('JSON.parse('+JSON.stringify(files.get(p))+')',scope)},
+  waitModeFile572:async(p:string)=>{if(p.endsWith('target.json'))return{schema:1,hwnd:1,foreground:1,active:true,initialUnchanged:true};if(p.endsWith('sibling.json')){state.fg=2;calls.push('READY_SIBLING');if(spec.beforeLocator!==undefined)state.fg=spec.beforeLocator;return{schema:1,hwnd:2,foreground:2,active:true,initialUnchanged:true}};assert.equal(p,markerPath);return vm.runInContext('JSON.parse('+JSON.stringify(files.get(p))+')',scope)},
   runPs:async(_script:string,args:string[])=>{const mode=args[args.indexOf('-Mode')+1],dest=args[args.indexOf('-Out')+1];calls.push(mode==='compare'?'COMPARE':dest.endsWith('before.json')?'SNAPSHOT_BEFORE':'SNAPSHOT_AFTER');if(mode==='snapshot'){if(dest.endsWith('before.json')&&spec.beforeSample!==undefined)state.fg=spec.beforeSample;if(dest.endsWith('after.json')&&spec.afterSample!==undefined)state.fg=spec.afterSample;files.set(dest,JSON.stringify(shot()))}else{files.set(dest,JSON.stringify({ok:true,delivery:'uia-pattern',target_hwnd:1,focus_kept:true,zorder_kept:true,cursor_kept:true,no_leaked_input:true,background_verified:true,no_leaked_input_kind:'derived'}))}return ''},
   PsUiaLocator:class{async locate(){calls.push('LOCATE');if(spec.locatorRole!==undefined)state.fg=spec.locatorRole;return{name:'OwnedSetValue572',controlType:'Edit',automationId:'owned_setvalue572'}}},
-  PsInputInjector:class{async invokeUia(){state.prePassed=true;state.actions++;calls.push('ACTION');if(spec.actionThrow)throw actionError;if(spec.afterAction!==undefined)state.fg=spec.afterAction;files.set('/OWNED_INERT/target.marker',JSON.stringify({schema:1,role:'target',mode:'setvalue',changed:true}));return{ok:true,mode:'setvalue',foreground:false}}},
+  PsInputInjector:class{async invokeUia(){state.prePassed=true;state.actions++;calls.push('ACTION');if(spec.actionThrow)throw actionError;if(spec.afterAction!==undefined)state.fg=spec.afterAction;files.set(markerPath,JSON.stringify({schema:1,role:'target',mode:'setvalue',changed:true}));return{ok:true,mode:'setvalue',foreground:false}}},
  };vm.createContext(scope);vm.runInContext(compiled.outputText+'\nthis.callRun=runMode572;',scope);
  let error:any;try{await scope.callRun('setvalue',spec.loader,{diagnostic:(value:string)=>{records.push(value);if(spec.sinkThrow)throw Error('OWNED_DIAGNOSTIC_SINK')}})}catch(e){error=e}
  if(spec.expectedPass&&error)throw error;assert.equal(!error,spec.expectedPass,spec.id);if(spec.actions!==undefined)assert.equal(state.actions,spec.actions,spec.id);

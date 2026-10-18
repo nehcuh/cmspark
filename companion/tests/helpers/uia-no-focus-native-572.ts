@@ -1,6 +1,7 @@
 // Windows-only acceptance of the other four actual no-focus SDK actions.
 // Invoke remains owned by the original uninstrumented + separate diagnostic tests.
 import test, { type TestContext } from "node:test"
+import { withSurface650, type SurfaceLease650 } from "../fixtures/native-surface-650"
 import assert from "node:assert/strict"
 import { execFile, type ChildProcess } from "node:child_process"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync, watch, copyFileSync } from "node:fs"
@@ -37,13 +38,14 @@ function waitModeFile572<T>(file:string,owner:Child572,deadline:number,parse:(te
     check()
   })
 }
-async function cleanupMode572(children:Child572[],remove:()=>void,primary:unknown):Promise<void> {
+async function cleanupMode572(children:Child572[],remove:()=>void,primary:unknown,settled?:()=>void):Promise<void> {
   let cleanup:unknown
   for(const owner of [...children].reverse()){
     try{if(!owner.isClosed()){owner.child.ref();if(!owner.child.kill())throw new Error("UIA572_MODE_TERMINATE_FAILED")}}catch(error){cleanup??=error}
     try{await owner.closed}catch(error){cleanup??=error}
   }
   try{remove()}catch(error){cleanup??=error}
+  if(cleanup===undefined&&children.every(c=>c.isClosed()))try{settled?.()}catch(error){cleanup??=error}
   if(primary!==undefined)throw primary
   if(cleanup!==undefined)throw cleanup
 }
@@ -95,11 +97,13 @@ function withoutActionExport572(bytes:Buffer):Buffer {
   assert.equal(matches.length,1,"the real built DLL must have one exact CUiAction export")
   const copy=Buffer.from(bytes);copy[matches[0]+8]="X".charCodeAt(0);return copy
 }
-async function runMode572(mode:Mode572,loader?:Loader572|"abi-invalid",t?:Pick<TestContext,"diagnostic">):Promise<void> {
+async function runMode572(mode:Mode572,loader?:Loader572|"abi-invalid",t?:Pick<TestContext,"diagnostic">,surfaceLease?:SurfaceLease650):Promise<void> {
+  surfaceLease?.checkpoint()
   const dir=mkdtempSync(path.join(tmpdir(),"uia-no-focus-native572-")),children:Child572[]=[]
+  surfaceLease?.retain()
   const deadline=performance.now()+45_000
   const remaining=()=>{const ms=Math.floor(deadline-performance.now());assert.ok(ms>0,"original owned45s lifetime exhausted");return ms}
-  const boundedRunner:PsRunner=(script,args,opts)=>runPs(script,args,{timeoutMs:Math.min(opts?.timeoutMs??15_000,remaining())})
+  const boundedRunner:PsRunner=(script,args,opts)=>{surfaceLease?.checkpoint();return runPs(script,args,{timeoutMs:Math.min(opts?.timeoutMs??15_000,remaining())})}
   const oracle=async(args:string[])=>{assert.ok(children.every(c=>!c.isClosed()));await boundedRunner(resolveWinScript("computer-bg-oracles.ps1"),args)}
   let primary:unknown
   /*UIA572_MODE_FAILURE_BEGIN*/let observedPhase572="UNKNOWN",readyRole572="UNKNOWN",beforeRole572="UNKNOWN",afterRole572="UNKNOWN",observedTarget572=0
@@ -110,6 +114,7 @@ async function runMode572(mode:Mode572,loader?:Loader572|"abi-invalid",t?:Pick<T
     assert.equal(process.arch,"x64");assert.equal(existsSync(resolvePowerShellExe()),true,"real Windows PowerShell is mandatory")
     const marker=path.join(dir,"target.marker"),siblingMarker=path.join(dir,"sibling.marker")
     const launch=async(role:"target"|"sibling")=>{
+      surfaceLease?.checkpoint()
       const ready=path.join(dir,role+".json"),owner=startMode572(["-Role",role,"-Mode",mode,"-Marker",role==="target"?marker:siblingMarker,"-Ready",ready],remaining());children.push(owner)
       const proof=await waitModeFile572(ready,owner,deadline,text=>JSON.parse(text) as {schema:number;hwnd:number;foreground:number;active:boolean;initialUnchanged:boolean})
       assert.equal(proof.schema,1);assert.ok(Number.isSafeInteger(proof.hwnd)&&proof.hwnd>0);assert.equal(proof.initialUnchanged,true)
@@ -154,17 +159,17 @@ async function runMode572(mode:Mode572,loader?:Loader572|"abi-invalid",t?:Pick<T
     /*UIA572_MODE_FAILURE_BEGIN*/observedPhase572="COMPARE_RETURNED";const observedAfter572=JSON.parse(readFileSync(afterPath,"utf8")) as Snapshot572;afterRole572=role572(observedAfter572.foreground,target,sibling);/*UIA572_MODE_FAILURE_END*/assertModeDesktop572(target,sibling,before,observedAfter572,JSON.parse(readFileSync(verdictPath,"utf8")),existsSync(siblingMarker))
     assert.ok(children.every(c=>!c.isClosed()))
   }catch(error){primary=error}
-  finally{/*UIA572_MODE_FAILURE_BEGIN*/if(primary!==undefined)try{t?.diagnostic("UIA572_MODE_FAILURE_OBSERVATION "+JSON.stringify({schema:1,phase:observedPhase572,readyRole:readyRole572,beforeRole:beforeRole572,afterRole:afterRole572,actionStarted:actionStarted572,actionReturned:actionReturned572,markerSeen:markerSeen572,childrenAlive:children.length===2&&children.every(c=>!c.isClosed())}))}catch{/* Passive observation cannot replace primary or prevent owned cleanup. */}/*UIA572_MODE_FAILURE_END*/await cleanupMode572(children,()=>rmSync(dir,{recursive:true,force:true}),primary)}
+  finally{/*UIA572_MODE_FAILURE_BEGIN*/if(primary!==undefined)try{t?.diagnostic("UIA572_MODE_FAILURE_OBSERVATION "+JSON.stringify({schema:1,phase:observedPhase572,readyRole:readyRole572,beforeRole:beforeRole572,afterRole:afterRole572,actionStarted:actionStarted572,actionReturned:actionReturned572,markerSeen:markerSeen572,childrenAlive:children.length===2&&children.every(c=>!c.isClosed())}))}catch{/* Passive observation cannot replace primary or prevent owned cleanup. */}/*UIA572_MODE_FAILURE_END*/await cleanupMode572(children,()=>rmSync(dir,{recursive:true,force:true}),primary,()=>{if(!existsSync(dir))surfaceLease?.settled()})}
   assert.equal(children.length,2);assert.ok(children.every(c=>c.isClosed()))
   console.log("UIA572_NO_FOCUS_NATIVE "+JSON.stringify({schema:1,mode,kind:loader??"action",targetChanged:loader===undefined,siblingUnchanged:true,allFourOracles:true,childrenClosed:2}))
 }
 // Registered by the original integration file so default canonical file workers
 // cannot run two independent #572 foreground owners concurrently.
 export function registerNoFocusNativeTests572():void {
-for(const intent of modes572)test(`#572 actual no-focus ${intent.mode} changes target state with all four desktop oracles`,{skip:process.platform!=="win32",timeout:45_000},(t)=>runMode572(intent.mode,undefined,t))
-for(const loader of ["missing","invalid-pe","wrong-architecture","missing-symbol"] as const)test(`#572 actual loader ${loader} refuses with no target action`,{skip:process.platform!=="win32",timeout:45_000},(t)=>runMode572("setvalue",loader,t))
+for(const intent of modes572)test(`#572 actual no-focus ${intent.mode} changes target state with all four desktop oracles`,{skip:process.platform!=="win32",timeout:45_000},(t)=>withSurface650(t,(owned,lease)=>runMode572(intent.mode,undefined,owned,lease)))
+for(const loader of ["missing","invalid-pe","wrong-architecture","missing-symbol"] as const)test(`#572 actual loader ${loader} refuses with no target action`,{skip:process.platform!=="win32",timeout:45_000},(t)=>withSurface650(t,(owned,lease)=>runMode572("setvalue",loader,owned,lease)))
 
-test("#572 actual CUiAction ABI rejects ten invalid argument shapes without target action",{skip:process.platform!=="win32",timeout:45_000},(t)=>runMode572("setvalue","abi-invalid",t))
+test("#572 actual CUiAction ABI rejects ten invalid argument shapes without target action",{skip:process.platform!=="win32",timeout:45_000},(t)=>withSurface650(t,(owned,lease)=>runMode572("setvalue","abi-invalid",owned,lease)))
 
 }
 
