@@ -43,10 +43,26 @@ test("#476 private confirmation paths return before ordinary WebView reply proje
 test("#476 dialog hosted variants preserve complete production source and fail on missing hooks",async()=>{
  const {desktopDialogFixture}=await(new Function("u","return import(u)"))(pathToFileURL(path.join(root,"scripts/desktop-mcp-fixture.mjs")).href)
  for(const language of["cpp","swift"]){const original=read("src/desktop/native/DesktopHost."+language),fixture=read("tests/fixtures/desktop-476/native-acceptance."+language),form=read("tests/fixtures/desktop-476/dialog-form.js"),dialog=read("tests/fixtures/desktop-476/dialog-acceptance."+language);for(const eol of["\n","\r\n"]){const source=original.replace(/\r\n/g,"\n").replace(/\n/g,eol),built=desktopDialogFixture(language,source,fixture,form,dialog);assert.equal(built.inverse,source);assert.ok(built.source.includes("D476_DIALOG_SEND_KEY"));assert.ok(built.source.includes("D476.dialog.offline"));assert.equal(built.source.includes("D476_FORM_SOURCE"),false)}assert.throws(()=>desktopDialogFixture(language,original.replace(language==="cpp"?"class Desktop {":"D476_MISSING_NEVER_IN_SOURCE","missing"),fixture,form,language==="cpp"?dialog:""));assert.throws(()=>desktopDialogFixture(language,original+original,fixture,form,dialog))}
- const hosted=read("tests/desktop-native-thread-metadata-476.test.ts");assert.ok(hosted.includes('acceptance/dialog'));assert.ok(hosted.includes('createNativeDialogRuntime'));assert.ok(hosted.includes('nativeKeys":6'));assert.ok(hosted.includes('lostUserAck":true'));assert.equal(read("tests/fixtures/desktop-476/dialog-form.js").includes("KeyboardEvent("),false)
+ const hosted=read("tests/desktop-native-thread-metadata-476.test.ts");assert.ok(hosted.includes('acceptance/dialog'));assert.ok(hosted.includes('createNativeDialogRuntime'));assert.ok(hosted.includes('nativeKeys":7'));assert.ok(hosted.includes('lostUserAck":true'));assert.equal(read("tests/fixtures/desktop-476/dialog-form.js").includes("KeyboardEvent("),false)
 })
 
 test("#476 dialog native acceptance cannot pass on normal close or missing real offline receipt",async()=>{const source=read("tests/desktop-native-thread-metadata-476.test.ts"),index=source.indexOf("// Same Node file");assert.ok(index>0);const statements=source.slice(index).split(/\r?\n/).filter(line=>line.trimStart().startsWith("assert.equal(await Promise.race([exit,"));assert.equal(statements.length,1);const actual=statements[0].replace(/new Promise<never>/g,"new Promise"),check=(code:number)=>vm.runInNewContext(`(async()=>{${actual}})()`,{assert,Promise,Error,exit:Promise.resolve(code),failure:new Promise(()=>{}),t:{signal:{addEventListener(){}}}},{timeout:1000})as Promise<void>;for(const n of[0,1,64,75,77])await assert.rejects(check(n));await check(76)})
+
+for(const language of ["cpp","swift"])test(`#476 ${language} actual native key guards permit denial then a separate streamed request`,()=>{
+ const source=read("tests/fixtures/desktop-476/dialog-acceptance."+language)
+ let keys=0,saves=0,stops=0
+ for(const [suffix,after]of [["NEW", ""],["SEND","save"],["FOLLOWUP","save"],["STOP","stop"],["OTHER",""],["REOPEN",""],["LOST_ACK","save"]]as const){
+  const row=source.split(/\r?\n/).find(line=>line.includes('"D476_DIALOG_'+suffix+'_KEY"'));assert.ok(row,suffix)
+  const match=language==="cpp"?row.match(/\{if\(([^)]+)\)\{failure\(h\);return;\}keys=(\d);/):row.match(/\{guard (.+) else\{failure\(h\);return\};keys=(\d);/)
+  assert.ok(match,"select the actual bounded native guard and next key state")
+  const expression=match[1].replaceAll(",","&&"),evaluate=new Function("keys","saves","stops","return "+expression)
+  const allowed=(k:number,s:number,t:number)=>Boolean(evaluate(k,s,t))===(language==="swift")
+  assert.equal(allowed(keys,saves,stops),true,suffix+" guard must permit its genuine predecessor")
+  assert.equal(allowed(keys+10,saves,stops),false,suffix+" stale key state must refuse")
+  keys=Number(match[2]);if(after==="save")saves++;if(after==="stop")stops++
+ }
+ assert.deepEqual({keys,saves,stops},{keys:7,saves:3,stops:1})
+})
 
 test("actual Windows launcher snprintf bytes bind both memcmp receivers and every malformed field carrier",()=>{
  function format(source:string,name:string){const values=[...source.matchAll(new RegExp('snprintf\\(\\s*'+name+'\\s*,\\s*sizeof\\('+name+'\\)\\s*,\\s*("(?:\\\\.|[^"\\\\])*")','g'))].map(m=>JSON.parse(m[1])as string).filter(s=>s.includes('"issued_method_set_version"')&&s.includes('"parent_handle"'));assert.equal(values.length,1,name+" actual unique parent format");return values[0]}

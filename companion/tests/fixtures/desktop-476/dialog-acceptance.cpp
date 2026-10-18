@@ -23,21 +23,22 @@ void D476DialogAcceptance::key(Desktop& h,WORD code){
 }
 void D476DialogAcceptance::renderer(Desktop& h,JsonObject const& frame){
  if(owner!=&h||loss||h.generation!=document)return;auto type=text(frame,L"type");
- if(type==L"desktop.chat.send"){if(++saves>2)failure(h);return;}
- if(type==L"desktop.chat.stop"){if(saves!=1||keys!=3||++stops>1)failure(h);return;}
+ if(type==L"desktop.chat.send"){if(++saves>3)failure(h);return;}
+ if(type==L"desktop.chat.stop"){if(saves!=2||keys!=4||++stops>1)failure(h);return;}
  if(type!=L"system.ping")return;auto id=text(frame,L"id");
  if(id==L"D476_DIALOG_NEW_KEY"){if(keys!=0||saves!=0){failure(h);return;}keys=1;key(h,VK_RETURN);return;}
- if(id==L"D476_DIALOG_OTHER_KEY"){if(keys!=3||stops!=1){failure(h);return;}keys=4;key(h,VK_RETURN);return;}
- if(id==L"D476_DIALOG_REOPEN_KEY"){if(keys!=4||stops!=1){failure(h);return;}keys=5;key(h,VK_RETURN);return;}
+ if(id==L"D476_DIALOG_OTHER_KEY"){if(keys!=4||stops!=1){failure(h);return;}keys=5;key(h,VK_RETURN);return;}
+ if(id==L"D476_DIALOG_REOPEN_KEY"){if(keys!=5||stops!=1){failure(h);return;}keys=6;key(h,VK_RETURN);return;}
  if(id==L"D476_DIALOG_SEND_KEY"){if(keys!=1||saves!=0){failure(h);return;}keys=2;key(h,VK_RETURN);return;}
- if(id==L"D476_DIALOG_LOST_ACK_KEY"){if(keys!=5||saves!=1||stops!=1){failure(h);return;}keys=6;key(h,VK_RETURN);return;}
- if(id==L"D476_DIALOG_STOP_KEY"){if(keys!=2||saves!=1){failure(h);return;}keys=3;key(h,VK_RETURN);return;}
+ if(id==L"D476_DIALOG_FOLLOWUP_KEY"){if(keys!=2||saves!=1||stops!=0){failure(h);return;}keys=3;key(h,VK_RETURN);return;}
+ if(id==L"D476_DIALOG_LOST_ACK_KEY"){if(keys!=6||saves!=2||stops!=1){failure(h);return;}keys=7;key(h,VK_RETURN);return;}
+ if(id==L"D476_DIALOG_STOP_KEY"){if(keys!=3||saves!=2){failure(h);return;}keys=4;key(h,VK_RETURN);return;}
  for(auto name:{L"D476_DIALOG_CREATED",L"D476_DIALOG_USER",L"D476_DIALOG_STREAMED",L"D476_DIALOG_L2_DENIED",L"D476_DIALOG_STOPPED",L"D476_DIALOG_REOPEN",L"D476_FAIL_DIALOG_PHASE"})if(id==name){D476Acceptance::emit(h,name);return;}
 }
-void D476DialogAcceptance::lost(Desktop& h){loss=owner==&h&&h.ready&&h.generation==document&&keys==6&&saves==2&&stops==1;}
+void D476DialogAcceptance::lost(Desktop& h){loss=owner==&h&&h.ready&&h.generation==document&&keys==7&&saves==3&&stops==1;}
 bool D476DialogAcceptance::observe(Desktop& h,std::wstring const& source,std::wstring const& body){
  if(owner!=&h||!loss||h.ready||!h.generation.empty()||source!=document_url)return false;
  auto f=flat(body);if(text(f,L"type")!=L"D476.dialog.offline")return false;
- bool ok=keys==6&&saves==2&&stops==1&&::keys(f,{L"type",L"generation",L"result"})&&text(f,L"generation")==document&&text(f,L"result")==L"ok";
+ bool ok=keys==7&&saves==3&&stops==1&&::keys(f,{L"type",L"generation",L"result"})&&text(f,L"generation")==document&&text(f,L"result")==L"ok";
  if(!ok)ExitProcess(64);loss=false;ExitProcess(76);return true; // Distinct test-only terminal receipt; ordinary window close still exits 0.
 }
