@@ -1,6 +1,6 @@
 // #480 build-only SDK acquisition. No production download, installer or PATH fallback.
 import fs from "node:fs"
-import { desktopMcpFixture, desktopMetadataFixture, desktopDialogFixture } from "./desktop-mcp-fixture.mjs"
+import { desktopMcpFixture, desktopMetadataFixture, desktopDialogFixture, desktopResourceFixture } from "./desktop-mcp-fixture.mjs"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
@@ -167,11 +167,11 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
       checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE",mode==="hostile"?"/DD480_HOSTILE":mode==="inheritance"?"/DD480_INHERITANCE":mode==="parent"?"/DD480_PARENT":"/DD480_VISUAL",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,source,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${binary}`],{env,cwd:output,buildDiagnostic:true})
       publish(binary,path.join(directory,"cmspark-desktop.exe"))
     }
-    for(const [family,formName]of[["mcp","native-form.js"],["metadata","metadata-form.js"],["dialog","dialog-form.js"]]){
+    for(const [family,formName]of[["mcp","native-form.js"],["metadata","metadata-form.js"],["dialog","dialog-form.js"],["resource","resource-form.js"]]){
     const mcpDirectory=path.join(acceptanceRoot,family);fs.mkdirSync(mcpDirectory,{recursive:true});if(!fs.lstatSync(mcpDirectory).isDirectory()||fs.lstatSync(mcpDirectory).isSymbolicLink())throw Error("DESKTOP_ACCEPTANCE_DIRECTORY")
     const mcpAssets=path.join(mcpDirectory,"assets");fs.mkdirSync(mcpAssets,{recursive:true});if(!fs.lstatSync(mcpAssets).isDirectory()||fs.lstatSync(mcpAssets).isSymbolicLink())throw Error("DESKTOP_ACCEPTANCE_DIRECTORY")
     for(const name of ["index.html","app.css","app.js"])publish(path.join(root,"src/desktop/assets",name),path.join(mcpAssets,name))
-    const mcpOriginal=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),mcpFixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/native-acceptance.cpp"),"utf8"),mcpForm=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476",formName),"utf8"),mcpVariant=(family==="dialog"?desktopDialogFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/dialog-acceptance.cpp"),"utf8")):family==="metadata"?desktopMetadataFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/metadata-acceptance.cpp"),"utf8")):desktopMcpFixture("cpp",mcpOriginal,mcpFixture,mcpForm))
+    const mcpOriginal=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),mcpFixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/native-acceptance.cpp"),"utf8"),mcpForm=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476",formName),"utf8"),mcpVariant=(family==="resource"?desktopResourceFixture("cpp",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/resource-acceptance.cpp"),"utf8"),mcpForm):family==="dialog"?desktopDialogFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/dialog-acceptance.cpp"),"utf8")):family==="metadata"?desktopMetadataFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/metadata-acceptance.cpp"),"utf8")):desktopMcpFixture("cpp",mcpOriginal,mcpFixture,mcpForm))
     if(mcpVariant.inverse!==mcpOriginal)throw Error("DESKTOP_MCP_SOURCE_DRIFT")
     const mcpSource=path.join(output,`acceptance-${family}.cpp`),mcpBinary=path.join(output,`acceptance-${family}.exe`);fs.writeFileSync(mcpSource,mcpVariant.source,{flag:"wx"})
     checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,mcpSource,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${mcpBinary}`],{env,cwd:output,buildDiagnostic:true})

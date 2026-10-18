@@ -1,6 +1,7 @@
 import { peekThreadDistilled, SUMMONER_PEEK_MAX_CHARS } from "../summoner/read-search"
 import { SUMMONER_RAIL_LIST_CAP } from "../summoner/protocol"
 import { redactSecrets } from "../threads/distill"
+import type { DesktopResourceStore } from "../skills/desktop-resource-store"
 
 export type DesktopReadServices = {
   threads: {
@@ -9,7 +10,7 @@ export type DesktopReadServices = {
     updateDesktopMetadata?(id: string, patch: Record<string, unknown>): { alias?: string | null; user_tags?: string[]; topic_folder?: string | null } | undefined
     getMessages(id: string): Array<{ role?: string; content?: unknown }>
   }
-  skills: { list(): unknown[]; listKnowledge(): unknown[] }
+  skills: { list(): unknown[]; listKnowledge(): unknown[]; createDesktopResourceStore?(): DesktopResourceStore }
   mcp: { listServers(): unknown[] }
 }
 function record(value: unknown): Record<string, any> { return value && typeof value === "object" && !Array.isArray(value) ? value : {} }

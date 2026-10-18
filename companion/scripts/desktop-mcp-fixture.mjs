@@ -80,3 +80,22 @@ export function desktopDialogFixture(language, original, fixture, form, dialog) 
   if(inverse!==base.source||base.inverse!==original)throw Error("DESKTOP_DIALOG_SOURCE_DRIFT")
   return {source,inverse:base.inverse}
 }
+
+/** Separate unshipped resource controller. The normal host always retains its exact bytes. */
+export function desktopResourceFixture(language, original, fixture, form) {
+  const base=desktopMcpFixture(language,original,fixture,form)
+  const patches=language==='cpp' ? [
+    ['void renderer(std::wstring const& source,std::wstring const& body){','void renderer(std::wstring const& source,std::wstring const& body){if(D476Acceptance::observe(*this,source,body))return;'],
+    ['else if(message==native_offline){self->retire_confirmation();','else if(message==native_offline){D476Acceptance::lost(*self);self->retire_confirmation();'],
+  ] : language==='swift' ? [
+    ['func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {','func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {\n        if D476Acceptance.observe(self,message){return}'],
+    ['guard socket === task else { return };let wasAuthenticated=authenticated;','guard socket === task else { return };D476Acceptance.lost(self);let wasAuthenticated=authenticated;'],
+  ] : []
+  if(patches.length!==2)throw Error('DESKTOP_RESOURCE_FIXTURE_KIND')
+  let source=base.source
+  for(const [before,after]of patches){if(source.split(before).length!==2)throw Error('DESKTOP_RESOURCE_FIXTURE_ANCHOR');source=source.replace(before,after)}
+  let inverse=source
+  for(const [before,after]of [...patches].reverse()){if(inverse.split(after).length!==2)throw Error('DESKTOP_RESOURCE_FIXTURE_INVERSE');inverse=inverse.replace(after,before)}
+  if(inverse!==base.source||base.inverse!==original)throw Error('DESKTOP_RESOURCE_SOURCE_DRIFT')
+  return{source,inverse:base.inverse}
+}
