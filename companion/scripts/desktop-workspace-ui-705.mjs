@@ -19,6 +19,61 @@ export function workspaceUI705Plan(root,dest){
  ]}
 }
 function within(root,file){const rel=path.relative(root,file);return !!rel&&!path.isAbsolute(rel)&&rel!=='..'&&!rel.startsWith('..'+path.sep)}
+// Diagnostic only. Unknown descriptors never change build, launch, identity or cleanup.
+const descriptorUnknown705=()=>({schema:1,status:'UNKNOWN',format:null,targetCount:'UNKNOWN',expectedTarget:null,expectedCount:'UNKNOWN',TestHostPath:{type:'UNKNOWN',within:null,exists:null},TestBundlePath:{type:'UNKNOWN',within:null,exists:null},UITargetAppPath:{type:'UNKNOWN',within:null,exists:null}})
+export function workspaceUI705DescriptorObservation(text,packageRoot){
+ const unknown=descriptorUnknown705(),object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v),own=(v,k)=>Object.hasOwn(v,k)?v[k]:undefined,count=n=>n===0?'ZERO':n===1?'ONE':'MULTIPLE'
+ try{
+  if(typeof text!=='string'||Buffer.byteLength(text,'utf8')>65536||typeof packageRoot!=='string'||!path.isAbsolute(packageRoot))return unknown
+  const value=JSON.parse(text);if(!object(value))return unknown
+  const metadata=own(value,'__xctestrun_metadata__'),format=metadata===undefined?1:object(metadata)?own(metadata,'FormatVersion'):undefined;if(format!==1&&format!==2)return unknown
+  let targets
+  if(format===1){const keys=Object.keys(value).filter(k=>k!=='__xctestrun_metadata__');if(keys.some(k=>!object(value[k])))return unknown;targets=keys.map(k=>({name:k,value:value[k]}))}
+  else{const configs=own(value,'TestConfigurations');if(!Array.isArray(configs))return unknown;targets=[];for(const config of configs){if(!object(config)||!Array.isArray(own(config,'TestTargets')))return unknown;for(const target of config.TestTargets){if(!object(target)||typeof own(target,'BlueprintName')!=='string')return unknown;targets.push({name:target.BlueprintName,value:target})}}}
+  const matches=targets.filter(t=>t.name==='OwnedPickerUITests'),result={...unknown,status:'OBSERVED',format,targetCount:count(targets.length),expectedTarget:matches.length===1,expectedCount:count(matches.length)}
+  if(matches.length>1)return{...result,status:'UNKNOWN',expectedTarget:null}
+  if(matches.length===0)return result
+  // No descriptor-controlled read occurs until lexical containment is established.
+  const lexical=path.resolve(packageRoot),rootStat=fs.lstatSync(lexical);if(!rootStat.isDirectory()||rootStat.isSymbolicLink())return unknown
+  const canonicalRoot=fs.realpathSync(lexical),inside=(root,file)=>file===root||file.startsWith(root+path.sep),allowed=(root,file)=>inside(path.join(root,'Products'),file)||inside(path.join(root,'OwnedPicker705.app'),file)
+  const target=matches[0].value,testRoot=path.join(lexical,'Products')
+  function resolve(value,host){
+   if(typeof value!=='string'||!value||Buffer.byteLength(value,'utf8')>4096||/[\0\r\n]/.test(value))return
+   if(value==='__TESTROOT__'||value.startsWith('__TESTROOT__/'))value=testRoot+value.slice('__TESTROOT__'.length)
+   else if(value==='__TESTHOST__'||value.startsWith('__TESTHOST__/')){if(!host)return;value=host+value.slice('__TESTHOST__'.length)}
+   if(/__[A-Za-z0-9_]+__/.test(value)||!path.isAbsolute(value))return
+   return path.resolve(value)
+  }
+  const host=resolve(own(target,'TestHostPath'))
+  function observe(name){
+   const value=own(target,name);if(value===undefined)return{type:'MISSING',within:null,exists:null}
+   if(typeof value!=='string')return{type:'OTHER',within:null,exists:null}
+   const file=resolve(value,name==='TestHostPath'?undefined:host);if(!file)return{type:'STRING',within:null,exists:null}
+   if(!allowed(lexical,file))return{type:'STRING',within:false,exists:null}
+   const relative=path.relative(lexical,file),realFile=path.resolve(canonicalRoot,relative);if(!allowed(canonicalRoot,realFile))return unknown[name]
+   // Refuse a symlink before realpath, including intermediate links; no outside target probes.
+   let current=canonicalRoot
+   for(const part of relative.split(path.sep)){current=path.join(current,part);let stat;try{stat=fs.lstatSync(current)}catch(e){if(e&&Object.getOwnPropertyDescriptor(e,'code')?.value==='ENOENT')return{type:'STRING',within:true,exists:false};throw e};if(stat.isSymbolicLink()||(!stat.isDirectory()&&!stat.isFile()))return unknown[name]}
+   if(fs.realpathSync(realFile)!==realFile)return unknown[name]
+   return{type:'STRING',within:true,exists:true}
+  }
+  for(const name of['TestHostPath','TestBundlePath','UITargetAppPath'])result[name]=observe(name)
+  if(['TestHostPath','TestBundlePath','UITargetAppPath'].some(name=>result[name].type==='UNKNOWN'||result[name].type==='OTHER'||result[name].type==='STRING'&&result[name].within===null))result.status='UNKNOWN'
+  return result
+ }catch{return unknown}
+}
+function observeWorkspaceUI705Descriptor(packageRoot){
+ let result=descriptorUnknown705()
+ try{
+  const directory=fs.lstatSync(packageRoot),products=fs.lstatSync(path.join(packageRoot,'Products'));if(!directory.isDirectory()||directory.isSymbolicLink()||!products.isDirectory()||products.isSymbolicLink())throw Error('OWNED_UI_DESCRIPTOR_UNKNOWN')
+  const file=path.join(packageRoot,'Products/OwnedPickerUI.xctestrun'),stat=fs.lstatSync(file)
+  if(stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1&&stat.size>0&&stat.size<=1048576){
+   const converted=spawnSync('/usr/bin/plutil',['-convert','json','-o','-',file],{stdio:'pipe',timeout:5000,maxBuffer:65536})
+   if(!converted.error&&converted.status===0&&Buffer.isBuffer(converted.stdout)&&converted.stdout.length<=65536)result=workspaceUI705DescriptorObservation(new TextDecoder('utf-8',{fatal:true}).decode(converted.stdout),packageRoot)
+  }
+ }catch{}
+ try{fs.writeSync(1,'D705_UI_DESCRIPTOR '+JSON.stringify(result)+'\n')}catch{}
+}
 export function buildWorkspaceUI705(root,dest){
  if(process.platform!=='darwin')throw Error('OWNED_UI_BUILD_PLATFORM')
  const plan=workspaceUI705Plan(root,dest),run=(bin,args)=>{const r=spawnSync(bin,args,{stdio:'pipe',encoding:'utf8'});if(r.error||r.status!==0){if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);throw Error('OWNED_UI_BUILD_FAILED')}return r.stdout}
@@ -51,4 +106,5 @@ export function buildWorkspaceUI705(root,dest){
  function inventory(dir,rel){for(const n of fs.readdirSync(dir)){const file=path.join(dir,n),r=path.posix.join(rel,n),s=fs.lstatSync(file);if(s.isDirectory()){inventory(file,r);continue};if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1)throw Error('OWNED_UI_BUILD_APP_FILE');const b=fs.readFileSync(file);rows.push({path:r,kind:'file',bytes:b.length,mode:s.mode&0o777,sha256:createHash('sha256').update(b).digest('hex')})}}
  inventory(app,'OwnedPicker705.app');copy(path.join(plan.work,'owner-observer'),'owner-observer',plan.work)
  fs.writeFileSync(path.join(plan.package,'package-manifest.json'),JSON.stringify({schema:1,files:rows.sort((a,b)=>a.path.localeCompare(b.path))}),{flag:'wx',mode:0o600})
+ observeWorkspaceUI705Descriptor(plan.package)
 }
