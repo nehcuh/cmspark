@@ -9,9 +9,11 @@
    比较基线和目标提交。使用完整 40/64 位小写 SHA；PR 三点比较应使用实际
    merge-base 作为基线，不直接把分支当前值当成基线。
 2. 在已登录代码平台打开 unified/raw diff 页面，让 CMspark 使用
-   `get_page_text` 读取。当前适配 Git unified text diff 的普通文本文件增删改；
-   split view、重命名、二进制、combined diff、折叠/分页/虚拟化页面尚未获得
-   平台适配和全量覆盖证明。解析失败会明确返回错误，不能用代码链接代替差异。
+   `get_page_text` 读取。当前适配 Git unified text diff 的普通文本文件增删改，
+   以及带完整变更 hunks、明确且未加引号的文本重命名（保留旧/新路径）。
+   纯重命名、copy、带引号路径、二进制、combined diff 仍不支持；split view、
+   折叠/分页/虚拟化页面也尚未获得平台适配和全量覆盖证明。即使解析成功，
+   网页比较语义和全量覆盖仍未核实。解析失败会明确返回错误，不能用代码链接代替差异。
 3. 用 `code_review_create` 引用同一次网页观察中的实际 diff，指定仓库、base、
    head，并选择需求、真实开发任务、测试的观察引用（`business_context`）。
    如需材料补充输出，一并指定已稳定的草稿编号和版本（`materials`）。
