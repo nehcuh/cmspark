@@ -46,10 +46,22 @@ export function compareProduced(actual, expected, parse) {
 }
 // Only finite constants are ever emitted, including on assertion/CDP/network failures.
 const STAGES = new Set(['PREFLIGHT', 'GIT', 'BUNDLE', 'XVFB', 'CHROMIUM', 'WORKER', 'AUTH', 'NAVIGATION', 'POSITIVE', 'NEGATIVES', 'CLEANUP', 'COMPLETE'])
+function startupProjection464(value) {
+  if (!value || typeof value !== 'object') return undefined
+  const keys=['step','spawnError','exitObserved','exitCode','signal','sandboxUnavailable','namespaceDenied','displayUnavailable','stderrTruncated'], out={}
+  for(const key of keys) { const d=Object.getOwnPropertyDescriptor(value,key);if(!d||!Object.hasOwn(d,'value'))return undefined;out[key]=d.value }
+  if (!['SPAWN','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(out.step) ||
+      !['NONE','SIGABRT','SIGTRAP','SIGSEGV','SIGTERM','SIGKILL','OTHER'].includes(out.signal) ||
+      !(out.exitCode===null||Number.isInteger(out.exitCode)&&out.exitCode>=0&&out.exitCode<=255) ||
+      keys.filter(k=>!['step','exitCode','signal'].includes(k)).some(k=>typeof out[k]!=='boolean')) return undefined
+  return out
+}
 export function receipt(stage, passed, cases, runtime = {}) {
   if (!STAGES.has(stage) || typeof passed !== 'boolean' || !Number.isSafeInteger(cases) || cases < 0 || cases > 32) refusal('INVALID_RECEIPT')
+  const startup=startupProjection464(runtime.chromiumStartup)
   return { schema: 1, stage, passed, cases, browserAcceptance: passed ? 'REAL_HOSTED_CHROMIUM' : 'NOT_PASSED',
     authBoundary: 'FIXTURE_PRIMITIVES_AND_PRODUCTION_PENDING', fullStartServer: false, reviewReady: false,
+    ...(startup?{chromiumStartup:startup}:{}),
     ...Object.fromEntries(Object.entries(runtime).filter(([k,v]) => ['node', 'chromium', 'image', 'source', 'base', 'head', 'expectedDiffSHA256', 'producedDiffSHA256', 'fileCount', 'additions', 'deletions'].includes(k) &&
       (typeof v === 'string' && v.length <= 200 && /^[A-Za-z0-9 ._:/+-]+$/.test(v) || typeof v === 'number' && Number.isSafeInteger(v) && v >= 0))) }
 }
@@ -61,6 +73,27 @@ async function waitForFile(filename, ms) {
   const end = Date.now() + ms
   while (Date.now() < end) { try { return fs.readFileSync(filename, 'utf8') } catch {} await new Promise(r => setTimeout(r, 25)) }
   refusal('STARTUP_FILE_MISSING')
+}
+// Diagnostics only: fixed categories, never stderr text/paths or success authority.
+// Continue draining the pipe after the memory cap. Snapshot before cleanup so an
+// owned SIGTERM during retirement cannot be reported as the startup result.
+export function observeChromiumStartup464() {
+  let step='SPAWN',spawnError=false,exitObserved=false,exitCode=null,signal='NONE',text='',bytes=0,stderrTruncated=false
+  return {
+    step(value) { if(!['SPAWN','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(value))throw new Error('INVALID_STARTUP_STEP');step=value },
+    track(child) {
+      child.on('error',()=>{spawnError=true})
+      child.on('exit',(code,sig)=>{exitObserved=true;exitCode=Number.isInteger(code)&&code>=0&&code<=255?code:null;signal=sig==null?'NONE':['SIGABRT','SIGTRAP','SIGSEGV','SIGTERM','SIGKILL'].includes(sig)?sig:'OTHER'})
+      child.stderr.on('error',()=>{stderrTruncated=true})
+      child.stderr.on('data',chunk=>{
+        if(!Buffer.isBuffer(chunk)){stderrTruncated=true;return}
+        const count=Math.min(8192-bytes,chunk.length)
+        if(count>0){text+=chunk.subarray(0,count).toString('utf8');bytes+=count}
+        if(count<chunk.length)stderrTruncated=true
+      })
+    },
+    snapshot() { return {step,spawnError,exitObserved,exitCode,signal,sandboxUnavailable:text.includes('No usable sandbox!'),namespaceDenied:text.includes('Failed to move to new namespace'),displayUnavailable:text.includes('Missing X server or $DISPLAY'),stderrTruncated} },
+  }
 }
 class CDP {
   constructor(socket) { this.socket=socket;this.id=0;this.pending=new Map();socket.on('error',()=>socket.terminate());socket.on('message', data => {
@@ -87,7 +120,7 @@ async function stopped(child, deadline) {
 }
 export async function main() {
   const envInput=process.env, platform=process.platform
-  let stage='PREFLIGHT', cases=0, owned, chromium, xvfb, server, browser, peer, timer, esbuild, forward, buildTask, buildSettled=true, expired=false, profileRead=false, runtime={}, cleanupOkay=true
+  let stage='PREFLIGHT', cases=0, owned, chromium, chromiumStartup, xvfb, server, browser, peer, timer, esbuild, forward, buildTask, buildSettled=true, expired=false, profileRead=false, runtime={}, cleanupOkay=true
   const active = new Set(), sockets = new Set()
   const deadline=Date.now()+BOUNDS.outer
   const remaining=()=>{const n=deadline-Date.now();if(n<=0||expired)refusal('OUTER_TIMEOUT');return n}
@@ -134,17 +167,21 @@ export async function main() {
     let displayText='';const displayReady=deferred();xvfb.stdio[3].on('data',b=>{displayText+=b.toString();if(displayText.length>8)displayReady.reject(new Error('INVALID_DISPLAY'));else if(/^\d+\n$/.test(displayText))displayReady.resolve(':'+displayText.trim())});xvfb.on('error',()=>displayReady.reject(new Error('XVFB_START_FAILED')))
     const display=await limit(displayReady.promise,5000,'XVFB_START_TIMEOUT')
     stage='CHROMIUM'
+    chromiumStartup=observeChromiumStartup464()
     const binary=['/usr/bin/chromium','/usr/bin/chromium-browser'].find(x=>{try{return fs.statSync(x).isFile()}catch{return false}})
     if(!binary)refusal('CHROMIUM_MISSING')
     const version=execFileSync(binary,['--version'],{env,encoding:'utf8',timeout:5000,stdio:['ignore','pipe','ignore']}).trim()
     if(!/^Chromium [0-9.]+(?: [A-Za-z0-9 ._-]+)?$/.test(version))refusal('CHROMIUM_IDENTITY_REFUSED')
     runtime.chromium=version
-    remaining();chromium=spawn(binary,chromeArgs(owned,extension),{env:childEnvironment(owned,env,display),stdio:'ignore'})
-    chromium.on('error',()=>{})
+    remaining();chromium=spawn(binary,chromeArgs(owned,extension),{env:childEnvironment(owned,env,display),stdio:['ignore','ignore','pipe']})
+    chromiumStartup.track(chromium);chromiumStartup.step('PORT_FILE')
     const portText=await waitForFile(path.join(owned,'profile/DevToolsActivePort'),10000), parts=portText.trim().split('\n')
+    chromiumStartup.step('PORT_PARSE')
     if(parts.length!==2||!/^\d{1,5}$/.test(parts[0])||!/^\/devtools\/browser\/[a-f0-9-]+$/.test(parts[1]))refusal('CDP_IDENTITY_REFUSED')
     const endpoint='http://127.0.0.1:'+parts[0]
+    chromiumStartup.step('CDP_CONNECT')
     browser=await CDP.connect(WebSocket,'ws://127.0.0.1:'+parts[0]+parts[1]);active.add(browser)
+    chromiumStartup.step('CONNECTED');runtime.chromiumStartup=chromiumStartup.snapshot()
     stage='WORKER'
     let workerInfo
     const end=Date.now()+10000
@@ -230,7 +267,9 @@ export async function main() {
     try{const moved=await getWire();assert.equal(moved.data?.provenance?.capture_status,'TARGET_CHANGED');assert.equal(moved.data?.codeComparison,undefined);assert.equal(captureLocalPageResult(env.CMSPARK_DATA_DIR,scope,'moved','get_page_text',moved).data.evidence_capture.capture_status,'skipped')}
     finally{page=await openPage();await page.evaluate(`delete document.body.innerText;history.replaceState(null,'',${JSON.stringify(PAGE)});true`);page.close();active.delete(page)}cases++
     remaining();profileRead=true;stage='COMPLETE'
-  } catch { /* Nothing from an untrusted page/transport exception is reflected. */ }
+  } catch { /* Nothing from an untrusted page/transport exception is reflected. */
+    if(chromiumStartup)runtime.chromiumStartup=chromiumStartup.snapshot()
+  }
   finally {
     // The same absolute120s bound remains armed through cleanup. Unknown closure
     // retains the owned directory; a late build/child may never touch a deleted root.

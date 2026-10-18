@@ -5,6 +5,7 @@ import path from 'node:path'
 import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { EventEmitter } from 'node:events'
 import { BASE, HEAD, PAGE, BOUNDS, preflight, childEnvironment, chromeArgs, compareProduced, receipt } from '../../../chrome-extension/scripts/accept-github-comparison-hosted.mjs'
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..')
 const harness=fs.readFileSync(path.join(repo,'chrome-extension/scripts/accept-github-comparison-hosted.mjs'),'utf8')
@@ -143,4 +144,67 @@ test('actual hosted path declarations bind imports and Git to this checkout',()=
   const actual=vm.runInNewContext(harness.slice(start,end).replaceAll('import.meta.url','actualURL')+'\n;({REPO})',{path,fileURLToPath,actualURL})
   assert.equal(actual.REPO,repo)
   assert.equal(fs.existsSync(path.join(actual.REPO,'companion/package.json')),true)
+})
+
+function actualStartupObserver464() {
+  const start=harness.indexOf('export function observeChromiumStartup464()'),end=harness.indexOf('\nclass CDP {',start)
+  assert.ok(start>=0&&end>start,'actual startup observation producer is present')
+  const c={Buffer,Set,Error,Object,Number};vm.createContext(c)
+  vm.runInContext(harness.slice(start,end).replace('export function','function')+'\nthis.observe=observeChromiumStartup464',c)
+  return c.observe()
+}
+test('actual startup producer classifies split sandbox stderr without publishing body or cleanup exit',()=>{
+  const observer=actualStartupObserver464(),child=new EventEmitter();child.stderr=new EventEmitter()
+  observer.track(child);observer.step('PORT_FILE')
+  child.stderr.emit('data',Buffer.from('private-owned-path No usable sand'))
+  child.stderr.emit('data',Buffer.from('box! Failed to move to new namespace'))
+  child.emit('exit',1,null)
+  const snapshot=observer.snapshot();child.emit('exit',null,'SIGTERM')
+  assert.equal(snapshot.sandboxUnavailable,true);assert.equal(snapshot.namespaceDenied,true)
+  assert.equal(snapshot.exitCode,1);assert.equal(snapshot.signal,'NONE');assert.equal(snapshot.step,'PORT_FILE')
+  assert.equal(JSON.stringify(snapshot).includes('private-owned-path'),false)
+  const r=receipt('CHROMIUM',false,0,{chromiumStartup:snapshot})
+  assert.equal(r.passed,false);assert.equal(r.chromiumStartup.exitCode,1)
+})
+test('startup pipe continues draining after memory cap and reports only finite categories',()=>{
+  const observer=actualStartupObserver464(),child=new EventEmitter();child.stderr=new EventEmitter();observer.track(child)
+  for(let i=0;i<64;i++)child.stderr.emit('data',Buffer.from('private-marker'.repeat(1024)))
+  child.stderr.emit('data',Buffer.from('No usable sandbox!'))
+  child.emit('error',new Error('private-error'));child.emit('exit',null,'UNRECOGNIZED_SIGNAL')
+  const s=observer.snapshot();assert.equal(s.stderrTruncated,true);assert.equal(s.sandboxUnavailable,false)
+  assert.equal(s.spawnError,true);assert.equal(s.signal,'OTHER');assert.equal(JSON.stringify(s).includes('private'),false)
+  assert.throws(()=>observer.step('private-step'))
+  let getters=0
+  const fake=Object.defineProperty({},'step',{get(){getters++;return 'CONNECTED'}})
+  assert.equal(receipt('CHROMIUM',false,0,{chromiumStartup:fake}).chromiumStartup,undefined)
+  assert.equal(getters,0)
+})
+async function actualChromiumPhase464({fail=false}={}) {
+  const observer=actualStartupObserver464(),child=new EventEmitter();child.stderr=new EventEmitter()
+  const start=harness.indexOf("    stage='CHROMIUM'"),end=harness.indexOf("    stage='WORKER'",start)
+  assert.ok(start>0&&end>start)
+  let calls=0,port=false
+  const c={stage:'CHROMIUM',chromiumStartup:undefined,observeChromiumStartup464:()=>observer,chromium:undefined,browser:undefined,portText:undefined,parts:undefined,
+    path,fs:{statSync(){return{isFile:()=>true}}},refusal(){throw Error('REFUSED')},execFileSync(){return'Chromium 155.0.8059.0'},runtime:{},remaining(){return 10000},owned:'/owned',extension:'/owned/extension',env:{},display:':1',chromeArgs,childEnvironment,
+    spawn(binary,args,options){calls++;assert.equal(binary,'/usr/bin/chromium');assert.equal(options.stdio[2],'pipe');return child},
+    async waitForFile(){port=true;if(fail){child.stderr.emit('data',Buffer.from('Missing X server or $DISPLAY private-marker'));child.emit('exit',1,null);throw Error('STARTUP_FILE_MISSING')}return'12345\n/devtools/browser/a-b-c\n'},
+    CDP:{async connect(){return{}}},WebSocket:class{},active:new Set()}
+  vm.createContext(c)
+  const catchStart=harness.indexOf('  } catch { /* Nothing from an untrusted page/transport exception'),catchEnd=harness.indexOf('\n  finally {',catchStart)
+  assert.ok(catchStart>0&&catchEnd>catchStart)
+  const actualCatch=harness.slice(catchStart,catchEnd)
+  await vm.runInContext('async function phase(){try{'+harness.slice(start,end)+actualCatch+'}\nphase()',c)
+  child.emit('exit',null,'SIGTERM')
+  assert.equal(calls,1);assert.equal(port,true)
+  return receipt('CHROMIUM',false,0,c.runtime)
+}
+test('actual main Chromium failure snapshots before finally without changing launch or pass policy',async()=>{
+  const r=await actualChromiumPhase464({fail:true})
+  assert.equal(r.passed,false);assert.equal(r.cases,0);assert.equal(r.chromiumStartup.step,'PORT_FILE')
+  assert.equal(r.chromiumStartup.displayUnavailable,true);assert.equal(r.chromiumStartup.exitCode,1);assert.equal(r.chromiumStartup.signal,'NONE')
+  assert.equal(JSON.stringify(r).includes('private-marker'),false)
+})
+test('actual main CDP-ready phase records connected without claiming the browser acceptance passed',async()=>{
+  const r=await actualChromiumPhase464()
+  assert.equal(r.chromiumStartup.step,'CONNECTED');assert.equal(r.passed,false);assert.equal(r.chromiumStartup.exitObserved,false)
 })
