@@ -3,7 +3,7 @@ import type http from "node:http"
 import { WebSocketServer, WebSocket } from "ws"
 import { DesktopIdentityRegistry, type DesktopPrincipal } from "./identity"
 import { DESKTOP_NATIVE_ORIGIN, DESKTOP_CHALLENGE_TTL_MS } from "./capabilities"
-import { desktopRead, type DesktopReadServices } from "./read"
+import { desktopRead, desktopTitleSearch, type DesktopReadServices } from "./read"
 import { parseDesktopFrame } from "./flat-json"
 import { createDesktopMcpSave } from "./mcp-save"
 import { createDesktopDialog, DESKTOP_DIALOG_METHODS, type NativeDialogRuntime } from "./dialog"
@@ -110,6 +110,17 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
         if (frame.type === "desktop.confirmation.decision") { if (frame.purpose === "resource") resources?.decide(frame); else if (!Object.hasOwn(frame, "purpose")) mcpSave.decide(frame); return }
         const owner = principal
         void mcpSave.handle(frame).then(result => { if (opts.registry.allows(owner, String(frame.type))) send(ws, result) }).catch(() => { if (opts.registry.allows(owner, String(frame.type))) send(ws, { type: "desktop.error", error_code: "DESKTOP_MCP_SAVE_FAILED", ...(typeof frame.id === "string" ? { id: frame.id } : {}) }) })
+        return
+      }
+      if (frame.type === "thread.search") {
+        const allowed = frame.limit === undefined ? ["type", "id", "query"] : ["type", "id", "query", "limit"]
+        if (!exact(frame, allowed) || typeof frame.id !== "string" || frame.id.length > 200 || typeof frame.query !== "string" || frame.query.length > 120 || (frame.limit !== undefined && (typeof frame.limit !== "number" || !Number.isInteger(frame.limit) || frame.limit < 1 || frame.limit > 20)) || !opts.registry.allows(principal, "thread.search")) {
+          send(ws, { type: "desktop.error", id: frame.id, error_code: "DESKTOP_METHOD_DENIED" }); return
+        }
+        try {
+          const result = desktopTitleSearch(frame.query, frame.limit as number | undefined, opts.services)
+          if (ws.readyState === WebSocket.OPEN && opts.registry.allows(principal, "thread.search")) send(ws, { ...result, id: frame.id })
+        } catch { if (opts.registry.allows(principal, "thread.search")) send(ws, { type: "desktop.error", id: frame.id, error_code: "DESKTOP_READ_FAILED" }) }
         return
       }
       const keys = frame.type === "thread.peek" ? ["type", "thread_id", "id"] : ["type", "id"]

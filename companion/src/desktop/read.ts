@@ -1,4 +1,4 @@
-import { peekThreadDistilled, SUMMONER_PEEK_MAX_CHARS } from "../summoner/read-search"
+import { peekThreadDistilled, searchThreadRows, normalizeSearchQuery, SUMMONER_SEARCH_LIMIT_DEFAULT, SUMMONER_PEEK_MAX_CHARS } from "../summoner/read-search"
 import { SUMMONER_RAIL_LIST_CAP } from "../summoner/protocol"
 import { redactSecrets } from "../threads/distill"
 import type { DesktopResourceStore } from "../skills/desktop-resource-store"
@@ -34,4 +34,12 @@ export function desktopRead(type: string, threadId: string | undefined, s: Deskt
     case "knowledge.list": return listed(type, "docs", s.skills.listKnowledge(), v => ({ id: text(v.id || v.name), name: text(v.name), title: text(v.title || v.name), description: text(v.description) }))
     default: return { type: "desktop.error", error_code: "DESKTOP_METHOD_DENIED" }
   }
+}
+
+/** Native title-only read: fresh canonical metadata; no digest/body/list repair. */
+export function desktopTitleSearch(query: string, limit: number = SUMMONER_SEARCH_LIMIT_DEFAULT, s: DesktopReadServices): Record<string, unknown> {
+  const normalized = normalizeSearchQuery(query)
+  const rows = s.threads.desktopMetadataSnapshot().map(row => ({ id: row.id, alias: text(row.alias || row.id), updated_at: row.updated_at }))
+  const hits = normalized ? searchThreadRows(rows, normalized, limit + 1) : []
+  return { type: "thread.search_result", threads: hits.slice(0, limit).map(hit => ({ id: text(hit.thread_id), title: text(hit.title), updated_at: text(hit.updated_at) })), truncated: hits.length > limit }
 }
