@@ -48,14 +48,16 @@ export function compareProduced(actual, expected, parse) {
 const STAGES = new Set(['PREFLIGHT', 'GIT', 'BUNDLE', 'XVFB', 'CHROMIUM', 'WORKER', 'AUTH', 'NAVIGATION', 'POSITIVE', 'NEGATIVES', 'CLEANUP', 'COMPLETE'])
 function startupProjection464(value) {
   if (!value || typeof value !== 'object') return undefined
-  const keys=['step','spawnError','exitObserved','exitCode','signal','sandboxUnavailable','namespaceDenied','displayUnavailable','stderrTruncated','stderrRetainedBytes','devToolsListening','portFileRead'], out={}
+  const keys=['step','spawnError','exitObserved','exitCode','signal','sandboxUnavailable','namespaceDenied','displayUnavailable','stderrTruncated','stderrRetainedBytes','devToolsListening','portFileRead','stderrSiteMask','stderrSeverityMask'], out={}
   for(const key of keys) { const d=Object.getOwnPropertyDescriptor(value,key);if(!d||!Object.hasOwn(d,'value'))return undefined;out[key]=d.value }
   if (!['SPAWN','DISPLAY_FD','DISPLAY_PARTIAL','DISPLAY_INVALID','DISPLAY_READY','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(out.step) ||
       !['NONE','SIGABRT','SIGTRAP','SIGSEGV','SIGTERM','SIGKILL','OTHER'].includes(out.signal) ||
       !(out.exitCode===null||Number.isInteger(out.exitCode)&&out.exitCode>=0&&out.exitCode<=255) ||
       !Number.isInteger(out.stderrRetainedBytes) || out.stderrRetainedBytes<0 || out.stderrRetainedBytes>8192 ||
+      !Number.isInteger(out.stderrSiteMask) || out.stderrSiteMask<0 || out.stderrSiteMask>1023 ||
+      !Number.isInteger(out.stderrSeverityMask) || out.stderrSeverityMask<0 || out.stderrSeverityMask>15 ||
       !['NOT_ATTEMPTED','READ','ENOENT','EACCES','EPERM','EISDIR','OTHER'].includes(out.portFileRead) ||
-      keys.filter(k=>!['step','exitCode','signal','stderrRetainedBytes','portFileRead'].includes(k)).some(k=>typeof out[k]!=='boolean')) return undefined
+      keys.filter(k=>!['step','exitCode','signal','stderrRetainedBytes','portFileRead','stderrSiteMask','stderrSeverityMask'].includes(k)).some(k=>typeof out[k]!=='boolean')) return undefined
   return out
 }
 export function receipt(stage, passed, cases, runtime = {}) {
@@ -92,6 +94,19 @@ async function waitForFile(filename, ms, observe = () => {}) {
 // owned SIGTERM during retirement cannot be reported as the startup result.
 export function observeChromiumStartup464() {
   let step='SPAWN',spawnError=false,exitObserved=false,exitCode=null,signal='NONE',text='',bytes=0,stderrTruncated=false,portFileRead='NOT_ATTEMPTED'
+  // Fixed source/severity token observations only; never a root-cause or pass signal.
+  // Keep bit order stable. Unsupported/textual prefixes, sites and severities stay unclassified.
+  const sites=['dbus/bus.cc','ui/ozone/platform/x11/ozone_platform_x11.cc','ui/gtk/gtk_ui.cc','ui/gl/init/gl_factory.cc','content/browser/gpu/gpu_process_host.cc','components/crash/core/app/crashpad_linux.cc','components/os_crypt/async/browser/freedesktop_secret_key_provider.cc','chrome/browser/process_singleton_posix.cc','chrome/browser/chrome_browser_main.cc','content/browser/devtools/devtools_http_handler.cc']
+  function logMasks() {
+    let stderrSiteMask=0,stderrSeverityMask=0
+    for(const line of text.split('\n')) {
+      const m=/^\[(?:[0-9]+:){0,2}(?:[0-9]{4}\/[0-9]{6}\.[0-9]{6}:)?(?:[0-9]+:)?(INFO|WARNING|ERROR|FATAL):([^:\r\n\]]+):[0-9]{1,10}\] /.exec(line)
+      if(!m)continue
+      const site=sites.indexOf(m[2]);if(site<0)continue
+      stderrSiteMask|=1<<site;stderrSeverityMask|=1<<['INFO','WARNING','ERROR','FATAL'].indexOf(m[1])
+    }
+    return {stderrSiteMask,stderrSeverityMask}
+  }
   return {
     step(value) { if(!['SPAWN','DISPLAY_FD','DISPLAY_PARTIAL','DISPLAY_INVALID','DISPLAY_READY','PORT_FILE','PORT_PARSE','CDP_CONNECT','CONNECTED'].includes(value))throw new Error('INVALID_STARTUP_STEP');step=value },
     portFile(value) { if(!['NOT_ATTEMPTED','READ','ENOENT','EACCES','EPERM','EISDIR','OTHER'].includes(value))throw new Error('INVALID_PORT_FILE_OBSERVATION');portFileRead=value },
@@ -106,7 +121,7 @@ export function observeChromiumStartup464() {
         if(count<chunk.length)stderrTruncated=true
       })
     },
-    snapshot() { return {step,spawnError,exitObserved,exitCode,signal,sandboxUnavailable:text.includes('No usable sandbox!'),namespaceDenied:text.includes('Failed to move to new namespace'),displayUnavailable:text.includes('Missing X server or $DISPLAY'),stderrTruncated,stderrRetainedBytes:bytes,devToolsListening:text.includes('DevTools listening on ws://'),portFileRead} },
+    snapshot() { return {step,spawnError,exitObserved,exitCode,signal,sandboxUnavailable:text.includes('No usable sandbox!'),namespaceDenied:text.includes('Failed to move to new namespace'),displayUnavailable:text.includes('Missing X server or $DISPLAY'),stderrTruncated,stderrRetainedBytes:bytes,devToolsListening:text.includes('DevTools listening on ws://'),portFileRead,...logMasks()} },
   }
 }
 class CDP {

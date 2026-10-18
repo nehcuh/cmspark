@@ -200,3 +200,27 @@ Brand/tray (#474): `node chrome-extension/scripts/generate-icons.mjs` and `node 
 ### #464 Xvfb passive startup evidence
 
 The hosted harness emits optional `xvfbStartup` using the existing capped child observer. `SPAWN`, `DISPLAY_FD`, `DISPLAY_PARTIAL`, `DISPLAY_INVALID` and `DISPLAY_READY` are fixed stages based only on existing display-FD checks. PARTIAL means data did not yet satisfy those checks, not a known valid prefix. The same8192-byte stderr cap drains later data; no stderr body, display number, port, path, PID or error message is emitted. A pre-cleanup snapshot records fixed error/exit state; it does not grant acceptance or prove startup cause. Existing Xvfb arguments/environment, FD3 parsing,5s readiness, outer120s, Chromium startup, auth, cleanup and all OS gates remain unchanged. No actual browser/native success is claimed by CPU controls.
+
+
+### #464 有限启动日志位图
+
+真实托管 Chromium 启动失败时，`chromiumStartup.stderrSiteMask` 与
+`stderrSeverityMask` 仅描述已保留的最多8192字节 stderr 中**识别到的日志前缀**。
+既有 Xvfb 观测也使用同一有限投影；其非 Chromium 格式保持未分类。
+不输出原始行、相对源路径、运行目录、行号、PID、端口、环境或正文。
+
+来源位从低到高固定为：0 DBus bus、1 X11 Ozone、2 GTK UI、3 GL factory、
+4 GPU process host、5 Linux Crashpad、6 Freedesktop secret provider、
+7 POSIX process singleton、8 browser main、9 DevTools HTTP handler。
+只接受固定相对源路径与 Chromium155 的完整前缀形状：至多两个数字 ID、
+至多一个时间戳、至多一个数字 tick（按此顺序），再接严重性/来源/行号；
+旧格式、未知来源、未知严重性、定制文字前缀和正文中的名称均不分类。
+严重性位固定为 INFO=1、WARNING=2、ERROR=4、FATAL=8；重复观测按位合并。
+两张位图不保留来源/严重性的配对或先后顺序，不能据此认定某来源产生了 FATAL；
+共享 stderr 的后代进程也可能贡献前缀，不据此认定具体进程。
+数字定制前缀若与受支持格式字节相同也无法区分；识别不提供日志真实性认证。
+
+位图为0不意味着没有错误，来源命中不证明调用分支、错误原因或浏览器已就绪；
+达到保留上限后仍排空 stderr，随后内容不再参与分类。清理后的退出不能回写启动快照。
+这批诊断不改变参数、环境、沙箱、5秒 Xvfb/10秒端口/25毫秒轮询/120秒整体预算，
+也不替代真实网页验收或任何 CI 门禁。源码0.6.14仍是未发布开发版本。

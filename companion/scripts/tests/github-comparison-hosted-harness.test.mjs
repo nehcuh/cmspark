@@ -295,3 +295,46 @@ test('Xvfb optional DTO preserves capped drain/privacy and rejects accessors or 
  let gets=0;const fake={...s};Object.defineProperty(fake,'step',{get(){gets++;return'DISPLAY_READY'}});assert.equal(receipt('XVFB',false,0,{xvfbStartup:fake}).xvfbStartup,undefined);assert.equal(gets,0)
  assert.equal(receipt('XVFB',false,0,{xvfbStartup:{...s,step:'INERT_PRIVATE'}}).xvfbStartup,undefined);assert.equal(receipt('XVFB',false,0).xvfbStartup,undefined)
 })
+
+
+// Literal native Chromium155 prefix observations are never error-cause/pass authority.
+const startupSites464=['dbus/bus.cc','ui/ozone/platform/x11/ozone_platform_x11.cc','ui/gtk/gtk_ui.cc','ui/gl/init/gl_factory.cc','content/browser/gpu/gpu_process_host.cc','components/crash/core/app/crashpad_linux.cc','components/os_crypt/async/browser/freedesktop_secret_key_provider.cc','chrome/browser/process_singleton_posix.cc','chrome/browser/chrome_browser_main.cc','content/browser/devtools/devtools_http_handler.cc']
+function observedLog464(chunks){const observer=actualStartupObserver464(),child=new EventEmitter();child.stderr=new EventEmitter();observer.track(child);for(const chunk of chunks)child.stderr.emit('data',Buffer.from(chunk));return observer.snapshot()}
+test('all ten fixed native log sites and four severities produce only stable bitmasks',()=>{
+ for(let i=0;i<startupSites464.length;i++)for(let severity=0;severity<4;severity++){
+  const name=['INFO','WARNING','ERROR','FATAL'][severity],state=observedLog464([`[12:34:1019/060102.123456:${name}:${startupSites464[i]}:123] PRIVATE_BODY_TOKEN\n`])
+  assert.equal(state.stderrSiteMask,1<<i);assert.equal(state.stderrSeverityMask,1<<severity)
+  const r=receipt('CHROMIUM',false,0,{chromiumStartup:state});assert.equal(r.chromiumStartup.stderrSiteMask,1<<i);assert.equal(r.passed,false);assert.equal(r.cases,0);assert.equal(r.reviewReady,false)
+  for(const value of ['PRIVATE_BODY_TOKEN',startupSites464[i],'1019/060102','12:34'])assert.equal(JSON.stringify(r).includes(value),false)
+ }
+})
+test('log categories accumulate split native prefixes and remain pre-cleanup immutable',()=>{
+ const observer=actualStartupObserver464(),child=new EventEmitter();child.stderr=new EventEmitter();observer.track(child)
+ for(const part of ['[1:2:ER','ROR:dbus/bus.cc:4] PRIVATE_A\n[WARNING:ui/gtk/gtk_ui.cc:5] PRIVATE_B\n'])child.stderr.emit('data',Buffer.from(part))
+ const before=observer.snapshot();assert.equal(before.stderrSiteMask,5);assert.equal(before.stderrSeverityMask,6)
+ child.stderr.emit('data',Buffer.from('[FATAL:chrome/browser/chrome_browser_main.cc:6] PRIVATE_AFTER\n'));child.emit('exit',null,'SIGTERM')
+ assert.equal(before.stderrSiteMask,5);assert.equal(before.signal,'NONE');assert.equal(JSON.stringify(before).includes('PRIVATE'),false)
+})
+test('unknown malformed old-format custom-prefix and body-embedded sites stay unclassified',()=>{
+ const lines=['body [ERROR:dbus/bus.cc:1] PRIVATE','[ERROR:private/site.cc:1] PRIVATE','[VERBOSE1:dbus/bus.cc:1] PRIVATE','[ERROR:dbus/bus.cc(1)] PRIVATE','[custom-prefix:ERROR:dbus/bus.cc:1] PRIVATE','[ERROR:dbus/bus.cc:1]','[ERROR:/private/dbus/bus.cc:1] PRIVATE','[ERROR:../dbus/bus.cc:1] PRIVATE','[ERROR:dbus/bus.cc:12345678901] PRIVATE','[1:ERROR:dbus/bus.cc:1]PRIVATE']
+ for(const line of lines){const state=observedLog464([line]);assert.equal(state.stderrSiteMask,0);assert.equal(state.stderrSeverityMask,0);assert.equal(JSON.stringify(state).includes('PRIVATE'),false)}
+})
+test('cap boundary partial prefixes and later drained megabytes cannot classify or escape',()=>{
+ const prefix='[ERROR:dbus/bus.cc:1] PRIVATE';const state=observedLog464(['x'.repeat(8188)+'\n'+prefix,'\n'+prefix.repeat(100000)])
+ assert.equal(state.stderrRetainedBytes,8192);assert.equal(state.stderrTruncated,true);assert.equal(state.stderrSiteMask,0);assert.equal(state.stderrSeverityMask,0)
+ const all=observedLog464(startupSites464.map(s=>`[ERROR:${s}:1] PRIVATE\n`));assert.equal(all.stderrSiteMask,1023);assert.equal(all.stderrSeverityMask,4)
+})
+test('both receipt projections reject nonfinite masks and never invoke mask accessors',()=>{
+ const state=observedLog464(['[ERROR:dbus/bus.cc:1] PRIVATE'])
+ for(const field of ['chromiumStartup','xvfbStartup'])for(const [key,max]of [['stderrSiteMask',1023],['stderrSeverityMask',15]]){
+  for(const value of [-1,max+1,NaN,Infinity,0.5,'PRIVATE'])assert.equal(receipt('CHROMIUM',false,0,{[field]:{...state,[key]:value}})[field],undefined)
+  let getters=0;const fake={...state};Object.defineProperty(fake,key,{get(){getters++;return 1}});assert.equal(receipt('CHROMIUM',false,0,{[field]:fake})[field],undefined);assert.equal(getters,0)
+ }
+})
+
+test('canonical native prefix has at most two IDs then one timestamp then one tick',()=>{
+ const positives=['[','[1:','[1:2:','[1:2:3:','[1019/060102.123456:','[1:1019/060102.123456:','[1:2:1019/060102.123456:3:']
+ const negatives=['[1:2:3:4:','[1019/060102.123456:1019/060102.123456:','[1019/060102.123456:1:2:','[1:2:1019/060102.123456:3:4:','[1:1019/060102.123456:2:1019/060102.123456:']
+ for(const prefix of positives){const state=observedLog464([prefix+'ERROR:dbus/bus.cc:1] PRIVATE\n']);assert.equal(state.stderrSiteMask,1);assert.equal(state.stderrSeverityMask,4)}
+ for(const prefix of negatives){const state=observedLog464([prefix+'ERROR:dbus/bus.cc:1] PRIVATE\n']);assert.equal(state.stderrSiteMask,0);assert.equal(state.stderrSeverityMask,0)}
+})
