@@ -43,6 +43,25 @@ private struct AX571OwnedPaths {
         return a[.type] as? FileAttributeType == .typeDirectory && (a[.systemNumber] as? NSNumber)?.uint64Value == device && (a[.systemFileNumber] as? NSNumber)?.uint64Value == inode && (a[.ownerAccountID] as? NSNumber)?.uint32Value == getuid()
     }
 }
+// Fixed diagnostic categories only. A failed completion still refuses with exit65.
+private enum AX571LaunchGuardFailure {
+    case openError, noReturnedApp, parentChanged, returnedPID, returnedTerminated, bundleID, bundleURL, executableURL
+}
+private func ax571LaunchGuardRefused(_ failure: AX571LaunchGuardFailure) -> Never {
+    let marker: String
+    switch failure {
+    case .openError: marker = "AX571_LAUNCH_OPEN_ERROR\n"
+    case .noReturnedApp: marker = "AX571_LAUNCH_NO_RETURNED_APP\n"
+    case .parentChanged: marker = "AX571_LAUNCH_PARENT_CHANGED\n"
+    case .returnedPID: marker = "AX571_LAUNCH_RETURNED_PID\n"
+    case .returnedTerminated: marker = "AX571_LAUNCH_RETURNED_TERMINATED\n"
+    case .bundleID: marker = "AX571_LAUNCH_BUNDLE_ID\n"
+    case .bundleURL: marker = "AX571_LAUNCH_BUNDLE_URL\n"
+    case .executableURL: marker = "AX571_LAUNCH_EXECUTABLE_URL\n"
+    }
+    try? FileHandle.standardError.write(contentsOf: Data(marker.utf8))
+    exit(65)
+}
 private final class AX571OwnedLauncher {
     let paths: AX571OwnedPaths
     let bundle: URL
@@ -107,11 +126,14 @@ private final class AX571OwnedLauncher {
         configuration.environment = ["PATH":"/usr/bin:/bin","TMPDIR":paths.directory.path]
         NSWorkspace.shared.openApplication(at:bundle,configuration:configuration) { [self] returned, error in
             DispatchQueue.main.async { [self] in
-                guard error == nil, let returned = returned, paths.current(),
-                      returned.processIdentifier > 0, returned.processIdentifier != getpid(), !returned.isTerminated,
-                      returned.bundleIdentifier == "com.cmspark.ax571.owned-target",
-                      returned.bundleURL?.resolvingSymlinksInPath() == bundle,
-                      returned.executableURL?.resolvingSymlinksInPath() == executable else { exit(65) }
+                guard error == nil else { ax571LaunchGuardRefused(.openError) }
+                guard let returned = returned else { ax571LaunchGuardRefused(.noReturnedApp) }
+                guard paths.current() else { ax571LaunchGuardRefused(.parentChanged) }
+                guard returned.processIdentifier > 0, returned.processIdentifier != getpid() else { ax571LaunchGuardRefused(.returnedPID) }
+                guard !returned.isTerminated else { ax571LaunchGuardRefused(.returnedTerminated) }
+                guard returned.bundleIdentifier == "com.cmspark.ax571.owned-target" else { ax571LaunchGuardRefused(.bundleID) }
+                guard returned.bundleURL?.resolvingSymlinksInPath() == bundle else { ax571LaunchGuardRefused(.bundleURL) }
+                guard returned.executableURL?.resolvingSymlinksInPath() == executable else { ax571LaunchGuardRefused(.executableURL) }
                 application = returned; applicationPID = returned.processIdentifier
                 terminationObservation = returned.observe(\.isTerminated,options:[.initial,.new]) { [weak self] owned, _ in
                     DispatchQueue.main.async { self?.observedTermination(owned) }

@@ -12,6 +12,12 @@ type Ax571Snapshot={foreground:number|null;zorder:number[];cursor:{x:number;y:nu
 function ax571Code(value:unknown):string {
  try {const item=value as Record<string,unknown>,code=item?.error_code??item?.code;return typeof code==='string'&&['TASK_ABORTED','HWND_DEAD','AX_WINDOW_GONE','ELEMENT_NOT_FOUND','AX_ELEMENT_MISMATCH','AX_ACTION_UNAVAILABLE','AX_ACTION_FAILED','AX_FAILED','INVALID_ACTION'].includes(code)?code:'UNKNOWN'}catch{return 'UNKNOWN'}
 }
+// Fixture diagnostics are a closed category, never native stderr/error text or authority.
+function ax571LaunchBoundary(value:unknown):string {
+ if(typeof value!=="string"||Buffer.byteLength(value,"utf8")>4096)return "UNKNOWN"
+ const markers=value.match(/^AX571_LAUNCH_(OPEN_ERROR|NO_RETURNED_APP|PARENT_CHANGED|RETURNED_PID|RETURNED_TERMINATED|BUNDLE_ID|BUNDLE_URL|EXECUTABLE_URL)\r?$/gm)
+ return markers?.length===1?markers[0].trimEnd().slice("AX571_LAUNCH_".length):"UNKNOWN"
+}
 function requireAx571Oracles(before:Ax571Snapshot,after:Ax571Snapshot,verdict:Record<string,unknown>,target:number,sibling:number):void {
  assert.ok(Number.isSafeInteger(target)&&target>0&&Number.isSafeInteger(sibling)&&sibling>0&&target!==sibling,'AX571_OWNED_WINDOWS_INVALID')
  for(const shot of [before,after]){
@@ -55,6 +61,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
  const deadline=performance.now()+20_000,remaining=()=>{t.signal.throwIfAborted();const n=Math.floor(deadline-performance.now());assert.ok(n>0,'AX571_DEADLINE');return n}
  const env={PATH:path.dirname(process.execPath)+':/usr/bin:/bin',TMPDIR:dir}
  let child:ChildProcess|undefined,closed:Promise<void>=Promise.resolve(),ended=false,failed=false,primary:unknown,appPID:number|undefined,launcherExit:number|null=null,launcherSignal:NodeJS.Signals|null=null
+ let launchBoundary="UNKNOWN",waitStage:"NOT_STARTED"|"OWNER_STARTED"|"APP_READY"|"ACTION"="NOT_STARTED"
  const json=async(bin:string,args:string[],limit=15_000)=>new Promise<any>((resolve,reject)=>{execFile(bin,args,{encoding:'utf8',env,timeout:Math.min(limit,remaining()),maxBuffer:65536,signal:t.signal},(error,stdout)=>{if(error){reject(Error('AX571_CHILD_FAILED'));return}try{resolve(JSON.parse(stdout))}catch{reject(Error('AX571_INVALID_JSON'))}})})
  const command=async(args:string[],limit=15_000)=>json(host,args,limit)
  const marker=path.join(dir,'target.json'),siblingMarker=path.join(dir,'sibling.json'),ready=path.join(dir,'ready.json'),stop=path.join(dir,'stop')
@@ -70,11 +77,14 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
   const security=await command(['security-check']);assert.equal(security.ok,true,'AX571_SECURITY_UNREADABLE');assert.equal(typeof security.axTrusted,'boolean','AX571_SECURITY_UNREADABLE');assert.equal(typeof security.secureInput,'boolean','AX571_SECURITY_UNREADABLE')
   t.diagnostic('AX571_PERMISSION '+JSON.stringify({schema:1,framework,axTrusted:security.axTrusted,secureInput:security.secureInput,identifierExpected:true,route:'DIRECT_CLI_NODE_PARENT',tccResponsibility:'UNKNOWN'}))
   lease.checkpoint();lease.retain()
-  child=execFile(fixture,['--launch-owned',framework,ready,marker,siblingMarker,String(remaining())],{env,timeout:remaining(),maxBuffer:4096,signal:t.signal},()=>{})
+  child=execFile(fixture,['--launch-owned',framework,ready,marker,siblingMarker,String(remaining())],{env,timeout:remaining(),maxBuffer:4096,signal:t.signal},(_error,_stdout,stderr)=>{launchBoundary=ax571LaunchBoundary(stderr)})
   closed=new Promise<void>(resolve=>child!.once('close',(code,signal)=>{launcherExit=code;launcherSignal=signal;ended=true;resolve()}))
+  waitStage='OWNER_STARTED'
   const started=ax571OwnerReceipt(await waitFile(ready+'.owner-started'),framework,false);assert.ok(started,'AX571_APP_OWNER_REQUIRED');appPID=started.pid;assert.ok(appPID!==child.pid,'AX571_APP_NOT_LAUNCHER');
+  waitStage='APP_READY'
   const proof=await waitFile(ready);assert.ok(proof.appPID===appPID,'AX571_READY_APP_IDENTITY');assert.equal(proof.schema,1,'AX571_INVALID_RECEIPT');assert.equal(proof.framework,framework,'AX571_INVALID_RECEIPT');const setup=ax571Setup(proof.setup);assert.ok(setup&&setup.appActive&&setup.siblingKey&&setup.targetBound&&setup.siblingBound,'AX571_OWNED_READY_REQUIRED');const target=proof.target,sibling=proof.sibling
   assert.ok(Number.isSafeInteger(target)&&target>0&&Number.isSafeInteger(sibling)&&sibling>0&&target!==sibling,'AX571_OWNED_WINDOWS_INVALID')
+  waitStage='ACTION'
   const snapshot=async(name:string)=>{const file=path.join(dir,name);await new Promise<void>((resolve,reject)=>execFile('/bin/bash',[path.resolve('../scripts/computer-bg-oracles.sh'),'snapshot','-out',file,'--host-bin',host],{env,timeout:Math.min(15_000,remaining()),maxBuffer:4096,signal:t.signal},error=>error?reject(Error('AX571_SNAPSHOT_FAILED')):resolve()));return JSON.parse(fs.readFileSync(file,'utf8')) as Ax571Snapshot}
   const before=await snapshot('before.json');t.diagnostic('AX571_INITIAL '+JSON.stringify({schema:1,framework,firstRole:before.foreground===null?'NONE':before.foreground===target?'TARGET':before.foreground===sibling?'SIBLING':'OTHER',targetPresent:before.zorder.includes(target),siblingPresent:before.zorder.includes(sibling)}));assert.ok(before.foreground===sibling,'AX571_INITIAL_SIBLING_REQUIRED');assert.equal(fs.existsSync(marker),false,'AX571_PREEXISTING_MARKER')
   // Entry estop precedes traversal/TCC and must cause no action.
@@ -101,7 +111,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
  finally{
   let setup:null|ReturnType<typeof ax571Setup>=null;try{const b=fs.readFileSync(ready+'.setup','utf8');if(Buffer.byteLength(b,'utf8')<=2048)setup=ax571Setup(JSON.parse(b))}catch{}
   try{t.diagnostic('AX571_SETUP '+JSON.stringify({schema:1,framework,observed:setup!==null,...(setup??{})}))}catch{/* Diagnostics cannot replace primary or cleanup. */}
-  try{t.diagnostic('AX571_LIFETIME '+JSON.stringify({schema:1,framework,closed:ended,prelaunch:launcherExit===78?'ADMISSION_REFUSED':launcherExit===79?'POLICY_REFUSED':'UNPROVEN',signalObserved:launcherSignal!==null}))}catch{/* Finite observation cannot replace primary or cleanup. */}
+  try{t.diagnostic('AX571_LIFETIME '+JSON.stringify({schema:1,framework,closed:ended,prelaunch:launcherExit===78?'ADMISSION_REFUSED':launcherExit===79?'POLICY_REFUSED':'UNPROVEN',signalObserved:launcherSignal!==null,waitStage,launchBoundary}))}catch{/* Finite observation cannot replace primary or cleanup. */}
   let cleanup:unknown
   let actualAppClosed=!child
   try{if(child&&!ended)child.kill();await closed;if(child){if(ax571PrelaunchRefused(ended,launcherExit,launcherSignal,[ready,ready+'.owner-started',ready+'.owner-closed',ready+'.setup',marker,siblingMarker]))actualAppClosed=true;else{const start=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-started','utf8')),framework,false,appPID);assert.ok(start,'AX571_APP_OWNER_REQUIRED');assert.ok(start.pid!==child.pid,'AX571_APP_NOT_LAUNCHER');const receipt=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-closed','utf8')),framework,true,start.pid);assert.ok(receipt,'AX571_APP_NOT_REAPED');actualAppClosed=true}}}catch{cleanup=Error('AX571_OWNER_CLEANUP_FAILED')}

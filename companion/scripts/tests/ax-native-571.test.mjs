@@ -211,3 +211,28 @@ test('#571 both actual owned path guards use the same canonical filesystem check
  assert.doesNotMatch(body,/resolvingSymlinksInPath/)
  for(const fact of['attributes[.type] as? FileAttributeType == .typeDirectory','permissions & 0o077 == 0','(attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid()','let dev = (attributes[.systemNumber] as? NSNumber)?.uint64Value','let ino = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value','uint64Value == device','uint64Value == inode'])assert.ok(body.includes(fact))
 })
+
+
+function launchBoundaryConsumer571(){
+ const node=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='ax571LaunchBoundary');assert.ok(node,'fixed native completion marker consumer missing')
+ const s={Buffer};vm.createContext(s);vm.runInContext(ts.transpileModule(node.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+';this.parse=ax571LaunchBoundary;',s);return s.parse
+}
+const launchCodes571=['OPEN_ERROR','NO_RETURNED_APP','PARENT_CHANGED','RETURNED_PID','RETURNED_TERMINATED','BUNDLE_ID','BUNDLE_URL','EXECUTABLE_URL']
+test('#571 fixed launch boundary consumer exports only known closed categories',()=>{
+ const parse=launchBoundaryConsumer571();for(const code of launchCodes571){assert.equal(parse('AX571_LAUNCH_'+code+'\n'),code);assert.equal(parse('IGNORED_OWNED_TEXT\nAX571_LAUNCH_'+code+'\r\n'),code)}
+ for(const value of [null,undefined,{},[],0,'','AX571_LAUNCH_PRIVATE_SENTINEL\n','prefix AX571_LAUNCH_OPEN_ERROR\n','AX571_LAUNCH_OPEN_ERROR suffix\n','AX571_LAUNCH_OPEN_ERROR\nAX571_LAUNCH_BUNDLE_ID\n','x'.repeat(4097)])assert.equal(parse(value),'UNKNOWN')
+ let reads=0;assert.equal(parse({toString(){reads++;throw Error('OWNED_SECRET')}}),'UNKNOWN');assert.equal(reads,0)
+})
+test('#571 actual launch callback consumes stderr only without reflecting native error or stdout',()=>{
+ const parse=launchBoundaryConsumer571();let call;const walk=n=>{if(ts.isCallExpression(n)&&n.expression.getText(ast)==='execFile'&&n.arguments[0]?.getText(ast)==='fixture')call=n;ts.forEachChild(n,walk)};walk(ast);assert.ok(call)
+ const callback=call.arguments.at(-1);assert.ok(ts.isArrowFunction(callback));const s={ax571LaunchBoundary:parse,launchBoundary:'UNKNOWN'};vm.createContext(s);vm.runInContext('this.callback='+ts.transpileModule('const f='+callback.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText.replace(/^const f = /,'').replace(/;\s*$/,''),s)
+ const error=Object.defineProperty({},'message',{get(){throw Error('PRIVATE_ERROR_READ')}})
+ s.callback(error,'AX571_LAUNCH_OPEN_ERROR\n','AX571_LAUNCH_BUNDLE_URL\n');assert.equal(s.launchBoundary,'BUNDLE_URL')
+ s.callback(error,'AX571_LAUNCH_OPEN_ERROR\n','UNRECOGNIZED_PRIVATE_SENTINEL');assert.equal(s.launchBoundary,'UNKNOWN')
+})
+test('#571 public lifetime observation includes only fixed wait stage and decoded launch category',()=>{
+ const owner=source.indexOf("await waitFile(ready+'.owner-started')"),ready=source.indexOf('await waitFile(ready)'),ownerPhase=source.indexOf("waitStage='OWNER_STARTED'"),readyPhase=source.indexOf("waitStage='APP_READY'"),actionPhase=source.indexOf("waitStage='ACTION'"),diagnostic=source.indexOf("t.diagnostic('AX571_LIFETIME '");assert.ok(ownerPhase>=0&&ownerPhase<owner&&readyPhase>owner&&readyPhase<ready&&actionPhase>ready&&actionPhase<diagnostic)
+ let expression;const walk=n=>{if(ts.isCallExpression(n)&&n.expression.getText(ast)==='t.diagnostic'&&n.arguments[0]?.getText(ast).startsWith("'AX571_LIFETIME '"))expression=n.arguments[0];ts.forEachChild(n,walk)};walk(ast);assert.ok(expression)
+ const s={JSON,framework:'APPKIT',ended:true,launcherExit:65,launcherSignal:null,waitStage:'APP_READY',launchBoundary:'BUNDLE_URL'};const text=vm.runInNewContext(expression.getText(ast),s);const result=JSON.parse(text.slice('AX571_LIFETIME '.length));assert.deepEqual(result,{schema:1,framework:'APPKIT',closed:true,prelaunch:'UNPROVEN',signalObserved:false,waitStage:'APP_READY',launchBoundary:'BUNDLE_URL'})
+ assert.equal(text.includes('PRIVATE_SENTINEL'),false)
+})
