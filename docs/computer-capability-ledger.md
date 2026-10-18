@@ -43,7 +43,7 @@ not from a successful driver response alone."*
 | **选择（怎么找到目标）** | 像素坐标（`click{x,y}` 客户端逻辑点）**或** OCR 文本锚点**或** UIA accessible-Name 锚点 | `tool-definitions-catalog.json` 的 `host_computer.actions` |
 | **UIA 定位** | **只读**。按 accessible-Name 锚点定位，返回元素中心 + 屏幕物理像素 rect；置信度 1.0(唯一) / 0.9(同名取树序首) / 0.8(子串)；离屏/零 rect 不返回 | `computer-uia-locate.ps1` 头部契约 |
 | **前台投递** | **`SendInput`，且必须先 `SetForegroundWindow`**（重试 3 次；失败即 `FOCUSLOST` 拒绝，绝不盲注入） | `computer-input.ps1`（26KB，WP1/WP2） |
-| **UIA 动作模式** | 已有 `InvokePattern` / `ValuePattern.SetValue` / `ScrollPattern` / `SelectionItemPattern.Select` / `TogglePattern`；executor 只接窄条件的左键 `Invoke` | `computer-uia-invoke.ps1`、`executor.ts`；逐靶子证据见 §3.3 |
+| **UIA 动作模式** | `PsInputInjector.invokeUia()` 用两个顺序直接 PS（`computer-uia-select.ps1` → `computer-uia-act.ps1` + no-focus DLL），共享原 15s 剩余预算；五种 pattern 均已有 WPF 当前原生证据，executor 仍只接窄条件的左键 `Invoke` | `win-adapters.ts`、`executor.ts`；当前证据与旧 CLI 兼容收紧见 §3.3 |
 
 ### ⚠️ 两条投递路线的边界
 
@@ -65,7 +65,7 @@ not from a successful driver response alone."*
 | 路线 | 状态 | 精确拒绝码 | 证据 |
 |---|---|---|---|
 | 前台 `SendInput`（坐标键鼠） | **Delivered**（机制存在且被使用） | `FOCUSLOST`（提前台 3 次失败）、`SENDFAILED`（注入事件数不符） | `computer-input.ps1` |
-| **后台 UIA 投递（不经前台）** | **Delivered（WPF 左键的历史实测，见 §3.3）**；其它靶子仍按行记 Gap | `UIA_ELEMENT_GONE` / `UIA_ELEMENT_MISMATCH` / `UIA_PATTERN_UNAVAILABLE` 等脚本精确码 | `computer-uia-invoke.ps1`、executor 左键接线、WPF 夹具 |
+| **后台 UIA 投递（不经前台）** | **Delivered（当前 WPF 左键，另有四种 WPF adapter pattern 验收，见 §3.3）**；其它靶子仍按行记 Gap | `UIA_ELEMENT_GONE` / `UIA_ELEMENT_MISMATCH` / `UIA_PATTERN_UNAVAILABLE` / `UIA_METHOD_FAILED` 等精确码；不确定终态不再做第二次动作 | `PsInputInjector` → select/act → no-focus DLL、executor 左键接线、WPF 夹具 |
 
 ### 3.2 结构与策略性拒绝（**不是**未实现，是**有意拒绝**）
 
@@ -78,7 +78,7 @@ not from a successful driver response alone."*
 
 | 靶子/框架 | 前台左键 | 后台左键 | 后台键盘 | 后台滚动 | 后台拖拽 |
 |---|---|---|---|---|---|
-| **WPF** | Gap | **Delivered（后台已验证）** ✅ | Gap | Gap | Gap |
+| **WPF** | Gap | **Delivered（当前生产 Invoke 已验证）** ✅ | Gap | Gap（通用 executor 路线；WPF `ScrollPattern` 已验收，见下） | Gap |
 | WinForms（下述历史夹具） | Gap | **Refused（`UIA_PATTERN_UNAVAILABLE`）** | Gap | Gap | Gap |
 | WinUI3 | Gap | Gap | Gap | Gap | Gap |
 | WebView2 | Gap | Gap | Gap | Gap | Gap |
@@ -86,7 +86,53 @@ not from a successful driver response alone."*
 | Tauri | Gap | Gap | Gap | Gap | Gap |
 | 原生 Win32 | Gap | Gap | Gap | Gap | Gap |
 
-**WPF 行的证据**（2026-09-30 本机实测，夹具 `companion/tests/fixtures/win/uia-wpf-fixture.ps1`）：
+#### 当前 WPF 原生证据（2026-10-18，PR #696）
+
+证据绑定：[head `a544264b6fa03c69a871405a5d998b02b75ad68f`](https://github.com/nehcuh/cmspark/commit/a544264b6fa03c69a871405a5d998b02b75ad68f)，
+[Windows run `39120491143` / attempt 1 / job `117654931313`](https://github.com/nehcuh/cmspark/actions/runs/39120491143/job/117654931313)。
+实际 checkout `f4ec5b558e86498d455a9b79c2ade0c77d9803ce` 与 head 同 tree
+`a0145cd7bf9e6efb6ee45e298f6a79cf2d02db08`；该 tree 随后合入 main `1629ad34749658d4ec339ea963dbf3010690a6fc`。
+这里引用的是该 PR 的实际原生结果，不把随后 main CI 的状态当作本轮已完成验收。
+
+正常用例 `#572 current WPF background Invoke changes only the target while all four desktop oracles hold`
+实际走生产 `PsInputInjector` 的 select → clean act → DLL，而非插桩副本。靶子标记改变，
+前后 foreground 均为 **SIBLING**，兄弟标记未出现，focus/z-order/cursor/no-leaked-input 四项及
+`background_verified` 均为 true，两个 owned children 已关闭。独立 client-phase diagnostic 用例
+也通过同样断言；它的成功不替代原正常用例。
+
+| WPF adapter pattern | 当前真实用例（均有靶子拥有的状态变化、兄弟未变、四 oracle 通过、两个 child 关闭） |
+|---|---|
+| `InvokePattern` | `#572 current WPF background Invoke changes only the target while all four desktop oracles hold` |
+| `ValuePattern.SetValue` | `#572 actual no-focus setvalue changes target state with all four desktop oracles`（值含中文） |
+| `SelectionItemPattern.Select` | `#572 actual no-focus select changes target state with all four desktop oracles` |
+| `TogglePattern` | `#572 actual no-focus toggle changes target state with all four desktop oracles` |
+| `ScrollPattern` | `#572 actual no-focus scroll changes target state with all four desktop oracles` |
+
+对应公开 Windows job 原始日志：正常 Invoke 的 plain `ok` / 闭 DTO 在行 7081 / 7086，
+独立诊断在 7091 / 7096；四个额外模式在 7155–7178。该完整日志为 715696 bytes，
+SHA-256 `6ab92797912620bf7cdf8e8ed95dbc77eb5860d2188a6bd84d576150e7440d15`。
+`computer-uia-invoke-integration.test.ts` 与 `helpers/uia-no-focus-native-572.ts` 中的原生断言
+不仅检查调用成功，还检查靶子标记、兄弟未变及四 oracle。
+
+**拒绝证据：**同一 job 的 missing / invalid-pe / wrong-architecture / missing-symbol 四个 loader
+用例均以 `pattern_unavailable`、`terminal: true`、固定 `background UIA terminal refusal` 拒绝，
+无靶子动作、兄弟未变、四 oracle 通过、两个 child 关闭（日志 7183–7206）。ABI 用例验证十种
+非法参数形状无靶子动作，同样保留 oracle 与清理（7211–7213）。这不是所有第三方框架的
+模式不可用证明；具体模式不支持仍由 `UIA_PATTERN_UNAVAILABLE` 等精确码及对应夹具判定。
+
+**兼容边界：**旧 standalone `computer-uia-invoke.ps1` 动作入口现为 failclosed
+`host_pipeline_required`（固定 `UIA_TERMINAL:UIA_PATTERN_UNAVAILABLE`，不执行动作）。
+当前生产动作由 host 在一个原 15000ms 总剩余预算内完成 select/act；没有 nested PowerShell。
+旧混合客户端的失败反事实与原生历史保留，不能把旧 CLI 写成当前成功动作路线。
+详见 `companion/tests/fixtures/win/README.md`。
+
+以上是 **WPF pattern 级**证据：executor 仍只把符合现有闸门的左键映射为 `Invoke`。
+`SetValue` 不等于通用键盘/热键，`ScrollPattern` 成功不等于 executor 的通用 scroll 已改走后台，
+更不证明其它工具包的相同行。输入泄漏仍为 **derived**，未升级为物理输入队列观察。
+
+#### 历史 WPF / WinForms 证据（保留）
+
+**WPF 历史证据**（2026-09-30 本机实测，夹具 `companion/tests/fixtures/win/uia-wpf-fixture.ps1`）：
 
 ```json
 {"ok":true,"mode":"invoke","controlType":"Button","automationId":"cmspark_fixture_button",
@@ -188,7 +234,7 @@ TCC 的最终责任身份仍为 **UNKNOWN**，不以 codesign Identifier 或父 
 | **光标保持** | ✅ **有**（已实测） | 同上（`cursor_kept`，GetCursorPos） |
 
 ⚠️ **注意区分**：前两项服务于**安全**（别在弹窗上乱点），后四项才能证明**「后台」真的成立**。
-后四项已有实现及 WPF 历史验收记录，其中输入泄漏仍为 **derived**。
+后四项已有实现、WPF 历史及 §3.3 当前原生验收记录，其中输入泄漏仍为 **derived**。
 其它靶子的后台结论仍须各自夹具与同轮 oracle 支持，不能借用 WPF 的结果。
 
 **另有两项既有资产值得记名**（比 cua 更强的部分）：
@@ -205,10 +251,14 @@ TCC 的最终责任身份仍为 **UNKNOWN**，不以 codesign Identifier 或父 
 | 1 | **本台账** | ✅ 本文件 |
 | 2 | **补 4 个后台 oracle** | ✅ 已做（`computer-bg-oracles.ps1`；基础 5 项比较测试，Windows 门禁另设 56 项校验＋1 项真实新旧脚本对照，按实际回执验收；`no_leaked_input` 为 derived） |
 | 3 | **Windows 后台投递**：UIA 动作模式 —— 脚本已落地并在 WPF 实测；**executor 已接线**（仅左键，条件窄；不绕过 A2.1/预算/速率窗） | ✅ |
-| 4 | **GUI 夹具** | 🟡 已有 WPF（正）+ WinForms（反）两个；其余靶子待做 |
-| 5 | **逐靶子回填**：WinUI3 / WebView2 / Electron / Tauri / 原生 Win32 | 待做 —— 目前**只有 WPF 左键**被证实 |
-| 6 | 键盘 / 滚动 / 拖拽的后台投递 | 待做 —— 脚本已支持 `setvalue`/`select`/`toggle`/`scroll`；executor 只接了左键（**只有左键有语义正确的 UIA 映射**：InvokePattern = 激活 = 左键；UIA 无右键/双击模式） |
+| 4 | **GUI 夹具** | 🟡 当前 WPF Invoke / 四种额外 pattern 正控与 loader/ABI 负控；旧 WinForms 反例保留为历史，其余靶子待做 |
+| 5 | **逐靶子回填**：WinUI3 / WebView2 / Electron / Tauri / 原生 Win32 | **记名 Gap** —— 当前已有 WPF 五种 adapter pattern 原生证据，不外推到这五类框架；仍缺各自夹具与同轮 oracle |
+| 6 | 通用键盘 / 滚动 / 拖拽的后台投递 | **记名 Gap / 部分机制已证** —— WPF `SetValue`/`Select`/`Toggle`/`ScrollPattern` 已验收；executor 仍只接后台左键，key/scroll/drag 仍走前台。不能把 SetValue 当通用键盘或把 adapter Scroll 当 executor 后台滚动；UIA 无右键/双击模式 |
 | 7 | **macOS 对齐** | #571：源 AX / oracle + owned AppKit/WKWebView gate 已接线，§4 当前按行 Gap，等待真实 hosted 最小动作回执 |
+
+#572 原 body 的最小验收是一个 WPF 或 WinUI3 夹具、先左键、四 oracle、精确拒绝和台账回填，
+并明确允许残余记名。当前 WPF 最小路线已有上述实际证据；第 5、6 项仍是原评论中的
+记名残余，不宣称全框架/通用动作已交付，也不以 WPF 通过替它们验收。macOS 仍归 #571。
 
 **纪律**：第 3 步无论成败都要**写回本台账** —— 那是这件事的价值所在。
 第 3 步的拒绝要**精确码**（例如 `uia_pattern_unavailable` = 该控件不暴露可调用模式），
