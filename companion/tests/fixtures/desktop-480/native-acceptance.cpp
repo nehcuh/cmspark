@@ -1,23 +1,50 @@
 // Unshipped acceptance declarations, inserted before the exact production Desktop class.
 #include <cstdio>
 #include <chrono>
+// Parent-only zero-access identity references. No reference enters the checker.
+using D480Compare=BOOL (WINAPI *)(HANDLE,HANDLE);
+static D480Compare d480_identity_api(){return (D480Compare)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"),"CompareObjectHandles");}
+static bool d480_identity_one(HANDLE process,HANDLE subject,HANDLE reference,D480Compare compare,bool* same){
+ DWORD flags=0;*same=false;
+ if(!compare||!GetHandleInformation(reference,&flags)||(flags&HANDLE_FLAG_INHERIT)||!compare(reference,reference)||!GetHandleInformation(process,&flags)||WaitForSingleObject(process,0)!=WAIT_TIMEOUT)return false;
+ HANDLE copy=nullptr;SetLastError(ERROR_SUCCESS);
+ if(!DuplicateHandle(process,subject,GetCurrentProcess(),&copy,0,FALSE,0)){
+  DWORD error=GetLastError();
+  return error==ERROR_INVALID_HANDLE&&GetHandleInformation(reference,&flags)&&!(flags&HANDLE_FLAG_INHERIT)&&WaitForSingleObject(process,0)==WAIT_TIMEOUT;
+ }
+ bool valid=GetHandleInformation(copy,&flags)&&!(flags&HANDLE_FLAG_INHERIT)&&compare(copy,copy)&&compare(reference,reference);
+ SetLastError(ERROR_SUCCESS);BOOL equal=compare(copy,reference);DWORD error=GetLastError();
+ valid=valid&&(equal||error==ERROR_NOT_SAME_OBJECT||error==ERROR_SUCCESS)&&GetHandleInformation(copy,&flags)&&!(flags&HANDLE_FLAG_INHERIT)&&GetHandleInformation(reference,&flags)&&!(flags&HANDLE_FLAG_INHERIT)&&WaitForSingleObject(process,0)==WAIT_TIMEOUT;
+ bool closed=CloseHandle(copy)!=FALSE;
+ if(valid&&equal)*same=true;
+ return valid&&closed;
+}
+static bool d480_known_identity(HANDLE process,const HANDLE known[3],const HANDLE refs[3],D480Compare compare,unsigned* mask){
+ *mask=0;for(unsigned i=0;i<3;i++){bool same=false;if(!d480_identity_one(process,known[i],refs[i],compare,&same))return false;if(same)*mask|=1u<<i;}return true;
+}
 class Desktop;
 class D480Acceptance {
  inline static unsigned auths=0,createdCount=0,admitted=0;
  inline static HWND firstWindow=nullptr;
  inline static int phase=0;
  inline static std::wstring oldGeneration;
- inline static HANDLE oldInput=nullptr,ownedSentinel=nullptr;
+ inline static HANDLE oldInput=nullptr,ownedSentinel=nullptr,knownParent=nullptr;
+ inline static HANDLE identityRefs[3]{};
+ inline static unsigned controlIdentity=257,descendantIdentity=257;
  inline static bool inputWasClosed=false,parentWasCleared=false,descendantDenied=false,checkerPositive=false;
  inline static ULONGLONG inheritanceStarted=0;
  // Test-only finite observations: 257=not run, 256=unexpected status; no raw HANDLE/path/error.
  inline static unsigned inheritanceStage=0,controlResult=257,descendantResult=257;
  inline static HANDLE parentReceipt=nullptr;
  inline static BY_HANDLE_FILE_INFORMATION parentReceiptInfo{};
- static DWORD inheritedChecker(std::wstring const&,wchar_t const*);
+ struct CheckerResult{DWORD raw=255;unsigned objects=256;bool valid=false;};
+ static CheckerResult inheritedChecker(std::wstring const&,wchar_t const*);
+ static bool captureReference(HANDLE,unsigned);
+ static void closeReferences();
  static void emit(Desktop&,std::wstring const&);
  static void script(Desktop&,wchar_t const*,std::wstring const&);
  public:
+ struct InheritanceScope{~InheritanceScope(){D480Acceptance::closeReferences();if(D480Acceptance::ownedSentinel){CloseHandle(D480Acceptance::ownedSentinel);D480Acceptance::ownedSentinel=nullptr;}}};
  static void safetyWatchdog();
  static void parentObserved();
  static void preConsume(HANDLE);
@@ -50,6 +77,7 @@ void D480Acceptance::auth(Desktop& h){auths++;emit(h,L"AUTH_"+std::to_wstring(au
 #ifdef D480_INHERITANCE
  bool checkBits[]={inputWasClosed,parentWasCleared,checkerPositive,descendantDenied};std::wstring checks;for(bool bit:checkBits)checks+=bit?L'1':L'0';
  emit(h,L"INHERITANCE_"+checks+L"_"+std::to_wstring(inheritanceStage)+L"_"+std::to_wstring(controlResult)+L"_"+std::to_wstring(descendantResult));
+ emit(h,L"IDENTITY_"+std::to_wstring(controlIdentity)+L"_"+std::to_wstring(descendantIdentity));
  emit(h,inputWasClosed&&parentWasCleared&&descendantDenied&&checkerPositive?L"CONSUMED_HANDLES_DENIED":L"FAIL_DESCENDANT_NOT_OBSERVED");
 #endif
 }
@@ -160,6 +188,7 @@ void D480Acceptance::preConsume(HANDLE input){
 #endif
 #ifdef D480_INHERITANCE
  oldInput=input;inheritanceStarted=GetTickCount64();SECURITY_ATTRIBUTES sa{sizeof(sa),nullptr,TRUE};ownedSentinel=CreateEventW(&sa,TRUE,FALSE,nullptr);inheritanceStage=1;
+ if(!captureReference(input,0)||!captureReference(ownedSentinel,2))closeReferences();
 #else
  (void)input;
 #endif
@@ -171,22 +200,45 @@ void D480Acceptance::inputClosed(HANDLE input){
  (void)input;
 #endif
 }
-DWORD D480Acceptance::inheritedChecker(std::wstring const& binary,wchar_t const* role){
+bool D480Acceptance::captureReference(HANDLE subject,unsigned index){
 #ifdef D480_INHERITANCE
- std::wstring command=L"\""+binary+L"\" "+role;STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION pi{};
- if(!CreateProcessW(binary.c_str(),command.data(),nullptr,nullptr,TRUE,0,nullptr,nullptr,&startup,&pi))return 252;CloseHandle(pi.hThread);
- ULONGLONG elapsed=GetTickCount64()-inheritanceStarted;DWORD remaining=elapsed<20000?(DWORD)(20000-elapsed):0,result=255;
- if(WaitForSingleObject(pi.hProcess,remaining)==WAIT_OBJECT_0)GetExitCodeProcess(pi.hProcess,&result);else{TerminateProcess(pi.hProcess,251);WaitForSingleObject(pi.hProcess,INFINITE);result=251;}
- CloseHandle(pi.hProcess);return result;
+ D480Compare compare=d480_identity_api();HANDLE reference=nullptr;DWORD flags=0;
+ if(index>=3||identityRefs[index]||!compare||!GetHandleInformation(subject,&flags)||!DuplicateHandle(GetCurrentProcess(),subject,GetCurrentProcess(),&reference,0,FALSE,0))return false;
+ if(!GetHandleInformation(reference,&flags)||(flags&HANDLE_FLAG_INHERIT)||!compare(reference,reference)||!compare(subject,reference)){CloseHandle(reference);return false;}
+ identityRefs[index]=reference;return true;
 #else
- (void)binary;(void)role;return 255;
+ (void)subject;(void)index;return false;
 #endif
+}
+void D480Acceptance::closeReferences(){for(HANDLE& reference:identityRefs){if(reference){if(!CloseHandle(reference)){checkerPositive=false;descendantDenied=false;}reference=nullptr;}}}
+D480Acceptance::CheckerResult D480Acceptance::inheritedChecker(std::wstring const& binary,wchar_t const* role){
+ CheckerResult result;
+#ifdef D480_INHERITANCE
+ std::wstring command=L"\""+binary+L"\" "+role;STARTUPINFOW startup{};startup.cb=sizeof(startup);
+ struct OwnedProcess{PROCESS_INFORMATION value{};bool reaped=false;~OwnedProcess(){if(value.hThread)CloseHandle(value.hThread);if(value.hProcess){if(!reaped){TerminateProcess(value.hProcess,251);WaitForSingleObject(value.hProcess,INFINITE);}CloseHandle(value.hProcess);}}} child;
+ if(!CreateProcessW(binary.c_str(),command.data(),nullptr,nullptr,TRUE,CREATE_SUSPENDED,nullptr,nullptr,&startup,&child.value)){result.raw=252;return result;}
+ HANDLE known[3]={oldInput,knownParent,ownedSentinel};unsigned objects=256;
+ if(!d480_known_identity(child.value.hProcess,known,identityRefs,d480_identity_api(),&objects)){result.raw=253;return result;}
+ ULONGLONG elapsed=GetTickCount64()-inheritanceStarted;
+ if(elapsed>=20000){result.raw=251;return result;}
+ if(ResumeThread(child.value.hThread)!=1){result.raw=254;return result;}
+ CloseHandle(child.value.hThread);child.value.hThread=nullptr;
+ elapsed=GetTickCount64()-inheritanceStarted;DWORD remaining=elapsed<20000?(DWORD)(20000-elapsed):0;
+ if(WaitForSingleObject(child.value.hProcess,remaining)!=WAIT_OBJECT_0){result.raw=251;return result;}
+ child.reaped=true;
+ if(!GetExitCodeProcess(child.value.hProcess,&result.raw))return result;
+ if(result.raw<=7){result.objects=objects;result.valid=true;}
+#else
+ (void)binary;(void)role;
+#endif
+ return result;
 }
 void D480Acceptance::parentCleared(HANDLE parent){
 #ifdef D480_INHERITANCE
- struct SentinelCleanup{~SentinelCleanup(){if(D480Acceptance::ownedSentinel){CloseHandle(D480Acceptance::ownedSentinel);D480Acceptance::ownedSentinel=nullptr;}}} cleanup;
+ struct SentinelCleanup{~SentinelCleanup(){D480Acceptance::closeReferences();if(D480Acceptance::ownedSentinel){CloseHandle(D480Acceptance::ownedSentinel);D480Acceptance::ownedSentinel=nullptr;}}} cleanup;
  DWORD flags=0;parentWasCleared=GetHandleInformation(parent,&flags)&&!(flags&HANDLE_FLAG_INHERIT);inheritanceStage=2;
- if(!inputWasClosed||!parentWasCleared||!ownedSentinel)return;
+ knownParent=parent;
+ if(!inputWasClosed||!parentWasCleared||!ownedSentinel||!identityRefs[0]||!identityRefs[2]||!captureReference(parent,1))return;
  wchar_t self[32768];DWORD length=GetModuleFileNameW(nullptr,self,32768);if(!length||length==32768)return;
  std::wstring file(self,length);auto slash=file.find_last_of(L"\\/");if(slash==std::wstring::npos)return;
  std::wstring receiver=file.substr(0,slash+1)+L"desktop-inheritance.exe",sidecar=receiver+L".handles";inheritanceStage=3;
@@ -194,8 +246,8 @@ void D480Acceptance::parentCleared(HANDLE parent){
  char bytes[256];int size=snprintf(bytes,sizeof(bytes),"D480_OWNED_HANDLES_V1\n%llu\n%llu\n%llu\n",(unsigned long long)(uintptr_t)oldInput,(unsigned long long)(uintptr_t)parent,(unsigned long long)(uintptr_t)ownedSentinel);
  BY_HANDLE_FILE_INFORMATION info{};DWORD wrote=0;bool valid=size>0&&size<(int)sizeof(bytes)&&GetFileInformationByHandle(output,&info)&&info.nNumberOfLinks==1&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))&&WriteFile(output,bytes,(DWORD)size,&wrote,nullptr)&&wrote==(DWORD)size&&FlushFileBuffers(output);CloseHandle(output);
  if(valid){inheritanceStage=5;
-  DWORD result=inheritedChecker(receiver,L"--sentinel");controlResult=(result<=7||(result>=240&&result<=255))?(unsigned)result:256;checkerPositive=result==4;inheritanceStage=6;
-  result=inheritedChecker(receiver,L"--descendant");descendantResult=(result<=7||(result>=240&&result<=255))?(unsigned)result:256;descendantDenied=result==4;inheritanceStage=7;
+  CheckerResult result=inheritedChecker(receiver,L"--sentinel");controlResult=(result.raw<=7||(result.raw>=240&&result.raw<=255))?(unsigned)result.raw:256;controlIdentity=result.objects;checkerPositive=result.valid&&result.raw==4&&result.objects==4;inheritanceStage=6;
+  result=inheritedChecker(receiver,L"--descendant");descendantResult=(result.raw<=7||(result.raw>=240&&result.raw<=255))?(unsigned)result.raw:256;descendantIdentity=result.objects;descendantDenied=result.valid&&result.objects==4;inheritanceStage=7;
  }
  CloseHandle(ownedSentinel);ownedSentinel=nullptr;
 #else

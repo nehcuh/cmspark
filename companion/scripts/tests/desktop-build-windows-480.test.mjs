@@ -161,3 +161,131 @@ test('all actual C++ acceptance compiler arguments preserve Unicode input withou
   assert.ok(nativeTest.includes('assert.deepEqual((stored.owned_added_476 as any).args,["中文 空格"])'))
   assert.ok(form.includes('中文 空格'))
 })
+
+// Same-number handles are not kernel identities. Execute only the actual C
+// predicate with inert Win32 outlets; this never compiles/runs Windows code.
+function identityFunctions(fixture) {
+  const extract = (source, signature) => {
+    const begin=source.indexOf(signature);assert.ok(begin>=0,signature)
+    const open=source.indexOf('{',begin);let depth=0
+    for(let i=open;i<source.length;i++) {if(source[i]==='{')depth++;else if(source[i]==='}'&&--depth===0)return source.slice(begin,i+1)}
+    assert.fail('complete C function')
+  }
+  if(!fixture.includes('static bool d480_identity_one(')) {
+    const original=fs.readFileSync(new URL('../../tests/fixtures/desktop-480/windows-inheritance.c',import.meta.url),'utf8')
+    const c=extract(original,'static unsigned fixture_mask(')
+    const body=c.replace('static unsigned fixture_mask(const HANDLE known[3])','function fixture_mask(known)').replace('unsigned mask=0','let mask=0').replace('for(unsigned i=0','for(let i=0').replace('DWORD flags=0','let flags=0').replace('&flags','flags').replace('1u<<i','1<<i')
+    return api => ({valid:true,mask:new Function('GetHandleInformation',body+';return fixture_mask([40,44,48])')(api.GetHandleInformation)})
+  }
+  const functions=['static bool d480_identity_one(','static bool d480_known_identity('].map(s=>extract(fixture,s))
+  let js=functions.join('\n')
+  const replacements=[[/static bool d480_identity_one\([^)]*\)/,'function d480_identity_one(process,subject,reference,compare,same)'],[/static bool d480_known_identity\([^)]*\)/,'function d480_known_identity(process,known,refs,compare,mask)'],[/DWORD flags=0/g,'let flags={value:0}'],[/HANDLE copy=nullptr/g,'let copy={value:null}'],[/DWORD error=/g,'const error='],[/BOOL equal=/g,'const equal='],[/bool valid=/g,'let valid='],[/bool closed=/g,'const closed='],[/for\(unsigned i=0/g,'for(let i=0'],[/bool same=false/g,'let same={value:false}'],[/\*same/g,'same.value'],[/\*mask/g,'mask.value'],[/if\(same\)/g,'if(same.value)'],[/&same/g,'same'],[/&copy/g,'copy'],[/&flags/g,'flags'],[/flags&HANDLE_FLAG_INHERIT/g,'flags.value&HANDLE_FLAG_INHERIT'],[/1u<<i/g,'1<<i']]
+  for(const [from,to] of replacements)js=js.replace(from,to)
+  return api => new Function(...Object.keys(api),js+';const mask={value:0};const valid=d480_known_identity("child",[40,44,48],[100,104,108],CompareObjectHandles,mask);return {valid,mask:mask.value};')(...Object.values(api))
+}
+const identityFixture=fs.readFileSync(new URL('../../tests/fixtures/desktop-480/native-acceptance.cpp',import.meta.url),'utf8')
+function identityScenario(objects,inject={}) {
+  const refs=[{}, {}, {}],table=new Map([[100,{object:refs[0]}],[104,{object:refs[1]}],[108,{object:refs[2]}]])
+  for(const [slot,kind] of objects)table.set(slot,{object:typeof kind==='number'?refs[kind]:{}})
+  let error=0,next=1000,temporary=0,calls=0
+  const unwrap=h=>h&&typeof h==='object'&&'value'in h?h.value:h
+  const api={FALSE:0,TRUE:1,ERROR_SUCCESS:0,ERROR_INVALID_HANDLE:6,ERROR_NOT_SAME_OBJECT:1656,HANDLE_FLAG_INHERIT:1,WAIT_TIMEOUT:258,
+    GetHandleInformation(h,out){h=unwrap(h);if(h==='child'){out.value=0;return !inject.dead}const v=table.get(h);if(!v)return false;out.value=inject.inheritedReference&&h===100?1:0;return !(inject.badRef&&h===100)},
+    WaitForSingleObject(){return inject.dead?0:258},GetCurrentProcess(){return 'self'},SetLastError(value){error=value},GetLastError(){return error},
+    DuplicateHandle(process,subject,target,out,access,inherit,options){calls++;assert.equal(process,'child');assert.equal(target,'self');assert.equal(access,0);assert.equal(inherit,0);assert.equal(options,0);if(inject.dupError){error=5;return false}if(!table.has(subject)){error=6;return false}out.value=next++;table.set(out.value,table.get(subject));temporary++;return true},
+    CompareObjectHandles(a,b){a=unwrap(a);b=unwrap(b);if(a!==b&&inject.compareError){error=5;return false}if(inject.selfCompareFailure&&a===b)return false;const same=table.get(a)?.object===table.get(b)?.object;error=same?0:(inject.differentZero?0:1656);return same},
+    CloseHandle(h){assert.ok(table.delete(unwrap(h)));temporary--;return !inject.closeFailure},
+  }
+  const result=identityFunctions(identityFixture)(api);assert.equal(temporary,0,'temporary duplicate closed on every branch');return {...result,calls}
+}
+for(const kind of ['Event','File','Pipe'])test(`known input slot reused by different ${kind} is not an original-object leak`,()=>{
+  assert.deepEqual(identityScenario([[40,kind],[48,2]]),{valid:true,mask:4,calls:3})
+})
+for(const [name,objects,mask] of [['positive',[[48,2]],4],['input leak',[[40,0],[48,2]],5],['parent leak',[[44,1],[48,2]],6],['both leak',[[40,0],[44,1],[48,2]],7],['wrong sentinel',[[48,'Event']],0]])test(`exact identity keeps ${name} mask${mask}`,()=>{
+  const value=identityScenario(objects);assert.equal(value.valid,true);assert.equal(value.mask,mask)
+})
+for(const failure of ['badRef','inheritedReference','dead','dupError','compareError','selfCompareFailure','closeFailure'])test(`known-object inspection refuses ${failure} without leaking a temporary copy`,()=>{
+  assert.equal(identityScenario([[40,0],[48,2]],{[failure]:true}).valid,false)
+})
+test('different-object FALSE with zero last-error requires successful valid-handle controls',()=>{
+  assert.equal(identityScenario([[40,'Pipe'],[48,2]],{differentZero:true}).mask,4)
+  assert.equal(identityScenario([[40,'Pipe'],[48,2]],{differentZero:true,selfCompareFailure:true}).valid,false)
+})
+
+function checkerSequence(overrides={}) {
+  const start=identityFixture.indexOf('D480Acceptance::CheckerResult D480Acceptance::inheritedChecker('),end=identityFixture.indexOf('\nvoid D480Acceptance::parentCleared',start)
+  assert.ok(start>=0&&end>start)
+  const whole=identityFixture.slice(start,end),active=whole.slice(whole.indexOf('#ifdef D480_INHERITANCE')+'#ifdef D480_INHERITANCE'.length,whole.indexOf('#else'))
+  const owned=active.match(/struct OwnedProcess\{PROCESS_INFORMATION value\{\};bool reaped=false;~OwnedProcess\(\)\{(.*?)\}\} child;/s);assert.ok(owned)
+  const cleanup=owned[1]
+  let body=active.replace(/std::wstring command=[^\n]+STARTUPINFOW startup\{\};startup.cb=sizeof\(startup\);/,'const command="OWNED";const startup={};').replace(owned[0],'const child={value:{hThread:null,hProcess:null},reaped:false};try{')
+  const replacements=[[/binary\.c_str\(\)/g,'binary'],[/command\.data\(\)/g,'command'],[/&startup/g,'startup'],[/&child\.value/g,'child.value'],[/HANDLE known\[3\]=\{oldInput,knownParent,ownedSentinel\}/g,'const known=[40,44,48]'],[/unsigned objects=256/g,'const objects={value:256}'],[/&objects/g,'objects'],[/ULONGLONG elapsed=/g,'let elapsed='],[/\(DWORD\)/g,''],[/DWORD remaining=/g,'const remaining='],[/&result\.raw/g,'result'],[/result.objects=objects/g,'result.objects=objects.value'],[/nullptr/g,'null']]
+  for(const [from,to] of replacements)body=body.replace(from,to)
+  body+='return result;}finally{const value=child.value,reaped=child.reaped;'+cleanup.replaceAll('nullptr','null')+'}'
+  let clockCalls=0,terminated=0,reaped=0,threadClosed=0,processClosed=0,resumed=0
+  const api={TRUE:1,FALSE:0,CREATE_SUSPENDED:4,WAIT_TIMEOUT:258,WAIT_OBJECT_0:0,INFINITE:0xffffffff,inheritanceStarted:0,identityRefs:[100,104,108],
+    CreateProcessW(binary,command,p,t,inherit,flags,env,cwd,startup,out){assert.equal(inherit,1);assert.equal(flags,4);assert.equal(env,null);assert.equal(cwd,null);if(overrides.createFail)return false;out.hThread='thread';out.hProcess='process';return true},
+    d480_identity_api(){return 'ownedCompare'},d480_known_identity(process,known,refs,compare,out){assert.equal(resumed,0);assert.deepEqual(known,[40,44,48]);assert.deepEqual(refs,[100,104,108]);out.value=overrides.mask??4;return !overrides.inspectFail},
+    GetTickCount64(){return overrides.expired?20000:++clockCalls},ResumeThread(thread){assert.equal(thread,'thread');resumed++;return overrides.resumeFail?0xffffffff:1},
+    WaitForSingleObject(handle,time){assert.equal(handle,'process');if(time===0xffffffff){reaped++;return 0}assert.ok(time<=20000);if(overrides.timeout)return 258;reaped++;return 0},
+    GetExitCodeProcess(handle,out){out.raw=overrides.raw??4;return !overrides.exitReadFail},TerminateProcess(handle,code){assert.equal(handle,'process');assert.equal(code,251);terminated++;return true},
+    CloseHandle(h){if(h==='thread')threadClosed++;else if(h==='process')processClosed++;else assert.fail('unknown cleanup handle');return true},
+  }
+  const result=new Function(...Object.keys(api),'binary','role','const result={raw:255,objects:256,valid:false};'+body)(...Object.values(api),'OWNED.exe','--descendant')
+  if(!overrides.createFail){assert.equal(threadClosed,1);assert.equal(processClosed,1);assert.equal(reaped,1)}else{assert.equal(threadClosed,0);assert.equal(processClosed,0)}
+  return {result,terminated,resumed}
+}
+test('actual inheritedChecker source resumes once, preserves raw values and reaps its process',()=>{
+  for(const raw of [0,4,5,7,240,251,259]){
+    const value=checkerSequence({raw});assert.equal(value.resumed,1);assert.equal(value.terminated,0);assert.equal(value.result.raw,raw);assert.equal(value.result.valid,raw<=7)
+  }
+})
+for(const fault of ['createFail','inspectFail','expired','resumeFail','timeout','exitReadFail'])test(`actual inheritedChecker source ${fault} cannot authorize and closes owned handles`,()=>{
+  const value=checkerSequence({[fault]:true});assert.equal(value.result.valid,false)
+  if(['inspectFail','expired','resumeFail','timeout'].includes(fault))assert.equal(value.terminated,1)
+})
+test('acceptance variant keeps exact production bytes and releases refs on bootstrap early exit', async()=>{
+  const {desktopAcceptanceVariant}=await import('../build-desktop-windows.mjs')
+  const original=fs.readFileSync(new URL('../../src/desktop/native/DesktopHost.cpp',import.meta.url),'utf8')
+  const value=desktopAcceptanceVariant('cpp',original,identityFixture)
+  assert.equal(value.inverse,original)
+  assert.ok(value.source.includes('HANDLE input=bootstrap.pipe;D480Acceptance::InheritanceScope identityScope;D480Acceptance::preConsume(input);'))
+  assert.ok(identityFixture.includes('~InheritanceScope(){D480Acceptance::closeReferences();'))
+  assert.ok(identityFixture.includes('if(!CloseHandle(reference)){checkerPositive=false;descendantDenied=false;}'))
+  assert.ok(identityFixture.includes('checkerPositive=result.valid&&result.raw==4&&result.objects==4'))
+  assert.ok(identityFixture.includes('descendantDenied=result.valid&&result.objects==4'))
+  assert.ok(identityFixture.includes('inputWasClosed&&parentWasCleared&&descendantDenied&&checkerPositive'))
+})
+
+function referenceCapture(fault) {
+  const begin=identityFixture.indexOf('bool D480Acceptance::captureReference('),end=identityFixture.indexOf('\nvoid D480Acceptance::closeReferences',begin)
+  const whole=identityFixture.slice(begin,end),branch=whole.slice(whole.indexOf('#ifdef D480_INHERITANCE')+'#ifdef D480_INHERITANCE'.length,whole.indexOf('#else'))
+  const body=branch.replace('D480Compare compare=d480_identity_api();HANDLE reference=nullptr;DWORD flags=0;','const compare=d480_identity_api();const reference={value:null};const flags={value:0};').replaceAll('&flags','flags').replaceAll('&reference','reference').replaceAll('flags&HANDLE_FLAG_INHERIT','flags.value&HANDLE_FLAG_INHERIT').replace('identityRefs[index]=reference','identityRefs[index]=reference.value')
+  const refs=[null,null,null];let closed=0,duplicates=0
+  const api={FALSE:0,HANDLE_FLAG_INHERIT:1,identityRefs:refs,
+    d480_identity_api(){return fault==='missingAPI'?null:(a,b)=>fault!=='compareFailure'},
+    GetHandleInformation(h,out){out.value=fault==='inheritableRef'&&typeof h==='object'?1:0;return fault!=='unknownSubject'},GetCurrentProcess(){return 'self'},
+    DuplicateHandle(source,subject,target,out,access,inherit,options){assert.equal(source,'self');assert.equal(target,'self');assert.equal(access,0);assert.equal(inherit,0);assert.equal(options,0);duplicates++;if(fault==='duplicateFailure')return false;out.value='noninheritReference';return true},
+    CloseHandle(h){assert.equal(h.value,'noninheritReference');closed++;return true},
+  }
+  const result=new Function(...Object.keys(api),'subject','index',body)(...Object.values(api),'liveOriginal',fault==='badIndex'?3:0)
+  return {result,closed,duplicates,refs}
+}
+test('actual captureReference captures a live original with zero access and never marks its reference inheritable',()=>{
+  assert.deepEqual(referenceCapture('none'),{result:true,closed:0,duplicates:1,refs:['noninheritReference',null,null]})
+})
+for(const fault of ['missingAPI','unknownSubject','duplicateFailure','inheritableRef','compareFailure','badIndex'])test(`actual captureReference ${fault} refuses without retaining a partial reference`,()=>{
+  const value=referenceCapture(fault);assert.equal(value.result,false);assert.deepEqual(value.refs,[null,null,null]);assert.equal(value.closed,['inheritableRef','compareFailure'].includes(fault)?1:0)
+})
+for(const lineEnding of ['LF','CRLF'])test(`actual closeReferences is idempotent and cleanup error cannot leave success checks true (${lineEnding})`,()=>{
+  const fixture=identityFixture.replace(/\r\n/g,'\n').replace(/\n/g,lineEnding==='CRLF'?'\r\n':'\n')
+  const start=fixture.indexOf('void D480Acceptance::closeReferences(){'),end=fixture.indexOf('\nD480Acceptance::CheckerResult',start)
+  const source=fixture.slice(start,end)
+  const body=source.slice(source.indexOf('{')+1,source.lastIndexOf('}')).replace('for(HANDLE& reference:identityRefs){','for(let i=0;i<identityRefs.length;i++){let reference=identityRefs[i];').replace('reference=nullptr;','reference=null;identityRefs[i]=reference;')
+  for(const fail of [false,true]){
+    const identityRefs=[100,104,108];let calls=0
+    const invoke=new Function('identityRefs','CloseHandle','let checkerPositive=true,descendantDenied=true;'+body+';return {checkerPositive,descendantDenied};')
+    const close=()=>{calls++;return !fail};const value=invoke(identityRefs,close);assert.deepEqual(identityRefs,[null,null,null]);assert.equal(calls,3);assert.equal(value.checkerPositive,!fail);assert.equal(value.descendantDenied,!fail)
+    invoke(identityRefs,close);assert.equal(calls,3)
+  }
+})
