@@ -463,6 +463,16 @@ jobs:
             -framework CoreImage -framework ImageIO -framework ScreenCaptureKit
           echo "OK: both Swift hosts typecheck"
 
+      - name: "macOS external AX action and background oracles (#571)"
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd companion
+          node --test scripts/tests/ax-native-571.test.mjs
+          node scripts/build-ax-native-571.mjs
+          node scripts/run-tests.mjs .test-dist/tests/computer-ax-native-571.test.js
+
 
       - name: Windows launcher runtime smoke (launch-hidden.vbs / launch.bat)
         # Runtime proof of the VBS decision tree on a real Windows box — esp.

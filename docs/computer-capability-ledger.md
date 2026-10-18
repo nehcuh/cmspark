@@ -57,7 +57,7 @@ not from a successful driver response alone."*
 
 ## 3. Windows 台账
 
-> 我们**只在 Windows 上有实现**。macOS 见 §4。
+> 本节记录 Windows；macOS AX 动作及比较 oracle 已有实现，逐行验收与未完事项见 §4。
 > **本表的空白 = 尚未用夹具证实，不等于不可能。**
 
 ### 3.1 投递路线（机制级）
@@ -134,12 +134,43 @@ UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tri
 
 ## 4. macOS / Linux
 
-| 平台 | 状态 | 说明 |
-|---|---|---|
-| macOS | **Gap（未系统化验证）** | 有 `darwin-adapters.ts` / `darwin-estop.ps1` 等实现，但**从未按 §1 判据系统验收**；且 `osascript_eval` 曾是确定性死路（#529，v0.6.11 已下架） |
-| Linux | **Gap（无实现）** | 全仓无 Linux 桌面投递实现 |
+macOS 的 `host.swift` 已有外部 AX 定位与 press/increment/decrement/confirm/cancel/setvalue，
+`darwin-adapters.ts` 可直接调用；`computer-bg-oracles.sh` 提供真实窗口/光标 snapshot 和严格
+compare。它们是**源实现**，不是后台 Delivered 证明。Linux 桌面投递仍为 Gap（无实现）。
 
-→ **macOS 立 issue 跟踪**（本轮不做，见 §6）。
+### 4.1 macOS AX：逐框架 / 动作与证据
+
+当前所有下列行仍是 **Gap**，因为本变更没有运行本机或 hosted AX。原生验收代码的存在、
+Swift 类型检查、纯 Node 比较控和 owned fixture 都不能代填 Delivered / Refused。
+
+| 靶子/框架 | 动作 | 当前状态 | 确切证据 / 尚缺什么 |
+|---|---|---|---|
+| AppKit NSButton | press | **Gap** | `computer-ax-native-571.test.ts` 的实际 external AX AppKit 行已接 hosted Mac；待真实 target marker + 同轮 focus/z-order/cursor 与 derived no-leak 回执。 |
+| WKWebView | press | **Gap** | 同文件实际 external AX WKWebView 行；marker 必须来自真实 trusted click→当前 WebView 主 frame，待同轮四 oracle。 |
+| AppKit | increment | **Gap** | `cuAXInvoke` 已有源分支；本叶未提供对应靶子 / action 实测。 |
+| AppKit | decrement | **Gap** | 同上；未验不当不可用。 |
+| AppKit | confirm | **Gap** | 已有 AXConfirm 源映射；未取得实际靶子效果或带 oracle 的精确拒绝。 |
+| AppKit | cancel | **Gap** | 已有 AXCancel 源映射；缺实际该行验收。 |
+| AppKit | setvalue | **Gap** | 已有 AXValue 源映射；缺实际该行验收。 |
+| WKWebView | increment / decrement / confirm / cancel / setvalue | **Gap** | 是否由控件暴露取决于实际 AX provider；本叶不捏造统一结果。 |
+| macOS | selection / scroll / drag | **Gap** | 没有本组对称动作映射与验收；不是本叶新增的全模式关闭前置。 |
+
+**实际运行后如何回填**：hosted `macOS external AX action and background oracles (#571)` 先构建
+未修改的真实 `cmspark-host` 和独立 unshipped owned target，再运行完整 native test。
+`AX571_PERMISSION` 只包含固定身份/布尔事实；`AX571_ROW` 只包含框架/动作、三态、有限码和 oracle
+布尔。只有 target-owned marker 确变且 focus/z-order/cursor 均 true，才可把对应 press 行改
+Delivered 并附本轮 commit/run/test；真实精确拒绝码且同轮 oracle 全通过才改 Refused。
+未知错误或缺权限/观测仍为 Gap，不用返回 ok 冒成功。TCC 权限 false 是真实硬失败，不 skip。
+原票最低成功标准是**至少一条**真实 AX 动作通过三项实测后台 oracle，不要求本表所有模式都 Delivered。
+
+**身份边界**：builder 校验签名 Identifier 为 `com.cmspark.agent`；运行前现有 `security-check`
+实测 `axTrusted` / `secureInput`。该测试路由为 Node 直接父进程→签名 CLI，不安装 app、不改权限。
+TCC 的最终责任身份仍为 **UNKNOWN**，不以 codesign Identifier 或父 PID 冒授予权限；hosted
+实际信任状态需保留。如果 trust=false，保留该次有限拒绝，不能把旧身份记录或别的 native 绿挪来代验。
+
+**负控与残余**：同 owned target 的 estop、错误 role 负控要求 marker 未写；未知 / null 观测
+严格失败。`no_leaked_input` 始终标 derived。production `executor` 当前没有把 Mac AX 自动接入
+坐标回退链，仍是明确残余；这是原票最小 native 验证之后的独立接线事项，不偷偷新增为本叶关闭条件。
 
 ---
 
@@ -177,7 +208,7 @@ UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tri
 | 4 | **GUI 夹具** | 🟡 已有 WPF（正）+ WinForms（反）两个；其余靶子待做 |
 | 5 | **逐靶子回填**：WinUI3 / WebView2 / Electron / Tauri / 原生 Win32 | 待做 —— 目前**只有 WPF 左键**被证实 |
 | 6 | 键盘 / 滚动 / 拖拽的后台投递 | 待做 —— 脚本已支持 `setvalue`/`select`/`toggle`/`scroll`；executor 只接了左键（**只有左键有语义正确的 UIA 映射**：InvokePattern = 激活 = 左键；UIA 无右键/双击模式） |
-| 7 | **macOS 对齐** | → #571 跟踪 |
+| 7 | **macOS 对齐** | #571：源 AX / oracle + owned AppKit/WKWebView gate 已接线，§4 当前按行 Gap，等待真实 hosted 最小动作回执 |
 
 **纪律**：第 3 步无论成败都要**写回本台账** —— 那是这件事的价值所在。
 第 3 步的拒绝要**精确码**（例如 `uia_pattern_unavailable` = 该控件不暴露可调用模式），

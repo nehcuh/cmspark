@@ -145,6 +145,7 @@ let zorderKept = null, zDiffAt = -1
 if (bz.length > 0 && az.length > 0) {
   const n = Math.min(bz.length, az.length)
   for (let i = 0; i < n; i++) if (bz[i] !== az[i]) { zDiffAt = i; break }
+  if (zDiffAt < 0 && bz.length !== az.length) zDiffAt = n
   zorderKept = zDiffAt < 0
 }
 
