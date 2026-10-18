@@ -225,3 +225,28 @@ test('actual preflight rejects other or unreported images despite hosted Linux a
  for(const ImageOS of [undefined,'ubuntu24','ubuntu26','ubuntu-22.04','private-marker'])assert.throws(()=>preflight({...env,ImageOS},'linux',stat,x=>x,42))
  assert.equal(childEnvironment('/owned',{CHROME_DEVEL_SANDBOX:'/foreign'}).CHROME_DEVEL_SANDBOX,undefined)
 })
+
+
+test('startup retains only capped byte count and a DevTools-listening boolean',()=>{
+ const observer=actualStartupObserver464(),child=new EventEmitter();child.stderr=new EventEmitter();observer.track(child)
+ child.stderr.emit('data',Buffer.from('private-owned-path DevTools list'))
+ child.stderr.emit('data',Buffer.from('ening on ws://127.0.0.1:1234/private-session'))
+ observer.portFile('ENOENT');const before=observer.snapshot()
+ assert.equal(before.stderrRetainedBytes,76);assert.equal(before.devToolsListening,true);assert.equal(before.portFileRead,'ENOENT')
+ child.stderr.emit('data',Buffer.alloc(9000,120));const capped=observer.snapshot();assert.equal(capped.stderrRetainedBytes,8192);assert.equal(capped.stderrTruncated,true)
+ const r=receipt('CHROMIUM',false,0,{chromiumStartup:before});assert.equal(r.chromiumStartup.portFileRead,'ENOENT');assert.equal(r.chromiumStartup.devToolsListening,true)
+ assert.equal(/private|1234|127\.0\.0\.1/.test(JSON.stringify(r)),false)
+ for(const stderrRetainedBytes of [-1,8193,NaN,'private-marker'])assert.equal(receipt('CHROMIUM',false,0,{chromiumStartup:{...before,stderrRetainedBytes}}).chromiumStartup,undefined)
+ assert.equal(receipt('CHROMIUM',false,0,{chromiumStartup:{...before,portFileRead:'private-marker'}}).chromiumStartup,undefined)
+ assert.throws(()=>observer.portFile('private-marker'))
+})
+test('actual port polling observes closed IO categories without changing25ms deadline or leaking errors',async()=>{
+ const start=harness.indexOf('async function waitForFile('),end=harness.indexOf('// Diagnostics only:',start);assert.ok(start>0&&end>start)
+ const values=[],seen=[],bytes='12345\n/devtools/browser/a-b\n';let now=0,getters=0,reads=0
+ const getter=Object.defineProperty({},'code',{get(){getters++;return 'private-marker'}})
+ const errors=[{code:'ENOENT'},{code:'EACCES'},{code:'EPERM'},{code:'EISDIR'},{code:'private-marker'},getter,new Proxy({},{getOwnPropertyDescriptor(){throw Error('private-marker')}})]
+ const context={Date:{now:()=>now},Object,Promise,Error,fs:{readFileSync(file,encoding){assert.equal(file,'/owned/profile/DevToolsActivePort');assert.equal(encoding,'utf8');reads++;if(errors.length)throw errors.shift();return bytes}},setTimeout(fn,ms){assert.equal(ms,25);now+=ms;fn()},refusal(code){throw Error(code)}};vm.createContext(context);vm.runInContext(harness.slice(start,end)+'\nthis.poll=waitForFile',context)
+ assert.equal(await context.poll('/owned/profile/DevToolsActivePort',10000,x=>values.push(x)),bytes);assert.deepEqual(values,['ENOENT','EACCES','EPERM','EISDIR','OTHER','OTHER','OTHER','READ']);assert.equal(getters,0);assert.equal(reads,8)
+ now=0;reads=0;context.fs.readFileSync=()=>{reads++;throw{code:'ENOENT'}}
+ await assert.rejects(()=>context.poll('/owned/profile/DevToolsActivePort',10000,x=>seen.push(x)),/STARTUP_FILE_MISSING/);assert.equal(now,10000);assert.equal(reads,400);assert.equal(seen.length,400)
+})

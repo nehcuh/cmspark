@@ -42,7 +42,7 @@ npm --prefix chrome-extension test
 
 ### 代码审阅与终端回传（#464）
 
-- `chrome-extension/scripts/accept-github-comparison-hosted.mjs` 只在 GitHub 托管 Ubuntu 22.04（`ImageOS=ubuntu22`）构建任务上启动全新 owned Chromium/profile，核验真实比较网页；本机不运行该验收。保留 Chromium 原沙箱参数，不使用可写 `/opt` 下的 helper，不安装、不修改系统策略或传入 `--no-sandbox`。Ubuntu 22.04 镜像已进入弃用期，计划 2027-04-17 退役，须在此前迁移；该限定不代表 Ubuntu 24.04 的浏览器兼容性；Ubuntu latest、macOS、Windows 原生 smoke 矩阵保持原样。有限启动诊断与 CPU 控制不能替代真实门禁。步骤在 Companion 构建后、完整测试前执行；完整前后端测试、供应链与原生 CI 门禁仍全部必需。
+- `chrome-extension/scripts/accept-github-comparison-hosted.mjs` 只在 GitHub 托管 Ubuntu 22.04（`ImageOS=ubuntu22`）构建任务上启动全新 owned Chromium/profile，核验真实比较网页；本机不运行该验收。保留 Chromium 原沙箱参数，不使用可写 `/opt` 下的 helper，不安装、不修改系统策略或传入 `--no-sandbox`。Ubuntu 22.04 镜像已进入弃用期，计划 2027-04-17 退役，须在此前迁移；该限定不代表 Ubuntu 24.04 的浏览器兼容性；Ubuntu latest、macOS、Windows 原生 smoke 矩阵保持原样。有限启动诊断仅提供封闭阶段、退出状态、最多 8192 字节的保留计数、DevTools 通告布尔值和端口文件读取类别，不输出 stderr 正文、端口或路径；原 10 秒轮询预算不变。诊断与 CPU 控制不能替代真实门禁。步骤在 Companion 构建后、完整测试前执行；完整前后端测试、供应链与原生 CI 门禁仍全部必需。
 - `companion/tests/code-review.test.ts`：来源范围、diff 行、持久化与容量、身份与引用、两类材料及过期/错 SHA。
 - `companion/tests/pty-terminal.test.ts`：原任务/peer 绑定、确认竞态、输入编码、输出上限、报告确认与幂等历史回传。
 - `chrome-extension/tests/terminal-relay.test.ts`、`terminal-wire.test.ts`：扩展页面/会话归属、断线和真实生产者帧格式。
