@@ -43,6 +43,85 @@ private struct AX571OwnedPaths {
         return a[.type] as? FileAttributeType == .typeDirectory && (a[.systemNumber] as? NSNumber)?.uint64Value == device && (a[.systemFileNumber] as? NSNumber)?.uint64Value == inode && (a[.ownerAccountID] as? NSNumber)?.uint32Value == getuid()
     }
 }
+// Passive startup journal: fixed tokens on one exclusively created, retained descriptor.
+private enum AX571StartupPoint: String {
+    case targetEntry = "TARGET_ENTRY", pathsAdmitted = "PATHS_ADMITTED", regularPolicyAdmitted = "REGULAR_POLICY_ADMITTED"
+    case didFinishEntered = "DID_FINISH_ENTERED", readinessQueued = "READINESS_QUEUED"
+    case targetPathsRefused = "TARGET_PATHS_REFUSED", regularPolicyRefused = "REGULAR_POLICY_REFUSED"
+    case wkNavigationRefused = "WK_NAVIGATION_REFUSED", receiptWriteRefused = "RECEIPT_WRITE_REFUSED"
+}
+private final class AX571StartupJournal {
+    let directory: String
+    let directoryFD: Int32
+    let fileFD: Int32
+    let directoryIdentity: stat
+    let fileIdentity: stat
+    var records = 0
+    var bytes = 0
+    var last: AX571StartupPoint?
+    var stopped = false
+    static func same(_ value: stat, _ original: stat, _ kind: mode_t, _ permissions: mode_t) -> Bool {
+        return value.st_dev == original.st_dev && value.st_ino == original.st_ino && value.st_uid == getuid() && value.st_mode & S_IFMT == kind && value.st_mode & 0o7777 == permissions && value.st_nlink == 1
+    }
+    // Directories need not have nlink1; file identities always do.
+    static func sameDirectory(_ value: stat, _ original: stat) -> Bool {
+        return value.st_dev == original.st_dev && value.st_ino == original.st_ino && value.st_uid == getuid() && value.st_mode & S_IFMT == S_IFDIR && value.st_mode & 0o7777 == 0o700
+    }
+    static func closeOwned(_ fd: Int32, _ original: stat, _ directory: Bool) {
+        var current = stat()
+        guard Darwin.fstat(fd, &current) == 0 else { return }
+        if directory ? sameDirectory(current, original) : same(current, original, mode_t(S_IFREG), mode_t(0o600)) { _ = Darwin.close(fd) }
+    }
+    init?() {
+        guard let raw = ProcessInfo.processInfo.environment["TMPDIR"], raw.hasPrefix("/"), !raw.contains("\0") else { return nil }
+        let url = URL(fileURLWithPath: raw)
+        guard url.path == raw, url.lastPathComponent.hasPrefix("ax-native571-"), ax571CanonicalDirectory(url) else { return nil }
+        var original = stat()
+        guard Darwin.lstat(raw, &original) == 0, Self.sameDirectory(original, original) else { return nil }
+        let d = Darwin.open(raw, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard d >= 0 else { return nil }
+        var held = stat()
+        guard Darwin.fstat(d, &held) == 0, Self.sameDirectory(held, original) else { Self.closeOwned(d, original, true); return nil }
+        let f = Darwin.openat(d, "target-startup.log", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode_t(0o600))
+        guard f >= 0 else { Self.closeOwned(d, original, true); return nil }
+        var file = stat(), current = stat()
+        // No reopen/unlink even if admission or observation fails.
+        guard Darwin.fstat(f, &file) == 0 else { Self.closeOwned(d, original, true); return nil }
+        guard Self.same(file, file, mode_t(S_IFREG), mode_t(0o600)), file.st_size == 0,
+              Darwin.lstat(raw, &current) == 0, Self.sameDirectory(current, original) else { Self.closeOwned(f, file, false); Self.closeOwned(d, original, true); return nil }
+        directory = raw; directoryFD = d; fileFD = f; directoryIdentity = original; fileIdentity = file
+    }
+    func note(_ point: AX571StartupPoint) {
+        guard !stopped else { return }
+        // Repeated readiness notifications are an existing callback, not a new stage.
+        if last == point { return }
+        let stages: [AX571StartupPoint] = [.targetEntry, .pathsAdmitted, .regularPolicyAdmitted, .didFinishEntered, .readinessQueued]
+        let refusals: [AX571StartupPoint] = [.targetPathsRefused, .regularPolicyRefused, .wkNavigationRefused, .receiptWriteRefused]
+        let refusal = refusals.contains(point)
+        let next = stages.firstIndex(of: point)
+        let previous = last.flatMap { stages.firstIndex(of: $0) }
+        let allowedRefusal = (point == .targetPathsRefused && last == .targetEntry) || (point == .regularPolicyRefused && last == .pathsAdmitted) || ((point == .wkNavigationRefused || point == .receiptWriteRefused) && (previous ?? -1) >= 2)
+        guard refusal ? allowedRefusal : next == (previous.map { $0 + 1 } ?? 0) else { stopped = true; return }
+        var parent = stat(), heldParent = stat(), file = stat()
+        guard Darwin.lstat(directory, &parent) == 0, Self.sameDirectory(parent, directoryIdentity),
+              Darwin.fstat(directoryFD, &heldParent) == 0, Self.sameDirectory(heldParent, directoryIdentity),
+              Darwin.fstat(fileFD, &file) == 0, Self.same(file, fileIdentity, mode_t(S_IFREG), mode_t(0o600)), file.st_size == off_t(bytes) else { stopped = true; return }
+        let data = Array((point.rawValue + "\n").utf8)
+        guard records < 12, bytes + data.count <= 512 else { stopped = true; return }
+        let written = data.withUnsafeBytes { Darwin.write(fileFD, $0.baseAddress, data.count) }
+        guard written == data.count else { stopped = true; return }
+        bytes += data.count; records += 1; last = point
+        if refusal { stopped = true }
+    }
+    deinit {
+        // Descriptor numbers alone confer no ownership after replacement.
+        var file = stat(), parent = stat()
+        if Darwin.fstat(fileFD, &file) == 0 && Self.same(file, fileIdentity, mode_t(S_IFREG), mode_t(0o600)) { _ = Darwin.close(fileFD) }
+        if Darwin.fstat(directoryFD, &parent) == 0 && Self.sameDirectory(parent, directoryIdentity) { _ = Darwin.close(directoryFD) }
+    }
+}
+private var ax571StartupJournal: AX571StartupJournal?
+
 // Test-only lifecycle observations, never application ownership or cleanup authority.
 private enum AX571LaunchLifecyclePoint { case entry, refused }
 private func ax571LaunchLifecycle(_ point: AX571LaunchLifecyclePoint, _ application: NSRunningApplication) {
@@ -171,7 +250,8 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var readinessQueued = false
     var readinessObservers: [NSObjectProtocol] = []
     init(_ arguments: [String]) {
-        guard let paths = AX571OwnedPaths(arguments) else { exit(64) }
+        guard let paths = AX571OwnedPaths(arguments) else { ax571StartupJournal?.note(.targetPathsRefused); exit(64) }
+        ax571StartupJournal?.note(.pathsAdmitted)
         framework = paths.framework; ready = paths.ready; marker = paths.marker; siblingMarker = paths.sibling
         super.init()
     }
@@ -181,6 +261,7 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         return value
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ax571StartupJournal?.note(.didFinishEntered)
         target = window("Owned AX571 target")
         sibling = window("Owned AX571 foreground sibling")
         let siblingButton = NSButton(title: "OwnedAX571Sibling", target: self, action: #selector(siblingPressed(_:)))
@@ -200,8 +281,8 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { exit(177) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { publishReady() }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { exit(64) }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { exit(64) }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { ax571StartupJournal?.note(.wkNavigationRefused); exit(64) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { ax571StartupJournal?.note(.wkNavigationRefused); exit(64) }
     func publishReady() {
         guard !setupStarted else { return }; setupStarted = true
         // LaunchServices made the sole initial activation request; readiness observes its receipt.
@@ -213,6 +294,7 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
     func queueReadiness() {
         guard setupStarted, !published, !readinessQueued else { return }; readinessQueued = true
+        ax571StartupJournal?.note(.readinessQueued)
         DispatchQueue.main.async { [weak self] in
             guard let self=self else { return }; self.readinessQueued = false
             guard !self.published else { return }
@@ -237,7 +319,7 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
     func write(_ value: [String: Any], to url: URL) {
         do { let data = try JSONSerialization.data(withJSONObject: value); try data.write(to: url, options: .atomic) }
-        catch { exit(64) }
+        catch { ax571StartupJournal?.note(.receiptWriteRefused); exit(64) }
     }
     @objc func targetPressed(_ sender: Any?) { changed() }
     @objc func siblingPressed(_ sender: Any?) { write(["schema": 1, "changed": true], to: siblingMarker) }
@@ -253,6 +335,7 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 let arguments = Array(CommandLine.arguments.dropFirst())
+if arguments.first != "--launch-owned" { ax571StartupJournal = AX571StartupJournal(); ax571StartupJournal?.note(.targetEntry) }
 let app = NSApplication.shared
 if arguments.first == "--launch-owned" {
     // Dedicated categories are reachable only before any owned-app launch request.
@@ -261,6 +344,7 @@ if arguments.first == "--launch-owned" {
     launcher.start(); withExtendedLifetime(launcher) { app.run() }
 } else {
     let delegate = AX571Target(arguments)
-    guard app.setActivationPolicy(.regular) else { exit(64) }
+    guard app.setActivationPolicy(.regular) else { ax571StartupJournal?.note(.regularPolicyRefused); exit(64) }
+    ax571StartupJournal?.note(.regularPolicyAdmitted)
     app.delegate = delegate; withExtendedLifetime(delegate) { app.run() }
 }

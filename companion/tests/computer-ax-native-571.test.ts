@@ -30,6 +30,41 @@ function ax571LaunchLifecycle(value:unknown):{entry:{pidAvailable:boolean;termin
  }
  return entry!==null||refused!==null?{entry,refused}:null
 }
+// Last observed target code point only; never readiness, ownership or cleanup authority.
+function ax571StartupTokens(value:unknown):{stage:string;refusal:string|null}|null {
+ if(typeof value!=="string"||value.length===0||Buffer.byteLength(value,"utf8")>512||!value.endsWith("\n"))return null
+ const lines=value.slice(0,-1).split("\n"),stages=["TARGET_ENTRY","PATHS_ADMITTED","REGULAR_POLICY_ADMITTED","DID_FINISH_ENTERED","READINESS_QUEUED"]
+ if(lines.length>12)return null
+ let stage=-1,refusal:string|null=null
+ for(const line of lines){
+  if(refusal!==null)return null
+  if(line===stages[stage+1]){stage++;continue}
+  if((line==="TARGET_PATHS_REFUSED"&&stage===0)||(line==="REGULAR_POLICY_REFUSED"&&stage===1)||((line==="WK_NAVIGATION_REFUSED"||line==="RECEIPT_WRITE_REFUSED")&&stage>=2)){refusal=line;continue}
+  return null
+ }
+ return stage>=0?{stage:stages[stage],refusal}:null
+}
+function ax571StartupRead(dir:string,owned:fs.BigIntStats):ReturnType<typeof ax571StartupTokens> {
+ let fd:number|undefined,identity:fs.BigIntStats|undefined,result:ReturnType<typeof ax571StartupTokens>=null
+ try {
+  const current=()=>{const s=fs.lstatSync(dir,{bigint:true});return s.isDirectory()&&!s.isSymbolicLink()&&s.dev===owned.dev&&s.ino===owned.ino&&s.uid===BigInt(process.getuid!())&&(s.mode&0o7777n)===0o700n}
+  if(!current()||fs.realpathSync(dir)!==dir||!path.basename(dir).startsWith('ax-native571-'))return null
+  // Node/libuv fs.open adds O_CLOEXEC itself; it is not a public fs.constants key.
+  const flags=fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK
+  fd=fs.openSync(path.join(dir,'target-startup.log'),flags)
+  const before=fs.fstatSync(fd,{bigint:true});identity=before
+  if(!before.isFile()||before.uid!==BigInt(process.getuid!())||(before.mode&0o7777n)!==0o600n||before.nlink!==1n||before.size<0n||before.size>512n)return null
+  const b=Buffer.alloc(513);let length=0
+  while(length<b.length){const count=fs.readSync(fd,b,length,b.length-length,null);if(count===0)break;length+=count}
+  const after=fs.fstatSync(fd,{bigint:true})
+  const linked=fs.lstatSync(path.join(dir,'target-startup.log'),{bigint:true})
+  if(!current()||!linked.isFile()||linked.isSymbolicLink()||linked.dev!==before.dev||linked.ino!==before.ino||!after.isFile()||after.dev!==before.dev||after.ino!==before.ino||after.uid!==before.uid||after.mode!==before.mode||after.nlink!==1n||after.size!==before.size||after.mtimeNs!==before.mtimeNs||after.ctimeNs!==before.ctimeNs||BigInt(length)!==before.size)return null
+  if(b.subarray(0,length).some(x=>x>127))return null
+  result=ax571StartupTokens(b.subarray(0,length).toString('ascii'))
+ }catch{return null}
+ finally{if(fd!==undefined){try{const now=fs.fstatSync(fd,{bigint:true});if(identity&&now.dev===identity.dev&&now.ino===identity.ino)fs.closeSync(fd);else result=null}catch{result=null}}}
+ return result
+}
 function requireAx571Oracles(before:Ax571Snapshot,after:Ax571Snapshot,verdict:Record<string,unknown>,target:number,sibling:number):void {
  assert.ok(Number.isSafeInteger(target)&&target>0&&Number.isSafeInteger(sibling)&&sibling>0&&target!==sibling,'AX571_OWNED_WINDOWS_INVALID')
  for(const shot of [before,after]){
@@ -121,6 +156,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
   t.diagnostic('AX571_ROW '+JSON.stringify({schema:1,framework,action:'press',status:result.ok===true?'Delivered':'Refused',code:result.ok===true?'OK':code,targetChanged:result.ok===true,focusKept:true,zorderKept:true,cursorKept:true,noLeakedInput:true,noLeakedInputKind:'derived'}))
  }catch(error){failed=true;primary=error}
  finally{
+  try{t.diagnostic('AX571_TARGET_STARTUP '+JSON.stringify({schema:1,framework,observation:ax571StartupRead(dir,owned)}))}catch{/* Passive journal cannot replace primary or cleanup. */}
   let setup:null|ReturnType<typeof ax571Setup>=null;try{const b=fs.readFileSync(ready+'.setup','utf8');if(Buffer.byteLength(b,'utf8')<=2048)setup=ax571Setup(JSON.parse(b))}catch{}
   try{t.diagnostic('AX571_SETUP '+JSON.stringify({schema:1,framework,observed:setup!==null,...(setup??{})}))}catch{/* Diagnostics cannot replace primary or cleanup. */}
   try{t.diagnostic('AX571_LIFETIME '+JSON.stringify({schema:1,framework,closed:ended,prelaunch:launcherExit===78?'ADMISSION_REFUSED':launcherExit===79?'POLICY_REFUSED':'UNPROVEN',signalObserved:launcherSignal!==null,waitStage,launchBoundary,launchLifecycle}))}catch{/* Finite observation cannot replace primary or cleanup. */}
