@@ -52,7 +52,7 @@ function windowsPanelBody(override?:string){
  body=body.replace(/\border!=0\b/g,'order.value!=0')
  // HWND uses a box only in the legacy body; other native handles are already opaque values.
  body=body.replace(/!IsWindowVisible\(dialog\)/g,'!IsWindowVisible(unbox(dialog))').replace(/d476OwnedDialog705\(dialog,h.window\)/g,'d476OwnedDialog705(unbox(dialog),h.window)').replace(/GetForegroundWindow\(\)==dialog/g,'GetForegroundWindow()==unbox(dialog)').replace(/GetDlgItem\(dialog,IDOK\)/g,'GetDlgItem(unbox(dialog),IDOK)').replace(/IsWindow\(dialog\)/g,'IsWindow(unbox(dialog))')
- body=body.replace(/\(void\)/g,'').replace(/L"/g,'"').replace(/\bnullptr\b/g,'null').replace(/(?<!&)&h\b/g,'h').replace(/\b(\d+)u\b/g,'$1').replace(/owned\.GetWindow/g,'owned.Get().GetWindow').replaceAll('pickerNonce.clear()','pickerNonce=\"\"').replace(/folder\.Compare/g,'folder.Get().Compare').replace('!folder||!expectedDirectory','!folder.Get()||!expectedDirectory.Get()')
+ body=body.replace(/\(void\)/g,'').replace(/\bL"/g,'"').replace(/\bnullptr\b/g,'null').replace(/(?<!&)&h\b/g,'h').replace(/\b(\d+)u\b/g,'$1').replace(/owned\.GetWindow/g,'owned.Get().GetWindow').replaceAll('pickerNonce.clear()','pickerNonce=\"\"').replace(/folder\.Compare/g,'folder.Get().Compare').replace('!folder||!expectedDirectory','!folder.Get()||!expectedDirectory.Get()')
  assert.doesNotMatch(body,/ComPtr|\bHWND\b|\bint\b|->|GetWindow\(&|,&order/)
  return vm.runInNewContext('(function(state){with(state){'+body+'}})',{},{timeout:1000}) as (s:any)=>void
 }
@@ -60,12 +60,12 @@ function windowsFixture(options:any={}){
  const calls:string[]=[],window={},actualWindow={};let arrived=!!options.arrived,valid=true
  const box=(value:any=null)=>({value,Get(){return this.value},GetAddressOf(){return this},Reset(){this.value=null}}),unbox=(x:any)=>x&&Object.hasOwn(x,'value')?x.value:x
  const item=(kind:any)=>({Compare(other:any,hint:any,out:any){calls.push('COMPARE');if(options.compareReentrant)valid=false;out.value=options.orderMismatch?1:kind===other.kind?0:1;return options.compareFail?-1:options.compareFalse?1:kind===other.kind?0:1},kind})
- const dialog:any={As(out:any){out.value={GetWindow(out:any){out.value=actualWindow;return 0}};return 0},SetFolder(value:any){calls.push('SET_FOLDER');options.onSet?.(state);if(options.reentrant)valid=false;if(options.dialogReplacement)p.dialog=box({foreign:true});return options.setFail?-1:0},GetFolder(out:any){calls.push('GET_FOLDER');if(options.folderReentrant)valid=false;out.value=options.folderNull?null:item(arrived?'expected':'foreign');return options.folderFail?-1:options.folderFalse?1:0},Close(){calls.push('CANCEL');return 0}}
+ const dialog:any={As(out:any){out.value={GetWindow(out:any){out.value=actualWindow;return 0}};return 0},SetFolder(value:any){calls.push('SET_FOLDER');options.onSet?.(state);if(options.reentrant)valid=false;if(options.dialogReplacement)p.dialog=box({foreign:true});return options.setFail?-1:0},GetFolder(out:any){calls.push('GET_FOLDER');if(options.folderReentrant)valid=false;out.value=options.folderNull?null:item(arrived?'expected':'foreign');return options.folderFail?-1:options.folderFalse?1:0},Close(){calls.push('CANCEL');return options.closeFail?-1:0}}
  const p:any={dialog:box(dialog),nonce:'owned-nonce',settled:false};const h:any={workspace_selection:p,window,generation:'owned-generation',picker_current:(candidate:any)=>candidate===h.workspace_selection&&valid&&!options.staleCurrent}
  const state:any={h,owner:options.staleOwner?{}:h,documentGeneration:options.staleGeneration?'old':'owned-generation',pickerNonce:options.staleNonce?'old':'owned-nonce',cancelPicker:!!options.cancel,panels:0,navigationStarted:false,expectedDirectory:box(),selection:{c_str:()=>'/owned/target'},box,unbox,
  FAILED:(n:number)=>n<0,S_OK:0,SICHINT_CANONICAL:0x10000000,IID_PPV_ARGS:(x:any)=>x,SHCreateItemFromParsingName(_s:any,_n:any,out:any){calls.push('CREATE_ITEM');out.value=item('expected');options.onCreate?.(state);return 0},
  KillTimer(){calls.push('KILL_TIMER')},d476OwnedDialog705:(_d:any,_w:any)=>!options.foreignWindow,IsWindowVisible:()=>true,GetForegroundWindow:()=>actualWindow,GetDlgItem:()=>options.noButton?null:{owned:true},IDOK:1,IsWindowEnabled:()=>!options.disabledButton,IsWindow:()=>true,
- fail:(_h:any,code:number)=>calls.push('FAIL_'+code),note:()=>{},emit:()=>calls.push('ATTEMPT'),SendMessageW:()=>calls.push('CLICK'),BM_CLICK:245,HRESULT_FROM_WIN32:(x:any)=>x,ERROR_CANCELLED:1223}
+ fail:(_h:any,code:number)=>calls.push('FAIL_'+code),note:()=>{},cancelNote:(_h:any,id:string)=>calls.push(id),emit:()=>calls.push('ATTEMPT'),SendMessageW:()=>calls.push('CLICK'),BM_CLICK:245,HRESULT_FROM_WIN32:(x:any)=>x,ERROR_CANCELLED:1223}
  // Pointer methods on the inert ComPtr retain the actual same dialog identity.
  state.owned=undefined;Object.assign(p.dialog,{As:dialog.As.bind(dialog),SetFolder:dialog.SetFolder.bind(dialog),GetFolder:dialog.GetFolder.bind(dialog),Close:dialog.Close.bind(dialog)})
  return{state,calls,arrive(){arrived=true}}
@@ -102,4 +102,9 @@ for(const phase of ['onCreate','onSet'])test('705 root nested panel cannot consu
 
 test('705 root retired navigation cannot stop a new request observation timer',()=>{
  const f=windowsFixture({arrived:true,onCreate(s:any){s.h.workspace_selection={...s.h.workspace_selection,nonce:'next-owned-nonce',dialog:s.box({next:true})}}});windowsPanelBody()(f.state);assert.equal(f.calls.includes('SET_FOLDER'),false);assert.equal(f.calls.includes('KILL_TIMER'),false);assert.equal(f.calls.includes('CLICK'),false)
+})
+
+
+test('705 readiness fixture preserves original single-Close and failure oracle with diagnostic result sink',()=>{
+ const f=windowsFixture({cancel:true,closeFail:true}),run=windowsPanelBody();run(f.state);assert.equal(f.calls.filter(v=>v==='CANCEL').length,1);assert.equal(f.calls.filter(v=>v==='FAIL_0').length,1);assert.equal(f.calls.filter(v=>v==='D476_WS_CANCEL_CLOSE_FAIL').length,1);assert.equal(f.calls.includes('D476_WS_CANCEL_CLOSE_OK'),false);assert.equal(f.calls.includes('CLICK'),false);assert.equal(f.calls.includes('SET_FOLDER'),false)
 })

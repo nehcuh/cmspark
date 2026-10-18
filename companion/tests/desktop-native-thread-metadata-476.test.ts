@@ -277,6 +277,16 @@ test('#705 passive fixture source retains selection-click order and finite nativ
  }
 })
 
+
+/** Test-only closed first-site observations. No native data or authority in this DTO. */
+function parseLocalFirstSite705(value:unknown):{origin:'R'|'W'|'M';site:number}|null {
+ if(typeof value!=='string'||value.length>32)return null
+ const m=/^D476_LOCAL_FIRST_([RWM])_([1-9]|1[0-7])$/.exec(value)
+ if(!m||m[0]!==value)return null
+ const site=Number(m[2]);if((m[1]==='W'&&site>13)||(m[1]==='M'&&site>8))return null
+ return{origin:m[1] as 'R'|'W'|'M',site}
+}
+
 // Shares the existing foreground worker and surface lease, never a new competing file.
 test('#476 native local-work keys→real PTY/ACP→explicit handback→same history',{skip:!['darwin','win32'].includes(process.platform),timeout:45000},async t=>withSurface650(t,async(t,surfaceLease)=>{
  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-local-work-476-'))),previous=process.env.CMSPARK_DATA_DIR,skipLogin=process.env.CMSPARK_SKIP_LOGIN_ENV;process.env.CMSPARK_DATA_DIR=dir;process.env.CMSPARK_SKIP_LOGIN_ENV='1'
@@ -288,10 +298,11 @@ test('#476 native local-work keys→real PTY/ACP→explicit handback→same hist
  const childClosures:Promise<void>[]=[],realStart=protocol.tryStartProtocolSession;t.mock.method(protocol,'tryStartProtocolSession',async (opts:Parameters<typeof protocol.tryStartProtocolSession>[0])=>{const handle=await realStart(opts);if(handle){protocolStarts++;childClosures.push(new Promise<void>(r=>{if(handle.child.exitCode!==null||handle.child.signalCode!==null)r();else handle.child.once('close',()=>r())}))}return handle})
  const runtime=createNativeLocalWorkRuntime({threads,activity:()=> 'idle'}),realInput=runtime.input,realResize=runtime.resize,realClose=runtime.close;runtime.input=(id,b64)=>{if(Buffer.from(b64,'base64').toString('utf8').includes('中'))inputUnicode=true;return realInput(id,b64)};runtime.resize=(id,c,r)=>{resizeCalls++;return realResize(id,c,r)};runtime.close=id=>{terminalStops++;return realClose(id)}
  const registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-local-work-476'),confirmations=new SecurityConfirmationManager(),required=['D476_LOCAL_OUTPUT','D476_LOCAL_RESIZED','D476_LOCAL_STOPPED','D476_LOCAL_SAVED','D476_LOCAL_REOPENED','D476_LOCAL_AGENT_SAVED','D476_LOCAL_AGENT_STOPPED','D476_LOCAL_DONE'],receipts=new Set<string>()
+ const localFirstSite:{R:number|null;W:number|null;M:number|null}={R:null,W:null,M:null}
  let native:DesktopNativeChild|undefined,current:any,authenticated=false,windowRequested=false,settled=false,failed=false,connections=0,completion:Promise<void>|undefined,primary:unknown,exitResolve!:(v:number)=>void,failResolve!:()=>void
  const exited=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r),channel=createDesktopChannel({registry,securityConfirmations:confirmations,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},maxPayload:10485760,localRuntime:runtime,onAuthenticated:host=>{authenticated=true;windowRequested=channel.window(host,'workspace')}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer();attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
  const deadline=new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_LOCAL_NATIVE_DEADLINE')),{once:true}));const fail=()=>{failed=true;failResolve()}
- channel.wss.on('connection',ws=>{current=ws;connections++;ws.on('message',raw=>{let frame:any;try{frame=JSON.parse(String(raw))}catch{return}if(!authenticated||frame.type!=='system.ping')return;if(frame.id==='D476_LOCAL_FAIL'){fail();return}if(!required.includes(frame.id))return;if(receipts.has(frame.id)){fail();return}receipts.add(frame.id);if(frame.id==='D476_LOCAL_DONE'){
+ channel.wss.on('connection',ws=>{current=ws;connections++;ws.on('message',raw=>{let frame:any;try{frame=JSON.parse(String(raw))}catch{return}if(!authenticated||frame.type!=='system.ping')return;const first=parseLocalFirstSite705(frame.id);if(first){if(Object.keys(frame).sort().join()==='id,type'&&(first.origin==='R'||first.origin==='W'&&process.platform==='win32'||first.origin==='M'&&process.platform==='darwin')&&localFirstSite[first.origin]===null)localFirstSite[first.origin]=first.site;return}if(frame.id==='D476_LOCAL_FAIL'){fail();return}if(!required.includes(frame.id))return;if(receipts.has(frame.id)){fail();return}receipts.add(frame.id);if(frame.id==='D476_LOCAL_DONE'){
    completion=(async()=>{await Promise.race([Promise.all(childClosures),deadline]);assert.equal(receipts.size,required.length);assert.equal(protocolStarts,2);assert.equal(saved,1);assert.equal(fs.readFileSync(permissionFile,'utf8'),'DENIED');assert.equal(inputUnicode,true);assert.ok(resizeCalls>=2);assert.ok(terminalStops>=1);const disk=new ThreadManager().readDesktopDialog('native-local-A');assert.equal(disk.messages.length,2);assert.ok(disk.messages.some(m=>m.content.includes('D476_LOCAL_中')));assert.ok(disk.messages.some(m=>m.content.includes('D476_AGENT_PERMISSION_DENIED')));assert.equal(new ThreadManager().readDesktopDialog('native-local-B').messages.length,0);assert.equal(manager.hasProjectThreadActivity('native-local-A'),false);ws.send(JSON.stringify({type:'D476.local.complete',result:'COMPLETE'}))})();completion.catch(fail)
   }})})
  server.listen(0,'127.0.0.1');await once(server,'listening')
@@ -300,7 +311,7 @@ test('#476 native local-work keys→real PTY/ACP→explicit handback→same hist
   assert.equal(await Promise.race([exited,failure.then(()=>{throw Error('OWNED_LOCAL_NATIVE_PHASE_FAILED')}),deadline]),77);if(completion)await completion;assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,1);assert.deepEqual([...receipts].sort(),[...required].sort());assert.equal(confirmations.pendingCount(),0)
   process.stdout.write('DESKTOP_LOCAL_WORK_476 {"native":true,"ownedPty":true,"unicodeInput":true,"unicodeOutput":true,"resized":true,"stopped":true,"selectedReturn":true,"reopened":true,"ownedAcpProcesses":2,"permissionDenied":true,"savedAgentMessages":1,"siblingUnchanged":true}\n')
  }catch(error){primary=error;throw error}finally{
-  surfaceLease.retain();try{t.diagnostic('D476_LOCAL_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),protocolStarts,saved,inputUnicode,resizeCalls,terminalStops,authenticated,windowRequested,connections,childExited:settled}))}catch{}
+  surfaceLease.retain();try{t.diagnostic('D476_LOCAL_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),protocolStarts,saved,inputUnicode,resizeCalls,terminalStops,authenticated,windowRequested,connections,childExited:settled,localFirstSite}))}catch{}
   let cleanupError:unknown;const clean=async(fn:()=>unknown)=>{try{await fn()}catch(error){cleanupError??=error}}
   await clean(async()=>{native?.terminate();if(native&&!settled)await exited});await clean(()=>{for(const ws of channel.wss.clients)ws.terminate();confirmations.rejectAll('disconnect')});await clean(()=>manager.shutdown());manager.setHandbackSink(null)
   await clean(()=>Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]));await clean(()=>new Promise<void>(r=>server.close(()=>r())))

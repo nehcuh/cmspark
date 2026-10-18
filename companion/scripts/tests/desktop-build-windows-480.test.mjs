@@ -328,3 +328,47 @@ test('frame document work uses the event sender and retains fixed callback failu
  assert.ok(created.includes('if(FAILED(loading))emit(h,L"FAIL_ENGINE_API")'))
  assert.doesNotMatch(loaded,/Sleep[(]|SetForegroundWindow|SendInput|LoadLibrary|http:/)
 })
+
+// #705 case36 sentinel identity: current-process numeric occupancy is not inheritance.
+function sentinelSource705(){return fs.readFileSync(new URL('../../tests/fixtures/desktop-480/windows-inheritance.c',import.meta.url),'utf8')}
+function sentinelPredicate705(source=sentinelSource705()){
+ const extract=(signature)=>{const start=source.indexOf(signature);assert.ok(start>=0,signature);const open=source.indexOf('{',start);let depth=0;for(let i=open;i<source.length;i++){if(source[i]==='{')depth++;else if(source[i]==='}'&&--depth===0)return source.slice(open+1,i)}assert.fail('whole actual C function')}
+ if(!source.includes('static int fixture_sentinel_same(')){
+  const body=extract('static unsigned fixture_mask(').replace(/\bunsigned /g,'let ').replace(/\bDWORD /g,'let ').replace('&flags','flags').replace('1u<<i','1<<i')
+  const old=new Function('known','GetHandleInformation',body);return api=>!!(old([40,44,48],api.GetHandleInformation)&4)
+ }
+ let body=extract('static int fixture_sentinel_same(')
+ const declarations='typedef BOOL (WINAPI *FixtureCompare)(HANDLE,HANDLE);';assert.ok(body.includes(declarations));body=body.replace(declarations,'')
+ const size='_Static_assert(sizeof(compare)==sizeof(raw),"fixed Win32 function pointer size");';assert.ok(body.includes(size));body=body.replace(size,'').replace('memcpy(&compare,&raw,sizeof(compare));','compare=raw;')
+ const replacements=[[/HANDLE candidate=NULL,reference=NULL;/,'let candidate={value:null},reference=null;'],[/int result=-1;/,'let result=-1;'],[/HMODULE module=/,'const module='],[/FARPROC raw=/,'const raw='],[/FixtureCompare compare=NULL;/,'let compare=null;'],[/DWORD flags=0;/,'let flags={value:0};'],[/BOOL captured=/,'const captured='],[/DWORD captureError=/,'const captureError='],[/BOOL equal=/,'const equal='],[/DWORD error=/,'const error='],[/&candidate/g,'candidate'],[/&flags/g,'flags'],[/flags&HANDLE_FLAG_INHERIT/g,'flags.value&HANDLE_FLAG_INHERIT'],[/\bcandidate=NULL/g,'candidate.value=null'],[/!candidate\b/g,'!candidate.value'],[/candidate==INVALID_HANDLE_VALUE/g,'candidate.value==INVALID_HANDLE_VALUE'],[/GetHandleInformation\(candidate,/g,'GetHandleInformation(candidate.value,'],[/compare\(candidate,candidate\)/g,'compare(candidate.value,candidate.value)'],[/compare\(candidate,reference\)/g,'compare(candidate.value,reference)'],[/if\(candidate&&/g,'if(candidate.value&&'],[/CloseHandle\(candidate\)/g,'CloseHandle(candidate.value)'],[/\bNULL\b/g,'null'],[/\bL"/g,'"']]
+ for(const [from,to]of replacements)body=body.replace(from,to)
+ return api=>new Function(...Object.keys(api),'subject',body)(...Object.values(api),48)
+}
+function sentinelScenario705(kind,inject={}){
+ const sentinel={},other={},table=new Map();if(kind!=='empty')table.set(48,{object:kind==='same'?sentinel:other,type:kind==='pipe'?'Pipe':'Event'})
+ let error=0,next=100,opened=0,duplicates=0,closed=0;const trace=[],temporary=new Set(),unwrap=h=>h&&typeof h==='object'&&'value'in h?h.value:h
+ const compare=(a,b)=>{a=unwrap(a);b=unwrap(b);trace.push('compare');if(inject.compareFailure&&a!==b){error=5;return false}if(inject.selfFailure&&a===b)return false;const same=table.get(a)?.object===table.get(b)?.object;error=same||inject.differentZero?0:1656;return same}
+ const api={FALSE:0,TRUE:1,NULL:null,INVALID_HANDLE_VALUE:-1,ERROR_SUCCESS:0,ERROR_INVALID_HANDLE:6,ERROR_NOT_SAME_OBJECT:1656,HANDLE_FLAG_INHERIT:1,SYNCHRONIZE:0x100000,fixture_event_name:'Local\\cmspark-d480-sentinel-0123456789abcdef0123456789abcdef',
+  GetModuleHandleW:name=>{assert.equal(name,'kernelbase.dll');return inject.missingAPI?null:'fixed-kernelbase'},GetProcAddress:(m,name)=>{assert.equal(name,'CompareObjectHandles');return compare},GetCurrentProcess:()=> 'self',GetLastError:()=>error,SetLastError:v=>error=v,
+  DuplicateHandle(from,subject,to,out,access,inherit,options){trace.push('duplicate');assert.equal(from,'self');assert.equal(to,'self');assert.equal(subject,48);assert.equal(access,0);assert.equal(inherit,0);assert.equal(options,0);duplicates++;if(inject.duplicateFailure){error=5;return false}if(!table.has(subject)){error=6;return false}const id=next++;out.value=id;table.set(id,table.get(subject));temporary.add(id);return true},
+  OpenEventW(access,inherit,name){trace.push('open');assert.equal(access,0x100000);assert.equal(inherit,0);assert.equal(name,api.fixture_event_name);opened++;if(inject.missingReference)return null;const id=inject.reuseKnownSlot?48:next++;table.set(id,{object:sentinel,type:'Event'});temporary.add(id);return id},
+  GetHandleInformation(h,out){h=unwrap(h);const value=table.get(h);if(out&&typeof out==='object')out.value=inject.inheritedTemporary?1:0;return !!value&&!inject.invalidReference},
+  CloseHandle(h){h=unwrap(h);trace.push('close');assert.ok(temporary.delete(h),'close only an owned temporary reference');table.delete(h);closed++;return !inject.closeFailure},
+ }
+ const raw=sentinelPredicate705()(api);assert.equal(temporary.size,0);return{raw,opened,duplicates,closed,trace}
+}
+for(const kind of ['Event','pipe'])test(`705 exact sentinel refuses true inheritance but accepts reused unrelated ${kind} slot`,()=>{
+ const reused=sentinelScenario705(kind);assert.equal(Number(reused.raw),0);assert.equal(Number(sentinelScenario705('same').raw),1)
+})
+test('705 candidate capture precedes reference lookup even when lookup reuses the known numeric slot',()=>{
+ const r=sentinelScenario705('empty',{reuseKnownSlot:true});assert.equal(Number(r.raw),0);assert.equal(r.duplicates,1);assert.equal(r.opened,1);assert.ok(r.trace.indexOf('duplicate')<r.trace.indexOf('open'));assert.equal(r.closed,1)
+})
+test('705 sentinel identity failures are unknown and close only exact temporary handles',()=>{
+ for(const fault of ['missingAPI','missingReference','duplicateFailure','invalidReference','compareFailure','selfFailure','inheritedTemporary','closeFailure'])assert.equal(sentinelScenario705('Event',{[fault]:true}).raw,-1,fault)
+ assert.equal(sentinelScenario705('Event',{differentZero:true}).raw,0)
+})
+test('705 fixture keeps legacy V1 checker but requires explicit unknown refusal for V2 identity',()=>{
+ const s=sentinelSource705();assert.match(s,/D480_OWNED_HANDLES_V2/);assert.match(s,/D480_OWNED_HANDLES_V1/);assert.ok(s.includes('if(!fixture_event_name[0])return fixture_mask(known);'));assert.ok(s.includes('if(observed>7u)goto done;'));assert.ok(s.includes('(observed&4u)||!d480_client_finish(&bootstrap,parent)'))
+ assert.ok(s.includes('OpenEventW(SYNCHRONIZE,FALSE,fixture_event_name)'));assert.ok(s.includes('ERROR_ALREADY_EXISTS'));assert.ok(s.includes('BCryptGenRandom'));assert.doesNotMatch(s,/OpenProcess\(.*PROCESS_ALL_ACCESS|NtQuerySystemInformation|GetProcessId\(candidate/)
+ const build=fs.readFileSync(new URL('../build-desktop-windows.mjs',import.meta.url),'utf8');assert.match(build,/DESKTOP_FIXTURE_ADDON/);assert.match(build,/"bcrypt.lib"/);assert.doesNotMatch(build,/Kernelbase.lib|OneCore.lib/)
+})
