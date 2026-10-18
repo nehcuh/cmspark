@@ -224,3 +224,10 @@ The hosted harness emits optional `xvfbStartup` using the existing capped child 
 达到保留上限后仍排空 stderr，随后内容不再参与分类。清理后的退出不能回写启动快照。
 这批诊断不改变参数、环境、沙箱、5秒 Xvfb/10秒端口/25毫秒轮询/120秒整体预算，
 也不替代真实网页验收或任何 CI 门禁。源码0.6.14仍是未发布开发版本。
+
+
+### #464 owned 导航完成屏障
+
+托管验收的 fixture worker 仅创建一个 `about:blank` tab。在同一 owned tab 上，先安装 `chrome.tabs.onUpdated` / `onRemoved` 监听再调用一次 `tabs.update` 到固定双 SHA 比较页；只有 exact tab、exact URL、`status=complete` 事件与更新 API 成功两项均成立，才进入原 DOM-ready 检查。API 返回或事件单独成立均不能放行；拒绝、移除、同步异常、超时及迟到结果会清理该次监听与 timer，不重试。
+
+加载、CDP 连接与原 diff 异步片段 MutationObserver 检查共享一个 60 秒绝对导航预算，并受原 120 秒总预算约束；不将两个阶段各算 60 秒。原鉴权 5 秒、工具 15 秒、页面选择器、完整文件/hunk/line 验收和全部 OS 门禁保留。既有 CPU 入口 `companion/scripts/tests/github-comparison-hosted-harness.test.mjs` 运行真实 worker / CDP / NAVIGATION 源码在惰性事件与虚拟时钟下的控制，包含允许的跨文档 context-destroyed 顺序；它们不启动 Chrome，也不证明已知 hosted 失败的唯一原因。真实托管 Chromium 仍为交付硬门，#464 整票仍为 Partial。

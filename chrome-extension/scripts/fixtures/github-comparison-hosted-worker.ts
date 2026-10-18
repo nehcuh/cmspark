@@ -9,14 +9,57 @@ let ownedTab: number | undefined
 let client: WSClient | undefined
 let configured = false
 let connected = false
+let navigationStarted = false
 chrome.runtime.onInstalled.addListener(() => {})
 ;(globalThis as any).cmspark464 = {
   async createTab() {
     if (ownedTab !== undefined) throw new Error("OWNED_TAB_ALREADY_CREATED")
-    const tab = await chrome.tabs.create({ url: URL, active: true })
+    const tab = await chrome.tabs.create({ url: "about:blank", active: true })
     if (!Number.isSafeInteger(tab.id)) throw new Error("OWNED_TAB_UNAVAILABLE")
     ownedTab = tab.id
     return ownedTab
+  },
+  async navigateToPage(timeoutMs: number) {
+    if (ownedTab === undefined || navigationStarted || !Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000) throw new Error("INVALID_OWNED_NAVIGATION")
+    navigationStarted = true
+    const tabId = ownedTab, deadline = Date.now() + timeoutMs
+    return await new Promise<boolean>((resolve, reject) => {
+      let settled = false, updateSucceeded = false, completeObserved = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const finish = (okay: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        chrome.tabs.onUpdated.removeListener(onUpdated)
+        chrome.tabs.onRemoved.removeListener(onRemoved)
+        if (okay) resolve(true)
+        else reject(new Error("OWNED_NAVIGATION_REFUSED"))
+      }
+      const check = () => {
+        if (Date.now() >= deadline) finish(false)
+        else if (updateSucceeded && completeObserved) finish(true)
+      }
+      const onUpdated = (id: number, info: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+        if (id !== tabId || settled) return
+        if (Date.now() >= deadline) { finish(false); return }
+        if (tab.id !== tabId || tab.url !== URL || tab.status !== "complete") completeObserved = false
+        else if (info.status === "complete") completeObserved = true
+        check()
+      }
+      const onRemoved = (id: number) => { if (id === tabId) finish(false) }
+      try {
+        chrome.tabs.onUpdated.addListener(onUpdated)
+        chrome.tabs.onRemoved.addListener(onRemoved)
+        timer = setTimeout(() => finish(false), timeoutMs)
+        if (Date.now() >= deadline) { finish(false); return }
+        Promise.resolve(chrome.tabs.update(tabId, { url: URL })).then(tab => {
+          if (settled) return
+          if (tab?.id !== tabId) { finish(false); return }
+          updateSucceeded = true
+          check()
+        }, () => finish(false))
+      } catch { finish(false) }
+    })
   },
   async pageTarget() {
     if (ownedTab === undefined) throw new Error("OWNED_TAB_UNAVAILABLE")

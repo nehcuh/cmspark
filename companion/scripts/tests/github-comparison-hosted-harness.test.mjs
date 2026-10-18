@@ -5,7 +5,7 @@ import path from 'node:path'
 import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
-import { EventEmitter } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { BASE, HEAD, PAGE, BOUNDS, preflight, childEnvironment, chromeArgs, compareProduced, receipt } from '../../../chrome-extension/scripts/accept-github-comparison-hosted.mjs'
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..')
 const harness=fs.readFileSync(path.join(repo,'chrome-extension/scripts/accept-github-comparison-hosted.mjs'),'utf8')
@@ -71,7 +71,7 @@ function actualWorker(){
   const source=worker.replace(/^import .+$/gm,'')
   const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None},reportDiagnostics:true})
   assert.equal(js.diagnostics.length,0)
-  const ctx={BrowserBridge,PageSanitizer:class{},WSClient,chrome:{runtime:{onInstalled:{addListener(){}}},debugger:{async getTargets(){return[{id:'ACTUAL-OWNED',type:'page',tabId:41},{id:'FOREIGN',type:'page',tabId:42}]}},tabs:{async create(options){effects.created++;assert.equal(options.url,PAGE);return{id:41}}}}}
+  const ctx={BrowserBridge,PageSanitizer:class{},WSClient,chrome:{runtime:{onInstalled:{addListener(){}}},debugger:{async getTargets(){return[{id:'ACTUAL-OWNED',type:'page',tabId:41},{id:'FOREIGN',type:'page',tabId:42}]}},tabs:{async create(options){effects.created++;assert.equal(options.url,'about:blank');return{id:41}}}}}
   vm.createContext(ctx);vm.runInContext(js.outputText,ctx)
   return {api:ctx.cmspark464,effects}
 }
@@ -338,3 +338,124 @@ test('canonical native prefix has at most two IDs then one timestamp then one ti
  for(const prefix of positives){const state=observedLog464([prefix+'ERROR:dbus/bus.cc:1] PRIVATE\n']);assert.equal(state.stderrSiteMask,1);assert.equal(state.stderrSeverityMask,4)}
  for(const prefix of negatives){const state=observedLog464([prefix+'ERROR:dbus/bus.cc:1] PRIVATE\n']);assert.equal(state.stderrSiteMask,0);assert.equal(state.stderrSeverityMask,0)}
 })
+
+
+// Actual TypeScript worker body under inert Chrome events and a virtual clock.
+// These controls do not create tabs, sockets, browsers, or real timers.
+function navigationWorker464({update}={}) {
+ const listeners=()=>{const set=new Set();return{addListener:f=>set.add(f),removeListener:f=>set.delete(f),emit(...a){for(const f of [...set])f(...a)},get size(){return set.size}}}
+ const onUpdated=listeners(),onRemoved=listeners(),timers=new Map(),calls=[];let now=1000,next=0,resolveUpdate,rejectUpdate
+ const pending=new Promise((resolve,reject)=>{resolveUpdate=resolve;rejectUpdate=reject})
+ const chrome={runtime:{onInstalled:{addListener(){}}},tabs:{onUpdated,onRemoved,
+  async create(options){calls.push(['create',options]);return{id:41}},
+  update(id,options){calls.push(['update',id,options]);assert.equal(onUpdated.size,1);assert.equal(onRemoved.size,1);return update?update():pending}}}
+ const c={chrome,BrowserBridge:class{},PageSanitizer:class{},WSClient:class{},Date:{now:()=>now},
+  setTimeout(f,ms){const id=++next;timers.set(id,{f,ms});return id},clearTimeout:id=>timers.delete(id)}
+ const compiled=ts.transpileModule(worker.replace(/^import .+$/gm,''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None},reportDiagnostics:true});assert.equal(compiled.diagnostics.length,0)
+ vm.createContext(c);vm.runInContext(compiled.outputText,c)
+ return{api:c.cmspark464,calls,onUpdated,onRemoved,timers,resolveUpdate,rejectUpdate,
+  complete(patch={}){onUpdated.emit(41,{status:'complete'},{id:41,url:PAGE,status:'complete',...patch})},
+  now(value){now=value},timeout(){const tasks=[...timers.values()];for(const t of tasks)t.f()},
+  clean(){assert.equal(onUpdated.size,0);assert.equal(onRemoved.size,0);assert.equal(timers.size,0)}}
+}
+const flushNavigation464=async()=>{for(let i=0;i<8;i++)await Promise.resolve()}
+async function startNavigation464(options={}){
+ const run=navigationWorker464(options);assert.equal(await run.api.createTab(),41)
+ assert.equal(run.calls[0][1].url,'about:blank');assert.equal(run.calls[0][1].active,true)
+ let outcome='pending';const done=run.api.navigateToPage(100).then(v=>{outcome=v;return v},()=>{outcome=false;return false})
+ return{...run,done,outcome:()=>outcome}
+}
+test('owned navigation requires actual update success after an exact complete event; later rejection wins',async()=>{
+ const good=await startNavigation464();good.complete();await flushNavigation464();assert.equal(good.outcome(),'pending')
+ good.resolveUpdate({id:41,status:'loading'});assert.equal(await good.done,true);good.clean()
+ assert.equal(good.calls.filter(x=>x[0]==='update').length,1);assert.equal(good.calls[1][1],41);assert.equal(good.calls[1][2].url,PAGE)
+ const bad=await startNavigation464();bad.complete();bad.rejectUpdate(Error('INERT_PRIVATE'));assert.equal(await bad.done,false);bad.clean()
+})
+test('API returned complete cannot replace a real exact tab URL status complete event',async()=>{
+ const run=await startNavigation464();run.resolveUpdate({id:41,url:PAGE,status:'complete'});await flushNavigation464();assert.equal(run.outcome(),'pending')
+ for(const [id,info,tab]of [[42,{status:'complete'},{id:42,url:PAGE,status:'complete'}],[41,{}, {id:41,url:PAGE,status:'complete'}],[41,{status:'complete'},{id:41,url:'about:blank',status:'complete'}],[41,{status:'complete'},{id:42,url:PAGE,status:'complete'}],[41,{status:'complete'},{id:41,url:PAGE,status:'loading'}]]){
+  run.onUpdated.emit(id,info,tab);await flushNavigation464();assert.equal(run.outcome(),'pending')
+ }
+ run.complete();assert.equal(await run.done,true);run.clean()
+})
+test('navigation loading after complete invalidates that candidate until a new exact event',async()=>{
+ const run=await startNavigation464();run.complete();run.onUpdated.emit(41,{status:'loading'},{id:41,url:PAGE,status:'loading'})
+ run.resolveUpdate({id:41});await flushNavigation464();assert.equal(run.outcome(),'pending');run.complete();assert.equal(await run.done,true);run.clean()
+})
+test('owned removal, API rejection and synchronous throw refuse once and release listeners and timer',async()=>{
+ for(const mode of ['remove','reject','throw','wrong-api-id']){
+  const run=await startNavigation464(mode==='throw'?{update(){throw Error('INERT_PRIVATE')}}:{})
+  run.onRemoved.emit(42);if(mode!=='throw'){await flushNavigation464();assert.equal(run.outcome(),'pending')}
+  if(mode==='remove')run.onRemoved.emit(41)
+  if(mode==='reject')run.rejectUpdate(Error('INERT_PRIVATE'))
+  if(mode==='wrong-api-id')run.resolveUpdate({id:42})
+  assert.equal(await run.done,false);run.clean();run.complete();run.resolveUpdate({id:41});await flushNavigation464();assert.equal(run.outcome(),false)
+ }
+})
+test('virtual absolute navigation deadline refuses at boundary, after it and on timeout with no late completion',async()=>{
+ for(const now of [1100,1101]){
+  const run=await startNavigation464();run.complete();run.now(now);run.resolveUpdate({id:41});assert.equal(await run.done,false);run.clean()
+ }
+ const run=await startNavigation464();assert.equal([...run.timers.values()][0].ms,100);run.timeout();assert.equal(await run.done,false);run.clean()
+ run.resolveUpdate({id:41});run.complete();await flushNavigation464();assert.equal(run.outcome(),false)
+ const lateEvent=await startNavigation464();lateEvent.resolveUpdate({id:41});await flushNavigation464();lateEvent.now(1100);lateEvent.complete();assert.equal(await lateEvent.done,false);lateEvent.clean()
+})
+test('navigation has one owned invocation and refuses absent tab, duplicate and invalid budgets without another update',async()=>{
+ const absent=navigationWorker464();await assert.rejects(()=>absent.api.navigateToPage(100));absent.clean()
+ const run=navigationWorker464();await run.api.createTab()
+ for(const ms of [0,-1,60001,NaN,Infinity,1.5,'100',undefined])await assert.rejects(()=>run.api.navigateToPage(ms))
+ assert.equal(run.calls.filter(x=>x[0]==='update').length,0)
+ const first=run.api.navigateToPage(100).catch(()=>false);await assert.rejects(()=>run.api.navigateToPage(100));assert.equal(run.calls.filter(x=>x[0]==='update').length,1)
+ run.timeout();assert.equal(await first,false);await assert.rejects(()=>run.api.navigateToPage(100));run.clean()
+})
+async function actualNavigationBudget464({loadMs=40000,domMs=1,domReady=true}={}){
+ let now=1000,loadBudget,domBudget,connectBudget,expression,positive=false
+ const start=harness.indexOf("    stage='NAVIGATION'"),end=harness.indexOf("    stage='POSITIVE'",start);assert.ok(start>0&&end>start)
+ const c={stage:'AUTH',BOUNDS,PAGE,active:new Set(),Date:{now:()=>now},Math,assert,remaining:()=>120000-now,refusal(){throw Error('NAVIGATION_REFUSED')},
+  worker:{async evaluate(code,awaited,ms){assert.equal(awaited,true);loadBudget=ms;assert.match(code,/cmspark464\.navigateToPage/);now+=loadMs;return true}},
+  async openPage(ms){connectBudget=ms;return{close(){},async evaluate(code,awaited,budget){assert.equal(awaited,true);expression=code;domBudget=budget;now+=domMs;return domReady}}}}
+ vm.createContext(c);let refused=false
+ try{await vm.runInContext('async function actual(){'+harness.slice(start,end)+'\nreturn true};actual()',c);positive=true}catch{refused=true}
+ return{loadBudget,domBudget,connectBudget,expression,positive,refused,now}
+}
+test('actual NAVIGATION shares one absolute 60s across load, connect and original DOM ready',async()=>{
+ const out=await actualNavigationBudget464();assert.equal(out.positive,true);assert.equal(out.loadBudget,60000);assert.equal(out.domBudget,20000);assert.equal(out.connectBudget,20000)
+ assert.match(out.expression,/setTimeout\(\(\)=>\{o\.disconnect\(\);resolve\(false\)\},20000\)/)
+ const late=await actualNavigationBudget464({domMs:20000});assert.equal(late.refused,true);assert.equal(late.positive,false)
+ const expired=await actualNavigationBudget464({loadMs:60000});assert.equal(expired.refused,true);assert.equal(expired.domBudget,undefined)
+ const notReady=await actualNavigationBudget464({domReady:false});assert.equal(notReady.refused,true)
+})
+test('actual CDP evaluate and connection accept only supplied remaining time while defaults stay unchanged',async()=>{
+ const code=harness.slice(harness.indexOf('class CDP {'),harness.indexOf('async function stopped('));let budget,terminated=0
+ const c={Map,Error,Math,BOUNDS,limit(p,ms){budget=ms;return p},once:()=>Promise.reject(Error('INERT_CONNECT')),refusal(){throw Error('REFUSED')}}
+ vm.createContext(c);vm.runInContext(harness.slice(harness.indexOf('function deferred()'),harness.indexOf('function limit('))+code+'\nthis.CDP=CDP',c)
+ class Socket{terminate(){terminated++}}
+ await assert.rejects(()=>c.CDP.connect(Socket,'INERT',321));assert.equal(budget,321);assert.equal(terminated,1)
+ let message;const socket={on(){},send(text){message=JSON.parse(text)},close(){},terminate(){}}
+ const client=new c.CDP(socket),first=client.evaluate('true',true,123);assert.equal(budget,123);assert.equal(message.params.awaitPromise,true);client.abort();await assert.rejects(first)
+ const second=client.evaluate('true');assert.equal(budget,60000);client.abort();await assert.rejects(second)
+})
+
+// Actual worker/CDP/NAVIGATION/catch source; protocol/DOM schedule is inert, not a browser recording.
+function crossDocumentEvent464(){const set=new Set();return{addListener(f){set.add(f)},removeListener(f){set.delete(f)},emit(...args){for(const f of [...set])f(...args)},size:()=>set.size}}
+async function actualCrossDocument464(){
+ const state={createdBeforeLoad:false,loaded:false,createURL:null,updates:0,contextDestroyed:false,pageEvaluations:0,workerEvaluations:0},updated=crossDocumentEvent464(),removed=crossDocumentEvent464();
+ const chrome={runtime:{onInstalled:{addListener(){}}},debugger:{async getTargets(){return[{id:'OWNED-TARGET',tabId:41,type:'page'}]}},tabs:{onUpdated:updated,onRemoved:removed,
+  async create(options){state.createURL=options.url;state.createdBeforeLoad=true;return{id:41,status:options.url==='about:blank'?'complete':'loading',url:'about:blank',pendingUrl:options.url}},
+  async update(id,options){assert.equal(id,41);assert.equal(options.url,PAGE);state.updates++;await Promise.resolve();state.loaded=true;updated.emit(41,{status:'complete'},{id:41,url:PAGE,status:'complete'});return{id:41,url:PAGE,status:'complete'}}}};
+ class Bridge{constructor(){}async execute(){throw Error('UNEXPECTED_BRIDGE')}}class Client{}
+ const wc={BrowserBridge:Bridge,PageSanitizer:class{},WSClient:Client,chrome,console:{log(){}},setTimeout,clearTimeout,Date,Promise,Error,Number};vm.createContext(wc);const compiled=ts.transpileModule(worker.replace(/^import .+$/gm,''),{fileName:'github-comparison-hosted-worker.ts',compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None},reportDiagnostics:true});assert.equal(compiled.diagnostics.length,0);vm.runInContext(compiled.outputText,wc);const api=wc.cmspark464;
+ assert.equal(await api.createTab(),41);assert.equal(await api.pageTarget(),'OWNED-TARGET');assert.equal(state.loaded,false);
+ const helperStart=harness.indexOf('function deferred()'),helperEnd=harness.indexOf('async function waitForFile(',helperStart),cdpStart=harness.indexOf('class CDP {'),cdpEnd=harness.indexOf('function cleanupRemaining(',cdpStart);
+ const cc={Map,Error,Promise,setTimeout,clearTimeout,once,BOUNDS:{navigation:60000},refusal(){throw Error('INERT_REFUSAL')}};vm.createContext(cc);vm.runInContext(harness.slice(helperStart,helperEnd)+harness.slice(cdpStart,cdpEnd)+'\nthis.CDP=CDP',cc);
+ function client(kind){const sock=new EventEmitter();sock.close=()=>{};sock.terminate=()=>{};sock.send=wire=>{const req=JSON.parse(wire);assert.equal(req.method,'Runtime.evaluate');assert.equal(req.params.awaitPromise,true);
+  if(kind==='worker'){state.workerEvaluations++;Promise.resolve(vm.runInContext(req.params.expression,wc)).then(value=>sock.emit('message',Buffer.from(JSON.stringify({id:req.id,result:{result:{value}}}))),()=>sock.emit('message',Buffer.from(JSON.stringify({id:req.id,error:{code:-32000,message:'INERT_WORKER_REFUSAL'}}))));return}
+  state.pageEvaluations++;const file={querySelector:()=>null,querySelectorAll:()=>Array(4).fill({})};const dom={location:{href:state.loaded?PAGE:'about:blank'},document:{readyState:state.loaded?'complete':'loading',getElementById:()=>file},MutationObserver:class{observe(){}disconnect(){}},setTimeout:()=>1,clearTimeout(){},Promise};vm.createContext(dom);const value=vm.runInContext(req.params.expression,dom);
+  if(!state.loaded){queueMicrotask(()=>{state.loaded=true;state.contextDestroyed=true;sock.emit('message',Buffer.from(JSON.stringify({id:req.id,error:{code:-32000,message:'Execution context was destroyed.'}})))});return}
+  Promise.resolve(value).then(v=>sock.emit('message',Buffer.from(JSON.stringify({id:req.id,result:{result:{value:v}}}))))};return new cc.CDP(sock)}
+ const page=client('page'),workerClient=client('worker'),c={stage:'AUTH',cases:2,runtime:{},chromiumStartup:undefined,xvfbStartup:undefined,PAGE,BOUNDS:{navigation:60000},Date,Math,assert,Error,remaining:()=>120000,profileRead:false,cleanupOkay:true,active:new Set(),worker:workerClient,openPage:async()=>page,console:{log(x){c.output=JSON.parse(x)}}};vm.createContext(c);
+ const receipts=harness.slice(harness.indexOf('const STAGES ='),harness.indexOf('\nfunction deferred()')).replace('export function','function');const start=harness.indexOf("    stage='NAVIGATION'"),end=harness.indexOf("    stage='POSITIVE'",start),ca=harness.indexOf('  } catch { /* Nothing from an untrusted page/transport exception'),cb=harness.indexOf('\n  finally {',ca),tail=harness.slice(harness.indexOf('  const out=receipt(stage'),harness.indexOf('\n}\nif(process.argv'));
+ vm.runInContext(receipts,c);const code=await vm.runInContext('async function actual(){try{'+harness.slice(start,end)+'\nthis.navCompleted=true;'+harness.slice(ca,cb)+'\n'+tail+'}\nactual.call(this)',c);
+ const result={kind:'ACTUAL_SOURCE_INERT_CROSS_DOCUMENT_SCHEDULE',createdCallbackBeforeLoad:state.createdBeforeLoad,initialCreateURLWasPage:state.createURL===PAGE,updateCalls:state.updates,contextDestroyed:state.contextDestroyed,pageEvaluations:state.pageEvaluations,workerEvaluations:state.workerEvaluations,navigationCompleted:c.navCompleted===true,actualTailCode:code,actualStage:c.output.stage,actualCases:c.output.cases,actualPassed:c.output.passed,pendingCDP:page.pending.size+workerClient.pending.size,nativeBrowser:false};assert.equal(result.navigationCompleted,true,'created Tab must not let pending cross-document navigation destroy the ready promise');assert.equal(result.pendingCDP,0);assert.equal(result.actualPassed,false,'partial phase producer is never a whole hosted pass');return result;
+}
+test('actual worker load barrier prevents a permitted cross-document context-destroyed navigation failure',async()=>{const out=await actualCrossDocument464();assert.equal(out.contextDestroyed,false);assert.equal(out.initialCreateURLWasPage,false);assert.equal(out.updateCalls,1);assert.equal(out.actualCases,2)})

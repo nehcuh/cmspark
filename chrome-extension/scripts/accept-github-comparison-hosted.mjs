@@ -129,9 +129,9 @@ class CDP {
     let m; try { m=JSON.parse(data.toString()) } catch { return }
     const p=this.pending.get(m.id);if (!p) return;this.pending.delete(m.id);m.error?p.reject(new Error('CDP_REFUSED')):p.resolve(m.result)
   }); socket.on('close', () => { for (const p of this.pending.values()) p.reject(new Error('CDP_CLOSED'));this.pending.clear() }) }
-  static async connect(WebSocket, url) { const s=new WebSocket(url); await limit(once(s,'open'),5000,'CDP_CONNECT');return new CDP(s) }
+  static async connect(WebSocket, url, timeout=5000) { const s=new WebSocket(url);try { await limit(once(s,'open'),Math.min(5000,timeout),'CDP_CONNECT');return new CDP(s) } catch { s.terminate();throw new Error('CDP_CONNECT') } }
   call(method, params={}, timeout=BOUNDS.navigation) { const id=++this.id, p=deferred(); this.pending.set(id,p);this.socket.send(JSON.stringify({id,method,params}));return limit(p.promise,timeout,'CDP_TIMEOUT').finally(()=>this.pending.delete(id)) }
-  async evaluate(expression, awaitPromise=false) { const r=await this.call('Runtime.evaluate',{expression,awaitPromise,returnByValue:true});if(r.exceptionDetails) refusal('PAGE_EVALUATION_REFUSED');return r.result?.value }
+  async evaluate(expression, awaitPromise=false, timeout=BOUNDS.navigation) { const r=await this.call('Runtime.evaluate',{expression,awaitPromise,returnByValue:true},timeout);if(r.exceptionDetails) refusal('PAGE_EVALUATION_REFUSED');return r.result?.value }
   close() { this.socket.close() }
   abort() {
     for(const p of this.pending.values())p.reject(new Error('CDP_CLOSED'))
@@ -227,7 +227,7 @@ export async function main() {
     // including its initial about:blank. URL selection would race navigation.
     const targetId=await worker.evaluate('globalThis.cmspark464.pageTarget()',true)
     if(typeof targetId!=='string'||!/^[A-Za-z0-9-]+$/.test(targetId))refusal('OWNED_PAGE_TARGET_MISSING')
-    const openPage=async()=>{const page=await CDP.connect(WebSocket,`ws://127.0.0.1:${parts[0]}/devtools/page/${targetId}`);active.add(page);return page}
+    const openPage=async(timeout=5000)=>{const page=await CDP.connect(WebSocket,`ws://127.0.0.1:${parts[0]}/devtools/page/${targetId}`,timeout);active.add(page);return page}
     stage='AUTH'
     const secret=crypto.randomBytes(32).toString('hex'), authenticated=new Set(), connected=deferred()
     server=new WebSocketServer({host:'127.0.0.1',port:0,maxPayload:1024*1024});await limit(once(server,'listening'),remaining(),'SERVER_LISTEN')
@@ -256,8 +256,13 @@ export async function main() {
     await limit(connected.promise,5000,'AUTH_TIMEOUT')
     const getWire=async()=>{ remaining();const id='owned464-'+(++getWire.counter);return forward.dispatchToExtension(id,'get_page_text',{tabId},peer,{threadId:'owned-hosted464',tabId}) };getWire.counter=0
     stage='NAVIGATION'
-    let page=await openPage()
-    const ready=await page.evaluate(`new Promise(resolve=>{let done=false;const check=()=>{if(location.href!==${JSON.stringify(PAGE)})return;const b=document.getElementById('files_bucket'),t=document.getElementById('toc'),f=document.getElementById('files');if(document.readyState==='complete'&&b&&t&&f&&!b.querySelector('include-fragment')&&f.querySelectorAll('.file.js-file').length===4){done=true;o.disconnect();clearTimeout(timer);resolve(true)}};const o=new MutationObserver(check);o.observe(document,{childList:true,subtree:true,attributes:true});const timer=setTimeout(()=>{o.disconnect();resolve(false)},60000);check()})`,true)
+    const navigationDeadline=Date.now()+Math.min(BOUNDS.navigation,remaining())
+    const navigationRemaining=()=>{const ms=Math.min(navigationDeadline-Date.now(),remaining());if(ms<=0)refusal('NAVIGATION_TIMEOUT');return ms}
+    assert.equal(await worker.evaluate(`globalThis.cmspark464.navigateToPage(${navigationRemaining()})`,true,navigationRemaining()),true)
+    navigationRemaining()
+    let page=await openPage(navigationRemaining())
+    const ready=await page.evaluate(`new Promise(resolve=>{let done=false;const check=()=>{if(location.href!==${JSON.stringify(PAGE)})return;const b=document.getElementById('files_bucket'),t=document.getElementById('toc'),f=document.getElementById('files');if(document.readyState==='complete'&&b&&t&&f&&!b.querySelector('include-fragment')&&f.querySelectorAll('.file.js-file').length===4){done=true;o.disconnect();clearTimeout(timer);resolve(true)}};const o=new MutationObserver(check);o.observe(document,{childList:true,subtree:true,attributes:true});const timer=setTimeout(()=>{o.disconnect();resolve(false)},${navigationRemaining()});check()})`,true,navigationRemaining())
+    navigationRemaining()
     assert.equal(ready,true);page.close();active.delete(page)
     stage='POSITIVE'
     const wire=await getWire();assert.equal(wire.success,true);assert.equal(wire.data?.provenance?.channel,'cdp');assert.equal(wire.data?.provenance?.capture_status,'eligible')
