@@ -3,11 +3,11 @@
 $ErrorActionPreference='Stop'
 if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1 -or $PSVersionTable.PSEdition -ne 'Desktop') { throw 'OWNED_REQUIRES_NATIVE_PS51' }
 $owner=$Id.ToString('D')
-if ($Id -eq [Guid]::Empty -or (Get-Content -LiteralPath (Join-Path $Directory '.owner') -Raw) -ne $owner) { throw 'OWNED_DIRECTORY_IDENTITY_REQUIRED' }
+if ($Id -eq [Guid]::Empty -or (Microsoft.PowerShell.Management\Get-Content -LiteralPath (Microsoft.PowerShell.Management\Join-Path $Directory '.owner') -Raw) -ne $owner) { throw 'OWNED_DIRECTORY_IDENTITY_REQUIRED' }
 $prefix='CMsparkOwned644_'+$owner+'_'
 $uninstall='SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
-$ledgerPath=Join-Path $Directory 'registry-ledger.json'
-Add-Type -TypeDefinition @'
+$ledgerPath=Microsoft.PowerShell.Management\Join-Path $Directory 'registry-ledger.json'
+Microsoft.PowerShell.Utility\Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -16,13 +16,13 @@ public static class RegistryOwned644 {
  public static extern int Create(IntPtr hive,string name,uint reserved,string cls,uint options,uint rights,IntPtr security,out SafeRegistryHandle key,out uint disposition);
 }
 '@ | Out-Null
-$created=New-Object System.Collections.Generic.List[object]
+$created=Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
 $views=@([Microsoft.Win32.RegistryView]::Registry32)
 if ([Environment]::Is64BitOperatingSystem) { $views=@([Microsoft.Win32.RegistryView]::Registry64,[Microsoft.Win32.RegistryView]::Registry32) }
-function Save-OwnedLedger { [IO.File]::WriteAllText($ledgerPath,(ConvertTo-Json -Compress -InputObject @{entries=$created.ToArray()}),([Text.UTF8Encoding]::new($false))) }
+function Save-OwnedLedger { [IO.File]::WriteAllText($ledgerPath,(Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject @{entries=$created.ToArray()}),([Text.UTF8Encoding]::new($false))) }
 function Remove-OwnedKeys {
- if (!(Test-Path -LiteralPath $ledgerPath)) { return }
- $saved=ConvertFrom-Json ([IO.File]::ReadAllText($ledgerPath))
+ if (!(Microsoft.PowerShell.Management\Test-Path -LiteralPath $ledgerPath)) { return }
+ $saved=Microsoft.PowerShell.Utility\ConvertFrom-Json ([IO.File]::ReadAllText($ledgerPath))
  foreach ($entry in $saved.entries) {
   if ($entry.name -notmatch ('^'+[regex]::Escape($prefix)+'(?:good|unquoted|reparse|dll|icon|folder|missing|args|env|relative|long)_(?:32|64)$') -or ($entry.view -ne 32 -and $entry.view -ne 64)) { throw 'OWNED_LEDGER_INVALID' }
   $view=[Microsoft.Win32.RegistryView]::Registry32;if ($entry.view -eq 64) { $view=[Microsoft.Win32.RegistryView]::Registry64 }
@@ -40,8 +40,8 @@ function Remove-OwnedKeys {
   } finally { if ($null -ne $key) { $key.Dispose() };if ($null -ne $parent) { $parent.Dispose() };$base.Dispose() }
  }
 }
-if ($Mode -eq 'cleanup' -or $Mode -eq 'check') { Remove-OwnedKeys;Write-Output '{"cleanup":true,"native_ps51":true}';exit 0 }
-$items=ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $Directory 'values.json')))
+if ($Mode -eq 'cleanup' -or $Mode -eq 'check') { Remove-OwnedKeys;Microsoft.PowerShell.Utility\Write-Output '{"cleanup":true,"native_ps51":true}';exit 0 }
+$items=Microsoft.PowerShell.Utility\ConvertFrom-Json ([IO.File]::ReadAllText((Microsoft.PowerShell.Management\Join-Path $Directory 'values.json')))
 try {
  foreach ($view in $views) {
   $tag=32;$flag=0x200;if ($view -eq [Microsoft.Win32.RegistryView]::Registry64) { $tag=64;$flag=0x100 }
@@ -68,5 +68,5 @@ try {
   }
   } finally { if ($null -ne $parent) { $parent.Dispose() };$base.Dispose() }
  }
- Write-Output (ConvertTo-Json -Compress -InputObject @{created=$created.Count;native_ps51=$true;logical_views=$views.Count})
+ Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject @{created=$created.Count;native_ps51=$true;logical_views=$views.Count})
 } catch { Remove-OwnedKeys;throw }

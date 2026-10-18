@@ -10,6 +10,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
+import fsNative from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 
@@ -343,12 +344,34 @@ test("红线 4：armed 默认 off；未 armed drain 拒绝", async () => {
   if (!r.ok) assert.equal(r.code, "not_armed")
 })
 
-test("红线 5：队列文件只存指针（thread_id/enqueued_at/corpus_ids），0600，无正文无草稿", async () => {
+test("红线 5：队列文件只存指针（thread_id/enqueued_at/corpus_ids），0600，无正文无草稿", async t => {
   const msgs: Msg[] = [{ id: "m1", role: "user", content: "SECRET-FREE-CONTENT" }]
   const tm = makeTm({ "t-q": { id: "t-q" } }, { "t-q": msgs })
   const built = buildDistillCorpus("t-q", tm as any)
   assert.ok(built.ok)
-  const r = armDistillQueue("t-q", built.ok ? built.corpus.corpus_ids : [])
+  const tmp = `${QUEUE_FILE}.tmp`
+  const calls: Array<{ op: string; mode?: string | number }> = [], restore: Array<() => void> = []
+  if (process.platform === "win32") {
+    const write = fsNative.writeFileSync, chmod = fsNative.chmodSync, rename = fsNative.renameSync
+    const w = t.mock.method(fsNative, "writeFileSync", function (this: typeof fsNative, ...args: Parameters<typeof write>) {
+      if (args[0] === tmp) calls.push({ op: "write", mode: typeof args[2] === "object" ? args[2]?.mode : undefined })
+      return Reflect.apply(write, this, args)
+    })
+    restore.push(() => w.mock.restore())
+    const c = t.mock.method(fsNative, "chmodSync", function (this: typeof fsNative, ...args: Parameters<typeof chmod>) {
+      if (args[0] === tmp) calls.push({ op: "chmod-tmp", mode: args[1] })
+      return Reflect.apply(chmod, this, args)
+    })
+    restore.push(() => c.mock.restore())
+    const n = t.mock.method(fsNative, "renameSync", function (this: typeof fsNative, ...args: Parameters<typeof rename>) {
+      if (args[0] === tmp && args[1] === QUEUE_FILE) calls.push({ op: "rename" })
+      return Reflect.apply(rename, this, args)
+    })
+    restore.push(() => n.mock.restore())
+  }
+  let r: ReturnType<typeof armDistillQueue>
+  try { r = armDistillQueue("t-q", built.ok ? built.corpus.corpus_ids : []) }
+  finally { for (const undo of restore.reverse()) undo() }
   assert.deepEqual(r, { ok: true, armed: true, queue_len: 1 })
   assert.ok(fs.existsSync(QUEUE_FILE))
   const raw = fs.readFileSync(QUEUE_FILE, "utf-8")
@@ -361,8 +384,13 @@ test("红线 5：队列文件只存指针（thread_id/enqueued_at/corpus_ids）�
   // 指针纪律：正文与草稿字符串绝不落盘
   assert.ok(!raw.includes("SECRET-FREE-CONTENT"))
   assert.ok(!raw.includes("system_prompt_append"))
-  const mode = fs.statSync(QUEUE_FILE).mode & 0o777
-  assert.equal(mode, 0o600)
+  if (process.platform === "win32") {
+    // The real queue writer chmods the temporary file before rename, not after.
+    assert.deepEqual(calls, [{ op: "write", mode: 0o600 }, { op: "chmod-tmp", mode: 0o600 }, { op: "rename" }])
+  } else {
+    const mode = fs.statSync(QUEUE_FILE).mode & 0o777
+    assert.equal(mode, 0o600)
+  }
 })
 
 test("drain：一次一条；草稿进内存 pending（getPendingDistillDraft），队列指针弹出", async () => {

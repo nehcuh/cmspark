@@ -139,7 +139,7 @@ jobs:
             2>&1 | tail -40
 
   # Residual: multi-OS smoke (build + pure security/lockstep tests).
-  # Full suite stays on ubuntu (build job). Matrix catches platform compile/runtime breaks.
+  # Full suite gates ubuntu (build) and Windows (#650); other matrix smoke remains.
   smoke-os:
     name: smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -149,6 +149,9 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # #650: full Windows children must not inherit checkout credentials.
+          persist-credentials: ${{ matrix.os != 'windows-latest' }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -184,7 +187,7 @@ jobs:
           if-no-files-found: error
 
       - name: Desktop build helper controls (#480)
-        run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs companion/scripts/tests/computer-uia-no-focus-build.test.mjs companion/scripts/tests/computer-uia-no-focus-resolver.test.mjs companion/scripts/tests/computer-uia-native-probe-572.test.mjs scripts/tests/uia-no-autofocus-572.test.mjs
+        run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs companion/scripts/tests/computer-uia-no-focus-build.test.mjs companion/scripts/tests/computer-uia-no-focus-resolver.test.mjs companion/scripts/tests/computer-uia-native-probe-572.test.mjs scripts/tests/uia-no-autofocus-572.test.mjs scripts/tests/metadata-key-phase-650.test.mjs
 
       - name: Build fixed no-autofocus UIA DLL (#572)
         if: matrix.os == 'windows-latest'
@@ -208,6 +211,214 @@ jobs:
       - name: Pinned NSIS dependency transport and integrity (#633)
         run: node --test scripts/tests/nsis-ci-setup.test.mjs
 
+      - name: Compile shared companion test inputs (#650)
+        id: windows-census-compile
+        shell: bash
+        run: |
+          cd companion
+          npx tsc -p tsconfig.test.json
+
+      - name: "Native Windows read-only Registry discovery (#644)"
+        id: windows-registry-prerequisites
+        # Actual in-box PS5.1 -> runPs -> parser, isolated nonce-owned HKCU keys.
+        # Does not execute candidates or mutate application permissions/config.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          # CI-only owned runner prerequisite: fixtures/collector never create parents.
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_REQUIRED' }
+          $uninstall = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+          $views = @([Microsoft.Win32.RegistryView]::Registry32)
+          if ([Environment]::Is64BitOperatingSystem) { $views = @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32) }
+          foreach ($view in $views) {
+            $base = $null; $key = $null
+            try {
+              $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $view)
+              $key = $base.OpenSubKey($uninstall, $false)
+              $state = 'present'
+              if ($null -eq $key) { $key = $base.CreateSubKey($uninstall); $state = 'created' }
+              if ($null -eq $key) { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_FAILED' }
+              $tag = 32; if ($view -eq [Microsoft.Win32.RegistryView]::Registry64) { $tag = 64 }
+              Write-Output ('OWNED_GHA_REGISTRY_PREREQUISITE view={0} state={1}' -f $tag, $state)
+            } finally {
+              if ($null -ne $key) { $key.Dispose() }
+              if ($null -ne $base) { $base.Dispose() }
+            }
+          }
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'ready=true' -Encoding utf8
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/integration/registry-apps-644.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Complete Windows Companion census (#650)"
+        id: windows-census
+        if: ${{ !cancelled() && matrix.os == 'windows-latest' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}
+        shell: pwsh
+        run: |
+          # CMSPARK_650_SETUP_DIAGNOSTIC_BEGIN
+          function Write-Cmspark650SetupDiagnostic {
+            param([string]$Stage, [string]$Phase, [System.Management.Automation.ErrorRecord]$Record)
+            $safeStage = 'UNKNOWN'
+            if ($Stage -cin @('primary', 'cleanup')) { $safeStage = $Stage }
+            $safePhase = 'UNKNOWN'
+            if ($Phase -cin @('service', 'directory_create', 'share_owner', 'share_create', 'controls', 'short_join', 'short_directory', 'short_type', 'long_buffer', 'short_buffer', 'long_call', 'long_check', 'short_call', 'short_check', 'roots_long', 'roots_short', 'roots_unc', 'launcher', 'cleanup_identity', 'cleanup_lookup', 'cleanup_verify', 'cleanup_share', 'cleanup_directory', 'cleanup_unc_env', 'cleanup_long_env', 'cleanup_short_env')) { $safePhase = $Phase }
+            $reason = 'OTHER'
+            switch -CaseSensitive ([string]$Record.FullyQualifiedErrorId) {
+              'CENSUS_OWNED_SMB_SETUP_FAILED' { $reason = 'SMB_SETUP'; break }
+              'CENSUS_OWNED_SMB_IDENTITY_INVALID' { $reason = 'SMB_IDENTITY'; break }
+              'CENSUS_OWNED_SHORT_ROOT_INVALID' { $reason = 'SHORT_ROOT'; break }
+            }
+            $line = 0; $column = 0
+            if ($null -ne $Record.InvocationInfo) {
+              $candidateLine = $Record.InvocationInfo.ScriptLineNumber
+              $candidateColumn = $Record.InvocationInfo.OffsetInLine
+              if ($candidateLine -ge 1 -and $candidateLine -le 4096) { $line = [int]$candidateLine }
+              if ($candidateColumn -ge 1 -and $candidateColumn -le 4096) { $column = [int]$candidateColumn }
+            }
+            $receipt = [ordered]@{ version = 1; stage = $safeStage; phase = $safePhase; reason = $reason; line = $line; column = $column }
+            [Console]::Out.WriteLine([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, 'CENSUS_650_SETUP {{"version":1,"stage":"{0}","phase":"{1}","reason":"{2}","line":{3},"column":{4}}}', [object[]]@($receipt.stage, $receipt.phase, $receipt.reason, $receipt.line, $receipt.column)))
+          }
+          # CMSPARK_650_SETUP_DIAGNOSTIC_END
+          if ($env:GITHUB_RUN_ID -cnotmatch '\A[1-9][0-9]*\z' -or $env:GITHUB_RUN_ATTEMPT -cnotmatch '\A[1-9][0-9]*\z') { throw 'CENSUS_OWNED_SMB_SETUP_FAILED' }
+          $share = 'cmspark650_{0}_{1}_{2}' -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT, ([Guid]::NewGuid().ToString('N'))
+          $directoryCreated = $false
+          $shareCreated = $false
+          try {
+            $phase = 'service'
+            Start-Service LanmanServer -ErrorAction Stop
+            $phase = 'directory_create'
+            $created = (& node scripts/windows-census-owned-smb.mjs create $share | ConvertFrom-Json -ErrorAction Stop)
+            if ($LASTEXITCODE -ne 0) { throw 'CENSUS_OWNED_SMB_SETUP_FAILED' }
+            $directoryCreated = $true
+            $fixture = $created.path
+            $phase = 'share_owner'
+            $owner = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $phase = 'share_create'
+            try { New-SmbShare -Name $share -Path $fixture -FullAccess $owner.Name -ErrorAction Stop | Out-Null } finally { $owner.Dispose() }
+            $shareCreated = $true
+            # CMSPARK_650_ORIGINAL_COMMANDS_BEGIN
+            $phase = 'controls'
+            node --test scripts/tests/windows-census.test.mjs scripts/tests/windows-census-evidence.test.mjs scripts/tests/windows-census-cli.test.mjs scripts/tests/windows-census-short-path.test.mjs scripts/tests/windows-census-setup-diagnostics.test.mjs scripts/tests/windows-census-short-provision.test.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $phase = 'short_join'
+            $shortFixture = Join-Path $fixture 'canonical short alias owned'
+            $phase = 'short_directory'
+            $shortCreated = (& node scripts/windows-census-owned-smb.mjs create-short $share $created.dev $created.ino | ConvertFrom-Json -ErrorAction Stop)
+            if ($LASTEXITCODE -ne 0 -or $shortCreated.path -cne $shortFixture) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            $phase = 'short_type'
+            Add-Type @'
+          using System;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          public static class Cmspark650OwnedPaths {
+            [StructLayout(LayoutKind.Sequential)]
+            public struct OwnedInfo {
+              public uint Attributes;
+              public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
+              public uint VolumeSerialNumber, SizeHigh, SizeLow, Links, FileIndexHigh, FileIndexLow;
+            }
+            [DllImport("kernel32.dll", EntryPoint="CreateFileW", CharSet=CharSet.Unicode, SetLastError=true, ExactSpelling=true)]
+            private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(string source, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+            [DllImport("kernel32.dll", SetLastError=true, ExactSpelling=true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle, out OwnedInfo info);
+            [DllImport("kernel32.dll", EntryPoint="SetFileShortNameW", CharSet=CharSet.Unicode, SetLastError=true, ExactSpelling=true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool SetFileShortName(Microsoft.Win32.SafeHandles.SafeFileHandle handle, string name);
+            public static int PrepareShortName(string source, string dev, string ino) {
+              Microsoft.Win32.SafeHandles.SafeFileHandle handle = CreateFile(source, 0x10080, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+              try {
+                if (handle.IsInvalid) return AliasResult(1, Marshal.GetLastWin32Error());
+                OwnedInfo info = new OwnedInfo();
+                if (!GetFileInformationByHandle(handle, out info)) return AliasResult(2, Marshal.GetLastWin32Error());
+                ulong fileId = ((ulong)info.FileIndexHigh << 32) | info.FileIndexLow;
+                if ((info.Attributes & 0x10) == 0 || (info.Attributes & 0x400) != 0 || fileId == 0 || info.VolumeSerialNumber.ToString(System.Globalization.CultureInfo.InvariantCulture) != dev || fileId.ToString(System.Globalization.CultureInfo.InvariantCulture) != ino) return AliasResult(3, 0);
+                if (!SetFileShortName(handle, "CNSUS~1")) return AliasResult(4, Marshal.GetLastWin32Error());
+                return AliasResult(0, 0);
+              } finally { handle.Dispose(); }
+            }
+            private static int AliasResult(int stage, int error) {
+              if (error < 0 || error > 65535) error = 0;
+              Console.WriteLine("CENSUS_650_SHORT {{\"stage\":{0},\"error\":{1}}}", stage, error);
+              return stage;
+            }
+            [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+            public static extern uint GetShortPathName(string source, StringBuilder dest, uint size);
+            [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+            public static extern uint GetLongPathName(string source, StringBuilder dest, uint size);
+          }
+          '@
+            $shortSetStatus = [Cmspark650OwnedPaths]::PrepareShortName($shortFixture, $shortCreated.dev, $shortCreated.ino)
+            if ($shortSetStatus -ne 0) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            $phase = 'long_buffer'
+            $longBuffer = [System.Text.StringBuilder]::new(32768)
+            $phase = 'short_buffer'
+            $shortBuffer = [System.Text.StringBuilder]::new(32768)
+            $phase = 'long_call'
+            $longLength = [Cmspark650OwnedPaths]::GetLongPathName($shortFixture, $longBuffer, 32768)
+            $phase = 'long_check'
+            if ($longLength -eq 0 -or $longLength -ge 32768) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            $phase = 'short_call'
+            $shortLength = [Cmspark650OwnedPaths]::GetShortPathName($longBuffer.ToString(), $shortBuffer, 32768)
+            $phase = 'short_check'
+            if ($shortLength -eq 0 -or $shortLength -ge 32768 -or $shortBuffer.ToString() -notmatch '~[0-9]' -or $shortBuffer.ToString() -eq $longBuffer.ToString()) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            if ([System.IO.Path]::GetFileName($shortBuffer.ToString()) -ine 'CNSUS~1') { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }
+            $phase = 'roots_long'
+            $env:CMSPARK_TEST_LONG_ROOT = $longBuffer.ToString()
+            $phase = 'roots_short'
+            $env:CMSPARK_TEST_SHORT_ROOT = $shortBuffer.ToString()
+            $phase = 'roots_unc'
+            $env:CMSPARK_TEST_UNC_SHARE = '\\127.0.0.1\' + $share
+            $phase = 'launcher'
+            node scripts/windows-census.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            # CMSPARK_650_ORIGINAL_COMMANDS_END
+          } catch {
+            Write-Cmspark650SetupDiagnostic -Stage 'primary' -Phase $phase -Record $_
+            throw 'CENSUS_OWNED_SMB_STEP_FAILED'
+          } finally {
+            try {
+              $phase = 'cleanup_identity'
+              if ($directoryCreated) {
+                # Uncertain/partial ownership is failure, never remove-by-name.
+                if (-not $shareCreated) { throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' }
+                $phase = 'cleanup_lookup'
+                $current = @(Get-SmbShare -Name $share -ErrorAction Stop)
+                if ($current.Count -ne 1) { throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' }
+                $phase = 'cleanup_verify'
+                & node scripts/windows-census-owned-smb.mjs verify $share $current[0].Name $current[0].Path $created.dev $created.ino
+                if ($LASTEXITCODE -ne 0) { throw 'CENSUS_OWNED_SMB_IDENTITY_INVALID' }
+                $phase = 'cleanup_share'
+                Remove-SmbShare -Name $share -Force -ErrorAction Stop
+                $phase = 'cleanup_directory'
+                Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction Stop
+              }
+            } catch {
+              Write-Cmspark650SetupDiagnostic -Stage 'cleanup' -Phase $phase -Record $_
+              throw 'CENSUS_OWNED_SMB_CLEANUP_FAILED'
+            } finally {
+              $phase = 'cleanup_unc_env'
+              if (Test-Path Env:CMSPARK_TEST_UNC_SHARE) { Remove-Item Env:CMSPARK_TEST_UNC_SHARE -ErrorAction Stop }
+              $phase = 'cleanup_long_env'
+              if (Test-Path Env:CMSPARK_TEST_LONG_ROOT) { Remove-Item Env:CMSPARK_TEST_LONG_ROOT -ErrorAction Stop }
+              $phase = 'cleanup_short_env'
+              if (Test-Path Env:CMSPARK_TEST_SHORT_ROOT) { Remove-Item Env:CMSPARK_TEST_SHORT_ROOT -ErrorAction Stop }
+            }
+          }
+
+      - name: "Windows census finite public receipts (#650)"
+        if: always() && matrix.os == 'windows-latest' && steps.windows-census.outputs.public_dir != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-census-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.windows-census.outputs.public_dir }}/*.json
+            ${{ steps.windows-census.outputs.public_dir }}/sealed/envelope.json
+            ${{ steps.windows-census.outputs.public_dir }}/sealed/*.enc
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Office compatibility and relocated runtime (#611)
         shell: bash
         run: |
@@ -215,7 +426,6 @@ jobs:
           node --test scripts/tests/office-lock-passive.test.mjs
           node scripts/smoke-office-runtime.mjs
           cd companion
-          npx tsc -p tsconfig.test.json
           node scripts/run-tests.mjs .test-dist/tests/office-format-compatibility.test.js .test-dist/tests/office-import-entry.test.js .test-dist/tests/odf-expansion.test.js
 
       - name: Smoke pure tests (no native host required)
@@ -342,37 +552,6 @@ jobs:
           node scripts/run-tests.mjs .test-dist/tests/computer-bg-oracles.test.js .test-dist/tests/integration/computer-bg-oracle-counterfactual-572.test.js .test-dist/tests/computer-uia-invoke-integration.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: "Native Windows read-only Registry discovery (#644)"
-        # Actual in-box PS5.1 -> runPs -> parser, isolated nonce-owned HKCU keys.
-        # Does not execute candidates or mutate application permissions/config.
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          # CI-only owned runner prerequisite: fixtures/collector never create parents.
-          $ErrorActionPreference = 'Stop'
-          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_REQUIRED' }
-          $uninstall = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
-          $views = @([Microsoft.Win32.RegistryView]::Registry32)
-          if ([Environment]::Is64BitOperatingSystem) { $views = @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32) }
-          foreach ($view in $views) {
-            $base = $null; $key = $null
-            try {
-              $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $view)
-              $key = $base.OpenSubKey($uninstall, $false)
-              $state = 'present'
-              if ($null -eq $key) { $key = $base.CreateSubKey($uninstall); $state = 'created' }
-              if ($null -eq $key) { throw 'OWNED_GHA_REGISTRY_PREREQUISITE_FAILED' }
-              $tag = 32; if ($view -eq [Microsoft.Win32.RegistryView]::Registry64) { $tag = 64 }
-              Write-Output ('OWNED_GHA_REGISTRY_PREREQUISITE view={0} state={1}' -f $tag, $state)
-            } finally {
-              if ($null -ne $key) { $key.Dispose() }
-              if ($null -ne $base) { $base.Dispose() }
-            }
-          }
-          cd companion
-          node scripts/run-tests.mjs .test-dist/tests/integration/registry-apps-644.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
       - name: "Native Windows GUI file template admission (#686)"
         # Exact pinned portable target in owned CI data; software approval is synthetic.
         # Real PS5.1 metadata + argv/parser evidence; no installation/default registration.
@@ -432,4 +611,21 @@ jobs:
         shell: pwsh
         run: |
           & scripts/tests/win-mcp-short-path-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Post-census isolated module-scope diagnostic (#650)"
+        # After every original step, including census sealing and public upload.
+        # A diagnostic PASS cannot replace the original census/job result.
+        if: ${{ always() && !cancelled() && matrix.os == 'windows-latest' }}
+        shell: pwsh
+        env:
+          CMSPARK_650_FINISHED_PUBLIC_DIR: ${{ steps.windows-census.outputs.public_dir }}
+        run: |
+          cd companion
+          $moduleScopeProbe650 = [IO.Path]::Combine($PWD.Path, '.test-dist/tests/fixtures/computer-bg-module-scope-650.probe.js')
+          if (-not [IO.File]::Exists($moduleScopeProbe650)) {
+            [Console]::Out.WriteLine('MODULE_SCOPE_650 {"version":1,"state":"INCOMPLETE","reason":"CALLER_MISSING"}')
+            exit 1
+          }
+          node "$moduleScopeProbe650" "$env:CMSPARK_650_FINISHED_PUBLIC_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

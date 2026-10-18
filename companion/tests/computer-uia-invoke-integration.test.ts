@@ -1,4 +1,5 @@
 import { registerNoFocusNativeTests572 } from "./helpers/uia-no-focus-native-572"
+import { registerMixedClientNative572 } from "./helpers/uia-mixed-client-572"
 // #572 — REAL integration: the compiled adapter driving the REAL PowerShell script.
 //
 // WHY THIS FILE EXISTS (read before deleting it):
@@ -33,6 +34,16 @@ const available = process.platform === "win32" && existsSync(PS) && !!SCRIPT
 
 /** A handle that is guaranteed not to be a window, so the script exits at its first check. */
 const DEAD_HWND = 1
+
+test("#650 shipped UIA source parses as Unicode in actual Desktop PowerShell 5.1", { skip: !available }, async () => {
+  const fixture = path.resolve("tests/fixtures/uia-script-encoding-650.ps1")
+  const result = await promisify(execFile)(PS, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture, "-ScriptPath", path.resolve(SCRIPT!)], { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 })
+  const proof = JSON.parse(result.stdout.trim())
+  assert.equal(proof.desktop51, true)
+  assert.equal(proof.current_errors, 0)
+  assert.equal(proof.stop_literal_exact, true)
+  assert.ok(Number.isSafeInteger(proof.ansi_counterfactual_errors) && proof.ansi_counterfactual_errors >= 1 && proof.ansi_counterfactual_errors <= 100)
+})
 
 test("#572 integration: the real script accepts -StopFile (the argv production actually sends)", { skip: !available }, async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "uia-int-"))
@@ -632,3 +643,4 @@ test("#572 client route selection keeps normal acceptance on the actual default 
 
 // Keep all foreground-owning #572 cases in this one canonical file worker.
 registerNoFocusNativeTests572()
+registerMixedClientNative572()

@@ -4,3 +4,10 @@
 /chrome-extension/src/sidepanel/voice/meeting-pcm-worklet-generated.ts text eol=lf
 /chrome-extension/src/sidepanel/voice/meeting-continuous-capture.ts text eol=lf
 /companion/src/summoner/meeting-continuous-generated.ts text eol=lf
+# The evidence recipient is fingerprinted from its exact committed PEM bytes.
+/scripts/windows-census-recipient-650.pem text eol=lf
+# Corpus generators compare their committed JSON bytes exactly.
+/companion/tests/fixtures/cu-locate-eval/corpus.json text eol=lf
+/companion/tests/fixtures/cu-redteam/corpus.json text eol=lf
+# This recorded Git patch is checked against its independent byte fingerprint.
+/companion/tests/fixtures/code-review-rename-464.patch text eol=lf

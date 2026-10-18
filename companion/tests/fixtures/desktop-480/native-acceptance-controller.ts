@@ -1,3 +1,4 @@
+import { withSurface650, parseSurfaceBorrow650, type SurfaceBorrow650 } from "../native-surface-650"
 /* Owned #480 acceptance coordinator. Imported by tests only, never product runtime. */
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -132,7 +133,9 @@ function ownDataRoot(): string {
   assert.ok(relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
   return d
 }
-export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile" | "reconnect" | "relaunch" | "inheritance" | "parent", parentCase?: string): Promise<void> {
+export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile" | "reconnect" | "relaunch" | "inheritance" | "parent", parentCase?: string, borrowed?: SurfaceBorrow650): Promise<void> {
+ if ((mode === "parent") !== !!borrowed) throw Error("OWNED_PARENT_SURFACE_BORROW_INVALID")
+ return withSurface650(t, async (t, surfaceLease) => {
   const data = ownDataRoot(), native = path.resolve("dist/desktop-native"), variant = mode === "hostile" ? "hostile" : mode === "inheritance" ? "inheritance" : mode === "parent" ? "parent" : "visual"
   let artifactRoot = path.join(native, "acceptance", variant), ownedClone: string | undefined, cloneIdentity: ReturnType<typeof ownedDirectoryIdentity> | undefined
   if (mode === "inheritance") {
@@ -193,7 +196,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     server.listen(0, "127.0.0.1"); await once(server, "listening", { signal: t.signal })
     const endpoint = `ws://127.0.0.1:${(server.address() as any).port}/desktop`
     launcher = new DesktopHostLauncher(registry, endpoint, (host, view) => channel.window(host, view), () => ({ binary, binding: {
-      launch: (file, cap, key, url, onExit) => { const child = addon.launch(file, cap, key, url, code => { lastExitCode = code; exits++; onExit(code); for (const wake of waiters) wake() }); launches++; return child },
+      launch: (file, cap, key, url, onExit) => { surfaceLease.checkpoint(); const child = addon.launch(file, cap, key, url, code => { lastExitCode = code; exits++; onExit(code); for (const wake of waiters) wake() }); launches++; return child },
     } }))
     const a = launcher.open("compact"), b = launcher.open("compact")
     await bounded(Promise.all([a, b]).then(results => { for (const result of results) assert.equal(result.ok, true) }), t.signal)
@@ -245,6 +248,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     assert.equal(secret.length, 64)
     console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
   } finally {
+    surfaceLease.retain()
     diagnostic("cleanup")
     t.signal.removeEventListener("abort", deadlineDiagnostic)
     launcher?.close(); registry.revokeAll()
@@ -259,7 +263,10 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     assert.equal(server.listening, false); assert.equal(channel.wss.clients.size, 0); assert.equal(legacy.clients.size, 0)
     assert.equal(exits, launches, "Every actually launched owned native process must settle")
     if (ownedClone && cloneIdentity) { requireOwnedDirectory(ownedClone, cloneIdentity); fs.rmSync(ownedClone, { recursive: true, force: true }) }
+    surfaceLease.settled()
   }
+
+ }, borrowed)
 }
 
 export function fixedLine(child: ChildProcess, name: string, signal: AbortSignal): Promise<void> {
@@ -271,6 +278,7 @@ export function fixedLine(child: ChildProcess, name: string, signal: AbortSignal
   })
 }
 export async function nativeParentDeath(t: TestContext): Promise<void> {
+ return withSurface650(t, async (t, surfaceLease) => {
   const data=ownDataRoot(),directory=fs.mkdtempSync(path.join(data,"native-parent-")),identity=ownedDirectoryIdentity(directory)
   const file=path.join(directory,"parent-exit.receipt"),fd=fs.openSync(file,"wx+",0o600),before=fs.fstatSync(fd)
   assert.equal(before.isFile(),true);assert.equal(before.nlink,1);assert.equal(before.size,0)
@@ -281,7 +289,7 @@ export async function nativeParentDeath(t: TestContext): Promise<void> {
     const source=path.resolve("dist/desktop-native/acceptance/parent"),binary=process.platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop",checker=process.platform==="win32"?"desktop-parent-probe.exe":"desktop-parent-probe"
     for(const name of [binary,checker]){const input=path.join(source,name),stat=fs.lstatSync(input);assert.ok(stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1);fs.copyFileSync(input,path.join(directory,name),fs.constants.COPYFILE_EXCL)}
     fs.mkdirSync(path.join(directory,"assets"));for(const name of ["index.html","app.css","app.js"])fs.copyFileSync(path.join(source,"assets",name),path.join(directory,"assets",name),fs.constants.COPYFILE_EXCL)
-    const env:NodeJS.ProcessEnv={CMSPARK_TEST_RUN_DIR:process.env.CMSPARK_TEST_RUN_DIR}
+    const env:NodeJS.ProcessEnv={CMSPARK_TEST_RUN_DIR:process.env.CMSPARK_TEST_RUN_DIR,CMSPARK_NATIVE_SURFACE_650_BORROW:JSON.stringify(surfaceLease.borrow())}
     for(const key of ["SystemRoot","SYSTEMROOT","TEMP","TMP","TMPDIR","PATH"])if(process.env[key])env[key]=process.env[key]
     // This is the actual owned issuer, not a secret-forwarding intermediary. Registry/native/bootstrap remain inside it.
     issuer=spawn(process.execPath,["--require",path.resolve("scripts/test-data-dir.cjs"),__filename,"--owned-parent",directory],{stdio:["ignore","pipe","pipe"],env});issuer.stderr?.resume()
@@ -303,16 +311,20 @@ export async function nativeParentDeath(t: TestContext): Promise<void> {
     const byte=Buffer.alloc(1);assert.equal(fs.readSync(fd,byte,0,1,0),1);assert.equal(byte[0],49)
     console.log("DESKTOP_480_PARENT_EXIT "+JSON.stringify({actualIssuerKilled:true,nativeHeldLockBeforeKill:true,actualNativeTeardownObserved:true,freshSameFileOneBit:true}))
   }finally{
+    surfaceLease.retain()
     for(const child of [issuer,probe])if(child&&child.exitCode===null&&child.signalCode===null)child.kill("SIGKILL")
     await Promise.all([issuer,probe].filter((c):c is ChildProcess=>!!c).map(exited));fs.closeSync(fd);requireOwnedDirectory(directory,identity)
     // A failed/aborted case cannot prove whether the detached native host has exited.
     // Its fixed20s test-only watchdog is only a safety guard, never a positive receipt.
     if(nativeTeardownObserved)fs.rmSync(directory,{recursive:true,force:true})
     else console.log("DESKTOP_480_PARENT_CLEANUP "+JSON.stringify({ownedIssuerAndProbeClosed:true,nativeTeardownObserved:false,ownedCaseRetained:true}))
+    if(nativeTeardownObserved || !issuer)surfaceLease.settled()
   }
+
+ })
 }
 // Only this unshipped owned fixture CLI. No capability/secret travels in argv/env/stdout.
 if(require.main===module){
   if(process.argv.length!==4||process.argv[2]!=="--owned-parent")throw Error("OWNED_PARENT_ARGUMENTS_INVALID")
-  nativeAcceptance({signal:AbortSignal.timeout(20000)} as TestContext,"parent",process.argv[3]).catch(()=>{process.stderr.write("OWNED_PARENT_FIXTURE_FAILED\n");process.exitCode=1})
+  nativeAcceptance({signal:AbortSignal.timeout(20000)} as TestContext,"parent",process.argv[3],parseSurfaceBorrow650(process.env.CMSPARK_NATIVE_SURFACE_650_BORROW)).catch(()=>{process.stderr.write("OWNED_PARENT_FIXTURE_FAILED\n");process.exitCode=1})
 }

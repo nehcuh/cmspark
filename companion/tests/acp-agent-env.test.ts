@@ -2,6 +2,7 @@
 
 import { describe, it, beforeEach } from "node:test"
 import assert from "node:assert/strict"
+import path from "node:path"
 import {
   buildAcpAgentEnv,
   parseEnvNullSeparated,
@@ -35,7 +36,7 @@ describe("buildAcpAgentEnv", () => {
       sessionId: "s1",
       mode: "propose_diff",
       processEnv: {
-        PATH: "/usr/bin:/bin",
+        PATH: path.dirname(process.execPath),
         HOME: "/Users/me",
         ANTHROPIC_API_KEY: "sk-ant-test",
         OPENAI_API_KEY: "sk-oai-test",
@@ -50,7 +51,7 @@ describe("buildAcpAgentEnv", () => {
     assert.equal(env.UNRELATED, "keep-me")
     assert.equal(env.CMSPARK_ACP_SESSION, "s1")
     assert.equal(env.CMSPARK_ACP_MODE, "propose_diff")
-    assert.ok(env.PATH && env.PATH.includes("/usr/bin"))
+    assert.ok(env.PATH?.split(path.delimiter).includes(path.dirname(process.execPath)))
   })
 
   it("merge order: loginShell < userEnv < serverEnv < markers", () => {
@@ -115,11 +116,31 @@ describe("getLoginShellEnv", () => {
       return Buffer.from("ANTHROPIC_API_KEY=sk-mock\0PATH=/bin\0")
     }) as unknown as typeof import("child_process").execFileSync
 
-    const a = getLoginShellEnv({ force: true, execFile: fakeExec, shell: "/bin/zsh" })
-    assert.equal(a.ANTHROPIC_API_KEY, "sk-mock")
-    const b = getLoginShellEnv({ execFile: fakeExec })
-    assert.equal(b.ANTHROPIC_API_KEY, "sk-mock")
-    assert.equal(calls, 1, "second call should use cache")
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+    try {
+      Object.defineProperty(process, "platform", { ...platform, value: "darwin" })
+      const a = getLoginShellEnv({ force: true, execFile: fakeExec, shell: "/bin/zsh" })
+      assert.equal(a.ANTHROPIC_API_KEY, "sk-mock")
+      const b = getLoginShellEnv({ execFile: fakeExec })
+      assert.equal(b.ANTHROPIC_API_KEY, "sk-mock")
+      assert.equal(calls, 1, "second call should use cache")
+    } finally {
+      Object.defineProperty(process, "platform", platform)
+    }
+  })
+
+  it("Windows never probes a POSIX login shell", () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+    let calls = 0
+    const fakeExec = (() => { calls++; throw new Error("POSIX probe forbidden on Windows") }) as unknown as typeof import("child_process").execFileSync
+    try {
+      Object.defineProperty(process, "platform", { ...platform, value: "win32" })
+      assert.deepEqual(getLoginShellEnv({ force: true, execFile: fakeExec }), {})
+      assert.deepEqual(getLoginShellEnv({ execFile: fakeExec }), {})
+      assert.equal(calls, 0)
+    } finally {
+      Object.defineProperty(process, "platform", platform)
+    }
   })
 
   it("returns {} when shell probe fails", () => {

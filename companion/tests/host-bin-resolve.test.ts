@@ -78,17 +78,17 @@ test("CMSPARK_HOST_BIN with ALLOW=1 returns override path", () => {
 })
 
 test("resolvePackagedContentsDir finds Contents from agent script path", () => {
-  const script =
-    "/Applications/CMspark.app/Contents/Resources/cmspark-agent.js"
-  const contents = resolvePackagedContentsDir(script, "/usr/bin/node")
-  assert.equal(contents, path.normalize("/Applications/CMspark.app/Contents"))
+  const expected = path.resolve(os.tmpdir(), "cmspark-hostbin-vector", "CMspark.app", "Contents")
+  const script = path.join(expected, "Resources", "cmspark-agent.js")
+  const contents = resolvePackagedContentsDir(script, process.execPath)
+  assert.equal(contents, expected)
 })
 
 test("resolvePackagedContentsDir finds Contents from node inside app", () => {
-  const nodeBin =
-    "/Applications/CMspark.app/Contents/Resources/node"
+  const expected = path.resolve(os.tmpdir(), "cmspark-hostbin-vector", "CMspark.app", "Contents")
+  const nodeBin = path.join(expected, "Resources", "node")
   const contents = resolvePackagedContentsDir("", nodeBin)
-  assert.equal(contents, path.normalize("/Applications/CMspark.app/Contents"))
+  assert.equal(contents, expected)
 })
 
 test("F2: candidate path math matches real repo layout (no dist/dist dead path)", () => {

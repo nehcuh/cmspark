@@ -1,7 +1,7 @@
 # Fixed Windows Known Folders only; never accepts paths or IDs from a caller.
 $ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-Add-Type -TypeDefinition @'
+[Console]::OutputEncoding = Microsoft.PowerShell.Utility\New-Object System.Text.UTF8Encoding($false)
+Microsoft.PowerShell.Utility\Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class CmsparkKnownFolders {
@@ -26,4 +26,4 @@ public static class CmsparkKnownFolders {
     documents = [CmsparkKnownFolders]::Get('FDD39AD0-238F-46AF-ADB4-6C85480369C7')
     desktop = [CmsparkKnownFolders]::Get('B4BFCC3A-DB2C-424C-B029-7FE99A87C641')
     downloads = [CmsparkKnownFolders]::Get('374DE290-123F-4565-9164-39C4925E467B')
-} | ConvertTo-Json -Compress
+} | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress

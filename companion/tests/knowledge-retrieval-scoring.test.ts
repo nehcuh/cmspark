@@ -230,7 +230,8 @@ test("AC-4 (static): retrieval-path function bodies never name llmExtract/llmRer
   let src = ""
   for (const p of candidates) {
     if (fs.existsSync(p)) {
-      src = fs.readFileSync(p, "utf8")
+      // Match source structure independently of Windows checkout line endings.
+      src = fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n")
       break
     }
   }

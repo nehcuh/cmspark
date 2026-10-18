@@ -16,7 +16,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { execFileSync } from "node:child_process"
@@ -27,6 +27,8 @@ import {
   type DarwinRunner,
 } from "../src/host-use/darwin/adapter.js"
 import { hostRead } from "../src/host-use/darwin/index.js"
+import * as hostBinary from "../src/host-use/darwin/host-bin.js"
+import * as hostIntegrity from "../src/host-use/darwin/host-integrity.js"
 import { NotImplementedForApp, DarwinPathNotAbsolute } from "../src/host-use/types.js"
 
 // Mock binary path — tests construct adapter directly with a fake bin path.
@@ -526,43 +528,29 @@ test("hostRead: default/mail path proceeds to the binary (fails honestly when bi
   }
 })
 
-test("hostRead: --max-chars passthrough to the binary (#69 Phase 2)", async () => {
-  // spawnHostBin has no injectable runner; point CMSPARK_HOST_BIN at a stub
-  // node script (integrity gate skipped via the dev escape hatch) that records
-  // its argv and returns a valid read-mail payload.
-  const tmp = mkdtempSync(join(tmpdir(), "hostread-argv-"))
-  const capture = join(tmp, "argv.json")
-  const stub = join(tmp, "stub-host.js")
-  writeFileSync(
-    stub,
-    "#!/usr/bin/env node\n" +
-      `require("fs").writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2)))\n` +
-      'process.stdout.write(JSON.stringify({sender:"S",subject:"T",date_received:"D",body_preview:"x".repeat(300)}))\n',
-  )
-  chmodSync(stub, 0o755)
-  process.env.CMSPARK_HOST_BIN = stub
-  process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE = "1"
-  process.env.CMSPARK_SKIP_HOST_INTEGRITY = "1"
+test("hostRead: --max-chars passthrough to the binary (#69 Phase 2)", async (t) => {
+  // Exercise real hostRead orchestration without relying on POSIX shebang execution.
+  // These writable CJS exports are scoped to this callback and restored even on failure.
+  const originalResolve = hostBinary.resolveHostBinary
+  const originalSpawn = hostIntegrity.spawnHostBin
+  const calls: Array<{ bin: string; args: string[]; timeoutMs?: number }> = []
+  t.mock.method(hostBinary, "resolveHostBinary", () => FAKE_BIN)
+  const spawn = t.mock.method(hostIntegrity, "spawnHostBin", async (...[bin, args, opts]: Parameters<typeof originalSpawn>) => {
+    calls.push({ bin, args: [...args], timeoutMs: opts?.timeoutMs })
+    return JSON.stringify({ sender: "S", subject: "T", date_received: "D", body_preview: "x".repeat(300) })
+  })
   try {
     const out = await hostRead({ application: "com.apple.mail", maxChars: 200 })
-    assert.deepEqual(JSON.parse(readFileSync(capture, "utf8")), [
-      "read-mail",
-      "--max-chars",
-      "200",
-    ])
-    // TS slice stays as defense in depth (stub ignores --max-chars, returns 300)
-    assert.equal(out.body_preview.length, 200)
+    assert.deepEqual(calls[0], { bin: FAKE_BIN, args: ["read-mail", "--max-chars", "200"], timeoutMs: 15000 })
+    assert.equal(out.body_preview.length, 200, "TS slice remains defense in depth")
     await hostRead({})
-    assert.deepEqual(JSON.parse(readFileSync(capture, "utf8")), [
-      "read-mail",
-      "--max-chars",
-      "500",
-    ])
+    assert.deepEqual(calls[1], { bin: FAKE_BIN, args: ["read-mail", "--max-chars", "500"], timeoutMs: 15000 })
+    spawn.mock.mockImplementation(async () => { throw new Error("owned transport failure") })
+    await assert.rejects(() => hostRead({}), /owned transport failure/)
   } finally {
-    delete process.env.CMSPARK_HOST_BIN
-    delete process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE
-    delete process.env.CMSPARK_SKIP_HOST_INTEGRITY
-    rmSync(tmp, { recursive: true, force: true })
+    t.mock.restoreAll()
+    assert.equal(hostBinary.resolveHostBinary, originalResolve)
+    assert.equal(hostIntegrity.spawnHostBin, originalSpawn)
   }
 })
 

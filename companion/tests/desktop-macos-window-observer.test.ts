@@ -7,6 +7,8 @@ import { pathToFileURL } from "node:url"
 const original = fs.readFileSync("src/desktop/native/DesktopHost.swift", "utf8")
 const fixture = fs.readFileSync("tests/fixtures/desktop-480/native-acceptance.swift", "utf8")
 const controller = fs.readFileSync("tests/fixtures/desktop-480/native-acceptance-controller.ts", "utf8")
+// Semantic adjacency accepts checkout EOLs; byte-exact builder inputs remain raw.
+const stopBeforeWindowEmit = /self\.stopWindow\(\)\r?\n            self\.emit\(host,"WINDOW_"/
 // Execute the actual closed Swift Boolean expressions as source-derived CPU
 // controls. This does not implement AppKit notifications or certify native focus.
 function predicates() {
@@ -43,7 +45,7 @@ test("Mac observation records original identity before completion and retains al
   assert.ok(fixture.includes("let bits=[win.isVisible,win.isKeyWindow,NSApp.isActive,self.firstWindow==win.windowNumber,ownCount==1,client.width==expected.width&&client.height==expected.height,work.contains(frame)]"))
   assert.ok(controller.includes('assert.equal(r.bits, "1111111"'))
   assert.ok(controller.includes('observations.find(r => r.kind === "window" && r.view === "compact")'))
-  assert.ok(fixture.includes("self.stopWindow()\n            self.emit(host,\"WINDOW_\""))
+  assert.ok(stopBeforeWindowEmit.test(fixture))
 })
 
 test("Mac acceptance builder preserves production bytes and arms cleanup only in the test variant", async () => {
@@ -57,4 +59,13 @@ test("Mac acceptance builder preserves production bytes and arms cleanup only in
   assert.ok(fixture.includes("windowObservers.removeAll()"))
   assert.ok(fixture.includes("windowObservation=nil"))
   assert.equal(fixture.includes("asyncAfter(deadline:.now()+0."), false)
+})
+
+test("Mac cleanup adjacency accepts LF/CRLF but still rejects missing or reordered statements", () => {
+  const cleanup = 'self.stopWindow()\n            self.emit(host,"WINDOW_"'
+  assert.equal(stopBeforeWindowEmit.test(cleanup), true)
+  assert.equal(stopBeforeWindowEmit.test(cleanup.replace(/\n/g, "\r\n")), true)
+  assert.equal(stopBeforeWindowEmit.test(cleanup.replace("self.stopWindow()", "")), false)
+  assert.equal(stopBeforeWindowEmit.test(cleanup.replace("self.emit", "self.other")), false)
+  assert.equal(stopBeforeWindowEmit.test('self.emit(host,"WINDOW_"\n            self.stopWindow()'), false)
 })

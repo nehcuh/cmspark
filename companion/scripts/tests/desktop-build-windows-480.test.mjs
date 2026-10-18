@@ -289,3 +289,42 @@ for(const lineEnding of ['LF','CRLF'])test(`actual closeReferences is idempotent
     invoke(identityRefs,close);assert.equal(calls,3)
   }
 })
+
+
+// Frame2.ExecuteScript before ContentLoading is documented to return null without
+// running the script. These are source/event-guard contracts, not native timing.
+function frameCallbackBody650(source,signature){
+ const start=source.indexOf(signature);if(start<0)return undefined
+ const open=source.indexOf('{',start);let depth=0,quoted=false,escaped=false
+ for(let i=open;i<source.length;i++){const c=source[i];if(quoted){if(escaped)escaped=false;else if(c.charCodeAt(0)===92)escaped=true;else if(c==='"')quoted=false;continue}if(c==='"'){quoted=true;continue}if(c==='{')depth++;else if(c==='}'&&--depth===0)return source.slice(open+1,i)}
+ assert.fail('complete actual C++ callback required')
+}
+function frameClosures650(){
+ const source=fs.readFileSync(new URL('../../tests/fixtures/desktop-480/native-acceptance.cpp',import.meta.url),'utf8')
+ const created=frameCallbackBody650(source,'Callback<ICoreWebView2FrameCreatedEventHandler>(');assert.ok(created)
+ const loaded=frameCallbackBody650(created,'Callback<ICoreWebView2FrameDOMContentLoadedEventHandler>(');assert.ok(loaded,'frame script must wait for the documented document event')
+ return {created,loaded}
+}
+test('hostile frame script waits for DOMContentLoaded instead of executing in FrameCreated',()=>{
+ const {created,loaded}=frameClosures650()
+ assert.ok(created.includes('bridge->add_DOMContentLoaded('))
+ assert.ok(loaded.includes('current->ExecuteScript('))
+ assert.equal(created.replace(loaded,'').includes('->ExecuteScript('),false)
+ assert.ok(created.indexOf('bridge->add_WebMessageReceived(')<created.indexOf('bridge->add_DOMContentLoaded('))
+})
+test('actual frame document callback guard dispatches once and only in the original hostile phase',()=>{
+ const {loaded}=frameClosures650(),end=loaded.indexOf('ComPtr<ICoreWebView2Frame>');assert.ok(end>0)
+ const prefix=loaded.slice(0,end).replaceAll('*attempted','attempted.value').replaceAll('S_OK','0')
+ const advance=new Function('phase','attempted','h','frameGeneration',prefix+';return 1;')
+ const state={value:false};assert.equal(advance(1,state,{generation:'owned-document'},'owned-document'),1);assert.equal(advance(1,state,{generation:'owned-document'},'owned-document'),0)
+ for(const phase of [0,2,3,4,5,6,7]){const fresh={value:false};assert.equal(advance(phase,fresh,{generation:'owned-document'},'owned-document'),0);assert.equal(fresh.value,false)}
+ const stale={value:false};assert.equal(advance(1,stale,{generation:'new-document'},'old-document'),0);assert.equal(stale.value,false)
+})
+test('frame document work uses the event sender and retains fixed callback failure refusals',()=>{
+ const {created,loaded}=frameClosures650()
+ assert.ok(loaded.includes('ComPtr<ICoreWebView2Frame> currentFrame=sender;'))
+ assert.ok(loaded.includes('FAILED(currentFrame.As(&current))'))
+ assert.ok(loaded.includes('FAIL_FRAME_NOT_OBSERVED'))
+ assert.ok(created.includes('if(FAILED(loading))emit(h,L"FAIL_ENGINE_API")'))
+ assert.doesNotMatch(loaded,/Sleep[(]|SetForegroundWindow|SendInput|LoadLibrary|http:/)
+})

@@ -6,6 +6,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import * as os from "node:os"
 import { createHash } from "node:crypto"
+import { execFileSync } from "node:child_process"
 import { parseUnifiedDiff } from "../src/code-review/diff"
 import { CodeReviewService } from "../src/code-review/service"
 import { EvidenceStore } from "../src/business-evidence/store"
@@ -15,6 +16,36 @@ const fixtureRoot = path.join(__dirname, "../../tests/fixtures")
 const diff = fs.readFileSync(path.join(fixtureRoot, "code-review-rename-464.patch"), "utf8")
 const metadata = JSON.parse(fs.readFileSync(path.join(fixtureRoot, "code-review-rename-464.json"), "utf8"))
 const sha = (value: string) => createHash("sha256").update(value).digest("hex")
+
+test("#464 autocrlf checkout preserves the recorded Git patch bytes without disabling unrelated conversion", t => {
+  const owned = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-rename-checkout-"))
+  t.after(() => fs.rmSync(owned, { recursive: true, force: true }))
+  const seed = path.join(owned, "seed"), checkout = path.join(owned, "checkout")
+  const emptyConfig = path.join(owned, "empty.gitconfig"), template = path.join(owned, "empty-template")
+  fs.mkdirSync(seed)
+  fs.mkdirSync(template)
+  fs.writeFileSync(emptyConfig, "", { flag: "wx" })
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
+    TMP: process.env.TMP, TEMP: process.env.TEMP, TMPDIR: process.env.TMPDIR,
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: emptyConfig, GIT_TERMINAL_PROMPT: "0" }
+  const git = (cwd: string, args: string[]) => execFileSync("git", args, {
+    cwd, env, encoding: "utf8", timeout: 10_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+  })
+  const relative = "companion/tests/fixtures/code-review-rename-464.patch"
+  const repository = path.resolve(fixtureRoot, "../../..")
+  fs.mkdirSync(path.dirname(path.join(seed, relative)), { recursive: true })
+  fs.copyFileSync(path.join(repository, ".gitattributes"), path.join(seed, ".gitattributes"))
+  fs.copyFileSync(path.join(repository, relative), path.join(seed, relative))
+  fs.writeFileSync(path.join(seed, "unrelated.txt"), "Unrelated checkout conversion remains enabled.\n")
+  git(seed, ["init", "--quiet", "--template=" + template])
+  git(seed, ["-c", "core.autocrlf=false", "add", "--", ".gitattributes", relative, "unrelated.txt"])
+  git(seed, ["-c", "user.name=Owned fixture", "-c", "user.email=fixture@invalid", "commit", "--quiet", "-m", "owned patch checkout"])
+  git(owned, ["-c", "core.autocrlf=true", "clone", "--quiet", "--no-local", "--template=" + template, seed, checkout])
+  const checked = fs.readFileSync(path.join(checkout, relative), "utf8")
+  assert.equal(sha(checked), metadata.patchSHA256)
+  assert.equal(sha(JSON.stringify(parseUnifiedDiff(checked)[0].lines)), metadata.lineInventorySHA256)
+  assert.ok(fs.readFileSync(path.join(checkout, "unrelated.txt"), "utf8").includes("\r\n"))
+})
 
 test("#464 actual Git R064 patch retains both paths and the full independent hunk inventory", () => {
   assert.equal(sha(diff), metadata.patchSHA256)

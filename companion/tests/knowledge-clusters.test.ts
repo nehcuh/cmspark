@@ -1,6 +1,7 @@
 import test, { after, before } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
+import fsNative from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { performance } from "node:perf_hooks"
@@ -186,16 +187,49 @@ test("#356: knowledgeIndexPath 跟随 live CMSPARK_DATA_DIR（env 后设不写�
   )
 })
 
-test("index file: 0o600, atomic write, corrupt/half JSON treated as missing", () => {
+test("index file: 0o600, atomic write, corrupt/half JSON treated as missing", t => {
   const p = clusters.knowledgeIndexPath()
-  clusters.writeKnowledgeIndexFile(p, {
-    version: 1,
-    built_at: new Date().toISOString(),
-    fingerprint: "fp-mode",
-    docs: [mkDoc("d1", { a: 1 })],
-  })
-  const mode = fs.statSync(p).mode & 0o777
-  assert.equal(mode, 0o600, `index file mode: ${mode.toString(8)}`)
+  const tmp = `${p}.tmp-${process.pid}`
+  const modeCalls: Array<{ op: string; mode?: string | number }> = []
+  const restore: Array<() => void> = []
+  if (process.platform === "win32") {
+    // Windows mode bits do not express POSIX owner/group/others or a DACL.
+    // Observe the real writer's mode requests and atomic rename without replacing it.
+    const write = fsNative.writeFileSync
+    const rename = fsNative.renameSync
+    const chmod = fsNative.chmodSync
+    const writeMock = t.mock.method(fsNative, "writeFileSync", function (this: typeof fsNative, ...args: Parameters<typeof write>) {
+      if (args[0] === tmp) modeCalls.push({ op: "write", mode: typeof args[2] === "object" ? args[2]?.mode : undefined })
+      return Reflect.apply(write, this, args)
+    })
+    restore.push(() => writeMock.mock.restore())
+    const renameMock = t.mock.method(fsNative, "renameSync", function (this: typeof fsNative, ...args: Parameters<typeof rename>) {
+      if (args[0] === tmp && args[1] === p) modeCalls.push({ op: "rename" })
+      return Reflect.apply(rename, this, args)
+    })
+    restore.push(() => renameMock.mock.restore())
+    const chmodMock = t.mock.method(fsNative, "chmodSync", function (this: typeof fsNative, ...args: Parameters<typeof chmod>) {
+      if (args[0] === p) modeCalls.push({ op: "chmod", mode: args[1] })
+      return Reflect.apply(chmod, this, args)
+    })
+    restore.push(() => chmodMock.mock.restore())
+  }
+  try {
+    clusters.writeKnowledgeIndexFile(p, {
+      version: 1,
+      built_at: new Date().toISOString(),
+      fingerprint: "fp-mode",
+      docs: [mkDoc("d1", { a: 1 })],
+    })
+  } finally {
+    for (const undo of restore.reverse()) undo()
+  }
+  if (process.platform === "win32") {
+    assert.deepEqual(modeCalls, [{ op: "write", mode: 0o600 }, { op: "rename" }, { op: "chmod", mode: 0o600 }])
+  } else {
+    const mode = fs.statSync(p).mode & 0o777
+    assert.equal(mode, 0o600, `index file mode: ${mode.toString(8)}`)
+  }
   assert.ok(clusters.readKnowledgeIndexFile(p), "well-formed index loads")
 
   fs.writeFileSync(p, "{", { mode: 0o600 }) // 半截

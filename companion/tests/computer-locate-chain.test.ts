@@ -1293,6 +1293,101 @@ test("#572 a stop during the new foreground observation still prevents UIA deliv
   assert.equal(f.injector.clicks.length, 0); assert.equal(f.counts().rate, 0)
 })
 
+// Full production executor, deterministic Promise boundary, inert desktop effects.
+// An already-started UIA attempt may settle after a panel stop or lost heartbeat;
+// neither authorizes the subsequent, separate coordinate fallback.
+type FallbackStopChannel = ReturnType<NonNullable<ComputerExecutorDeps["abortCheck"]>>
+function fallbackStopCase(reply: UiaInvokeResult, initial: FallbackStopChannel = null) {
+  let channel = initial, rate = 0
+  let entered!: () => void, release!: () => void
+  const pending = new Promise<void>(resolve => { entered = resolve })
+  const settlement = new Promise<void>(resolve => { release = resolve })
+  const evidence = new RecordEvidence(), capturer = new DiffCountingCapturer()
+  const removed: string[] = []
+  const injector = uiaInjector(reply), invoke = injector.invokeUia.bind(injector)
+  injector.invokeUia = async (...args) => {
+    const result = await invoke(...args)
+    entered()
+    await settlement
+    return result
+  }
+  const deps = bgDeps({
+    injector: injector as InputInjector, capturer,
+    uiaLocator: new FakeUia([uiaButtonHit()]),
+    abortCheck: () => channel,
+    onActionInjected: () => { rate++ },
+    removeFile: async path => { removed.push(path) },
+    now: () => 1_000_000, sleep: async () => {},
+  }, evidence)
+  return { injector, evidence, capturer, removed, rate: () => rate,
+    start: () => runComputerTask(CLICK_OK, deps),
+    async settle(task: ReturnType<typeof runComputerTask>, next: FallbackStopChannel = null) {
+      await pending; channel = next; release(); return task
+    } }
+}
+
+for (const channel of ["panel", "estop-lost"] as const) {
+  test(`#572 fallback-stop: ${channel} during awaited UIA refusal prevents a later coordinate action`, async () => {
+    const f = fallbackStopCase({ ok: false, reason: "pattern_unavailable", detail: "owned refusal" })
+    const r = await f.settle(f.start(), channel)
+    assert.equal(f.injector.invokes.length, 1, "the UIA attempt already started")
+    assert.equal(f.injector.clicks.length, 0, "stop must prevent the separate fallback action")
+    assert.equal(r.success, false)
+    assert.equal(r.errorCode, channel === "estop-lost" ? "EMERGENCY_STOP_LOST" : "TASK_ABORTED")
+    assert.equal(f.rate(), 0)
+    assert.equal(r.completedActions, 0)
+    assert.equal(f.evidence.records.length, 0)
+  })
+}
+
+test("#572 fallback-stop: ordinary UIA refusal still uses the existing coordinate route", async () => {
+  const f = fallbackStopCase({ ok: false, reason: "pattern_unavailable", detail: "owned refusal" })
+  const r = await f.settle(f.start())
+  assert.equal(r.success, true, r.error)
+  assert.equal(f.injector.invokes.length, 1); assert.equal(f.injector.clicks.length, 1)
+  assert.equal(f.rate(), 1); assert.equal(r.completedActions, 1)
+  assert.equal(f.evidence.records[0].delivery, "uia_fallback")
+  assert.ok(f.capturer.diffs > 0, "original A2.1 observation remains")
+})
+
+test("#572 fallback-stop: successful UIA delivery still avoids a coordinate action", async () => {
+  const f = fallbackStopCase(invokeOk())
+  const r = await f.settle(f.start())
+  assert.equal(r.success, true, r.error)
+  assert.equal(f.injector.invokes.length, 1); assert.equal(f.injector.clicks.length, 0)
+  assert.equal(f.rate(), 1); assert.equal(f.evidence.records[0].delivery, "uia_pattern")
+  assert.ok(f.capturer.diffs > 0, "original A2.1 observation remains")
+})
+
+test("#572 fallback-stop: explicit aborted UIA receipt retains the original refusal", async () => {
+  const f = fallbackStopCase({ ok: false, reason: "aborted", detail: "owned stop" })
+  const r = await f.settle(f.start())
+  assert.equal(r.success, false); assert.equal(r.errorCode, "TASK_ABORTED")
+  assert.equal(f.injector.invokes.length, 1); assert.equal(f.injector.clicks.length, 0)
+  assert.equal(f.rate(), 0); assert.equal(r.completedActions, 0)
+})
+
+test("#572 fallback-stop: a stop before delivery prevents both routes", async () => {
+  const f = fallbackStopCase({ ok: false, reason: "pattern_unavailable", detail: "owned refusal" }, "panel")
+  const r = await f.start()
+  assert.equal(r.success, false); assert.equal(r.errorCode, "TASK_ABORTED")
+  assert.equal(f.injector.invokes.length, 0); assert.equal(f.injector.clicks.length, 0)
+  assert.equal(f.rate(), 0); assert.equal(r.completedActions, 0)
+})
+
+test("#572 fallback-stop: a non-invoke UIA success cannot bypass a later panel stop", async () => {
+  const reply = invokeOk()
+  assert.equal(reply.ok, true)
+  if (!reply.ok) throw new Error("owned successful UIA fixture required")
+  const f = fallbackStopCase({ ...reply, mode: "select" })
+  const r = await f.settle(f.start(), "panel")
+  assert.equal(f.injector.invokes.length, 1)
+  assert.equal(f.injector.clicks.length, 0)
+  assert.equal(r.success, false); assert.equal(r.errorCode, "TASK_ABORTED")
+  assert.equal(f.rate(), 0); assert.equal(r.completedActions, 0)
+  assert.equal(f.evidence.records.length, 0)
+})
+
 for (const reason of ['method_failed','element_mismatch','window_gone','element_gone','pattern_unavailable','bad_output'] as const) {
   test(`#572 no-focus terminal ${reason} never retries with coordinate input`, async () => {
     const injector = uiaInjector({ ok: false, reason, detail: 'fixed terminal refusal', terminal: true } as UiaInvokeResult)

@@ -1,14 +1,65 @@
 // Daemon module tests — UDS lock, PID file, process detection, graceful shutdown, daemonize
 
-import test, { before, after } from "node:test"
+import test, { before, after, mock, type TestContext } from "node:test"
 import assert from "node:assert/strict"
 import * as os from "node:os"
 import * as path from "node:path"
 import * as fs from "node:fs"
+import fsNative from "node:fs"
 import * as net from "node:net"
+import netNative from "node:net"
 import { spawn } from "node:child_process"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-daemon-"))
+const windows = process.platform === "win32"
+const servers = new Map<string, net.Server>()
+const sockets = new Map<net.Server, Set<net.Socket>>()
+
+function ownedLockPath(leaf: string): string {
+  return windows
+    ? `\\\\.\\pipe\\cmspark-test-${path.basename(tempHome)}-${leaf.replace(/[\\/]/g, "-")}`
+    : path.join(tempHome, leaf)
+}
+
+async function endpointConnects(lockPath: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const client = net.createConnection(lockPath)
+    let connected = false, failure: Error | undefined
+    client.once("connect", () => { connected = true; client.destroy() })
+    client.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT" && error.code !== "ECONNREFUSED") failure = error
+      client.destroy()
+    })
+    client.once("close", () => failure ? reject(failure) : resolve(connected))
+  })
+}
+
+async function releaseOwnedLock(lockPath: string): Promise<void> {
+  const server = servers.get(lockPath)
+  const closed = server ? new Promise<void>(resolve => server.once("close", resolve)) : Promise.resolve()
+  releaseLock(lockPath)
+  await closed
+}
+
+function observeNoPipeFilesystem(t: TestContext) {
+  const calls: string[] = []
+  if (windows) {
+    const mkdir = fsNative.mkdirSync, chmod = fsNative.chmodSync, unlink = fsNative.unlinkSync
+    t.mock.method(fsNative, "mkdirSync", function (this: typeof fsNative, ...args: Parameters<typeof mkdir>) {
+      if (String(args[0]).startsWith("\\\\")) calls.push("mkdir")
+      return Reflect.apply(mkdir, this, args)
+    })
+    t.mock.method(fsNative, "chmodSync", function (this: typeof fsNative, ...args: Parameters<typeof chmod>) {
+      if (String(args[0]).startsWith("\\\\")) calls.push("chmod")
+      return Reflect.apply(chmod, this, args)
+    })
+    t.mock.method(fsNative, "unlinkSync", function (this: typeof fsNative, ...args: Parameters<typeof unlink>) {
+      if (String(args[0]).startsWith("\\\\")) calls.push("unlink")
+      return Reflect.apply(unlink, this, args)
+    })
+  }
+  return calls
+}
 
 let acquireLock: typeof import("../src/daemon").acquireLock
 let releaseLock: typeof import("../src/daemon").releaseLock
@@ -26,7 +77,25 @@ let getDefaultPidPath: typeof import("../src/daemon").getDefaultPidPath
 
 before(async () => {
   process.env.HOME = tempHome
-  delete process.env.CMSPARK_DATA_DIR
+  // Keep the same POSIX location; Windows homedir does not follow HOME.
+  process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
+
+  const create = netNative.createServer
+  mock.method(netNative, "createServer", function (this: typeof netNative, ...args: Parameters<typeof create>) {
+    const server = Reflect.apply(create, this, args) as net.Server
+    const clients = new Set<net.Socket>()
+    sockets.set(server, clients)
+    server.on("connection", client => { clients.add(client); client.once("close", () => clients.delete(client)) })
+    server.once("listening", () => {
+      const address = server.address()
+      if (typeof address === "string") servers.set(address, server)
+    })
+    server.once("close", () => {
+      sockets.delete(server)
+      for (const [address, current] of servers) if (current === server) servers.delete(address)
+    })
+    return server
+  })
 
   const daemon = await import("../src/daemon")
   acquireLock = daemon.acquireLock
@@ -44,7 +113,12 @@ before(async () => {
   getDefaultPidPath = daemon.getDefaultPidPath
 })
 
-after(() => {
+after(async () => {
+  for (const [server, clients] of sockets) {
+    for (const client of clients) client.destroy()
+    if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+  mock.restoreAll()
   fs.rmSync(tempHome, { recursive: true, force: true })
 })
 
@@ -53,67 +127,86 @@ after(() => {
 // ============================================================================
 
 test("acquireLock returns true when lock is free", async () => {
-  const lockPath = path.join(tempHome, "test1.sock")
+  const lockPath = ownedLockPath("test1.sock")
   const result = await acquireLock(lockPath)
+  try {
   assert.equal(result, true)
-  assert.equal(fs.existsSync(lockPath), true)
-  releaseLock(lockPath)
+  if (windows) assert.equal(await endpointConnects(lockPath), true)
+  else assert.equal(fs.existsSync(lockPath), true)
+  } finally { await releaseOwnedLock(lockPath) }
 })
 
 test("acquireLock is idempotent when already held by this process", async () => {
   // OPS-02: daemon start keeps the UDS lock across initDataDir, then startServer
   // calls acquireLock again. Same-process re-acquire must succeed (not false-positive
   // "already_running" against our own PID).
-  const lockPath = path.join(tempHome, "test2.sock")
+  const lockPath = ownedLockPath("test2.sock")
   const first = await acquireLock(lockPath)
+  try {
   assert.equal(first, true)
 
   const second = await acquireLock(lockPath)
   assert.equal(second, true)
 
-  releaseLock(lockPath)
+  } finally { await releaseOwnedLock(lockPath) }
 })
 
 test("releaseLock removes the socket file", async () => {
-  const lockPath = path.join(tempHome, "test3.sock")
+  const lockPath = ownedLockPath("test3.sock")
   await acquireLock(lockPath)
-  assert.equal(fs.existsSync(lockPath), true)
-  releaseLock(lockPath)
-  assert.equal(fs.existsSync(lockPath), false)
+  try {
+    if (windows) assert.equal(await endpointConnects(lockPath), true)
+    else assert.equal(fs.existsSync(lockPath), true)
+  } finally { await releaseOwnedLock(lockPath) }
+  if (windows) assert.equal(await endpointConnects(lockPath), false)
+  else assert.equal(fs.existsSync(lockPath), false)
 })
 
 test("releaseLock is idempotent when called twice", async () => {
-  const lockPath = path.join(tempHome, "test4.sock")
+  const lockPath = ownedLockPath("test4.sock")
   await acquireLock(lockPath)
-  releaseLock(lockPath)
-  releaseLock(lockPath) // should not throw
-  assert.equal(fs.existsSync(lockPath), false)
+  await releaseOwnedLock(lockPath)
+  await releaseOwnedLock(lockPath) // should not throw
+  if (windows) assert.equal(await endpointConnects(lockPath), false)
+  else assert.equal(fs.existsSync(lockPath), false)
 })
 
-test("acquireLock creates parent directories if needed", async () => {
-  const lockPath = path.join(tempHome, "nested", "deep", "test5.sock")
+test("acquireLock creates parent directories if needed", async t => {
+  const lockPath = ownedLockPath(path.join("nested", "deep", "test5.sock"))
+  const filesystem = observeNoPipeFilesystem(t)
   const result = await acquireLock(lockPath)
+  try {
   assert.equal(result, true)
-  assert.equal(fs.existsSync(lockPath), true)
-  releaseLock(lockPath)
+  if (windows) assert.equal(await endpointConnects(lockPath), true)
+  else assert.equal(fs.existsSync(lockPath), true)
+  } finally { await releaseOwnedLock(lockPath) }
+  if (windows) { assert.deepEqual(filesystem, []); assert.equal(await endpointConnects(lockPath), false) }
 })
 
-test("acquireLock sets socket file permissions to 0o600", async () => {
-  const lockPath = path.join(tempHome, "test6.sock")
+test("acquireLock sets socket file permissions to 0o600", async t => {
+  const lockPath = ownedLockPath("test6.sock")
+  const filesystem = observeNoPipeFilesystem(t)
   await acquireLock(lockPath)
+  try {
+  if (windows) {
+    assert.equal(await endpointConnects(lockPath), true)
+    assert.equal(await acquireLock(lockPath), true)
+  } else {
   const stats = fs.statSync(lockPath)
   // eslint-disable-next-line no-bitwise
   const mode = stats.mode & 0o777
   assert.equal(mode, 0o600)
-  releaseLock(lockPath)
+  }
+  } finally { await releaseOwnedLock(lockPath) }
+  if (windows) { assert.deepEqual(filesystem, []); assert.equal(await endpointConnects(lockPath), false) }
 })
 
 test("acquireLock can re-acquire after release", async () => {
-  const lockPath = path.join(tempHome, "test7.sock")
+  const lockPath = ownedLockPath("test7.sock")
   assert.equal(await acquireLock(lockPath), true)
-  releaseLock(lockPath)
+  await releaseOwnedLock(lockPath)
   assert.equal(await acquireLock(lockPath), true)
-  releaseLock(lockPath)
+  await releaseOwnedLock(lockPath)
 })
 
 // ============================================================================
@@ -121,7 +214,7 @@ test("acquireLock can re-acquire after release", async () => {
 // ============================================================================
 
 test("multi-process competition: only one process holds the lock", async () => {
-  const lockPath = path.join(tempHome, "compete.sock")
+  const lockPath = ownedLockPath("compete.sock")
 
   // Process A: acquires lock and holds it
   const scriptA = `
@@ -301,13 +394,24 @@ test("writePidFile creates parent directories", () => {
   assert.equal(readPidFile(pidPath), 42)
 })
 
-test("writePidFile sets file permissions to 0o600", () => {
+test("writePidFile sets file permissions to 0o600", t => {
   const pidPath = path.join(tempHome, "perms.pid")
-  writePidFile(pidPath, 42)
+  const modes: unknown[] = []
+  const write = fsNative.writeFileSync
+  const observed = windows ? t.mock.method(fsNative, "writeFileSync", function (this: typeof fsNative, ...args: Parameters<typeof write>) {
+    if (args[0] === pidPath) modes.push(typeof args[2] === "object" ? args[2]?.mode : undefined)
+    return Reflect.apply(write, this, args)
+  }) : undefined
+  try { writePidFile(pidPath, 42) } finally { observed?.mock.restore() }
+  if (windows) {
+    assert.deepEqual(modes, [0o600]) // Actual creation request, not a Windows DACL.
+    assert.equal(readPidFile(pidPath), 42)
+  } else {
   const stats = fs.statSync(pidPath)
   // eslint-disable-next-line no-bitwise
   const mode = stats.mode & 0o777
   assert.equal(mode, 0o600)
+  }
 })
 
 test("cleanupPidFile removes the file", () => {
@@ -330,8 +434,12 @@ test("cleanupPidFile is idempotent for missing file", () => {
 
 test("getDefaultLockPath returns path under ~/.cmspark-agent", () => {
   const lockPath = getDefaultLockPath()
+  if (windows) {
+    assert.equal(lockPath, "\\\\?\\pipe\\cmspark-agent-lock")
+  } else {
   assert.ok(lockPath.endsWith("daemon.sock"))
   assert.ok(lockPath.includes(".cmspark-agent"))
+  }
 })
 
 test("getDefaultPidPath returns path under ~/.cmspark-agent", () => {
@@ -353,7 +461,8 @@ test("setupGracefulShutdown calls cleanup on SIGTERM", async () => {
       fs.writeFileSync(${JSON.stringify(markerPath)}, "CLEANUP_DONE");
     });
     // Send signal asynchronously so the handler has time to register
-    setTimeout(() => process.kill(process.pid, "SIGTERM"), 50);
+    // Windows unit test: invoke the registered listener, not console/kill delivery.
+    setTimeout(() => process.platform === "win32" ? process.emit("SIGTERM", "SIGTERM") : process.kill(process.pid, "SIGTERM"), 50);
     // Keep alive briefly so the handler can run and write the file
     setTimeout(() => {}, 300);
   `
@@ -374,7 +483,7 @@ test("setupGracefulShutdown calls cleanup on SIGINT", async () => {
       fs.writeFileSync(${JSON.stringify(markerPath)}, "CLEANUP_DONE");
     });
     // Send signal asynchronously so the handler has time to register
-    setTimeout(() => process.kill(process.pid, "SIGINT"), 50);
+    setTimeout(() => process.platform === "win32" ? process.emit("SIGINT", "SIGINT") : process.kill(process.pid, "SIGINT"), 50);
     // Keep alive briefly so the handler can run and write the file
     setTimeout(() => {}, 300);
   `
@@ -397,9 +506,9 @@ test("setupGracefulShutdown ignores duplicate signals", async () => {
       const start = Date.now();
       while (Date.now() - start < 200) {}
     });
-    process.kill(process.pid, "SIGTERM");
+    process.platform === "win32" ? process.emit("SIGTERM", "SIGTERM") : process.kill(process.pid, "SIGTERM");
     // Second signal during cleanup should be ignored
-    setTimeout(() => process.kill(process.pid, "SIGTERM"), 50);
+    setTimeout(() => process.platform === "win32" ? process.emit("SIGTERM", "SIGTERM") : process.kill(process.pid, "SIGTERM"), 50);
   `
 
   const child = spawn(process.execPath, ["-e", script], { cwd: tempHome })
@@ -423,7 +532,7 @@ test("setupGracefulShutdown awaits async cleanup on SIGTERM", async () => {
       await new Promise(resolve => setTimeout(resolve, 50));
       fs.writeFileSync(${JSON.stringify(markerPath)}, "ASYNC_CLEANUP_DONE");
     });
-    setTimeout(() => process.kill(process.pid, "SIGTERM"), 50);
+    setTimeout(() => process.platform === "win32" ? process.emit("SIGTERM", "SIGTERM") : process.kill(process.pid, "SIGTERM"), 50);
     setTimeout(() => {}, 300);
   `
 
