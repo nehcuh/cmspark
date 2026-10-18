@@ -14,6 +14,7 @@ import { getLockPath } from "../../src/platform"
 import { spawnAcpChild } from "../../src/acp/win-spawn"
 import { OwnedStdioTransport } from "../../src/mcp/stdio-transport"
 import { prepareWindowsJob, quoteWindowsJobArg, spawnWindowsJob } from "../../src/process/windows-job"
+import { windowsTargetEnvironment } from "../../src/process/windows-env"
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const alive = (pid?: number) => { if (!pid) return false; try { process.kill(pid, 0); return true } catch { return false } }
@@ -70,6 +71,7 @@ function observeHostileJobStartup() {
       safe(() => child.stdout?.on("data", (chunk: unknown) => count("stdout_bytes", chunk)))
       safe(() => child.stderr?.on("data", (chunk: unknown) => { count("stderr_bytes", chunk); observeStderr(chunk) }))
     },
+    snapshot() { return { ...facts, stderr_fixed_words: [...stderrFixed].sort() } },
     emit(t: Pick<TestContext, "diagnostic">) {
       safe(() => t.diagnostic(JSON.stringify({ schema: "owned-hostile-job-startup-v2", ...facts, stderr_fixed_words: [...stderrFixed].sort() })))
     },
@@ -284,21 +286,72 @@ test("native Windows job preserves bidirectional protocol pipes and ignored stdi
 })
 
 
-test("native Windows job survives hostile server env and preserves literal argv", { skip: process.platform !== "win32", timeout: 30000 }, async t => {
-  const root = ownedRoot(), marker = path.join(root, "argv.json"), script = path.join(root, "literal argv.cjs")
-  const args = ["", 'space 中文 & % "value"', "C:\\owned path\\", "x".repeat(2048)]
-  fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify({args:process.argv.slice(2),cwd:process.cwd()}));process.stdin.resume();setTimeout(()=>{},20000);`)
-  let child: ChildProcess | undefined
-  const observation = observeHostileJobStartup()
-  try {
-    await prepareWindowsJob()
-    child = spawnWindowsJob(process.execPath, [script, ...args], { env: { ...process.env, SystemRoot: root, ComSpec: path.join(root, "fake.exe") }, cwd: path.relative(process.cwd(), root), stdio: "pipe" })
-    observation.attach(child)
-    child.stderr?.on("data", () => {})
-    await until(() => fs.existsSync(marker), 15000)
-    const observed = JSON.parse(fs.readFileSync(marker, "utf8"))
-    assert.deepEqual(observed.args, args); assert.equal(fs.realpathSync.native(observed.cwd), fs.realpathSync.native(root))
-  } finally { observation.emit(t); await stop(child); fs.rmSync(root, { recursive: true, force: true }) }
+// Test-owned overrides must be unique under the actual Windows case-folding
+// rule. Do not rewrite the parent environment or production target semantics.
+function hostileJobEnvironment(runtimeRoot: string, fakeComSpec: string, host: NodeJS.ProcessEnv = process.env) {
+  const env: NodeJS.ProcessEnv = Object.create(null)
+  for (const key of Object.keys(host)) if (!["SYSTEMROOT", "COMSPEC"].includes(key.toUpperCase())) env[key] = host[key]
+  env.SystemRoot = runtimeRoot; env.ComSpec = fakeComSpec
+  const block = windowsTargetEnvironment(env, host).toString("utf16le").split("\0").filter(Boolean)
+  for (const [name, expected] of [["SYSTEMROOT", runtimeRoot], ["COMSPEC", fakeComSpec]]) {
+    const entries = block.filter(entry => entry.slice(0, entry.indexOf("=")).toUpperCase() === name)
+    assert.ok(entries.length === 1 && entries[0].slice(entries[0].indexOf("=") + 1) === expected, "owned target override must reach the effective environment exactly once")
+  }
+  return env
+}
+
+for (const runtime of ["invalid-root", "trusted-root"] as const) {
+  test(`native Windows job ${runtime} keeps explicit env and literal argv`, { skip: process.platform !== "win32", timeout: 30000 }, async t => {
+    const root = ownedRoot(), marker = path.join(root, "argv.json"), script = path.join(root, "literal argv.cjs")
+    const args = ["", 'space 中文 & % "value"', "C:\\owned path\\", "x".repeat(2048)]
+    fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify({args:process.argv.slice(2),cwd:process.cwd()}));process.stdin.resume();setTimeout(()=>{},20000);`)
+    let child: ChildProcess | undefined
+    const observation = observeHostileJobStartup()
+    try {
+      // Node itself needs a valid Windows runtime root before it can execute
+      // the argv marker. The separate invalid-root control is not a retry or
+      // a passing substitute for this required real argv/cwd positive.
+      const hostKey = Object.keys(process.env).sort().find(key => key.toUpperCase() === "SYSTEMROOT")
+      const trustedRoot = hostKey === undefined ? undefined : process.env[hostKey]
+      assert.ok(typeof trustedRoot === "string" && trustedRoot.length > 0, "trusted parent runtime root is required")
+      const env = hostileJobEnvironment(runtime === "invalid-root" ? root : trustedRoot, path.join(root, "fake.exe"))
+      await prepareWindowsJob()
+      child = spawnWindowsJob(process.execPath, [script, ...args], { env, cwd: path.relative(process.cwd(), root), stdio: "pipe" })
+      observation.attach(child)
+      child.stderr?.on("data", () => {})
+      if (runtime === "invalid-root") {
+        await until(() => observation.snapshot().close_observed, 15000)
+        const observed = observation.snapshot()
+        assert.equal(observed.spawn_observed, true); assert.equal(observed.error_observed, false)
+        assert.equal(observed.exit_observed, true); assert.equal(observed.exit_code, 134); assert.equal(observed.exit_signal, null)
+        assert.equal(observed.close_code, 134); assert.equal(observed.close_signal, null)
+        assert.ok(observed.stderr_fixed_words.includes("ncrypto::CSPRNG") && observed.stderr_fixed_words.includes("node::InitializeOncePerProcessInternal"), "invalid runtime must expose the observed fixed startup assertion")
+        assert.equal(fs.existsSync(marker), false, "invalid runtime must fail before target JavaScript")
+      } else {
+        await until(() => fs.existsSync(marker), 15000)
+        const observed = JSON.parse(fs.readFileSync(marker, "utf8"))
+        assert.deepEqual(observed.args, args); assert.equal(fs.realpathSync.native(observed.cwd), fs.realpathSync.native(root))
+      }
+    } finally { observation.emit(t); await stop(child); fs.rmSync(root, { recursive: true, force: true }) }
+  })
+}
+
+test("owned hostile job environment pins effective root and shell across casing collisions", () => {
+  const host = { ...JSON.parse('{"__proto__":"owned-prototype-key"}'), SYSTEMROOT: "C:\\Windows", SystemRoot: "C:\\shadow-root", COMSPEC: "C:\\Windows\\cmd.exe", ComSpec: "C:\\shadow-shell", OWNED: "retained" }
+  const before = { ...host }, fake = "C:\\owned\\fake.exe"
+  const bad = hostileJobEnvironment("C:\\owned", fake, host), good = hostileJobEnvironment("C:\\Windows", fake, host)
+  assert.deepEqual(host, before)
+  for (const [env, root] of [[bad, "C:\\owned"], [good, "C:\\Windows"]] as const) {
+    const rows = windowsTargetEnvironment(env, host).toString("utf16le").split("\0").filter(Boolean)
+    assert.equal(rows.filter(row => /^systemroot=/i.test(row)).length, 1)
+    assert.equal(rows.filter(row => /^comspec=/i.test(row)).length, 1)
+    assert.ok(rows.includes(`SystemRoot=${root}`)); assert.ok(rows.includes(`ComSpec=${fake}`))
+    assert.equal(env.OWNED, "retained")
+    assert.equal(Object.hasOwn(env, "__proto__"), true)
+    assert.ok(rows.includes("__proto__=owned-prototype-key"), "all non-override own keys must survive the actual environment block")
+  }
+  const withoutRoot = (env: NodeJS.ProcessEnv) => Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== "SYSTEMROOT"))
+  assert.deepEqual(withoutRoot(bad), withoutRoot(good), "test-owned pair differs only in the effective runtime root")
 })
 
 test("native Windows owner crash reclaims its job without touching a sentinel", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
