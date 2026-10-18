@@ -363,3 +363,16 @@ test('#571 actual exit64 branches retain the original exit with early-stage and 
  const table={targetPathsRefused:[1,'TARGET_PATHS_REFUSED'],regularPolicyRefused:[2,'REGULAR_POLICY_REFUSED'],wkNavigationRefused:[4,'WK_NAVIGATION_REFUSED'],receiptWriteRefused:[5,'RECEIPT_WRITE_REFUSED']},parse=startupConsumer571().parse
  for(const branch of branches)for(const failedWrite of[false,true]){const[n,token]=table[branch[1]],m=startupMachine571();for(const stage of startupStages571.slice(0,n))m.note(stage);if(failedWrite)m.state.write=()=>-1;const code=branch[0].replace('ax571StartupJournal?.note(.'+branch[1]+')','note('+JSON.stringify(token)+')'),exit={code:0};vm.runInNewContext(code,{note:m.note,exit:n=>{exit.code=n}});assert.equal(exit.code,64);const result=parse(m.writes.join(''));assert.equal(result.refusal,failedWrite?null:token);if(failedWrite)assert.equal(m.state.stopped,true)}
 })
+
+// The fixture requires an actual regular policy, not an acknowledgement of a redundant switch.
+function actualRegularPolicy571(){
+ const swift=fs.readFileSync(path.join(root,'companion/tests/fixtures/ax-571/owned-target.swift'),'utf8').replace(/\r\n/g,'\n'),a=swift.indexOf('    let delegate = AX571Target(arguments)'),b=swift.indexOf('    ax571StartupJournal?.note(.regularPolicyAdmitted)',a);assert.ok(a>=0&&b>a);const body=swift.slice(a,b),decl=/let ([A-Za-z_][A-Za-z0-9_]*) = app\.activationPolicy\(\)/.exec(body),g=/guard (.+) else \{ ax571StartupJournal\?\.note\(\.regularPolicyRefused\); exit\(64\) \}/.exec(body);assert.ok(g,'actual target policy refusal guard');let condition=g[1].replace(/\.regular\b/g,'"regular"');
+ const code=(decl?'const '+decl[1]+'=app.activationPolicy();':'')+'Boolean('+condition+')';
+ return (app)=>vm.runInNewContext(decl?'(()=>{'+code.replace('Boolean(','return Boolean(')+'})()':code,{app},{timeout:1000})
+}
+test('#571 regular policy already satisfied is admitted without a redundant switch',()=>{
+ const evaluate=actualRegularPolicy571();for(const result of [false,true]){let gets=0,sets=0;assert.equal(evaluate({activationPolicy(){gets++;return 'regular'},setActivationPolicy(p){sets++;assert.equal(p,'regular');return result}}),true);assert.equal(gets,1);assert.equal(sets,0)}
+})
+test('#571 policy transitions require both successful switch and actual regular postcondition',()=>{
+ const evaluate=actualRegularPolicy571();for(const initial of ['accessory','prohibited'])for(const result of [false,true])for(const final of ['regular','accessory','prohibited']){let gets=0,sets=0;const ok=evaluate({activationPolicy(){return gets++===0?initial:final},setActivationPolicy(p){sets++;assert.equal(p,'regular');return result}});assert.equal(ok,result&&final==='regular',JSON.stringify({initial,result,final}));assert.equal(sets,1);assert.equal(gets,result?2:1)}
+})

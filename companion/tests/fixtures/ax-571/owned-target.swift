@@ -344,7 +344,8 @@ if arguments.first == "--launch-owned" {
     launcher.start(); withExtendedLifetime(launcher) { app.run() }
 } else {
     let delegate = AX571Target(arguments)
-    guard app.setActivationPolicy(.regular) else { ax571StartupJournal?.note(.regularPolicyRefused); exit(64) }
+    let initialPolicy = app.activationPolicy()
+    guard initialPolicy == .regular || (app.setActivationPolicy(.regular) && app.activationPolicy() == .regular) else { ax571StartupJournal?.note(.regularPolicyRefused); exit(64) }
     ax571StartupJournal?.note(.regularPolicyAdmitted)
     app.delegate = delegate; withExtendedLifetime(delegate) { app.run() }
 }
