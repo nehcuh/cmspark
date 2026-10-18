@@ -1278,6 +1278,21 @@ private enum CUAX571LocateReason: String {
 }
 #if CMSPARK_AX571_DIAGNOSTICS
 private var cuAX571CurrentReason = CUAX571LocateReason.notRecorded
+private struct CUAX571Traversal {
+    var hidden = false, sizeMissing = false, sizeSmall = false
+    var nameEmpty = false, nameDifferent = false
+    var childrenMissing = false, childrenWrongType = false, childrenEmpty = false, childrenNonempty = false
+    var depth = 0
+    var end = "EMPTY_FRONTIER"
+    var value: [String: Any] {
+        return ["schema": 1, "hidden": hidden, "sizeMissing": sizeMissing, "sizeSmall": sizeSmall,
+                "nameEmpty": nameEmpty, "nameDifferent": nameDifferent,
+                "childrenMissing": childrenMissing, "childrenWrongType": childrenWrongType,
+                "childrenEmpty": childrenEmpty, "childrenNonempty": childrenNonempty,
+                "depth": depth, "end": end]
+    }
+}
+private var cuAX571Traversal = CUAX571Traversal()
 #endif
 @inline(__always) private func cuAX571Note(_ reason: CUAX571LocateReason) {
 #if CMSPARK_AX571_DIAGNOSTICS
@@ -1288,6 +1303,7 @@ private func cuAX571LocateResult(_ value: [String: Any]) -> String {
 #if CMSPARK_AX571_DIAGNOSTICS
     var result = value
     result["ax571Reason"] = cuAX571CurrentReason.rawValue
+    if (value["found"] as? Bool) == false && cuAX571CurrentReason == .treeExhausted { result["ax571Traversal"] = cuAX571Traversal.value }
     return cuJson(result)
 #else
     return cuJson(value)
@@ -1390,6 +1406,9 @@ private func cuAXTargetWindow(_ app: AXUIElement, _ pid: pid_t, _ windowId: UInt
 // MARK: - ax-locate
 
 func cuAXLocate(windowId: UInt32, target: String) -> String {
+#if CMSPARK_AX571_DIAGNOSTICS
+    cuAX571Traversal = CUAX571Traversal()
+#endif
     cuAX571Note(.locateStarted)
     let pid = cuPidForWindow(windowId)
     guard let appElement = cuAppElementForPid(pid),
@@ -1404,17 +1423,29 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
             // Skip hidden/zero-size
             var hiddenRef: CFTypeRef?
             AXUIElementCopyAttributeValue(element, kAXHiddenAttribute as CFString, &hiddenRef)
+#if CMSPARK_AX571_DIAGNOSTICS
+            if let hidden = hiddenRef as? Bool, hidden { cuAX571Traversal.hidden = true }
+#endif
             if let hidden = hiddenRef as? Bool, hidden { continue }
             var sizeRef: CFTypeRef?
             AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef)
+#if CMSPARK_AX571_DIAGNOSTICS
+            if sizeRef == nil { cuAX571Traversal.sizeMissing = true }
+#endif
             var sz = CGSize.zero
             if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &sz) }
+#if CMSPARK_AX571_DIAGNOSTICS
+            if sz.width <= 1 && sz.height <= 1 { cuAX571Traversal.sizeSmall = true }
+#endif
             if sz.width <= 1 && sz.height <= 1 { continue }
 
             var nameRef: CFTypeRef?; var roleRef: CFTypeRef?
             AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &nameRef)
             AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
             let name = (nameRef as? String) ?? ""
+#if CMSPARK_AX571_DIAGNOSTICS
+            if name.isEmpty { cuAX571Traversal.nameEmpty = true }
+#endif
             if name.lowercased() == target.lowercased() || name.contains(target) {
                 var posRef: CFTypeRef?; AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef)
                 var pos = CGPoint.zero; var size = CGSize.zero
@@ -1427,12 +1458,26 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
                     "name": name, "role": (roleRef as? String) ?? "unknown", "confidence": 1.0, "candidates": 1,
                 ])
             }
+#if CMSPARK_AX571_DIAGNOSTICS
+            if !name.isEmpty { cuAX571Traversal.nameDifferent = true }
+#endif
             var children: CFTypeRef?
             AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
+#if CMSPARK_AX571_DIAGNOSTICS
+            if children == nil { cuAX571Traversal.childrenMissing = true }
+            else if let childArray = children as? [AXUIElement] {
+                if childArray.isEmpty { cuAX571Traversal.childrenEmpty = true }
+                else { cuAX571Traversal.childrenNonempty = true }
+            } else { cuAX571Traversal.childrenWrongType = true }
+#endif
             if let childArray = children as? [AXUIElement] { nextLevel.append(contentsOf: childArray) }
         }
         queue = nextLevel; depth += 1
     }
+#if CMSPARK_AX571_DIAGNOSTICS
+    cuAX571Traversal.depth = depth
+    cuAX571Traversal.end = queue.isEmpty ? "EMPTY_FRONTIER" : "DEPTH_LIMIT"
+#endif
     cuAX571Note(.treeExhausted)
     return cuAX571LocateResult(["found": false])
 }

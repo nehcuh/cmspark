@@ -73,6 +73,20 @@ function ax571LocateReason(value:unknown):string {
   return typeof reason==="string"&&["NOT_RECORDED","LOCATE_STARTED","CG_READ_UNAVAILABLE","CG_TARGET_COUNT","CG_TARGET_METADATA","CG_ROW_PID","CG_SAME_APP_METADATA","CG_CORRESPONDENCE","AX_WINDOWS_SHAPE","AX_WINDOWS_LIMIT","AX_MEMBER_TYPE","AX_MEMBER_METADATA","AX_AMBIGUOUS","AX_TARGET_ABSENT","AX_RECHECK_CHANGED","STOPPED","ELEMENT_FOUND","TREE_EXHAUSTED"].includes(reason)?reason:"UNKNOWN"
  }catch{return "UNKNOWN"}
 }
+// Failure-only fixed traversal facts; never a selector, permission or lifecycle decision.
+function ax571Traversal(value:unknown):{schema:1;hidden:boolean;sizeMissing:boolean;sizeSmall:boolean;nameEmpty:boolean;nameDifferent:boolean;childrenMissing:boolean;childrenWrongType:boolean;childrenEmpty:boolean;childrenNonempty:boolean;depth:number;end:string}|null {
+ try {
+  if(!value||typeof value!=="object")return null
+  const slot=Object.getOwnPropertyDescriptor(value,"ax571Traversal"),item=slot&&"value"in slot?slot.value:undefined
+  if(!item||typeof item!=="object"||Array.isArray(item))return null
+  const keys=["schema","hidden","sizeMissing","sizeSmall","nameEmpty","nameDifferent","childrenMissing","childrenWrongType","childrenEmpty","childrenNonempty","depth","end"]
+  const descriptors=Object.getOwnPropertyDescriptors(item)
+  if(Reflect.ownKeys(descriptors).length!==keys.length||!keys.every(k=>Object.prototype.hasOwnProperty.call(descriptors,k)&&"value"in descriptors[k]))return null
+  const get=(k:string)=>descriptors[k].value
+  if(get("schema")!==1||!keys.slice(1,10).every(k=>typeof get(k)==="boolean")||!Number.isInteger(get("depth"))||get("depth")<0||get("depth")>50||!["EMPTY_FRONTIER","DEPTH_LIMIT"].includes(get("end"))||get("end")==="DEPTH_LIMIT"&&get("depth")!==50)return null
+  return {schema:1,hidden:get("hidden"),sizeMissing:get("sizeMissing"),sizeSmall:get("sizeSmall"),nameEmpty:get("nameEmpty"),nameDifferent:get("nameDifferent"),childrenMissing:get("childrenMissing"),childrenWrongType:get("childrenWrongType"),childrenEmpty:get("childrenEmpty"),childrenNonempty:get("childrenNonempty"),depth:get("depth"),end:get("end")}
+ }catch{return null}
+}
 function ax571BindingTokens(value:unknown):{schema:1;firstTarget:string;firstSibling:string;secondTarget:string;secondSibling:string;stable:boolean}|null {
  try {
   if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).sort().join(",")!=="firstSibling,firstTarget,schema,secondSibling,secondTarget,stable")return null
@@ -187,7 +201,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
    const code=ax571Code(denied);t.diagnostic('AX571_ROW '+JSON.stringify({schema:1,framework,action:'press',status:'Gap',code,permission:false,reason:'ACTUAL_PERMISSION_PRECONDITION_FALSE'}));assert.notEqual(denied.ok,true,'AX571_UNTRUSTED_ACTION');assert.notEqual(code,'UNKNOWN','AX571_UNCLASSIFIED_REFUSAL');assert.equal(fs.existsSync(marker),false,'AX571_UNTRUSTED_EFFECT');throw Error('AX571_PERMISSION_REQUIRED')
   }
   assert.equal(security.secureInput,false,'AX571_SECURE_INPUT_ACTIVE')
-  const hit=await command(['ax-locate','--window-id',String(target),'--target','OwnedAX571Press']);try{t.diagnostic('AX571_LOCATE '+JSON.stringify({schema:1,framework,reason:ax571LocateReason(hit)}))}catch{/* Passive observation cannot replace locate/primary. */}assert.equal(hit.found,true,'AX571_LOCATE_FAILED');assert.ok(hit.name==='OwnedAX571Press','AX571_IDENTITY');assert.equal(typeof hit.role,'string','AX571_IDENTITY')
+  const hit=await command(['ax-locate','--window-id',String(target),'--target','OwnedAX571Press']);try{t.diagnostic('AX571_LOCATE '+JSON.stringify({schema:1,framework,reason:ax571LocateReason(hit)}));if(hit.found===false)t.diagnostic('AX571_TRAVERSAL '+JSON.stringify({schema:1,framework,observation:ax571Traversal(hit)}))}catch{/* Passive observation cannot replace locate/primary. */}assert.equal(hit.found,true,'AX571_LOCATE_FAILED');assert.ok(hit.name==='OwnedAX571Press','AX571_IDENTITY');assert.equal(typeof hit.role,'string','AX571_IDENTITY')
   const args=['ax-invoke','--window-id',String(target),'--target',hit.name,'--action','press','--expect-role',hit.role,'--expect-name',hit.name,'--estop-flag',stop]
   const mismatchArgs=[...args],roleIndex=mismatchArgs.indexOf('--expect-role');assert.ok(roleIndex>=0&&mismatchArgs.lastIndexOf('--expect-role')===roleIndex,'AX571_ROLE_ARGV');mismatchArgs[roleIndex+1]='AX571_WRONG_ROLE'
   const mismatch=await command(mismatchArgs,8000)

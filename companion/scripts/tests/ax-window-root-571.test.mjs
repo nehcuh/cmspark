@@ -99,7 +99,7 @@ test('#571 in-call finite locate evidence distinguishes actual existing binding 
 test('#571 native-only locate result adds a finite field while shipping serialization remains exact',()=>{
  const raw=body('cuAX571LocateResult');assert.ok(raw.startsWith('\n#if CMSPARK_AX571_DIAGNOSTICS\n'))
  const [native,shipping]=raw.slice('\n#if CMSPARK_AX571_DIAGNOSTICS\n'.length).split('\n#else\n');assert.equal(shipping.trim(),'return cuJson(value)\n#endif')
- const js=native.replace('var result = value','let result = {...value}').replace('cuAX571CurrentReason.rawValue','reason');assert.doesNotMatch(js,/\bvar\b|#if|AXUIElement|CGWindow/)
+ const js=native.replace('    if (value["found"] as? Bool) == false && cuAX571CurrentReason == .treeExhausted { result["ax571Traversal"] = cuAX571Traversal.value }\n','').replace('var result = value','let result = {...value}').replace('cuAX571CurrentReason.rawValue','reason');assert.doesNotMatch(js,/\bvar\b|#if|AXUIElement|CGWindow/)
  const run=vm.compileFunction(js,['value','reason','cuJson']),value={found:false};assert.equal(run(value,'AX_TARGET_ABSENT',JSON.stringify),'{"found":false,"ax571Reason":"AX_TARGET_ABSENT"}');assert.deepEqual(value,{found:false})
  const located=body('cuAXLocate');assert.match(located,/cuAX571Note\(\.locateStarted\)/);assert.match(located,/cuAX571Note\(\.elementFound\)\s+return cuAX571LocateResult/);assert.match(located,/cuAX571Note\(\.treeExhausted\)\s+return cuAX571LocateResult/)
  const build=fs.readFileSync(path.join(root,'companion/scripts/build-ax-native-571.mjs'),'utf8');assert.equal((build.match(/'CMSPARK_AX571_DIAGNOSTICS'/g)||[]).length,1)

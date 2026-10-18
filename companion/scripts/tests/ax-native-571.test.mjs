@@ -515,3 +515,5 @@ test('#571 four binding roles reuse existing observations and never alter public
  assert.equal((tail.match(/CGWindowListCopyWindowInfo\(/g)||[]).length,2);assert.ok(tail.indexOf('self.writeBinding(firstTargetReason,firstSiblingReason,secondTargetReason,secondSiblingReason,stable)')<tail.indexOf('self.write(observation, to:self.ready.appendingPathExtension("setup"))'));assert.match(tail,/guard ax571Readiness\(active,key,targetBound,siblingBound\) else \{ return \}/);assert.doesNotMatch(tail,/Timer|sleep|asyncAfter|self\??\.queueReadiness\(/)
  for(const input of [text,text.replace(/\r?\n/g,'\r\n')]){const f=bindingReason571(input);assert.equal(f.run([],42,'Owned AX571 target',f.h.rect(1,2,3,4)).reason,'NO_TITLE_MATCH')}
 })
+
+import './ax-traversal-observation-571.test.mjs'

@@ -203,3 +203,8 @@ Brand/tray (#474): `node chrome-extension/scripts/generate-icons.mjs` and `node 
 owned 夹具用现有两次 CG 读取，记录首次/第二次 target、sibling 绑定的八种有限理由和原 stable 布尔值到私有 `ready.json.binding`。父测试只接纳同一 0700 目录、当前用户的 0600 单链接普通文件；长度至多512字节，禁止符号链接，读取前后复核身份与稳定性。缺失、模式不符、字段非法或写入/读取异常仅丢弃观测，原 locate 断言、ready 条件、20秒期限、E-Stop 与后台效果/焦点/光标/z-order 和 owned 清理继续原样生效。
 
 现有 MJS 入口用有界惯性 seams 验证这些路径，不运行 Swift/AppKit 或证明真实原生成功。真实 macOS 编译、AppKit/WK 后台动作及生命周期仍必须通过 hosted 原生步骤；组件绿、日志字段或受控测试不能替代它。不要在用户桌面启动此夹具。
+
+
+### #571 traversal failure observation
+
+The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach `ax571Traversal` only to a `found:false`/`TREE_EXHAUSTED` locate result. The parent emits `AX571_TRAVERSAL` with schema 1, nine fixed booleans, depth 0..50 and `EMPTY_FRONTIER`/`DEPTH_LIMIT`, or null for invalid/unknown observation. Flags describe branches encountered anywhere during that one call, not the properties of a particular node or the historical WK cause. They contain no names, roles, titles, IDs, PIDs, paths, frames or error text. Shipping serialization and all existing AX/CG calls, hidden/size/name/children/depth decisions and strict native assertions remain unchanged. The canonical `ax-native-571.test.mjs` entry statically imports the source-derived traversal controls; CPU projection is not a Swift SDK/native result. True hosted Mac validation remains required.
