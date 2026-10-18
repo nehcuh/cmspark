@@ -24,7 +24,8 @@ final class WorkspacePicker705:XCTestCase {
   // No quiescent receipt if an Objective-C exception, timeout or termination interrupts a synchronous UI call.
   defer{do{try scene.write(.returned,["schema":1,"nonce":scene.nonce,"pid":pid,"phase":"UI_SEQUENCE_RETURNED"])}catch{XCTFail("OWNED_UI_QUIESCENCE_REFUSED")}}
   let app=XCUIApplication(url:scene.appBundle) // Proxy only. Never launch/activate/terminate another instance.
-  guard app.state == .runningForeground || app.state == .runningBackground else{throw OwnedUI705Error.refused}
+  let observedState=app.state
+  guard observedState == .runningForeground || observedState == .runningBackground else{throw OwnedUI705Error.refused}
   func ready(_ file:OwnedUI705File,_ number:Int) throws {let f=try waitFile(file);try scene.tuple(f,["schema","nonce","number"]);guard try OwnedUI705Scene.number(f["number"])==Double(number) else{throw OwnedUI705Error.refused}}
   func sheet() throws ->XCUIElement {let windows=app.windows.matching(identifier:scene.nonce);guard windows.count==1 else{throw OwnedUI705Error.refused};let w=windows.element;guard w.sheets.element.waitForExistence(timeout:try remaining()),w.sheets.count==1 else{throw OwnedUI705Error.refused};return w.sheets.element}
   try ready(.first,1);let first=try sheet();_ = try remaining();first.typeKey("g",modifierFlags:[.command,.shift])

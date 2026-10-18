@@ -86,3 +86,9 @@ test('705 actual Show result observer cannot bypass original stale or settled gu
  assert.equal(cancelSuffix705(cpp,0).some(x=>x.startsWith('D476_WS_CANCEL_SHOW_')),false)
  const quiet=[];vm.compileFunction(body,['h','result','settled','current','cancelPicker','HRESULT_FROM_WIN32','ERROR_CANCELLED','FAILED','cancelNote'])({},1223,false,true,false,x=>x,1223,x=>x<0,(_,id)=>quiet.push(id));assert.deepEqual(quiet,[])
 })
+
+
+test('705 actual UI app-state gate uses one observation and refuses all nonrunning states',()=>{
+ const source=fs.readFileSync(path.join(root,'tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift'),'utf8').replace(/\r\n/g,'\n'),a=source.indexOf('  let app=XCUIApplication(url:scene.appBundle)'),b=source.indexOf('  func ready(',a);assert.ok(a>=0&&b>a);const body=source.slice(a,b),decl=/let ([A-Za-z_][A-Za-z0-9_]*)=app\.state/.exec(body),guard=/guard (.+) else\{throw OwnedUI705Error\.refused\}/.exec(body);assert.ok(guard);const expr=guard[1].replace(/\.(runningForeground|runningBackground)\b/g,(_,k)=>JSON.stringify(k)),code=(decl?'const '+decl[1]+'=app.state;':'')+'return Boolean('+expr+')',check=vm.compileFunction(code,['app']);
+ for(const states of [['runningBackground','runningForeground'],['runningForeground','runningBackground'],['runningForeground','runningForeground'],['runningBackground','runningBackground'],['notRunning','notRunning'],['runningUnknown','runningUnknown'],['unknown','unknown']]){let calls=0;const app={get state(){assert.ok(calls<states.length,'unbounded state reads');return states[calls++]}};assert.equal(check(app),['runningForeground','runningBackground'].includes(states[0]),JSON.stringify(states));assert.equal(calls,1,'gate is one asynchronous state snapshot')}
+})

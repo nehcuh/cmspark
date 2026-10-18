@@ -3,6 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import vm from 'node:vm'
 import * as ts from 'typescript'
 import {pathToFileURL} from 'node:url'
@@ -107,7 +108,7 @@ test('705 receipt mask rejects exact schema tuple identity malformed and partial
 })
 function realReceiptBoundary705(){
  const source=fs.readFileSync(helper,'utf8'),parsed=ts.createSourceFile(helper,source,ts.ScriptTarget.Latest,true),selected=parsed.statements.filter(n=>(ts.isClassDeclaration(n)&&n.name?.text==='OwnedUI705Boundary')||(ts.isVariableStatement(n)&&['refused','canonical','regular','UI705_RUNNER_ID','UI705_FILES'].some(v=>n.declarationList.declarations.some(d=>d.name.getText(parsed)===v)))).map(n=>n.getText(parsed)).join('\n'),out=ts.transpileModule(selected,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}),mod:any={exports:{}}
- const nonce='b'.repeat(64),parent=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR!,'receipt-mask-705-'))),root=path.join(parent,'cmspark-workspace-ui-705-'+nonce);fs.mkdirSync(root,{mode:0o700})
+ const nonce='b'.repeat(64),parent=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR||os.tmpdir(),'receipt-mask-705-'))),root=path.join(parent,'cmspark-workspace-ui-705-'+nonce);fs.mkdirSync(root,{mode:0o700})
  // Test-private POSIX contract projection only: retain real kind/dev/ino/nlink/uid and
  // I/O; Windows permission bits are not evidence of real POSIX permissions.
  const testUid=fs.lstatSync(root).uid,fds=new Set<number>(),owned=(name:fs.PathLike)=>{const value=String(name);assert.ok(value===root||value.startsWith(root+path.sep));return value},stat=(s:fs.Stats)=>Object.assign(Object.create(Object.getPrototypeOf(s)),s,{mode:(s.mode&~0o777)|(s.isDirectory()?0o700:s.isFile()?0o600:s.mode&0o777)})
@@ -146,7 +147,7 @@ test('705 actual physical receipt callback is portable without host getuid POSIX
  // select its real owned-FS callback. This never changes global process/fs or production.
  const current=fs.readFileSync(path.resolve('tests/desktop-workspace-xctest-705.test.ts'),'utf8'),compiled=ts.transpileModule(current,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText
  for(const shape of['missing-getuid','windows-mode']){
-  const parent=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR!,'receipt-win-contract-705-'))),fds=new Set<number>(),links:string[]=[],cases=new Map<string,()=>void>()
+  const parent=fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR||os.tmpdir(),'receipt-win-contract-705-'))),fds=new Set<number>(),links:string[]=[],cases=new Map<string,()=>void>()
   const owned=(name:fs.PathLike)=>{const value=String(name);assert.ok(value===parent||value.startsWith(parent+path.sep));return value}
   const rawStat=(s:fs.Stats)=>Object.assign(Object.create(Object.getPrototypeOf(s)),s,{uid:0,mode:shape==='windows-mode'?(s.mode&~0o777)|(s.isDirectory()?0o777:0o666):s.mode})
   const windowsFS={...fs,lstatSync:(name:fs.PathLike)=>rawStat(fs.lstatSync(owned(name))),openSync:(name:fs.PathLike,flags:fs.OpenMode,mode?:fs.Mode)=>{const fd=fs.openSync(owned(name),flags,mode);fds.add(fd);return fd},fstatSync:(fd:number)=>{assert.ok(fds.has(fd));return rawStat(fs.fstatSync(fd))},closeSync:(fd:number)=>{try{return fs.closeSync(fd)}finally{fds.delete(fd)}},symlinkSync:(target:fs.PathLike,name:fs.PathLike,type?:fs.symlink.Type)=>{owned(target);owned(name);links.push(type??'missing');assert.equal(type,'junction','Windows fixture must request only owned directory junction');return fs.symlinkSync(target,name,process.platform==='win32'?'junction':'dir')}}
@@ -154,4 +155,14 @@ test('705 actual physical receipt callback is portable without host getuid POSIX
   try{vm.runInNewContext(compiled,{module:mod,exports:mod.exports,require:(name:string)=>name==='node:fs'?windowsFS:name==='node:test'?(name:string,callback:()=>void)=>cases.set(name,callback):require(name),process:localProcess,Buffer,TextDecoder,URL,console},{timeout:3000});const actual=cases.get('705 receipt mask actual strict reader handles owned files links directory and partial publication');assert.ok(actual);actual();assert.deepEqual(links,['junction']);assert.equal(fds.size,0)}finally{for(const fd of fds)fs.closeSync(fd);fs.rmSync(parent,{recursive:true,force:true})}
  }
 })
-function createRequireForReceipt705(){return (name:string)=>{if(name==='node:test')return test;if(name==='node:assert/strict')return assert;if(name==='node:fs')return fs;if(name==='node:path')return path;if(name==='node:vm')return vm;if(name==='typescript')return ts;if(name==='node:url')return{pathToFileURL};throw Error('OWNED_TEST_IMPORT_REFUSED')}}
+function createRequireForReceipt705(){return (name:string)=>{if(name==='node:test')return test;if(name==='node:assert/strict')return assert;if(name==='node:fs')return fs;if(name==='node:path')return path;if(name==='node:vm')return vm;if(name==='node:os')return os;if(name==='typescript')return ts;if(name==='node:url')return{pathToFileURL};throw Error('OWNED_TEST_IMPORT_REFUSED')}}
+
+
+test('705 actual receipt callbacks tolerate absent or empty TMPDIR without mutating the global environment',()=>{
+ const current=fs.readFileSync(path.resolve('tests/desktop-workspace-xctest-705.test.ts'),'utf8'),compiled=ts.transpileModule(current,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,parent=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'receipt-fallback-705-')))
+ try{for(const empty of[false,true]){const cases=new Map<string,()=>void>(),mod:any={exports:{}},localProcess={pid:process.pid,platform:process.platform,env:empty?{TMPDIR:''}:{}},require=createRequireForReceipt705();let fallbacks=0
+  vm.runInNewContext(compiled,{module:mod,exports:mod.exports,require:(name:string)=>name==='node:os'?{tmpdir(){fallbacks++;return parent}}:name==='node:test'?(name:string,callback:()=>void)=>cases.set(name,callback):require(name),process:localProcess,Buffer,TextDecoder,URL,console},{timeout:3000})
+  for(const name of['705 receipt mask actual strict reader handles owned files links directory and partial publication','705 actual physical receipt callback is portable without host getuid POSIX modes or file-symlink privilege']){const callback=cases.get(name);assert.ok(callback);callback()}
+  assert.equal(fallbacks,3,'real FS callback and both Windows-shaped parents use the same private fallback');assert.deepEqual(fs.readdirSync(parent),[])
+ }}finally{fs.rmSync(parent,{recursive:true,force:true})}
+})
