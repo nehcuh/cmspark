@@ -36,7 +36,9 @@ type BrowserResult = { success: boolean; data?: any; error?: string }
  * External MCP outputs and caller-authored reports never enter this function. */
 export function captureLocalPageResult(dataDir: string, scope: EvidenceScope | undefined, toolCallId: string, tool: string, result: BrowserResult, signal?: AbortSignal, writesAllowed = true): BrowserResult {
   if (!["get_page_text", "get_page_html"].includes(tool) || !result.success) return result
-  const { observation_id: _untrustedId, evidence_capture: _untrustedCapture, ...pageData } = result.data || {}
+  const { observation_id: _untrustedId, evidence_capture: _untrustedCapture,
+    codeComparison: _untrustedComparison, code_comparison: _untrustedStoredComparison,
+    comparison_digest: _untrustedComparisonDigest, ...pageData } = result.data || {}
   if (!scope) return { ...result, data: pageData }
   let captured: { capture_status: string; observation_id?: string; reason?: string }
   if (signal?.aborted || !writesAllowed) captured = { capture_status: "skipped", reason: signal?.aborted ? "INTERRUPTED" : "PLAN_READONLY" }

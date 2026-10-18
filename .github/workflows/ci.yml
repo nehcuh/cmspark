@@ -12,6 +12,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Immutable public #464 comparison expectations need both Git endpoints.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -102,6 +105,12 @@ jobs:
         # globstar.
         run: |
           cd chrome-extension && npm test
+
+      - name: Hosted GitHub comparison acceptance (#464)
+        # Real installed Chromium/MV3 APIs, no credentials or synthetic positive.
+        run: |
+          node --test companion/scripts/tests/github-comparison-hosted-harness.test.mjs
+          node chrome-extension/scripts/accept-github-comparison-hosted.mjs
 
       - name: Supply-chain audit — chrome-extension PRODUCTION deps (gating)
         # Shipped (non-dev) deps must be advisory-free. Currently 0 after the

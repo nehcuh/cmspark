@@ -8,6 +8,8 @@ export interface PageReadPayload {
   truncated: boolean
   limit: number | null
   /** Browser-internal only, sampled together with the content. */
+  comparisonRefusal?: string
+  codeComparison?: unknown
   rawUrl?: string
 }
 
@@ -46,7 +48,8 @@ export async function readWithProvenance(
     observedTarget!.navigation_key !== before.target!.navigation_key
   )
   return {
-    payload: { content: payload.content, channel: payload.channel, truncated: payload.truncated, limit: payload.limit },
+    payload: { content: payload.content, channel: payload.channel, truncated: payload.truncated, limit: payload.limit, ...(available && !changed && payload.codeComparison !== undefined ? { codeComparison: payload.codeComparison } : {}),
+      ...(payload.comparisonRefusal ? { comparisonRefusal: payload.comparisonRefusal } : {}) },
     provenance: {
       schema_version: 1 as const,
       target: available && !changed ? before.target : undefined,
