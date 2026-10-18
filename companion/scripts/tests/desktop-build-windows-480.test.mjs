@@ -4,6 +4,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DESKTOP_WINDOWS_INPUTS, prepareDesktopNodeHeaders, extractDesktopSdk, desktopWindowsCompilePlan } from '../build-desktop-windows.mjs'
+import './desktop-local-native-476.test.mjs'
+if(process.platform!=='win32')await import('./desktop-workspace-ui-705.test.mjs')
 
 test('declared SDK output itself cannot redirect into an unrelated sibling', async () => {
   const owned=fs.mkdtempSync(path.join(os.tmpdir(),'desktop-sdk-output-'))
