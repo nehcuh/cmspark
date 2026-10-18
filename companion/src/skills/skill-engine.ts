@@ -5,7 +5,7 @@ import * as path from "path"
 import * as os from "os"
 import * as crypto from "crypto"
 import { tokenize, tfidfVec, idfFromDocs, cosineSimilarity } from "./semantic-match"
-import matter from "gray-matter"
+import matter from "../passive-frontmatter"
 import AdmZip from "adm-zip"
 import * as yaml from "js-yaml"
 import { getConfigDir, type LlmConfig as CompanionLlmConfig } from "../config"
@@ -30,6 +30,7 @@ import {
 import { validateWildcardPattern } from "../security"
 import { redactSecrets } from "../threads/distill"
 import { normalizeTags } from "../threads/digest"
+import { createDesktopResourceStore, type ResourceKind, type ResourceImport } from "./desktop-resource-store"
 import { findRelatedKnowledge, KNOWLEDGE_RELATED_LIMIT, type RelatedKnowledgeInput } from "./knowledge-related"
 import { hashKnowledgeBody, knowledgeDuplicateExempt, stripPdfFilenameHeading } from "./knowledge-duplicate"
 import {
@@ -325,6 +326,8 @@ function heuristicKnowledgeDescription(body: string): string {
 }
 
 export class SkillEngine {
+  /** Only active native snapshots subscribe; no persistent generation/history map. */
+  private desktopResourceObservers = new Set<() => void>()
   private skillsDir: string
   private builtinDir: string
   private knowledgeDir: string
@@ -437,6 +440,7 @@ export class SkillEngine {
   }
 
   refresh(): void {
+    for (const notify of [...this.desktopResourceObservers]) { try { notify() } catch { /* Observer failures never replace canonical refresh. */ } }
     this.skillsCache = []
     this.knowledgeFolders = new Map()
     // Load user skills
@@ -2294,6 +2298,9 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     }
     const yamlStr = yaml.dump(frontmatter, { lineWidth: -1, noRefs: true, quotingType: '"' })
     const md = `---\n${yamlStr}---\n\n${body}`
+    // Entry edits persist without refresh(); active native snapshots must still
+    // observe the canonical mutation, including an eventual same-byte ABA.
+    for (const notify of [...this.desktopResourceObservers]) { try { notify() } catch { /* Observer failure cannot prevent the canonical write. */ } }
     writeRestrictedFile(skill.source_file, md)
   }
 
@@ -2799,6 +2806,51 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
   // --- Knowledge management (operates on knowledge/ directory) ---
 
+  /** Private native-only outlet; general WS callers keep their existing importer semantics. */
+  createDesktopResourceStore() {
+    return createDesktopResourceStore({
+      roots: [this.skillsDir, this.builtinDir, this.knowledgeDir],
+      refresh: () => this.refresh(), fresh: () => this.ensureFresh(),
+      records: kind => this.skillsCache.filter(s => kind === "knowledge" ? this.isKnowledgeDoc(s) : this.isSkillDoc(s)),
+      observe: listener => { this.desktopResourceObservers.add(listener); return () => { this.desktopResourceObservers.delete(listener) } },
+      prepare: (kind, text) => this.prepareDesktopResourceImport(kind, text),
+      update: (id, patch) => {
+        // The legacy get() accepts aliases across kinds. Never let an alias shadow
+        // redirect the exact native canonical id to a different document.
+        const target = this.get(id)
+        const canonical = this.skillsCache.filter(s => this.isKnowledgeDoc(s) && (s.id || s.name) === id)
+        if (canonical.length !== 1 || target !== canonical[0]) throw Error("DESKTOP_RESOURCE_CONFLICT")
+        return this.updateKnowledge(id, patch as KnowledgeUpdatePatch)
+      },
+    })
+  }
+
+  private prepareDesktopResourceImport(kind: ResourceKind, text: string): ResourceImport {
+    const original = matter(text)
+    const canonical = kind === "knowledge" ? this.ensureKnowledgeFrontmatter(text) : text
+    const parsed = matter(canonical), name = parsed.data.name
+    if (typeof name !== "string" || !name.trim()) throw Error("DESKTOP_RESOURCE_INPUT_INVALID")
+    // Existing canonical loader classifies these types as knowledge even under
+    // skills/. Refuse a wrong-kind import instead of ACKing an invisible skill.
+    if (kind === "skill" && (parsed.data.type === "site_knowledge" || parsed.data.type === "domain_knowledge")) throw Error("DESKTOP_RESOURCE_INPUT_INVALID")
+    // Refuse occupied canonical name/id rather than allocating a second copy of it.
+    const submittedId = typeof parsed.data.id === "string" ? parsed.data.id : name
+    if (!submittedId || this.skillsCache.some(s => (s.name === name || s.id === name || s.name === submittedId || s.id === submittedId) && (kind === "knowledge" ? this.isKnowledgeDoc(s) : this.isSkillDoc(s)))) throw Error("DESKTOP_RESOURCE_CONFLICT")
+    if (kind === "knowledge" && this.findKnowledgeDuplicate(text)) throw Error("DESKTOP_RESOURCE_CONFLICT")
+    const title = String(parsed.data.title || name)
+    const taken = kind === "knowledge" ? this.collectTakenStems() : listStemSet(this.skillsDir)
+    const identity = allocateDocIdentity({ title: kind === "knowledge" ? title : name, preferredId: isLegacySafeId(name) ? name : undefined, seed: title, takenStems: taken })
+    let raw = text, target = this.skillsDir
+    if (kind === "knowledge") {
+      const data = this.allowlistKnowledgeFrontmatter(parsed.data)
+      data.name = identity.id; data.id = identity.id; data.title = identity.title
+      // The native importer retains original parsed body bytes; no permission frontmatter survives.
+      raw = `---\n${yaml.dump(data, { lineWidth: -1, noRefs: true, quotingType: '"' })}---\n${original.content}`
+      target = path.join(this.knowledgeDir, parsed.data.type === "site_knowledge" || parsed.data.site ? "sites" : "global")
+    }
+    return { kind, id: kind === "skill" ? String(parsed.data.id || name) : identity.id, title: identity.title, text, destination: path.join(target, `${identity.filenameStem}.md`), raw }
+  }
+
   listKnowledge(): KnowledgeListItem[] {
     this.ensureFresh()
     return this.skillsCache
@@ -2930,7 +2982,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     data.id = ident
     data.title = title
     const yamlStr = yaml.dump(data, { lineWidth: -1, noRefs: true, quotingType: '"' })
-    const stamped = `---\n${yamlStr}---\n\n${body.trimStart()}`
+    const stamped = `---\n${yamlStr}---\n${patch.body === undefined ? body : `\n${body.trimStart()}`}`
     writeRestrictedFile(skill.source_file, stamped)
     this.refresh()
     return { id: ident, title }

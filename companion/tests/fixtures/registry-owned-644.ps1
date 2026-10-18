@@ -1,12 +1,31 @@
 ﻿param([ValidateSet('create','cleanup','check')][string]$Mode,[Guid]$Id,[string]$Directory)
+# REGISTRY644_PASSIVE_PHASE_BEGIN
+$script:registryPhaseSequence644=0
+$script:registryPhaseClock644=$null
+if ($Mode -eq 'create') { try { $script:registryPhaseClock644=[Diagnostics.Stopwatch]::StartNew() } catch {} }
+function Write-RegistryPhase644 {
+ param([string]$Stage)
+ try {
+  if ($Mode -ne 'create' -or $Stage -cnotin @('ENTERED','OWNER_VERIFIED','ADD_TYPE_ENTERED','ADD_TYPE_RETURNED','VALUES_READY','REGISTRY_ENTERED','REGISTRY_COMPLETE','COMPLETE') -or $script:registryPhaseSequence644 -ge 8) { return }
+  $script:registryPhaseSequence644++
+  $elapsed='null'
+  try { if ($null -ne $script:registryPhaseClock644) { $value=$script:registryPhaseClock644.ElapsedMilliseconds;if ($value -ge 0 -and $value -le 90000) { $elapsed=$value.ToString([Globalization.CultureInfo]::InvariantCulture) } } } catch {}
+  [Console]::Error.WriteLine(('REGISTRY644_FIXTURE_PHASE {"schema":1,"mode":"create","sequence":'+$script:registryPhaseSequence644.ToString([Globalization.CultureInfo]::InvariantCulture)+',"stage":"'+$Stage+'","elapsed_ms":'+$elapsed+'}'))
+ } catch { # Passive failure must never replace the original fixture operation.
+ }
+}
+Write-RegistryPhase644 'ENTERED'
+# REGISTRY644_PASSIVE_PHASE_END
 [Console]::OutputEncoding=[Text.Encoding]::UTF8
 $ErrorActionPreference='Stop'
 if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1 -or $PSVersionTable.PSEdition -ne 'Desktop') { throw 'OWNED_REQUIRES_NATIVE_PS51' }
 $owner=$Id.ToString('D')
 if ($Id -eq [Guid]::Empty -or (Microsoft.PowerShell.Management\Get-Content -LiteralPath (Microsoft.PowerShell.Management\Join-Path $Directory '.owner') -Raw) -ne $owner) { throw 'OWNED_DIRECTORY_IDENTITY_REQUIRED' }
+Write-RegistryPhase644 'OWNER_VERIFIED'
 $prefix='CMsparkOwned644_'+$owner+'_'
 $uninstall='SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
 $ledgerPath=Microsoft.PowerShell.Management\Join-Path $Directory 'registry-ledger.json'
+Write-RegistryPhase644 'ADD_TYPE_ENTERED'
 Microsoft.PowerShell.Utility\Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -16,6 +35,7 @@ public static class RegistryOwned644 {
  public static extern int Create(IntPtr hive,string name,uint reserved,string cls,uint options,uint rights,IntPtr security,out SafeRegistryHandle key,out uint disposition);
 }
 '@ | Out-Null
+Write-RegistryPhase644 'ADD_TYPE_RETURNED'
 $created=Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
 $views=@([Microsoft.Win32.RegistryView]::Registry32)
 if ([Environment]::Is64BitOperatingSystem) { $views=@([Microsoft.Win32.RegistryView]::Registry64,[Microsoft.Win32.RegistryView]::Registry32) }
@@ -42,6 +62,8 @@ function Remove-OwnedKeys {
 }
 if ($Mode -eq 'cleanup' -or $Mode -eq 'check') { Remove-OwnedKeys;Microsoft.PowerShell.Utility\Write-Output '{"cleanup":true,"native_ps51":true}';exit 0 }
 $items=Microsoft.PowerShell.Utility\ConvertFrom-Json ([IO.File]::ReadAllText((Microsoft.PowerShell.Management\Join-Path $Directory 'values.json')))
+Write-RegistryPhase644 'VALUES_READY'
+Write-RegistryPhase644 'REGISTRY_ENTERED'
 try {
  foreach ($view in $views) {
   $tag=32;$flag=0x200;if ($view -eq [Microsoft.Win32.RegistryView]::Registry64) { $tag=64;$flag=0x100 }
@@ -68,5 +90,7 @@ try {
   }
   } finally { if ($null -ne $parent) { $parent.Dispose() };$base.Dispose() }
  }
+ Write-RegistryPhase644 'REGISTRY_COMPLETE'
  Microsoft.PowerShell.Utility\Write-Output (Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject @{created=$created.Count;native_ps51=$true;logical_views=$views.Count})
+ Write-RegistryPhase644 'COMPLETE'
 } catch { Remove-OwnedKeys;throw }

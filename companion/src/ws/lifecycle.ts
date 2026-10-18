@@ -15,6 +15,7 @@ import { bindProjectConfirmationProbe } from "../threads/project-activity"
 import { codingHandbackView } from "../acp/ui-progress"
 import { randomUUID } from "crypto"
 import { DesktopIdentityRegistry } from "../desktop/identity"
+import { createNativeDialogRuntime } from "../desktop/dialog-runtime"
 import { createDesktopChannel, attachDesktopUpgrade } from "../desktop/channel"
 import { DesktopHostLauncher } from "../desktop/host-launcher"
 import { requestDesktopOpen } from "../desktop/open"
@@ -134,7 +135,7 @@ export type ToolExecutorFn = (
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
 export type WsLifecycleDeps = {
-  createToolExecutor: (ws: WebSocket) => ToolExecutorFn
+  createToolExecutor: (ws: WebSocket, nativeOwner?: { current(): boolean; unavailable(): void }) => ToolExecutorFn
   handleSecurityConfirmationResponse: (
     ws: WebSocket,
     msg: any,
@@ -806,7 +807,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     maxPayload: MAX_WS_MESSAGE_SIZE,
     securityConfirmations: requireRt().securityConfirmations,
     onAuthenticated: host => desktopLauncher.authenticated(host),
-    onDisconnect: ws => requireRt().securityConfirmations.rejectAll("disconnect", ws),
+    dialogRuntime: owner => createNativeDialogRuntime({ ...owner, threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), history: requireRt().getHistoryStore(), createExecutor: run => requireRt().createToolExecutor(owner.ws, run) }),
+    onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws) },
   })
   desktopLauncher = new DesktopHostLauncher(desktopRegistry, `ws://127.0.0.1:${port}/desktop`, (host, view) => desktopChannel.window(host, view))
   wss = attachWssListenThenStartMcp({

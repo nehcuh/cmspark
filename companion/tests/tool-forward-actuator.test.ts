@@ -127,7 +127,19 @@ test("production createToolExecutor L1 path calls forwardL1OrUnavailable (lockst
   assert.match(src, /from\s+["']\.\/ws\/l1-actuator["']/)
   assert.match(src, /forwardL1OrUnavailable\s*\(/)
   assert.match(src, /pickExtensionWs:\s*pickAuthenticatedClientWs/)
-  assert.match(src, /getAuth:\s*\(w\)\s*=>\s*getWsAuthState\(w\)/)
+  assert.match(src, /getAuth:\s*\(w\)\s*=>\s*authFor\(w\)/)
+  const authProjection = src.match(/const authFor = \(peer: WebSocket\) => ([^\r\n]+)/)
+  assert.ok(authProjection, "actual local native auth closure must remain explicit")
+  let live = true, fallback = 0
+  const owned = {}, foreign = {}, ordinary = { authenticated: true, surface: "panel" }
+  const make = new Function("ws", "nativeOwner", "getWsAuthState", "return peer=>" + authProjection[1])
+  const native = make(owned, { current: () => live }, () => { fallback++; return ordinary })
+  assert.deepEqual(native(owned), { authenticated: true, surface: "desktop", origin: "cmspark-desktop-native://local" })
+  live = false
+  assert.equal(native(owned).authenticated, false, "stale native owner cannot inherit an authenticated surface")
+  assert.equal(fallback, 0)
+  assert.equal(native(foreign), ordinary)
+  assert.equal(make(owned, undefined, () => ordinary)(owned), ordinary)
   // actuator socket is what forwardToolToExtension receives
   assert.match(src, /ws:\s*actuatorWs/)
   // companion-tool confirm binding still uses originating ws (S6)

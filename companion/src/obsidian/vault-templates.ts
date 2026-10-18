@@ -14,7 +14,7 @@
 
 import * as fs from "fs"
 import * as path from "path"
-import matter from "gray-matter"
+import matter from "../passive-frontmatter"
 import { getConfigDir } from "../config"
 
 export interface VaultTemplate {

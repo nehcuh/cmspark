@@ -44,6 +44,15 @@ import { ensureExtensionPeerForOverlayConfirm } from "../ws/extension-peer"
 export const DESTRUCTIVE_MCP_TOOL_PATTERN =
   /\b(write|delete|exec|commit|rm|remove|shell|curl|wget|spawn|fork|kill|drop|truncate|wipe|destroy)\b/i
 
+/** Trusted native-session closure; never accepted from tool arguments. */
+export type NativeMcpOwner = { current(): boolean; unavailable(): Promise<void> }
+const nativeMcpStale = (owner?: NativeMcpOwner) => owner != null && owner.current() !== true
+const nativeMcpStaleResult = () => ({ success: false as const, error: "DESKTOP_SESSION_STALE" })
+async function nativeMcpUnavailable(owner: NativeMcpOwner) {
+  try { await owner.unavailable() } catch { /* An unavailable confirmation never authorizes dispatch. */ }
+  return { success: false as const, error: "DESKTOP_CONFIRMATION_UNAVAILABLE" }
+}
+
 /** Strip CMspark-internal keys before MCP callTool. actingTid reads the original. */
 export function stripCmsparkInternalMcpArgs(params: unknown): Record<string, unknown> {
   const src =
@@ -245,8 +254,10 @@ export async function executeMcpTool(
   startedAt: number,
   signal?: AbortSignal,
   offeredToolNames?: ReadonlySet<string>,
+  nativeOwner?: NativeMcpOwner,
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   void startedAt // retained for call-site parity with pre-split createToolExecutor
+  if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
   if (signal?.aborted) return { success: false, error: "MCP tool call cancelled before dispatch" }
   const notOffered = gateUnofferedMcpTool(toolName, offeredToolNames)
   if (notOffered) return notOffered
@@ -335,6 +346,7 @@ export async function executeMcpTool(
       reason: "full_autonomy_cruise",
     })
   } else if (needsConfirm || forceMcpConfirm) {
+    if (nativeOwner) return nativeMcpUnavailable(nativeOwner)
     const channel = await confirmChannel(ws, signal)
     if ("error" in channel) {
       return { success: false, error: `Security Block: ${channel.error}` }
@@ -423,6 +435,7 @@ export async function executeMcpTool(
   const mcpArgs = stripCmsparkInternalMcpArgs(params)
   let dispatchedArgs = mcpArgs
   const runOnce = async (): Promise<{ success: boolean; data?: any; error?: string; rawErr?: string }> => {
+    if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
     if (signal?.aborted) return { success: false, error: "MCP tool call cancelled before dispatch" }
     if (!checkAuthorization()) return { success: false, error: "MCP authorization changed or revoked before dispatch" }
     const selectionDenied = checkSelection()
@@ -435,6 +448,7 @@ export async function executeMcpTool(
         return { success: false, error: `MCP tool ${toolName} route changed during authorization` }
       }
       const result = await manager.callTool(route, mcpArgs, signal, preparedArgs => {
+        if (nativeMcpStale(nativeOwner)) throw new Error("DESKTOP_SESSION_STALE")
         if (!checkAuthorization()) throw new Error("MCP authorization changed or revoked before dispatch")
         const selected = checkSelection()
         if (selected) throw new Error(selected.error)
@@ -449,6 +463,7 @@ export async function executeMcpTool(
         // prefix or repeating filesystem IO after the response.
         dispatchedArgs = preparedArgs
       })
+      if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
       const structuredData = result?.structuredContent !== undefined
         ? { content: result.content ?? [], structuredContent: result.structuredContent }
         : undefined
@@ -467,6 +482,7 @@ export async function executeMcpTool(
       }
       return { success: true, data: structuredData ?? result?.content ?? result }
     } catch (err: any) {
+      if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
       const rawErr = err?.message || String(err)
       return { success: false, rawErr, error: enhanceMcpError(rawErr, route, params) }
     }
@@ -485,6 +501,7 @@ export async function executeMcpTool(
       checkSelection,
       checkAuthorization,
       signal,
+      nativeOwner,
     })
     if (expanded.retried) {
       if (expanded.ok) {
@@ -533,11 +550,15 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
   checkSelection?: () => { error: string } | null
   checkAuthorization?: () => boolean
   signal?: AbortSignal
+  nativeOwner?: NativeMcpOwner
 }): Promise<{ retried: boolean; ok?: boolean; error?: string; authorizationIdentity?: string }> {
+  const stale = { retried: true, ok: false, error: "DESKTOP_SESSION_STALE" }
+  if (nativeMcpStale(opts.nativeOwner)) return stale
   const cancelled = { retried: true, ok: false, error: "MCP allow-dir expansion cancelled" }
   if (opts.signal?.aborted) return cancelled
   const { securityConfirmations } = requireRt()
   const { canOfferAllowDirExpand, addFilesystemAllowDir, captureFilesystemAdmission } = await import("./allow-dir-expand")
+  if (nativeMcpStale(opts.nativeOwner)) return stale
   if (opts.signal?.aborted) return cancelled
   const selectionDenied = opts.checkSelection?.()
   if (selectionDenied) return { retried: true, ok: false, error: selectionDenied.error }
@@ -556,7 +577,7 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
   }
 
   const admission = captureFilesystemAdmission(opts.route.serverName)
-  const authorized = () => admission.isCurrent() && opts.checkAuthorization?.() !== false && !opts.checkSelection?.()
+  const authorized = () => !nativeMcpStale(opts.nativeOwner) && admission.isCurrent() && opts.checkAuthorization?.() !== false && !opts.checkSelection?.()
   try {
     if (!authorized()) return revoked
 
@@ -581,6 +602,10 @@ export async function tryExpandFilesystemAllowDirOnDenial(opts: {
       return { retried: true, ok: true, authorizationIdentity: added.authorizationIdentity }
     }
 
+    if (opts.nativeOwner) {
+      const denied = await nativeMcpUnavailable(opts.nativeOwner)
+      return { retried: true, ok: false, error: denied.error }
+    }
     const channel = await confirmChannel(opts.ws, opts.signal)
     if ("error" in channel) {
       return {
@@ -736,7 +761,9 @@ export async function executeMcpMetaTool(
   sessionId: string,
   ws: WebSocket,
   signal?: AbortSignal,
+  nativeOwner?: NativeMcpOwner,
 ): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
   if (signal?.aborted) return { success: false, error: "MCP meta-tool call cancelled before dispatch" }
   const { securityConfirmations } = requireRt()
   const manager = getMcpManager()
@@ -772,6 +799,7 @@ export async function executeMcpMetaTool(
       reason: "full_autonomy_cruise",
     })
   } else if (needsConfirm) {
+    if (nativeOwner) return nativeMcpUnavailable(nativeOwner)
     const channel = await confirmChannel(ws, signal)
     if ("error" in channel) {
       return { success: false, error: `Security Block: ${channel.error}` }
@@ -832,6 +860,7 @@ export async function executeMcpMetaTool(
 
   const selectionRevoked = checkSelection()
   if (selectionRevoked) return selectionRevoked
+  if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
   if (signal?.aborted) return { success: false, error: "MCP meta-tool call cancelled before dispatch" }
   if (!checkAuthorization()) return { success: false, error: "MCP authorization changed or revoked before dispatch" }
 
@@ -839,24 +868,28 @@ export async function executeMcpMetaTool(
     switch (toolName) {
       case "mcp_list_resources": {
         const resources = await manager.listResources(serverName, signal)
+        if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
         return { success: true, data: { server: serverName, resources } }
       }
       case "mcp_read_resource": {
         const uri = String(args.uri || "").trim()
         if (!uri) return { success: false, error: "Resource uri is required" }
         const result = await manager.readResource(serverName, uri, signal)
+        if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
         return { success: true, data: result }
       }
       case "mcp_get_prompt": {
         const name = String(args.name || "").trim()
         if (!name) return { success: false, error: "Prompt name is required" }
         const result = await manager.getPrompt(serverName, name, args.arguments, signal)
+        if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
         return { success: true, data: result }
       }
       default:
         return { success: false, error: `Unknown MCP meta tool: ${toolName}` }
     }
   } catch (err: any) {
+    if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
     const rawErr = err.message || String(err)
     // Capability mismatch: give the LLM concrete guidance toward namespaced tools.
     if (/does not advertise/i.test(rawErr)) {

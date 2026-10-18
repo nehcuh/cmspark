@@ -131,7 +131,7 @@ for(const docFirst of [true,false])test(`actual hosted form initial save + rende
  assert.equal(complete,true,"the initial real save must be checkpointed before native-only keyboard/offline stages");const disk=new ThreadManager().get("native-metadata-A")!;assert.equal(disk.alias,"原生 中文对话");assert.deepEqual(disk.user_tags,["Review","付款"]);assert.equal(disk.topic_folder,"项目资料")
 })
 test("cancel restores focus to the current row after an actual list refresh",t=>{
- const {manager}=owned(t),c=authenticated(t,manager),f=renderer();openActual(f,c);f.receive(c.send({type:"thread.list",id:"thread.list"}));const current=f.ids.list.children.find((row:any)=>row.children.some((v:any)=>v.attributes["data-thread-metadata"]==="metadata-A")).children[1]
+ const {manager}=owned(t),c=authenticated(t,manager),f=renderer();openActual(f,c);f.receive(c.send({type:"thread.list",id:"thread.list"}));const current=f.ids.list.children.find((row:any)=>row.children.some((v:any)=>v.attributes["data-thread-metadata"]==="metadata-A")).children.find((button:any)=>button.attributes["data-thread-metadata"]==="metadata-A")
  f.ids["metadata-cancel"].events.click();assert.equal(current.focused,true);assert.equal(f.ids["metadata-editor"].hidden,true)
 })
 test("reconnect preserves draft but requires a fresh read before a new save",t=>{
@@ -197,7 +197,7 @@ test("metadata-only native fixture inverse restores every production byte and pr
 
 test("actual hosted exit assertion rejects ordinary close and requires the offline terminal receipt",async()=>{
  const source=fs.readFileSync(path.resolve(__dirname,"../../tests/desktop-native-thread-metadata-476.test.ts"),"utf8")
- const assertions=source.split(/\r?\n/).filter(line=>line.trimStart().startsWith("assert.equal(await Promise.race([exit,"))
+ const boundary=source.indexOf("// Same Node file");assert.ok(boundary>0,"the independent new dialog case follows the existing metadata case");const assertions=source.slice(0,boundary).split(/\r?\n/).filter(line=>line.trimStart().startsWith("assert.equal(await Promise.race([exit,"))
  assert.equal(assertions.length,1,"execute the actual hosted assertion, not a mirrored predicate")
  // Erase the sole TypeScript generic; retain the actual awaited predicate and expected receipt.
  const actual=assertions[0].replace(/new Promise<never>/g,"new Promise")

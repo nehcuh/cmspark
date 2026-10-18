@@ -5,6 +5,8 @@ param(
   [Parameter(Mandatory=$true)][string]$PackageSHA256
 )
 # HostedWindows evidence only. No application is executed; no whole extraction.
+# Clock-independent fixed observation; no source path, parameter or error text.
+[Console]::Error.WriteLine('GALLERY70_BODY_ENTERED=1')
 $ErrorActionPreference = 'Stop'
 if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'PS51_REQUIRED' }
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'HOSTED_WINDOWS_ONLY' }

@@ -260,3 +260,19 @@ test("B1: larger replacement of a truncated doc is still rejected (not byte-leng
   assert.throws(() => engine.updateKnowledge(doc.id, { body: bigger }), /截断/)
   assert.equal(fs.readFileSync(skill.source_file).equals(before), true)
 })
+
+
+test("metadata-only knowledge update preserves the entire parsed body", () => {
+  const dir = knowledgeDir()
+  fs.writeFileSync(path.join(dir, "body-preserved.md"), "---\nname: body-preserved\nid: body-preserved\ntype: domain_knowledge\ndescription: d\n---\n\n    first code line\n    second code line\n\n")
+  const engine = new SkillEngine()
+  const old = engine.get("body-preserved")!
+  const body = old.content, file = old.source_file, name = old.name, id = old.id
+  engine.updateKnowledge("body-preserved", { title: "metadata-only", description: "changed", tags: ["kept"] })
+  const current = engine.get("body-preserved")!
+  assert.equal(current.content, body)
+  assert.equal(current.name, name)
+  assert.equal(current.id, id)
+  assert.equal(current.source_file, file)
+  assert.equal(new SkillEngine().get("body-preserved")!.content, body)
+})

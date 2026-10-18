@@ -458,10 +458,19 @@ export type ToolExecutorFn = (
 // Do not re-inflate server.ts with multi-agent pregate, L2 algebra, cookie/URL/image/
 // browser_download/MCP gate bodies, extension-forward plumbing, confirm-response, or business tool bodies.
 // Exported for integration tests (audit item 6).
-export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
+export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boolean; unavailable(): void }): ToolExecutorFn {
+  const confirmations = nativeOwner ? Object.create(securityConfirmations) as typeof securityConfirmations : securityConfirmations
+  const denyNativeConfirmation = async () => {
+    nativeOwner?.unavailable()
+    const aborted = new AbortController(); aborted.abort()
+    await securityConfirmations.request(() => {}, { toolName: "native unsupported confirmation", code: "", dangerousApis: [] }, { originWs: ws, signal: aborted.signal })
+  }
+  if (nativeOwner) confirmations.request = async () => { await denyNativeConfirmation(); return { confirmationId: "", approved: false, reason: "denied" } }
+  const nativeMcpOwner = nativeOwner ? { current: () => nativeOwner.current(), unavailable: denyNativeConfirmation } : undefined
+  const authFor = (peer: WebSocket) => peer === ws && nativeOwner ? { authenticated: nativeOwner.current(), surface: "desktop", origin: "cmspark-desktop-native://local" } : getWsAuthState(peer)
   // Per-connection session id — used as the key for MCP first-use confirmation cache
   // so approvals don't bleed across browser sessions.
-  const sessionId = randomUUID()
+  const sessionId = (nativeOwner && mcpSessionByWs.get(ws)) || randomUUID()
   // Audit item 8: register the (ws, sessionId) pair so ws.on("close") can clean
   // up the per-session MCP confirm-cache. Without this, stale approvals leak.
   mcpSessionByWs.set(ws, sessionId)
@@ -472,6 +481,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     signal?: AbortSignal,
     invokeOpts?: ToolExecuteInvokeOpts,
   ): Promise<{ success: boolean; data?: any; error?: string }> => {
+    if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
     if (signal?.aborted) return { success: false, error: "Tool call cancelled before dispatch" }
     let finalParams = contextReadParams(toolName, params || {}, invokeOpts?.siteContextTabId, invokeOpts?.siteContextRequireActive)
     delete finalParams.locator_scope
@@ -621,6 +631,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     const mutationHold = pregate.releaseMutationHold
 
     try {
+    if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
     // Cookie trust domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
     const cookieOutcome = runCookieTrustAdmission({
       toolName,
@@ -647,6 +658,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
 
     // L2 confirmation gate — extracted to tool/l2-admission.ts (C10-B)
     const l2Outcome = await runL2ToolAdmission({
+      ...(nativeOwner ? { nativeConfirmationUnavailable: denyNativeConfirmation } : {}),
       enterprisePermit,
       signal,
       toolName,
@@ -658,7 +670,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       actingThreadId,
       isOutboundMcpCall,
       logToolFinish,
-      securityConfirmations,
+      securityConfirmations: confirmations,
       getThreadManager: () => threadManager,
       getCachedTabUrl,
       getDomainFromUrl,
@@ -666,8 +678,9 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       activeTrayConfirmsByWs,
       clients: getWsClients(),
       // surface rides on getWsAuthState — overlay-origin L2 fans out via confirm-fanout
-      wsAuthGet: (w) => getWsAuthState(w),
+      wsAuthGet: (w) => authFor(w),
     })
+    if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
     if (!l2Outcome.ok) {
       return l2Outcome.result
     }
@@ -678,6 +691,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
 
     // URL scheme+domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
     const urlOutcome = await runUrlNavigateAdmission({
+      ...(nativeOwner ? { nativeConfirmationUnavailable: denyNativeConfirmation } : {}),
       enterprisePermit,
       signal,
       toolName,
@@ -687,11 +701,12 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       ws,
       isOutboundMcpCall,
       logToolFinish,
-      securityConfirmations,
+      securityConfirmations: confirmations,
       clients: getWsClients(),
       // surface rides on getWsAuthState — overlay-origin URL confirms use confirm-fanout
-      wsAuthGet: (w) => getWsAuthState(w),
+      wsAuthGet: (w) => authFor(w),
     })
+    if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
     if (!urlOutcome.ok) return urlOutcome.result
     if (signal?.aborted) return { success: false, error: "Tool call cancelled during admission" }
 
@@ -704,11 +719,14 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       startedAt,
       ws,
       logToolFinish,
-      securityConfirmations,
-      dispatchToExtension,
+      securityConfirmations: confirmations,
+      dispatchToExtension: (...args) => nativeOwner && !nativeOwner.current()
+        ? Promise.resolve({ success: false, error: "DESKTOP_SESSION_STALE" })
+        : dispatchToExtension(...args),
       actingThreadId,
       trackTimeoutInFlight: !!mutationHold,
     })
+    if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
     if (imageOutcome !== null) {
       return imageOutcome
     }
@@ -730,6 +748,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           delete (finalParams as { surface?: unknown }).surface
         }
         // Thread id already injected by adapter as __thread_id (computer-use precedent)
+        if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
           evidenceScope,
           // Propagate chat.abort / supersede so shell_exec can killProcessTree.
@@ -740,7 +759,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           // direction; without originWs any loopback WS peer could burn the
           // 3 nonce attempts (DoS).
           sendConfirmation: (details) =>
-            securityConfirmations.request(
+            confirmations.request(
               (data) => {
                 if (ws.readyState === WebSocket.OPEN) {
                   ws.send(JSON.stringify(data))
@@ -783,9 +802,9 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             }
           })(),
           handshakeSurface: (() => {
-            const st = getWsAuthState(ws)
+            const st = authFor(ws)
             if (!st) return undefined
-            return st.surface === "summoner" ? "summoner" : "tray"
+            return nativeOwner ? "desktop" : st.surface === "summoner" ? "summoner" : "tray"
           })(),
           // #371: fire-and-forget worker loop after spawn_expert_team persists the brief.
           // Do not await the worker LLM run (would deadlock the parent tool call).
@@ -793,9 +812,11 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           // adapter.chatCreate bypassed max_concurrent_multi_agent_llm_loops=5.
           // Cap full → queue (worker waits with brief on disk); slot free → drain.
           kickWorkerChat: ({ threadId, message }) => {
+            if (nativeOwner && !nativeOwner.current()) return
             const { scheduleWhenLlmSlotAvailable } = require("./orchestrator/llm-loop-gate") as typeof import("./orchestrator/llm-loop-gate")
             const workerThread = threadManager.get(threadId)
             scheduleWhenLlmSlotAvailable(workerThread, threadId, async () => {
+              if (nativeOwner && !nativeOwner.current()) return
               // F1: synchronous require — an `await import` gap let a user
               // chat.create install its controller first, and the old
               // install-reuse then double-ran the worker on one signal.
@@ -810,6 +831,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
               }
               try {
                 const { chatCreate } = await import("./llm/adapter")
+                if (nativeOwner && !nativeOwner.current()) return
                 await chatCreate({
                   threadId,
                   message,
@@ -851,7 +873,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     // MCP meta tools — Resources/Prompts access (executed locally via McpManager)
     if (toolName === "mcp_list_resources" || toolName === "mcp_read_resource" || toolName === "mcp_get_prompt") {
       try {
-        const result = await executeMcpMetaTool(toolName, finalParams, sessionId, ws, signal)
+        const result = await executeMcpMetaTool(toolName, finalParams, sessionId, ws, signal, nativeMcpOwner)
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {
@@ -865,7 +887,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     // MCP namespaced tools — mcp__<server>__<tool>
     if (isMcpNamespaced(toolName)) {
       try {
-        const result = await executeMcpTool(toolName, finalParams, sessionId, ws, startedAt, signal)
+        const result = await executeMcpTool(toolName, finalParams, sessionId, ws, startedAt, signal, undefined, nativeMcpOwner)
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {
@@ -887,17 +909,19 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       if (resolveEffectiveExecutionPolicy(evidenceScope.threadId, id => threadManager.get(id)) === "plan_readonly" && !isPlanReadonlyAllowed(toolName)) return planReadonlyBlockedResult(toolName, evidenceScope.threadId)
       locatorScope = { scope_id: createHash("sha256").update(sessionId + "\0" + evidenceScope.threadId).digest("hex"), thread_id: evidenceScope.threadId }
     }
+    if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
     if (enterprisePermit) claimEnterpriseDispatch(enterprisePermit, toolName, finalParams, ws)
     const result = await forwardL1OrUnavailable({
       originatingWs: ws,
-      getAuth: (w) => getWsAuthState(w),
+      getAuth: (w) => authFor(w),
       pickExtensionWs: pickAuthenticatedClientWs,
       toolCallId,
       toolName,
       startedAt,
       logToolFinish,
-      forward: ({ ws: actuatorWs }) =>
-        forwardToolToExtension({
+      forward: ({ ws: actuatorWs }) => nativeOwner && !nativeOwner.current()
+        ? Promise.resolve({ success: false, error: "DESKTOP_SESSION_STALE" })
+        : forwardToolToExtension({
           toolCallId,
           toolName,
           finalParams,

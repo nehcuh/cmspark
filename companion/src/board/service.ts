@@ -168,9 +168,11 @@ export async function mutateMissionBoard(
   tm: ThreadManager,
   hostThreadId: string,
   op: (board: MissionBoard, host: ThreadLike) => BoardResult | Promise<BoardResult>,
-  opts?: { auditPath?: string },
+  opts?: { auditPath?: string; current?: () => boolean },
 ): Promise<BoardResult> {
   return tm.withThreadLock(hostThreadId, async () => {
+    const staleOwner = (): BoardResult => ({ ok: false, error: "Board mutation owner changed", error_code: "BOARD_MUTATION_OWNER_STALE", recoverable: true })
+    if (opts?.current && !opts.current()) return staleOwner()
     const host = tm.get(hostThreadId) as ThreadLike | undefined
     if (!host) {
       return { ok: false, error: `host thread not found: ${hostThreadId}` }
@@ -191,6 +193,7 @@ export async function mutateMissionBoard(
     const prevStatus = board.status
 
     const result = await op(board, host)
+    if (opts?.current && !opts.current()) return staleOwner()
     if (!result.ok) return result
 
     // Status transition integrity: completed only via complete mutation path
@@ -1378,7 +1381,7 @@ export async function completeBoard(
 export async function abandonWorkerIntents(
   tm: ThreadManager,
   workerThreadId: string,
-  opts?: { reason?: string; auditPath?: string },
+  opts?: { reason?: string; auditPath?: string; current?: () => boolean },
 ): Promise<{ abandoned: number; host_thread_id: string | null }> {
   const hostId = resolveBoardHostThreadId(tm, workerThreadId)
   if (!hostId) return { abandoned: 0, host_thread_id: null }
@@ -1412,7 +1415,7 @@ export async function abandonWorkerIntents(
       })
       abandonedCount = count
       if (count === 0) return { ok: true, board }
-      audit(
+      if (!opts?.current) audit(
         "board.intents_abandoned",
         {
           thread_id: hostId,
@@ -1424,9 +1427,10 @@ export async function abandonWorkerIntents(
       )
       return { ok: true, board: { ...board, intents } }
     },
-    { auditPath: opts?.auditPath },
+    { auditPath: opts?.auditPath, ...(opts?.current ? { current: opts.current } : {}) },
   )
   if (!result.ok) return { abandoned: 0, host_thread_id: hostId }
+  if (opts?.current && abandonedCount) audit("board.intents_abandoned", { thread_id: hostId, worker_id: workerThreadId, abandoned_count: abandonedCount, reason: opts.reason || "worker_cancel" }, opts.auditPath)
   return { abandoned: abandonedCount, host_thread_id: hostId }
 }
 

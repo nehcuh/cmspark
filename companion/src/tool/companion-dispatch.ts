@@ -134,7 +134,7 @@ export interface CompanionToolExecOptions {
    * Overlay ACL (#265). From WS handshake via createToolExecutor, NEVER from
    * a model-claimed surface field. Missing / summoner → SUMMONER_ACL deny.
    */
-  handshakeSurface?: "summoner" | "tray"
+  handshakeSurface?: "summoner" | "tray" | "desktop"
   /**
    * #371: fire-and-forget worker chat.create after spawn_expert_team persists
    * the task slice. Bound from createToolExecutor; tests inject a recorder.

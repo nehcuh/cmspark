@@ -13,7 +13,7 @@ for(const language of ["cpp","swift"])test(`#476 ${language} acceptance observes
  const {desktopMcpFixture}=await(new Function("u","return import(u)"))(pathToFileURL(path.join(root,"scripts/desktop-mcp-fixture.mjs")).href)
  const variant=desktopMcpFixture(language,original,fixture,read("tests/fixtures/desktop-476/native-form.js"))
  const hook=language==="cpp"?"D476Acceptance::renderer(*this,frame);":"D476Acceptance.renderer(self,f);"
- const remap=language==="cpp"?'frame.Remove(L"generation");put(frame,L"id",id);send(frame);':'var out=f;out.removeValue(forKey:"generation");out["id"]=id;transmit(out,to:socket)'
+ const remap=language==="cpp"?'frame.Remove(L"generation");put(frame,L"id",id);send(frame);':'var out=f;if type=="desktop.chat.stop"{out["run_id"]=requests["desktop.chat.send"]?.nativeId};out.removeValue(forKey:"generation");out["id"]=id;transmit(out,to:socket)'
  assert.ok(variant.source.includes(hook+remap),"test receipt hook must precede the unchanged real remapping/send")
  assert.equal(variant.inverse,original)
  const start=fixture.indexOf(language==="cpp"?"void D476Acceptance::renderer(":"static func renderer(")

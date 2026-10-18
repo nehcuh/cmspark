@@ -156,10 +156,35 @@ export function writeRestrictedFile(filePath: string, content: string | Buffer):
     const code = (err as NodeJS.ErrnoException)?.code
     if (code !== "ENOENT") throw err
   }
-  if (Buffer.isBuffer(content)) {
-    fs.writeFileSync(filePath, content, { mode: 0o600 })
-  } else {
-    fs.writeFileSync(filePath, content, { encoding: "utf8", mode: 0o600 })
+  // Write a private sibling first: a failed write must not truncate the live file.
+  const temporary = path.join(parent, `.cmspark-write-${crypto.randomUUID()}.tmp`)
+  let fd: number | undefined
+  let created: fs.BigIntStats | undefined
+  try {
+    fd = fs.openSync(temporary, "wx", 0o600)
+    created = fs.fstatSync(fd, { bigint: true })
+    fs.writeFileSync(fd, content, typeof content === "string" ? { encoding: "utf8" } : undefined)
+    const completed = fd
+    fd = undefined // A failed close has unknown ownership; never retry its numeric descriptor.
+    fs.closeSync(completed)
+    // Preserve the existing refusal even if a symlink appeared during writing.
+    try {
+      if (fs.lstatSync(filePath).isSymbolicLink()) {
+        throw new Error(`Refusing to write through symlink: ${filePath}`)
+      }
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err
+    }
+    fs.renameSync(temporary, filePath)
+    created = undefined // The old temporary pathname no longer belongs to this write.
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd) } catch { /* keep primary failure */ } }
+    if (created) {
+      try {
+        const current = fs.lstatSync(temporary, { bigint: true })
+        if (current.dev === created.dev && current.ino === created.ino) fs.unlinkSync(temporary)
+      } catch { /* removed, replaced or cleanup refused; preserve the primary failure */ }
+    }
   }
 }
 

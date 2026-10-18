@@ -1,6 +1,6 @@
 // Windows-only acceptance of the other four actual no-focus SDK actions.
 // Invoke remains owned by the original uninstrumented + separate diagnostic tests.
-import test from "node:test"
+import test, { type TestContext } from "node:test"
 import assert from "node:assert/strict"
 import { execFile, type ChildProcess } from "node:child_process"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync, watch, copyFileSync } from "node:fs"
@@ -95,13 +95,17 @@ function withoutActionExport572(bytes:Buffer):Buffer {
   assert.equal(matches.length,1,"the real built DLL must have one exact CUiAction export")
   const copy=Buffer.from(bytes);copy[matches[0]+8]="X".charCodeAt(0);return copy
 }
-async function runMode572(mode:Mode572,loader?:Loader572|"abi-invalid"):Promise<void> {
+async function runMode572(mode:Mode572,loader?:Loader572|"abi-invalid",t?:Pick<TestContext,"diagnostic">):Promise<void> {
   const dir=mkdtempSync(path.join(tmpdir(),"uia-no-focus-native572-")),children:Child572[]=[]
   const deadline=performance.now()+45_000
   const remaining=()=>{const ms=Math.floor(deadline-performance.now());assert.ok(ms>0,"original owned45s lifetime exhausted");return ms}
   const boundedRunner:PsRunner=(script,args,opts)=>runPs(script,args,{timeoutMs:Math.min(opts?.timeoutMs??15_000,remaining())})
   const oracle=async(args:string[])=>{assert.ok(children.every(c=>!c.isClosed()));await boundedRunner(resolveWinScript("computer-bg-oracles.ps1"),args)}
   let primary:unknown
+  /*UIA572_MODE_FAILURE_BEGIN*/let observedPhase572="UNKNOWN",readyRole572="UNKNOWN",beforeRole572="UNKNOWN",afterRole572="UNKNOWN",observedTarget572=0
+  let actionStarted572=false,actionReturned572=false,markerSeen572=false
+  const role572=(value:unknown,target:number,sibling:number)=>typeof value!=="number"||!Number.isSafeInteger(value)||value<0?"UNKNOWN":value===0?"NONE":value===target&&target>0?"TARGET":value===sibling&&sibling>0?"SIBLING":"OTHER"
+  /*UIA572_MODE_FAILURE_END*/
   try{
     assert.equal(process.arch,"x64");assert.equal(existsSync(resolvePowerShellExe()),true,"real Windows PowerShell is mandatory")
     const marker=path.join(dir,"target.marker"),siblingMarker=path.join(dir,"sibling.marker")
@@ -109,15 +113,15 @@ async function runMode572(mode:Mode572,loader?:Loader572|"abi-invalid"):Promise<
       const ready=path.join(dir,role+".json"),owner=startMode572(["-Role",role,"-Mode",mode,"-Marker",role==="target"?marker:siblingMarker,"-Ready",ready],remaining());children.push(owner)
       const proof=await waitModeFile572(ready,owner,deadline,text=>JSON.parse(text) as {schema:number;hwnd:number;foreground:number;active:boolean;initialUnchanged:boolean})
       assert.equal(proof.schema,1);assert.ok(Number.isSafeInteger(proof.hwnd)&&proof.hwnd>0);assert.equal(proof.initialUnchanged,true)
-      if(role==="sibling"){assert.equal(proof.foreground,proof.hwnd);assert.equal(proof.active,true)}
+      /*UIA572_MODE_FAILURE_BEGIN*/if(role==="target")observedTarget572=proof.hwnd;/*UIA572_MODE_FAILURE_END*/if(role==="sibling"){/*UIA572_MODE_FAILURE_BEGIN*/readyRole572=role572(proof.foreground,observedTarget572,proof.hwnd);/*UIA572_MODE_FAILURE_END*/assert.equal(proof.foreground,proof.hwnd);assert.equal(proof.active,true)}
       return proof.hwnd
     }
-    const target=await launch("target"),sibling=await launch("sibling"),intent=modes572.find(value=>value.mode===mode)!
+    const target=await launch("target"),sibling=await launch("sibling"),intent=modes572.find(value=>value.mode===mode)!;/*UIA572_MODE_FAILURE_BEGIN*/observedPhase572="READY_CONFIRMED";/*UIA572_MODE_FAILURE_END*/
     assert.equal(existsSync(marker),false);assert.equal(existsSync(siblingMarker),false)
-    const hit=await new PsUiaLocator(boundedRunner).locate(target,intent.name);assert.ok(hit);assert.equal(hit.automationId,intent.automationId)
+    const hit=await new PsUiaLocator(boundedRunner).locate(target,intent.name);/*UIA572_MODE_FAILURE_BEGIN*/observedPhase572="LOCATOR_RETURNED";/*UIA572_MODE_FAILURE_END*/assert.ok(hit);assert.equal(hit.automationId,intent.automationId)
     const beforePath=path.join(dir,"before.json"),afterPath=path.join(dir,"after.json"),verdictPath=path.join(dir,"verdict.json")
     await oracle(["-Mode","snapshot","-TargetHwnd",String(target),"-Out",beforePath]);const before=JSON.parse(readFileSync(beforePath,"utf8")) as Snapshot572
-    assert.equal(before.foreground,sibling)
+    /*UIA572_MODE_FAILURE_BEGIN*/observedPhase572="BEFORE_CAPTURED";beforeRole572=role572(before.foreground,target,sibling);/*UIA572_MODE_FAILURE_END*/assert.equal(before.foreground,sibling)
     let runner=boundedRunner
     if(loader&&loader!=="abi-invalid"){
       let actualLibrary=""
@@ -137,30 +141,30 @@ async function runMode572(mode:Mode572,loader?:Loader572|"abi-invalid"):Promise<
         return boundedRunner(script,replaceNoFocusLibrary572(args,selected),opts)
       }
     }
-    if(loader==="abi-invalid"){
+    /*UIA572_MODE_FAILURE_BEGIN*/actionStarted572=true;/*UIA572_MODE_FAILURE_END*/if(loader==="abi-invalid"){
       const proof=JSON.parse(await boundedRunner(path.resolve("tests/fixtures/win/uia-no-focus-abi-572.ps1"),["-Hwnd",String(target),"-Library",resolveComputerUiaNoFocusDll()]))
-      assert.deepEqual(proof,{schema:1,kind:"UIA572_ABI_INVALID",cases:10,allRejected:true});assert.equal(existsSync(marker),false)
+      /*UIA572_MODE_FAILURE_BEGIN*/actionReturned572=true;observedPhase572="ACTION_RETURNED";/*UIA572_MODE_FAILURE_END*/assert.deepEqual(proof,{schema:1,kind:"UIA572_ABI_INVALID",cases:10,allRejected:true});assert.equal(existsSync(marker),false)
     }else{
     const result=await new PsInputInjector(runner,path.join(dir,"absent.stop")).invokeUia(target,hit.name,mode,{expectControlType:hit.controlType,expectAutomationId:hit.automationId,...(mode==="setvalue"?{value:"Owned572 中文 value"}:{}),...(mode==="scroll"?{direction:"down" as const,scrollAmount:1}:{})})
-    if(loader){assert.equal(result.ok,false);if(result.ok)throw new Error("UIA572_LOADER_ACCEPTED");assert.equal(result.reason,"pattern_unavailable");assert.equal(result.terminal,true);assert.equal(result.detail,"background UIA terminal refusal");assert.doesNotMatch(result.detail,/\.dll|uia-no-focus-native572/);assert.equal(existsSync(marker),false)}
-    else{assert.equal(result.ok,true);if(!result.ok)throw new Error("UIA572_MODE_REFUSED");assert.equal(result.mode,mode);assert.equal(result.foreground,false);const receipt=await waitModeFile572(marker,children[0],deadline,text=>JSON.parse(text));assert.deepEqual(receipt,{schema:1,role:"target",mode,changed:true})}
+    /*UIA572_MODE_FAILURE_BEGIN*/actionReturned572=true;observedPhase572="ACTION_RETURNED";/*UIA572_MODE_FAILURE_END*/if(loader){assert.equal(result.ok,false);if(result.ok)throw new Error("UIA572_LOADER_ACCEPTED");assert.equal(result.reason,"pattern_unavailable");assert.equal(result.terminal,true);assert.equal(result.detail,"background UIA terminal refusal");assert.doesNotMatch(result.detail,/\.dll|uia-no-focus-native572/);assert.equal(existsSync(marker),false)}
+    else{assert.equal(result.ok,true);if(!result.ok)throw new Error("UIA572_MODE_REFUSED");assert.equal(result.mode,mode);assert.equal(result.foreground,false);const receipt=await waitModeFile572(marker,children[0],deadline,text=>JSON.parse(text));/*UIA572_MODE_FAILURE_BEGIN*/markerSeen572=true;/*UIA572_MODE_FAILURE_END*/assert.deepEqual(receipt,{schema:1,role:"target",mode,changed:true});/*UIA572_MODE_FAILURE_BEGIN*/observedPhase572="TARGET_MARKER_CONFIRMED";/*UIA572_MODE_FAILURE_END*/}
     }
-    await oracle(["-Mode","snapshot","-TargetHwnd",String(target),"-Out",afterPath])
+    await oracle(["-Mode","snapshot","-TargetHwnd",String(target),"-Out",afterPath]);/*UIA572_MODE_FAILURE_BEGIN*/observedPhase572="AFTER_CAPTURED";/*UIA572_MODE_FAILURE_END*/
     await oracle(["-Mode","compare","-Before",beforePath,"-After",afterPath,"-TargetHwnd",String(target),"-Delivery","uia-pattern","-Out",verdictPath])
-    assertModeDesktop572(target,sibling,before,JSON.parse(readFileSync(afterPath,"utf8")),JSON.parse(readFileSync(verdictPath,"utf8")),existsSync(siblingMarker))
+    /*UIA572_MODE_FAILURE_BEGIN*/observedPhase572="COMPARE_RETURNED";const observedAfter572=JSON.parse(readFileSync(afterPath,"utf8")) as Snapshot572;afterRole572=role572(observedAfter572.foreground,target,sibling);/*UIA572_MODE_FAILURE_END*/assertModeDesktop572(target,sibling,before,observedAfter572,JSON.parse(readFileSync(verdictPath,"utf8")),existsSync(siblingMarker))
     assert.ok(children.every(c=>!c.isClosed()))
   }catch(error){primary=error}
-  finally{await cleanupMode572(children,()=>rmSync(dir,{recursive:true,force:true}),primary)}
+  finally{/*UIA572_MODE_FAILURE_BEGIN*/if(primary!==undefined)try{t?.diagnostic("UIA572_MODE_FAILURE_OBSERVATION "+JSON.stringify({schema:1,phase:observedPhase572,readyRole:readyRole572,beforeRole:beforeRole572,afterRole:afterRole572,actionStarted:actionStarted572,actionReturned:actionReturned572,markerSeen:markerSeen572,childrenAlive:children.length===2&&children.every(c=>!c.isClosed())}))}catch{/* Passive observation cannot replace primary or prevent owned cleanup. */}/*UIA572_MODE_FAILURE_END*/await cleanupMode572(children,()=>rmSync(dir,{recursive:true,force:true}),primary)}
   assert.equal(children.length,2);assert.ok(children.every(c=>c.isClosed()))
   console.log("UIA572_NO_FOCUS_NATIVE "+JSON.stringify({schema:1,mode,kind:loader??"action",targetChanged:loader===undefined,siblingUnchanged:true,allFourOracles:true,childrenClosed:2}))
 }
 // Registered by the original integration file so default canonical file workers
 // cannot run two independent #572 foreground owners concurrently.
 export function registerNoFocusNativeTests572():void {
-for(const intent of modes572)test(`#572 actual no-focus ${intent.mode} changes target state with all four desktop oracles`,{skip:process.platform!=="win32",timeout:45_000},()=>runMode572(intent.mode))
-for(const loader of ["missing","invalid-pe","wrong-architecture","missing-symbol"] as const)test(`#572 actual loader ${loader} refuses with no target action`,{skip:process.platform!=="win32",timeout:45_000},()=>runMode572("setvalue",loader))
+for(const intent of modes572)test(`#572 actual no-focus ${intent.mode} changes target state with all four desktop oracles`,{skip:process.platform!=="win32",timeout:45_000},(t)=>runMode572(intent.mode,undefined,t))
+for(const loader of ["missing","invalid-pe","wrong-architecture","missing-symbol"] as const)test(`#572 actual loader ${loader} refuses with no target action`,{skip:process.platform!=="win32",timeout:45_000},(t)=>runMode572("setvalue",loader,t))
 
-test("#572 actual CUiAction ABI rejects ten invalid argument shapes without target action",{skip:process.platform!=="win32",timeout:45_000},()=>runMode572("setvalue","abi-invalid"))
+test("#572 actual CUiAction ABI rejects ten invalid argument shapes without target action",{skip:process.platform!=="win32",timeout:45_000},(t)=>runMode572("setvalue","abi-invalid",t))
 
 }
 
