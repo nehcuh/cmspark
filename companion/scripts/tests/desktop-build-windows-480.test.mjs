@@ -375,7 +375,7 @@ test('705 fixture keeps legacy V1 checker but requires explicit unknown refusal 
 
 // Actual /W4 /WX failure C4456: V2 text must not hide the module-path buffer.
 test('705 actual V2 sidecar reader keeps module path and event text in distinct local names',()=>{
- const s=fs.readFileSync(path.resolve('tests/fixtures/desktop-480/windows-inheritance.c'),'utf8'),a=s.indexOf('static int fixture_read_known(HANDLE known[3]) {'),b=s.indexOf('static unsigned fixture_mask',a);assert.ok(a>=0&&b>a);const body=s.slice(a,b);
+ const s=sentinelSource705(),a=s.indexOf('static int fixture_read_known(HANDLE known[3]) {'),b=s.indexOf('static unsigned fixture_mask',a);assert.ok(a>=0&&b>a);const body=s.slice(a,b);
  const outer=/wchar_t ([A-Za-z_][A-Za-z0-9_]*)\[32768\]; DWORD n=GetModuleFileNameW\(NULL,\1,32768\)/.exec(body),inner=/char ([A-Za-z_][A-Za-z0-9_]*)\[96\]=\{0\}/.exec(body);assert.ok(outer&&inner,'actual two buffer declarations');assert.notEqual(outer[1],inner[1],'V2 inner local must not shadow outer module path under /W4 /WX');
  assert.ok(body.includes('wcscat_s('+outer[1]+',32768,L".handles")'));assert.ok(body.includes('CreateFileW('+outer[1]+',GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL)'));
 });
