@@ -31,6 +31,15 @@ function ax571Setup(value:unknown):{schema:1;appActive:boolean;siblingKey:boolea
   return {schema:1,appActive:get('appActive'),siblingKey:get('siblingKey'),targetBound:get('targetBound'),siblingBound:get('siblingBound'),firstRole:get('firstRole')}
  } catch {return null}
 }
+// These dedicated native entry exits precede its sole launch request.
+// Existing/malformed/unreadable evidence is never classified as absent.
+function ax571PrelaunchRefused(closed:boolean,code:number|null,signal:NodeJS.Signals|null,files:string[]):boolean {
+ if(!closed||(code!==78&&code!==79)||signal!==null)return false
+ for(const file of files){try{fs.lstatSync(file);return false}catch(error){
+  if(!error||typeof error!=="object"||Object.getOwnPropertyDescriptor(error,"code")?.value!=="ENOENT")return false
+ }}
+ return true
+}
 // Private owned-file evidence: launcher close alone never proves the app closed.
 function ax571OwnerReceipt(value:unknown,framework:string,terminated:boolean,pid?:number):{pid:number}|null {
  try {
@@ -45,7 +54,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ax-native571-'))),owned=fs.lstatSync(dir,{bigint:true}),root=path.resolve('dist/ax-native-571'),host=path.join(root,'cmspark-host'),fixture=path.join(root,'OwnedAX571.app/Contents/MacOS/owned-target')
  const deadline=performance.now()+20_000,remaining=()=>{t.signal.throwIfAborted();const n=Math.floor(deadline-performance.now());assert.ok(n>0,'AX571_DEADLINE');return n}
  const env={PATH:path.dirname(process.execPath)+':/usr/bin:/bin',TMPDIR:dir}
- let child:ChildProcess|undefined,closed:Promise<void>=Promise.resolve(),ended=false,failed=false,primary:unknown,appPID:number|undefined
+ let child:ChildProcess|undefined,closed:Promise<void>=Promise.resolve(),ended=false,failed=false,primary:unknown,appPID:number|undefined,launcherExit:number|null=null,launcherSignal:NodeJS.Signals|null=null
  const json=async(bin:string,args:string[],limit=15_000)=>new Promise<any>((resolve,reject)=>{execFile(bin,args,{encoding:'utf8',env,timeout:Math.min(limit,remaining()),maxBuffer:65536,signal:t.signal},(error,stdout)=>{if(error){reject(Error('AX571_CHILD_FAILED'));return}try{resolve(JSON.parse(stdout))}catch{reject(Error('AX571_INVALID_JSON'))}})})
  const command=async(args:string[],limit=15_000)=>json(host,args,limit)
  const marker=path.join(dir,'target.json'),siblingMarker=path.join(dir,'sibling.json'),ready=path.join(dir,'ready.json'),stop=path.join(dir,'stop')
@@ -62,7 +71,7 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
   t.diagnostic('AX571_PERMISSION '+JSON.stringify({schema:1,framework,axTrusted:security.axTrusted,secureInput:security.secureInput,identifierExpected:true,route:'DIRECT_CLI_NODE_PARENT',tccResponsibility:'UNKNOWN'}))
   lease.checkpoint();lease.retain()
   child=execFile(fixture,['--launch-owned',framework,ready,marker,siblingMarker,String(remaining())],{env,timeout:remaining(),maxBuffer:4096,signal:t.signal},()=>{})
-  closed=new Promise<void>(resolve=>child!.once('close',()=>{ended=true;resolve()}))
+  closed=new Promise<void>(resolve=>child!.once('close',(code,signal)=>{launcherExit=code;launcherSignal=signal;ended=true;resolve()}))
   const started=ax571OwnerReceipt(await waitFile(ready+'.owner-started'),framework,false);assert.ok(started,'AX571_APP_OWNER_REQUIRED');appPID=started.pid;assert.ok(appPID!==child.pid,'AX571_APP_NOT_LAUNCHER');
   const proof=await waitFile(ready);assert.ok(proof.appPID===appPID,'AX571_READY_APP_IDENTITY');assert.equal(proof.schema,1,'AX571_INVALID_RECEIPT');assert.equal(proof.framework,framework,'AX571_INVALID_RECEIPT');const setup=ax571Setup(proof.setup);assert.ok(setup&&setup.appActive&&setup.siblingKey&&setup.targetBound&&setup.siblingBound,'AX571_OWNED_READY_REQUIRED');const target=proof.target,sibling=proof.sibling
   assert.ok(Number.isSafeInteger(target)&&target>0&&Number.isSafeInteger(sibling)&&sibling>0&&target!==sibling,'AX571_OWNED_WINDOWS_INVALID')
@@ -92,9 +101,10 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
  finally{
   let setup:null|ReturnType<typeof ax571Setup>=null;try{const b=fs.readFileSync(ready+'.setup','utf8');if(Buffer.byteLength(b,'utf8')<=2048)setup=ax571Setup(JSON.parse(b))}catch{}
   try{t.diagnostic('AX571_SETUP '+JSON.stringify({schema:1,framework,observed:setup!==null,...(setup??{})}))}catch{/* Diagnostics cannot replace primary or cleanup. */}
+  try{t.diagnostic('AX571_LIFETIME '+JSON.stringify({schema:1,framework,closed:ended,prelaunch:launcherExit===78?'ADMISSION_REFUSED':launcherExit===79?'POLICY_REFUSED':'UNPROVEN',signalObserved:launcherSignal!==null}))}catch{/* Finite observation cannot replace primary or cleanup. */}
   let cleanup:unknown
   let actualAppClosed=!child
-  try{if(child&&!ended)child.kill();await closed;if(child){const start=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-started','utf8')),framework,false,appPID);assert.ok(start,'AX571_APP_OWNER_REQUIRED');assert.ok(start.pid!==child.pid,'AX571_APP_NOT_LAUNCHER');const receipt=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-closed','utf8')),framework,true,start.pid);assert.ok(receipt,'AX571_APP_NOT_REAPED');actualAppClosed=true}}catch{cleanup=Error('AX571_OWNER_CLEANUP_FAILED')}
+  try{if(child&&!ended)child.kill();await closed;if(child){if(ax571PrelaunchRefused(ended,launcherExit,launcherSignal,[ready,ready+'.owner-started',ready+'.owner-closed',ready+'.setup',marker,siblingMarker]))actualAppClosed=true;else{const start=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-started','utf8')),framework,false,appPID);assert.ok(start,'AX571_APP_OWNER_REQUIRED');assert.ok(start.pid!==child.pid,'AX571_APP_NOT_LAUNCHER');const receipt=ax571OwnerReceipt(JSON.parse(fs.readFileSync(ready+'.owner-closed','utf8')),framework,true,start.pid);assert.ok(receipt,'AX571_APP_NOT_REAPED');actualAppClosed=true}}}catch{cleanup=Error('AX571_OWNER_CLEANUP_FAILED')}
   if((!child||ended)&&actualAppClosed){try{const now=fs.lstatSync(dir,{bigint:true});assert.ok(now.isDirectory()&&!now.isSymbolicLink()&&now.dev===owned.dev&&now.ino===owned.ino,'AX571_CLEANUP_IDENTITY');fs.rmSync(dir,{recursive:true});lease.settled()}catch(error){cleanup=error}}
   else cleanup=Error('AX571_OWNER_NOT_REAPED')
   if(failed)throw primary;if(cleanup!==undefined)throw cleanup

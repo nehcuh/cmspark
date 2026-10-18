@@ -213,7 +213,9 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 let arguments = Array(CommandLine.arguments.dropFirst())
 let app = NSApplication.shared
 if arguments.first == "--launch-owned" {
-    guard let launcher = AX571OwnedLauncher(Array(arguments.dropFirst())), app.setActivationPolicy(.prohibited) else { exit(64) }
+    // Dedicated categories are reachable only before any owned-app launch request.
+    guard let launcher = AX571OwnedLauncher(Array(arguments.dropFirst())) else { exit(78) }
+    guard app.setActivationPolicy(.prohibited) else { exit(79) }
     launcher.start(); withExtendedLifetime(launcher) { app.run() }
 } else {
     let delegate = AX571Target(arguments)
