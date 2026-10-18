@@ -12,7 +12,7 @@ import { saveConfig, getConfig, configEvents, CONFIG_CHANGE_EVENT } from "../src
 import { McpClient } from "../src/mcp/client"
 import { getMcpManager } from "../src/mcp/manager"
 import { bindMcpDispatchRuntime, executeMcpTool, executeMcpMetaTool, tryExpandFilesystemAllowDirOnDenial } from "../src/mcp/dispatch"
-import { canOfferAllowDirExpand } from "../src/mcp/allow-dir-expand"
+import { canOfferAllowDirExpand, normalizeAllowDirKey } from "../src/mcp/allow-dir-expand"
 
 async function owned(t: any, trust: "trusted" | "manual" = "trusted", cruise = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-mcp-476-")), old = process.env.CMSPARK_DATA_DIR
@@ -105,7 +105,11 @@ for (const mode of ["native-denied", "legacy-approved", "native-existing-cruise"
     assert.equal(result.ok, true); assert.equal(apply, 1); assert.equal(ready, 1)
     assert.equal(x.calls.confirmation, mode === "legacy-approved" ? 1 : 0)
     assert.equal(x.calls.unavailable, 0)
-    assert.ok((getConfig().mcp!.servers.native476 as any).args.includes(fs.realpathSync(target)))
+    assert.deepEqual(
+      (getConfig().mcp!.servers.native476 as any).args.map(normalizeAllowDirKey),
+      [allowed, fs.realpathSync.native(target)].map(normalizeAllowDirKey),
+      "only the existing root and the approved canonical directory are configured",
+    )
   }
 })
 
