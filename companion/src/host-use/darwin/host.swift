@@ -1055,6 +1055,124 @@ func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
     return clientOrigin
 }
 
+// #571 focus evidence is independent of screen stacking. Public AX only; no activation.
+// 256 is a NEW closed evidence cap: reject the complete observation, never take a prefix.
+private struct CUFocusMetadata: Equatable {
+    let pid: pid_t
+    let title: String
+    let x: CGFloat
+    let y: CGFloat
+    let width: CGFloat
+    let height: CGFloat
+
+    static func == (lhs: CUFocusMetadata, rhs: CUFocusMetadata) -> Bool {
+        // Swift String equality normalizes Unicode; correspondence requires exact title bytes.
+        return lhs.pid == rhs.pid && lhs.title.utf8.elementsEqual(rhs.title.utf8) &&
+            lhs.x == rhs.x && lhs.y == rhs.y && lhs.width == rhs.width && lhs.height == rhs.height
+    }
+}
+
+private struct CUFocusEvidence {
+    let app: AXUIElement
+    let window: AXUIElement
+    let metadata: CUFocusMetadata
+    let windows: [AXUIElement]
+    let allMetadata: [CUFocusMetadata]
+}
+
+private func cuFocusAttribute(_ element: AXUIElement, _ name: CFString) -> CFTypeRef? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, name, &value) == .success else { return nil }
+    return value
+}
+
+private func cuFocusElement(_ value: CFTypeRef?) -> AXUIElement? {
+    guard let value = value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+    return (value as! AXUIElement)
+}
+
+private func cuFocusMetadata(_ element: AXUIElement, _ expectedPID: pid_t) -> CUFocusMetadata? {
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(element, &pid) == .success, pid > 0, pid == expectedPID,
+          let rawTitle = cuFocusAttribute(element, kAXTitleAttribute as CFString),
+          CFGetTypeID(rawTitle) == CFStringGetTypeID(), let title = rawTitle as? String, !title.isEmpty,
+          let rawPosition = cuFocusAttribute(element, kAXPositionAttribute as CFString),
+          CFGetTypeID(rawPosition) == AXValueGetTypeID(),
+          let rawSize = cuFocusAttribute(element, kAXSizeAttribute as CFString),
+          CFGetTypeID(rawSize) == AXValueGetTypeID() else { return nil }
+    let position = rawPosition as! AXValue, size = rawSize as! AXValue
+    var point = CGPoint.zero, dimensions = CGSize.zero
+    guard AXValueGetType(position) == .cgPoint, AXValueGetType(size) == .cgSize,
+          AXValueGetValue(position, .cgPoint, &point), AXValueGetValue(size, .cgSize, &dimensions),
+          point.x.isFinite, point.y.isFinite, dimensions.width.isFinite, dimensions.height.isFinite,
+          dimensions.width > 0, dimensions.height > 0 else { return nil }
+    return CUFocusMetadata(pid: pid, title: title, x: point.x, y: point.y, width: dimensions.width, height: dimensions.height)
+}
+
+private func cuFocusEvidence(_ system: AXUIElement) -> CUFocusEvidence? {
+    guard let app = cuFocusElement(cuFocusAttribute(system, kAXFocusedApplicationAttribute as CFString)),
+          let window = cuFocusElement(cuFocusAttribute(app, kAXFocusedWindowAttribute as CFString)) else { return nil }
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(app, &pid) == .success, pid > 0,
+          let metadata = cuFocusMetadata(window, pid),
+          let rawWindows = cuFocusAttribute(app, kAXWindowsAttribute as CFString),
+          CFGetTypeID(rawWindows) == CFArrayGetTypeID() else { return nil }
+    let array = rawWindows as! CFArray
+    guard CFArrayGetCount(array) > 0, CFArrayGetCount(array) <= 256,
+          let values = rawWindows as? [AnyObject], values.count == CFArrayGetCount(array) else { return nil }
+    var windows: [AXUIElement] = [], allMetadata: [CUFocusMetadata] = []
+    for value in values {
+        guard let item = cuFocusElement(value), let itemMetadata = cuFocusMetadata(item, pid) else { return nil }
+        windows.append(item); allMetadata.append(itemMetadata)
+    }
+    // A focused element must be one actual member, not merely a matching title/frame.
+    guard windows.filter({ CFEqual($0, window) }).count == 1,
+          allMetadata.filter({ $0 == metadata }).count == 1 else { return nil }
+    return CUFocusEvidence(app: app, window: window, metadata: metadata, windows: windows, allMetadata: allMetadata)
+}
+
+private func cuFocusCGMetadata(_ row: [String: Any], _ expectedPID: pid_t) -> CUFocusMetadata? {
+    guard let pid = row["pid"] as? pid_t, pid > 0, pid == expectedPID,
+          let title = row["name"] as? String, !title.isEmpty,
+          let bounds = row["bounds"] as? [String: CGFloat],
+          let x = bounds["x"], let y = bounds["y"], let width = bounds["width"], let height = bounds["height"],
+          x.isFinite, y.isFinite, width.isFinite, height.isFinite, width > 0, height > 0 else { return nil }
+    return CUFocusMetadata(pid: pid, title: title, x: x, y: y, width: width, height: height)
+}
+
+// FOCUS_SELECTOR_BEGIN — source-derived CPU controls exercise this exact decision body.
+private func cuFocusUniqueCG(_ metadata: CUFocusMetadata, _ rows: [[String: Any]]) -> UInt32? {
+    var match: UInt32? = nil
+    for row in rows {
+        guard let pid = row["pid"] as? pid_t else { return nil }
+        if pid != metadata.pid { continue }
+        // Incomplete same-app rows cannot be used to rule out ambiguity.
+        guard let observed = cuFocusCGMetadata(row, metadata.pid),
+              let id = row["windowId"] as? UInt32, id > 0 else { return nil }
+        if observed == metadata {
+            if match != nil { return nil }
+            match = id
+        }
+    }
+    return match
+}
+// FOCUS_SELECTOR_END
+
+private func cuFocusedWindowId(_ rows: [[String: Any]]) -> UInt32? {
+    guard AXIsProcessTrusted() else { return nil }
+    let system = AXUIElementCreateSystemWide()
+    guard let before = cuFocusEvidence(system), let id = cuFocusUniqueCG(before.metadata, rows),
+          let after = cuFocusEvidence(system),
+          CFEqual(before.app, after.app), CFEqual(before.window, after.window),
+          before.metadata == after.metadata, before.allMetadata == after.allMetadata,
+          before.windows.count == after.windows.count else { return nil }
+    // A changed complete AX window sequence is conservatively unknown, even if only reordered.
+    for index in before.windows.indices {
+        guard CFEqual(before.windows[index], after.windows[index]) else { return nil }
+    }
+    return id
+}
+
 // MARK: - window-list
 
 func cuWindowList(bundleId: String?, windowId: UInt32?, foreground: Bool) -> String {
@@ -1092,7 +1210,10 @@ func cuWindowList(bundleId: String?, windowId: UInt32?, foreground: Bool) -> Str
             "layer": layer,
         ])
     }
-    return cuJson(["ok": true, "windows": filtered])
+    // Only an actual, stable, uniquely mapped focused AX window supplies this scalar.
+    // The original returned rows/order are preserved, including overlays and other apps.
+    let focused: Any = foreground ? (cuFocusedWindowId(filtered).map { $0 as Any } ?? NSNull()) : NSNull()
+    return cuJson(["ok": true, "windows": filtered, "foregroundWindowId": focused])
 }
 
 // MARK: - ax-probe

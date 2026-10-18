@@ -184,6 +184,24 @@ macOS 的 `host.swift` 已有外部 AX 定位与 press/increment/decrement/confi
 `darwin-adapters.ts` 可直接调用；`computer-bg-oracles.sh` 提供真实窗口/光标 snapshot 和严格
 compare。它们是**源实现**，不是后台 Delivered 证明。Linux 桌面投递仍为 Gap（无实现）。
 
+### macOS 焦点观测边界（#571，源码修正，原生验收待完成）
+
+屏幕堆叠的首个 CG 窗口不等于接收键盘焦点的窗口。`window-list --foreground`
+保留原有全部返回行和顺序，并额外返回只读 `foregroundWindowId`（数字或 null）：从系统级
+AXFocusedApplication/AXFocusedWindow 读取真实焦点对象，要求其 PID、非空精确标题和有限精确
+位置/尺寸与唯一已列出的 CG 窗口对应；不按层级、前台应用首行、标题近似或距离猜测。
+
+对应前要求 focused window 是该应用完整 AXWindows 数组中唯一 CFEqual 成员，且完整元数据
+在 AX 与 CG 两侧都不歧义。新实现证据预算为 **最多256个 AX 窗口**，超过即整次未知，绝不截前缀；
+数组成员任一缺失/错误/无标题/不合法几何也未知。读取后再次核对 focused app/window、完整数组
+及元数据；变化、无权限或无法对应都返回 null。该保守条件可能拒绝拥有无标题或未完整暴露窗口的应用。
+公开 AX/CG 调用不是原子快照，双读不是对两次调用之间任意 ABA 或未来焦点变化的保证。
+
+snapshot 仅接受唯一实际列出的正整数测量 ID，没有顶项回退；完整原始 z-order、cursor 和
+sibling 的 before/after 严格断言不变。纯 Node 受控源投影不是 Swift SDK/native 执行，当前历史
+OTHER 行的 owner/layer 和唯一原因仍 UNKNOWN。该修正不新增动作、激活、TCC 权限或清理权；
+只有新 head hosted Mac 的实际 marker 和原全部 oracle 通过，才能回填 Delivered/Refused。
+
 ### 4.1 macOS AX：逐框架 / 动作与证据
 
 当前所有下列行仍是 **Gap**，因为本变更没有运行本机或 hosted AX。原生验收代码的存在、

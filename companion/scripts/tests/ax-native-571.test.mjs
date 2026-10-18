@@ -1,4 +1,5 @@
 import test from 'node:test'
+import './ax-focus-oracle-571.test.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'

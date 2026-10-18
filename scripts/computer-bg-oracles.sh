@@ -86,7 +86,8 @@ fi
 
 read_foreground_id() {
   # `window-list --foreground` returns on-screen windows in CGWindowListCopyWindowInfo order,
-  # which is front-to-back, so entry 0 is the frontmost window.
+  # which is front-to-back screen stacking, not keyboard focus. The host supplies
+  # a separate AX-derived foregroundWindowId; missing/ambiguous focus stays null.
   [ -n "$HOST_BIN" ] || return 1
   "$HOST_BIN" window-list --foreground 2>/dev/null || return 1
 }
@@ -111,7 +112,10 @@ const zorder = []
 if (wl && wl.ok === true && Array.isArray(wl.windows)) {
   for (const w of wl.windows) if (typeof w.windowId === "number") zorder.push(w.windowId)
 }
-const foreground = zorder.length > 0 ? zorder[0] : null
+// Never infer focus from top stacking row, layer, or a frontmost application PID.
+const measured = wl && wl.ok === true ? wl.foregroundWindowId : null
+const foreground = Number.isSafeInteger(measured) && measured > 0 && measured <= 0xffffffff &&
+  zorder.filter((id) => id === measured).length === 1 ? measured : null
 
 let cursor = null
 if (cur && cur.ok === true && typeof cur.x === "number" && typeof cur.y === "number") {
