@@ -347,3 +347,71 @@ test('clean action preserves exact original native ABI and all dispatch semantic
  assert.ok(begin>=0&&end>begin);original=original.slice(0,begin)+original.slice(end);
  assert.equal(dispatch(ps),original);
 });
+
+// Execute only the actual owned fixture's event/function bodies after finite PS
+// syntax translation. No PowerShell/WPF/user32 is evaluated on this host.
+import * as ownedFs572 from 'node:fs';
+import { tmpdir as ownedTmp572 } from 'node:os';
+const modeFixture572 = readFileSync(path.join(root,'companion/tests/fixtures/win/uia-no-focus-modes-572.ps1'),'utf8');
+function eventBody572(source,anchor){return source.includes(anchor)?body(source,anchor):'';}
+function readyEvent572(source,role='sibling',mode='setvalue',failWrite=false){
+ const dir=ownedFs572.mkdtempSync(path.join(ownedTmp572(),'cmspark-event572-')),Ready=path.join(dir,'ready');
+ const state={};for(const [,name,value]of source.matchAll(/^\$script:(\w+) = \$(false|true)\s*$/gm))state[name]=value==='true';
+ let fg=909,writes=0,moves=0,activations=0,helper=()=>{};
+ const win={IsActive:false,Handle:{ToInt64:()=>202},Activate(){activations++;return false;}};
+ const control={Text:'',IsChecked:false,VerticalOffset:0,ScrollableHeight:120},list={SelectedItem:{}};
+ const io={exists:f=>ownedFs572.existsSync(f),write(f,text){writes++;if(failWrite){ownedFs572.writeFileSync(f,text.slice(0,2));throw Error('OWNED_WRITE_FAILURE');}ownedFs572.writeFileSync(f,text);},move:(a,b)=>{moves++;ownedFs572.renameSync(a,b);}};
+ function translate(text){
+  let js=text.replaceAll('([Windows.Interop.WindowInteropHelper]::new($win)).Handle','win.Handle')
+   .replaceAll('[OwnedModesForeground572]::GetForegroundWindow().ToInt64()','foreground().ToInt64()')
+   .replaceAll('[IO.File]::Exists','io.exists').replaceAll('[IO.File]::WriteAllText','io.write').replaceAll('[IO.File]::Move','io.move')
+   .replace(/\(\$proof \| Microsoft\.PowerShell\.Utility\\ConvertTo-Json -Compress\)/g,'JSON.stringify(proof)')
+   .replace(/\[ordered\]@\{([^{}]*)\}/g,(_,fields)=>'{'+fields.split(';').filter(x=>x.trim()).map(x=>x.replace(/^\s*(\w+)\s*=\s*/,'$1:')).join(',')+'}')
+   .replaceAll('[void]','void ').replaceAll('[bool]','').replace(/\belseif\b/g,'else if')
+   .replace(/\$script:(\w+)/g,'state.$1').replaceAll('$true','true').replaceAll('$false','false')
+   .replace(/-not\s+/g,'!').replace(/ -ceq /g,' === ').replace(/ -eq /g,' === ').replace(/ -ne /g,' !== ')
+   .replace(/ -or /g,' || ').replace(/ -and /g,' && ').replace(/ -gt /g,' > ').replace(/ -le /g,' <= ')
+   .replace(/\$(\w+)/g,'$1').replace(/Publish-OwnedSiblingReady572\b/g,'publishSibling()');
+  assert.doesNotMatch(js,/\$|::| -[a-z]+ |@\{/,'unsupported PS syntax must not be guessed');
+  return new vm.Script('(function(){let handle,baseline,proof,foreground572,active572;'+js+'\n})').runInNewContext({win,state,Role:role,Mode:mode,Ready,control,list,io,foreground:()=>({ToInt64:()=>fg}),publishSibling:()=>helper()});
+ }
+ helper=translate(eventBody572(source,'function Publish-OwnedSiblingReady572'));
+ const rendered=translate(eventBody572(source,'$win.Add_ContentRendered(')),activated=translate(eventBody572(source,'$win.Add_Activated('));
+ return {rendered,activated,state,win,foreground(value){fg=value},seedReady(){ownedFs572.writeFileSync(Ready,'OWNED_PREEXISTING');},counts:()=>({writes,moves,activations}),proof:()=>ownedFs572.existsSync(Ready)?JSON.parse(readFileSync(Ready,'utf8')):null,close:()=>ownedFs572.rmSync(dir,{recursive:true,force:true})};
+}
+for(const eol of ['LF','CRLF']){
+ const source=modeFixture572.replace(/\r\n/g,'\n').replace(/\n/g,eol==='CRLF'?'\r\n':'\n');
+ test(`actual ${eol} sibling waits after failed activation request until own real activation`,()=>{
+  const h=readyEvent572(source);try{
+   h.rendered();assert.equal(h.counts().activations,1);assert.equal(h.proof(),null,'Activate return alone must not publish inactive/foreign ready');
+   h.win.IsActive=true;h.foreground(202);h.activated();
+   assert.deepEqual(h.proof(),{schema:1,hwnd:202,foreground:202,active:true,initialUnchanged:true});assert.equal(h.counts().moves,1);
+  }finally{h.close();}
+ });
+ test(`actual ${eol} never activated or wrong foreground cannot publish ready`,()=>{
+  const h=readyEvent572(source);try{
+   h.rendered();h.activated();assert.equal(h.proof(),null);h.win.IsActive=true;h.activated();assert.equal(h.proof(),null);
+   h.win.IsActive=false;h.foreground(202);h.activated();assert.equal(h.proof(),null);assert.equal(h.counts().writes,0);
+  }finally{h.close();}
+ });
+ test(`actual ${eol} activation before rendering waits for rendered content and duplicates are inert`,()=>{
+  const h=readyEvent572(source);try{
+   h.win.IsActive=true;h.foreground(202);h.activated();assert.equal(h.proof(),null);
+   h.rendered();assert.equal(h.proof().active,true);h.activated();h.rendered();h.activated();
+   assert.deepEqual(h.counts(),{writes:1,moves:1,activations:1});
+  }finally{h.close();}
+ });
+ test(`actual ${eol} preexisting ready preserves the original no-activation guard`,()=>{
+  const h=readyEvent572(source);try{h.seedReady();h.rendered();h.activated();assert.deepEqual(h.counts(),{writes:0,moves:0,activations:0});}finally{h.close();}
+ });
+ test(`actual ${eol} write failure never claims ready or retries a failed publication`,()=>{
+  const h=readyEvent572(source,'sibling','setvalue',true);try{
+   assert.doesNotThrow(()=>h.rendered());assert.equal(h.proof(),null);h.win.IsActive=true;h.foreground(202);
+   assert.throws(()=>h.activated(),/OWNED_WRITE_FAILURE/);assert.equal(h.proof(),null);
+   h.activated();h.rendered();assert.equal(h.proof(),null);assert.deepEqual(h.counts(),{writes:1,moves:0,activations:1});
+  }finally{h.close();}
+ });
+ for(const mode of ['setvalue','select','toggle','scroll'])test(`actual ${eol} target ${mode} baseline publication remains unchanged`,()=>{
+  const h=readyEvent572(source,'target',mode);try{h.rendered();assert.deepEqual(h.proof(),{schema:1,hwnd:202,foreground:909,active:false,initialUnchanged:true});assert.equal(h.counts().activations,0);assert.equal(h.state.armed572,true);}finally{h.close();}
+ });
+}

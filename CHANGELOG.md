@@ -4,11 +4,17 @@
 
 ## [Unreleased]
 
+- Windows 原生继承夹具仅对 sentinel 使用确切内核对象身份，先捕获旧数值槽再打开独占命名 Event 引用；无关 Event／管道占槽不冒称继承，真实继承及未知 API／比较／关闭失败仍严格拒绝。保留 V1、原 protected endpoint、bootstrap、20秒与清理；不宣称已证明历史 launch 失败根因。
+
+- #572 Windows 原生测试夹具仅在自有 sibling 已渲染、实际 IsActive 且前台 HWND 精确匹配后才原子发布 ready；Activate 请求本身不作成功证据。复用 ContentRendered/Activated 事件和原 45 秒边界，不加轮询、输入或前台权限；从未实际激活仍失败。LF/CRLF 源码回归不代表实际 Windows 已通过，也不判定旧原生失败的唯一原因。
+
 - #732：只在本次独占创建且仍为空、保留句柄与精确 bigint 身份一致的 Windows history temp 上初始化当前用户 owner／受保护有限 DACL，再经原只读 PRIVATE 门后写元数据；已有 config/root/history ACL 不修复、不接受 Admin-owner 替代。原生夹具改为在绑定 owned parent 下显式安全描述符新建唯一 root/empty；CPU 与内存编译不代表 NTFS 或整票验收已通过，0.6.14 仍为开发版。
 
 - #732 原生隐私 positive 首轮拒绝后，仅在显式 GHA Windows gate 下补一次同路径只读原因回执；默认生产输出与所有 owner／ACL 谓词不变，原失败不会被第二读或诊断替换。闭集原因和0/1/null索引不泄露 SID／SDDL／路径，不更改 ACL、token 或权限；不是已修复 NTFS 根因或整票完成。
 
 - #605 Windows 原生管道回归夹具的 ready JSON 先写独占临时文件、完整关闭后再原子发布，避免 `exists` 已真却读取到空 JSON。补确定性开文件／写入失败控制，保留原管道、cwd、ignored stdio、时限和清理断言；不将夹具竞态冒称产品管道故障或所有 Windows 失败的根因。
+
+- #730 将原坐标操作30次／60秒限流的拒绝透传为类型化可恢复反馈，对话可等待或改做其它工作；限流仍拒绝当前操作，不跳过确认或自动重试。相邻单任务忙出口保留原不可恢复等级，并补完整生产准入链、虚拟时钟与安全负控。
 
 - #732（0.6.14 开发中）：新增仅 hosted 的生产 Companion crash/restart 与真实 SidePanel reload 验收候选；保留原页面无幽灵 running、同数据历史、正常取消及严格清理断言。CPU 控制不代表真实浏览器/daemon 或 Windows ACL 已通过；真实第五 job 首轮在 BROWSER 拒绝且清理成功，根因未知。补最后固定浏览器阶段与 cleanup 前 child 存在性／有限退出码回执，不输出 stderr／身份／正文，不改沙箱、启动、预算或成功条件。
 

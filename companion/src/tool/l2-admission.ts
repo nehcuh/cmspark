@@ -601,7 +601,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // JSON-escaped against layout spoofing, every injectable action
       // enumerated verbatim; unit-tested in computer-preview.test.ts.
       const { buildComputerL2Preview } = await import("../computer/preview")
-      const failC = (error: string, errorCode?: "APP_COORDINATE_DENIED" | "APP_COORDINATE_STRUCTURAL" | "COMPUTER_DISABLED" | "APP_NOT_WHITELISTED") => {
+      const failC = (error: string, errorCode?: "APP_COORDINATE_DENIED" | "APP_COORDINATE_STRUCTURAL" | "COMPUTER_DISABLED" | "APP_NOT_WHITELISTED" | "COMPUTER_TASK_BUSY" | "RATE_LIMITED") => {
         const result = { success: false, error, ...(errorCode ? { error_code: errorCode } : {}) }
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
@@ -621,6 +621,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         if (computerTaskAbort.size > 0) {
           return failC(
             "host_computer refused: another computer task is already executing (global single-task invariant, plan §E.6.2) [COMPUTER_TASK_BUSY] — wait for it to finish or abort it from the panel.",
+            "COMPUTER_TASK_BUSY",
           )
         }
         // L-5: loop/worker CU focus lease — peek only (do not hold through L2).
@@ -655,6 +656,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         if (limiter.saturated()) {
           return failC(
             `host_computer refused: session injection rate limit reached (${limiter.countInWindow()}/30 in the last 60s) [RATE_LIMITED] — wait for the window to drain before starting another computer task.`,
+            "RATE_LIMITED",
           )
         }
         // P5 / Grok v4.1 §3.2 (Pi re-confirm PROCEED 2026-07-24 + Pi final

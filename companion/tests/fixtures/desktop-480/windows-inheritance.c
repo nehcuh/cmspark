@@ -83,14 +83,16 @@ done:
  CloseHandle(fd);CloseHandle(process);return result;
 }
 #else
+// Test-only name belongs to this exact parent fixture; never a process/object scan.
+static wchar_t fixture_event_name[96];
 #ifndef DESKTOP_FIXTURE_ADDON
 #define CMSPARK_BOOTSTRAP_CHILD
 #include "../../../src/desktop/native/windows-bootstrap.h"
 static int fixture_read_known(HANDLE known[3]) {
-  wchar_t name[32768]; DWORD n=GetModuleFileNameW(NULL,name,32768);
+  wchar_t sidecar_path[32768]; DWORD n=GetModuleFileNameW(NULL,sidecar_path,32768);
   if(!n||n>32750)return 0;
-  if(wcscat_s(name,32768,L".handles"))return 0;
-  HANDLE file=CreateFileW(name,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);
+  if(wcscat_s(sidecar_path,32768,L".handles"))return 0;
+  HANDLE file=CreateFileW(sidecar_path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);
   if(file==INVALID_HANDLE_VALUE)return 0;
   BY_HANDLE_FILE_INFORMATION info;char bytes[256];DWORD got=0;
   int valid=GetFileInformationByHandle(file,&info)&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))&&info.nNumberOfLinks==1&&info.nFileSizeHigh==0&&info.nFileSizeLow>0&&info.nFileSizeLow<sizeof(bytes);
@@ -98,14 +100,61 @@ static int fixture_read_known(HANDLE known[3]) {
   BY_HANDLE_FILE_INFORMATION after;
   if(valid)valid=GetFileInformationByHandle(file,&after)&&after.dwVolumeSerialNumber==info.dwVolumeSerialNumber&&after.nFileIndexHigh==info.nFileIndexHigh&&after.nFileIndexLow==info.nFileIndexLow&&after.nNumberOfLinks==1&&after.nFileSizeHigh==info.nFileSizeHigh&&after.nFileSizeLow==info.nFileSizeLow;
   CloseHandle(file);if(!valid)return 0;bytes[got]=0;
-  unsigned long long a,b,c;
-  if(sscanf_s(bytes,"D480_OWNED_HANDLES_V1\n%llu\n%llu\n%llu\n",&a,&b,&c)!=3)return 0;
-  char canonical[256];int length=snprintf(canonical,sizeof(canonical),"D480_OWNED_HANDLES_V1\n%llu\n%llu\n%llu\n",a,b,c);if(length!=(int)got||memcmp(bytes,canonical,got))return 0;
+  unsigned long long a,b,c;fixture_event_name[0]=0;
+  if(!strncmp(bytes,"D480_OWNED_HANDLES_V2\n",strlen("D480_OWNED_HANDLES_V2\n"))){
+    char name[96]={0};
+    if(sscanf_s(bytes,"D480_OWNED_HANDLES_V2\n%llu\n%llu\n%llu\n%95[^\n]\n",&a,&b,&c,name,(unsigned)sizeof(name))!=4)return 0;
+    const char *prefix="Local\\cmspark-d480-sentinel-";size_t prefix_length=strlen(prefix);
+    if(strlen(name)!=prefix_length+32||strncmp(name,prefix,prefix_length)||!c||c==(uintptr_t)-1)return 0;
+    for(size_t i=prefix_length;i<prefix_length+32;i++)if(!((name[i]>='0'&&name[i]<='9')||(name[i]>='a'&&name[i]<='f')))return 0;
+    char canonical[256];int length=snprintf(canonical,sizeof(canonical),"D480_OWNED_HANDLES_V2\n%llu\n%llu\n%llu\n%s\n",a,b,c,name);if(length!=(int)got||memcmp(bytes,canonical,got))return 0;
+    for(size_t i=0;i<=prefix_length+32;i++)fixture_event_name[i]=(wchar_t)(unsigned char)name[i];
+  }else{
+    if(sscanf_s(bytes,"D480_OWNED_HANDLES_V1\n%llu\n%llu\n%llu\n",&a,&b,&c)!=3)return 0;
+    char canonical[256];int length=snprintf(canonical,sizeof(canonical),"D480_OWNED_HANDLES_V1\n%llu\n%llu\n%llu\n",a,b,c);if(length!=(int)got||memcmp(bytes,canonical,got))return 0;
+  }
   if(a>(uintptr_t)-1||b>(uintptr_t)-1||c>(uintptr_t)-1)return 0;
   known[0]=(HANDLE)(uintptr_t)a;known[1]=(HANDLE)(uintptr_t)b;known[2]=(HANDLE)(uintptr_t)c;return 1;
 }
 static unsigned fixture_mask(const HANDLE known[3]) {
   unsigned mask=0;for(unsigned i=0;i<3;i++){DWORD flags=0;if(GetHandleInformation(known[i],&flags))mask|=1u<<i;}return mask;
+}
+// -1 is unknown, never absence. Capture the numeric candidate BEFORE opening a
+// reference: OpenEvent itself may allocate the previously absent numeric slot.
+static int fixture_sentinel_same(HANDLE subject) {
+  typedef BOOL (WINAPI *FixtureCompare)(HANDLE,HANDLE);
+  HMODULE module=GetModuleHandleW(L"kernelbase.dll");FARPROC raw=module?GetProcAddress(module,"CompareObjectHandles"):NULL;
+  FixtureCompare compare=NULL;
+  _Static_assert(sizeof(compare)==sizeof(raw),"fixed Win32 function pointer size");
+  memcpy(&compare,&raw,sizeof(compare));
+  HANDLE candidate=NULL,reference=NULL;int result=-1;
+  do{
+    if(!compare)break;
+    SetLastError(ERROR_SUCCESS);
+    BOOL captured=DuplicateHandle(GetCurrentProcess(),subject,GetCurrentProcess(),&candidate,0,FALSE,0);
+    DWORD captureError=captured?ERROR_SUCCESS:GetLastError();
+    if(!captured){candidate=NULL;if(captureError!=ERROR_INVALID_HANDLE)break;}
+    else if(!candidate||candidate==INVALID_HANDLE_VALUE){candidate=NULL;break;}
+    reference=OpenEventW(SYNCHRONIZE,FALSE,fixture_event_name);
+    if(!reference||reference==INVALID_HANDLE_VALUE){reference=NULL;break;}
+    DWORD flags=0;
+    if(!GetHandleInformation(reference,&flags)||(flags&HANDLE_FLAG_INHERIT)||!compare(reference,reference))break;
+    if(!captured){result=0;break;}
+    if(!GetHandleInformation(candidate,&flags)||(flags&HANDLE_FLAG_INHERIT)||!compare(candidate,candidate))break;
+    SetLastError(ERROR_SUCCESS);BOOL equal=compare(candidate,reference);DWORD error=GetLastError();
+    if(!(equal||error==ERROR_NOT_SAME_OBJECT||error==ERROR_SUCCESS))break;
+    if(!GetHandleInformation(candidate,&flags)||(flags&HANDLE_FLAG_INHERIT)||!GetHandleInformation(reference,&flags)||(flags&HANDLE_FLAG_INHERIT)||!compare(candidate,candidate)||!compare(reference,reference))break;
+    result=equal?1:0;
+  }while(0);
+  if(reference&&!CloseHandle(reference))result=-1;
+  if(candidate&&!CloseHandle(candidate))result=-1;
+  return result;
+}
+static unsigned fixture_observed_mask(const HANDLE known[3]) {
+  // V1 is the unchanged case35 parent-side inspected checker protocol.
+  if(!fixture_event_name[0])return fixture_mask(known);
+  int same=fixture_sentinel_same(known[2]);if(same<0)return 256u;
+  return (fixture_mask(known)&3u)|(same?4u:0u);
 }
 #endif
 #ifdef DESKTOP_FIXTURE_ADDON
@@ -131,7 +180,7 @@ static DWORD fixture_checker(const wchar_t *binary,const wchar_t *role) {
 static int fixture_sidecar(const wchar_t *binary) {
   wchar_t name[32768];if(wcslen(binary)>32750||wcscpy_s(name,32768,binary)||wcscat_s(name,32768,L".handles"))return 0;
   HANDLE file=CreateFileW(name,GENERIC_WRITE,0,NULL,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,NULL);if(file==INVALID_HANDLE_VALUE)return 0;
-  char bytes[256];int n=snprintf(bytes,sizeof(bytes),"D480_OWNED_HANDLES_V1\n%llu\n%llu\n%llu\n",(unsigned long long)(uintptr_t)fixture_known[0],(unsigned long long)(uintptr_t)fixture_known[1],(unsigned long long)(uintptr_t)fixture_known[2]);
+  char bytes[256];int n=snprintf(bytes,sizeof(bytes),"D480_OWNED_HANDLES_V2\n%llu\n%llu\n%llu\n%ls\n",(unsigned long long)(uintptr_t)fixture_known[0],(unsigned long long)(uintptr_t)fixture_known[1],(unsigned long long)(uintptr_t)fixture_known[2],fixture_event_name);
   DWORD wrote=0;BOOL ok=n>0&&n<(int)sizeof(bytes)&&WriteFile(file,bytes,(DWORD)n,&wrote,NULL)&&wrote==(DWORD)n&&FlushFileBuffers(file);CloseHandle(file);return ok;
 }
 static unsigned fixture_pipe_captures,fixture_parent_captures;
@@ -182,16 +231,24 @@ static napi_value fixture_inspect(napi_env env,napi_callback_info info) {
 }
 static void fixture_cleanup(void *ignored) {(void)ignored;if(fixture_known[2]){CloseHandle(fixture_known[2]);fixture_known[2]=NULL;}}
 NAPI_MODULE_INIT() {
-  SECURITY_ATTRIBUTES sa={sizeof(sa),NULL,TRUE};fixture_known[2]=CreateEventW(&sa,TRUE,FALSE,NULL);fixture_started=GetTickCount64();
-  if(!fixture_known[2]){napi_throw_error(env,"OWNED_SENTINEL_REQUIRED","Owned sentinel unavailable");return NULL;}
+  unsigned char random[16];
+  if(BCryptGenRandom(NULL,random,sizeof(random),BCRYPT_USE_SYSTEM_PREFERRED_RNG)<0){napi_throw_error(env,"OWNED_SENTINEL_REQUIRED","Owned sentinel unavailable");return NULL;}
+  const wchar_t *digits=L"0123456789abcdef";wchar_t suffix[33]={0};
+  for(unsigned i=0;i<sizeof(random);i++){suffix[i*2]=digits[random[i]>>4];suffix[i*2+1]=digits[random[i]&15];}
+  SecureZeroMemory(random,sizeof(random));
+  if(swprintf_s(fixture_event_name,96,L"Local\\cmspark-d480-sentinel-%ls",suffix)<0){napi_throw_error(env,"OWNED_SENTINEL_REQUIRED","Owned sentinel unavailable");return NULL;}
+  SECURITY_ATTRIBUTES sa={sizeof(sa),NULL,TRUE};SetLastError(ERROR_SUCCESS);
+  HANDLE sentinel=CreateEventW(&sa,TRUE,FALSE,fixture_event_name);DWORD createdError=GetLastError();
+  if(!sentinel||createdError==ERROR_ALREADY_EXISTS){if(sentinel)CloseHandle(sentinel);napi_throw_error(env,"OWNED_SENTINEL_REQUIRED","Owned sentinel unavailable");return NULL;}
+  fixture_known[2]=sentinel;fixture_started=GetTickCount64();
   napi_add_env_cleanup_hook(env,fixture_cleanup,NULL);
   napi_value out=init(env,exports),fn;napi_create_function(env,"inspectOwned",NAPI_AUTO_LENGTH,fixture_inspect,NULL,&fn);napi_set_named_property(env,out,"inspectOwned",fn);return out;
 }
 #else
 int wmain(int argc,wchar_t **argv) {
   HANDLE known[3];if(!fixture_read_known(known))return 240;
-  if(argc==2&&!wcscmp(argv[1],L"--sentinel"))return (int)(fixture_mask(known)&4u);
-  if(argc==2&&(!wcscmp(argv[1],L"--sibling")||!wcscmp(argv[1],L"--descendant")))return (int)fixture_mask(known);
+  if(argc==2&&!wcscmp(argv[1],L"--sentinel")){unsigned observed=fixture_observed_mask(known);return observed>7u?243:(int)(observed&4u);}
+  if(argc==2&&(!wcscmp(argv[1],L"--sibling")||!wcscmp(argv[1],L"--descendant"))){unsigned observed=fixture_observed_mask(known);return observed>7u?243:(int)observed;}
   CmsparkBootstrapClient bootstrap;if(!d480_client_open(argc,argv,&bootstrap))return 241;
   char bytes[CMSPARK_BOOT_MAX+1];DWORD total=0;HANDLE parent=NULL;int result=242;
   if(!d480_client_body(&bootstrap,bytes,&total))goto done;
@@ -200,7 +257,8 @@ int wmain(int argc,wchar_t **argv) {
   while(*field>='0'&&*field<='9'){unsigned digit=(unsigned)(*field++-'0');if(number>(UINT64_MAX-digit)/10)goto done;number=number*10+digit;}
   if(strcmp(field,"\"}\n")||number>(uintptr_t)-1)goto done;parent=(HANDLE)(uintptr_t)number;
   char expected[CMSPARK_BOOT_MAX+1];int length=snprintf(expected,sizeof(expected),"{\"capability_id\":\"01010101010101010101010101010101\",\"secret\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"url\":\"ws://127.0.0.1:1/desktop\",\"protocol_version\":1,\"issued_method_set_version\":8,\"parent_handle\":\"%llu\"}\n",(unsigned long long)number);
-  if(length<=0||(DWORD)length!=total||memcmp(bytes,expected,total)||!d480_sync_parent(parent)||(fixture_mask(known)&4u)||!d480_client_finish(&bootstrap,parent))goto done;
+  unsigned observed=fixture_observed_mask(known);if(observed>7u)goto done;
+  if(length<=0||(DWORD)length!=total||memcmp(bytes,expected,total)||!d480_sync_parent(parent)||(observed&4u)||!d480_client_finish(&bootstrap,parent))goto done;
   result=0;
 done:
   SecureZeroMemory(bytes,sizeof(bytes));d480_client_close(&bootstrap);if(parent)CloseHandle(parent);return result;

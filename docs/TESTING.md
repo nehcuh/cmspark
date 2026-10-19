@@ -4,6 +4,16 @@
 
 ## 测试架构
 
+### Windows sentinel 对象身份夹具
+
+case36 的数值句柄可被当前子进程的无关对象复用，不能单用 GetHandleInformation 推断 sentinel 继承。夹具使用128位随机 Local Event 名称与原子拒绝重名创建；在打开只读同步引用之前捕获候选，再用既有 CompareObjectHandles 比较。V2 sidecar 只在 owned 文件传递已知三句柄和固定格式名称，旧 V1 case35 保留。未知 API、引用、比较或关闭结果仍拒绝；原 launcher、inherit=false、pipe/parent 检查、ACK、20s和真实 native gate 不变。CPU 词法投影不等 Windows SDK／原生通过，也不确定旧 launch 失败的唯一原因。
+
+### #572 Windows sibling 就绪事件
+
+既有 `scripts/tests/uia-no-autofocus-572.test.mjs`（原 CI 入口显式执行）追加实际 fixture ContentRendered/Activated/发布函数的有限 PS→JS 语法投影。LF/CRLF 均覆盖请求返回未激活、从未激活、错前台、Activated 先于渲染、重复事件、既存 ready 与写失败；target 四模式原始基线不变。投影使用真实 owned 文件写入/rename，窗口与事件为惰性 seam，不执行 PowerShell、WPF 或 user32。
+
+夹具只给自有 sibling 请求一次原 Activate，再用当前 IsActive 和精确自有 HWND 判断是否可发布；没有新增计时器、轮询、retry、SetForegroundWindow 或输入注入。真实 Windows 的原 45 秒生命周期和全部背景四 oracle 保留；无真实激活就无 ready 并失败。受控 CPU 不证明本轮 Windows 原因或通过，仍须精确新 head 的真实平台验收。
+
 ### #732 hosted restart 的有限浏览器启动回执（PR735）
 
 既有第五个 job 的首轮有限回执为 `stage:BROWSER`、`cleanup:true`，其余九检查为 false；它不能区分 Xvfb、端口、CDP、worker、配对或认证阶段的实际失败，根因仍未知。现仅扩展原固定回执：`browserPhase` 为最后到达的固定源码观察点，取 `XVFB_REQUEST`、`DISPLAY_OBSERVED`、`BINARY_SELECTED`、`PORT_FILE`、`CDP_CONNECTED`、`WORKER_FOUND`、`WORKER_READY`、`PAIR_PAGE`、`PAIRED`、`AUTH_DONE` 或 null；不是失败原因、唯一失败 API 或阶段完成总证明。`WORKER_READY` 只表示原 workerScriptReady 返回，随后原 Runtime.enable 仍可能失败。
