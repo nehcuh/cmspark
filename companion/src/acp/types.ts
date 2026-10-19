@@ -30,6 +30,8 @@ export interface AcpAgentServerConfig {
 }
 
 export interface AcpConfig {
+  /** #722 execution remains fixed-one; bounded-N belongs to #728. */
+  max_concurrent_sessions?: 1
   /** Master switch — default false (non default-on). */
   enabled: boolean
   servers: Record<string, AcpAgentServerConfig>
@@ -120,6 +122,7 @@ export interface AcpSessionRecord {
 }
 
 export const DEFAULT_ACP_CONFIG: AcpConfig = {
+  max_concurrent_sessions: 1,
   enabled: false,
   servers: {},
   policy: {
@@ -187,6 +190,8 @@ export function sanitizeAcpConfig(raw: unknown): AcpConfig {
   const policyIn =
     r.policy && typeof r.policy === "object" ? (r.policy as Record<string, unknown>) : {}
   return {
+    // Fixed-one representation only. Raw2/NaN/etc never opens new capacity.
+    max_concurrent_sessions: 1,
     enabled: r.enabled === true,
     servers,
     policy: {

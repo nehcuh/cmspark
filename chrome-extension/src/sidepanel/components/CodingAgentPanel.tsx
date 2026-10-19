@@ -187,6 +187,8 @@ export function CodingAgentPanel({
   }, [session?.sessionId, session?.terminalCommandExpiresAt])
   const commandAvailable = !!session?.terminalCommandLine && typeof session.terminalCommandExpiresAt === "number" && session.terminalCommandExpiresAt > commandClock
   const stopControl = useCodingStop(session)
+  const currentSelectionRef = useRef({ threadId: state.activeThreadId, revision: state.activeThreadSelectionRevision })
+  currentSelectionRef.current = { threadId: state.activeThreadId, revision: state.activeThreadSelectionRevision }
   const currentSessionRef = useRef(session)
   currentSessionRef.current = session
   const currentManualEntryRef = useRef(manualEntry)
@@ -260,6 +262,8 @@ export function CodingAgentPanel({
     }
   }, [readyAgents, agentId])
   const repoHint = useMemo(() => parseRepoFromUrl(pageUrl), [pageUrl])
+  const selectableSessions = Object.values(state.codingSessionsById).filter(row => row.threadId === threadId && !row.cacheCompacted &&
+    (["offered", "confirmed", "running"].includes(row.state) || row.sessionId === session?.sessionId))
   const live = session?.state === "running" || session?.state === "offered" || session?.state === "confirmed"
   const timeline = (session?.timeline || []) as TimelineRow[]
 
@@ -503,6 +507,10 @@ export function CodingAgentPanel({
       setStarting(false)
       return
     }
+    // This click explicitly starts a new task; retire only the old terminal UI selection.
+    if (session && !["offered", "confirmed", "running"].includes(session.state)) {
+      dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })
+    }
     flash("正在启动…请在下方确认条点「允许」")
     const page_context = formatPageContext({
       pageUrl,
@@ -549,6 +557,8 @@ export function CodingAgentPanel({
   }, [
     threadId,
     state.activeThreadId,
+    session,
+    dispatch,
     agentId,
     effectiveWorkspace,
     goal,
@@ -1102,6 +1112,19 @@ export function CodingAgentPanel({
           </div>
         ) : null}
 
+        {threadId && selectableSessions.length > 0 ? (
+          <label style={styles.field}>
+            <span style={styles.fieldLabel}>本对话提案与会话（执行串行1个）</span>
+            <select style={styles.select} aria-label="选择本对话编程提案" value={session?.sessionId || ""}
+              onChange={e => dispatch({ type: "ACP_SELECT_SESSION", threadId, sessionId: e.target.value,
+                threadRevision: state.activeThreadSelectionRevision })}>
+              {!session ? <option value="">请选择提案</option> : null}
+              {selectableSessions.map(row => <option key={row.sessionId} value={row.sessionId}>
+                {row.displayName || row.agentId} · {row.state === "offered" ? "待启动" : row.state === "running" ? "运行中" : row.state === "confirmed" ? "已确认待准入" : row.error === "expired" ? "已过期" : "已结束"} · {row.sessionId.slice(-6)}
+              </option>)}
+            </select>
+          </label>
+        ) : null}
         {/* Live session shell (main surface) */}
         {session ? (
           <div style={styles.session}>
@@ -1148,7 +1171,7 @@ export function CodingAgentPanel({
                   ? codingHandoffCopy.modeBadgeDraft
                   : codingHandoffCopy.modeBadgeReview}
                 {session.transport ? ` · ${session.transport}` : ""}
-                {session.cancelConfirmed || session.cancelled ? " · 已停止" : live ? session.state === "running" ? ` · ${codingHandoffCopy.statusRunning}` : " · 待启动" : ` · ${codingHandoffCopy.statusDone}`}
+                {session.error === "expired" ? " · 已过期" : session.cancelConfirmed || session.cancelled ? " · 已停止" : live ? session.state === "running" ? ` · ${codingHandoffCopy.statusRunning}` : " · 待启动" : ` · ${codingHandoffCopy.statusDone}`}
               </span>
               <div style={styles.sessionBtns}>
                 {live ? (
@@ -1179,6 +1202,20 @@ export function CodingAgentPanel({
               </div>
             </div>
 
+            {session.state === "offered" ? <div style={styles.composerCol}>
+              <label style={styles.footnote}><input type="checkbox" checked={cloudDisclosure}
+                onChange={e => setCloudDisclosure(e.target.checked)} />{codingHandoffCopy.disclosureCheckbox}</label>
+              <button type="button" style={styles.secondary} disabled={!cloudDisclosure || pendingConfirm || starting}
+                onClick={() => {
+                  const target = currentSessionRef.current
+                  if (!mountedRef.current || !target || target !== session || target.state !== "offered" ||
+                      currentSelectionRef.current.threadId !== threadId ||
+                      currentSelectionRef.current.revision !== state.activeThreadSelectionRevision || !cloudDisclosure) return
+                  setStarting(true)
+                  sendCodingOperation(target, dispatch, { type: "acp.ui_start", cloud_disclosure_accepted: true })
+                }}>启动选中提案（需确认）</button>
+              <p style={styles.footnote}>提案不会自动启动或排队；每次启动都需确认，同时只执行1个。</p>
+            </div> : null}
             {session.error && !(session.state === "closed" && session.error === "cancelled") ? <div style={styles.err}>{session.error}</div> : null}
             {session.transport === "cli" && !session.cacheCompacted ? (
               <div style={styles.transportNote}>

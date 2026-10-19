@@ -571,6 +571,7 @@ const defaultConfig: CompanionConfig = {
     entries: {},
   },
   acp: {
+    max_concurrent_sessions: 1,
     enabled: false,
     servers: {},
     policy: {

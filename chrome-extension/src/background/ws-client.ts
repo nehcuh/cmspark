@@ -69,6 +69,25 @@ export class WSClient {
    *  orphan socket's late onclose/onmessage can never tear down or answer on
    *  behalf of the current connection. */
   private generation = 0
+  private cockpitIdle: { socket: WebSocket; gen: number; id: string; settled: boolean;
+    resolve: (value: { state: "IDLE" | "BUSY" | "UNKNOWN"; isCurrent(): boolean }) => void } | null = null
+
+  invalidateCockpitIdle(): void {
+    const pending = this.cockpitIdle; this.cockpitIdle = null
+    if (pending && !pending.settled) { pending.settled = true; pending.resolve({ state: "UNKNOWN", isCurrent: () => false }) }
+  }
+
+  requestCockpitIdle(): Promise<{ state: "IDLE" | "BUSY" | "UNKNOWN"; isCurrent(): boolean }> {
+    const socket = this.ws, gen = this.generation
+    if (!this.authenticated || socket?.readyState !== WebSocket.OPEN || this.cockpitIdle) return Promise.resolve({ state: "UNKNOWN", isCurrent: () => false })
+    return new Promise(resolve => {
+      const probe = { socket, gen, id: crypto.randomUUID(), settled: false, resolve }
+      this.cockpitIdle = probe
+      try { socket.send(JSON.stringify({ type: "cockpit.idle.get", id: probe.id })) }
+      catch { this.invalidateCockpitIdle() }
+    })
+  }
+
 
   private readonly ALARM_NAME = "cmspark-ws-reconnect"
   private readonly MAX_RECONNECT_DELAY = 30000
@@ -124,11 +143,13 @@ export class WSClient {
       // Auth handshake messages are handled inline, never forwarded to the app.
       if (msg.type === "auth.challenge") {
         this.authenticated = false
+        this.invalidateCockpitIdle()
         this.invalidateMeetingPcm()
         void this.handleChallenge(msg.nonce, socket, gen)
         return
       }
       if (msg.type === "auth.ok") {
+        this.invalidateCockpitIdle()
         this.invalidateMeetingPcm()
         // Lock-step with companion/src/protocol.ts PROTOCOL_VERSION. Missing = accept (MIN).
         const advertised = msg.negotiated_protocol_version ?? msg.protocol_version
@@ -144,6 +165,7 @@ export class WSClient {
       if (msg.type === "auth.failed") {
         // Companion terminates the socket after this; onclose handles state.
         this.authenticated = false
+        this.invalidateCockpitIdle()
         this.invalidateMeetingPcm()
         return
       }
@@ -151,6 +173,22 @@ export class WSClient {
       // App-level message. Defense-in-depth: the companion only emits app
       // messages after auth.ok, but never trust wire state alone.
       if (!this.authenticated) return
+      if (msg.type === "security.confirmation.request" || msg.type === "security.confirmation.resolved" ||
+          msg.type === "security.confirmation.expired" || msg.type === "computer.task.event") this.invalidateCockpitIdle()
+      if (msg.type === "error" && this.cockpitIdle?.id === msg.id) this.invalidateCockpitIdle()
+      if (msg.type === "cockpit.idle.result") {
+        const probe = this.cockpitIdle
+        if (!probe || probe.id !== msg.id || probe.settled) return
+        let state: "IDLE" | "BUSY" | "UNKNOWN" = "UNKNOWN"
+        try {
+          const d = Object.getOwnPropertyDescriptors(msg)
+          if (Object.keys(d).sort().join() === "id,state,type" && Object.values(d).every(v => "value" in v) &&
+              ["IDLE", "BUSY", "UNKNOWN"].includes(d.state.value)) state = d.state.value
+        } catch { /* Unknown DTO never closes. */ }
+        probe.settled = true
+        probe.resolve({ state, isCurrent: () => state === "IDLE" && this.cockpitIdle === probe && this.ws === probe.socket && this.generation === probe.gen && this.authenticated && probe.socket.readyState === WebSocket.OPEN })
+        return
+      }
       if (msg.type === "system.pong" && this.meetingPing && this.meetingPing.id === msg.id) {
         const probe = this.meetingPing
         this.meetingPing = null
@@ -187,6 +225,7 @@ export class WSClient {
 
     socket.onerror = () => {
       if (stale()) return
+      this.invalidateCockpitIdle()
       this.invalidateMeetingPcm()
       // onclose will fire after this
     }
@@ -398,6 +437,7 @@ export class WSClient {
   }
 
   private discardSocket(close = true) {
+    this.invalidateCockpitIdle()
     this.invalidateMeetingPcm()
     const socket = this.ws
     this.ws = null

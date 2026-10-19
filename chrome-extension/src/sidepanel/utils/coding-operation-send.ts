@@ -4,7 +4,7 @@ import type { AgentAction, CodingSessionState } from "../store/agentStore"
 export function sendCodingOperation(
   session: Pick<CodingSessionState, "sessionId" | "threadId">,
   dispatch: (action: AgentAction) => void,
-  request: { type: "acp.session.prompt" | "acp.session.followup" | "acp.apply_diff"; text?: string; goal?: string; mode?: string },
+  request: { type: "acp.session.prompt" | "acp.session.followup" | "acp.apply_diff" | "acp.ui_start"; text?: string; goal?: string; mode?: string; cloud_disclosure_accepted?: boolean },
 ) {
   const identity = { sessionId: session.sessionId, threadId: session.threadId }
   dispatch({ type: "ACP_OPERATION_REQUEST", ...identity })

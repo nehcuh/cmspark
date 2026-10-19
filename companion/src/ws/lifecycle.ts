@@ -71,6 +71,8 @@ import {
 import { allowInboundLogEvent } from "../log-event-gate"
 import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
+import { sendCockpitIdleSnapshot } from "./cockpit-idle"
+import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
 import { surfaceFromOrigin, isChromeExtensionWsOrigin } from "./handshake-surface"
@@ -1210,6 +1212,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         stampCmsparkSurface(msg, authState.surface)
         if (msg.type !== "system.ping") {
           logger.debug("ws.message.received", summarizeMessage(msg))
+        }
+
+        if (msg.type === "cockpit.idle.get") {
+          sendCockpitIdleSnapshot(ws, { type: msg.type, id: msg.id }, authState, () => wsAuth.get(ws),
+            () => requireRt().securityConfirmations.pendingCount(), getComputerTaskAbortRegistry())
+          return
         }
 
         // Intercept tool.result — these resolve pending promises
