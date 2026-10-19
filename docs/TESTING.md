@@ -20,7 +20,9 @@ case36 的数值句柄可被当前子进程的无关对象复用，不能单用 
 
 有效 UTF-8 优先；没有真实编码声明时不推断 ACP／GBK。非法 UTF-8、含 NUL 或 Windows 非 ASCII 命令经 shell 转换后的非空输出，既有 `note` 和相应进度尾部包含 `OUTPUT_ENCODING_UNDETERMINED`；正文可能有替换字符，不能据此判断文件损坏。这不是自动 GBK 转码。真实 Windows 上 `echo 中文`、`type` UTF-8 文件及 GBK-only 程序的输出仍需原生验收；CPU seam 不冒充平台通过。确认／沙箱、命令／环境、退出码、取消、超时及原输出预算均不改变。
 
-`shell-encoding-windows-native-731.test.ts` 仅非 Windows skip；Windows 必须先通过 GHA 和 canonical preload owned 目录身份／边界核验，否则在导入应用或 spawn 前失败。原 runner 自动发现，无新增 CI 参数。测试通过实际 `shellExec` 跑固定 `echo`、owned UTF-8 文件的 `type` 和当前 Node.exe 的固定 CP936 字节 emitter；`type` 必须精确且无警告，`echo` 必须有实际不可判定标记（即使 pipe 字节本身为有效 UTF-8，也不能证明命令到控制台的转换无损），CP936 两流必须明确标注。只保存／恢复 test-owned 配置并检查并发变更，等待自有命令结束后清理；不改 HOME、系统代码页或原 60 秒默认时限。Mac/Linux skip 与源码编译不代表此 Windows 验收已通过。
+`shell-encoding-windows-native-731.test.ts` 仅非 Windows skip；Windows 必须先通过 GHA 和 canonical preload owned 目录身份／边界核验，否则在导入应用或 spawn 前失败。原 runner 自动发现，无新增 CI 参数。测试通过实际 `shellExec` 跑固定 `echo`、owned UTF-8 文件的 `type` 和当前 Node.exe 的固定 CP936 字节 emitter；`type` 与符合单一 literal cmd 分支的 `echo 中文` 都必须精确中文／CRLF 且无警告，进度保真；CP936 两流必须明确标注。只保存／恢复 test-owned 配置并检查并发变更，等待自有命令结束后清理；不改 HOME、系统代码页或原 60 秒默认时限。Mac/Linux skip 与源码编译不代表此 Windows 验收已通过。
+
+Windows 单一、无引号／变量展开／控制符／链／管道／重定向／分组／开关的非 ASCII literal cmd `echo`，使用原选定 cmd、原 `/d /s /c` 引号与原命令，仅新增 `/u` 输出模式；stdout 据该启动合同按 UTF-16LE 流式解码／严格校验，不靠字节猜码。非法／奇数结束／孤立 surrogate／NUL 输出仍标不可判定，非空 stderr 不宣称已知格式。`type` 和所有不满足该严格语法、自定义非 cmd shell、外部 exe/com、非 Windows 均保留旧路径；禁止全局 `/u` 或 `chcp`。新增实际模块惰性 spawn 控覆盖原 argv/命令/options、全部拆分、stderr/空流、上限／退出和不适用语法；没有执行 cmd 或 native。UTF-16LE 仍需同新 head 真实 Windows 断言确认，CPU 格式假设不能冒平台通过或整个 #731 关闭。
 
 | 端 | 测试框架 | 测试目录 | 规模（约） | 运行命令 |
 |----|---------|---------|-----------|---------|

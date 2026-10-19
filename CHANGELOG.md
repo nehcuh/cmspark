@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #731 为 Windows 单一、无扩展／元字符的非 ASCII literal cmd `echo` 增加显式 Unicode stdout 合同与流式解码，保留原命令、cwd、环境、L2、逻辑 shell、退出／停止／超时和输出预算；`type`、复合命令、自定义 shell、外部程序及非 Windows 保持原路径，未知 stderr 仍标注。原生测试将 echo 加强为精确中文／CRLF／无虚假警告，受控字节不是 Windows 已通过；0.6.14 仍为开发版。
+
 - Windows 原生继承夹具仅对 sentinel 使用确切内核对象身份，先捕获旧数值槽再打开独占命名 Event 引用；无关 Event／管道占槽不冒称继承，真实继承及未知 API／比较／关闭失败仍严格拒绝。保留 V1、原 protected endpoint、bootstrap、20秒与清理；不宣称已证明历史 launch 失败根因。
 
 - #572 Windows 原生测试夹具仅在自有 sibling 已渲染、实际 IsActive 且前台 HWND 精确匹配后才原子发布 ready；Activate 请求本身不作成功证据。复用 ContentRendered/Activated 事件和原 45 秒边界，不加轮询、输入或前台权限；从未实际激活仍失败。LF/CRLF 源码回归不代表实际 Windows 已通过，也不判定旧原生失败的唯一原因。
