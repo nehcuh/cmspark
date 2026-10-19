@@ -241,3 +241,7 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 `desktop-browser-task-476.test.ts` 使用 stock renderer、真实 HMAC/channel、canonical run 注册、真实 adapter 和 ThreadManager 保存／reload，配合受控 provider／Chrome API 接口，验证选择不是执行、15秒内绑定后模型延迟不续期／不丢同一运行限制、精确 peer/tab 和零背景激活。实际工厂与原 pending-map／BrowserBridge 的 CDP／scripting 读取闭包另核，不能把受控 API 当浏览器证据。永久负控覆盖同名／错 peer、旧 ACK、A/B/A、失权、导航观察、错误租约、已有确认、64容量与取消后挂起调用。
 
 本批源验证不启动真实浏览器或本机原生 host。后续精确 head 的 Windows/macOS native 与真实已认证扩展证据仍为验收门，旧归档／MCP／资源／对话原生回调也必须保留；没有为本片伪造新 native PASS 或改变原预算、测试列表和平台 skip。背景读取不允许 image phase1／phase2 或 unknown 分支绕过矩阵；非 native 路径保留原语义。方法表实际 v8/read11/renderer25/native27，controller-only retire 与 confirmation 决策均不进 renderer 表。
+
+### Windows 原生管道夹具的 JSON 就绪回执（#605）
+
+`cross-os-process-605.test.ts` 的 protocol fixture 用自有 `.pending` 文件的独占写入、关闭及 rename 发布完整 ready JSON。确定性 CPU 控制在实际写入开始时检查最终文件仍不可见，写入失败时不能宣布协议就绪；不通过增加等待、重试 JSON.parse 或捕获语法错误绕过断言。Windows CI 仍需真实验证双向管道、继承 cwd、ignored stdio 及进程清理。

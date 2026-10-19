@@ -6,6 +6,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import net from "node:net"
+import vm from "node:vm"
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import { AcpManager } from "../../src/acp/manager"
 import { initDataDir, saveConfig, getConfig, getConfigDir } from "../../src/config"
@@ -260,12 +261,59 @@ test("job launcher CRT quoting preserves empty, quote and trailing-backslash ope
   assert.equal(quoteWindowsJobArg("C:\\owned path\\"), '"C:\\owned path\\\\"')
 })
 
-test("native Windows job preserves bidirectional protocol pipes and ignored stdio", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
-  const root = ownedRoot(), script = path.join(root, "protocol.cjs"), marker = path.join(root, "ready")
-  fs.writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify({cwd:process.cwd()}));
+function protocolFixture(root: string) {
+  const script = path.join(root, "protocol.cjs"), marker = path.join(root, "ready")
+  fs.writeFileSync(script, `const fs=require('node:fs');
+    fs.writeFileSync(${JSON.stringify(marker + '.pending')},JSON.stringify({cwd:process.cwd()}),{flag:'wx',mode:0o600});
+    fs.renameSync(${JSON.stringify(marker + '.pending')},${JSON.stringify(marker)});
     process.stdout.write('READY\\n');process.stderr.write('OWNED_STDERR\\n');
     require('node:readline').createInterface({input:process.stdin}).on('line',line=>process.stdout.write(JSON.stringify({echo:JSON.parse(line)})+'\\n'));
     setTimeout(()=>{},20000);`)
+  return { script, marker }
+}
+
+test("protocol readiness JSON remains absent until its complete native publication", () => {
+  for (const failWrite of [false, true]) {
+    const root = ownedRoot(), { script, marker } = protocolFixture(root)
+    let writes = 0, protocolWrites = 0
+    const fixtureFs = { ...fs, writeFileSync(file: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, options?: any) {
+      const fd = fs.openSync(file as fs.PathLike, options?.flag ?? "w", options?.mode ?? 0o600)
+      try {
+        writes++
+        assert.equal(fs.existsSync(marker), false, "a partially written JSON marker must not be visible")
+        assert.throws(() => JSON.parse(fs.readFileSync(marker, "utf8")), { code: "ENOENT" })
+        if (failWrite) throw new Error("OWNED_JSON_WRITE_FAILURE")
+        fs.writeFileSync(fd, data)
+        assert.equal(fs.existsSync(marker), false, "completed bytes need the final atomic publication")
+      } finally { fs.closeSync(fd) }
+    } }
+    const run = () => vm.runInNewContext(fs.readFileSync(script, "utf8"), {
+      require(id: string) {
+        if (id === "node:fs") return fixtureFs
+        if (id === "node:readline") return { createInterface: () => ({ on() {} }) }
+        throw new Error("OWNED_PROTOCOL_FIXTURE_IMPORT_REFUSED")
+      },
+      process: { cwd: () => root, stdout: { write() { protocolWrites++ } }, stderr: { write() { protocolWrites++ } }, stdin: {} },
+      setTimeout() {},
+    })
+    try {
+      if (failWrite) {
+        assert.throws(run, /OWNED_JSON_WRITE_FAILURE/)
+        assert.equal(fs.existsSync(marker), false)
+        assert.equal(protocolWrites, 0, "a failed publication never announces protocol readiness")
+      } else {
+        run()
+        assert.deepEqual(JSON.parse(fs.readFileSync(marker, "utf8")), { cwd: root })
+        assert.equal(fs.existsSync(marker + ".pending"), false)
+        assert.equal(protocolWrites, 2)
+      }
+      assert.equal(writes, 1)
+    } finally { fs.rmSync(root, { recursive: true, force: true }) }
+  }
+})
+
+test("native Windows job preserves bidirectional protocol pipes and ignored stdio", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
+  const root = ownedRoot(), { script, marker } = protocolFixture(root)
   let child: ChildProcess | undefined, output = "", errors = ""
   try {
     await prepareWindowsJob()
