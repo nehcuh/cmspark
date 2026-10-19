@@ -11,7 +11,23 @@ const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..')
 export const BOUNDS=Object.freeze({outer:120000,navigation:60000,auth:5000,tool:15000})
 const fail=()=>{throw new Error('OWNED_ACCEPTANCE_REFUSED')}
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject}}
-export function finiteReceipt(stage,checks) {
+// Passive progress only: a phase is the last reached source observation, not a cause.
+function ownStartupValue(value,key) {
+  try {const d=Object.getOwnPropertyDescriptor(value,key);return d&&Object.hasOwn(d,'value')?d.value:undefined}catch{return undefined}
+}
+export function browserStartupProjection(value) {
+  const phase=ownStartupValue(value,'browserPhase')
+  const phases=['XVFB_REQUEST','DISPLAY_OBSERVED','BINARY_SELECTED','PORT_FILE','CDP_CONNECTED','WORKER_FOUND','WORKER_READY','PAIR_PAGE','PAIRED','AUTH_DONE']
+  const code=key=>{const n=ownStartupValue(value,key);return typeof n==='number'&&Number.isInteger(n)&&n>=-2147483648&&n<=2147483647?n:null}
+  return {browserPhase:typeof phase==='string'&&phases.includes(phase)?phase:null,
+    browserPresent:ownStartupValue(value,'browserPresent')===true,browserExitCode:code('browserExitCode'),
+    xvfbPresent:ownStartupValue(value,'xvfbPresent')===true,xvfbExitCode:code('xvfbExitCode')}
+}
+export function observeBrowserStartup(phase,browser,xvfb) {
+  return browserStartupProjection({browserPhase:phase,browserPresent:browser!=null,browserExitCode:ownStartupValue(browser,'exitCode'),
+    xvfbPresent:xvfb!=null,xvfbExitCode:ownStartupValue(xvfb,'exitCode')})
+}
+export function finiteReceipt(stage,checks,startup) {
   const stages=['PREFLIGHT','ARTIFACT','DAEMON','BROWSER','PANEL','START','DURABLE','CRASH','RECONNECT','EXISTING_DOCUMENT','RELOAD','TERMINAL','CLEANUP','COMPLETE']
   if(!stages.includes(stage))fail()
   const output={}
@@ -19,7 +35,7 @@ export function finiteReceipt(stage,checks) {
     let d;try{d=Object.getOwnPropertyDescriptor(checks,key)}catch{}
     output[key]=!!d&&Object.hasOwn(d,'value')&&d.value===true
   }
-  return {schema:1,stage,boundary:'REAL_DAEMON_PRODUCTION_EXTENSION_TRUE_SIDEPANEL_SYNTHETIC_ACP',checks:output,passed:stage==='COMPLETE'&&Object.values(output).every(Boolean)}
+  return {schema:1,stage,boundary:'REAL_DAEMON_PRODUCTION_EXTENSION_TRUE_SIDEPANEL_SYNTHETIC_ACP',checks:output,passed:stage==='COMPLETE'&&Object.values(output).every(Boolean),...browserStartupProjection(startup)}
 }
 export function preflight(env,platform,stat=fs.lstatSync,realpath=fs.realpathSync,uid=process.getuid?.()) {
   if(platform!=='linux'||env.GITHUB_ACTIONS!=='true'||env.RUNNER_OS!=='Linux'||env.RUNNER_ENVIRONMENT!=='github-hosted'||env.ImageOS!=='ubuntu22'||!path.isAbsolute(env.RUNNER_TEMP||''))fail()
@@ -139,7 +155,7 @@ export function sameOwnedRoot(root,identity,stat=fs.lstatSync,realpath=fs.realpa
   } catch {return false}
 }
 export async function main() {
-  let stage='PREFLIGHT',owned,ownedIdentity,daemon,browser,worker,view,observer,xvfb,chromium,timer,secret,peerIdentity,session,thread
+  let stage='PREFLIGHT',browserPhase=null,browserStartup,owned,ownedIdentity,daemon,browser,worker,view,observer,xvfb,chromium,timer,secret,peerIdentity,session,thread
   const checks={},children=new Set(),clients=new Set(),observers=new Set(),deadline=Date.now()+BOUNDS.outer,abort=new AbortController()
   const remaining=()=>{const n=deadline-Date.now();if(n<=0||abort.signal.aborted)fail();return n}
   let navigationDeadline;const nav=()=>{const n=Math.min(remaining(),(navigationDeadline??deadline)-Date.now());if(n<=0)fail();return n}
@@ -170,25 +186,25 @@ export async function main() {
     if(await health())fail()
     const start=async()=>{daemon=child(process.execPath,[path.join(ROOT,'companion/dist/index.js'),'daemon','start'],env);await poll(async()=>{if(daemon.exitCode!==null||daemon.signalCode!==null)fail();return health()},BOUNDS.auth);return daemon}
     stage='DAEMON';await start();secret=privateRead(env.CMSPARK_DATA_DIR,'ws_secret',256).trim();if(!/^[a-f0-9]{64}$/.test(secret))fail()
-    stage='BROWSER';xvfb=child('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','ignore','pipe','pipe']);const display=deferred();let text='';xvfb.stdio[3].on('error',()=>display.reject(new Error('DISPLAY')));xvfb.stdio[3].on('data',b=>{text+=b.toString();if(text.length>8)display.reject(new Error('DISPLAY'));if(/^\d{1,5}\n$/.test(text))display.resolve(':'+text.trim())});const screen=await limit(display.promise,Math.min(5000,remaining()))
-    const binary=['/usr/bin/chromium-browser','/usr/bin/chromium'].find(p=>{try{return fs.statSync(p).isFile()}catch{return false}});if(!binary)fail()
+    stage='BROWSER';browserPhase='XVFB_REQUEST';xvfb=child('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','ignore','pipe','pipe']);const display=deferred();let text='';xvfb.stdio[3].on('error',()=>display.reject(new Error('DISPLAY')));xvfb.stdio[3].on('data',b=>{text+=b.toString();if(text.length>8)display.reject(new Error('DISPLAY'));if(/^\d{1,5}\n$/.test(text))display.resolve(':'+text.trim())});const screen=await limit(display.promise,Math.min(5000,remaining()));browserPhase='DISPLAY_OBSERVED'
+    const binary=['/usr/bin/chromium-browser','/usr/bin/chromium'].find(p=>{try{return fs.statSync(p).isFile()}catch{return false}});if(!binary)fail();browserPhase='BINARY_SELECTED'
     chromium=child(binary,chromeArgs(owned,extension),childEnvironment(owned,input,screen));const portFile=path.join(owned,'profile/DevToolsActivePort')
-    const textPort=await poll(()=>{try{return fs.readFileSync(portFile,'utf8')}catch{return false}},10000),parts=textPort.trim().split('\n');if(parts.length!==2||!/^\d{1,5}$/.test(parts[0])||!/^\/devtools\/browser\/[a-f0-9-]+$/.test(parts[1]))fail()
-    const socketBase='ws://127.0.0.1:'+parts[0];browser=await connect(socketBase+parts[1]);const targets=()=>browser.call('Target.getTargets',{},remaining()).then(r=>r.targetInfos)
+    const textPort=await poll(()=>{try{return fs.readFileSync(portFile,'utf8')}catch{return false}},10000),parts=textPort.trim().split('\n');if(parts.length!==2||!/^\d{1,5}$/.test(parts[0])||!/^\/devtools\/browser\/[a-f0-9-]+$/.test(parts[1]))fail();browserPhase='PORT_FILE'
+    const socketBase='ws://127.0.0.1:'+parts[0];browser=await connect(socketBase+parts[1]);browserPhase='CDP_CONNECTED';const targets=()=>browser.call('Target.getTargets',{},remaining()).then(r=>r.targetInfos)
     const targetSocket=async id=>{const list=await (await fetch('http://127.0.0.1:'+parts[0]+'/json/list',{signal:AbortSignal.timeout(Math.min(BOUNDS.auth,remaining()))})).json();const matches=list.filter(t=>t.id===id);if(matches.length!==1||typeof matches[0].webSocketDebuggerUrl!=='string'||!matches[0].webSocketDebuggerUrl.startsWith(socketBase+'/devtools/'))fail();return matches[0].webSocketDebuggerUrl}
-    const sw=await poll(async()=>{const list=(await targets()).filter(t=>t.type==='service_worker'&&new RegExp('^chrome-extension://[a-p]{32}/'+paths.worker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$').test(t.url));if(list.length>1)fail();return list[0]},10000),origin='chrome-extension://'+sw.url.split('/')[2]
-    worker=await connect(await targetSocket(sw.targetId));await worker.workerScriptReady(Math.min(BOUNDS.auth,remaining()));await worker.call('Runtime.enable',{},remaining())
+    const sw=await poll(async()=>{const list=(await targets()).filter(t=>t.type==='service_worker'&&new RegExp('^chrome-extension://[a-p]{32}/'+paths.worker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$').test(t.url));if(list.length>1)fail();return list[0]},10000),origin='chrome-extension://'+sw.url.split('/')[2];browserPhase='WORKER_FOUND'
+    worker=await connect(await targetSocket(sw.targetId));await worker.workerScriptReady(Math.min(BOUNDS.auth,remaining()));browserPhase='WORKER_READY';await worker.call('Runtime.enable',{},remaining())
     // A real tab is used only for pairing; it is never accepted as the SidePanel.
     navigationDeadline=Date.now()+Math.min(BOUNDS.navigation,remaining())
     const tab=await worker.evaluate("chrome.tabs.create({url:'about:blank',active:true}).then(t=>t.id)",nav())
     if(!Number.isSafeInteger(tab))fail()
-    await worker.evaluate(loadedExpression(tab,origin+'/'+paths.page,nav(),'navigate'),nav())
+    await worker.evaluate(loadedExpression(tab,origin+'/'+paths.page,nav(),'navigate'),nav());browserPhase='PAIR_PAGE'
     const pairing=await worker.evaluate(`chrome.debugger.getTargets().then(ts=>{const m=ts.filter(t=>t.tabId===${tab});if(m.length!==1)throw new Error('PAIR_TARGET');return m[0].id})`,nav())
     const pairingView=await connect(await targetSocket(pairing))
-    await pairingView.evaluate(`chrome.runtime.sendMessage({type:'ws.setSecret',secret:${JSON.stringify(secret)}}).then(r=>{if(r?.ok!==true)throw new Error('PAIR')})`,Math.min(BOUNDS.auth,remaining()))
+    await pairingView.evaluate(`chrome.runtime.sendMessage({type:'ws.setSecret',secret:${JSON.stringify(secret)}}).then(r=>{if(r?.ok!==true)throw new Error('PAIR')})`,Math.min(BOUNDS.auth,remaining()));browserPhase='PAIRED'
     const request=async message=>{if(!observer||observer.readyState!==WebSocket.OPEN)fail();const d=deferred(),on=b=>{let r;try{r=JSON.parse(b.toString())}catch{return}if(message.type==='thread.list'?r.type==='thread.list':r.type==='acp.sessions.list_result'&&r.request_id===message.request_id)d.resolve(r)};observer.on('message',on);observer.send(JSON.stringify(message));try{return await limit(d.promise,Math.min(BOUNDS.auth,remaining()))}finally{observer.off('message',on)}}
     const auth=async()=>{remaining();const socket=new WebSocket('ws://127.0.0.1:23401',{origin}),ready=deferred();socket.closed=new Promise(resolve=>socket.once('close',resolve));observers.add(socket);socket.on('error',()=>ready.reject(new Error('AUTH')));socket.on('message',b=>{let r;try{r=JSON.parse(b.toString())}catch{return}if(r.type==='auth.challenge')socket.send(JSON.stringify({type:'auth.handshake',proof:crypto.createHmac('sha256',secret).update(r.nonce).digest('hex'),protocol_version:1}));if(r.type==='auth.ok')ready.resolve(true)});observer=socket;await limit(ready.promise,Math.min(BOUNDS.auth,remaining()))}
-    await auth();stage='PANEL';const before=await targets();await pairingView.evaluate(`chrome.windows.getCurrent().then(w=>chrome.sidePanel.open({windowId:w.id}))`,nav(),true);const panelId=await poll(async()=>{try{return choosePanel(before,await targets(),origin+'/'+paths.page,await worker.evaluate('chrome.debugger.getTargets()',nav()))}catch{return false}},nav());view=await connect(await targetSocket(panelId))
+    await auth();browserPhase='AUTH_DONE';stage='PANEL';const before=await targets();await pairingView.evaluate(`chrome.windows.getCurrent().then(w=>chrome.sidePanel.open({windowId:w.id}))`,nav(),true);const panelId=await poll(async()=>{try{return choosePanel(before,await targets(),origin+'/'+paths.page,await worker.evaluate('chrome.debugger.getTargets()',nav()))}catch{return false}},nav());view=await connect(await targetSocket(panelId))
     const evaluate=expression=>view.evaluate(expression,nav());const waitDOM=expression=>poll(()=>evaluate(expression),nav())
     await waitDOM("!!document.querySelector('.cm-header-new')");const initialList=await request({type:'thread.list'});if(!Array.isArray(initialList.threads))fail();const oldThreads=new Set(initialList.threads.map(t=>t.id));await evaluate("document.querySelector('.cm-header-new').click();true")
     thread=await poll(async()=>{const list=await request({type:'thread.list'});if(!Array.isArray(list.threads))fail();const created=list.threads.filter(t=>!oldThreads.has(t.id));if(created.length>1)fail();return created[0]?.id},BOUNDS.auth)
@@ -207,6 +223,8 @@ export async function main() {
     stage='COMPLETE'
   }catch{/* Fixed receipt only; no protocol, IDs, paths, titles, errors or secrets. */}
   finally {
+    // Snapshot before cleanup termination can change either exitCode.
+    browserStartup=observeBrowserStartup(browserPhase,chromium,xvfb)
     let clean=true
     for(const socket of observers)socket.terminate()
     for(const c of clients)c.abort()
@@ -217,7 +235,7 @@ export async function main() {
     if(owned&&clean){if(!sameOwnedRoot(owned,ownedIdentity))clean=false;else try{fs.rmSync(owned,{recursive:true,force:true})}catch{clean=false}}
     checks.cleanup=clean;if(!clean)stage='CLEANUP'
   }
-  Object.assign(console,originalConsole);const out=finiteReceipt(stage,checks);console.log(JSON.stringify(out));return out.passed?0:1
+  Object.assign(console,originalConsole);const out=finiteReceipt(stage,checks,browserStartup);console.log(JSON.stringify(out));return out.passed?0:1
 }
 let directEntry=false
 try{directEntry=!!process.argv[1]&&fs.realpathSync(process.argv[1])===fs.realpathSync(fileURLToPath(import.meta.url))}catch{}

@@ -4,9 +4,11 @@
 
 ## [Unreleased]
 
+- #732 原生隐私 positive 首轮拒绝后，仅在显式 GHA Windows gate 下补一次同路径只读原因回执；默认生产输出与所有 owner／ACL 谓词不变，原失败不会被第二读或诊断替换。闭集原因和0/1/null索引不泄露 SID／SDDL／路径，不更改 ACL、token 或权限；不是已修复 NTFS 根因或整票完成。
+
 - #605 Windows 原生管道回归夹具的 ready JSON 先写独占临时文件、完整关闭后再原子发布，避免 `exists` 已真却读取到空 JSON。补确定性开文件／写入失败控制，保留原管道、cwd、ignored stdio、时限和清理断言；不将夹具竞态冒称产品管道故障或所有 Windows 失败的根因。
 
-- #732（0.6.14 开发中）：新增仅 hosted 的生产 Companion crash/restart 与真实 SidePanel reload 验收候选；保留原页面无幽灵 running、同数据历史、正常取消及严格清理断言。CPU 控制不代表真实浏览器/daemon 或 Windows ACL 已通过，真实新 job 尚未运行。
+- #732（0.6.14 开发中）：新增仅 hosted 的生产 Companion crash/restart 与真实 SidePanel reload 验收候选；保留原页面无幽灵 running、同数据历史、正常取消及严格清理断言。CPU 控制不代表真实浏览器/daemon 或 Windows ACL 已通过；真实第五 job 首轮在 BROWSER 拒绝且清理成功，根因未知。补最后固定浏览器阶段与 cleanup 前 child 存在性／有限退出码回执，不输出 stderr／身份／正文，不改沙箱、启动、预算或成功条件。
 
 - #732 新增编程接力最小元数据历史与对话内只读清单，目标、路径、输出、命令与授权不落此文件；历史不恢复进程或旧会话权限，失去运行句柄的记录显示已中断。私有存储验证失败明确提示不可持久，真实 NTFS／服务重启与侧栏刷新仍待对应验收，整票保持 Partial。见 [会话历史说明](docs/acp-history.md)。
 

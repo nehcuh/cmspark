@@ -7,10 +7,38 @@ import os from "node:os"
 import path from "node:path"
 import { AcpHistoryStore } from "../src/acp/history-store"
 import { verifyHistoryPrivacy } from "../src/acp/history-privacy"
+import { runPs, resolveWinScript } from "../src/host-use/win/powershell"
 function canonicalWindows(): void {
   assert.equal(process.env.GITHUB_ACTIONS, "true", "OWNED_HISTORY_CANONICAL_GHA_REQUIRED")
   assert.equal(process.env.RUNNER_OS, "Windows", "OWNED_HISTORY_CANONICAL_WINDOWS_REQUIRED")
 }
+// Supplementary CI-only read: never replaces the original prerequisite result.
+function privacyDiagnosticDTO(raw: string): { status: "PRIVATE" | "REFUSED" | "UNKNOWN"; reason: string; pathIndex: 0 | 1 | null } {
+  const unknown = { status: "UNKNOWN" as const, reason: "IO_UNKNOWN", pathIndex: null }
+  if (typeof raw !== "string" || Buffer.byteLength(raw, "utf8") > 512) return unknown
+  try {
+    const value = JSON.parse(raw)
+    if (!value || Array.isArray(value) || typeof value !== "object" || Object.keys(value).sort().join(",") !== "pathIndex,reason,status") return unknown
+    const { status, reason, pathIndex } = value
+    if (typeof status !== "string" || typeof reason !== "string" || !["PRIVATE", "REFUSED", "UNKNOWN"].includes(status) || !(pathIndex === null || pathIndex === 0 || pathIndex === 1)) return unknown
+    const refused = ["REPARSE", "OWNER", "DACL", "ACE_PRINCIPAL"]
+    const opaque = ["ACE_TYPE", "ACE_QUALIFIER"]
+    const valid = status === "PRIVATE" ? reason === "NONE" && pathIndex === null
+      : status === "REFUSED" ? refused.includes(reason) && pathIndex !== null
+      : reason === "IO_UNKNOWN" || reason === "PATHARGS" && pathIndex === null || opaque.includes(reason) && pathIndex !== null
+    return valid ? { status: status as "PRIVATE" | "REFUSED" | "UNKNOWN", reason, pathIndex } : unknown
+  } catch { return unknown }
+}
+async function privatePrerequisite(paths: string[]): Promise<void> {
+  const status = await verifyHistoryPrivacy(paths)
+  if (status !== "PRIVATE" && process.platform === "win32" && process.env.GITHUB_ACTIONS === "true" && process.env.RUNNER_OS === "Windows") {
+    let diagnostic = privacyDiagnosticDTO("")
+    try { diagnostic = privacyDiagnosticDTO(await runPs(resolveWinScript("acp-history-privacy.ps1"), ["--diagnostic-732", ...paths])) } catch { /* finite unavailable */ }
+    try { console.log("ACP_HISTORY_PRIVACY_732 " + JSON.stringify(diagnostic)) } catch { /* original assertion remains primary */ }
+  }
+  assert.equal(status, "PRIVATE", "OWNED_TEMP_PRIVACY_PREREQUISITE_REQUIRED")
+}
+
 async function owned(run: (dir: string) => Promise<void>) {
   let dir = "", identity: fs.Stats | undefined
   try {
@@ -35,14 +63,14 @@ test("#732 actual Windows ACL root+empty file admission", { skip: process.platfo
   return owned(async dir => {
   const file = path.join(dir, "empty")
   const fd = fs.openSync(file, "wx", 0o600); fs.closeSync(fd)
-  assert.equal(await verifyHistoryPrivacy([dir, file]), "PRIVATE", "OWNED_TEMP_PRIVACY_PREREQUISITE_REQUIRED")
+  await privatePrerequisite([dir, file])
   assert.equal(fs.statSync(file).size, 0)
   })
 })
 test("#732 actual NTFS metadata round-trip is historical only", { skip: process.platform !== "win32" }, async () => {
   canonicalWindows()
   return owned(async dir => {
-  assert.equal(await verifyHistoryPrivacy([dir]), "PRIVATE", "OWNED_TEMP_PRIVACY_PREREQUISITE_REQUIRED")
+  await privatePrerequisite([dir])
   const first = new AcpHistoryStore({ root: () => dir, enabled: () => true })
   first.note({ session_id: "inert-session", thread_id: "inert-thread", agent_id: "inert-agent", mode: "review_readonly",
     state: "running", created_at: "2026-10-19T12:00:00.000Z", goal: "NEVER_PERSIST_NATIVE_GOAL", workspace_root: "NEVER_PERSIST_NATIVE_PATH" })

@@ -4,6 +4,20 @@
 
 ## 测试架构
 
+### #732 hosted restart 的有限浏览器启动回执（PR735）
+
+既有第五个 job 的首轮有限回执为 `stage:BROWSER`、`cleanup:true`，其余九检查为 false；它不能区分 Xvfb、端口、CDP、worker、配对或认证阶段的实际失败，根因仍未知。现仅扩展原固定回执：`browserPhase` 为最后到达的固定源码观察点，取 `XVFB_REQUEST`、`DISPLAY_OBSERVED`、`BINARY_SELECTED`、`PORT_FILE`、`CDP_CONNECTED`、`WORKER_FOUND`、`WORKER_READY`、`PAIR_PAGE`、`PAIRED`、`AUTH_DONE` 或 null；不是失败原因、唯一失败 API 或阶段完成总证明。`WORKER_READY` 只表示原 workerScriptReady 返回，随后原 Runtime.enable 仍可能失败。
+
+`browserPresent`／`xvfbPresent` 只表示当前保存了已创建的 child 对象，不能证明成功 spawn、仍存活或已关闭；两个 `ExitCode` 是 cleanup 之前的实际 own-data int32 或 null，不能从 cleanup SIGTERM 推断启动退出原因，也不当 writer EOF、真实 close 或根因。未知、getter、错型或非有限值不回显。无 stderr、正文、PID、路径、目标 ID、argv、环境或 secret 输出。
+
+原 schema1、stage、十项检查和 pass predicate 保留；诊断不增加成功条件、不将 cleanup 成功当启动通过。原120s／60s／5s／15s与端口10s预算、浏览器二选一、参数、环境、沙箱、正常 daemon／SidePanel／清理均不变。新增四个永久 CPU callback，其中一组执行实际 BROWSER 源片段并在各 await 注入受控失败；这不是本机或 hosted Chromium/daemon 成功。旧39控制复用，后续真实新 head／CI 仍必须通过。
+
+### #732 Windows 隐私拒绝的显式 CI 诊断
+
+默认 `acp-history-privacy.ps1` 继续只输出原 `PRIVATE`／`REFUSED`／`UNKNOWN` JSON 字符串，生产 `verifyHistoryPrivacy` 调用不变、只读谓词和顺序不变。只有第一个参数精确 `--diagnostic-732`，且 `GITHUB_ACTIONS=true`／`RUNNER_OS=Windows` 大小写精确时，才对原同一或两个 owned 路径输出 `{status,reason,pathIndex}`。原因闭集为 `PATHARGS/REPARSE/OWNER/DACL/ACE_TYPE/ACE_PRINCIPAL/ACE_QUALIFIER/IO_UNKNOWN/NONE`，索引只为0／1／null；没有 SID、SDDL、路径、错误正文或 ACL 变更。`IO_UNKNOWN` 也涵盖补充查询或解析不可用，不证明某个真实 IO 原因。
+
+两个原生 positive 的首次隐私结果仍是权威断言；只在首次失败后，每个 case 最多对相同路径进行一次原15s预算的只读补充查询，并输出固定 `ACP_HISTORY_PRIVACY_732` 回执。即使第二读为 PRIVATE、日志 sink 或解析失败，也不能放过原失败；这不是重试成功或修 ACL。最终 history-file 隐私断言与 cleanup 原样保留。七项新增 CPU 控制覆盖 LF/CRLF 全脚本逆变、闭字段解析、精确开关／GHA gate、单次查询与 primary 保存；不是 PS5.1／NTFS 运行。首次真实两 REFUSED 的 OWNER/DACL 具体原因仍未知，需后续远端原生回执再裁定。
+
 ### #731 shell 输出编码
 
 `companion/tests/shell-output-encoding-731.test.ts` 由原 canonical 测试入口发现，运行实际 `shell.ts` 模块与受控 child pipe 字节。覆盖中文／emoji 的所有单个拆分位置、stderr、结束残片、固定 CP936 字节、含 NUL 的混合输出、进度／输出上限、退出码、停止／超时及原模块／allowlist 拒绝。测试使用内存 spawn、虚拟时钟和 owned UTF-8 文件，不启动 cmd、PowerShell 或真实子 shell。

@@ -140,3 +140,69 @@ for(const mode of ['timeout','open-error','success-no-close','success-close'])te
     assert.equal(deleted,mode==='success-close'?1:0,'terminate dispatch is not actual close')
   } finally {socket?.emit('close')}
 })
+
+// #735 finite browser progress: actual published startup segment, inert transports.
+import * as startupHarness from '../accept-acp-history-hosted-732.mjs'
+function browserSegment(fault='none') {
+  const source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')
+  const begin=source.indexOf("    stage='BROWSER';"),end=source.indexOf("stage='PANEL';",begin)
+  assert.ok(begin>0&&end>begin)
+  const body=source.slice(begin,end),cleanup=source.slice(source.indexOf('  finally {\n',end),source.indexOf('    let clean=true',end))
+  const capture=cleanup.includes('browserStartup=observeBrowserStartup(browserPhase,chromium,xvfb)')?'browserStartup=observeBrowserStartup(browserPhase,chromium,xvfb)':''
+  const receiptCall=source.match(/const out=(finiteReceipt\(stage,checks(?:,browserStartup)?\));/)
+  assert.ok(receiptCall)
+  const marker='OWNED_ERROR_DO_NOT_REFLECT_PATH_PID_BODY',fail=()=>{throw Error(marker)}
+  const origin='chrome-extension://'+'a'.repeat(32),workerPath='static/background/index.js'
+  const xvfb={exitCode:null,stdio:[null,null,null,new EventEmitter()]},chrome={exitCode:null}
+  let connectCount=0,limitCount=0,fetchCount=0
+  const worker={workerScriptReady:async()=>{if(fault==='workerready')fail();return true},call:async()=>{if(fault==='runtimeenable')fail();return {}},evaluate:async expression=>{
+    if(expression.startsWith('chrome.tabs.create')){if(fault==='tabcreate')fail();return 7}
+    if(expression.startsWith('chrome.debugger.getTargets')){if(fault==='pairtarget')fail();return 'pair'}
+    if(fault==='navigate')fail();return true
+  }}
+  const browser={call:async()=>({targetInfos:fault==='workerdiscovery'?[]:[{targetId:'worker',type:'service_worker',url:origin+'/'+workerPath}]})}
+  const pair={evaluate:async()=>{if(fault==='pairsecret')fail();return true}}
+  class Socket extends EventEmitter {
+    static OPEN=1
+    constructor(){super();this.readyState=1;queueMicrotask(()=>fault==='auth'?this.emit('error',Error(marker)):this.emit('message',JSON.stringify({type:'auth.challenge',nonce:'public'})))}
+    send(){queueMicrotask(()=>this.emit('message',JSON.stringify({type:'auth.ok'})))}
+  }
+  const context={stage:'BROWSER',browserPhase:null,browserStartup:undefined,chromium:undefined,xvfb:undefined,browser:undefined,worker:undefined,observer:undefined,secret:'PUBLIC_SYNTHETIC_ONLY',owned:'/owned',paths:{worker:workerPath,page:'sidepanel.html'},navigationDeadline:undefined,
+    child(exe){if(exe==='/usr/bin/Xvfb'){queueMicrotask(()=>xvfb.stdio[3].emit('data',Buffer.from('23\n')));return xvfb}return chrome},
+    env:{},input:{},extension:'/owned/extension',chromeArgs:startupHarness.chromeArgs,childEnvironment:()=>({}),remaining:()=>1000,nav:()=>1000,BOUNDS,
+    deferred:defer,limit:async promise=>{if(++limitCount===1&&fault==='display')fail();return promise},
+    poll:async fn=>{const v=await fn();if(!v)fail();return v},
+    connect:async()=>{connectCount++;if(fault===['browserconnect','workerconnect','pairconnect'][connectCount-1])fail();return [browser,worker,pair][connectCount-1]},
+    fs:{statSync:()=>{if(fault==='binary')fail();return {isFile:()=>true}},readFileSync:()=>{if(fault==='port')fail();return '9222\n/devtools/browser/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n'}},
+    fetch:async()=>{const which=++fetchCount===1?'worker':'pair';if(fault===which+'fetch')fail();return {json:async()=>{if(fault===which+'json')fail();return ['worker','pair'].map(id=>({id,webSocketDebuggerUrl:'ws://127.0.0.1:9222/devtools/page/'+id}))}}},
+    WebSocket:Socket,observers:new Set(),crypto:{createHmac:()=>({update:()=>({digest:()=> 'PUBLIC_PROOF'})})},AbortSignal,loadedExpression:()=> 'OWNED_NAVIGATION_EXPRESSION',Math,Date,path,fail,
+    observeBrowserStartup:startupHarness.observeBrowserStartup,finiteReceipt:startupHarness.finiteReceipt,
+  }
+  return vm.runInNewContext(`(async()=>{let startupError=false;try{${body}}catch{startupError=true} ${capture}; const checks={cleanup:true};return {receipt:${receiptCall[1]},startupError}})()`,context)
+}
+test('#735 actual browser awaits report only the last observed fixed phase and never pass a failed startup',async()=>{
+  const cases={display:'XVFB_REQUEST',binary:'DISPLAY_OBSERVED',port:'BINARY_SELECTED',browserconnect:'PORT_FILE',workerdiscovery:'CDP_CONNECTED',workerconnect:'WORKER_FOUND',workerfetch:'WORKER_FOUND',workerjson:'WORKER_FOUND',workerready:'WORKER_FOUND',runtimeenable:'WORKER_READY',tabcreate:'WORKER_READY',navigate:'WORKER_READY',pairtarget:'PAIR_PAGE',pairconnect:'PAIR_PAGE',pairfetch:'PAIR_PAGE',pairjson:'PAIR_PAGE',pairsecret:'PAIR_PAGE',auth:'PAIRED',none:'AUTH_DONE'}
+  for(const [fault,phase]of Object.entries(cases)){const r=await browserSegment(fault);assert.equal(r.receipt.browserPhase,phase,fault);assert.equal(r.startupError,fault!=='none',fault);assert.equal(r.receipt.passed,false,fault);assert.equal(r.receipt.stage,'BROWSER');assert.equal(r.receipt.checks.cleanup,true);assert.equal(JSON.stringify(r).includes('DO_NOT_REFLECT'),false)}
+})
+test('#735 browser receipt projection refuses unknown scalars, getters, proxies and unrelated text',()=>{
+  assert.equal(typeof startupHarness.browserStartupProjection,'function')
+  let getters=0;const input={browserPhase:'PORT_FILE',browserPresent:true,browserExitCode:65,xvfbPresent:true,xvfbExitCode:null,raw:'SECRET_PATH_BODY'}
+  Object.defineProperty(input,'xvfbExitCode',{get(){getters++;throw Error('SECRET')}})
+  const r=startupHarness.browserStartupProjection(input);assert.equal(getters,0);assert.deepEqual(r,{browserPhase:'PORT_FILE',browserPresent:true,browserExitCode:65,xvfbPresent:true,xvfbExitCode:null});assert.equal(JSON.stringify(r).includes('SECRET'),false)
+  for(const value of [null,[],new Proxy({},{getOwnPropertyDescriptor(){throw Error('SECRET')}}),{browserPhase:['PORT_FILE'],browserExitCode:'65',browserPresent:'true'},{browserPhase:'UNKNOWN_PRIVATE',browserExitCode:NaN},{browserPhase:'PORT_FILE',browserExitCode:Infinity},{browserPhase:'PORT_FILE',browserExitCode:2147483648}]){const r=startupHarness.browserStartupProjection(value);assert.equal(r.browserExitCode,null);assert.equal(JSON.stringify(r).includes('SECRET'),false);assert.equal(JSON.stringify(r).includes('UNKNOWN_PRIVATE'),false)}
+})
+test('#735 actual main snapshots before cleanup and exit observations cannot become cleanup kill outcomes',()=>{
+  const s=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8'),start=s.lastIndexOf('  finally {\n')
+  const snapshot=s.indexOf('browserStartup=observeBrowserStartup(browserPhase,chromium,xvfb)',start),terminate=s.indexOf('for(const socket of observers)socket.terminate()',start)
+  assert.ok(snapshot>start&&snapshot<terminate)
+  assert.equal(typeof startupHarness.observeBrowserStartup,'function')
+  const browser={exitCode:65},xvfb={exitCode:null},before=startupHarness.observeBrowserStartup('WORKER_FOUND',browser,xvfb)
+  browser.exitCode=143;xvfb.exitCode=143;assert.equal(before.browserExitCode,65);assert.equal(before.xvfbExitCode,null);assert.equal(before.browserPresent,true)
+  const absent=startupHarness.observeBrowserStartup(null,undefined,undefined);assert.equal(absent.browserPhase,null);assert.equal(absent.browserPresent,false);assert.equal(absent.xvfbPresent,false)
+})
+test('#735 original pass predicate ignores startup diagnostics and still requires all ten checks',()=>{
+  const keys=Object.keys(finiteReceipt('COMPLETE',{}).checks),all=Object.fromEntries(keys.map(k=>[k,true]));assert.equal(keys.length,10)
+  assert.equal(finiteReceipt('COMPLETE',all,{browserPhase:null}).passed,true)
+  for(const key of keys){const r=finiteReceipt('COMPLETE',{...all,[key]:false},{browserPhase:'AUTH_DONE',browserPresent:true,browserExitCode:0,xvfbPresent:true,xvfbExitCode:0});assert.equal(r.passed,false)}
+  assert.equal(finiteReceipt('BROWSER',all,{browserPhase:'AUTH_DONE'}).passed,false)
+})
