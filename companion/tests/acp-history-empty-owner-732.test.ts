@@ -28,13 +28,13 @@ function storeFixture(variant = "success", platform = "win32") {
   const privacy = async (paths: string[]) => paths.every(p => table.get(p)?.owner === "user") ? "PRIVATE" : "REFUSED"
   const imports: any = { fs: fake, path: path.posix, crypto: { randomUUID: () => "11111111-1111-4111-8111-111111111111" }, "./history-privacy": { verifyHistoryPrivacy: privacy },
     "./history-new-empty": { initializeHistoryEmpty: async (r: string, name: string, parent: number, fd: number, current: () => boolean) => {
-      initialized++; assert.equal(r, root); assert.match(name, /^acp-history\./); assert.equal(descriptors.get(parent)?.name, root); assert.equal(descriptors.get(fd)?.name, path.join(root, name)); assert.equal(current(), true)
-      const file = table.get(path.join(root, name)); file.owner = "user"
+      initialized++; assert.equal(r, root); assert.match(name, /^acp-history\./); assert.equal(descriptors.get(parent)?.name, root); assert.equal(descriptors.get(fd)?.name, path.posix.join(root, name)); assert.equal(current(), true)
+      const file = table.get(path.posix.join(root, name)); file.owner = "user"
       if (variant === "partial") return "REFUSED"
       if (variant === "unknown") return "UNKNOWN"
       if (variant === "disable") enabled = false
       if (variant === "root-replaced") table.set(root, { ...table.get(root), ino: table.get(root).ino + 1n }) // Number(high) == Number(high+1): exact BigInt fence required.
-      if (variant === "file-replaced") table.set(path.join(root, name), { ...file, ino: file.ino + 1n })
+      if (variant === "file-replaced") table.set(path.posix.join(root, name), { ...file, ino: file.ino + 1n })
       if (variant === "linked") file.links = 2
       if (variant === "nonempty") file.bytes = Buffer.from("X")
       return "INITIALIZED"
