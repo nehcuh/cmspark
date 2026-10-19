@@ -897,7 +897,7 @@ export function CodingAgentPanel({
               <button
                 type="button"
                 style={styles.linkBtn}
-                title="打开内嵌终端（独立终端页，需在确认台批准）"
+                title={codingHandoffCopy.panelIndependentTerminalHint}
                 onClick={() => {
                   chrome.runtime.sendMessage({ type: "terminal.open_tab" }, () => {
                     void chrome.runtime.lastError
@@ -1255,7 +1255,9 @@ export function CodingAgentPanel({
                 </pre>
               ) : (
                 <div style={styles.empty}>
-                  {live
+                  {session.state === "offered" || session.state === "confirmed"
+                    ? codingHandoffCopy.sessionAwaitingStart
+                    : live
                     ? "已启动，等待 Agent 写出内容…（无换行时可能整段结束后才出现）"
                     : "暂无输出"}
                 </div>

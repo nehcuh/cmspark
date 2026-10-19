@@ -72,6 +72,10 @@ type LiveSession = {
   unacked: Map<number, number>
   unackedBytes: number
   paused: boolean
+  outputBytes: number
+  ackFrames: number
+  pauseCount: number
+  lastOutputAt: number | null
   lastClientAt: number
   heartbeat: ReturnType<typeof setInterval>
   send: (frame: Record<string, unknown>) => void
@@ -253,12 +257,28 @@ function closeLive(code: TerminalClosedCode, extra?: { signal?: number; error?: 
 
 function maybePause(s: LiveSession): void {
   if (!s.paused && s.unackedBytes >= TERMINAL_HIGH_WATER_UNACKED) {
+    s.pauseCount = Math.min(Number.MAX_SAFE_INTEGER, s.pauseCount + 1)
     s.paused = true
     try {
       s.handle.pause()
     } catch {
       /* ignore */
     }
+  }
+}
+
+function terminalMetrics(s: LiveSession): Record<string, number | boolean | null> {
+  const now = typeof performance === "undefined" ? NaN : performance.now()
+  return {
+    seq: s.seq,
+    output_bytes: s.outputBytes,
+    unacked_frames: s.unacked.size,
+    unacked_bytes: s.unackedBytes,
+    ack_frames: s.ackFrames,
+    pause_count: s.pauseCount,
+    paused: s.paused,
+    last_output_age_ms: s.lastOutputAt != null && Number.isFinite(now) && now >= s.lastOutputAt
+      ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(now - s.lastOutputAt)) : null,
   }
 }
 
@@ -290,6 +310,9 @@ function emitChunks(s: LiveSession, text: string): void {
     const seq = s.seq
     s.unacked.set(seq, slice.length)
     s.unackedBytes += slice.length
+    s.outputBytes = Math.min(Number.MAX_SAFE_INTEGER, s.outputBytes + slice.length)
+    const now = typeof performance === "undefined" ? NaN : performance.now()
+    s.lastOutputAt = Number.isFinite(now) ? now : null
     s.send({
       type: "terminal.data",
       id: s.id,
@@ -446,6 +469,10 @@ export function spawnPtySession(opts: {
     unacked: new Map(),
     unackedBytes: 0,
     paused: false,
+    outputBytes: 0,
+    ackFrames: 0,
+    pauseCount: 0,
+    lastOutputAt: null,
     lastClientAt: Date.now(),
     heartbeat: setInterval(() => {
       const s = live
@@ -453,7 +480,7 @@ export function spawnPtySession(opts: {
       // Last-resort orphan reclaim. Client ping/input/ack/resize reset lastClientAt
       // so a quiet-but-watched tab (vim/man/ssh idle) is not SIGKILL'd.
       if (Date.now() - s.lastClientAt > heartbeatMs) closeLive("killed")
-      else s.send({ type: "terminal.heartbeat", id: s.id })
+      else s.send({ type: "terminal.heartbeat", id: s.id, metrics: terminalMetrics(s) })
     }, Math.min(Math.max(1, heartbeatMs / 3), 15_000)),
     send: opts.send,
   }
@@ -544,6 +571,7 @@ export function ackPty(id: string, seq: number): { ok: true } | { ok: false; err
     if (q <= seq) {
       s.unacked.delete(q)
       s.unackedBytes = Math.max(0, s.unackedBytes - n)
+      s.ackFrames = Math.min(Number.MAX_SAFE_INTEGER, s.ackFrames + 1)
     }
   }
   maybeResume(s)
@@ -552,6 +580,7 @@ export function ackPty(id: string, seq: number): { ok: true } | { ok: false; err
 
 export function pausePty(id: string): { ok: true } | { ok: false; error: string } {
   if (!noteClientActivity(id) || !live) return { ok: false, error: "terminal_not_found" }
+  if (!live.paused) live.pauseCount = Math.min(Number.MAX_SAFE_INTEGER, live.pauseCount + 1)
   live.paused = true
   try {
     live.handle.pause()

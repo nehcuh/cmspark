@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+- #727 在既有“更多”能力菜单和编程会话 chip 增加打开编程接力入口，并补空对话入口提示；只开面板，不自动提案、启动或打开终端。#722 修正待启动提案的面板空输出提示；容量与生命周期余项仍保留。
+- #724 内嵌终端显示权威启动来源，缺失或未知时不冒称 Agent 就绪；首个输出帧及既有 heartbeat 记录有限字节/ACK/暂停/输出年龄诊断，不记内容、不新增计时器或模型内容出口。
+
+- #731 `shell_exec` 按流式 UTF-8 解码 stdout/stderr，避免中文字符跨数据块时损坏；非法 UTF-8 或含 NUL 的输出在既有 note 和进度尾部明确标为编码不可判定，不猜测 GBK、不改命令或系统代码页。保留确认、沙箱、退出／停止／超时及输出上限；受控 CPU 回归不代表真实 Windows 编码验收已完成，0.6.14 仍为开发版。
+
+- #731 增加 remote-only Windows 原生 pipe 验收：真实固定 echo/type/CP936 emitter 经原 shellExec，拒绝缺失 canonical owned 前置，并保留编码不可判定分支与原清理／预算。源码候选和非 Windows skip 不宣称真实 Windows 已通过。
+
+- #729：页面只读 DOM 观察与交互失败分开计数，保留四次来源失败、两次定位失败和 CDP attach freeze；读取被限时只提示换策略或显式重置计数，不再因点击失败连带禁止读取或引导升级权限。真实浏览器与 Windows 验收以当前 CI 为准。
+
+- Windows computer capture now refuses a recognized confirmation-cockpit title in target selection, ownership, L2 preview and the final screenshot boundary. The existing BitBlt fallback rejects failed foreground/rectangle checks and foreground drift before saving. The title is spoofable and does not authorize a window; this does not prove absence of all occlusion or complete #723. Existing L2, thresholds and budgets remain unchanged (Refs #723).
+
+- #722 修复 ACP 提案因当前会话或单进程容量占用而被拒绝时丢失结构码、误停整轮的问题；返回本线程有限 holder 与建议动作，其他线程会话信息不外露。start 在任何异步准备前同步检查唯一运行槽，防止不同线程预先获得的提案同时启动；取消后仍等进程真实关闭才释放。忙碌仍失败，容量、逐次 L2 和 worker/owner 门禁不变；终端入口、提案生命周期和多提案设计仍待完成。
+
 - #476 原生工作台新增当前对话的浏览器任务候选与显式背景／前台选择。状态与元数据仅访问已认证扩展；下一次同对话明确发送时才绑定真实运行，首行仅支持既有 `get_page_text` 精确 peer/tab 背景读取，未知浏览器操作拒绝且不自动聚焦／打开 Chrome。协议同步 v8；CPU 源码控制不代表真实原生／扩展验收，整票仍 Partial。见 [浏览器任务指南](docs/desktop-browser-tasks.md)。
 
 - #464 开发中：GitHub tagged-release（限固定英文元数据布局、单段 ASCII tag，不含斜杠/编码 tag）的唯一完整发布元数据 HTML 可保留当前平台声明的仓库/tag/完整 commit 观测关系，材料按原 pilot、字段引用和 revision 核对。此状态不证明历史 tag、构建/资产/签名或发布批准，仍不提升 ready；真实 hosted browser 验收尚未完成。

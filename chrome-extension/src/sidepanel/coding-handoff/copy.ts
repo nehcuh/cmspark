@@ -57,7 +57,7 @@ export const codingHandoffCopy = {
    * and the dual-process copy would point at an outer Terminal.app that was never opened.
    */
   modeCEmbedRunningBanner:
-    "模式 C：内嵌终端中的 Agent 正在运行（本插件终端页）。侧栏停止仅结束会话与监视桥；内嵌终端进程需在终端页关闭。",
+    "模式 C：已观察到内嵌 Agent 启动来源，请到终端页核实当前状态并自行交互；侧栏停止仅结束会话与监视桥，内嵌终端进程需在终端页关闭。",
 
   /**
    * Mode C host-terminal outcomes. Both render sites gate on `isModeCInvolved`, which excludes
@@ -127,7 +127,12 @@ export const codingHandoffCopy = {
    */
   panelOpenEmbeddedTerminal: "在本插件打开终端",
   /** #586: 常驻入口（不依赖会话）——独立终端页，terminal.open_tab，同设置区按钮。 */
-  panelOpenEmbeddedTerminalTab: "打开内嵌终端页 →",
+  panelOpenEmbeddedTerminalTab: "打开本机终端页（非 Agent 启动入口）",
+  panelIndependentTerminalHint: "新普通终端页为本机用户 shell；若已有终端，仅聚焦原页，不启动新 Agent。",
+  sessionAwaitingStart: "待启动：尚未启动 Agent。",
+  ctaOpenPanel: "打开",
+  emptyCodeHint: "/code 打开编程接力",
+  emptyMessageCodeHint: "消息悬浮 </> 派给终端助手（先打开任务草稿，不会自动启动）",
   panelEmbeddedTerminalHint:
     "打开的是本插件的终端页；请回到侧栏确认后才启动，Agent 自身可能还需先登录。",
 

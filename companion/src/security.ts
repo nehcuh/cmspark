@@ -1114,6 +1114,9 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   ["ACP_SESSION_NOT_FOUND", "recoverable"],
   ["ACP_SESSION_ID_REQUIRED", "recoverable"],
   ["ACP_PROPOSAL_PARAMS_REQUIRED", "recoverable"], // model can supply the missing agent/task before L2
+  // #722: a refused proposal remains a refusal; temporary occupancy must not halt the turn.
+  ["ACP_SESSION_BUSY", "recoverable"],
+  ["ACP_CONCURRENCY_LIMIT", "recoverable"],
   // ── #560 第二半：把「偏严」的三个改为 recoverable ──────────────────────────
   // 这三条原先落默认桶 non_recoverable → **整轮终止**，但语义上 agent 都能继续：
   //

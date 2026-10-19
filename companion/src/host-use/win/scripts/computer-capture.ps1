@@ -30,6 +30,15 @@ Add-Type -TypeDefinition @'
 using System; using System.Runtime.InteropServices;
 public class CapW32 {
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder text, int count);
+  // Spoofable protective refusal, never a permission or content-quality proof.
+  public static bool IsCockpitWindow(IntPtr h) {
+    var text = new System.Text.StringBuilder(512);
+    if (GetWindowText(h, text, text.Capacity) <= 0) return false;
+    string title = text.ToString();
+    const string marker = "CMspark Confirmation Cockpit [723]";
+    return title == marker || title.StartsWith(marker + " - ", StringComparison.Ordinal);
+  }
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
@@ -65,6 +74,10 @@ public class CapW32 {
 function Fail([string]$prefix, [string]$detail, [int]$code) {
   [Console]::Error.WriteLine("${prefix}:$detail")
   exit $code
+}
+
+function Refuse-CockpitWindow([IntPtr]$target) {
+  if ([CapW32]::IsCockpitWindow($target)) { Fail "CAPTUREFAILED" "confirmation cockpit is not an application capture target" 6 }
 }
 
 function Test-BlackImage([System.Drawing.Bitmap]$bmp) {
@@ -118,8 +131,9 @@ if ($CropOf -ne "") {
 $hwndPtr = [IntPtr]::new($Hwnd)
 if (-not [CapW32]::IsWindow($hwndPtr)) { Fail "HWNDDEAD" "hwnd $Hwnd is not a live window" 4 }
 
+Refuse-CockpitWindow $hwndPtr
 $r = New-Object CapW32+RECT
-[CapW32]::GetWindowRect($hwndPtr, [ref]$r) | Out-Null
+if (-not [CapW32]::GetWindowRect($hwndPtr, [ref]$r)) { Fail "HWNDDEAD" "window rect query failed" 4 }
 $width = $r.Right - $r.Left; $height = $r.Bottom - $r.Top
 if ($width -le 0 -or $height -le 0) { Fail "HWNDDEAD" "hwnd $Hwnd has an empty rect" 4 }
 
@@ -152,10 +166,11 @@ if ((-not $printed) -or $black) {
     Fail "CAPTUREFAILED" "PrintWindow produced no usable pixels (black=$black, printed=$printed) and fallback is disabled" 6
   }
   $bmp.Dispose()
-  [CapW32]::ForceForeground($hwndPtr) | Out-Null
+  if (-not [CapW32]::ForceForeground($hwndPtr)) { Fail "CAPTUREFAILED" "foreground request failed" 6 }
   Start-Sleep -Milliseconds 250
-  # Re-read rect after restore/foreground.
-  [CapW32]::GetWindowRect($hwndPtr, [ref]$r) | Out-Null
+  if ([CapW32]::GetForegroundWindow() -ne $hwndPtr) { Fail "CAPTUREFAILED" "target is not foreground" 6 }
+  # Re-read rect after restore/foreground; never use a failed query's stale rect.
+  if (-not [CapW32]::GetWindowRect($hwndPtr, [ref]$r)) { Fail "CAPTUREFAILED" "foreground rect query failed" 6 }
   $width = $r.Right - $r.Left; $height = $r.Bottom - $r.Top
   if ($width -le 0 -or $height -le 0) { Fail "HWNDDEAD" "hwnd $Hwnd rect collapsed after foreground" 4 }
   $bmp = New-Object System.Drawing.Bitmap($width, $height)
@@ -170,6 +185,9 @@ if ((-not $printed) -or $black) {
   $fallbackUsed = $true
 }
 
+# These are observations, not an atomic proof that every occluder is absent.
+if ($fallbackUsed -and [CapW32]::GetForegroundWindow() -ne $hwndPtr) { $bmp.Dispose(); Fail "CAPTUREFAILED" "foreground changed before save" 6 }
+if ([CapW32]::IsCockpitWindow($hwndPtr)) { $bmp.Dispose(); Fail "CAPTUREFAILED" "confirmation cockpit is not an application capture target" 6 }
 $bmp.Save($OutPath, [System.Drawing.Imaging.ImageFormat]::Png)
 $bmp.Dispose()
 $sha = (Get-FileHash $OutPath -Algorithm SHA256).Hash.ToLower()

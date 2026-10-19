@@ -3,6 +3,8 @@
 // #au4dch SH-A: windowsHide on win32 + optional onProgress for tool.progress tails.
 
 import { spawn, type ChildProcess } from "child_process"
+import { StringDecoder } from "string_decoder"
+import { TextDecoder } from "util"
 import * as fs from "fs"
 import * as path from "path"
 import { getModule, requireModule } from "./modules"
@@ -469,6 +471,37 @@ export type ShellProgress = {
   stderr_tail: string
 }
 
+// Child pipes have no reliable ACP/console-code-page declaration. Preserve UTF-8
+// across data events; never guess GBK (or another encoding) from invalid bytes.
+function shellOutputDecoder() {
+  const decoder = new StringDecoder("utf8")
+  const validator = new TextDecoder("utf-8", { fatal: true })
+  let undetermined = false
+  return {
+    write(chunk: Buffer): string {
+      if (chunk.includes(0)) undetermined = true
+      if (!undetermined) {
+        try { validator.decode(chunk, { stream: true }) } catch { undetermined = true }
+      }
+      return decoder.write(chunk)
+    },
+    end(): string {
+      if (!undetermined) {
+        try { validator.decode() } catch { undetermined = true }
+      }
+      return decoder.end()
+    },
+    get undetermined() { return undetermined },
+  }
+}
+
+const OUTPUT_ENCODING_MARKER = "[OUTPUT_ENCODING_UNDETERMINED] "
+function outputProgressTail(text: string, undetermined: boolean): string {
+  return undetermined
+    ? OUTPUT_ENCODING_MARKER + tailChars(text, PROGRESS_TAIL_CHARS - OUTPUT_ENCODING_MARKER.length)
+    : tailChars(text)
+}
+
 /**
  * Options for Node spawn of shell_exec children (legacy shell:true path).
  * windowsHide: true on win32 so approved one-shots do not flash an empty console
@@ -697,6 +730,8 @@ export async function shellExec(opts: {
 
     let stdout = ""
     let stderr = ""
+    const stdoutDecoder = shellOutputDecoder()
+    const stderrDecoder = shellOutputDecoder()
     /** null | timeout | abort — distinguishes chat.stop vs wall-clock kill. */
     let killReason: null | "timeout" | "abort" = null
     let settled = false
@@ -710,8 +745,8 @@ export async function shellExec(opts: {
       try {
         opts.onProgress({
           elapsed_ms: now - started,
-          stdout_tail: tailChars(stdout),
-          stderr_tail: tailChars(stderr),
+          stdout_tail: outputProgressTail(stdout, stdoutDecoder.undetermined),
+          stderr_tail: outputProgressTail(stderr, stderrDecoder.undetermined),
         })
       } catch {
         /* UI best-effort */
@@ -745,11 +780,13 @@ export async function shellExec(opts: {
       : null
 
     child.stdout?.on("data", (d: Buffer) => {
-      if (stdout.length < MAX_OUTPUT) stdout += d.toString("utf-8")
+      const decoded = stdoutDecoder.write(d)
+      if (stdout.length < MAX_OUTPUT) stdout += decoded
       emitProgress(false)
     })
     child.stderr?.on("data", (d: Buffer) => {
-      if (stderr.length < MAX_OUTPUT) stderr += d.toString("utf-8")
+      const decoded = stderrDecoder.write(d)
+      if (stderr.length < MAX_OUTPUT) stderr += decoded
       emitProgress(false)
     })
 
@@ -781,6 +818,10 @@ export async function shellExec(opts: {
     })
 
     child.on("close", (code, signalName) => {
+      const stdoutEnd = stdoutDecoder.end()
+      const stderrEnd = stderrDecoder.end()
+      if (stdout.length < MAX_OUTPUT) stdout += stdoutEnd
+      if (stderr.length < MAX_OUTPUT) stderr += stderrEnd
       cleanup()
       emitProgress(true)
       const timed_out = killReason === "timeout"
@@ -810,7 +851,10 @@ export async function shellExec(opts: {
           stdout: stdout.slice(0, MAX_OUTPUT),
           stderr: stderr.slice(0, MAX_OUTPUT),
           truncated: stdout.length >= MAX_OUTPUT || stderr.length >= MAX_OUTPUT,
-          note: "Command body not stored in audit log (default). Output shown to agent only.",
+          note: "Command body not stored in audit log (default). Output shown to agent only." +
+            (stdoutDecoder.undetermined || stderrDecoder.undetermined
+              ? ` OUTPUT_ENCODING_UNDETERMINED (${[stdoutDecoder.undetermined ? "stdout" : "", stderrDecoder.undetermined ? "stderr" : ""].filter(Boolean).join(", ")}): non-UTF-8 or binary output; encoding cannot be determined. Replacement characters may be present; do not infer file corruption from this output.`
+              : ""),
         },
       })
     })
