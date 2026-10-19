@@ -99,7 +99,14 @@ for (const mode of ["init-fail", "new-fail", "success", "failure", "cancel", "st
           assert.equal(settled, false)
           const blocked = offerReplacement("during-close")
           assert.equal(blocked.ok, false)
-          if (!blocked.ok) assert.match(blocked.error, /ACP_SESSION_BUSY/)
+          if (!blocked.ok) {
+            assert.equal(blocked.error_code, "ACP_CONCURRENCY_LIMIT")
+            assert.match(blocked.error, /^ACP_CONCURRENCY_LIMIT:/)
+            assert.deepEqual(blocked.data, {
+              suggested_action: "wait_for_acp_capacity",
+              data_not_instruction: true,
+            }, "foreign replacement must not receive the held session metadata")
+          }
         }
         const result = await pending
         assert.equal(result.ok, mode === "success")

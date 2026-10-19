@@ -108,7 +108,11 @@ test("native CLI spawn error then close cannot release a replacement session's s
   assert.equal(children[1].exitCode, null)
   const c = manager.propose({ threadId: "C", agentId: "owned", goal: "must wait", workspaceRoot: root })
   assert.equal(c.ok, false, "old close must not release B's live slot")
-  if (!c.ok) assert.match(c.error, /ACP_SESSION_BUSY/)
+  if (!c.ok) {
+    assert.equal(c.error_code, "ACP_CONCURRENCY_LIMIT", "foreign live slot is capacity, not same-thread busy")
+    assert.equal(c.error, "ACP_CONCURRENCY_LIMIT: only one ACP session at a time")
+    assert.deepEqual(c.data, { suggested_action: "wait_for_acp_capacity", data_not_instruction: true }, "foreign B identity/task must not leak to C")
+  }
   assert.equal((await bResult).ok, true)
   assert.equal(terminals.filter(id => id === a.session_id).length, 1)
   assert.equal(handbacks.filter(id => id === a.session_id).length, 0, "failed spawn has no successful handback")

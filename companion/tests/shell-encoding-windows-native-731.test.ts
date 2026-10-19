@@ -73,12 +73,10 @@ test("731 remote Windows shell_exec has faithful UTF8 or explicit undecidable pi
     }
     const echo = await run("echo", "echo 中文")
     assert.equal(echo.result.data.spawn_mode, "shell")
-    if (echo.result.data.stdout === text) {
-      assert.equal(echo.result.data.note.includes("OUTPUT_ENCODING_UNDETERMINED"), false)
-    } else {
-      assert.match(echo.result.data.note, /OUTPUT_ENCODING_UNDETERMINED.*stdout/)
-      assert.ok(echo.progress.some(p => p.stdout_tail.startsWith("[OUTPUT_ENCODING_UNDETERMINED] ")))
-    }
+    // Non-ASCII cmd command conversion has no reliable encoding declaration.
+    // Even valid UTF8 bytes do not certify the command survived that conversion.
+    assert.match(echo.result.data.note, /OUTPUT_ENCODING_UNDETERMINED.*stdout/)
+    assert.ok(echo.progress.some(p => p.stdout_tail.startsWith("[OUTPUT_ENCODING_UNDETERMINED] ")))
     const typed = await run("type", "type owned-utf8.txt")
     assert.equal(typed.result.data.spawn_mode, "shell")
     assert.equal(typed.result.data.stdout, text)

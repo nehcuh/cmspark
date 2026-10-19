@@ -7,7 +7,7 @@ import os from "node:os"
 import path from "node:path"
 import {
   resetSiteOpMemoryForTests, hydratePersistedSiteOpExperience, refreshPersistedSiteOpExperience,
-  peekSiteOpBan, recordSiteOpFailure, getOriginFailCount, autoSiteOpExperienceLine, locatorKeyForTool,
+  peekSiteOpBan, recordSiteOpFailure, getOriginFailCount, getReadOnlyOriginFailCount, autoSiteOpExperienceLine, locatorKeyForTool,
 } from "../src/tool/site-op-memory"
 import { siteExperienceIdentity } from "../src/skills/site-experience-identity"
 import { SkillEngine } from "../src/skills/skill-engine"
@@ -45,7 +45,8 @@ test("#535 mixed historical locator proofs remain live; stale selected evidence 
   assert.equal(refreshPersistedSiteOpExperience("mixed", origin, entries.map(e => ({ ...e, stale: true }))), 0)
   assert.equal(peekSiteOpBan("mixed", "click", { tabId: 7, selector: "#known-missing" }, origin).banned, false)
   for (let i=0;i<4;i++)recordSiteOpFailure("opaque", "wait_for", { tabId: 7, selector: `#opaque-${i}` }, undefined, origin)
-  assert.equal(getOriginFailCount("opaque", origin), 4, "UNKNOWN stays a real conservative health signal")
+  assert.equal(getReadOnlyOriginFailCount("opaque", origin), 4, "UNKNOWN remains a real conservative read-only health signal")
+  assert.equal(getOriginFailCount("opaque", origin), 0, "read-only UNKNOWN must not consume the interaction budget")
 })
 
 test("#535 current knowledge projection suppresses channel-only auto summary and raw-body fallback", () => {
