@@ -11,9 +11,21 @@ import { initDataDir, saveConfig } from "../../src/config"
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
-async function until(check: () => boolean, budget = 20_000) {
+type StartObservation =
+  | { kind: "pending" }
+  | { kind: "fulfilled"; ok: boolean }
+  | { kind: "rejected"; error: unknown }
+async function until(check: () => boolean, observe: () => StartObservation, budget = 20_000) {
   const deadline = Date.now() + budget
-  while (!check()) { assert.ok(Date.now() < deadline, "owned ACP fixture deadline"); await pause(10) }
+  while (!check()) {
+    const started = observe()
+    if (started.kind === "rejected") throw started.error
+    if (started.kind === "fulfilled") {
+      assert.fail(started.ok ? "owned ACP completed before required marker" : "owned ACP failed before required marker")
+    }
+    assert.ok(Date.now() < deadline, "owned ACP fixture deadline")
+    await pause(10)
+  }
 }
 
 for (const mode of ["init-fail", "new-fail", "success", "failure", "cancel", "startup-cancel"] as const) {
@@ -61,14 +73,22 @@ for (const mode of ["init-fail", "new-fail", "success", "failure", "cancel", "st
       const offered = manager.propose({ threadId: "old", agentId: "owned", goal: "owned lifecycle fixture", workspaceRoot: root })
       assert.ok(offered.ok)
       let settled = false
-      pending = manager.start(offered.session.session_id).then(result => { settled = true; return result })
+      let startObservation: StartObservation = { kind: "pending" }
+      pending = manager.start(offered.session.session_id)
+      // Observe both outcomes immediately. Keep the original promise/error for
+      // lifecycle cleanup, without printing result bodies or inherited context.
+      void pending.then(
+        result => { settled = true; startObservation = { kind: "fulfilled", ok: result.ok } },
+        error => { settled = true; startObservation = { kind: "rejected", error } },
+      )
+      const observeStart = () => startObservation
       if (mode === "init-fail" || mode === "new-fail") {
-        await until(() => fs.existsSync(cli))
+        await until(() => fs.existsSync(cli), observeStart)
         assert.equal(JSON.parse(fs.readFileSync(cli, "utf8")).oldAlive, false, "CLI fallback cannot overlap its probe agent")
         assert.equal((await pending).ok, true)
         assert.equal(offered.session.transport, "cli")
       } else {
-        await until(() => fs.existsSync(mode === "startup-cancel" ? newStage : prompt))
+        await until(() => fs.existsSync(mode === "startup-cancel" ? newStage : prompt), observeStart)
         const pid = JSON.parse(fs.readFileSync(proto, "utf8")).pid as number
         if (mode === "cancel" || mode === "startup-cancel") manager.cancel(offered.session.session_id)
         if (process.platform !== "win32") {
