@@ -2773,11 +2773,8 @@ async function dispatchMessage(
           : undefined
       try {
         const { releaseTrustBeforeThreadGone } = await import("./packs/pack-engine")
-        for (const t of threadManager.list()) {
-          if (exceptId && t.id === exceptId) continue
-          if (threadManager.getMessages(t.id).length === 0) {
-            releaseTrustBeforeThreadGone(t, "thread.cleanup_empty", threadManager)
-          }
+        for (const t of threadManager.emptyCleanupCandidates(exceptId)) {
+          releaseTrustBeforeThreadGone(t, "thread.cleanup_empty", threadManager)
         }
       } catch {
         /* best-effort */

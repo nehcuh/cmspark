@@ -184,6 +184,8 @@ interface Thread {
    * P1.5 recycle bin; hard delete clears file + index entry.
    */
   trashed_at?: string | null
+  /** Permanent organization state, independent of the 30-day recycle bin. */
+  archived_at?: string | null
   /** Wave 2 话题夹 — user folder label, not Project/Pack. */
   topic_folder?: string | null
   user_tags?: string[]
@@ -252,6 +254,23 @@ function validateConfigOverride(config: any): { valid: boolean; error?: string; 
 
 interface ThreadIndex {
   threads: Thread[]
+}
+
+export interface ThreadArchiveSnapshot {
+  id: string
+  alias: string
+  created_at: string
+  updated_at: string
+  archived_at?: string | null
+}
+
+function validArchiveDate(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
+}
+function archiveValue(thread: { archived_at?: string | null }): string | null | undefined {
+  const value = thread.archived_at
+  if (value !== undefined && value !== null && !validArchiveDate(value)) throw Error("DESKTOP_ARCHIVE_UNAVAILABLE")
+  return value
 }
 
 interface Message {
@@ -627,6 +646,18 @@ export class ThreadManager {
    * Only fills `digest` when memory has `undefined` (not intentional `null` clear).
    */
   private saveIndex(): void {
+    // A peer may have archived or restored since this manager loaded. Ordinary
+    // writes cannot replay an old marker (including an old non-null value over
+    // restore-null). An unreadable existing index must not authorize that loss.
+    const canonical = this.readArchiveIndex(true)
+    const archiveById = new Map(canonical.threads.map(t => [t.id, t]))
+    for (const thread of this.index.threads) {
+      const disk = archiveById.get(thread.id)
+      if (!disk || disk.created_at !== thread.created_at) continue
+      if (Object.hasOwn(disk, "archived_at")) thread.archived_at = disk.archived_at
+      else delete thread.archived_at
+      if (Object.hasOwn(disk, "archived_at") && typeof disk.updated_at === "string" && disk.updated_at > thread.updated_at) thread.updated_at = disk.updated_at
+    }
     try {
       if (fs.existsSync(this.indexPath)) {
         const raw = fs.readFileSync(this.indexPath, "utf-8")
@@ -820,18 +851,92 @@ export class ThreadManager {
   }
 
   cleanupEmpty(exceptId?: string): string[] {
-    const emptyThreads = this.index.threads.filter(
-      (t) =>
-        !this.isTrashed(t) &&
-        t.id !== exceptId &&
-        this.getMessages(t.id).length === 0,
-    )
+    const emptyThreads = this.emptyCleanupCandidates(exceptId)
     const deletedIds: string[] = []
     for (const thread of emptyThreads) {
+      if (!this.emptyCleanupCandidates(exceptId).some(t => t.id === thread.id)) continue
       this.delete(thread.id)
       deletedIds.push(thread.id)
     }
     return deletedIds
+  }
+
+  /** Used by automatic cleanup and its Trust-release prepass. Unknown archive
+   * state never grants automatic deletion; explicit delete/trash are unchanged. */
+  emptyCleanupCandidates(exceptId?: string): Thread[] {
+    try {
+      const disk = new Map(this.readArchiveIndex().threads.map(t => [t.id, t]))
+      return this.index.threads.filter(t => {
+        const current = disk.get(t.id)
+        return current && current.created_at === t.created_at && !this.isTrashed(current) && !archiveValue(current) && t.id !== exceptId && this.getMessages(t.id).length === 0
+      })
+    } catch { return [] }
+  }
+
+  private readArchiveIndex(ordinarySave = false): ThreadIndex {
+    let raw: string
+    try {
+      const stat = fs.lstatSync(this.indexPath)
+      if (!stat.isFile() || stat.isSymbolicLink()) throw Error("DESKTOP_ARCHIVE_UNAVAILABLE")
+      raw = fs.readFileSync(this.indexPath, "utf8")
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { threads: [] }
+      throw Error("DESKTOP_ARCHIVE_UNAVAILABLE")
+    }
+    try {
+      const index = JSON.parse(raw)
+      if (!index || !Array.isArray(index.threads)) throw Error()
+      const ids = new Map<string, Thread>()
+      for (const row of index.threads) {
+        if (!row || typeof row.id !== "string") throw Error()
+        archiveValue(row)
+        const previous = ids.get(row.id)
+        if (previous) {
+          // Ordinary metadata reads/saves keep the first duplicate legacy row.
+          // Any archive property makes that ambiguity unsafe, including null;
+          // native snapshot/commit reads always remain strict.
+          if (!ordinarySave || Object.hasOwn(previous, "archived_at") || Object.hasOwn(row, "archived_at")) throw Error()
+        } else ids.set(row.id, row)
+      }
+      return ordinarySave ? { ...index, threads: uniqueIndexThreads(index.threads) } : index
+    } catch { throw Error("DESKTOP_ARCHIVE_UNAVAILABLE") }
+  }
+
+  /** Normal desktop list/search need only the fresh archive markers, not the
+   * stricter timestamp/OCC snapshot contract. Legacy duplicates with no archive
+   * property are normalized in this read-only projection, never repaired. */
+  desktopArchivedThreadIds(): string[] {
+    return this.readArchiveIndex(true).threads
+      .filter(t => !this.isTrashed(t) && !!archiveValue(t)).map(t => t.id)
+  }
+
+  /** Fresh canonical metadata only: no get/list, transcript, repair or purge. */
+  desktopArchiveSnapshot(): ThreadArchiveSnapshot[] {
+    return this.readArchiveIndex().threads.filter(t => !this.isTrashed(t)).map(t => {
+      if (!ThreadManager.isSafeThreadId(t.id) || /[^a-zA-Z0-9_-]/.test(t.id) || typeof t.alias !== "string" || !validArchiveDate(t.created_at) || !validArchiveDate(t.updated_at)) throw Error("DESKTOP_ARCHIVE_UNAVAILABLE")
+      return { id: t.id, alias: t.alias, created_at: t.created_at, updated_at: t.updated_at, ...(Object.hasOwn(t, "archived_at") ? { archived_at: t.archived_at } : {}) }
+    })
+  }
+
+  /** Only the socket-private archive actor may submit this expected tuple. All
+   * checks and the single atomic index commit are synchronous; this is not a
+   * cross-process CAS. Fresh disk siblings and unrelated target fields survive. */
+  setDesktopArchive(threadId: string, expected: ThreadArchiveSnapshot, archived: boolean): ThreadArchiveSnapshot {
+    const disk = this.readArchiveIndex(), target = disk.threads.find(t => t.id === threadId)
+    if (!target || this.isTrashed(target)) throw Error("DESKTOP_ARCHIVE_NOT_FOUND")
+    if (!ThreadManager.isSafeThreadId(threadId) || /[^a-zA-Z0-9_-]/.test(threadId) || !validArchiveDate(target.created_at) || !validArchiveDate(target.updated_at) || typeof archived !== "boolean" || expected.id !== threadId || expected.created_at !== target.created_at || expected.updated_at !== target.updated_at || Object.hasOwn(expected, "archived_at") !== Object.hasOwn(target, "archived_at") || archiveValue(expected) !== archiveValue(target)) throw Error("DESKTOP_ARCHIVE_CONFLICT")
+    if (!!archiveValue(target) === archived) return { ...expected }
+    const now = monotonicTimestamp()
+    const nextTime = now > target.updated_at ? now : new Date(Date.parse(target.updated_at) + 1).toISOString()
+    const next = { ...target, archived_at: archived ? nextTime : null, updated_at: nextTime }
+    disk.threads = disk.threads.map(t => t === target ? next : t)
+    // Memory is untouched until the write returns. A throw may be unconfirmed
+    // if an injected writer renamed before throwing; the actor never claims a
+    // rollback or automatically retries in that case.
+    atomicWriteJSON(this.indexPath, disk)
+    const memory = this.index.threads.find(t => t.id === threadId && t.created_at === target.created_at)
+    if (memory) { memory.archived_at = next.archived_at; memory.updated_at = next.updated_at }
+    return { id: next.id, alias: next.alias, created_at: next.created_at, updated_at: next.updated_at, archived_at: next.archived_at }
   }
 
   /** #480: metadata-only snapshot; never purge/repair/save or expose mutable index rows. */
@@ -985,6 +1090,7 @@ export class ThreadManager {
   }
 
   update(threadId: string, updates: Partial<Thread>): Thread | undefined {
+    if (Object.hasOwn(updates, "archived_at")) throw new Error("Archive metadata requires its current native snapshot")
     if (Object.prototype.hasOwnProperty.call(updates, "project_id") || Object.prototype.hasOwnProperty.call(updates, "project_metadata_unavailable")) {
       throw new Error("Project membership is owned by ProjectStore; use thread.project.set")
     }

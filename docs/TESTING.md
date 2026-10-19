@@ -217,3 +217,12 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 原票允许每行 Delivered/Refused/Gap，只要求至少一条真实后台动作。d66 head `d66da90e92f99c439cdd98280733e34c7499e6b1` / CI39166888090 的 AppKit press 已有 target effect 与完整 oracle；同轮 WK 在 locate 前置后因 TREE_EXHAUSTED 失败，缺 after-oracle，原2P1F历史保留。
 
 新分支仅接受 WK 的 own foundfalse、确切 TREE_EXHAUSTED 与完整有效 traversal EMPTY_FRONTIER/depth<50。安全/当前 owned binding/initial sibling/estop 后，必须 fresh after snapshot、同一严格全 z-order/focus/cursor/derived noLeak 比较，双 marker 不存在及原 finally owner-close/lease 清理；不执行动作，不制造 Refused/unsupported 码。其它拒绝/未知/null/畸形/permission/timeout/cancel/DEPTH_LIMIT 仍硬失败；原 AppKit 与正常 WK action/role-negative、至少一条 Delivered 均保留。新 head 全部原生/CI 门尚待真实通过，不把 CPU 或旧 AppKit 证据当新 WK 动作成功。TCC责任归因仍 UNKNOWN、generic executor Mac AX 接线残余不变。
+
+
+## #476 原生永久归档
+
+永久受控测试位于 `desktop-thread-archive-store-476.test.ts`、`desktop-thread-archive-channel-476.test.ts` 和 `desktop-archive-renderer-476.test.ts`。它们使用真实 canonical ThreadManager、HMAC/channel 和 DOM 代码，验证 peer archive／restore-null 保留、旧无归档字段重复索引兼容、自动清理保护、目标／状态版本／活动／断连拒绝，以及 rename 已提交但回执丢失时的 SAVE_UNCONFIRMED。未知归档索引仍拒绝写入，不为普通旧重复行兼容放开 archive snapshot／commit。
+
+真正的平台验收沿用现有 `desktop-native-thread-metadata-476.test.ts` 的 OS／surface lease／清理链，新增 `#476 actual native permanent archive history restore and lost ACK use the canonical index`。Windows/macOS 必须真实编译并运行该回调：实际 owned 窗口键盘、归档视图、原历史、恢复、忙碌拒绝及真实保存 ACK 丢失。成功需要十次键盘动作、三次真实提交及专属离线终态76；普通退出0不算通过。Linux 的平台 skip 不算原生成功。原20秒预算、原测试列表和权限门不放宽，不在用户桌面启动验收窗口。
+
+桌面协议v7的方法表、launcher、两 host、builder 和原 fixture 消费者必须一致；仅两条固定三段 read 方法例外，不开放通用桌面 RPC。原spec及实施计划见 [归档合同](superpowers/specs/2026-10-19-desktop-thread-archive-476.md)／[计划](superpowers/plans/2026-10-19-desktop-thread-archive-476.md)。

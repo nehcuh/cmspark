@@ -29,7 +29,8 @@ import {
   getLockFilePath,
   getPidFilePath,
 } from "../config"
-import { handleMessage, redactMcpServersForBroadcast } from "../message-router"
+import { handleMessage, redactMcpServersForBroadcast, listLlmActiveThreadIds } from "../message-router"
+import { projectThreadActivity } from "../message-router/handlers/projects"
 import { redactConfigForWire } from "../config-redact"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
@@ -806,6 +807,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     services: { threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), mcp: mcpManager },
     maxPayload: MAX_WS_MESSAGE_SIZE,
     securityConfirmations: requireRt().securityConfirmations,
+    archiveActivity: id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target)),
     onAuthenticated: host => desktopLauncher.authenticated(host),
     dialogRuntime: owner => createNativeDialogRuntime({ ...owner, threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), history: requireRt().getHistoryStore(), createExecutor: run => requireRt().createToolExecutor(owner.ws, run) }),
     onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws) },

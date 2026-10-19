@@ -146,3 +146,41 @@ test('#476 actual native resource imports, reopens, edits, denies/removes and pr
   }
  })
 })
+
+// Archive shares this existing foreground file and lifecycle lease. No new
+// worker/job/permission or extended deadline; Linux registration stays skipped.
+test("#476 actual native permanent archive history restore and lost ACK use the canonical index",{skip:!["darwin","win32"].includes(process.platform),timeout:20000},async t=>{
+ return withSurface650(t,async(t,surfaceLease)=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"native-archive-476-")),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
+  const threads=new ThreadManager();threads.create("归档对话","native-archive-A");threads.create("另一对话","native-archive-B");threads.addMessage("native-archive-A",{thread_id:"native-archive-A",role:"user",content:"owned archive history"})
+  const attachment=path.join(dir,"threads/native-archive-A.files/owned.txt"),attachmentBytes=Buffer.from("owned archive attachment");fs.mkdirSync(path.dirname(attachment));fs.writeFileSync(attachment,attachmentBytes)
+  const originalMessages=JSON.stringify(threads.getMessages("native-archive-A")),originalSibling=JSON.stringify(threads.get("native-archive-B")),registry=new DesktopIdentityRegistry(),boot=registry.issue("owned-native-archive-476")
+  const required=["D476_ARCHIVE_ARCHIVED","D476_ARCHIVE_VIEW","D476_ARCHIVE_HISTORY","D476_ARCHIVE_RESTORED","D476_ARCHIVE_BUSY","D476_ARCHIVE_BEFORE_LOST_ACK"],receipts=new Set<string>()
+  let child:DesktopNativeChild|undefined,childExited=false,authenticated=false,windowRequested=false,connections=0,failed=false,blocked=false,droppedAck=false,sets=0,archived=false,restored=false,exitResolve!:(n:number)=>void,failResolve!:()=>void,primary:unknown
+  const exit=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r)
+  const channel=createDesktopChannel({registry,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},maxPayload:10*1024*1024,archiveActivity:()=>blocked?"busy":"idle",onAuthenticated:host=>{authenticated=true;windowRequested=channel.window(host,"workspace")}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer()
+  attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
+  channel.wss.on("connection",ws=>{connections++;const originalSend=ws.send.bind(ws);ws.send=((data:any,...args:any[])=>{
+    let f:any;try{f=JSON.parse(String(data))}catch{return Reflect.apply(originalSend,ws,[data,...args])}
+    if(f.type==="desktop.archive.set.result"&&f.thread_id==="native-archive-A"&&f.ok===true&&f.saved===true){sets++;const saved=new ThreadManager().get("native-archive-A")!;if(sets===1)archived=!!saved.archived_at&&f.archived===true;if(sets===2)restored=saved.archived_at===null&&f.archived===false;if(sets===3){droppedAck=true;ws.terminate();return}}
+    return Reflect.apply(originalSend,ws,[data,...args])
+   })as typeof ws.send
+   ws.on("message",raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(!authenticated||f.type!=="system.ping")return;if(f.id==="D476_ARCHIVE_BLOCK"){blocked=true;return}if(f.id==="D476_ARCHIVE_UNBLOCK"){blocked=false;return}if(f.id==="D476_FAIL_ARCHIVE_PHASE"||f.id==="D476_FAIL_SCRIPT"){failed=true;failResolve();return}if(required.includes(f.id)){if(receipts.has(f.id)){failed=true;failResolve()}receipts.add(f.id)}})
+  })
+  server.listen(0,"127.0.0.1");await once(server,"listening")
+  try{
+   const native=path.resolve(__dirname,"../../dist/desktop-native"),binary=path.join(native,"acceptance/archive",process.platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop")
+   assert.ok(fs.existsSync(binary),"actual archive acceptance host must be built")
+   surfaceLease.checkpoint();child=(require(path.join(native,"desktop-launcher.node"))as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,code=>{childExited=true;exitResolve(code)})
+   assert.equal(await Promise.race([exit,failure.then(()=>{throw Error("OWNED_ARCHIVE_NATIVE_PHASE_FAILED")}),new Promise<never>((_,reject)=>t.signal.addEventListener("abort",()=>reject(Error("OWNED_ARCHIVE_NATIVE_DEADLINE")),{once:true}))]),76,"only bound real native offline observation can report success")
+   assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,1);assert.equal(sets,3);assert.equal(archived,true);assert.equal(restored,true);assert.equal(droppedAck,true);assert.deepEqual([...receipts].sort(),[...required].sort())
+   const disk=new ThreadManager();assert.ok(disk.get("native-archive-A")!.archived_at);assert.equal(JSON.stringify(disk.getMessages("native-archive-A")),originalMessages);assert.equal(JSON.stringify(disk.get("native-archive-B")),originalSibling);assert.deepEqual(fs.readFileSync(attachment),attachmentBytes)
+   process.stdout.write('DESKTOP_ARCHIVE_476 {"native":true,"archived":true,"restored":true,"historyUnchanged":true,"otherThreadUnchanged":true,"nativeKeys":10,"busyRefused":true,"lostAck":true,"offlineUnconfirmed":true}\n')
+  }catch(error){primary=error;throw error}finally{
+   surfaceLease.retain()
+   try{t.diagnostic("D476_ARCHIVE_NATIVE_PHASE "+JSON.stringify({schema:1,failed,receiptMask:required.reduce((mask,id,i)=>mask|(receipts.has(id)?1<<i:0),0),sets,archived,restored,droppedAck,connections,authenticated,windowRequested,childExited}))}catch{}
+   try{child?.terminate();if(child&&!childExited)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()}
+   catch(error){if(primary===undefined)throw error;try{t.diagnostic("D476_ARCHIVE_CLEANUP_FAILED")}catch{}}
+  }
+ })
+})

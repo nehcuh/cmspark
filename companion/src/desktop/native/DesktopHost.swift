@@ -46,6 +46,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
     var phase = "initial"; var connection: String?; var authenticated = false
     var web: WKWebView?; var window: NSWindow?; var generation: String?
     var requests = [String: (nativeId: String, uiId: String?, generation: String, thread: String?, kind: String?, target: String?, revision: String?)]()
+    var archiveTarget:String?
     var confirmation:NativeConfirmation?
     var parentWatch: DispatchSourceProcess?; var view = "compact"
     var compactSize = NSSize(width:360,height:420); var workspaceSize = NSSize(width:1040,height:760)
@@ -128,6 +129,12 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         p.timer=Timer.scheduledTimer(withTimeInterval:max(0.001,(p.deadline-Date().timeIntervalSince1970*1000)/1000),repeats:false){[weak self,weak p] _ in guard let self=self,let p=p,self.confirmation === p else{return};self.retireConfirmation(nil)}
         p.alert.beginSheetModal(for:window){[weak self,weak p] response in guard let self=self,let p=p,self.confirmation === p else{return};self.retireConfirmation(response == .alertSecondButtonReturn)}
     }
+    // Retire the server snapshot without tracking/delivering a new document reply.
+    func retireArchive() {
+        let target=archiveTarget;archiveTarget=nil
+        requests.removeValue(forKey:"desktop.archive.state");requests.removeValue(forKey:"desktop.archive.set")
+        if authenticated,let target=target,let socket=socket {transmit(["type":"desktop.archive.state","id":UUID().uuidString,"thread_id":target],to:socket)}
+    }
     func retireDialog() {
         guard let run=requests["desktop.chat.send"] else{return};requests.removeValue(forKey:"desktop.chat.send")
         if authenticated,let socket=socket {transmit(["type":"desktop.chat.stop","id":UUID().uuidString,"thread_id":run.thread ?? "","run_id":run.nativeId],to:socket)}
@@ -169,6 +176,9 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
             if pair.key=="desktop.thread.open",f["owned_run_id"] != nil {if let active=active,active.generation==generation,active.thread==pair.value.thread,f["owned_run_id"] as? String==active.nativeId{mapped["owned_run_id"]=active.uiId}else{mapped["owned_run_id"]=NSNull()}}
             if pair.key=="desktop.chat.stop",f["run_id"] != nil {guard let active=active,f["run_id"] as? String==active.nativeId else{return};mapped["run_id"]=active.uiId}
         }
+        if ["desktop.archive.list","desktop.archive.state","desktop.archive.set"].contains(pair.key) {
+            guard type==pair.key+".result",pair.key=="desktop.archive.list" || f["thread_id"] as? String==pair.value.thread else{return}
+        }
         if pair.key.hasPrefix("desktop.resource.") && type != pair.key+".result" {return}
         requests.removeValue(forKey:pair.key)
         if pair.key=="thread.peek",f["type"] as? String=="thread.peek_result",f["thread_id"] as? String != pair.value.thread { return }
@@ -176,7 +186,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         var reply=mapped;reply["id"]=pair.value.uiId;deliver(reply)
     }
     func offline(_ task:URLSessionWebSocketTask, code:Int = 0) {
-        guard socket === task else { return };let wasAuthenticated=authenticated;retireConfirmation(nil);socket=nil;authenticated=false;generation=nil;requests.removeAll();task.cancel(with:.goingAway,reason:nil);session?.invalidateAndCancel();deliver(["type":"desktop.offline"])
+        guard socket === task else { return };let wasAuthenticated=authenticated;archiveTarget=nil;retireConfirmation(nil);socket=nil;authenticated=false;generation=nil;requests.removeAll();task.cancel(with:.goingAway,reason:nil);session?.invalidateAndCancel();deliver(["type":"desktop.offline"])
         // Credential stays native; a fresh connection/nonce is required. Never tray fallback.
         if !wasAuthenticated { switch code { case -1022: exit(42);case -1011:exit(43);case -1004:exit(44);case 0:exit(45);default:exit(41) } }
         DispatchQueue.main.asyncAfter(deadline:.now()+5) { if self.socket == nil { self.connect() } }
@@ -194,20 +204,20 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
     }
     func show(_ next:String) {
         guard let win=window else { return }
-        if view != next { if view=="compact" {compactSize=win.contentLayoutRect.size}else{workspaceSize=win.contentLayoutRect.size};view=next;win.setContentSize(next=="compact" ? compactSize:workspaceSize) }
+        if view != next { retireArchive();if view=="compact" {compactSize=win.contentLayoutRect.size}else{workspaceSize=win.contentLayoutRect.size};view=next;win.setContentSize(next=="compact" ? compactSize:workspaceSize) }
         if let screen=win.screen ?? NSScreen.main { var frame=win.frame;frame.size.width=min(frame.width,screen.visibleFrame.width);frame.size.height=min(frame.height,screen.visibleFrame.height);frame.origin.x=max(screen.visibleFrame.minX,min(frame.origin.x,screen.visibleFrame.maxX-frame.width));frame.origin.y=max(screen.visibleFrame.minY,min(frame.origin.y,screen.visibleFrame.maxY-frame.height));win.setFrame(frame,display:true) }
         win.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
     }
     func windowWillClose(_ notification:Notification) { NSApp.terminate(nil) }
-    func applicationWillTerminate(_ notification:Notification) { retireDialog();retireConfirmation(false);socket?.cancel(with:.normalClosure,reason:nil);parentWatch?.cancel() }
+    func applicationWillTerminate(_ notification:Notification) { retireArchive();retireDialog();retireConfirmation(false);socket?.cancel(with:.normalClosure,reason:nil);parentWatch?.cancel() }
     func webView(_ webView:WKWebView,decidePolicyFor navigationAction:WKNavigationAction,decisionHandler:@escaping(WKNavigationActionPolicy)->Void) {
         var download=false
         if #available(macOS 11.3,*) { download=navigationAction.shouldPerformDownload }
         let allowed = !download && navigationAction.targetFrame?.isMainFrame==true && navigationAction.request.url?.absoluteString==origin
-        if allowed { retireDialog();retireConfirmation(false);generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)
+        if allowed { retireArchive();retireDialog();retireConfirmation(false);generation=nil;requests.removeAll() };decisionHandler(allowed ? .allow:.cancel)
     }
     func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
-        guard authenticated,webView.url?.absoluteString==origin else{return};generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!])
+        guard authenticated,webView.url?.absoluteString==origin else{return};retireArchive();generation=UUID().uuidString;deliver(["type":"desktop.document","generation":generation!])
     }
     func webView(_ webView:WKWebView,createWebViewWith configuration:WKWebViewConfiguration,for navigationAction:WKNavigationAction,windowFeatures:WKWindowFeatures)->WKWebView? { nil }
     func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {
@@ -216,6 +226,9 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         if type=="desktop.view",Set(f.keys)==["type","view","generation"],let view=f["view"] as? String,["compact","workspace"].contains(view){show(view);return}
         let allowed:Set<String>
         if type=="thread.search" {allowed=f["limit"] == nil ? ["type","id","query","generation"]:["type","id","query","limit","generation"]}
+        else if type=="desktop.archive.list" {allowed=f["query"] == nil ? ["type","id","generation"]:["type","id","query","generation"]}
+        else if type=="desktop.archive.state" {allowed=["type","id","thread_id","generation"]}
+        else if type=="desktop.archive.set" {allowed=["type","id","thread_id","revision","archived","generation"]}
         else if type=="desktop.mcp.edit" {allowed=["type","id","name","thread_id","generation"]}
         else if type=="desktop.mcp.save" {allowed=["type","id","name","thread_id","action","payload_json","generation"]}
         else if type=="desktop.resource.read" {allowed=["type","id","kind","resource_id","generation"]}
@@ -232,6 +245,14 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         if type=="thread.search" {
             guard Set(f.keys)==allowed,let id=f["id"] as? String,id.utf16.count<=200,let query=f["query"] as? String,query.utf16.count<=120 else{return}
             if let value=f["limit"] {guard let limit=value as? NSNumber,CFGetTypeID(limit) != CFBooleanGetTypeID(),limit.doubleValue.isFinite,limit.doubleValue.rounded(.towardZero)==limit.doubleValue,limit.doubleValue>=1,limit.doubleValue<=20 else{return}}
+        }
+        if ["desktop.archive.list","desktop.archive.state","desktop.archive.set"].contains(type) {
+            guard Set(f.keys)==allowed,let id=f["id"] as? String,!id.isEmpty,id.utf16.count<=200 else{return}
+            if type=="desktop.archive.list" {if let query=f["query"] {guard let text=query as? String,text.utf16.count<=120 else{return}}}
+            else {
+                guard let target=f["thread_id"] as? String,!target.isEmpty,target.utf8.count<=64,target.utf8.allSatisfy({($0>=65 && $0<=90)||($0>=97 && $0<=122)||($0>=48 && $0<=57)||$0==95||$0==45}) else{return}
+                if type=="desktop.archive.set" {guard let revision=f["revision"] as? String,Self.hex(revision,64),let value=f["archived"] as? NSNumber,CFGetTypeID(value)==CFBooleanGetTypeID() else{return}}
+            }
         }
         if type.hasPrefix("desktop.mcp.") {
             guard Set(f.keys)==allowed,f["name"] is String,f["thread_id"] is NSNull || f["thread_id"] is String,requests["desktop.mcp.save"]==nil else{return}
@@ -255,6 +276,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         }
         guard Set(f.keys).isSubset(of:allowed),methods.contains(type),f["id"]==nil || f["id"] is String,let socket=socket else{return}
         if type=="thread.peek" { guard let id=f["thread_id"] as? String,!id.isEmpty else{return} }
+        if type=="desktop.archive.state" || type=="desktop.archive.set" {archiveTarget=f["thread_id"] as? String}
         let id=UUID().uuidString;requests[type]=(id,f["id"] as? String,g,f["thread_id"] as? String,f["kind"] as? String,f["resource_id"] as? String,f["revision"] as? String)
         var out=f;if type=="desktop.chat.stop"{out["run_id"]=requests["desktop.chat.send"]?.nativeId};out.removeValue(forKey:"generation");out["id"]=id;transmit(out,to:socket)
     }
@@ -273,6 +295,6 @@ let bootstrapWatch=DispatchSource.makeProcessSource(identifier:parent,eventMask:
 var data=Data()
 while true { do { guard let part=try FileHandle.standardInput.read(upToCount:4097-data.count),!part.isEmpty else{break};data.append(part);if data.count>4096{exit(14)} } catch {exit(13)} }
 try? FileHandle.standardInput.close()
-guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==6,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
+guard getppid()==parent,let bootstrap=flatFrame(data),Set(bootstrap.keys)==["capability_id","secret","url","protocol_version","issued_method_set_version"],let cap=bootstrap["capability_id"] as? String,NativeDesktop.hex(cap,32),let secret=bootstrap["secret"] as? String,NativeDesktop.hex(secret,64),exactOne(bootstrap["protocol_version"]),(bootstrap["issued_method_set_version"] as? NSNumber)?.doubleValue==Double(DesktopCapabilities.version) && CFGetTypeID(bootstrap["issued_method_set_version"] as! NSNumber) != CFBooleanGetTypeID() && DesktopCapabilities.version==7,let endpoint=bootstrap["url"] as? String,let url=URL(string:endpoint),url.scheme=="ws",url.host=="127.0.0.1",url.path=="/desktop",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,url.port != nil else{exit(15)}
 data.resetBytes(in:0..<data.count)
 let app=NSApplication.shared;private let delegate=NativeDesktop(bootstrap,parent:parent);app.delegate=delegate;app.setActivationPolicy(.regular);bootstrapWatch.cancel();app.run()
