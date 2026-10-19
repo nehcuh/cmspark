@@ -245,3 +245,42 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 ### Windows 原生管道夹具的 JSON 就绪回执（#605）
 
 `cross-os-process-605.test.ts` 的 protocol fixture 用自有 `.pending` 文件的独占写入、关闭及 rename 发布完整 ready JSON。确定性 CPU 控制在实际写入开始时检查最终文件仍不可见，写入失败时不能宣布协议就绪；不通过增加等待、重试 JSON.parse 或捕获语法错误绕过断言。Windows CI 仍需真实验证双向管道、继承 cwd、ignored stdio 及进程清理。
+
+## #732 ACP 最小历史的 Windows 私有存储验收
+
+`companion/tests/acp-history-native-732.test.ts` 由原 canonical test discovery 收集，不增 runner 列表。它仅在 Windows 执行；非 Windows 的两个 skip 不代表 NTFS 通过。Windows 回调在任何临时文件或 PowerShell 操作前要求既有 hosted 标记 `GITHUB_ACTIONS=true` 且 `RUNNER_OS=Windows`，手工本机运行固定拒绝，不用伪造变量启动。该夹具标记不是运行身份认证，最终证据仍须绑定真实受审 GitHub head/job/run。
+
+两个正控分别使用唯一 owned temp：实际只读 ACL helper 检查目录和 exclusive 空文件，然后实际 metadata store 写入、fresh loader 读回为 historical interrupted，并重查 final ACL 和默认省略目标／路径。生产门始终要求真实 current-SID owner、有限 DACL、稳定身份，不能用 mode600、Administrators-owner fallback、SetAcl 或 skip 替代。若 runner 新建目录继承的实际 owner/ACL 不满足，`OWNED_TEMP_PRIVACY_PREREQUISITE_REQUIRED` 是真实前置失败；先保留精确 Windows 回执并审查有限 fixture 前置，不弱化生产条件或无变化重跑。
+
+清理只针对本次 unique directory 且先核原 dev/ino、目录类型和非 symlink；固定错误类别不打印 path/SID/SDDL/异常正文。两个实际 Windows PASS 仍只证明私有 metadata roundtrip，不能冒充 Companion daemon 真重启或侧栏真刷新/旧会话行为验收，#732 整票剩余 DoD 单独记录。不要在用户桌面启动测试浏览器、原生窗口或 PowerShell 夹具。
+
+
+### #732 actual daemon restart and native SidePanel reload (hosted only)
+
+`node chrome-extension/scripts/tests/acp-history-hosted-732.test.mjs` runs the
+inert CPU controls. It does not launch a daemon, browser, shell, or real Agent.
+The dedicated `acp-history-restart` job consumes normal build outputs from the
+same `github.sha` and runs `accept-acp-history-hosted-732.mjs` only on an official
+Ubuntu 22.04 hosted runner. Original build and three-platform gates, including
+both actual Windows history ACL tests, remain required.
+
+The real path is production daemon/WS HMAC → shipping extension and actual
+manifest SidePanel → original synthetic ACP peer through the normal start/L2
+UI → durable history reply → exact retained daemon crash/close and peer EOF →
+same-data new daemon → **existing document interrupted/no live ghost** → actual
+`Page.reload` with new loader/default realm/load → same history. The pairing tab
+is excluded from panel target selection. No unique non-tab SidePanel target is
+an explicit failure. Automated disclosure/L2 clicks are synthetic test actions,
+not human authorization. A separate real session cancel retains its terminal
+history; normal shutdown is never relabeled as a crash.
+
+The harness keeps the original 5s authentication, 15s tool, 60s absolute shared
+navigation, and 120s outer bounds. It changes no permissions, sandbox flags,
+production API, environment defaults or automatic recovery policy. Test-owned
+DATA/profile/config and transient HMAC values are never uploaded. Only the fixed
+Boolean receipt leaves the trusted process; no screenshot, image hash, raw CDP,
+WS messages, IDs, paths, process logs, credentials or profile artifacts are kept.
+Owned directories are removed only after pending requests/endpoints/children
+settle; uncertain cleanup fails and retains the owned root. CPU success is not
+real process/browser or Windows NTFS evidence. This new hosted path remains
+**NOT RUN** until a changed-head hosted job actually executes it.

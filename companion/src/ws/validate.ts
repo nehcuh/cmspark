@@ -353,6 +353,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "acp.list": () => ({ valid: true }),
+    "acp.sessions.list": (m) => typeof m.thread_id === "string" && !!m.thread_id &&
+      Buffer.byteLength(m.thread_id) <= 256 && !/[\x00-\x1f\x7f]/.test(m.thread_id) &&
+      typeof m.request_id === "string" && /^[A-Za-z0-9:_-]{1,100}$/.test(m.request_id)
+      ? { valid: true } : { valid: false, error: "acp.sessions.list requires owner/request" },
     "acp.rediscover": () => ({ valid: true }),
     "acp.adopt_discovered": () => ({ valid: true }),
     "acp.session.prepare_manual_entry": (m) => {

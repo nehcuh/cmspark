@@ -7,6 +7,7 @@ import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 import { normalizeDocumentWarning } from "../utils/document-warning"
 import { pruneCodingSessionCache } from "../utils/coding-session-cache"
+import { parseCodingHistory, type CodingHistory } from "../coding-handoff/history"
 
 /** S20: Side Panel composer is read-only while overlay holds the lease. */
 export type OverlayStandbyFromError = { standby: boolean; label: string }
@@ -340,6 +341,7 @@ export interface AgentState {
    */
   codingSessionsById: Record<string, CodingSessionState>
   codingSessionIdByThread: Record<string, string>
+  codingHistory?: CodingHistory | null
   codingOperationError?: { sessionId: string; threadId: string; error: string } | null
   codingManualEntry?: { sessionId: string; threadId: string; requestId: string; pending: boolean;
     commandLine?: string; shell?: "cmd.exe" | "POSIX sh"; error?: string } | null
@@ -608,6 +610,9 @@ export type AgentAction =
   | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
   | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
   | { type: "ACP_SESSION_EVENT"; event: CodingSessionEvent }
+  | { type: "ACP_HISTORY_REQUEST"; threadId: string; requestId: string; selectionRevision: number }
+  | { type: "ACP_HISTORY_RESULT"; message: unknown }
+  | { type: "ACP_HISTORY_INVALIDATE" }
   | { type: "SET_ACP_LIST"; enabled: boolean; agents: AcpAgentInfo[] }
   | { type: "CLEAR_CODING_SESSION"; sessionId: string }
   | { type: "ACP_CANCEL_RECEIPT"; sessionId: string; threadId: string }
@@ -1032,6 +1037,7 @@ function applyActiveThreadSwitch(
   | "activeThreadId"
   | "codingOperationError"
   | "codingManualEntry"
+  | "codingHistory"
   | "messages"
   | "messagesByThreadId"
   | "messagesCacheOrder"
@@ -1058,6 +1064,7 @@ function applyActiveThreadSwitch(
   const hydrating = !!threadId && !hit
   return {
     activeThreadId: threadId,
+    codingHistory: threadId === state.activeThreadId ? state.codingHistory : null,
     codingOperationError: null,
     codingManualEntry: null,
     messages: hit && threadId ? cache[threadId]! : [],
@@ -1137,6 +1144,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         return {
           ...state,
           connectionState: action.state,
+          codingHistory: null,
           isProcessing: false,
           threadBusyById: {},
           streamingContent: "",
@@ -1167,6 +1175,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         threads,
         activeThreadId: nextActiveThreadId,
+        codingHistory: nextActiveThreadId === state.activeThreadId ? state.codingHistory : null,
         codingOperationError: nextActiveThreadId === state.activeThreadId ? state.codingOperationError : null,
         codingManualEntry: nextActiveThreadId === state.activeThreadId ? state.codingManualEntry : null,
         // #513: cards for threads gone from the list go with them.
@@ -1203,6 +1212,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         ...switched,
         activeThreadSelectionRevision: state.activeThreadSelectionRevision + 1,
+        codingHistory: null,
         lastBrowserToolAt: null,
         modePin: null,
         pinnedTabIds: activeThread?.pinned_tabs || [],
@@ -1578,6 +1588,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         threads: [action.thread, ...state.threads],
         activeThreadId: action.thread.id,
+        codingHistory: action.thread.id === state.activeThreadId ? state.codingHistory : null,
         codingOperationError: null,
         codingManualEntry: null,
         messages: [],
@@ -1951,6 +1962,33 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "COMPUTER_TASK_EVENT":
       // 状态机(含 P4 懒创建/完结后丢弃)全部在纯函数 reduceComputerTaskEvent 里。
       return { ...state, computerTask: reduceComputerTaskEvent(state.computerTask, action.event) }
+    case "ACP_HISTORY_INVALIDATE":
+      return { ...state, codingHistory: null }
+    case "ACP_HISTORY_REQUEST": {
+      if (state.connectionState !== "connected" || action.threadId !== state.activeThreadId ||
+          action.selectionRevision !== state.activeThreadSelectionRevision) return state
+      return { ...state, codingHistory: { threadId: action.threadId, requestId: action.requestId,
+        selectionRevision: action.selectionRevision, pending: true, status: "unavailable", rows: [],
+        runtimeAtRequest: selectCodingSession(state, action.threadId) } }
+    }
+    case "ACP_HISTORY_RESULT": {
+      const result = parseCodingHistory(action.message), pending = state.codingHistory
+      if (!result || !pending?.pending || state.connectionState !== "connected" ||
+          result.threadId !== state.activeThreadId || result.threadId !== pending.threadId ||
+          result.requestId !== pending.requestId || pending.selectionRevision !== state.activeThreadSelectionRevision) return state
+      // A history-only row cannot retain live controls from a previous daemon.
+      // A session event received after this request owns a different object and wins,
+      // even if it happens within the same millisecond or keeps the same session ID.
+      const runtime = pending.runtimeAtRequest
+      const retire = result.status === "ok" && runtime &&
+        state.codingSessionsById[runtime.sessionId] === runtime &&
+        state.codingSessionIdByThread[result.threadId] === runtime.sessionId &&
+        result.rows.some(row => row.source === "history" && row.session_id === runtime.sessionId)
+      const selection = retire ? { ...state.codingSessionIdByThread } : state.codingSessionIdByThread
+      if (retire) delete selection[result.threadId]
+      return { ...state, codingSessionIdByThread: selection,
+        codingHistory: { ...pending, runtimeAtRequest: undefined, pending: false, status: result.status, rows: result.rows } }
+    }
     case "ACP_SESSION_EVENT": {
       const e = action.event
       if (!e?.session_id) return state
@@ -2048,6 +2086,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return {
         ...state,
         acpEnabled: action.enabled === true,
+        ...(action.enabled === true ? {} : { codingHistory: null }),
         acpAgents: Array.isArray(action.agents) ? action.agents : [],
       }
     case "CLEAR_CODING_SESSION": {

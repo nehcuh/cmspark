@@ -1597,6 +1597,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "apps.set_enabled":
       // 编程接力 ACP (Composition live session)
       case "acp.list":
+      case "acp.sessions.list":
       case "acp.rediscover":
       case "acp.adopt_discovered":
       case "acp.session.prepare_manual_entry":

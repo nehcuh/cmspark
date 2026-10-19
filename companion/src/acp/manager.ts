@@ -6,7 +6,8 @@ import { spawnAcpChild, killAcpChild, closeAcpChild, MODE_C_TEMPFILE_TTL_MS } fr
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
-import { getConfig } from "../config"
+import { getConfig, getConfigDir } from "../config"
+import type { AcpHistoryStore, AcpHistoryReply } from "./history-store"
 import { logger } from "../logger"
 import type { AcpSessionRecord, AcpPolicyProfile } from "./types"
 import { resolveAcpWorkspaceRoot } from "./workspace-bind"
@@ -79,7 +80,11 @@ export class AcpManager {
   private trackChild(id: string, child: ChildProcessWithoutNullStreams): void {
     this.processes.set(id, child)
     this.ownedChildren.add(child)
-    child.once("close", () => this.ownedChildren.delete(child))
+    child.once("close", () => {
+      this.ownedChildren.delete(child)
+      const session = this.sessions.get(id)
+      if (session) this.noteHistory(session)
+    })
   }
   private protocolHandles = new Map<string, ProtocolSessionHandle>()
   private runningCount = 0
@@ -101,13 +106,21 @@ export class AcpManager {
     | null = null
   private unsubscribeEmbedSpawn: () => void
 
-  constructor() {
+  constructor(private history?: AcpHistoryStore) {
     // #506 A: the ACP path only RECORDS the embed intent — the PTY layer owns the real spawn, so
     // its event is the only truthful signal that the embedded agent is now running. Until it
     // fires, the session stays in `embed_intent` and the panel copy says "no process yet".
     this.unsubscribeEmbedSpawn = onPtyAgentSpawned(({ threadId }) => {
       if (threadId) this.noteEmbedAgentSpawned(threadId)
     })
+  }
+
+  private noteHistory(session: AcpSessionRecord): void {
+    const child = this.processes.get(session.session_id)
+    const active = ["offered", "confirmed", "running"].includes(session.state) ||
+      this.startupPreparations.has(session.session_id) ||
+      !!child && child.exitCode === null && child.signalCode === null
+    this.history?.note(session, active)
   }
 
   /**
@@ -164,6 +177,7 @@ export class AcpManager {
   ): void {
     if (this.terminalEmitted.has(session)) return
     session.terminal_kind = kind
+    this.noteHistory(session)
     this.terminalEmitted.add(session)
     if (!this.terminalSink) return
     try {
@@ -184,6 +198,7 @@ export class AcpManager {
   }
 
   private emitProgress(session: AcpSessionRecord, tail: string, force = false): void {
+    this.noteHistory(session)
     const now = Date.now()
     const last = this.lastProgressAt.get(session.session_id) || 0
     if (!force && now - last < 800) return
@@ -447,6 +462,12 @@ export class AcpManager {
 
   listSessionsForThread(threadId: string): AcpSessionRecord[] {
     return [...this.sessions.values()].filter((s) => s.thread_id === threadId)
+  }
+
+  /** Observational metadata; historical IDs never enter this.sessions or own a process. */
+  async listHistoryForThread(threadId: string): Promise<AcpHistoryReply> {
+    return this.history ? this.history.list(threadId, this.listSessionsForThread(threadId))
+      : { status: "unavailable", rows: [] }
   }
 
   /** Read-only metadata admission; closed UI state does not prove the owned child finished. */
@@ -717,6 +738,7 @@ export class AcpManager {
       } finally {
         clearTimeout(timer)
         this.startupPreparations.delete(sessionId)
+        this.noteHistory(session)
       }
       if (this.shuttingDown || session.mode_c_open_cancelled) {
         this.runningCount = Math.max(0, this.runningCount - 1)
@@ -1221,7 +1243,13 @@ export class AcpManager {
 let singleton: AcpManager | null = null
 
 export function getAcpManager(): AcpManager {
-  if (!singleton) singleton = new AcpManager()
+  if (!singleton) {
+    // Lazy first-party metadata wiring: constructing a manager alone is inert.
+    const { AcpHistoryStore } = require("./history-store") as typeof import("./history-store")
+    singleton = new AcpManager(new AcpHistoryStore({
+      root: getConfigDir, enabled: () => getConfig().acp?.enabled === true,
+    }))
+  }
   return singleton
 }
 

@@ -24,6 +24,8 @@ export interface AcpHandlerContext {
   getWorkspaceRoot?: (threadId: string) => string | null | undefined
   /** Return agent_role for thread if known (refuse worker). */
   getAgentRole?: (threadId: string) => string | undefined
+  /** Authoritative thread existence for the new read-only metadata family. */
+  hasThread?: (threadId: string) => boolean
 }
 
 let broadcastHooked = false
@@ -57,6 +59,25 @@ export async function handleAcpWsMessage(
   ctx: AcpHandlerContext,
 ): Promise<any> {
   const mgr = getAcpManager()
+  if (type === "acp.sessions.list") {
+    const owner = typeof msg.thread_id === "string" ? msg.thread_id : ""
+    const requestId = typeof msg.request_id === "string" && /^[A-Za-z0-9:_-]{1,100}$/.test(msg.request_id) ? msg.request_id : ""
+    const rejected = () => ({ type: "error", family: "acp", request_type: type,
+      ...(owner && Buffer.byteLength(owner) <= 256 ? { thread_id: owner } : {}),
+      ...(requestId ? { request_id: requestId } : {}), error: "ACP_HISTORY_OWNER_INVALID" })
+    if (!owner || Buffer.byteLength(owner) > 256 || /[\x00-\x1f\x7f]/.test(owner) || !requestId ||
+        ctx.threadId !== owner || !ctx.hasThread?.(owner) || ctx.getAgentRole?.(owner) === "worker")
+      return rejected()
+    if (!getConfig().acp?.enabled)
+      return { type: "acp.sessions.list_result", thread_id: owner, request_id: requestId, status: "disabled", rows: [] }
+    const result = await mgr.listHistoryForThread(owner)
+    // Recheck after I/O; removed/retargeted owners do not receive metadata.
+    if (ctx.threadId !== owner || !ctx.hasThread?.(owner) || ctx.getAgentRole?.(owner) === "worker")
+      return rejected()
+    if (!getConfig().acp?.enabled)
+      return { type: "acp.sessions.list_result", thread_id: owner, request_id: requestId, status: "disabled", rows: [] }
+    return { type: "acp.sessions.list_result", thread_id: owner, request_id: requestId, ...result }
+  }
   if (type === "acp.session.prepare_manual_entry") {
     const sid = typeof msg.session_id === "string" ? msg.session_id : ""
     const session = sid ? mgr.getSession(sid) : undefined
@@ -330,8 +351,8 @@ async function handleAcpWsMessageInternal(
       if (!agentId) return { type: "error", error: "agent_id required" }
       if (!goal) return { type: "error", error: "goal required" }
       const workspaceRoot =
-        (typeof msg.workspace_root === "string" && msg.workspace_root) ||
         ctx.getWorkspaceRoot?.(threadId) ||
+        (typeof msg.workspace_root === "string" && msg.workspace_root) ||
         null
       const pageContext =
         typeof msg.page_context === "string"

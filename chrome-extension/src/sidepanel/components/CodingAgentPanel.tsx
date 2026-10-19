@@ -33,6 +33,7 @@ import {
 } from "../coding-handoff/repo-context"
 import { useAgentStore, selectCodingSession, codingSessionBelongsToThread, selectCodingOperationError, selectCodingManualEntry } from "../store/agentStore"
 import { MinimalConfirm } from "./MinimalConfirm"
+import { codingHistoryLabel } from "../coding-handoff/history"
 
 /**
  * Progress tail display caps — mirror companion/src/acp/progress-caps.ts.
@@ -153,6 +154,14 @@ export function CodingAgentPanel({
   const externalStatus = state.processingStatus
   /** Store-level enabled flag (updated by acp.list / SET_ACP_LIST). */
   const storeAcpEnabled = state.acpEnabled === true
+  const history = state.codingHistory?.threadId === threadId ? state.codingHistory : null
+  useEffect(() => {
+    if (!open || !threadId || threadId !== state.activeThreadId || !storeAcpEnabled || state.connectionState !== "connected") return
+    if (typeof crypto?.randomUUID !== "function") return
+    const requestId = `history:${crypto.randomUUID()}`
+    dispatch({ type: "ACP_HISTORY_REQUEST", threadId, requestId, selectionRevision: state.activeThreadSelectionRevision })
+    chrome.runtime.sendMessage({ type: "acp.sessions.list", thread_id: threadId, request_id: requestId }, () => { void chrome.runtime.lastError })
+  }, [open, threadId, state.activeThreadId, state.activeThreadSelectionRevision, state.connectionState, storeAcpEnabled, session?.sessionId, session?.state, dispatch])
   /** Prefer prop; fall back to config store (settings optimistically sets coding_handoff). */
   const configOpenLocalTerminal =
     openLocalTerminal ||
@@ -876,6 +885,20 @@ export function CodingAgentPanel({
             <MinimalConfirm />
           </div>
         ) : null}
+
+        <details style={{ padding: "6px 12px", fontSize: 11 }} data-acp-history>
+          <summary>会话清单（只读，不恢复进程）</summary>
+          <div style={{ maxHeight: 140, overflowY: "auto" }}>
+            <p>目标、路径和输出未保存。</p>
+            {!history || history.pending ? <p>历史尚不可用{history?.pending ? "，正在请求服务" : ""}；不代表没有会话。</p>
+              : history.status !== "ok" ? <p>历史记录不可用；持久性未获确认。当前会话控制不受影响。</p>
+              : history.rows.length === 0 ? <p>当前服务未返回本对话的历史记录。</p>
+              : history.rows.map(row => <div key={row.session_id} style={{ padding: "4px 0" }}>
+                <span>{row.agent_id} · {codingHistoryLabel(row)}</span>
+                <small style={{ display: "block" }}>{row.created_at} · {row.session_id}</small>
+              </div>)}
+          </div>
+        </details>
 
         {/* Context strip — C1 basename + C1b B-lite git one-line (S1) */}
         <div style={styles.contextBar}>
