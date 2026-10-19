@@ -5,12 +5,14 @@
   let metadataEpoch=0, metadataTarget=null, metadataDocument=null, metadataEdit=null, metadataSave=null, metadataInitial=null, metadataOpen=false, metadataTrigger=null;
   let dialogEpoch=0,dialogTarget=null,dialogOpen=null,dialogCreate=null,dialogRun=null,dialogSubscription=null,dialogLive=null;
   const dialogDrafts=new Map();
+  let archiveView=false,archiveEpoch=0,archiveTarget=null,archiveRead=null,archiveWrite=null,archiveSnapshot=null,archiveList=null;
   let titleSearchRevision=0,titleSearchPending=null,titleSearchActive=false,titleSearchTouched=false,titleListPending=null;
   let resourceEpoch=0,resourceTarget=null,resourceDocument=null,resourceRead=null,resourceWrite=null,resourceDoc=null,resourceImport=false;
   const titles={"thread.list":"对话","mcp.list":"MCP","skill.list":"技能","knowledge.list":"知识"};
   const $=id=>document.getElementById(id);
   function post(frame){if(!generation)return;const value={...frame,generation};if(window.webkit?.messageHandlers?.desktop)window.webkit.messageHandlers.desktop.postMessage(value);else if(window.chrome?.webview)window.chrome.webview.postMessage(value)}
   function request(type,thread_id){
+    if(type==="thread.list"&&archiveView){requestArchiveList();return}
     if(type==="thread.list"&&titleSearchActive){submitTitleSearch();return}
     let id=type;if(type==="thread.list"&&titleSearchTouched){id="desktop-title-list-"+(++sequence);titleListPending={id,document:generation,revision:titleSearchRevision}}
     post({type,id,...(thread_id?{thread_id}:{})})
@@ -19,11 +21,51 @@
   function currentTitleRequest(p){return p&&generation&&p.document===generation&&p.revision===titleSearchRevision&&page==="thread.list"}
   function submitTitleSearch(){
     if(!generation||page!=="thread.list"||!$("thread-search-query"))return;
+    if(archiveView){retireArchive();requestArchiveList();return}
     const query=$("thread-search-query").value;titleSearchTouched=true;retireTitleSearch();
     if(!query.trim()){request("thread.list");return}
     if(query.length>120){$("notice").textContent="标题查询最多 120 个字符。";return}
     titleSearchActive=true;titleSearchPending={id:"desktop-title-search-"+(++sequence),document:generation,revision:titleSearchRevision};$("notice").textContent="正在搜索标题…";post({type:"thread.search",id:titleSearchPending.id,query});
   }
+  function archiveFeedback(value){if($("archive-feedback"))$("archive-feedback").textContent=value}
+  function archiveBusy(){if($("archive-save"))$("archive-save").disabled=!generation||!archiveSnapshot||!!archiveRead||!!archiveWrite||archiveSnapshot.activity!=="idle"}
+  function retireArchive(notify=true){
+    if(notify&&generation&&archiveTarget)post({type:"desktop.archive.state",id:"archive-retire-"+(++sequence),thread_id:archiveTarget});
+    archiveEpoch++;archiveTarget=null;archiveRead=null;archiveWrite=null;archiveSnapshot=null;archiveBusy();if($("archive-editor"))$("archive-editor").hidden=true;
+  }
+  function archiveContext(p){return p&&page==="thread.list"&&p.document===generation&&p.epoch===archiveEpoch&&p.view===archiveView}
+  function requestArchiveList(){
+    if(!generation||page!=="thread.list"||!archiveView)return;
+    const query=$("thread-search-query")?.value||"";archiveList=null;if(query.length>120){$("notice").textContent="查询最多 120 个字符。";return}
+    archiveList={id:"archive-list-"+(++sequence),document:generation,epoch:archiveEpoch,view:archiveView};$("notice").textContent="正在读取已归档对话…";
+    post({type:"desktop.archive.list",id:archiveList.id,...(query.trim()?{query}:{})});
+  }
+  function openArchiveState(target){
+    if(!generation||page!=="thread.list"||!$("archive-editor")||typeof target!=="string"||(target.length<1||target.length>64||/[^a-zA-Z0-9_-]/.test(target)))return;
+    retireArchive();archiveTarget=target;archiveRead={id:"archive-state-"+(++sequence),target,document:generation,epoch:archiveEpoch,view:archiveView};
+    $("archive-editor").hidden=false;$("archive-title").textContent=target;archiveFeedback("正在核对当前归档状态…");archiveBusy();post({type:"desktop.archive.state",id:archiveRead.id,thread_id:target});
+  }
+  function validArchiveState(v){return v&&typeof v==="object"&&Object.keys(v).sort().join(",")==="activity,archived,revision,title"&&typeof v.archived==="boolean"&&typeof v.title==="string"&&v.title.length<=2000&&typeof v.revision==="string"&&/^[a-f0-9]{64}$/.test(v.revision)&&["idle","busy","unknown"].includes(v.activity)}
+  function receiveArchive(frame){
+    if(frame.type==="desktop.archive.list.result"){
+      const p=archiveList;if(!archiveContext(p)||frame.id!==p.id)return true;archiveList=null;
+      if(frame.ok!==true||typeof frame.truncated!=="boolean"||!Array.isArray(frame.threads)||frame.threads.length>64||!frame.threads.every(v=>v&&typeof v==="object"&&Object.keys(v).sort().join(",")==="archived,id,title,updated_at"&&v.archived===true&&typeof v.id==="string"&&v.id.length>=1&&v.id.length<=64&&!/[^a-zA-Z0-9_-]/.test(v.id)&&typeof v.title==="string"&&v.title.length<=2000&&typeof v.updated_at==="string"&&v.updated_at.length<=2000)){$("list").replaceChildren();$("notice").textContent="归档列表未确认，请重新读取。";return true}
+      renderThreads(frame.threads,frame.truncated,false,true);return true;
+    }
+    if(frame.type==="desktop.archive.state.result"){
+      const p=archiveRead;if(!archiveContext(p)||frame.id!==p.id||frame.thread_id!==p.target||archiveTarget!==p.target)return true;archiveRead=null;
+      if(frame.ok!==true||!validArchiveState(frame.state)){archiveSnapshot=null;archiveFeedback("当前状态未确认；不能归档或恢复，请重新打开。");archiveBusy();return true}
+      archiveSnapshot=frame.state;$("archive-title").textContent=frame.state.title;$("archive-save").textContent=frame.state.archived?"恢复这条对话":"归档这条对话";
+      archiveFeedback(frame.state.activity==="idle"?"已核对当前状态，请明确选择归档或恢复。":frame.state.activity==="busy"?"对话仍有活动，暂不能更改归档状态。":"无法核实活动状态，暂不能更改归档状态。");archiveBusy();return true;
+    }
+    if(frame.type==="desktop.archive.set.result"){
+      const p=archiveWrite;if(!archiveContext(p)||frame.id!==p.id||frame.thread_id!==p.target||archiveTarget!==p.target)return true;archiveWrite=null;archiveSnapshot=null;
+      if(frame.ok===true&&frame.saved===true&&frame.archived===p.archived){retireArchive();if(archiveView)requestArchiveList();else request("thread.list");$("notice").textContent=p.archived?"已归档；可在已归档视图打开或恢复。":"已恢复；可在正常对话列表打开。"}
+      else {archiveFeedback("保存结果未确认，或当前状态已变化；请重新读取核对，不会自动重放。");archiveBusy()}return true;
+    }
+    return false;
+  }
+  function setArchiveView(value){if(page!=="thread.list"||archiveView===value)return;retireArchive();archiveList=null;archiveView=value;retireTitleSearch(true);retireMetadata();retireDialog();load()}
   function busy(value){if($("mcp-save"))$("mcp-save").disabled=value;if($("mcp-cancel"))$("mcp-cancel").disabled=value;for(const key of ["name","command","args","cwd","enabled"])if($("mcp-"+key))$("mcp-"+key).disabled=value||(key==="name"&&editAction==="update")}
   function feedback(text){if($("mcp-feedback"))$("mcp-feedback").textContent=text}
   function editor(action,config={},name=""){editRequest=null;editAction=action;draftOpen=true;if(!$("mcp-editor"))return;$("mcp-editor").hidden=false;$("mcp-name").value=name;$("mcp-command").value=config.command||"";$("mcp-args").value=JSON.stringify(config.args||[]);$("mcp-cwd").value=config.cwd||"";$("mcp-enabled").checked=config.enabled===true;busy(false);feedback("每次保存均需原生确认。启用的配置可能启动或重启 MCP 进程。")}
@@ -35,7 +77,7 @@
   function fillMetadata(value){$("metadata-alias").value=value.alias;$("metadata-tags").value=value.user_tags.join("\n");$("metadata-folder").value=value.topic_folder||""}
   function validMetadata(value){return value&&typeof value==="object"&&Object.keys(value).sort().join(",")==="alias,topic_folder,user_tags"&&typeof value.alias==="string"&&Array.isArray(value.user_tags)&&value.user_tags.length<=20&&value.user_tags.every(v=>typeof v==="string")&&(value.topic_folder===null||typeof value.topic_folder==="string")}
   function openMetadata(target,trigger){
-    if(!generation||!$("metadata-editor"))return;
+    if(!generation||!$("metadata-editor"))return;retireArchive();
     const retained=metadataOpen&&metadataTarget===target&&metadataDocument!==generation?metadataValues():null;
     retireMetadata();metadataOpen=true;metadataTarget=target;metadataDocument=generation;metadataTrigger=trigger;
     metadataEdit={id:"desktop-metadata-edit-"+(++sequence),target,document:generation,epoch:metadataEpoch,retained};
@@ -55,11 +97,11 @@
     if(frame.ok===true&&frame.outcome==="committed"&&typeof frame.resource_id==="string"){resourceFeedback("已持久化，请重新打开核对。");request(page);if(p.op!=="remove")openResource(p.kind,frame.resource_id);else retireResource()}
     else {resourceDoc=null;resourceFeedback(frame.outcome==="conflict"?"资源已变化，请重新打开核对；草稿未自动提交。":"结果未确认或被拒绝；请先刷新核对，不会自动重放。");resourceBusy()}return true;
   }
-  function load(retainMetadata=false){retireTitleSearch(true);if($("thread-search"))$("thread-search").hidden=page!=="thread.list";if(!retainMetadata)retireResource();if($("resource-import"))$("resource-import").hidden=!resourceKind();if(!retainMetadata){retireMetadata();retireDialog()}if($("dialog-new"))$("dialog-new").hidden=page!=="thread.list";if($("metadata-editor"))$("metadata-editor").hidden=page!=="thread.list"||!metadataOpen;editRequest=null;if($("mcp-new"))$("mcp-new").hidden=page!=="mcp.list";if($("mcp-editor"))$("mcp-editor").hidden=page!=="mcp.list"||!draftOpen; selectedThread=null; $("title").textContent=titles[page];$("notice").textContent="加载中…";$("list").replaceChildren();$("preview").replaceChildren();document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-current",b.dataset.page===page?"page":"false"));request(page)}
+  function load(retainMetadata=false){retireArchive();archiveList=null;if($("archive-views"))$("archive-views").hidden=page!=="thread.list";if($("archive-normal"))$("archive-normal").setAttribute("aria-pressed",String(!archiveView));if($("archive-view"))$("archive-view").setAttribute("aria-pressed",String(archiveView));retireTitleSearch(true);if($("thread-search"))$("thread-search").hidden=page!=="thread.list";if(!retainMetadata)retireResource();if($("resource-import"))$("resource-import").hidden=!resourceKind();if(!retainMetadata){retireMetadata();retireDialog()}if($("dialog-new"))$("dialog-new").hidden=page!=="thread.list";if($("metadata-editor"))$("metadata-editor").hidden=page!=="thread.list"||!metadataOpen;editRequest=null;if($("mcp-new"))$("mcp-new").hidden=page!=="mcp.list";if($("mcp-editor"))$("mcp-editor").hidden=page!=="mcp.list"||!draftOpen; selectedThread=null; $("title").textContent=titles[page];$("notice").textContent="加载中…";$("list").replaceChildren();$("preview").replaceChildren();document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-current",b.dataset.page===page?"page":"false"));request(page)}
   function dialogFeedback(text){if($("dialog-feedback"))$("dialog-feedback").textContent=text}
   function dialogBusy(){if($("dialog-send"))$("dialog-send").disabled=!generation||!dialogTarget||!!dialogOpen||!!dialogRun;if($("dialog-stop")){ $("dialog-stop").hidden=!dialogRun;$("dialog-stop").disabled=!generation||!!dialogRun?.stopPending;$("dialog-stop").textContent=dialogRun?"停止对话 · "+dialogRun.target:"停止当前对话" }if($("dialog-new"))$("dialog-new").disabled=!generation||!!dialogCreate}
   function retireDialog(){if(dialogTarget&&$("dialog-input"))dialogDrafts.set(dialogTarget,$("dialog-input").value);dialogEpoch++;dialogOpen=null;dialogTarget=null;dialogSubscription=null;dialogLive=null;if($("dialog-editor"))$("dialog-editor").hidden=true;dialogBusy()}
-  function openDialog(target){if(!generation||!$("dialog-editor"))return;retireDialog();dialogTarget=target;dialogOpen={id:"desktop-dialog-open-"+(++sequence),target,document:generation,epoch:dialogEpoch};$("dialog-editor").hidden=false;$("dialog-input").value=dialogDrafts.get(target)||"";$("dialog-history").replaceChildren();dialogFeedback("正在读取真实对话历史…");dialogBusy();post({type:"desktop.thread.open",id:dialogOpen.id,thread_id:target})}
+  function openDialog(target){if(!generation||!$("dialog-editor"))return;retireArchive();retireDialog();dialogTarget=target;dialogOpen={id:"desktop-dialog-open-"+(++sequence),target,document:generation,epoch:dialogEpoch};$("dialog-editor").hidden=false;$("dialog-input").value=dialogDrafts.get(target)||"";$("dialog-history").replaceChildren();dialogFeedback("正在读取真实对话历史…");dialogBusy();post({type:"desktop.thread.open",id:dialogOpen.id,thread_id:target})}
   function dialogRow(content,role){const row=document.createElement("article");row.textContent=(role==="user"?"你\n":"CMspark\n")+content;$("dialog-history").append(row);return row}
   function receiveDialog(frame){
     if(frame.type==="desktop.thread.create.result"){
@@ -93,8 +135,8 @@
   }
   window.cmsparkDesktopReceive=frame=>{
     if(!frame||typeof frame!=="object")return;
-    if(frame.type==="desktop.document"){generation=frame.generation;resourceWrite=null;retireResource(true);resourceFeedback("连接已恢复；草稿保留，须重新打开并核对当前资源。");retireDialog();dialogRun=null;dialogCreate=null;dialogBusy();retireMetadata(true);metadataFeedback(metadataOpen?"连接已恢复，草稿保留；请重新打开原对话信息核对后保存。":"");editRequest=null;saveRequest=null;busy(false);feedback(draftOpen?"连接已恢复，请核对草稿后重新确认保存。":"");$("status").textContent="已连接 · MCP 保存需确认";load(true);for(const type of ["mcp.list","skill.list","knowledge.list"])request(type);return}
-    if(frame.type==="desktop.offline"){retireTitleSearch();generation=null;resourceWrite=null;retireResource(true);resourceFeedback("连接断开，保存结果未知；草稿保留且不会自动重放。");retireDialog();dialogRun=null;dialogCreate=null;dialogBusy();dialogFeedback("连接断开，结果未确认；请重连后核对历史，草稿保留。");retireMetadata(true);metadataFeedback("连接断开，保存结果未确认。草稿保留，请重连后核对原对话。");selectedThread=null;editRequest=null;saveRequest=null;busy(false);feedback("连接断开，尚未确认保存。草稿保留，请重新检查后提交。");$("preview").replaceChildren();$("status").textContent="连接已断开";$("notice").textContent="等待原生宿主重新连接。";return}
+    if(frame.type==="desktop.document"){retireArchive(false);archiveList=null;generation=frame.generation;resourceWrite=null;retireResource(true);resourceFeedback("连接已恢复；草稿保留，须重新打开并核对当前资源。");retireDialog();dialogRun=null;dialogCreate=null;dialogBusy();retireMetadata(true);metadataFeedback(metadataOpen?"连接已恢复，草稿保留；请重新打开原对话信息核对后保存。":"");editRequest=null;saveRequest=null;busy(false);feedback(draftOpen?"连接已恢复，请核对草稿后重新确认保存。":"");$("status").textContent="已连接 · MCP 保存需确认";load(true);for(const type of ["mcp.list","skill.list","knowledge.list"])request(type);return}
+    if(frame.type==="desktop.offline"){retireArchive(false);archiveList=null;archiveFeedback("连接断开，保存结果未确认；重新连接后须核对状态，不会自动重放。");retireTitleSearch();generation=null;resourceWrite=null;retireResource(true);resourceFeedback("连接断开，保存结果未知；草稿保留且不会自动重放。");retireDialog();dialogRun=null;dialogCreate=null;dialogBusy();dialogFeedback("连接断开，结果未确认；请重连后核对历史，草稿保留。");retireMetadata(true);metadataFeedback("连接断开，保存结果未确认。草稿保留，请重连后核对原对话。");selectedThread=null;editRequest=null;saveRequest=null;busy(false);feedback("连接断开，尚未确认保存。草稿保留，请重新检查后提交。");$("preview").replaceChildren();$("status").textContent="连接已断开";$("notice").textContent="等待原生宿主重新连接。";return}
     if(frame.type==="desktop.thread.metadata.edit.result"){
       if(!currentMetadata(metadataEdit,frame))return;const retained=metadataEdit.retained;metadataEdit=null;metadataBusy(false);
       if(frame.ok!==true||!validMetadata(frame.metadata)){metadataInitial=null;metadataBusy(true);metadataFeedback(frame.error_code==="DESKTOP_METADATA_REDACTED"?"这条对话信息含隐藏内容，无法在此编辑。":"无法读取这条对话信息，请重新打开。");return}
@@ -105,12 +147,14 @@
       if(frame.ok===true&&frame.saved===true&&validMetadata(frame.metadata)){metadataInitial=frame.metadata;fillMetadata(frame.metadata);metadataFeedback("已保存对话信息。");request("thread.list")}
       else metadataFeedback(frame.error_code==="DESKTOP_METADATA_REDACTED"?"信息含隐藏内容，未保存。请检查草稿。":"保存结果未确认，草稿保留。请刷新核对后重新提交。");return;
     }
+    if(receiveArchive(frame))return;
     if(receiveResource(frame))return;
     if(receiveDialog(frame))return;
     // Confirmation payloads belong exclusively to the native controller; the renderer never decides.
     if(frame.type==="desktop.confirmation.request"||frame.type==="desktop.confirmation.resolved")return;
     if(frame.type==="desktop.mcp.edit.result"){if(!editRequest||frame.id!==editRequest)return;editRequest=null;if(frame.config)editor("update",frame.config,frame.name);else feedback("无法编辑该条目；目前仅支持 stdio。");return}
     if(frame.type==="desktop.mcp.save.result"){if(!saveRequest||frame.id!==saveRequest)return;saveRequest=null;busy(false);if(frame.ok===true&&frame.saved===true){feedback("已保存配置。连接状态以列表实际结果为准。");request("mcp.list")}else feedback("未收到保存成功确认。请刷新核对当前配置，再检查草稿后重试。");return}
+    if((frame.type==="thread.list"||frame.type==="thread.search_result")&&archiveView)return;
     if(frame.type==="thread.search_result"){
       if(!titleSearchActive||!currentTitleRequest(titleSearchPending)||frame.id!==titleSearchPending.id)return;
       titleSearchPending=null;frame={...frame,type:"thread.list",titleSearch:true};
@@ -126,9 +170,11 @@
     }
     if(frame.type==="thread.peek_result"){if(page==="thread.list"&&selectedThread&&frame.thread_id===selectedThread)$("preview").textContent=frame.markdown||"暂无预览。";return}
     if(frame.type!==page)return;
-    const rows=frame.threads||frame.servers||frame.skills||frame.docs||[];$("list").replaceChildren();$("notice").textContent=rows.length?(frame.truncated?(frame.titleSearch?"匹配较多，请缩小标题查询范围。":"仅显示前 64 项。"):""):(frame.titleSearch?"没有匹配的对话标题。":"暂无内容。");
-    for(const row of rows){const li=document.createElement("li"), label=document.createElement(page==="thread.list"?"button":"strong");label.textContent=row.title||row.name||row.id||"未命名";if(page==="thread.list"){label.type="button";label.addEventListener("click",()=>{if(page!=="thread.list")return;retireMetadata();retireDialog();selectedThread=row.id;$("preview").replaceChildren();request("thread.peek",row.id)})}li.append(label);if(resourceKind()){const read=document.createElement("button");read.type="button";read.textContent="查看／管理正文";read.setAttribute("data-resource-id",row.id);read.addEventListener("click",()=>openResource(resourceKind(),row.id));li.append(read)}if(page==="thread.list"){const open=document.createElement("button");open.type="button";open.textContent="打开对话";open.setAttribute("data-thread-dialog",row.id);open.addEventListener("click",()=>{if(page!=="thread.list")return;retireMetadata();selectedThread=row.id;$("preview").replaceChildren();openDialog(row.id)});li.append(open);const edit=document.createElement("button");edit.type="button";edit.textContent="对话信息";edit.setAttribute("data-thread-metadata",row.id);edit.addEventListener("click",()=>openMetadata(row.id,edit));li.append(edit);if(row.topic_folder||(row.user_tags||[]).length){const tags=document.createElement("p");tags.textContent=[row.topic_folder?"分组 · "+row.topic_folder:"",(row.user_tags||[]).map(v=>"#"+v).join(" ")].filter(Boolean).join(" · ");li.append(tags)}}if(page==="mcp.list"){const edit=document.createElement("button");edit.type="button";edit.textContent="编辑 stdio";edit.addEventListener("click",()=>{if(!generation||saveRequest)return;editRequest="desktop-mcp-edit-"+(++sequence);post({type:"desktop.mcp.edit",id:editRequest,name:row.name||row.id,thread_id:null})});li.append(edit)}if(row.description||row.status){const p=document.createElement("p");p.textContent=row.description||row.status;li.append(p)}$("list").append(li)}
+    renderThreads(frame.threads||frame.servers||frame.skills||frame.docs||[],frame.truncated,frame.titleSearch,false);
   };
+  function renderThreads(rows,truncated,titleSearch,isArchive){$("list").replaceChildren();$("notice").textContent=rows.length?(truncated?(titleSearch?"匹配较多，请缩小标题查询范围。":"仅显示前 64 项。"):""):(titleSearch?"没有匹配的对话标题。":"暂无内容。");
+    for(const row of rows){const li=document.createElement("li"), label=document.createElement(page==="thread.list"?"button":"strong");label.textContent=row.title||row.name||row.id||"未命名";if(page==="thread.list"){label.type="button";label.addEventListener("click",()=>{if(page!=="thread.list")return;retireMetadata();retireDialog();selectedThread=row.id;$("preview").replaceChildren();retireArchive();request("thread.peek",row.id)})}li.append(label);if(resourceKind()){const read=document.createElement("button");read.type="button";read.textContent="查看／管理正文";read.setAttribute("data-resource-id",row.id);read.addEventListener("click",()=>openResource(resourceKind(),row.id));li.append(read)}if(page==="thread.list"){const open=document.createElement("button");open.type="button";open.textContent="打开对话";open.setAttribute("data-thread-dialog",row.id);open.addEventListener("click",()=>{if(page!=="thread.list")return;retireMetadata();selectedThread=row.id;$("preview").replaceChildren();openDialog(row.id)});li.append(open);const edit=document.createElement("button");edit.type="button";edit.textContent="对话信息";edit.setAttribute("data-thread-metadata",row.id);edit.addEventListener("click",()=>openMetadata(row.id,edit));li.append(edit);const archive=document.createElement("button"),rowView=archiveView,rowDocument=generation;archive.type="button";archive.textContent=isArchive?"恢复":"归档";archive.setAttribute("data-thread-archive",row.id);archive.addEventListener("click",()=>{if(page==="thread.list"&&archiveView===rowView&&generation===rowDocument)openArchiveState(row.id)});li.append(archive);if(row.topic_folder||(row.user_tags||[]).length){const tags=document.createElement("p");tags.textContent=[row.topic_folder?"分组 · "+row.topic_folder:"",(row.user_tags||[]).map(v=>"#"+v).join(" ")].filter(Boolean).join(" · ");li.append(tags)}}if(page==="mcp.list"){const edit=document.createElement("button");edit.type="button";edit.textContent="编辑 stdio";edit.addEventListener("click",()=>{if(!generation||saveRequest)return;editRequest="desktop-mcp-edit-"+(++sequence);post({type:"desktop.mcp.edit",id:editRequest,name:row.name||row.id,thread_id:null})});li.append(edit)}if(row.description||row.status){const p=document.createElement("p");p.textContent=row.description||row.status;li.append(p)}$("list").append(li)}
+  }
   if(window.chrome?.webview)window.chrome.webview.addEventListener("message",e=>window.cmsparkDesktopReceive(e.data));
   document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>{page=b.dataset.page;load()}));
   $("resource-import")?.addEventListener("click",()=>{if(!generation||!resourceKind()||resourceWrite)return;retireResource();resourceImport=true;resourceDocument=generation;$("resource-editor").hidden=false;$("resource-title").textContent="导入单份 Markdown";for(const key of ["name","description","tags","text"])$("resource-"+key).value="";resourceFeedback("粘贴完整单份 Markdown 文本；不接受文件路径、ZIP 或执行设置。");resourceBusy()});
@@ -158,11 +204,15 @@
     post({type:"desktop.mcp.save",id:saveRequest,name,action:editAction,thread_id:null,payload_json:JSON.stringify({command,args,cwd:$("mcp-cwd").value,enabled:$("mcp-enabled").checked})});
   });
   $("thread-search-submit")?.addEventListener("click",submitTitleSearch);
-  $("thread-search-clear")?.addEventListener("click",()=>{titleSearchTouched=true;retireTitleSearch(true);if(generation&&page==="thread.list")request("thread.list")});
-  $("thread-search-query")?.addEventListener("input",()=>{retireTitleSearch();titleSearchTouched=true;if(generation&&page==="thread.list")$("notice").textContent="查询已更改，请提交标题搜索。"});
+  $("archive-normal")?.addEventListener("click",()=>setArchiveView(false));
+  $("archive-view")?.addEventListener("click",()=>setArchiveView(true));
+  $("archive-cancel")?.addEventListener("click",()=>retireArchive());
+  $("archive-save")?.addEventListener("click",()=>{if(!generation||page!=="thread.list"||!archiveTarget||archiveRead||archiveWrite||!archiveSnapshot||archiveSnapshot.activity!=="idle")return;archiveWrite={id:"archive-set-"+(++sequence),target:archiveTarget,document:generation,epoch:archiveEpoch,view:archiveView,archived:!archiveSnapshot.archived};const revision=archiveSnapshot.revision;archiveSnapshot=null;archiveBusy();archiveFeedback("正在保存，结果未确认…");post({type:"desktop.archive.set",id:archiveWrite.id,thread_id:archiveWrite.target,revision,archived:archiveWrite.archived})});
+  $("thread-search-clear")?.addEventListener("click",()=>{retireArchive();archiveList=null;titleSearchTouched=true;retireTitleSearch(true);if(generation&&page==="thread.list")request("thread.list")});
+  $("thread-search-query")?.addEventListener("input",()=>{retireArchive();archiveList=null;retireTitleSearch();titleSearchTouched=true;if(generation&&page==="thread.list")$("notice").textContent="查询已更改，请提交标题搜索。"});
   $("thread-search-query")?.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();submitTitleSearch()}});
-  $("dialog-new")?.addEventListener("click",()=>{if(!generation||dialogCreate)return;dialogCreate={id:"desktop-dialog-new-"+(++sequence),document:generation,page,epoch:dialogEpoch,target:dialogTarget};dialogBusy();post({type:"desktop.thread.create",id:dialogCreate.id})});
+  $("dialog-new")?.addEventListener("click",()=>{if(!generation||dialogCreate)return;retireArchive();dialogCreate={id:"desktop-dialog-new-"+(++sequence),document:generation,page,epoch:dialogEpoch,target:dialogTarget};dialogBusy();post({type:"desktop.thread.create",id:dialogCreate.id})});
   $("dialog-send")?.addEventListener("click",()=>{if(!generation||!dialogTarget||dialogOpen||dialogRun)return;const message=$("dialog-input").value;if(!message.trim())return;dialogRun={id:"desktop-dialog-send-"+(++sequence),target:dialogTarget,document:generation,message};dialogSubscription={id:dialogRun.id,target:dialogTarget,document:generation,epoch:dialogEpoch};dialogLive=null;dialogBusy();dialogFeedback("发送已提交，尚未确认持久化…");post({type:"desktop.chat.send",id:dialogRun.id,thread_id:dialogRun.target,message})});
   $("dialog-stop")?.addEventListener("click",()=>{const run=dialogRun;if(!generation||!run||run.stopPending)return;run.stopPending=true;dialogBusy();post({type:"desktop.chat.stop",id:"desktop-dialog-stop-"+(++sequence),thread_id:run.target,run_id:run.id})});
-  $("view").addEventListener("click",()=>{compact=!compact;post({type:"desktop.view",view:compact?"compact":"workspace"})});
+  $("view").addEventListener("click",()=>{retireArchive();compact=!compact;post({type:"desktop.view",view:compact?"compact":"workspace"})});
 })();
