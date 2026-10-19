@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import vm from 'node:vm'
 import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { project } from '../windows-census-reporter.mjs'
@@ -324,4 +325,45 @@ test('census child failure projection rejects Proxy byte fields without invoking
   assert.deepEqual(view.child_failure_chain,[{depth:0,stdout_bytes:3}])
   assert.equal(traps,0)
   assert.equal(JSON.stringify([actual,view]).includes('OWNED_'),false)
+})
+
+
+// #720: the observer predicts the unchanged runner, including its platform-only
+// fixed argv. These are real source functions with an inert spawn collector;
+// no child, native, filesystem test execution or shortened budget is involved.
+test('passive census batch predictor matches unchanged runner platform fixed argv at boundaries', t => {
+  const runner = fs.readFileSync(path.join(root, 'companion/scripts/run-tests.mjs'), 'utf8')
+  const start = runner.indexOf('const MAX_ARGV_CHARS ='), end = runner.indexOf('const testRunDir =', start)
+  assert.ok(start >= 0 && end > start)
+  const pure = runner.slice(start, end)
+  const mainCall = /^\s*code = (runNodeTest\(main, process\.platform === "win32" \? \["--test-concurrency=1"\] : \[\]\))$/m.exec(runner)
+  const settingsCall = /^\s*if \(code === 0\) code = (runNodeTest\(settings, settingsWebIsolationArgs\(\)\))$/m.exec(runner)
+  assert.ok(mainCall); assert.ok(settingsCall)
+  const results = []
+  for (const platform of ['win32', 'linux']) for (const node of ['20.20.0', '22.23.2']) for (const padding of [0, 21, 42]) {
+    const nativePath = platform === 'win32' ? path.win32 : path.posix
+    const companion = platform === 'win32' ? 'C:\\a\\cmspark\\cmspark\\companion' : '/owned/cmspark/companion'
+    const execPath = platform === 'win32' ? 'C:\\hostedtoolcache\\windows\\node\\22.23.2\\x64\\node.exe' : '/owned/node'
+    const main = Array.from({ length: 1200 }, (_, index) => ({ file: `.test-dist/tests/t${String(index).padStart(4, '0')}${index === 0 ? 'x'.repeat(padding) : ''}.test.js`, excluded: false, stage: 'main' }))
+    const settings = { file: '.test-dist/tests/settings-web.test.js', excluded: false, stage: 'settings' }
+    const discovery = [...main, { file: '.test-dist/tests/_excluded.test.js', excluded: true, stage: 'main' }, settings]
+    const calls = [], view = { execPath, platform, versions: { node }, env: {} }
+    const context = { path: nativePath, process: view, root: companion, testRunDir: 'OWNED_INERT', console: { error: () => assert.fail('canonical inert spawn must succeed') },
+      spawnSync: (exe, args, options) => { calls.push({ exe, args: [...args], options }); return { status: 0, signal: null } },
+      main: main.map(row => nativePath.join(companion, row.file)), settings: [nativePath.join(companion, settings.file)] }
+    vm.runInNewContext(pure + ';' + mainCall[1] + ';' + settingsCall[1], context)
+    // This is the imported production function body, not a rewritten predictor.
+    const predict = vm.runInNewContext('(' + scheduledBatches.toString() + ')', { path: nativePath, process: view })
+    const expected = Array.from(predict(companion, discovery, execPath), batch => ({ stage: batch.stage, files: Array.from(batch.files) }))
+    const actual = calls.map(call => ({ stage: call.args.includes('--experimental-test-isolation=none') || call.args.some(arg => arg.endsWith('settings-web.test.js')) ? 'settings' : 'main',
+      files: call.args.filter(arg => arg.endsWith('.test.js')).map(file => nativePath.relative(companion, file).split(nativePath.sep).join('/')) }))
+    assert.equal(JSON.stringify(actual.flatMap(batch => batch.files)), JSON.stringify([...main.map(row => row.file), settings.file]), 'original ordered file list must be complete exactly once')
+    assert.equal(calls.every(call => call.exe === execPath && call.options.cwd === companion), true)
+    assert.equal(calls.at(-1).args.includes('--experimental-test-isolation=none'), Number(node.split('.')[0]) >= 22)
+    assert.equal(calls.filter(call => !call.args.some(arg => arg.endsWith('settings-web.test.js'))).every(call => call.args.includes('--test-concurrency=1') === (platform === 'win32')), true)
+    results.push({ platform, node, padding, actual: actual.map(batch => batch.files.length), predicted: expected.map(batch => batch.files.length), exact: JSON.stringify(actual) === JSON.stringify(expected) })
+  }
+  t.diagnostic(JSON.stringify({ cases: results, realChildSpawns: 0, canonicalRunnerUnchanged: true }))
+  assert.equal(results.length, 12)
+  assert.equal(results.every(row => row.exact), true, 'observer must reconstruct every original fixed argv boundary without changing test order, list or32000 limit')
 })

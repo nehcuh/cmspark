@@ -10,6 +10,8 @@ export interface PageReadPayload {
   /** Browser-internal only, sampled together with the content. */
   comparisonRefusal?: string
   codeComparison?: unknown
+  releaseRelation?: unknown
+  releaseRefusal?: string
   rawUrl?: string
 }
 
@@ -49,7 +51,9 @@ export async function readWithProvenance(
   )
   return {
     payload: { content: payload.content, channel: payload.channel, truncated: payload.truncated, limit: payload.limit, ...(available && !changed && payload.codeComparison !== undefined ? { codeComparison: payload.codeComparison } : {}),
-      ...(payload.comparisonRefusal ? { comparisonRefusal: payload.comparisonRefusal } : {}) },
+      ...(payload.comparisonRefusal ? { comparisonRefusal: payload.comparisonRefusal } : {}),
+      ...(available && !changed && payload.releaseRelation !== undefined ? { releaseRelation: payload.releaseRelation } : {}),
+      ...(payload.releaseRefusal ? { releaseRefusal: payload.releaseRefusal } : {}) },
     provenance: {
       schema_version: 1 as const,
       target: available && !changed ? before.target : undefined,

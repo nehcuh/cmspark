@@ -38,7 +38,8 @@ export function captureLocalPageResult(dataDir: string, scope: EvidenceScope | u
   if (!["get_page_text", "get_page_html"].includes(tool) || !result.success) return result
   const { observation_id: _untrustedId, evidence_capture: _untrustedCapture,
     codeComparison: _untrustedComparison, code_comparison: _untrustedStoredComparison,
-    comparison_digest: _untrustedComparisonDigest, ...pageData } = result.data || {}
+    comparison_digest: _untrustedComparisonDigest, releaseRelation: _untrustedRelease,
+    release_relation: _untrustedStoredRelease, release_relation_digest: _untrustedReleaseDigest, ...pageData } = result.data || {}
   if (!scope) return { ...result, data: pageData }
   let captured: { capture_status: string; observation_id?: string; reason?: string }
   if (signal?.aborted || !writesAllowed) captured = { capture_status: "skipped", reason: signal?.aborted ? "INTERRUPTED" : "PLAN_READONLY" }
