@@ -57,7 +57,7 @@ not from a successful driver response alone."*
 
 ## 3. Windows 台账
 
-> 我们**只在 Windows 上有实现**。macOS 见 §4。
+> 本节记录 Windows；macOS AX 动作及比较 oracle 已有实现，逐行验收与未完事项见 §4。
 > **本表的空白 = 尚未用夹具证实，不等于不可能。**
 
 ### 3.1 投递路线（机制级）
@@ -180,12 +180,89 @@ UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tri
 
 ## 4. macOS / Linux
 
-| 平台 | 状态 | 说明 |
-|---|---|---|
-| macOS | **Gap（未系统化验证）** | 有 `darwin-adapters.ts` / `darwin-estop.ps1` 等实现，但**从未按 §1 判据系统验收**；且 `osascript_eval` 曾是确定性死路（#529，v0.6.11 已下架） |
-| Linux | **Gap（无实现）** | 全仓无 Linux 桌面投递实现 |
+macOS 的 `host.swift` 已有外部 AX 定位与 press/increment/decrement/confirm/cancel/setvalue，
+`darwin-adapters.ts` 可直接调用；`computer-bg-oracles.sh` 提供真实窗口/光标 snapshot 和严格
+compare。它们是**源实现**，不是后台 Delivered 证明。Linux 桌面投递仍为 Gap（无实现）。
 
-→ **macOS 立 issue 跟踪**（本轮不做，见 §6）。
+### macOS 焦点观测边界（#571，源码修正，原生验收待完成）
+
+屏幕堆叠的首个 CG 窗口不等于接收键盘焦点的窗口。`window-list --foreground`
+保留原有全部返回行和顺序，并额外返回只读 `foregroundWindowId`（数字或 null）：从系统级
+AXFocusedApplication/AXFocusedWindow 读取真实焦点对象，要求其 PID、非空精确标题和有限精确
+位置/尺寸与唯一已列出的 CG 窗口对应；不按层级、前台应用首行、标题近似或距离猜测。
+
+对应前要求 focused window 是该应用完整 AXWindows 数组中唯一 CFEqual 成员，且完整元数据
+在 AX 与 CG 两侧都不歧义。新实现证据预算为 **最多256个 AX 窗口**，超过即整次未知，绝不截前缀；
+数组成员任一缺失/错误/无标题/不合法几何也未知。读取后再次核对 focused app/window、完整数组
+及元数据；变化、无权限或无法对应都返回 null。该保守条件可能拒绝拥有无标题或未完整暴露窗口的应用。
+公开 AX/CG 调用不是原子快照，双读不是对两次调用之间任意 ABA 或未来焦点变化的保证。
+
+snapshot 仅接受唯一实际列出的正整数测量 ID，没有顶项回退；完整原始 z-order、cursor 和
+sibling 的 before/after 严格断言不变。纯 Node 受控源投影不是 Swift SDK/native 执行，当前历史
+OTHER 行的 owner/layer 和唯一原因仍 UNKNOWN。该修正不新增动作、激活、TCC 权限或清理权；
+只有新 head hosted Mac 的实际 marker 和原全部 oracle 通过，才能回填 Delivered/Refused。
+
+### macOS 目标窗口遍历与夹具身份（#571，原生验收待完成）
+
+`ax-locate` / `ax-invoke` 不再从常常没有 AXSize 的 AXApplication 节点遍历：旧实现会在
+读取该节点的子节点之前用零尺寸过滤整棵树。现在先将请求的 CGWindowID 与当前 PID、
+UTF8 精确标题和有限正尺寸几何对应到唯一实际 AXWindows 成员，再从该窗口开始原有遍历。
+请求 ID 必须是正的 UInt32 整数，布尔、分数或截断回绕不能形成新身份。完整目标窗口证据
+使用独立的新 **256窗口上限**，超限、AX 成员证据缺失、仍可能匹配目标的 CG 行证据缺失/歧义、
+两次 CG/AX 观察或成员次序变化都拒绝，不选第一个窗口，也不以同名 sibling 代替。
+只有 CG 行已知的 UTF8 标题字节或有限几何分量与完整目标值相异时，才排除该不可能匹配的行；
+缺失、类型不符或非有限值本身不能证明不匹配。目标 ID/完整元数据仍在此排除之前严格验证。该读证据过程不激活窗口、不扩 TCC；
+`ax-invoke` 保留原动作/值校验、周期与动作前 E-Stop 检查，并在证据读取阶段检查停止。
+原 hidden/zero-size 过滤、50层遍历、元素 name/role 复核和支持动作条件保留。
+
+owned 夹具中的 `NSWindow.windowNumber` 是应用设备编号，不能与全局 CGWindowID 直接比较。
+夹具改为用当前 `NSScreen.screens.first` 的完整主屏 frame，将实际 NSWindow 全框转换到 CG
+上左原点坐标，再按当前 PID、固定精确标题和有限精确全框唯一选取 CG 行；不使用 keyboard
+screen、Retina 倍率、最近几何或 first-row 猜测。再次观察同一 screen/window 对象、完整 frame
+和 CG 对应，缺失或变化不发布 ready。既有 activation/key、20秒期限和 owner cleanup 不变。
+
+这些对应仍是非原子的保守双读，不承诺排除两次系统调用之间的任意 ABA；无标题或不完整
+暴露的应用可能被拒绝。CPU 源投影不是 Swift SDK/AppKit/CG 执行，已有原生失败的唯一原因
+仍 UNKNOWN。每行仅按自己的 target marker 与同轮完整 oracle 回填，不能以 AppKit 通过替 WK 或其它动作验收。
+
+### 4.1 macOS AX：逐框架 / 动作与证据
+
+AppKit press 已有下述 d66 hosted 原生证据；其余行按缺口保留 **Gap**。原生验收代码、
+Swift 类型检查、纯 Node 比较控和 owned fixture 本身不能代填 Delivered / Refused。
+
+| 靶子/框架 | 动作 | 当前状态 | 确切证据 / 尚缺什么 |
+|---|---|---|---|
+| AppKit NSButton | press | **Delivered** | [CI 39166888090](https://github.com/nehcuh/cmspark/actions/runs/39166888090)，head `d66da90e92f99c439cdd98280733e34c7499e6b1`；`#571 actual external AX press APPKIT: target marker and all background oracles` PASS，targetChanged/focus/z-order/cursor/noLeak 均 true，noLeak 为 derived。 |
+| WKWebView | press | **Gap** | 同一 d66 原始 native 行因 `AX571_LOCATE_FAILED` / `TREE_EXHAUSTED` 为 RED，未执行动作或 after-oracle；现有 `EMPTY_FRONTIER` 深度3观测不证明根因或统一不支持。仅精确已知缺口可走新 zero-effect + fresh 四 oracle 回归；新 head 原生结果待验，不能把旧红改绿。 |
+| AppKit | increment | **Gap** | `cuAXInvoke` 已有源分支；本叶未提供对应靶子 / action 实测。 |
+| AppKit | decrement | **Gap** | 同上；未验不当不可用。 |
+| AppKit | confirm | **Gap** | 已有 AXConfirm 源映射；未取得实际靶子效果或带 oracle 的精确拒绝。 |
+| AppKit | cancel | **Gap** | 已有 AXCancel 源映射；缺实际该行验收。 |
+| AppKit | setvalue | **Gap** | 已有 AXValue 源映射；缺实际该行验收。 |
+| WKWebView | increment / decrement / confirm / cancel / setvalue | **Gap** | 是否由控件暴露取决于实际 AX provider；本叶不捏造统一结果。 |
+| macOS | selection / scroll / drag | **Gap** | 没有本组对称动作映射与验收；不是本叶新增的全模式关闭前置。 |
+
+**实际运行后如何回填**：hosted `macOS external AX action and background oracles (#571)` 先构建
+真实 `cmspark-host` 源码（仅验收构建启用固定阶段诊断，普通 host 输出不变）和独立 unshipped owned
+target，再运行完整 native test。
+`AX571_PERMISSION` 只包含固定身份/布尔事实；`AX571_ROW` 只包含框架/动作、三态、有限码和 oracle
+布尔。只有 target-owned marker 确变且 focus/z-order/cursor 均 true，才可把对应 press 行改
+Delivered 并附本轮 commit/run/test；真实精确拒绝码且同轮 oracle 全通过才改 Refused。
+未知错误或缺权限/观测仍为 Gap，不用返回 ok 冒成功。TCC 权限 false 是真实硬失败，不 skip。
+WK 唯一允许的已知 Gap 是 trusted/current-owned 既有前置均通过后，`found:false`、
+`TREE_EXHAUSTED`、完整有效 traversal `EMPTY_FRONTIER` 且 depth<50；必须新 after 快照、
+同一严格完整 oracle 和双 marker 零效果才记录 Gap，不能记 Refused 或 Delivered。未知、
+CG/绑定/权限/超时/取消/深度上限与清理失败仍硬失败；AppKit/正常已定位动作及至少一条 Delivered 不变。
+原票最低成功标准是**至少一条**真实 AX 动作通过三项实测后台 oracle，不要求本表所有模式都 Delivered。
+
+**身份边界**：builder 校验签名 Identifier 为 `com.cmspark.agent`；运行前现有 `security-check`
+实测 `axTrusted` / `secureInput`。该测试路由为 Node 直接父进程→签名 CLI，不安装 app、不改权限。
+TCC 的最终责任身份仍为 **UNKNOWN**，不以 codesign Identifier 或父 PID 冒授予权限；hosted
+实际信任状态需保留。如果 trust=false，保留该次有限拒绝，不能把旧身份记录或别的 native 绿挪来代验。
+
+**负控与残余**：同 owned target 的 estop、错误 role 负控要求 marker 未写；未知 / null 观测
+严格失败。`no_leaked_input` 始终标 derived。production `executor` 当前没有把 Mac AX 自动接入
+坐标回退链，仍是明确残余；这是原票最小 native 验证之后的独立接线事项，不偷偷新增为本叶关闭条件。
 
 ---
 
@@ -223,7 +300,7 @@ UIA_PATTERN_UNAVAILABLE:no usable UIA action pattern for 'SubmitTest' (Pane) tri
 | 4 | **GUI 夹具** | 🟡 当前 WPF Invoke / 四种额外 pattern 正控与 loader/ABI 负控；旧 WinForms 反例保留为历史，其余靶子待做 |
 | 5 | **逐靶子回填**：WinUI3 / WebView2 / Electron / Tauri / 原生 Win32 | **记名 Gap** —— 当前已有 WPF 五种 adapter pattern 原生证据，不外推到这五类框架；仍缺各自夹具与同轮 oracle |
 | 6 | 通用键盘 / 滚动 / 拖拽的后台投递 | **记名 Gap / 部分机制已证** —— WPF `SetValue`/`Select`/`Toggle`/`ScrollPattern` 已验收；executor 仍只接后台左键，key/scroll/drag 仍走前台。不能把 SetValue 当通用键盘或把 adapter Scroll 当 executor 后台滚动；UIA 无右键/双击模式 |
-| 7 | **macOS 对齐** | → #571 跟踪 |
+| 7 | **macOS 对齐** | #571：AppKit press 的 d66 hosted 最小动作与 oracle 已通过；WK/其它动作按 §4 记名 Gap，新 Gap 回归及完整新 head CI 待验 |
 
 #572 原 body 的最小验收是一个 WPF 或 WinUI3 夹具、先左键、四 oracle、精确拒绝和台账回填，
 并明确允许残余记名。当前 WPF 最小路线已有上述实际证据；第 5、6 项仍是原评论中的
