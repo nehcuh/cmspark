@@ -31,7 +31,7 @@ const change: Record<string, string | string[]> = {
 /** Integration fixture runs the production configuration loader, capture
  * constructor, mutation repository, checker and renderer. A single synthetic
  * platform is intentional here; real multi-platform/model acceptance is #457. */
-function scenario(kind: DraftKind, runtimeNA = false, overrides: Record<string, string | string[]> = {}, mappings: PilotContract["mappings"] = []) {
+function scenario(kind: DraftKind, runtimeNA = false, overrides: Record<string, string | string[]> = {}, mappings: PilotContract["mappings"] = [], clock = now) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-draft-scenario-"))
   const schema = DRAFT_SCHEMAS[kind], values = { ...structuredClone(kind === "change_material.v1" ? change : development), ...overrides }
   const types: Record<string, [string, string]> = { release_artifact: ["release", "artifact"], architecture_target: ["architecture", "system"], runtime_target: ["system", "system"], code_requirement: ["requirement", "requirement"], tests_requirement: ["requirement", "requirement"], tests_commit: ["commit", "commit"], defects_requirement: ["requirement", "requirement"], criteria_cases: ["acceptance_criterion", "test_case"] }
@@ -41,11 +41,11 @@ function scenario(kind: DraftKind, runtimeNA = false, overrides: Record<string, 
     mappings, required_fields: [], pass_values: ["passed"], ...(runtimeNA ? { runtime_not_applicable: { allowed: true, rationale: "This pilot covers software-only systems" } } : {}) }
   const pilotFile = path.join(root, "pilot.json"); fs.writeFileSync(pilotFile, JSON.stringify(pilot))
   const store = new EvidenceStore(root, { kind: "chat", threadId: "scenario" })
-  const repo = new DraftRepository(store, pilotFile, () => now)
+  const repo = new DraftRepository(store, pilotFile, () => clock)
   const first = repo.create({ kind, title: "<script>alert(1)</script>", target: { environment: "prod", business_system_id: "SYS-1" }, request_id: "create" })
   const wire = JSON.parse(fs.readFileSync(path.join(__dirname, "../../tests/fixtures/page-read-v1.json"), "utf8"))
   wire.data.text = Object.entries(values).filter(([name]) => name !== "tests.criteria_mapping").map(([name, value]) => name + ": " + (Array.isArray(value) ? value.join("; ") : value)).join("\n") + "\nLogin works → CASE-1\nNo assets\nNo defects"
-  store.capture("page", "get_page_text", wire, now)
+  store.capture("page", "get_page_text", wire, clock)
   const observation = store.read().observations[0]
   const citation = { observation_id: observation.id, start: 0, end: Array.from(observation.content).length, excerpt: observation.content }
   const citeText = (excerpt: string) => { const start = Array.from(observation.content.slice(0, observation.content.indexOf(excerpt))).length; return { ...citation, start, end: start + Array.from(excerpt).length, excerpt } }
@@ -54,7 +54,7 @@ function scenario(kind: DraftKind, runtimeNA = false, overrides: Record<string, 
     : { value, citations: [citation] }]))
   const relations = Object.fromEntries(schema.relations.filter(name => !["story_requirement", "criteria_cases"].includes(name)).map(name => [name, { citations: [citation] }]))
   const draft = repo.update({ draft_id: first.id, expected_revision: 1, request_id: "update", fields, relations, ...(kind === "development_trace.v1" ? { story_draft_text: "![secret](https://host/collect) <img src=x>" } : {}) })
-  const check = (time = now) => { const state = store.read(); return checkDraft(draft, state.observations, state.locked_pilot!, state.capacity_gap, time) }
+  const check = (time = clock) => { const state = store.read(); return checkDraft(draft, state.observations, state.locked_pilot!, state.capacity_gap, time) }
   return { root, store, repo, draft, check, close: () => fs.rmSync(root, { recursive: true, force: true }) }
 }
 
@@ -143,3 +143,32 @@ test("runtime exemption comes only from the locked pilot and never suppresses co
     } finally { f.close() }
   }
 })
+
+// Exercise real capture → draft mutation → checker → rendering for both missions.
+for (const kind of ["change_material.v1", "development_trace.v1"] as const) {
+  for (const [time, at, valid] of [
+    ["2026-02-30T12:00:00Z", "2026-03-02T12:05:00Z", false],
+    ["2025-02-29T12:00:00Z", "2025-03-01T12:05:00Z", false],
+    ["1900-02-29T12:00:00Z", "1900-03-01T12:05:00Z", false],
+    ["2026-04-31T12:00:00+02:00", "2026-05-01T10:05:00Z", false],
+    ["2024-02-29T12:00:00Z", "2024-02-29T12:05:00Z", true],
+    ["2000-02-29T12:00:00Z", "2000-02-29T12:05:00Z", true],
+    ["2026-04-30T12:00:00+02:00", "2026-04-30T10:05:00Z", true],
+    ["2026-04-30T00:01:00.123+02:00", "2026-04-29T22:06:00Z", true],
+    ["2026-04-30T23:59:00.12-02:00", "2026-05-01T02:04:00Z", true],
+    ["2026-03-02", "2026-03-02T12:05:00Z", false],
+    ["2026-03-02T12:11:00Z", "2026-03-02T12:05:00Z", false],
+  ] as const) {
+    test(`${kind}: business calendar ${time} is ${valid ? "supported" : "unverified"}`, () => {
+      const field = kind === "change_material.v1" ? "runtime.source_updated_at" : "tests.source_updated_at"
+      const f = scenario(kind, false, { [field]: time }, [], Date.parse(at))
+      try {
+        const view = f.check()
+        assert.equal(view.fields[field].state, valid ? "supported" : "unverified")
+        assert.equal(view.ready, valid)
+        assert.equal(renderDraft(view).markdown.includes("齐备待复核"), valid)
+        if (!valid) assert.ok(view.fields[field].reasons.includes("SOURCE_TIME_UNVERIFIED"))
+      } finally { f.close() }
+    })
+  }
+}
