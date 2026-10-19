@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto"
 import { atomicWriteJSON } from "../io"
 import { siteTargetFromBridge, type SiteTarget } from "../site-context/target"
 import { evidenceDigest, evidenceScopeHash, normalizeEvidenceText, type EvidenceScope } from "./content"
+import { validateGithubComparison, githubComparisonDigest, type GithubComparison } from "../code-review/github-comparison"
 import { applyPilotCoverage, validateLockedPilot, type LockedPilotContract } from "./pilot-contract"
 
 export const EVIDENCE_LIMITS = Object.freeze({ observations: 64, contentBytes: 64 * 1024, scopeBytes: 4 * 1024 * 1024, drafts: 16 })
@@ -18,6 +19,9 @@ export interface Observation {
   digest: string
   summary: string
   provenance: Record<string, unknown>
+  /** Browser capture only; old observations remain generic/unknown. */
+  code_comparison?: GithubComparison
+  comparison_digest?: string
 }
 export interface EvidenceFile {
   schema_version: 1
@@ -52,6 +56,16 @@ function validateFile(value: unknown): EvidenceFile {
       || observation.digest !== evidenceDigest(observation.content)
       || !siteTargetFromBridge(observation.target)
       || !observation.provenance || typeof observation.provenance !== "object") return fail("EVIDENCE_CORRUPT")
+    if (observation.code_comparison !== undefined || observation.comparison_digest !== undefined) {
+      try {
+        const comparison = validateGithubComparison(observation.code_comparison, observation.target.url)
+        if (observation.tool !== "get_page_text" || observation.provenance.text_transform !== "unchanged"
+          || observation.provenance.truncated !== false || !["cdp", "isolated", "main"].includes(observation.provenance.channel as string)
+          || observation.provenance.frame !== "top" || (observation.provenance.scope as { kind?: unknown })?.kind !== "document"
+          || observation.comparison_digest !== githubComparisonDigest(comparison)
+          || Buffer.byteLength(JSON.stringify(comparison), "utf8") + Buffer.byteLength(observation.content, "utf8") > EVIDENCE_LIMITS.contentBytes) return fail("EVIDENCE_CORRUPT")
+      } catch { return fail("EVIDENCE_CORRUPT") }
+    }
     seen.add(observation.id)
   }
   if (file.drafts.some(draft => !draft || typeof draft !== "object" || Array.isArray(draft))) return fail("EVIDENCE_CORRUPT")
@@ -105,7 +119,7 @@ export class EvidenceStore {
   /** Called only after the local browser executor has returned successfully.
    * The model cannot invoke this method or supply an Observation identity. */
   capture(toolCallId: string, tool: string, result: unknown, now = Date.now()):
-    { capture_status: "captured"; observation_id: string }
+    { capture_status: "captured"; observation_id: string; comparison_adapter?: "github_compare_two_dot.v1"; comparison_digest?: string }
     | { capture_status: "skipped"; reason: string } {
     const response = result as any
     if (!["get_page_text", "get_page_html"].includes(tool) || response?.success !== true) {
@@ -144,9 +158,22 @@ export class EvidenceStore {
         pagination: "unknown", virtualization: "unknown", iframe_coverage: "not_traversed",
       },
     }
+    if (tool === "get_page_text" && response.data?.codeComparison !== undefined
+      && observation.provenance.text_transform === "unchanged" && !metadata.truncated && metadata.channel !== "dom") {
+      try {
+        const comparison = validateGithubComparison(response.data.codeComparison, target.url)
+        if (Buffer.byteLength(JSON.stringify(comparison), "utf8") + Buffer.byteLength(content, "utf8") > EVIDENCE_LIMITS.contentBytes) {
+          this.transaction(state => { state.capacity_gap = true })
+          return { capture_status: "skipped", reason: "CAPACITY" }
+        }
+        observation.code_comparison = comparison
+        observation.comparison_digest = githubComparisonDigest(comparison)
+      } catch { /* Preserve useful generic page text; invalid sidecars never promote it. */ }
+    }
     try {
       this.transaction(state => { state.observations.push(applyPilotCoverage(observation, state.locked_pilot)) })
-      return { capture_status: "captured", observation_id: observation.id }
+      return { capture_status: "captured", observation_id: observation.id,
+        ...(observation.code_comparison ? { comparison_adapter: observation.code_comparison.adapter, comparison_digest: observation.comparison_digest } : {}) }
     } catch (error) {
       if ((error as Error).message === "EVIDENCE_CAPACITY") {
         this.transaction(state => { state.capacity_gap = true })
