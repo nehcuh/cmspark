@@ -20,7 +20,7 @@
 ## 1. 一句话
 
 复杂任务可由 **Orchestrator（编排线程）** 经你确认后 **`spawn_worker`** 拉起多个 **Worker（子线程）**；同一 Chrome **tab 同时只能被一个 holder 操作**（tab lease）。子任务在最近对话里默认藏在主任务下面（「N 子任务」打开已有 Fleet 列表；进入后顶栏「← 主任务」）。图谱、相关、检索只纳主对话（含 spawn 后升成编排的父），不把 worker 当平级节点。  
-**Mission Board** 是线程上的结构化黑板（Fact / Intent / Hint）。`collect_handback`：worker 仍在跑 → `WORKER_STILL_RUNNING`（不停兄弟）；写完的 Markdown 研究报告是成功收取（`structured=false`），不是 JSON 解析失败。结构化 Fact/Intent 仍合并进板。
+**Mission Board** 是线程上的结构化黑板（Fact / Intent / Hint）。`collect_handback`：worker 仍在跑 → `WORKER_STILL_RUNNING`（不停兄弟，也不把正常等待累计成主任务的三次执行失败）；写完的 Markdown 研究报告是成功收取（`structured=false`），不是 JSON 解析失败。结构化 Fact/Intent 仍合并进板。
 
 这与 GOAL 里实验性 **Type C Skill / `sub_agent`** 设想、以及「再装一个深层 Agent」**不是同一机制**：这里是 **同一 Companion 上的编排 + 子线程**。
 
@@ -60,7 +60,7 @@ Orchestrator **默认不能**直接 mutate 浏览器 / shell / host；执行细�
 
 超限会得到可理解错误（如 `MULTI_AGENT_LLM_CAP` / `TAB_LEASE_CAP`），应等待或取消 worker，而不是死循环 spawn。
 
-**`wait_workers` 是轮询/状态查询，不是屏障**：不会阻塞到所有 worker 结束；主线程需自行循环查询或结合 handback / Board 状态。
+**`wait_workers` 工具本身仍是轮询/状态查询**。主线程请求等待，或提前收取尚在运行的自有 worker 时，运行时会在整批工具返回后接管有界等待，释放主线程的模型并发槽，让排队子任务运行；不需要模型反复查询。等待最多沿用本次请求的 10 分钟预算，完成后收集结果并继续汇总。到期会明确披露仍在运行的子任务；若模型再次轮询，就以可追溯的“仍在运行”回复结束本轮，不冒充任务已完成，也不自动重派。用户停止、安全阻断和原有失败保护仍生效。
 
 ---
 
@@ -101,7 +101,7 @@ Orchestrator **默认不能**直接 mutate 浏览器 / shell / host；执行细�
 | `board_read` | 读板 |
 | `board_complete` | 申请收工（**L2** + 可完成性检查；`empty_complete` 等会在确认里暴露） |
 | `board_claim_intent` / `board_heartbeat_intent` | Intent 认领 / 心跳（进阶） |
-| `collect_handback` | board 模式下要求 **结构化** handback，抑制散文幻觉 |
+| `collect_handback` | 收取真实终态报告；散文报告保留来源与部分结果标记，结构化 Fact/Intent 经校验后入板；运行完成不等于业务结论已验收 |
 
 Side Panel：**BoardPanel**（底栏/上下文入口以当前 UI 为准）展示板状态。  
 FleetStrip / **子任务列表**：worker 数量、状态、**进入子任务**（下钻观察该 worker 对话与 tool）、**全停**（abort LLM + 拒 pending + 释放相关 tab 锁，需二次确认）。
@@ -155,3 +155,7 @@ FleetStrip / **子任务列表**：worker 数量、状态、**进入子任务**�
 ---
 
 *文档版本：2026-07-29 · 对齐 ADR-020 能力坐标 · 与 `orchestrator/*` · `board/*` · ORCHESTRATOR_CAPS 一致。*
+
+### 等待、部分报告与恢复
+
+worker 在工具调用后异常结束时，系统可以保留此前最后一段非空报告，并明确标为部分结果。收集和计划复审使用同一份报告来源；新的报告或运行版本出现后，旧来源不能继续接受验收。失败报告只能记录未通过的条件，不能以“已经收到文字”代替成功。任务所有权、执行版本、确认与重试预算保持原有约束。

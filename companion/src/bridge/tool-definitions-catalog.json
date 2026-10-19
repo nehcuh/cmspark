@@ -1320,7 +1320,7 @@
     "type": "function",
     "function": {
       "name": "collect_handback",
-      "description": "Read the worker's last assistant message. Do not call while that worker is still running (live tool card) — recoverable WORKER_STILL_RUNNING, siblings keep going. A finished markdown/prose report is a successful collect with structured=false and last_assistant (not an error, does not ⚠️, does not update MissionBoard). Structured Fact/Intent JSON (`schema_version` + facts/intents) merges into the host board. Empty last assistant is recoverable HANDBACK_MISSING_STRUCTURE. Returns task_result with runtime status, bounded extractive summary, evidence trust and original message reference. Tool success does not independently verify completion or claims. Follow-up questions should reuse collected results and source references; do not duplicate long reports. For original details, provide report_offset and optional report_limit; report_excerpt is bounded and exposes next_offset/has_more.",
+      "description": "Read the worker's last assistant message. A running worker returns recoverable WORKER_STILL_RUNNING, never a final report. For your current owned run, the parent runtime waits and collects after the whole tool batch; do not repeatedly poll or collect live drafts. Siblings keep going. A finished markdown/prose report is a successful collect with structured=false and last_assistant (not an error, does not ⚠️, does not update MissionBoard). Structured Fact/Intent JSON (`schema_version` + facts/intents) merges into the host board. Empty last assistant is recoverable HANDBACK_MISSING_STRUCTURE. Returns task_result with runtime status, bounded extractive summary, evidence trust and original message reference. Tool success does not independently verify completion or claims. Follow-up questions should reuse collected results and source references; do not duplicate long reports. For original details, provide report_offset and optional report_limit; report_excerpt is bounded and exposes next_offset/has_more.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1405,7 +1405,7 @@
     "type": "function",
     "function": {
       "name": "wait_workers",
-      "description": "Poll-only snapshot of workers in this orchestrator_run (ADR-015). Does NOT block/sleep for a barrier — call repeatedly or use HITL. True async barrier is not implemented. Each worker also carries `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = the run ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both absent = it never ran. Use these to tell a dead worker from an idle one (#569).",
+      "description": "Poll-only snapshot of workers in this orchestrator_run (ADR-015). Does NOT block/sleep for a barrier — call repeatedly or use HITL. True async barrier is not implemented. Each worker also carries `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = the run ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both absent = it never ran. Use these to tell a dead worker from an idle one (#569). In a parent chat, a successful poll transfers to bounded runtime waiting after this tool batch, yielding the parent model slot for queued workers. The tool itself remains poll-only. On deadline, disclose still-running work rather than repeatedly calling this tool or spawning duplicates.",
       "parameters": {
         "type": "object",
         "properties": {},

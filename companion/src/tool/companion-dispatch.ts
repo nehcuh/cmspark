@@ -1037,7 +1037,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         success: true,
         data: {
           poll_only: true,
-          note: "wait_workers is poll-only (no barrier). Avoid repeated model polling. Before an ordinary final reply, the parent runtime waits for active/queued workers with a deadline, collects results, and asks for a combined summary with recovery options. User stop/security/round-limit endings do not auto-resume. Check llm_loops and terminal states for progress.",
+          note: "wait_workers is poll-only (no barrier). Avoid repeated model polling. After a parent wait request, a pending owned handback batch, or an ordinary final reply, the parent runtime yields its model slot and waits for active/queued workers within one request deadline, collects results, and asks for a combined summary with recovery options. Repeated polls after that deadline end with an explicit still-running reply. User stop/security/round-limit endings do not auto-resume. Check llm_loops and terminal states for progress.",
           llm_loops: llm,
           ...(parentId ? { plan: (await import("../orchestrator/cooperation-plan")).cooperationPlanSnapshot(threadManager, String(parentId), await buildIsThreadLlmActive()) } : {}),
           intents_reaped: intentsReaped,

@@ -44,6 +44,8 @@ export async function superviseFleet(opts: {
   signal?: AbortSignal
   onWait?: () => void
   timeoutMs?: number
+  /** Internal chat-scoped cutoff; repeated polls never renew the wait budget. */
+  deadlineMs?: number
   pollMs?: number
   reportedTimeouts?: Set<string>
 }): Promise<Array<Record<string, unknown>>> {
@@ -52,7 +54,7 @@ export async function superviseFleet(opts: {
   if (!runId || parent?.agent_role === "worker") return []
   const epochs = { ...parent.fleet_handback_epochs }
   const result: Array<Record<string, unknown>> = []
-  const deadline = Date.now() + (opts.timeoutMs ?? FLEET_WAIT_MS)
+  const deadline = opts.deadlineMs ?? Date.now() + (opts.timeoutMs ?? FLEET_WAIT_MS)
   let waiting = false
   while (true) {
     if (opts.signal?.aborted || opts.tm.get(opts.parentId)?.paused ||
@@ -65,10 +67,11 @@ export async function superviseFleet(opts: {
     for (const w of workers) {
       // A live/queued newer run always wins over the last completed run stamp.
       if (opts.isActive(w.id) && !w.paused) {
-        if (opts.reportedTimeouts?.has(w.id)) continue
+        const timeoutKey = `${w.id}:${fleetWorkerEpoch(w)}`
+        if (opts.reportedTimeouts?.has(timeoutKey)) continue
         if (Date.now() < deadline) { pending = true; continue }
         result.push({ worker_id: w.id, status: "waiting_timeout", recovery: fleetRecovery("waiting_timeout") })
-        opts.reportedTimeouts?.add(w.id)
+        opts.reportedTimeouts?.add(timeoutKey)
         continue
       }
       const epoch = fleetWorkerEpoch(w)

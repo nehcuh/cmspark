@@ -1544,6 +1544,8 @@ async function dispatchMessage(
         try {
           const { onLoopRunFinished } = await import("./loop/loop-kernel")
           const { listWorkers } = await import("./orchestrator/spawn")
+          const { buildIsThreadLlmActive } = await import("./tool/companion-dispatch")
+          const isWorkerActive = await buildIsThreadLlmActive()
           onLoopRunFinished({
             threadManager: services.threadManager,
             threadId: rest.thread_id,
@@ -1553,7 +1555,7 @@ async function dispatchMessage(
               const t = services.threadManager.get(rest.thread_id)
               if (!t?.orchestrator_run_id) return false
               return listWorkers(services.threadManager, t.orchestrator_run_id).some(
-                (w: any) => w?.id && w.id !== rest.thread_id && abortControllers.has(w.id),
+                (w: any) => w?.id && w.parent_thread_id === rest.thread_id && isWorkerActive(w.id),
               )
             },
             sendToExtension: session.sendToExtension,
