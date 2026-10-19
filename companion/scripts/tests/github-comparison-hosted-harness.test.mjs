@@ -459,3 +459,96 @@ async function actualCrossDocument464(){
  const result={kind:'ACTUAL_SOURCE_INERT_CROSS_DOCUMENT_SCHEDULE',createdCallbackBeforeLoad:state.createdBeforeLoad,initialCreateURLWasPage:state.createURL===PAGE,updateCalls:state.updates,contextDestroyed:state.contextDestroyed,pageEvaluations:state.pageEvaluations,workerEvaluations:state.workerEvaluations,navigationCompleted:c.navCompleted===true,actualTailCode:code,actualStage:c.output.stage,actualCases:c.output.cases,actualPassed:c.output.passed,pendingCDP:page.pending.size+workerClient.pending.size,nativeBrowser:false};assert.equal(result.navigationCompleted,true,'created Tab must not let pending cross-document navigation destroy the ready promise');assert.equal(result.pendingCDP,0);assert.equal(result.actualPassed,false,'partial phase producer is never a whole hosted pass');return result;
 }
 test('actual worker load barrier prevents a permitted cross-document context-destroyed navigation failure',async()=>{const out=await actualCrossDocument464();assert.equal(out.contextDestroyed,false);assert.equal(out.initialCreateURLWasPage,false);assert.equal(out.updateCalls,1);assert.equal(out.actualCases,2)})
+
+
+// Diagnostics-only controls execute actual harness/worker source in inert realms.
+function actualOperationProjection464(){
+ const start=harness.indexOf('const STAGES ='),end=harness.indexOf('\nfunction deferred()');assert.ok(start>0&&end>start)
+ const c={};vm.createContext(c);vm.runInContext(harness.slice(start,end).replace('export function','function')+'\nthis.api={receipt,project:acceptanceOperationProjection464,operations:[...ACCEPTANCE_OPERATIONS]}',c);return c.api
+}
+test('all fixed acceptance operations project as closed own-data scalars without readiness authority',()=>{
+ const api=actualOperationProjection464();assert.equal(api.operations.length,54)
+ for(const acceptanceOperation of api.operations){const r=receipt('WORKER',false,0,{acceptanceOperation});assert.equal(r.acceptanceOperation,acceptanceOperation);assert.equal(r.passed,false);assert.equal(r.reviewReady,false);assert.equal(r.cases,0)}
+ for(const value of ['PRIVATE_BODY_PATH',undefined,null,0,NaN,{},[],new String('WORKER_API'),'WORKER_API\nPRIVATE'])assert.equal(receipt('WORKER',false,0,{acceptanceOperation:value}).acceptanceOperation,undefined)
+ assert.equal(receipt('WORKER',false,0,Object.create({acceptanceOperation:'WORKER_API'})).acceptanceOperation,undefined)
+})
+test('actual receipt skips the new getter before legacy metadata enumeration and preserves old values',()=>{
+ let operationGets=0,nodeGets=0
+ const runtime={get acceptanceOperation(){operationGets++;throw Error('PRIVATE_GETTER')},get node(){nodeGets++;return'22.23.2'},image:'20261012.322.1',unrelated:'PRIVATE_DATA'}
+ const out=receipt('WORKER',false,0,runtime);assert.equal(operationGets,0);assert.equal(nodeGets,1);assert.equal(out.node,'22.23.2');assert.equal(out.image,'20261012.322.1');assert.equal(out.acceptanceOperation,undefined);assert.equal(JSON.stringify(out).includes('PRIVATE'),false)
+})
+test('operation descriptor failures and hostile values are omitted without invoking their contents',()=>{
+ const api=actualOperationProjection464();let gets=0
+ const runtime=new Proxy({acceptanceOperation:'WORKER_API'},{getOwnPropertyDescriptor(){throw Error('PRIVATE_DESCRIPTOR')},get(){gets++;throw Error('PRIVATE_GET')}})
+ assert.equal(api.project(runtime),undefined);assert.equal(gets,0)
+ const value=Object.defineProperty({},'toString',{get(){gets++;throw Error('PRIVATE_COERCION')}})
+ assert.equal(receipt('WORKER',false,0,{acceptanceOperation:value}).acceptanceOperation,undefined);assert.equal(gets,0)
+ // Legacy runtime enumeration can still throw for a hostile whole Proxy; no new blanket claim.
+ assert.throws(()=>receipt('WORKER',false,0,runtime));assert.equal(JSON.stringify(receipt('WORKER',false,0,{})).includes('PRIVATE'),false)
+})
+async function actualOperationWorker464(mode){
+ let now=0,created=0,targetCalls=0
+ const chrome={runtime:{onInstalled:{addListener(){}}},tabs:{async create(options){created++;assert.equal(options.url,'about:blank');if(mode==='CREATE')throw Error('PRIVATE_CREATE');return{id:41}}},debugger:{async getTargets(){targetCalls++;return mode==='TARGET'?[]:[{id:'OWNED-TARGET',tabId:41,type:'page',url:'about:blank'}]}}}
+ const wc={BrowserBridge:class{},PageSanitizer:class{},WSClient:class{},chrome};vm.createContext(wc)
+ vm.runInContext(ts.transpileModule(worker.replace(/^import .+$/gm,''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText,wc)
+ const realWorker={async evaluate(expression){if(mode==='API'&&expression.startsWith('typeof'))return'undefined';return await vm.runInContext(expression,wc)}}
+ const c={stage:'CHROMIUM',cases:0,runtime:{},chromiumStartup:undefined,xvfbStartup:undefined,Date:{now:()=>now},Math,URL,Number,assert,endpoint:'http://127.0.0.1:1',AbortSignal:{timeout(){return{}}},remaining:()=>120000,profileRead:false,cleanupOkay:true,active:new Set(),parts:['1'],WebSocket:class{},
+  async fetch(){if(mode==='FETCH')throw Error('PRIVATE_FETCH');return{async json(){if(mode==='PARSE')throw Error('PRIVATE_PARSE');return mode==='MISSING'?[]:[{type:'service_worker',url:'chrome-extension://'+'a'.repeat(32)+'/worker.js',webSocketDebuggerUrl:'ws://127.0.0.1/OWNED'}]}}},
+  setTimeout(f){now+=10001;f()},CDP:{async connect(){if(mode==='CONNECT')throw Error('PRIVATE_CONNECT');return realWorker}},console:{log(text){c.out=JSON.parse(text)}}}
+ vm.createContext(c);vm.runInContext(harness.slice(harness.indexOf('const STAGES ='),harness.indexOf('\nfunction deferred()')).replace('export function','function'),c)
+ const a=harness.indexOf("    stage='WORKER'"),b=harness.indexOf('    const secret=',a),ca=harness.indexOf('  } catch { /* Nothing'),cb=harness.indexOf('\n  finally {',ca),tail=harness.slice(harness.indexOf('  const out=receipt(stage'),harness.indexOf('\n}\nif(process.argv'))
+ const code=await vm.runInContext('async function phase(){try{'+harness.slice(a,b)+harness.slice(ca,cb)+'\n'+tail+'};phase()',c)
+ return{out:c.out,code,created,targetCalls}
+}
+test('actual WORKER and catch distinguish seven original same-DTO refusal sites without reflecting errors',async()=>{
+ const results=[]
+ for(const [mode,operation]of [['FETCH','WORKER_DISCOVER_FETCH'],['PARSE','WORKER_DISCOVER_PARSE'],['MISSING','WORKER_FOUND'],['CONNECT','WORKER_CONNECT'],['API','WORKER_API'],['CREATE','WORKER_CREATE'],['TARGET','WORKER_TARGET']]){
+  const r=await actualOperationWorker464(mode);assert.equal(r.code,1);assert.equal(r.out.stage,'WORKER');assert.equal(r.out.cases,0);assert.equal(r.out.passed,false);assert.equal(r.out.acceptanceOperation,operation);assert.equal(JSON.stringify(r.out).includes('PRIVATE'),false);results.push(r.out.acceptanceOperation)
+ }
+ assert.equal(new Set(results).size,7)
+})
+test('actual AST operation writes use only the complete fixed catalog; cleanup never updates it',()=>{
+ const source=ts.createSourceFile('actual-hosted.mjs',harness,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),written=new Set()
+ const add=node=>{if(ts.isStringLiteral(node))written.add(node.text);else if(ts.isConditionalExpression(node)){add(node.whenTrue);add(node.whenFalse)}else assert.fail('operation assignment must be closed literal')}
+ function visit(node){if(ts.isVariableDeclaration(node)&&node.name.getText(source)==='operation')add(node.initializer);if(ts.isBinaryExpression(node)&&node.operatorToken.kind===ts.SyntaxKind.EqualsToken&&ts.isIdentifier(node.left)&&node.left.text==='operation')add(node.right);ts.forEachChild(node,visit)}visit(source)
+ assert.deepEqual([...written].sort(),Array.from(actualOperationProjection464().operations).sort())
+ const a=harness.indexOf('  finally {',harness.indexOf('export async function main()')),b=harness.indexOf('\n  const out=receipt(stage',a)
+ const cleanup=ts.createSourceFile('cleanup.js','async function actual(){'+harness.slice(a+'  finally {'.length,b),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS)
+ let writes=0;function check(node){if(ts.isBinaryExpression(node)&&node.operatorToken.kind===ts.SyntaxKind.EqualsToken&&node.left.getText(cleanup).includes('operation'))writes++;ts.forEachChild(node,check)}check(cleanup);assert.equal(writes,0)
+})
+async function actualOperationRestore464(mode){
+ const a=mode==='moved'?harness.indexOf("    operation='NEG_MOVED_SETUP'"):harness.indexOf("    for(const kind of ['folded','loading'])"),b=mode==='moved'?harness.indexOf("    operation='COMPLETE'",a):harness.indexOf("    operation='NEG_MOVED_SETUP'",a)
+ assert.ok(a>0&&b>a);let dispatch=0,opened=0,closed=0,evaluated=0
+ const c={stage:'NEGATIVES',cases:0,runtime:{},chromiumStartup:undefined,xvfbStartup:undefined,profileRead:false,cleanupOkay:true,active:new Set(),PAGE,assert,env:{CMSPARK_DATA_DIR:'/INERT_ONLY'},scope:{},input:{},
+ async openPage(){opened++;return{async evaluate(){evaluated++;return true},close(){closed++}}},async getWire(){dispatch++;if(mode!=='loading'||dispatch===2)throw Error('PRIVATE_PRIMARY');return{success:true,data:{comparison_refusal:true}}},captureLocalPageResult(){return{data:{}}},service:{create(){throw Error('CAPTURE_REQUIRED')}},console:{log(text){c.out=JSON.parse(text)}}}
+ vm.createContext(c);vm.runInContext(harness.slice(harness.indexOf('const STAGES ='),harness.indexOf('\nfunction deferred()')).replace('export function','function'),c)
+ const ca=harness.indexOf('  } catch { /* Nothing'),cb=harness.indexOf('\n  finally {',ca),tail=harness.slice(harness.indexOf('  const out=receipt(stage'),harness.indexOf('\n}\nif(process.argv'))
+ const code=await vm.runInContext('async function phase(){let page;try{'+harness.slice(a,b)+harness.slice(ca,cb)+'\n'+tail+'};phase()',c)
+ return{out:c.out,code,dispatch,opened,closed,evaluated}
+}
+test('actual negative finally restoration remains last-entered and never disguises failure as first-failure evidence',async()=>{
+ for(const [mode,operation,dispatch,opened]of [['folded','NEG_FOLDED_RESTORE',1,2],['loading','NEG_LOADING_RESTORE',2,4],['moved','NEG_MOVED_RESTORE',1,2]]){
+  const r=await actualOperationRestore464(mode);assert.equal(r.out.acceptanceOperation,operation);assert.equal(r.out.passed,false);assert.equal(r.code,1);assert.equal(r.dispatch,dispatch);assert.equal(r.opened,opened);assert.equal(r.closed,opened);assert.equal(r.evaluated,opened);assert.equal(JSON.stringify(r.out).includes('PRIVATE_PRIMARY'),false)
+ }
+})
+async function actualOperationCleanup464(late){
+ const a=harness.indexOf('  finally {',harness.indexOf('export async function main()')),b=harness.indexOf('\n}',a),part=harness.slice(a+'  finally {'.length,b),split=part.indexOf('\n  }\n  const out=')
+ const helpers=harness.slice(harness.indexOf('function cleanupRemaining('),harness.indexOf('export async function main()'))
+ let deleted=0,cleared=0
+ const c={stage:'COMPLETE',cases:11,runtime:{acceptanceOperation:'COMPLETE'},operation:'COMPLETE',profileRead:true,cleanupOkay:true,forward:undefined,esbuild:undefined,buildTask:undefined,buildSettled:true,server:undefined,browser:undefined,chromium:undefined,xvfb:undefined,owned:'/INERT_ONLY',sockets:new Set(),active:new Set(),deadline:120000,expired:false,timer:{},Date:{now:()=>late?120000:1000},fs:{rmSync(){deleted++}},clearTimeout(){cleared++},refusal(){throw Error('INERT_DEADLINE')},console:{log(text){c.out=JSON.parse(text)}}}
+ vm.createContext(c);vm.runInContext(harness.slice(harness.indexOf('const STAGES ='),harness.indexOf('\nfunction deferred()')).replace('export function','function'),c)
+ const code=await vm.runInContext(helpers+'\nasync function actual(){'+part.slice(0,split)+part.slice(split+'\n  }'.length)+'};actual()',c)
+ return{out:c.out,code,operation:c.operation,deleted,cleared}
+}
+test('actual outer cleanup preserves operation snapshot and original pass/fail and directory retention decisions',async()=>{
+ const fast=await actualOperationCleanup464(false);assert.equal(fast.out.passed,true);assert.equal(fast.code,0);assert.equal(fast.deleted,1);assert.equal(fast.out.acceptanceOperation,'COMPLETE')
+ const late=await actualOperationCleanup464(true);assert.equal(late.out.passed,false);assert.equal(late.out.stage,'CLEANUP');assert.equal(late.code,1);assert.equal(late.deleted,0);assert.equal(late.out.acceptanceOperation,'COMPLETE')
+ assert.equal(fast.operation,'COMPLETE');assert.equal(late.operation,'COMPLETE');assert.equal(fast.cleared,1);assert.equal(late.cleared,1)
+})
+test('actual main preflight catch attaches finite operation without process or owned filesystem activity',async()=>{
+ let printed,effects=0;const forbidden=()=>{effects++;throw Error('DENIED')}
+ const a=harness.indexOf('async function stopped('),b=harness.indexOf('if(process.argv[1]')
+ const c={process:{env:{},platform:'linux'},BOUNDS,preflight,receipt,clearTimeout,console:{log:s=>{printed=JSON.parse(s)}},spawn:forbidden,fs:{mkdtempSync:forbidden}}
+ vm.createContext(c);vm.runInContext(harness.slice(a,b).replace('export async function','async function'),c)
+ assert.equal(await c.main(),1);assert.equal(printed.acceptanceOperation,'PREFLIGHT');assert.equal(printed.passed,false);assert.equal(effects,0)
+})

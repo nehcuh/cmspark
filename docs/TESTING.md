@@ -231,3 +231,10 @@ The hosted harness emits optional `xvfbStartup` using the existing capped child 
 托管验收的 fixture worker 仅创建一个 `about:blank` tab。在同一 owned tab 上，先安装 `chrome.tabs.onUpdated` / `onRemoved` 监听再调用一次 `tabs.update` 到固定双 SHA 比较页；只有 exact tab、exact URL、`status=complete` 事件与更新 API 成功两项均成立，才进入原 DOM-ready 检查。API 返回或事件单独成立均不能放行；拒绝、移除、同步异常、超时及迟到结果会清理该次监听与 timer，不重试。
 
 加载、CDP 连接与原 diff 异步片段 MutationObserver 检查共享一个 60 秒绝对导航预算，并受原 120 秒总预算约束；不将两个阶段各算 60 秒。原鉴权 5 秒、工具 15 秒、页面选择器、完整文件/hunk/line 验收和全部 OS 门禁保留。既有 CPU 入口 `companion/scripts/tests/github-comparison-hosted-harness.test.mjs` 运行真实 worker / CDP / NAVIGATION 源码在惰性事件与虚拟时钟下的控制，包含允许的跨文档 context-destroyed 顺序；它们不启动 Chrome，也不证明已知 hosted 失败的唯一原因。真实托管 Chromium 仍为交付硬门，#464 整票仍为 Partial。
+
+
+### #464 acceptanceOperation 诊断边界
+
+`acceptanceOperation` 仅投影 harness 局部变量的固定 last-entered operation，覆盖入口/启动、WORKER 发现/连接/API/创建/目标核验、AUTH、导航、正控与全部负控的既有关键 await/assert。只在成功结束或现有 catch 中加入 runtime 回执，外层 cleanup 不更新它；runtime 重赋值不会丢失局部操作。原所有调用、等待、120s/60s/5s/15s、权限、通过条件与清理不变。
+
+它不是 first-failure 或根因：folded/loading/moved 的原 finally 恢复步骤可能成为最后操作，即使原失败发生更早。只接受 own-data 闭集字符串，继承值、getter、未知值或诊断 descriptor 异常不反射；旧 runtime 枚举本身若因恶意 Proxy 而抛出，仍不声称整个 receipt 对 Proxy 普遍安全。CPU 惰性控制不证明真实浏览器通过，b567 WORKER/cases0 的具体失败位置仍 UNKNOWN；当时 AUTH/NAV 未执行。#464 仍为 Partial，0.6.14 仍是开发版本。

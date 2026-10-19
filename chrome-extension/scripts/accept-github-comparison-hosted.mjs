@@ -46,6 +46,23 @@ export function compareProduced(actual, expected, parse) {
 }
 // Only finite constants are ever emitted, including on assertion/CDP/network failures.
 const STAGES = new Set(['PREFLIGHT', 'GIT', 'BUNDLE', 'XVFB', 'CHROMIUM', 'WORKER', 'AUTH', 'NAVIGATION', 'POSITIVE', 'NEGATIVES', 'CLEANUP', 'COMPLETE'])
+// Last-entered test operation only, never a failure cause or pass/authority input.
+const ACCEPTANCE_OPERATIONS = new Set([
+  'PREFLIGHT','GIT_EXPECTATION','BUNDLE','XVFB_READY','CHROMIUM_IDENTITY','CHROMIUM_PORT','CHROMIUM_CONNECT',
+  'WORKER_DISCOVER_FETCH','WORKER_DISCOVER_PARSE','WORKER_FOUND','WORKER_CONNECT','WORKER_API','WORKER_CREATE','WORKER_TAB_ID','WORKER_TARGET','WORKER_TARGET_ID',
+  'AUTH_LISTEN','AUTH_BAD_PROOF','AUTH_PREAUTH_RESULT','AUTH_CONFIGURE','AUTH_CONNECTED',
+  'NAV_LOAD','NAV_CONNECT','NAV_DOM_READY',
+  'POSITIVE_DISPATCH','POSITIVE_PROVENANCE','POSITIVE_COMPARE','POSITIVE_CAPTURE','POSITIVE_CREATE','POSITIVE_RELOAD','POSITIVE_FILES',
+  'NEG_IDENTITY','NEG_OWNER','NEG_MANUAL','NEG_FOREIGN_AUTH','NEG_FOREIGN_PENDING','NEG_FOREIGN_SETTLE','NEG_REPLAY','NEG_FOLDED_SETUP','NEG_FOLDED_DISPATCH','NEG_FOLDED_CAPTURE','NEG_FOLDED_REFUSE','NEG_FOLDED_RESTORE','NEG_LOADING_SETUP','NEG_LOADING_DISPATCH','NEG_LOADING_CAPTURE','NEG_LOADING_REFUSE','NEG_LOADING_RESTORE','NEG_MOVED_SETUP','NEG_MOVED_DISPATCH','NEG_MOVED_PROVENANCE','NEG_MOVED_CAPTURE','NEG_MOVED_RESTORE',
+  'COMPLETE',
+])
+function acceptanceOperationProjection464(runtime) {
+  try {
+    const d=Object.getOwnPropertyDescriptor(runtime,'acceptanceOperation')
+    return d&&Object.hasOwn(d,'value')&&typeof d.value==='string'&&ACCEPTANCE_OPERATIONS.has(d.value)?d.value:undefined
+  } catch { return undefined }
+}
+
 function startupProjection464(value) {
   if (!value || typeof value !== 'object') return undefined
   const keys=['step','spawnError','exitObserved','exitCode','signal','sandboxUnavailable','namespaceDenied','displayUnavailable','stderrTruncated','stderrRetainedBytes','devToolsListening','portFileRead','stderrSiteMask','stderrSeverityMask'], out={}
@@ -63,11 +80,13 @@ function startupProjection464(value) {
 export function receipt(stage, passed, cases, runtime = {}) {
   if (!STAGES.has(stage) || typeof passed !== 'boolean' || !Number.isSafeInteger(cases) || cases < 0 || cases > 32) refusal('INVALID_RECEIPT')
   const startup=startupProjection464(runtime.chromiumStartup), xvfbStartup=startupProjection464(runtime.xvfbStartup)
+  const acceptanceOperation=acceptanceOperationProjection464(runtime)
   return { schema: 1, stage, passed, cases, browserAcceptance: passed ? 'REAL_HOSTED_CHROMIUM' : 'NOT_PASSED',
     authBoundary: 'FIXTURE_PRIMITIVES_AND_PRODUCTION_PENDING', fullStartServer: false, reviewReady: false,
     ...(startup?{chromiumStartup:startup}:{}),
     ...(xvfbStartup?{xvfbStartup}:{}),
-    ...Object.fromEntries(Object.entries(runtime).filter(([k,v]) => ['node', 'chromium', 'image', 'source', 'base', 'head', 'expectedDiffSHA256', 'producedDiffSHA256', 'fileCount', 'additions', 'deletions'].includes(k) &&
+    ...(acceptanceOperation?{acceptanceOperation}:{}),
+    ...Object.fromEntries(Object.keys(runtime).filter(k=>k!=='acceptanceOperation').map(k=>[k,runtime[k]]).filter(([k,v]) => ['node', 'chromium', 'image', 'source', 'base', 'head', 'expectedDiffSHA256', 'producedDiffSHA256', 'fileCount', 'additions', 'deletions'].includes(k) &&
       (typeof v === 'string' && v.length <= 200 && /^[A-Za-z0-9 ._:/+-]+$/.test(v) || typeof v === 'number' && Number.isSafeInteger(v) && v >= 0))) }
 }
 function deferred() { let resolve, reject; const promise = new Promise((a,b) => { resolve=a;reject=b }); return { promise, resolve, reject } }
@@ -150,6 +169,7 @@ async function stopped(child, deadline) {
 export async function main() {
   const envInput=process.env, platform=process.platform
   let stage='PREFLIGHT', cases=0, owned, chromium, chromiumStartup, xvfb, xvfbStartup, server, browser, peer, timer, esbuild, forward, buildTask, buildSettled=true, expired=false, profileRead=false, runtime={}, cleanupOkay=true
+  let operation='PREFLIGHT'
   const active = new Set(), sockets = new Set()
   const deadline=Date.now()+BOUNDS.outer
   const remaining=()=>{const n=deadline-Date.now();if(n<=0||expired)refusal('OUTER_TIMEOUT');return n}
@@ -177,6 +197,7 @@ export async function main() {
     assert.equal(auth.AUTH_TIMEOUT_MS,5000);assert.equal(forward.TOOL_EXECUTION_TIMEOUT_MS,15000)
     timer=setTimeout(() => { expired=true;for(const c of active)c.abort();for (const s of sockets) s.terminate();for(const c of [chromium,xvfb]) c?.kill('SIGTERM') },remaining())
     stage='GIT'
+    operation='GIT_EXPECTATION'
     const gitEnv={...env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_OPTIONAL_LOCKS:'0'}
     const git=(...args)=>execFileSync('/usr/bin/git',['-C',REPO,...args],{env:gitEnv,encoding:'utf8',timeout:5000,maxBuffer:1024*1024,stdio:['ignore','pipe','ignore']})
     assert.equal(git('rev-parse',BASE+'^{commit}').trim(),BASE);assert.equal(git('rev-parse',HEAD+'^{commit}').trim(),HEAD)
@@ -184,6 +205,7 @@ export async function main() {
     const expectedFiles=parseUnifiedDiff(expected);assert.equal(expectedFiles.length,4)
     runtime={node:process.versions.node,image:imageVersion,source:git('rev-parse','HEAD').trim(),base:BASE,head:HEAD,expectedDiffSHA256:hash(expected)}
     stage='BUNDLE'
+    operation='BUNDLE'
     const extension=path.join(owned,'extension');fs.mkdirSync(extension)
     buildSettled=false
     buildTask=esbuild.build({entryPoints:[path.join(HERE,'fixtures/github-comparison-hosted-worker.ts')],bundle:true,platform:'browser',format:'iife',outfile:path.join(extension,'worker.js'),logLevel:'silent'})
@@ -192,6 +214,7 @@ export async function main() {
     fs.writeFileSync(path.join(extension,'manifest.json'),JSON.stringify({manifest_version:3,name:'Owned comparison acceptance',version:'1.0.0',
       background:{service_worker:'worker.js'},permissions:['tabs','debugger','scripting','storage','alarms'],host_permissions:['https://github.com/*','http://127.0.0.1/*']}))
     stage='XVFB';remaining()
+    operation='XVFB_READY'
     xvfbStartup=observeChromiumStartup464()
     xvfb=spawn('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],{env,stdio:['ignore','ignore','pipe','pipe']})
     xvfbStartup.track(xvfb);xvfbStartup.step('DISPLAY_FD')
@@ -199,6 +222,7 @@ export async function main() {
     const display=await limit(displayReady.promise,5000,'XVFB_START_TIMEOUT')
     xvfbStartup.step('DISPLAY_READY');runtime.xvfbStartup=xvfbStartup.snapshot()
     stage='CHROMIUM'
+    operation='CHROMIUM_IDENTITY'
     chromiumStartup=observeChromiumStartup464()
     const binary=['/usr/bin/chromium','/usr/bin/chromium-browser'].find(x=>{try{return fs.statSync(x).isFile()}catch{return false}})
     if(!binary)refusal('CHROMIUM_MISSING')
@@ -206,30 +230,39 @@ export async function main() {
     if(!/^Chromium [0-9.]+(?: [A-Za-z0-9 ._-]+)?$/.test(version))refusal('CHROMIUM_IDENTITY_REFUSED')
     runtime.chromium=version
     remaining();chromium=spawn(binary,chromeArgs(owned,extension),{env:childEnvironment(owned,env,display),stdio:['ignore','ignore','pipe']})
+    operation='CHROMIUM_PORT'
     chromiumStartup.track(chromium);chromiumStartup.step('PORT_FILE')
     const portText=await waitForFile(path.join(owned,'profile/DevToolsActivePort'),10000,value=>chromiumStartup.portFile(value)), parts=portText.trim().split('\n')
     chromiumStartup.step('PORT_PARSE')
     if(parts.length!==2||!/^\d{1,5}$/.test(parts[0])||!/^\/devtools\/browser\/[a-f0-9-]+$/.test(parts[1]))refusal('CDP_IDENTITY_REFUSED')
     const endpoint='http://127.0.0.1:'+parts[0]
+    operation='CHROMIUM_CONNECT'
     chromiumStartup.step('CDP_CONNECT')
     browser=await CDP.connect(WebSocket,'ws://127.0.0.1:'+parts[0]+parts[1]);active.add(browser)
     chromiumStartup.step('CONNECTED');runtime.chromiumStartup=chromiumStartup.snapshot()
     stage='WORKER'
     let workerInfo
     const end=Date.now()+10000
-    while(Date.now()<end) { const r=await fetch(endpoint+'/json/list',{signal:AbortSignal.timeout(Math.min(5000,remaining()))});const targets=await r.json();workerInfo=targets.find(x=>x.type==='service_worker'&&/^chrome-extension:\/\/[a-p]{32}\/worker.js$/.test(x.url));if(workerInfo)break;await new Promise(r=>setTimeout(r,50)) }
+    while(Date.now()<end) { operation='WORKER_DISCOVER_FETCH';const r=await fetch(endpoint+'/json/list',{signal:AbortSignal.timeout(Math.min(5000,remaining()))});operation='WORKER_DISCOVER_PARSE';const targets=await r.json();workerInfo=targets.find(x=>x.type==='service_worker'&&/^chrome-extension:\/\/[a-p]{32}\/worker.js$/.test(x.url));if(workerInfo)break;await new Promise(r=>setTimeout(r,50)) }
+    operation='WORKER_FOUND'
     if(!workerInfo)refusal('OWNED_WORKER_MISSING')
     const origin=new URL(workerInfo.url).origin==='null'?'chrome-extension://'+workerInfo.url.split('/')[2]:new URL(workerInfo.url).origin
+    operation='WORKER_CONNECT'
     const worker=await CDP.connect(WebSocket,workerInfo.webSocketDebuggerUrl);active.add(worker)
+    operation='WORKER_API'
     assert.equal(await worker.evaluate('typeof globalThis.cmspark464.configure'), 'function')
-    const tabId=await worker.evaluate('globalThis.cmspark464.createTab()',true);assert.ok(Number.isSafeInteger(tabId))
+    operation='WORKER_CREATE'
+    const tabId=await worker.evaluate('globalThis.cmspark464.createTab()',true);operation='WORKER_TAB_ID';assert.ok(Number.isSafeInteger(tabId))
     // Chrome's actual debugger target/tab mapping retains the exact created tab,
     // including its initial about:blank. URL selection would race navigation.
+    operation='WORKER_TARGET'
     const targetId=await worker.evaluate('globalThis.cmspark464.pageTarget()',true)
+    operation='WORKER_TARGET_ID'
     if(typeof targetId!=='string'||!/^[A-Za-z0-9-]+$/.test(targetId))refusal('OWNED_PAGE_TARGET_MISSING')
     const openPage=async(timeout=5000)=>{const page=await CDP.connect(WebSocket,`ws://127.0.0.1:${parts[0]}/devtools/page/${targetId}`,timeout);active.add(page);return page}
     stage='AUTH'
     const secret=crypto.randomBytes(32).toString('hex'), authenticated=new Set(), connected=deferred()
+    operation='AUTH_LISTEN'
     server=new WebSocketServer({host:'127.0.0.1',port:0,maxPayload:1024*1024});await limit(once(server,'listening'),remaining(),'SERVER_LISTEN')
     server.on('connection',(ws,req)=>{
       sockets.add(ws);ws.on('error',()=>ws.terminate());const nonce=auth.issueChallenge(), timeout=setTimeout(()=>ws.terminate(),auth.AUTH_TIMEOUT_MS)
@@ -247,64 +280,91 @@ export async function main() {
     })
     const serverPort=server.address().port
     // Negative proof reaches the same actual verifier but cannot become the dispatch peer.
+    operation='AUTH_BAD_PROOF'
     const bad=new WebSocket('ws://127.0.0.1:'+serverPort,{origin});bad.on('error',()=>bad.terminate());bad.on('message',()=>bad.send(JSON.stringify({type:'auth.handshake',proof:'0'.repeat(64),protocol_version:1})))
     await limit(once(bad,'close'),5000,'BAD_PROOF_ACCEPTED');assert.equal(peer,undefined);cases++
+    operation='AUTH_PREAUTH_RESULT'
     const early=new WebSocket('ws://127.0.0.1:'+serverPort,{origin});early.on('error',()=>early.terminate())
     early.on('message',()=>early.send(JSON.stringify({type:'tool.result',tool_call_id:'owned464-0',result:{success:true}})))
     await limit(once(early,'close'),5000,'PREAUTH_APP_ACCEPTED');assert.equal(peer,undefined);cases++
+    operation='AUTH_CONFIGURE'
     assert.equal(await worker.evaluate(`globalThis.cmspark464.configure(${serverPort},${JSON.stringify(secret)})`),true)
+    operation='AUTH_CONNECTED'
     await limit(connected.promise,5000,'AUTH_TIMEOUT')
     const getWire=async()=>{ remaining();const id='owned464-'+(++getWire.counter);return forward.dispatchToExtension(id,'get_page_text',{tabId},peer,{threadId:'owned-hosted464',tabId}) };getWire.counter=0
     stage='NAVIGATION'
+    operation='NAV_LOAD'
     const navigationDeadline=Date.now()+Math.min(BOUNDS.navigation,remaining())
     const navigationRemaining=()=>{const ms=Math.min(navigationDeadline-Date.now(),remaining());if(ms<=0)refusal('NAVIGATION_TIMEOUT');return ms}
     assert.equal(await worker.evaluate(`globalThis.cmspark464.navigateToPage(${navigationRemaining()})`,true,navigationRemaining()),true)
     navigationRemaining()
+    operation='NAV_CONNECT'
     let page=await openPage(navigationRemaining())
+    operation='NAV_DOM_READY'
     const ready=await page.evaluate(`new Promise(resolve=>{let done=false;const check=()=>{if(location.href!==${JSON.stringify(PAGE)})return;const b=document.getElementById('files_bucket'),t=document.getElementById('toc'),f=document.getElementById('files');if(document.readyState==='complete'&&b&&t&&f&&!b.querySelector('include-fragment')&&f.querySelectorAll('.file.js-file').length===4){done=true;o.disconnect();clearTimeout(timer);resolve(true)}};const o=new MutationObserver(check);o.observe(document,{childList:true,subtree:true,attributes:true});const timer=setTimeout(()=>{o.disconnect();resolve(false)},${navigationRemaining()});check()})`,true,navigationRemaining())
     navigationRemaining()
     assert.equal(ready,true);page.close();active.delete(page)
     stage='POSITIVE'
-    const wire=await getWire();assert.equal(wire.success,true);assert.equal(wire.data?.provenance?.channel,'cdp');assert.equal(wire.data?.provenance?.capture_status,'eligible')
+    operation='POSITIVE_DISPATCH'
+    const wire=await getWire();operation='POSITIVE_PROVENANCE';assert.equal(wire.success,true);assert.equal(wire.data?.provenance?.channel,'cdp');assert.equal(wire.data?.provenance?.capture_status,'eligible')
+    operation='POSITIVE_COMPARE'
     compareProduced(wire.data.codeComparison,expected,parseUnifiedDiff)
+    operation='POSITIVE_CAPTURE'
     const scope={kind:'chat',threadId:'owned-hosted464'}, captured=captureLocalPageResult(env.CMSPARK_DATA_DIR,scope,'positive','get_page_text',wire)
     assert.equal(captured.data.evidence_capture.capture_status,'captured');assert.equal(captured.data.codeComparison,undefined)
     const input={request_id:'positive',repository:'https://github.com/nehcuh/cmspark',base:BASE,head:HEAD,comparison_observation_id:captured.data.observation_id}
+    operation='POSITIVE_CREATE'
     const service=new CodeReviewService(env.CMSPARK_DATA_DIR,scope),view=service.create(input)
     assert.equal(view.adapter,'github_compare_two_dot.v1');assert.equal(view.coverage,'complete');assert.equal(view.identity_state,'host_comparison_verified');assert.equal(view.review_ready,false);assert.equal(view.untrusted,true)
+    operation='POSITIVE_RELOAD'
     assert.deepEqual(new CodeReviewService(env.CMSPARK_DATA_DIR,scope).read({review_id:view.review_id}),view)
+    operation='POSITIVE_FILES'
     assert.deepEqual(view.files,expectedFiles);cases++
     runtime={...runtime,producedDiffSHA256:hash(wire.data.codeComparison.diff_text),fileCount:4,additions:33,deletions:4}
     stage='NEGATIVES'
+    operation='NEG_IDENTITY'
     assert.throws(()=>service.create({...input,request_id:'wrong-base',base:'a'.repeat(40)}),/IDENTITY_MISMATCH/)
+    operation='NEG_OWNER'
     assert.throws(()=>new CodeReviewService(env.CMSPARK_DATA_DIR,{kind:'chat',threadId:'foreign'}).create(input),/CAPTURE_REQUIRED/);cases+=2
+    operation='NEG_MANUAL'
     const manual={review_id:view.review_id,repository:view.repository,base:view.base,head:view.head,diff_hash:view.diff_hash,status:'completed',summary:'Owned manual assessment',findings:[],reviewed_files:view.files.map(x=>x.new_path||x.old_path),mappings:[]}
     assert.equal(service.receive(manual).origin,'user_confirmed_external_assessment');assert.equal(service.read({review_id:view.review_id}).review_ready,false);cases++
     // A real foreign socket may replay real wire data; only originWs can settle.
+    operation='NEG_FOREIGN_AUTH'
     const foreign=new WebSocket('ws://127.0.0.1:'+serverPort,{origin});foreign.on('error',()=>foreign.terminate())
     const foreignAuthed=deferred();foreign.on('message',data=>{const m=JSON.parse(data.toString());if(m.type==='auth.challenge')foreign.send(JSON.stringify({type:'auth.handshake',protocol_version:1,proof:crypto.createHmac('sha256',secret).update(m.nonce).digest('hex')}));if(m.type==='auth.ok')foreignAuthed.resolve()})
     await limit(foreignAuthed.promise,5000,'FOREIGN_AUTH_TIMEOUT')
     const foreignServer=[...authenticated].find(x=>x!==peer);assert.ok(foreignServer)
+    operation='NEG_FOREIGN_PENDING'
     const nextId='owned464-'+(getWire.counter+1), actualPromise=getWire()
     forward.handleToolResult({tool_call_id:nextId,result:wire},foreignServer);assert.ok(forward.pendingToolCalls.has(nextId))
+    operation='NEG_FOREIGN_SETTLE'
     assert.equal((await actualPromise).success,true);assert.equal(forward.pendingToolCalls.has(nextId),false)
+    operation='NEG_REPLAY'
     forward.handleToolResult({tool_call_id:nextId,result:wire},peer);assert.equal(forward.pendingToolCalls.has(nextId),false);foreign.close();cases+=2
     for(const kind of ['folded','loading']){
+      operation=kind==='folded'?'NEG_FOLDED_SETUP':'NEG_LOADING_SETUP'
       page=await openPage()
       const changed=await page.evaluate(`(()=>{const key='__owned464Restore';if(window[key])return false;${kind==='folded'?`const n=document.querySelector('#files .file-header button[aria-label="Toggle diff contents"]');if(!n||n.getAttribute('aria-expanded')!=='true')return false;window[key]=()=>n.setAttribute('aria-expanded','true');n.setAttribute('aria-expanded','false');`:`const b=document.getElementById('files_bucket');if(!b||b.querySelector('include-fragment'))return false;const n=document.createElement('include-fragment');window[key]=()=>n.remove();b.append(n);`}return true})()`)
       assert.equal(changed,true);page.close();active.delete(page)
-      try{const refused=await getWire();assert.equal(refused.success,true);assert.equal(refused.data?.codeComparison,undefined);assert.ok(refused.data?.comparison_refusal)
+      try{operation=kind==='folded'?'NEG_FOLDED_DISPATCH':'NEG_LOADING_DISPATCH';const refused=await getWire();assert.equal(refused.success,true);assert.equal(refused.data?.codeComparison,undefined);assert.ok(refused.data?.comparison_refusal)
+        operation=kind==='folded'?'NEG_FOLDED_CAPTURE':'NEG_LOADING_CAPTURE'
         const c=captureLocalPageResult(env.CMSPARK_DATA_DIR,scope,kind,'get_page_text',refused)
+        operation=kind==='folded'?'NEG_FOLDED_REFUSE':'NEG_LOADING_REFUSE'
         assert.throws(()=>service.create({...input,request_id:kind,comparison_observation_id:c.data.observation_id||'00000000-0000-4000-8000-000000000000'}),/CAPTURE_REQUIRED/)
-      }finally{page=await openPage();assert.equal(await page.evaluate(`(()=>{const f=window.__owned464Restore;if(typeof f!=='function')return false;f();delete window.__owned464Restore;return true})()`),true);page.close();active.delete(page)}cases++
+      }finally{operation=kind==='folded'?'NEG_FOLDED_RESTORE':'NEG_LOADING_RESTORE';page=await openPage();assert.equal(await page.evaluate(`(()=>{const f=window.__owned464Restore;if(typeof f!=='function')return false;f();delete window.__owned464Restore;return true})()`),true);page.close();active.delete(page)}cases++
     }
+    operation='NEG_MOVED_SETUP'
     page=await openPage()
     assert.equal(await page.evaluate(`(()=>{if(Object.hasOwn(document.body,'innerText'))return false;const value=document.body.innerText;Object.defineProperty(document.body,'innerText',{configurable:true,get(){history.replaceState(null,'',${JSON.stringify(PAGE+'?owned464=changed')});return value}});return true})()`),true)
     page.close();active.delete(page)
-    try{const moved=await getWire();assert.equal(moved.data?.provenance?.capture_status,'TARGET_CHANGED');assert.equal(moved.data?.codeComparison,undefined);assert.equal(captureLocalPageResult(env.CMSPARK_DATA_DIR,scope,'moved','get_page_text',moved).data.evidence_capture.capture_status,'skipped')}
-    finally{page=await openPage();await page.evaluate(`delete document.body.innerText;history.replaceState(null,'',${JSON.stringify(PAGE)});true`);page.close();active.delete(page)}cases++
+    try{operation='NEG_MOVED_DISPATCH';const moved=await getWire();operation='NEG_MOVED_PROVENANCE';assert.equal(moved.data?.provenance?.capture_status,'TARGET_CHANGED');assert.equal(moved.data?.codeComparison,undefined);operation='NEG_MOVED_CAPTURE';assert.equal(captureLocalPageResult(env.CMSPARK_DATA_DIR,scope,'moved','get_page_text',moved).data.evidence_capture.capture_status,'skipped')}
+    finally{operation='NEG_MOVED_RESTORE';page=await openPage();await page.evaluate(`delete document.body.innerText;history.replaceState(null,'',${JSON.stringify(PAGE)});true`);page.close();active.delete(page)}cases++
+    operation='COMPLETE'
     remaining();profileRead=true;stage='COMPLETE'
+    runtime.acceptanceOperation=operation
   } catch { /* Nothing from an untrusted page/transport exception is reflected. */
+    runtime.acceptanceOperation=operation
     if(chromiumStartup)runtime.chromiumStartup=chromiumStartup.snapshot()
     if(xvfbStartup)runtime.xvfbStartup=xvfbStartup.snapshot()
   }
