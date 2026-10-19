@@ -83,7 +83,29 @@ $timer = Microsoft.PowerShell.Utility\New-Object System.Windows.Threading.Dispat
 $timer.Interval = [TimeSpan]::FromSeconds(45)
 $timer.Add_Tick({ $timer.Stop(); $win.Close() })
 $timer.Start()
+$script:rendered572 = $false
+$script:siblingPublishAttempted572 = $false
+function Publish-OwnedSiblingReady572 {
+  if ($Role -ne 'sibling' -or -not $script:rendered572 -or $script:siblingPublishAttempted572 -or [IO.File]::Exists($Ready)) { return }
+  $handle = ([Windows.Interop.WindowInteropHelper]::new($win)).Handle
+  $active572 = [bool]$win.IsActive
+  $foreground572 = [OwnedModesForeground572]::GetForegroundWindow().ToInt64()
+  if ($handle.ToInt64() -le 0 -or -not $active572 -or $foreground572 -ne $handle.ToInt64()) { return }
+  $script:siblingPublishAttempted572 = $true
+  $script:armed572 = $true
+  $proof = [ordered]@{ schema = 1; hwnd = $handle.ToInt64(); foreground = $foreground572; active = $active572; initialUnchanged = $true }
+  [IO.File]::WriteAllText($Ready + '.pending', ($proof | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress))
+  [IO.File]::Move($Ready + '.pending', $Ready)
+}
+$win.Add_Activated({ Publish-OwnedSiblingReady572 })
 $win.Add_ContentRendered({
+  if ($Role -eq 'sibling') {
+    if ($script:rendered572 -or [IO.File]::Exists($Ready)) { return }
+    $script:rendered572 = $true
+    [void]$win.Activate()
+    Publish-OwnedSiblingReady572
+    return
+  }
   if ([IO.File]::Exists($Ready)) { return }
   $handle = ([Windows.Interop.WindowInteropHelper]::new($win)).Handle
   $baseline = $true
@@ -92,7 +114,7 @@ $win.Add_ContentRendered({
     elseif ($Mode -eq 'select') { $baseline = $list.SelectedItem -ne $control }
     elseif ($Mode -eq 'toggle') { $baseline = $control.IsChecked -eq $false }
     elseif ($Mode -eq 'scroll') { $baseline = ($control.VerticalOffset -eq 0 -and $control.ScrollableHeight -gt 0) }
-  } else { [void]$win.Activate() }
+  }
   $script:armed572 = $true
   $proof = [ordered]@{ schema = 1; hwnd = $handle.ToInt64(); foreground = [OwnedModesForeground572]::GetForegroundWindow().ToInt64(); active = [bool]$win.IsActive; initialUnchanged = [bool]$baseline }
   [IO.File]::WriteAllText($Ready + '.pending', ($proof | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress))

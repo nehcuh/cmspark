@@ -90,7 +90,7 @@ test("#563 actual dispatcher missing/invalid token refuses before held busy slot
 })
 test("#563 only two busy grades join original intrinsic/default policy", () => {
  assert.equal(ERROR_CODE_LEVELS.get("SHELL_BUSY"), "recoverable"); assert.equal(ERROR_CODE_LEVELS.get("NETSEC_BUSY"), "recoverable")
- assert.equal(ERROR_CODE_LEVELS.size, 167); assert.equal(DEFAULT_NON_RECOVERABLE_CODES.length, 59)
+ assert.equal(ERROR_CODE_LEVELS.size, 168); assert.equal(DEFAULT_NON_RECOVERABLE_CODES.length, 59)
  for (const code of ["SHELL_SCOPE_DENIED", "NETSEC_SCOPE_DENIED", "SETTINGS_REQUIRED"]) assert.equal(ERROR_CODE_LEVELS.has(code), false)
  for (const code of ["SECURITY_TOKEN_INVALID", "NETSEC_TARGETS_DENIED", "GRANT_DENIED", "BOARD_TRUST_REJECTED"]) assert.equal(ERROR_CODE_LEVELS.get(code), "non_recoverable")
 })

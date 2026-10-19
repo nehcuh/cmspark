@@ -1004,6 +1004,8 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // #563: temporary single-flight denial feeds back; lock/auth/third-failure stop stay unchanged.
   ["SHELL_BUSY", "recoverable"],
   ["NETSEC_BUSY", "recoverable"],
+  // #730: the existing 30/60s injection window still refuses; only its feedback recovers.
+  ["RATE_LIMITED", "recoverable"],
   ["NETSEC_TARGETS_DENIED", "non_recoverable"], // #563 E1: finite allowlist/per-task target refusal; target text cannot change the hard grade.
   // ── security ──────────────────────────────────────────────────────────────
   // Cookie 信任域拦截：真实报文以 "Security Block: …" 开头，今天靠子串判 security。
