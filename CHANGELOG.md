@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #480 Windows 原生 metadata 验收将同一测试的 abort 同时绑定 metadata 与 closing 等待，超时取消立即进入原 owned-child 清理并继续等待真实退出；正常完成卸载监听。保留原20秒、退出0、认证／元数据／窗口断言与 surface 清理，不冒称已定位或修复 Windows 晚退出原因。
+
 - Windows 原生继承夹具仅对 sentinel 使用确切内核对象身份，先捕获旧数值槽再打开独占命名 Event 引用；无关 Event／管道占槽不冒称继承，真实继承及未知 API／比较／关闭失败仍严格拒绝。保留 V1、原 protected endpoint、bootstrap、20秒与清理；不宣称已证明历史 launch 失败根因。
 
 - #572 Windows 原生测试夹具仅在自有 sibling 已渲染、实际 IsActive 且前台 HWND 精确匹配后才原子发布 ready；Activate 请求本身不作成功证据。复用 ContentRendered/Activated 事件和原 45 秒边界，不加轮询、输入或前台权限；从未实际激活仍失败。LF/CRLF 源码回归不代表实际 Windows 已通过，也不判定旧原生失败的唯一原因。

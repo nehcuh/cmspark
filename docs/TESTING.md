@@ -255,3 +255,9 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 ### Windows 原生管道夹具的 JSON 就绪回执（#605）
 
 `cross-os-process-605.test.ts` 的 protocol fixture 用自有 `.pending` 文件的独占写入、关闭及 rename 发布完整 ready JSON。确定性 CPU 控制在实际写入开始时检查最终文件仍不可见，写入失败时不能宣布协议就绪；不通过增加等待、重试 JSON.parse 或捕获语法错误绕过断言。Windows CI 仍需真实验证双向管道、继承 cwd、ignored stdio 及进程清理。
+
+## #480 Windows closing 取消入口回归
+
+`desktop-native-windows-480.test.ts` 的原20秒 native callback 以同一 owned abort promise 覆盖 metadata race 与发送 `desktop.close` 后的 exit 等待；already-aborted 在 launch 前拒绝，finally 先卸载自己 listener，再执行原 retain／captured child terminate／真实 exit／WS与server close／settled。取消仍是失败，不能因 cleanup 完成变成 PASS。原退出0／HMAC通路／四元数据／native window／lease 断言不弱化，不加 timer/retry/等待额度。
+
+`desktop-native-close-lifetime-480.test.ts` 提取该真实整段 callback，使用明确惰性 network/auth/child/surface seam 覆盖 normal、metadata/closing abort、held exit、preaborted、launch/send throw 和 window 拒绝。它不是 Windows/WebView2/native 运行。main1dde deadline/closing 后 exit0 的实际原因仍 UNKNOWN；`childExited` 是 JS onExit 已送达，不独立证明此前 OS 进程仍活。精确新 head 仍须在原20秒下真实 Windows 自然完成；不要无变化重跑、延长时限或以纯CPU通过替代原生门禁。
