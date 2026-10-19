@@ -12,11 +12,28 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { ThreadManager } from "../src/threads/thread-manager"
+import ts from "typescript"
 
 const ENDED_AT = "2026-09-30T04:40:37.532Z"
 
 /** 每次 `new ThreadManager()` 都从磁盘 index 重新加载 —— 用它模拟 daemon 重启。 */
 const fresh = () => new ThreadManager()
+
+function assertSynchronousTerminalPersist(adapter: string) {
+  const source = ts.createSourceFile("adapter.ts", adapter, ts.ScriptTarget.Latest, true)
+  const chat = source.statements.find((s): s is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(s) && s.name?.text === "chatCreate")
+  assert.ok(chat?.body, "找不到实际 chatCreate 函数体")
+  const finalizers = chat.body.statements.filter(ts.isTryStatement)
+    .map(s => s.finallyBlock).filter((s): s is ts.Block => !!s)
+  assert.equal(finalizers.length, 1, "必须定位函数级 finally，不能误选前置检查或嵌套 helper")
+  const finalizer = finalizers[0].getText(source)
+  const gateAt = finalizer.indexOf("runTerminalEpochIsCurrent(threadId, runEpoch)")
+  const writeAt = finalizer.indexOf("last_run_terminal: runStats.terminal", gateAt)
+  assert.ok(gateAt >= 0 && writeAt > gateAt, "finally 写盘必须出现在 epoch 判断之后")
+  assert.equal(finalizer.slice(gateAt, writeAt).includes("await"), false,
+    "比较和 update 之间不能有 await，否则后任可以插进来")
+}
 
 test("#569 落盘 last_run_terminal/ended_at，新实例（模拟 daemon 重启）能读回", () => {
   const tm = fresh()
@@ -110,14 +127,7 @@ test("#569 落点在 adapter 的 chatCreate finally —— 唯一覆盖全部 ru
   const claimAt = code.indexOf("claimRunTerminalEpoch(threadId)")
   const awaitAt = code.indexOf("await ")
   assert.ok(claimAt >= 0 && awaitAt > claimAt, "epoch 必须在 chatCreate 的第一个 await 之前领走")
-  const gateAt = adapter.indexOf("runTerminalEpochIsCurrent(threadId, runEpoch)")
-  const writeAt = adapter.indexOf("last_run_terminal: runStats.terminal", gateAt)
-  assert.ok(gateAt >= 0 && writeAt > gateAt, "写盘必须出现在 epoch 判断之后")
-  assert.equal(
-    adapter.slice(gateAt, writeAt).includes("await"),
-    false,
-    "比较和 update 之间不能有 await，否则后任可以插进来",
-  )
+  assertSynchronousTerminalPersist(adapter)
   assert.ok(adapter.includes("last_run_ended_at: new Date().toISOString()"), "落盘应写结束时刻")
 
   // 为什么必须写局部值而不是 `runStats.terminal`：`runStats` 是调用方可选传入的，
@@ -151,6 +161,23 @@ test("#569 落点在 adapter 的 chatCreate finally —— 唯一覆盖全部 ru
     !readFileSync(mr, "utf8").includes("last_run_terminal"),
     "message-router 里不该再有落盘（对 worker 是 no-op，会使 #569 静默失效）",
   )
+})
+
+test("#714 finally 守卫接受前置异步 epoch 检查，仍拒绝真正落盘区间异步或缺失检查", () => {
+  const cwd = ["src/llm/adapter.ts", "companion/src/llm/adapter.ts"]
+    .find(p => { try { readFileSync(p, "utf8"); return true } catch { return false } })
+  assert.ok(cwd)
+  const adapter = readFileSync(cwd, "utf8")
+  for (const src of [adapter.replace(/\r\n/g, "\n"), adapter.replace(/\r?\n/g, "\r\n")]) {
+    assertSynchronousTerminalPersist(src)
+    const at = src.lastIndexOf("runTerminalEpochIsCurrent(threadId, runEpoch)")
+    assert.ok(at >= 0)
+    const gate = "runTerminalEpochIsCurrent(threadId, runEpoch)"
+    const mutant = (replacement: string) => src.slice(0, at) + src.slice(at).replace(gate, replacement)
+    assert.throws(() => assertSynchronousTerminalPersist(mutant(gate + " && await Promise.resolve(true)")))
+    assert.throws(() => assertSynchronousTerminalPersist(mutant("true")))
+    assert.throws(() => assertSynchronousTerminalPersist(src.replace("last_run_terminal: runStats.terminal", "other_terminal: runStats.terminal")))
+  }
 })
 
 test("#569 落盘不扰动 run_progress —— update() 是胖 API，带播种副作用", () => {
