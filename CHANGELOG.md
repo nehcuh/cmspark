@@ -12,6 +12,10 @@
 
 - #730 将原坐标操作30次／60秒限流的拒绝透传为类型化可恢复反馈，对话可等待或改做其它工作；限流仍拒绝当前操作，不跳过确认或自动重试。相邻单任务忙出口保留原不可恢复等级，并补完整生产准入链、虚拟时钟与安全负控。
 
+- #722 补齐同线程多提案的有限生命周期：4个／对话、64个／后台、15分钟仅待启动项懒过期；执行仍固定串行1个。面板可显式选择既有提案，按原快照逐次确认启动或取消；重复／过期／迟到批准不自动排队或启动，待启动／本机 shell 文案保持诚实。
+
+- #722 编程接力 UI 在确认期间容量被其它会话占用时，向原所属对话返回真实 typed 拒绝，不再把未准入会话回复成 running。用请求内私有准入观测区分即时拒绝与已创建子进程后的同步取消；后者立即反馈取消，真实关闭前仍保留运行槽。已准入的长会话仍及时响应，拒绝与同步取消不自动重试；前端只显示“启动请求已受理，正在准备…”。保留固定单执行、逐次 L2、worker/owner 和原终态清理；受控 CPU 不代表实际 Agent/Windows 验收，整票的多提案与生命周期余项仍保留，0.6.14 仍为开发版。
+
 - #727 在既有“更多”能力菜单和编程会话 chip 增加打开编程接力入口，并补空对话入口提示；只开面板，不自动提案、启动或打开终端。#722 修正待启动提案的面板空输出提示；容量与生命周期余项仍保留。
 - #724 内嵌终端显示权威启动来源，缺失或未知时不冒称 Agent 就绪；首个输出帧及既有 heartbeat 记录有限字节/ACK/暂停/输出年龄诊断，不记内容、不新增计时器或模型内容出口。
 
@@ -23,7 +27,7 @@
 
 - Windows computer capture now refuses a recognized confirmation-cockpit title in target selection, ownership, L2 preview and the final screenshot boundary. The existing BitBlt fallback rejects failed foreground/rectangle checks and foreground drift before saving. The title is spoofable and does not authorize a window; this does not prove absence of all occlusion or complete #723. Existing L2, thresholds and budgets remain unchanged (Refs #723).
 
-- #722 修复 ACP 提案因当前会话或单进程容量占用而被拒绝时丢失结构码、误停整轮的问题；返回本线程有限 holder 与建议动作，其他线程会话信息不外露。start 在任何异步准备前同步检查唯一运行槽，防止不同线程预先获得的提案同时启动；取消后仍等进程真实关闭才释放。忙碌仍失败，容量、逐次 L2 和 worker/owner 门禁不变；终端入口、提案生命周期和多提案设计仍待完成。
+- #722 修复 ACP 提案因当前会话或单进程容量占用而被拒绝时丢失结构码、误停整轮的问题；返回本线程有限 holder 与建议动作，其他线程会话信息不外露。start 在任何异步准备前同步检查唯一运行槽，防止不同线程预先获得的提案同时启动；取消后仍等进程真实关闭才释放。忙碌仍失败，容量、逐次 L2 和 worker/owner 门禁不变；提案生命周期、同线程多提案等原票余项仍待完成。
 
 - #476 原生工作台新增当前对话的浏览器任务候选与显式背景／前台选择。状态与元数据仅访问已认证扩展；下一次同对话明确发送时才绑定真实运行，首行仅支持既有 `get_page_text` 精确 peer/tab 背景读取，未知浏览器操作拒绝且不自动聚焦／打开 Chrome。协议同步 v8；CPU 源码控制不代表真实原生／扩展验收，整票仍 Partial。见 [浏览器任务指南](docs/desktop-browser-tasks.md)。
 

@@ -390,6 +390,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.thread_id !== "string" || !m.thread_id) {
         return { valid: false, error: "acp.ui_start requires thread_id" }
       }
+      if (m.session_id !== undefined) {
+        return typeof m.session_id === "string" && m.session_id.length > 0 && m.session_id.length <= 100
+          ? { valid: true } : { valid: false, error: "acp.ui_start requires a valid selected session_id" }
+      }
       if (typeof m.agent_id !== "string" || !m.agent_id) {
         return { valid: false, error: "acp.ui_start requires agent_id" }
       }

@@ -110,7 +110,10 @@ test("operation notice is bounded and follows only the current selected immutabl
   assert.equal(other.codingOperationError, null)
   assert.equal(agentReducer(other, codingControlAction(fixture.livePromptRefused)!), other)
   assert.equal(selectCodingOperationError(other, selectCodingSession(state)), undefined)
-  const newer = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { ...fixture.progress, session_id: "new-owned-session" } })
+  const observed = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { ...fixture.progress, session_id: "new-owned-session" } })
+  assert.equal(selectCodingSession(observed)?.sessionId, fixture.progress.session_id, "new pending/live metadata must not silently replace the explicit target")
+  const newer = agentReducer(observed, { type: "ACP_SELECT_SESSION", sessionId: "new-owned-session", threadId: fixture.progress.thread_id,
+    threadRevision: observed.activeThreadSelectionRevision })
   assert.equal(newer.codingOperationError, null)
   assert.equal(agentReducer(newer, codingControlAction(fixture.livePromptRefused)!), newer)
   assert.equal(agentReducer(state, { type: "SET_THREADS", threads: [] }).codingOperationError, null)

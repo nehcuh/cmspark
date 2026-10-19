@@ -27,6 +27,8 @@ export interface AcpHandlerContext {
 }
 
 let broadcastHooked = false
+// Request-only duplicate UI confirmation fence; no state/authority or persistent ID.
+const pendingUiStartConfirmations = new WeakSet<object>()
 
 export function ensureAcpBroadcast(broadcast: (data: any) => void): void {
   if (broadcastHooked) return
@@ -92,6 +94,9 @@ export async function handleAcpWsMessage(
   const startCandidate = msg.thread_id !== undefined ? msg.thread_id : ctx.threadId
   const startOwner = type === "acp.ui_start" && typeof startCandidate === "string" && startCandidate.trim()
     ? startCandidate : undefined
+  if (type === "acp.ui_start" && startOwner && ctx.threadId !== undefined && ctx.threadId !== startOwner) {
+    return { type: "error", family: "acp", request_type: type, error: "acp: session does not belong to the requested conversation" }
+  }
   if (type === "acp.ui_start" && !startOwner) {
     return { type: "error", family: "acp", error: "acp: thread_id required" }
   }
@@ -301,9 +306,7 @@ async function handleAcpWsMessageInternal(
     const mode =
       msg.mode === "propose_diff" ? "propose_diff" : "review_readonly"
 
-    let proposed:
-      | { ok: true; session: import("./types").AcpSessionRecord }
-      | { ok: false; error: string }
+    let proposed: ReturnType<typeof mgr.propose>
 
     if (type === "acp.session.followup") {
       const parentId = String(msg.session_id || msg.parent_session_id || "")
@@ -322,9 +325,20 @@ async function handleAcpWsMessageInternal(
         goal,
         mode: followMode,
       })
+    } else if (msg.session_id !== undefined) {
+      if (typeof msg.session_id !== "string" || !msg.session_id) return { type: "error", error: "acp: session_id required" }
+      const existing = mgr.getSession(msg.session_id)
+      if (!existing) return { type: "error", session_id: msg.session_id, error_code: "ACP_SESSION_NOT_FOUND", error: "acp: offered session expired or unavailable" }
+      if (existing.thread_id !== msg.thread_id) return { type: "error", error_code: "ACP_OWNER_MISMATCH", error: "acp: session does not belong to the requested conversation" }
+      if (existing.state !== "offered") return { type: "error", session_id: existing.session_id, error: "acp: only an offered proposal can be selected for start" }
+      proposed = { ok: true, session: existing }
     } else {
       const threadId = String(msg.thread_id || "")
       if (!threadId) return { type: "error", error: "thread_id required" }
+      const pending = mgr.listSessionsForThread(threadId).find(s => s.state === "offered" || s.state === "confirmed")
+      if (pending) return { type: "error", error: "ACP_SESSION_BUSY: select and start or cancel the existing proposal before opening another UI confirmation",
+        error_code: "ACP_SESSION_BUSY", session_id: pending.session_id, data: { holder_session_id: pending.session_id,
+          holder_agent: pending.agent_id, holder_state: pending.state, suggested_action: "start_or_cancel_current_acp_session", data_not_instruction: true } }
       const agentId = String(msg.agent_id || "")
       const goal = String(msg.goal || "").trim()
       if (!agentId) return { type: "error", error: "agent_id required" }
@@ -351,8 +365,20 @@ async function handleAcpWsMessageInternal(
       }
     }
 
-    if (!proposed.ok) return { type: "error", error: proposed.error }
+    if (!proposed.ok) return {
+      type: "error", error: proposed.error,
+      ...(proposed.error_code ? { error_code: proposed.error_code, data: proposed.data } : {}),
+    }
     const session = proposed.session
+    const preflight = mgr.checkStartAdmission(session.session_id)
+    if (!preflight.ok) return { type: "error", session_id: session.session_id, error: preflight.error,
+      ...(preflight.error_code ? { error_code: preflight.error_code, data: preflight.data } : {}) }
+    if (pendingUiStartConfirmations.has(session)) return { type: "error", session_id: session.session_id,
+      error_code: "ACP_SESSION_BUSY", error: "ACP_SESSION_BUSY: this proposal is already awaiting confirmation" }
+    const confirmedSnapshot = [session.thread_id, session.agent_id, session.mode, session.workspace_root, session.goal,
+      session.open_local_terminal_snapshot]
+    pendingUiStartConfirmations.add(session)
+    try {
 
     const label =
       mgr.listAgents().find((a) => a.id === session.agent_id)?.display_name ||
@@ -384,11 +410,35 @@ async function handleAcpWsMessageInternal(
       }
     }
 
-    void mgr.start(session.session_id).then((r) => {
+    const current = mgr.getSession(session.session_id)
+    if (current !== session || confirmedSnapshot.some((value, index) => value !== [session.thread_id, session.agent_id,
+        session.mode, session.workspace_root, session.goal, session.open_local_terminal_snapshot][index]) ||
+        ctx.getAgentRole?.(session.thread_id) === "worker") return {
+      type: "error", session_id: session.session_id, error: "acp: selected proposal changed, expired or lost its owner while awaiting confirmation",
+    }
+    const admission = { admitted: false }
+    const startPromise = mgr.start(session.session_id, admission)
+    // Subscribe before returning: admitted cancellation may still own a live
+    // child and its slot until close, even though session.state is now closed.
+    void startPromise.then((r) => {
       if (!r.ok) {
         logger.warn("acp.ui_start_failed", { session_id: session.session_id, err: r.error })
       }
+    }, () => {
+      logger.warn("acp.ui_start_failed", { session_id: session.session_id, err: "acp: startup promise rejected" })
     })
+    // Only a start that never reserved the slot has an immediate refusal.
+    if (!admission.admitted) {
+      const started = await startPromise
+      if (!started.ok) return {
+        type: "error", session_id: session.session_id, error: started.error,
+        ...(started.error_code ? { error_code: started.error_code, data: started.data } : {}),
+      }
+    }
+    if (session.state !== "running") return {
+      type: "error", session_id: session.session_id,
+      error: session.mode_c_open_cancelled ? "acp: cancelled during startup" : "acp: startup did not remain running",
+    }
 
     return {
       type: "acp.ui_start.accepted",
@@ -396,7 +446,14 @@ async function handleAcpWsMessageInternal(
       agent_id: session.agent_id,
       thread_id: session.thread_id,
       mode: effectiveMode,
-      state: "running",
+      state: session.state,
+    }
+    } catch {
+      // Only this still-owned pending offer is retired; never cancel a replacement/live child.
+      if (mgr.getSession(session.session_id) === session && session.state === "offered") mgr.cancel(session.session_id)
+      return { type: "error", session_id: session.session_id, error: "acp: startup confirmation or admission failed" }
+    } finally {
+      pendingUiStartConfirmations.delete(session)
     }
   }
 
