@@ -233,3 +233,88 @@ for (const kind of ["change_material.v1", "development_trace.v1"] as const) {
     })
   }
 }
+
+test("selected business reference omissions remain explicit through assessment receipt reload and materials", t => {
+  const f = setup(t), drafts = new BusinessEvidenceService(f.dir, f.scope)
+  const materials = [drafts.create({ kind: "change_material.v1", title: "Change", target: { environment: "prod", business_system_id: "SYS" }, request_id: "change" }),
+    drafts.create({ kind: "development_trace.v1", title: "Development", target: { environment: "prod" }, request_id: "dev" })]
+  const wire = structuredClone(fixture.wire)
+  wire.data.text = `REQ-1 REQ-2 TASK-7 CASE-9 ${fixture.git.head}`
+  const captured = f.store.capture("business-selected-inventory", "get_page_text", wire)
+  if (captured.capture_status !== "captured") throw new Error("fixture failed")
+  const citation = { observation_id: captured.observation_id, excerpt: wire.data.text, start: 0, end: Array.from(wire.data.text).length }
+  const refs = [{ kind: "requirement", external_id: "REQ-1", citation }, { kind: "requirement", external_id: "REQ-2", citation },
+    { kind: "development_task", external_id: "TASK-7", citation }, { kind: "test", external_id: "CASE-9", citation, commit_id: fixture.git.head }]
+  const view = f.service.create({ ...f.input, business_context: refs, materials: materials.map(result => ({ draft_id: result.draft_id, revision: result.revision })) })
+  const report = { review_id: view.review_id, repository: view.repository, base: view.base, head: view.head, diff_hash: view.diff_hash,
+    status: "partial", summary: "Only selected REQ-1 assessed; REQ-2 remains unassessed", reviewed_files: ["hello.ts"], findings: [],
+    mappings: refs.filter(ref => ref.external_id !== "REQ-2").map(ref => ({ ...ref, assessment: "Requires business verification" })) }
+  const assessed = f.service.assess(report)
+  const preview = f.service.previewReport(report)
+  const received = f.service.receive(preview)
+  const reloaded = new CodeReviewService(f.dir, f.scope).read({ review_id: view.review_id })
+  const rendered = materials.map(material => renderReviewMaterial(f.dir, f.scope, { review_id: view.review_id, draft_id: material.draft_id }))
+  assert.equal(assessed.assessment?.report.status, "partial")
+  assert.equal(received.report.status, "partial")
+  assert.equal(received.origin, "user_confirmed_external_assessment")
+  assert.deepEqual(reloaded.receipt, received)
+  assert.deepEqual(reloaded.assessment, assessed.assessment)
+  assert.equal(reloaded.business_context.length, 4)
+  assert.equal(received.report.mappings.length, 3)
+  assert.equal(reloaded.review_ready, false)
+  for (const material of rendered) assert.equal(material.json.combined_ready, false)
+  const gap = "CODE_REPORT_CONTEXT_REFERENCES_MISSING"
+  const stages = [assessed.gaps, reloaded.gaps, ...rendered.map(material => material.json.gaps)]
+  t.diagnostic(JSON.stringify({ selectedReferences: 4, mappedReferences: 3, assessmentRecorded: !!assessed.assessment,
+    externalReceiptRecorded: !!received, reloadedReceiptExact: true, renderedMaterials: rendered.length,
+    omittedReferenceGapByStage: stages.map(gaps => gaps.includes(gap)), reviewReady: reloaded.review_ready,
+    combinedReady: rendered.map(material => material.json.combined_ready) }))
+  for (const gaps of stages) assert.ok(gaps.includes(gap), "a selected same-kind reference is unassessed and must remain an explicit inventory gap")
+})
+
+test("selected reference inventory uses complete canonical references without changing partial acceptance or refusals", t => {
+  for (const mode of ["all", "duplicate", "citation", "commit", "empty"] as const) {
+    const f = setup(t), drafts = new BusinessEvidenceService(f.dir, f.scope)
+    const materials = [drafts.create({ kind: "change_material.v1", title: "Change", target: { environment: "prod", business_system_id: "SYS" }, request_id: "change" }),
+      drafts.create({ kind: "development_trace.v1", title: "Development", target: { environment: "prod" }, request_id: "dev" })]
+    const wire = structuredClone(fixture.wire)
+    wire.data.text = `REQ-1 REQ-2 TASK-7 CASE-9 ${fixture.git.head} ${fixture.git.base}`
+    const captured = f.store.capture("business-inventory", "get_page_text", wire)
+    if (captured.capture_status !== "captured") throw new Error("fixture failed")
+    const citation = { observation_id: captured.observation_id, excerpt: wire.data.text, start: 0, end: Array.from(wire.data.text).length }
+    const secondWire = structuredClone(wire)
+    secondWire.data.text += " Second independently captured reference"
+    const second = f.store.capture("business-inventory-second", "get_page_text", secondWire)
+    if (second.capture_status !== "captured") throw new Error("fixture failed")
+    const secondCitation = { observation_id: second.observation_id, excerpt: secondWire.data.text, start: 0, end: Array.from(secondWire.data.text).length }
+    const ordinary = [{ kind: "requirement", external_id: "REQ-1", citation }, { kind: "requirement", external_id: "REQ-2", citation },
+      { kind: "development_task", external_id: "TASK-7", citation }, { kind: "test", external_id: "CASE-9", citation, commit_id: fixture.git.head }]
+    const refs = mode === "empty" ? [] : mode === "citation"
+      ? [ordinary[0], { ...ordinary[0], citation: secondCitation }, ordinary[2], ordinary[3]]
+      : mode === "commit" ? [ordinary[0], ordinary[2], ordinary[3], { ...ordinary[3], commit_id: fixture.git.base }] : ordinary
+    const selected = mode === "empty" ? [] : mode === "duplicate" ? [refs[0], refs[0], refs[2], refs[3]]
+      : mode === "citation" ? [refs[0], refs[2], refs[3]] : mode === "commit" ? refs.slice(0, 3) : refs
+    const view = f.service.create({ ...f.input, business_context: refs, materials: materials.map(result => ({ draft_id: result.draft_id, revision: result.revision })) })
+    const report = { review_id: view.review_id, repository: view.repository, base: view.base, head: view.head, diff_hash: view.diff_hash,
+      status: "partial", summary: "Controlled selected-reference inventory, not business-semantic certification", reviewed_files: ["hello.ts"], findings: [],
+      mappings: selected.map(ref => ({ ...ref, assessment: "Requires business verification" })) }
+    if (mode === "all") {
+      for (const method of ["assess", "previewReport", "receive"] as const) {
+        assert.throws(() => f.service[method]({ ...report, head: fixture.git.base }), /CODE_REPORT_IDENTITY_MISMATCH/)
+        assert.throws(() => f.service[method]({ ...report, mappings: [{ ...report.mappings[0], external_id: "NOT_SELECTED" }] }), /CODE_REPORT_CONTEXT_MISMATCH/)
+      }
+    }
+    const assessed = f.service.assess(report), received = f.service.receive(f.service.previewReport(report))
+    const reloaded = new CodeReviewService(f.dir, f.scope).read({ review_id: view.review_id })
+    const rendered = materials.map(material => renderReviewMaterial(f.dir, f.scope, { review_id: view.review_id, draft_id: material.draft_id }))
+    const expectedGap = mode === "duplicate" || mode === "citation" || mode === "commit"
+    for (const gaps of [assessed.gaps, reloaded.gaps, ...rendered.map(material => material.json.gaps)]) {
+      assert.equal(gaps.includes("CODE_REPORT_CONTEXT_REFERENCES_MISSING"), expectedGap, mode)
+    }
+    assert.equal(received.report.status, "partial");assert.equal(reloaded.assessment?.report.status, "partial")
+    assert.deepEqual(reloaded.receipt, received);assert.equal(reloaded.review_ready, false)
+    for (const material of rendered) assert.equal(material.json.combined_ready, false)
+    if (mode === "empty") for (const kind of ["REQUIREMENT", "DEVELOPMENT_TASK", "TEST"]) assert.ok(reloaded.gaps.includes(`CODE_REPORT_${kind}_MISSING`))
+    if (mode === "commit") assert.ok(reloaded.gaps.includes("CODE_REPORT_TEST_COMMIT_MISMATCH"))
+  }
+})

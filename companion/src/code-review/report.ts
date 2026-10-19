@@ -45,6 +45,8 @@ export function checkReport(review: ReviewIdentity, report: ReviewReport, observ
     const { assessment: _assessment, ...reference } = mapping
     if (!review.business_context?.some(ref => canonicalRequest(ref) === canonicalRequest(reference))) throw new Error("CODE_REPORT_CONTEXT_MISMATCH")
   }
+  const mappedReferences = new Set(report.mappings.map(({ assessment: _assessment, ...reference }) => canonicalRequest(reference)))
+  if ((review.business_context || []).some(reference => !mappedReferences.has(canonicalRequest(reference)))) gaps.push("CODE_REPORT_CONTEXT_REFERENCES_MISSING")
   gaps.push(...checkBusinessReferences(report.mappings, observations, review.head, now))
   return [...new Set(gaps)]
 }
