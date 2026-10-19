@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #732：只在本次独占创建且仍为空、保留句柄与精确 bigint 身份一致的 Windows history temp 上初始化当前用户 owner／受保护有限 DACL，再经原只读 PRIVATE 门后写元数据；已有 config/root/history ACL 不修复、不接受 Admin-owner 替代。原生夹具改为在绑定 owned parent 下显式安全描述符新建唯一 root/empty；CPU 与内存编译不代表 NTFS 或整票验收已通过，0.6.14 仍为开发版。
+
 - #732 原生隐私 positive 首轮拒绝后，仅在显式 GHA Windows gate 下补一次同路径只读原因回执；默认生产输出与所有 owner／ACL 谓词不变，原失败不会被第二读或诊断替换。闭集原因和0/1/null索引不泄露 SID／SDDL／路径，不更改 ACL、token 或权限；不是已修复 NTFS 根因或整票完成。
 
 - #605 Windows 原生管道回归夹具的 ready JSON 先写独占临时文件、完整关闭后再原子发布，避免 `exists` 已真却读取到空 JSON。补确定性开文件／写入失败控制，保留原管道、cwd、ignored stdio、时限和清理断言；不将夹具竞态冒称产品管道故障或所有 Windows 失败的根因。

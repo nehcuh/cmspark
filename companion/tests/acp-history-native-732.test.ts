@@ -1,10 +1,11 @@
 // #732 Windows hosted acceptance only; never invoke native checks on a manual desktop.
-// No ACL mutation/remediation. A non-private runner temp root is a real prerequisite failure.
+// Explicit security initializes NEW fixture objects only; no parent/existing-path remediation.
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { randomUUID } from "node:crypto"
 import { AcpHistoryStore } from "../src/acp/history-store"
 import { verifyHistoryPrivacy } from "../src/acp/history-privacy"
 import { runPs, resolveWinScript } from "../src/host-use/win/powershell"
@@ -39,19 +40,44 @@ async function privatePrerequisite(paths: string[]): Promise<void> {
   assert.equal(status, "PRIVATE", "OWNED_TEMP_PRIVACY_PREREQUISITE_REQUIRED")
 }
 
+async function fixtureObject(parent: string, name: string, kind: "root" | "empty"): Promise<void> {
+  canonicalWindows()
+  assert.equal(process.platform, "win32", "OWNED_HISTORY_FIXTURE_WINDOWS_REQUIRED")
+  assert.match(parent, /^[A-Za-z]:\\/, "OWNED_HISTORY_FIXTURE_LOCAL_DRIVE_REQUIRED")
+  const fd = fs.openSync(parent, fs.constants.O_RDONLY)
+  let original: fs.BigIntStats | undefined
+  try {
+    original = fs.fstatSync(fd, { bigint: true })
+    const current = () => {
+      const p = fs.lstatSync(parent, { bigint: true }), h = fs.fstatSync(fd, { bigint: true })
+      return original!.dev === p.dev && original!.ino === p.ino && original!.dev === h.dev && original!.ino === h.ino &&
+        p.isDirectory() && h.isDirectory() && !p.isSymbolicLink() && fs.realpathSync(parent) === parent
+    }
+    assert.equal(current(), true, "OWNED_HISTORY_FIXTURE_PARENT_CHANGED")
+    const reply = await runPs(resolveWinScript("acp-history-native-fixture.ps1"), [parent, name, original.dev.toString(), original.ino.toString(), kind])
+    assert.equal(current(), true, "OWNED_HISTORY_FIXTURE_PARENT_CHANGED")
+    assert.equal(reply.trim(), '\"INITIALIZED\"', "OWNED_HISTORY_FIXTURE_CREATION_REQUIRED")
+  } finally {
+    if (original) {
+      try { const now = fs.fstatSync(fd, { bigint: true }); if (now.dev === original.dev && now.ino === original.ino) fs.closeSync(fd) } catch { /* Never close a replacement descriptor. */ }
+    } else { fs.closeSync(fd) }
+  }
+}
 async function owned(run: (dir: string) => Promise<void>) {
-  let dir = "", identity: fs.Stats | undefined
+  let dir = "", identity: fs.BigIntStats | undefined
   try {
     dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-history732-native-")))
-    identity = fs.lstatSync(dir)
-    await run(dir)
+    identity = fs.lstatSync(dir, { bigint: true })
+    const child = "history-root-" + randomUUID()
+    await fixtureObject(dir, child, "root")
+    await run(path.join(dir, child))
   } catch (error: any) {
     if (error?.code === "ERR_ASSERTION") throw error
     throw new Error("OWNED_HISTORY_NATIVE_IO_FAILED")
   } finally {
     if (identity) {
       try {
-        const now = fs.lstatSync(dir)
+        const now = fs.lstatSync(dir, { bigint: true })
         if (now.isDirectory() && !now.isSymbolicLink() && now.ino === identity.ino && now.dev === identity.dev) fs.rmSync(dir, { recursive: true, force: true })
         else throw Error("changed")
       } catch { throw new Error("OWNED_HISTORY_NATIVE_CLEANUP_FAILED") }
@@ -62,7 +88,7 @@ test("#732 actual Windows ACL root+empty file admission", { skip: process.platfo
   canonicalWindows()
   return owned(async dir => {
   const file = path.join(dir, "empty")
-  const fd = fs.openSync(file, "wx", 0o600); fs.closeSync(fd)
+  await fixtureObject(dir, "empty", "empty")
   await privatePrerequisite([dir, file])
   assert.equal(fs.statSync(file).size, 0)
   })

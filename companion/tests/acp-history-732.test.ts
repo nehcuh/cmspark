@@ -20,6 +20,8 @@ function historyModule(options: { io?: typeof fs; platform?: string } = {}) {
       if (name === "path") return path
       if (name === "crypto") return { randomUUID: () => "owned-fixed" }
       if (name === "./history-privacy") return { verifyHistoryPrivacy: async () => "PRIVATE" }
+      // Existing Windows-shaped ACL tests are inert seams; the real initializer has its own controls.
+      if (name === "./history-new-empty") return { initializeHistoryEmpty: async () => { assert.equal(options.platform, "win32"); return "INITIALIZED" } }
       throw new Error(`unadmitted history dependency ${name}`)
   }, Buffer, process: { platform: options.platform || "darwin", getuid: () => process.getuid?.() || 0 },
   }, { filename: historyFile })

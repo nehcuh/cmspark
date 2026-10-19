@@ -3,6 +3,7 @@ import * as fs from "fs"
 import * as path from "path"
 import { randomUUID } from "crypto"
 import { verifyHistoryPrivacy } from "./history-privacy"
+import { initializeHistoryEmpty } from "./history-new-empty"
 
 export type AcpHistoryState = "offered" | "confirmed" | "running" | "handback" | "closed"
 export type AcpHistoryStatus = "ok" | "disabled" | "unavailable" | "invalid" | "private_refused" | "commit_unknown" | "capacity"
@@ -59,6 +60,8 @@ export function parseAcpHistory(text: string): AcpHistoryRecord[] | null {
     return value.records
   } catch { return null }
 }
+const exactWindowsObject = (a: fs.BigIntStats, b: fs.BigIntStats) => typeof a.dev === "bigint" && a.dev >= 0n && a.dev <= 0xffffffffn &&
+  typeof a.ino === "bigint" && a.ino > 0n && a.ino <= 0xffffffffffffffffn && a.dev === b.dev && a.ino === b.ino
 const sameObject = (a: fs.Stats, b: fs.Stats) => a.dev === b.dev && a.ino === b.ino
 const identity = (a: fs.Stats, b: fs.Stats) => sameObject(a, b) && a.nlink === b.nlink
 const unchanged = (a: fs.Stats, b: fs.Stats) => identity(a, b) && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs
@@ -75,8 +78,9 @@ export class AcpHistoryStore {
   private work: Promise<void> | null = null
   private rootPath = ""
   private rootIdentity: fs.Stats | null = null
+  private rootExactIdentity: fs.BigIntStats | null = null
   private fileIdentity: fs.Stats | null = null
-  private retiredTemp: { name: string; identity: fs.Stats } | null = null
+  private retiredTemp: { name: string; identity: fs.Stats; exact?: fs.BigIntStats } | null = null
   constructor(private options: { root: () => string; enabled: () => boolean;
     privacy?: (paths: string[]) => Promise<"PRIVATE" | "REFUSED" | "UNKNOWN"> }) {}
 
@@ -131,6 +135,7 @@ export class AcpHistoryStore {
     // APFS changes directory nlink when our own temp is created; file nlink stays strict.
     if (!this.rootIdentity || !sameObject(this.rootIdentity, this.safeStat(this.rootPath, true))) throw new Error("private")
     if (fs.realpathSync(this.rootPath) !== this.rootPath) throw new Error("private")
+    if (process.platform === "win32" && (!this.rootExactIdentity || !exactWindowsObject(this.rootExactIdentity, fs.lstatSync(this.rootPath, { bigint: true })))) throw new Error("private")
   }
   private async privacy(paths: string[]): Promise<void> {
     this.enabled()
@@ -145,6 +150,11 @@ export class AcpHistoryStore {
     this.enabled()
     const raw = path.resolve(this.options.root())
     this.rootPath = raw; this.rootIdentity = this.safeStat(raw, true)
+    if (process.platform === "win32") {
+      const exact = fs.lstatSync(raw, { bigint: true })
+      if (!exactWindowsObject(exact, exact) || !exact.isDirectory() || exact.isSymbolicLink()) throw new Error("private")
+      this.rootExactIdentity = exact
+    }
     if (fs.realpathSync(raw) !== raw) throw new Error("private")
     await this.privacy([raw]); this.assertRoot()
     let before: fs.Stats
@@ -180,7 +190,8 @@ export class AcpHistoryStore {
     this.enabled(); this.assertRoot()
     if (this.retiredTemp) {
       try {
-        if (!identity(this.retiredTemp.identity, this.safeStat(this.retiredTemp.name))) throw new Error("private")
+        if (!identity(this.retiredTemp.identity, this.safeStat(this.retiredTemp.name)) || process.platform === "win32" &&
+            (!this.retiredTemp.exact || !exactWindowsObject(this.retiredTemp.exact, fs.lstatSync(this.retiredTemp.name, { bigint: true })))) throw new Error("private")
         fs.unlinkSync(this.retiredTemp.name); this.retiredTemp = null
       } catch (e: any) { if (e?.code === "ENOENT") this.retiredTemp = null; else throw e }
     }
@@ -196,43 +207,72 @@ export class AcpHistoryStore {
     }
     const temp = path.join(this.rootPath, `acp-history.${randomUUID()}.tmp`)
     let fd: number | undefined, owned: fs.Stats | undefined, renamed = false
+    let parentFd: number | undefined, parentExact: fs.BigIntStats | undefined, emptyExact: fs.BigIntStats | undefined
+    const checkHeld = (name: string, size: number) => {
+      if (process.platform !== "win32") return
+      this.enabled(); this.assertRoot()
+      const p = fs.fstatSync(parentFd!, { bigint: true }), n = fs.lstatSync(name, { bigint: true })
+      if (!parentExact || !this.rootExactIdentity || !exactWindowsObject(parentExact, p) || !exactWindowsObject(this.rootExactIdentity, p) || !p.isDirectory() ||
+          !emptyExact || !exactWindowsObject(emptyExact, n) || !n.isFile() || n.isSymbolicLink() || n.nlink !== 1n || n.size !== BigInt(size)) throw new Error("private")
+      if (fd !== undefined) {
+        const f = fs.fstatSync(fd, { bigint: true })
+        if (!exactWindowsObject(emptyExact, f) || !f.isFile() || f.nlink !== 1n || f.size !== BigInt(size)) throw new Error("private")
+      }
+    }
     try {
       this.enabled(); this.assertRoot()
+      if (process.platform === "win32") {
+        parentFd = fs.openSync(this.rootPath, fs.constants.O_RDONLY)
+        parentExact = fs.fstatSync(parentFd, { bigint: true })
+        if (!this.rootExactIdentity || !exactWindowsObject(this.rootExactIdentity, parentExact) || !parentExact.isDirectory()) throw new Error("private")
+      }
       fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL |
         (process.platform === "win32" ? 0 : fs.constants.O_NOFOLLOW), 0o600)
       owned = fs.fstatSync(fd)
       if (!identity(owned, this.safeStat(temp))) throw new Error("private")
-      // An exclusive EMPTY file must pass its real ACL before metadata enters it.
-      await this.privacy([this.rootPath, temp]); this.assertRoot()
+      if (process.platform === "win32") {
+        emptyExact = fs.fstatSync(fd, { bigint: true }); checkHeld(temp, 0)
+        const result = await initializeHistoryEmpty(this.rootPath, path.basename(temp), parentFd!, fd, () => this.options.enabled())
+        this.enabled(); checkHeld(temp, 0)
+        if (result !== "INITIALIZED") throw new Error("private")
+      }
+      // An exclusive EMPTY file must pass its independent real ACL before metadata enters it.
+      await this.privacy([this.rootPath, temp]); this.assertRoot(); checkHeld(temp, 0)
       if (!identity(owned, this.safeStat(temp)) || !identity(owned, fs.fstatSync(fd))) throw new Error("private")
       this.enabled()
       let offset = 0
       while (offset < contents.length) { const n = fs.writeSync(fd, contents, offset, contents.length - offset); if (!n) throw new Error("write"); offset += n }
       fs.fsyncSync(fd)
       if (!identity(owned, this.safeStat(temp))) throw new Error("private")
-      await this.privacy([this.rootPath, temp]); this.assertRoot()
+      await this.privacy([this.rootPath, temp]); this.assertRoot(); checkHeld(temp, contents.length)
       if (!identity(owned, this.safeStat(temp)) || !identity(owned, fs.fstatSync(fd))) throw new Error("private")
       this.enabled()
       const close = fd; fd = undefined; fs.closeSync(close)
       if (this.fileIdentity ? !unchanged(this.fileIdentity, this.safeStat(this.name())) : fs.existsSync(this.name())) throw new Error("private")
-      this.assertRoot(); fs.renameSync(temp, this.name()); renamed = true
+      this.assertRoot(); checkHeld(temp, contents.length); fs.renameSync(temp, this.name()); renamed = true
+      checkHeld(this.name(), contents.length)
       this.fileIdentity = this.safeStat(this.name())
       if (!identity(owned, this.fileIdentity)) throw new Error("private")
-      await this.privacy([this.rootPath, this.name()]); this.assertRoot()
+      await this.privacy([this.rootPath, this.name()]); this.assertRoot(); checkHeld(this.name(), contents.length)
       if (!unchanged(this.fileIdentity, this.safeStat(this.name()))) throw new Error("private")
       this.status = "ok"
     } catch (e) {
       if (renamed) { this.status = "commit_unknown"; this.blocked = true }
       throw e
     } finally {
-      if (fd !== undefined) { const close = fd; fd = undefined; try { fs.closeSync(close) } catch {} }
+      if (fd !== undefined) { const close = fd; fd = undefined; try {
+        if (process.platform !== "win32" || !emptyExact || exactWindowsObject(emptyExact, fs.fstatSync(close, { bigint: true }))) fs.closeSync(close)
+      } catch {} }
+      if (parentFd !== undefined) { const close = parentFd; parentFd = undefined; try {
+        if (!parentExact || exactWindowsObject(parentExact, fs.fstatSync(close, { bigint: true }))) fs.closeSync(close)
+      } catch {} }
       // Never delete a replaced path or mutate history after the master switch goes off.
       if (!renamed && owned && this.options.enabled()) {
-        try { this.assertRoot(); if (identity(owned, this.safeStat(temp))) fs.unlinkSync(temp) } catch {}
+        try { this.assertRoot(); if (identity(owned, this.safeStat(temp)) && (process.platform !== "win32" || emptyExact && exactWindowsObject(emptyExact, fs.lstatSync(temp, { bigint: true })))) fs.unlinkSync(temp) } catch {}
       } else if (!renamed && owned) {
         // A disable during the async privacy query never mutates history afterwards.
         // Keep at most this one operation-owned cleanup claim for a future enable.
-        this.retiredTemp = { name: temp, identity: owned }
+        this.retiredTemp = { name: temp, identity: owned, ...(emptyExact ? { exact: emptyExact } : {}) }
       }
     }
   }

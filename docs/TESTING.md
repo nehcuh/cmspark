@@ -264,7 +264,11 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 
 `companion/tests/acp-history-native-732.test.ts` 由原 canonical test discovery 收集，不增 runner 列表。它仅在 Windows 执行；非 Windows 的两个 skip 不代表 NTFS 通过。Windows 回调在任何临时文件或 PowerShell 操作前要求既有 hosted 标记 `GITHUB_ACTIONS=true` 且 `RUNNER_OS=Windows`，手工本机运行固定拒绝，不用伪造变量启动。该夹具标记不是运行身份认证，最终证据仍须绑定真实受审 GitHub head/job/run。
 
-两个正控分别使用唯一 owned temp：实际只读 ACL helper 检查目录和 exclusive 空文件，然后实际 metadata store 写入、fresh loader 读回为 historical interrupted，并重查 final ACL 和默认省略目标／路径。生产门始终要求真实 current-SID owner、有限 DACL、稳定身份，不能用 mode600、Administrators-owner fallback、SetAcl 或 skip 替代。若 runner 新建目录继承的实际 owner/ACL 不满足，`OWNED_TEMP_PRIVACY_PREREQUISITE_REQUIRED` 是真实前置失败；先保留精确 Windows 回执并审查有限 fixture 前置，不弱化生产条件或无变化重跑。
+两个正控分别在保留身份的 owned outer temp 内，以显式当前 SID owner／受保护 user/SYSTEM/Administrators DACL 原子新建 UUID 子目录及空文件；只使用 canonical drive-letter local 路径，拒 UNC／设备路径与已存在 final child，不修改 outer parent 或用户/config 目录。新创建例外取代旧的“仅 mode600 即可构造 Windows positive”假设；`acp-history-privacy.ps1` 原只读判据和两个 hard assertions 保持不变。夹具 helper 和调用方均限定 Windows／精确 GHA 标记，标记不是安全身份认证。
+
+生产 store 仍先验证已有 root PRIVATE；只对本次 O_EXCL、仍为空的 UUID temp，在实际保留 fd 与 helper 新开原生句柄上，按 Node22/libuv 的 volume serial uint32 + file index uint64 精确匹配后设置 owner／受保护 DACL。父目录句柄及路径、file fd/path、nlink1、regular/nonreparse/empty 在 await 两侧复核；成功回执不替代原 PRIVATE before-write 与 fsync/rename/final checks。原生 API 通过 SafeFileHandle 单次释放，输出仅 INITIALIZED/REFUSED/UNKNOWN；不改 token／系统权限、不修已有目录或文件、未知拒绝且不写 metadata。POSIX 路径保留原操作。
+
+新增 `acp-history-empty-owner-732.test.ts` 只用实际 TypeScript 类／函数与明确惰性 owner/native seam；覆盖默认 owner 不同的空文件、精确大整数／父子替换／部分失败／disabled／有限输出，以及原生源码约束。它不执行 PS/C#，不是 NTFS 证明。原 `acp-history-732.test.ts` 的 Windows-shaped ACL seam 显式容纳新 initializer，原 assertions 不删；不得把此 seam 当实际 owner/DACL 成功。真实 Windows 两 positive 和 writer temp/fresh loader 仍须新 head CI；unsafe 既有 root 继续 private_refused，不允许无变化重跑代替修复。
 
 清理只针对本次 unique directory 且先核原 dev/ino、目录类型和非 symlink；固定错误类别不打印 path/SID/SDDL/异常正文。两个实际 Windows PASS 仍只证明私有 metadata roundtrip，不能冒充 Companion daemon 真重启或侧栏真刷新/旧会话行为验收，#732 整票剩余 DoD 单独记录。不要在用户桌面启动测试浏览器、原生窗口或 PowerShell 夹具。
 
