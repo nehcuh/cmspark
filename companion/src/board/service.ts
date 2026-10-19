@@ -10,6 +10,7 @@ import { browserTaskResult, type CooperationResult } from "../orchestrator/coope
 import { recordCooperationResult } from "../orchestrator/cooperation-state"
 import { isCurrentPlannedWorker } from "../orchestrator/cooperation-plan"
 import { dependencyReadiness } from "../orchestrator/cooperation-dependencies"
+import { selectWorkerReport } from "../orchestrator/worker-report"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import {
   BOARD_CAPS,
@@ -878,11 +879,7 @@ async function collectWorkerHandbackRaw(
   // worker dies on that turn (screenshot tab mismatch, same-tool circuit),
   // the chronological last assistant is blank even though earlier turns
   // wrote the report. Hand back the last non-empty body (thread 8olhpa).
-  const assistants = msgs.filter((m) => m.role === "assistant")
-  const chronologicalLast = assistants.length > 0 ? assistants[assistants.length - 1] : undefined
-  const report = [...assistants].reverse().find((m) => typeof m.content === "string" && m.content.trim())
-  const handbackSource = report ?? chronologicalLast
-  const stoppedMidRun = !!report && report !== chronologicalLast
+  const { source: handbackSource, partial: stoppedMidRun } = selectWorkerReport(msgs)
   const lastAssistant: CollectHandbackLastAssistant = handbackSource
     ? { id: handbackSource.id, content: handbackSource.content, created_at: handbackSource.created_at }
     : null
@@ -971,7 +968,7 @@ async function collectWorkerHandbackRaw(
 
   const rawPayload = lastAssistant?.content ?? null
   if (rawPayload == null || (typeof rawPayload === "string" && !rawPayload.trim())) {
-    const error = assistants.length
+    const error = msgs.some(m => m.role === "assistant")
       ? "worker stopped before writing a report (assistant turns were tool calls only)"
       : "handback payload is empty (no assistant message)"
     audit(

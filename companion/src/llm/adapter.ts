@@ -27,7 +27,7 @@ import { assessFleetTask, shouldAssessFleetTask, FLEET_DISPATCH_HINT } from "../
 import { peekFleetSuggestGate } from "../orchestrator/fleet-suggest"
 import { computeWorkerWhitelist, workerParentCapabilityWhitelist } from "../orchestrator/spawn"
 import { projectCooperationToolResult, projectFleetReports } from "../orchestrator/cooperation-result"
-import { superviseFleet, abortableDelay, FLEET_SUPERVISION_HINT } from "../orchestrator/fleet-supervision"
+import { superviseFleet, abortableDelay, FLEET_SUPERVISION_HINT, FLEET_WAIT_MS } from "../orchestrator/fleet-supervision"
 import { multiAgentLlmLoopSnapshot, releaseMultiAgentLlmLoop, tryAcquireMultiAgentLlmLoop } from "../orchestrator/llm-loop-gate"
 import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
@@ -1433,6 +1433,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   let evaluateAuthGuidanceIssued = false
   const fleetTimeoutsReported = new Set<string>()
   let fleetSlotYielded = false
+  let fleetWaitDeadline: number | undefined
+  let fleetTimeoutSummaryOffered = false
 
   const reacquireFleetSlot = async () => {
     if (!fleetSlotYielded) return
@@ -1445,6 +1447,103 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       if (Date.now() >= deadline) throw Object.assign(new Error("FLEET_RESUME_CAP: 子任务等待结束，但主线程暂时无法取得模型并发槽，请稍后继续汇总"), { code: "FLEET_RESUME_CAP" })
       await abortableDelay(1000, signal)
     }
+  }
+
+  const assertCurrentFleetRun = () => {
+    signal?.throwIfAborted()
+    params.assertCurrentRun?.()
+    if (!runTerminalEpochIsCurrent(threadId, runEpoch)) {
+      throw Object.assign(new Error("fleet supervision superseded"), { name: "AbortError" })
+    }
+  }
+
+  // Both an ordinary finish and a tool-requested wait use the same bounded
+  // supervisor. Tool batches are fully paired before this can yield the slot.
+  const superviseFleetResults = async (): Promise<"none" | "collected" | "stopped"> => {
+    if (!fleetSupervisionHint) return "none"
+    const { buildIsThreadLlmActive } = await import("../tool/companion-dispatch")
+    assertCurrentFleetRun()
+    const isActive = await buildIsThreadLlmActive()
+    if (threadManager.get(threadId)?.orchestrator_run_id && fleetWaitDeadline === undefined) {
+      fleetWaitDeadline = Date.now() + FLEET_WAIT_MS
+    }
+    const reports = await superviseFleet({
+      tm: threadManager, parentId: threadId, signal,
+      isActive, deadlineMs: fleetWaitDeadline,
+      reportedTimeouts: fleetTimeoutsReported,
+      onWait: () => {
+        assertCurrentFleetRun()
+        fleetSlotYielded = multiAgentLlmLoopSnapshot().holders.includes(threadId)
+        if (fleetSlotYielded) releaseMultiAgentLlmLoop(threadId)
+        const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content: "正在等待并收集子任务结果；完成后继续汇总。" })
+        sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content: note.content })
+      },
+      collect: async (workerId) => {
+        assertCurrentFleetRun()
+        const tc = { id: `fleet-handback-${randomUUID()}`, type: "function" as const,
+          function: { name: "collect_handback", arguments: JSON.stringify({ worker_id: workerId }) } }
+        const row = persistAssistantDraft({ content: "收集子任务结果", tool_calls: [tc] })
+        messages.push({ role: "assistant", content: row.content, tool_calls: [tc] })
+        sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: row.id, content: row.content, tool_calls: [tc] })
+        sendToExtension({ type: "tool.start", thread_id: threadId, tool_call_id: tc.id, tool_name: "collect_handback", params: { worker_id: workerId } })
+        const collectStarted = Date.now()
+        let result
+        try { result = await executeTool(tc.id, "collect_handback", { __thread_id: threadId, worker_id: workerId }, signal) }
+        catch (error) { result = { success: false, error: error instanceof Error ? error.message : String(error) } }
+        assertCurrentFleetRun()
+        runStats.toolCalls++
+        rememberToolResult(tc, result, "collect_handback")
+        threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, { worker_id: workerId }))
+        try { await historyStore.record({ thread_id: threadId, tool_name: "collect_handback", params: JSON.stringify({ worker_id: workerId }),
+          result_summary: JSON.stringify(projectCooperationToolResult("collect_handback", result)).slice(0, 500),
+          success: result.success ? 1 : 0, error: result.error ?? null, duration_ms: Date.now() - collectStarted, created_at: new Date().toISOString() }) }
+        catch { logger.warn("fleet.history_record_failed", { thread_id: threadId }) }
+        messages.push({ role: "tool", tool_call_id: tc.id, name: "collect_handback", content: wrapUntrusted(truncateToolResultContent(JSON.stringify(projectCooperationToolResult("collect_handback", result))), tc.id, "collect_handback") })
+        sendToExtension({ type: "tool.result", thread_id: threadId, tool_call_id: tc.id, tool_name: "collect_handback", result })
+        return result
+      },
+    })
+    assertCurrentFleetRun()
+    // The first timeout is offered to the model once for a combined summary.
+    // If it asks to poll again, end this turn with an honest persisted pending
+    // reply. Never renew the deadline, fake worker completion or error, or
+    // spend another model round merely asking it not to poll.
+    const pending = threadManager.list().filter(w => ownsFleetWorker(w.id) && !w.paused && isActive(w.id))
+    if (fleetTimeoutSummaryOffered && pending.length) {
+      const content = "子任务仍在运行，本轮等待已达到时限。已收集的结果保留在当前对话；未完成子任务：" +
+        pending.map(w => w.id).join("、") + "。你可以稍后继续收集，或取消不再需要的子任务；不会自动重复派发。"
+      const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content })
+      sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content })
+      sendToExtension({ type: "chat.done", thread_id: threadId, message_id: note.id, finish_reason: "stop" })
+      return "stopped"
+    }
+    if (reports.length) {
+      logger.info("fleet.supervision", { thread_id: threadId, worker_count: reports.length })
+      const incomplete = reports.filter(r => r.status !== "completed" || (r.handback as any)?.success === false || (r.handback as any)?.data?.partial === true)
+      if (incomplete.length) {
+        const content = "子任务未全部完成：\n" + incomplete.map(r => `${r.worker_id}: ${r.status}。${r.recovery ?? "已收集返回信息；请根据缺失内容调整目标后请求重试。"}`).join("\n")
+        const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content })
+        sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content })
+      }
+      if (reports.some(r => r.status === "waiting_timeout")) fleetTimeoutSummaryOffered = true
+      await reacquireFleetSlot()
+      signal?.throwIfAborted()
+      messages.push({ role: "system", content: FLEET_SUPERVISION_HINT + " Actual collected tool rows contain bounded extractive reports with original source references; the list below contains status and recovery only. Continue with a combined answer and concrete recovery options for incomplete work. Runtime completion does not independently verify claims. A waiting_timeout is still live; do not claim all work finished. Do not loop wait_workers to bypass the runtime deadline." })
+      messages.push({ role: "user", content: wrapUntrusted(truncateToolResultContent(JSON.stringify(projectFleetReports(reports))), "fleet-supervision", "worker_handbacks") })
+      await runContextBudgetPass("mid_loop")
+      return "collected"
+    }
+    await reacquireFleetSlot()
+    signal?.throwIfAborted()
+    return "none"
+  }
+
+  const ownsFleetWorker = (workerId: unknown): boolean => {
+    if (typeof workerId !== "string" || !fleetSupervisionHint) return false
+    const parent = threadManager.get(threadId), worker = threadManager.get(workerId)
+    return !!parent?.orchestrator_run_id && parent.agent_role !== "worker" &&
+      worker?.agent_role === "worker" && worker.parent_thread_id === threadId &&
+      worker.orchestrator_run_id === parent.orchestrator_run_id
   }
 
   try {
@@ -1735,59 +1834,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
       // If no tool calls, we're done — unless the model role-played tools in text (DSML etc.).
       if (assistantMsg.length === 0) {
-        if (fleetSupervisionHint) {
-          const { buildIsThreadLlmActive } = await import("../tool/companion-dispatch")
-          const reports = await superviseFleet({
-            tm: threadManager, parentId: threadId, signal,
-            isActive: await buildIsThreadLlmActive(),
-            reportedTimeouts: fleetTimeoutsReported,
-            onWait: () => {
-              fleetSlotYielded = multiAgentLlmLoopSnapshot().holders.includes(threadId)
-              if (fleetSlotYielded) releaseMultiAgentLlmLoop(threadId)
-              const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content: "正在等待并收集子任务结果；完成后继续汇总。" })
-              sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content: note.content })
-            },
-            collect: async (workerId) => {
-              const tc = { id: `fleet-handback-${randomUUID()}`, type: "function" as const,
-                function: { name: "collect_handback", arguments: JSON.stringify({ worker_id: workerId }) } }
-              const row = persistAssistantDraft({ content: "收集子任务结果", tool_calls: [tc] })
-              messages.push({ role: "assistant", content: row.content, tool_calls: [tc] })
-              sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: row.id, content: row.content, tool_calls: [tc] })
-              sendToExtension({ type: "tool.start", thread_id: threadId, tool_call_id: tc.id, tool_name: "collect_handback", params: { worker_id: workerId } })
-              const collectStarted = Date.now()
-              let result
-              try { result = await executeTool(tc.id, "collect_handback", { __thread_id: threadId, worker_id: workerId }, signal) }
-              catch (error) { result = { success: false, error: error instanceof Error ? error.message : String(error) } }
-              runStats.toolCalls++
-              rememberToolResult(tc, result, "collect_handback")
-              threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, { worker_id: workerId }))
-              try { await historyStore.record({ thread_id: threadId, tool_name: "collect_handback", params: JSON.stringify({ worker_id: workerId }),
-                result_summary: JSON.stringify(projectCooperationToolResult("collect_handback", result)).slice(0, 500),
-                success: result.success ? 1 : 0, error: result.error ?? null, duration_ms: Date.now() - collectStarted, created_at: new Date().toISOString() }) }
-              catch { logger.warn("fleet.history_record_failed", { thread_id: threadId }) }
-              messages.push({ role: "tool", tool_call_id: tc.id, name: "collect_handback", content: wrapUntrusted(truncateToolResultContent(JSON.stringify(projectCooperationToolResult("collect_handback", result))), tc.id, "collect_handback") })
-              sendToExtension({ type: "tool.result", thread_id: threadId, tool_call_id: tc.id, tool_name: "collect_handback", result })
-              return result
-            },
-          })
-          if (reports.length) {
-            logger.info("fleet.supervision", { thread_id: threadId, worker_count: reports.length })
-            const incomplete = reports.filter(r => r.status !== "completed" || (r.handback as any)?.success === false || (r.handback as any)?.data?.partial === true)
-            if (incomplete.length) {
-              const content = "子任务未全部完成：\n" + incomplete.map(r => `${r.worker_id}: ${r.status}。${r.recovery ?? "已收集返回信息；请根据缺失内容调整目标后请求重试。"}`).join("\n")
-              const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content })
-              sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content })
-            }
-            await reacquireFleetSlot()
-            signal?.throwIfAborted()
-            messages.push({ role: "system", content: FLEET_SUPERVISION_HINT + " Actual collected tool rows contain bounded extractive reports with original source references; the list below contains status and recovery only. Continue with a combined answer and concrete recovery options for incomplete work. Runtime completion does not independently verify claims. A waiting_timeout is still live; do not claim all work finished. Do not loop wait_workers to bypass the runtime deadline." })
-            messages.push({ role: "user", content: wrapUntrusted(truncateToolResultContent(JSON.stringify(projectFleetReports(reports))), "fleet-supervision", "worker_handbacks") })
-            await runContextBudgetPass("mid_loop")
-            continue
-          }
-          await reacquireFleetSlot()
-          signal?.throwIfAborted()
-        }
+        const fleetOutcome = await superviseFleetResults()
+        if (fleetOutcome === "stopped") return
+        if (fleetOutcome === "collected") continue
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { detectTextToolIntentLeak, TOOL_FORMAT_LEAK_USER_HINT_ZH } = require("./tool-format-leak") as typeof import("./tool-format-leak")
         const leak = detectTextToolIntentLeak(assistantContent)
@@ -1875,6 +1924,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       // not perturbed by our own text.
       const pivotNotes: string[] = []
       let shouldStop = false
+      let fleetCoordinationRequested = false
 
       for (const tc of assistantMsg) {
         // Inter-tool abort: keep completed rows, fill remaining as interrupted
@@ -2229,6 +2279,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             throw err
           }
 
+          // #714: wait_workers is still a poll-only public tool. A successful
+          // owned-run poll requests the existing runtime barrier after this
+          // whole tool batch, rather than another provider polling round.
+          if (toolName === "wait_workers" && toolResult.success && toolResult.data?.poll_only === true &&
+              threadManager.list().some(w => ownsFleetWorker(w.id))) fleetCoordinationRequested = true
+
           if (toolResult.success) {
             if ((isCdpInteractiveTool(toolName) || shouldThawAfterSuccess(toolName)) && typeof resolvedTabId === "number") {
               contextTabId = resolvedTabId
@@ -2334,6 +2390,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               (typeof (toolResult as { data?: { error_code?: string } }).data?.error_code === "string"
                 ? (toolResult as { data?: { error_code?: string } }).data?.error_code
                 : undefined)
+            // A genuine pending handback is a coordination state, not an
+            // executed failure. Do not clear earlier real failures. Bind the
+            // typed result to this tool and this parent's current worker run;
+            // a foreign worker or the same code on another tool stays denied.
+            const pendingFleetCollection = toolName === "collect_handback" &&
+              classCode === "WORKER_STILL_RUNNING" && ownsFleetWorker((execParams as Record<string, unknown>).worker_id)
+            if (pendingFleetCollection) fleetCoordinationRequested = true
             // Classify before any tab-title splice. Titles are page-controlled;
             // appending them first let "Security Block" in a title halt the turn.
             const errorLevel = classifyError(toolResult.error || "", {
@@ -2425,7 +2488,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             // #425 (gbkq2q): SITE_OP peek 拒执（信封在工具执行前就返回，工具根本
             // 没跑）不是「执行失败」——不消耗熔断预算；信封仍经 classifyError
             // recoverable 喂回模型换路。真实执行失败（如 wait_for 超时）照计数。
-            if (failCode !== "SITE_OP_BANNED" && failCode !== "SITE_OP_ESCALATE") {
+            if (!pendingFleetCollection && failCode !== "SITE_OP_BANNED" && failCode !== "SITE_OP_ESCALATE") {
             const failCount = (recoverableFailureCounts.get(toolName) || 0) + 1
             recoverableFailureCounts.set(toolName, failCount)
             const sameToolDecision = decideSameToolFailure({
@@ -2587,6 +2650,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             pivotNotes.join("\n"),
         })
       }
+
+      if (fleetCoordinationRequested && await superviseFleetResults() === "stopped") return
 
       // Mid-loop recompact (F-I6 follow-up): tool rounds can blow budget after pre_loop.
       await runContextBudgetPass("mid_loop")

@@ -7,6 +7,7 @@ import { computeWorkerWhitelist, workerParentCapabilityWhitelist, workerWhitelis
 import { getMcpManager } from "../mcp/manager"
 import { workerCapUsage } from "./worker-occupancy"
 import { ORCHESTRATOR_CAPS } from "./constants"
+import { selectWorkerReport } from "./worker-report"
 import catalog from "../bridge/tool-definitions-catalog.json"
 const KNOWN_TOOLS = new Set(catalog.map(t => t.function.name))
 
@@ -133,7 +134,7 @@ function sourceIsCurrent(tm: ThreadManager, result: CooperationResult) {
   if (!worker) return true
   if (worker.last_run_execution_id && worker.last_run_execution_id !== worker.last_run_settled_execution_id) return false
   const prefix = `${worker.last_run_ended_at ?? "not_started"}:${worker.last_run_terminal ?? "normal"}:${!!worker.paused}:`
-  const lastAssistant = tm.getMessages(worker.id).filter(m => m.role === "assistant").at(-1)
+  const lastAssistant = selectWorkerReport(tm.getMessages(worker.id)).source
   return result.source.version.startsWith(prefix) && result.source.message_id === lastAssistant?.id &&
     result.source.execution_id === worker.last_run_execution_id
 }
