@@ -7,7 +7,7 @@ import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { EventEmitter } from 'node:events'
 import { spawnSync } from 'node:child_process'
-import { BOUNDS,preflight,childEnvironment,chromeArgs,manifestPaths,choosePanel,finiteReceipt,CDP,reloadDocument,restartSequence,historyObservationExpression,closeOwnedChild,loadedExpression,privateRead,limit } from '../accept-acp-history-hosted-732.mjs'
+import { BOUNDS,preflight,childEnvironment,chromeArgs,manifestPaths,choosePanel,finiteReceipt,CDP,reloadDocument,restartSequence,historyObservationExpression,closeOwnedChild,loadedExpression,privateRead,limit,observeBrowserStartup } from '../accept-acp-history-hosted-732.mjs'
 const root='/owned',url='chrome-extension://'+'a'.repeat(32)+'/sidepanel.html'
 const defer=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject}}
 const hosted={GITHUB_ACTIONS:'true',RUNNER_OS:'Linux',RUNNER_ENVIRONMENT:'github-hosted',ImageOS:'ubuntu22',RUNNER_TEMP:root}
@@ -51,18 +51,27 @@ test('private reader keeps actual owner/kind/link/bounded-file checks (POSIX rec
   } finally {fs.rmSync(root,{recursive:true,force:true})}
 })
 
-function actualFinally(overrides={}) {
-  const source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')
-  const begin=source.lastIndexOf('  finally {\n    let clean=true')
-  const end=source.indexOf('\n  Object.assign(console,originalConsole)',begin)
-  assert.ok(begin>0&&end>begin)
-  const finallyBlock=source.slice(begin+'  finally {'.length,end).trim().slice(0,-1)
+// Test-only projection: scope to the actual exported main, not the first cleanup statement.
+function extractMainFinally(source) {
+  assert.equal(typeof source,'string')
+  const text=source.replace(/\r\n/g,'\n'),declaration='export async function main() {\n',tail='\n}\nlet directEntry=false\n',boundary='\n  Object.assign(console,originalConsole)'
+  const start=text.indexOf(declaration),close=text.indexOf(tail,start),end=text.indexOf(boundary,start)
+  assert.ok(start>=0&&start===text.lastIndexOf(declaration)&&close>start&&end>start&&end<close)
+  assert.equal(end,text.lastIndexOf(boundary))
+  const begin=text.lastIndexOf('\n  finally {',end)
+  assert.ok(begin>start)
+  const block=text.slice(begin+'\n  finally {'.length,end)
+  assert.match(block,/\n  }$/)
+  return block.slice(0,-4).trim()
+}
+function actualFinally(overrides={},source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')) {
+  const finallyBlock=extractMainFinally(source)
   let deletes=0,aborts=0
   const sameOwnedRoot=source.includes('export function sameOwnedRoot(')?vm.runInNewContext('('+source.slice(source.indexOf('export function sameOwnedRoot(')+'export '.length,source.indexOf('export async function main()',source.indexOf('export function sameOwnedRoot('))).trim()+')',{fs:{},process:{getuid:()=>1000}}):()=>{throw Error('ABSENT_ROOT_FENCE')}
   const rootStat={dev:1,ino:2,uid:1000,mode:0o40700,isDirectory:()=>true,isSymbolicLink:()=>false}
-  const context={ownedIdentity:rootStat,sameOwnedRoot:(r,i)=>sameOwnedRoot(r,i,()=>({...rootStat,mtimeMs:999,...overrides.currentRootStat}),x=>overrides.rootRealpath??x,1000),observer:{terminate(){aborts++}},observers:new Set([{terminate(){aborts++},closed:Promise.resolve()}]),clients:new Set([{abort(){aborts++},settled:Promise.resolve()}]),pending:new Set(),children:new Set(),remaining:()=>10,deadline:Date.now()+1000,abort:{signal:{aborted:false}},timer:undefined,secret:'PRIVATE',owned:'/owned',fs:{rmSync(){deletes++}},checks:{},stage:'COMPLETE',closeOwnedChild,limit,clearTimeout,Date,Promise,...overrides}
+  const context={browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,ownedIdentity:rootStat,sameOwnedRoot:(r,i)=>sameOwnedRoot(r,i,()=>({...rootStat,mtimeMs:999,...overrides.currentRootStat}),x=>overrides.rootRealpath??x,1000),observer:{terminate(){aborts++}},observers:new Set([{terminate(){aborts++},closed:Promise.resolve()}]),clients:new Set([{abort(){aborts++},settled:Promise.resolve()}]),pending:new Set(),children:new Set(),remaining:()=>10,deadline:Date.now()+1000,abort:{signal:{aborted:false}},timer:undefined,secret:'PRIVATE',owned:'/owned',fs:{rmSync(){deletes++}},checks:{},stage:'COMPLETE',closeOwnedChild,limit,clearTimeout,Date,Promise,...overrides}
   if(overrides.pending)context.clients=new Set([{abort(){},settled:Promise.allSettled([...overrides.pending])}])
-  return {run:()=>vm.runInNewContext(`(async()=>{${finallyBlock};return {checks,stage,secret}})()`,context),deletes:()=>deletes,aborts:()=>aborts}
+  return {run:()=>vm.runInNewContext(`(async()=>{${finallyBlock};return {checks,stage,secret,browserStartup}})()`,context),deletes:()=>deletes,aborts:()=>aborts}
 }
 test('actual main finally closes owned endpoints and clears secret before deleting scratch',async()=>{
   const s=actualFinally(),r=await s.run();assert.equal(r.checks.cleanup,true);assert.equal(r.secret,undefined);assert.equal(s.deletes(),1);assert.equal(s.aborts(),2)
@@ -120,8 +129,7 @@ test('real CLI canonical and owned directory alias both refuse local startup wit
 for(const mode of ['timeout','open-error','success-no-close','success-close'])test('actual connect/finally retains known socket until real close: '+mode,async()=>{
   const source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')
   const declaration=source.slice(source.indexOf('  const connect='),source.indexOf('\n  let WebSocket'))
-  const begin=source.lastIndexOf('  finally {\n    let clean=true'),end=source.indexOf('\n  Object.assign(console,originalConsole)',begin)
-  assert.ok(begin>0&&end>begin);const body=source.slice(begin+'  finally {'.length,end).trim().slice(0,-1)
+  const body=extractMainFinally(source)
   const clients=new Set();let socket,terminated=0,observedClose=false,deleted=0,rejected=false
   class OwnedSocket extends EventEmitter {
     constructor(){super();socket=this;this.once('close',()=>{observedClose=true});if(mode==='open-error')queueMicrotask(()=>this.emit('error',Error('PRIVATE_ERROR')));if(mode.startsWith('success'))queueMicrotask(()=>this.emit('open'))}
@@ -130,7 +138,7 @@ for(const mode of ['timeout','open-error','success-no-close','success-close'])te
   try {
     const connect=vm.runInNewContext(`(()=>{${declaration};return connect})()`,{CDP,WebSocket:OwnedSocket,clients,BOUNDS,remaining:()=>2})
     try{await connect('ws://owned-inert')}catch{rejected=true}
-    const context={observers:new Set(),clients,children:new Set(),remaining:()=>5,deadline:Date.now()+100,abort:{signal:{aborted:false}},timer:undefined,secret:'PUBLIC',owned:'/owned',ownedIdentity:{},sameOwnedRoot:()=>true,fs:{rmSync(){deleted++}},checks:{},stage:'BROWSER',closeOwnedChild,limit,clearTimeout,Date,Promise}
+    const context={browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,observers:new Set(),clients,children:new Set(),remaining:()=>5,deadline:Date.now()+100,abort:{signal:{aborted:false}},timer:undefined,secret:'PUBLIC',owned:'/owned',ownedIdentity:{},sameOwnedRoot:()=>true,fs:{rmSync(){deleted++}},checks:{},stage:'BROWSER',closeOwnedChild,limit,clearTimeout,Date,Promise}
     const result=await vm.runInNewContext(`(async()=>{${body};return checks.cleanup})()`,context)
     assert.equal(rejected,mode==='timeout'||mode==='open-error')
     assert.equal(clients.size,1,'every already-created client must be retained, including failed open')
@@ -205,4 +213,21 @@ test('#735 original pass predicate ignores startup diagnostics and still require
   assert.equal(finiteReceipt('COMPLETE',all,{browserPhase:null}).passed,true)
   for(const key of keys){const r=finiteReceipt('COMPLETE',{...all,[key]:false},{browserPhase:'AUTH_DONE',browserPresent:true,browserExitCode:0,xvfbPresent:true,xvfbExitCode:0});assert.equal(r.passed,false)}
   assert.equal(finiteReceipt('BROWSER',all,{browserPhase:'AUTH_DONE'}).passed,false)
+})
+
+// #735 extractor regression controls: actual whole main, no native/browser execution.
+test('actual main finally extraction accepts LF/CRLF and executes the real pre-cleanup snapshot',async()=>{
+  const source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')
+  for(const text of [source,source.replace(/\r?\n/g,'\r\n')]) {
+    const s=actualFinally({},text),r=await s.run()
+    assert.equal(r.checks.cleanup,true);assert.equal(r.secret,undefined);assert.equal(s.deletes(),1);assert.equal(s.aborts(),2)
+    assert.deepEqual(JSON.parse(JSON.stringify(r.browserStartup)),{browserPhase:'PORT_FILE',browserPresent:true,browserExitCode:65,xvfbPresent:true,xvfbExitCode:null})
+    assert.equal(extractMainFinally(text).includes('browserStartup=observeBrowserStartup(browserPhase,chromium,xvfb)'),true)
+  }
+})
+test('actual main finally extraction refuses missing/duplicate/outside boundaries without selecting another finally',()=>{
+  const source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8'),boundary='\n  Object.assign(console,originalConsole)'
+  for(const text of [source.replace('export async function main() {','async function otherMain() {'),source.replace('\n  finally {','\n  notFinally {'),source.replace(boundary,'\n  OTHER(console,originalConsole)'),source+boundary,source.replace(boundary,'\n  OTHER(console,originalConsole)')+boundary,source.replace('\n  }\n  Object.assign','\n  NOT_CLOSING\n  Object.assign'),source+'\nexport async function main() {\n'])assert.throws(()=>extractMainFinally(text))
+  const outside='  finally {\n    throw Error("FOREIGN_NOT_EXECUTED")\n  }\n'
+  assert.equal(extractMainFinally(outside+source),extractMainFinally(source))
 })
