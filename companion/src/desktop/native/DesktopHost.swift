@@ -250,7 +250,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
             guard Set(f.keys)==allowed,let id=f["id"] as? String,!id.isEmpty,id.utf16.count<=200 else{return}
             if type=="desktop.archive.list" {if let query=f["query"] {guard let text=query as? String,text.utf16.count<=120 else{return}}}
             else {
-                guard let target=f["thread_id"] as? String,!target.isEmpty,target.utf8.count<=64,target.utf8.allSatisfy{($0>=65 && $0<=90)||($0>=97 && $0<=122)||($0>=48 && $0<=57)||$0==95||$0==45} else{return}
+                guard let target=f["thread_id"] as? String,!target.isEmpty,target.utf8.count<=64,target.utf8.allSatisfy({($0>=65 && $0<=90)||($0>=97 && $0<=122)||($0>=48 && $0<=57)||$0==95||$0==45}) else{return}
                 if type=="desktop.archive.set" {guard let revision=f["revision"] as? String,Self.hex(revision,64),let value=f["archived"] as? NSNumber,CFGetTypeID(value)==CFBooleanGetTypeID() else{return}}
             }
         }

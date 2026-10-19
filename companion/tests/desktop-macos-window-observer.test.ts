@@ -48,12 +48,16 @@ test("Mac observation records original identity before completion and retains al
   assert.ok(stopBeforeWindowEmit.test(fixture))
 })
 
+function assertVariantCleanup(source: string) {
+  assert.ok(source.includes("d480AcceptanceWindowStop(self);archiveTarget=nil;retireConfirmation(nil);socket=nil;"))
+  assert.ok(source.includes("d480AcceptanceWindowStop(self);retireArchive();retireDialog();retireConfirmation(false);socket?.cancel"))
+}
+
 test("Mac acceptance builder preserves production bytes and arms cleanup only in the test variant", async () => {
   const builder = await (new Function("url", "return import(url)"))(pathToFileURL(path.resolve("scripts/build-desktop-windows.mjs")).href)
   const variant = builder.desktopAcceptanceVariant("swift", original, fixture)
   assert.equal(variant.inverse, original)
-  assert.ok(variant.source.includes("d480AcceptanceWindowStop(self);retireConfirmation(nil);socket=nil;"))
-  assert.ok(variant.source.includes("d480AcceptanceWindowStop(self);retireDialog();retireConfirmation(false);socket?.cancel"))
+  assertVariantCleanup(variant.source)
   assert.equal(original.includes("d480AcceptanceWindowStop"), false)
   assert.ok(fixture.includes("NotificationCenter.default.removeObserver(observer)"))
   assert.ok(fixture.includes("windowObservers.removeAll()"))
@@ -68,4 +72,28 @@ test("Mac cleanup adjacency accepts LF/CRLF but still rejects missing or reorder
   assert.equal(stopBeforeWindowEmit.test(cleanup.replace("self.stopWindow()", "")), false)
   assert.equal(stopBeforeWindowEmit.test(cleanup.replace("self.emit", "self.other")), false)
   assert.equal(stopBeforeWindowEmit.test('self.emit(host,"WINDOW_"\n            self.stopWindow()'), false)
+})
+
+test("actual Mac acceptance variants retain archive cleanup and inverse across EOLs and reject retirement mutants", async () => {
+  const builder = await (new Function("url", "return import(url)"))(pathToFileURL(path.resolve("scripts/build-desktop-windows.mjs")).href)
+  for (const source of [original, original.replace(/\r?\n/g, "\r\n")]) {
+    const variant = builder.desktopAcceptanceVariant("swift", source, fixture)
+    assert.equal(variant.inverse, source)
+    assertVariantCleanup(variant.source)
+  }
+  const variant = builder.desktopAcceptanceVariant("swift", original, fixture)
+  const offline = "d480AcceptanceWindowStop(self);archiveTarget=nil;retireConfirmation(nil);socket=nil;"
+  const terminate = "d480AcceptanceWindowStop(self);retireArchive();retireDialog();retireConfirmation(false);socket?.cancel"
+  for (const [before, after] of [
+    [offline, offline.replace("d480AcceptanceWindowStop(self);", "")],
+    [offline, offline.replace("archiveTarget=nil;", "")],
+    [offline, "archiveTarget=nil;retireConfirmation(nil);socket=nil;d480AcceptanceWindowStop(self);"],
+    [terminate, terminate.replace("retireArchive();", "")],
+    [terminate, terminate.replace("retireDialog();", "")],
+    [terminate, terminate.replace("retireConfirmation(false);", "")],
+    [terminate, terminate.replace("socket?.cancel", "socket?.resume")],
+  ]) {
+    assert.equal(variant.source.split(before).length, 2)
+    assert.throws(() => assertVariantCleanup(variant.source.replace(before, after)))
+  }
 })

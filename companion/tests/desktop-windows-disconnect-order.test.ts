@@ -7,10 +7,14 @@ import fs from "node:fs"
 const cpp = fs.readFileSync("src/desktop/native/DesktopHost.cpp", "utf8")
 const network = cpp.match(/if\(!ready\.(exchange\(false\)|load\(\))\)ExitProcess\(41\);post\(native_offline,id\);Sleep\(5000\);/)
 assert.ok(network, "native disconnect guard must be explicitly modeled")
-const offline = cpp.match(/else if\(message==native_offline\)\{([^{}]*?)if\(self->web\)/)?.[1]
-assert.ok(offline)
-const statements = offline.split(";").map(x => x.trim()).filter(Boolean)
-assert.ok(statements.every(x => ["self->retire_confirmation()", "self->ready=false", "self->generation.clear()", "self->requests.clear()"].includes(x)))
+function offlineStatements(source: string) {
+  const offline = source.match(/else if\(message==native_offline\)\{([^{}]*?)if\(self->web\)/)?.[1]
+  assert.ok(offline)
+  const statements = offline.split(";").map(x => x.trim()).filter(Boolean)
+  assert.deepEqual(statements, ["self->retire_confirmation()", "self->ready=false", "self->archive_target.clear()", "self->generation.clear()", "self->requests.clear()"])
+  return statements
+}
+const statements = offlineStatements(cpp)
 const retiredEpochRecheck = cpp.includes('if(!ready||phase!=L"ready"){if(frame_epoch!=epoch)return;throw std::runtime_error("PHASE");}')
 assert.ok(retiredEpochRecheck || cpp.includes('if(!ready||phase!=L"ready")throw std::runtime_error("PHASE");'))
 if (retiredEpochRecheck) {
@@ -19,8 +23,8 @@ if (retiredEpochRecheck) {
 }
 assert.equal(cpp.includes("if(frame->epoch!=self->epoch)return 0;"), true)
 
-type State = { ready: boolean; phase: string; epoch: number; generation: boolean; pending: boolean; accepted: number }
-function connected(): State { return { ready: true, phase: "ready", epoch: 1, generation: true, pending: true, accepted: 0 } }
+type State = { ready: boolean; phase: string; epoch: number; generation: boolean; pending: boolean; archive: boolean; accepted: number }
+function connected(): State { return { ready: true, phase: "ready", epoch: 1, generation: true, pending: true, archive: true, accepted: 0 } }
 function disconnect(s: State): void {
   const wasReady = s.ready
   if (network![1] === "exchange(false)") s.ready = false
@@ -40,6 +44,7 @@ function offlineMessage(s: State, epoch: number): void {
   for (const statement of statements) {
     // Native prompt retirement does not alter the existing readiness/order projection.
     if (statement === "self->ready=false") s.ready = false
+    else if (statement === "self->archive_target.clear()") s.archive = false
     else if (statement === "self->generation.clear()") s.generation = false
     else if (statement === "self->requests.clear()") s.pending = false
   }
@@ -55,6 +60,7 @@ test("authenticated frame queued before disconnect drains before the UI clears r
   assert.equal(s.accepted, 1)
   offlineMessage(s, 1)
   assert.deepEqual([s.ready, s.generation, s.pending], [false, false, false])
+  assert.equal(s.archive, false)
 })
 
 test("already drained authenticated frames keep the same disconnect cleanup", () => {
@@ -63,6 +69,7 @@ test("already drained authenticated frames keep the same disconnect cleanup", ()
   disconnect(s)
   offlineMessage(s, 1)
   assert.deepEqual([s.accepted, s.ready, s.generation, s.pending], [1, false, false, false])
+  assert.equal(s.archive, false)
 })
 
 test("initial unauthenticated connection failure still exits rather than reconnecting", () => {
@@ -75,6 +82,7 @@ test("old epoch messages cannot clear or authorize a newer connection", () => {
   offlineMessage(s, 1)
   frame(s, 1)
   assert.deepEqual([s.ready, s.generation, s.pending, s.accepted], [true, true, true, 0])
+  assert.equal(s.archive, true)
 })
 
 test("network retirement between UI epoch admission and readiness sampling ignores the retired frame", () => {
@@ -89,4 +97,13 @@ test("after UI offline and during invalid handshake phases frames still fail clo
   s.ready = true; s.phase = "hello"
   assert.throws(() => frame(s, 1), /EXIT_45_PHASE/)
   assert.equal(s.accepted, 0)
+})
+
+test("offline archive retirement requires every original clear in order and rejects omitted or extra actions", () => {
+  for (const source of [cpp, cpp.replace(/\r?\n/g, "\r\n")]) assert.deepEqual(offlineStatements(source), statements)
+  const actual = statements.join(";") + ";"
+  assert.equal(cpp.split(actual).length, 2)
+  for (const statement of statements) assert.throws(() => offlineStatements(cpp.replace(actual, actual.replace(statement + ";", ""))))
+  assert.throws(() => offlineStatements(cpp.replace(actual, [...statements].reverse().join(";") + ";")))
+  assert.throws(() => offlineStatements(cpp.replace(actual, actual + "self->unknown_action();")))
 })

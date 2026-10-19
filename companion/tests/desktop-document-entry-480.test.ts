@@ -6,12 +6,12 @@ import path from "node:path"
 const companion=path.resolve(__dirname,"../..")
 const cpp=fs.readFileSync(path.join(companion,"src/desktop/native/DesktopHost.cpp"),"utf8")
 function literal(name:string){return new RegExp(`static constexpr wchar_t ${name}\\[\\]=L"([^"]+)";`).exec(cpp)?.[1]}
-function documentBindings(){return [
- /return web->Navigate\((\w+)\);/.exec(cpp)?.[1],
- /bool allow=uri&&std::wstring\(uri\)==(\w+);/.exec(cpp)?.[1],
- /bool own=uri&&std::wstring\(uri\)==(\w+);/.exec(cpp)?.[1],
- /void renderer\([^\n]+?source!=(\w+)\|\|generation.empty\(\)\)return;/.exec(cpp)?.[1],
- /resources\{\{(\w+),\{L"index.html",L"text\/html"\}\}/.exec(cpp)?.[1]
+function documentBindings(source=cpp){return [
+ /return web->Navigate\((\w+)\);/.exec(source)?.[1],
+ /bool allow=uri&&std::wstring\(uri\)==(\w+);/.exec(source)?.[1],
+ /bool own=uri&&std::wstring\(uri\)==(\w+);/.exec(source)?.[1],
+ /void renderer\([^\n]+?source!=(\w+)\|\|generation.empty\(\)\)return;/.exec(source)?.[1],
+ /resources\{\{(\w+),\{L"index.html",L"text\/html"\}\}/.exec(source)?.[1]
 ]}
 test("Windows virtual folder entry is the explicit existing index.html document",()=>{
  const origin=literal("document_origin"),document=literal("document_url");assert.equal(origin,"https://cmspark-desktop.invalid/");assert.equal(document,"https://cmspark-desktop.invalid/index.html")
@@ -20,11 +20,14 @@ test("Windows virtual folder entry is the explicit existing index.html document"
  assert.equal(fs.statSync(path.join(companion,"src/desktop/assets")).isDirectory(),true)
  assert.match(cpp,/SetVirtualHostNameToFolderMapping\(L"cmspark-desktop.invalid",\(root\+L"\\\\assets"\)\.c_str\(\),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS\)/)
 })
+function assertDocumentLifecycle(source:string){
+ assert.deepEqual(documentBindings(source),Array(5).fill("document_url"))
+ assert.match(source,/if\(allow\)\{retire_archive\(\);retire_dialog\(\);retire_confirmation\(0\);generation.clear\(\);requests.clear\(\);\}/)
+ assert.match(source,/if\(ok&&own&&ready\)document\(\);/)
+ assert.match(source,/if\(!ready\|\|source!=document_url\|\|generation.empty\(\)\)return;/)
+}
 test("Navigate, main-frame start/completion, renderer and HTML map use the same exact file identity",()=>{
- assert.deepEqual(documentBindings(),Array(5).fill("document_url"))
- assert.match(cpp,/if\(allow\)\{retire_dialog\(\);retire_confirmation\(0\);generation.clear\(\);requests.clear\(\);\}/)
- assert.match(cpp,/if\(ok&&own&&ready\)document\(\);/)
- assert.match(cpp,/if\(!ready\|\|source!=document_url\|\|generation.empty\(\)\)return;/)
+ assertDocumentLifecycle(cpp)
 })
 test("all five source-bound document identities reject directory, aliases and foreign documents",()=>{
  const bindings=documentBindings().map(name=>literal(name||""));assert.equal(bindings.length,5)
@@ -37,4 +40,13 @@ test("origin-relative CSS and JS retain their original exact bundle resources",(
  assert.match(cpp,/std::wstring\(document_origin\)\+L"app.css",\{L"app.css",L"text\/css"\}/)
  assert.match(cpp,/std::wstring\(document_origin\)\+L"app.js",\{L"app.js",L"text\/javascript"\}/)
  const html=fs.readFileSync(path.join(companion,"src/desktop/assets/index.html"),"utf8");assert.match(html,/href="app.css"/);assert.match(html,/src="app.js"/);assert.match(html,/default-src 'none'/);assert.match(html,/connect-src 'none'/)
+})
+
+test("document identity and archive-aware retirement remain strict for LF/CRLF and source mutations",()=>{
+ for(const source of [cpp,cpp.replace(/\r?\n/g,"\r\n")])assertDocumentLifecycle(source)
+ const actual="if(allow){retire_archive();retire_dialog();retire_confirmation(0);generation.clear();requests.clear();}"
+ assert.equal(cpp.split(actual).length,2)
+ for(const changed of [actual.replace("retire_archive();",""),actual.replace("retire_dialog();",""),actual.replace("retire_confirmation(0);",""),actual.replace("generation.clear();",""),actual.replace("requests.clear();",""),"if(allow){generation.clear();retire_archive();retire_dialog();retire_confirmation(0);requests.clear();}"])assert.throws(()=>assertDocumentLifecycle(cpp.replace(actual,changed)))
+ assert.throws(()=>assertDocumentLifecycle(cpp.replace("source!=document_url","source!=document_origin")))
+ assert.throws(()=>assertDocumentLifecycle(cpp.replace("if(ok&&own&&ready)document();","if(ok&&own)document();")))
 })
