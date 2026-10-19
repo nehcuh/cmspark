@@ -4,6 +4,10 @@
 
 ## 测试架构
 
+### Windows sentinel 对象身份夹具
+
+case36 的数值句柄可被当前子进程的无关对象复用，不能单用 GetHandleInformation 推断 sentinel 继承。夹具使用128位随机 Local Event 名称与原子拒绝重名创建；在打开只读同步引用之前捕获候选，再用既有 CompareObjectHandles 比较。V2 sidecar 只在 owned 文件传递已知三句柄和固定格式名称，旧 V1 case35 保留。未知 API、引用、比较或关闭结果仍拒绝；原 launcher、inherit=false、pipe/parent 检查、ACK、20s和真实 native gate 不变。CPU 词法投影不等 Windows SDK／原生通过，也不确定旧 launch 失败的唯一原因。
+
 ### #572 Windows sibling 就绪事件
 
 既有 `scripts/tests/uia-no-autofocus-572.test.mjs`（原 CI 入口显式执行）追加实际 fixture ContentRendered/Activated/发布函数的有限 PS→JS 语法投影。LF/CRLF 均覆盖请求返回未激活、从未激活、错前台、Activated 先于渲染、重复事件、既存 ready 与写失败；target 四模式原始基线不变。投影使用真实 owned 文件写入/rename，窗口与事件为惰性 seam，不执行 PowerShell、WPF 或 user32。
