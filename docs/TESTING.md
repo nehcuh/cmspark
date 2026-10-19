@@ -4,6 +4,12 @@
 
 ## 测试架构
 
+### #572 Windows sibling 就绪事件
+
+既有 `scripts/tests/uia-no-autofocus-572.test.mjs`（原 CI 入口显式执行）追加实际 fixture ContentRendered/Activated/发布函数的有限 PS→JS 语法投影。LF/CRLF 均覆盖请求返回未激活、从未激活、错前台、Activated 先于渲染、重复事件、既存 ready 与写失败；target 四模式原始基线不变。投影使用真实 owned 文件写入/rename，窗口与事件为惰性 seam，不执行 PowerShell、WPF 或 user32。
+
+夹具只给自有 sibling 请求一次原 Activate，再用当前 IsActive 和精确自有 HWND 判断是否可发布；没有新增计时器、轮询、retry、SetForegroundWindow 或输入注入。真实 Windows 的原 45 秒生命周期和全部背景四 oracle 保留；无真实激活就无 ready 并失败。受控 CPU 不证明本轮 Windows 原因或通过，仍须精确新 head 的真实平台验收。
+
 ### #731 shell 输出编码
 
 `companion/tests/shell-output-encoding-731.test.ts` 由原 canonical 测试入口发现，运行实际 `shell.ts` 模块与受控 child pipe 字节。覆盖中文／emoji 的所有单个拆分位置、stderr、结束残片、固定 CP936 字节、含 NUL 的混合输出、进度／输出上限、退出码、停止／超时及原模块／allowlist 拒绝。测试使用内存 spawn、虚拟时钟和 owned UTF-8 文件，不启动 cmd、PowerShell 或真实子 shell。

@@ -57,6 +57,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   // #563: busy is temporary availability, not a permission or concurrency override.
   SHELL_BUSY: "recoverable",
   NETSEC_BUSY: "recoverable",
+  RATE_LIMITED: "recoverable", // #730: preserve refusal, L2 and the existing 30/60s window
   // #563: real invalid-token guards already hard-stop; only their wire gains a code.
   SECURITY_TOKEN_INVALID: "non_recoverable",
   // #521 new ephemeral addressing refusals; fixed intrinsic recovery, no authority.
