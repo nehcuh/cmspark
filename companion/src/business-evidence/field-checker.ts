@@ -10,7 +10,16 @@ export interface CheckedField { state: FieldState; reasons: string[]; sources: C
 export type CheckedFields = Record<string, CheckedField>
 const result = (state: FieldState, reason: string, sources: CheckedSource[] = []): CheckedField => ({ state, reasons: [reason], sources })
 const scalarValue = (draft: DraftRecord, name: string) => typeof draft.fields[name]?.value === "string" ? draft.fields[name].value as string : undefined
-const businessTimestamp = (value: string) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))
+const businessTimestamp = (value: string): boolean => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.exec(value)
+  if (!match || !Number.isFinite(Date.parse(value))) return false
+  // Date.parse normalizes impossible dates such as February 30. Validate the
+  // source's local calendar date before its existing timezone/time checks.
+  const year = Number(match[1]), month = Number(match[2]), day = Number(match[3])
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1]
+}
 
 /** Only checks registered candidates against immutable local Observations. It
  * does not infer semantic truth from an LLM score or from an uncited URL. */
