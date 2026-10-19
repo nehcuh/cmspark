@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Windows 原生继承夹具仅对 sentinel 使用确切内核对象身份，先捕获旧数值槽再打开独占命名 Event 引用；无关 Event／管道占槽不冒称继承，真实继承及未知 API／比较／关闭失败仍严格拒绝。保留 V1、原 protected endpoint、bootstrap、20秒与清理；不宣称已证明历史 launch 失败根因。
+
 - #572 Windows 原生测试夹具仅在自有 sibling 已渲染、实际 IsActive 且前台 HWND 精确匹配后才原子发布 ready；Activate 请求本身不作成功证据。复用 ContentRendered/Activated 事件和原 45 秒边界，不加轮询、输入或前台权限；从未实际激活仍失败。LF/CRLF 源码回归不代表实际 Windows 已通过，也不判定旧原生失败的唯一原因。
 
 - #605 Windows 原生管道回归夹具的 ready JSON 先写独占临时文件、完整关闭后再原子发布，避免 `exists` 已真却读取到空 JSON。补确定性开文件／写入失败控制，保留原管道、cwd、ignored stdio、时限和清理断言；不将夹具竞态冒称产品管道故障或所有 Windows 失败的根因。
