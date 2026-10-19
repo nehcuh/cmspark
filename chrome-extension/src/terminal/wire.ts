@@ -9,6 +9,32 @@ export const TERMINAL_ACK_HIGH_WATER = 64
 /** b64 字符上限（净荷 16KiB → b64 ≈ 21.8k，留余量；超出的帧直接拒，防坏帧撑爆 atob）。 */
 export const TERMINAL_FRAME_B64_MAX = 24 * 1024
 
+export type TerminalLaunchKind = "local_shell" | "embedded_agent"
+export type TerminalMetrics = {
+  seq: number; output_bytes: number; unacked_frames: number; unacked_bytes: number
+  ack_frames: number; pause_count: number; paused: boolean; last_output_age_ms: number | null
+}
+
+/** Optional diagnostic projection only. Invalid metadata must not alter terminal control. */
+export function parseTerminalMetrics(raw: unknown): TerminalMetrics | null {
+  if (!raw || typeof raw !== "object") return null
+  const o = raw as Record<string, unknown>
+  const keys = ["seq", "output_bytes", "unacked_frames", "unacked_bytes", "ack_frames", "pause_count"] as const
+  if (keys.some(key => typeof o[key] !== "number" || !Number.isSafeInteger(o[key]) || (o[key] as number) < 0)) return null
+  if ((o.unacked_bytes as number) > 256 * 1024 || (o.unacked_frames as number) > 256 * 1024 || typeof o.paused !== "boolean") return null
+  const age = o.last_output_age_ms
+  if (age !== null && (typeof age !== "number" || !Number.isSafeInteger(age) || age < 0)) return null
+  return { seq: o.seq as number, output_bytes: o.output_bytes as number, unacked_frames: o.unacked_frames as number,
+    unacked_bytes: o.unacked_bytes as number, ack_frames: o.ack_frames as number, pause_count: o.pause_count as number,
+    paused: o.paused, last_output_age_ms: age as number | null }
+}
+
+export function terminalLaunchLabel(kind: TerminalLaunchKind | null): string {
+  if (kind === "local_shell") return "本机用户 shell（非编程 Agent）"
+  if (kind === "embedded_agent") return "内嵌 Agent 启动来源（用户驱动；就绪与输出请在终端核实）"
+  return "终端来源未知（旧版或未提供）"
+}
+
 // --- client → companion ---
 
 export type TerminalClientFrame =
@@ -23,7 +49,7 @@ export type TerminalClientFrame =
 // --- companion → client ---
 
 export type TerminalServerFrame =
-  | { type: "terminal.opened"; id: string; pid?: number; platform: string; review_id?: string; review_prompt?: string }
+  | { type: "terminal.opened"; id: string; pid?: number; platform: string; launch_kind?: TerminalLaunchKind; review_id?: string; review_prompt?: string }
   | { type: "terminal.review.received"; id: string; receipt_id: string; review_id: string }
   /** 扩展级错误（无会话 id，id=""）：busy 拒 / WS 未连 / 开门超时。与 closed 分开——closed 是某会话终态，error 是「连会话都没成立」。 */
   | { type: "terminal.error"; id: string; code: string; error: string }
@@ -77,7 +103,8 @@ export function parseTerminalServerFrame(raw: unknown): TerminalServerFrame | nu
       const platform = asStr(o.platform)
       if (!platform || (o.pid != null && pid == null)) return null
       const review_id = asStr(o.review_id), review_prompt = asStr(o.review_prompt)
-      return { type, id, ...(pid != null ? { pid } : {}), platform, ...(review_id && review_prompt && review_prompt.length <= 512 * 1024 ? { review_id, review_prompt } : {}) }
+      const kind = o.launch_kind === "local_shell" || o.launch_kind === "embedded_agent" ? o.launch_kind : undefined
+      return { type, id, ...(pid != null ? { pid } : {}), platform, ...(kind ? { launch_kind: kind } : {}), ...(review_id && review_prompt && review_prompt.length <= 512 * 1024 ? { review_id, review_prompt } : {}) }
     }
     case "terminal.review.received": {
       const receipt_id = asStr(o.receipt_id), review_id = asStr(o.review_id)

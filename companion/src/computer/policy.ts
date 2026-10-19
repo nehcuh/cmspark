@@ -16,6 +16,13 @@ import { aumidToVault, basenameToVault, isLolbinPath } from "../apps/guards"
 import { APP_TOKEN_PATTERN } from "../apps/types"
 import { ComputerError, type WindowInfo } from "./types"
 
+/** #723: a spoofable, protective refusal only; a non-match grants no authority. */
+export const COMPUTER_COCKPIT_TITLE = "CMspark Confirmation Cockpit [723]"
+export function isCompanionCockpitWindow(info: Pick<WindowInfo, "title">, platform = os.platform()): boolean {
+  if (platform !== "win32" || typeof info.title !== "string") return false
+  return info.title === COMPUTER_COCKPIT_TITLE || info.title.startsWith(COMPUTER_COCKPIT_TITLE + " - ")
+}
+
 /**
  * macOS vault bundle IDs — structural exclusion set (WP3 + adversarial review H6).
  * Apps whose bundle ID matches any entry here can NEVER carry coordinateAllowed
@@ -275,6 +282,9 @@ export function assertHwndOwnedByEntry(
 ): void {
   if (!info.alive) {
     throw new ComputerError("HWND_DEAD", `computer: hwnd ${info.hwnd} is no longer a live window`)
+  }
+  if (isCompanionCockpitWindow(info)) {
+    throw new ComputerError("HWND_NOT_OWNED", "computer: refusing the confirmation cockpit as an application target")
   }
   // macOS WP3: ownership is by bundleId; Windows: ownership is by exe path
   const entryPath = os.platform() === "darwin"

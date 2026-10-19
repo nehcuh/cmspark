@@ -34,6 +34,11 @@ export const SITE_ATTACH_FAIL_BAN = 1
 export const SITE_ORIGIN_FAIL_ESCALATE = 4
 export const EVALUATE_NULL_RESULT = "EVALUATE_NULL_RESULT"
 
+/** #729: observation failures never promote or consume the interaction fuse.
+ * This is a closed tool-name set, never inferred from model parameters. */
+const READ_ONLY_DOM = new Set(["get_page_text", "get_page_html", "wait_for"])
+const READ_ONLY_RETRY_GUIDANCE = "Read-only DOM observation is limited; use another page or reading strategy, not automatic retries. For an origin limit, ask the user to reset this conversation/site failure count in Settings. Waiting or reopening the same origin does not clear it; locator and attach restrictions remain."
+
 /**
  * Failure codes that must NOT aggregate toward the origin CDP fail streak or
  * locator bans (#528, real-run 2026-09-26): they are parameter/authorization
@@ -229,6 +234,7 @@ export type SiteOpBan =
       banned: true
       error_code: "SITE_OP_BANNED" | "TAB_ATTACH_FROZEN" | "SITE_OP_ESCALATE"
       locator: string
+      readOnly?: true
     }
 
 export type OriginCdpFailState = { fails: number; lastCode: string }
@@ -240,6 +246,8 @@ type ThreadMem = {
   frozenTabs: Set<number>
   /** #357 origin streak — the single shared counter (#358 persist keys off it too). */
   originFails: Record<string, OriginCdpFailState>
+  /** Volatile read-only health, same threshold; never hydrated as interactions. */
+  readOriginFails: Record<string, OriginCdpFailState>
   /** #358: origins already auto-persisted this process (once per thread+origin). */
   persistedOrigins: Set<string>
   hydratedOrigins: Set<string>
@@ -259,6 +267,7 @@ function stateFor(threadId: string): ThreadMem {
       locators: {},
       frozenTabs: new Set(),
       originFails: {},
+      readOriginFails: {},
       persistedOrigins: new Set(),
       hydratedOrigins: new Set(),
       restoredLocators: {},
@@ -266,6 +275,7 @@ function stateFor(threadId: string): ThreadMem {
     mem.set(threadId, s)
   } else {
     if (!s.originFails) s.originFails = {}
+    if (!s.readOriginFails) s.readOriginFails = {}
     if (!s.persistedOrigins) s.persistedOrigins = new Set()
     if (!s.hydratedOrigins) s.hydratedOrigins = new Set()
     if (!s.restoredLocators) s.restoredLocators = {}
@@ -278,6 +288,12 @@ export function getOriginFailCount(threadId: string, origin: string): number {
   const key = originFailKey(origin)
   if (!isAggregatableSiteOrigin(key)) return 0
   return stateFor(threadId).originFails[key]?.fails ?? 0
+}
+
+/** #729 read-only health has no interaction-persistence side effects. */
+export function getReadOnlyOriginFailCount(threadId: string, origin: string): number {
+  const key = originFailKey(origin)
+  return isAggregatableSiteOrigin(key) ? stateFor(threadId).readOriginFails[key]?.fails ?? 0 : 0
 }
 
 /** #533 UI read face: one verified origin/tab only; no locator strings. */
@@ -301,6 +317,8 @@ export function resetSiteOriginCounter(threadId: string, origin: string): void {
   if (!isAggregatableSiteOrigin(key)) return
   const observed = mem.get(threadId)?.originFails[key]
   if (observed) observed.fails = 0
+  const readObserved = mem.get(threadId)?.readOriginFails[key]
+  if (readObserved) readObserved.fails = 0
 }
 
 /** #358 read seam: dump per-origin CDP fail counters (http(s) only; no locators / frozen tabs). */
@@ -374,24 +392,26 @@ export function peekSiteOpBan(
     return { banned: true, error_code: "TAB_ATTACH_FROZEN", locator: "attach" }
   }
   const origin = originForSiteOp(params, tabUrl)
+  const readOnly = READ_ONLY_DOM.has(toolName)
   if (isAggregatableSiteOrigin(origin)) {
-    const originSt = s.originFails[origin]
+    const originSt = (readOnly ? s.readOriginFails : s.originFails)[origin]
     if (originSt && originSt.fails >= SITE_ORIGIN_FAIL_ESCALATE) {
+      if (readOnly) return { banned: true, error_code: "SITE_OP_BANNED", locator: "readonly-origin", readOnly: true }
       return { banned: true, error_code: "SITE_OP_ESCALATE", locator: "origin" }
     }
   }
   if (isSnapshotRequest(toolName, params)) return { banned: false }
   const locator = locatorKeyForTool(toolName, params)
   const restored = s.restoredLocators[locatorMapKey(origin, "*", locator)]
-  if (restored && restored.expiresAt > Date.now()) {
+  if (!readOnly && restored && restored.expiresAt > Date.now()) {
     return { banned: true, error_code: "SITE_OP_BANNED", locator }
   }
   const st = s.locators[locatorMapKey(origin, toolName, locator)]
   if (st && st.fails >= SITE_LOCATOR_FAIL_BAN) {
-    return { banned: true, error_code: "SITE_OP_BANNED", locator }
+    return { banned: true, error_code: "SITE_OP_BANNED", locator, ...(readOnly ? { readOnly: true as const } : {}) }
   }
   // Tool-hop of the same locator (click → get_element_info) still banned.
-  if (locator !== "none" && locator !== "attach") {
+  if (!readOnly && locator !== "none" && locator !== "attach") {
     const any = s.locators[locatorMapKey(origin, "*", locator)]
     if (any && any.fails >= SITE_LOCATOR_FAIL_BAN) {
       return { banned: true, error_code: "SITE_OP_BANNED", locator }
@@ -452,10 +472,11 @@ export function recordSiteOpFailure(
     }
   }
   const ephemeral = isSnapshotRequest(toolName, params)
+  const readOnly = READ_ONLY_DOM.has(toolName)
   const k = locatorMapKey(origin, toolName, locator)
   const prev = ephemeral ? { fails: 0, lastCode: code } : (s.locators[k] || { fails: 0, lastCode: code })
   if (!ephemeral) { prev.fails += 1; prev.lastCode = code; s.locators[k] = prev }
-  if (!ephemeral && locator !== "none" && locator !== "attach") {
+  if (!readOnly && !ephemeral && locator !== "none" && locator !== "attach") {
     const anyK = locatorMapKey(origin, "*", locator)
     const any = s.locators[anyK] || { fails: 0, lastCode: code }
     any.fails += 1
@@ -466,12 +487,13 @@ export function recordSiteOpFailure(
   let originEscalateDue = false
   let originPersistDue = false
   if (isAggregatableSiteOrigin(origin)) {
-    const ost = s.originFails[origin] || { fails: 0, lastCode: code }
+    const counters = readOnly ? s.readOriginFails : s.originFails
+    const ost = counters[origin] || { fails: 0, lastCode: code }
     ost.fails += 1
     ost.lastCode = code
-    s.originFails[origin] = ost
-    originFails = ost.fails
-    originEscalateDue = ost.fails >= SITE_ORIGIN_FAIL_ESCALATE
+    counters[origin] = ost
+    originFails = readOnly ? 0 : ost.fails
+    originEscalateDue = !readOnly && ost.fails >= SITE_ORIGIN_FAIL_ESCALATE
     originPersistDue = originEscalateDue && !s.persistedOrigins.has(origin)
   }
   return {
@@ -510,7 +532,7 @@ export function collectOriginFailedLocators(
   for (const [k, st] of Object.entries(s.locators)) {
     if (!k.startsWith(prefix)) continue
     const [o, tool, locator] = k.split("|")
-    if (o !== key || tool === "*" || !locator || locator === "none" || locator === "attach") continue
+    if (o !== key || tool === "*" || READ_ONLY_DOM.has(tool) || !locator || locator === "none" || locator === "attach") continue
     if (st.fails < 1 || !isDurableSiteOpFailureCode(st.lastCode)) continue
     if (!isSafeSiteOpLocatorText(locator)) continue
     out.push({ tool, locator, code: st.lastCode, fails: st.fails })
@@ -545,7 +567,7 @@ export function hydratePersistedSiteOpExperience(
   for (const e of entries) {
     if (e.stale) continue
     const parsed = parsePersistedSiteOpLine(e.content)
-    if (!parsed || !isDurableSiteOpFailureCode(parsed.code)) continue
+    if (!parsed || READ_ONLY_DOM.has(parsed.tool) || !isDurableSiteOpFailureCode(parsed.code)) continue
     // Round-2 MAJOR-2: disk entries are user-editable — re-run the injection gate
     // here so a template-conformant [auto] line with a poisoned locator cannot
     // ride past the persist-side check into a machine ban / prompt.
@@ -593,7 +615,7 @@ export function refreshPersistedSiteOpExperience(
     const recordedAt = typeof entry.recorded_at === "string" ? Date.parse(entry.recorded_at) : NaN
     if (!Number.isFinite(recordedAt) || recordedAt > now || now - recordedAt >= SITE_EXPERIENCE_TTL_MS) continue
     const parsed = parsePersistedSiteOpLine(entry.content)
-    if (!parsed || !isDurableSiteOpFailureCode(parsed.code) || canonicalizeSiteOrigin(parsed.origin) !== origin || !isSafeSiteOpLocatorText(parsed.locator)) continue
+    if (!parsed || READ_ONLY_DOM.has(parsed.tool) || !isDurableSiteOpFailureCode(parsed.code) || canonicalizeSiteOrigin(parsed.origin) !== origin || !isSafeSiteOpLocatorText(parsed.locator)) continue
     const parsedUrl = new URL(parsed.origin)
     if (parsedUrl.pathname !== "/" || parsedUrl.search || parsedUrl.hash || parsedUrl.username || parsedUrl.password) continue
     if (!isCdpInteractiveTool(parsed.tool) || parsed.locator === "none" || parsed.locator === "attach") continue
@@ -697,6 +719,13 @@ export function bannedSiteOpResult(
   // #409-A: default unarmed (fail-closed) — an absent caller must never get
   // host_computer advertising when CU is actually disabled.
   const cuArmed = opts?.cuArmed === true
+  if (ban.readOnly === true && ban.error_code === "SITE_OP_BANNED") {
+    return {
+      success: false,
+      error: `SITE_OP_BANNED: ${READ_ONLY_RETRY_GUIDANCE}`,
+      data: { error_code: "SITE_OP_BANNED", suggested_action: "switch_strategy", locator: ban.locator },
+    }
+  }
   if (ban.error_code === "TAB_ATTACH_FROZEN") {
     return {
       success: false,
@@ -769,13 +798,15 @@ export function formatSiteOpMemoryPrompt(
     try { return new URL(origin).hostname === hostname.toLowerCase() } catch { return false }
   }
   const banned: string[] = []
+  const readBanned: string[] = []
   for (const [k, st] of Object.entries(s.locators)) {
     if (st.fails < SITE_LOCATOR_FAIL_BAN) continue
     const [origin, tool, locator] = k.split("|")
     if (!matchesTarget(origin)) {
       continue
     }
-    banned.push(
+    const target = READ_ONLY_DOM.has(tool) ? readBanned : banned
+    target.push(
       `- ${tool} ${locator} on ${origin} (${st.lastCode}${st.persisted ? ", persisted" : ""}, ${st.fails}×)`,
     )
   }
@@ -783,11 +814,11 @@ export function formatSiteOpMemoryPrompt(
     if (state.expiresAt <= Date.now()) continue
     const [origin, tool, locator] = key.split("|")
     if (!matchesTarget(origin)) continue
-    banned.push(`- ${tool === "*" ? "all page tools" : tool} ${locator} on ${origin} (${state.lastCode}, persisted, expires ${new Date(state.expiresAt).toISOString()})`)
+    banned.push(`- ${tool === "*" ? "interactive page tools" : tool} ${locator} on ${origin} (${state.lastCode}, persisted, expires ${new Date(state.expiresAt).toISOString()})`)
   }
   if (banned.length) {
     lines.push(
-      "Do NOT retry these locators (site op-memory):\n" +
+      "Do NOT retry these interaction locators (site op-memory):\n" +
         banned.slice(0, 24).join("\n") +
         "\nPersisted failures carry over from earlier sessions. " +
         g.locatorAlt,
@@ -807,6 +838,12 @@ export function formatSiteOpMemoryPrompt(
   if (originEsc.length) {
     lines.push("Origin CDP escalate (#357):\n" + originEsc.slice(0, 8).join("\n"))
   }
+  for (const [origin, st] of Object.entries(s.readOriginFails)) {
+    if (isAggregatableSiteOrigin(origin) && matchesTarget(origin) && st.fails >= SITE_ORIGIN_FAIL_ESCALATE) {
+      readBanned.push(`- read-only DOM on ${origin} (${st.lastCode}, ${st.fails}×)`)
+    }
+  }
+  if (readBanned.length) lines.push("Read-only observation limits:\n" + readBanned.slice(0, 24).join("\n") + "\n" + READ_ONLY_RETRY_GUIDANCE)
   if (!lines.length) return ""
   return `## Site op-memory (machine)\n${lines.join("\n")}`
 }

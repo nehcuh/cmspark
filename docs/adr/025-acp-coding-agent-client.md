@@ -66,3 +66,11 @@ Channel:      community Phase A default; Phase B opt-in; gated apply GO; free sh
 | 完整 Zed IDE / free shell / 静默写盘 | ❌ 仍 NO-GO |
 
 Apply 路径：`acp.apply_diff` / tool `acp_apply_diff` — 仅应用会话内解析出的 pending_diffs，禁止路径逃逸。
+
+### 7. 终端观测口径（#724，2026-10-19）
+
+PTY 是用户本人交互的终端，不是自动 Agent 输出宿主。编程会话的内容面仍是 ACP JSON-RPC / CLI 桥的 `progress_tail` 与带 untrusted framing/taint 的 handback；Mode C 内嵌终端内容不会因终端打开或诊断计数自动进入主对话/模型。既有显式、绑定原任务且经人类确认的审阅报告导入是独立路径，不等于采集终端字节。
+
+`terminal.opened.launch_kind` 只记录本机 shell 或 consumed embed descriptor 的启动来源；它不证明 Agent 登录、健康、就绪或任务完成。旧版本缺字段与失败时保持未知，不能从标签 URL、线程绑定或 CLI 名猜测。Mode C 的 Agent 由用户在终端驱动；停止侧栏监视与关闭终端进程沿用原边界。
+
+诊断只记录首个有效输出帧的序号/字节数以及原 heartbeat 的有限计数、流控状态和单调输出年龄。不记录终端文本/base64/键击/粘贴、路径、Agent 名或环境，不新增 PTY→模型内容渠道、计时器、多 PTY 或授权能力。

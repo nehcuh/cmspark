@@ -2075,7 +2075,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               /* fail-closed: unarmed copy */
             }
             toolResult = bannedSiteOpResult(siteBan, { cuArmed })
-            if (siteBan.error_code === "SITE_OP_BANNED") {
+            if (siteBan.error_code === "SITE_OP_BANNED" && !siteBan.readOnly) {
               const key = JSON.stringify([originForSiteOp(execParams, tabUrl), siteBan.locator])
               if (!locatorBanGuidanceIssued.has(key)) {
                 locatorBanGuidanceIssued.add(key)

@@ -4,6 +4,7 @@
 import {
   isTerminalFrame,
   parseTerminalServerFrame,
+  parseTerminalMetrics,
   type TerminalServerFrame,
 } from "../terminal/wire"
 
@@ -101,6 +102,8 @@ export function attachTerminalPort(
   let detached = false
   let inputFrames = 0
   let opened = false
+  let outputObserved = false
+  let ended = false
 
   const relay: TerminalRelay = {
     handleConnectionLost() {
@@ -120,7 +123,8 @@ export function attachTerminalPort(
         // run only once a minute. Reply here while its owned Port remains attached.
         if (opened && (msg as { id?: string }).id === sessionId) {
           const forwarded = wsSend({ type: "terminal.ping", id: sessionId }) === true
-          log("info", "extension.terminal_heartbeat_forwarded", { id: sessionId, forwarded, input_frames: inputFrames })
+          const metrics = parseTerminalMetrics((msg as { metrics?: unknown }).metrics)
+          log("info", "extension.terminal_heartbeat_forwarded", { id: sessionId, forwarded, input_frames: inputFrames, ...(metrics || {}) })
         }
         return true
       }
@@ -128,7 +132,12 @@ export function attachTerminalPort(
       if (!frame) return false
       if (sessionId && frame.id && frame.id !== sessionId) return true // 别的会话帧：吞掉不回（单会话）
       if (frame.type === "terminal.opened") opened = true
-      if (frame.type === "terminal.closed") opened = false
+      if (frame.type === "terminal.closed") { opened = false; ended = true }
+      if (frame.type === "terminal.data" && sessionId && frame.id === sessionId && !ended && !outputObserved) {
+        outputObserved = true
+        // Parser already validated canonical base64 and the unchanged 16KiB cap.
+        log("info", "extension.terminal_output_observed", { id: sessionId, seq: frame.seq, bytes: atob(frame.b64).length })
+      }
       if (frame.type === "terminal.opened" || frame.type === "terminal.closed" || frame.type === "terminal.error") {
         log("info", "extension.terminal_session_frame", {
           id: sessionId, type: frame.type, input_frames: inputFrames,

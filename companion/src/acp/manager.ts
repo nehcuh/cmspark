@@ -465,7 +465,18 @@ export class AcpManager {
     workspaceRoot?: string | null
     mode?: "review_readonly" | "propose_diff"
     parentSessionId?: string
-  }): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
+  }): { ok: true; session: AcpSessionRecord } | {
+    ok: false
+    error: string
+    error_code?: "ACP_SESSION_BUSY" | "ACP_CONCURRENCY_LIMIT"
+    data?: {
+      holder_session_id?: string
+      holder_agent?: string
+      holder_state?: AcpSessionRecord["state"]
+      suggested_action: "start_or_cancel_current_acp_session" | "wait_or_cancel_current_acp_session" | "wait_for_acp_capacity"
+      data_not_instruction: true
+    }
+  } {
     const cfg = getConfig()
     if (!cfg.acp?.enabled) {
       return { ok: false, error: "acp: feature disabled (config.acp.enabled=false)" }
@@ -475,11 +486,33 @@ export class AcpManager {
       return { ok: false, error: `acp: unknown or disabled agent "${opts.agentId}"` }
     }
     if (this.runningCount >= 1) {
-      return { ok: false, error: "ACP_SESSION_BUSY: only one ACP session at a time" }
+      // A foreign holder's handle/task is not feedback for this thread.
+      const holder = [...this.sessions.values()].find(s => s.thread_id === opts.threadId && s.state === "running")
+      return {
+        ok: false,
+        error: "ACP_CONCURRENCY_LIMIT: only one ACP session at a time",
+        error_code: "ACP_CONCURRENCY_LIMIT",
+        data: {
+          ...(holder ? { holder_session_id: holder.session_id, holder_agent: holder.agent_id, holder_state: holder.state } : {}),
+          suggested_action: "wait_for_acp_capacity",
+          data_not_instruction: true,
+        },
+      }
     }
     for (const s of this.sessions.values()) {
       if (s.thread_id === opts.threadId && (s.state === "running" || s.state === "offered")) {
-        return { ok: false, error: "ACP_SESSION_BUSY: thread already has an ACP session" }
+        return {
+          ok: false,
+          error: "ACP_SESSION_BUSY: thread already has an ACP session",
+          error_code: "ACP_SESSION_BUSY",
+          data: {
+            holder_session_id: s.session_id,
+            holder_agent: s.agent_id,
+            holder_state: s.state,
+            suggested_action: s.state === "offered" ? "start_or_cancel_current_acp_session" : "wait_or_cancel_current_acp_session",
+            data_not_instruction: true,
+          },
+        }
       }
     }
     const ws = resolveAcpWorkspaceRoot(opts.workspaceRoot)
@@ -616,7 +649,7 @@ export class AcpManager {
 
   async start(sessionId: string): Promise<
     | { ok: true; session: AcpSessionRecord }
-    | { ok: false; error: string }
+    | Extract<ReturnType<AcpManager["propose"]>, { ok: false }>
   > {
     if (this.shuttingDown) return { ok: false, error: "acp: manager shutting down" }
     const session = this.sessions.get(sessionId)
@@ -629,6 +662,21 @@ export class AcpManager {
     const server = this.resolveServer(session.agent_id)
     if (!server?.command) return { ok: false, error: "acp: agent config missing" }
 
+    // Offers from different threads can predate a running session. Reserve
+    // synchronously here, before Windows preparation or any other await.
+    if (this.runningCount >= 1) {
+      const holder = [...this.sessions.values()].find(s => s.thread_id === session.thread_id && s.state === "running")
+      return {
+        ok: false,
+        error: "ACP_CONCURRENCY_LIMIT: only one ACP session at a time",
+        error_code: "ACP_CONCURRENCY_LIMIT",
+        data: {
+          ...(holder ? { holder_session_id: holder.session_id, holder_agent: holder.agent_id, holder_state: holder.state } : {}),
+          suggested_action: "wait_for_acp_capacity",
+          data_not_instruction: true,
+        },
+      }
+    }
     this.runningCount++
     session.state = "running"
     session.timeline = []

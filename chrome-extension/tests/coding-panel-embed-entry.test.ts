@@ -487,7 +487,8 @@ test("#506: embed_running gets its own banner — neither 尚无进程 nor the o
   assert.doesNotMatch(text, /本机 Terminal/)
   // It must say what is true: the agent runs in the in-plugin terminal page, and Stop keeps it.
   assert.match(text, /内嵌终端/)
-  assert.match(text, /正在运行|运行中/)
+  assert.match(text, /已观察到.*启动来源.*核实当前状态/)
+  assert.doesNotMatch(text, /Agent 正在运行|Agent 运行中/)
   assert.match(text, /终端页/)
   // Surface-independent: the banner does not point at a button (none renders in this state).
   assert.equal(modeCBannerText("embed_running", { hasEntryButton: true }), text)

@@ -261,6 +261,8 @@ export async function handleTerminalMessage(
       id,
       ...(spawned.pid ? { pid: spawned.pid } : {}),
       platform: ptyHostPlatform(),
+      // Source/purpose only: successful PTY admission is not Agent readiness.
+      launch_kind: intent ? "embedded_agent" : "local_shell",
       ...(review ? { review_id: reviewId, review_prompt: reviewPrompt(review) } : {}),
     }
   }

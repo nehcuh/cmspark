@@ -561,7 +561,12 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         workspaceRoot: resolvedWs || null,
         mode: resolvedMode,
       })
-      if (!r.ok) return { success: false, error: r.error }
+      if (!r.ok) {
+        if (r.error_code === "ACP_SESSION_BUSY" || r.error_code === "ACP_CONCURRENCY_LIMIT") {
+          return { success: false, error: r.error, error_code: r.error_code, data: r.data }
+        }
+        return { success: false, error: r.error }
+      }
       return {
         success: true,
         data: {
@@ -597,8 +602,13 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const sessionOwner = getAcpManager().getSession(sid)
       if (sessionOwner && sessionOwner.thread_id !== (params.__thread_id || params._thread_id)) return { success: false, error: "ACP session is not owned by this thread", error_code: "ACP_OWNER_MISMATCH" }
       const r = await getAcpManager().start(sid)
-      if (!r.ok) return r.error === "acp: unknown session"
-        ? acpSessionLookupFailure(params, sid) : { success: false, error: r.error }
+      if (!r.ok) {
+        if (r.error_code === "ACP_CONCURRENCY_LIMIT") {
+          return { success: false, error: r.error, error_code: r.error_code, data: r.data }
+        }
+        return r.error === "acp: unknown session"
+          ? acpSessionLookupFailure(params, sid) : { success: false, error: r.error }
+      }
       return {
         success: true,
         data: {

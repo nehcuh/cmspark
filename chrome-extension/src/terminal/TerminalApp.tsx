@@ -12,6 +12,8 @@ import {
   terminalB64Decode,
   terminalB64Encode,
   type TerminalServerFrame,
+  type TerminalLaunchKind,
+  terminalLaunchLabel,
 } from "./wire"
 import { tokens } from "../sidepanel/ui/tokens"
 
@@ -34,6 +36,7 @@ export function TerminalApp() {
   const [reportText, setReportText] = useState("")
   const [reportStatus, setReportStatus] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [launchKind, setLaunchKind] = useState<TerminalLaunchKind | null>(null)
   const submitRef = useRef<((report: unknown) => void) | null>(null)
 
   useEffect(() => {
@@ -78,6 +81,7 @@ export function TerminalApp() {
         clearInterval(pingTimer)
         subData.dispose()
         setStatus("error")
+        setLaunchKind(null)
         setDetail("companion 未响应：请确认 CMspark 在运行，且设置中已开启「内嵌终端」")
       }
     }, OPEN_WATCHDOG_MS)
@@ -150,6 +154,7 @@ export function TerminalApp() {
           clearTimeout(watchdog)
           setDetail("")
           setStatus("running")
+          setLaunchKind(frame.launch_kind || null)
           fit.fit()
           send({ type: "terminal.resize", id: sessionId, ...(pendingResize || { cols: term.cols, rows: term.rows }) })
           pendingResize = null
@@ -266,9 +271,9 @@ export function TerminalApp() {
           borderBottom: `1px solid ${tokens.darkBorder}`,
         }}
       >
-        <strong>内嵌终端</strong>
+        <strong>{status === "running" ? terminalLaunchLabel(launchKind) : "内嵌终端（来源未确认）"}</strong>
         <span style={{ opacity: 0.7 }}>
-          {status === "running" ? "运行中" : STATUS_COPY[status]}
+          {status === "running" ? "终端已打开；不代表 Agent 就绪" : STATUS_COPY[status]}
           {detail ? ` · ${detail}` : ""}
         </span>
         <span style={{ flex: 1 }} />

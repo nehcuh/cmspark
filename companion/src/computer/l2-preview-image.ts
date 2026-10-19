@@ -1,3 +1,5 @@
+import * as os from "os"
+import { isCompanionCockpitWindow } from "./policy"
 // WP4(WI-2):任务级 L2 标注截图 helper。
 //
 // 在 host_computer 确认闸门内(best-effort)生成:目标窗口截图 → OCR(凭证区
@@ -103,9 +105,15 @@ export async function buildComputerL2PreviewImage(
     let failureReason: PreviewUnavailableReason = "target_unavailable"
     try {
       // hwnd 解析(与 executor 同一规则:目标 exe 的最大可见窗口)。
-      const wins = await deps.windows.enumerateByExe(opts.exePath)
+      const enumerated = await deps.windows.enumerateByExe(opts.exePath)
+      const wins = Array.isArray(enumerated) ? enumerated.filter(w => !isCompanionCockpitWindow(w)) : []
       if (!Array.isArray(wins) || wins.length === 0) return { unavailable: "target_unavailable" }
       const win = [...wins].sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)[0]
+      // Independent preview selection must not reintroduce the same cockpit.
+      if (os.platform() === "win32") {
+        const current = await deps.windows.infoForHwnd(win.hwnd)
+        if (current.hwnd !== win.hwnd || isCompanionCockpitWindow(current)) return { unavailable: "target_unavailable" }
+      }
       // 截图(raw 帧立即纳入追踪)。
       failureReason = "capture_failed"
       const shot = await deps.capturer.captureWindow(win.hwnd)

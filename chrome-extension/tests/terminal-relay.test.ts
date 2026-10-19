@@ -79,3 +79,41 @@ test("only the extension terminal document can attach; disconnect feedback is de
   listener({ type: "terminal.open", id: "owned", user_gesture: true })
   assert.equal(messages[0].code, "disconnected")
 })
+
+test("#724 first owned output is sampled once, no contents, foreign/ended frames do not count", () => {
+  ;(globalThis as any).chrome = { runtime: { id: "test", getURL: () => "chrome-extension://test/tabs/embedded-terminal.html" } }
+  let message: (frame: unknown) => void = () => {}
+  const logs: any[] = [], delivered: any[] = [], sent: any[] = []
+  const port = { sender: { id: "test", url: "chrome-extension://test/tabs/embedded-terminal.html" }, postMessage: (frame: unknown) => delivered.push(frame),
+    onMessage: { addListener: (fn: typeof message) => { message = fn } }, onDisconnect: { addListener() {} } }
+  const relay = attachTerminalPort(port as never, frame => { sent.push(frame); return true }, (_level, event, data) => logs.push({ event, data }))!
+  const frame = (id: string, seq: number) => ({ type: "terminal.data", id, seq, b64: btoa("SYNTHETIC_NOT_FOR_LOG") })
+  relay.handleWsFrame(frame("unbound", 1)); assert.equal(logs.length, 0)
+  message({ type: "terminal.open", id: "owned", user_gesture: true })
+  relay.handleWsFrame({ type: "terminal.opened", id: "owned", platform: "win32", launch_kind: "embedded_agent" })
+  relay.handleWsFrame(frame("foreign", 1)); relay.handleWsFrame(frame("owned", 1)); relay.handleWsFrame(frame("owned", 2))
+  const output = logs.filter(row => row.event === "extension.terminal_output_observed")
+  assert.equal(output.length, 1); assert.deepEqual(output[0].data, { id: "owned", seq: 1, bytes: 21 })
+  assert.equal(JSON.stringify(logs).includes("SYNTHETIC_NOT_FOR_LOG"), false)
+  assert.equal(JSON.stringify(logs).includes(btoa("SYNTHETIC_NOT_FOR_LOG")), false)
+  const metrics = { seq: 2, output_bytes: 42, unacked_frames: 0, unacked_bytes: 0, ack_frames: 2, pause_count: 0, paused: false, last_output_age_ms: 9 }
+  relay.handleWsFrame({ type: "terminal.heartbeat", id: "foreign", metrics }); assert.equal(sent.at(-1).type, "terminal.open")
+  relay.handleWsFrame({ type: "terminal.heartbeat", id: "owned", metrics: { ...metrics, CONTENT: "SYNTHETIC_NOT_FOR_LOG" } })
+  assert.equal(logs.at(-1).data.last_output_age_ms, 9); assert.equal(logs.at(-1).data.CONTENT, undefined)
+  relay.handleWsFrame({ type: "terminal.heartbeat", id: "owned", metrics: { ...metrics, output_bytes: Infinity } })
+  assert.equal(logs.at(-1).data.last_output_age_ms, undefined); assert.equal(sent.at(-1).type, "terminal.ping")
+  relay.handleWsFrame({ type: "terminal.closed", id: "owned" }); relay.handleWsFrame(frame("owned", 3))
+  assert.equal(logs.filter(row => row.event === "extension.terminal_output_observed").length, 1)
+})
+
+test("#724 independent terminal entry only focuses an existing bound Agent tab without relabel/rebind", async () => {
+  const existingUrl = "chrome-extension://test/tabs/embedded-terminal.html?thread_id=owned-agent"
+  const updates: unknown[] = []
+  ;(globalThis as any).chrome = { runtime: { getURL: () => "chrome-extension://test/tabs/embedded-terminal.html" }, tabs: {
+    query: async () => [{ id: 7, windowId: 3, url: existingUrl }],
+    update: async (...args: unknown[]) => { updates.push(args) }, create: async () => { throw Error("NO_SECOND_TAB") },
+  }, windows: { update: async () => {} } }
+  await openOrFocusEmbeddedTerminal()
+  assert.deepEqual(updates, [[7, { active: true }]])
+  assert.equal(existingUrl.includes("thread_id=owned-agent"), true)
+})

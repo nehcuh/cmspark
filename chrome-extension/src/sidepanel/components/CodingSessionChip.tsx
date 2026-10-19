@@ -84,6 +84,10 @@ export function CodingSessionChip({
         <div style={styles.modeCHint}>{modeCBannerText(session.localTerminal)}</div>
       ) : null}
       <div style={styles.btns}>
+        <button type="button" style={styles.stop} onClick={() => {
+          if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
+          window.dispatchEvent(new CustomEvent("cmspark:open-coding-handoff"))
+        }}>{codingHandoffCopy.ctaOpenPanel}</button>
         {live ? (
           <button
             type="button"

@@ -15,6 +15,7 @@ import { resolveTaskRelationship } from "../utils/task-relationship"
 import { TaskRelationshipNav } from "./TaskRelationshipNav"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
 import { ModeBadge } from "../ui/ModeBadge"
+import { codingHandoffCopy } from "../coding-handoff/copy"
 
 import {
   IconList,
@@ -428,6 +429,12 @@ export function StatusRail({
             <div role="presentation" style={railStyles.menuGroupLabel}>
               能力
             </div>
+            <button type="button" role="menuitem" style={railStyles.menuItem} onClick={() => {
+              closeMenu()
+              window.dispatchEvent(new CustomEvent("cmspark:open-coding-handoff"))
+            }}>
+              <span>{codingHandoffCopy.productName}</span>
+            </button>
             <button
               type="button"
               role="menuitem"

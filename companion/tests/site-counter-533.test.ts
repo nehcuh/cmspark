@@ -7,7 +7,7 @@ import { handleMessage, __testSetLlmActiveForTests } from "../src/message-router
 import { ThreadManager } from "../src/threads/thread-manager"
 import { SkillEngine } from "../src/skills/skill-engine"
 import { siteTargetFromBrowser } from "../src/site-context/target"
-import { recordSiteOpFailure, getOriginFailCount, resetSiteOpMemoryForTests, peekSiteOpBan } from "../src/tool/site-op-memory"
+import { recordSiteOpFailure, getOriginFailCount, getReadOnlyOriginFailCount, resetSiteOpMemoryForTests, peekSiteOpBan } from "../src/tool/site-op-memory"
 import { validateWsMessage } from "../src/ws/validate"
 import { pendingToolCalls } from "../src/ws/tool-forward"
 import { securityConfirmations, seedThreadManagerForTests } from "../src/server"
@@ -130,8 +130,10 @@ test("#533 real adapter late failure follows a refused busy reset without retiri
     await Promise.race([started,task.then(()=>{throw Error("OWNED_ADAPTER_DID_NOT_DISPATCH")})])
     assert.equal((await f.reset(status.target_key)).code,"SITE_COUNTER_BUSY")
     assert.equal(getOriginFailCount(f.thread.id,status.origin),3)
+    assert.equal(getReadOnlyOriginFailCount(f.thread.id,status.origin),0)
     finish();await task
-    assert.equal(getOriginFailCount(f.thread.id,status.origin),4,"actual post-await adapter failure keeps truthful old budget after reset refusal")
+    assert.equal(getOriginFailCount(f.thread.id,status.origin),3,"busy reset refusal preserves the prior interaction budget")
+    assert.equal(getReadOnlyOriginFailCount(f.thread.id,status.origin),1,"the real late wait_for failure increments only its read-only budget")
   }finally{finish();if(task)await task.catch(()=>{});releaseKickAbortController(f.thread.id,controller);proto.create=previous;bridge.close()}
 })
 

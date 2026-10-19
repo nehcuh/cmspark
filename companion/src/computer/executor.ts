@@ -54,6 +54,7 @@ import {
   assertExeNotDrifted,
   assertHwndOwnedByEntry,
   isVaultBrowserEntry,
+  isCompanionCockpitWindow,
   normalizeExePath,
 } from "./policy"
 import { isCompanionUiOwner } from "./self-ui"
@@ -392,6 +393,13 @@ export async function runComputerTask(
     })
   const pendingRaws = new Set<string>()
   const trackCapture = async (h: number): Promise<CaptureMeta> => {
+    // Revalidate even read-only captures after selection/L2 awaits. The final
+    // Windows PS boundary checks the fixed refusal marker again before saving.
+    if (os.platform() === "win32") {
+      const current = await deps.windows.infoForHwnd(h)
+      if (current.hwnd !== h) throw new ComputerError("HWND_NOT_OWNED", "computer: capture target changed")
+      assertHwndOwnedByEntry(current, entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
+    }
     const meta = await deps.capturer.captureWindow(h)
     if (meta.path) pendingRaws.add(meta.path)
     return meta
@@ -455,7 +463,7 @@ export async function runComputerTask(
     : draftErr)
 
   // A10 + §E.2 gate (executor-side belt; the server gate already checked).
-  let entry
+  let entry: ReturnType<typeof assertCoordinateAllowed>
   let vaultBrowserOneShot = false
   try {
     entry = assertCoordinateAllowed(deps.config, params.app, { allowVaultBrowserOneShot: true })
@@ -487,7 +495,7 @@ export async function runComputerTask(
       throw new ComputerError("APP_NOT_WHITELISTED",
         `computer: no bundleId or exe path for "${entry.display_name}"`)
     }
-    const wins = await deps.windows.enumerateByExe(exeId)
+    const wins = (await deps.windows.enumerateByExe(exeId)).filter(w => !isCompanionCockpitWindow(w))
     if (wins.length === 0) {
       throw new ComputerError("COMPUTER_WINDOW_ABSENT", `computer: no visible window for "${entry.display_name}" — is it running?`)
     }

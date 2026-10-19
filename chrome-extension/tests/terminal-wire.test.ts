@@ -8,6 +8,8 @@ declare const __dirname: string
 import {
   isTerminalFrame,
   parseTerminalServerFrame,
+  parseTerminalMetrics,
+  terminalLaunchLabel,
   terminalB64Decode,
   terminalB64Encode,
   TERMINAL_FRAME_B64_MAX,
@@ -104,4 +106,27 @@ test("actual Companion review frames retain prompt, scoped error and receipt", (
   const rejected = parseTerminalServerFrame(fixture.rejected)
   assert.equal(rejected?.id, fixture.opened.id)
   assert.equal(parseTerminalServerFrame(fixture.received)?.type, "terminal.review.received")
+})
+
+test("#724 launch source is optional, finite, and never Agent readiness", () => {
+  for (const launch_kind of ["local_shell", "embedded_agent"]) {
+    const actual = parseTerminalServerFrame({ type: "terminal.opened", id: "owned", platform: "win32", launch_kind }) as any
+    assert.equal(actual.launch_kind, launch_kind)
+  }
+  for (const launch_kind of [undefined, "FORGED", 42]) {
+    const actual = parseTerminalServerFrame({ type: "terminal.opened", id: "owned", platform: "win32", launch_kind }) as any
+    assert.equal(actual.launch_kind, undefined)
+  }
+})
+
+test("#724 optional diagnostics project exactly eight finite fields and reject uncertain values", () => {
+  const metrics = { seq: 0, output_bytes: 0, unacked_frames: 0, unacked_bytes: 0, ack_frames: 0, pause_count: 0, paused: false, last_output_age_ms: null }
+  assert.deepEqual(parseTerminalMetrics({ ...metrics, CONTENT: "not for logs" }), metrics)
+  assert.equal(Object.keys(parseTerminalMetrics(metrics)!).length, 8)
+  for (const patch of [{ seq: -1 }, { output_bytes: Infinity }, { ack_frames: Number.MAX_SAFE_INTEGER + 1 }, { pause_count: NaN }, { unacked_bytes: 256 * 1024 + 1 }, { unacked_frames: 256 * 1024 + 1 }, { paused: 1 }, { last_output_age_ms: undefined }, { last_output_age_ms: -1 }]) assert.equal(parseTerminalMetrics({ ...metrics, ...patch }), null)
+  assert.equal(parseTerminalMetrics(undefined), null)
+  assert.ok(terminalLaunchLabel(null).includes("未知"))
+  assert.ok(terminalLaunchLabel("local_shell").includes("非编程 Agent"))
+  assert.ok(terminalLaunchLabel("embedded_agent").includes("核实"))
+  assert.equal(terminalLaunchLabel("embedded_agent").includes("正在运行"), false)
 })

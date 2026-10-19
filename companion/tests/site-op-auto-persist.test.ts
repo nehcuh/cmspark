@@ -36,7 +36,6 @@ let originalCreate: any = undefined
 let roundScript: Array<{ tool?: { name: string; args: Record<string, unknown> }; content?: string }> = []
 
 before(async () => {
-  process.env.HOME = tempHome
   process.env.CMSPARK_DATA_DIR = path.join(tempHome, ".cmspark-agent")
   delete process.env.DEEPSEEK_API_KEY
 
@@ -406,7 +405,7 @@ test("#535 channel failure cannot persist locator proof; true locator miss still
   const bridge = new BrowserBridge()
   const { resolveBrowserSiteTarget } = await import("../src/site-context/browser-resolver")
   const { contextReadParams } = await import("../src/site-context/admission")
-  const { getOriginFailCount } = await import("../src/tool/site-op-memory")
+  const { getOriginFailCount, getReadOnlyOriginFailCount } = await import("../src/tool/site-op-memory")
   const manager = new ThreadManager(), se = new SkillEngine()
   const codes: string[] = []
   const current = (threadId: string) => ({ ...buildParams({ threadId, skillEngine: se, manager, executeTool: async (_id, name, args) => {
@@ -435,7 +434,8 @@ test("#535 channel failure cannot persist locator proof; true locator miss still
       fs.writeFileSync(process.env.CMSPARK_RECORD_535_PATH, JSON.stringify(badEntries, null, 2)+"\n", { mode: 0o600 })
     }
     assert.deepEqual(codes, Array(4).fill("WAIT_PROBE_FAILED"))
-    assert.equal(getOriginFailCount(thread.id, "https://channel-fixture.test"), 4, "channel health remains conservative")
+    assert.equal(getReadOnlyOriginFailCount(thread.id, "https://channel-fixture.test"), 4, "read-only channel health remains conservative")
+    assert.equal(getOriginFailCount(thread.id, "https://channel-fixture.test"), 0, "read failures must not poison interactions")
     assert.equal(badEntries.length, 0, "a broken probe is not evidence of a broken selector")
     assert.ok(cdpReads > 0 && scriptingReads > 0, "actual producer must try both channels")
 

@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { codingHandoffCopy } from "../coding-handoff/copy"
 import { useCapabilityMode } from "../hooks/useCapabilityMode"
 import { marked } from "marked"
 import markedKatex from "marked-katex-extension"
@@ -2092,6 +2093,10 @@ export function EmptyState({ level }: { level: "chat" | "browser" | "computer" }
       <div style={styles.emptyTitle}>{title}</div>
       {hint ? <div style={styles.emptyHint}>{hint}</div> : null}
       {rows.length > 0 ? <InvitationRows items={rows} /> : null}
+      <div style={styles.codingEntryHints} data-coding-entry-hints>
+        <div>{codingHandoffCopy.emptyCodeHint}</div>
+        <div>{codingHandoffCopy.emptyMessageCodeHint}</div>
+      </div>
       {pageChip ? (
         <div style={styles.pageChip} data-testid="empty-page-chip">
           <span style={styles.pageChipText}>{pageChip}</span>
@@ -2240,6 +2245,13 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
     maxWidth: 260,
     margin: "0 0 28px",
+  },
+  codingEntryHints: {
+    fontSize: 11,
+    color: tokens.textSecondary,
+    lineHeight: 1.35,
+    maxWidth: 260,
+    margin: "8px 0 0",
   },
   pageChip: {
     display: "flex",
