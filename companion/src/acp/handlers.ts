@@ -95,7 +95,7 @@ export async function handleAcpWsMessage(
   const startOwner = type === "acp.ui_start" && typeof startCandidate === "string" && startCandidate.trim()
     ? startCandidate : undefined
   if (type === "acp.ui_start" && startOwner && ctx.threadId !== undefined && ctx.threadId !== startOwner) {
-    return { type: "error", family: "acp", request_type: type, error: "acp: session does not belong to the requested conversation" }
+    return { type: "error", family: "acp", request_type: type, thread_id: startOwner, error: "acp: session does not belong to the requested conversation" }
   }
   if (type === "acp.ui_start" && !startOwner) {
     return { type: "error", family: "acp", error: "acp: thread_id required" }
@@ -243,38 +243,71 @@ async function handleAcpWsMessageInternal(
     if (!r.ok) {
       if (String(r.error).startsWith("NEEDS_CONFIRM_FOLLOWUP:")) {
         const newId = String(r.error).slice("NEEDS_CONFIRM_FOLLOWUP:".length)
-        // Start followup with L2 (same as followup handler)
         const session = mgr.getSession(newId)
-        if (!session) return { type: "error", error: "followup session missing" }
-        const label =
-          mgr.listAgents().find((a) => a.id === session.agent_id)?.display_name ||
-          session.agent_id
-        const approved = await confirmOrDeny(ctx, {
-          toolName: "acp_start_session",
-          dangerousApis: ["acp_start_session"],
-          code: formatAcpStartConfirmCode({
-            agentLabel: label,
-            mode: session.mode,
-            workspaceRoot: session.workspace_root,
-            goal: session.goal,
-            sessionId: session.session_id,
-            // Session snapshot from propose — not live config (TOCTOU)
-            openLocalTerminal: session.open_local_terminal_snapshot === true,
-          }),
-          riskLevel: "high",
-          autoConfirmEligible: false,
-          criticalApis: ["acp_start_session"],
-        })
-        if (!approved) {
-          mgr.cancel(session.session_id)
-          return { type: "acp.session.prompt.denied", session_id: sid, error: "user_denied" }
+        if (!session) return { type: "error", session_id: sid, error: "followup session missing" }
+        if ((ctx.threadId !== undefined && ctx.threadId !== session.thread_id) ||
+            ctx.getAgentRole?.(session.thread_id) === "worker") return {
+          type: "error", session_id: sid, error: "acp: followup lost its owner or cannot start from a worker",
         }
-        void mgr.start(session.session_id)
-        return {
-          type: "acp.session.prompt.accepted",
-          session_id: session.session_id,
-          parent_session_id: sid,
-          mode: "followup_turn",
+        // A follow-up offer is metadata, not execution admission or approval.
+        const preflight = mgr.checkStartAdmission(session.session_id)
+        if (!preflight.ok) return { type: "error", session_id: sid, error: preflight.error,
+          ...(preflight.error_code ? { error_code: preflight.error_code, data: preflight.data } : {}) }
+        if (pendingUiStartConfirmations.has(session)) return { type: "error", session_id: sid,
+          error_code: "ACP_SESSION_BUSY", error: "ACP_SESSION_BUSY: this proposal is already awaiting confirmation" }
+        const confirmedSnapshot = [session.thread_id, session.agent_id, session.mode, session.workspace_root, session.goal,
+          session.open_local_terminal_snapshot]
+        pendingUiStartConfirmations.add(session)
+        try {
+          const label = mgr.listAgents().find((a) => a.id === session.agent_id)?.display_name || session.agent_id
+          const approved = await confirmOrDeny(ctx, {
+            toolName: "acp_start_session",
+            dangerousApis: ["acp_start_session"],
+            code: formatAcpStartConfirmCode({
+              agentLabel: label,
+              mode: session.mode,
+              workspaceRoot: session.workspace_root,
+              goal: session.goal,
+              sessionId: session.session_id,
+              openLocalTerminal: session.open_local_terminal_snapshot === true,
+            }),
+            riskLevel: "high",
+            autoConfirmEligible: false,
+            criticalApis: ["acp_start_session"],
+          })
+          if (!approved) {
+            if (mgr.getSession(session.session_id) === session && session.state === "offered") mgr.cancel(session.session_id)
+            return { type: "acp.session.prompt.denied", session_id: sid, error: "user_denied" }
+          }
+          const current = mgr.getSession(session.session_id)
+          if (current !== session || confirmedSnapshot.some((value, index) => value !== [session.thread_id, session.agent_id,
+              session.mode, session.workspace_root, session.goal, session.open_local_terminal_snapshot][index]) ||
+              (ctx.threadId !== undefined && ctx.threadId !== session.thread_id) ||
+              ctx.getAgentRole?.(session.thread_id) === "worker") return {
+            type: "error", session_id: sid, error: "acp: followup changed, expired or lost its owner while awaiting confirmation",
+          }
+          const admission = { admitted: false }
+          const startPromise = mgr.start(session.session_id, admission)
+          // Observe failure immediately; never await a successfully admitted long run.
+          void startPromise.then((started) => {
+            if (!started.ok) logger.warn("acp.prompt_start_failed", { session_id: session.session_id, err: "acp: followup startup failed" })
+          }, () => {
+            logger.warn("acp.prompt_start_failed", { session_id: session.session_id, err: "acp: followup startup promise rejected" })
+          })
+          if (!admission.admitted) {
+            const started = await startPromise
+            if (!started.ok) return { type: "error", session_id: sid, error: started.error,
+              ...(started.error_code ? { error_code: started.error_code, data: started.data } : {}) }
+          }
+          if (session.state !== "running") return { type: "error", session_id: sid,
+            error: session.mode_c_open_cancelled ? "acp: cancelled during startup" : "acp: startup did not remain running" }
+          return { type: "acp.session.prompt.accepted", session_id: session.session_id,
+            parent_session_id: sid, mode: "followup_turn" }
+        } catch {
+          if (mgr.getSession(session.session_id) === session && session.state === "offered") mgr.cancel(session.session_id)
+          return { type: "error", session_id: sid, error: "acp: followup confirmation or admission failed" }
+        } finally {
+          pendingUiStartConfirmations.delete(session)
         }
       }
       return { type: "error", error: r.error }

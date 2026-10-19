@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #722 CLI 会话追加提问生成的后续提案复用同一容量预检、逐次确认和最终准入回执；忙碌在确认前可见，迟到批准、提案变化和启动取消不再被回复为已受理。错误绑定原请求会话，所属对话冲突仍拒绝并保留有效请求 owner；补齐源码耦合的 marker CPU 夹具接口，原单执行、L2、worker/owner、原生时限不变。
+
 - Windows 原生继承夹具仅对 sentinel 使用确切内核对象身份，先捕获旧数值槽再打开独占命名 Event 引用；无关 Event／管道占槽不冒称继承，真实继承及未知 API／比较／关闭失败仍严格拒绝。保留 V1、原 protected endpoint、bootstrap、20秒与清理；不宣称已证明历史 launch 失败根因。
 
 - #572 Windows 原生测试夹具仅在自有 sibling 已渲染、实际 IsActive 且前台 HWND 精确匹配后才原子发布 ready；Activate 请求本身不作成功证据。复用 ContentRendered/Activated 事件和原 45 秒边界，不加轮询、输入或前台权限；从未实际激活仍失败。LF/CRLF 源码回归不代表实际 Windows 已通过，也不判定旧原生失败的唯一原因。
