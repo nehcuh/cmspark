@@ -270,3 +270,9 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 `acp-offered-lifecycle-722` 执行真实 manager 方法与 config sanitizer 的受控 CPU 回归：4/64/15min 提案元数据界限、未知时间保守拒绝、保护 confirmed/running/准备与 owned child、固定1配置、原 WS selected-session 校验。`acp-busy-feedback-722` 继续执行真实 manager/dispatcher/handler、原真实 slot-close callback 和 R2准入 receipt，另补既有offer原快照确认／重复／取消／过期／配置失效／foreign owner／批准前容量拒绝。模型 propose 不再把 offered 当执行槽，因此旧提案断言改由四提案边界测 busy，而执行槽始终由实际 start/close 控制。
 
 `coding-offered-lifecycle-722` 使用真实 reducer、生产 JSX／onClick、原 send helper 与 React SSR，验证同线程选择、ABA旧选择拒绝、非选中回执隔离、过期不自动换下一项和显式启动请求形状。它是受控组件／事件投影，不是 mounted browser、真实 Agent 或 Windows native。
+
+## #480 Windows closing 取消入口回归
+
+`desktop-native-windows-480.test.ts` 的原20秒 native callback 以同一 owned abort promise 覆盖 metadata race 与发送 `desktop.close` 后的 exit 等待；already-aborted 在 launch 前拒绝，finally 先卸载自己 listener，再执行原 retain／captured child terminate／真实 exit／WS与server close／settled。取消仍是失败，不能因 cleanup 完成变成 PASS。原退出0／HMAC通路／四元数据／native window／lease 断言不弱化，不加 timer/retry/等待额度。
+
+`desktop-native-close-lifetime-480.test.ts` 提取该真实整段 callback，使用明确惰性 network/auth/child/surface seam 覆盖 normal、metadata/closing abort、held exit、preaborted、launch/send throw 和 window 拒绝。它不是 Windows/WebView2/native 运行。main1dde deadline/closing 后 exit0 的实际原因仍 UNKNOWN；`childExited` 是 JS onExit 已送达，不独立证明此前 OS 进程仍活。精确新 head 仍须在原20秒下真实 Windows 自然完成；不要无变化重跑、延长时限或以纯CPU通过替代原生门禁。

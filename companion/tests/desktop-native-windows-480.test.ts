@@ -52,10 +52,15 @@ test("real Windows binding noninherited bootstrap and minimal parent handle auth
   try{fs.writeFileSync(1,`DESKTOP_480_NATIVE ${JSON.stringify(receipt)}\n`)}catch{diagnosticFailed=true}
  }
  let child:DesktopNativeChild|undefined
- try{surfaceLease.checkpoint();phase="launch";child=binding.launch(path.join(native,"cmspark-desktop.exe"),boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address() as any).port}/desktop`,exited);phase="waiting-metadata"
-  await Promise.race([done,exit.then(code=>{throw Error(`Native Windows host exit ${code}; authenticated=${auth}; readFamilies=${methods.size}`)}),new Promise<never>((_,reject)=>t.signal.addEventListener("abort",()=>{diagnostic("deadline");reject(Error("Owned Windows native outer deadline"))},{once:true}))]);assert.equal(auth,true);assert.equal(windowRequested,true);assert.equal(legacy.clients.size,0);assert.equal(channel.wss.clients.size,1)
-  phase="closing";const ws=[...channel.wss.clients][0];ws.send(JSON.stringify({type:"desktop.close"}));assert.equal(await exit,0);phase="complete"
- }finally{surfaceLease.retain();diagnostic("cleanup");child?.terminate();for(const ws of channel.wss.clients)ws.terminate();if(child)await exit;await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));diagnostic("cleanup-complete");assert.equal(diagnosticFailed,false,"Owned native diagnostic capture failed");surfaceLease.settled()}
+ let rejectAbort!:(reason:Error)=>void
+ const aborted=new Promise<never>((_,reject)=>{rejectAbort=reject})
+ const deadline=()=>{diagnostic("deadline");return Error("Owned Windows native outer deadline")}
+ const abort=()=>rejectAbort(deadline())
+ t.signal.addEventListener("abort",abort,{once:true})
+ try{if(t.signal.aborted)throw deadline();surfaceLease.checkpoint();phase="launch";child=binding.launch(path.join(native,"cmspark-desktop.exe"),boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address() as any).port}/desktop`,exited);phase="waiting-metadata"
+  await Promise.race([done,exit.then(code=>{throw Error(`Native Windows host exit ${code}; authenticated=${auth}; readFamilies=${methods.size}`)}),aborted]);assert.equal(auth,true);assert.equal(windowRequested,true);assert.equal(legacy.clients.size,0);assert.equal(channel.wss.clients.size,1)
+  phase="closing";const ws=[...channel.wss.clients][0];ws.send(JSON.stringify({type:"desktop.close"}));assert.equal(await Promise.race([exit,aborted]),0);phase="complete"
+ }finally{t.signal.removeEventListener("abort",abort);surfaceLease.retain();diagnostic("cleanup");child?.terminate();for(const ws of channel.wss.clients)ws.terminate();if(child)await exit;await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));diagnostic("cleanup-complete");assert.equal(diagnosticFailed,false,"Owned native diagnostic capture failed");surfaceLease.settled()}
 
  })
 })
