@@ -14,6 +14,14 @@ case36 的数值句柄可被当前子进程的无关对象复用，不能单用 
 
 夹具只给自有 sibling 请求一次原 Activate，再用当前 IsActive 和精确自有 HWND 判断是否可发布；没有新增计时器、轮询、retry、SetForegroundWindow 或输入注入。真实 Windows 的原 45 秒生命周期和全部背景四 oracle 保留；无真实激活就无 ready 并失败。受控 CPU 不证明本轮 Windows 原因或通过，仍须精确新 head 的真实平台验收。
 
+### #722 UI 确认续体与容量反馈
+
+`companion/tests/acp-busy-feedback-722.test.ts` 的原有19个源码控制保留，追加实际完整 WS handler → 真实 manager 方法的确认续体回归，由原 canonical 入口发现。两个 owner 先各有 offered，A 批准后占槽、长会话尚未终结时即回复；B 随后批准必须得到绑定所属对话/会话的 `ACP_CONCURRENCY_LIMIT`，无第二次启动、无 foreign holder 泄漏。另覆盖确认前 typed busy、拒绝确认、worker/缺失 owner、确认期间配置失效、同步取消，以及实际前端错误路由的可见性和其它 owner/缺失 owner 拒绝。
+
+追加创建子进程后的第二次 timeline 同步取消回归：回复须在真实 close 前给出取消，运行槽在 close 前仍占用、close 后才释放，不得在 closed 状态等待长 Promise 或回 accepted。请求内准入 receipt 只由 handler 构造，manager 在真实占槽后记录；不进入协议、会话、历史或模型，测试 interception 必须真实转发该参数。
+
+配置、用户批准决定和子进程/计时器为显式惰性 seam；不是有效 L2 token、真人确认、实际连接断线或 Windows/Agent 原生证明。实际 hook 的 accepted 文案仅为“启动请求已受理，正在准备…”，不证明 Agent 已启动。多 offered、回收生命周期等原 #722 余项仍独立保留；无新队列、重试、权限、容量或时限。
+
 ### #731 shell 输出编码
 
 `companion/tests/shell-output-encoding-731.test.ts` 由原 canonical 测试入口发现，运行实际 `shell.ts` 模块与受控 child pipe 字节。覆盖中文／emoji 的所有单个拆分位置、stderr、结束残片、固定 CP936 字节、含 NUL 的混合输出、进度／输出上限、退出码、停止／超时及原模块／allowlist 拒绝。测试使用内存 spawn、虚拟时钟和 owned UTF-8 文件，不启动 cmd、PowerShell 或真实子 shell。
@@ -255,6 +263,13 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 ### Windows 原生管道夹具的 JSON 就绪回执（#605）
 
 `cross-os-process-605.test.ts` 的 protocol fixture 用自有 `.pending` 文件的独占写入、关闭及 rename 发布完整 ready JSON。确定性 CPU 控制在实际写入开始时检查最终文件仍不可见，写入失败时不能宣布协议就绪；不通过增加等待、重试 JSON.parse 或捕获语法错误绕过断言。Windows CI 仍需真实验证双向管道、继承 cwd、ignored stdio 及进程清理。
+
+
+### #722 待启动提案有限生命周期
+
+`acp-offered-lifecycle-722` 执行真实 manager 方法与 config sanitizer 的受控 CPU 回归：4/64/15min 提案元数据界限、未知时间保守拒绝、保护 confirmed/running/准备与 owned child、固定1配置、原 WS selected-session 校验。`acp-busy-feedback-722` 继续执行真实 manager/dispatcher/handler、原真实 slot-close callback 和 R2准入 receipt，另补既有offer原快照确认／重复／取消／过期／配置失效／foreign owner／批准前容量拒绝。模型 propose 不再把 offered 当执行槽，因此旧提案断言改由四提案边界测 busy，而执行槽始终由实际 start/close 控制。
+
+`coding-offered-lifecycle-722` 使用真实 reducer、生产 JSX／onClick、原 send helper 与 React SSR，验证同线程选择、ABA旧选择拒绝、非选中回执隔离、过期不自动换下一项和显式启动请求形状。它是受控组件／事件投影，不是 mounted browser、真实 Agent 或 Windows native。
 
 ## #480 Windows closing 取消入口回归
 

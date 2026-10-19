@@ -513,7 +513,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           acp_enabled: !!(await import("../config")).getConfig().acp?.enabled,
           embedded_terminal_enabled: getConfig().embedded_terminal?.enabled === true && (process.platform === "darwin" || process.platform === "win32"),
           open_local_terminal: getConfig().coding_handoff?.open_local_terminal === true,
-          note: "ACP is Composition only. Start with acp_propose_session after user intent; never auto-spawn.",
+          note: "ACP is Composition only: proposals do not spawn; this thread may hold up to four pending proposals. Start one selected session at a time only after its own L2 approval; execution capacity stays1. Inspect current_sessions and explicitly start or cancel an offer; busy is not permission or automatic queueing. Never auto-spawn.",
         },
       }
     }

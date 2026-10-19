@@ -608,6 +608,7 @@ export type AgentAction =
   | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
   | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
   | { type: "ACP_SESSION_EVENT"; event: CodingSessionEvent }
+  | { type: "ACP_SELECT_SESSION"; sessionId: string; threadId: string; threadRevision: number }
   | { type: "SET_ACP_LIST"; enabled: boolean; agents: AcpAgentInfo[] }
   | { type: "CLEAR_CODING_SESSION"; sessionId: string }
   | { type: "ACP_CANCEL_RECEIPT"; sessionId: string; threadId: string }
@@ -1990,7 +1991,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         outputTruncated: e.output_truncated ?? previous?.outputTruncated,
         cancelled: ((e.state ?? previous?.state) === "closed" && e.error === "cancelled") || previous?.cancelled,
       }
-      const selection = previous ? state.codingSessionIdByThread : {
+      // A new pending proposal must not silently replace the user's selected target.
+      const selectedRow = state.codingSessionsById[state.codingSessionIdByThread[owner]]
+      const selection = previous || selectedRow && ["offered", "confirmed", "running"].includes(selectedRow.state) ? state.codingSessionIdByThread : {
         ...state.codingSessionIdByThread, [owner]: next.sessionId,
       }
       return {
@@ -2005,6 +2008,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         codingManualEntry: state.codingManualEntry && selection[state.codingManualEntry.threadId] === state.codingManualEntry.sessionId
           ? state.codingManualEntry : null,
       }
+    }
+    case "ACP_SELECT_SESSION": {
+      const row = state.codingSessionsById[action.sessionId]
+      if (state.activeThreadId !== action.threadId || state.activeThreadSelectionRevision !== action.threadRevision ||
+          !row || row.threadId !== action.threadId || row.cacheCompacted) return state
+      return { ...state, codingSessionIdByThread: { ...state.codingSessionIdByThread, [action.threadId]: row.sessionId },
+        codingOperationError: null, codingManualEntry: null }
     }
     case "ACP_CANCEL_RECEIPT": {
       const row = state.codingSessionsById[action.sessionId]

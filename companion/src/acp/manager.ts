@@ -441,11 +441,40 @@ export class AcpManager {
     return out
   }
 
+  /** #722 proposal metadata only:4/thread,64/process,15min; never execution capacity. */
+  private expireOfferedSessions(): boolean {
+    const now = Date.now()
+    if (!Number.isFinite(now)) return false
+    let reliable = true
+    for (const [id, session] of this.sessions) {
+      if (session.state !== "offered") continue
+      if (typeof session.created_at !== "string") { reliable = false; continue }
+      const created = Date.parse(session.created_at)
+      if (!Number.isFinite(created) || created > now) { reliable = false; continue }
+      if (now - created < 15 * 60_000) continue
+      // An anomalous live/preparing record must never lose ownership or its slot.
+      if (this.startupPreparations.has(id) || this.processes.has(id) || this.protocolHandles.has(id)) continue
+      session.state = "closed"
+      session.error = "expired"
+      session.partial = true
+      session.mode_c_open_cancelled = true
+      session.terminal_kind = "cancelled"
+      this.emitProgress(session, "expired — proposal was not started", true)
+      this.emitTerminal(session, "cancelled")
+      this.sessions.delete(id)
+      this.manualEntryLaunches.delete(id)
+      this.lastProgressAt.delete(id)
+    }
+    return reliable
+  }
+
   getSession(sessionId: string): AcpSessionRecord | undefined {
+    this.expireOfferedSessions()
     return this.sessions.get(sessionId)
   }
 
   listSessionsForThread(threadId: string): AcpSessionRecord[] {
+    this.expireOfferedSessions()
     return [...this.sessions.values()].filter((s) => s.thread_id === threadId)
   }
 
@@ -485,35 +514,21 @@ export class AcpManager {
     if (!server || !server.enabled || !server.command) {
       return { ok: false, error: `acp: unknown or disabled agent "${opts.agentId}"` }
     }
-    if (this.runningCount >= 1) {
-      // A foreign holder's handle/task is not feedback for this thread.
-      const holder = [...this.sessions.values()].find(s => s.thread_id === opts.threadId && s.state === "running")
-      return {
-        ok: false,
-        error: "ACP_CONCURRENCY_LIMIT: only one ACP session at a time",
-        error_code: "ACP_CONCURRENCY_LIMIT",
-        data: {
-          ...(holder ? { holder_session_id: holder.session_id, holder_agent: holder.agent_id, holder_state: holder.state } : {}),
-          suggested_action: "wait_for_acp_capacity",
-          data_not_instruction: true,
-        },
-      }
+    if (!this.expireOfferedSessions()) return {
+      ok: false, error: "ACP_SESSION_BUSY: proposal clock metadata is unavailable; inspect or cancel the existing offer",
+      error_code: "ACP_SESSION_BUSY", data: { suggested_action: "start_or_cancel_current_acp_session", data_not_instruction: true },
     }
-    for (const s of this.sessions.values()) {
-      if (s.thread_id === opts.threadId && (s.state === "running" || s.state === "offered")) {
-        return {
-          ok: false,
-          error: "ACP_SESSION_BUSY: thread already has an ACP session",
-          error_code: "ACP_SESSION_BUSY",
-          data: {
-            holder_session_id: s.session_id,
-            holder_agent: s.agent_id,
-            holder_state: s.state,
-            suggested_action: s.state === "offered" ? "start_or_cancel_current_acp_session" : "wait_or_cancel_current_acp_session",
-            data_not_instruction: true,
-          },
-        }
-      }
+    const offers = [...this.sessions.values()].filter(s => s.state === "offered")
+    const own = offers.filter(s => s.thread_id === opts.threadId)
+    if (own.length >= 4) {
+      const holder = own[0]
+      return { ok: false, error: "ACP_SESSION_BUSY: this conversation already has four pending proposals; start or cancel an existing proposal",
+        error_code: "ACP_SESSION_BUSY", data: { holder_session_id: holder.session_id, holder_agent: holder.agent_id,
+          holder_state: holder.state, suggested_action: "start_or_cancel_current_acp_session", data_not_instruction: true } }
+    }
+    if (offers.length >= 64) return {
+      ok: false, error: "ACP_CONCURRENCY_LIMIT: pending proposal metadata is full; cancel an existing proposal before creating another",
+      error_code: "ACP_CONCURRENCY_LIMIT", data: { suggested_action: "wait_for_acp_capacity", data_not_instruction: true },
     }
     const ws = resolveAcpWorkspaceRoot(opts.workspaceRoot)
     if (!ws.ok) return { ok: false, error: ws.error }
@@ -647,10 +662,9 @@ export class AcpManager {
     )
   }
 
-  async start(sessionId: string): Promise<
-    | { ok: true; session: AcpSessionRecord }
-    | Extract<ReturnType<AcpManager["propose"]>, { ok: false }>
-  > {
+  /** No slot reservation or spawn; final start repeats this check synchronously. */
+  checkStartAdmission(sessionId: string): { ok: true } | Extract<ReturnType<AcpManager["propose"]>, { ok: false }> {
+    if (!this.expireOfferedSessions()) return { ok: false, error: "acp: proposal clock metadata unavailable" }
     if (this.shuttingDown) return { ok: false, error: "acp: manager shutting down" }
     const session = this.sessions.get(sessionId)
     if (!session) return { ok: false, error: "acp: unknown session" }
@@ -677,8 +691,21 @@ export class AcpManager {
         },
       }
     }
+    return { ok: true }
+  }
+
+  async start(sessionId: string, admission?: { admitted: boolean }): Promise<
+    | { ok: true; session: AcpSessionRecord }
+    | Extract<ReturnType<AcpManager["propose"]>, { ok: false }>
+  > {
+    const admissionCheck = this.checkStartAdmission(sessionId)
+    if (!admissionCheck.ok) return admissionCheck
+    const session = this.sessions.get(sessionId)!
+    const cfg = getConfig()
+    const server = this.resolveServer(session.agent_id)!
     this.runningCount++
     session.state = "running"
+    if (admission) admission.admitted = true
     session.timeline = []
     this.pushTimeline(session, [timelineItem("status", "starting…", { status: "running" })])
 
