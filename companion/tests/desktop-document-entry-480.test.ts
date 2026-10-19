@@ -22,7 +22,7 @@ test("Windows virtual folder entry is the explicit existing index.html document"
 })
 function assertDocumentLifecycle(source:string){
  assert.deepEqual(documentBindings(source),Array(5).fill("document_url"))
- assert.match(source,/if\(allow\)\{retire_archive\(\);retire_dialog\(\);retire_confirmation\(0\);generation.clear\(\);requests.clear\(\);\}/)
+ assert.match(source,/if\(allow\)\{if\(!retire_browser\(true\)\)ExitProcess\(46\);retire_archive\(\);retire_dialog\(\);retire_confirmation\(0\);generation.clear\(\);requests.clear\(\);\}/)
  assert.match(source,/if\(ok&&own&&ready\)document\(\);/)
  assert.match(source,/if\(!ready\|\|source!=document_url\|\|generation.empty\(\)\)return;/)
 }
@@ -44,9 +44,9 @@ test("origin-relative CSS and JS retain their original exact bundle resources",(
 
 test("document identity and archive-aware retirement remain strict for LF/CRLF and source mutations",()=>{
  for(const source of [cpp,cpp.replace(/\r?\n/g,"\r\n")])assertDocumentLifecycle(source)
- const actual="if(allow){retire_archive();retire_dialog();retire_confirmation(0);generation.clear();requests.clear();}"
+ const actual="if(allow){if(!retire_browser(true))ExitProcess(46);retire_archive();retire_dialog();retire_confirmation(0);generation.clear();requests.clear();}"
  assert.equal(cpp.split(actual).length,2)
- for(const changed of [actual.replace("retire_archive();",""),actual.replace("retire_dialog();",""),actual.replace("retire_confirmation(0);",""),actual.replace("generation.clear();",""),actual.replace("requests.clear();",""),"if(allow){generation.clear();retire_archive();retire_dialog();retire_confirmation(0);requests.clear();}"])assert.throws(()=>assertDocumentLifecycle(cpp.replace(actual,changed)))
+ for(const changed of [actual.replace("if(!retire_browser(true))ExitProcess(46);",""),actual.replace("retire_browser(true)","retire_browser(false)"),actual.replace("ExitProcess(46)","ExitProcess(45)"),actual.replace("retire_archive();",""),actual.replace("retire_dialog();",""),actual.replace("retire_confirmation(0);",""),actual.replace("generation.clear();",""),actual.replace("requests.clear();",""),"if(allow){generation.clear();if(!retire_browser(true))ExitProcess(46);retire_archive();retire_dialog();retire_confirmation(0);requests.clear();}"])assert.throws(()=>assertDocumentLifecycle(cpp.replace(actual,changed)))
  assert.throws(()=>assertDocumentLifecycle(cpp.replace("source!=document_url","source!=document_origin")))
  assert.throws(()=>assertDocumentLifecycle(cpp.replace("if(ok&&own&&ready)document();","if(ok&&own)document();")))
 })
