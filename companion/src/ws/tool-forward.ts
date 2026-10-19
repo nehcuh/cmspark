@@ -292,6 +292,8 @@ export type ForwardToolToExtensionCtx = {
   startedAt: number
   /** True when pregate incremented mutationHolds for this call. */
   mutationHold?: boolean
+  /** Trusted native actor's remaining original total budget; can only shorten. */
+  remainingBudgetMs?: number
   logToolFinish: (id: string, name: string, startedAt: number, result: any) => void
 }
 
@@ -418,7 +420,9 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
       logToolFinish(toolCallId, toolName, startedAt, result)
       resolve(result)
     }
-    const dispatchTimeoutMs = resolveToolDispatchTimeoutMs(toolName, finalParams)
+    const maximum = resolveToolDispatchTimeoutMs(toolName, finalParams)
+    if (ctx.remainingBudgetMs !== undefined && (!Number.isFinite(ctx.remainingBudgetMs) || ctx.remainingBudgetMs <= 0)) { resolve({ success: false, error: "DESKTOP_BROWSER_CONTEXT_STALE" }); return }
+    const dispatchTimeoutMs = ctx.remainingBudgetMs === undefined ? maximum : Math.min(maximum, Math.ceil(ctx.remainingBudgetMs))
     const timer = setTimeout(() => {
       const result = { success: false, error: `Tool execution timeout (${dispatchTimeoutMs}ms): ${toolName}` }
       logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: dispatchTimeoutMs })

@@ -203,6 +203,8 @@ interface ChatCreateParams {
   signal?: AbortSignal
   /** Trusted native router continuation check; never a renderer/message field. */
   assertCurrentRun?: () => void
+  /** Trusted actual native run restriction; never parsed from model/WS JSON. */
+  nativeBrowserTarget?: () => number | undefined
   skipUserMessage?: boolean
   /** Active-tab hostname for site_knowledge + site op-memory (not a trust gate). */
   hostname?: string
@@ -945,7 +947,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
   let codingHandoffContext = ""
   let fleetSupervisionHint = ""
+  const paramsForNativeBrowserTarget = () => { const v = params.nativeBrowserTarget?.(); return Number.isSafeInteger(v) && (v || 0) > 0 ? v : undefined }
   const composeSystemPrompt = () => [
+    ...(paramsForNativeBrowserTarget() ? [`Current native task browser target tabId=${paramsForNativeBrowserTarget()}. Only get_page_text is supported by this selected target; list_tabs/evaluate/other browser actions are unavailable. Visibility selection is not tool approval.`] : []),
     basePrompt,
     runProgressHint,
     fleetDispatchHint,
@@ -1975,6 +1979,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         // / osascript. On validation failure, route to the same recovery path as
         // JSON.parse errors — return an error tool_result so the LLM can self-
         // correct on the next turn.
+        if (toolName === "get_page_text" && typeof params === "object" && params !== null && !Array.isArray(params) && params.tabId === undefined) {
+          const nativeTarget = paramsForNativeBrowserTarget()
+          if (nativeTarget !== undefined) params = { ...params, tabId: nativeTarget }
+        }
         const parsed = tryParseToolArgs(toolName, params)
         if (!parsed.ok) {
           logger.warn("llm.tool_arg_validation_failed", {

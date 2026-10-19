@@ -336,7 +336,7 @@ interface Services {
 
 interface SessionCallbacks {
   /** #476 private native owner and actual canonical run binding; never JSON fields. */
-  nativeDialog?: { current(): boolean; messageId: string; started(run: Readonly<{ current(): boolean; stop(): boolean }>): void }
+  nativeDialog?: { current(): boolean; messageId: string; browserTarget?(): number | undefined; started(run: Readonly<{ id?: string; current(): boolean; stop(): boolean }>): void }
 
   /** #689 current originating socket/auth identity, not caller-controlled. */
   appsOwnerCurrent?: () => boolean
@@ -1333,7 +1333,7 @@ async function dispatchMessage(
         })().finally(() => { if (nativeRunCurrent()) abortThreadChat(rest.thread_id, { clearQueue: true }) })
         return true
       }
-      nativeOwner?.started(Object.freeze({ current: nativeRunCurrent, stop: stopNativeRun }))
+      nativeOwner?.started(Object.freeze({ id: String(myGeneration), current: nativeRunCurrent, stop: stopNativeRun }))
       const assertNativeCurrent = () => { if (nativeOwner && (!nativeOwner.current() || controller.signal.aborted)) { stopNativeRun(); throw Object.assign(new Error("DESKTOP_SESSION_STALE"), { name: "AbortError" }) } }
 
 
@@ -1466,6 +1466,7 @@ async function dispatchMessage(
         assertNativeCurrent()
         await chatCreate({
           ...(nativeOwner ? { assertCurrentRun: assertNativeCurrent } : {}),
+          ...(nativeOwner?.browserTarget ? { nativeBrowserTarget: nativeOwner.browserTarget } : {}),
           threadId: rest.thread_id,
           surface: stampedSurface === "desktop" ? "desktop" : stampedSurface === "summoner" ? "summoner" : "tray",
           ...(nativeOwner && rest.clientMessageId === nativeOwner.messageId ? { reservedUserMessageId: nativeOwner.messageId } : {}),

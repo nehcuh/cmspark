@@ -1,13 +1,15 @@
 /** #476 native-only conversation projection. No generic message-router forwarding. */
 import { ThreadManager, type DesktopDialogHistory } from "../threads/thread-manager"
 import { redactSecrets } from "../threads/distill"
+import type { createDesktopBrowser, BrowserReservation } from "./browser"
 
-export type NativeDialogRun = Readonly<{ current(): boolean; stop(): boolean }>
+export type NativeDialogRun = Readonly<{ id?: string; current(): boolean; stop(): boolean }>
 export type NativeDialogStart = {
   threadId: string; message: string; messageId: string
   current(): boolean
   started(run: NativeDialogRun): void
   event(frame: Record<string, unknown>): void
+  browser?: BrowserReservation
 }
 export type NativeDialogRuntime = { start(input: NativeDialogStart): Promise<void> }
 export type NativeDialogHistory = DesktopDialogHistory
@@ -16,8 +18,8 @@ const safe = (value: unknown) => redactSecrets(typeof value === "string" ? value
 const exact = (frame: Record<string, unknown>, keys: string[]) => Object.keys(frame).length === keys.length && keys.every(k => Object.prototype.hasOwnProperty.call(frame, k))
 type Manager = Pick<ThreadManager, "create" | "desktopMetadataSnapshot"> & { readDesktopDialog?(id: string): NativeDialogHistory }
 type Frame = Record<string, unknown>
-type Operation = { id: string; thread: string; message: string; run?: NativeDialogRun; userPersisted: boolean; failed: boolean; done: boolean; unknown: boolean; cancelled: boolean }
-export function createDesktopDialog(opts: { threads: Manager; runtime?: NativeDialogRuntime; current(): boolean; send(frame: Frame): void; maxPayload: number }) {
+type Operation = { id: string; thread: string; message: string; run?: NativeDialogRun; browser?: BrowserReservation; userPersisted: boolean; failed: boolean; done: boolean; unknown: boolean; cancelled: boolean }
+export function createDesktopDialog(opts: { threads: Manager; runtime?: NativeDialogRuntime; current(): boolean; send(frame: Frame): void; maxPayload: number; browser?: ReturnType<typeof createDesktopBrowser> }) {
   let operation: Operation | undefined
   let lastSend: { id: string; thread: string; message: string; result: Frame } | undefined
   let lastCreate: { id: string; result: Frame } | undefined
@@ -74,6 +76,7 @@ export function createDesktopDialog(opts: { threads: Manager; runtime?: NativeDi
       const op = operation
       if (!op || op.id !== frame.run_id || op.thread !== frame.thread_id || (op.run && !op.run.current())) { result(frame, { ok: false, stopped: false, error_code: "DESKTOP_RUN_STALE" }); return }
       op.cancelled = true; op.failed = true
+      op.browser?.close()
       const stopped = op.run ? op.run.stop() : true
       result(frame, { ok: stopped, stopped, run_id: op.id }); return
     }
@@ -86,16 +89,18 @@ export function createDesktopDialog(opts: { threads: Manager; runtime?: NativeDi
     if (operation) { result(frame, { ok: false, error_code: "DESKTOP_CHAT_BUSY" }); return }
     if (!opts.runtime) { result(frame, { ok: false, error_code: "DESKTOP_CHAT_UNAVAILABLE" }); return }
     const op: Operation = { id: frame.id, thread: frame.thread_id as string, message: frame.message, userPersisted: false, failed: false, done: false, unknown: false, cancelled: false }; operation = op
+    op.browser = opts.browser?.reserve(op.thread)
     result(frame, { ok: true, accepted: true, run_id: op.id })
     void Promise.resolve().then(() => {
       if (!live(op)) return
-      return opts.runtime!.start({ threadId: op.thread, message: op.message, messageId: op.id, current: () => live(op), started: run => { op.run = run; if (!live(op)) run.stop() }, event: frame => event(op, frame) })
+      return opts.runtime!.start({ threadId: op.thread, message: op.message, messageId: op.id, browser: op.browser, current: () => live(op), started: run => { op.run = run; if (!live(op)) run.stop() }, event: frame => event(op, frame) })
     }).catch(() => { op.failed = true }).finally(() => {
+      op.browser?.close()
       if (operation !== op) return
       const terminal = { type: "desktop.chat.event", id: op.id, run_id: op.id, thread_id: op.thread, kind: "terminal", state: op.unknown || (!op.done && !op.failed) ? "unknown" : op.failed ? "stopped_or_failed" : "done", user_persisted: op.userPersisted }
       lastSend = { id: op.id, thread: op.thread, message: op.message, result: terminal }; send(terminal); operation = undefined
     })
   }
-  function cancel() { const op = operation; operation = undefined; op?.run?.stop() }
+  function cancel() { const op = operation; operation = undefined; op?.browser?.close(); op?.run?.stop() }
   return { handle, cancel }
 }

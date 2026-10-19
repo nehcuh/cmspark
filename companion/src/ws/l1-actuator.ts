@@ -68,6 +68,8 @@ export type ForwardL1OrUnavailableOpts = {
   originatingWs: WebSocket
   getAuth: L1ActuatorDeps["getAuth"]
   pickExtensionWs: L1ActuatorDeps["pickExtensionWs"]
+  /** Trusted native actor only. A missing exact peer NEVER falls back. */
+  exactExtension?: () => WebSocket | null
   toolCallId: string
   toolName: string
   startedAt: number
@@ -83,7 +85,8 @@ export type ForwardL1OrUnavailableOpts = {
 export async function forwardL1OrUnavailable(
   opts: ForwardL1OrUnavailableOpts,
 ): Promise<L1ForwardResult> {
-  const resolved = resolveL1ActuatorWs(opts.originatingWs, {
+  const exact = opts.exactExtension?.()
+  const resolved = opts.exactExtension ? (exact ? { ok: true as const, ws: exact } : { ok: false as const, error_code: BROWSER_UNAVAILABLE }) : resolveL1ActuatorWs(opts.originatingWs, {
     getAuth: opts.getAuth,
     pickExtensionWs: opts.pickExtensionWs,
   })

@@ -12,6 +12,7 @@ import {
   type TerminalRelay,
 } from "./terminal"
 import { BrowserBridge } from "./browser-bridge"
+import { createDesktopBrowserPeerHandler } from "./desktop-browser-peer"
 import { KeepAlive } from "./keep-alive"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { buildSecurityConfirmationWsPayload } from "./security-confirmation-payload"
@@ -72,6 +73,7 @@ import {
   type ArmState,
 } from "./cockpit-focus-policy"
 
+const desktopBrowserPeer = createDesktopBrowserPeerHandler()
 let wsClient: WSClient
 // #432: 单会话终端中继（同时最多 1 个 PTY，spec §5）
 let terminalRelay: TerminalRelay | null = null
@@ -292,6 +294,7 @@ function init() {
     onMessage: handleCompanionMessage,
     onStateChange: handleStateChange,
     onConnectionLost: () => {
+      desktopBrowserPeer.reset()
       browserBridge?.clearInteractiveSnapshots()
       terminalRelay?.handleConnectionLost()
       chrome.runtime.sendMessage({ type: "thread.mutation.connection", state: "disconnected" }).catch(() => {})
@@ -384,6 +387,13 @@ const pendingLlmOneshot = new Map<
 >()
 
 async function handleCompanionMessage(msg: any) {
+  if (msg.type === "desktop.browser.peer.cancel") {desktopBrowserPeer.cancel(msg);return}
+  if (msg.type === "desktop.browser.peer.request") {
+    const current = wsClient.desktopBrowserConnectionCurrent()
+    const result = await desktopBrowserPeer.request(msg, current)
+    if (current()) wsClient.send(result)
+    return
+  }
   if (msg.type === "ui.command") {
     // #433 P2: companion → ext whitelist. Overlay never L2.
     try {

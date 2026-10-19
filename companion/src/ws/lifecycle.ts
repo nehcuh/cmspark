@@ -16,6 +16,8 @@ import { codingHandbackView } from "../acp/ui-progress"
 import { randomUUID } from "crypto"
 import { DesktopIdentityRegistry } from "../desktop/identity"
 import { createNativeDialogRuntime } from "../desktop/dialog-runtime"
+import { desktopBrowserPeer, handleDesktopBrowserPeerResult } from "../desktop/browser-peer"
+import type { DesktopBrowserRun } from "../desktop/browser"
 import { createDesktopChannel, attachDesktopUpgrade } from "../desktop/channel"
 import { DesktopHostLauncher } from "../desktop/host-launcher"
 import { requestDesktopOpen } from "../desktop/open"
@@ -136,7 +138,7 @@ export type ToolExecutorFn = (
 ) => Promise<{ success: boolean; data?: any; error?: string }>
 
 export type WsLifecycleDeps = {
-  createToolExecutor: (ws: WebSocket, nativeOwner?: { current(): boolean; unavailable(): void }) => ToolExecutorFn
+  createToolExecutor: (ws: WebSocket, nativeOwner?: { current(): boolean; unavailable(): void; browser?(): DesktopBrowserRun | undefined }) => ToolExecutorFn
   handleSecurityConfirmationResponse: (
     ws: WebSocket,
     msg: any,
@@ -808,6 +810,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     maxPayload: MAX_WS_MESSAGE_SIZE,
     securityConfirmations: requireRt().securityConfirmations,
     archiveActivity: id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target)),
+    browserPeers: () => [...clients].filter(c => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin)).map(c => desktopBrowserPeer(c, () => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin))),
     onAuthenticated: host => desktopLauncher.authenticated(host),
     dialogRuntime: owner => createNativeDialogRuntime({ ...owner, threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), history: requireRt().getHistoryStore(), createExecutor: run => requireRt().createToolExecutor(owner.ws, run) }),
     onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws) },
@@ -1176,6 +1179,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         if (!authState?.authenticated) {
           logger.warn("ws.unauthenticated_message", { type: msg.type })
           try { ws.terminate() } catch { /* closing */ }
+          return
+        }
+        if (msg.type === "desktop.browser.peer.result") {
+          if (isChromeExtensionWsOrigin(authState.origin)) handleDesktopBrowserPeerResult(ws, msg)
           return
         }
         if (msg.type === "desktop.open") {

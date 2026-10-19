@@ -225,4 +225,11 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 
 真正的平台验收沿用现有 `desktop-native-thread-metadata-476.test.ts` 的 OS／surface lease／清理链，新增 `#476 actual native permanent archive history restore and lost ACK use the canonical index`。Windows/macOS 必须真实编译并运行该回调：实际 owned 窗口键盘、归档视图、原历史、恢复、忙碌拒绝及真实保存 ACK 丢失。成功需要十次键盘动作、三次真实提交及专属离线终态76；普通退出0不算通过。Linux 的平台 skip 不算原生成功。原20秒预算、原测试列表和权限门不放宽，不在用户桌面启动验收窗口。
 
-桌面协议v7的方法表、launcher、两 host、builder 和原 fixture 消费者必须一致；仅两条固定三段 read 方法例外，不开放通用桌面 RPC。原spec及实施计划见 [归档合同](superpowers/specs/2026-10-19-desktop-thread-archive-476.md)／[计划](superpowers/plans/2026-10-19-desktop-thread-archive-476.md)。
+当前桌面协议v8的方法表、launcher、两 host、builder 和原 fixture 消费者必须一致；固定三段 read 例外仅 archive.list／archive.state／browser.status／browser.tasks 四条，不开放通用桌面 RPC。原spec及实施计划见 [归档合同](superpowers/specs/2026-10-19-desktop-thread-archive-476.md)／[计划](superpowers/plans/2026-10-19-desktop-thread-archive-476.md)。
+
+
+## #476 浏览器任务纵向切片
+
+`desktop-browser-task-476.test.ts` 使用 stock renderer、真实 HMAC/channel、canonical run 注册、真实 adapter 和 ThreadManager 保存／reload，配合受控 provider／Chrome API 接口，验证选择不是执行、15秒内绑定后模型延迟不续期／不丢同一运行限制、精确 peer/tab 和零背景激活。实际工厂与原 pending-map／BrowserBridge 的 CDP／scripting 读取闭包另核，不能把受控 API 当浏览器证据。永久负控覆盖同名／错 peer、旧 ACK、A/B/A、失权、导航观察、错误租约、已有确认、64容量与取消后挂起调用。
+
+本批源验证不启动真实浏览器或本机原生 host。后续精确 head 的 Windows/macOS native 与真实已认证扩展证据仍为验收门，旧归档／MCP／资源／对话原生回调也必须保留；没有为本片伪造新 native PASS 或改变原预算、测试列表和平台 skip。背景读取不允许 image phase1／phase2 或 unknown 分支绕过矩阵；非 native 路径保留原语义。方法表实际 v8/read11/renderer25/native27，controller-only retire 与 confirmation 决策均不进 renderer 表。

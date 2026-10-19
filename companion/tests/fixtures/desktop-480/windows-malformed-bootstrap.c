@@ -23,7 +23,7 @@ static napi_value malformed(napi_env env,napi_callback_info info) {
   bound=1;
   const char* version=variant==0?"true":variant==1?"1,\"protocol_version\":1":variant==2?"1,\"\\u0070rotocol_version\":1":"1";
   const char* url_json=variant==3?"1":variant==4?"\"ws://foreign.invalid:1/desktop\"":variant==5?"\"ws://127.0.0.1:0/desktop\"":"\"ws://127.0.0.1:1/desktop\"";
-  int length=snprintf(body,sizeof(body),"{\"capability_id\":\"11111111111111111111111111111111\",\"secret\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"url\":%s,\"protocol_version\":%s,\"issued_method_set_version\":7,\"parent_handle\":\"%llu\"}\n",url_json,version,(unsigned long long)(uintptr_t)target);
+  int length=snprintf(body,sizeof(body),"{\"capability_id\":\"11111111111111111111111111111111\",\"secret\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"url\":%s,\"protocol_version\":%s,\"issued_method_set_version\":8,\"parent_handle\":\"%llu\"}\n",url_json,version,(unsigned long long)(uintptr_t)target);
   if(length<=0||(DWORD)length>CMSPARK_BOOT_MAX)goto done;
   accepted=d480_server_send(&channel,pi.hProcess,pi.dwProcessId,body,(DWORD)length);
 done:;
