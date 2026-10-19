@@ -586,11 +586,12 @@ export class AcpManager {
     }
     // Structured handback body: ### 路径 / ### 摘要 / ### 建议验收 (no LLM).
     const shaped = shapeHandbackBody({ body, paths: pathList })
+    session.partial = session.partial || (code !== 0 && code != null)
     session.handback_text = frameAcpHandback({
       agentId: session.agent_id,
       sessionId: session.session_id,
       profile: session.profile,
-      partial: session.partial || (code !== 0 && code != null),
+      partial: session.partial,
       body: shaped,
       maxChars: maxOut,
     })

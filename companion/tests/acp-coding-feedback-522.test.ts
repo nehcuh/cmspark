@@ -5,6 +5,58 @@ import os from "node:os"
 import path from "node:path"
 import { retainTerminalCommandLine } from "../src/acp/progress-caps"
 
+test("failed ACP return keeps framing, saved original-task history and progress partial together", async () => {
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const { formatHandbackChatMessage } = await import("../src/acp/handback-format")
+  config.saveConfig({ acp: { enabled: true, servers: { fixture: { enabled: true,
+    command: process.execPath, protocol: "cli", policy: { profile: "review_readonly" } } } } } as any)
+  const threads = new ThreadManager(), sibling = threads.create("Unchanged sibling")
+  const rows: { code: number | null; expectedPartial: boolean; actualPartial: boolean;
+    framedPartial: boolean; savedPartial: boolean; savedComplete: boolean; progressPartial: boolean;
+    terminalKind: string | undefined; reloadSame: boolean; siblingEmpty: boolean }[] = []
+  for (const [code, partial, expectedPartial] of [[0, false, false], [1, false, true],
+    [-1, false, true], [0, true, true], [null, false, false]] as const) {
+    const owner = threads.create("Owned handback"), mgr = new manager.AcpManager(), events: any[] = []
+    let framed = ""
+    mgr.onEvent(event => events.push(event))
+    mgr.setHandbackSink(({ session, handback }) => {
+      framed = handback
+      threads.addMessage(session.thread_id, { thread_id: session.thread_id, role: "assistant",
+        content: formatHandbackChatMessage({ agentId: session.agent_id, mode: session.mode,
+          partial: session.partial, handback, diffSummary: session.diff_summary || null,
+          paths: (session.pending_diffs || []).map(diff => diff.relPath) }) })
+    })
+    try {
+      const offered = mgr.propose({ threadId: owner.id, agentId: "fixture", goal: "Owned readonly review",
+        workspaceRoot: root, mode: "review_readonly" })
+      assert.ok(offered.ok)
+      if (!offered.ok) return
+      const session = offered.session
+      session.partial = partial
+      ;(mgr as any).finishSession(session, "Owned untrusted review output", 48_000, code)
+      const saved = threads.getMessages(owner.id), reloaded = new ThreadManager().getMessages(owner.id)
+      assert.equal(saved.length, 1)
+      assert.equal(saved[0].thread_id, owner.id)
+      const heading = String(reloaded[0]?.content).split("\n")[0]
+      rows.push({ code, expectedPartial, actualPartial: session.partial,
+        framedPartial: framed.includes("partial=true>"), savedPartial: heading.endsWith("（部分输出）"),
+        savedComplete: heading.endsWith("完成"), progressPartial: events.at(-1)?.partial === true,
+        terminalKind: session.terminal_kind, reloadSame: JSON.stringify(saved) === JSON.stringify(reloaded),
+        siblingEmpty: new ThreadManager().getMessages(sibling.id).length === 0 })
+    } finally { await mgr.shutdown() }
+  }
+  for (const row of rows) {
+    assert.equal(row.savedPartial, row.expectedPartial, `saved handback code=${row.code}`)
+    assert.equal(row.savedComplete, !row.expectedPartial)
+    assert.equal(row.actualPartial, row.expectedPartial)
+    assert.equal(row.framedPartial, row.expectedPartial)
+    assert.equal(row.progressPartial, row.expectedPartial)
+    assert.equal(row.terminalKind, row.code !== 0 && row.code != null ? "failed" : "closed")
+    assert.equal(row.reloadSame, true)
+    assert.equal(row.siblingEmpty, true)
+  }
+})
+
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-coding-522-"))
 process.env.CMSPARK_DATA_DIR = root
 let config: typeof import("../src/config")
