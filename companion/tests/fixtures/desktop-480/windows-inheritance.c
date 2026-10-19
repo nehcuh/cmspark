@@ -89,10 +89,10 @@ static wchar_t fixture_event_name[96];
 #define CMSPARK_BOOTSTRAP_CHILD
 #include "../../../src/desktop/native/windows-bootstrap.h"
 static int fixture_read_known(HANDLE known[3]) {
-  wchar_t name[32768]; DWORD n=GetModuleFileNameW(NULL,name,32768);
+  wchar_t sidecar_path[32768]; DWORD n=GetModuleFileNameW(NULL,sidecar_path,32768);
   if(!n||n>32750)return 0;
-  if(wcscat_s(name,32768,L".handles"))return 0;
-  HANDLE file=CreateFileW(name,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);
+  if(wcscat_s(sidecar_path,32768,L".handles"))return 0;
+  HANDLE file=CreateFileW(sidecar_path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);
   if(file==INVALID_HANDLE_VALUE)return 0;
   BY_HANDLE_FILE_INFORMATION info;char bytes[256];DWORD got=0;
   int valid=GetFileInformationByHandle(file,&info)&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))&&info.nNumberOfLinks==1&&info.nFileSizeHigh==0&&info.nFileSizeLow>0&&info.nFileSizeLow<sizeof(bytes);
