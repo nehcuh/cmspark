@@ -458,7 +458,7 @@ export type ToolExecutorFn = (
 // Do not re-inflate server.ts with multi-agent pregate, L2 algebra, cookie/URL/image/
 // browser_download/MCP gate bodies, extension-forward plumbing, confirm-response, or business tool bodies.
 // Exported for integration tests (audit item 6).
-export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boolean; unavailable(): void }): ToolExecutorFn {
+export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boolean; unavailable(): void; browser?(): import("./desktop/browser").DesktopBrowserRun | undefined }): ToolExecutorFn {
   const confirmations = nativeOwner ? Object.create(securityConfirmations) as typeof securityConfirmations : securityConfirmations
   const denyNativeConfirmation = async () => {
     nativeOwner?.unavailable()
@@ -483,7 +483,17 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
   ): Promise<{ success: boolean; data?: any; error?: string }> => {
     if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
     if (signal?.aborted) return { success: false, error: "Tool call cancelled before dispatch" }
+    // Native browser matrix is closed before image phase1 or any extension helper.
+    // Companion/MCP retain their existing independent policy/confirmation gates.
+    if (nativeOwner && toolName !== "get_page_text" && !isCompanionTool(toolName) && !isMcpNamespaced(toolName) && !["mcp_list_resources", "mcp_read_resource", "mcp_get_prompt"].includes(toolName)) return { success: false, error: "DESKTOP_BROWSER_OPERATION_UNAVAILABLE" }
     let finalParams = contextReadParams(toolName, params || {}, invokeOpts?.siteContextTabId, invokeOpts?.siteContextRequireActive)
+    // Selected target comes from the current native actor, never model tab/URL/peer claims.
+    let nativeBrowserRoute: import("./desktop/browser").BrowserRoute | undefined
+    if (nativeOwner && toolName === "get_page_text") {
+      nativeBrowserRoute = await nativeOwner.browser?.()?.route(toolName, finalParams, signal)
+      if (!nativeBrowserRoute || !nativeOwner.current()) return { success: false, error: "DESKTOP_BROWSER_UNAVAILABLE" }
+      finalParams = { ...finalParams, tabId: nativeBrowserRoute.tabId }
+    }
     delete finalParams.locator_scope
     delete finalParams.__locator_scope
     delete finalParams.__snapshot_scope
@@ -911,10 +921,12 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
     }
     if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
     if (enterprisePermit) claimEnterpriseDispatch(enterprisePermit, toolName, finalParams, ws)
+    if (nativeOwner && (!nativeBrowserRoute || !nativeBrowserRoute.current())) return { success: false, error: "DESKTOP_BROWSER_OPERATION_UNAVAILABLE" }
     const result = await forwardL1OrUnavailable({
       originatingWs: ws,
       getAuth: (w) => authFor(w),
       pickExtensionWs: pickAuthenticatedClientWs,
+      ...(nativeOwner ? { exactExtension: () => nativeOwner.current() && nativeBrowserRoute?.current() ? nativeBrowserRoute.peer : null } : {}),
       toolCallId,
       toolName,
       startedAt,
@@ -929,10 +941,12 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
           actingThreadId,
           startedAt,
           mutationHold: !!mutationHold,
+          ...(nativeBrowserRoute ? { remainingBudgetMs: nativeBrowserRoute.remaining() } : {}),
           locatorScope,
           logToolFinish,
         }),
     })
+    if (nativeBrowserRoute && (!nativeOwner?.current() || !await nativeBrowserRoute.finish())) return { success: false, error: "DESKTOP_BROWSER_CONTEXT_STALE" }
     const currentEvidenceThread = evidenceScope?.kind === "chat" ? threadManager.get(evidenceScope.threadId) : undefined
     return captureLocalPageResult(getConfigDir(), currentEvidenceThread ? evidenceScope : undefined, toolCallId, toolName, result, signal,
       captureWritesAllowedAtStart && currentEvidenceThread?.execution_policy !== "plan_readonly")

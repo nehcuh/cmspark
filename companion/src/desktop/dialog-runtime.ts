@@ -5,10 +5,11 @@ import type { SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
 import { handleMessage } from "../message-router"
 import type { NativeDialogRuntime } from "./dialog"
+import type { DesktopBrowserRun } from "./browser"
 export function createNativeDialogRuntime(opts: {
   ws: WebSocket; current(): boolean
   threads: ThreadManager; skills: SkillEngine; history: HistoryStore
-  createExecutor(owner: { current(): boolean; unavailable(): void }): (id: string, name: string, params: any, signal?: AbortSignal, options?: any) => Promise<{ success: boolean; data?: any; error?: string }>
+  createExecutor(owner: { current(): boolean; unavailable(): void; browser(): DesktopBrowserRun | undefined }): (id: string, name: string, params: any, signal?: AbortSignal, options?: any) => Promise<{ success: boolean; data?: any; error?: string }>
 }): NativeDialogRuntime {
   return {
     async start(input) {
@@ -18,12 +19,13 @@ export function createNativeDialogRuntime(opts: {
       // persisted UUIDs refuse replay, rather than overwriting/duplicating rows.
       const snapshot = opts.threads.readDesktopDialog(input.threadId)
       if (snapshot.messages.some(row => row.id === input.messageId)) throw Error("DESKTOP_REQUEST_RECORDED")
-      const executeTool = opts.createExecutor({ current, unavailable: () => input.event({ type: "desktop.chat.confirmation_unavailable", thread_id: input.threadId }) })
+      let browser: DesktopBrowserRun | undefined
+      const executeTool = opts.createExecutor({ current, browser: () => browser, unavailable: () => input.event({ type: "desktop.chat.confirmation_unavailable", thread_id: input.threadId }) })
       const emit = (frame: Record<string, unknown>) => { if (current()) input.event(frame) }
       const result = await handleMessage({ type: "chat.create", thread_id: input.threadId, message: input.message, clientMessageId: input.messageId },
         { threadManager: opts.threads, skillEngine: opts.skills, historyStore: opts.history },
         { surface: "desktop", origin: "cmspark-desktop-native://local", originWs: opts.ws,
-          nativeDialog: { current, messageId: input.messageId, started: input.started },
+          nativeDialog: { current, messageId: input.messageId, browserTarget: () => browser?.target(), started: run => { browser = input.browser?.bind(run); input.started(run) } },
           isCurrentSession: current, appsOwnerCurrent: current,
           sendToExtension: emit, executeTool: async (...args) => {
             if (!current()) return { success: false, error: "DESKTOP_SESSION_STALE" }

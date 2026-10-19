@@ -868,6 +868,10 @@ export function getTabLease(tabId: number): TabLease | null {
   sweepExpired()
   return leases.get(tabId) || null
 }
+/** Read-only native admission probe: no sweep, promotion, renewal or release. */
+export function peekTabLease(tabId: number): Readonly<TabLease> | null {
+  return leases.get(tabId) || null
+}
 
 export function listTabLocks(): Array<{
   tab_id: number

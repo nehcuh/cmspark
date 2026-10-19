@@ -49,8 +49,8 @@ test("Mac observation records original identity before completion and retains al
 })
 
 function assertVariantCleanup(source: string) {
-  assert.ok(source.includes("d480AcceptanceWindowStop(self);archiveTarget=nil;retireConfirmation(nil);socket=nil;"))
-  assert.ok(source.includes("d480AcceptanceWindowStop(self);retireArchive();retireDialog();retireConfirmation(false);socket?.cancel"))
+  assert.ok(source.includes("d480AcceptanceWindowStop(self);browserRequest=nil;browserThread=nil;archiveTarget=nil;retireConfirmation(nil);socket=nil;"))
+  assert.ok(source.includes("d480AcceptanceWindowStop(self);retireBrowser(true);retireArchive();retireDialog();retireConfirmation(false);socket?.cancel"))
 }
 
 test("Mac acceptance builder preserves production bytes and arms cleanup only in the test variant", async () => {
@@ -82,12 +82,16 @@ test("actual Mac acceptance variants retain archive cleanup and inverse across E
     assertVariantCleanup(variant.source)
   }
   const variant = builder.desktopAcceptanceVariant("swift", original, fixture)
-  const offline = "d480AcceptanceWindowStop(self);archiveTarget=nil;retireConfirmation(nil);socket=nil;"
-  const terminate = "d480AcceptanceWindowStop(self);retireArchive();retireDialog();retireConfirmation(false);socket?.cancel"
+  const offline = "d480AcceptanceWindowStop(self);browserRequest=nil;browserThread=nil;archiveTarget=nil;retireConfirmation(nil);socket=nil;"
+  const terminate = "d480AcceptanceWindowStop(self);retireBrowser(true);retireArchive();retireDialog();retireConfirmation(false);socket?.cancel"
   for (const [before, after] of [
     [offline, offline.replace("d480AcceptanceWindowStop(self);", "")],
+    [offline, offline.replace("browserRequest=nil;", "")],
+    [offline, offline.replace("browserThread=nil;", "")],
     [offline, offline.replace("archiveTarget=nil;", "")],
-    [offline, "archiveTarget=nil;retireConfirmation(nil);socket=nil;d480AcceptanceWindowStop(self);"],
+    [offline, "browserRequest=nil;browserThread=nil;archiveTarget=nil;retireConfirmation(nil);socket=nil;d480AcceptanceWindowStop(self);"],
+    [terminate, terminate.replace("retireBrowser(true);", "")],
+    [terminate, terminate.replace("retireBrowser(true)", "retireBrowser(false)")],
     [terminate, terminate.replace("retireArchive();", "")],
     [terminate, terminate.replace("retireDialog();", "")],
     [terminate, terminate.replace("retireConfirmation(false);", "")],

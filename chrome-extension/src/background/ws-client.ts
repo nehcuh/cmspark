@@ -324,6 +324,12 @@ export class WSClient {
     if (hadMeeting) { try { this.onMessage({ type: "thread.mutation.connection", state: "disconnected" }) } catch { /* local cleanup only */ } }
   }
 
+  /** Captured authenticated socket identity, invalidated on close/error/auth reset. */
+  desktopBrowserConnectionCurrent(): () => boolean {
+    const socket = this.ws, gen = this.generation, auth = this.meetingAuth
+    return () => !!socket && this.ws === socket && this.generation === gen && this.meetingAuth === auth && this.authenticated && socket.readyState === WebSocket.OPEN
+  }
+
   getState(): ConnectionState {
     return this.state
   }

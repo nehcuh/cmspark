@@ -7,3 +7,8 @@
 header{height:auto;min-height:56px;flex-wrap:wrap}#dialog-editor{margin:16px 0}#dialog-input{display:block;width:100%;font:inherit;color:inherit;background:transparent;border:1px solid #aaa;border-radius:4px;padding:8px;margin:8px 0;resize:vertical}#dialog-history article{border-bottom:1px solid #deddd6;padding:10px 0;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}#dialog-feedback{font-size:13px;line-height:1.5}
 
 #archive-views{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}#archive-views button[aria-pressed=true]{font-weight:600;border-color:currentColor}#archive-editor{border:1px solid #a7a79a;border-radius:8px;padding:16px;margin:16px 0}#archive-feedback{font-size:13px;line-height:1.5}
+
+#browser-editor { max-width: 56rem; }
+#browser-choices { list-style: none; padding: 0; }
+#browser-choices li { border: 1px solid currentColor; border-radius: .4rem; margin-block: .75rem; padding: .75rem; overflow-wrap: anywhere; }
+#browser-choices button { margin-inline-end: .5rem; margin-block: .25rem; }

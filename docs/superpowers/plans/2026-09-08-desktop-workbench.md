@@ -61,3 +61,14 @@ Native macOS and Windows builds, summon hotkey registration/conflict recovery, e
 
 ## Review discipline
 Machine checks precede each implementation review: owning unit/contract negative tests, build, relevant real-render UI tests and native platform checks named by the slice. Freeze sources and evidence; actual Grok4.6 + DeepSeekV4Pro independent verdicts, fix blockers then resubmit. Invalid tool-call output is not a verdict. Record each slice in linked Issue/PR, keep #475 icon/history delivery separate. Current plan is not release approval.
+
+
+## 2026-10-19 · §6 的有限浏览器任务实施附录
+
+沿用原 #476，不新增需求票。本片仅当前线程＋服务器验证的当前扩展 peer/tab；状态只读，候选不是已有任务。读取获得 S（绝对 E≤获取时刻＋15000ms），明确选择得到下一次发送 P，实际同线程 chat-start 在 E 内绑定真实 canonical run R。S/P 不持久化、不续期；R 只活到原运行结束或失权。metadata ACK 不立即删除 S；进入同线程聊天不删除 P。切其它线程、文档、离线／撤销关闭旧上下文，旧 ACK 不得改变当前策略。
+
+固定 wire：`desktop.browser.status`、`desktop.browser.tasks(thread_id)`、`desktop.browser.visibility(thread_id,context_id,selection_id,visibility)`。仅原生控制器可发送 `desktop.browser.retire(context_request_id,scope=view|all)`；它先于对应新 intent 到达服务器，页面视图撤销与 run 策略撤销分开。读取 refresh 不把正在运行的任务转移到其它候选，最近 context 的文档撤销也关闭该 owner 的旧 active run 绑定。
+
+`get_page_text` 是当前唯一背景执行行，经实际执行器保留原策略／租约／L2／URL／企业／清洗门，派发精确 peer/tab 并在返回后复核导航；模型不能换目标。前台显示是独立明确视图操作，不是工具确认。其它浏览器行在任何扩展／image 辅助 effect 前拒绝，不能回退 first peer、active tab、打开 Chrome、复制 profile 或升级权限。本地／MCP 的原独立策略不变。
+
+扩展元数据 RPC 上限 64 在途（取消但未返回的 Chrome 调用仍计入），导航记录上限 64。仅本扩展观察到的 loading/url/onRemoved 使 nonce 失效；淘汰／重启只拒绝旧 token，不声明未观察事件的原子文档证明。cancel 未确认不等于撤销已发 effect。细节及真实验收限制见 [用户指南](../../desktop-browser-tasks.md) 和 [测试说明](../../TESTING.md)。本附录与 CPU 源检查不表示原生／浏览器验收或 #476 全部完成。

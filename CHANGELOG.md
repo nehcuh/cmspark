@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #476 原生工作台新增当前对话的浏览器任务候选与显式背景／前台选择。状态与元数据仅访问已认证扩展；下一次同对话明确发送时才绑定真实运行，首行仅支持既有 `get_page_text` 精确 peer/tab 背景读取，未知浏览器操作拒绝且不自动聚焦／打开 Chrome。协议同步 v8；CPU 源码控制不代表真实原生／扩展验收，整票仍 Partial。见 [浏览器任务指南](docs/desktop-browser-tasks.md)。
+
 - #464 开发中：GitHub tagged-release（限固定英文元数据布局、单段 ASCII tag，不含斜杠/编码 tag）的唯一完整发布元数据 HTML 可保留当前平台声明的仓库/tag/完整 commit 观测关系，材料按原 pilot、字段引用和 revision 核对。此状态不证明历史 tag、构建/资产/签名或发布批准，仍不提升 ready；真实 hosted browser 验收尚未完成。
 
 
