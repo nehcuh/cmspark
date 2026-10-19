@@ -1,14 +1,14 @@
 (function(){
   // Real ACKs and owned-window native Enter events only. No DOM key dispatch,
   // success fabrication, timer, retry, automatic write or native permission.
-  let phase=0,started=false,requested=0,keyMask=0;
+  let phase=0,started=false,requested=0,keyMask=0,pendingButton=null;
   const $=id=>document.getElementById(id),target="native-archive-A";
   const names=["ROW","SAVE","VIEW","HISTORY","RESTORE_ROW","RESTORE_SAVE","NORMAL","BUSY_ROW","RETRY_ROW","LOST_SAVE"];
   const send=f=>{if(window.chrome?.webview)window.chrome.webview.postMessage(f);else window.webkit.messageHandlers.desktop.postMessage(f)};
   const post=id=>send({type:"system.ping",id,generation:documentGeneration}),fail=()=>post("D476_FAIL_ARCHIVE_PHASE");
   const pick=attribute=>[...$("list").querySelectorAll("["+attribute+"]")].find(b=>b.getAttribute(attribute)===target);
-  const key=(index,button)=>{if(!button||button.disabled||index!==requested+1){fail();return}requested=index;button.focus();post("D476_ARCHIVE_"+names[index-1]+"_KEY")};
-  document.addEventListener("keydown",e=>{if(e.key!=="Enter")return;if(e.isTrusted!==true||e.target!==document.activeElement||requested<1||requested>10||(keyMask&(1<<(requested-1)))){fail();return}keyMask|=1<<(requested-1)});
+  const key=(index,button)=>{if(!button||button.disabled||index!==requested+1){fail();return}button.focus();if(document.activeElement!==button){fail();return}requested=index;pendingButton=button;post("D476_ARCHIVE_"+names[index-1]+"_KEY")};
+  document.addEventListener("keydown",e=>{if(e.key!=="Enter")return;if(e.isTrusted!==true||e.target!==document.activeElement||e.target!==pendingButton||requested<1||requested>10||(keyMask&(1<<(requested-1)))){fail();return}keyMask|=1<<(requested-1);pendingButton=null});
   const start=()=>{if(started)return;started=true;document.querySelector('[data-page="thread.list"]').click()};
   const original=window.cmsparkDesktopReceive;
   window.cmsparkDesktopReceive=f=>{
