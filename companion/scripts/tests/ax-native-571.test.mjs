@@ -66,11 +66,13 @@ test('#571 CI builds signed actual host before external AX hard gate, preserves 
   for(const mutation of [block.replace('set -euo pipefail','set -uo pipefail'),block.replace('node scripts/build-ax-native-571.mjs','true'),block.replace('node scripts/build-ax-native-571.mjs','node scripts/run-tests.mjs .test-dist/tests/computer-ax-native-571.test.js'),block.replace('node scripts/run-tests.mjs .test-dist/tests/computer-ax-native-571.test.js','true')])assert.throws(()=>ax571CiBlock(normalized.replace(anchor+block,anchor+mutation)))
  }
 })
-test('#571 ledger records native framework/action rows as unproven, keeps permission and executor residual explicit',()=>{
+test('#571 ledger binds the one actual AppKit delivered row and keeps all other gaps and residuals explicit',()=>{
  const ledger=fs.readFileSync(path.join(root,'docs/computer-capability-ledger.md'),'utf8'),section=ledger.split('### 4.1 macOS AX')[1]?.split('## 5.')[0]
- assert.ok(section);for(const framework of ['AppKit NSButton','WKWebView'])assert.ok(section.includes('| '+framework+' | press | **Gap**'))
- for(const fact of ['AX571_ROW','AX571_PERMISSION','TCC','UNKNOWN','executor','至少一条'])assert.ok(section.includes(fact))
- assert.equal(section.includes('| **Delivered**'),false);assert.equal(ledger.includes('我们**只在 Windows 上有实现**'),false);assert.equal(ledger.includes('darwin-estop.ps1'),false)
+ assert.ok(section);assert.ok(section.includes('| AppKit NSButton | press | **Delivered**'));assert.ok(section.includes('| WKWebView | press | **Gap**'))
+ const rows=section.split('\n').filter(x=>x.startsWith('| ')&&/\*\*(?:Delivered|Gap)\*\*/.test(x));assert.equal(rows.length,9);assert.equal(rows.filter(x=>x.includes('**Delivered**')).length,1)
+ for(const row of rows.filter(x=>!x.includes('| AppKit NSButton | press |')))assert.ok(row.includes('**Gap**'))
+ for(const fact of ['39166888090','d66da90e92f99c439cdd98280733e34c7499e6b1','AX571_ROW','AX571_PERMISSION','TCC','UNKNOWN','executor','至少一条','after-oracle','TREE_EXHAUSTED'])assert.ok(section.includes(fact))
+ assert.equal(ledger.includes('我们**只在 Windows 上有实现**'),false);assert.equal(ledger.includes('darwin-estop.ps1'),false)
 })
 
 test('#571 actual initial readiness gate observes active/key and both CG identities before publishing',()=>{
@@ -517,3 +519,71 @@ test('#571 four binding roles reuse existing observations and never alter public
 })
 
 import './ax-traversal-observation-571.test.mjs'
+
+
+// Actual native registrar/callback with inert owned process, file and Chrome-free OS seams.
+// Never imports or launches the native test module on an agent's desktop.
+function actualKnownGapRun571(options={}){
+ const records=[],rows=[],files=new Map(),timers=new Set();let child,framework='APPKIT',actions=0,estops=0,mismatches=0,snapshots=0,compares=0,removed=0,settled=0,killed=0
+ const dir='/owned/ax-native571-test',root=path.resolve('dist/ax-native-571'),target=1,sibling=2,owner=77
+ const before={foreground:2,zorder:[2,1],cursor:{x:10,y:10}},after={...structuredClone(before),...options.after}
+ const fsStub={mkdtempSync:()=>dir,realpathSync:x=>x,lstatSync(file){if(file===dir)return{isDirectory:()=>true,isSymbolicLink:()=>false,dev:1n,ino:2n,uid:9n,mode:0o700n};throw{code:'ENOENT'}},watch(){return{close(){}}},existsSync:file=>files.has(file),
+  writeFileSync(file,data){files.set(file,String(data))},unlinkSync(file){files.delete(file)},rmSync(){removed++},openSync(){throw{code:'ENOENT'}},
+  readFileSync(file){if(file===path.join(root,'identity.json'))return JSON.stringify({schema:1,identifierExpected:true,signatureVerified:true,fixtureBundleVerified:true,fixtureIdentifierExpected:true,route:'DIRECT_CLI_NODE_PARENT',tccResponsibility:'UNKNOWN'});if(files.has(file))return files.get(file);throw{code:'ENOENT'}}}
+ const put=(name,value)=>files.set(path.join(dir,name),JSON.stringify(value))
+ const childProcess={pid:10,once(event,callback){assert.equal(event,'close');this.closeCallback=callback;return this},kill(){killed++;put('ready.json.owner-closed',{schema:1,framework,pid:owner,urlBound:true,terminated:!options.badClose});this.closeCallback(0,null);return true}}
+ const traversal=options.traversal??{schema:1,hidden:false,sizeMissing:false,sizeSmall:false,nameEmpty:true,nameDifferent:true,childrenMissing:true,childrenWrongType:false,childrenEmpty:true,childrenNonempty:true,depth:3,end:'EMPTY_FRONTIER'}
+ const hit=Object.hasOwn(options,'hit')?options.hit:options.located?{found:true,name:'OwnedAX571Press',role:'AXButton'}:{found:false,ax571Reason:'TREE_EXHAUSTED',ax571Traversal:traversal}
+ const exec=(bin,args,config,callback)=>{
+  if(args[0]==='--launch-owned'){
+   framework=args[1];child=childProcess
+   put('ready.json.owner-started',{schema:1,framework,pid:owner,urlBound:true,terminated:false})
+   put('ready.json',{schema:1,framework,appPID:owner,target,sibling,setup:{schema:1,appActive:true,siblingKey:true,targetBound:true,siblingBound:true,firstRole:'SIBLING',...options.setup}})
+   return child
+  }
+  if(bin==='/bin/bash'){
+   if(args[1]==='snapshot'){snapshots++;files.set(args[args.indexOf('-out')+1],JSON.stringify(snapshots===1?{...before,...options.before}:after))}
+   else{assert.equal(args[1],'compare');compares++;put('verdict.json',{...compare(after,'ax-action',{...before,...options.before}),...options.verdict});if(options.targetEffect)put('target.json',{schema:1,framework,changed:true});if(options.siblingEffect)put('sibling.json',{schema:1,framework,changed:true})}
+   callback(null);return{}
+  }
+  let result
+  if(args[0]==='security-check')result={ok:true,axTrusted:true,secureInput:false,...options.security}
+  else if(args[0]==='ax-locate')result=hit
+  else{
+   assert.equal(args[0],'ax-invoke')
+   if(files.has(path.join(dir,'stop'))){estops++;result={error_code:'TASK_ABORTED'}}
+   else if(args[args.indexOf('--expect-role')+1]==='AX571_WRONG_ROLE'){mismatches++;result={error_code:'AX_ELEMENT_MISMATCH'}}
+   else if(options.security?.axTrusted===false)result={error_code:'AX_FAILED'}
+   else{actions++;result=options.actionResult??{ok:true};if(result.ok===true)put('target.json',{schema:1,framework,changed:true})}
+  }
+  callback(null,JSON.stringify(result),'');return{}
+ }
+ const c={test:(name,opts,callback)=>records.push({name,opts,callback}),assert,fs:fsStub,path,os:{tmpdir:()=>'/owned'},execFile:exec,performance:{now:()=>0},process:{platform:'darwin',getuid:()=>9,execPath:'/INERT_NODE/bin/node'},Buffer,
+  setTimeout(fn){const token={fn};timers.add(token);return token},clearTimeout:id=>timers.delete(id),withSurface650:async(t,body)=>body(t,{checkpoint(){},retain(){},settled(){settled++}})}
+ vm.createContext(c);const js=ts.transpileModule(source.replace(/^import .*$/gm,''),{fileName:'computer-ax-native-571.test.ts',compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None},reportDiagnostics:true});assert.equal(js.diagnostics.length,0);vm.runInContext(js.outputText,c)
+ return{async run(name){const record=records.find(r=>r.name.includes(name));assert.ok(record);const t={signal:new AbortController().signal,diagnostic:s=>rows.push(s)};let error;try{await record.callback(t)}catch(e){error=e}return{okay:error===undefined,error,rows,actions,estops,mismatches,snapshots,compares,removed,settled,killed,timers:timers.size}},records}
+}
+test('#571 real WK known-Gap callback requires fresh oracles and zero effects without an action',async()=>{
+ const run=actualKnownGapRun571(),r=await run.run('press WKWEBVIEW:');assert.equal(r.okay,true);assert.equal(r.actions,0);assert.equal(r.estops,1);assert.equal(r.mismatches,0);assert.equal(r.snapshots,2);assert.equal(r.compares,1);assert.equal(r.removed,1);assert.equal(r.settled,1);assert.equal(r.killed,1);assert.equal(r.timers,0)
+ const row=r.rows.find(x=>x.startsWith('AX571_ROW '));assert.ok(row);const value=JSON.parse(row.slice('AX571_ROW '.length));assert.equal(value.status,'Gap');assert.equal(value.reason,'TREE_EXHAUSTED');assert.equal(value.code,'UNKNOWN');assert.equal(value.targetChanged,false);assert.equal(value.noLeakedInputKind,'derived')
+ const aggregate=await run.run('at least one');assert.equal(aggregate.okay,false)
+})
+test('#571 real known-Gap branch keeps every oracle, target/sibling zero and cleanup refusal hard',async()=>{
+ for(const options of [{after:{foreground:1}},{after:{foreground:null}},{after:{zorder:[2]}},{after:{zorder:[2,1,3]}},{after:{zorder:[1,2]}},{after:{cursor:null}},{after:{cursor:{x:11,y:10}}},...['focus_kept','zorder_kept','cursor_kept','no_leaked_input','background_verified'].map(k=>({verdict:{[k]:false}})),{verdict:{no_leaked_input_kind:'observed'}},{targetEffect:true},{siblingEffect:true},{badClose:true}]){
+  const r=await actualKnownGapRun571(options).run('press WKWEBVIEW:');assert.equal(r.okay,false);assert.equal(r.actions,0)
+ }
+})
+test('#571 only WK exact known traversal may become Gap; invalid or other refusal paths still fail',async()=>{
+ const base={schema:1,hidden:false,sizeMissing:false,sizeSmall:false,nameEmpty:true,nameDifferent:true,childrenMissing:true,childrenWrongType:false,childrenEmpty:true,childrenNonempty:true,depth:3,end:'EMPTY_FRONTIER'}
+ const hits=[{found:false,ax571Reason:'UNKNOWN',ax571Traversal:base},{found:false,ax571Reason:'CG_TARGET_COUNT',ax571Traversal:base},{found:false,ax571Reason:'TREE_EXHAUSTED',ax571Traversal:null},...[-1,50,51,NaN].map(depth=>({found:false,ax571Reason:'TREE_EXHAUSTED',ax571Traversal:{...base,depth}})),{found:false,ax571Reason:'TREE_EXHAUSTED',ax571Traversal:{...base,end:'DEPTH_LIMIT'}},{found:false,ax571Reason:'TREE_EXHAUSTED',ax571Traversal:{...base,extra:true}},{found:false,ax571Reason:'TREE_EXHAUSTED',ax571Traversal:{...base,hidden:'false'}},{found:null,ax571Reason:'TREE_EXHAUSTED',ax571Traversal:base}]
+ for(const hit of hits){const r=await actualKnownGapRun571({hit}).run('press WKWEBVIEW:');assert.equal(r.okay,false);assert.equal(r.actions,0)}
+ const app=await actualKnownGapRun571().run('press APPKIT:');assert.equal(app.okay,false)
+ for(const options of [{security:{axTrusted:false}},{security:{secureInput:true}},{setup:{targetBound:false}},{before:{foreground:1}}]){const r=await actualKnownGapRun571(options).run('press WKWEBVIEW:');assert.equal(r.okay,false);assert.equal(r.actions,0)}
+})
+test('#571 real located AppKit/WK routes retain identity-negative, delivered/refused semantics and aggregate minimum',async()=>{
+ for(const framework of ['APPKIT','WKWEBVIEW']){
+  const run=actualKnownGapRun571({located:true}),r=await run.run('press '+framework+':');assert.equal(r.okay,true);assert.equal(r.actions,1);assert.equal(r.estops,1);assert.equal(r.mismatches,1);assert.equal(r.snapshots,2);assert.equal(r.compares,1);assert.equal(r.settled,1)
+  assert.equal((await run.run('at least one')).okay,true);assert.ok(r.rows.some(x=>x.includes('"status":"Delivered"')))
+  const refused=actualKnownGapRun571({located:true,actionResult:{ok:false,error_code:'AX_ACTION_UNAVAILABLE'}}),n=await refused.run('press '+framework+':');assert.equal(n.okay,true);assert.ok(n.rows.some(x=>x.includes('"status":"Refused"')));assert.equal((await refused.run('at least one')).okay,false)
+ }
+})

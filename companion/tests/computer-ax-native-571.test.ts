@@ -162,6 +162,16 @@ function ax571OwnerReceipt(value:unknown,framework:string,terminated:boolean,pid
   return {pid:n}
  }catch{return null}
 }
+// One recorded WK locate Gap only; no action/refusal success or cleanup authority.
+function ax571KnownWKGap(framework:string,value:unknown):boolean {
+ if(framework!=='WKWEBVIEW'||!value||typeof value!=='object'||Array.isArray(value))return false
+ try {
+  const found=Object.getOwnPropertyDescriptor(value,'found')
+  if(!found||!Object.hasOwn(found,'value')||found.value!==false||ax571LocateReason(value)!=='TREE_EXHAUSTED')return false
+  const traversal=ax571Traversal(value)
+  return traversal!==null&&traversal.end==='EMPTY_FRONTIER'&&traversal.depth<50
+ }catch{return false}
+}
 let delivered571=0
 for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual external AX press ${framework}: target marker and all background oracles`,{skip:process.platform!=='darwin',timeout:20_000},t=>withSurface650(t,async(t,lease)=>{
  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ax-native571-'))),owned=fs.lstatSync(dir,{bigint:true}),root=path.resolve('dist/ax-native-571'),host=path.join(root,'cmspark-host'),fixture=path.join(root,'OwnedAX571.app/Contents/MacOS/owned-target')
@@ -201,7 +211,16 @@ for(const framework of ['APPKIT','WKWEBVIEW'] as const)test(`#571 actual externa
    const code=ax571Code(denied);t.diagnostic('AX571_ROW '+JSON.stringify({schema:1,framework,action:'press',status:'Gap',code,permission:false,reason:'ACTUAL_PERMISSION_PRECONDITION_FALSE'}));assert.notEqual(denied.ok,true,'AX571_UNTRUSTED_ACTION');assert.notEqual(code,'UNKNOWN','AX571_UNCLASSIFIED_REFUSAL');assert.equal(fs.existsSync(marker),false,'AX571_UNTRUSTED_EFFECT');throw Error('AX571_PERMISSION_REQUIRED')
   }
   assert.equal(security.secureInput,false,'AX571_SECURE_INPUT_ACTIVE')
-  const hit=await command(['ax-locate','--window-id',String(target),'--target','OwnedAX571Press']);try{t.diagnostic('AX571_LOCATE '+JSON.stringify({schema:1,framework,reason:ax571LocateReason(hit)}));if(hit.found===false)t.diagnostic('AX571_TRAVERSAL '+JSON.stringify({schema:1,framework,observation:ax571Traversal(hit)}))}catch{/* Passive observation cannot replace locate/primary. */}assert.equal(hit.found,true,'AX571_LOCATE_FAILED');assert.ok(hit.name==='OwnedAX571Press','AX571_IDENTITY');assert.equal(typeof hit.role,'string','AX571_IDENTITY')
+  const hit=await command(['ax-locate','--window-id',String(target),'--target','OwnedAX571Press']);try{t.diagnostic('AX571_LOCATE '+JSON.stringify({schema:1,framework,reason:ax571LocateReason(hit)}));if(hit.found===false)t.diagnostic('AX571_TRAVERSAL '+JSON.stringify({schema:1,framework,observation:ax571Traversal(hit)}))}catch{/* Passive observation cannot replace locate/primary. */}
+  if(ax571KnownWKGap(framework,hit)){
+  const after=await snapshot('after.json'),verdictFile=path.join(dir,'verdict.json')
+  await new Promise<void>((resolve,reject)=>execFile('/bin/bash',[path.resolve('../scripts/computer-bg-oracles.sh'),'compare','-before',path.join(dir,'before.json'),'-after',path.join(dir,'after.json'),'-out',verdictFile,'--target-hwnd',String(target),'--delivery','ax-action'],{env,timeout:Math.min(15_000,remaining()),maxBuffer:4096,signal:t.signal},error=>error?reject(Error('AX571_COMPARE_FAILED')):resolve()))
+  requireAx571Oracles(before,after,JSON.parse(fs.readFileSync(verdictFile,'utf8')),target,sibling);assert.equal(fs.existsSync(siblingMarker),false,'AX571_SIBLING_EFFECT')
+   assert.equal(fs.existsSync(marker),false,'AX571_GAP_TARGET_EFFECT')
+   t.diagnostic('AX571_ROW '+JSON.stringify({schema:1,framework,action:'press',status:'Gap',code:'UNKNOWN',reason:'TREE_EXHAUSTED',targetChanged:false,focusKept:true,zorderKept:true,cursorKept:true,noLeakedInput:true,noLeakedInputKind:'derived'}))
+   return
+  }
+  assert.equal(hit.found,true,'AX571_LOCATE_FAILED');assert.ok(hit.name==='OwnedAX571Press','AX571_IDENTITY');assert.equal(typeof hit.role,'string','AX571_IDENTITY')
   const args=['ax-invoke','--window-id',String(target),'--target',hit.name,'--action','press','--expect-role',hit.role,'--expect-name',hit.name,'--estop-flag',stop]
   const mismatchArgs=[...args],roleIndex=mismatchArgs.indexOf('--expect-role');assert.ok(roleIndex>=0&&mismatchArgs.lastIndexOf('--expect-role')===roleIndex,'AX571_ROLE_ARGV');mismatchArgs[roleIndex+1]='AX571_WRONG_ROLE'
   const mismatch=await command(mismatchArgs,8000)

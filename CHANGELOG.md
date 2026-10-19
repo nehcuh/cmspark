@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #571 按原票至少一条后台动作与逐行三态判据回填 d66 AppKit press 原生证据；WK 已知 TREE_EXHAUSTED 保留 Gap 与旧红历史，仅可经新零效果、fresh 完整 oracle 和原清理硬门验收。未知/权限/绑定/深度/超时不转 Gap，原动作与最低 Delivered 门不变；不是修复 WK 根因或宣布全 macOS 完成，新 head 原生/CI 待验。
+
 - #571: native acceptance 的诊断编译开关下，locate 遍历失败新增固定分支布尔值、深度与 frontier 终态观测；不新增 AX/CG 查询，不改变遍历或后台动作，WK 原生失败原因仍待实际验收。
 
 - #464 ACP v1 初始化改用标准 `clientCapabilities` 字段，保留原文件/终端能力全部关闭、超时和响应拒绝；补实际 JSON-RPC 请求捕获回归测试，并说明网页 diff 已支持的明确未加引号文本重命名。字段校准不证明真实 Agent 兼容或业务验收，#464 整票仍为 Partial。

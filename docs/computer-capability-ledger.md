@@ -223,17 +223,17 @@ screen、Retina 倍率、最近几何或 first-row 猜测。再次观察同一 s
 
 这些对应仍是非原子的保守双读，不承诺排除两次系统调用之间的任意 ABA；无标题或不完整
 暴露的应用可能被拒绝。CPU 源投影不是 Swift SDK/AppKit/CG 执行，已有原生失败的唯一原因
-仍 UNKNOWN。AppKit/WK 的 target marker 与同轮完整 oracle 未通过前，下表继续保留 Gap。
+仍 UNKNOWN。每行仅按自己的 target marker 与同轮完整 oracle 回填，不能以 AppKit 通过替 WK 或其它动作验收。
 
 ### 4.1 macOS AX：逐框架 / 动作与证据
 
-当前所有下列行仍是 **Gap**，因为本变更没有运行本机或 hosted AX。原生验收代码的存在、
-Swift 类型检查、纯 Node 比较控和 owned fixture 都不能代填 Delivered / Refused。
+AppKit press 已有下述 d66 hosted 原生证据；其余行按缺口保留 **Gap**。原生验收代码、
+Swift 类型检查、纯 Node 比较控和 owned fixture 本身不能代填 Delivered / Refused。
 
 | 靶子/框架 | 动作 | 当前状态 | 确切证据 / 尚缺什么 |
 |---|---|---|---|
-| AppKit NSButton | press | **Gap** | `computer-ax-native-571.test.ts` 的实际 external AX AppKit 行已接 hosted Mac；待真实 target marker + 同轮 focus/z-order/cursor 与 derived no-leak 回执。 |
-| WKWebView | press | **Gap** | 同文件实际 external AX WKWebView 行；marker 必须来自真实 trusted click→当前 WebView 主 frame，待同轮四 oracle。 |
+| AppKit NSButton | press | **Delivered** | [CI 39166888090](https://github.com/nehcuh/cmspark/actions/runs/39166888090)，head `d66da90e92f99c439cdd98280733e34c7499e6b1`；`#571 actual external AX press APPKIT: target marker and all background oracles` PASS，targetChanged/focus/z-order/cursor/noLeak 均 true，noLeak 为 derived。 |
+| WKWebView | press | **Gap** | 同一 d66 原始 native 行因 `AX571_LOCATE_FAILED` / `TREE_EXHAUSTED` 为 RED，未执行动作或 after-oracle；现有 `EMPTY_FRONTIER` 深度3观测不证明根因或统一不支持。仅精确已知缺口可走新 zero-effect + fresh 四 oracle 回归；新 head 原生结果待验，不能把旧红改绿。 |
 | AppKit | increment | **Gap** | `cuAXInvoke` 已有源分支；本叶未提供对应靶子 / action 实测。 |
 | AppKit | decrement | **Gap** | 同上；未验不当不可用。 |
 | AppKit | confirm | **Gap** | 已有 AXConfirm 源映射；未取得实际靶子效果或带 oracle 的精确拒绝。 |
@@ -249,6 +249,10 @@ target，再运行完整 native test。
 布尔。只有 target-owned marker 确变且 focus/z-order/cursor 均 true，才可把对应 press 行改
 Delivered 并附本轮 commit/run/test；真实精确拒绝码且同轮 oracle 全通过才改 Refused。
 未知错误或缺权限/观测仍为 Gap，不用返回 ok 冒成功。TCC 权限 false 是真实硬失败，不 skip。
+WK 唯一允许的已知 Gap 是 trusted/current-owned 既有前置均通过后，`found:false`、
+`TREE_EXHAUSTED`、完整有效 traversal `EMPTY_FRONTIER` 且 depth<50；必须新 after 快照、
+同一严格完整 oracle 和双 marker 零效果才记录 Gap，不能记 Refused 或 Delivered。未知、
+CG/绑定/权限/超时/取消/深度上限与清理失败仍硬失败；AppKit/正常已定位动作及至少一条 Delivered 不变。
 原票最低成功标准是**至少一条**真实 AX 动作通过三项实测后台 oracle，不要求本表所有模式都 Delivered。
 
 **身份边界**：builder 校验签名 Identifier 为 `com.cmspark.agent`；运行前现有 `security-check`
@@ -296,7 +300,7 @@ TCC 的最终责任身份仍为 **UNKNOWN**，不以 codesign Identifier 或父 
 | 4 | **GUI 夹具** | 🟡 当前 WPF Invoke / 四种额外 pattern 正控与 loader/ABI 负控；旧 WinForms 反例保留为历史，其余靶子待做 |
 | 5 | **逐靶子回填**：WinUI3 / WebView2 / Electron / Tauri / 原生 Win32 | **记名 Gap** —— 当前已有 WPF 五种 adapter pattern 原生证据，不外推到这五类框架；仍缺各自夹具与同轮 oracle |
 | 6 | 通用键盘 / 滚动 / 拖拽的后台投递 | **记名 Gap / 部分机制已证** —— WPF `SetValue`/`Select`/`Toggle`/`ScrollPattern` 已验收；executor 仍只接后台左键，key/scroll/drag 仍走前台。不能把 SetValue 当通用键盘或把 adapter Scroll 当 executor 后台滚动；UIA 无右键/双击模式 |
-| 7 | **macOS 对齐** | #571：源 AX / oracle + owned AppKit/WKWebView gate 已接线，§4 当前按行 Gap，等待真实 hosted 最小动作回执 |
+| 7 | **macOS 对齐** | #571：AppKit press 的 d66 hosted 最小动作与 oracle 已通过；WK/其它动作按 §4 记名 Gap，新 Gap 回归及完整新 head CI 待验 |
 
 #572 原 body 的最小验收是一个 WPF 或 WinUI3 夹具、先左键、四 oracle、精确拒绝和台账回填，
 并明确允许残余记名。当前 WPF 最小路线已有上述实际证据；第 5、6 项仍是原评论中的

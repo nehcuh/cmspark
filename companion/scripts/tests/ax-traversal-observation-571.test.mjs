@@ -110,17 +110,21 @@ test('#571 only tree-exhausted failure attaches observation; valid found and oth
  for(const reason of ['ELEMENT_FOUND','AX_TARGET_ABSENT'])assert.equal(JSON.parse(f({found:reason==='ELEMENT_FOUND'},reason,x,JSON.stringify)).ax571Traversal,undefined)
  assert.deepEqual(JSON.parse(f({found:false},'TREE_EXHAUSTED',x,JSON.stringify)).ax571Traversal,x);assert.equal(JSON.parse(f({found:true},'TREE_EXHAUSTED',x,JSON.stringify)).ax571Traversal,undefined)
  const ts=fs.readFileSync(path.join(root,'companion/tests/computer-ax-native-571.test.ts'),'utf8')
- const line=ts.split('\n').find(l=>l.includes("t.diagnostic('AX571_TRAVERSAL '"));assert.ok(line);assert.ok(line.indexOf('if(hit.found===false)')<line.indexOf("t.diagnostic('AX571_TRAVERSAL '"));assert.ok(line.indexOf('catch')<line.indexOf("assert.equal(hit.found,true"))
+ const line=ts.split('\n').find(l=>l.includes("t.diagnostic('AX571_TRAVERSAL '")),blockStart=ts.indexOf('const hit='),blockEnd=ts.indexOf('const args=',blockStart),block=ts.slice(blockStart,blockEnd);assert.ok(line&&blockStart>=0&&blockEnd>blockStart);assert.ok(line.indexOf('if(hit.found===false)')<line.indexOf("t.diagnostic('AX571_TRAVERSAL '"));assert.ok(block.indexOf('catch')<block.indexOf("assert.equal(hit.found,true"));assert.ok(block.includes("assert.equal(hit.found,true,'AX571_LOCATE_FAILED')"))
 })
 test('#571 LF/CRLF preserve actual traversal observation and existing canonical discovers this module',()=>{
  for(const input of [source,source.replace(/\n/g,'\r\n')]){const t=traversal(input.replace(/\r\n/g,'\n'));assert.equal(t.run(t.node('No match',[])).observation.end,'EMPTY_FRONTIER')}
  const entry=fs.readFileSync(path.join(root,'companion/scripts/tests/ax-native-571.test.mjs'),'utf8');assert.equal(entry.split("import './ax-traversal-observation-571.test.mjs'").length,2)
 })
 test('#571 actual passive TAP sink fault cannot replace the original locate assertion',async()=>{
- const text=fs.readFileSync(path.join(root,'companion/tests/computer-ax-native-571.test.ts'),'utf8'),line=text.split('\n').find(l=>l.includes("t.diagnostic('AX571_TRAVERSAL '"))
- const piece=line.slice(line.indexOf('const hit='),line.indexOf(';assert.ok(hit.name'))
+ const text=fs.readFileSync(path.join(root,'companion/tests/computer-ax-native-571.test.ts'),'utf8'),start=text.indexOf('const hit='),end=text.indexOf('const args=',start)
+ assert.ok(start>=0&&end>start);const piece=text.slice(start,end)
+ const require=createRequire(path.join(root,'companion/package.json')),ts=require('typescript'),ast=ts.createSourceFile('actual.ts',text,ts.ScriptTarget.Latest,true)
+ const predicate=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='ax571KnownWKGap')
+ const predicateJS=predicate?ts.transpileModule(predicate.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText:''
  assert.ok(piece.includes("assert.equal(hit.found,true,'AX571_LOCATE_FAILED')"))
  const parse=consumer();let commands=0,sinks=0
- const c={command:async()=>{commands++;return{found:false,ax571Traversal:fixture()}},t:{diagnostic(){sinks++;throw Error('OWNED_SINK_FAULT')}},target:1,framework:'wkwebview',ax571LocateReason:()=> 'TREE_EXHAUSTED',ax571Traversal:parse,assert,JSON}
- vm.createContext(c);await assert.rejects(vm.runInContext('(async()=>{'+piece+'})()',c),/AX571_LOCATE_FAILED/);assert.equal(commands,1);assert.equal(sinks,1)
+ const c={command:async()=>{commands++;return{found:false,ax571Traversal:fixture()}},t:{diagnostic(){sinks++;throw Error('OWNED_SINK_FAULT')}},target:1,framework:'APPKIT',ax571LocateReason:()=> 'TREE_EXHAUSTED',ax571Traversal:parse,assert,JSON}
+ const execution=ts.transpileModule('(async()=>{'+piece+'})()',{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None},reportDiagnostics:true});assert.equal(execution.diagnostics.length,0)
+ vm.createContext(c);await assert.rejects(vm.runInContext(predicateJS+'\n'+execution.outputText,c),/AX571_LOCATE_FAILED/);assert.equal(commands,1);assert.equal(sinks,1)
 })
