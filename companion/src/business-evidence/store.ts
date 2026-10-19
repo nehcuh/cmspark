@@ -7,6 +7,8 @@ import { evidenceDigest, evidenceScopeHash, normalizeEvidenceText, type Evidence
 import { validateGithubComparison, githubComparisonDigest, type GithubComparison } from "../code-review/github-comparison"
 import { applyPilotCoverage, validateLockedPilot, type LockedPilotContract } from "./pilot-contract"
 
+import { validateGithubRelease, githubReleaseDigest, GITHUB_RELEASE_SELECTOR, type GithubReleaseRelation } from "../code-review/github-release"
+
 export const EVIDENCE_LIMITS = Object.freeze({ observations: 64, contentBytes: 64 * 1024, scopeBytes: 4 * 1024 * 1024, drafts: 16 })
 export interface Observation {
   schema_version: 1
@@ -22,6 +24,8 @@ export interface Observation {
   /** Browser capture only; old observations remain generic/unknown. */
   code_comparison?: GithubComparison
   comparison_digest?: string
+  release_relation?: GithubReleaseRelation
+  release_relation_digest?: string
 }
 export interface EvidenceFile {
   schema_version: 1
@@ -64,6 +68,18 @@ function validateFile(value: unknown): EvidenceFile {
           || observation.provenance.frame !== "top" || (observation.provenance.scope as { kind?: unknown })?.kind !== "document"
           || observation.comparison_digest !== githubComparisonDigest(comparison)
           || Buffer.byteLength(JSON.stringify(comparison), "utf8") + Buffer.byteLength(observation.content, "utf8") > EVIDENCE_LIMITS.contentBytes) return fail("EVIDENCE_CORRUPT")
+      } catch { return fail("EVIDENCE_CORRUPT") }
+    }
+    if (observation.release_relation !== undefined || observation.release_relation_digest !== undefined) {
+      try {
+        const relation = validateGithubRelease(observation.release_relation, observation.target.url)
+        if (observation.tool !== "get_page_html" || observation.code_comparison !== undefined
+          || observation.provenance.text_transform !== "unchanged" || observation.provenance.truncated !== false
+          || !["cdp", "isolated", "main"].includes(observation.provenance.channel as string) || observation.provenance.frame !== "top"
+          || (observation.provenance.scope as { kind?: unknown })?.kind !== "selector"
+          || (observation.provenance.scope as { selector?: unknown })?.selector !== GITHUB_RELEASE_SELECTOR
+          || observation.release_relation_digest !== githubReleaseDigest(relation, observation.content)
+          || Buffer.byteLength(JSON.stringify(relation), "utf8") + Buffer.byteLength(observation.content, "utf8") > EVIDENCE_LIMITS.contentBytes) return fail("EVIDENCE_CORRUPT")
       } catch { return fail("EVIDENCE_CORRUPT") }
     }
     seen.add(observation.id)
@@ -119,7 +135,7 @@ export class EvidenceStore {
   /** Called only after the local browser executor has returned successfully.
    * The model cannot invoke this method or supply an Observation identity. */
   capture(toolCallId: string, tool: string, result: unknown, now = Date.now()):
-    { capture_status: "captured"; observation_id: string; comparison_adapter?: "github_compare_two_dot.v1"; comparison_digest?: string }
+    { capture_status: "captured"; observation_id: string; comparison_adapter?: "github_compare_two_dot.v1"; comparison_digest?: string; release_adapter?: "github_tagged_release.v1"; release_relation_digest?: string }
     | { capture_status: "skipped"; reason: string } {
     const response = result as any
     if (!["get_page_text", "get_page_html"].includes(tool) || response?.success !== true) {
@@ -170,10 +186,24 @@ export class EvidenceStore {
         observation.comparison_digest = githubComparisonDigest(comparison)
       } catch { /* Preserve useful generic page text; invalid sidecars never promote it. */ }
     }
+    if (tool === "get_page_html" && response.data?.releaseRelation !== undefined
+      && observation.provenance.text_transform === "unchanged" && !metadata.truncated && metadata.channel !== "dom"
+      && scope.kind === "selector" && scope.selector === GITHUB_RELEASE_SELECTOR) {
+      try {
+        const relation = validateGithubRelease(response.data.releaseRelation, target.url)
+        if (Buffer.byteLength(JSON.stringify(relation), "utf8") + Buffer.byteLength(content, "utf8") > EVIDENCE_LIMITS.contentBytes) {
+          this.transaction(state => { state.capacity_gap = true })
+          return { capture_status: "skipped", reason: "CAPACITY" }
+        }
+        observation.release_relation = relation
+        observation.release_relation_digest = githubReleaseDigest(relation, content)
+      } catch { /* Preserve ordinary HTML; malformed relation cannot promote it. */ }
+    }
     try {
       this.transaction(state => { state.observations.push(applyPilotCoverage(observation, state.locked_pilot)) })
       return { capture_status: "captured", observation_id: observation.id,
-        ...(observation.code_comparison ? { comparison_adapter: observation.code_comparison.adapter, comparison_digest: observation.comparison_digest } : {}) }
+        ...(observation.code_comparison ? { comparison_adapter: observation.code_comparison.adapter, comparison_digest: observation.comparison_digest } : {}),
+        ...(observation.release_relation ? { release_adapter: observation.release_relation.adapter, release_relation_digest: observation.release_relation_digest } : {}) }
     } catch (error) {
       if ((error as Error).message === "EVIDENCE_CAPACITY") {
         this.transaction(state => { state.capacity_gap = true })

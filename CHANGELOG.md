@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #464 开发中：GitHub tagged-release（限固定英文元数据布局、单段 ASCII tag，不含斜杠/编码 tag）的唯一完整发布元数据 HTML 可保留当前平台声明的仓库/tag/完整 commit 观测关系，材料按原 pilot、字段引用和 revision 核对。此状态不证明历史 tag、构建/资产/签名或发布批准，仍不提升 ready；真实 hosted browser 验收尚未完成。
+
 
 - #476 原生工作台增加永久归档／恢复视图、标题及精确 ID 查询和同对话历史入口；归档保留 canonical 消息与附件，独立于 30 天回收站。写入绑定当前原生连接、一次性状态版本和真实活动检查；旧 Web 列表仍能访问归档对话。桌面能力协议同步 v7；受控 CPU 验证不替代 Windows/macOS 原生验收，工作区／本机／Chrome 等整票余项仍保留。见 [归档指南](docs/desktop-thread-archive.md)。
 - #464 GitHub 比较采集在派生完整性前拒绝含额外代码单元格兄弟节点、未知包装、多义 BR/未知子结构或隐藏表格/行的代码；身份元数据必须位于 diff 外。保留合法空行 BR、普通高亮 span、原预算与全局非就绪状态；真实 hosted 浏览器验收仍单独执行。

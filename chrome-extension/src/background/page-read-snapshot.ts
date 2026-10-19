@@ -1,5 +1,5 @@
 export type PageReadRequest = { kind: "text" } | { kind: "html"; selector: string }
-export interface PageReadSnapshot { content: string; url?: string; codeComparison?: unknown; comparisonRefusal?: string }
+export interface PageReadSnapshot { content: string; url?: string; codeComparison?: unknown; comparisonRefusal?: string; releaseRelation?: unknown; releaseRefusal?: string }
 
 /** Serialized into CDP/chrome.scripting. Every extractor helper is deliberately
  * nested: the serialized function must not depend on module/import closures. */
@@ -7,6 +7,64 @@ export function pageReadSnapshot(request: PageReadRequest): PageReadSnapshot {
   const content = request.kind === "text" ? document.body?.innerText || ""
     : document.querySelector(request.selector)?.outerHTML?.substring(0, 500000) || ""
   const result: PageReadSnapshot = { content, url: location.href }
+  // A release relation is a current platform statement, never artifact/build
+  // authenticity. Only this complete metadata selector can carry the sidecar.
+  if (request.kind === "html" && request.selector === ".Box-body div.d-flex.flex-row.flex-wrap.color-fg-muted.flex-items-end") {
+    let refusal = "UNSUPPORTED_RELEASE_VIEW"
+    try {
+      const u = new URL(location.href)
+      const route = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/releases\/tag\/([A-Za-z0-9_][A-Za-z0-9_.-]*)$/.exec(u.pathname)
+      if (u.origin !== "https://github.com" || !route || u.search || u.hash || u.username || u.password) throw 0
+      const repository = u.origin + "/" + route[1] + "/" + route[2], tag = route[3]
+      refusal = "RELEASE_CAPACITY"
+      if (new TextEncoder().encode(result.content).length > 65536) throw 0
+      refusal = "UNSUPPORTED_RELEASE_VIEW"
+      const attr = (e: Element, name: string) => e.getAttribute(name) || ""
+      const cls = (e: Element, name: string) => attr(e, "class").split(/\s+/).includes(name)
+      const one = (nodes: Element[]) => { if (nodes.length !== 1) throw 0; return nodes[0] }
+      const header = one(Array.from(document.querySelectorAll(request.selector)))
+      const wrapper = header.parentNode as Element, box = wrapper?.parentNode as Element
+      if (header.tagName.toLowerCase() !== "div" || wrapper?.tagName.toLowerCase() !== "div"
+        || !["tmp-mb-3", "tmp-pb-md-4", "border-md-bottom"].every(c => cls(wrapper, c))
+        || box?.tagName.toLowerCase() !== "div" || !cls(box, "Box-body") || !cls(box.parentNode as Element, "Box")) throw 0
+      for (let n: Node | null = header; n; n = n.parentNode) if (n.nodeType === 1) {
+        const e = n as Element
+        if (["article", "script", "template"].includes(e.tagName.toLowerCase()) || cls(e, "markdown-body") || cls(e, "comment-body")
+          || e.hasAttribute("hidden") || attr(e, "aria-hidden") === "true" || cls(e, "d-none")
+          || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse))\s*(?:!important\s*)?(?:;|$)/i.test(attr(e, "style"))) throw 0
+      }
+      const children = Array.from(header.childNodes)
+      if (children.some(n => n.nodeType === 3 ? !!(n.nodeValue || "").trim() : n.nodeType !== 1
+        || (n as Element).tagName.toLowerCase() !== "div" || !cls(n as Element, "tmp-mr-4") || !cls(n as Element, "mb-2"))) throw 0
+      const all = Array.from(header.getElementsByTagName("*"))
+      if (all.some(e => ["script", "style", "template", "iframe"].includes(e.tagName.toLowerCase())
+        || e.hasAttribute("hidden") || attr(e, "aria-hidden") === "true" || cls(e, "d-none")
+        || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse))\s*(?:!important\s*)?(?:;|$)/i.test(attr(e, "style")))) throw 0
+      if (!/\breleased this\b/.test(header.textContent || "") || !attr(one(all.filter(e => e.tagName.toLowerCase() === "relative-time")), "datetime")) throw 0
+      refusal = "RELEASE_IDENTITY_MISMATCH"
+      const links = all.filter(e => e.tagName.toLowerCase() === "a")
+      const parsed = links.map(node => ({ node, url: new URL(attr(node, "href"), u) }))
+      const tagLink = one(parsed.filter(x => /\/tree\//.test(x.url.pathname)).map(x => x.node))
+      if (new URL(attr(tagLink, "href"), u).href !== repository + "/tree/" + tag || (tagLink.textContent || "").trim() !== tag
+        || !Array.from(tagLink.getElementsByTagName("svg")).some(e => attr(e, "aria-label") === "Tag")) throw 0
+      const commitLink = one(parsed.filter(x => /\/commit\//.test(x.url.pathname)).map(x => x.node))
+      const commitUrl = new URL(attr(commitLink, "href"), u), m = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/commit\/([a-f0-9]{40})$/.exec(commitUrl.pathname)
+      if (!m || commitUrl.href !== repository + "/commit/" + m[3] || attr(commitLink, "data-hovercard-type") !== "commit"
+        || !Array.from(commitLink.getElementsByTagName("svg")).some(e => attr(e, "aria-label") === "Commit")) throw 0
+      const label = (one(Array.from(commitLink.getElementsByTagName("code"))).textContent || "").trim()
+      if (!/^[a-f0-9]{7,40}$/.test(label) || !m[3].startsWith(label)) throw 0
+      refusal = "RELEASE_TARGET_CHANGED"
+      let connected = false
+      for (let n: Node | null = header; n; n = n.parentNode) if (n === document) connected = true
+      if (!connected || location.href !== result.url || document.querySelectorAll(request.selector).length !== 1
+        || document.querySelector(request.selector) !== header || header.outerHTML !== result.content) throw 0
+      const relation = { schema_version: 1, adapter: "github_tagged_release.v1", repository, release_url: u.href, tag, head: m[3] }
+      refusal = "RELEASE_CAPACITY"
+      if (new TextEncoder().encode(result.content).length + new TextEncoder().encode(JSON.stringify(relation)).length > 65536) throw 0
+      result.releaseRelation = relation
+    } catch { result.releaseRefusal = refusal }
+    return result
+  }
   if (request.kind !== "text" || !/^https:\/\/github\.com\//.test(location.href)) return result
   const u = new URL(location.href)
   const route = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/compare\/([a-f0-9]{40})\.\.([a-f0-9]{40})$/.exec(u.pathname)

@@ -57,9 +57,17 @@ export async function readPageHtml(tabId: number, selector: string | undefined, 
       catch (domError) { throw new Error(`${(error as Error).message}; DOM fallback failed: ${(domError as Error).message}`) }
     }
     if (typeof snapshot.content !== "string") throw new Error("PAGE_READ_INVALID_RESULT")
-    return { content: snapshot.content, rawUrl: snapshot.url, channel, truncated: snapshot.content.length >= 500000, limit: 500000 }
+    return { content: snapshot.content, rawUrl: snapshot.url, channel, truncated: snapshot.content.length >= 500000, limit: 500000,
+      releaseRelation: snapshot.releaseRelation, releaseRefusal: snapshot.releaseRefusal }
   })
   const sanitized = deps.sanitizer.sanitize(result.payload.content)
+  let releaseRelation: unknown
+  if (result.payload.releaseRelation !== undefined && sanitized.threatsRemoved.length === 0 && sanitized.sanitized === result.payload.content) {
+    try {
+      const encoded = JSON.stringify(result.payload.releaseRelation), checked = deps.sanitizer.sanitizeText(encoded)
+      if (checked.threatsRemoved.length === 0 && checked.sanitized === encoded) releaseRelation = result.payload.releaseRelation
+    } catch { /* malformed nested data stays ordinary HTML */ }
+  }
   return {
     success: true,
     data: {
@@ -67,6 +75,8 @@ export async function readPageHtml(tabId: number, selector: string | undefined, 
       // Legacy execution family; actual channel is additive provenance.channel.
       source: result.payload.channel === "dom" ? "dom" : "runtime",
       threats_removed: sanitized.threatsRemoved, provenance: result.provenance,
+      ...(releaseRelation !== undefined ? { releaseRelation } : {}),
+      ...(["UNSUPPORTED_RELEASE_VIEW", "RELEASE_IDENTITY_MISMATCH", "RELEASE_TARGET_CHANGED", "RELEASE_CAPACITY"].includes(result.payload.releaseRefusal || "") ? { release_refusal: result.payload.releaseRefusal } : {}),
     },
   }
 }

@@ -80,3 +80,10 @@
 GitHub typed comparison 只支持可核对的已展开 unified DOM：代码单元格必须仅含直接代码标记与排版空白，标记内仅展开文本与普通语法高亮 span，空行允许单独 BR；额外可见兄弟节点或未知包装不能标完整；混合 BR、未知/隐藏子结构、隐藏表格或行均保留未知。比较身份节点必须在 diff 子树之外，不能由代码内容中的唯一同名节点形成身份。此处 DOM/文件控制不代替真实浏览器验收，`review_ready` 仍为 false。
 
 本叶真实浏览器证据：PR711 head `6b1f52a5` / run `39189613843` 已完成上述固定公开 GitHub 双点比较的真实 Chromium 11 case；当前产品代码与该受测路径逐字一致。后续 head `093de278` 的独立托管启动/清理失败保留为 UNKNOWN，并未改写为通过；其测试专用接线不随本产品叶合入。产品新 head 与合后 main 仍须通过现有全部 CI，#464 整票仍为 Partial。
+
+
+## GitHub 发布页的当前观测关系（#464，开发中）
+
+仅支持固定英文 GitHub 发布头与单段 ASCII tag（`[A-Za-z0-9_][A-Za-z0-9_.-]*`），不支持含斜杠或 URL 编码的 tag。`get_page_html` 对唯一完整发布元数据行（固定 selector `.Box-body div.d-flex.flex-row.flex-wrap.color-fg-muted.flex-items-end`）可附带 `github_tagged_release.v1`。它仅声明当前采集页的仓库、tag、完整 commit；受原 target、sanitizer 和64KiB预算限制。数字 release.id 不在 header，不能猜；材料仅接受原 scalar 引用真正支持的 tag/确切 URL，以及同 tag/version、同 review.head、同 Observation 的精确引用和当前材料 revision。
+
+匹配只显示 `observed_platform_relation`，同时保留 `RELEASE_BUILD_ARTIFACT_AUTHENTICITY_NOT_VERIFIED`；不会满足 release_artifact、清除其他资料缺项或把 review_ready/combined_ready 改为 true。旧普通页面/Agent 声明仍 unknown。原始HTTP fixture+受控CPU链不是真实浏览器验收，本叶也不能关闭 whole #464。
