@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #627 新增仅官方 hosted Ubuntu 22.04 的普通生产扩展验收：真实 HMAC、HTTP grant/session、Ed25519 login-view proof、品牌 permit 与 socket/pending 归属，校验 rule-free status 和 human_only/no-store 图像。CPU 使用明确的浏览器结果 seam，不冒原生或 full startServer；图像只在 owned trusted 内存消费，无截图、图像 hash、密钥或原始协议 artifact。新增 CI 门仍待真实 hosted 通过，不代表真实 SSO 或 #618 T4 已完成；0.6.14 仍为开发版本。
+
 - #571 按原票至少一条后台动作与逐行三态判据回填 d66 AppKit press 原生证据；WK 已知 TREE_EXHAUSTED 保留 Gap 与旧红历史，仅可经新零效果、fresh 完整 oracle 和原清理硬门验收。未知/权限/绑定/深度/超时不转 Gap，原动作与最低 Delivered 门不变；不是修复 WK 根因或宣布全 macOS 完成，新 head 原生/CI 待验。
 
 - #571: native acceptance 的诊断编译开关下，locate 遍历失败新增固定分支布尔值、深度与 frontier 终态观测；不新增 AX/CG 查询，不改变遍历或后台动作，WK 原生失败原因仍待实际验收。

@@ -85,6 +85,16 @@ jobs:
         run: |
           cd chrome-extension && npm run build
 
+      - name: Stage public production builds for hosted enterprise acceptance (#627)
+        uses: actions/upload-artifact@v4
+        with:
+          name: enterprise627-build-${{ github.sha }}
+          path: |
+            companion/dist/
+            chrome-extension/build/chrome-mv3-prod/
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Sidepanel visual-hygiene gate (#321 PR-1)
         # Color-aware static gate: fails on raw hex/rgb() in CSS-property
         # position, `tokens.x || "#fallback"` anti-patterns, and fontSize < 10
@@ -137,6 +147,35 @@ jobs:
             tests/p2-deep-diagnosis-batch.test.ts \
             tests/ws-router-validator-lockstep.test.ts \
             2>&1 | tail -40
+
+  # #627 exercises the ordinary built production extension, not a fixture worker.
+  # The original build and three OS gates remain unchanged. This explicit image
+  # retains the supported sandbox with the same reviewed Chromium launch args.
+  enterprise627-hosted:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: companion/package-lock.json
+      - name: Install locked Companion runtime dependencies
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: npm --prefix companion ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: enterprise627-build-${{ github.sha }}
+          path: .
+      - name: Guarded enterprise hosted-harness CPU controls (#627)
+        run: node chrome-extension/scripts/tests/enterprise-browser-hosted-627.test.mjs
+      - name: Real production-extension rule-free status and human-only image (#627)
+        # No pixels, image hash, browser trace, credential, or raw protocol upload.
+        run: node chrome-extension/scripts/accept-enterprise-browser-hosted-627.mjs
 
   # Residual: multi-OS smoke (build + pure security/lockstep tests).
   # Full suite gates ubuntu (build) and Windows (#650); other matrix smoke remains.

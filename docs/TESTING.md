@@ -215,3 +215,15 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 原票允许每行 Delivered/Refused/Gap，只要求至少一条真实后台动作。d66 head `d66da90e92f99c439cdd98280733e34c7499e6b1` / CI39166888090 的 AppKit press 已有 target effect 与完整 oracle；同轮 WK 在 locate 前置后因 TREE_EXHAUSTED 失败，缺 after-oracle，原2P1F历史保留。
 
 新分支仅接受 WK 的 own foundfalse、确切 TREE_EXHAUSTED 与完整有效 traversal EMPTY_FRONTIER/depth<50。安全/当前 owned binding/initial sibling/estop 后，必须 fresh after snapshot、同一严格全 z-order/focus/cursor/derived noLeak 比较，双 marker 不存在及原 finally owner-close/lease 清理；不执行动作，不制造 Refused/unsupported 码。其它拒绝/未知/null/畸形/permission/timeout/cancel/DEPTH_LIMIT 仍硬失败；原 AppKit 与正常 WK action/role-negative、至少一条 Delivered 均保留。新 head 全部原生/CI 门尚待真实通过，不把 CPU 或旧 AppKit 证据当新 WK 动作成功。TCC责任归因仍 UNKNOWN、generic executor Mac AX 接线残余不变。
+
+
+## #627 生产扩展 hosted 验收（0.6.14 开发态）
+
+`enterprise627-hosted` 使用官方 `ubuntu-22.04`（后续迁移仍需原 sandbox 验证），消费同一 CI SHA 的普通 Companion dist 与完整 Plasmo `chrome-mv3-prod` build artifact。原 build 和三 OS smoke 保留。仅运行已安装 Chromium/Xvfb，不安装 helper、不使用 `--no-sandbox`/headless，不修改启动参数、5s auth、15s tool、单一60s navigation 或120s outer预算。固定 loopback23401占用、真实扩展不可用或启动失败均为失败，不能重试/放宽门。
+
+- CPU：`node chrome-extension/scripts/tests/enterprise-browser-hosted-627.test.mjs`。先安装 process/network/native 与 ownedFS guard，再加载真实编译 backend；HMAC、private branded permit、HTTP handler、service、签名/nonce/no-store 和 pending/socket 控制使用原实现。浏览器结果投递为明确受控 seam；不证明原生 scripting 或 pixels。
+- Hosted：`node chrome-extension/scripts/accept-enterprise-browser-hosted-627.mjs`，本机 preflight 必须拒绝。完整原生产扩展（不改 manifest/worker）经既有 `ws.setSecret` 配对、真实 chrome.storage profile 与实际 HMAC socket，仅访问 owned 无秘密 login-marker 页。HTTP 注入真实 EnterpriseBrowserService；transport 执行生产 check→claim→recheck→dispatch/pending/actual-socket-result。这是已声明的测试 DI，不冒 full startServer/createToolExecutor 全服务器集成。
+- 真 Chrome undefined ScriptInjection 必须拒绝，而原 rule-free null status 成功。真实 login-snapshot 必须有 human_only/no-store、签名 nonce 单次使用和完整 expected/after 检查；active decoy 不得替代 session capture。图像仅 owned trusted 进程/扩展 context 内临时解码为固定公开 marker 布尔，绝不写/上传 pixels、图像 hash、QR、cookie、key、URL query、WS/CDP/HTTP body、浏览器 console/trace。只输出固定 stage/布尔回执。
+- 失败/成功均需归零原 pending 并真实关闭本次 socket/server/browser/Xvfb 后才删除 owned目录；未知 closure 保留目录但不上传，不得变为通过。fixture只持有自己创建的对象，不扫描/杀其它 listener 或真实用户 profile。
+
+该门针对原 #627 API 兼容缺口，不要求第二企业身份或真实 SSO，亦不代表 #618 T4。当前源码/CPU 通过不能替代真实 hosted 门；首次实际浏览器结果仍待新 head CI，不预先记为 Delivered。
