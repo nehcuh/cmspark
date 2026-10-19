@@ -115,3 +115,16 @@ for(const reset of ["desktop.offline","desktop.document"] as const)test(`actual 
  const a=setup(t,true);a.select("metadata-A");a.f.ids["dialog-input"].value="owned document lifecycle";a.f.ids["dialog-send"].click();a.wire();await tick();a.f.ids["dialog-stop"].click();a.wire();const before=a.f.posted.filter((f:any)=>f.type==="desktop.chat.stop").length
  try{if(reset==="desktop.offline")a.c.socket.terminate();a.f.receive(reset==="desktop.offline"?{type:reset}:{type:reset,generation:"replacement-owned-document"});assert.equal(a.f.ids["dialog-stop"].hidden,true);a.f.ids["dialog-stop"].events.click();assert.equal(a.f.posted.filter((f:any)=>f.type==="desktop.chat.stop").length,before);a.f.receive({type:"desktop.document",generation:"next-owned-document"});assert.equal(a.f.posted.filter((f:any)=>f.type==="desktop.chat.stop").length,before);assert.equal(a.f.ids["dialog-stop"].hidden,true)}finally{for(const end of a.ends)end();await tick();a.flush()}
 })
+
+
+test("dialog native key witness binds each request to its expected focused button",()=>{
+ for(const [focus,trusted,late] of [["normal",true,false],["noop",true,false],["wrong",true,false],["normal",false,false],["normal",true,true]] as const){
+  const f=renderer();f.posted.length=0;const body={id:"inert-body",getAttribute:()=>null};f.document.activeElement=body;
+  const expected=f.ids["dialog-new"];if(focus==="noop")expected.focus=()=>{};if(focus==="wrong")expected.focus=()=>{f.document.activeElement=f.ids["mcp-new"]};
+  vm.runInNewContext("const documentGeneration='owned-document';"+fs.readFileSync(path.resolve(__dirname,"../../tests/fixtures/desktop-476/dialog-form.js"),"utf8"),{window:f.window,document:f.document},{timeout:1000});
+  const failures=()=>f.posted.filter((x:any)=>x.id==="D476_FAIL_DIALOG_PHASE").length,keys=()=>f.posted.filter((x:any)=>x.id==="D476_DIALOG_NEW_KEY").length;
+  if(focus!=="normal"){assert.equal(keys(),0,"failed focus cannot request a native key");assert.equal(failures(),1)}
+  else{assert.equal(keys(),1);assert.equal(failures(),0);assert.equal(f.document.activeElement,expected);if(late)f.document.activeElement=body;f.document.events.keydown({key:"Enter",isTrusted:trusted,target:f.document.activeElement});assert.equal(failures(),trusted&&!late?0:1,"another active control is not the expected key recipient");if(trusted&&!late){f.document.events.keydown({key:"Enter",isTrusted:true,target:expected});assert.equal(failures(),1,"the same key request is not consumed twice")}}
+  assert.equal(f.posted.filter((x:any)=>x.type==="desktop.thread.create").length,0);assert.equal(f.posted.filter((x:any)=>x.type==="desktop.chat.send").length,0);
+ }
+})
