@@ -27,6 +27,7 @@ import { discoverFeed, fetchFeed, fetchMultipleFeeds, parseOpml } from "../noteb
 import { fetchPlaylist, getYouTubeApiKey, parsePlaylistId, setYouTubeApiKey } from "../notebooklm/youtube-api"
 import {
   closeCockpit,
+  collapseCockpitIfIdle,
   cockpitStatus,
   focusCockpit,
   openOrFocusCockpit,
@@ -599,7 +600,24 @@ async function handleCompanionMessage(msg: any) {
   // Focus is background-driven — Cockpit must not self-focus on every confirm.
   const focusEvent = cockpitFocusEventFromMessage(msg)
   if (focusEvent && decideCockpitFocus(focusEvent, cockpitArmState) === "open_focus") {
-    openOrFocusCockpit().catch(() => {})
+    const stillCurrent = () => {
+      if (decideCockpitFocus(focusEvent, cockpitArmState) !== "open_focus") return false
+      const snapshot = getHydrateSnapshot()
+      if (msg.type === "security.confirmation.request") return snapshot.pendingConfirmations.some(p => p === msg)
+      const task = snapshot.computerTask
+      return !!task && task.taskId === msg.taskId && task.status !== "finished" && (focusEvent.kind !== "computer_task" || focusEvent.event !== "paused" || task.status === "paused")
+    }
+    openOrFocusCockpit(stillCurrent).catch(() => {})
+  }
+
+  if (msg.type === "security.confirmation.resolved" || msg.type === "security.confirmation.expired" ||
+      msg.type === "computer.task.event" && msg.event === "finished") {
+    const localIdle = () => {
+      const snapshot = getHydrateSnapshot()
+      return wsClient.getState() === "connected" && snapshot.pendingConfirmations.length === 0 &&
+        (snapshot.computerTask === null || snapshot.computerTask.status === "finished")
+    }
+    collapseCockpitIfIdle(localIdle, () => wsClient.requestCockpitIdle()).catch(() => {})
   }
 
   // #432: terminal.* 帧定向进终端 tab 中继（不广播侧栏，不解析 ANSI）；
@@ -994,6 +1012,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       }
 
       case "security.confirmation.response":
+        wsClient.invalidateCockpitIdle()
         // Forward full Side Panel fields: add_to_whitelist, nonce_response,
         // add_to_thread_whitelist, stop_thread. Companion handleSecurityConfirmationResponse
         // already consumes these (server.ts ~1481-1515). Dropping them silently
@@ -1903,18 +1922,21 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
 
       // UI Mode P1 — L2 Cockpit window lifecycle (does not stop computer tasks)
       case "cockpit.open": {
+        wsClient.invalidateCockpitIdle()
         openOrFocusCockpit()
           .then((windowId) => sendResponse({ ok: windowId != null, windowId }))
           .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
         return true
       }
       case "cockpit.focus": {
+        wsClient.invalidateCockpitIdle()
         focusCockpit()
           .then((ok) => sendResponse({ ok }))
           .catch(() => sendResponse({ ok: false }))
         return true
       }
       case "cockpit.close": {
+        wsClient.invalidateCockpitIdle()
         closeCockpit()
           .then(() => sendResponse({ ok: true }))
           .catch(() => sendResponse({ ok: false }))
