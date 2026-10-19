@@ -19,10 +19,12 @@ export const reviewCreateSchema = z.object({
   repository: z.string().min(1).max(8192).transform(canonicalRepository),
   base: sha, head: sha,
   diff: citationSchema.optional(),
+  comparison_observation_id: z.string().uuid().optional(),
   identity_citations: z.array(citationSchema).max(8).default([]),
   business_context: z.array(businessReferenceSchema).max(64).optional(),
   materials: z.array(z.object({ draft_id: z.string().min(1).max(128), revision: z.number().int().safe().positive() }).strict()).max(2).optional(),
-}).strict().refine(input => input.base.length === input.head.length && input.base !== input.head)
+}).strict().refine(input => input.base.length === input.head.length && input.base !== input.head
+  && !(input.diff && input.comparison_observation_id))
 export type ReviewCreate = z.infer<typeof reviewCreateSchema>
 export const reviewIdSchema = z.object({ review_id: z.string().uuid() }).strict()
 

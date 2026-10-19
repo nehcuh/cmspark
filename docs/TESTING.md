@@ -42,6 +42,8 @@ npm --prefix chrome-extension test
 
 ### 代码审阅与终端回传（#464）
 
+- GitHub 完整 SHA 双点比较：`companion/tests/github-comparison-464.test.ts` 与 `chrome-extension/tests/github-comparison-464.test.ts` 执行生产 serialized snapshot→有界观察→真实 capture/store/service 的受控正负链，Windows compiled 布局仍读取源 CJS；离线 HTTP DOM 不冒真实浏览器。PR711 head6b1f52a5 / CI39189613843 的固定公开比较有真实 Chromium 11case，后续093启动/清理红原因 UNKNOWN、原分支保留。该测试专用 harness/worker/workflow 不在本产品叶，现 main 全部4job、650/native/security门原样；新产品head+main全部CI仍必需，whole464仍Partial、0.6.14仍开发版。
+
 - `companion/tests/code-review.test.ts`：来源范围、diff 行、持久化与容量、身份与引用、两类材料及过期/错 SHA。
 - `companion/tests/pty-terminal.test.ts`：原任务/peer 绑定、确认竞态、输入编码、输出上限、报告确认与幂等历史回传。
 - `chrome-extension/tests/terminal-relay.test.ts`、`terminal-wire.test.ts`：扩展页面/会话归属、断线和真实生产者帧格式。

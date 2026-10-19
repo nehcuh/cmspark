@@ -6,6 +6,7 @@ import { atomicWriteJSON } from "../io"
 import { EvidenceStore, type Observation } from "../business-evidence/store"
 import { canonicalRequest, evidenceDigest, evidenceScopeHash, exactExcerpt, excerptSupportsValue, type EvidenceScope } from "../business-evidence/content"
 import { REVIEW_LIMITS, boundRequest, reviewCreateSchema, reviewIdSchema, type ReviewCreate } from "./contract"
+import { validateGithubComparison, githubComparisonDigest } from "./github-comparison"
 import { parseUnifiedDiff } from "./diff"
 import { receiptSchema, reportSchema, checkReport } from "./report"
 import { BusinessEvidenceService } from "../business-evidence/service"
@@ -78,6 +79,22 @@ export class CodeReviewService {
       if (!observation || observation.tool !== "get_page_text" || !exactExcerpt(observation.content, input.diff)) throw new Error("CODE_DIFF_CITATION_INVALID")
       if (observation.provenance.text_transform !== "unchanged") throw new Error("CODE_DIFF_RECAPTURE_REQUIRED")
     }
+    if (input.comparison_observation_id) {
+      const captured = observations.find(item => item.id === input.comparison_observation_id)
+      if (!captured?.code_comparison || captured.tool !== "get_page_text") throw new Error("CODE_COMPARISON_CAPTURE_REQUIRED")
+      const comparison = validateGithubComparison(captured.code_comparison, captured.target.url)
+      if (githubComparisonDigest(comparison) !== captured.comparison_digest
+        || comparison.repository !== input.repository || comparison.base !== input.base || comparison.head !== input.head) throw new Error("CODE_COMPARISON_IDENTITY_MISMATCH")
+      return {
+        business_context: input.business_context || [], materials: materialsTooLarge ? [] : materialViews,
+        material_bindings: input.materials || [], files: parseUnifiedDiff(comparison.diff_text),
+        diff_hash: evidenceDigest(comparison.diff_text), identity_state: "host_comparison_verified" as const,
+        coverage: "complete" as const, comparison_semantics: comparison.semantics,
+        adapter: comparison.adapter, comparison_digest: captured.comparison_digest, gaps: contextGaps,
+        sources: [{ observation_id: captured.id, url: captured.target.url, observed_at: captured.observed_at,
+          digest: captured.digest, normalization: "NFC_LF", provenance: captured.provenance }],
+      }
+    }
     const diffText = input.diff && observation ? Array.from(observation.content).slice(input.diff.start, input.diff.end).join("") : null
     const files = diffText !== null ? parseUnifiedDiff(diffText) : []
     // Metadata must be outside the code span, on the same atomic page read.
@@ -87,7 +104,7 @@ export class CodeReviewService {
       metadata.some(citation => excerptSupportsValue(observation!.content, citation, value, true)))
     return {
       business_context: input.business_context || [], materials: materialsTooLarge ? [] : materialViews,
-      material_bindings: input.materials || [],
+      material_bindings: input.materials || [], adapter: "unified_diff_text.v1" as const,
       files, diff_hash: diffText !== null ? evidenceDigest(diffText) : null,
       identity_state: identity_present ? "page_text_present" as const : "requested_only" as const,
       coverage: observation?.provenance.truncated === true ? "partial" as const : "unknown" as const,
@@ -162,7 +179,7 @@ export class CodeReviewService {
   }
   private view(job: z.infer<typeof recordSchema>) {
     const view = { review_id: job.id, created_at: job.created_at, repository: job.input.repository, base: job.input.base, head: job.input.head,
-      ...this.snapshot(job.input), review_ready: false, untrusted: true, adapter: "unified_diff_text.v1" }
+      ...this.snapshot(job.input), review_ready: false, untrusted: true }
     const observations = this.evidence.read().observations
     const reportGaps = job.receipt ? checkReport(view, job.receipt.report, observations) : []
     const ownGaps = job.assessment ? checkReport(view, job.assessment.report, observations, Date.now(), "cmspark") : []

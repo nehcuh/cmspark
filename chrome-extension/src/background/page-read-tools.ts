@@ -16,12 +16,27 @@ export async function readPageText(tabId: number, deps: PageReadDependencies) {
     const response = await deps.evaluate(tabId, pageReadExpression(request), request, value => { channel = value })
     const content = response.result?.value?.content
     if (typeof content !== "string") throw new Error("PAGE_READ_INVALID_RESULT")
-    return { content, rawUrl: response.result.value.url, channel, truncated: false, limit: null }
+    return { content, rawUrl: response.result.value.url, channel, truncated: false, limit: null, codeComparison: response.result.value.codeComparison,
+      comparisonRefusal: ["UNSUPPORTED_VIEW", "IDENTITY_MISMATCH", "FILES_NOT_LOADED", "INVENTORY_MISMATCH", "HUNK_INCOMPLETE", "CAPACITY", "TARGET_CHANGED"].includes(response.result.value.comparisonRefusal) ? response.result.value.comparisonRefusal : undefined }
   })
   const sanitized = deps.sanitizer.sanitizeText(result.payload.content)
+  // Apply the same text policy to nested code/identity data; never let a sidecar
+  // bypass sanitization because it is outside body.text. Ordinary text stays intact.
+  let comparisonRefusal = result.payload.comparisonRefusal
+  let codeComparison: unknown
+  if (result.payload.codeComparison !== undefined && sanitized.threatsRemoved.length === 0) {
+    try {
+      const encoded = JSON.stringify(result.payload.codeComparison)
+      const checked = deps.sanitizer.sanitizeText(encoded)
+      if (checked.threatsRemoved.length === 0 && checked.sanitized === encoded) codeComparison = result.payload.codeComparison
+      else comparisonRefusal = "SOURCE_TRANSFORMED"
+    } catch { /* malformed nested data cannot become capture evidence */ }
+  }
   return {
     success: true,
-    data: { text: sanitized.sanitized, threats_removed: sanitized.threatsRemoved, provenance: result.provenance },
+    data: { text: sanitized.sanitized, threats_removed: sanitized.threatsRemoved, provenance: result.provenance,
+      ...(codeComparison !== undefined ? { codeComparison } : {}),
+      ...(comparisonRefusal ? { comparison_refusal: comparisonRefusal } : {}) },
   }
 }
 

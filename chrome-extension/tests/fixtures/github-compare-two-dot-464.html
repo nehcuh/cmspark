@@ -1,0 +1,1695 @@
+<html><body><link data-turbo-transient="" rel="alternate" type="text/x-diff" href="/nehcuh/cmspark/compare/30f4aa867ca1b9970f0fa4d72fc993a13af49972..06f3bf3fae687eebd518371be859379389642bc7.diff"></link><link data-turbo-transient="" rel="alternate" type="text/x-patch" href="/nehcuh/cmspark/compare/30f4aa867ca1b9970f0fa4d72fc993a13af49972..06f3bf3fae687eebd518371be859379389642bc7.patch"></link><div data-view-component="true" class="compare-show-header Subhead">
+  <h1 data-view-component="true" class="Subhead-heading Subhead-heading--large">Comparing changes</h1>
+  <div data-view-component="true" class="Subhead-description">          This is a direct comparison between two commits made in this repository or its related repositories.
+          <a class="Link--inTextBlock" href="/nehcuh/cmspark/compare/30f4aa867ca1b9970f0fa4d72fc993a13af49972...06f3bf3fae687eebd518371be859379389642bc7">View the default comparison</a> for this range or
+          <a href="https://docs.github.com/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-comparing-branches-in-pull-requests#three-dot-and-two-dot-git-diff-comparisons" data-view-component="true" class="Link--inTextBlock Link">learn more about diff comparisons</a>.
+</div>
+  
+</div><details id="base-ref-selector" class="details-reset details-overlay select-menu commitish-suggester hx_rsm">
+  <summary data-view-component="true" class="branch Button--secondary Button--small Button">  <span class="Button-content">
+    <span class="Button-label"><span class="fgColor-muted text-bold">base:</span>
+    <span class="css-truncate css-truncate-target" data-menu-button="">30f4aa867ca1b9970f0fa4d72fc993a13af49972</span></span>
+  </span>
+    <span class="Button-visual Button-trailingAction">
+      <svg></svg>
+    </span>
+</summary>
+  
+<div class="SelectMenu">
+  <div class="SelectMenu-modal">
+    <header class="SelectMenu-header">
+      <span class="SelectMenu-title">Choose a base ref</span>
+      <button class="SelectMenu-closeButton" type="button" data-toggle-for="base-ref-selector"><svg></svg></button>
+    </header>
+
+    <input-demux data-action="tab-container-change:input-demux#storeInput tab-container-changed:input-demux#updateInput">
+      <div class="SelectMenu-filter">
+        <input data-target="input-demux.source" id="context-commitish-filter-field-base" class="SelectMenu-input form-control" aria-owns="ref-list-branches-base" data-controls-ref-menu-id="ref-list-branches-base" autofocus="" autocomplete="off" aria-label="Find a branch" placeholder="Find a branch" type="text"></input>
+      </div>
+
+      <tab-container class="d-flex flex-column js-branches-tags-tabs" style="min-height: 0;">
+        <div class="SelectMenu-tabs" role="tablist" data-target="input-demux.control">
+          <button class="SelectMenu-tab" type="button" role="tab" aria-selected="true">Branches</button>
+          <button class="SelectMenu-tab" type="button" role="tab">Tags</button>
+        </div>
+
+        <div role="tabpanel" id="ref-list-branches-base" data-filter-placeholder="Find a branch" tabindex="" class="d-flex flex-column flex-auto">
+          <ref-selector type="branch" data-targets="input-demux.sinks" data-action="
+              input-entered:ref-selector#inputEntered
+              tab-selected:ref-selector#tabSelected
+              focus-list:ref-selector#focusFirstListMember
+            " query-endpoint="/nehcuh/cmspark/refs" cache-key="v0:1792352812.0" current-committish="MzBmNGFhODY3Y2ExYjk5NzBmMGZhNGQ3MmZjOTkzYTEzYWY0OTk3Mg==" default-branch="bWFpbg==" name-with-owner="bmVoY3VoL2Ntc3Bhcms=" prefetch-on-mouseover="">
+
+            
+
+              
+
+
+
+            <div data-target="ref-selector.listContainer" role="menu" class="SelectMenu-list m-0">
+              <div class="SelectMenu-loading tmp-pt-3 pb-0 overflow-hidden">
+                <span data-view-component="true">
+  <svg></svg>    <span class="sr-only">Loading</span>
+</span>
+              </div>
+            </div>
+
+              
+
+
+          </ref-selector>
+
+        </div>
+
+        <div role="tabpanel" id="tags-menu-base" data-filter-placeholder="Find a tag" tabindex="" hidden="" class="d-flex flex-column flex-auto">
+          <ref-selector type="tag" data-action="
+              input-entered:ref-selector#inputEntered
+              tab-selected:ref-selector#tabSelected
+              focus-list:ref-selector#focusFirstListMember
+            " data-targets="input-demux.sinks" query-endpoint="/nehcuh/cmspark/refs" cache-key="v0:1792352812.0" current-committish="MzBmNGFhODY3Y2ExYjk5NzBmMGZhNGQ3MmZjOTkzYTEzYWY0OTk3Mg==" default-branch="bWFpbg==" name-with-owner="bmVoY3VoL2Ntc3Bhcms=">
+
+            
+
+            
+
+              
+
+
+            <div data-target="ref-selector.listContainer" role="menu" class="SelectMenu-list">
+              <div class="SelectMenu-loading tmp-pt-3 pb-0 overflow-hidden">
+                <span data-view-component="true">
+  <svg></svg>    <span class="sr-only">Loading</span>
+</span>
+              </div>
+            </div>
+          </ref-selector>
+        </div>
+      </tab-container>
+    </input-demux>
+  </div>
+</div>
+
+</details><details id="head-ref-selector" class="details-reset details-overlay select-menu commitish-suggester hx_rsm">
+  <summary data-view-component="true" class="branch Button--secondary Button--small Button">  <span class="Button-content">
+    <span class="Button-label"><span class="fgColor-muted text-bold">compare:</span>
+    <span class="css-truncate css-truncate-target" data-menu-button="">06f3bf3fae687eebd518371be859379389642bc7</span></span>
+  </span>
+    <span class="Button-visual Button-trailingAction">
+      <svg></svg>
+    </span>
+</summary>
+  
+<div class="SelectMenu">
+  <div class="SelectMenu-modal">
+    <header class="SelectMenu-header">
+      <span class="SelectMenu-title">Choose a head ref</span>
+      <button class="SelectMenu-closeButton" type="button" data-toggle-for="head-ref-selector"><svg></svg></button>
+    </header>
+
+    <input-demux data-action="tab-container-change:input-demux#storeInput tab-container-changed:input-demux#updateInput">
+      <div class="SelectMenu-filter">
+        <input data-target="input-demux.source" id="context-commitish-filter-field-head" class="SelectMenu-input form-control" aria-owns="ref-list-branches-head" data-controls-ref-menu-id="ref-list-branches-head" autofocus="" autocomplete="off" aria-label="Find a branch" placeholder="Find a branch" type="text"></input>
+      </div>
+
+      <tab-container class="d-flex flex-column js-branches-tags-tabs" style="min-height: 0;">
+        <div class="SelectMenu-tabs" role="tablist" data-target="input-demux.control">
+          <button class="SelectMenu-tab" type="button" role="tab" aria-selected="true">Branches</button>
+          <button class="SelectMenu-tab" type="button" role="tab">Tags</button>
+        </div>
+
+        <div role="tabpanel" id="ref-list-branches-head" data-filter-placeholder="Find a branch" tabindex="" class="d-flex flex-column flex-auto">
+          <ref-selector type="branch" data-targets="input-demux.sinks" data-action="
+              input-entered:ref-selector#inputEntered
+              tab-selected:ref-selector#tabSelected
+              focus-list:ref-selector#focusFirstListMember
+            " query-endpoint="/nehcuh/cmspark/refs" cache-key="v0:1792352812.0" current-committish="MDZmM2JmM2ZhZTY4N2VlYmQ1MTgzNzFiZTg1OTM3OTM4OTY0MmJjNw==" default-branch="bWFpbg==" name-with-owner="bmVoY3VoL2Ntc3Bhcms=" prefetch-on-mouseover="">
+
+            
+
+              
+
+
+
+            <div data-target="ref-selector.listContainer" role="menu" class="SelectMenu-list m-0">
+              <div class="SelectMenu-loading tmp-pt-3 pb-0 overflow-hidden">
+                <span data-view-component="true">
+  <svg></svg>    <span class="sr-only">Loading</span>
+</span>
+              </div>
+            </div>
+
+              
+
+
+          </ref-selector>
+
+        </div>
+
+        <div role="tabpanel" id="tags-menu-head" data-filter-placeholder="Find a tag" tabindex="" hidden="" class="d-flex flex-column flex-auto">
+          <ref-selector type="tag" data-action="
+              input-entered:ref-selector#inputEntered
+              tab-selected:ref-selector#tabSelected
+              focus-list:ref-selector#focusFirstListMember
+            " data-targets="input-demux.sinks" query-endpoint="/nehcuh/cmspark/refs" cache-key="v0:1792352812.0" current-committish="MDZmM2JmM2ZhZTY4N2VlYmQ1MTgzNzFiZTg1OTM3OTM4OTY0MmJjNw==" default-branch="bWFpbg==" name-with-owner="bmVoY3VoL2Ntc3Bhcms=">
+
+            
+
+            
+
+              
+
+
+            <div data-target="ref-selector.listContainer" role="menu" class="SelectMenu-list">
+              <div class="SelectMenu-loading tmp-pt-3 pb-0 overflow-hidden">
+                <span data-view-component="true">
+  <svg></svg>    <span class="sr-only">Loading</span>
+</span>
+              </div>
+            </div>
+          </ref-selector>
+        </div>
+      </tab-container>
+    </input-demux>
+  </div>
+</div>
+
+</details><div id="files_bucket"><div><div class="container-xl tmp-px-3 tmp-px-md-4 tmp-px-lg-5">
+  <div id="diff" class="uncommentable">
+      <div id="toc" class="details-collapse table-of-contents js-details-container Details flex-1">
+    <div class="d-flex d-inline-block float-right">
+  <form data-turbo="false" action="/users/diffview" accept-charset="UTF-8" method="post">
+    <segmented-control>
+  <ul aria-label="Diff view" role="list" data-view-component="true" class="SegmentedControl--small SegmentedControl">
+      <li class="SegmentedControl-item" role="listitem" data-targets="segmented-control.items">
+  <button data-disable-with="" name="diff" value="split" data-action="click:segmented-control#select" aria-current="false" type="submit" data-view-component="true" class="Button--invisible Button--small Button Button--invisible-noVisuals">  <span class="Button-content">
+    <span class="Button-label">Split</span>
+  </span>
+</button>
+
+</li>
+
+      <li class="SegmentedControl-item SegmentedControl-item--selected" role="listitem" data-targets="segmented-control.items">
+  <button data-disable-with="" name="diff" value="unified" data-action="click:segmented-control#select" aria-current="true" type="submit" data-view-component="true" class="Button--invisible Button--small Button Button--invisible-noVisuals">  <span class="Button-content">
+    <span class="Button-label">Unified</span>
+  </span>
+</button>
+
+</li>
+
+</ul></segmented-control>
+</form></div>
+
+
+    <div class="toc-diff-stats">
+      <svg></svg>
+      Showing
+        <button type="button" class="btn-link js-details-target" aria-expanded="false">
+          4 changed files
+        </button>
+      with
+      <strong>33 additions</strong>
+      and <strong>4 deletions</strong>.
+    </div>
+
+      <ol class="content collapse js-transitionable overflow-y-hidden width-full">
+        <li>
+          <span class="diffstat float-right">
+              <span class="color-fg-success">
+                +2
+              </span>
+              <span class="color-fg-danger">
+                −0
+              </span>
+              <a href="#diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" class="tooltipped tooltipped-s" aria-label="2 lines changed">
+                <span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-neutral"></span><span class="diffstat-block-neutral"></span><span class="diffstat-block-neutral"></span>
+              </a>
+          </span>
+          <svg title="modified"></svg>
+          <a href="#diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed">CHANGELOG.md</a>
+        </li>
+        <li>
+          <span class="diffstat float-right">
+              <span class="color-fg-success">
+                +1
+              </span>
+              <span class="color-fg-danger">
+                −1
+              </span>
+              <a href="#diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" class="tooltipped tooltipped-s" aria-label="2 lines changed">
+                <span class="diffstat-block-added"></span><span class="diffstat-block-deleted"></span><span class="diffstat-block-neutral"></span><span class="diffstat-block-neutral"></span><span class="diffstat-block-neutral"></span>
+              </a>
+          </span>
+          <svg title="modified"></svg>
+          <a href="#diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431">companion/src/acp/jsonrpc-stdio.ts</a>
+        </li>
+        <li>
+          <span class="diffstat float-right">
+              <span class="color-fg-success">
+                +25
+              </span>
+              <span class="color-fg-danger">
+                −0
+              </span>
+              <a href="#diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" class="tooltipped tooltipped-s" aria-label="25 lines changed">
+                <span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-added"></span>
+              </a>
+          </span>
+          <svg title="modified"></svg>
+          <a href="#diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc">companion/tests/acp-initialize-version.test.ts</a>
+        </li>
+        <li>
+          <span class="diffstat float-right">
+              <span class="color-fg-success">
+                +5
+              </span>
+              <span class="color-fg-danger">
+                −3
+              </span>
+              <a href="#diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" class="tooltipped tooltipped-s" aria-label="8 lines changed">
+                <span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-deleted"></span><span class="diffstat-block-neutral"></span>
+              </a>
+          </span>
+          <svg title="modified"></svg>
+          <a href="#diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2">docs/code-review-workflow.md</a>
+        </li>
+      </ol>
+  </div>
+
+    
+
+
+<div id="files" class="diff-view  js-diff-container" data-hpc="">
+
+  <div class="container-md js-file-filter-blankslate" data-target="diff-file-filter.blankslate" hidden="">
+    
+  <div class="blankslate-container">
+    <div data-view-component="true" class="blankslate">
+      <svg></svg>
+
+      <h2 data-view-component="true" class="blankslate-heading">        There are no files selected for viewing
+</h2>
+      
+
+</div>  </div>
+  </div>
+    <div class="js-diff-progressive-container">      <copilot-diff-entry data-file-path="CHANGELOG.md">
+  <div id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" data-details-container-group="file" class="file js-file js-details-container js-targetable-element show-inline-notes Details
+               Details--on open
+               soft-wrap
+               file-type-prose
+              
+              
+              
+              " data-file-type=".md" data-file-deleted="false" data-tagsearch-path="CHANGELOG.md" data-targets="diff-file-filter.diffEntries">
+    <div class="file-header d-flex flex-md-row flex-column flex-md-items-center file-header--expandable js-file-header js-skip-tagsearch" data-path="CHANGELOG.md" data-short-path="06572a9" data-anchor="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" data-file-type=".md" data-file-deleted="false">
+      <div class="file-info flex-auto min-width-0 mb-md-0 mb-2">
+        <button type="button" class="btn-octicon js-details-target" aria-label="Toggle diff contents" aria-expanded="true" style="width: 22px;">
+  <svg></svg>
+  <svg></svg>
+</button>
+
+
+          <div class="js-expand-full-wrapper d-inline-block">
+            <button type="button" class="btn-link color-fg-muted no-underline js-expand-full directional-expander tooltipped tooltipped-se" aria-label="Expand all" data-url="/nehcuh/cmspark/blob_expand/e102bc6394727d6124f4f62cd664273f8195542f?anchor=diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed&amp;diff=unified&amp;direction=full&amp;mode=100644&amp;path=CHANGELOG.md">
+              <svg></svg>
+            </button>
+            <button type="button" class="btn-link color-fg-muted no-underline js-collapse-diff tooltipped tooltipped-se" aria-label="Collapse expanded lines" hidden="">
+              <svg></svg>
+            </button>
+          </div>
+
+
+          <span class="sr-only">
+            2 changes: 2 additions &amp; 0 deletions
+          </span>
+          <span class="diffstat" aria-hidden="true">2 <span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-neutral"></span><span class="diffstat-block-neutral"></span><span class="diffstat-block-neutral"></span></span>
+
+        
+<span class="Truncate">
+  <a title="CHANGELOG.md" class="Link--primary Truncate-text" href="#diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed">CHANGELOG.md</a>
+
+  <span data-view-component="true">
+  <clipboard-copy data-copy-feedback="Copied!" aria-label="Copy" value="CHANGELOG.md" data-view-component="true" class="Link--onHover color-fg-muted ml-2 tmp-ml-2 mr-2 tmp-mr-2">
+      <svg></svg>
+      <svg></svg>
+</clipboard-copy>  <div aria-live="polite" aria-atomic="true" class="sr-only" data-clipboard-copy-feedback=""></div>
+</span>
+</span>
+
+
+        
+      </div>
+
+      <div class="file-actions pt-0 mb-md-0 mb-2 ml-md-2 flex-shrink-0 flex-md-justify-end">
+        <div class="d-flex flex-justify-end">
+
+
+
+
+
+
+
+
+            <span class="BtnGroup min-width-0 flex-self-center">
+                <form class="BtnGroup-parent js-prose-diff-toggle-form" data-turbo="false" action="/nehcuh/cmspark/diffs/0?name=main&amp;sha1=30f4aa867ca1b9970f0fa4d72fc993a13af49972&amp;sha2=06f3bf3fae687eebd518371be859379389642bc7&amp;source=true&amp;w=false" accept-charset="UTF-8" method="get">                  <button class="btn btn-sm BtnGroup-item tooltipped tooltipped-s source js-source selected" aria-current="true" aria-label="Display the source diff" type="submit" data-disable-with="">
+                          <svg></svg>
+                  </button>
+</form>                  <form class="BtnGroup-parent js-prose-diff-toggle-form" data-turbo="false" action="/nehcuh/cmspark/diffs/0?name=main&amp;sha1=30f4aa867ca1b9970f0fa4d72fc993a13af49972&amp;sha2=06f3bf3fae687eebd518371be859379389642bc7&amp;short_path=06572a9&amp;w=false" accept-charset="UTF-8" method="get">                    <button class="btn btn-sm BtnGroup-item tooltipped tooltipped-s rendered js-rendered" aria-label="Display the rich diff" type="submit" data-disable-with="">
+                            <svg></svg>
+                    </button>
+</form>            </span>
+
+
+
+          
+
+          <details class="js-file-header-dropdown dropdown details-overlay details-reset pr-2 pl-2">
+            <summary class="height-full">
+              <div class="height-full d-flex flex-items-center Link--secondary">
+                <svg></svg>
+              </div>
+            </summary>
+            <details-menu class="dropdown-menu dropdown-menu-sw show-more-popover color-fg-default position-absolute f5" style="width:max-content; min-width:185px; z-index:99; right: -4px;">
+                            <label role="menuitemradio" class="dropdown-item btn-link text-normal d-block tmp-pl-5" tabindex="0" aria-checked="true">
+              <span class="position-absolute tmp-ml-n4"><svg></svg></span>
+              <input type="checkbox" checked="" class="d-none js-toggle-file-notes"></input>
+              Show comments
+            </label>
+
+                            <div role="none" class="dropdown-divider"></div>
+
+                              <a href="/nehcuh/cmspark/blob/06f3bf3fae687eebd518371be859379389642bc7/CHANGELOG.md" class="tmp-pl-5 dropdown-item btn-link" rel="nofollow" role="menuitem" data-ga-click="View file, click, location:files_changed_dropdown">
+   View file
+</a>
+
+
+                                    <button type="button" disabled="" role="menuitem" class="tmp-pl-5 dropdown-item btn-link" aria-label="You must be signed in and have push access to make changes.">
+      Edit file
+    </button>
+
+
+                                  <button type="button" disabled="" role="menuitem" class="tmp-pl-5 dropdown-item btn-link" aria-label="You must be signed in and have push access to delete this file.">
+    Delete file
+  </button>
+
+
+                            <div role="none" class="dropdown-divider"></div>
+
+                            <span data-target="copilot-diff-entry.menuItemsSlot"></span>
+
+                
+            </details-menu>
+          </details>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="js-file-content Details-content--hidden position-relative" data-hydro-view="{&quot;event_type&quot;:&quot;pull_request.select_diff_range&quot;,&quot;payload&quot;:{&quot;actor_id&quot;:null,&quot;pull_request_id&quot;:null,&quot;repository_id&quot;:null,&quot;diff_type&quot;:&quot;UNIFIED&quot;,&quot;whitespace_ignored&quot;:false,&quot;originating_url&quot;:&quot;https://github.com/nehcuh/cmspark/compare/file-list?range=30f4aa867ca1b9970f0fa4d72fc993a13af49972..06f3bf3fae687eebd518371be859379389642bc7&quot;,&quot;user_id&quot;:null}}" data-hydro-view-hmac="22ba6f10b685bc9c806d5c1b75fa07af42a6eb8632d2ee0621b861d34d19e683">
+      
+
+          <div class="data highlight js-blob-wrapper js-check-hidden-unicode
+            
+            ">
+            
+
+
+
+
+              
+              <table class=" diff-table js-diff-table tab-size  " data-tab-size="4" data-diff-anchor="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" data-paste-markdown-skip="">
+                <thead class="sr-only">
+                  <tr>
+                      <th scope="col">Original file line number</th>
+                      <th scope="col">Diff line number</th>
+                      <th scope="col">Diff line change</th>
+                  </tr>
+                </thead>
+                  <colgroup>
+                    <col width="40"></col>
+                    <col width="40"></col>
+                    <col></col>
+                  </colgroup>
+                <tbody>
+                      
+      <tr class="js-expandable-line js-skip-tagsearch" data-position="0">
+    <td class="blob-num blob-num-expandable" colspan="2">
+          <a href="#diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" id="expand-up-link-0-diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" class="js-expand directional-expander single-expander" aria-label="Expand Up" data-url="/nehcuh/cmspark/blob_excerpt/e102bc6394727d6124f4f62cd664273f8195542f?diff=unified&amp;direction=up&amp;in_wiki_context&amp;last_left&amp;last_right&amp;left=4&amp;left_hunk_size=6&amp;mode=100644&amp;path=CHANGELOG.md&amp;right=4&amp;right_hunk_size=8" data-left-range="1-3" data-right-range="1-3">
+            <svg></svg>
+          </a>
+          <tool-tip id="tooltip-a781a4a4-901c-450a-abe4-35787d40a048" for="expand-up-link-0-diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" popover="manual" data-direction="ne" data-type="label" data-view-component="true" class="sr-only position-absolute">Expand Up</tool-tip>
+    </td>
+    <td class="blob-code blob-code-inner blob-code-hunk">@@ -4,6 +4,8 @@</td>
+  </tr>
+
+    <tr data-hunk="8603f06b2aab1e088512327b860db565b79e87faa3134d4348066b60c2fd70c8" class="show-top-border">
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edL4" data-line-number="4" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edR4" data-line-number="4" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><br></br></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="8603f06b2aab1e088512327b860db565b79e87faa3134d4348066b60c2fd70c8" class="show-top-border">
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edL5" data-line-number="5" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edR5" data-line-number="5" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><span class="pl-mh">## <span class="pl-en"><span class="pl-s">[</span>Unreleased<span class="pl-s">]</span></span></span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="8603f06b2aab1e088512327b860db565b79e87faa3134d4348066b60c2fd70c8" class="show-top-border">
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edL6" data-line-number="6" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edR6" data-line-number="6" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><br></br></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="8603f06b2aab1e088512327b860db565b79e87faa3134d4348066b60c2fd70c8" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edR7" data-line-number="7" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+"><span class="pl-v">-</span> <span class="pl-s">#<span class="pl-corl">464</span></span> ACP v1 初始化改用标准 <span class="pl-s">`</span><span class="pl-c1">clientCapabilities</span><span class="pl-s">`</span> 字段，保留原文件/终端能力全部关闭、超时和响应拒绝；补实际 JSON-RPC 请求捕获回归测试，并说明网页 diff 已支持的明确未加引号文本重命名。字段校准不证明真实 Agent 兼容或业务验收，<span class="pl-s">#<span class="pl-corl">464</span></span> 整票仍为 Partial。</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="8603f06b2aab1e088512327b860db565b79e87faa3134d4348066b60c2fd70c8" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edR8" data-line-number="8" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+"><br></br></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="8603f06b2aab1e088512327b860db565b79e87faa3134d4348066b60c2fd70c8" class="show-top-border">
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edL7" data-line-number="7" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edR9" data-line-number="9" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><span class="pl-mh">## <span class="pl-en"><span class="pl-s">[</span>0.6.14<span class="pl-s">]</span> — 2026-10-18（开发版本，尚未正式发布）</span></span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="8603f06b2aab1e088512327b860db565b79e87faa3134d4348066b60c2fd70c8" class="show-top-border">
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edL8" data-line-number="8" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edR10" data-line-number="10" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><br></br></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="8603f06b2aab1e088512327b860db565b79e87faa3134d4348066b60c2fd70c8" class="show-top-border">
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edL9" data-line-number="9" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edR11" data-line-number="11" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">汇总 0.6.13 源码切点之后已合并到主分支的改动。此处记录源码版本，不表示已经生成或发布安装包；发行包和未完成验收见 <span class="pl-s">[</span>版本与交付状态<span class="pl-s">]</span><span class="pl-s">(</span><span class="pl-corl">docs/release-status.md</span><span class="pl-s">)</span>。保留 0.7.0 企业双场景里程碑的原验收要求。</span></td>
+</tr>
+
+
+
+
+  <tr class="js-expandable-line js-skip-tagsearch" data-position="">
+    <td class="blob-num blob-num-expandable" colspan="2">
+          <a href="#diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" id="expand-down-link--diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" class="js-expand directional-expander single-expander" aria-label="Expand Down" data-url="/nehcuh/cmspark/blob_excerpt/e102bc6394727d6124f4f62cd664273f8195542f?diff=unified&amp;direction=down&amp;in_wiki_context&amp;last_left=9&amp;last_right=11&amp;left=524&amp;left_hunk_size&amp;mode=100644&amp;path=CHANGELOG.md&amp;right=524&amp;right_hunk_size" data-left-range="10-523" data-right-range="12-523">
+            <svg></svg>
+          </a>
+          <tool-tip id="tooltip-4807781c-6f5b-4881-88e1-e92666ed706d" for="expand-down-link--diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed" popover="manual" data-direction="ne" data-type="label" data-view-component="true" class="sr-only position-absolute">Expand Down</tool-tip>
+    </td>
+    <td class="blob-code blob-code-inner blob-code-hunk"></td>
+  </tr>
+
+
+                </tbody>
+              </table>
+
+          </div>
+
+    </div>
+  </div>
+</copilot-diff-entry>
+
+      <copilot-diff-entry data-file-path="companion/src/acp/jsonrpc-stdio.ts">
+  <div id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" data-details-container-group="file" class="file js-file js-details-container js-targetable-element show-inline-notes Details
+               Details--on open
+              
+              
+              
+              
+              
+              " data-file-type=".ts" data-file-deleted="false" data-tagsearch-path="companion/src/acp/jsonrpc-stdio.ts" data-targets="diff-file-filter.diffEntries">
+    <div class="file-header d-flex flex-md-row flex-column flex-md-items-center file-header--expandable js-file-header js-skip-tagsearch" data-path="companion/src/acp/jsonrpc-stdio.ts" data-short-path="d47169b" data-anchor="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" data-file-type=".ts" data-file-deleted="false">
+      <div class="file-info flex-auto min-width-0 mb-md-0 mb-2">
+        <button type="button" class="btn-octicon js-details-target" aria-label="Toggle diff contents" aria-expanded="true" style="width: 22px;">
+  <svg></svg>
+  <svg></svg>
+</button>
+
+
+          <div class="js-expand-full-wrapper d-inline-block">
+            <button type="button" class="btn-link color-fg-muted no-underline js-expand-full directional-expander tooltipped tooltipped-se" aria-label="Expand all" data-url="/nehcuh/cmspark/blob_expand/5a7ae930947ec0ebf05fdbaa9c5aa9cb8e91e632?anchor=diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431&amp;diff=unified&amp;direction=full&amp;mode=100644&amp;path=companion%2Fsrc%2Facp%2Fjsonrpc-stdio.ts">
+              <svg></svg>
+            </button>
+            <button type="button" class="btn-link color-fg-muted no-underline js-collapse-diff tooltipped tooltipped-se" aria-label="Collapse expanded lines" hidden="">
+              <svg></svg>
+            </button>
+          </div>
+
+
+          <span class="sr-only">
+            2 changes: 1 addition &amp; 1 deletion
+          </span>
+          <span class="diffstat" aria-hidden="true">2 <span class="diffstat-block-added"></span><span class="diffstat-block-deleted"></span><span class="diffstat-block-neutral"></span><span class="diffstat-block-neutral"></span><span class="diffstat-block-neutral"></span></span>
+
+        
+<span class="Truncate">
+  <a title="companion/src/acp/jsonrpc-stdio.ts" class="Link--primary Truncate-text" href="#diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431">companion/src/acp/jsonrpc-stdio.ts</a>
+
+  <span data-view-component="true">
+  <clipboard-copy data-copy-feedback="Copied!" aria-label="Copy" value="companion/src/acp/jsonrpc-stdio.ts" data-view-component="true" class="Link--onHover color-fg-muted ml-2 tmp-ml-2 mr-2 tmp-mr-2">
+      <svg></svg>
+      <svg></svg>
+</clipboard-copy>  <div aria-live="polite" aria-atomic="true" class="sr-only" data-clipboard-copy-feedback=""></div>
+</span>
+</span>
+
+
+        
+      </div>
+
+      <div class="file-actions pt-0 mb-md-0 mb-2 ml-md-2 flex-shrink-0 flex-md-justify-end">
+        <div class="d-flex flex-justify-end">
+
+
+
+
+
+
+
+
+
+
+
+          
+
+          <details class="js-file-header-dropdown dropdown details-overlay details-reset pr-2 pl-2">
+            <summary class="height-full">
+              <div class="height-full d-flex flex-items-center Link--secondary">
+                <svg></svg>
+              </div>
+            </summary>
+            <details-menu class="dropdown-menu dropdown-menu-sw show-more-popover color-fg-default position-absolute f5" style="width:max-content; min-width:185px; z-index:99; right: -4px;">
+                            <label role="menuitemradio" class="dropdown-item btn-link text-normal d-block tmp-pl-5" tabindex="0" aria-checked="true">
+              <span class="position-absolute tmp-ml-n4"><svg></svg></span>
+              <input type="checkbox" checked="" class="d-none js-toggle-file-notes"></input>
+              Show comments
+            </label>
+
+                            <div role="none" class="dropdown-divider"></div>
+
+                              <a href="/nehcuh/cmspark/blob/06f3bf3fae687eebd518371be859379389642bc7/companion/src/acp/jsonrpc-stdio.ts" class="tmp-pl-5 dropdown-item btn-link" rel="nofollow" role="menuitem" data-ga-click="View file, click, location:files_changed_dropdown">
+   View file
+</a>
+
+
+                                    <button type="button" disabled="" role="menuitem" class="tmp-pl-5 dropdown-item btn-link" aria-label="You must be signed in and have push access to make changes.">
+      Edit file
+    </button>
+
+
+                                  <button type="button" disabled="" role="menuitem" class="tmp-pl-5 dropdown-item btn-link" aria-label="You must be signed in and have push access to delete this file.">
+    Delete file
+  </button>
+
+
+                            <div role="none" class="dropdown-divider"></div>
+
+                            <span data-target="copilot-diff-entry.menuItemsSlot"></span>
+
+                
+            </details-menu>
+          </details>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="js-file-content Details-content--hidden position-relative" data-hydro-view="{&quot;event_type&quot;:&quot;pull_request.select_diff_range&quot;,&quot;payload&quot;:{&quot;actor_id&quot;:null,&quot;pull_request_id&quot;:null,&quot;repository_id&quot;:null,&quot;diff_type&quot;:&quot;UNIFIED&quot;,&quot;whitespace_ignored&quot;:false,&quot;originating_url&quot;:&quot;https://github.com/nehcuh/cmspark/compare/file-list?range=30f4aa867ca1b9970f0fa4d72fc993a13af49972..06f3bf3fae687eebd518371be859379389642bc7&quot;,&quot;user_id&quot;:null}}" data-hydro-view-hmac="22ba6f10b685bc9c806d5c1b75fa07af42a6eb8632d2ee0621b861d34d19e683">
+      
+
+          <div class="data highlight js-blob-wrapper js-check-hidden-unicode
+            
+            ">
+            
+
+
+
+
+              
+              <table class=" diff-table js-diff-table tab-size  " data-tab-size="4" data-diff-anchor="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" data-paste-markdown-skip="">
+                <thead class="sr-only">
+                  <tr>
+                      <th scope="col">Original file line number</th>
+                      <th scope="col">Diff line number</th>
+                      <th scope="col">Diff line change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                      
+      <tr class="js-expandable-line js-skip-tagsearch" data-position="0">
+    <td class="blob-num blob-num-expandable" colspan="2">
+          <a href="#diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" id="expand-up-link-0-diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" class="js-expand directional-expander single-expander" aria-label="Expand Up" data-url="/nehcuh/cmspark/blob_excerpt/5a7ae930947ec0ebf05fdbaa9c5aa9cb8e91e632?diff=unified&amp;direction=up&amp;in_wiki_context&amp;last_left&amp;last_right&amp;left=179&amp;left_hunk_size=7&amp;mode=100644&amp;path=companion%2Fsrc%2Facp%2Fjsonrpc-stdio.ts&amp;right=179&amp;right_hunk_size=7" data-left-range="1-178" data-right-range="1-178">
+            <svg></svg>
+          </a>
+          <tool-tip id="tooltip-cd677cff-da08-4a5d-88a7-3b0e5fcc1b45" for="expand-up-link-0-diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" popover="manual" data-direction="ne" data-type="label" data-view-component="true" class="sr-only position-absolute">Expand Up</tool-tip>
+    </td>
+    <td class="blob-code blob-code-inner blob-code-hunk">@@ -179,7 +179,7 @@ export async function tryAcpInitialize(</td>
+  </tr>
+
+    <tr data-hunk="59c07cdc70f68f7508eac9ff7631a1bb3fb79afe4cc60c8bcd470c0923a21ae6" class="show-top-border">
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431L179" data-line-number="179" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431R179" data-line-number="179" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">      <span class="pl-kos">{</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="59c07cdc70f68f7508eac9ff7631a1bb3fb79afe4cc60c8bcd470c0923a21ae6" class="show-top-border">
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431L180" data-line-number="180" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431R180" data-line-number="180" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">        <span class="pl-c1">protocolVersion</span>: <span class="pl-c1">1</span><span class="pl-kos">,</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="59c07cdc70f68f7508eac9ff7631a1bb3fb79afe4cc60c8bcd470c0923a21ae6" class="show-top-border">
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431L181" data-line-number="181" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431R181" data-line-number="181" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">        <span class="pl-c1">clientInfo</span>: <span class="pl-kos">{</span> <span class="pl-c1">name</span>: <span class="pl-s">&quot;cmspark&quot;</span><span class="pl-kos">,</span> <span class="pl-c1">version</span>: <span class="pl-s">&quot;0.6.14&quot;</span> <span class="pl-kos">}</span><span class="pl-kos">,</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="59c07cdc70f68f7508eac9ff7631a1bb3fb79afe4cc60c8bcd470c0923a21ae6" class="show-top-border">
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431L182" data-line-number="182" class="blob-num blob-num-deletion js-linkable-line-number"></td>
+
+    <td class="blob-num blob-num-deletion empty-cell"></td>
+
+  <td class="blob-code blob-code-deletion  js-file-line">
+    <span class="blob-code-inner blob-code-marker js-skip-tagsearch" data-code-marker="-">        <span class="pl-c1 x x-first x-last">capabilities</span>: <span class="pl-kos">{</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="59c07cdc70f68f7508eac9ff7631a1bb3fb79afe4cc60c8bcd470c0923a21ae6" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431R182" data-line-number="182" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">        <span class="pl-c1 x x-first x-last">clientCapabilities</span>: <span class="pl-kos">{</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="59c07cdc70f68f7508eac9ff7631a1bb3fb79afe4cc60c8bcd470c0923a21ae6" class="show-top-border">
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431L183" data-line-number="183" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431R183" data-line-number="183" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">          <span class="pl-c1">fs</span>: <span class="pl-kos">{</span> <span class="pl-c1">readTextFile</span>: <span class="pl-c1">false</span><span class="pl-kos">,</span> <span class="pl-c1">writeTextFile</span>: <span class="pl-c1">false</span> <span class="pl-kos">}</span><span class="pl-kos">,</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="59c07cdc70f68f7508eac9ff7631a1bb3fb79afe4cc60c8bcd470c0923a21ae6" class="show-top-border">
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431L184" data-line-number="184" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431R184" data-line-number="184" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">          <span class="pl-c1">terminal</span>: <span class="pl-c1">false</span><span class="pl-kos">,</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="59c07cdc70f68f7508eac9ff7631a1bb3fb79afe4cc60c8bcd470c0923a21ae6" class="show-top-border">
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431L185" data-line-number="185" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431R185" data-line-number="185" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">        <span class="pl-kos">}</span><span class="pl-kos">,</span></span></td>
+</tr>
+
+
+
+
+  <tr class="js-expandable-line js-skip-tagsearch" data-position="">
+    <td class="blob-num blob-num-expandable" colspan="2">
+          <a href="#diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" id="expand-down-link--diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" class="js-expand directional-expander single-expander" aria-label="Expand Down" data-url="/nehcuh/cmspark/blob_excerpt/5a7ae930947ec0ebf05fdbaa9c5aa9cb8e91e632?diff=unified&amp;direction=down&amp;in_wiki_context&amp;last_left=185&amp;last_right=185&amp;left=198&amp;left_hunk_size&amp;mode=100644&amp;path=companion%2Fsrc%2Facp%2Fjsonrpc-stdio.ts&amp;right=198&amp;right_hunk_size" data-left-range="186-197" data-right-range="186-197">
+            <svg></svg>
+          </a>
+          <tool-tip id="tooltip-956d8d8e-8fc5-4eb4-be9c-f22f74a2e709" for="expand-down-link--diff-d47169b48e619db63de07a6ecec0483cec2203e97c21ac94edc3173bfde38431" popover="manual" data-direction="ne" data-type="label" data-view-component="true" class="sr-only position-absolute">Expand Down</tool-tip>
+    </td>
+    <td class="blob-code blob-code-inner blob-code-hunk"></td>
+  </tr>
+
+
+                </tbody>
+              </table>
+
+          </div>
+
+    </div>
+  </div>
+</copilot-diff-entry>
+
+      <copilot-diff-entry data-file-path="companion/tests/acp-initialize-version.test.ts">
+  <div id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" data-details-container-group="file" class="file js-file js-details-container js-targetable-element show-inline-notes Details
+               Details--on open
+              
+              
+              
+              
+              
+              " data-file-type=".ts" data-file-deleted="false" data-tagsearch-path="companion/tests/acp-initialize-version.test.ts" data-targets="diff-file-filter.diffEntries">
+    <div class="file-header d-flex flex-md-row flex-column flex-md-items-center file-header--expandable js-file-header js-skip-tagsearch" data-path="companion/tests/acp-initialize-version.test.ts" data-short-path="8e1b57a" data-anchor="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" data-file-type=".ts" data-file-deleted="false">
+      <div class="file-info flex-auto min-width-0 mb-md-0 mb-2">
+        <button type="button" class="btn-octicon js-details-target" aria-label="Toggle diff contents" aria-expanded="true" style="width: 22px;">
+  <svg></svg>
+  <svg></svg>
+</button>
+
+
+          <div class="js-expand-full-wrapper d-inline-block">
+            <button type="button" class="btn-link color-fg-muted no-underline js-expand-full directional-expander tooltipped tooltipped-se" aria-label="Expand all" data-url="/nehcuh/cmspark/blob_expand/00f7dc669353ac33b1a801e3bbd6006545d4f244?anchor=diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc&amp;diff=unified&amp;direction=full&amp;mode=100644&amp;path=companion%2Ftests%2Facp-initialize-version.test.ts">
+              <svg></svg>
+            </button>
+            <button type="button" class="btn-link color-fg-muted no-underline js-collapse-diff tooltipped tooltipped-se" aria-label="Collapse expanded lines" hidden="">
+              <svg></svg>
+            </button>
+          </div>
+
+
+          <span class="sr-only">
+            25 changes: 25 additions &amp; 0 deletions
+          </span>
+          <span class="diffstat" aria-hidden="true">25 <span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-added"></span></span>
+
+        
+<span class="Truncate">
+  <a title="companion/tests/acp-initialize-version.test.ts" class="Link--primary Truncate-text" href="#diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc">companion/tests/acp-initialize-version.test.ts</a>
+
+  <span data-view-component="true">
+  <clipboard-copy data-copy-feedback="Copied!" aria-label="Copy" value="companion/tests/acp-initialize-version.test.ts" data-view-component="true" class="Link--onHover color-fg-muted ml-2 tmp-ml-2 mr-2 tmp-mr-2">
+      <svg></svg>
+      <svg></svg>
+</clipboard-copy>  <div aria-live="polite" aria-atomic="true" class="sr-only" data-clipboard-copy-feedback=""></div>
+</span>
+</span>
+
+
+        
+      </div>
+
+      <div class="file-actions pt-0 mb-md-0 mb-2 ml-md-2 flex-shrink-0 flex-md-justify-end">
+        <div class="d-flex flex-justify-end">
+
+
+
+
+
+
+
+
+
+
+
+          
+
+          <details class="js-file-header-dropdown dropdown details-overlay details-reset pr-2 pl-2">
+            <summary class="height-full">
+              <div class="height-full d-flex flex-items-center Link--secondary">
+                <svg></svg>
+              </div>
+            </summary>
+            <details-menu class="dropdown-menu dropdown-menu-sw show-more-popover color-fg-default position-absolute f5" style="width:max-content; min-width:185px; z-index:99; right: -4px;">
+                            <label role="menuitemradio" class="dropdown-item btn-link text-normal d-block tmp-pl-5" tabindex="0" aria-checked="true">
+              <span class="position-absolute tmp-ml-n4"><svg></svg></span>
+              <input type="checkbox" checked="" class="d-none js-toggle-file-notes"></input>
+              Show comments
+            </label>
+
+                            <div role="none" class="dropdown-divider"></div>
+
+                              <a href="/nehcuh/cmspark/blob/06f3bf3fae687eebd518371be859379389642bc7/companion/tests/acp-initialize-version.test.ts" class="tmp-pl-5 dropdown-item btn-link" rel="nofollow" role="menuitem" data-ga-click="View file, click, location:files_changed_dropdown">
+   View file
+</a>
+
+
+                                    <button type="button" disabled="" role="menuitem" class="tmp-pl-5 dropdown-item btn-link" aria-label="You must be signed in and have push access to make changes.">
+      Edit file
+    </button>
+
+
+                                  <button type="button" disabled="" role="menuitem" class="tmp-pl-5 dropdown-item btn-link" aria-label="You must be signed in and have push access to delete this file.">
+    Delete file
+  </button>
+
+
+                            <div role="none" class="dropdown-divider"></div>
+
+                            <span data-target="copilot-diff-entry.menuItemsSlot"></span>
+
+                
+            </details-menu>
+          </details>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="js-file-content Details-content--hidden position-relative" data-hydro-view="{&quot;event_type&quot;:&quot;pull_request.select_diff_range&quot;,&quot;payload&quot;:{&quot;actor_id&quot;:null,&quot;pull_request_id&quot;:null,&quot;repository_id&quot;:null,&quot;diff_type&quot;:&quot;UNIFIED&quot;,&quot;whitespace_ignored&quot;:false,&quot;originating_url&quot;:&quot;https://github.com/nehcuh/cmspark/compare/file-list?range=30f4aa867ca1b9970f0fa4d72fc993a13af49972..06f3bf3fae687eebd518371be859379389642bc7&quot;,&quot;user_id&quot;:null}}" data-hydro-view-hmac="22ba6f10b685bc9c806d5c1b75fa07af42a6eb8632d2ee0621b861d34d19e683">
+      
+
+          <div class="data highlight js-blob-wrapper js-check-hidden-unicode
+            
+            ">
+            
+
+
+
+
+              
+              <table class=" diff-table js-diff-table tab-size  " data-tab-size="4" data-diff-anchor="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" data-paste-markdown-skip="">
+                <thead class="sr-only">
+                  <tr>
+                      <th scope="col">Original file line number</th>
+                      <th scope="col">Diff line number</th>
+                      <th scope="col">Diff line change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                      
+      <tr class="js-expandable-line js-skip-tagsearch" data-position="0">
+    <td class="blob-num blob-num-expandable" colspan="2">
+          <a href="#diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" id="expand-up-link-0-diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" class="js-expand directional-expander single-expander" aria-label="Expand Up" data-url="/nehcuh/cmspark/blob_excerpt/00f7dc669353ac33b1a801e3bbd6006545d4f244?diff=unified&amp;direction=up&amp;in_wiki_context&amp;last_left&amp;last_right&amp;left=6&amp;left_hunk_size=6&amp;mode=100644&amp;path=companion%2Ftests%2Facp-initialize-version.test.ts&amp;right=6&amp;right_hunk_size=31" data-left-range="1-5" data-right-range="1-5">
+            <svg></svg>
+          </a>
+          <tool-tip id="tooltip-b1101503-9e86-421e-b76e-6093d6d6a9ec" for="expand-up-link-0-diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" popover="manual" data-direction="ne" data-type="label" data-view-component="true" class="sr-only position-absolute">Expand Up</tool-tip>
+    </td>
+    <td class="blob-code blob-code-inner blob-code-hunk">@@ -6,6 +6,31 @@ import type { ChildProcessWithoutNullStreams } from &quot;node:child_process&quot;</td>
+  </tr>
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcL6" data-line-number="6" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR6" data-line-number="6" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><span class="pl-k">import</span> <span class="pl-c1">*</span> <span class="pl-k">as</span> <span class="pl-s1">winSpawn</span> <span class="pl-k">from</span> <span class="pl-s">&quot;../src/acp/win-spawn&quot;</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcL7" data-line-number="7" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR7" data-line-number="7" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><span class="pl-k">import</span> <span class="pl-kos">{</span> <span class="pl-s1">tryStartProtocolSession</span> <span class="pl-kos">}</span> <span class="pl-k">from</span> <span class="pl-s">&quot;../src/acp/protocol-session&quot;</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcL8" data-line-number="8" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR8" data-line-number="8" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><span class="pl-k">import</span> <span class="pl-kos">{</span> <span class="pl-v">JsonRpcStdioClient</span><span class="pl-kos">,</span> <span class="pl-s1">tryAcpInitialize</span> <span class="pl-kos">}</span> <span class="pl-k">from</span> <span class="pl-s">&quot;../src/acp/jsonrpc-stdio&quot;</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR9" data-line-number="9" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+"><span class="pl-k">import</span> <span class="pl-kos">{</span> <span class="pl-s1">version</span> <span class="pl-k">as</span> <span class="pl-s1">companionVersion</span> <span class="pl-kos">}</span> <span class="pl-k">from</span> <span class="pl-s">&quot;../package.json&quot;</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR10" data-line-number="10" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+"><br></br></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR11" data-line-number="11" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+"><span class="pl-en">test</span><span class="pl-kos">(</span><span class="pl-s">&quot;ACP v1 initialize advertises exact denied client capabilities on actual JSON-RPC stdio&quot;</span><span class="pl-kos">,</span> <span class="pl-k">async</span> <span class="pl-s1">t</span> <span class="pl-c1">=&gt;</span> <span class="pl-kos">{</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR12" data-line-number="12" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-c">// Actual production helper + encoder, with only inert owned streams as transport.</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR13" data-line-number="13" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-c">// A request capture is not proof of a real Agent&#x27;s compatibility or execution.</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR14" data-line-number="14" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-k">const</span> <span class="pl-s1">child</span> <span class="pl-c1">=</span> <span class="pl-k">new</span> <span class="pl-v">EventEmitter</span><span class="pl-kos">(</span><span class="pl-kos">)</span> <span class="pl-k">as</span> <span class="pl-smi">ChildProcessWithoutNullStreams</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR15" data-line-number="15" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-k">const</span> <span class="pl-s1">stdout</span> <span class="pl-c1">=</span> <span class="pl-k">new</span> <span class="pl-v">PassThrough</span><span class="pl-kos">(</span><span class="pl-kos">)</span><span class="pl-kos">,</span> <span class="pl-s1">stderr</span> <span class="pl-c1">=</span> <span class="pl-k">new</span> <span class="pl-v">PassThrough</span><span class="pl-kos">(</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR16" data-line-number="16" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-k">const</span> <span class="pl-s1">captured</span>: <span class="pl-smi">unknown</span><span class="pl-kos">[</span><span class="pl-kos">]</span> <span class="pl-c1">=</span> <span class="pl-kos">[</span><span class="pl-kos">]</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR17" data-line-number="17" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-k">const</span> <span class="pl-s1">result</span> <span class="pl-c1">=</span> <span class="pl-kos">{</span> <span class="pl-c1">protocolVersion</span>: <span class="pl-c1">1</span><span class="pl-kos">,</span> <span class="pl-c1">agentCapabilities</span>: <span class="pl-kos">{</span><span class="pl-kos">}</span><span class="pl-kos">,</span> <span class="pl-c1">authMethods</span>: <span class="pl-kos">[</span><span class="pl-kos">]</span> <span class="pl-kos">}</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR18" data-line-number="18" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-k">const</span> <span class="pl-s1">stdin</span> <span class="pl-c1">=</span> <span class="pl-k">new</span> <span class="pl-v">Writable</span><span class="pl-kos">(</span><span class="pl-kos">{</span> <span class="pl-en">write</span><span class="pl-kos">(</span><span class="pl-s1">chunk</span><span class="pl-kos">,</span> <span class="pl-s1">_encoding</span><span class="pl-kos">,</span> <span class="pl-s1">done</span><span class="pl-kos">)</span> <span class="pl-kos">{</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR19" data-line-number="19" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">    <span class="pl-k">const</span> <span class="pl-s1">request</span> <span class="pl-c1">=</span> <span class="pl-c1">JSON</span><span class="pl-kos">.</span><span class="pl-en">parse</span><span class="pl-kos">(</span><span class="pl-v">String</span><span class="pl-kos">(</span><span class="pl-s1">chunk</span><span class="pl-kos">)</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR20" data-line-number="20" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">    <span class="pl-s1">captured</span><span class="pl-kos">.</span><span class="pl-en">push</span><span class="pl-kos">(</span><span class="pl-s1">request</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR21" data-line-number="21" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">    <span class="pl-en">queueMicrotask</span><span class="pl-kos">(</span><span class="pl-kos">(</span><span class="pl-kos">)</span> <span class="pl-c1">=&gt;</span> <span class="pl-s1">stdout</span><span class="pl-kos">.</span><span class="pl-en">write</span><span class="pl-kos">(</span><span class="pl-c1">JSON</span><span class="pl-kos">.</span><span class="pl-en">stringify</span><span class="pl-kos">(</span><span class="pl-kos">{</span> <span class="pl-c1">jsonrpc</span>: <span class="pl-s">&quot;2.0&quot;</span><span class="pl-kos">,</span> <span class="pl-c1">id</span>: <span class="pl-s1">request</span><span class="pl-kos">.</span><span class="pl-c1">id</span><span class="pl-kos">,</span> result <span class="pl-kos">}</span><span class="pl-kos">)</span> <span class="pl-c1">+</span> <span class="pl-s">&quot;\n&quot;</span><span class="pl-kos">)</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR22" data-line-number="22" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">    <span class="pl-en">done</span><span class="pl-kos">(</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR23" data-line-number="23" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-kos">}</span> <span class="pl-kos">}</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR24" data-line-number="24" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-v">Object</span><span class="pl-kos">.</span><span class="pl-en">assign</span><span class="pl-kos">(</span><span class="pl-s1">child</span><span class="pl-kos">,</span> <span class="pl-kos">{</span> stdin<span class="pl-kos">,</span> stdout<span class="pl-kos">,</span> stderr<span class="pl-kos">,</span> <span class="pl-c1">pid</span>: <span class="pl-c1">undefined</span><span class="pl-kos">,</span> <span class="pl-c1">exitCode</span>: <span class="pl-c1">null</span><span class="pl-kos">,</span> <span class="pl-c1">signalCode</span>: <span class="pl-c1">null</span> <span class="pl-kos">}</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR25" data-line-number="25" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-k">const</span> <span class="pl-s1">client</span> <span class="pl-c1">=</span> <span class="pl-k">new</span> <span class="pl-v">JsonRpcStdioClient</span><span class="pl-kos">(</span><span class="pl-s1">child</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR26" data-line-number="26" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-s1">t</span><span class="pl-kos">.</span><span class="pl-en">after</span><span class="pl-kos">(</span><span class="pl-kos">(</span><span class="pl-kos">)</span> <span class="pl-c1">=&gt;</span> <span class="pl-kos">{</span> <span class="pl-s1">client</span><span class="pl-kos">.</span><span class="pl-en">shutdown</span><span class="pl-kos">(</span><span class="pl-kos">)</span><span class="pl-kos">;</span> <span class="pl-s1">stdin</span><span class="pl-kos">.</span><span class="pl-en">destroy</span><span class="pl-kos">(</span><span class="pl-kos">)</span><span class="pl-kos">;</span> <span class="pl-s1">stdout</span><span class="pl-kos">.</span><span class="pl-en">destroy</span><span class="pl-kos">(</span><span class="pl-kos">)</span><span class="pl-kos">;</span> <span class="pl-s1">stderr</span><span class="pl-kos">.</span><span class="pl-en">destroy</span><span class="pl-kos">(</span><span class="pl-kos">)</span> <span class="pl-kos">}</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR27" data-line-number="27" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-s1">assert</span><span class="pl-kos">.</span><span class="pl-en">deepEqual</span><span class="pl-kos">(</span><span class="pl-k">await</span> <span class="pl-en">tryAcpInitialize</span><span class="pl-kos">(</span><span class="pl-s1">client</span><span class="pl-kos">,</span> <span class="pl-c1">1234</span><span class="pl-kos">)</span><span class="pl-kos">,</span> <span class="pl-kos">{</span> <span class="pl-c1">ok</span>: <span class="pl-c1">true</span><span class="pl-kos">,</span> result <span class="pl-kos">}</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR28" data-line-number="28" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-s1">assert</span><span class="pl-kos">.</span><span class="pl-en">deepEqual</span><span class="pl-kos">(</span><span class="pl-s1">captured</span><span class="pl-kos">,</span> <span class="pl-kos">[</span><span class="pl-kos">{</span> <span class="pl-c1">jsonrpc</span>: <span class="pl-s">&quot;2.0&quot;</span><span class="pl-kos">,</span> <span class="pl-c1">id</span>: <span class="pl-c1">1</span><span class="pl-kos">,</span> <span class="pl-c1">method</span>: <span class="pl-s">&quot;initialize&quot;</span><span class="pl-kos">,</span> <span class="pl-c1">params</span>: <span class="pl-kos">{</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR29" data-line-number="29" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">    <span class="pl-c1">protocolVersion</span>: <span class="pl-c1">1</span><span class="pl-kos">,</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR30" data-line-number="30" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">    <span class="pl-c1">clientInfo</span>: <span class="pl-kos">{</span> <span class="pl-c1">name</span>: <span class="pl-s">&quot;cmspark&quot;</span><span class="pl-kos">,</span> <span class="pl-c1">version</span>: <span class="pl-s1">companionVersion</span> <span class="pl-kos">}</span><span class="pl-kos">,</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR31" data-line-number="31" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">    <span class="pl-c1">clientCapabilities</span>: <span class="pl-kos">{</span> <span class="pl-c1">fs</span>: <span class="pl-kos">{</span> <span class="pl-c1">readTextFile</span>: <span class="pl-c1">false</span><span class="pl-kos">,</span> <span class="pl-c1">writeTextFile</span>: <span class="pl-c1">false</span> <span class="pl-kos">}</span><span class="pl-kos">,</span> <span class="pl-c1">terminal</span>: <span class="pl-c1">false</span> <span class="pl-kos">}</span><span class="pl-kos">,</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR32" data-line-number="32" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">  <span class="pl-kos">}</span> <span class="pl-kos">}</span><span class="pl-kos">]</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR33" data-line-number="33" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+"><span class="pl-kos">}</span><span class="pl-kos">)</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcL9" data-line-number="9" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR34" data-line-number="34" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><br></br></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcL10" data-line-number="10" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR35" data-line-number="35" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><span class="pl-c">// The request seam below invokes the complete production initialize helper;</span></span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="cf5268d4b05bc43e2e61cf27d2629e967e1566c5142fa5674f348d9ade051734" class="show-top-border">
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcL11" data-line-number="11" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bcR36" data-line-number="36" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><span class="pl-c">// owned stdio + protocol-session lifecycle is also exercised in the peer gate.</span></span></td>
+</tr>
+
+
+
+
+  <tr class="js-expandable-line js-skip-tagsearch" data-position="">
+    <td class="blob-num blob-num-expandable" colspan="2">
+          <a href="#diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" id="expand-down-link--diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" class="js-expand directional-expander single-expander" aria-label="Expand Down" data-url="/nehcuh/cmspark/blob_excerpt/00f7dc669353ac33b1a801e3bbd6006545d4f244?diff=unified&amp;direction=down&amp;in_wiki_context&amp;last_left=11&amp;last_right=36&amp;left=177&amp;left_hunk_size&amp;mode=100644&amp;path=companion%2Ftests%2Facp-initialize-version.test.ts&amp;right=177&amp;right_hunk_size" data-left-range="12-176" data-right-range="37-176">
+            <svg></svg>
+          </a>
+          <tool-tip id="tooltip-047d0d27-bf9c-43e4-85f5-08b7bc5924b7" for="expand-down-link--diff-8e1b57a44491a639654e09d67c98686302f71a2cadab0ceb2786f26f92b624bc" popover="manual" data-direction="ne" data-type="label" data-view-component="true" class="sr-only position-absolute">Expand Down</tool-tip>
+    </td>
+    <td class="blob-code blob-code-inner blob-code-hunk"></td>
+  </tr>
+
+
+                </tbody>
+              </table>
+
+          </div>
+
+    </div>
+  </div>
+</copilot-diff-entry>
+
+      <copilot-diff-entry data-file-path="docs/code-review-workflow.md">
+  <div id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" data-details-container-group="file" class="file js-file js-details-container js-targetable-element show-inline-notes Details
+               Details--on open
+               soft-wrap
+               file-type-prose
+              
+              
+              
+              " data-file-type=".md" data-file-deleted="false" data-tagsearch-path="docs/code-review-workflow.md" data-targets="diff-file-filter.diffEntries">
+    <div class="file-header d-flex flex-md-row flex-column flex-md-items-center file-header--expandable js-file-header js-skip-tagsearch" data-path="docs/code-review-workflow.md" data-short-path="51e8e13" data-anchor="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" data-file-type=".md" data-file-deleted="false">
+      <div class="file-info flex-auto min-width-0 mb-md-0 mb-2">
+        <button type="button" class="btn-octicon js-details-target" aria-label="Toggle diff contents" aria-expanded="true" style="width: 22px;">
+  <svg></svg>
+  <svg></svg>
+</button>
+
+
+          <div class="js-expand-full-wrapper d-inline-block">
+            <button type="button" class="btn-link color-fg-muted no-underline js-expand-full directional-expander tooltipped tooltipped-se" aria-label="Expand all" data-url="/nehcuh/cmspark/blob_expand/a097cd194dfd59d759a45cffa500d2e49e8ec785?anchor=diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2&amp;diff=unified&amp;direction=full&amp;mode=100644&amp;path=docs%2Fcode-review-workflow.md">
+              <svg></svg>
+            </button>
+            <button type="button" class="btn-link color-fg-muted no-underline js-collapse-diff tooltipped tooltipped-se" aria-label="Collapse expanded lines" hidden="">
+              <svg></svg>
+            </button>
+          </div>
+
+
+          <span class="sr-only">
+            8 changes: 5 additions &amp; 3 deletions
+          </span>
+          <span class="diffstat" aria-hidden="true">8 <span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-added"></span><span class="diffstat-block-deleted"></span><span class="diffstat-block-neutral"></span></span>
+
+        
+<span class="Truncate">
+  <a title="docs/code-review-workflow.md" class="Link--primary Truncate-text" href="#diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2">docs/code-review-workflow.md</a>
+
+  <span data-view-component="true">
+  <clipboard-copy data-copy-feedback="Copied!" aria-label="Copy" value="docs/code-review-workflow.md" data-view-component="true" class="Link--onHover color-fg-muted ml-2 tmp-ml-2 mr-2 tmp-mr-2">
+      <svg></svg>
+      <svg></svg>
+</clipboard-copy>  <div aria-live="polite" aria-atomic="true" class="sr-only" data-clipboard-copy-feedback=""></div>
+</span>
+</span>
+
+
+        
+      </div>
+
+      <div class="file-actions pt-0 mb-md-0 mb-2 ml-md-2 flex-shrink-0 flex-md-justify-end">
+        <div class="d-flex flex-justify-end">
+
+
+
+
+
+
+
+
+            <span class="BtnGroup min-width-0 flex-self-center">
+                <form class="BtnGroup-parent js-prose-diff-toggle-form" data-turbo="false" action="/nehcuh/cmspark/diffs/3?name=main&amp;sha1=30f4aa867ca1b9970f0fa4d72fc993a13af49972&amp;sha2=06f3bf3fae687eebd518371be859379389642bc7&amp;source=true&amp;w=false" accept-charset="UTF-8" method="get">                  <button class="btn btn-sm BtnGroup-item tooltipped tooltipped-s source js-source selected" aria-current="true" aria-label="Display the source diff" type="submit" data-disable-with="">
+                          <svg></svg>
+                  </button>
+</form>                  <form class="BtnGroup-parent js-prose-diff-toggle-form" data-turbo="false" action="/nehcuh/cmspark/diffs/3?name=main&amp;sha1=30f4aa867ca1b9970f0fa4d72fc993a13af49972&amp;sha2=06f3bf3fae687eebd518371be859379389642bc7&amp;short_path=51e8e13&amp;w=false" accept-charset="UTF-8" method="get">                    <button class="btn btn-sm BtnGroup-item tooltipped tooltipped-s rendered js-rendered" aria-label="Display the rich diff" type="submit" data-disable-with="">
+                            <svg></svg>
+                    </button>
+</form>            </span>
+
+
+
+          
+
+          <details class="js-file-header-dropdown dropdown details-overlay details-reset pr-2 pl-2">
+            <summary class="height-full">
+              <div class="height-full d-flex flex-items-center Link--secondary">
+                <svg></svg>
+              </div>
+            </summary>
+            <details-menu class="dropdown-menu dropdown-menu-sw show-more-popover color-fg-default position-absolute f5" style="width:max-content; min-width:185px; z-index:99; right: -4px;">
+                            <label role="menuitemradio" class="dropdown-item btn-link text-normal d-block tmp-pl-5" tabindex="0" aria-checked="true">
+              <span class="position-absolute tmp-ml-n4"><svg></svg></span>
+              <input type="checkbox" checked="" class="d-none js-toggle-file-notes"></input>
+              Show comments
+            </label>
+
+                            <div role="none" class="dropdown-divider"></div>
+
+                              <a href="/nehcuh/cmspark/blob/06f3bf3fae687eebd518371be859379389642bc7/docs/code-review-workflow.md" class="tmp-pl-5 dropdown-item btn-link" rel="nofollow" role="menuitem" data-ga-click="View file, click, location:files_changed_dropdown">
+   View file
+</a>
+
+
+                                    <button type="button" disabled="" role="menuitem" class="tmp-pl-5 dropdown-item btn-link" aria-label="You must be signed in and have push access to make changes.">
+      Edit file
+    </button>
+
+
+                                  <button type="button" disabled="" role="menuitem" class="tmp-pl-5 dropdown-item btn-link" aria-label="You must be signed in and have push access to delete this file.">
+    Delete file
+  </button>
+
+
+                            <div role="none" class="dropdown-divider"></div>
+
+                            <span data-target="copilot-diff-entry.menuItemsSlot"></span>
+
+                
+            </details-menu>
+          </details>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="js-file-content Details-content--hidden position-relative" data-hydro-view="{&quot;event_type&quot;:&quot;pull_request.select_diff_range&quot;,&quot;payload&quot;:{&quot;actor_id&quot;:null,&quot;pull_request_id&quot;:null,&quot;repository_id&quot;:null,&quot;diff_type&quot;:&quot;UNIFIED&quot;,&quot;whitespace_ignored&quot;:false,&quot;originating_url&quot;:&quot;https://github.com/nehcuh/cmspark/compare/file-list?range=30f4aa867ca1b9970f0fa4d72fc993a13af49972..06f3bf3fae687eebd518371be859379389642bc7&quot;,&quot;user_id&quot;:null}}" data-hydro-view-hmac="22ba6f10b685bc9c806d5c1b75fa07af42a6eb8632d2ee0621b861d34d19e683">
+      
+
+          <div class="data highlight js-blob-wrapper js-check-hidden-unicode
+            
+            ">
+            
+
+
+
+
+              
+              <table class=" diff-table js-diff-table tab-size  " data-tab-size="4" data-diff-anchor="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" data-paste-markdown-skip="">
+                <thead class="sr-only">
+                  <tr>
+                      <th scope="col">Original file line number</th>
+                      <th scope="col">Diff line number</th>
+                      <th scope="col">Diff line change</th>
+                  </tr>
+                </thead>
+                  <colgroup>
+                    <col width="40"></col>
+                    <col width="40"></col>
+                    <col></col>
+                  </colgroup>
+                <tbody>
+                      
+      <tr class="js-expandable-line js-skip-tagsearch" data-position="0">
+    <td class="blob-num blob-num-expandable" colspan="2">
+          <a href="#diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" id="expand-up-link-0-diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" class="js-expand directional-expander single-expander" aria-label="Expand Up" data-url="/nehcuh/cmspark/blob_excerpt/a097cd194dfd59d759a45cffa500d2e49e8ec785?diff=unified&amp;direction=up&amp;in_wiki_context&amp;last_left&amp;last_right&amp;left=9&amp;left_hunk_size=9&amp;mode=100644&amp;path=docs%2Fcode-review-workflow.md&amp;right=9&amp;right_hunk_size=11" data-left-range="1-8" data-right-range="1-8">
+            <svg></svg>
+          </a>
+          <tool-tip id="tooltip-ebb108d8-5336-4e97-ab85-bcddf1e7018f" for="expand-up-link-0-diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" popover="manual" data-direction="ne" data-type="label" data-view-component="true" class="sr-only position-absolute">Expand Up</tool-tip>
+    </td>
+    <td class="blob-code blob-code-inner blob-code-hunk">@@ -9,9 +9,11 @@</td>
+  </tr>
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2L9" data-line-number="9" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R9" data-line-number="9" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">   比较基线和目标提交。使用完整 40/64 位小写 SHA；PR 三点比较应使用实际</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2L10" data-line-number="10" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R10" data-line-number="10" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">   merge-base 作为基线，不直接把分支当前值当成基线。</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2L11" data-line-number="11" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R11" data-line-number="11" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><span class="pl-s">2</span><span class="pl-v">.</span> 在已登录代码平台打开 unified/raw diff 页面，让 CMspark 使用</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2L12" data-line-number="12" class="blob-num blob-num-deletion js-linkable-line-number"></td>
+
+    <td class="blob-num blob-num-deletion empty-cell"></td>
+
+  <td class="blob-code blob-code-deletion  js-file-line">
+    <span class="blob-code-inner blob-code-marker js-skip-tagsearch" data-code-marker="-">   <span class="pl-s">`</span><span class="pl-c1">get_page_text</span><span class="pl-s">`</span> 读取。当前适配 Git unified text diff 的普通文本文件增删改；</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2L13" data-line-number="13" class="blob-num blob-num-deletion js-linkable-line-number"></td>
+
+    <td class="blob-num blob-num-deletion empty-cell"></td>
+
+  <td class="blob-code blob-code-deletion  js-file-line">
+    <span class="blob-code-inner blob-code-marker js-skip-tagsearch" data-code-marker="-">   split view、重命名、二进制、combined diff、折叠/分页/虚拟化页面尚未获得</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2L14" data-line-number="14" class="blob-num blob-num-deletion js-linkable-line-number"></td>
+
+    <td class="blob-num blob-num-deletion empty-cell"></td>
+
+  <td class="blob-code blob-code-deletion  js-file-line">
+    <span class="blob-code-inner blob-code-marker js-skip-tagsearch" data-code-marker="-">   平台适配和全量覆盖证明。解析失败会明确返回错误，不能用代码链接代替差异。</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R12" data-line-number="12" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">   <span class="pl-s">`</span><span class="pl-c1">get_page_text</span><span class="pl-s">`</span> 读取。当前适配 Git unified text diff 的普通文本文件增删改，</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R13" data-line-number="13" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">   以及带完整变更 hunks、明确且未加引号的文本重命名（保留旧/新路径）。</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R14" data-line-number="14" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">   纯重命名、copy、带引号路径、二进制、combined diff 仍不支持；split view、</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R15" data-line-number="15" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">   折叠/分页/虚拟化页面也尚未获得平台适配和全量覆盖证明。即使解析成功，</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td class="blob-num blob-num-addition empty-cell"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R16" data-line-number="16" class="blob-num blob-num-addition js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-addition  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker="+">   网页比较语义和全量覆盖仍未核实。解析失败会明确返回错误，不能用代码链接代替差异。</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2L15" data-line-number="15" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R17" data-line-number="17" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" "><span class="pl-s">3</span><span class="pl-v">.</span> 用 <span class="pl-s">`</span><span class="pl-c1">code_review_create</span><span class="pl-s">`</span> 引用同一次网页观察中的实际 diff，指定仓库、base、</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2L16" data-line-number="16" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R18" data-line-number="18" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">   head，并选择需求、真实开发任务、测试的观察引用（<span class="pl-s">`</span><span class="pl-c1">business_context</span><span class="pl-s">`</span>）。</span></td>
+</tr>
+
+
+
+
+    <tr data-hunk="abdd8865dd574df80f93c53460d54bcd02f3563e46c15c89ddfd6a5c901a1fd9" class="show-top-border">
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2L17" data-line-number="17" class="blob-num blob-num-context js-linkable-line-number"></td>
+
+    <td id="diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2R19" data-line-number="19" class="blob-num blob-num-context js-linkable-line-number js-blob-rnum"></td>
+
+  <td class="blob-code blob-code-context  js-file-line">
+    <span class="blob-code-inner blob-code-marker " data-code-marker=" ">   如需材料补充输出，一并指定已稳定的草稿编号和版本（<span class="pl-s">`</span><span class="pl-c1">materials</span><span class="pl-s">`</span>）。</span></td>
+</tr>
+
+
+
+
+  <tr class="js-expandable-line js-skip-tagsearch" data-position="">
+    <td class="blob-num blob-num-expandable" colspan="2">
+          <a href="#diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" id="expand-down-link--diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" class="js-expand directional-expander single-expander" aria-label="Expand Down" data-url="/nehcuh/cmspark/blob_excerpt/a097cd194dfd59d759a45cffa500d2e49e8ec785?diff=unified&amp;direction=down&amp;in_wiki_context&amp;last_left=17&amp;last_right=19&amp;left=67&amp;left_hunk_size&amp;mode=100644&amp;path=docs%2Fcode-review-workflow.md&amp;right=67&amp;right_hunk_size" data-left-range="18-66" data-right-range="20-66">
+            <svg></svg>
+          </a>
+          <tool-tip id="tooltip-6961229f-5a42-4997-bf0a-37bf5028d157" for="expand-down-link--diff-51e8e1322454f45c50290a23cff6f5749ffd84769ad096d38ea25cd9077404a2" popover="manual" data-direction="ne" data-type="label" data-view-component="true" class="sr-only position-absolute">Expand Down</tool-tip>
+    </td>
+    <td class="blob-code blob-code-inner blob-code-hunk"></td>
+  </tr>
+
+
+                </tbody>
+              </table>
+
+          </div>
+
+    </div>
+  </div>
+</copilot-diff-entry>
+
+</div>
+
+
+</div>
+
+<button type="button" class="js-toggle-all-file-notes" data-hotkey="i" style="display:none">Toggle all file notes</button>
+
+<button type="button" class="js-toggle-all-file-annotations" data-hotkey="a" style="display:none">Toggle all file annotations</button>
+
+<svg></svg>
+
+
+  </div>
+</div>
+</div></div></body></html>
