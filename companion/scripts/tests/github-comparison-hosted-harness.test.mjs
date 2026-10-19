@@ -429,7 +429,7 @@ test('actual CDP evaluate and connection accept only supplied remaining time whi
  const code=harness.slice(harness.indexOf('class CDP {'),harness.indexOf('async function stopped('));let budget,terminated=0
  const c={Map,Error,Math,BOUNDS,limit(p,ms){budget=ms;return p},once:()=>Promise.reject(Error('INERT_CONNECT')),refusal(){throw Error('REFUSED')}}
  vm.createContext(c);vm.runInContext(harness.slice(harness.indexOf('function deferred()'),harness.indexOf('function limit('))+code+'\nthis.CDP=CDP',c)
- class Socket{terminate(){terminated++}}
+ class Socket extends EventEmitter{terminate(){terminated++}}
  await assert.rejects(()=>c.CDP.connect(Socket,'INERT',321));assert.equal(budget,321);assert.equal(terminated,1)
  let message;const socket={on(){},send(text){message=JSON.parse(text)},close(){},terminate(){}}
  const client=new c.CDP(socket),first=client.evaluate('true',true,123);assert.equal(budget,123);assert.equal(message.params.awaitPromise,true);client.abort();await assert.rejects(first)
@@ -491,8 +491,8 @@ async function actualOperationWorker464(mode){
  const chrome={runtime:{onInstalled:{addListener(){}}},tabs:{async create(options){created++;assert.equal(options.url,'about:blank');if(mode==='CREATE')throw Error('PRIVATE_CREATE');return{id:41}}},debugger:{async getTargets(){targetCalls++;return mode==='TARGET'?[]:[{id:'OWNED-TARGET',tabId:41,type:'page',url:'about:blank'}]}}}
  const wc={BrowserBridge:class{},PageSanitizer:class{},WSClient:class{},chrome};vm.createContext(wc)
  vm.runInContext(ts.transpileModule(worker.replace(/^import .+$/gm,''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText,wc)
- const realWorker={async evaluate(expression){if(mode==='API'&&expression.startsWith('typeof'))return'undefined';return await vm.runInContext(expression,wc)}}
- const c={stage:'CHROMIUM',cases:0,runtime:{},chromiumStartup:undefined,xvfbStartup:undefined,Date:{now:()=>now},Math,URL,Number,assert,endpoint:'http://127.0.0.1:1',AbortSignal:{timeout(){return{}}},remaining:()=>120000,profileRead:false,cleanupOkay:true,active:new Set(),parts:['1'],WebSocket:class{},
+ const realWorker={async workerScriptReady(){return true},async evaluate(expression){if(mode==='API'&&expression.startsWith('typeof'))return'undefined';return await vm.runInContext(expression,wc)}}
+ const c={BOUNDS,stage:'CHROMIUM',cases:0,runtime:{},chromiumStartup:undefined,xvfbStartup:undefined,Date:{now:()=>now},Math,URL,Number,assert,endpoint:'http://127.0.0.1:1',AbortSignal:{timeout(){return{}}},remaining:()=>120000,profileRead:false,cleanupOkay:true,active:new Set(),parts:['1'],WebSocket:class{},
   async fetch(){if(mode==='FETCH')throw Error('PRIVATE_FETCH');return{async json(){if(mode==='PARSE')throw Error('PRIVATE_PARSE');return mode==='MISSING'?[]:[{type:'service_worker',url:'chrome-extension://'+'a'.repeat(32)+'/worker.js',webSocketDebuggerUrl:'ws://127.0.0.1/OWNED'}]}}},
   setTimeout(f){now+=10001;f()},CDP:{async connect(){if(mode==='CONNECT')throw Error('PRIVATE_CONNECT');return realWorker}},console:{log(text){c.out=JSON.parse(text)}}}
  vm.createContext(c);vm.runInContext(harness.slice(harness.indexOf('const STAGES ='),harness.indexOf('\nfunction deferred()')).replace('export function','function'),c)
@@ -551,4 +551,83 @@ test('actual main preflight catch attaches finite operation without process or o
  const c={process:{env:{},platform:'linux'},BOUNDS,preflight,receipt,clearTimeout,console:{log:s=>{printed=JSON.parse(s)}},spawn:forbidden,fs:{mkdtempSync:forbidden}}
  vm.createContext(c);vm.runInContext(harness.slice(a,b).replace('export async function','async function'),c)
  assert.equal(await c.main(),1);assert.equal(printed.acceptanceOperation,'PREFLIGHT');assert.equal(printed.passed,false);assert.equal(effects,0)
+})
+
+
+// Worker entry evaluation can finish after its inspectable target is connected.
+function actualWorkerScriptClient464(reply=()=>({})) {
+ const sockets=[],timers=new Map();let timerId=0
+ class Socket extends EventEmitter {
+  constructor(){super();sockets.push(this)}
+  send(text){const message=JSON.parse(text);this.emit('message',Buffer.from(JSON.stringify({id:message.id,result:reply(message)})))}
+  terminate(){this.emit('close')}
+  close(){this.emit('close')}
+ }
+ const c={Map,Error,BOUNDS,once,refusal(code){throw Error(code)},setTimeout(fn,ms){timers.set(++timerId,{fn,ms});return timerId},clearTimeout(id){timers.delete(id)}}
+ vm.createContext(c)
+ vm.runInContext(harness.slice(harness.indexOf('function deferred()'),harness.indexOf('async function waitForFile('))+'\n'+harness.slice(harness.indexOf('class CDP {'),harness.indexOf('function cleanupRemaining('))+'\nthis.CDP=CDP',c)
+ return{CDP:c.CDP,Socket,sockets,timers,loaded(socket){socket.emit('message',Buffer.from(JSON.stringify({method:'Inspector.workerScriptLoaded',params:{}})))}}
+}
+const workerScriptFlush464=async()=>{for(let i=0;i<20;i++)await Promise.resolve()}
+test('actual CDP captures script-completion notification before connect continuation',async()=>{
+ const a=actualWorkerScriptClient464(),connecting=a.CDP.connect(a.Socket,'ws://OWNED')
+ assert.equal(a.sockets.length,1);a.sockets[0].emit('open');a.loaded(a.sockets[0])
+ const client=await connecting;assert.equal(await client.workerScriptReady(40),true);assert.equal(a.timers.size,0)
+ client.abort();await assert.rejects(()=>client.workerScriptReady(40),/CDP_CLOSED/)
+})
+test('actual worker readiness waits only for its own script-completion event',async()=>{
+ const a=actualWorkerScriptClient464(),socket=new a.Socket(),client=new a.CDP(socket);let outcome='pending'
+ const waiting=client.workerScriptReady(40).then(()=>{outcome='ready'})
+ socket.emit('message',Buffer.from(JSON.stringify({method:'Runtime.executionContextCreated',params:{}})))
+ await workerScriptFlush464();assert.equal(outcome,'pending');assert.equal(a.timers.size,1)
+ a.loaded(socket);await waiting;assert.equal(outcome,'ready');assert.equal(a.timers.size,0);assert.equal(client.workerWaiter,undefined)
+})
+test('actual worker readiness closes, aborts and times out without leaving a waiter or late success',async()=>{
+ for(const kind of ['close','abort','timeout']){
+  const a=actualWorkerScriptClient464(),socket=new a.Socket(),client=new a.CDP(socket)
+  const promise=client.workerScriptReady(40),rejected=assert.rejects(promise)
+  if(kind==='close')socket.emit('close');else if(kind==='abort')client.abort();else{const timer=[...a.timers.values()].find(x=>x.ms===40);assert.ok(timer);timer.fn()}
+  await rejected;assert.equal(a.timers.size,0);assert.equal(client.workerWaiter,undefined)
+  a.loaded(socket);await assert.rejects(promise)
+ }
+})
+test('actual worker readiness refuses invalid and duplicate pending budgets without extra waits',async()=>{
+ const a=actualWorkerScriptClient464(),socket=new a.Socket(),client=new a.CDP(socket)
+ for(const ms of [undefined,0,-1,NaN,Infinity,0.5,60001])await assert.rejects(()=>client.workerScriptReady(ms),/INVALID_WORKER_READY_BUDGET/)
+ assert.equal(a.timers.size,0)
+ const waiting=client.workerScriptReady(40);await assert.rejects(()=>client.workerScriptReady(40),/WORKER_READY_ALREADY_PENDING/);assert.equal(a.timers.size,1)
+ a.loaded(socket);await waiting;assert.equal(a.timers.size,0)
+})
+async function actualWorkerEntryOrder464(mode){
+ const realm=vm.createContext({});let evaluations=0,apiBeforeLoaded=0,loaded=false,printed
+ const a=actualWorkerScriptClient464(message=>{
+  assert.equal(message.method,'Runtime.evaluate');evaluations++;if(!loaded)apiBeforeLoaded++
+  try{const value=vm.runInContext(message.params.expression,realm);return{result:{type:typeof value,value}}}
+  catch{return{exceptionDetails:{text:'INERT_ENTRY_NOT_EXECUTED'}}}
+ })
+ const c={BOUNDS,Date:{now:()=>0},Math,Number,URL,assert,stage:'CHROMIUM',operation:'CHROMIUM_CONNECT',cases:0,runtime:{},chromiumStartup:undefined,xvfbStartup:undefined,profileRead:false,cleanupOkay:true,remaining:()=>120000,endpoint:'http://127.0.0.1:1',parts:['1'],active:new Set(),WebSocket:a.Socket,CDP:a.CDP,AbortSignal:{timeout:()=>({})},refusal(code){throw Error(code)},receipt,console:{log(text){printed=JSON.parse(text)}},async fetch(){return{async json(){return[{type:'service_worker',url:'chrome-extension://'+'a'.repeat(32)+'/worker.js',webSocketDebuggerUrl:'ws://127.0.0.1/OWNED'}]}}}}
+ vm.createContext(c)
+ const start=harness.indexOf("    stage='WORKER'"),end=harness.indexOf("    operation='WORKER_CREATE'",start),ca=harness.indexOf('  } catch { /* Nothing'),cb=harness.indexOf('\n  finally {',ca),tail=harness.slice(harness.indexOf('  const out=receipt(stage'),harness.indexOf('\n}\nif(process.argv'))
+ const task=vm.runInContext('async function phase(){try{'+harness.slice(start,end)+'this.apiCheckCompleted=true;'+harness.slice(ca,cb)+'\n'+tail+'};phase()',c)
+ await workerScriptFlush464();assert.equal(a.sockets.length,1)
+ const finishScript=()=>{loaded=true;if(mode!=='missing-api')vm.runInContext('globalThis.cmspark464={configure(){return true}}',realm);a.loaded(a.sockets[0])}
+ if(mode==='cached'){loaded=true;vm.runInContext('globalThis.cmspark464={configure(){return true}}',realm)}
+ a.sockets[0].emit('open')
+ if(mode==='cached')a.loaded(a.sockets[0]);else{await workerScriptFlush464();assert.equal(evaluations,0);if(mode==='close')a.sockets[0].emit('close');else finishScript()}
+ const code=await task;assert.equal(code,1);assert.equal(printed.passed,false);assert.equal(printed.cases,0);assert.equal(printed.acceptanceOperation,mode==='late'||mode==='cached'?undefined:'WORKER_API');assert.equal(JSON.stringify(printed).includes('INERT_ENTRY'),false);assert.equal(a.timers.size,0)
+ return{apiCheckCompleted:c.apiCheckCompleted===true,evaluations,apiBeforeLoaded,printed}
+}
+test('actual WORKER API waits for script evaluation and still refuses a loaded script with no API',async()=>{
+ for(const mode of ['late','cached','missing-api','close']){
+  const r=await actualWorkerEntryOrder464(mode);assert.equal(r.apiCheckCompleted,mode==='late'||mode==='cached');assert.equal(r.apiBeforeLoaded,0);assert.equal(r.evaluations,mode==='close'?0:1)
+ }
+})
+test('actual WORKER readiness and API evaluation share the original60s and remaining outer budget',async()=>{
+ const start=harness.indexOf('    const workerApiDeadline='),end=harness.indexOf("    operation='WORKER_CREATE'",start);assert.ok(start>0&&end>start)
+ for(const [readyCost,evalCost,outer,expected]of [[40000,19999,120000,true],[40000,20000,120000,false],[25000,4999,30000,true],[25000,5000,30000,false],[60000,0,120000,false]]){
+  let now=0,readyBudget,evalBudget,evaluated=0
+  const c={BOUNDS,Date:{now:()=>now},Math,assert,remaining:()=>outer-now,refusal(code){throw Error(code)},worker:{async workerScriptReady(ms){readyBudget=ms;now+=readyCost;return true},async evaluate(expression,awaited,ms){evaluated++;assert.equal(expression,'typeof globalThis.cmspark464.configure');assert.equal(awaited,false);evalBudget=ms;now+=evalCost;return'function'}}}
+  vm.createContext(c);let okay=true;try{await vm.runInContext('async function phase(){'+harness.slice(start,end)+'};phase()',c)}catch{okay=false}
+  assert.equal(okay,expected);assert.equal(readyBudget,Math.min(60000,outer));if(evaluated)assert.equal(evalBudget,Math.min(60000,outer)-readyCost);else assert.equal(readyCost,60000)
+ }
 })

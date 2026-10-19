@@ -144,15 +144,25 @@ export function observeChromiumStartup464() {
   }
 }
 class CDP {
-  constructor(socket) { this.socket=socket;this.id=0;this.pending=new Map();socket.on('error',()=>socket.terminate());socket.on('message', data => {
+  constructor(socket) { this.socket=socket;this.id=0;this.pending=new Map();this.workerLoaded=false;this.workerWaiter=undefined;this.closed=false;socket.on('error',()=>socket.terminate());socket.on('message', data => {
     let m; try { m=JSON.parse(data.toString()) } catch { return }
+    if(m.method==='Inspector.workerScriptLoaded'&&!this.closed){this.workerLoaded=true;this.workerWaiter?.resolve(true);return}
     const p=this.pending.get(m.id);if (!p) return;this.pending.delete(m.id);m.error?p.reject(new Error('CDP_REFUSED')):p.resolve(m.result)
-  }); socket.on('close', () => { for (const p of this.pending.values()) p.reject(new Error('CDP_CLOSED'));this.pending.clear() }) }
-  static async connect(WebSocket, url, timeout=5000) { const s=new WebSocket(url);try { await limit(once(s,'open'),Math.min(5000,timeout),'CDP_CONNECT');return new CDP(s) } catch { s.terminate();throw new Error('CDP_CONNECT') } }
+  }); socket.on('close', () => { this.closed=true;this.workerWaiter?.reject(new Error('CDP_CLOSED'));for (const p of this.pending.values()) p.reject(new Error('CDP_CLOSED'));this.pending.clear() }) }
+  static async connect(WebSocket, url, timeout=5000) { const s=new WebSocket(url), client=new CDP(s);try { await limit(once(s,'open'),Math.min(5000,timeout),'CDP_CONNECT');return client } catch { s.terminate();throw new Error('CDP_CONNECT') } }
+  workerScriptReady(ms) {
+    if(!Number.isInteger(ms)||ms<=0||ms>BOUNDS.navigation)return Promise.reject(new Error('INVALID_WORKER_READY_BUDGET'))
+    if(this.closed)return Promise.reject(new Error('CDP_CLOSED'))
+    if(this.workerLoaded)return Promise.resolve(true)
+    if(this.workerWaiter)return Promise.reject(new Error('WORKER_READY_ALREADY_PENDING'))
+    const waiter=deferred();this.workerWaiter=waiter
+    return limit(waiter.promise,ms,'WORKER_SCRIPT_TIMEOUT').finally(()=>{if(this.workerWaiter===waiter)this.workerWaiter=undefined})
+  }
   call(method, params={}, timeout=BOUNDS.navigation) { const id=++this.id, p=deferred(); this.pending.set(id,p);this.socket.send(JSON.stringify({id,method,params}));return limit(p.promise,timeout,'CDP_TIMEOUT').finally(()=>this.pending.delete(id)) }
   async evaluate(expression, awaitPromise=false, timeout=BOUNDS.navigation) { const r=await this.call('Runtime.evaluate',{expression,awaitPromise,returnByValue:true},timeout);if(r.exceptionDetails) refusal('PAGE_EVALUATION_REFUSED');return r.result?.value }
   close() { this.socket.close() }
   abort() {
+    this.closed=true;this.workerWaiter?.reject(new Error('CDP_CLOSED'))
     for(const p of this.pending.values())p.reject(new Error('CDP_CLOSED'))
     this.pending.clear();this.socket.terminate()
   }
@@ -250,7 +260,14 @@ export async function main() {
     operation='WORKER_CONNECT'
     const worker=await CDP.connect(WebSocket,workerInfo.webSocketDebuggerUrl);active.add(worker)
     operation='WORKER_API'
-    assert.equal(await worker.evaluate('typeof globalThis.cmspark464.configure'), 'function')
+    // An inspectable worker target can precede evaluation of its entry script.
+    // Chrome emits this event after evaluation, including failed evaluation;
+    // the original API assertion must still succeed after the barrier.
+    const workerApiDeadline=Date.now()+Math.min(BOUNDS.navigation,remaining())
+    const workerApiRemaining=()=>{const ms=Math.min(workerApiDeadline-Date.now(),remaining());if(ms<=0)refusal('WORKER_API_TIMEOUT');return ms}
+    await worker.workerScriptReady(workerApiRemaining())
+    assert.equal(await worker.evaluate('typeof globalThis.cmspark464.configure',false,workerApiRemaining()), 'function')
+    workerApiRemaining()
     operation='WORKER_CREATE'
     const tabId=await worker.evaluate('globalThis.cmspark464.createTab()',true);operation='WORKER_TAB_ID';assert.ok(Number.isSafeInteger(tabId))
     // Chrome's actual debugger target/tab mapping retains the exact created tab,

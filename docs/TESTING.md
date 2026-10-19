@@ -238,3 +238,9 @@ The hosted harness emits optional `xvfbStartup` using the existing capped child 
 `acceptanceOperation` 仅投影 harness 局部变量的固定 last-entered operation，覆盖入口/启动、WORKER 发现/连接/API/创建/目标核验、AUTH、导航、正控与全部负控的既有关键 await/assert。只在成功结束或现有 catch 中加入 runtime 回执，外层 cleanup 不更新它；runtime 重赋值不会丢失局部操作。原所有调用、等待、120s/60s/5s/15s、权限、通过条件与清理不变。
 
 它不是 first-failure 或根因：folded/loading/moved 的原 finally 恢复步骤可能成为最后操作，即使原失败发生更早。只接受 own-data 闭集字符串，继承值、getter、未知值或诊断 descriptor 异常不反射；旧 runtime 枚举本身若因恶意 Proxy 而抛出，仍不声称整个 receipt 对 Proxy 普遍安全。CPU 惰性控制不证明真实浏览器通过，b567 WORKER/cases0 的具体失败位置仍 UNKNOWN；当时 AUTH/NAV 未执行。#464 仍为 Partial，0.6.14 仍是开发版本。
+
+### #464 worker 脚本执行屏障
+
+调试目标可被连接不代表入口脚本已经执行完毕。CDP 客户端在等待 WebSocket open 前注册消息处理，并只在该会话收到 `Inspector.workerScriptLoaded` 时记录完成；先到的通知也保留。WORKER_API 仅在该通知后执行原来的 `typeof globalThis.cmspark464.configure === 'function'` 检查，不循环查询、不重试或恢复旧会话。Chrome 在脚本执行失败后也会发送完成通知，因此通知本身不是脚本成功、权限或验收通过证明；原 API 检查仍必须通过。
+
+通知等待与 API 检查共享原 API 调用的 60 秒绝对预算，并受原 120 秒总预算约束。断开、abort、超时或非法预算会拒绝并移除 waiter/timer，迟到消息不能改变已拒绝的那次等待；浏览器和页面客户端不等待 worker 通知。启动参数、沙箱、权限、鉴权 5 秒、工具 15 秒、导航预算和原通过条件不变。a252 的真实失败已定位在 WORKER_API，但异常类别及唯一原生原因仍未知；受控顺序回放和 Node/ARM 通过不替代真实 hosted 与全部 CI。
