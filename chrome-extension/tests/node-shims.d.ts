@@ -13,7 +13,16 @@ declare module "node:fs" {
 
 declare module "node:path" {
   export function join(...parts: string[]): string
+  export function resolve(...parts: string[]): string
+  export function basename(path: string, suffix?: string): string
+  export function dirname(path: string): string
 }
+
+declare module "node:module" {
+  export function createRequire(filename: string | URL): (id: string) => any
+}
+
+declare const __dirname: string
 
 declare const process: { cwd(): string }
 

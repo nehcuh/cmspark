@@ -1,12 +1,175 @@
 export type PageReadRequest = { kind: "text" } | { kind: "html"; selector: string }
-export interface PageReadSnapshot { content: string; url?: string }
+export interface PageReadSnapshot { content: string; url?: string; codeComparison?: unknown; comparisonRefusal?: string }
 
-/** Serialized directly into CDP / chrome.scripting. Keep this function
- * self-contained: content and location are sampled in one synchronous task. */
+/** Serialized into CDP/chrome.scripting. Every extractor helper is deliberately
+ * nested: the serialized function must not depend on module/import closures. */
 export function pageReadSnapshot(request: PageReadRequest): PageReadSnapshot {
   const content = request.kind === "text" ? document.body?.innerText || ""
     : document.querySelector(request.selector)?.outerHTML?.substring(0, 500000) || ""
-  return { content, url: location.href }
+  const result: PageReadSnapshot = { content, url: location.href }
+  if (request.kind !== "text" || !/^https:\/\/github\.com\//.test(location.href)) return result
+  const u = new URL(location.href)
+  const route = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/compare\/([a-f0-9]{40})\.\.([a-f0-9]{40})$/.exec(u.pathname)
+  if (u.origin !== "https://github.com" || !route || u.search || u.hash || u.username || u.password || route[3] === route[4]) return result
+  const repository = u.origin + "/" + route[1] + "/" + route[2]
+  let reason = "UNSUPPORTED_VIEW"
+  try {
+    const attr = (e: Element, name: string) => e.getAttribute(name) || ""
+    const cls = (e: Element, name: string) => attr(e, "class").split(/\s+/).includes(name)
+    const elements = (e: Document | Element, tag = "*") => Array.from(e.getElementsByTagName(tag)).filter(n => {
+      for (let p: Node | null = n.parentNode; p && p !== e; p = p.parentNode) if (p.nodeType === 1 && ["template", "script"].includes((p as Element).tagName.toLowerCase())) return false
+      return true
+    })
+    const one = (nodes: Element[]) => { if (nodes.length !== 1) throw 0; return nodes[0] }
+    const byId = (id: string) => one(elements(document).filter(e => attr(e, "id") === id))
+    const connected = (e: Node) => { for (let p: Node | null = e; p; p = p.parentNode) if (p === document) return true; return false }
+    const text = (e: Element) => e.textContent || ""
+    const hidden = (e: Element) => e.hasAttribute("hidden") || attr(e, "aria-hidden") === "true" || cls(e, "d-none")
+      || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse))\s*(?:!important\s*)?(?:;|$)/i.test(attr(e, "style"))
+    const visible = (e: Element) => {
+      for (let p: Node | null = e; p; p = p.parentNode) if (p.nodeType === 1 && hidden(p as Element)) throw 0
+    }
+    const outsideDiff = (e: Element) => {
+      for (let p: Node | null = e; p; p = p.parentNode) if (p.nodeType === 1) {
+        const node = p as Element
+        if (["files_bucket", "toc", "files"].includes(attr(node, "id")) || node.hasAttribute("data-code-marker")
+          || cls(node, "file") || cls(node, "blob-code") || node.tagName.toLowerCase() === "table") throw 0
+      }
+    }
+    const codeText = (e: Element) => {
+      visible(e)
+      const value = text(e), children = Array.from(e.childNodes)
+      // GitHub represents a genuinely empty line by one direct, empty BR.
+      if (!value && children.length === 1 && children[0].nodeType === 1) {
+        const br = children[0] as Element
+        if (br.tagName.toLowerCase() === "br" && br.attributes.length === 0 && br.childNodes.length === 0) return value
+      }
+      const pending = [...children]
+      while (pending.length) {
+        const node = pending.pop()!
+        if (node.nodeType === 3) continue
+        if (node.nodeType !== 1) throw 0
+        const span = node as Element
+        if (span.tagName.toLowerCase() !== "span" || Array.from(span.attributes).some(a => a.name !== "class")
+          || attr(span, "class").split(/\s+/).filter(Boolean).some(c => !/^(?:pl-[a-z0-9_-]+|x|x-first|x-last)$/.test(c))) throw 0
+        pending.push(...Array.from(span.childNodes))
+      }
+      return value
+    }
+    const integer = (s: string) => { if (!/^(?:0|[1-9]\d*)$/.test(s)) throw 0; const n = Number(s); if (!Number.isSafeInteger(n)) throw 0; return n }
+    const validPath = (p: string) => !!p && p.length <= 8192 && !/[\x00-\x1f\x7f-\x9f\\"]/u.test(p) && !p.startsWith("/") && !p.split("/").some(s => !s || s === "." || s === "..")
+    const ref = (id: string, sha: string) => {
+      const root = byId(id), values = elements(root, "ref-selector").map(e => attr(e, "current-committish"))
+      if (!values.length || values.some(v => atob(v) !== sha)) throw 0
+      return root
+    }
+    const baseRoot = ref("base-ref-selector", route[3]), headRoot = ref("head-ref-selector", route[4])
+    const heading = one(elements(document).filter(e => cls(e, "compare-show-header")))
+    ;[baseRoot, headRoot, heading].forEach(outsideDiff)
+    if (!text(heading).includes("This is a direct comparison between two commits")) throw 0
+    const alternate = elements(document, "link").filter(e => attr(e, "rel") === "alternate" && attr(e, "type") === "text/x-diff")
+    if (alternate.length !== 1 || new URL(attr(alternate[0], "href"), u).href !== u.href + ".diff") throw 0
+    reason = "FILES_NOT_LOADED"
+    const bucket = byId("files_bucket"), toc = byId("toc"), filesRoot = byId("files")
+    for (const root of [bucket, toc, filesRoot]) for (let node: Node | null = root; node; node = node.parentNode)
+      if ([baseRoot, headRoot, heading].includes(node as Element)) throw 0
+    if (elements(bucket, "include-fragment").length || elements(bucket).some(e => attr(e, "aria-busy") === "true")) throw 0
+    reason = "UNSUPPORTED_VIEW"
+    const selected = elements(toc, "button").filter(e => attr(e, "name") === "diff" && attr(e, "aria-current") === "true")
+    if (selected.length !== 1 || attr(selected[0], "value") !== "unified") throw 0
+    // Unknown visible non-file children are not silently ignored as another layout.
+    if (elements(bucket).some(e => /(?:diff-load|diff-error|diff-too-big|diff-file-error|js-diff-file-filter)/.test(attr(e, "class"))
+      || e.tagName.toLowerCase() === "input" && /(?:filter|whitespace)/.test(attr(e, "name") + attr(e, "id")) && !!attr(e, "value"))) throw 0
+    const stats = one(elements(toc).filter(e => cls(e, "toc-diff-stats")))
+    const statsText = text(stats)
+    const total = /\b(\d+) changed files\b[\s\S]*?\b(\d+) additions\b[\s\S]*?\b(\d+) deletions\b/.exec(statsText)
+    if (!total) throw 0
+    const n = integer(total[1]), additions = integer(total[2]), deletions = integer(total[3])
+    reason = "CAPACITY"
+    if (n < 1 || n > 128) throw 0
+    reason = "INVENTORY_MISMATCH"
+    const lists = elements(toc, "ol"), list = one(lists)
+    const entries = Array.from(list.childNodes).filter(e => e.nodeType === 1) as Element[]
+    if (entries.length !== n || entries.some(e => e.tagName.toLowerCase() !== "li")) throw 0
+    const inventory = entries.map(e => {
+      const links = elements(e, "a").filter(a => attr(a, "href").startsWith("#diff-") && !attr(a, "aria-label"))
+      const a = one(links), anchor = attr(a, "href").slice(1), p = text(a)
+      const status = one(elements(e, "svg").filter(s => !!attr(s, "title")))
+      const kind = attr(status, "title")
+      if (!validPath(p) || !["modified", "added", "removed"].includes(kind)) throw 0
+      const plus = one(elements(e, "span").filter(s => cls(s, "color-fg-success"))), minus = one(elements(e, "span").filter(s => cls(s, "color-fg-danger")))
+      return { anchor, path: p, kind, additions: integer(text(plus).trim().replace(/^\+/, "")), deletions: integer(text(minus).trim().replace(/^−/, "")) }
+    })
+    if (new Set(inventory.map(x => x.anchor)).size !== n || new Set(inventory.map(x => x.path)).size !== n) throw 0
+    const roots = elements(filesRoot).filter(e => cls(e, "file") && cls(e, "js-file"))
+    if (roots.length !== n) throw 0
+    const manifest: { old_path: string | null; new_path: string | null; additions: number; deletions: number }[] = []
+    const diff: string[] = []
+    for (const item of inventory) {
+      const file = one(roots.filter(e => attr(e, "id") === item.anchor))
+      if (attr(file, "data-tagsearch-path") !== item.path) throw 0
+      reason = "UNSUPPORTED_VIEW"
+      const header = one(elements(file).filter(e => cls(e, "file-header")))
+      const toggle = one(elements(header, "button").filter(e => attr(e, "aria-label") === "Toggle diff contents"))
+      if (file.hasAttribute("hidden") || attr(file, "aria-hidden") === "true" || cls(file, "d-none") || /display\s*:\s*none/i.test(attr(file, "style"))
+        || attr(toggle, "aria-expanded") !== "true" || attr(header, "data-path") !== item.path || attr(header, "data-anchor") !== item.anchor) throw 0
+      const table = one(elements(file, "table").filter(e => cls(e, "js-diff-table")))
+      if (attr(table, "data-diff-anchor") !== item.anchor) throw 0
+      visible(table)
+      const old = item.kind === "added" ? null : item.path, next = item.kind === "removed" ? null : item.path
+      const lines = [`diff --git a/${item.path} b/${item.path}`, `--- ${old ? "a/" + old : "/dev/null"}`, `+++ ${next ? "b/" + next : "/dev/null"}`]
+      let a = 0, d = 0, oldAt = 0, newAt = 0, oldLeft = 0, newLeft = 0, hunks = 0, previousOld = 0, previousNew = 0
+      reason = "HUNK_INCOMPLETE"
+      for (const row of elements(table, "tr")) {
+        visible(row)
+        const cells = Array.from(row.childNodes).filter(e => e.nodeType === 1 && (e as Element).tagName.toLowerCase() === "td") as Element[]
+        if (!cells.length) continue
+        const h = cells.filter(e => cls(e, "blob-code-hunk"))
+        if (h.length) {
+          if (h.length !== 1 || oldLeft || newLeft) throw 0
+          // A completed hunk may end with an empty unchanged-context expander.
+          if (!text(h[0]).trim() && cls(row, "js-expandable-line") && !oldLeft && !newLeft) continue
+          const value = text(h[0]), m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$/.exec(value)
+          if (!m) throw 0
+          oldAt = integer(m[1]); newAt = integer(m[3]); oldLeft = integer(m[2] ?? "1"); newLeft = integer(m[4] ?? "1")
+          if (oldAt < previousOld || newAt < previousNew || oldLeft + newLeft === 0 || oldLeft > 65536 || newLeft > 65536 || !old && oldLeft || !next && newLeft) throw 0
+          lines.push(value); hunks++; continue
+        }
+        if (!attr(row, "data-hunk")) throw 0
+        const code = one(cells.filter(e => cls(e, "blob-code")))
+        const inner = one(elements(code).filter(e => e.hasAttribute("data-code-marker")))
+        // A supported code cell is exactly its direct marker plus formatting
+        // whitespace. Extra siblings/wrappers could carry omitted visible code.
+        if (inner.parentNode !== code || Array.from(code.childNodes).some(node => node !== inner
+          && (node.nodeType !== 3 || !!(node.nodeValue || "").trim()))) throw 0
+        const marker = attr(inner, "data-code-marker"), value = codeText(inner)
+        if (![" ", "+", "-"].includes(marker) || /[\r\n]/.test(value)) throw 0
+        const numbers = cells.filter(e => cls(e, "blob-num"))
+        if (numbers.length !== 2) throw 0
+        const left = attr(numbers[0], "data-line-number"), right = attr(numbers[1], "data-line-number")
+        const takesOld = marker !== "+", takesNew = marker !== "-"
+        if (takesOld ? oldLeft <= 0 || integer(left) !== oldAt || oldAt === 0 : !!left) throw 0
+        if (takesNew ? newLeft <= 0 || integer(right) !== newAt || newAt === 0 : !!right) throw 0
+        if (takesOld) { oldAt++; oldLeft-- }
+        if (takesNew) { newAt++; newLeft-- }
+        if (marker === "+") a++; if (marker === "-") d++
+        lines.push(marker + value); previousOld = oldAt; previousNew = newAt
+      }
+      if (!hunks || oldLeft || newLeft || a !== item.additions || d !== item.deletions || a + d === 0) throw 0
+      manifest.push({ old_path: old?.normalize("NFC") ?? null, new_path: next?.normalize("NFC") ?? null, additions: a, deletions: d }); diff.push(...lines)
+    }
+    reason = "INVENTORY_MISMATCH"
+    if (manifest.reduce((s, f) => s + f.additions, 0) !== additions || manifest.reduce((s, f) => s + f.deletions, 0) !== deletions) throw 0
+    const comparison = { schema_version: 1, adapter: "github_compare_two_dot.v1", repository, base: route[3], head: route[4], semantics: "two_dot_trees", file_count: n, additions, deletions, diff_text: diff.join("\n").normalize("NFC") + "\n", manifest }
+    reason = "CAPACITY"
+    if (new TextEncoder().encode(JSON.stringify(comparison)).length > 65536) throw 0
+    reason = "TARGET_CHANGED"
+    if (location.href !== result.url || ![bucket, toc, filesRoot, baseRoot, headRoot, heading, ...roots].every(connected)
+      || ref("base-ref-selector", route[3]) !== baseRoot || ref("head-ref-selector", route[4]) !== headRoot || text(stats) !== statsText
+      || byId("files_bucket") !== bucket || byId("toc") !== toc || byId("files") !== filesRoot) throw 0
+    result.codeComparison = comparison
+  } catch { result.comparisonRefusal = reason }
+  return result
 }
 
 export function pageReadExpression(request: PageReadRequest): string {
