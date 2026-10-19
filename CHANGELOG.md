@@ -6,6 +6,12 @@
 
 - #627 新增仅官方 hosted Ubuntu 22.04 的普通生产扩展验收：真实 HMAC、HTTP grant/session、Ed25519 login-view proof、品牌 permit 与 socket/pending 归属，校验 rule-free status 和 human_only/no-store 图像。CPU 使用明确的浏览器结果 seam，不冒原生或 full startServer；图像只在 owned trusted 内存消费，无截图、图像 hash、密钥或原始协议 artifact。新增 CI 门仍待真实 hosted 通过，不代表真实 SSO 或 #618 T4 已完成；0.6.14 仍为开发版本。
 
+- 测试夹具：STT 取消断言等待 fake runner 的实际进入事件，替代固定 20ms 猜测；macOS AX 夹具监听两个自有窗口的遮挡状态变化，仍经原完整绑定判据确认就绪。原时限、取消和背景安全断言保持；不将此归因于历史失败，也不声称所有原生环境已通过。
+
+- #464 编程接力非零退出时，将已有部分输出判定同步到会话、handback、原任务保存标题和进度，避免失败回传仍显示“完成”；保留原终态、确认和报告引用校验。此修复不证明真实 Agent 兼容或业务验收，整票仍为 Partial。
+
+- #464 对评语遗漏的已选业务引用补充明确缺项：按完整 kind/id/citation/commit 规范身份核对，不以同类引用或重复映射覆盖遗漏。仍接收部分评语，保留原状态、来源/范围拒绝和未就绪标记；此处仅核引用清单，不证明业务语义、真实 Agent 或企业验收。
+
 - #571 按原票至少一条后台动作与逐行三态判据回填 d66 AppKit press 原生证据；WK 已知 TREE_EXHAUSTED 保留 Gap 与旧红历史，仅可经新零效果、fresh 完整 oracle 和原清理硬门验收。未知/权限/绑定/深度/超时不转 Gap，原动作与最低 Delivered 门不变；不是修复 WK 根因或宣布全 macOS 完成，新 head 原生/CI 待验。
 
 - #571: native acceptance 的诊断编译开关下，locate 遍历失败新增固定分支布尔值、深度与 frontier 终态观测；不新增 AX/CG 查询，不改变遍历或后台动作，WK 原生失败原因仍待实际验收。

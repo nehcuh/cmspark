@@ -118,6 +118,16 @@ function makeService(opts: {
   })
 }
 
+// Observe the fake runner's actual entry, not an elapsed wall-clock guess.
+// If end settles before entering, retain that failure instead of waiting forever.
+function runnerEntryBarrier() {
+  let entered!: () => void
+  const entry = new Promise<void>(resolve => { entered = resolve })
+  return { entered, wait: (end: Promise<unknown>) => Promise.race([
+    entry, end.then(() => { throw new Error("expected fake runner entry before end settled") }),
+  ]) }
+}
+
 test("happy path: start chunk end returns text and cleans tmp", async () => {
   const dataDir = tempDataDir()
   const whisperRoot = path.join(dataDir, "models", "whisper")
@@ -303,6 +313,7 @@ test("infer_timeout maps from runner", async () => {
 })
 
 test("abort during infer cancels and cleans tmp", async () => {
+  const runnerEntry = runnerEntryBarrier()
   const dataDir = tempDataDir()
   const whisperRoot = path.join(dataDir, "models", "whisper")
   plantReadyModel(whisperRoot)
@@ -318,6 +329,7 @@ test("abort during infer cancels and cleans tmp", async () => {
         o.signal?.addEventListener("abort", () => {
           reject(new WhisperRunnerError("aborted", "whisper aborted"))
         })
+        runnerEntry.entered()
         // if never aborted, hang until test timeout — abort will fire
       })
     },
@@ -336,8 +348,7 @@ test("abort during infer cancels and cleans tmp", async () => {
   svc.chunk("ab1", 0, Buffer.from("zz"), "p")
 
   const endP = svc.end("ab1", 1, "p")
-  // allow end to enter runner
-  await new Promise((r) => setTimeout(r, 20))
+  await runnerEntry.wait(endP)
   const ab = svc.abort("ab1", "p")
   assert.equal(ab.ok, true)
 
@@ -622,6 +633,7 @@ test("end maps OOM-like runner errors to oom", async () => {
 })
 
 test("forceAbort clears inferring so a new start can proceed", async () => {
+  const runnerEntry = runnerEntryBarrier()
   const dataDir = tempDataDir()
   const whisperRoot = path.join(dataDir, "models", "whisper")
   plantReadyModel(whisperRoot)
@@ -633,6 +645,7 @@ test("forceAbort clears inferring so a new start can proceed", async () => {
     dataDir,
     whisperRoot,
     runWhisper: async ({ signal }) => {
+      runnerEntry.entered()
       await gate
       if (signal?.aborted) {
         throw new WhisperRunnerError("aborted", "aborted")
@@ -654,7 +667,7 @@ test("forceAbort clears inferring so a new start can proceed", async () => {
   )
   svc.chunk("old", 0, Buffer.from("x"), "peerA")
   const endP = svc.end("old", 1, "peerA")
-  await new Promise((r) => setTimeout(r, 20))
+  await runnerEntry.wait(endP)
   const blocked = svc.start(
     {
       sessionId: "new",
@@ -724,6 +737,7 @@ test("V2: abort with stale sessionId from same peer frees the bound slot", async
 })
 
 test("V2: peer-level abort cancels in-flight infer; late end() must not drop the retry session", async () => {
+  const runnerEntry = runnerEntryBarrier()
   const dataDir = tempDataDir()
   const whisperRoot = path.join(dataDir, "models", "whisper")
   plantReadyModel(whisperRoot)
@@ -735,6 +749,7 @@ test("V2: peer-level abort cancels in-flight infer; late end() must not drop the
     dataDir,
     whisperRoot,
     runWhisper: async ({ signal }) => {
+      runnerEntry.entered()
       await gate
       if (signal?.aborted) {
         throw new WhisperRunnerError("aborted", "aborted")
@@ -756,7 +771,7 @@ test("V2: peer-level abort cancels in-flight infer; late end() must not drop the
   )
   svc.chunk("old", 0, Buffer.from("x"), "peerA")
   const endP = svc.end("old", 1, "peerA")
-  await new Promise((r) => setTimeout(r, 20))
+  await runnerEntry.wait(endP)
 
   // Holder is mid-infer → retry start conflicts (adapter-side resource_conflict)
   const blocked = svc.start(

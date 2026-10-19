@@ -337,7 +337,10 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     func publishReady() {
         guard !setupStarted else { return }; setupStarted = true
         // LaunchServices made the sole initial activation request; readiness observes its receipt.
-        for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, sibling as AnyObject)] {
+        // A key/active notification can precede the WindowServer's owned-window
+        // visibility transition. Only exact owned windows trigger a fresh full check.
+        for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, sibling as AnyObject),
+                               (NSWindow.didChangeOcclusionStateNotification, target as AnyObject), (NSWindow.didChangeOcclusionStateNotification, sibling as AnyObject)] {
             readinessObservers.append(NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in self?.queueReadiness() })
         }
         sibling.makeKeyAndOrderFront(nil)
