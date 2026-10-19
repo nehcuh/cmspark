@@ -123,7 +123,7 @@ export function scheduledBatches(companion, discovery, execPath = process.execPa
   const preload = path.join(companion, 'scripts', 'test-data-dir.cjs')
   const grouped = []
   for (const stage of ['main', 'settings']) {
-    const fixed = ['--require', preload, '--test', ...(stage === 'settings' && Number(process.versions.node.split('.')[0]) >= 22 ? ['--experimental-test-isolation=none'] : [])]
+    const fixed = ['--require', preload, '--test', ...(stage === 'main' && process.platform === 'win32' ? ['--test-concurrency=1'] : []), ...(stage === 'settings' && Number(process.versions.node.split('.')[0]) >= 22 ? ['--experimental-test-isolation=none'] : [])]
     let batch = []
     for (const row of discovery.filter(x => !x.excluded && x.stage === stage)) {
       const chars = execPath.length + 2 + fixed.reduce((n, x) => n + x.length + 1, 0) + [...batch, row.file].reduce((n, x) => n + path.join(companion, x).length + 1, 0)
