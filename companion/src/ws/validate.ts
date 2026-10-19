@@ -1,3 +1,4 @@
+import { validCockpitIdleRequest } from "./cockpit-idle"
 // WS message shape validation (layer 1 fail-closed fence).
 // Extracted from server.ts (C10-A mechanical split) — zero behavior change.
 // Re-exported from server.ts for test/public API stability.
@@ -44,6 +45,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
 
   // Known message types with required field validation
   const validators: Record<string, (m: any) => WsValidationResult> = {
+    "cockpit.idle.get": m => validCockpitIdleRequest(m) ? { valid: true } : { valid: false, error: "Invalid cockpit idle observation" },
     "desktop.browser.peer.result": m => typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128 && !/[^a-zA-Z0-9_-]/.test(m.id) && typeof m.ok === "boolean" && Object.keys(m).every(k => ["type", "id", "ok", "data"].includes(k))
       ? { valid: true } : { valid: false, error: "Invalid browser metadata result" },
     "desktop.open": m => Object.keys(m).some(k => !["type", "view", "id"].includes(k)) || (m.view !== undefined && m.view !== "compact" && m.view !== "workspace") || (m.id !== undefined && (typeof m.id !== "string" || m.id.length > 200))

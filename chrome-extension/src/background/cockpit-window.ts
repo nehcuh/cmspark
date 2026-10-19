@@ -1,245 +1,183 @@
-// Cockpit window manager — L2 Computer Use surface (UI Mode P1 + R1 persist).
-// Spec: docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md §3 / §6 P1
-//
-// Owns chrome.windows lifecycle. Side panel and other pages only send
-// cockpit.open / focus / close / status messages.
-//
-// R1 (2026-07-27): persist windowId in chrome.storage.session + reclaim via
-// windows.getAll matching cockpit URL after SW death.
-
-/** Plasmo builds `src/tabs/cockpit.tsx` → `tabs/cockpit.html`. */
+// Background-owned Cockpit lifecycle. #723 idle collapse is observation-only;
+// closing a window never aborts or approves a computer task.
 export const COCKPIT_PATH = "tabs/cockpit.html"
-
 export const COCKPIT_DEFAULT_WIDTH = 720
 export const COCKPIT_DEFAULT_HEIGHT = 560
-
-/** Session storage key for surviving MV3 service-worker restarts. */
 export const COCKPIT_SESSION_KEY = "cmspark.cockpitWindowId"
 
-let cockpitWindowId: number | null = null
+type Owner = { id: number | null }
+let owner: Owner = { id: null }
+let operation = {}
+let idleIntent = {}
 let onRemovedHooked = false
-/** In-flight open — concurrent openOrFocusCockpit callers chain on this promise. */
-let openInFlight: Promise<number | null> | null = null
+let openInFlight: { promise: Promise<Owner | null>; callers: Set<() => boolean>; op: object } | null = null
 let hydrateInFlight: Promise<void> | null = null
+let removing: { owner: Owner; promise: Promise<void> } | null = null
+let persistence: Promise<void> = Promise.resolve()
 
-export function getCockpitWindowId(): number | null {
-  return cockpitWindowId
-}
-
-export function cockpitUrl(): string {
-  return chrome.runtime.getURL(COCKPIT_PATH)
-}
-
-/** Pure: whether a tab URL is our cockpit page (handles query/hash). */
+export function getCockpitWindowId(): number | null { return owner.id }
+export function cockpitUrl(): string { return chrome.runtime.getURL(COCKPIT_PATH) }
 export function isCockpitTabUrl(tabUrl: string | undefined, expectedBase: string): boolean {
   if (!tabUrl) return false
   try {
-    const a = new URL(tabUrl)
-    const b = new URL(expectedBase)
-    return a.origin === b.origin && a.pathname === b.pathname
-  } catch {
-    return tabUrl.split("?")[0].split("#")[0] === expectedBase.split("?")[0].split("#")[0]
-  }
+    const a = new URL(tabUrl), b = new URL(expectedBase)
+    // URL.origin is "null" for extension URLs in some JS implementations.
+    return a.protocol === b.protocol && a.host === b.host && a.pathname === b.pathname
+  } catch { return false }
 }
-
-async function persistWindowId(id: number | null): Promise<void> {
-  try {
-    if (id == null) {
-      await chrome.storage.session.remove(COCKPIT_SESSION_KEY)
-    } else {
-      await chrome.storage.session.set({ [COCKPIT_SESSION_KEY]: id })
-    }
-  } catch {
-    // session storage may be unavailable in unit tests without chrome mock
-  }
+function ownedPopup(w: chrome.windows.Window | undefined, id?: number): w is chrome.windows.Window & { id: number } {
+  return !!w && Number.isSafeInteger(w.id) && w.id! >= 0 && (id === undefined || w.id === id) && w.type === "popup" &&
+    w.tabs?.length === 1 && isCockpitTabUrl(w.tabs[0].url, cockpitUrl()) &&
+    (!w.tabs[0].pendingUrl || isCockpitTabUrl(w.tabs[0].pendingUrl, cockpitUrl()))
 }
-
-async function readPersistedWindowId(): Promise<number | null> {
-  try {
-    const got = await chrome.storage.session.get(COCKPIT_SESSION_KEY)
-    const v = got?.[COCKPIT_SESSION_KEY]
-    return typeof v === "number" && Number.isFinite(v) ? v : null
-  } catch {
-    return null
-  }
+function persistWindowId(id: number | null): void {
+  // Completion may be late; it never mutates owner. Later writes remain ordered.
+  persistence = persistence.then(async () => {
+    if (id === null) await chrome.storage.session.remove(COCKPIT_SESSION_KEY)
+    else await chrome.storage.session.set({ [COCKPIT_SESSION_KEY]: id })
+  }).catch(() => {})
 }
-
+function adopt(id: number | null): Owner { owner = { id }; persistWindowId(id); return owner }
 function ensureOnRemoved(): void {
   if (onRemovedHooked) return
   onRemovedHooked = true
-  chrome.windows.onRemoved.addListener((windowId) => {
-    if (windowId === cockpitWindowId) {
-      cockpitWindowId = null
-      void persistWindowId(null)
-    }
+  chrome.windows.onRemoved.addListener(id => {
+    if (owner.id === id) adopt(null)
   })
 }
-
-/** Probe whether our tracked window still exists. */
-async function windowExists(id: number): Promise<boolean> {
-  try {
-    await chrome.windows.get(id)
-    return true
-  } catch {
-    return false
-  }
+async function getOwned(id: number): Promise<chrome.windows.Window | undefined> {
+  try { const w = await chrome.windows.get(id, { populate: true }); return ownedPopup(w, id) ? w : undefined } catch { return undefined }
 }
-
-/** Find an existing cockpit window by scanning tabs (SW reclaim). */
 export async function reclaimCockpitWindowId(): Promise<number | null> {
-  const expected = cockpitUrl()
   try {
-    const wins = await chrome.windows.getAll({ populate: true })
-    for (const w of wins) {
-      if (w.id == null) continue
-      const tabs = w.tabs || []
-      for (const t of tabs) {
-        if (isCockpitTabUrl(t.url, expected)) {
-          return w.id
-        }
-      }
-    }
-  } catch {
-    return null
-  }
-  return null
+    const all = (await chrome.windows.getAll({ populate: true })).filter(w => ownedPopup(w))
+    return all.length === 1 ? all[0].id! : null
+  } catch { return null }
 }
-
-/** Hydrate in-memory id from session storage or live windows. */
 async function hydrateCockpitWindowId(): Promise<void> {
-  if (cockpitWindowId != null) {
-    if (await windowExists(cockpitWindowId)) return
-    cockpitWindowId = null
-    await persistWindowId(null)
+  let expected = owner
+  if (expected.id !== null) {
+    const found = await getOwned(expected.id)
+    if (owner !== expected || removing) return
+    if (found) return
+    expected = adopt(null)
   }
-  const stored = await readPersistedWindowId()
-  if (stored != null && (await windowExists(stored))) {
-    cockpitWindowId = stored
-    return
-  }
-  if (stored != null) {
-    await persistWindowId(null)
+  let stored: unknown
+  try { stored = (await chrome.storage.session.get(COCKPIT_SESSION_KEY))?.[COCKPIT_SESSION_KEY] } catch { return }
+  if (owner !== expected || removing) return
+  if (typeof stored === "number" && Number.isSafeInteger(stored) && stored >= 0) {
+    const found = await getOwned(stored)
+    if (owner !== expected || removing) return
+    if (found) { adopt(stored); return }
   }
   const reclaimed = await reclaimCockpitWindowId()
-  if (reclaimed != null) {
-    cockpitWindowId = reclaimed
-    await persistWindowId(reclaimed)
-  }
+  if (owner !== expected || removing) return
+  if (reclaimed !== null) adopt(reclaimed)
+  else persistWindowId(null)
 }
-
 function ensureHydrated(): Promise<void> {
   if (!hydrateInFlight) {
-    hydrateInFlight = hydrateCockpitWindowId().finally(() => {
-      hydrateInFlight = null
-    })
+    const p = hydrateCockpitWindowId().finally(() => { if (hydrateInFlight === p) hydrateInFlight = null })
+    hydrateInFlight = p
   }
   return hydrateInFlight
 }
-
-async function openOrFocusCockpitImpl(): Promise<number | null> {
+async function openImpl(allowed: () => boolean, op: object): Promise<Owner | null> {
+  const current = () => operation === op && allowed() && !removing
+  await ensureHydrated()
+  if (!current()) return null
+  const held = owner
+  if (held.id !== null) {
+    const found = await getOwned(held.id)
+    if (owner !== held || !current()) return null
+    if (found) {
+      try { await chrome.windows.update(held.id, { focused: true, drawAttention: true }); return owner === held && current() ? held : null }
+      catch { if (owner === held && current()) adopt(null); else return null }
+    } else adopt(null)
+  }
+  if (!current()) return null
+  const empty = owner
+  try {
+    const created = await chrome.windows.create({ url: cockpitUrl(), type: "popup", width: COCKPIT_DEFAULT_WIDTH, height: COCKPIT_DEFAULT_HEIGHT, focused: true })
+    // A stale create cannot overwrite the new owner or delete an unknown window.
+    if (owner !== empty || !current() || !created || !Number.isSafeInteger(created.id)) return null
+    return adopt(created.id!)
+  } catch { return null }
+}
+/** Coalesced existing open policy; a removal must retire before its replacement. */
+export async function openOrFocusCockpit(allowed: () => boolean = () => true): Promise<number | null> {
+  idleIntent = {}
   ensureOnRemoved()
-  await ensureHydrated()
-
-  if (cockpitWindowId != null) {
-    const ok = await windowExists(cockpitWindowId)
-    if (ok) {
-      try {
-        await chrome.windows.update(cockpitWindowId, {
-          focused: true,
-          drawAttention: true,
-        })
-        return cockpitWindowId
-      } catch {
-        cockpitWindowId = null
-        await persistWindowId(null)
-      }
-    } else {
-      cockpitWindowId = null
-      await persistWindowId(null)
-    }
-  }
-
-  // Last chance: reclaim without stored id
-  const reclaimed = await reclaimCockpitWindowId()
-  if (reclaimed != null) {
-    cockpitWindowId = reclaimed
-    await persistWindowId(reclaimed)
-    try {
-      await chrome.windows.update(reclaimed, { focused: true, drawAttention: true })
-      return reclaimed
-    } catch {
-      cockpitWindowId = null
-      await persistWindowId(null)
-    }
-  }
-
-  try {
-    const win = await chrome.windows.create({
-      url: cockpitUrl(),
-      type: "popup",
-      width: COCKPIT_DEFAULT_WIDTH,
-      height: COCKPIT_DEFAULT_HEIGHT,
-      focused: true,
-    })
-    cockpitWindowId = win.id ?? null
-    await persistWindowId(cockpitWindowId)
-    return cockpitWindowId
-  } catch {
-    cockpitWindowId = null
-    await persistWindowId(null)
-    return null
-  }
+  if (!allowed()) return null
+  let flight = openInFlight
+  if (!flight || flight.op !== operation) {
+    // A current request never joins a retired operation. Claim its successor
+    // before waiting, so a later explicit close can still invalidate it.
+    const predecessor = flight
+    const removal = removing?.promise
+    const callers = new Set([allowed])
+    const op = {}; operation = op
+    const anyLive = () => [...callers].some(current => current())
+    const p: Promise<Owner | null> = (async () => {
+      if (predecessor) await predecessor.promise
+      if (removal) await removal
+      if (operation !== op || !anyLive()) return null
+      return openImpl(anyLive, op)
+    })().finally(() => { if (openInFlight?.promise === p) openInFlight = null })
+    flight = { promise: p, callers, op }; openInFlight = flight
+  } else flight.callers.add(allowed)
+  const result = await flight.promise
+  // One shared window, but each caller still needs its own live intent/owner.
+  return result !== null && allowed() && owner === result && operation === flight.op && !removing ? result.id : null
 }
-
-/**
- * Open cockpit if needed, otherwise focus + drawAttention.
- * Concurrent callers share one in-flight promise (no duplicate windows).
- */
-export async function openOrFocusCockpit(): Promise<number | null> {
-  if (openInFlight) return openInFlight
-  openInFlight = openOrFocusCockpitImpl().finally(() => {
-    openInFlight = null
-  })
-  return openInFlight
-}
-
 export async function focusCockpit(): Promise<boolean> {
-  await ensureHydrated()
-  if (cockpitWindowId == null) return false
-  try {
-    await chrome.windows.update(cockpitWindowId, {
-      focused: true,
-      drawAttention: true,
-    })
-    return true
-  } catch {
-    cockpitWindowId = null
-    await persistWindowId(null)
-    return false
-  }
+  idleIntent = {}; const op = operation
+  if (removing) await removing.promise
+  await ensureHydrated(); const held = owner
+  if (operation !== op || removing || held.id === null) return false
+  const found = await getOwned(held.id)
+  if (!found || owner !== held || operation !== op || removing) return false
+  try { await chrome.windows.update(held.id, { focused: true, drawAttention: true }); return owner === held && operation === op }
+  catch { if (owner === held && operation === op) adopt(null); return false }
 }
-
-/** Close cockpit window if open. Does not abort the computer task. */
+function removeOwned(held: Owner): Promise<void> {
+  if (held.id === null || owner !== held || removing) return Promise.resolve()
+  // Install ownership before Chrome may deliver onRemoved; no storage await here.
+  let settle!: () => void
+  const promise = new Promise<void>(resolve => settle = resolve)
+  const claim = { owner: held, promise }; removing = claim
+  let result: Promise<void>
+  try { result = chrome.windows.remove(held.id) } catch { result = Promise.reject() }
+  void result.then(() => { if (owner === held) adopt(null) }, () => { /* Unknown removal: retain/revalidate original owner. */ })
+    .finally(() => { if (removing === claim) removing = null; settle() })
+  return promise
+}
 export async function closeCockpit(): Promise<void> {
-  await ensureHydrated()
-  if (cockpitWindowId == null) return
-  const id = cockpitWindowId
-  cockpitWindowId = null
-  await persistWindowId(null)
-  try {
-    await chrome.windows.remove(id)
-  } catch {
-    // already gone
-  }
+  idleIntent = {}; const op = {}; operation = op
+  if (removing) { await removing.promise; return }
+  await ensureHydrated(); const held = owner
+  if (held.id === null || removing || operation !== op) return
+  const found = await getOwned(held.id)
+  if (found && owner === held && !removing && operation === op) await removeOwned(held)
 }
-
-export function cockpitStatus(): { open: boolean; windowId: number | null } {
-  return { open: cockpitWindowId != null, windowId: cockpitWindowId }
+export type CockpitIdleReceipt = { state: "IDLE" | "BUSY" | "UNKNOWN"; isCurrent(): boolean }
+/** No idle receipt is cached or used to change confirmation/task state. */
+export async function collapseCockpitIfIdle(localIdle: () => boolean, request: () => Promise<CockpitIdleReceipt>): Promise<void> {
+  const intent = {}; idleIntent = intent
+  const eligible = () => idleIntent === intent && localIdle() && !openInFlight && !removing
+  if (!eligible()) return
+  ensureOnRemoved(); await ensureHydrated()
+  if (!eligible()) return
+  const held = owner
+  if (held.id === null) return
+  const receipt = await request()
+  if (!eligible() || owner !== held || receipt.state !== "IDLE" || !receipt.isCurrent()) return
+  const found = await getOwned(held.id)
+  if (!found || !eligible() || owner !== held || !receipt.isCurrent()) return
+  // Same JS turn: final mirror/connection/reference fence then irreversible API.
+  await removeOwned(held)
 }
-
-/** Test helper — reset module state between unit tests. */
+export function cockpitStatus(): { open: boolean; windowId: number | null } { return { open: owner.id !== null, windowId: owner.id } }
 export function _resetCockpitWindowStateForTests(): void {
-  cockpitWindowId = null
-  openInFlight = null
-  hydrateInFlight = null
+  owner = { id: null }; operation = {}; idleIntent = {}; openInFlight = null; hydrateInFlight = null; removing = null; persistence = Promise.resolve(); onRemovedHooked = false
 }
