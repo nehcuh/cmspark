@@ -244,3 +244,10 @@ The hosted harness emits optional `xvfbStartup` using the existing capped child 
 调试目标可被连接不代表入口脚本已经执行完毕。CDP 客户端在等待 WebSocket open 前注册消息处理，并只在该会话收到 `Inspector.workerScriptLoaded` 时记录完成；先到的通知也保留。WORKER_API 仅在该通知后执行原来的 `typeof globalThis.cmspark464.configure === 'function'` 检查，不循环查询、不重试或恢复旧会话。Chrome 在脚本执行失败后也会发送完成通知，因此通知本身不是脚本成功、权限或验收通过证明；原 API 检查仍必须通过。
 
 通知等待与 API 检查共享原 API 调用的 60 秒绝对预算，并受原 120 秒总预算约束。断开、abort、超时或非法预算会拒绝并移除 waiter/timer，迟到消息不能改变已拒绝的那次等待；浏览器和页面客户端不等待 worker 通知。启动参数、沙箱、权限、鉴权 5 秒、工具 15 秒、导航预算和原通过条件不变。a252 的真实失败已定位在 WORKER_API，但异常类别及唯一原生原因仍未知；受控顺序回放和 Node/ARM 通过不替代真实 hosted 与全部 CI。
+
+
+### #464 comparison fixture source/compiled 路径
+
+`companion/tests/github-comparison-464.test.ts` 的 CJS 夹具始终位于源目录 `companion/tests/fixtures`；TypeScript 不 emit 该 CJS，Windows staging 仅复制原 PowerShell 脚本。compiled 测试只通过平台原生 `path.basename(path.dirname(__dirname)) === ".test-dist"` 识别直接父目录，再回到源夹具；extension 测试的仓库根定位使用同样规则。普通 source 布局不变，任意祖先含 `.test-dist` 不再误判，源 CJS 自身保持不变。
+
+既有 canonical `node --test companion/scripts/tests/github-comparison-hosted-harness.test.mjs` 包含两个完整实际源码语句的 Win32/POSIX source/compiled、祖先同名、空格/中文与 LF/CRLF 控制，并核源 CJS 在两平台的正常定位。原 56 个控制/断言保留；这些惰性路径控制不执行 Windows 或浏览器。PR711 head6b1 的 Windows census 公开结果仅证实 `github-comparison-464.test.js:1:1` 文件级失败；路径缺陷由源码受控复现独立确认，具体历史异常正文未读取，extension sibling 没有被宣称也在该 job 失败。修复须经新 head 真实 CI；0.6.14 仍是开发版本，#464 整票仍 Partial。

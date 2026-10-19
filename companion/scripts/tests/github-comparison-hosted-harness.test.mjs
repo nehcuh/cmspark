@@ -631,3 +631,56 @@ test('actual WORKER readiness and API evaluation share the original60s and remai
   assert.equal(okay,expected);assert.equal(readyBudget,Math.min(60000,outer));if(evaluated)assert.equal(evalBudget,Math.min(60000,outer)-readyCost);else assert.equal(readyCost,60000)
  }
 })
+
+
+// Execute the complete actual fixture require statement with native path dialects.
+// These are source/layout controls, not a recorded Windows test execution.
+function actualComparisonFixture464(source, dialect, dirname) {
+  const ast=ts.createSourceFile('github-comparison-464.test.ts',source,ts.ScriptTarget.Latest,true)
+  const declarations=ast.statements.filter(n=>ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(ast)==='fixture'))
+  assert.equal(declarations.length,1)
+  const statement=declarations[0].getText(ast);let resolved,calls=0
+  vm.runInNewContext(statement,{path:dialect,__dirname:dirname,require(file){calls++;resolved=file;return Object.freeze({inert:true})}},{timeout:1000})
+  assert.equal(calls,1);return resolved
+}
+test('actual comparison fixture require resolves Win32 and POSIX source/compiled layouts on LF and CRLF',()=>{
+  const source=fs.readFileSync(path.join(repo,'companion/tests/github-comparison-464.test.ts'),'utf8')
+  const cases=[
+    [path.win32,'D:\\owned\\cmspark\\companion','tests'],
+    [path.win32,'D:\\owned\\cmspark\\companion','.test-dist\\tests'],
+    [path.posix,'/owned/cmspark/companion','tests'],
+    [path.posix,'/owned/cmspark/companion','.test-dist/tests'],
+    [path.posix,'/owned/.test-dist/archive/companion','tests'],
+    [path.win32,'D:\\owned\\.test-dist\\archive\\companion','tests'],
+    [path.posix,'/owned/.test-dist-copy/companion','tests'],
+    [path.win32,'D:\\owned\\with space 中文\\companion','.test-dist\\tests'],
+  ]
+  for(const newline of ['\n','\r\n'])for(const [dialect,companion,relative]of cases){
+    const dirname=dialect.join(companion,relative),expected=dialect.join(companion,'tests','fixtures','github-comparison-dom-464.cjs')
+    assert.equal(actualComparisonFixture464(source.replace(/\r?\n/g,newline),dialect,dirname),expected,JSON.stringify({dirname,newline}))
+  }
+})
+test('source-only CJS fixture retains actual repository root on both native path dialects',()=>{
+  const source=fs.readFileSync(path.join(repo,'companion/tests/fixtures/github-comparison-dom-464.cjs'),'utf8')
+  const statement=source.split(/\r?\n/).find(line=>line.startsWith('const repo=path.resolve('));assert.ok(statement)
+  for(const [dialect,root]of [[path.win32,'D:\\owned\\cmspark'],[path.posix,'/owned/cmspark']]){
+    const dirname=dialect.join(root,'companion','tests','fixtures'),context={path:dialect,__dirname:dirname,Map}
+    vm.runInNewContext(statement+'\nthis.actual=repo;',context,{timeout:1000});assert.equal(context.actual,root)
+  }
+})
+
+test('actual extension comparison root resolves Win32 and POSIX source/compiled layouts on LF and CRLF',()=>{
+  const source=fs.readFileSync(path.join(repo,'chrome-extension/tests/github-comparison-464.test.ts'),'utf8')
+  const cases=[
+    [path.win32,'D:\\owned\\cmspark','tests'],[path.win32,'D:\\owned\\cmspark','.test-dist\\tests'],
+    [path.posix,'/owned/cmspark','tests'],[path.posix,'/owned/cmspark','.test-dist/tests'],
+    [path.posix,'/owned/.test-dist/archive','tests'],[path.win32,'D:\\owned\\.test-dist\\archive','tests'],
+    [path.posix,'/owned/.test-dist-copy','tests'],[path.win32,'D:\\owned\\with space 中文','.test-dist\\tests'],
+  ]
+  for(const newline of ['\n','\r\n'])for(const [dialect,root,relative]of cases){
+    const text=source.replace(/\r?\n/g,newline),ast=ts.createSourceFile('extension.ts',text,ts.ScriptTarget.Latest,true)
+    const declarations=ast.statements.filter(n=>ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(ast)==='repoRoot'));assert.equal(declarations.length,1)
+    const dirname=dialect.join(root,'chrome-extension',relative),context={path:dialect,__dirname:dirname}
+    vm.runInNewContext(declarations[0].getText(ast)+'\nthis.actual=repoRoot;',context,{timeout:1000});assert.equal(context.actual,root,JSON.stringify({dirname,newline}))
+  }
+})

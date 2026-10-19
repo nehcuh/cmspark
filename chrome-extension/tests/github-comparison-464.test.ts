@@ -4,7 +4,7 @@ import fs from "node:fs"
 import path from "node:path"
 import vm from "node:vm"
 import { createRequire } from "node:module"
-const repoRoot = path.resolve(__dirname, __dirname.includes("/.test-dist/") ? "../../.." : "../..")
+const repoRoot = path.resolve(__dirname, path.basename(path.dirname(__dirname)) === ".test-dist" ? "../../.." : "../..")
 const { DOMParser } = createRequire(path.join(repoRoot, "companion/package.json"))("@xmldom/xmldom")
 import { pageReadExpression } from "../src/background/page-read-snapshot"
 

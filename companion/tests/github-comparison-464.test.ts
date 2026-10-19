@@ -9,7 +9,7 @@ import { evidenceScopeHash } from "../src/business-evidence/content"
 import { CodeReviewService } from "../src/code-review/service"
 import { executeCodeReviewTool } from "../src/code-review/executor"
 import { pendingToolCalls, handleToolResult } from "../src/ws/tool-forward"
-const fixture = require(path.join(__dirname, __dirname.includes("/.test-dist/") ? "../../tests/fixtures" : "./fixtures", "github-comparison-dom-464.cjs"))
+const fixture = require(path.join(__dirname, path.basename(path.dirname(__dirname)) === ".test-dist" ? "../../tests/fixtures" : "./fixtures", "github-comparison-dom-464.cjs"))
 const scope = { kind: "chat" as const, threadId: "owned-464" }
 function owned(t: { after: (fn: () => void) => void }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-github-464-"))
