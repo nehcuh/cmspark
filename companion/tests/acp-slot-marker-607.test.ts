@@ -15,7 +15,7 @@ const fixtureJs = ts.transpileModule(fixtureSource, {
 }).outputText
 
 async function executeFixture(scenario: Scenario) {
-  let clock = 0, cancels = 0, shutdowns = 0, rejectObserverAttached = false
+  let clock = 0, cancels = 0, shutdowns = 0, rejectObserverAttached = false, admissionChecks = 0
   const files = new Map<string, string>()
   const registered: Array<{ name: string; run: () => Promise<void> }> = []
   const owned = "/inert/cmspark-607-slot-owned"
@@ -43,6 +43,10 @@ async function executeFixture(scenario: Scenario) {
       if (scenario === "marker-first") publishMarker()
       if (scenario === "same-tick") queueMicrotask(() => { publishMarker(); finish!({ ok: false }) })
       return pending
+    }
+    checkStartAdmission(sessionId: string) {
+      assert.equal(sessionId, "inert"); admissionChecks++
+      return { ok: scenario !== "pending" }
     }
     cancel() { cancels++; finish?.({ ok: false }); return { ok: true } }
     async shutdown() { shutdowns++; finish?.({ ok: false }) }
@@ -80,7 +84,7 @@ async function executeFixture(scenario: Scenario) {
   let failure: unknown
   try { await selected.run() } catch (error) { failure = error }
   assert.equal(shutdowns, 1, "original finally must run")
-  return { failure, clock, cancels, originalError, rejectObserverAttached }
+  return { failure, clock, cancels, originalError, rejectObserverAttached, admissionChecks }
 }
 
 for (const [scenario, expected] of [
@@ -108,6 +112,7 @@ for (const scenario of ["marker-first", "same-tick"] as const) {
     const observed = await executeFixture(scenario)
     assert.equal(observed.failure, undefined)
     assert.equal(observed.cancels, 1)
+    assert.equal(observed.admissionChecks, 1, "original after-close admission boundary must be visited")
   })
 }
 

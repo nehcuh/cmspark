@@ -34,6 +34,12 @@ export function codingMessageTargetsThread(msg: { thread_id?: unknown }, threadI
   return !!threadId && typeof msg.thread_id === "string" && msg.thread_id === threadId
 }
 
+/** A reply for an older selected offer cannot retarget current-operation feedback. */
+export function codingMessageTargetsSelection(msg: { thread_id?: unknown; session_id?: unknown }, threadId: string | null, selection: Record<string, string>): boolean {
+  return codingMessageTargetsThread(msg, threadId) && (msg.session_id === undefined ||
+    typeof msg.session_id === "string" && !!threadId && selection[threadId] === msg.session_id)
+}
+
 export function isHydrateSelectError(err: string): boolean {
   return /Thread not found/i.test(err)
 }
@@ -308,6 +314,8 @@ export function useWebSocket() {
 
   // Keep refs in sync (listener is mount-once — never close over render state)
   activeThreadRef.current = state.activeThreadId
+  const codingSelectionRef = useRef(state.codingSessionIdByThread)
+  codingSelectionRef.current = state.codingSessionIdByThread
   // #502 E Inspect: inspected worker id rides its own ref — the inspect buffer
   // is updated independent of (and never widens) the active-thread gate above.
   const inspectedWorkerRef = useRef<string | null>(null)
@@ -1747,15 +1755,15 @@ export function useWebSocket() {
           break
 
         case "acp.ui_start.accepted":
-          if (!codingMessageTargetsThread(msg, activeThreadRef.current)) break
+          if (!codingMessageTargetsSelection(msg, activeThreadRef.current, codingSelectionRef.current)) break
           // progress follows acp.session.event — keep status for panel feedback
           dispatch({
             type: "SET_PROCESSING_STATUS",
-            status: "编程助手已确认启动…",
+            status: "启动请求已受理，正在准备…",
           })
           break
         case "acp.ui_start.denied":
-          if (!codingMessageTargetsThread(msg, activeThreadRef.current)) break
+          if (!codingMessageTargetsSelection(msg, activeThreadRef.current, codingSelectionRef.current)) break
           dispatch({
             type: "SET_PROCESSING_STATUS",
             status:
@@ -2430,7 +2438,7 @@ export function useWebSocket() {
             const controlAction = codingControlAction(msg)
             if (controlAction) { dispatch(controlAction); break }
             if ((msg.session_id !== undefined || msg.thread_id !== undefined) &&
-                !codingMessageTargetsThread(msg, activeThreadRef.current)) break
+                !codingMessageTargetsSelection(msg, activeThreadRef.current, codingSelectionRef.current)) break
             dispatch({
               type: "SET_PROCESSING_STATUS",
               status:
