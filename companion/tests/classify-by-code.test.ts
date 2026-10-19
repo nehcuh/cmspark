@@ -142,6 +142,9 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   TAB_LEASE_CAP: "recoverable",
   TAB_ID_REQUIRED: "recoverable",
   TAB_NOT_FOUND: "recoverable",
+  // #722: temporary same-thread busy / global capacity only; neither permits start or reveals a foreign holder.
+  ACP_SESSION_BUSY: "recoverable",
+  ACP_CONCURRENCY_LIMIT: "recoverable",
   ACP_SESSION_NOT_FOUND: "recoverable", // stale daemon handle can be replaced via confirmed propose/start
   ACP_SESSION_ID_REQUIRED: "recoverable", // model can use a current ID or propose a new session
   ACP_PROPOSAL_PARAMS_REQUIRED: "recoverable", // malformed proposals can be rebuilt before confirmation

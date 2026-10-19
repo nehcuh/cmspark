@@ -473,12 +473,14 @@ export type ShellProgress = {
 
 // Child pipes have no reliable ACP/console-code-page declaration. Preserve UTF-8
 // across data events; never guess GBK (or another encoding) from invalid bytes.
-function shellOutputDecoder() {
+function shellOutputDecoder(commandEncodingUnconfirmed = false) {
   const decoder = new StringDecoder("utf8")
   const validator = new TextDecoder("utf-8", { fatal: true })
   let undetermined = false
+  let sawBytes = false
   return {
     write(chunk: Buffer): string {
+      if (chunk.length) sawBytes = true
       if (chunk.includes(0)) undetermined = true
       if (!undetermined) {
         try { validator.decode(chunk, { stream: true }) } catch { undetermined = true }
@@ -491,7 +493,7 @@ function shellOutputDecoder() {
       }
       return decoder.end()
     },
-    get undetermined() { return undetermined },
+    get undetermined() { return undetermined || (commandEncodingUnconfirmed && sawBytes) },
   }
 }
 
@@ -730,8 +732,11 @@ export async function shellExec(opts: {
 
     let stdout = ""
     let stderr = ""
-    const stdoutDecoder = shellOutputDecoder()
-    const stderrDecoder = shellOutputDecoder()
+    // cmd can lose Unicode while converting the command before emitting valid
+    // UTF8/ASCII bytes. Byte validity alone cannot establish that provenance.
+    const commandEncodingUnconfirmed = process.platform === "win32" && !useArgv && /[^\x00-\x7f]/.test(command)
+    const stdoutDecoder = shellOutputDecoder(commandEncodingUnconfirmed)
+    const stderrDecoder = shellOutputDecoder(commandEncodingUnconfirmed)
     /** null | timeout | abort — distinguishes chat.stop vs wall-clock kill. */
     let killReason: null | "timeout" | "abort" = null
     let settled = false
@@ -853,7 +858,7 @@ export async function shellExec(opts: {
           truncated: stdout.length >= MAX_OUTPUT || stderr.length >= MAX_OUTPUT,
           note: "Command body not stored in audit log (default). Output shown to agent only." +
             (stdoutDecoder.undetermined || stderrDecoder.undetermined
-              ? ` OUTPUT_ENCODING_UNDETERMINED (${[stdoutDecoder.undetermined ? "stdout" : "", stderrDecoder.undetermined ? "stderr" : ""].filter(Boolean).join(", ")}): non-UTF-8 or binary output; encoding cannot be determined. Replacement characters may be present; do not infer file corruption from this output.`
+              ? ` OUTPUT_ENCODING_UNDETERMINED (${[stdoutDecoder.undetermined ? "stdout" : "", stderrDecoder.undetermined ? "stderr" : ""].filter(Boolean).join(", ")}): output encoding or command-to-console conversion cannot be confirmed. Replacement characters may be present; do not infer file corruption from this output.`
               : ""),
         },
       })

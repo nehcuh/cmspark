@@ -5,14 +5,15 @@
  * site-op-auto-persist.test.ts）。三条钉死：
  *  a) SITE_OP_BANNED ×4（peek 拒执，工具未执行）不触发熔断——run 存活到收尾
  *  b) 真实失败 ×2 + peek 拒执 ×3 交错 → 只计真实失败；第 3 次真实失败才熔断
- *  c) origin 已升级 + wait_for 真实失败 ×3 熔断 → chat.error 附解锁指引
- *     （#425 放宽：不再只认 osascript_eval/host_computer）
+ *  c) click ×1 + wait_for ×3：读写计数隔离，wait_for 仍熔断但不误给 host 解锁
+ *  d) interaction ×4（同工具最后三次失败）：真实升级后仍提供 host 解锁指引
  */
 import test, { after, before } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { getOriginFailCount, getReadOnlyOriginFailCount } from "../src/tool/site-op-memory"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-peekbreaker-"))
 
@@ -242,20 +243,19 @@ test("(b) 真实失败 ×2 + peek 拒执 ×3 交错：只计真实失败，第 3
   assert.match(String(chatErrors[0].error), /工具 wait_for 连续 3 次执行失败/)
 })
 
-test("(c) origin 已升级 + wait_for 真实×3 熔断 → chat.error 带解锁指引（任意工具）", async () => {
+test("(c) click1 + wait_for3 retain separate budgets; read breaker has no host unlock", async () => {
   resetSiteOpMemoryForTests()
   clearTabUrlCacheForTests()
   applyTabNavigated(203, "https://r.com/home")
   logEvents.length = 0
-  // 4 次真实失败（不同 locator）→ origin fails=4 达 SITE_ORIGIN_FAIL_ESCALATE；
-  // 第 4 次即 wait_for#3：recordSiteOpFailure 先把 origin 推到升级线，随后熔断
-  // 检查看到 isOriginEscalated=true → 附解锁指引。
+  // #729: one interaction plus three observations are not four interaction failures.
+  // wait_for still has its genuine same-tool failure breaker at three.
   roundScript = [
     proposeRound,
-    { tool: { name: "click", args: { tabId: 203, text: "r1" } } },    // 真实失败 → origin 1
-    { tool: { name: "wait_for", args: { tabId: 203, selector: "#w1" } } }, // origin 2, wait_for 计 1
-    { tool: { name: "wait_for", args: { tabId: 203, selector: "#w2" } } }, // origin 3, 计 2
-    { tool: { name: "wait_for", args: { tabId: 203, selector: "#w3" } } }, // origin 4（升级）, 计 3 → 熔断
+    { tool: { name: "click", args: { tabId: 203, text: "r1" } } },    // interaction 1
+    { tool: { name: "wait_for", args: { tabId: 203, selector: "#w1" } } }, // read 1, wait_for 1
+    { tool: { name: "wait_for", args: { tabId: 203, selector: "#w2" } } }, // read 2, wait_for 2
+    { tool: { name: "wait_for", args: { tabId: 203, selector: "#w3" } } }, // read 3, wait_for 3 → breaker
     { content: "never reached" },
   ]
 
@@ -278,7 +278,38 @@ test("(c) origin 已升级 + wait_for 真实×3 熔断 → chat.error 带解锁�
   const chatErrors = sent.filter(m => m?.type === "chat.error")
   assert.equal(chatErrors.length, 1)
   assert.match(String(chatErrors[0].error), /工具 wait_for 连续 3 次执行失败/, "wait_for (a CDP tool) hits the breaker")
-  // #425 放宽前：解锁指引只挂在 osascript_eval/host_computer 上 → 这里是裸死胡同。
-  // 测试 HOME 无 coordinateEnabled → unarmed 分支文案。
-  assert.match(String(chatErrors[0].error), /解锁：在 设置 → 坐标计算机使用 打开 coordinateEnabled/)
+  assert.equal(getOriginFailCount(thread.id, "https://r.com"), 1)
+  assert.equal(getReadOnlyOriginFailCount(thread.id, "https://r.com"), 3)
+  const breakers = logEvents.filter(e => e.event === "llm.recoverable_loop_detected")
+  assert.equal(breakers.length, 1); assert.equal(breakers[0].data.fail_count, 3)
+  assert.doesNotMatch(String(chatErrors[0].error), /解锁：|替代路径（host_computer）/)
+})
+
+
+test("(d) four genuine interaction failures retain escalation and host unlock on the third same-tool failure", async () => {
+  resetSiteOpMemoryForTests(); clearTabUrlCacheForTests()
+  applyTabNavigated(204, "https://interaction.test/home"); logEvents.length = 0
+  roundScript = [proposeRound,
+    { tool: { name: "hover", args: { tabId: 204, selector: "#first" } } },
+    ...["#c1", "#c2", "#c3"].map(selector => ({ tool: { name: "click", args: { tabId: 204, selector } } })),
+    { content: "never reached" }]
+  const manager = new ThreadManager(), se = new SkillEngine()
+  const thread = manager.create("interaction escalation", "test-peek-04"), sent: any[] = []
+  let interactionDispatched = 0
+  await chatCreate(buildParams({ threadId: thread.id, hostname: "interaction.test", manager, skillEngine: se, sent,
+    executeTool: async (_id, name) => {
+      if (name === "run_progress_propose") return proposeOk
+      assert.ok(name === "click" || name === "hover")
+      interactionDispatched++; return { ...timeoutFail }
+    },
+  }))
+  assert.equal(interactionDispatched, 4)
+  assert.equal(getOriginFailCount(thread.id, "https://interaction.test"), 4)
+  assert.equal(getReadOnlyOriginFailCount(thread.id, "https://interaction.test"), 0)
+  const errors = sent.filter(m => m?.type === "chat.error"), breakers = logEvents.filter(e => e.event === "llm.recoverable_loop_detected")
+  assert.equal(errors.length, 1); assert.equal(breakers.length, 1)
+  assert.equal(breakers[0].data.tool_name, "click"); assert.equal(breakers[0].data.fail_count, 3)
+  assert.match(String(errors[0].error), /工具 click 连续 3 次执行失败/)
+  assert.match(String(errors[0].error), /解锁：在 设置 → 坐标计算机使用 打开 coordinateEnabled/)
+  assert.equal(manager.getMessages(thread.id).some(m => m.role === "assistant" && String(m.content).includes("never reached")), false)
 })

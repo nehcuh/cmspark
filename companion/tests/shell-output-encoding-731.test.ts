@@ -13,7 +13,7 @@ const source = path.join(root, "src/capability/shell.ts")
 const chinese = Buffer.from("中文🙂", "utf8")
 // Fixed CP936 bytes for 中文, not a recording of the user's private command.
 const cp936 = Buffer.from([0xd6, 0xd0, 0xce, 0xc4])
-function fixture(policy = "confirm_per_command", enabled = true) {
+function fixture(policy = "confirm_per_command", enabled = true, platform = "win32") {
   const child: any = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
   child.pid = 31; child.exitCode = null; child.signalCode = null
   let kills = 0, now = 1000
@@ -21,7 +21,7 @@ function fixture(policy = "confirm_per_command", enabled = true) {
   let nextTimer = 0
   child.kill = () => { kills++; return true }
   const context: any = { Buffer, TextDecoder, console, AbortController,
-    process: { platform: "win32", env: { PATH: "OWNED_INERT_PATH" }, cwd: () => "OWNED_CWD", kill: () => assert.fail("no real kill") },
+    process: { platform, env: { PATH: "OWNED_INERT_PATH" }, cwd: () => "OWNED_CWD", kill: () => assert.fail("no real kill") },
     Date: class extends Date { static now() { return now } },
     setTimeout: (fn: () => void) => { const id = ++nextTimer; timers.set(id, fn); return id }, clearTimeout: (id: number) => timers.delete(id),
     setInterval: (fn: () => void) => { const id = ++nextTimer; intervals.set(id, fn); return id }, clearInterval: (id: number) => intervals.delete(id),
@@ -45,13 +45,13 @@ function fixture(policy = "confirm_per_command", enabled = true) {
     close: (code = 0) => { child.exitCode = code; child.emit("close", code, null) },
   }
 }
-async function bytes(stdout: Buffer[], stderr: Buffer[] = [], code = 0) {
+async function bytes(stdout: Buffer[], stderr: Buffer[] = [], code = 0, command = "echo owned") {
   const f = fixture(), progress: any[] = []
-  const p = f.shell.shellExec({ command: "echo 中文", runKey: "owned-731", onProgress: value => progress.push(value) })
+  const p = f.shell.shellExec({ command, runKey: "owned-731", onProgress: value => progress.push(value) })
   for (const b of stdout) { f.now(2000 + progress.length * 1000); f.child.stdout.emit("data", b) }
   for (const b of stderr) { f.now(50000 + progress.length * 1000); f.child.stderr.emit("data", b) }
   f.close(code); const result = await p
-  assert.equal(f.spawnCalls.length, 1); assert.equal(f.spawnCalls[0][0], "echo 中文")
+  assert.equal(f.spawnCalls.length, 1); assert.equal(f.spawnCalls[0][0], command)
   assert.equal(f.spawnCalls[0][1].shell, true); assert.equal(f.spawnCalls[0][1].windowsHide, true)
   assert.equal(f.spawnCalls[0][1].env.PATH, "OWNED_INERT_PATH"); assert.equal(f.spawnCalls[0][1].env.CMSPARK_SHELL, "1")
   assert.equal(f.timers.size, 0); assert.equal(f.intervals.size, 0); assert.equal(f.shell.listActiveShellRunIds().length, 0)
@@ -122,4 +122,24 @@ test("731 module/policy/preabort refusals still prevent any spawn", async () => 
   const disabled = fixture("confirm_per_command", false); assert.equal((await disabled.shell.shellExec({ command: "echo hi" })).success, false); assert.equal(disabled.spawnCalls.length, 0)
   const denied = fixture("allowlist"); assert.equal((await denied.shell.shellExec({ command: "echo hi;bad" })).success, false); assert.equal(denied.spawnCalls.length, 0)
   const early = fixture(), ac = new AbortController(); ac.abort(); assert.equal((await early.shell.shellExec({ command: "echo hi", signal: ac.signal })).data.aborted, true); assert.equal(early.spawnCalls.length, 0)
+})
+
+// Valid UTF8 pipe bytes do not prove the earlier cmd console conversion was lossless.
+test("731 Windows Unicode shell command conservatively labels even valid ASCII or UTF8 pipes", async () => {
+  for (const text of ["??\r\n", "中文\r\n", "真实�字符"]) {
+    const { result, progress, f } = await bytes([Buffer.from(text)], [], 0, "echo 中文")
+    assert.equal(f.spawnCalls[0][0], "echo 中文"); assert.equal(f.spawnCalls[0][1].shell, true)
+    assert.equal(result.data.stdout, text); assert.equal(result.data.stderr, "")
+    assert.match(result.data.note, /OUTPUT_ENCODING_UNDETERMINED \(stdout\)/)
+    assert.ok(progress.some(p => p.stdout_tail.startsWith("[OUTPUT_ENCODING_UNDETERMINED] ")))
+    assert.equal(progress.at(-1).stderr_tail, "")
+  }
+})
+test("731 command provenance warning excludes ASCII commands, argv and non-Windows", async () => {
+  for (const [platform, command] of [["win32", "echo owned"], ["win32", '"C:\\owned\\node.exe" 中文'], ["darwin", "echo 中文"]]) {
+    const f = fixture("confirm_per_command", true, platform)
+    const p = f.shell.shellExec({ command }); f.child.stdout.emit("data", Buffer.from("中文")); f.close()
+    const result = await p; assert.equal(result.data.stdout, "中文")
+    assert.equal(result.data.note.includes("OUTPUT_ENCODING_UNDETERMINED"), false)
+  }
 })
