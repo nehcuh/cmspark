@@ -194,3 +194,24 @@ test('actual workflow keeps original jobs and consumes same-SHA ordinary product
  assert.deepEqual(upload.with.path.trim().split('\n'),['companion/dist/','chrome-extension/build/chrome-mv3-prod/'])
  assert.equal(hosted.steps.at(-1).run,'node chrome-extension/scripts/accept-enterprise-browser-hosted-627.mjs');assert.equal(hosted.steps.at(-1)['continue-on-error'],undefined)
 })
+
+function actualWorkerPredicate() {
+  const source=fs.readFileSync(new URL('../accept-enterprise-browser-hosted-627.mjs',import.meta.url),'utf8')
+  const ts=createRequire(path.join(ROOT,'companion/package.json'))('typescript')
+  const ast=ts.createSourceFile('actual-hosted-main.mjs',source,ts.ScriptTarget.ES2022,true,ts.ScriptKind.JS),predicates=[]
+  const visit=node=>{if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==='filter'&&node.expression.expression.getText(ast)==='targets')predicates.push(node.arguments[0].getText(ast));ts.forEachChild(node,visit)}
+  visit(ast);assert.equal(predicates.length,1,'the actual main worker discovery predicate must be unique')
+  // Literal worker path is recorded from official normal-build artifact12164695718,
+  // run39202399936, manifestSHA256 9d8522c217e187a439182a23935fd9c61231b9745b3dcc593b4c12b88e540de4.
+  return vm.runInNewContext('('+predicates[0]+')',{paths:{worker:'static/background/index.js'}})
+}
+test('actual worker discovery accepts the manifest-produced literal dot path',()=>{
+  const matches=actualWorkerPredicate(),base='chrome-extension://'+'a'.repeat(32)+'/'
+  assert.equal(matches({type:'service_worker',url:base+'static/background/index.js'}),true)
+})
+test('actual worker discovery rejects substituted dots, suffixes, wrong types and foreign extension IDs',()=>{
+  const matches=actualWorkerPredicate(),base='chrome-extension://'+'a'.repeat(32)+'/'
+  for(const suffix of ['static/background/index$js','static/background/indexXjs','static/background/index.js?x=1','static/background/index.js#x','static/background/index.js/extra'])assert.equal(matches({type:'service_worker',url:base+suffix}),false)
+  assert.equal(matches({type:'page',url:base+'static/background/index.js'}),false)
+  assert.equal(matches({type:'service_worker',url:'chrome-extension://'+'q'.repeat(32)+'/static/background/index.js'}),false)
+})

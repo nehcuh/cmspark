@@ -239,7 +239,7 @@ export async function main() {
     browser=await CDP.connect(WebSocket,'ws://127.0.0.1:'+parts[0]+parts[1]);active.add(browser)
     stage='EXTENSION'
     let info;const end=Date.now()+10000
-    while(Date.now()<end){const targets=await(await fetch(endpoint+'/json/list',{signal:AbortSignal.timeout(Math.min(5000,remaining()))})).json();const matches=targets.filter(t=>t.type==='service_worker'&&new RegExp('^chrome-extension://[a-p]{32}/'+paths.worker.replace(/[.*+?^${}()|[\]\\]/g,'\\$')+'$').test(t.url));if(matches.length===1){info=matches[0];break}await new Promise(r=>setTimeout(r,50))}
+    while(Date.now()<end){const targets=await(await fetch(endpoint+'/json/list',{signal:AbortSignal.timeout(Math.min(5000,remaining()))})).json();const matches=targets.filter(t=>t.type==='service_worker'&&new RegExp('^chrome-extension://[a-p]{32}/'+paths.worker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$').test(t.url));if(matches.length===1){info=matches[0];break}await new Promise(r=>setTimeout(r,50))}
     if(!info)refusal('PRODUCTION_WORKER_MISSING')
     const origin='chrome-extension://'+info.url.split('/')[2]
     worker=await CDP.connect(WebSocket,info.webSocketDebuggerUrl);active.add(worker);await worker.workerScriptReady(Math.min(BOUNDS.navigation,remaining()))
