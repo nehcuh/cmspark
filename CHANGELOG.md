@@ -8,6 +8,8 @@
 
 - **Refs #723 Windows 观察质量（开发候选）**：窗口渲染源和屏幕拷贝使用闭合质量标签，遮挡／部分截图不作为目标页面 OCR 正文；凭证黑化、确认预览、模型结果、时间线和密封证据保留提示。只读捕获与确认前预览不恢复／抢焦点；原注入 L2、时限、对话框通道和阈值不变。可信 HWND 遮罩与只读准入尚未实现，CPU 不代表 Windows 原生或整票完成。
 
+- **#723 D2 首个身份纵向开发候选**：仅增加 nativeMessaging 与固定 `com.cmspark.cockpit` host 的 document/当前 owner/认证 WS bind/dispose 链；新增 Windows smoke 末尾 gating 入口与固定 CFT 供应校验。真实 pipe/parent/Job 清理尚待远端验收，空 pin 明确 NOT_READY；不含 mask、通用执行、额外动作授权或发版安装，版本仍 0.6.14。
+
 - **#726 Windows 选夹验收路径域**：仅测试的预期工作区使用原生 realpath 规范化，避免成功选夹返回的长路径与临时目录的 8.3 短名直接比较。保留实际选夹、绑定、取消、ACP cwd、所有者和清理断言；增加真实 Node JS realpath 与显式原生绑定 seam 的 LF/CRLF 回归。受控 CPU 通过不代替新 head 的 Windows 原生验收。
 
 ### Fixed

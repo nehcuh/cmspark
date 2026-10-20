@@ -647,3 +647,10 @@ jobs:
           }
           node "$moduleScopeProbe650" "$env:CMSPARK_650_FINISHED_PUBLIC_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Windows cockpit native bridge first identity STOP gate (#723)"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          & scripts/tests/run-cockpit-bridge-first.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -4,6 +4,10 @@ declare module "node:test" {
   export default test
 }
 
+declare module "node:timers" {
+  export function setImmediate(callback: () => void): unknown
+}
+
 declare module "node:fs" {
   export function readFileSync(path: string, encoding: string): string
   export function existsSync(path: string): boolean

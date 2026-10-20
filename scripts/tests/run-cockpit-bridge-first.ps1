@@ -1,0 +1,41 @@
+# Remote-only first identity gate; all new children receive an explicit environment.
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or -not [Environment]::Is64BitOperatingSystem) { throw 'COCKPIT_BRIDGE_REMOTE_ONLY' }
+$repo = (Get-Item -LiteralPath (Join-Path $PSScriptRoot '..\..')).FullName
+$runnerTemp = Get-Item -LiteralPath $env:RUNNER_TEMP
+if (($runnerTemp.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not $runnerTemp.PSIsContainer) { throw 'COCKPIT_BRIDGE_RUNNER_TEMP' }
+$root = Join-Path $runnerTemp.FullName ('cmspark-test-run-723-identity-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $root | Out-Null
+$data = Join-Path $root 'data'; $temp = Join-Path $root 'temp'
+New-Item -ItemType Directory -Path $data, $temp | Out-Null
+$node = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
+if ((Get-Item -LiteralPath $node).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'COCKPIT_BRIDGE_NODE_PATH' }
+$entry = Join-Path $PSScriptRoot 'cockpit-bridge-first-gate.cjs'
+# Node and entry are absolute filesystem paths, not shell text.
+$start = New-Object Diagnostics.ProcessStartInfo
+$start.FileName = $node
+$start.Arguments = '"' + $entry + '"'
+$start.UseShellExecute = $false
+$start.WorkingDirectory = $repo
+$start.EnvironmentVariables.Clear()
+$start.EnvironmentVariables['SystemRoot'] = $env:SystemRoot
+$start.EnvironmentVariables['WINDIR'] = $env:SystemRoot
+$start.EnvironmentVariables['ComSpec'] = Join-Path $env:SystemRoot 'System32\cmd.exe'
+$start.EnvironmentVariables['PATH'] = (Split-Path -Parent $node) + ';' + (Join-Path $env:SystemRoot 'System32')
+$start.EnvironmentVariables['TEMP'] = $temp
+$start.EnvironmentVariables['TMP'] = $temp
+$start.EnvironmentVariables['GITHUB_ACTIONS'] = 'true'
+$start.EnvironmentVariables['RUNNER_OS'] = 'Windows'
+$start.EnvironmentVariables['CMSPARK_TEST_RUN_DIR'] = $root
+$start.EnvironmentVariables['CMSPARK_DATA_DIR'] = $data
+$start.EnvironmentVariables['CMSPARK_723_COMPILED_ROOT'] = Join-Path $repo 'companion\.test-dist\src'
+if ($env:RUNNER_TRACKING_ID) { $start.EnvironmentVariables['RUNNER_TRACKING_ID'] = $env:RUNNER_TRACKING_ID }
+$child = New-Object Diagnostics.Process
+$child.StartInfo = $start
+try {
+  if (-not $child.Start()) { throw 'COCKPIT_BRIDGE_GATE_START' }
+  $child.WaitForExit()
+  $exitCode = $child.ExitCode
+} finally { $child.Dispose() }
+exit $exitCode

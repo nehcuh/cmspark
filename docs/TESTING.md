@@ -6,6 +6,10 @@ Windows／跨平台变更先读 [Windows 开发与失败定位](windows-developm
 
 ## 测试架构
 
+### #723 D2 固定 native bridge 首门
+
+[首个身份纵向说明](browser-native-bridge.md) 区分源码/惰性 CPU、C# framing/owned 注册与真实 document→parent pipe/HWND→当前 owner/认证 WS 的验收。Windows smoke 仅在原全部步骤末尾追加 `run-cockpit-bridge-first.ps1` gating step，复用 `.test-dist/src`、构建当前候选扩展；固定 CFT pin 未具备完整归档/EXE 证明时先失败为 NOT_READY。新供应器只用一次 600000 ms 网络准备，无 redirect/retry，不改变原 45 秒 native 或 5000 ms bind。所有新增子进程使用显式环境、owned npm 配置/cache；C# framing、注册负控、document receipt CPU 在真实 controller 之前，Job CPU 在 controller 内只执行一次。惰性 ZIP/生命周期控不称浏览器/原生通过，mask/opaque scope 仍未实现，整张 #723 不因此关闭。
+
 ### Windows 选夹的短名与长名
 
 `companion/tests/picker-native-path-domain-726.test.ts` 执行当前 Node 的真实 JS `realpathSync` 实现与原生选夹测试的实际预期路径声明／严格比较。仅原生绑定用明确的惰性短名→长名 seam；不会执行 Win32、窗口或选夹。它同时覆盖 LF/CRLF、原 JS-only 声明的失败、已展开路径正控、异目录拒绝及原生身份不可得的失败传播。`workspace-picker-windows-native-726.test.ts` 的预期根使用 `fs.realpathSync.native`，实际选夹及全部绑定／取消／ACP cwd／清理断言不变。该 CPU 检查不能证明真实 Windows API 或替代远端新 head 的原生用例。

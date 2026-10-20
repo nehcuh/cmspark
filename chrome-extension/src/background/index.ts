@@ -3,6 +3,7 @@
 
 import { forwardSiteCounterSettings, noteSiteCounterUiSelection } from "./site-counter-settings"
 import { WSClient } from "./ws-client"
+import { createCockpitNativeRelay, COCKPIT_NATIVE_PORT } from "./cockpit-native-bridge"
 import { projectMetadataSenderAllowed } from "./project-metadata"
 import {
   attachTerminalPort,
@@ -76,6 +77,10 @@ import {
 
 const desktopBrowserPeer = createDesktopBrowserPeerHandler()
 let wsClient: WSClient
+const cockpitNativeRelay = createCockpitNativeRelay(() => {
+  const current = wsClient?.desktopBrowserConnectionCurrent() ?? (() => false)
+  return { current, send: frame => current() && wsClient.send(frame) }
+})
 // #432: 单会话终端中继（同时最多 1 个 PTY，spec §5）
 let terminalRelay: TerminalRelay | null = null
 let browserBridge: BrowserBridge
@@ -308,6 +313,7 @@ function init() {
 
   // Long-lived ports keep the service worker alive while UI surfaces are open
   chrome.runtime.onConnect.addListener((port) => {
+    if (port.name === COCKPIT_NATIVE_PORT) { void cockpitNativeRelay.attach(port); return }
     if (port.name === "cmspark-sidepanel") {
       logToCompanion("info", "extension.sidepanel_port_connected", {})
       port.onDisconnect.addListener(() => {
@@ -352,6 +358,7 @@ function handleStateChange(state: "connected" | "connecting" | "disconnected") {
   chrome.runtime.sendMessage({ type: "thread.mutation.connection", state }).catch(() => {})
 
   if (state === "disconnected") {
+    cockpitNativeRelay.disconnect()
     scheduleDisconnectNotification()
     // #374: 断线后旧 socket 的在途 graph 请求不会有响应——清空注册表防悬挂
     clearGraphRequests()
@@ -388,6 +395,7 @@ const pendingLlmOneshot = new Map<
 >()
 
 async function handleCompanionMessage(msg: any) {
+  if (cockpitNativeRelay.receive(msg)) return
   if (msg.type === "desktop.browser.peer.cancel") {desktopBrowserPeer.cancel(msg);return}
   if (msg.type === "desktop.browser.peer.request") {
     const current = wsClient.desktopBrowserConnectionCurrent()
