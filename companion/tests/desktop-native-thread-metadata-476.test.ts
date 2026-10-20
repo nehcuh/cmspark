@@ -184,3 +184,105 @@ test("#476 actual native permanent archive history restore and lost ACK use the 
   }
  })
 })
+
+/** New terminal-only leaf: same serialized foreground file, never a new worker. */
+function hostedTerminalAdmission705() {
+ assert.ok(process.platform==='darwin'||process.platform==='win32','TERMINAL705_SUPPORTED_HOST_REQUIRED')
+ assert.equal(process.env.GITHUB_ACTIONS,'true','TERMINAL705_REMOTE_GHA_REQUIRED')
+ assert.equal(process.env.RUNNER_OS,process.platform==='win32'?'Windows':'macOS','TERMINAL705_RUNNER_REQUIRED')
+ const run=process.env.CMSPARK_TEST_RUN_DIR,data=process.env.CMSPARK_DATA_DIR
+ assert.ok(run&&data&&path.isAbsolute(run)&&path.isAbsolute(data),'TERMINAL705_CANONICAL_PRELOAD_REQUIRED')
+ const physical=fs.realpathSync(run),owned=fs.realpathSync(data),relation=path.relative(physical,owned)
+ assert.ok(relation&&relation!=='..'&&!relation.startsWith('..'+path.sep)&&!path.isAbsolute(relation),'TERMINAL705_OWNED_DATA_REQUIRED')
+ for(const file of [run,data]){const st=fs.lstatSync(file);assert.ok(st.isDirectory()&&!st.isSymbolicLink(),'TERMINAL705_OWNED_DIRECTORY_REQUIRED')}
+ const keep=new Set(['PATH','Path','SystemRoot','WINDIR','COMSPEC','PATHEXT','TEMP','TMP','TMPDIR','LANG','LC_ALL','TZ','SHELL','GITHUB_ACTIONS','RUNNER_OS','CMSPARK_TEST_RUN_DIR','CMSPARK_DATA_DIR','RUNNER_TRACKING_ID'])
+ const admitted=process.platform==='win32'?new Set([...keep].map(k=>k.toUpperCase())):keep
+ // Inspect key names only; never copy/read/hash/log removed credential values.
+ for(const key of Object.keys(process.env))if(!admitted.has(process.platform==='win32'?key.toUpperCase():key))delete process.env[key]
+ process.env.CMSPARK_SKIP_LOGIN_ENV='1'
+ return owned
+}
+
+test('#476 terminal-only native confirmation→real user PTY→selected partial excerpt→canonical reopen',{skip:!['darwin','win32'].includes(process.platform),timeout:45000,concurrency:false},async t=>{
+ const owned=hostedTerminalAdmission705()
+ return withSurface650(t,async(t,surfaceLease)=>{
+  const previous=process.env.CMSPARK_DATA_DIR,dir=fs.realpathSync(fs.mkdtempSync(path.join(owned,'native-terminal705-')));process.env.CMSPARK_DATA_DIR=dir
+  const {initDataDir,saveConfig}=await import('../src/config'),{createNativeTerminalRuntime}=await import('../src/desktop/terminal-runtime'),{SecurityConfirmationManager}=await import('../src/security-confirmation'),{loadNodePty}=await import('../src/pty/load-native'),pty=await import('../src/pty/session'),{WebSocket}=await import('ws'),{createHmac}=await import('node:crypto')
+  await initDataDir();saveConfig({modules:{'devsec-workspace':{available:true,enabled:true}},embedded_terminal:{enabled:true}} as any)
+  assert.equal(pty.isPtyBusy(),false,'TERMINAL705_NO_FOREIGN_LIVE_SLOT')
+  const threads=new ThreadManager();threads.create('Native terminal A','native-terminal-A');threads.create('Unchanged sibling','native-terminal-B');threads.update('native-terminal-A',{workspace_root:dir})
+  const registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-native-terminal705'),confirmations=new SecurityConfirmationManager(),runtime=createNativeTerminalRuntime(()=> 'idle')
+  const outputDecoder=new TextDecoder(),inputDecoder=new TextDecoder();let outputSuffix='',inputSuffix='';const actualHandles:Array<{kill():void;exited:boolean}>=[];let completionFailure:unknown
+  const required=['DENIED','CANCELLED','OUTPUT','RESIZED','STOPPED','SAVED','REOPENED','DONE'].map(n=>'D476_TERMINAL_'+n),receipts=new Set<string>(),outputSeq=new Set<number>(),ackSeq=new Set<number>(),dimensions=new Set<string>(),childExits:Promise<void>[]=[]
+  let child:DesktopNativeChild|undefined,childExited=false,authenticated=false,windowRequested=false,failed=false,connections=0,primary:any,completion:Promise<void>|undefined,foreign:InstanceType<typeof WebSocket>|undefined,foreignCheck:Promise<void>|undefined,actualSpawns=0,openAttempts=0,confirmationRequests=0,decisions=0,deniedResults=0,outputBytes=0,largestFrame=0,lastOutput=0,inputUnicode=false,outputUnicode=false,stops=0,ownedPid=0,actualProcessExit=false,exitResolve!:(n:number)=>void,failResolve!:()=>void,primaryFailure:unknown
+  const exited=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r),deadline=new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE')),{once:true})),fail=()=>{failed=true;failResolve()}
+  // Delegate every spawn to the actual required @lydell loader. This is observation,
+  // not testSetPtySpawn/MockPty/platform spoof or a replacement native handle.
+  const nativePty=loadNodePty(),realSpawn=nativePty.spawn.bind(nativePty)
+  t.mock.method(nativePty,'spawn',(...parameters:Parameters<typeof realSpawn>)=>{const [file,args,opts]=parameters
+   assert.equal(file,runtime.shell().file);assert.deepEqual(args,[...runtime.shell().args]);assert.equal(fs.realpathSync(opts.cwd),dir)
+   const handle=realSpawn(file,args,opts);actualSpawns++;ownedPid=handle.pid;const ownedHandle={kill:()=>handle.kill(),exited:false};actualHandles.push(ownedHandle)
+   childExits.push(new Promise<void>(resolve=>handle.onExit(()=>{ownedHandle.exited=true;actualProcessExit=true;resolve()})));assert.ok(Number.isSafeInteger(ownedPid)&&ownedPid>0);return handle
+  })
+  const realOpen=runtime.openTerminal,realInput=runtime.input,realResize=runtime.resize,realAck=runtime.ack,realClose=runtime.close
+  runtime.openTerminal=input=>{openAttempts++;assert.equal(input.owner,primary);assert.equal(confirmations.pendingCount(),0);const result=realOpen(input);if(result.ok){assert.ok(pty.getOwnedPtyContext(input.id,primary));assert.equal(pty.getOwnedPtyContext(input.id,null),null);assert.equal(pty.getOwnedPtyContext(input.id,{}),null);assert.equal(pty.readPtyTail(input.id,primary,'native-terminal-A').success,false,'shell consent is not private model-tail consent')}return result}
+  runtime.input=(id,b64)=>{const bytes=Buffer.from(b64,'base64');assert.ok(bytes.length<=16384);inputSuffix=(inputSuffix+inputDecoder.decode(bytes,{stream:true})).slice(-256);assert.equal(inputSuffix.includes('D476_TERMINAL_中'),false,'complete output marker must not come from input echo');if(inputSuffix.includes('中'))inputUnicode=true;return realInput(id,b64)}
+  runtime.resize=(id,c,r)=>{const value=realResize(id,c,r);if(value.ok)dimensions.add(c+'x'+r);return value}
+  runtime.ack=(id,seq)=>{const value=realAck(id,seq);if(value.ok)ackSeq.add(seq);return value}
+  runtime.close=id=>{stops++;return realClose(id)}
+  const channel=createDesktopChannel({registry,securityConfirmations:confirmations,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},maxPayload:10485760,terminalRuntime:runtime,onAuthenticated:host=>{if(host==='owned-native-terminal705'){authenticated=true;windowRequested=channel.window(host,'workspace')}}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer();attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
+  const foreignOwner=async(operation:string)=>{
+   const cap=registry.issue('owned-terminal705-foreign'),port=(server.address()as any).port
+   foreign=new WebSocket(`ws://127.0.0.1:${port}/desktop`);foreign.on('error',error=>{completionFailure=error;fail()})
+   const frames:any[]=[],wake=new Set<()=>void>();foreign.on('message',raw=>{frames.push(JSON.parse(String(raw)));for(const fn of [...wake])fn()})
+   const next=async()=>{while(frames.length===0)await Promise.race([new Promise<void>(resolve=>{const f=()=>{wake.delete(f);resolve()};wake.add(f)}),deadline]);return frames.shift()}
+   assert.equal((await next()).type,'desktop.challenge.request');foreign.send(JSON.stringify({type:'desktop.hello',capability_id:cap.capabilityId,protocol_version:1}));const challenge=await next();assert.equal(challenge.type,'desktop.challenge')
+   foreign.send(JSON.stringify({type:'desktop.authenticate',capability_id:cap.capabilityId,protocol_version:1,proof:createHmac('sha256',Buffer.from(cap.secret,'hex')).update(JSON.stringify(['cmspark.desktop.auth.v1',cap.capabilityId,challenge.connection_id,1,challenge.nonce])).digest('hex')}));assert.equal((await next()).type,'desktop.ready')
+   for(const thread of ['native-terminal-A','native-terminal-B']){foreign.send(JSON.stringify({type:'desktop.terminal.close',id:'foreign-'+thread,thread_id:thread,operation_id:operation}));const result=await next();assert.equal(result.ok,false);assert.equal(result.error_code,'LOCAL_NOT_OWNED')}
+   foreign.close();await once(foreign,'close')
+  }
+  channel.wss.on('connection',ws=>{
+   connections++;if(!primary)primary=ws;const original=ws.send.bind(ws)
+   ws.send=((data:any,...args:any[])=>{let f:any;try{f=JSON.parse(String(data))}catch{return Reflect.apply(original,ws,[data,...args])}
+    if(ws===primary){
+     if(f.type==='desktop.confirmation.request'&&f.purpose==='local-work'){confirmationRequests++;assert.ok(confirmationRequests<=4);assert.equal(JSON.parse(f.action_json).kind,confirmationRequests<=3?'terminal-open':'terminal-return')}
+     if(f.type==='desktop.terminal.open.result'){
+      if(f.ok===false&&f.error_code==='LOCAL_DENIED'){deniedResults++;assert.equal(actualSpawns,0);assert.equal(openAttempts,0)}
+      if(f.ok===true){assert.equal(deniedResults,2);foreignCheck=foreignOwner(f.operation_id);foreignCheck.catch(error=>{completionFailure=error;fail()})}
+     }
+     if(f.type==='desktop.terminal.data'){const bytes=Buffer.from(f.b64,'base64');assert.ok(bytes.length<=16384);assert.equal(f.seq,lastOutput+1);lastOutput=f.seq;outputSeq.add(f.seq);outputBytes+=bytes.length;largestFrame=Math.max(largestFrame,bytes.length);outputSuffix=(outputSuffix+outputDecoder.decode(bytes,{stream:true})).slice(-128);if(outputSuffix.includes('D476_TERMINAL_中'))outputUnicode=true}
+    }
+    return Reflect.apply(original,ws,[data,...args])
+   })as typeof ws.send
+   ws.on('message',raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(ws!==primary||!authenticated)return
+    if(f.type==='desktop.confirmation.decision'&&f.purpose==='local-work')decisions++
+    if(f.type!=='system.ping'||typeof f.id!=='string')return
+    if(f.id==='D476_TERMINAL_FAIL'){fail();return}
+    if(!required.includes(f.id))return;if(receipts.has(f.id)){fail();return}receipts.add(f.id)
+    if(f.id==='D476_TERMINAL_DONE'){
+     completion=(async()=>{
+      await Promise.race([Promise.all([...childExits,...(foreignCheck?[foreignCheck]:[])]),deadline]);assert.equal(actualProcessExit,true);assert.equal(pty.isPtyBusy(),false);assert.equal(pty.getLivePtyId(),null)
+      assert.equal(actualSpawns,1);assert.equal(openAttempts,1);assert.equal(confirmationRequests,4);assert.equal(decisions,4);assert.equal(deniedResults,2);assert.equal(inputUnicode,true);assert.equal(outputUnicode,true);assert.ok(outputBytes>16384);assert.ok(largestFrame<=16384);assert.ok(outputSeq.size>0);assert.deepEqual([...ackSeq].sort((a,b)=>a-b),[...outputSeq].sort((a,b)=>a-b));assert.ok(dimensions.size>=2);assert.equal(stops,1);assert.equal(receipts.size,required.length)
+      const disk=new ThreadManager().readDesktopDialog('native-terminal-A');assert.equal(disk.messages.length,1);assert.ok(disk.messages[0].content.includes('D476_TERMINAL_中'));assert.ok(disk.messages[0].content.includes('partial'));assert.equal(new ThreadManager().readDesktopDialog('native-terminal-B').messages.length,0);assert.equal(confirmations.pendingCount(),0)
+      ws.send(JSON.stringify({type:'D476.terminal.complete',result:'COMPLETE'}))
+     })();completion.catch(error=>{completionFailure=error;fail()})
+    }
+   })
+  })
+  server.listen(0,'127.0.0.1');await once(server,'listening')
+  try{
+   const native=path.resolve(__dirname,'../../dist/desktop-native'),binary=path.join(native,'acceptance/terminal',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop');assert.ok(fs.existsSync(binary),'actual terminal-only acceptance host must be built');surfaceLease.checkpoint()
+   child=(require(path.join(native,'desktop-launcher.node'))as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,code=>{childExited=true;exitResolve(code)})
+   assert.equal(await Promise.race([exited,failure.then(()=>{throw completionFailure??Error('OWNED_TERMINAL705_NATIVE_PHASE_FAILED')}),deadline]),77);if(completion)await completion;assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,2);assert.deepEqual([...receipts].sort(),[...required].sort())
+   process.stdout.write('DESKTOP_TERMINAL_705 {"native":true,"realPty":true,"syntheticNativeApproval":true,"humanApproval":false,"deniedAndCancelledZeroLaunch":true,"unicode":true,"over16KiBOutput":true,"seqAck":true,"resized":true,"stoppedActualExit":true,"selectedPartialReturn":true,"diskReopened":true,"foreignAndNullRefused":true}\n')
+  }catch(error){primaryFailure=error;throw error}finally{
+   surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),actualSpawns,openAttempts,confirmationRequests,decisions,deniedResults,outputBytes,largestFrame,outputFrames:outputSeq.size,acks:ackSeq.size,dimensions:dimensions.size,inputUnicode,outputUnicode,stops,actualProcessExit,authenticated,windowRequested,connections,childExited}))}catch{}
+   let cleanupError:unknown;const clean=async(fn:()=>unknown)=>{try{await fn()}catch(error){cleanupError??=error}}
+   await clean(async()=>{child?.terminate();if(child&&!childExited)await exited});await clean(()=>{foreign?.terminate();for(const ws of channel.wss.clients)ws.terminate();confirmations.rejectAll('disconnect')})
+   await clean(()=>{for(const handle of actualHandles)if(!handle.exited)handle.kill()});await clean(async()=>{await Promise.race([Promise.all(childExits),deadline]);assert.equal(pty.isPtyBusy(),false)});await clean(()=>Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]));await clean(()=>new Promise<void>(r=>server.close(()=>r())))
+   if(previous===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=previous
+   if(!child||childExited){if(!pty.isPtyBusy()&&actualHandles.every(handle=>handle.exited)){await clean(()=>fs.rmSync(dir,{recursive:true,force:true}));surfaceLease.settled()}else cleanupError??=Error('OWNED_TERMINAL705_PTY_REAP_UNCONFIRMED')}
+   if(primaryFailure===undefined&&cleanupError!==undefined)throw cleanupError
+  }
+ })
+})

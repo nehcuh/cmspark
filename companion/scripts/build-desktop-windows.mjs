@@ -1,3 +1,5 @@
+import { desktopTerminalFixture } from "./desktop-terminal-fixture.mjs"
+import { copyDesktopAssets } from "./desktop-assets.mjs"
 // #480 build-only SDK acquisition. No production download, installer or PATH fallback.
 import fs from "node:fs"
 import { desktopMcpFixture, desktopMetadataFixture, desktopDialogFixture, desktopResourceFixture, desktopArchiveFixture } from "./desktop-mcp-fixture.mjs"
@@ -162,7 +164,7 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
     for(const mode of ["visual","hostile","inheritance","parent"]){
       const directory=path.join(acceptanceRoot,mode);fs.mkdirSync(directory,{recursive:true});if(!fs.lstatSync(directory).isDirectory()||fs.lstatSync(directory).isSymbolicLink())throw new Error("DESKTOP_ACCEPTANCE_DIRECTORY")
       const assets=path.join(directory,"assets");fs.mkdirSync(assets,{recursive:true});if(!fs.lstatSync(assets).isDirectory()||fs.lstatSync(assets).isSymbolicLink())throw new Error("DESKTOP_ACCEPTANCE_DIRECTORY")
-      for(const name of ["index.html","app.css","app.js"])publish(path.join(root,"src/desktop/assets",name),path.join(assets,name))
+      copyDesktopAssets(root,assets)
       const original=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),fixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-480/native-acceptance.cpp"),"utf8"),variant=desktopAcceptanceVariant("cpp",original,fixture)
       if(variant.inverse!==original)throw new Error("DESKTOP_ACCEPTANCE_SOURCE_DRIFT")
       const source=path.join(output,`acceptance-${mode}.cpp`),binary=path.join(output,`acceptance-${mode}.exe`);fs.writeFileSync(source,variant.source,{flag:"wx"})
@@ -172,13 +174,20 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
     for(const [family,formName]of[["mcp","native-form.js"],["metadata","metadata-form.js"],["dialog","dialog-form.js"],["resource","resource-form.js"],["archive","archive-form.js"]]){
     const mcpDirectory=path.join(acceptanceRoot,family);fs.mkdirSync(mcpDirectory,{recursive:true});if(!fs.lstatSync(mcpDirectory).isDirectory()||fs.lstatSync(mcpDirectory).isSymbolicLink())throw Error("DESKTOP_ACCEPTANCE_DIRECTORY")
     const mcpAssets=path.join(mcpDirectory,"assets");fs.mkdirSync(mcpAssets,{recursive:true});if(!fs.lstatSync(mcpAssets).isDirectory()||fs.lstatSync(mcpAssets).isSymbolicLink())throw Error("DESKTOP_ACCEPTANCE_DIRECTORY")
-    for(const name of ["index.html","app.css","app.js"])publish(path.join(root,"src/desktop/assets",name),path.join(mcpAssets,name))
+    copyDesktopAssets(root,mcpAssets)
     const mcpOriginal=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),mcpFixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/native-acceptance.cpp"),"utf8"),mcpForm=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476",formName),"utf8"),mcpVariant=(family==="archive"?desktopArchiveFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/archive-acceptance.cpp"),"utf8")):family==="resource"?desktopResourceFixture("cpp",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/resource-acceptance.cpp"),"utf8"),mcpForm):family==="dialog"?desktopDialogFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/dialog-acceptance.cpp"),"utf8")):family==="metadata"?desktopMetadataFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/metadata-acceptance.cpp"),"utf8")):desktopMcpFixture("cpp",mcpOriginal,mcpFixture,mcpForm))
     if(mcpVariant.inverse!==mcpOriginal)throw Error("DESKTOP_MCP_SOURCE_DRIFT")
     const mcpSource=path.join(output,`acceptance-${family}.cpp`),mcpBinary=path.join(output,`acceptance-${family}.exe`);fs.writeFileSync(mcpSource,mcpVariant.source,{flag:"wx"})
     checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,mcpSource,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${mcpBinary}`],{env,cwd:output,buildDiagnostic:true})
     publish(mcpBinary,path.join(mcpDirectory,"cmspark-desktop.exe"))
     }
+    const terminalDirectory=path.join(acceptanceRoot,"terminal");fs.mkdirSync(terminalDirectory,{recursive:true});if(!fs.lstatSync(terminalDirectory).isDirectory()||fs.lstatSync(terminalDirectory).isSymbolicLink())throw Error("DESKTOP_ACCEPTANCE_DIRECTORY")
+    const terminalAssets=path.join(terminalDirectory,"assets");fs.mkdirSync(terminalAssets,{recursive:true});if(!fs.lstatSync(terminalAssets).isDirectory()||fs.lstatSync(terminalAssets).isSymbolicLink())throw Error("DESKTOP_ACCEPTANCE_DIRECTORY");copyDesktopAssets(root,terminalAssets)
+    const terminalOriginal=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),terminalController=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/terminal-acceptance.cpp"),"utf8"),terminalForm=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/terminal-form.js"),"utf8"),terminalVariant=desktopTerminalFixture("cpp",terminalOriginal,terminalController,terminalForm)
+    if(terminalVariant.inverse!==terminalOriginal)throw Error("DESKTOP_TERMINAL_SOURCE_DRIFT")
+    const terminalSource=path.join(output,"acceptance-terminal.cpp"),terminalBinary=path.join(output,"acceptance-terminal.exe");fs.writeFileSync(terminalSource,terminalVariant.source,{flag:"wx"})
+    checked(cl,["/nologo","/std:c++20","/EHsc","/utf-8","/DUNICODE","/D_UNICODE",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,terminalSource,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${terminalBinary}`],{env,cwd:output,buildDiagnostic:true})
+    publish(terminalBinary,path.join(terminalDirectory,"cmspark-desktop.exe"))
     const inherit=path.join(acceptanceRoot,"inheritance"),fixture=path.join(root,"tests/fixtures/desktop-480/windows-inheritance.c")
     checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_inheritance","/DDESKTOP_FIXTURE_ADDON",`/I${headers}`,fixture,"/link",lib,"bcrypt.lib",`/OUT:${path.join(output,"desktop-inheritance.node")}`],{env,cwd:output,buildDiagnostic:true})
     checked(cl,["/nologo","/std:c11","/W4","/WX",fixture,"/link",`/OUT:${path.join(output,"desktop-inheritance.exe")}`],{env,cwd:output,buildDiagnostic:true})

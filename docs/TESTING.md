@@ -363,3 +363,16 @@ Required later Windows checks: usable PrintWindow, overlapped BitBlt, stable sam
 ### #723 D1 Windows capture producer (independent remote acceptance)
 
 `computer-capture-native-controls-723.test.ts` runs inert helpers and whole-callback VM controls. `computer-capture-windows-native-723.test.ts` registers five Windows-only hard cases automatically discovered once by the existing canonical Windows CI runner (no duplicate #572 step entry): default real PrintWindow, passive minimized/nonforeground refusal, forced-after-real-PrintWindow BitBlt partial and owned NOACTIVATE overlay occluded. Each retains fresh owned WPF/real helper children through close under45s/15s remaining budgets. No screenshots/raw metadata are printed. The one test-only variant changes observed printed=false after the actual PrintWindow call and is inverse-checked; it is not natural PrintWindow failure or a production option. Only the exact changed-head five-mode Windows result can complete this gate; the #572 UIA job alone does not prove this capture path.
+
+
+### #476 terminal-only first vertical (PR705 rethink)
+
+`desktop-terminal-work-705`, `desktop-terminal-renderer-705` and `desktop-terminal-native-controller-705` are guarded CPU/source controls for the actual HMAC channel, terminal actor, canonical thread store, existing PTY API with an inert spawn callback, and exact controller/renderer source. The renderer host is a controlled DOM/xterm seam; no browser, native window, real PTY process or human approval is claimed. The same-owner terminal shell confirmation must leave `readPtyTail` unavailable; the existing model-tail grant is separate.
+
+This leaf consumes only an explicitly prebound canonical root and exposes no picker or Agent methods. Keep current archive/browser capability members and ACP execution claims; the existing PTY core is unchanged. Closed metadata is retained for explicit return until a later open actually succeeds, then retired; a close request does not free the backend's actual closing slot. Normal configuration, source-reading consumers, fixed offline assets/integrity, and finite negative controls remain required.
+
+Independent changed-head Windows/macOS terminal-native acceptance is **NOT_RUN** for this candidate: actual native confirmation → owned PTY/xterm keyboard/Unicode/resize/Stop/actual close → explicit selected-return confirmation → same-thread durable reopen. Original45s native lifetime, owner/nullcaller, cleanup and strict foreground oracles are not weakened. The old PR705 workspace picker/XCTest/ACP native callbacks stay unmodified on that branch and remain blocked; no skip, unchanged rerun or CPU substitute completes them or whole #476.
+
+### #476 用户终端的远端原生载体
+
+`build-desktop-native.mjs --test-fixtures` 生成不随产品交付的 `acceptance/terminal`，沿现有 `desktop-native-thread-metadata-476.test` 串行文件与 surface lease 验收。新增回调要求实际 GitHub Actions Windows/macOS、canonical owned 数据目录与真实 @lydell PTY；无 MockPty、平台冒充、testSetSpawn 或回执伪造。它涵盖原生拒绝／取消零启动、真实 shell Unicode 与超过16KiB输出、逐帧 ACK、resize、Stop／实际进程退出及 partial 摘录的原对话重开。原生按钮和键盘激活是合成测试而非人工批准。本机禁止运行；CPU 控制与 native 编译／运行结果分开记账，不以载体存在称为 native PASS。

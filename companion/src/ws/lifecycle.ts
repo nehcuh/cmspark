@@ -19,6 +19,7 @@ import { createNativeDialogRuntime } from "../desktop/dialog-runtime"
 import { desktopBrowserPeer, handleDesktopBrowserPeerResult } from "../desktop/browser-peer"
 import type { DesktopBrowserRun } from "../desktop/browser"
 import { createDesktopChannel, attachDesktopUpgrade } from "../desktop/channel"
+import { createNativeTerminalRuntime } from "../desktop/terminal-runtime"
 import { DesktopHostLauncher } from "../desktop/host-launcher"
 import { requestDesktopOpen } from "../desktop/open"
 import http from "http"
@@ -812,10 +813,11 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     maxPayload: MAX_WS_MESSAGE_SIZE,
     securityConfirmations: requireRt().securityConfirmations,
     archiveActivity: id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target)),
+    terminalRuntime: createNativeTerminalRuntime(id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target))),
     browserPeers: () => [...clients].filter(c => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin)).map(c => desktopBrowserPeer(c, () => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin))),
     onAuthenticated: host => desktopLauncher.authenticated(host),
     dialogRuntime: owner => createNativeDialogRuntime({ ...owner, threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), history: requireRt().getHistoryStore(), createExecutor: run => requireRt().createToolExecutor(owner.ws, run) }),
-    onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws) },
+    onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws); try { require("../pty/session").killPtyByPeer(ws) } catch { /* Continue desktop teardown if PTY cleanup fails. */ } },
   })
   desktopLauncher = new DesktopHostLauncher(desktopRegistry, `ws://127.0.0.1:${port}/desktop`, (host, view) => desktopChannel.window(host, view))
   wss = attachWssListenThenStartMcp({

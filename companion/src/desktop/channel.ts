@@ -14,6 +14,7 @@ import { createDesktopResources, DESKTOP_RESOURCE_METHODS } from "./resources"
 import { createDesktopArchive, DESKTOP_ARCHIVE_METHODS } from "./archive"
 import { createDesktopBrowser, DESKTOP_BROWSER_METHODS } from "./browser"
 import type { DesktopBrowserPeer } from "./browser-peer"
+import { createDesktopTerminalWork, DESKTOP_TERMINAL_METHODS, type DesktopTerminalRuntime } from "./terminal-work"
 import { pendingToolCalls } from "../ws/tool-forward"
 
 const hexId = /^[0-9a-f]{32}$/
@@ -28,7 +29,7 @@ export function attachDesktopUpgrade(server: http.Server, legacy: WebSocketServe
     target.handleUpgrade(req, socket, head, ws => target.emit("connection", ws, req))
   })
 }
-export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; services: DesktopReadServices; maxPayload: number; securityConfirmations?: SecurityConfirmationManager; onDisconnect?: (ws: WebSocket) => void; onAuthenticated?: (host: string) => void; dialogRuntime?: (owner: { ws: WebSocket; current(): boolean }) => NativeDialogRuntime; archiveActivity?: (id: string) => "idle" | "busy" | "unknown"; browserPeers?: () => DesktopBrowserPeer[] }) {
+export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; services: DesktopReadServices; maxPayload: number; securityConfirmations?: SecurityConfirmationManager; onDisconnect?: (ws: WebSocket) => void; onAuthenticated?: (host: string) => void; dialogRuntime?: (owner: { ws: WebSocket; current(): boolean }) => NativeDialogRuntime; archiveActivity?: (id: string) => "idle" | "busy" | "unknown"; browserPeers?: () => DesktopBrowserPeer[]; terminalRuntime?: DesktopTerminalRuntime }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: opts.maxPayload })
   const active = new Map<WebSocket, DesktopPrincipal>()
   const pending = new Map<WebSocket, string>()
@@ -46,6 +47,12 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
     let resources: ReturnType<typeof createDesktopResources> | undefined
     let archive: ReturnType<typeof createDesktopArchive> | undefined
     let browser: ReturnType<typeof createDesktopBrowser> | undefined
+    let terminal: ReturnType<typeof createDesktopTerminalWork> | undefined
+    function sendTerminal(frame: Record<string, unknown>): boolean {
+      if (ws.readyState !== WebSocket.OPEN) return false
+      try { const body = JSON.stringify(frame); if (Buffer.byteLength(body, "utf8") <= opts.maxPayload) { ws.send(body); return true } } catch { /* Lost delivery cannot grant or repeat effects. */ }
+      terminal?.cancel(); ws.close(1009); return false
+    }
     function sendResource(value: unknown) {
       if (ws.readyState !== WebSocket.OPEN) return false
       let encoded: string | undefined
@@ -65,7 +72,7 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
       else ws.close(1009)
       return false
     }
-    retire.set(ws, () => { browser?.cancel(); archive?.cancel(); try { dialog?.cancel() } catch { /* Continue retiring other pending work. */ } try { mcpSave?.cancel() } catch { /* Socket teardown must continue. */ } try { resources?.cancel() } catch { /* Finish socket retirement. */ } })
+    retire.set(ws, () => { terminal?.cancel(); browser?.cancel(); archive?.cancel(); try { dialog?.cancel() } catch { /* Continue retiring other pending work. */ } try { mcpSave?.cancel() } catch { /* Socket teardown must continue. */ } try { resources?.cancel() } catch { /* Finish socket retirement. */ } })
     const timer = setTimeout(() => ws.terminate(), DESKTOP_CHALLENGE_TTL_MS)
     ws.on("error", () => {})
     send(ws, { type: "desktop.challenge.request" })
@@ -94,6 +101,7 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
             desktopArchiveSnapshot: () => { if (!opts.services.threads.desktopArchiveSnapshot) throw Error("DESKTOP_ARCHIVE_UNAVAILABLE"); return opts.services.threads.desktopArchiveSnapshot() },
             setDesktopArchive: (id, expected, archived) => { if (!opts.services.threads.setDesktopArchive) throw Error("DESKTOP_ARCHIVE_UNAVAILABLE"); return opts.services.threads.setDesktopArchive(id, expected, archived) },
           }, current: method => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, method), activity: opts.archiveActivity }) }
+          if (opts.securityConfirmations && opts.terminalRuntime) { const owner = principal; terminal = createDesktopTerminalWork({ ws, threads: opts.services.threads as ThreadManager, runtime: opts.terminalRuntime, manager: opts.securityConfirmations, current: () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.terminal.open"), send: sendTerminal, maxPayload: opts.maxPayload }) }
           send(ws, { type: "desktop.ready", protocol_version: 1 }); opts.onAuthenticated?.(principal.hostSessionId); return
         }
         ws.terminate(); return
@@ -109,6 +117,12 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
       if ((DESKTOP_ARCHIVE_METHODS as readonly string[]).includes(String(frame.type))) {
         if (!archive || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: String(frame.type) + ".result", id: frame.id, ok: false, ...(frame.thread_id === undefined ? {} : { thread_id: frame.thread_id }), ...(frame.type === "desktop.archive.set" ? { saved: false } : {}), error_code: "DESKTOP_ARCHIVE_METHOD_DENIED" }); return }
         send(ws, archive.handle(frame)); return
+      }
+      if ((DESKTOP_TERMINAL_METHODS as readonly string[]).includes(String(frame.type))) {
+        if (!terminal || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: String(frame.type) + ".result", id: frame.id, thread_id: frame.thread_id, ok: false, error_code: "DESKTOP_METHOD_DENIED" }); return }
+        const owner = principal
+        void terminal.handle(frame).then(result => { if (opts.registry.allows(owner, String(frame.type))) sendTerminal(result) }).catch(() => { if (opts.registry.allows(owner, String(frame.type))) sendTerminal({ type: String(frame.type) + ".result", id: frame.id, thread_id: frame.thread_id, ok: false, error_code: "LOCAL_UNAVAILABLE" }) })
+        return
       }
       if ((DESKTOP_DIALOG_METHODS as readonly string[]).includes(String(frame.type))) {
         if (!dialog || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", id: frame.id, error_code: "DESKTOP_METHOD_DENIED" }); return }
@@ -130,7 +144,7 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
       }
       if (["desktop.mcp.edit", "desktop.mcp.save", "desktop.confirmation.decision"].includes(String(frame.type))) {
         if (!mcpSave || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", error_code: "DESKTOP_METHOD_DENIED", ...(typeof frame.id === "string" ? { id: frame.id } : {}) }); return }
-        if (frame.type === "desktop.confirmation.decision") { if (frame.purpose === "resource") resources?.decide(frame); else if (!Object.hasOwn(frame, "purpose")) mcpSave.decide(frame); return }
+        if (frame.type === "desktop.confirmation.decision") { if (frame.purpose === "local-work") terminal?.decide(frame); else if (frame.purpose === "resource") resources?.decide(frame); else if (!Object.hasOwn(frame, "purpose")) mcpSave.decide(frame); return }
         const owner = principal
         void mcpSave.handle(frame).then(result => { if (opts.registry.allows(owner, String(frame.type))) send(ws, result) }).catch(() => { if (opts.registry.allows(owner, String(frame.type))) send(ws, { type: "desktop.error", error_code: "DESKTOP_MCP_SAVE_FAILED", ...(typeof frame.id === "string" ? { id: frame.id } : {}) }) })
         return

@@ -43,6 +43,16 @@ static bool exact_one(JsonObject const& o,wchar_t const* k){auto v=o.TryLookup(k
 static bool hex(std::wstring const& s,size_t count){return s.size()==count&&std::all_of(s.begin(),s.end(),[](wchar_t c){return(c>=L'0'&&c<=L'9')||(c>=L'a'&&c<=L'f');});}
 static std::wstring wide(std::string const& s){if(s.empty())return L"";int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),(int)s.size(),nullptr,0);if(!n)throw std::runtime_error("UTF8");std::wstring out(n,0);if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),(int)s.size(),out.data(),n))throw std::runtime_error("UTF8");return out;}
 static std::string utf8(std::wstring const& s){int n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,s.data(),(int)s.size(),nullptr,0,nullptr,nullptr);if(!n&&!s.empty())throw std::runtime_error("UTF16");std::string out(n,0);if(n&&!WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,s.data(),(int)s.size(),out.data(),n,nullptr,nullptr))throw std::runtime_error("UTF16");return out;}
+// A fixed offline template only; no nonce enters frames or stored assets.
+static bool desktop_style_html(std::string& data,std::wstring const& nonce){
+ if(!hex(nonce,64))return false;
+ std::string marker="__CM_STYLE_NONCE__",csp="'nonce-__CM_STYLE_NONCE__'",meta="name=\"cmspark-style-nonce\" content=\"__CM_STYLE_NONCE__\"";
+ for(auto const& context:{csp,meta}){auto at=data.find(context);if(at==std::string::npos||data.find(context,at+1)!=std::string::npos)return false;}
+ auto first=data.find(marker),second=first==std::string::npos?std::string::npos:data.find(marker,first+marker.size());
+ if(second==std::string::npos||data.find(marker,second+marker.size())!=std::string::npos)return false;
+ auto value=utf8(nonce);data.replace(second,marker.size(),value);data.replace(first,marker.size(),value);
+ return data.find(marker)==std::string::npos;
+}
 static JsonObject parse(std::wstring const& s){return JsonObject::Parse(s);}
 // JSON parser remains the OS implementation; the scanner rejects duplicate decoded keys
 // before the system object can collapse them. Only primitive protocol envelopes use this.
@@ -68,6 +78,7 @@ static std::wstring hmac(std::wstring const& keyhex,std::wstring const& message)
 static bool sync_parent(HANDLE handle){return d480_sync_parent(handle)!=0;}
 
 struct Pending{std::wstring native_id,ui_id,generation,thread,kind,target,revision;};
+struct LocalRequest{Pending pending;std::wstring method,operation;};
 struct Frame{unsigned long epoch;std::wstring value;};
 #ifdef CMSPARK_DESKTOP_TEST_PHASES
 #define DESKTOP_TEST_NOTE(name) test_note(TestPhase::name);
@@ -83,8 +94,9 @@ struct Frame{unsigned long epoch;std::wstring value;};
 class Desktop {
  struct Confirmation {std::wstring id,digest,full,generation,purpose;IJsonValue thread{nullptr};double deadline=0;unsigned long epoch=0;HWND window=nullptr,details=nullptr;};
  std::unique_ptr<Confirmation> confirmation;
+ std::map<std::wstring,Pending> local_operations;std::map<std::wstring,LocalRequest> local_requests;std::set<std::wstring> local_closed;std::wstring local_thread;
  static double wall_ms(){return std::chrono::duration<double,std::milli>(std::chrono::system_clock::now().time_since_epoch()).count();}
- HWND window=nullptr;std::wstring browser_request,browser_thread;std::wstring cap,secret,root,generation,view=L"compact";INTERNET_PORT port=0;
+ HWND window=nullptr;std::wstring browser_request,browser_thread;std::wstring cap,secret,root,generation,style_nonce,view=L"compact";INTERNET_PORT port=0;
  ComPtr<ICoreWebView2Environment> environment;ComPtr<ICoreWebView2Controller> controller;ComPtr<ICoreWebView2> web;
  std::mutex socket_lock;HINTERNET socket=nullptr;std::atomic<bool> ready{false};std::atomic<unsigned long> epoch{0};
  std::wstring phase=L"initial";std::map<std::wstring,Pending> requests;std::wstring archive_target;SIZE compact{360,420},workspace{1040,760};
@@ -112,7 +124,66 @@ class Desktop {
  void deliver(JsonObject const& frame){if(web&&ready&&!generation.empty())web->PostWebMessageAsJson(frame.Stringify().c_str());}
  bool retire_browser(bool all){auto parent=browser_request;requests.erase(L"desktop.browser.tasks");requests.erase(L"desktop.browser.visibility");if(all){browser_request.clear();browser_thread.clear();}if(!ready||parent.empty())return true;JsonObject frame;put(frame,L"type",L"desktop.browser.retire");put(frame,L"context_request_id",parent);put(frame,L"scope",all?L"all":L"view");return send(frame);}
  void retire_archive(){auto target=archive_target;archive_target.clear();requests.erase(L"desktop.archive.state");requests.erase(L"desktop.archive.set");if(ready&&!target.empty()){JsonObject state;put(state,L"type",L"desktop.archive.state");put(state,L"id",random_id());put(state,L"thread_id",target);send(state);}}
- void retire_dialog(){auto r=requests.find(L"desktop.chat.send");if(r==requests.end())return;if(ready){JsonObject stop;put(stop,L"type",L"desktop.chat.stop");put(stop,L"id",random_id());put(stop,L"thread_id",r->second.thread);put(stop,L"run_id",r->second.native_id);send(stop);}requests.erase(r);}
+ void retire_dialog(){retire_local();auto r=requests.find(L"desktop.chat.send");if(r==requests.end())return;if(ready){JsonObject stop;put(stop,L"type",L"desktop.chat.stop");put(stop,L"id",random_id());put(stop,L"thread_id",r->second.thread);put(stop,L"run_id",r->second.native_id);send(stop);}requests.erase(r);}
+ static bool local_method(std::wstring const& type){return std::set<std::wstring>{L"desktop.local.state",L"desktop.terminal.open",L"desktop.terminal.input",L"desktop.terminal.resize",L"desktop.terminal.ack",L"desktop.terminal.ping",L"desktop.terminal.close",L"desktop.terminal.return"}.count(type)!=0;}
+ static bool local_integer(JsonObject const& frame,wchar_t const* key,double maximum){auto value=frame.TryLookup(key);if(!value||value.ValueType()!=JsonValueType::Number)return false;auto n=value.GetNumber();return std::isfinite(n)&&n>=1&&n<=maximum&&std::floor(n)==n;}
+ static bool local_base64(std::wstring const& value){
+  auto count=value.size();if(!count||count>21848||count%4)return false;
+  auto digit=[](wchar_t c){if(c>=L'A'&&c<=L'Z')return int(c-L'A');if(c>=L'a'&&c<=L'z')return int(c-L'a')+26;if(c>=L'0'&&c<=L'9')return int(c-L'0')+52;if(c==L'+')return 62;if(c==L'/')return 63;return -1;};
+  size_t padding=value[count-1]==L'='?1:0;if(count>1&&value[count-2]==L'=')++padding;
+  if(count/4*3-padding>16384)return false;
+  for(size_t i=0;i<count-padding;++i)if(digit(value[i])<0)return false;
+  if(padding==2&&(digit(value[count-3])&15))return false;
+  if(padding==1&&(digit(value[count-2])&3))return false;
+  return true;
+ }
+ void retire_local(){
+  if(confirmation&&confirmation->purpose==L"local-work")retire_confirmation(0);
+  for(auto const& [id,op]:local_operations)if(ready&&op.generation==generation){JsonObject close;put(close,L"type",L"desktop.terminal.close");put(close,L"id",random_id());put(close,L"thread_id",op.thread);put(close,L"operation_id",id);send(close);}
+  local_operations.clear();local_requests.clear();local_closed.clear();local_thread.clear();
+ }
+ void render_local(JsonObject frame){
+  auto type=text(frame,L"type"),ui=text(frame,L"id"),thread=text(frame,L"thread_id");if(!local_method(type)||!method(type)||ui.empty()||utf8(ui).size()>200||thread.empty())return;
+  std::set<std::wstring> expected{L"type",L"id",L"thread_id",L"generation"};
+  bool start=type==L"desktop.terminal.open";
+  if(start)expected.insert(L"revision");
+  if(type==L"desktop.terminal.open"||type==L"desktop.terminal.resize"){expected.insert(L"cols");expected.insert(L"rows");if(!local_integer(frame,L"cols",500)||!local_integer(frame,L"rows",200))return;}
+  if(type!=L"desktop.local.state"&&!start)expected.insert(L"operation_id");
+  if(type==L"desktop.terminal.input"||type==L"desktop.terminal.ack"){expected.insert(L"seq");if(!local_integer(frame,L"seq",9007199254740991.0))return;}
+  if(type==L"desktop.terminal.input"){expected.insert(L"b64");auto b64=text(frame,L"b64");if(!local_base64(b64))return;}
+  if(type==L"desktop.terminal.return"){expected.insert(L"text");if(text(frame,L"text").empty()||text(frame,L"text").size()>48000)return;}
+  if(frame.Size()!=expected.size())return;for(auto const& item:frame)if(!expected.count(std::wstring(item.Key())))return;
+  if(start&&!hex(text(frame,L"revision"),64))return;
+  std::wstring operation;
+  if(frame.HasKey(L"operation_id")){auto original=text(frame,L"operation_id");auto found=std::find_if(local_operations.begin(),local_operations.end(),[&](auto const& row){return row.second.ui_id==original&&row.second.thread==thread&&row.second.generation==generation;});if(found==local_operations.end()||(type.rfind(L"desktop.terminal.",0)==0)!=(found->second.kind==L"terminal"))return;operation=found->first;put(frame,L"operation_id",operation);}
+  if(type==L"desktop.local.state"){if(confirmation&&confirmation->purpose==L"local-work")retire_confirmation(0);local_thread=thread;}
+  if((start||type==L"desktop.terminal.input"||type==L"desktop.terminal.resize"||type==L"desktop.terminal.return")&&local_thread!=thread)return;
+  auto native=random_id();Pending pending{native,ui,generation,thread,L"terminal",L"",text(frame,L"revision")};
+  if(start){if(std::any_of(local_operations.begin(),local_operations.end(),[&](auto const& row){return row.second.generation==generation&&(!local_closed.count(row.first)||row.second.ui_id==ui);}))return;if(confirmation&&confirmation->purpose==L"local-work")retire_confirmation(0);local_operations[native]=pending;}
+  local_requests[native]={pending,type,operation};frame.Remove(L"generation");put(frame,L"id",native);if(!send(frame)){local_requests.erase(native);if(start)local_operations.erase(native);}
+ }
+ bool accept_local(JsonObject frame){
+  auto type=text(frame,L"type");
+  if(type==L"desktop.terminal.data"||type==L"desktop.terminal.closed"||type==L"desktop.terminal.heartbeat"){
+   auto found=local_operations.find(text(frame,L"operation_id"));if(found==local_operations.end()||found->second.generation!=generation||text(frame,L"thread_id")!=found->second.thread)return true;
+   if((type.rfind(L"desktop.terminal.",0)==0)!=(found->second.kind==L"terminal"))return true;if(type==L"desktop.terminal.heartbeat"){JsonObject ping;put(ping,L"type",L"desktop.terminal.ping");put(ping,L"id",random_id());put(ping,L"thread_id",found->second.thread);put(ping,L"operation_id",found->first);send(ping);return true;}if(type==L"desktop.terminal.closed")local_closed.insert(found->first);put(frame,L"operation_id",found->second.ui_id);deliver(frame);return true;
+  }
+  auto request=local_requests.find(text(frame,L"id"));if(request==local_requests.end())return false;auto value=request->second;
+  if(value.pending.generation!=generation||type!=value.method+L".result"||text(frame,L"thread_id")!=value.pending.thread)return true;
+  if(frame.HasKey(L"operation_id")){
+   auto expected=value.operation.empty()?value.pending.native_id:value.operation;if(text(frame,L"operation_id")!=expected)return true;auto operation=local_operations.find(expected);if(operation==local_operations.end())return true;put(frame,L"operation_id",operation->second.ui_id);
+  }
+  if(value.method==L"desktop.local.state"&&frame.HasKey(L"state")){
+   auto state=frame.GetNamedObject(L"state");if(state.HasKey(L"operations")){JsonArray mapped;for(auto const& entry:state.GetNamedArray(L"operations")){if(entry.ValueType()!=JsonValueType::Object)continue;auto row=entry.GetObject();auto op=local_operations.find(text(row,L"operation_id"));if(op==local_operations.end()||op->second.generation!=generation||op->second.thread!=value.pending.thread)continue;put(row,L"operation_id",op->second.ui_id);mapped.Append(row);}state.Insert(L"operations",mapped);frame.Insert(L"state",state);}
+  }
+  if(value.method==L"desktop.terminal.open"){
+   auto ok=frame.TryLookup(L"ok");if(!ok||ok.ValueType()!=JsonValueType::Boolean)return true;
+   if(!ok.GetBoolean())local_operations.erase(value.pending.native_id);
+   else{if(text(frame,L"operation_id")!=value.pending.ui_id)return true;for(auto old=local_operations.begin();old!=local_operations.end();){if(old->first!=value.pending.native_id&&local_closed.count(old->first)){local_closed.erase(old->first);old=local_operations.erase(old);}else ++old;}}
+  }
+  if(value.method==L"desktop.terminal.close"&&text(frame,L"status")==L"closed")local_closed.insert(value.operation);
+  local_requests.erase(request);put(frame,L"id",value.pending.ui_id);deliver(frame);return true;
+ }
  void document(){if(!retire_browser(true))ExitProcess(46);retire_archive();retire_dialog();retire_confirmation(0);requests.clear();generation=random_id();JsonObject frame;put(frame,L"type",L"desktop.document");put(frame,L"generation",generation);deliver(frame);DESKTOP_TEST_NOTE(document_post_attempted)}
  void start_network(){std::thread([this](){winrt::init_apartment(winrt::apartment_type::multi_threaded);while(true){
    auto id=++epoch;ready=false;post(native_connect,id);
@@ -130,12 +201,12 @@ class Desktop {
    if(!ready.load())ExitProcess(41);post(native_offline,id);Sleep(5000); // UI drains earlier frames before clearing ready; no credential fallback.
  }}).detach();}
  bool method(std::wstring const& s){for(auto value:desktop_read_methods)if(s==value)return true;return false;}
- void show(std::wstring const& next){if(view!=next)retire_archive();RECT old{};GetClientRect(window,&old);if(view==L"compact")compact={old.right,old.bottom};else workspace={old.right,old.bottom};view=next;auto size=view==L"compact"?compact:workspace;RECT rect{0,0,size.cx,size.cy};AdjustWindowRectEx(&rect,WS_OVERLAPPEDWINDOW,FALSE,0);MONITORINFO monitor{sizeof(monitor)};GetMonitorInfoW(MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST),&monitor);int width=std::min(rect.right-rect.left,monitor.rcWork.right-monitor.rcWork.left),height=std::min(rect.bottom-rect.top,monitor.rcWork.bottom-monitor.rcWork.top);RECT current{};GetWindowRect(window,&current);int x=std::clamp((int)current.left,(int)monitor.rcWork.left,(int)monitor.rcWork.right-width),y=std::clamp((int)current.top,(int)monitor.rcWork.top,(int)monitor.rcWork.bottom-height);SetWindowPos(window,nullptr,x,y,width,height,SWP_NOZORDER);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);}
+ void show(std::wstring const& next){if(view!=next){if(confirmation&&confirmation->purpose==L"local-work")retire_confirmation(0);local_thread.clear();retire_archive();}RECT old{};GetClientRect(window,&old);if(view==L"compact")compact={old.right,old.bottom};else workspace={old.right,old.bottom};view=next;auto size=view==L"compact"?compact:workspace;RECT rect{0,0,size.cx,size.cy};AdjustWindowRectEx(&rect,WS_OVERLAPPEDWINDOW,FALSE,0);MONITORINFO monitor{sizeof(monitor)};GetMonitorInfoW(MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST),&monitor);int width=std::min(rect.right-rect.left,monitor.rcWork.right-monitor.rcWork.left),height=std::min(rect.bottom-rect.top,monitor.rcWork.bottom-monitor.rcWork.top);RECT current{};GetWindowRect(window,&current);int x=std::clamp((int)current.left,(int)monitor.rcWork.left,(int)monitor.rcWork.right-width),y=std::clamp((int)current.top,(int)monitor.rcWork.top,(int)monitor.rcWork.bottom-height);SetWindowPos(window,nullptr,x,y,width,height,SWP_NOZORDER);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);}
  // A native window owns decisions. No private action/credentials pass to WebView.
  void retire_confirmation(int decision=-1){
   if(!confirmation)return;auto value=std::move(confirmation); // Remove pending before close/callback.
   if(value->window){KillTimer(value->window,1);DestroyWindow(value->window);}
-  if(decision>=0&&ready&&value->epoch==epoch&&value->generation==generation&&wall_ms()<value->deadline){JsonObject result;put(result,L"type",L"desktop.confirmation.decision");put(result,L"confirmation_id",value->id);put(result,L"action_digest",value->digest);result.Insert(L"thread_id",value->thread);result.Insert(L"approved",JsonValue::CreateBooleanValue(decision==1));if(value->purpose==L"resource")put(result,L"purpose",L"resource");send(result);}
+  if(decision>=0&&ready&&value->epoch==epoch&&value->generation==generation&&wall_ms()<value->deadline){JsonObject result;put(result,L"type",L"desktop.confirmation.decision");put(result,L"confirmation_id",value->id);put(result,L"action_digest",value->digest);result.Insert(L"thread_id",value->thread);result.Insert(L"approved",JsonValue::CreateBooleanValue(decision==1));if(value->purpose==L"resource")put(result,L"purpose",L"resource");else if(value->purpose==L"local-work")put(result,L"purpose",L"local-work");send(result);}
  }
  static LRESULT CALLBACK confirmation_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l){
   auto self=(Desktop*)GetWindowLongPtrW(hwnd,GWLP_USERDATA);if(message==WM_NCCREATE){self=(Desktop*)((CREATESTRUCTW*)l)->lpCreateParams;SetWindowLongPtrW(hwnd,GWLP_USERDATA,(LONG_PTR)self);}if(!self)return DefWindowProcW(hwnd,message,w,l);
@@ -145,13 +216,15 @@ class Desktop {
   return DefWindowProcW(hwnd,message,w,l);
  }
  void begin_confirmation(JsonObject const& frame){
-  bool resource=text(frame,L"purpose")==L"resource";
+  bool resource=text(frame,L"purpose")==L"resource",local=text(frame,L"purpose")==L"local-work";
   if(confirmation)return;
-  if(resource){if(!keys(frame,{L"type",L"purpose",L"request_method",L"request_id",L"confirmation_id",L"thread_id",L"action_digest",L"action_json",L"deadline_ms",L"timeout_ms"}))return;}
+  if(resource||local){if(!keys(frame,{L"type",L"purpose",L"request_method",L"request_id",L"confirmation_id",L"thread_id",L"action_digest",L"action_json",L"deadline_ms",L"timeout_ms"}))return;}
   else if(!keys(frame,{L"type",L"request_id",L"confirmation_id",L"thread_id",L"action_digest",L"action_json",L"deadline_ms",L"timeout_ms"}))return;
-  auto method=resource?text(frame,L"request_method"):L"desktop.mcp.save";
+  auto method=(resource||local)?text(frame,L"request_method"):L"desktop.mcp.save";
+  if(local&&method!=L"desktop.terminal.open"&&method!=L"desktop.terminal.return")return;
   if(resource&&!std::set<std::wstring>{L"desktop.resource.import",L"desktop.resource.update",L"desktop.resource.remove"}.count(method))return;
-  auto request=requests.find(method);if(request==requests.end()||request->second.native_id!=text(frame,L"request_id")||request->second.generation!=generation)return;
+  auto request=requests.find(method);Pending binding;
+  if(local){auto owned=local_operations.find(text(frame,L"request_id"));if(owned==local_operations.end()||owned->second.generation!=generation||owned->second.thread!=local_thread)return;binding=owned->second;}else{if(request==requests.end()||request->second.native_id!=text(frame,L"request_id")||request->second.generation!=generation)return;binding=request->second;}
   auto id=text(frame,L"confirmation_id"),digest=text(frame,L"action_digest"),full=text(frame,L"action_json");if(id.empty()||!hex(digest,64))return;
   // SHA256 of the complete exact private JSON, not a clipped preview/socket alone.
   auto bytes=utf8(full);BCRYPT_ALG_HANDLE algorithm=nullptr;unsigned char hash[32]{};
@@ -160,9 +233,15 @@ class Desktop {
   std::wstring actual;static wchar_t const digits[]=L"0123456789abcdef";for(auto b:hash){actual+=digits[b>>4];actual+=digits[b&15];}if(actual!=digest)return;
   auto deadline=frame.TryLookup(L"deadline_ms"),timeout=frame.TryLookup(L"timeout_ms"),thread=frame.TryLookup(L"thread_id");if(!deadline||!timeout||!thread||deadline.ValueType()!=JsonValueType::Number||timeout.ValueType()!=JsonValueType::Number)return;
   double end=deadline.GetNumber(),budget=timeout.GetNumber(),now=wall_ms();if(!std::isfinite(end)||!std::isfinite(budget)||budget<=0||budget>45000||end<=now||end>now+budget)return;
-  if(!((thread.ValueType()==JsonValueType::Null&&request->second.thread.empty())||(thread.ValueType()==JsonValueType::String&&!request->second.thread.empty()&&std::wstring(thread.GetString())==request->second.thread)))return;
+  if(!((thread.ValueType()==JsonValueType::Null&&binding.thread.empty())||(thread.ValueType()==JsonValueType::String&&!binding.thread.empty()&&std::wstring(thread.GetString())==binding.thread)))return;
   auto action=parse(full);JsonObject summary;
-  if(resource){
+  if(local){
+   if(!keys(action,{L"purpose",L"kind",L"thread_id",L"operation_id",L"payload"})||text(action,L"purpose")!=L"local-work"||text(action,L"thread_id")!=binding.thread||text(action,L"operation_id")!=binding.native_id||action.GetNamedValue(L"payload").ValueType()!=JsonValueType::Object)return;
+   auto kind=text(action,L"kind");if((kind!=L"terminal-open"||method!=L"desktop.terminal.open")&&(kind!=L"terminal-return"||method!=L"desktop.terminal.return"))return;
+   if(!std::any_of(local_requests.begin(),local_requests.end(),[&](auto const& row){auto const& item=row.second;return item.method==method&&item.pending.generation==generation&&item.pending.thread==binding.thread&&(item.operation.empty()?item.pending.native_id:item.operation)==binding.native_id;}))return;
+   auto payload=action.GetNamedObject(L"payload");if(kind==L"terminal-open"&&text(payload,L"revision")!=binding.revision)return;
+   summary=action;
+  }else if(resource){
    if(!keys(action,{L"purpose",L"op",L"kind",L"resource_id",L"revision",L"payload",L"thread_id"})||text(action,L"purpose")!=L"resource"||text(action,L"op")!=method.substr(17)||text(action,L"kind")!=request->second.kind||text(action,L"resource_id").empty()||thread.ValueType()!=JsonValueType::Null||action.GetNamedValue(L"thread_id").ValueType()!=JsonValueType::Null||action.GetNamedValue(L"payload").ValueType()!=JsonValueType::Object)return;
    if(method!=L"desktop.resource.import"&&(text(action,L"resource_id")!=request->second.target||text(action,L"revision")!=request->second.revision))return;
    if(method==L"desktop.resource.import"&&action.GetNamedValue(L"revision").ValueType()!=JsonValueType::Null)return;
@@ -172,11 +251,11 @@ class Desktop {
    put(summary,L"action",operation);put(summary,L"name",name);for(auto key:{L"command",L"args",L"cwd",L"enabled"})if(server.HasKey(key))summary.Insert(key,server.Lookup(key));if(action.HasKey(L"enable_global"))summary.Insert(L"enable_global",action.Lookup(L"enable_global"));put(summary,L"env",L"默认隐藏；可在本原生窗口查看完整操作");
   }
   WNDCLASSW cls{};cls.lpfnWndProc=confirmation_proc;cls.hInstance=GetModuleHandleW(nullptr);cls.lpszClassName=L"CMsparkMcpNativeConfirmation";cls.hCursor=LoadCursor(nullptr,IDC_ARROW);if(!RegisterClassW(&cls)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)return;
-  auto value=std::make_unique<Confirmation>();value->id=id;value->digest=digest;value->full=full;value->thread=thread;value->deadline=end;value->generation=generation;value->epoch=epoch;value->purpose=resource?L"resource":L"";confirmation=std::move(value);
-  auto panel=CreateWindowExW(WS_EX_DLGMODALFRAME,cls.lpszClassName,resource?L"确认全局技能／知识变更":L"确认保存 MCP stdio 配置",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,CW_USEDEFAULT,CW_USEDEFAULT,660,500,window,nullptr,cls.hInstance,this);if(!panel){retire_confirmation(0);return;}confirmation->window=panel;
-  auto note=CreateWindowExW(0,L"STATIC",resource?L"全局资源变更可能影响后续对话读取。完整操作在下方；管理许可不授权执行内容。":L"此操作可能启动或重启本地进程。凭据默认隐藏，只有此原生窗口可以批准。",WS_CHILD|WS_VISIBLE,14,12,620,40,panel,nullptr,cls.hInstance,nullptr);
+  auto value=std::make_unique<Confirmation>();value->id=id;value->digest=digest;value->full=full;value->thread=thread;value->deadline=end;value->generation=generation;value->epoch=epoch;value->purpose=local?L"local-work":resource?L"resource":L"";confirmation=std::move(value);
+  auto panel=CreateWindowExW(WS_EX_DLGMODALFRAME,cls.lpszClassName,local?L"确认本地终端操作":resource?L"确认全局技能／知识变更":L"确认保存 MCP stdio 配置",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,CW_USEDEFAULT,CW_USEDEFAULT,660,500,window,nullptr,cls.hInstance,this);if(!panel){retire_confirmation(0);return;}confirmation->window=panel;
+  auto note=CreateWindowExW(0,L"STATIC",local?L"用户终端可执行命令并离开起始目录；不是 OS 沙箱；本次许可不授权模型读取终端屏显。完整操作如下。":resource?L"全局资源变更可能影响后续对话读取。完整操作在下方；管理许可不授权执行内容。":L"此操作可能启动或重启本地进程。凭据默认隐藏，只有此原生窗口可以批准。",WS_CHILD|WS_VISIBLE,14,12,620,40,panel,nullptr,cls.hInstance,nullptr);
   confirmation->details=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",summary.Stringify().c_str(),WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|ES_AUTOHSCROLL,14,56,614,330,panel,nullptr,cls.hInstance,nullptr);
-  if(confirmation->details&&resource){SendMessageW(confirmation->details,EM_SETLIMITTEXT,10*1024*1024,0);SetWindowTextW(confirmation->details,summary.Stringify().c_str());}
+  if(confirmation->details&&(resource||local)){SendMessageW(confirmation->details,EM_SETLIMITTEXT,10*1024*1024,0);SetWindowTextW(confirmation->details,summary.Stringify().c_str());}
   auto reveal=CreateWindowExW(0,L"BUTTON",L"查看完整操作（含私有配置）",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,14,398,280,30,panel,(HMENU)3,cls.hInstance,nullptr);
   auto cancel=CreateWindowExW(0,L"BUTTON",L"取消",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,360,398,110,30,panel,(HMENU)2,cls.hInstance,nullptr);
   auto approve=CreateWindowExW(0,L"BUTTON",L"确认并保存",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,484,398,140,30,panel,(HMENU)1,cls.hInstance,nullptr);
@@ -194,6 +273,7 @@ class Desktop {
   if(type==L"desktop.close"){flat(body);if(!keys(frame,{L"type"}))throw std::runtime_error("CONTROL");DestroyWindow(window);return;}
   if(type==L"desktop.confirmation.request"){begin_confirmation(flat(body));return;}
   if(type==L"desktop.confirmation.resolved"){auto terminal=flat(body);if(confirmation&&text(terminal,L"confirmation_id")==confirmation->id)retire_confirmation();return;}
+  if(accept_local(frame))return;
   auto request=std::find_if(requests.begin(),requests.end(),[&](auto const& r){return r.second.native_id==text(frame,L"id");});if(request==requests.end()||request->second.generation!=generation)return;auto pending=request->second;auto name=request->first;
   if(name==L"desktop.chat.send"){
    if(text(frame,L"thread_id")!=pending.thread)return;
@@ -215,6 +295,7 @@ class Desktop {
   requests.erase(request);if(name==L"thread.peek"&&type==L"thread.peek_result"&&text(frame,L"thread_id")!=pending.thread)return;if((name==L"desktop.thread.metadata.edit"||name==L"desktop.thread.metadata.save")&&(type!=name+L".result"||text(frame,L"thread_id")!=pending.thread))return;put(frame,L"id",pending.ui_id);deliver(frame);
  }
  void renderer(std::wstring const& source,std::wstring const& body){if(!ready||source!=document_url||generation.empty())return;auto frame=flat(body);if(text(frame,L"generation")!=generation)return;auto type=text(frame,L"type");if(type==L"desktop.view"&&keys(frame,{L"type",L"view",L"generation"})){auto next=text(frame,L"view");if(next==L"compact"||next==L"workspace")show(next);return;}
+  if(local_method(type)){render_local(frame);return;}
   std::set<std::wstring> allowed{L"type",L"id",L"generation"};if(type==L"thread.peek")allowed.insert(L"thread_id");
   if(type==L"thread.search"){
    allowed.insert(L"query");if(frame.HasKey(L"limit"))allowed.insert(L"limit");auto query=frame.TryLookup(L"query");auto id=frame.TryLookup(L"id");
@@ -251,7 +332,7 @@ class Desktop {
    if(type==L"desktop.thread.create"&&requests.count(type))return;
    if(type==L"desktop.chat.stop"){auto active=requests.find(L"desktop.chat.send");if(active==requests.end()||active->second.generation!=generation||active->second.thread!=text(frame,L"thread_id")||active->second.ui_id!=text(frame,L"run_id"))return;put(frame,L"run_id",active->second.native_id);}
   }
-  for(auto const& item:frame)if(!allowed.count(std::wstring(item.Key())))return;if(!method(type))return;auto original=frame.TryLookup(L"id");if(original&&original.ValueType()!=JsonValueType::String)return;if(type==L"thread.peek"&&text(frame,L"thread_id").empty())return;DESKTOP_TEST_NOTE(renderer_admitted)bool changeThread=type==L"thread.peek"||type==L"desktop.thread.open"||type==L"desktop.chat.send";bool allBrowser=type==L"desktop.thread.create"||(changeThread&&!browser_thread.empty()&&browser_thread!=text(frame,L"thread_id"));bool viewBrowser=changeThread||type==L"thread.list"||type==L"mcp.list"||type==L"skill.list"||type==L"knowledge.list"||type==L"desktop.browser.status"||type==L"desktop.browser.tasks";if((allBrowser||viewBrowser)&&!retire_browser(allBrowser))ExitProcess(46);if(type==L"desktop.archive.state"||type==L"desktop.archive.set")archive_target=text(frame,L"thread_id");auto id=random_id();requests[type]={id,text(frame,L"id"),generation,text(frame,L"thread_id"),text(frame,L"kind"),text(frame,L"resource_id"),text(frame,L"revision")};if(type==L"desktop.browser.tasks"){browser_request=id;browser_thread=text(frame,L"thread_id");}frame.Remove(L"generation");put(frame,L"id",id);send(frame);DESKTOP_TEST_NOTE(renderer_send_attempted)
+  for(auto const& item:frame)if(!allowed.count(std::wstring(item.Key())))return;if(!method(type))return;auto original=frame.TryLookup(L"id");if(original&&original.ValueType()!=JsonValueType::String)return;if(type==L"thread.peek"&&text(frame,L"thread_id").empty())return;DESKTOP_TEST_NOTE(renderer_admitted)bool changeThread=type==L"thread.peek"||type==L"desktop.thread.open"||type==L"desktop.chat.send";if(type==L"desktop.thread.create"||(changeThread&&local_thread!=text(frame,L"thread_id"))){if(confirmation&&confirmation->purpose==L"local-work")retire_confirmation(0);local_thread.clear();}bool allBrowser=type==L"desktop.thread.create"||(changeThread&&!browser_thread.empty()&&browser_thread!=text(frame,L"thread_id"));bool viewBrowser=changeThread||type==L"thread.list"||type==L"mcp.list"||type==L"skill.list"||type==L"knowledge.list"||type==L"desktop.browser.status"||type==L"desktop.browser.tasks";if((allBrowser||viewBrowser)&&!retire_browser(allBrowser))ExitProcess(46);if(type==L"desktop.archive.state"||type==L"desktop.archive.set")archive_target=text(frame,L"thread_id");auto id=random_id();requests[type]={id,text(frame,L"id"),generation,text(frame,L"thread_id"),text(frame,L"kind"),text(frame,L"resource_id"),text(frame,L"revision")};if(type==L"desktop.browser.tasks"){browser_request=id;browser_thread=text(frame,L"thread_id");}frame.Remove(L"generation");put(frame,L"id",id);send(frame);DESKTOP_TEST_NOTE(renderer_send_attempted)
  }
  void build_webview(){
   // UDF is exclusively owned by this host. No existing browser profile is opened.
@@ -261,14 +342,14 @@ class Desktop {
     ComPtr<ICoreWebView2Settings> settings;web->get_Settings(&settings);settings->put_AreDevToolsEnabled(FALSE);settings->put_AreDefaultContextMenusEnabled(FALSE);settings->put_AreDefaultScriptDialogsEnabled(FALSE);settings->put_IsStatusBarEnabled(FALSE);settings->put_IsWebMessageEnabled(TRUE);
     ComPtr<ICoreWebView2_3> mapping;if(FAILED(web.As(&mapping))||FAILED(mapping->SetVirtualHostNameToFolderMapping(L"cmspark-desktop.invalid",(root+L"\\assets").c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS))){ExitProcess(54);return E_FAIL;}
     EventRegistrationToken token{};
-    web->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs* args)->HRESULT{LPWSTR uri=nullptr;args->get_Uri(&uri);bool allow=uri&&std::wstring(uri)==document_url;CoTaskMemFree(uri);args->put_Cancel(!allow);if(allow){if(!retire_browser(true))ExitProcess(46);retire_archive();retire_dialog();retire_confirmation(0);generation.clear();requests.clear();}return S_OK;}).Get(),&token);
+    web->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs* args)->HRESULT{LPWSTR uri=nullptr;args->get_Uri(&uri);bool allow=uri&&std::wstring(uri)==document_url;CoTaskMemFree(uri);args->put_Cancel(!allow);if(allow){if(!retire_browser(true))ExitProcess(46);retire_archive();retire_dialog();retire_confirmation(0);generation.clear();requests.clear();style_nonce=random_id()+random_id();}return S_OK;}).Get(),&token);
     web->add_FrameNavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs* args)->HRESULT{args->put_Cancel(TRUE);return S_OK;}).Get(),&token);
     web->add_NewWindowRequested(Callback<ICoreWebView2NewWindowRequestedEventHandler>([](ICoreWebView2*,ICoreWebView2NewWindowRequestedEventArgs* args)->HRESULT{args->put_Handled(TRUE);return S_OK;}).Get(),&token);
     web->add_PermissionRequested(Callback<ICoreWebView2PermissionRequestedEventHandler>([](ICoreWebView2*,ICoreWebView2PermissionRequestedEventArgs* args)->HRESULT{args->put_State(COREWEBVIEW2_PERMISSION_STATE_DENY);return S_OK;}).Get(),&token);
     ComPtr<ICoreWebView2_4> downloads;if(SUCCEEDED(web.As(&downloads)))downloads->add_DownloadStarting(Callback<ICoreWebView2DownloadStartingEventHandler>([](ICoreWebView2*,ICoreWebView2DownloadStartingEventArgs* args)->HRESULT{args->put_Cancel(TRUE);return S_OK;}).Get(),&token);else{ExitProcess(55);return E_FAIL;}
     web->AddWebResourceRequestedFilter(L"*",COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
-    web->add_WebResourceRequested(Callback<ICoreWebView2WebResourceRequestedEventHandler>([this](ICoreWebView2*,ICoreWebView2WebResourceRequestedEventArgs* args)->HRESULT{ComPtr<ICoreWebView2WebResourceRequest> request;args->get_Request(&request);LPWSTR uri=nullptr;request->get_Uri(&uri);std::wstring u=uri?uri:L"";CoTaskMemFree(uri);std::map<std::wstring,std::pair<std::wstring,std::wstring>> resources{{document_url,{L"index.html",L"text/html"}},{std::wstring(document_origin)+L"app.css",{L"app.css",L"text/css"}},{std::wstring(document_origin)+L"app.js",{L"app.js",L"text/javascript"}}};auto found=resources.find(u);ComPtr<ICoreWebView2WebResourceResponse> response;
-      if(found==resources.end())environment->CreateWebResourceResponse(nullptr,403,L"Denied",L"",&response);else{std::ifstream file(std::filesystem::path(root+L"\\assets\\"+found->second.first),std::ios::binary);std::string data((std::istreambuf_iterator<char>(file)),{});ComPtr<IStream> stream;stream.Attach(SHCreateMemStream((BYTE const*)data.data(),(UINT)data.size()));environment->CreateWebResourceResponse(stream.Get(),file?200:404,file?L"OK":L"Missing",(L"Content-Type: "+found->second.second+L"; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\n").c_str(),&response);}args->put_Response(response.Get());return S_OK;}).Get(),&token);
+    web->add_WebResourceRequested(Callback<ICoreWebView2WebResourceRequestedEventHandler>([this](ICoreWebView2*,ICoreWebView2WebResourceRequestedEventArgs* args)->HRESULT{ComPtr<ICoreWebView2WebResourceRequest> request;args->get_Request(&request);LPWSTR uri=nullptr;request->get_Uri(&uri);std::wstring u=uri?uri:L"";CoTaskMemFree(uri);std::map<std::wstring,std::pair<std::wstring,std::wstring>> resources{{document_url,{L"index.html",L"text/html"}},{std::wstring(document_origin)+L"app.css",{L"app.css",L"text/css"}},{std::wstring(document_origin)+L"app.js",{L"app.js",L"text/javascript"}},{std::wstring(document_origin)+L"terminal.css",{L"terminal.css",L"text/css"}},{std::wstring(document_origin)+L"terminal-fit.js",{L"terminal-fit.js",L"text/javascript"}},{std::wstring(document_origin)+L"terminal-core.js",{L"terminal-core.js",L"text/javascript"}},{std::wstring(document_origin)+L"local-work.js",{L"local-work.js",L"text/javascript"}}};auto found=resources.find(u);ComPtr<ICoreWebView2WebResourceResponse> response;
+      if(found==resources.end())environment->CreateWebResourceResponse(nullptr,403,L"Denied",L"",&response);else{std::ifstream file(std::filesystem::path(root+L"\\assets\\"+found->second.first),std::ios::binary);std::string data((std::istreambuf_iterator<char>(file)),{});if(found->second.first==L"index.html"&&!desktop_style_html(data,style_nonce)){environment->CreateWebResourceResponse(nullptr,403,L"Denied",L"",&response);args->put_Response(response.Get());return S_OK;}ComPtr<IStream> stream;stream.Attach(SHCreateMemStream((BYTE const*)data.data(),(UINT)data.size()));environment->CreateWebResourceResponse(stream.Get(),file?200:404,file?L"OK":L"Missing",(L"Content-Type: "+found->second.second+L"; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\n").c_str(),&response);}args->put_Response(response.Get());return S_OK;}).Get(),&token);
     web->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs* args)->HRESULT{DESKTOP_TEST_NAV_LOCALS BOOL ok=FALSE;DESKTOP_TEST_CAPTURE(success_hr)args->get_IsSuccess(&ok);LPWSTR uri=nullptr;DESKTOP_TEST_CAPTURE(source_hr)web->get_Source(&uri);bool own=uri&&std::wstring(uri)==document_url;CoTaskMemFree(uri);DESKTOP_TEST_NAV()if(ok&&own&&ready)document();return S_OK;}).Get(),&token);
     web->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>([this](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args)->HRESULT{DESKTOP_TEST_NOTE(renderer_callback)LPWSTR source=nullptr,value=nullptr;args->get_Source(&source);args->get_WebMessageAsJson(&value);try{renderer(source?source:L"",value?value:L"");}catch(...){/* Reject invalid renderer protocol without authority fallback. */}CoTaskMemFree(source);CoTaskMemFree(value);return S_OK;}).Get(),&token);
     RECT bounds{};GetClientRect(window,&bounds);controller->put_Bounds(bounds);return web->Navigate(document_url);
@@ -280,8 +361,8 @@ class Desktop {
  Desktop(std::wstring const& c,std::wstring const& s,INTERNET_PORT p,std::wstring const& r):cap(c),secret(s),root(r),port(p){}
  static LRESULT CALLBACK proc(HWND hwnd,UINT message,WPARAM w,LPARAM l){Desktop* self=(Desktop*)GetWindowLongPtrW(hwnd,GWLP_USERDATA);if(message==WM_NCCREATE){self=(Desktop*)((CREATESTRUCTW*)l)->lpCreateParams;self->window=hwnd;SetWindowLongPtrW(hwnd,GWLP_USERDATA,(LONG_PTR)self);}if(!self)return DefWindowProcW(hwnd,message,w,l);
   if(message==WM_SIZE&&self->controller){RECT bounds{};GetClientRect(hwnd,&bounds);self->controller->put_Bounds(bounds);return 0;}
-  if(message==native_frame||message==native_connect||message==native_offline){std::unique_ptr<Frame> frame((Frame*)l);if(frame->epoch!=self->epoch)return 0;try{if(message==native_connect){self->retire_confirmation();self->phase=L"initial";self->generation.clear();self->requests.clear();}else if(message==native_offline){self->retire_confirmation();self->ready=false;self->archive_target.clear();self->browser_request.clear();self->browser_thread.clear();self->generation.clear();self->requests.clear();if(self->web){JsonObject offline;put(offline,L"type",L"desktop.offline");self->web->PostWebMessageAsJson(offline.Stringify().c_str());}}else self->accept(frame->value,frame->epoch);}catch(...){ExitProcess(45);}return 0;}
-  if(message==WM_CLOSE){if(!self->retire_browser(true))ExitProcess(46);self->retire_archive();self->retire_dialog();self->retire_confirmation(0);DestroyWindow(hwnd);return 0;}if(message==WM_DESTROY){if(self->controller)self->controller->Close();PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,message,w,l);
+  if(message==native_frame||message==native_connect||message==native_offline){std::unique_ptr<Frame> frame((Frame*)l);if(frame->epoch!=self->epoch)return 0;if(message==native_connect||message==native_offline)self->retire_local();try{if(message==native_connect){self->retire_confirmation();self->phase=L"initial";self->generation.clear();self->requests.clear();}else if(message==native_offline){self->retire_confirmation();self->ready=false;self->archive_target.clear();self->browser_request.clear();self->browser_thread.clear();self->generation.clear();self->requests.clear();if(self->web){JsonObject offline;put(offline,L"type",L"desktop.offline");self->web->PostWebMessageAsJson(offline.Stringify().c_str());}}else self->accept(frame->value,frame->epoch);}catch(...){ExitProcess(45);}return 0;}
+  if(message==WM_CLOSE){self->retire_local();if(!self->retire_browser(true))ExitProcess(46);self->retire_archive();self->retire_dialog();self->retire_confirmation(0);DestroyWindow(hwnd);return 0;}if(message==WM_DESTROY){if(self->controller)self->controller->Close();PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,message,w,l);
  }
  int run(HINSTANCE instance){WNDCLASSW cls{};cls.lpfnWndProc=proc;cls.hInstance=instance;cls.lpszClassName=L"CMsparkDesktopOwnedWindow";cls.hCursor=LoadCursor(nullptr,IDC_ARROW);if(!RegisterClassW(&cls))return 60;RECT rect{0,0,360,420};AdjustWindowRectEx(&rect,WS_OVERLAPPEDWINDOW,FALSE,0);window=CreateWindowExW(0,cls.lpszClassName,L"CMspark 工作台",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,instance,this);if(!window)return 61;start_network();MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}ExitProcess((UINT)msg.wParam);return(int)msg.wParam;}
 };
@@ -294,7 +375,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){try{
  struct BootBuffer{char bytes[CMSPARK_BOOT_MAX+1]{};~BootBuffer(){SecureZeroMemory(bytes,sizeof(bytes));}} buffer;DWORD body_length=0;if(!d480_client_body(&bootstrap,buffer.bytes,&body_length))return 13;
  std::string data(buffer.bytes,body_length);SecureZeroMemory(buffer.bytes,sizeof(buffer.bytes));
  struct DataWipe{std::string& value;~DataWipe(){if(!value.empty())SecureZeroMemory(value.data(),value.size());}} data_wipe{data};
- auto boot=flat(wide(data));SecureZeroMemory(data.data(),data.size());if(!keys(boot,{L"capability_id",L"secret",L"url",L"protocol_version",L"issued_method_set_version",L"parent_handle"})||!hex(text(boot,L"capability_id"),32)||!hex(text(boot,L"secret"),64)||!exact_one(boot,L"protocol_version")||boot.GetNamedValue(L"issued_method_set_version").ValueType()!=JsonValueType::Number||boot.GetNamedNumber(L"issued_method_set_version")!=desktop_method_set_version||desktop_method_set_version!=8)return 15;
+ auto boot=flat(wide(data));SecureZeroMemory(data.data(),data.size());if(!keys(boot,{L"capability_id",L"secret",L"url",L"protocol_version",L"issued_method_set_version",L"parent_handle"})||!hex(text(boot,L"capability_id"),32)||!hex(text(boot,L"secret"),64)||!exact_one(boot,L"protocol_version")||boot.GetNamedValue(L"issued_method_set_version").ValueType()!=JsonValueType::Number||boot.GetNamedNumber(L"issued_method_set_version")!=desktop_method_set_version||desktop_method_set_version!=9)return 15;
  auto url=text(boot,L"url");std::wstring prefix=L"ws://127.0.0.1:";if(url.rfind(prefix,0)!=0||url.size()<prefix.size()+9||url.substr(url.size()-8)!=L"/desktop")return 15;auto port_text=url.substr(prefix.size(),url.size()-prefix.size()-8);if(port_text.empty()||port_text.size()>5||!std::all_of(port_text.begin(),port_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 15;unsigned port=std::stoul(port_text);if(!port||port>65535)return 15;
  auto parent_text=text(boot,L"parent_handle");if(parent_text.empty()||parent_text[0]==L'0'||!std::all_of(parent_text.begin(),parent_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 16;size_t used=0;auto number=std::stoull(parent_text,&used,10);if(used!=parent_text.size()||number>(uintptr_t)-1)return 16;HANDLE parent=(HANDLE)(uintptr_t)number;if(!sync_parent(parent))return 16;if(!d480_client_finish(&bootstrap,parent))return 16;
  CloseHandle(input);bootstrap.pipe=nullptr;

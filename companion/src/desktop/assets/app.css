@@ -12,3 +12,5 @@ header{height:auto;min-height:56px;flex-wrap:wrap}#dialog-editor{margin:16px 0}#
 #browser-choices { list-style: none; padding: 0; }
 #browser-choices li { border: 1px solid currentColor; border-radius: .4rem; margin-block: .75rem; padding: .75rem; overflow-wrap: anywhere; }
 #browser-choices button { margin-inline-end: .5rem; margin-block: .25rem; }
+
+#local-work .local-terminal{height:320px;min-width:0;overflow:hidden}#local-work{min-width:0}#local-work button{margin:4px}
