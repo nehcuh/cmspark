@@ -34,6 +34,12 @@ CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://mod
 
 当前未提供 OAuth 登录流程、旧版 HTTP+SSE 回退、sampling 或 MCP tasks 的产品支持。分页目录已完整聚合，但所用 SDK 的工具输出 Schema 校验缓存仅保留最后一页，不能将此能力理解为所有分页工具都经过输出 Schema 校验。
 
+### HTTP 重定向安全
+
+0.6.14 开发版将 MCP SDK 更新至 1.32.0。Streamable HTTP 默认使用同源重定向策略（也允许同主机默认端口的 HTTP → HTTPS 安全升级），其它跨来源跳转会被拒绝，避免自定义请求头、会话标识及 307/308 请求正文被转发到其它来源。HTTP 服务迁移到其它来源时，请核实并直接配置最终服务 URL；CMspark 不提供放宽该策略的配置。stdio 连接方式不变。
+
+上游公告：[HTTP 重定向](https://github.com/advisories/GHSA-6prh-2h8m-c8cw)、[可选服务端 taskStore 的会话隔离](https://github.com/advisories/GHSA-22jm-h49p-29qw)。当前产品未配置 SDK taskStore，不应据此推断已发生任务越权。升级依赖不表示已经发布或替换本机应用。
+
 ## 配置文件位置
 
 所有 MCP server 配置最终保存在：
