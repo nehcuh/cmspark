@@ -6,6 +6,18 @@ Windows／跨平台变更先读 [Windows 开发与失败定位](windows-developm
 
 ## 测试架构
 
+### Windows 选夹的短名与长名
+
+`companion/tests/picker-native-path-domain-726.test.ts` 执行当前 Node 的真实 JS `realpathSync` 实现与原生选夹测试的实际预期路径声明／严格比较。仅原生绑定用明确的惰性短名→长名 seam；不会执行 Win32、窗口或选夹。它同时覆盖 LF/CRLF、原 JS-only 声明的失败、已展开路径正控、异目录拒绝及原生身份不可得的失败传播。`workspace-picker-windows-native-726.test.ts` 的预期根使用 `fs.realpathSync.native`，实际选夹及全部绑定／取消／ACP cwd／清理断言不变。该 CPU 检查不能证明真实 Windows API 或替代远端新 head 的原生用例。
+
+### #726 既有 Git 状态请求关联
+
+`chrome-extension/tests/workspace-git-hints-726.test.ts` 由原前端 canonical `tests/**/*.ts` 编译与 `*.test.js` 入口发现。测试运行实际 Panel status effect → 原 Git 状态返回函数／handler → 原 WS `id` 包络 JSON → 当前 observer／实际完整 live hook → 原候选按钮 callback；Git 子进程、realpath、Chrome 发送与 React 生命周期为显式惰性 seam。没有真实 Git、文件系统探测、浏览器、picker、PTY 或 provider 执行。
+
+只有现有 Panel 状态查询会登记；其它未登记 `coding.git_status`／`acp.workspace_status` 回复拒作候选。请求绑定当前线程、选择 revision、真实连接对象与规范 expected path，下一请求退休前一请求。回复和 Chrome 发送确认两者均须成功，先回复后发送失败也不保存；断线、发送异常、effect cleanup、同线程 ABA、旧 callback、重放、未知 owner/id、错误／非仓库／缺路径／异路径及不完整值均不产生提示。原活动 tool ID 歧义仍停用该选择／连接的收集。现有 handler 的成功形状是 `is_repo:true` 且无 error，不伪造不存在的 `success` 字段。
+
+已成功观察的目录在 `thread.updated`／真实 reducer 解绑后保留于当前 live hint，reload／切换／断线仍清空。它是 Git 实际 cwd，不能称仓库顶根或自动确认；最多3条预算与 native-pick 唯一绑定不变，按钮只发原 `workspace.pick`。当前状态查询本来仅在已绑定时发出，本片不为未绑定者新探测目录；MCP 本机来源与真实 shipping CodingAgentPanel 浏览器端到端仍独立未交付。正常测试项目包含现有 node-shims，不能以遗漏该文件的 selected program 冒充 canonical 类型检查。
+
 ### Windows sentinel 对象身份夹具
 
 case36 的数值句柄可被当前子进程的无关对象复用，不能单用 GetHandleInformation 推断 sentinel 继承。夹具使用128位随机 Local Event 名称与原子拒绝重名创建；在打开只读同步引用之前捕获候选，再用既有 CompareObjectHandles 比较。V2 sidecar 只在 owned 文件传递已知三句柄和固定格式名称，旧 V1 case35 保留。未知 API、引用、比较或关闭结果仍拒绝；原 launcher、inherit=false、pipe/parent 检查、ACK、20s和真实 native gate 不变。CPU 词法投影不等 Windows SDK／原生通过，也不确定旧 launch 失败的唯一原因。
@@ -294,6 +306,24 @@ The unshipped Windows acceptance variant observes the exact blocked top-level na
 - `chrome-extension/tests/coding-bounded-n-739.test.ts` 执行真实 reducer／private send producer 与完整 WS listener，覆盖有序 membership、同线程／跨线程 ABA、唯一回执、Stop先于Start回执、manual-entry、compact marker与legacy未知关联。原522／607／722／727消费者按已批准新容量／显式选择合同同步，保留其 owner、真正close、工作区和拒绝断言。
 - `companion/tests/integration/acp-bounded-n-739.test.ts` 仅 Windows CI 执行：N1/2/4各创建精确 owned Node bridge，以原子 JSON marker 确认真实独立 PID 重叠，同 Agent 拒绝、取消一方后另一方仍活、真实close后仅释放其槽。每case45秒、marker20秒、原bridge10秒，不扩时限／权限。它不启动配置的 Agent/provider，不是本机已跑证据；非Windows注册后显式skip，必须在真实Windows计数通过。
 - 原607六个受管close／probe→fallback场景完整保留，当前case不以UI closed、cancelACK或exitCode提前释放。源审批、一次必要共享locked ARM与精确head/main完整CI另行验收；不能凭多个offered、VM、SSR或ARM单独关闭整票。
+
+
+### #726 当前对话目录提示（开发候选，原生待验）
+
+`companion/tests/workspace-hints-726.test.ts` 执行真实 workspace.pick 分支和整份原生 helper 的惰性导入；`acp-workspace-priority-726.test.ts` 执行真实 manager/handler/提案工具生产结果，并喂给提示观察器；扩展 `tests/workspace-hints-726.test.ts` 执行完整 live hook、reducer、实际 Panel JSX/点击及晚回复 callback。CPU seams 不启动 shell/Agent/浏览器/原生选择器，不冒称真实 L2 或 OS 导航通过。
+
+提示最多三个、仅内存；仅当前实时 start/result 配对且 shell exit0/no-timeout/no-abort、ACP 实际 offered 可纳入。`cwd` 标为进程启动目录，严格字面 `cd` 只标参数声明；不解释泛 `--cwd`、环境展开、文件父目录或 MCP 远端本地性。初始首片未收 Git 提示；本版仅按上文既有 Git 状态请求关联契约纳入。真实连接广播须在提前返回前退休旧视图与两种未完成的回复／发送确认，重连只接纳新连接的请求。未知／折叠／失败及历史回放均不补候选。
+
+显式点击只给既有 `workspace.pick` 传可选 initial_path/request_id，不代替原 native OK；取消（即使 SelectedPath 保留提示）零绑定，选中其它目录绑定实际返回值。原 picker120秒、ACP/L2/45秒、plan_readonly 和 setWorkspaceRoot 的单次原生收据条件不改。服务器在两个 await 后复核原 thread 对象与真实当前 panel socket；UI A→B→A／断线的旧反馈不能改新选择，真实用户仍可确认原A（只绑定A，绝不B或自动启动）。
+
+后续真实 changed-head GHA 必须验证 Windows/macOS 原生预导航与一次确认后的实际目录，不能以本批 CPU、任何旧735原生红／绿或本地假 chrome 代替。whole #726 在该证据及余项核对前仍未关闭；0.6.14 未发版。
+
+
+#726 R2：真实 server 的 tool.start 参数摘要不包含 command，故首轮手工 command seam 不代表可达能力。新增 `shell-workspace-declaration-726.test.ts` 执行整份 shellExec（惰性 child）、真实 server start 摘要与 adapter result 序列化后再喂真实观察器；仅原 exit0／无超时／未取消输出可选 declared_cwd，cwd 仍为 spawn cwd。严格已知 cmd 或 /bin/sh 的完整字面 cd 语法，不执行／展开／猜目录，不发送命令或后缀。重复活动 tool ID 后保已验证提示，但本选择／连接后续收集停用，直到真实选择／连接变化；没有隐藏墓碑或自动重试。ALM／C1 等 Unicode 控制、格式、surrogate 与行分隔符路径拒绝；cmd 单引号不当 POSIX 引号。R1 全源码／27回执和4个真实反例保留，原生仍待。
+
+### #726 remote picker thread-scoped discovery
+
+`picker-native-discovery-726.test.ts` lexically projects the actual unshipped C# decision bodies with inert API facts; it does not execute PowerShell, C#, Win32 or UIA. It preserves the original coordinator/transport controls and covers a live hidden-owner modal with MainWindowHandle zero, exact child-thread PID/TID checks, unique visible #32770, 64-thread/256-callback refusal limits, empty versus partial native enumeration, and original captured HWND/root/UIA/OK/Cancel rechecks. No desktop enumeration, title targeting, input, foreground change, polling, retry or timeout expansion is added. A genuine changed-head hosted Windows run must still establish original OK/cancel binding and ACP-cwd acceptance; the prior120781.7155ms failure's cause remains UNKNOWN.
 
 ### #725 terminal-tail consent and readonly boundary
 

@@ -384,8 +384,8 @@ async function handleAcpWsMessageInternal(
       if (!agentId) return { type: "error", error: "agent_id required" }
       if (!goal) return { type: "error", error: "goal required" }
       const workspaceRoot =
-        (typeof msg.workspace_root === "string" && msg.workspace_root) ||
         ctx.getWorkspaceRoot?.(threadId) ||
+        (typeof msg.workspace_root === "string" && msg.workspace_root) ||
         null
       const pageContext =
         typeof msg.page_context === "string"

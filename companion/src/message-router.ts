@@ -5376,36 +5376,54 @@ async function dispatchMessage(
     case "workspace.pick": {
       // Optional thread_id: pick + bind in one step (avoids UI race / stale set)
       const owner = typeof rest.thread_id === "string" && rest.thread_id ? { thread_id: rest.thread_id } : {}
-      const result = await pickFolderNativeImpl(WORKSPACE_FOLDER_PROMPT)
-      if (result.error === "cancelled") {
-        return { type: "workspace.pick_result", ...owner, cancelled: true }
+      const hinted = rest.initial_path !== undefined || rest.request_id !== undefined
+      const requestId = typeof rest.request_id === "string" && /^[A-Za-z0-9:_-]{1,100}$/.test(rest.request_id) ? rest.request_id : undefined
+      const initialPath = rest.initial_path
+      const originalThread = hinted && owner.thread_id ? threadManager.get(owner.thread_id) : undefined
+      const current = () => !!originalThread && threadManager.get(owner.thread_id!) === originalThread && session?.isCurrentSession?.() === true
+      if (hinted && (!requestId || typeof initialPath !== "string" ||
+          !(/^(?:\/|[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/.test(initialPath)) || /[\p{Cc}\p{Cf}\p{Cs}\u2028\u2029]/u.test(initialPath) || !current())) {
+        return { type: "workspace.pick_result", ...owner, ...(requestId ? { request_id: requestId } : {}), error: "工作区提示已失效或格式无效" }
       }
-      if (result.error) return { type: "workspace.pick_result", ...owner, error: result.error }
-      if (!result.path) return { type: "workspace.pick_result", ...owner, error: "未选择文件夹" }
-      const { recordNativePick, setWorkspaceRoot } = await import("./capability/workspace")
+      const replyOwner = { ...owner, ...(requestId ? { request_id: requestId } : {}) }
+      const result = hinted
+        ? await pickFolderNativeImpl(WORKSPACE_FOLDER_PROMPT, initialPath)
+        : await pickFolderNativeImpl(WORKSPACE_FOLDER_PROMPT)
+      if (result.error === "cancelled") {
+        return { type: "workspace.pick_result", ...replyOwner, cancelled: true }
+      }
+      if (result.error) return { type: "workspace.pick_result", ...replyOwner, error: result.error }
+      if (!result.path) return { type: "workspace.pick_result", ...replyOwner, error: "未选择文件夹" }
+      const [{ recordNativePick, setWorkspaceRoot }, { appendCapabilityAudit }] = await Promise.all([
+        import("./capability/workspace"), import("./packs/audit-log"),
+      ])
       let abs = result.path
       try {
         abs = fs.realpathSync(path.resolve(result.path))
       } catch {
         /* keep result.path */
       }
+      // Hint provenance is never authority. A real selected path is still required,
+      // and an owner replaced during either await may not receive its receipt.
+      if (hinted && !current()) return { type: "workspace.pick_result", ...replyOwner, error: "工作区提示已失效" }
       recordNativePick(abs)
       if (typeof rest.thread_id === "string" && rest.thread_id) {
         const thread = threadManager.get(rest.thread_id)
         if (!thread) {
-          return { type: "workspace.pick_result", ...owner, path: abs, error: `thread not found: ${rest.thread_id}` }
+          return { type: "workspace.pick_result", ...replyOwner, path: abs, error: `thread not found: ${rest.thread_id}` }
         }
         const bind = setWorkspaceRoot(abs)
-        if (!bind.ok) return { type: "workspace.pick_result", ...owner, path: abs, error: bind.error }
+        if (!bind.ok) return { type: "workspace.pick_result", ...replyOwner, path: abs, error: bind.error }
         threadManager.update(rest.thread_id, { workspace_root: bind.path } as any)
+        appendCapabilityAudit({ type: "workspace.bound", source: hinted ? "suggested-confirmed" : "picker", thread_id: rest.thread_id, at: new Date().toISOString() })
         return {
-          type: "workspace.pick_result", ...owner,
+          type: "workspace.pick_result", ...replyOwner,
           path: bind.path,
           bound: true,
           thread: threadManager.get(rest.thread_id),
         }
       }
-      return { type: "workspace.pick_result", ...owner, path: abs, bound: false }
+      return { type: "workspace.pick_result", ...replyOwner, path: abs, bound: false }
     }
     case "workspace.set": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }

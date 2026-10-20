@@ -39,6 +39,6 @@ declare module "node:assert/strict" {
   export default assert
 }
 declare module "node:vm" {
-  const vm: { runInNewContext(code: string, context: Record<string, unknown>): any }
+  const vm: { runInNewContext(code: string, context: Record<string, unknown>, options?: { timeout?: number }): any }
   export default vm
 }

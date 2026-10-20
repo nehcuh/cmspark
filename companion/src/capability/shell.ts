@@ -678,6 +678,30 @@ function literalUnicodeEchoShell(command: string, useArgv: boolean): string | nu
   return shell
 }
 
+/** A completed command's literal declaration, not final cwd or an existence claim.
+ * Node shell:true selects cmd via process.env.comspec on Windows, /bin/sh on
+ * Linux/macOS. Unknown/custom shells and any interpreted grammar give no hint.
+ */
+export function declaredShellCwd(command: string, platform: string, shell: string): string | undefined {
+  if (/[\p{Cc}\p{Cf}\p{Cs}\u2028\u2029% !$`<>|;()^]/u.test(command.replace(/ /g, ""))) return undefined
+  const parts = command.split("&&")
+  if (parts.length > 2 || parts.length === 2 && !parts[1].trim() || parts.some(p => p.includes("&"))) return undefined
+  if (parts[1] && !/^[A-Za-z0-9_.-]+(?: +[A-Za-z0-9_.-]+)*$/.test(parts[1].trim())) return undefined
+  const prefix = parts[0].trim()
+  if (platform === "win32") {
+    if (!/^(?:cmd\.exe|[A-Za-z]:[\\/](?:[^\\/]+[\\/])*cmd\.exe)$/i.test(shell)) return undefined
+    const m = /^cd +\/d +(?:"([^"\n]+)"|([^\s"']+)) *$/i.exec(prefix)
+    if (!m) return undefined
+    const p = m[1] || m[2]
+    if (/[*?\[\]~]/.test(p) || !/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/.test(p) || /^\\\\[?.]\\/.test(p) || p.split(/[\\/]/).some(v => v === "." || v === "..")) return undefined
+    return p
+  }
+  if ((platform !== "darwin" && platform !== "linux") || shell !== "/bin/sh") return undefined
+  const m = /^cd +(?:"([^"\\\n]+)"|'([^'\\\n]+)'|([^\s"'\\]+)) *$/.exec(prefix)
+  const p = m && (m[1] || m[2] || m[3])
+  return p && !(m![3] && /[*?\[\]~]/.test(p)) && p.startsWith("/") && !p.startsWith("//") && !p.split("/").some(v => v === "." || v === "..") ? p : undefined
+}
+
 export async function shellExec(opts: {
   command: string
   cwd?: string | null
@@ -740,6 +764,9 @@ export async function shellExec(opts: {
     const env = buildChildEnv()
     const argv = tryParseSimpleArgv(command)
     const useArgv = shouldUseArgvSpawn(argv)
+    const declaredCwd = !useArgv
+      ? declaredShellCwd(command, process.platform, process.platform === "win32" ? process.env.comspec || "cmd.exe" : "/bin/sh")
+      : undefined
     const unicodeEchoShell = literalUnicodeEchoShell(command, useArgv)
     const child = unicodeEchoShell
       ? spawn(unicodeEchoShell, ["/d", "/u", "/s", "/c", `"${command}"`], {
@@ -864,6 +891,7 @@ export async function shellExec(opts: {
       resolve({
         success: true,
         data: {
+          ...(exitCode === 0 && !timed_out && !aborted && declaredCwd ? { declared_cwd: declaredCwd } : {}),
           exit_code: exitCode,
           signal: signalName || null,
           timed_out,

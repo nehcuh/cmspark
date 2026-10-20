@@ -9,6 +9,7 @@ import { codingManualEntryAction } from "../src/sidepanel/utils/coding-manual-en
 import { codingControlAction } from "../src/sidepanel/utils/coding-control-message"
 import { agentReducer, initialState, selectCodingSession, type AgentState } from "../src/sidepanel/store/agentStore"
 import { sendCodingOperation, takeCodingOperationReply, clearCodingOperationFeedback, captureCodingSelection } from "../src/sidepanel/utils/coding-operation-send"
+import { WorkspaceHints } from "../src/sidepanel/coding-handoff/workspace-hints"
 
 const switchTo = (s: AgentState, threadId: string) => agentReducer(s, { type: "SET_ACTIVE_THREAD", threadId })
 function offer(s: AgentState, sessionId: string, threadId = "owner") {
@@ -149,6 +150,7 @@ test("#739 actual whole WS listener correlates exact receipts and retains Stop/m
   const code = ts.transpileModule(`export const ${listener.getText(sf)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
   vm.runInNewContext(code, { exports: exported, takeCodingOperationReply, dispatch, codingManualEntryAction, codingControlAction,
     activeThreadRef: { current: "owner" }, isBoardHintReply: () => false, isManagedThreadMutationReply: () => false,
+    workspaceHintsRef: { current: new WorkspaceHints() }, workspaceHintSelectionRef: { current: s.activeThreadSelectionRevision },
     nextHydrateRetry: () => "none", knowledgePreviewErrorText: () => null, isComputerModelErrorMessage: () => false,
   })
   const route = exported.messageListener
@@ -265,6 +267,7 @@ test("#739 actual connection lifecycle broadcast retires pending feedback even w
   const exported: any = {}, dispatch = (a: any) => actions.push(a)
   vm.runInNewContext(ts.transpileModule(`export const ${listener.getText(sf)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
     exports: exported, takeCodingOperationReply, clearCodingOperationFeedback, dispatch,
+    workspaceHintsRef: { current: new WorkspaceHints() }, activeThreadRef: { current: "owner" }, workspaceHintSelectionRef: { current: 2 },
   })
   const route = exported.messageListener, capture = { threadRevision: 2, selectionRevision: 3 }
   try {
