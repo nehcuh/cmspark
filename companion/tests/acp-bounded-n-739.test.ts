@@ -28,7 +28,7 @@ function configFixture() {
   const save = evaluate(`let cachedConfig, cachedConfigMtimeMs;\n${functions("config.ts", ["saveConfig", "deepMerge", "stripCompanionUiProcessContinueDeny"])}`, {
     getConfig: () => current, PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), require: (n: string) => { assert.equal(n, "./acp/types"); return types },
     getEnvApiKey: () => undefined, resolveApiKey: () => undefined, path, getConfigDir: () => "/inert/config", console: { warn() {} },
-    atomicWriteJSON: (p: string, value: any) => { assert.equal(p, "/inert/config/config.json"); writes.push(value) }, configFileMtimeMs: () => 1,
+    atomicWriteJSON: (p: string, value: any) => { assert.equal(p, path.join("/inert/config", "config.json")); writes.push(value) }, configFileMtimeMs: () => 1,
     configEvents: { emit: (_: string, value: any) => { current = value; events.push(value) } }, CONFIG_CHANGE_EVENT: "inert-config",
   }).saveConfig
   const handler = evaluate(functions("message-router/handlers/config.ts", ["handleConfigFamily", "hasPrototypePollutionKey", "sanitizeConfig"]), {

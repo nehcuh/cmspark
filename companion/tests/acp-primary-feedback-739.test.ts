@@ -23,7 +23,7 @@ function fixture() {
         if (name.startsWith("node:")) return require(name)
         assert(name.startsWith("."), "UNADMITTED_UI_IMPORT")
         const p = path.resolve(path.dirname(file), name), target = [".ts", ".tsx", "/index.ts"].map(x => p + x).find(x => fs.existsSync(x))
-        assert(target); assert(target.startsWith(repo + "/chrome-extension/src/")); return load(target)
+        assert(target); assert(target.startsWith(path.join(repo, "chrome-extension", "src") + path.sep)); return load(target)
       },
     }, { filename: file, timeout: 3000 })
     return module.exports
