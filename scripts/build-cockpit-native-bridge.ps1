@@ -15,8 +15,30 @@ if (-not $directory.PSIsContainer -or ($directory.Attributes -band [IO.FileAttri
 $binary = Join-Path $directory.FullName 'cmspark-cockpit-bridge.exe'
 $digest = Join-Path $directory.FullName 'cmspark-cockpit-bridge.sha256'
 if ((Test-Path -LiteralPath $binary) -or (Test-Path -LiteralPath $digest)) { throw 'COCKPIT_BRIDGE_BUILD_OUTPUT_EXISTS' }
-& $compiler /nologo /target:exe /platform:x64 /optimize+ /warn:4 /warnaserror+ /codepage:65001 ('/out:' + $binary) $source
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'COCKPIT_BRIDGE_BUILD_FAILED' }
+# Fixed file arguments end in .cs/.exe; quote them for the Framework Arguments
+# API, without a shell or expansion. Never accept a quote/control separator.
+foreach ($argumentPath in @($source, $binary)) {
+  if ($argumentPath.IndexOfAny([char[]]@([char]34, [char]0, [char]13, [char]10)) -ge 0) { throw 'COCKPIT_BRIDGE_BUILD_PATH' }
+}
+$compileStart = [Diagnostics.ProcessStartInfo]::new()
+$compileStart.FileName = $compiler
+$compileStart.Arguments = '/nologo /target:exe /platform:x64 /optimize+ /warn:4 /warnaserror+ /codepage:65001 /out:"' + $binary + '" "' + $source + '"'
+$compileStart.UseShellExecute = $false
+$compileStart.WorkingDirectory = (Get-Location).ProviderPath
+$compileChild = [Diagnostics.Process]::new()
+try {
+  $compileChild.StartInfo = $compileStart
+  if (-not $compileChild.Start()) { throw 'COCKPIT_BRIDGE_BUILD_FAILED' }
+  $compileChild.WaitForExit()
+  $compilerExitCode = $compileChild.ExitCode
+} finally { $compileChild.Dispose() }
+if ($compilerExitCode -ne 0 -or -not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+  $buildFailure = [InvalidOperationException]::new('COCKPIT_BRIDGE_BUILD_FAILED')
+  # An owned same-runspace bad-source control requires the actual numeric exit,
+  # never an unset variable, a generic exception or absence of an output file.
+  $buildFailure.Data['CompilerExitCode'] = $compilerExitCode
+  throw $buildFailure
+}
 $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText($digest, $hash + "`n", [Text.UTF8Encoding]::new($false))
 Write-Output 'COCKPIT_BRIDGE_BUILD_OK'

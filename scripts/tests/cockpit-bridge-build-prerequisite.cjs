@@ -24,6 +24,12 @@ function main() {
     // Same PS5.1 builder and sanitized env as registration; no Out-Null parent
     // consumes its compiler success stream. Public source/compiler output only.
     cleanupAllowed = false
+    const controls = path.join(root, 'compiler-controls'); fs.mkdirSync(controls)
+    const controlResult = cp.spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-File',
+      path.join(repo, 'scripts/tests/cockpit-bridge-build-completion.test.ps1'), '-TestRoot', controls],
+    { cwd: repo, env, windowsHide: true, stdio: 'inherit' })
+    assert.ok(!controlResult.error); assert.equal(controlResult.status, 0); assert.equal(controlResult.signal, null)
+    assert.ok(sameRoot())
     const result = cp.spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-File',
       path.join(repo, 'scripts/build-cockpit-native-bridge.ps1'), '-OutputDirectory', output],
     { cwd: repo, env, windowsHide: true, stdio: 'inherit' })

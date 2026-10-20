@@ -49,3 +49,4 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 - 修改生产函数依赖后，检查删除 import 后执行函数的 VM/AST/readFile 消费者。真实依赖须同时进入消费端 import 和 VM globals；只跑被修改函数的测试会漏掉旧消费端的 ReferenceError。#723 的 `transient-rate-feedback-730` 回归保留了这个失败。
 - 前台就绪必须核最后一个可能改变激活的操作。WPF 最小化会调用 SW_MINIMIZE，API 允许激活下一顶层窗口；先激活另窗再最小化不能证明最终前台仍是另窗。当前修复候选只调整原操作顺序，CPU 正负控不冒真实 Windows 验收，也不证明历史唯一原因。禁止补救焦点或放松前台断言。
 - 首条 worker 消息的 schema 与终止路径先查真实 producer：font-cache 消息没有 `ok` 字段，observer 的 false 不等字体失败；`finally` 主动 terminate 后的非零 exit 也不单独证明崩溃。冷启动耗时的物理原因未证实时保留 UNKNOWN。
+- 原生编译的退出码必须绑定实际已终止进程。#723 的真实前置在读取未设置的 `$LASTEXITCODE` 时拒绝，不能初始化 0、猜 compiler 成功或把十余秒解释成 timeout。需要明确原 compiler 的启动／等待／自身 ExitCode，连同下一 executable 消费者审计，保原 flags、stdout、摘要和拒绝。跨 PS 版本的公开源码不证明实际 GUI／PATHEXT／ShellExecute 分类；好／坏源码控制必须用同固定编译器得到真实 0／非零，泛异常不是有效负控。

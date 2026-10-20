@@ -47,10 +47,41 @@ try {
   $compiler = @('Framework64', 'Framework') | ForEach-Object { Join-Path $env:SystemRoot "Microsoft.NET\$_\v4.0.30319\csc.exe" } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
   if (-not $compiler) { throw 'COCKPIT_BRIDGE_BUILD_COMPILER' }
   $cpu = Join-Path $root 'framing.exe'
-  & $compiler /nologo /target:exe /platform:x64 /warn:4 /warnaserror+ /codepage:65001 /main:CMspark.CockpitBridge.FramingTests ('/out:' + $cpu) (Join-Path $repo 'companion\src\computer\native\cockpit-bridge-host.cs') (Join-Path $repo 'scripts\tests\cockpit-bridge-framing.cs')
-  Check ($LASTEXITCODE -eq 0)
-  $receipt = & $cpu
-  Check ($LASTEXITCODE -eq 0)
+  $hostSource = Join-Path $repo 'companion\src\computer\native\cockpit-bridge-host.cs'
+  $framingSource = Join-Path $repo 'scripts\tests\cockpit-bridge-framing.cs'
+  foreach ($argumentPath in @($cpu, $hostSource, $framingSource)) {
+    if ($argumentPath.IndexOfAny([char[]]@([char]34, [char]0, [char]13, [char]10)) -ge 0) { throw 'COCKPIT_BRIDGE_REGISTRATION_ASSERT' }
+  }
+  $compileStart = [Diagnostics.ProcessStartInfo]::new()
+  $compileStart.FileName = $compiler
+  $compileStart.Arguments = '/nologo /target:exe /platform:x64 /warn:4 /warnaserror+ /codepage:65001 /main:CMspark.CockpitBridge.FramingTests /out:"' + $cpu + '" "' + $hostSource + '" "' + $framingSource + '"'
+  $compileStart.UseShellExecute = $false
+  $compileStart.WorkingDirectory = (Get-Location).ProviderPath
+  $compileChild = [Diagnostics.Process]::new()
+  try {
+    $compileChild.StartInfo = $compileStart
+    if (-not $compileChild.Start()) { throw 'COCKPIT_BRIDGE_REGISTRATION_ASSERT' }
+    $compileChild.WaitForExit()
+    $framingCompilerExitCode = $compileChild.ExitCode
+  } finally { $compileChild.Dispose() }
+  Check ($framingCompilerExitCode -eq 0)
+  $framingStart = [Diagnostics.ProcessStartInfo]::new()
+  $framingStart.FileName = $cpu
+  $framingStart.UseShellExecute = $false
+  $framingStart.WorkingDirectory = (Get-Location).ProviderPath
+  $framingStart.RedirectStandardOutput = $true
+  $framingChild = [Diagnostics.Process]::new()
+  try {
+    $framingChild.StartInfo = $framingStart
+    if (-not $framingChild.Start()) { throw 'COCKPIT_BRIDGE_REGISTRATION_ASSERT' }
+    $framingOutput = $framingChild.StandardOutput.ReadToEndAsync()
+    $framingChild.WaitForExit()
+    $framingExitCode = $framingChild.ExitCode
+    # The fixed C# producer writes one JSON line with Console.WriteLine. Match
+    # the original PowerShell native line transport before saving its receipt.
+    $receipt = $framingOutput.GetAwaiter().GetResult().TrimEnd([char[]]@([char]13, [char]10))
+  } finally { $framingChild.Dispose() }
+  Check ($framingExitCode -eq 0)
   $cpuReceipt = $receipt | ConvertFrom-Json
   Check ($cpuReceipt.kind -ceq 'controlled-csharp-framing' -and $cpuReceipt.native -ceq 'NOT_RUN' -and $cpuReceipt.passed -gt 0)
   $counts.csharpFraming = $cpuReceipt.passed

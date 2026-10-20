@@ -34,6 +34,12 @@ function actual(fault = 'none') {
   }
   const spawnSync = (file, args, options) => {
     launches++; calls.push({ file, args: Array.from(args), options })
+    if (args[3].endsWith('cockpit-bridge-build-completion.test.ps1')) {
+      if (fault === 'control-error') return { error: Error('inert control spawn refusal'), status: null, signal: null }
+      if (fault === 'control-unclosed') return { status: null, signal: 'SIGTERM' }
+      return fault === 'control-failed' ? { status: 1, signal: null } : { status: 0, signal: null }
+    }
+    assert.ok(args[3].endsWith('build-cockpit-native-bridge.ps1'))
     const binary = win.join(root, 'bin', names[0]), digest = win.join(root, 'bin', names[1]), bytes = Buffer.from('inert compiler-output fixture; never executed')
     if (fault !== 'missing-binary') put(binary, bytes, fault === 'binary-link' ? 'link' : 'file')
     if (fault !== 'missing-digest') put(digest, crypto.createHash('sha256').update(bytes).digest('hex') + '\n', fault === 'digest-link' ? 'link' : 'file')
@@ -56,20 +62,29 @@ function actual(fault = 'none') {
   return { proc, stdout, stderr, calls, launches, removed, closed }
 }
 test('actual build prerequisite runs only the fixed PS5.1 builder and validates its owned output', () => {
-  const r = actual(); assert.equal(r.proc.exitCode, undefined); assert.equal(r.launches, 1); assert.equal(r.removed, true)
+  const r = actual(); assert.equal(r.proc.exitCode, undefined); assert.equal(r.launches, 2); assert.equal(r.removed, true)
   assert.deepEqual(r.stdout, ['COCKPIT_BRIDGE_FIXED_BUILD_COMPLETE\n']); assert.deepEqual(r.stderr, [])
-  const c = r.calls[0]; assert.equal(c.file, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+  const control = r.calls[0]
+  assert.deepEqual(control.args, ['-NoProfile', '-NonInteractive', '-File', 'C:\\repo\\scripts\\tests\\cockpit-bridge-build-completion.test.ps1', '-TestRoot', 'C:\\owned\\cmspark-cockpit-build-one\\compiler-controls'])
+  const c = r.calls[1]; assert.equal(c.file, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+  assert.equal(control.file, c.file); assert.equal(control.options.env, c.options.env)
   assert.deepEqual(c.args, ['-NoProfile', '-NonInteractive', '-File', 'C:\\repo\\scripts\\build-cockpit-native-bridge.ps1', '-OutputDirectory', 'C:\\owned\\cmspark-cockpit-build-one\\bin'])
   assert.equal(c.options.stdio, 'inherit'); assert.equal(c.options.windowsHide, true); assert.equal(c.options.cwd, 'C:\\repo')
   for (const k of ['HOME', 'USERPROFILE', 'PROVIDER_KEY', 'HTTPS_PROXY', 'NODE_OPTIONS']) assert.equal(k in c.options.env, false)
   assert.equal(r.closed, 2)
 })
 for (const fault of ['compiler-failed', 'missing-binary', 'missing-digest', 'wrong-digest', 'binary-link', 'digest-link', 'binary-hardlink', 'changed-binary', 'grown-digest', 'zero-read']) test('actual build prerequisite refuses ' + fault, () => {
-  const r = actual(fault); assert.equal(r.proc.exitCode, 1); assert.equal(r.launches, 1); assert.equal(r.removed, false)
+  const r = actual(fault); assert.equal(r.proc.exitCode, 1); assert.equal(r.launches, 2); assert.equal(r.removed, false)
   assert.deepEqual(r.stdout, []); assert.deepEqual(r.stderr, ['COCKPIT_BRIDGE_FIXED_BUILD_REFUSED\n'])
 })
 for (const fault of ['unclosed-child', 'spawn-error', 'root-replaced']) test('actual build prerequisite retains uncertain ownership/liveness: ' + fault, () => {
-  const r = actual(fault); assert.equal(r.proc.exitCode, 1); assert.equal(r.launches, 1); assert.equal(r.removed, false)
+  const r = actual(fault); assert.equal(r.proc.exitCode, 1); assert.equal(r.launches, 2); assert.equal(r.removed, false)
+})
+test('actual compiler-control failure refuses before the product builder and retains scratch', () => {
+  for (const fault of ['control-failed', 'control-error', 'control-unclosed']) {
+    const r = actual(fault); assert.equal(r.proc.exitCode, 1); assert.equal(r.launches, 1); assert.equal(r.removed, false)
+    assert.equal(r.closed, 0); assert.deepEqual(r.stdout, []); assert.deepEqual(r.stderr, ['COCKPIT_BRIDGE_FIXED_BUILD_REFUSED\n'])
+  }
 })
 test('actual build prerequisite refuses non-Windows before allocating or launching', () => {
   const r = actual('wrong-platform'); assert.equal(r.proc.exitCode, 1); assert.equal(r.launches, 0); assert.equal(r.removed, false)
@@ -83,4 +98,54 @@ test('actual Windows workflow requires fixed builder before canonical and keeps 
   assert.ok(at < workflow.indexOf('Native Windows read-only Registry discovery (#644)'))
   assert.ok(at < workflow.indexOf('Complete Windows Companion census (#650)'))
   assert.ok(workflow.slice(at).startsWith(command + '\n          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n'))
+})
+
+// Source-consumer controls only. Actual PS5.1 parsing/compiler behavior is
+// exercised by the required remote completion.test.ps1, never a JS interpreter.
+function completionContract(build, registration, nativeControls) {
+  for (const text of [build, registration]) assert.equal(text.includes('$LASTEXITCODE'), false)
+  const owners = [[build, 'compileChild', 'compilerExitCode'], [registration, 'compileChild', 'framingCompilerExitCode'], [registration, 'framingChild', 'framingExitCode']]
+  for (const [text, child, code] of owners) {
+    const begin = text.indexOf(`if (-not $${child}.Start())`)
+    const wait = text.indexOf(`$${child}.WaitForExit()`, begin), exit = text.indexOf(`$${code} = $${child}.ExitCode`, wait)
+    const dispose = text.indexOf(`} finally { $${child}.Dispose() }`, exit)
+    assert.ok(begin >= 0 && wait > begin && exit > wait && dispose > exit, child)
+  }
+  assert.ok(build.includes("$compileStart.UseShellExecute = $false"))
+  assert.ok(registration.includes("$compileStart.UseShellExecute = $false"))
+  assert.ok(registration.includes("$framingStart.UseShellExecute = $false"))
+  assert.equal(/UseShellExecute\s*=\s*\$true/.test(build + registration), false)
+  for (const text of [build, registration]) assert.ok(text.includes('[char[]]@([char]34, [char]0, [char]13, [char]10)'))
+  assert.ok(build.includes("'/nologo /target:exe /platform:x64 /optimize+ /warn:4 /warnaserror+ /codepage:65001 /out:\"' + $binary + '\" \"' + $source + '\"'"))
+  assert.ok(registration.includes("'/nologo /target:exe /platform:x64 /warn:4 /warnaserror+ /codepage:65001 /main:CMspark.CockpitBridge.FramingTests /out:\"' + $cpu + '\" \"' + $hostSource + '\" \"' + $framingSource + '\"'"))
+  assert.ok(build.includes("$buildFailure.Data['CompilerExitCode'] = $compilerExitCode"))
+  assert.ok(registration.includes('Check ($framingCompilerExitCode -eq 0)'))
+  assert.ok(registration.includes('Check ($framingExitCode -eq 0)'))
+  assert.ok(registration.includes('$framingChild.StandardOutput.ReadToEndAsync()'))
+  assert.ok(nativeControls.includes("$controlCaught.Exception.Data['CompilerExitCode'] -isnot [int]"))
+  assert.ok(nativeControls.includes("$controlCaught.Exception.Data['CompilerExitCode'] -eq 0"))
+  assert.ok(nativeControls.includes('$compilerExitCode -isnot [int] -or $compilerExitCode -ne 0'))
+  assert.ok(nativeControls.includes('$controlReply = . $controlBuilder -OutputDirectory $controlOutput'))
+  assert.equal(/&\s*\$controlBinary|FileName\s*=\s*\$controlBinary/.test(nativeControls), false)
+  assert.ok(nativeControls.includes('[char]0x4e2d + [char]0x6587'))
+}
+const registration = fs.readFileSync(path.join(__dirname, 'cockpit-bridge-registration.ps1'), 'utf8')
+const nativeControls = fs.readFileSync(path.join(__dirname, 'cockpit-bridge-build-completion.test.ps1'), 'utf8')
+test('actual three Process consumers and true numeric compiler controls retain their LF and CRLF contracts', () => {
+  const inputs = [builder, registration, nativeControls].map(x => x.replaceAll('\r\n', '\n'))
+  for (const ending of ['\n', '\r\n']) completionContract(...inputs.map(x => x.replaceAll('\n', ending)))
+})
+test('completion source controls reject missing wait/dispose, stale exit, weakened flags and fake numeric negatives', () => {
+  const mutations = [
+    [builder.replace('$compileChild.WaitForExit()', '# missing wait'), registration, nativeControls],
+    [builder.replace('$compileChild.Dispose()', '# missing dispose'), registration, nativeControls],
+    [builder.replace('$compilerExitCode = $compileChild.ExitCode', '$compilerExitCode = 0'), registration, nativeControls],
+    [builder.replace('UseShellExecute = $false', 'UseShellExecute = $true'), registration, nativeControls],
+    [builder.replace('/warnaserror+', '/warnaserror-'), registration, nativeControls],
+    [builder.replace('[char]34, [char]0, [char]13, [char]10', '[char]34, [char]0'), registration, nativeControls],
+    [builder, registration.replace('$framingExitCode = $framingChild.ExitCode', '$framingExitCode = $framingCompilerExitCode'), nativeControls],
+    [builder, registration.replace('Check ($framingCompilerExitCode -eq 0)', 'Check ($true)'), nativeControls],
+    [builder, registration, nativeControls.replace("$controlCaught.Exception.Data['CompilerExitCode'] -eq 0", '$false')],
+  ]
+  for (const values of mutations) assert.throws(() => completionContract(...values))
 })

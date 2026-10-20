@@ -4,6 +4,10 @@
 
 Windows 原 Node 标量九项之后、Registry 和完整 census 之前，运行独立的固定桥接构建验证。它调用原 PS5.1 build-only 脚本，使用与注册路径相同的最小 child environment 和编译参数，要求真实 child close/exit0、普通自有产物和匹配的 SHA256 文件。编译器的公开源码输出直接进入 CI 两个流，不被嵌套调用的 `Out-Null` 消耗；不输出环境或凭据。
 
+固定 csc 与原 framing EXE 各自使用 `ProcessStartInfo.UseShellExecute=false`，启动成功、等待原进程终止后读取其自身 `ExitCode`，在 finally 释放对象；不初始化／复用 `$LASTEXITCODE`，不依赖 PS5.1 对 EXE 的 GUI／console 或 shell 分类。原编译 flags、warn-as-error、摘要和 framing JSON 校验保持。编译器输出继承原流，framing stdout 继续保存实际固定 C# serializer 的 JSON 行。
+
+前置入口先在自有布局复制同一 builder，用同固定 PS5.1／csc 验证公开惰性好源码的真实 exit0、产物与摘要，以及坏源码的真实非零 `CompilerExitCode`、原 build 拒绝且无成功产物／摘要。路径包含空格、字符码构造的中文和字面 `%`；明确拒绝引号／NUL／CR／LF，参数通过 Framework `Arguments` 的有限双引号传递。控制不执行生成的 EXE，泛异常／未设置退出码不能算坏源码负控通过；之后仍实际构建固定产品 host。Node 源码合同和 VM 检查不是 PS5.1／C# 解释执行，真实控制必须由精确新 head 的 Windows 决定。
+
 此路径不执行生成的 EXE、不写注册、不启动浏览器。只有构建成功、产物验证通过、child 已知关闭且临时根身份未变化时才清理自有目录；构建拒绝、关闭或归属未知时保留并拒绝，不能把失败 shell 的 close 当成所有编译后代已退出。后续原注册／framing／真实身份和全部原断言、时限继续存在。两个构建使用不同自有目录／子进程，不复用产物或 PowerShell 状态；共享 OS 缓存可能被预热，不宣称冷启动。受控 Node/VM 正负控不是 PS5.1／C# 实际构建通过，必须由新 head 的真实 Windows 决定。旧 `registration-framing` 内层异常仍 UNKNOWN；前置拆分不假称修复其历史原因。
 
 ### #723 首个 Windows 窗口身份门：失败证据
