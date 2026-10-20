@@ -324,7 +324,9 @@ function logToolFinish(toolCallId: string, toolName: string, startedAt: number, 
     tool_call_id: toolCallId,
     tool_name: toolName,
     duration_ms: Date.now() - startedAt,
-    ...summarizeToolResult(result),
+    ...(toolName === "terminal_tail_read"
+      ? { success: result?.success === true, omission: "security" }
+      : summarizeToolResult(result)),
   })
 }
 
@@ -610,14 +612,15 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
         type: "tool.start",
         tool_call_id: toolCallId,
         tool_name: toolName,
-        params: summarizeToolParams(finalParams),
+        params: toolName === "terminal_tail_read" ? { omission: "security" } : summarizeToolParams(finalParams),
         ...(actingThreadId ? { thread_id: actingThreadId } : {}),
       }))
     }
     logger.info("tool.start", {
       tool_call_id: toolCallId,
       tool_name: toolName,
-      params: enterprisePermit ? { enterprise: true } : summarizeToolParams(finalParams),
+      params: toolName === "terminal_tail_read" ? { omission: "security" }
+        : enterprisePermit ? { enterprise: true } : summarizeToolParams(finalParams),
       thread_id: actingThreadId,
     })
     // Only true when re-applied under trustedOutbound — never from raw LLM params.
@@ -761,6 +764,14 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
         if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
           evidenceScope,
+          // Only authenticated, local-chat server-bound scope may pull terminal text.
+          // Adapter final __thread_id injection is preserved, but JSON is not this authority.
+          readTerminalTail: toolName === "terminal_tail_read" && evidenceScope?.kind === "chat" && !invokeOpts?.trustedOutbound && !nativeOwner
+            ? (id: string) => {
+              const { bindTerminalTailReader } = require("./pty/tail-read") as typeof import("./pty/tail-read")
+              return bindTerminalTailReader(ws, evidenceScope.threadId, tid => threadManager.get(tid),
+                () => ws.readyState === WebSocket.OPEN && getWsAuthState(ws)?.authenticated === true)(id)
+            } : undefined,
           // Propagate chat.abort / supersede so shell_exec can killProcessTree.
           signal,
           // Executor-internal confirmation channel (Phase 1 W8-windows
@@ -873,8 +884,10 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {
-        const result = { success: false, error: err.message }
-        logger.error("tool.exception", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
+        const result = { success: false, error: toolName === "terminal_tail_read"
+          ? "Terminal tail read failed" : err.message }
+        logger.error("tool.exception", { tool_call_id: toolCallId, tool_name: toolName,
+          error: toolName === "terminal_tail_read" ? "Terminal tail read failed" : err.message || String(err) })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }

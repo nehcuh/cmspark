@@ -20,7 +20,7 @@ function declaration(command: string, platform: string, shell: string) { const s
 function wireObserver(command: string, result: unknown) {
   const server = parse("src/server.ts"), adapter = parse("src/llm/adapter.ts")
   const summary = node(server, n => ts.isFunctionDeclaration(n) && n.name?.text === "summarizeToolParams")
-  const start = node(server, n => ts.isExpressionStatement(n) && ts.isCallExpression(n.expression) && n.expression.expression.getText(server) === "ws.send" && n.getText(server).includes("params: summarizeToolParams(finalParams)"))
+  const start = node(server, n => ts.isExpressionStatement(n) && ts.isCallExpression(n.expression) && n.expression.expression.getText(server) === "ws.send" && n.getText(server).includes('type: "tool.start"'))
   const finish = node(adapter, n => ts.isExpressionStatement(n) && ts.isCallExpression(n.expression) && n.expression.expression.getText(adapter) === "sendToExtension" && n.getText(adapter).includes('type: "tool.result"') && n.getText(adapter).includes("result: toolResult,"))
   const messages: any[] = []
   compile(`${summary}\nexport function send(){${start};${finish}}`, { finalParams: { command }, toolResult: result, actingThreadId: "A", threadId: "A", toolName: "shell_exec", toolCallId: "owned", tc: { id: "owned" },

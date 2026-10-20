@@ -2,6 +2,8 @@
 
 > 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
 
+Windows／跨平台变更先读 [Windows 开发与失败定位](windows-development.md)：包含系统化调试、路径／换行／真实消费者预检和原生证据边界；只选本次必要回归，不新增全仓或模型门。
+
 ## 测试架构
 
 ### Windows 选夹的短名与长名
@@ -192,7 +194,7 @@ npm --prefix chrome-extension test
 
 1. 在 `companion/tests/`（或 `security/`、`integration/`）创建 `your-module.test.ts`
 2. 使用 `node:test` 的 `test()` / `describe()` 与 `node:assert/strict`
-3. 需要临时目录时参考既有 `fs.mkdtempSync` + `process.env.HOME` 模式（见 adapter / security 套件）
+3. 应用导入前沿用 [`test-data-dir.cjs`](../companion/scripts/test-data-dir.cjs) preload：绝对、test-owned `CMSPARK_TEST_RUN_DIR` 下创建独立 `CMSPARK_DATA_DIR`；不改 HOME，不触碰真实安装配置
 4. 动态 `import("../src/…")` 加载源码（编译后路径由 tsc 映射）
 5. 共享 setup 可用 `_*-setup.ts`（不会被 `node --test` 主 glob 直接当用例跑）
 
@@ -322,3 +324,14 @@ The unshipped Windows acceptance variant observes the exact blocked top-level na
 ### #726 remote picker thread-scoped discovery
 
 `picker-native-discovery-726.test.ts` lexically projects the actual unshipped C# decision bodies with inert API facts; it does not execute PowerShell, C#, Win32 or UIA. It preserves the original coordinator/transport controls and covers a live hidden-owner modal with MainWindowHandle zero, exact child-thread PID/TID checks, unique visible #32770, 64-thread/256-callback refusal limits, empty versus partial native enumeration, and original captured HWND/root/UIA/OK/Cancel rechecks. No desktop enumeration, title targeting, input, foreground change, polling, retry or timeout expansion is added. A genuine changed-head hosted Windows run must still establish original OK/cancel binding and ACP-cwd acceptance; the prior120781.7155ms failure's cause remains UNKNOWN.
+
+### #725 terminal-tail consent and readonly boundary
+
+`terminal-tail-725.test.ts` executes the whole production session/handler/formatter/private-reader functions under inert process/env/audit/timer seams, plus actual private server-property/source parsing. It tests output-only collection, legacy/current-object consent, two disclosed L2 branches, cancellation/failure, socket/thread/worker/plan refusal, zero read-side input/process effects, close privacy, UTF-16 split normalization, control expansion and exact8192byte/8000char output framing. Synthetic output is not a native PTY run, user approval, provider call or proof of model injection resistance. Real exact-head Windows/macOS PTY echo/>8KiB/closed-tab and original owner/L2/cleanup acceptance remain future hard gates; no timeout/skip/retry relaxation.
+
+
+### #725 pinned Windows PTY worker source correction
+
+`node-pty-worker-retire-725.test.ts` 用锁定 beta.15 的真实 Windows JS 与实际 PTY session 函数、惰性 native/socket/worker 边界核对自然退出后的 worker 退休；这不是本机 PTY/Windows 验收。上游 JS 保留 MIT 版权和来源，x64/arm64 原包分别按 companion lock integrity 校准。补丁只在 `_cleanUpProcess` 的原输出 destroy 后调用既有 retained output-worker dispose，沿用原始 flush/terminate；不在退出后调用数值 PID kill，不证明所有 HPCON 已释放，pre-ready deferred kill 仍单独待核。
+
+正常 companion postinstall 与两个 Windows 打包入口使用同一精确源码补丁。非 Windows 不查询 native 包；正常安装无 optional PTY 包/不支持架构时报告 NOT_INSTALLED/NOT_SUPPORTED 并保留原终端不可用降级。Windows 打包必须有匹配包且修正成功，完整真实 companion lock 的独立读取上限为256KiB；package/source 文件仍各128KiB，均完整读取且不截断。未知版本/完整性/源码、别名/身份替换或不完整写入均拒绝。受控 CPU 不能替代新 head 的原两条真实 PTY 测试、20s/6s/45s 原预算和完整 canonical；当前长时间 pending 的具体原因仍 UNKNOWN，不以本修正假定历史根因。

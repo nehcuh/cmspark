@@ -218,6 +218,14 @@ jobs:
           cd companion
           npx tsc -p tsconfig.test.json
 
+      - name: "Actual owned PTY tail transport (#725; macOS)"
+        # Windows discovers this same file once in the complete canonical census below.
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/integration/terminal-tail-native-725.test.js
+
       - name: "Native Windows read-only Registry discovery (#644)"
         id: windows-registry-prerequisites
         # Actual in-box PS5.1 -> runPs -> parser, isolated nonce-owned HKCU keys.

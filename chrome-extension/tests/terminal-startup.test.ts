@@ -3,12 +3,14 @@ import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import ts from "typescript"
-import { terminalB64Decode, terminalB64Encode } from "../src/terminal/wire"
+import { terminalB64Decode, terminalB64Encode, TERMINAL_TAIL_DISCLOSURE } from "../src/terminal/wire"
 
 // Execute the real component effect with fake xterm/Port/timers. No browser or PTY is spawned.
 function startup() {
   const timers: Array<{ callback: () => void; ms: number; interval: boolean; active: boolean }> = []
-  const sent: any[] = [], states: any[] = []
+  const sent: any[] = [], states: any[] = [], refs: Array<{ current: any }> = []
+  const rendered: any[] = []
+  let disconnected: () => void = () => {}
   let effect: (() => (() => void)) | undefined
   let onFrame: (frame: unknown) => void = () => {}
   let onInput: (text: string) => void = () => {}
@@ -28,16 +30,16 @@ function startup() {
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText
   const mocks: Record<string, unknown> = {
     react: {
-      useRef: () => ({ current: {} }),
+      useRef: () => { const ref = { current: {} }; refs.push(ref); return ref },
       useState: (initial: unknown) => { const slot = states.length; states.push(initial); return [initial, (next: any) => { states[slot] = typeof next === "function" ? next(states[slot]) : next }] },
       useEffect: (fn: typeof effect) => { effect = fn },
     },
-    "react/jsx-runtime": { jsx() {}, jsxs() {} },
+    "react/jsx-runtime": { jsx(type: any, props: any) { const e = { type, props }; rendered.push(e); return e }, jsxs(type: any, props: any) { const e = { type, props }; rendered.push(e); return e } },
     "@xterm/xterm": { Terminal: FakeTerminal },
     "@xterm/addon-fit": { FitAddon: class { fit() {} } },
     "@xterm/xterm/css/xterm.css": {},
     "../background/terminal": { TERMINAL_PORT_NAME: "cmspark-terminal" },
-    "./wire": { terminalB64Encode, terminalB64Decode },
+    "./wire": { terminalB64Encode, terminalB64Decode, TERMINAL_TAIL_DISCLOSURE },
     "../sidepanel/ui/tokens": { tokens: {} },
   }
   const exports: any = {}
@@ -46,7 +48,7 @@ function startup() {
   exports.TerminalApp()
   const globals: Record<string, unknown> = {
     window: { location: { search: "?thread_id=jeatvi" }, addEventListener() {}, removeEventListener() {} },
-    chrome: { runtime: { connect: () => ({ postMessage: (frame: unknown) => sent.push(frame), disconnect() {}, onMessage: { addListener: (fn: typeof onFrame) => { onFrame = fn } }, onDisconnect: { addListener() {} } }) } },
+    chrome: { runtime: { connect: () => ({ postMessage: (frame: unknown) => sent.push(frame), disconnect() {}, onMessage: { addListener: (fn: typeof onFrame) => { onFrame = fn } }, onDisconnect: { addListener: (fn: () => void) => { disconnected = fn } } }) } },
     ResizeObserver: class { observe() { onResize({ cols: 100, rows: 30 }) } disconnect() {} },
     setTimeout: (fn: () => void, ms: number) => schedule(fn, ms),
     setInterval: (fn: () => void, ms: number) => schedule(fn, ms, true),
@@ -57,7 +59,9 @@ function startup() {
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true, writable: true })
   const cleanup = effect!()
   return {
-    sent, states,
+    sent, states, rendered,
+    readTail() { refs[1].current() },
+    disconnect() { disconnected() },
     frame(value: unknown) { onFrame(value) },
     fire(ms: number) { for (const timer of [...timers]) if (timer.active && timer.ms <= ms) { if (!timer.interval) timer.active = false; timer.callback() } },
     input(text: string) { if (!inputDisposed) onInput(text) },
@@ -138,5 +142,35 @@ test("terminal watchdog closes a never-opened request and stops late frames", ()
     app.fire(60_000)
     assert.equal(app.states[0], "error")
     assert.equal(app.sent.length, count)
+  } finally { app.close() }
+})
+
+test("725 fixed disclosure is rendered before original PTY output without relying on a read", () => {
+  const app = startup()
+  try {
+    const notice = app.rendered.find(e => e.type === "p" && e.props.children === TERMINAL_TAIL_DISCLOSURE)
+    assert.ok(notice)
+    assert.ok(TERMINAL_TAIL_DISCLOSURE.includes("模型的引用或概括可能保存在对话记录中"))
+    assert.deepEqual(app.sent.map(f => f.type), ["terminal.open"])
+  } finally { app.close() }
+})
+test("725 explicit current-tail UI request is never automatic and late closed snapshots do not revive it", () => {
+  const app = startup()
+  try {
+    app.readTail(); assert.ok(!app.sent.some(f => f.type === "terminal.tail.read"))
+    app.opened(); assert.ok(!app.sent.some(f => f.type === "terminal.tail.read"))
+    app.readTail(); const id = app.sent[0].id
+    assert.deepEqual(app.sent.at(-1), { type: "terminal.tail.read", id })
+    const actual = JSON.parse(fs.readFileSync(path.join(process.cwd(), "tests/fixtures/terminal-tail-725.json"), "utf8"))
+    app.frame({ ...actual, id: "foreign" }); assert.equal(app.states[7], "")
+    app.frame({ ...actual, id }); assert.equal(app.states[7], actual.result.data.text)
+    app.frame({ type: "terminal.closed", id, code: 0 }); assert.equal(app.states[7], "")
+    const n = app.sent.length; app.readTail(); app.frame({ ...actual, id }); assert.equal(app.sent.length, n); assert.equal(app.states[7], "")
+  } finally { app.close() }
+})
+test("725 disconnect retires UI excerpt immediately", () => {
+  const app = startup()
+  try {
+    app.opened(); const actual = JSON.parse(fs.readFileSync(path.join(process.cwd(), "tests/fixtures/terminal-tail-725.json"), "utf8")); app.frame({ ...actual, id: app.sent[0].id }); assert.ok(app.states[7]); app.disconnect(); assert.equal(app.states[7], "")
   } finally { app.close() }
 })

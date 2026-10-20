@@ -2,6 +2,10 @@
 
 > **Project-level CLAUDE.md** — highest priority in Claude Code
 
+## Windows 与跨平台交付
+
+涉及 Windows、原生生命周期或跨平台测试时，先读共享 [Windows 开发与失败定位](docs/windows-development.md)。按原 DoD 亲证原因、核真实消费者与平台边界；不以重复 CI、放宽时限／权限或模型共识替代验收。
+
 ## Dynamic Workflow Routing
 
 `workflows/*.ts`（`phase()` / `log()`）是 **playbook / 历史 DSL，不是执行器**——仓库内没有 runner。活路由是 VibeSOP 与 `.grok/workflows/*.rhai`。可保留 `workflows/` 文件当参考，不要包装成可执行运行时。

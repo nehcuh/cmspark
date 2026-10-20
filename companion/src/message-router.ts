@@ -5903,6 +5903,7 @@ async function dispatchMessage(
     case "system.ping":
       return meetingPcmPong()
 
+    case "terminal.tail.read":
     case "terminal.review.submit":
     case "terminal.open":
     case "terminal.input":

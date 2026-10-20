@@ -55,6 +55,15 @@ export function redactForStorage(
   let params = rawParams || "{}"
   let result_summary = rawSummary || ""
 
+  // #725: even partial/non-JSON summaries and unknown argument fields may
+  // contain the screen tail. Never release a prefix into the operation DB.
+  if (toolName === "terminal_tail_read") {
+    return {
+      params: `<redacted:len=${params.length}:sha256=${shortHash(params)}>`,
+      result_summary: `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`,
+    }
+  }
+
   // Wave E P0-4: never persist thread_recall query text or hit excerpts.
   if (toolName === "thread_recall") {
     let queryLen = 0
@@ -468,7 +477,8 @@ export class HistoryStore {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         op.thread_id, op.tool_name, safeParams,
-        safeSummary, op.error || null,
+        safeSummary, op.tool_name === "terminal_tail_read"
+          ? (op.error ? "terminal tail read failed" : null) : op.error || null,
         op.success ? 1 : 0, op.duration_ms || 0,
         op.created_at || new Date().toISOString(),
       ],

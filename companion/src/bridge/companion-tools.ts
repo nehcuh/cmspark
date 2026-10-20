@@ -32,6 +32,7 @@ export const COMPANION_TOOLS = [
   "workspace_read_file",
   "ensure_project_dir",
   "shell_exec",
+  "terminal_tail_read",
   "netsec_port_scan",
   // ADR-015 orchestrator
   "spawn_worker",

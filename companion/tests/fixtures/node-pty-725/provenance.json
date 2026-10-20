@@ -1,0 +1,31 @@
+{
+  "issue": 725,
+  "version": "1.2.0-beta.15",
+  "sourceOnly": true,
+  "nativeBinaries": false,
+  "certificate": {
+    "version": "1.2.0-beta.15",
+    "wrapper": {
+      "resolved": "https://registry.npmjs.org/@lydell/node-pty/-/node-pty-1.2.0-beta.15.tgz",
+      "integrity": "sha512-Br8wBxzbxFwdWgk9uQ+rdzE0xfoxOK4QuGH54swhRwc5IxP6H9Y1/bcyazRGvNUs6XkB5qNVkezuKSRxUwZe7A==",
+      "packageSHA256": "c5bed9a4877885f271b49ca3b4ae014004e2d1aca3631a01da7a8bb2a6912acc"
+    },
+    "architectures": {
+      "x64": {
+        "resolved": "https://registry.npmjs.org/@lydell/node-pty-win32-x64/-/node-pty-win32-x64-1.2.0-beta.15.tgz",
+        "integrity": "sha512-2f8twEmDVxZ7drchAXjtevpmSPhFok0avAnzXro4t5gmz0xsPNKkoZvymwtuIS3xo7PzQqZOPQ/YzwEMb7oIzQ==",
+        "packageSHA256": "45d385c850259029c52ac5675b317e987f6556296f8e83758e89551935b27013",
+        "beforeSHA256": "4f503c377b11cbd113e1f32b3932fdc35e8132b0e647f4c6b70dc84224127c53",
+        "afterSHA256": "dc4c76d33bcb3e1b894594a672f34e04e08fdacabcf9df3bd980d22c56212df4"
+      },
+      "arm64": {
+        "resolved": "https://registry.npmjs.org/@lydell/node-pty-win32-arm64/-/node-pty-win32-arm64-1.2.0-beta.15.tgz",
+        "integrity": "sha512-pyAk91w7wnnKrD4mrHXtIXRfmzSWV5bEzvRhurXcMCtCc2TJ424ciUskIgWMhAPP6y3KyUnqElj+U6kY3iOt0A==",
+        "packageSHA256": "e93d1d24224b183601a011512c6403d2be54ab818f3722e8ffacc95adb0f5bd5",
+        "beforeSHA256": "4f503c377b11cbd113e1f32b3932fdc35e8132b0e647f4c6b70dc84224127c53",
+        "afterSHA256": "dc4c76d33bcb3e1b894594a672f34e04e08fdacabcf9df3bd980d22c56212df4"
+      }
+    }
+  },
+  "source": "Exact lock-integrity verified npm Windows package JS; retained MIT headers and LICENSE; arm64 target JS independently compared exact with x64."
+}
