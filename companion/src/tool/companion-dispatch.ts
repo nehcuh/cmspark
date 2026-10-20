@@ -1,3 +1,4 @@
+import { consumeComputerReadAttempt, type ComputerReadOperation } from "../computer/readonly-session"
 // Companion-side tool dispatch (executeCompanionTool).
 // Extracted from server.ts (C10-B mechanical split) — zero behavior change.
 // Runtime deps (threadManager, skillEngine, …) are injected via bindCompanionDispatchRuntime.
@@ -8,6 +9,7 @@
 
 import { execFile } from "child_process"
 import { randomUUID } from "crypto"
+import { observationNotice } from "../computer/observation"
 import { executeCodeReviewTool } from "../code-review/executor"
 import os from "os"
 import { getConfig } from "../config"
@@ -127,6 +129,7 @@ export interface CompanionToolExecOptions {
    * trust. Forwarded from the createToolExecutor closure (where sessionId
    * lives) into runComputerTask deps; absent = every re-L2 asks.
    */
+  computerRead?: ComputerReadOperation
   computerSessionId?: string
   /**
    * LLM-loop AbortSignal (chat.abort / supersede). shell_exec listens and
@@ -2229,6 +2232,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
               config: getConfig(),
               currentSecurity: () => getConfig().security,
+              beforeReadCapture: () => consumeComputerReadAttempt(),
+              readScope: execOpts?.computerRead,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
@@ -2363,6 +2368,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
               config: getConfig(),
               currentSecurity: () => getConfig().security,
+              beforeReadCapture: () => consumeComputerReadAttempt(),
+              readScope: execOpts?.computerRead,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
@@ -2397,12 +2404,13 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           return {
             success: false,
             error: result.error,
-            data: { error_code: result.errorCode, task_id: result.taskId, evidence_dir: result.evidenceDir, steps: result.steps },
+            data: { ...(isWin ? { observation_notice: observationNotice(result.steps) } : {}), error_code: result.errorCode, task_id: result.taskId, evidence_dir: result.evidenceDir, steps: result.steps },
           }
         }
         return {
           success: true,
           data: {
+            ...(isWin ? { observation_notice: observationNotice(result.steps) } : {}),
             task_id: result.taskId,
             completed: result.completedActions,
             total: result.totalActions,

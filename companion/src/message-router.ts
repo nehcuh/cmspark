@@ -1,3 +1,4 @@
+import { retireComputerReadonlyThread } from "./computer/readonly-session"
 // Message router — dispatches incoming WebSocket messages to handlers
 // FREEZE (C10 multi-adv 2026-08-10 / phase-A 2026-08-11):
 // NEW business handlers must not grow this file — extract a family module under
@@ -274,6 +275,7 @@ export function abortThreadChat(
   opts?: { clearQueue?: boolean },
 ): { stopped: boolean; cancelled: number } {
   if (!threadId) return { stopped: false, cancelled: 0 }
+  retireComputerReadonlyThread(threadId)
   // N-1 no-revive: cancel this thread's queued kick BEFORE freeing the gate —
   // releaseMultiAgentLlmLoop drains synchronously and would start the very
   // kick this stop is meant to kill (grok A / kimi B, pull 2026-09-21).

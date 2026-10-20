@@ -5,7 +5,7 @@
 import { useEffect, useState, type CSSProperties } from "react"
 import { AgentStoreProvider, useAgentStore } from "../sidepanel/store/agentStore"
 import { useWebSocket } from "../sidepanel/hooks/useWebSocket"
-import { previewImageSafe } from "../sidepanel/utils/computer-utils"
+import { previewImageSafe, computerObservationLabel } from "../sidepanel/utils/computer-utils"
 import {
   canOfferComputerSessionTrust,
   canOfferThreadTrust,
@@ -385,6 +385,9 @@ function StepLine({ step }: { step: ComputerStepView }) {
           <span style={{ marginLeft: 6, color: tokens.darkAccent }}>{step.layer}</span>
         )}
       </div>
+      {(step.previewImage || step.action === "describe" || step.action === "screenshot" || step.observation_quality) && (
+        <div role="note">{computerObservationLabel(step)}</div>
+      )}
       {show && (
         <img
           src={`data:image/jpeg;base64,${step.previewImage}`}

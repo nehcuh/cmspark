@@ -4,9 +4,17 @@
 
 ## [Unreleased]
 
+- Refs #723: add remote-only owned-window Windows capture acceptance for actual PS5.1/PrintWindow, passive refusal and real BitBlt quality; CPU checks remain separate from native verification.
+
+- **Refs #723 Windows 观察质量（开发候选）**：窗口渲染源和屏幕拷贝使用闭合质量标签，遮挡／部分截图不作为目标页面 OCR 正文；凭证黑化、确认预览、模型结果、时间线和密封证据保留提示。只读捕获与确认前预览不恢复／抢焦点；原注入 L2、时限、对话框通道和阈值不变。可信 HWND 遮罩与只读准入尚未实现，CPU 不代表 Windows 原生或整票完成。
+
 - **#726 Windows 选夹验收路径域**：仅测试的预期工作区使用原生 realpath 规范化，避免成功选夹返回的长路径与临时目录的 8.3 短名直接比较。保留实际选夹、绑定、取消、ACP cwd、所有者和清理断言；增加真实 Node JS realpath 与显式原生绑定 seam 的 LF/CRLF 回归。受控 CPU 通过不代替新 head 的 Windows 原生验收。
 
 ### Fixed
+
+- **#723 D3 只读会话开发候选**：全查看/截图/等待仅在同一真实认证扩展端点、服务端普通对话与应用内，首次origin+nonce人工L2且读取完整成功后受限复用；每次新token，只读探测保留本次UIA结果而不持久化缓存，避免正常写回自触发失权；断线/取消/失权/subject变化/失败/凭证未知退休，不借注入G1或模型标记。独立capture尝试限率复用原30/60秒，注入双开关/白名单/45秒与原例外不变；实际executor派生的started标记只令全读取留后台，首确认/暂停仍显眼。CPU不是Windows/浏览器证明，可信HWND/双帧mask和whole723仍未完成，不发版。
+
+- #464 GitHub 比较观察拒绝未解析的可见表格行、混合非 TD 单元格或同一行额外未知 TD；changed/context 必须完整匹配原三列，hunk/空 expander 完整匹配原两列，仅跳过原固定三列辅助标题，避免遗漏内容后仍把代码覆盖标为 complete。补实际序列化 producer、存储与材料链负控；不改变审阅齐备状态，也不代表真实平台或企业业务验收。
 
 - #735：显式“新对话”不再被空列表自动创建的 2 秒去重窗口吞掉；自动初始化仍保留原防风暴窗口。内部显式意图 hint 不证明真人、不授权且不进入 WS，原 sender／鉴权／确认不变；受控源码回归不宣称 hosted SidePanel 或 Windows 原生验收已通过。
 

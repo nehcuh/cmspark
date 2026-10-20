@@ -561,6 +561,15 @@ function evictOldest<K, V>(map: Map<K, V>, max: number): void {
 }
 
 export class ThreadManager {
+  private computerReadOwners = new WeakMap<Thread, object>()
+  getComputerReadOwner(threadId: string): object | undefined {
+    const thread = this.index.threads.find(t => t.id === threadId)
+    if (!thread || thread.trashed_at || thread.archived_at) return undefined
+    let owner = this.computerReadOwners.get(thread)
+    if (!owner) { owner = {}; this.computerReadOwners.set(thread, owner) }
+    return owner
+  }
+
   // #726 observation ownership only: never serialized or used for tool admission.
   private mcpObservationOwners = new WeakMap<Thread, object>()
 
@@ -813,6 +822,7 @@ export class ThreadManager {
     const thread = this.index.threads.find((t) => t.id === threadId)
     if (!thread) return undefined
     if (thread.trashed_at) return thread
+    this.computerReadOwners.delete(thread)
     thread.trashed_at = monotonicTimestamp()
     thread.updated_at = monotonicTimestamp()
     this.saveIndex()
@@ -823,6 +833,7 @@ export class ThreadManager {
   restore(threadId: string): Thread | undefined {
     const thread = this.index.threads.find((t) => t.id === threadId)
     if (!thread) return undefined
+    this.computerReadOwners.delete(thread)
     thread.trashed_at = null
     thread.updated_at = monotonicTimestamp()
     this.saveIndex()
@@ -946,7 +957,7 @@ export class ThreadManager {
     // rollback or automatically retries in that case.
     atomicWriteJSON(this.indexPath, disk)
     const memory = this.index.threads.find(t => t.id === threadId && t.created_at === target.created_at)
-    if (memory) { memory.archived_at = next.archived_at; memory.updated_at = next.updated_at }
+    if (memory) { this.computerReadOwners.delete(memory); memory.archived_at = next.archived_at; memory.updated_at = next.updated_at }
     return { id: next.id, alias: next.alias, created_at: next.created_at, updated_at: next.updated_at, archived_at: next.archived_at }
   }
 
@@ -1235,6 +1246,7 @@ export class ThreadManager {
     if (["mcp_selection_mode", "active_mcp_server_ids", "agent_role", "parent_thread_id"].some(key => Object.hasOwn(safeUpdates, key))) {
       this.mcpObservationOwners.set(thread, Object.freeze({}))
     }
+    if (["agent_role", "parent_thread_id", "execution_policy", "config_override"].some(key => Object.hasOwn(safeUpdates, key))) this.computerReadOwners.delete(thread)
     Object.assign(thread, safeUpdates, { updated_at: monotonicTimestamp() })
     // Tri-state run_progress: undefined = never set (initial seed from
     // handoff.open_todos fires here); null = explicit clear, sticky — never
@@ -1325,6 +1337,8 @@ export class ThreadManager {
     }
 
     // Commit only after all validation succeeds
+    // Retire before the first write, including the existing late-validation failure path.
+    this.computerReadOwners.delete(thread)
     thread.mission_pack_id = patch.mission_pack_id
     thread.mission_pack_snapshot = patch.mission_pack_snapshot
     thread.tool_whitelist = patch.tool_whitelist

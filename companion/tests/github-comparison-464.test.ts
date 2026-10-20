@@ -9,6 +9,8 @@ import { evidenceScopeHash } from "../src/business-evidence/content"
 import { CodeReviewService } from "../src/code-review/service"
 import { executeCodeReviewTool } from "../src/code-review/executor"
 import { pendingToolCalls, handleToolResult } from "../src/ws/tool-forward"
+import { BusinessEvidenceService } from "../src/business-evidence/service"
+import { renderReviewMaterial } from "../src/code-review/material"
 const fixture = require(path.join(__dirname, path.basename(path.dirname(__dirname)) === ".test-dist" ? "../../tests/fixtures" : "./fixtures", "github-comparison-dom-464.cjs"))
 const scope = { kind: "chat" as const, threadId: "owned-464" }
 function owned(t: { after: (fn: () => void) => void }) {
@@ -116,4 +118,48 @@ test("caller-looking comparison fields are cleared even without a capture scope"
   assert.notEqual(scoped.data.observation_id, "forged")
   assert.equal(scoped.data.evidence_capture.comparison_adapter, "github_compare_two_dot.v1")
   assert.equal(scoped.data.codeComparison, undefined)
+})
+
+test("unknown visible diff row cannot propagate complete coverage to stored review materials", async t => {
+  const f = owned(t), drafts = new BusinessEvidenceService(f.dir, scope)
+  const draft = drafts.create({ kind: "development_trace.v1", title: "Owned row coverage", target: { environment: "prod", business_system_id: "OWNED" }, request_id: "draft" })
+  const id = await capture(f.dir)
+  const review = f.service.create({ ...input(id), materials: [{ draft_id: draft.draft_id, revision: 1 }] })
+  const rendered = renderReviewMaterial(f.dir, scope, { review_id: review.review_id, draft_id: draft.draft_id })
+  assert.equal(rendered.json.code_review.coverage, "complete")
+  assert.equal(rendered.json.review_ready, false); assert.equal(rendered.json.combined_ready, false)
+  const html = fixture.source.replace("<tbody>", "<tbody><tr><th>UNPARSED_VISIBLE_ROW</th></tr>")
+  assert.notEqual(html, fixture.source)
+  const wire = await fixture.read({ html })
+  assert.ok(wire.data.text.includes("UNPARSED_VISIBLE_ROW"))
+  assert.equal(wire.data.codeComparison, undefined)
+  const result = captureLocalPageResult(f.dir, scope, "unknown-row", "get_page_text", wire)
+  assert.throws(() => f.service.create({ ...input(result.data.observation_id), request_id: "unknown-row", materials: [{ draft_id: draft.draft_id, revision: 1 }] }), /CAPTURE_REQUIRED/)
+})
+
+test("unknown extra changed or hunk cell cannot create a complete stored comparison or material", async t => {
+  const { DOMParser } = require("@xmldom/xmldom")
+  const f = owned(t), draft = new BusinessEvidenceService(f.dir, scope).create({ kind: "development_trace.v1",
+    title: "Owned cell coverage", target: { environment: "prod", business_system_id: "OWNED" }, request_id: "draft" })
+  const baselineId = await capture(f.dir)
+  const baseline = f.service.create({ ...input(baselineId), materials: [{ draft_id: draft.draft_id, revision: 1 }] })
+  assert.deepEqual(new CodeReviewService(f.dir, scope).read({ review_id: baseline.review_id }), baseline)
+  const material = renderReviewMaterial(f.dir, scope, { review_id: baseline.review_id, draft_id: draft.draft_id })
+  assert.equal(material.json.code_review.coverage, "complete")
+  assert.equal(material.json.review_ready, false); assert.equal(material.json.combined_ready, false)
+  for (const kind of ["changed", "hunk"]) {
+    const document = new DOMParser({ onError: () => {} }).parseFromString(fixture.source, "application/xml")
+    const rows: any[] = Array.from(document.getElementsByTagName("tr"))
+    const row = rows.find(r => kind === "changed" ? !!r.getAttribute("data-hunk") :
+      Array.from(r.getElementsByTagName("td")).some((c: any) => (c.getAttribute("class") || "").split(/\s+/).includes("blob-code-hunk")))!
+    assert.ok(row)
+    const extra = document.createElement("td"); extra.appendChild(document.createTextNode("UNPARSED_VISIBLE_TD")); row.appendChild(extra)
+    const wire = await fixture.read({ html: document.toString() })
+    assert.ok(wire.data.text.includes("UNPARSED_VISIBLE_TD"))
+    assert.equal(wire.data.codeComparison, undefined)
+    const captured = captureLocalPageResult(f.dir, scope, kind, "get_page_text", wire)
+    assert.equal(captured.data.evidence_capture?.comparison_adapter, undefined)
+    assert.throws(() => f.service.create({ ...input(captured.data.observation_id), request_id: kind,
+      materials: [{ draft_id: draft.draft_id, revision: 1 }] }), /CODE_COMPARISON_CAPTURE_REQUIRED/)
+  }
 })

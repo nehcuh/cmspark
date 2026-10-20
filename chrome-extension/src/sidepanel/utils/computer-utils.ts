@@ -10,6 +10,29 @@ import type {
 } from "../types"
 import { tokens } from "../ui/tokens"
 
+/** Closed display-only metadata; missing historical fields stay unknown. */
+export function computerObservationView(value: unknown): Pick<ComputerStepView, "capture_method" | "observation_quality"> {
+  try {
+    if (!value || typeof value !== "object") return {}
+    const method = Object.getOwnPropertyDescriptor(value, "capture_method")
+    const quality = Object.getOwnPropertyDescriptor(value, "observation_quality")
+    if (!method || !("value" in method) || !quality || !("value" in quality)) return {}
+    const m = method.value, q = quality.value
+    if ((m === "printwindow" && q === "ok") || (m === "bitblt" && (q === "partial" || q === "occluded"))) {
+      return { capture_method: m, observation_quality: q }
+    }
+  } catch { /* proxy/unknown is not a quality declaration */ }
+  return {}
+}
+export function computerObservationLabel(value: unknown): string {
+  switch (computerObservationView(value).observation_quality) {
+    case "ok": return "窗口渲染源 · 非语义验证"
+    case "partial": return "部分观察 · 不代表目标页面内容"
+    case "occluded": return "观察受遮挡 · 不代表目标页面内容"
+    default: return "观察质量未知"
+  }
+}
+
 /** 时间线默认保留最近 30 步。 */
 export const COMPUTER_TIMELINE_MAX_STEPS = 30
 /** 时间线内预览图总字节上限(base64 解码后估算)——超过先丢旧图保文字行。 */
@@ -90,6 +113,7 @@ export function reduceComputerTaskEvent(
 
     case "step": {
       const step: ComputerStepView = {
+        ...computerObservationView(ev),
         seq: typeof ev.seq === "number" ? ev.seq : 0,
         action: ev.action,
         caption: ev.caption,

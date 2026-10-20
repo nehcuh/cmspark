@@ -84,6 +84,21 @@ class FakeCapturer implements ScreenCapturer {
   }
 }
 
+test("#723 independent confirmation preview requests passive capture and keeps quality first", async () => {
+  let passive: unknown; const removed: string[] = [], builder = new FakePreviewBuilder()
+  const capturer = new FakeCapturer()
+  capturer.captureWindow = async (_h?: number, options?: { passive: boolean }) => {
+    passive = options
+    return { ...shot(RAW), capture_method: "bitblt", observation_quality: "partial", occludedBy: [] }
+  }
+  const result = await buildComputerL2PreviewImage({ windows: new FakeWindows([winInfo()]), capturer,
+    locator: new FakeLocator(OK_WORDS), previewBuilder: builder, removeFile: async p => { removed.push(p) } }, makeOpts())
+  assert.ok(result); assert.deepEqual(passive, { passive: true })
+  assert.ok(result.caption.startsWith("[host observation: partial;"))
+  assert.ok(result.caption.includes("①")); assert.deepEqual(removed, [RAW])
+  assert.equal(builder.calls.length, 1)
+})
+
 const realLocate = PsLocator.prototype.locate
 
 class FakeLocator implements Locator {

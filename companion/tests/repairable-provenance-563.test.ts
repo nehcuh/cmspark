@@ -1,3 +1,4 @@
+import { computerFailureEnvelope } from "./helpers/computer-failure-envelope"
 /** #563 finite ordinary refusals: actual producers, no effective native/installation authority. */
 import test,{before,beforeEach,afterEach,after,mock}from"node:test"
 import assert from"node:assert/strict"
@@ -27,7 +28,7 @@ const previewWire=new Function("prev",ts.transpileModule("return "+previewObject
 const dispatch=ast("tool/companion-dispatch.ts")
 const refusal=one(dispatch,n=>ts.isIfStatement(n)&&n.expression.getText(dispatch)==="!result.success"&&n.thenStatement.getText(dispatch).includes("evidence_dir"))as ts.IfStatement
 assert.ok(ts.isBlock(refusal.thenStatement));const returned=refusal.thenStatement.statements.find(ts.isReturnStatement);assert.ok(returned)
-const computerWire=new Function("result",ts.transpileModule(returned.getText(dispatch),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)
+const computerWire=computerFailureEnvelope(ts.transpileModule(returned.getText(dispatch),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)
 function checkRepair(wire:any,code:string){assert.equal(wire.success,false);assert.equal(wire.data.error_code,code);assert.equal(classifyError(wire.error,{error_code:wire.data.error_code}),"recoverable");for(const failCount of[0,1,2,3,4])assert.deepEqual(decideSameToolFailure({failCount,threshold:3,alreadyPivoted:false,errorCode:code,errorText:wire.error+" element_not_found"}),{action:failCount<3?"count":"stop"})}
 function deps(name:string,throws?:string,disabled=false):any{
  const deny=()=>{effects++;throw Error("ROOT_NATIVE_CONFIRM_EVIDENCE_FORBIDDEN")},proxy=new Proxy({},{get:()=>deny})

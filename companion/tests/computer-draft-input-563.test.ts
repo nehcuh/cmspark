@@ -1,3 +1,4 @@
+import { computerFailureEnvelope } from "./helpers/computer-failure-envelope"
 /** #563 finite draft refusals: actual schema/executor/wire/consumer, no native authority. */
 import test, { before, beforeEach, afterEach, after, mock } from "node:test"
 import assert from "node:assert/strict"
@@ -32,7 +33,7 @@ function one(ast: ts.SourceFile, predicate: (n: ts.Node) => boolean) { const fou
 const ds=tree("tool/companion-dispatch.ts")
 const refusal=one(ds,n=>ts.isIfStatement(n)&&n.expression.getText(ds)==="!result.success"&&n.thenStatement.getText(ds).includes("evidence_dir")) as ts.IfStatement
 assert.ok(ts.isBlock(refusal.thenStatement)); const ret=refusal.thenStatement.statements.find(ts.isReturnStatement);assert.ok(ret)
-const wireFromActual = new Function("result",ts.transpileModule(ret.getText(ds),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)
+const wireFromActual = computerFailureEnvelope(ts.transpileModule(ret.getText(ds),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)
 const ad=tree("llm/adapter.ts")
 const code=one(ad,n=>ts.isVariableDeclaration(n)&&n.name.getText(ad)==="classCode")
 const level=one(ad,n=>ts.isVariableDeclaration(n)&&n.name.getText(ad)==="errorLevel"&&!!n.initializer?.getText(ad).includes("classifyError(toolResult.error"))

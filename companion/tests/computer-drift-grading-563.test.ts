@@ -1,3 +1,4 @@
+import { computerFailureEnvelope } from "./helpers/computer-failure-envelope"
 import test, { beforeEach, afterEach, after, mock } from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -34,7 +35,7 @@ const dispatchAst = ast("tool/companion-dispatch.ts")
 const failed = unique(dispatchAst, n => ts.isIfStatement(n) && n.expression.getText(dispatchAst) === "!result.success" && n.thenStatement.getText(dispatchAst).includes("evidence_dir") && ts.isBlock(n.thenStatement)) as ts.IfStatement
 const returnNode = (failed.thenStatement as ts.Block).statements.find(ts.isReturnStatement)!
 assert.ok(returnNode)
-const failureEnvelope = new Function("result", returnNode.getText(dispatchAst)) as (result: Awaited<ReturnType<typeof runComputerTask>>) => any
+const failureEnvelope = computerFailureEnvelope( returnNode.getText(dispatchAst)) as (result: Awaited<ReturnType<typeof runComputerTask>>) => any
 const adapter = ast("llm/adapter.ts")
 const code = unique(adapter, n => ts.isVariableDeclaration(n) && n.name.getText(adapter) === "classCode")
 const level = unique(adapter, n => ts.isVariableDeclaration(n) && n.name.getText(adapter) === "errorLevel" && !!n.initializer?.getText(adapter).includes("classifyError(toolResult.error"))

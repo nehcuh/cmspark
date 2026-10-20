@@ -34,6 +34,11 @@ export interface EvidenceSealer {
 }
 
 export interface EvidenceActionRecord {
+  capture_method?: import("./observation").CaptureMethod
+  observation_quality?: import("./observation").ObservationQuality
+  occludedBy?: import("./observation").CaptureObservation["occludedBy"]
+  beforeObservation?: import("./observation").CaptureObservation
+  afterObservation?: import("./observation").CaptureObservation
   seq: number
   action: string
   x?: number

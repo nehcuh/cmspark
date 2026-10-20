@@ -17,12 +17,17 @@
 import { corpusOf, type ComputerAction, type RectPx } from "./types"
 
 export interface ComputerTaskEvent {
+  capture_method?: import("./observation").CaptureMethod
+  observation_quality?: import("./observation").ObservationQuality
+  occludedBy?: import("./observation").CaptureObservation["occludedBy"]
   event: "started" | "step" | "paused" | "finished"
   taskId: string
   /** started: app display name + task text; finished: outcome. */
   app?: string
   task?: string
   total?: number
+  /** Presentation only, from the actual validated immutable executor draft. */
+  read_only_observation?: boolean
   /** WP4: started 附动作预算总量(任务条「已用/总量」的分母)。 */
   budget?: number
   ok?: boolean
