@@ -2,6 +2,8 @@
 
 > 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
 
+Windows／跨平台变更先读 [Windows 开发与失败定位](windows-development.md)：包含系统化调试、路径／换行／真实消费者预检和原生证据边界；只选本次必要回归，不新增全仓或模型门。
+
 ## 测试架构
 
 ### Windows sentinel 对象身份夹具
@@ -28,7 +30,9 @@ case36 的数值句柄可被当前子进程的无关对象复用，不能单用 
 
 有效 UTF-8 优先；没有真实编码声明时不推断 ACP／GBK。非法 UTF-8、含 NUL 或 Windows 非 ASCII 命令经 shell 转换后的非空输出，既有 `note` 和相应进度尾部包含 `OUTPUT_ENCODING_UNDETERMINED`；正文可能有替换字符，不能据此判断文件损坏。这不是自动 GBK 转码。真实 Windows 上 `echo 中文`、`type` UTF-8 文件及 GBK-only 程序的输出仍需原生验收；CPU seam 不冒充平台通过。确认／沙箱、命令／环境、退出码、取消、超时及原输出预算均不改变。
 
-`shell-encoding-windows-native-731.test.ts` 仅非 Windows skip；Windows 必须先通过 GHA 和 canonical preload owned 目录身份／边界核验，否则在导入应用或 spawn 前失败。原 runner 自动发现，无新增 CI 参数。测试通过实际 `shellExec` 跑固定 `echo`、owned UTF-8 文件的 `type` 和当前 Node.exe 的固定 CP936 字节 emitter；`type` 必须精确且无警告，`echo` 必须有实际不可判定标记（即使 pipe 字节本身为有效 UTF-8，也不能证明命令到控制台的转换无损），CP936 两流必须明确标注。只保存／恢复 test-owned 配置并检查并发变更，等待自有命令结束后清理；不改 HOME、系统代码页或原 60 秒默认时限。Mac/Linux skip 与源码编译不代表此 Windows 验收已通过。
+`shell-encoding-windows-native-731.test.ts` 仅非 Windows skip；Windows 必须先通过 GHA 和 canonical preload owned 目录身份／边界核验，否则在导入应用或 spawn 前失败。原 runner 自动发现，无新增 CI 参数。测试通过实际 `shellExec` 跑固定 `echo`、owned UTF-8 文件的 `type` 和当前 Node.exe 的固定 CP936 字节 emitter；`type` 与符合单一 literal cmd 分支的 `echo 中文` 都必须精确中文／CRLF 且无警告，进度保真；CP936 两流必须明确标注。只保存／恢复 test-owned 配置并检查并发变更，等待自有命令结束后清理；不改 HOME、系统代码页或原 60 秒默认时限。Mac/Linux skip 与源码编译不代表此 Windows 验收已通过。
+
+Windows 单一、无引号／变量展开／控制符／链／管道／重定向／分组／开关的非 ASCII literal cmd `echo`，使用原选定 cmd、原 `/d /s /c` 引号与原命令，仅新增 `/u` 输出模式；stdout 据该启动合同按 UTF-16LE 流式解码／严格校验，不靠字节猜码。非法／奇数结束／孤立 surrogate／NUL 输出仍标不可判定，非空 stderr 不宣称已知格式。`type` 和所有不满足该严格语法、自定义非 cmd shell、外部 exe/com、非 Windows 均保留旧路径；禁止全局 `/u` 或 `chcp`。新增实际模块惰性 spawn 控覆盖原 argv/命令/options、全部拆分、stderr/空流、上限／退出和不适用语法；没有执行 cmd 或 native。UTF-16LE 仍需同新 head 真实 Windows 断言确认，CPU 格式假设不能冒平台通过或整个 #731 关闭。
 
 | 端 | 测试框架 | 测试目录 | 规模（约） | 运行命令 |
 |----|---------|---------|-----------|---------|
@@ -178,7 +182,7 @@ npm --prefix chrome-extension test
 
 1. 在 `companion/tests/`（或 `security/`、`integration/`）创建 `your-module.test.ts`
 2. 使用 `node:test` 的 `test()` / `describe()` 与 `node:assert/strict`
-3. 需要临时目录时参考既有 `fs.mkdtempSync` + `process.env.HOME` 模式（见 adapter / security 套件）
+3. 应用导入前沿用 [`test-data-dir.cjs`](../companion/scripts/test-data-dir.cjs) preload：绝对、test-owned `CMSPARK_TEST_RUN_DIR` 下创建独立 `CMSPARK_DATA_DIR`；不改 HOME，不触碰真实安装配置
 4. 动态 `import("../src/…")` 加载源码（编译后路径由 tsc 映射）
 5. 共享 setup 可用 `_*-setup.ts`（不会被 `node --test` 主 glob 直接当用例跑）
 
@@ -277,6 +281,27 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 
 `desktop-native-close-lifetime-480.test.ts` 提取该真实整段 callback，使用明确惰性 network/auth/child/surface seam 覆盖 normal、metadata/closing abort、held exit、preaborted、launch/send throw 和 window 拒绝。它不是 Windows/WebView2/native 运行。main1dde deadline/closing 后 exit0 的实际原因仍 UNKNOWN；`childExited` 是 JS onExit 已送达，不独立证明此前 OS 进程仍活。精确新 head 仍须在原20秒下真实 Windows 自然完成；不要无变化重跑、延长时限或以纯CPU通过替代原生门禁。
 
+### #480 hostile cancelled-navigation completion fixture
+
+The unshipped Windows acceptance variant observes the exact blocked top-level navigation ID and ready document generation. It emits the existing `REMOTE_DENIED` marker and issues the existing popup script only after matching `NavigationCompleted` reports unsuccessful `OPERATION_CANCELED`, all getters succeed, and the current top-level Source/generation remain owned. Starting alone, unrelated/duplicate completion, failed getters, changed document, or foreign sender cannot advance. Shipped native source and the Mac fixture remain unchanged.
+
+`desktop-hostile-completion-480.test.ts` lowers the actual limited C++ fixture bodies and drives a controlled event schedule, including LF/CRLF generator inverses and exact UINT64 identities. These are CPU/source controls, not C++ compilation or WebView2 execution. Exact-head Windows native acceptance must still finish naturally within the original 20 seconds with all original markers/assertions and cleanup; the historical timeout cause remains unknown.
+
+
+### #739 bounded-N bridge / 多会话视图
+
+- `companion/tests/acp-bounded-n-739.test.ts` 直接执行真实 manager、saveConfig、WS handler 与实际工具 L2／dispatch 分支，进程、确认、文件和时钟均为显式惰性 seam；覆盖 N1/2/4、同 Agent、降额／禁用、prepare／exit-before-close／failed-spawn／fallback 与替换对象。该 CPU 证据不是原生或真实 CLI 正控。
+- `chrome-extension/tests/coding-bounded-n-739.test.ts` 执行真实 reducer／private send producer 与完整 WS listener，覆盖有序 membership、同线程／跨线程 ABA、唯一回执、Stop先于Start回执、manual-entry、compact marker与legacy未知关联。原522／607／722／727消费者按已批准新容量／显式选择合同同步，保留其 owner、真正close、工作区和拒绝断言。
+- `companion/tests/integration/acp-bounded-n-739.test.ts` 仅 Windows CI 执行：N1/2/4各创建精确 owned Node bridge，以原子 JSON marker 确认真实独立 PID 重叠，同 Agent 拒绝、取消一方后另一方仍活、真实close后仅释放其槽。每case45秒、marker20秒、原bridge10秒，不扩时限／权限。它不启动配置的 Agent/provider，不是本机已跑证据；非Windows注册后显式skip，必须在真实Windows计数通过。
+- 原607六个受管close／probe→fallback场景完整保留，当前case不以UI closed、cancelACK或exitCode提前释放。源审批、一次必要共享locked ARM与精确head/main完整CI另行验收；不能凭多个offered、VM、SSR或ARM单独关闭整票。
+
 ### #725 terminal-tail consent and readonly boundary
 
 `terminal-tail-725.test.ts` executes the whole production session/handler/formatter/private-reader functions under inert process/env/audit/timer seams, plus actual private server-property/source parsing. It tests output-only collection, legacy/current-object consent, two disclosed L2 branches, cancellation/failure, socket/thread/worker/plan refusal, zero read-side input/process effects, close privacy, UTF-16 split normalization, control expansion and exact8192byte/8000char output framing. Synthetic output is not a native PTY run, user approval, provider call or proof of model injection resistance. Real exact-head Windows/macOS PTY echo/>8KiB/closed-tab and original owner/L2/cleanup acceptance remain future hard gates; no timeout/skip/retry relaxation.
+
+
+### #725 pinned Windows PTY worker source correction
+
+`node-pty-worker-retire-725.test.ts` 用锁定 beta.15 的真实 Windows JS 与实际 PTY session 函数、惰性 native/socket/worker 边界核对自然退出后的 worker 退休；这不是本机 PTY/Windows 验收。上游 JS 保留 MIT 版权和来源，x64/arm64 原包分别按 companion lock integrity 校准。补丁只在 `_cleanUpProcess` 的原输出 destroy 后调用既有 retained output-worker dispose，沿用原始 flush/terminate；不在退出后调用数值 PID kill，不证明所有 HPCON 已释放，pre-ready deferred kill 仍单独待核。
+
+正常 companion postinstall 与两个 Windows 打包入口使用同一精确源码补丁。非 Windows 不查询 native 包；正常安装无 optional PTY 包/不支持架构时报告 NOT_INSTALLED/NOT_SUPPORTED 并保留原终端不可用降级。Windows 打包必须有匹配包且修正成功，完整真实 companion lock 的独立读取上限为256KiB；package/source 文件仍各128KiB，均完整读取且不截断。未知版本/完整性/源码、别名/身份替换或不完整写入均拒绝。受控 CPU 不能替代新 head 的原两条真实 PTY 测试、20s/6s/45s 原预算和完整 canonical；当前长时间 pending 的具体原因仍 UNKNOWN，不以本修正假定历史根因。

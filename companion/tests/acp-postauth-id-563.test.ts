@@ -11,11 +11,14 @@ import { classifyError } from "../src/security"
 // These are real, isolated, in-memory policy tokens, not human approval receipts.
 let effects = { process: 0, network: 0, start: 0, apply: 0, issued: 0 }
 let expected = { start: 0, apply: 0, issued: 0 }
+const threads = new Map<string, { id: string; agent_role: "main" | "worker" | "orchestrator" }>()
 before(async () => { assert.ok(process.env.CMSPARK_DATA_DIR); await initDataDir() })
 beforeEach(() => {
   _resetAcpManagerForTests()
   saveConfig({ acp: { enabled: true, servers: { owned: { enabled: true, command: process.execPath, args: [], protocol: "cli", policy: { profile: "review_readonly" } } } } } as any)
-  bindCompanionDispatchRuntime({ getThreadManager: () => ({}), getSkillEngine: () => null, getComputerEstopEnsureOverride: () => null } as any)
+  threads.clear()
+  for (const id of ["owned-thread", "foreign-thread"]) threads.set(id, { id, agent_role: "main" })
+  bindCompanionDispatchRuntime({ getThreadManager: () => ({ get: (id: string) => threads.get(id) }), getSkillEngine: () => null, getComputerEstopEnsureOverride: () => null } as any)
   effects = { process: 0, network: 0, start: 0, apply: 0, issued: 0 }
   expected = { start: 0, apply: 0, issued: 0 }
   for (const name of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"] as const) mock.method(cp, name, (() => { effects.process++; throw Error("OWNED_PROCESS_FORBIDDEN") }) as any)
@@ -92,6 +95,20 @@ test("signed current-owner nonempty IDs still reach the original start and apply
     const result = await call(tool, signed(tool, { session_id: own.session_id, __thread_id: "owned-thread" }))
     assert.equal(result.success, true)
   }
+})
+
+for (const role of ["worker", "orchestrator"] as const) test(`signed ${role} owner cannot start even after token validation`, async () => {
+  const own = offer("owned-thread"), foreign = offer("foreign-thread")
+  threads.set("owned-thread", { id: "owned-thread", agent_role: role })
+  const params = signed("acp_start_session", { session_id: own.session_id, __thread_id: "owned-thread" })
+  const result = await call("acp_start_session", params)
+  assert.equal(result.success, false)
+  assert.equal(result.error, "acp: worker/orchestrator threads cannot start ACP sessions")
+  assert.equal(JSON.stringify(result).includes(foreign.session_id), false)
+  assert.equal(getAcpManager().getSession(own.session_id)?.state, "offered")
+  const replay = await call("acp_start_session", params)
+  assert.match(replay.error, /Invalid or expired security token/)
+  assert.deepEqual(replay.data, { error_code: "SECURITY_TOKEN_INVALID" })
 })
 
 function realApplyLookup() {

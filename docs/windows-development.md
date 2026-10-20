@@ -1,0 +1,45 @@
+# Windows 开发与失败定位
+
+适用于 coding agent 和贡献者。先按当前 Issue 的原始 DoD、精确 head/main 和实际失败阶段定位；历史 Windows 红灯不是同一个系统根因。本文是已有调试、隔离与验收纪律的短入口，不新增模型、全仓重测或平台前置门。测试地图见 [TESTING](TESTING.md)，开发约定见 [CONTRIBUTING](../CONTRIBUTING.md)。
+
+## 系统化调试：先亲证，再改动
+
+1. **复现**：固定 commit/tree、运行命令、cwd、Node/依赖、编译源与产物，找到最小真实 producer/原 callback。先核复现输入有效；无法复现就写 UNKNOWN，不修猜测。
+2. **观察**：写清 expected/actual，保存原错误、stack、退出码、signal、阶段及 setup 失败。公开共享只用已允许的有限投影；不读取或传播凭据、cipher、恢复明文或私人业务。
+3. **假设**：一次提出一个可证伪原因，明确哪条新观察可以否定它；最后阶段、空输出、注册行号、超时或取消都不是根因。
+4. **隔离**：用实际源码/实际 payload 的最小受控实验只改变一个变量，保留正负结果。区分夹具、操作器、产品和原生行为，不用手写 shadow 实现代替真实分支。
+5. **修复**：亲证后只改原因；保留原拒绝、身份、权限、错误优先级、时限和清理。邻近但无关的问题另记，不顺带重构。
+6. **验证**：原反例修前 RED、修后 GREEN；对必要的最小惰性/CPU 复现共核三次，并找同类消费者。**三次不是三次 CI、桌面操作或真实外部调用，也不是全套测试三遍。** 不可安全重复的动作按已批准的真实验收路径执行，并说明证据限制。
+
+## 按改动边界做预检
+
+- **路径与换行**：宿主路径用相应 Node path API；固定 POSIX 的虚拟 FS 则全链使用 posix，不能混宿主 win32。路径相关 producer 覆盖 source/compiled 布局、win32/posix 与误导祖先目录；先辨 `resolve`、`normalize`、`realpath` 的真实职责。Windows 8.3 短名／长名需在同一已声明的 canonical 域比较；JS `realpath` 与 native binding 的实际行为不能凭名字视为相同。保持严格身份断言，不以去盘符、大小写折叠或模糊路径匹配代替。源码提取器喂原 LF/CRLF 两种字节，严格边界不删；checkout、TS printer、模板字面量各自的换行不能混成一次全局归一化。
+- **真实契约与消费者**：fixture 来自实际返回/序列化；负控先查当前 dispatcher、role/token/owner API。修改函数、闭包、helper 或 workflow 时用 `rg` 查 import 之外的 readFile/AST/VM/字符串消费者，跑真正受影响 family；不能为过期 fake 删除产品保护或旧安全断言。
+- **编译与工具闭包**：使用本次工程的实际 tsconfig/include、ambient shims、文件名、cwd 和 Node 版本；selected 零诊断不冒完整项目通过，诊断为零也不等 emit 成功。从实际 package/lock 核 helper、版本、argv、输出/参数预算；部署完整所需 package scope（含 package.json、相对资源、类型），不只搬 trace 中几个 JS。无关已通过机器按精确输入复用。
+- **夹具与操作器**：在 import 应用前设独立 test-owned DATA_DIR，沿用 [preload](../companion/scripts/test-data-dir.cjs)；不改 HOME、不接触 live config，不继承 provider/key/proxy 全环境。保留原 runner 必需的 Windows 允许变量。先核 driver 语法、入口、cwd、目录 UID/ACL、依赖、输出可写性、guard 和真实包路径，再启动；setup 错误保留但不计产品 RED。不靠逐次失败无限加 allowlist。
+- **字节与语言语义**：真实 TS 字符串先解码/编译再分析反斜杠，不能数工具展示的转义。中文文件内容与 stdout 编码分开；UTF-8 分块、非 UTF-8 与 stderr 均据真实字节/声明判断，不猜 GBK或更改系统代码页。PS 比较规则、C++ 字符串/SDK 参数所有权必须按真实语言；保留实际 MSVC warning/UTF-8 选项，不压警告换绿。
+- **原生身份与生命周期**：请求 Activate/Invoke、收到 ACK 或文件存在，不等于实际前台/效果/完整 ready。固定 owned PID/TID/HWND/对象身份与同次请求；数字 HANDLE、MainWindowHandle、标题或字节相同不独立证明所有权。ready JSON 完整发布后才可见；成功终态、exit、stdio close、cancel 与 cleanup 分开。槽和共享桌面 lease 保留到真实 close/teardown，不能用 UI closed 或 timeout 提前释放仍存活的 worker。
+
+以上只按本次影响选择必要证据；不是要求每个文档或普通改动执行全部原生/全仓测试。
+
+## 已证类别的公共仓库案例
+
+这些回归载体可直接读源；它们不解释其它 UNKNOWN 的 Windows/原生失败。
+
+| 已证类别 | 公共代码案例 | 要保住的验证目的 |
+|---|---|---|
+| 编译目录的正斜杠判定漏 Windows | [#464 fixture 路径](../companion/tests/github-comparison-464.test.ts) | source/compiled 都读取正确原 fixture，不去盘符或把 hint 当实际路径 |
+| LF 提取留下 CR，末尾边界错位 | [#476 native receipts](../companion/tests/desktop-native-receipts-476.test.ts) | 原完整 callback 同时核 LF/CRLF，保 primary failure 与所有 cleanup |
+| exists 时 JSON 尚未写完 | [#605 protocolFixture](../companion/tests/integration/cross-os-process-605.test.ts) | 独占 pending 写完/关闭再 rename；实际写失败不宣布 ready，不吞 parse 错误 |
+| 8.3 短名与原生返回长名落在不同断言域 | [#726 原生 picker 回归源](https://github.com/nehcuh/cmspark/blob/a4bbb5754b1264dc1f9627dba168d1d873328cb1/companion/tests/workspace-picker-windows-native-726.test.ts) | 已核该次真实 OK／绑定后严格路径断言失败；不能把 `fs.realpathSync` 等同 native canonicalization 或放松最终同根断言 |
+| fake 缺新增角色查询，首错污染后续 token 计数 | [postauth dispatcher 回归](../companion/tests/acp-postauth-id-563.test.ts) | 补真实只读接口，保 worker/foreign/replay 与单次 token 断言 |
+| 文件正常但管道解码不可判定 | [#731 字节 producer](../companion/tests/shell-output-encoding-731.test.ts) | 精确声明才解码，不明就标注；CPU 字节 seam 不能冒真实 Windows echo/type |
+
+Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为共享路径预检，#726 再次遗漏；修单个 fixture 后还须检查同类实际消费者。本例是已认证的强证据，不解释 #725 worker 长 pending 或 #735 原生未知原因，也不声称所有 Windows 失败同根。
+
+## 收敛与交付边界
+
+- 每轮先绑定官方 head/tree/run/attempt、完整批次与实际终态。多段 TAP footer 要分别累计；PASS、FAIL、CANCEL、SKIP、INCOMPLETE 分开。普通 exit0、上传成功或某一阶段通过不等整个原生 case 成功。
+- 两位真正非作者的互盲源码意见、CPU/ARM 和真实原生验收各有边界；都不相互替代。原生 DoD 必须在精确新 head 的真实 Windows 与所要求 main 路径上验证，不以 macOS/Linux、VM/DOM、编译或旧 head 代替。
+- 不靠延长 timeout、sleep、重试、skip/COE、弱断言、权限放宽、恢复焦点或无变化 CI rerun 消红。若需要改变实验/合同，先陈述已证缺口和原 DoD，由负责人裁决；新的观测字段也不能无限按轮追加。
+- 同一问题最多三轮修复/复审，之后负责人缩小或重想方案；换目录/packet 名不重置轮数。首轮读完整差量，之后仅核受影响增量，复用字节/输入未变的有效意见与机器；NIT 不触发新 CI，不追加第三/第四必需模型。

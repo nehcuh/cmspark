@@ -37,6 +37,8 @@ test("a new session never inherits another session's mode, diff, workspace or te
 test("late prior-session events and stale dismiss timers cannot replace or dismiss a newer session", () => {
   let state = event(switchTo(initialState, "a"), { session_id: "old", thread_id: "a", state: "closed" })
   state = event(state, { session_id: "new", thread_id: "a", state: "running" })
+  assert.equal(selectCodingSession(state)?.sessionId, "old", "new metadata does not steal an existing explicit view")
+  state = agentReducer(state, { type: "ACP_SELECT_SESSION", sessionId: "new", threadId: "a", threadRevision: state.activeThreadSelectionRevision })
   state = event(state, { session_id: "old", thread_id: "a", state: "closed", handback: "late" })
   state = agentReducer(state, { type: "CLEAR_CODING_SESSION", sessionId: "old" })
   assert.equal(selectCodingSession(state)?.sessionId, "new")

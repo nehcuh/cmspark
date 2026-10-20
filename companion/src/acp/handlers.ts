@@ -106,8 +106,15 @@ export async function handleAcpWsMessage(
   const resultSession = typeof result.session_id === "string" ? mgr.getSession(result.session_id) : undefined
   const owner = resultSession?.thread_id ?? session?.thread_id ??
     startOwner
+  const followsParent = type === "acp.session.followup" || type === "acp.session.prompt"
+  const linkedParent = followsParent && session && mgr.getSession(sid) === session && resultSession &&
+    resultSession.thread_id === session.thread_id && resultSession.parent_session_id === sid
+      ? resultSession.parent_session_id : undefined
+  // Metadata correlation only: never reflect a foreign/replaced object's parent.
+  const { parent_session_id: ignoredParent, ...withoutParent } = result
   return {
-    ...result,
+    ...(followsParent ? withoutParent : result),
+    ...(linkedParent ? { parent_session_id: linkedParent } : {}),
     ...(result.type === "error" ? { family: "acp", request_type: type } : {}),
     ...(owner ? { thread_id: owner } : {}),
     ...(!result.session_id && sid ? { session_id: sid } : {}),
@@ -310,7 +317,7 @@ async function handleAcpWsMessageInternal(
           pendingUiStartConfirmations.delete(session)
         }
       }
-      return { type: "error", error: r.error }
+      return { type: "error", error: r.error, ...(r.error_code ? { error_code: r.error_code, data: r.data } : {}) }
     }
     return { type: "acp.session.prompt.accepted", session_id: sid, mode: "live" }
   }
@@ -476,6 +483,7 @@ async function handleAcpWsMessageInternal(
     return {
       type: "acp.ui_start.accepted",
       session_id: session.session_id,
+      ...(session.parent_session_id ? { parent_session_id: session.parent_session_id } : {}),
       agent_id: session.agent_id,
       thread_id: session.thread_id,
       mode: effectiveMode,

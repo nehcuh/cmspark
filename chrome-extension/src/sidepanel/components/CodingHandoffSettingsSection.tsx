@@ -29,6 +29,8 @@ export const LOCAL_TERMINAL_APP_OPTIONS: Array<{ value: string; label: string }>
 type Props = {
   /** From companion config.acp.enabled when available */
   acpEnabled?: boolean
+  maxConcurrentSessions?: 1 | 2 | 3 | 4
+  onChangeMaxConcurrentSessions?: (value: 1 | 2 | 3 | 4) => void
   autoSuggest?: boolean
   /** Mode C: open host Terminal with interactive agent on start */
   openLocalTerminal?: boolean
@@ -47,6 +49,8 @@ type Props = {
 
 export function CodingHandoffSettingsSection({
   acpEnabled = false,
+  maxConcurrentSessions = 1,
+  onChangeMaxConcurrentSessions,
   autoSuggest = true,
   openLocalTerminal = false,
   localTerminalApp = "auto",
@@ -98,6 +102,16 @@ export function CodingHandoffSettingsSection({
         <span>{codingHandoffCopy.settingsAcpEnabled}</span>
       </label>
       <p style={styles.hint}>{codingHandoffCopy.settingsAcpHint}</p>
+      <label style={styles.row}>
+        <span>同时运行的编程接力上限</span>
+        <select aria-label="编程接力并发上限" value={maxConcurrentSessions} onChange={event => {
+          const value = Number(event.target.value)
+          if (value === 1 || value === 2 || value === 3 || value === 4) onChangeMaxConcurrentSessions?.(value)
+        }}>
+          {[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}
+        </select>
+      </label>
+      <p style={styles.hint}>默认 1；每次启动仍须分别确认，同一 Agent 同时最多运行一份。大于 1 时仅支持提案时已关闭本机终端的 bridge-only 会话。降额不会停止已有会话。</p>
 
       <label style={styles.row}>
         <input

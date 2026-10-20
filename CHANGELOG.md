@@ -4,13 +4,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Refs #725: Windows 安装和打包对精确锁定的 node-pty beta.15 JS 应用自然退出后 output-worker 退休修正；复用原 worker dispose/flush，不按已退出 PID 再 kill。未知依赖拒绝，普通缺少 optional PTY 包仍降级；不声称解决当前 Windows CI pending 或全部原生资源退出。
+
 - #725 开发候选：在原终端打开确认和首输出前明示回显、模型暴露及正常回复留存，仅对确实批准后新建的同一 live 对象开放当前认证对话的明确只读尾部拉取。内存8192 UTF-8字节与完整JSON8000字符双限、纯文本控制字/标记惰性化、先taint再返回；无写入/自动读/跨worker或新授权。工具自身持久化/二级投影不保留正文，不承诺去除普通模型回复转述；CPU控制不冒真实PTY验收或整票交付。
 
+- #739 显式并发上限扩为1..4（默认1），用私有 session 对象占位统一准备、协议探测／CLI、取消至真实 close 的计数；同 Agent 仍单执行，N>1只允许已明确选择的纯 bridge，不扩 PTY 或逐次 L2 权限。提案改为4／对话、16／后台与同对话 Agent 去重；旧存量不删除。面板保留有序会话列表、显式选择和只读执行阶段，双 UI 修订与私有唯一回执关联防止迟到反馈跨选择覆盖；失败 handback、来源与 taint 不变。补受控生产者和 Windows CI-only owned overlap 夹具；未冒称真实 CLI／模型／平台已验收，不发版或安装。
+
 - #480 Windows 原生 metadata 验收将同一测试的 abort 同时绑定 metadata 与 closing 等待，超时取消立即进入原 owned-child 清理并继续等待真实退出；正常完成卸载监听。保留原20秒、退出0、认证／元数据／窗口断言与 surface 清理，不冒称已定位或修复 Windows 晚退出原因。
+
+- Windows #480 未交付 hostile 验收夹具仅在精确导航 ID 的取消完成事件、原 owned 页面及文档代际均匹配后推进下一脚本；保留生产导航拒绝与原生验收预算。该源码调度更正不宣称历史引擎失败原因。
 
 - **#723 空闲确认台收起（开发候选）**：已认证扩展通过同一 WS 只读核对 Companion 全局确认/计算机任务是否空闲，再收起精确自有 popup；未知/忙保留，晚到重确认沿原 #326 策略重开，轻量确认不抢焦点。保留 L2/45 秒及原误拍保护；不代表原生验收或 quality/rect/只读脱 critical 已完成。
 
 - #722 CLI 会话追加提问生成的后续提案复用同一容量预检、逐次确认和最终准入回执；忙碌在确认前可见，迟到批准、提案变化和启动取消不再被回复为已受理。错误绑定原请求会话，所属对话冲突仍拒绝并保留有效请求 owner；补齐源码耦合的 marker CPU 夹具接口，原单执行、L2、worker/owner、原生时限不变。
+
+- #731 为 Windows 单一、无扩展／元字符的非 ASCII literal cmd `echo` 增加显式 Unicode stdout 合同与流式解码，保留原命令、cwd、环境、L2、逻辑 shell、退出／停止／超时和输出预算；`type`、复合命令、自定义 shell、外部程序及非 Windows 保持原路径，未知 stderr 仍标注。原生测试将 echo 加强为精确中文／CRLF／无虚假警告，受控字节不是 Windows 已通过；0.6.14 仍为开发版。
 
 - Windows 原生继承夹具仅对 sentinel 使用确切内核对象身份，先捕获旧数值槽再打开独占命名 Event 引用；无关 Event／管道占槽不冒称继承，真实继承及未知 API／比较／关闭失败仍严格拒绝。保留 V1、原 protected endpoint、bootstrap、20秒与清理；不宣称已证明历史 launch 失败根因。
 

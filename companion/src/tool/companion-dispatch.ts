@@ -608,6 +608,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const { getAcpManager } = await import("../acp")
       const sessionOwner = getAcpManager().getSession(sid)
       if (sessionOwner && sessionOwner.thread_id !== (params.__thread_id || params._thread_id)) return { success: false, error: "ACP session is not owned by this thread", error_code: "ACP_OWNER_MISMATCH" }
+      const role = threadManager.get(String(params.__thread_id || params._thread_id || ""))?.agent_role
+      if (role === "worker" || role === "orchestrator") return { success: false, error: "acp: worker/orchestrator threads cannot start ACP sessions" }
       const r = await getAcpManager().start(sid)
       if (!r.ok) {
         if (r.error_code === "ACP_CONCURRENCY_LIMIT") {
@@ -621,6 +623,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         data: {
           session_id: r.session.session_id,
           state: r.session.state,
+          execution_phase: r.session.execution_phase,
           handback: r.session.handback_text,
           local_terminal: r.session.local_terminal,
           open_local_terminal: r.session.open_local_terminal_snapshot === true,
@@ -648,6 +651,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           session_id: s.session_id,
           task_result: taskResult,
           state: s.state,
+          execution_phase: s.execution_phase,
           handback: s.handback_text || null,
           local_terminal: s.local_terminal,
           open_local_terminal: s.open_local_terminal_snapshot === true,
@@ -686,6 +690,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           session_id: s.session_id,
           task_result: taskResult,
           state: s.state,
+          execution_phase: s.execution_phase,
           agent_id: s.agent_id,
           local_terminal: s.local_terminal,
           open_local_terminal: s.open_local_terminal_snapshot === true,

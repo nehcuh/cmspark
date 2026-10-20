@@ -243,6 +243,10 @@ for pkg in node-notifier systray2 onnxruntime-node; do
     cp -r "companion/node_modules/${pkg}" "${STAGING}/node_modules/"
   fi
 done
+# #725: no uncorrected Windows sidecar, even when npm lifecycle scripts were omitted.
+case "${PLATFORM}" in
+  windows-*) node "${ROOT_DIR}/scripts/patch-node-pty-worker.cjs" --windows-package ;;
+esac
 # #432: scoped prebuilds — copy the whole @lydell tree (node-pty + platform optional).
 if [ -d "companion/node_modules/@lydell" ]; then
   cp -r "companion/node_modules/@lydell" "${STAGING}/node_modules/"

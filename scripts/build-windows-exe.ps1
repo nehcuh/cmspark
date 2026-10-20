@@ -101,6 +101,10 @@ if (-not $SkipInstall) {
     Ok "Skipped (--SkipInstall)"
 }
 
+# #725: also enforce the pinned source correction with --SkipInstall / ignored lifecycle scripts.
+node "$ProjectRoot\scripts\patch-node-pty-worker.cjs" --windows-package
+if ($LASTEXITCODE -ne 0) { Fail "Pinned PTY worker correction refused" }
+
 # ---------------------------------------------------------------------------
 # [2/6] Build TypeScript + esbuild bundle
 # ---------------------------------------------------------------------------
