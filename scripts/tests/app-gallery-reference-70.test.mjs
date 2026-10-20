@@ -1,5 +1,6 @@
 // Pure Node/owned-FS controls. No native signature result or binary download.
 import test from 'node:test'
+import { createHash } from 'node:crypto'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -237,4 +238,23 @@ test('#70 phase diagnostic does not equate malformed or BOM markers with a valid
 })
 test('#70 body observation precedes guards and clock but leaves original phase location and PS statements intact',()=>{
  const ps=fs.readFileSync(path.join(root,'scripts/fixtures/app-gallery-reference-70.ps1'),'utf8'),marker="[Console]::Error.WriteLine('GALLERY70_BODY_ENTERED=1')";assert.equal(ps.split(marker).length,2);assert.ok(ps.indexOf(marker)<ps.indexOf("$ErrorActionPreference = 'Stop'"));assert.ok(ps.indexOf(marker)<ps.indexOf('$phaseClock ='));assert.ok(ps.indexOf("'GALLERY70_PHASE=ENTERED:'")>ps.indexOf('$phaseClock ='));
+})
+
+// One bounded native binding experiment; CPU verifies whole-source equivalence,
+// not PowerShell execution or a historical timeout root cause.
+test('#70 explicit JSON input binding preserves the complete signed sampler inverse', () => {
+  const source = fs.readFileSync(path.join(root, 'scripts/fixtures/app-gallery-reference-70.ps1'), 'utf8')
+  const oldLine = "  [ordered]@{entry=$EntryName; exeBytes=$written; exeSHA256=$exeHash; signatureStatus=$signature.Status.ToString(); certificateSHA256DER=$certificateHash; subject=$signature.SignerCertificate.Subject; collectedAtUTC=[DateTime]::UtcNow.ToString('o'); psVersion=$PSVersionTable.PSVersion.ToString(); machine='x64'; fileVersion=$fileVersion} | Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress"
+  const explicitLine = "  Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress -InputObject ([ordered]@{entry=$EntryName; exeBytes=$written; exeSHA256=$exeHash; signatureStatus=$signature.Status.ToString(); certificateSHA256DER=$certificateHash; subject=$signature.SignerCertificate.Subject; collectedAtUTC=[DateTime]::UtcNow.ToString('o'); psVersion=$PSVersionTable.PSVersion.ToString(); machine='x64'; fileVersion=$fileVersion})"
+  const inverse = text => {
+    assert.equal(text.split(explicitLine).length, 2, 'one exact explicit binding of the original primitive object')
+    const restored = text.replace(explicitLine, oldLine).replace(/\r\n/g, '\n')
+    assert.equal(createHash('sha256').update(restored).digest('hex'), "a44c7353317649beb41c807121af8cfc8601dd86999a66074e88f3244e8520cf", 'all original fields, expressions, native guards, budget and cleanup remain exact')
+  }
+  inverse(source)
+  inverse(source.replace(/\r?\n/g, '\r\n'))
+  assert.throws(() => inverse(source.replace('certificateSHA256DER=$certificateHash', 'certificateSHA256DER="changed"')))
+  assert.throws(() => inverse(source.replace("-cne 'Valid'", "-cne 'NotSigned'")))
+  assert.throws(() => inverse(source.replace('} finally {', '} # removed-finally {')))
+  assert.throws(() => inverse(source.replace(' -InputObject ', ' ')))
 })
