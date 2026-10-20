@@ -297,10 +297,26 @@ function originalCensusCommands(run) {
   assert.equal(match[1].split(locator).length, 2, 'only the census receives the new owned locator')
   return match[1].replace(locator, '').replace(/^  /gm, '')
 }
-// Validate the complete reviewed macOS-only addition before removing it from
-// the original cross-platform schedule pin. No Windows gate is normalized away.
-function censusStepsWithReviewedTail725(raw) {
+// Only this exact, single pre-census PS regression is new to the old schedule.
+// Validate its complete shape and location before applying the original pins.
+function censusStepsWithReviewedNodeSelection723(raw) {
   const steps = workflowYaml.load(raw).jobs['smoke-os'].steps
+  const name = 'Windows cockpit Node scalar selection (#723)'
+  const scalar = steps.filter(step => step.name === name)
+  assert.equal(scalar.length, 1, 'one exact early PowerShell scalar regression')
+  assert.deepEqual(scalar[0], {
+    name, if: "matrix.os == 'windows-latest'", shell: 'pwsh',
+    run: '& scripts/tests/cockpit-bridge-node-selection.test.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n',
+  }, 'the actual interpreter command and failure exit remain exact')
+  const compile = steps.findIndex(step => step.name === 'Compile shared companion test inputs (#650)')
+  assert.ok(compile >= 0)
+  assert.equal(steps.indexOf(scalar[0]), compile + 1, 'the scalar regression follows the shared compile')
+  return steps.filter(step => step !== scalar[0])
+}
+// Validate the complete reviewed macOS-only addition before removing it from
+// the original cross-platform schedule pin. Every original Windows gate remains.
+function censusStepsWithReviewedTail725(raw) {
+  const steps = censusStepsWithReviewedNodeSelection723(raw)
   const name = 'Actual owned PTY tail transport (#725; macOS)'
   const tail = steps.filter(step => step.name === name)
   assert.equal(tail.length, 1, 'one exact directed macOS native tail step')
@@ -498,5 +514,30 @@ test('reviewed macOS tail addition is exact once before preserving every Windows
     const doc = workflowYaml.load(raw), steps = doc.jobs['smoke-os'].steps
     mutate(steps, steps.findIndex(step => step.name === name))
     assert.throws(() => assertCensusSchedule(workflowYaml.dump(doc)))
+  }
+})
+
+test('reviewed early PowerShell scalar regression preserves every original schedule pin under LF and CRLF', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  const name = 'Windows cockpit Node scalar selection (#723)'
+  for (const source of [raw, raw.replaceAll('\n', '\r\n')]) {
+    assertCensusSchedule(source)
+    for (const mutate of [
+      (steps, index) => steps.splice(index, 1),
+      (steps, index) => steps.splice(index, 0, { ...steps[index] }),
+      (steps, index) => { steps[index].if = "matrix.os == 'macos-latest'" },
+      (steps, index) => { steps[index]['continue-on-error'] = true },
+      (steps, index) => { steps[index].shell = 'bash' },
+      (steps, index) => { steps[index].run = steps[index].run.replace('cockpit-bridge-node-selection.test.ps1', 'omitted.ps1') },
+      (steps, index) => { steps[index].run = steps[index].run.replace('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n', '') },
+      (steps, index) => { steps[index].run += 'echo unreviewed-command\n' },
+      (steps, index) => { steps[index]['timeout-minutes'] = 99 },
+      (steps, index) => { const step = steps.splice(index, 1)[0]; steps.splice(index - 1, 0, step) },
+      (steps, index) => { const step = steps.splice(index, 1)[0]; steps.splice(index + 1, 0, step) },
+    ]) {
+      const doc = workflowYaml.load(source), steps = doc.jobs['smoke-os'].steps
+      mutate(steps, steps.findIndex(step => step.name === name))
+      assert.throws(() => assertCensusSchedule(workflowYaml.dump(doc)))
+    }
   }
 })
