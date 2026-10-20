@@ -1,13 +1,13 @@
 // FocusBand chip for live ACP coding handoff — stop ≠ 急停 (CU).
 
-import { useEffect, type CSSProperties } from "react"
+import { useEffect, useRef, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import { isModeCInvolved, modeCBannerText, modeCStopLabel, modeCStopTitle } from "../coding-handoff/embed-entry"
 import type { CodingSessionState } from "../store/agentStore"
 import { useAgentStore, codingSessionBelongsToThread, selectCodingOperationError, selectCodingManualEntry } from "../store/agentStore"
 import { useCodingStop } from "../hooks/useCodingStop"
-import { sendCodingOperation } from "../utils/coding-operation-send"
+import { sendCodingOperation, captureCodingSelection } from "../utils/coding-operation-send"
 
 export function CodingSessionChip({
   session,
@@ -17,22 +17,35 @@ export function CodingSessionChip({
   compact?: boolean
 }) {
   const { state, dispatch } = useAgentStore()
+  const currentState = useRef(state)
+  currentState.current = state
+  const current = () => currentState.current.activeThreadId === session.threadId &&
+    currentState.current.codingSessionIdByThread[session.threadId] === session.sessionId &&
+    currentState.current.activeThreadSelectionRevision === state.activeThreadSelectionRevision &&
+    currentState.current.activeCodingSelectionRevision === state.activeCodingSelectionRevision
   const live = session.state === "running" || session.state === "offered" || session.state === "confirmed"
   const stopControl = useCodingStop(session)
   const actionError = selectCodingOperationError(state, session)
   const manualEntry = selectCodingManualEntry(state, session)
 
   useEffect(() => {
-    if (session.state !== "closed") return
+    if (session.state !== "closed" || session.executionPhase === "preparing" || session.executionPhase === "running" || session.executionPhase === "closing") return
     if (actionError || manualEntry) return
     // Do not auto-dismiss while applyable diffs remain (UX: 应用 diff must stay reachable)
     if (session.hasPendingDiff) return
     const t = window.setTimeout(() => {
-      dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })
+      dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId,
+        threadRevision: state.activeThreadSelectionRevision, selectionRevision: state.activeCodingSelectionRevision })
     }, 12_000)
     return () => window.clearTimeout(t)
-  }, [session.state, session.sessionId, session.hasPendingDiff, actionError, manualEntry, dispatch])
-  const label = session.displayName || session.agentId || "Agent"
+  }, [state.activeThreadSelectionRevision, state.activeCodingSelectionRevision, session.state, session.executionPhase, session.sessionId, session.hasPendingDiff, actionError, manualEntry, dispatch])
+  const peers = (state.codingSessionIdsByThread[session.threadId] || []).map(id => state.codingSessionsById[id]).filter(Boolean)
+  const counts = { offered: peers.filter(row => row.state === "offered").length,
+    preparing: peers.filter(row => row.executionPhase === "preparing").length,
+    running: peers.filter(row => row.executionPhase === "running").length,
+    closing: peers.filter(row => row.executionPhase === "closing").length }
+  const label = (session.displayName || session.agentId || "Agent") +
+    ` · 待${counts.offered}/准备${counts.preparing}/运行${counts.running}/关闭${counts.closing}`
   const modeBadge =
     session.mode === "propose_diff"
       ? codingHandoffCopy.modeBadgeDraft
@@ -53,12 +66,12 @@ export function CodingSessionChip({
     sendCodingOperation(session, dispatch, {
       type: "acp.session.followup", goal: goal.trim(),
       mode: session.mode === "propose_diff" ? "propose_diff" : "review_readonly",
-    })
+    }, captureCodingSelection(state), current)
   }
 
   const onApply = () => {
     if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
-    sendCodingOperation(session, dispatch, { type: "acp.apply_diff" })
+    sendCodingOperation(session, dispatch, { type: "acp.apply_diff" }, captureCodingSelection(state), current)
   }
 
   return (

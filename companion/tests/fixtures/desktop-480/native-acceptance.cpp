@@ -28,6 +28,10 @@ class D480Acceptance {
  inline static HWND firstWindow=nullptr;
  inline static int phase=0;
  inline static std::wstring oldGeneration;
+ // One exact top-level cancelled navigation in the current ready document.
+ inline static bool remotePending=false;
+ inline static UINT64 remoteNavigationId=0;
+ inline static std::wstring remoteGeneration;
  inline static HANDLE oldInput=nullptr,ownedSentinel=nullptr,knownParent=nullptr;
  inline static HANDLE identityRefs[3]{};
  inline static unsigned controlIdentity=257,descendantIdentity=257;
@@ -56,7 +60,8 @@ class D480Acceptance {
  static void document(Desktop&);
  static void message(Desktop&,std::wstring const&,std::wstring const&);
  static void forward(Desktop&,JsonObject const&);
- static void navigation(Desktop&,bool,LPCWSTR);
+ static void navigation(Desktop&,ICoreWebView2NavigationStartingEventArgs*);
+ static void completed(Desktop&,ICoreWebView2NavigationCompletedEventArgs*);
  static void newWindow(Desktop&);
  static void download(Desktop&);
  static void attach(Desktop&);
@@ -116,13 +121,37 @@ void D480Acceptance::message(Desktop& h,std::wstring const& source,std::wstring 
 #endif
 }
 void D480Acceptance::forward(Desktop& h,JsonObject const& frame){(void)h;if(text(frame,L"id").rfind(L"D480A_HIT_",0)==0)admitted++;}
-void D480Acceptance::navigation(Desktop& h,bool allowed,LPCWSTR uri){
+void D480Acceptance::navigation(Desktop& h,ICoreWebView2NavigationStartingEventArgs* args){
 #ifdef D480_HOSTILE
- if(phase==2&&uri&&std::wstring(uri)==L"https://cmspark-480-blocked.invalid/"){
-  emit(h,allowed?L"FAIL_REMOTE":L"REMOTE_DENIED");if(!allowed){phase=3;script(h,L"window.open('https://cmspark-480-blocked.invalid/','_blank');",h.generation);}
- }
+ if(phase!=2||remotePending||!h.ready||h.generation.empty()||!args)return;
+ const std::wstring generation=h.generation;
+ LPWSTR uri=nullptr;HRESULT uriStatus=args->get_Uri(&uri);
+ bool blocked=SUCCEEDED(uriStatus)&&uri&&std::wstring(uri)==L"https://cmspark-480-blocked.invalid/";
+ CoTaskMemFree(uri);if(!blocked)return;
+ UINT64 navigationId=0;if(FAILED(args->get_NavigationId(&navigationId)))return;
+ if(phase!=2||remotePending||!h.ready||h.generation!=generation)return;
+ remoteNavigationId=navigationId;remoteGeneration=generation;remotePending=true;
 #else
- (void)h;(void)allowed;(void)uri;
+ (void)h;(void)args;
+#endif
+}
+void D480Acceptance::completed(Desktop& h,ICoreWebView2NavigationCompletedEventArgs* args){
+#ifdef D480_HOSTILE
+ if(phase!=2||!remotePending||!h.ready||!h.web||!args||h.generation!=remoteGeneration)return;
+ const auto web=h.web;const std::wstring generation=remoteGeneration;
+ UINT64 navigationId=0;BOOL succeeded=TRUE;
+ COREWEBVIEW2_WEB_ERROR_STATUS status=COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+ if(FAILED(args->get_NavigationId(&navigationId))||navigationId!=remoteNavigationId||
+    FAILED(args->get_IsSuccess(&succeeded))||succeeded||
+    FAILED(args->get_WebErrorStatus(&status))||status!=COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED)return;
+ LPWSTR uri=nullptr;HRESULT sourceStatus=web->get_Source(&uri);
+ bool own=SUCCEEDED(sourceStatus)&&uri&&std::wstring(uri)==document_url;
+ CoTaskMemFree(uri);
+ if(!own||phase!=2||!remotePending||remoteNavigationId!=navigationId||remoteGeneration!=generation||!h.ready||h.web.Get()!=web.Get()||h.generation!=generation)return;
+ remotePending=false;phase=3;
+ emit(h,L"REMOTE_DENIED");script(h,L"window.open('https://cmspark-480-blocked.invalid/','_blank');",generation);
+#else
+ (void)h;(void)args;
 #endif
 }
 void D480Acceptance::newWindow(Desktop& h){
@@ -141,6 +170,15 @@ void D480Acceptance::download(Desktop& h){
 }
 void D480Acceptance::attach(Desktop& h){
 #ifdef D480_HOSTILE
+ // Observe the original production cancellation; never advance inside Starting.
+ EventRegistrationToken startingToken{},completedToken{};
+ HRESULT starting=h.web->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([&h](ICoreWebView2* sender,ICoreWebView2NavigationStartingEventArgs* args)->HRESULT{
+  if(sender&&sender==h.web.Get())D480Acceptance::navigation(h,args);return S_OK;
+ }).Get(),&startingToken);
+ HRESULT completedRegistration=h.web->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([&h](ICoreWebView2* sender,ICoreWebView2NavigationCompletedEventArgs* args)->HRESULT{
+  if(sender&&sender==h.web.Get())D480Acceptance::completed(h,args);return S_OK;
+ }).Get(),&completedToken);
+ if(FAILED(starting)||FAILED(completedRegistration)){emit(h,L"FAIL_ENGINE_API");return;}
  ComPtr<ICoreWebView2_4> frames;if(FAILED(h.web.As(&frames))){emit(h,L"FAIL_ENGINE_API");return;}
  EventRegistrationToken token{};
  HRESULT result=frames->add_FrameCreated(Callback<ICoreWebView2FrameCreatedEventHandler>([&h](ICoreWebView2*,ICoreWebView2FrameCreatedEventArgs* args)->HRESULT{

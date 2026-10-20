@@ -1403,39 +1403,10 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // profile coercion (review_readonly) that load-time sanitize already enforces.
   // Use require() like loadConfig to avoid circular ESM import edges.
   if (updated.acp != null || config.acp != null) {
-    try {
-      const { sanitizeAcpConfig } = require("./acp/types") as typeof import("./acp/types")
-      updated.acp = sanitizeAcpConfig(updated.acp)
-    } catch (e) {
-      // Fail closed to defaults (match loadConfig spirit) — never persist unsanitized acp
-      try {
-        const { DEFAULT_ACP_CONFIG } =
-          require("./acp/types") as typeof import("./acp/types")
-        updated.acp = {
-          ...DEFAULT_ACP_CONFIG,
-          servers: {},
-          enabled: updated.acp?.enabled === true,
-        }
-      } catch {
-        updated.acp = {
-          enabled: false,
-          servers: {},
-          policy: {
-            require_workspace: true,
-            force_confirm_session_start: true,
-            default_profile: "review_readonly",
-          },
-        }
-      }
-      try {
-        console.warn(
-          "[cmspark-agent] saveConfig: sanitizeAcpConfig failed — forced safe defaults",
-          e,
-        )
-      } catch {
-        /* ignore */
-      }
-    }
+    // Invalid explicit N must reject before any write; do not swallow it and
+    // persist empty servers. Disk loading retains its independent fail-closed catch.
+    const { sanitizeAcpConfig } = require("./acp/types") as typeof import("./acp/types")
+    updated.acp = sanitizeAcpConfig(updated.acp)
   }
 
   // Resolve LLM and vision API keys using the same priority rules.

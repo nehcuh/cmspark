@@ -226,6 +226,24 @@ export type L2AdmissionResult =
  * On ok:false, caller must return result immediately (already logToolFinish'd inside when appropriate — match current code).
  */
 export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2AdmissionResult> {
+  // Capacity preview is read-only and follows owner/worker checks; real start
+  // repeats this same manager gate before synchronously reserving its claim.
+  if (ctx.toolName === "acp_start_session") {
+    const threadId = resolveAcpThreadId(ctx.finalParams, ctx.actingThreadId)
+    const thread = threadId ? ctx.getThreadManager().get(threadId) : undefined
+    if (!threadId || thread?.agent_role === "worker" || thread?.agent_role === "orchestrator") return {
+      ok: false, result: { success: false, error: "acp: worker/orchestrator threads cannot start ACP sessions" },
+    }
+    const { getAcpManager } = await import("../acp")
+    const manager = getAcpManager(), sessionId = String(ctx.finalParams.session_id || "")
+    const session = manager.getSession(sessionId)
+    if (session && session.thread_id !== threadId) return {
+      ok: false, result: { success: false, error: "ACP session is not owned by this thread", error_code: "ACP_OWNER_MISMATCH" },
+    }
+    const admission = manager.checkStartAdmission(sessionId)
+    if (!admission.ok) return { ok: false, result: { success: false, error: admission.error,
+      ...(admission.error_code ? { error_code: admission.error_code, data: admission.data } : {}) } }
+  }
   const nativeUnavailable = async (): Promise<L2AdmissionResult> => { await ctx.nativeConfirmationUnavailable!(); return { ok: false, result: { success: false, error: "DESKTOP_CONFIRMATION_UNAVAILABLE", error_code: "DESKTOP_CONFIRMATION_UNAVAILABLE" } } }
   if (ctx.nativeConfirmationUnavailable && ctx.toolName === "host_app" && ctx.finalParams.action === "run_template") return nativeUnavailable()
   // #686: an action-specific interactive floor precedes enterprise/token/skip branches.

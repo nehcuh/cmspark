@@ -1,4 +1,4 @@
-/** #722 actual manager offer metadata and fixed-one config; no OS process or token. */
+/** #722 actual manager offer metadata and default-one bounded config; no OS process or token. */
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -16,34 +16,34 @@ function fixture() {
   const config = { acp: { enabled: true, max_concurrent_sessions: 1 }, coding_handoff: { open_local_terminal: false } }
   class Clock extends Date { constructor(value?: any) { super(value === undefined ? now : value) } static now() { return now } }
   const Actual = compile(`export class Actual {
-    sessions=new Map();runningCount=0;shuttingDown=false;startupPreparations=new Map();protocolHandles=new Map();processes=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();events=[];
+    sessions=new Map();executionClaims=new Map();shuttingDown=false;startupPreparations=new Map();protocolHandles=new Map();processes=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();events=[];
     resolveServer(){return{enabled:true,command:'INERT_NOT_EXECUTED',policy:{profile:'review_readonly'}}}
     emitProgress(session,tail){this.events.push(JSON.parse(JSON.stringify({session,tail}))) }pushTimeline(){};emitTerminal(){};
     ${selected.join("\n")}
   }`, { getConfig: () => config, newSessionId: () => `synthetic-${++serial}`, resolveAcpWorkspaceRoot: () => ({ ok: true, root: "/synthetic/workspace" }), logger: { info() {} }, Date: Clock,
     timelineItem: () => ({}), killAcpChild: deny, setTimeout: deny }).Actual
   const manager = new Actual()
-  return { manager, config, effects, advance(ms: number) { now += ms }, clock(value: number) { now = value }, propose(threadId = "owner") { return manager.propose({ threadId, agentId: "inert", goal: "Owned synthetic task" }) } }
+  return { manager, config, effects, advance(ms: number) { now += ms }, clock(value: number) { now = value }, propose(threadId = "owner", agentId = "inert") { return manager.propose({ threadId, agentId, goal: "Owned synthetic task" }) } }
 }
-function offered(f: ReturnType<typeof fixture>, owner = "owner") { const r = f.propose(owner); assert.equal(r.ok, true); return r.session }
+function offered(f: ReturnType<typeof fixture>, owner = "owner", agent = "inert") { const r = f.propose(owner, agent); assert.equal(r.ok, true); return r.session }
 function zero(f: ReturnType<typeof fixture>) { assert.deepEqual(f.effects, { external: 0, token: 0, native: 0 }) }
 
 test("#722 same-thread four model offers are metadata only; fifth is typed refusal", () => {
-  const f = fixture(), rows = Array.from({ length: 4 }, () => f.propose())
+  const f = fixture(), rows = Array.from({ length: 4 }, (_, i) => f.propose("owner", `inert-${i}`))
   assert.equal(rows.filter(r => r.ok).length, 4)
   assert.ok(rows.every(r => r.session.state === "offered"))
-  const refusal = f.propose(); assert.equal(refusal.ok, false); assert.equal(refusal.error_code, "ACP_SESSION_BUSY")
-  assert.equal(refusal.data.holder_state, "offered"); assert.equal(f.manager.sessions.size, 4); assert.equal(f.manager.runningCount, 0); zero(f)
+  const refusal = f.propose("owner", "fifth"); assert.equal(refusal.ok, false); assert.equal(refusal.error_code, "ACP_SESSION_BUSY")
+  assert.equal(refusal.data.holder_state, "offered"); assert.equal(f.manager.sessions.size, 4); assert.equal(f.manager.executionClaims.size, 0); zero(f)
 })
-test("#722 global64-offer budget refuses foreign metadata without disclosing a holder", () => {
-  const f = fixture(); for (let i = 0; i < 64; i++) offered(f, `owner-${i}`)
+test("#722 global16-nonterminal budget refuses foreign metadata without disclosing a holder", () => {
+  const f = fixture(); for (let i = 0; i < 16; i++) offered(f, `owner-${i}`)
   const refusal = f.propose("new-owner"); assert.equal(refusal.ok, false); assert.equal(refusal.error_code, "ACP_CONCURRENCY_LIMIT")
-  assert.equal(refusal.data.holder_session_id, undefined); assert.equal(refusal.data.holder_agent, undefined); assert.equal(f.manager.sessions.size, 64); zero(f)
+  assert.equal(refusal.data.holder_session_id, undefined); assert.equal(refusal.data.holder_agent, undefined); assert.equal(f.manager.sessions.size, 16); zero(f)
 })
 test("#722 explicit offered cancel does not touch another owner or running slots", () => {
   const f = fixture(), one = offered(f), foreign = offered(f, "foreign")
   assert.equal(f.manager.cancel(one.session_id).ok, true); assert.equal(one.state, "closed"); assert.equal(foreign.state, "offered")
-  assert.equal(f.manager.runningCount, 0); offered(f); zero(f)
+  assert.equal(f.manager.executionClaims.size, 0); offered(f); zero(f)
 })
 for (const access of ["get", "list", "propose", "start-admission"] as const) test(`#722 lazy ${access} retires only expired offers at15min with owner-bound closed feedback`, () => {
   const f = fixture(), row = offered(f); f.advance(900_000)
@@ -53,15 +53,15 @@ for (const access of ["get", "list", "propose", "start-admission"] as const) tes
   if (access === "start-admission") f.manager.checkStartAdmission(row.session_id)
   assert.equal(f.manager.sessions.has(row.session_id), false)
   const event = f.manager.events.find((e: any) => e.session.session_id === row.session_id && e.session.error === "expired")
-  assert.ok(event); assert.equal(event.session.thread_id, "owner"); assert.equal(event.session.state, "closed"); assert.equal(f.manager.runningCount, 0); zero(f)
+  assert.ok(event); assert.equal(event.session.thread_id, "owner"); assert.equal(event.session.state, "closed"); assert.equal(f.manager.executionClaims.size, 0); zero(f)
 })
 test("#722 offer remains actionable immediately before the exact expiry boundary", () => {
   const f = fixture(), row = offered(f); f.advance(899_999)
   assert.equal(f.manager.getSession(row.session_id), row); assert.equal(row.state, "offered"); zero(f)
 })
 for (const state of ["confirmed", "running", "handback"] as const) test(`#722 expiry never retires ${state} or frees its existing execution slot`, () => {
-  const f = fixture(), row = offered(f); row.state = state; f.manager.runningCount = 1; f.advance(900_001)
-  assert.equal(f.manager.getSession(row.session_id), row); assert.equal(row.state, state); assert.equal(f.manager.runningCount, 1); zero(f)
+  const f = fixture(), row = offered(f); row.state = state; f.manager.executionClaims.set(row,{children:new Set(),ending:false}); f.advance(900_001)
+  assert.equal(f.manager.getSession(row.session_id), row); assert.equal(row.state, state); assert.equal(f.manager.executionClaims.size, 1); zero(f)
 })
 for (const resource of ["startupPreparations", "processes", "protocolHandles"] as const) test(`#722 anomalous offered row with ${resource} remains protected from retirement`, () => {
   const f = fixture(), row = offered(f); f.manager[resource].set(row.session_id, {}); f.advance(900_001)
@@ -77,18 +77,18 @@ for (const badTime of ["invalid", "future", "clock", "array", "number", "null"] 
   if (badTime === "null") row.created_at = null
   const refusal = f.propose("another-owner"); assert.equal(refusal.ok, false); assert.equal(f.manager.sessions.has(row.session_id), true); zero(f)
 })
-test("#722 existing running execution does not consume offer metadata and final start admission still refuses", () => {
-  const f = fixture(), running = offered(f); running.state = "running"; f.manager.runningCount = 1
-  const next = offered(f), check = f.manager.checkStartAdmission(next.session_id)
+test("#722 running claim preserves admission independently of a different-agent proposal and final start admission still refuses", () => {
+  const f = fixture(), running = offered(f); running.state = "running"; f.manager.executionClaims.set(running,{children:new Set(),ending:false})
+  const next = offered(f, "owner", "another-agent"), check = f.manager.checkStartAdmission(next.session_id)
   assert.equal(check.ok, false); assert.equal(check.error_code, "ACP_CONCURRENCY_LIMIT"); assert.equal(check.data.holder_session_id, running.session_id)
-  assert.equal(next.state, "offered"); assert.equal(f.manager.runningCount, 1); zero(f)
+  assert.equal(next.state, "offered"); assert.equal(f.manager.executionClaims.size, 1); zero(f)
 })
-test("#722 configuration represents only default fixed1 and cannot enableN", () => {
+test("#739 bounded configuration preserves default1 and rejects invalid explicit capacity", () => {
   const types = compile(source("acp/types.ts").text)
   assert.equal(types.DEFAULT_ACP_CONFIG.enabled, false); assert.equal(types.DEFAULT_ACP_CONFIG.max_concurrent_sessions, 1)
-  for (const max of [undefined, 1, 2, -1, 0, Number.NaN, "2", null]) {
-    assert.equal(types.sanitizeAcpConfig({ enabled: true, max_concurrent_sessions: max }).max_concurrent_sessions, 1)
-  }
+  assert.equal(types.sanitizeAcpConfig({ enabled: true }).max_concurrent_sessions, 1)
+  for (const max of [1, 2, 3, 4]) assert.equal(types.sanitizeAcpConfig({ enabled: true, max_concurrent_sessions: max }).max_concurrent_sessions, max)
+  for (const max of [undefined, -1, 0, 5, Number.NaN, "2", null]) assert.throws(() => types.sanitizeAcpConfig({ enabled: true, max_concurrent_sessions: max }))
 })
 
 test("#722 actual existing WS validation admits selected session ID without accepting malformed IDs or weakening legacy goal", () => {
