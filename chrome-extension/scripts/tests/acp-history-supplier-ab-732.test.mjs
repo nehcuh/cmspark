@@ -80,13 +80,13 @@ test('a refused but fully cleaned A is retained, then exactly one B executes',as
   const a=variantIO('port'),b=variantIO(),calls=[];const r=await runAB(async id=>{calls.push(id);return runVariant(id,id==='A'?a.io:b.io)})
   assert.deepEqual(calls,['A','B']);assert.equal(r.complete,true);assert.equal(r.variants[0].success,false);assert.equal(r.variants[1].success,true)
 })
-test('workflow adds only one always step after the byte-exact original business command',()=>{
+test('fixed supplier retires the old A/B workflow without weakening the original business gate',()=>{
   const workflow=fs.readFileSync(fileURLToPath(new URL('../../../.github/workflows/ci.yml',import.meta.url)),'utf8')
   const job=workflow.slice(workflow.indexOf('  acp-history-restart:'))
   assert.equal(job.match(/run: node chrome-extension\/scripts\/accept-acp-history-hosted-732\.mjs/g)?.length,1)
-  assert.equal(job.match(/run: node chrome-extension\/scripts\/diagnose-acp-history-supplier-ab-732\.mjs/g)?.length,1)
-  assert.match(job,/run: node chrome-extension\/scripts\/accept-acp-history-hosted-732\.mjs\n      - name: One supplier A\/B causal experiment \(#732; no business bypass\)\n        if: always\(\)\n        run: node chrome-extension\/scripts\/diagnose-acp-history-supplier-ab-732\.mjs\n$/)
-  assert.equal(job.includes('continue-on-error'),false)
+  assert.equal(job.includes('diagnose-acp-history-supplier-ab-732.mjs'),false)
+  assert.equal(job.includes('continue-on-error'),false);assert.equal(job.includes('if: always()'),false)
+  assert.match(job,/run: node chrome-extension\/scripts\/accept-acp-history-hosted-732\.mjs\n$/)
 })
 test('actual retained payload pin rejects byte drift, replacement, writable owner and retargeted aliases',()=>{
   const source=fs.readFileSync(fileURLToPath(new URL('../diagnose-acp-history-supplier-ab-732.mjs',import.meta.url)),'utf8')

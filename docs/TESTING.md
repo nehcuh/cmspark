@@ -1,5 +1,14 @@
 # TESTING
 
+### #732 固定 Linux CFT 供应边界（未完成远端验收）
+
+`accept-acp-history-hosted-732.mjs` 仅在 Node22、Linux x64、GitHub-hosted Ubuntu22 的正常 build artifact 身份核对后运行：一次官方 CFT155.0.8059.84 固定包供应 → 一次独立端口及精确 `Browser.getVersion` 正证 → 原完整原生 SidePanel／正常 daemon 重启／历史／reload 业务。包199014491字节与309成员的 SHA256、CRC、布局、普通文件身份及只读模式全部固定；无系统安装、外部解包工具、缓存、重定向、重试或任意 executable override。
+
+供应和独立正证各有明确120秒新阶段；原业务120秒、端口10秒、导航60秒、认证5秒和工具15秒不变。两阶段使用不同 owned profile／子进程／端点，无 daemon、认证或存储复用；HOME、sandbox 和原启动参数不变。前置正证可能热 OS 页缓存，不能再称未预热冷启动。旧 image-supplier A/B 工作流步骤明确退休，原代码／受控测试／拒绝 raw 仍保留，未被记作成功。
+
+独立正证必须精确 `Chrome/155.0.8059.84`、managed child 真 close、stdout/stderr 两 EOF、包身份与清理全部通过；失败或未知不进入业务。close 未知先保留包，禁止清理过程中抛错后误删仍在使用的 executable。该边界只属于验收，不增加产品权限。纯 CPU、实际包纯文件解压和 ELF 静态读取不是浏览器启动／安装／原生或真实 SidePanel 通过；真实远端 witness 和完整业务均须新 head CI，当前仍 NOT_RUN／NOT_READY。历史 BINARY_SELECTED／PANEL 唯一原因仍 UNKNOWN，原三轮上限不重置；不得本机启动测试浏览器。
+
+
 > 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
 
 Windows／跨平台变更先读 [Windows 开发与失败定位](windows-development.md)：包含系统化调试、路径／换行／真实消费者预检和原生证据边界；只选本次必要回归，不新增全仓或模型门。

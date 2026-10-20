@@ -69,7 +69,7 @@ function actualFinally(overrides={},source=fs.readFileSync(fileURLToPath(new URL
   let deletes=0,aborts=0
   const sameOwnedRoot=source.includes('export function sameOwnedRoot(')?vm.runInNewContext('('+source.slice(source.indexOf('export function sameOwnedRoot(')+'export '.length,source.indexOf('export async function main()',source.indexOf('export function sameOwnedRoot('))).trim()+')',{fs:{},process:{getuid:()=>1000}}):()=>{throw Error('ABSENT_ROOT_FENCE')}
   const rootStat={dev:1,ino:2,uid:1000,mode:0o40700,isDirectory:()=>true,isSymbolicLink:()=>false}
-  const context={browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,ownedIdentity:rootStat,sameOwnedRoot:(r,i)=>sameOwnedRoot(r,i,()=>({...rootStat,mtimeMs:999,...overrides.currentRootStat}),x=>overrides.rootRealpath??x,1000),observer:{terminate(){aborts++}},observers:new Set([{terminate(){aborts++},closed:Promise.resolve()}]),clients:new Set([{abort(){aborts++},settled:Promise.resolve()}]),pending:new Set(),children:new Set(),remaining:()=>10,deadline:Date.now()+1000,abort:{signal:{aborted:false}},timer:undefined,secret:'PRIVATE',owned:'/owned',fs:{rmSync(){deletes++}},checks:{},stage:'COMPLETE',closeOwnedChild,limit,clearTimeout,Date,Promise,...overrides}
+  const context={activeSupplier:undefined,browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,ownedIdentity:rootStat,sameOwnedRoot:(r,i)=>sameOwnedRoot(r,i,()=>({...rootStat,mtimeMs:999,...overrides.currentRootStat}),x=>overrides.rootRealpath??x,1000),observer:{terminate(){aborts++}},observers:new Set([{terminate(){aborts++},closed:Promise.resolve()}]),clients:new Set([{abort(){aborts++},settled:Promise.resolve()}]),pending:new Set(),children:new Set(),remaining:()=>10,deadline:Date.now()+1000,abort:{signal:{aborted:false}},timer:undefined,secret:'PRIVATE',owned:'/owned',fs:{rmSync(){deletes++}},checks:{},stage:'COMPLETE',closeOwnedChild,limit,clearTimeout,Date,Promise,...overrides}
   if(overrides.pending)context.clients=new Set([{abort(){},settled:Promise.allSettled([...overrides.pending])}])
   return {run:()=>vm.runInNewContext(`(async()=>{${finallyBlock};return {checks,stage,secret,browserStartup}})()`,context),deletes:()=>deletes,aborts:()=>aborts}
 }
@@ -113,6 +113,8 @@ test('real CLI canonical and owned directory alias both refuse local startup wit
   try {
     const canonical=path.join(root,'canonical');fs.mkdirSync(canonical,{mode:0o700})
     fs.copyFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),path.join(canonical,'harness.mjs'))
+    fs.copyFileSync(fileURLToPath(new URL('../cft-linux-supplier-732.mjs',import.meta.url)),path.join(canonical,'cft-linux-supplier-732.mjs'))
+    fs.mkdirSync(path.join(canonical,'fixtures'));fs.copyFileSync(fileURLToPath(new URL('../fixtures/cft-linux64-732.json',import.meta.url)),path.join(canonical,'fixtures/cft-linux64-732.json'))
     fs.symlinkSync(canonical,path.join(root,'alias'),process.platform==='win32'?'junction':'dir')
     const results=[]
     for(const name of ['canonical','alias']) {
@@ -138,7 +140,7 @@ for(const mode of ['timeout','open-error','success-no-close','success-close'])te
   try {
     const connect=vm.runInNewContext(`(()=>{${declaration};return connect})()`,{CDP,WebSocket:OwnedSocket,clients,BOUNDS,remaining:()=>2})
     try{await connect('ws://owned-inert')}catch{rejected=true}
-    const context={browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,observers:new Set(),clients,children:new Set(),remaining:()=>5,deadline:Date.now()+100,abort:{signal:{aborted:false}},timer:undefined,secret:'PUBLIC',owned:'/owned',ownedIdentity:{},sameOwnedRoot:()=>true,fs:{rmSync(){deleted++}},checks:{},stage:'BROWSER',closeOwnedChild,limit,clearTimeout,Date,Promise}
+    const context={activeSupplier:undefined,browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,observers:new Set(),clients,children:new Set(),remaining:()=>5,deadline:Date.now()+100,abort:{signal:{aborted:false}},timer:undefined,secret:'PUBLIC',owned:'/owned',ownedIdentity:{},sameOwnedRoot:()=>true,fs:{rmSync(){deleted++}},checks:{},stage:'BROWSER',closeOwnedChild,limit,clearTimeout,Date,Promise}
     const result=await vm.runInNewContext(`(async()=>{${body};return checks.cleanup})()`,context)
     assert.equal(rejected,mode==='timeout'||mode==='open-error')
     assert.equal(clients.size,1,'every already-created client must be retained, including failed open')
@@ -175,7 +177,7 @@ function browserSegment(fault='none') {
     constructor(){super();this.readyState=1;queueMicrotask(()=>fault==='auth'?this.emit('error',Error(marker)):this.emit('message',JSON.stringify({type:'auth.challenge',nonce:'public'})))}
     send(){queueMicrotask(()=>this.emit('message',JSON.stringify({type:'auth.ok'})))}
   }
-  const context={stage:'BROWSER',browserPhase:null,browserStartup:undefined,chromium:undefined,xvfb:undefined,browser:undefined,worker:undefined,observer:undefined,secret:'PUBLIC_SYNTHETIC_ONLY',owned:'/owned',paths:{worker:workerPath,page:'sidepanel.html'},navigationDeadline:undefined,
+  const context={activeSupplier:{binary:'/owned/fixed/chrome',check(){if(fault==='binary')fail()}},stage:'BROWSER',browserPhase:null,browserStartup:undefined,chromium:undefined,xvfb:undefined,browser:undefined,worker:undefined,observer:undefined,secret:'PUBLIC_SYNTHETIC_ONLY',owned:'/owned',paths:{worker:workerPath,page:'sidepanel.html'},navigationDeadline:undefined,
     child(exe){if(exe==='/usr/bin/Xvfb'){queueMicrotask(()=>xvfb.stdio[3].emit('data',Buffer.from('23\n')));return xvfb}return chrome},
     env:{},input:{},extension:'/owned/extension',chromeArgs:startupHarness.chromeArgs,childEnvironment:()=>({}),remaining:()=>1000,nav:()=>1000,BOUNDS,
     deferred:defer,limit:async promise=>{if(++limitCount===1&&fault==='display')fail();return promise},
@@ -211,14 +213,14 @@ test('#735 actual main snapshots before cleanup and exit observations cannot bec
 
 async function activePortPublication(parts,mutateAfterRead=false) {
   const source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')
-  const begin=source.indexOf("    const binary=['/usr/bin/chromium-browser'"),end=source.indexOf('    const socketBase=',begin)
+  const begin=source.indexOf("    if(!activeSupplier)fail();activeSupplier.check(remaining);"),end=source.indexOf('    const socketBase=',begin)
   const poll=source.split('\n').find(line=>line.startsWith('  const poll=async'))
   assert.ok(begin>0&&end>begin&&poll)
   const owned=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-port732-'))),profile=path.join(owned,'profile'),file=path.join(profile,'DevToolsActivePort')
   fs.mkdirSync(profile,{mode:0o700})
   let reads=0,writes=0,timer
   const deadline=Date.now()+100
-  const context={path,Date,Promise,setTimeout,deadline,owned,extension:path.join(owned,'extension'),input:{},screen:':23',chromium:undefined,browserPhase:'DISPLAY_OBSERVED',
+  const context={activeSupplier:{binary:'/owned/fixed/chrome',check(){}},path,Date,Promise,setTimeout,deadline,owned,extension:path.join(owned,'extension'),input:{},screen:':23',chromium:undefined,browserPhase:'DISPLAY_OBSERVED',
     chromeArgs,childEnvironment,devToolsPortSnapshot:startupHarness.devToolsPortSnapshot,
     remaining:()=>{if(Date.now()>=deadline)throw Error('OWNED_TEST_DEADLINE')},fail:()=>{throw Error('OWNED_ACCEPTANCE_REFUSED')},
     fs:{statSync:()=>({isFile:()=>true}),readFileSync(p,encoding){assert.equal(p,file);assert.equal(encoding,'utf8');reads++;const text=fs.readFileSync(p,encoding);if(mutateAfterRead)fs.writeFileSync(file,'INVALID_AFTER_SNAPSHOT');return text}},
