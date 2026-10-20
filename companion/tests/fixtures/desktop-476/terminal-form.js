@@ -12,7 +12,7 @@
   if(typing){if(e.isTrusted!==true||e.target!==pendingTarget||document.activeElement!==pendingTarget||typedEnter){fail();return}typedEnter=true;return}
   if(e.isTrusted!==true||e.target!==pendingTarget||document.activeElement!==pendingTarget||requested<1||requested>10||(keyMask&(1<<(requested-1)))){fail();return}
   keyMask|=1<<(requested-1);selectPressed=requested===8;pendingTarget=null;
- });
+ },true);
  document.addEventListener("keyup",e=>{if(e.key!=="Enter"||!selectPressed)return;selectPressed=false;if(e.isTrusted!==true||e.target!==$("local-select")||phase!==10||!$("local-feedback").textContent.includes("已选择")){fail();return}phase=11;key(9,$("local-return"))});
  const start=()=>{if(started)return;const row=pick("local");if(!row)return;started=true;phase=1;key(1,row)};
  const original=window.cmsparkDesktopReceive;

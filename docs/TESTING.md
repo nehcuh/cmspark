@@ -376,3 +376,5 @@ Independent changed-head Windows/macOS terminal-native acceptance is **NOT_RUN**
 ### #476 用户终端的远端原生载体
 
 `build-desktop-native.mjs --test-fixtures` 生成不随产品交付的 `acceptance/terminal`，沿现有 `desktop-native-thread-metadata-476.test` 串行文件与 surface lease 验收。新增回调要求实际 GitHub Actions Windows/macOS、canonical owned 数据目录与真实 @lydell PTY；无 MockPty、平台冒充、testSetSpawn 或回执伪造。它涵盖原生拒绝／取消零启动、真实 shell Unicode 与超过16KiB输出、逐帧 ACK、resize、Stop／实际进程退出及 partial 摘录的原对话重开。原生按钮和键盘激活是合成测试而非人工批准。本机禁止运行；CPU 控制与 native 编译／运行结果分开记账，不以载体存在称为 native PASS。
+
+Windows 验收控制器仅通过本次自有 WebView2 COM 对象串行发送固定 `Input.dispatchKeyEvent`，逐字符后 Enter；每次完成回调后才发下一事件，最多一个活动动作与一个待处理固定动作。它验收原生宿主浏览器引擎输入 → 实际 renderer/xterm → 实际 PTY，不证明 Win32 键盘队列、物理键盘或真人操作。当前文档／owner／epoch、真实前台、`isTrusted`／activeElement、原生确认和45秒边界仍严格要求；未清空输入不得完成，不使用 focus rescue、DOM 假事件或 `insertText`。CPU 源码控制不证明这些原生条件已通过，原 Windows 超时的唯一原因仍未知。
