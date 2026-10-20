@@ -1,3 +1,4 @@
+import { computerFailureEnvelope } from "./helpers/computer-failure-envelope"
 /** Actual JS executor/policy -> JSON -> actual adapter. Inert seams are not L2 grants/native/human approval. */
 import test, { before, after, type TestContext } from "node:test"
 import assert from "node:assert/strict"
@@ -55,7 +56,7 @@ function collectReturn(node: ts.Node): void {
 }
 collectReturn(dispatchSource)
 assert.equal(returns.length, 1)
-const failureEnvelope = new Function("result", returns[0])
+const failureEnvelope = computerFailureEnvelope( returns[0])
 const adapterPath = path.resolve(__dirname, "../../src/llm/adapter.ts")
 const adapterSource = ts.createSourceFile(adapterPath, fs.readFileSync(adapterPath, "utf8"), ts.ScriptTarget.Latest, true)
 const consumerStatements: string[] = []

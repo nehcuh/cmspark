@@ -243,6 +243,9 @@ export interface WindowInfo {
 }
 
 export interface CaptureMeta {
+  capture_method?: import("./observation").CaptureMethod
+  observation_quality?: import("./observation").ObservationQuality
+  occludedBy?: import("./observation").CaptureObservation["occludedBy"]
   hwnd: number
   rect: RectPx
   /** Client area in IMAGE coordinates (bitmap covers full window incl. title bar). */
@@ -397,7 +400,7 @@ export type UiaWatcherFactory = (
 ) => Promise<UiaWatcher>
 
 export interface ScreenCapturer {
-  captureWindow(hwnd: number): Promise<CaptureMeta>
+  captureWindow(hwnd: number, options?: { passive: boolean }): Promise<CaptureMeta>
   /** Crop srcPath to rect (clamped to image), write outPath, return outPath. */
   crop(srcPath: string, rect: RectPx, outPath: string): Promise<string>
   /** diffRatio in [0,1] between two same-subject captures (optional crop on A). */

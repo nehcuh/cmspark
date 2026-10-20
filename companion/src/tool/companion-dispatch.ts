@@ -9,6 +9,7 @@ import { consumeComputerReadAttempt, type ComputerReadOperation } from "../compu
 
 import { execFile } from "child_process"
 import { randomUUID } from "crypto"
+import { observationNotice } from "../computer/observation"
 import { executeCodeReviewTool } from "../code-review/executor"
 import os from "os"
 import { getConfig } from "../config"
@@ -2403,12 +2404,13 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           return {
             success: false,
             error: result.error,
-            data: { error_code: result.errorCode, task_id: result.taskId, evidence_dir: result.evidenceDir, steps: result.steps },
+            data: { ...(isWin ? { observation_notice: observationNotice(result.steps) } : {}), error_code: result.errorCode, task_id: result.taskId, evidence_dir: result.evidenceDir, steps: result.steps },
           }
         }
         return {
           success: true,
           data: {
+            ...(isWin ? { observation_notice: observationNotice(result.steps) } : {}),
             task_id: result.taskId,
             completed: result.completedActions,
             total: result.totalActions,

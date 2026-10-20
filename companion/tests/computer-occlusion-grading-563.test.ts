@@ -1,3 +1,4 @@
+import { computerFailureEnvelope } from "./helpers/computer-failure-envelope"
 /** #563 D3: actual typed producer and AST outward/adapter expressions.
  * Controlled PsRunner errors, no native input, usable token, authorized task or model.
  */
@@ -28,7 +29,7 @@ const executor=source("computer/executor.ts"),fail=unique(executor,n=>ts.isVaria
 const returned=unique(fail,n=>ts.isReturnStatement(n)&&n.getText(executor).includes("errorCode: err.code"))
 const taskResult=body(["err","taskId","evidence","steps","params"],returned.getText(executor))
 const dispatcher=source("tool/companion-dispatch.ts")
-const envelope=body(["result"],unique(dispatcher,n=>ts.isReturnStatement(n)&&n.getText(dispatcher).includes("error_code: result.errorCode")).getText(dispatcher))
+const envelope=computerFailureEnvelope(unique(dispatcher,n=>ts.isReturnStatement(n)&&n.getText(dispatcher).includes("error_code: result.errorCode")).getText(dispatcher))
 const adapter=source("llm/adapter.ts")
 const variable=(name:string)=>unique(adapter,n=>ts.isVariableDeclaration(n)&&n.name.getText(adapter)===name) as ts.VariableDeclaration
 const classify=body(["toolResult","toolName","classifyError"],`const classCode=${variable("classCode").initializer!.getText(adapter)};const errorLevel=${variable("errorLevel").initializer!.getText(adapter)};const failCode=${variable("failCode").initializer!.getText(adapter)};return {classCode,errorLevel,failCode};`)

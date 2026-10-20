@@ -1,3 +1,4 @@
+import { computerFailureEnvelope } from "./helpers/computer-failure-envelope"
 /** #563: real locate-chain refusals through the complete executor failure
  * closure and actual outward/adapter expressions. Providers and closure effects
  * are inert; this does not run an authorized task, native input, or a browser.
@@ -52,7 +53,7 @@ const failure = unique(executor, n => ts.isVariableDeclaration(n) && n.name.getT
 const failureClosure = body(["log", "emit", "taskId", "steps", "params", "sweepRaws", "evidence", "uiaWatcherLiveness"],
   `let uiaWatcher = null; return ${failure.initializer!.getText(executor)};`)
 const dispatcher = source("tool/companion-dispatch.ts")
-const envelope = body(["result"], unique(dispatcher, n => ts.isReturnStatement(n)
+const envelope = computerFailureEnvelope( unique(dispatcher, n => ts.isReturnStatement(n)
   && n.getText(dispatcher).includes("error_code: result.errorCode")).getText(dispatcher))
 const adapter = source("llm/adapter.ts")
 const variable = (name: string) => unique(adapter, n => ts.isVariableDeclaration(n)

@@ -889,8 +889,16 @@ test("executor: screenshot/describe/wait do not consume the action budget", asyn
   assert.equal(injector.clicks.length, 1, "budget 1 still allows the single click")
   const describe = r.steps.find((s) => s.action === "describe")
   assert.ok(describe?.untrustedText?.includes("确定"), "describe returns OCR text as untrusted data")
+  let ocrText = describe?.untrustedText
+  if (os.platform() === "win32") {
+    // This fake capture has no source-quality metadata. Preserve the Windows
+    // unknown-source notice and the separate OCR taint label, in that order.
+    const sourcePrefix = "[host observation: unknown; capture-source quality unavailable]\n"
+    assert.ok(ocrText?.startsWith(sourcePrefix), "Windows describe keeps its exact unknown-source notice first")
+    ocrText = ocrText!.slice(sourcePrefix.length)
+  }
   assert.ok(
-    describe?.untrustedText?.startsWith("[untrusted host-ocr"),
+    ocrText?.startsWith("[untrusted host-ocr"),
     "describe marks text as untrusted host-ocr",
   )
 })

@@ -17,6 +17,9 @@
 import { corpusOf, type ComputerAction, type RectPx } from "./types"
 
 export interface ComputerTaskEvent {
+  capture_method?: import("./observation").CaptureMethod
+  observation_quality?: import("./observation").ObservationQuality
+  occludedBy?: import("./observation").CaptureObservation["occludedBy"]
   event: "started" | "step" | "paused" | "finished"
   taskId: string
   /** started: app display name + task text; finished: outcome. */

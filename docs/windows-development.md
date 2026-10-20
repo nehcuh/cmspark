@@ -14,7 +14,7 @@
 ## 按改动边界做预检
 
 - **路径与换行**：宿主路径用相应 Node path API；固定 POSIX 的虚拟 FS 则全链使用 posix，不能混宿主 win32。路径相关 producer 覆盖 source/compiled 布局、win32/posix 与误导祖先目录；先辨 `resolve`、`normalize`、`realpath` 的真实职责。Windows 8.3 短名／长名需在同一已声明的 canonical 域比较；JS `realpath` 与 native binding 的实际行为不能凭名字视为相同。保持严格身份断言，不以去盘符、大小写折叠或模糊路径匹配代替。源码提取器喂原 LF/CRLF 两种字节，严格边界不删；checkout、TS printer、模板字面量各自的换行不能混成一次全局归一化。
-- **真实契约与消费者**：fixture 来自实际返回/序列化；负控先查当前 dispatcher、role/token/owner API。修改函数、闭包、helper 或 workflow 时用 `rg` 查 import 之外的 readFile/AST/VM/字符串消费者，跑真正受影响 family；不能为过期 fake 删除产品保护或旧安全断言。
+- **真实契约与消费者**：fixture 来自实际返回/序列化；负控先查当前 dispatcher、role/token/owner API。修改函数、闭包、helper 或 workflow 时用 `rg` 查 import 之外的 readFile/AST/VM/字符串消费者，跑真正受影响 family；不能为过期 fake 删除产品保护或旧安全断言。抽取 return 的动态函数也必须绑定该语句实际使用的平台变量与模块 helper；AST 找到语句不等于执行闭包完整。
 - **编译与工具闭包**：使用本次工程的实际 tsconfig/include、ambient shims、文件名、cwd 和 Node 版本；selected 零诊断不冒完整项目通过，诊断为零也不等 emit 成功。从实际 package/lock 核 helper、版本、argv、输出/参数预算；部署完整所需 package scope（含 package.json、相对资源、类型），不只搬 trace 中几个 JS。无关已通过机器按精确输入复用。
 - **夹具与操作器**：在 import 应用前设独立 test-owned DATA_DIR，沿用 [preload](../companion/scripts/test-data-dir.cjs)；不改 HOME、不接触 live config，不继承 provider/key/proxy 全环境。保留原 runner 必需的 Windows 允许变量。先核 driver 语法、入口、cwd、目录 UID/ACL、依赖、输出可写性、guard 和真实包路径，再启动；setup 错误保留但不计产品 RED。不靠逐次失败无限加 allowlist。
 - **字节与语言语义**：真实 TS 字符串先解码/编译再分析反斜杠，不能数工具展示的转义。中文文件内容与 stdout 编码分开；UTF-8 分块、非 UTF-8 与 stderr 均据真实字节/声明判断，不猜 GBK或更改系统代码页。PS 比较规则、C++ 字符串/SDK 参数所有权必须按真实语言；保留实际 MSVC warning/UTF-8 选项，不压警告换绿。
@@ -43,3 +43,9 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 - 两位真正非作者的互盲源码意见、CPU/ARM 和真实原生验收各有边界；都不相互替代。原生 DoD 必须在精确新 head 的真实 Windows 与所要求 main 路径上验证，不以 macOS/Linux、VM/DOM、编译或旧 head 代替。
 - 不靠延长 timeout、sleep、重试、skip/COE、弱断言、权限放宽、恢复焦点或无变化 CI rerun 消红。若需要改变实验/合同，先陈述已证缺口和原 DoD，由负责人裁决；新的观测字段也不能无限按轮追加。
 - 同一问题最多三轮修复/复审，之后负责人缩小或重想方案；换目录/packet 名不重置轮数。首轮读完整差量，之后仅核受影响增量，复用字节/输入未变的有效意见与机器；NIT 不触发新 CI，不追加第三/第四必需模型。
+
+## 新增依赖和窗口状态的短检查
+
+- 修改生产函数依赖后，检查删除 import 后执行函数的 VM/AST/readFile 消费者。真实依赖须同时进入消费端 import 和 VM globals；只跑被修改函数的测试会漏掉旧消费端的 ReferenceError。#723 的 `transient-rate-feedback-730` 回归保留了这个失败。
+- 前台就绪必须核最后一个可能改变激活的操作。WPF 最小化会调用 SW_MINIMIZE，API 允许激活下一顶层窗口；先激活另窗再最小化不能证明最终前台仍是另窗。当前修复候选只调整原操作顺序，CPU 正负控不冒真实 Windows 验收，也不证明历史唯一原因。禁止补救焦点或放松前台断言。
+- 首条 worker 消息的 schema 与终止路径先查真实 producer：font-cache 消息没有 `ok` 字段，observer 的 false 不等字体失败；`finally` 主动 terminate 后的非零 exit 也不单独证明崩溃。冷启动耗时的物理原因未证实时保留 UNKNOWN。
