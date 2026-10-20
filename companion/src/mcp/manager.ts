@@ -25,6 +25,7 @@ import {
   type McpToolRoute,
 } from "./types.js"
 import { ensureFilesystemAllowlist } from "./filesystem-home.js"
+import { carryMcpWorkspaceObservation } from "./workspace-observation"
 import { getMcpConfirmCache } from "./confirm-cache.js"
 import { mcpAuthorizationDigest } from "./authorization.js"
 import { setTimeout as delay } from "node:timers/promises"
@@ -505,13 +506,15 @@ export class McpManager extends EventEmitter {
   ): Promise<any> {
     const client = this.requireAvailableClient(route.serverName)
     const identity = this.getAuthorizationIdentity(route.serverName)
-    return client.callTool(route.toolName, args, signal, preparedArgs => {
+    const result = await client.callTool(route.toolName, args, signal, preparedArgs => {
       if (identity === undefined || this.getAuthorizationIdentity(route.serverName) !== identity ||
           this.requireAvailableClient(route.serverName) !== client) {
         throw new Error("MCP authorization changed or revoked before dispatch")
       }
       beforeDispatch?.(preparedArgs)
     })
+    carryMcpWorkspaceObservation(result, result, () => identity !== undefined && this.getAuthorizationIdentity(route.serverName) === identity && this.requireAvailableClient(route.serverName) === client)
+    return result
   }
 
   async listResources(serverName: string, signal?: AbortSignal): Promise<any> {

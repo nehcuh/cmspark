@@ -1,3 +1,4 @@
+import { carryMcpWorkspaceObservation } from "./mcp/workspace-observation"
 // Companion server — WebSocket server, message routing, tool execution bridge
 
 import { WebSocket } from "ws"
@@ -909,8 +910,16 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
 
     // MCP namespaced tools — mcp__<server>__<tool>
     if (isMcpNamespaced(toolName)) {
+      const observationThread = evidenceScope?.kind === "chat" ? threadManager.get(evidenceScope.threadId) : undefined
+      const observationAuth = getWsAuthState(ws)
+      const observationCurrent = () => !!observationThread && observationThread.agent_role !== "worker" && !observationThread.parent_thread_id &&
+        !enterprisePermit && !invokeOpts?.trustedOutbound && !nativeOwner && !signal?.aborted && ws.readyState === WebSocket.OPEN &&
+        observationAuth?.authenticated === true && getWsAuthState(ws) === observationAuth &&
+        threadManager.get(evidenceScope!.threadId) === observationThread && finalParams.__thread_id === evidenceScope!.threadId
       try {
         const result = await executeMcpTool(toolName, finalParams, sessionId, ws, startedAt, signal, undefined, nativeMcpOwner)
+        if (observationCurrent()) carryMcpWorkspaceObservation(result, result, observationCurrent)
+        else carryMcpWorkspaceObservation(result, result, () => false)
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {

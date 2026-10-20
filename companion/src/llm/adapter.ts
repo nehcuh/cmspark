@@ -1,3 +1,4 @@
+import { readMcpWorkspaceObservation } from "../mcp/workspace-observation"
 import { isSnapshotLocatorRefusal, snapshotHistory } from "../tool/snapshot-locator"
 // LLM adapter — chat + tool loop via LlmProvider (OpenAI / Anthropic wire)
 
@@ -2125,12 +2126,14 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           })
 
           // Send tool result to extension for UI display (before vision analysis so UI shows raw result)
+          const workspaceObservation = readMcpWorkspaceObservation(toolResult)
           sendToExtension({
             type: "tool.result",
             tool_call_id: tc.id,
             thread_id: threadId,
             tool_name: toolName,
             result: toolResult,
+            ...(workspaceObservation ? { workspace_observation: workspaceObservation } : {}),
           })
           try {
             const { onRouteTool } = require("../loop/route-session") as typeof import("../loop/route-session")

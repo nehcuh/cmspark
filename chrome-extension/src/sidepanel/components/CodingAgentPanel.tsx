@@ -928,7 +928,7 @@ export function CodingAgentPanel({
               <span>本对话完成操作中提到的目录（未绑定，仍需原生选择确认）</span>
               {state.workspaceHints.rows.map(hint => (
                 <button key={hint.key} type="button" style={styles.linkBtn} onClick={() => pickWorkspace(hint)}>
-                  {hint.path} · {{ "acp-offer": "提案目录", "shell-cwd": "进程启动目录", "literal-cd": "字面 cd 参数", "git-cwd": "Git 实际目录" }[hint.source]} · 最近 {hint.recent} / {hint.count} 次
+                  {hint.path} · {{ "acp-offer": "提案目录", "shell-cwd": "进程启动目录", "literal-cd": "字面 cd 参数", "git-cwd": "Git 实际目录", "mcp-directory": "MCP 访问目录候选" }[hint.source]} · 最近 {hint.recent} / {hint.count} 次
                 </button>
               ))}
             </div>
