@@ -3,13 +3,15 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import vm from "node:vm"
+import ts from "typescript"
 
 // Deliberately strict source consumers, not a PowerShell/C# compiler or a
 // Windows registry execution. Execute the actual narrow boolean expressions over
 // the documented HKCU shared-key alias and hostile value/name/subkey inputs.
 function uniqueAfter(source: string, marker: string): string {
-  assert.equal(source.split(marker).length, 2, "actual registry consumer must remain unique")
-  return source.slice(source.indexOf(marker) + marker.length)
+  const lexical = source.replace(/\r\n/g, "\n")
+  assert.equal(lexical.split(marker).length, 2, "actual registry consumer must remain unique")
+  return lexical.slice(lexical.indexOf(marker) + marker.length)
 }
 function condition(source: string): string {
   const start = source.indexOf("if (")
@@ -29,8 +31,11 @@ function condition(source: string): string {
   }
   throw Error("actual condition has no balanced end")
 }
-const host = fs.readFileSync(path.resolve(__dirname, "../../src/computer/native/cockpit-bridge-host.cs"), "utf8")
-const installer = fs.readFileSync(path.resolve(__dirname, "../../../scripts/register-cockpit-native-bridge.ps1"), "utf8")
+const companionRoot = path.resolve(__dirname, path.basename(path.dirname(__dirname)) === ".test-dist" ? "../.." : "..")
+const hostFile = path.join(companionRoot, "src/computer/native/cockpit-bridge-host.cs")
+const installerFile = path.resolve(companionRoot, "../scripts/register-cockpit-native-bridge.ps1")
+const host = fs.readFileSync(hostFile, "utf8")
+const installer = fs.readFileSync(installerFile, "utf8")
 const nativeExpression = condition(uniqueAfter(host, "if (key == null) continue;"))
 const powershellExpression = condition(uniqueAfter(installer, "      try {\n        "))
 const nativeJs = nativeExpression.replace('(key.GetValue("") as string)', 'key.GetValue("")').replaceAll('RegistryValueKind.String', '"String"')
@@ -86,4 +91,48 @@ test("installer still requires an owned record before accepting any existing key
 
 test("a changed registry value kind cannot inherit the REG_SZ ownership receipt", () => {
   assert.deepEqual(bothRejects(key(manifest, [""], [], "ExpandString"), "Registry64"), [true, true])
+})
+
+
+test("whole actual registry consumer keeps all ownership assertions in source/compiled layouts and LF/CRLF", () => {
+  const testFile = path.join(companionRoot, "tests/cockpit-native-registry-source-723.test.ts")
+  const source = fs.readFileSync(testFile, "utf8")
+  const javascript = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
+  } }).outputText
+  for (const directory of [path.join(companionRoot, "tests"), path.join(companionRoot, ".test-dist/tests")]) {
+    for (const eol of ["\n", "\r\n"]) {
+      const nativeBytes = host.replace(/\r?\n/g, eol)
+      const installerBytes = installer.replace(/\r?\n/g, eol)
+      const execute = (ps: string, cs = nativeBytes) => {
+        const callbacks: { name: string; run: () => void }[] = []
+        const modules: Record<string, unknown> = {
+          "node:test": (name: string, run: () => void) => { callbacks.push({ name, run }) },
+          "node:assert/strict": assert, "node:path": path, "node:vm": vm, typescript: ts,
+          "node:fs": { readFileSync(file: string, encoding: string) {
+            assert.equal(encoding, "utf8")
+            const selected = path.resolve(file)
+            if (selected === hostFile) return cs
+            if (selected === installerFile) return ps
+            throw Error("unexpected actual registry source read")
+          } },
+        }
+        new vm.Script(javascript, { filename: path.join(directory, "cockpit-native-registry-source-723.test.js") })
+          .runInNewContext({ exports: {}, __dirname: directory, require: (id: string) => {
+            assert.ok(Object.hasOwn(modules, id)); return modules[id]
+          } })
+        assert.equal(callbacks.length, 8)
+        // The eighth callback is this regression, not a shadow ownership rule.
+        for (const callback of callbacks.slice(0, 7)) callback.run()
+      }
+      execute(installerBytes)
+      const psMarker = "      try {" + eol + "        "
+      const refused = { code: "ERR_ASSERTION", message: /actual registry consumer must remain unique/ }
+      assert.throws(() => execute(installerBytes.replace(psMarker, "      omitted {" + eol + "        ")), refused)
+      assert.throws(() => execute(installerBytes + eol + psMarker), refused)
+      const csMarker = "if (key == null) continue;"
+      assert.throws(() => execute(installerBytes, nativeBytes.replace(csMarker, "/* omitted consumer */")), refused)
+      assert.throws(() => execute(installerBytes, nativeBytes + eol + csMarker), refused)
+    }
+  }
 })
