@@ -86,6 +86,7 @@ function validLocatorMode(v: Record<string, unknown>, click: boolean): boolean {
 }
 
 export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
+  terminal_tail_read: z.object({ session_id: z.string().min(1) }).strict(),
   // --- Page evaluation (high-risk: arbitrary JS in a real Chrome tab) ---
   evaluate: z.object({
     tabId: tabIdSchema,

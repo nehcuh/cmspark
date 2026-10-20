@@ -1731,6 +1731,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     // #432 embedded PTY (client → server). Outbound frames (opened/data/closed) are not validated here.
+    "terminal.tail.read": (m) => Object.keys(m).every(k => ["type", "id"].includes(k)) && typeof m.id === "string" && !!m.id.trim()
+      ? { valid: true } : { valid: false, error: "terminal.tail.read requires only id" },
     "terminal.review.submit": (m) => typeof m.id === "string" && m.user_gesture === true && !!m.report && typeof m.report === "object" ? { valid: true } : { valid: false, error: "terminal report requires explicit submit" },
     "terminal.open": (m) => {
       if (typeof m.id !== "string" || !m.id.trim()) {

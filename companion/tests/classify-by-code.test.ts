@@ -55,6 +55,7 @@ test("#560 每个已登记的码：等级与 message 内容完全无关（属性
  */
 const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "security"> = {
   // #563: busy is temporary availability, not a permission or concurrency override.
+  TERMINAL_TAIL_UNAVAILABLE: "recoverable", // #725: unavailable private live tail; no body, no automatic read/retry or permission
   SHELL_BUSY: "recoverable",
   NETSEC_BUSY: "recoverable",
   RATE_LIMITED: "recoverable", // #730: preserve refusal, L2 and the existing 30/60s window

@@ -91,6 +91,9 @@ export function isPlanReadonlyAllowed(toolName: string): boolean {
  *   Listing MCP resources is not needed to draft a plan; page observation
  *   tools already cover the read surface.
  *
+ * terminal_tail_read → DENIED. Exposes a live user terminal to the model;
+ * its readonly transport is not permission to widen a plan-mode data surface.
+ *
  * ask_user → DENIED. L2_GATE_TOOLS must stay a closed deny set in plan mode
  *   (differential test asserts deny ⊇ L2 表). Under plan the assistant asks
  *   questions as plain chat text; the structured HITL channel is unnecessary.

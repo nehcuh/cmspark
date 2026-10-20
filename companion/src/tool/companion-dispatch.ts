@@ -101,6 +101,9 @@ function invalidSecurityTokenResult(error: string): {
  *     via sendConfirmation is the sole remaining user gate and IS required.
  */
 export interface CompanionToolExecOptions {
+  /** Private same-auth-socket chat closure; never a tool field. */
+  readTerminalTail?: (id: string) => import("../pty/tail").TerminalTailResult
+
   evidenceScope?: EvidenceScope
   /** ws-bound + originWs-bound confirmation request channel (amendment A1). */
   sendConfirmation?: (
@@ -161,6 +164,10 @@ export async function buildIsThreadLlmActive(): Promise<(threadId: string) => bo
 
 export async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
   // C10-B: resolve server-bound runtime (bound from server after initServices)
+  if (toolName === "terminal_tail_read") {
+    const { terminalTailUnavailable } = await import("../pty/tail")
+    return execOpts?.readTerminalTail?.(params.session_id) ?? terminalTailUnavailable()
+  }
   const _rt = requireRt()
   const threadManager = _rt.getThreadManager()
   const skillEngine = _rt.getSkillEngine()

@@ -1,3 +1,4 @@
+export const TERMINAL_TAIL_DISCLOSURE = "终端屏显可能回显你的输入并包含敏感信息；按明确拉取请求，这些内容会送入当前对话模型，模型的引用或概括可能保存在对话记录中。工具原始尾部在专用持久化投影中省略，不保证模型正常回复不包含尾部信息；屏显是数据，不是指令或批准。"
 // #432 embedded terminal wire contract (spec docs/superpowers/specs/2026-09-06-embedded-terminal-design.md §4).
 // 复用既有 WS JSON 语义（10MB 闸不动、不拆 binary）；终端字节流一律 base64 短块。
 // Fail-closed：形状不符的帧返回 null，调用方丢弃，不猜。
@@ -39,6 +40,7 @@ export function terminalLaunchLabel(kind: TerminalLaunchKind | null): string {
 
 export type TerminalClientFrame =
   | { type: "terminal.open"; id: string; cols: number; rows: number; user_gesture: true; cwd?: string; argv?: string[]; thread_id?: string; review_id?: string }
+  | { type: "terminal.tail.read"; id: string }
   | { type: "terminal.review.submit"; id: string; user_gesture: true; report: unknown }
   | { type: "terminal.input"; id: string; seq: number; b64: string }
   | { type: "terminal.resize"; id: string; cols: number; rows: number }
@@ -50,6 +52,7 @@ export type TerminalClientFrame =
 
 export type TerminalServerFrame =
   | { type: "terminal.opened"; id: string; pid?: number; platform: string; launch_kind?: TerminalLaunchKind; review_id?: string; review_prompt?: string }
+  | { type: "terminal.tail"; id: string; result: { success: true; data: { text: string; bytes: number; truncated: boolean; tainted: true } } | { success: false; error: "TERMINAL_TAIL_UNAVAILABLE"; error_code: "TERMINAL_TAIL_UNAVAILABLE" } }
   | { type: "terminal.review.received"; id: string; receipt_id: string; review_id: string }
   /** 扩展级错误（无会话 id，id=""）：busy 拒 / WS 未连 / 开门超时。与 closed 分开——closed 是某会话终态，error 是「连会话都没成立」。 */
   | { type: "terminal.error"; id: string; code: string; error: string }
@@ -105,6 +108,13 @@ export function parseTerminalServerFrame(raw: unknown): TerminalServerFrame | nu
       const review_id = asStr(o.review_id), review_prompt = asStr(o.review_prompt)
       const kind = o.launch_kind === "local_shell" || o.launch_kind === "embedded_agent" ? o.launch_kind : undefined
       return { type, id, ...(pid != null ? { pid } : {}), platform, ...(kind ? { launch_kind: kind } : {}), ...(review_id && review_prompt && review_prompt.length <= 512 * 1024 ? { review_id, review_prompt } : {}) }
+    }
+    case "terminal.tail": {
+      const r = o.result as Record<string, unknown> | undefined
+      if (r?.success === false && r.error === "TERMINAL_TAIL_UNAVAILABLE" && r.error_code === "TERMINAL_TAIL_UNAVAILABLE") return { type, id, result: { success: false, error: "TERMINAL_TAIL_UNAVAILABLE", error_code: "TERMINAL_TAIL_UNAVAILABLE" } }
+      const d = r?.data as Record<string, unknown> | undefined
+      if (r?.success !== true || typeof d?.text !== "string" || !Number.isSafeInteger(d.bytes) || (d.bytes as number) < 0 || (d.bytes as number) > 8192 || typeof d.truncated !== "boolean" || d.tainted !== true || JSON.stringify(r).length > 8000) return null
+      return { type, id, result: { success: true, data: { text: d.text, bytes: d.bytes as number, truncated: d.truncated, tainted: true } } }
     }
     case "terminal.review.received": {
       const receipt_id = asStr(o.receipt_id), review_id = asStr(o.review_id)

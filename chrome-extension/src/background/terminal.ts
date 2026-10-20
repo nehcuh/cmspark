@@ -160,7 +160,7 @@ export function attachTerminalPort(
     if (detached) return
     if (!raw || typeof raw !== "object") return
     const m = raw as { type?: unknown; id?: unknown }
-    if (typeof m.type !== "string" || !["terminal.open", "terminal.input", "terminal.resize", "terminal.ack", "terminal.ping", "terminal.pause", "terminal.resume", "terminal.close", "terminal.review.submit"].includes(m.type)) return
+    if (typeof m.type !== "string" || !["terminal.open", "terminal.input", "terminal.resize", "terminal.ack", "terminal.ping", "terminal.pause", "terminal.resume", "terminal.close", "terminal.review.submit", "terminal.tail.read"].includes(m.type)) return
     if (m.type === "terminal.open") {
       if (sessionId || typeof m.id !== "string" || !m.id) return
       sessionId = m.id

@@ -10,6 +10,7 @@ import "@xterm/xterm/css/xterm.css"
 import { TERMINAL_PORT_NAME } from "../background/terminal"
 import {
   terminalB64Decode,
+  TERMINAL_TAIL_DISCLOSURE,
   terminalB64Encode,
   type TerminalServerFrame,
   type TerminalLaunchKind,
@@ -37,6 +38,9 @@ export function TerminalApp() {
   const [reportStatus, setReportStatus] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [launchKind, setLaunchKind] = useState<TerminalLaunchKind | null>(null)
+  const [tail, setTail] = useState("")
+  const [tailSessionId, setTailSessionId] = useState("")
+  const tailReadRef = useRef<(() => void) | null>(null)
   const submitRef = useRef<((report: unknown) => void) | null>(null)
 
   useEffect(() => {
@@ -60,6 +64,7 @@ export function TerminalApp() {
     fit.fit()
 
     const sessionId = `term.${Date.now().toString(36)}.${(sessionSeq += 1)}`
+    setTailSessionId(sessionId)
     const query = new URLSearchParams(window.location.search)
     const threadId = query.get("thread_id"), reviewId = query.get("review_id")
     let inputSeq = 0
@@ -78,6 +83,7 @@ export function TerminalApp() {
       if (!opened) {
         send({ type: "terminal.close", id: sessionId })
         sessionEnded = true
+        setTail("")
         clearInterval(pingTimer)
         subData.dispose()
         setStatus("error")
@@ -99,9 +105,11 @@ export function TerminalApp() {
         // SW 已走 — 下面 onDisconnect 不保证触发，直接落终态
         setStatus("closed")
         sessionEnded = true
+        setTail("")
         clearInterval(pingTimer)
       }
     }
+    tailReadRef.current = () => { if (ready && !sessionEnded) send({ type: "terminal.tail.read", id: sessionId }) }
     submitRef.current = report => send({ type: "terminal.review.submit", id: sessionId, user_gesture: true, report })
 
     const open = () => {
@@ -129,6 +137,7 @@ export function TerminalApp() {
           setSubmitting(false)
           if (frame.code === "disconnected" || frame.error === "TERMINAL_SESSION_NOT_OWNED") {
             sessionEnded = true
+            setTail("")
             clearInterval(pingTimer)
             setStatus("closed")
             setDetail("连接中断，终端进程已结束。请关闭此页并重新发起编程接力。")
@@ -140,6 +149,7 @@ export function TerminalApp() {
         clearTimeout(watchdog)
         send({ type: "terminal.close", id: sessionId })
         sessionEnded = true
+        setTail("")
         clearInterval(pingTimer)
         setStatus("error")
         setDetail(frame.error)
@@ -161,6 +171,9 @@ export function TerminalApp() {
           term.focus()
           if (frame.review_prompt) setReviewPrompt(frame.review_prompt)
           break
+        case "terminal.tail":
+          setTail(frame.result.success ? frame.result.data.text : "终端尾部不可用；请确认这是已批准披露的当前会话。")
+          break
         case "terminal.review.received":
           setDetail("")
           setSubmitting(false)
@@ -176,6 +189,7 @@ export function TerminalApp() {
         }
         case "terminal.closed": {
           sessionEnded = true
+          setTail("")
           clearInterval(pingTimer)
           setSubmitting(false)
           opened = true // 终态到达，停 watchdog
@@ -194,6 +208,7 @@ export function TerminalApp() {
     port.onDisconnect.addListener(() => {
       if (closedByUs) return
       sessionEnded = true
+      setTail("")
       clearInterval(pingTimer)
       subData.dispose()
       setSubmitting(false)
@@ -244,6 +259,8 @@ export function TerminalApp() {
       }
       term.dispose()
       submitRef.current = null
+      tailReadRef.current = null
+      setTail("")
     }
   }, [])
 
@@ -285,6 +302,12 @@ export function TerminalApp() {
           关闭
         </button>
       </div>
+      <section aria-label="终端输出与模型隐私披露" style={{ color: tokens.darkText, padding: "8px 20px", flexShrink: 0 }}>
+        <p>{TERMINAL_TAIL_DISCLOSURE}</p>
+        {tailSessionId && <p>当前终端会话 ID：<code>{tailSessionId}</code>（可明确告知当前对话；ID 本身不是权限）</p>}
+        <button type="button" disabled={status !== "running"} onClick={() => tailReadRef.current?.()}>只读查看当前尾部（不发送到模型）</button>
+        {tail && <pre style={{ whiteSpace: "pre-wrap", maxHeight: "28vh", overflow: "auto" }}>{tail}</pre>}
+      </section>
       {reviewPrompt && (
         <details style={{ color: tokens.darkText, padding: "14px 20px", maxHeight: "48vh", overflow: "auto", flexShrink: 0 }} open>
           <summary>代码审阅任务与报告回传</summary>

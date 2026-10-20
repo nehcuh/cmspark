@@ -11,6 +11,14 @@ function cpuModule(rel: string, globals: Record<string, unknown>) {
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText + inspect, { exports, ...globals }, { timeout: 1000 })
   return exports as any
 }
+// Newly imported pure production tail/policy helpers stay source-coupled;
+// no placeholder consent implementation or weakened existing assertions.
+function tailModule() {
+  return cpuModule("pty/tail.ts", { Buffer, require(id: string) {
+    if (id === "../llm/text-sanitize") return cpuModule("llm/text-sanitize.ts", {})
+    throw Error("UNADMITTED_TAIL_IMPORT")
+  } })
+}
 function fixture() {
   const frames: any[] = [], beats: Array<() => void> = []
   let clock = 100, output: ((text: string) => void) | undefined, exit: ((data: unknown) => void) | undefined
@@ -22,6 +30,7 @@ function fixture() {
     process: { platform: "darwin", env: {}, on() {}, kill: deny },
     setInterval: (fn: () => void) => { beats.push(fn); return { unref() {} } }, clearInterval() {},
     require(id: string) {
+      if (id === "./tail") return tailModule()
       if (id === "./windows-tree") return { killWindowsPtyTree: deny }
       if (id === "node:path") return path.posix
       if (id === "../packs/audit-log") return { appendCapabilityAudit() {} }
@@ -91,15 +100,18 @@ test("#724 diagnostic counters saturate without changing flow and uncertain mono
 function handlerFixture(kind: "local_shell" | "embedded_agent", surface = "panel", approve = true) {
   let intent: any = kind === "embedded_agent" ? { file: "/inert/agent", args: [], cwd: "/inert" } : null
   let spawns = 0
+  const real = fixture(); real.pty.__testSetPtyPlatform("win32")
   const owner = { readyState: 1 }
   const handler = cpuModule("pty/handler.ts", { require(id: string) {
+    if (id === "./tail") return tailModule()
+    if (id === "../tool/plan-readonly") return cpuModule("tool/plan-readonly.ts", {})
     if (id === "../config") return { getConfig: () => ({ embedded_terminal: { enabled: true } }) }
     if (id === "../code-review/service") return { CodeReviewService: class {} }
     if (id === "../code-review/report") return {}
     if (id === "path") return path.posix
     if (id === "../acp/open-local-terminal") return { peekEmbedIntent: () => intent, takeEmbedIntent: () => { const value = intent; intent = null; return value }, sameEmbedIntent: (a: unknown, b: unknown) => a === b, recordEmbedIntent() {} }
     if (id === "./cwd") return { resolveTerminalStartCwd: () => ({ ok: true, cwd: "/inert" }) }
-    if (id === "./session") return { ptyHostPlatform: () => "win32", spawnPtySession: () => { spawns++; return { ok: true, pid: 0 } } }
+    if (id === "./session") return { ...real.pty, spawnPtySession: (opts: any) => { spawns++; return real.pty.spawnPtySession(opts) } }
     throw Error("UNADMITTED_HANDLER_IMPORT")
   } })
   return { open: () => handler.handleTerminalMessage("terminal.open", { id: "owned", user_gesture: true, thread_id: "thread", launch_kind: "FORGED", argv: undefined }, { threadManager: { get: () => ({ workspace_root: "/inert" }) } },

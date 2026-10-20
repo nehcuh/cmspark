@@ -9,6 +9,8 @@ import { peekEmbedIntent, recordEmbedIntent, sameEmbedIntent, takeEmbedIntent } 
 import { resolveTerminalStartCwd } from "./cwd"
 import {
   ackPty,
+  approvePtyTailRead,
+  readPtyTail,
   closePty,
   INVALID_PTY_OPTS,
   pausePty,
@@ -20,6 +22,9 @@ import {
   ptyHostPlatform,
   getOwnedPtyContext,
 } from "./session"
+
+import { TERMINAL_TAIL_DISCLOSURE } from "./tail"
+import { resolveEffectiveExecutionPolicy } from "../tool/plan-readonly"
 
 type Services = { threadManager: ThreadManager }
 type Session = {
@@ -137,8 +142,8 @@ export async function handleTerminalMessage(
         toolName: "terminal.open",
         dangerousApis: ["pty", "shell"],
         code: embedIntent && embedArgs
-          ? `open embedded PTY cwd=${cwdRes.cwd}\n本机内嵌终端将运行 Agent：${path.basename(embedIntent.file)}（参数 ${embedArgs.length} 个）；该 Agent 可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}`
-          : `open login PTY cwd=${cwdRes.cwd}\n本机用户 shell，可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}`,
+          ? `open embedded PTY cwd=${cwdRes.cwd}\n本机内嵌终端将运行 Agent：${path.basename(embedIntent.file)}（参数 ${embedArgs.length} 个）；该 Agent 可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}\n${TERMINAL_TAIL_DISCLOSURE}`
+          : `open login PTY cwd=${cwdRes.cwd}\n本机用户 shell，可读取用户 Agent 登录配置和环境；非只读沙箱。${review ? `\nreview=${reviewId}\nrepository=${review.repository}\nbase=${review.base}\nhead=${review.head}` : ""}\n${TERMINAL_TAIL_DISCLOSURE}`,
       })
     } catch { return deny("TERMINAL_CONFIRMATION_FAILED", { id }) }
     finally { if (pendingOpen === pending) pendingOpen = null }
@@ -253,6 +258,8 @@ export async function handleTerminalMessage(
       }
       return deny(spawned.error)
     }
+    // Private eligibility belongs only to this successful, actually disclosed-approved live object.
+    approvePtyTailRead(id, session.originWs)
     // #584: 如实上报宿主平台（写死 "darwin" 在 win32 opened 帧上是假话）；
     // ConPTY 的子进程在 spawn 返回后才创建——pid 为 0（未知）时如实缺省，
     // 不上报假 pid（wire 侧已容忍缺省）。
@@ -270,10 +277,18 @@ export async function handleTerminalMessage(
   if (!id) return deny(`${type} requires id`)
   const context = getOwnedPtyContext(id, session?.originWs)
   if (!context) return deny("TERMINAL_SESSION_NOT_OWNED", { id })
+  if (type === "terminal.tail.read") {
+    // Explicit local human snapshot only; no heartbeat refresh or model push.
+    const thread = context.threadId ? services.threadManager.get(context.threadId) : null
+    if (!context.threadId || !thread || thread.agent_role === "worker" || resolveEffectiveExecutionPolicy(context.threadId, id => services.threadManager.get(id)) === "plan_readonly") return deny("TERMINAL_TAIL_UNAVAILABLE", { id })
+    return { type: "terminal.tail", id, result: readPtyTail(id, session?.originWs, context.threadId) }
+  }
+
   if (context.threadId) {
     const thread = services.threadManager.get(context.threadId)
     if (!thread || thread.execution_policy === "plan_readonly") { closePty(id); return deny("TERMINAL_CONTEXT_CHANGED", { id }) }
   }
+
 
   if (type === "terminal.review.submit") {
     if (!context.threadId || !context.reviewId || rest.user_gesture !== true || !session?.requestConfirmation) return deny("CODE_REPORT_BOUND_CONFIRMATION_REQUIRED", { id })
