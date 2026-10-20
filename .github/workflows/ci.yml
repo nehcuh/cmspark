@@ -685,3 +685,6 @@ jobs:
           path: .
       - name: Actual daemon restart and native SidePanel reload (#732)
         run: node chrome-extension/scripts/accept-acp-history-hosted-732.mjs
+      - name: One supplier A/B causal experiment (#732; no business bypass)
+        if: always()
+        run: node chrome-extension/scripts/diagnose-acp-history-supplier-ab-732.mjs
