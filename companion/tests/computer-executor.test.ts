@@ -228,6 +228,8 @@ function makeDeps(overrides: Partial<ComputerExecutorDeps> = {}): ComputerExecut
     config: testConfig(),
     now: () => 1000000,
     sleep: async () => {},
+    // Fake capture paths have no files; explicit cleanup overrides stay authoritative.
+    removeFile: async () => {},
     ...overrides,
   }
 }

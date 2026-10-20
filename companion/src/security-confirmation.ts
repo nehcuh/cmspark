@@ -224,6 +224,13 @@ export type SecurityConfirmationTerminalListener = (
 
 export class SecurityConfirmationManager {
   private pending = new Map<string, PendingConfirmation>()
+  // D3 server-only provenance. JSON/decision lookalikes and privileged tray
+  // respond() never acquire this fact; no new response/wire field.
+  private originApprovals = new WeakMap<object, WebSocket>()
+
+  isOriginApproval(decision: SecurityConfirmationDecision, socket: WebSocket): boolean {
+    return this.originApprovals.get(decision) === socket
+  }
   /**
    * N5: optional multi-surface fan-out hook (HUD stdin, tray cancelConfirm, …).
    * Invoked exactly once per confirmation that reaches a terminal decision.
@@ -531,6 +538,9 @@ export class SecurityConfirmationManager {
               .filter((s) => s.pack_id && pending.expertTeamPackIds!.includes(s.pack_id)),
           }
         : {}),
+    }
+    if (approved && pending.originWs !== undefined && pending.originWs === sourceWs) {
+      this.originApprovals.set(decision, sourceWs)
     }
     pending.resolve(decision)
     this.fireTerminal(decision)

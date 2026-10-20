@@ -345,3 +345,10 @@ The unshipped Windows acceptance variant observes the exact blocked top-level na
 `node-pty-worker-retire-725.test.ts` 用锁定 beta.15 的真实 Windows JS 与实际 PTY session 函数、惰性 native/socket/worker 边界核对自然退出后的 worker 退休；这不是本机 PTY/Windows 验收。上游 JS 保留 MIT 版权和来源，x64/arm64 原包分别按 companion lock integrity 校准。补丁只在 `_cleanUpProcess` 的原输出 destroy 后调用既有 retained output-worker dispose，沿用原始 flush/terminate；不在退出后调用数值 PID kill，不证明所有 HPCON 已释放，pre-ready deferred kill 仍单独待核。
 
 正常 companion postinstall 与两个 Windows 打包入口使用同一精确源码补丁。非 Windows 不查询 native 包；正常安装无 optional PTY 包/不支持架构时报告 NOT_INSTALLED/NOT_SUPPORTED 并保留原终端不可用降级。Windows 打包必须有匹配包且修正成功，完整真实 companion lock 的独立读取上限为256KiB；package/source 文件仍各128KiB，均完整读取且不截断。未知版本/完整性/源码、别名/身份替换或不完整写入均拒绝。受控 CPU 不能替代新 head 的原两条真实 PTY 测试、20s/6s/45s 原预算和完整 canonical；当前长时间 pending 的具体原因仍 UNKNOWN，不以本修正假定历史根因。
+
+
+### #723 D3 同连接只读同意候选
+
+`companion/tests/computer-readonly-session-723.test.ts` 沿实际普通chat evidence binder→whole server executor→真实ThreadManager/L2/confirmation manager/token，验证首次deny、真实origin批准后复用/fresh token、privileged同形不授信、重连/subject ABA/取消/失权/失败清理及单连接pending接续；另实际executor→原dispatch广播→focus producer验证presentation-only started标记、混入注入/paused/首次heavy/nonce原行为。捕获/OCR/证据等OS边界仅inert DI，既有45秒/权限/注入G1不改；限率用独立账户和原常量，失败捕获也计。受控CPU不是人工批准、真实浏览器或Windows native。
+
+首次确认可见范围明确为当前认证扩展端点/对话/App，仅全describe/screenshot/wait；无新TTL/具名Chrome profile证明，不借G1跨重连。D2 HWND正身份/双帧mask仍未完成；D1真实Windows及发布head/main的实际门禁继续独立，不能由本测试关闭whole723。

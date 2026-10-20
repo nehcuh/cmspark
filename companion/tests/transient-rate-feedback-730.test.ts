@@ -8,6 +8,7 @@ import path from "node:path"
 import vm from "node:vm"
 import crypto from "node:crypto"
 import ts from "typescript"
+import { readonlyComputerDraft } from "../src/computer/readonly-session"
 
 const root = path.resolve(__dirname, "../../src")
 function source(file: string) {
@@ -89,6 +90,7 @@ function fixture(count = 30, busy = false, policyOff = false) {
     "../acp/taint": { isAcpHandbackTainted: () => false },
   }
   const admission = compile(admissionCode, {
+    readonlyComputerDraft,
     ComputerError: types.ComputerError, os: { platform: () => "darwin" }, WebSocket: { OPEN: 1 },
     getConfig: () => config, getComputerTaskAbortRegistry: () => active,
     logger: { info() {}, warn() {} }, familyOfTool: () => null, detectCriticalApis: () => [],

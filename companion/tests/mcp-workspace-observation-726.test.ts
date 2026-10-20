@@ -32,7 +32,8 @@ function actualThreadManager(initial: any = { id: "A", agent_role: "normal", mcp
   const method = (name: string, optional = false) => node(file, (n, sf) => ts.isMethodDeclaration(n) && n.name.getText(sf) === name, optional)
   const ownerField = node(file, (n, sf) => ts.isPropertyDeclaration(n) && n.name.getText(sf) === "mcpObservationOwners", true)
   const clock = node(file, n => ts.isFunctionDeclaration(n) && n.name?.text === "monotonicTimestamp")
-  const members = [ownerField, ...["update", "applyPackPatch", "create", "delete", "sanitizeId", "sanitizeAlias", "isSafeThreadId"].map(n => method(n)), method("getMcpObservationOwner", true)].join("\n")
+  const readOwnerField = node(file, (n, sf) => ts.isPropertyDeclaration(n) && n.name.getText(sf) === "computerReadOwners", true)
+  const members = [ownerField, readOwnerField, ...["update", "applyPackPatch", "create", "delete", "sanitizeId", "sanitizeAlias", "isSafeThreadId"].map(n => method(n)), method("getMcpObservationOwner", true)].join("\n")
   let saves = 0, saveFailure = false; const files = new Map<string, any>()
   const C = compile(`let _lastTs=0;${clock};export class ThreadManager {${members}}`, { seedRunProgress: () => ({ items: [] }), validateConfigOverride: (v: any) => ({ valid: true, sanitized: v }), atomicWriteJSON: (p: string, v: any) => files.set(p, v), fs: { unlinkSync: (p: string) => files.delete(p) }, removeAttachmentsDir() {} }).ThreadManager
   const tm = new C(); Object.assign(tm, { index: { threads: [initial] }, liveMirrors: new Map(), get(id: string) { return this.index.threads.find((t: any) => t.id === id) }, saveIndex() { saves++; if (saveFailure) throw Error("OWNED_SAVE_FAILURE") }, threadFilePath: (id: string) => "/inert/" + id })
