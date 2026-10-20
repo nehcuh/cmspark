@@ -83,13 +83,34 @@ export function loadedExpression(tabId,url,ms,operation='current') {
     else chrome.tabs.get(id).then(check,()=>done(true))
   })}.toString()})(${tabId},${JSON.stringify(url)},${ms},${JSON.stringify(operation)})`
 }
-export function choosePanel(before,after,url,debugTargets) {
-  const prior=new Set(before.map(t=>t.targetId))
-  const anchors=before.filter(t=>t.url===url&&debugTargets.some(d=>d.id===t.targetId&&Number.isSafeInteger(d.tabId)))
+export function choosePanel(before,after,url,debugTargets,pairingTab) {
+  if(pairingTab!==undefined&&(!Number.isSafeInteger(pairingTab)||pairingTab<0)||!Array.isArray(before)||!Array.isArray(after)||!Array.isArray(debugTargets))fail()
+  const unique=(rows,key)=>{const map=new Map();for(const row of rows){if(!row||typeof row[key]!=='string'||!row[key]||map.has(row[key]))fail();map.set(row[key],row)}return map}
+  const prior=unique(before,'targetId'),cdp=unique(after,'targetId'),debug=unique(debugTargets,'id')
+  const anchors=before.filter(t=>t.type==='page'&&t.url===url&&Number.isSafeInteger(debug.get(t.targetId)?.tabId)&&debug.get(t.targetId).tabId>=0&&(pairingTab===undefined||debug.get(t.targetId).tabId===pairingTab))
   if(anchors.length!==1)fail()
-  const matches=after.filter(t=>!prior.has(t.targetId)&&t.url===url&&t.browserContextId===anchors[0].browserContextId&&debugTargets.some(d=>d.id===t.targetId&&d.tabId===undefined&&d.url===url))
-  if(matches.length!==1)fail()
-  return matches[0].targetId
+  const anchor=anchors[0],profile=anchor.browserContextId,pair=cdp.get(anchor.targetId),extensionId=url.split('/')[2]
+  if(typeof profile!=='string'||!profile||!pair||pair.type!=='page'||pair.url!==url||pair.browserContextId!==profile)fail()
+  const nativeCandidates=[],cdpCandidates=[]
+  for(const d of debugTargets){
+    if(d.type!=='page'||d.url!==url||d.tabId!==undefined)continue
+    const t=cdp.get(d.id)
+    if(d.extensionId!==extensionId||!t||t.type!=='page'||t.url!==url||t.browserContextId!==profile)fail()
+    nativeCandidates.push(d.id)
+  }
+  for(const t of after){
+    if(t.type!=='page'||t.url!==url)continue
+    if(typeof t.browserContextId!=='string'||!t.browserContextId)fail()
+    if(t.browserContextId!==profile)continue
+    const d=debug.get(t.targetId)
+    if(!d||d.type!=='page'||d.url!==url)fail()
+    if(d.tabId!==undefined){if(!Number.isSafeInteger(d.tabId)||d.tabId<0||d.extensionId!==undefined)fail();continue}
+    if(d.extensionId!==extensionId)fail()
+    cdpCandidates.push(t.targetId)
+  }
+  // Count the complete joint set, including a same-URL popup that predates open.
+  if(nativeCandidates.length!==1||cdpCandidates.length!==1||nativeCandidates[0]!==cdpCandidates[0]||prior.has(cdpCandidates[0]))fail()
+  return cdpCandidates[0]
 }
 // Serialized into the owned real extension worker. These witnesses never enter
 // production messages/storage and caller-provided IDs are not sender proof.
@@ -119,7 +140,7 @@ export async function installNativePanelWitness(api,scope,spec) {
     if(!Array.isArray(rows)||rows.length!==1)refuse()
     const row=rows[0],uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value)
     if(row.contextType!=='SIDE_PANEL'||row.documentUrl!==spec.url||row.documentOrigin!==origin||row.incognito!==false||
-      row.tabId!==-1||row.frameId!==0||!uuid(row.contextId)||!uuid(row.documentId)||(row.windowId!==-1&&row.windowId!==spec.windowId))refuse()
+      row.tabId!==-1||row.frameId!==0||!uuid(row.contextId)||typeof row.documentId!=='string'||!/^[0-9A-F]{32}$/.test(row.documentId)||/^0{32}$/.test(row.documentId)||(row.windowId!==-1&&row.windowId!==spec.windowId))refuse()
     return Object.freeze({contextId:row.contextId,documentId:row.documentId,frameId:row.frameId})
   }
   const same=(a,b)=>a.contextId===b.contextId&&a.documentId===b.documentId&&a.frameId===b.frameId
@@ -137,10 +158,12 @@ export async function installNativePanelWitness(api,scope,spec) {
     try{
       current();if(opened!==1||!context||port)refuse()
       port=incoming;port.onDisconnect.addListener(disconnected)
-      // The native Chrome Port supplies sender; no message body supplies it.
+      // Fixed155 non-tab Ports have id/url/origin, but no native document fields.
+      // This is secondary endpoint evidence; the complete joint target/context
+      // and CDP document continuity proof is enforced by openNativePanel.
       const sender=port.sender
-      if(sender?.id!==extensionId||sender.url!==spec.url||sender.origin!==origin||sender.frameId!==context.frameId||
-        sender.documentId!==context.documentId||sender.documentLifecycle!=='active'||sender.tab!==undefined)refuse()
+      if(!sender||typeof sender!=='object'||sender.id!==extensionId||sender.url!==spec.url||sender.origin!==origin||
+        ['tab','frameId','documentId','documentLifecycle'].some(field=>field in sender))refuse()
       const captured=port;await recheck();current();if(port!==captured)refuse()
       bound=true
     }catch{if(incoming!==port)try{incoming.disconnect()}catch{};bad()}
@@ -173,25 +196,52 @@ export async function openNativePanel(io) {
   const key='__cmsparkPanel732_'+nonce,name='cmspark-panel-proof732-'+nonce,ms=remaining(),deadline=Date.now()+ms
   if(!Number.isInteger(ms)||ms<=0||ms>BOUNDS.navigation)fail()
   const left=()=>{const n=Math.min(remaining(),deadline-Date.now());if(n<=0)fail();return n}
-  let view,installed=false,targetAttempted=false
+  let view,installed=false,targetAttempted=false,invalid=false,frame,panelId,opened,ownedWindow,accepted=false
+  const observers=[],current=()=>{left();if(invalid||view&&view.closed!==false)fail()},invalidate=()=>{invalid=true}
   const inspect=()=>worker.evaluate(`globalThis[${JSON.stringify(key)}].snapshot()`,left())
   try{
     const record=await worker.evaluate(`chrome.tabs.get(${tab}).then(t=>({id:t.id,windowId:t.windowId,url:t.url,incognito:t.incognito}))`,left())
     if(record?.id!==tab||record.url!==url||record.incognito!==false||!Number.isSafeInteger(record.windowId)||record.windowId<0)fail()
-    const spec={key,port:name,url,windowId:record.windowId,ms:left()}
+    ownedWindow=record.windowId
+    const spec={key,port:name,url,windowId:ownedWindow,ms:left()}
     installed=true
     await worker.evaluate(`(${installNativePanelWitness.toString()})(chrome,globalThis,${JSON.stringify(spec)})`,left())
     await pairingView.evaluate(`chrome.sidePanel.open({windowId:${record.windowId}})`,left(),true)
-    const opened=await poll(async()=>{const value=await inspect();return value.state==='opened'?value:false},left())
-    const panelId=await poll(async()=>{
-      const debug=await worker.evaluate('chrome.debugger.getTargets()',left()),list=await targets()
-      try{const id=choosePanel(before,list,url,debug),matches=debug.filter(d=>d.id===id&&d.type==='page'&&d.extensionId===url.split('/')[2]&&d.tabId===undefined&&d.url===url);return matches.length===1?id:false}catch{return false}
-    },left())
-    const socket=await limit(targetSocket(panelId),left());view=await limit(connect(socket),left())
+    opened=await poll(async()=>{const value=await inspect();return value.state==='opened'?value:false},left())
+    const sameNative=value=>value.contextId===opened.contextId&&value.documentId===opened.documentId&&value.frameId===opened.frameId
+    const native=async state=>{current();const value=await inspect();current();if(!sameNative(value)||state&&value.state!==state)fail();return value}
+    const joint=async()=>{
+      current();await native();const debug=await worker.evaluate('chrome.debugger.getTargets()',left());current()
+      const list=await targets();current();const selected=choosePanel(before,list,url,debug,tab)
+      await native();current();if(panelId!==undefined&&selected!==panelId)fail();return selected
+    }
+    panelId=await joint();current()
+    const socket=await limit(targetSocket(panelId),left());current();await native()
+    view=await limit(connect(socket),left());current()
+    // These listeners belong only to this temporary owned CDP client. A later
+    // return to the old URL/loader/token cannot clear an observed transition.
+    const watch=(name,fn=invalidate)=>{const off=view.on(name,fn);if(typeof off!=='function')fail();observers.push(off)}
+    watch('Page.frameNavigated',p=>{if(!p.frame?.parentId)invalidate()})
+    for(const event of ['Page.frameDetached','Page.frameStartedNavigating','Page.navigatedWithinDocument'])watch(event,p=>{if(!frame||p.frameId===frame.id)invalidate()})
+    for(const event of ['Runtime.executionContextsCleared','Runtime.executionContextDestroyed','Inspector.detached'])watch(event)
+    await view.call('Page.enable',{},left());current();await native()
+    await view.call('Runtime.enable',{},left());current();await native()
+    const document=async()=>{
+      current();const result=await view.call('Page.getFrameTree',{},left());current();const f=result?.frameTree?.frame
+      if(!f||f.parentId||f.url!==url||typeof f.id!=='string'||!f.id||typeof f.loaderId!=='string'||!f.loaderId)fail()
+      const value={id:f.id,loaderId:f.loaderId,url:f.url}
+      if(frame&&(value.id!==frame.id||value.loaderId!==frame.loaderId||value.url!==frame.url))fail()
+      return value
+    }
+    frame=await document();await native();current()
+    const stable=async state=>{await native(state);await joint();await document();await native(state);current()}
+    await stable('opened');current()
     targetAttempted=true
     await view.evaluate(`(${connectNativePanelWitness.toString()})(chrome,globalThis,${JSON.stringify(key)},${JSON.stringify(name)},${deadline})`,left())
-    const bound=await poll(async()=>{const value=await inspect();return value.state==='bound'?value:false},left())
-    if(bound.contextId!==opened.contextId||bound.documentId!==opened.documentId||bound.frameId!==opened.frameId)fail()
+    current()
+    const bound=await poll(async()=>{current();const value=await inspect();current();return value.state==='bound'?value:false},left())
+    if(!sameNative(bound))fail()
+    await stable('bound');current();accepted=true
     return view
   }finally{
     // Remote timer uses the same phase deadline; original outer cleanup still
@@ -201,6 +251,24 @@ export async function openNativePanel(io) {
     // namespace; it is not an authorization proof against hostile realm code.
     if(installed)try{if(await worker.evaluate(`(()=>{const d=Object.getOwnPropertyDescriptor(globalThis,${JSON.stringify(key+'_cleanup')});if(!d)return true;if(!Object.hasOwn(d,'value')||!d.value||!Object.isFrozen(d.value))throw Error('OWNED_PANEL_CLEANUP_REFUSED');const r=Object.getOwnPropertyDescriptor(d.value,'request'),c=Object.getOwnPropertyDescriptor(d.value,'close');if(!r||!Object.hasOwn(r,'value')||r.value!==${JSON.stringify(key)}||!c||!Object.hasOwn(c,'value')||typeof c.value!=='function')throw Error('OWNED_PANEL_CLEANUP_REFUSED');return c.value()})()`,left())!==true)clean=false}catch{clean=false}
     if(targetAttempted)try{if(await view.evaluate(`(()=>{const d=Object.getOwnPropertyDescriptor(globalThis,${JSON.stringify(key+'_cleanup')});if(!d)return true;if(!Object.hasOwn(d,'value')||!d.value||!Object.isFrozen(d.value))throw Error('OWNED_PANEL_CLEANUP_REFUSED');const r=Object.getOwnPropertyDescriptor(d.value,'request'),c=Object.getOwnPropertyDescriptor(d.value,'close');if(!r||!Object.hasOwn(r,'value')||r.value!==${JSON.stringify(key)}||!c||!Object.hasOwn(c,'value')||typeof c.value!=='function')throw Error('OWNED_PANEL_CLEANUP_REFUSED');return c.value()})()`,left())!==true)clean=false}catch{clean=false}
+    if(accepted)try{
+      // Retirement itself awaits two remote acknowledgements. Keep the event
+      // latch installed and validate the native/joint/document proof again
+      // after those effects, before returning the still-owned CDP client.
+      const filter={contextTypes:['SIDE_PANEL'],documentUrls:[url],documentOrigins:['chrome-extension://'+url.split('/')[2]]}
+      const finalNative=async()=>{
+        current();const rows=await worker.evaluate(`chrome.runtime.getContexts(${JSON.stringify(filter)})`,left());current()
+        if(!Array.isArray(rows)||rows.length!==1)fail();const row=rows[0]
+        if(row.contextType!=='SIDE_PANEL'||row.documentUrl!==url||row.documentOrigin!==filter.documentOrigins[0]||row.incognito!==false||row.tabId!==-1||row.frameId!==opened.frameId||row.contextId!==opened.contextId||row.documentId!==opened.documentId||(row.windowId!==-1&&row.windowId!==ownedWindow))fail()
+      }
+      await finalNative();const debug=await worker.evaluate('chrome.debugger.getTargets()',left());current()
+      const list=await targets();current();if(choosePanel(before,list,url,debug,tab)!==panelId)fail()
+      const result=await view.call('Page.getFrameTree',{},left());current();const f=result?.frameTree?.frame
+      if(!f||f.parentId||f.id!==frame.id||f.loaderId!==frame.loaderId||f.url!==frame.url)fail()
+      await finalNative();current()
+    }catch{clean=false}
+    try{current()}catch{clean=false}
+    for(const off of observers)try{off()}catch{clean=false}
     if(!clean)fail()
   }
 }

@@ -49,3 +49,7 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 - 修改生产函数依赖后，检查删除 import 后执行函数的 VM/AST/readFile 消费者。真实依赖须同时进入消费端 import 和 VM globals；只跑被修改函数的测试会漏掉旧消费端的 ReferenceError。#723 的 `transient-rate-feedback-730` 回归保留了这个失败。
 - 前台就绪必须核最后一个可能改变激活的操作。WPF 最小化会调用 SW_MINIMIZE，API 允许激活下一顶层窗口；先激活另窗再最小化不能证明最终前台仍是另窗。当前修复候选只调整原操作顺序，CPU 正负控不冒真实 Windows 验收，也不证明历史唯一原因。禁止补救焦点或放松前台断言。
 - 首条 worker 消息的 schema 与终止路径先查真实 producer：font-cache 消息没有 `ok` 字段，observer 的 false 不等字体失败；`finally` 主动 terminate 后的非零 exit 也不单独证明崩溃。冷启动耗时的物理原因未证实时保留 UNKNOWN。
+
+## Chrome 原生 DTO 与完整集合证明
+
+同名或说明中同称 UUID 的字段不保证同一序列化形状。先逐字段追固定版本的实际 producer → serializer → consumer，再生成正负 fixture：Chromium 155 的 contextId、documentId 与非 tab Port.sender 分属不同域，不能手工拼成一个不存在的“完整回执”。原生枚举的完整集合也不能在计数前丢掉旧候选；两个未知 profile 的相等不是已知同源正证。源派生 CPU 控制仍不是浏览器实测，也不解释所有历史 UNKNOWN；变更后的原完整业务和真实原生门继续保留。

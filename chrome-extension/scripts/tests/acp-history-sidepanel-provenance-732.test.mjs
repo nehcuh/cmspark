@@ -3,12 +3,21 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import fs from 'node:fs'
-import {openNativePanel,choosePanel,installNativePanelWitness} from '../accept-acp-history-hosted-732.mjs'
+import {openNativePanel,choosePanel,installNativePanelWitness,CDP} from '../accept-acp-history-hosted-732.mjs'
 const id='a'.repeat(32),url='chrome-extension://'+id+'/sidepanel.html',nonce='b'.repeat(32),key='__cmsparkPanel732_'+nonce,cleanupKey=key+'_cleanup'
-const documentId='11111111-1111-4111-8111-111111111111',contextId='22222222-2222-4222-8222-222222222222'
+// Fixed CFT155 native producer domains: runtime_api.cc:1032–1042 separates
+// context UUID from DocumentId=UnguessableToken; base/token.cc:33 uses two
+// uppercase %016PRIX64 halves. This is source-derived CPU data, not a recording.
+const nativeDocumentId=(high,low)=>[high,low].map(n=>n.toString(16).toUpperCase().padStart(16,'0')).join('')
+const documentId=nativeDocumentId(0x0123456789ABCDEFn,0xFEDCBA9876543210n),contextId='22222222-2222-4222-8222-222222222222'
+// message_service.cc:620–648 leaves the non-tab normal-extension FrameData
+// default; native_renderer_messaging_service.cc:650–658 omits all three fields.
+const nativeNonTabSender=()=>({id,url,origin:'chrome-extension://'+id})
 class ChromeEvent {listeners=new Set();addListener(fn){this.listeners.add(fn)}removeListener(fn){this.listeners.delete(fn)}emit(value){for(const fn of [...this.listeners])fn(value)}}
 function fixture(fault='none') {
-  let now=Date.now(),ends=now+1000,opens=0,connected=0,reads=0,opened=false,portPhase=false
+  let now=Date.now(),ends=now+1000,opens=0,connected=0,reads=0,frameReads=0,finalNativeReads=0,opened=false,portPhase=false
+  const viewEvents=new Map(),emit=(name,value={})=>{for(const fn of [...(viewEvents.get(name)||[])])fn(value)}
+  const frame={id:'owned-main-frame',loaderId:'owned-loader',url}
   const timers=new Map(),clock={now:()=>now},schedule=(fn,ms)=>{const token={};timers.set(token,{fn,at:now+ms});return token},cancel=token=>timers.delete(token)
   const advance=ms=>{now+=ms;for(const [token,timer]of [...timers])if(timer.at<=now){timers.delete(token);timer.fn()}}
   const onOpened=new ChromeEvent(),onConnect=new ChromeEvent(),ports=[]
@@ -22,7 +31,12 @@ function fixture(fault='none') {
     if(fault==='context-origin')result.documentOrigin='chrome-extension://'+'c'.repeat(32)
     if(fault==='context-frame')result.frameId=1
     if(fault==='context-incognito')result.incognito=true
-    if(fault==='replacement'&&portPhase)result.documentId='33333333-3333-4333-8333-333333333333'
+    if(fault==='context-id-after-port'&&portPhase)result.contextId='33333333-3333-4333-8333-333333333333'
+    if(fault==='replacement'&&portPhase||fault==='document-before-port'&&frameReads||fault==='document-after-port'&&portPhase)result.documentId=nativeDocumentId(3n,4n)
+    if(fault==='legacy-document-uuid')result.documentId='11111111-1111-4111-8111-111111111111'
+    if(fault==='lower-document')result.documentId=documentId.toLowerCase()
+    if(fault==='zero-document')result.documentId='0'.repeat(32)
+    if(fault==='missing-context')return []
     return fault==='duplicate-context'?[result,{...result}]:[result]
   }
   // Chromium's native onOpened serializes GURL::path(), including the leading
@@ -40,13 +54,18 @@ function fixture(fault='none') {
     if(fault==='tab-specific')event.tabId=7
     onOpened.emit(event);if(fault==='duplicate-event')onOpened.emit(event)
   }},tabs:{get:async tab=>({id:tab,windowId:9,url,incognito:false})},debugger:{getTargets:async()=>[
-    {id:'pair',type:'page',url,tabId:7},{id:'candidate',type:'page',url,extensionId:id,...(fault==='normal-tab'?{tabId:8}:{})},
+    {id:'pair',type:'page',url,tabId:7},{id:portPhase&&fault==='target-after-port'?'replacement':'candidate',type:'page',url,extensionId:fault==='target-extension'?'c'.repeat(32):id,...(fault==='normal-tab'?{tabId:8}:{})},
+    ...(fault==='old-popup'?[{id:'old-popup',type:'page',url,extensionId:id}]:[]),
+    ...(fault==='debugger-extra'?[{id:'extra',type:'page',url,extensionId:id}]:[]),
   ]}}
   const targetChrome={runtime:{connect:({name})=>{
     connected++;portPhase=true
-    const sender={id,url,origin:'chrome-extension://'+id,documentId,documentLifecycle:'active',frameId:0}
+    const sender=nativeNonTabSender()
     if(fault==='foreign-sender')sender.id='c'.repeat(32)
-    if(fault==='wrong-document')sender.documentId='44444444-4444-4444-8444-444444444444'
+    if(fault==='wrong-document')sender.documentId=nativeDocumentId(4n,5n)
+    if(fault==='sender-origin')sender.origin='chrome-extension://'+'c'.repeat(32)
+    if(fault==='sender-url')sender.url=new URL('other.html',url).href
+    if(fault==='legacy-port-fields')Object.assign(sender,{documentId,documentLifecycle:'active',frameId:0})
     if(fault==='tab-sender')sender.tab={id:7}
     if(fault==='inactive-sender')sender.documentLifecycle='cached'
     if(fault==='sender-frame')sender.frameId=1
@@ -59,15 +78,41 @@ function fixture(fault='none') {
   }}}
   const realm=api=>vm.createContext({chrome:api,Date:clock,setTimeout:schedule,clearTimeout:cancel}),workerRealm=realm(chrome),pairRealm=realm(chrome),targetRealm=realm(targetChrome)
   const execute=(context,expression)=>vm.runInContext(expression,context,{timeout:1000})
-  const worker={evaluate:async expression=>execute(workerRealm,expression)},pairingView={evaluate:async(expression,ms,gesture)=>{assert.equal(gesture,true);assert.match(expression,/^chrome\.sidePanel\.open\(\{windowId:9\}\)$/);return execute(pairRealm,expression)}}
-  const view={evaluate:async expression=>execute(targetRealm,expression)},anchor={targetId:'pair',url,browserContextId:'own'},candidate={targetId:'candidate',url,browserContextId:'own'}
+  const worker={evaluate:async expression=>{const value=await execute(workerRealm,expression);if(expression.startsWith('chrome.runtime.getContexts(')&&++finalNativeReads===2&&fault==='late-client-close')CDP.prototype.abort.call(view);if(fault==='late-return-navigation'&&portPhase&&frameReads>=4)emit('Page.frameNavigated',{frame:{...frame,loaderId:'late-loader'}});return value}},pairingView={evaluate:async(expression,ms,gesture)=>{assert.equal(gesture,true);assert.match(expression,/^chrome\.sidePanel\.open\(\{windowId:9\}\)$/);return execute(pairRealm,expression)}}
+  const view={closed:false,pending:new Map(),events:viewEvents,socket:{terminate(){}},evaluate:async expression=>{
+    const result=await execute(targetRealm,expression)
+    if(expression.startsWith('(function connectNativePanelWitness(')){
+      if(fault==='navigation-after-port'||fault==='navigation-aba')emit('Page.frameNavigated',{frame:{...frame,loaderId:'new-loader'}})
+      if(fault==='navigation-aba')emit('Page.frameNavigated',{frame:{...frame}})
+      if(fault==='context-clear-after-port')emit('Runtime.executionContextsCleared')
+      if(fault==='context-destroy-after-port')emit('Runtime.executionContextDestroyed',{executionContextId:1})
+      if(fault==='detach-after-port')emit('Page.frameDetached',{frameId:frame.id})
+      if(fault==='inspector-detach-after-port')emit('Inspector.detached')
+      if(fault==='loader-after-port')frame.loaderId='changed-loader'
+      if(fault==='frame-id-after-port')frame.id='changed-frame'
+    }
+    if(fault==='cleanup-navigation'&&expression.startsWith('(()=>{const d=Object.getOwnPropertyDescriptor(globalThis,'))emit('Page.frameNavigated',{frame:{...frame,loaderId:'cleanup-navigation'}})
+    return result
+  },on:(name,fn)=>{let set=viewEvents.get(name);if(!set)viewEvents.set(name,set=new Set());set.add(fn);return()=>set.delete(fn)},call:async(method)=>{
+    if(method==='Page.enable'||method==='Runtime.enable')return {}
+    assert.equal(method,'Page.getFrameTree');frameReads++
+    if(fault==='navigation-before-port')emit('Page.frameNavigated',{frame:{...frame}})
+    if(fault==='wrong-frame-url')return {frameTree:{frame:{...frame,url:new URL('other.html',url).href}}}
+    if(fault==='missing-loader')return {frameTree:{frame:{...frame,loaderId:''}}}
+    return {frameTree:{frame:{...frame}}}
+  }},anchor={targetId:'pair',type:'page',url,browserContextId:'own'},candidate={targetId:'candidate',type:'page',url,browserContextId:'own'}
+  if(fault==='unknown-profile')delete anchor.browserContextId
+  if(fault==='wrong-profile')candidate.browserContextId='foreign'
+  if(fault==='missing-profile')delete candidate.browserContextId
+  const oldPopup={targetId:'old-popup',type:'page',url,browserContextId:'own'}
+  const currentTargets=()=>[{...anchor,...(fault==='pairing-profile-after-port'&&portPhase?{browserContextId:'foreign'}:{})},...(fault==='cdp-missing'||fault==='target-missing-after-port'&&portPhase?[]:[{...candidate,...(portPhase&&fault==='target-after-port'?{targetId:'replacement'}:{})}]),...(fault==='old-popup'?[oldPopup]:[]),...(fault==='cdp-extra'?[{targetId:'extra',type:'page',url,browserContextId:'own'}]:[])]
   const remaining=()=>{if(now>=ends)throw Error('OWNED_TEST_EXPIRED');return ends-now}
-  const io={worker,pairingView,tab:7,url,before:[anchor],targets:async()=>[anchor,candidate],targetSocket:async target=>{assert.equal(target,'candidate');return 'owned-inert'},connect:async()=>view,
+  const io={worker,pairingView,tab:7,url,before:[anchor,...(fault==='old-popup'?[oldPopup]:[])].map(row=>({...row})),targets:async()=>currentTargets(),targetSocket:async target=>{assert.equal(target,'candidate');return 'owned-inert'},connect:async()=>view,
     poll:async(fn,ms)=>{assert.ok(ms<=1000);for(let i=0;i<20;i++){const found=await fn();if(found)return found;await Promise.resolve()}advance(1001);throw Error('OWNED_TEST_EXPIRED')},remaining,nonce}
-  return {io,view,workerRealm,targetRealm,chrome,row,advance,ports,timers,onOpened,onConnect,counts:()=>({opens,connected,reads}),clean:()=>{assert.equal(onOpened.listeners.size,0);assert.equal(onConnect.listeners.size,0);assert.equal(Object.hasOwn(workerRealm,key),false);assert.equal(Object.hasOwn(workerRealm,cleanupKey),false);assert.equal(Object.hasOwn(targetRealm,key),false);assert.equal(Object.hasOwn(targetRealm,cleanupKey),false);for(const port of ports)assert.equal(port.closed(),true);assert.equal(timers.size,0)}}
+  return {io,view,workerRealm,targetRealm,chrome,row,advance,ports,timers,onOpened,onConnect,counts:()=>({opens,connected,reads,frameReads,finalNativeReads}),clean:()=>{assert.equal([...viewEvents.values()].every(set=>set.size===0),true);assert.equal(onOpened.listeners.size,0);assert.equal(onConnect.listeners.size,0);assert.equal(Object.hasOwn(workerRealm,key),false);assert.equal(Object.hasOwn(workerRealm,cleanupKey),false);assert.equal(Object.hasOwn(targetRealm,key),false);assert.equal(Object.hasOwn(targetRealm,cleanupKey),false);for(const port of ports)assert.equal(port.closed(),true);assert.equal(timers.size,0)}}
 }
 test('native SidePanel proof executes real serialized onOpened/context/sender lifecycle and closes all witness resources',async()=>{
-  const f=fixture();assert.equal(await openNativePanel(f.io),f.view);assert.equal(f.counts().opens,1);assert.equal(f.counts().connected,1);assert.ok(f.counts().reads>=4);f.clean()
+  const f=fixture();assert.equal(await openNativePanel(f.io),f.view);assert.equal(f.counts().opens,1);assert.equal(f.counts().connected,1);assert.ok(f.counts().reads>=4);assert.ok(f.counts().frameReads>=4);assert.equal(f.view.closed,false);f.clean()
 })
 for(const moment of ['before-effect','after-effect'])test('installation '+moment+' acknowledgement failure immediately retires only this request',async()=>{
   const f=fixture(),evaluate=f.io.worker.evaluate
@@ -182,13 +227,13 @@ for(const kind of ['object','function','wrong-request','accessor'])test('unknown
   const d=Object.getOwnPropertyDescriptor(f.targetRealm,cleanupKey);assert.equal(kind==='accessor'?d.get:d.value,kind==='accessor'?getter:foreign)
   delete f.targetRealm[cleanupKey];f.clean()
 })
-for(const fault of ['preexisting','wrong-window','wrong-path','relative-path','tab-specific','duplicate-event','context-tab','context-popup','context-window','context-origin','context-frame','context-incognito','duplicate-context','foreign-sender','wrong-document','tab-sender','inactive-sender','sender-frame','replacement','disconnect','late-port','no-event','open-reject','normal-tab'])test('native provenance refuses '+fault+' and retires the request-local listeners/port',async()=>{
-  const f=fixture(fault);await assert.rejects(openNativePanel(f.io));f.advance(1001);f.clean();assert.ok(f.counts().opens<=1)
+for(const fault of ['preexisting','wrong-window','wrong-path','relative-path','tab-specific','duplicate-event','context-tab','context-popup','context-window','context-origin','context-frame','context-incognito','duplicate-context','foreign-sender','wrong-document','tab-sender','inactive-sender','sender-frame','replacement','disconnect','late-port','no-event','open-reject','normal-tab','legacy-document-uuid','lower-document','zero-document','legacy-port-fields','sender-origin','sender-url','missing-context','old-popup','debugger-extra','cdp-extra','cdp-missing','unknown-profile','wrong-profile','missing-profile','target-extension','navigation-before-port','navigation-after-port','navigation-aba','context-clear-after-port','context-destroy-after-port','detach-after-port','inspector-detach-after-port','loader-after-port','wrong-frame-url','missing-loader','document-before-port','document-after-port','target-after-port','late-return-navigation','context-id-after-port','frame-id-after-port','target-missing-after-port','pairing-profile-after-port','cleanup-navigation','late-client-close'])test('native provenance refuses '+fault+' and retires the request-local listeners/port',async()=>{
+  const f=fixture(fault);await assert.rejects(openNativePanel(f.io));if(fault==='late-client-close'){assert.equal(f.view.closed,true);assert.equal(f.counts().finalNativeReads,2)}f.advance(1001);f.clean();assert.ok(f.counts().opens<=1)
   if(['preexisting','wrong-window','wrong-path','relative-path','tab-specific','duplicate-event','context-tab','context-popup','context-window','context-origin','context-frame','context-incognito','duplicate-context','no-event','open-reject','normal-tab'].includes(fault))assert.equal(f.counts().connected,0)
 })
 test('the old target heuristic alone accepts a non-tab extension view; new whole producer requires native event provenance',async()=>{
-  const before=[{targetId:'pair',url,browserContextId:'own'}],after=[...before,{targetId:'candidate',url,browserContextId:'own'}]
-  assert.equal(choosePanel(before,after,url,[{id:'pair',url,tabId:7},{id:'candidate',url,extensionId:id}]),'candidate')
+  const before=[{targetId:'pair',type:'page',url,browserContextId:'own'}],after=[...before,{targetId:'candidate',type:'page',url,browserContextId:'own'}]
+  assert.equal(choosePanel(before,after,url,[{id:'pair',type:'page',url,tabId:7},{id:'candidate',type:'page',url,extensionId:id}],7),'candidate')
   const f=fixture('no-event');await assert.rejects(openNativePanel(f.io));assert.equal(f.counts().connected,0);f.advance(1001);f.clean()
 })
 test('late native event cannot revive a disposed witness or remove its replacement',async()=>{
@@ -203,4 +248,36 @@ test('source keeps real business/daemon restart assertions and shares the unchan
   assert.equal(source.includes("remaining:nav,nonce:crypto.randomBytes(16).toString('hex')"),true)
   for(const literal of ['checks.durable=true','checks.crashClosed=true','checks.peerClosed=true','checks.existingInterrupted=o.interrupted','checks.reloadedInterrupted=o.interrupted&&o.noGhost','checks.terminalPreserved='])assert.equal(source.includes(literal),true,literal)
   assert.equal(source.includes('BROWSER_PANEL_FALLBACK'),false)
+})
+
+test('fixed155 source-derived DTO domains keep native token separate and non-tab sender fields absent',()=>{
+  assert.match(documentId,/^[0-9A-F]{32}$/);assert.notEqual(documentId,'0'.repeat(32));assert.match(contextId,/^[a-f0-9-]{36}$/)
+  const sender=nativeNonTabSender();assert.deepEqual(Object.keys(sender).sort(),['id','origin','url'])
+  for(const field of ['tab','frameId','documentId','documentLifecycle'])assert.equal(Object.hasOwn(sender,field),false)
+})
+
+// The original root whole-set counterexamples use the actual exported selector,
+// independently of the earlier context/port checks that could mask these faults.
+const targetPage=(targetId,profile='owned-profile')=>({targetId,type:'page',url,browserContextId:profile})
+const nativeTarget=(targetId,tabId)=>({id:targetId,type:'page',url,...(tabId===undefined?{extensionId:id}:{tabId})})
+test('joint target set coherent fresh panel calibration',()=>{
+  const before=[targetPage('pair')],after=[...before,targetPage('native')]
+  assert.equal(choosePanel(before,after,url,[nativeTarget('pair',7),nativeTarget('native')]),'native')
+})
+test('joint target set refuses an old same-URL popup alongside the fresh genuine panel',()=>{
+  const before=[targetPage('pair'),targetPage('old-popup')],after=[...before,targetPage('native')]
+  assert.throws(()=>choosePanel(before,after,url,[nativeTarget('pair',7),nativeTarget('old-popup'),nativeTarget('native')]))
+})
+test('joint target set refuses undefined profile equality as positive provenance',()=>{
+  const pair=targetPage('pair'),panel=targetPage('native');delete pair.browserContextId;delete panel.browserContextId
+  assert.throws(()=>choosePanel([pair],[pair,panel],url,[nativeTarget('pair',7),nativeTarget('native')]))
+})
+
+test('joint target set retains prior-target refusal after complete native and CDP agreement',()=>{
+  const rows=[targetPage('pair'),targetPage('native')],debug=[nativeTarget('pair',7),nativeTarget('native')]
+  assert.throws(()=>choosePanel(rows,rows,url,debug,7))
+})
+test('joint target set must anchor the actual owned pairing tab when it is supplied',()=>{
+  const before=[targetPage('pair')],after=[...before,targetPage('native')],debug=[nativeTarget('pair',8),nativeTarget('native')]
+  assert.throws(()=>choosePanel(before,after,url,debug,7))
 })

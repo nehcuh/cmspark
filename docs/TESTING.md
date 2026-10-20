@@ -419,18 +419,38 @@ an explicit failure. Automated disclosure/L2 clicks are synthetic test actions,
 not human authorization. A separate real session cancel retains its terminal
 history; normal shutdown is never relabeled as a crash.
 
-The request first resolves its owned pairing tab's concrete window. A temporary
-`sidePanel.onOpened` listener must observe that exact window and URL pathname,
-followed by one fresh `runtime.getContexts({contextTypes:['SIDE_PANEL']})`
-document. The selected new non-tab debugger target must open an owned temporary
-runtime port whose browser-supplied `sender.documentId` matches that native
-context. Current context is checked again before accepting the target; payload
-claims, an open acknowledgement, URL equality or an absent debugger `tabId`
-alone are insufficient. Chromium can report native SidePanel `windowId: -1`;
-the concrete window comes from the opening event, while a known conflicting
-context window is rejected. Listeners and the port retire within the original
-shared navigation deadline, with the original endpoint/browser cleanup still
-required on failure. There is no ordinary-tab fallback.
+The request first resolves its owned pairing tab's concrete window and known,
+nonempty browser context. A temporary `sidePanel.onOpened` listener observes
+that exact window and URL pathname, followed by one fresh native
+`runtime.getContexts({contextTypes:['SIDE_PANEL']})` document. Fixed Chromium
+155 uses a lowercase hyphenated UUID for `contextId`, but a nonzero uppercase
+32-hex UnguessableToken for `documentId`; these are different producer domains.
+The normal non-tab `Port.sender` supplies its extension ID, URL and origin,
+without tab/frame/document/lifecycle fields. Unexpected fabricated fields are
+rejected; the port is secondary endpoint/lifetime evidence, not a document-ID
+proof. The former hand-written UUID/document-bearing Port positives are retained
+in historical reports, not accepted as native DTOs.
+
+The positive target binding uses the complete joint set from
+`chrome.debugger.getTargets()` and browser `Target.getTargets()`. Fixed155's
+`GetOrCreateAll` enumerates the loaded native SidePanel as a same-profile page
+in both sets with the same agent-host ID; debugger emits its `extensionId` and
+omits `tabId`. Exactly one matching non-tab page must exist in both complete
+sets, including old same-URL popup candidates. Missing, divergent or ambiguous
+sets, an unknown/wrong profile, an old selected target or a different pairing
+tab refuse. URL equality, absent `tabId`, a supplied payload or an open ACK
+alone are insufficient. There is no ordinary-tab fallback.
+
+The owned CDP client's actual main-frame URL, frame ID and loader ID are pinned
+before the port connection. Request-local Page/Runtime/Inspector listeners
+latch observed navigation, detach or context teardown; returning to previous
+values cannot revive the request. Native context/document, complete target set
+and frame/loader are checked before/after the port ACK and again after witness
+retirement, immediately before return. Cleanup keeps these event controls until
+the final checks and removes every listener. Chromium's global native context
+has `windowId: -1`; the concrete owned window comes from `onOpened`, and a known
+conflicting window is rejected. Original shared navigation/outer deadlines and
+actual endpoint/browser cleanup remain required.
 
 Chromium 155's `onOpened` producer serializes `GURL::path()` with its leading
 slash: a configured `panel.html` produces event path `/panel.html`, as verified
@@ -443,8 +463,9 @@ hosted `PANEL` failure; the original complete business gate still must pass.
 
 `node chrome-extension/scripts/tests/acp-history-sidepanel-provenance-732.test.mjs`
 executes the actual serialized worker and target helpers with inert Chrome API
-boundaries, including stale/foreign documents, tab/popup contexts, duplicate
-events, late ports and cleanup. These CPU controls are not native SidePanel
+boundaries, including actual fixed155 DTO domains, stale/foreign documents, tab/popup
+contexts, full-set/profile ambiguity, duplicate events, late ports, observed
+navigation ABA, frame/loader changes and cleanup. These CPU controls are not native SidePanel
 execution. The original hosted `PANEL` failure remains of unknown unique cause;
 this strengthens its source oracle without claiming that failure is resolved.
 
