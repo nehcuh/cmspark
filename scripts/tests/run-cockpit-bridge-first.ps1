@@ -9,8 +9,16 @@ $root = Join-Path $runnerTemp.FullName ('cmspark-test-run-723-identity-' + [guid
 New-Item -ItemType Directory -Path $root | Out-Null
 $data = Join-Path $root 'data'; $temp = Join-Path $root 'temp'
 New-Item -ItemType Directory -Path $data, $temp | Out-Null
-$node = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
-if ((Get-Item -LiteralPath $node).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'COCKPIT_BRIDGE_NODE_PATH' }
+# Keep PATH precedence, but never apply scalar path/attribute operations to arrays.
+$nodeCommands = @(Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop)
+if ($nodeCommands.Count -ne 1 -or $nodeCommands[0] -isnot [System.Management.Automation.ApplicationInfo]) { throw 'COCKPIT_BRIDGE_NODE_PATH' }
+$node = $nodeCommands[0].Source
+if ($node -isnot [string] -or -not [IO.Path]::IsPathRooted($node) -or [IO.Path]::GetFullPath($node) -cne $node) { throw 'COCKPIT_BRIDGE_NODE_PATH' }
+$nodeItems = @(Get-Item -LiteralPath $node -ErrorAction Stop)
+if ($nodeItems.Count -ne 1 -or $nodeItems[0] -isnot [IO.FileInfo]) { throw 'COCKPIT_BRIDGE_NODE_PATH' }
+$nodeItem = $nodeItems[0]
+if (-not $nodeItem.Exists -or $nodeItem.PSIsContainer -or $nodeItem.Extension -ine '.exe' -or ($nodeItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'COCKPIT_BRIDGE_NODE_PATH' }
+$node = $nodeItem.FullName
 $entry = Join-Path $PSScriptRoot 'cockpit-bridge-first-gate.cjs'
 # Node and entry are absolute filesystem paths, not shell text.
 $start = New-Object Diagnostics.ProcessStartInfo

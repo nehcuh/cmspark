@@ -218,6 +218,13 @@ jobs:
           cd companion
           npx tsc -p tsconfig.test.json
 
+      - name: "Windows cockpit Node scalar selection (#723)"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          & scripts/tests/cockpit-bridge-node-selection.test.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: "Actual owned PTY tail transport (#725; macOS)"
         # Windows discovers this same file once in the complete canonical census below.
         if: matrix.os == 'macos-latest'

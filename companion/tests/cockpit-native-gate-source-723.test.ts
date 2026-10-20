@@ -106,3 +106,21 @@ test('whole actual gate consumes the actual fixed source pin and preserves prepa
   assert.deepEqual(output, ['COCKPIT_BRIDGE_FIRST_IDENTITY_COMPLETE\n'])
   // These are inert child close events, not a Windows/Chrome/native-positive receipt.
 })
+
+
+test('actual PowerShell launcher bounds both scalar domains and runs the interpreter regression before canonical', () => {
+  const root = path.resolve(__dirname, '../../..')
+  const launcher = fs.readFileSync(path.join(root, 'scripts/tests/run-cockpit-bridge-first.ps1'), 'utf8').replace(/\r\n/g, '\n')
+  const micro = fs.readFileSync(path.join(root, 'scripts/tests/cockpit-bridge-node-selection.test.ps1'), 'utf8').replace(/\r\n/g, '\n')
+  const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8').replace(/\r\n/g, '\n')
+  for (const literal of ['@(Get-Command node.exe -CommandType Application -TotalCount 1 -ErrorAction Stop)', '$nodeCommands.Count -ne 1', '[System.Management.Automation.ApplicationInfo]', '$node -isnot [string]', '[IO.Path]::GetFullPath($node)', '@(Get-Item -LiteralPath $node -ErrorAction Stop)', '$nodeItems.Count -ne 1', '[IO.FileInfo]', '$nodeItem.PSIsContainer', '$nodeItem.Attributes -band [IO.FileAttributes]::ReparsePoint']) assert.ok(launcher.includes(literal), literal)
+  assert.ok(launcher.indexOf('$nodeItems.Count -ne 1') < launcher.indexOf('$nodeItem.Attributes -band'))
+  assert.equal(launcher.includes('Select-Object'), false)
+  for (const literal of ['::ParseFile(', '$_.Right.FindAll(', '[scriptblock]::Create(', '. $selection', '-Commands @()', '@($realCommands[0], $realCommands[0])', '-Items @()', '@($realItems[0], $realItems[0])', '[IO.FileAttributes]::ReparsePoint', '-Items @($directory)', 'native_identity']) assert.ok(micro.includes(literal), literal)
+  const early = workflow.indexOf('& scripts/tests/cockpit-bridge-node-selection.test.ps1')
+  assert.ok(early > workflow.indexOf('Compile shared companion test inputs (#650)'))
+  assert.ok(early < workflow.indexOf('Native Windows read-only Registry discovery (#644)'))
+  const final = workflow.indexOf('& scripts/tests/run-cockpit-bridge-first.ps1')
+  assert.ok(final > workflow.indexOf('Post-census isolated module-scope diagnostic (#650)'))
+  assert.equal(workflow.split('& scripts/tests/run-cockpit-bridge-first.ps1').length, 2)
+})
