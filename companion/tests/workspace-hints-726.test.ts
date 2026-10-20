@@ -6,7 +6,7 @@ import path from "node:path"
 import vm from "node:vm"
 import ts from "typescript"
 const src = path.resolve(__dirname, path.basename(path.dirname(__dirname)) === ".test-dist" ? "../../src" : "../src")
-function pickerCase() {
+function pickerCase(nativePath: typeof path = path) {
   const file = ts.createSourceFile("router.ts", fs.readFileSync(path.join(src, "message-router.ts"), "utf8"), ts.ScriptTarget.Latest, true)
   let found: ts.CaseClause | undefined
   function walk(n: ts.Node) { if (ts.isCaseClause(n) && n.expression.getText(file) === '"workspace.pick"') found = n; ts.forEachChild(n, walk) }
@@ -14,7 +14,7 @@ function pickerCase() {
   const exports: any = {}, calls: any[] = [], bindings: string[] = [], audits: any[] = []
   let thread: any = { id: "A" }, current = true, result: any = { path: "/actual/selected" }, during = () => {}
   const imports = { recordNativePick(p: string) { bindings.push("receipt:" + p) }, setWorkspaceRoot(p: string) { bindings.push(p); return { ok: true, path: p } } }
-  const globals = { exports, WORKSPACE_FOLDER_PROMPT: "owned prompt", fs: { realpathSync: (p: string) => p }, path,
+  const globals = { exports, WORKSPACE_FOLDER_PROMPT: "owned prompt", fs: { realpathSync: (p: string) => p }, path: nativePath,
     pickFolderNativeImpl: async (...args: any[]) => { calls.push(args); during(); return result },
     threadManager: { get: () => thread, update: (_: string, patch: any) => Object.assign(thread, patch) },
     require: (id: string) => { if (id === "./packs/audit-log") return { appendCapabilityAudit: (event: any) => audits.push(event) }; assert.equal(id, "./capability/workspace"); return imports } }
@@ -24,11 +24,14 @@ function pickerCase() {
     result(v: any) { result = v }, during(fn: () => void) { during = fn }, stale() { current = false }, replace() { thread = { id: "A" } } }
 }
 test("#726 original picker receives only the hint; actual returned selection alone binds", async () => {
-  const f = pickerCase(), r = await f.run()
-  assert.equal(f.calls.length, 1); assert.equal(f.calls[0][1], "/hint")
-  assert.equal(r.request_id, "pick:1"); assert.equal(r.thread_id, "A"); assert.equal(r.path, "/actual/selected")
-  assert.deepEqual(f.bindings, ["receipt:/actual/selected", "/actual/selected"])
-  assert.equal(f.audits[0].source, "suggested-confirmed"); assert.equal(f.audits[0].type, "workspace.bound"); assert.equal("path" in f.audits[0], false)
+  for (const nativePath of [path.posix, path.win32]) {
+    const selected = nativePath.resolve("/actual/selected")
+    const f = pickerCase(nativePath), r = await f.run()
+    assert.equal(f.calls.length, 1); assert.equal(f.calls[0][1], "/hint")
+    assert.equal(r.request_id, "pick:1"); assert.equal(r.thread_id, "A"); assert.equal(r.path, selected)
+    assert.deepEqual(f.bindings, ["receipt:" + selected, selected])
+    assert.equal(f.audits[0].source, "suggested-confirmed"); assert.equal(f.audits[0].type, "workspace.bound"); assert.equal("path" in f.audits[0], false)
+  }
 })
 test("#726 Cancel never binds, even though initial location was nonempty", async () => {
   const f = pickerCase(); f.result({ error: "cancelled" }); const r = await f.run()

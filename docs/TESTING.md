@@ -4,6 +4,14 @@
 
 ## 测试架构
 
+### #726 既有 Git 状态请求关联
+
+`chrome-extension/tests/workspace-git-hints-726.test.ts` 由原前端 canonical `tests/**/*.ts` 编译与 `*.test.js` 入口发现。测试运行实际 Panel status effect → 原 Git 状态返回函数／handler → 原 WS `id` 包络 JSON → 当前 observer／实际完整 live hook → 原候选按钮 callback；Git 子进程、realpath、Chrome 发送与 React 生命周期为显式惰性 seam。没有真实 Git、文件系统探测、浏览器、picker、PTY 或 provider 执行。
+
+只有现有 Panel 状态查询会登记；其它未登记 `coding.git_status`／`acp.workspace_status` 回复拒作候选。请求绑定当前线程、选择 revision、真实连接对象与规范 expected path，下一请求退休前一请求。回复和 Chrome 发送确认两者均须成功，先回复后发送失败也不保存；断线、发送异常、effect cleanup、同线程 ABA、旧 callback、重放、未知 owner/id、错误／非仓库／缺路径／异路径及不完整值均不产生提示。原活动 tool ID 歧义仍停用该选择／连接的收集。现有 handler 的成功形状是 `is_repo:true` 且无 error，不伪造不存在的 `success` 字段。
+
+已成功观察的目录在 `thread.updated`／真实 reducer 解绑后保留于当前 live hint，reload／切换／断线仍清空。它是 Git 实际 cwd，不能称仓库顶根或自动确认；最多3条预算与 native-pick 唯一绑定不变，按钮只发原 `workspace.pick`。当前状态查询本来仅在已绑定时发出，本片不为未绑定者新探测目录；MCP 本机来源与真实 shipping CodingAgentPanel 浏览器端到端仍独立未交付。正常测试项目包含现有 node-shims，不能以遗漏该文件的 selected program 冒充 canonical 类型检查。
+
 ### Windows sentinel 对象身份夹具
 
 case36 的数值句柄可被当前子进程的无关对象复用，不能单用 GetHandleInformation 推断 sentinel 继承。夹具使用128位随机 Local Event 名称与原子拒绝重名创建；在打开只读同步引用之前捕获候选，再用既有 CompareObjectHandles 比较。V2 sidecar 只在 owned 文件传递已知三句柄和固定格式名称，旧 V1 case35 保留。未知 API、引用、比较或关闭结果仍拒绝；原 launcher、inherit=false、pipe/parent 检查、ACK、20s和真实 native gate 不变。CPU 词法投影不等 Windows SDK／原生通过，也不确定旧 launch 失败的唯一原因。
@@ -28,7 +36,9 @@ case36 的数值句柄可被当前子进程的无关对象复用，不能单用 
 
 有效 UTF-8 优先；没有真实编码声明时不推断 ACP／GBK。非法 UTF-8、含 NUL 或 Windows 非 ASCII 命令经 shell 转换后的非空输出，既有 `note` 和相应进度尾部包含 `OUTPUT_ENCODING_UNDETERMINED`；正文可能有替换字符，不能据此判断文件损坏。这不是自动 GBK 转码。真实 Windows 上 `echo 中文`、`type` UTF-8 文件及 GBK-only 程序的输出仍需原生验收；CPU seam 不冒充平台通过。确认／沙箱、命令／环境、退出码、取消、超时及原输出预算均不改变。
 
-`shell-encoding-windows-native-731.test.ts` 仅非 Windows skip；Windows 必须先通过 GHA 和 canonical preload owned 目录身份／边界核验，否则在导入应用或 spawn 前失败。原 runner 自动发现，无新增 CI 参数。测试通过实际 `shellExec` 跑固定 `echo`、owned UTF-8 文件的 `type` 和当前 Node.exe 的固定 CP936 字节 emitter；`type` 必须精确且无警告，`echo` 必须有实际不可判定标记（即使 pipe 字节本身为有效 UTF-8，也不能证明命令到控制台的转换无损），CP936 两流必须明确标注。只保存／恢复 test-owned 配置并检查并发变更，等待自有命令结束后清理；不改 HOME、系统代码页或原 60 秒默认时限。Mac/Linux skip 与源码编译不代表此 Windows 验收已通过。
+`shell-encoding-windows-native-731.test.ts` 仅非 Windows skip；Windows 必须先通过 GHA 和 canonical preload owned 目录身份／边界核验，否则在导入应用或 spawn 前失败。原 runner 自动发现，无新增 CI 参数。测试通过实际 `shellExec` 跑固定 `echo`、owned UTF-8 文件的 `type` 和当前 Node.exe 的固定 CP936 字节 emitter；`type` 与符合单一 literal cmd 分支的 `echo 中文` 都必须精确中文／CRLF 且无警告，进度保真；CP936 两流必须明确标注。只保存／恢复 test-owned 配置并检查并发变更，等待自有命令结束后清理；不改 HOME、系统代码页或原 60 秒默认时限。Mac/Linux skip 与源码编译不代表此 Windows 验收已通过。
+
+Windows 单一、无引号／变量展开／控制符／链／管道／重定向／分组／开关的非 ASCII literal cmd `echo`，使用原选定 cmd、原 `/d /s /c` 引号与原命令，仅新增 `/u` 输出模式；stdout 据该启动合同按 UTF-16LE 流式解码／严格校验，不靠字节猜码。非法／奇数结束／孤立 surrogate／NUL 输出仍标不可判定，非空 stderr 不宣称已知格式。`type` 和所有不满足该严格语法、自定义非 cmd shell、外部 exe/com、非 Windows 均保留旧路径；禁止全局 `/u` 或 `chcp`。新增实际模块惰性 spawn 控覆盖原 argv/命令/options、全部拆分、stderr/空流、上限／退出和不适用语法；没有执行 cmd 或 native。UTF-16LE 仍需同新 head 真实 Windows 断言确认，CPU 格式假设不能冒平台通过或整个 #731 关闭。
 
 | 端 | 测试框架 | 测试目录 | 规模（约） | 运行命令 |
 |----|---------|---------|-----------|---------|
@@ -277,12 +287,26 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 
 `desktop-native-close-lifetime-480.test.ts` 提取该真实整段 callback，使用明确惰性 network/auth/child/surface seam 覆盖 normal、metadata/closing abort、held exit、preaborted、launch/send throw 和 window 拒绝。它不是 Windows/WebView2/native 运行。main1dde deadline/closing 后 exit0 的实际原因仍 UNKNOWN；`childExited` 是 JS onExit 已送达，不独立证明此前 OS 进程仍活。精确新 head 仍须在原20秒下真实 Windows 自然完成；不要无变化重跑、延长时限或以纯CPU通过替代原生门禁。
 
+### #480 hostile cancelled-navigation completion fixture
+
+The unshipped Windows acceptance variant observes the exact blocked top-level navigation ID and ready document generation. It emits the existing `REMOTE_DENIED` marker and issues the existing popup script only after matching `NavigationCompleted` reports unsuccessful `OPERATION_CANCELED`, all getters succeed, and the current top-level Source/generation remain owned. Starting alone, unrelated/duplicate completion, failed getters, changed document, or foreign sender cannot advance. Shipped native source and the Mac fixture remain unchanged.
+
+`desktop-hostile-completion-480.test.ts` lowers the actual limited C++ fixture bodies and drives a controlled event schedule, including LF/CRLF generator inverses and exact UINT64 identities. These are CPU/source controls, not C++ compilation or WebView2 execution. Exact-head Windows native acceptance must still finish naturally within the original 20 seconds with all original markers/assertions and cleanup; the historical timeout cause remains unknown.
+
+
+### #739 bounded-N bridge / 多会话视图
+
+- `companion/tests/acp-bounded-n-739.test.ts` 直接执行真实 manager、saveConfig、WS handler 与实际工具 L2／dispatch 分支，进程、确认、文件和时钟均为显式惰性 seam；覆盖 N1/2/4、同 Agent、降额／禁用、prepare／exit-before-close／failed-spawn／fallback 与替换对象。该 CPU 证据不是原生或真实 CLI 正控。
+- `chrome-extension/tests/coding-bounded-n-739.test.ts` 执行真实 reducer／private send producer 与完整 WS listener，覆盖有序 membership、同线程／跨线程 ABA、唯一回执、Stop先于Start回执、manual-entry、compact marker与legacy未知关联。原522／607／722／727消费者按已批准新容量／显式选择合同同步，保留其 owner、真正close、工作区和拒绝断言。
+- `companion/tests/integration/acp-bounded-n-739.test.ts` 仅 Windows CI 执行：N1/2/4各创建精确 owned Node bridge，以原子 JSON marker 确认真实独立 PID 重叠，同 Agent 拒绝、取消一方后另一方仍活、真实close后仅释放其槽。每case45秒、marker20秒、原bridge10秒，不扩时限／权限。它不启动配置的 Agent/provider，不是本机已跑证据；非Windows注册后显式skip，必须在真实Windows计数通过。
+- 原607六个受管close／probe→fallback场景完整保留，当前case不以UI closed、cancelACK或exitCode提前释放。源审批、一次必要共享locked ARM与精确head/main完整CI另行验收；不能凭多个offered、VM、SSR或ARM单独关闭整票。
+
 
 ### #726 当前对话目录提示（开发候选，原生待验）
 
 `companion/tests/workspace-hints-726.test.ts` 执行真实 workspace.pick 分支和整份原生 helper 的惰性导入；`acp-workspace-priority-726.test.ts` 执行真实 manager/handler/提案工具生产结果，并喂给提示观察器；扩展 `tests/workspace-hints-726.test.ts` 执行完整 live hook、reducer、实际 Panel JSX/点击及晚回复 callback。CPU seams 不启动 shell/Agent/浏览器/原生选择器，不冒称真实 L2 或 OS 导航通过。
 
-提示最多三个、仅内存；仅当前实时 start/result 配对且 shell exit0/no-timeout/no-abort、ACP 实际 offered 可纳入。`cwd` 标为进程启动目录，严格字面 `cd` 只标参数声明；不解释泛 `--cwd`、环境展开、文件父目录或 MCP 远端本地性。现 Git 状态回复没有精确 request correlation，首片不收作提示。未知／折叠／失败及历史回放均不补候选。
+提示最多三个、仅内存；仅当前实时 start/result 配对且 shell exit0/no-timeout/no-abort、ACP 实际 offered 可纳入。`cwd` 标为进程启动目录，严格字面 `cd` 只标参数声明；不解释泛 `--cwd`、环境展开、文件父目录或 MCP 远端本地性。初始首片未收 Git 提示；本版仅按上文既有 Git 状态请求关联契约纳入。真实连接广播须在提前返回前退休旧视图与两种未完成的回复／发送确认，重连只接纳新连接的请求。未知／折叠／失败及历史回放均不补候选。
 
 显式点击只给既有 `workspace.pick` 传可选 initial_path/request_id，不代替原 native OK；取消（即使 SelectedPath 保留提示）零绑定，选中其它目录绑定实际返回值。原 picker120秒、ACP/L2/45秒、plan_readonly 和 setWorkspaceRoot 的单次原生收据条件不改。服务器在两个 await 后复核原 thread 对象与真实当前 panel socket；UI A→B→A／断线的旧反馈不能改新选择，真实用户仍可确认原A（只绑定A，绝不B或自动启动）。
 
@@ -290,3 +314,7 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 
 
 #726 R2：真实 server 的 tool.start 参数摘要不包含 command，故首轮手工 command seam 不代表可达能力。新增 `shell-workspace-declaration-726.test.ts` 执行整份 shellExec（惰性 child）、真实 server start 摘要与 adapter result 序列化后再喂真实观察器；仅原 exit0／无超时／未取消输出可选 declared_cwd，cwd 仍为 spawn cwd。严格已知 cmd 或 /bin/sh 的完整字面 cd 语法，不执行／展开／猜目录，不发送命令或后缀。重复活动 tool ID 后保已验证提示，但本选择／连接后续收集停用，直到真实选择／连接变化；没有隐藏墓碑或自动重试。ALM／C1 等 Unicode 控制、格式、surrogate 与行分隔符路径拒绝；cmd 单引号不当 POSIX 引号。R1 全源码／27回执和4个真实反例保留，原生仍待。
+
+### #726 remote picker thread-scoped discovery
+
+`picker-native-discovery-726.test.ts` lexically projects the actual unshipped C# decision bodies with inert API facts; it does not execute PowerShell, C#, Win32 or UIA. It preserves the original coordinator/transport controls and covers a live hidden-owner modal with MainWindowHandle zero, exact child-thread PID/TID checks, unique visible #32770, 64-thread/256-callback refusal limits, empty versus partial native enumeration, and original captured HWND/root/UIA/OK/Cancel rechecks. No desktop enumeration, title targeting, input, foreground change, polling, retry or timeout expansion is added. A genuine changed-head hosted Windows run must still establish original OK/cancel binding and ACP-cwd acceptance; the prior120781.7155ms failure's cause remains UNKNOWN.

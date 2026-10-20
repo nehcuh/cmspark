@@ -59,10 +59,10 @@ test("#722 actual selector JSX lists only current owner and dispatches the expli
 test("#722 actual selected-start button invokes only old session ID/owner + original L2 request", () => {
   const file = sf("components/CodingAgentPanel.tsx"), button = one(file, n => ts.isJsxElement(n) && n.openingElement.tagName.getText(file) === "button" && n.children.some(c => c.getText(file).includes("启动选中提案（需确认）")))
   const wire: any[] = [], actions: any[] = [], row: any = { sessionId: "a3", threadId: "A", state: "offered" }
-  const send = compile(sf("utils/coding-operation-send.ts").text, { chrome: { runtime: { sendMessage(message: any, done: any) { wire.push(message); done({ ok: true }) } } } }).sendCodingOperation
-  const refs = { session: { current: row }, owner: { current: { threadId: "A", revision: 2 } } }
-  const render = compile(`export function render(cloudDisclosure=true){return(${button})}`, { session: row, state: { activeThreadSelectionRevision: 2 }, threadId: "A", styles: {}, pendingConfirm: false, starting: false,
-    mountedRef: { current: true }, currentSessionRef: refs.session, currentSelectionRef: refs.owner, setStarting() {}, dispatch: (a: any) => actions.push(a), sendCodingOperation: send }).render
+  const operations = compile(sf("utils/coding-operation-send.ts").text, { chrome: { runtime: { sendMessage(message: any, done: any) { wire.push(message); done({ ok: true }) } } } })
+  const refs = { session: { current: row }, owner: { current: { threadId: "A", revision: 2, selectionRevision: 3 } } }
+  const render = compile(`export function render(cloudDisclosure=true){return(${button})}`, { session: row, state: { activeThreadSelectionRevision: 2, activeCodingSelectionRevision: 3 }, threadId: "A", styles: {}, pendingConfirm: false, starting: false,
+    mountedRef: { current: true }, currentSessionRef: refs.session, currentSelectionRef: refs.owner, setStarting() {}, dispatch: (a: any) => actions.push(a), sendCodingOperation: operations.sendCodingOperation, captureCodingSelection: operations.captureCodingSelection }).render
   const element = render(); assert.match(renderToStaticMarkup(element), /需确认/); assert.equal(wire.length, 0)
   element.props.onClick(); assert.deepEqual(JSON.parse(JSON.stringify(wire)), [{ type: "acp.ui_start", cloud_disclosure_accepted: true, session_id: "a3", thread_id: "A" }])
   refs.session.current = { ...row, sessionId: "a4" }; element.props.onClick(); assert.equal(wire.length, 1)

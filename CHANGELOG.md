@@ -4,13 +4,23 @@
 
 ## [Unreleased]
 
+- #739 显式并发上限扩为1..4（默认1），用私有 session 对象占位统一准备、协议探测／CLI、取消至真实 close 的计数；同 Agent 仍单执行，N>1只允许已明确选择的纯 bridge，不扩 PTY 或逐次 L2 权限。提案改为4／对话、16／后台与同对话 Agent 去重；旧存量不删除。面板保留有序会话列表、显式选择和只读执行阶段，双 UI 修订与私有唯一回执关联防止迟到反馈跨选择覆盖；失败 handback、来源与 taint 不变。补受控生产者和 Windows CI-only owned overlap 夹具；未冒称真实 CLI／模型／平台已验收，不发版或安装。
+
+- **#726 Git 目录来源连接（0.6.14 开发候选）**：既有编程接力 Git 状态请求沿用 WS `id`，仅保存当前线程／选择版本／连接的已登记请求；发送成功且精确回复同一次请求、规范目录一致、无错误且确为 Git 仓库时，才增加最多三个内存提示中的“Git 实际目录”。它是已执行状态查询的 cwd，不推断仓库顶根；旧回复、发送失败、断线、ABA 或重复请求均不授权绑定。已见提示在明确解绑后仍可预导航原生选择器，重载即清空；不新增查询、权限、RPC 或自动启动。MCP 本机归属及真实 shipping Panel 浏览器链仍未完成，整票不关闭。
+
+- Refs #726: the remote-only native picker controller discovers the unique owned modal through held-child threads, including hidden-owner layouts; original picker success, cancellation and time budgets remain required. CPU projections are not Windows acceptance.
+
 - **#726 工作区目录提示（0.6.14 开发候选）**：编程接力未绑定工作区时，仅从当前连接、当前对话实时完成的 shell/ACP 提案保留最多三个内存提示；提示只预导航原生选择器，实际确认选中的路径才可绑定，不自动启动或授信。UI 新提案优先使用已绑定对话目录；折叠／失败／旧回复、MCP 远端路径及无精确关联的 Git 状态不纳入，重载／切换／断线即清空。受控 CPU 不代表真实 Windows/macOS picker 通过，整票与原生验收仍待。 活动工具 ID 重复会保守停用该选择／连接的后续提示收集；字面 cd 仅由实际 shell 成功输出派生有限 declared_cwd，不广播原命令，cmd/POSIX 引号分别拒歧义。
 
 - #480 Windows 原生 metadata 验收将同一测试的 abort 同时绑定 metadata 与 closing 等待，超时取消立即进入原 owned-child 清理并继续等待真实退出；正常完成卸载监听。保留原20秒、退出0、认证／元数据／窗口断言与 surface 清理，不冒称已定位或修复 Windows 晚退出原因。
 
+- Windows #480 未交付 hostile 验收夹具仅在精确导航 ID 的取消完成事件、原 owned 页面及文档代际均匹配后推进下一脚本；保留生产导航拒绝与原生验收预算。该源码调度更正不宣称历史引擎失败原因。
+
 - **#723 空闲确认台收起（开发候选）**：已认证扩展通过同一 WS 只读核对 Companion 全局确认/计算机任务是否空闲，再收起精确自有 popup；未知/忙保留，晚到重确认沿原 #326 策略重开，轻量确认不抢焦点。保留 L2/45 秒及原误拍保护；不代表原生验收或 quality/rect/只读脱 critical 已完成。
 
 - #722 CLI 会话追加提问生成的后续提案复用同一容量预检、逐次确认和最终准入回执；忙碌在确认前可见，迟到批准、提案变化和启动取消不再被回复为已受理。错误绑定原请求会话，所属对话冲突仍拒绝并保留有效请求 owner；补齐源码耦合的 marker CPU 夹具接口，原单执行、L2、worker/owner、原生时限不变。
+
+- #731 为 Windows 单一、无扩展／元字符的非 ASCII literal cmd `echo` 增加显式 Unicode stdout 合同与流式解码，保留原命令、cwd、环境、L2、逻辑 shell、退出／停止／超时和输出预算；`type`、复合命令、自定义 shell、外部程序及非 Windows 保持原路径，未知 stderr 仍标注。原生测试将 echo 加强为精确中文／CRLF／无虚假警告，受控字节不是 Windows 已通过；0.6.14 仍为开发版。
 
 - Windows 原生继承夹具仅对 sentinel 使用确切内核对象身份，先捕获旧数值槽再打开独占命名 Event 引用；无关 Event／管道占槽不冒称继承，真实继承及未知 API／比较／关闭失败仍严格拒绝。保留 V1、原 protected endpoint、bootstrap、20秒与清理；不宣称已证明历史 launch 失败根因。
 

@@ -79,7 +79,7 @@ test("#727 actual store retains the offered session on A-B-A return; priority bu
 })
 test("#722 actual Chip SSR preserves its already-shipped pending-start status and adds only open CTA", () => {
   const file = source("components/CodingSessionChip.tsx"), session = { sessionId: "own", threadId: "A", agentId: "inert", state: "offered", updatedAt: 1 }
-  const store = { useAgentStore: () => ({ state: { activeThreadId: "A" }, dispatch() {} }), codingSessionBelongsToThread, selectCodingOperationError: () => null, selectCodingManualEntry: () => null }
+  const store = { useAgentStore: () => ({ state: { activeThreadId: "A", codingSessionIdsByThread: { A: ["own"] }, codingSessionsById: { own: session } }, dispatch() {} }), codingSessionBelongsToThread, selectCodingOperationError: () => null, selectCodingManualEntry: () => null }
   const component = compile(file.text, { require(id: string) {
     if (id === "react") return React
     if (id === "react/jsx-runtime") return jsxRuntime

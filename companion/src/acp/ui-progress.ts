@@ -56,11 +56,11 @@ export function boundCodingProgress(event: AcpLiveEvent): AcpLiveEvent | null {
 /** Save the canonical message first; this is only its bounded live-browser projection. */
 export function codingHandbackView<M extends { content: unknown }>(session: AcpSessionRecord, message: M) {
   const view = boundCodingProgress({ type: "acp.session.event", session_id: session.session_id,
-    thread_id: session.thread_id, agent_id: session.agent_id, state: session.state,
+    thread_id: session.thread_id, agent_id: session.agent_id, state: session.state, execution_phase: session.execution_phase,
     handback: typeof message.content === "string" ? message.content : "", pending_diffs: session.pending_diffs,
   })
   if (!view) return null
-  return { type: "acp.handback.message", thread_id: session.thread_id, session_id: session.session_id,
+  return { type: "acp.handback.message", thread_id: session.thread_id, session_id: session.session_id, execution_phase: session.execution_phase,
     message: { ...message, content: (view.handback || "") + (view.output_truncated
       ? "\n\n_此处仅显示部分输出；请返回所属主对话查看已保存的结果。_" : "") },
     pending_diffs: (view.pending_diffs || []).map((diff: any) => ({ path: diff.relPath, isNew: diff.isNew, isDelete: diff.isDelete, applyable: diff.applyable })),

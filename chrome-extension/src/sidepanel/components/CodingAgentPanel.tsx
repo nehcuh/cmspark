@@ -12,7 +12,7 @@ import {
 } from "react"
 import { tokens } from "../ui/tokens"
 import { useCodingStop } from "../hooks/useCodingStop"
-import { sendCodingOperation } from "../utils/coding-operation-send"
+import { sendCodingOperation, captureCodingSelection } from "../utils/coding-operation-send"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import {
   isEmbeddedTerminalSupported,
@@ -188,8 +188,8 @@ export function CodingAgentPanel({
   }, [session?.sessionId, session?.terminalCommandExpiresAt])
   const commandAvailable = !!session?.terminalCommandLine && typeof session.terminalCommandExpiresAt === "number" && session.terminalCommandExpiresAt > commandClock
   const stopControl = useCodingStop(session)
-  const currentSelectionRef = useRef({ threadId: state.activeThreadId, revision: state.activeThreadSelectionRevision })
-  currentSelectionRef.current = { threadId: state.activeThreadId, revision: state.activeThreadSelectionRevision }
+  const currentSelectionRef = useRef({ threadId: state.activeThreadId, revision: state.activeThreadSelectionRevision, selectionRevision: state.activeCodingSelectionRevision })
+  currentSelectionRef.current = { threadId: state.activeThreadId, revision: state.activeThreadSelectionRevision, selectionRevision: state.activeCodingSelectionRevision }
   const hintViewRef = useRef(state.workspaceHints)
   hintViewRef.current = state.workspaceHints
   const hintPickRef = useRef<{ requestId: string; threadId: string; revision: number; connection: object } | null>(null)
@@ -202,6 +202,7 @@ export function CodingAgentPanel({
     const captured = manualEntry
     const timer = window.setTimeout(() => dispatch({ type: "ACP_MANUAL_ENTRY_RESULT",
       sessionId: captured.sessionId, threadId: captured.threadId, requestId: captured.requestId,
+      threadRevision: captured.threadRevision, selectionRevision: captured.selectionRevision,
       error: "未收到交互入口准备回执，请重试。" }), 10_000)
     return () => window.clearTimeout(timer)
   }, [manualEntry, dispatch])
@@ -266,8 +267,8 @@ export function CodingAgentPanel({
     }
   }, [readyAgents, agentId])
   const repoHint = useMemo(() => parseRepoFromUrl(pageUrl), [pageUrl])
-  const selectableSessions = Object.values(state.codingSessionsById).filter(row => row.threadId === threadId && !row.cacheCompacted &&
-    (["offered", "confirmed", "running"].includes(row.state) || row.sessionId === session?.sessionId))
+  const selectableSessions = (threadId ? state.codingSessionIdsByThread[threadId] || [] : [])
+    .map(id => state.codingSessionsById[id]).filter(row => row && row.threadId === threadId && !row.cacheCompacted)
   const live = session?.state === "running" || session?.state === "offered" || session?.state === "confirmed"
   const timeline = (session?.timeline || []) as TimelineRow[]
 
@@ -473,12 +474,20 @@ export function CodingAgentPanel({
     }
     // Soft placeholder until response; omit spinner that would feel blocking
     setGitStatusLine("—")
-    chrome.runtime.sendMessage(
-      { type: "coding.git_status", thread_id: threadId, workspace_root: effectiveWorkspace },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
+    const view = hintViewRef.current, selection = currentSelectionRef.current
+    const id = `workspace-git:${crypto.randomUUID()}`
+    const finish = view?.threadId === threadId && selection.threadId === threadId && view.revision === selection.revision && state.connectionState === "connected"
+      ? view.registerGitRequest?.(id, effectiveWorkspace) : null
+    try {
+      chrome.runtime.sendMessage(
+        { type: "coding.git_status", thread_id: threadId, workspace_root: effectiveWorkspace, ...(finish ? { id } : {}) },
+        (response) => {
+          const next = finish?.(!chrome.runtime.lastError && response?.ok === true)
+          if (next) dispatch({ type: "SET_WORKSPACE_HINTS", view: next })
+        },
+      )
+    } catch { finish?.(false) }
+    return () => { finish?.(false) }
   }, [open, effectiveWorkspace, threadId])
 
   useEffect(() => {
@@ -530,56 +539,39 @@ export function CodingAgentPanel({
       setStarting(false)
       return
     }
-    // This click explicitly starts a new task; retire only the old terminal UI selection.
-    if (session && !["offered", "confirmed", "running"].includes(session.state)) {
-      dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })
-    }
     flash("正在启动…请在下方确认条点「允许」")
     const page_context = formatPageContext({
       pageUrl,
       pageTitle,
       repo: repoHint,
     })
-    chrome.runtime.sendMessage(
-      {
-        type: "acp.ui_start",
-        thread_id: threadId,
-        agent_id: agentId,
-        goal: goal.trim(),
-        workspace_root: ws,
-        mode,
-        cloud_disclosure_accepted: true,
-        page_context,
-        page_url: pageUrl || undefined,
-        page_title: pageTitle || undefined,
-        repo_hint: repoHint ? `${repoHint.owner}/${repoHint.name}` : undefined,
-      },
-      (resp?: { ok?: boolean; error?: string }) => {
-        const err = chrome.runtime.lastError?.message
-        if (err) {
-          flash(`扩展转发失败: ${err}`, 6000)
-          setStarting(false)
-          return
-        }
-        if (resp && resp.ok === false) {
-          const errMsg = resp.error || "Companion 未连接"
-          flash(errMsg, 6000)
-          if (isAcpDisabledError(errMsg)) {
-            setStoreAcpEnabledFalse()
-          }
-          setStarting(false)
-          return
-        }
-        // Fallback: if no confirm/session/error within 12s, re-enable CTA
-        const tid = window.setTimeout(() => {
-          if (mountedRef.current && startingRef.current) setStarting(false)
-        }, 12000)
-        enablePollTimersRef.current.push(tid)
-      },
-    )
+    const capture = captureCodingSelection(state)
+    const current = () => mountedRef.current && currentSelectionRef.current.threadId === threadId &&
+      currentSelectionRef.current.revision === capture.threadRevision && currentSelectionRef.current.selectionRevision === capture.selectionRevision
+    const sent = sendCodingOperation({ sessionId: "", threadId }, dispatch, {
+      type: "acp.ui_start", agent_id: agentId, goal: goal.trim(), workspace_root: ws, mode,
+      cloud_disclosure_accepted: true, page_context, page_url: pageUrl || undefined,
+      page_title: pageTitle || undefined, repo_hint: repoHint ? `${repoHint.owner}/${repoHint.name}` : undefined,
+    }, capture, current, error => {
+      if (error) {
+        flash(error, 6000)
+        if (isAcpDisabledError(error)) setStoreAcpEnabledFalse()
+        setStarting(false)
+        return
+      }
+      // Preserve the existing local CTA fallback, without retiring the unique
+      // outstanding request or treating forwarding as lifecycle completion.
+      const tid = window.setTimeout(() => {
+        if (current() && startingRef.current) setStarting(false)
+      }, 12000)
+      enablePollTimersRef.current.push(tid)
+    })
+    if (!sent) setStarting(false)
   }, [
     threadId,
     state.activeThreadId,
+    state.activeThreadSelectionRevision,
+    state.activeCodingSelectionRevision,
     session,
     dispatch,
     agentId,
@@ -770,7 +762,9 @@ export function CodingAgentPanel({
     if (composerDisabled) return
     const t = input.trim()
     if (!t || !session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
-    sendCodingOperation(session, dispatch, { type: "acp.session.prompt", text: t })
+    sendCodingOperation(session, dispatch, { type: "acp.session.prompt", text: t }, captureCodingSelection(state), () => currentSessionRef.current === session &&
+      currentSelectionRef.current.revision === state.activeThreadSelectionRevision &&
+      currentSelectionRef.current.selectionRevision === state.activeCodingSelectionRevision)
     setInput("")
   }
 
@@ -793,7 +787,9 @@ export function CodingAgentPanel({
 
   const onApply = () => {
     if (!session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
-    sendCodingOperation(session, dispatch, { type: "acp.apply_diff" })
+    sendCodingOperation(session, dispatch, { type: "acp.apply_diff" }, captureCodingSelection(state), () => currentSessionRef.current === session &&
+      currentSelectionRef.current.revision === state.activeThreadSelectionRevision &&
+      currentSelectionRef.current.selectionRevision === state.activeCodingSelectionRevision)
   }
 
   // Must stay above `if (!open) return null` — a hook after that return fires only
@@ -818,6 +814,8 @@ export function CodingAgentPanel({
 
   const prepareManualEntry = () => {
     const target = currentSessionRef.current
+    if (currentSelectionRef.current.revision !== state.activeThreadSelectionRevision ||
+        currentSelectionRef.current.selectionRevision !== state.activeCodingSelectionRevision) return
     setControlError(""); setStatus("")
     if (!target || !codingSessionBelongsToThread(target, state.activeThreadId) ||
         state.codingSessionIdByThread[target.threadId] !== target.sessionId) {
@@ -825,7 +823,7 @@ export function CodingAgentPanel({
     }
     if (!storeAcpEnabled && !acpEnabled) { setControlError("编程助手已关闭，请先在设置中启用。"); return }
     const requestId = `coding-entry-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    const identity = { sessionId: target.sessionId, threadId: target.threadId, requestId }
+    const identity = { sessionId: target.sessionId, threadId: target.threadId, requestId, ...captureCodingSelection(state) }
     dispatch({ type: "ACP_MANUAL_ENTRY_REQUEST", ...identity })
     try {
       chrome.runtime.sendMessage({ type: "acp.session.prepare_manual_entry", session_id: target.sessionId,
@@ -930,7 +928,7 @@ export function CodingAgentPanel({
               <span>本对话完成操作中提到的目录（未绑定，仍需原生选择确认）</span>
               {state.workspaceHints.rows.map(hint => (
                 <button key={hint.key} type="button" style={styles.linkBtn} onClick={() => pickWorkspace(hint)}>
-                  {hint.path} · {{ "acp-offer": "提案目录", "shell-cwd": "进程启动目录", "literal-cd": "字面 cd 参数" }[hint.source]} · 最近 {hint.recent} / {hint.count} 次
+                  {hint.path} · {{ "acp-offer": "提案目录", "shell-cwd": "进程启动目录", "literal-cd": "字面 cd 参数", "git-cwd": "Git 实际目录" }[hint.source]} · 最近 {hint.recent} / {hint.count} 次
                 </button>
               ))}
             </div>
@@ -1147,7 +1145,7 @@ export function CodingAgentPanel({
 
         {threadId && selectableSessions.length > 0 ? (
           <label style={styles.field}>
-            <span style={styles.fieldLabel}>本对话提案与会话（执行串行1个）</span>
+            <span style={styles.fieldLabel}>本对话提案与会话（每次启动分别确认）</span>
             <select style={styles.select} aria-label="选择本对话编程提案" value={session?.sessionId || ""}
               onChange={e => dispatch({ type: "ACP_SELECT_SESSION", threadId, sessionId: e.target.value,
                 threadRevision: state.activeThreadSelectionRevision })}>
@@ -1158,6 +1156,7 @@ export function CodingAgentPanel({
             </select>
           </label>
         ) : null}
+        {session ? <p style={styles.footnote}>受管 bridge：{session.executionPhase === "preparing" ? "准备中（已占位）" : session.executionPhase === "running" ? "已启动（不证明 CLI 登录或模型可用）" : session.executionPhase === "closing" ? "关闭中（仍占位）" : session.executionPhase === "released" ? "占位已释放" : "执行状态未确认（旧回执未提供）"}</p> : null}
         {/* Live session shell (main surface) */}
         {session ? (
           <div style={styles.session}>
@@ -1227,7 +1226,8 @@ export function CodingAgentPanel({
                   <button
                     type="button"
                     style={styles.linkBtn}
-                    onClick={() => dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })}
+                    onClick={() => dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId,
+                      threadRevision: state.activeThreadSelectionRevision, selectionRevision: state.activeCodingSelectionRevision })}
                   >
                     清除会话
                   </button>
@@ -1243,11 +1243,14 @@ export function CodingAgentPanel({
                   const target = currentSessionRef.current
                   if (!mountedRef.current || !target || target !== session || target.state !== "offered" ||
                       currentSelectionRef.current.threadId !== threadId ||
-                      currentSelectionRef.current.revision !== state.activeThreadSelectionRevision || !cloudDisclosure) return
+                      currentSelectionRef.current.revision !== state.activeThreadSelectionRevision ||
+                      currentSelectionRef.current.selectionRevision !== state.activeCodingSelectionRevision || !cloudDisclosure) return
                   setStarting(true)
-                  sendCodingOperation(target, dispatch, { type: "acp.ui_start", cloud_disclosure_accepted: true })
+                  sendCodingOperation(target, dispatch, { type: "acp.ui_start", cloud_disclosure_accepted: true }, captureCodingSelection(state),
+                    () => currentSelectionRef.current.revision === state.activeThreadSelectionRevision &&
+                      currentSelectionRef.current.selectionRevision === state.activeCodingSelectionRevision && currentSessionRef.current === target)
                 }}>启动选中提案（需确认）</button>
-              <p style={styles.footnote}>提案不会自动启动或排队；每次启动都需确认，同时只执行1个。</p>
+              <p style={styles.footnote}>提案不会自动启动或排队；每次启动都需确认，上限以设置和实际占位为准，同一 Agent 最多一份。</p>
             </div> : null}
             {session.error && !(session.state === "closed" && session.error === "cancelled") ? <div style={styles.err}>{session.error}</div> : null}
             {session.transport === "cli" && !session.cacheCompacted ? (

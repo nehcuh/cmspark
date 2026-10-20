@@ -25,6 +25,10 @@ public sealed class PickerNative726 : IDisposable {
   }catch{}};
   Automation.AddAutomationEventHandler(WindowPattern.WindowOpenedEvent,desktop,TreeScope.Subtree,handler);
  }
+ const int MaxThreads=64;
+ const int MaxWindows=256;
+ delegate bool EnumThreadWndProc(IntPtr h,IntPtr unused);
+ [DllImport("user32.dll")] static extern bool EnumThreadWindows(uint threadId,EnumThreadWndProc callback,IntPtr extra);
  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);
@@ -35,13 +39,51 @@ public sealed class PickerNative726 : IDisposable {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h,System.Text.StringBuilder name,int size);
  bool Owned(IntPtr h){uint p;return h!=IntPtr.Zero&&IsWindow(h)&&GetWindowThreadProcessId(h,out p)!=0&&p==pid;}
  static bool Class(IntPtr h,string wanted){var b=new System.Text.StringBuilder(256);return GetClassName(h,b,b.Capacity)>0&&b.ToString()==wanted;}
+ void Live() {
+  child.Refresh();
+  if(child.HasExited||child.Id!=pid||child.Handle==IntPtr.Zero)throw new InvalidOperationException();
+ }
  IntPtr Dialog() {
-  if(child.HasExited)throw new InvalidOperationException(); child.Refresh();
-  var main=child.MainWindowHandle;if(main==IntPtr.Zero)return IntPtr.Zero;
-  if(!Owned(main))throw new InvalidOperationException();
-  var dialog=Class(main,"#32770")?main:GetWindow(main,6); // GW_ENABLEDPOPUP, never enumerate desktop windows
-  if(dialog==IntPtr.Zero||dialog==main&&!Class(main,"#32770"))return IntPtr.Zero;
-  var owner=GetAncestor(dialog,3); // GA_ROOTOWNER
+  Live();
+  var threads=child.Threads;
+  if(threads.Count>MaxThreads)throw new InvalidOperationException();
+  var seenThreads=new System.Collections.Generic.List<int>();
+  var dialogs=new System.Collections.Generic.List<IntPtr>();
+  int callbacks=0;
+  bool fault=false;
+  foreach(ProcessThread thread in threads) {
+   int threadId=thread.Id;
+   if(threadId<=0||seenThreads.Contains(threadId))throw new InvalidOperationException();
+   seenThreads.Add(threadId);
+   int before=callbacks;
+   EnumThreadWndProc callback=(h,unused)=>{
+    try {
+     callbacks++;
+     if(callbacks>MaxWindows){fault=true;return false;}
+     uint actualPid;var actualThread=GetWindowThreadProcessId(h,out actualPid);
+     if(actualThread==0||actualThread!=(uint)threadId||actualPid!=(uint)pid||!IsWindow(h)){fault=true;return false;}
+     if(!IsWindowVisible(h))return true;
+     var kind=new System.Text.StringBuilder(256);
+     int length=GetClassName(h,kind,kind.Capacity);
+     if(length<=0||length>=kind.Capacity-1){fault=true;return false;}
+     if(kind.ToString()!="#32770")return true;
+     if(!dialogs.Contains(h))dialogs.Add(h);
+     if(dialogs.Count>1){fault=true;return false;}
+     return true;
+    }catch{fault=true;return false;}
+   };
+   bool complete=false;
+   try {complete=EnumThreadWindows((uint)threadId,callback,IntPtr.Zero);}
+   finally {GC.KeepAlive(callback);}
+   // FALSE with no callbacks is a documented empty thread, not partial success.
+   if(fault||(!complete&&callbacks!=before))throw new InvalidOperationException();
+  }
+  Live();
+  if(dialogs.Count==0)return IntPtr.Zero;
+  if(dialogs.Count!=1)throw new InvalidOperationException();
+  var dialog=IntPtr.Zero;
+  foreach(var candidate in dialogs)dialog=candidate;
+  var owner=GetAncestor(dialog,3); // GA_ROOTOWNER can be the hidden taskbar owner.
   if(!Owned(dialog)||!Owned(owner)||!IsWindowVisible(dialog)||!Class(dialog,"#32770"))throw new InvalidOperationException();
   var root=AutomationElement.FromHandle(dialog);
   if(root==null||root.Current.ProcessId!=pid||root.Current.NativeWindowHandle!=dialog.ToInt64())throw new InvalidOperationException();

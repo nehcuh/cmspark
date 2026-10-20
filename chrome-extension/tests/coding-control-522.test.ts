@@ -43,7 +43,7 @@ test("actual closed followup/prompt/apply refusals remain visible without reopen
   let state = agentReducer(started(), codingControlAction(fixture.receipt)!)
   for (const error of [fixture.followupRefused, fixture.promptRefused, fixture.applyRefused]) {
     state = agentReducer(state, codingControlAction(error)!)
-    assert.equal(selectCodingOperationError(state, selectCodingSession(state)), error.error)
+    assert.equal(selectCodingOperationError(state, selectCodingSession(state)), `回执关联未知：${error.error}`)
     assert.equal(selectCodingSession(state)?.state, "closed")
     assert.equal(selectCodingSession(state)?.cancelConfirmed, true)
     assert.equal(agentReducer(state, codingControlAction({ ...error, thread_id: "wrong-owner" })!), state)
@@ -54,7 +54,7 @@ test("a real non-Stop refusal cannot clear an outstanding Stop request; actual S
   let state = agentReducer(started(), { type: "ACP_CONTROL_REQUEST", sessionId: fixture.receipt.session_id, threadId: fixture.receipt.thread_id })
   state = agentReducer(state, codingControlAction(fixture.livePromptRefused)!)
   assert.equal(selectCodingSession(state)?.stopPending, true)
-  assert.equal(selectCodingOperationError(state, selectCodingSession(state)), fixture.livePromptRefused.error)
+  assert.equal(selectCodingOperationError(state, selectCodingSession(state)), `回执关联未知：${fixture.livePromptRefused.error}`)
   state = agentReducer(state, codingControlAction(fixture.refused)!)
   assert.equal(selectCodingSession(state)?.stopPending, false)
   assert.equal(selectCodingSession(state)?.controlError, fixture.refused.error)
@@ -78,7 +78,7 @@ test("retirement preserves the minimal real cancelled outcome when no cancel ack
   assert.equal(selectCodingSession(state)?.cancelled, true)
 })
 
-test("legacy untyped ACP errors retain the original processingStatus route instead of guessing Stop", () => {
+test("legacy untyped ACP errors cannot guess Stop or current-view operation capture", () => {
   const legacy = { ...fixture.followupRefused }
   delete legacy.request_type
   assert.equal(codingControlAction(legacy), null)
@@ -92,7 +92,7 @@ test("actual compacted-owner followup refusal is visible without restoring recor
   assert.equal(selectCodingSession(state)?.cacheCompacted, true)
   const records = state.codingSessionsById, selection = state.codingSessionIdByThread
   const next = agentReducer(state, codingControlAction(fixture.followupRefused)!)
-  assert.equal(next.codingOperationError?.error, fixture.followupRefused.error)
+  assert.equal(next, state, "uncorrelated late feedback cannot restore rich compacted metadata or current-view feedback")
   assert.equal(next.codingSessionsById, records)
   assert.equal(next.codingSessionIdByThread, selection)
   assert.equal(selectCodingSession(next)?.cacheCompacted, true)
@@ -101,27 +101,29 @@ test("actual compacted-owner followup refusal is visible without restoring recor
 
 test("operation notice is bounded and follows only the current selected immutable owner", () => {
   let state = agentReducer(started(), codingControlAction(fixture.livePromptRefused)!)
-  const request = { type: "ACP_OPERATION_REQUEST" as const, sessionId: fixture.progress.session_id, threadId: fixture.progress.thread_id }
+  const request = { type: "ACP_OPERATION_REQUEST" as const, sessionId: fixture.progress.session_id, threadId: fixture.progress.thread_id, threadRevision: state.activeThreadSelectionRevision, selectionRevision: state.activeCodingSelectionRevision }
   state = agentReducer(state, request)
   assert.equal(selectCodingOperationError(state, selectCodingSession(state)), undefined)
   state = agentReducer(state, codingControlAction({ ...fixture.livePromptRefused, error: "x".repeat(1001) })!)
-  assert.equal(selectCodingOperationError(state, selectCodingSession(state))?.length, 1000)
+  assert.equal(state.codingSessionsById[fixture.progress.session_id].operationError?.length, 1000)
+  assert.equal(selectCodingOperationError(state, selectCodingSession(state)), `回执关联未知：${"x".repeat(1000)}`)
   const other = agentReducer(state, { type: "SET_ACTIVE_THREAD", threadId: "other-owner" })
   assert.equal(other.codingOperationError, null)
-  assert.equal(agentReducer(other, codingControlAction(fixture.livePromptRefused)!), other)
+  assert.equal(agentReducer(other, codingControlAction(fixture.livePromptRefused)!).codingOperationError, null)
   assert.equal(selectCodingOperationError(other, selectCodingSession(state)), undefined)
   const observed = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { ...fixture.progress, session_id: "new-owned-session" } })
   assert.equal(selectCodingSession(observed)?.sessionId, fixture.progress.session_id, "new pending/live metadata must not silently replace the explicit target")
   const newer = agentReducer(observed, { type: "ACP_SELECT_SESSION", sessionId: "new-owned-session", threadId: fixture.progress.thread_id,
     threadRevision: observed.activeThreadSelectionRevision })
   assert.equal(newer.codingOperationError, null)
-  assert.equal(agentReducer(newer, codingControlAction(fixture.livePromptRefused)!), newer)
+  assert.equal(agentReducer(newer, codingControlAction(fixture.livePromptRefused)!).codingOperationError, null)
   assert.equal(agentReducer(state, { type: "SET_THREADS", threads: [] }).codingOperationError, null)
   assert.equal(agentReducer(state, { type: "REMOVE_THREAD", threadId: fixture.progress.thread_id }).codingOperationError, null)
   assert.equal(agentReducer(state, { type: "REMOVE_THREADS", threadIds: [fixture.progress.thread_id] }).codingOperationError, null)
   const dismissed = agentReducer(state, { type: "CLEAR_CODING_SESSION", sessionId: fixture.progress.session_id })
   assert.equal(dismissed.codingOperationError, null)
-  assert.equal(agentReducer(dismissed, codingControlAction(fixture.livePromptRefused)!), dismissed)
+  assert.equal(selectCodingSession(agentReducer(dismissed, codingControlAction(fixture.livePromptRefused)!)), null)
+  assert.equal(agentReducer(dismissed, codingControlAction(fixture.livePromptRefused)!).codingOperationError, null)
 })
 
 test("unknown or structured request metadata retains original flow without coercion", () => {
