@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- #464 GitHub 比较观察拒绝未解析的可见表格行、混合非 TD 单元格或同一行额外未知 TD；changed/context 必须完整匹配原三列，hunk/空 expander 完整匹配原两列，仅跳过原固定三列辅助标题，避免遗漏内容后仍把代码覆盖标为 complete。补实际序列化 producer、存储与材料链负控；不改变审阅齐备状态，也不代表真实平台或企业业务验收。
+
 - Refs #725: Windows 安装和打包对精确锁定的 node-pty beta.15 JS 应用自然退出后 output-worker 退休修正；复用原 worker dispose/flush，不按已退出 PID 再 kill。未知依赖拒绝，普通缺少 optional PTY 包仍降级；不声称解决当前 Windows CI pending 或全部原生资源退出。
 
 - #725 开发候选：在原终端打开确认和首输出前明示回显、模型暴露及正常回复留存，仅对确实批准后新建的同一 live 对象开放当前认证对话的明确只读尾部拉取。内存8192 UTF-8字节与完整JSON8000字符双限、纯文本控制字/标记惰性化、先taint再返回；无写入/自动读/跨worker或新授权。工具自身持久化/二级投影不保留正文，不承诺去除普通模型回复转述；CPU控制不冒真实PTY验收或整票交付。
