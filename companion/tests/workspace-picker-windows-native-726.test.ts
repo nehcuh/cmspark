@@ -28,7 +28,7 @@ test("726 hosted Windows native hint OK binds actual selected root and starts sy
     const adapterModule = require(path.join(testsRoot, "helpers/picker-native-adapter-726.cjs"))
     const scratch = fs.mkdtempSync(path.join(data, "picker726-")), scratchStat = fs.lstatSync(scratch, { bigint: true })
     const root = path.join(scratch, "实际工作区-726"); fs.mkdirSync(root)
-    const expected = fs.realpathSync(root), configFile = path.join(data, "config.json")
+    const expected = fs.realpathSync.native(root), configFile = path.join(data, "config.json")
     let before: Buffer | null = null
     if (fs.existsSync(configFile)) { const s = fs.lstatSync(configFile); assert.ok(s.isFile() && !s.isSymbolicLink() && s.nlink === 1); before = fs.readFileSync(configFile) }
     const tempBefore = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR }

@@ -4,6 +4,10 @@
 
 ## 测试架构
 
+### Windows 选夹的短名与长名
+
+`companion/tests/picker-native-path-domain-726.test.ts` 执行当前 Node 的真实 JS `realpathSync` 实现与原生选夹测试的实际预期路径声明／严格比较。仅原生绑定用明确的惰性短名→长名 seam；不会执行 Win32、窗口或选夹。它同时覆盖 LF/CRLF、原 JS-only 声明的失败、已展开路径正控、异目录拒绝及原生身份不可得的失败传播。`workspace-picker-windows-native-726.test.ts` 的预期根使用 `fs.realpathSync.native`，实际选夹及全部绑定／取消／ACP cwd／清理断言不变。该 CPU 检查不能证明真实 Windows API 或替代远端新 head 的原生用例。
+
 ### #726 既有 Git 状态请求关联
 
 `chrome-extension/tests/workspace-git-hints-726.test.ts` 由原前端 canonical `tests/**/*.ts` 编译与 `*.test.js` 入口发现。测试运行实际 Panel status effect → 原 Git 状态返回函数／handler → 原 WS `id` 包络 JSON → 当前 observer／实际完整 live hook → 原候选按钮 callback；Git 子进程、realpath、Chrome 发送与 React 生命周期为显式惰性 seam。没有真实 Git、文件系统探测、浏览器、picker、PTY 或 provider 执行。
