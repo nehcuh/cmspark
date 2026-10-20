@@ -14,7 +14,7 @@
 ## 按改动边界做预检
 
 - **路径与换行**：宿主路径用相应 Node path API；固定 POSIX 的虚拟 FS 则全链使用 posix，不能混宿主 win32。路径相关 producer 覆盖 source/compiled 布局、win32/posix 与误导祖先目录；先辨 `resolve`、`normalize`、`realpath` 的真实职责。Windows 8.3 短名／长名需在同一已声明的 canonical 域比较；JS `realpath` 与 native binding 的实际行为不能凭名字视为相同。保持严格身份断言，不以去盘符、大小写折叠或模糊路径匹配代替。源码提取器喂原 LF/CRLF 两种字节，严格边界不删；checkout、TS printer、模板字面量各自的换行不能混成一次全局归一化。
-- **真实契约与消费者**：fixture 来自实际返回/序列化；负控先查当前 dispatcher、role/token/owner API。修改函数、闭包、helper 或 workflow 时用 `rg` 查 import 之外的 readFile/AST/VM/字符串消费者，跑真正受影响 family；不能为过期 fake 删除产品保护或旧安全断言。
+- **真实契约与消费者**：fixture 来自实际返回/序列化；负控先查当前 dispatcher、role/token/owner API。修改函数、闭包、helper 或 workflow 时用 `rg` 查 import 之外的 readFile/AST/VM/字符串消费者，跑真正受影响 family；不能为过期 fake 删除产品保护或旧安全断言。抽取 return 的动态函数也必须绑定该语句实际使用的平台变量与模块 helper；AST 找到语句不等于执行闭包完整。
 - **编译与工具闭包**：使用本次工程的实际 tsconfig/include、ambient shims、文件名、cwd 和 Node 版本；selected 零诊断不冒完整项目通过，诊断为零也不等 emit 成功。从实际 package/lock 核 helper、版本、argv、输出/参数预算；部署完整所需 package scope（含 package.json、相对资源、类型），不只搬 trace 中几个 JS。无关已通过机器按精确输入复用。
 - **夹具与操作器**：在 import 应用前设独立 test-owned DATA_DIR，沿用 [preload](../companion/scripts/test-data-dir.cjs)；不改 HOME、不接触 live config，不继承 provider/key/proxy 全环境。保留原 runner 必需的 Windows 允许变量。先核 driver 语法、入口、cwd、目录 UID/ACL、依赖、输出可写性、guard 和真实包路径，再启动；setup 错误保留但不计产品 RED。不靠逐次失败无限加 allowlist。
 - **字节与语言语义**：真实 TS 字符串先解码/编译再分析反斜杠，不能数工具展示的转义。中文文件内容与 stdout 编码分开；UTF-8 分块、非 UTF-8 与 stderr 均据真实字节/声明判断，不猜 GBK或更改系统代码页。PS 比较规则、C++ 字符串/SDK 参数所有权必须按真实语言；保留实际 MSVC warning/UTF-8 选项，不压警告换绿。

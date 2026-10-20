@@ -1,3 +1,4 @@
+import { computerFailureEnvelope } from "./helpers/computer-failure-envelope"
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -23,7 +24,7 @@ function findFailureEnvelope(node: ts.Node): void {
 }
 findFailureEnvelope(source)
 assert.equal(returns.length, 1, "must find exactly one actual host_computer failure envelope")
-const failureEnvelope = new Function("result", returns[0]) as (result: Awaited<ReturnType<typeof runComputerTask>>) => any
+const failureEnvelope = computerFailureEnvelope( returns[0]) as (result: Awaited<ReturnType<typeof runComputerTask>>) => any
 
 async function actualDenial(kind: "app" | "hwnd" | "structural", metadata: string) {
   const effects: string[] = []

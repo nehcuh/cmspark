@@ -1,3 +1,4 @@
+import { computerFailureEnvelope } from "./helpers/computer-failure-envelope"
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -23,7 +24,7 @@ function collectReturn(node: ts.Node): void {
 }
 collectReturn(dispatchSource)
 assert.equal(returns.length, 1)
-const failureEnvelope = new Function("result", returns[0])
+const failureEnvelope = computerFailureEnvelope( returns[0])
 const adapterPath = path.resolve(__dirname, "../../src/llm/adapter.ts")
 const adapterSource = ts.createSourceFile(adapterPath, fs.readFileSync(adapterPath, "utf8"), ts.ScriptTarget.Latest, true)
 const consumerStatements: string[] = []
