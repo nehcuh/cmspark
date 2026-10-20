@@ -4,13 +4,14 @@ export const CODING_INACTIVE_RICH_MAX_ROWS = 16
 export const CODING_INACTIVE_RICH_MAX_BYTES = 256 * 1024
 
 function terminal(row: CodingSessionState): boolean {
-  return row.state === "closed" || row.state === "handback"
+  return (row.state === "closed" || row.state === "handback") &&
+    row.executionPhase !== "preparing" && row.executionPhase !== "running" && row.executionPhase !== "closing"
 }
 
 export function compactCodingSession(row: CodingSessionState): CodingSessionState {
   return {
     sessionId: row.sessionId, threadId: row.threadId, agentId: row.agentId,
-    state: row.state, updatedAt: row.updatedAt, transport: row.transport,
+    state: row.state, executionPhase: row.executionPhase, updatedAt: row.updatedAt, transport: row.transport,
     mode: row.mode, partial: row.partial, hasPendingDiff: row.hasPendingDiff,
     openLocalTerminal: row.openLocalTerminal, localTerminal: row.localTerminal,
     cancelConfirmed: row.cancelConfirmed, cacheCompacted: true,
@@ -36,5 +37,23 @@ export function pruneCodingSessionCache(
     result[row.sessionId] = compactCodingSession(row)
     count--; bytes -= sizes[index]!
   })
+  return result
+}
+
+/** Ordered, unique, viewable membership; existing singleton is only a migration seed. */
+export function codingSessionMembership(
+  records: Record<string, CodingSessionState>, previous: Record<string, string[]> | undefined,
+  selection: Record<string, string>, eventId?: string,
+): Record<string, string[]> {
+  const result: Record<string, string[]> = {}
+  const append = (id: string, owner: string) => {
+    const row = records[id]
+    if (!row || row.threadId !== owner || row.cacheCompacted) return
+    const ids = result[owner] || (result[owner] = [])
+    if (!ids.includes(id)) ids.push(id)
+  }
+  for (const [owner, ids] of Object.entries(previous || {})) for (const id of ids) append(id, owner)
+  for (const [owner, id] of Object.entries(selection)) append(id, owner)
+  if (eventId && records[eventId]) append(eventId, records[eventId]!.threadId)
   return result
 }

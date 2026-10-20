@@ -284,3 +284,11 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 The unshipped Windows acceptance variant observes the exact blocked top-level navigation ID and ready document generation. It emits the existing `REMOTE_DENIED` marker and issues the existing popup script only after matching `NavigationCompleted` reports unsuccessful `OPERATION_CANCELED`, all getters succeed, and the current top-level Source/generation remain owned. Starting alone, unrelated/duplicate completion, failed getters, changed document, or foreign sender cannot advance. Shipped native source and the Mac fixture remain unchanged.
 
 `desktop-hostile-completion-480.test.ts` lowers the actual limited C++ fixture bodies and drives a controlled event schedule, including LF/CRLF generator inverses and exact UINT64 identities. These are CPU/source controls, not C++ compilation or WebView2 execution. Exact-head Windows native acceptance must still finish naturally within the original 20 seconds with all original markers/assertions and cleanup; the historical timeout cause remains unknown.
+
+
+### #739 bounded-N bridge / 多会话视图
+
+- `companion/tests/acp-bounded-n-739.test.ts` 直接执行真实 manager、saveConfig、WS handler 与实际工具 L2／dispatch 分支，进程、确认、文件和时钟均为显式惰性 seam；覆盖 N1/2/4、同 Agent、降额／禁用、prepare／exit-before-close／failed-spawn／fallback 与替换对象。该 CPU 证据不是原生或真实 CLI 正控。
+- `chrome-extension/tests/coding-bounded-n-739.test.ts` 执行真实 reducer／private send producer 与完整 WS listener，覆盖有序 membership、同线程／跨线程 ABA、唯一回执、Stop先于Start回执、manual-entry、compact marker与legacy未知关联。原522／607／722／727消费者按已批准新容量／显式选择合同同步，保留其 owner、真正close、工作区和拒绝断言。
+- `companion/tests/integration/acp-bounded-n-739.test.ts` 仅 Windows CI 执行：N1/2/4各创建精确 owned Node bridge，以原子 JSON marker 确认真实独立 PID 重叠，同 Agent 拒绝、取消一方后另一方仍活、真实close后仅释放其槽。每case45秒、marker20秒、原bridge10秒，不扩时限／权限。它不启动配置的 Agent/provider，不是本机已跑证据；非Windows注册后显式skip，必须在真实Windows计数通过。
+- 原607六个受管close／probe→fallback场景完整保留，当前case不以UI closed、cancelACK或exitCode提前释放。源审批、一次必要共享locked ARM与精确head/main完整CI另行验收；不能凭多个offered、VM、SSR或ARM单独关闭整票。

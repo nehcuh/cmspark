@@ -115,7 +115,7 @@ test("native CLI spawn error then close cannot release a replacement session's s
   assert.equal(c.ok, false, "old close must not release B's live slot")
   if (!c.ok) {
     assert.equal(c.error_code, "ACP_CONCURRENCY_LIMIT", "foreign live slot is capacity, not same-thread busy")
-    assert.equal(c.error, "ACP_CONCURRENCY_LIMIT: only one ACP session at a time")
+    assert.equal(c.error, "ACP_CONCURRENCY_LIMIT: wait for an owned session to close or choose a different agent within the configured capacity")
     assert.deepEqual(c.data, { suggested_action: "wait_for_acp_capacity", data_not_instruction: true }, "foreign B identity/task must not leak to C")
   }
   assert.equal((await bResult).ok, true)

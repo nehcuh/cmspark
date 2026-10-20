@@ -10,7 +10,7 @@ const fixture = JSON.parse(fs.readFileSync(path.join(process.cwd(), "tests/fixtu
 const started = () => agentReducer(agentReducer(initialState, { type: "SET_ACTIVE_THREAD", threadId: fixture.progress.thread_id }),
   { type: "ACP_SESSION_EVENT", event: fixture.progress })
 const request = { type: "ACP_MANUAL_ENTRY_REQUEST" as const, sessionId: fixture.prepared.session_id,
-  threadId: fixture.prepared.thread_id, requestId: fixture.prepared.request_id }
+  threadId: fixture.prepared.thread_id, requestId: fixture.prepared.request_id, threadRevision: started().activeThreadSelectionRevision, selectionRevision: started().activeCodingSelectionRevision }
 const pending = () => agentReducer(started(), request)
 
 test("recorded closed default-off session receives only its explicitly requested private command", () => {
@@ -37,7 +37,9 @@ test("matching real refusal stays visible; wrong request, owner or selection can
   assert.equal(switched.codingManualEntry, null)
   assert.equal(agentReducer(switched, codingManualEntryAction(fixture.prepared)!), switched)
   assert.equal(selectCodingManualEntry(switched, selectCodingSession(state)), null)
-  const replaced = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { ...fixture.progress, session_id: "new-session" } })
+  const observed = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { ...fixture.progress, session_id: "new-session" } })
+  assert.equal(observed.codingManualEntry, state.codingManualEntry, "unrelated metadata cannot steal pending selected entry")
+  const replaced = agentReducer(observed, { type: "ACP_SELECT_SESSION", sessionId: "new-session", threadId: request.threadId, threadRevision: observed.activeThreadSelectionRevision })
   assert.equal(replaced.codingManualEntry, null)
   assert.equal(agentReducer(replaced, codingManualEntryAction(fixture.prepared)!), replaced)
 })

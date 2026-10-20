@@ -1,3 +1,4 @@
+import { takeCodingOperationReply, clearCodingOperationFeedback } from "../utils/coding-operation-send"
 import { isBoardHintReply } from "../utils/board-hint-request"
 import { codingManualEntryAction } from "../utils/coding-manual-entry-message"
 // WebSocket hook for Side Panel — communicates with background service worker
@@ -417,6 +418,12 @@ export function useWebSocket() {
     // broadcasts here — never claim the response channel (do not return true).
     const messageListener = (msg: any) => {
       if (!msg || typeof msg.type !== "string") return false
+      if (msg.type === "thread.mutation.connection") {
+        if (msg.state === "disconnected" || msg.state === "connecting") clearCodingOperationFeedback()
+        return false
+      }
+      const codingFeedback = takeCodingOperationReply(msg)
+      if (codingFeedback) { dispatch(codingFeedback); return false }
       // Outbound UI→SW commands (armed via Settings etc.) must not be processed here.
       // Background is the sole handler; a throw in this listener can break the response path.
       if (
@@ -1735,6 +1742,7 @@ export function useWebSocket() {
                 session_id: msg.session_id,
                 thread_id: msg.thread_id,
                 state: "closed",
+                execution_phase: msg.execution_phase,
                 mode: msg.mode,
                 pending_diffs: msg.pending_diffs,
                 handback: msg.message?.content,
@@ -1745,34 +1753,13 @@ export function useWebSocket() {
           break
 
         case "acp.apply_diff.result":
-          if (!codingMessageTargetsThread(msg, activeThreadRef.current)) break
-          dispatch({
-            type: "SET_PROCESSING_STATUS",
-            status: msg.ok
-              ? `已应用 ${Array.isArray(msg.applied) ? msg.applied.length : 0} 个文件`
-              : `应用 diff 失败: ${msg.error || "unknown"}`,
-          })
-          break
-
+        case "acp.apply_diff.denied":
+        case "acp.session.prompt.accepted":
+        case "acp.session.prompt.denied":
         case "acp.ui_start.accepted":
-          if (!codingMessageTargetsSelection(msg, activeThreadRef.current, codingSelectionRef.current)) break
-          // progress follows acp.session.event — keep status for panel feedback
-          dispatch({
-            type: "SET_PROCESSING_STATUS",
-            status: "启动请求已受理，正在准备…",
-          })
-          break
         case "acp.ui_start.denied":
-          if (!codingMessageTargetsSelection(msg, activeThreadRef.current, codingSelectionRef.current)) break
-          dispatch({
-            type: "SET_PROCESSING_STATUS",
-            status:
-              msg.error === "user_denied"
-                ? "编程助手启动已取消"
-                : typeof msg.error === "string" && msg.error
-                  ? msg.error
-                  : "编程助手启动失败",
-          })
+          // Unassociated legacy response is not today's selected operation.
+          // Lifecycle/diff records still arrive through their authenticated session events.
           break
 
         case "computer.task.abort.ack":
@@ -2437,15 +2424,8 @@ export function useWebSocket() {
             if (manualEntryAction) { dispatch(manualEntryAction); break }
             const controlAction = codingControlAction(msg)
             if (controlAction) { dispatch(controlAction); break }
-            if ((msg.session_id !== undefined || msg.thread_id !== undefined) &&
-                !codingMessageTargetsSelection(msg, activeThreadRef.current, codingSelectionRef.current)) break
-            dispatch({
-              type: "SET_PROCESSING_STATUS",
-              status:
-                typeof msg.error === "string" && msg.error
-                  ? msg.error
-                  : "编程助手错误",
-            })
+            // A legacy ACP error without private request correlation must not
+            // overwrite a new view/global status after same-thread selection ABA.
             break
           }
           // App tab (WP4, routing hardened in WP6a): apps.* failures
@@ -2517,6 +2497,7 @@ export function useWebSocket() {
       chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
         if (chrome.runtime.lastError) return
         if (response) {
+          if (response.connectionState !== "connected") clearCodingOperationFeedback()
           dispatch({ type: "SET_CONNECTION", state: response.connectionState })
           if (response.connectionState === "connected") {
             requestInitialData()
@@ -2542,6 +2523,7 @@ export function useWebSocket() {
     const port = chrome.runtime.connect({ name: "cmspark-sidepanel" })
 
     return () => {
+      clearCodingOperationFeedback()
       clearInterval(interval)
       chrome.runtime.onMessage.removeListener(messageListener)
       document.removeEventListener("visibilitychange", handleVisibilityChange)

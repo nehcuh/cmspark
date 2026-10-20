@@ -46,7 +46,7 @@ function fixture() {
   const managerSource = source("acp/manager.ts")
   const propose = ["propose", "expireOfferedSessions"].map(name => extract(managerSource, n => ts.isMethodDeclaration(n) && n.name.getText(managerSource) === name)).join("\n")
   const Manager = compile(`export class ActualPropose {
-    sessions=new Map(); runningCount=0;startupPreparations=new Map();processes=new Map();protocolHandles=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();
+    sessions=new Map(); executionClaims=new Map();failedSpawnChildren=new WeakSet();startupPreparations=new Map();processes=new Map();protocolHandles=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();
     resolveServer(){return {enabled:true,command:'INERT_NOT_EXECUTED',policy:{profile:'review_readonly'}}}
     emitProgress(){}; ${propose}
   }`, {
@@ -92,12 +92,12 @@ async function busy(f: ReturnType<typeof fixture>) {
   const first = await f.dispatch(f.params)
   assert.equal(first.success, true)
   assert.equal(first.data.state, "offered")
-  for (let i = 1; i < 4; i++) assert.equal((await f.dispatch(f.params)).success, true)
+  for (let i = 1; i < 4; i++) assert.equal((await f.dispatch({ ...f.params, agent_id: `inert-${i}` })).success, true)
   const before = JSON.stringify([...f.manager.sessions])
-  const refusal = await f.dispatch(f.params)
+  const refusal = await f.dispatch({ ...f.params, agent_id: "fifth" })
   assert.equal(refusal.success, false)
   assert.equal(JSON.stringify([...f.manager.sessions]), before)
-  assert.equal(f.manager.runningCount, 0)
+  assert.equal(f.manager.executionClaims.size, 0)
   return { first, refusal }
 }
 function noEffects(f: ReturnType<typeof fixture>) { assert.deepEqual(f.effects, { external: 0, issuedToken: 0 }) }
@@ -117,18 +117,18 @@ test("#722 offered holder facts are owner-scoped finite data, not execution or t
   })
   noEffects(f)
 })
-test("#722 a running record no longer consumes offer metadata while execution remains reserved", async () => {
+test("#722 different-agent offer preserves the existing running claim and metadata bounds", async () => {
   const f = fixture(), first = await f.dispatch(f.params)
-  f.manager.sessions.get(first.data.session_id).state = "running"; f.manager.runningCount = 1
-  const offered = await f.dispatch(f.params)
+  f.manager.sessions.get(first.data.session_id).state = "running"; f.manager.executionClaims.set(f.manager.sessions.get(first.data.session_id),{children:new Set(),ending:false})
+  const offered = await f.dispatch({ ...f.params, agent_id: "other-agent" })
   assert.equal(offered.success, true); assert.equal(offered.data.state, "offered")
-  assert.equal(f.manager.runningCount, 1); assert.equal(f.manager.sessions.size, 2); noEffects(f)
+  assert.equal(f.manager.executionClaims.size, 1); assert.equal(f.manager.sessions.size, 2); noEffects(f)
 })
 for (const own of [true, false]) test(`#722 new proposal does not expose an ${own ? "own" : "foreign"} running holder`, async () => {
   const f = fixture(), first = await f.dispatch({ ...f.params, __thread_id: own ? "owned-thread" : "foreign-thread" })
-  const row = f.manager.sessions.get(first.data.session_id); row.state = "running"; row.goal = "SYNTHETIC_DO_NOT_DISCLOSE"; f.manager.runningCount = 1
-  const offered = await f.dispatch(f.params)
-  assert.equal(offered.success, true); assert.equal(offered.data.state, "offered"); assert.equal(f.manager.runningCount, 1)
+  const row = f.manager.sessions.get(first.data.session_id); row.state = "running"; row.goal = "SYNTHETIC_DO_NOT_DISCLOSE"; f.manager.executionClaims.set(row,{children:new Set(),ending:false})
+  const offered = await f.dispatch({ ...f.params, agent_id: "other-agent" })
+  assert.equal(offered.success, true); assert.equal(offered.data.state, "offered"); assert.equal(f.manager.executionClaims.size, 1)
   assert.equal(JSON.stringify(offered).includes(row.goal), false); assert.equal(JSON.stringify(offered).includes(first.data.session_id), false); noEffects(f)
 })
 for (const code of ["ACP_SESSION_BUSY", "ACP_CONCURRENCY_LIMIT"]) test(`#722 registered ${code} grade cannot be changed by hostile message metadata`, () => {
@@ -165,7 +165,7 @@ test("#722 actual workspace containment still denies the data-root name", async 
 function admissionFixture(platform: "linux" | "win32", deferredPreparation = false) {
   const { EventEmitter } = require("node:events") as typeof import("node:events")
   const managerSource = source("acp/manager.ts")
-  const methods = ["propose", "start", "startCliBridge", "trackChild", "getSession", "listSessionsForThread", "cancel", "shutdown", "expireOfferedSessions", "checkStartAdmission", "promptSession", "followup"].map(name =>
+  const methods = ["propose", "reserveExecutionClaim", "releaseExecutionClaim", "start", "startCliBridge", "trackChild", "getSession", "listSessionsForThread", "cancel", "shutdown", "expireOfferedSessions", "checkStartAdmission", "promptSession", "followup"].map(name =>
     extract(managerSource, n => ts.isMethodDeclaration(n) && n.name.getText(managerSource) === name)).join("\n")
   const children: any[] = [], preparations: Array<() => void> = [], tracked: Promise<any>[] = []
   let serial = 0, prepareCalls = 0, startCalls = 0, envCalls = 0, kills = 0, enabled = true, preparationReleased = !deferredPreparation
@@ -174,7 +174,7 @@ function admissionFixture(platform: "linux" | "win32", deferredPreparation = fal
   const firstChild = new Promise<void>(resolve => { entered = resolve })
   const secondChild = new Promise<void>(resolve => { enteredSecond = resolve })
   const exports = compile(`export class ActualAdmission {
-    sessions=new Map();runningCount=0;processes=new Map();ownedChildren=new Set();startupPreparations=new Map();
+    sessions=new Map();executionClaims=new Map();failedSpawnChildren=new WeakSet();processes=new Map();ownedChildren=new Set();startupPreparations=new Map();
     protocolHandles=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();shuttingDown=false;unsubscribeEmbedSpawn(){};
     resolveServer(){return {enabled:true,command:'INERT_NEVER_EXECUTED',protocol:'cli',policy:{profile:'review_readonly'}}};
     emitProgress(){};emitTerminal(){};pushTimeline(){};buildUserPrompt(){return 'synthetic task'};maybeOpenLocalTerminal(){};
@@ -203,6 +203,7 @@ function admissionFixture(platform: "linux" | "win32", deferredPreparation = fal
   const dispatchSource = source("tool/companion-dispatch.ts")
   const clause = extract(dispatchSource, n => ts.isCaseClause(n) && n.expression.getText(dispatchSource) === '"acp_start_session"')
   const dispatch = compile(`export async function run(params){switch('acp_start_session'){${clause}}}`, {
+    threadManager: { get: () => ({ agent_role: "main" }) },
     securityPolicy: { validateTokenFor: (token: string) => token === "INERT_AUTH_SEAM_NOT_A_TOKEN" },
     invalidSecurityTokenResult: () => ({ success: false, error: "Invalid or expired security token", data: { error_code: "SECURITY_TOKEN_INVALID" } }),
     acpSessionLookupFailure: () => ({ success: false, error_code: "ACP_SESSION_NOT_FOUND", error: "synthetic lookup refusal" }),
@@ -236,16 +237,16 @@ for (const platform of ["linux", "win32"] as const) test(`#722 ${platform} start
     assert.equal(f.children.length, 1, "second start must not reach even the inert spawn boundary")
     const refused = await pb
     assert.equal(refused.ok, false); assert.equal(refused.error_code, "ACP_CONCURRENCY_LIMIT")
-    assert.equal(target.state, "offered"); assert.equal(f.manager.runningCount, 1)
+    assert.equal(target.state, "offered"); assert.equal(f.manager.executionClaims.size, 1)
     assert.deepEqual(Object.keys(refused.data).sort(), ["data_not_instruction", "suggested_action"])
     f.close(f.children[0]); await pa
-    assert.equal(f.manager.runningCount, 0)
+    assert.equal(f.manager.executionClaims.size, 0)
     assert.equal(f.children.length, 1, "refused target must not auto-start after release")
     const resumed = f.start(target.session_id)
     await f.secondChild
     assert.equal(f.children.length, 2); assert.equal(target.state, "running")
     f.close(f.children[1]); await resumed
-    assert.equal(f.manager.runningCount, 0)
+    assert.equal(f.manager.executionClaims.size, 0)
   } finally { await f.cleanup() }
 })
 test("#722 win32 preparation reserves the one slot before its await", async () => {
@@ -253,11 +254,11 @@ test("#722 win32 preparation reserves the one slot before its await", async () =
   try {
     const pa = f.start(first.session_id), pb = f.start(target.session_id)
     assert.equal(f.prepareCalls(), 1, "busy target must not enter Windows job preparation")
-    assert.equal(f.children.length, 0); assert.equal(f.manager.runningCount, 1)
+    assert.equal(f.children.length, 0); assert.equal(f.manager.executionClaims.size, 1)
     assert.equal((await pb).error_code, "ACP_CONCURRENCY_LIMIT"); assert.equal(target.state, "offered")
     f.releasePreparation(); await f.firstChild
     assert.equal(f.children.length, 1); f.close(f.children[0]); await pa
-    assert.equal(f.manager.runningCount, 0)
+    assert.equal(f.manager.executionClaims.size, 0)
   } finally { await f.cleanup() }
 })
 test("#722 cancel does not release a live child's admission before the real close callback", async () => {
@@ -265,12 +266,12 @@ test("#722 cancel does not release a live child's admission before the real clos
   try {
     const pa = f.start(first.session_id); await f.firstChild
     assert.equal(f.manager.cancel(first.session_id).ok, true)
-    assert.equal(first.state, "closed"); assert.equal(f.manager.runningCount, 1); assert.equal(f.kills(), 1)
+    assert.equal(first.state, "closed"); assert.equal(f.manager.executionClaims.size, 1); assert.equal(f.kills(), 1)
     const pb = f.start(target.session_id)
     assert.equal(f.children.length, 1); assert.equal((await pb).error_code, "ACP_CONCURRENCY_LIMIT")
     assert.equal(target.state, "offered")
     f.close(f.children[0]); await pa
-    assert.equal(f.manager.runningCount, 0); assert.equal(f.children.length, 1)
+    assert.equal(f.manager.executionClaims.size, 0); assert.equal(f.children.length, 1)
   } finally { await f.cleanup() }
 })
 test("#722 shutdown keeps its original refusal and waits for the owned close", async () => {
@@ -280,8 +281,8 @@ test("#722 shutdown keeps its original refusal and waits for the owned close", a
     const shuttingDown = f.manager.shutdown()
     const refusal = await f.start(target.session_id)
     assert.equal(refusal.ok, false); assert.equal(refusal.error, "acp: manager shutting down")
-    assert.equal(refusal.error_code, undefined); assert.equal(f.manager.runningCount, 1); assert.equal(target.state, "offered")
-    f.close(f.children[0]); await Promise.all([pa, shuttingDown]); assert.equal(f.manager.runningCount, 0)
+    assert.equal(refusal.error_code, undefined); assert.equal(f.manager.executionClaims.size, 1); assert.equal(target.state, "offered")
+    f.close(f.children[0]); await Promise.all([pa, shuttingDown]); assert.equal(f.manager.executionClaims.size, 0)
   } finally { await f.cleanup() }
 })
 test("#722 cancelled Windows preparation stays reserved until the original preparation settles", async () => {
@@ -289,10 +290,10 @@ test("#722 cancelled Windows preparation stays reserved until the original prepa
   try {
     const pa = f.start(first.session_id); f.manager.cancel(first.session_id)
     const pb = f.start(target.session_id)
-    assert.equal(f.prepareCalls(), 1); assert.equal(f.children.length, 0); assert.equal(f.manager.runningCount, 1)
+    assert.equal(f.prepareCalls(), 1); assert.equal(f.children.length, 0); assert.equal(f.manager.executionClaims.size, 1)
     assert.equal((await pb).error_code, "ACP_CONCURRENCY_LIMIT"); assert.equal(target.state, "offered")
     f.releasePreparation(); assert.equal((await pa).ok, false)
-    assert.equal(f.children.length, 0); assert.equal(f.manager.runningCount, 0)
+    assert.equal(f.children.length, 0); assert.equal(f.manager.executionClaims.size, 0)
   } finally { await f.cleanup() }
 })
 test("#722 start dispatcher preserves missing/invalid L2 and foreign-owner refusal before admission", async () => {
@@ -397,7 +398,7 @@ for (const platform of ["linux", "win32"] as const) test(`#722 real ${platform} 
     assert.equal(refused.thread_id, "owner-B"); assert.equal(refused.session_id, f.starts[1].id)
     assert.deepEqual(JSON.parse(JSON.stringify(refused.data)), { suggested_action: "wait_for_acp_capacity", data_not_instruction: true })
     assert.equal(f.manager.getSession(refused.session_id).state, "offered")
-    assert.equal(f.children.length, 1); assert.equal(f.manager.runningCount, 1)
+    assert.equal(f.children.length, 1); assert.equal(f.manager.executionClaims.size, 1)
   } finally { await f.cleanup() }
 })
 
@@ -453,7 +454,7 @@ test("#722 real synchronous startup cancellation never becomes accepted running"
     const refused = await pending
     assert.equal(refused.type, "error"); assert.match(refused.error, /cancelled during startup/)
     assert.equal(refused.thread_id, "owner-A"); assert.equal(f.manager.getSession(refused.session_id).state, "closed")
-    assert.equal(f.manager.runningCount, 0); assert.equal(f.children.length, 0)
+    assert.equal(f.manager.executionClaims.size, 0); assert.equal(f.children.length, 0)
   } finally { await f.cleanup() }
 })
 
@@ -467,18 +468,35 @@ test("#722 actual hook shows owned typed refusal, ignores foreign or ownerless f
     const ownerCheck = ["codingMessageTargetsThread", "codingMessageTargetsSelection"].map(name => extract(file, n => ts.isFunctionDeclaration(n) && n.name?.text === name)).join("\n")
     const accepted = extract(file, n => ts.isCaseClause(n) && n.expression.getText(file) === '"acp.ui_start.accepted"')
     const error = extract(file, n => ts.isIfStatement(n) && n.expression.getText(file).startsWith('msg.family === "acp"'))
+    const listenerText = extract(file, n => ts.isVariableDeclaration(n) && n.name.getText(file) === "messageListener")
+    const projected = ts.createSourceFile("listener", `const ${listenerText}`, ts.ScriptTarget.Latest, true)
+    const declaration = (projected.statements[0] as ts.VariableStatement).declarationList.declarations[0]
+    const statements = ((declaration.initializer as ts.ArrowFunction).body as ts.Block).statements
+    const feedback = statements.findIndex(n => ts.isIfStatement(n) && n.expression.getText(projected) === "codingFeedback")
+    assert.ok(feedback >= 0)
+    const prelude = statements.slice(0, feedback + 1).map(n => n.getText(projected)).join("\n")
+    assert.match(prelude, /takeCodingOperationReply/)
     const actions: any[] = [], activeThreadRef = { current: "owner-B" as string | null }
-    const route = compile(`${ownerCheck}\nexport function run(msg){switch(msg.type){${accepted}\ncase "error":${error}}}`, {
+    const operations = compile(fs.readFileSync(path.resolve(sourceRoot, "../../chrome-extension/src/sidepanel/utils/coding-operation-send.ts"), "utf8"), {
+      chrome: { runtime: { sendMessage(_msg: unknown, callback: any) { callback({ ok: true }) } } },
+    })
+    const route = compile(`${ownerCheck}\nexport function run(msg){${prelude};switch(msg.type){${accepted}\ncase "error":${error}}}`, {
+      takeCodingOperationReply: operations.takeCodingOperationReply, clearCodingOperationFeedback: operations.clearCodingOperationFeedback,
       activeThreadRef, codingSelectionRef: { current: { "owner-A": admitted.session_id, "owner-B": refused.session_id } }, dispatch: (action: any) => actions.push(action),
       codingManualEntryAction: compile(fs.readFileSync(path.resolve(sourceRoot, "../../chrome-extension/src/sidepanel/utils/coding-manual-entry-message.ts"), "utf8")).codingManualEntryAction,
       codingControlAction: compile(fs.readFileSync(path.resolve(sourceRoot, "../../chrome-extension/src/sidepanel/utils/coding-control-message.ts"), "utf8")).codingControlAction,
     }).run
-    route(refused); assert.equal(actions.length, 1); assert.equal(actions[0].status, refused.error)
-    actions.length = 0; route(admitted); assert.equal(actions.length, 0, "old A receipt cannot affect active B")
+    const capture = { threadRevision: 2, selectionRevision: 3 }
+    for (const threadId of ["owner-A", "owner-B"]) operations.sendCodingOperation({ sessionId: "", threadId }, () => {}, { type: "acp.ui_start" }, capture)
+    route(refused); assert.equal(actions.length, 1); assert.equal(actions[0].type, "ACP_OPERATION_ERROR"); assert.equal(actions[0].error, refused.error)
+    assert.equal(actions[0].threadId, "owner-B"); assert.equal(actions[0].selectionRevision, 3)
+    actions.length = 0; route(admitted); assert.equal(actions.length, 1)
+    assert.equal(actions[0].threadId, "owner-A"); assert.equal(actions[0].type, "ACP_OPERATION_SETTLED")
+    assert.equal(actions[0].resultSessionId, admitted.session_id)
+    actions.length = 0
     route({ ...refused, thread_id: "owner-A" }); route({ ...refused, thread_id: undefined }); assert.equal(actions.length, 0)
     activeThreadRef.current = "owner-A"; route(admitted)
-    assert.equal(actions.length, 1); assert.equal(actions[0].status, "启动请求已受理，正在准备…")
-    assert.equal(actions[0].status.includes("已确认启动"), false)
+    assert.equal(actions.length, 0, "duplicate/uncorrelated legacy acceptance cannot borrow current revisions or announce readiness")
   } finally { await f.cleanup() }
 })
 
@@ -496,7 +514,7 @@ test("#722 real post-spawn timeline cancellation replies before close while pres
     // Observe only bounded CPU promise reactions, without delivering child close.
     // This is a test seam; product admission never races microtasks or timers.
     for (let i = 0; i < 16; i++) await Promise.resolve()
-    const beforeClose = { replied, reply, occupied: f.manager.runningCount, exitCode: f.children[0].exitCode }
+    const beforeClose = { replied, reply, occupied: f.manager.executionClaims.size, exitCode: f.children[0].exitCode }
     assert.equal(cancelled, true); assert.equal(f.children.length, 1)
     assert.equal(beforeClose.occupied, 1); assert.equal(beforeClose.exitCode, null)
     const target = f.manager.propose({ threadId: "owner-B", agentId: "inert-agent", goal: "synthetic task", workspaceRoot: "/inert/workspace" })
@@ -505,7 +523,7 @@ test("#722 real post-spawn timeline cancellation replies before close while pres
     assert.equal(blocked.ok, false); assert.equal(blocked.error_code, "ACP_CONCURRENCY_LIMIT")
     assert.equal(target.session.state, "offered"); assert.equal(f.children.length, 1)
     f.close(f.children[0]); await pending
-    assert.equal(f.manager.runningCount, 0)
+    assert.equal(f.manager.executionClaims.size, 0)
     assert.equal(beforeClose.replied, true, "UI cancellation must not wait for its admitted child's close")
     assert.equal(beforeClose.reply.type, "error"); assert.equal(beforeClose.reply.family, "acp")
     assert.equal(beforeClose.reply.request_type, "acp.ui_start"); assert.equal(beforeClose.reply.thread_id, "owner-A")
@@ -527,7 +545,7 @@ test("#722 selected-offer UI confirmation uses the stored snapshot and never cli
     assert.match(copy, /ORIGINAL_SYNTHETIC_GOAL/); assert.match(copy, /original\/owned/); assert.equal(copy.includes("OVERRIDE"), false)
     f.confirmations[0].resolve({ approved: true }); const accepted = await pending
     assert.equal(accepted.type, "acp.ui_start.accepted"); assert.equal(accepted.session_id, row.session_id)
-    assert.equal(row.mode, "review_readonly"); assert.equal(f.children.length, 1); assert.equal(f.manager.runningCount, 1)
+    assert.equal(row.mode, "review_readonly"); assert.equal(f.children.length, 1); assert.equal(f.manager.executionClaims.size, 1)
   } finally { await f.cleanup() }
 })
 test("#722 duplicate selected-offer UI confirmation refuses before a second approval", async () => {
@@ -550,7 +568,7 @@ for (const invalidation of ["expired", "cancelled", "disabled"] as const) test(`
     if (invalidation === "cancelled") f.manager.cancel(row.session_id)
     if (invalidation === "disabled") f.disableUi()
     f.confirmations[0].resolve({ approved: true }); const reply = await pending
-    assert.equal(reply.type, "error"); assert.equal(reply.session_id, row.session_id); assert.equal(f.children.length, 0); assert.equal(f.manager.runningCount, 0)
+    assert.equal(reply.type, "error"); assert.equal(reply.session_id, row.session_id); assert.equal(f.children.length, 0); assert.equal(f.manager.executionClaims.size, 0)
     if (invalidation === "expired") assert.equal(f.manager.getSession(row.session_id), undefined)
   } finally { await f.cleanup() }
 })
@@ -587,7 +605,7 @@ for (const change of ["owner", "agent", "goal", "workspace", "mode", "terminal",
     if (change === "replacement") f.manager.sessions.set(row.session_id, { ...row })
     if (change === "worker") f.setRole("owner-A", "worker")
     f.confirmations[0].resolve({ approved: true }); const reply = await pending
-    assert.equal(reply.type, "error"); assert.equal(f.children.length, 0); assert.equal(f.manager.runningCount, 0)
+    assert.equal(reply.type, "error"); assert.equal(f.children.length, 0); assert.equal(f.manager.executionClaims.size, 0)
   } finally { await f.cleanup() }
 })
 
@@ -612,16 +630,18 @@ test("#736 live CLI prompt refuses busy before another confirmation and stays vi
     for (const row of f.confirmations) row.resolve({ approved: false })
     const reply = await pending
     assert.equal(confirmationsBefore, 0, "busy must not request another L2")
-    assert.equal(reply.type, "error"); assert.equal(reply.error_code, "ACP_CONCURRENCY_LIMIT")
+    assert.equal(reply.type, "error"); assert.equal(reply.error_code, "ACP_SESSION_BUSY")
     assert.equal(reply.thread_id, "owner-A"); assert.equal(reply.session_id, parent.session_id)
     assert.equal(reply.family, "acp"); assert.equal(reply.request_type, "acp.session.prompt")
-    assert.equal(f.starts.length, 1); assert.equal(f.children.length, 1); assert.equal(f.manager.runningCount, 1)
-    assert.equal(followupRow(f, parent).state, "offered")
-    const action = compile(fs.readFileSync(path.resolve(sourceRoot, "../../chrome-extension/src/sidepanel/utils/coding-control-message.ts"), "utf8")).codingControlAction(reply)
+    assert.equal(f.starts.length, 1); assert.equal(f.children.length, 1); assert.equal(f.manager.executionClaims.size, 1)
+    assert.equal([...f.manager.sessions.values()].some((row: any) => row.parent_session_id === parent.session_id), false, "nonterminal pair cannot create a duplicate offer")
+    const ops = compile(fs.readFileSync(path.resolve(sourceRoot, "../../chrome-extension/src/sidepanel/utils/coding-operation-send.ts"), "utf8"), { chrome: { runtime: { sendMessage(_m: unknown, done: any) { done({ ok: true }) } } } })
+    ops.sendCodingOperation({ sessionId: parent.session_id, threadId: "owner-A" }, () => {}, { type: "acp.session.prompt", text: "inert" }, { threadRevision: 1, selectionRevision: 1 })
+    const action = ops.takeCodingOperationReply(reply)
     const store = ts.createSourceFile("agentStore.tsx", fs.readFileSync(path.resolve(sourceRoot, "../../chrome-extension/src/sidepanel/store/agentStore.tsx"), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
     const clause = extract(store, n => ts.isCaseClause(n) && n.expression.getText(store) === '"ACP_OPERATION_ERROR"')
     const reduce = compile(`export function run(state, action){switch(action.type){${clause}}return state}`).run
-    const state = { activeThreadId: "owner-A", codingSessionIdByThread: { "owner-A": parent.session_id }, codingSessionsById: { [parent.session_id]: { sessionId: parent.session_id, threadId: "owner-A", state: "running" } }, codingOperationError: null }
+    const state = { activeThreadSelectionRevision: 1, activeCodingSelectionRevision: 1, activeThreadId: "owner-A", codingSessionIdByThread: { "owner-A": parent.session_id }, codingSessionsById: { [parent.session_id]: { sessionId: parent.session_id, threadId: "owner-A", state: "running" } }, codingOperationError: null }
     assert.equal(reduce(state, action).codingOperationError.error, reply.error)
     assert.equal(reduce(state, { ...action, threadId: "foreign" }), state)
     f.close(f.children[0]); await live
@@ -638,7 +658,7 @@ test("#736 actual prompt followup accepted receipt does not await its long runni
     f.confirmations[0].resolve({ approved: true }); const reply = await pending
     assert.equal(reply.type, "acp.session.prompt.accepted"); assert.equal(reply.parent_session_id, parent.session_id)
     assert.equal(reply.session_id, row.session_id); assert.equal(reply.thread_id, "owner-A")
-    assert.equal(f.children.length, 1); assert.equal(f.starts[0].settled, false); assert.equal(f.manager.runningCount, 1)
+    assert.equal(f.children.length, 1); assert.equal(f.starts[0].settled, false); assert.equal(f.manager.executionClaims.size, 1)
   } finally { await f.cleanup() }
 })
 
@@ -651,7 +671,7 @@ test("#736 actual followup late capacity refusal is returned instead of accepted
     assert.equal(reply.type, "error"); assert.equal(reply.error_code, "ACP_CONCURRENCY_LIMIT")
     assert.equal(reply.thread_id, "owner-A"); assert.equal(reply.session_id, parent.session_id)
     assert.deepEqual(JSON.parse(JSON.stringify(reply.data)), { suggested_action: "wait_for_acp_capacity", data_not_instruction: true })
-    assert.equal(row.state, "offered"); assert.equal(f.children.length, 1); assert.equal(f.manager.runningCount, 1)
+    assert.equal(row.state, "offered"); assert.equal(f.children.length, 1); assert.equal(f.manager.executionClaims.size, 1)
     f.close(f.children[0]); await occupied
   } finally { await f.cleanup() }
 })
@@ -686,7 +706,7 @@ for (const change of ["owner", "agent", "goal", "workspace", "mode", "terminal",
     if (change === "disabled") f.disableUi()
     f.confirmations[0].resolve({ approved: true }); const reply = await pending
     assert.equal(reply.type, "error"); assert.equal(reply.session_id, parent.session_id); assert.equal(reply.thread_id, "owner-A")
-    assert.equal(f.children.length, 0); assert.equal(f.manager.runningCount, 0)
+    assert.equal(f.children.length, 0); assert.equal(f.manager.executionClaims.size, 0)
     if (change === "replacement") assert.equal(f.manager.getSession(row.session_id).state, "offered")
     if (change === "expired") assert.equal(f.manager.getSession(row.session_id), undefined)
   } finally { await f.cleanup() }
@@ -723,11 +743,11 @@ test("#736 post-spawn prompt cancellation replies before close and does not rele
     f.manager.pushTimeline = (session: any) => { if (++timelineCalls === 2) f.manager.cancel(session.session_id) }
     const pending = f.prompt("owner-A", parent.session_id); pending.then((value: any) => { replied = true; reply = value })
     await promptReactions(); f.confirmations[0].resolve({ approved: true }); await f.firstChild; await promptReactions()
-    const beforeClose = { replied, reply, occupied: f.manager.runningCount, exitCode: f.children[0].exitCode }
+    const beforeClose = { replied, reply, occupied: f.manager.executionClaims.size, exitCode: f.children[0].exitCode }
     assert.equal(beforeClose.replied, true); assert.equal(beforeClose.reply.type, "error")
     assert.equal(beforeClose.reply.session_id, parent.session_id); assert.match(beforeClose.reply.error, /cancelled during startup/)
     assert.equal(beforeClose.occupied, 1); assert.equal(beforeClose.exitCode, null)
-    f.close(f.children[0]); await pending; assert.equal(f.manager.runningCount, 0)
+    f.close(f.children[0]); await pending; assert.equal(f.manager.executionClaims.size, 0)
   } finally { await f.cleanup() }
 })
 

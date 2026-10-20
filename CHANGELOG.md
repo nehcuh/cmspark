@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #739 显式并发上限扩为1..4（默认1），用私有 session 对象占位统一准备、协议探测／CLI、取消至真实 close 的计数；同 Agent 仍单执行，N>1只允许已明确选择的纯 bridge，不扩 PTY 或逐次 L2 权限。提案改为4／对话、16／后台与同对话 Agent 去重；旧存量不删除。面板保留有序会话列表、显式选择和只读执行阶段，双 UI 修订与私有唯一回执关联防止迟到反馈跨选择覆盖；失败 handback、来源与 taint 不变。补受控生产者和 Windows CI-only owned overlap 夹具；未冒称真实 CLI／模型／平台已验收，不发版或安装。
+
 - #480 Windows 原生 metadata 验收将同一测试的 abort 同时绑定 metadata 与 closing 等待，超时取消立即进入原 owned-child 清理并继续等待真实退出；正常完成卸载监听。保留原20秒、退出0、认证／元数据／窗口断言与 surface 清理，不冒称已定位或修复 Windows 晚退出原因。
 
 - Windows #480 未交付 hostile 验收夹具仅在精确导航 ID 的取消完成事件、原 owned 页面及文档代际均匹配后推进下一脚本；保留生产导航拒绝与原生验收预算。该源码调度更正不宣称历史引擎失败原因。
