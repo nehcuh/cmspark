@@ -1,5 +1,11 @@
 # TESTING
 
+### #723 首个 Windows 窗口身份门：失败证据
+
+`COCKPIT_BRIDGE_FIRST_IDENTITY_INCOMPLETE` 保留原阶段名；同次 `COCKPIT_BRIDGE_FIRST_FAILURE` 仅给出固定步骤、真实 close/退出、输出字节数、有限 PS 源角色／行列／检查序号及 C# 错误代码／framing 检查数。原始输出仍只在 owned 临时文件中，公开回执不包含正文、路径、命令、环境或 Registry 值；格式未知、超限或身份变化时证据为 unavailable，不改变原失败。
+
+`registration-framing` 也覆盖 PS 成功后的 receipt 数量断言，不能单凭阶段名判定 PS／C#／Registry 或 pipe 根因。子进程 exit0 后的控制器拒绝与子进程失败分别记录。此证据修复不是原生注册修复；完整 canonical、原有 Windows 回归和真实 Chrome pipe／PID／HWND 身份门仍须实际通过。不得据新回执延时、重试、跳过断言或启用遮罩。
+
 > 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
 
 Windows／跨平台变更先读 [Windows 开发与失败定位](windows-development.md)：包含系统化调试、路径／换行／真实消费者预检和原生证据边界；只选本次必要回归，不新增全仓或模型门。

@@ -60,7 +60,7 @@ namespace CMspark.CockpitBridge {
         Check(actual.Count == 11 && (string)actual["op"] == "bound" && (string)actual["tagValue"] == "18446744073709551615");
         Console.WriteLine("{\"kind\":\"controlled-csharp-framing\",\"passed\":" + passed + ",\"native\":\"NOT_RUN\",\"boundFixture\":" + boundFixture + "}");
         return 0;
-      } catch { Console.Error.WriteLine("COCKPIT_BRIDGE_FRAMING_FAILED"); return 1; }
+      } catch { Console.Error.WriteLine("COCKPIT_BRIDGE_FRAMING_FAILED checks=" + passed.ToString(System.Globalization.CultureInfo.InvariantCulture)); return 1; }
     }
   }
 }

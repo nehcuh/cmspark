@@ -1,6 +1,8 @@
 # Remote-only CPU/build/owned-registration admission. This is not the real
 # Chrome/native-port positive gate and cannot enable masking.
 param([Parameter(Mandatory=$true)][string]$TestRoot)
+$script:registrationCheckCounter = 0
+try {
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or -not [Environment]::Is64BitOperatingSystem) { throw 'COCKPIT_BRIDGE_REMOTE_ONLY' }
@@ -18,7 +20,10 @@ $registered = $false
 $foreign = $null
 $counts = [ordered]@{ csharpFraming = 0; registration = 0; unregister = 0; negativeNative = 0; realChromePositive = 'NOT_RUN' }
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
-function Check([bool]$Value) { if (-not $Value) { throw 'COCKPIT_BRIDGE_REGISTRATION_ASSERT' } }
+function Check([bool]$Value) {
+  if ($script:registrationCheckCounter -lt 100000) { $script:registrationCheckCounter++ }
+  if (-not $Value) { throw 'COCKPIT_BRIDGE_REGISTRATION_ASSERT' }
+}
 function Refused([scriptblock]$Run, [string]$Reason) {
   $observed = $false
   try { & $Run | Out-Null } catch { if ($_.Exception.Message -cne $Reason) { throw }; $observed = $true }
@@ -150,4 +155,48 @@ try {
   foreach ($base in $bases.Values) { $base.Dispose() }
   # Owned fresh scratch only; keep failing scratch for the admitted operator.
   # A successful caller may remove it after binding its source/receipt hashes.
+}
+} catch {
+  # Observation only, after the original finally has unwound. No message,
+  # path, source text, stack, registry value or environment crosses stderr.
+  $registrationFailureJson = '{"v":1,"role":"unknown","line":0,"column":0,"check":0,"hresult":0,"reason":"OTHER"}'
+  try {
+    $registrationFailure = $_
+    $registrationRole = 'unknown'
+    $registrationScript = $registrationFailure.InvocationInfo.ScriptName
+    $registrationPaths = [ordered]@{
+      registration = [IO.Path]::GetFullPath($PSCommandPath)
+      build = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\build-cockpit-native-bridge.ps1'))
+      registrar = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\register-cockpit-native-bridge.ps1'))
+    }
+    foreach ($registrationEntry in $registrationPaths.GetEnumerator()) {
+      if ([string]::Equals($registrationScript, $registrationEntry.Value, [StringComparison]::Ordinal)) { $registrationRole = $registrationEntry.Key }
+    }
+    $registrationLine = [int64]$registrationFailure.InvocationInfo.ScriptLineNumber
+    $registrationColumn = [int64]$registrationFailure.InvocationInfo.OffsetInLine
+    $registrationCheck = [int64]$script:registrationCheckCounter
+    $registrationHresult = [int64]$registrationFailure.Exception.HResult
+    if ($registrationLine -lt 0 -or $registrationLine -gt 100000 -or
+        $registrationColumn -lt 0 -or $registrationColumn -gt 100000 -or
+        $registrationCheck -lt 0 -or $registrationCheck -gt 100000 -or
+        $registrationHresult -lt [int]::MinValue -or $registrationHresult -gt [int]::MaxValue) { throw 'OBSERVATION_RANGE' }
+    $registrationReasons = @(
+      'COCKPIT_BRIDGE_BUILD_COMPILER', 'COCKPIT_BRIDGE_BUILD_FAILED', 'COCKPIT_BRIDGE_BUILD_OUTPUT_EXISTS',
+      'COCKPIT_BRIDGE_BUILD_PATH', 'COCKPIT_BRIDGE_BUILD_PLATFORM', 'COCKPIT_BRIDGE_BUILD_SOURCE',
+      'COCKPIT_BRIDGE_CHILD_NOT_CLOSED', 'COCKPIT_BRIDGE_EXACT_ID_REQUIRED', 'COCKPIT_BRIDGE_FIXED_KEY_OCCUPIED',
+      'COCKPIT_BRIDGE_OWNED_ROOT_REQUIRED', 'COCKPIT_BRIDGE_REGISTRATION_ASSERT', 'COCKPIT_BRIDGE_REGISTRATION_BINARY',
+      'COCKPIT_BRIDGE_REGISTRATION_CONFLICT', 'COCKPIT_BRIDGE_REGISTRATION_EXPLICIT_UNBIND_REQUIRED',
+      'COCKPIT_BRIDGE_REGISTRATION_FAILED', 'COCKPIT_BRIDGE_REGISTRATION_FILE', 'COCKPIT_BRIDGE_REGISTRATION_NOT_OWNED',
+      'COCKPIT_BRIDGE_REGISTRATION_PLATFORM', 'COCKPIT_BRIDGE_REGISTRATION_ROOT',
+      'COCKPIT_BRIDGE_REGISTRY_FIXTURE_OWNERSHIP_CHANGED', 'COCKPIT_BRIDGE_REMOTE_ONLY'
+    )
+    $registrationReason = 'OTHER'
+    if ($registrationReasons -ccontains $registrationFailure.Exception.Message) { $registrationReason = $registrationFailure.Exception.Message }
+    $registrationFailureJson = ConvertTo-Json -Compress -InputObject ([ordered]@{
+      v = 1; role = $registrationRole; line = [int]$registrationLine; column = [int]$registrationColumn
+      check = [int]$registrationCheck; hresult = [int]$registrationHresult; reason = $registrationReason
+    })
+  } catch { }
+  try { [Console]::Error.WriteLine('COCKPIT_BRIDGE_REGISTRATION_FAILURE ' + $registrationFailureJson) } catch { }
+  throw
 }

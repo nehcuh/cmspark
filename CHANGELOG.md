@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Refs #723：首个 Windows 窗口身份验收的失败回执记录实际子进程 close/退出、固定 PS 源坐标与检查序号，区分子进程失败和随后回执数量断言；仅输出有限字段，不公开原始错误、路径或环境。此项修复验收证据缺口，未证明历史注册失败原因，不改变准入、原生门禁或时限。
+
 - Refs #723: add remote-only owned-window Windows capture acceptance for actual PS5.1/PrintWindow, passive refusal and real BitBlt quality; CPU checks remain separate from native verification.
 
 - **Refs #723 Windows 观察质量（开发候选）**：窗口渲染源和屏幕拷贝使用闭合质量标签，遮挡／部分截图不作为目标页面 OCR 正文；凭证黑化、确认预览、模型结果、时间线和密封证据保留提示。只读捕获与确认前预览不恢复／抢焦点；原注入 L2、时限、对话框通道和阈值不变。可信 HWND 遮罩与只读准入尚未实现，CPU 不代表 Windows 原生或整票完成。

@@ -34,6 +34,154 @@ test('actual setup runner rejects natural failure and signal, retaining separate
   assert.match(String(await execute(1, null)), /GATE_control_FAILED/)
   assert.match(String(await execute(0, 'SIGTERM')), /GATE_control_FAILED/)
 })
+test('actual runner observation receives close and cannot alter the original success predicate', async () => {
+  for (const throws of [false, true]) {
+    const child = new EventEmitter(), events: unknown[][] = [], closes: number[] = []
+    const run = new vm.Script(`(${functions[0].getText(source)})`).runInNewContext({ sequence: 0, raw: '/owned/raw', path,
+      fs: { openSync: () => 7 + closes.length, closeSync: (fd: number) => closes.push(fd) }, cp: { spawn: () => child } })
+    const result = run('/fixed/node', [], '/owned', {}, 'control', (...args: unknown[]) => { events.push(args); if (throws) throw Error('OBSERVER_ONLY') })
+    child.emit('exit', 0, null); assert.equal(events.length, 0); assert.equal(closes.length, 0)
+    child.emit('close', 0, null); await result
+    assert.deepEqual(events, [['close', 0, null]]); assert.equal(closes.length, 2)
+  }
+})
+type EvidenceAPI = {
+  runRecorded: (...args: unknown[]) => Promise<void>
+  failure: () => Record<string, unknown> | undefined
+  last: () => unknown
+  parse: (text: unknown) => unknown
+  describe: (...args: unknown[]) => Record<string, unknown>
+}
+function evidenceAPI(raw: string, spawn: (...args: unknown[]) => unknown, fileSystem: typeof fs = fs): EvidenceAPI {
+  const begin = text.indexOf('// Failure evidence is observation only:'), end = text.indexOf('\nasync function main()', begin)
+  assert.ok(begin > 0 && end > begin)
+  return new vm.Script(`(()=>{${text.slice(begin, end)};return {runRecorded,failure:()=>firstFailure,last:()=>lastStep,parse:registrationEvidence,describe:failureEvidence}})()`)
+    .runInNewContext({ fs: fileSystem, path, Buffer, cp: { spawn }, sequence: 0, stage: 'registration-framing', raw }) as EvidenceAPI
+}
+async function recordedControl(code: number, stderr = '', spawnError?: unknown) {
+  const raw = fs.mkdtempSync(path.join(process.env.CMSPARK_TEST_RUN_DIR!, 'first-evidence-')), child = new EventEmitter()
+  const api = evidenceAPI(raw, (...args: unknown[]) => {
+    const options = args[2] as { stdio: [string, number, number] }
+    fs.writeSync(options.stdio[1], 'PRIVATE_BODY_NOT_PUBLIC\n')
+    fs.writeSync(options.stdio[2], stderr)
+    queueMicrotask(() => { if (spawnError !== undefined) child.emit('error', spawnError); else { child.emit('exit', code, null); child.emit('close', code, null) } })
+    return child
+  })
+  let error: unknown
+  try { await api.runRecorded('/fixed/node', [], '/owned', Object.freeze({}), 'registration-framing') } catch (value) { error = value }
+  return { raw, api, error, child }
+}
+test('actual step failure preserves exit and only publishes closed numeric/code evidence', async () => {
+  const payload = { v: 1, role: 'registration', line: 49, column: 3, check: 4, hresult: -1, reason: 'COCKPIT_BRIDGE_REGISTRATION_ASSERT' }
+  const s = await recordedControl(7, 'PRIVATE_PATH_AND_BODY\nerror CS0165: PRIVATE_TEXT\nCOCKPIT_BRIDGE_FRAMING_FAILED checks=5\nCOCKPIT_BRIDGE_REGISTRATION_FAILURE ' + JSON.stringify(payload) + '\n')
+  try {
+    assert.match(String(s.error), /GATE_registration-framing_FAILED/)
+    const value = s.api.failure()!
+    assert.equal(value.kind, 'child_refused'); assert.equal(value.exitCode, 7); assert.equal(value.closeObserved, true)
+    assert.equal(value.framingChecks, 5); assert.equal(JSON.stringify(value.registration), JSON.stringify(payload))
+    assert.equal(JSON.stringify(value.compilerCodes), '["CS0165"]')
+    const encoded = JSON.stringify(value)
+    assert.ok(encoded.length <= 4096); assert.equal(/PRIVATE|\/fixed|\/owned/.test(encoded), false)
+    assert.ok(!('text' in value) && !('error' in value))
+  } finally { fs.rmSync(s.raw, { recursive: true }) }
+})
+test('successful child plus later controller assertion stays distinct from child failure', async () => {
+  const s = await recordedControl(0)
+  try {
+    assert.equal(s.error, undefined); assert.equal(s.api.failure(), undefined)
+    const value = s.api.describe('controller_refused', 'registration-framing', s.api.last())
+    assert.equal(value.kind, 'controller_refused'); assert.equal(value.exitCode, 0); assert.equal(value.closeObserved, true)
+    assert.equal(value.step, 'registration-framing')
+  } finally { fs.rmSync(s.raw, { recursive: true }) }
+})
+test('spawn error is preserved without reading it and later close cannot rewrite first evidence', async () => {
+  let traps = 0
+  const opaque = new Proxy({}, { get() { traps++; throw Error('PRIVATE_GETTER') }, getPrototypeOf() { traps++; throw Error('PRIVATE_PROTOTYPE') } })
+  const s = await recordedControl(0, '', opaque)
+  try {
+    assert.equal(s.error, opaque); assert.equal(traps, 0)
+    const value = s.api.failure()!, before = JSON.stringify(value)
+    assert.equal(value.spawnError, true); assert.equal(value.closeObserved, false); assert.equal(value.exitCode, null)
+    s.child.emit('close', 0, null); assert.equal(JSON.stringify(s.api.failure()), before); assert.equal(traps, 0)
+  } finally { fs.rmSync(s.raw, { recursive: true }) }
+})
+test('registration evidence requires exactly the actual closed seven-key canonical record', () => {
+  const api = evidenceAPI('/unused', () => { throw Error('NO_CHILD') })
+  const fixture = fs.readFileSync(path.resolve(__dirname, '../../../scripts/tests/cockpit-bridge-registration.ps1'), 'utf8').replaceAll('\r\n', '\n')
+  // This is a source-derived CPU input, not a claim to execute PowerShell's serializer.
+  const value = { v: 1, role: 'build', line: 1, column: 1, check: 0, hresult: -2147483648, reason: 'OTHER' }
+  const producer = fixture.indexOf('$registrationFailureJson = ConvertTo-Json -Compress -InputObject ([ordered]@{'), end = fixture.indexOf('\n    })', producer)
+  assert.ok(producer > 0 && end > producer)
+  const fields = [...fixture.slice(producer + '$registrationFailureJson = ConvertTo-Json -Compress -InputObject ([ordered]@{'.length, end).matchAll(/\b([A-Za-z][A-Za-z0-9]*)\s*=/g)].map(m => m[1])
+  assert.deepEqual(fields, Object.keys(value))
+  const prefix = 'COCKPIT_BRIDGE_REGISTRATION_FAILURE ', body = JSON.stringify(value)
+  assert.equal(JSON.stringify(api.parse(prefix + body + '\r\n')), body)
+  const bad = [body + ' ', body.replace('"v":1', '"v":1,"v":1'), JSON.stringify({ ...value, line: -1 }), JSON.stringify({ ...value, check: 100001 }), JSON.stringify({ ...value, hresult: 2147483648 }), JSON.stringify({ ...value, role: 'PRIVATE_PATH' }), JSON.stringify({ ...value, reason: 'COCKPIT_BRIDGE_INVENTED' }), JSON.stringify({ ...value, body: 'PRIVATE' })]
+  for (const candidate of bad) assert.equal(api.parse(prefix + candidate + '\n'), null)
+  assert.equal(api.parse(prefix + body + '\n' + prefix + body + '\n'), null)
+  let touched = 0
+  assert.equal(api.parse(new Proxy({}, { get() { touched++; throw Error('NO_READ') } })), null); assert.equal(touched, 0)
+})
+test('oversized or replaced observation files are unavailable and cannot change primary failure', async () => {
+  const s = await recordedControl(9, 'x'.repeat(65537))
+  try {
+    const value = s.api.failure()!
+    assert.equal(value.exitCode, 9); assert.equal(value.stderrBytes, 65537); assert.equal(value.detailsAvailable, false)
+    assert.equal(value.registration, null); assert.equal(value.framingChecks, null)
+    const file = path.join(s.raw, '1-registration-framing.stderr'), moved = file + '.owned'
+    fs.writeFileSync(file, 'original')
+    let swapped = false
+    const fileSystem = { ...fs, openSync: ((name: fs.PathLike, flags: fs.OpenMode) => {
+      if (name === file && !swapped) { swapped = true; fs.renameSync(file, moved); fs.writeFileSync(file, 'replacement') }
+      return fs.openSync(name, flags)
+    }) as typeof fs.openSync }
+    try {
+      const api = evidenceAPI(s.raw, () => { throw Error('NO_CHILD') }, fileSystem)
+      const current = api.describe('controller_refused', 'PRIVATE_STAGE', { label: 'registration-framing', output: path.join(s.raw, '1-registration-framing.stdout'), error: file, state: { closed: true, spawnError: false, code: 9, signal: null } })
+      assert.equal(swapped, true); assert.equal(current.stage, 'unknown'); assert.equal(current.detailsAvailable, false); assert.equal(current.stderrBytes, null)
+      assert.equal(s.api.failure()!.exitCode, 9)
+    } finally { if (swapped) { fs.unlinkSync(file); fs.renameSync(moved, file) } }
+  } finally { fs.rmSync(s.raw, { recursive: true }) }
+})
+test('evidence remains byte bounded when a closed-child output file grows at the read boundary', () => {
+  const raw = fs.mkdtempSync(path.join(process.env.CMSPARK_TEST_RUN_DIR!, 'growing-evidence-')), file = path.join(raw, 'growing'), empty = path.join(raw, 'empty')
+  fs.writeFileSync(file, 'base'); fs.writeFileSync(empty, '')
+  const fds = new Set<number>(); let grown = false, maximumRead = 0
+  const grow = (fd: number) => { if (fds.has(fd) && !grown) { grown = true; fs.appendFileSync(file, 'x'.repeat(100000)) } }
+  const fileSystem = { ...fs,
+    openSync: ((name: fs.PathLike, flags: fs.OpenMode) => { const fd = fs.openSync(name, flags); if (name === file) fds.add(fd); else fds.delete(fd); return fd }) as typeof fs.openSync,
+    readFileSync: ((name: fs.PathOrFileDescriptor, encoding: BufferEncoding) => { if (typeof name === 'number') grow(name); const data = fs.readFileSync(name, encoding); if (typeof name === 'number' && fds.has(name)) maximumRead = Math.max(maximumRead, Buffer.byteLength(data)); return data }) as typeof fs.readFileSync,
+    readSync: ((fd: number, buffer: NodeJS.ArrayBufferView, offset: number, length: number, position: number | null) => { grow(fd); if (fds.has(fd)) maximumRead = Math.max(maximumRead, length); return fs.readSync(fd, buffer, offset, length, position) }) as typeof fs.readSync }
+  try {
+    const api = evidenceAPI(raw, () => { throw Error('NO_CHILD') }, fileSystem)
+    const value = api.describe('child_refused', 'registration-framing', { label: 'registration-framing', output: empty, error: file, state: { closed: true, spawnError: false, code: 8, signal: null } })
+    assert.equal(grown, true); assert.ok(maximumRead <= 65537, 'metadata check cannot authorize an unbounded whole-file read')
+    assert.equal(value.exitCode, 8); assert.equal(value.stderrBytes, null); assert.equal(value.detailsAvailable, false)
+  } finally { fs.rmSync(raw, { recursive: true }) }
+})
+test('evidence rejects a timestamp change actually observed by its final open-file stat', () => {
+  for (const changed of [false, true]) {
+    const raw = fs.mkdtempSync(path.join(process.env.CMSPARK_TEST_RUN_DIR!, 'final-stat-evidence-')), output = path.join(raw, 'out'), error = path.join(raw, 'err')
+    fs.writeFileSync(output, ''); fs.writeFileSync(error, 'error CS0165: PUBLIC\n')
+    const initial = fs.statSync(error), files = new Map<number, fs.PathLike>(), counts = new Map<number, number>()
+    let observed: fs.Stats | undefined
+    const fileSystem = { ...fs,
+      openSync: ((name: fs.PathLike, flags: fs.OpenMode) => { const fd = fs.openSync(name, flags); files.set(fd, name); counts.set(fd, 0); return fd }) as typeof fs.openSync,
+      fstatSync: ((fd: number) => {
+        const count = (counts.get(fd) ?? 0) + 1; counts.set(fd, count)
+        if (changed && files.get(fd) === error && count === 2) { fs.writeFileSync(error, 'error CS9999: PUBLIC\n'); fs.utimesSync(error, initial.atime, new Date(initial.mtimeMs + 10000)) }
+        const stat = fs.fstatSync(fd); if (files.get(fd) === error && count === 2) observed = stat
+        return stat
+      }) as typeof fs.fstatSync }
+    try {
+      const api = evidenceAPI(raw, () => { throw Error('NO_CHILD') }, fileSystem)
+      const value = api.describe('child_refused', 'registration-framing', { label: 'registration-framing', output, error, state: { closed: true, spawnError: false, code: 9, signal: null } })
+      assert.equal(value.exitCode, 9); assert.equal(observed?.size, initial.size)
+      if (changed) { assert.notEqual(observed?.mtimeMs, initial.mtimeMs); assert.equal(value.detailsAvailable, false); assert.equal(value.stderrBytes, null); assert.equal(JSON.stringify(value.compilerCodes), '[]') }
+      else { assert.equal(value.detailsAvailable, true); assert.equal(JSON.stringify(value.compilerCodes), '["CS0165"]') }
+    } finally { fs.rmSync(raw, { recursive: true }) }
+  }
+})
 test('whole actual gate refuses the empty source pin before filesystem, process, or network effects', () => {
   const actualSupply = require(path.resolve(__dirname, '../../../scripts/tests/cockpit-bridge-browser-supply.cjs'))
   let effects = 0
