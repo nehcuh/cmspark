@@ -400,5 +400,14 @@ Boolean receipt leaves the trusted process; no screenshot, image hash, raw CDP,
 WS messages, IDs, paths, process logs, credentials or profile artifacts are kept.
 Owned directories are removed only after pending requests/endpoints/children
 settle; uncertain cleanup fails and retains the owned root. CPU success is not
-real process/browser or Windows NTFS evidence. This new hosted path remains
-**NOT RUN** until a changed-head hosted job actually executes it.
+real process/browser or Windows NTFS evidence. Published PR735 head
+`76f46998ed2ae9e2fe504afae3d88ad862bf36c1` reached `PANEL` / `AUTH_DONE` and
+failed; its unique hosted cause is not established.
+
+`tests/create-blank-thread.test.ts` also executes the actual StatusRail New
+callback, shared explicit create producer, empty-list auto producer and SW
+receiver with a fixed clock. Explicit UI requests remain independent while
+automatic empty-list requests retain the original 2-second deduplication. Its
+`user_gesture: true` is only an internal deduplication hint: it proves no human
+action, authorizes nothing, and is stripped by the existing WS message builder.
+This CPU regression is not a changed-head hosted/browser or native PASS.

@@ -1281,7 +1281,9 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         // P1: SW single-flight for blank auto-create (Panel + Cockpit each run useWebSocket).
         // Empty alias + client id = auto blank; drop concurrent creates within 2s window.
         const alias = message.alias || ""
-        const isBlankAuto = !alias && typeof message.id === "string" && message.id
+        // Explicit UI intent bypasses only auto-create deduplication. This hint
+        // proves no human gesture, grants no authority, and is not sent over WS.
+        const isBlankAuto = message.user_gesture !== true && !alias && typeof message.id === "string" && message.id
         if (isBlankAuto) {
           const now = Date.now()
           const g = globalThis as any
