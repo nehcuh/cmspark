@@ -276,3 +276,17 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 `desktop-native-windows-480.test.ts` 的原20秒 native callback 以同一 owned abort promise 覆盖 metadata race 与发送 `desktop.close` 后的 exit 等待；already-aborted 在 launch 前拒绝，finally 先卸载自己 listener，再执行原 retain／captured child terminate／真实 exit／WS与server close／settled。取消仍是失败，不能因 cleanup 完成变成 PASS。原退出0／HMAC通路／四元数据／native window／lease 断言不弱化，不加 timer/retry/等待额度。
 
 `desktop-native-close-lifetime-480.test.ts` 提取该真实整段 callback，使用明确惰性 network/auth/child/surface seam 覆盖 normal、metadata/closing abort、held exit、preaborted、launch/send throw 和 window 拒绝。它不是 Windows/WebView2/native 运行。main1dde deadline/closing 后 exit0 的实际原因仍 UNKNOWN；`childExited` 是 JS onExit 已送达，不独立证明此前 OS 进程仍活。精确新 head 仍须在原20秒下真实 Windows 自然完成；不要无变化重跑、延长时限或以纯CPU通过替代原生门禁。
+
+
+### #726 当前对话目录提示（开发候选，原生待验）
+
+`companion/tests/workspace-hints-726.test.ts` 执行真实 workspace.pick 分支和整份原生 helper 的惰性导入；`acp-workspace-priority-726.test.ts` 执行真实 manager/handler/提案工具生产结果，并喂给提示观察器；扩展 `tests/workspace-hints-726.test.ts` 执行完整 live hook、reducer、实际 Panel JSX/点击及晚回复 callback。CPU seams 不启动 shell/Agent/浏览器/原生选择器，不冒称真实 L2 或 OS 导航通过。
+
+提示最多三个、仅内存；仅当前实时 start/result 配对且 shell exit0/no-timeout/no-abort、ACP 实际 offered 可纳入。`cwd` 标为进程启动目录，严格字面 `cd` 只标参数声明；不解释泛 `--cwd`、环境展开、文件父目录或 MCP 远端本地性。现 Git 状态回复没有精确 request correlation，首片不收作提示。未知／折叠／失败及历史回放均不补候选。
+
+显式点击只给既有 `workspace.pick` 传可选 initial_path/request_id，不代替原 native OK；取消（即使 SelectedPath 保留提示）零绑定，选中其它目录绑定实际返回值。原 picker120秒、ACP/L2/45秒、plan_readonly 和 setWorkspaceRoot 的单次原生收据条件不改。服务器在两个 await 后复核原 thread 对象与真实当前 panel socket；UI A→B→A／断线的旧反馈不能改新选择，真实用户仍可确认原A（只绑定A，绝不B或自动启动）。
+
+后续真实 changed-head GHA 必须验证 Windows/macOS 原生预导航与一次确认后的实际目录，不能以本批 CPU、任何旧735原生红／绿或本地假 chrome 代替。whole #726 在该证据及余项核对前仍未关闭；0.6.14 未发版。
+
+
+#726 R2：真实 server 的 tool.start 参数摘要不包含 command，故首轮手工 command seam 不代表可达能力。新增 `shell-workspace-declaration-726.test.ts` 执行整份 shellExec（惰性 child）、真实 server start 摘要与 adapter result 序列化后再喂真实观察器；仅原 exit0／无超时／未取消输出可选 declared_cwd，cwd 仍为 spawn cwd。严格已知 cmd 或 /bin/sh 的完整字面 cd 语法，不执行／展开／猜目录，不发送命令或后缀。重复活动 tool ID 后保已验证提示，但本选择／连接后续收集停用，直到真实选择／连接变化；没有隐藏墓碑或自动重试。ALM／C1 等 Unicode 控制、格式、surrogate 与行分隔符路径拒绝；cmd 单引号不当 POSIX 引号。R1 全源码／27回执和4个真实反例保留，原生仍待。

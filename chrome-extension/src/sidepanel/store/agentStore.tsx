@@ -1,3 +1,4 @@
+import type { WorkspaceHintView } from "../coding-handoff/workspace-hints"
 import { registrySummaryFromMessage, type RegistryDiscoverySummary } from "../utils/apps-discovery"
 // Global state store for the agent
 
@@ -143,6 +144,7 @@ export type AcpAgentInfo = {
 }
 
 export interface AgentState {
+  workspaceHints: WorkspaceHintView | null
   connectionState: ConnectionState
   threads: Thread[]
   activeThreadId: string | null
@@ -468,6 +470,7 @@ export interface AgentState {
 }
 
 export type AgentAction =
+  | { type: "SET_WORKSPACE_HINTS"; view: WorkspaceHintView | null }
   | { type: "SET_CONNECTION"; state: ConnectionState }
   | { type: "SET_THREADS"; threads: Thread[] }
   | { type: "SET_ACTIVE_THREAD"; threadId: string }
@@ -699,6 +702,7 @@ export type AgentAction =
   | { type: "CLEAR_LOOP_SUGGEST" }
 
 export const initialState: AgentState = {
+  workspaceHints: null,
   connectionState: "disconnected",
   threads: [],
   activeThreadId: null,
@@ -1131,12 +1135,18 @@ function pruneFleetSuggest(map: AgentState["fleetSuggestByThreadId"], keepIds: s
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
+    case "SET_WORKSPACE_HINTS": {
+      const v = action.view
+      if (v && (state.connectionState !== "connected" || state.activeThreadId !== v.threadId || state.activeThreadSelectionRevision !== v.revision)) return state
+      return { ...state, workspaceHints: v }
+    }
     case "SET_CONNECTION": {
       // P1 C-RACE-02: drop sticky busy when companion disconnects — in-flight
       // map never gets chat.done/aborted over a dead socket.
       if (action.state === "disconnected") {
         return {
           ...state,
+          workspaceHints: null,
           connectionState: action.state,
           isProcessing: false,
           threadBusyById: {},
@@ -1144,7 +1154,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           streamingReasoning: "",
         }
       }
-      return { ...state, connectionState: action.state }
+      return { ...state, connectionState: action.state, workspaceHints: action.state === "connected" ? state.workspaceHints : null }
     }
     case "SET_THREADS": {
       // Keep active thread if it's still in the list; otherwise stay null so that
@@ -1168,6 +1178,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         threads,
         activeThreadId: nextActiveThreadId,
+        workspaceHints: nextActiveThreadId === state.activeThreadId ? state.workspaceHints : null,
         codingOperationError: nextActiveThreadId === state.activeThreadId ? state.codingOperationError : null,
         codingManualEntry: nextActiveThreadId === state.activeThreadId ? state.codingManualEntry : null,
         // #513: cards for threads gone from the list go with them.
@@ -1204,6 +1215,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         ...switched,
         activeThreadSelectionRevision: state.activeThreadSelectionRevision + 1,
+        workspaceHints: null,
         lastBrowserToolAt: null,
         modePin: null,
         pinnedTabIds: activeThread?.pinned_tabs || [],
