@@ -1,4 +1,5 @@
 import { takeCodingOperationReply, clearCodingOperationFeedback } from "../utils/coding-operation-send"
+import { WorkspaceHints } from "../coding-handoff/workspace-hints"
 import { isBoardHintReply } from "../utils/board-hint-request"
 import { codingManualEntryAction } from "../utils/coding-manual-entry-message"
 // WebSocket hook for Side Panel — communicates with background service worker
@@ -307,6 +308,10 @@ export function useWebSocket() {
   const streamingRef = useRef("")
   const initializedRef = useRef(false)
   const activeThreadRef = useRef<string | null>(null)
+  const workspaceHintsRef = useRef(new WorkspaceHints())
+  const workspaceHintSelectionRef = useRef(state.activeThreadSelectionRevision)
+  workspaceHintSelectionRef.current = state.activeThreadSelectionRevision
+  workspaceHintsRef.current.select(state.activeThreadId, state.activeThreadSelectionRevision)
   // Tracks an in-flight "auto-create blank thread" request so we don't fire a
   // second one before the first resolves. Reset whenever a non-empty thread.list
   // arrives (so a future empty state — e.g. after user deletes everything —
@@ -419,6 +424,9 @@ export function useWebSocket() {
     const messageListener = (msg: any) => {
       if (!msg || typeof msg.type !== "string") return false
       if (msg.type === "thread.mutation.connection") {
+        workspaceHintsRef.current.select(activeThreadRef.current, workspaceHintSelectionRef.current)
+        workspaceHintsRef.current.observe(msg)
+        dispatch({ type: "SET_WORKSPACE_HINTS", view: workspaceHintsRef.current.view() })
         if (msg.state === "disconnected" || msg.state === "connecting") clearCodingOperationFeedback()
         return false
       }
@@ -442,6 +450,9 @@ export function useWebSocket() {
         return false
       }
       try {
+      // Live frames only: history/hydration branches never call the tool observer.
+      workspaceHintsRef.current.select(activeThreadRef.current, workspaceHintSelectionRef.current)
+      if (workspaceHintsRef.current.observe(msg)) dispatch({ type: "SET_WORKSPACE_HINTS", view: workspaceHintsRef.current.view() })
       switch (msg.type) {
         case "chat.token": {
           // P0-B: ignore stream events for non-active threads
@@ -1568,6 +1579,12 @@ export function useWebSocket() {
         case "workspace.clear_result":
         case "workspace.set_result":
         case "workspace.pick_result":
+          // Correlated hints may truthfully bind original A after a UI switch.
+          // Update its record, but let the requesting panel own late/ABA feedback.
+          if (msg.type === "workspace.pick_result" && msg.request_id) {
+            if (msg.thread?.id) dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+            break
+          }
           // Thread fields updated by companion (mission_pack_id, workspace_root, …)
           // pick_result must be global so /code modal can bind without PacksPanel mounted
           if (msg.thread?.id) {
@@ -2499,6 +2516,10 @@ export function useWebSocket() {
         if (response) {
           if (response.connectionState !== "connected") clearCodingOperationFeedback()
           dispatch({ type: "SET_CONNECTION", state: response.connectionState })
+          if (response.connectionState !== "connected" || !workspaceHintsRef.current.view()) {
+            workspaceHintsRef.current.observe({ type: "thread.mutation.connection", state: response.connectionState })
+            dispatch({ type: "SET_WORKSPACE_HINTS", view: workspaceHintsRef.current.view() })
+          }
           if (response.connectionState === "connected") {
             requestInitialData()
           } else {

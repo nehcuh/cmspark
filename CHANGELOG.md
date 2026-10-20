@@ -4,7 +4,15 @@
 
 ## [Unreleased]
 
+- **#726 Windows 选夹验收路径域**：仅测试的预期工作区使用原生 realpath 规范化，避免成功选夹返回的长路径与临时目录的 8.3 短名直接比较。保留实际选夹、绑定、取消、ACP cwd、所有者和清理断言；增加真实 Node JS realpath 与显式原生绑定 seam 的 LF/CRLF 回归。受控 CPU 通过不代替新 head 的 Windows 原生验收。
+
 - #739 显式并发上限扩为1..4（默认1），用私有 session 对象占位统一准备、协议探测／CLI、取消至真实 close 的计数；同 Agent 仍单执行，N>1只允许已明确选择的纯 bridge，不扩 PTY 或逐次 L2 权限。提案改为4／对话、16／后台与同对话 Agent 去重；旧存量不删除。面板保留有序会话列表、显式选择和只读执行阶段，双 UI 修订与私有唯一回执关联防止迟到反馈跨选择覆盖；失败 handback、来源与 taint 不变。补受控生产者和 Windows CI-only owned overlap 夹具；未冒称真实 CLI／模型／平台已验收，不发版或安装。
+
+- **#726 Git 目录来源连接（0.6.14 开发候选）**：既有编程接力 Git 状态请求沿用 WS `id`，仅保存当前线程／选择版本／连接的已登记请求；发送成功且精确回复同一次请求、规范目录一致、无错误且确为 Git 仓库时，才增加最多三个内存提示中的“Git 实际目录”。它是已执行状态查询的 cwd，不推断仓库顶根；旧回复、发送失败、断线、ABA 或重复请求均不授权绑定。已见提示在明确解绑后仍可预导航原生选择器，重载即清空；不新增查询、权限、RPC 或自动启动。MCP 本机归属及真实 shipping Panel 浏览器链仍未完成，整票不关闭。
+
+- Refs #726: the remote-only native picker controller discovers the unique owned modal through held-child threads, including hidden-owner layouts; original picker success, cancellation and time budgets remain required. CPU projections are not Windows acceptance.
+
+- **#726 工作区目录提示（0.6.14 开发候选）**：编程接力未绑定工作区时，仅从当前连接、当前对话实时完成的 shell/ACP 提案保留最多三个内存提示；提示只预导航原生选择器，实际确认选中的路径才可绑定，不自动启动或授信。UI 新提案优先使用已绑定对话目录；折叠／失败／旧回复、MCP 远端路径及无精确关联的 Git 状态不纳入，重载／切换／断线即清空。受控 CPU 不代表真实 Windows/macOS picker 通过，整票与原生验收仍待。 活动工具 ID 重复会保守停用该选择／连接的后续提示收集；字面 cd 仅由实际 shell 成功输出派生有限 declared_cwd，不广播原命令，cmd/POSIX 引号分别拒歧义。
 
 - #480 Windows 原生 metadata 验收将同一测试的 abort 同时绑定 metadata 与 closing 等待，超时取消立即进入原 owned-child 清理并继续等待真实退出；正常完成卸载监听。保留原20秒、退出0、认证／元数据／窗口断言与 surface 清理，不冒称已定位或修复 Windows 晚退出原因。
 
