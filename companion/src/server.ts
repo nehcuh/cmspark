@@ -1,3 +1,6 @@
+import { assertCoordinateAllowed } from "./computer/policy"
+import { getComputerSessionTrust, resolveComputerTrustKey } from "./computer/session-trust"
+import { computerReadConnectionFor, readonlyComputerDraft, type ComputerReadConnection, type ComputerReadOperation } from "./computer/readonly-session"
 import { carryMcpWorkspaceObservation } from "./mcp/workspace-observation"
 // Companion server — WebSocket server, message routing, tool execution bridge
 
@@ -477,6 +480,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
   // Audit item 8: register the (ws, sessionId) pair so ws.on("close") can clean
   // up the per-session MCP confirm-cache. Without this, stale approvals leak.
   mcpSessionByWs.set(ws, sessionId)
+  let computerReads: ComputerReadConnection | undefined
   const executor: ToolExecutorFn = async (
     toolCallId: string,
     toolName: string,
@@ -509,6 +513,8 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
     const captureWritesAllowedAtStart = evidenceScope?.kind !== "chat"
       || threadManager.get(evidenceScope.threadId)?.execution_policy !== "plan_readonly"
     if (evidenceScope?.kind === "chat") finalParams = { ...finalParams, __thread_id: evidenceScope.threadId }
+    // Only normal router-owned chat evidence scope is a readonly subject.
+    computerReads?.observeThread(evidenceScope?.threadId)
     // #au4dch DL-1: normalize dotted alias → downloads_find
     if (toolName === "downloads.find") {
       toolName = "downloads_find"
@@ -644,7 +650,33 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
     finalParams = pregate.finalParams
     const mutationHold = pregate.releaseMutationHold
 
+    let computerRead: ComputerReadOperation | undefined
+    let computerReadSucceeded = false
     try {
+    if (toolName === "host_computer") {
+      const draft = readonlyComputerDraft(finalParams)
+      if (!draft) computerReads?.retire()
+      const thread = evidenceScope?.kind === "chat" ? threadManager.get(evidenceScope.threadId) : undefined
+      const threadOwner = thread && threadManager.getComputerReadOwner(evidenceScope!.threadId)
+      const auth = getWsAuthState(ws), configuration = getConfig(), app = draft && configuration.apps?.entries?.[String(draft.app)]
+      if (draft && thread && threadOwner && app && !nativeOwner && !invokeOpts?.trustedOutbound && !enterprisePermit &&
+          thread.agent_role !== "worker" && thread.agent_role !== "orchestrator" && !thread.parent_thread_id && auth?.authenticated === true &&
+          auth.surface === "panel" && /^chrome-extension:\/\//i.test(auth.origin || "")) {
+        computerReads ??= computerReadConnectionFor(ws)
+        computerReads.observeThread(evidenceScope!.threadId)
+        computerRead = computerReads.begin({ thread: threadOwner, threadId: evidenceScope!.threadId, app, configuration, auth,
+          current: () => {
+            if (signal?.aborted || ws.readyState !== WebSocket.OPEN || getWsAuthState(ws) !== auth || auth.authenticated !== true ||
+                auth.surface !== "panel" || threadManager.get(evidenceScope!.threadId) !== thread ||
+                threadManager.getComputerReadOwner(evidenceScope!.threadId) !== threadOwner || getConfig() !== configuration ||
+                configuration.apps?.entries?.[String(draft.app)] !== app) return false
+            try { return assertCoordinateAllowed(configuration, String(draft.app), { allowVaultBrowserOneShot: true }) === app } catch { return false }
+          },
+          mayRetain: () => !getComputerSessionTrust().hasCredentialLatch(resolveComputerTrustKey(evidenceScope!.threadId, sessionId), String(draft.app)),
+        }, draft, signal)
+        finalParams = { ...draft, __thread_id: evidenceScope!.threadId }
+      } else computerReads?.retire()
+    }
     if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
     // Cookie trust domain gate — extracted to tool/url-cookie-admission.ts (C10-C)
     const cookieOutcome = runCookieTrustAdmission({
@@ -673,6 +705,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
     // L2 confirmation gate — extracted to tool/l2-admission.ts (C10-B)
     const l2Outcome = await runL2ToolAdmission({
       ...(nativeOwner ? { nativeConfirmationUnavailable: denyNativeConfirmation } : {}),
+      computerRead,
       enterprisePermit,
       signal,
       toolName,
@@ -765,6 +798,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
         if (nativeOwner && !nativeOwner.current()) return { success: false, error: "DESKTOP_SESSION_STALE" }
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
           evidenceScope,
+          computerRead,
           // Only authenticated, local-chat server-bound scope may pull terminal text.
           // Adapter final __thread_id injection is preserved, but JSON is not this authority.
           readTerminalTail: toolName === "terminal_tail_read" && evidenceScope?.kind === "chat" && !invokeOpts?.trustedOutbound && !nativeOwner
@@ -882,6 +916,8 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
             })
           },
         })
+        computerRead?.assertCurrent()
+        computerReadSucceeded = result.success === true
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {
@@ -973,6 +1009,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
     return captureLocalPageResult(getConfigDir(), currentEvidenceThread ? evidenceScope : undefined, toolCallId, toolName, result, signal,
       captureWritesAllowedAtStart && currentEvidenceThread?.execution_policy !== "plan_readonly")
     } finally {
+      computerRead?.finish(computerReadSucceeded)
       guiTemplateReceipt?.close()
       if (mutationHold) {
         try {

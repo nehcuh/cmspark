@@ -228,8 +228,7 @@ function makeDeps(overrides: Partial<ComputerExecutorDeps> = {}): ComputerExecut
     config: testConfig(),
     now: () => 1000000,
     sleep: async () => {},
-    // FakeCapturer returns virtual paths, so its default cleanup is inert too.
-    // Tests that assert cleanup inject their own recording callback below.
+    // Fake capture paths have no files; explicit cleanup overrides stay authoritative.
     removeFile: async () => {},
     ...overrides,
   }

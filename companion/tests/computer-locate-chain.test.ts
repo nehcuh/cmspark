@@ -365,6 +365,8 @@ function execDeps(over: Partial<ComputerExecutorDeps>, evidence: RecordEvidence)
     evidenceFactory: () => evidence,
     confirm: async () => ({ confirmationId: "", approved: true } as any),
     config: exeConfig({ uiaCapable: true }),
+    // Fake capture paths have no files; explicit cleanup overrides stay authoritative.
+    removeFile: async () => {},
     ...over,
   }
 }

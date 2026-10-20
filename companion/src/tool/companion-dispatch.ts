@@ -1,3 +1,4 @@
+import { consumeComputerReadAttempt, type ComputerReadOperation } from "../computer/readonly-session"
 // Companion-side tool dispatch (executeCompanionTool).
 // Extracted from server.ts (C10-B mechanical split) — zero behavior change.
 // Runtime deps (threadManager, skillEngine, …) are injected via bindCompanionDispatchRuntime.
@@ -128,6 +129,7 @@ export interface CompanionToolExecOptions {
    * trust. Forwarded from the createToolExecutor closure (where sessionId
    * lives) into runComputerTask deps; absent = every re-L2 asks.
    */
+  computerRead?: ComputerReadOperation
   computerSessionId?: string
   /**
    * LLM-loop AbortSignal (chat.abort / supersede). shell_exec listens and
@@ -2230,6 +2232,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
               config: getConfig(),
               currentSecurity: () => getConfig().security,
+              beforeReadCapture: () => consumeComputerReadAttempt(),
+              readScope: execOpts?.computerRead,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
@@ -2364,6 +2368,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
               config: getConfig(),
               currentSecurity: () => getConfig().security,
+              beforeReadCapture: () => consumeComputerReadAttempt(),
+              readScope: execOpts?.computerRead,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>

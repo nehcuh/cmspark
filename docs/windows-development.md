@@ -43,3 +43,9 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 - 两位真正非作者的互盲源码意见、CPU/ARM 和真实原生验收各有边界；都不相互替代。原生 DoD 必须在精确新 head 的真实 Windows 与所要求 main 路径上验证，不以 macOS/Linux、VM/DOM、编译或旧 head 代替。
 - 不靠延长 timeout、sleep、重试、skip/COE、弱断言、权限放宽、恢复焦点或无变化 CI rerun 消红。若需要改变实验/合同，先陈述已证缺口和原 DoD，由负责人裁决；新的观测字段也不能无限按轮追加。
 - 同一问题最多三轮修复/复审，之后负责人缩小或重想方案；换目录/packet 名不重置轮数。首轮读完整差量，之后仅核受影响增量，复用字节/输入未变的有效意见与机器；NIT 不触发新 CI，不追加第三/第四必需模型。
+
+## 新增依赖和窗口状态的短检查
+
+- 修改生产函数依赖后，检查删除 import 后执行函数的 VM/AST/readFile 消费者。真实依赖须同时进入消费端 import 和 VM globals；只跑被修改函数的测试会漏掉旧消费端的 ReferenceError。#723 的 `transient-rate-feedback-730` 回归保留了这个失败。
+- 前台就绪必须核最后一个可能改变激活的操作。WPF 最小化会调用 SW_MINIMIZE，API 允许激活下一顶层窗口；先激活另窗再最小化不能证明最终前台仍是另窗。当前修复候选只调整原操作顺序，CPU 正负控不冒真实 Windows 验收，也不证明历史唯一原因。禁止补救焦点或放松前台断言。
+- 首条 worker 消息的 schema 与终止路径先查真实 producer：font-cache 消息没有 `ok` 字段，observer 的 false 不等字体失败；`finally` 主动 terminate 后的非零 exit 也不单独证明崩溃。冷启动耗时的物理原因未证实时保留 UNKNOWN。

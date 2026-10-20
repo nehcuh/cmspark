@@ -149,6 +149,7 @@ export const MAX_TYPE_TEXT_CHARS = 2000
 // ---------------------------------------------------------------------------
 
 export type ComputerErrorCode =
+  | "COMPUTER_TASK_BUSY" // existing task/confirmation refusal code, not a new wire value
   | "COMPUTER_DISABLED" // global computer.coordinateEnabled=false (A10)
   | "APP_COORDINATE_DENIED" // AppEntry coordinateAllowed=false (A10)
   | "APP_COORDINATE_STRUCTURAL" // vault/LOLBIN-mapped app can never opt in (A10.3)

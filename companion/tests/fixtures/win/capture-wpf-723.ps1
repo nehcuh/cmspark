@@ -63,8 +63,8 @@ public static class CaptureFixture723 {
     target.ContentRendered += delegate {
       if(rendered) return; rendered=true;
       if(mode=="minimized" || mode=="nonforeground") {
-        other=Pattern(false); other.Left=600; other.Show(); other.Activate();
         if(mode=="minimized") target.WindowState=WindowState.Minimized;
+        other=Pattern(false); other.Left=600; other.Show(); other.Activate();
       } else {
         target.Activate();
         if(mode=="occluded") { other=Pattern(true); other.Show(); }

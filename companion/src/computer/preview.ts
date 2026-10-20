@@ -26,6 +26,8 @@ export interface ComputerTaskEvent {
   app?: string
   task?: string
   total?: number
+  /** Presentation only, from the actual validated immutable executor draft. */
+  read_only_observation?: boolean
   /** WP4: started 附动作预算总量(任务条「已用/总量」的分母)。 */
   budget?: number
   ok?: boolean

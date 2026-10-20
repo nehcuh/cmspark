@@ -1,3 +1,4 @@
+import { readonlyComputerDraft, type ComputerReadOperation } from "../computer/readonly-session"
 // L2 security admission gate for createToolExecutor.
 // Extracted from server.ts (C10 Phase B mechanical split) — zero behavior change.
 //
@@ -179,6 +180,7 @@ function resolveHostUseApp(toolName: string, params: any): string {
 export type L2AdmissionContext = {
   /** Trusted native lifecycle only: no supported native tool-confirmation UI yet. */
   nativeConfirmationUnavailable?: () => Promise<void>
+  computerRead?: ComputerReadOperation
   enterprisePermit?: import("../outbound-mcp/enterprise-permit").EnterprisePermit
   signal?: AbortSignal
   toolName: string
@@ -277,6 +279,42 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       return { ok: false, result: { success: false, error: "App file template unavailable or denied; review its configuration and approve again." } }
     }
   }
+  if (ctx.toolName === "host_computer" && ctx.computerRead) {
+    const read = ctx.computerRead
+    try {
+      read.assertCurrent()
+      const { assertCoordinateAllowed } = await import("../computer/policy")
+      const entry = assertCoordinateAllowed(getConfig(), String(read.draft.app), { allowVaultBrowserOneShot: true })
+      if (getComputerTaskAbortRegistry().size > 0) throw new ComputerError("COMPUTER_TASK_BUSY", "computer: another computer task is executing")
+      if ((await ctx.computerRateLimiter()).saturated()) throw new ComputerError("RATE_LIMITED", "computer: injection account is saturated")
+      read.assertCurrent()
+      if (!read.reuse) {
+        const { buildComputerL2Preview } = await import("../computer/preview")
+        const preview = buildComputerL2Preview({ task: String(read.draft.task), appToken: String(read.draft.app), appDisplayName: entry.display_name,
+          actions: read.draft.actions, budget: Math.min(Math.max(1, Number(read.draft.budget) || 15), 30) })
+        const disclosure = "本连接、当前对话和此应用：首次允许后仅复用查看、截图、等待；不授权点击或键入。断线、取消、失权或读取失败后需重新确认。"
+        const approvalAuth = ctx.wsAuthGet(ctx.ws)
+        const decision = await ctx.securityConfirmations.request(data => {
+          try {
+            if (data.type === "security.confirmation.request") read.assertCurrent()
+            if (ctx.ws.readyState === WebSocket.OPEN && ctx.wsAuthGet(ctx.ws) === approvalAuth && approvalAuth?.authenticated === true) ctx.ws.send(JSON.stringify(data))
+          } catch { /* stale/disconnected owner gets no late preview */ }
+        }, { toolName: "host_computer", dangerousApis: [], code: disclosure + "\n" + preview,
+          fullPreview: disclosure + "\n" + preview, autoConfirmEligible: false }, { originWs: ctx.ws, signal: read.signal })
+        if (!decision.approved || !read.approve(ctx.securityConfirmations, decision, ctx.ws)) throw new Error("computer: readonly human origin confirmation required")
+      }
+      read.assertCurrent()
+      const params = { ...read.draft, ...(typeof ctx.finalParams.__thread_id === "string" ? { __thread_id: ctx.finalParams.__thread_id } : {}) }
+      const approved = securityPolicy.issueTokenFor("host_computer", params)
+      return { ok: true, finalParams: { ...params, security_token: approved.token } }
+    } catch (error) {
+      read.finish(false)
+      const result = { success: false as const, error: error instanceof Error ? error.message : "Readonly admission unavailable",
+        ...(error instanceof ComputerError ? { error_code: error.code } : {}) }
+      ctx.logToolFinish(ctx.toolCallId, ctx.toolName, ctx.startedAt, result)
+      return { ok: false, result }
+    }
+  }
   if (ctx.enterprisePermit) {
     const { checkEnterprisePermit } = await import("../outbound-mcp/enterprise-permit")
     if (!checkEnterprisePermit(ctx.enterprisePermit, ctx.toolName, ctx.finalParams, ctx.ws)) return { ok: false, result: { success: false, error: "PERMIT_INVALID" } }
@@ -351,6 +389,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
   // so the executor returns the typed platform error.
   const hostComputerGated = toolName === "host_computer" &&
     isHostComputerPlatformGated(os.platform())
+  const hostComputerReadOnly = hostComputerGated && !!readonlyComputerDraft(finalParams)
   // P0 platform filter: osascript_eval is macOS-only. Fail before L2 confirmation
   // so Windows/Linux never show a pointless confirm dialog (same idea as hostAppGated
   // skipping off-platform). Defense-in-depth still remains in executeCompanionTool.
@@ -685,7 +724,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         // isTrusted() already enforces idle expiry (30 min, anchored to last
         // interactive approve) and credential latch — those need no separate
         // check here.
-        if (hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot) && sessionId && finalParams.app) {
+        if (!hostComputerReadOnly && hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot) && sessionId && finalParams.app) {
           const {
             getComputerSessionTrust,
             resolveComputerTrustKey,
@@ -793,7 +832,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
               })
             }
           }
-        } else if (hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot) && finalParams.app) {
+        } else if (!hostComputerReadOnly && hostComputerTrustSkipAlgebraOpen(vaultBrowserOneShot) && finalParams.app) {
           // No sessionId — G1 needs session; unattended is process-global (ADR-021).
           const {
             evaluateUnattendedHostComputerSkipDetail,
@@ -1067,7 +1106,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // (hostComputerTrustSkip) may skip. Restore forceConfirm for hostComputerGated after P0
     // when capabilityForceConfirm no longer implied criticalApis.length for this tool.
     // ACP: NEVER waive (acpForceConfirm overrides cruise) — pure algebra in resolveL2ForceConfirm.
-    const forceConfirm = resolveL2ForceConfirm({
+    const forceConfirm = hostComputerReadOnly || resolveL2ForceConfirm({
       toolName,
       capabilityForceConfirm,
       hostComputerGated,
@@ -1825,7 +1864,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // a fresh preview) AND extend the type corpus with this task's type.text
       // literals — so a future task with the same-or-subset corpus is eligible
       // for the G1 trust skip above.
-      if (hostComputerGated && finalParams.app) {
+      if (hostComputerGated && !hostComputerReadOnly && finalParams.app) {
         const { getComputerSessionTrust, resolveComputerTrustKey } = await import("../computer/session-trust")
         const trust = getComputerSessionTrust()
         const appToken = String(finalParams.app)

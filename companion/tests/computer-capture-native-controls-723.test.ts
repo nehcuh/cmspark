@@ -222,3 +222,70 @@ test("723 fixed setup diagnostics identify the exact still-strict failing assert
     assert.ok(observed.every(phase => ["MINIMIZED_STATE", "OTHER_FOREGROUND", "TARGET_FOREGROUND", "OWNED_OCCLUDER"].includes(phase)))
   }
 })
+
+
+test("723 actual WPF ContentRendered ordering establishes owned foreground after minimize side effects", () => {
+  const vm = require("node:vm")
+  const original = fs.readFileSync(path.join(testsRoot, "fixtures/win/capture-wpf-723.ps1"), "utf8")
+  for (const fixture of [original.replace(/\r\n/g, "\n"), original.replace(/\r?\n/g, "\r\n")]) {
+    const start = "target.ContentRendered += delegate {", finish = "    };"
+    assert.equal(fixture.split(start).length, 2)
+    const suffix = fixture.slice(fixture.indexOf(start) + start.length)
+    const body = suffix.slice(0, suffix.indexOf(finish))
+    assert.ok(body.includes("Publish(ready,target,other); verify();"))
+    const json = fixture.match(/^    string json=(.+);\r?$/m)
+    assert.ok(json, "actual Publish JSON expression required")
+    // This fixed C# event body is also a JS-compatible subset. Execute its
+    // actual statements unchanged; only window/API boundaries are inert.
+    const run = (mode: typeof modes723[number], denied = false, ignoreMinimize = false) => {
+      let foreground = 7, minimized = false, published = 0
+      // Front-to-back model: other activation moves9 above target7; the next
+      // top-level below target remains11. No actual host windows are inspected.
+      let zOrder = [7, 11]
+      const activate = (hwnd: number) => { zOrder = [hwnd, ...zOrder.filter(value => value !== hwnd)]; foreground = hwnd }
+      const events: string[] = []
+      const target: any = { Activate() { events.push("target-activate"); if (!denied) activate(7) } }
+      Object.defineProperty(target, "WindowState", { set(value) {
+        assert.equal(value, "minimized"); events.push("minimize")
+        if (!ignoreMinimize) {
+          minimized = true
+          const targetIndex = zOrder.indexOf(7)
+          assert.ok(targetIndex >= 0 && targetIndex + 1 < zOrder.length)
+          foreground = zOrder[targetIndex + 1]
+          zOrder = zOrder.filter(value => value !== 7)
+        }
+      } })
+      let receipt!: Receipt723
+      const callback = vm.runInNewContext(`(function(mode) { let rendered=false, other=null; return function() {${body}\n}; })`, {
+        target, WindowState: { Minimized: "minimized" }, ready: "owned-ready", verify() {},
+        Pattern(overlay: boolean) {
+          return { Left: 0, Show() { events.push("other-show"); if (!overlay && !denied) activate(9) },
+            Activate() { events.push("other-activate"); if (!denied) activate(9) } }
+        },
+        Publish(_ready: string, actualTarget: unknown, other: unknown) {
+          assert.equal(actualTarget, target); published++; events.push("publish")
+          // Same real C# Publish expression, not a handmade successful receipt.
+          const text = vm.runInNewContext(`(${json![1]})`, {
+            h: { ToInt64: () => 7 }, o: { ToInt64: () => other ? 9 : 0 },
+            GetForegroundWindow: () => ({ ToInt64: () => foreground }), IsIconic: () => minimized,
+          }, { timeout: 2000 })
+          receipt = receipt723(text)
+        },
+      }, { timeout: 2000 })(mode)
+      callback(); callback(); assert.equal(published, 1, "actual rendered latch still publishes once")
+      return { receipt, events }
+    }
+    for (const mode of modes723) {
+      const result = run(mode)
+      // SW_MINIMIZE may activate the next Z window (sentinel11), even after a
+      // prior owned activation. This models allowed API behavior, not Win32.
+      assertSetup723(mode, result.receipt)
+      if (mode === "minimized") assert.deepEqual(result.events, ["minimize", "other-show", "other-activate", "publish"])
+    }
+    for (const [denied, ignoreMinimize, expected] of [[true, false, "OTHER_FOREGROUND"], [false, true, "MINIMIZED_STATE"]] as const) {
+      let phase = ""
+      assert.throws(() => assertSetup723("minimized", run("minimized", denied, ignoreMinimize).receipt, value => { phase = value }), assert.AssertionError)
+      assert.equal(phase, expected, "failed activation or absent minimization cannot become ready")
+    }
+  }
+})

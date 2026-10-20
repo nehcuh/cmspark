@@ -346,13 +346,20 @@ The unshipped Windows acceptance variant observes the exact blocked top-level na
 
 正常 companion postinstall 与两个 Windows 打包入口使用同一精确源码补丁。非 Windows 不查询 native 包；正常安装无 optional PTY 包/不支持架构时报告 NOT_INSTALLED/NOT_SUPPORTED 并保留原终端不可用降级。Windows 打包必须有匹配包且修正成功，完整真实 companion lock 的独立读取上限为256KiB；package/source 文件仍各128KiB，均完整读取且不截断。未知版本/完整性/源码、别名/身份替换或不完整写入均拒绝。受控 CPU 不能替代新 head 的原两条真实 PTY 测试、20s/6s/45s 原预算和完整 canonical；当前长时间 pending 的具体原因仍 UNKNOWN，不以本修正假定历史根因。
 
+
+### #723 D3 同连接只读同意候选
+
+`companion/tests/computer-readonly-session-723.test.ts` 沿实际普通chat evidence binder→whole server executor→真实ThreadManager/L2/confirmation manager/token，验证首次deny、真实origin批准后复用/fresh token、privileged同形不授信、重连/subject ABA/取消/失权/失败清理及单连接pending接续；另实际executor→原dispatch广播→focus producer验证presentation-only started标记、混入注入/paused/首次heavy/nonce原行为。捕获/OCR/证据等OS边界仅inert DI，既有45秒/权限/注入G1不改；限率用独立账户和原常量，失败捕获也计。受控CPU不是人工批准、真实浏览器或Windows native。
+
+首次确认可见范围明确为当前认证扩展端点/对话/App，仅全describe/screenshot/wait；无新TTL/具名Chrome profile证明，不借G1跨重连。D2 HWND正身份/双帧mask仍未完成；D1真实Windows及发布head/main的实际门禁继续独立，不能由本测试关闭whole723。
+
 ### #723 Windows observation quality
 
 The focused inert families are `computer-capture-self-723` (existing ownership/fallback controls plus actual adapter/executor taint), `computer-observation-723` (closed parser, bounded actual C# source lowering, real owned evidence serialization and model framing), `computer-l2-preview-image`, and extension `computer-task-state`. Related executor, OCR, preview and Windows error mapping tests retain their existing assertions. Source lowering and runner seams do not compile or execute PowerShell/C#/Windows APIs; fake sealer bytes do not claim real encryption.
 
-Required later Windows checks: usable PrintWindow, overlapped BitBlt, stable sampled-empty BitBlt, API/identity/DPI/limit refusal, passive minimized/nonforeground refusal, credential blackout, quality on model/UI/preview/evidence, unchanged injection/dialog/stop/cleanup gates. No local screenshot, browser, foreground rescue, native test or provider is needed for the CPU controls. Native-mask and read-only-admission requirements remain incomplete; no new hosted Chrome runner is assumed.
+Required later Windows checks: usable PrintWindow, overlapped BitBlt, stable sampled-empty BitBlt, API/identity/DPI/limit refusal, passive minimized/nonforeground refusal, credential blackout, quality on model/UI/preview/evidence, unchanged injection/dialog/stop/cleanup gates. No local screenshot, browser, foreground rescue, native test or provider is needed for the CPU controls. Native-mask requirements remain incomplete; scoped read-only admission is described in the D3 section above. No new hosted Chrome runner is assumed.
 
 
-### #723 D1 Windows capture producer (remote acceptance, not yet run)
+### #723 D1 Windows capture producer (independent remote acceptance)
 
-`computer-capture-native-controls-723.test.ts` runs inert helpers and whole-callback VM controls. `computer-capture-windows-native-723.test.ts` registers five Windows-only hard cases automatically discovered once by the existing canonical Windows CI runner (no duplicate #572 step entry): default real PrintWindow, passive minimized/nonforeground refusal, forced-after-real-PrintWindow BitBlt partial and owned NOACTIVATE overlay occluded. Each retains fresh owned WPF/real helper children through close under45s/15s remaining budgets. No screenshots/raw metadata are printed. The one test-only variant changes observed printed=false after the actual PrintWindow call and is inverse-checked; it is not natural PrintWindow failure or a production option. Until actual new-head Windows runs, D1 native=NOT_RUN; the #572 UIA job alone does not prove this capture path.
+`computer-capture-native-controls-723.test.ts` runs inert helpers and whole-callback VM controls. `computer-capture-windows-native-723.test.ts` registers five Windows-only hard cases automatically discovered once by the existing canonical Windows CI runner (no duplicate #572 step entry): default real PrintWindow, passive minimized/nonforeground refusal, forced-after-real-PrintWindow BitBlt partial and owned NOACTIVATE overlay occluded. Each retains fresh owned WPF/real helper children through close under45s/15s remaining budgets. No screenshots/raw metadata are printed. The one test-only variant changes observed printed=false after the actual PrintWindow call and is inverse-checked; it is not natural PrintWindow failure or a production option. Only the exact changed-head five-mode Windows result can complete this gate; the #572 UIA job alone does not prove this capture path.
