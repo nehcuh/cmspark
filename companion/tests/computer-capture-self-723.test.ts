@@ -9,6 +9,7 @@ import * as os from "os"
 
 import { runComputerTask, type ComputerExecutorDeps } from "../src/computer/executor"
 import { PsLocator } from "../src/computer/win-adapters"
+import { PsScreenCapturer } from "../src/computer/win-adapters"
 import {
   ComputerError,
   type CaptureMeta,
@@ -89,6 +90,45 @@ function shot(path: string): CaptureMeta {
     osrBlackSuspected: false,
   }
 }
+
+const observed723 = (quality: "ok" | "partial" | "occluded") => ({
+  fallbackUsed: quality !== "ok",
+  capture_method: quality === "ok" ? "printwindow" : "bitblt",
+  observation_quality: quality,
+  occludedBy: quality === "occluded" ? [{ hwnd: 99, rect: { x: 100, y: 100, width: 20, height: 20 }, className: "OwnedTest" }] : [],
+})
+
+test("#723 actual Windows adapter retains closed observation and internal passive argument", async () => {
+  let args: string[] = []
+  const c = new PsScreenCapturer(async (_script, argv) => {
+    args = argv!
+    const out = args[args.indexOf("-OutPath") + 1]
+    return JSON.stringify({ ...shot(out), sha256: "a".repeat(64), ok: true, ...observed723("occluded") })
+  })
+  const result = await (c.captureWindow as any)(HWND, { passive: true })
+  assert.equal((result as any).observation_quality, "occluded")
+  assert.deepEqual((result as any).occludedBy, observed723("occluded").occludedBy)
+  assert.ok(args.includes("-Passive"))
+})
+
+test("#723 describe taint reaches real result/event/evidence with private OCR and no page body", async t => {
+  windows723(t)
+  for (const quality of ["occluded", "partial"] as const) {
+    let ocrCalls = 0; const events: any[] = [], evidence = new FakeEvidence()
+    const { deps } = deps723([winInfo()])
+    deps.capturer.captureWindow = async () => ({ ...shot("tainted-723"), ...observed723(quality) } as CaptureMeta)
+    deps.locator.ocr = async () => { ocrCalls++; return { language: "zh-Hans", words: [{ text: "DO_NOT_RETURN_PAGE_BODY", x: 0, y: 0, w: 20, h: 10 }] } }
+    deps.evidenceFactory = () => evidence; deps.onEvent = e => { events.push(e) }
+    const result = await runComputerTask({ task: "read", app: "win.app.test", actions: [{ action: "describe" }] }, deps)
+    assert.equal(result.success, true); assert.equal(ocrCalls, 1)
+    assert.ok(result.steps[0].untrustedText!.includes(`[host observation: ${quality};`))
+    assert.ok(!result.steps[0].untrustedText!.includes("DO_NOT_RETURN_PAGE_BODY"))
+    assert.equal((result.steps[0] as any).observation_quality, quality)
+    assert.equal(events.find(e => e.event === "step").observation_quality, quality)
+    assert.equal((evidence.records[0] as any).observation_quality, quality)
+    assert.equal(evidence.sealed.length, 1)
+  }
+})
 
 /** X1: script entries are either a bare diffRatio or full zoned metrics. */
 type DiffScriptEntry = number | DiffMetrics

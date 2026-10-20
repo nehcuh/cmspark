@@ -345,3 +345,14 @@ The unshipped Windows acceptance variant observes the exact blocked top-level na
 `node-pty-worker-retire-725.test.ts` 用锁定 beta.15 的真实 Windows JS 与实际 PTY session 函数、惰性 native/socket/worker 边界核对自然退出后的 worker 退休；这不是本机 PTY/Windows 验收。上游 JS 保留 MIT 版权和来源，x64/arm64 原包分别按 companion lock integrity 校准。补丁只在 `_cleanUpProcess` 的原输出 destroy 后调用既有 retained output-worker dispose，沿用原始 flush/terminate；不在退出后调用数值 PID kill，不证明所有 HPCON 已释放，pre-ready deferred kill 仍单独待核。
 
 正常 companion postinstall 与两个 Windows 打包入口使用同一精确源码补丁。非 Windows 不查询 native 包；正常安装无 optional PTY 包/不支持架构时报告 NOT_INSTALLED/NOT_SUPPORTED 并保留原终端不可用降级。Windows 打包必须有匹配包且修正成功，完整真实 companion lock 的独立读取上限为256KiB；package/source 文件仍各128KiB，均完整读取且不截断。未知版本/完整性/源码、别名/身份替换或不完整写入均拒绝。受控 CPU 不能替代新 head 的原两条真实 PTY 测试、20s/6s/45s 原预算和完整 canonical；当前长时间 pending 的具体原因仍 UNKNOWN，不以本修正假定历史根因。
+
+### #723 Windows observation quality
+
+The focused inert families are `computer-capture-self-723` (existing ownership/fallback controls plus actual adapter/executor taint), `computer-observation-723` (closed parser, bounded actual C# source lowering, real owned evidence serialization and model framing), `computer-l2-preview-image`, and extension `computer-task-state`. Related executor, OCR, preview and Windows error mapping tests retain their existing assertions. Source lowering and runner seams do not compile or execute PowerShell/C#/Windows APIs; fake sealer bytes do not claim real encryption.
+
+Required later Windows checks: usable PrintWindow, overlapped BitBlt, stable sampled-empty BitBlt, API/identity/DPI/limit refusal, passive minimized/nonforeground refusal, credential blackout, quality on model/UI/preview/evidence, unchanged injection/dialog/stop/cleanup gates. No local screenshot, browser, foreground rescue, native test or provider is needed for the CPU controls. Native-mask and read-only-admission requirements remain incomplete; no new hosted Chrome runner is assumed.
+
+
+### #723 D1 Windows capture producer (remote acceptance, not yet run)
+
+`computer-capture-native-controls-723.test.ts` runs inert helpers and whole-callback VM controls. `computer-capture-windows-native-723.test.ts` registers five Windows-only hard cases automatically discovered once by the existing canonical Windows CI runner (no duplicate #572 step entry): default real PrintWindow, passive minimized/nonforeground refusal, forced-after-real-PrintWindow BitBlt partial and owned NOACTIVATE overlay occluded. Each retains fresh owned WPF/real helper children through close under45s/15s remaining budgets. No screenshots/raw metadata are printed. The one test-only variant changes observed printed=false after the actual PrintWindow call and is inverse-checked; it is not natural PrintWindow failure or a production option. Until actual new-head Windows runs, D1 native=NOT_RUN; the #572 UIA job alone does not prove this capture path.

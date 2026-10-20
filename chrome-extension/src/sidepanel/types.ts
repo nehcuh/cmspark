@@ -730,6 +730,8 @@ export interface ComputerLocateAttemptView {
 
 /** computer.task.event 的下行负载(镜像 ComputerTaskEvent,含 WI-2 新增可选字段)。 */
 export interface ComputerTaskEventView {
+  capture_method?: "printwindow" | "bitblt"
+  observation_quality?: "ok" | "occluded" | "partial"
   event: "started" | "step" | "paused" | "finished"
   taskId: string
   /** started:目标应用显示名 + 任务文本。 */
@@ -767,6 +769,8 @@ export interface ComputerTaskEventView {
 
 /** 步骤时间线中的一行(折叠后的 step 事件)。 */
 export interface ComputerStepView {
+  capture_method?: "printwindow" | "bitblt"
+  observation_quality?: "ok" | "occluded" | "partial"
   seq: number
   action?: string
   caption?: string

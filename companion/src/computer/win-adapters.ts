@@ -201,10 +201,11 @@ export function sweepComputerTempCaptures(opts: SweepComputerTempOptions = {}): 
 
 // ---------------------------------------------------------------------------
 
+import { captureObservation, observationRect } from "./observation"
 export class PsScreenCapturer implements ScreenCapturer {
   constructor(private runner: PsRunner = runPs) {}
 
-  async captureWindow(hwnd: number): Promise<CaptureMeta> {
+  async captureWindow(hwnd: number, options?: { passive: boolean }): Promise<CaptureMeta> {
     const out = tmpPng("cap")
     let stdout: string
     try {
@@ -212,22 +213,41 @@ export class PsScreenCapturer implements ScreenCapturer {
         "-Hwnd", String(hwnd),
         "-OutPath", out,
         "-AllowFallback",
+        ...(options?.passive === true ? ["-Passive"] : []),
       ])
     } catch (err) {
       rethrowComputerPsError(err, "capture")
     }
-    const meta = parsePsJson<any>(stdout!, "computer.capture")
-    return {
-      hwnd: Number(meta.hwnd),
-      rect: meta.rect,
-      dpi: Number(meta.dpi ?? 96),
-      path: String(meta.path ?? out),
-      sha256: String(meta.sha256 ?? ""),
-      black: meta.black === true,
-      fallbackUsed: meta.fallbackUsed === true,
-      osrBlackSuspected: meta.osrBlackSuspected === true,
-      // client offset within the full-window image (title bar etc.)
-      client: meta.client ?? { x: 0, y: 0, width: meta.rect?.width ?? 0, height: meta.rect?.height ?? 0 },
+    try {
+      const meta = parsePsJson<any>(stdout!, "computer.capture")
+      const observation = captureObservation(meta)
+      const rect = observationRect(meta.rect)
+      const client = observationRect(meta.client)
+      if (!observation || !rect || meta.ok !== true || meta.hwnd !== hwnd || meta.path !== out ||
+        typeof meta.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(meta.sha256) || meta.black !== false ||
+        !Number.isSafeInteger(meta.dpi) || meta.dpi <= 0 || typeof meta.osrBlackSuspected !== "boolean" ||
+        !client || client.x < 0 || client.y < 0 || client.x + client.width > rect.width || client.y + client.height > rect.height ||
+        meta.fallbackUsed !== (observation.capture_method === "bitblt") ||
+        observation.occludedBy.some(row => row.hwnd === hwnd || row.rect.x >= rect.x + rect.width || row.rect.y >= rect.y + rect.height || row.rect.x + row.rect.width <= rect.x || row.rect.y + row.rect.height <= rect.y)) {
+        throw new ComputerError("CAPTURE_FAILED", "computer: unavailable capture observation")
+      }
+      return {
+        ...observation,
+        hwnd,
+        rect,
+        dpi: meta.dpi,
+        path: out,
+        sha256: meta.sha256,
+        black: false,
+        fallbackUsed: meta.fallbackUsed,
+        osrBlackSuspected: meta.osrBlackSuspected,
+        // client offset within the full-window image (title bar etc.)
+        client,
+      }
+    } catch (error) {
+      // This raw was never returned to the executor's pending-raw tracker.
+      try { fs.rmSync(out, { force: true }) } catch { /* same temp janitor fallback */ }
+      throw error instanceof ComputerError ? error : new ComputerError("CAPTURE_FAILED", "computer: unavailable capture observation")
     }
   }
 

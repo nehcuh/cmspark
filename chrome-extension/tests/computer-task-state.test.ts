@@ -20,11 +20,28 @@ import {
   isValidEvidenceTaskId,
   previewImageSafe,
   reduceComputerTaskEvent,
+  computerObservationLabel,
+  computerObservationView,
 } from "../src/sidepanel/utils/computer-utils"
 import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
 import type { ComputerStepView, ComputerTaskEventView, ComputerTaskState } from "../src/sidepanel/types"
 
 const NOW = 1_750_000_000_000
+
+test("#723 actual reducer and image cap preserve fixed source quality, never legacy ok", () => {
+  const event: ComputerTaskEventView = { event: "step", taskId: "quality-723", seq: 1, action: "describe", capture_method: "bitblt", observation_quality: "occluded", previewImage: "A".repeat(400000) }
+  const state = must(reduceComputerTaskEvent(null, event, NOW))
+  assert.equal(state.steps[0].observation_quality, "occluded")
+  const capped = capTimeline([...Array(20)].map((_, i) => ({ ...state.steps[0], seq: i })))
+  assert.ok(capped.some(s => s.previewImage === undefined))
+  assert.ok(capped.every(s => s.observation_quality === "occluded"))
+  assert.ok(computerObservationLabel(state.steps[0]).includes("受遮挡"))
+  assert.equal(computerObservationLabel({}), "观察质量未知")
+  assert.equal(computerObservationLabel({ ...event, observation_quality: ["ok"] }), "观察质量未知")
+  let getters = 0
+  assert.deepEqual(computerObservationView(Object.defineProperty({}, "capture_method", { get() { getters++; return "printwindow" } })), {})
+  assert.equal(getters, 0)
+})
 
 /** 断言非空并收窄类型(本仓库 @types/node 的 assert.ok/fail 不带 asserts 签名)。 */
 function must<T>(v: T | null): T {

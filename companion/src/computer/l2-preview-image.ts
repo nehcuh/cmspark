@@ -1,5 +1,6 @@
 import * as os from "os"
 import { isCompanionCockpitWindow } from "./policy"
+import { observationMarker } from "./observation"
 // WP4(WI-2):任务级 L2 标注截图 helper。
 //
 // 在 host_computer 确认闸门内(best-effort)生成:目标窗口截图 → OCR(凭证区
@@ -116,7 +117,7 @@ export async function buildComputerL2PreviewImage(
       }
       // 截图(raw 帧立即纳入追踪)。
       failureReason = "capture_failed"
-      const shot = await deps.capturer.captureWindow(win.hwnd)
+      const shot = await deps.capturer.captureWindow(win.hwnd, { passive: true })
       rawPath = shot.path || null
       if (!rawPath) return { unavailable: "capture_failed" }
       // OCR:凭证区黑化(与 executor 只读帧同一扫描)+ 首动作锚文本定位。
@@ -144,7 +145,7 @@ export async function buildComputerL2PreviewImage(
       if (!image) return { unavailable: "render_failed" }
       return {
         image,
-        caption: buildL2PreviewCaption(opts.appDisplayName, Array.isArray(opts.actions) ? opts.actions.length : 0),
+        caption: `${observationMarker(shot)} · ${buildL2PreviewCaption(opts.appDisplayName, Array.isArray(opts.actions) ? opts.actions.length : 0)}`,
       }
     } catch (err) {
       log("computer.l2preview.failed", { error: String((err as Error)?.message ?? err) })
