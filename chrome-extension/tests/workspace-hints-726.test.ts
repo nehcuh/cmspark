@@ -19,8 +19,8 @@ function shell(o: WorkspaceHints, id: string, cwd: string, extra: any = {}, para
 }
 test("#726 exact path keys retain case/CJK/root and normalize only declared Windows spelling", () => {
   for (const [a, b] of [["c:/项目/repo/", "C:\\项目\\repo"], ["\\\\HOST\\SHARE\\中文\\", "\\\\host\\share\\中文"], ["C:\\", "c:/"], ["/", "/"]]) assert.equal(workspaceHintPath(a)?.key, workspaceHintPath(b)?.key)
-  assert.notEqual(workspaceHintPath("/Repo")?.key, workspaceHintPath("/repo")?.key)
-  assert.notEqual(workspaceHintPath("C:\\Repo")?.key, workspaceHintPath("C:\\repo")?.key)
+  assert.notStrictEqual(workspaceHintPath("/Repo")?.key, workspaceHintPath("/repo")?.key)
+  assert.notStrictEqual(workspaceHintPath("C:\\Repo")?.key, workspaceHintPath("C:\\repo")?.key)
   for (const bad of ["relative", "C:relative", "\\\\?\\C:\\repo", "/a/../b", "/bad\n", "/bad\u202e"]) assert.equal(workspaceHintPath(bad), null)
 })
 test("#726 memory is bounded3, latest first, retained count only; no automatic action", () => {
