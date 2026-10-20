@@ -25,7 +25,9 @@ function fixture(fault='none') {
     if(fault==='replacement'&&portPhase)result.documentId='33333333-3333-4333-8333-333333333333'
     return fault==='duplicate-context'?[result,{...result}]:[result]
   }
-  const nativeInfo={windowId:9,path:'sidepanel.html'}
+  // Chromium's native onOpened serializes GURL::path(), including the leading
+  // slash. getOptions/setOptions use a different, relative resource domain.
+  const nativeInfo={windowId:9,path:new URL(url).pathname}
   const chrome={runtime:{getContexts:async filter=>{
     assert.deepEqual(JSON.parse(JSON.stringify(filter)),{contextTypes:['SIDE_PANEL'],documentUrls:[url],documentOrigins:['chrome-extension://'+id]});return contexts()
   },onConnect},sidePanel:{onOpened,open:async options=>{
@@ -33,7 +35,8 @@ function fixture(fault='none') {
     if(fault==='no-event')return
     opened=true;const event={...nativeInfo}
     if(fault==='wrong-window')event.windowId=10
-    if(fault==='wrong-path')event.path='other.html'
+    if(fault==='wrong-path')event.path=new URL('other.html',url).pathname
+    if(fault==='relative-path')event.path=new URL(url).pathname.slice(1)
     if(fault==='tab-specific')event.tabId=7
     onOpened.emit(event);if(fault==='duplicate-event')onOpened.emit(event)
   }},tabs:{get:async tab=>({id:tab,windowId:9,url,incognito:false})},debugger:{getTargets:async()=>[
@@ -179,9 +182,9 @@ for(const kind of ['object','function','wrong-request','accessor'])test('unknown
   const d=Object.getOwnPropertyDescriptor(f.targetRealm,cleanupKey);assert.equal(kind==='accessor'?d.get:d.value,kind==='accessor'?getter:foreign)
   delete f.targetRealm[cleanupKey];f.clean()
 })
-for(const fault of ['preexisting','wrong-window','wrong-path','tab-specific','duplicate-event','context-tab','context-popup','context-window','context-origin','context-frame','context-incognito','duplicate-context','foreign-sender','wrong-document','tab-sender','inactive-sender','sender-frame','replacement','disconnect','late-port','no-event','open-reject','normal-tab'])test('native provenance refuses '+fault+' and retires the request-local listeners/port',async()=>{
+for(const fault of ['preexisting','wrong-window','wrong-path','relative-path','tab-specific','duplicate-event','context-tab','context-popup','context-window','context-origin','context-frame','context-incognito','duplicate-context','foreign-sender','wrong-document','tab-sender','inactive-sender','sender-frame','replacement','disconnect','late-port','no-event','open-reject','normal-tab'])test('native provenance refuses '+fault+' and retires the request-local listeners/port',async()=>{
   const f=fixture(fault);await assert.rejects(openNativePanel(f.io));f.advance(1001);f.clean();assert.ok(f.counts().opens<=1)
-  if(['preexisting','wrong-window','wrong-path','tab-specific','duplicate-event','context-tab','context-popup','context-window','context-origin','context-frame','context-incognito','duplicate-context','no-event','open-reject','normal-tab'].includes(fault))assert.equal(f.counts().connected,0)
+  if(['preexisting','wrong-window','wrong-path','relative-path','tab-specific','duplicate-event','context-tab','context-popup','context-window','context-origin','context-frame','context-incognito','duplicate-context','no-event','open-reject','normal-tab'].includes(fault))assert.equal(f.counts().connected,0)
 })
 test('the old target heuristic alone accepts a non-tab extension view; new whole producer requires native event provenance',async()=>{
   const before=[{targetId:'pair',url,browserContextId:'own'}],after=[...before,{targetId:'candidate',url,browserContextId:'own'}]
@@ -192,7 +195,7 @@ test('late native event cannot revive a disposed witness or remove its replaceme
   const f=fixture(),spec={key,port:'cmspark-panel-proof732-'+nonce,url,windowId:9,ms:1000}
   await installNativePanelWitness(f.chrome,f.workerRealm,spec);const old=f.workerRealm[key],replacement={owned:'later-request'}
   const replacementCleanup={owned:'later-cleanup'}
-  f.workerRealm[key]=replacement;f.workerRealm[cleanupKey]=replacementCleanup;old.close();f.onOpened.emit({windowId:9,path:'sidepanel.html'});await Promise.resolve();assert.equal(f.workerRealm[key],replacement);assert.equal(f.workerRealm[cleanupKey],replacementCleanup);assert.equal(f.onOpened.listeners.size,0);assert.equal(f.onConnect.listeners.size,0);delete f.workerRealm[key];delete f.workerRealm[cleanupKey]
+  f.workerRealm[key]=replacement;f.workerRealm[cleanupKey]=replacementCleanup;old.close();f.onOpened.emit({windowId:9,path:new URL(url).pathname});await Promise.resolve();assert.equal(f.workerRealm[key],replacement);assert.equal(f.workerRealm[cleanupKey],replacementCleanup);assert.equal(f.onOpened.listeners.size,0);assert.equal(f.onConnect.listeners.size,0);delete f.workerRealm[key];delete f.workerRealm[cleanupKey]
 })
 test('source keeps real business/daemon restart assertions and shares the unchanged navigation deadline',()=>{
   const source=fs.readFileSync(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url),'utf8')

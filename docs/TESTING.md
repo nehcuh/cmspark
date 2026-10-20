@@ -6,7 +6,7 @@
 
 供应和独立正证各有明确120秒新阶段；原业务120秒、端口10秒、导航60秒、认证5秒和工具15秒不变。两阶段使用不同 owned profile／子进程／端点，无 daemon、认证或存储复用；HOME、sandbox 和原启动参数不变。前置正证可能热 OS 页缓存，不能再称未预热冷启动。旧 image-supplier A/B 工作流步骤明确退休，原代码／受控测试／拒绝 raw 仍保留，未被记作成功。
 
-独立正证必须精确 `Chrome/155.0.8059.84`、managed child 真 close、stdout/stderr 两 EOF、包身份与清理全部通过；失败或未知不进入业务。close 未知先保留包，禁止清理过程中抛错后误删仍在使用的 executable。该边界只属于验收，不增加产品权限。纯 CPU、实际包纯文件解压和 ELF 静态读取不是浏览器启动／安装／原生或真实 SidePanel 通过；真实远端 witness 和完整业务均须新 head CI，当前仍 NOT_RUN／NOT_READY。历史 BINARY_SELECTED／PANEL 唯一原因仍 UNKNOWN，原三轮上限不重置；不得本机启动测试浏览器。
+独立正证必须精确 `Chrome/155.0.8059.84`、managed child 真 close、stdout/stderr 两 EOF、包身份与清理全部通过；失败或未知不进入业务。close 未知先保留包，禁止清理过程中抛错后误删仍在使用的 executable。该边界只属于验收，不增加产品权限。纯 CPU、实际包纯文件解压和 ELF 静态读取不是浏览器启动／安装／原生或真实 SidePanel 通过。PR735 head `ac686c0e59f4e739f04ed0f14fae9845d8f86b56` 的真实远端供应 witness 已完成端口、精确版本、close、两 EOF 和清理正证；原完整业务随后在 `AUTH_DONE`／`PANEL` 拒绝、尚未进入 durable，仍 NOT_READY。历史 BINARY_SELECTED／PANEL 唯一原因仍 UNKNOWN，原三轮上限不重置；不得本机启动测试浏览器。
 
 
 > 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
@@ -420,7 +420,7 @@ not human authorization. A separate real session cancel retains its terminal
 history; normal shutdown is never relabeled as a crash.
 
 The request first resolves its owned pairing tab's concrete window. A temporary
-`sidePanel.onOpened` listener must observe that exact window and manifest path,
+`sidePanel.onOpened` listener must observe that exact window and URL pathname,
 followed by one fresh `runtime.getContexts({contextTypes:['SIDE_PANEL']})`
 document. The selected new non-tab debugger target must open an owned temporary
 runtime port whose browser-supplied `sender.documentId` matches that native
@@ -431,6 +431,15 @@ the concrete window comes from the opening event, while a known conflicting
 context window is rejected. Listeners and the port retire within the original
 shared navigation deadline, with the original endpoint/browser cleanup still
 required on failure. There is no ordinary-tab fallback.
+
+Chromium 155's `onOpened` producer serializes `GURL::path()` with its leading
+slash: a configured `panel.html` produces event path `/panel.html`, as verified
+by its upstream serialized-event browser test. The helper compares only that
+exact pathname; it does not accept the relative spelling or a matching basename.
+Permanent inert events derive their path from `new URL(url).pathname`, with an
+explicit relative-path refusal alongside the existing owner/context/port checks.
+This source-proven acceptance bug is not a uniquely observed explanation of the
+hosted `PANEL` failure; the original complete business gate still must pass.
 
 `node chrome-extension/scripts/tests/acp-history-sidepanel-provenance-732.test.mjs`
 executes the actual serialized worker and target helpers with inert Chrome API

@@ -99,7 +99,7 @@ export async function installNativePanelWitness(api,scope,spec) {
     !/^chrome-extension:\/\/[a-p]{32}\/[A-Za-z0-9_./-]+\.html$/.test(spec.url)||
     !Number.isSafeInteger(spec.windowId)||spec.windowId<0||!Number.isInteger(spec.ms)||spec.ms<=0||spec.ms>60000||Object.hasOwn(scope,spec.key)||Object.hasOwn(scope,spec.key+'_cleanup'))refuse()
   const cleanupKey=spec.key+'_cleanup'
-  const origin='chrome-extension://'+spec.url.split('/')[2],extensionId=spec.url.split('/')[2],page=spec.url.slice(origin.length+1),expires=Date.now()+spec.ms
+  const origin='chrome-extension://'+spec.url.split('/')[2],extensionId=spec.url.split('/')[2],page=spec.url.slice(origin.length),expires=Date.now()+spec.ms
   const filter={contextTypes:['SIDE_PANEL'],documentUrls:[spec.url],documentOrigins:[origin]},previous=await api.runtime.getContexts(filter)
   if(!Array.isArray(previous)||previous.length||Date.now()>=expires)refuse()
   let disposed=false,failed=false,bound=false,opened=0,context,port,timer,witness,cleanup
