@@ -224,6 +224,10 @@ jobs:
         run: |
           & scripts/tests/cockpit-bridge-node-selection.test.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/tests/cockpit-bridge-build-prerequisite.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Actual owned PTY tail transport (#725; macOS)"
         # Windows discovers this same file once in the complete canonical census below.

@@ -1,5 +1,11 @@
 # TESTING
 
+### #723 固定构建前置正控
+
+Windows 原 Node 标量九项之后、Registry 和完整 census 之前，运行独立的固定桥接构建验证。它调用原 PS5.1 build-only 脚本，使用与注册路径相同的最小 child environment 和编译参数，要求真实 child close/exit0、普通自有产物和匹配的 SHA256 文件。编译器的公开源码输出直接进入 CI 两个流，不被嵌套调用的 `Out-Null` 消耗；不输出环境或凭据。
+
+此路径不执行生成的 EXE、不写注册、不启动浏览器。只有构建成功、产物验证通过、child 已知关闭且临时根身份未变化时才清理自有目录；构建拒绝、关闭或归属未知时保留并拒绝，不能把失败 shell 的 close 当成所有编译后代已退出。后续原注册／framing／真实身份和全部原断言、时限继续存在。两个构建使用不同自有目录／子进程，不复用产物或 PowerShell 状态；共享 OS 缓存可能被预热，不宣称冷启动。受控 Node/VM 正负控不是 PS5.1／C# 实际构建通过，必须由新 head 的真实 Windows 决定。旧 `registration-framing` 内层异常仍 UNKNOWN；前置拆分不假称修复其历史原因。
+
 ### #723 首个 Windows 窗口身份门：失败证据
 
 `COCKPIT_BRIDGE_FIRST_IDENTITY_INCOMPLETE` 保留原阶段名；同次 `COCKPIT_BRIDGE_FIRST_FAILURE` 仅给出固定步骤、真实 close/退出、输出字节数、有限 PS 源角色／行列／检查序号及 C# 错误代码／framing 检查数。原始输出仍只在 owned 临时文件中，公开回执不包含正文、路径、命令、环境或 Registry 值；格式未知、超限或身份变化时证据为 unavailable，不改变原失败。

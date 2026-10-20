@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- Refs #723：Windows 在完整 census 前单独验证固定桥接程序的真实 PS5.1 构建与产物摘要；原 Node 标量九项、注册、framing 和真实身份门禁保留。独立构建只编译、验证、清理自有临时产物，不运行或注册 host；构建失败立即拒绝，不再等长套件后才到嵌套构建边界。旧 `registration-framing` 首因仍 UNKNOWN，不冒称本次拆分已经修复原生问题。
+
 - MCP SDK 升至 1.32.0：HTTP 默认只跟随同源重定向，拒绝把自定义请求头、会话标识及 307/308 请求正文转发到其它来源；stdio 连接方式不变。补真实 SDK 与应用 HTTP 构造路径的受控回归。版本仍为 0.6.14 开发版，不代表已发版或安装；任务存储安全公告不表示本产品已启用或遭利用。
 
 - #723 首个身份验收的 Node launcher 显式限定 PATH 优先的单一 Application 与单一普通非 reparse EXE，拒绝数组后再读取标量属性；新增 canonical 前真实 PowerShell 分支回归，完整身份门仍在原末尾。尚不表示 CFT、bridge 或真实窗口身份通过。

@@ -297,8 +297,8 @@ function originalCensusCommands(run) {
   assert.equal(match[1].split(locator).length, 2, 'only the census receives the new owned locator')
   return match[1].replace(locator, '').replace(/^  /gm, '')
 }
-// Only this exact, single pre-census PS regression is new to the old schedule.
-// Validate its complete shape and location before applying the original pins.
+// Validate this exact pre-census prerequisite block before applying old pins.
+// The scalar PS regression remains first; fixed build-only acceptance follows.
 function censusStepsWithReviewedNodeSelection723(raw) {
   const steps = workflowYaml.load(raw).jobs['smoke-os'].steps
   const name = 'Windows cockpit Node scalar selection (#723)'
@@ -306,7 +306,7 @@ function censusStepsWithReviewedNodeSelection723(raw) {
   assert.equal(scalar.length, 1, 'one exact early PowerShell scalar regression')
   assert.deepEqual(scalar[0], {
     name, if: "matrix.os == 'windows-latest'", shell: 'pwsh',
-    run: '& scripts/tests/cockpit-bridge-node-selection.test.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n',
+    run: '& scripts/tests/cockpit-bridge-node-selection.test.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode scripts/tests/cockpit-bridge-build-prerequisite.cjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n',
   }, 'the actual interpreter command and failure exit remain exact')
   const compile = steps.findIndex(step => step.name === 'Compile shared companion test inputs (#650)')
   assert.ok(compile >= 0)
