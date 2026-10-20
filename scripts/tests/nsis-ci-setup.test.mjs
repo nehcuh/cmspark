@@ -297,8 +297,24 @@ function originalCensusCommands(run) {
   assert.equal(match[1].split(locator).length, 2, 'only the census receives the new owned locator')
   return match[1].replace(locator, '').replace(/^  /gm, '')
 }
-function assertCensusSchedule(raw) {
+// Validate the complete reviewed macOS-only addition before removing it from
+// the original cross-platform schedule pin. No Windows gate is normalized away.
+function censusStepsWithReviewedTail725(raw) {
   const steps = workflowYaml.load(raw).jobs['smoke-os'].steps
+  const name = 'Actual owned PTY tail transport (#725; macOS)'
+  const tail = steps.filter(step => step.name === name)
+  assert.equal(tail.length, 1, 'one exact directed macOS native tail step')
+  assert.deepEqual(tail[0], {
+    name, if: "matrix.os == 'macos-latest'", shell: 'bash',
+    run: 'cd companion\nnode scripts/run-tests.mjs .test-dist/tests/integration/terminal-tail-native-725.test.js\n',
+  }, 'native command, platform and failure semantics remain exact')
+  const compile = steps.findIndex(step => step.name === 'Compile shared companion test inputs (#650)')
+  assert.ok(compile >= 0)
+  assert.equal(steps.indexOf(tail[0]), compile + 1, 'actual native tail follows the shared compile')
+  return steps.filter(step => step !== tail[0])
+}
+function assertCensusSchedule(raw) {
+  const steps = censusStepsWithReviewedTail725(raw)
   const names = steps.map(s => s.name)
   const i = names.indexOf('Native Windows read-only Registry discovery (#644)')
   assert.deepEqual(names.slice(i - 1, i + 4), ['Compile shared companion test inputs (#650)', 'Native Windows read-only Registry discovery (#644)', 'Complete Windows Companion census (#650)', 'Windows census finite public receipts (#650)', 'Office compatibility and relocated runtime (#611)'])
@@ -461,5 +477,26 @@ test('owned alias provisioning inverse rejects omission/mutation/duplication wit
   }
   for (const [from,to] of [['0x10080','0x10081'],['0x02200000','0x02000000'],['CNSUS~1','OTHER~1'],['$shortCreated.ino','$created.ino'],['fileId == 0','fileId != 0']]) {
     assert.ok(run.includes(from)); assert.throws(() => censusWithoutReviewedShortProvision(run.replace(from,to)))
+  }
+})
+
+
+test('reviewed macOS tail addition is exact once before preserving every Windows schedule pin', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  assertCensusSchedule(raw)
+  const name = 'Actual owned PTY tail transport (#725; macOS)'
+  for (const mutate of [
+    (steps, index) => steps.splice(index, 1),
+    (steps, index) => steps.splice(index, 0, { ...steps[index] }),
+    (steps, index) => { steps[index].if = "matrix.os == 'windows-latest'" },
+    (steps, index) => { steps[index]['continue-on-error'] = true },
+    (steps, index) => { steps[index].run += 'echo unreviewed-command\n' },
+    (steps, index) => { steps[index].run = steps[index].run.replace('terminal-tail-native-725', 'omitted-native') },
+    (steps, index) => { steps[index]['timeout-minutes'] = 99 },
+    (steps, index) => { const tail = steps.splice(index, 1)[0]; steps.splice(index - 1, 0, tail) },
+  ]) {
+    const doc = workflowYaml.load(raw), steps = doc.jobs['smoke-os'].steps
+    mutate(steps, steps.findIndex(step => step.name === name))
+    assert.throws(() => assertCensusSchedule(workflowYaml.dump(doc)))
   }
 })
