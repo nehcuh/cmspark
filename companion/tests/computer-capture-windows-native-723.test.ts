@@ -62,7 +62,7 @@ for (const mode of modes723) test(`723 D1 actual Windows capture ${mode}`, { ski
       }, () => { /* retained close, never callback/exit alone, owns settlement */ })
       const owner = track(child)
       const before = await waitReceipt723(ready, owner, deadline, owned.signal)
-      assertSetup723(mode, before); lease.checkpoint()
+      assertSetup723(mode, before, phase => { stage = "FIXTURE_" + phase }); lease.checkpoint()
       stage = "CAPTURE"
       // Import only after installing the transparent actual-child observer.
       const { PsScreenCapturer } = await import("../src/computer/win-adapters")

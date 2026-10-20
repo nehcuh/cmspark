@@ -79,7 +79,9 @@
 
 GitHub typed comparison 只支持可核对的已展开 unified DOM：代码单元格必须仅含直接代码标记与排版空白，标记内仅展开文本与普通语法高亮 span，空行允许单独 BR；额外可见兄弟节点或未知包装不能标完整；混合 BR、未知/隐藏子结构、隐藏表格或行均保留未知。比较身份节点必须在 diff 子树之外，不能由代码内容中的唯一同名节点形成身份。此处 DOM/文件控制不代替真实浏览器验收，`review_ready` 仍为 false。
 
-本叶真实浏览器证据：PR711 head `6b1f52a5` / run `39189613843` 已完成上述固定公开 GitHub 双点比较的真实 Chromium 11 case；当前产品代码与该受测路径逐字一致。后续 head `093de278` 的独立托管启动/清理失败保留为 UNKNOWN，并未改写为通过；其测试专用接线不随本产品叶合入。产品新 head 与合后 main 仍须通过现有全部 CI，#464 整票仍为 Partial。
+表格行仅跳过原 `thead.sr-only` 下固定三列辅助标题；changed/context 行必须是原 old/new/code 三个直接 TD，hunk（含末尾空 expander）必须是原 colspan=2 的行号 expander 与 hunk 两个直接 TD。未知行、混合非 TD 或同一行额外未知 TD 不生成完整比较观察，不能在材料中沿用 complete 覆盖。原 expander 的辅助链接不作为代码，合法代码高亮与单独 BR 空行仍按原规则读取。
+
+本叶真实浏览器证据：PR711 head `6b1f52a5` / run `39189613843` 已完成上述固定公开 GitHub 双点比较的真实 Chromium 11 case；该11 case结果只覆盖当时的旧 producer；本次新增表格行 guard 改变了 producer 字节，目前仅有受控 CPU 验证，不能由旧浏览器证据覆盖，精确新 head/main CI 待验收。后续 head `093de278` 的独立托管启动/清理失败保留为 UNKNOWN，并未改写为通过；其测试专用接线不随本产品叶合入。产品新 head 与合后 main 仍须通过现有全部 CI，#464 整票仍为 Partial。
 
 
 ## GitHub 发布页的当前观测关系（#464，开发中）

@@ -119,3 +119,46 @@ test("serialized complete code cell cannot hide visible siblings or unsupported 
   }
   assert.equal(snapshot().codeComparison.file_count, 4)
 })
+
+test("serialized complete comparison refuses unknown rows and mixed row cells while retaining fixed accessibility labels", () => {
+  assert.equal(snapshot().codeComparison.file_count, 4)
+  for (const variant of ["body-th", "mixed-th", "unknown-header", "visible-header"]) {
+    const document = new DOMParser({ onError: () => {} }).parseFromString(html, "application/xml") as unknown as Document
+    const table = Array.from(document.getElementsByTagName("table")).find(e => (e.getAttribute("class") || "").split(/\s+/).includes("js-diff-table"))!
+    assert.ok(table)
+    if (variant === "body-th") {
+      const row = document.createElement("tr"), cell = document.createElement("th")
+      cell.appendChild(document.createTextNode("UNPARSED_VISIBLE_ROW")); row.appendChild(cell)
+      table.getElementsByTagName("tbody")[0].appendChild(row)
+    } else if (variant === "mixed-th") {
+      const row = Array.from(table.getElementsByTagName("tr")).find(e => !!e.getAttribute("data-hunk"))!
+      const cell = document.createElement("th"); cell.appendChild(document.createTextNode("UNPARSED_VISIBLE_CELL")); row.appendChild(cell)
+    } else if (variant === "unknown-header") table.getElementsByTagName("th")[0].textContent = "UNPARSED_HEADER"
+    else table.getElementsByTagName("thead")[0].removeAttribute("class")
+    assert.equal(snapshot(document.toString()).codeComparison, undefined, variant)
+  }
+})
+
+test("serialized comparison consumes exactly the known changed and hunk row cells", () => {
+  const baseline = snapshot()
+  assert.equal(baseline.codeComparison.file_count, 4)
+  assert.equal(baseline.codeComparison.additions, 33)
+  assert.equal(baseline.codeComparison.deletions, 4)
+  assert.ok(baseline.codeComparison.diff_text.includes("\n+\n"))
+  for (const kind of ["changed", "hunk", "empty-expander"] as const) {
+    for (const position of ["first", "last"] as const) {
+      const document = new DOMParser({ onError: () => {} }).parseFromString(html, "application/xml") as unknown as Document
+      const rows = Array.from(document.getElementsByTagName("tr"))
+      const row = rows.find(r => kind === "changed" ? !!r.getAttribute("data-hunk") :
+        Array.from(r.getElementsByTagName("td")).some(c => (c.getAttribute("class") || "").split(/\s+/).includes("blob-code-hunk")
+          && (kind === "empty-expander" ? !(c.textContent || "").trim() : !!(c.textContent || "").trim())))!
+      assert.ok(row)
+      const extra = document.createElement("td")
+      extra.appendChild(document.createTextNode("UNPARSED_VISIBLE_TD"))
+      if (position === "first") row.insertBefore(extra, row.firstChild); else row.appendChild(extra)
+      const captured = snapshot(document.toString())
+      assert.equal(captured.codeComparison, undefined, `${kind}:${position}`)
+      assert.equal(captured.comparisonRefusal, "HUNK_INCOMPLETE")
+    }
+  }
+})

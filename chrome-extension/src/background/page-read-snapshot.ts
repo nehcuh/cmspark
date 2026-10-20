@@ -181,10 +181,27 @@ export function pageReadSnapshot(request: PageReadRequest): PageReadSnapshot {
       for (const row of elements(table, "tr")) {
         visible(row)
         const cells = Array.from(row.childNodes).filter(e => e.nodeType === 1 && (e as Element).tagName.toLowerCase() === "td") as Element[]
-        if (!cells.length) continue
+        const children = Array.from(row.childNodes).filter(e => e.nodeType !== 3 || !!(e.nodeValue || "").trim())
+        if (!cells.length) {
+          // Only the fixed accessibility column labels are outside the diff.
+          // Unknown visible rows must not disappear from a complete snapshot.
+          const section = row.parentNode as Element
+          const labels = ["Original file line number", "Diff line number", "Diff line change"]
+          if (section?.tagName?.toLowerCase() !== "thead" || section.parentNode !== table || !cls(section, "sr-only")
+            || children.length !== labels.length || children.some((node, i) => node.nodeType !== 1
+              || (node as Element).tagName.toLowerCase() !== "th" || attr(node as Element, "scope") !== "col"
+              || text(node as Element).trim() !== labels[i] || Array.from(node.childNodes).some(child => child.nodeType !== 3))) throw 0
+          continue
+        }
+        if (children.length !== cells.length) throw 0
         const h = cells.filter(e => cls(e, "blob-code-hunk"))
         if (h.length) {
-          if (h.length !== 1 || oldLeft || newLeft) throw 0
+          // The recorded unified hunk has one two-column expander and its hunk.
+          // Every direct cell must be accounted for, including empty expanders.
+          if (h.length !== 1 || cells.length !== 2 || cells[1] !== h[0]
+            || !cls(cells[0], "blob-num") || !cls(cells[0], "blob-num-expandable")
+            || cls(cells[0], "blob-code") || attr(cells[0], "colspan") !== "2"
+            || cls(h[0], "blob-num") || oldLeft || newLeft) throw 0
           // A completed hunk may end with an empty unchanged-context expander.
           if (!text(h[0]).trim() && cls(row, "js-expandable-line") && !oldLeft && !newLeft) continue
           const value = text(h[0]), m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$/.exec(value)
@@ -203,7 +220,10 @@ export function pageReadSnapshot(request: PageReadRequest): PageReadSnapshot {
         const marker = attr(inner, "data-code-marker"), value = codeText(inner)
         if (![" ", "+", "-"].includes(marker) || /[\r\n]/.test(value)) throw 0
         const numbers = cells.filter(e => cls(e, "blob-num"))
-        if (numbers.length !== 2) throw 0
+        // The supported unified changed/context row is exactly old/new/code.
+        if (numbers.length !== 2 || cells.length !== 3
+          || cells[0] !== numbers[0] || cells[1] !== numbers[1] || cells[2] !== code
+          || numbers.includes(code)) throw 0
         const left = attr(numbers[0], "data-line-number"), right = attr(numbers[1], "data-line-number")
         const takesOld = marker !== "+", takesNew = marker !== "-"
         if (takesOld ? oldLeft <= 0 || integer(left) !== oldAt || oldAt === 0 : !!left) throw 0

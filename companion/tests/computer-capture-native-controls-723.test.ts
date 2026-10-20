@@ -205,3 +205,20 @@ test("723 passive native oracles reject actual adapter malformed, invalid, API a
     }
   }
 })
+
+
+test("723 fixed setup diagnostics identify the exact still-strict failing assertion, never receipt content", () => {
+  const cases: Array<{ mode: typeof modes723[number]; value: Receipt723; phase: string }> = [
+    { mode: "minimized", value: { ...sample(), other: 9, foreground: 9 }, phase: "MINIMIZED_STATE" },
+    { mode: "minimized", value: { ...sample(), other: 9, minimized: true }, phase: "OTHER_FOREGROUND" },
+    { mode: "nonforeground", value: { ...sample(), other: 9 }, phase: "OTHER_FOREGROUND" },
+    { mode: "printwindow", value: { ...sample(), foreground: 9 }, phase: "TARGET_FOREGROUND" },
+    { mode: "occluded", value: sample(), phase: "OWNED_OCCLUDER" },
+  ]
+  for (const item of cases) {
+    const observed: string[] = []
+    assert.throws(() => assertSetup723(item.mode, item.value, phase => observed.push(phase)), assert.AssertionError)
+    assert.equal(observed.at(-1), item.phase)
+    assert.ok(observed.every(phase => ["MINIMIZED_STATE", "OTHER_FOREGROUND", "TARGET_FOREGROUND", "OWNED_OCCLUDER"].includes(phase)))
+  }
+})

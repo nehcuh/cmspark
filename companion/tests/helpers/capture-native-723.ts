@@ -27,11 +27,21 @@ export function receipt723(text: string): Receipt723 {
   assert.ok(value.hwnd > 0 && value.foreground > 0 && typeof value.minimized === "boolean" && value.desktop51 === true)
   return value
 }
-export function assertSetup723(mode: Mode723, r: Receipt723): void {
+export function assertSetup723(mode: Mode723, r: Receipt723,
+  observe?: (phase: "MINIMIZED_STATE" | "OTHER_FOREGROUND" | "TARGET_FOREGROUND" | "OWNED_OCCLUDER") => void): void {
+  observe?.("MINIMIZED_STATE")
   assert.equal(r.minimized, mode === "minimized")
-  if (mode === "minimized" || mode === "nonforeground") assert.ok(r.other > 0 && r.other !== r.hwnd && r.foreground === r.other)
-  else assert.ok(r.foreground === r.hwnd, "owned target must be foreground")
-  if (mode === "occluded") assert.ok(r.other > 0 && r.other !== r.hwnd)
+  if (mode === "minimized" || mode === "nonforeground") {
+    observe?.("OTHER_FOREGROUND")
+    assert.ok(r.other > 0 && r.other !== r.hwnd && r.foreground === r.other)
+  } else {
+    observe?.("TARGET_FOREGROUND")
+    assert.ok(r.foreground === r.hwnd, "owned target must be foreground")
+  }
+  if (mode === "occluded") {
+    observe?.("OWNED_OCCLUDER")
+    assert.ok(r.other > 0 && r.other !== r.hwnd)
+  }
 }
 export function assertUnchanged723(before: Receipt723, after: Receipt723): void {
   assert.ok(Object.keys(before).every(key => (after as any)[key] === (before as any)[key]), "passive capture must not activate, restore, replace or close an owned window")
