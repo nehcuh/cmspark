@@ -1,3 +1,4 @@
+import { retireComputerReadonlyThread } from "./readonly-session"
 /**
  * Running host_computer task abort flags (process memory).
  * Shared by server host_computer path and unattended disarm so "解除武装"
@@ -16,6 +17,7 @@ export function getComputerTaskAbortRegistry(): Map<string, boolean> {
  * Used by chat.abort, unattended disarm, and computer.task.abort "*".
  */
 export function flipAllComputerTaskAborts(): number {
+  retireComputerReadonlyThread()
   let matched = 0
   for (const k of computerTaskAbort.keys()) {
     computerTaskAbort.set(k, true)

@@ -43,7 +43,7 @@ export type CockpitFocusEvent =
       /** Tool name `[Outbound] …`: operator is in another app; Win/Linux have no tray. */
       outboundChannel?: boolean
     }
-  | { kind: "computer_task"; event: string }
+  | { kind: "computer_task"; event: string; readOnlyObservation?: boolean }
   /** L-5 (#391): unattended blocked report — tray/Board only, never steal. */
   | { kind: "loop_blocked" }
 
@@ -82,6 +82,7 @@ export function decideCockpitFocus(
   if (event.kind === "loop_blocked") return "stay_background"
   if (event.event === "paused") return "open_focus"
   if (event.event === "started") {
+    if (event.readOnlyObservation === true) return "stay_background"
     return isArmed(arm) ? "stay_background" : "open_focus"
   }
   return "stay_background"
@@ -108,7 +109,8 @@ export function cockpitFocusEventFromMessage(msg: any): CockpitFocusEvent | null
     }
   }
   if (msg.type === "computer.task.event") {
-    return { kind: "computer_task", event: typeof msg.event === "string" ? msg.event : "" }
+    return { kind: "computer_task", event: typeof msg.event === "string" ? msg.event : "",
+      ...(msg.event === "started" && msg.read_only_observation === true ? { readOnlyObservation: true } : {}) }
   }
   if (msg.type === "task_loop.blocked_report") {
     return { kind: "loop_blocked" }
