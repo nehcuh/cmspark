@@ -12,6 +12,7 @@ import { WebSocketServer } from "ws"
 import { ThreadManager } from "../src/threads/thread-manager"
 import { createDesktopChannel, attachDesktopUpgrade } from "../src/desktop/channel"
 import { DesktopIdentityRegistry } from "../src/desktop/identity"
+import { DESKTOP_NATIVE_ORIGIN } from "../src/desktop/capabilities"
 import type { DesktopNativeBinding, DesktopNativeChild } from "../src/desktop/host-launcher"
 
 test("#476 actual native grouped thread metadata UI persists all fields in the canonical manager",{skip:!["darwin","win32"].includes(process.platform),timeout:20000},async t=>{
@@ -233,7 +234,7 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
   const channel=createDesktopChannel({registry,securityConfirmations:confirmations,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},maxPayload:10485760,terminalRuntime:runtime,onAuthenticated:host=>{if(host==='owned-native-terminal705'){authenticated=true;windowRequested=channel.window(host,'workspace')}}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer();attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
   const foreignOwner=async(operation:string)=>{
    const cap=registry.issue('owned-terminal705-foreign'),port=(server.address()as any).port
-   foreign=new WebSocket(`ws://127.0.0.1:${port}/desktop`);foreign.on('error',error=>{completionFailure=error;fail()})
+   foreign=new WebSocket(`ws://127.0.0.1:${port}/desktop`,{origin:DESKTOP_NATIVE_ORIGIN});foreign.on('error',error=>{completionFailure=error;fail()})
    const frames:any[]=[],wake=new Set<()=>void>();foreign.on('message',raw=>{frames.push(JSON.parse(String(raw)));for(const fn of [...wake])fn()})
    const next=async()=>{while(frames.length===0)await Promise.race([new Promise<void>(resolve=>{const f=()=>{wake.delete(f);resolve()};wake.add(f)}),deadline]);return frames.shift()}
    assert.equal((await next()).type,'desktop.challenge.request');foreign.send(JSON.stringify({type:'desktop.hello',capability_id:cap.capabilityId,protocol_version:1}));const challenge=await next();assert.equal(challenge.type,'desktop.challenge')

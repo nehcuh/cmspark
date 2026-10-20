@@ -11,8 +11,11 @@ private enum D705TerminalAcceptance {
         guard owner==nil,h.authenticated,let web=h.web,let generation=h.generation,let socket=h.socket,
               let literal=try? JSONSerialization.data(withJSONObject:generation,options:.fragmentsAllowed),let encoded=String(data:literal,encoding:.utf8) else{failure(h);return}
         owner=h;task=socket;document=generation
-        let code="const documentGeneration="+encoded+";"+D705_TERMINAL_FORM_SOURCE
-        web.evaluateJavaScript(code){_,error in if error != nil || !current(h){failure(h)}}
+        let code="const documentGeneration="+encoded+";"+D705_TERMINAL_FORM_SOURCE+";true"
+        web.evaluateJavaScript(code){result,error in
+            guard error == nil,current(h),let installed=result as? NSNumber,
+                  CFGetTypeID(installed)==CFBooleanGetTypeID(),installed.boolValue else{failure(h);return}
+        }
     }
     static func key(_ h:NativeDesktop,_ code:UInt16,_ characters:String)->Bool {
         guard current(h),let window=h.window,let web=h.web,window.isKeyWindow,

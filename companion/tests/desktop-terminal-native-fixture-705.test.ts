@@ -108,3 +108,24 @@ test('both terminal acceptance native variants invert every product byte, preser
  assert.ok(mac.includes('if(terminalVariant.inverse!==terminalOriginal)'));assert.ok(windows.includes('if(terminalVariant.inverse!==terminalOriginal)'))
  assert.ok(mac.includes('acceptance","terminal"'));assert.ok(windows.includes('acceptanceRoot,"terminal"'))
 })
+
+// Use the actual native foreign-client constructor and actual production upgrade
+// callback. The inert server has no socket listener, process or native effects.
+test('native terminal foreign-owner probe reaches authentication only through exact native Origin',()=>{
+ const file=ts.createSourceFile('native.ts',source('tests/desktop-native-thread-metadata-476.test.ts'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TS)
+ const candidates:ts.NewExpression[]=[]
+ function visit(n:ts.Node){if(ts.isVariableDeclaration(n)&&n.name.getText(file)==='foreignOwner'){const scan=(x:ts.Node)=>{if(ts.isNewExpression(x)&&x.expression.getText(file)==='WebSocket')candidates.push(x);ts.forEachChild(x,scan)};scan(n)}ts.forEachChild(n,visit)}visit(file)
+ assert.equal(candidates.length,1,'one actual native foreign-owner client')
+ const caps=ts.createSourceFile('caps.ts',source('src/desktop/capabilities.ts'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);let origin:string|undefined
+ function cap(n:ts.Node){if(ts.isVariableDeclaration(n)&&n.name.getText(caps)==='DESKTOP_NATIVE_ORIGIN'&&n.initializer&&ts.isStringLiteral(n.initializer))origin=n.initializer.text;ts.forEachChild(n,cap)}cap(caps);assert.ok(origin)
+ let captured:any[]=[]
+ vm.runInNewContext('new '+candidates[0].getText(file).slice(4),{WebSocket:class{constructor(...args:any[]){captured=args}},port:12345,DESKTOP_NATIVE_ORIGIN:origin},{timeout:1000})
+ assert.equal(captured[0],'ws://127.0.0.1:12345/desktop')
+ const channel=ts.createSourceFile('channel.ts',source('src/desktop/channel.ts'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TS),definitions=channel.statements.filter((n):n is ts.FunctionDeclaration=>ts.isFunctionDeclaration(n)&&n.name?.text==='attachDesktopUpgrade');assert.equal(definitions.length,1)
+ const js=ts.transpileModule(definitions[0].getText(channel).replace(/^export /,''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText
+ const context:any={DESKTOP_NATIVE_ORIGIN:origin};vm.runInNewContext(js+';globalThis.upgrade=attachDesktopUpgrade;',context,{timeout:1000})
+ function attempt(value:unknown){let accepted=0,rejected='';const server=new EventEmitter(),legacy={handleUpgrade(){throw Error('foreign native client cannot enter legacy route')}},desktop={handleUpgrade(req:any,socket:any,head:any,done:any){accepted++;done({})},emit(){}};context.upgrade(server,legacy,desktop,()=>false);server.emit('upgrade',{url:'/desktop',headers:{origin:value}},{end(value:string){rejected=value}},Buffer.alloc(0));return{accepted,rejected}}
+ for(const invalid of [undefined,'null','https://foreign.invalid'])assert.deepEqual(attempt(invalid),{accepted:0,rejected:'HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'})
+ assert.deepEqual(attempt(captured[1]?.origin),{accepted:1,rejected:''},'real negative owner fixture must reach the unchanged authentication gate; no Origin bypass')
+ assert.equal(captured[1].origin,origin)
+})

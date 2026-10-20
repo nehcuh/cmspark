@@ -19,8 +19,8 @@ void D705TerminalAcceptance::emit(Desktop& h,wchar_t const* id){JsonObject frame
 void D705TerminalAcceptance::failure(Desktop& h){if(failed)return;failed=true;emit(h,L"D476_TERMINAL_FAIL");}
 void D705TerminalAcceptance::document_ready(Desktop& h){
  if(owner||!h.ready||h.generation.empty()||!h.web){failure(h);return;}owner=&h;document=h.generation;epoch=h.epoch;
- std::wstring code=L"const documentGeneration="+std::wstring(JsonValue::CreateStringValue(document).Stringify())+L";"+D705_TERMINAL_FORM_SOURCE;
- auto result=h.web->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT status,LPCWSTR)->HRESULT{if(FAILED(status)||!current(h))failure(h);return S_OK;}).Get());if(FAILED(result))failure(h);
+ std::wstring code=L"const documentGeneration="+std::wstring(JsonValue::CreateStringValue(document).Stringify())+L";"+D705_TERMINAL_FORM_SOURCE+L";true";
+ auto result=h.web->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT status,LPCWSTR scriptResult)->HRESULT{if(FAILED(status)||!current(h)||!scriptResult||std::wstring(scriptResult)!=L"true")failure(h);return S_OK;}).Get());if(FAILED(result))failure(h);
 }
 HWND D705TerminalAcceptance::focused(Desktop& h){
  if(!current(h)||GetForegroundWindow()!=h.window)return nullptr;
