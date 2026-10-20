@@ -23,7 +23,7 @@ function wireObserver(command: string, result: unknown) {
   const start = node(server, n => ts.isExpressionStatement(n) && ts.isCallExpression(n.expression) && n.expression.expression.getText(server) === "ws.send" && n.getText(server).includes('type: "tool.start"'))
   const finish = node(adapter, n => ts.isExpressionStatement(n) && ts.isCallExpression(n.expression) && n.expression.expression.getText(adapter) === "sendToExtension" && n.getText(adapter).includes('type: "tool.result"') && n.getText(adapter).includes("result: toolResult,"))
   const messages: any[] = []
-  compile(`${summary}\nexport function send(){${start};${finish}}`, { finalParams: { command }, toolResult: result, actingThreadId: "A", threadId: "A", toolName: "shell_exec", toolCallId: "owned", tc: { id: "owned" },
+  compile(`${summary}\nexport function send(){${start};${finish}}`, { finalParams: { command }, toolResult: result, actingThreadId: "A", threadId: "A", toolName: "shell_exec", workspaceObservation: undefined, toolCallId: "owned", tc: { id: "owned" },
     ws: { send(raw: string) { messages.push(JSON.parse(raw)) } }, sendToExtension(msg: any) { messages.push(JSON.parse(JSON.stringify(msg))) } }).send()
   assert.equal(Object.hasOwn(messages[0].params, "command"), false)
   assert.equal(JSON.stringify(messages[0]).includes(command), false)

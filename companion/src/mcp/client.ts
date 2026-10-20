@@ -1,5 +1,6 @@
 import { normalizeFilesystemRootAliases } from "./filesystem-root-alias"
-import { filesystemStartupConfig } from "./filesystem-home"
+import { filesystemStartupConfig, filesystemServerHome } from "./filesystem-home"
+import { captureMcpWorkspaceRoots, observeMcpDirectory, associateMcpWorkspaceObservation } from "./workspace-observation"
 // Single MCP server client. Wraps the SDK's Client class with:
 // - config-driven transport selection (stdio or http)
 // - per-call AbortController timeouts (call_timeout_ms)
@@ -47,6 +48,7 @@ const MAX_CATALOG_ITEMS = 10000
 export class McpClient extends EventEmitter {
   private client: Client | null = null
   private transport: Transport | null = null
+  private workspaceRoots: ReturnType<typeof captureMcpWorkspaceRoots>
   private _config: McpServerConfig
   private _connection: McpConnectionState = {
     status: "disconnected",
@@ -115,6 +117,7 @@ export class McpClient extends EventEmitter {
       return
     }
     this._closing = false
+    this.workspaceRoots = undefined
     this.publishedCatalogs.clear()
     this.setStatus("connecting")
     // #289: do NOT clear _stderrBuffer here — the previous attempt's stderr
@@ -127,6 +130,8 @@ export class McpClient extends EventEmitter {
     // catch and leave this instance stuck in `connecting` forever.
     try {
       const startupConfig = filesystemStartupConfig(this._config)
+      this.workspaceRoots = !injectedTransport && isLocalOfficialFilesystem(this._config)
+        ? captureMcpWorkspaceRoots(this._config, startupConfig, filesystemServerHome(this._config)) : undefined
       const transport = injectedTransport ?? createTransport(startupConfig, {
         onStderr: (chunk) => {
           this._stderrBuffer += chunk
@@ -265,6 +270,9 @@ export class McpClient extends EventEmitter {
   /** Update config without reconnect. Caller must ensure no transport-affecting fields changed. */
   updateConfig(next: McpServerConfig): void {
     this._config = next
+    // The same live transport retains its admitted roots; renew only the private
+    // holder so old observations cannot revive across a config ABA.
+    this.workspaceRoots = this.workspaceRoots ? Object.freeze({ ...this.workspaceRoots }) : undefined
   }
 
   /** Mark the server as permanently dead (manager gave up on restarts). */
@@ -466,6 +474,7 @@ export class McpClient extends EventEmitter {
     }
     const timeout = resolveCallTimeout(this._config)
     const client = this.client
+    const workspaceRoots = this.workspaceRoots, callConfig = this._config
 
     // Audit item 15: use an AbortController so that BOTH the per-call timeout
     // AND an externally-supplied signal (e.g. chat.abort from the adapter)
@@ -505,6 +514,7 @@ export class McpClient extends EventEmitter {
       controller.signal.throwIfAborted()
       if (!this.isCurrentClient(client)) throw new Error(`MCP server ${this.name} connection changed before dispatch`)
       beforeDispatch?.(toolArgs)
+      const workspaceObservation = observeMcpDirectory(workspaceRoots, toolName, toolArgs)
       const result = await client.callTool(
         { name: toolName, arguments: toolArgs },
         undefined,
@@ -512,11 +522,14 @@ export class McpClient extends EventEmitter {
       )
       succeeded = true
       // Result shape: { content: [{type, text|...}], isError }
-      return {
+      const output = {
         content: (result as any).content,
         ...((result as any).structuredContent !== undefined ? { structuredContent: (result as any).structuredContent } : {}),
         isError: (result as any).isError === true,
       }
+      if (!output.isError) associateMcpWorkspaceObservation(output, workspaceObservation,
+        () => this.isCurrentClient(client) && !controller.signal.aborted && this._config === callConfig && this.workspaceRoots === workspaceRoots)
+      return output
     } catch (err: any) {
       // Distinguish our timer-driven abort (timeout) from an external abort
       // or a genuine SDK error so the LLM gets a useful message.

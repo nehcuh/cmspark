@@ -1,5 +1,5 @@
 /** #726: ephemeral declarations, never workspace receipts or authority. No I/O. */
-export type WorkspaceHint = Readonly<{ key: string; path: string; source: "acp-offer" | "shell-cwd" | "literal-cd" | "git-cwd"; recent: number; count: number }>
+export type WorkspaceHint = Readonly<{ key: string; path: string; source: "acp-offer" | "shell-cwd" | "literal-cd" | "git-cwd" | "mcp-directory"; recent: number; count: number }>
 export type WorkspaceHintView = Readonly<{ threadId: string; revision: number; connection: object; rows: readonly WorkspaceHint[]; registerGitRequest?: (id: string, expectedPath: string) => ((sent: boolean) => WorkspaceHintView | null) | null }>
 function own(value: unknown, key: string): unknown {
   if (!value || typeof value !== "object") return undefined
@@ -91,7 +91,7 @@ export class WorkspaceHints {
       // Once an outstanding ID is reused, no later result proves its holder.
       // Retain verified hints but stop this selection/connection's collection.
       if (this.starts.has(id)) { this.ambiguous = true; this.starts.clear(); this.gitRequest = null; return false }
-      if ((name === "shell_exec" || name === "acp_propose_session") && complete(own(msg, "params"))) {
+      if ((name === "shell_exec" || name === "acp_propose_session" || typeof name === "string" && name.startsWith("mcp__")) && complete(own(msg, "params"))) {
         // At most the same three live source holders; evicted sources cannot complete.
         this.starts.set(id, name)
         if (this.starts.size > 3) this.starts.delete(this.starts.keys().next().value!)
@@ -102,6 +102,11 @@ export class WorkspaceHints {
     const start = this.starts.get(id); this.starts.delete(id)
     const result = own(msg, "result"), data = own(result, "data")
     if (!start || name !== start || !complete(result) || !complete(data) || own(result, "success") !== true) return false
+    const observation = own(msg, "workspace_observation")
+    if (typeof name === "string" && name.startsWith("mcp__") && complete(observation) && own(observation, "kind") === "local-mcp-directory") {
+      const candidate = own(observation, "path")
+      if (typeof candidate === "string" && candidate.length <= 4096) this.add(candidate, "mcp-directory")
+    }
     if (name === "acp_propose_session" && typeof own(data, "session_id") === "string" && !!own(data, "session_id") && own(data, "state") === "offered") this.add(own(data, "workspace_root"), "acp-offer")
     if (name === "shell_exec" && own(data, "exit_code") === 0 && own(data, "timed_out") === false && own(data, "aborted") === false) {
       this.add(own(data, "cwd"), "shell-cwd"); this.add(own(data, "declared_cwd"), "literal-cd")
