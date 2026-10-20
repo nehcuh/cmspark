@@ -130,3 +130,11 @@ test("#724 optional diagnostics project exactly eight finite fields and reject u
   assert.ok(terminalLaunchLabel("embedded_agent").includes("核实"))
   assert.equal(terminalLaunchLabel("embedded_agent").includes("正在运行"), false)
 })
+
+test("725 actual owned handler tail frame has closed typed readonly shape", () => {
+  const actual = JSON.parse(fs.readFileSync(path.join(process.cwd(), "tests/fixtures/terminal-tail-725.json"), "utf8"))
+  assert.equal(actual.type, "terminal.tail")
+  assert.deepEqual(parseTerminalServerFrame(actual), actual)
+  for (const data of [{ ...actual.result.data, bytes: NaN }, { ...actual.result.data, bytes: 8193 }, { ...actual.result.data, tainted: false }, { ...actual.result.data, truncated: "true" }, { ...actual.result.data, text: "x".repeat(8001) }]) assert.equal(parseTerminalServerFrame({ ...actual, result: { success: true, data } }), null)
+  assert.equal(parseTerminalServerFrame({ ...actual, result: { success: false, error: "screen-derived-error", error_code: "TERMINAL_TAIL_UNAVAILABLE" } }), null)
+})

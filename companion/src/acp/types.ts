@@ -30,6 +30,8 @@ export interface AcpAgentServerConfig {
 }
 
 export interface AcpConfig {
+  /** #739 explicit bridge capacity; no automatic starts or new authority. */
+  max_concurrent_sessions?: 1 | 2 | 3 | 4
   /** Master switch — default false (non default-on). */
   enabled: boolean
   servers: Record<string, AcpAgentServerConfig>
@@ -72,6 +74,8 @@ export interface AcpSessionRecord {
   thread_id: string
   agent_id: string
   state: AcpSessionState
+  /** Readonly ownership fact; absent on legacy peers means unknown. */
+  execution_phase?: "preparing" | "running" | "closing" | "released"
   workspace_root: string
   profile: AcpPolicyProfile
   /** Runtime mode for this session (propose_diff enables parse+apply path). */
@@ -120,6 +124,7 @@ export interface AcpSessionRecord {
 }
 
 export const DEFAULT_ACP_CONFIG: AcpConfig = {
+  max_concurrent_sessions: 1,
   enabled: false,
   servers: {},
   policy: {
@@ -127,6 +132,13 @@ export const DEFAULT_ACP_CONFIG: AcpConfig = {
     force_confirm_session_start: true,
     default_profile: "review_readonly",
   },
+}
+
+export function validateAcpConcurrencyLimit(value: unknown): 1 | 2 | 3 | 4 {
+  if (value !== 1 && value !== 2 && value !== 3 && value !== 4) {
+    throw new Error("acp.max_concurrent_sessions must be a numeric integer from 1 through 4")
+  }
+  return value
 }
 
 export function sanitizeAcpConfig(raw: unknown): AcpConfig {
@@ -187,6 +199,8 @@ export function sanitizeAcpConfig(raw: unknown): AcpConfig {
   const policyIn =
     r.policy && typeof r.policy === "object" ? (r.policy as Record<string, unknown>) : {}
   return {
+    max_concurrent_sessions: Object.prototype.hasOwnProperty.call(r, "max_concurrent_sessions")
+      ? validateAcpConcurrencyLimit(r.max_concurrent_sessions) : 1,
     enabled: r.enabled === true,
     servers,
     policy: {

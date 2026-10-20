@@ -101,6 +101,9 @@ function invalidSecurityTokenResult(error: string): {
  *     via sendConfirmation is the sole remaining user gate and IS required.
  */
 export interface CompanionToolExecOptions {
+  /** Private same-auth-socket chat closure; never a tool field. */
+  readTerminalTail?: (id: string) => import("../pty/tail").TerminalTailResult
+
   evidenceScope?: EvidenceScope
   /** ws-bound + originWs-bound confirmation request channel (amendment A1). */
   sendConfirmation?: (
@@ -161,6 +164,10 @@ export async function buildIsThreadLlmActive(): Promise<(threadId: string) => bo
 
 export async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
   // C10-B: resolve server-bound runtime (bound from server after initServices)
+  if (toolName === "terminal_tail_read") {
+    const { terminalTailUnavailable } = await import("../pty/tail")
+    return execOpts?.readTerminalTail?.(params.session_id) ?? terminalTailUnavailable()
+  }
   const _rt = requireRt()
   const threadManager = _rt.getThreadManager()
   const skillEngine = _rt.getSkillEngine()
@@ -513,7 +520,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           acp_enabled: !!(await import("../config")).getConfig().acp?.enabled,
           embedded_terminal_enabled: getConfig().embedded_terminal?.enabled === true && (process.platform === "darwin" || process.platform === "win32"),
           open_local_terminal: getConfig().coding_handoff?.open_local_terminal === true,
-          note: "ACP is Composition only. Start with acp_propose_session after user intent; never auto-spawn.",
+          note: "ACP is Composition only: proposals do not spawn; this thread may hold up to four pending proposals. Start one selected session at a time only after its own L2 approval; execution capacity stays1. Inspect current_sessions and explicitly start or cancel an offer; busy is not permission or automatic queueing. Never auto-spawn.",
         },
       }
     }
@@ -601,6 +608,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const { getAcpManager } = await import("../acp")
       const sessionOwner = getAcpManager().getSession(sid)
       if (sessionOwner && sessionOwner.thread_id !== (params.__thread_id || params._thread_id)) return { success: false, error: "ACP session is not owned by this thread", error_code: "ACP_OWNER_MISMATCH" }
+      const role = threadManager.get(String(params.__thread_id || params._thread_id || ""))?.agent_role
+      if (role === "worker" || role === "orchestrator") return { success: false, error: "acp: worker/orchestrator threads cannot start ACP sessions" }
       const r = await getAcpManager().start(sid)
       if (!r.ok) {
         if (r.error_code === "ACP_CONCURRENCY_LIMIT") {
@@ -614,6 +623,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         data: {
           session_id: r.session.session_id,
           state: r.session.state,
+          execution_phase: r.session.execution_phase,
           handback: r.session.handback_text,
           local_terminal: r.session.local_terminal,
           open_local_terminal: r.session.open_local_terminal_snapshot === true,
@@ -641,6 +651,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           session_id: s.session_id,
           task_result: taskResult,
           state: s.state,
+          execution_phase: s.execution_phase,
           handback: s.handback_text || null,
           local_terminal: s.local_terminal,
           open_local_terminal: s.open_local_terminal_snapshot === true,
@@ -679,6 +690,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           session_id: s.session_id,
           task_result: taskResult,
           state: s.state,
+          execution_phase: s.execution_phase,
           agent_id: s.agent_id,
           local_terminal: s.local_terminal,
           open_local_terminal: s.open_local_terminal_snapshot === true,

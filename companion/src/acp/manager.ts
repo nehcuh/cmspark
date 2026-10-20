@@ -43,6 +43,7 @@ export type AcpLiveEvent = {
   thread_id: string
   agent_id: string
   state: AcpSessionRecord["state"]
+  execution_phase?: AcpSessionRecord["execution_phase"]
   /** Throttled tail of stdout for UI (not full stream). */
   progress_tail?: string
   handback?: string
@@ -76,18 +77,55 @@ export class AcpManager {
   private manualEntryLaunches = new Map<string, ManualEntryLaunch>()
   private processes = new Map<string, ChildProcessWithoutNullStreams>()
   private ownedChildren = new Set<ChildProcessWithoutNullStreams>()
+  private failedSpawnChildren = new WeakSet<ChildProcessWithoutNullStreams>()
   private startupPreparations = new Map<string, { controller: AbortController; done: Promise<void> }>()
-  private trackChild(id: string, child: ChildProcessWithoutNullStreams): void {
+  private trackChild(session: AcpSessionRecord, child: ChildProcessWithoutNullStreams): void {
+    const id = session.session_id
+    const claim = this.executionClaims.get(session)
+    claim?.children.add(child)
+    child.once("spawn", () => {
+      if (claim && !claim.ending && this.executionClaims.get(session) === claim && this.processes.get(id) === child && session.state === "running" && session.execution_phase === "preparing") {
+        session.execution_phase = "running"
+        this.emitProgress(session, "", true)
+      }
+    })
+    child.once("error", () => { if (!child.pid) this.failedSpawnChildren.add(child) })
     this.processes.set(id, child)
     this.ownedChildren.add(child)
     child.once("close", () => {
       this.ownedChildren.delete(child)
-      const session = this.sessions.get(id)
-      if (session) this.noteHistory(session)
+      claim?.children.delete(child)
+      if (claim?.ending) this.releaseExecutionClaim(session)
+      const historySession = this.sessions.get(id)
+      if (historySession) this.noteHistory(historySession)
     })
   }
   private protocolHandles = new Map<string, ProtocolSessionHandle>()
-  private runningCount = 0
+  /** One logical start, retained across preparation, probe and CLI fallback. */
+  private executionClaims = new Map<AcpSessionRecord, {
+    children: Set<ChildProcessWithoutNullStreams>
+    ending: boolean
+  }>()
+
+  private reserveExecutionClaim(session: AcpSessionRecord): void {
+    this.executionClaims.set(session, { children: new Set(), ending: false })
+    session.execution_phase = "preparing"
+  }
+
+  private releaseExecutionClaim(session: AcpSessionRecord): void {
+    const claim = this.executionClaims.get(session)
+    if (!claim) return // old/repeated close cannot retire any replacement claim
+    claim.ending = true
+    // A failed spawn with no PID owns no OS child. A PID-bearing child, even
+    // with exitCode already set, remains owned until its actual close callback.
+    for (const child of claim.children) if (!child.pid && this.failedSpawnChildren.has(child)) claim.children.delete(child)
+    if (claim.children.size) session.execution_phase = "closing"
+    else {
+      this.executionClaims.delete(session)
+      session.execution_phase = "released"
+    }
+    if (session.state === "closed") this.emitProgress(session, "", true)
+  }
   private shuttingDown = false
   private listeners = new Set<AcpEventListener>()
   private lastProgressAt = new Map<string, number>()
@@ -225,6 +263,7 @@ export class AcpManager {
       thread_id: session.thread_id,
       agent_id: session.agent_id,
       state: session.state,
+      execution_phase: session.execution_phase,
       progress_tail: tail.slice(-tailCap),
       goal: session.goal?.slice(0, 500),
       workspace_root: session.workspace_root,
@@ -456,11 +495,40 @@ export class AcpManager {
     return out
   }
 
+  /** #739 nonterminal metadata4/thread16/install; only idle offers expire at15min. */
+  private expireOfferedSessions(): boolean {
+    const now = Date.now()
+    if (!Number.isFinite(now)) return false
+    let reliable = true
+    for (const [id, session] of this.sessions) {
+      if (session.state !== "offered") continue
+      if (typeof session.created_at !== "string") { reliable = false; continue }
+      const created = Date.parse(session.created_at)
+      if (!Number.isFinite(created) || created > now) { reliable = false; continue }
+      if (now - created < 15 * 60_000) continue
+      // An anomalous live/preparing record must never lose ownership or its slot.
+      if (this.executionClaims.has(session) || this.startupPreparations.has(id) || this.processes.has(id) || this.protocolHandles.has(id)) continue
+      session.state = "closed"
+      session.error = "expired"
+      session.partial = true
+      session.mode_c_open_cancelled = true
+      session.terminal_kind = "cancelled"
+      this.emitProgress(session, "expired — proposal was not started", true)
+      this.emitTerminal(session, "cancelled")
+      this.sessions.delete(id)
+      this.manualEntryLaunches.delete(id)
+      this.lastProgressAt.delete(id)
+    }
+    return reliable
+  }
+
   getSession(sessionId: string): AcpSessionRecord | undefined {
+    this.expireOfferedSessions()
     return this.sessions.get(sessionId)
   }
 
   listSessionsForThread(threadId: string): AcpSessionRecord[] {
+    this.expireOfferedSessions()
     return [...this.sessions.values()].filter((s) => s.thread_id === threadId)
   }
 
@@ -474,7 +542,7 @@ export class AcpManager {
   hasProjectThreadActivity(threadId: string): boolean {
     return this.listSessionsForThread(threadId).some(session => {
       const child = this.processes.get(session.session_id)
-      return ["offered", "confirmed", "running"].includes(session.state) || this.startupPreparations.has(session.session_id) ||
+      return this.executionClaims.has(session) || ["offered", "confirmed", "running", "handback"].includes(session.state) || this.startupPreparations.has(session.session_id) ||
         !!child && child.exitCode === null && child.signalCode === null
     })
   }
@@ -506,35 +574,25 @@ export class AcpManager {
     if (!server || !server.enabled || !server.command) {
       return { ok: false, error: `acp: unknown or disabled agent "${opts.agentId}"` }
     }
-    if (this.runningCount >= 1) {
-      // A foreign holder's handle/task is not feedback for this thread.
-      const holder = [...this.sessions.values()].find(s => s.thread_id === opts.threadId && s.state === "running")
-      return {
-        ok: false,
-        error: "ACP_CONCURRENCY_LIMIT: only one ACP session at a time",
-        error_code: "ACP_CONCURRENCY_LIMIT",
-        data: {
-          ...(holder ? { holder_session_id: holder.session_id, holder_agent: holder.agent_id, holder_state: holder.state } : {}),
-          suggested_action: "wait_for_acp_capacity",
-          data_not_instruction: true,
-        },
-      }
+    if (!this.expireOfferedSessions()) return {
+      ok: false, error: "ACP_SESSION_BUSY: proposal clock metadata is unavailable; inspect or cancel the existing offer",
+      error_code: "ACP_SESSION_BUSY", data: { suggested_action: "start_or_cancel_current_acp_session", data_not_instruction: true },
     }
-    for (const s of this.sessions.values()) {
-      if (s.thread_id === opts.threadId && (s.state === "running" || s.state === "offered")) {
-        return {
-          ok: false,
-          error: "ACP_SESSION_BUSY: thread already has an ACP session",
-          error_code: "ACP_SESSION_BUSY",
-          data: {
-            holder_session_id: s.session_id,
-            holder_agent: s.agent_id,
-            holder_state: s.state,
-            suggested_action: s.state === "offered" ? "start_or_cancel_current_acp_session" : "wait_or_cancel_current_acp_session",
-            data_not_instruction: true,
-          },
-        }
-      }
+    const offers = [...this.sessions.values()].filter(s => s.state !== "closed" || this.executionClaims.has(s))
+    const pair = offers.find(s => s.thread_id === opts.threadId && s.agent_id === opts.agentId)
+    if (pair) return { ok: false, error: "ACP_SESSION_BUSY: this conversation already has an active proposal for this agent",
+      error_code: "ACP_SESSION_BUSY", data: { holder_session_id: pair.session_id, holder_agent: pair.agent_id,
+        holder_state: pair.state, suggested_action: "start_or_cancel_current_acp_session", data_not_instruction: true } }
+    const own = offers.filter(s => s.thread_id === opts.threadId)
+    if (own.length >= 4) {
+      const holder = own[0]
+      return { ok: false, error: "ACP_SESSION_BUSY: this conversation already has four nonterminal proposals; start or cancel an existing proposal",
+        error_code: "ACP_SESSION_BUSY", data: { holder_session_id: holder.session_id, holder_agent: holder.agent_id,
+          holder_state: holder.state, suggested_action: "start_or_cancel_current_acp_session", data_not_instruction: true } }
+    }
+    if (offers.length >= 16) return {
+      ok: false, error: "ACP_CONCURRENCY_LIMIT: pending proposal metadata is full; cancel an existing proposal before creating another",
+      error_code: "ACP_CONCURRENCY_LIMIT", data: { suggested_action: "wait_for_acp_capacity", data_not_instruction: true },
     }
     const ws = resolveAcpWorkspaceRoot(opts.workspaceRoot)
     if (!ws.ok) return { ok: false, error: ws.error }
@@ -668,10 +726,9 @@ export class AcpManager {
     )
   }
 
-  async start(sessionId: string): Promise<
-    | { ok: true; session: AcpSessionRecord }
-    | Extract<ReturnType<AcpManager["propose"]>, { ok: false }>
-  > {
+  /** No slot reservation or spawn; final start repeats this check synchronously. */
+  checkStartAdmission(sessionId: string): { ok: true } | Extract<ReturnType<AcpManager["propose"]>, { ok: false }> {
+    if (!this.expireOfferedSessions()) return { ok: false, error: "acp: proposal clock metadata unavailable" }
     if (this.shuttingDown) return { ok: false, error: "acp: manager shutting down" }
     const session = this.sessions.get(sessionId)
     if (!session) return { ok: false, error: "acp: unknown session" }
@@ -683,13 +740,20 @@ export class AcpManager {
     const server = this.resolveServer(session.agent_id)
     if (!server?.command) return { ok: false, error: "acp: agent config missing" }
 
-    // Offers from different threads can predate a running session. Reserve
-    // synchronously here, before Windows preparation or any other await.
-    if (this.runningCount >= 1) {
-      const holder = [...this.sessions.values()].find(s => s.thread_id === session.thread_id && s.state === "running")
+    // Read-only preflight and final synchronous reservation share this one gate.
+    const rawLimit = cfg.acp.max_concurrent_sessions
+    const limit = rawLimit === undefined ? 1 : rawLimit
+    if (limit !== 1 && limit !== 2 && limit !== 3 && limit !== 4) return { ok: false, error: "acp: invalid execution capacity" }
+    const active = [...this.executionClaims.keys()]
+    const sameAgent = active.find(s => s.agent_id === session.agent_id)
+    const incompatible = limit > 1 && (session.open_local_terminal_snapshot !== false || active.some(s => s.open_local_terminal_snapshot !== false))
+    if (sameAgent || incompatible || active.length >= limit || active.filter(s => s.thread_id === session.thread_id).length >= limit) {
+      const holder = active.find(s => s.thread_id === session.thread_id)
       return {
         ok: false,
-        error: "ACP_CONCURRENCY_LIMIT: only one ACP session at a time",
+        error: incompatible
+          ? "ACP_CONCURRENCY_LIMIT: parallel sessions require an explicitly proposed bridge-only session and no active Mode C session"
+          : "ACP_CONCURRENCY_LIMIT: wait for an owned session to close or choose a different agent within the configured capacity",
         error_code: "ACP_CONCURRENCY_LIMIT",
         data: {
           ...(holder ? { holder_session_id: holder.session_id, holder_agent: holder.agent_id, holder_state: holder.state } : {}),
@@ -698,8 +762,22 @@ export class AcpManager {
         },
       }
     }
-    this.runningCount++
+    return { ok: true }
+  }
+
+  async start(sessionId: string, admission?: { admitted: boolean }): Promise<
+    | { ok: true; session: AcpSessionRecord }
+    | Extract<ReturnType<AcpManager["propose"]>, { ok: false }>
+  > {
+    const admissionCheck = this.checkStartAdmission(sessionId)
+    if (!admissionCheck.ok) return admissionCheck
+    const session = this.sessions.get(sessionId)!
+    const cfg = getConfig()
+    const server = this.resolveServer(session.agent_id)!
+    this.reserveExecutionClaim(session)
+    try {
     session.state = "running"
+    if (admission) admission.admitted = true
     session.timeline = []
     this.pushTimeline(session, [timelineItem("status", "starting…", { status: "running" })])
 
@@ -715,7 +793,7 @@ export class AcpManager {
 
     // Event observers may synchronously shut down/cancel during starting….
     if (this.shuttingDown || session.mode_c_open_cancelled) {
-      this.runningCount = Math.max(0, this.runningCount - 1)
+      this.releaseExecutionClaim(session)
       session.state = "closed"
       return { ok: false, error: "acp: cancelled during startup" }
     }
@@ -729,7 +807,7 @@ export class AcpManager {
       this.startupPreparations.set(sessionId, { controller, done })
       try { await done }
       catch (e: any) {
-        this.runningCount = Math.max(0, this.runningCount - 1)
+        this.releaseExecutionClaim(session)
         session.state = "closed"
         const error = session.mode_c_open_cancelled ? "acp: cancelled during startup" : e?.message || String(e)
         session.error = session.error || error
@@ -741,7 +819,7 @@ export class AcpManager {
         this.noteHistory(session)
       }
       if (this.shuttingDown || session.mode_c_open_cancelled) {
-        this.runningCount = Math.max(0, this.runningCount - 1)
+        this.releaseExecutionClaim(session)
         session.state = "closed"
         return { ok: false, error: "acp: cancelled during startup" }
       }
@@ -758,7 +836,7 @@ export class AcpManager {
         session,
         promptTimeoutMs: server.policy.session_timeout_ms,
         hooks: {
-          onSpawn: (child) => { probeChild = child; this.trackChild(sessionId, child) },
+          onSpawn: (child) => { probeChild = child; this.trackChild(session, child) },
           onAgentText: (text) => {
             const next = (session.agent_output_text || "") + text
             if (Buffer.byteLength(next) > 256 * 1024) {
@@ -795,11 +873,12 @@ export class AcpManager {
         const release = () => {
           if (released) return
           released = true
-          this.runningCount = Math.max(0, this.runningCount - 1)
+          this.releaseExecutionClaim(session)
           if (this.processes.get(sessionId) === probeChild) this.processes.delete(sessionId)
         }
-        if (!probeChild?.pid || probeChild.exitCode != null || probeChild.signalCode != null) release()
-        else probeChild.once("close", release)
+        this.releaseExecutionClaim(session)
+        if (!this.executionClaims.has(session)) release()
+        else probeChild?.once("close", release)
         const error = e?.message || String(e)
         session.state = "closed"; session.error = error
         this.emitTerminal(session, "failed")
@@ -809,7 +888,7 @@ export class AcpManager {
       const releaseProtocolSlot = () => {
         if (released) return
         released = true
-        this.runningCount = Math.max(0, this.runningCount - 1)
+        this.releaseExecutionClaim(session)
         if (this.protocolHandles.get(sessionId) === handle) this.protocolHandles.delete(sessionId)
         if (!handle || this.processes.get(sessionId) === handle.child) this.processes.delete(sessionId)
       }
@@ -858,9 +937,15 @@ export class AcpManager {
           return { ok: false, error: errMsg }
         }
       }
+      if (probeChild && this.executionClaims.get(session)?.children.has(probeChild) && !this.failedSpawnChildren.has(probeChild)) {
+        session.state = "closed"
+        session.error = "acp: probe has not closed; CLI fallback refused"
+        this.emitTerminal(session, "failed")
+        return { ok: false, error: session.error }
+      }
       this.processes.delete(sessionId)
       if (protocolMode === "acp") {
-        this.runningCount = Math.max(0, this.runningCount - 1)
+        this.releaseExecutionClaim(session)
         session.state = "closed"
         const errMsg = "agent does not speak ACP JSON-RPC"
         session.error = errMsg
@@ -873,7 +958,11 @@ export class AcpManager {
     }
 
     // --- CLI bridge (legacy / fallback) ---
-    return this.startCliBridge(session, server, prompt)
+    session.execution_phase = "preparing"
+    return await this.startCliBridge(session, server, prompt)
+    } finally {
+      this.releaseExecutionClaim(session)
+    }
   }
 
   private async startCliBridge(
@@ -887,7 +976,7 @@ export class AcpManager {
     try {
       fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" })
     } catch (e: any) {
-      this.runningCount = Math.max(0, this.runningCount - 1)
+      this.releaseExecutionClaim(session)
       session.state = "closed"
       session.error = `cannot write prompt file: ${e?.message || e}`
       this.emitProgress(session, session.error, true)
@@ -923,7 +1012,7 @@ export class AcpManager {
         }) as ChildProcessWithoutNullStreams
       } catch (e: any) {
         removePrompt()
-        this.runningCount = Math.max(0, this.runningCount - 1)
+        this.releaseExecutionClaim(session)
         session.state = "closed"
         const errMsg = e?.message || String(e)
         session.error = errMsg
@@ -940,7 +1029,7 @@ export class AcpManager {
         if (!this.shuttingDown) this.manualEntryLaunches.set(sessionId, captureManualEntryLaunch(launchInput))
       })
       session.pid = child.pid
-      this.trackChild(sessionId, child)
+      this.trackChild(session, child)
       this.pushTimeline(session, [
         timelineItem("status", `CLI pid ${child.pid}`, { status: "running" }),
       ])
@@ -951,8 +1040,9 @@ export class AcpManager {
       let escalation: ReturnType<typeof setTimeout> | undefined
       const releaseSlot = () => {
         if (released) return
+        this.releaseExecutionClaim(session)
+        if (this.executionClaims.has(session)) return
         released = true
-        this.runningCount = Math.max(0, this.runningCount - 1)
         if (this.processes.get(sessionId) === child) this.processes.delete(sessionId)
       }
       const stopChild = () => {
@@ -975,7 +1065,7 @@ export class AcpManager {
         clearTimeout(timer)
         // A failed spawn owns no process. Stream errors in a live child settle
         // immediately, but retain its slot until close confirms termination.
-        if (!child.pid || child.exitCode != null || child.signalCode != null) releaseSlot()
+        releaseSlot()
         const msg = err?.message || String(err)
         session.state = "closed"
         session.error = msg
@@ -1075,7 +1165,7 @@ export class AcpManager {
   async promptSession(
     sessionId: string,
     text: string,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+  ): Promise<{ ok: true } | Extract<ReturnType<AcpManager["propose"]>, { ok: false }>> {
     const session = this.sessions.get(sessionId)
     if (!session) return { ok: false, error: "unknown session" }
     const t = String(text || "").trim()
@@ -1094,7 +1184,7 @@ export class AcpManager {
 
     // CLI or closed: new turn via followup
     const fu = this.followup({ parentSessionId: sessionId, goal: t, mode: session.mode })
-    if (!fu.ok) return { ok: false, error: fu.error }
+    if (!fu.ok) return fu
     // Auto-start followup requires caller HITL — return session id for UI to confirm
     return {
       ok: false,
@@ -1109,7 +1199,7 @@ export class AcpManager {
     parentSessionId: string
     goal: string
     mode?: "review_readonly" | "propose_diff"
-  }): { ok: true; session: AcpSessionRecord } | { ok: false; error: string } {
+  }): { ok: true; session: AcpSessionRecord } | Extract<ReturnType<AcpManager["propose"]>, { ok: false }> {
     const parent = this.sessions.get(opts.parentSessionId)
     if (!parent) return { ok: false, error: "acp: parent session not found" }
     const prior = (parent.handback_text || "").slice(0, 12_000)
@@ -1181,6 +1271,7 @@ export class AcpManager {
     // (and Mode C terminal agent may still be running).
     session.partial = true
     session.mode_c_open_cancelled = true
+    if (this.executionClaims.has(session)) session.execution_phase = "closing"
     this.startupPreparations.get(sessionId)?.controller.abort()
     if (session.local_terminal === "pending") {
       session.local_terminal = "skipped"

@@ -3214,6 +3214,14 @@ export function SettingsSlideout() {
           <div style={styles.divider} />
           <CodingHandoffSettingsSection
             acpEnabled={!!(config as { acp?: { enabled?: boolean } }).acp?.enabled}
+            maxConcurrentSessions={(config as { acp?: { max_concurrent_sessions?: 1 | 2 | 3 | 4 } }).acp?.max_concurrent_sessions ?? 1}
+            onChangeMaxConcurrentSessions={value => {
+              // Keep the previous selection until the daemon validates and persists it.
+              chrome.runtime.sendMessage({ type: "config.set", config: { acp: { max_concurrent_sessions: value } } }, response => {
+                if (chrome.runtime.lastError || response?.type !== "config.updated" || !response.config) return
+                dispatch({ type: "SET_CONFIG", config: response.config })
+              })
+            }}
             acpAgents={state.acpAgents}
             autoSuggest={
               (config as { coding_handoff?: { auto_suggest?: boolean } }).coding_handoff

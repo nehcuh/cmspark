@@ -91,7 +91,12 @@ for (const protocol of ["acp", "auto"] as const) {
       if (process.platform !== "win32") {
         await pause(2200)
         assert.equal(alive(observed.pid), true, "fixture deliberately ignores TERM")
-        assert.equal(manager.propose({ threadId: "during-teardown", agentId: "owned", goal: "must wait", workspaceRoot: root }).ok, false)
+        const target = manager.propose({ threadId: "during-teardown", agentId: "owned", goal: "must wait", workspaceRoot: root })
+        assert.ok(target.ok, "pending metadata is not another running process")
+        const blocked = await manager.start(target.session.session_id)
+        assert.equal(blocked.ok, false)
+        if (!blocked.ok) assert.equal(blocked.error_code, "ACP_CONCURRENCY_LIMIT")
+        assert.equal(target.session.state, "offered")
       }
       await until(() => settled, 7000, "configured ACP policy expiry")
       const result = await pending
@@ -101,7 +106,8 @@ for (const protocol of ["acp", "auto"] as const) {
       assert.ok(Date.now() - observed.at < 7000, "the 15-minute fallback deadline must not win")
       await until(() => !alive(observed.pid), 5000, "owned ACP target reaped")
       const next = manager.propose({ threadId: "next", agentId: "owned", goal: "slot released", workspaceRoot: root })
-      assert.ok(next.ok, "policy expiry releases the old session slot")
+      assert.ok(next.ok)
+      assert.equal(manager.checkStartAdmission(next.session.session_id).ok, true, "policy expiry releases the old execution slot")
     } finally {
       await manager.shutdown()
       await pending

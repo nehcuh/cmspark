@@ -561,6 +561,17 @@ function evictOldest<K, V>(map: Map<K, V>, max: number): void {
 }
 
 export class ThreadManager {
+  // #726 observation ownership only: never serialized or used for tool admission.
+  private mcpObservationOwners = new WeakMap<Thread, object>()
+
+  getMcpObservationOwner(threadId: string): object | undefined {
+    const thread = this.index.threads.find(t => t.id === threadId)
+    if (!thread) return undefined
+    let owner = this.mcpObservationOwners.get(thread)
+    if (!owner) { owner = Object.freeze({}); this.mcpObservationOwners.set(thread, owner) }
+    return owner
+  }
+
   readonly projects: ProjectStore
   private index: ThreadIndex
   private indexPath: string
@@ -1221,6 +1232,9 @@ export class ThreadManager {
       throw new Error("execution_policy must be \"default\" or \"plan_readonly\"")
     }
     const { last_message_at: _ignoredListClock, ...safeUpdates } = updates
+    if (["mcp_selection_mode", "active_mcp_server_ids", "agent_role", "parent_thread_id"].some(key => Object.hasOwn(safeUpdates, key))) {
+      this.mcpObservationOwners.set(thread, Object.freeze({}))
+    }
     Object.assign(thread, safeUpdates, { updated_at: monotonicTimestamp() })
     // Tri-state run_progress: undefined = never set (initial seed from
     // handoff.open_todos fires here); null = explicit clear, sticky — never
@@ -1324,6 +1338,9 @@ export class ThreadManager {
     }
     if (patch.knowledge_smart_match !== undefined) {
       thread.knowledge_smart_match = patch.knowledge_smart_match
+    }
+    if (patch.mcp_selection_mode !== undefined || patch.active_mcp_server_ids !== undefined) {
+      this.mcpObservationOwners.set(thread, Object.freeze({}))
     }
     if (patch.mcp_selection_mode !== undefined) thread.mcp_selection_mode = patch.mcp_selection_mode
     if (patch.active_mcp_server_ids !== undefined) {

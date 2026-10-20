@@ -16,6 +16,7 @@ import {
 import { logger } from "../../logger"
 import { appendCapabilityAudit } from "../../packs/audit-log"
 import { redactConfigForWire } from "../../config-redact"
+import { validateAcpConcurrencyLimit } from "../../acp/types"
 import { normalizeLocalTerminalApp } from "../../acp/open-local-terminal"
 
 
@@ -258,21 +259,23 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       }
       // ACP / coding handoff — previously dropped by this allow-list (silent no-op).
       // UI "启用 ACP" / in-panel first-start depend on these keys surviving config.set.
-      // Narrow allow-list (P0-1): only boolean `enabled` via config.set.
-      // servers/policy mutations stay on acp.adopt_discovered / disk load sanitize only.
+      // Narrow allow-list: enabled plus bounded execution capacity; never servers/policy.
       if (cfg.acp && typeof cfg.acp === "object" && !Array.isArray(cfg.acp)) {
         const src = cfg.acp as Record<string, unknown>
-        if (typeof src.enabled === "boolean") {
+        const hasCapacity = Object.prototype.hasOwnProperty.call(src, "max_concurrent_sessions")
+        if (hasCapacity) {
+          try { validateAcpConcurrencyLimit(src.max_concurrent_sessions) }
+          catch { return { type: "error", error: "acp.max_concurrent_sessions must be a numeric integer from 1 through 4" } }
+        }
+        if (typeof src.enabled === "boolean" || hasCapacity) {
           const current = getConfig()
           const cur = current.acp || { enabled: false, servers: {}, policy: {} }
-          // Spread current acp so deepMerge preserves servers/policy; ignore any
-          // servers/policy payload on the wire (WS injection / confused deputy).
           normalized.acp = {
             ...cur,
-            enabled: src.enabled,
+            ...(typeof src.enabled === "boolean" ? { enabled: src.enabled } : {}),
+            ...(hasCapacity ? { max_concurrent_sessions: validateAcpConcurrencyLimit(src.max_concurrent_sessions) } : {}),
           }
         }
-        // non-boolean enabled (and any servers/policy-only payload) ignored
       }
       if (cfg.coding_handoff && typeof cfg.coding_handoff === "object" && !Array.isArray(cfg.coding_handoff)) {
         const current = getConfig()

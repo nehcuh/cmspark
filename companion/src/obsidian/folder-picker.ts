@@ -72,7 +72,7 @@ export function resolveWindowsPowerShell(): string {
  * spawned with windowsHide:false / -WindowStyle Hidden (SW_HIDE, still a
  * desktop). UTF-8 stdout: PS 5.1 defaults to ANSI (CP936).
  */
-export function buildWindowsFolderPickScript(prompt: string): string {
+export function buildWindowsFolderPickScript(prompt: string, initialPath?: string): string {
   const title = psSingleQuote(prompt)
   return [
     "$utf8 = New-Object System.Text.UTF8Encoding $false",
@@ -88,6 +88,7 @@ export function buildWindowsFolderPickScript(prompt: string): string {
     "  $d.Description = $title",
     "  $d.ShowNewFolderButton = $true",
     "  $d.RootFolder = [System.Environment+SpecialFolder]::Desktop",
+    ...(initialPath ? [`  $d.SelectedPath = '${psSingleQuote(initialPath)}'`] : []),
     "  try { $d.UseDescriptionForTitle = $true } catch {}",
     "  $f = New-Object System.Windows.Forms.Form",
     "  $f.TopMost = $true",
@@ -184,12 +185,12 @@ async function runWindowsFormsDialog(script: string, failLabel: string): Promise
 
 /** Open the OS native folder-picker. Returns {path} on success, {error:"cancelled"} if the
  *  user dismissed it, or {error} describing the failure. */
-export async function pickFolderNative(prompt?: string): Promise<PickResult> {
+export async function pickFolderNative(prompt?: string, initialPath?: string): Promise<PickResult> {
   const title = (prompt && prompt.trim()) || MARKDOWN_FOLDER_PROMPT
   try {
-    if (isMacOS()) return await pickMacOS(title)
-    if (isLinux()) return await pickLinux(title)
-    if (isWindows()) return await pickWindows(title)
+    if (isMacOS()) return await pickMacOS(title, initialPath)
+    if (isLinux()) return await pickLinux(title, initialPath)
+    if (isWindows()) return await pickWindows(title, initialPath)
     return { error: "当前平台不支持图形化选择文件夹,请手动输入路径" }
   } catch (e: any) {
     return { error: `选择文件夹失败: ${e.message || String(e)}` }
@@ -216,22 +217,24 @@ export function classifyMacOSPickError(e: any): { kind: "cancel" | "timeout" | "
   return { kind: "other", message: msg }
 }
 
-async function pickMacOSPlain(prompt: string): Promise<PickResult> {
+async function pickMacOSPlain(prompt: string, initialPath?: string): Promise<PickResult> {
   // `choose folder` returns an alias; `POSIX path of` yields the path (with a trailing slash).
   // Cancel → osascript exits non-zero with "User canceled" / error -128 in stderr.
-  const script = `POSIX path of (choose folder with prompt "${escapeAppleScriptString(prompt)}")`
+  const location = initialPath ? ` default location (POSIX file "${escapeAppleScriptString(initialPath)}")` : ""
+  const script = `POSIX path of (choose folder with prompt "${escapeAppleScriptString(prompt)}"${location})`
   const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", script], { timeout: PICK_TIMEOUT_MS })
   const p = trimTrailingSlash(stdout)
   return p ? { path: p } : { error: "未选择文件夹" }
 }
 
-async function pickMacOS(prompt: string): Promise<PickResult> {
+async function pickMacOS(prompt: string, initialPath?: string): Promise<PickResult> {
   // #542: a companion daemon spawned in the background shows the dialog BEHIND the
   // user's windows; the pick then times out and the relay panel start dies silently.
   // First try binding the dialog to the frontmost app so it actually appears in front.
+  const location = initialPath ? ` default location (POSIX file "${escapeAppleScriptString(initialPath)}")` : ""
   const frontScript =
     `tell application (path to frontmost application as text) to ` +
-    `POSIX path of (choose folder with prompt "${escapeAppleScriptString(prompt)}")`
+    `POSIX path of (choose folder with prompt "${escapeAppleScriptString(prompt)}"${location})`
   try {
     const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", frontScript], { timeout: PICK_TIMEOUT_MS })
     const p = trimTrailingSlash(stdout)
@@ -243,7 +246,7 @@ async function pickMacOS(prompt: string): Promise<PickResult> {
     // Any other front-tell failure (Automation denied -1743, no frontmost app, …):
     // degrade to the plain dialog exactly once rather than failing the whole pick.
     try {
-      return await pickMacOSPlain(prompt)
+      return await pickMacOSPlain(prompt, initialPath)
     } catch (e2: any) {
       const c2 = classifyMacOSPickError(e2)
       if (c2.kind === "cancel") return { error: "cancelled" }
@@ -253,12 +256,12 @@ async function pickMacOS(prompt: string): Promise<PickResult> {
   }
 }
 
-async function pickLinux(prompt: string): Promise<PickResult> {
+async function pickLinux(prompt: string, initialPath?: string): Promise<PickResult> {
   // zenity exits 0 with the path on stdout; exit 1 if cancelled; non-zero/ENOENT if missing.
   try {
     const { stdout } = await execFileP(
       "zenity",
-      ["--file-selection", "--directory", `--title=${prompt}`],
+      ["--file-selection", "--directory", `--title=${prompt}`, ...(initialPath ? [`--filename=${initialPath.replace(/\/$/, "")}/`] : [])],
       { timeout: PICK_TIMEOUT_MS },
     )
     const p = trimTrailingSlash(stdout)
@@ -271,8 +274,8 @@ async function pickLinux(prompt: string): Promise<PickResult> {
   }
 }
 
-async function pickWindows(prompt: string): Promise<PickResult> {
-  return runWindowsFormsDialog(buildWindowsFolderPickScript(prompt), "Windows 文件夹对话框失败")
+async function pickWindows(prompt: string, initialPath?: string): Promise<PickResult> {
+  return runWindowsFormsDialog(buildWindowsFolderPickScript(prompt, initialPath), "Windows 文件夹对话框失败")
 }
 
 /**

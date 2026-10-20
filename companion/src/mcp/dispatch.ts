@@ -18,6 +18,7 @@ import {
 import { isFullAutonomyCruise } from "../tool/l2-admission"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { ThreadManager } from "../threads/thread-manager"
+import { carryMcpWorkspaceObservation } from "./workspace-observation"
 import { getMcpManager } from "./manager"
 import { getMcpConfirmCache } from "./confirm-cache"
 import {
@@ -231,6 +232,18 @@ function createMcpServerSelectionGate(
   }
 }
 
+/** New observation lifetime only; ordinary execution selection semantics are unchanged. */
+function captureMcpObservationSelection(params: any, sessionId: string): () => boolean {
+  try {
+    const manager = requireRt().getThreadManager()
+    const threadId = typeof params?.__thread_id === "string" ? params.__thread_id
+      : typeof params?._thread_id === "string" ? params._thread_id : sessionId
+    if (typeof manager?.getMcpObservationOwner !== "function") return () => false
+    const owner = manager.getMcpObservationOwner(threadId)
+    return () => owner !== undefined && requireRt().getThreadManager() === manager && manager.getMcpObservationOwner(threadId) === owner
+  } catch { return () => false }
+}
+
 function gatePlannedMcpIdentity(toolName: string, params: any, sessionId: string): string | null {
   const tm = requireRt().getThreadManager()
   if (!tm) return null // The general dispatch selection gate owns missing-thread rejection.
@@ -268,6 +281,7 @@ export async function executeMcpTool(
     return { success: false, error: `MCP tool ${toolName} not found (server may be disconnected)` }
   }
   const checkSelection = createMcpServerSelectionGate(route.serverName, params, sessionId)
+  const observationSelectionCurrent = captureMcpObservationSelection(params, sessionId)
   const selectionDenied = checkSelection()
   if (selectionDenied) return selectionDenied
   const plannedIdentityError = gatePlannedMcpIdentity(toolName, params, sessionId)
@@ -480,7 +494,10 @@ export async function executeMcpTool(
           ),
         }
       }
-      return { success: true, data: structuredData ?? result?.content ?? result }
+      const output = { success: true, data: structuredData ?? result?.content ?? result }
+      carryMcpWorkspaceObservation(result, output, () => observationSelectionCurrent() && !signal?.aborted && !nativeMcpStale(nativeOwner) && checkAuthorization() && !checkSelection() &&
+        manager.resolveToolName(toolName)?.serverName === route.serverName && manager.resolveToolName(toolName)?.toolName === route.toolName)
+      return output
     } catch (err: any) {
       if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
       const rawErr = err?.message || String(err)
@@ -532,7 +549,11 @@ export async function executeMcpTool(
     success: !!outcome.success,
     ...(outcome.success ? {} : { error: outcome.error }),
   })
-  if (outcome.success) return { success: true, data: outcome.data }
+  if (outcome.success) {
+    const output = { success: true, data: outcome.data }
+    carryMcpWorkspaceObservation(outcome, output, () => observationSelectionCurrent() && !signal?.aborted && checkAuthorization() && !checkSelection())
+    return output
+  }
   return { success: false, error: outcome.error || "MCP call failed",
     ...(outcome.data !== undefined ? { data: outcome.data } : {}) }
 }

@@ -7,7 +7,7 @@ import path from "node:path"
 import vm from "node:vm"
 import ts from "typescript"
 
-const sourceRoot = path.resolve(__dirname, "../../src")
+const sourceRoot = path.resolve(__dirname, path.basename(path.dirname(__dirname)) === ".test-dist" ? "../../src" : "../src")
 function moduleFromSource(relative: string, imports: Record<string, unknown>) {
   const filename = path.join(sourceRoot, relative)
   const source = fs.readFileSync(filename, "utf8")
@@ -162,4 +162,23 @@ test("#726 foreign control still cannot cancel the fixed proposal owner", async 
   const reply = await f.control("acp.session.cancel", { session_id: id, thread_id: "foreign" })
   assert.equal(reply.type, "error"); assert.match(reply.error, /does not belong/)
   assert.equal(f.effects.cancellation, before)
+})
+
+test("#726 actual ACP proposal tool producer feeds the actual hint observer without binding or launch", async () => {
+  const f = fixture(), source = fs.readFileSync(path.join(sourceRoot, "tool/companion-dispatch.ts"), "utf8")
+  const sf = ts.createSourceFile("dispatch.ts", source, ts.ScriptTarget.Latest, true); let clause: ts.CaseClause | undefined
+  function walk(n: ts.Node) { if (ts.isCaseClause(n) && n.expression.getText(sf) === '\"acp_propose_session\"') clause = n; ts.forEachChild(n, walk) }; walk(sf); assert.ok(clause)
+  const thread = moduleFromSource("acp/thread-id.ts", {}), validation = moduleFromSource("acp/proposal-params.ts", {})
+  const exports: any = {}; vm.runInNewContext(ts.transpileModule(`export async function invoke(params){switch('acp_propose_session'){${clause!.getText(sf)}}}`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, {
+    exports, require(id: string) { if (id === "../acp/thread-id") return thread; assert.equal(id, "../acp"); return { getAcpManager: () => f.manager } },
+    validateAcpProposalParams: validation.validateAcpProposalParams, threadManager: { get: () => ({ workspace_root: "/inert/bound-project", agent_role: "main" }) }, securityPolicy: { validateTokenFor: (token: string) => token === "synthetic-inert-only" }, invalidSecurityTokenResult: () => ({ success: false }) })
+  const result = await exports.invoke({ __thread_id: "owner", agent_id: "inert", goal: "synthetic only", workspace_root: "/stale", security_token: "synthetic-inert-only" })
+  assert.equal(result.success, true); assert.equal(result.data.state, "offered"); assert.equal(result.data.workspace_root, "/inert/bound-project")
+  const observerExports: any = {}, observerPath = path.resolve(sourceRoot, "../../chrome-extension/src/sidepanel/coding-handoff/workspace-hints.ts")
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(observerPath, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: observerExports })
+  const o = new observerExports.WorkspaceHints(); o.select("owner", 1); o.observe({ type: "connected" })
+  o.observe({ type: "tool.start", thread_id: "owner", tool_call_id: "real-offer", tool_name: "acp_propose_session", params: {} })
+  o.observe({ type: "tool.result", thread_id: "owner", tool_call_id: "real-offer", tool_name: "acp_propose_session", result })
+  assert.equal(o.view().rows[0].path, result.data.workspace_root); assert.equal(o.view().rows[0].source, "acp-offer")
+  assert.equal(f.effects.confirmation, 0); assert.equal(f.effects.protocolSeam, 0); assert.equal(f.effects.external, 0); assert.equal(f.effects.realFs, 0)
 })

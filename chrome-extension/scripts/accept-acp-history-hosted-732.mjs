@@ -54,6 +54,14 @@ export function chromeArgs(owned,extension) {
   if(path.dirname(extension)!==owned)fail()
   return [`--user-data-dir=${path.join(owned,'profile')}`,'--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',`--disable-extensions-except=${extension}`,`--load-extension=${extension}`,'--no-first-run','--no-default-browser-check','about:blank']
 }
+export function devToolsPortSnapshot(text) {
+  if(typeof text!=='string')return false
+  const parts=text.trim().split('\n')
+  // Chromium writes without a final newline and may expose a short-write prefix.
+  // Its browser endpoint contains the complete lowercase UUID, not a prefix.
+  if(parts.length!==2||!/^\d{1,5}$/.test(parts[0])||!/^\/devtools\/browser\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(parts[1]))return false
+  return parts
+}
 export function manifestPaths(m) {
   const safe=s=>typeof s==='string'&&/^[A-Za-z0-9_./-]+$/.test(s)&&!s.startsWith('/')&&s.split('/').every(v=>v&&v!=='.'&&v!=='..')
   if(m.manifest_version!==3||!safe(m.background?.service_worker)||!safe(m.side_panel?.default_path)||!m.side_panel.default_path.endsWith('.html')||!['sidePanel','tabs','storage','debugger'].every(p=>m.permissions?.includes(p)))fail()
@@ -189,7 +197,7 @@ export async function main() {
     stage='BROWSER';browserPhase='XVFB_REQUEST';xvfb=child('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','ignore','pipe','pipe']);const display=deferred();let text='';xvfb.stdio[3].on('error',()=>display.reject(new Error('DISPLAY')));xvfb.stdio[3].on('data',b=>{text+=b.toString();if(text.length>8)display.reject(new Error('DISPLAY'));if(/^\d{1,5}\n$/.test(text))display.resolve(':'+text.trim())});const screen=await limit(display.promise,Math.min(5000,remaining()));browserPhase='DISPLAY_OBSERVED'
     const binary=['/usr/bin/chromium-browser','/usr/bin/chromium'].find(p=>{try{return fs.statSync(p).isFile()}catch{return false}});if(!binary)fail();browserPhase='BINARY_SELECTED'
     chromium=child(binary,chromeArgs(owned,extension),childEnvironment(owned,input,screen));const portFile=path.join(owned,'profile/DevToolsActivePort')
-    const textPort=await poll(()=>{try{return fs.readFileSync(portFile,'utf8')}catch{return false}},10000),parts=textPort.trim().split('\n');if(parts.length!==2||!/^\d{1,5}$/.test(parts[0])||!/^\/devtools\/browser\/[a-f0-9-]+$/.test(parts[1]))fail();browserPhase='PORT_FILE'
+    const parts=await poll(()=>{try{return devToolsPortSnapshot(fs.readFileSync(portFile,'utf8'))}catch{return false}},10000);browserPhase='PORT_FILE'
     const socketBase='ws://127.0.0.1:'+parts[0];browser=await connect(socketBase+parts[1]);browserPhase='CDP_CONNECTED';const targets=()=>browser.call('Target.getTargets',{},remaining()).then(r=>r.targetInfos)
     const targetSocket=async id=>{const list=await (await fetch('http://127.0.0.1:'+parts[0]+'/json/list',{signal:AbortSignal.timeout(Math.min(BOUNDS.auth,remaining()))})).json();const matches=list.filter(t=>t.id===id);if(matches.length!==1||typeof matches[0].webSocketDebuggerUrl!=='string'||!matches[0].webSocketDebuggerUrl.startsWith(socketBase+'/devtools/'))fail();return matches[0].webSocketDebuggerUrl}
     const sw=await poll(async()=>{const list=(await targets()).filter(t=>t.type==='service_worker'&&new RegExp('^chrome-extension://[a-p]{32}/'+paths.worker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$').test(t.url));if(list.length>1)fail();return list[0]},10000),origin='chrome-extension://'+sw.url.split('/')[2];browserPhase='WORKER_FOUND'

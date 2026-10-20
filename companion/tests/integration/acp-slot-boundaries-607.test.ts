@@ -97,7 +97,10 @@ for (const mode of ["init-fail", "new-fail", "success", "failure", "cancel", "st
           await pause(100)
           assert.equal(alive(pid), true)
           assert.equal(settled, false)
-          const blocked = offerReplacement("during-close")
+          const target = offerReplacement("during-close")
+          assert.ok(target.ok, "offer metadata is independent from execution capacity")
+          const blocked = await manager.start(target.session.session_id)
+          assert.equal(target.session.state, "offered")
           assert.equal(blocked.ok, false)
           if (!blocked.ok) {
             assert.equal(blocked.error_code, "ACP_CONCURRENCY_LIMIT")
@@ -114,7 +117,9 @@ for (const mode of ["init-fail", "new-fail", "success", "failure", "cancel", "st
         assert.equal(offered.session.state, "closed")
         assert.equal(fs.existsSync(cli), false, "explicit ACP cancellation never becomes CLI fallback")
       }
-      assert.ok(offerReplacement("after-close").ok)
+      const replacement = offerReplacement("after-close")
+      assert.ok(replacement.ok)
+      assert.equal(manager.checkStartAdmission(replacement.session.session_id).ok, true, "actual close releases execution admission")
     } finally {
       await manager.shutdown()
       await pending

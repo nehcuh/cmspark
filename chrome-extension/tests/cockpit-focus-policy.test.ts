@@ -237,9 +237,9 @@ test("#524 background opens cockpit when decideCockpitFocus says open_focus", ()
   const bg = readFileSync(join(process.cwd(), "src/background/index.ts"), "utf8")
   const start = bg.indexOf("const focusEvent = cockpitFocusEventFromMessage")
   assert.ok(start > 0)
-  const slice = bg.slice(start, start + 400)
+  const slice = bg.slice(start, bg.indexOf("// #432: terminal.*", start))
   assert.match(slice, /decideCockpitFocus\(focusEvent, cockpitArmState\) === "open_focus"/)
-  assert.match(slice, /openOrFocusCockpit\(\)/)
+  assert.match(slice, /openOrFocusCockpit\(stillCurrent\)/)
 })
 
 test("普通 navigate 轻确认仍 stay_background", () => {

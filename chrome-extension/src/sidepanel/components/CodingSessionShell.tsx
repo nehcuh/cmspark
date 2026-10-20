@@ -1,11 +1,13 @@
 // Coding Session Shell — browser-side ACP Client surface (Zed-like, 320px).
 // User stays here for input / timeline / stop — no forced terminal switch.
 
-import { useState, type CSSProperties } from "react"
+import { useState, useRef, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import { codingHandoffCopy } from "../coding-handoff/copy"
 import type { CodingSessionState } from "../store/agentStore"
 import { useAgentStore, codingSessionBelongsToThread } from "../store/agentStore"
+import { useCodingStop } from "../hooks/useCodingStop"
+import { sendCodingOperation, captureCodingSelection } from "../utils/coding-operation-send"
 
 export type TimelineRow = {
   id?: string
@@ -26,6 +28,13 @@ export function CodingSessionShell({
 }) {
   const { state, dispatch } = useAgentStore()
   const [text, setText] = useState("")
+  const selected = useRef({ state, session }); selected.current = { state, session }
+  const stopControl = useCodingStop(session)
+  const capture = captureCodingSelection(state)
+  const current = () => selected.current.session === session &&
+    selected.current.state.activeThreadSelectionRevision === capture.threadRevision &&
+    selected.current.state.activeCodingSelectionRevision === capture.selectionRevision &&
+    codingSessionBelongsToThread(session, selected.current.state.activeThreadId)
   const live = session.state === "running" || session.state === "offered"
   const modeBadge =
     session.mode === "propose_diff"
@@ -41,15 +50,7 @@ export function CodingSessionShell({
       session.localTerminal !== "failed" &&
       session.localTerminal !== "skipped")
 
-  const onStop = () => {
-    if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
-    chrome.runtime.sendMessage(
-      { type: "acp.session.cancel", session_id: session.sessionId, thread_id: session.threadId },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
-  }
+  const onStop = stopControl.stop
 
   /** CLI bridge is one-shot; multi-turn only on ACP transport. */
   const isCliTransport = session.transport === "cli"
@@ -60,31 +61,17 @@ export function CodingSessionShell({
     if (composerDisabled) return
     const t = text.trim()
     if (!t) return
-    chrome.runtime.sendMessage(
-      {
-        type: "acp.session.prompt",
-        session_id: session.sessionId, thread_id: session.threadId,
-        text: t,
-      },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
-    setText("")
+    if (sendCodingOperation(session, dispatch, { type: "acp.session.prompt", text: t }, capture, current)) setText("")
   }
 
   const onApply = () => {
-    if (!codingSessionBelongsToThread(session, state.activeThreadId)) return
-    chrome.runtime.sendMessage(
-      { type: "acp.apply_diff", session_id: session.sessionId, thread_id: session.threadId },
-      () => {
-        void chrome.runtime.lastError
-      },
-    )
+    if (!current()) return
+    sendCodingOperation(session, dispatch, { type: "acp.apply_diff" }, capture, current)
   }
 
   const dismiss = () => {
-    dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId })
+    if (!current() || ["preparing", "running", "closing"].includes(session.executionPhase || "")) return
+    dispatch({ type: "CLEAR_CODING_SESSION", sessionId: session.sessionId, ...capture })
     onClose?.()
   }
 

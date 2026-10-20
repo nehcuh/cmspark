@@ -8,6 +8,7 @@ import { appendCapabilityAudit } from "../packs/audit-log"
 import { loadNodePty, type PtyHandle, type PtySpawnFn } from "./load-native"
 import { buildTerminalEnv } from "./env"
 import { createKimiTaskPrefill } from "./kimi-task-prefill"
+import { appendTerminalTail, terminalTailResult, terminalTailUnavailable, type TerminalTailResult } from "./tail"
 
 /**
  * Total (never-throwing) rendering of a caller-supplied value for a refusal message.
@@ -81,6 +82,9 @@ type LiveSession = {
   send: (frame: Record<string, unknown>) => void
 }
 
+// Private exact-object consent and memory; never a wire boolean or session-id grant.
+const readableTail = new WeakMap<LiveSession, { text: string; rolled: boolean; pending: string }>()
+
 let live: LiveSession | null = null
 // A closing terminal no longer accepts input/data, but reserves the only PTY slot
 // until its process tree and native handle have actually been released.
@@ -110,6 +114,8 @@ export function __testSetPtyPlatform(p?: NodeJS.Platform): void {
 export function __testResetPtySessions(): void {
   const s = live
   const pending = closing
+  if (s) readableTail.delete(s)
+  if (pending) readableTail.delete(pending)
   live = null
   closing = null
   if (s) {
@@ -178,6 +184,22 @@ export function getOwnedPtyContext(id: string, owner: unknown): Readonly<{ threa
   return owner && live?.id === id && live.owner === owner ? live : null
 }
 
+/** Called only after the actual origin-bound disclosed terminal.open approval and successful spawn. */
+export function approvePtyTailRead(id: string, owner: unknown): boolean {
+  const context = getOwnedPtyContext(id, owner)
+  if (!context || context !== live) return false
+  readableTail.set(live, { text: "", rolled: false, pending: "" })
+  return true
+}
+
+/** No activity/heartbeat refresh, stdin, spawn or authority fallback on read. */
+export function readPtyTail(id: string, owner: unknown, threadId: string): TerminalTailResult {
+  const context = getOwnedPtyContext(id, owner)
+  if (!context || context !== live || !threadId || context.threadId !== threadId) return terminalTailUnavailable()
+  const tail = readableTail.get(live)
+  return tail ? terminalTailResult(tail.text + tail.pending, tail.rolled) : terminalTailUnavailable()
+}
+
 export function killPtyByThreadId(threadId: string): boolean {
   if (!live || live.threadId !== threadId) return false
   closeLive("killed")
@@ -217,6 +239,7 @@ function installExitHook(): void {
 function closeLive(code: TerminalClosedCode, extra?: { signal?: number; error?: string; exited?: boolean }): void {
   const s = live
   if (!s) return
+  readableTail.delete(s) // Clear privacy before cleanup can reserve the slot or await native exit.
   live = null
   closing = s
   clearInterval(s.heartbeat)
@@ -490,6 +513,8 @@ export function spawnPtySession(opts: {
   const prefillTask = createKimiTaskPrefill(hasFile ? opts.initialPrompt : undefined, text => handle.write(text))
   handle.onData((data) => {
     if (live !== session) return
+    const tail = readableTail.get(session)
+    if (tail) { const next = appendTerminalTail(tail.text, data, tail.pending); tail.text = next.text; tail.pending = next.pending; tail.rolled ||= next.omitted }
     emitChunks(session, data)
     if (live === session) {
       try {

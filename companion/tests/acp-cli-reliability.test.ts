@@ -62,7 +62,8 @@ for (const stream of ["stdin", "stdout", "stderr"] as const) {
     child.emit("close", 1)
     assert.equal(terminals.length, 1)
     assert.equal(fs.existsSync(path.join(os.tmpdir(), `cmspark-acp-${session.session_id}.md`)), false)
-    assert.ok(manager.propose({ threadId: "next", agentId: "owned", goal: "next", workspaceRoot: session.workspace_root }).ok)
+    const next = manager.propose({ threadId: "next", agentId: "owned", goal: "next", workspaceRoot: session.workspace_root })
+    assert.ok(next.ok); assert.equal(manager.checkStartAdmission(next.session.session_id).ok, true)
   })
 }
 
@@ -78,7 +79,7 @@ test("CLI synchronous spawn failure removes its owned prompt and releases its sl
   const b = offer("B")
   assert.equal((await manager.start(b.session_id)).ok, false)
   assert.equal(fs.existsSync(path.join(os.tmpdir(), `cmspark-acp-${b.session_id}.md`)), false)
-  assert.ok(offer("C"), "each synchronous failure releases exactly its own slot")
+  assert.equal(manager.checkStartAdmission(offer("C").session_id).ok, true, "each synchronous failure releases exactly its own execution slot")
 })
 
 test("native CLI spawn error then close cannot release a replacement session's slot", { timeout: 8000 }, async t => {
@@ -106,17 +107,21 @@ test("native CLI spawn error then close cannot release a replacement session's s
   assert.equal(b.state, "running")
   assert.ok(children[1].pid)
   assert.equal(children[1].exitCode, null)
-  const c = manager.propose({ threadId: "C", agentId: "owned", goal: "must wait", workspaceRoot: root })
+  const proposalC = manager.propose({ threadId: "C", agentId: "owned", goal: "must wait", workspaceRoot: root })
+  assert.ok(proposalC.ok, "pending proposal metadata does not consume an execution slot")
+  const c = await manager.start(proposalC.session.session_id)
+  assert.equal(proposalC.session.state, "offered")
+  assert.equal(children.length, 2, "busy start cannot reach a third native spawn")
   assert.equal(c.ok, false, "old close must not release B's live slot")
   if (!c.ok) {
     assert.equal(c.error_code, "ACP_CONCURRENCY_LIMIT", "foreign live slot is capacity, not same-thread busy")
-    assert.equal(c.error, "ACP_CONCURRENCY_LIMIT: only one ACP session at a time")
+    assert.equal(c.error, "ACP_CONCURRENCY_LIMIT: wait for an owned session to close or choose a different agent within the configured capacity")
     assert.deepEqual(c.data, { suggested_action: "wait_for_acp_capacity", data_not_instruction: true }, "foreign B identity/task must not leak to C")
   }
   assert.equal((await bResult).ok, true)
   assert.equal(terminals.filter(id => id === a.session_id).length, 1)
   assert.equal(handbacks.filter(id => id === a.session_id).length, 0, "failed spawn has no successful handback")
-  assert.ok(offer("D"))
+  assert.equal(manager.checkStartAdmission(offer("D").session_id).ok, true)
 })
 
 for (const afterTimeout of [false, true]) test(`CLI late pipe errors retain ownership and clear escalation (afterTimeout=${afterTimeout})`, async t => {
@@ -134,12 +139,14 @@ for (const afterTimeout of [false, true]) test(`CLI late pipe errors retain owne
   assert.equal((await pending).ok, false)
   child.stdin.emit("error", new Error("late owned EPIPE"))
   assert.equal(kills, afterTimeout ? 2 : 1)
-  assert.equal(manager.propose({ threadId: "blocked", agentId: "owned", goal: "wait", workspaceRoot: root }).ok, false)
+  const blocked = offer("blocked")
+  assert.equal((await manager.start(blocked.session_id)).ok, false)
+  assert.equal(blocked.state, "offered")
   child.emit("close", 1)
   child.emit("close", 1)
   t.mock.timers.tick(6000)
   assert.equal(kills, afterTimeout ? 2 : 1, "close must clear every delayed kill before PID reuse")
-  assert.ok(offer("next"))
+  assert.equal(manager.checkStartAdmission(offer("next").session_id).ok, true)
 })
 
 test("CLI timeout handles synchronous ChildProcess.kill error reentry without orphaning a timer", async t => {

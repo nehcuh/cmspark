@@ -17,6 +17,6 @@ export function codingControlAction(message: Record<string, unknown>): AgentActi
     type: "ACP_OPERATION_ERROR", sessionId: message.session_id, threadId: message.thread_id,
     error: typeof message.error === "string" && message.error ? message.error : "编程助手错误",
   }
-  // Older/other replies retain the hook's existing processingStatus flow; do not guess Stop.
+  // Older/other replies cannot borrow the current view's private capture or guess Stop.
   return null
 }

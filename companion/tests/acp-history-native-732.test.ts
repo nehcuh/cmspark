@@ -51,7 +51,7 @@ async function fixtureObject(parent: string, name: string, kind: "root" | "empty
     const current = () => {
       const p = fs.lstatSync(parent, { bigint: true }), h = fs.fstatSync(fd, { bigint: true })
       return original!.dev === p.dev && original!.ino === p.ino && original!.dev === h.dev && original!.ino === h.ino &&
-        p.isDirectory() && h.isDirectory() && !p.isSymbolicLink() && fs.realpathSync(parent) === parent
+        p.isDirectory() && h.isDirectory() && !p.isSymbolicLink() && fs.realpathSync.native(parent) === parent
     }
     assert.equal(current(), true, "OWNED_HISTORY_FIXTURE_PARENT_CHANGED")
     const reply = await runPs(resolveWinScript("acp-history-native-fixture.ps1"), [parent, name, original.dev.toString(), original.ino.toString(), kind])
@@ -66,7 +66,7 @@ async function fixtureObject(parent: string, name: string, kind: "root" | "empty
 async function owned(run: (dir: string) => Promise<void>) {
   let dir = "", identity: fs.BigIntStats | undefined
   try {
-    dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-history732-native-")))
+    dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-history732-native-")))
     identity = fs.lstatSync(dir, { bigint: true })
     const child = "history-root-" + randomUUID()
     await fixtureObject(dir, child, "root")

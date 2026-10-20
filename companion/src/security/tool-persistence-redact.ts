@@ -136,6 +136,22 @@ export function redactToolPayloadForPersistence(
   let safeParams = params
   let safeResult = result
 
+  // #725: the live, tainted screen tail is not an archive payload in either
+  // history mode. Fold the whole envelope (including arbitrary failure text),
+  // rather than treating a short plain error or unexpected shape as safe.
+  if (name === "terminal_tail_read") {
+    const interrupted = result && typeof result === "object" &&
+      (result as Record<string, unknown>).success === false &&
+      (result as Record<string, unknown>).error_code === "INTERRUPTED"
+    return {
+      params: params === undefined ? undefined : stubPayload(params),
+      result: result === undefined ? undefined : {
+        ...collapseResult(result),
+        ...(interrupted ? { error: "interrupted", error_code: "INTERRUPTED" } : {}),
+      },
+    }
+  }
+
   if (name === "thread_recall") {
     const p = params && typeof params === "object" ? (params as Record<string, unknown>) : {}
     const q = typeof p.query === "string" ? p.query : ""

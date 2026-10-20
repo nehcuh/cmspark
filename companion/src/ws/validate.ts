@@ -1,3 +1,4 @@
+import { validCockpitIdleRequest } from "./cockpit-idle"
 // WS message shape validation (layer 1 fail-closed fence).
 // Extracted from server.ts (C10-A mechanical split) — zero behavior change.
 // Re-exported from server.ts for test/public API stability.
@@ -44,6 +45,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
 
   // Known message types with required field validation
   const validators: Record<string, (m: any) => WsValidationResult> = {
+    "cockpit.idle.get": m => validCockpitIdleRequest(m) ? { valid: true } : { valid: false, error: "Invalid cockpit idle observation" },
     "desktop.browser.peer.result": m => typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128 && !/[^a-zA-Z0-9_-]/.test(m.id) && typeof m.ok === "boolean" && Object.keys(m).every(k => ["type", "id", "ok", "data"].includes(k))
       ? { valid: true } : { valid: false, error: "Invalid browser metadata result" },
     "desktop.open": m => Object.keys(m).some(k => !["type", "view", "id"].includes(k)) || (m.view !== undefined && m.view !== "compact" && m.view !== "workspace") || (m.id !== undefined && (typeof m.id !== "string" || m.id.length > 200))
@@ -393,6 +395,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "acp.ui_start": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) {
         return { valid: false, error: "acp.ui_start requires thread_id" }
+      }
+      if (m.session_id !== undefined) {
+        return typeof m.session_id === "string" && m.session_id.length > 0 && m.session_id.length <= 100
+          ? { valid: true } : { valid: false, error: "acp.ui_start requires a valid selected session_id" }
       }
       if (typeof m.agent_id !== "string" || !m.agent_id) {
         return { valid: false, error: "acp.ui_start requires agent_id" }
@@ -1729,6 +1735,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     // #432 embedded PTY (client → server). Outbound frames (opened/data/closed) are not validated here.
+    "terminal.tail.read": (m) => Object.keys(m).every(k => ["type", "id"].includes(k)) && typeof m.id === "string" && !!m.id.trim()
+      ? { valid: true } : { valid: false, error: "terminal.tail.read requires only id" },
     "terminal.review.submit": (m) => typeof m.id === "string" && m.user_gesture === true && !!m.report && typeof m.report === "object" ? { valid: true } : { valid: false, error: "terminal report requires explicit submit" },
     "terminal.open": (m) => {
       if (typeof m.id !== "string" || !m.id.trim()) {

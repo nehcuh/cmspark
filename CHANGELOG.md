@@ -4,6 +4,34 @@
 
 ## [Unreleased]
 
+- **#726 Windows 选夹验收路径域**：仅测试的预期工作区使用原生 realpath 规范化，避免成功选夹返回的长路径与临时目录的 8.3 短名直接比较。保留实际选夹、绑定、取消、ACP cwd、所有者和清理断言；增加真实 Node JS realpath 与显式原生绑定 seam 的 LF/CRLF 回归。受控 CPU 通过不代替新 head 的 Windows 原生验收。
+
+### Fixed
+
+- Refs #725: Windows 安装和打包对精确锁定的 node-pty beta.15 JS 应用自然退出后 output-worker 退休修正；复用原 worker dispose/flush，不按已退出 PID 再 kill。未知依赖拒绝，普通缺少 optional PTY 包仍降级；不声称解决当前 Windows CI pending 或全部原生资源退出。
+
+- #725 开发候选：在原终端打开确认和首输出前明示回显、模型暴露及正常回复留存，仅对确实批准后新建的同一 live 对象开放当前认证对话的明确只读尾部拉取。内存8192 UTF-8字节与完整JSON8000字符双限、纯文本控制字/标记惰性化、先taint再返回；无写入/自动读/跨worker或新授权。工具自身持久化/二级投影不保留正文，不承诺去除普通模型回复转述；CPU控制不冒真实PTY验收或整票交付。
+
+- **#726 MCP 本机目录候选（开发候选）**：仅实际官方 filesystem stdio 连接、当前授权与已生效允许根内的成功操作，携带后端私有来源到当前对话实时提示；目录操作使用实际已准备路径，文件操作只取明确非 home 的共同允许根，不解析正文或猜文件 dirname。最多16根／16固定操作数／每路径4096字符，仅 outer tool.result 增加目录观察，不改变模型 ToolResult、L2、MCP 结果与权限。HTTP／自称同名、注入 transport、失效／取消／跨线程或旧连接不生成候选；原三条内存预算与 native picker 唯一绑定不变。来源测试不是真实 MCP 服务验收；实际 Panel 的受控 mounted 消费链与独立远端 Windows 选夹／ACP cwd 已分别验证，边界见测试说明。候选不绑定，整体验收以精确发布 head/main CI 为准。
+
+- #739 显式并发上限扩为1..4（默认1），用私有 session 对象占位统一准备、协议探测／CLI、取消至真实 close 的计数；同 Agent 仍单执行，N>1只允许已明确选择的纯 bridge，不扩 PTY 或逐次 L2 权限。提案改为4／对话、16／后台与同对话 Agent 去重；旧存量不删除。面板保留有序会话列表、显式选择和只读执行阶段，双 UI 修订与私有唯一回执关联防止迟到反馈跨选择覆盖；失败 handback、来源与 taint 不变。补受控生产者和 Windows CI-only owned overlap 夹具；未冒称真实 CLI／模型／平台已验收，不发版或安装。
+
+- **#726 Git 目录来源连接（0.6.14 开发候选）**：既有编程接力 Git 状态请求沿用 WS `id`，仅保存当前线程／选择版本／连接的已登记请求；发送成功且精确回复同一次请求、规范目录一致、无错误且确为 Git 仓库时，才增加最多三个内存提示中的“Git 实际目录”。它是已执行状态查询的 cwd，不推断仓库顶根；旧回复、发送失败、断线、ABA 或重复请求均不授权绑定。已见提示在明确解绑后仍可预导航原生选择器，重载即清空；不新增查询、权限、RPC 或自动启动。MCP 本机来源与实际 Panel 的受控 mounted 消费链已有各自证据；原生门禁独立，整体验收以精确发布 head/main CI 为准。
+
+- Refs #726: the remote-only native picker controller discovers the unique owned modal through held-child threads, including hidden-owner layouts; original picker success, cancellation and time budgets remain required. CPU projections are not Windows acceptance.
+
+- **#726 工作区目录提示（0.6.14 开发候选）**：编程接力未绑定工作区时，仅从当前连接、当前对话实时完成的 shell/ACP 提案保留最多三个内存提示；提示只预导航原生选择器，实际确认选中的路径才可绑定，不自动启动或授信。UI 新提案优先使用已绑定对话目录；折叠／失败／旧回复、MCP 远端路径及无精确关联的 Git 状态不纳入，重载／切换／断线即清空。受控 Panel 挂载链与独立远端 Windows 原生 OK/Cancel、绑定及合成 ACP 进程实际 cwd 已分别验证；不冒称同一次物理浏览器／原生 e2e，精确发布 head/main CI 仍独立验收。 活动工具 ID 重复会保守停用该选择／连接的后续提示收集；字面 cd 仅由实际 shell 成功输出派生有限 declared_cwd，不广播原命令，cmd/POSIX 引号分别拒歧义。
+
+- #480 Windows 原生 metadata 验收将同一测试的 abort 同时绑定 metadata 与 closing 等待，超时取消立即进入原 owned-child 清理并继续等待真实退出；正常完成卸载监听。保留原20秒、退出0、认证／元数据／窗口断言与 surface 清理，不冒称已定位或修复 Windows 晚退出原因。
+
+- Windows #480 未交付 hostile 验收夹具仅在精确导航 ID 的取消完成事件、原 owned 页面及文档代际均匹配后推进下一脚本；保留生产导航拒绝与原生验收预算。该源码调度更正不宣称历史引擎失败原因。
+
+- **#723 空闲确认台收起（开发候选）**：已认证扩展通过同一 WS 只读核对 Companion 全局确认/计算机任务是否空闲，再收起精确自有 popup；未知/忙保留，晚到重确认沿原 #326 策略重开，轻量确认不抢焦点。保留 L2/45 秒及原误拍保护；不代表原生验收或 quality/rect/只读脱 critical 已完成。
+
+- #722 CLI 会话追加提问生成的后续提案复用同一容量预检、逐次确认和最终准入回执；忙碌在确认前可见，迟到批准、提案变化和启动取消不再被回复为已受理。错误绑定原请求会话，所属对话冲突仍拒绝并保留有效请求 owner；补齐源码耦合的 marker CPU 夹具接口，原单执行、L2、worker/owner、原生时限不变。
+
+- #731 为 Windows 单一、无扩展／元字符的非 ASCII literal cmd `echo` 增加显式 Unicode stdout 合同与流式解码，保留原命令、cwd、环境、L2、逻辑 shell、退出／停止／超时和输出预算；`type`、复合命令、自定义 shell、外部程序及非 Windows 保持原路径，未知 stderr 仍标注。原生测试将 echo 加强为精确中文／CRLF／无虚假警告，受控字节不是 Windows 已通过；0.6.14 仍为开发版。
+
 - Windows 原生继承夹具仅对 sentinel 使用确切内核对象身份，先捕获旧数值槽再打开独占命名 Event 引用；无关 Event／管道占槽不冒称继承，真实继承及未知 API／比较／关闭失败仍严格拒绝。保留 V1、原 protected endpoint、bootstrap、20秒与清理；不宣称已证明历史 launch 失败根因。
 
 - #572 Windows 原生测试夹具仅在自有 sibling 已渲染、实际 IsActive 且前台 HWND 精确匹配后才原子发布 ready；Activate 请求本身不作成功证据。复用 ContentRendered/Activated 事件和原 45 秒边界，不加轮询、输入或前台权限；从未实际激活仍失败。LF/CRLF 源码回归不代表实际 Windows 已通过，也不判定旧原生失败的唯一原因。
@@ -16,11 +44,14 @@
 
 - #730 将原坐标操作30次／60秒限流的拒绝透传为类型化可恢复反馈，对话可等待或改做其它工作；限流仍拒绝当前操作，不跳过确认或自动重试。相邻单任务忙出口保留原不可恢复等级，并补完整生产准入链、虚拟时钟与安全负控。
 
+- #722 补齐同线程多提案的有限生命周期：4个／对话、64个／后台、15分钟仅待启动项懒过期；执行仍固定串行1个。面板可显式选择既有提案，按原快照逐次确认启动或取消；重复／过期／迟到批准不自动排队或启动，待启动／本机 shell 文案保持诚实。
+
+- #722 编程接力 UI 在确认期间容量被其它会话占用时，向原所属对话返回真实 typed 拒绝，不再把未准入会话回复成 running。用请求内私有准入观测区分即时拒绝与已创建子进程后的同步取消；后者立即反馈取消，真实关闭前仍保留运行槽。已准入的长会话仍及时响应，拒绝与同步取消不自动重试；前端只显示“启动请求已受理，正在准备…”。保留固定单执行、逐次 L2、worker/owner 和原终态清理；受控 CPU 不代表实际 Agent/Windows 验收，整票的多提案与生命周期余项仍保留，0.6.14 仍为开发版。
+
 - #732（0.6.14 开发中）：新增仅 hosted 的生产 Companion crash/restart 与真实 SidePanel reload 验收候选；保留原页面无幽灵 running、同数据历史、正常取消及严格清理断言。CPU 控制不代表真实浏览器/daemon 或 Windows ACL 已通过；真实第五 job 首轮在 BROWSER 拒绝且清理成功，根因未知。补最后固定浏览器阶段与 cleanup 前 child 存在性／有限退出码回执，不输出 stderr／身份／正文，不改沙箱、启动、预算或成功条件。
 
 - #732 新增编程接力最小元数据历史与对话内只读清单，目标、路径、输出、命令与授权不落此文件；历史不恢复进程或旧会话权限，失去运行句柄的记录显示已中断。私有存储验证失败明确提示不可持久，真实 NTFS／服务重启与侧栏刷新仍待对应验收，整票保持 Partial。见 [会话历史说明](docs/acp-history.md)。
 
-- #726 编程接力 UI 启动优先使用对话已绑定的工作区，避免旧客户端路径覆盖确认与启动快照；未绑定对话保留显式工作区兼容。对话目录候选与确认绑定仍未交付，整票保持 Partial。
 
 - #727 在既有“更多”能力菜单和编程会话 chip 增加打开编程接力入口，并补空对话入口提示；只开面板，不自动提案、启动或打开终端。#722 修正待启动提案的面板空输出提示；容量与生命周期余项仍保留。
 - #724 内嵌终端显示权威启动来源，缺失或未知时不冒称 Agent 就绪；首个输出帧及既有 heartbeat 记录有限字节/ACK/暂停/输出年龄诊断，不记内容、不新增计时器或模型内容出口。
@@ -33,7 +64,7 @@
 
 - Windows computer capture now refuses a recognized confirmation-cockpit title in target selection, ownership, L2 preview and the final screenshot boundary. The existing BitBlt fallback rejects failed foreground/rectangle checks and foreground drift before saving. The title is spoofable and does not authorize a window; this does not prove absence of all occlusion or complete #723. Existing L2, thresholds and budgets remain unchanged (Refs #723).
 
-- #722 修复 ACP 提案因当前会话或单进程容量占用而被拒绝时丢失结构码、误停整轮的问题；返回本线程有限 holder 与建议动作，其他线程会话信息不外露。start 在任何异步准备前同步检查唯一运行槽，防止不同线程预先获得的提案同时启动；取消后仍等进程真实关闭才释放。忙碌仍失败，容量、逐次 L2 和 worker/owner 门禁不变；终端入口、提案生命周期和多提案设计仍待完成。
+- #722 修复 ACP 提案因当前会话或单进程容量占用而被拒绝时丢失结构码、误停整轮的问题；返回本线程有限 holder 与建议动作，其他线程会话信息不外露。start 在任何异步准备前同步检查唯一运行槽，防止不同线程预先获得的提案同时启动；取消后仍等进程真实关闭才释放。忙碌仍失败，容量、逐次 L2 和 worker/owner 门禁不变；提案生命周期、同线程多提案等原票余项仍待完成。
 
 - #476 原生工作台新增当前对话的浏览器任务候选与显式背景／前台选择。状态与元数据仅访问已认证扩展；下一次同对话明确发送时才绑定真实运行，首行仅支持既有 `get_page_text` 精确 peer/tab 背景读取，未知浏览器操作拒绝且不自动聚焦／打开 Chrome。协议同步 v8；CPU 源码控制不代表真实原生／扩展验收，整票仍 Partial。见 [浏览器任务指南](docs/desktop-browser-tasks.md)。
 

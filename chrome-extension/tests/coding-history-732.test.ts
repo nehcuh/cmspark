@@ -112,6 +112,8 @@ test("#732 a newer selected session and another thread remain untouched", () => 
   let state = runningRequest()
   state = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { session_id: "other-thread", thread_id: "other", state: "running" } })
   state = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { session_id: "new", thread_id: "owner", state: "running" } })
+  state = agentReducer(state, { type: "ACP_SELECT_SESSION", sessionId: "new", threadId: "owner", threadRevision: state.activeThreadSelectionRevision })
+  assert.equal(selectCodingSession(state)?.sessionId, "new")
   const current = selectCodingSession(state), other = state.codingSessionIdByThread.other
   state = agentReducer(state, { type: "ACP_HISTORY_RESULT", message })
   assert.equal(selectCodingSession(state), current)
@@ -139,4 +141,73 @@ test("#732 late events update only their retired record and cannot reselect hist
   state = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { session_id: "one", thread_id: "owner", state: "closed" } })
   assert.equal(selectCodingSession(state), null)
   assert.equal(state.codingSessionsById.one.state, "closed")
+})
+
+
+test("#732 history retirement removes stale menu membership and rejects delayed explicit selection", () => {
+  const before = runningRequest()
+  const state = agentReducer(before, { type: "ACP_HISTORY_RESULT", message })
+  assert.equal(state.codingSessionsById.one, before.codingSessionsById.one, "keep the cached transcript")
+  assert.equal(state.codingSessionIdsByThread.owner.includes("one"), false)
+  const stale = { type: "ACP_SELECT_SESSION" as const, sessionId: "one", threadId: "owner", threadRevision: state.activeThreadSelectionRevision }
+  assert.equal(agentReducer(state, stale), state, "a retired menu option cannot revive controls")
+  const later = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { session_id: "next", thread_id: "owner", state: "running" } })
+  assert.equal(later.codingSessionIdsByThread.owner.includes("one"), false, "another event must not backfill stale cache")
+  assert.equal(selectCodingSession(later)?.sessionId, "next")
+  assert.equal(agentReducer(later, stale), later)
+})
+
+test("#732 an actual later same-ID live event can restore membership without history hydration", () => {
+  const before = runningRequest()
+  const retired = agentReducer(before, { type: "ACP_HISTORY_RESULT", message })
+  const next = agentReducer(retired, { type: "ACP_SESSION_EVENT", event: { session_id: "one", thread_id: "owner", state: "running" } })
+  assert.notStrictEqual(next.codingSessionsById.one, before.codingSessionsById.one)
+  assert.equal(next.codingSessionIdsByThread.owner.includes("one"), true)
+  assert.equal(selectCodingSession(next), null, "a live update does not implicitly change the user's selection")
+  const selected = agentReducer(next, { type: "ACP_SELECT_SESSION", sessionId: "one", threadId: "owner", threadRevision: next.activeThreadSelectionRevision })
+  assert.equal(selectCodingSession(selected)?.sessionId, "one")
+  assert.equal(next.codingHistory?.rows[0].history_status, "interrupted", "historical observation remains historical")
+})
+
+
+test("#732 changed selection still retires every unchanged history-only member", () => {
+  let state = runningRequest()
+  state = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { session_id: "two", thread_id: "owner", state: "running" } })
+  state = agentReducer(state, { type: "ACP_HISTORY_REQUEST", threadId: "owner", requestId: "history:one", selectionRevision: state.activeThreadSelectionRevision })
+  const one = state.codingSessionsById.one, two = state.codingSessionsById.two
+  state = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { session_id: "new", thread_id: "owner", state: "running" } })
+  state = agentReducer(state, { type: "ACP_SELECT_SESSION", threadId: "owner", sessionId: "new", threadRevision: state.activeThreadSelectionRevision })
+  const selected = selectCodingSession(state)
+  state = agentReducer(state, { type: "ACP_HISTORY_RESULT", message: { ...message, rows: [row, { ...row, session_id: "two" }] } })
+  assert.equal(selectCodingSession(state), selected)
+  assert.deepEqual(state.codingSessionIdsByThread.owner, ["new"])
+  assert.equal(state.codingSessionsById.one, one); assert.equal(state.codingSessionsById.two, two)
+  for (const sessionId of ["one", "two"]) assert.equal(agentReducer(state, { type: "ACP_SELECT_SESSION", threadId: "owner", sessionId, threadRevision: state.activeThreadSelectionRevision }), state)
+})
+
+test("#732 multi-member history retirement preserves a same-ID event after the request", () => {
+  let state = runningRequest()
+  state = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { session_id: "two", thread_id: "owner", state: "running" } })
+  state = agentReducer(state, { type: "ACP_HISTORY_REQUEST", threadId: "owner", requestId: "history:one", selectionRevision: state.activeThreadSelectionRevision })
+  state = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { session_id: "two", thread_id: "owner", state: "running" } })
+  const currentTwo = state.codingSessionsById.two
+  state = agentReducer(state, { type: "ACP_HISTORY_RESULT", message: { ...message, rows: [row, { ...row, session_id: "two" }] } })
+  assert.equal(selectCodingSession(state), null)
+  assert.deepEqual(state.codingSessionIdsByThread.owner, ["two"])
+  assert.equal(state.codingSessionsById.two, currentTwo)
+  const selected = agentReducer(state, { type: "ACP_SELECT_SESSION", threadId: "owner", sessionId: "two", threadRevision: state.activeThreadSelectionRevision })
+  assert.equal(selectCodingSession(selected), currentTwo)
+})
+
+
+test("#732 all pre-request history-only members lose live selection routes", () => {
+  let state = runningRequest()
+  state = agentReducer(state, { type: "ACP_SESSION_EVENT", event: { session_id: "two", thread_id: "owner", state: "running" } })
+  state = agentReducer(state, { type: "ACP_HISTORY_REQUEST", threadId: "owner", requestId: "history:one", selectionRevision: state.activeThreadSelectionRevision })
+  const records = state.codingSessionsById
+  state = agentReducer(state, { type: "ACP_HISTORY_RESULT", message: { ...message, rows: [row, { ...row, session_id: "two" }] } })
+  assert.equal(selectCodingSession(state), null)
+  assert.deepEqual(state.codingSessionIdsByThread.owner, [])
+  assert.equal(state.codingSessionsById, records)
+  for (const sessionId of ["one", "two"]) assert.equal(agentReducer(state, { type: "ACP_SELECT_SESSION", threadId: "owner", sessionId, threadRevision: state.activeThreadSelectionRevision }), state)
 })

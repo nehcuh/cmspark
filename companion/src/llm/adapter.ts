@@ -1,3 +1,4 @@
+import { readMcpWorkspaceObservation } from "../mcp/workspace-observation"
 import { isSnapshotLocatorRefusal, snapshotHistory } from "../tool/snapshot-locator"
 // LLM adapter — chat + tool loop via LlmProvider (OpenAI / Anthropic wire)
 
@@ -1947,12 +1948,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           logger.warn("llm.tool_parse_error", {
             tool_call_id: tc.id,
             tool_name: toolName,
-            arguments: tc.function.arguments,
-            error: parseErr.message,
+            arguments: toolName === "terminal_tail_read" ? "[omitted]" : tc.function.arguments,
+            error: toolName === "terminal_tail_read" ? "Invalid terminal tail arguments" : parseErr.message,
           })
           const parseResult = {
             success: false,
-            error: `Invalid JSON in tool arguments: ${parseErr.message}. Received: ${tc.function.arguments}`,
+            error: toolName === "terminal_tail_read" ? "Invalid JSON for terminal_tail_read"
+              : `Invalid JSON in tool arguments: ${parseErr.message}. Received: ${tc.function.arguments}`,
           }
           rememberToolResult(tc, parseResult, toolName)
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, parseResult, {}))
@@ -1988,12 +1990,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           logger.warn("llm.tool_arg_validation_failed", {
             tool_call_id: tc.id,
             tool_name: toolName,
-            arguments: tc.function.arguments,
-            error: parsed.error,
+            arguments: toolName === "terminal_tail_read" ? "[omitted]" : tc.function.arguments,
+            error: toolName === "terminal_tail_read" ? "Invalid terminal tail arguments" : parsed.error,
           })
           const validationResult = {
             success: false,
-            error: parsed.error,
+            error: toolName === "terminal_tail_read" ? "Invalid arguments for terminal_tail_read" : parsed.error,
           }
           rememberToolResult(tc, validationResult, toolName)
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, validationResult, {}))
@@ -2124,12 +2126,14 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           })
 
           // Send tool result to extension for UI display (before vision analysis so UI shows raw result)
+          const workspaceObservation = readMcpWorkspaceObservation(toolResult)
           sendToExtension({
             type: "tool.result",
             tool_call_id: tc.id,
             thread_id: threadId,
             tool_name: toolName,
             result: toolResult,
+            ...(workspaceObservation ? { workspace_observation: workspaceObservation } : {}),
           })
           try {
             const { onRouteTool } = require("../loop/route-session") as typeof import("../loop/route-session")
@@ -2318,8 +2322,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               thread_id: threadId,
               tool_call_id: tc.id,
               tool_name: toolName,
-              error: toolResult.error,
-              params,
+              error: toolName === "terminal_tail_read" ? "Terminal tail read refused" : toolResult.error,
+              params: toolName === "terminal_tail_read" ? { omission: "security" } : params,
             })
 
             const failCode =
@@ -2474,7 +2478,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               tool_call_id: tc.id,
               tool_name: toolName,
               error_level: errorLevel,
-              error: toolResult.error,
+              error: toolName === "terminal_tail_read" ? "Terminal tail read refused" : toolResult.error,
             })
 
             if (errorLevel === "security" || errorLevel === "non_recoverable") {
@@ -2596,10 +2600,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           logger.error("llm.tool_execution_exception", {
             tool_call_id: tc.id,
             tool_name: toolName,
-            error: e.message || String(e),
-            stack: e.stack,
+            error: toolName === "terminal_tail_read" ? "Terminal tail read failed" : e.message || String(e),
+            stack: toolName === "terminal_tail_read" ? undefined : e.stack,
           })
-          const result = { success: false, error: e.message || String(e) }
+          const result = { success: false, error: toolName === "terminal_tail_read"
+            ? "Terminal tail read failed" : e.message || String(e) }
           // Same supersede-filler race as the success path above: replace, not append.
           const exceptionRow = createToolResultMessage(threadId, tc, result, params)
           if (!replaceInterruptedFillerIfPresent(threadManager, threadId, tc.id, exceptionRow, savedAssistantId)) {

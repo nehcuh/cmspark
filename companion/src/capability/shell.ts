@@ -473,19 +473,21 @@ export type ShellProgress = {
 
 // Child pipes have no reliable ACP/console-code-page declaration. Preserve UTF-8
 // across data events; never guess GBK (or another encoding) from invalid bytes.
-function shellOutputDecoder(commandEncodingUnconfirmed = false) {
-  const decoder = new StringDecoder("utf8")
-  const validator = new TextDecoder("utf-8", { fatal: true })
+function shellOutputDecoder(commandEncodingUnconfirmed = false, encoding: "utf8" | "utf16le" = "utf8") {
+  const decoder = new StringDecoder(encoding)
+  const validator = new TextDecoder(encoding === "utf16le" ? "utf-16le" : "utf-8", { fatal: true })
   let undetermined = false
   let sawBytes = false
   return {
     write(chunk: Buffer): string {
       if (chunk.length) sawBytes = true
-      if (chunk.includes(0)) undetermined = true
+      if (encoding === "utf8" && chunk.includes(0)) undetermined = true
       if (!undetermined) {
         try { validator.decode(chunk, { stream: true }) } catch { undetermined = true }
       }
-      return decoder.write(chunk)
+      const decoded = decoder.write(chunk)
+      if (encoding === "utf16le" && decoded.includes("\0")) undetermined = true
+      return decoded
     },
     end(): string {
       if (!undetermined) {
@@ -664,6 +666,42 @@ export function shellSpawnArgvOptions(cwd: string, env: NodeJS.ProcessEnv): {
   }
 }
 
+// Only one literal cmd builtin has a declared output format here. Compound,
+// expanded, quoted and custom-shell commands retain their original route.
+function literalUnicodeEchoShell(command: string, useArgv: boolean): string | null {
+  if (process.platform !== "win32" || useArgv) return null
+  const shell = process.env.comspec || "cmd.exe"
+  // Match Node 22's actual cmd selection, not a new shell or PATH policy.
+  if (!/^(?:.*\\)?cmd(?:\.exe)?$/i.test(shell)) return null
+  const echo = /^echo ([^\x00-\x20\x7f"'%!^&|<>()/][^\x00-\x1f\x7f"'%!^&|<>()]*)$/i.exec(command)
+  if (!echo || !/[^\x00-\x7f]/.test(echo[1]) || /^(?:on|off)$/i.test(echo[1])) return null
+  return shell
+}
+
+/** A completed command's literal declaration, not final cwd or an existence claim.
+ * Node shell:true selects cmd via process.env.comspec on Windows, /bin/sh on
+ * Linux/macOS. Unknown/custom shells and any interpreted grammar give no hint.
+ */
+export function declaredShellCwd(command: string, platform: string, shell: string): string | undefined {
+  if (/[\p{Cc}\p{Cf}\p{Cs}\u2028\u2029% !$`<>|;()^]/u.test(command.replace(/ /g, ""))) return undefined
+  const parts = command.split("&&")
+  if (parts.length > 2 || parts.length === 2 && !parts[1].trim() || parts.some(p => p.includes("&"))) return undefined
+  if (parts[1] && !/^[A-Za-z0-9_.-]+(?: +[A-Za-z0-9_.-]+)*$/.test(parts[1].trim())) return undefined
+  const prefix = parts[0].trim()
+  if (platform === "win32") {
+    if (!/^(?:cmd\.exe|[A-Za-z]:[\\/](?:[^\\/]+[\\/])*cmd\.exe)$/i.test(shell)) return undefined
+    const m = /^cd +\/d +(?:"([^"\n]+)"|([^\s"']+)) *$/i.exec(prefix)
+    if (!m) return undefined
+    const p = m[1] || m[2]
+    if (/[*?\[\]~]/.test(p) || !/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/.test(p) || /^\\\\[?.]\\/.test(p) || p.split(/[\\/]/).some(v => v === "." || v === "..")) return undefined
+    return p
+  }
+  if ((platform !== "darwin" && platform !== "linux") || shell !== "/bin/sh") return undefined
+  const m = /^cd +(?:"([^"\\\n]+)"|'([^'\\\n]+)'|([^\s"'\\]+)) *$/.exec(prefix)
+  const p = m && (m[1] || m[2] || m[3])
+  return p && !(m![3] && /[*?\[\]~]/.test(p)) && p.startsWith("/") && !p.startsWith("//") && !p.split("/").some(v => v === "." || v === "..") ? p : undefined
+}
+
 export async function shellExec(opts: {
   command: string
   cwd?: string | null
@@ -726,7 +764,15 @@ export async function shellExec(opts: {
     const env = buildChildEnv()
     const argv = tryParseSimpleArgv(command)
     const useArgv = shouldUseArgvSpawn(argv)
-    const child = useArgv && argv
+    const declaredCwd = !useArgv
+      ? declaredShellCwd(command, process.platform, process.platform === "win32" ? process.env.comspec || "cmd.exe" : "/bin/sh")
+      : undefined
+    const unicodeEchoShell = literalUnicodeEchoShell(command, useArgv)
+    const child = unicodeEchoShell
+      ? spawn(unicodeEchoShell, ["/d", "/u", "/s", "/c", `"${command}"`], {
+          ...shellSpawnArgvOptions(cwd, env), windowsVerbatimArguments: true,
+        })
+      : useArgv && argv
       ? spawn(argv[0], argv.slice(1), shellSpawnArgvOptions(cwd, env))
       : spawn(command, shellSpawnOptions(cwd, env))
 
@@ -735,7 +781,7 @@ export async function shellExec(opts: {
     // cmd can lose Unicode while converting the command before emitting valid
     // UTF8/ASCII bytes. Byte validity alone cannot establish that provenance.
     const commandEncodingUnconfirmed = process.platform === "win32" && !useArgv && /[^\x00-\x7f]/.test(command)
-    const stdoutDecoder = shellOutputDecoder(commandEncodingUnconfirmed)
+    const stdoutDecoder = shellOutputDecoder(commandEncodingUnconfirmed && !unicodeEchoShell, unicodeEchoShell ? "utf16le" : "utf8")
     const stderrDecoder = shellOutputDecoder(commandEncodingUnconfirmed)
     /** null | timeout | abort — distinguishes chat.stop vs wall-clock kill. */
     let killReason: null | "timeout" | "abort" = null
@@ -845,6 +891,7 @@ export async function shellExec(opts: {
       resolve({
         success: true,
         data: {
+          ...(exitCode === 0 && !timed_out && !aborted && declaredCwd ? { declared_cwd: declaredCwd } : {}),
           exit_code: exitCode,
           signal: signalName || null,
           timed_out,

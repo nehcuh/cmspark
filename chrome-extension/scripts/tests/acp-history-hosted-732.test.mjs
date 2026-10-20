@@ -184,7 +184,7 @@ function browserSegment(fault='none') {
     fs:{statSync:()=>{if(fault==='binary')fail();return {isFile:()=>true}},readFileSync:()=>{if(fault==='port')fail();return '9222\n/devtools/browser/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n'}},
     fetch:async()=>{const which=++fetchCount===1?'worker':'pair';if(fault===which+'fetch')fail();return {json:async()=>{if(fault===which+'json')fail();return ['worker','pair'].map(id=>({id,webSocketDebuggerUrl:'ws://127.0.0.1:9222/devtools/page/'+id}))}}},
     WebSocket:Socket,observers:new Set(),crypto:{createHmac:()=>({update:()=>({digest:()=> 'PUBLIC_PROOF'})})},AbortSignal,loadedExpression:()=> 'OWNED_NAVIGATION_EXPRESSION',Math,Date,path,fail,
-    observeBrowserStartup:startupHarness.observeBrowserStartup,finiteReceipt:startupHarness.finiteReceipt,
+    observeBrowserStartup:startupHarness.observeBrowserStartup,finiteReceipt:startupHarness.finiteReceipt,devToolsPortSnapshot:startupHarness.devToolsPortSnapshot,
   }
   return vm.runInNewContext(`(async()=>{let startupError=false;try{${body}}catch{startupError=true} ${capture}; const checks={cleanup:true};return {receipt:${receiptCall[1]},startupError}})()`,context)
 }
@@ -207,6 +207,41 @@ test('#735 actual main snapshots before cleanup and exit observations cannot bec
   const browser={exitCode:65},xvfb={exitCode:null},before=startupHarness.observeBrowserStartup('WORKER_FOUND',browser,xvfb)
   browser.exitCode=143;xvfb.exitCode=143;assert.equal(before.browserExitCode,65);assert.equal(before.xvfbExitCode,null);assert.equal(before.browserPresent,true)
   const absent=startupHarness.observeBrowserStartup(null,undefined,undefined);assert.equal(absent.browserPhase,null);assert.equal(absent.browserPresent,false);assert.equal(absent.xvfbPresent,false)
+})
+
+async function activePortPublication(parts,mutateAfterRead=false) {
+  const source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')
+  const begin=source.indexOf("    const binary=['/usr/bin/chromium-browser'"),end=source.indexOf('    const socketBase=',begin)
+  const poll=source.split('\n').find(line=>line.startsWith('  const poll=async'))
+  assert.ok(begin>0&&end>begin&&poll)
+  const owned=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-port732-'))),profile=path.join(owned,'profile'),file=path.join(profile,'DevToolsActivePort')
+  fs.mkdirSync(profile,{mode:0o700})
+  let reads=0,writes=0,timer
+  const deadline=Date.now()+100
+  const context={path,Date,Promise,setTimeout,deadline,owned,extension:path.join(owned,'extension'),input:{},screen:':23',chromium:undefined,browserPhase:'DISPLAY_OBSERVED',
+    chromeArgs,childEnvironment,devToolsPortSnapshot:startupHarness.devToolsPortSnapshot,
+    remaining:()=>{if(Date.now()>=deadline)throw Error('OWNED_TEST_DEADLINE')},fail:()=>{throw Error('OWNED_ACCEPTANCE_REFUSED')},
+    fs:{statSync:()=>({isFile:()=>true}),readFileSync(p,encoding){assert.equal(p,file);assert.equal(encoding,'utf8');reads++;const text=fs.readFileSync(p,encoding);if(mutateAfterRead)fs.writeFileSync(file,'INVALID_AFTER_SNAPSHOT');return text}},
+    child(_binary,args,env){assert.deepEqual(Array.from(args),chromeArgs(owned,path.join(owned,'extension')));assert.equal(env.HOME,undefined);fs.writeFileSync(file,parts[0]);writes++;if(parts.length===2)timer=setTimeout(()=>{fs.appendFileSync(file,parts[1]);writes++},5);return {exitCode:null,signalCode:null}},
+  }
+  try {
+    const result=await vm.runInNewContext(`(async()=>{${poll};try{${source.slice(begin,end)};return {ok:true,phase:browserPhase,parts}}catch{return {ok:false,phase:browserPhase}}})()`,context)
+    return {...result,reads,writes}
+  } finally {clearTimeout(timer);fs.rmSync(owned,{recursive:true,force:true})}
+}
+test('#735 actual port prefix waits published endpoint after partial first line or UUID without final newline',async()=>{
+  const endpoint='/devtools/browser/11111111-1111-4111-8111-111111111111',full='9222\n'+endpoint
+  for(const offset of [2,5,20,full.length-1]) {
+    const result=await activePortPublication([full.slice(0,offset),full.slice(offset)])
+    assert.equal(result.ok,true);assert.equal(result.phase,'PORT_FILE');assert.deepEqual(Array.from(result.parts),['9222',endpoint]);assert.ok(result.reads>=2);assert.equal(result.writes,2)
+  }
+  const complete=await activePortPublication([full]);assert.equal(complete.ok,true);assert.equal(complete.reads,1)
+  const same=await activePortPublication([full],true);assert.equal(same.ok,true);assert.equal(same.reads,1);assert.deepEqual(Array.from(same.parts),['9222',endpoint])
+})
+test('#735 complete malformed active-port content never becomes a usable endpoint',async()=>{
+  for(const text of ['not-a-port\n/devtools/browser/11111111-1111-4111-8111-111111111111','9222\n/devtools/page/11111111-1111-4111-8111-111111111111','9222\n/devtools/browser/11111111-1111-4111-8111-111111111111\nEXTRA']) {
+    const result=await activePortPublication([text]);assert.equal(result.ok,false);assert.equal(result.phase,'BINARY_SELECTED');assert.equal(result.parts,undefined)
+  }
 })
 test('#735 original pass predicate ignores startup diagnostics and still requires all ten checks',()=>{
   const keys=Object.keys(finiteReceipt('COMPLETE',{}).checks),all=Object.fromEntries(keys.map(k=>[k,true]));assert.equal(keys.length,10)

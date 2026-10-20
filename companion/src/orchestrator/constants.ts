@@ -18,6 +18,7 @@ export const ORCHESTRATOR_CAPS = {
 
 /** Tools workers must not get by default (evaluate is intentionally allowed under L2). */
 export const WORKER_HARD_DENY = new Set([
+  "terminal_tail_read",
   "shell_exec",
   "netsec_port_scan",
   "osascript_eval",

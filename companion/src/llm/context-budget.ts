@@ -33,6 +33,9 @@ export const COMPACT_SENSITIVE_CODE_TOOLS = new Set([
   "host_app",
   "host_computer",
   "shell_exec",
+  // #725: direct tool-payload projections only. Ordinary assistant prose
+  // retains its existing semantics and may quote the disclosed screen text.
+  "terminal_tail_read",
   "netsec_port_scan",
   // Wave E P0-3: workspace file bodies same class as host_read (compact + thread_recall)
   "workspace_read_file",
@@ -216,7 +219,8 @@ export function redactMessagesForCompaction(messages: CanonicalChatMessage[]): C
       return { role: "assistant", content }
     }
     // tool
-    const name = idToName.get(m.tool_call_id) || "tool"
+    const name = idToName.get(m.tool_call_id) ||
+      (m.name === "terminal_tail_read" ? m.name : "tool")
     if (COMPACT_SENSITIVE_COOKIE_TOOLS.has(name)) {
       return { role: "tool", tool_call_id: m.tool_call_id, content: `[${name}: redacted]` }
     }

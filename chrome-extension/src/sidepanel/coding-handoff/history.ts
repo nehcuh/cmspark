@@ -7,7 +7,9 @@ export type CodingHistoryRow = {
 export type CodingHistory = { threadId: string; requestId: string; selectionRevision: number;
   pending: boolean; status: string; rows: CodingHistoryRow[];
   /** UI-only reference fence; never sent or persisted as historical metadata. */
-  runtimeAtRequest?: { sessionId: string; threadId: string } | null }
+  runtimeAtRequest?: { sessionId: string; threadId: string } | null
+  /** Same UI-only fence for every selectable member; cleared with the matching reply. */
+  runtimesAtRequest?: { sessionId: string; threadId: string }[] }
 const STATUS = new Set(["ok", "disabled", "unavailable", "invalid", "private_refused", "commit_unknown", "capacity"])
 const STATES = new Set(["offered", "confirmed", "running", "handback", "closed"])
 const KEYS = new Set(["session_id", "thread_id", "agent_id", "mode", "created_at", "updated_at", "observed_state", "terminal_kind", "source", "history_status"])

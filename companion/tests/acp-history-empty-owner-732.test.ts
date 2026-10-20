@@ -143,6 +143,7 @@ function fixtureProjection(variant = "good") {
   const fake = { constants: fs.constants, openSync() { reads++; return 11 }, fstatSync() { reads++; return original },
     lstatSync() { reads++; return { ...original, ...(complete && variant === "replaced" ? { ino: original.ino + 1n } : {}) } },
     realpathSync(p: string) { reads++; return p }, closeSync() { closed++ } }
+  Object.assign(fake.realpathSync, { native: fake.realpathSync })
   const module = { exports: {} as any }
   vm.runInNewContext(ts.transpileModule(bodies + "\nmodule.exports={fixtureObject}", { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
     { module, assert, fs: fake, process: { platform: variant === "posix" ? "darwin" : "win32", env: { GITHUB_ACTIONS: variant === "manual" ? "false" : "true", RUNNER_OS: "Windows" } },

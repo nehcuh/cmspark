@@ -1,3 +1,5 @@
+import { takeCodingOperationReply, clearCodingOperationFeedback } from "../utils/coding-operation-send"
+import { WorkspaceHints } from "../coding-handoff/workspace-hints"
 import { isBoardHintReply } from "../utils/board-hint-request"
 import { codingManualEntryAction } from "../utils/coding-manual-entry-message"
 // WebSocket hook for Side Panel — communicates with background service worker
@@ -32,6 +34,12 @@ const hydrateRetryIds = new Set<string>()
 /** Session feedback must carry its stored owner; missing owner never means the active thread. */
 export function codingMessageTargetsThread(msg: { thread_id?: unknown }, threadId: string | null): boolean {
   return !!threadId && typeof msg.thread_id === "string" && msg.thread_id === threadId
+}
+
+/** A reply for an older selected offer cannot retarget current-operation feedback. */
+export function codingMessageTargetsSelection(msg: { thread_id?: unknown; session_id?: unknown }, threadId: string | null, selection: Record<string, string>): boolean {
+  return codingMessageTargetsThread(msg, threadId) && (msg.session_id === undefined ||
+    typeof msg.session_id === "string" && !!threadId && selection[threadId] === msg.session_id)
 }
 
 export function isHydrateSelectError(err: string): boolean {
@@ -300,6 +308,10 @@ export function useWebSocket() {
   const streamingRef = useRef("")
   const initializedRef = useRef(false)
   const activeThreadRef = useRef<string | null>(null)
+  const workspaceHintsRef = useRef(new WorkspaceHints())
+  const workspaceHintSelectionRef = useRef(state.activeThreadSelectionRevision)
+  workspaceHintSelectionRef.current = state.activeThreadSelectionRevision
+  workspaceHintsRef.current.select(state.activeThreadId, state.activeThreadSelectionRevision)
   // Tracks an in-flight "auto-create blank thread" request so we don't fire a
   // second one before the first resolves. Reset whenever a non-empty thread.list
   // arrives (so a future empty state — e.g. after user deletes everything —
@@ -308,6 +320,8 @@ export function useWebSocket() {
 
   // Keep refs in sync (listener is mount-once — never close over render state)
   activeThreadRef.current = state.activeThreadId
+  const codingSelectionRef = useRef(state.codingSessionIdByThread)
+  codingSelectionRef.current = state.codingSessionIdByThread
   // #502 E Inspect: inspected worker id rides its own ref — the inspect buffer
   // is updated independent of (and never widens) the active-thread gate above.
   const inspectedWorkerRef = useRef<string | null>(null)
@@ -409,6 +423,15 @@ export function useWebSocket() {
     // broadcasts here — never claim the response channel (do not return true).
     const messageListener = (msg: any) => {
       if (!msg || typeof msg.type !== "string") return false
+      if (msg.type === "thread.mutation.connection") {
+        workspaceHintsRef.current.select(activeThreadRef.current, workspaceHintSelectionRef.current)
+        workspaceHintsRef.current.observe(msg)
+        dispatch({ type: "SET_WORKSPACE_HINTS", view: workspaceHintsRef.current.view() })
+        if (msg.state === "disconnected" || msg.state === "connecting") clearCodingOperationFeedback()
+        return false
+      }
+      const codingFeedback = takeCodingOperationReply(msg)
+      if (codingFeedback) { dispatch(codingFeedback); return false }
       // Outbound UI→SW commands (armed via Settings etc.) must not be processed here.
       // Background is the sole handler; a throw in this listener can break the response path.
       if (
@@ -427,6 +450,9 @@ export function useWebSocket() {
         return false
       }
       try {
+      // Live frames only: history/hydration branches never call the tool observer.
+      workspaceHintsRef.current.select(activeThreadRef.current, workspaceHintSelectionRef.current)
+      if (workspaceHintsRef.current.observe(msg)) dispatch({ type: "SET_WORKSPACE_HINTS", view: workspaceHintsRef.current.view() })
       switch (msg.type) {
         case "chat.token": {
           // P0-B: ignore stream events for non-active threads
@@ -1554,6 +1580,12 @@ export function useWebSocket() {
         case "workspace.clear_result":
         case "workspace.set_result":
         case "workspace.pick_result":
+          // Correlated hints may truthfully bind original A after a UI switch.
+          // Update its record, but let the requesting panel own late/ABA feedback.
+          if (msg.type === "workspace.pick_result" && msg.request_id) {
+            if (msg.thread?.id) dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+            break
+          }
           // Thread fields updated by companion (mission_pack_id, workspace_root, …)
           // pick_result must be global so /code modal can bind without PacksPanel mounted
           if (msg.thread?.id) {
@@ -1732,6 +1764,7 @@ export function useWebSocket() {
                 session_id: msg.session_id,
                 thread_id: msg.thread_id,
                 state: "closed",
+                execution_phase: msg.execution_phase,
                 mode: msg.mode,
                 pending_diffs: msg.pending_diffs,
                 handback: msg.message?.content,
@@ -1742,34 +1775,13 @@ export function useWebSocket() {
           break
 
         case "acp.apply_diff.result":
-          if (!codingMessageTargetsThread(msg, activeThreadRef.current)) break
-          dispatch({
-            type: "SET_PROCESSING_STATUS",
-            status: msg.ok
-              ? `已应用 ${Array.isArray(msg.applied) ? msg.applied.length : 0} 个文件`
-              : `应用 diff 失败: ${msg.error || "unknown"}`,
-          })
-          break
-
+        case "acp.apply_diff.denied":
+        case "acp.session.prompt.accepted":
+        case "acp.session.prompt.denied":
         case "acp.ui_start.accepted":
-          if (!codingMessageTargetsThread(msg, activeThreadRef.current)) break
-          // progress follows acp.session.event — keep status for panel feedback
-          dispatch({
-            type: "SET_PROCESSING_STATUS",
-            status: "编程助手已确认启动…",
-          })
-          break
         case "acp.ui_start.denied":
-          if (!codingMessageTargetsThread(msg, activeThreadRef.current)) break
-          dispatch({
-            type: "SET_PROCESSING_STATUS",
-            status:
-              msg.error === "user_denied"
-                ? "编程助手启动已取消"
-                : typeof msg.error === "string" && msg.error
-                  ? msg.error
-                  : "编程助手启动失败",
-          })
+          // Unassociated legacy response is not today's selected operation.
+          // Lifecycle/diff records still arrive through their authenticated session events.
           break
 
         case "computer.task.abort.ack":
@@ -2439,15 +2451,8 @@ export function useWebSocket() {
             if (manualEntryAction) { dispatch(manualEntryAction); break }
             const controlAction = codingControlAction(msg)
             if (controlAction) { dispatch(controlAction); break }
-            if ((msg.session_id !== undefined || msg.thread_id !== undefined) &&
-                !codingMessageTargetsThread(msg, activeThreadRef.current)) break
-            dispatch({
-              type: "SET_PROCESSING_STATUS",
-              status:
-                typeof msg.error === "string" && msg.error
-                  ? msg.error
-                  : "编程助手错误",
-            })
+            // A legacy ACP error without private request correlation must not
+            // overwrite a new view/global status after same-thread selection ABA.
             break
           }
           // App tab (WP4, routing hardened in WP6a): apps.* failures
@@ -2519,7 +2524,12 @@ export function useWebSocket() {
       chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
         if (chrome.runtime.lastError) return
         if (response) {
+          if (response.connectionState !== "connected") clearCodingOperationFeedback()
           dispatch({ type: "SET_CONNECTION", state: response.connectionState })
+          if (response.connectionState !== "connected" || !workspaceHintsRef.current.view()) {
+            workspaceHintsRef.current.observe({ type: "thread.mutation.connection", state: response.connectionState })
+            dispatch({ type: "SET_WORKSPACE_HINTS", view: workspaceHintsRef.current.view() })
+          }
           if (response.connectionState === "connected") {
             requestInitialData()
           } else {
@@ -2544,6 +2554,7 @@ export function useWebSocket() {
     const port = chrome.runtime.connect({ name: "cmspark-sidepanel" })
 
     return () => {
+      clearCodingOperationFeedback()
       clearInterval(interval)
       chrome.runtime.onMessage.removeListener(messageListener)
       document.removeEventListener("visibilitychange", handleVisibilityChange)

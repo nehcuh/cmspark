@@ -79,7 +79,7 @@ test("#727 actual store retains the offered session on A-B-A return; priority bu
 })
 test("#722 actual Chip SSR preserves its already-shipped pending-start status and adds only open CTA", () => {
   const file = source("components/CodingSessionChip.tsx"), session = { sessionId: "own", threadId: "A", agentId: "inert", state: "offered", updatedAt: 1 }
-  const store = { useAgentStore: () => ({ state: { activeThreadId: "A" }, dispatch() {} }), codingSessionBelongsToThread, selectCodingOperationError: () => null, selectCodingManualEntry: () => null }
+  const store = { useAgentStore: () => ({ state: { activeThreadId: "A", codingSessionIdsByThread: { A: ["own"] }, codingSessionsById: { own: session } }, dispatch() {} }), codingSessionBelongsToThread, selectCodingOperationError: () => null, selectCodingManualEntry: () => null }
   const component = compile(file.text, { require(id: string) {
     if (id === "react") return React
     if (id === "react/jsx-runtime") return jsxRuntime
@@ -101,11 +101,12 @@ function terminalView() {
   const callback = receive.slice(receive.indexOf("(") + 1, receive.lastIndexOf(")"))
   const heading = one(sf, n => ts.isJsxElement(n) && n.openingElement.tagName.getText(sf) === "strong")
   const wire = compile(fs.readFileSync(path.resolve(root, "../terminal/wire.ts"), "utf8"), { TextEncoder, atob, btoa })
-  const ui: { status: string; kind: string | null } = { status: "connecting", kind: null }
+  const ui: { status: string; kind: string | null; tail: string } = { status: "connecting", kind: null, tail: "" }
   const frameReceiver = compile(`export function create(){let sessionEnded=false,opened=false,ready=false,pendingResize=null;const sessionId='owned';return ${callback}}`, {
     clearTimeout() {}, clearInterval() {}, watchdog: 1, pingTimer: 1,
     setStatus: (value: string) => { ui.status = value }, setLaunchKind: (value: string | null) => { ui.kind = value },
     setDetail() {}, setReportStatus() {}, setSubmitting() {}, setReviewPrompt() {},
+    setTail: (value: string) => { ui.tail = value },
     fit: { fit() {} }, send() {}, subData: { dispose() {} },
     term: { cols: 80, rows: 24, focus() {}, write(_bytes: unknown, done: () => void) { done() } },
     terminalB64Decode: wire.terminalB64Decode,
@@ -136,4 +137,25 @@ test("#724 actual failed open cannot later claim an Agent launch source", () => 
   f.receive({ type: "terminal.opened", id: "owned", platform: "win32", launch_kind: "embedded_agent" })
   assert.equal(f.ui.status, "error"); assert.equal(f.ui.kind, null)
   assert.equal(f.html().includes("内嵌 Agent 启动来源"), false)
+})
+
+
+test("#725 actual extracted TerminalApp callback clears received tail on retirement and rejects late revival", () => {
+  const actual = JSON.parse(fs.readFileSync(path.resolve(root, "../../tests/fixtures/terminal-tail-725.json"), "utf8"))
+  for (const retirement of [
+    { type: "terminal.closed", id: "owned" },
+    { type: "terminal.error", id: "owned", code: "disconnected", error: "connection lost" },
+  ]) {
+    const f = terminalView()
+    f.receive({ type: "terminal.opened", id: "owned", platform: "win32", launch_kind: "embedded_agent" })
+    f.receive({ ...actual, id: "owned" })
+    assert.equal(f.ui.tail, actual.result.data.text, "the actual current-session callback stores the producer-recorded text")
+    f.receive({ ...retirement, id: "foreign" })
+    assert.equal(f.ui.tail, actual.result.data.text, "foreign retirement must not change the current excerpt")
+    f.receive(retirement)
+    assert.equal(f.ui.status, "closed")
+    assert.equal(f.ui.tail, "", "retirement invokes the real state reset, not a no-op setter")
+    f.receive({ ...actual, id: "owned" })
+    assert.equal(f.ui.tail, "", "late tail frames cannot revive an ended session")
+  }
 })

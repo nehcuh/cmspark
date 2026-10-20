@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { codingSessionBelongsToThread, useAgentStore, type CodingSessionState } from "../store/agentStore"
 
 /** Shared panel/chip control. Runtime success is forwarding, never lifecycle completion. */
 export function useCodingStop(session: CodingSessionState | null) {
   const { state, dispatch } = useAgentStore()
+  const currentState = useRef(state)
+  currentState.current = state
   const [ownerError, setOwnerError] = useState("")
   useEffect(() => { setOwnerError("") }, [session?.sessionId, session?.threadId])
   useEffect(() => {
@@ -16,6 +18,8 @@ export function useCodingStop(session: CodingSessionState | null) {
     return () => window.clearTimeout(timer)
   }, [session?.sessionId, session?.threadId, session?.stopPending, dispatch])
   const stop = () => {
+    if (currentState.current.activeThreadSelectionRevision !== state.activeThreadSelectionRevision ||
+        currentState.current.activeCodingSelectionRevision !== state.activeCodingSelectionRevision) return
     if (!session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) {
       setOwnerError("无法停止：当前会话不属于此对话，请返回所属对话后重试。")
       return
