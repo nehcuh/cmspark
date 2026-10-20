@@ -89,6 +89,119 @@ export function choosePanel(before,after,url,debugTargets) {
   if(matches.length!==1)fail()
   return matches[0].targetId
 }
+// Serialized into the owned real extension worker. These witnesses never enter
+// production messages/storage and caller-provided IDs are not sender proof.
+export async function installNativePanelWitness(api,scope,spec) {
+  const refuse=()=>{throw new Error('OWNED_PANEL_PROOF_REFUSED')}
+  if(!spec||!/^__cmsparkPanel732_[a-f0-9]{32}$/.test(spec.key)||spec.port!=='cmspark-panel-proof732-'+spec.key.slice(-32)||
+    !/^chrome-extension:\/\/[a-p]{32}\/[A-Za-z0-9_./-]+\.html$/.test(spec.url)||
+    !Number.isSafeInteger(spec.windowId)||spec.windowId<0||!Number.isInteger(spec.ms)||spec.ms<=0||spec.ms>60000||Object.hasOwn(scope,spec.key)||Object.hasOwn(scope,spec.key+'_cleanup'))refuse()
+  const cleanupKey=spec.key+'_cleanup'
+  const origin='chrome-extension://'+spec.url.split('/')[2],extensionId=spec.url.split('/')[2],page=spec.url.slice(origin.length+1),expires=Date.now()+spec.ms
+  const filter={contextTypes:['SIDE_PANEL'],documentUrls:[spec.url],documentOrigins:[origin]},previous=await api.runtime.getContexts(filter)
+  if(!Array.isArray(previous)||previous.length||Date.now()>=expires)refuse()
+  let disposed=false,failed=false,bound=false,opened=0,context,port,timer,witness,cleanup
+  const current=()=>{if(disposed||failed||Date.now()>=expires)refuse()}
+  const close=()=>{
+    if(disposed)return true
+    disposed=true;clearTimeout(timer)
+    try{api.sidePanel.onOpened.removeListener(onOpened)}catch{failed=true}
+    try{api.runtime.onConnect.removeListener(onConnect)}catch{failed=true}
+    if(port){port.onDisconnect.removeListener(disconnected);try{port.disconnect()}catch{failed=true}}
+    if(Object.getOwnPropertyDescriptor(scope,spec.key)?.value===witness)delete scope[spec.key]
+    if(Object.getOwnPropertyDescriptor(scope,cleanupKey)?.value===cleanup)delete scope[cleanupKey]
+    return !failed
+  }
+  const bad=()=>{failed=true;close()}
+  const nativeContext=rows=>{
+    if(!Array.isArray(rows)||rows.length!==1)refuse()
+    const row=rows[0],uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value)
+    if(row.contextType!=='SIDE_PANEL'||row.documentUrl!==spec.url||row.documentOrigin!==origin||row.incognito!==false||
+      row.tabId!==-1||row.frameId!==0||!uuid(row.contextId)||!uuid(row.documentId)||(row.windowId!==-1&&row.windowId!==spec.windowId))refuse()
+    return Object.freeze({contextId:row.contextId,documentId:row.documentId,frameId:row.frameId})
+  }
+  const same=(a,b)=>a.contextId===b.contextId&&a.documentId===b.documentId&&a.frameId===b.frameId
+  const recheck=async()=>{current();const captured=context;if(!captured)refuse();const latest=nativeContext(await api.runtime.getContexts(filter));current();if(context!==captured||!same(captured,latest))refuse();return captured}
+  const onOpened=async info=>{
+    if(disposed)return
+    try{
+      current();if(++opened!==1||info.windowId!==spec.windowId||info.path!==page||info.tabId!==undefined)refuse()
+      const found=nativeContext(await api.runtime.getContexts(filter));current();context=found
+    }catch{bad()}
+  }
+  const disconnected=()=>bad()
+  const onConnect=async incoming=>{
+    if(incoming.name!==spec.port)return
+    try{
+      current();if(opened!==1||!context||port)refuse()
+      port=incoming;port.onDisconnect.addListener(disconnected)
+      // The native Chrome Port supplies sender; no message body supplies it.
+      const sender=port.sender
+      if(sender?.id!==extensionId||sender.url!==spec.url||sender.origin!==origin||sender.frameId!==context.frameId||
+        sender.documentId!==context.documentId||sender.documentLifecycle!=='active'||sender.tab!==undefined)refuse()
+      const captured=port;await recheck();current();if(port!==captured)refuse()
+      bound=true
+    }catch{if(incoming!==port)try{incoming.disconnect()}catch{};bad()}
+  }
+  witness={async snapshot(){try{current();if(!context)return {state:'pending'};const captured=await recheck();return {state:bound?'bound':'opened',...captured}}catch{bad();refuse()}},close}
+  cleanup=Object.freeze({request:spec.key,close})
+  scope[spec.key]=witness
+  scope[cleanupKey]=cleanup
+  try{api.sidePanel.onOpened.addListener(onOpened);api.runtime.onConnect.addListener(onConnect);timer=setTimeout(close,Math.max(0,expires-Date.now()));return true}catch{bad();refuse()}
+}
+export function connectNativePanelWitness(api,scope,key,name,expires) {
+  const cleanupKey=key+'_cleanup'
+  if(Date.now()>=expires||Object.hasOwn(scope,key)||Object.hasOwn(scope,cleanupKey))throw new Error('OWNED_PANEL_PROOF_REFUSED')
+  let timer,cleanup,disposed=false
+  const port=api.runtime.connect({name}),done=()=>{
+    if(disposed)return true
+    disposed=true;clearTimeout(timer);port.onDisconnect.removeListener(done)
+    if(Object.getOwnPropertyDescriptor(scope,key)?.value===port)delete scope[key]
+    if(Object.getOwnPropertyDescriptor(scope,cleanupKey)?.value===cleanup)delete scope[cleanupKey]
+    return true
+  },close=()=>{let closed=true;try{port.disconnect()}catch{closed=false}finally{done()}return closed}
+  cleanup=Object.freeze({request:key,close})
+  scope[key]=port;scope[cleanupKey]=cleanup;port.onDisconnect.addListener(done)
+  timer=setTimeout(close,Math.max(0,expires-Date.now()))
+  return true
+}
+export async function openNativePanel(io) {
+  const {worker,pairingView,tab,url,before,targets,connect,targetSocket,poll,remaining,nonce}=io
+  if(!Number.isSafeInteger(tab)||tab<0||!/^chrome-extension:\/\/[a-p]{32}\/[A-Za-z0-9_./-]+\.html$/.test(url)||!/^([a-f0-9]{32})$/.test(nonce))fail()
+  const key='__cmsparkPanel732_'+nonce,name='cmspark-panel-proof732-'+nonce,ms=remaining(),deadline=Date.now()+ms
+  if(!Number.isInteger(ms)||ms<=0||ms>BOUNDS.navigation)fail()
+  const left=()=>{const n=Math.min(remaining(),deadline-Date.now());if(n<=0)fail();return n}
+  let view,installed=false,targetAttempted=false
+  const inspect=()=>worker.evaluate(`globalThis[${JSON.stringify(key)}].snapshot()`,left())
+  try{
+    const record=await worker.evaluate(`chrome.tabs.get(${tab}).then(t=>({id:t.id,windowId:t.windowId,url:t.url,incognito:t.incognito}))`,left())
+    if(record?.id!==tab||record.url!==url||record.incognito!==false||!Number.isSafeInteger(record.windowId)||record.windowId<0)fail()
+    const spec={key,port:name,url,windowId:record.windowId,ms:left()}
+    installed=true
+    await worker.evaluate(`(${installNativePanelWitness.toString()})(chrome,globalThis,${JSON.stringify(spec)})`,left())
+    await pairingView.evaluate(`chrome.sidePanel.open({windowId:${record.windowId}})`,left(),true)
+    const opened=await poll(async()=>{const value=await inspect();return value.state==='opened'?value:false},left())
+    const panelId=await poll(async()=>{
+      const debug=await worker.evaluate('chrome.debugger.getTargets()',left()),list=await targets()
+      try{const id=choosePanel(before,list,url,debug),matches=debug.filter(d=>d.id===id&&d.type==='page'&&d.extensionId===url.split('/')[2]&&d.tabId===undefined&&d.url===url);return matches.length===1?id:false}catch{return false}
+    },left())
+    const socket=await limit(targetSocket(panelId),left());view=await limit(connect(socket),left())
+    targetAttempted=true
+    await view.evaluate(`(${connectNativePanelWitness.toString()})(chrome,globalThis,${JSON.stringify(key)},${JSON.stringify(name)},${deadline})`,left())
+    const bound=await poll(async()=>{const value=await inspect();return value.state==='bound'?value:false},left())
+    if(bound.contextId!==opened.contextId||bound.documentId!==opened.documentId||bound.frameId!==opened.frameId)fail()
+    return view
+  }finally{
+    // Remote timer uses the same phase deadline; original outer cleanup still
+    // awaits actual clients and owned browser close if a CDP endpoint is lost.
+    let clean=true
+    // This structural handle belongs only to the owned worker's random nonce
+    // namespace; it is not an authorization proof against hostile realm code.
+    if(installed)try{if(await worker.evaluate(`(()=>{const d=Object.getOwnPropertyDescriptor(globalThis,${JSON.stringify(key+'_cleanup')});if(!d)return true;if(!Object.hasOwn(d,'value')||!d.value||!Object.isFrozen(d.value))throw Error('OWNED_PANEL_CLEANUP_REFUSED');const r=Object.getOwnPropertyDescriptor(d.value,'request'),c=Object.getOwnPropertyDescriptor(d.value,'close');if(!r||!Object.hasOwn(r,'value')||r.value!==${JSON.stringify(key)}||!c||!Object.hasOwn(c,'value')||typeof c.value!=='function')throw Error('OWNED_PANEL_CLEANUP_REFUSED');return c.value()})()`,left())!==true)clean=false}catch{clean=false}
+    if(targetAttempted)try{if(await view.evaluate(`(()=>{const d=Object.getOwnPropertyDescriptor(globalThis,${JSON.stringify(key+'_cleanup')});if(!d)return true;if(!Object.hasOwn(d,'value')||!d.value||!Object.isFrozen(d.value))throw Error('OWNED_PANEL_CLEANUP_REFUSED');const r=Object.getOwnPropertyDescriptor(d.value,'request'),c=Object.getOwnPropertyDescriptor(d.value,'close');if(!r||!Object.hasOwn(r,'value')||r.value!==${JSON.stringify(key)}||!c||!Object.hasOwn(c,'value')||typeof c.value!=='function')throw Error('OWNED_PANEL_CLEANUP_REFUSED');return c.value()})()`,left())!==true)clean=false}catch{clean=false}
+    if(!clean)fail()
+  }
+}
 export function limit(promise,ms) {if(!(ms>0))fail();let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('OWNED_TIMEOUT')),ms)})]).finally(()=>clearTimeout(timer))}
 export class CDP {
   constructor(socket) {
@@ -212,7 +325,7 @@ export async function main() {
     await pairingView.evaluate(`chrome.runtime.sendMessage({type:'ws.setSecret',secret:${JSON.stringify(secret)}}).then(r=>{if(r?.ok!==true)throw new Error('PAIR')})`,Math.min(BOUNDS.auth,remaining()));browserPhase='PAIRED'
     const request=async message=>{if(!observer||observer.readyState!==WebSocket.OPEN)fail();const d=deferred(),on=b=>{let r;try{r=JSON.parse(b.toString())}catch{return}if(message.type==='thread.list'?r.type==='thread.list':r.type==='acp.sessions.list_result'&&r.request_id===message.request_id)d.resolve(r)};observer.on('message',on);observer.send(JSON.stringify(message));try{return await limit(d.promise,Math.min(BOUNDS.auth,remaining()))}finally{observer.off('message',on)}}
     const auth=async()=>{remaining();const socket=new WebSocket('ws://127.0.0.1:23401',{origin}),ready=deferred();socket.closed=new Promise(resolve=>socket.once('close',resolve));observers.add(socket);socket.on('error',()=>ready.reject(new Error('AUTH')));socket.on('message',b=>{let r;try{r=JSON.parse(b.toString())}catch{return}if(r.type==='auth.challenge')socket.send(JSON.stringify({type:'auth.handshake',proof:crypto.createHmac('sha256',secret).update(r.nonce).digest('hex'),protocol_version:1}));if(r.type==='auth.ok')ready.resolve(true)});observer=socket;await limit(ready.promise,Math.min(BOUNDS.auth,remaining()))}
-    await auth();browserPhase='AUTH_DONE';stage='PANEL';const before=await targets();await pairingView.evaluate(`chrome.windows.getCurrent().then(w=>chrome.sidePanel.open({windowId:w.id}))`,nav(),true);const panelId=await poll(async()=>{try{return choosePanel(before,await targets(),origin+'/'+paths.page,await worker.evaluate('chrome.debugger.getTargets()',nav()))}catch{return false}},nav());view=await connect(await targetSocket(panelId))
+    await auth();browserPhase='AUTH_DONE';stage='PANEL';const before=await targets();view=await openNativePanel({worker,pairingView,tab,url:origin+'/'+paths.page,before,targets,connect,targetSocket,poll,remaining:nav,nonce:crypto.randomBytes(16).toString('hex')})
     const evaluate=expression=>view.evaluate(expression,nav());const waitDOM=expression=>poll(()=>evaluate(expression),nav())
     await waitDOM("!!document.querySelector('.cm-header-new')");const initialList=await request({type:'thread.list'});if(!Array.isArray(initialList.threads))fail();const oldThreads=new Set(initialList.threads.map(t=>t.id));await evaluate("document.querySelector('.cm-header-new').click();true")
     thread=await poll(async()=>{const list=await request({type:'thread.list'});if(!Array.isArray(list.threads))fail();const created=list.threads.filter(t=>!oldThreads.has(t.id));if(created.length>1)fail();return created[0]?.id},BOUNDS.auth)

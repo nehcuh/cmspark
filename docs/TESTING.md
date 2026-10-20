@@ -410,6 +410,26 @@ an explicit failure. Automated disclosure/L2 clicks are synthetic test actions,
 not human authorization. A separate real session cancel retains its terminal
 history; normal shutdown is never relabeled as a crash.
 
+The request first resolves its owned pairing tab's concrete window. A temporary
+`sidePanel.onOpened` listener must observe that exact window and manifest path,
+followed by one fresh `runtime.getContexts({contextTypes:['SIDE_PANEL']})`
+document. The selected new non-tab debugger target must open an owned temporary
+runtime port whose browser-supplied `sender.documentId` matches that native
+context. Current context is checked again before accepting the target; payload
+claims, an open acknowledgement, URL equality or an absent debugger `tabId`
+alone are insufficient. Chromium can report native SidePanel `windowId: -1`;
+the concrete window comes from the opening event, while a known conflicting
+context window is rejected. Listeners and the port retire within the original
+shared navigation deadline, with the original endpoint/browser cleanup still
+required on failure. There is no ordinary-tab fallback.
+
+`node chrome-extension/scripts/tests/acp-history-sidepanel-provenance-732.test.mjs`
+executes the actual serialized worker and target helpers with inert Chrome API
+boundaries, including stale/foreign documents, tab/popup contexts, duplicate
+events, late ports and cleanup. These CPU controls are not native SidePanel
+execution. The original hosted `PANEL` failure remains of unknown unique cause;
+this strengthens its source oracle without claiming that failure is resolved.
+
 The harness keeps the original 5s authentication, 15s tool, 60s absolute shared
 navigation, and 120s outer bounds. It changes no permissions, sandbox flags,
 production API, environment defaults or automatic recovery policy. Test-owned
