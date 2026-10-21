@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Refs #723：远端身份夹具的 CDP transport 终止同步拒绝 target／default-context 事件等待，避免命令已 ACK 后只等外层超时；保留原 abort 原因、45 秒、身份及 cleanup。新增真实类的 LF/CRLF／关闭／迟到事件回归；此为已证生命周期缺口，不认定历史 Windows 超时原因，native 身份与 mask 仍未完成。
+
 - Refs #723：隔离启动器的 CPU 自检读 claim 时显式兼容 Node 仍持有的写句柄，保留只读访问、原 nonce／身份校验与 lease；新增真实 Windows 旧默认共享拒绝负控及 LF/CRLF 源回归。此为验收夹具修复，不代表 Chrome 窗口身份或 mask 已通过。
 
 - Refs #723/#732：修复新增 fd3 观察器在 Node22 Windows 上被 `isFIFO()`／`isSocket()` 固定 false 误拒的问题，按原 fd3 的真实类型位限定 pipe/socket；补齐历史连接 VM 对新增 bridge 断线消费者的惰性依赖与调用回归。保原 PASS／拒绝、4KiB 与身份门，不据此认定历史原生首错或启用 mask；仍为 0.6.14 开发版。
@@ -11,6 +13,9 @@
 - Refs #732：hosted 验收改为固定官方 Linux CFT 包供应、独立精确端口／版本正证再执行原完整 SidePanel 历史业务；旧 A/B 实验步骤退休且失败保留。CPU／纯文件解压不是浏览器通过；后续真实 hosted Linux 验收已完整通过重启／重载历史、取消与清理，不代表 Windows 浏览器或实体真人授权；不发版、不改原业务时限或产品权限。
 
 - Refs #723：首个 Windows 窗口身份验收的失败回执记录实际子进程 close/退出、固定 PS 源坐标与检查序号，区分子进程失败和随后回执数量断言；仅输出有限字段，不公开原始错误、路径或环境。此项修复验收证据缺口，未证明历史注册失败原因，不改变准入、原生门禁或时限。
+
+- #750 CI 编排：Windows 全量 census 与定向原生验收拆为两台独立 hosted VM，保留各自完整原生准备、串行桌面保护、原测试／时限及 census 密封证据；两路都必须成功。已有 workflow／NSIS CPU 契约检查提前至原生编译前，npm 下载缓存键覆盖双锁而不缓存执行产物。墙钟与总 runner 成本以新 head/main 实测为准，不宣称修复 #723 的 UNKNOWN 原生超时；0.6.14 仍为开发版。
+
 
 - Refs #723: add remote-only owned-window Windows capture acceptance for actual PS5.1/PrintWindow, passive refusal and real BitBlt quality; CPU checks remain separate from native verification.
 

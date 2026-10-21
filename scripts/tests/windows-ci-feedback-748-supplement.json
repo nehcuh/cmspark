@@ -1,0 +1,29 @@
+{
+  "sourceCommit": "6521db567a06c01711b6527e96cdfcde65094342",
+  "sourceWorkflowSha256": "5cc02dfea08c5357a90c437f5ee6bbf5bdec4df054dd137c14fa9f061c280c2a",
+  "steps": [
+    {
+      "name": "Windows cockpit Node scalar selection (#723)",
+      "if": "matrix.os == 'windows-latest'",
+      "shell": "pwsh",
+      "run": "& scripts/tests/cockpit-bridge-node-selection.test.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs scripts/tests/cockpit-bridge-first-evidence.test.mjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode scripts/tests/cockpit-bridge-build-prerequisite.cjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+    },
+    {
+      "name": "Windows cockpit native bridge first identity STOP gate (#723)",
+      "id": "cockpit-first-identity",
+      "if": "matrix.os == 'windows-latest'",
+      "shell": "pwsh",
+      "run": "& scripts/tests/run-cockpit-bridge-first.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+    },
+    {
+      "name": "Publish finite cockpit first failure (#723)",
+      "if": "always() && matrix.os == 'windows-latest' && steps.cockpit-first-identity.outcome == 'failure' && steps.cockpit-first-identity.outputs.finite_summary != ''",
+      "uses": "actions/upload-artifact@v4",
+      "with": {
+        "name": "cockpit-first-identity-finite",
+        "path": "${{ steps.cockpit-first-identity.outputs.finite_summary }}",
+        "if-no-files-found": "error"
+      }
+    }
+  ]
+}

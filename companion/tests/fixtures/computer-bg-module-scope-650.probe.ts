@@ -166,15 +166,19 @@ test("#650 module scope CPU: original discovery admits old test suffix but exclu
   assert.ok(found.includes(path.join("OWNED_DATA", names[1])))
   assert.equal(found.includes(path.join("OWNED_DATA", names[2])), false, "standalone probe cannot precede baseline in canonical workers")
 })
-test("#650 module scope CPU: sole workflow invocation is last after original seal/upload and native steps", () => {
+test("#650 module scope CPU: sole census-lane invocation follows its original seal/upload", () => {
   const source = readFileSync(path.join(REPO, ".github/workflows/ci.yml"), "utf8")
   const marker = '      - name: "Post-census isolated module-scope diagnostic (#650)"'
   assert.equal(source.split(marker).length, 2)
-  const start = source.indexOf(marker), step = source.slice(start)
+  const start = source.indexOf(marker), end = source.indexOf("\n  acp-history-restart:", start)
+  assert.ok(end > start, "the following independent job is outside this matrix step")
+  const step = source.slice(start, end)
   assert.ok(source.indexOf('      - name: "Windows census finite public receipts (#650)"') < start)
   assert.ok(source.indexOf('      - name: "Windows native 8.3 filesystem paths (#604)"') < start)
+  const nativeShortStep = source.slice(source.indexOf('      - name: "Windows native 8.3 filesystem paths (#604)"'), start)
+  assert.match(nativeShortStep, /if: matrix\.os == 'windows-latest' && matrix\.lane != 'census'/, "the source-order sibling runs on the independent native desktop, not this census lane")
   assert.equal(step.match(/^      - name:/gm)?.length, 1, "nothing may follow this standalone diagnostic")
-  assert.match(step, /if: \$\{\{ always\(\) && !cancelled\(\) && matrix\.os == 'windows-latest' \}\}/)
+  assert.match(step, /if: \$\{\{ always\(\) && !cancelled\(\) && matrix\.os == 'windows-latest' && matrix\.lane == 'census' \}\}/)
   assert.match(step, /CMSPARK_650_FINISHED_PUBLIC_DIR: \$\{\{ steps\.windows-census\.outputs\.public_dir \}\}/)
   assert.match(step, /\$moduleScopeProbe650 = \[IO\.Path\]::Combine\(\$PWD\.Path, '\.test-dist\/tests\/fixtures\/computer-bg-module-scope-650\.probe\.js'\)/)
   assert.match(step, /\[IO\.File\]::Exists\(\$moduleScopeProbe650\)/)

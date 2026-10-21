@@ -44,8 +44,8 @@ function aborted(signal, action) {
 }
 class Cdp {
   constructor(ws, signal) {
-    this.ws = ws; this.signal = signal; this.sequence = 0; this.pending = new Map(); this.listeners = new Set(); this.failed = false
-    const fail = evidence.callback(15, () => { this.failed = true; for (const entry of this.pending.values()) entry.reject(Error('COCKPIT_BRIDGE_CDP_CLOSED')); this.pending.clear(); ws.close() })
+    this.ws = ws; this.signal = signal; this.sequence = 0; this.pending = new Map(); this.listeners = new Set(); this.waiters = new Set(); this.failed = false
+    const fail = evidence.callback(15, () => { this.failed = true; for (const entry of this.pending.values()) entry.reject(Error('COCKPIT_BRIDGE_CDP_CLOSED')); this.pending.clear(); for (const reject of this.waiters) reject(Error('COCKPIT_BRIDGE_CDP_CLOSED')); this.waiters.clear(); ws.close() })
     ws.addEventListener('message', evidence.callback(16, event => {
       try {
         const value = JSON.parse(String(event.data))
@@ -64,19 +64,23 @@ class Cdp {
   }
   async target(predicate) {
     return aborted(this.signal, (resolve, reject) => {
+      if (this.failed) { reject(Error('COCKPIT_BRIDGE_CDP_CLOSED')); return }
+      this.waiters.add(reject)
       const found = info => { if (predicate(info)) { this.listeners.delete(listener); resolve(info) } }
       const listener = evidence.callback(18, event => { if (event.method === 'Target.targetCreated' || event.method === 'Target.targetInfoChanged') found(event.params.targetInfo) })
       this.listeners.add(listener)
       this.command('Target.getTargets').then(evidence.callback(92, value => value.targetInfos.forEach(found)), reject)
-      return () => this.listeners.delete(listener)
+      return () => { this.listeners.delete(listener); this.waiters.delete(reject) }
     })
   }
   async defaultContext(session, origin) {
     return aborted(this.signal, (resolve, reject) => {
+      if (this.failed) { reject(Error('COCKPIT_BRIDGE_CDP_CLOSED')); return }
+      this.waiters.add(reject)
       const listener = evidence.callback(19, event => { if (event.sessionId === session && event.method === 'Runtime.executionContextCreated' &&
         event.params.context.origin === origin && event.params.context.auxData?.isDefault === true) resolve(event.params.context.id) })
       this.listeners.add(listener); this.command('Runtime.enable', {}, session).catch(reject)
-      return () => this.listeners.delete(listener)
+      return () => { this.listeners.delete(listener); this.waiters.delete(reject) }
     })
   }
   async evaluate(session, expression, contextId) {

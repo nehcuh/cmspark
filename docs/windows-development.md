@@ -65,3 +65,16 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 Node22 的 `Stats.isFIFO()`／`isSocket()` 在 Windows 上会固定返回 false，不能据此认定 `fstat` 得到的 fd3 不是管道；同版 libuv 会将实际 named pipe 的 mode 标为 FIFO。有限观察器只接受整数 mode 中真实 S_IFMT 对应的 FIFO／已导出的 SOCK 类型，继续拒绝普通文件、目录、字符设备与未知类型，不按平台无条件放行。可选常量未导出不应在 fixture 中手造；源派生正控应执行实际安装 Node 的 Stats 函数并保持 Windows FIFO 正控必需。参考 [Node22 Stats 实现](https://github.com/nodejs/node/blob/v22.23.2/lib/internal/fs/utils.js#L539-L545) 与 [同版 libuv fstat](https://github.com/nodejs/node/blob/v22.23.2/deps/uv/src/win/fs.c#L2200-L2220)。这是此次新增观察器回归的因果修复，不是历史窗口身份失败原因的证明。
 
 修改实际函数的依赖时，须找全提取该函数的 AST／VM 消费者，不能只验证改动附近的 switch。`handleStateChange` 加入 bridge 断线消费者后，历史连接测试必须显式绑定这个惰性接口，并用真实函数调用次数证明断线通知；原历史、聊天、owner/request/selection 断言不能删除或放松。只读源合并无冲突与类型绿都不能代替这类实际消费者执行。
+
+## 长 CI 的反馈与桌面隔离（#750）
+
+先用连续实际 job/step 元数据分开“在哪一步失败”和“这一步内部为什么失败”。2026-10-21 的20个不同 revision 样本为 Windows10FAIL/10PASS，中位约26.5分钟；18次执行到完整 census 的中位约17.2分钟。这不是固定版本 flake 率，也不能据此把新功能验收错误称系统根因。
+
+CI 的 Windows canonical 与 directed native 使用两个独立 fresh hosted VM，原生动作在各自桌面内仍串行，原 lease/close/身份／预算不变。两路都必须成功；新增 job 不能只凭旧 check 通过而省略。canonical 保全原 npm test／封存，native 自己安装 frontend、执行原 stage:win-scripts 并构建全部必需 fixture；不要借另一 VM 的副作用、已注册窗口、缓存可执行文件或路径当准备正证。末尾被动模块诊断仅观察 canonical sealed baseline。
+
+源码／YAML／LF-CRLF／真实返回契约应在慢原生门之前跑受影响 CPU 控制，避免花半小时才发现确定性夹具错误。下载缓存恢复放实际安装之前，键覆盖两端锁；保原安装和供应完整性。相同 tsc 入口不等于相同输入／输出，未有完整编译闭包等价就不删。分 VM 可缩短关键路径但增加总 CPU／下载，报告真实 head/main 两项成本；不延时、重试、skip/COE 或增加同桌面并发消红。
+
+
+## 命令 ACK 之后仍要传播 transport 终态（#723）
+
+CDP target／context 的事件等待不能只依靠命令 pending Map：初始 getTargets／Runtime.enable 已 ACK 后，Map 可以为空，socket close 仍须拒绝独立事件等待者；已有 closed 入口不能再发命令，成功与 abort 应退订。用真实完整类及原 reason／并发／迟到事件反例验证，保持原时限和清理。此源码缺口只证明一类错误会被最终 timeout 掩盖，不证明历史 Windows 的 transport 曾关闭；不要因此猜 flag、复活旧 worker、延预算或以 CPU 冒原生。
