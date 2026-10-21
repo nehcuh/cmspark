@@ -483,6 +483,7 @@ export interface AgentState {
 export type AgentAction =
   | { type: "SET_WORKSPACE_HINTS"; view: WorkspaceHintView | null }
   | { type: "SET_CONNECTION"; state: ConnectionState }
+  | { type: "OBSERVE_CODING_HISTORY_CONNECTION"; state: ConnectionState }
   | { type: "SET_THREADS"; threads: Thread[] }
   | { type: "SET_ACTIVE_THREAD"; threadId: string }
   | { type: "ADD_MESSAGE"; message: Message }
@@ -1165,6 +1166,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       if (v && (state.connectionState !== "connected" || state.activeThreadId !== v.threadId || state.activeThreadSelectionRevision !== v.revision)) return state
       return { ...state, workspaceHints: v }
     }
+    case "OBSERVE_CODING_HISTORY_CONNECTION":
     case "SET_CONNECTION": {
       if (!["connected", "connecting", "disconnected"].includes(action.state)) return state
       const historyRevision = state.codingHistoryConnectionRevision ?? 0
@@ -1172,7 +1174,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ? historyRevision + 1 : historyRevision
       // P1 C-RACE-02: drop sticky busy when companion disconnects — in-flight
       // map never gets chat.done/aborted over a dead socket.
-      if (action.state === "disconnected") {
+      // Management broadcasts observe history/connection only. The existing
+      // status action retains ownership of chat busy/stream cleanup.
+      if (action.type === "SET_CONNECTION" && action.state === "disconnected") {
         return {
           ...state,
           workspaceHints: null,

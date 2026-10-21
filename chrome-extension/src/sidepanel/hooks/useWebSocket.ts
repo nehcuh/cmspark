@@ -425,7 +425,7 @@ export function useWebSocket() {
       if (!msg || typeof msg.type !== "string") return false
       if (msg.type === "thread.mutation.connection") {
         if (msg.state !== "connected" && msg.state !== "connecting" && msg.state !== "disconnected") return false
-        dispatch({ type: "SET_CONNECTION", state: msg.state })
+        dispatch({ type: "OBSERVE_CODING_HISTORY_CONNECTION", state: msg.state })
         workspaceHintsRef.current.select(activeThreadRef.current, workspaceHintSelectionRef.current)
         workspaceHintsRef.current.observe(msg)
         dispatch({ type: "SET_WORKSPACE_HINTS", view: workspaceHintsRef.current.view() })

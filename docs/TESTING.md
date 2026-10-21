@@ -1,5 +1,9 @@
 # TESTING
 
+### #732 历史连接观察与聊天清理分离
+
+`coding-history-connection-732.test.ts` 除原快速／同批重连及 owner/request/runtime 围栏外，验证管理连接广播不改变聊天 busy、processing、stream、reasoning、messages；原 `SET_CONNECTION` 状态路径仍清理断线工作。新增 `OBSERVE_CODING_HISTORY_CONNECTION` 仅属于 UI 内存动作，不改变 wire／后端权限。必须同时复验原 `board-hint-receipts-660` lifecycle 的断线保草稿、无自动重试及聊天不变断言，不可只看 ACP 正控。惰性 callback／SSR 与普通前端类型程序不称 mounted React 或远端原生通过。
+
 ### #732 固定 Linux CFT 供应边界（未完成远端验收）
 
 `accept-acp-history-hosted-732.mjs` 仅在 Node22、Linux x64、GitHub-hosted Ubuntu22 的正常 build artifact 身份核对后运行：一次官方 CFT155.0.8059.84 固定包供应 → 一次独立端口及精确 `Browser.getVersion` 正证 → 原完整原生 SidePanel／正常 daemon 重启／历史／reload 业务。包199014491字节与309成员的 SHA256、CRC、布局、普通文件身份及只读模式全部固定；无系统安装、外部解包工具、缓存、重定向、重试或任意 executable override。

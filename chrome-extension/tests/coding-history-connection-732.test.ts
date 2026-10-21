@@ -62,6 +62,25 @@ function fixture(ending = "\n", flags: { open?: boolean; enabled?: boolean } = {
   return { get state() { return state }, wire, route, emit, render, dispatch, deliver }
 }
 
+test("#732 management connection observations preserve chat, while the existing status action still clears disconnected work", async () => {
+  const f = fixture(); f.render(); await f.deliver(0, true)
+  f.dispatch({ type: "SET_THREAD_BUSY", threadId: "owner", busy: true })
+  f.dispatch({ type: "SET_PROCESSING", isProcessing: true })
+  f.dispatch({ type: "SET_STREAMING", content: "owned chat stream" })
+  f.dispatch({ type: "SET_STREAMING_REASONING", content: "owned chat reasoning" })
+  const chat = () => JSON.stringify({ busy: f.state.threadBusyById, processing: f.state.isProcessing,
+    content: f.state.streamingContent, reasoning: f.state.streamingReasoning, messages: f.state.messages })
+  const before = chat(), revision = f.state.codingHistoryConnectionRevision
+  f.emit("disconnected")
+  assert.equal(chat(), before, "management broadcast must not clear unrelated chat activity")
+  assert.equal(f.state.codingHistory, null)
+  assert.equal(f.state.codingHistoryConnectionRevision, revision + 1)
+  f.emit("connected"); f.render(); assert.equal(f.wire.length, 2)
+  f.dispatch({ type: "SET_CONNECTION", state: "disconnected" })
+  assert.equal(f.state.isProcessing, false); assert.deepEqual(f.state.threadBusyById, {})
+  assert.equal(f.state.streamingContent, ""); assert.equal(f.state.streamingReasoning, "")
+})
+
 test("#732 actual rapid connection broadcasts invalidate live history between polls (LF/CRLF)", async () => {
   for (const ending of ["\n", "\r\n"]) {
     const f = fixture(ending); f.render(); await f.deliver(0, true)
