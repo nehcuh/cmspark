@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Refs #732：hosted 夹具在监听登记后等待同 worker 关联通道的真实 Chrome API 回执，并在原隔离准备子进程用正常 ThreadManager 持久化唯一合成预绑定对话，再通过实际导航 UI 选择与核验。移除不具原生选夹收据的 workspace.set／传输 ACK 假绑定路径；这不是 picker 或真人授权证明，真实 ACP 创建、确认、重启／重载／取消与隐私门禁保留。当前原生首失败仍 UNKNOWN，开发版不发版。
+
 - Refs #732：hosted SidePanel 验收按固定 Chromium 155 的实际 DTO 分离 context UUID／大写32位文档 token；非 tab Port 只作其真实端点二级核验。正证改为原生事件／上下文与完整双目标集合唯一性、已知浏览器 profile 及实际 frame／loader 连续性，歧义、导航 ABA 和清理期间失效均拒绝。原手写 UUID／Port 字段正控不再冒充真实回执；CPU 非原生通过，原完整历史业务仍 NOT_READY，0.6.14 为开发版。
 
 - Refs #732：hosted SidePanel 证明严格比较原生 `onOpened` 的 URL pathname（含前导 `/`），不再与相对资源路径混用；永久正控由实际 URL pathname 派生，并拒绝相对拼写。固定供应正控已实际完成，原完整业务仍在 `PANEL` 拒绝、唯一首因未被公开回执定位；本修正不冒称原生或历史业务已通过。

@@ -172,7 +172,16 @@ export async function installNativePanelWitness(api,scope,spec) {
   cleanup=Object.freeze({request:spec.key,close})
   scope[spec.key]=witness
   scope[cleanupKey]=cleanup
-  try{api.sidePanel.onOpened.addListener(onOpened);api.runtime.onConnect.addListener(onConnect);timer=setTimeout(close,Math.max(0,expires-Date.now()));return true}catch{bad();refuse()}
+  try{
+    api.sidePanel.onOpened.addListener(onOpened);api.runtime.onConnect.addListener(onConnect)
+    timer=setTimeout(close,Math.max(0,expires-Date.now()))
+    // RequestWorker and EventRouter share the worker proxy associated group.
+    // This real Chrome response observes registration before another renderer
+    // opens; a CDP script acknowledgement alone has no such ordering contract.
+    current();const ready=await api.runtime.getContexts(filter);current()
+    if(!Array.isArray(ready)||ready.length)refuse()
+    return true
+  }catch{bad();refuse()}
 }
 export function connectNativePanelWitness(api,scope,key,name,expires) {
   const cleanupKey=key+'_cleanup'
@@ -337,6 +346,36 @@ export function privateRead(root,name,max=1024*1024) {
   const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK)
   try{const b=fs.fstatSync(fd);if(b.dev!==s.dev||b.ino!==s.ino)fail();const bytes=Buffer.alloc(max+1),n=fs.readSync(fd,bytes,0,max+1,0),a=fs.fstatSync(fd),l=fs.lstatSync(file),r=fs.lstatSync(root);if(n>max||a.size!==n||a.size!==b.size||a.mtimeMs!==b.mtimeMs||a.ino!==l.ino||a.dev!==l.dev||a.nlink!==1||l.nlink!==1||a.mode!==s.mode||a.uid!==s.uid||l.mode!==s.mode||l.uid!==s.uid||r.ino!==rs.ino||r.dev!==rs.dev||r.mode!==rs.mode||r.uid!==rs.uid||r.isSymbolicLink())fail();return bytes.subarray(0,n).toString('utf8')}finally{fs.closeSync(fd)}
 }
+// Synthetic pre-existing user data for this remote-only acceptance, not a
+// picker/human grant. The real daemon subsequently loads the normal store.
+export const OWNED_THREAD=Object.freeze({id:'owned-history-732',alias:'Owned history acceptance'})
+export function seedOwnedThread(ThreadManager,workspace) {
+  const refuse=()=>{throw Error('OWNED_THREAD_PREPARATION_REFUSED')}
+  if(typeof workspace!=='string'||!workspace.startsWith('/')||workspace.includes('\0'))refuse()
+  const manager=new ThreadManager()
+  if(manager.list({include_trashed:true}).length!==0)refuse()
+  const made=manager.create(OWNED_THREAD.alias,OWNED_THREAD.id)
+  if(made.id!==OWNED_THREAD.id||made.alias!==OWNED_THREAD.alias)refuse()
+  const updated=manager.update(made.id,{workspace_root:workspace})
+  if(updated?.id!==made.id||updated.workspace_root!==workspace)refuse()
+  const again=new ThreadManager(),rows=again.list({include_trashed:true}),read=again.get(made.id)
+  if(rows.length!==1||rows[0].id!==made.id||rows[0].alias!==OWNED_THREAD.alias||rows[0].workspace_root!==workspace||read?.id!==made.id||read.workspace_root!==workspace||again.getMessages(made.id).length!==0)refuse()
+  return OWNED_THREAD.id
+}
+// Click only existing stock navigation controls. No runtime bind/React entry.
+export function seededThreadSelectionExpression(operation) {
+  if(!['open','exists','select','selected','close'].includes(operation))fail()
+  return `(${function(operation,alias){
+    const refuse=()=>{throw Error('OWNED_THREAD_UI_REFUSED')}
+    const rows=()=>[...document.querySelectorAll('.cm-nav-thread')].filter(b=>b.title===alias)
+    if(operation==='open'){if(document.querySelector('.cm-navigation'))return true;const buttons=[...document.querySelectorAll('.cm-navigation-toggle')];if(buttons.length!==1||buttons[0].disabled)refuse();buttons[0].click();return true}
+    if(operation==='close'){const buttons=[...document.querySelectorAll('.cm-navigation-disclosure button[aria-label="关闭导航"]')];if(buttons.length>1)refuse();if(buttons.length)buttons[0].click();return true}
+    const found=rows();if(found.length>1)refuse();if(found.length!==1)return false
+    if(operation==='exists')return !found[0].disabled
+    if(operation==='select'){if(found[0].disabled)refuse();found[0].click();return true}
+    return found[0].getAttribute('aria-current')==='page'
+  }.toString()})(${JSON.stringify(operation)},${JSON.stringify(OWNED_THREAD.alias)})`
+}
 // Root contents may change; inode/dev/uid/mode/type/canonical path must not.
 export function sameOwnedRoot(root,identity,stat=fs.lstatSync,realpath=fs.realpathSync,uid=process.getuid?.()) {
   try {
@@ -369,7 +408,8 @@ export async function main() {
     const require=createRequire(path.join(ROOT,'companion/package.json'));({WebSocket}=require('ws'))
     timer=setTimeout(()=>{abort.abort();for(const c of clients)c.abort();observer?.terminate();for(const c of children)if(c.exitCode===null&&c.signalCode===null)c.kill('SIGKILL')},remaining())
     const cfg={port:23401,llm:{api_key:''},vision:{api_key:''},voice:{modelPrewarm:false},embedded_terminal:{enabled:false},coding_handoff:{open_local_terminal:false},mcp:{enabled:false,servers:{}},acp:{enabled:true,servers:{owned732:{enabled:true,display_name:'Owned history fixture',transport:'stdio',protocol:'acp',command:process.execPath,args:[path.join(ROOT,'companion/tests/fixtures/acp-lifecycle.cjs')],env:{FIXTURE_MODE:'hang-prompt',FIXTURE_PID_FILE:path.join(owned,'peer.pid'),FIXTURE_STAGE_FILE:path.join(owned,'peer.stage')},policy:{profile:'review_readonly',allow_write:false,allow_exec:false}}},policy:{require_workspace:true,force_confirm_session_start:true,default_profile:'review_readonly'}}}
-    const prepared=child(process.execPath,['-e',`require(${JSON.stringify(path.join(ROOT,'companion/dist/config.js'))}).saveConfig(${JSON.stringify(cfg)})`],env)
+    if(fs.existsSync(path.join(env.CMSPARK_DATA_DIR,'threads')))fail()
+    const prepared=child(process.execPath,['-e',`require(${JSON.stringify(path.join(ROOT,'companion/dist/config.js'))}).saveConfig(${JSON.stringify(cfg)});const OWNED_THREAD=${JSON.stringify(OWNED_THREAD)};(${seedOwnedThread.toString()})(require(${JSON.stringify(path.join(ROOT,'companion/dist/threads/thread-manager.js'))}).ThreadManager,${JSON.stringify(workspace)})`],env)
     await limit(prepared.closed,remaining());if(prepared.exitCode!==0)fail()
     stage='ARTIFACT';if(!/^[a-f0-9]{40}$/.test(input.GITHUB_SHA||'')||fs.readFileSync(path.join(ROOT,'acceptance-build-sha.txt'),'utf8')!==input.GITHUB_SHA+'\n')fail();const built=path.join(ROOT,'chrome-extension/build/chrome-mv3-prod'),m=JSON.parse(fs.readFileSync(path.join(built,'manifest.json'),'utf8')),paths=manifestPaths(m),extension=path.join(owned,'extension')
     const inspect=dir=>{for(const s of fs.readdirSync(dir,{withFileTypes:true})){if(s.isSymbolicLink()||!s.isDirectory()&&!s.isFile())fail();if(s.isDirectory())inspect(path.join(dir,s.name))}};inspect(built);fs.cpSync(built,extension,{recursive:true,dereference:false})
@@ -398,9 +438,17 @@ export async function main() {
     const auth=async()=>{remaining();const socket=new WebSocket('ws://127.0.0.1:23401',{origin}),ready=deferred();socket.closed=new Promise(resolve=>socket.once('close',resolve));observers.add(socket);socket.on('error',()=>ready.reject(new Error('AUTH')));socket.on('message',b=>{let r;try{r=JSON.parse(b.toString())}catch{return}if(r.type==='auth.challenge')socket.send(JSON.stringify({type:'auth.handshake',proof:crypto.createHmac('sha256',secret).update(r.nonce).digest('hex'),protocol_version:1}));if(r.type==='auth.ok')ready.resolve(true)});observer=socket;await limit(ready.promise,Math.min(BOUNDS.auth,remaining()))}
     await auth();browserPhase='AUTH_DONE';stage='PANEL';const before=await targets();view=await openNativePanel({worker,pairingView,tab,url:origin+'/'+paths.page,before,targets,connect,targetSocket,poll,remaining:nav,nonce:crypto.randomBytes(16).toString('hex')})
     const evaluate=expression=>view.evaluate(expression,nav());const waitDOM=expression=>poll(()=>evaluate(expression),nav())
-    await waitDOM("!!document.querySelector('.cm-header-new')");const initialList=await request({type:'thread.list'});if(!Array.isArray(initialList.threads))fail();const oldThreads=new Set(initialList.threads.map(t=>t.id));await evaluate("document.querySelector('.cm-header-new').click();true")
-    thread=await poll(async()=>{const list=await request({type:'thread.list'});if(!Array.isArray(list.threads))fail();const created=list.threads.filter(t=>!oldThreads.has(t.id));if(created.length>1)fail();return created[0]?.id},BOUNDS.auth)
-    await evaluate(`chrome.runtime.sendMessage({type:'workspace.set',thread_id:${JSON.stringify(thread)},path:${JSON.stringify(workspace)}}).then(r=>{if(r?.ok===false)throw new Error('WORKSPACE')})`)
+    await waitDOM("!!document.querySelector('.cm-header-new')")
+    const initialList=await request({type:'thread.list'})
+    if(!Array.isArray(initialList.threads)||initialList.threads.length!==1)fail()
+    const seeded=initialList.threads[0]
+    if(seeded.id!==OWNED_THREAD.id||seeded.alias!==OWNED_THREAD.alias||seeded.workspace_root!==workspace)fail()
+    thread=seeded.id
+    await evaluate(seededThreadSelectionExpression('open'));await waitDOM(seededThreadSelectionExpression('exists'))
+    await evaluate(seededThreadSelectionExpression('select'))
+    await waitDOM("!document.querySelector('.cm-navigation-disclosure')")
+    await evaluate(seededThreadSelectionExpression('open'));await waitDOM(seededThreadSelectionExpression('selected'))
+    await evaluate(seededThreadSelectionExpression('close'))
     const openPanel=()=>evaluate("window.dispatchEvent(new CustomEvent('cmspark:open-coding-handoff'));true");await openPanel()
     await waitDOM(`!![...document.querySelectorAll('[title]')].find(e=>e.title===${JSON.stringify(workspace)})`)
     await waitDOM("[...document.querySelectorAll('select option')].some(x=>x.value==='owned732')")

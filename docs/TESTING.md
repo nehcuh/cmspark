@@ -419,6 +419,29 @@ an explicit failure. Automated disclosure/L2 clicks are synthetic test actions,
 not human authorization. A separate real session cancel retains its terminal
 history; normal shutdown is never relabeled as a crash.
 
+Before the daemon starts, the existing isolated configuration preparation child
+uses the normal shipped ThreadManager create/update and serializer to seed exactly
+one synthetic existing conversation (fixed ID/alias) with this run's owned
+workspace. A pre-existing threads directory or inconsistent reload refuses. The
+shipping daemon/UI must load that exact one-thread store; the helper clicks the
+actual navigation toggle/conversation button, checks its selected aria-current,
+and then verifies the exact workspace title and actual agent option. It does not
+call workspace.set, recordNativePick, forge a picker, dispatch internal React
+state or claim a fresh conversation-New UI test. This is explicit synthetic
+prebound user data, not human/native-picker authorization. Original actual ACP
+session creation through the stock UI/L2 and every restart/reload/cancel/privacy
+check remain. A permanent real-store serializer/reload control and the actual
+workspace.set policy refusal keep these boundaries distinct.
+
+After installing its temporary listeners, the worker awaits a real filtered
+getContexts response and requires the pre-open set still empty before the
+separate pairing renderer opens. EventRouter registration and RequestWorker
+share the worker proxy associated group, unlike the independent worker DevTools
+reply. A mere CDP script acknowledgement does not establish browser-side listener
+installation. Controlled asynchronous delivery/refusal/occupied-context cases
+exercise this ordering; they are not a replay of the hosted scheduler and do not
+prove the old run's unique cause. No timer/retry/event-replay fallback is added.
+
 The request first resolves its owned pairing tab's concrete window and known,
 nonempty browser context. A temporary `sidePanel.onOpened` listener observes
 that exact window and URL pathname, followed by one fresh native

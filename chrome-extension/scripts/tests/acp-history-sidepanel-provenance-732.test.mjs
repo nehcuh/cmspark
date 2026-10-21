@@ -281,3 +281,19 @@ test('joint target set must anchor the actual owned pairing tab when it is suppl
   const before=[targetPage('pair')],after=[...before,targetPage('native')],debug=[nativeTarget('pair',8),nativeTarget('native')]
   assert.throws(()=>choosePanel(before,after,url,debug,7))
 })
+
+// EventRouter and RequestWorker share the worker proxy associated group; CDP
+// script replies do not. Only the external delivery order is controlled here.
+for(const mode of ['delayed','barrier-reject','barrier-context'])test('browser listener registration response barrier '+mode,async()=>{
+  const f=fixture(),add=f.onOpened.addListener.bind(f.onOpened),emit=f.onOpened.emit.bind(f.onOpened),get=f.chrome.runtime.getContexts
+  let browserInstalled=false,pending=false,responses=0,drops=0
+  f.onOpened.addListener=fn=>{add(fn);pending=true}
+  f.onOpened.emit=info=>{if(browserInstalled)emit(info);else drops++}
+  f.chrome.runtime.getContexts=async filter=>{
+    if(pending&&!browserInstalled){browserInstalled=true;responses++;if(mode==='barrier-reject')throw Error('SYNTHETIC_BROWSER_RESPONSE_REFUSED');if(mode==='barrier-context')return [f.row]}
+    return get(filter)
+  }
+  if(mode==='delayed'){assert.equal(await openNativePanel(f.io),f.view);assert.equal(responses,1);assert.equal(drops,0);assert.equal(f.counts().connected,1)}
+  else {await assert.rejects(openNativePanel(f.io));assert.equal(f.counts().opens,0);assert.equal(f.counts().connected,0)}
+  f.clean()
+})

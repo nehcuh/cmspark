@@ -268,3 +268,99 @@ test('actual main finally extraction refuses missing/duplicate/outside boundarie
   const outside='  finally {\n    throw Error("FOREIGN_NOT_EXECUTED")\n  }\n'
   assert.equal(extractMainFinally(outside+source),extractMainFinally(source))
 })
+
+// Normal ThreadManager and atomicWriteJSON execute on real owned files; only
+// configuration-root and unused imports are inert. This is not a daemon run.
+async function actualSeedStore(dir) {
+  const {createRequire}=await import('node:module'),require=createRequire(new URL('../../../companion/package.json',import.meta.url)),ts=require('typescript')
+  const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..'),cache=new Map()
+  const options=ts.convertCompilerOptionsFromJson(JSON.parse(fs.readFileSync(path.join(repo,'companion/tsconfig.json'),'utf8')).compilerOptions,path.join(repo,'companion')).options
+  const sourceModule=(relative)=>{
+    if(cache.has(relative))return cache.get(relative)
+    const file=path.join(repo,'companion/src',relative),text=fs.readFileSync(file,'utf8'),out=ts.transpileModule(text,{fileName:file,compilerOptions:options,reportDiagnostics:true})
+    assert.equal(out.diagnostics.length,0)
+    const module={exports:{}},unused=new Proxy({},{get(){throw Error('UNUSED_STORE_IMPORT_EXECUTED')}})
+    const req=id=>{
+      if(id==='fs'||id==='node:fs')return fs;if(id==='path'||id==='node:path')return path;if(id==='node:crypto')return require('node:crypto')
+      if(id==='../config')return {getConfigDir:()=>dir,getConfig:()=>{throw Error('UNUSED_CONFIG_READ')}}
+      if(relative==='threads/thread-manager.ts'&&id==='../io')return sourceModule('io.ts')
+      if(relative==='threads/thread-manager.ts'&&id==='./project-store')return sourceModule('threads/project-store.ts')
+      if(relative==='threads/thread-manager.ts'&&id==='./run-progress')return sourceModule('threads/run-progress.ts')
+      if(relative==='threads/run-progress.ts'&&id==='../orchestrator/constants')return sourceModule('orchestrator/constants.ts')
+      if(['./digest','./user-tags','./metadata-patch','./distill','./thread-inspect','./runtime-context-budget','../loop/loop-state','./project-store','../tool/plan-readonly','../llm/image-sniff','./image-sidecar'].includes(id))return unused
+      throw Error('UNEXPECTED_STORE_IMPORT')
+    }
+    new vm.Script(out.outputText,{filename:file}).runInNewContext({module,exports:module.exports,require:req,process,Buffer,console,Date,setTimeout,clearTimeout})
+    cache.set(relative,module.exports);return module.exports
+  }
+  return {ThreadManager:sourceModule('threads/thread-manager.ts').ThreadManager,ts,repo}
+}
+function actualPreparationExpression(source,ts,bindings){
+  const file=ts.createSourceFile('actual-hosted.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),found=[]
+  const visit=n=>{if(ts.isVariableDeclaration(n)&&n.name.getText(file)==='prepared'&&n.initializer&&ts.isCallExpression(n.initializer)){const args=n.initializer.arguments[1];if(args&&ts.isArrayLiteralExpression(args)&&args.elements.length===2&&args.elements[0].getText(file)==="'-e'")found.push(args.elements[1])}ts.forEachChild(n,visit)};visit(file);assert.equal(found.length,1)
+  return new vm.Script(found[0].getText(file)).runInNewContext(bindings)
+}
+test('seeded preparation actual normal store serializes one prebound conversation and reloads it',async()=>{
+  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-seed-'))),workspace=path.join(dir,'workspace');fs.mkdirSync(workspace,{mode:0o700})
+  try {
+    const h=await import('../accept-acp-history-hosted-732.mjs'),{ThreadManager,ts,repo}=await actualSeedStore(dir),configFile=path.join(repo,'companion/dist/config.js'),storeFile=path.join(repo,'companion/dist/threads/thread-manager.js'),calls=[]
+    const source=fs.readFileSync(path.join(repo,'chrome-extension/scripts/accept-acp-history-hosted-732.mjs'),'utf8')
+    const expression=actualPreparationExpression(source,ts,{path,ROOT:repo,cfg:{acp:{enabled:true}},workspace,OWNED_THREAD:h.OWNED_THREAD,seedOwnedThread:h.seedOwnedThread,JSON})
+    new vm.Script(expression).runInNewContext({require:id=>{calls.push(id);if(id===configFile)return{saveConfig:()=>{}};if(id===storeFile)return{ThreadManager};throw Error('UNEXPECTED_PREPARATION_IMPORT')},process,Buffer})
+    const reloaded=new ThreadManager(),rows=reloaded.list({include_trashed:true});assert.equal(rows.length,1);assert.equal(rows[0].id,'owned-history-732');assert.equal(rows[0].alias,'Owned history acceptance');assert.equal(rows[0].workspace_root,workspace);assert.equal(reloaded.getMessages(rows[0].id).length,0)
+    const index=path.join(dir,'threads/index.json'),messages=path.join(dir,'threads',rows[0].id+'.json');assert.equal(fs.statSync(index).mode&0o777,0o600);assert.equal(fs.statSync(messages).mode&0o777,0o600);assert.equal(fs.readdirSync(path.join(dir,'threads')).length,2);assert.deepEqual(calls,[configFile,storeFile]);assert.throws(()=>h.seedOwnedThread(ThreadManager,workspace));assert.equal(new ThreadManager().list().length,1)
+  }finally{fs.rmSync(dir,{recursive:true,force:true})}
+})
+
+function stockNavigationContract(ts,repo,thread) {
+  const file=path.join(repo,'chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx'),text=fs.readFileSync(file,'utf8'),tree=ts.createSourceFile(file,text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),buttons=[]
+  const visit=n=>{if(ts.isJsxOpeningElement(n)&&n.tagName.getText(tree)==='button'&&n.attributes.properties.some(p=>ts.isJsxAttribute(p)&&p.name.getText(tree)==='className'&&p.initializer&&ts.isStringLiteral(p.initializer)&&p.initializer.text==='cm-nav-thread'))buttons.push(n);ts.forEachChild(n,visit)};visit(tree);assert.equal(buttons.length,1)
+  const attr=name=>{const rows=buttons[0].attributes.properties.filter(p=>ts.isJsxAttribute(p)&&p.name.getText(tree)===name);assert.equal(rows.length,1);return rows[0].initializer.expression.getText(tree)}
+  const timelineFile=path.join(repo,'chrome-extension/src/sidepanel/utils/thread-timeline.ts'),timeline=ts.createSourceFile(timelineFile,fs.readFileSync(timelineFile,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TS)
+  const actualFunction=name=>{const found=timeline.statements.filter(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);assert.equal(found.length,1);const output=ts.transpileModule(found[0].getText(timeline),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;const m={exports:{}};new vm.Script(output).runInNewContext({module:m,exports:m.exports});return m.exports[name]}
+  const messages=[],state={activeThreadId:null,threads:[thread]},context={thread,state,displayThreadTitle:actualFunction('displayThreadTitle'),isFleetWorkerThread:actualFunction('isFleetWorkerThread'),workerBelongTitle(){throw Error('UNEXPECTED_WORKER')},dispatch(action){assert.equal(action.type,'SET_ACTIVE_THREAD');state.activeThreadId=action.threadId},chrome:{runtime:{sendMessage:frame=>messages.push(frame)}},onNavigate(){if(context.deferNavigate)context.pendingNavigate=true;else context.open=false},open:false}
+  const evaluate=expression=>new vm.Script(expression).runInNewContext(context),button={disabled:false,get title(){return evaluate(attr('title'))},getAttribute:name=>name==='aria-current'?evaluate(attr('aria-current')):null,click:evaluate('('+attr('onClick')+')')}
+  return {context,button,messages,state}
+}
+test('seeded UI selector clicks actual shipping navigation handler and checks actual selected aria-current',async()=>{
+  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-ui-')))
+  try{
+    const h=await import('../accept-acp-history-hosted-732.mjs'),{ThreadManager,ts,repo}=await actualSeedStore(dir),workspace=path.join(dir,'workspace');fs.mkdirSync(workspace);h.seedOwnedThread(ThreadManager,workspace)
+    const s=stockNavigationContract(ts,repo,new ThreadManager().get(h.OWNED_THREAD.id)),toggle={disabled:false,click(){s.context.open=true}},close={click(){s.context.open=false}}
+    const doc={querySelector:q=>q==='.cm-navigation'&&s.context.open?{}:null,querySelectorAll:q=>q==='.cm-navigation-toggle'?[toggle]:q==='.cm-nav-thread'&&s.context.open?[s.button]:q==='.cm-navigation-disclosure button[aria-label="关闭导航"]'&&s.context.open?[close]:[]}
+    const run=action=>vm.runInNewContext(h.seededThreadSelectionExpression(action),{document:doc})
+    assert.equal(run('open'),true);assert.equal(run('exists'),true);assert.equal(run('selected'),false);assert.equal(run('select'),true);assert.equal(s.state.activeThreadId,h.OWNED_THREAD.id);assert.equal(JSON.stringify(s.messages),JSON.stringify([{type:'thread.select',threadId:h.OWNED_THREAD.id}]))
+    assert.equal(run('open'),true);assert.equal(run('selected'),true);assert.equal(run('close'),true);assert.equal(s.context.open,false)
+    // Execute the actual main caller span with a deferred React close commit.
+    // onNavigate is real above; only its render scheduling is controlled here.
+    let closeWaits=0;s.context.deferNavigate=true;s.context.open=true
+    const originalQuery=doc.querySelector;doc.querySelector=q=>q==='.cm-navigation-disclosure'&&s.context.open?{}:originalQuery(q)
+    const source=fs.readFileSync(path.join(repo,'chrome-extension/scripts/accept-acp-history-hosted-732.mjs'),'utf8'),begin=source.indexOf("    await evaluate(seededThreadSelectionExpression('select'))"),end=source.indexOf("    await evaluate(seededThreadSelectionExpression('close'))",begin)
+    assert.ok(begin>0&&end>begin)
+    const body=source.slice(begin,end),evaluate=async expression=>vm.runInNewContext(expression,{document:doc}),waitDOM=async expression=>{if(expression==="!document.querySelector('.cm-navigation-disclosure')"){assert.equal(await evaluate(expression),false);closeWaits++}if(s.context.pendingNavigate){s.context.open=false;s.context.pendingNavigate=false}assert.equal(await evaluate(expression),true)}
+    await new vm.Script('(async()=>{'+body+'})()').runInNewContext({evaluate,waitDOM,seededThreadSelectionExpression:h.seededThreadSelectionExpression})
+    assert.equal(closeWaits,1);assert.equal(s.context.open,true);assert.equal(run('selected'),true);run('close')
+  }finally{fs.rmSync(dir,{recursive:true,force:true})}
+})
+test('seeded UI selector refuses duplicate disabled wrong-alias and stale-selection projections',async()=>{
+  const h=await import('../accept-acp-history-hosted-732.mjs');let clicked=0
+  const own={title:h.OWNED_THREAD.alias,disabled:false,getAttribute:()=>null,click(){clicked++}},doc=rows=>({querySelectorAll:()=>rows})
+  const run=(operation,rows)=>vm.runInNewContext(h.seededThreadSelectionExpression(operation),{document:doc(rows)})
+  assert.throws(()=>run('select',[own,own]));assert.throws(()=>run('select',[{...own,disabled:true}]));assert.equal(run('select',[{...own,title:'foreign'}]),false);assert.equal(run('selected',[own]),false);assert.equal(clicked,0);assert.throws(()=>h.seededThreadSelectionExpression('bind'))
+})
+test('synthetic prebound store does not bypass actual workspace.set native-pick policy',async()=>{
+  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-policy-')))
+  try{
+    const {ThreadManager,ts,repo}=await actualSeedStore(dir),workspace=path.join(dir,'workspace');fs.mkdirSync(workspace)
+    const h=await import('../accept-acp-history-hosted-732.mjs');h.seedOwnedThread(ThreadManager,workspace)
+    const file=path.join(repo,'companion/src/capability/workspace.ts'),output=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,work={exports:{}}
+    const req=id=>{if(id==='fs')return fs;if(id==='path')return path;if(id==='os')return os;if(id==='./modules')return {requireModule(){throw Error('UNUSED_MODULE')}};if(id==='./project-dir')return {cmsparkProjectsRoot(){throw Error('UNUSED_PROJECT_ROOT')}};throw Error('UNEXPECTED_WORKSPACE_IMPORT')}
+    new vm.Script(output).runInNewContext({require:req,module:work,exports:work.exports,process,Buffer,Date})
+    const source=fs.readFileSync(path.join(repo,'companion/src/message-router.ts'),'utf8'),start=source.indexOf('case "workspace.set": {'),end=source.indexOf('case "workspace.clear":',start);assert.ok(start>0&&end>start)
+    let body=source.slice(start+'case "workspace.set": {'.length,end).trim();assert.ok(body.endsWith('}'));body=body.slice(0,-1);assert.equal(body.split('await import("./capability/workspace")').length,2);body=body.replace('await import("./capability/workspace")','await io.workspace()')
+    const compiled=ts.transpileModule('async function run(rest,threadManager,io){'+body+'}',{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,run=new vm.Script(compiled+';run').runInNewContext({})
+    const manager=new ThreadManager();let updates=0;const result=await run({thread_id:h.OWNED_THREAD.id,path:workspace},{get:id=>manager.get(id),update(){updates++;throw Error('UNAUTHORIZED_UPDATE')}},{workspace:async()=>work.exports})
+    assert.equal(result.type,'error');assert.match(result.error,/recent workspace.pick/);assert.equal(updates,0);assert.equal(new ThreadManager().get(h.OWNED_THREAD.id).workspace_root,workspace)
+    const main=fs.readFileSync(path.join(repo,'chrome-extension/scripts/accept-acp-history-hosted-732.mjs'),'utf8');assert.equal(main.includes("type:'workspace.set'"),false);assert.equal(main.includes('recordNativePick'),false);assert.equal(main.includes("if(fs.existsSync(path.join(env.CMSPARK_DATA_DIR,'threads')))fail()"),true)
+  }finally{fs.rmSync(dir,{recursive:true,force:true})}
+})
