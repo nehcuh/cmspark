@@ -406,6 +406,8 @@ Required later Windows checks: usable PrintWindow, overlapped BitBlt, stable sam
 
 ### #732 actual daemon restart and native SidePanel reload (hosted only)
 
+Fresh-document 验收复用既有 stock 导航按钮选中预置的合成对话，核实际 `aria-current=page` 与 mobile disclosure 已关闭后才发原 open-panel 事件。header 出现不等于异步 thread.list／owner 已提交；不改产品的 owner-change close，不直接写 React/store，不重置 pairing 起算的 60s navigation 或原 120s 业务期限。永久源控制覆盖延迟 hydrate、已就绪、延迟导航提交、缺失／disabled 行和 foreign owner；CPU 不是 mounted browser 或真实原生通过。
+
 The existing document consumes actual background connection observations directly.
 A UI-only history invalidation revision survives a disconnect/reconnect committed
 in one render batch, invalidates pending old replies, and refreshes read-only

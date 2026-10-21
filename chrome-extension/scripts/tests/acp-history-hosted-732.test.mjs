@@ -285,6 +285,8 @@ async function actualSeedStore(dir) {
       if(id==='../config')return {getConfigDir:()=>dir,getConfig:()=>{throw Error('UNUSED_CONFIG_READ')}}
       if(relative==='threads/thread-manager.ts'&&id==='../io')return sourceModule('io.ts')
       if(relative==='threads/thread-manager.ts'&&id==='./project-store')return sourceModule('threads/project-store.ts')
+      if(relative==='threads/thread-manager.ts'&&id==='./thread-inspect')return sourceModule('threads/thread-inspect.ts')
+      if(relative==='threads/thread-inspect.ts'&&id==='./cleanup-rules')return sourceModule('threads/cleanup-rules.ts')
       if(relative==='threads/thread-manager.ts'&&id==='./run-progress')return sourceModule('threads/run-progress.ts')
       if(relative==='threads/run-progress.ts'&&id==='../orchestrator/constants')return sourceModule('orchestrator/constants.ts')
       if(['./digest','./user-tags','./metadata-patch','./distill','./thread-inspect','./runtime-context-budget','../loop/loop-state','./project-store','../tool/plan-readonly','../llm/image-sniff','./image-sidecar'].includes(id))return unused
@@ -363,4 +365,50 @@ test('synthetic prebound store does not bypass actual workspace.set native-pick 
     assert.equal(result.type,'error');assert.match(result.error,/recent workspace.pick/);assert.equal(updates,0);assert.equal(new ThreadManager().get(h.OWNED_THREAD.id).workspace_root,workspace)
     const main=fs.readFileSync(path.join(repo,'chrome-extension/scripts/accept-acp-history-hosted-732.mjs'),'utf8');assert.equal(main.includes("type:'workspace.set'"),false);assert.equal(main.includes('recordNativePick'),false);assert.equal(main.includes("if(fs.existsSync(path.join(env.CMSPARK_DATA_DIR,'threads')))fail()"),true)
   }finally{fs.rmSync(dir,{recursive:true,force:true})}
+})
+
+// Fresh document readiness is the committed owner, not only the header. These
+// projections execute current shipping reducers/effects and real row onClick;
+// the tiny DOM host supplies no browser/layout/native or history-success DTO.
+async function freshOwnerControl(dir,{ready=false,deferClose=false,missing=false,disabled=false}={}) {
+  const h=await import('../accept-acp-history-hosted-732.mjs'),{ThreadManager,ts,repo}=await actualSeedStore(dir),workspace=path.join(dir,'workspace');fs.mkdirSync(workspace);h.seedOwnedThread(ThreadManager,workspace)
+  const manager=new ThreadManager(),cache=new Map(),shared=vm.createContext({process,Buffer,console,Date,TextEncoder,Map,Set})
+  const lower=(text,file)=>{const out=ts.transpileModule(text,{fileName:file,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,esModuleInterop:true,jsx:ts.JsxEmit.ReactJSX},reportDiagnostics:true});assert.equal(out.diagnostics.length,0);return out.outputText}
+  const actual=(relative)=>{if(cache.has(relative))return cache.get(relative);const file=path.join(repo,'chrome-extension',relative),m={exports:{}};const require=id=>{if(id==='react')return{createContext:()=>({}),useContext(){throw Error('UNUSED_MOUNT')},useReducer(){throw Error('UNUSED_MOUNT')}};if(id==='react/jsx-runtime')return{jsx(){throw Error('UNUSED_RENDER')},jsxs(){throw Error('UNUSED_RENDER')}};if(id.startsWith('.')){const base=path.resolve(path.dirname(file),id);for(const ext of ['.ts','.tsx'])if(fs.existsSync(base+ext))return actual(path.relative(path.join(repo,'chrome-extension'),base+ext))}throw Error('UNEXPECTED_FRONT_IMPORT')};const run=new vm.Script('(function(exports,require,module){'+lower(fs.readFileSync(file,'utf8'),file)+'\n})',{filename:file}).runInContext(shared);run(m.exports,require,m);cache.set(relative,m.exports);return m.exports}
+  const {agentReducer,initialState,selectCodingSession}=actual('src/sidepanel/store/agentStore.tsx')
+  const parse=file=>ts.createSourceFile(file,fs.readFileSync(path.join(repo,file),'utf8'),ts.ScriptTarget.Latest,true,file.endsWith('tsx')?ts.ScriptKind.TSX:file.endsWith('mjs')?ts.ScriptKind.JS:ts.ScriptKind.TS)
+  const exact=(sf,match)=>{const found=[];const visit=n=>{if(match(n))found.push(n);ts.forEachChild(n,visit)};visit(sf);assert.equal(found.length,1);return found[0]}
+  const compile=(text,globals={})=>{const m={exports:{}};new vm.Script(lower(text,'actual.ts')).runInNewContext({module:m,exports:m.exports,process,Buffer,Date,Map,Set,...globals});return m.exports}
+  const hook=parse('chrome-extension/src/sidepanel/hooks/useWebSocket.ts'),app=parse('chrome-extension/src/sidepanel/App.tsx'),host=parse('chrome-extension/scripts/accept-acp-history-hosted-732.mjs'),panel=parse('chrome-extension/src/sidepanel/components/CodingAgentPanel.tsx')
+  const router=parse('companion/src/message-router.ts'),routerClause=exact(router,n=>ts.isCaseClause(n)&&n.expression.getText(router)==='"thread.list"').getText(router)
+  const list=compile('export async function run(rest){switch("thread.list"){'+routerClause+'}}',{threadManager:manager,session:null,require:id=>{assert.equal(id,'./packs/pack-engine');return{isPackTrustSnapshot:()=>false,clearTrustCookieWithoutRestore(){throw Error('UNEXPECTED_TRASH')}}}}).run
+  const threadClause=exact(hook,n=>ts.isCaseClause(n)&&n.expression.getText(hook)==='"thread.list"').getText(hook)
+  const appBody=exact(app,n=>ts.isFunctionDeclaration(n)&&n.name?.text==='AppContent'),effects=[]
+  for(const n of appBody.body.statements)if(ts.isExpressionStatement(n)&&ts.isCallExpression(n.expression)&&n.expression.expression.getText(app)==='useEffect'&&(n.getText(app).includes('cmspark:open-coding-handoff')||n.getText(app).includes('codingPanelThreadRef.current')))effects.push(n.getText(app));assert.equal(effects.length,2)
+  const control=exact(app,n=>ts.isJsxSelfClosingElement(n)&&n.tagName.getText(app)==='CodingAgentPanel'),attr=control.attributes.properties.find(n=>ts.isJsxAttribute(n)&&n.name.getText(app)==='open').initializer.expression.getText(app)
+  const fresh=exact(host,n=>ts.isPropertyAssignment(n)&&n.name.getText(host)==='fresh'&&n.getText(host).includes('cm-header-new')).initializer
+  assert.ok(ts.isArrowFunction(fresh)&&ts.isBlock(fresh.body));const until=fresh.body.statements.findIndex(n=>ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(host)==='o'));assert.ok(until>0)
+  const prefix=fresh.body.statements.slice(0,until).map(n=>n.getText(host)).join('\n')
+  const historyEffect=exact(panel,n=>ts.isExpressionStatement(n)&&ts.isCallExpression(n.expression)&&n.expression.expression.getText(panel)==='useEffect'&&n.getText(panel).includes('type: "acp.sessions.list"')).getText(panel)
+  let state=agentReducer(initialState,{type:'SET_CONNECTION',state:'connected'}),opened=false,navigation=false,pendingClose=false,owner={current:null},active={current:null},deps=[],events=new Map(),wire=[],historyDeps,openCalls=0,hydrations=0
+  const dispatch=a=>{state=agentReducer(state,a);s.context.state=state},s=stockNavigationContract(ts,repo,manager.get(h.OWNED_THREAD.id));s.button.disabled=disabled;s.context.dispatch=dispatch;s.context.onNavigate=()=>{if(deferClose)pendingClose=true;else navigation=false}
+  const render=()=>{active.current=state.activeThreadId;s.context.state=state;effects.forEach((effect,i)=>compile('export function install(){'+effect+'}',{appState:state,activeCodingSession:selectCodingSession(state),codingPanelThreadRef:owner,setCodingPanelOpen:v=>{opened=v},setCodingPanelSeed(){},window:{addEventListener:(name,fn)=>events.set(name,fn),removeEventListener:name=>events.delete(name)},useEffect:(fn,next)=>{if(!deps[i]||next.some((v,j)=>!Object.is(v,deps[i][j]))){deps[i]=next;fn()}}}).install())}
+  const isOpen=()=>new vm.Script(attr).runInNewContext({codingPanelOpen:opened,codingPanelThreadRef:owner,appState:state})
+  const consume=compile('export function consume(msg){switch(msg.type){'+threadClause+'}}',{dispatch,creatingBlankThreadRef:{current:false},activeThreadRef:active,chrome:{runtime:{sendMessage(){}}},generateShortId(){throw Error('NO_BLANK')}}).consume
+  const hydrate=async()=>{assert.equal(hydrations++,0);const reply=await list({});assert.equal(reply.type,'thread.list');assert.equal(reply.list_scope,'active');consume(JSON.parse(JSON.stringify(reply)));render()}
+  const toggle={disabled:false,click(){navigation=true}},close={click(){if(deferClose)pendingClose=true;else navigation=false}},doc={querySelector:q=>q==='.cm-navigation'||q==='.cm-navigation-disclosure'?navigation?{}:null:q==='.cm-header-new'?{}:null,querySelectorAll:q=>q==='.cm-navigation-toggle'?[toggle]:q==='.cm-nav-thread'&&navigation&&!missing&&state.threads.length?[s.button]:q==='.cm-navigation-disclosure button[aria-label="关闭导航"]'&&navigation?[close]:[]}
+  const evaluate=async expression=>vm.runInNewContext(expression,{document:doc}),waitDOM=async expression=>{if(expression.includes('OWNED_THREAD_UI_REFUSED')&&!state.threads.length)await hydrate();if(expression==="!document.querySelector('.cm-navigation-disclosure')"&&pendingClose){pendingClose=false;navigation=false}const value=await evaluate(expression);assert.equal(value,true,'exact stock UI predicate must commit');return value}
+  render();if(ready)await hydrate()
+  const run=()=>new vm.Script('(async()=>{'+prefix+'})()').runInNewContext({evaluate,waitDOM,seededThreadSelectionExpression:h.seededThreadSelectionExpression,openPanel:async()=>{openCalls++;events.get('cmspark:open-coding-handoff')({detail:undefined})}})
+  const readHistory=()=>compile('export function install(){'+historyEffect+'}',{open:isOpen(),threadId:state.activeThreadId,state,session:selectCodingSession(state),storeAcpEnabled:true,dispatch,crypto:{randomUUID:()=> 'owned-fresh'},chrome:{runtime:{sendMessage:(m,done)=>{wire.push(m);done()},lastError:undefined}},useEffect:(fn,next)=>{if(!historyDeps||next.some((v,i)=>!Object.is(v,historyDeps[i]))){historyDeps=next;fn()}}}).install()
+  return {run,render,hydrate,dispatch,readHistory,isOpen,wire,get state(){return state},get openCalls(){return openCalls},get hydrated(){return hydrations>0}}
+}
+test('fresh document waits real selected owner before opening, with late hydration and delayed navigation close',async()=>{
+  for(const variant of [{ready:false},{ready:true},{ready:false,deferClose:true}]){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-')));try{const f=await freshOwnerControl(dir,variant);await f.run();if(!f.hydrated)await f.hydrate();f.render();assert.equal(f.state.activeThreadId,'owned-history-732');assert.equal(f.isOpen(),true);f.readHistory();assert.equal(f.wire.length,1);assert.equal(f.wire[0].thread_id,'owned-history-732')}finally{fs.rmSync(dir,{recursive:true,force:true})}}
+})
+test('fresh document missing or disabled owned navigation row cannot open or query another owner',async()=>{
+  for(const mode of ['missing','disabled']){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-missing-')));try{const f=await freshOwnerControl(dir,{[mode]:true});await assert.rejects(f.run());assert.equal(f.openCalls,0);f.readHistory();assert.equal(f.wire.length,0)}finally{fs.rmSync(dir,{recursive:true,force:true})}}
+})
+test('fresh document owner changes still close panel and refuse foreign history',async()=>{
+  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-owner-')));try{const f=await freshOwnerControl(dir,{ready:true});await f.run();f.render();assert.equal(f.isOpen(),true);f.dispatch({type:'SET_ACTIVE_THREAD',threadId:'foreign'});f.render();assert.equal(f.isOpen(),false);f.readHistory();assert.equal(f.wire.length,0)}finally{fs.rmSync(dir,{recursive:true,force:true})}
 })
