@@ -19,7 +19,9 @@ jobs:
           # REL-5 / P2: align with release.yml + package.sh (Node 22)
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: companion/package-lock.json
+          cache-dependency-path: |
+            companion/package-lock.json
+            chrome-extension/package-lock.json
 
       - name: Install dependencies
         # Actual MeetingPanel SSR controls require the locked frontend React dependencies.
@@ -73,13 +75,6 @@ jobs:
         # shipped deps — devDeps (tsx/typescript/@types/*) are build-time only.
         run: |
           cd companion && npm audit --omit=dev --audit-level=high
-
-      - name: Setup chrome-extension Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: chrome-extension/package-lock.json
 
       - name: Build + typecheck chrome-extension (audit H7)
         run: |
@@ -155,15 +150,27 @@ jobs:
             tests/ws-router-validator-lockstep.test.ts \
             2>&1 | tail -40
 
-  # Residual: multi-OS smoke (build + pure security/lockstep tests).
-  # Full suite gates ubuntu (build) and Windows (#650); other matrix smoke remains.
+  # #750: independent fresh Windows VMs for full census and directed native gates.
+  # Both statuses are required; native steps stay serial inside each desktop.
   smoke-os:
-    name: smoke (${{ matrix.os }})
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            lane: smoke
+            name: smoke (ubuntu-latest)
+          - os: macos-latest
+            lane: smoke
+            name: smoke (macos-latest)
+          - os: windows-latest
+            lane: census
+            name: smoke (windows-latest)
+          - os: windows-latest
+            lane: native
+            name: smoke (windows-native)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -175,7 +182,17 @@ jobs:
         with:
           node-version: '22.23.2'
           cache: 'npm'
-          cache-dependency-path: companion/package-lock.json
+          cache-dependency-path: |
+            companion/package-lock.json
+            chrome-extension/package-lock.json
+
+      - name: Install native-lane frontend dependencies (#750)
+        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: |
+          cd chrome-extension
+          npm ci
 
       - name: Install + build companion
         # Keep all npm lifecycle scripts; only optional external ORT GPU files are omitted.
@@ -186,17 +203,27 @@ jobs:
           npm ci
           npm run build
 
+      - name: Pinned NSIS dependency transport and integrity (#633)
+        run: node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs
+
+      - name: Stage native-lane Windows scripts (#750)
+        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
+        shell: bash
+        run: |
+          cd companion
+          npm run stage:win-scripts
+
       - name: "Fixed gallery collector CPU controls (#70; no native signature claim)"
         run: node --test scripts/tests/app-gallery-reference-70.test.mjs
 
       - name: "Read-only fixed-release gallery certificate sampling (#70)"
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane == 'census'
         # Exact two official ZIPs, streamed/pinned; sole root EXE metadata only.
         # No app execution/install. A failed collection fails this job.
         run: node scripts/collect-app-gallery-reference-70.mjs "${{ runner.temp }}/gallery70-reference-metadata.json"
 
       - name: "Publish only gallery certificate metadata (#70)"
-        if: always() && matrix.os == 'windows-latest'
+        if: always() && matrix.os == 'windows-latest' && matrix.lane == 'census'
         uses: actions/upload-artifact@v4
         with:
           name: gallery70-reference-metadata
@@ -224,9 +251,6 @@ jobs:
           node scripts/run-tests.mjs .test-dist/tests/desktop-native-macos-480.test.js .test-dist/tests/desktop-native-windows-480.test.js .test-dist/tests/desktop-native-mcp-476.test.js
           # The metadata key oracle owns the foreground; other native windows must exit first.
           node scripts/run-tests.mjs .test-dist/tests/desktop-native-thread-metadata-476.test.js
-
-      - name: Pinned NSIS dependency transport and integrity (#633)
-        run: node --test scripts/tests/nsis-ci-setup.test.mjs
 
       - name: Compile shared companion test inputs (#650)
         id: windows-census-compile
@@ -278,7 +302,7 @@ jobs:
 
       - name: "Complete Windows Companion census (#650)"
         id: windows-census
-        if: ${{ !cancelled() && matrix.os == 'windows-latest' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}
+        if: ${{ !cancelled() && matrix.os == 'windows-latest' && matrix.lane == 'census' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}
         shell: pwsh
         run: |
           # CMSPARK_650_SETUP_DIAGNOSTIC_BEGIN
@@ -433,7 +457,7 @@ jobs:
           }
 
       - name: "Windows census finite public receipts (#650)"
-        if: always() && matrix.os == 'windows-latest' && steps.windows-census.outputs.public_dir != ''
+        if: always() && matrix.os == 'windows-latest' && matrix.lane == 'census' && steps.windows-census.outputs.public_dir != ''
         uses: actions/upload-artifact@v4
         with:
           name: windows-census-${{ github.sha }}-${{ github.run_attempt }}
@@ -445,6 +469,7 @@ jobs:
           retention-days: 7
 
       - name: Office compatibility and relocated runtime (#611)
+        if: matrix.lane != 'census'
         shell: bash
         run: |
           node --test scripts/tests/office-runtime-stage.test.mjs
@@ -454,6 +479,7 @@ jobs:
           node scripts/run-tests.mjs .test-dist/tests/office-format-compatibility.test.js .test-dist/tests/office-import-entry.test.js .test-dist/tests/odf-expansion.test.js
 
       - name: Smoke pure tests (no native host required)
+        if: matrix.lane != 'census'
         shell: bash
         run: |
           cd companion
@@ -511,7 +537,7 @@ jobs:
         # the b09b2211 nested HasSystemNode probe (js present + no node on
         # PATH must fall through to the SEA exe). Static shape stays pinned by
         # scripts/tests/test-package-gates.sh on the ubuntu build job.
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           & scripts/tests/win-launcher-smoke.ps1
@@ -521,13 +547,14 @@ jobs:
         # Compile win-sapi-helper.cs with in-box csc.exe (+ GAC System.Speech)
         # and prove the line-JSON protocol end-to-end with a silent WAV.
         # No content assertions — Server SKUs may legally have no recognizers.
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           & scripts/tests/win-sapi-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Native Windows, macOS and Linux authorization / process regressions (#605)"
+        if: matrix.lane != 'census'
         shell: bash
         run: |
           cd companion
@@ -536,19 +563,21 @@ jobs:
           node scripts/run-tests.mjs .test-dist/tests/integration/cross-os-mcp-605.test.js .test-dist/tests/integration/cross-os-process-605.test.js .test-dist/tests/source-services-605.test.js .test-dist/tests/mcp-http-recovery.test.js .test-dist/tests/mcp-stdio-tree.test.js
 
       - name: "Cross-platform MCP and process boundaries (#607)"
+        if: matrix.lane != 'census'
         shell: bash
         run: |
           cd companion
           node scripts/run-tests.mjs .test-dist/tests/integration/cross-os-mcp-607.test.js .test-dist/tests/integration/mcp-boundaries-607.test.js .test-dist/tests/integration/process-isolation-607.test.js .test-dist/tests/integration/acp-slot-boundaries-607.test.js
 
       - name: "Cancellable Windows ownership startup (#609)"
+        if: matrix.lane != 'census'
         shell: bash
         run: |
           cd companion
           node scripts/run-tests.mjs .test-dist/tests/windows-owner.test.js .test-dist/tests/integration/windows-owner-609.test.js
 
       - name: "Windows reliability and confirmation regressions (#592, #595, #598, #599)"
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe") -and -not (Get-Command makensis -ErrorAction SilentlyContinue)) {
@@ -570,7 +599,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Windows MCP and ACP recovery regressions (#601)"
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           cd companion
@@ -580,7 +609,7 @@ jobs:
       - name: "Actual Windows background oracle comparator (#572)"
         # Real PS5.1 comparator/refusal plus owned WPF current-adapter delivery.
         # UIA requires target state and all four current background oracles.
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           cd companion
@@ -590,7 +619,7 @@ jobs:
       - name: "Native Windows GUI file template admission (#686)"
         # Exact pinned portable target in owned CI data; software approval is synthetic.
         # Real PS5.1 metadata + argv/parser evidence; no installation/default registration.
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           cd companion
@@ -598,7 +627,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Native Windows explicit App binary drift (#689)"
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           cd companion
@@ -606,7 +635,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Native Windows manual CLI entry (#522)"
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           cd companion
@@ -614,7 +643,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Windows MCP compatibility and stdout drain (#602)"
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           cd companion
@@ -622,7 +651,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Windows ACP pipes and filesystem roots / native UNC (#603)"
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           $fixture = Join-Path $env:RUNNER_TEMP "cmspark-603-$env:GITHUB_RUN_ID"
@@ -642,16 +671,16 @@ jobs:
           }
 
       - name: "Windows native 8.3 filesystem paths (#604)"
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.lane != 'census'
         shell: pwsh
         run: |
           & scripts/tests/win-mcp-short-path-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: "Post-census isolated module-scope diagnostic (#650)"
-        # After every original step, including census sealing and public upload.
+        # Only the canonical VM after its sealing/public upload; not the other desktop.
         # A diagnostic PASS cannot replace the original census/job result.
-        if: ${{ always() && !cancelled() && matrix.os == 'windows-latest' }}
+        if: ${{ always() && !cancelled() && matrix.os == 'windows-latest' && matrix.lane == 'census' }}
         shell: pwsh
         env:
           CMSPARK_650_FINISHED_PUBLIC_DIR: ${{ steps.windows-census.outputs.public_dir }}

@@ -1,5 +1,16 @@
 # TESTING
 
+## Windows CI 两条独立验收链（#750）
+
+`smoke (windows-latest)` 保持原 canonical 身份：同一 checkout 的 install/build/stage/完整 npm test、原生 fixture 准备、Registry／SMB／8.3、逐批记账与密封上传均保留。其末尾 module-scope 诊断只观察这台 canonical VM 的 sealed baseline，不能声称观察另一台桌面。
+
+`smoke (windows-native)` 在另一台全新的 Windows VM 安装两端锁定依赖，并用原 `npm run stage:win-scripts` 准备 staged PS 布局、独立构建原 UIA／desktop fixture，串行运行原 Office 与后续定向原生／进程／确认／UNC 测试。完整 canonical 自身也发现原生 case，因此两台机器保守地重复必要准备及原 #480 控制；不跨 job 传可执行产物、profile、registry、lease 或证据。Ubuntu/macOS 及 hosted history 原门保留。
+
+六个实际 jobs 必须全部成功，不能只看旧 Windows check；`fail-fast:false` 保留，某一路失败不取消另一条证据链。不得把两个 Windows 作业改成同一桌面里的并行 native 测试，也不提高原 `--test-concurrency=1`。确定性源码契约用现有 `nsis-ci-setup.test.mjs` 和 `windows-ci-feedback-750.test.mjs` 在原生编译前执行；后者读取实际 YAML，核四记录矩阵、原命令／错误语义守恒、各 lane 的真实条件与 LF/CRLF 负控。
+
+双锁 setup-node 缓存仅用于 npm 下载数据，原 npm ci／生命周期与 clean census 环境不变；不保证 canonical 命中父进程缓存。重复 tsc 尚无完整输入／emit 等价证明，本轮全部保留。真实新 head/main 的两个 Windows 终态、官方 artifact 身份和完整 tag/SHA/TAP/EOF／逐 skip 来源仍是交付门。尚未合入的 #723 first-identity 失败独立处理，不因 CI 排程优化而放行。性能结果需同时记录 native 反馈时间、完整 census 时间、总墙钟及总 job 分钟；不能用快失败声称成功加速。
+
+
 ### #732 历史连接观察与聊天清理分离
 
 `coding-history-connection-732.test.ts` 除原快速／同批重连及 owner/request/runtime 围栏外，验证管理连接广播不改变聊天 busy、processing、stream、reasoning、messages；原 `SET_CONNECTION` 状态路径仍清理断线工作。新增 `OBSERVE_CODING_HISTORY_CONNECTION` 仅属于 UI 内存动作，不改变 wire／后端权限。必须同时复验原 `board-hint-receipts-660` lifecycle 的断线保草稿、无自动重试及聊天不变断言，不可只看 ACP 正控。惰性 callback／SSR 与普通前端类型程序不称 mounted React 或远端原生通过。

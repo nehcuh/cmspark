@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- #750 CI 编排：Windows 全量 census 与定向原生验收拆为两台独立 hosted VM，保留各自完整原生准备、串行桌面保护、原测试／时限及 census 密封证据；两路都必须成功。已有 workflow／NSIS CPU 契约检查提前至原生编译前，npm 下载缓存键覆盖双锁而不缓存执行产物。墙钟与总 runner 成本以新 head/main 实测为准，不宣称修复 #723 的 UNKNOWN 原生超时；0.6.14 仍为开发版。
+
 - Refs #732：hosted 验收改为固定官方 Linux CFT 包供应、独立精确端口／版本正证再执行原完整 SidePanel 历史业务；旧 A/B 实验步骤退休且失败保留。CPU／纯文件解压不是浏览器通过，真实远端仍未验收；不发版、不改原业务时限或产品权限。
 
 - Refs #723: add remote-only owned-window Windows capture acceptance for actual PS5.1/PrintWindow, passive refusal and real BitBlt quality; CPU checks remain separate from native verification.
