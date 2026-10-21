@@ -76,6 +76,9 @@ const cockpitScalar = 'Windows cockpit Node scalar selection (#723)'
 const cockpitGate = 'Windows cockpit native bridge first identity STOP gate (#723)'
 const cockpitArtifact = 'Publish finite cockpit first failure (#723)'
 const cockpitMutations = [
+  ['missing prepared handoff control', d => { find(d, cockpitScalar).run = find(d, cockpitScalar).run.replace(' scripts/tests/cockpit-bridge-prepared-build.test.mjs', '') }],
+  ['duplicate prepared handoff control', d => { find(d, cockpitScalar).run = find(d, cockpitScalar).run.replace(' scripts/tests/cockpit-bridge-prepared-build.test.mjs', ' scripts/tests/cockpit-bridge-prepared-build.test.mjs scripts/tests/cockpit-bridge-prepared-build.test.mjs') }],
+  ['unreviewed prepared test argument', d => { find(d, cockpitScalar).run = find(d, cockpitScalar).run.replace(' scripts/tests/cockpit-bridge-prepared-build.test.mjs', ' scripts/tests/cockpit-bridge-other.test.mjs') }],
   ['missing scalar', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== cockpitScalar) }],
   ['duplicate scalar', d => { d.jobs['smoke-os'].steps.push(structuredClone(find(d, cockpitScalar))) }],
   ['scalar no longer checks census VM', d => { find(d, cockpitScalar).if += " && matrix.lane == 'native'" }],

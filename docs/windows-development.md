@@ -88,3 +88,5 @@ CDP target／context 的事件等待不能只依靠命令 pending Map：初始 g
 编译和身份 await 共用45秒、最终落在 registrar，只证明最终等待点，不证明编译或 registrar 的历史物理原因。用户明确批准同次固定源码 build-only 最多120秒，再进入原运行与清理45秒；这是成功测量边界的扩大，不称旧预算未变或冷启动。必须等待两个真实 compiler-helper close、锁存超时并 drain，拒绝晚成功；同次源码／FD／摘要／nonce绑定交接，真实 FileAttributes 非 reparse 核验在绑定 FD 内，不能借缓存、旧注册产物或 CPU 绿代替真实 Windows。其余门和零重试保持。
 
 同次交接的限额必须在第一次 body read/hash 前检查，不能扫描完再拒绝。新编译 callback 的失败也须等实际 child close，不能把 error/exit 当作 stdio 已关闭。写入自有目标时，Windows 只保证最后写句柄关闭后的时间戳正确；保写 FD 的 inode/dev/mode/nlink/size 和完整摘要，close 后再绑定只读 FD 的时间戳，不能泛忽略文件身份或内容变化。此次原源码 CPU 反例不是历史原生失败原因；依据：[Microsoft File Times](https://learn.microsoft.com/en-us/windows/win32/sysinfo/file-times)。
+
+工作流新增 `node --test` 参数时，也要搜索原命令里的测试路径和 parsed-YAML／整段命令合同；只搜索本次改动的模块文件名会漏掉这些消费者。#755 的首次 Ubuntu 早期 NSIS 步骤实际因精确 cockpit 命令差量未同步而拒绝，未进入原生，不能称 Windows 失败或下载根因。只允许本次精确新增的测试参数，补缺失／重复／替换负控，原历史 pin、lane、环境和失败上传约束保持。
