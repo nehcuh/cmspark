@@ -48,4 +48,56 @@ function Test-CompilerCompletion([string]$CaseRoot, [bool]$Invalid) {
 # UseShellExecute=false must preserve them as data rather than shell expansion.
 Test-CompilerCompletion (Join-Path $controlDirectory.FullName ('good space ' + [char]0x4e2d + [char]0x6587 + ' % path')) $false
 Test-CompilerCompletion (Join-Path $controlDirectory.FullName ('bad space ' + [char]0x4e2d + [char]0x6587 + ' % path')) $true
+$jobControlBuilderBytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'build-cockpit-bridge-job.ps1'))
+$jobControlSourceBytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'cockpit-bridge-chrome-job.cs'))
+$jobControlCpuBytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'cockpit-bridge-chrome-job-cpu.cs'))
+function Test-JobCompilerCompletion([string]$CaseRoot, [ValidateSet('actual', 'missing-first', 'missing-second')][string]$Case) {
+  $jobControlScripts = Join-Path $CaseRoot 'scripts'
+  $jobControlOutput = Join-Path $CaseRoot 'bin'
+  New-Item -ItemType Directory -Path $jobControlScripts, $jobControlOutput -Force | Out-Null
+  $jobControlBuilder = Join-Path $jobControlScripts 'build-cockpit-bridge-job.ps1'
+  [IO.File]::WriteAllBytes($jobControlBuilder, $jobControlBuilderBytes)
+  $jobControlSource = Join-Path $jobControlScripts 'cockpit-bridge-chrome-job.cs'
+  $jobControlCpu = Join-Path $jobControlScripts 'cockpit-bridge-chrome-job-cpu.cs'
+  if ($Case -ceq 'actual') {
+    # Positive compiles byte-identical actual Job sources, never runs either EXE.
+    [IO.File]::WriteAllBytes($jobControlSource, $jobControlSourceBytes)
+    [IO.File]::WriteAllBytes($jobControlCpu, $jobControlCpuBytes)
+  } else {
+    # Public inert negatives isolate the selected /main, not Job/native logic.
+    $jobControlFirstMethod = if ($Case -ceq 'missing-first') { 'MissingMain' } else { 'Main' }
+    $jobControlSecondMethod = if ($Case -ceq 'missing-second') { 'MissingMain' } else { 'Main' }
+    [IO.File]::WriteAllText($jobControlSource, ('namespace CMspark.CockpitBridge.TestOnly { class ChromeJob { static void ' + $jobControlFirstMethod + '() {} } }'), $controlUtf8)
+    [IO.File]::WriteAllText($jobControlCpu, ('namespace CMspark.CockpitBridge.TestOnly { class ChromeJobCpu { static void ' + $jobControlSecondMethod + '() {} } }'), $controlUtf8)
+  }
+  $jobControlCaught = $null
+  $jobControlReply = $null
+  try { $jobControlReply = . $jobControlBuilder -OutputDirectory $jobControlOutput } catch { $jobControlCaught = $_ }
+  $jobControlTargets = @('cockpit-chrome-job.exe', 'cockpit-chrome-job-cpu.exe')
+  $jobControlCount = if ($Case -ceq 'missing-first') { 1 } else { 2 }
+  if (@($jobCompilerResults).Count -ne $jobControlCount) { throw 'COCKPIT_BRIDGE_JOB_COMPILER_CONTROL_RESULTS' }
+  for ($jobControlIndex = 0; $jobControlIndex -lt $jobControlCount; $jobControlIndex++) {
+    $jobControlResult = $jobCompilerResults[$jobControlIndex]
+    if ($jobControlResult.Target -cne $jobControlTargets[$jobControlIndex] -or $jobControlResult.ExitCode -isnot [int]) { throw 'COCKPIT_BRIDGE_JOB_COMPILER_CONTROL_RESULTS' }
+    if ($Case -ceq 'actual' -or $jobControlIndex -lt $jobControlCount - 1) {
+      if ($jobControlResult.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $jobControlOutput $jobControlResult.Target) -PathType Leaf)) { throw 'COCKPIT_BRIDGE_JOB_COMPILER_CONTROL_POSITIVE' }
+    }
+  }
+  if ($Case -ceq 'actual') {
+    if ($null -ne $jobControlCaught) { throw $jobControlCaught }
+    if ($jobControlReply -cne 'COCKPIT_BRIDGE_JOB_BUILT') { throw 'COCKPIT_BRIDGE_JOB_COMPILER_CONTROL_POSITIVE' }
+  } else {
+    $jobControlFailedTarget = $jobControlTargets[$jobControlCount - 1]
+    if ($null -eq $jobControlCaught -or $null -ne $jobControlReply -or $jobControlCaught.Exception.Message -cne 'COCKPIT_BRIDGE_JOB_BUILD_FAILED' -or
+        -not $jobControlCaught.Exception.Data.Contains('CompilerTarget') -or $jobControlCaught.Exception.Data['CompilerTarget'] -cne $jobControlFailedTarget -or
+        -not $jobControlCaught.Exception.Data.Contains('CompilerExitCode') -or $jobControlCaught.Exception.Data['CompilerExitCode'] -isnot [int] -or
+        $jobControlCaught.Exception.Data['CompilerExitCode'] -eq 0 -or $jobCompilerResults[$jobControlCount - 1].ExitCode -ne $jobControlCaught.Exception.Data['CompilerExitCode'] -or
+        (Test-Path -LiteralPath (Join-Path $jobControlOutput $jobControlFailedTarget))) { throw 'COCKPIT_BRIDGE_JOB_COMPILER_CONTROL_NEGATIVE' }
+    if ($Case -ceq 'missing-first' -and (Test-Path -LiteralPath (Join-Path $jobControlOutput $jobControlTargets[1]))) { throw 'COCKPIT_BRIDGE_JOB_COMPILER_CONTROL_NEGATIVE' }
+  }
+}
+foreach ($jobControlCase in @('actual', 'missing-first', 'missing-second')) {
+  Test-JobCompilerCompletion (Join-Path $controlDirectory.FullName ($jobControlCase + ' job space ' + [char]0x4e2d + [char]0x6587 + ' % path')) $jobControlCase
+}
+Write-Output 'COCKPIT_BRIDGE_JOB_COMPILER_CONTROLS_COMPLETE'
 Write-Output 'COCKPIT_BRIDGE_COMPILER_CONTROLS_COMPLETE'

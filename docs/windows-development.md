@@ -50,3 +50,4 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 - 前台就绪必须核最后一个可能改变激活的操作。WPF 最小化会调用 SW_MINIMIZE，API 允许激活下一顶层窗口；先激活另窗再最小化不能证明最终前台仍是另窗。当前修复候选只调整原操作顺序，CPU 正负控不冒真实 Windows 验收，也不证明历史唯一原因。禁止补救焦点或放松前台断言。
 - 首条 worker 消息的 schema 与终止路径先查真实 producer：font-cache 消息没有 `ok` 字段，observer 的 false 不等字体失败；`finally` 主动 terminate 后的非零 exit 也不单独证明崩溃。冷启动耗时的物理原因未证实时保留 UNKNOWN。
 - 原生编译的退出码必须绑定实际已终止进程。#723 的真实前置在读取未设置的 `$LASTEXITCODE` 时拒绝，不能初始化 0、猜 compiler 成功或把十余秒解释成 timeout。需要明确原 compiler 的启动／等待／自身 ExitCode，连同下一 executable 消费者审计，保原 flags、stdout、摘要和拒绝。跨 PS 版本的公开源码不证明实际 GUI／PATHEXT／ShellExecute 分类；好／坏源码控制必须用同固定编译器得到真实 0／非零，泛异常不是有效负控。
+- 编译同族审计必须沿实际 controller 找到嵌套 builder 的每个 `/main`。Job wrapper／CPU 共用循环时，第一项失败会遮住第二项；前置正控编译实际两份源，负控分别缺失第一、第二 Main，并核对应目标的真实 Int32 非零，第二项负控还须保第一项真实 0。只编译不执行，保原 first-identity 重编译、45 秒及后续门；这不定位当前 UNKNOWN 的原生失败。

@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- Refs #723：补齐首个身份 controller 实际调用的 Job builder，两项 `/main` 分别等待原编译进程并读取自身 ExitCode；现有前置编译控制增加实际 Job 源正控及两项分别缺失 Main 的数值退出负控，不执行产物。原 45 秒、身份重编译和后续门保留，未认定当前 first-identity 失败原因。
+
 - Refs #723：固定 csc 构建、framing 编译和 framing EXE 分别直接等待原 Process 并读取其真实退出码，不再依赖可能未设置或陈旧的 PowerShell 自动变量。原编译参数、拒绝、摘要和后续原生门保留；前置接入同 PS5.1／同编译器的好、坏源码必需控制，不执行其 EXE。当前仍需真实 Windows 验收，不据此认定历史 csc 分类或旧注册失败唯一原因。
 
 - Refs #723：Windows 在完整 census 前单独验证固定桥接程序的真实 PS5.1 构建与产物摘要；原 Node 标量九项、注册、framing 和真实身份门禁保留。独立构建只编译、验证、清理自有临时产物，不运行或注册 host；构建失败立即拒绝，不再等长套件后才到嵌套构建边界。旧 `registration-framing` 首因仍 UNKNOWN，不冒称本次拆分已经修复原生问题。

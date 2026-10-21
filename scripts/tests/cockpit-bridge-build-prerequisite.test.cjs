@@ -149,3 +149,62 @@ test('completion source controls reject missing wait/dispose, stale exit, weaken
   ]
   for (const values of mutations) assert.throws(() => completionContract(...values))
 })
+
+// Both /main targets are consumed by the actual first-identity controller.
+// These are source contracts; only the required PS5.1 control compiles them.
+const jobBuilder = fs.readFileSync(path.join(__dirname, 'build-cockpit-bridge-job.ps1'), 'utf8')
+function jobCompletionContract(job, controls) {
+  assert.equal(job.includes('$LASTEXITCODE'), false)
+  assert.equal(/&\s*\$compiler/.test(job), false)
+  const start = job.indexOf('if (-not $jobCompileChild.Start())')
+  const wait = job.indexOf('$jobCompileChild.WaitForExit()', start)
+  const exit = job.indexOf('$jobCompilerExitCode = $jobCompileChild.ExitCode', wait)
+  const dispose = job.indexOf('} finally { $jobCompileChild.Dispose() }', exit)
+  const result = job.indexOf('$jobCompilerResults += [pscustomobject]@{ Target = $item[0]; ExitCode = $jobCompilerExitCode }', dispose)
+  assert.ok(start >= 0 && wait > start && exit > wait && dispose > exit && result > dispose)
+  assert.ok(job.includes('$jobCompileStart.FileName = $compiler'))
+  assert.ok(job.includes('$jobCompileStart.UseShellExecute = $false'))
+  assert.equal(/UseShellExecute\s*=\s*\$true|RedirectStandard|EnvironmentVariables/.test(job), false)
+  assert.ok(job.includes('[char[]]@([char]34, [char]0, [char]13, [char]10)'))
+  assert.ok(job.includes("'/nologo /target:exe /platform:x64 /optimize+ /warn:4 /warnaserror+ /codepage:65001 /main:' + $item[1] + ' /out:\"' + $target + '\" \"' + $source + '\" \"' + $fixture + '\"'"))
+  for (const [target, main] of [['cockpit-chrome-job.exe', 'ChromeJob'], ['cockpit-chrome-job-cpu.exe', 'ChromeJobCpu']]) {
+    assert.ok(job.includes(`@('${target}', 'CMspark.CockpitBridge.TestOnly.${main}')`))
+  }
+  assert.ok(job.includes("$jobBuildFailure.Data['CompilerTarget'] = $item[0]"))
+  assert.ok(job.includes("$jobBuildFailure.Data['CompilerExitCode'] = $jobCompilerExitCode"))
+  assert.ok(controls.includes("@('actual', 'missing-first', 'missing-second')"))
+  assert.ok(controls.includes('$jobControlReply = . $jobControlBuilder -OutputDirectory $jobControlOutput'))
+  assert.ok(controls.includes('[IO.File]::WriteAllBytes($jobControlSource, $jobControlSourceBytes)'))
+  assert.ok(controls.includes('[IO.File]::WriteAllBytes($jobControlCpu, $jobControlCpuBytes)'))
+  assert.ok(controls.includes("if ($Case -ceq 'missing-first') { 'MissingMain' } else { 'Main' }"))
+  assert.ok(controls.includes("if ($Case -ceq 'missing-second') { 'MissingMain' } else { 'Main' }"))
+  assert.ok(controls.includes('$jobControlResult.ExitCode -isnot [int]'))
+  assert.ok(controls.includes('$jobControlResult.ExitCode -ne 0'))
+  assert.ok(controls.includes("$jobControlCaught.Exception.Data['CompilerTarget'] -cne $jobControlFailedTarget"))
+  assert.ok(controls.includes("$jobControlCaught.Exception.Data['CompilerExitCode'] -isnot [int]"))
+  assert.ok(controls.includes("$jobControlCaught.Exception.Data['CompilerExitCode'] -eq 0"))
+  assert.ok(controls.includes("$jobCompilerResults[$jobControlCount - 1].ExitCode -ne $jobControlCaught.Exception.Data['CompilerExitCode']"))
+  assert.equal(/&\s*\$jobControl|FileName\s*=\s*\$jobControl/.test(controls), false)
+}
+test('actual Job compiler loop and required controls bind both own exits with LF and CRLF', () => {
+  const inputs = [jobBuilder, nativeControls].map(x => x.replaceAll('\r\n', '\n'))
+  for (const ending of ['\n', '\r\n']) jobCompletionContract(...inputs.map(x => x.replaceAll('\n', ending)))
+  const controller = fs.readFileSync(path.join(__dirname, 'cockpit-bridge-real-first.cjs'), 'utf8')
+  assert.ok(controller.includes("await runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild])"))
+  assert.ok(controller.indexOf("path.join(jobBuild, 'cockpit-chrome-job-cpu.exe')") > controller.indexOf("'scripts/tests/build-cockpit-bridge-job.ps1'"))
+})
+test('Job completion source controls reject stale exits and either uncovered main target', () => {
+  const mutations = [
+    [jobBuilder.replace('$jobCompileChild.WaitForExit()', '# no wait'), nativeControls],
+    [jobBuilder.replace('$jobCompileChild.Dispose()', '# no dispose'), nativeControls],
+    [jobBuilder.replace('$jobCompilerExitCode = $jobCompileChild.ExitCode', '$jobCompilerExitCode = $LASTEXITCODE'), nativeControls],
+    [jobBuilder.replace('/warnaserror+', '/warnaserror-'), nativeControls],
+    [jobBuilder.replace("'CMspark.CockpitBridge.TestOnly.ChromeJobCpu'", "'CMspark.CockpitBridge.TestOnly.ChromeJob'"), nativeControls],
+    [jobBuilder, nativeControls.replace("@('actual', 'missing-first', 'missing-second')", "@('actual', 'missing-first')")],
+    [jobBuilder, nativeControls.replace("if ($Case -ceq 'missing-second') { 'MissingMain' } else { 'Main' }", "'Main'")],
+    [jobBuilder, nativeControls.replace("$jobControlCaught.Exception.Data['CompilerExitCode'] -eq 0", '$false')],
+    [jobBuilder, nativeControls.replace("$jobControlCaught.Exception.Data['CompilerTarget'] -cne $jobControlFailedTarget", '$false')],
+    [jobBuilder, nativeControls.replace('[IO.File]::WriteAllBytes($jobControlCpu, $jobControlCpuBytes)', '# fake positive CPU')],
+  ]
+  for (const values of mutations) assert.throws(() => jobCompletionContract(...values))
+})

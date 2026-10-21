@@ -8,6 +8,8 @@ Windows 原 Node 标量九项之后、Registry 和完整 census 之前，运行�
 
 前置入口先在自有布局复制同一 builder，用同固定 PS5.1／csc 验证公开惰性好源码的真实 exit0、产物与摘要，以及坏源码的真实非零 `CompilerExitCode`、原 build 拒绝且无成功产物／摘要。路径包含空格、字符码构造的中文和字面 `%`；明确拒绝引号／NUL／CR／LF，参数通过 Framework `Arguments` 的有限双引号传递。控制不执行生成的 EXE，泛异常／未设置退出码不能算坏源码负控通过；之后仍实际构建固定产品 host。Node 源码合同和 VM 检查不是 PS5.1／C# 解释执行，真实控制必须由精确新 head 的 Windows 决定。
 
+同一必需控制子进程还复制实际 Job builder：正控复制字节相同的 wrapper／CPU 两份 C# 源，核两个 `/main` 的实际 Int32 exit0 和两个产物；两个公开惰性负控分别缺失第一 Main、第二 Main，核固定目标与实际数值非零，第二负控还须先观察第一项 exit0／产物。所有 fixture EXE 只编译不执行，失败必须保原 build 拒绝且无失败目标产物。Job 循环逐项直接等待原编译进程并在 finally 释放，不复用自动变量；原 first-identity 仍在自身 45 秒中重新编译并执行原 CPU／Chrome 路径。当前 first-identity 的具体失败仍 UNKNOWN，编译正控不等真实身份通过。
+
 此路径不执行生成的 EXE、不写注册、不启动浏览器。只有构建成功、产物验证通过、child 已知关闭且临时根身份未变化时才清理自有目录；构建拒绝、关闭或归属未知时保留并拒绝，不能把失败 shell 的 close 当成所有编译后代已退出。后续原注册／framing／真实身份和全部原断言、时限继续存在。两个构建使用不同自有目录／子进程，不复用产物或 PowerShell 状态；共享 OS 缓存可能被预热，不宣称冷启动。受控 Node/VM 正负控不是 PS5.1／C# 实际构建通过，必须由新 head 的真实 Windows 决定。旧 `registration-framing` 内层异常仍 UNKNOWN；前置拆分不假称修复其历史原因。
 
 ### #723 首个 Windows 窗口身份门：失败证据
