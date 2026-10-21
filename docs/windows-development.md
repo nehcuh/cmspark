@@ -78,3 +78,7 @@ CI 的 Windows canonical 与 directed native 使用两个独立 fresh hosted VM�
 ## 命令 ACK 之后仍要传播 transport 终态（#723）
 
 CDP target／context 的事件等待不能只依靠命令 pending Map：初始 getTargets／Runtime.enable 已 ACK 后，Map 可以为空，socket close 仍须拒绝独立事件等待者；已有 closed 入口不能再发命令，成功与 abort 应退订。用真实完整类及原 reason／并发／迟到事件反例验证，保持原时限和清理。此源码缺口只证明一类错误会被最终 timeout 掩盖，不证明历史 Windows 的 transport 曾关闭；不要因此猜 flag、复活旧 worker、延预算或以 CPU 冒原生。
+
+## 工作流移动也会影响未改过的测试消费者（#723）
+
+拆分 Windows lanes 后，读取 YAML 的旧 companion 测试仍可能要求“原生身份门在 census 诊断之后”。测试文件本身未改，不代表它不受影响：须沿实际 readFile/AST 消费者运行完整 family，并检查两条执行路径的最终条件和顺序。此前本地预检因缺少 owned 夹具目录未执行的八项，不能据此当作“无关”；补齐原夹具环境并保留旧失败，再用原 callback 亲证修正及错误顺序／错 lane 负控。不得靠删除断言、泛忽略新增 step 或跳过原生门消红。
