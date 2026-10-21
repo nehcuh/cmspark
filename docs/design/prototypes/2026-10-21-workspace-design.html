@@ -1,0 +1,303 @@
+<div id="cm-design-preview">
+  <div class="cm-preview-label"><span>CMspark · 交互设计稿</span><span>示例数据 · 不连接模型或修改真实设置</span></div>
+  <div class="viz-carousel" aria-label="CMspark 主界面设计方向" data-previous-label="上一个方案" data-next-label="下一个方案">
+    <section data-variant="事项优先" aria-label="事项优先设计"><div id="cm-task-first" class="cm-product" aria-label="事项优先工作中心"></div></section>
+    <section data-variant="设置候选" aria-label="语义设置候选设计" hidden><div id="cm-settings-preview" class="cm-product" aria-label="设置候选预览"></div></section>
+    <section data-variant="对话优先" aria-label="对话优先设计" hidden><div id="cm-chat-first" class="cm-product" aria-label="对话优先工作中心"></div></section>
+    <section data-variant="浏览器侧栏" aria-label="浏览器侧栏设计" hidden><div class="cm-side-stage"><div id="cm-browser-side" class="cm-product cm-side-product" aria-label="浏览器侧栏"></div></div></section>
+  </div>
+</div>
+<style>
+#cm-design-preview{width:100%;color:#242424;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}
+#cm-design-preview *{box-sizing:border-box}
+#cm-design-preview [hidden]{display:none!important}
+#cm-design-preview .cm-preview-label{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:0 16px 12px;font-size:12px;line-height:1.5;color:var(--foreground,#242424)}
+#cm-design-preview .cm-product{--cm-paper:#fff;--cm-frame:#f7f7f5;--cm-raised:#f7f7f5;--cm-ink:#242424;--cm-secondary:#666;--cm-line:#e6e6e3;--cm-selected:#eaeae7;--cm-primary:#242424;--cm-on-primary:#fff;--cm-focus:#4f46e5;--cm-link:#3730a3;--cm-warning:#8c5418;--cm-warning-bg:#fff7e8;--cm-good:#24734e;--cm-good-bg:#edf6ef;--cm-bad:#af3434;--cm-bad-bg:#fff0f0;color:var(--cm-ink);background:var(--cm-frame);border:1px solid var(--cm-line);border-radius:12px;min-height:744px;overflow:clip;font-size:14px;line-height:1.55;font-weight:400;--cm-pitch:70px} /* taste-skill-ignore: focus/link indigo retained from the approved CMspark DESIGN.md; not a newly selected theme. */
+#cm-design-preview .cm-product[data-theme="dark"]{--cm-paper:#171717;--cm-frame:#202020;--cm-raised:#252525;--cm-ink:#f1f1ef;--cm-secondary:#b4b4b4;--cm-line:#393939;--cm-selected:#353535;--cm-primary:#f1f1ef;--cm-on-primary:#171717;--cm-focus:#a5a0ff;--cm-link:#b9b5ff;--cm-warning:#e8bc7c;--cm-warning-bg:#332c21;--cm-good:#9cd2b3;--cm-good-bg:#1e3127;--cm-bad:#f3a3a3;--cm-bad-bg:#382424}
+#cm-design-preview .cm-product button,#cm-design-preview .cm-product input,#cm-design-preview .cm-product textarea,#cm-design-preview .cm-product select{font:inherit;color:inherit}
+#cm-design-preview .cm-product button{background:none;border:0;padding:0;cursor:pointer}
+#cm-design-preview .cm-product button:disabled{cursor:not-allowed;color:var(--cm-secondary)}
+#cm-design-preview .cm-product :focus-visible{outline:2px solid var(--cm-focus);outline-offset:3px}
+#cm-design-preview .cm-product i[data-lucide],#cm-design-preview .cm-product svg{width:17px;height:17px;flex-shrink:0}
+#cm-design-preview .cm-product h1,#cm-design-preview .cm-product h2,#cm-design-preview .cm-product h3,#cm-design-preview .cm-product p{margin:0}
+#cm-design-preview .cm-product h1{font-size:24px;line-height:1.35;font-weight:500;letter-spacing:-.5px}
+#cm-design-preview .cm-product h2{font-size:16px;line-height:1.5;font-weight:500}
+#cm-design-preview .cm-product h3{font-size:14px;font-weight:500}
+#cm-design-preview .cm-shell{display:grid;grid-template-columns:186px minmax(0,1fr);min-height:742px}
+#cm-design-preview .cm-nav{padding:22px 12px 16px;display:flex;flex-direction:column;min-width:0;gap:24px}
+#cm-design-preview .cm-brand{display:flex;align-items:center;gap:9px;padding:0 10px;font-size:17px;font-weight:500;letter-spacing:-.5px}
+#cm-design-preview .cm-brand img{width:23px;height:23px}
+#cm-design-preview .cm-scope{padding:5px 10px 0;color:var(--cm-secondary);font-size:12px}
+#cm-design-preview .cm-nav-group{display:grid;gap:4px}
+#cm-design-preview .cm-nav-label{padding:0 12px 7px;color:var(--cm-secondary);font-size:12px}
+#cm-design-preview .cm-nav-item{display:flex;gap:10px;align-items:center;min-height:38px;padding:7px 12px!important;border-radius:7px;text-align:left;width:100%}
+#cm-design-preview .cm-nav-item:hover{background:var(--cm-selected)}
+#cm-design-preview .cm-nav-item.is-active{background:var(--cm-selected);font-weight:500}
+#cm-design-preview .cm-nav-item .cm-count{margin-left:auto;min-width:19px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums}
+#cm-design-preview .cm-nav-bottom{margin-top:auto;display:grid;gap:5px}
+#cm-design-preview .cm-capture-foot{border-top:1px solid var(--cm-line);padding:12px 11px 0;font-size:12px;color:var(--cm-secondary);display:flex;justify-content:space-between;align-items:center;gap:6px}
+#cm-design-preview .cm-dot{width:6px;height:6px;border-radius:50%;background:var(--cm-good);display:inline-block;margin-right:6px;vertical-align:middle}
+#cm-design-preview .cm-dot.paused{background:var(--cm-secondary)}
+#cm-design-preview .cm-sheet{background:var(--cm-paper);border-left:1px solid var(--cm-line);min-width:0;display:flex;flex-direction:column}
+#cm-design-preview .cm-top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:57px;border-bottom:1px solid var(--cm-line);padding:12px 28px;font-size:12px;color:var(--cm-secondary)}
+#cm-design-preview .cm-top-left,#cm-design-preview .cm-top-right{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+#cm-design-preview .cm-top-right button{display:flex;gap:6px;align-items:center;color:var(--cm-ink)}
+#cm-design-preview .cm-mobile-menu{display:none;align-items:center;gap:5px}
+#cm-design-preview .cm-content{padding:26px 28px 28px;min-width:0;flex:1}
+#cm-design-preview .cm-title-row{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:24px}
+#cm-design-preview .cm-subtitle{color:var(--cm-secondary);margin-top:7px!important;font-size:13px}
+#cm-design-preview .cm-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:7px 12px!important;min-height:34px;border:1px solid var(--cm-line)!important;border-radius:7px;white-space:nowrap;background:var(--cm-paper)!important}
+#cm-design-preview .cm-button:hover{background:var(--cm-raised)!important}
+#cm-design-preview .cm-button.primary{background:var(--cm-primary)!important;color:var(--cm-on-primary)!important;border-color:var(--cm-primary)!important}
+#cm-design-preview .cm-button.quiet{border-color:transparent!important;background:transparent!important;padding-left:0!important;justify-content:flex-start}
+#cm-design-preview .cm-button.is-active{background:var(--cm-selected)!important}
+#cm-design-preview .cm-button.small{font-size:13px;min-height:30px;padding:5px 9px!important}
+#cm-design-preview .cm-inline{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+#cm-design-preview .cm-link{color:var(--cm-link)!important;text-align:left;font-size:12px}
+#cm-design-preview .cm-split{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:24px;align-items:start}
+#cm-design-preview .cm-main-list{min-width:0}
+#cm-design-preview .cm-section-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
+#cm-design-preview .cm-pending{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--cm-raised);border-radius:8px;padding:13px 15px;margin-bottom:24px}
+#cm-design-preview .cm-pending small{display:block;font-size:12px;color:var(--cm-secondary);margin-top:3px}
+#cm-design-preview .cm-filters{display:flex;flex-wrap:wrap;gap:5px;padding-bottom:13px;border-bottom:1px solid var(--cm-line);margin-bottom:5px}
+#cm-design-preview .cm-filter{padding:5px 9px!important;border-radius:6px;font-size:13px;color:var(--cm-secondary)!important;min-height:30px}
+#cm-design-preview .cm-filter.is-active{background:var(--cm-selected);color:var(--cm-ink)!important}
+#cm-design-preview .cm-task-row{display:grid;grid-template-columns:minmax(0,1fr) 80px;gap:12px;width:100%;text-align:left;min-height:var(--cm-pitch);align-items:center;border-bottom:1px solid var(--cm-line)!important;padding:12px 8px!important;border-radius:5px}
+#cm-design-preview .cm-task-row:hover,#cm-design-preview .cm-task-row.is-selected{background:var(--cm-raised)}
+#cm-design-preview .cm-task-name{font-weight:500;display:block;margin-bottom:5px;overflow-wrap:anywhere}
+#cm-design-preview .cm-provenance{font-size:13px;color:var(--cm-secondary);display:flex;flex-wrap:wrap;gap:4px 7px}
+#cm-design-preview .cm-provenance span{display:inline-block}
+#cm-design-preview .cm-due{text-align:right;font-size:13px;font-variant-numeric:tabular-nums}
+#cm-design-preview .cm-due small{display:block;color:var(--cm-secondary);font-size:12px;margin-top:4px}
+#cm-design-preview .cm-warning{color:var(--cm-warning)!important}
+#cm-design-preview .cm-positive{color:var(--cm-good)!important}
+#cm-design-preview .cm-bad{color:var(--cm-bad)!important}
+#cm-design-preview .cm-detail{min-width:0;border-left:1px solid var(--cm-line);padding-left:22px}
+#cm-design-preview .cm-detail h2{margin-bottom:14px}
+#cm-design-preview .cm-detail dl{margin:0;display:grid;grid-template-columns:65px minmax(0,1fr);gap:12px 10px;font-size:13px}
+#cm-design-preview .cm-detail dt{color:var(--cm-secondary)}
+#cm-design-preview .cm-detail dd{margin:0;overflow-wrap:anywhere}
+#cm-design-preview .cm-quote{margin:18px 0;padding:14px;background:var(--cm-raised);border-radius:8px;font-size:13px;line-height:1.7}
+#cm-design-preview .cm-quote cite{display:block;color:var(--cm-secondary);font-size:12px;font-style:normal;margin-bottom:7px}
+#cm-design-preview .cm-detail-actions{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 10px}
+#cm-design-preview .cm-caption{font-size:12px;color:var(--cm-secondary);line-height:1.6}
+#cm-design-preview .cm-note{padding:11px 13px;border-radius:7px;background:var(--cm-raised);font-size:12px;color:var(--cm-secondary);margin-top:16px}
+#cm-design-preview .cm-note.warning{background:var(--cm-warning-bg);color:var(--cm-warning)}
+#cm-design-preview .cm-note.success{background:var(--cm-good-bg);color:var(--cm-good)}
+#cm-design-preview .cm-note.error{background:var(--cm-bad-bg);color:var(--cm-bad)}
+#cm-design-preview .cm-activity{margin-top:27px;padding-top:20px;border-top:1px solid var(--cm-line)}
+#cm-design-preview .cm-update{display:flex;gap:12px;margin-top:12px;font-size:12px;color:var(--cm-secondary)}
+#cm-design-preview .cm-update time{min-width:37px;font-variant-numeric:tabular-nums}
+#cm-design-preview .cm-update p{color:var(--cm-ink);font-size:13px}
+#cm-design-preview .cm-resource-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 24px}
+#cm-design-preview .cm-resource{padding:20px 0;border-bottom:1px solid var(--cm-line);display:grid;gap:8px;align-content:start}
+#cm-design-preview .cm-resource p{font-size:13px;color:var(--cm-secondary)}
+#cm-design-preview .cm-source-row{display:grid;grid-template-columns:1fr auto;gap:16px;padding:20px 0;border-bottom:1px solid var(--cm-line);align-items:center}
+#cm-design-preview .cm-source-row p{font-size:12px;color:var(--cm-secondary);margin-top:6px}
+#cm-design-preview .cm-chat-layout{display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:28px}
+#cm-design-preview .cm-chat-body{min-width:0;display:flex;flex-direction:column;gap:22px}
+#cm-design-preview .cm-user-msg{background:var(--cm-raised);border-radius:12px;padding:13px 16px;align-self:flex-end;max-width:90%}
+#cm-design-preview .cm-answer{line-height:1.9}
+#cm-design-preview .cm-answer ul{padding-left:20px;margin:12px 0}
+#cm-design-preview .cm-source-chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;border:1px solid var(--cm-line)!important;border-radius:5px;padding:4px 7px!important;margin:8px 5px 0 0}
+#cm-design-preview .cm-composer{margin-top:25px;border:1px solid var(--cm-line);border-radius:13px;padding:13px 14px;background:var(--cm-paper)}
+#cm-design-preview .cm-composer textarea{width:100%;resize:vertical;min-height:52px;background:transparent;border:0;outline-offset:0;color:var(--cm-ink)}
+#cm-design-preview .cm-composer textarea::placeholder,#cm-design-preview .cm-input::placeholder{color:var(--cm-secondary)}
+#cm-design-preview .cm-composer-bottom{display:flex;justify-content:space-between;align-items:center;gap:8px}
+#cm-design-preview .cm-composer-meta{display:flex;gap:12px;align-items:center;font-size:12px;color:var(--cm-secondary)}
+#cm-design-preview .cm-conversation-list{border-left:1px solid var(--cm-line);padding-left:20px;display:grid;gap:8px;align-content:start}
+#cm-design-preview .cm-conversation-list button{text-align:left;border-bottom:1px solid var(--cm-line);padding:13px 0!important}
+#cm-design-preview .cm-conversation-list small{display:block;font-size:12px;color:var(--cm-secondary);margin-top:5px}
+#cm-design-preview .cm-settings-tabs{display:flex;gap:5px;flex-wrap:wrap;padding-bottom:15px;margin-bottom:22px;border-bottom:1px solid var(--cm-line)}
+#cm-design-preview .cm-intent{background:var(--cm-raised);border-radius:10px;padding:20px;margin-bottom:22px}
+#cm-design-preview .cm-intent label{font-weight:500;display:block;margin-bottom:10px}
+#cm-design-preview .cm-intent-row{display:flex;gap:8px;align-items:stretch}
+#cm-design-preview .cm-input{min-width:0;width:100%;background:var(--cm-paper);border:1px solid var(--cm-line);border-radius:7px;min-height:40px;padding:9px 11px;color:var(--cm-ink)}
+#cm-design-preview .cm-examples{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+#cm-design-preview .cm-example{font-size:12px;color:var(--cm-secondary)!important;text-align:left;text-decoration:underline;text-decoration-color:var(--cm-line);text-underline-offset:4px}
+#cm-design-preview .cm-example:hover{color:var(--cm-ink)!important}
+#cm-design-preview .cm-candidates{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}
+#cm-design-preview .cm-plan{border:1px solid var(--cm-line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+#cm-design-preview .cm-plan.is-chosen{border-color:var(--cm-ink)}
+#cm-design-preview .cm-plan p{font-size:13px;color:var(--cm-secondary)}
+#cm-design-preview .cm-plan .cm-plan-tag{font-size:12px;color:var(--cm-secondary);display:flex;gap:7px;align-items:center}
+#cm-design-preview .cm-plan ul{padding-left:17px;margin:0;font-size:13px;line-height:1.9}
+#cm-design-preview .cm-plan .cm-button{margin-top:auto}
+#cm-design-preview .cm-preview-diff{margin-top:22px;border-top:1px solid var(--cm-line);padding-top:20px}
+#cm-design-preview .cm-change-row{display:grid;grid-template-columns:20px minmax(0,1fr) minmax(110px,1fr);gap:8px;padding:12px 0;border-bottom:1px solid var(--cm-line);font-size:13px;align-items:start}
+#cm-design-preview .cm-change-row small{display:block;font-size:12px;color:var(--cm-secondary);margin-top:3px}
+#cm-design-preview .cm-change-value{font-size:12px;text-align:right}
+#cm-design-preview .cm-change-value span{display:block;color:var(--cm-secondary);margin-bottom:3px}
+#cm-design-preview .cm-change-row input{accent-color:var(--cm-ink);margin:3px 0 0}
+#cm-design-preview .cm-apply-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:17px}
+#cm-design-preview .cm-manual{margin-top:28px}
+#cm-design-preview .cm-manual-row{display:flex;justify-content:space-between;gap:20px;padding:17px 0;border-bottom:1px solid var(--cm-line);align-items:center}
+#cm-design-preview .cm-manual-row p{font-size:12px;color:var(--cm-secondary);margin-top:5px}
+#cm-design-preview .cm-manual-row .cm-value{font-size:12px;white-space:nowrap;text-align:right}
+#cm-design-preview .cm-empty{padding:30px 12px;text-align:center;color:var(--cm-secondary);font-size:13px}
+#cm-design-preview .cm-sheet-back{display:none;margin-bottom:17px}
+#cm-design-preview .cm-live{font-size:12px;color:var(--cm-secondary);min-height:20px;margin-top:8px}
+#cm-design-preview .cm-edit-fields{display:grid;gap:12px;margin:18px 0;padding-top:16px;border-top:1px solid var(--cm-line)}
+#cm-design-preview .cm-edit-fields label{display:grid;gap:6px;font-size:13px}
+#cm-design-preview .cm-later{margin-top:20px;font-size:13px;color:var(--cm-secondary)}
+#cm-design-preview .cm-later summary{cursor:pointer;padding:8px 0}
+#cm-design-preview .cm-mobile-nav{padding:12px 16px;border-bottom:1px solid var(--cm-line);display:flex;flex-wrap:wrap;gap:5px}
+#cm-design-preview .cm-side-stage{min-height:744px;background:#efefec;padding:20px;display:flex;justify-content:center;align-items:flex-start;border-radius:12px}
+#cm-design-preview .cm-side-product{max-width:390px;width:100%;min-height:704px}
+#cm-design-preview .cm-side-product .cm-shell{display:block;min-height:702px}
+#cm-design-preview .cm-side-product .cm-nav{display:none}
+#cm-design-preview .cm-side-product .cm-sheet{border:0}
+#cm-design-preview .cm-side-product .cm-top{padding:13px 16px}
+#cm-design-preview .cm-side-product .cm-content{padding:22px 18px}
+#cm-design-preview .cm-side-product .cm-chat-layout{display:block}
+#cm-design-preview .cm-side-product .cm-conversation-list{display:none}
+#cm-design-preview .cm-side-product .cm-mobile-menu{display:flex}
+#cm-design-preview .cm-side-product .cm-title-row{margin-bottom:20px}
+#cm-design-preview .cm-side-product h1{font-size:20px}
+#cm-design-preview .cm-side-product .cm-top-right .cm-scope-label{display:none}
+#cm-design-preview .cm-side-product .cm-candidates{grid-template-columns:1fr}
+#cm-design-preview .cm-side-product .cm-intent-row{flex-wrap:wrap}
+#cm-design-preview .cm-side-product .cm-intent-row .cm-button{width:100%}
+#cm-design-preview .cm-side-product .cm-split{display:block}
+#cm-design-preview .cm-side-product .cm-detail{display:none}
+#cm-design-preview .cm-side-product[data-detail="true"] .cm-main-list{display:none}
+#cm-design-preview .cm-side-product[data-detail="true"] .cm-detail{display:block;border-left:0;padding-left:0}
+#cm-design-preview .cm-side-product .cm-sheet-back{display:inline-flex}
+#cm-design-preview .cm-side-product .cm-resource-grid{grid-template-columns:1fr}
+@media(min-width:1200px){#cm-design-preview .cm-shell{grid-template-columns:208px minmax(0,1fr)}#cm-design-preview .cm-content{padding:30px 32px}#cm-design-preview .cm-split{grid-template-columns:minmax(0,1fr) 310px;gap:28px}}
+@media(min-width:861px){#cm-design-preview .cm-product:not(.cm-side-product) .cm-top-right button{display:none}}
+@media(max-width:860px){#cm-design-preview .cm-shell{display:block}#cm-design-preview .cm-nav{display:none}#cm-design-preview .cm-sheet{border:0}#cm-design-preview .cm-mobile-menu{display:flex}#cm-design-preview .cm-content{padding:24px}#cm-design-preview .cm-top{padding:12px 24px}#cm-design-preview .cm-split{grid-template-columns:minmax(0,1fr) 250px;gap:20px}#cm-design-preview .cm-candidates{grid-template-columns:1fr}#cm-design-preview .cm-chat-layout{grid-template-columns:minmax(0,1fr) 210px;gap:20px}}
+@media(max-width:650px){#cm-design-preview .cm-preview-label{font-size:11px}#cm-design-preview .cm-product{border-radius:9px;min-height:744px}#cm-design-preview .cm-content{padding:22px 17px}#cm-design-preview .cm-top{padding:12px 17px;gap:8px}#cm-design-preview .cm-top-right .cm-scope-label{display:none}#cm-design-preview .cm-split{display:block}#cm-design-preview .cm-detail{display:none}#cm-design-preview .cm-product[data-detail="true"] .cm-main-list{display:none}#cm-design-preview .cm-product[data-detail="true"] .cm-detail{display:block;border:0;padding:0}#cm-design-preview .cm-sheet-back{display:inline-flex}#cm-design-preview .cm-title-row{gap:10px}#cm-design-preview .cm-title-row h1{font-size:22px}#cm-design-preview .cm-chat-layout{display:block}#cm-design-preview .cm-conversation-list{display:none}#cm-design-preview .cm-resource-grid{grid-template-columns:1fr}#cm-design-preview .cm-intent{padding:15px}#cm-design-preview .cm-intent-row{flex-wrap:wrap}#cm-design-preview .cm-intent-row .cm-button{width:100%}#cm-design-preview .cm-input{font-size:16px!important}#cm-design-preview .cm-composer textarea{font-size:16px!important}#cm-design-preview .cm-change-row{grid-template-columns:20px minmax(0,1fr)}#cm-design-preview .cm-change-value{grid-column:2;text-align:left}#cm-design-preview .cm-change-value span{display:inline;margin-right:10px}#cm-design-preview .cm-pending{padding:13px 12px}#cm-design-preview .cm-side-stage{padding:0;background:transparent}#cm-design-preview .cm-side-product{max-width:100%}#cm-design-preview .cm-top-left{gap:6px}#cm-design-preview .cm-title-row .cm-button{font-size:12px;padding:7px 10px!important}}
+@media(pointer:coarse){#cm-design-preview .cm-product button{min-height:44px}#cm-design-preview .cm-examples{gap:10px}#cm-design-preview .cm-plan{padding:16px}}
+@media(prefers-reduced-motion:reduce){#cm-design-preview *{animation:none!important;transition:none!important}}
+</style>
+<script>
+(() => {
+  const root = document.getElementById('cm-design-preview');
+  const esc = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
+  const tasks = [
+    {id:'report',title:'提交灰度验证报告',app:'钉钉',group:'支付项目交付群',from:'王经理',due:'今天 17:00',status:'处理中',kind:'mine',feedback:'发到支付项目交付群，并 @王经理',quote:'今天五点前把灰度验证报告发到群里，重点说明回滚验证结果。',time:'10月21日 09:18',reminder:'今天 16:00，截止前 1 小时',progress:'验证已完成，报告待整理',needsReply:true},
+    {id:'review',title:'确认接口联调排期',app:'微信',group:'客户接口联调群',from:'陈悦',due:'今天 18:00',status:'待反馈',kind:'waiting',feedback:'在客户接口联调群确认排期',quote:'麻烦确认一下周五的联调排期，今天下班前在群里回复我就好。',time:'10月21日 10:02',reminder:'今天 17:00 跟进',progress:'已询问研发，等待排期回复',needsReply:true},
+    {id:'vendor',title:'跟进供应商补充材料',app:'企业内聊',group:'供应商接入专项',from:'刘宁',due:'明天 11:00',status:'等待他人',kind:'supervise',feedback:'收齐材料后更新专项群',quote:'补充材料明天上午十一点前给你，收到后辛苦在专项群同步一下。',time:'10月21日 10:26',reminder:'明天 10:00 跟进',progress:'等待刘宁补充材料',needsReply:true},
+    {id:'plan',title:'补充需求方案中的权限说明',app:'钉钉',group:'工作助手产品讨论',from:'周然',due:'周五 15:00',status:'待处理',kind:'mine',feedback:'更新方案文档，并回复产品讨论群',quote:'周五下午三点前补一下权限边界，文档更新后群里告诉我。',time:'10月21日 11:08',reminder:'周五 14:00',progress:'尚未开始',needsReply:true}
+  ];
+  const candidates = [
+    {id:'c1',title:'整理下周评审材料',group:'钉钉 · 工作助手产品讨论',from:'周然',quote:'下周评审前咱们把材料整理一下。',question:'执行人和具体截止时间待确认'},
+    {id:'c2',title:'核对报表口径',group:'企业内聊 · 数据分析沟通群',from:'陈悦',quote:'这部分口径可能还要再核对，先记一下。',question:'是否由本人负责待确认'}
+  ];
+  const samples = {
+    quiet:{text:'少打扰我，但别漏掉重要待办',summary:'你希望降低提醒频率，同时保留关键事项的及时提醒。',plans:[
+      {name:'重要事项即时提醒',tag:'推荐',why:'保留临期和督办提醒，普通事项集中汇总。',changes:[['普通事项提醒','即时','每天 09:00 汇总','只调整普通提醒；重要和临期事项保持即时。'],['免打扰时段','未设置','22:00–08:00','时区为 Asia/Shanghai；关键提醒是否例外可单独设置。']]},
+      {name:'每天两次集中处理',tag:'更安静',why:'按固定时间处理事项，减少工作中的打断。',changes:[['普通事项提醒','即时','09:00 / 16:00 汇总','临近截止时仍按事项单独的提醒规则提示。']]},
+      {name:'只提醒临期事项',tag:'最少打扰',why:'只保留即将到期的提醒，其余到待办页查看。',changes:[['普通事项提醒','即时','仅在临期时通知','可能更晚注意到没有截止日期的事项。']]}
+    ]},
+    privacy:{text:'聊天截图不要发送给云端',summary:'你希望约束聊天内容的处理范围；仅把图片留在本机还不够。',plans:[
+      {name:'严格本地处理',tag:'隐私优先',why:'图片、OCR 文本和语义抽取都留在本机。',prereq:'需要可用的本地语义模型；本示例未安装。',changes:[['聊天内容处理','当前模型服务','仅本机','没有本地模型时暂停语义抽取，不能退回云端。']]},
+      {name:'本地采集，人工整理',tag:'可先使用',why:'继续截图和本地 OCR，关闭聊天内容的模型抽取。',changes:[['后台语义抽取','开启','关闭','保留记录，用户自行整理；自动候选待办暂停生成。']]},
+      {name:'只禁发原图',tag:'仍会发送文本',why:'图片留本机，OCR 文本仍交给当前模型理解。',changes:[['向模型发送原图','允许','禁止','OCR 文本可能含完整聊天内容，不满足“内容全部留本机”。']]}
+    ]},
+    voice:{text:'语音经常识别错字，希望准确一些',summary:'你可能希望纠正识别结果，也可能希望更换识别方式。',plans:[
+      {name:'开启识别后纠错',tag:'保留当前引擎',why:'继续使用当前听写，再由配置的模型给出纠错建议。',changes:[['ASR 纠错','关闭','开启','会增加处理时间；若模型在云端，转写文本会发送至该服务。']]},
+      {name:'使用本机识别',tag:'需要准备',why:'尝试本地 Whisper，先核对设备与模型是否可用。',prereq:'需要单独下载模型并启用本机转写。',changes:[['听写方式','浏览器识别','本机 Whisper','先完成下载，再明确启用；不声称一定比当前引擎更准。']]},
+      {name:'先检查输入设备',tag:'无需更换模型',why:'噪声或选错麦克风也可能导致错字。',navigate:true,changes:[['输入设备','当前系统设备','打开设备检查','只打开对应设置，不写入配置。']]}
+    ]}
+  };
+  const settingsCategories=['模型与推理','输入与语音','待办与提醒','记录与隐私','文件与知识','连接与配对','安全与信任','本机与工具','密钥与环境','实验功能'];
+  const instances=[];
+  function make(id, variant){
+    const el=document.getElementById(id);
+    const s={view:variant==='tasks'?'today':variant==='settings'?'settings':'chat',variant,menu:false,filter:'all',selected:'report',detail:false,edit:false,edits:{},settingsTab:'待办与提醒',sample:'quiet',phrase:samples.quiet.text,result:variant==='settings'?'quiet':null,chosen:0,preview:variant==='settings',apply:'idle',checked:variant==='settings'?[0,1]:[],done:new Set(),feedback:new Set(),accepted:new Set(),ignored:new Set(),extra:[],review:null,paused:false,source:false,notice:'',history:[],prefs:{},backup:null};
+    instances.push({el,s});
+    const btn=(text,action,cls='',extra='')=>`<button type="button" class="cm-button cursor-interaction ${cls}" data-action="${action}" ${extra}>${text}</button>`;
+    const unresolved=()=>candidates.filter(x=>!s.accepted.has(x.id)&&!s.ignored.has(x.id));
+    const allTasks=()=>[...tasks,...s.extra].map(t=>({...t,...s.edits[t.id]}));
+    function navItems(){const items=s.variant==='chat'?[['today','今日','calendar-days'],['chat','对话','message-square'],['todos','待办','list-todo'],['library','资料','folder-open'],['capture','活动记录','scan-line']]:[['today','今日','calendar-days'],['todos','待办','list-todo'],['chat','对话','message-square'],['library','资料','folder-open'],['capture','活动记录','scan-line']];return items.map(([view,label,ico])=>`<button type="button" class="cm-nav-item cursor-interaction ${s.view===view?'is-active':''}" data-action="nav:${view}" ${s.view===view?'aria-current="page"':''}>${icon(ico)}<span>${label}</span>${view==='todos'&&unresolved().length?`<span class="cm-count">${unresolved().length}</span>`:''}</button>`).join('');}
+    function title(name,sub,action=''){return `<div class="cm-title-row"><div><h1>${name}</h1>${sub?`<p class="cm-subtitle">${sub}</p>`:''}</div>${action}</div>`;}
+    function detail(t){
+      const owner=t.owner||(t.kind==='supervise'?'刘宁':'我');
+      const field=(key,label,value)=>`<label for="${id}-edit-${key}">${label}<input id="${id}-edit-${key}" class="cm-input" value="${esc(value)}"></label>`;
+      return `<aside class="cm-detail" aria-label="事项详情">${btn('返回事项列表','back','quiet cm-sheet-back')}<div class="cm-section-heading"><h2>${esc(t.title)}</h2>${btn('编辑','edit','small')}</div><dl><dt>提出人</dt><dd>${esc(t.from)}</dd><dt>来源</dt><dd>${esc(t.app)} / ${esc(t.group)}</dd><dt>执行人</dt><dd>${esc(owner)}</dd><dt>截止</dt><dd>${esc(t.due)}</dd><dt>反馈到</dt><dd>${esc(t.feedback)}</dd><dt>提醒</dt><dd>${esc(t.reminder)}</dd></dl>${s.edit?`<div class="cm-edit-fields">${field('owner','执行人',owner)}${field('due','截止时间',t.due==='未设置'?'':t.due)}${field('reminder','提醒时间或规则',t.reminder==='未设置'?'':t.reminder)}${field('feedback','反馈位置与要求',t.feedback)}<div class="cm-inline">${btn('保存事项（演示）','save-task','primary small')}${btn('取消','cancel-edit','small')}</div></div>`:''}${t.reminder==='未设置'||t.reminder==='待设置提醒'?`<div class="cm-note warning">这项事项尚未设置提醒。${btn('设置提醒','edit','quiet small')}</div>`:''}<blockquote class="cm-quote"><cite>${esc(t.from)} · ${esc(t.time)}</cite>${esc(t.quote)}</blockquote>${btn(s.source?'收起来源证据':'查看来源证据','source','quiet small')}${s.source?'<div class="cm-note">示例证据：保留群名、发言人、消息时间与原文。此处未使用真实聊天截图，也不承诺跳转客户端原消息。</div>':''}<div class="cm-detail-actions">${btn(s.done.has(t.id)?'恢复为处理中':'标记处理完成','done',s.done.has(t.id)?'':'primary')}${btn(s.feedback.has(t.id)?'标记尚未反馈':'标记已反馈','feedback')}</div><p class="cm-caption">处理：${s.done.has(t.id)?'已完成':'未完成'} · 反馈：${s.feedback.has(t.id)?'已反馈':'尚未反馈'}</p><div class="cm-activity"><h3>事项进展</h3><div class="cm-update"><time>${t.id.startsWith('c')?'刚刚':'10:35'}</time><p>${esc(t.progress)}</p></div><div class="cm-update"><time>${t.id.startsWith('c')?'刚刚':'09:25'}</time><p>${t.id.startsWith('c')?'你已核对责任人及反馈去向；提醒可继续设置':'你已确认事项和提醒时间'}</p></div></div></aside>`;
+    }
+    function taskList(){
+      if(s.filter==='inbox')return `<div class="cm-main-list"><div class="cm-section-heading"><h2>待整理</h2><span class="cm-caption">${unresolved().length} 条候选</span></div>${unresolved().map(t=>`<article class="cm-resource"><h3>${esc(t.title)}</h3><p>${esc(t.group)} / ${esc(t.from)}</p><blockquote class="cm-quote">${esc(t.quote)}</blockquote><p>${esc(t.question)}</p>${s.review===t.id?`<div><label class="cm-caption" for="${id}-owner">执行人</label><input id="${id}-owner" class="cm-input" value="" placeholder="请明确填写执行人"><label class="cm-caption" for="${id}-deadline">截止时间（可留空）</label><input id="${id}-deadline" class="cm-input" placeholder="核对原文后填写具体时间"><label class="cm-caption" for="${id}-feedback">反馈位置或要求</label><input id="${id}-feedback" class="cm-input" value="${esc(t.group)}"><div class="cm-inline" style="margin-top:12px">${btn('确认并加入',`save-candidate:${t.id}`,'primary small')}${btn('取消整理','cancel-review','small')}</div></div>`:`<div class="cm-inline">${btn('核对并加入',`accept:${t.id}`,'small')}${btn('忽略',`ignore:${t.id}`,'quiet small')}</div>`}</article>`).join('')||'<div class="cm-empty">候选已整理完。新识别的事项会出现在这里。</div>'}</div>`;
+      const baseRows=allTasks().filter(t=>s.filter==='all'||s.filter==='mine'&&t.kind==='mine'||s.filter==='supervise'&&t.kind==='supervise'||s.filter==='waiting'&&t.kind==='waiting'||s.filter==='done'&&s.done.has(t.id));
+      const rows=s.view==='today'?baseRows.filter(t=>t.due.startsWith('今天')||t.reminder.startsWith('今天')):baseRows;
+      return `<div class="cm-main-list"><div class="cm-section-heading"><h2>${s.view==='today'?'需要关注':'事项清单'}</h2><span class="cm-caption">${rows.length} 项</span></div>${rows.map(t=>`<button type="button" data-action="select:${t.id}" class="cm-task-row cursor-interaction ${s.selected===t.id?'is-selected':''}" aria-label="查看${esc(t.title)}"><span><span class="cm-task-name">${esc(t.title)}</span><span class="cm-provenance"><span>${esc(t.app)}</span><span>${esc(t.group)}</span><span>${esc(t.from)}</span></span></span><span class="cm-due ${t.due.startsWith('今天')?'cm-warning':''}">${esc(t.due)}<small>${s.done.has(t.id)?'已处理':esc(t.status)}</small></span></button>`).join('')||'<div class="cm-empty">这个视图还没有事项。你可以切换筛选或整理候选。</div>'}${s.accepted.size?`<div class="cm-note">已加入 ${s.accepted.size} 条候选（演示）。新增事项同样保留来源证据和用户确认记录。</div>`:''}<div class="cm-activity"><div class="cm-section-heading"><h2>最近变化</h2>${btn('查看活动记录','nav:capture','quiet small')}</div><div class="cm-update"><time>11:08</time><p>新增权限说明请求<span class="cm-caption"> · 钉钉 / 周然</span></p></div><div class="cm-update"><time>10:26</time><p>供应商承诺明天提供材料<span class="cm-caption"> · 等待刘宁</span></p></div></div></div>`;
+    }
+    function todos(){const t=allTasks().find(x=>x.id===s.selected)||tasks[0];return title(s.view==='today'?'今日':'待办',s.view==='today'?'10月21日，星期三 · 先处理有明确时限的事项':'每项保留提出人、原文、截止时间与反馈去向',btn('新增事项','new','small'))+`${unresolved().length?`<div class="cm-pending"><div><h3>${unresolved().length} 条候选待整理</h3><small>来自你看过的对话，尚未进入正式清单</small></div>${btn('去整理','inbox','small')}</div>`:''}<div class="cm-filters" aria-label="待办筛选">${[['all','全部'],['mine','我的待办'],['supervise','我督办的'],['waiting','等待反馈'],['done','已处理']].map(([k,l])=>`<button type="button" class="cm-filter cursor-interaction ${s.filter===k?'is-active':''}" data-action="filter:${k}" aria-pressed="${s.filter===k}">${l}</button>`).join('')}</div><div class="cm-split">${taskList()}${s.filter!=='inbox'?detail(t):'<aside class="cm-detail"><h2>先核对，再加入</h2><p class="cm-caption">请求不一定等于你的承诺。无法识别的责任人或时间留作待确认，忽略过的事项不应反复出现。</p></aside>'}</div>`;}
+    function chat(){return title('对话',s.variant==='side'?'当前网页与个人事项，随时接着聊':'查资料、做工作，也可以继续追踪事项',s.variant==='side'?'':btn('新对话','new-chat','small'))+`<div class="cm-chat-layout"><div class="cm-chat-body"><div class="cm-user-msg">今天还有哪些事情需要我反馈？</div><div class="cm-answer"><p>有两项需要今天反馈，建议先处理灰度验证报告。</p><ul><li><strong>17:00 前</strong>，将验证报告发到支付项目交付群，并 @王经理。</li><li><strong>18:00 前</strong>，在客户接口联调群确认周五排期。你还在等待研发回复。</li></ul><p class="cm-caption">以上来自已确认待办。消息中的要求和你的处理状态分别保留。</p><button type="button" class="cm-source-chip cursor-interaction" data-action="select:report">${icon('quote')}王经理 · 支付项目交付群</button><button type="button" class="cm-source-chip cursor-interaction" data-action="select:review">${icon('quote')}陈悦 · 客户接口联调群</button></div>${s.variant==='side'?`<div class="cm-pending"><div><h3>今天 17:00 · 提交验证报告</h3><small>反馈到支付项目交付群</small></div>${btn('查看','select:report','small')}</div>`:''}<div class="cm-composer"><label class="cm-caption" for="${id}-composer">发消息</label><textarea id="${id}-composer" placeholder="描述你要完成的事，或添加网页和文件…"></textarea><div class="cm-composer-bottom"><div class="cm-composer-meta"><button type="button" data-action="context" aria-label="添加上下文">${icon('plus')}</button><button type="button" data-action="capabilities">能力</button><span>当前模型</span></div>${btn(icon('arrow-up')+'发送','send','primary small')}</div></div><div class="cm-caption">示例对话 · 输入仅用于演示反馈，不会发送给模型</div></div><aside class="cm-conversation-list"><h3>最近对话</h3><button type="button" data-action="conversation">项目交付与反馈<small>今天 · 当前对话</small></button><button type="button" data-action="conversation">接口联调资料整理<small>昨天 · 2 份资料</small></button><button type="button" data-action="conversation">工作助手需求讨论<small>10月19日</small></button>${btn('管理全部对话','manage-chats','quiet small')}<div class="cm-note">执行记录和 Agent 任务留在对应对话中。</div></aside></div>`;}
+    function library(){return title('资料','保留工作材料，也保留材料的来源')+`<div class="cm-resource-grid">${[['知识','整理的笔记、知识条目和关联图谱','知识列表 / 知识图谱','book-open'],['会议','录音、转写、参考笔记和会议纪要','开始会议 / 导入音频','mic'],['文件','对话中上传、生成和导出的文件','查看文件','file-text'],['浏览器标签页','为当前对话选取网页上下文','选择网页','panels-top-left']].map(([n,d,a,ico])=>`<article class="cm-resource"><div class="cm-inline">${icon(ico)}<h2>${n}</h2></div><p>${d}</p>${btn(a,`resource:${n}`,'quiet small')}</article>`).join('')}</div><div class="cm-note">技能、场景与专家、MCP 和应用在“设置 → 本机与工具”中管理；对话保留本次使用的快捷入口。</div>`;}
+    function capture(){return title('活动记录','只记录已启用应用中可采集到的画面',btn(s.paused?'恢复记录':'暂停记录','pause',s.paused?'primary':''))+`<div class="cm-note ${s.paused?'warning':'success'}"><span class="cm-dot ${s.paused?'paused':''}"></span>${s.paused?'记录已暂停。暂停期间的对话不会补采。':'正在记录 · 最近一次成功采集 11:08 · 本机 OCR'}</div>${[['钉钉','已启用 · 当前打开的会话画面','11:08'],['微信','已启用 · 当前打开的会话画面','10:02'],['企业内聊','未启用 · 添加应用后可配置','尚无记录']].map(([n,d,t])=>`<div class="cm-source-row"><div><h2>${n}</h2><p>${d}</p></div><span class="cm-caption">${t}</span></div>`).join('')}<div class="cm-note">采集范围不包含未打开、未加载的消息。窗口最小化或遮挡时是否可采集，需要按应用验证。</div><div class="cm-inline" style="margin-top:20px">${btn('配置采集与隐私','capture-settings')}${btn('查看候选事项','inbox')}</div>`;}
+    function manualRows(){const map={
+      '待办与提醒':[['普通事项提醒',s.prefs['普通事项提醒']||'即时','已确认事项的提醒频率'],['免打扰时段',s.prefs['免打扰时段']||'未设置','以设备时区为准'],['逾期提醒','每天 09:00','已完成和已取消的事项停止提醒']],
+      '输入与语音':[['听写方式',s.prefs['听写方式']||'浏览器识别','本机模型需下载后单独启用'],['ASR 纠错',s.prefs['ASR 纠错']||'关闭','查看转写内容会由哪个模型服务处理'],['实时出字','开启','边说边显示识别中的文字']],
+      '记录与隐私':[['启用的应用','钉钉、微信','仅采集可获得的窗口画面'],['聊天内容处理',s.prefs['聊天内容处理']||'当前模型服务','本机 OCR 与语义模型的数据范围分开说明'],['后台语义抽取',s.prefs['后台语义抽取']||'开启','暂停后不再生成新的候选事项']],
+      '模型与推理':[['对话模型','当前已配置模型','能力和服务状态需要读取真实配置'],['推理预算','标准','仅为支持该能力的模型提供选项']],
+      '连接与配对':[['Companion 连接','已连接（示例）','配对和信任确认保留独立流程']],
+      '安全与信任':[['操作确认','沿用当前策略','AI 候选不能自动批准权限或操作']],
+      '本机与工具':[['技能 / 场景与专家','查看与管理','与当前对话启用的能力分开'],['MCP / 应用','查看与管理','连接、安装和授权分别确认']],
+      '密钥与环境':[['密钥条目','••••••••','真实密钥不进入语义推荐上下文']],
+      '文件与知识':[['附件与知识索引','沿用当前设置','保留导入、导出和知识管理入口']],
+      '实验功能':[['实验能力','按项启用','模型许可、下载与启用分别处理']]
+    };return `<div class="cm-manual"><div class="cm-section-heading"><h2>${esc(s.settingsTab)}</h2><span class="cm-caption">也可直接浏览设置</span></div>${(map[s.settingsTab]||[]).map(([a,b,c])=>`<div class="cm-manual-row"><div><h3>${esc(a)}</h3><p>${esc(c)}</p></div><button type="button" class="cm-value cursor-interaction" data-action="manual:${esc(a)}">${esc(b)} ›</button></div>`).join('')}</div>`;}
+    function settings(){const result=s.result&&samples[s.result];let resultHtml='';
+      if(s.result==='clarify'){resultHtml=`<div class="cm-note">这个描述有多种可能。正式版会基于实际设置澄清；此设计稿请选择一个示例场景体验候选流程。</div>`;}
+      else if(s.result==='offline'){resultHtml=`<div class="cm-note error" role="alert">模型暂不可用，未生成语义候选。手动设置仍可使用。${btn('重试','retry','quiet small')}</div>`;}
+      else if(result){const plan=result.plans[s.chosen];resultHtml=`<div class="cm-section-heading"><div><h2>可能符合你需求的方案</h2><p class="cm-subtitle">${esc(result.summary)}</p></div></div><div class="cm-candidates">${result.plans.map((p,i)=>`<article class="cm-plan ${s.chosen===i?'is-chosen':''}"><span class="cm-plan-tag">${s.chosen===i?icon('circle-check'):icon('circle')}${esc(p.tag)}</span><h3>${esc(p.name)}</h3><p>${esc(p.why)}</p><ul>${p.changes.map(c=>`<li>${esc(c[0])}：${esc(c[2])}</li>`).join('')}</ul>${btn(s.chosen===i?'已选 · 查看变更':'选择并查看变更',`plan:${i}`,'small')}</article>`).join('')}</div>${s.preview?`<div class="cm-preview-diff"><div class="cm-section-heading"><h2>应用前核对</h2><span class="cm-caption">${plan.changes.length} 项候选变更</span></div>${plan.changes.map((c,i)=>`<label class="cm-change-row"><input type="checkbox" data-change="${i}" ${s.checked.includes(i)?'checked':''}><span>${esc(c[0])}<small>${esc(c[3])}</small></span><span class="cm-change-value"><span>当前：${esc(s.prefs[c[0]]||c[1])}</span>建议：${esc(c[2])}</span></label>`).join('')}${plan.prereq?`<div class="cm-note warning">${esc(plan.prereq)} 该步骤需单独操作，当前不能直接应用。${btn('查看准备步骤','prerequisite','quiet small')}</div>`:''}${s.apply==='failed'?'<div class="cm-note error" role="alert">演示：保存失败。候选和草稿已保留，尚未标记为生效。</div>':''}${s.apply==='success'?`<div class="cm-note success" role="status">演示：已更新 ${s.checked.length} 项预览设置。真实配置未改变。${btn('撤销预览变更','undo','quiet small')}</div>`:`<div class="cm-apply-row"><span class="cm-caption">${plan.navigate?'此方案只打开设置，不写入配置':'仅应用你选中的项目'}</span>${btn(s.apply==='pending'?'正在核对…':plan.navigate?'打开对应设置':plan.prereq?'需先完成准备':'确认应用（演示）','apply','primary',plan.prereq||!s.checked.length||s.apply==='pending'?'disabled':'')}</div>`}</div>`:''}`;}
+      return title('设置','说清你希望改善的体验，或直接浏览具体设置')+`<div class="cm-intent"><label for="${id}-intent">你希望 CMspark 怎样工作？</label><form class="cm-intent-row" data-form="intent"><input id="${id}-intent" class="cm-input" value="${esc(s.phrase)}" placeholder="例如：少打扰我，但别漏掉重要待办" autocomplete="off"><button class="cm-button primary cursor-interaction" type="submit">${icon('sparkles')}理解并给出候选</button></form><div class="cm-examples">${Object.entries(samples).map(([k,v])=>`<button type="button" class="cm-example cursor-interaction" data-action="sample:${k}">${esc(v.text)}</button>`).join('')}</div><p class="cm-caption" style="margin-top:11px">交互演示：使用预设候选；正式版结合真实设置目录、当前值和可用能力进行 AI 理解。</p></div>${resultHtml}<div class="cm-settings-tabs" style="margin-top:28px" aria-label="设置分类">${settingsCategories.map(x=>`<button type="button" class="cm-filter cursor-interaction ${s.settingsTab===x?'is-active':''}" data-action="category:${x}" aria-pressed="${s.settingsTab===x}">${x}</button>`).join('')}</div>${manualRows()}`;
+    }
+    function render(){
+      el.dataset.detail=s.detail?'true':'false';
+      el.innerHTML=`<div class="cm-shell"><nav class="cm-nav" aria-label="主导航"><div><div class="cm-brand">${icon('command')}CMspark</div><div class="cm-scope">个人工作空间</div></div><div class="cm-nav-group">${navItems()}</div><div class="cm-nav-group"><div class="cm-nav-label">继续工作</div><button type="button" class="cm-nav-item cursor-interaction" data-action="nav:chat">${icon('message-circle')}项目交付与反馈</button></div><div class="cm-nav-bottom"><button type="button" class="cm-nav-item cursor-interaction ${s.view==='settings'?'is-active':''}" data-action="nav:settings">${icon('settings-2')}设置</button><div class="cm-capture-foot"><span><span class="cm-dot ${s.paused?'paused':''}"></span>${s.paused?'记录已暂停':'记录已开启'}</span><button type="button" data-action="pause" aria-label="${s.paused?'恢复记录':'暂停记录'}">${icon(s.paused?'play':'pause')}</button></div></div></nav><section class="cm-sheet"><header class="cm-top"><div class="cm-top-left"><button type="button" class="cm-mobile-menu cursor-interaction" data-action="menu" aria-expanded="${s.menu}">${icon('menu')}<span>CMspark</span></button><span>${s.variant==='side'?'浏览器侧栏':'个人工作空间'}</span></div><div class="cm-top-right"><span class="cm-scope-label">${s.paused?'记录已暂停':'本机已连接'}</span><button type="button" data-action="${s.variant==='side'?'full':'nav:settings'}">${icon(s.variant==='side'?'expand':'settings-2')}<span>${s.variant==='side'?'工作中心':'设置'}</span></button></div></header>${s.menu?`<nav class="cm-mobile-nav" aria-label="展开的主导航">${navItems()}${btn('设置','nav:settings','small')}</nav>`:''}<main class="cm-content">${s.view==='settings'?settings():s.view==='chat'?chat():s.view==='library'?library():s.view==='capture'?capture():todos()}${s.notice?`<div class="cm-note" role="status">${esc(s.notice)}</div>`:''}<div class="cm-live" aria-live="polite"></div></main></section></div>`;
+      el.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>action(b.dataset.action)));
+      const form=el.querySelector('[data-form="intent"]');if(form)form.addEventListener('submit',e=>{e.preventDefault();s.phrase=el.querySelector('#'+id+'-intent').value;s.result=design.service==='offline'?'offline':Object.keys(samples).find(k=>samples[k].text===s.phrase.trim())||'clarify';s.chosen=0;s.preview=!!samples[s.result];s.checked=samples[s.result]?samples[s.result].plans[0].changes.map((_,i)=>i):[];s.apply='idle';s.notice='';render();});
+      el.querySelectorAll('[data-change]').forEach(c=>c.addEventListener('change',()=>{const i=+c.dataset.change;s.checked=c.checked?[...s.checked,i]:s.checked.filter(x=>x!==i);s.apply='idle';render();}));
+      if(globalThis.lucide)globalThis.lucide.createIcons({attrs:{width:17,height:17}});
+    }
+    function action(a){const [k,v]=a.split(':');s.notice='';
+      if(k==='nav'){s.view=v;s.detail=false;s.menu=false;s.source=false;}
+      else if(k==='menu')s.menu=!s.menu;
+      else if(k==='select'){s.selected=v;s.view='todos';s.filter='all';s.detail=true;s.source=false;}
+      else if(k==='back')s.detail=false;
+      else if(k==='edit'){s.edit=true;s.detail=true;}
+      else if(k==='cancel-edit')s.edit=false;
+      else if(k==='save-task'){const owner=el.querySelector('#'+id+'-edit-owner').value.trim();if(!owner){s.notice='请先填写执行人。';}else{s.edits[s.selected]={owner,due:el.querySelector('#'+id+'-edit-due').value.trim()||'未设置',reminder:el.querySelector('#'+id+'-edit-reminder').value.trim()||'未设置',feedback:el.querySelector('#'+id+'-edit-feedback').value.trim()||'待确认'};s.edit=false;s.notice='演示：事项信息已更新；真实提醒计划未建立。';}}
+      else if(k==='filter'){s.filter=v;s.detail=false;}
+      else if(k==='inbox'){s.view='todos';s.filter='inbox';s.detail=false;}
+      else if(k==='source')s.source=!s.source;
+      else if(k==='done'){s.done.has(s.selected)?s.done.delete(s.selected):s.done.add(s.selected);s.notice='演示：处理状态已更新，反馈状态保持独立。';}
+      else if(k==='feedback'){s.feedback.has(s.selected)?s.feedback.delete(s.selected):s.feedback.add(s.selected);s.notice='演示：已记录你的反馈状态，未向聊天工具发送消息。';}
+      else if(k==='accept'){s.review=v;}
+      else if(k==='cancel-review'){s.review=null;}
+      else if(k==='save-candidate'){const t=candidates.find(x=>x.id===v);const owner=el.querySelector('#'+id+'-owner').value.trim();const due=el.querySelector('#'+id+'-deadline').value.trim();const feedback=el.querySelector('#'+id+'-feedback').value.trim();if(!owner){s.notice='请先确认执行人。';}else{s.accepted.add(v);s.extra.push({id:v,owner,title:t.title,app:t.group.split(' · ')[0],group:t.group.split(' · ')[1],from:t.from,due:due||'未设置',status:'待处理',kind:owner==='我'?'mine':'supervise',feedback:feedback||'待确认',quote:t.quote,time:'消息时间待核对',reminder:due?'待设置提醒':'未设置',progress:'已由用户整理并确认',needsReply:!!feedback});s.review=null;s.filter='all';s.selected=v;s.detail=true;s.notice='演示：已加入正式清单。未填写的时间保持未设置，不自动猜测。';}}
+      else if(k==='ignore')s.ignored.add(v);
+      else if(k==='pause'){s.paused=!s.paused;}
+      else if(k==='capture-settings'){s.view='settings';s.settingsTab='记录与隐私';}
+      else if(k==='category')s.settingsTab=v;
+      else if(k==='sample'){s.sample=v;s.phrase=samples[v].text;s.result=null;s.preview=false;s.apply='idle';}
+      else if(k==='plan'){s.chosen=+v;s.preview=true;s.apply='idle';s.checked=samples[s.result].plans[s.chosen].changes.map((_,i)=>i);}
+      else if(k==='apply'){const plan=samples[s.result].plans[s.chosen];if(plan.navigate){s.settingsTab='输入与语音';s.notice='演示：已打开输入与语音设置，未修改配置。';}else if(!plan.prereq&&s.checked.length){s.backup={...s.prefs};s.apply='pending';render();setTimeout(()=>{s.apply=design.service==='save-fail'?'failed':'success';if(s.apply==='success'){for(const i of s.checked){const c=plan.changes[i];s.prefs[c[0]]=c[2];}}render();},550);return;}}
+      else if(k==='undo'){s.prefs={...s.backup};s.apply='idle';s.notice='演示：预览设置已恢复。';}
+      else if(k==='retry'){design.service='normal';s.result=null;s.notice='演示：服务已恢复，可再次生成候选。';}
+      else if(k==='full'){s.notice='正式产品将在独立页面打开完整工作中心；可切换下方“事项优先”查看。';}
+      else if(k==='context'){s.notice='上下文入口：浏览器标签页、文件、知识、其他对话。';}
+      else if(k==='capabilities'){s.notice='本次对话能力：技能、场景与专家、MCP、应用。全局管理位于设置。';}
+      else if(k==='send'){s.notice='这是交互设计稿。输入未发送给模型，真实对话未改变。';}
+      else if(k==='prerequisite'){s.notice='需单独检查能力、下载模型和授权；正式流程沿用现有确认机制。';}
+      else if(k==='manual'){s.notice=`“${v}”的手动设置入口；此稿不修改真实配置。`;}
+      else if(k==='manage-chats'){s.notice='完整管理保留：搜索、标签/分组、重命名、归档、回收站与批量操作。';}
+      else if(k==='resource'){s.notice=`${v}入口保留；详细工作流沿用现有功能。`;}
+      else if(k==='new'||k==='new-chat'){s.notice=k==='new'?'新增事项时填写内容、责任人、时间、反馈去向；此处为设计入口。':'新对话入口；此处为设计预览。';}
+      else if(k==='conversation'){s.notice='切换对话时，执行状态与结果继续归属原对话。';}
+      render();
+    }
+    return {el,s,render};
+  }
+  const design={dark:false,dense:false,service:'normal'};
+  const apps=[make('cm-task-first','tasks'),make('cm-settings-preview','settings'),make('cm-chat-first','chat'),make('cm-browser-side','side')];
+  function updateDesign(){for(const a of apps){a.el.dataset.theme=design.dark?'dark':'light';a.el.style.setProperty('--cm-pitch',design.dense?'60px':'70px');a.render();}}
+  updateDesign();
+  if(globalThis.Tweak){const tweak=new Tweak({container:root,onChange:updateDesign});tweak.addToggle(design,'dark',{label:'深色外观'});tweak.addToggle(design,'dense',{label:'紧凑事项列表'});tweak.addSelect(design,'service',{label:'设置流程情景',options:[{label:'正常演示',value:'normal'},{label:'模型不可用',value:'offline'},{label:'保存失败',value:'save-fail'}]});}
+})();
+</script>

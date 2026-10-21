@@ -581,3 +581,10 @@ This CPU regression is not a changed-head hosted/browser or native PASS.
 `cockpit-bridge-cdp-lifecycle.test.mjs` 直接执行真实 controller 的完整 `aborted`／`Cdp`，使用惰性 EventTarget 协议 seam，核空 target snapshot／Runtime.enable 已 ACK 后的关闭、并发命令与事件等待、已关闭入口、原对象 abort、原匹配结果及 malformed／迟到事件。LF/CRLF 均覆盖事件等待；此类 CPU 不建立 WebSocket、Chrome 或原生正证。命令 Map 与事件等待独立，transport close 必须使二者拒绝，并在成功／拒绝／abort 后退订；不能让终态错误拖到外层 deadline。
 
 这不证明6521真的发生了 CDP close，旧 worker 缺失／启动失败／具体剩余时长仍 UNKNOWN。原 first-identity 真实窗口、认证 WS、parent-zero 拒绝和 Job 真实 close／清理仍必须由精确新 head 的 Windows 证明；不得延45秒或添加猜测启动参数、强制唤醒／缓存旧目标。
+
+
+## 聊天事项与语义设置（#752–#754）
+
+Companion `activity-752.test.ts`、`settings-assistant.test.ts`、`personal-workspace-transport.test.ts` 执行真实服务/存储/处理器；fixture 来自实际返回，使用独立临时目录和惰性适配器。覆盖默认关闭、来源与候选、明确确认、提醒持久状态/迟到回执、暂停后的留存、owner/旧值/过期和认证拒绝。既有路由锁步、Board/MCP/Meeting 消费者随影响范围回归。扩展 `activity-workspace-752.test.ts`、`semantic-settings.test.ts`、`workspace-sender.test.ts` 使用真实组件/生产回调，覆盖最近来源、日期精度、语义方案选择与可信页面边界。
+
+`chrome-extension/scripts/render-workspace-fixture.cjs` 与 `personal-workspace-ui-fixture.cjs` 可构建真实 App 的受控演示；后者使用真实后台处理器和独立临时数据，替换采集、模型和通知。当前证据及完整命令见 [机器报告](audit/reviews/2026-10-21-chat-action-workspace-machine.md)。这些检查不证明真实 TCC/屏幕录制/Vision、模型准确率或通知展示，不能替代平台现场验收。

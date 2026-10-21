@@ -54,6 +54,7 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 |------|------|------|------|
 | **Capture** | 召唤器 HTML 卡 | 默认 1040×760；紧凑 360×420；流式出字；永不审批 | 本页 [召唤器](#召唤器capture) · [PRODUCT.md](PRODUCT.md) |
 | **L0 · 主体** | 自然语言 · 多线程 · 历史 | Side Panel ChatShell（空态「要对这页做什么」/「弹出对话框」）；线程隔离；SQLite 操作史 | 本页 [使用指南](#使用指南) |
+| **个人工作中心 · 开发分支** | 来源待办、督办与语义设置 | 独立工作页；采集和模型默认关闭，macOS 前台可见窗口；真实原生验收待完成，未正式发布 | [personal-workspace](docs/personal-workspace.md) |
 | **L0 产品特性** | Obsidian 导出 · Mermaid · NotebookLM | 导出/渲染/导入（**非**组合原语） | [ADR-008](docs/adr/008-obsidian-export.md) · [009](docs/adr/009-mermaid-rendering.md) · [notebooklm-user-guide](docs/notebooklm-user-guide.md) |
 | **L0 输入** | 听写+ · 本机 STT · 会议记录 | classic/连续/按住热键；Whisper 渐进假设；场景「会议」工作台 | [meeting-and-dictation-user-guide](docs/meeting-and-dictation-user-guide.md) · [ADR-023](docs/adr/023-voice-local-stt-path-b.md) · [ADR-024](docs/adr/024-dictation-plus-asr-refiner-meeting.md) |
 | **L1 · 浅层** | 浏览器 CDP 操控 | 标签页、页面读写、点击/填表、截图、导航等 | 本页 [浏览器操作示例](#浏览器操作示例) |

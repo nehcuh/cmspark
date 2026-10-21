@@ -79,6 +79,7 @@ import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
 import { surfaceFromOrigin, isChromeExtensionWsOrigin } from "./handshake-surface"
+import { getActivityService } from "../activity"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 import {
   bindExtensionPeerPicker,
@@ -779,6 +780,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   httpServer.on("listening", () => {
     console.log(`[cmspark-agent] Companion started on ws://127.0.0.1:${port}`)
     logger.info("server.listening", { port })
+    // Explicit opt-in is persisted; opening a UI is not required for confirmed reminders.
+    try { getActivityService().start() } catch { logger.warn("activity.start_failed") }
     scheduleWhisperPrewarm()
     // P3a HUD spike: if tray is co-located in this process, run full in-process
     // open→hydrate→confirm→standby. Dual-process (normal tray + server) is driven
@@ -1671,6 +1674,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
 
   // Graceful shutdown
   const shutdown = async (signal: string) => {
+    // Fence passive collection and wait for owned work before shutting down transports.
+    try { await getActivityService().stop() } catch { logger.warn("activity.stop_failed") }
     // Stop enterprise admission and fence late work before any awaited teardown.
     try { closeEnterpriseHttp() } catch { logger.warn("enterprise.shutdown_failed") }
     desktopLauncher.close()

@@ -1,0 +1,62 @@
+{
+  "date": "2026-10-21",
+  "base": "a3ecd5f21e63c05044fd6ced9406168de544b9c1",
+  "checks": [
+    {
+      "name": "extension",
+      "command": "chrome-extension: npm test",
+      "exit_code": 0,
+      "counts": {
+        "tests": 1807,
+        "pass": 1807,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "log_sha256": "f292e7606e1baa232e6ad911e9c43f4f70c4b6ac07e403aaef6520ee8095a0fb"
+    },
+    {
+      "name": "companion_focused",
+      "command": "companion: isolated runner, eight affected families",
+      "exit_code": 0,
+      "counts": {
+        "tests": 73,
+        "pass": 73,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "log_sha256": "817020cd79e2369bdd07b243f82918559ff9d156291880bb0d7a1c7ae8da065e"
+    },
+    {
+      "name": "companion_linux",
+      "command": "non-root Linux aarch64 / Node22.23.3: companion npm test",
+      "exit_code": 0,
+      "counts": {
+        "tests": 8683,
+        "pass": 8505,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 178
+      },
+      "log_sha256": "14043c5ff06b3904b0bce78a00da8fe867b268349f171d3ce7cddabd8288c037"
+    }
+  ],
+  "native_live_capture_model_notifications": "NOT_RUN",
+  "linux_snapshot_delta": "protected-app exclusions, narrow scheduler reads, reconnect baseline; verified independently after full snapshot; adversarial F1-F3 fixes verified by affected families and actual App browser",
+  "gate": {
+    "timestamp_utc": "2026-10-21T15:01:12.884911+00:00",
+    "blast_tier": "T3",
+    "machine": "PASS_WITH_DECLARED_SCOPE",
+    "adversary": "APPROVE",
+    "pi_rereview": "APPROVE_WITH_NITS",
+    "pi_cli_version": "0.85.1",
+    "pi_self_reported_provider": "deepseek",
+    "pi_self_reported_model": "deepseek-v4-flash",
+    "pi_model_identity_source": "Pi report PI_PROVIDER/PI_MODEL; not independently provider-attested",
+    "pi_reviewed_staged_diff_sha256": "5047982c6351016f7df706b59e4bc493e7b50e352a0821d407411ffcdb268113",
+    "nonblocking_followup": "https://github.com/nehcuh/cmspark/issues/756",
+    "ci": "PENDING",
+    "merged": false
+  }
+}

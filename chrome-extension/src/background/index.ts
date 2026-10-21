@@ -5,6 +5,7 @@ import { forwardSiteCounterSettings, noteSiteCounterUiSelection } from "./site-c
 import { WSClient } from "./ws-client"
 import { createCockpitNativeRelay, COCKPIT_NATIVE_PORT } from "./cockpit-native-bridge"
 import { projectMetadataSenderAllowed } from "./project-metadata"
+import { forwardWorkspaceRequest } from "./workspace-sender"
 import {
   attachTerminalPort,
   buildTerminalOpenBinding,
@@ -696,6 +697,21 @@ function setupMessageHandlers() {
 /** Sync dispatch for extension UI → SW messages. Returns whether the channel is kept open. */
 function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sender?: chrome.runtime.MessageSender): boolean {
     switch (message?.type) {
+      case "activity.state":
+      case "activity.apps":
+      case "activity.configure":
+      case "activity.scan":
+      case "activity.analyze":
+      case "activity.source":
+      case "activity.delete":
+      case "todo.confirm":
+      case "todo.create":
+      case "todo.update":
+      case "todo.dismiss":
+      case "settings.assistant.propose":
+      case "settings.assistant.apply":
+        sendResponse(forwardWorkspaceRequest(message, sender, chrome.runtime.id, wsClient))
+        return false
       case "getStatus":
         sendResponse({
           connectionState: wsClient?.getState?.() ?? "disconnected",

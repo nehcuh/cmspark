@@ -11,6 +11,7 @@ import { handleSiteCounterMessage, noteSiteCounterThreadSelection } from "./mess
 import { meetingPcmPong } from "./voice/meeting-pcm-contract"
 import os from "os"
 import { handleProjectMessage, projectReplyProjection } from "./message-router/handlers/projects"
+import { handlePersonalWorkspaceMessage } from "./message-router/handlers/personal-workspace"
 import { beginProjectRunAdmission } from "./threads/project-activity"
 import { resolveBrowserSiteTarget } from "./site-context/browser-resolver"
 import { bindChatEvidenceScope } from "./business-evidence/chat-scope"
@@ -1114,6 +1115,20 @@ async function dispatchMessage(
   const { threadManager, skillEngine, historyStore } = services
 
   switch (type) {
+    case "activity.state":
+    case "activity.apps":
+    case "activity.configure":
+    case "activity.scan":
+    case "activity.analyze":
+    case "activity.source":
+    case "activity.delete":
+    case "todo.confirm":
+    case "todo.create":
+    case "todo.update":
+    case "todo.dismiss":
+    case "settings.assistant.propose":
+    case "settings.assistant.apply":
+      return handlePersonalWorkspaceMessage(msg, session)
     case "project.list":
     case "project.create":
     case "project.rename":
