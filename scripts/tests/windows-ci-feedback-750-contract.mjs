@@ -6,6 +6,10 @@ import { createRequire } from 'node:module'
 
 const yaml = createRequire(new URL('../../companion/package.json', import.meta.url))('js-yaml')
 const baseline = JSON.parse(fs.readFileSync(new URL('./windows-ci-feedback-750-baseline.json', import.meta.url), 'utf8'))
+const cockpit = JSON.parse(fs.readFileSync(new URL('./windows-ci-feedback-748-supplement.json', import.meta.url), 'utf8'))
+assert.deepEqual(Object.keys(cockpit).sort(), ['sourceCommit', 'sourceWorkflowSha256', 'steps'])
+assert.equal(cockpit.sourceCommit, '6521db567a06c01711b6527e96cdfcde65094342')
+assert.equal(cockpit.sourceWorkflowSha256, '5cc02dfea08c5357a90c437f5ee6bbf5bdec4df054dd137c14fa9f061c280c2a')
 const canonical = value => value === null || typeof value !== 'object' ? JSON.stringify(value) : Array.isArray(value) ? '[' + value.map(canonical).join(',') + ']' : '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + canonical(value[k])).join(',') + '}'
 const digest = value => createHash('sha256').update(canonical(value)).digest('hex')
 const omit = (value, keys) => Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)))
@@ -24,6 +28,8 @@ const CENSUS_ONLY = new Set(['Read-only fixed-release gallery certificate sampli
 const directedAt = baseline.steps.findIndex(step => step.key === 'Office compatibility and relocated runtime (#611)')
 assert.ok(directedAt > 0)
 const DIRECTED = new Set(baseline.steps.slice(directedAt).map(step => step.key).filter(name => !CENSUS_ONLY.has(name)))
+const COCKPIT_NAMES = ['Windows cockpit Node scalar selection (#723)', 'Windows cockpit native bridge first identity STOP gate (#723)', 'Publish finite cockpit first failure (#723)']
+assert.deepEqual(cockpit.steps.map(key), COCKPIT_NAMES)
 
 // Deliberately small expression grammar. Unknown identifiers/functions/tokens
 // refuse; no eval/Function or access to arbitrary workflow data.
@@ -60,6 +66,55 @@ export function condition750(source, context) {
   return Boolean(value && (/\b(?:always|success|failure|cancelled)\s*\(/.test(text) || context.success))
 }
 
+// Source-derived 6521 objects allow precisely the lane split and one newly
+// required lifecycle test argument. Original d5fc34/19 pins stay unchanged.
+export function validateCockpitSteps748(steps) {
+  const selected = COCKPIT_NAMES.map(name => {
+    const found = steps.filter(step => key(step) === name)
+    assert.equal(found.length, 1, 'one exact cockpit step: ' + name)
+    return found[0]
+  })
+  const expected = structuredClone(cockpit.steps)
+  const oldTests = 'node --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs scripts/tests/cockpit-bridge-first-evidence.test.mjs\n'
+  assert.equal(expected[0].run.split(oldTests).length, 2)
+  expected[0].run = expected[0].run.replace(oldTests, oldTests.trimEnd() + ' scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs\n')
+  for (const step of expected.slice(1)) {
+    const oldLane = "matrix.os == 'windows-latest'"
+    assert.equal(step.if.split(oldLane).length, 2)
+    step.if = step.if.replace(oldLane, oldLane + " && matrix.lane == 'native'")
+  }
+  assert.deepEqual(selected, expected, 'cockpit command/body/failure/artifact attributes are exact')
+  const [scalar, gate, upload] = selected
+  const compile = steps.findIndex(step => step.name === 'Compile shared companion test inputs (#650)')
+  const lastDirected = steps.findIndex(step => step.name === 'Windows native 8.3 filesystem paths (#604)')
+  const probe = steps.find(step => step.name === 'Post-census isolated module-scope diagnostic (#650)')
+  assert.ok(compile >= 0 && lastDirected > compile && probe)
+  assert.equal(steps.indexOf(scalar), compile + 1)
+  assert.equal(steps.indexOf(gate), lastDirected + 1)
+  assert.equal(steps.indexOf(upload), steps.indexOf(gate) + 1)
+  assert.equal(steps.indexOf(probe), steps.indexOf(upload) + 1)
+  assert.equal(steps.at(-1), probe, 'the census diagnostic remains the final matrix step')
+  assert.equal(probe.if, "${{ always() && !cancelled() && matrix.os == 'windows-latest' && matrix.lane == 'census' }}", 'the last source step never runs after the native pair on its desktop')
+  for (const matrix of MATRIX750) for (const status of ['success', 'failure', 'cancelled']) {
+    for (const outcome of ['success', 'failure', 'skipped', 'cancelled']) for (const summary of ['', 'owned-finite']) {
+      const context = { success: status === 'success', cancelled: status === 'cancelled', values: {
+        'matrix.os': matrix.os, 'matrix.lane': matrix.lane,
+        'steps.cockpit-first-identity.outcome': outcome,
+        'steps.cockpit-first-identity.outputs.finite_summary': summary,
+      } }
+      const windows = matrix.os === 'windows-latest', native = windows && matrix.lane === 'native'
+      assert.equal(condition750(scalar.if, context), windows && context.success)
+      assert.equal(condition750(gate.if, context), native && context.success)
+      const publish = native && outcome === 'failure' && summary !== ''
+      assert.equal(condition750(upload.if, context), publish)
+      // A failed gate still publishes its finite summary; success/empty/other
+      // lanes do not. No cross-VM census prerequisite is introduced.
+    }
+  }
+  // Remove only these fully validated actual objects from the legacy view.
+  return steps.filter(step => !selected.includes(step))
+}
+
 function cache750(step, nodeVersion) {
   assert.equal(step.uses, 'actions/setup-node@v4')
   assert.deepEqual(omit(step.with, ['cache-dependency-path']), { 'node-version': nodeVersion, cache: 'npm' })
@@ -76,7 +131,7 @@ export function validateWindowsCiFeedback750(text) {
   assert.equal(digest(omit(job, ['name', 'runs-on', 'strategy', 'steps'])), baseline.smokeOther)
   assert.equal(job.name, '${{ matrix.name }}'); assert.equal(job['runs-on'], '${{ matrix.os }}')
   assert.deepEqual(job.strategy, { 'fail-fast': false, matrix: { include: MATRIX750 } })
-  const keys = steps.map(key)
+  const keys = validateCockpitSteps748(steps).map(key)
   assert.deepEqual(keys.filter(name => name !== NSIS && name !== FRONT && name !== STAGE), baseline.steps.map(s => s.key).filter(name => name !== NSIS), 'all old steps retain order/cardinality')
   assert.equal(keys.filter(name => name === NSIS).length, 1)
   assert.equal(keys.filter(name => name === FRONT).length, 1)
@@ -106,7 +161,7 @@ export function validateWindowsCiFeedback750(text) {
     }
     assert.equal(digest(conserved), old.objectWithoutIf, 'original command/body/env/failure/artifact changed: ' + old.key)
     for (const matrix of MATRIX750) for (const state of states) {
-      const context = { ...state, values: { 'matrix.os': matrix.os, 'matrix.lane': matrix.lane, 'steps.windows-census-compile.outcome': state.compile, 'steps.windows-registry-prerequisites.outputs.ready': state.registry, 'steps.windows-census.outputs.public_dir': state.public } }
+      const context = { ...state, values: { 'matrix.os': matrix.os, 'matrix.lane': matrix.lane, 'steps.windows-census-compile.outcome': state.compile, 'steps.windows-registry-prerequisites.outputs.ready': state.registry, 'steps.windows-census.outputs.public_dir': state.public, 'steps.cockpit-first-identity.outcome': 'success', 'steps.cockpit-first-identity.outputs.finite_summary': '' } }
       const original = condition750(old.if, context)
       const allowed = CENSUS_ONLY.has(old.key) ? matrix.lane === 'census' : DIRECTED.has(old.key) ? matrix.lane !== 'census' : true
       assert.equal(condition750(step.if, context), Boolean(original && allowed), 'wrong lane/failure/cancellation semantics: ' + old.key + '/' + matrix.name)

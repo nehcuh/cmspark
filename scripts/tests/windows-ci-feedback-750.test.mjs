@@ -71,3 +71,40 @@ for (const [label, mutate] of mutations) {
     for (const value of [source, source.replaceAll('\n', '\r\n')]) assert.throws(() => validateWindowsCiFeedback750(value))
   })
 }
+
+const cockpitScalar = 'Windows cockpit Node scalar selection (#723)'
+const cockpitGate = 'Windows cockpit native bridge first identity STOP gate (#723)'
+const cockpitArtifact = 'Publish finite cockpit first failure (#723)'
+const cockpitMutations = [
+  ['missing scalar', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== cockpitScalar) }],
+  ['duplicate scalar', d => { d.jobs['smoke-os'].steps.push(structuredClone(find(d, cockpitScalar))) }],
+  ['scalar no longer checks census VM', d => { find(d, cockpitScalar).if += " && matrix.lane == 'native'" }],
+  ['missing newly required lifecycle control', d => { find(d, cockpitScalar).run = find(d, cockpitScalar).run.replace(' scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs', '') }],
+  ['duplicate lifecycle control argument', d => { find(d, cockpitScalar).run = find(d, cockpitScalar).run.replace(' scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs', ' scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs') }],
+  ['extra scalar command', d => { find(d, cockpitScalar).run += 'echo unreviewed\n' }],
+  ['scalar exit guard omitted', d => { find(d, cockpitScalar).run = find(d, cockpitScalar).run.replace('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n', '') }],
+  ['scalar after Registry', d => { const a = d.jobs['smoke-os'].steps, s = a.splice(a.findIndex(s => s.name === cockpitScalar), 1)[0]; a.splice(a.findIndex(s => s.name === 'Native Windows read-only Registry discovery (#644)') + 1, 0, s) }],
+  ['missing native gate', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== cockpitGate) }],
+  ['native gate on census desktop', d => { find(d, cockpitGate).if = "matrix.os == 'windows-latest'" }],
+  ['native gate failure waived', d => { find(d, cockpitGate)['continue-on-error'] = true }],
+  ['native gate budget expanded', d => { find(d, cockpitGate)['timeout-minutes'] = 99 }],
+  ['native gate receipt id lost', d => { delete find(d, cockpitGate).id }],
+  ['native gate command changed', d => { find(d, cockpitGate).run = find(d, cockpitGate).run.replace('run-cockpit-bridge-first.ps1', 'omitted.ps1') }],
+  ['native gate before final directed oracle', d => { const a = d.jobs['smoke-os'].steps, s = a.splice(a.findIndex(s => s.name === cockpitGate), 1)[0]; a.splice(a.findIndex(s => s.name === 'Windows native 8.3 filesystem paths (#604)'), 0, s) }],
+  ['native pair appended after census probe', d => { const a = d.jobs['smoke-os'].steps, g = a.splice(a.findIndex(s => s.name === cockpitGate), 1)[0], u = a.splice(a.findIndex(s => s.name === cockpitArtifact), 1)[0]; a.push(g, u) }],
+  ['missing finite artifact', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== cockpitArtifact) }],
+  ['duplicate finite artifact', d => { d.jobs['smoke-os'].steps.push(structuredClone(find(d, cockpitArtifact))) }],
+  ['finite artifact includes raw', d => { find(d, cockpitArtifact).with.path = '${{ runner.temp }}/**' }],
+  ['finite artifact also census', d => { find(d, cockpitArtifact).if = find(d, cockpitArtifact).if.replace(" && matrix.lane == 'native'", '') }],
+  ['finite artifact on successful gate', d => { find(d, cockpitArtifact).if = find(d, cockpitArtifact).if.replace("outcome == 'failure'", "outcome == 'success'") }],
+  ['finite artifact loses failed-job always', d => { find(d, cockpitArtifact).if = find(d, cockpitArtifact).if.replace('always() && ', '') }],
+  ['finite artifact accepts empty summary', d => { find(d, cockpitArtifact).if = find(d, cockpitArtifact).if.replace(" && steps.cockpit-first-identity.outputs.finite_summary != ''", '') }],
+]
+for (const [label, mutate] of cockpitMutations) {
+  test('#748 source-derived cockpit union refuses: ' + label, () => {
+    validateWindowsCiFeedback750(workflow)
+    const doc = parseWorkflow750(workflow); mutate(doc)
+    const source = printWorkflow750(doc)
+    for (const value of [source, source.replaceAll('\n', '\r\n')]) assert.throws(() => validateWindowsCiFeedback750(value))
+  })
+}

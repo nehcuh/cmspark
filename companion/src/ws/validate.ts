@@ -1,4 +1,5 @@
 import { validCockpitIdleRequest } from "./cockpit-idle"
+import { validCockpitBridgeMessage } from "./cockpit-native-bridge"
 // WS message shape validation (layer 1 fail-closed fence).
 // Extracted from server.ts (C10-A mechanical split) — zero behavior change.
 // Re-exported from server.ts for test/public API stability.
@@ -45,6 +46,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
 
   // Known message types with required field validation
   const validators: Record<string, (m: any) => WsValidationResult> = {
+    "cockpit.bridge.hello": m => validCockpitBridgeMessage(m) ? { valid: true } : { valid: false, error: "Invalid cockpit bridge identity" },
+    "cockpit.bridge.bound": m => validCockpitBridgeMessage(m) ? { valid: true } : { valid: false, error: "Invalid cockpit bridge identity" },
+    "cockpit.bridge.retire": m => validCockpitBridgeMessage(m) ? { valid: true } : { valid: false, error: "Invalid cockpit bridge identity" },
     "cockpit.idle.get": m => validCockpitIdleRequest(m) ? { valid: true } : { valid: false, error: "Invalid cockpit idle observation" },
     "desktop.browser.peer.result": m => typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128 && !/[^a-zA-Z0-9_-]/.test(m.id) && typeof m.ok === "boolean" && Object.keys(m).every(k => ["type", "id", "ok", "data"].includes(k))
       ? { valid: true } : { valid: false, error: "Invalid browser metadata result" },

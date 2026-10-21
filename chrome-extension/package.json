@@ -57,7 +57,8 @@
       "cookies",
       "scripting",
       "notifications",
-      "downloads"
+      "downloads",
+      "nativeMessaging"
     ]
   }
 }

@@ -259,6 +259,17 @@ jobs:
           cd companion
           npx tsc -p tsconfig.test.json
 
+      - name: "Windows cockpit Node scalar selection (#723)"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          & scripts/tests/cockpit-bridge-node-selection.test.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs scripts/tests/cockpit-bridge-first-evidence.test.mjs scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/tests/cockpit-bridge-build-prerequisite.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: "Actual owned PTY tail transport (#725; macOS)"
         # Windows discovers this same file once in the complete canonical census below.
         if: matrix.os == 'macos-latest'
@@ -677,6 +688,22 @@ jobs:
           & scripts/tests/win-mcp-short-path-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: "Windows cockpit native bridge first identity STOP gate (#723)"
+        id: cockpit-first-identity
+        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
+        shell: pwsh
+        run: |
+          & scripts/tests/run-cockpit-bridge-first.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Publish finite cockpit first failure (#723)"
+        if: always() && matrix.os == 'windows-latest' && matrix.lane == 'native' && steps.cockpit-first-identity.outcome == 'failure' && steps.cockpit-first-identity.outputs.finite_summary != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: cockpit-first-identity-finite
+          path: ${{ steps.cockpit-first-identity.outputs.finite_summary }}
+          if-no-files-found: error
+
       - name: "Post-census isolated module-scope diagnostic (#650)"
         # Only the canonical VM after its sealing/public upload; not the other desktop.
         # A diagnostic PASS cannot replace the original census/job result.
@@ -693,6 +720,7 @@ jobs:
           }
           node "$moduleScopeProbe650" "$env:CMSPARK_650_FINISHED_PUBLIC_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 
   acp-history-restart:
     needs: build

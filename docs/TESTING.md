@@ -1,5 +1,15 @@
 # TESTING
 
+### #723 Job CPU 的 live claim 共享
+
+`cockpit-bridge-chrome-job-cpu.cs` 在 Node 的 `wx+` owner 句柄仍存活时读取原 claim。Framework `File.ReadAllText` 默认只共享 Read，不能与现存写访问兼容；fixture 改用 Read access、`ReadWrite|Delete` share 的显式流，沿用原文本读取和后续 `JobInput.Parse/CheckClaim` 的 nonce、64/65 字节与所有权拒绝。真实 Windows 自检还须亲证旧默认读以 sharing violation（Win32 32）拒绝，不能把任意 IOException 当正控；不关闭或降级父 lease。
+
+`cockpit-chrome-job-env-723.test.ts` 新回归从实际 C# 读取片段投影构造参数，以惰性双向 share 模型核 LF/CRLF、旧读／只共享 Read 反例及外来独占持有者拒绝。其余四个环境／固定155生产者控原样保留。模型不是 .NET／Windows执行；精确新 head 的真实 CPU EXE、Chrome/native 身份和清理仍须通过。8e3 的官方有限首错只定位到 CPU 退出码断言，不能冒称已取得该次内部异常或浏览器首窗成功。
+
+### #732 当前完整验收状态
+
+PR735 的真实 hosted Linux 场景已完成正常 daemon 重启、既有页面及 reload 页面中断历史、终态保留和自有清理；Windows 同时完成完整 canonical 与两项 ACL／NTFS 历史原生检查。下文供应／PANEL 的 NOT_READY 描述保留对应历史阶段，不是当前结论；不据此声称 Windows 浏览器、真实 ACP provider 或真人审批通过，版本仍为开发版。
+
 ## Windows CI 两条独立验收链（#750）
 
 `smoke (windows-latest)` 保持原 canonical 身份：同一 checkout 的 install/build/stage/完整 npm test、原生 fixture 准备、Registry／SMB／8.3、逐批记账与密封上传均保留。其末尾 module-scope 诊断只观察这台 canonical VM 的 sealed baseline，不能声称观察另一台桌面。
@@ -15,7 +25,7 @@
 
 `coding-history-connection-732.test.ts` 除原快速／同批重连及 owner/request/runtime 围栏外，验证管理连接广播不改变聊天 busy、processing、stream、reasoning、messages；原 `SET_CONNECTION` 状态路径仍清理断线工作。新增 `OBSERVE_CODING_HISTORY_CONNECTION` 仅属于 UI 内存动作，不改变 wire／后端权限。必须同时复验原 `board-hint-receipts-660` lifecycle 的断线保草稿、无自动重试及聊天不变断言，不可只看 ACP 正控。惰性 callback／SSR 与普通前端类型程序不称 mounted React 或远端原生通过。
 
-### #732 固定 Linux CFT 供应边界（未完成远端验收）
+### #732 固定 Linux CFT 供应边界与历史拒绝记录
 
 `accept-acp-history-hosted-732.mjs` 仅在 Node22、Linux x64、GitHub-hosted Ubuntu22 的正常 build artifact 身份核对后运行：一次官方 CFT155.0.8059.84 固定包供应 → 一次独立端口及精确 `Browser.getVersion` 正证 → 原完整原生 SidePanel／正常 daemon 重启／历史／reload 业务。包199014491字节与309成员的 SHA256、CRC、布局、普通文件身份及只读模式全部固定；无系统安装、外部解包工具、缓存、重定向、重试或任意 executable override。
 
@@ -23,12 +33,39 @@
 
 独立正证必须精确 `Chrome/155.0.8059.84`、managed child 真 close、stdout/stderr 两 EOF、包身份与清理全部通过；失败或未知不进入业务。close 未知先保留包，禁止清理过程中抛错后误删仍在使用的 executable。该边界只属于验收，不增加产品权限。纯 CPU、实际包纯文件解压和 ELF 静态读取不是浏览器启动／安装／原生或真实 SidePanel 通过。PR735 head `ac686c0e59f4e739f04ed0f14fae9845d8f86b56` 的真实远端供应 witness 已完成端口、精确版本、close、两 EOF 和清理正证；原完整业务随后在 `AUTH_DONE`／`PANEL` 拒绝、尚未进入 durable，仍 NOT_READY。历史 BINARY_SELECTED／PANEL 唯一原因仍 UNKNOWN，原三轮上限不重置；不得本机启动测试浏览器。
 
+### #723 固定构建前置正控
+
+Windows 原 Node 标量九项之后、Registry 和完整 census 之前，运行独立的固定桥接构建验证。它调用原 PS5.1 build-only 脚本，使用与注册路径相同的最小 child environment 和编译参数，要求真实 child close/exit0、普通自有产物和匹配的 SHA256 文件。编译器的公开源码输出直接进入 CI 两个流，不被嵌套调用的 `Out-Null` 消耗；不输出环境或凭据。
+
+固定 csc 与原 framing EXE 各自使用 `ProcessStartInfo.UseShellExecute=false`，启动成功、等待原进程终止后读取其自身 `ExitCode`，在 finally 释放对象；不初始化／复用 `$LASTEXITCODE`，不依赖 PS5.1 对 EXE 的 GUI／console 或 shell 分类。原编译 flags、warn-as-error、摘要和 framing JSON 校验保持。编译器输出继承原流，framing stdout 继续保存实际固定 C# serializer 的 JSON 行。
+
+前置入口先在自有布局复制同一 builder，用同固定 PS5.1／csc 验证公开惰性好源码的真实 exit0、产物与摘要，以及坏源码的真实非零 `CompilerExitCode`、原 build 拒绝且无成功产物／摘要。路径包含空格、字符码构造的中文和字面 `%`；明确拒绝引号／NUL／CR／LF，参数通过 Framework `Arguments` 的有限双引号传递。控制不执行生成的 EXE，泛异常／未设置退出码不能算坏源码负控通过；之后仍实际构建固定产品 host。Node 源码合同和 VM 检查不是 PS5.1／C# 解释执行，真实控制必须由精确新 head 的 Windows 决定。
+
+同一必需控制子进程还复制实际 Job builder：正控复制字节相同的 wrapper／CPU 两份 C# 源，核两个 `/main` 的实际 Int32 exit0 和两个产物；两个公开惰性负控分别缺失第一 Main、第二 Main，核固定目标与实际数值非零，第二负控还须先观察第一项 exit0／产物。所有 fixture EXE 只编译不执行，失败必须保原 build 拒绝且无失败目标产物。Job 循环逐项直接等待原编译进程并在 finally 释放，不复用自动变量；原 first-identity 仍在自身 45 秒中重新编译并执行原 CPU／Chrome 路径。当前 first-identity 的具体失败仍 UNKNOWN，编译正控不等真实身份通过。
+
+此路径不执行生成的 EXE、不写注册、不启动浏览器。只有构建成功、产物验证通过、child 已知关闭且临时根身份未变化时才清理自有目录；构建拒绝、关闭或归属未知时保留并拒绝，不能把失败 shell 的 close 当成所有编译后代已退出。后续原注册／framing／真实身份和全部原断言、时限继续存在。两个构建使用不同自有目录／子进程，不复用产物或 PowerShell 状态；共享 OS 缓存可能被预热，不宣称冷启动。受控 Node/VM 正负控不是 PS5.1／C# 实际构建通过，必须由新 head 的真实 Windows 决定。旧 `registration-framing` 内层异常仍 UNKNOWN；前置拆分不假称修复其历史原因。
+
+### #723 首个 Windows 窗口身份门：失败证据
+
+新增 `cockpit-bridge-first-evidence.test.mjs` 的源派生 Windows Stats 正控：实际安装 Node 的 mode 检查函数在 Windows 绑定下仍须让原 fd3 FIFO 产生完整完成帧；普通文件、设备、未知／非整数 mode 与写入失败仍拒绝或保持原结果。POSIX 实际 fd3／Node:test 测试不是 Windows 通过，新 head 的真实 Windows 控制不可跳过。
+
+`coding-history-connection-732.test.ts` 执行实际 `handleStateChange` 时显式绑定惰性 bridge 断线接口，并核它仅随断线被调用。原八项历史／聊天／围栏控制不变；移除真实断线调用的源变体应令新增控制失败。此处不是浏览器、原生 host 或真人授权证明。
+
+`COCKPIT_BRIDGE_FIRST_IDENTITY_INCOMPLETE` 保留原阶段名；同次 `COCKPIT_BRIDGE_FIRST_FAILURE` 仅给出固定步骤、真实 close/退出、输出字节数、有限 PS 源角色／行列／检查序号及 C# 错误代码／framing 检查数。原始输出仍只在 owned 临时文件中，公开回执不包含正文、路径、命令、环境或 Registry 值；格式未知、超限或身份变化时证据为 unavailable，不改变原失败。
+
+`registration-framing` 也覆盖 PS 成功后的 receipt 数量断言，不能单凭阶段名判定 PS／C#／Registry 或 pipe 根因。子进程 exit0 后的控制器拒绝与子进程失败分别记录。此证据修复不是原生注册修复；完整 canonical、原有 Windows 回归和真实 Chrome pipe／PID／HWND 身份门仍须实际通过。不得据新回执延时、重试、跳过断言或启用遮罩。
 
 > 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
 
 Windows／跨平台变更先读 [Windows 开发与失败定位](windows-development.md)：包含系统化调试、路径／换行／真实消费者预检和原生证据边界；只选本次必要回归，不新增全仓或模型门。
 
 ## 测试架构
+
+### #723 D2 固定 native bridge 首门
+
+`cockpit-chrome-job-env-723.test.ts` 对实际 C# EnvironmentBlock 完整方法做有限源码降级，核六字段、固定 ComSpec、受污染父环境、排序和 UTF-16 双 NUL；固定155主源片段保留 URL/字节/hash，核 managed/default feature 选择与 legacy 缺 ComSpec 拒绝。控制不执行 C#/C++/Win32 或 Chrome，不证明当前实际 feature/policy。原真实 PS5.1 编译正控自动复制当前 C#，原 first-identity 独立重编译／45 秒和全部原生断言保留。
+
+[首个身份纵向说明](browser-native-bridge.md) 区分源码/惰性 CPU、C# framing/owned 注册与真实 document→parent pipe/HWND→当前 owner/认证 WS 的验收。Windows smoke 仅在原全部步骤末尾追加 `run-cockpit-bridge-first.ps1` gating step，复用 `.test-dist/src`、构建当前候选扩展；固定 CFT pin 未具备完整归档/EXE 证明时先失败为 NOT_READY。新供应器只用一次 600000 ms 网络准备，无 redirect/retry，不改变原 45 秒 native 或 5000 ms bind。所有新增子进程使用显式环境、owned npm 配置/cache；C# framing、注册负控、document receipt CPU 在真实 controller 之前，Job CPU 在 controller 内只执行一次。惰性 ZIP/生命周期控不称浏览器/原生通过，mask/opaque scope 仍未实现，整张 #723 不因此关闭。
 
 ### Windows 选夹的短名与长名
 
@@ -537,3 +574,10 @@ automatic empty-list requests retain the original 2-second deduplication. Its
 `user_gesture: true` is only an internal deduplication hint: it proves no human
 action, authorizes nothing, and is stripped by the existing WS message builder.
 This CPU regression is not a changed-head hosted/browser or native PASS.
+
+
+### #723 CDP transport 终态传播
+
+`cockpit-bridge-cdp-lifecycle.test.mjs` 直接执行真实 controller 的完整 `aborted`／`Cdp`，使用惰性 EventTarget 协议 seam，核空 target snapshot／Runtime.enable 已 ACK 后的关闭、并发命令与事件等待、已关闭入口、原对象 abort、原匹配结果及 malformed／迟到事件。LF/CRLF 均覆盖事件等待；此类 CPU 不建立 WebSocket、Chrome 或原生正证。命令 Map 与事件等待独立，transport close 必须使二者拒绝，并在成功／拒绝／abort 后退订；不能让终态错误拖到外层 deadline。
+
+这不证明6521真的发生了 CDP close，旧 worker 缺失／启动失败／具体剩余时长仍 UNKNOWN。原 first-identity 真实窗口、认证 WS、parent-zero 拒绝和 Job 真实 close／清理仍必须由精确新 head 的 Windows 证明；不得延45秒或添加猜测启动参数、强制唤醒／缓存旧目标。

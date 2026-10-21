@@ -77,7 +77,7 @@ try {
   [Console]::Error.WriteLine('GALLERY70_PHASE=SIGNATURE_RETURNED:' + $phaseClock.ElapsedMilliseconds)
   if ($signature.Status.ToString() -cne 'Valid' -or $null -eq $signature.SignerCertificate) { throw 'SIGNATURE_NOT_VALID' }
   $certificateHash = ([BitConverter]::ToString($hash.ComputeHash($signature.SignerCertificate.RawData))).Replace('-','').ToLowerInvariant()
-  [ordered]@{entry=$EntryName; exeBytes=$written; exeSHA256=$exeHash; signatureStatus=$signature.Status.ToString(); certificateSHA256DER=$certificateHash; subject=$signature.SignerCertificate.Subject; collectedAtUTC=[DateTime]::UtcNow.ToString('o'); psVersion=$PSVersionTable.PSVersion.ToString(); machine='x64'; fileVersion=$fileVersion} | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress
+  Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -InputObject ([ordered]@{entry=$EntryName; exeBytes=$written; exeSHA256=$exeHash; signatureStatus=$signature.Status.ToString(); certificateSHA256DER=$certificateHash; subject=$signature.SignerCertificate.Subject; collectedAtUTC=[DateTime]::UtcNow.ToString('o'); psVersion=$PSVersionTable.PSVersion.ToString(); machine='x64'; fileVersion=$fileVersion})
   [Console]::Error.WriteLine('GALLERY70_PHASE=COMPLETE:' + $phaseClock.ElapsedMilliseconds)
 } finally {
   foreach ($resource in @($reader,$held,$output,$entryStream,$zip,$archive,$hash)) { if ($null -ne $resource) { $resource.Dispose() } }

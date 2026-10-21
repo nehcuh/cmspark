@@ -26,6 +26,8 @@ import {
 import { cockpitModeBadgeLabel } from "./cockpit-status"
 import { ConfirmationPreview } from "./ConfirmationPreview"
 import { resolveStopTargetId } from "../sidepanel/utils/thread-busy"
+import { attachCockpitNativeBridge } from "./native-bridge"
+import { COCKPIT_NATIVE_PORT } from "../shared/cockpit-native-bridge"
 import { disarmAllFlags } from "../sidepanel/components/autopilot-tier"
 import { newTempUserMessageId } from "../utils/temp-message-id"
 
@@ -42,6 +44,16 @@ function CockpitBoot() {
   useWebSocket()
   useEffect(() => {
     const port = chrome.runtime.connect({ name: "cmspark-cockpit" })
+    let nativeRuntimePort: chrome.runtime.Port | null = null
+    let stopNativeBridge = () => {}
+    try {
+      nativeRuntimePort = chrome.runtime.connect({ name: COCKPIT_NATIVE_PORT })
+      stopNativeBridge = attachCockpitNativeBridge(nativeRuntimePort)
+    } catch {
+      // Optional identity observation must not interrupt original hydration.
+      try { nativeRuntimePort?.disconnect() } catch { /* unavailable */ }
+      nativeRuntimePort = null
+    }
     // Hydrate mid-task open: SW mirror of computerTask + pending confirms
     chrome.runtime.sendMessage({ type: "cockpit.hydrate" }, (res) => {
       if (chrome.runtime.lastError || !res?.ok) return
@@ -56,6 +68,8 @@ function CockpitBoot() {
       }
     })
     return () => {
+      try { stopNativeBridge() } catch { /* optional bridge is unavailable */ }
+      try { nativeRuntimePort?.disconnect() } catch { /* already retired */ }
       try {
         port.disconnect()
       } catch {

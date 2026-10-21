@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { validateCockpitSteps748 } from "./windows-ci-feedback-750-contract.mjs"
 import { fetchNsisPackage, verifiedNsisSetup, requireWindowsCi, NSIS_PACKAGE_URL, MAX_PACKAGE_BYTES } from "../ensure-ci-nsis.mjs"
 
 test("the failed metadata lookup is replaced by the exact same pinned installer package", async () => {
@@ -297,10 +298,35 @@ function originalCensusCommands(run) {
   assert.equal(match[1].split(locator).length, 2, 'only the census receives the new owned locator')
   return match[1].replace(locator, '').replace(/^  /gm, '')
 }
-// Validate the complete reviewed macOS-only addition before removing it from
-// the original cross-platform schedule pin. No Windows gate is normalized away.
-function censusStepsWithReviewedTail725(raw) {
+// Validate this exact pre-census prerequisite block before applying old pins.
+// The scalar PS regression remains first; fixed build-only acceptance follows.
+function censusStepsWithReviewedFirstEvidence723(raw) {
   const steps = workflowYaml.load(raw).jobs['smoke-os'].steps
+  // This checks exact source-derived objects, native-only final pair, all lane
+  // outcomes and the sole appended lifecycle test before making a legacy view.
+  return validateCockpitSteps748(steps)
+}
+function censusStepsWithReviewedNodeSelection723(raw) {
+  return censusStepsWithReviewedFirstEvidence723(raw)
+}
+test('finite first failure upload cannot widen paths, run on PASS or weaken the native step', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  censusStepsWithReviewedFirstEvidence723(raw)
+  for (const mutate of [
+    steps => { steps.find(step => step.name === 'Publish finite cockpit first failure (#723)').with.path = '${{ runner.temp }}/**' },
+    steps => { steps.find(step => step.name === 'Publish finite cockpit first failure (#723)').if = "always() && matrix.os == 'windows-latest'" },
+    steps => { steps.find(step => step.name === 'Windows cockpit native bridge first identity STOP gate (#723)')['continue-on-error'] = true },
+    steps => { const step = steps.find(step => step.name === 'Publish finite cockpit first failure (#723)'); steps.push({ ...step }) },
+    steps => { delete steps.find(step => step.name === 'Windows cockpit native bridge first identity STOP gate (#723)').id },
+  ]) {
+    const doc = workflowYaml.load(raw); mutate(doc.jobs['smoke-os'].steps)
+    assert.throws(() => censusStepsWithReviewedFirstEvidence723(workflowYaml.dump(doc)))
+  }
+})
+// Validate the complete reviewed macOS-only addition before removing it from
+// the original cross-platform schedule pin. Every original Windows gate remains.
+function censusStepsWithReviewedTail725(raw) {
+  const steps = censusStepsWithReviewedNodeSelection723(raw)
   const name = 'Actual owned PTY tail transport (#725; macOS)'
   const tail = steps.filter(step => step.name === name)
   assert.equal(tail.length, 1, 'one exact directed macOS native tail step')
@@ -503,5 +529,30 @@ test('reviewed macOS tail addition is exact once before preserving every Windows
     const doc = workflowYaml.load(raw), steps = doc.jobs['smoke-os'].steps
     mutate(steps, steps.findIndex(step => step.name === name))
     assert.throws(() => assertCensusSchedule(workflowYaml.dump(doc)))
+  }
+})
+
+test('reviewed early PowerShell scalar regression preserves every original schedule pin under LF and CRLF', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  const name = 'Windows cockpit Node scalar selection (#723)'
+  for (const source of [raw, raw.replaceAll('\n', '\r\n')]) {
+    assertCensusSchedule(source)
+    for (const mutate of [
+      (steps, index) => steps.splice(index, 1),
+      (steps, index) => steps.splice(index, 0, { ...steps[index] }),
+      (steps, index) => { steps[index].if = "matrix.os == 'macos-latest'" },
+      (steps, index) => { steps[index]['continue-on-error'] = true },
+      (steps, index) => { steps[index].shell = 'bash' },
+      (steps, index) => { steps[index].run = steps[index].run.replace('cockpit-bridge-node-selection.test.ps1', 'omitted.ps1') },
+      (steps, index) => { steps[index].run = steps[index].run.replace('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n', '') },
+      (steps, index) => { steps[index].run += 'echo unreviewed-command\n' },
+      (steps, index) => { steps[index]['timeout-minutes'] = 99 },
+      (steps, index) => { const step = steps.splice(index, 1)[0]; steps.splice(index - 1, 0, step) },
+      (steps, index) => { const step = steps.splice(index, 1)[0]; steps.splice(index + 1, 0, step) },
+    ]) {
+      const doc = workflowYaml.load(source), steps = doc.jobs['smoke-os'].steps
+      mutate(steps, steps.findIndex(step => step.name === name))
+      assert.throws(() => assertCensusSchedule(workflowYaml.dump(doc)))
+    }
   }
 })

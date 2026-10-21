@@ -178,6 +178,38 @@ export async function collapseCockpitIfIdle(localIdle: () => boolean, request: (
   await removeOwned(held)
 }
 export function cockpitStatus(): { open: boolean; windowId: number | null } { return { open: owner.id !== null, windowId: owner.id } }
+/** Live document correlation for the native identity experiment; no HWND claim. */
+export async function claimCockpitNativeDocument(sender: chrome.runtime.MessageSender): Promise<{
+  windowId: number; documentId: string; isCurrent(): boolean; revalidate(): Promise<boolean>
+} | null> {
+  // Chrome can connect the new document before windows.create resolves and
+  // openImpl adopts its ID. Join only that already-running creation; no retry.
+  const opening = openInFlight
+  if (opening) {
+    try { await opening.promise } catch { return null }
+  }
+  const held = owner
+  const documentId = sender.documentId
+  const tabId = sender.tab?.id
+  if (held.id === null || removing || sender.id !== chrome.runtime.id || typeof documentId !== "string" ||
+    !/^[\x21-\x7e]{1,128}$/.test(documentId) || !Number.isSafeInteger(tabId) ||
+    sender.tab?.windowId !== held.id || !isCockpitTabUrl(sender.url, cockpitUrl())) return null
+  let active = true
+  const isCurrent = () => active && owner === held && !removing && held.id !== null
+  const revalidate = async () => {
+    if (!isCurrent()) return false
+    try {
+      const window = await getOwned(held.id!)
+      if (!isCurrent() || window?.tabs?.[0]?.id !== tabId) { active = false; return false }
+      const contexts = await chrome.runtime.getContexts({ documentIds: [documentId] })
+      const valid = contexts.length === 1 && contexts[0].documentId === documentId && contexts[0].tabId === tabId &&
+        contexts[0].windowId === held.id && isCockpitTabUrl(contexts[0].documentUrl, cockpitUrl())
+      if (!valid) active = false
+      return valid && isCurrent()
+    } catch { active = false; return false }
+  }
+  return await revalidate() ? { windowId: held.id, documentId, isCurrent, revalidate } : null
+}
 export function _resetCockpitWindowStateForTests(): void {
   owner = { id: null }; operation = {}; idleIntent = {}; openInFlight = null; hydrateInFlight = null; removing = null; persistence = Promise.resolve(); onRemovedHooked = false
 }

@@ -4,13 +4,24 @@
 
 ## [Unreleased]
 
+- Refs #723：远端身份夹具的 CDP transport 终止同步拒绝 target／default-context 事件等待，避免命令已 ACK 后只等外层超时；保留原 abort 原因、45 秒、身份及 cleanup。新增真实类的 LF/CRLF／关闭／迟到事件回归；此为已证生命周期缺口，不认定历史 Windows 超时原因，native 身份与 mask 仍未完成。
+
+- Refs #723：隔离启动器的 CPU 自检读 claim 时显式兼容 Node 仍持有的写句柄，保留只读访问、原 nonce／身份校验与 lease；新增真实 Windows 旧默认共享拒绝负控及 LF/CRLF 源回归。此为验收夹具修复，不代表 Chrome 窗口身份或 mask 已通过。
+
+- Refs #723/#732：修复新增 fd3 观察器在 Node22 Windows 上被 `isFIFO()`／`isSocket()` 固定 false 误拒的问题，按原 fd3 的真实类型位限定 pipe/socket；补齐历史连接 VM 对新增 bridge 断线消费者的惰性依赖与调用回归。保原 PASS／拒绝、4KiB 与身份门，不据此认定历史原生首错或启用 mask；仍为 0.6.14 开发版。
+
+- Refs #732：hosted 验收改为固定官方 Linux CFT 包供应、独立精确端口／版本正证再执行原完整 SidePanel 历史业务；旧 A/B 实验步骤退休且失败保留。CPU／纯文件解压不是浏览器通过；后续真实 hosted Linux 验收已完整通过重启／重载历史、取消与清理，不代表 Windows 浏览器或实体真人授权；不发版、不改原业务时限或产品权限。
+
+- Refs #723：首个 Windows 窗口身份验收的失败回执记录实际子进程 close/退出、固定 PS 源坐标与检查序号，区分子进程失败和随后回执数量断言；仅输出有限字段，不公开原始错误、路径或环境。此项修复验收证据缺口，未证明历史注册失败原因，不改变准入、原生门禁或时限。
+
 - #750 CI 编排：Windows 全量 census 与定向原生验收拆为两台独立 hosted VM，保留各自完整原生准备、串行桌面保护、原测试／时限及 census 密封证据；两路都必须成功。已有 workflow／NSIS CPU 契约检查提前至原生编译前，npm 下载缓存键覆盖双锁而不缓存执行产物。墙钟与总 runner 成本以新 head/main 实测为准，不宣称修复 #723 的 UNKNOWN 原生超时；0.6.14 仍为开发版。
 
-- Refs #732：hosted 验收改为固定官方 Linux CFT 包供应、独立精确端口／版本正证再执行原完整 SidePanel 历史业务；旧 A/B 实验步骤退休且失败保留。CPU／纯文件解压不是浏览器通过，真实远端仍未验收；不发版、不改原业务时限或产品权限。
 
 - Refs #723: add remote-only owned-window Windows capture acceptance for actual PS5.1/PrintWindow, passive refusal and real BitBlt quality; CPU checks remain separate from native verification.
 
 - **Refs #723 Windows 观察质量（开发候选）**：窗口渲染源和屏幕拷贝使用闭合质量标签，遮挡／部分截图不作为目标页面 OCR 正文；凭证黑化、确认预览、模型结果、时间线和密封证据保留提示。只读捕获与确认前预览不恢复／抢焦点；原注入 L2、时限、对话框通道和阈值不变。可信 HWND 遮罩与只读准入尚未实现，CPU 不代表 Windows 原生或整票完成。
+
+- **#723 D2 首个身份纵向开发候选**：仅增加 nativeMessaging 与固定 `com.cmspark.cockpit` host 的 document/当前 owner/认证 WS bind/dispose 链；新增 Windows smoke 末尾 gating 入口与固定 CFT 供应校验。真实 pipe/parent/Job 清理尚待远端验收，空 pin 明确 NOT_READY；不含 mask、通用执行、额外动作授权或发版安装，版本仍 0.6.14。
 
 - **#726 Windows 选夹验收路径域**：仅测试的预期工作区使用原生 realpath 规范化，避免成功选夹返回的长路径与临时目录的 8.3 短名直接比较。保留实际选夹、绑定、取消、ACP cwd、所有者和清理断言；增加真实 Node JS realpath 与显式原生绑定 seam 的 LF/CRLF 回归。受控 CPU 通过不代替新 head 的 Windows 原生验收。
 
@@ -31,6 +42,16 @@
 - MCP SDK 升至 1.32.0：HTTP 默认只跟随同源重定向，拒绝把自定义请求头、会话标识及 307/308 请求正文转发到其它来源；stdio 连接方式不变。补真实 SDK 与应用 HTTP 构造路径的受控回归。版本仍为 0.6.14 开发版，不代表已发版或安装；任务存储安全公告不表示本产品已启用或遭利用。
 
 - #732 hosted 验收候选以请求内 `onOpened`、原生 `SIDE_PANEL` 上下文和实际临时 Port 的 `sender.documentId` 绑定目标，拒绝仅凭同 URL／非 tab 的不足证明。保留原真实 DOM、daemon 重启、历史、单一时限及清理门禁；只改验收与受控回归，不宣称已定位旧 `PANEL` 唯一原因或原生验收通过，版本仍为开发版。
+
+- Refs #723：固定 Chrome Job 环境补入由同 SystemRoot 派生的 ComSpec，满足 CFT155 支持的 Native Messaging legacy 启动分支；保留原五字段、排序／双 NUL、固定 argv、隔离及 45 秒。新增实际源生产器与固定155消费者的惰性正负控，不继承任意父环境或覆盖 feature/policy；当前原生首错仍 UNKNOWN。
+
+- Refs #723：补齐首个身份 controller 实际调用的 Job builder，两项 `/main` 分别等待原编译进程并读取自身 ExitCode；现有前置编译控制增加实际 Job 源正控及两项分别缺失 Main 的数值退出负控，不执行产物。原 45 秒、身份重编译和后续门保留，未认定当前 first-identity 失败原因。
+
+- Refs #723：固定 csc 构建、framing 编译和 framing EXE 分别直接等待原 Process 并读取其真实退出码，不再依赖可能未设置或陈旧的 PowerShell 自动变量。原编译参数、拒绝、摘要和后续原生门保留；前置接入同 PS5.1／同编译器的好、坏源码必需控制，不执行其 EXE。当前仍需真实 Windows 验收，不据此认定历史 csc 分类或旧注册失败唯一原因。
+
+- Refs #723：Windows 在完整 census 前单独验证固定桥接程序的真实 PS5.1 构建与产物摘要；原 Node 标量九项、注册、framing 和真实身份门禁保留。独立构建只编译、验证、清理自有临时产物，不运行或注册 host；构建失败立即拒绝，不再等长套件后才到嵌套构建边界。旧 `registration-framing` 首因仍 UNKNOWN，不冒称本次拆分已经修复原生问题。
+
+- #723 首个身份验收的 Node launcher 显式限定 PATH 优先的单一 Application 与单一普通非 reparse EXE，拒绝数组后再读取标量属性；新增 canonical 前真实 PowerShell 分支回归，完整身份门仍在原末尾。尚不表示 CFT、bridge 或真实窗口身份通过。
 
 - **#723 D3 只读会话开发候选**：全查看/截图/等待仅在同一真实认证扩展端点、服务端普通对话与应用内，首次origin+nonce人工L2且读取完整成功后受限复用；每次新token，只读探测保留本次UIA结果而不持久化缓存，避免正常写回自触发失权；断线/取消/失权/subject变化/失败/凭证未知退休，不借注入G1或模型标记。独立capture尝试限率复用原30/60秒，注入双开关/白名单/45秒与原例外不变；实际executor派生的started标记只令全读取留后台，首确认/暂停仍显眼。CPU不是Windows/浏览器证明，可信HWND/双帧mask和whole723仍未完成，不发版。
 
