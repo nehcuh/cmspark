@@ -49,3 +49,7 @@ Case：本次实施把普通表单保存等同重新排程、把维护绑定采�
 保护：用户确认的提醒、暂停后的隐私保留期及最新来源可追溯；修复后须独立复核，再进入 Pi。
 
 Pi 复审冻结 diff SHA-256：`5047982c6351016f7df706b59e4bc493e7b50e352a0821d407411ffcdb268113`。复审后只补充本结果、文档导航/测试地图与元数据预算说明，没有再修改生产或测试代码。完整报告见 [Pi 复审](2026-10-21-chat-action-workspace-pi.md)；后续意见 [#756](https://github.com/nehcuh/cmspark/issues/756)。
+
+## 精确提交的远端增量
+
+首次远端 head `a7159117` 的 Companion 全量实际 8,512 PASS / 178 平台 SKIP / 0 FAIL，两端构建通过。ACP hosted 控制遗漏 onView VM 依赖已本地按原命令复现并修复（83/86 → 86/86），保留原断言并增加新导航依赖断言。Windows 固定 gallery 采样 SIGTERM 的独立首错仍 UNKNOWN；详见 [CI 记录](2026-10-21-chat-action-workspace-ci.md)。不宣称全 CI 绿或已合并。

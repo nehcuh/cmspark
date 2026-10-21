@@ -58,5 +58,34 @@
     "nonblocking_followup": "https://github.com/nehcuh/cmspark/issues/756",
     "ci": "PENDING",
     "merged": false
+  },
+  "remote_ci_first_head": {
+    "head": "a7159117b644e06ce0f1d0733d8be30047608686",
+    "run_url": "https://github.com/nehcuh/cmspark/actions/runs/39622056813",
+    "companion_full_test": {
+      "tests": 8690,
+      "pass": 8512,
+      "skipped": 178,
+      "fail": 0,
+      "exit_code": 0
+    },
+    "companion_build": "PASS",
+    "extension_build": "PASS",
+    "ubuntu_smoke": "PASS",
+    "acp_hosted_controls": "FAIL: onView VM dependency missing; locally fixed 86/86",
+    "windows_census": "FAIL: unchanged fixed gallery sampler SIGTERM, cause UNKNOWN",
+    "log_sha256": "f3fe5e2cc071ea3228be58a4b047b04b0ad96931ab3e8de49c34dd1196492f29",
+    "macos_smoke": "PASS"
+  },
+  "test_closure_followup": {
+    "timestamp_utc": "2026-10-21T15:12:09.257178+00:00",
+    "production_changes": false,
+    "tests": 86,
+    "pass": 86,
+    "fail": 0,
+    "skipped": 0,
+    "adversary": "APPROVE",
+    "pi_rereview": "APPROVE",
+    "remote_ci": "PENDING_AFTER_PUSH"
   }
 }
