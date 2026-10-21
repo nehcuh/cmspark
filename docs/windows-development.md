@@ -53,3 +53,11 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 ## Chrome 原生 DTO 与完整集合证明
 
 同名或说明中同称 UUID 的字段不保证同一序列化形状。先逐字段追固定版本的实际 producer → serializer → consumer，再生成正负 fixture：Chromium 155 的 contextId、documentId 与非 tab Port.sender 分属不同域，不能手工拼成一个不存在的“完整回执”。原生枚举的完整集合也不能在计数前丢掉旧候选；两个未知 profile 的相等不是已知同源正证。源派生 CPU 控制仍不是浏览器实测，也不解释所有历史 UNKNOWN；变更后的原完整业务和真实原生门继续保留。
+
+## 长 CI 的反馈与桌面隔离（#750）
+
+先用连续实际 job/step 元数据分开“在哪一步失败”和“这一步内部为什么失败”。2026-10-21 的20个不同 revision 样本为 Windows10FAIL/10PASS，中位约26.5分钟；18次执行到完整 census 的中位约17.2分钟。这不是固定版本 flake 率，也不能据此把新功能验收错误称系统根因。
+
+CI 的 Windows canonical 与 directed native 使用两个独立 fresh hosted VM，原生动作在各自桌面内仍串行，原 lease/close/身份／预算不变。两路都必须成功；新增 job 不能只凭旧 check 通过而省略。canonical 保全原 npm test／封存，native 自己安装 frontend、执行原 stage:win-scripts 并构建全部必需 fixture；不要借另一 VM 的副作用、已注册窗口、缓存可执行文件或路径当准备正证。末尾被动模块诊断仅观察 canonical sealed baseline。
+
+源码／YAML／LF-CRLF／真实返回契约应在慢原生门之前跑受影响 CPU 控制，避免花半小时才发现确定性夹具错误。下载缓存恢复放实际安装之前，键覆盖两端锁；保原安装和供应完整性。相同 tsc 入口不等于相同输入／输出，未有完整编译闭包等价就不删。分 VM 可缩短关键路径但增加总 CPU／下载，报告真实 head/main 两项成本；不延时、重试、skip/COE 或增加同桌面并发消红。

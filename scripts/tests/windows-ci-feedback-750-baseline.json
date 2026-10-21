@@ -1,0 +1,246 @@
+{
+  "git": "d5fc9eff126e63e914eea5992bac3efbdad6e61e",
+  "workflowSha256": "0504526dee63a01b702cb99fa3a77ad0c36556bc0742af1446a29dfe469cddc7",
+  "workflowWithoutJobs": "65ed6a4d72766df54bd173cf2995b63c2a819550424bfc04566319fcbf5ab87e",
+  "history": "2c2c3c296655bc5cbdff25986795a81eb19e4d0d98b53232930e199726c3b574",
+  "smokeOther": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+  "buildOther": "2d5ed340cb943ddd3f4f80dfe872e967a667c92a3131b7a27b9eaf3e090e8771",
+  "steps": [
+    {
+      "key": "actions/checkout@v4",
+      "objectWithoutIf": "752409f019ebe668e2818678071c79379798192d3d679c0bc5ee953585cf16d5"
+    },
+    {
+      "key": "Setup Node.js",
+      "objectWithoutIf": "55232e08f060abffb56f37e9f738caced2c672b176e865173bfb5ec0f43c547d"
+    },
+    {
+      "key": "Install + build companion",
+      "objectWithoutIf": "eaf795ba38be969810c7216b54894c675e8c7cd167a3823eb0fa04b428fc4871"
+    },
+    {
+      "key": "Fixed gallery collector CPU controls (#70; no native signature claim)",
+      "objectWithoutIf": "8a16a20e359df0b525fae91e71f37970879d64e177f09b4aafa396defff6acdd"
+    },
+    {
+      "key": "Read-only fixed-release gallery certificate sampling (#70)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "cc11a94ec9cf614a0018af4a8f2813701c01ab1a5d54975a2e113009e59f8a59"
+    },
+    {
+      "key": "Publish only gallery certificate metadata (#70)",
+      "if": "always() && matrix.os == 'windows-latest'",
+      "objectWithoutIf": "78e893086f714056610099fc1b1936ad00b06f88b4d886c9815bdf167bf9a0b5"
+    },
+    {
+      "key": "Desktop build helper controls (#480)",
+      "objectWithoutIf": "d95a815de9b5a70a49995b6bd8be36fbbb5ec4e07237b1b1f8470d67186f15c0"
+    },
+    {
+      "key": "Build fixed no-autofocus UIA DLL (#572)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "e8885f9f405f8f6875993a6f58912b76e04c2d68f7c679071f91c65428d940c1"
+    },
+    {
+      "key": "Actual native desktop build and isolated connection (#480)",
+      "if": "matrix.os != 'ubuntu-latest'",
+      "objectWithoutIf": "d01c907560f8c00594dd29ba3692c1e3a3d208d8b2b9ded3364ed4885fc3d65f"
+    },
+    {
+      "key": "Pinned NSIS dependency transport and integrity (#633)",
+      "objectWithoutIf": "2807e64f8c1ace3315cc16721645d58b5b68898034b4afa9792133266746752d"
+    },
+    {
+      "key": "Compile shared companion test inputs (#650)",
+      "objectWithoutIf": "a0584aa3101b303459e02383a04e0e4cdfa122423c73a65bc6e4378b4700f9fb"
+    },
+    {
+      "key": "Actual owned PTY tail transport (#725; macOS)",
+      "if": "matrix.os == 'macos-latest'",
+      "objectWithoutIf": "79165e2e3babca7b797c45a776caddf634fc8b5ee81f294258b16273084bbbef"
+    },
+    {
+      "key": "Native Windows read-only Registry discovery (#644)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "be69551cb6d4935ac541ad1965f22249c070fc3d24645c4e5a3f14a51d8bda56"
+    },
+    {
+      "key": "Complete Windows Companion census (#650)",
+      "if": "${{ !cancelled() && matrix.os == 'windows-latest' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}",
+      "objectWithoutIf": "38f05ed0b48fd00b579b400eacc6b986262aa7f4d7d1d19e220caede354b3c21"
+    },
+    {
+      "key": "Windows census finite public receipts (#650)",
+      "if": "always() && matrix.os == 'windows-latest' && steps.windows-census.outputs.public_dir != ''",
+      "objectWithoutIf": "5601e23b4971aed9d1c9f4976ff132063be1b978263a09c9cb909a2b803410f0"
+    },
+    {
+      "key": "Office compatibility and relocated runtime (#611)",
+      "objectWithoutIf": "af04f6c50877de139517538a2a02f2f77b8ccee31e4026f2ffde3d2581cd45e4"
+    },
+    {
+      "key": "Smoke pure tests (no native host required)",
+      "objectWithoutIf": "e66de591b8b5f2c2407ab76fdfbc0cf810d98bdd018eb5381705a7ae18b92b0d"
+    },
+    {
+      "key": "Swift host typecheck (macOS only)",
+      "if": "matrix.os == 'macos-latest'",
+      "objectWithoutIf": "ff4ee665e56cb2b94ffee44259a81f40b705b3f5e03578114f4b505eb26d6022"
+    },
+    {
+      "key": "macOS external AX action and background oracles (#571)",
+      "if": "matrix.os == 'macos-latest'",
+      "objectWithoutIf": "734efa59e658222b1d8b6ead96e23c76f2a600c0fd269820677c656678b69990"
+    },
+    {
+      "key": "Windows launcher runtime smoke (launch-hidden.vbs / launch.bat)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "3f8ed450918dd0a3f2642ae42c0114a9f1634f9177ce946c4d8430971ff0e161"
+    },
+    {
+      "key": "Windows SAPI helper smoke (#259 win-sapi-helper)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "40a49284f43963b7026204693c226e2fba3fefdb404dbcf41c1a25b45f36455d"
+    },
+    {
+      "key": "Native Windows, macOS and Linux authorization / process regressions (#605)",
+      "objectWithoutIf": "aeb138a848aab490cf33cb288e84a98b1a63fded933e87c6356c1571b2304961"
+    },
+    {
+      "key": "Cross-platform MCP and process boundaries (#607)",
+      "objectWithoutIf": "11258ab092084f02f9a59930524763fbb8ad9274354c779bb181f93140f6ce6d"
+    },
+    {
+      "key": "Cancellable Windows ownership startup (#609)",
+      "objectWithoutIf": "fac6dedb9291e1853e3bb72d85bcee01b99c9fb3e58d0243e770bf70d4b0f5f7"
+    },
+    {
+      "key": "Windows reliability and confirmation regressions (#592, #595, #598, #599)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "3ca6a251be2649ae6316f44a7846d725606091ec61f65a47747a7972fd9f00b7"
+    },
+    {
+      "key": "Windows MCP and ACP recovery regressions (#601)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "df8119430926e23bbc8675f6866fd28fd86c9a240da7a61a8f052fac2a91a1e7"
+    },
+    {
+      "key": "Actual Windows background oracle comparator (#572)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "e561e30ea113517d45a390cb9629b61e96f48e5d541f55549a99510b67bebc91"
+    },
+    {
+      "key": "Native Windows GUI file template admission (#686)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "967cf6723e40d7a96805ba3cdeaef1b85a9c7838d4098fc6cf3250e9be942bb4"
+    },
+    {
+      "key": "Native Windows explicit App binary drift (#689)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "7b23bd1167b187c2293bc3588cf985da2ac3cd883d779b1b5671ccf390f479a5"
+    },
+    {
+      "key": "Native Windows manual CLI entry (#522)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "6ab04e6aace9a1f3c6a781d8a07d96bdc7e09736f9313de7f9d171c4228a2775"
+    },
+    {
+      "key": "Windows MCP compatibility and stdout drain (#602)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "1e1511e315a32625ab47c7b0e8fcd980dc4c2dc2e6a64d148583bdb42af49422"
+    },
+    {
+      "key": "Windows ACP pipes and filesystem roots / native UNC (#603)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "c259ed733bb8fe36a1065428a58f03c3beed13da1ad021e602007c6309ac8f0f"
+    },
+    {
+      "key": "Windows native 8.3 filesystem paths (#604)",
+      "if": "matrix.os == 'windows-latest'",
+      "objectWithoutIf": "cc68f4fa041cf62b238baedd34999c1a35901baa7a357b849d3a7525e8778125"
+    },
+    {
+      "key": "Post-census isolated module-scope diagnostic (#650)",
+      "if": "${{ always() && !cancelled() && matrix.os == 'windows-latest' }}",
+      "objectWithoutIf": "debcfbefb8620a7a1820876f367df3a5147938197d26ee649df6c343b3799548"
+    }
+  ],
+  "buildSteps": [
+    {
+      "key": "actions/checkout@v4",
+      "object": "dd0465395fff2eaf34fe466af3f46904442331f18fbcb4d67ae136cd3ae05d18"
+    },
+    {
+      "key": "Setup Node.js",
+      "object": "97ea18f89fdd8855b6bc55844f650173c8d82910577d69149eb06ee023de3a89"
+    },
+    {
+      "key": "Install dependencies",
+      "object": "09676f88736c2dea98f45d516c1f5f3da0e307642b5cfcd64201e96dfd3967c8"
+    },
+    {
+      "key": "Verify systray2 binary integrity",
+      "object": "d61826b153f3d3ee4b4bffb75af7b2bb674027f7353fb63f38129e9d189a8e99"
+    },
+    {
+      "key": "Verify Node archive checksum helper (audit H8)",
+      "object": "d54f9a2daddf1cee59d0c4b4b42de9ef239972ba8614c3345316ce11be16f048"
+    },
+    {
+      "key": "Package fail-closed gates (P0-D nits)",
+      "object": "6481644fbe3cc07f8e688387da041aab2df721c5dc295723f24474f9a5b5171e"
+    },
+    {
+      "key": "Build companion",
+      "object": "c043ede0b8cb1ad7c7b8ec8c3cb99ace0012dbf25b53fe5b866f859a5b672a6a"
+    },
+    {
+      "key": "Run companion tests",
+      "object": "b925e138207651d207a4a5491b7bc4b5c571b3c329ff2c713c8753238bb6a304"
+    },
+    {
+      "key": "Supply-chain audit — companion (gating, high+)",
+      "object": "6313bd88ef6175d553a611a13a98feb53667e3bb4755d694113e0f9012921355"
+    },
+    {
+      "key": "Setup chrome-extension Node.js",
+      "object": "7ad416a667c9fc4ba699fc5a1f1c87547c86860acffc6cedc68c95d68df3a794"
+    },
+    {
+      "key": "Build + typecheck chrome-extension (audit H7)",
+      "object": "1d08ba5776b029779f15c3ef0c45997f554f0ccae0e12df7cb14b43806ec9785"
+    },
+    {
+      "key": "ACP history hosted CPU controls (#732)",
+      "object": "bc3cceb672e155e0682e451823a26314cd2f416c562b37b369628bdb0e5707bc"
+    },
+    {
+      "key": "Bind normal public build outputs (#732)",
+      "object": "9e0f27f925ec92d84c2e6db6431a7058a56f714e3ff524235f3228fff029fa5d"
+    },
+    {
+      "key": "Upload normal public restart acceptance build (#732)",
+      "object": "f0c7bdaca2ce087ead49ea7418dae7c9c6cbf7be36ea26d6fe86f58a62edd55f"
+    },
+    {
+      "key": "Sidepanel visual-hygiene gate (#321 PR-1)",
+      "object": "e3e798eab86c5168b51eb08a5f7054032da0bbc13186189da99b190edfcb5b99"
+    },
+    {
+      "key": "Run chrome-extension tests",
+      "object": "1c5251cf72a0a43435a3be4eac78b7dea04f06795a20e1eb50c6725fd10ce81d"
+    },
+    {
+      "key": "Supply-chain audit — chrome-extension PRODUCTION deps (gating)",
+      "object": "d013c3a5a1949706d3bf829debe495a4fc1303217115bca5affccc1f53ed50bb"
+    },
+    {
+      "key": "Supply-chain audit — chrome-extension full tree (informational)",
+      "object": "f0f2407870b5c779b17579c7d84804a8f7c6bf27fcb25809ec9364319d652d0e"
+    },
+    {
+      "key": "Coverage observation (informational, residual OPS-M / P2)",
+      "object": "439b8175cc85e3ebaf17c899dec6d7d694944a323fd3c88c09cf4ed2aabfa27b"
+    }
+  ]
+}
