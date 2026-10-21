@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Refs #723：隔离启动器的 CPU 自检读 claim 时显式兼容 Node 仍持有的写句柄，保留只读访问、原 nonce／身份校验与 lease；新增真实 Windows 旧默认共享拒绝负控及 LF/CRLF 源回归。此为验收夹具修复，不代表 Chrome 窗口身份或 mask 已通过。
+
 - Refs #723/#732：修复新增 fd3 观察器在 Node22 Windows 上被 `isFIFO()`／`isSocket()` 固定 false 误拒的问题，按原 fd3 的真实类型位限定 pipe/socket；补齐历史连接 VM 对新增 bridge 断线消费者的惰性依赖与调用回归。保原 PASS／拒绝、4KiB 与身份门，不据此认定历史原生首错或启用 mask；仍为 0.6.14 开发版。
 
 - Refs #732：hosted 验收改为固定官方 Linux CFT 包供应、独立精确端口／版本正证再执行原完整 SidePanel 历史业务；旧 A/B 实验步骤退休且失败保留。CPU／纯文件解压不是浏览器通过；后续真实 hosted Linux 验收已完整通过重启／重载历史、取消与清理，不代表 Windows 浏览器或实体真人授权；不发版、不改原业务时限或产品权限。

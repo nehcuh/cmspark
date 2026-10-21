@@ -1,5 +1,11 @@
 # TESTING
 
+### #723 Job CPU 的 live claim 共享
+
+`cockpit-bridge-chrome-job-cpu.cs` 在 Node 的 `wx+` owner 句柄仍存活时读取原 claim。Framework `File.ReadAllText` 默认只共享 Read，不能与现存写访问兼容；fixture 改用 Read access、`ReadWrite|Delete` share 的显式流，沿用原文本读取和后续 `JobInput.Parse/CheckClaim` 的 nonce、64/65 字节与所有权拒绝。真实 Windows 自检还须亲证旧默认读以 sharing violation（Win32 32）拒绝，不能把任意 IOException 当正控；不关闭或降级父 lease。
+
+`cockpit-chrome-job-env-723.test.ts` 新回归从实际 C# 读取片段投影构造参数，以惰性双向 share 模型核 LF/CRLF、旧读／只共享 Read 反例及外来独占持有者拒绝。其余四个环境／固定155生产者控原样保留。模型不是 .NET／Windows执行；精确新 head 的真实 CPU EXE、Chrome/native 身份和清理仍须通过。8e3 的官方有限首错只定位到 CPU 退出码断言，不能冒称已取得该次内部异常或浏览器首窗成功。
+
 ### #732 当前完整验收状态
 
 PR735 的真实 hosted Linux 场景已完成正常 daemon 重启、既有页面及 reload 页面中断历史、终态保留和自有清理；Windows 同时完成完整 canonical 与两项 ACL／NTFS 历史原生检查。下文供应／PANEL 的 NOT_READY 描述保留对应历史阶段，不是当前结论；不据此声称 Windows 浏览器、真实 ACP provider 或真人审批通过，版本仍为开发版。

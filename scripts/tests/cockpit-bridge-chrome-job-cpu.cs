@@ -35,7 +35,15 @@ namespace CMspark.CockpitBridge.TestOnly {
         string binary = Path.Combine(scope, "not-executable.fixture"), extension = Path.Combine(scope, "extension"), profile = Path.Combine(scope, "profile");
         Directory.CreateDirectory(extension); Directory.CreateDirectory(profile); File.WriteAllText(binary, "controlled CPU input, never executed", new UTF8Encoding(false));
         string hash; using (SHA256 sha = SHA256.Create()) using (FileStream input = File.OpenRead(binary)) hash = BitConverter.ToString(sha.ComputeHash(input)).Replace("-", "").ToLowerInvariant();
-        string nonce = File.ReadAllText(Path.Combine(root, "native-surface-650", "claim"), Encoding.ASCII);
+        // The Node lease deliberately retains its wx+ writer until teardown.
+        // Framework ReadAllText shares only Read and must fail against it.
+        bool legacyShareRefused = false;
+        try { File.ReadAllText(Path.Combine(root, "native-surface-650", "claim"), Encoding.ASCII); }
+        catch (IOException error) { legacyShareRefused = (error.HResult & 0xffff) == 32; }
+        Check(legacyShareRefused);
+        string nonce;
+        using (FileStream claim = new FileStream(Path.Combine(root, "native-surface-650", "claim"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        using (StreamReader reader = new StreamReader(claim, Encoding.ASCII, true)) nonce = reader.ReadToEnd();
         long now = (DateTime.UtcNow.Ticks - 621355968000000000L) / 10000;
         string[] args = { root, binary, hash, extension, profile, nonce, (now + 45000).ToString(System.Globalization.CultureInfo.InvariantCulture) };
         parsed = JobInput.Parse(args, now); parsed.CheckClaim(); Check(parsed.FixedArguments().Length == 5);

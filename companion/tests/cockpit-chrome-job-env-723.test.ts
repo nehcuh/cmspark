@@ -133,3 +133,61 @@ test("actual caller uses its explicit Unicode block and real build controls copy
   assert.ok(controls.includes("[IO.File]::WriteAllBytes($jobControlSource, $jobControlSourceBytes)"))
   assert.ok(controls.includes("@('actual', 'missing-first', 'missing-second')"))
 })
+
+// Project only the actual C# nonce-reader constructor arguments. The IO seam
+// models CreateFile's documented *two-way* access/share compatibility, not an
+// executed .NET/Windows positive. The real CPU EXE also retains that negative.
+function cpuNonce(text: string, ownerAccess = 3, ownerShare = 7) {
+  const normalized = text.replaceAll("\r\n", "\n")
+  const fragments = [...normalized.matchAll(/        string nonce[\s\S]*?(?=        long now =)/g)]
+  assert.equal(fragments.length, 1)
+  const fragment = fragments[0][0].trim(), attempts: number[] = [], events: string[] = []
+  const value = "a".repeat(64), claimPath = win.join(root, "native-surface-650", "claim")
+  const sharingFailure = () => Object.assign(Error("ERROR_SHARING_VIOLATION"), { code: 32 })
+  class Input {
+    closed = false
+    constructor(file: string, mode: number, access: number, share: number) {
+      assert.equal(file, claimPath); assert.equal(mode, 3); assert.equal(access, 1)
+      attempts.push(share)
+      if ((share & ownerAccess) !== ownerAccess || (ownerShare & access) !== access) throw sharingFailure()
+      events.push("open")
+    }
+    Dispose() { if (!this.closed) { this.closed = true; events.push("close") } }
+  }
+  class Reader {
+    constructor(private input: Input, encoding: string, detectBOM: boolean) { assert.equal(encoding, "ASCII"); assert.equal(detectBOM, true) }
+    ReadToEnd() { assert.equal(this.input.closed, false); events.push("read"); return value }
+    Dispose() { this.input.Dispose() }
+  }
+  let body: string
+  if (fragment.startsWith("string nonce = File.ReadAllText(")) body = fragment.replace("string nonce", "let nonce") + "\nreturn nonce;"
+  else {
+    const match = /^string nonce;\s+using \(FileStream (\w+) = new FileStream\(([^;]+)\)\)\s+using \(StreamReader (\w+) = new StreamReader\(([^;]+)\)\) nonce = \3.ReadToEnd\(\);$/.exec(fragment)
+    assert.ok(match, "keep the actual nonce-reader projection closed")
+    body = `let nonce; const ${match[1]} = new FileStream(${match[2]}); try { const ${match[3]} = new StreamReader(${match[4]}); try { nonce = ${match[3]}.ReadToEnd(); } finally { ${match[3]}.Dispose(); } } finally { ${match[1]}.Dispose(); } return nonce;`
+  }
+  const nonce: string = vm.runInNewContext("(function(){" + body + "})()", {
+    root, Path: { Combine: win.join }, Encoding: { ASCII: "ASCII" },
+    FileMode: { Open: 3 }, FileAccess: { Read: 1 }, FileShare: { Read: 1, ReadWrite: 3, Delete: 4 },
+    FileStream: Input, StreamReader: Reader,
+    // Framework File.ReadAllText -> StreamReader(path) uses FileShare.Read.
+    File: { ReadAllText(file: string, encoding: string) {
+      const input = new Input(file, 3, 1, 1)
+      try { return new Reader(input, encoding, true).ReadToEnd() } finally { input.Dispose() }
+    } },
+  })
+  return { nonce, attempts, events }
+}
+test("actual CPU claim reader coexists with the live writable owner under LF/CRLF", () => {
+  const cpu = fs.readFileSync(path.join(repo, "scripts/tests/cockpit-bridge-chrome-job-cpu.cs"), "utf8")
+  const owner = fs.readFileSync(path.join(repo, "companion/tests/fixtures/native-surface-650.ts"), "utf8")
+  assert.ok(owner.includes('fd = fs.openSync(claim, "wx+", 0o600)'))
+  assert.ok(owner.includes('if (fd !== undefined) { fs.closeSync(fd); fd = undefined }'))
+  for (const newline of ["\n", "\r\n"]) {
+    const text = cpu.replaceAll("\r\n", "\n").replaceAll("\n", newline)
+    const result = cpuNonce(text)
+    assert.equal(result.nonce, "a".repeat(64)); assert.deepEqual(result.events, ["open", "read", "close"])
+    assert.throws(() => cpuNonce(text.replace("FileShare.ReadWrite | FileShare.Delete", "FileShare.Read")), /ERROR_SHARING_VIOLATION/)
+    assert.throws(() => cpuNonce(text, 3, 0), /ERROR_SHARING_VIOLATION/, "a truly exclusive foreign holder remains refused")
+  }
+})

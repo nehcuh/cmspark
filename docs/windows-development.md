@@ -1,5 +1,7 @@
 # Windows 开发与失败定位
 
+跨 Node／Framework 的同一文件须核双向 access/share 兼容。Node lease 的 `wx+` 即使共享 Read/Write/Delete，Framework 默认 `File.ReadAllText` 仍只共享 Read，会拒绝现存写句柄；读取者的 share 必须允许已有 access，不能提前关 owner 或放宽权限掩盖。#723 Job CPU fixture 的修复保持 Read access、显式 ReadWrite|Delete share 和后续原 nonce/claim 校验；真实 Windows 还验证旧读的精确 sharing violation。惰性共享模型／原厂源码链不等于已观测某次 CPU 内部异常，也不等于 native 窗口身份成功。原厂依据：[Framework StreamReader](https://github.com/microsoft/referencesource/blob/ec9fa9ae770d522a5b5f0607898044b7478574a3/mscorlib/system/io/streamreader.cs)、[CreateFile 的双向共享规则](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)。
+
 适用于 coding agent 和贡献者。先按当前 Issue 的原始 DoD、精确 head/main 和实际失败阶段定位；历史 Windows 红灯不是同一个系统根因。本文是已有调试、隔离与验收纪律的短入口，不新增模型、全仓重测或平台前置门。测试地图见 [TESTING](TESTING.md)，开发约定见 [CONTRIBUTING](../CONTRIBUTING.md)。
 
 ## 系统化调试：先亲证，再改动
