@@ -5,7 +5,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
 const file=path.resolve(__dirname,'../..','tests/fixtures/desktop-476/terminal-acceptance.cpp')
-const source=fs.readFileSync(file,'utf8')
+// Remove only fixed diagnostic call arguments for the unchanged control-flow oracle.
+const source=fs.readFileSync(file,'utf8').replace(/failure\((h|target),[1-9][0-9]?\)/g,'failure($1)')
 function block(text:string,start:number){
  const begin=text.indexOf('{',start);assert.ok(begin>=0);let depth=0,quote='',comment=false
  for(let i=begin;i<text.length;i++){
@@ -18,7 +19,7 @@ function block(text:string,start:number){
  }
  throw Error('UNTERMINATED_CPP_SOURCE')
 }
-function member(name:string,text=source){const marker='D705TerminalAcceptance::'+name+'(';assert.equal(text.split(marker).length,2);return block(text,text.indexOf(marker))}
+function member(name:string,text=source){const marker='D705TerminalAcceptance::'+name+'(';assert.equal(text.split(marker).length,2);return block(text,text.indexOf(marker)).replace(/note\((?:&h|nullptr),L'W',(?:site|4|8)\);/g,'').replace(/failure\((h|target),[1-9][0-9]?\)/g,'failure($1)')}
 function lower(body:string){return body.replace(/\bL(?=")/g,'').replace(/command\(\)\.size\(\)/g,'command().length').replace(/std::wstring\(1,command\(\)\[cursor\]\)/g,'command()[cursor]').replace(/const size_t /g,'const ').replace(/\bauto action=/g,'const action=').replace(/throw std::runtime_error\(/g,'throw Error(').replace(/JsonObject payload;/g,'const payload=new JsonObject();').replace(/JsonValue::CreateNumberValue\(/g,'Number(').replace(/\(void\)/g,'').replace(/input_web\.Reset\(\)/g,'input_web=null').replace(/FAILED\((\w+)\)/g,'($1<0)')}
 function command(text=source){const match=/static const std::wstring value=L("[^\n]+");return value;/.exec(member('command',text));assert.ok(match);return JSON.parse(match[1]) as string}
 function context(extra:any={}){

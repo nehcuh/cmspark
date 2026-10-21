@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Refs #747/#476: add a closed first-observed refusal code to the unshipped terminal acceptance fixture only; preserve original failures, native45s, authority and cleanup. Codes identify original rejection groups, not Windows physical causes; current native failure remains blocking.
+
 - **#476 桌面用户终端开发候选**：从已明确绑定的对话目录，经原生确认进入原单 PTY 与离线 xterm；所选终端摘录另行确认后保存到原对话。目录缺失诚实不可用，桌面 Agent／新目录选择入口仍未交付，不自动开启模块、默认目录或模型尾部读取。保留当前归档／浏览器与 ACP claims；真实 Windows/macOS 原生验收尚未执行，不发版、不关闭整票。
 
 - Refs #723: add remote-only owned-window Windows capture acceptance for actual PS5.1/PrintWindow, passive refusal and real BitBlt quality; CPU checks remain separate from native verification.

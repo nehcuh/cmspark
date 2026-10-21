@@ -186,6 +186,23 @@ test("#476 actual native permanent archive history restore and lost ACK use the 
  })
 })
 
+/** Closed passive 747 projection. Own-data getters are never evaluated; Proxy traps are not promised safe. */
+function createTerminalFirstFailure747(){
+ let first:{origin:'W'|'R';site:number}|null=null,sealed=false
+ const own=(value:unknown,key:string)=>{if(!value||typeof value!=='object')return undefined;const d=Object.getOwnPropertyDescriptor(value,key);return d&&Object.hasOwn(d,'value')?d.value:undefined}
+ return{
+  observe(value:unknown){try{
+   if(sealed||first||!value||typeof value!=='object'||Object.getOwnPropertyNames(value).sort().join()!=='id,type'||Object.getOwnPropertySymbols(value).length)return
+   if(own(value,'type')!=='system.ping')return;const id=own(value,'id');if(typeof id!=='string'||id.length>32)return
+   const m=/^D476_TERMINAL_FIRST_([WR])_([1-9]|1[0-9]|2[0-8])$/.exec(id);if(!m)return
+   const site=Number(m[2]);if(m[1]==='R'&&site>19)return
+   first={origin:m[1] as 'W'|'R',site}
+  }catch{/* Observation failure cannot replace original primary/cleanup. */}},
+  seal(){sealed=true},
+  snapshot(){return{schema:1,source:'ffe3514318883fc863bf2347093f328354ee841b',first:first?{...first}:null}}
+ }
+}
+
 /** New terminal-only leaf: same serialized foreground file, never a new worker. */
 function hostedTerminalAdmission705() {
  assert.ok(process.platform==='darwin'||process.platform==='win32','TERMINAL705_SUPPORTED_HOST_REQUIRED')
@@ -214,9 +231,10 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
   const threads=new ThreadManager();threads.create('Native terminal A','native-terminal-A');threads.create('Unchanged sibling','native-terminal-B');threads.update('native-terminal-A',{workspace_root:dir})
   const registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-native-terminal705'),confirmations=new SecurityConfirmationManager(),runtime=createNativeTerminalRuntime(()=> 'idle')
   const outputDecoder=new TextDecoder(),inputDecoder=new TextDecoder();let outputSuffix='',inputSuffix='';const actualHandles:Array<{kill():void;exited:boolean}>=[];let completionFailure:unknown
+  const firstFailure=createTerminalFirstFailure747()
   const required=['DENIED','CANCELLED','OUTPUT','RESIZED','STOPPED','SAVED','REOPENED','DONE'].map(n=>'D476_TERMINAL_'+n),receipts=new Set<string>(),outputSeq=new Set<number>(),ackSeq=new Set<number>(),dimensions=new Set<string>(),childExits:Promise<void>[]=[]
   let child:DesktopNativeChild|undefined,childExited=false,authenticated=false,windowRequested=false,failed=false,connections=0,primary:any,completion:Promise<void>|undefined,foreign:InstanceType<typeof WebSocket>|undefined,foreignCheck:Promise<void>|undefined,actualSpawns=0,openAttempts=0,confirmationRequests=0,decisions=0,deniedResults=0,outputBytes=0,largestFrame=0,lastOutput=0,inputUnicode=false,outputUnicode=false,stops=0,ownedPid=0,actualProcessExit=false,exitResolve!:(n:number)=>void,failResolve!:()=>void,primaryFailure:unknown
-  const exited=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r),deadline=new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE')),{once:true})),fail=()=>{failed=true;failResolve()}
+  const exited=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r),deadline=new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>{firstFailure.seal();reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))},{once:true})),fail=()=>{firstFailure.seal();failed=true;failResolve()}
   // Delegate every spawn to the actual required @lydell loader. This is observation,
   // not testSetPtySpawn/MockPty/platform spoof or a replacement native handle.
   const nativePty=loadNodePty(),realSpawn=nativePty.spawn.bind(nativePty)
@@ -258,6 +276,7 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
    ws.on('message',raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(ws!==primary||!authenticated)return
     if(f.type==='desktop.confirmation.decision'&&f.purpose==='local-work')decisions++
     if(f.type!=='system.ping'||typeof f.id!=='string')return
+    firstFailure.observe(f)
     if(f.id==='D476_TERMINAL_FAIL'){fail();return}
     if(!required.includes(f.id))return;if(receipts.has(f.id)){fail();return}receipts.add(f.id)
     if(f.id==='D476_TERMINAL_DONE'){
@@ -273,11 +292,11 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
   server.listen(0,'127.0.0.1');await once(server,'listening')
   try{
    const native=path.resolve(__dirname,'../../dist/desktop-native'),binary=path.join(native,'acceptance/terminal',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop');assert.ok(fs.existsSync(binary),'actual terminal-only acceptance host must be built');surfaceLease.checkpoint()
-   child=(require(path.join(native,'desktop-launcher.node'))as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,code=>{childExited=true;exitResolve(code)})
+   child=(require(path.join(native,'desktop-launcher.node'))as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,code=>{firstFailure.seal();childExited=true;exitResolve(code)})
    assert.equal(await Promise.race([exited,failure.then(()=>{throw completionFailure??Error('OWNED_TERMINAL705_NATIVE_PHASE_FAILED')}),deadline]),77);if(completion)await completion;assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,2);assert.deepEqual([...receipts].sort(),[...required].sort())
    process.stdout.write('DESKTOP_TERMINAL_705 {"native":true,"realPty":true,"syntheticNativeApproval":true,"humanApproval":false,"deniedAndCancelledZeroLaunch":true,"unicode":true,"over16KiBOutput":true,"seqAck":true,"resized":true,"stoppedActualExit":true,"selectedPartialReturn":true,"diskReopened":true,"foreignAndNullRefused":true}\n')
   }catch(error){primaryFailure=error;throw error}finally{
-   surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),actualSpawns,openAttempts,confirmationRequests,decisions,deniedResults,outputBytes,largestFrame,outputFrames:outputSeq.size,acks:ackSeq.size,dimensions:dimensions.size,inputUnicode,outputUnicode,stops,actualProcessExit,authenticated,windowRequested,connections,childExited}))}catch{}
+   firstFailure.seal();surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,firstFailure:firstFailure.snapshot(),failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),actualSpawns,openAttempts,confirmationRequests,decisions,deniedResults,outputBytes,largestFrame,outputFrames:outputSeq.size,acks:ackSeq.size,dimensions:dimensions.size,inputUnicode,outputUnicode,stops,actualProcessExit,authenticated,windowRequested,connections,childExited}))}catch{}
    let cleanupError:unknown;const clean=async(fn:()=>unknown)=>{try{await fn()}catch(error){cleanupError??=error}}
    await clean(async()=>{child?.terminate();if(child&&!childExited)await exited});await clean(()=>{foreign?.terminate();for(const ws of channel.wss.clients)ws.terminate();confirmations.rejectAll('disconnect')})
    await clean(()=>{for(const handle of actualHandles)if(!handle.exited)handle.kill()});await clean(async()=>{await Promise.race([Promise.all(childExits),deadline]);assert.equal(pty.isPtyBusy(),false)});await clean(()=>Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]));await clean(()=>new Promise<void>(r=>server.close(()=>r())))
