@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Refs #723：经用户明确批准，将同次固定源码编译拆为最多 120 秒的必过准备阶段，原生运行与清理仍限原 45 秒。交接绑定真实关闭回执、源码、nonce 和文件身份；超时晚到不能进入原生阶段。真实 Windows 与精确 main 验收仍须通过。
+
 - Refs #723：远端身份夹具的 CDP transport 终止同步拒绝 target／default-context 事件等待，避免命令已 ACK 后只等外层超时；保留原 abort 原因、45 秒、身份及 cleanup。新增真实类的 LF/CRLF／关闭／迟到事件回归；此为已证生命周期缺口，不认定历史 Windows 超时原因，native 身份与 mask 仍未完成。
 
 - Refs #723：隔离启动器的 CPU 自检读 claim 时显式兼容 Node 仍持有的写句柄，保留只读访问、原 nonce／身份校验与 lease；新增真实 Windows 旧默认共享拒绝负控及 LF/CRLF 源回归。此为验收夹具修复，不代表 Chrome 窗口身份或 mask 已通过。

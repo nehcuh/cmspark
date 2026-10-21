@@ -113,11 +113,15 @@ if (process.argv[2] === '--producer') {
     }
     walk(ast)
     assert.equal(positions.size, 92)
-    assert.equal(buildJoins.length, 1)
-    const tuple = buildJoins[0].arguments[0]
-    assert.equal(buildJoins[0].arguments.length, 1); assert.ok(ts.isArrayLiteralExpression(tuple)); assert.equal(tuple.elements.length, 2)
-    assert.equal(tuple.elements[0].getText(ast), "runPs(path.join(sourceRepo, 'scripts/build-cockpit-native-bridge.ps1'), ['-OutputDirectory', path.join(install, 'bin')])")
-    assert.equal(tuple.elements[1].getText(ast), "evidence.wait(36, () => (runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild])))")
+    // Human-approved split: compilers are mandatory in the parent's separate
+    // 120s preparation. Runtime keeps45s, revalidates the same-run artifacts,
+    // and observes the real metadata verifier close before any native child.
+    assert.equal(buildJoins.length, 0)
+    assert.ok(text.includes("require('./cockpit-bridge-prepared-build.cjs').stage({"))
+    assert.ok(text.includes('root, sourceRepo, install, jobBuild, expectedNonce: preparedNonce'))
+    assert.ok(text.includes("evidence.wait(36, () => runPs(path.join(sourceRepo, 'scripts/tests/cockpit-bridge-prepared-paths.ps1'), ['-Phase', phase]))"))
+    assert.equal(text.includes("runPs(path.join(sourceRepo, 'scripts/build-cockpit-native-bridge.ps1')"), false)
+    assert.equal(text.includes("runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1')"), false)
     assert.equal(awaits.length, 28); assert.equal(assertions.length, 29)
     for (const [id, kind] of Object.entries(sites.kinds)) assert.ok(uses.get(Number(id))?.some(method => methods[kind]?.includes(method)), 'closed site must retain its actual source wrapper: ' + id)
     assert.ok(text.includes('const positive = evidence.arm(')); assert.ok(text.includes('const observationDone = evidence.dependency()'))
@@ -130,7 +134,7 @@ if (process.argv[2] === '--producer') {
     assert.equal(createHash('sha256').update(shared).digest('hex'), 'bb4099db59ba888505c134f1771985712f0cb99f1a6f2bf56b86dff96b76e645')
   })
   test('actual coverage rejects omitted wrappers, prearmed observation and surface completion', () => {
-    for (const mutation of [controller.replace('await evidence.wait(', 'await omittedWait('), controller.replace('evidence.check(1,', 'omittedCheck(1,'), controller.replace('evidence.callback(', 'omittedCallback('), controller.replace('evidence.wait(36,', 'omittedWait(36,'), controller.replace('Promise.allSettled(', 'Promise.all('), controller.replace('evidence.arm(', 'omittedArm('), controller.replace('finally { evidence.surface(2) }', 'finally { void 0 }')]) assert.throws(() => coverage(mutation))
+    for (const mutation of [controller.replace('await evidence.wait(', 'await omittedWait('), controller.replace('evidence.check(1,', 'omittedCheck(1,'), controller.replace('evidence.callback(', 'omittedCallback('), controller.replace('evidence.wait(36,', 'omittedWait(36,'), controller.replace('expectedNonce: preparedNonce', 'expectedNonce: undefined'), controller.replace('evidence.arm(', 'omittedArm('), controller.replace('finally { evidence.surface(2) }', 'finally { void 0 }')]) assert.throws(() => coverage(mutation))
   })
   for (const [caseName, cpuReceipt, code] of [['malformed', '{', 'SYNC_REFUSED'], ['null', 'null', 'CHECK_REFUSED']]) test('actual CPU JSON parse or argument failure freezes before cleanup: ' + caseName, () => {
     const ast = ts.createSourceFile('actual-controller.cjs', controller, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)

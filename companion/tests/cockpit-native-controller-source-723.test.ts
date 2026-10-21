@@ -91,6 +91,16 @@ async function controllerHarness(rawSinkFailure?: { child: number; stream: "stdo
     stdin: { end: () => void }; exitCode: number | null; signalCode: string | null; kill: () => boolean; send: () => void }
   const abort = new AbortController(), reason = Error("CONTROLLED_LEASE_EXPIRED"), original = Error("CONTROLLED_CHILD_ERROR")
   const children: Child[] = [], kinds: string[] = [], descriptors = new Set<number>()
+  let releaseStage!: () => void, completeStage!: () => void, stageFailure: unknown, queryPhase = "stage"
+  const stageGate = new Promise<void>(resolve => { releaseStage = resolve }), stageCompletion = new Promise<void>(resolve => { completeStage = resolve })
+  const stages: any[] = [], launches: { kind: string; args: any[] }[] = []
+  const stage = async (options: any) => {
+    stages.push(options); await stageGate
+    if (stageFailure) throw stageFailure
+    await options.verifyFiles(queryPhase)
+    await stageCompletion
+    if (stageFailure) throw stageFailure
+  }
   let killed = 0, closedDescriptors = 0, settled = 0, nextDescriptor = 10, checkpoints = 0, checkpointError: Error | undefined
   const child = (kind: string): Child => {
     kinds.push(kind)
@@ -110,9 +120,10 @@ async function controllerHarness(rawSinkFailure?: { child: number; stream: "stdo
     lease: { checkpoint() { checkpoints++; if (checkpointError) throw checkpointError }, settled() { settled++ }, borrow: () => ({ nonce: "controlled-owned-fixture" }) },
     powershell: "owned-inert-powershell", childEnvironment: { OWNED_CPU: "yes" }, root: "owned-root", install: "owned-install",
     sourceRepo: "public-source", serverFile: "owned-server", jobBuild: "owned-job", chrome: "fixed-browser", chromeSHA256: "fixed-sha",
+    preparedNonce: "a".repeat(32), require(id: string) { assert.equal(id, "./cockpit-bridge-prepared-build.cjs"); return { stage } },
     extension: "owned-extension", profile: "owned-profile", outerDeadline: 1, secret: "controlled-not-a-token",
     randomBytes: () => ({ toString: () => "controlled-not-a-token" }),
-    cp: { spawn: () => child("spawn"), fork: () => child("fork") },
+    cp: { spawn: (...args: any[]) => { launches.push({ kind: "spawn", args }); return child("spawn") }, fork: (...args: any[]) => { launches.push({ kind: "fork", args }); return child("fork") } },
     fs: { openSync(name: string) {
       if (rawSinkFailure && !rawSinkFailure.listener && path.basename(name) === `operator-${rawSinkFailure.child}.${rawSinkFailure.stream}`) throw original
       const fd = nextDescriptor++; descriptors.add(fd); return fd },
@@ -124,33 +135,43 @@ async function controllerHarness(rawSinkFailure?: { child: number; stream: "stdo
   new vm.Script(helperCode + "\nglobalThis.actualRunPs = runPs;").runInContext(context)
   const actualRunPs = context.actualRunPs as (script: string, args: string[], cleanup?: boolean) => Promise<void>
   function close(value: Child, code = 0) { value.exitCode = code; value.emit("close", code, null) }
-  function prefix(retire = false) {
-    const statements = terminal.tryBlock.statements
-    const end = statements.findIndex(node => node.getText(source).startsWith("const secret ="))
-    assert.ok(end > 0)
-    const body = statements.slice(0, end).map(node => node.getText(source)).join("\n")
+  // Deliberate finite schedule fixture for the actual runPs helper. This is
+  // not the production compiler prefix: preparation now belongs to its own gate.
+  function parallelHelpers(retire = false) {
+    const body = `await Promise.allSettled([runPs('controlled-host-helper.ps1', []), runPs('controlled-job-helper.ps1', [])]).then(results => {
+      if (results[0].status === 'rejected') throw results[0].reason;
+      if (results[1].status === 'rejected') throw results[1].reason;
+    });`
     const code = retire ? `try {${body}} ${terminal.catchClause!.getText(source)} finally ${terminal.finallyBlock!.getText(source)}` : body
     return new vm.Script(`(async()=>{${code}})()`).runInContext(context) as Promise<void>
   }
+  function productionPrefix() {
+    const statements = terminal.tryBlock.statements
+    const cpu = statements.findIndex(node => node.getText(source).startsWith("const cpu ="))
+    assert.ok(cpu > 0); assert.equal(statements[cpu - 1].getText(source), "admitChild()")
+    const body = statements.slice(0, cpu + 1).map(node => node.getText(source)).join("\n")
+    return new vm.Script(`(async()=>{${body}})()`).runInContext(context) as Promise<void>
+  }
   function launch(marker: string) { return new vm.Script(launchCode(marker)).runInContext(context) }
   async function turn() { for (let index = 0; index < 32; index++) await Promise.resolve() }
-  return { abort, reason, original, children, kinds, context, actualRunPs, close, launch, prefix, turn,
+  return { abort, reason, original, children, kinds, context, actualRunPs, close, launch, parallelHelpers, productionPrefix, turn, stages, launches,
+    releaseStage, completeStage, stageFails(error: unknown) { stageFailure = error }, queryPhase(value: string) { queryPhase = value },
     checkpointFails() { checkpointError = reason },
     facts: () => ({ killed, closedDescriptors, openDescriptors: descriptors.size, settled, checkpoints }) }
 }
 
 for (const schedule of ["normal", "host-error", "job-error", "both-errors", "abort", "failed-kill"] as const) {
-  test(`actual fixed build prefix joins both real helper closes before server: ${schedule}`, async () => {
+  test(`actual runPs finite parallel helper fixture joins both closes: ${schedule}`, async () => {
     const h = await controllerHarness(), jobError = Error("CONTROLLED_JOB_BUILD_ERROR")
     let done = false, error: unknown, killAttempts = 0
-    const running = h.prefix().then(() => { done = true }, value => { error = value; done = true })
+    const running = h.parallelHelpers().then(() => { done = true }, value => { error = value; done = true })
     const initial = { count: h.children.length, descriptors: h.facts().openDescriptors }
-    // Drain the original serial prefix too, so its RED is a natural assertion
-    // exit rather than an unresolved fake child or a harness timeout.
+    // Drain a refused controlled admission too, so any regression exits
+    // naturally rather than leaving an unresolved fake child.
     if (initial.count !== 2) {
       for (const child of h.children) h.close(child)
       await running
-      assert.equal(initial.count, 2, "both original fixed compiler helpers must be admitted before either closes")
+      assert.equal(initial.count, 2, "both controlled helper calls must be admitted before either closes")
     }
     assert.equal(initial.descriptors, 4); assert.deepEqual(h.kinds, ["spawn", "spawn"])
     if (schedule === "failed-kill") for (const child of h.children) child.kill = () => { killAttempts++; throw Error("CONTROLLED_KILL_REFUSED") }
@@ -164,7 +185,7 @@ for (const schedule of ["normal", "host-error", "job-error", "both-errors", "abo
     // Complete Job first, including both-fail: selection must still be host-first.
     h.close(h.children[1]); await h.turn()
     assert.equal(done, false); assert.equal(h.facts().closedDescriptors, 2)
-    assert.deepEqual(h.kinds, ["spawn", "spawn"], "no server or CPU admission while sibling remains live")
+    assert.deepEqual(h.kinds, ["spawn", "spawn"], "only the two controlled helper children exist while a sibling remains live")
     h.close(h.children[0]); await running
     assert.equal(done, true); assert.equal(h.facts().openDescriptors, 0); assert.equal(h.facts().closedDescriptors, 4)
     const expected = schedule === "normal" ? undefined : schedule === "job-error" ? jobError : schedule === "abort" || schedule === "failed-kill" ? h.reason : h.original
@@ -176,7 +197,7 @@ for (const child of [1, 2]) for (const stream of ["stdout", "stderr"] as const) 
   test(`partial raw ${child}/${stream} setup joins both actual closes before lease retirement`, async () => {
     const h = await controllerHarness({ child, stream })
     let done = false, error: unknown
-    const running = h.prefix(true).then(() => { done = true }, value => { done = true; error = value })
+    const running = h.parallelHelpers(true).then(() => { done = true }, value => { done = true; error = value })
     await h.turn(); assert.equal(h.children.length, 2)
     h.close(h.children[child === 1 ? 1 : 0]); await h.turn()
     const beforeFaultClose = { done, ...h.facts() }
@@ -184,32 +205,78 @@ for (const child of [1, 2]) for (const stream of ["stdout", "stderr"] as const) 
     // the immutable old helper; a missing join must fail naturally, not hang.
     h.close(h.children[child - 1]); await running; await h.turn()
     assert.equal(beforeFaultClose.done, false, "partial setup cannot return before its real close")
-    assert.equal(beforeFaultClose.settled, 0, "a still-live compiler cannot retire the lease")
+    assert.equal(beforeFaultClose.settled, 0, "a still-live controlled helper cannot retire the lease")
     assert.equal(h.facts().openDescriptors, 0); assert.equal(h.facts().settled, 1)
     assert.equal(error, h.original, "the original raw setup refusal is not replaced")
   })
 }
 
-test("actual full build/server prefix admits server only after both compiler closes", async () => {
-  const h = await controllerHarness(), statements = terminal.tryBlock.statements
-  const cpu = statements.findIndex(node => node.getText(source).startsWith("const cpu ="))
-  assert.ok(cpu > 0); assert.equal(statements[cpu - 1].getText(source), "admitChild()")
-  const code = statements.slice(0, cpu - 1).map(node => node.getText(source)).join("\n")
-  let done = false
-  const running = new vm.Script(`(async()=>{${code}})()`).runInContext(h.context) as Promise<void>
-  running.then(() => { done = true })
-  assert.equal(h.children.length, 2); h.close(h.children[0]); await h.turn()
-  assert.equal(done, false); assert.deepEqual(h.kinds, ["spawn", "spawn"])
-  h.close(h.children[1]); await running
-  assert.equal(done, true); assert.deepEqual(h.kinds, ["spawn", "spawn", "fork"])
-  assert.equal(h.facts().openDescriptors, 0); h.close(h.children[2])
-})
+for (const mode of ["normal", "stage-refused", "query-refused", "query-error", "abort-before-query", "lease-before-query", "abort-query", "abort-before-server", "lease-before-server", "wrong-phase"] as const) {
+  test(`actual runtime stage/query/server/CPU prefix preserves admission ordering: ${mode}`, async () => {
+    const h = await controllerHarness()
+    let done = false, error: unknown
+    const running = h.productionPrefix().then(() => { done = true }, value => { error = value; done = true })
+    await h.turn()
+    assert.equal(h.stages.length, 1); assert.equal(h.children.length, 0)
+    const options = h.stages[0]
+    assert.deepEqual(Object.keys(options).sort(), ["expectedNonce", "install", "jobBuild", "root", "sourceRepo", "verifyFiles"])
+    assert.equal(options.expectedNonce, h.context.preparedNonce, "actual preparedNonce closure is passed unchanged")
+    assert.equal(options.root, h.context.root); assert.equal(options.install, h.context.install)
+    assert.equal(options.sourceRepo, h.context.sourceRepo); assert.equal(options.jobBuild, path.join(h.context.root, "job-build"))
+    if (mode === "stage-refused") h.stageFails(h.original)
+    if (mode === "wrong-phase") h.queryPhase("prepare")
+    if (mode === "abort-before-query") h.abort.abort(h.reason)
+    if (mode === "lease-before-query") h.checkpointFails()
+    h.releaseStage(); await h.turn()
+    if (["stage-refused", "wrong-phase", "abort-before-query", "lease-before-query"].includes(mode)) {
+      await running
+      assert.equal(h.children.length, 0, "stage/phase failure cannot start query, server or CPU")
+      if (mode === "stage-refused") assert.equal(error, h.original)
+      if (mode === "abort-before-query" || mode === "lease-before-query") assert.equal(error, h.reason)
+      if (mode === "wrong-phase") assert.match(String(error), /PREPARATION_STAGE_REQUIRED/)
+      assert.equal(done, true); return
+    }
+    assert.equal(h.children.length, 1); assert.deepEqual(h.kinds, ["spawn"])
+    const query = h.launches[0]
+    assert.equal(query.args[0], "owned-inert-powershell")
+    assert.deepEqual(Array.from(query.args[1]), ["-NoProfile", "-NonInteractive", "-File", path.join("public-source", "scripts/tests/cockpit-bridge-prepared-paths.ps1"), "-Phase", "stage"])
+    assert.equal(query.args[2].env, h.context.childEnvironment)
+    assert.equal(h.facts().checkpoints, 1, "query uses original signal/lease admission")
+    if (mode === "query-error") h.children[0].emit("error", h.original)
+    if (mode === "abort-query") h.abort.abort(h.reason)
+    await h.turn(); assert.equal(done, false); assert.deepEqual(h.kinds, ["spawn"])
+    assert.equal(h.facts().closedDescriptors, 0, "query must actually close before stage publication")
+    if (mode === "abort-query") assert.equal(h.facts().killed, 1)
+    h.close(h.children[0], mode === "query-refused" ? 1 : 0); await h.turn()
+    assert.equal(h.facts().openDescriptors, 0)
+    if (["query-refused", "query-error", "abort-query"].includes(mode)) {
+      await running; assert.equal(done, true); assert.deepEqual(h.kinds, ["spawn"])
+      if (mode === "query-error") assert.equal(error, h.original)
+      if (mode === "abort-query") assert.equal(error, h.reason)
+      if (mode === "query-refused") assert.match(String(error), /OWNED_INSTALL_REFUSED/)
+      return
+    }
+    assert.equal(done, false); assert.deepEqual(h.kinds, ["spawn"], "closed query alone is not stage success")
+    if (mode === "abort-before-server") h.abort.abort(h.reason)
+    if (mode === "lease-before-server") h.checkpointFails()
+    h.completeStage(); await running
+    if (mode !== "normal") {
+      assert.equal(error, h.reason); assert.deepEqual(h.kinds, ["spawn"], "original signal/lease blocks server and CPU after stage")
+    } else {
+      assert.equal(error, undefined); assert.deepEqual(h.kinds, ["spawn", "fork", "spawn"])
+      assert.equal(h.facts().checkpoints, 3, "same signal/lease guards query, server and CPU")
+      assert.equal(h.launches[1].args[2].env, h.context.childEnvironment)
+      assert.equal(h.launches[2].args[2].env, h.context.childEnvironment)
+      h.close(h.children[1]); h.close(h.children[2])
+    }
+  })
+}
 
 for (const child of [1, 2]) {
   test(`partial raw setup plus child ${child} spawn error still joins actual close`, async () => {
     const h = await controllerHarness({ child, stream: "stderr" })
     let done = false, error: unknown
-    const running = h.prefix(true).then(() => { done = true }, value => { done = true; error = value })
+    const running = h.parallelHelpers(true).then(() => { done = true }, value => { done = true; error = value })
     assert.equal(h.children.length, 2)
     h.children[child - 1].emit("error", Error("CONTROLLED_SECONDARY_SPAWN_ERROR"))
     await h.turn(); h.close(h.children[child === 1 ? 1 : 0]); await h.turn()
@@ -225,7 +292,7 @@ for (const child of [1, 2]) for (const stream of ["stdout", "stderr"] as const) 
   test(`late abort after partial ${child}/${stream}/${listener ? "listener" : "open"} setup still stops both owned children`, async () => {
     const h = await controllerHarness({ child, stream, listener })
     let done = false, error: unknown
-    const running = h.prefix(true).then(() => { done = true }, value => { done = true; error = value })
+    const running = h.parallelHelpers(true).then(() => { done = true }, value => { done = true; error = value })
     await h.turn(); assert.equal(h.children.length, 2)
     h.abort.abort(h.reason); await h.turn()
     const afterAbort = { done, ...h.facts() }
@@ -243,7 +310,7 @@ for (const child of [1, 2]) {
   test(`late abort after partial child ${child} setup preserves failure even if kill throws`, async () => {
     const h = await controllerHarness({ child, stream: "stderr" })
     let done = false, error: unknown
-    const running = h.prefix(true).then(() => { done = true }, value => { done = true; error = value })
+    const running = h.parallelHelpers(true).then(() => { done = true }, value => { done = true; error = value })
     await h.turn()
     const target = h.children[child - 1], kill = target.kill
     target.kill = () => { kill(); throw Error("CONTROLLED_KILL_REFUSAL") }
@@ -255,25 +322,19 @@ for (const child of [1, 2]) {
   })
 }
 
-test("pending real PowerShell abort joins both closes and admits no late server", async t => {
+test("actual runPs parallel fixture abort joins both closes before lease retirement", async t => {
   const h = await controllerHarness()
-  const statements = terminal.tryBlock.statements
-  const ready = statements.findIndex(node => node.getText(source).includes("waitMessage(value => value?.type === 'ready')"))
-  assert.ok(ready > 0, "actual main initialization prefix must exist")
-  const prefix = statements.slice(0, ready + 1).map(node => node.getText(source)).join("\n")
   let done = false, result: unknown
-  const running = new vm.Script(`(async()=>{try {${prefix}} ${terminal.catchClause!.getText(source)} finally ${terminal.finallyBlock!.getText(source)}})()`).runInContext(h.context) as Promise<void>
-  running.then(() => { done = true }, value => { result = value; done = true })
+  const running = h.parallelHelpers(true).then(() => { done = true }, value => { result = value; done = true })
   assert.equal(h.children.length, 2)
   h.abort.abort(h.reason); await h.turn()
   const beforeClose = { ...h.facts(), done }
   h.close(h.children[1]); await h.turn(); assert.equal(done, false)
-  h.close(h.children[0]); await running.catch(() => {}); await h.turn()
-  t.diagnostic(JSON.stringify({ beforeClose, lateServerForks: h.kinds.filter(kind => kind === "fork").length, descriptorsAfterClose: h.facts().closedDescriptors }))
-  assert.equal(beforeClose.killed, 2, "abort must request both owned pending helpers' termination")
+  h.close(h.children[0]); await running; await h.turn()
+  t.diagnostic(JSON.stringify({ beforeClose, descriptorsAfterClose: h.facts().closedDescriptors }))
+  assert.equal(beforeClose.killed, 2)
   assert.equal(beforeClose.done, false); assert.equal(beforeClose.closedDescriptors, 0); assert.equal(beforeClose.openDescriptors, 4)
-  assert.equal(result, h.reason); assert.equal(h.kinds.filter(kind => kind === "fork").length, 0, "no server may launch after expiry")
-  assert.equal(h.facts().closedDescriptors, 4)
+  assert.equal(result, h.reason); assert.equal(h.facts().settled, 1); assert.equal(h.facts().closedDescriptors, 4)
 })
 
 test("real PowerShell pre-abort refuses spawn, while cleanup still runs and joins close", async () => {

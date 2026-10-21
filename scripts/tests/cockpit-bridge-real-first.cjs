@@ -5,7 +5,11 @@ const evidence = require('./cockpit-bridge-first-evidence.cjs').createObserver()
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path')
 const cp = require('node:child_process'), { randomBytes } = require('node:crypto'), { test } = require('node:test')
 evidence.check(1, () => (assert.equal(process.platform, 'win32'))); evidence.check(2, () => (assert.equal(process.env.GITHUB_ACTIONS, 'true'))); evidence.check(3, () => (assert.equal(process.env.RUNNER_OS, 'Windows')))
-const [chromeInput, chromeSHA256, extensionInput, compiledInput] = evidence.sync(74, () => (process.argv.slice(2)))
+const [chromeInput, chromeSHA256, extensionInput, compiledInput, preparedNonce] = evidence.sync(74, () => {
+  const args = process.argv.slice(2)
+  if (process.argv.length !== 7 || !/^[0-9a-f]{32}$/.test(args[4])) throw Error('COCKPIT_BRIDGE_PREPARATION_NONCE_REQUIRED')
+  return args
+})
 function physical(input, directory) { try {
   evidence.check(4, () => (assert.ok(typeof input === 'string' && path.isAbsolute(input))))
   const s = fs.lstatSync(input); evidence.check(5, () => (assert.ok(!s.isSymbolicLink() && (directory ? s.isDirectory() : s.isFile()))))
@@ -173,14 +177,14 @@ test('actual Chrome document native parent / actual authenticated WS first ident
   }) }
   try {
     const jobBuild = path.join(root, 'job-build'); fs.mkdirSync(jobBuild)
-    // Both fixed build-only helpers stay inside this test/lease. Join actual
-    // close (including a failed sibling) before starting any server or desktop work.
-    await evidence.wait(33, () => Promise.allSettled([
-      runPs(path.join(sourceRepo, 'scripts/build-cockpit-native-bridge.ps1'), ['-OutputDirectory', path.join(install, 'bin')]),
-      evidence.wait(36, () => (runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild]))),
-    ]).then(builds => {
-      if (builds[0].status === 'rejected') throw builds[0].reason
-      if (builds[1].status === 'rejected') throw builds[1].reason
+    // Same-run prepared artifacts are revalidated and copied under this
+    // original runtime/cleanup deadline. No compiler or CPU pre-run is hidden.
+    await evidence.wait(33, () => require('./cockpit-bridge-prepared-build.cjs').stage({
+      root, sourceRepo, install, jobBuild, expectedNonce: preparedNonce,
+      verifyFiles: phase => {
+        if (phase !== 'stage') throw Error('COCKPIT_BRIDGE_PREPARATION_STAGE_REQUIRED')
+        return evidence.wait(36, () => runPs(path.join(sourceRepo, 'scripts/tests/cockpit-bridge-prepared-paths.ps1'), ['-Phase', phase]))
+      },
     }))
     const secret = randomBytes(32).toString('hex')
     admitChild()

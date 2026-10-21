@@ -52,7 +52,7 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 - 前台就绪必须核最后一个可能改变激活的操作。WPF 最小化会调用 SW_MINIMIZE，API 允许激活下一顶层窗口；先激活另窗再最小化不能证明最终前台仍是另窗。当前修复候选只调整原操作顺序，CPU 正负控不冒真实 Windows 验收，也不证明历史唯一原因。禁止补救焦点或放松前台断言。
 - 首条 worker 消息的 schema 与终止路径先查真实 producer：font-cache 消息没有 `ok` 字段，observer 的 false 不等字体失败；`finally` 主动 terminate 后的非零 exit 也不单独证明崩溃。冷启动耗时的物理原因未证实时保留 UNKNOWN。
 - 原生编译的退出码必须绑定实际已终止进程。#723 的真实前置在读取未设置的 `$LASTEXITCODE` 时拒绝，不能初始化 0、猜 compiler 成功或把十余秒解释成 timeout。需要明确原 compiler 的启动／等待／自身 ExitCode，连同下一 executable 消费者审计，保原 flags、stdout、摘要和拒绝。跨 PS 版本的公开源码不证明实际 GUI／PATHEXT／ShellExecute 分类；好／坏源码控制必须用同固定编译器得到真实 0／非零，泛异常不是有效负控。
-- 编译同族审计必须沿实际 controller 找到嵌套 builder 的每个 `/main`。Job wrapper／CPU 共用循环时，第一项失败会遮住第二项；前置正控编译实际两份源，负控分别缺失第一、第二 Main，并核对应目标的真实 Int32 非零，第二项负控还须保第一项真实 0。只编译不执行，保原 first-identity 重编译、45 秒及后续门；这不定位当前 UNKNOWN 的原生失败。
+- 编译同族审计必须沿实际 controller 找到嵌套 builder 的每个 `/main`。Job wrapper／CPU 共用循环时，第一项失败会遮住第二项；前置正控编译实际两份源，负控分别缺失第一、第二 Main，并核对应目标的真实 Int32 非零，第二项负控还须保第一项真实 0。只编译不执行，保原 flags 与真实控制；first-identity 固定编译按下面的明确批准拆分，原生运行／清理45秒及后续门保留；这不定位当前 UNKNOWN 的原生失败。
 - 原生 controller 的首错须覆盖同步前置、Promise 和异步事件回调；仅保留 child 退出码或 TAP 字节数不能定位谓词。固定 fd3 的首拒、独立 abort 未决集合、completion／cleanup 有限回执只用于诊断，最多捕获 4KiB，洪泛后继续 drain，不改变原退出；PASS 完成也会 abort 测试 signal，只有实际 Node:test 顶层 timeout 类型可判超时。源码坐标绑定明确原版 SHA；共享 lease 内部不可见细节保留 UNKNOWN，不能用最后阶段猜首因。失败时只上传 owned gate-summary.json 有限投影，绝不上传 raw/profile/凭据。
 - 重建子进程环境时须核后续真实消费者。固定 CFT155 支持的 Native Messaging legacy 分支需要 ComSpec；Chrome Job 只从同 admitted SystemRoot 派生 System32/cmd.exe，不能复制任意父 ComSpec、扩 PATH 或强制 direct feature。六字段排序／UTF-16 双 NUL 和原 CreateProcessW 不变；源码降级正负控不是 C#/Windows 执行，也不证明当前实际 feature/policy 或首错。
 
@@ -82,3 +82,9 @@ CDP target／context 的事件等待不能只依靠命令 pending Map：初始 g
 ## 工作流移动也会影响未改过的测试消费者（#723）
 
 拆分 Windows lanes 后，读取 YAML 的旧 companion 测试仍可能要求“原生身份门在 census 诊断之后”。测试文件本身未改，不代表它不受影响：须沿实际 readFile/AST 消费者运行完整 family，并检查两条执行路径的最终条件和顺序。此前本地预检因缺少 owned 夹具目录未执行的八项，不能据此当作“无关”；补齐原夹具环境并保留旧失败，再用原 callback 亲证修正及错误顺序／错 lane 负控。不得靠删除断言、泛忽略新增 step 或跳过原生门消红。
+
+## 明确批准的编译／原生测量拆分（#723）
+
+编译和身份 await 共用45秒、最终落在 registrar，只证明最终等待点，不证明编译或 registrar 的历史物理原因。用户明确批准同次固定源码 build-only 最多120秒，再进入原运行与清理45秒；这是成功测量边界的扩大，不称旧预算未变或冷启动。必须等待两个真实 compiler-helper close、锁存超时并 drain，拒绝晚成功；同次源码／FD／摘要／nonce绑定交接，真实 FileAttributes 非 reparse 核验在绑定 FD 内，不能借缓存、旧注册产物或 CPU 绿代替真实 Windows。其余门和零重试保持。
+
+同次交接的限额必须在第一次 body read/hash 前检查，不能扫描完再拒绝。新编译 callback 的失败也须等实际 child close，不能把 error/exit 当作 stdio 已关闭。写入自有目标时，Windows 只保证最后写句柄关闭后的时间戳正确；保写 FD 的 inode/dev/mode/nlink/size 和完整摘要，close 后再绑定只读 FD 的时间戳，不能泛忽略文件身份或内容变化。此次原源码 CPU 反例不是历史原生失败原因；依据：[Microsoft File Times](https://learn.microsoft.com/en-us/windows/win32/sysinfo/file-times)。
