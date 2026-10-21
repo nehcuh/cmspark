@@ -402,6 +402,15 @@ Required later Windows checks: usable PrintWindow, overlapped BitBlt, stable sam
 
 ### #732 actual daemon restart and native SidePanel reload (hosted only)
 
+The existing document consumes actual background connection observations directly.
+A UI-only history invalidation revision survives a disconnect/reconnect committed
+in one render batch, invalidates pending old replies, and refreshes read-only
+history only when the open current-owner panel is connected and enabled. Repeated
+unchanged labels and unknown states do not loop; owner/request/selection and
+runtime-reference guards remain. Controlled source/reducer/effect checks cover
+the missed-between-polls schedule; they do not prove the hosted failure's unique
+cause or replace actual existing/fresh document acceptance.
+
 `node chrome-extension/scripts/tests/acp-history-hosted-732.test.mjs` runs the
 inert CPU controls. It does not launch a daemon, browser, shell, or real Agent.
 The dedicated `acp-history-restart` job consumes normal build outputs from the

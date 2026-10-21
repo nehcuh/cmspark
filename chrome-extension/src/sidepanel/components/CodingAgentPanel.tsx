@@ -162,7 +162,7 @@ export function CodingAgentPanel({
     const requestId = `history:${crypto.randomUUID()}`
     dispatch({ type: "ACP_HISTORY_REQUEST", threadId, requestId, selectionRevision: state.activeThreadSelectionRevision })
     chrome.runtime.sendMessage({ type: "acp.sessions.list", thread_id: threadId, request_id: requestId }, () => { void chrome.runtime.lastError })
-  }, [open, threadId, state.activeThreadId, state.activeThreadSelectionRevision, state.connectionState, storeAcpEnabled, session?.sessionId, session?.state, dispatch])
+  }, [open, threadId, state.activeThreadId, state.activeThreadSelectionRevision, state.connectionState, state.codingHistoryConnectionRevision, storeAcpEnabled, session?.sessionId, session?.state, dispatch])
   /** Prefer prop; fall back to config store (settings optimistically sets coding_handoff). */
   const configOpenLocalTerminal =
     openLocalTerminal ||

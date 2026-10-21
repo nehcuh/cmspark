@@ -152,6 +152,8 @@ export type AcpAgentInfo = {
 export interface AgentState {
   workspaceHints: WorkspaceHintView | null
   connectionState: ConnectionState
+  /** UI history observation only; survives batched disconnect/reconnect, never wire authority. */
+  codingHistoryConnectionRevision: number
   threads: Thread[]
   activeThreadId: string | null
   /** UI selection identity: advances on distinct explicit navigation, including batched return. */
@@ -717,6 +719,7 @@ export type AgentAction =
 export const initialState: AgentState = {
   workspaceHints: null,
   connectionState: "disconnected",
+  codingHistoryConnectionRevision: 0,
   threads: [],
   activeThreadId: null,
   activeThreadSelectionRevision: 0,
@@ -1163,6 +1166,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, workspaceHints: v }
     }
     case "SET_CONNECTION": {
+      if (!["connected", "connecting", "disconnected"].includes(action.state)) return state
+      const historyRevision = state.codingHistoryConnectionRevision ?? 0
+      const codingHistoryConnectionRevision = action.state !== "connected" && state.connectionState === "connected"
+        ? historyRevision + 1 : historyRevision
       // P1 C-RACE-02: drop sticky busy when companion disconnects — in-flight
       // map never gets chat.done/aborted over a dead socket.
       if (action.state === "disconnected") {
@@ -1170,6 +1177,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           ...state,
           workspaceHints: null,
           connectionState: action.state,
+          codingHistoryConnectionRevision,
           codingHistory: null,
           isProcessing: false,
           threadBusyById: {},
@@ -1177,7 +1185,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           streamingReasoning: "",
         }
       }
-      return { ...state, connectionState: action.state, workspaceHints: action.state === "connected" ? state.workspaceHints : null }
+      return { ...state, connectionState: action.state, codingHistoryConnectionRevision,
+        codingHistory: action.state === "connected" ? state.codingHistory : null,
+        workspaceHints: action.state === "connected" ? state.workspaceHints : null }
     }
     case "SET_THREADS": {
       // Keep active thread if it's still in the list; otherwise stay null so that
