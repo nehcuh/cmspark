@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { validateCockpitSteps748 } from "./windows-ci-feedback-750-contract.mjs"
 import { fetchNsisPackage, verifiedNsisSetup, requireWindowsCi, NSIS_PACKAGE_URL, MAX_PACKAGE_BYTES } from "../ensure-ci-nsis.mjs"
 
 test("the failed metadata lookup is replaced by the exact same pinned installer package", async () => {
@@ -117,7 +118,7 @@ test("receipt reader is bounded, finite and permanently checked in the owned Win
 })
 
 const registryReady = "Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'ready=true' -Encoding utf8\n"
-const censusCondition = "${{ !cancelled() && matrix.os == 'windows-latest' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}"
+const censusCondition = "${{ !cancelled() && matrix.os == 'windows-latest' && matrix.lane == 'census' && steps.windows-census-compile.outcome == 'success' && steps.windows-registry-prerequisites.outputs.ready == 'true' }}"
 const digest = text => createHash("sha256").update(text).digest("hex")
 // #650: keep the legacy full lifecycle pin after removing only reviewed short-root additions.
 const reviewedShortSetup = "  $shortFixture = Join-Path $fixture 'canonical short alias owned'\n  New-Item -ItemType Directory -Path $shortFixture -ErrorAction Stop | Out-Null\n  Add-Type @'\nusing System;\nusing System.Text;\nusing System.Runtime.InteropServices;\npublic static class Cmspark650OwnedPaths {\n  [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)]\n  public static extern uint GetShortPathName(string source, StringBuilder dest, uint size);\n  [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)]\n  public static extern uint GetLongPathName(string source, StringBuilder dest, uint size);\n}\n'@\n  $longBuffer = [System.Text.StringBuilder]::new(32768)\n  $shortBuffer = [System.Text.StringBuilder]::new(32768)\n  $longLength = [Cmspark650OwnedPaths]::GetLongPathName($shortFixture, $longBuffer, 32768)\n  if ($longLength -eq 0 -or $longLength -ge 32768) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n  $shortLength = [Cmspark650OwnedPaths]::GetShortPathName($longBuffer.ToString(), $shortBuffer, 32768)\n  if ($shortLength -eq 0 -or $shortLength -ge 32768 -or $shortBuffer.ToString() -notmatch '~[0-9]' -or $shortBuffer.ToString() -eq $longBuffer.ToString()) { throw 'CENSUS_OWNED_SHORT_ROOT_INVALID' }\n  $env:CMSPARK_TEST_LONG_ROOT = $longBuffer.ToString()\n  $env:CMSPARK_TEST_SHORT_ROOT = $shortBuffer.ToString()\n"
@@ -297,10 +298,35 @@ function originalCensusCommands(run) {
   assert.equal(match[1].split(locator).length, 2, 'only the census receives the new owned locator')
   return match[1].replace(locator, '').replace(/^  /gm, '')
 }
-// Validate the complete reviewed macOS-only addition before removing it from
-// the original cross-platform schedule pin. No Windows gate is normalized away.
-function censusStepsWithReviewedTail725(raw) {
+// Validate this exact pre-census prerequisite block before applying old pins.
+// The scalar PS regression remains first; fixed build-only acceptance follows.
+function censusStepsWithReviewedFirstEvidence723(raw) {
   const steps = workflowYaml.load(raw).jobs['smoke-os'].steps
+  // This checks exact source-derived objects, native-only final pair, all lane
+  // outcomes and the sole appended lifecycle test before making a legacy view.
+  return validateCockpitSteps748(steps)
+}
+function censusStepsWithReviewedNodeSelection723(raw) {
+  return censusStepsWithReviewedFirstEvidence723(raw)
+}
+test('finite first failure upload cannot widen paths, run on PASS or weaken the native step', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  censusStepsWithReviewedFirstEvidence723(raw)
+  for (const mutate of [
+    steps => { steps.find(step => step.name === 'Publish finite cockpit first failure (#723)').with.path = '${{ runner.temp }}/**' },
+    steps => { steps.find(step => step.name === 'Publish finite cockpit first failure (#723)').if = "always() && matrix.os == 'windows-latest'" },
+    steps => { steps.find(step => step.name === 'Windows cockpit native bridge first identity STOP gate (#723)')['continue-on-error'] = true },
+    steps => { const step = steps.find(step => step.name === 'Publish finite cockpit first failure (#723)'); steps.push({ ...step }) },
+    steps => { delete steps.find(step => step.name === 'Windows cockpit native bridge first identity STOP gate (#723)').id },
+  ]) {
+    const doc = workflowYaml.load(raw); mutate(doc.jobs['smoke-os'].steps)
+    assert.throws(() => censusStepsWithReviewedFirstEvidence723(workflowYaml.dump(doc)))
+  }
+})
+// Validate the complete reviewed macOS-only addition before removing it from
+// the original cross-platform schedule pin. Every original Windows gate remains.
+function censusStepsWithReviewedTail725(raw) {
+  const steps = censusStepsWithReviewedNodeSelection723(raw)
   const name = 'Actual owned PTY tail transport (#725; macOS)'
   const tail = steps.filter(step => step.name === name)
   assert.equal(tail.length, 1, 'one exact directed macOS native tail step')
@@ -318,7 +344,10 @@ function assertCensusSchedule(raw) {
   const names = steps.map(s => s.name)
   const i = names.indexOf('Native Windows read-only Registry discovery (#644)')
   assert.deepEqual(names.slice(i - 1, i + 4), ['Compile shared companion test inputs (#650)', 'Native Windows read-only Registry discovery (#644)', 'Complete Windows Companion census (#650)', 'Windows census finite public receipts (#650)', 'Office compatibility and relocated runtime (#611)'])
-  assert.equal(names[i - 2], 'Pinned NSIS dependency transport and integrity (#633)')
+  const early = steps.findIndex(s => s.name === 'Pinned NSIS dependency transport and integrity (#633)')
+  assert.equal(early, steps.findIndex(s => s.name === 'Install + build companion') + 1)
+  assert.ok(early < steps.findIndex(s => s.name === 'Build fixed no-autofocus UIA DLL (#572)'))
+  assert.deepEqual(steps[early], { name: 'Pinned NSIS dependency transport and integrity (#633)', run: 'node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs' })
   const [compile, registry, census, artifact, office] = steps.slice(i - 1, i + 4)
   assert.deepEqual(compile, { name: names[i - 1], id: 'windows-census-compile', shell: 'bash', run: 'cd companion\nnpx tsc -p tsconfig.test.json\n' })
   assert.equal(registry.id, 'windows-registry-prerequisites')
@@ -334,14 +363,16 @@ function assertCensusSchedule(raw) {
   const legacyRun = legacyCensusWithoutReviewedShortRoots(originalRun)
   assert.equal(digest(legacyRun), '75ea0a66638629f8f3d5a162122e94ce626dec9ede490596afbf80cdb303ac4b', 'the full original lifecycle stays exact outside reviewed insertions')
   assert.equal(digest(originalCensusCommands(legacyRun)), 'b6aba13f90e3e4567e0b80f21c8585a223383200e26237514d53caafd80836a6', 'the original control/census commands and exits remain exact')
-  assert.equal(digest(JSON.stringify(artifact)), 'bf504e85964e900151325fca797443741ab84ad49d746b0257af2a269fc64697', 'sealed artifact condition and paths stay exact')
+  assert.equal(artifact.if, "always() && matrix.os == 'windows-latest' && matrix.lane == 'census' && steps.windows-census.outputs.public_dir != ''")
+  const artifactBeforeLanes = { ...artifact, if: artifact.if.replace(" && matrix.lane == 'census'", '') }
+  assert.equal(digest(JSON.stringify(artifactBeforeLanes)), 'bf504e85964e900151325fca797443741ab84ad49d746b0257af2a269fc64697', 'original sealed artifact condition and paths stay exact outside the explicit lane selector')
   const passiveOfficeCommand = 'node --test scripts/tests/office-lock-passive.test.mjs\n'
   assert.equal(office.run.split(passiveOfficeCommand).length, 2, 'the delivered passive Office controls run exactly once')
   assert.ok(office.run.includes('node --test scripts/tests/office-runtime-stage.test.mjs\n' + passiveOfficeCommand), 'passive controls follow the original Office controls')
   assert.equal(digest(office.run.replace(passiveOfficeCommand, '')), '8fb06555123eebe638397b5bc81d5074db606f3aa9192d499b5914095b130402', 'Office retains its original body outside the exact delivered passive command')
-  for (const step of [compile, office]) {
-    assert.equal(step.if, undefined); assert.equal(step['continue-on-error'], undefined)
-  }
+  assert.equal(compile.if, undefined)
+  assert.equal(office.if, "matrix.lane != 'census'")
+  for (const step of [compile, office]) assert.equal(step['continue-on-error'], undefined)
   assert.equal(steps.filter(s => s.name === compile.name).length, 1)
 }
 test("full census follows verified prerequisites before targeted Office and preserves every native gate", () => {
@@ -498,5 +529,30 @@ test('reviewed macOS tail addition is exact once before preserving every Windows
     const doc = workflowYaml.load(raw), steps = doc.jobs['smoke-os'].steps
     mutate(steps, steps.findIndex(step => step.name === name))
     assert.throws(() => assertCensusSchedule(workflowYaml.dump(doc)))
+  }
+})
+
+test('reviewed early PowerShell scalar regression preserves every original schedule pin under LF and CRLF', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  const name = 'Windows cockpit Node scalar selection (#723)'
+  for (const source of [raw, raw.replaceAll('\n', '\r\n')]) {
+    assertCensusSchedule(source)
+    for (const mutate of [
+      (steps, index) => steps.splice(index, 1),
+      (steps, index) => steps.splice(index, 0, { ...steps[index] }),
+      (steps, index) => { steps[index].if = "matrix.os == 'macos-latest'" },
+      (steps, index) => { steps[index]['continue-on-error'] = true },
+      (steps, index) => { steps[index].shell = 'bash' },
+      (steps, index) => { steps[index].run = steps[index].run.replace('cockpit-bridge-node-selection.test.ps1', 'omitted.ps1') },
+      (steps, index) => { steps[index].run = steps[index].run.replace('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n', '') },
+      (steps, index) => { steps[index].run += 'echo unreviewed-command\n' },
+      (steps, index) => { steps[index]['timeout-minutes'] = 99 },
+      (steps, index) => { const step = steps.splice(index, 1)[0]; steps.splice(index - 1, 0, step) },
+      (steps, index) => { const step = steps.splice(index, 1)[0]; steps.splice(index + 1, 0, step) },
+    ]) {
+      const doc = workflowYaml.load(source), steps = doc.jobs['smoke-os'].steps
+      mutate(steps, steps.findIndex(step => step.name === name))
+      assert.throws(() => assertCensusSchedule(workflowYaml.dump(doc)))
+    }
   }
 })

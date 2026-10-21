@@ -1,10 +1,71 @@
 # TESTING
 
+### #723 Job CPU 的 live claim 共享
+
+`cockpit-bridge-chrome-job-cpu.cs` 在 Node 的 `wx+` owner 句柄仍存活时读取原 claim。Framework `File.ReadAllText` 默认只共享 Read，不能与现存写访问兼容；fixture 改用 Read access、`ReadWrite|Delete` share 的显式流，沿用原文本读取和后续 `JobInput.Parse/CheckClaim` 的 nonce、64/65 字节与所有权拒绝。真实 Windows 自检还须亲证旧默认读以 sharing violation（Win32 32）拒绝，不能把任意 IOException 当正控；不关闭或降级父 lease。
+
+`cockpit-chrome-job-env-723.test.ts` 新回归从实际 C# 读取片段投影构造参数，以惰性双向 share 模型核 LF/CRLF、旧读／只共享 Read 反例及外来独占持有者拒绝。其余四个环境／固定155生产者控原样保留。模型不是 .NET／Windows执行；精确新 head 的真实 CPU EXE、Chrome/native 身份和清理仍须通过。8e3 的官方有限首错只定位到 CPU 退出码断言，不能冒称已取得该次内部异常或浏览器首窗成功。
+
+### #732 当前完整验收状态
+
+PR735 的真实 hosted Linux 场景已完成正常 daemon 重启、既有页面及 reload 页面中断历史、终态保留和自有清理；Windows 同时完成完整 canonical 与两项 ACL／NTFS 历史原生检查。下文供应／PANEL 的 NOT_READY 描述保留对应历史阶段，不是当前结论；不据此声称 Windows 浏览器、真实 ACP provider 或真人审批通过，版本仍为开发版。
+
+## Windows CI 两条独立验收链（#750）
+
+`smoke (windows-latest)` 保持原 canonical 身份：同一 checkout 的 install/build/stage/完整 npm test、原生 fixture 准备、Registry／SMB／8.3、逐批记账与密封上传均保留。其末尾 module-scope 诊断只观察这台 canonical VM 的 sealed baseline，不能声称观察另一台桌面。
+
+`smoke (windows-native)` 在另一台全新的 Windows VM 安装两端锁定依赖，并用原 `npm run stage:win-scripts` 准备 staged PS 布局、独立构建原 UIA／desktop fixture，串行运行原 Office 与后续定向原生／进程／确认／UNC 测试。完整 canonical 自身也发现原生 case，因此两台机器保守地重复必要准备及原 #480 控制；不跨 job 传可执行产物、profile、registry、lease 或证据。Ubuntu/macOS 及 hosted history 原门保留。
+
+六个实际 jobs 必须全部成功，不能只看旧 Windows check；`fail-fast:false` 保留，某一路失败不取消另一条证据链。不得把两个 Windows 作业改成同一桌面里的并行 native 测试，也不提高原 `--test-concurrency=1`。确定性源码契约用现有 `nsis-ci-setup.test.mjs` 和 `windows-ci-feedback-750.test.mjs` 在原生编译前执行；后者读取实际 YAML，核四记录矩阵、原命令／错误语义守恒、各 lane 的真实条件与 LF/CRLF 负控。
+
+双锁 setup-node 缓存仅用于 npm 下载数据，原 npm ci／生命周期与 clean census 环境不变；不保证 canonical 命中父进程缓存。重复 tsc 尚无完整输入／emit 等价证明，本轮全部保留。真实新 head/main 的两个 Windows 终态、官方 artifact 身份和完整 tag/SHA/TAP/EOF／逐 skip 来源仍是交付门。尚未合入的 #723 first-identity 失败独立处理，不因 CI 排程优化而放行。性能结果需同时记录 native 反馈时间、完整 census 时间、总墙钟及总 job 分钟；不能用快失败声称成功加速。
+
+
+### #732 历史连接观察与聊天清理分离
+
+`coding-history-connection-732.test.ts` 除原快速／同批重连及 owner/request/runtime 围栏外，验证管理连接广播不改变聊天 busy、processing、stream、reasoning、messages；原 `SET_CONNECTION` 状态路径仍清理断线工作。新增 `OBSERVE_CODING_HISTORY_CONNECTION` 仅属于 UI 内存动作，不改变 wire／后端权限。必须同时复验原 `board-hint-receipts-660` lifecycle 的断线保草稿、无自动重试及聊天不变断言，不可只看 ACP 正控。惰性 callback／SSR 与普通前端类型程序不称 mounted React 或远端原生通过。
+
+### #732 固定 Linux CFT 供应边界与历史拒绝记录
+
+`accept-acp-history-hosted-732.mjs` 仅在 Node22、Linux x64、GitHub-hosted Ubuntu22 的正常 build artifact 身份核对后运行：一次官方 CFT155.0.8059.84 固定包供应 → 一次独立端口及精确 `Browser.getVersion` 正证 → 原完整原生 SidePanel／正常 daemon 重启／历史／reload 业务。包199014491字节与309成员的 SHA256、CRC、布局、普通文件身份及只读模式全部固定；无系统安装、外部解包工具、缓存、重定向、重试或任意 executable override。
+
+供应和独立正证各有明确120秒新阶段；原业务120秒、端口10秒、导航60秒、认证5秒和工具15秒不变。两阶段使用不同 owned profile／子进程／端点，无 daemon、认证或存储复用；HOME、sandbox 和原启动参数不变。前置正证可能热 OS 页缓存，不能再称未预热冷启动。旧 image-supplier A/B 工作流步骤明确退休，原代码／受控测试／拒绝 raw 仍保留，未被记作成功。
+
+独立正证必须精确 `Chrome/155.0.8059.84`、managed child 真 close、stdout/stderr 两 EOF、包身份与清理全部通过；失败或未知不进入业务。close 未知先保留包，禁止清理过程中抛错后误删仍在使用的 executable。该边界只属于验收，不增加产品权限。纯 CPU、实际包纯文件解压和 ELF 静态读取不是浏览器启动／安装／原生或真实 SidePanel 通过。PR735 head `ac686c0e59f4e739f04ed0f14fae9845d8f86b56` 的真实远端供应 witness 已完成端口、精确版本、close、两 EOF 和清理正证；原完整业务随后在 `AUTH_DONE`／`PANEL` 拒绝、尚未进入 durable，仍 NOT_READY。历史 BINARY_SELECTED／PANEL 唯一原因仍 UNKNOWN，原三轮上限不重置；不得本机启动测试浏览器。
+
+### #723 固定构建前置正控
+
+Windows 原 Node 标量九项之后、Registry 和完整 census 之前，运行独立的固定桥接构建验证。它调用原 PS5.1 build-only 脚本，使用与注册路径相同的最小 child environment 和编译参数，要求真实 child close/exit0、普通自有产物和匹配的 SHA256 文件。编译器的公开源码输出直接进入 CI 两个流，不被嵌套调用的 `Out-Null` 消耗；不输出环境或凭据。
+
+固定 csc 与原 framing EXE 各自使用 `ProcessStartInfo.UseShellExecute=false`，启动成功、等待原进程终止后读取其自身 `ExitCode`，在 finally 释放对象；不初始化／复用 `$LASTEXITCODE`，不依赖 PS5.1 对 EXE 的 GUI／console 或 shell 分类。原编译 flags、warn-as-error、摘要和 framing JSON 校验保持。编译器输出继承原流，framing stdout 继续保存实际固定 C# serializer 的 JSON 行。
+
+前置入口先在自有布局复制同一 builder，用同固定 PS5.1／csc 验证公开惰性好源码的真实 exit0、产物与摘要，以及坏源码的真实非零 `CompilerExitCode`、原 build 拒绝且无成功产物／摘要。路径包含空格、字符码构造的中文和字面 `%`；明确拒绝引号／NUL／CR／LF，参数通过 Framework `Arguments` 的有限双引号传递。控制不执行生成的 EXE，泛异常／未设置退出码不能算坏源码负控通过；之后仍实际构建固定产品 host。Node 源码合同和 VM 检查不是 PS5.1／C# 解释执行，真实控制必须由精确新 head 的 Windows 决定。
+
+同一必需控制子进程还复制实际 Job builder：正控复制字节相同的 wrapper／CPU 两份 C# 源，核两个 `/main` 的实际 Int32 exit0 和两个产物；两个公开惰性负控分别缺失第一 Main、第二 Main，核固定目标与实际数值非零，第二负控还须先观察第一项 exit0／产物。所有 fixture EXE 只编译不执行，失败必须保原 build 拒绝且无失败目标产物。Job 循环逐项直接等待原编译进程并在 finally 释放，不复用自动变量；原 first-identity 仍在自身 45 秒中重新编译并执行原 CPU／Chrome 路径。当前 first-identity 的具体失败仍 UNKNOWN，编译正控不等真实身份通过。
+
+此路径不执行生成的 EXE、不写注册、不启动浏览器。只有构建成功、产物验证通过、child 已知关闭且临时根身份未变化时才清理自有目录；构建拒绝、关闭或归属未知时保留并拒绝，不能把失败 shell 的 close 当成所有编译后代已退出。后续原注册／framing／真实身份和全部原断言、时限继续存在。两个构建使用不同自有目录／子进程，不复用产物或 PowerShell 状态；共享 OS 缓存可能被预热，不宣称冷启动。受控 Node/VM 正负控不是 PS5.1／C# 实际构建通过，必须由新 head 的真实 Windows 决定。旧 `registration-framing` 内层异常仍 UNKNOWN；前置拆分不假称修复其历史原因。
+
+### #723 首个 Windows 窗口身份门：失败证据
+
+新增 `cockpit-bridge-first-evidence.test.mjs` 的源派生 Windows Stats 正控：实际安装 Node 的 mode 检查函数在 Windows 绑定下仍须让原 fd3 FIFO 产生完整完成帧；普通文件、设备、未知／非整数 mode 与写入失败仍拒绝或保持原结果。POSIX 实际 fd3／Node:test 测试不是 Windows 通过，新 head 的真实 Windows 控制不可跳过。
+
+`coding-history-connection-732.test.ts` 执行实际 `handleStateChange` 时显式绑定惰性 bridge 断线接口，并核它仅随断线被调用。原八项历史／聊天／围栏控制不变；移除真实断线调用的源变体应令新增控制失败。此处不是浏览器、原生 host 或真人授权证明。
+
+`COCKPIT_BRIDGE_FIRST_IDENTITY_INCOMPLETE` 保留原阶段名；同次 `COCKPIT_BRIDGE_FIRST_FAILURE` 仅给出固定步骤、真实 close/退出、输出字节数、有限 PS 源角色／行列／检查序号及 C# 错误代码／framing 检查数。原始输出仍只在 owned 临时文件中，公开回执不包含正文、路径、命令、环境或 Registry 值；格式未知、超限或身份变化时证据为 unavailable，不改变原失败。
+
+`registration-framing` 也覆盖 PS 成功后的 receipt 数量断言，不能单凭阶段名判定 PS／C#／Registry 或 pipe 根因。子进程 exit0 后的控制器拒绝与子进程失败分别记录。此证据修复不是原生注册修复；完整 canonical、原有 Windows 回归和真实 Chrome pipe／PID／HWND 身份门仍须实际通过。不得据新回执延时、重试、跳过断言或启用遮罩。
+
 > 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
 
 Windows／跨平台变更先读 [Windows 开发与失败定位](windows-development.md)：包含系统化调试、路径／换行／真实消费者预检和原生证据边界；只选本次必要回归，不新增全仓或模型门。
 
 ## 测试架构
+
+### #723 D2 固定 native bridge 首门
+
+`cockpit-chrome-job-env-723.test.ts` 对实际 C# EnvironmentBlock 完整方法做有限源码降级，核六字段、固定 ComSpec、受污染父环境、排序和 UTF-16 双 NUL；固定155主源片段保留 URL/字节/hash，核 managed/default feature 选择与 legacy 缺 ComSpec 拒绝。控制不执行 C#/C++/Win32 或 Chrome，不证明当前实际 feature/policy。原真实 PS5.1 编译正控自动复制当前 C#，原 first-identity 独立重编译／45 秒和全部原生断言保留。
+
+[首个身份纵向说明](browser-native-bridge.md) 区分源码/惰性 CPU、C# framing/owned 注册与真实 document→parent pipe/HWND→当前 owner/认证 WS 的验收。Windows smoke 仅在原全部步骤末尾追加 `run-cockpit-bridge-first.ps1` gating step，复用 `.test-dist/src`、构建当前候选扩展；固定 CFT pin 未具备完整归档/EXE 证明时先失败为 NOT_READY。新供应器只用一次 600000 ms 网络准备，无 redirect/retry，不改变原 45 秒 native 或 5000 ms bind。所有新增子进程使用显式环境、owned npm 配置/cache；C# framing、注册负控、document receipt CPU 在真实 controller 之前，Job CPU 在 controller 内只执行一次。惰性 ZIP/生命周期控不称浏览器/原生通过，mask/opaque scope 仍未实现，整张 #723 不因此关闭。
 
 ### Windows 选夹的短名与长名
 
@@ -43,6 +104,20 @@ case36 的数值句柄可被当前子进程的无关对象复用，不能单用 
 追加创建子进程后的第二次 timeline 同步取消回归：回复须在真实 close 前给出取消，运行槽在 close 前仍占用、close 后才释放，不得在 closed 状态等待长 Promise 或回 accepted。请求内准入 receipt 只由 handler 构造，manager 在真实占槽后记录；不进入协议、会话、历史或模型，测试 interception 必须真实转发该参数。
 
 配置、用户批准决定和子进程/计时器为显式惰性 seam；不是有效 L2 token、真人确认、实际连接断线或 Windows/Agent 原生证明。实际 hook 的 accepted 文案仅为“启动请求已受理，正在准备…”，不证明 Agent 已启动。多 offered、回收生命周期等原 #722 余项仍独立保留；无新队列、重试、权限、容量或时限。
+
+### #732 hosted restart 的有限浏览器启动回执（PR735）
+
+既有第五个 job 的首轮有限回执为 `stage:BROWSER`、`cleanup:true`，其余九检查为 false；它不能区分 Xvfb、端口、CDP、worker、配对或认证阶段的实际失败，根因仍未知。现仅扩展原固定回执：`browserPhase` 为最后到达的固定源码观察点，取 `XVFB_REQUEST`、`DISPLAY_OBSERVED`、`BINARY_SELECTED`、`PORT_FILE`、`CDP_CONNECTED`、`WORKER_FOUND`、`WORKER_READY`、`PAIR_PAGE`、`PAIRED`、`AUTH_DONE` 或 null；不是失败原因、唯一失败 API 或阶段完成总证明。`WORKER_READY` 只表示原 workerScriptReady 返回，随后原 Runtime.enable 仍可能失败。
+
+`browserPresent`／`xvfbPresent` 只表示当前保存了已创建的 child 对象，不能证明成功 spawn、仍存活或已关闭；两个 `ExitCode` 是 cleanup 之前的实际 own-data int32 或 null，不能从 cleanup SIGTERM 推断启动退出原因，也不当 writer EOF、真实 close 或根因。未知、getter、错型或非有限值不回显。无 stderr、正文、PID、路径、目标 ID、argv、环境或 secret 输出。
+
+原 schema1、stage、十项检查和 pass predicate 保留；诊断不增加成功条件、不将 cleanup 成功当启动通过。原120s／60s／5s／15s与端口10s预算、浏览器二选一、参数、环境、沙箱、正常 daemon／SidePanel／清理均不变。新增四个永久 CPU callback，其中一组执行实际 BROWSER 源片段并在各 await 注入受控失败；这不是本机或 hosted Chromium/daemon 成功。旧39控制复用，后续真实新 head／CI 仍必须通过。
+
+### #732 Windows 隐私拒绝的显式 CI 诊断
+
+默认 `acp-history-privacy.ps1` 继续只输出原 `PRIVATE`／`REFUSED`／`UNKNOWN` JSON 字符串，生产 `verifyHistoryPrivacy` 调用不变、只读谓词和顺序不变。只有第一个参数精确 `--diagnostic-732`，且 `GITHUB_ACTIONS=true`／`RUNNER_OS=Windows` 大小写精确时，才对原同一或两个 owned 路径输出 `{status,reason,pathIndex}`。原因闭集为 `PATHARGS/REPARSE/OWNER/DACL/ACE_TYPE/ACE_PRINCIPAL/ACE_QUALIFIER/IO_UNKNOWN/NONE`，索引只为0／1／null；没有 SID、SDDL、路径、错误正文或 ACL 变更。`IO_UNKNOWN` 也涵盖补充查询或解析不可用，不证明某个真实 IO 原因。
+
+两个原生 positive 的首次隐私结果仍是权威断言；只在首次失败后，每个 case 最多对相同路径进行一次原15s预算的只读补充查询，并输出固定 `ACP_HISTORY_PRIVACY_732` 回执。即使第二读为 PRIVATE、日志 sink 或解析失败，也不能放过原失败；这不是重试成功或修 ACL。最终 history-file 隐私断言与 cleanup 原样保留。七项新增 CPU 控制覆盖 LF/CRLF 全脚本逆变、闭字段解析、精确开关／GHA gate、单次查询与 primary 保存；不是 PS5.1／NTFS 运行。首次真实两 REFUSED 的 OWNER/DACL 具体原因仍未知，需后续远端原生回执再裁定。
 
 ### #731 shell 输出编码
 
@@ -378,3 +453,146 @@ Independent changed-head Windows/macOS terminal-native acceptance is **NOT_RUN**
 `build-desktop-native.mjs --test-fixtures` 生成不随产品交付的 `acceptance/terminal`，沿现有 `desktop-native-thread-metadata-476.test` 串行文件与 surface lease 验收。新增回调要求实际 GitHub Actions Windows/macOS、canonical owned 数据目录与真实 @lydell PTY；无 MockPty、平台冒充、testSetSpawn 或回执伪造。它涵盖原生拒绝／取消零启动、真实 shell Unicode 与超过16KiB输出、逐帧 ACK、resize、Stop／实际进程退出及 partial 摘录的原对话重开。原生按钮和键盘激活是合成测试而非人工批准。本机禁止运行；CPU 控制与 native 编译／运行结果分开记账，不以载体存在称为 native PASS。
 
 Windows 验收控制器仅通过本次自有 WebView2 COM 对象串行发送固定 `Input.dispatchKeyEvent`，逐字符后 Enter；每次完成回调后才发下一事件，最多一个活动动作与一个待处理固定动作。它验收原生宿主浏览器引擎输入 → 实际 renderer/xterm → 实际 PTY，不证明 Win32 键盘队列、物理键盘或真人操作。当前文档／owner／epoch、真实前台、`isTrusted`／activeElement、原生确认和45秒边界仍严格要求；未清空输入不得完成，不使用 focus rescue、DOM 假事件或 `insertText`。CPU 源码控制不证明这些原生条件已通过，原 Windows 超时的唯一原因仍未知。
+
+## #732 ACP 最小历史的 Windows 私有存储验收
+
+`companion/tests/acp-history-native-732.test.ts` 由原 canonical test discovery 收集，不增 runner 列表。它仅在 Windows 执行；非 Windows 的两个 skip 不代表 NTFS 通过。Windows 回调在任何临时文件或 PowerShell 操作前要求既有 hosted 标记 `GITHUB_ACTIONS=true` 且 `RUNNER_OS=Windows`，手工本机运行固定拒绝，不用伪造变量启动。该夹具标记不是运行身份认证，最终证据仍须绑定真实受审 GitHub head/job/run。
+
+两个正控分别在保留身份的 owned outer temp 内，以显式当前 SID owner／受保护 user/SYSTEM/Administrators DACL 原子新建 UUID 子目录及空文件；只使用 canonical drive-letter local 路径，拒 UNC／设备路径与已存在 final child，不修改 outer parent 或用户/config 目录。新创建例外取代旧的“仅 mode600 即可构造 Windows positive”假设；`acp-history-privacy.ps1` 原只读判据和两个 hard assertions 保持不变。夹具 helper 和调用方均限定 Windows／精确 GHA 标记，标记不是安全身份认证。
+
+生产 store 仍先验证已有 root PRIVATE；只对本次 O_EXCL、仍为空的 UUID temp，在实际保留 fd 与 helper 新开原生句柄上，按 Node22/libuv 的 volume serial uint32 + file index uint64 精确匹配后设置 owner／受保护 DACL。父目录句柄及路径、file fd/path、nlink1、regular/nonreparse/empty 在 await 两侧复核；成功回执不替代原 PRIVATE before-write 与 fsync/rename/final checks。原生 API 通过 SafeFileHandle 单次释放，输出仅 INITIALIZED/REFUSED/UNKNOWN；不改 token／系统权限、不修已有目录或文件、未知拒绝且不写 metadata。POSIX 路径保留原操作。
+
+新增 `acp-history-empty-owner-732.test.ts` 只用实际 TypeScript 类／函数与明确惰性 owner/native seam；覆盖默认 owner 不同的空文件、精确大整数／父子替换／部分失败／disabled／有限输出，以及原生源码约束。它不执行 PS/C#，不是 NTFS 证明。原 `acp-history-732.test.ts` 的 Windows-shaped ACL seam 显式容纳新 initializer，原 assertions 不删；不得把此 seam 当实际 owner/DACL 成功。真实 Windows 两 positive 和 writer temp/fresh loader 仍须新 head CI；unsafe 既有 root 继续 private_refused，不允许无变化重跑代替修复。
+
+清理只针对本次 unique directory 且先核原 dev/ino、目录类型和非 symlink；固定错误类别不打印 path/SID/SDDL/异常正文。两个实际 Windows PASS 仍只证明私有 metadata roundtrip，不能冒充 Companion daemon 真重启或侧栏真刷新/旧会话行为验收，#732 整票剩余 DoD 单独记录。不要在用户桌面启动测试浏览器、原生窗口或 PowerShell 夹具。
+
+
+### #732 actual daemon restart and native SidePanel reload (hosted only)
+
+Fresh-document 验收复用既有 stock 导航按钮选中预置的合成对话，核实际 `aria-current=page` 与 mobile disclosure 已关闭后才发原 open-panel 事件。header 出现不等于异步 thread.list／owner 已提交；不改产品的 owner-change close，不直接写 React/store，不重置 pairing 起算的 60s navigation 或原 120s 业务期限。永久源控制覆盖延迟 hydrate、已就绪、延迟导航提交、缺失／disabled 行和 foreign owner；CPU 不是 mounted browser 或真实原生通过。
+
+The existing document consumes actual background connection observations directly.
+A UI-only history invalidation revision survives a disconnect/reconnect committed
+in one render batch, invalidates pending old replies, and refreshes read-only
+history only when the open current-owner panel is connected and enabled. Repeated
+unchanged labels and unknown states do not loop; owner/request/selection and
+runtime-reference guards remain. Controlled source/reducer/effect checks cover
+the missed-between-polls schedule; they do not prove the hosted failure's unique
+cause or replace actual existing/fresh document acceptance.
+
+`node chrome-extension/scripts/tests/acp-history-hosted-732.test.mjs` runs the
+inert CPU controls. It does not launch a daemon, browser, shell, or real Agent.
+The dedicated `acp-history-restart` job consumes normal build outputs from the
+same `github.sha` and runs `accept-acp-history-hosted-732.mjs` only on an official
+Ubuntu 22.04 hosted runner. Original build and three-platform gates, including
+both actual Windows history ACL tests, remain required.
+
+The real path is production daemon/WS HMAC → shipping extension and actual
+manifest SidePanel → original synthetic ACP peer through the normal start/L2
+UI → durable history reply → exact retained daemon crash/close and peer EOF →
+same-data new daemon → **existing document interrupted/no live ghost** → actual
+`Page.reload` with new loader/default realm/load → same history. The pairing tab
+is excluded from panel target selection. No unique non-tab SidePanel target is
+an explicit failure. Automated disclosure/L2 clicks are synthetic test actions,
+not human authorization. A separate real session cancel retains its terminal
+history; normal shutdown is never relabeled as a crash.
+
+Before the daemon starts, the existing isolated configuration preparation child
+uses the normal shipped ThreadManager create/update and serializer to seed exactly
+one synthetic existing conversation (fixed ID/alias) with this run's owned
+workspace. A pre-existing threads directory or inconsistent reload refuses. The
+shipping daemon/UI must load that exact one-thread store; the helper clicks the
+actual navigation toggle/conversation button, checks its selected aria-current,
+and then verifies the exact workspace title and actual agent option. It does not
+call workspace.set, recordNativePick, forge a picker, dispatch internal React
+state or claim a fresh conversation-New UI test. This is explicit synthetic
+prebound user data, not human/native-picker authorization. Original actual ACP
+session creation through the stock UI/L2 and every restart/reload/cancel/privacy
+check remain. A permanent real-store serializer/reload control and the actual
+workspace.set policy refusal keep these boundaries distinct.
+
+After installing its temporary listeners, the worker awaits a real filtered
+getContexts response and requires the pre-open set still empty before the
+separate pairing renderer opens. EventRouter registration and RequestWorker
+share the worker proxy associated group, unlike the independent worker DevTools
+reply. A mere CDP script acknowledgement does not establish browser-side listener
+installation. Controlled asynchronous delivery/refusal/occupied-context cases
+exercise this ordering; they are not a replay of the hosted scheduler and do not
+prove the old run's unique cause. No timer/retry/event-replay fallback is added.
+
+The request first resolves its owned pairing tab's concrete window and known,
+nonempty browser context. A temporary `sidePanel.onOpened` listener observes
+that exact window and URL pathname, followed by one fresh native
+`runtime.getContexts({contextTypes:['SIDE_PANEL']})` document. Fixed Chromium
+155 uses a lowercase hyphenated UUID for `contextId`, but a nonzero uppercase
+32-hex UnguessableToken for `documentId`; these are different producer domains.
+The normal non-tab `Port.sender` supplies its extension ID, URL and origin,
+without tab/frame/document/lifecycle fields. Unexpected fabricated fields are
+rejected; the port is secondary endpoint/lifetime evidence, not a document-ID
+proof. The former hand-written UUID/document-bearing Port positives are retained
+in historical reports, not accepted as native DTOs.
+
+The positive target binding uses the complete joint set from
+`chrome.debugger.getTargets()` and browser `Target.getTargets()`. Fixed155's
+`GetOrCreateAll` enumerates the loaded native SidePanel as a same-profile page
+in both sets with the same agent-host ID; debugger emits its `extensionId` and
+omits `tabId`. Exactly one matching non-tab page must exist in both complete
+sets, including old same-URL popup candidates. Missing, divergent or ambiguous
+sets, an unknown/wrong profile, an old selected target or a different pairing
+tab refuse. URL equality, absent `tabId`, a supplied payload or an open ACK
+alone are insufficient. There is no ordinary-tab fallback.
+
+The owned CDP client's actual main-frame URL, frame ID and loader ID are pinned
+before the port connection. Request-local Page/Runtime/Inspector listeners
+latch observed navigation, detach or context teardown; returning to previous
+values cannot revive the request. Native context/document, complete target set
+and frame/loader are checked before/after the port ACK and again after witness
+retirement, immediately before return. Cleanup keeps these event controls until
+the final checks and removes every listener. Chromium's global native context
+has `windowId: -1`; the concrete owned window comes from `onOpened`, and a known
+conflicting window is rejected. Original shared navigation/outer deadlines and
+actual endpoint/browser cleanup remain required.
+
+Chromium 155's `onOpened` producer serializes `GURL::path()` with its leading
+slash: a configured `panel.html` produces event path `/panel.html`, as verified
+by its upstream serialized-event browser test. The helper compares only that
+exact pathname; it does not accept the relative spelling or a matching basename.
+Permanent inert events derive their path from `new URL(url).pathname`, with an
+explicit relative-path refusal alongside the existing owner/context/port checks.
+This source-proven acceptance bug is not a uniquely observed explanation of the
+hosted `PANEL` failure; the original complete business gate still must pass.
+
+`node chrome-extension/scripts/tests/acp-history-sidepanel-provenance-732.test.mjs`
+executes the actual serialized worker and target helpers with inert Chrome API
+boundaries, including actual fixed155 DTO domains, stale/foreign documents, tab/popup
+contexts, full-set/profile ambiguity, duplicate events, late ports, observed
+navigation ABA, frame/loader changes and cleanup. These CPU controls are not native SidePanel
+execution. The original hosted `PANEL` failure remains of unknown unique cause;
+this strengthens its source oracle without claiming that failure is resolved.
+
+The harness keeps the original 5s authentication, 15s tool, 60s absolute shared
+navigation, and 120s outer bounds. It changes no permissions, sandbox flags,
+production API, environment defaults or automatic recovery policy. Test-owned
+DATA/profile/config and transient HMAC values are never uploaded. Only the fixed
+Boolean receipt leaves the trusted process; no screenshot, image hash, raw CDP,
+WS messages, IDs, paths, process logs, credentials or profile artifacts are kept.
+Owned directories are removed only after pending requests/endpoints/children
+settle; uncertain cleanup fails and retains the owned root. CPU success is not
+real process/browser or Windows NTFS evidence. Published PR735 head
+`76f46998ed2ae9e2fe504afae3d88ad862bf36c1` reached `PANEL` / `AUTH_DONE` and
+failed; its unique hosted cause is not established.
+
+`tests/create-blank-thread.test.ts` also executes the actual StatusRail New
+callback, shared explicit create producer, empty-list auto producer and SW
+receiver with a fixed clock. Explicit UI requests remain independent while
+automatic empty-list requests retain the original 2-second deduplication. Its
+`user_gesture: true` is only an internal deduplication hint: it proves no human
+action, authorizes nothing, and is stripped by the existing WS message builder.
+This CPU regression is not a changed-head hosted/browser or native PASS.
+
+
+### #723 CDP transport 终态传播
+
+`cockpit-bridge-cdp-lifecycle.test.mjs` 直接执行真实 controller 的完整 `aborted`／`Cdp`，使用惰性 EventTarget 协议 seam，核空 target snapshot／Runtime.enable 已 ACK 后的关闭、并发命令与事件等待、已关闭入口、原对象 abort、原匹配结果及 malformed／迟到事件。LF/CRLF 均覆盖事件等待；此类 CPU 不建立 WebSocket、Chrome 或原生正证。命令 Map 与事件等待独立，transport close 必须使二者拒绝，并在成功／拒绝／abort 后退订；不能让终态错误拖到外层 deadline。
+
+这不证明6521真的发生了 CDP close，旧 worker 缺失／启动失败／具体剩余时长仍 UNKNOWN。原 first-identity 真实窗口、认证 WS、parent-zero 拒绝和 Job 真实 close／清理仍必须由精确新 head 的 Windows 证明；不得延45秒或添加猜测启动参数、强制唤醒／缓存旧目标。

@@ -73,6 +73,9 @@ import { allowInboundLogEvent } from "../log-event-gate"
 import { pendingToolCalls, handleToolResult } from "./tool-forward"
 import { validateWsMessage } from "./validate"
 import { sendCockpitIdleSnapshot } from "./cockpit-idle"
+import { CockpitNativeBridge } from "./cockpit-native-bridge"
+
+const cockpitNativeBridge = new CockpitNativeBridge()
 import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
@@ -1210,6 +1213,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           }
           return
         }
+        // This closed identity schema has no stamped/requested action fields.
+        // Its current actual auth object is checked again at final send.
+        if (msg.type === "cockpit.bridge.hello" || msg.type === "cockpit.bridge.bound" || msg.type === "cockpit.bridge.retire") {
+          cockpitNativeBridge.handle(ws, msg, authState, () => wsAuth.get(ws))
+          return
+        }
         // S20: overwrite always after ACL. Never trust a client-supplied field.
         stampCmsparkSurface(msg, authState.surface)
         if (msg.type !== "system.ping") {
@@ -1553,6 +1562,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     })
 
     ws.on("close", (code) => {
+      cockpitNativeBridge.close(ws)
       clearInterval(pingInterval)
       clients.delete(ws)
       // P0-2B: clear the per-connection auth timer + state.

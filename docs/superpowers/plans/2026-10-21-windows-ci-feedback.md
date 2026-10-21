@@ -1,0 +1,11 @@
+# Windows CI feedback implementation plan (#750)
+
+Depends on [the finite contract](../specs/2026-10-21-windows-ci-feedback.md). Issue-first already satisfied.
+
+1. Root synthesizes complete map/diagnosis/cross-cut reports and fixes the scope to separate fresh Windows desktop lanes, early existing workflow CPU controls and dual-lock download cache. Preserve UNKNOWN physical causes and original failures.
+2. Add real parsed-YAML lane/closure controls and update the existing NSIS whole-workflow schedule validator. Capture original serial workflow RED with the same final positive tests before editing workflow. Keep original body digests and negative controls; LF/CRLF are separate inputs.
+3. Root changes only scheduling/cache and necessary frontend and original Windows script-stage prerequisites. Verify each original step command is unchanged, each original Windows directed command reaches native lane and complete census still has its original prerequisites. Keep all compile calls. No application/runner/preload/sealer/private-key changes.
+4. Run focused guarded inert CPU family three times for the new scheduling counterexample, then affected consumer families once. Freeze exact source/diff and public source inventory; run one fresh locked ARM affected check, retaining prior image/toolchain and guard.
+5. Two mutually blind nonauthors inspect the same frozen full diff, necessary full author/diagnosis evidence and affected tests (Kimi plus one eligible reviewer). Root is author and has no vote. Fix actual blockers with affected-only rereview; NIT disposition is explicit.
+6. Commit only declared reviewed paths, push and create standalone PR #750 scope off current main. Bind exact head and all six real jobs. On failure preserve original raw, isolate actual cause and repair only affected scope; no unchanged retry/timeout/skip. Do not let PR748 UNKNOWN gate contaminate this independent PR.
+7. Once exact-head jobs/Windows full canonical/official strict recovery/native evidence pass, perform already-authorized matchhead merge. Babysit exact main all six jobs, exact whole tree and source, strict evidence and actual issue close. Record real timing and tradeoff, safe explicit finite backup. No key/cipher/recoveredraw/runtime/dependency backup.

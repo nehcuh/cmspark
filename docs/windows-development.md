@@ -1,5 +1,7 @@
 # Windows 开发与失败定位
 
+跨 Node／Framework 的同一文件须核双向 access/share 兼容。Node lease 的 `wx+` 即使共享 Read/Write/Delete，Framework 默认 `File.ReadAllText` 仍只共享 Read，会拒绝现存写句柄；读取者的 share 必须允许已有 access，不能提前关 owner 或放宽权限掩盖。#723 Job CPU fixture 的修复保持 Read access、显式 ReadWrite|Delete share 和后续原 nonce/claim 校验；真实 Windows 还验证旧读的精确 sharing violation。惰性共享模型／原厂源码链不等于已观测某次 CPU 内部异常，也不等于 native 窗口身份成功。原厂依据：[Framework StreamReader](https://github.com/microsoft/referencesource/blob/ec9fa9ae770d522a5b5f0607898044b7478574a3/mscorlib/system/io/streamreader.cs)、[CreateFile 的双向共享规则](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)。
+
 适用于 coding agent 和贡献者。先按当前 Issue 的原始 DoD、精确 head/main 和实际失败阶段定位；历史 Windows 红灯不是同一个系统根因。本文是已有调试、隔离与验收纪律的短入口，不新增模型、全仓重测或平台前置门。测试地图见 [TESTING](TESTING.md)，开发约定见 [CONTRIBUTING](../CONTRIBUTING.md)。
 
 ## 系统化调试：先亲证，再改动
@@ -49,3 +51,34 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 - 修改生产函数依赖后，检查删除 import 后执行函数的 VM/AST/readFile 消费者。真实依赖须同时进入消费端 import 和 VM globals；只跑被修改函数的测试会漏掉旧消费端的 ReferenceError。#723 的 `transient-rate-feedback-730` 回归保留了这个失败。
 - 前台就绪必须核最后一个可能改变激活的操作。WPF 最小化会调用 SW_MINIMIZE，API 允许激活下一顶层窗口；先激活另窗再最小化不能证明最终前台仍是另窗。当前修复候选只调整原操作顺序，CPU 正负控不冒真实 Windows 验收，也不证明历史唯一原因。禁止补救焦点或放松前台断言。
 - 首条 worker 消息的 schema 与终止路径先查真实 producer：font-cache 消息没有 `ok` 字段，observer 的 false 不等字体失败；`finally` 主动 terminate 后的非零 exit 也不单独证明崩溃。冷启动耗时的物理原因未证实时保留 UNKNOWN。
+- 原生编译的退出码必须绑定实际已终止进程。#723 的真实前置在读取未设置的 `$LASTEXITCODE` 时拒绝，不能初始化 0、猜 compiler 成功或把十余秒解释成 timeout。需要明确原 compiler 的启动／等待／自身 ExitCode，连同下一 executable 消费者审计，保原 flags、stdout、摘要和拒绝。跨 PS 版本的公开源码不证明实际 GUI／PATHEXT／ShellExecute 分类；好／坏源码控制必须用同固定编译器得到真实 0／非零，泛异常不是有效负控。
+- 编译同族审计必须沿实际 controller 找到嵌套 builder 的每个 `/main`。Job wrapper／CPU 共用循环时，第一项失败会遮住第二项；前置正控编译实际两份源，负控分别缺失第一、第二 Main，并核对应目标的真实 Int32 非零，第二项负控还须保第一项真实 0。只编译不执行，保原 first-identity 重编译、45 秒及后续门；这不定位当前 UNKNOWN 的原生失败。
+- 原生 controller 的首错须覆盖同步前置、Promise 和异步事件回调；仅保留 child 退出码或 TAP 字节数不能定位谓词。固定 fd3 的首拒、独立 abort 未决集合、completion／cleanup 有限回执只用于诊断，最多捕获 4KiB，洪泛后继续 drain，不改变原退出；PASS 完成也会 abort 测试 signal，只有实际 Node:test 顶层 timeout 类型可判超时。源码坐标绑定明确原版 SHA；共享 lease 内部不可见细节保留 UNKNOWN，不能用最后阶段猜首因。失败时只上传 owned gate-summary.json 有限投影，绝不上传 raw/profile/凭据。
+- 重建子进程环境时须核后续真实消费者。固定 CFT155 支持的 Native Messaging legacy 分支需要 ComSpec；Chrome Job 只从同 admitted SystemRoot 派生 System32/cmd.exe，不能复制任意父 ComSpec、扩 PATH 或强制 direct feature。六字段排序／UTF-16 双 NUL 和原 CreateProcessW 不变；源码降级正负控不是 C#/Windows 执行，也不证明当前实际 feature/policy 或首错。
+
+## Chrome 原生 DTO 与完整集合证明
+
+同名或说明中同称 UUID 的字段不保证同一序列化形状。先逐字段追固定版本的实际 producer → serializer → consumer，再生成正负 fixture：Chromium 155 的 contextId、documentId 与非 tab Port.sender 分属不同域，不能手工拼成一个不存在的“完整回执”。原生枚举的完整集合也不能在计数前丢掉旧候选；两个未知 profile 的相等不是已知同源正证。源派生 CPU 控制仍不是浏览器实测，也不解释所有历史 UNKNOWN；变更后的原完整业务和真实原生门继续保留。
+
+## Node22 Windows pipe 类型与实际源码消费者
+
+Node22 的 `Stats.isFIFO()`／`isSocket()` 在 Windows 上会固定返回 false，不能据此认定 `fstat` 得到的 fd3 不是管道；同版 libuv 会将实际 named pipe 的 mode 标为 FIFO。有限观察器只接受整数 mode 中真实 S_IFMT 对应的 FIFO／已导出的 SOCK 类型，继续拒绝普通文件、目录、字符设备与未知类型，不按平台无条件放行。可选常量未导出不应在 fixture 中手造；源派生正控应执行实际安装 Node 的 Stats 函数并保持 Windows FIFO 正控必需。参考 [Node22 Stats 实现](https://github.com/nodejs/node/blob/v22.23.2/lib/internal/fs/utils.js#L539-L545) 与 [同版 libuv fstat](https://github.com/nodejs/node/blob/v22.23.2/deps/uv/src/win/fs.c#L2200-L2220)。这是此次新增观察器回归的因果修复，不是历史窗口身份失败原因的证明。
+
+修改实际函数的依赖时，须找全提取该函数的 AST／VM 消费者，不能只验证改动附近的 switch。`handleStateChange` 加入 bridge 断线消费者后，历史连接测试必须显式绑定这个惰性接口，并用真实函数调用次数证明断线通知；原历史、聊天、owner/request/selection 断言不能删除或放松。只读源合并无冲突与类型绿都不能代替这类实际消费者执行。
+
+## 长 CI 的反馈与桌面隔离（#750）
+
+先用连续实际 job/step 元数据分开“在哪一步失败”和“这一步内部为什么失败”。2026-10-21 的20个不同 revision 样本为 Windows10FAIL/10PASS，中位约26.5分钟；18次执行到完整 census 的中位约17.2分钟。这不是固定版本 flake 率，也不能据此把新功能验收错误称系统根因。
+
+CI 的 Windows canonical 与 directed native 使用两个独立 fresh hosted VM，原生动作在各自桌面内仍串行，原 lease/close/身份／预算不变。两路都必须成功；新增 job 不能只凭旧 check 通过而省略。canonical 保全原 npm test／封存，native 自己安装 frontend、执行原 stage:win-scripts 并构建全部必需 fixture；不要借另一 VM 的副作用、已注册窗口、缓存可执行文件或路径当准备正证。末尾被动模块诊断仅观察 canonical sealed baseline。
+
+源码／YAML／LF-CRLF／真实返回契约应在慢原生门之前跑受影响 CPU 控制，避免花半小时才发现确定性夹具错误。下载缓存恢复放实际安装之前，键覆盖两端锁；保原安装和供应完整性。相同 tsc 入口不等于相同输入／输出，未有完整编译闭包等价就不删。分 VM 可缩短关键路径但增加总 CPU／下载，报告真实 head/main 两项成本；不延时、重试、skip/COE 或增加同桌面并发消红。
+
+
+## 命令 ACK 之后仍要传播 transport 终态（#723）
+
+CDP target／context 的事件等待不能只依靠命令 pending Map：初始 getTargets／Runtime.enable 已 ACK 后，Map 可以为空，socket close 仍须拒绝独立事件等待者；已有 closed 入口不能再发命令，成功与 abort 应退订。用真实完整类及原 reason／并发／迟到事件反例验证，保持原时限和清理。此源码缺口只证明一类错误会被最终 timeout 掩盖，不证明历史 Windows 的 transport 曾关闭；不要因此猜 flag、复活旧 worker、延预算或以 CPU 冒原生。
+
+## 工作流移动也会影响未改过的测试消费者（#723）
+
+拆分 Windows lanes 后，读取 YAML 的旧 companion 测试仍可能要求“原生身份门在 census 诊断之后”。测试文件本身未改，不代表它不受影响：须沿实际 readFile/AST 消费者运行完整 family，并检查两条执行路径的最终条件和顺序。此前本地预检因缺少 owned 夹具目录未执行的八项，不能据此当作“无关”；补齐原夹具环境并保留旧失败，再用原 callback 亲证修正及错误顺序／错 lane 负控。不得靠删除断言、泛忽略新增 step 或跳过原生门消红。
