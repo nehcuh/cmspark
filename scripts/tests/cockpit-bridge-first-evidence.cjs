@@ -2,6 +2,7 @@
 'use strict'
 const fs = require('node:fs')
 const catalogue = require('./cockpit-bridge-first-sites.cjs')
+const { validProjection } = require('./cockpit-bridge-phase-observation.cjs')
 const LIMIT = 4096, CODES = new Set(['SYNC_REFUSED', 'ASSERT_REFUSED', 'CHECK_REFUSED', 'SCOPE_REFUSED', 'AWAIT_REFUSED', 'CALLBACK_REFUSED'])
 const siteOK = site => Number.isInteger(site) && Object.hasOwn(catalogue.sites, site)
 const pendingOK = (foreground, pending) => (foreground === 0 || siteOK(foreground)) && Array.isArray(pending) && pending.length <= 128 && pending.every((site, index) => siteOK(site) && (index === 0 || pending[index - 1] < site)) && (foreground === 0 || pending.includes(foreground))
@@ -14,7 +15,7 @@ function createObserver(write = bytes => {
   if (type !== fs.constants.S_IFIFO && type !== fs.constants.S_IFSOCK) return 0
   return fs.writeSync(3, bytes)
 }) {
-  let first = null, cleanupFirst = null, interrupted = false, completed = false, started = false, cleanup = false, surface = 0, armed = 0, written = 0, disabled = false
+  let first = null, cleanupFirst = null, interrupted = false, completed = false, started = false, cleanup = false, surface = 0, armed = 0, written = 0, disabled = false, phasesWritten = false
   const active = new Map(); let sequence = 0
   const safe = action => { try { return action() } catch { } }
   const emit = value => safe(() => {
@@ -35,6 +36,12 @@ function createObserver(write = bytes => {
   const leave = token => { active.delete(token) }
   const observer = {
     refuse,
+    phases(record) { safe(() => {
+      if (completed || phasesWritten) return
+      phasesWritten = true
+      const finite = validProjection(record) ? record : { v: 1, phases: null, registrar: null, at: 'UNKNOWN' }
+      emit({ v: 1, kind: 'phases', record: finite })
+    }) },
     sync(site, action) { try { return action() } catch (error) { refuse(site, 'SYNC_REFUSED'); if (!started) observer.complete(false); throw error } },
     assert(site, assertion) { return (...args) => { try { return assertion(...args) } catch (error) { refuse(site, 'ASSERT_REFUSED'); if (!started) observer.complete(false); throw error } } },
     check(site, action) { try { return action() } catch (error) { refuse(site, 'CHECK_REFUSED'); if (!started) observer.complete(false); throw error } },
@@ -88,16 +95,18 @@ function decode(bytes) {
   try {
     if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > LIMIT || bytes.some(byte => byte > 127) || bytes.at(-1) !== 10) return null
     const lines = bytes.toString('ascii').slice(0, -1).split('\n')
-    if (lines.length > 3) return null
+    if (lines.length > 4) return null
     const seen = new Set(), result = { first: null, interrupt: null, completion: null }
     for (const line of lines) {
       const value = JSON.parse(line)
-      if (!value || Array.isArray(value) || JSON.stringify(value) !== line || value.v !== 1 || !Object.hasOwn(result, value.kind) || seen.has(value.kind) || seen.has('completion')) return null
+      if (!value || Array.isArray(value) || JSON.stringify(value) !== line || value.v !== 1 || !(Object.hasOwn(result, value.kind) || value.kind === 'phases') || seen.has(value.kind) || seen.has('completion')) return null
       seen.add(value.kind)
       if (value.kind === 'first') {
         if (Object.keys(value).join(',') !== 'v,kind,site,code,foreground,pending' || !refusalOK({ site: value.site, code: value.code, foreground: value.foreground, pending: value.pending })) return null
       } else if (value.kind === 'interrupt') {
         if (Object.keys(value).join(',') !== 'v,kind,foreground,pending,surface' || ![0, 1, 2].includes(value.surface) || !pendingOK(value.foreground, value.pending)) return null
+      } else if (value.kind === 'phases') {
+        if (Object.keys(value).join(',') !== 'v,kind,record' || !validProjection(value.record)) return null
       } else if (Object.keys(value).join(',') !== 'v,kind,ok,surface,cleanupFirst' || typeof value.ok !== 'boolean' || ![0, 1, 2].includes(value.surface) || !(value.cleanupFirst === null || refusalOK(value.cleanupFirst))) return null
       result[value.kind] = value
     }
@@ -120,6 +129,6 @@ function publicEvidence(record, text) {
     first: refusal(record.first),
     interrupt: record.interrupt ? { foreground: locate(record.interrupt.foreground), pending: record.interrupt.pending.map(locate), surface: record.interrupt.surface } : null,
     completion: record.completion ? { ok: record.completion.ok, surface: record.completion.surface, cleanupFirst: refusal(record.completion.cleanupFirst) } : null,
-    runner: runnerOutcome(text) }
+    runner: runnerOutcome(text), ...(record.phases ? { phases: record.phases.record } : {}) }
 }
 module.exports = { createObserver, capture, decode, runnerOutcome, publicEvidence, LIMIT }

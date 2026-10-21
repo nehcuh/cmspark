@@ -90,3 +90,28 @@ CDP target／context 的事件等待不能只依靠命令 pending Map：初始 g
 同次交接的限额必须在第一次 body read/hash 前检查，不能扫描完再拒绝。新编译 callback 的失败也须等实际 child close，不能把 error/exit 当作 stdio 已关闭。写入自有目标时，Windows 只保证最后写句柄关闭后的时间戳正确；保写 FD 的 inode/dev/mode/nlink/size 和完整摘要，close 后再绑定只读 FD 的时间戳，不能泛忽略文件身份或内容变化。此次原源码 CPU 反例不是历史原生失败原因；依据：[Microsoft File Times](https://learn.microsoft.com/en-us/windows/win32/sysinfo/file-times)。
 
 工作流新增 `node --test` 参数时，也要搜索原命令里的测试路径和 parsed-YAML／整段命令合同；只搜索本次改动的模块文件名会漏掉这些消费者。#755 的首次 Ubuntu 早期 NSIS 步骤实际因精确 cockpit 命令差量未同步而拒绝，未进入原生，不能称 Windows 失败或下载根因。只允许本次精确新增的测试参数，补缺失／重复／替换负控，原历史 pin、lane、环境和失败上传约束保持。
+
+### #723 one bounded phase observation (human-approved cap exception)
+
+The remote first-identity gate may emit optional closed phase buckets on its
+existing finite pipe. Runtime stages 1–9 mean entry, prepared-stage complete,
+server ready, CPU close, Job started, observer ready, registrar invocation,
+first registrar ENTRY, and actual registrar close. Buckets are monotonic elapsed
+250 ms intervals (0–180) within the existing runtime; they are coarse observations,
+not an extension of its 45 seconds. Registrar checkpoint buckets use their own
+process-relative clock; never subtract the two clock domains.
+
+Only the explicit hosted-Windows gate opts into registrar ASCII checkpoints:
+ENTRY, root/record, views, binary pin, JSON, flushed files, registry readback,
+terminal after disposal. They include no path, ID, PID, hash or error text. At
+most 16 lines, 64 bytes per line and 1024 bytes total are consumed; malformed,
+truncated, duplicate, out-of-order or failed-sink observations become UNKNOWN.
+First abort or actual registrar close freezes the projection. Late output cannot
+rewrite it. Default registration, action/identity assertions, actual child-close
+joins and cleanup remain authoritative; the fd3 bound stays 4096 bytes.
+
+This is one explicitly approved changed-head remote diagnosis after the three-round
+cap, not a fourth behavioral fix. Build remains 120 seconds and runtime plus cleanup
+45 seconds, with zero retries. Missing ENTRY or a last checkpoint bounds an unknown
+interval; it cannot prove PowerShell startup, a particular Windows API, antivirus,
+or the historical failure cause. If this one run is still insufficient, stop UNKNOWN.

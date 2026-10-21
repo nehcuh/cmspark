@@ -116,7 +116,11 @@ async function controllerHarness(rawSinkFailure?: { child: number; stream: "stdo
     }
     return value
   }
-  const context = vm.createContext({ assert, evidence, path, signal: abort.signal, children, closes: new WeakMap(),
+  const phaseObservation = require(path.resolve(__dirname, '../../../scripts/tests/cockpit-bridge-phase-observation.cjs')).createObservation(() => 0)
+  phaseObservation.start(); phaseObservation.mark(1)
+  const phaseReceipts: any[] = []; const latchPhases = (at: string) => phaseReceipts.push(phaseObservation.snapshot(at))
+  abort.signal.addEventListener('abort', () => latchPhases('ABORT'), { once: true })
+  const context = vm.createContext({ assert, evidence, path, phaseObservation, latchPhases, signal: abort.signal, children, closes: new WeakMap(),
     lease: { checkpoint() { checkpoints++; if (checkpointError) throw checkpointError }, settled() { settled++ }, borrow: () => ({ nonce: "controlled-owned-fixture" }) },
     powershell: "owned-inert-powershell", childEnvironment: { OWNED_CPU: "yes" }, root: "owned-root", install: "owned-install",
     sourceRepo: "public-source", serverFile: "owned-server", jobBuild: "owned-job", chrome: "fixed-browser", chromeSHA256: "fixed-sha",
@@ -154,7 +158,7 @@ async function controllerHarness(rawSinkFailure?: { child: number; stream: "stdo
   }
   function launch(marker: string) { return new vm.Script(launchCode(marker)).runInContext(context) }
   async function turn() { for (let index = 0; index < 32; index++) await Promise.resolve() }
-  return { abort, reason, original, children, kinds, context, actualRunPs, close, launch, parallelHelpers, productionPrefix, turn, stages, launches,
+  return { abort, reason, original, children, kinds, context, actualRunPs, phaseReceipts, close, launch, parallelHelpers, productionPrefix, turn, stages, launches,
     releaseStage, completeStage, stageFails(error: unknown) { stageFailure = error }, queryPhase(value: string) { queryPhase = value },
     checkpointFails() { checkpointError = reason },
     facts: () => ({ killed, closedDescriptors, openDescriptors: descriptors.size, settled, checkpoints }) }
@@ -420,7 +424,7 @@ test("actual registration attempt always reaches exact owned cleanup, including 
           if (schedule.includes("cleanup-")) throw cleanupError
           ownedState = false; return
         }
-        assert.deepEqual(Array.from(args), ["-InstallRoot", install, "-ExtensionId", observedId])
+        assert.deepEqual(Array.from(args), ["-InstallRoot", install, "-ExtensionId", observedId, "-GateObservation723"])
         // Controlled interruption of the real helper seam. The registrar
         // writes its exclusive owned files and registry before its final
         // success output; this is not an OS/registry-positive receipt.
@@ -439,4 +443,36 @@ test("actual registration attempt always reaches exact owned cleanup, including 
     assert.equal(fact.settled, fact.schedule.includes("cleanup-") ? 0 : 1, fact.schedule)
     assert.equal(fact.ownedState, fact.schedule === "owned-then-abort-cleanup-unknown", fact.schedule)
   }
+})
+
+// Real runPs body, inert existing EventEmitter drain and close. Diagnostic tokens
+// never resolve the child or replace its failure/abort/mandatory close join.
+test("registrar observation latches actual close without becoming acceptance", async () => {
+  const h = await controllerHarness(); let done = false
+  const running = h.actualRunPs(path.join("public-source", "scripts/register-cockpit-native-bridge.ps1"), ["-GateObservation723"]).then(() => { done = true })
+  h.children[0].stdout.emit("data", Buffer.from("CM723P 1 0\nCM723P 2 1\n"))
+  await h.turn(); assert.equal(done, false); assert.equal(h.phaseReceipts.length, 0)
+  h.close(h.children[0]); await running
+  const receipt = h.phaseReceipts[0]
+  assert.equal(receipt.at, "CLOSE"); assert.equal(JSON.stringify(receipt.phases), JSON.stringify([[1, 0], [7, 0], [8, 0], [9, 0]]))
+  assert.equal(JSON.stringify(receipt.registrar), JSON.stringify([[1, 0], [2, 1]]))
+  assert.equal(h.facts().openDescriptors, 0)
+})
+test("registrar first abort cannot be rewritten by late checkpoints or child close", async () => {
+  const h = await controllerHarness(); let done = false, error: unknown
+  const running = h.actualRunPs(path.join("public-source", "scripts/register-cockpit-native-bridge.ps1"), ["-GateObservation723"]).then(() => { done = true }, e => { error = e; done = true })
+  h.children[0].stdout.emit("data", Buffer.from("CM723P 1 0\n")); h.abort.abort(h.reason)
+  await h.turn(); assert.equal(done, false)
+  h.children[0].stdout.emit("data", Buffer.from("CM723P 2 1\nCM723P 8 2\n")); h.close(h.children[0]); await running
+  assert.equal(error, h.reason); assert.equal(h.phaseReceipts[0].at, "ABORT")
+  assert.equal(JSON.stringify(h.phaseReceipts[0].registrar), JSON.stringify([[1, 0]]))
+  assert.equal(h.phaseReceipts[1], h.phaseReceipts[0]); assert.equal(h.facts().openDescriptors, 0)
+})
+test("malformed registrar observation remains UNKNOWN and preserves failed exit", async () => {
+  const h = await controllerHarness(); let error: unknown
+  const running = h.actualRunPs(path.join("public-source", "scripts/register-cockpit-native-bridge.ps1"), ["-GateObservation723"]).catch(e => { error = e })
+  h.children[0].stdout.emit("data", Buffer.from("CM723P 1 0\nPRIVATE_PATH_OR_ERROR\n")); h.close(h.children[0], 7); await running
+  assert.match(String(error), /COCKPIT_BRIDGE_OWNED_INSTALL_REFUSED/)
+  assert.equal(h.phaseReceipts[0].registrar, null)
+  assert.equal(JSON.stringify(h.phaseReceipts).includes("PRIVATE"), false); assert.equal(h.facts().openDescriptors, 0)
 })

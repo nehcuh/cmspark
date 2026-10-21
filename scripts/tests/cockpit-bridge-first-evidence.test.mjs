@@ -16,7 +16,7 @@ const self = fileURLToPath(import.meta.url)
 
 if (process.argv[2] === '--producer') {
   const mode = process.argv[3]
-  assert.ok(['pass', 'assert', 'throw', 'spoof', 'timeout', 'async', 'target-callback', 'duplicate', 'partial', 'flood', 'missing', 'chunks'].includes(mode))
+  assert.ok(['pass', 'phases', 'assert', 'throw', 'spoof', 'timeout', 'async', 'target-callback', 'duplicate', 'partial', 'flood', 'missing', 'chunks'].includes(mode))
   let callback
   if (mode === 'async' || mode === 'target-callback') {
     // Execute the actual instrumented asynchronous CPU assertion callback.
@@ -48,6 +48,10 @@ if (process.argv[2] === '--producer') {
     }
     test('actual Chrome document native parent / actual authenticated WS first identity STOP gate', { timeout: 40 }, async t => {
       observer.start(t.signal)
+      if (mode === 'phases') {
+        const clock = require('./cockpit-bridge-phase-observation.cjs').createObservation(() => 0); clock.start(); clock.mark(1)
+        clock.feed(Buffer.from('CM723P 1 0\n')); observer.phases(clock.snapshot('CLOSE'))
+      }
       let ok = false
       try {
         if (mode === 'assert') observer.assert(1, assert.equal)(false, true, 'PRIVATE_ASSERTION_BODY')
@@ -72,6 +76,9 @@ if (process.argv[2] === '--producer') {
     })
   }
 } else {
+  // The existing mandatory workflow entry owns these pure diagnostic controls.
+  require('./cockpit-bridge-phase-observation.test.cjs')
+  await import('./cockpit-bridge-phase-integration.test.mjs')
   const ts = createRequire(new URL('../../companion/package.json', import.meta.url))('typescript')
   const controller = fs.readFileSync(new URL('./cockpit-bridge-real-first.cjs', import.meta.url), 'utf8')
   const parentFile = fileURLToPath(new URL('./cockpit-bridge-first-gate.cjs', import.meta.url))
@@ -174,6 +181,7 @@ if (process.argv[2] === '--producer') {
       const stat = { mode, ...methods }, frames = [], calls = [], module = { exports: {} }
       vm.runInNewContext(helper, { module, Buffer, require(name) {
         if (name === './cockpit-bridge-first-sites.cjs') return sites
+        if (name === './cockpit-bridge-phase-observation.cjs') return require(name)
         assert.equal(name, 'node:fs')
         return { constants: fs.constants,
           fstatSync(fd) { assert.equal(fd, 3); if (behavior === 'stat-throws') throw Error('STAT_REFUSED'); return stat },
@@ -231,6 +239,9 @@ if (process.argv[2] === '--producer') {
   test('actual fd3/Node:test preserves PASS, assertion, rejection, timeout and real async callback', async () => {
     const good = await produce('pass')
     assert.equal(good.code, 0); assert.equal(good.signal, null); assert.equal(good.record.first, null); assert.equal(good.record.interrupt, null); assert.equal(good.record.completion.ok, true)
+    const phaseChild = await produce('phases')
+    assert.equal(phaseChild.code, 0); assert.equal(phaseChild.record.completion.ok, true)
+    assert.deepEqual(phaseChild.actualParent.firstIdentity.phases, { v: 1, phases: [[1, 0]], registrar: [[1, 0]], at: 'CLOSE' })
     for (const [mode, runner] of [['assert', 'CODE_FAILURE'], ['throw', 'CODE_FAILURE'], ['spoof', 'CODE_FAILURE'], ['timeout', 'TIMEOUT'], ['async', 'UNCAUGHT_EXCEPTION'], ['target-callback', 'UNHANDLED_REJECTION']]) {
       const result = await produce(mode)
       assert.equal(result.code, 1); assert.equal(result.signal, null)
