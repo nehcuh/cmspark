@@ -30,8 +30,8 @@ $subkey = 'Software\Google\Chrome\NativeMessagingHosts\' + $hostName
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or -not [IO.Path]::IsPathRooted($InstallRoot)) { throw 'COCKPIT_BRIDGE_REGISTRATION_PLATFORM' }
 if (-not $Unregister -and $ExtensionId -cnotmatch '^[a-p]{32}$') { throw 'COCKPIT_BRIDGE_EXACT_ID_REQUIRED' }
-$root = (Get-Item -LiteralPath $InstallRoot).FullName
-if (-not (Get-Item -LiteralPath $root).PSIsContainer -or ((Get-Item -LiteralPath $root).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'COCKPIT_BRIDGE_REGISTRATION_ROOT' }
+$root = (Microsoft.PowerShell.Management\Get-Item -LiteralPath $InstallRoot).FullName
+if (-not (Microsoft.PowerShell.Management\Get-Item -LiteralPath $root).PSIsContainer -or ((Microsoft.PowerShell.Management\Get-Item -LiteralPath $root).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'COCKPIT_BRIDGE_REGISTRATION_ROOT' }
 $binary = Join-Path $root 'bin\cmspark-cockpit-bridge.exe'
 $pin = Join-Path $root 'bin\cmspark-cockpit-bridge.sha256'
 $directory = Join-Path $root 'native-messaging'
@@ -40,7 +40,7 @@ $recordPath = Join-Path $directory 'registration.json'
 $record = $null
 
 function Read-RegularText([string]$Path) {
-  $item = Get-Item -LiteralPath $Path
+  $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $Path
   if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.Length -gt 4096) { throw 'COCKPIT_BRIDGE_REGISTRATION_FILE' }
   return $utf8.GetString([IO.File]::ReadAllBytes($item.FullName))
 }
@@ -65,7 +65,7 @@ function Read-OwnedRecord {
 }
 
 if (Test-Path -LiteralPath $directory) {
-  $item = Get-Item -LiteralPath $directory
+  $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $directory
   if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'COCKPIT_BRIDGE_REGISTRATION_CONFLICT' }
   if (Test-Path -LiteralPath $recordPath) { $record = Read-OwnedRecord }
   elseif (@(Get-ChildItem -LiteralPath $directory -Force).Count -ne 0) { throw 'COCKPIT_BRIDGE_REGISTRATION_CONFLICT' }
@@ -101,7 +101,7 @@ try {
     Write-Output 'COCKPIT_BRIDGE_UNREGISTERED'
     return
   }
-  $binaryItem = Get-Item -LiteralPath $binary
+  $binaryItem = Microsoft.PowerShell.Management\Get-Item -LiteralPath $binary
   if ($binaryItem.PSIsContainer -or ($binaryItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'COCKPIT_BRIDGE_REGISTRATION_BINARY' }
   $binaryHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
   if ((Read-RegularText $pin) -cne ($binaryHash + "`n")) { throw 'COCKPIT_BRIDGE_REGISTRATION_BINARY' }

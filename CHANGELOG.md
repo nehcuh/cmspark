@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Refs #723/#755: bind the native-host registrar’s six filesystem reads to the built-in PowerShell Management module after a bounded Windows command-resolution comparison; retain ownership, reparse checks and cleanup. Native full-flow acceptance remains required.
+
 - Windows CI (#723): add one human-approved, bounded phase/checkpoint observation for the first-identity gate; preserve build120/runtime-cleanup45, original results and 4096-byte finite evidence cap. Unknown intervals remain unknown.
 
 - Refs #723：经用户明确批准，将同次固定源码编译拆为最多 120 秒的必过准备阶段，原生运行与清理仍限原 45 秒。交接绑定真实关闭回执、源码、nonce 和文件身份；超时晚到不能进入原生阶段。真实 Windows 与精确 main 验收仍须通过。

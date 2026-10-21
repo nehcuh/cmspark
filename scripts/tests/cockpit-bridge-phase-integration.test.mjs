@@ -42,8 +42,24 @@ test('registrar diagnostic opt-in conserves every original business statement by
   assert.ok(a > 0 && b > a); business = business.slice(0, a) + business.slice(b)
   const lines = business.split('\n')
   business = lines.filter(line => !/^\s*(?:Write-Cmspark723Phase [1-8]|\$cmspark723Terminal = \$true|if \(\$cmspark723Terminal\) \{ Write-Cmspark723Phase 8 \})$/.test(line)).join('\n')
+  // The separate full-registrar regression admits exactly six qualified reads.
+  business = business.replaceAll('Microsoft.PowerShell.Management\\Get-Item', 'Get-Item')
   assert.equal(createHash('sha256').update(business).digest('hex'), '7618f1946a985272eae1c030d2db5ab383e2ddf6b81500a20c95fc02f2d88909')
   for (let id = 1; id <= 8; id++) assert.equal((source.match(new RegExp('Write-Cmspark723Phase ' + id + '(?![0-9])', 'g')) || []).length, 1)
   assert.ok(source.includes("[Console]::Out.WriteLine('CM723P '"))
   assert.ok(source.includes('foreach ($base in $bases.Values) { $base.Dispose() }\n  if ($cmspark723Terminal)'))
+})
+
+// Source-consumer regression only: the remote two-runner probe supplies the
+// command-resolution evidence; these controls do not execute PowerShell.
+test('registrar binds all six actual Get-Item reads to the admitted built-in module', () => {
+  const source = fs.readFileSync(new URL('../register-cockpit-native-bridge.ps1', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  const calls = [...source.matchAll(/([A-Za-z.]+\\)?Get-Item -LiteralPath (\$[A-Za-z]+)/g)]
+  assert.deepEqual(calls.map(m => [m[1], m[2]]), [
+    ['Microsoft.PowerShell.Management\\', '$InstallRoot'], ['Microsoft.PowerShell.Management\\', '$root'], ['Microsoft.PowerShell.Management\\', '$root'],
+    ['Microsoft.PowerShell.Management\\', '$Path'], ['Microsoft.PowerShell.Management\\', '$directory'], ['Microsoft.PowerShell.Management\\', '$binary'],
+  ])
+  // Removing only the six qualified command names restores the full registrar,
+  // including literal paths, reparse fences, both registry views and re-read cleanup.
+  assert.equal(createHash('sha256').update(source.replaceAll('Microsoft.PowerShell.Management\\Get-Item', 'Get-Item')).digest('hex'), '57a0a06ab55e7b9da3bfe8cbcf2d9856a5830858cb55a0db177122ddf5bc88f4')
 })
