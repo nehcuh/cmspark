@@ -8,6 +8,7 @@ import ts from "typescript"
 // Execute the actual remote controller's terminal catch/finally. Inert child
 // outcomes are fault inputs, not Windows job/Chrome/native-positive receipts.
 const file = path.resolve(__dirname, "../../../scripts/tests/cockpit-bridge-real-first.cjs")
+const evidence = require(path.resolve(__dirname, '../../../scripts/tests/cockpit-bridge-first-evidence.cjs')).createObserver((bytes: Buffer) => bytes.length)
 const source = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
 const terminals: ts.TryStatement[] = []
 function visit(node: ts.Node) {
@@ -27,7 +28,7 @@ async function run(primary: boolean, jobEmpty: boolean, serverFails = false) {
   ])
   // Handle injected rejection immediately; the actual finally still awaits it.
   closes.get(server)!.catch(() => {})
-  const sandbox = { assert, original, primaryFailure: null, chromeChild, cleanupObserved: jobEmpty, closes, server,
+  const sandbox = { assert, evidence, original, primaryFailure: null, chromeChild, cleanupObserved: jobEmpty, closes, server,
     registered: true, sourceRepo: "owned-public-source", install: "owned-test-install", path,
     cdp: undefined, t: { diagnostic: (value: string) => diagnostics.push(value) },
     lease: { settled: () => { settled++ } }, runPs: async () => { unregistered++ },
@@ -98,7 +99,7 @@ async function controllerHarness() {
       kill: () => { killed++; if (kind === "fork") { value.exitCode = 0; value.emit("close", 0, null) }; return true }, send() {} })
     return value
   }
-  const context = vm.createContext({ assert, path, signal: abort.signal, children, closes: new WeakMap(),
+  const context = vm.createContext({ assert, evidence, path, signal: abort.signal, children, closes: new WeakMap(),
     lease: { checkpoint() { checkpoints++; if (checkpointError) throw checkpointError }, settled() { settled++ }, borrow: () => ({ nonce: "controlled-owned-fixture" }) },
     powershell: "owned-inert-powershell", childEnvironment: { OWNED_CPU: "yes" }, root: "owned-root", install: "owned-install",
     sourceRepo: "public-source", serverFile: "owned-server", jobBuild: "owned-job", chrome: "fixed-browser", chromeSHA256: "fixed-sha",
@@ -124,7 +125,7 @@ async function controllerHarness() {
 test("pending real PowerShell abort joins close before output release and admits no late server", async t => {
   const h = await controllerHarness()
   const statements = terminal.tryBlock.statements
-  const ready = statements.findIndex(node => node.getText(source).includes("await waitMessage(value => value?.type === 'ready')"))
+  const ready = statements.findIndex(node => node.getText(source).includes("waitMessage(value => value?.type === 'ready')"))
   assert.ok(ready > 0, "actual main initialization prefix must exist")
   const prefix = statements.slice(0, ready + 1).map(node => node.getText(source)).join("\n")
   let done = false, result: unknown
@@ -205,7 +206,7 @@ test("actual registration attempt always reaches exact owned cleanup, including 
   const statements = terminal.tryBlock.statements
   const indexes = statements.map((node, index) => ({ node, index })).filter(({ node }) =>
     ts.isExpressionStatement(node) && ts.isAwaitExpression(node.expression) &&
-    node.expression.getText(source).startsWith("await runPs(") && node.getText(source).includes("scripts/register-cockpit-native-bridge.ps1"))
+    node.expression.getText(source).includes("runPs(path.join(sourceRepo,") && node.getText(source).includes("scripts/register-cockpit-native-bridge.ps1"))
   assert.equal(indexes.length, 1, "unique actual registration invocation")
   const registrationIndex = indexes[0].index
   const flags = [registrationIndex - 1, registrationIndex + 1].filter(index =>
@@ -217,7 +218,7 @@ test("actual registration attempt always reaches exact owned cleanup, including 
     const primary = Error("CONTROLLED_REGISTRATION_ABORT"), cleanupError = Error("CONTROLLED_REGISTRATION_NOT_OWNED")
     let ownedState = false, cleanupCalls = 0, settled = 0, error: unknown
     const install = "owned-test-install", sourceRepo = "owned-public-source", observedId = "a".repeat(32)
-    const sandbox = { assert, path, install, sourceRepo, observedId, registered: false, primaryFailure: null,
+    const sandbox = { assert, evidence, path, install, sourceRepo, observedId, registered: false, primaryFailure: null,
       chromeChild: undefined, server: undefined, cdp: undefined, cleanupObserved: false,
       t: { diagnostic() {} }, lease: { settled() { settled++ } },
       runPs: async (script: string, args: string[], cleanup = false) => {

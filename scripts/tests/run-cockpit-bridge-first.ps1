@@ -45,5 +45,17 @@ try {
   if (-not $child.Start()) { throw 'COCKPIT_BRIDGE_GATE_START' }
   $child.WaitForExit()
   $exitCode = $child.ExitCode
-} finally { $child.Dispose() }
+} finally {
+  $child.Dispose()
+  # Only the fixed owned finite summary is publishable; never raw/profile data.
+  try {
+    $summary = Join-Path $root 'gate-summary.json'
+    if ($env:GITHUB_OUTPUT -and $summary.IndexOfAny([char[]]"`r`n") -lt 0 -and [IO.File]::Exists($summary)) {
+      $summaryItem = Get-Item -LiteralPath $summary -ErrorAction Stop
+      if ($summaryItem -is [IO.FileInfo] -and -not ($summaryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $summaryItem.Length -le 16384) {
+        [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "finite_summary=$summary`n")
+      }
+    }
+  } catch { }
+}
 exit $exitCode

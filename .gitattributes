@@ -11,3 +11,5 @@
 /companion/tests/fixtures/cu-redteam/corpus.json text eol=lf
 # This recorded Git patch is checked against its independent byte fingerprint.
 /companion/tests/fixtures/code-review-rename-464.patch text eol=lf
+# The fixed CFT member/layout source is fingerprinted as exact committed bytes.
+/chrome-extension/scripts/fixtures/cft-linux64-732.json text eol=lf

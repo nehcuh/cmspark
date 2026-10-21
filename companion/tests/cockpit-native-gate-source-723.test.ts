@@ -9,6 +9,7 @@ import { pipeline } from 'node:stream/promises'
 import { createHash } from 'node:crypto'
 import ts from 'typescript'
 const file = path.resolve(__dirname, '../../../scripts/tests/cockpit-bridge-first-gate.cjs')
+const firstEvidence = require(path.resolve(__dirname, '../../../scripts/tests/cockpit-bridge-first-evidence.cjs'))
 const text = fs.readFileSync(file, 'utf8'), source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
 const functions = source.statements.filter((n): n is ts.FunctionDeclaration => ts.isFunctionDeclaration(n) && n.name?.text === 'run')
 assert.equal(functions.length, 1)
@@ -56,7 +57,7 @@ function evidenceAPI(raw: string, spawn: (...args: unknown[]) => unknown, fileSy
   const begin = text.indexOf('// Failure evidence is observation only:'), end = text.indexOf('\nasync function main()', begin)
   assert.ok(begin > 0 && end > begin)
   return new vm.Script(`(()=>{${text.slice(begin, end)};return {runRecorded,failure:()=>firstFailure,last:()=>lastStep,parse:registrationEvidence,describe:failureEvidence}})()`)
-    .runInNewContext({ fs: fileSystem, path, Buffer, cp: { spawn }, sequence: 0, stage: 'registration-framing', raw }) as EvidenceAPI
+    .runInNewContext({ firstEvidence, fs: fileSystem, path, Buffer, cp: { spawn }, sequence: 0, stage: 'registration-framing', raw }) as EvidenceAPI
 }
 async function recordedControl(code: number, stderr = '', spawnError?: unknown) {
   const raw = fs.mkdtempSync(path.join(process.env.CMSPARK_TEST_RUN_DIR!, 'first-evidence-')), child = new EventEmitter()
@@ -187,7 +188,7 @@ test('whole actual gate refuses the empty source pin before filesystem, process,
   let effects = 0
   const deny = new Proxy({}, { get() { effects++; throw Error('FORBIDDEN_EFFECT') } })
   const modules: Record<string, unknown> = { 'node:assert/strict': assert, 'node:fs': deny, 'node:path': path, 'node:child_process': deny,
-    './cockpit-bridge-browser-supply.cjs': actualSupply, './cockpit-bridge-browser-admission.cjs': { version: 1, builds: [] } }
+    './cockpit-bridge-first-evidence.cjs': firstEvidence, './cockpit-bridge-browser-supply.cjs': actualSupply, './cockpit-bridge-browser-admission.cjs': { version: 1, builds: [] } }
   assert.throws(() => new vm.Script(text, { filename: file }).runInNewContext({ require: (id: string) => { assert.ok(id in modules); return modules[id] }, process: { platform: 'win32', arch: 'x64', env: { GITHUB_ACTIONS: 'true', RUNNER_OS: 'Windows' } } }), /SUPPLY_NOT_READY/)
   assert.equal(effects, 0)
 })
@@ -235,7 +236,7 @@ test('whole actual gate consumes the actual fixed source pin and preserves prepa
     'node:fs': { lstatSync: () => ({ isSymbolicLink: () => false, isDirectory: () => true, isFile: () => true }), realpathSync: { native: (p: string) => win.resolve(p) },
       mkdirSync() {}, writeFileSync() {}, openSync: () => 1, closeSync() {}, readdirSync: () => [{ name: 'cockpit-bridge-controlled', isDirectory: () => true }], existsSync: () => true },
     'node:child_process': { spawn(file: string, args: string[], options: { env: Record<string, string>; cwd: string }) { calls.push({ file, args, options }); const child = new EventEmitter(); queueMicrotask(() => child.emit('close', 0, null)); return child } },
-    './cockpit-bridge-browser-supply.cjs': { selectPin: actualSupply.selectPin,
+    './cockpit-bridge-first-evidence.cjs': firstEvidence, './cockpit-bridge-browser-supply.cjs': { selectPin: actualSupply.selectPin,
       async download(selected: unknown) { assert.deepEqual(selected, pin); stages.push('fixed-download') },
       async extract() { stages.push('verified-extract'); return 'C:\\owned\\chrome.exe' } },
     './cockpit-bridge-browser-admission.cjs': admission, './cockpit-bridge-child-env.cjs': actualEnv,

@@ -299,20 +299,56 @@ function originalCensusCommands(run) {
 }
 // Validate this exact pre-census prerequisite block before applying old pins.
 // The scalar PS regression remains first; fixed build-only acceptance follows.
-function censusStepsWithReviewedNodeSelection723(raw) {
+function censusStepsWithReviewedFirstEvidence723(raw) {
   const steps = workflowYaml.load(raw).jobs['smoke-os'].steps
+  const uploads = steps.filter(step => step.name === 'Publish finite cockpit first failure (#723)')
+  assert.equal(uploads.length, 1)
+  assert.deepEqual(uploads[0], {
+    name: 'Publish finite cockpit first failure (#723)',
+    if: "always() && matrix.os == 'windows-latest' && steps.cockpit-first-identity.outcome == 'failure' && steps.cockpit-first-identity.outputs.finite_summary != ''",
+    uses: 'actions/upload-artifact@v4',
+    with: { name: 'cockpit-first-identity-finite', path: '${{ steps.cockpit-first-identity.outputs.finite_summary }}', 'if-no-files-found': 'error' },
+  })
+  const gates = steps.filter(step => step.name === 'Windows cockpit native bridge first identity STOP gate (#723)')
+  assert.equal(gates.length, 1)
+  assert.deepEqual(gates[0], { name: gates[0].name, id: 'cockpit-first-identity', if: "matrix.os == 'windows-latest'", shell: 'pwsh', run: '& scripts/tests/run-cockpit-bridge-first.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n' })
+  assert.equal(steps.indexOf(uploads[0]), steps.indexOf(gates[0]) + 1)
+  assert.equal(steps.at(-1), uploads[0])
+  return steps.filter(step => step !== uploads[0]).map(step => {
+    if (step !== gates[0]) return step
+    const { id, ...original } = step
+    assert.equal(id, 'cockpit-first-identity')
+    return original
+  })
+}
+function censusStepsWithReviewedNodeSelection723(raw) {
+  const steps = censusStepsWithReviewedFirstEvidence723(raw)
   const name = 'Windows cockpit Node scalar selection (#723)'
   const scalar = steps.filter(step => step.name === name)
   assert.equal(scalar.length, 1, 'one exact early PowerShell scalar regression')
   assert.deepEqual(scalar[0], {
     name, if: "matrix.os == 'windows-latest'", shell: 'pwsh',
-    run: '& scripts/tests/cockpit-bridge-node-selection.test.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode scripts/tests/cockpit-bridge-build-prerequisite.cjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n',
+    run: '& scripts/tests/cockpit-bridge-node-selection.test.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs scripts/tests/cockpit-bridge-first-evidence.test.mjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode scripts/tests/cockpit-bridge-build-prerequisite.cjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n',
   }, 'the actual interpreter command and failure exit remain exact')
   const compile = steps.findIndex(step => step.name === 'Compile shared companion test inputs (#650)')
   assert.ok(compile >= 0)
   assert.equal(steps.indexOf(scalar[0]), compile + 1, 'the scalar regression follows the shared compile')
   return steps.filter(step => step !== scalar[0])
 }
+test('finite first failure upload cannot widen paths, run on PASS or weaken the native step', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  censusStepsWithReviewedFirstEvidence723(raw)
+  for (const mutate of [
+    steps => { steps.find(step => step.name === 'Publish finite cockpit first failure (#723)').with.path = '${{ runner.temp }}/**' },
+    steps => { steps.find(step => step.name === 'Publish finite cockpit first failure (#723)').if = "always() && matrix.os == 'windows-latest'" },
+    steps => { steps.find(step => step.name === 'Windows cockpit native bridge first identity STOP gate (#723)')['continue-on-error'] = true },
+    steps => { const step = steps.find(step => step.name === 'Publish finite cockpit first failure (#723)'); steps.push({ ...step }) },
+    steps => { delete steps.find(step => step.name === 'Windows cockpit native bridge first identity STOP gate (#723)').id },
+  ]) {
+    const doc = workflowYaml.load(raw); mutate(doc.jobs['smoke-os'].steps)
+    assert.throws(() => censusStepsWithReviewedFirstEvidence723(workflowYaml.dump(doc)))
+  }
+})
 // Validate the complete reviewed macOS-only addition before removing it from
 // the original cross-platform schedule pin. Every original Windows gate remains.
 function censusStepsWithReviewedTail725(raw) {

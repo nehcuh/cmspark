@@ -165,7 +165,7 @@ test("#722 actual workspace containment still denies the data-root name", async 
 function admissionFixture(platform: "linux" | "win32", deferredPreparation = false) {
   const { EventEmitter } = require("node:events") as typeof import("node:events")
   const managerSource = source("acp/manager.ts")
-  const methods = ["propose", "reserveExecutionClaim", "releaseExecutionClaim", "start", "startCliBridge", "trackChild", "getSession", "listSessionsForThread", "cancel", "shutdown", "expireOfferedSessions", "checkStartAdmission", "promptSession", "followup"].map(name =>
+  const methods = ["propose", "reserveExecutionClaim", "releaseExecutionClaim", "start", "startCliBridge", "trackChild", "noteHistory", "getSession", "listSessionsForThread", "cancel", "shutdown", "expireOfferedSessions", "checkStartAdmission", "promptSession", "followup"].map(name =>
     extract(managerSource, n => ts.isMethodDeclaration(n) && n.name.getText(managerSource) === name)).join("\n")
   const children: any[] = [], preparations: Array<() => void> = [], tracked: Promise<any>[] = []
   let serial = 0, prepareCalls = 0, startCalls = 0, envCalls = 0, kills = 0, enabled = true, preparationReleased = !deferredPreparation

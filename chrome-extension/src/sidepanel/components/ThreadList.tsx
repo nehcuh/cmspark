@@ -74,7 +74,8 @@ export function createBlankThread(dispatch: (action: { type: "ADD_THREAD"; threa
     active_skill_ids: [] as string[],
   }
   dispatch({ type: "ADD_THREAD", thread: thread as Thread })
-  chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
+  // Internal deduplication hint only; not proof of a user or authorization.
+  chrome.runtime.sendMessage({ type: "thread.create", alias: "", id, user_gesture: true })
   return id
 }
 

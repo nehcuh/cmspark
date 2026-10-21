@@ -190,7 +190,7 @@ test('actual Job compiler loop and required controls bind both own exits with LF
   const inputs = [jobBuilder, nativeControls].map(x => x.replaceAll('\r\n', '\n'))
   for (const ending of ['\n', '\r\n']) jobCompletionContract(...inputs.map(x => x.replaceAll('\n', ending)))
   const controller = fs.readFileSync(path.join(__dirname, 'cockpit-bridge-real-first.cjs'), 'utf8')
-  assert.ok(controller.includes("await runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild])"))
+  assert.ok(controller.includes("runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild])"))
   assert.ok(controller.indexOf("path.join(jobBuild, 'cockpit-chrome-job-cpu.exe')") > controller.indexOf("'scripts/tests/build-cockpit-bridge-job.ps1'"))
 })
 test('Job completion source controls reject stale exits and either uncovered main target', () => {

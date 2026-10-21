@@ -2,6 +2,7 @@
 'use strict'
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process')
 const supply = require('./cockpit-bridge-browser-supply.cjs')
+const firstEvidence = require('./cockpit-bridge-first-evidence.cjs')
 assert.equal(process.platform, 'win32'); assert.equal(process.arch, 'x64')
 assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(process.env.RUNNER_OS, 'Windows')
 // A pin is mandatory before network, npm, registration or any child process.
@@ -75,29 +76,38 @@ function failureEvidence(kind, currentStage, step) {
   const compiler = [...new Set([...body.matchAll(/\berror (CS[0-9]{4}):/g)].map(m => m[1]))].sort()
   const framing = [...body.matchAll(/COCKPIT_BRIDGE_FRAMING_FAILED checks=(0|[1-9][0-9]{0,4})(?=\r?$)/gm)]
   const state = step?.state
+  let firstIdentity = null
+  try { firstIdentity = firstEvidence.publicEvidence(state?.observation ?? null, output.text) } catch { }
   return { v: 1, stage: GATE_STAGES.has(currentStage) ? currentStage : 'unknown', kind: kind === 'child_refused' ? kind : 'controller_refused',
     step: STEP_LABELS.has(step?.label) ? step.label : 'none', closeObserved: state?.closed === true, spawnError: state?.spawnError === true,
     exitCode: Number.isInteger(state?.code) && state.code >= 0 && state.code <= 255 ? state.code : null,
     signal: state?.closed ? state.signal === null ? 'NONE' : ['SIGTERM', 'SIGKILL', 'SIGABRT'].includes(state.signal) ? state.signal : 'OTHER' : 'UNKNOWN',
     stdoutBytes: output.bytes, stderrBytes: error.bytes, detailsAvailable: output.text !== null && error.text !== null,
     registration: registrationEvidence(error.text), framingChecks: framing.length === 1 ? Number(framing[0][1]) : null,
-    compilerCodes: compiler.slice(0, 8), compilerMore: compiler.length > 8 }
+    compilerCodes: compiler.slice(0, 8), compilerMore: compiler.length > 8, firstIdentity }
 }
 async function run(file, args, cwd, env, label, observe) {
   const output = fs.openSync(path.join(raw, String(++sequence) + '-' + label + '.stdout'), 'wx')
   const error = fs.openSync(path.join(raw, String(sequence) + '-' + label + '.stderr'), 'wx')
   try {
     await new Promise((resolve, reject) => {
-      const child = cp.spawn(file, args, { cwd, env, windowsHide: true, stdio: ['ignore', output, error] })
+      const child = cp.spawn(file, args, { cwd, env, windowsHide: true, stdio: label === 'first-identity' ? ['ignore', output, error, 'pipe'] : ['ignore', output, error] })
+      let observation
+      try { if (label === 'first-identity') observation = firstEvidence.capture(child.stdio?.[3]) } catch { }
       child.once('error', error => { try { observe?.('error', null, null) } catch { } reject(error) })
-      child.once('close', (code, signal) => { try { observe?.('close', code, signal) } catch { } code === 0 && signal === null ? resolve() : reject(Error('COCKPIT_BRIDGE_GATE_' + label + '_FAILED')) })
+      child.once('close', (code, signal) => {
+        let record = null
+        try { if (observation) record = observation.finish(true) } catch { }
+        try { if (observation) observe?.('close', code, signal, record); else observe?.('close', code, signal) } catch { }
+        code === 0 && signal === null ? resolve() : reject(Error('COCKPIT_BRIDGE_GATE_' + label + '_FAILED'))
+      })
     })
   } finally { fs.closeSync(output); fs.closeSync(error) }
 }
 async function runRecorded(file, args, cwd, env, label) {
   const n = sequence + 1, state = { closed: false, spawnError: false, code: null, signal: null }
   const step = { label, state, output: path.join(raw, n + '-' + label + '.stdout'), error: path.join(raw, n + '-' + label + '.stderr') }
-  const observe = (event, code, signal) => { if (event === 'error') state.spawnError = true; else if (event === 'close') { state.closed = true; state.code = code; state.signal = signal } }
+  const observe = (event, code, signal, observation = null) => { if (event === 'error') state.spawnError = true; else if (event === 'close') { state.closed = true; state.code = code; state.signal = signal; state.observation = observation } }
   try { await run(file, args, cwd, env, label, observe); lastStep = step }
   catch (error) { if (!firstFailure) firstFailure = failureEvidence('child_refused', stage, step); throw error }
 }
@@ -130,7 +140,10 @@ async function main() {
   process.stdout.write('COCKPIT_BRIDGE_FIRST_IDENTITY_COMPLETE\n')
 }
 main().catch(() => {
+  const failure = firstFailure || failureEvidence('controller_refused', stage, lastStep)
+  // Durable public finite evidence only. Diagnostic I/O never changes the gate.
+  try { fs.writeFileSync(path.join(root, 'gate-summary.json'), JSON.stringify({ version: 1, stage: 'first-identity-incomplete', masking: 'NOT_IMPLEMENTED', firstFailure: failure }) + '\n', { flag: 'wx' }) } catch { }
   process.stderr.write('COCKPIT_BRIDGE_FIRST_IDENTITY_INCOMPLETE ' + stage + '\n')
-  process.stderr.write('COCKPIT_BRIDGE_FIRST_FAILURE ' + JSON.stringify(firstFailure || failureEvidence('controller_refused', stage, lastStep)) + '\n')
+  process.stderr.write('COCKPIT_BRIDGE_FIRST_FAILURE ' + JSON.stringify(failure) + '\n')
   process.exitCode = 1
 })
