@@ -424,6 +424,8 @@ export function useWebSocket() {
     const messageListener = (msg: any) => {
       if (!msg || typeof msg.type !== "string") return false
       if (msg.type === "thread.mutation.connection") {
+        if (msg.state !== "connected" && msg.state !== "connecting" && msg.state !== "disconnected") return false
+        dispatch({ type: "OBSERVE_CODING_HISTORY_CONNECTION", state: msg.state })
         workspaceHintsRef.current.select(activeThreadRef.current, workspaceHintSelectionRef.current)
         workspaceHintsRef.current.observe(msg)
         dispatch({ type: "SET_WORKSPACE_HINTS", view: workspaceHintsRef.current.view() })
@@ -926,6 +928,7 @@ export function useWebSocket() {
           break
 
         case "config.updated":
+          if (msg.config?.acp?.enabled === false) dispatch({ type: "ACP_HISTORY_INVALIDATE" })
           dispatch({ type: "SET_CONFIG", config: normalizeConfig(msg.config) })
           dispatch({ type: "SET_CONFIG_HYDRATED", hydrated: true })
           if (msg.source === "companion" && msg.config?.llm) {
@@ -1707,6 +1710,10 @@ export function useWebSocket() {
           }
           break
 
+        case "acp.sessions.list_result":
+          dispatch({ type: "ACP_HISTORY_RESULT", message: msg })
+          break
+
         case "acp.session.manual_entry": {
           const action = codingManualEntryAction(msg)
           if (action) dispatch(action)
@@ -2370,6 +2377,11 @@ export function useWebSocket() {
           break
 
         case "error": {
+          if (msg.family === "acp" && msg.request_type === "acp.sessions.list") {
+            dispatch({ type: "ACP_HISTORY_RESULT", message: { type: "acp.sessions.list_result",
+              thread_id: msg.thread_id, request_id: msg.request_id, status: "unavailable", rows: [] } })
+            break
+          }
           // BoardPanel consumes correlated Hint results (also legacy typed errors).
           if (isBoardHintReply(msg)) break
           // A management failure must not stop or append errors to unrelated chat.

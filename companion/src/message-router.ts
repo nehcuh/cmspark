@@ -3493,6 +3493,7 @@ async function dispatchMessage(
     // stay injectable in tests. Mutations validate+normalize before
     // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
     case "acp.list":
+    case "acp.sessions.list":
     case "acp.rediscover":
     case "acp.adopt_discovered":
     case "acp.session.prepare_manual_entry":
@@ -3532,6 +3533,7 @@ async function dispatchMessage(
           const t = threadManager.get(tid) as { agent_role?: string } | null
           return t?.agent_role
         },
+        hasThread: (tid) => !!threadManager.get(tid),
       })
       if (acpRes) return acpRes
       return { type: "error", error: `Unhandled acp type: ${type}` }

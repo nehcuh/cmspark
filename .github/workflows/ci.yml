@@ -85,6 +85,23 @@ jobs:
         run: |
           cd chrome-extension && npm run build
 
+      - name: ACP history hosted CPU controls (#732)
+        run: node --test chrome-extension/scripts/tests/acp-history-hosted-732.test.mjs chrome-extension/scripts/tests/cft-linux-supplier-732.test.mjs
+
+      - name: Bind normal public build outputs (#732)
+        run: node -e "require('fs').writeFileSync('acceptance-build-sha.txt', process.env.GITHUB_SHA + '\n')"
+
+      - name: Upload normal public restart acceptance build (#732)
+        uses: actions/upload-artifact@v4
+        with:
+          name: acp-history-public-build-${{ github.sha }}
+          path: |
+            companion/dist/
+            chrome-extension/build/chrome-mv3-prod/
+            acceptance-build-sha.txt
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Sidepanel visual-hygiene gate (#321 PR-1)
         # Color-aware static gate: fails on raw hex/rgb() in CSS-property
         # position, `tokens.x || "#fallback"` anti-patterns, and fontSize < 10
@@ -647,3 +664,24 @@ jobs:
           }
           node "$moduleScopeProbe650" "$env:CMSPARK_650_FINISHED_PUBLIC_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  acp-history-restart:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: companion/package-lock.json
+      - name: Install locked Companion runtime dependencies
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: cd companion && npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: acp-history-public-build-${{ github.sha }}
+          path: .
+      - name: Actual daemon restart and native SidePanel reload (#732)
+        run: node chrome-extension/scripts/accept-acp-history-hosted-732.mjs
