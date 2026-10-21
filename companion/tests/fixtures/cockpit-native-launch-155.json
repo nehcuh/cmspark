@@ -1,0 +1,55 @@
+{
+  "version": "155.0.8059.84",
+  "copyright": "Chromium Authors. BSD-style license: https://chromium.googlesource.com/chromium/src/+/155.0.8059.84/LICENSE",
+  "scope": "Exact primary-source excerpts for inert source controls; no C++/Windows execution or actual feature/policy claim.",
+  "parts": {
+    "legacyGuard": {
+      "sourceURL": "https://chromium.googlesource.com/chromium/src/+/155.0.8059.84/chrome/browser/extensions/api/messaging/launch_context_win.cc",
+      "sourceBytes": 14527,
+      "sourceSHA256": "8a43d375f2f71b2eb20576e4b3b73d8e2e58cab2c6d46438a57aa1238e5962e5",
+      "startLine": 155,
+      "text": "  DWORD comspec_length = ::GetEnvironmentVariable(L\"COMSPEC\", NULL, 0);\n  if (comspec_length == 0) {\n    LOG(ERROR) << \"COMSPEC is not set\";\n    return base::Process();\n  }",
+      "textSHA256": "affc69198cbaf6e6ff045b148fe3de899c046439beeb89d007370d6ed239032e"
+    },
+    "featureDefault": {
+      "sourceURL": "https://raw.githubusercontent.com/chromium/chromium/refs/tags/155.0.8059.84/extensions/common/extension_features.cc",
+      "sourceBytes": 9892,
+      "sourceSHA256": "ac5572ec6cc0433ba9e1cd5989da58aa185832732c4e34b29550f2e9d3d61295",
+      "startLine": 184,
+      "text": "BASE_FEATURE(kLaunchWindowsNativeHostsDirectly,\n             base::FEATURE_DISABLED_BY_DEFAULT);",
+      "textSHA256": "c84df68434a6268bc2a2e6c330c2c81fa0a00757fe2b4e36ad2aba727368a839"
+    },
+    "registeredDefault": {
+      "sourceURL": "https://raw.githubusercontent.com/chromium/chromium/refs/tags/155.0.8059.84/chrome/browser/prefs/browser_prefs.cc",
+      "sourceBytes": 131450,
+      "sourceSHA256": "6ca2cc2e690bd8da668bb18ea72dc20945e075a40e92da16f3058808d4e84fbc",
+      "startLine": 2248,
+      "text": "  registry->RegisterBooleanPref(prefs::kNativeHostsExecutablesLaunchDirectly,\n                                false);",
+      "textSHA256": "e2659fa808cc4e2185dc581ca7c55a1b61ce176979f6a4585d2e5cc7ed7895aa"
+    },
+    "managedSelection": {
+      "sourceURL": "https://raw.githubusercontent.com/chromium/chromium/refs/tags/155.0.8059.84/chrome/browser/extensions/api/messaging/native_process_launcher.cc",
+      "sourceBytes": 5821,
+      "sourceSHA256": "b0b6f56ea9b9404350f4ff8a89bb0724b76f1194b44cccf42a4963705c7828a5",
+      "startLine": 136,
+      "text": "  if (profile && profile->GetPrefs()->IsManagedPreference(\n                     prefs::kNativeHostsExecutablesLaunchDirectly)) {\n    native_hosts_executables_launch_directly = profile->GetPrefs()->GetBoolean(\n        prefs::kNativeHostsExecutablesLaunchDirectly);\n  } else {\n    native_hosts_executables_launch_directly = base::FeatureList::IsEnabled(\n        extensions_features::kLaunchWindowsNativeHostsDirectly);\n  }",
+      "textSHA256": "8ca0d9c52011671f6faf548305a4bdf7bc25d4a0e9616446f13d7d1aeb5fec05"
+    },
+    "routeSelection": {
+      "sourceURL": "https://chromium.googlesource.com/chromium/src/+/155.0.8059.84/chrome/browser/extensions/api/messaging/launch_context_win.cc",
+      "sourceBytes": 14527,
+      "sourceSHA256": "8a43d375f2f71b2eb20576e4b3b73d8e2e58cab2c6d46438a57aa1238e5962e5",
+      "startLine": 264,
+      "text": "  const bool use_direct_launch =\n      native_hosts_executables_launch_directly &&\n      command_line.GetProgram().MatchesFinalExtension(L\".exe\");",
+      "textSHA256": "cac19162086ecdd1e0c6a94cd6f4f5d825301b3cca61c59d30bef75c6a4dad10"
+    },
+    "policyDefault": {
+      "sourceURL": "https://raw.githubusercontent.com/chromium/chromium/refs/tags/155.0.8059.84/components/policy/resources/templates/policy_definitions/Miscellaneous/NativeHostsExecutablesLaunchDirectly.yaml",
+      "sourceBytes": 1160,
+      "sourceSHA256": "c03d855e83731ec44ef7b2447d4a2e3d5f5058c9b6afcacab9833452291183c0",
+      "startLine": 2,
+      "text": "default: null",
+      "textSHA256": "e300b0ab453aa642611ea321ee4ac1b742f04f68071b6004e4c7e073ee5ba359"
+    }
+  }
+}

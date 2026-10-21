@@ -130,6 +130,7 @@ namespace CMspark.CockpitBridge.TestOnly {
       Require(!Directory.Exists(temporary)); Directory.CreateDirectory(temporary); DirectoryPath(temporary);
       SortedDictionary<string, string> fields = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
       fields.Add("SystemRoot", systemRoot); fields.Add("WINDIR", systemRoot); fields.Add("PATH", Path.Combine(systemRoot, "System32")); fields.Add("TEMP", temporary); fields.Add("TMP", temporary);
+      fields.Add("ComSpec", Path.Combine(systemRoot, "System32", "cmd.exe"));
       StringBuilder result = new StringBuilder(); foreach (KeyValuePair<string, string> field in fields) result.Append(field.Key).Append('=').Append(field.Value).Append('\0');
       return result.Append('\0').ToString();
     }

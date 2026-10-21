@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- Refs #723：固定 Chrome Job 环境补入由同 SystemRoot 派生的 ComSpec，满足 CFT155 支持的 Native Messaging legacy 启动分支；保留原五字段、排序／双 NUL、固定 argv、隔离及 45 秒。新增实际源生产器与固定155消费者的惰性正负控，不继承任意父环境或覆盖 feature/policy；当前原生首错仍 UNKNOWN。
+
 - Refs #723：补齐首个身份 controller 实际调用的 Job builder，两项 `/main` 分别等待原编译进程并读取自身 ExitCode；现有前置编译控制增加实际 Job 源正控及两项分别缺失 Main 的数值退出负控，不执行产物。原 45 秒、身份重编译和后续门保留，未认定当前 first-identity 失败原因。
 
 - Refs #723：固定 csc 构建、framing 编译和 framing EXE 分别直接等待原 Process 并读取其真实退出码，不再依赖可能未设置或陈旧的 PowerShell 自动变量。原编译参数、拒绝、摘要和后续原生门保留；前置接入同 PS5.1／同编译器的好、坏源码必需控制，不执行其 EXE。当前仍需真实 Windows 验收，不据此认定历史 csc 分类或旧注册失败唯一原因。

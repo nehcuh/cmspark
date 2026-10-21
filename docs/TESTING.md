@@ -26,6 +26,8 @@ Windows／跨平台变更先读 [Windows 开发与失败定位](windows-developm
 
 ### #723 D2 固定 native bridge 首门
 
+`cockpit-chrome-job-env-723.test.ts` 对实际 C# EnvironmentBlock 完整方法做有限源码降级，核六字段、固定 ComSpec、受污染父环境、排序和 UTF-16 双 NUL；固定155主源片段保留 URL/字节/hash，核 managed/default feature 选择与 legacy 缺 ComSpec 拒绝。控制不执行 C#/C++/Win32 或 Chrome，不证明当前实际 feature/policy。原真实 PS5.1 编译正控自动复制当前 C#，原 first-identity 独立重编译／45 秒和全部原生断言保留。
+
 [首个身份纵向说明](browser-native-bridge.md) 区分源码/惰性 CPU、C# framing/owned 注册与真实 document→parent pipe/HWND→当前 owner/认证 WS 的验收。Windows smoke 仅在原全部步骤末尾追加 `run-cockpit-bridge-first.ps1` gating step，复用 `.test-dist/src`、构建当前候选扩展；固定 CFT pin 未具备完整归档/EXE 证明时先失败为 NOT_READY。新供应器只用一次 600000 ms 网络准备，无 redirect/retry，不改变原 45 秒 native 或 5000 ms bind。所有新增子进程使用显式环境、owned npm 配置/cache；C# framing、注册负控、document receipt CPU 在真实 controller 之前，Job CPU 在 controller 内只执行一次。惰性 ZIP/生命周期控不称浏览器/原生通过，mask/opaque scope 仍未实现，整张 #723 不因此关闭。
 
 ### Windows 选夹的短名与长名
