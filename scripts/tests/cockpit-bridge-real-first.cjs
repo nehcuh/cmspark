@@ -128,23 +128,37 @@ test('actual Chrome document native parent / actual authenticated WS first ident
     const child = track(cp.spawn(powershell, ['-NoProfile', '-NonInteractive', '-File', script, ...args], { env: childEnvironment, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }))
     // Join the real close even if abort/error wins the ordinary result wait.
     const actuallyClosed = new Promise(resolve => child.once('close', resolve))
+    // A raw-sink setup refusal can precede the ordinary result await. Keep a
+    // later spawn error handled; the original result is still awaited below.
+    closes.get(child).catch(() => {})
     const label = 'operator-' + children.length
-    const streams = [child.stdout, child.stderr].map((stream, index) => {
-      const file = fs.openSync(path.join(root, label + (index ? '.stderr' : '.stdout')), 'wx', 0o600)
-      let size = 0; stream.on('data', evidence.callback(27, bytes => { size += bytes.length; fs.writeSync(file, bytes); if (size > 1048576) child.kill() }))
-      return { file, stream }
-    })
+    const streams = []
     try {
+      for (const [index, stream] of [child.stdout, child.stderr].entries()) {
+        const file = fs.openSync(path.join(root, label + (index ? '.stderr' : '.stdout')), 'wx', 0o600)
+        streams.push({ file, stream })
+        let size = 0; stream.on('data', evidence.callback(27, bytes => { size += bytes.length; fs.writeSync(file, bytes); if (size > 1048576) child.kill() }))
+      }
       const result = cleanup ? await evidence.wait(28, () => (closes.get(child))) : await evidence.wait(29, () => (aborted(signal, (resolve, reject) => {
         closes.get(child).then(resolve, reject); return () => {}
       })))
       evidence.check(30, () => (assert.equal(result.code, 0, 'COCKPIT_BRIDGE_OWNED_INSTALL_REFUSED')))
     } finally {
-      if (!cleanup && signal.aborted && child.exitCode === null && child.signalCode === null) {
-        try { child.kill() } catch { /* actual close remains mandatory; a kill request is not proof */ }
+      const requestStop = () => {
+        if (child.exitCode === null && child.signalCode === null) {
+          try { child.kill() } catch { /* actual close remains mandatory; a kill request is not proof */ }
+        }
       }
-      await evidence.wait(31, () => (actuallyClosed))
-      for (const entry of streams) fs.closeSync(entry.file)
+      // Setup can fail before the ordinary abort-aware wait. Keep that same
+      // signal effective until real close, including an abort arriving later.
+      if (!cleanup) signal.addEventListener('abort', requestStop, { once: true })
+      try {
+        if (!cleanup && signal.aborted) requestStop()
+        await evidence.wait(31, () => (actuallyClosed))
+      } finally {
+        if (!cleanup) signal.removeEventListener('abort', requestStop)
+        for (const entry of streams) fs.closeSync(entry.file)
+      }
     }
   }
   const messages = [], observers = new Set()
@@ -154,15 +168,22 @@ test('actual Chrome document native parent / actual authenticated WS first ident
     return () => { observationDone(); observers.delete(accept) }
   }) }
   try {
-    await evidence.wait(33, () => (runPs(path.join(sourceRepo, 'scripts/build-cockpit-native-bridge.ps1'), ['-OutputDirectory', path.join(install, 'bin')])))
+    const jobBuild = path.join(root, 'job-build'); fs.mkdirSync(jobBuild)
+    // Both fixed build-only helpers stay inside this test/lease. Join actual
+    // close (including a failed sibling) before starting any server or desktop work.
+    await evidence.wait(33, () => Promise.allSettled([
+      runPs(path.join(sourceRepo, 'scripts/build-cockpit-native-bridge.ps1'), ['-OutputDirectory', path.join(install, 'bin')]),
+      evidence.wait(36, () => (runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild]))),
+    ]).then(builds => {
+      if (builds[0].status === 'rejected') throw builds[0].reason
+      if (builds[1].status === 'rejected') throw builds[1].reason
+    }))
     const secret = randomBytes(32).toString('hex')
     admitChild()
     server = track(cp.fork(serverFile, [], { env: childEnvironment, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }))
     server.on('message', evidence.callback(34, value => { messages.push(value); if (value?.type === 'bridge-state' && value.state === 'verified') verified = value.count; for (const accept of observers) accept(value) }))
     server.send({ type: 'init', secret })
     await evidence.wait(35, () => (waitMessage(value => value?.type === 'ready')))
-    const jobBuild = path.join(root, 'job-build'); fs.mkdirSync(jobBuild)
-    await evidence.wait(36, () => (runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild])))
     admitChild()
     const cpu = track(cp.spawn(path.join(jobBuild, 'cockpit-chrome-job-cpu.exe'), [], { env: childEnvironment, stdio: ['ignore', 'pipe', 'pipe'] }))
     retainOutput(cpu, 'job-cpu')

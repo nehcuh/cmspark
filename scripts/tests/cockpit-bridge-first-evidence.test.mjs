@@ -87,7 +87,7 @@ if (process.argv[2] === '--producer') {
   function coverage(text) {
     const ast = ts.createSourceFile('actual-controller.cjs', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
     assert.equal(ast.parseDiagnostics.length, 0)
-    const uses = new Map(), awaits = [], assertions = [], methods = { await: ['wait'], assert: ['assert', 'check'], 'event-callback': ['callback'], 'promise-callback': ['callback'], 'named-event-callback': ['callback'], 'top-sync': ['sync'], 'outer-surface': ['surfaceWait'], 'prearmed-positive': ['arm'], 'physical-escape': ['refuse'], 'body-sync': ['sync'], 'main-escape': ['primary'], 'action-escape': ['primary'] }
+    const positions = new Set(), uses = new Map(), awaits = [], assertions = [], buildJoins = [], methods = { await: ['wait'], assert: ['assert', 'check'], 'event-callback': ['callback'], 'promise-callback': ['callback'], 'named-event-callback': ['callback'], 'top-sync': ['sync'], 'outer-surface': ['surfaceWait'], 'prearmed-positive': ['arm'], 'physical-escape': ['refuse'], 'body-sync': ['sync'], 'main-escape': ['primary'], 'action-escape': ['primary'] }
     function walk(node, checked = false) {
       if (ts.isAwaitExpression(node)) {
         assert.ok(ts.isCallExpression(node.expression) && ['evidence.wait', 'evidence.surfaceWait'].includes(node.expression.expression.getText(ast)), 'every actual await keeps its observation boundary')
@@ -95,9 +95,16 @@ if (process.argv[2] === '--producer') {
       }
       if (ts.isCallExpression(node)) {
         const name = node.expression.getText(ast)
+        if (name === 'Promise.allSettled') buildJoins.push(node)
         assert.ok(!/^assert\./.test(name) || checked, 'no escaping original assertion loses its wrapper')
         if (/^evidence\.(wait|assert|check|callback|sync|surfaceWait|arm|refuse|fallback|primary)$/.test(name)) {
           const id = Number(node.arguments[0]?.getText(ast)); assert.ok(Object.hasOwn(sites.sites, id))
+          // The outer fallback deliberately refers to its enclosing site87.
+          if (name !== 'evidence.fallback') {
+            assert.equal(positions.has(id), false); positions.add(id)
+            const point = ast.getLineAndCharacterOfPosition(node.getStart(ast))
+            assert.deepEqual(sites.sites[id], [point.line + 1, point.character + 1])
+          }
           const list = uses.get(id) || []; list.push(name.slice(9)); uses.set(id, list)
           if (name === 'evidence.assert' || name === 'evidence.check') assertions.push(node)
         }
@@ -105,18 +112,25 @@ if (process.argv[2] === '--producer') {
       ts.forEachChild(node, child => walk(child, checked || (ts.isCallExpression(node) && node.expression.getText(ast) === 'evidence.check')))
     }
     walk(ast)
-    assert.equal(awaits.length, 29); assert.equal(assertions.length, 29)
+    assert.equal(positions.size, 92)
+    assert.equal(buildJoins.length, 1)
+    const tuple = buildJoins[0].arguments[0]
+    assert.equal(buildJoins[0].arguments.length, 1); assert.ok(ts.isArrayLiteralExpression(tuple)); assert.equal(tuple.elements.length, 2)
+    assert.equal(tuple.elements[0].getText(ast), "runPs(path.join(sourceRepo, 'scripts/build-cockpit-native-bridge.ps1'), ['-OutputDirectory', path.join(install, 'bin')])")
+    assert.equal(tuple.elements[1].getText(ast), "evidence.wait(36, () => (runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild])))")
+    assert.equal(awaits.length, 28); assert.equal(assertions.length, 29)
     for (const [id, kind] of Object.entries(sites.kinds)) assert.ok(uses.get(Number(id))?.some(method => methods[kind]?.includes(method)), 'closed site must retain its actual source wrapper: ' + id)
     assert.ok(text.includes('const positive = evidence.arm(')); assert.ok(text.includes('const observationDone = evidence.dependency()'))
     assert.ok(text.includes('evidence.surface(1)')); assert.ok(text.includes('finally { evidence.surface(2) }'))
   }
   test('whole actual source keeps escaping/await/callback coverage with LF and CRLF', () => {
+    assert.equal(sites.sourceSHA256, createHash('sha256').update(controller.replaceAll('\r\n', '\n')).digest('hex'))
     coverage(controller.replaceAll('\r\n', '\n')); coverage(controller.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'))
     const shared = fs.readFileSync(new URL('../../companion/tests/fixtures/native-surface-650.ts', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
     assert.equal(createHash('sha256').update(shared).digest('hex'), 'bb4099db59ba888505c134f1771985712f0cb99f1a6f2bf56b86dff96b76e645')
   })
   test('actual coverage rejects omitted wrappers, prearmed observation and surface completion', () => {
-    for (const mutation of [controller.replace('await evidence.wait(', 'await omittedWait('), controller.replace('evidence.check(1,', 'omittedCheck(1,'), controller.replace('evidence.callback(', 'omittedCallback('), controller.replace('evidence.arm(', 'omittedArm('), controller.replace('finally { evidence.surface(2) }', 'finally { void 0 }')]) assert.throws(() => coverage(mutation))
+    for (const mutation of [controller.replace('await evidence.wait(', 'await omittedWait('), controller.replace('evidence.check(1,', 'omittedCheck(1,'), controller.replace('evidence.callback(', 'omittedCallback('), controller.replace('evidence.wait(36,', 'omittedWait(36,'), controller.replace('Promise.allSettled(', 'Promise.all('), controller.replace('evidence.arm(', 'omittedArm('), controller.replace('finally { evidence.surface(2) }', 'finally { void 0 }')]) assert.throws(() => coverage(mutation))
   })
   for (const [caseName, cpuReceipt, code] of [['malformed', '{', 'SYNC_REFUSED'], ['null', 'null', 'CHECK_REFUSED']]) test('actual CPU JSON parse or argument failure freezes before cleanup: ' + caseName, () => {
     const ast = ts.createSourceFile('actual-controller.cjs', controller, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
@@ -136,7 +150,14 @@ if (process.argv[2] === '--producer') {
       observer.cleanup(); observer.fallback(1, 'AWAIT_REFUSED'); observer.complete(false)
       const record = api.decode(Buffer.concat(frames))
       assert.equal(failed, true); assert.equal(record.first.code, code); assert.equal(record.completion.cleanupFirst, null)
-      assert.equal(sites.sites[record.first.site][0], 168)
+      let actualSite
+      function locate(node) {
+        if (ts.isCallExpression(node) && node.expression.getText(ast) === (caseName === 'malformed' ? 'evidence.sync' : 'evidence.check') && Number(node.arguments[0]?.getText(ast)) === (caseName === 'malformed' ? 41 : 42)) actualSite = node
+        ts.forEachChild(node, locate)
+      }
+      locate(ast); assert.ok(actualSite)
+      const point = ast.getLineAndCharacterOfPosition(actualSite.getStart(ast))
+      assert.deepEqual(sites.sites[record.first.site], [point.line + 1, point.character + 1])
   })
   test('default writer accepts actual Windows Stats pipe/socket modes and refuses other sinks', () => {
     // Execute installed Node's real predicates with their Windows binding;
