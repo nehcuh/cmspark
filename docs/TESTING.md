@@ -30,6 +30,10 @@ Windows 原 Node 标量九项之后、Registry 和完整 census 之前，运行�
 
 ### #723 首个 Windows 窗口身份门：失败证据
 
+新增 `cockpit-bridge-first-evidence.test.mjs` 的源派生 Windows Stats 正控：实际安装 Node 的 mode 检查函数在 Windows 绑定下仍须让原 fd3 FIFO 产生完整完成帧；普通文件、设备、未知／非整数 mode 与写入失败仍拒绝或保持原结果。POSIX 实际 fd3／Node:test 测试不是 Windows 通过，新 head 的真实 Windows 控制不可跳过。
+
+`coding-history-connection-732.test.ts` 执行实际 `handleStateChange` 时显式绑定惰性 bridge 断线接口，并核它仅随断线被调用。原八项历史／聊天／围栏控制不变；移除真实断线调用的源变体应令新增控制失败。此处不是浏览器、原生 host 或真人授权证明。
+
 `COCKPIT_BRIDGE_FIRST_IDENTITY_INCOMPLETE` 保留原阶段名；同次 `COCKPIT_BRIDGE_FIRST_FAILURE` 仅给出固定步骤、真实 close/退出、输出字节数、有限 PS 源角色／行列／检查序号及 C# 错误代码／framing 检查数。原始输出仍只在 owned 临时文件中，公开回执不包含正文、路径、命令、环境或 Registry 值；格式未知、超限或身份变化时证据为 unavailable，不改变原失败。
 
 `registration-framing` 也覆盖 PS 成功后的 receipt 数量断言，不能单凭阶段名判定 PS／C#／Registry 或 pipe 根因。子进程 exit0 后的控制器拒绝与子进程失败分别记录。此证据修复不是原生注册修复；完整 canonical、原有 Windows 回归和真实 Chrome pipe／PID／HWND 身份门仍须实际通过。不得据新回执延时、重试、跳过断言或启用遮罩。

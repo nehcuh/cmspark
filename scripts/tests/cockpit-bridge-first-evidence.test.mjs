@@ -138,6 +138,47 @@ if (process.argv[2] === '--producer') {
       assert.equal(failed, true); assert.equal(record.first.code, code); assert.equal(record.completion.cleanupFirst, null)
       assert.equal(sites.sites[record.first.site][0], 168)
   })
+  test('default writer accepts actual Windows Stats pipe/socket modes and refuses other sinks', () => {
+    // Execute installed Node's real predicates with their Windows binding;
+    // these methods intentionally report false for FIFO/socket on Windows.
+    const bindings = { ...fs.constants, S_IFBLK: fs.constants.S_IFBLK, S_IFSOCK: fs.constants.S_IFSOCK, isWindows: true }
+    const methods = Object.fromEntries(['_checkModeProperty', 'isFIFO', 'isSocket'].map(name =>
+      [name, vm.runInNewContext('(' + fs.Stats.prototype[name].toString() + ')', bindings)]))
+    const helper = fs.readFileSync(new URL('./cockpit-bridge-first-evidence.cjs', import.meta.url), 'utf8')
+    function observe(mode, behavior = 'write') {
+      const stat = { mode, ...methods }, frames = [], calls = [], module = { exports: {} }
+      vm.runInNewContext(helper, { module, Buffer, require(name) {
+        if (name === './cockpit-bridge-first-sites.cjs') return sites
+        assert.equal(name, 'node:fs')
+        return { constants: fs.constants,
+          fstatSync(fd) { assert.equal(fd, 3); if (behavior === 'stat-throws') throw Error('STAT_REFUSED'); return stat },
+          writeSync(fd, bytes) { assert.equal(fd, 3); calls.push(bytes.length)
+            if (behavior === 'write-throws') throw Error('WRITE_REFUSED')
+            if (behavior === 'short') return bytes.length - 1
+            frames.push(Buffer.from(bytes)); return bytes.length },
+        }
+      } })
+      const observer = module.exports.createObserver()
+      observer.complete(true)
+      return { stat, calls, record: api.decode(Buffer.concat(frames)) }
+    }
+    assert.equal(Number.isInteger(fs.constants.S_IFMT), true)
+    assert.equal(Number.isInteger(fs.constants.S_IFIFO), true)
+    // S_IFSOCK is conditionally exported by Node; do not invent it on Windows.
+    const acceptedModes = [fs.constants.S_IFIFO]
+    if (Number.isInteger(fs.constants.S_IFSOCK)) acceptedModes.push(fs.constants.S_IFSOCK)
+    for (const mode of acceptedModes) {
+      const result = observe(mode)
+      assert.equal(result.stat.isFIFO(), false); assert.equal(result.stat.isSocket(), false)
+      assert.equal(result.record.completion.ok, true); assert.equal(result.calls.length, 1)
+    }
+    for (const mode of [fs.constants.S_IFREG, fs.constants.S_IFCHR, 0, -1, 4096.5, undefined, NaN, '4096']) {
+      const result = observe(mode); assert.equal(result.record, null); assert.equal(result.calls.length, 0)
+    }
+    for (const behavior of ['stat-throws', 'write-throws', 'short']) {
+      const result = observe(fs.constants.S_IFIFO, behavior); assert.equal(result.record, null)
+    }
+  })
   async function produce(mode, broken = false) {
     const childArgs = []
     // Local inert harness may explicitly preload its own CPU-only deny guard.

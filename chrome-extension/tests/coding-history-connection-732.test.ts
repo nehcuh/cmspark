@@ -43,14 +43,14 @@ async function actualRows(live: boolean) {
 function fixture(ending = "\n", flags: { open?: boolean; enabled?: boolean } = {}) {
   let state = agentReducer(agentReducer(initialState, { type: "SET_ACTIVE_THREAD", threadId: "owner" }), { type: "SET_CONNECTION", state: "connected" })
   state = agentReducer(state, { type: "ACP_SESSION_EVENT", event })
-  const dispatch = (a: any) => { state = agentReducer(state, a) }, wire: any[] = []; let dependencies: unknown[] | undefined, sequence = 0
+  const dispatch = (a: any) => { state = agentReducer(state, a) }, wire: any[] = []; let dependencies: unknown[] | undefined, sequence = 0, nativeDisconnects = 0
   const hook = syntax(files.hook, ending), panel = syntax(files.panel, ending), background = syntax(files.background, ending)
   const branch = exact(hook, n => ts.isIfStatement(n) && n.expression.getText(hook) === 'msg.type === "thread.mutation.connection"')
   const effect = exact(panel, n => ts.isExpressionStatement(n) && ts.isCallExpression(n.expression) && n.expression.expression.getText(panel) === "useEffect" && n.getText(panel).includes('type: "acp.sessions.list"'))
   const context = { dispatch, workspaceHintsRef: { current: { select() {}, observe() {}, view() { return null } } }, activeThreadRef: { current: "owner" }, workspaceHintSelectionRef: { current: 1 }, clearCodingOperationFeedback() {} }
   const route = compile(`export function consume(msg){${branch}}`, context).consume
   const producer = exact(background, n => ts.isFunctionDeclaration(n) && n.name?.text === "handleStateChange")
-  const emit = compile(`export ${producer}`, { updateBadge() {}, chrome: { runtime: { sendMessage(message: unknown) { route(message); return Promise.resolve() } } }, scheduleDisconnectNotification() {}, clearGraphRequests() {}, cancelDisconnectNotification() {}, clearDisconnectedNotification() {}, wsClient: { send() {} } }).handleStateChange
+  const emit = compile(`export ${producer}`, { updateBadge() {}, cockpitNativeRelay: { disconnect() { nativeDisconnects++ } }, chrome: { runtime: { sendMessage(message: unknown) { route(message); return Promise.resolve() } } }, scheduleDisconnectNotification() {}, clearGraphRequests() {}, cancelDisconnectNotification() {}, clearDisconnectedNotification() {}, wsClient: { send() {} } }).handleStateChange
   const render = () => compile(`export function install(){${effect}}`, { state, open: flags.open !== false, threadId: "owner", storeAcpEnabled: flags.enabled !== false, session: selectCodingSession(state), dispatch,
     crypto: { randomUUID: () => `connection-${++sequence}` }, chrome: { runtime: { lastError: undefined, sendMessage(message: unknown, done: () => void) { wire.push(message); done() } } },
     useEffect(fn: () => void, next: unknown[]) { if (!dependencies || next.some((value, i) => !Object.is(value, dependencies![i]))) { dependencies = next; fn() } },
@@ -59,7 +59,7 @@ function fixture(ending = "\n", flags: { open?: boolean; enabled?: boolean } = {
     const frame = wire[index], result = await actualRows(live)
     dispatch({ type: "ACP_HISTORY_RESULT", message: { type: "acp.sessions.list_result", thread_id: frame.thread_id, request_id: frame.request_id, ...result, ...patch } })
   }
-  return { get state() { return state }, wire, route, emit, render, dispatch, deliver }
+  return { get state() { return state }, get nativeDisconnects() { return nativeDisconnects }, wire, route, emit, render, dispatch, deliver }
 }
 
 test("#732 management connection observations preserve chat, while the existing status action still clears disconnected work", async () => {
@@ -132,4 +132,17 @@ test("#732 ordinary explicit polling transition still refreshes history; duplica
   const f = fixture(); f.render(); f.dispatch({ type: "SET_CONNECTION", state: "disconnected" }); f.render()
   f.dispatch({ type: "SET_CONNECTION", state: "connected" }); f.render(); assert.equal(f.wire.length, 2)
   f.dispatch({ type: "SET_CONNECTION", state: "connected" }); f.render(); assert.equal(f.wire.length, 2)
+})
+
+// The actual background connection producer now has two independent consumers.
+// This inert required binding keeps the history fixture honest without starting
+// the native host or replacing either consumer's production behavior.
+test("#732/#723 actual connection producer notifies native relay only on disconnect", () => {
+  for (const ending of ["\n", "\r\n"]) {
+    const f = fixture(ending)
+    f.emit("connected"); f.emit("connecting"); assert.equal(f.nativeDisconnects, 0)
+    f.emit("disconnected"); assert.equal(f.nativeDisconnects, 1)
+    f.emit("connected"); assert.equal(f.nativeDisconnects, 1)
+    f.emit("disconnected"); assert.equal(f.nativeDisconnects, 2)
+  }
 })

@@ -57,3 +57,9 @@ Registry／#732 已认识过 8.3 差异，但未把这个已证类别升级为�
 ## Chrome 原生 DTO 与完整集合证明
 
 同名或说明中同称 UUID 的字段不保证同一序列化形状。先逐字段追固定版本的实际 producer → serializer → consumer，再生成正负 fixture：Chromium 155 的 contextId、documentId 与非 tab Port.sender 分属不同域，不能手工拼成一个不存在的“完整回执”。原生枚举的完整集合也不能在计数前丢掉旧候选；两个未知 profile 的相等不是已知同源正证。源派生 CPU 控制仍不是浏览器实测，也不解释所有历史 UNKNOWN；变更后的原完整业务和真实原生门继续保留。
+
+## Node22 Windows pipe 类型与实际源码消费者
+
+Node22 的 `Stats.isFIFO()`／`isSocket()` 在 Windows 上会固定返回 false，不能据此认定 `fstat` 得到的 fd3 不是管道；同版 libuv 会将实际 named pipe 的 mode 标为 FIFO。有限观察器只接受整数 mode 中真实 S_IFMT 对应的 FIFO／已导出的 SOCK 类型，继续拒绝普通文件、目录、字符设备与未知类型，不按平台无条件放行。可选常量未导出不应在 fixture 中手造；源派生正控应执行实际安装 Node 的 Stats 函数并保持 Windows FIFO 正控必需。参考 [Node22 Stats 实现](https://github.com/nodejs/node/blob/v22.23.2/lib/internal/fs/utils.js#L539-L545) 与 [同版 libuv fstat](https://github.com/nodejs/node/blob/v22.23.2/deps/uv/src/win/fs.c#L2200-L2220)。这是此次新增观察器回归的因果修复，不是历史窗口身份失败原因的证明。
+
+修改实际函数的依赖时，须找全提取该函数的 AST／VM 消费者，不能只验证改动附近的 switch。`handleStateChange` 加入 bridge 断线消费者后，历史连接测试必须显式绑定这个惰性接口，并用真实函数调用次数证明断线通知；原历史、聊天、owner/request/selection 断言不能删除或放松。只读源合并无冲突与类型绿都不能代替这类实际消费者执行。

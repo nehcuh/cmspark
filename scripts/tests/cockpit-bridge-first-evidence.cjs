@@ -6,7 +6,14 @@ const LIMIT = 4096, CODES = new Set(['SYNC_REFUSED', 'ASSERT_REFUSED', 'CHECK_RE
 const siteOK = site => Number.isInteger(site) && Object.hasOwn(catalogue.sites, site)
 const pendingOK = (foreground, pending) => (foreground === 0 || siteOK(foreground)) && Array.isArray(pending) && pending.length <= 128 && pending.every((site, index) => siteOK(site) && (index === 0 || pending[index - 1] < site)) && (foreground === 0 || pending.includes(foreground))
 const refusalOK = value => value !== null && Object.keys(value).join(',') === 'site,code,foreground,pending' && siteOK(value.site) && CODES.has(value.code) && pendingOK(value.foreground, value.pending)
-function createObserver(write = bytes => { const stat = fs.fstatSync(3); if (!stat.isFIFO() && !stat.isSocket()) return 0; return fs.writeSync(3, bytes) }) {
+function createObserver(write = bytes => {
+  const stat = fs.fstatSync(3)
+  if (!Number.isInteger(stat.mode)) return 0
+  // Windows Stats.isFIFO()/isSocket() return false even for libuv pipe modes.
+  const type = stat.mode & fs.constants.S_IFMT
+  if (type !== fs.constants.S_IFIFO && type !== fs.constants.S_IFSOCK) return 0
+  return fs.writeSync(3, bytes)
+}) {
   let first = null, cleanupFirst = null, interrupted = false, completed = false, started = false, cleanup = false, surface = 0, armed = 0, written = 0, disabled = false
   const active = new Map(); let sequence = 0
   const safe = action => { try { return action() } catch { } }
