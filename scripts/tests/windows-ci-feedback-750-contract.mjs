@@ -1,5 +1,6 @@
 // #750 finite parsed-workflow conservation; never runs a workflow command.
 import assert from 'node:assert/strict'
+import { collapseNativeStages760 } from './native-ci-stages-760-contract.mjs'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
@@ -106,6 +107,7 @@ function cache750(step, nodeVersion) {
 
 export function validateWindowsCiFeedback750(text) {
   const doc = yaml.load(text)
+  doc.jobs['smoke-os'].steps = collapseNativeStages760(doc.jobs['smoke-os'].steps)
   assert.equal(digest(omit(doc, ['jobs'])), baseline.workflowWithoutJobs)
   assert.deepEqual(Object.keys(doc.jobs).sort(), ['acp-history-restart', 'build', 'smoke-os'])
   // #759 accepts only the exact reviewed security-pin delta; the historical
@@ -145,7 +147,7 @@ export function validateWindowsCiFeedback750(text) {
     let conserved = omit(step, ['if'])
     if (old.key === 'Setup Node.js') conserved = { ...conserved, with: { ...omit(conserved.with, ['cache-dependency-path']), 'node-version': '22.23.2' } }
     if (old.key === NSIS) {
-      assert.equal(step.run, 'node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/node-security-runtime-759.test.mjs')
+      assert.equal(step.run, 'node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/node-security-runtime-759.test.mjs scripts/tests/native-ci-stages-760.test.mjs')
       conserved = { ...conserved, run: 'node --test scripts/tests/nsis-ci-setup.test.mjs' }
     }
     assert.equal(digest(conserved), old.objectWithoutIf, 'original command/body/env/failure/artifact changed: ' + old.key)
