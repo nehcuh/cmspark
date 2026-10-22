@@ -343,7 +343,7 @@ function assertCensusSchedule(raw) {
   const early = steps.findIndex(s => s.name === 'Pinned NSIS dependency transport and integrity (#633)')
   assert.equal(early, steps.findIndex(s => s.name === 'Install + build companion') + 1)
   assert.ok(early < steps.findIndex(s => s.name === 'Build fixed no-autofocus UIA DLL (#572)'))
-  assert.deepEqual(steps[early], { name: 'Pinned NSIS dependency transport and integrity (#633)', run: 'node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/node-security-runtime-759.test.mjs' })
+  assert.deepEqual(steps[early], { name: 'Pinned NSIS dependency transport and integrity (#633)', run: 'node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/node-security-runtime-759.test.mjs scripts/tests/native-ci-stages-760.test.mjs' })
   const [compile, registry, census, artifact, office] = steps.slice(i - 1, i + 4)
   assert.deepEqual(compile, { name: names[i - 1], id: 'windows-census-compile', shell: 'bash', run: 'cd companion\nnpx tsc -p tsconfig.test.json\n' })
   assert.equal(registry.id, 'windows-registry-prerequisites')

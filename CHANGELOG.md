@@ -14,6 +14,8 @@
 
 - Security (#759): upgrade packaged Node, all CI/release jobs, native build headers/import library and the digest-pinned validation image to Node 22.23.4 for the [2026-10-21 Node security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). Development engines now require `>=22.23.4 <23`; Windows SEA and native packaging require exact 22.23.4. Windows SEA resolves one executable and reuses it for validation, direct Node build calls and the embedded base. Node 24/26 are not yet qualified. This runtime security update does not establish the cause of existing Windows native CI failures. Product version remains 0.6.14 (unreleased).
 
+- CI (#760): report native fixture build, test compilation, bootstrap/process acceptance and desktop interaction acceptance as separate ordered steps, preserving commands, failure handling, Windows/macOS checks and all native assertions. This improves failure attribution without claiming the outstanding Windows failures are fixed.
+
 - Refs #723/#755: bind the native-host registrar’s six filesystem reads to the built-in PowerShell Management module after a bounded Windows command-resolution comparison; retain ownership, reparse checks and cleanup. Native full-flow acceptance remains required.
 
 - Windows CI (#723): add one human-approved, bounded phase/checkpoint observation for the first-identity gate; preserve build120/runtime-cleanup45, original results and 4096-byte finite evidence cap. Unknown intervals remain unknown.

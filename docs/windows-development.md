@@ -139,3 +139,12 @@ CI, Windows SEA packaging and native builds use exact Node 22.23.4, including ma
 用户明确要求移除不稳定的首次身份验收合并条件。仅删除 `run-cockpit-bridge-first.ps1` 自动调用及其专属失败上传；保留脚本、源码/CPU 控制、独立验收的原编译120秒与运行/清理45秒以及全部身份断言。其余 Windows 原生、全量 census、macOS 与构建检查保持。以上旧门禁记录是历史，不表示该调用仍在自动 CI 中。
 
 最新 head `3980ccbc` 的回执是 `CODE_FAILURE`、site48，即 controller 第241行获取 Chrome DevTools 连接地址的 await 拒绝；尚未连接 WebSocket、注册 host 或验证身份。具体底层拒绝原因仍 UNKNOWN，不能沿用此前 TIMEOUT 或 Get-FileHash 归因。移出 CI 是验收范围调整，#723 仍未完成；CI 通过不能作为该功能可用或可发布的证据。
+
+
+## CI 原生验收分层（#760）
+
+原先一个步骤包含的四组命令，现按原顺序分别显示：`Build native desktop fixtures (#480)`、`Compile native desktop acceptance tests (#480)`、`Native desktop bootstrap and process acceptance (#480)`、`Native desktop interaction acceptance (#476)`。每步保留相同 OS 条件与 bash 失败退出；任一步失败，后续正常步骤不运行，原 job/check 名和合并验收要求不变。阶段名用于区分构建、编译、进程/协议和桌面交互的失败，不代表每个混合测试文件已进一步拆成单一类别。
+
+编译、协议、Windows HANDLE/进程与资源清理仍是必需验收。前台、键盘、原生确认等交互用例只有在证明当前环境不满足具体前提后，才考虑迁到经过验证的专用交互 runner，并保留同一提交/产物的必需结果。GitHub Windows 并非天然无法运行图形测试；[微软提供了 windows-latest UI 示例](https://learn.microsoft.com/en-us/windows/apps/develop/ai-assisted/testing#run-tests-in-ci)，但它不保证本项目所有 Win32 焦点前提。
+
+输入框未创建、进程异常退出、身份或清理未完成仍按失败处理。此分层没有移除测试、放宽断言/时限、增加重试或启用 continue-on-error，也不宣称修复 #705/#747/#723 的原生根因。
