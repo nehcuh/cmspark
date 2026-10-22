@@ -12,7 +12,7 @@ $entry = [IO.Path]::Combine($root, 'cmspark-agent.js')
 # agent mode. Reject --eval/--require, relative paths, substring matches and
 # scripts passed as data to unrelated programs. Windows paths cannot contain ".
 $commandPattern = '^\s*(?:"[^"]+"|\S+)\s+(?:"(?<script>[^"]+)"|(?<script>\S+))\s+(?:tray|daemon|start)(?:\s|$)'
-Get-CimInstance Win32_Process | ForEach-Object {
+Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'cmspark-agent.exe'" | ForEach-Object {
     if (($_.Name -ne 'node.exe' -and $_.Name -ne 'cmspark-agent.exe') -or -not $_.ExecutablePath) { return }
     $owned = $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)
     if (-not $owned -and $_.Name -eq 'node.exe' -and $_.CommandLine) {

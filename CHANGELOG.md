@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Windows installer (#764): request only `node.exe` and `cmspark-agent.exe` candidates from CIM before applying the unchanged installation ownership and system-Node script/mode checks. Preserve the complete NSIS/ZIP stop and sibling-survival regressions and their existing time limits. This reduces returned candidates; it does not establish the unique cause of earlier enumeration timeouts.
+
 - Fix (#480): verify the sibling inheritance fixture with parent-side kernel-object identities before resuming its suspended checker. Preserve raw exit masks separately: reused numeric slots do not prove protected pipe/process inheritance. Real leaks, missing/unknown identity evidence and checker/cleanup failures still reject. Historical failing-slot identity remains UNKNOWN; native gates and time budgets are unchanged.
 
 - Fix (#476): compare desktop history file identities as exact 64-bit integers before reading the opened transcript. Distinct device/inode values must not become equal through JavaScript Number rounding. Retain the real replacement regression and add large-identity acceptance/refusal controls; no CI gate or timeout is changed.

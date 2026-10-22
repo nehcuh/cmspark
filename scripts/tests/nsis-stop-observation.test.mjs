@@ -12,6 +12,7 @@ import * as observation from './nsis-stop-observation.mjs'
 const repo = fileURLToPath(new URL('../../', import.meta.url))
 const modulePath = fileURLToPath(new URL('./nsis-stop-observation.mjs', import.meta.url))
 const original = fs.readFileSync(path.join(repo, 'companion/stop-installed-agent.ps1'))
+const filteredQuery = "Get-CimInstance Win32_Process -Filter \"Name = 'node.exe' OR Name = 'cmspark-agent.exe'\" | ForEach-Object {"
 const installer = fs.readFileSync(path.join(repo, 'scripts/installer.nsi'), 'utf8')
 const originalMacro = Buffer.from(installer.match(/^!macro StopInstalledAgentUnshared\r?\n[\s\S]*?^!macroend/gm)[0])
 const insideName = "space 中文 & O'Brien ! (test)"
@@ -31,7 +32,7 @@ test('observed helper inverses the complete actual production bytes, BOM and CRL
     const observed = buildObservedHelper(bytes)
     assert.ok(observed.subarray(0, 3).equals(Buffer.from([239, 187, 191])))
     assert.deepEqual(restoreOriginalHelper(observed), bytes)
-    assert.equal((observed.toString().match(/Get-CimInstance Win32_Process \| ForEach-Object \{/g) ?? []).length, 1)
+    assert.equal(observed.toString().split(filteredQuery).length - 1, 1)
     assert.equal((observed.toString().match(/Stop-Process -Id \$_\.ProcessId -Force -ErrorAction SilentlyContinue/g) ?? []).length, 1)
     assert.match(observed.toString(), /if \(\$script:cmsparkSmokeObservationGap\) \{ exit 149 \}/)
     assert.ok(observed.toString().indexOf('phase:pipeline-return') > observed.toString().indexOf('Stop-Process -Id'))
@@ -39,7 +40,7 @@ test('observed helper inverses the complete actual production bytes, BOM and CRL
 })
 
 test('missing, duplicate and pre-instrumented anchors cannot generate a different helper', () => {
-  for (const marker of ["$ErrorActionPreference = 'Stop'", 'Get-CimInstance Win32_Process | ForEach-Object {', 'Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue']) {
+  for (const marker of ["$ErrorActionPreference = 'Stop'", filteredQuery, 'Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue']) {
     assert.throws(() => buildObservedHelper(Buffer.from(original.toString().replace(marker, 'REMOVED'))), invalid)
     assert.throws(() => buildObservedHelper(Buffer.concat([original, Buffer.from('\n' + marker)])), invalid)
   }
@@ -47,6 +48,22 @@ test('missing, duplicate and pre-instrumented anchors cannot generate a differen
   const observed = buildObservedHelper(original).toString()
   assert.throws(() => restoreOriginalHelper(Buffer.from(observed.replace('BEGIN:prelude', 'BEGIN:missing'))), invalid)
   assert.throws(() => restoreOriginalHelper(Buffer.from(observed + '\n# CMSPARK_NSIS_OBSERVE_V1_BEGIN:prelude\n')), invalid)
+})
+
+test('the observed query retains both runtime names and refuses altered candidate filters', () => {
+  // Source/observer contract only; this does not execute WQL or model CIM rows.
+  const source = original.toString()
+  const names = [...source.matchAll(/\$_\.Name -ne '([^']+)'/g)].map(match => match[1])
+  assert.deepEqual(names, ['node.exe', 'cmspark-agent.exe'])
+  const filter = filteredQuery.match(/-Filter "([^"]+)"/)[1]
+  assert.equal(filter, names.map(name => `Name = '${name}'`).join(' OR '))
+  for (const changed of [
+    filteredQuery.replace("Name = 'node.exe' OR ", ''),
+    filteredQuery.replace(" OR Name = 'cmspark-agent.exe'", ''),
+    filteredQuery.replace(' OR ', ' AND '),
+    filteredQuery.replace('Name =', 'Name LIKE'),
+    filteredQuery.replace('" |', ' AND ExecutablePath LIKE \'C:%\'" |'),
+  ]) assert.throws(() => buildObservedHelper(Buffer.from(source.replace(filteredQuery, changed))), invalid)
 })
 
 test('fresh exclusive owned preparation is incomplete and cannot substitute for stop acceptance', () => owned(root => {
