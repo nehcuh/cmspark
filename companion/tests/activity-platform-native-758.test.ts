@@ -7,9 +7,10 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
 import { withSurface650 } from './fixtures/native-surface-650'
 import { WindowsPassiveRecorder, LinuxPassiveRecorder, resolveLinuxRecorder } from '../src/activity/platform'
-import { resolvePowerShellExe, resolveWinScript, runPs } from '../src/host-use/win/powershell'
+import { resolveWinScript, runPs } from '../src/host-use/win/powershell'
 import { DEFAULT_ACTIVITY_CONFIG } from '../src/activity/types'
 import { submitReminder } from '../src/activity/adapters'
+import { buildOwnedWpf758 } from './helpers/activity-native-fixture-758'
 const exec=promisify(execFile)
 const enabled=process.env.CMSPARK_ACTIVITY_NATIVE_758==='1'
 
@@ -29,14 +30,17 @@ function receipt(file:string,child:ChildProcess,signal:AbortSignal,diagnostic:()
 }
 test('#758 actual desktop foreground identity, passive pixels and local OCR; minimized or occluded targets are refused', {skip:!enabled||!['linux','win32'].includes(process.platform),timeout:90_000}, t=>withSurface650(t,async(owned,lease)=>{
   if(process.platform==='linux')assert.equal(process.env.CMSPARK_ACTIVITY_PRIVATE_BUS_758,'1','use the owned Xvfb/private-bus driver')
+  if(process.platform==='win32'){assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.RUNNER_OS,'Windows')}
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cmspark-activity758-原生 with spaces-'))
   const win=process.platform==='win32'
-  const child=win?spawn(resolvePowerShellExe(),['-NoProfile','-NonInteractive','-STA','-ExecutionPolicy','Bypass','-File',path.resolve('tests/fixtures/activity-windows-758.ps1'),'-Directory',dir],{windowsHide:true,stdio:['ignore','ignore','pipe']}):spawn('/usr/bin/python3',[path.resolve('tests/fixtures/activity-linux-758.py'),dir],{stdio:['ignore','ignore','pipe']})
+  let binary=''
+  try{if(win)binary=await buildOwnedWpf758(dir,owned.signal)}catch(error){fs.rmSync(dir,{recursive:true,force:true});throw error}
+  const child=win?spawn(binary,[dir],{windowsHide:false,stdio:['ignore','ignore','pipe']}):spawn('/usr/bin/python3',[path.resolve('tests/fixtures/activity-linux-758.py'),dir],{stdio:['ignore','ignore','pipe']})
   let stderr=Buffer.alloc(0)
   child.stderr?.on('data',(chunk:Buffer)=>{if(stderr.length<4096)stderr=Buffer.concat([stderr,chunk.subarray(0,4096-stderr.length)])}) // keep draining after the finite prefix
   const diagnostic=()=>{
     let phase='UNKNOWN'
-    try{const value=JSON.parse(fs.readFileSync(path.join(dir,'phase.json'),'utf8'));if(['SHOW_DIALOG','CONTENT_RENDERED','CONTROL'].includes(value.phase))phase=value.phase}catch{}
+    try{const value=JSON.parse(fs.readFileSync(path.join(dir,'phase.json'),'utf8'));if(['SETUP','SHOW_DIALOG','CONTENT_RENDERED','CONTROL'].includes(value.phase))phase=value.phase}catch{}
     return JSON.stringify({phase,stderr:stderr.toString('utf8')})
   }
   lease.retain();let ended=false;const closed=new Promise<void>(resolve=>child.once('close',()=>{ended=true;resolve()}))
