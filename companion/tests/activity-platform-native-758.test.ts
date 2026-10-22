@@ -13,13 +13,17 @@ import { submitReminder } from '../src/activity/adapters'
 const exec=promisify(execFile)
 const enabled=process.env.CMSPARK_ACTIVITY_NATIVE_758==='1'
 
-function receipt(file:string,child:ChildProcess,signal:AbortSignal):Promise<any>{
+function receipt(file:string,child:ChildProcess,signal:AbortSignal,diagnostic:()=>string=()=> ''):Promise<any>{
   return new Promise((resolve,reject)=>{
     let finished=false
     const finish=(error?:unknown,value?:any)=>{if(finished)return;finished=true;clearTimeout(timer);watch.close();child.off('close',closed);signal.removeEventListener('abort',aborted);error?reject(error):resolve(value)}
-    const check=()=>{try{if(fs.existsSync(file))finish(undefined,JSON.parse(fs.readFileSync(file,'utf8')))}catch(e){finish(e)}}
-    const closed=()=>finish(Error('OWNED_ACTIVITY_FIXTURE_CLOSED')),aborted=()=>finish(signal.reason)
-    const watch=fs.watch(path.dirname(file),check),timer=setTimeout(()=>finish(Error('OWNED_ACTIVITY_FIXTURE_NOT_READY')),10_000)
+    const check=(allowReady=true)=>{try{
+      const failure=path.join(path.dirname(file),'failure.json')
+      if(fs.existsSync(failure)){const value=JSON.parse(fs.readFileSync(failure,'utf8'));finish(Error('OWNED_ACTIVITY_FIXTURE_FAILED '+JSON.stringify(value).slice(0,2048)));return}
+      if(allowReady&&fs.existsSync(file))finish(undefined,JSON.parse(fs.readFileSync(file,'utf8')))
+    }catch(e){finish(e)}}
+    const closed=()=>{check(false);if(!finished)finish(Error('OWNED_ACTIVITY_FIXTURE_CLOSED '+diagnostic()))},aborted=()=>finish(signal.reason)
+    const watch=fs.watch(path.dirname(file),()=>check()),timer=setTimeout(()=>finish(Error('OWNED_ACTIVITY_FIXTURE_NOT_READY '+diagnostic())),10_000)
     child.once('close',closed);signal.addEventListener('abort',aborted,{once:true});if(signal.aborted)aborted();else check()
   })
 }
@@ -27,12 +31,19 @@ test('#758 actual desktop foreground identity, passive pixels and local OCR; min
   if(process.platform==='linux')assert.equal(process.env.CMSPARK_ACTIVITY_PRIVATE_BUS_758,'1','use the owned Xvfb/private-bus driver')
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cmspark-activity758-原生 with spaces-'))
   const win=process.platform==='win32'
-  const child=win?spawn(resolvePowerShellExe(),['-NoProfile','-NonInteractive','-STA','-ExecutionPolicy','Bypass','-File',path.resolve('tests/fixtures/activity-windows-758.ps1'),'-Directory',dir],{windowsHide:true,stdio:'ignore'}):spawn('/usr/bin/python3',[path.resolve('tests/fixtures/activity-linux-758.py'),dir],{stdio:'ignore'})
+  const child=win?spawn(resolvePowerShellExe(),['-NoProfile','-NonInteractive','-STA','-ExecutionPolicy','Bypass','-File',path.resolve('tests/fixtures/activity-windows-758.ps1'),'-Directory',dir],{windowsHide:true,stdio:['ignore','ignore','pipe']}):spawn('/usr/bin/python3',[path.resolve('tests/fixtures/activity-linux-758.py'),dir],{stdio:['ignore','ignore','pipe']})
+  let stderr=Buffer.alloc(0)
+  child.stderr?.on('data',(chunk:Buffer)=>{if(stderr.length<4096)stderr=Buffer.concat([stderr,chunk.subarray(0,4096-stderr.length)])}) // keep draining after the finite prefix
+  const diagnostic=()=>{
+    let phase='UNKNOWN'
+    try{const value=JSON.parse(fs.readFileSync(path.join(dir,'phase.json'),'utf8'));if(['SHOW_DIALOG','CONTENT_RENDERED','CONTROL'].includes(value.phase))phase=value.phase}catch{}
+    return JSON.stringify({phase,stderr:stderr.toString('utf8')})
+  }
   lease.retain();let ended=false;const closed=new Promise<void>(resolve=>child.once('close',()=>{ended=true;resolve()}))
   child.on('error',()=>{})
   const write=(name:string,value:any)=>{fs.writeFileSync(path.join(dir,name+'.pending'),JSON.stringify(value),{flag:'wx'});fs.renameSync(path.join(dir,name+'.pending'),path.join(dir,name))}
   try{
-    const ready=await receipt(path.join(dir,'ready.json'),child,owned.signal)
+    const ready=await receipt(path.join(dir,'ready.json'),child,owned.signal,diagnostic)
     assert.equal(ready.pid,child.pid)
     if(!win){const lock=await receipt(path.join(process.env.CMSPARK_ACTIVITY_LOCK_FIXTURE_758!,'ready.json'),child,owned.signal);assert.equal(lock.bus_name,'org.freedesktop.ScreenSaver')}
     const root=path.join(dir,'records');fs.mkdirSync(root,{mode:0o700})
