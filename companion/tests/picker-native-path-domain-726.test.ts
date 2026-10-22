@@ -31,6 +31,9 @@ function realpaths() {
   const alias = "C:\\Users\\OWNED~1\\Temp\\picker726\\workspace", canonical = "C:\\Users\\owned-test-user\\Temp\\picker726\\workspace"
   let nativeCalls = 0
   const context: any = {
+    // Model the ordinary runtime with Node permission mode disabled.
+    // Node 22.23.4 realpathSync checks this dependency before its path walk.
+    permission: { isEnabled: () => false, has: () => { throw new Error("UNEXPECTED_PERMISSION_QUERY") } },
     getOptions: () => ({}), toPathIfFileURL: (v: string) => v, validatePath: (v: unknown) => assert.equal(typeof v, "string"),
     pathModule: path.win32, realpathCacheKey: Symbol("cache"), SafeMap: Map, SafeSet: Set,
     splitRoot: (v: string) => path.win32.parse(v).root, nextPart: (v: string, from: number) => v.indexOf("\\", from), isWindows: true,

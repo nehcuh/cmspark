@@ -102,7 +102,7 @@ test("Windows runner serializes original file budgets without changing discovery
   const all=["one.test.js","two.test.js","nested/three.test.js","settings-web.test.js"].map(n=>fs.realpathSync(path.join(fixtures,n))).sort()
   const execute=(platform:string,requested:string[]=[],status=0) => {
     const calls:{args:string[];options:any}[]=[],end={code:-1},exit=Symbol("owned-exit")
-    const context:any={fs,path,os:{tmpdir:()=>owned},fileURLToPath:()=>path.join(scripts,"run-tests.mjs"),spawnSync:(_bin:string,args:string[],options:any)=>{calls.push({args,options});return {status,signal:null}},console:{error:()=>{}},process:{execPath:"/owned/node",argv:["/owned/node","owned-runner",...requested],platform,versions:{node:"22.23.2"},env:{OWNED_SENTINEL:"inert"},exit(code:number){end.code=code;throw exit}}}
+    const context:any={fs,path,os:{tmpdir:()=>owned},fileURLToPath:()=>path.join(scripts,"run-tests.mjs"),spawnSync:(_bin:string,args:string[],options:any)=>{calls.push({args,options});return {status,signal:null}},console:{error:()=>{}},process:{execPath:"/owned/node",argv:["/owned/node","owned-runner",...requested],platform,versions:{node:"22.23.4"},env:{OWNED_SENTINEL:"inert"},exit(code:number){end.code=code;throw exit}}}
     vm.createContext(context);try{vm.runInContext(program,context)}catch(error){if(error!==exit)throw error}
     assert.notEqual(end.code,-1);return {calls,code:end.code,context}
   }

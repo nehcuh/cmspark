@@ -2,7 +2,7 @@
 
 ## 前提
 
-- **Node.js ≥ 22.19.0**（Office 引擎最低要求；与 README / CI / TESTING 一致；推荐 `nvm`）
+- **Node.js ≥ 22.23.4 且 < 23**（当前受支持的安全运行时范围；与 README / CI / TESTING 一致；推荐 `nvm`）
 - Chrome 浏览器（Manifest V3）
 - npm
 

@@ -28,7 +28,7 @@ Windows：Office 引擎需要与包内 Node 架构一致的 Microsoft Visual C++
 Redistributable（官方 x64 包请选择 x64）。没有安装时请从微软官方安装：
 https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist
 安装器不自动提权或安装该组件。Linux WASM 引擎需要宿主可用字体；中文文档
-建议安装开源中文字体，例如 Noto CJK。开发环境需要 Node >=22.19.0。
+建议安装开源中文字体，例如 Noto CJK。开发环境需要 Node >=22.23.4 且 <23。
 引擎及依赖的许可、源码信息见 THIRD_PARTY_NOTICES 和 office-runtime.json。
 
 1. 打开任意网页
@@ -82,4 +82,4 @@ A: 下载新版本 zip 或 Setup.exe，解压覆盖或覆盖安装，重启 CMsp
 
 Q: 需要安装 Node.js 吗？
 A: 不需要。官方分发包已内置 node.exe，开箱即用。
-   （精简版用户如需使用系统 Node.js，请确保版本 >=22.19.0）
+   （精简版用户如需使用系统 Node.js，请确保版本 >=22.23.4 且 <23）

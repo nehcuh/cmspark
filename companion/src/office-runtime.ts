@@ -47,7 +47,7 @@ function loadKit(): Kit {
   try { kit = require("@deepseek-ai/libreoffice-kit") as Kit }
   catch (firstError) {
     try { kit = createRequire(process.execPath)("@deepseek-ai/libreoffice-kit") as Kit }
-    catch { throw new Error(`本地 Office 引擎不可用，请安装完整版 CMspark（需要 Node.js 22.19 或更新版本）。${String(firstError)}`) }
+    catch { throw new Error(`本地 Office 引擎不可用，请安装完整版 CMspark（需要 Node.js 22.23.4 或更新的 22.x 安全版本）。${String(firstError)}`) }
   }
   return kit
 }

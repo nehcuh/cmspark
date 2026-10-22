@@ -340,10 +340,10 @@ test('passive census batch predictor matches unchanged runner platform fixed arg
   const settingsCall = /^\s*if \(code === 0\) code = (runNodeTest\(settings, settingsWebIsolationArgs\(\)\))$/m.exec(runner)
   assert.ok(mainCall); assert.ok(settingsCall)
   const results = []
-  for (const platform of ['win32', 'linux']) for (const node of ['20.20.0', '22.23.2']) for (const padding of [0, 21, 42]) {
+  for (const platform of ['win32', 'linux']) for (const node of ['20.20.0', '22.23.4']) for (const padding of [0, 21, 42]) {
     const nativePath = platform === 'win32' ? path.win32 : path.posix
     const companion = platform === 'win32' ? 'C:\\a\\cmspark\\cmspark\\companion' : '/owned/cmspark/companion'
-    const execPath = platform === 'win32' ? 'C:\\hostedtoolcache\\windows\\node\\22.23.2\\x64\\node.exe' : '/owned/node'
+    const execPath = platform === 'win32' ? 'C:\\hostedtoolcache\\windows\\node\\22.23.4\\x64\\node.exe' : '/owned/node'
     const main = Array.from({ length: 1200 }, (_, index) => ({ file: `.test-dist/tests/t${String(index).padStart(4, '0')}${index === 0 ? 'x'.repeat(padding) : ''}.test.js`, excluded: false, stage: 'main' }))
     const settings = { file: '.test-dist/tests/settings-web.test.js', excluded: false, stage: 'settings' }
     const discovery = [...main, { file: '.test-dist/tests/_excluded.test.js', excluded: true, stage: 'main' }, settings]

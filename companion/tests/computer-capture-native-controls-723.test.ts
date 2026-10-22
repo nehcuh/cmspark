@@ -108,7 +108,7 @@ test("723 actual canonical walk and Windows schedule discover the native module 
     throw Error("CPU_RUNNER_UNDECLARED_IMPORT")
   }
   let exit: number | undefined
-  vm.runInNewContext(lowered, { require: requireRunner, exports: {}, process: { execPath: "/owned/node", argv: ["node", "runner"], platform: "win32", versions: { node: "22.23.2" }, env: {}, exit: (code: number) => { exit = code } }, console: { error: () => { throw Error("CPU_RUNNER_ERROR") } } })
+  vm.runInNewContext(lowered, { require: requireRunner, exports: {}, process: { execPath: "/owned/node", argv: ["node", "runner"], platform: "win32", versions: { node: "22.23.4" }, env: {}, exit: (code: number) => { exit = code } }, console: { error: () => { throw Error("CPU_RUNNER_ERROR") } } })
   assert.equal(exit, 0); assert.equal(scheduled.length, 1)
   assert.ok(scheduled[0].includes("--test-concurrency=1"))
   assert.equal(scheduled[0].filter(p => p.endsWith("/computer-capture-windows-native-723.test.js")).length, 1)

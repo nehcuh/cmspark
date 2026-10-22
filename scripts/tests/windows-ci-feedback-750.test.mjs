@@ -26,6 +26,8 @@ const office = 'Office compatibility and relocated runtime (#611)'
 const native = 'Actual native desktop build and isolated connection (#480)'
 const front = 'Install native-lane frontend dependencies (#750)'
 const mutations = [
+  ['#759 security contract omitted', d => { find(d, 'Pinned NSIS dependency transport and integrity (#633)').run = find(d, 'Pinned NSIS dependency transport and integrity (#633)').run.replace(' scripts/tests/node-security-runtime-759.test.mjs', '') }],
+  ...['build', 'smoke-os', 'acp-history-restart'].map(job => ['#759 vulnerable or floating Node in ' + job, d => { d.jobs[job].steps.find(s => s.uses?.startsWith('actions/setup-node@')).with['node-version'] = '22.23.2' }]),
   ['missing original census', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== census) }],
   ['duplicate directed native', d => { d.jobs['smoke-os'].steps.push(structuredClone(find(d, native))) }],
   ['wrong census lane', d => { find(d, census).if = find(d, census).if.replace("'census'", "'native'") }],
@@ -73,8 +75,7 @@ for (const [label, mutate] of mutations) {
 }
 
 const cockpitScalar = 'Windows cockpit Node scalar selection (#723)'
-const cockpitGate = 'Windows cockpit native bridge first identity STOP gate (#723)'
-const cockpitArtifact = 'Publish finite cockpit first failure (#723)'
+const retiredCockpit = JSON.parse(fs.readFileSync(new URL('./windows-ci-feedback-748-supplement.json', import.meta.url), 'utf8')).steps.slice(1)
 const cockpitMutations = [
   ['missing prepared handoff control', d => { find(d, cockpitScalar).run = find(d, cockpitScalar).run.replace(' scripts/tests/cockpit-bridge-prepared-build.test.mjs', '') }],
   ['duplicate prepared handoff control', d => { find(d, cockpitScalar).run = find(d, cockpitScalar).run.replace(' scripts/tests/cockpit-bridge-prepared-build.test.mjs', ' scripts/tests/cockpit-bridge-prepared-build.test.mjs scripts/tests/cockpit-bridge-prepared-build.test.mjs') }],
@@ -87,21 +88,10 @@ const cockpitMutations = [
   ['extra scalar command', d => { find(d, cockpitScalar).run += 'echo unreviewed\n' }],
   ['scalar exit guard omitted', d => { find(d, cockpitScalar).run = find(d, cockpitScalar).run.replace('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n', '') }],
   ['scalar after Registry', d => { const a = d.jobs['smoke-os'].steps, s = a.splice(a.findIndex(s => s.name === cockpitScalar), 1)[0]; a.splice(a.findIndex(s => s.name === 'Native Windows read-only Registry discovery (#644)') + 1, 0, s) }],
-  ['missing native gate', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== cockpitGate) }],
-  ['native gate on census desktop', d => { find(d, cockpitGate).if = "matrix.os == 'windows-latest'" }],
-  ['native gate failure waived', d => { find(d, cockpitGate)['continue-on-error'] = true }],
-  ['native gate budget expanded', d => { find(d, cockpitGate)['timeout-minutes'] = 99 }],
-  ['native gate receipt id lost', d => { delete find(d, cockpitGate).id }],
-  ['native gate command changed', d => { find(d, cockpitGate).run = find(d, cockpitGate).run.replace('run-cockpit-bridge-first.ps1', 'omitted.ps1') }],
-  ['native gate before final directed oracle', d => { const a = d.jobs['smoke-os'].steps, s = a.splice(a.findIndex(s => s.name === cockpitGate), 1)[0]; a.splice(a.findIndex(s => s.name === 'Windows native 8.3 filesystem paths (#604)'), 0, s) }],
-  ['native pair appended after census probe', d => { const a = d.jobs['smoke-os'].steps, g = a.splice(a.findIndex(s => s.name === cockpitGate), 1)[0], u = a.splice(a.findIndex(s => s.name === cockpitArtifact), 1)[0]; a.push(g, u) }],
-  ['missing finite artifact', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== cockpitArtifact) }],
-  ['duplicate finite artifact', d => { d.jobs['smoke-os'].steps.push(structuredClone(find(d, cockpitArtifact))) }],
-  ['finite artifact includes raw', d => { find(d, cockpitArtifact).with.path = '${{ runner.temp }}/**' }],
-  ['finite artifact also census', d => { find(d, cockpitArtifact).if = find(d, cockpitArtifact).if.replace(" && matrix.lane == 'native'", '') }],
-  ['finite artifact on successful gate', d => { find(d, cockpitArtifact).if = find(d, cockpitArtifact).if.replace("outcome == 'failure'", "outcome == 'success'") }],
-  ['finite artifact loses failed-job always', d => { find(d, cockpitArtifact).if = find(d, cockpitArtifact).if.replace('always() && ', '') }],
-  ['finite artifact accepts empty summary', d => { find(d, cockpitArtifact).if = find(d, cockpitArtifact).if.replace(" && steps.cockpit-first-identity.outputs.finite_summary != ''", '') }],
+  ...retiredCockpit.map(step => ['restored retired step: ' + step.name, d => { d.jobs['smoke-os'].steps.push(structuredClone(step)) }]),
+  ['renamed retired gate', d => { d.jobs['smoke-os'].steps.push({ ...structuredClone(retiredCockpit[0]), name: 'renamed', id: 'renamed' }) }],
+  ['dangling finite output', d => { d.jobs['smoke-os'].steps.push({ name: 'renamed upload', uses: 'actions/upload-artifact@v4', with: { path: '${{ steps.cockpit-first-identity.outputs.finite_summary }}' } }) }],
+
 ]
 for (const [label, mutate] of cockpitMutations) {
   test('#748 source-derived cockpit union refuses: ' + label, () => {

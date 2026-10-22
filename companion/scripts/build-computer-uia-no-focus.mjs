@@ -35,9 +35,9 @@ export function stageComputerUiaNoFocus(source, destination) {
   regular(target)
 }
 export function buildComputerUiaNoFocus({ root: sourceRoot = root, toolchain } = {}) {
-  // Deliberate reproducible-build pin: the desktop SDK/header inputs and CI use 22.23.2.
+  // Deliberate reproducible-build pin: the desktop SDK/header inputs and CI use 22.23.4.
   // This is a build-tool policy, not a runtime UIA requirement for all Node22 patches.
-  if (process.platform !== "win32" || process.arch !== "x64" || process.version !== "v22.23.2") throw new Error("UIA_NO_FOCUS_BUILD_REQUIRES_WINDOWS_X64_NODE22_23_2")
+  if (process.platform !== "win32" || process.arch !== "x64" || process.version !== "v22.23.4") throw new Error("UIA_NO_FOCUS_BUILD_REQUIRES_WINDOWS_X64_NODE22_23_4")
   const source = path.join(sourceRoot, "src/host-use/win/native/computer-uia-no-focus.cpp")
   regular(source)
   const { cl, env } = toolchain ?? desktopWindowsToolchain()
