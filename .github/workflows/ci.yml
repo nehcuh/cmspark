@@ -204,7 +204,7 @@ jobs:
           npm run build
 
       - name: Pinned NSIS dependency transport and integrity (#633)
-        run: node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs
+        run: node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/native-ci-stages-760.test.mjs
 
       - name: Stage native-lane Windows scripts (#750)
         if: matrix.os == 'windows-latest' && matrix.lane == 'native'
@@ -240,15 +240,36 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node companion/scripts/build-computer-uia-native-probe-572.mjs
 
-      - name: Actual native desktop build and isolated connection (#480)
+      - name: Build native desktop fixtures (#480)
         if: matrix.os != 'ubuntu-latest'
         shell: bash
         run: |
           set -euo pipefail
           cd companion
           node scripts/build-desktop-native.mjs --test-fixtures
+
+      - name: Compile native desktop acceptance tests (#480)
+        if: matrix.os != 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd companion
           ./node_modules/.bin/tsc -p tsconfig.test.json
+
+      - name: Native desktop bootstrap and process acceptance (#480)
+        if: matrix.os != 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd companion
           node scripts/run-tests.mjs .test-dist/tests/desktop-native-macos-480.test.js .test-dist/tests/desktop-native-windows-480.test.js .test-dist/tests/desktop-native-mcp-476.test.js
+
+      - name: Native desktop interaction acceptance (#476)
+        if: matrix.os != 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd companion
           # The metadata key oracle owns the foreground; other native windows must exit first.
           node scripts/run-tests.mjs .test-dist/tests/desktop-native-thread-metadata-476.test.js
 

@@ -122,3 +122,12 @@ or the historical failure cause. If this one run is still insufficient, stop UNK
 2026-10-22 的一次获准双 fresh-runner 对照，使用相同闭集 childEnv 与普通 owned 目录：裸 `Get-Item` 停在解析阶段并触及15秒截止；`Microsoft.PowerShell.Management\Get-Item` 在约299毫秒完成解析及内置命令身份核验，读取及目录断言也通过（同进程观测约27毫秒）。run39693953668 的两个模式各只执行一次；这是本次命令发现路径的证据，不证明此前所有Windows超时都由它引起，也不保证全局缓存冷态。
 
 registrar 的六处 `Get-Item` 明确绑定该内置模块，避免为这项固定文件系统检查走裸命令发现。保留每次实际读取、LiteralPath、目录/普通文件及reparse检查、两Registry view所有权和注销前重读；不缓存或删减检查。其余命令未因猜测改写。源码消费者同时核全文件仅六处绑定差异、原业务与registry反例；真正修复仍须精确head原生验收，编译120秒、运行与清理45秒不扩大，单次修复验收若失败即停。
+
+
+## CI 原生验收分层（#760）
+
+原先一个步骤包含的四组命令，现按原顺序分别显示：`Build native desktop fixtures (#480)`、`Compile native desktop acceptance tests (#480)`、`Native desktop bootstrap and process acceptance (#480)`、`Native desktop interaction acceptance (#476)`。每步保留相同 OS 条件与 bash 失败退出；任一步失败，后续正常步骤不运行，原 job/check 名和合并验收要求不变。阶段名用于区分构建、编译、进程/协议和桌面交互的失败，不代表每个混合测试文件已进一步拆成单一类别。
+
+编译、协议、Windows HANDLE/进程与资源清理仍是必需验收。前台、键盘、原生确认等交互用例只有在证明当前环境不满足具体前提后，才考虑迁到经过验证的专用交互 runner，并保留同一提交/产物的必需结果。GitHub Windows 并非天然无法运行图形测试；[微软提供了 windows-latest UI 示例](https://learn.microsoft.com/en-us/windows/apps/develop/ai-assisted/testing#run-tests-in-ci)，但它不保证本项目所有 Win32 焦点前提。
+
+输入框未创建、进程异常退出、身份或清理未完成仍按失败处理。此分层没有移除测试、放宽断言/时限、增加重试或启用 continue-on-error，也不宣称修复 #705/#747/#723 的原生根因。

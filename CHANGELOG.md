@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- CI (#760): report native fixture build, test compilation, bootstrap/process acceptance and desktop interaction acceptance as separate ordered steps, preserving commands, failure handling, Windows/macOS checks and all native assertions. This improves failure attribution without claiming the outstanding Windows failures are fixed.
+
 - Refs #723/#755: bind the native-host registrar’s six filesystem reads to the built-in PowerShell Management module after a bounded Windows command-resolution comparison; retain ownership, reparse checks and cleanup. Native full-flow acceptance remains required.
 
 - Windows CI (#723): add one human-approved, bounded phase/checkpoint observation for the first-identity gate; preserve build120/runtime-cleanup45, original results and 4096-byte finite evidence cap. Unknown intervals remain unknown.

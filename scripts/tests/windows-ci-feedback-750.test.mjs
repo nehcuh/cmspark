@@ -23,7 +23,8 @@ const find = (doc, name) => doc.jobs['smoke-os'].steps.find(step => step.name ==
 const census = 'Complete Windows Companion census (#650)'
 const artifact = 'Windows census finite public receipts (#650)'
 const office = 'Office compatibility and relocated runtime (#611)'
-const native = 'Actual native desktop build and isolated connection (#480)'
+const native = 'Build native desktop fixtures (#480)'
+const nativeCompile = 'Compile native desktop acceptance tests (#480)'
 const front = 'Install native-lane frontend dependencies (#750)'
 const mutations = [
   ['missing original census', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== census) }],
@@ -31,7 +32,7 @@ const mutations = [
   ['wrong census lane', d => { find(d, census).if = find(d, census).if.replace("'census'", "'native'") }],
   ['directed tests leak to census', d => { delete find(d, office).if }],
   ['native body changed', d => { find(d, native).run = find(d, native).run.replace('--test-fixtures', '') }],
-  ['test compile deleted', d => { find(d, native).run = find(d, native).run.replace('./node_modules/.bin/tsc -p tsconfig.test.json\n', '') }],
+  ['test compile deleted', d => { find(d, nativeCompile).run = find(d, nativeCompile).run.replace('./node_modules/.bin/tsc -p tsconfig.test.json\n', '') }],
   ['census body changed', d => { find(d, census).run += '\nexit 0\n' }],
   ['waived test failure', d => { find(d, native)['continue-on-error'] = true }],
   ['waived whole job', d => { d.jobs['smoke-os']['continue-on-error'] = true }],
