@@ -1,5 +1,6 @@
 /** Personal tasks are durable user-owned records, independent of Agent MissionBoard. */
 export interface ActivityConfig {
+  ocr_language?: 'zh-Hans' | 'zh-Hant' | 'en-US'
   enabled: boolean
   allowed_apps: string[]
   interval_ms: number
@@ -17,6 +18,7 @@ export interface ActivitySource {
   ocr_text: string
   sha256: string
   bytes: number
+  origin?: 'foreground' | 'manual_import'
   deleted?: boolean
 }
 export interface TaskEvidence {
@@ -67,6 +69,8 @@ export interface ActivityState {
 }
 export interface ActivityRuntime {
   platform: string
+  capture_mode?: 'automatic' | 'manual-only'
+  platform_note?: string
   supported: boolean
   running: boolean
   scanning: boolean
@@ -81,8 +85,8 @@ export class ActivityError extends Error {
   constructor(public code: string, message: string) { super(message); this.name = 'ActivityError' }
 }
 export const DEFAULT_ACTIVITY_CONFIG: ActivityConfig = {
-  enabled: false, allowed_apps: [], interval_ms: 30_000, ocr_ai_enabled: false,
+  enabled: false, allowed_apps: [], ocr_language: 'zh-Hans', interval_ms: 30_000, ocr_ai_enabled: false,
   retention_days: 14, max_storage_mb: 512,
 }
-export const PROTECTED_APPS = /(?:keychainaccess|1password|onepassword|bitwarden|lastpass|keepass|dashlane|authy|authenticator|systempreferences|loginwindow|screenlock|securityagent|authorizationhost|passwords|wallet|metamask|ledger|exodus|secretive)/i
+export const PROTECTED_APPS = /(?:keychainaccess|1password|onepassword|bitwarden|lastpass|keepass|dashlane|authy|authenticator|systempreferences|loginwindow|screenlock|securityagent|authorizationhost|passwords|wallet|metamask|ledger|exodus|secretive|logonui|credentialuibroker|lockapp|winlogon|consent\.exe|screensaver|screenlock|kscreenlocker|gnome-shell|gdm|lightdm|sddm)/i
 export const COVERAGE = '仅记录已授权且位于前台的应用窗口可见内容；不会切换聊天、滚动或读取未显示消息。提醒要求本机 Companion 运行；系统可能抑制通知。'

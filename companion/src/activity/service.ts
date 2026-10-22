@@ -1,7 +1,9 @@
 import { DATA_DIR } from '../config'
 import { ActivityStore } from './store'
-import { MacPassiveRecorder, extractActivity, submitReminder, type RecorderAdapter, type ExtractedCandidate } from './adapters'
+import { extractActivity, submitReminder, type RecorderAdapter, type ExtractedCandidate } from './adapters'
 import { ActivityError, COVERAGE, type ActivityApp, type ActivityRuntime, type ActivitySource, type ActivityWireState, type PersonalTodo } from './types'
+import { createRecorder, platformSupport } from './platform'
+import { languageOf, validatePng } from './image'
 import { validateActivityMessage } from './validation'
 export interface ActivityDependencies {
   dataDir: string
@@ -30,9 +32,9 @@ export class ActivityService {
   constructor(deps: ActivityDependencies) {
     this.store = new ActivityStore(deps.dataDir)
     const platform = deps.platform ?? process.platform
-    this.runtime = { platform, supported: platform === 'darwin', running: false, scanning: false, last_scan_at: null, last_success_at: null, status: 'stopped', error: null, coverage: COVERAGE }
+    this.runtime = { platform, ...platformSupport(platform), running: false, scanning: false, last_scan_at: null, last_success_at: null, status: 'stopped', error: null, coverage: COVERAGE }
     this.now = deps.now ?? Date.now
-    this.recorder = deps.recorder ?? new MacPassiveRecorder(this.store.root)
+    this.recorder = deps.recorder ?? createRecorder(this.store.root, platform)
     this.extract = deps.extract ?? extractActivity
     this.notify = deps.notify ?? submitReminder
   }
@@ -68,7 +70,7 @@ export class ActivityService {
     await this.scan()
   }
   private async listApps(): Promise<ActivityApp[]> {
-    if (!this.runtime.supported || !this.recorder.listApps) throw new ActivityError('UNSUPPORTED_PLATFORM', '当前运行应用选择仅支持 macOS')
+    if (!this.runtime.supported || !this.recorder.listApps) throw new ActivityError('UNSUPPORTED_PLATFORM', this.runtime.platform_note || '当前环境无法列出前台应用')
     if (!this.appListing) this.appListing = this.recorder.listApps(this.abort.signal).finally(() => { this.appListing = null })
     return this.appListing
   }
@@ -76,7 +78,7 @@ export class ActivityService {
     if (this.pending) throw new ActivityError('BUSY', '上一轮采集尚未完成')
     const config = this.store.config()
     if (!config.enabled) throw new ActivityError('RECORDING_DISABLED', '请先选择应用并明确开启记录')
-    if (!this.runtime.supported) throw new ActivityError('UNSUPPORTED_PLATFORM', '当前活动截图仅支持 macOS')
+    if (!this.runtime.supported) throw new ActivityError('UNSUPPORTED_PLATFORM', this.runtime.platform_note || '当前环境不支持自动采集')
     if (!config.allowed_apps.length) throw new ActivityError('NO_ALLOWED_APPS', '请先设置采集应用白名单')
     const epoch = this.generation, signal = this.abort.signal
     this.lastPoll = this.now(); this.runtime.scanning = true; this.runtime.status = 'scanning'; this.runtime.error = null
@@ -87,7 +89,7 @@ export class ActivityService {
         this.store.prune(this.now())
         const capture = await this.recorder.capture(config, signal)
         if (!current() || !capture) { if (current()) this.runtime.status = 'no_visible_allowed_window'; return }
-        const source = this.store.addSource({ app_id: capture.app_id, app_name: capture.app_name, window_title: capture.window_title, ocr_text: capture.ocr_text, captured_at: new Date(this.now()).toISOString() }, capture.image)
+        const source = this.store.addSource({ app_id: capture.app_id, app_name: capture.app_name, window_title: capture.window_title, origin: 'foreground', ocr_text: capture.ocr_text, captured_at: new Date(this.now()).toISOString() }, capture.image)
         if (!current()) return
         this.runtime.last_success_at = new Date(this.now()).toISOString()
         this.runtime.status = source ? 'captured' : 'unchanged'
@@ -116,6 +118,21 @@ export class ActivityService {
     })().finally(() => { this.pending = null })
     await this.pending
   }
+  async importImage(encoded: string, requestCurrent: () => boolean): Promise<void> {
+    if (this.pending) throw new ActivityError('BUSY', '上一轮采集或 OCR 尚未完成')
+    if (!this.recorder.ocrImage) throw new ActivityError('OCR_UNAVAILABLE', '当前系统未提供本地截图 OCR')
+    const image = Buffer.from(encoded, 'base64'); if (image.toString('base64') !== encoded) throw new ActivityError('INVALID_IMAGE', '截图编码无效'); validatePng(image)
+    const epoch = this.generation, signal = this.abort.signal
+    this.pending = (async () => {
+      const text = await this.recorder.ocrImage!(image, languageOf(this.store.config()), signal)
+      if (epoch !== this.generation || signal.aborted || !requestCurrent()) throw new ActivityError('CANCELLED', '页面或设置已变化，导入已取消')
+      this.store.prune(this.now())
+      // Explicit import is not proof of foreground app identity or message time.
+      this.store.addSource({ app_id: 'manual.screenshot', app_name: '用户导入截图（应用未核实）', window_title: '', origin: 'manual_import', captured_at: new Date(this.now()).toISOString(), ocr_text: text }, image)
+      this.store.prune(this.now())
+    })().finally(() => { this.pending = null })
+    await this.pending
+  }
   private async deliverReminders(): Promise<void> {
     for (const todo of this.store.dueReminders(this.now())) {
       if (!this.runtime.running) return
@@ -140,6 +157,7 @@ export class ActivityService {
           return { type: 'activity.result', id, ok: true, apps }
         }
         case 'activity.configure': this.store.configure(Number(message.expected_revision), message.patch); this.fence(); this.maintain(); break
+        case 'activity.import': await this.importImage(String(message.image_base64), current); break
         case 'activity.scan': await this.scan(current); break
         case 'activity.analyze': await this.analyze(String(message.source_id), current); break
         case 'activity.source': return { type: 'activity.result', id, ok: true, source: this.store.source(String(message.source_id)) }

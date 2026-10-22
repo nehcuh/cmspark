@@ -588,3 +588,12 @@ This CPU regression is not a changed-head hosted/browser or native PASS.
 Companion `activity-752.test.ts`、`settings-assistant.test.ts`、`personal-workspace-transport.test.ts` 执行真实服务/存储/处理器；fixture 来自实际返回，使用独立临时目录和惰性适配器。覆盖默认关闭、来源与候选、明确确认、提醒持久状态/迟到回执、暂停后的留存、owner/旧值/过期和认证拒绝。既有路由锁步、Board/MCP/Meeting 消费者随影响范围回归。扩展 `activity-workspace-752.test.ts`、`semantic-settings.test.ts`、`workspace-sender.test.ts` 使用真实组件/生产回调，覆盖最近来源、日期精度、语义方案选择与可信页面边界。
 
 `chrome-extension/scripts/render-workspace-fixture.cjs` 与 `personal-workspace-ui-fixture.cjs` 可构建真实 App 的受控演示；后者使用真实后台处理器和独立临时数据，替换采集、模型和通知。当前证据及完整命令见 [机器报告](audit/reviews/2026-10-21-chat-action-workspace-machine.md)。这些检查不证明真实 TCC/屏幕录制/Vision、模型准确率或通知展示，不能替代平台现场验收。
+
+
+## 活动记录平台适配（#758）
+
+`activity-platform-758.test.ts` 验证真实服务的适配器选择、PNG/WS 预算、导入权限和迟到结果、手动来源日期、Windows Passive 路径/身份/桌面/权限、固定 OCR 和系统通知退出状态。`activity-platform-native-758.test.ts` 仅在显式原生 driver 中启用，复用原 `native-surface-650` 桌面 lease；Windows hosted 自有 WPF 窗口验证实际 helper/WinRT OCR/不抢焦点/最小化拒绝和通知提交。Linux `cd companion && bash scripts/test-activity-x11-758.sh`总是创建私有 D-Bus 和 Xvfb，实际 XRes/焦点/像素/Tesseract、伪造 PID、遮挡、最小化、XScreenSaver 与通知提交均执行。桌面屏幕锁定 D-Bus 协议使用明确的受控服务，测试 true/false/服务退出后 unknown 拒绝；这不是实际 GNOME/KDE 锁屏的证明。原生 driver 依赖见 CI 新 Linux lane；不连接真实聊天、模型或现有安装配置。
+
+`node --test scripts/tests/activity-notifier-package.test.cjs` 执行真实 esbuild 通知模块产物，在没有源 node_modules 的独立目录核固定 sidecar/缺失资源拒绝，以及实际 staging 字节和两个 Windows 打包入口；不以开发 resolve 代替 SEA 资源闭包。
+
+普通无桌面全量会明确跳过这个原生家族；CI 另设 Linux X11 和 Windows native 的实际执行门。通知请求提交不证明视觉展示或已读；Wayland 的自动采集保持不支持，主动导入/本地识别由真实 App 受控浏览器验证。

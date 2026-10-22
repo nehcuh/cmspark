@@ -26,6 +26,14 @@ const office = 'Office compatibility and relocated runtime (#611)'
 const native = 'Actual native desktop build and isolated connection (#480)'
 const front = 'Install native-lane frontend dependencies (#750)'
 const mutations = [
+  ['missing activity native addition', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== 'Actual passive activity capture and local OCR (#758)') }],
+  ['activity native runs on census desktop', d => { find(d, 'Actual passive activity capture and local OCR (#758)').if = "matrix.os == 'windows-latest'" }],
+  ['activity native failure waived', d => { find(d, 'Actual passive activity capture and local OCR (#758)')['continue-on-error'] = true }],
+  ['activity native runs before compilation', d => { const a = d.jobs['smoke-os'].steps; a.unshift(a.splice(a.findIndex(s => s.name === 'Actual passive activity capture and local OCR (#758)'), 1)[0]) }],
+  ['activity X11 job removed', d => { delete d.jobs['activity-linux-x11'] }],
+  ['activity X11 unknown command', d => { d.jobs['activity-linux-x11'].steps.at(-1).run += 'echo ignored\n' }],
+  ['activity X11 failure waived', d => { d.jobs['activity-linux-x11']['continue-on-error'] = true }],
+  ['activity bundle regression omitted', d => { const a = d.jobs.build.steps.find(s => s.name === 'Package fail-closed gates (P0-D nits)'); a.run = a.run.replace('node --test scripts/tests/activity-notifier-package.test.cjs\n', '') }],
   ['missing original census', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== census) }],
   ['duplicate directed native', d => { d.jobs['smoke-os'].steps.push(structuredClone(find(d, native))) }],
   ['wrong census lane', d => { find(d, census).if = find(d, census).if.replace("'census'", "'native'") }],

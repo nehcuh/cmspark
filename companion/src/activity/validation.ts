@@ -16,11 +16,12 @@ export function iso(v: unknown): string | null {
   return new Date(v).toISOString()
 }
 export function validateConfig(patch: unknown): Record<string, unknown> {
-  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb'])
+  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb', 'ocr_language'])
   for (const [key, value] of Object.entries(patch)) {
-    if (key === 'enabled' || key === 'ocr_ai_enabled') { if (typeof value !== 'boolean') throw new ActivityError('INVALID_REQUEST', '开关必须是布尔值') }
+    if (key === 'ocr_language') { if (!['zh-Hans', 'zh-Hant', 'en-US'].includes(String(value))) throw new ActivityError('INVALID_REQUEST', 'OCR 语言无效') }
+    else if (key === 'enabled' || key === 'ocr_ai_enabled') { if (typeof value !== 'boolean') throw new ActivityError('INVALID_REQUEST', '开关必须是布尔值') }
     else if (key === 'allowed_apps') {
-      if (!Array.isArray(value) || value.length > 20 || value.some(app => typeof app !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]{2,199}$/.test(app) || PROTECTED_APPS.test(app))) throw new ActivityError('INVALID_REQUEST', '应用白名单无效或包含敏感应用')
+      if (!Array.isArray(value) || value.length > 20 || value.some(app => typeof app !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]{2,199}$/.test(app) || /^(?:win|linux)\./.test(app) && !/^(?:win|linux)\.[a-f0-9]{64}$/.test(app) || PROTECTED_APPS.test(app))) throw new ActivityError('INVALID_REQUEST', '应用白名单无效或包含敏感应用')
     } else {
       const limits: Record<string, [number, number]> = { interval_ms: [5_000, 600_000], retention_days: [1, 90], max_storage_mb: [16, 10240] }
       const [min, max] = limits[key]
@@ -49,7 +50,7 @@ export function validateActivityMessage(message: unknown): boolean {
     const base = ['type', 'id']
     const extras: Record<string, string[]> = {
       'activity.state': [], 'activity.apps': [], 'activity.configure': ['expected_revision', 'patch'], 'activity.scan': [],
-      'activity.analyze': ['source_id'], 'activity.source': ['source_id'], 'activity.delete': ['source_id'],
+      'activity.import': ['image_base64'], 'activity.analyze': ['source_id'], 'activity.source': ['source_id'], 'activity.delete': ['source_id'],
       'todo.create': ['source_id', 'expected_revision', 'task'], 'todo.confirm': ['candidate_id', 'expected_revision', 'task'], 'todo.update': ['todo_id', 'expected_revision', 'patch'], 'todo.dismiss': ['candidate_id', 'expected_revision'],
     }
     if (!Object.hasOwn(extras, message.type)) return false
@@ -57,6 +58,7 @@ export function validateActivityMessage(message: unknown): boolean {
     if (message.id !== undefined) text(message.id, 128, true)
     if ('expected_revision' in message && (!Number.isSafeInteger(message.expected_revision) || Number(message.expected_revision) < 0)) return false
     if (['activity.configure', 'todo.create', 'todo.confirm', 'todo.update', 'todo.dismiss'].includes(message.type) && !('expected_revision' in message)) return false
+    if (message.type === 'activity.import' && (typeof message.image_base64 !== 'string' || message.image_base64.length > 8_388_608 || message.image_base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(message.image_base64) || !message.image_base64.length)) return false
     if (message.type === 'activity.configure') validateConfig(message.patch)
     if ((message.type === 'todo.confirm' || message.type === 'todo.create')) validateTask(message.task, true)
     if (message.type === 'todo.update') validateTask(message.patch)

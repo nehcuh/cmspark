@@ -99,7 +99,7 @@ test('AI off permits explicit manual source task creation; source deletion remov
 })
 test('disabled service and unsupported platform never invoke a capture or model', async () => {
   const f = fixture(); let captures = 0
-  const service = new ActivityService({ dataDir: f.dir, platform: 'win32', now: () => NOW, recorder: { capture: async () => { captures++; throw Error('must not capture') } } })
+  const service = new ActivityService({ dataDir: f.dir, platform: 'freebsd', now: () => NOW, recorder: { capture: async () => { captures++; throw Error('must not capture') } } })
   try {
     service.start(); await new Promise(resolve => setImmediate(resolve))
     assert.equal(captures, 0)
@@ -308,7 +308,7 @@ test('explicit apps picker returns only bounded running app names/IDs and never 
 })
 test('apps picker unsupported platform fails explicitly without invoking adapter', async () => {
   const f = fixture(); let lists = 0
-  const service = new ActivityService({ dataDir: f.dir, platform: 'win32', recorder: { listApps: async () => { lists++; return [] }, capture: async () => null } })
+  const service = new ActivityService({ dataDir: f.dir, platform: 'freebsd', recorder: { listApps: async () => { lists++; return [] }, capture: async () => null } })
   try {
     assert.equal((await service.handle({ type: 'activity.apps' })).error_code, 'UNSUPPORTED_PLATFORM')
     assert.equal(lists, 0)
@@ -376,7 +376,7 @@ test('retention runs on paused unsupported-platform startup and every minute wit
   const oldCandidate = addCandidate(f.store, { ...oldSource, ocr_text: oldSource.ocr_text })
   const task = f.store.confirm(oldCandidate.id, oldCandidate.revision, { title: '正式事项仍在', owner: '我' }, stamp)
   const never = async (): Promise<never> => { throw Error('maintenance must not call external dependencies') }
-  const service = new ActivityService({ dataDir: f.dir, platform: 'win32', now: () => now, recorder: { capture: never }, extract: never, notify: never })
+  const service = new ActivityService({ dataDir: f.dir, platform: 'freebsd', now: () => now, recorder: { capture: never }, extract: never, notify: never })
   try {
     service.start(); await new Promise(resolve => setImmediate(resolve))
     assert.equal(service.state().config.enabled, false)

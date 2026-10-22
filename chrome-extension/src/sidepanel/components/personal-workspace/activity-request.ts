@@ -2,9 +2,9 @@
 export interface TaskEvidence { source_id: string; app_id: string; group: string; sender: string; message_time: string; quote: string }
 export interface TodoCandidate { id: string; revision: number; created_at: string; title: string; owner: string; due_at: string | null; feedback_to: string; feedback_required: boolean; evidence: TaskEvidence; status: 'pending' | 'confirmed' | 'dismissed'; todo_id?: string }
 export interface PersonalTodo { id: string; revision: number; created_at: string; updated_at: string; title: string; owner: string; due_at: string | null; remind_at: string | null; feedback_to: string; feedback_required: boolean; kind: 'own' | 'supervise'; handling_status: 'open' | 'done'; feedback_status: 'pending' | 'done' | 'not_required'; evidence: TaskEvidence; reminder: { status: 'none' | 'scheduled' | 'attempting' | 'submitted' | 'failed' | 'unknown'; attempted_at?: string; error?: string } }
-export interface ActivityConfig { enabled: boolean; allowed_apps: string[]; interval_ms: number; ocr_ai_enabled: boolean; retention_days: number; max_storage_mb: number }
-export interface ActivitySource { id: string; captured_at: string; app_id: string; app_name: string; window_title: string; ocr_text: string; sha256: string; bytes: number; deleted?: boolean }
-export interface ActivitySnapshot { version: 1; revision: number; config: ActivityConfig; candidates: TodoCandidate[]; todos: PersonalTodo[]; sources: Array<Omit<ActivitySource, 'ocr_text'>>; runtime: { platform: string; supported: boolean; running: boolean; scanning: boolean; last_scan_at: string | null; last_success_at: string | null; status: string; error: string | null; coverage: string } }
+export interface ActivityConfig { ocr_language?: 'zh-Hans' | 'zh-Hant' | 'en-US'; enabled: boolean; allowed_apps: string[]; interval_ms: number; ocr_ai_enabled: boolean; retention_days: number; max_storage_mb: number }
+export interface ActivitySource { id: string; captured_at: string; app_id: string; app_name: string; window_title: string; ocr_text: string; sha256: string; bytes: number; origin?: 'foreground' | 'manual_import'; deleted?: boolean }
+export interface ActivitySnapshot { version: 1; revision: number; config: ActivityConfig; candidates: TodoCandidate[]; todos: PersonalTodo[]; sources: Array<Omit<ActivitySource, 'ocr_text'>>; runtime: { capture_mode?: 'automatic' | 'manual-only'; platform_note?: string; platform: string; supported: boolean; running: boolean; scanning: boolean; last_scan_at: string | null; last_success_at: string | null; status: string; error: string | null; coverage: string } }
 export interface ActivityApp { app_id: string; app_name: string }
 export interface ActivityReply { apps?: ActivityApp[]; type: 'activity.result'; id: string; ok: boolean; state?: ActivitySnapshot; source?: ActivitySource & { image_data_url: string | null }; error?: string; error_code?: string }
 
@@ -40,7 +40,7 @@ export function requestActivity(type: string, data: Record<string, unknown> = {}
     if (signal?.aborted) { cancel(); return }
     chrome.runtime.onMessage.addListener(receive)
     signal?.addEventListener('abort', cancel, { once: true })
-    timer = setTimeout(() => finish(new Error('未收到后台确认，请刷新核实；不会自动重试更改。')), type === 'activity.scan' ? 120_000 : type === 'activity.analyze' ? 45_000 : 15_000)
+    timer = setTimeout(() => finish(new Error('未收到后台确认，请刷新核实；不会自动重试更改。')), type === 'activity.scan' || type === 'activity.import' ? 120_000 : type === 'activity.analyze' ? 45_000 : 15_000)
     try {
       Promise.resolve(chrome.runtime.sendMessage({ type, ...data, id, require_connected: true })).then(ack => {
         if (ack?.ok === false) finish(new Error(ack.error || 'Companion 未连接。'))

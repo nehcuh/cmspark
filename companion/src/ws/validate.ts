@@ -56,6 +56,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "activity.state": (m) => personalWorkspaceSchema(m),
     "activity.apps": (m) => personalWorkspaceSchema(m),
     "activity.configure": (m) => personalWorkspaceSchema(m),
+    "activity.import": (m) => personalWorkspaceSchema(m),
     "activity.scan": (m) => personalWorkspaceSchema(m),
     "activity.analyze": (m) => personalWorkspaceSchema(m),
     "activity.source": (m) => personalWorkspaceSchema(m),

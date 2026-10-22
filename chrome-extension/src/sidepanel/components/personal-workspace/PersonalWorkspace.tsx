@@ -105,7 +105,7 @@ function SourceEvidence({ evidence, connected, onSource, sourceAvailable = true,
     <blockquote>{evidence.quote || '没有引用文本；请读取来源截图与 OCR 核对。'}</blockquote>
     <button type="button" className="cm-p-link" disabled={!connected || loading || !evidence.source_id || !sourceAvailable} onClick={() => void load()}>{!sourceAvailable ? '来源已清理' : loading ? '读取来源中…' : source ? '重新读取来源' : '查看原始截图与 OCR'}</button>
     {error && <p role="alert" className="cm-personal-fieldnote">{error}</p>}
-    {sourceAvailable && source && <details open><summary className="cm-personal-source-line">采集于 {formatTaskTime(source.captured_at)} · {source.app_name || source.app_id}</summary>{source.image_data_url && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(source.image_data_url) ? <img className="cm-personal-source-image" src={source.image_data_url} alt={`${source.app_name || '应用'}在${formatTaskTime(source.captured_at)}的来源截图`} /> : <p className="cm-personal-fieldnote">截图已清理或不可读取。</p>}<p className="cm-personal-fieldnote" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: 10 }}>{source.ocr_text || '无 OCR 文本'}</p></details>}
+    {sourceAvailable && source && <details open><summary className="cm-personal-source-line">{source.origin === 'manual_import' ? '导入于（原消息时间未知）' : '采集于'} {formatTaskTime(source.captured_at)} · {source.app_name || source.app_id}</summary>{source.image_data_url && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(source.image_data_url) ? <img className="cm-personal-source-image" src={source.image_data_url} alt={`${source.app_name || '应用'}在${formatTaskTime(source.captured_at)}的来源截图`} /> : <p className="cm-personal-fieldnote">截图已清理或不可读取。</p>}<p className="cm-personal-fieldnote" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: 10 }}>{source.ocr_text || '无 OCR 文本'}</p></details>}
   </>
 }
 
@@ -147,17 +147,18 @@ function ActivityPanel({ controller, connected }: { controller: ActivityControll
   const [loadedSource, setLoadedSource] = useState<ActivityReply['source']>(), [manual, setManual] = useState(false)
   const runtime = snapshot!.runtime, config = snapshot!.config
   const source = snapshot!.sources.find(item => item.id === sourceId)
-  const status = !runtime.supported ? '当前平台暂不支持自动采集' : runtime.scanning ? '正在采集与分析' : config.enabled ? '采集已开启' : '采集已暂停'
+  const status = !runtime.supported ? '当前环境仅支持主动导入截图' : runtime.scanning ? '正在采集与分析' : config.enabled ? '采集已开启' : '采集已暂停'
   return <>
     <div className="cm-personal-config"><div className="cm-personal-section-title"><h2>{status}</h2><button type="button" className="cm-p-button" disabled={!connected || busy || !runtime.supported || !config.enabled && !config.allowed_apps.length} onClick={() => void mutate('activity.configure', { expected_revision: snapshot!.revision, patch: { enabled: !config.enabled } }, config.enabled ? '已暂停后续采集。' : '采集已开启；仅覆盖指定的前台应用。')}>{config.enabled ? '暂停采集' : '开启采集'}</button></div>
-      <p className="cm-personal-fieldnote">{runtime.coverage}</p>
+      <p className="cm-personal-fieldnote">{runtime.coverage}</p><p className="cm-personal-fieldnote">{runtime.platform_note}</p>
       <div className="cm-personal-runtime"><div><span>最近成功采集</span><strong>{formatTaskTime(runtime.last_success_at)}</strong></div><div><span>指定应用</span><strong>{config.allowed_apps.length} 个 · 每 {config.interval_ms / 1000} 秒检查</strong></div><div><span>已保存来源</span><strong>{snapshot!.sources.length} 张 · {(snapshot!.sources.reduce((total, item) => total + item.bytes, 0) / 1024 / 1024).toFixed(1)} MB</strong></div></div>
       {runtime.error && <p role="alert">采集未完成：{runtime.error}</p>}
       <p className="cm-personal-fieldnote">OCR 语义抽取：{config.ocr_ai_enabled ? '已允许 OCR 文本发送给配置的模型' : '未授权模型读取 OCR 文本；不会自动抽取待办'}。原始截图留在本机。</p>
       <div className="cm-personal-actions" style={{ marginTop: 16 }}><button type="button" className="cm-p-button" disabled={busy || !connected} onClick={() => setEditing(value => !value)}>{editing ? '收起设置' : '设置应用与隐私'}</button><button type="button" className="cm-p-button" disabled={!connected || busy || !runtime.supported || !config.enabled} onClick={() => void mutate('activity.scan', {}, '本次采集请求已完成，请核对最近成功时间与待整理事项。')}>{busy ? '等待后台…' : '现在检查一次'}</button></div>
-      {editing && <ActivityConfigEditor config={config} revision={snapshot!.revision} busy={busy || !connected} onSave={async patch => { const saved = await mutate('activity.configure', { expected_revision: snapshot!.revision, patch }, '采集设置已保存。'); if (saved) setEditing(false) }} />}
+      {editing && <ActivityConfigEditor platform={runtime.platform} autoSupported={runtime.supported} config={config} revision={snapshot!.revision} busy={busy || !connected} onSave={async patch => { const saved = await mutate('activity.configure', { expected_revision: snapshot!.revision, patch }, '采集设置已保存。'); if (saved) setEditing(false) }} />}
       <section className="cm-personal-config-section"><h2>保留与清理</h2><p className="cm-personal-fieldnote" style={{ margin: '12px 0' }}>来源最多保留 {config.retention_days} 天，容量上限 {config.max_storage_mb} MB；清理截图与 OCR 后，已确认事项保留，引用原文也会移除。</p>{deleteConfirm ? <div className="cm-personal-actions"><span className="cm-personal-fieldnote">删除全部截图、OCR 和未确认候选？此操作不可撤销。</span><button className="cm-p-button cm-p-danger" type="button" disabled={busy || !connected} onClick={async () => { if (await mutate('activity.delete', {}, '来源与未确认候选已清理；已确认事项保留。')) setDeleteConfirm(false) }}>确认清理来源</button><button className="cm-p-button" type="button" onClick={() => setDeleteConfirm(false)}>取消</button></div> : <button className="cm-p-button cm-p-danger" type="button" disabled={!connected || busy} onClick={() => setDeleteConfirm(true)}>清理全部来源</button>}</section>
     </div>
+    <ImportScreenshot busy={busy || !connected} onImport={image_base64 => mutate('activity.import', { image_base64 }, '截图已在本机 OCR；未发送模型。请核对来源后整理待办，或单独点击抽取。')} />
     <RecentActivitySources sources={snapshot!.sources} onSelect={id => { setSourceId(id); setLoadedSource(undefined); setManual(false) }} />
     {source && <section className="cm-personal-detail" key={source.id} style={{ maxWidth: 900, marginTop: 20 }}><div className="cm-personal-detail-top"><h2>采集来源</h2><button className="cm-p-link" type="button" onClick={() => setSourceId(null)}>关闭来源</button></div><SourceEvidence appName={source.app_name} connected={connected} onSource={setLoadedSource} evidence={{ source_id: source.id, app_id: source.app_id, group: '', sender: '', message_time: '', quote: '' }} />
       <div className="cm-personal-actions" style={{ marginTop: 16 }}><button type="button" className="cm-p-button" disabled={busy || !connected || !loadedSource} onClick={() => setManual(value => !value)}>{manual ? '收起待办草稿' : '手动整理为待办'}</button><button type="button" className="cm-p-button" disabled={busy || !connected || !config.ocr_ai_enabled} onClick={() => void mutate('activity.analyze', { source_id: source.id }, '该来源的待办抽取已完成，请到待整理中核对。')}>抽取待办</button></div>
@@ -168,9 +169,38 @@ function ActivityPanel({ controller, connected }: { controller: ActivityControll
   </>
 }
 
-function ActivityConfigEditor({ config, revision, busy, onSave }: { config: ActivityConfig; revision: number; busy: boolean; onSave: (patch: Partial<ActivityConfig>) => Promise<void> }) {
+function ImportScreenshot({ busy, onImport }: { busy: boolean; onImport: (image: string) => Promise<boolean> }) {
+  const reader = useRef<FileReader | null>(null), alive = useRef(true)
+  const [reading, setReading] = useState(false), [error, setError] = useState('')
+  useEffect(() => { alive.current = true; return () => { alive.current = false; reader.current?.abort() } }, [])
+  return <section className="cm-personal-config-section"><h2>主动导入截图</h2>
+    <p className="cm-personal-fieldnote">适用于 Wayland、无法后台采集的环境，或只想整理一张截图。选择不超过 6 MB 的 PNG，在本机 OCR；不会自动发送模型。来源标为用户导入，应用、群和消息时间均需人工核对。</p>
+    <label className="cm-personal-fieldnote" style={{ display: 'block', marginTop: 12 }}>选择 PNG 并在本机识别<input style={{ display: 'block', maxWidth: '100%', marginTop: 8 }} aria-label="主动导入 PNG 截图" type="file" accept="image/png,.png" disabled={busy || reading} onChange={event => {
+      const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''
+      if (!file) return
+      setError('')
+      if (!file.size || file.size > 6 * 1024 * 1024 || file.type && file.type !== 'image/png') { setError('请选择非空且不超过 6 MB 的 PNG 截图。'); return }
+      reader.current?.abort(); const next = new FileReader(); reader.current = next; setReading(true)
+      const done = () => { if (alive.current && reader.current === next) setReading(false) }
+      next.onerror = () => { if (alive.current) setError('无法读取所选截图。'); done() }
+      next.onabort = done
+      next.onload = async () => {
+        if (!alive.current || reader.current !== next) return
+        try {
+          if (typeof next.result !== 'string' || !next.result.startsWith('data:image/png;base64,')) throw new Error('PNG 数据无效')
+          await onImport(next.result.slice(next.result.indexOf(',') + 1))
+        } catch { if (alive.current) setError('截图导入未确认，请核对后台连接和本地 OCR。') }
+        finally { done() }
+      }
+      next.readAsDataURL(file)
+    }} /></label>{reading && <p role="status">正在等待本地 OCR…</p>}{error && <p role="alert">{error}</p>}
+  </section>
+}
+
+function ActivityConfigEditor({ config, revision, busy, onSave, platform = 'darwin', autoSupported = true }: { platform?: string; autoSupported?: boolean; config: ActivityConfig; revision: number; busy: boolean; onSave: (patch: Partial<ActivityConfig>) => Promise<void> }) {
   const initialRevision = useRef(revision)
   const [apps, setApps] = useState(config.allowed_apps.join('\n')), [interval, setIntervalValue] = useState(config.interval_ms / 1000), [days, setDays] = useState(config.retention_days), [storage, setStorage] = useState(config.max_storage_mb), [ai, setAi] = useState(config.ocr_ai_enabled)
+  const [language, setLanguage] = useState(config.ocr_language || 'zh-Hans')
   const [error, setError] = useState('')
   const [runningApps, setRunningApps] = useState<ActivityApp[] | null>(null), [loadingApps, setLoadingApps] = useState(false), [appsError, setAppsError] = useState('')
   const appsRequest = useRef<AbortController | null>(null)
@@ -188,13 +218,14 @@ function ActivityConfigEditor({ config, revision, busy, onSave }: { config: Acti
     event.preventDefault(); setError('')
     if (revision !== initialRevision.current) { setError('设置已变化，请收起并重新打开设置后核对。'); return }
     const allowed = [...new Set(apps.split(/[\n,]/).map(app => app.trim()).filter(Boolean))]
-    if (allowed.length > 20 || allowed.some(app => !/^[A-Za-z0-9][A-Za-z0-9.-]{2,199}$/.test(app))) { setError('请填写有效应用 bundle ID，每行一个，最多 20 个。'); return }
-    void onSave({ allowed_apps: allowed, interval_ms: interval * 1000, retention_days: days, max_storage_mb: storage, ocr_ai_enabled: ai })
-  }}><div className="cm-personal-form"><section className="cm-personal-wide cm-personal-app-picker" aria-label="选择记录应用"><div className="cm-personal-section-title"><h2>允许记录的应用</h2><span className="cm-personal-count">已选择 {selectedApps.length} / 20 个</span></div><p className="cm-personal-fieldnote">点击后读取本机正在运行的应用名称；勾选只修改草稿，保存后仍需单独开启采集。</p><button type="button" className="cm-p-button" disabled={busy || loadingApps} onClick={() => void loadApps()}>{loadingApps ? '读取应用列表…' : '选择正在运行的应用'}</button>
+    if (allowed.length > 20 || allowed.some(app => !/^[A-Za-z0-9][A-Za-z0-9.-]{2,199}$/.test(app) || /^(?:win|linux)\./.test(app) && !/^(?:win|linux)\.[a-f0-9]{64}$/.test(app))) { setError('请填写有效应用标识，每行一个，最多 20 个；Windows / Linux 标识应从应用列表选择。'); return }
+    void onSave({ allowed_apps: allowed, interval_ms: interval * 1000, retention_days: days, max_storage_mb: storage, ocr_ai_enabled: ai, ocr_language: language })
+  }}><div className="cm-personal-form"><section className="cm-personal-wide cm-personal-app-picker" aria-label="选择记录应用"><div className="cm-personal-section-title"><h2>允许记录的应用</h2><span className="cm-personal-count">已选择 {selectedApps.length} / 20 个</span></div><p className="cm-personal-fieldnote">点击后读取本机正在运行的应用名称；勾选只修改草稿，保存后仍需单独开启采集。</p><button type="button" className="cm-p-button" disabled={busy || loadingApps || !autoSupported} onClick={() => void loadApps()}>{loadingApps ? '读取应用列表…' : '选择正在运行的应用'}</button>
       {choices.length > 0 && <div className="cm-personal-app-choices">{choices.map(app => <label key={app.app_id} className="cm-personal-check"><input type="checkbox" checked={selectedApps.includes(app.app_id)} disabled={busy || selectedApps.length >= 20 && !selectedApps.includes(app.app_id)} onChange={event => { setApps(event.target.checked ? [...new Set([...selectedApps, app.app_id])].join('\n') : selectedApps.filter(id => id !== app.app_id).join('\n')) }} /><span>{app.app_name}{!runningApps?.some(choice => choice.app_id === app.app_id) && <span className="cm-personal-fieldnote"> · 已选择，当前列表未发现</span>}</span></label>)}</div>}
       {runningApps?.length === 0 && <p className="cm-personal-fieldnote">当前没有可选择的应用。请先打开目标聊天应用再刷新列表；已有选择保留。</p>}{appsError && <p role="alert" className="cm-personal-fieldnote">{appsError} 已有选择和草稿保留；可使用高级设置填写应用标识。</p>}
-      <details className="cm-personal-advanced"><summary>高级设置：手动填写应用标识</summary><label>应用 bundle ID（每行一个）<textarea value={apps} onChange={e => setApps(e.target.value)} placeholder={'com.tencent.xinWeChat\ncom.alibaba.DingTalkMac'} disabled={busy} /></label></details></section><p className="cm-personal-fieldnote cm-personal-wide">只支持前台应用当前可见窗口；密码管理器和系统敏感界面始终排除。不会打开、切换或滚动聊天。</p><label>检查间隔（秒）<input type="number" min={5} max={600} step={1} value={interval} onChange={e => setIntervalValue(Number(e.target.value))} disabled={busy} required /></label><label>保留天数<input type="number" min={1} max={90} step={1} value={days} onChange={e => setDays(Number(e.target.value))} disabled={busy} required /></label><label>存储上限（MB）<input type="number" min={16} max={10240} step={1} value={storage} onChange={e => setStorage(Number(e.target.value))} disabled={busy} required /></label>
-    <label className="cm-personal-check cm-personal-wide"><input type="checkbox" checked={ai} onChange={e => setAi(e.target.checked)} disabled={busy} />允许将截图识别出的 OCR 文本发送给当前配置的模型，用于理解聊天并提出待办候选。聊天内容可能包含个人或企业信息。</label><p className="cm-personal-fieldnote cm-personal-wide">截图保存在本机；模型是否在本机取决于你的模型配置。关闭此项后不发送 OCR 文本。保存范围后仍需单独开启采集；系统屏幕录制权限须由你授权。</p></div>{error && <p role="alert">{error}</p>}<div className="cm-personal-save"><button type="submit" className="cm-p-button cm-p-primary" disabled={busy}>保存范围与隐私设置</button></div></form>
+      <details className="cm-personal-advanced"><summary>高级设置：手动填写应用标识</summary><label>{platform === 'darwin' ? '应用 bundle ID（每行一个）' : '应用身份摘要（请从上方应用列表选择）'}<textarea value={apps} onChange={e => setApps(e.target.value)} placeholder={platform === 'darwin' ? 'com.tencent.xinWeChat\ncom.alibaba.DingTalkMac' : '通过应用选择器生成 win. 或 linux. 标识'} disabled={busy} /></label></details></section><p className="cm-personal-fieldnote cm-personal-wide">只支持前台应用当前可见窗口；密码管理器和系统敏感界面始终排除。不会打开、切换或滚动聊天。</p><label>检查间隔（秒）<input type="number" min={5} max={600} step={1} value={interval} onChange={e => setIntervalValue(Number(e.target.value))} disabled={busy} required /></label><label>保留天数<input type="number" min={1} max={90} step={1} value={days} onChange={e => setDays(Number(e.target.value))} disabled={busy} required /></label><label>存储上限（MB）<input type="number" min={16} max={10240} step={1} value={storage} onChange={e => setStorage(Number(e.target.value))} disabled={busy} required /></label>
+    <label>本地 OCR 语言<select value={language} onChange={e => setLanguage(e.target.value as typeof language)} disabled={busy}><option value="zh-Hans">简体中文</option><option value="zh-Hant">繁体中文</option><option value="en-US">英语</option></select></label><p className="cm-personal-fieldnote">需安装相应系统 OCR / Tesseract 语言包；不会自动下载。Windows、Linux 应用标识由实际进程映像生成。</p>
+    <label className="cm-personal-check cm-personal-wide"><input type="checkbox" checked={ai} onChange={e => setAi(e.target.checked)} disabled={busy} />允许将截图识别出的 OCR 文本发送给当前配置的模型，用于理解聊天并提出待办候选。聊天内容可能包含个人或企业信息。</label><p className="cm-personal-fieldnote cm-personal-wide">截图保存在本机；模型是否在本机取决于你的模型配置。关闭此项后不发送 OCR 文本。保存范围后仍需单独开启采集；需要系统权限的操作须由你在系统中单独授权。</p></div>{error && <p role="alert">{error}</p>}<div className="cm-personal-save"><button type="submit" className="cm-p-button cm-p-primary" disabled={busy}>保存范围与隐私设置</button></div></form>
 }
 
 function MaterialsPanel({ openResource }: { openResource: (panel: ContextPanelId) => void }) {

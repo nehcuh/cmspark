@@ -11,7 +11,7 @@ const { parseExtractedCandidates } = require(path.join(root, 'companion/dist/act
 const { SettingsAssistant } = require(path.join(root, 'companion/dist/settings-assistant'))
 const recorded = JSON.parse(fs.readFileSync(path.join(root, 'companion/tests/fixtures/activity-752.json'), 'utf8'))
 const source = recorded.source.source, image = Buffer.from(source.image_data_url.split(',')[1], 'base64')
-const activity = new ActivityService({ dataDir: data, platform: 'darwin', recorder: { capture: async () => null, listApps: async () => recorded.apps.apps }, notify: async () => {}, extract: async () => [] })
+const activity = new ActivityService({ dataDir: data, platform: process.env.CMSPARK_FIXTURE_ACTIVITY_PLATFORM || 'darwin', recorder: { ocrImage: async () => 'PROJECT ALPHA\nSEND REPORT FRIDAY（受控本地 OCR）', capture: async () => null, listApps: async () => recorded.apps.apps }, notify: async () => {}, extract: async () => [] })
 const first = activity.store.addSource({ app_id: source.app_id, app_name: source.app_name, window_title: source.window_title, captured_at: new Date().toISOString(), ocr_text: source.ocr_text }, image)
 const raw = { candidates: [{ title: '提交季度方案（测试）', owner: '', feedback_to: '项目群', feedback_required: true, quote: source.ocr_text, group: '项目群', sender: '', message_time: '' }] }
 activity.store.addCandidates(first, parseExtractedCandidates(JSON.stringify(raw), first))
@@ -29,7 +29,7 @@ const bootstrap = `<script>window.fixtureResponse=(m,cb)=>{if(!/^(activity\\.|to
 const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && request.url === '/fixture') {
     try {
-      let bytes = ''; for await (const chunk of request) { bytes += chunk; if (bytes.length > 20000) throw Error('fixture request too large') }
+      let bytes = ''; for await (const chunk of request) { bytes += chunk; if (bytes.length > 8_389_000) throw Error('fixture request too large') }
       const { require_connected: _hint, ...frame } = JSON.parse(bytes)
       const result = frame.type.startsWith('settings.assistant.') ? await assistant.handle(frame, 'fixture') : await activity.handle(frame)
       response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(result))

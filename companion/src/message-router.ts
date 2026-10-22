@@ -1118,6 +1118,7 @@ async function dispatchMessage(
     case "activity.state":
     case "activity.apps":
     case "activity.configure":
+    case "activity.import":
     case "activity.scan":
     case "activity.analyze":
     case "activity.source":

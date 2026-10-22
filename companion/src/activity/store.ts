@@ -21,7 +21,7 @@ export class ActivityStore {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as ActivityState
       if (saved.version !== 1 || !Number.isSafeInteger(saved.revision) || !Array.isArray(saved.sources) || !Array.isArray(saved.candidates) || !Array.isArray(saved.todos) || saved.sources.length > 2000 || saved.todos.length > 3000 || saved.candidates.length > 3000) throw new ActivityError('CORRUPT_STORAGE', '活动存储版本或结构无效')
       validateConfig(saved.config)
-      this.value = saved
+      this.value = { ...saved, config: { ...DEFAULT_ACTIVITY_CONFIG, ...saved.config } }
       // A crash between durable claim and callback cannot prove notification delivery.
       if (saved.todos.some(t => t.reminder.status === 'attempting')) this.mutate(s => { for (const t of s.todos) if (t.reminder.status === 'attempting') { t.reminder.status = 'unknown'; t.revision++ } })
     }
