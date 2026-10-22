@@ -17,7 +17,7 @@ export function nativeProbeCompilePlan572({cl,root,output}) {
   return [command,args.map(value=>value===original?generated:value===out?`/OUT:${path.win32.join(output,probe572.dll)}`:value)]
 }
 export function buildNativeProbe572({root:sourceRoot=root,toolchain}={}) {
-  if(process.platform!=='win32'||process.arch!=='x64'||process.version!=='v22.23.2')throw new Error('UIA572_PROBE_BUILD_WINDOWS_X64_NODE22_23_2')
+  if(process.platform!=='win32'||process.arch!=='x64'||process.version!=='v22.23.4')throw new Error('UIA572_PROBE_BUILD_WINDOWS_X64_NODE22_23_4')
   const source=path.join(sourceRoot,'src/host-use/win/native/computer-uia-no-focus.cpp')
   const info=fs.lstatSync(source)
   if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1)throw new Error('UIA572_PROBE_SOURCE')

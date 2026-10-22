@@ -16,7 +16,7 @@ export function ax571BuildPlan(root){
  ]}
 }
 export function buildAx571(root){
- if(process.platform!=='darwin'||process.version!=='v22.23.2')throw Error('AX571_BUILD_PLATFORM_RUNTIME')
+ if(process.platform!=='darwin'||process.version!=='v22.23.4')throw Error('AX571_BUILD_PLATFORM_RUNTIME')
  const plan=ax571BuildPlan(root)
  fs.mkdirSync(plan.dest,{recursive:true});const stat=fs.lstatSync(plan.dest);if(!stat.isDirectory()||stat.isSymbolicLink())throw Error('AX571_BUILD_REDIRECT')
  for(const file of [plan.host,plan.fixtureBundle]){if(fs.existsSync(file))throw Error('AX571_BUILD_OUTPUT_ALREADY_EXISTS')}

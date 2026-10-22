@@ -307,13 +307,11 @@ test('actual PowerShell launcher bounds both scalar domains and runs the interpr
   const early = workflow.indexOf('& scripts/tests/cockpit-bridge-node-selection.test.ps1')
   assert.ok(early > workflow.indexOf('Compile shared companion test inputs (#650)'))
   assert.ok(early < workflow.indexOf('Native Windows read-only Registry discovery (#644)'))
-  const final = workflow.indexOf('& scripts/tests/run-cockpit-bridge-first.ps1')
-  const gate = workflow.indexOf('- name: "Windows cockpit native bridge first identity STOP gate (#723)"')
+  assert.equal(workflow.includes('run-cockpit-bridge-first.ps1'), false)
+  assert.equal(workflow.includes('cockpit-first-identity'), false)
   const probe = workflow.indexOf('- name: "Post-census isolated module-scope diagnostic (#650)"')
-  assert.ok(gate > workflow.indexOf('- name: "Windows native 8.3 filesystem paths (#604)"') && gate < final && final < probe)
-  assert.ok(workflow.slice(gate, final).includes("if: matrix.os == 'windows-latest' && matrix.lane == 'native'"))
+  assert.ok(probe > workflow.indexOf('- name: "Windows native 8.3 filesystem paths (#604)"'))
   assert.ok(workflow.slice(probe, workflow.indexOf('\n        run:', probe)).includes("if: ${{ always() && !cancelled() && matrix.os == 'windows-latest' && matrix.lane == 'census' }}"))
-  assert.equal(workflow.split('& scripts/tests/run-cockpit-bridge-first.ps1').length, 2)
 })
 
 test('actual setup error retains its reason and raw descriptors until the real close', async () => {

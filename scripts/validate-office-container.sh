@@ -2,8 +2,8 @@
 # A fresh container uses baked dependencies, never the host's native node_modules.
 set -euo pipefail
 TASK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-docker build --platform linux/arm64 -f "${TASK_ROOT}/docker/office-val.Dockerfile" -t cmspark-office-val:node22.23.2 "${TASK_ROOT}"
-docker run --rm --platform linux/arm64 -v "${TASK_ROOT}:/source:ro" cmspark-office-val:node22.23.2 bash -c '
+docker build --platform linux/arm64 -f "${TASK_ROOT}/docker/office-val.Dockerfile" -t cmspark-office-val:node22.23.4 "${TASK_ROOT}"
+docker run --rm --platform linux/arm64 -v "${TASK_ROOT}:/source:ro" cmspark-office-val:node22.23.4 bash -c '
   set -euo pipefail
   cp -R /source/companion/src /source/companion/tests /source/companion/scripts /source/companion/assets /opt/cmspark/companion/
   cp /source/companion/tsconfig*.json /opt/cmspark/companion/

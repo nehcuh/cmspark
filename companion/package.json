@@ -6,7 +6,7 @@
     "cmspark-agent": "./dist/index.js"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.23.4 <23"
   },
   "scripts": {
     "prebuild": "node scripts/generate-meeting-capture.mjs --check && node scripts/generate-tray-icons.mjs",

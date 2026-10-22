@@ -251,7 +251,7 @@ Its required platform engine is preserved intact, including the 0.1.5 integrity
 inventory, resources, `sources/` recipes and patches, and `licenses/` notices.
 `scripts/stage-office-runtime.mjs` verifies every inventory digest before and
 after staging and retains the filesystem workers and matching optional native
-dependencies. Distribution Node is pinned to 22.23.2; the existing official
+dependencies. Distribution Node is pinned to 22.23.4; the existing official
 Node archive checksum verification remains in place. `office-runtime.json`
 records the selected engine and staged package versions. See the shipped
 `THIRD_PARTY_NOTICES` for license/source locations.
@@ -270,3 +270,11 @@ Re-run `npm audit --omit=dev` when: `node-notifier` publishes a release that
 pins `uuid` ≥11 (would clear the 2 moderate); or companion adds a new direct
 production dependency. The `--audit-level=high` CI gate will surface any new
 high/critical on a shipped dep automatically.
+
+### Node security baseline (2026-10-22)
+
+The [official Node 22.23.4 security release](https://nodejs.org/en/blog/release/v22.23.4/) supplies the packaged runtime and native build inputs. Header archive SHA256: `dc4028dc105e27e5295119dd9da076fca71d5216113e097813f0fb30f59241a5`; Windows x64 `node.lib`: `c243185f2347870cadb637c909bf123fc703dc65dbfa769b17ec45a4b661d782`. Both come from the same release SHASUMS256 manifest.
+
+`docker/office-val.Dockerfile` pins the official `node:22.23.4-bookworm-slim` OCI index to `sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d`. Registry manifest/config inspection confirmed Node 22.23.4 for Linux AMD64 and ARM64; this inspection is not a container execution result. Local development engines intentionally narrow to `>=22.23.4 <23`; higher major versions are not qualified by this change.
+
+安全基线跟踪：[Issue #759](https://github.com/nehcuh/cmspark/issues/759)。

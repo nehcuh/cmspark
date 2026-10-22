@@ -27,6 +27,9 @@ function windowsRealpathModel(alias: string, canonical: string) {
   const end = builtin.indexOf("\n/**", native)
   assert.ok(begin >= 0 && native > begin && end > native)
   const context: any = {
+    // Model the ordinary runtime with Node permission mode disabled.
+    // Node 22.23.4 realpathSync checks this dependency before its path walk.
+    permission: { isEnabled: () => false, has: () => { throw new Error("UNEXPECTED_PERMISSION_QUERY") } },
     getOptions: () => ({}), toPathIfFileURL: (p: string) => p,
     validatePath: (p: unknown) => assert.equal(typeof p, "string"), pathModule: path.win32,
     realpathCacheKey: Symbol("cache"), SafeMap: Map, SafeSet: Set,

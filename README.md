@@ -147,7 +147,7 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 
 ### 环境要求
 
-- **Node.js** ≥ 22.19.0（Office 引擎最低要求；推荐使用 `nvm` 管理；发行 runtime 固定 22.23.2）
+- **Node.js** ≥ 22.23.4 且 < 23（当前受支持的安全运行时范围；推荐使用 `nvm` 管理；发行 runtime 固定 22.23.4）
 - **Chrome / Edge** 浏览器（支持 Manifest V3 扩展）
 - **LLM API Key**（默认支持 DeepSeek，也可配置其他 OpenAI-compatible 服务）
 
@@ -686,7 +686,7 @@ build-package.bat
 
 验证：包内 `dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe` 或设置页「本机组件：已就绪」。
 
-> 本地 Windows x64 SEA 构建需要 x64 Node.js ≥ 22.19.0。官方 Setup.exe 由 `make package-windows` / CI `package.sh` 在安装 [NSIS](https://nsis.sourceforge.io/) 后生成。Office 引擎还需要匹配架构的 [Microsoft Visual C++ v14 runtime](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist)。
+> 本地 Windows x64 SEA 构建固定使用 x64 Node.js 22.23.4。官方 Setup.exe 由 `make package-windows` / CI `package.sh` 在安装 [NSIS](https://nsis.sourceforge.io/) 后生成。Office 引擎还需要匹配架构的 [Microsoft Visual C++ v14 runtime](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist)。
 
 #### 安装（注册后台服务）
 
@@ -876,7 +876,7 @@ macOS 打包流程：
 2. esbuild bundle + 复制 Node.js 运行时、原生依赖
 3. 压缩为 zip，额外生成 DMG 安装包
 
-**Windows 前提**：构建用 Node.js ≥ 22.19.0；发行包自带 Node 22.23.2。Office 导入需要匹配架构的 Microsoft Visual C++ v14 runtime。官方 Setup.exe 需要 [NSIS](https://nsis.sourceforge.io/)（CI 钉死 Chocolatey `nsis` 3.12.0）；本机未装则 `package.sh` 跳过安装器并警告，zip 仍可用。
+**Windows 前提**：原生与 SEA 构建固定使用 Node.js 22.23.4；发行包自带同版 Node。Office 导入需要匹配架构的 Microsoft Visual C++ v14 runtime。官方 Setup.exe 需要 [NSIS](https://nsis.sourceforge.io/)（CI 钉死 Chocolatey `nsis` 3.12.0）；本机未装则 `package.sh` 跳过安装器并警告，zip 仍可用。
 
 ### 分别启动
 

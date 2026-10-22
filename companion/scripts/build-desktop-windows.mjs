@@ -5,14 +5,14 @@ import path from "node:path"
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
 
-const NODE_VERSION = "22.23.2"
+const NODE_VERSION = "22.23.4"
 const MAX_INPUT_BYTES = 32 * 1024 * 1024
 const MAX_EXTRACT_BYTES = 64 * 1024 * 1024
 export const DESKTOP_WINDOWS_INPUTS = Object.freeze({
   headers: Object.freeze({ url: `https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-headers.tar.gz`,
-    sha256: "daaf13ec5d45a38bbcfcff06d0723f72a6813b89ab27bb5af2ac8e1f6259dde0" }),
+    sha256: "dc4028dc105e27e5295119dd9da076fca71d5216113e097813f0fb30f59241a5" }),
   nodeLib: Object.freeze({ url: `https://nodejs.org/dist/v${NODE_VERSION}/win-x64/node.lib`,
-    sha256: "ac15f1e9d7c8279353723a77f6319967f1a41c06026521094a8234c2e6fbe052" }),
+    sha256: "c243185f2347870cadb637c909bf123fc703dc65dbfa769b17ec45a4b661d782" }),
   webview: Object.freeze({ url: "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4258.31/microsoft.web.webview2.1.0.4258.31.nupkg",
     sha256: "56f7f4b8bf9aee4b8efefbbdd4f67d5f74ebd1b100ed0806da71bf76af481aa9" }),
 })

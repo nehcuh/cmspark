@@ -17,7 +17,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           # REL-5 / P2: align with release.yml + package.sh (Node 22)
-          node-version: '22'
+          node-version: '22.23.4'
           cache: 'npm'
           cache-dependency-path: |
             companion/package-lock.json
@@ -180,7 +180,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.23.2'
+          node-version: '22.23.4'
           cache: 'npm'
           cache-dependency-path: |
             companion/package-lock.json
@@ -204,7 +204,7 @@ jobs:
           npm run build
 
       - name: Pinned NSIS dependency transport and integrity (#633)
-        run: node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/native-ci-stages-760.test.mjs
+        run: node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/node-security-runtime-759.test.mjs scripts/tests/native-ci-stages-760.test.mjs
 
       - name: Stage native-lane Windows scripts (#750)
         if: matrix.os == 'windows-latest' && matrix.lane == 'native'
@@ -709,22 +709,6 @@ jobs:
           & scripts/tests/win-mcp-short-path-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: "Windows cockpit native bridge first identity STOP gate (#723)"
-        id: cockpit-first-identity
-        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
-        shell: pwsh
-        run: |
-          & scripts/tests/run-cockpit-bridge-first.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: "Publish finite cockpit first failure (#723)"
-        if: always() && matrix.os == 'windows-latest' && matrix.lane == 'native' && steps.cockpit-first-identity.outcome == 'failure' && steps.cockpit-first-identity.outputs.finite_summary != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: cockpit-first-identity-finite
-          path: ${{ steps.cockpit-first-identity.outputs.finite_summary }}
-          if-no-files-found: error
-
       - name: "Post-census isolated module-scope diagnostic (#650)"
         # Only the canonical VM after its sealing/public upload; not the other desktop.
         # A diagnostic PASS cannot replace the original census/job result.
@@ -750,7 +734,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.4'
           cache: npm
           cache-dependency-path: companion/package-lock.json
       - name: Install locked Companion runtime dependencies

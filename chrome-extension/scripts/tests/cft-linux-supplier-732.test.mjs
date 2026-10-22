@@ -60,7 +60,7 @@ test('actual business finally retains an unknown child bundle before a throwing 
 test('actual exported business refuses absent private supplier before its first preflight/IO call',async()=>{
   const text=fs.readFileSync(source,'utf8'),begin=text.indexOf('export async function main() {'),end=text.indexOf('\nlet directEntry=false',begin)
   assert.ok(begin>0&&end>begin);let preflights=0
-  const context={activeSupplier:undefined,fail(){throw Error('OWNED_ACCEPTANCE_REFUSED')},Date,AbortController,Set,Object,Promise,clearTimeout,BOUNDS:{outer:120000},process:{env:{},platform:'linux',versions:{node:'22.23.2'}},preflight(){preflights++;throw Error('INERT_PREFLIGHT_BOUNDARY')},observeBrowserStartup:()=>({}),finiteReceipt:()=>({passed:false}),console:Object.fromEntries(['log','info','warn','error','debug'].map(k=>[k,()=>{}]))}
+  const context={activeSupplier:undefined,fail(){throw Error('OWNED_ACCEPTANCE_REFUSED')},Date,AbortController,Set,Object,Promise,clearTimeout,BOUNDS:{outer:120000},process:{env:{},platform:'linux',versions:{node:'22.23.4'}},preflight(){preflights++;throw Error('INERT_PREFLIGHT_BOUNDARY')},observeBrowserStartup:()=>({}),finiteReceipt:()=>({passed:false}),console:Object.fromEntries(['log','info','warn','error','debug'].map(k=>[k,()=>{}]))}
   const actual=vm.runInNewContext('('+text.slice(begin+'export '.length,end)+')',context)
   try{await actual()}catch(e){assert.equal(e.message,'OWNED_ACCEPTANCE_REFUSED')}
   assert.equal(preflights,0)
