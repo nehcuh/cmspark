@@ -41,7 +41,7 @@ Windows 原 Node 标量九项之后、Registry 和完整 census 之前，运行�
 
 前置入口先在自有布局复制同一 builder，用同固定 PS5.1／csc 验证公开惰性好源码的真实 exit0、产物与摘要，以及坏源码的真实非零 `CompilerExitCode`、原 build 拒绝且无成功产物／摘要。路径包含空格、字符码构造的中文和字面 `%`；明确拒绝引号／NUL／CR／LF，参数通过 Framework `Arguments` 的有限双引号传递。控制不执行生成的 EXE，泛异常／未设置退出码不能算坏源码负控通过；之后仍实际构建固定产品 host。Node 源码合同和 VM 检查不是 PS5.1／C# 解释执行，真实控制必须由精确新 head 的 Windows 决定。
 
-同一必需控制子进程还复制实际 Job builder：正控复制字节相同的 wrapper／CPU 两份 C# 源，核两个 `/main` 的实际 Int32 exit0 和两个产物；两个公开惰性负控分别缺失第一 Main、第二 Main，核固定目标与实际数值非零，第二负控还须先观察第一项 exit0／产物。所有 fixture EXE 只编译不执行，失败必须保原 build 拒绝且无失败目标产物。Job 循环逐项直接等待原编译进程并在 finally 释放，不复用自动变量；原 first-identity 仍在自身 45 秒中重新编译并执行原 CPU／Chrome 路径。当前 first-identity 的具体失败仍 UNKNOWN，编译正控不等真实身份通过。
+同一必需控制子进程还复制实际 Job builder：正控复制字节相同的 wrapper／CPU 两份 C# 源，核两个 `/main` 的实际 Int32 exit0 和两个产物；两个公开惰性负控分别缺失第一 Main、第二 Main，核固定目标与实际数值非零，第二负控还须先观察第一项 exit0／产物。所有 fixture EXE 只编译不执行，失败必须保原 build 拒绝且无失败目标产物。Job 循环逐项直接等待原编译进程并在 finally 释放，不复用自动变量；用户已明确批准：固定编译前移至同次 120 秒准备阶段，交接与原 CPU／Chrome／清理仍限原 45 秒。当前 first-identity 的具体失败仍 UNKNOWN，编译正控不等真实身份通过。
 
 此路径不执行生成的 EXE、不写注册、不启动浏览器。只有构建成功、产物验证通过、child 已知关闭且临时根身份未变化时才清理自有目录；构建拒绝、关闭或归属未知时保留并拒绝，不能把失败 shell 的 close 当成所有编译后代已退出。后续原注册／framing／真实身份和全部原断言、时限继续存在。两个构建使用不同自有目录／子进程，不复用产物或 PowerShell 状态；共享 OS 缓存可能被预热，不宣称冷启动。受控 Node/VM 正负控不是 PS5.1／C# 实际构建通过，必须由新 head 的真实 Windows 决定。旧 `registration-framing` 内层异常仍 UNKNOWN；前置拆分不假称修复其历史原因。
 
@@ -63,9 +63,9 @@ Windows／跨平台变更先读 [Windows 开发与失败定位](windows-developm
 
 ### #723 D2 固定 native bridge 首门
 
-`cockpit-chrome-job-env-723.test.ts` 对实际 C# EnvironmentBlock 完整方法做有限源码降级，核六字段、固定 ComSpec、受污染父环境、排序和 UTF-16 双 NUL；固定155主源片段保留 URL/字节/hash，核 managed/default feature 选择与 legacy 缺 ComSpec 拒绝。控制不执行 C#/C++/Win32 或 Chrome，不证明当前实际 feature/policy。原真实 PS5.1 编译正控自动复制当前 C#，原 first-identity 独立重编译／45 秒和全部原生断言保留。
+`cockpit-chrome-job-env-723.test.ts` 对实际 C# EnvironmentBlock 完整方法做有限源码降级，核六字段、固定 ComSpec、受污染父环境、排序和 UTF-16 双 NUL；固定155主源片段保留 URL/字节/hash，核 managed/default feature 选择与 legacy 缺 ComSpec 拒绝。控制不执行 C#/C++/Win32 或 Chrome，不证明当前实际 feature/policy。原真实 PS5.1 编译正控自动复制当前 C#，固定编译前移至用户明确批准的同次 120 秒准备阶段，交接、原生运行与清理仍限原 45 秒，全部原生断言保留。
 
-[首个身份纵向说明](browser-native-bridge.md) 区分源码/惰性 CPU、C# framing/owned 注册与真实 document→parent pipe/HWND→当前 owner/认证 WS 的验收。Windows smoke 仅在原全部步骤末尾追加 `run-cockpit-bridge-first.ps1` gating step，复用 `.test-dist/src`、构建当前候选扩展；固定 CFT pin 未具备完整归档/EXE 证明时先失败为 NOT_READY。新供应器只用一次 600000 ms 网络准备，无 redirect/retry，不改变原 45 秒 native 或 5000 ms bind。所有新增子进程使用显式环境、owned npm 配置/cache；C# framing、注册负控、document receipt CPU 在真实 controller 之前，Job CPU 在 controller 内只执行一次。惰性 ZIP/生命周期控不称浏览器/原生通过，mask/opaque scope 仍未实现，整张 #723 不因此关闭。
+[首个身份纵向说明](browser-native-bridge.md) 区分源码/惰性 CPU、C# framing/owned 注册与真实 document→parent pipe/HWND→当前 owner/认证 WS 的验收。Windows smoke 仅在原全部步骤末尾追加 `run-cockpit-bridge-first.ps1` gating step，复用 `.test-dist/src`、构建当前候选扩展；固定 CFT pin 未具备完整归档/EXE 证明时先失败为 NOT_READY。新供应器只用一次 600000 ms 网络准备，无 redirect/retry。用户另行明确批准同次固定源码编译最多 120 秒，再进入原 45 秒 native／cleanup；5000 ms bind 保持，两段不是旧整体 45 秒测量。所有新增子进程使用显式环境、owned npm 配置/cache；C# framing、注册负控、document receipt CPU 在真实 controller 之前，Job CPU 在 controller 内只执行一次。惰性 ZIP/生命周期控不称浏览器/原生通过，mask/opaque scope 仍未实现，整张 #723 不因此关闭。
 
 ### Windows 选夹的短名与长名
 

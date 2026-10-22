@@ -10,6 +10,12 @@
 
 - **#476 桌面用户终端开发候选**：从已明确绑定的对话目录，经原生确认进入原单 PTY 与离线 xterm；所选终端摘录另行确认后保存到原对话。目录缺失诚实不可用，桌面 Agent／新目录选择入口仍未交付，不自动开启模块、默认目录或模型尾部读取。保留当前归档／浏览器与 ACP claims；真实 Windows/macOS 原生验收尚未执行，不发版、不关闭整票。
 
+- Refs #723/#755: bind the native-host registrar’s six filesystem reads to the built-in PowerShell Management module after a bounded Windows command-resolution comparison; retain ownership, reparse checks and cleanup. Native full-flow acceptance remains required.
+
+- Windows CI (#723): add one human-approved, bounded phase/checkpoint observation for the first-identity gate; preserve build120/runtime-cleanup45, original results and 4096-byte finite evidence cap. Unknown intervals remain unknown.
+
+- Refs #723：经用户明确批准，将同次固定源码编译拆为最多 120 秒的必过准备阶段，原生运行与清理仍限原 45 秒。交接绑定真实关闭回执、源码、nonce 和文件身份；超时晚到不能进入原生阶段。真实 Windows 与精确 main 验收仍须通过。
+
 - Refs #723：远端身份夹具的 CDP transport 终止同步拒绝 target／default-context 事件等待，避免命令已 ACK 后只等外层超时；保留原 abort 原因、45 秒、身份及 cleanup。新增真实类的 LF/CRLF／关闭／迟到事件回归；此为已证生命周期缺口，不认定历史 Windows 超时原因，native 身份与 mask 仍未完成。
 
 - Refs #723：隔离启动器的 CPU 自检读 claim 时显式兼容 Node 仍持有的写句柄，保留只读访问、原 nonce／身份校验与 lease；新增真实 Windows 旧默认共享拒绝负控及 LF/CRLF 源回归。此为验收夹具修复，不代表 Chrome 窗口身份或 mask 已通过。

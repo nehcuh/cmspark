@@ -5,7 +5,11 @@ const evidence = require('./cockpit-bridge-first-evidence.cjs').createObserver()
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path')
 const cp = require('node:child_process'), { randomBytes } = require('node:crypto'), { test } = require('node:test')
 evidence.check(1, () => (assert.equal(process.platform, 'win32'))); evidence.check(2, () => (assert.equal(process.env.GITHUB_ACTIONS, 'true'))); evidence.check(3, () => (assert.equal(process.env.RUNNER_OS, 'Windows')))
-const [chromeInput, chromeSHA256, extensionInput, compiledInput] = evidence.sync(74, () => (process.argv.slice(2)))
+const [chromeInput, chromeSHA256, extensionInput, compiledInput, preparedNonce] = evidence.sync(74, () => {
+  const args = process.argv.slice(2)
+  if (process.argv.length !== 7 || !/^[0-9a-f]{32}$/.test(args[4])) throw Error('COCKPIT_BRIDGE_PREPARATION_NONCE_REQUIRED')
+  return args
+})
 function physical(input, directory) { try {
   evidence.check(4, () => (assert.ok(typeof input === 'string' && path.isAbsolute(input))))
   const s = fs.lstatSync(input); evidence.check(5, () => (assert.ok(!s.isSymbolicLink() && (directory ? s.isDirectory() : s.isFile()))))
@@ -108,9 +112,16 @@ async function endpoint(profile, child, signal) {
   })
 }
 // Reuse the existing native-fixture outer 45s budget. The production bind stays 5s.
-test('actual Chrome document native parent / actual authenticated WS first identity STOP gate', { timeout: 45000 }, async t => { const outerDeadline = Date.now() + 45000; evidence.start(t.signal); let observationOK = false; try { const observationValue = await evidence.surfaceWait(87, () => (withSurface650(t, async (_, lease) => {
+test('actual Chrome document native parent / actual authenticated WS first identity STOP gate', { timeout: 45000 }, async t => { const outerDeadline = Date.now() + 45000; evidence.start(t.signal);
+  const phaseObservation = require('./cockpit-bridge-phase-observation.cjs').createObservation(); phaseObservation.start(); phaseObservation.mark(1)
+  const latchPhases = at => evidence.phases(phaseObservation.snapshot(at))
+  t.signal.addEventListener('abort', () => latchPhases('ABORT'), { once: true })
+  if (t.signal.aborted) latchPhases('ABORT')
+  let observationOK = false; try { const observationValue = await evidence.surfaceWait(87, () => (withSurface650(t, async (_, lease) => {
   evidence.surface(1); try {
 
+  lease.signal.addEventListener('abort', () => latchPhases('ABORT'), { once: true })
+  if (lease.signal.aborted) latchPhases('ABORT')
   lease.retain()
   const operatorFailed = new AbortController(), signal = AbortSignal.any([lease.signal, operatorFailed.signal]), children = [], closes = new WeakMap(), profile = path.join(root, 'bridge-chrome-' + randomBytes(8).toString('hex')), install = path.join(root, 'bridge-install-' + randomBytes(8).toString('hex'))
   fs.mkdirSync(profile); fs.mkdirSync(install); fs.mkdirSync(path.join(install, 'bin'))
@@ -129,9 +140,14 @@ test('actual Chrome document native parent / actual authenticated WS first ident
   const admitChild = () => { signal.throwIfAborted(); lease.checkpoint() }
   const runPs = async (script, args, cleanup = false) => {
     if (!cleanup) admitChild()
+    const registrarObservation = !cleanup && args.includes('-GateObservation723') && script === path.join(sourceRepo, 'scripts/register-cockpit-native-bridge.ps1')
+    if (registrarObservation) phaseObservation.mark(7) // Invocation boundary, not proof that PowerShell entered its script.
     const child = track(cp.spawn(powershell, ['-NoProfile', '-NonInteractive', '-File', script, ...args], { env: childEnvironment, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }))
     // Join the real close even if abort/error wins the ordinary result wait.
-    const actuallyClosed = new Promise(resolve => child.once('close', resolve))
+    const actuallyClosed = new Promise(resolve => child.once('close', (...args) => {
+      if (registrarObservation) { phaseObservation.mark(9); latchPhases('CLOSE') }
+      resolve(...args)
+    }))
     // A raw-sink setup refusal can precede the ordinary result await. Keep a
     // later spawn error handled; the original result is still awaited below.
     closes.get(child).catch(() => {})
@@ -141,12 +157,19 @@ test('actual Chrome document native parent / actual authenticated WS first ident
       for (const [index, stream] of [child.stdout, child.stderr].entries()) {
         const file = fs.openSync(path.join(root, label + (index ? '.stderr' : '.stdout')), 'wx', 0o600)
         streams.push({ file, stream })
-        let size = 0; stream.on('data', evidence.callback(27, bytes => { size += bytes.length; fs.writeSync(file, bytes); if (size > 1048576) child.kill() }))
+        let size = 0; stream.on('data', evidence.callback(27, bytes => {
+          if (registrarObservation && index === 0 && phaseObservation.feed(bytes)) phaseObservation.mark(8)
+          size += bytes.length; try { fs.writeSync(file, bytes) } catch (error) { if (registrarObservation) phaseObservation.sinkFailure(); throw error }
+          if (size > 1048576) child.kill()
+        }))
       }
       const result = cleanup ? await evidence.wait(28, () => (closes.get(child))) : await evidence.wait(29, () => (aborted(signal, (resolve, reject) => {
         closes.get(child).then(resolve, reject); return () => {}
       })))
       evidence.check(30, () => (assert.equal(result.code, 0, 'COCKPIT_BRIDGE_OWNED_INSTALL_REFUSED')))
+    } catch (error) {
+      if (registrarObservation) phaseObservation.sinkFailure()
+      throw error
     } finally {
       const requestStop = () => {
         if (child.exitCode === null && child.signalCode === null) {
@@ -173,26 +196,29 @@ test('actual Chrome document native parent / actual authenticated WS first ident
   }) }
   try {
     const jobBuild = path.join(root, 'job-build'); fs.mkdirSync(jobBuild)
-    // Both fixed build-only helpers stay inside this test/lease. Join actual
-    // close (including a failed sibling) before starting any server or desktop work.
-    await evidence.wait(33, () => Promise.allSettled([
-      runPs(path.join(sourceRepo, 'scripts/build-cockpit-native-bridge.ps1'), ['-OutputDirectory', path.join(install, 'bin')]),
-      evidence.wait(36, () => (runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild]))),
-    ]).then(builds => {
-      if (builds[0].status === 'rejected') throw builds[0].reason
-      if (builds[1].status === 'rejected') throw builds[1].reason
+    // Same-run prepared artifacts are revalidated and copied under this
+    // original runtime/cleanup deadline. No compiler or CPU pre-run is hidden.
+    await evidence.wait(33, () => require('./cockpit-bridge-prepared-build.cjs').stage({
+      root, sourceRepo, install, jobBuild, expectedNonce: preparedNonce,
+      verifyFiles: phase => {
+        if (phase !== 'stage') throw Error('COCKPIT_BRIDGE_PREPARATION_STAGE_REQUIRED')
+        return evidence.wait(36, () => runPs(path.join(sourceRepo, 'scripts/tests/cockpit-bridge-prepared-paths.ps1'), ['-Phase', phase]))
+      },
     }))
+    phaseObservation.mark(2)
     const secret = randomBytes(32).toString('hex')
     admitChild()
     server = track(cp.fork(serverFile, [], { env: childEnvironment, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }))
     server.on('message', evidence.callback(34, value => { messages.push(value); if (value?.type === 'bridge-state' && value.state === 'verified') verified = value.count; for (const accept of observers) accept(value) }))
     server.send({ type: 'init', secret })
     await evidence.wait(35, () => (waitMessage(value => value?.type === 'ready')))
+    phaseObservation.mark(3)
     admitChild()
     const cpu = track(cp.spawn(path.join(jobBuild, 'cockpit-chrome-job-cpu.exe'), [], { env: childEnvironment, stdio: ['ignore', 'pipe', 'pipe'] }))
     retainOutput(cpu, 'job-cpu')
     let cpuReceipt = ''; cpu.stdout.on('data', evidence.callback(37, bytes => { cpuReceipt += bytes; evidence.check(38, () => (assert.ok(cpuReceipt.length <= 4096))) }));
     evidence.assert(39, assert.equal)((await evidence.wait(40, () => (closes.get(cpu)))).code, 0, 'COCKPIT_BRIDGE_JOB_CPU_FAILED')
+    phaseObservation.mark(4)
     const cpuValue = evidence.sync(41, () => (JSON.parse(cpuReceipt))); evidence.check(42, () => (assert.equal(cpuValue.kind, 'owned-chrome-job-controlled-cpu'))); evidence.check(43, () => (assert.equal(cpuValue.native, 'NOT_RUN'))); evidence.check(44, () => (assert.ok(cpuValue.passed > 0)))
     admitChild()
     chromeChild = track(cp.spawn(path.join(jobBuild, 'cockpit-chrome-job.exe'), [root, chrome, chromeSHA256, extension, profile, lease.borrow().nonce, String(outerDeadline)], { env: childEnvironment, stdio: ['pipe', 'pipe', 'pipe'] }))
@@ -211,6 +237,7 @@ test('actual Chrome document native parent / actual authenticated WS first ident
     }))
     closes.get(chromeChild).then(() => jobStartedReject(Error('COCKPIT_BRIDGE_JOB_START_FAILED')), jobStartedReject)
     await evidence.wait(47, () => (aborted(signal, (resolve, reject) => { jobStarted.then(resolve, reject); return () => {} })))
+    phaseObservation.mark(5)
     const address = await evidence.wait(48, () => (endpoint(profile, chromeChild, signal))), ws = new WebSocket(address)
     await evidence.wait(49, () => (aborted(signal, (resolve, reject) => { ws.addEventListener('open', resolve, { once: true }); ws.addEventListener('error', reject, { once: true }); return () => {} })))
     cdp = new Cdp(ws, signal); await evidence.wait(50, () => (cdp.command('Target.setDiscoverTargets', { discover: true })))
@@ -220,9 +247,10 @@ test('actual Chrome document native parent / actual authenticated WS first ident
     observedId = await evidence.wait(54, () => (cdp.evaluate(sw, 'chrome.runtime.id')))
     evidence.check(55, () => (assert.match(observedId, /^[a-p]{32}$/))); evidence.check(56, () => (assert.equal(new URL(worker.url).host, observedId)))
     server.send({ type: 'observer-id', id: observedId }); await evidence.wait(57, () => (waitMessage(value => value?.type === 'observer-id-set')))
+    phaseObservation.mark(6)
     // Mark the attempt before awaiting: an interrupted helper may already own registry/files.
     registered = true
-    await evidence.wait(58, () => (runPs(path.join(sourceRepo, 'scripts/register-cockpit-native-bridge.ps1'), ['-InstallRoot', install, '-ExtensionId', observedId])))
+    await evidence.wait(58, () => (runPs(path.join(sourceRepo, 'scripts/register-cockpit-native-bridge.ps1'), ['-InstallRoot', install, '-ExtensionId', observedId, '-GateObservation723'])))
     // Real service-worker Native Messaging has no native window parent: negative only.
     const negative = await evidence.wait(59, () => (cdp.evaluate(sw, `new Promise(resolve=>{const p=chrome.runtime.connectNative('com.cmspark.cockpit');let replied=false;p.onMessage.addListener(m=>{replied=true;resolve(m&&Object.keys(m).sort().join() === 'op,reason,v'&&m.v===1&&m.op==='unavailable'&&m.reason==='bridge_unavailable'?'unavailable':'INVALID');});p.onDisconnect.addListener(()=>{void chrome.runtime.lastError;if(!replied)resolve('UNKNOWN');});p.postMessage({v:1,op:'bind',ownerNonce:'${randomBytes(16).toString('hex')}',challenge:'${randomBytes(32).toString('hex')}',documentId:'negative-service-worker',windowId:1});})`)))
     evidence.check(60, () => (assert.equal(negative, 'unavailable', 'COCKPIT_BRIDGE_PARENT_ZERO_NOT_PROVEN')))
