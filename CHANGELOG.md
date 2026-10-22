@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Refs #747: route Windows offline desktop assets through the existing nonce-aware, exact-URL response handler instead of virtual-folder mapping, which bypassed that handler. Fail closed if nonce/navigation or resource-handler registration fails; keep CSP and all native acceptance assertions. Source-derived nonce regressions do not replace Windows native validation or explain the separate heap-crash receipt.
+
 - Refs #747: terminal acceptance observes the owned PTY PID when real data arrives, allowing the locked Windows implementation's initial PID 0; completion still requires a positive stable PID on the same handle and actual exit. Added inert real-producer regressions; native Windows acceptance remains required.
 
 - Refs #747/#476: add a closed first-observed refusal code to the unshipped terminal acceptance fixture only; preserve original failures, native45s, authority and cleanup. Codes identify original rejection groups, not Windows physical causes; current native failure remains blocking.
