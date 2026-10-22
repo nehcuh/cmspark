@@ -230,7 +230,7 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
   assert.equal(pty.isPtyBusy(),false,'TERMINAL705_NO_FOREIGN_LIVE_SLOT')
   const threads=new ThreadManager();threads.create('Native terminal A','native-terminal-A');threads.create('Unchanged sibling','native-terminal-B');threads.update('native-terminal-A',{workspace_root:dir})
   const registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-native-terminal705'),confirmations=new SecurityConfirmationManager(),runtime=createNativeTerminalRuntime(()=> 'idle')
-  const outputDecoder=new TextDecoder(),inputDecoder=new TextDecoder();let outputSuffix='',inputSuffix='';const actualHandles:Array<{kill():void;exited:boolean}>=[];let completionFailure:unknown
+  const outputDecoder=new TextDecoder(),inputDecoder=new TextDecoder();let outputSuffix='',inputSuffix='';const actualHandles:Array<{kill():void;pid():number;exited:boolean}>=[];let completionFailure:unknown
   const firstFailure=createTerminalFirstFailure747()
   const required=['DENIED','CANCELLED','OUTPUT','RESIZED','STOPPED','SAVED','REOPENED','DONE'].map(n=>'D476_TERMINAL_'+n),receipts=new Set<string>(),outputSeq=new Set<number>(),ackSeq=new Set<number>(),dimensions=new Set<string>(),childExits:Promise<void>[]=[]
   let child:DesktopNativeChild|undefined,childExited=false,authenticated=false,windowRequested=false,failed=false,connections=0,primary:any,completion:Promise<void>|undefined,foreign:InstanceType<typeof WebSocket>|undefined,foreignCheck:Promise<void>|undefined,actualSpawns=0,openAttempts=0,confirmationRequests=0,decisions=0,deniedResults=0,outputBytes=0,largestFrame=0,lastOutput=0,inputUnicode=false,outputUnicode=false,stops=0,ownedPid=0,actualProcessExit=false,exitResolve!:(n:number)=>void,failResolve!:()=>void,primaryFailure:unknown
@@ -240,8 +240,11 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
   const nativePty=loadNodePty(),realSpawn=nativePty.spawn.bind(nativePty)
   t.mock.method(nativePty,'spawn',(...parameters:Parameters<typeof realSpawn>)=>{const [file,args,opts]=parameters
    assert.equal(file,runtime.shell().file);assert.deepEqual(args,[...runtime.shell().args]);assert.equal(fs.realpathSync(opts.cwd),dir)
-   const handle=realSpawn(file,args,opts);actualSpawns++;ownedPid=handle.pid;const ownedHandle={kill:()=>handle.kill(),exited:false};actualHandles.push(ownedHandle)
-   childExits.push(new Promise<void>(resolve=>handle.onExit(()=>{ownedHandle.exited=true;actualProcessExit=true;resolve()})));assert.ok(Number.isSafeInteger(ownedPid)&&ownedPid>0);return handle
+   const handle=realSpawn(file,args,opts);actualSpawns++;const ownedHandle={kill:()=>handle.kill(),pid:()=>handle.pid,exited:false};actualHandles.push(ownedHandle)
+   // Windows publishes the real PID at ready_datapipe, before forwarding data.
+   // Keep ownership on this exact handle; a synchronous PID of zero is not a spawn failure.
+   handle.onData(()=>{try{const pid=handle.pid;assert.ok(Number.isSafeInteger(pid)&&pid>0);if(ownedPid!==0)assert.equal(pid,ownedPid);else ownedPid=pid}catch(error){completionFailure??=error;fail()}})
+   childExits.push(new Promise<void>(resolve=>handle.onExit(()=>{ownedHandle.exited=true;actualProcessExit=true;resolve()})));return handle
   })
   const realOpen=runtime.openTerminal,realInput=runtime.input,realResize=runtime.resize,realAck=runtime.ack,realClose=runtime.close
   runtime.openTerminal=input=>{openAttempts++;assert.equal(input.owner,primary);assert.equal(confirmations.pendingCount(),0);const result=realOpen(input);if(result.ok){assert.ok(pty.getOwnedPtyContext(input.id,primary));assert.equal(pty.getOwnedPtyContext(input.id,null),null);assert.equal(pty.getOwnedPtyContext(input.id,{}),null);assert.equal(pty.readPtyTail(input.id,primary,'native-terminal-A').success,false,'shell consent is not private model-tail consent')}return result}
@@ -282,7 +285,7 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
     if(f.id==='D476_TERMINAL_DONE'){
      completion=(async()=>{
       await Promise.race([Promise.all([...childExits,...(foreignCheck?[foreignCheck]:[])]),deadline]);assert.equal(actualProcessExit,true);assert.equal(pty.isPtyBusy(),false);assert.equal(pty.getLivePtyId(),null)
-      assert.equal(actualSpawns,1);assert.equal(openAttempts,1);assert.equal(confirmationRequests,4);assert.equal(decisions,4);assert.equal(deniedResults,2);assert.equal(inputUnicode,true);assert.equal(outputUnicode,true);assert.ok(outputBytes>16384);assert.ok(largestFrame<=16384);assert.ok(outputSeq.size>0);assert.deepEqual([...ackSeq].sort((a,b)=>a-b),[...outputSeq].sort((a,b)=>a-b));assert.ok(dimensions.size>=2);assert.equal(stops,1);assert.equal(receipts.size,required.length)
+      assert.equal(actualSpawns,1);assert.equal(actualHandles.length,1);assert.ok(Number.isSafeInteger(ownedPid)&&ownedPid>0);assert.equal(actualHandles[0].pid(),ownedPid);assert.equal(openAttempts,1);assert.equal(confirmationRequests,4);assert.equal(decisions,4);assert.equal(deniedResults,2);assert.equal(inputUnicode,true);assert.equal(outputUnicode,true);assert.ok(outputBytes>16384);assert.ok(largestFrame<=16384);assert.ok(outputSeq.size>0);assert.deepEqual([...ackSeq].sort((a,b)=>a-b),[...outputSeq].sort((a,b)=>a-b));assert.ok(dimensions.size>=2);assert.equal(stops,1);assert.equal(receipts.size,required.length)
       const disk=new ThreadManager().readDesktopDialog('native-terminal-A');assert.equal(disk.messages.length,1);assert.ok(disk.messages[0].content.includes('D476_TERMINAL_中'));assert.ok(disk.messages[0].content.includes('partial'));assert.equal(new ThreadManager().readDesktopDialog('native-terminal-B').messages.length,0);assert.equal(confirmations.pendingCount(),0)
       ws.send(JSON.stringify({type:'D476.terminal.complete',result:'COMPLETE'}))
      })();completion.catch(error=>{completionFailure=error;fail()})

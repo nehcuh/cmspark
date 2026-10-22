@@ -75,3 +75,5 @@ W4 的 payload throw 与 W8 的失效 owner 只能本地锁存：不存在安全
 | R19 | history-result |
 
 永久 `desktop-terminal-first-failure-747` 执行实际 collector／C++ note 与完整 stock form 的受控拒绝；`desktop-terminal-webview-input-747` 的原29断言、原 script-install5及 pinned xterm6保留。CPU不是Win32／WebView／真实PTY证据。当前 ffe351 Mac terminal PASS、Windows FAIL以及旧705 picker/ACP欠账均保留；本候选本机原生未运行。源码两非作者、必要ARM及唯一changed-head真实诊断由root另外验收；若仍UNKNOWN，停止本条，不把观察合同当成功或整票完成。
+
+2026-10-22 PID 契约修正：锁定的 Windows PTY 在同步创建返回时允许 `pid=0`，收到 worker 就绪消息后才发布 PID。原生验收从同一真实 handle 的数据事件观察正整数 PID，后续数据和完成阶段均核对其不变；仍必须实际退出，无数据、无退出或身份改变均失败。`desktop-terminal-pid-747` 用锁定的 Windows 实现及生产 session 执行惰性调度，并执行原生验收源码中的观察回调和完成断言。此结果证明同步断言不符合依赖契约，不能单独认定历史 R9 的唯一原因或替代新 head 原生验收；原 45 秒、输出、确认、foreign-owner 与清理要求不变。
