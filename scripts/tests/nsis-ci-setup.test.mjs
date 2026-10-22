@@ -302,24 +302,20 @@ function originalCensusCommands(run) {
 // The scalar PS regression remains first; fixed build-only acceptance follows.
 function censusStepsWithReviewedFirstEvidence723(raw) {
   const steps = workflowYaml.load(raw).jobs['smoke-os'].steps
-  // This checks exact source-derived objects, native-only final pair, all lane
-  // outcomes and the sole appended lifecycle test before making a legacy view.
+  // This checks the exact retained scalar controls and authorized retirement
+  // of the first-identity pair before making the unchanged legacy view.
   return validateCockpitSteps748(steps)
 }
 function censusStepsWithReviewedNodeSelection723(raw) {
   return censusStepsWithReviewedFirstEvidence723(raw)
 }
-test('finite first failure upload cannot widen paths, run on PASS or weaken the native step', () => {
+test('retired first-identity gate and finite upload cannot return to automatic CI', () => {
   const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
   censusStepsWithReviewedFirstEvidence723(raw)
-  for (const mutate of [
-    steps => { steps.find(step => step.name === 'Publish finite cockpit first failure (#723)').with.path = '${{ runner.temp }}/**' },
-    steps => { steps.find(step => step.name === 'Publish finite cockpit first failure (#723)').if = "always() && matrix.os == 'windows-latest'" },
-    steps => { steps.find(step => step.name === 'Windows cockpit native bridge first identity STOP gate (#723)')['continue-on-error'] = true },
-    steps => { const step = steps.find(step => step.name === 'Publish finite cockpit first failure (#723)'); steps.push({ ...step }) },
-    steps => { delete steps.find(step => step.name === 'Windows cockpit native bridge first identity STOP gate (#723)').id },
-  ]) {
-    const doc = workflowYaml.load(raw); mutate(doc.jobs['smoke-os'].steps)
+  const retired = JSON.parse(fs.readFileSync(new URL('./windows-ci-feedback-748-supplement.json', import.meta.url), 'utf8')).steps.slice(1)
+  for (const step of retired) {
+    const doc = workflowYaml.load(raw)
+    doc.jobs['smoke-os'].steps.push(structuredClone(step))
     assert.throws(() => censusStepsWithReviewedFirstEvidence723(workflowYaml.dump(doc)))
   }
 })

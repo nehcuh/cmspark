@@ -66,53 +66,35 @@ export function condition750(source, context) {
   return Boolean(value && (/\b(?:always|success|failure|cancelled)\s*\(/.test(text) || context.success))
 }
 
-// Source-derived 6521 objects allow precisely the lane split and two newly
-// required lifecycle and prepared-handoff test arguments. Original d5fc34/19 pins stay unchanged.
+// Keep the source-derived scalar preflight. The human-approved CI policy
+// removes only the experimental first-identity execution and its own upload;
+// the archived supplement remains unchanged as evidence of the old schedule.
 export function validateCockpitSteps748(steps) {
-  const selected = COCKPIT_NAMES.map(name => {
-    const found = steps.filter(step => key(step) === name)
-    assert.equal(found.length, 1, 'one exact cockpit step: ' + name)
-    return found[0]
-  })
-  const expected = structuredClone(cockpit.steps)
-  const oldTests = 'node --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs scripts/tests/cockpit-bridge-first-evidence.test.mjs\n'
-  assert.equal(expected[0].run.split(oldTests).length, 2)
-  expected[0].run = expected[0].run.replace(oldTests, oldTests.trimEnd() + ' scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs scripts/tests/cockpit-bridge-prepared-build.test.mjs\n')
-  for (const step of expected.slice(1)) {
-    const oldLane = "matrix.os == 'windows-latest'"
-    assert.equal(step.if.split(oldLane).length, 2)
-    step.if = step.if.replace(oldLane, oldLane + " && matrix.lane == 'native'")
+  const scalarName = COCKPIT_NAMES[0]
+  const selected = steps.filter(step => key(step) === scalarName)
+  assert.equal(selected.length, 1, 'one exact cockpit scalar step')
+  for (const step of steps) {
+    assert.equal(COCKPIT_NAMES.slice(1).includes(key(step)), false, 'retired first-identity pair is not automatic CI')
+    assert.equal(/run-cockpit-bridge-first\.ps1|cockpit-first-identity/.test(JSON.stringify(step)), false, 'no renamed gate or dangling first-identity output')
   }
-  assert.deepEqual(selected, expected, 'cockpit command/body/failure/artifact attributes are exact')
-  const [scalar, gate, upload] = selected
+  const expected = structuredClone(cockpit.steps[0])
+  const oldTests = 'node --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs scripts/tests/cockpit-bridge-first-evidence.test.mjs\n'
+  assert.equal(expected.run.split(oldTests).length, 2)
+  expected.run = expected.run.replace(oldTests, oldTests.trimEnd() + ' scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs scripts/tests/cockpit-bridge-prepared-build.test.mjs\n')
+  assert.deepEqual(selected[0], expected, 'scalar command/body/failure attributes remain exact')
   const compile = steps.findIndex(step => step.name === 'Compile shared companion test inputs (#650)')
   const lastDirected = steps.findIndex(step => step.name === 'Windows native 8.3 filesystem paths (#604)')
   const probe = steps.find(step => step.name === 'Post-census isolated module-scope diagnostic (#650)')
   assert.ok(compile >= 0 && lastDirected > compile && probe)
-  assert.equal(steps.indexOf(scalar), compile + 1)
-  assert.equal(steps.indexOf(gate), lastDirected + 1)
-  assert.equal(steps.indexOf(upload), steps.indexOf(gate) + 1)
-  assert.equal(steps.indexOf(probe), steps.indexOf(upload) + 1)
+  assert.equal(steps.indexOf(selected[0]), compile + 1)
+  assert.equal(steps.indexOf(probe), lastDirected + 1)
   assert.equal(steps.at(-1), probe, 'the census diagnostic remains the final matrix step')
-  assert.equal(probe.if, "${{ always() && !cancelled() && matrix.os == 'windows-latest' && matrix.lane == 'census' }}", 'the last source step never runs after the native pair on its desktop')
+  assert.equal(probe.if, "${{ always() && !cancelled() && matrix.os == 'windows-latest' && matrix.lane == 'census' }}")
   for (const matrix of MATRIX750) for (const status of ['success', 'failure', 'cancelled']) {
-    for (const outcome of ['success', 'failure', 'skipped', 'cancelled']) for (const summary of ['', 'owned-finite']) {
-      const context = { success: status === 'success', cancelled: status === 'cancelled', values: {
-        'matrix.os': matrix.os, 'matrix.lane': matrix.lane,
-        'steps.cockpit-first-identity.outcome': outcome,
-        'steps.cockpit-first-identity.outputs.finite_summary': summary,
-      } }
-      const windows = matrix.os === 'windows-latest', native = windows && matrix.lane === 'native'
-      assert.equal(condition750(scalar.if, context), windows && context.success)
-      assert.equal(condition750(gate.if, context), native && context.success)
-      const publish = native && outcome === 'failure' && summary !== ''
-      assert.equal(condition750(upload.if, context), publish)
-      // A failed gate still publishes its finite summary; success/empty/other
-      // lanes do not. No cross-VM census prerequisite is introduced.
-    }
+    const context = { success: status === 'success', cancelled: status === 'cancelled', values: { 'matrix.os': matrix.os, 'matrix.lane': matrix.lane } }
+    assert.equal(condition750(selected[0].if, context), matrix.os === 'windows-latest' && context.success)
   }
-  // Remove only these fully validated actual objects from the legacy view.
-  return steps.filter(step => !selected.includes(step))
+  return steps.filter(step => step !== selected[0])
 }
 
 function cache750(step, nodeVersion) {
