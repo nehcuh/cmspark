@@ -37,7 +37,9 @@ test("concurrent actual registration cannot replace the winning identity or inva
       if (role === 'first') {
         const key = crypto.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }).toString();
         const grant = grants.issueOutboundGrant({caller_id:'fixture',label:'fixture',enterprise_policy:{...instance,revision:'r1',expires_at:new Date(Date.now()+60000).toISOString(),authority_public_key:key,tools:['get_page_text'],navigation:[{origin:'https://business.test',path:'/app'}],evidence:[{origin:'https://business.test',path:'/app'}],login:[{origin:'https://sso.test',path:'/login'}],ready:[{selector:'#ready'}],login_markers:[{selector:'#login'}],actions:[]}});
-        fs.writeFileSync(path.join(directory, 'first.issued'), JSON.stringify({valid:grants.verifyOutboundGrantToken(grant.token).ok}));
+        const issuedPath = path.join(directory, 'first.issued'), pendingIssuedPath = issuedPath + '.tmp';
+        fs.writeFileSync(pendingIssuedPath, JSON.stringify({valid:grants.verifyOutboundGrantToken(grant.token).ok}), { flag: 'wx', mode: 0o600 });
+        fs.renameSync(pendingIssuedPath, issuedPath);
         wait(path.join(directory, 'verify.release'));
         process.stdout.write(JSON.stringify({registered:true,grant_live:grants.verifyOutboundGrantToken(grant.token).ok}));
       } else process.stdout.write(JSON.stringify({registered:true}));

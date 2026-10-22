@@ -363,6 +363,10 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 
 本批源验证不启动真实浏览器或本机原生 host。后续精确 head 的 Windows/macOS native 与真实已认证扩展证据仍为验收门，旧归档／MCP／资源／对话原生回调也必须保留；没有为本片伪造新 native PASS 或改变原预算、测试列表和平台 skip。背景读取不允许 image phase1／phase2 或 unknown 分支绕过矩阵；非 native 路径保留原语义。方法表实际 v8/read11/renderer25/native27，controller-only retire 与 confirmation 决策均不进 renderer 表。
 
+### 并发企业注册夹具的授权回执（#625）
+
+`enterprise-registration-625.test.ts` 的真实 first 子进程先独占写完自有 `first.issued.tmp`，关闭写句柄后 rename 为 `first.issued`。父进程保留原存在性等待和严格 JSON 解析，避免在最终文件刚创建但内容尚未写入时读取空文件；不增加等待或解析重试。两个真实竞争注册、失败方 `INSTANCE_BUSY`、获胜身份及已签发 grant 仍须全部通过。源驱动的 ownedFS 对照在真实 open 与首次写入之间观察旧／新发布路径，不能以手造回执代替实际 grant 验证。
+
 ### Windows 原生管道夹具的 JSON 就绪回执（#605）
 
 `cross-os-process-605.test.ts` 的 protocol fixture 用自有 `.pending` 文件的独占写入、关闭及 rename 发布完整 ready JSON。确定性 CPU 控制在实际写入开始时检查最终文件仍不可见，写入失败时不能宣布协议就绪；不通过增加等待、重试 JSON.parse 或捕获语法错误绕过断言。Windows CI 仍需真实验证双向管道、继承 cwd、ignored stdio 及进程清理。
