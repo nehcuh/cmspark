@@ -7,6 +7,7 @@ import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { EventEmitter } from 'node:events'
 import { spawnSync } from 'node:child_process'
+import { observeDisplayReady } from '../cft-linux-supplier-732.mjs'
 import { BOUNDS,preflight,childEnvironment,chromeArgs,manifestPaths,choosePanel,finiteReceipt,CDP,reloadDocument,restartSequence,historyObservationExpression,closeOwnedChild,loadedExpression,privateRead,limit,observeBrowserStartup } from '../accept-acp-history-hosted-732.mjs'
 const root='/owned',url='chrome-extension://'+'a'.repeat(32)+'/sidepanel.html'
 const defer=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject}}
@@ -163,7 +164,8 @@ function browserSegment(fault='none') {
   assert.ok(receiptCall)
   const marker='OWNED_ERROR_DO_NOT_REFLECT_PATH_PID_BODY',fail=()=>{throw Error(marker)}
   const origin='chrome-extension://'+'a'.repeat(32),workerPath='static/background/index.js'
-  const xvfb={exitCode:null,stdio:[null,null,null,new EventEmitter()]},chrome={exitCode:null}
+  const xvfb=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null,stdio:[null,null,null,new EventEmitter()]}),chrome={exitCode:null}
+  xvfb.stdio[3].resume=()=>{}
   let connectCount=0,limitCount=0,fetchCount=0
   const worker={workerScriptReady:async()=>{if(fault==='workerready')fail();return true},call:async()=>{if(fault==='runtimeenable')fail();return {}},evaluate:async expression=>{
     if(expression.startsWith('chrome.tabs.create')){if(fault==='tabcreate')fail();return 7}
@@ -180,7 +182,7 @@ function browserSegment(fault='none') {
   const context={activeSupplier:{binary:'/owned/fixed/chrome',check(){if(fault==='binary')fail()}},stage:'BROWSER',browserPhase:null,browserStartup:undefined,chromium:undefined,xvfb:undefined,browser:undefined,worker:undefined,observer:undefined,secret:'PUBLIC_SYNTHETIC_ONLY',owned:'/owned',paths:{worker:workerPath,page:'sidepanel.html'},navigationDeadline:undefined,
     child(exe){if(exe==='/usr/bin/Xvfb'){queueMicrotask(()=>xvfb.stdio[3].emit('data',Buffer.from('23\n')));return xvfb}return chrome},
     env:{},input:{},extension:'/owned/extension',chromeArgs:startupHarness.chromeArgs,childEnvironment:()=>({}),remaining:()=>1000,nav:()=>1000,BOUNDS,
-    deferred:defer,limit:async promise=>{if(++limitCount===1&&fault==='display')fail();return promise},
+    deferred:defer,observeDisplayReady,limit:async promise=>{if(++limitCount===1&&fault==='display')fail();return promise},
     poll:async fn=>{const v=await fn();if(!v)fail();return v},
     connect:async()=>{connectCount++;if(fault===['browserconnect','workerconnect','pairconnect'][connectCount-1])fail();return [browser,worker,pair][connectCount-1]},
     fs:{statSync:()=>{if(fault==='binary')fail();return {isFile:()=>true}},readFileSync:()=>{if(fault==='port')fail();return '9222\n/devtools/browser/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n'}},
