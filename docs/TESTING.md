@@ -27,6 +27,10 @@ PR735 的真实 hosted Linux 场景已完成正常 daemon 重启、既有页面�
 
 ### #732 固定 Linux CFT 供应边界与历史拒绝记录
 
+Xvfb 显示号就绪由供应正证与历史业务共享同一个消费者：保留最多 8 字节、1–5 位十进制数字加 LF 的帧与原 5 秒就绪期限；帧前的 fd3 EOF/关闭/错误、子进程错误/真实关闭立即拒绝。`exit` 可能先于末尾管道数据，故不据此丢弃尚在传输的帧；但帧就绪后仍须核原子进程存活，才可启动 Chrome。帧后的正常 fd3 EOF 不使仍存活的显示服务器失败。原 120 秒、浏览器启动参数、完整历史断言及 owned close/EOF 清理不变。
+
+供应有限回执增加 `display`：固定 `state`、饱和到 9 的字节计数、EOF/close 布尔、有限退出码与信号类别，均在清理前快照；不输出管道、stderr、错误正文或路径，也不参与原通过谓词。`PENDING` 只表示未观察到帧或已知终态，不证明具体底层原因。run `39800748286` 的旧 `XVFB/childCount:1/cleanup:true` 缺少这些观察，实际物理原因仍为 UNKNOWN；不能把源码生命周期反例当作该次 runner 的实测根因。
+
 `accept-acp-history-hosted-732.mjs` 仅在 Node22、Linux x64、GitHub-hosted Ubuntu22 的正常 build artifact 身份核对后运行：一次官方 CFT155.0.8059.84 固定包供应 → 一次独立端口及精确 `Browser.getVersion` 正证 → 原完整原生 SidePanel／正常 daemon 重启／历史／reload 业务。包199014491字节与309成员的 SHA256、CRC、布局、普通文件身份及只读模式全部固定；无系统安装、外部解包工具、缓存、重定向、重试或任意 executable override。
 
 供应和独立正证各有明确120秒新阶段；原业务120秒、端口10秒、导航60秒、认证5秒和工具15秒不变。两阶段使用不同 owned profile／子进程／端点，无 daemon、认证或存储复用；HOME、sandbox 和原启动参数不变。前置正证可能热 OS 页缓存，不能再称未预热冷启动。旧 image-supplier A/B 工作流步骤明确退休，原代码／受控测试／拒绝 raw 仍保留，未被记作成功。
@@ -358,6 +362,10 @@ The unshipped acceptance host built with `CMSPARK_AX571_DIAGNOSTICS` may attach 
 `desktop-browser-task-476.test.ts` 使用 stock renderer、真实 HMAC/channel、canonical run 注册、真实 adapter 和 ThreadManager 保存／reload，配合受控 provider／Chrome API 接口，验证选择不是执行、15秒内绑定后模型延迟不续期／不丢同一运行限制、精确 peer/tab 和零背景激活。实际工厂与原 pending-map／BrowserBridge 的 CDP／scripting 读取闭包另核，不能把受控 API 当浏览器证据。永久负控覆盖同名／错 peer、旧 ACK、A/B/A、失权、导航观察、错误租约、已有确认、64容量与取消后挂起调用。
 
 本批源验证不启动真实浏览器或本机原生 host。后续精确 head 的 Windows/macOS native 与真实已认证扩展证据仍为验收门，旧归档／MCP／资源／对话原生回调也必须保留；没有为本片伪造新 native PASS 或改变原预算、测试列表和平台 skip。背景读取不允许 image phase1／phase2 或 unknown 分支绕过矩阵；非 native 路径保留原语义。方法表实际 v8/read11/renderer25/native27，controller-only retire 与 confirmation 决策均不进 renderer 表。
+
+### 并发企业注册夹具的授权回执（#625）
+
+`enterprise-registration-625.test.ts` 的真实 first 子进程先独占写完自有 `first.issued.tmp`，关闭写句柄后 rename 为 `first.issued`。父进程保留原存在性等待和严格 JSON 解析，避免在最终文件刚创建但内容尚未写入时读取空文件；不增加等待或解析重试。两个真实竞争注册、失败方 `INSTANCE_BUSY`、获胜身份及已签发 grant 仍须全部通过。源驱动的 ownedFS 对照在真实 open 与首次写入之间观察旧／新发布路径，不能以手造回执代替实际 grant 验证。
 
 ### Windows 原生管道夹具的 JSON 就绪回执（#605）
 

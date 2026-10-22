@@ -129,6 +129,8 @@ export function supplierReceipt(phase,facts={}){
   const out={schema:1,boundary:'PINNED_CFT_LINUX64_SUPPLIER_ONLY',phase,sourcePinSHA256:SOURCE_PIN_SHA256}
   for(const key of ['portReady','versionObserved','allClosed','bothEOF','cleanup'])out[key]=Object.getOwnPropertyDescriptor(facts,key)?.value===true
   const n=Object.getOwnPropertyDescriptor(facts,'childCount')?.value;out.childCount=Number.isInteger(n)&&n>=0&&n<=2?n:0
+  const display=Object.getOwnPropertyDescriptor(facts,'display')?.value
+  out.display=displayReadyProjection(display)
   out.passed=phase==='COMPLETE'&&['portReady','versionObserved','allClosed','bothEOF','cleanup'].every(k=>out[k]);if(Buffer.byteLength(JSON.stringify(out))>1024)refuse();return out
 }
 export async function runPinnedPipeline(io){
@@ -138,6 +140,47 @@ export async function runPinnedPipeline(io){
   return code
 }
 const limit=(p,ms)=>{if(!Number.isFinite(ms)||ms<=0)refuse();let timer;return Promise.race([p,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('PINNED_SUPPLIER_REFUSED')),ms)})]).finally(()=>clearTimeout(timer))}
+// A display number is a readiness frame, not proof its owning process is alive.
+// Only finite observations leave this boundary; pipe/error bodies stay private.
+export function displayReadyProjection(value){
+  const own=key=>{try{const d=Object.getOwnPropertyDescriptor(value,key);return d&&Object.hasOwn(d,'value')?d.value:undefined}catch{return undefined}}
+  const states=['PENDING','READY','PIPE_ERROR','PIPE_EOF','PIPE_CLOSED','CHILD_ERROR','CHILD_CLOSED','INVALID']
+  const state=own('state'),bytes=own('bytes'),exit=own('exitCode'),signal=own('signal')
+  return {state:states.includes(state)?state:null,bytes:Number.isInteger(bytes)&&bytes>=0&&bytes<=9?bytes:null,
+    eof:own('eof')===true,closed:own('closed')===true,
+    exitCode:Number.isInteger(exit)&&exit>=-2147483648&&exit<=2147483647?exit:null,
+    signal:['NONE','SIGTERM','SIGKILL','OTHER'].includes(signal)?signal:null}
+}
+export function observeDisplayReady(child){
+  const pipe=child.stdio[3];if(!pipe)refuse()
+  let resolve,reject,text='',state='PENDING',bytes=0,eof=false,closed=false
+  const ready=new Promise((a,b)=>{resolve=a;reject=b})
+  const stopData=()=>{pipe.off('data',data);text=''}
+  const rejectReady=reason=>{if(state!=='PENDING'&&state!=='READY')return;const pending=state==='PENDING';state=reason;stopData();if(pending)reject(Error('DISPLAY_REFUSED'))}
+  const data=b=>{
+    if(state!=='PENDING')return
+    if(!Buffer.isBuffer(b)){rejectReady('INVALID');return}
+    bytes=Math.min(9,bytes+b.length)
+    if(bytes>8){rejectReady('INVALID');return}
+    text+=b.toString('ascii')
+    // Reject non-ASCII bytes rather than accepting their masked ASCII form.
+    if(b.some(x=>x!==10&&(x<48||x>57))){rejectReady('INVALID');return}
+    if(/^\d{1,5}\n$/.test(text)){const display=':'+text.slice(0,-1);state='READY';stopData();resolve(display)}
+    else if(!/^\d{0,5}$/.test(text))rejectReady('INVALID')
+  }
+  pipe.on('data',data)
+  pipe.on('error',()=>rejectReady('PIPE_ERROR'))
+  pipe.once('end',()=>{eof=true;if(state==='PENDING')rejectReady('PIPE_EOF')})
+  pipe.once('close',()=>{if(state==='PENDING')rejectReady('PIPE_CLOSED')})
+  child.on('error',()=>rejectReady('CHILD_ERROR'))
+  child.once('close',()=>{closed=true;rejectReady('CHILD_CLOSED')})
+  // Do not reject on exit: final fd3 data may still be in flight until close.
+  pipe.resume()
+  const isLive=()=>state==='READY'&&!closed&&child.exitCode===null&&child.signalCode===null
+  const snapshot=()=>displayReadyProjection({state,bytes,eof,closed,exitCode:child.exitCode,
+    signal:child.signalCode===null?'NONE':['SIGTERM','SIGKILL'].includes(child.signalCode)?child.signalCode:'OTHER'})
+  return {ready,isLive,snapshot}
+}
 export function observeSupplierChild(child){
   let closed,stdout,stderr
   const state={child,close:new Promise(r=>{closed=r}),stdoutEnd:new Promise(r=>{stdout=r}),stderrEnd:new Promise(r=>{stderr=r}),closed:false,error:false,stdoutEOF:false,stderrEOF:false}
@@ -152,10 +195,11 @@ export async function closeSupplierChild(state,remaining){
 // Same source-driven port grammar as the original business, supplied explicitly
 // by its private caller. No daemon, pairing, grant or authentication is accepted.
 export async function runSupplierWitness(io){
-  let phase='PREFLIGHT',client;const children=[],facts={}
+  let phase='PREFLIGHT',client,display;const children=[],facts={}
   try{
-    io.checkPayload();phase='XVFB';const display=io.display();children.push(display.state)
+    io.checkPayload();phase='XVFB';display=io.display();children.push(display.state)
     const screen=await limit(display.ready,Math.min(5000,io.remaining()))
+    if(!display.isLive())refuse()
     phase='BROWSER';const browser=io.browser(screen);children.push(browser)
     const end=Math.min(io.deadline,io.now()+10000);let parts
     while(io.now()<end){io.remaining();if(browser.error||browser.closed||browser.child.exitCode!==null||browser.child.signalCode!==null)refuse();try{parts=io.parsePort(io.readPort())}catch{parts=false}if(parts)break;await io.wait(25)}
@@ -163,6 +207,8 @@ export async function runSupplierWitness(io){
     const version=await client.call('Browser.getVersion',{},Math.min(5000,io.remaining()))
     if(version?.product!=='Chrome/'+PIN.version)refuse();facts.versionObserved=true;phase='VERSION'
   }catch{/* Only the fixed finite receipt leaves this boundary. */}
+  // Capture before owned cleanup can change the observed exit/close state.
+  if(display)facts.display=display.snapshot()
   let clean=true
   if(client)try{client.abort();await limit(client.settled,io.remaining())}catch{clean=false}
   try{await io.closeClients()}catch{clean=false}

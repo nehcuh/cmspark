@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+- Test reliability (#625): publish the concurrent registration fixture's complete grant receipt by an exclusive temporary write and rename. Seeing the final file now means its JSON was fully written; preserve real competing registration, live-grant checks and the existing wait limits.
+
+- Fix (#732): settle hosted Xvfb display readiness on terminal pipe/process events and reject a display whose owning process has already exited before starting Chrome. Reuse the same consumer in the supplier witness and history business; retain display framing, original deadlines, owned cleanup and all history assertions. Add finite pre-cleanup observations; the physical cause of the earlier hosted failure remains unknown.
+
+- Windows installer (#764): request only `node.exe` and `cmspark-agent.exe` candidates from CIM before applying the unchanged installation ownership and system-Node script/mode checks. Preserve the complete NSIS/ZIP stop and sibling-survival regressions and their existing time limits. This reduces returned candidates; it does not establish the unique cause of earlier enumeration timeouts.
+
 - Fix (#480): verify the sibling inheritance fixture with parent-side kernel-object identities before resuming its suspended checker. Preserve raw exit masks separately: reused numeric slots do not prove protected pipe/process inheritance. Real leaks, missing/unknown identity evidence and checker/cleanup failures still reject. Historical failing-slot identity remains UNKNOWN; native gates and time budgets are unchanged.
 
 - Fix (#476): compare desktop history file identities as exact 64-bit integers before reading the opened transcript. Distinct device/inode values must not become equal through JavaScript Number rounding. Retain the real replacement regression and add large-identity acceptance/refusal controls; no CI gate or timeout is changed.

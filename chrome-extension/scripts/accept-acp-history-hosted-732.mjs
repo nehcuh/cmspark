@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
-import { supplyFixedCft,runPinnedPipeline,runSupplierWitness,observeSupplierChild,supplierReceipt } from './cft-linux-supplier-732.mjs'
+import { supplyFixedCft,runPinnedPipeline,runSupplierWitness,observeSupplierChild,observeDisplayReady,supplierReceipt } from './cft-linux-supplier-732.mjs'
 let activeSupplier
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..')
 export const BOUNDS=Object.freeze({outer:120000,navigation:60000,auth:5000,tool:15000})
@@ -418,7 +418,7 @@ export async function main() {
     if(await health())fail()
     const start=async()=>{daemon=child(process.execPath,[path.join(ROOT,'companion/dist/index.js'),'daemon','start'],env);await poll(async()=>{if(daemon.exitCode!==null||daemon.signalCode!==null)fail();return health()},BOUNDS.auth);return daemon}
     stage='DAEMON';await start();secret=privateRead(env.CMSPARK_DATA_DIR,'ws_secret',256).trim();if(!/^[a-f0-9]{64}$/.test(secret))fail()
-    stage='BROWSER';browserPhase='XVFB_REQUEST';xvfb=child('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','ignore','pipe','pipe']);const display=deferred();let text='';xvfb.stdio[3].on('error',()=>display.reject(new Error('DISPLAY')));xvfb.stdio[3].on('data',b=>{text+=b.toString();if(text.length>8)display.reject(new Error('DISPLAY'));if(/^\d{1,5}\n$/.test(text))display.resolve(':'+text.trim())});const screen=await limit(display.promise,Math.min(5000,remaining()));browserPhase='DISPLAY_OBSERVED'
+    stage='BROWSER';browserPhase='XVFB_REQUEST';xvfb=child('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','ignore','pipe','pipe']);const display=observeDisplayReady(xvfb);const screen=await limit(display.ready,Math.min(5000,remaining()));if(!display.isLive())fail();browserPhase='DISPLAY_OBSERVED'
     if(!activeSupplier)fail();activeSupplier.check(remaining);const binary=activeSupplier.binary;browserPhase='BINARY_SELECTED'
     chromium=child(binary,chromeArgs(owned,extension),childEnvironment(owned,input,screen));const portFile=path.join(owned,'profile/DevToolsActivePort')
     const parts=await poll(()=>{try{return devToolsPortSnapshot(fs.readFileSync(portFile,'utf8'))}catch{return false}},10000);browserPhase='PORT_FILE'
@@ -522,8 +522,7 @@ async function independentSupplierWitness(bundle,temp,input,built,paths) {
     const retainedChild=(exe,args,childEnv,stdio)=>{remaining();bundle.check(remaining);const s=observeSupplierChild(spawn(exe,args,{env:childEnv,stdio}));retained.add(s);return s}
     timer=setTimeout(terminate,remaining())
     return await runSupplierWitness({deadline,remaining,now:Date.now,wait:ms=>new Promise(r=>setTimeout(r,ms)),checkPayload:()=>bundle.check(remaining),parsePort:devToolsPortSnapshot,
-      display(){const state=retainedChild('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','pipe','pipe','pipe']),d=deferred();let text='',settled=false
-        state.child.stdio[3].on('error',()=>{if(!settled){settled=true;d.reject(Error('DISPLAY_REFUSED'))}});state.child.stdio[3].on('data',b=>{if(settled)return;if(b.length+text.length>8){settled=true;d.reject(Error('DISPLAY_REFUSED'));return}text+=b.toString();if(/^\d{1,5}\n$/.test(text)){settled=true;d.resolve(':'+text.trim())}});return {state,ready:d.promise}},
+      display(){const state=retainedChild('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','pipe','pipe','pipe']);return {state,...observeDisplayReady(state.child)}},
       browser:display=>retainedChild(bundle.binary,chromeArgs(owned,extension),childEnvironment(owned,input,display),['ignore','pipe','pipe']),
       readPort:()=>fs.readFileSync(path.join(owned,'profile/DevToolsActivePort'),'utf8'),connect:parts=>CDP.connect(WebSocket,'ws://127.0.0.1:'+parts[0]+parts[1],Math.min(5000,remaining()),clients),
       closeClients:async()=>{for(const c of clients)c.abort();await limit(Promise.all([...clients].map(c=>c.settled)),remaining())},

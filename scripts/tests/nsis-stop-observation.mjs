@@ -61,7 +61,7 @@ export function buildObservedHelper(bytes) {
   const original=bytes.subarray(hasBOM?3:0).toString('utf8');
   if (!Buffer.from(original,'utf8').equals(bytes.subarray(hasBOM?3:0)) || original.includes(PREFIX) || original.includes('cmsparkSmokeObservation')) fail();
   let out=once(original,"$ErrorActionPreference = 'Stop'", "$ErrorActionPreference = 'Stop'"+block('prelude',prelude));
-  out=once(out,'Get-CimInstance Win32_Process | ForEach-Object {', block('before-cim',"Write-CMsparkSmokeObservation 'phase:cim-enter'")+'Get-CimInstance Win32_Process | ForEach-Object {'+block('first-row',`    if (-not $script:cmsparkSmokeObservationFirst) {
+  out=once(out,'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\' OR Name = \'cmspark-agent.exe\'" | ForEach-Object {', block('before-cim',"Write-CMsparkSmokeObservation 'phase:cim-enter'")+'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\' OR Name = \'cmspark-agent.exe\'" | ForEach-Object {'+block('first-row',`    if (-not $script:cmsparkSmokeObservationFirst) {
         $script:cmsparkSmokeObservationFirst = $true
         Write-CMsparkSmokeObservation 'phase:first-row'
     }`));

@@ -5,7 +5,7 @@ import path from 'node:path'
 import os from 'node:os'
 import vm from 'node:vm'
 import { EventEmitter } from 'node:events'
-import { PIN,SOURCE_PIN_SHA256,validateFixedLayout,createOwnedLedger,downloadFixedArchive,supplierReceipt,runPinnedPipeline,observeSupplierChild,runSupplierWitness } from '../cft-linux-supplier-732.mjs'
+import { PIN,SOURCE_PIN_SHA256,validateFixedLayout,createOwnedLedger,downloadFixedArchive,supplierReceipt,runPinnedPipeline,observeSupplierChild,observeDisplayReady,displayReadyProjection,runSupplierWitness } from '../cft-linux-supplier-732.mjs'
 import {devToolsPortSnapshot,childEnvironment,chromeArgs} from '../accept-acp-history-hosted-732.mjs'
 const source=new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)
 test('actual direct entry must supply and witness before the business gate',async()=>{
@@ -27,6 +27,57 @@ test('receipt never executes getters or emits bodies/paths and cannot fake compl
   assert.throws(()=>supplierReceipt('UNKNOWN'))
   assert.equal(supplierReceipt('COMPLETE',{childCount:2,portReady:true,versionObserved:true,allClosed:true,bothEOF:true,cleanup:true}).passed,true)
 })
+function displayChild(){
+  const c=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null,stdio:[null,null,null,new EventEmitter()]})
+  c.stdio[3].resume=()=>{};return c
+}
+for(const event of ['end','close','pipe-error','child-error','child-close'])test('display readiness promptly rejects terminal observation before a frame: '+event,async()=>{
+  const c=displayChild(),p=c.stdio[3],d=observeDisplayReady(c),rejected=assert.rejects(d.ready,{message:'DISPLAY_REFUSED'})
+  if(event==='pipe-error')p.emit('error',Error('PRIVATE'))
+  else if(event==='child-error')c.emit('error',Error('PRIVATE'))
+  else if(event==='child-close'){c.exitCode=23;c.emit('close',23,null)}
+  else p.emit(event)
+  await rejected;assert.equal(d.isLive(),false);assert.equal(p.listenerCount('data'),0)
+  const before=d.snapshot();c.emit('close',23,null);p.emit('error',Error('PRIVATE_LATE'));p.emit('end')
+  assert.equal(d.snapshot().state,before.state);assert.equal(JSON.stringify(d.snapshot()).includes('PRIVATE'),false)
+})
+test('display readiness accepts split decimal frame and normal fd3 EOF only while its child is alive',async()=>{
+  const c=displayChild(),p=c.stdio[3],d=observeDisplayReady(c)
+  for(const b of ['1','23','\n'])p.emit('data',Buffer.from(b))
+  assert.equal(await d.ready,':123');p.emit('end');p.emit('close')
+  assert.equal(d.isLive(),true);assert.equal(d.snapshot().eof,true);assert.equal(p.listenerCount('data'),0)
+  const before=d.snapshot();c.signalCode='SIGTERM';c.emit('close',null,'SIGTERM')
+  assert.equal(d.isLive(),false);assert.equal(before.closed,false);assert.equal(before.signal,'NONE');assert.equal(d.snapshot().closed,true)
+})
+test('display exit observation does not discard trailing frame data but cannot authorize a dead display',async()=>{
+  const c=displayChild(),p=c.stdio[3],d=observeDisplayReady(c)
+  c.exitCode=0;c.emit('exit',0,null);p.emit('data',Buffer.from('12\n'))
+  assert.equal(await d.ready,':12');assert.equal(d.isLive(),false)
+  c.emit('close',0,null);assert.equal(d.snapshot().state,'CHILD_CLOSED')
+})
+for(const bytes of [Buffer.from('12'),Buffer.from('123456\n'),Buffer.from('1\r\n'),Buffer.from('1\n2'),Buffer.alloc(9,49),Buffer.from([0xb1,10])])test('display refuses incomplete or invalid fd3 bytes '+bytes.toString('hex'),async()=>{
+  const c=displayChild(),p=c.stdio[3],d=observeDisplayReady(c),rejected=assert.rejects(d.ready,{message:'DISPLAY_REFUSED'})
+  p.emit('data',bytes);p.emit('end');await rejected;assert.equal(d.isLive(),false);assert.ok(d.snapshot().bytes<=9)
+})
+test('display diagnostics project only fixed scalars without executing getters or becoming pass authority',()=>{
+  let reads=0;const value={state:'PRIVATE',bytes:100,exitCode:'23',signal:'PRIVATE',raw:'PRIVATE'}
+  Object.defineProperty(value,'closed',{get(){reads++;throw Error('PRIVATE')}})
+  const r=displayReadyProjection(value);assert.equal(reads,0);assert.equal(r.state,null);assert.equal(r.bytes,null);assert.equal(r.closed,false);assert.equal(r.exitCode,null)
+  assert.equal(JSON.stringify(r).includes('PRIVATE'),false)
+  assert.equal(displayReadyProjection(new Proxy({},{getOwnPropertyDescriptor(){throw Error('PRIVATE')}})).state,null)
+  const receipt=supplierReceipt('XVFB',{display:{state:'READY',bytes:3,eof:true,exitCode:0,closed:true,signal:'NONE'}})
+  assert.equal(receipt.passed,false);assert.equal(receipt.display.state,'READY');assert.ok(Buffer.byteLength(JSON.stringify(receipt))<1024)
+})
+test('actual private supplier display producer uses the shared readiness lifecycle',async()=>{
+  const text=fs.readFileSync(source,'utf8'),start=text.indexOf("      display(){const state=retainedChild('/usr/bin/Xvfb'"),end=text.indexOf('\n      browser:',start)
+  assert.ok(start>0&&end>start)
+  const c=displayChild(),state={child:c};let spawns=0
+  const io=vm.runInNewContext('({'+text.slice(start,end)+'})',{observeDisplayReady,env:{},retainedChild(exe,args,env,stdio){
+    spawns++;assert.equal(exe,'/usr/bin/Xvfb');assert.deepEqual(Array.from(args),['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp']);assert.deepEqual(Array.from(stdio),['ignore','pipe','pipe','pipe']);return state
+  }})
+  const actual=io.display(),rejected=assert.rejects(actual.ready,{message:'DISPLAY_REFUSED'})
+  c.stdio[3].emit('end');await rejected;assert.equal(actual.state,state);assert.equal(actual.isLive(),false);assert.equal(spawns,1)
+})
 function flow(overrides={}){const calls=[],bundle={check(){calls.push('check')},dispose(){calls.push('dispose')}},io={supply:async()=>{calls.push('supply');return bundle},witness:async b=>{assert.equal(b,bundle);calls.push('witness');return true},business:async b=>{assert.equal(b,bundle);calls.push('business');return 0},...overrides};return {calls,bundle,io}}
 test('actual pipeline orders one supply/witness/business and disposes exactly once',async()=>{const s=flow();assert.equal(await runPinnedPipeline(s.io),0);assert.deepEqual(s.calls,['supply','witness','business','dispose'])})
 for(const point of ['supply','witness','business'])test('failed '+point+' refuses downstream and preserves cleanup',async()=>{const s=flow();s.io[point]=async()=>{s.calls.push(point);throw Error('PRIVATE')};assert.equal(await runPinnedPipeline(s.io),1);assert.equal(s.calls.filter(x=>x===point).length,1);if(point!=='business')assert.equal(s.calls.includes('business'),false);assert.equal(s.calls.includes('dispose'),point!=='supply')})
@@ -42,10 +93,21 @@ function witness(mode='good'){
   let clock=0,removes=0,closedClients=0,calls=0;const states=[],order=[]
   function child(){const c=new EventEmitter();c.exitCode=null;c.signalCode=null;for(const key of ['stdout','stderr']){c[key]=new EventEmitter();c[key].resume=()=>{}}
     c.kill=()=>{if(mode==='killfalse')return false;c.exitCode=0;if(mode!=='missingEOF')for(const key of ['stdout','stderr'])c[key].emit('end');c.emit('close');return true};const s=observeSupplierChild(c);states.push(s);return s}
-  const clients=new Set(),io={deadline:100,remaining:()=>100,now:()=>clock,wait:async n=>{clock+=n},parsePort:devToolsPortSnapshot,checkPayload(){order.push('check');if(mode==='pin')throw Error('PRIVATE')},display(){order.push('display');return {state:child(),ready:Promise.resolve(':1')}},browser(){order.push('browser');return child()},readPort:()=>mode==='port'?'1234\n/devtools/browser/short':'1234\n/devtools/browser/12345678-1234-1234-1234-123456789abc',async connect(){order.push('connect');const c={settled:Promise.resolve(),abort(){},async call(name,_args,ms){assert.equal(name,'Browser.getVersion');assert.ok(ms<=5000);calls++;return {product:mode==='version'?'Chrome/154.0.0.0':'Chrome/'+PIN.version}}};clients.add(c);if(mode==='connect')throw Error('PRIVATE');return c},async closeClients(){for(const c of clients)c.abort();closedClients++;if(mode==='clients')throw Error('PRIVATE')},removeOwned(){removes++;order.push('remove')}}
+  const clients=new Set(),io={deadline:100,remaining:()=>100,now:()=>clock,wait:async n=>{clock+=n},parsePort:devToolsPortSnapshot,checkPayload(){order.push('check');if(mode==='pin')throw Error('PRIVATE')},display(){order.push('display');const state=child();state.child.stdio=[null,null,null,new EventEmitter()];state.child.stdio[3].resume=()=>{};const display=observeDisplayReady(state.child);queueMicrotask(()=>state.child.stdio[3].emit('data',Buffer.from('1\n')));return {state,...display}},browser(){order.push('browser');return child()},readPort:()=>mode==='port'?'1234\n/devtools/browser/short':'1234\n/devtools/browser/12345678-1234-1234-1234-123456789abc',async connect(){order.push('connect');const c={settled:Promise.resolve(),abort(){},async call(name,_args,ms){assert.equal(name,'Browser.getVersion');assert.ok(ms<=5000);calls++;return {product:mode==='version'?'Chrome/154.0.0.0':'Chrome/'+PIN.version}}};clients.add(c);if(mode==='connect')throw Error('PRIVATE');return c},async closeClients(){for(const c of clients)c.abort();closedClients++;if(mode==='clients')throw Error('PRIVATE')},removeOwned(){removes++;order.push('remove')}}
   return {io,states,order,calls:()=>calls,removes:()=>removes,closedClients:()=>closedClients}
 }
 test('actual witness requires complete UUID, exact CDP product, two real close/EOF states',async()=>{const s=witness(),r=await runSupplierWitness(s.io);assert.equal(r.passed,true);assert.equal(r.childCount,2);assert.equal(s.calls(),1);assert.equal(s.removes(),1);assert.ok(s.states.every(x=>x.closed&&x.stdoutEOF&&x.stderrEOF));assert.deepEqual(s.order,['check','display','browser','connect','check','remove'])})
+test('actual witness refuses a ready frame from an already closed display before browser creation',async()=>{
+  const s=witness(),display=s.io.display
+  s.io.display=()=>{const d=display();d.state.child.exitCode=23;d.state.child.emit('close',23,null);for(const key of ['stdout','stderr'])d.state.child[key].emit('end');return d}
+  const r=await runSupplierWitness(s.io);assert.equal(r.passed,false);assert.equal(r.phase,'XVFB');assert.equal(r.childCount,1)
+  assert.equal(s.order.includes('browser'),false);assert.equal(s.calls(),0);assert.equal(r.display.closed,true);assert.equal(r.display.exitCode,23);assert.equal(r.cleanup,true)
+})
+test('witness snapshots display observations before cleanup termination and cannot use diagnostics to pass',async()=>{
+  const s=witness('port'),r=await runSupplierWitness(s.io)
+  assert.equal(r.passed,false);assert.equal(r.display.state,'READY');assert.equal(r.display.closed,false);assert.equal(r.display.exitCode,null)
+  assert.equal(s.states[0].closed,true);assert.equal(s.states[0].child.exitCode,0)
+})
 for(const mode of ['port','version','pin','connect','clients','killfalse','missingEOF'])test('actual witness '+mode+' never becomes business permission',async()=>{const s=witness(mode),r=await runSupplierWitness(s.io);assert.equal(r.passed,false);if(['clients','killfalse','missingEOF'].includes(mode)){assert.equal(r.cleanup,false);assert.equal(s.removes(),0)}assert.equal(JSON.stringify(r).includes('PRIVATE'),false);if(mode==='port')assert.equal(s.calls(),0);if(mode==='connect')assert.equal(s.closedClients(),1)})
 test('witness and business profiles remain separate with no HOME/auth inheritance or changed browser flags',()=>{const input={HOME:'/foreign',RUNNER_TRACKING_ID:'opaque',API_KEY:'PRIVATE'},a='/owned/witness',b='/owned/business';assert.notDeepEqual(chromeArgs(a,a+'/extension'),chromeArgs(b,b+'/extension'));for(const root of [a,b]){const e=childEnvironment(root,input,':1');assert.equal(e.HOME,undefined);assert.equal(e.API_KEY,undefined);assert.equal(e.RUNNER_TRACKING_ID,'opaque');assert.equal(chromeArgs(root,root+'/extension').some(x=>/sandbox|headless/.test(x)),false)}})
 test('actual business finally retains an unknown child bundle before a throwing pin check',async()=>{
