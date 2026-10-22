@@ -10,11 +10,35 @@ const tree=ts.createSourceFile("desktop-native-windows-480.test.ts",source,ts.Sc
 const callbacks:ts.ArrowFunction[]=[]
 function scan(n:ts.Node){if(ts.isCallExpression(n)&&n.expression.getText(tree)==="test"&&ts.isStringLiteral(n.arguments[0])&&n.arguments[0].text.startsWith("actual Windows inheritance: sentinel checker")){const callback=n.arguments[n.arguments.length-1];assert.ok(ts.isArrowFunction(callback));callbacks.push(callback)}ts.forEachChild(n,scan)}scan(tree);assert.equal(callbacks.length,1)
 const body=ts.transpileModule(`return (${callbacks[0].getText(tree)})`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText
+// Derive receipt field names from the real N-API producer, not a parallel DTO.
+const nativeSource=fs.readFileSync(path.resolve("tests/fixtures/desktop-480/windows-inheritance.c"),"utf8")
+const inspectSource=nativeSource.slice(nativeSource.indexOf("static napi_value fixture_inspect("),nativeSource.indexOf("static void fixture_cleanup("))
+const receiptFields=[...inspectSource.matchAll(/napi_(?:get_boolean|create_uint32)\(env,(\w+),&value\);napi_set_named_property\(env,object,"([a-z_]+)",value\);/g)].map(match=>({variable:match[1],field:match[2]}))
+assert.equal(receiptFields.length,5);assert.equal(new Set(receiptFields.map(x=>x.field)).size,5)
+function nativeReceipt(raw=4,objects=4,controlObjects=4,sidecar=true,control=4):Record<string,unknown>{
+ const bindings:Record<string,unknown>={fixture_sidecar_ok:sidecar,fixture_control:control,fixture_sibling:raw,fixture_control_identity:controlObjects,fixture_sibling_identity:objects}
+ return Object.fromEntries(receiptFields.map(({variable,field})=>{assert.ok(Object.hasOwn(bindings,variable));return[field,bindings[variable]]}))
+}
+const missingSiblingIdentity=nativeReceipt();delete missingSiblingIdentity.sibling_identity_mask
+const missingControlIdentity=nativeReceipt();delete missingControlIdentity.control_identity_mask
 for(const [name,observed,expectedFailure]of[
- ["valid exactmask4",{sidecar_valid:true,control_mask:4,sibling_mask:4},false],
- ["protected sibling leak",{sidecar_valid:true,control_mask:4,sibling_mask:7},true],
- ["checker partial mask",{sidecar_valid:true,control_mask:4,sibling_mask:0},true],
- ["sidecar rejected",{sidecar_valid:false,control_mask:4,sibling_mask:4},true],
+ ["valid exact identity4",nativeReceipt(),false],
+ ["unrelated input slot raw5 identity4",nativeReceipt(5),false],
+ ["unrelated parent slot raw6 identity4",nativeReceipt(6),false],
+ ["unrelated both slots raw7 identity4",nativeReceipt(7),false],
+ ["protected input leak",nativeReceipt(5,5),true],
+ ["protected parent leak",nativeReceipt(6,6),true],
+ ["protected both leak",nativeReceipt(7,7),true],
+ ["missing sentinel identity",nativeReceipt(0,0),true],
+ ["unknown sibling identity",nativeReceipt(4,256),true],
+ ["not-run sibling identity",nativeReceipt(4,257),true],
+ ["unknown control identity",nativeReceipt(4,4,256),true],
+ ["missing sibling identity field",missingSiblingIdentity,true],
+ ["missing control identity field",missingControlIdentity,true],
+ ["checker refusal",nativeReceipt(243),true],
+ ["checker incomplete",nativeReceipt(255),true],
+ ["control missing sentinel",nativeReceipt(4,4,4,true,0),true],
+ ["sidecar rejected",nativeReceipt(4,4,4,false),true],
 ]as const)test(`C2 cleanup model: ${name} preserves primary assertion and leaves loaded DLL outside disposable run`,async()=>{
  const root=fs.mkdtempSync(path.join(process.env.CMSPARK_DATA_DIR!,"c2-lock-model-")),input=path.join(root,"inheritance");fs.mkdirSync(input)
  for(const f of["desktop-inheritance.node","desktop-inheritance.exe"])fs.writeFileSync(path.join(input,f),"inert-not-executable",{flag:"wx"})

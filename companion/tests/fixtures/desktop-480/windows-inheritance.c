@@ -161,21 +161,79 @@ static unsigned fixture_observed_mask(const HANDLE known[3]) {
 #include <node_api.h>
 static HANDLE fixture_known[3];
 static DWORD fixture_sibling=255,fixture_control=255;
+static unsigned fixture_control_identity=257,fixture_sibling_identity=257;
 static int fixture_sidecar_ok=0;
 static ULONGLONG fixture_started;
 static wchar_t *host_environment(void);
 /* Called before defining the interposition macro: these are real Win32 APIs. */
-static DWORD fixture_checker(const wchar_t *binary,const wchar_t *role) {
+typedef BOOL (WINAPI *FixtureCompare)(HANDLE,HANDLE);
+typedef struct { DWORD raw; unsigned objects; int valid; } FixtureCheckerResult;
+/* References stay exclusively in this parent; numeric child slots are not identities. */
+static int fixture_identity_one(HANDLE process,HANDLE subject,HANDLE reference,FixtureCompare compare,int* same){
+ DWORD flags=0;*same=0;
+ if(!compare||!GetHandleInformation(reference,&flags)||(flags&HANDLE_FLAG_INHERIT)||!compare(reference,reference)||!GetHandleInformation(process,&flags)||WaitForSingleObject(process,0)!=WAIT_TIMEOUT)return 0;
+ HANDLE copy=NULL;SetLastError(ERROR_SUCCESS);
+ if(!DuplicateHandle(process,subject,GetCurrentProcess(),&copy,0,FALSE,0)){
+  DWORD error=GetLastError();
+  return error==ERROR_INVALID_HANDLE&&GetHandleInformation(reference,&flags)&&!(flags&HANDLE_FLAG_INHERIT)&&WaitForSingleObject(process,0)==WAIT_TIMEOUT;
+ }
+ int valid=GetHandleInformation(copy,&flags)&&!(flags&HANDLE_FLAG_INHERIT)&&compare(copy,copy)&&compare(reference,reference);
+ SetLastError(ERROR_SUCCESS);BOOL equal=compare(copy,reference);DWORD error=GetLastError();
+ valid=valid&&(equal||error==ERROR_NOT_SAME_OBJECT||error==ERROR_SUCCESS)&&GetHandleInformation(copy,&flags)&&!(flags&HANDLE_FLAG_INHERIT)&&GetHandleInformation(reference,&flags)&&!(flags&HANDLE_FLAG_INHERIT)&&WaitForSingleObject(process,0)==WAIT_TIMEOUT;
+ int closed=CloseHandle(copy)!=FALSE;
+ if(valid&&equal)*same=1;
+ return valid&&closed;
+}
+static int fixture_known_identity(HANDLE process,const HANDLE known[3],const HANDLE refs[3],FixtureCompare compare,unsigned* mask){
+ *mask=0;for(unsigned i=0;i<3;i++){int same=0;if(!fixture_identity_one(process,known[i],refs[i],compare,&same))return 0;if(same)*mask|=1u<<i;}return 1;
+}
+static int fixture_close_refs(HANDLE refs[3]) {
+  int valid=1;
+  for(unsigned i=0;i<3;i++){HANDLE reference=refs[i];refs[i]=NULL;if(reference&&!CloseHandle(reference))valid=0;}
+  return valid;
+}
+static int fixture_capture_refs(HANDLE refs[3],FixtureCompare compare) {
+  for(unsigned i=0;i<3;i++){
+    DWORD flags=0;
+    if(!compare||!GetHandleInformation(fixture_known[i],&flags)||
+       !DuplicateHandle(GetCurrentProcess(),fixture_known[i],GetCurrentProcess(),&refs[i],0,FALSE,0)||
+       !refs[i]||refs[i]==INVALID_HANDLE_VALUE||!GetHandleInformation(refs[i],&flags)||
+       (flags&HANDLE_FLAG_INHERIT)||!compare(refs[i],refs[i])||!compare(fixture_known[i],refs[i]))return 0;
+  }
+  return 1;
+}
+static FixtureCheckerResult fixture_checker(const wchar_t *binary,const wchar_t *role) {
+  FixtureCheckerResult result={255,256,0};
   wchar_t command[32768];STARTUPINFOW startup;PROCESS_INFORMATION pi;
+  HANDLE refs[3]={NULL,NULL,NULL};int reaped=0,cleanup_ok=1,inspected=0;unsigned objects=256;
+  ULONGLONG elapsed=0;DWORD remaining=0;wchar_t *environment=NULL;
+  HMODULE module=GetModuleHandleW(L"kernelbase.dll");FARPROC raw=module?GetProcAddress(module,"CompareObjectHandles"):NULL;
+  FixtureCompare compare=NULL;
+  _Static_assert(sizeof(compare)==sizeof(raw),"fixed Win32 function pointer size");memcpy(&compare,&raw,sizeof(compare));
   memset(&startup,0,sizeof(startup));memset(&pi,0,sizeof(pi));startup.cb=sizeof(startup);
-  if(wcschr(binary,L'"')||swprintf_s(command,32768,L"\"%ls\" %ls",binary,role)<0)return 254;
-  wchar_t *environment=host_environment();if(!environment)return 253;
-  BOOL started=CreateProcessW(binary,command,NULL,NULL,TRUE,CREATE_UNICODE_ENVIRONMENT,environment,NULL,&startup,&pi);free(environment);
-  if(!started)return 252;CloseHandle(pi.hThread);
-  ULONGLONG elapsed=GetTickCount64()-fixture_started;DWORD remaining=elapsed<FIXTURE_BUDGET?(DWORD)(FIXTURE_BUDGET-elapsed):0;
-  DWORD result=255;if(WaitForSingleObject(pi.hProcess,remaining)==WAIT_OBJECT_0)GetExitCodeProcess(pi.hProcess,&result);
-  else{TerminateProcess(pi.hProcess,251);WaitForSingleObject(pi.hProcess,INFINITE);result=251;}
-  CloseHandle(pi.hProcess);return result;
+  if(wcschr(binary,L'"')||swprintf_s(command,32768,L"\"%ls\" %ls",binary,role)<0){result.raw=254;goto done;}
+  if(!fixture_capture_refs(refs,compare)){result.raw=253;goto done;}
+  environment=host_environment();if(!environment){result.raw=253;goto done;}
+  if(!CreateProcessW(binary,command,NULL,NULL,TRUE,CREATE_UNICODE_ENVIRONMENT|CREATE_SUSPENDED,environment,NULL,&startup,&pi)){result.raw=252;goto done;}
+  free(environment);environment=NULL;
+  /* Inspect the exact returned suspended child before its CRT can reuse a slot. */
+  if(!fixture_known_identity(pi.hProcess,fixture_known,refs,compare,&objects)){result.raw=253;goto done;}
+  elapsed=GetTickCount64()-fixture_started;
+  if(elapsed>=FIXTURE_BUDGET){result.raw=251;goto done;}
+  if(ResumeThread(pi.hThread)!=1){result.raw=254;goto done;}
+  elapsed=GetTickCount64()-fixture_started;remaining=elapsed<FIXTURE_BUDGET?(DWORD)(FIXTURE_BUDGET-elapsed):0;
+  if(WaitForSingleObject(pi.hProcess,remaining)!=WAIT_OBJECT_0){result.raw=251;goto done;}
+  reaped=1;
+  if(!GetExitCodeProcess(pi.hProcess,&result.raw))goto done;
+  inspected=result.raw<=7;
+done:
+  if(environment)free(environment);
+  if(pi.hProcess&&!reaped){if(!TerminateProcess(pi.hProcess,251))cleanup_ok=0;if(WaitForSingleObject(pi.hProcess,INFINITE)!=WAIT_OBJECT_0)cleanup_ok=0;}
+  if(pi.hThread&&!CloseHandle(pi.hThread))cleanup_ok=0;
+  if(pi.hProcess&&!CloseHandle(pi.hProcess))cleanup_ok=0;
+  if(!fixture_close_refs(refs))cleanup_ok=0;
+  if(inspected&&cleanup_ok){result.objects=objects;result.valid=1;}
+  return result;
 }
 static int fixture_sidecar(const wchar_t *binary) {
   wchar_t name[32768];if(wcslen(binary)>32750||wcscpy_s(name,32768,binary)||wcscat_s(name,32768,L".handles"))return 0;
@@ -210,7 +268,13 @@ static int fixture_capture_valid(void) {
 static BOOL WINAPI fixture_create(LPCWSTR app,LPWSTR command,LPSECURITY_ATTRIBUTES process,LPSECURITY_ATTRIBUTES thread,BOOL inherit,DWORD flags,LPVOID environment,LPCWSTR cwd,LPSTARTUPINFOW startup,LPPROCESS_INFORMATION pi) {
   /* Both actual protected handles must be live before this exact sibling boundary. */
   fixture_sidecar_ok=!inherit&&fixture_capture_valid()&&fixture_sidecar(app);
-  if(fixture_sidecar_ok){fixture_control=fixture_checker(app,L"--sentinel");fixture_sibling=fixture_checker(app,L"--sibling");fixture_sidecar_ok=fixture_capture_valid();}
+  if(fixture_sidecar_ok){
+    FixtureCheckerResult control=fixture_checker(app,L"--sentinel"),sibling=fixture_checker(app,L"--sibling");
+    fixture_control=control.raw;fixture_sibling=sibling.raw;
+    fixture_control_identity=control.valid?control.objects:256;
+    fixture_sibling_identity=sibling.valid?sibling.objects:256;
+    fixture_sidecar_ok=fixture_capture_valid();
+  }
   return CreateProcessW(app,command,process,thread,inherit,flags,environment,cwd,startup,pi);
 }
 #define CreateNamedPipeW fixture_pipe
@@ -227,6 +291,8 @@ static napi_value fixture_inspect(napi_env env,napi_callback_info info) {
   napi_get_boolean(env,fixture_sidecar_ok,&value);napi_set_named_property(env,object,"sidecar_valid",value);
   napi_create_uint32(env,fixture_control,&value);napi_set_named_property(env,object,"control_mask",value);
   napi_create_uint32(env,fixture_sibling,&value);napi_set_named_property(env,object,"sibling_mask",value);
+  napi_create_uint32(env,fixture_control_identity,&value);napi_set_named_property(env,object,"control_identity_mask",value);
+  napi_create_uint32(env,fixture_sibling_identity,&value);napi_set_named_property(env,object,"sibling_identity_mask",value);
   return object;
 }
 static void fixture_cleanup(void *ignored) {(void)ignored;if(fixture_known[2]){CloseHandle(fixture_known[2]);fixture_known[2]=NULL;}}

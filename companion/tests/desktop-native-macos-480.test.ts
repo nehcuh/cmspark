@@ -132,9 +132,17 @@ test("acceptance source variants invert byte-exact and reject missing or duplica
 for(const mode of ["visual","hostile","reconnect","relaunch"] as const)test(`actual Mac acceptance ${mode}: real owned window/engine/lifecycle`,{skip:process.platform!=="darwin",timeout:20000},t=>nativeAcceptance(t,mode))
 
 test("acceptance strict inheritance oracle rejects checker failures and partial sentinel proof",()=>{
- requireInheritance({sidecar_valid:true,control_mask:4,sibling_mask:4})
- for(const mask of [0,1,2,3,5,6,7,240,252,255])assert.throws(()=>requireInheritance({sidecar_valid:true,control_mask:4,sibling_mask:mask}),`invalid sibling ${mask}`)
- assert.throws(()=>requireInheritance({sidecar_valid:false,control_mask:4,sibling_mask:4}));assert.throws(()=>requireInheritance({sidecar_valid:true,control_mask:0,sibling_mask:4}))
+ const source=fs.readFileSync(path.resolve("tests/fixtures/desktop-480/windows-inheritance.c"),"utf8")
+ const inspect=source.slice(source.indexOf("static napi_value fixture_inspect("),source.indexOf("static void fixture_cleanup("))
+ const fields=[...inspect.matchAll(/napi_(?:get_boolean|create_uint32)\(env,(\w+),&value\);napi_set_named_property\(env,object,"([a-z_]+)",value\);/g)].map(match=>({variable:match[1],field:match[2]}))
+ assert.equal(fields.length,5);assert.equal(new Set(fields.map(x=>x.field)).size,5)
+ const bindings:Record<string,unknown>={fixture_sidecar_ok:true,fixture_control:4,fixture_sibling:4,fixture_control_identity:4,fixture_sibling_identity:4}
+ const valid=Object.fromEntries(fields.map(({variable,field})=>{assert.ok(Object.hasOwn(bindings,variable));return[field,bindings[variable]]})) as Parameters<typeof requireInheritance>[0]
+ for(const raw of [0,1,2,3,4,5,6,7])requireInheritance({...valid,sibling_mask:raw})
+ for(const mask of [0,1,2,3,5,6,7,256,257])for(const field of ["control_identity_mask","sibling_identity_mask"]as const)assert.throws(()=>requireInheritance({...valid,[field]:mask}),`invalid ${field} ${mask}`)
+ for(const raw of [-1,8,240,243,252,255,256,257,NaN,4.5])assert.throws(()=>requireInheritance({...valid,sibling_mask:raw}),`invalid raw ${raw}`)
+ for(const field of ["control_identity_mask","sibling_identity_mask"]as const){const missing:Partial<typeof valid>={...valid};delete missing[field];assert.throws(()=>requireInheritance(missing as typeof valid),`missing ${field}`)}
+ assert.throws(()=>requireInheritance({...valid,sidecar_valid:false}));assert.throws(()=>requireInheritance({...valid,control_mask:0}))
 })
 
 test("acceptance strict cleanup refuses a replaced owned directory before removing it",()=>{

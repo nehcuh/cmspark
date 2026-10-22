@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Fix (#480): verify the sibling inheritance fixture with parent-side kernel-object identities before resuming its suspended checker. Preserve raw exit masks separately: reused numeric slots do not prove protected pipe/process inheritance. Real leaks, missing/unknown identity evidence and checker/cleanup failures still reject. Historical failing-slot identity remains UNKNOWN; native gates and time budgets are unchanged.
+
+- Fix (#476): compare desktop history file identities as exact 64-bit integers before reading the opened transcript. Distinct device/inode values must not become equal through JavaScript Number rounding. Retain the real replacement regression and add large-identity acceptance/refusal controls; no CI gate or timeout is changed.
+
 - Refs #723: remove the experimental Chrome/native first-identity gate and its dedicated failure upload from automatic CI at the user's request. Keep the independent acceptance scripts and CPU controls; all other CI gates remain required. CI success does not establish #723 native identity or masking readiness.
 
 - Security (#759): upgrade packaged Node, all CI/release jobs, native build headers/import library and the digest-pinned validation image to Node 22.23.4 for the [2026-10-21 Node security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). Development engines now require `>=22.23.4 <23`; Windows SEA and native packaging require exact 22.23.4. Windows SEA resolves one executable and reuses it for validation, direct Node build calls and the embedded base. Node 24/26 are not yet qualified. This runtime security update does not establish the cause of existing Windows native CI failures. Product version remains 0.6.14 (unreleased).
