@@ -16,7 +16,7 @@ const self = fileURLToPath(import.meta.url)
 
 if (process.argv[2] === '--producer') {
   const mode = process.argv[3]
-  assert.ok(['pass', 'assert', 'throw', 'spoof', 'timeout', 'async', 'target-callback', 'duplicate', 'partial', 'flood', 'missing', 'chunks'].includes(mode))
+  assert.ok(['pass', 'phases', 'assert', 'throw', 'spoof', 'timeout', 'async', 'target-callback', 'duplicate', 'partial', 'flood', 'missing', 'chunks'].includes(mode))
   let callback
   if (mode === 'async' || mode === 'target-callback') {
     // Execute the actual instrumented asynchronous CPU assertion callback.
@@ -48,6 +48,10 @@ if (process.argv[2] === '--producer') {
     }
     test('actual Chrome document native parent / actual authenticated WS first identity STOP gate', { timeout: 40 }, async t => {
       observer.start(t.signal)
+      if (mode === 'phases') {
+        const clock = require('./cockpit-bridge-phase-observation.cjs').createObservation(() => 0); clock.start(); clock.mark(1)
+        clock.feed(Buffer.from('CM723P 1 0\n')); observer.phases(clock.snapshot('CLOSE'))
+      }
       let ok = false
       try {
         if (mode === 'assert') observer.assert(1, assert.equal)(false, true, 'PRIVATE_ASSERTION_BODY')
@@ -72,6 +76,9 @@ if (process.argv[2] === '--producer') {
     })
   }
 } else {
+  // The existing mandatory workflow entry owns these pure diagnostic controls.
+  require('./cockpit-bridge-phase-observation.test.cjs')
+  await import('./cockpit-bridge-phase-integration.test.mjs')
   const ts = createRequire(new URL('../../companion/package.json', import.meta.url))('typescript')
   const controller = fs.readFileSync(new URL('./cockpit-bridge-real-first.cjs', import.meta.url), 'utf8')
   const parentFile = fileURLToPath(new URL('./cockpit-bridge-first-gate.cjs', import.meta.url))
@@ -113,11 +120,15 @@ if (process.argv[2] === '--producer') {
     }
     walk(ast)
     assert.equal(positions.size, 92)
-    assert.equal(buildJoins.length, 1)
-    const tuple = buildJoins[0].arguments[0]
-    assert.equal(buildJoins[0].arguments.length, 1); assert.ok(ts.isArrayLiteralExpression(tuple)); assert.equal(tuple.elements.length, 2)
-    assert.equal(tuple.elements[0].getText(ast), "runPs(path.join(sourceRepo, 'scripts/build-cockpit-native-bridge.ps1'), ['-OutputDirectory', path.join(install, 'bin')])")
-    assert.equal(tuple.elements[1].getText(ast), "evidence.wait(36, () => (runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild])))")
+    // Human-approved split: compilers are mandatory in the parent's separate
+    // 120s preparation. Runtime keeps45s, revalidates the same-run artifacts,
+    // and observes the real metadata verifier close before any native child.
+    assert.equal(buildJoins.length, 0)
+    assert.ok(text.includes("require('./cockpit-bridge-prepared-build.cjs').stage({"))
+    assert.ok(text.includes('root, sourceRepo, install, jobBuild, expectedNonce: preparedNonce'))
+    assert.ok(text.includes("evidence.wait(36, () => runPs(path.join(sourceRepo, 'scripts/tests/cockpit-bridge-prepared-paths.ps1'), ['-Phase', phase]))"))
+    assert.equal(text.includes("runPs(path.join(sourceRepo, 'scripts/build-cockpit-native-bridge.ps1')"), false)
+    assert.equal(text.includes("runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1')"), false)
     assert.equal(awaits.length, 28); assert.equal(assertions.length, 29)
     for (const [id, kind] of Object.entries(sites.kinds)) assert.ok(uses.get(Number(id))?.some(method => methods[kind]?.includes(method)), 'closed site must retain its actual source wrapper: ' + id)
     assert.ok(text.includes('const positive = evidence.arm(')); assert.ok(text.includes('const observationDone = evidence.dependency()'))
@@ -130,7 +141,7 @@ if (process.argv[2] === '--producer') {
     assert.equal(createHash('sha256').update(shared).digest('hex'), 'bb4099db59ba888505c134f1771985712f0cb99f1a6f2bf56b86dff96b76e645')
   })
   test('actual coverage rejects omitted wrappers, prearmed observation and surface completion', () => {
-    for (const mutation of [controller.replace('await evidence.wait(', 'await omittedWait('), controller.replace('evidence.check(1,', 'omittedCheck(1,'), controller.replace('evidence.callback(', 'omittedCallback('), controller.replace('evidence.wait(36,', 'omittedWait(36,'), controller.replace('Promise.allSettled(', 'Promise.all('), controller.replace('evidence.arm(', 'omittedArm('), controller.replace('finally { evidence.surface(2) }', 'finally { void 0 }')]) assert.throws(() => coverage(mutation))
+    for (const mutation of [controller.replace('await evidence.wait(', 'await omittedWait('), controller.replace('evidence.check(1,', 'omittedCheck(1,'), controller.replace('evidence.callback(', 'omittedCallback('), controller.replace('evidence.wait(36,', 'omittedWait(36,'), controller.replace('expectedNonce: preparedNonce', 'expectedNonce: undefined'), controller.replace('evidence.arm(', 'omittedArm('), controller.replace('finally { evidence.surface(2) }', 'finally { void 0 }')]) assert.throws(() => coverage(mutation))
   })
   for (const [caseName, cpuReceipt, code] of [['malformed', '{', 'SYNC_REFUSED'], ['null', 'null', 'CHECK_REFUSED']]) test('actual CPU JSON parse or argument failure freezes before cleanup: ' + caseName, () => {
     const ast = ts.createSourceFile('actual-controller.cjs', controller, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
@@ -170,6 +181,7 @@ if (process.argv[2] === '--producer') {
       const stat = { mode, ...methods }, frames = [], calls = [], module = { exports: {} }
       vm.runInNewContext(helper, { module, Buffer, require(name) {
         if (name === './cockpit-bridge-first-sites.cjs') return sites
+        if (name === './cockpit-bridge-phase-observation.cjs') return require(name)
         assert.equal(name, 'node:fs')
         return { constants: fs.constants,
           fstatSync(fd) { assert.equal(fd, 3); if (behavior === 'stat-throws') throw Error('STAT_REFUSED'); return stat },
@@ -227,6 +239,9 @@ if (process.argv[2] === '--producer') {
   test('actual fd3/Node:test preserves PASS, assertion, rejection, timeout and real async callback', async () => {
     const good = await produce('pass')
     assert.equal(good.code, 0); assert.equal(good.signal, null); assert.equal(good.record.first, null); assert.equal(good.record.interrupt, null); assert.equal(good.record.completion.ok, true)
+    const phaseChild = await produce('phases')
+    assert.equal(phaseChild.code, 0); assert.equal(phaseChild.record.completion.ok, true)
+    assert.deepEqual(phaseChild.actualParent.firstIdentity.phases, { v: 1, phases: [[1, 0]], registrar: [[1, 0]], at: 'CLOSE' })
     for (const [mode, runner] of [['assert', 'CODE_FAILURE'], ['throw', 'CODE_FAILURE'], ['spoof', 'CODE_FAILURE'], ['timeout', 'TIMEOUT'], ['async', 'UNCAUGHT_EXCEPTION'], ['target-callback', 'UNHANDLED_REJECTION']]) {
       const result = await produce(mode)
       assert.equal(result.code, 1); assert.equal(result.signal, null)
