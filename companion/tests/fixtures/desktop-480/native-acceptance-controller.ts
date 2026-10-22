@@ -49,10 +49,12 @@ export function requireWindow(r: AcceptanceReceipt | undefined, view: "compact" 
   assert.equal(r.view, view); assert.equal(r.width, r.expectedWidth); assert.equal(r.height, r.expectedHeight)
   assert.equal(r.bits, "1111111", "Visible/key/active/same/singleton/exact-geometry/clamp all required")
 }
-export function requireInheritance(value: { sidecar_valid: boolean; control_mask: number; sibling_mask: number }): void {
+export function requireInheritance(value: { sidecar_valid: boolean; control_mask: number; sibling_mask: number; control_identity_mask: number; sibling_identity_mask: number }): void {
   assert.equal(value.sidecar_valid, true); assert.equal(value.control_mask, 4)
-  assert.equal(value.sibling_mask, 4, "Actual sibling must prove sentinel presence and protected endpoint absence; error/partial masks fail")
+  assert.equal(value.control_identity_mask, 4); assert.equal(value.sibling_identity_mask, 4, "Exact protected objects must be absent while the sentinel is present")
+  assert.ok(Number.isSafeInteger(value.sibling_mask) && value.sibling_mask >= 0 && value.sibling_mask <= 7, "Actual sibling must complete its sidecar/checker path; raw slots do not establish object identity")
 }
+
 // Observe production-admitted responses only. Incoming phase/proof text is never
 // a success receipt; ready is bound by the channel's synchronous authenticated callback.
 export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { host: string; capabilityId: string }, registry: DesktopIdentityRegistry, record: (receipt: AcceptanceReceipt) => void, proof: (value: string) => void, activity: () => void = () => {}) {

@@ -1,5 +1,7 @@
 # Windows 开发与失败定位
 
+Windows 继承验收须区分句柄数值槽位与内核对象身份：`GetHandleInformation` 成功只能证明当前槽位有效，不能证明它是父进程的原 protected pipe/process。#480 sibling 夹具在恢复 suspended checker 前，由父进程以不可继承、零访问权副本及 `CompareObjectHandles` 核三份原对象，raw exit mask 与 identity mask 分开保存；真实泄漏、缺少／UNKNOWN 身份、checker 或 cleanup 失败仍拒绝。源码受控反例不认定历史失败槽位的实际对象，历史原因保持 UNKNOWN；原生门禁、权限、原累计时限均不删改，也不重置旧诊断上限。官方接口依据：[GetHandleInformation](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-gethandleinformation)、[CompareObjectHandles](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-compareobjecthandles)。
+
 跨 Node／Framework 的同一文件须核双向 access/share 兼容。Node lease 的 `wx+` 即使共享 Read/Write/Delete，Framework 默认 `File.ReadAllText` 仍只共享 Read，会拒绝现存写句柄；读取者的 share 必须允许已有 access，不能提前关 owner 或放宽权限掩盖。#723 Job CPU fixture 的修复保持 Read access、显式 ReadWrite|Delete share 和后续原 nonce/claim 校验；真实 Windows 还验证旧读的精确 sharing violation。惰性共享模型／原厂源码链不等于已观测某次 CPU 内部异常，也不等于 native 窗口身份成功。原厂依据：[Framework StreamReader](https://github.com/microsoft/referencesource/blob/ec9fa9ae770d522a5b5f0607898044b7478574a3/mscorlib/system/io/streamreader.cs)、[CreateFile 的双向共享规则](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)。
 
 适用于 coding agent 和贡献者。先按当前 Issue 的原始 DoD、精确 head/main 和实际失败阶段定位；历史 Windows 红灯不是同一个系统根因。本文是已有调试、隔离与验收纪律的短入口，不新增模型、全仓重测或平台前置门。测试地图见 [TESTING](TESTING.md)，开发约定见 [CONTRIBUTING](../CONTRIBUTING.md)。
