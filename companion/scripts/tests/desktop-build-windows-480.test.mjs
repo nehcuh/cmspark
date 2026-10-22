@@ -372,3 +372,148 @@ test('705 fixture keeps legacy V1 checker but requires explicit unknown refusal 
  assert.ok(s.includes('OpenEventW(SYNCHRONIZE,FALSE,fixture_event_name)'));assert.ok(s.includes('ERROR_ALREADY_EXISTS'));assert.ok(s.includes('BCryptGenRandom'));assert.doesNotMatch(s,/OpenProcess\(.*PROCESS_ALL_ACCESS|NtQuerySystemInformation|GetProcessId\(candidate/)
  const build=fs.readFileSync(new URL('../build-desktop-windows.mjs',import.meta.url),'utf8');assert.match(build,/DESKTOP_FIXTURE_ADDON/);assert.match(build,/"bcrypt.lib"/);assert.doesNotMatch(build,/Kernelbase.lib|OneCore.lib/)
 })
+
+// Case36: run complete actual C observer bodies against inert process/object tables.
+// This is a source control, never a Windows process, compiler or native binding.
+function siblingSource480() { return fs.readFileSync(new URL('../../tests/fixtures/desktop-480/windows-inheritance.c', import.meta.url), 'utf8') }
+function siblingFunction480(source, signature) {
+  const start=source.indexOf(signature);assert.ok(start>=0,`actual case36 function ${signature}`)
+  const open=source.indexOf('{',start);let depth=0
+  for(let i=open;i<source.length;i++){if(source[i]==='{')depth++;else if(source[i]==='}'&&--depth===0)return source.slice(open+1,i)}
+  assert.fail('complete case36 C function')
+}
+function siblingFunctions480(source=siblingSource480()) {
+  const signatures={fixture_identity_one:'static int fixture_identity_one(',fixture_known_identity:'static int fixture_known_identity(',fixture_capture_refs:'static int fixture_capture_refs(',fixture_close_refs:'static int fixture_close_refs('}
+  const args={fixture_identity_one:'process,subject,reference,compare,same',fixture_known_identity:'process,known,refs,compare,mask',fixture_capture_refs:'refs,compare',fixture_close_refs:'refs'}
+  const translate=(body)=>body
+    .replace(/DWORD flags=0/g,'let flags={value:0}')
+    .replace(/HANDLE copy=NULL/g,'let copy={value:null}')
+    .replace(/\b(?:DWORD|BOOL|int|unsigned|HANDLE) /g,'let ')
+    .replace(/&refs\[i\]/g,'({get value(){return refs[i]},set value(v){refs[i]=v}})')
+    .replace(/&same/g,'same').replace(/&copy/g,'copy').replace(/&flags/g,'flags')
+    .replace(/\*same/g,'same.value').replace(/\*mask/g,'mask.value')
+    .replace(/let same=0/g,'let same={value:0}').replace(/if\(same\)/g,'if(same.value)')
+    .replace(/flags&HANDLE_FLAG_INHERIT/g,'flags.value&HANDLE_FLAG_INHERIT')
+    .replace(/1u<<i/g,'1<<i').replace(/\bNULL\b/g,'null')
+  const functions=Object.entries(signatures).map(([name,signature])=>`function ${name}(${args[name]}){${translate(siblingFunction480(source,signature))}}`).join('\n')
+  return api=>new Function(...Object.keys(api),functions+';return {fixture_identity_one,fixture_known_identity,fixture_capture_refs,fixture_close_refs};')(...Object.values(api))
+}
+function siblingIdentityScenario480(objects,inject={}) {
+  const originals=[{},{},{}], table=new Map([[100,{object:originals[0]}],[104,{object:originals[1]}],[108,{object:originals[2]}]])
+  for(const [slot,kind]of objects)table.set(slot,{object:typeof kind==='number'?originals[kind]:{}})
+  let error=0,next=1000;const temporary=new Set(),trace=[]
+  const unwrap=h=>h&&typeof h==='object'&&'value'in h?h.value:h
+  const api={FALSE:0,TRUE:1,ERROR_SUCCESS:0,ERROR_INVALID_HANDLE:6,ERROR_NOT_SAME_OBJECT:1656,HANDLE_FLAG_INHERIT:1,WAIT_TIMEOUT:258,
+    GetCurrentProcess:()=> 'self',SetLastError:v=>{error=v},GetLastError:()=>error,
+    GetHandleInformation(h,out){h=unwrap(h);out.value=inject.inheritedReference&&h===100?1:0;if(h==='child')return !inject.dead;return table.has(h)&&!(inject.badReference&&h===100)},
+    WaitForSingleObject(h,time){assert.equal(h,'child');assert.equal(time,0);return inject.dead?0:258},
+    DuplicateHandle(from,subject,to,out,access,inherit,options){trace.push('duplicate');assert.equal(from,'child');assert.equal(to,'self');assert.deepEqual([access,inherit,options],[0,0,0]);if(inject.duplicateFailure){error=5;return false}if(!table.has(subject)){error=6;return false}out.value=next++;table.set(out.value,table.get(subject));temporary.add(out.value);return true},
+    CompareObjectHandles(a,b){a=unwrap(a);b=unwrap(b);if(inject.selfFailure&&a===b)return false;if(inject.compareFailure&&a!==b){error=5;return false}const same=table.get(a)?.object===table.get(b)?.object;error=same||inject.differentZero?0:1656;return same},
+    CloseHandle(h){h=unwrap(h);trace.push('close');assert.ok(temporary.delete(h));table.delete(h);return !inject.closeFailure},
+  }
+  const source=siblingSource480(),mask={value:0};let valid
+  if(!source.includes('static int fixture_identity_one(')){
+    // Same new counterexample against the actual old producer, not a fabricated old algorithm.
+    const body=siblingFunction480(source,'static unsigned fixture_mask(').replace(/\b(?:unsigned|DWORD) /g,'let ').replace('let flags=0','let flags={value:0}').replace('&flags','flags').replace('1u<<i','1<<i')
+    mask.value=new Function('known','GetHandleInformation',body)([40,44,48],api.GetHandleInformation);valid=true
+  }else{const functions=siblingFunctions480(source)(api);valid=functions.fixture_known_identity('child',[40,44,48],[100,104,108],inject.missingAPI?null:api.CompareObjectHandles,mask)}
+  assert.equal(temporary.size,0,'every acquired identity copy receives cleanup')
+  return {valid:!!valid,mask:mask.value,trace}
+}
+for(const [raw,objects]of [[5,[[40,'Event'],[48,2]]],[6,[[44,'Process'],[48,2]]],[7,[[40,'Pipe'],[44,'Process'],[48,2]]]])test(`case36 actual C: unrelated numeric mask${raw} has protected-object mask4`,()=>{
+  const result=siblingIdentityScenario480(objects);assert.equal(result.valid,true);assert.equal(result.mask,4)
+})
+for(const [name,objects,mask]of [['sentinel',[[48,2]],4],['input',[[40,0],[48,2]],5],['parent',[[44,1],[48,2]],6],['both',[[40,0],[44,1],[48,2]],7],['missing sentinel',[],0],['different sentinel',[[48,'Event']],0]])test(`case36 actual C: ${name} preserves exact object mask${mask}`,()=>{
+  const result=siblingIdentityScenario480(objects);assert.equal(result.valid,true);assert.equal(result.mask,mask)
+})
+for(const failure of ['missingAPI','badReference','inheritedReference','dead','duplicateFailure','compareFailure','selfFailure','closeFailure'])test(`case36 actual C: ${failure} is unknown, never protected absence`,()=>{
+  assert.equal(siblingIdentityScenario480([[40,0],[48,2]],{[failure]:true}).valid,false)
+})
+test('case36 actual C: different-object zero error needs successful self controls',()=>{
+  assert.equal(siblingIdentityScenario480([[40,'Pipe'],[48,2]],{differentZero:true}).mask,4)
+  assert.equal(siblingIdentityScenario480([[40,'Pipe'],[48,2]],{differentZero:true,selfFailure:true}).valid,false)
+})
+function siblingReferences480(fault='none') {
+  const refs=[null,null,null],originals=[40,44,48],table=new Map(originals.map((h,i)=>[h,{object:i}]));let next=100,duplicates=0;const closed=[],live=new Set()
+  const api={FALSE:0,INVALID_HANDLE_VALUE:-1,HANDLE_FLAG_INHERIT:1,fixture_known:originals,GetCurrentProcess:()=> 'self',
+    GetHandleInformation(h,out){out.value=fault==='inheritedReference'&&h>=100?1:0;return table.has(h)&&!(fault==='missingOriginal'&&h===44)},
+    DuplicateHandle(from,h,to,out,access,inherit,options){assert.deepEqual([from,to,access,inherit,options],['self','self',0,0,0]);duplicates++;if(fault==='partialDuplicate'&&duplicates===2)return false;out.value=next++;table.set(out.value,table.get(h));live.add(out.value);return true},
+    CloseHandle(h){assert.ok(live.delete(h),'only acquired references are closed once');closed.push(h);table.delete(h);return fault!=='closeFailure'},
+  }
+  const compare=(a,b)=>fault!=='selfFailure'||a!==b?table.get(a)?.object===table.get(b)?.object:false
+  const fn=siblingFunctions480()(api),captured=fn.fixture_capture_refs(refs,fault==='missingAPI'?null:compare),cleaned=fn.fixture_close_refs(refs)
+  assert.deepEqual(refs,[null,null,null]);assert.equal(live.size,0)
+  const again=fn.fixture_close_refs(refs);assert.equal(again,1)
+  return {captured:!!captured,cleaned:!!cleaned,duplicates,closed:closed.length}
+}
+test('case36 actual C: three zero-access parent references remain noninheritable and close exactly once',()=>{
+  assert.deepEqual(siblingReferences480(),{captured:true,cleaned:true,duplicates:3,closed:3})
+})
+for(const fault of ['missingAPI','missingOriginal','partialDuplicate','inheritedReference','selfFailure'])test(`case36 actual C: ${fault} cleans partial references without admission`,()=>{
+  assert.equal(siblingReferences480(fault).captured,false)
+})
+test('case36 actual C: reference close failure cannot report successful cleanup',()=>{assert.equal(siblingReferences480('closeFailure').cleaned,false)})
+function siblingChecker480(inject={}) {
+  let body=siblingFunction480(siblingSource480(),'static FixtureCheckerResult fixture_checker(')
+  const fixed='FixtureCheckerResult result={255,256,0};';assert.ok(body.includes(fixed));body=body.replace(fixed,'const result={raw:255,objects:256,valid:0};')
+  body=body.replace('wchar_t command[32768];STARTUPINFOW startup;PROCESS_INFORMATION pi;','const command={};const startup={};const pi={hThread:null,hProcess:null};')
+    .replace('HANDLE refs[3]={NULL,NULL,NULL};','const refs=[null,null,null];')
+    .replace('unsigned objects=256;','const objects={value:256};')
+    .replace('wchar_t *environment=NULL;','let environment=null;')
+    .replace('FixtureCompare compare=NULL;','let compare=null;')
+    .replace('_Static_assert(sizeof(compare)==sizeof(raw),"fixed Win32 function pointer size");memcpy(&compare,&raw,sizeof(compare));','compare=raw;')
+    .replace('memset(&startup,0,sizeof(startup));memset(&pi,0,sizeof(pi));startup.cb=sizeof(startup);','startup.cb=1;')
+    .replace(/\b(?:int|ULONGLONG|DWORD|HMODULE|FARPROC) /g,'let ')
+    .replace('&startup','startup').replace('&pi','pi').replace('&objects','objects')
+    .replace('&result.raw','({get value(){return result.raw},set value(v){result.raw=v}})')
+    .replace('result.objects=objects','result.objects=objects.value')
+    .replace(/\(DWORD\)/g,'').replace(/\bNULL\b/g,'null').replace(/\bL"/g,'"').replace(/\bL'/g,"'")
+  const first=body.indexOf('if(wcschr('),done=body.indexOf('\ndone:');assert.ok(first>=0&&done>first)
+  body=body.slice(0,first)+'work:{'+body.slice(first,done).replaceAll('goto done;','break work;')+'}'+body.slice(done+'\ndone:'.length)
+  let ticks=0,resumed=0,terminated=0,waited=0;const trace=[],live=new Set();const compare=()=>true
+  const api={FALSE:0,TRUE:1,CREATE_UNICODE_ENVIRONMENT:1024,CREATE_SUSPENDED:4,WAIT_OBJECT_0:0,INFINITE:0xffffffff,FIXTURE_BUDGET:20000,fixture_started:100,fixture_known:[40,44,48],
+    GetModuleHandleW:n=>{assert.equal(n,'kernelbase.dll');return inject.missingAPI?null:'module'},GetProcAddress:(m,n)=>{assert.equal(n,'CompareObjectHandles');return compare},
+    wcschr:()=>!!inject.badPath,swprintf_s:()=>inject.badFormat?-1:1,
+    fixture_capture_refs(refs,cmp){trace.push('capture');if(!cmp||inject.captureFailure)return 0;for(let i=0;i<3;i++){refs[i]=100+i;live.add(refs[i])}return 1},
+    host_environment(){trace.push('environment');if(inject.environmentFailure)return null;live.add('environment');return 'environment'},free(value){assert.ok(live.delete(value));trace.push('free')},
+    CreateProcessW(binary,command,p,t,inherit,flags,environment,cwd,startup,pi){trace.push('create');assert.equal(binary,'owned.exe');assert.equal(inherit,1);assert.equal(flags,1028);assert.equal(environment,'environment');assert.equal(cwd,null);if(inject.createFailure)return false;pi.hThread='thread';pi.hProcess='child';live.add('thread');live.add('child');return true},
+    fixture_known_identity(child,known,refs,cmp,objects){trace.push('inspect');assert.equal(child,'child');assert.equal(resumed,0);assert.deepEqual(known,[40,44,48]);assert.deepEqual(refs,[100,101,102]);assert.equal(cmp,compare);objects.value=inject.objects??4;return !inject.inspectFailure},
+    GetTickCount64(){return inject.expired?20100:101+ticks++},ResumeThread(thread){assert.equal(thread,'thread');trace.push('resume');resumed++;return inject.resumeFailure?0xffffffff:1},
+    WaitForSingleObject(child,time){assert.equal(child,'child');trace.push(time===0xffffffff?'reap':'wait');waited++;if(time===0xffffffff)return inject.reapFailure?258:0;assert.ok(time>=0&&time<20000,'remaining original cumulative budget');return inject.timeout?258:0},
+    GetExitCodeProcess(child,out){assert.equal(child,'child');trace.push('exit');if(inject.exitFailure)return false;out.value=inject.raw??4;return true},
+    TerminateProcess(child,code){assert.equal(child,'child');assert.equal(code,251);trace.push('terminate');terminated++;return !inject.terminateFailure},
+    CloseHandle(h){assert.ok(live.delete(h),'owned process/thread closed once');trace.push('close:'+h);return !(inject.threadCloseFailure&&h==='thread'||inject.processCloseFailure&&h==='child')},
+    fixture_close_refs(refs){for(let i=0;i<3;i++)if(refs[i]!==null){assert.ok(live.delete(refs[i]));refs[i]=null}trace.push('close:refs');return !inject.refsCloseFailure},
+  }
+  const result=new Function(...Object.keys(api),'binary','role',body)(...Object.values(api),'owned.exe','--sibling')
+  assert.equal(live.size,0,'all successfully acquired modeled resources get one cleanup attempt')
+  if(trace.includes('inspect'))assert.ok(trace.indexOf('create')<trace.indexOf('inspect'))
+  if(trace.includes('resume'))assert.ok(trace.indexOf('inspect')<trace.indexOf('resume'))
+  return {result,trace,resumed,terminated,waited}
+}
+test('case36 actual C: suspended object inspection precedes one resume and preserves every raw completion mask',()=>{
+  for(const raw of [0,1,2,3,4,5,6,7,240,243,251,259]){const r=siblingChecker480({raw});assert.equal(r.resumed,1);assert.equal(r.terminated,0);assert.equal(r.result.raw,raw);assert.equal(!!r.result.valid,raw<=7);assert.equal(r.result.objects,raw<=7?4:256)}
+})
+for(const fault of ['badPath','badFormat','missingAPI','captureFailure','environmentFailure','createFailure','inspectFailure','expired','resumeFailure','timeout','exitFailure','threadCloseFailure','processCloseFailure','refsCloseFailure'])test(`case36 actual C: ${fault} cannot publish an identity proof`,()=>{
+  const r=siblingChecker480({[fault]:true});assert.equal(r.result.valid,0);assert.equal(r.result.objects,256)
+  if(['inspectFailure','expired','resumeFailure','timeout'].includes(fault))assert.equal(r.terminated,1)
+})
+for(const fault of ['terminateFailure','reapFailure'])test(`case36 actual C: ${fault} preserves refusal and all cleanup attempts`,()=>{
+  const r=siblingChecker480({inspectFailure:true,[fault]:true});assert.equal(r.result.valid,0);assert.equal(r.result.objects,256);assert.equal(r.terminated,1)
+})
+test('case36 actual C: kernel-object leak masks reach the consumer without being cleared',()=>{
+  for(const objects of [5,6,7,0])assert.deepEqual(siblingChecker480({objects,raw:4}).result,{raw:4,objects,valid:1})
+})
+test('case36 actual N-API producer publishes both identity values separately from raw exit masks',()=>{
+  const source=siblingSource480(),body=siblingFunction480(source,'static napi_value fixture_inspect(')
+  const bindings=[...body.matchAll(/napi_(get_boolean|create_uint32)\(env,(\w+),&value\);napi_set_named_property\(env,object,"([a-z_]+)",value\);/g)].map(m=>({kind:m[1],variable:m[2],field:m[3]}))
+  assert.equal(bindings.length,5);assert.equal(new Set(bindings.map(x=>x.field)).size,5)
+  const inputs={fixture_sidecar_ok:true,fixture_control:4,fixture_sibling:5,fixture_control_identity:4,fixture_sibling_identity:4}
+  const value=Object.fromEntries(bindings.map(({variable,field})=>{assert.ok(Object.hasOwn(inputs,variable));return[field,inputs[variable]]}))
+  assert.deepEqual(value,{sidecar_valid:true,control_mask:4,sibling_mask:5,control_identity_mask:4,sibling_identity_mask:4})
+  const create=siblingFunction480(source,'static BOOL WINAPI fixture_create(')
+  assert.ok(create.includes('fixture_control=control.raw;fixture_sibling=sibling.raw;'))
+  assert.ok(create.includes('fixture_control_identity=control.valid?control.objects:256;'))
+  assert.ok(create.includes('fixture_sibling_identity=sibling.valid?sibling.objects:256;'))
+  assert.ok(create.includes('return CreateProcessW(app,command,process,thread,inherit,flags,environment,cwd,startup,pi);'))
+})

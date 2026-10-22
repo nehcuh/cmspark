@@ -143,6 +143,46 @@ test("a real file replaced between lstat and open is refused before any replacem
   unavailable(read)
 })
 
+for (const field of ["dev", "ino"] as const) {
+  for (const replaced of [false, true]) {
+    test(`strict native history compares exact 64-bit ${field} with replacement=${replaced}`, t => {
+      const { file, read } = owned(t)
+      const lstat = fs.lstatSync, fstat = fs.fstatSync, open = fs.openSync, readFile = fs.readFileSync
+      const beforeId = 9007199254740992n, openedId = replaced ? beforeId + 1n : beforeId
+      assert.equal(Number(beforeId), Number(openedId), "the Number domain cannot distinguish these IDs")
+      let fd: number | undefined, transcriptReads = 0
+      t.mock.method(fs, "openSync", (...args: any[]) => {
+        const opened = Reflect.apply(open, fs, args)
+        if (args[0] === file) fd = opened
+        return opened
+      })
+      t.mock.method(fs, "lstatSync", (...args: any[]) => {
+        const stat = Reflect.apply(lstat, fs, args)
+        if (args[0] === file) {
+          const bigint = args[1]?.bigint === true
+          Object.defineProperty(stat, field, { value: bigint ? beforeId : Number(beforeId) })
+        }
+        return stat
+      })
+      t.mock.method(fs, "fstatSync", (...args: any[]) => {
+        const stat = Reflect.apply(fstat, fs, args)
+        if (args[0] === fd) {
+          const bigint = args[1]?.bigint === true
+          Object.defineProperty(stat, field, { value: bigint ? openedId : Number(openedId) })
+        }
+        return stat
+      })
+      t.mock.method(fs, "readFileSync", (...args: any[]) => {
+        if (args[0] === fd) transcriptReads++
+        return Reflect.apply(readFile, fs, args)
+      })
+      if (replaced) unavailable(read)
+      else assert.equal(read().messages.length, 0)
+      assert.equal(transcriptReads, replaced ? 0 : 1)
+    })
+  }
+}
+
 test("a syntactically ISO-shaped but impossible timestamp is not projected", t => {
   const { manager, file, read } = owned(t)
   manager.addMessage("history-A", { thread_id: "history-A", role: "user", content: "正文", id: "owned-user" })

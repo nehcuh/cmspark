@@ -1,5 +1,7 @@
 # Windows 开发与失败定位
 
+Windows 继承验收须区分句柄数值槽位与内核对象身份：`GetHandleInformation` 成功只能证明当前槽位有效，不能证明它是父进程的原 protected pipe/process。#480 sibling 夹具在恢复 suspended checker 前，由父进程以不可继承、零访问权副本及 `CompareObjectHandles` 核三份原对象，raw exit mask 与 identity mask 分开保存；真实泄漏、缺少／UNKNOWN 身份、checker 或 cleanup 失败仍拒绝。源码受控反例不认定历史失败槽位的实际对象，历史原因保持 UNKNOWN；原生门禁、权限、原累计时限均不删改，也不重置旧诊断上限。官方接口依据：[GetHandleInformation](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-gethandleinformation)、[CompareObjectHandles](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-compareobjecthandles)。
+
 跨 Node／Framework 的同一文件须核双向 access/share 兼容。Node lease 的 `wx+` 即使共享 Read/Write/Delete，Framework 默认 `File.ReadAllText` 仍只共享 Read，会拒绝现存写句柄；读取者的 share 必须允许已有 access，不能提前关 owner 或放宽权限掩盖。#723 Job CPU fixture 的修复保持 Read access、显式 ReadWrite|Delete share 和后续原 nonce/claim 校验；真实 Windows 还验证旧读的精确 sharing violation。惰性共享模型／原厂源码链不等于已观测某次 CPU 内部异常，也不等于 native 窗口身份成功。原厂依据：[Framework StreamReader](https://github.com/microsoft/referencesource/blob/ec9fa9ae770d522a5b5f0607898044b7478574a3/mscorlib/system/io/streamreader.cs)、[CreateFile 的双向共享规则](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)。
 
 适用于 coding agent 和贡献者。先按当前 Issue 的原始 DoD、精确 head/main 和实际失败阶段定位；历史 Windows 红灯不是同一个系统根因。本文是已有调试、隔离与验收纪律的短入口，不新增模型、全仓重测或平台前置门。测试地图见 [TESTING](TESTING.md)，开发约定见 [CONTRIBUTING](../CONTRIBUTING.md)。
@@ -21,6 +23,7 @@
 - **夹具与操作器**：在 import 应用前设独立 test-owned DATA_DIR，沿用 [preload](../companion/scripts/test-data-dir.cjs)；不改 HOME、不接触 live config，不继承 provider/key/proxy 全环境。保留原 runner 必需的 Windows 允许变量。先核 driver 语法、入口、cwd、目录 UID/ACL、依赖、输出可写性、guard 和真实包路径，再启动；setup 错误保留但不计产品 RED。不靠逐次失败无限加 allowlist。
 - **字节与语言语义**：真实 TS 字符串先解码/编译再分析反斜杠，不能数工具展示的转义。中文文件内容与 stdout 编码分开；UTF-8 分块、非 UTF-8 与 stderr 均据真实字节/声明判断，不猜 GBK或更改系统代码页。PS 比较规则、C++ 字符串/SDK 参数所有权必须按真实语言；保留实际 MSVC warning/UTF-8 选项，不压警告换绿。
 - **原生身份与生命周期**：请求 Activate/Invoke、收到 ACK 或文件存在，不等于实际前台/效果/完整 ready。固定 owned PID/TID/HWND/对象身份与同次请求；数字 HANDLE、MainWindowHandle、标题或字节相同不独立证明所有权。ready JSON 完整发布后才可见；成功终态、exit、stdio close、cancel 与 cleanup 分开。槽和共享桌面 lease 保留到真实 close/teardown，不能用 UI closed 或 timeout 提前释放仍存活的 worker。
+- **64 位文件身份**：`lstat` 与打开后的 `fstat` 比较 device/inode 时，两端都使用 `{ bigint: true }`。不同的 64 位值转换成 JavaScript Number 后可能相等，不能据此放行替换文件。正控须允许相同的大整数身份，负控须在读取 transcript 前拒绝不同身份；保留真实文件替换回归。CPU 精度反例不独立证明某次远端失败的实际文件 ID。
 
 以上只按本次影响选择必要证据；不是要求每个文档或普通改动执行全部原生/全仓测试。
 

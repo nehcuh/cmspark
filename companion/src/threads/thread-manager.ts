@@ -1390,10 +1390,10 @@ export class ThreadManager {
       // Do not call get(): that compatibility getter can seed runtime metadata.
       const thread = this.index.threads.find(t => t.id === threadId)
       if (!thread || thread.trashed_at || typeof thread.alias !== "string") throw Error()
-      const file = this.threadFilePath(threadId), before = fs.lstatSync(file)
+      const file = this.threadFilePath(threadId), before = fs.lstatSync(file, { bigint: true })
       if (!before.isFile() || before.isSymbolicLink()) throw Error()
       fd = fs.openSync(file, "r")
-      const opened = fs.fstatSync(fd)
+      const opened = fs.fstatSync(fd, { bigint: true })
       if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) throw Error()
       const data: unknown = JSON.parse(fs.readFileSync(fd, "utf8"))
       if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray((data as any).messages)) throw Error()
