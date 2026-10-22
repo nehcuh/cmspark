@@ -13,7 +13,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-NODE_VERSION="v22.23.2"
+NODE_VERSION="v22.23.4"
 NODE_MIRROR="${NODE_MIRROR:-https://nodejs.org/dist}"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 

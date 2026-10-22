@@ -77,9 +77,15 @@ Write-Host ""
 # ---------------------------------------------------------------------------
 Step 1 6 "Installing dependencies..."
 
-# #611: Kit's filesystem ESM + native Worker runtime requires Node >=22.19.
-node -e "const [major,minor]=process.versions.node.split('.').map(Number);if(major<22||(major===22&&minor<19)||process.arch!=='x64'){console.error('This Windows x64 package requires x64 Node >=22.19.0');process.exit(1)}"
-if ($LASTEXITCODE -ne 0) { Fail "Node.js >=22.19.0 required for the Office runtime" }
+# Resolve one actual application before validation: a bare node command may be a shim.
+$NodeCommand = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue
+if (-not $NodeCommand -or -not $NodeCommand.Source -or $NodeCommand.Source -notlike "*.exe") {
+    Fail "Could not resolve a real node.exe on PATH (found only shim wrappers)"
+}
+$NodeExe = $NodeCommand.Source
+# Validate and reuse this exact path for every direct Node invocation and SEA copy.
+& $NodeExe -e "if(process.versions.node!=='22.23.4'||process.arch!=='x64'){console.error('This Windows x64 package requires x64 Node 22.23.4');process.exit(1)}"
+if ($LASTEXITCODE -ne 0) { Fail "Node.js 22.23.4 required for Windows SEA packaging" }
 
 if (-not $SkipInstall) {
     Push-Location $CompanionDir
@@ -102,7 +108,7 @@ if (-not $SkipInstall) {
 }
 
 # #725: also enforce the pinned source correction with --SkipInstall / ignored lifecycle scripts.
-node "$ProjectRoot\scripts\patch-node-pty-worker.cjs" --windows-package
+& $NodeExe "$ProjectRoot\scripts\patch-node-pty-worker.cjs" --windows-package
 if ($LASTEXITCODE -ne 0) { Fail "Pinned PTY worker correction refused" }
 
 # ---------------------------------------------------------------------------
@@ -117,11 +123,11 @@ try {
     if ($LASTEXITCODE -ne 0) { Fail "TypeScript compilation failed" }
     Ok "TypeScript compiled to dist/"
 
-    node scripts/build-desktop-native.mjs
+    & $NodeExe scripts/build-desktop-native.mjs
     if ($LASTEXITCODE -ne 0) { Fail "Native desktop build failed" }
 
     # SoT: companion/scripts/esbuild-bundle-args.json (shared with package.sh / package.json)
-    node scripts/run-esbuild-bundle.mjs
+    & $NodeExe scripts/run-esbuild-bundle.mjs
     if ($LASTEXITCODE -ne 0) { Fail "esbuild bundle failed" }
     Ok "Bundle: dist/cmspark-agent.js"
 } finally { Pop-Location }
@@ -156,20 +162,12 @@ Push-Location $CompanionDir
 try {
     # Generate SEA blob
     Write-Host "  Generating SEA blob..." -ForegroundColor DarkGray
-    node --experimental-sea-config sea-config.json
+    & $NodeExe --experimental-sea-config sea-config.json
     if ($LASTEXITCODE -ne 0) { Fail "SEA blob generation failed" }
     if (-not (Test-Path "sea-prep.blob")) { Fail "sea-prep.blob not found after generation" }
     Ok "sea-prep.blob generated"
 
-    # Copy node.exe as the base for our exe.
-    # Resolve node.exe specifically — `Get-Command node` may return a node.cmd
-    # shim (e.g. managed runtime wrappers), which postject cannot inject into.
-    $NodeExe = $null
-    foreach ($candidate in @("node.exe", "node")) {
-        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($cmd -and $cmd.Source -like "*.exe") { $NodeExe = $cmd.Source; break }
-    }
-    if (-not $NodeExe) { Fail "Could not resolve a real node.exe on PATH (found only shim wrappers)" }
+    # Copy the same executable that passed the version/architecture guard.
     $AppExe  = Join-Path $CompanionDir "dist\cmspark-agent.exe"
     Copy-Item $NodeExe $AppExe -Force
     Ok "Copied: $NodeExe -> dist\cmspark-agent.exe"
@@ -328,7 +326,7 @@ New-Item -ItemType Directory -Force $StagingDir | Out-Null
 
 # Core exe
 Copy-Item "$CompanionDir\dist\cmspark-agent.exe" $StagingDir
-node "$CompanionDir\scripts\desktop-artifacts.mjs" stage "$CompanionDir\dist\desktop-native" $StagingDir win32
+& $NodeExe "$CompanionDir\scripts\desktop-artifacts.mjs" stage "$CompanionDir\dist\desktop-native" $StagingDir win32
 if ($LASTEXITCODE -ne 0) { Fail "Native desktop staging failed" }
 Ok "cmspark-agent.exe"
 
@@ -392,7 +390,7 @@ if ($WinPs1Count -lt 1) {
     Fail "host-scripts-win/*.ps1 empty after staging — refusing to ship"
 }
 Ok "host-scripts-win/ ($WinPs1Count Windows host-use scripts)"
-node "$CompanionDir\scripts\build-computer-uia-no-focus.mjs" --stage "$StagingDir\host-scripts-win"
+& $NodeExe "$CompanionDir\scripts\build-computer-uia-no-focus.mjs" --stage "$StagingDir\host-scripts-win"
 if ($LASTEXITCODE -ne 0) { Fail "Fixed no-autofocus UIA DLL staging failed" }
 
 # systray2 + its full transitive dependency tree.
@@ -409,7 +407,7 @@ $Systray2Packages = @(
     "universalify"  # fs-extra dep
 )
 New-Item -ItemType Directory -Force "$StagingDir\node_modules" | Out-Null
-node "$ProjectRoot\scripts\stage-office-runtime.mjs" --source "$CompanionDir" --destination "$StagingDir" --platform "windows-x64"
+& $NodeExe "$ProjectRoot\scripts\stage-office-runtime.mjs" --source "$CompanionDir" --destination "$StagingDir" --platform "windows-x64"
 if ($LASTEXITCODE -ne 0) { Fail "Office runtime staging failed" }
 $anySystray2Ok = $false
 foreach ($pkg in $Systray2Packages) {
@@ -497,7 +495,7 @@ if (-not $WhisperSrc -and $env:CMSPARK_WHISPER_AUTO_FETCH -ne "0") {
     Write-Host "  Fetching cmspark-whisper-win-x64 (manifest-pinned)..." -ForegroundColor DarkGray
     Push-Location $CompanionDir
     try {
-        node scripts/fetch-whisper-binary.mjs --arch win-x64 --dest (Join-Path $CompanionDir "dist\bin")
+        & $NodeExe scripts/fetch-whisper-binary.mjs --arch win-x64 --dest (Join-Path $CompanionDir "dist\bin")
         if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $CompanionDir "dist\bin\cmspark-whisper-win-x64.exe"))) {
             $WhisperSrc = Join-Path $CompanionDir "dist\bin\cmspark-whisper-win-x64.exe"
             Ok "auto-fetched cmspark-whisper-win-x64.exe"

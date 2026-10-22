@@ -122,3 +122,9 @@ or the historical failure cause. If this one run is still insufficient, stop UNK
 2026-10-22 的一次获准双 fresh-runner 对照，使用相同闭集 childEnv 与普通 owned 目录：裸 `Get-Item` 停在解析阶段并触及15秒截止；`Microsoft.PowerShell.Management\Get-Item` 在约299毫秒完成解析及内置命令身份核验，读取及目录断言也通过（同进程观测约27毫秒）。run39693953668 的两个模式各只执行一次；这是本次命令发现路径的证据，不证明此前所有Windows超时都由它引起，也不保证全局缓存冷态。
 
 registrar 的六处 `Get-Item` 明确绑定该内置模块，避免为这项固定文件系统检查走裸命令发现。保留每次实际读取、LiteralPath、目录/普通文件及reparse检查、两Registry view所有权和注销前重读；不缓存或删减检查。其余命令未因猜测改写。源码消费者同时核全文件仅六处绑定差异、原业务与registry反例；真正修复仍须精确head原生验收，编译120秒、运行与清理45秒不扩大，单次修复验收若失败即停。
+
+## Node runtime security baseline (2026-10-22)
+
+CI, Windows SEA packaging and native builds use exact Node 22.23.4, including matching official headers and x64 import library. SEA resolves one `node.exe` application path before checking its version and architecture, then reuses that path for all direct Node calls and the executable copy; a bare `node` shim cannot supply a different validated runtime. Development supports `>=22.23.4 <23`; Node 24/26 are not yet qualified. This incorporates the [2026-10-21 security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). Older version links above document historical observations, not the current runtime requirement. Do not infer that this update fixes an existing native timeout or identity failure.
+
+安全基线跟踪：[Issue #759](https://github.com/nehcuh/cmspark/issues/759)。

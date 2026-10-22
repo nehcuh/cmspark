@@ -22,10 +22,10 @@ function replacement(file) {
 function write(file,content){replacement(file);fs.writeFileSync(file,content,{flag:"wx"})}
 directory(dest);directory(generated)
 if (!["darwin", "win32"].includes(process.platform)) throw new Error("Native platform build command not implemented for this OS")
-if (process.version !== "v22.23.2") throw new Error("Pinned Node22.23.2 build runtime required")
+if (process.version !== "v22.23.4") throw new Error("Pinned Node22.23.4 build runtime required")
 const { prepareDesktopNodeHeaders, desktopAcceptanceVariant } = await import("./build-desktop-windows.mjs")
 const headers = process.platform === "darwin" ? await prepareDesktopNodeHeaders({dest}) : undefined
-// Erasable TypeScript is supported by pinned Node22.23.2. This is the sole editable method table.
+// Erasable TypeScript is supported by pinned Node22.23.4. This is the sole editable method table.
 const { DESKTOP_READ_METHODS, DESKTOP_RENDERER_METHODS, DESKTOP_NATIVE_METHODS, DESKTOP_METHOD_SET_VERSION } = await import(pathToFileURL(path.join(root, "src/desktop/capabilities.ts")))
 if (!DESKTOP_READ_METHODS.every(v => typeof v === "string" && (/^[a-z]+\.[a-z]+$/.test(v) || v === "desktop.archive.list" || v === "desktop.archive.state" || v === "desktop.browser.status" || v === "desktop.browser.tasks"))) throw new Error("Invalid native method table")
 if (DESKTOP_METHOD_SET_VERSION !== 8 || JSON.stringify(DESKTOP_NATIVE_METHODS) !== JSON.stringify([...DESKTOP_RENDERER_METHODS,"desktop.confirmation.decision","desktop.browser.retire"]) || JSON.stringify(DESKTOP_RENDERER_METHODS) !== JSON.stringify([...DESKTOP_READ_METHODS,"desktop.mcp.edit","desktop.mcp.save","desktop.thread.metadata.edit","desktop.thread.metadata.save","desktop.thread.create","desktop.thread.open","desktop.chat.send","desktop.chat.stop","desktop.resource.read","desktop.resource.import","desktop.resource.update","desktop.resource.remove","desktop.archive.set","desktop.browser.visibility"])) throw new Error("Invalid controller method table")

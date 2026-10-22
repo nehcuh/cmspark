@@ -51,6 +51,6 @@ test('CI compiles before UIA, and both actual packaging producers explicitly sta
  for(const value of [lf,lf.replace(/\n/g,'\r\n')])assertBuildOrder(value)
  for(const value of [lf.replace(normal,''),lf.replace(guard,''),lf.replace(probe,''),lf.replace(normal,'BUILD_SWAP').replace(probe,normal).replace('BUILD_SWAP',probe),lf.replace(guard,'if ($LASTEXITCODE -eq 0) { exit $LASTEXITCODE }'),lf.replace('Actual native desktop build and isolated connection','MISSING_NATIVE_STEP')])assert.throws(()=>assertBuildOrder(value))
  const sh=fs.readFileSync(new URL('../scripts/package.sh',root),'utf8');assert.ok(sh.includes('node "${ROOT_DIR}/companion/scripts/build-computer-uia-no-focus.mjs" --stage "${STAGING}/host-scripts-win"'))
- const ps=fs.readFileSync(new URL('../scripts/build-windows-exe.ps1',root),'utf8');assert.ok(ps.includes('node "$CompanionDir\\scripts\\build-computer-uia-no-focus.mjs" --stage "$StagingDir\\host-scripts-win"'));assert.ok(ps.includes('if ($LASTEXITCODE -ne 0) { Fail "Fixed no-autofocus UIA DLL staging failed" }'))
+ const ps=fs.readFileSync(new URL('../scripts/build-windows-exe.ps1',root),'utf8');assert.ok(ps.includes('& $NodeExe "$CompanionDir\\scripts\\build-computer-uia-no-focus.mjs" --stage "$StagingDir\\host-scripts-win"'));assert.ok(ps.includes('if ($LASTEXITCODE -ne 0) { Fail "Fixed no-autofocus UIA DLL staging failed" }'))
 })
 test('CPU resolver/pipeline controls execute zero OS commands',()=>assert.equal(effects,0))

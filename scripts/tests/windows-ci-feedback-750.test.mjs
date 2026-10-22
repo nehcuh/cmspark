@@ -26,6 +26,8 @@ const office = 'Office compatibility and relocated runtime (#611)'
 const native = 'Actual native desktop build and isolated connection (#480)'
 const front = 'Install native-lane frontend dependencies (#750)'
 const mutations = [
+  ['#759 security contract omitted', d => { find(d, 'Pinned NSIS dependency transport and integrity (#633)').run = find(d, 'Pinned NSIS dependency transport and integrity (#633)').run.replace(' scripts/tests/node-security-runtime-759.test.mjs', '') }],
+  ...['build', 'smoke-os', 'acp-history-restart'].map(job => ['#759 vulnerable or floating Node in ' + job, d => { d.jobs[job].steps.find(s => s.uses?.startsWith('actions/setup-node@')).with['node-version'] = '22.23.2' }]),
   ['missing original census', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== census) }],
   ['duplicate directed native', d => { d.jobs['smoke-os'].steps.push(structuredClone(find(d, native))) }],
   ['wrong census lane', d => { find(d, census).if = find(d, census).if.replace("'census'", "'native'") }],

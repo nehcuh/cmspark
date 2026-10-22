@@ -161,7 +161,7 @@ cd companion && npx tsc -p tsconfig.test.json \
 npm --prefix chrome-extension test
 ```
 
-要求 **Node.js ≥ 22.19.0**（Office 引擎最低要求；与 CONTRIBUTING 一致，发行 runtime 为 22.23.2）。
+要求 **Node.js ≥ 22.23.4 且 < 23**（当前受支持的安全运行时范围；与 CONTRIBUTING 一致，发行 runtime 为 22.23.4）。
 
 ## Companion 测试地图
 

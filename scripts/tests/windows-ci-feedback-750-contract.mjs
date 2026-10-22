@@ -126,7 +126,14 @@ export function validateWindowsCiFeedback750(text) {
   const doc = yaml.load(text)
   assert.equal(digest(omit(doc, ['jobs'])), baseline.workflowWithoutJobs)
   assert.deepEqual(Object.keys(doc.jobs).sort(), ['acp-history-restart', 'build', 'smoke-os'])
-  assert.equal(digest(doc.jobs['acp-history-restart']), baseline.history)
+  // #759 accepts only the exact reviewed security-pin delta; the historical
+  // digest still guards every other history job field and command.
+  const history = structuredClone(doc.jobs['acp-history-restart'])
+  const historySetup = history.steps.filter(step => step.uses?.startsWith('actions/setup-node@'))
+  assert.equal(historySetup.length, 1)
+  assert.equal(historySetup[0].with['node-version'], '22.23.4')
+  historySetup[0].with['node-version'] = '22'
+  assert.equal(digest(history), baseline.history)
   const job = doc.jobs['smoke-os'], steps = job.steps
   assert.equal(digest(omit(job, ['name', 'runs-on', 'strategy', 'steps'])), baseline.smokeOther)
   assert.equal(job.name, '${{ matrix.name }}'); assert.equal(job['runs-on'], '${{ matrix.os }}')
@@ -142,7 +149,7 @@ export function validateWindowsCiFeedback750(text) {
   assert.equal(keys.indexOf(FRONT), keys.indexOf(INSTALL) - 1)
   const front = steps.find(step => key(step) === FRONT)
   assert.deepEqual(front, { name: FRONT, if: "matrix.os == 'windows-latest' && matrix.lane == 'native'", env: { ONNXRUNTIME_NODE_INSTALL: 'skip' }, run: 'cd chrome-extension\nnpm ci\n' })
-  cache750(steps.find(step => step.name === 'Setup Node.js'), '22.23.2')
+  cache750(steps.find(step => step.name === 'Setup Node.js'), '22.23.4')
   const states = [
     { success: true, cancelled: false, compile: 'success', registry: 'true', public: 'owned-public' },
     { success: false, cancelled: false, compile: 'success', registry: 'true', public: 'owned-public' },
@@ -154,9 +161,9 @@ export function validateWindowsCiFeedback750(text) {
   for (const old of baseline.steps) {
     const step = steps.find(s => key(s) === old.key)
     let conserved = omit(step, ['if'])
-    if (old.key === 'Setup Node.js') conserved = { ...conserved, with: omit(conserved.with, ['cache-dependency-path']) }
+    if (old.key === 'Setup Node.js') conserved = { ...conserved, with: { ...omit(conserved.with, ['cache-dependency-path']), 'node-version': '22.23.2' } }
     if (old.key === NSIS) {
-      assert.equal(step.run, 'node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs')
+      assert.equal(step.run, 'node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/node-security-runtime-759.test.mjs')
       conserved = { ...conserved, run: 'node --test scripts/tests/nsis-ci-setup.test.mjs' }
     }
     assert.equal(digest(conserved), old.objectWithoutIf, 'original command/body/env/failure/artifact changed: ' + old.key)
@@ -170,10 +177,10 @@ export function validateWindowsCiFeedback750(text) {
   const build = doc.jobs.build
   assert.equal(digest(omit(build, ['steps'])), baseline.buildOther)
   assert.deepEqual(build.steps.map(key), baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js').map(s => s.key))
-  cache750(build.steps.find(s => s.name === 'Setup Node.js'), '22')
+  cache750(build.steps.find(s => s.name === 'Setup Node.js'), '22.23.4')
   for (const old of baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js')) {
     let step = build.steps.find(s => key(s) === old.key)
-    if (old.key === 'Setup Node.js') step = { ...step, with: omit(step.with, ['cache-dependency-path']) }
+    if (old.key === 'Setup Node.js') step = { ...step, with: { ...omit(step.with, ['cache-dependency-path']), 'node-version': '22' } }
     assert.equal(digest(step), old.object, 'unrelated build command/permission changed: ' + old.key)
   }
   return doc

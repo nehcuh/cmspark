@@ -17,7 +17,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           # REL-5 / P2: align with release.yml + package.sh (Node 22)
-          node-version: '22'
+          node-version: '22.23.4'
           cache: 'npm'
           cache-dependency-path: |
             companion/package-lock.json
@@ -180,7 +180,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.23.2'
+          node-version: '22.23.4'
           cache: 'npm'
           cache-dependency-path: |
             companion/package-lock.json
@@ -204,7 +204,7 @@ jobs:
           npm run build
 
       - name: Pinned NSIS dependency transport and integrity (#633)
-        run: node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs
+        run: node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/node-security-runtime-759.test.mjs
 
       - name: Stage native-lane Windows scripts (#750)
         if: matrix.os == 'windows-latest' && matrix.lane == 'native'
@@ -729,7 +729,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.4'
           cache: npm
           cache-dependency-path: companion/package-lock.json
       - name: Install locked Companion runtime dependencies
