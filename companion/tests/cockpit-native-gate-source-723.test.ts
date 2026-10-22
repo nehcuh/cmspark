@@ -65,7 +65,7 @@ async function recordedControl(code: number, stderr = '', spawnError?: unknown) 
     const options = args[2] as { stdio: [string, number, number] }
     fs.writeSync(options.stdio[1], 'PRIVATE_BODY_NOT_PUBLIC\n')
     fs.writeSync(options.stdio[2], stderr)
-    queueMicrotask(() => { if (spawnError !== undefined) child.emit('error', spawnError); else { child.emit('exit', code, null); child.emit('close', code, null) } })
+    queueMicrotask(() => { if (spawnError !== undefined) child.emit('error', spawnError); child.emit('exit', code, null); child.emit('close', code, null) })
     return child
   })
   let error: unknown
@@ -95,17 +95,23 @@ test('successful child plus later controller assertion stays distinct from child
     assert.equal(value.step, 'registration-framing')
   } finally { fs.rmSync(s.raw, { recursive: true }) }
 })
-test('spawn error is preserved without reading it and later close cannot rewrite first evidence', async () => {
-  let traps = 0
+test('spawn error waits actual close without inspecting the opaque reason or rewriting evidence', async () => {
+  let traps = 0, settled = false, error: unknown
   const opaque = new Proxy({}, { get() { traps++; throw Error('PRIVATE_GETTER') }, getPrototypeOf() { traps++; throw Error('PRIVATE_PROTOTYPE') } })
-  const s = await recordedControl(0, '', opaque)
+  const raw = fs.mkdtempSync(path.join(process.env.CMSPARK_TEST_RUN_DIR!, 'first-spawn-')), child = new EventEmitter(), api = evidenceAPI(raw, () => child)
+  const operation = api.runRecorded('/fixed/node', [], '/owned', Object.freeze({}), 'registration-framing').then(() => { settled = true }, value => { error = value; settled = true })
   try {
-    assert.equal(s.error, opaque); assert.equal(traps, 0)
-    const value = s.api.failure()!, before = JSON.stringify(value)
-    assert.equal(value.spawnError, true); assert.equal(value.closeObserved, false); assert.equal(value.exitCode, null)
-    s.child.emit('close', 0, null); assert.equal(JSON.stringify(s.api.failure()), before); assert.equal(traps, 0)
-  } finally { fs.rmSync(s.raw, { recursive: true }) }
+    child.emit('error', opaque); for (let i = 0; i < 8; i++) await Promise.resolve()
+    const beforeClose = { settled, evidenceAbsent: api.failure() === undefined }
+    child.emit('close', 0, null); await operation
+    assert.deepEqual(beforeClose, { settled: false, evidenceAbsent: true })
+    assert.equal(error, opaque); assert.equal(traps, 0)
+    const value = api.failure()!, before = JSON.stringify(value)
+    assert.equal(value.spawnError, true); assert.equal(value.closeObserved, true); assert.equal(value.exitCode, 0)
+    child.emit('close', 7, null); assert.equal(JSON.stringify(api.failure()), before); assert.equal(traps, 0)
+  } finally { fs.rmSync(raw, { recursive: true }) }
 })
+
 test('registration evidence requires exactly the actual closed seven-key canonical record', () => {
   const api = evidenceAPI('/unused', () => { throw Error('NO_CHILD') })
   const fixture = fs.readFileSync(path.resolve(__dirname, '../../../scripts/tests/cockpit-bridge-registration.ps1'), 'utf8').replaceAll('\r\n', '\n')
@@ -188,7 +194,7 @@ test('whole actual gate refuses the empty source pin before filesystem, process,
   let effects = 0
   const deny = new Proxy({}, { get() { effects++; throw Error('FORBIDDEN_EFFECT') } })
   const modules: Record<string, unknown> = { 'node:assert/strict': assert, 'node:fs': deny, 'node:path': path, 'node:child_process': deny,
-    './cockpit-bridge-first-evidence.cjs': firstEvidence, './cockpit-bridge-browser-supply.cjs': actualSupply, './cockpit-bridge-browser-admission.cjs': { version: 1, builds: [] } }
+    './cockpit-bridge-prepared-build.cjs': deny, './cockpit-bridge-first-evidence.cjs': firstEvidence, './cockpit-bridge-browser-supply.cjs': actualSupply, './cockpit-bridge-browser-admission.cjs': { version: 1, builds: [] } }
   assert.throws(() => new vm.Script(text, { filename: file }).runInNewContext({ require: (id: string) => { assert.ok(id in modules); return modules[id] }, process: { platform: 'win32', arch: 'x64', env: { GITHUB_ACTIONS: 'true', RUNNER_OS: 'Windows' } } }), /SUPPLY_NOT_READY/)
   assert.equal(effects, 0)
 })
@@ -227,34 +233,66 @@ test('actual independent transfer deadline destroys the sole request without ret
   assert.match(String((await httpControl(200, '20', undefined, true)).error), /TRANSFER_DEADLINE/)
 })
 
-test('whole actual gate consumes the actual fixed source pin and preserves preparation/registration/controller order', async () => {
+async function wholeGateControl(fault: 'none' | 'host' | 'job' | 'attributes' = 'none') {
   const actualSupply = require(supplierFile), admission = require(path.resolve(__dirname, '../../../scripts/tests/cockpit-bridge-browser-admission.cjs'))
   const actualEnv = require(path.resolve(__dirname, '../../../scripts/tests/cockpit-bridge-child-env.cjs'))
   const pin = actualSupply.selectPin(admission), calls: { file: string; args: string[]; options: { env: Record<string, string>; cwd: string } }[] = [], stages: string[] = []
+  let preparations = 0
   const win = path.win32, repo = 'C:\\candidate', root = 'C:\\owned\\cmspark-test-run-controlled', output: string[] = []
   const modules: Record<string, unknown> = { 'node:assert/strict': assert, 'node:path': win,
     'node:fs': { lstatSync: () => ({ isSymbolicLink: () => false, isDirectory: () => true, isFile: () => true }), realpathSync: { native: (p: string) => win.resolve(p) },
       mkdirSync() {}, writeFileSync() {}, openSync: () => 1, closeSync() {}, readdirSync: () => [{ name: 'cockpit-bridge-controlled', isDirectory: () => true }], existsSync: () => true },
-    'node:child_process': { spawn(file: string, args: string[], options: { env: Record<string, string>; cwd: string }) { calls.push({ file, args, options }); const child = new EventEmitter(); queueMicrotask(() => child.emit('close', 0, null)); return child } },
+    'node:child_process': { spawn(file: string, args: string[], options: { env: Record<string, string>; cwd: string }) { calls.push({ file, args, options }); const child = new EventEmitter(); queueMicrotask(() => child.emit('close', fault === 'host' && args.some(v => v.endsWith('build-cockpit-native-bridge.ps1')) || fault === 'job' && args.some(v => v.endsWith('build-cockpit-bridge-job.ps1')) || fault === 'attributes' && args.some(v => v.endsWith('cockpit-bridge-prepared-paths.ps1')) ? 7 : 0, null)); return child } },
     './cockpit-bridge-first-evidence.cjs': firstEvidence, './cockpit-bridge-browser-supply.cjs': { selectPin: actualSupply.selectPin,
       async download(selected: unknown) { assert.deepEqual(selected, pin); stages.push('fixed-download') },
       async extract() { stages.push('verified-extract'); return 'C:\\owned\\chrome.exe' } },
     './cockpit-bridge-browser-admission.cjs': admission, './cockpit-bridge-child-env.cjs': actualEnv,
+    './cockpit-bridge-prepared-build.cjs': { async prepare(options: { root: string; sourceRepo: string; runBuild: (kind: string, output: string) => Promise<unknown>; verifyFiles: (phase: string) => Promise<void> }) {
+      preparations++
+      assert.equal(options.root, root); assert.equal(options.sourceRepo, repo)
+      const builds = await Promise.allSettled([
+        options.runBuild('host', win.join(root, 'prepared-build/host')),
+        options.runBuild('job', win.join(root, 'prepared-build/job')),
+      ])
+      for (const build of builds) if (build.status === 'rejected') throw build.reason
+      assert.deepEqual(JSON.parse(JSON.stringify(builds)), [
+        { status: 'fulfilled', value: { closed: true, code: 0, signal: null } },
+        { status: 'fulfilled', value: { closed: true, code: 0, signal: null } },
+      ])
+      await options.verifyFiles('prepare')
+      return { nonce: 'c'.repeat(32) }
+    } },
   }
   const sandbox = { require: (id: string) => { assert.ok(id in modules); return modules[id] }, __dirname: win.join(repo, 'scripts/tests'), process: { platform: 'win32', arch: 'x64', execPath: 'C:\\node\\node.exe', env: { GITHUB_ACTIONS: 'true', RUNNER_OS: 'Windows', SystemRoot: 'C:\\Windows', CMSPARK_TEST_RUN_DIR: root, CMSPARK_DATA_DIR: win.join(root, 'data'), TEMP: win.join(root, 'temp') }, stdout: { write: (s: string) => output.push(s) }, stderr: { write: (s: string) => output.push(s) }, exitCode: 0 } }
   await new vm.Script(text, { filename: file }).runInNewContext(sandbox)
+  if (fault !== 'none') {
+    assert.equal(sandbox.process.exitCode, 1); assert.equal(preparations, 1)
+    assert.equal(calls.some(call => call.args.some(v => v.endsWith('cockpit-bridge-real-first.cjs'))), false)
+    assert.equal(calls.length, fault === 'attributes' ? 8 : 7)
+    assert.equal(output.some(value => value === 'COCKPIT_BRIDGE_FIRST_IDENTITY_COMPLETE\n'), false)
+    assert.ok(output.some(value => value.includes('COCKPIT_BRIDGE_FIRST_IDENTITY_INCOMPLETE build-preparation')))
+    return
+  }
   assert.equal(sandbox.process.exitCode, 0); assert.deepEqual(stages, ['fixed-download', 'verified-extract'])
-  assert.equal(calls.length, 6)
+  assert.equal(preparations, 1)
+  assert.equal(calls.length, 9)
   assert.deepEqual(Array.from(calls[0].args.slice(1)), ['ci', '--registry=https://registry.npmjs.org/', '--no-audit', '--no-fund'])
   assert.deepEqual(Array.from(calls[1].args.slice(1)), ['run', 'build']); assert.deepEqual(Array.from(calls[2].args.slice(1)), ['-p', 'tsconfig.test.json'])
   assert.ok(calls[3].args[3].endsWith('cockpit-bridge-registration.ps1'))
   assert.ok(calls[4].args[2].endsWith('cockpit-bridge-document-receipt.cjs'))
-  assert.ok(calls[5].args[2].endsWith('cockpit-bridge-real-first.cjs')); assert.equal(calls[5].args.length, 7)
-  assert.equal(calls[5].args[4], pin.executableSHA256); assert.ok(calls[5].args[6].endsWith('companion\\.test-dist\\src'))
+  assert.ok(calls[5].args[3].endsWith('build-cockpit-native-bridge.ps1'))
+  assert.ok(calls[6].args[3].endsWith('build-cockpit-bridge-job.ps1'))
+  assert.ok(calls[7].args[3].endsWith('cockpit-bridge-prepared-paths.ps1'))
+  assert.deepEqual(Array.from(calls[7].args.slice(-2)), ['-Phase', 'prepare'])
+  assert.ok(calls[8].args[2].endsWith('cockpit-bridge-real-first.cjs')); assert.equal(calls[8].args.length, 8)
+  assert.equal(calls[8].args[4], pin.executableSHA256); assert.ok(calls[8].args[6].endsWith('companion\\.test-dist\\src'))
+  assert.equal(calls[8].args[7], 'c'.repeat(32))
   for (const call of calls) { assert.equal('HOME' in call.options.env, false); assert.equal('USERPROFILE' in call.options.env, false); assert.equal('NODE_OPTIONS' in call.options.env, false); assert.equal('HTTPS_PROXY' in call.options.env, false) }
   assert.deepEqual(output, ['COCKPIT_BRIDGE_FIRST_IDENTITY_COMPLETE\n'])
   // These are inert child close events, not a Windows/Chrome/native-positive receipt.
-})
+}
+test('whole actual gate consumes the actual fixed source pin and preserves preparation/registration/controller order', () => wholeGateControl())
+for (const fault of ['host', 'job', 'attributes'] as const) test('whole actual gate refuses native admission after preparation failure: ' + fault, () => wholeGateControl(fault))
 
 
 test('actual PowerShell launcher bounds both scalar domains and runs the interpreter regression before canonical', () => {
@@ -276,4 +314,43 @@ test('actual PowerShell launcher bounds both scalar domains and runs the interpr
   assert.ok(workflow.slice(gate, final).includes("if: matrix.os == 'windows-latest' && matrix.lane == 'native'"))
   assert.ok(workflow.slice(probe, workflow.indexOf('\n        run:', probe)).includes("if: ${{ always() && !cancelled() && matrix.os == 'windows-latest' && matrix.lane == 'census' }}"))
   assert.equal(workflow.split('& scripts/tests/run-cockpit-bridge-first.ps1').length, 2)
+})
+
+test('actual setup error retains its reason and raw descriptors until the real close', async () => {
+  const child = new EventEmitter(), closed: number[] = [], original = Error('CONTROLLED_SETUP_ERROR'), events: unknown[][] = []
+  const run = new vm.Script(`(${functions[0].getText(source)})`).runInNewContext({ sequence: 0, raw: '/owned/raw', path,
+    fs: { openSync: () => 7 + closed.length, closeSync: (fd: number) => closed.push(fd) }, cp: { spawn: () => child } })
+  let settled = false, error: unknown
+  const operation = run('/fixed/ps', [], '/owned', {}, 'native-build-host', (...values: unknown[]) => events.push(values)).then(() => { settled = true }, (value: unknown) => { settled = true; error = value })
+  child.emit('error', original); for (let i = 0; i < 8; i++) await Promise.resolve()
+  const beforeClose = { settled, descriptors: closed.length }
+  child.emit('close', 0, null); await operation
+  assert.deepEqual(beforeClose, { settled: false, descriptors: 0 })
+  assert.equal(error, original); assert.equal(closed.length, 2)
+  assert.deepEqual(events, [['error', null, null], ['close', 0, null]])
+})
+
+test('actual prepare and parent build caller drain an errored host close after its sibling closes', async () => {
+  const calls: EventEmitter[] = [], root = fs.mkdtempSync(path.join(process.env.CMSPARK_TEST_RUN_DIR!, 'prepare-caller-')), original = Error('ORIGINAL_HOST_ERROR')
+  const api = evidenceAPI(root, () => { const child = new EventEmitter(); calls.push(child); return child })
+  const prepareCalls: ts.CallExpression[] = []
+  function find(node: ts.Node) { if (ts.isCallExpression(node) && node.expression.getText(source) === 'preparedBuild.prepare') prepareCalls.push(node); ts.forEachChild(node, find) }
+  find(source); assert.equal(prepareCalls.length, 1)
+  const settings = prepareCalls[0].arguments[0]; assert.ok(ts.isObjectLiteralExpression(settings))
+  const property = settings.properties.find((node): node is ts.PropertyAssignment => ts.isPropertyAssignment(node) && node.name.getText(source) === 'runBuild')
+  assert.ok(property)
+  const repo = path.resolve(__dirname, '../../..'), helper = require(path.join(repo, 'scripts/tests/cockpit-bridge-prepared-build.cjs'))
+  const runBuild = new vm.Script('(' + property.initializer.getText(source) + ')').runInNewContext({ path, repo, __dirname: path.join(repo, 'scripts/tests'), powershell: 'CONTROLLED_ONLY', childEnv: Object.freeze({}), runRecorded: api.runRecorded })
+  let settled = false, error: unknown
+  const preparation = helper.prepare({ root, sourceRepo: repo, runBuild, verifyFiles: async () => { throw Error('QUERY_MUST_NOT_RUN') } }).then(() => { settled = true }, (value: unknown) => { settled = true; error = value })
+  try {
+    for (let i = 0; i < 32; i++) await Promise.resolve()
+    assert.equal(calls.length, 2)
+    calls[0].emit('error', original); calls[1].emit('close', 0, null)
+    for (let i = 0; i < 32; i++) await Promise.resolve()
+    const beforeHostClose = { settled, manifest: fs.existsSync(path.join(root, 'prepared-build/manifest.json')) }
+    calls[0].emit('close', -1, null); await preparation
+    assert.deepEqual(beforeHostClose, { settled: false, manifest: false })
+    assert.equal(error, original); assert.equal(fs.existsSync(path.join(root, 'prepared-build/manifest.json')), false)
+  } finally { fs.rmSync(root, { recursive: true }) }
 })

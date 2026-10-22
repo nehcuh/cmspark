@@ -4,8 +4,25 @@ param(
   [Parameter(Mandatory=$true)][string]$InstallRoot,
   [string]$ExtensionId = '',
   [ValidateSet('Registry64', 'Registry32')][string]$RegistryView = 'Registry64',
-  [switch]$Unregister
+  [switch]$Unregister,
+  [switch]$GateObservation723
 )
+# Explicit remote-gate observation only. This does not participate in success,
+# ownership or error handling. No identity/path/error bytes enter these tokens.
+$cmspark723Clock = $null
+if ($GateObservation723 -and -not $Unregister -and [Environment]::GetEnvironmentVariable('GITHUB_ACTIONS') -ceq 'true' -and [Environment]::GetEnvironmentVariable('RUNNER_OS') -ceq 'Windows') {
+  try { $cmspark723Clock = [Diagnostics.Stopwatch]::StartNew() } catch { }
+}
+function Write-Cmspark723Phase([int]$Phase) {
+  if ($null -eq $cmspark723Clock) { return }
+  try {
+    $cmspark723Bucket = [Math]::Floor($cmspark723Clock.Elapsed.TotalMilliseconds / 250)
+    if ($cmspark723Bucket -lt 0 -or $cmspark723Bucket -gt 180) { $cmspark723Bucket = 181 }
+    [Console]::Out.WriteLine('CM723P ' + $Phase.ToString([Globalization.CultureInfo]::InvariantCulture) + ' ' + $cmspark723Bucket.ToString([Globalization.CultureInfo]::InvariantCulture))
+  } catch { } # Observation failure cannot replace the registrar's own outcome.
+}
+Write-Cmspark723Phase 1
+$cmspark723Terminal = $false
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $hostName = 'com.cmspark.cockpit'
@@ -13,8 +30,8 @@ $subkey = 'Software\Google\Chrome\NativeMessagingHosts\' + $hostName
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or -not [IO.Path]::IsPathRooted($InstallRoot)) { throw 'COCKPIT_BRIDGE_REGISTRATION_PLATFORM' }
 if (-not $Unregister -and $ExtensionId -cnotmatch '^[a-p]{32}$') { throw 'COCKPIT_BRIDGE_EXACT_ID_REQUIRED' }
-$root = (Get-Item -LiteralPath $InstallRoot).FullName
-if (-not (Get-Item -LiteralPath $root).PSIsContainer -or ((Get-Item -LiteralPath $root).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'COCKPIT_BRIDGE_REGISTRATION_ROOT' }
+$root = (Microsoft.PowerShell.Management\Get-Item -LiteralPath $InstallRoot).FullName
+if (-not (Microsoft.PowerShell.Management\Get-Item -LiteralPath $root).PSIsContainer -or ((Microsoft.PowerShell.Management\Get-Item -LiteralPath $root).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'COCKPIT_BRIDGE_REGISTRATION_ROOT' }
 $binary = Join-Path $root 'bin\cmspark-cockpit-bridge.exe'
 $pin = Join-Path $root 'bin\cmspark-cockpit-bridge.sha256'
 $directory = Join-Path $root 'native-messaging'
@@ -23,7 +40,7 @@ $recordPath = Join-Path $directory 'registration.json'
 $record = $null
 
 function Read-RegularText([string]$Path) {
-  $item = Get-Item -LiteralPath $Path
+  $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $Path
   if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.Length -gt 4096) { throw 'COCKPIT_BRIDGE_REGISTRATION_FILE' }
   return $utf8.GetString([IO.File]::ReadAllBytes($item.FullName))
 }
@@ -48,12 +65,13 @@ function Read-OwnedRecord {
 }
 
 if (Test-Path -LiteralPath $directory) {
-  $item = Get-Item -LiteralPath $directory
+  $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $directory
   if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'COCKPIT_BRIDGE_REGISTRATION_CONFLICT' }
   if (Test-Path -LiteralPath $recordPath) { $record = Read-OwnedRecord }
   elseif (@(Get-ChildItem -LiteralPath $directory -Force).Count -ne 0) { throw 'COCKPIT_BRIDGE_REGISTRATION_CONFLICT' }
 }
 
+Write-Cmspark723Phase 2
 $bases = @{}
 try {
   foreach ($view in @('Registry32', 'Registry64')) {
@@ -67,6 +85,7 @@ try {
       } finally { $key.Dispose() }
     }
   }
+  Write-Cmspark723Phase 3
   if ($Unregister) {
     if ($null -eq $record) { throw 'COCKPIT_BRIDGE_REGISTRATION_NOT_OWNED' }
     if ($ExtensionId -and $ExtensionId -cne $record.extensionId) { throw 'COCKPIT_BRIDGE_REGISTRATION_CONFLICT' }
@@ -82,15 +101,17 @@ try {
     Write-Output 'COCKPIT_BRIDGE_UNREGISTERED'
     return
   }
-  $binaryItem = Get-Item -LiteralPath $binary
+  $binaryItem = Microsoft.PowerShell.Management\Get-Item -LiteralPath $binary
   if ($binaryItem.PSIsContainer -or ($binaryItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'COCKPIT_BRIDGE_REGISTRATION_BINARY' }
   $binaryHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
   if ((Read-RegularText $pin) -cne ($binaryHash + "`n")) { throw 'COCKPIT_BRIDGE_REGISTRATION_BINARY' }
+  Write-Cmspark723Phase 4
   if ($null -ne $record) {
     if ($record.extensionId -cne $ExtensionId) { throw 'COCKPIT_BRIDGE_REGISTRATION_EXPLICIT_UNBIND_REQUIRED' }
     if ($record.hostSha256 -cne $binaryHash) { throw 'COCKPIT_BRIDGE_REGISTRATION_BINARY' }
     $key = $bases[$RegistryView].OpenSubKey($subkey, $false)
     try { if ($null -eq $key -or $key.GetValue('') -cne $manifestPath) { throw 'COCKPIT_BRIDGE_REGISTRATION_CONFLICT' } } finally { if ($null -ne $key) { $key.Dispose() } }
+    $cmspark723Terminal = $true
     Write-Output 'COCKPIT_BRIDGE_ALREADY_REGISTERED'
     return
   }
@@ -99,18 +120,23 @@ try {
   $hash = [Security.Cryptography.SHA256]::Create()
   try { $manifestHash = ([BitConverter]::ToString($hash.ComputeHash($utf8.GetBytes($manifest)))).Replace('-', '').ToLowerInvariant() } finally { $hash.Dispose() }
   $newRecord = ([ordered]@{ v = 1; installId = [guid]::NewGuid().ToString('N'); extensionId = $ExtensionId; hostPath = $binary; hostSha256 = $binaryHash; manifestPath = $manifestPath; manifestSha256 = $manifestHash; registryView = $RegistryView } | ConvertTo-Json -Compress) + "`n"
+  Write-Cmspark723Phase 5
   # Exclusive creation; never overwrite an existing record or manifest.
   foreach ($entry in @(@($manifestPath, $manifest), @($recordPath, $newRecord))) {
     $file = [IO.File]::Open($entry[0], [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try { $bytes = $utf8.GetBytes($entry[1]); $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) } finally { $file.Dispose() }
   }
+  Write-Cmspark723Phase 6
   $key = $bases[$RegistryView].CreateSubKey($subkey, $true)
   try {
     if (@($key.GetValueNames()).Count -ne 0 -or @($key.GetSubKeyNames()).Count -ne 0) { throw 'COCKPIT_BRIDGE_REGISTRATION_CONFLICT' }
     $key.SetValue('', $manifestPath, [Microsoft.Win32.RegistryValueKind]::String)
     if ($key.GetValue('') -cne $manifestPath) { throw 'COCKPIT_BRIDGE_REGISTRATION_FAILED' }
   } finally { $key.Dispose() }
+  Write-Cmspark723Phase 7
+  $cmspark723Terminal = $true
   Write-Output 'COCKPIT_BRIDGE_REGISTERED'
 } finally {
   foreach ($base in $bases.Values) { $base.Dispose() }
+  if ($cmspark723Terminal) { Write-Cmspark723Phase 8 }
 }

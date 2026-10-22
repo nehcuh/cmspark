@@ -190,8 +190,12 @@ test('actual Job compiler loop and required controls bind both own exits with LF
   const inputs = [jobBuilder, nativeControls].map(x => x.replaceAll('\r\n', '\n'))
   for (const ending of ['\n', '\r\n']) jobCompletionContract(...inputs.map(x => x.replaceAll('\n', ending)))
   const controller = fs.readFileSync(path.join(__dirname, 'cockpit-bridge-real-first.cjs'), 'utf8')
-  assert.ok(controller.includes("runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1'), ['-OutputDirectory', jobBuild])"))
-  assert.ok(controller.indexOf("path.join(jobBuild, 'cockpit-chrome-job-cpu.exe')") > controller.indexOf("'scripts/tests/build-cockpit-bridge-job.ps1'"))
+  const parent = fs.readFileSync(path.join(__dirname, 'cockpit-bridge-first-gate.cjs'), 'utf8')
+  assert.ok(parent.includes("path.join(__dirname, 'build-cockpit-bridge-job.ps1')"))
+  assert.ok(parent.indexOf('await preparedBuild.prepare(') < parent.lastIndexOf("'first-identity')"))
+  assert.ok(controller.includes("require('./cockpit-bridge-prepared-build.cjs').stage({"))
+  assert.ok(controller.indexOf("path.join(jobBuild, 'cockpit-chrome-job-cpu.exe')") > controller.indexOf("require('./cockpit-bridge-prepared-build.cjs').stage({"))
+  assert.equal(controller.includes("runPs(path.join(sourceRepo, 'scripts/tests/build-cockpit-bridge-job.ps1')"), false)
 })
 test('Job completion source controls reject stale exits and either uncovered main target', () => {
   const mutations = [

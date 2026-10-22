@@ -9,6 +9,12 @@
 - Refs #752–#754：新增个人工作中心（今日、待办、资料与活动记录），侧栏保留对话入口；指定 macOS 前台应用截图与本地 OCR 默认关闭，模型分析单独选择。候选经用户确认后成为待办，保留来源并分别跟踪处理与反馈；本机后台服务持久安排提醒，明确系统通知提交不代表已读。无接口聊天不能覆盖不可见的群与历史；其他平台暂不支持此截图路径。
 - Refs #754：一句话设置接入模型语义候选与逐项预览，显式确认后沿用原配置保存并读取核对。语音结束只填草稿；权限、语音偏好、记录与提醒策略需要在对应入口单独核对，不虚构自动应用结果。
 
+- Refs #723/#755: bind the native-host registrar’s six filesystem reads to the built-in PowerShell Management module after a bounded Windows command-resolution comparison; retain ownership, reparse checks and cleanup. Native full-flow acceptance remains required.
+
+- Windows CI (#723): add one human-approved, bounded phase/checkpoint observation for the first-identity gate; preserve build120/runtime-cleanup45, original results and 4096-byte finite evidence cap. Unknown intervals remain unknown.
+
+- Refs #723：经用户明确批准，将同次固定源码编译拆为最多 120 秒的必过准备阶段，原生运行与清理仍限原 45 秒。交接绑定真实关闭回执、源码、nonce 和文件身份；超时晚到不能进入原生阶段。真实 Windows 与精确 main 验收仍须通过。
+
 - Refs #723：远端身份夹具的 CDP transport 终止同步拒绝 target／default-context 事件等待，避免命令已 ACK 后只等外层超时；保留原 abort 原因、45 秒、身份及 cleanup。新增真实类的 LF/CRLF／关闭／迟到事件回归；此为已证生命周期缺口，不认定历史 Windows 超时原因，native 身份与 mask 仍未完成。
 
 - Refs #723：隔离启动器的 CPU 自检读 claim 时显式兼容 Node 仍持有的写句柄，保留只读访问、原 nonce／身份校验与 lease；新增真实 Windows 旧默认共享拒绝负控及 LF/CRLF 源回归。此为验收夹具修复，不代表 Chrome 窗口身份或 mask 已通过。

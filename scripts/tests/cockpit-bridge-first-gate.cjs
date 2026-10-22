@@ -1,8 +1,10 @@
-// GHA Windows only. Setup precedes (and never extends) the controller's 45s lease.
+// GHA Windows only. Same-run build preparation has its approved 120s admission
+// limit; the separate native controller retains its original 45s lease.
 'use strict'
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process')
 const supply = require('./cockpit-bridge-browser-supply.cjs')
 const firstEvidence = require('./cockpit-bridge-first-evidence.cjs')
+const preparedBuild = require('./cockpit-bridge-prepared-build.cjs')
 assert.equal(process.platform, 'win32'); assert.equal(process.arch, 'x64')
 assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(process.env.RUNNER_OS, 'Windows')
 // A pin is mandatory before network, npm, registration or any child process.
@@ -32,8 +34,8 @@ const npmEnv = { ...childEnv, PATH: nodeDirectory + path.delimiter + childEnv.PA
   npm_config_cache: cache, npm_config_registry: 'https://registry.npmjs.org/' }
 let sequence = 0, stage = 'supply'
 // Failure evidence is observation only: no raw text, paths, errors or authority.
-const STEP_LABELS = new Set(['npm-ci', 'extension-build', 'extension-test-compile', 'registration-framing', 'document-receipt', 'first-identity'])
-const GATE_STAGES = new Set(['supply', 'extension-build', 'registration-framing', 'document-receipt', 'first-identity'])
+const STEP_LABELS = new Set(['npm-ci', 'extension-build', 'extension-test-compile', 'registration-framing', 'document-receipt', 'native-build-host', 'native-build-job', 'prepared-files-prepare', 'first-identity'])
+const GATE_STAGES = new Set(['supply', 'extension-build', 'registration-framing', 'document-receipt', 'build-preparation', 'first-identity'])
 const REGISTRATION_REASONS = new Set(['OTHER', 'COCKPIT_BRIDGE_REMOTE_ONLY', 'COCKPIT_BRIDGE_OWNED_ROOT_REQUIRED', 'COCKPIT_BRIDGE_FIXED_KEY_OCCUPIED', 'COCKPIT_BRIDGE_REGISTRATION_ASSERT', 'COCKPIT_BRIDGE_BUILD_PLATFORM', 'COCKPIT_BRIDGE_BUILD_PATH', 'COCKPIT_BRIDGE_BUILD_SOURCE', 'COCKPIT_BRIDGE_BUILD_COMPILER', 'COCKPIT_BRIDGE_BUILD_OUTPUT_EXISTS', 'COCKPIT_BRIDGE_BUILD_FAILED', 'COCKPIT_BRIDGE_EXACT_ID_REQUIRED', 'COCKPIT_BRIDGE_REGISTRATION_PLATFORM', 'COCKPIT_BRIDGE_REGISTRATION_ROOT', 'COCKPIT_BRIDGE_REGISTRATION_FILE', 'COCKPIT_BRIDGE_REGISTRATION_CONFLICT', 'COCKPIT_BRIDGE_REGISTRATION_NOT_OWNED', 'COCKPIT_BRIDGE_REGISTRATION_BINARY', 'COCKPIT_BRIDGE_REGISTRATION_EXPLICIT_UNBIND_REQUIRED', 'COCKPIT_BRIDGE_REGISTRATION_FAILED', 'COCKPIT_BRIDGE_REGISTRY_FIXTURE_OWNERSHIP_CHANGED', 'COCKPIT_BRIDGE_CHILD_NOT_CLOSED'])
 let lastStep, firstFailure
 function boundedEvidence(file) {
@@ -94,12 +96,14 @@ async function run(file, args, cwd, env, label, observe) {
       const child = cp.spawn(file, args, { cwd, env, windowsHide: true, stdio: label === 'first-identity' ? ['ignore', output, error, 'pipe'] : ['ignore', output, error] })
       let observation
       try { if (label === 'first-identity') observation = firstEvidence.capture(child.stdio?.[3]) } catch { }
-      child.once('error', error => { try { observe?.('error', null, null) } catch { } reject(error) })
+      let failed = false, primary
+      child.once('error', error => { failed = true; primary = error; try { observe?.('error', null, null) } catch { } })
       child.once('close', (code, signal) => {
         let record = null
         try { if (observation) record = observation.finish(true) } catch { }
         try { if (observation) observe?.('close', code, signal, record); else observe?.('close', code, signal) } catch { }
-        code === 0 && signal === null ? resolve() : reject(Error('COCKPIT_BRIDGE_GATE_' + label + '_FAILED'))
+        if (failed) reject(primary)
+        else code === 0 && signal === null ? resolve() : reject(Error('COCKPIT_BRIDGE_GATE_' + label + '_FAILED'))
       })
     })
   } finally { fs.closeSync(output); fs.closeSync(error) }
@@ -132,10 +136,25 @@ async function main() {
   assert.equal(receipts.length, 1)
   stage = 'document-receipt'
   await runRecorded(process.execPath, ['-r', preload, path.join(__dirname, 'cockpit-bridge-document-receipt.cjs'), path.join(extension, '.test-dist'), receipts[0]], repo, childEnv, 'document-receipt')
-  // Controller owns a separate live install, builds/runs Job CPU once, then
-  // launches owned Chrome. Do not pre-run Job CPU or bypass its STOP checks.
+  // Build-only preparation never runs an EXE or registers a native host. It
+  // drains both actual builder closes even after its success deadline expires.
+  stage = 'build-preparation'
+  const prepared = await preparedBuild.prepare({ root, sourceRepo: repo,
+    runBuild: async (kind, output) => {
+      const script = kind === 'host' ? path.join(repo, 'scripts/build-cockpit-native-bridge.ps1')
+        : path.join(__dirname, 'build-cockpit-bridge-job.ps1')
+      await runRecorded(powershell, ['-NoProfile', '-NonInteractive', '-File', script, '-OutputDirectory', output], repo, childEnv, 'native-build-' + kind)
+      return { closed: true, code: 0, signal: null }
+    },
+    verifyFiles: async phase => {
+      assert.equal(phase, 'prepare')
+      await runRecorded(powershell, ['-NoProfile', '-NonInteractive', '-File', path.join(__dirname, 'cockpit-bridge-prepared-paths.ps1'), '-Phase', phase], repo, childEnv, 'prepared-files-prepare')
+    },
+  })
+  // Controller owns a fresh live install and runs Job CPU exactly once. The
+  // nonce joins this one preparation, not a grant or an external path override.
   stage = 'first-identity'
-  await runRecorded(process.execPath, ['-r', preload, path.join(__dirname, 'cockpit-bridge-real-first.cjs'), chrome, pin.executableSHA256, bundle, compiled], repo, childEnv, 'first-identity')
+  await runRecorded(process.execPath, ['-r', preload, path.join(__dirname, 'cockpit-bridge-real-first.cjs'), chrome, pin.executableSHA256, bundle, compiled, prepared.nonce], repo, childEnv, 'first-identity')
   fs.writeFileSync(path.join(root, 'gate-summary.json'), JSON.stringify({ version: 1, stage: 'first-identity-complete', masking: 'NOT_IMPLEMENTED' }) + '\n', { flag: 'wx' })
   process.stdout.write('COCKPIT_BRIDGE_FIRST_IDENTITY_COMPLETE\n')
 }

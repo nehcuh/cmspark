@@ -275,7 +275,7 @@ jobs:
         run: |
           & scripts/tests/cockpit-bridge-node-selection.test.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs scripts/tests/cockpit-bridge-first-evidence.test.mjs scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs
+          node --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs scripts/tests/cockpit-bridge-first-evidence.test.mjs scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs scripts/tests/cockpit-bridge-prepared-build.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/tests/cockpit-bridge-build-prerequisite.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

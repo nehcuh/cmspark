@@ -69,8 +69,8 @@ export function condition750(source, context) {
   return Boolean(value && (/\b(?:always|success|failure|cancelled)\s*\(/.test(text) || context.success))
 }
 
-// Source-derived 6521 objects allow precisely the lane split and one newly
-// required lifecycle test argument. Original d5fc34/19 pins stay unchanged.
+// Source-derived 6521 objects allow precisely the lane split and two newly
+// required lifecycle and prepared-handoff test arguments. Original d5fc34/19 pins stay unchanged.
 export function validateCockpitSteps748(steps) {
   const additions = steps.filter(step => key(step) === activity758.nativeStep.name)
   assert.equal(additions.length, 1, 'one exact #758 native addition')
@@ -87,7 +87,7 @@ export function validateCockpitSteps748(steps) {
   const expected = structuredClone(cockpit.steps)
   const oldTests = 'node --test scripts/tests/cockpit-bridge-build-prerequisite.test.cjs scripts/tests/cockpit-bridge-first-evidence.test.mjs\n'
   assert.equal(expected[0].run.split(oldTests).length, 2)
-  expected[0].run = expected[0].run.replace(oldTests, oldTests.trimEnd() + ' scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs\n')
+  expected[0].run = expected[0].run.replace(oldTests, oldTests.trimEnd() + ' scripts/tests/cockpit-bridge-cdp-lifecycle.test.mjs scripts/tests/cockpit-bridge-prepared-build.test.mjs\n')
   for (const step of expected.slice(1)) {
     const oldLane = "matrix.os == 'windows-latest'"
     assert.equal(step.if.split(oldLane).length, 2)
