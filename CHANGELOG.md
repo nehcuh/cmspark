@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Security: update the extension's DOMPurify dependency from 3.4.16 to 3.4.17 to resolve the production dependency audit advisories, including GHSA-cg2g-xh64-v4q7. No other dependencies or audit gates are changed.
+
 - Fix: keep filesystem `edit_file` anchor mismatches recoverable through a typed MCP error, so the agent can re-read the file and correct `oldText` without ending the turn. Preserve write confirmations and exact-match editing.
 
 - Fix (Windows): retry only transient EPERM/EACCES/EBUSY failures of the existing atomic JSON/text replacement, with five attempts and 150 ms of scheduled waits. Preserve synchronous config updates, original files on terminal failure, and existing permissions. Add real Windows conversation-save lock/release and persistent-lock regressions; this does not identify the user's external lock owner.
