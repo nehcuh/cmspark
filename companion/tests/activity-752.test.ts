@@ -179,6 +179,37 @@ test('feedback pending still reminds after handling complete; fully completed ta
     assert.equal(f.store.claimReminder(t.id, stamp), false)
   } finally { f.cleanup() }
 })
+test('status-only forged pending cannot make a not-required done todo due; true required stays pending and due', async () => {
+  const f = fixture()
+  const service = new ActivityService({ dataDir: f.dir, now: () => NOW })
+  const todoOf = (reply: Record<string, unknown>, id: string): any => (reply.state as any).todos.find((t: any) => t.id === id)
+  try {
+    const source = addSource(service.store)
+    const created = await service.handle({ type: 'todo.create', source_id: source.id, expected_revision: service.state().revision, task: { title: '手动整理', owner: '我', remind_at: stamp } })
+    assert.equal(created.ok, true)
+    const free = (created.state as any).todos[0]
+    assert.equal(free.feedback_required, false)
+    assert.equal(free.feedback_status, 'not_required')
+    const handled = await service.handle({ type: 'todo.update', todo_id: free.id, expected_revision: free.revision, patch: { handling_status: 'done' } })
+    assert.equal(handled.ok, true)
+    const forged = await service.handle({ type: 'todo.update', todo_id: free.id, expected_revision: todoOf(handled, free.id).revision, patch: { feedback_status: 'pending' } })
+    assert.equal(forged.ok, true)
+    const merged = todoOf(forged, free.id)
+    assert.equal(merged.handling_status, 'done')
+    assert.equal(merged.feedback_required, false)
+    assert.equal(merged.feedback_status, 'not_required')
+    assert.equal(new ActivityStore(f.dir).state().todos.find(t => t.id === free.id)!.feedback_status, 'not_required')
+    const required = await service.handle({ type: 'todo.create', source_id: source.id, expected_revision: service.state().revision, task: { title: '仍需反馈', owner: '我', remind_at: stamp, feedback_required: true } })
+    assert.equal(required.ok, true)
+    const requiredTodo = (required.state as any).todos[0]
+    assert.equal(requiredTodo.feedback_status, 'pending')
+    const requiredHandled = await service.handle({ type: 'todo.update', todo_id: requiredTodo.id, expected_revision: requiredTodo.revision, patch: { handling_status: 'done' } })
+    assert.equal(requiredHandled.ok, true)
+    assert.equal(service.state().todos.find(t => t.id === requiredTodo.id)!.feedback_status, 'pending')
+    assert.deepEqual(service.store.dueReminders(NOW).map(t => t.id), [requiredTodo.id])
+    assert.equal(service.store.claimReminder(free.id, stamp), false)
+  } finally { await service.stop(); f.cleanup() }
+})
 test('mac passive adapter uses verified actual foreground identity and refuses secure input', async () => {
   const f = fixture(); const commands: string[][] = []
   const runner = { resolve: () => 'test-host', run: async (_bin: string, args: string[]) => {

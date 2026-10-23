@@ -137,7 +137,8 @@ export class ActivityStore {
         // Full-form saves and equivalent timezone encodings are not a request to notify again.
         if (t.remind_at !== previousReminderAt) t.reminder = { status: t.remind_at ? 'scheduled' : 'none' }
       }
-      if (patch.feedback_required === false) t.feedback_status = 'not_required'
+      // Keep feedback state consistent after partial updates.
+      if (t.feedback_required === false) t.feedback_status = 'not_required'
       if (patch.feedback_required === true && t.feedback_status === 'not_required') t.feedback_status = 'pending'
       if (t.feedback_required && t.feedback_status === 'not_required') throw new ActivityError('INVALID_REQUEST', '需反馈事项不能设为无需反馈')
       t.updated_at = now; t.revision++

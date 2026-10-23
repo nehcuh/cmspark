@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix (#752/#757): keep not-required feedback canonical after partial todo updates, so status-only edits cannot make completed tasks due again. Cover the real create/update response and reloaded state; retain required-feedback reminders.
+
 - Security: update the extension's DOMPurify dependency from 3.4.16 to 3.4.17 to resolve the production dependency audit advisories, including GHSA-cg2g-xh64-v4q7. No other dependencies or audit gates are changed.
 
 - Fix: keep filesystem `edit_file` anchor mismatches recoverable through a typed MCP error, so the agent can re-read the file and correct `oldText` without ending the turn. Preserve write confirmations and exact-match editing.
