@@ -589,3 +589,11 @@ This CPU regression is not a changed-head hosted/browser or native PASS.
 `cockpit-bridge-cdp-lifecycle.test.mjs` 直接执行真实 controller 的完整 `aborted`／`Cdp`，使用惰性 EventTarget 协议 seam，核空 target snapshot／Runtime.enable 已 ACK 后的关闭、并发命令与事件等待、已关闭入口、原对象 abort、原匹配结果及 malformed／迟到事件。LF/CRLF 均覆盖事件等待；此类 CPU 不建立 WebSocket、Chrome 或原生正证。命令 Map 与事件等待独立，transport close 必须使二者拒绝，并在成功／拒绝／abort 后退订；不能让终态错误拖到外层 deadline。
 
 这不证明6521真的发生了 CDP close，旧 worker 缺失／启动失败／具体剩余时长仍 UNKNOWN。原 first-identity 真实窗口、认证 WS、parent-zero 拒绝和 Job 真实 close／清理仍必须由精确新 head 的 Windows 证明；不得延45秒或添加猜测启动参数、强制唤醒／缓存旧目标。
+
+## Windows conversation-save rename recovery
+
+`companion/tests/io-rename-recovery.test.ts` executes the actual writer module with controlled syscall failures and real owned files, including one real Node `Atomics.wait` case. It covers transient and persistent errors, JSON/text consumers, unchanged POSIX behavior, cleanup and synchronous return semantics. These controls do not establish a Windows lock owner.
+
+`companion/tests/io-rename-windows-native.test.ts` runs only on Windows. An owned PowerShell process holds a real conversation file without delete sharing. The real `ThreadManager.addMessage` must observe a native rename refusal, recover after the first refusal releases the holder, and persist exactly one new message. With the holder retained, all five attempts must fail, the prior JSON must remain byte-identical, and saving after holder close must work. Child readiness/close are bounded; cleanup waits for actual owned process close.
+
+The `Session save recovery` workflow runs these together with MCP edit recovery and config controls in its `Windows session persistence` job. The ordinary Windows census still includes them. On other platforms the two native cases explicitly skip; those skips do not count as Windows validation.

@@ -13,11 +13,30 @@
 
 import * as fs from "fs"
 
+const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80] as const
+
+function renameAtomicSync(from: string, to: string): void {
+  for (let retries = 0; ; retries++) {
+    try {
+      fs.renameSync(from, to)
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code
+      if (process.platform !== "win32" || retries === RENAME_RETRY_DELAYS_MS.length ||
+        (code !== "EPERM" && code !== "EACCES" && code !== "EBUSY")) throw err
+      // Keep config/thread read-modify-write synchronous. Yield the OS thread
+      // with 150 ms total scheduled waits, retrying only this same replacement.
+      // Persistent refusals still fail; never unlink or overwrite the target.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RENAME_RETRY_DELAYS_MS[retries])
+    }
+  }
+}
+
 export function atomicWriteJSON(filePath: string, data: unknown, mode: number = 0o600): void {
   const tmp = `${filePath}.tmp-${process.pid}`
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode })
   try {
-    fs.renameSync(tmp, filePath)
+    renameAtomicSync(tmp, filePath)
   } catch (err) {
     // rename failed (e.g. cross-device — shouldn't happen since tmp is same dir, but be safe) —
     // don't leak the tmp file; clean up and rethrow so the caller sees the write failed.
@@ -33,7 +52,7 @@ export function atomicWriteText(filePath: string, contents: string, mode: number
   const tmp = `${filePath}.tmp-${process.pid}`
   fs.writeFileSync(tmp, contents, { mode })
   try {
-    fs.renameSync(tmp, filePath)
+    renameAtomicSync(tmp, filePath)
   } catch (err) {
     try { fs.unlinkSync(tmp) } catch { /* ignore */ }
     throw err
