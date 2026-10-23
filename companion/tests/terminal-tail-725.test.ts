@@ -146,7 +146,7 @@ test("725 actual WS router case reaches the current owned read handler without n
 })
 test("725 exact fixed unavailable code remains recoverable without screen hints or grade changes", () => {
   const f = fixture(), security = f.load("security")
-  assert.equal(security.ERROR_CODE_LEVELS.size, 169); assert.equal(security.DEFAULT_NON_RECOVERABLE_CODES.length, 59)
+  assert.equal(security.ERROR_CODE_LEVELS.size, 170); assert.equal(security.ERROR_CODE_LEVELS.get("MCP_EDIT_MATCH_NOT_FOUND"), "recoverable"); assert.equal(security.DEFAULT_NON_RECOVERABLE_CODES.length, 59)
   for (const text of ["TERMINAL_TAIL_UNAVAILABLE", "ordinary no hint", "Security Block: permission denied", "element_not_found timeout"]) assert.equal(security.classifyError(text, { error_code: "TERMINAL_TAIL_UNAVAILABLE" }), "recoverable")
   for (const code of ["SECURITY_TOKEN_INVALID", "NETSEC_TARGETS_DENIED", "GRANT_DENIED", "BOARD_TRUST_REJECTED"]) assert.equal(security.ERROR_CODE_LEVELS.get(code), "non_recoverable")
 })

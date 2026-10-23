@@ -1077,6 +1077,8 @@ export const ERROR_CODE_LEVELS: ReadonlyMap<string, ErrorLevel> = new Map<string
   // Authorization refusal permits a different tool or fresh human approval;
   // it never validates/mints a token or relaxes the evaluate admission gate.
   ["EVALUATE_AUTH_REQUIRED", "recoverable"],
+  // A stale/invented edit anchor is model-correctable by re-reading the file (6p34pu).
+  ["MCP_EDIT_MATCH_NOT_FOUND", "recoverable"],
   // #554：wait_for 探测失败 —— 一次都没探成功 ⇒ 探测坏了（可重试），不是「元素不存在」。
   ["WAIT_PROBE_FAILED", "recoverable"],
   ["WAIT_TIMEOUT", "recoverable"],

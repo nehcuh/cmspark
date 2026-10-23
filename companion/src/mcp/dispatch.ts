@@ -268,7 +268,7 @@ export async function executeMcpTool(
   signal?: AbortSignal,
   offeredToolNames?: ReadonlySet<string>,
   nativeOwner?: NativeMcpOwner,
-): Promise<{ success: boolean; data?: any; error?: string }> {
+): Promise<{ success: boolean; data?: any; error?: string; error_code?: string }> {
   void startedAt // retained for call-site parity with pre-split createToolExecutor
   if (nativeMcpStale(nativeOwner)) return nativeMcpStaleResult()
   if (signal?.aborted) return { success: false, error: "MCP tool call cancelled before dispatch" }
@@ -555,6 +555,10 @@ export async function executeMcpTool(
     return output
   }
   return { success: false, error: outcome.error || "MCP call failed",
+    // The loop's classifier reads typed codes, not the failCode message parser
+    // used for CDP health. Preserve structured server data without changing it.
+    ...(outcome.error?.startsWith("MCP_EDIT_MATCH_NOT_FOUND:")
+      ? { error_code: "MCP_EDIT_MATCH_NOT_FOUND" } : {}),
     ...(outcome.data !== undefined ? { data: outcome.data } : {}) }
 }
 
@@ -700,6 +704,20 @@ export function enhanceMcpError(
   params: any,
 ): string {
   const ctx = `MCP ${route.serverName}/${route.toolName}`
+  // Match only the server's leading diagnostic, never tokens in the echoed
+  // oldText (which may itself contain timeout / access-denied / security text).
+  // executeMcpTool also projects this code into the typed result for the loop.
+  const editMismatch = "Could not find exact match for edit:"
+  if (route.toolName === "edit_file" && (
+    rawErr.startsWith(editMismatch) || rawErr.startsWith(`${ctx} returned error: ${editMismatch}`)
+  )) {
+    return (
+      `MCP_EDIT_MATCH_NOT_FOUND: ${ctx} could not match oldText in the current file. ` +
+      `Read the current file, then build edits using oldText copied from that content. ` +
+      `Do not retry the unchanged edits or invent placeholder text; do not overwrite the whole file to bypass the mismatch. ` +
+      `Underlying error: ${rawErr}`
+    )
+  }
   // Timeout — the server may be slow / busy / hung. Suggest retry + narrowing.
   if (/MCP timeout/i.test(rawErr)) {
     const argHint = params && typeof params === "object" && Object.keys(params).length > 0

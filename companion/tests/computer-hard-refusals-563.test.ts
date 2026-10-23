@@ -213,7 +213,8 @@ for (const code of ["DANGER_DENIED_BY_USER", "EMERGENCY_STOP_LOST", "OWNED_UNKNO
     assert.equal(Object.hasOwn(wire, "error_code"), false); assert.equal(consumer.errorLevel, "recoverable")
   })
 test("#563 only seven additional codes and original defaults/mixed fallback remain", () => {
-  assert.equal(security.ERROR_CODE_LEVELS.size, 169); assert.equal(security.DEFAULT_NON_RECOVERABLE_CODES.length, 59)
+  assert.equal(security.ERROR_CODE_LEVELS.size, 170); assert.equal(security.DEFAULT_NON_RECOVERABLE_CODES.length, 59)
+  assert.equal(security.ERROR_CODE_LEVELS.get("MCP_EDIT_MATCH_NOT_FOUND"), "recoverable")
   for (const code of CODES) assert.equal(security.ERROR_CODE_LEVELS.get(code), "non_recoverable")
   for (const code of [undefined, "OWNED_UNKNOWN_CODE", "EMERGENCY_STOP_UNAVAILABLE", "TYPE_NO_EFFECT", "APP_WINDOW_NOT_FOUND", "INVALID_ACTION"])
     for (const [error, level] of [["timeout", "recoverable"], ["owned refusal", "non_recoverable"]]) assert.equal(security.classifyError(error, { error_code: code }), level)

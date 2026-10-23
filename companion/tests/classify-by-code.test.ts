@@ -119,6 +119,7 @@ const EXPECTED_LEVELS: Record<string, "recoverable" | "non_recoverable" | "secur
   // （pi 指出：同带 suggested_action 的 DOWNLOADS_API_UNAVAILABLE 就留在 non_recoverable）。
   HINT_REQUIRED: "recoverable",   // agent 补上 filenameHint/urlContains 即可自修
   DOWNLOAD_BUSY: "recoverable",   // 瞬时互斥，等前一个下载结束即可重试
+  MCP_EDIT_MATCH_NOT_FOUND: "recoverable", // re-read the file and correct oldText (6p34pu)
   SELECTOR_REQUIRED: "recoverable", // 与同族 SELECTOR_OR_TEXT_REQUIRED 对齐；⚠️ 见下注
   EVALUATE_AUTH_REQUIRED: "recoverable", // exact authorization refusal: alternate tool/fresh L2, never execution permission
   WAIT_PROBE_FAILED: "recoverable",
