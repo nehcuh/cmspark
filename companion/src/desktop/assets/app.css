@@ -12,3 +12,8 @@ header{height:auto;min-height:56px;flex-wrap:wrap}#dialog-editor{margin:16px 0}#
 #browser-choices { list-style: none; padding: 0; }
 #browser-choices li { border: 1px solid currentColor; border-radius: .4rem; margin-block: .75rem; padding: .75rem; overflow-wrap: anywhere; }
 #browser-choices button { margin-inline-end: .5rem; margin-block: .25rem; }
+
+#workspace-open{border:1px solid #a7a79a;border-radius:8px;padding:16px;margin:16px 0}#workspace-feedback{font-size:13px;line-height:1.5}#workspace-entries{display:grid;gap:6px;margin:12px 0}#workspace-entries button{text-align:left;overflow-wrap:anywhere}#workspace-text{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.6;max-width:100%}
+
+.local-terminal{height:360px;min-height:180px;min-width:0;overflow:hidden;background:#101010;color:#eee;padding:8px}.local-terminal[hidden]{display:none}#local-agent-output{white-space:pre-wrap;overflow-wrap:anywhere}#local-agent{max-width:100%}
+#local-work{min-width:0}#local-work button{margin:4px}

@@ -322,9 +322,9 @@ function stockNavigationContract(ts,repo,thread) {
   const attr=name=>{const rows=buttons[0].attributes.properties.filter(p=>ts.isJsxAttribute(p)&&p.name.getText(tree)===name);assert.equal(rows.length,1);return rows[0].initializer.expression.getText(tree)}
   const timelineFile=path.join(repo,'chrome-extension/src/sidepanel/utils/thread-timeline.ts'),timeline=ts.createSourceFile(timelineFile,fs.readFileSync(timelineFile,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TS)
   const actualFunction=name=>{const found=timeline.statements.filter(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);assert.equal(found.length,1);const output=ts.transpileModule(found[0].getText(timeline),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;const m={exports:{}};new vm.Script(output).runInNewContext({module:m,exports:m.exports});return m.exports[name]}
-  const messages=[],state={activeThreadId:null,threads:[thread]},context={thread,state,displayThreadTitle:actualFunction('displayThreadTitle'),isFleetWorkerThread:actualFunction('isFleetWorkerThread'),workerBelongTitle(){throw Error('UNEXPECTED_WORKER')},dispatch(action){assert.equal(action.type,'SET_ACTIVE_THREAD');state.activeThreadId=action.threadId},chrome:{runtime:{sendMessage:frame=>messages.push(frame)}},onNavigate(){if(context.deferNavigate)context.pendingNavigate=true;else context.open=false},open:false}
+  const messages=[],viewChanges=[],state={activeThreadId:null,threads:[thread]},context={thread,state,onView(view){assert.equal(view,"chat");viewChanges.push(view)},displayThreadTitle:actualFunction('displayThreadTitle'),isFleetWorkerThread:actualFunction('isFleetWorkerThread'),workerBelongTitle(){throw Error('UNEXPECTED_WORKER')},dispatch(action){assert.equal(action.type,'SET_ACTIVE_THREAD');state.activeThreadId=action.threadId},chrome:{runtime:{sendMessage:frame=>messages.push(frame)}},onNavigate(){if(context.deferNavigate)context.pendingNavigate=true;else context.open=false},open:false}
   const evaluate=expression=>new vm.Script(expression).runInNewContext(context),button={disabled:false,get title(){return evaluate(attr('title'))},getAttribute:name=>name==='aria-current'?evaluate(attr('aria-current')):null,click:evaluate('('+attr('onClick')+')')}
-  return {context,button,messages,state}
+  return {context,button,messages,state,viewChanges}
 }
 test('seeded UI selector clicks actual shipping navigation handler and checks actual selected aria-current',async()=>{
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-ui-')))
@@ -333,7 +333,7 @@ test('seeded UI selector clicks actual shipping navigation handler and checks ac
     const s=stockNavigationContract(ts,repo,new ThreadManager().get(h.OWNED_THREAD.id)),toggle={disabled:false,click(){s.context.open=true}},close={click(){s.context.open=false}}
     const doc={querySelector:q=>q==='.cm-navigation'&&s.context.open?{}:null,querySelectorAll:q=>q==='.cm-navigation-toggle'?[toggle]:q==='.cm-nav-thread'&&s.context.open?[s.button]:q==='.cm-navigation-disclosure button[aria-label="关闭导航"]'&&s.context.open?[close]:[]}
     const run=action=>vm.runInNewContext(h.seededThreadSelectionExpression(action),{document:doc})
-    assert.equal(run('open'),true);assert.equal(run('exists'),true);assert.equal(run('selected'),false);assert.equal(run('select'),true);assert.equal(s.state.activeThreadId,h.OWNED_THREAD.id);assert.equal(JSON.stringify(s.messages),JSON.stringify([{type:'thread.select',threadId:h.OWNED_THREAD.id}]))
+    assert.equal(run('open'),true);assert.equal(run('exists'),true);assert.equal(run('selected'),false);assert.equal(run('select'),true);assert.equal(s.state.activeThreadId,h.OWNED_THREAD.id);assert.deepEqual(s.viewChanges,['chat']);assert.equal(JSON.stringify(s.messages),JSON.stringify([{type:'thread.select',threadId:h.OWNED_THREAD.id}]))
     assert.equal(run('open'),true);assert.equal(run('selected'),true);assert.equal(run('close'),true);assert.equal(s.context.open,false)
     // Execute the actual main caller span with a deferred React close commit.
     // onNavigate is real above; only its render scheduling is controlled here.
@@ -343,7 +343,7 @@ test('seeded UI selector clicks actual shipping navigation handler and checks ac
     assert.ok(begin>0&&end>begin)
     const body=source.slice(begin,end),evaluate=async expression=>vm.runInNewContext(expression,{document:doc}),waitDOM=async expression=>{if(expression==="!document.querySelector('.cm-navigation-disclosure')"){assert.equal(await evaluate(expression),false);closeWaits++}if(s.context.pendingNavigate){s.context.open=false;s.context.pendingNavigate=false}assert.equal(await evaluate(expression),true)}
     await new vm.Script('(async()=>{'+body+'})()').runInNewContext({evaluate,waitDOM,seededThreadSelectionExpression:h.seededThreadSelectionExpression})
-    assert.equal(closeWaits,1);assert.equal(s.context.open,true);assert.equal(run('selected'),true);run('close')
+    assert.equal(closeWaits,1);assert.deepEqual(s.viewChanges,['chat','chat']);assert.equal(s.context.open,true);assert.equal(run('selected'),true);run('close')
   }finally{fs.rmSync(dir,{recursive:true,force:true})}
 })
 test('seeded UI selector refuses duplicate disabled wrong-alias and stale-selection projections',async()=>{
@@ -403,13 +403,13 @@ async function freshOwnerControl(dir,{ready=false,deferClose=false,missing=false
   render();if(ready)await hydrate()
   const run=()=>new vm.Script('(async()=>{'+prefix+'})()').runInNewContext({evaluate,waitDOM,seededThreadSelectionExpression:h.seededThreadSelectionExpression,openPanel:async()=>{openCalls++;events.get('cmspark:open-coding-handoff')({detail:undefined})}})
   const readHistory=()=>compile('export function install(){'+historyEffect+'}',{open:isOpen(),threadId:state.activeThreadId,state,session:selectCodingSession(state),storeAcpEnabled:true,dispatch,crypto:{randomUUID:()=> 'owned-fresh'},chrome:{runtime:{sendMessage:(m,done)=>{wire.push(m);done()},lastError:undefined}},useEffect:(fn,next)=>{if(!historyDeps||next.some((v,i)=>!Object.is(v,historyDeps[i]))){historyDeps=next;fn()}}}).install()
-  return {run,render,hydrate,dispatch,readHistory,isOpen,wire,get state(){return state},get openCalls(){return openCalls},get hydrated(){return hydrations>0}}
+  return {run,render,hydrate,dispatch,readHistory,isOpen,wire,viewChanges:s.viewChanges,get state(){return state},get openCalls(){return openCalls},get hydrated(){return hydrations>0}}
 }
 test('fresh document waits real selected owner before opening, with late hydration and delayed navigation close',async()=>{
-  for(const variant of [{ready:false},{ready:true},{ready:false,deferClose:true}]){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-')));try{const f=await freshOwnerControl(dir,variant);await f.run();if(!f.hydrated)await f.hydrate();f.render();assert.equal(f.state.activeThreadId,'owned-history-732');assert.equal(f.isOpen(),true);f.readHistory();assert.equal(f.wire.length,1);assert.equal(f.wire[0].thread_id,'owned-history-732')}finally{fs.rmSync(dir,{recursive:true,force:true})}}
+  for(const variant of [{ready:false},{ready:true},{ready:false,deferClose:true}]){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-')));try{const f=await freshOwnerControl(dir,variant);await f.run();if(!f.hydrated)await f.hydrate();f.render();assert.equal(f.state.activeThreadId,'owned-history-732');assert.deepEqual(f.viewChanges,['chat']);assert.equal(f.isOpen(),true);f.readHistory();assert.equal(f.wire.length,1);assert.equal(f.wire[0].thread_id,'owned-history-732')}finally{fs.rmSync(dir,{recursive:true,force:true})}}
 })
 test('fresh document missing or disabled owned navigation row cannot open or query another owner',async()=>{
-  for(const mode of ['missing','disabled']){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-missing-')));try{const f=await freshOwnerControl(dir,{[mode]:true});await assert.rejects(f.run());assert.equal(f.openCalls,0);f.readHistory();assert.equal(f.wire.length,0)}finally{fs.rmSync(dir,{recursive:true,force:true})}}
+  for(const mode of ['missing','disabled']){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-missing-')));try{const f=await freshOwnerControl(dir,{[mode]:true});await assert.rejects(f.run());assert.equal(f.openCalls,0);assert.deepEqual(f.viewChanges,[]);f.readHistory();assert.equal(f.wire.length,0)}finally{fs.rmSync(dir,{recursive:true,force:true})}}
 })
 test('fresh document owner changes still close panel and refuse foreign history',async()=>{
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-owner-')));try{const f=await freshOwnerControl(dir,{ready:true});await f.run();f.render();assert.equal(f.isOpen(),true);f.dispatch({type:'SET_ACTIVE_THREAD',threadId:'foreign'});f.render();assert.equal(f.isOpen(),false);f.readHistory();assert.equal(f.wire.length,0)}finally{fs.rmSync(dir,{recursive:true,force:true})}

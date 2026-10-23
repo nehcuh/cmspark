@@ -16,9 +16,9 @@ PR735 的真实 hosted Linux 场景已完成正常 daemon 重启、既有页面�
 
 `smoke (windows-native)` 在另一台全新的 Windows VM 安装两端锁定依赖，并用原 `npm run stage:win-scripts` 准备 staged PS 布局、独立构建原 UIA／desktop fixture，串行运行原 Office 与后续定向原生／进程／确认／UNC 测试。完整 canonical 自身也发现原生 case，因此两台机器保守地重复必要准备及原 #480 控制；不跨 job 传可执行产物、profile、registry、lease 或证据。Ubuntu/macOS 及 hosted history 原门保留。
 
-六个实际 jobs 必须全部成功，不能只看旧 Windows check；`fail-fast:false` 保留，某一路失败不取消另一条证据链。不得把两个 Windows 作业改成同一桌面里的并行 native 测试，也不提高原 `--test-concurrency=1`。确定性源码契约用现有 `nsis-ci-setup.test.mjs` 和 `windows-ci-feedback-750.test.mjs` 在原生编译前执行；后者读取实际 YAML，核四记录矩阵、原命令／错误语义守恒、各 lane 的真实条件与 LF/CRLF 负控。
+七个实际 jobs（含 #758 独立 Linux X11 活动验收）必须全部成功，不能只看旧 Windows check；`fail-fast:false` 保留，某一路失败不取消另一条证据链。不得把两个 Windows 作业改成同一桌面里的并行 native 测试，也不提高原 `--test-concurrency=1`。确定性源码契约用现有 `nsis-ci-setup.test.mjs` 和 `windows-ci-feedback-750.test.mjs` 在原生编译前执行；后者读取实际 YAML，核四记录矩阵、原命令／错误语义守恒、各 lane 的真实条件与 LF/CRLF 负控。
 
-双锁 setup-node 缓存仅用于 npm 下载数据，原 npm ci／生命周期与 clean census 环境不变；不保证 canonical 命中父进程缓存。重复 tsc 尚无完整输入／emit 等价证明，本轮全部保留。真实新 head/main 的两个 Windows 终态、官方 artifact 身份和完整 tag/SHA/TAP/EOF／逐 skip 来源仍是交付门。尚未合入的 #723 first-identity 失败独立处理，不因 CI 排程优化而放行。性能结果需同时记录 native 反馈时间、完整 census 时间、总墙钟及总 job 分钟；不能用快失败声称成功加速。
+双锁 setup-node 缓存仅用于 npm 下载数据，原 npm ci／生命周期与 clean census 环境不变；不保证 canonical 命中父进程缓存。重复 tsc 尚无完整输入／emit 等价证明，本轮全部保留。真实新 head/main 的两个 Windows 终态、官方 artifact 身份和完整 tag/SHA/TAP/EOF／逐 skip 来源仍是交付门。#723 first-identity 的历史失败仍未解决；该实验入口及专属失败上传已按用户要求退出自动 CI，独立验收脚本仍保留，CI 全绿不代表 #723 完成。性能结果需同时记录 native 反馈时间、完整 census 时间、总墙钟及总 job 分钟；不能用快失败声称成功加速。
 
 
 ### #732 历史连接观察与聊天清理分离
@@ -166,6 +166,18 @@ npm --prefix chrome-extension test
 ```
 
 要求 **Node.js ≥ 22.23.4 且 < 23**（当前受支持的安全运行时范围；与 CONTRIBUTING 一致，发行 runtime 为 22.23.4）。
+
+### 未发行的 macOS picker 验收包（#705）
+
+既有 native workspace 失败诊断点另发出有界 `D705_XCODE_FAILURE` schema1 记录：只有已观察到 xcodebuild 父进程 close 后，才分别读取场景中已有的固定 `xcode.stdout` / `xcode.stderr`，每份最多 256KiB（多读一字节即整份拒绝），严格 UTF-8、私有目录/文件身份、权限、链接数及最终命名文件/FD 全元数据均须稳定。输出仅包含固定状态、每流首个完整行标记，以及首个合法 NSError 域/有符号 int32；仅四种 Foundation 域映射到固定枚举，其他域的 code 恒为 null。不输出原文、路径、userInfo、原始域名或摘要，JSON 最多 1024 字节。读取、解析和输出失败均不替代原错误或清理结果。
+
+这是父进程关闭后的稳定有界快照，不是继承日志句柄的 EOF、完整日志、两流全局顺序或根因证明。未终止的末行不解析；未知格式保持 UNKNOWN/NONE。退出码 65、未观察到启动回执，仍不能说明实际 Xcode 选择、Runner 环境或目标是否启动。原 45 秒、同实例身份/ACK、真实 UI 和关闭门禁保持不变。`companion/tests/desktop-workspace-xctest-705.test.ts` 用实际 AST producer、受控故障及真实 owned 文件验证上述边界；这些 CPU/文件控制不冒充 macOS XCTest 通过。
+
+`companion/scripts/tests/desktop-workspace-ui-705.test.mjs` 覆盖固定 Format1 `OwnedPickerUITests` 的 `UITargetAppPath=__TESTROOT__/../OwnedPicker705.app` 绑定、其它描述字段保留、最终描述文件唯一清单行及坏形状/外部路径/转换失败拒绝。构建器先完成固定 app 的签名校验，再绑定描述文件；原始描述文件和无路径的前后摘要留在 generated 工作目录，不改已签名 app 或 Runner。
+
+这些 Node/owned FS 检查不运行 XCTest，也不证明 Xcode 不会在测试方法之前启动应用。真实 changed-head CI 仍须通过原 addon 启动与身份、owner ACK、实际系统 picker 选择/取消和严格关闭/静默门禁；缺字段和 exit65 的历史因果关系保持 UNKNOWN，不增加权限、等待预算、重试或 skip。该夹具不属于发行应用载荷，开发版本仍为 0.6.14。
+
+macOS runner startup 的 `bundle_url` 使用唯一目录 URL 表示（末尾一个 `/`），`executable_url` 仍严格匹配文件 URL。Swift producer 明确 `isDirectory:true`；Node consumer 不对回执做 trim、URL 重写或容忍替代表示。`foundation-startup.json` 是 Foundation/ownedFS 原语生成的完整冻结回执，旁附源与字节摘要；CPU 回归直接消费该回执并证明旧 consumer 拒绝，同时保留外部路径、重复斜杠、query/fragment 和错误可执行文件 URL 拒绝。冻结 PID 仅是测试数据，不用于进程发现或信号。
 
 ## Companion 测试地图
 
@@ -447,6 +459,23 @@ Required later Windows checks: usable PrintWindow, overlapped BitBlt, stable sam
 
 `computer-capture-native-controls-723.test.ts` runs inert helpers and whole-callback VM controls. `computer-capture-windows-native-723.test.ts` registers five Windows-only hard cases automatically discovered once by the existing canonical Windows CI runner (no duplicate #572 step entry): default real PrintWindow, passive minimized/nonforeground refusal, forced-after-real-PrintWindow BitBlt partial and owned NOACTIVATE overlay occluded. Each retains fresh owned WPF/real helper children through close under45s/15s remaining budgets. No screenshots/raw metadata are printed. The one test-only variant changes observed printed=false after the actual PrintWindow call and is inverse-checked; it is not natural PrintWindow failure or a production option. Only the exact changed-head five-mode Windows result can complete this gate; the #572 UIA job alone does not prove this capture path.
 
+
+### #476 terminal acceptance within the #705 / #747 composition
+
+`desktop-terminal-work-705`, `desktop-terminal-renderer-705` and `desktop-terminal-native-controller-705` are guarded CPU/source controls for the actual HMAC channel, terminal actor, canonical thread store, existing PTY API with an inert spawn callback, and exact controller/renderer source. The renderer host is a controlled DOM/xterm seam; no browser, native window, real PTY process or human approval is claimed. The same-owner terminal shell confirmation must leave `readPtyTail` unavailable; the existing model-tail grant is separate.
+
+The isolated terminal-runtime acceptance adapter consumes an explicitly prebound canonical root and advertises no Agent capability. The composed product retains #705 workspace selection, read-only Explorer and Agent methods under method-set v10; its full local-runtime actor and the terminal-only injected actor are selected exclusively per connection. Keep current archive/browser capability members and ACP execution claims; the existing PTY core is unchanged. Closed metadata is retained for explicit return until a later open actually succeeds, then retired; a close request does not free the backend's actual closing slot. Normal configuration, source-reading consumers, fixed offline assets/integrity, and finite negative controls remain required.
+
+Independent changed-head Windows/macOS terminal-native acceptance is **NOT_RUN** for this candidate: actual native confirmation → owned PTY/xterm keyboard/Unicode/resize/Stop/actual close → explicit selected-return confirmation → same-thread durable reopen. Original45s native lifetime, owner/nullcaller, cleanup and strict foreground oracles are not weakened. The composition also retains the #705 workspace picker/XCTest/ACP native callbacks and their independent assertions. Source integration does not complete them; no skip, unchanged rerun or CPU substitute completes those gates or whole #476.
+
+### #476 用户终端的远端原生载体
+
+`build-desktop-native.mjs --test-fixtures` 生成不随产品交付的 `acceptance/terminal`，沿现有 `desktop-native-thread-metadata-476.test` 串行文件与 surface lease 验收。新增回调要求实际 GitHub Actions Windows/macOS、canonical owned 数据目录与真实 @lydell PTY；无 MockPty、平台冒充、testSetSpawn 或回执伪造。它涵盖原生拒绝／取消零启动、真实 shell Unicode 与超过16KiB输出、逐帧 ACK、resize、Stop／实际进程退出及 partial 摘录的原对话重开。原生按钮和键盘激活是合成测试而非人工批准。本机禁止运行；CPU 控制与 native 编译／运行结果分开记账，不以载体存在称为 native PASS。
+
+Windows 验收控制器仅通过本次自有 WebView2 COM 对象串行发送固定 `Input.dispatchKeyEvent`，逐字符后 Enter；每次完成回调后才发下一事件，最多一个活动动作与一个待处理固定动作。它验收原生宿主浏览器引擎输入 → 实际 renderer/xterm → 实际 PTY，不证明 Win32 键盘队列、物理键盘或真人操作。当前文档／owner／epoch、真实前台、`isTrusted`／activeElement、原生确认和45秒边界仍严格要求；未清空输入不得完成，不使用 focus rescue、DOM 假事件或 `insertText`。CPU 源码控制不证明这些原生条件已通过，原 Windows 超时的唯一原因仍未知。
+
+终端输出验收的两个观察器均要求公开 active buffer 中的完整 `D476_TERMINAL_中`。Node 侧独立使用同一固定 xterm 包，按实际成功 open 的尺寸初始化，串行处理原始字节、实际 write callback 和成功 resize；DONE 等待已捕获队列，原 abort 仍立即拒绝。页面侧仅在未发货夹具中捕获真实 Terminal，并核同文档、generation、operation 和 holder 后读取；不替换产品 parser。硬换行、erase、空 alternate buffer、只有“中”和 foreign operation 均不能补成阳性。惰性 CPU 控制的 DOM/input seams 仍为受控对象，no-open parser 只证明解析语义；原生确认、真实 PTY、窗口输入、选择回传和退出仍由正常 Windows/macOS CI 验收。
+
 ## #732 ACP 最小历史的 Windows 私有存储验收
 
 `companion/tests/acp-history-native-732.test.ts` 由原 canonical test discovery 收集，不增 runner 列表。它仅在 Windows 执行；非 Windows 的两个 skip 不代表 NTFS 通过。Windows 回调在任何临时文件或 PowerShell 操作前要求既有 hosted 标记 `GITHUB_ACTIONS=true` 且 `RUNNER_OS=Windows`，手工本机运行固定拒绝，不用伪造变量启动。该夹具标记不是运行身份认证，最终证据仍须绑定真实受审 GitHub head/job/run。
@@ -589,6 +618,26 @@ This CPU regression is not a changed-head hosted/browser or native PASS.
 `cockpit-bridge-cdp-lifecycle.test.mjs` 直接执行真实 controller 的完整 `aborted`／`Cdp`，使用惰性 EventTarget 协议 seam，核空 target snapshot／Runtime.enable 已 ACK 后的关闭、并发命令与事件等待、已关闭入口、原对象 abort、原匹配结果及 malformed／迟到事件。LF/CRLF 均覆盖事件等待；此类 CPU 不建立 WebSocket、Chrome 或原生正证。命令 Map 与事件等待独立，transport close 必须使二者拒绝，并在成功／拒绝／abort 后退订；不能让终态错误拖到外层 deadline。
 
 这不证明6521真的发生了 CDP close，旧 worker 缺失／启动失败／具体剩余时长仍 UNKNOWN。原 first-identity 真实窗口、认证 WS、parent-zero 拒绝和 Job 真实 close／清理仍必须由精确新 head 的 Windows 证明；不得延45秒或添加猜测启动参数、强制唤醒／缓存旧目标。
+
+
+## 聊天事项与语义设置（#752–#754）
+
+Companion `activity-752.test.ts`、`settings-assistant.test.ts`、`personal-workspace-transport.test.ts` 执行真实服务/存储/处理器；fixture 来自实际返回，使用独立临时目录和惰性适配器。覆盖默认关闭、来源与候选、明确确认、提醒持久状态/迟到回执、暂停后的留存、owner/旧值/过期和认证拒绝。既有路由锁步、Board/MCP/Meeting 消费者随影响范围回归。扩展 `activity-workspace-752.test.ts`、`semantic-settings.test.ts`、`workspace-sender.test.ts` 使用真实组件/生产回调，覆盖最近来源、日期精度、语义方案选择与可信页面边界。
+
+`chrome-extension/scripts/render-workspace-fixture.cjs` 与 `personal-workspace-ui-fixture.cjs` 可构建真实 App 的受控演示；后者使用真实后台处理器和独立临时数据，替换采集、模型和通知。当前证据及完整命令见 [机器报告](audit/reviews/2026-10-21-chat-action-workspace-machine.md)。这些检查不证明真实 TCC/屏幕录制/Vision、模型准确率或通知展示，不能替代平台现场验收。
+
+
+## 活动记录平台适配（#758）
+
+`activity-platform-758.test.ts` 验证真实服务的适配器选择、PNG/WS 预算、导入权限和迟到结果、手动来源日期、Windows Passive 路径/身份/桌面/权限、固定 OCR 和系统通知退出状态。`activity-platform-native-758.test.ts` 仅在显式原生 driver 中启用，复用原 `native-surface-650` 桌面 lease；Windows hosted 自有 WPF 窗口验证实际 helper/WinRT OCR/不抢焦点/最小化拒绝和通知提交。Linux `cd companion && bash scripts/test-activity-x11-758.sh`总是创建私有 D-Bus 和 Xvfb，实际 XRes/焦点/像素/Tesseract、伪造 PID、遮挡、最小化、XScreenSaver 与通知提交均执行。桌面屏幕锁定 D-Bus 协议使用明确的受控服务，测试 true/false/服务退出后 unknown 拒绝；这不是实际 GNOME/KDE 锁屏的证明。原生 driver 依赖见 CI 新 Linux lane；不连接真实聊天、模型或现有安装配置。
+
+`node --test scripts/tests/activity-notifier-package.test.cjs` 执行真实 esbuild 通知模块产物，在没有源 node_modules 的独立目录核固定 sidecar/缺失资源拒绝，以及实际 staging 字节和两个 Windows 打包入口；不以开发 resolve 代替 SEA 资源闭包。
+
+普通无桌面全量会明确跳过这个原生家族；CI 另设 Linux X11 和 Windows native 的实际执行门。通知请求提交不证明视觉展示或已读；Wayland 的自动采集保持不支持，主动导入/本地识别由真实 App 受控浏览器验证。
+
+### #757 与 Node 安全／原生阶段 CI 的组合
+
+新增 Linux X11 job 与其余 CI job 一样固定 Node 22.23.4；Windows notifier staging 使用 SEA 已校验并用于复制的同一 `$NodeExe`。`node-security-runtime-759.test.mjs` 核 CI 四处、release 两处 setup-node 及全部十次直接 Node 调用，不以更新计数代替逐项版本和身份断言。750 契约先核完整 #758 新对象与 #760 四阶段，再投影到不变历史基线；保留 #723 两个退休自动步骤的禁入控制。组合的源码／CPU 结果仍不代替新 head 与 main 的七项真实 CI。
 
 ## Windows conversation-save rename recovery
 

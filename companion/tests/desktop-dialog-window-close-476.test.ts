@@ -17,6 +17,8 @@ function closeBranch(name: "confirmation_proc" | "proc", source = cpp) {
 function calls(name: "confirmation_proc" | "proc", message = 16, source = cpp) {
   const events: string[] = []
   const result = closeBranch(name, source)(message, 16, {
+    retire_local() { events.push("cancel-owned-local") },
+    retire_workspace() { events.push("retire-owned-workspace") },
     retire_browser(all: boolean) { assert.equal(all, true); events.push("retire-browser-state"); return true },
     retire_archive() { events.push("retire-archive-state") },
     retire_dialog() { events.push("stop-owned-chat") },
@@ -28,7 +30,7 @@ test("closing only the MCP confirmation title bar denies it without stopping an 
   assert.deepEqual(calls("confirmation_proc"), { result: 0, events: ["deny-this-confirmation"] })
 })
 test("closing the actual main window still retires its captured chat before destroying the host", () => {
-  assert.deepEqual(calls("proc"), { result: 0, events: ["retire-browser-state", "retire-archive-state", "stop-owned-chat", "deny-this-confirmation", "destroy-main"] })
+  assert.deepEqual(calls("proc"), { result: 0, events: ["cancel-owned-local", "retire-owned-workspace", "retire-browser-state", "retire-archive-state", "stop-owned-chat", "deny-this-confirmation", "destroy-main"] })
 })
 test("the close branch does not execute its actions for another window message", () => {
   for (const name of ["confirmation_proc", "proc"] as const) assert.deepEqual(calls(name, 5), { result: undefined, events: [] })
@@ -39,17 +41,20 @@ test("the close branch does not execute its actions for another window message",
 test("archive-aware main close preserves exact retirement order across checkout EOLs and rejects omissions", () => {
   function verify(source: string) {
     assert.deepEqual(calls("confirmation_proc", 16, source), { result: 0, events: ["deny-this-confirmation"] })
-    assert.deepEqual(calls("proc", 16, source), { result: 0, events: ["retire-browser-state", "retire-archive-state", "stop-owned-chat", "deny-this-confirmation", "destroy-main"] })
+    assert.deepEqual(calls("proc", 16, source), { result: 0, events: ["cancel-owned-local", "retire-owned-workspace", "retire-browser-state", "retire-archive-state", "stop-owned-chat", "deny-this-confirmation", "destroy-main"] })
     for (const name of ["confirmation_proc", "proc"] as const) assert.deepEqual(calls(name, 5, source), { result: undefined, events: [] })
   }
   for (const source of [cpp, cpp.replace(/\r?\n/g, "\r\n")]) verify(source)
-  const actual = "if(!self->retire_browser(true))ExitProcess(46);self->retire_archive();self->retire_dialog();self->retire_confirmation(0);DestroyWindow(hwnd);"
+  const actual = "self->retire_local();self->retire_workspace();if(!self->retire_browser(true))ExitProcess(46);self->retire_archive();self->retire_dialog();self->retire_confirmation(0);DestroyWindow(hwnd);"
   assert.equal(cpp.split(actual).length, 2)
   for (const changed of [
+    actual.replace("self->retire_local();", ""), actual.replace("self->retire_workspace();", ""),
+    actual.replace("self->retire_local();", "self->retire_local();self->retire_local();"),
+    actual.replace("self->retire_local();", "").replace("self->retire_archive();", "self->retire_local();self->retire_archive();"),
     actual.replace("if(!self->retire_browser(true))ExitProcess(46);", ""), actual.replace("retire_browser(true)", "retire_browser(false)"),
     actual.replace("self->retire_archive();", ""), actual.replace("self->retire_dialog();", ""),
     actual.replace("self->retire_confirmation(0);", ""), actual.replace("DestroyWindow(hwnd);", ""),
-    "DestroyWindow(hwnd);if(!self->retire_browser(true))ExitProcess(46);self->retire_archive();self->retire_dialog();self->retire_confirmation(0);",
+    "DestroyWindow(hwnd);self->retire_local();if(!self->retire_browser(true))ExitProcess(46);self->retire_archive();self->retire_dialog();self->retire_confirmation(0);",
   ]) assert.throws(() => verify(cpp.replace(actual, changed)))
   assert.throws(() => verify(cpp.replace("if(message==WM_CLOSE){self->retire_confirmation(0);return 0;}", "if(message==WM_CLOSE){self->retire_archive();self->retire_confirmation(0);return 0;}")))
 })
@@ -57,8 +62,10 @@ test("archive-aware main close preserves exact retirement order across checkout 
 test("failed browser retirement exits before main close can retire chat or destroy the host", () => {
   const events: string[] = []
   assert.throws(() => closeBranch("proc")(16, 16, {
+    retire_local() { events.push("cancel-owned-local") },
+    retire_workspace() { events.push("retire-owned-workspace") },
     retire_browser(all: boolean) { assert.equal(all, true); events.push("browser-refused"); return false },
     retire_archive() { events.push("archive") }, retire_dialog() { events.push("dialog") }, retire_confirmation() { events.push("confirmation") },
   }, () => events.push("destroy"), 0, (code: number) => { assert.equal(code, 46); throw Error("EXIT_46") }), /EXIT_46/)
-  assert.deepEqual(events, ["browser-refused"])
+  assert.deepEqual(events, ["cancel-owned-local", "retire-owned-workspace", "browser-refused"])
 })

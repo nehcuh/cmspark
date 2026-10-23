@@ -12,6 +12,13 @@ import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "../voice/session-caps"
 import { validateProjectRequest } from "../threads/project-store"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import { validBinaryDriftMessage } from "../apps/binary-drift-state"
+import { validateActivityMessage } from "../activity"
+import { validateSettingsAssistantMessage } from "../settings-assistant"
+
+function personalWorkspaceSchema(message: any): WsValidationResult {
+  const valid = message.type.startsWith("settings.assistant.") ? validateSettingsAssistantMessage(message) : validateActivityMessage(message)
+  return valid ? { valid: true } : { valid: false, error: "Invalid personal workspace request" }
+}
 function projectSchema(message: any): WsValidationResult {
   const { type, id, ...rest } = message
   if (id !== undefined && (typeof id !== "string" || id.length > 200)) return { valid: false, error: "Invalid project correlation" }
@@ -46,6 +53,20 @@ export function validateWsMessage(msg: any): WsValidationResult {
 
   // Known message types with required field validation
   const validators: Record<string, (m: any) => WsValidationResult> = {
+    "activity.state": (m) => personalWorkspaceSchema(m),
+    "activity.apps": (m) => personalWorkspaceSchema(m),
+    "activity.configure": (m) => personalWorkspaceSchema(m),
+    "activity.import": (m) => personalWorkspaceSchema(m),
+    "activity.scan": (m) => personalWorkspaceSchema(m),
+    "activity.analyze": (m) => personalWorkspaceSchema(m),
+    "activity.source": (m) => personalWorkspaceSchema(m),
+    "activity.delete": (m) => personalWorkspaceSchema(m),
+    "todo.confirm": (m) => personalWorkspaceSchema(m),
+    "todo.create": (m) => personalWorkspaceSchema(m),
+    "todo.update": (m) => personalWorkspaceSchema(m),
+    "todo.dismiss": (m) => personalWorkspaceSchema(m),
+    "settings.assistant.propose": (m) => personalWorkspaceSchema(m),
+    "settings.assistant.apply": (m) => personalWorkspaceSchema(m),
     "cockpit.bridge.hello": m => validCockpitBridgeMessage(m) ? { valid: true } : { valid: false, error: "Invalid cockpit bridge identity" },
     "cockpit.bridge.bound": m => validCockpitBridgeMessage(m) ? { valid: true } : { valid: false, error: "Invalid cockpit bridge identity" },
     "cockpit.bridge.retire": m => validCockpitBridgeMessage(m) ? { valid: true } : { valid: false, error: "Invalid cockpit bridge identity" },

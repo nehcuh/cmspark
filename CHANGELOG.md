@@ -10,6 +10,14 @@
 
 - Fix (Windows): retry only transient EPERM/EACCES/EBUSY failures of the existing atomic JSON/text replacement, with five attempts and 150 ms of scheduled waits. Preserve synchronous config updates, original files on terminal failure, and existing permissions. Add real Windows conversation-save lock/release and persistent-lock regressions; this does not identify the user's external lock owner.
 
+- Sync the terminal retirement source contract with the current separate connect/offline cleanup paths; retain local retirement and stale-socket rejection.
+
+- Windows Job cwd 使用 Node URL 构造器，保持文件 URL 路径行为并兼容测试中的 DOM 类型。
+
+- Fix (#705/#747): serve Windows offline desktop resources through the existing nonce-aware exact-URL handler, removing the competing virtual-folder mapping and rejecting failed navigation/filter/handler registrations. Preserve #705 local/workspace retirement, all seven resources and the two-marker nonce helper. Source controls do not establish native acceptance or explain historical macOS exit65/Windows refusals.
+
+- Refs #747: terminal acceptance checks the complete marker in each actual xterm parser's active buffer after real write callbacks. The independent Node observer serializes original bytes and successful resizes; the unshipped form binds its actual Terminal to the owned operation and document. Preserve full-marker, trusted input, ACK, selected-return, real exit and 45-second requirements. CPU controls do not establish a historical native cause or replace Windows/macOS acceptance.
+
 - Test reliability (#625): publish the concurrent registration fixture's complete grant receipt by an exclusive temporary write and rename. Seeing the final file now means its JSON was fully written; preserve real competing registration, live-grant checks and the existing wait limits.
 
 - Fix (#732): settle hosted Xvfb display readiness on terminal pipe/process events and reject a display whose owning process has already exited before starting Chrome. Reuse the same consumer in the supplier witness and history business; retain display framing, original deadlines, owned cleanup and all history assertions. Add finite pre-cleanup observations; the physical cause of the earlier hosted failure remains unknown.
@@ -20,11 +28,34 @@
 
 - Fix (#476): compare desktop history file identities as exact 64-bit integers before reading the opened transcript. Distinct device/inode values must not become equal through JavaScript Number rounding. Retain the real replacement regression and add large-identity acceptance/refusal controls; no CI gate or timeout is changed.
 
+- CI / packaging (#757/#758/#759/#760): compose activity acceptance with the pinned Node 22.23.4 runtime and separated native stages. Pin the added X11 job, bind Windows notifier staging to the validated SEA executable, and update exact workflow/dispatch consumer inventories. Retain all activity assertions and the authorized retirement of only the two automatic #723 first-identity steps; this composition does not claim their native cause is fixed.
+
 - Refs #723: remove the experimental Chrome/native first-identity gate and its dedicated failure upload from automatic CI at the user's request. Keep the independent acceptance scripts and CPU controls; all other CI gates remain required. CI success does not establish #723 native identity or masking readiness.
 
 - Security (#759): upgrade packaged Node, all CI/release jobs, native build headers/import library and the digest-pinned validation image to Node 22.23.4 for the [2026-10-21 Node security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). Development engines now require `>=22.23.4 <23`; Windows SEA and native packaging require exact 22.23.4. Windows SEA resolves one executable and reuses it for validation, direct Node build calls and the embedded base. Node 24/26 are not yet qualified. This runtime security update does not establish the cause of existing Windows native CI failures. Product version remains 0.6.14 (unreleased).
 
 - CI (#760): report native fixture build, test compilation, bootstrap/process acceptance and desktop interaction acceptance as separate ordered steps, preserving commands, failure handling, Windows/macOS checks and all native assertions. This improves failure attribution without claiming the outstanding Windows failures are fixed.
+
+- #705 修复未发行 macOS picker 验收的目录 URL 字节合同：Swift 明确生成目录 URL，Node 严格匹配唯一带末尾斜杠的 runner bundle URL；补真实 Foundation 回执回归，原身份、ACK、静默与实际关闭门禁不变。此项不证明历史 exit65 原因或原生验收通过。
+
+- #464 ACP v1 初始化改用标准 `clientCapabilities` 字段，保留原文件/终端能力全部关闭、超时和响应拒绝；补实际 JSON-RPC 请求捕获回归测试，并说明网页 diff 已支持的明确未加引号文本重命名。字段校准不证明真实 Agent 兼容或业务验收，#464 整票仍为 Partial。
+
+- #705 在现有 macOS picker 失败点增加父进程关闭后的有限 Xcode 日志快照：只发布固定状态、标记和允许的错误域/码，保留私有文件/FD 边界、原错误及清理语义；退出 65 的实际根因和原生验收仍为未知，未改变 45 秒或启动/身份/ACK 门禁。
+
+- #705 未发行的 macOS picker 验收包将 Format1 描述文件的唯一 UI 测试目标绑定到已构建并签名的固定 owned app；清单记录最终描述文件字节，保留原描述文件证据。此项不证明历史 exit65 根因，真实启动、身份/ACK、选择取消与关闭门禁仍须新 head 原生验收。
+
+- 活动记录增加 Windows / Linux X11 被动采集、平台应用身份、本地 OCR 语言与系统通知回执；Wayland/受限环境提供主动 PNG 导入，保留人工确认和来源未知边界（#758）。
+
+- Refs #752–#754：新增个人工作中心（今日、待办、资料与活动记录），侧栏保留对话入口；指定 macOS 前台应用截图与本地 OCR 默认关闭，模型分析单独选择。候选经用户确认后成为待办，保留来源并分别跟踪处理与反馈；本机后台服务持久安排提醒，明确系统通知提交不代表已读。无接口聊天不能覆盖不可见的群与历史；其他平台暂不支持此截图路径。
+- Refs #754：一句话设置接入模型语义候选与逐项预览，显式确认后沿用原配置保存并读取核对。语音结束只填草稿；权限、语音偏好、记录与提醒策略需要在对应入口单独核对，不虚构自动应用结果。
+
+- Refs #747: route Windows offline desktop assets through the existing nonce-aware, exact-URL response handler instead of virtual-folder mapping, which bypassed that handler. Fail closed if nonce/navigation or resource-handler registration fails; keep CSP and all native acceptance assertions. Source-derived nonce regressions do not replace Windows native validation or explain the separate heap-crash receipt.
+
+- Refs #747: terminal acceptance observes the owned PTY PID when real data arrives, allowing the locked Windows implementation's initial PID 0; completion still requires a positive stable PID on the same handle and actual exit. Added inert real-producer regressions; native Windows acceptance remains required.
+
+- Refs #747/#476: add a closed first-observed refusal code to the unshipped terminal acceptance fixture only; preserve original failures, native45s, authority and cleanup. Codes identify original rejection groups, not Windows physical causes; current native failure remains blocking.
+
+- **#476 桌面用户终端开发候选**：从已明确绑定的对话目录，经原生确认进入原单 PTY 与离线 xterm；所选终端摘录另行确认后保存到原对话。目录缺失诚实不可用，该早期终端独立候选不含桌面 Agent／新目录选择；当前组合保留 #705 的工作区选择和 Agent 路径，两者仍须各自原生验收。不自动开启模块、默认目录或模型尾部读取。保留当前归档／浏览器与 ACP claims；当前组合的真实 Windows/macOS 原生验收尚未执行，不发版、不关闭整票。
 
 - Refs #723/#755: bind the native-host registrar’s six filesystem reads to the built-in PowerShell Management module after a bounded Windows command-resolution comparison; retain ownership, reparse checks and cleanup. Native full-flow acceptance remains required.
 

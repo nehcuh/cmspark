@@ -1,7 +1,7 @@
 {
   "name": "cmspark-agent",
   "version": "0.6.14",
-  "description": "Local companion for CMspark Browser Agent — manages LLM calls, skills, threads, and operation history. Now with cross-platform system tray.",
+  "description": "Local companion for CMspark Browser Agent \u2014 manages LLM calls, skills, threads, and operation history. Now with cross-platform system tray.",
   "bin": {
     "cmspark-agent": "./dist/index.js"
   },
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "prebuild": "node scripts/generate-meeting-capture.mjs --check && node scripts/generate-tray-icons.mjs",
-    "build": "tsc && node -e \"const fs=require('fs'),p=require('path');fs.mkdirSync('dist/computer',{recursive:true});fs.copyFileSync('src/computer/qwen-vl-worker.py','dist/computer/qwen-vl-worker.py');process.platform!=='win32'&&fs.chmodSync('dist/index.js',0o755)\"",
+    "build": "tsc && node -e \"const fs=require('fs'),p=require('path');fs.mkdirSync('dist/computer',{recursive:true});fs.copyFileSync('src/computer/qwen-vl-worker.py','dist/computer/qwen-vl-worker.py');fs.mkdirSync('dist/activity',{recursive:true});fs.copyFileSync('src/activity/linux-recorder.py','dist/activity/linux-recorder.py');process.platform!=='win32'&&fs.chmodSync('dist/index.js',0o755)\"",
     "test": "node scripts/generate-meeting-capture.mjs --check && node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node scripts/run-tests.mjs",
     "start": "node dist/index.js start",
     "dev": "tsx src/index.ts start",
@@ -49,7 +49,9 @@
     "sql.js": "^1.14.1",
     "systray2": "^2.1.4",
     "ws": "^8.17.0",
-    "zod": "^3.23.0"
+    "zod": "^3.23.0",
+    "@xterm/xterm": "6.0.0",
+    "@xterm/addon-fit": "0.11.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/server-filesystem": "1.0.0",

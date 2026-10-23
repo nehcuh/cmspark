@@ -12,6 +12,7 @@
 | 文档 | 坐标（摘要） | 说明 |
 |------|----------------|------|
 | [release-status.md](release-status.md) | **交付状态** | 源码版本、正式发行包、已合并能力与待验收边界 |
+| [personal-workspace.md](personal-workspace.md) | **个人工作中心 · 开发分支** | 聊天来源待办、督办、持久提醒与语义设置；默认关闭，真实原生验收待完成 |
 | [workspace-ui.md](workspace-ui.md) | **Operate** | 响应式对话工作区、导航、历史、输入和设置 |
 | [../README.md](../README.md) | 全景 | 家 = 已登录 Chrome；Capture / 租手 / 安装 |
 | [../PRODUCT.md](../PRODUCT.md) | 产品句 | 四面 Capture·Operate·Confirm·租手 |

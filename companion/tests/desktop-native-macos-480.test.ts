@@ -91,7 +91,7 @@ test("real binding retains bootstrap when only owned subdaemon standard descript
 test("actual native bootstrap refuses boolean protocol and duplicate/escaped duplicate fields before network",{skip:process.platform!=="darwin",timeout:20000},()=>{
  const {spawnSync}=require("node:child_process") as typeof import("node:child_process")
  const binary=path.resolve(__dirname,"../../dist/desktop-native/cmspark-desktop")
- const base={capability_id:"11".repeat(16),secret:"22".repeat(32),url:"ws://127.0.0.1:1/desktop",protocol_version:1,issued_method_set_version:8}
+ const base={capability_id:"11".repeat(16),secret:"22".repeat(32),url:"ws://127.0.0.1:1/desktop",protocol_version:1,issued_method_set_version:10}
  const canonical=JSON.stringify(base)
  for(const body of [JSON.stringify({...base,protocol_version:true}),canonical.replace('"protocol_version":1','"protocol_version":1,"protocol_version":1'),canonical.replace('"protocol_version":1','"protocol_version":1,"\\u0070rotocol_version":1')]){const r=spawnSync(binary,[],{input:body,stdio:["pipe","ignore","ignore"],timeout:5000,env:{PATH:"/usr/bin:/bin"}});assert.equal(r.status,15)}
 })
@@ -159,7 +159,7 @@ test("acceptance source fixed manifest stages no acceptance controller or execut
  const sourceRoot=path.resolve(__dirname,"../.."),{desktopIntegrity,stageDesktop}=require(path.join(sourceRoot,"scripts/desktop-artifacts.mjs")),build=require(path.join(sourceRoot,"scripts/build-desktop-windows.mjs"))
  const root=fs.mkdtempSync(path.join(process.env.CMSPARK_DATA_DIR!,"acceptance-stage-"))
  try{for(const platform of ["darwin","win32"]){
-  const source=path.join(root,platform),dest=path.join(root,platform+"-package"),names=[platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop","desktop-launcher.node","assets/index.html","assets/app.css","assets/app.js",...(platform==="win32"?["licenses/WebView2.LICENSE.txt"]:[])]
+  const source=path.join(root,platform),dest=path.join(root,platform+"-package"),names=[platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop","desktop-launcher.node","assets/index.html","assets/app.css","assets/app.js","assets/local-work.js","assets/terminal-core.js","assets/terminal-fit.js","assets/terminal.css","assets/terminal-core.LICENSE.txt","assets/terminal-fit.LICENSE.txt",...(platform==="win32"?["licenses/WebView2.LICENSE.txt"]:[])]
   for(const name of [...names,"acceptance/parent/parent-exit.receipt","acceptance/hostile/cmspark-desktop","acceptance/inheritance/desktop-inheritance.node"]){const file=path.join(source,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,"inert-build-only",{flag:"wx"})}
   const integrity=desktopIntegrity(source,platform);assert.deepEqual(Object.keys(integrity.files),names);fs.writeFileSync(path.join(source,"integrity.json"),JSON.stringify(integrity));stageDesktop(source,dest,platform)
   assert.equal(fs.existsSync(path.join(dest,"bin/desktop-native/acceptance")),false);assert.deepEqual(desktopIntegrity(path.join(dest,"bin/desktop-native"),platform),integrity)

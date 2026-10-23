@@ -15,10 +15,13 @@ import { bindProjectConfirmationProbe } from "../threads/project-activity"
 import { codingHandbackView } from "../acp/ui-progress"
 import { randomUUID } from "crypto"
 import { DesktopIdentityRegistry } from "../desktop/identity"
+import {commitNativeLocalHandback} from "../desktop/local-handback"
+import {createNativeLocalWorkRuntime} from "../desktop/local-work-runtime"
 import { createNativeDialogRuntime } from "../desktop/dialog-runtime"
 import { desktopBrowserPeer, handleDesktopBrowserPeerResult } from "../desktop/browser-peer"
 import type { DesktopBrowserRun } from "../desktop/browser"
 import { createDesktopChannel, attachDesktopUpgrade } from "../desktop/channel"
+import { createNativeTerminalRuntime } from "../desktop/terminal-runtime"
 import { DesktopHostLauncher } from "../desktop/host-launcher"
 import { requestDesktopOpen } from "../desktop/open"
 import http from "http"
@@ -33,6 +36,7 @@ import {
 } from "../config"
 import { handleMessage, redactMcpServersForBroadcast, listLlmActiveThreadIds } from "../message-router"
 import { projectThreadActivity } from "../message-router/handlers/projects"
+import { isModuleEnabled } from "../capability/modules"
 import { redactConfigForWire } from "../config-redact"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
@@ -79,6 +83,7 @@ import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
 import { surfaceFromOrigin, isChromeExtensionWsOrigin } from "./handshake-surface"
+import { getActivityService } from "../activity"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 import {
   bindExtensionPeerPicker,
@@ -689,6 +694,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           diffSummary: session.diff_summary || null,
           paths: (session.pending_diffs || []).map((d) => d.relPath).filter(Boolean),
         })
+        if(commitNativeLocalHandback(session,content))return
         const msg = tm.addMessage(session.thread_id, {
           thread_id: session.thread_id,
           role: "assistant",
@@ -779,6 +785,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   httpServer.on("listening", () => {
     console.log(`[cmspark-agent] Companion started on ws://127.0.0.1:${port}`)
     logger.info("server.listening", { port })
+    // Explicit opt-in is persisted; opening a UI is not required for confirmed reminders.
+    try { getActivityService().start() } catch { logger.warn("activity.start_failed") }
     scheduleWhisperPrewarm()
     // P3a HUD spike: if tray is co-located in this process, run full in-process
     // open→hydrate→confirm→standby. Dual-process (normal tray + server) is driven
@@ -815,10 +823,13 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     maxPayload: MAX_WS_MESSAGE_SIZE,
     securityConfirmations: requireRt().securityConfirmations,
     archiveActivity: id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target)),
+    terminalRuntime: createNativeTerminalRuntime(id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target))),
     browserPeers: () => [...clients].filter(c => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin)).map(c => desktopBrowserPeer(c, () => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin))),
     onAuthenticated: host => desktopLauncher.authenticated(host),
     dialogRuntime: owner => createNativeDialogRuntime({ ...owner, threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), history: requireRt().getHistoryStore(), createExecutor: run => requireRt().createToolExecutor(owner.ws, run) }),
-    onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws) },
+    localRuntime: createNativeLocalWorkRuntime({threads:requireRt().getThreadManager(),activity:id=>projectThreadActivity(id,key=>listLlmActiveThreadIds().includes(key))}),
+    workspaceRuntime: { enabled: () => isModuleEnabled("devsec-workspace"), activity: id => projectThreadActivity(id, key => listLlmActiveThreadIds().includes(key)) },
+    onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws); try { require("../pty/session").killPtyByPeer(ws) } catch { /* Continue desktop teardown if PTY cleanup fails. */ } },
   })
   desktopLauncher = new DesktopHostLauncher(desktopRegistry, `ws://127.0.0.1:${port}/desktop`, (host, view) => desktopChannel.window(host, view))
   wss = attachWssListenThenStartMcp({
@@ -1671,6 +1682,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
 
   // Graceful shutdown
   const shutdown = async (signal: string) => {
+    // Fence passive collection and wait for owned work before shutting down transports.
+    try { await getActivityService().stop() } catch { logger.warn("activity.stop_failed") }
     // Stop enterprise admission and fence late work before any awaited teardown.
     try { closeEnterpriseHttp() } catch { logger.warn("enterprise.shutdown_failed") }
     desktopLauncher.close()

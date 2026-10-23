@@ -1,5 +1,7 @@
 # Windows 开发与失败定位
 
+同时编译 Node 与 DOM 类型时，Windows Job 的 cwd 使用从 `node:url` 导入的 URL 构造器收窄；不依赖可能由 DOM 声明合并的全局 `URL`。字符串与文件 URL 仍走原路径规范化及所有权检查。
+
 安装器与 ZIP 卸载的进程查询先以固定两名称 WQL `-Filter` 请求 `node.exe` 或 `cmspark-agent.exe`，随后仍执行原完整 Name／ExecutablePath／安装目录和系统 Node 首脚本／模式检查。不得把安装路径拼进 WQL 或以过滤替代所有权检查。NSIS 观察器须匹配真实查询全文，并保留整脚本 BOM／CRLF 字节逆变换。`cim-enter` 在命令调用前，未出现首行不能区分命令解析、查询初始化或 CIM 内部等待；过滤不保证 provider 内部免全扫描，也不证明历史超时根因。原完整 Windows stop／sibling 存活验收及 30 秒上限保留。接口依据：[Get-CimInstance 5.1 的 Filter](https://learn.microsoft.com/en-us/powershell/module/cimcmdlets/get-ciminstance?view=powershell-5.1)。
 
 Windows 继承验收须区分句柄数值槽位与内核对象身份：`GetHandleInformation` 成功只能证明当前槽位有效，不能证明它是父进程的原 protected pipe/process。#480 sibling 夹具在恢复 suspended checker 前，由父进程以不可继承、零访问权副本及 `CompareObjectHandles` 核三份原对象，raw exit mask 与 identity mask 分开保存；真实泄漏、缺少／UNKNOWN 身份、checker 或 cleanup 失败仍拒绝。源码受控反例不认定历史失败槽位的实际对象，历史原因保持 UNKNOWN；原生门禁、权限、原累计时限均不删改，也不重置旧诊断上限。官方接口依据：[GetHandleInformation](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-gethandleinformation)、[CompareObjectHandles](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-compareobjecthandles)。
@@ -148,3 +150,10 @@ CI, Windows SEA packaging and native builds use exact Node 22.23.4, including ma
 编译、协议、Windows HANDLE/进程与资源清理仍是必需验收。前台、键盘、原生确认等交互用例只有在证明当前环境不满足具体前提后，才考虑迁到经过验证的专用交互 runner，并保留同一提交/产物的必需结果。GitHub Windows 并非天然无法运行图形测试；[微软提供了 windows-latest UI 示例](https://learn.microsoft.com/en-us/windows/apps/develop/ai-assisted/testing#run-tests-in-ci)，但它不保证本项目所有 Win32 焦点前提。
 
 输入框未创建、进程异常退出、身份或清理未完成仍按失败处理。此分层没有移除测试、放宽断言/时限、增加重试或启用 continue-on-error，也不宣称修复 #705/#747/#723 的原生根因。
+
+
+## Windows 桌面资源的唯一 nonce 响应路径（#705 / #747）
+
+WebView2 virtual-host folder mapping 会绕过 `WebResourceRequested`，而桌面 HTML 的 nonce 只由现有 response handler 注入。该 origin 因而只使用原精确 URL handler；进入 `Navigate` 前须核 `NavigationStarting`、resource filter、resource handler 的注册 HRESULT，失败保原 exit54 并返回实际 HRESULT。参考 [WebResourceRequested 与 virtual-host mapping](https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/webresourcerequested)。
+
+组合保留 #705 两个独立 CSP/meta 占位符的完整 nonce helper、七项资源的原顺序/MIME、nosniff、403 未知资源拒绝、精确同源文档身份及 local/workspace/browser/archive/dialog/confirmation 退休顺序。测试须从这份真实 helper 和固定 xterm transform 导出，不能直接套用另一分支的单标记 fixture。四个实际 xterm style factory 的 CPU 反例约束占位符拒绝和响应 nonce，但不代替 Windows WebView/native 验收，也不证明历史 macOS exit65、Windows picker/焦点拒绝或独立 `0xC0000374` 回执的唯一原因；这些原因保持 UNKNOWN。原时限、CI 条件与全部原生断言不变。

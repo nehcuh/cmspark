@@ -346,6 +346,13 @@ function emitChunks(s: LiveSession, text: string): void {
   }
 }
 
+/** Server-only snapshot of the exact existing default user shell. Not renderer input. */
+export function defaultPtyCommand(): {file:string;args:string[]} {
+  if(ptyHostPlatform()==="win32")return {file:"powershell.exe",args:[]}
+  const shell=process.env.SHELL?.trim()
+  return {file:shell?shell:"/bin/zsh",args:["-l"]}
+}
+
 export function spawnPtySession(opts: {
   id: string
   cols: number
@@ -408,17 +415,7 @@ export function spawnPtySession(opts: {
   // an unrequested login shell. Refused before env work and before any spawnFn call.
   let file: string
   if (opts.file === undefined) {
-    if (hostPlatform === "win32") {
-      // #584: Windows 没有 `$SHELL` 惯例——MSYS/Git-Bash 反而会注入 POSIX 路径
-      // （如 /usr/bin/bash），在 win32 spawn 必 ENOENT，故整段忽略 `$SHELL`，
-      // 缺省 PowerShell（node-pty 直收 PATH 裸名）。
-      file = "powershell.exe"
-    } else {
-      // `$SHELL` is trimmed ONCE and the trimmed value is what spawns: `" /bin/bash "` cannot exist
-      // as a path, so trimming only for the emptiness check would guarantee ENOENT.
-      const shell = process.env.SHELL?.trim()
-      file = shell ? shell : "/bin/zsh"
-    }
+    file = defaultPtyCommand().file
   } else if (typeof opts.file === "string" && opts.file.length > 0 && isAbsolute(opts.file)) {
     // Used exactly as given: no trim/normalization of a malformed supplied path. This no-trim rule
     // deliberately diverges from `rejectNonAbsoluteCommand` (src/acp/open-local-terminal.ts), which
