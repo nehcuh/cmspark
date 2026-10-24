@@ -5,6 +5,7 @@
       "tabId": {
         "type": "integer",
         "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
         "description": "标签页 ID",
         "minimum": 1
       },
@@ -46,6 +47,7 @@
       "tabId": {
         "type": "integer",
         "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
         "description": "标签页 ID",
         "minimum": 1
       },

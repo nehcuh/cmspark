@@ -7,7 +7,7 @@ import os from 'node:os'
 import vm from 'node:vm'
 import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { project } from '../windows-census-reporter.mjs'
+import { project, publicFailureMetadata } from '../windows-census-reporter.mjs'
 import { childEnvironment, prepareOwnedGitConfig, rejectCheckoutCredentials, capture, discover, reconcile, scheduledBatches, inventory, stageSucceeded } from '../windows-census.mjs'
 
 const root = path.resolve(import.meta.dirname, '../..')
@@ -275,7 +275,13 @@ test('census child failure projection preserves finite actual wrapped exit facts
     assert.equal(entry.stderr_bytes, Buffer.byteLength('OWNED_PRIVATE_ERROR_650'))
     const serialized = JSON.stringify(events)
     for (const value of ['OWNED_STDOUT_650','OWNED_PRIVATE_ERROR_650','process.exit(7)']) assert.equal(serialized.includes(value), false)
-    assert.equal((await reconcile(observed)).outcome, 'FAIL', 'observability never changes original failure')
+    const reconciled = await reconcile(observed)
+    assert.equal(reconciled.outcome, 'FAIL', 'observability never changes original failure')
+    const publicCase = reconciled.cases.find(row => row.outcome === 'FAIL' && row.failure?.child_failure_chain?.some(child => child.code === 7))
+    assert.ok(publicCase, 'actual TestsStream child facts must survive the public accounting boundary')
+    assert.equal(publicCase.failure.status, 'OBSERVED')
+    assert.deepEqual(publicCase.failure.child_failure_chain, child.child_failure_chain)
+    for (const value of ['OWNED_STDOUT_650', 'OWNED_PRIVATE_ERROR_650', 'process.exit(7)']) assert.equal(JSON.stringify(reconciled).includes(value), false)
   } finally { retire(f) }
 })
 
@@ -293,6 +299,18 @@ test('census child failure projection bounds cycles and refuses getters, text an
   assert.equal(invalid.child_failure_chain, undefined)
   assert.equal(JSON.stringify([actual,invalid]).includes('OWNED_'), false)
   assert.equal(project({type:'test:pass',data:{}},3,root).child_failure_chain,undefined)
+  const finite = publicFailureMetadata(actual)
+  assert.equal(finite.status, 'OBSERVED'); assert.deepEqual(finite.child_failure_chain, actual.child_failure_chain)
+  assert.deepEqual(publicFailureMetadata({}), { status: 'UNAVAILABLE' })
+  for (const mutation of [
+    { ...actual, signal: 'PRIVATE_UNKNOWN_SIGNAL' },
+    { ...actual, child_failure_chain: [{ depth: 0, code: 9, message: 'PRIVATE_UNSUPPORTED' }] },
+    { ...actual, child_failure_chain: [{ depth: 0, code: Infinity }] },
+    { ...actual, child_failure_chain: [{ depth: 0, code: 9 }, { depth: 0, code: 9 }] },
+    { ...actual, child_failure_chain: [{ depth: 0, stdout_bytes: 10, stdout_exceeds_projection_bound: true }] },
+  ]) assert.throws(() => publicFailureMetadata(mutation), { message: 'CENSUS_METADATA_INVALID' })
+  assert.equal(JSON.stringify(finite).includes('OWNED_'), false)
+
 })
 
 

@@ -19,7 +19,7 @@ test('owned package/lock engines require the patched, qualified Node22 line', ()
   }
 })
 test('every CI/release setup-node job and packaged runtime use exact patched Node', () => {
-  for (const [name, count] of [['ci.yml', 3], ['release.yml', 2]]) {
+  for (const [name, count] of [['ci.yml', 4], ['release.yml', 2]]) {
     const source = read('.github/workflows/' + name)
     const setupCount = [...source.matchAll(/uses: actions\/setup-node@/g)].length
     const versions = [...source.matchAll(/node-version:\s*['"]?([\d.]+)['"]?/g)].map(m => m[1])
@@ -92,7 +92,7 @@ function seaDispatch759(source) {
   assert.equal(copy.length, 1)
   assert.ok(copy[0].index > guard[0].index)
   const direct = [...source.matchAll(/^\s*(node|& \$NodeExe) (.+)\r?$/gm)]
-  assert.equal(direct.length, 9, 'complete direct Node call inventory')
+  assert.equal(direct.length, 10, 'complete direct Node call inventory')
   assert.equal((source.match(/Get-Command node\.exe/g) || []).length, 1)
   assert.equal((source.match(/^\s*\$NodeExe\s*=/gm) || []).length, 1)
   return io => {
@@ -123,7 +123,7 @@ test('SEA validates and copies one bound executable despite a different bare nod
   const s = seaInputs759(), result = seaDispatch759(seaSource759())(s.io)
   assert.equal(s.resolutions(), 1)
   assert.equal(result.copied, 'C:\\owned real\\node.exe')
-  assert.deepEqual(result.calls, Array(9).fill(result.copied))
+  assert.deepEqual(result.calls, Array(10).fill(result.copied))
   for (const version of ['22.23.2', '22.23.3', '24.22.1']) assert.throws(() => seaDispatch759(seaSource759())(seaInputs759(version).io), /NODE_PIN_REFUSED/)
   assert.throws(() => seaDispatch759(seaSource759())(seaInputs759(patched, 'arm64').io), /NODE_PIN_REFUSED/)
 })
@@ -147,5 +147,20 @@ test('SEA refuses missing/shim-only resolution and never re-resolves after valid
   s.io.runtime = () => { changed = true; return {version: patched, arch: 'x64'} }
   const result = seaDispatch759(seaSource759())(s.io)
   assert.equal(result.copied, 'C:\\initial\\node.exe')
-  assert.deepEqual(result.calls, Array(9).fill(result.copied))
+  assert.deepEqual(result.calls, Array(10).fill(result.copied))
+})
+
+test('activity notifier staging reuses the same validated SEA executable', () => {
+  const actual = seaSource759()
+  const calls = [...actual.matchAll(/^& \$NodeExe ("\$ProjectRoot\\scripts\\stage-activity-notifier\.mjs" "\$CompanionDir" "\$StagingDir")\r?$/gm)]
+  assert.equal(calls.length, 1, 'one exact actual notifier staging producer')
+  const sourceCall = calls[0][0]
+  assert.ok(actual.includes(sourceCall + '\nif ($LASTEXITCODE -ne 0) { Fail "Activity notification resource staging failed" }'))
+  const mutant = actual.replace(sourceCall, sourceCall.replace('& $NodeExe ', 'node '))
+  assert.notEqual(mutant, actual)
+  const good = seaDispatch759(actual)(seaInputs759().io)
+  const bad = seaDispatch759(mutant)(seaInputs759().io)
+  assert.deepEqual(good.calls, Array(10).fill(good.copied))
+  assert.equal(bad.calls.filter(binary => binary !== bad.copied).length, 1)
+  assert.ok(bad.calls.includes('C:\\shim\\node.cmd'))
 })

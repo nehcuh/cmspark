@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { relativeFile } from './windows-census-reporter.mjs'
+import { relativeFile, terminalDiagnosticFile, publicFailureMetadata, publicTerminalDiagnostic } from './windows-census-reporter.mjs'
 import { sealEvidence } from './windows-census-evidence.mjs'
 import { prepareOwnedShortRoots } from './windows-census-owned-short-path.mjs'
 
@@ -263,7 +263,23 @@ export async function reconcile({ companion, receipts, rawFile, discovery, execu
     for (const event of doc.events.filter(e => ['test:pass', 'test:fail'].includes(e.type))) {
       if (!event.file || !knownFiles.has(event.file)) throw Error('CENSUS_CASE_SOURCE_UNRESOLVED')
       if ([event.skip, event.todo, event.suite].some(v => typeof v !== 'boolean')) throw Error('CENSUS_METADATA_INVALID')
-      cases.push({ file: event.file, line: safeNumber(event.line), column: safeNumber(event.column), nesting: safeNumber(event.nesting), testNumber: safeNumber(event.testNumber), duration_ms: safeNumber(event.duration_ms), name_hash: safeHash(event.name_hash), outcome: event.skip ? 'SKIP' : event.todo ? 'TODO' : event.type === 'test:fail' ? 'FAIL' : 'PASS', suite: event.suite })
+      const current = { file: event.file, line: safeNumber(event.line), column: safeNumber(event.column), nesting: safeNumber(event.nesting), testNumber: safeNumber(event.testNumber), duration_ms: safeNumber(event.duration_ms), name_hash: safeHash(event.name_hash), outcome: event.skip ? 'SKIP' : event.todo ? 'TODO' : event.type === 'test:fail' ? 'FAIL' : 'PASS', suite: event.suite }
+      if (current.outcome === 'FAIL') {
+        current.failure = publicFailureMetadata(event)
+        if (event.file === terminalDiagnosticFile) {
+          // Diagnostics have the test's original location, but no testNumber or
+          // name. Never associate by file alone or use an auxiliary child doc.
+          const sameLocation = other => other.file === event.file && other.line === event.line && other.column === event.column && other.nesting === event.nesting
+          const located = [current.line, current.column, current.nesting].every(Number.isSafeInteger) && current.line > 0 && current.column > 0
+          const failures = doc.events.filter(other => other.type === 'test:fail' && !other.skip && !other.todo && sameLocation(other))
+          const observations = doc.events.filter(other => other.type === 'test:diagnostic' && other.terminal_phase !== undefined && sameLocation(other))
+          current.terminal_phase = !located || failures.length !== 1 ? { status: 'UNKNOWN', reason: 'UNRESOLVED_LOCATION' }
+            : observations.length === 0 ? { status: 'MISSING' }
+            : observations.length !== 1 ? { status: 'UNKNOWN', reason: 'AMBIGUOUS' }
+            : publicTerminalDiagnostic(observations[0].terminal_phase)
+        }
+      }
+      cases.push(current)
     }
     for (const event of doc.events.filter(e => ['test:pass', 'test:fail'].includes(e.type) && (e.skip || e.todo))) {
       skips.push({ file: event.file, line: event.line, column: event.column, name_hash: event.name_hash, skip: event.skip, todo: event.todo, reason_hash: safeHash(event.skip_reason_hash ?? event.todo_reason_hash), oracle: 'UNCLASSIFIED_SOURCE_GUARD' })

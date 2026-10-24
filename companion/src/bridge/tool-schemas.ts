@@ -18,10 +18,10 @@
 // the generic any-record fallback. The aggregated MCP inputSchema (captured in
 // mcp/aggregator.ts) is converted to zod and enforced. When the schema is
 // missing (server hasn't sent tools yet, transient gap), we fall back to
-// z.record(z.unknown()) AND log a warning so the gap is observable.
+// z.record(z.string(), z.unknown()) AND log a warning so the gap is observable.
 //
 // Per audit Gate 2: use zod (already in package.json, was previously dead
-// weight). Per-tool schema; generic fallback (z.record(z.unknown())) only for
+// weight). Per-tool schema; generic fallback (z.record(z.string(), z.unknown())) only for
 // native tools not in the high-risk set OR MCP tools with no cached schema.
 
 import { z } from "zod"
@@ -64,12 +64,13 @@ const urlSchema = z.string().min(1).refine(
 
 const tabIdSchema = z.number().int().positive()
 
-export const LEGACY_CLICK_ARG_SCHEMA = z.object({
+const LEGACY_CLICK_ARG_BASE_SCHEMA = z.object({
     tabId: tabIdSchema,
     selector: z.string().min(1).optional(),
     text: z.string().min(1).optional(),
     exact: z.boolean().optional(),
-  }).refine((v) => !!(v.selector || v.text), { message: "click requires text or selector" })
+  })
+export const LEGACY_CLICK_ARG_SCHEMA = LEGACY_CLICK_ARG_BASE_SCHEMA.refine((v) => !!(v.selector || v.text), { message: "click requires text or selector" })
 export const LEGACY_TYPE_ARG_SCHEMA = z.object({
     tabId: tabIdSchema,
     value: z.string(),
@@ -96,7 +97,7 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
   }),
 
   get_interactive_snapshot: z.object({ tabId: tabIdSchema.safe() }).strict(),
-  click: LEGACY_CLICK_ARG_SCHEMA.innerType().extend(snapshotPair).refine(v => validLocatorMode(v, true), { message: "click requires legacy locator or exclusive paired snapshot IDs" }),
+  click: LEGACY_CLICK_ARG_BASE_SCHEMA.extend(snapshotPair).refine(v => validLocatorMode(v, true), { message: "click requires legacy locator or exclusive paired snapshot IDs" }),
   dblclick: z.object({
     tabId: tabIdSchema,
     selector: z.string().min(1).optional(),
@@ -324,7 +325,7 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
   host_cli: z.object({
     app: z.string().min(1),
     subcommand: z.string().min(1),
-    flags: z.record(z.union([z.string(), z.boolean()])).optional(),
+    flags: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
     args: z.array(z.string()).max(16).optional(),
     security_token: z.string().optional(),
   }),
@@ -453,7 +454,7 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
 }
 
 /** Generic fallback: accept any record shape, no constraints. */
-const GENERIC_FALLBACK = z.record(z.unknown())
+const GENERIC_FALLBACK = z.record(z.string(), z.unknown())
 
 // ---------------------------------------------------------------------------
 // JSON Schema → zod converter (C-MCP-1).
@@ -487,7 +488,7 @@ function jsonSchemaPrimitiveToZod(node: any): z.ZodTypeAny {
 }
 
 function jsonSchemaObjectToZod(node: any): z.ZodTypeAny {
-  if (!node || typeof node !== "object") return z.record(z.unknown())
+  if (!node || typeof node !== "object") return z.record(z.string(), z.unknown())
 
   const props = (node.properties && typeof node.properties === "object") ? node.properties : null
   const requiredList: string[] = Array.isArray(node.required)
@@ -496,7 +497,7 @@ function jsonSchemaObjectToZod(node: any): z.ZodTypeAny {
   const requiredSet = new Set(requiredList)
 
   if (!props || Object.keys(props).length === 0) {
-    return z.record(z.unknown())
+    return z.record(z.string(), z.unknown())
   }
 
   const shape: Record<string, z.ZodTypeAny> = {}
@@ -528,7 +529,7 @@ function schemaForTool(toolName: string): z.ZodTypeAny {
     }
     logger.warn("tool_schemas.mcp_schema_missing", {
       tool_name: toolName,
-      fallback: "z.record(z.unknown())",
+      fallback: "z.record(z.string(), z.unknown())",
     })
     return GENERIC_FALLBACK
   }

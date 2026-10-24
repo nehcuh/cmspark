@@ -11,7 +11,7 @@ function offlineStatements(source: string) {
   const offline = source.match(/else if\(message==native_offline\)\{([^{}]*?)if\(self->web\)/)?.[1]
   assert.ok(offline)
   const statements = offline.split(";").map(x => x.trim()).filter(Boolean)
-  assert.deepEqual(statements, ["self->retire_confirmation()", "self->ready=false", "self->archive_target.clear()", "self->browser_request.clear()", "self->browser_thread.clear()", "self->generation.clear()", "self->requests.clear()"])
+  assert.deepEqual(statements, ["self->retire_local()", "self->retire_picker()", "self->retire_confirmation()", "self->ready=false", "self->archive_target.clear()", "self->browser_request.clear()", "self->browser_thread.clear()", "self->generation.clear()", "self->requests.clear()"])
   return statements
 }
 const statements = offlineStatements(cpp)
@@ -23,8 +23,8 @@ if (retiredEpochRecheck) {
 }
 assert.equal(cpp.includes("if(frame->epoch!=self->epoch)return 0;"), true)
 
-type State = { ready: boolean; phase: string; epoch: number; generation: boolean; pending: boolean; archive: boolean; browser: boolean; browserThread: boolean; accepted: number }
-function connected(): State { return { ready: true, phase: "ready", epoch: 1, generation: true, pending: true, archive: true, browser: true, browserThread: true, accepted: 0 } }
+type State = { local: boolean; picker: boolean; ready: boolean; phase: string; epoch: number; generation: boolean; pending: boolean; archive: boolean; browser: boolean; browserThread: boolean; accepted: number }
+function connected(): State { return { local: true, picker: true, ready: true, phase: "ready", epoch: 1, generation: true, pending: true, archive: true, browser: true, browserThread: true, accepted: 0 } }
 function disconnect(s: State): void {
   const wasReady = s.ready
   if (network![1] === "exchange(false)") s.ready = false
@@ -43,7 +43,9 @@ function offlineMessage(s: State, epoch: number): void {
   if (epoch !== s.epoch) return
   for (const statement of statements) {
     // Native prompt retirement does not alter the existing readiness/order projection.
-    if (statement === "self->ready=false") s.ready = false
+    if (statement === "self->retire_local()") s.local = false
+    else if (statement === "self->retire_picker()") s.picker = false
+    else if (statement === "self->ready=false") s.ready = false
     else if (statement === "self->archive_target.clear()") s.archive = false
     else if (statement === "self->browser_request.clear()") s.browser = false
     else if (statement === "self->browser_thread.clear()") s.browserThread = false
@@ -111,4 +113,14 @@ test("offline browser and archive retirement requires every original clear in or
   for (const statement of statements) assert.throws(() => offlineStatements(cpp.replace(actual, actual.replace(statement + ";", ""))))
   assert.throws(() => offlineStatements(cpp.replace(actual, [...statements].reverse().join(";") + ";")))
   assert.throws(() => offlineStatements(cpp.replace(actual, actual + "self->unknown_action();")))
+})
+
+// The actual private panel is retired by the same current-epoch UI branch.
+test("current offline branch retires owned local and picker while stale epochs preserve both", () => {
+  assert.equal(statements.filter(x => x === "self->retire_local()").length, 1)
+  assert.equal(statements.filter(x => x === "self->retire_picker()").length, 1)
+  const current = connected(); offlineMessage(current, 1)
+  assert.equal(current.local, false); assert.equal(current.picker, false); assert.deepEqual([current.ready,current.generation,current.pending], [false,false,false])
+  const newer = connected(); newer.epoch = 2; offlineMessage(newer, 1)
+  assert.equal(newer.local, true); assert.equal(newer.picker, true); assert.deepEqual([newer.ready,newer.generation,newer.pending], [true,true,true])
 })

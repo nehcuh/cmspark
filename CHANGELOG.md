@@ -4,11 +4,61 @@
 
 ## [Unreleased]
 
+- macOS workspace acceptance: wait for an input candidate in the same owned picker after the Go to Folder shortcut, within the original shared deadline. Keep the original control-type selection, unique input, hittability, real path entry, selection, cancellation and cleanup checks.
+
+- Windows terminal acceptance: join the first owned document with actual visible foreground readiness before installing the test form. Keep the original per-input, callback, confirmation, output, cleanup and 45-second guards; no focus request or retry is added.
+
+- CI acceptance: check the fixed CFT runtime version and supplier close/EOF facts on the single actual ACP history business browser, replacing the separate startup witness. Keep all business assertions and existing deadlines. Preserve bounded terminal failure metadata in public census accounting and snapshot it on abort; raw output remains private and an observed failure remains a failure.
+
+- Desktop acceptance source contracts: update the local-state consumer to retain the handled-reply guard and exercise its real refusal cases under LF and CRLF. Preserve the raw Swift source seals with exact LF checkout attributes. Bound macOS picker-button identity diagnostics to fixed enum values; keep the original UI actions, assertions, deadlines and cleanup authority.
+
+- Desktop local acceptance: advance only on a state reply actually consumed by the current view, and forward that handled result through the app adapter. This prevents an untracked retirement reply from triggering the next action; original refusal and completion checks remain.
+- Desktop terminal: retain one private owner-bound receipt capability to settle real outstanding output ACKs after close. Keep input, resize and ping closed; invalidate the capability on retirement, reset or a new successful spawn. The acceptance form waits for actual ACK accounting before DONE. Keep the auxiliary macOS picker-query census off the live selection path; preserve the real unique-button, hittability, click, cancellation and 45-second acceptance checks. Missing observations remain unknown and native validation is still required.
+
+- Test fixtures: resize the Windows terminal window inward while retaining exact measured dimensions; set the unshipped macOS workspace picker prompt before presentation while retaining the real UI selection and cancellation. Replace the Session test’s PowerShell lock holder with a run-owned Win32 executable, keeping real sharing violations, both release/persistent controls, and existing deadlines. These changes remove fixture preconditions; remote native validation remains required. Keep prior source-authority hashes and account for the separate passive diagnostic increment through an exact source inverse.
+
+- 原生桌面验收补充分段回执：区分 Agent 请求、确认、启动尝试与句柄返回，并在实际 Xcode 关闭后读取有限测试结果；保留全部原断言、超时和清理结果，不据此宣称 Windows/macOS 已修复。
+- Test fixture (Windows terminal): explicitly select UTF-8 for the owned PowerShell Console writer before producing the fixed CJK output. This removes a locale-dependent fixture precondition; the original parser, output volume, browser-engine input route, ACK, resize, Stop, ownership and 45-second assertions remain. Native validation is required; this is not a claim that an earlier runner used a particular code page.
+
+- Test diagnostics (terminal acceptance): record the bounded set of readiness operands actually observed by the original renderer short-circuit, plus input-CR and raw-output-marker booleans. Keep the command, parser calls, input actions, deadlines and success/refusal assertions unchanged; missing observations remain unknown.
+- Test diagnostics (macOS workspace): split only the existing Choose first-match/deadline/wait observation boundaries and emit one separately marked strict Xcode snapshot to bounded stdout after its real close following cancellation, so a completed test context cannot silently drop the late observation. Keep UI actions, assertions, deadlines and cleanup authority unchanged; this is diagnostic coverage, not a proven GUI behavior fix.
+- ACP native progress: deliver each current owner-bound update without the legacy broadcast throttle, preserving private routing, bounded payloads and legacy pacing.
+
+- Test diagnostics (macOS workspace): publish a bounded main-thread UI stage snapshot before the existing XCTest calls, so the owner can report the last published stage even when a synchronous call has not returned. Keep original actions, 45-second deadline, refusal, success and cleanup authorities unchanged; a stage snapshot does not identify the physical cause of the earlier hang.
+
+- Test diagnostics (#480): enable existing closed Windows native phase observations in acceptance fixtures and record them only from the current authenticated response socket. Reports explicitly describe lifetime-once attempts without reconnect-epoch attribution; success assertions and original deadlines remain unchanged.
+
+- Security: upgrade body-parser to 2.4.0 and Zod to 4.6.6 for the current high-severity advisories, with OpenAI SDK 6.0.0 for Zod 4 compatibility. Refresh the actual legacy outbound-schema recording and retain safe-integer argument bounds; existing moderate audit findings remain tracked.
+
+- Test diagnostics (#705): record a one-shot local terminal data-receipt observation and bounded daemon send counts without publishing terminal text or changing success assertions. Reap only the local acceptance callback’s exact PTY handles and confirm their real exits plus slot release before settling its native surface.
+
+- Test reliability (#480): clone every pinned offline desktop resource and vendor license into owned inheritance and parent-death fixtures; reject incomplete or linked source files before publishing the asset directory. This fixes the demonstrated three-file clone gap without claiming it explains every native timeout.
+
+- Test reliability (#705): ignore out-of-phase retirement snapshots in the local-work acceptance observer, matching the real UI’s untracked hide/open-dialog requests. Required state validation, native actions and final history assertions remain mandatory.
+
+- Test reliability (macOS workspace): wait for the owned panel’s existing Choose/Open query to appear after committing its folder path, within the original remaining deadline; retain unique-button, hittability and real-click requirements. Production panel labels and behavior are unchanged.
+
+- Test reliability (#758): publish the owned Linux window fixture’s ready and acknowledgement JSON only after an exclusive temporary write and close, preventing the watcher from parsing an empty final file. Preserve the original receipt parser, child-close rejection, desktop assertions and time limits.
+
+- Fix (desktop): revoke host authority before graceful shutdown without terminating the authenticated socket before its final close frame; preserve immediate direct revocation, foreign hosts and reentrant retirement. Configure only the unshipped macOS XCTest runner to publish its owned scene handshake outside App Sandbox; retain strict file identity and original native assertions.
+
+- Fix (Windows desktop): stop reconnecting after a validated terminal close begins, while retaining transient reconnect and authentication failure handling. Native workspace acceptance uses the retained dialog’s real Cancel button and reports bounded failure identities without changing its assertions or deadline.
+
+- Fix (#752/#757): keep not-required feedback canonical after partial todo updates, so status-only edits cannot make completed tasks due again. Cover the real create/update response and reloaded state; retain required-feedback reminders.
+
 - Security: update the extension's DOMPurify dependency from 3.4.16 to 3.4.17 to resolve the production dependency audit advisories, including GHSA-cg2g-xh64-v4q7. No other dependencies or audit gates are changed.
 
 - Fix: keep filesystem `edit_file` anchor mismatches recoverable through a typed MCP error, so the agent can re-read the file and correct `oldText` without ending the turn. Preserve write confirmations and exact-match editing.
 
 - Fix (Windows): retry only transient EPERM/EACCES/EBUSY failures of the existing atomic JSON/text replacement, with five attempts and 150 ms of scheduled waits. Preserve synchronous config updates, original files on terminal failure, and existing permissions. Add real Windows conversation-save lock/release and persistent-lock regressions; this does not identify the user's external lock owner.
+
+- Sync the terminal retirement source contract with the current separate connect/offline cleanup paths; retain local retirement and stale-socket rejection.
+
+- Windows Job cwd 使用 Node URL 构造器，保持文件 URL 路径行为并兼容测试中的 DOM 类型。
+
+- Fix (#705/#747): serve Windows offline desktop resources through the existing nonce-aware exact-URL handler, removing the competing virtual-folder mapping and rejecting failed navigation/filter/handler registrations. Preserve #705 local/workspace retirement, all seven resources and the two-marker nonce helper. Source controls do not establish native acceptance or explain historical macOS exit65/Windows refusals.
+
+- Refs #747: terminal acceptance checks the complete marker in each actual xterm parser's active buffer after real write callbacks. The independent Node observer serializes original bytes and successful resizes; the unshipped form binds its actual Terminal to the owned operation and document. Preserve full-marker, trusted input, ACK, selected-return, real exit and 45-second requirements. CPU controls do not establish a historical native cause or replace Windows/macOS acceptance.
 
 - Test reliability (#625): publish the concurrent registration fixture's complete grant receipt by an exclusive temporary write and rename. Seeing the final file now means its JSON was fully written; preserve real competing registration, live-grant checks and the existing wait limits.
 
@@ -20,11 +70,34 @@
 
 - Fix (#476): compare desktop history file identities as exact 64-bit integers before reading the opened transcript. Distinct device/inode values must not become equal through JavaScript Number rounding. Retain the real replacement regression and add large-identity acceptance/refusal controls; no CI gate or timeout is changed.
 
+- CI / packaging (#757/#758/#759/#760): compose activity acceptance with the pinned Node 22.23.4 runtime and separated native stages. Pin the added X11 job, bind Windows notifier staging to the validated SEA executable, and update exact workflow/dispatch consumer inventories. Retain all activity assertions and the authorized retirement of only the two automatic #723 first-identity steps; this composition does not claim their native cause is fixed.
+
 - Refs #723: remove the experimental Chrome/native first-identity gate and its dedicated failure upload from automatic CI at the user's request. Keep the independent acceptance scripts and CPU controls; all other CI gates remain required. CI success does not establish #723 native identity or masking readiness.
 
 - Security (#759): upgrade packaged Node, all CI/release jobs, native build headers/import library and the digest-pinned validation image to Node 22.23.4 for the [2026-10-21 Node security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). Development engines now require `>=22.23.4 <23`; Windows SEA and native packaging require exact 22.23.4. Windows SEA resolves one executable and reuses it for validation, direct Node build calls and the embedded base. Node 24/26 are not yet qualified. This runtime security update does not establish the cause of existing Windows native CI failures. Product version remains 0.6.14 (unreleased).
 
 - CI (#760): report native fixture build, test compilation, bootstrap/process acceptance and desktop interaction acceptance as separate ordered steps, preserving commands, failure handling, Windows/macOS checks and all native assertions. This improves failure attribution without claiming the outstanding Windows failures are fixed.
+
+- #705 修复未发行 macOS picker 验收的目录 URL 字节合同：Swift 明确生成目录 URL，Node 严格匹配唯一带末尾斜杠的 runner bundle URL；补真实 Foundation 回执回归，原身份、ACK、静默与实际关闭门禁不变。此项不证明历史 exit65 原因或原生验收通过。
+
+- #464 ACP v1 初始化改用标准 `clientCapabilities` 字段，保留原文件/终端能力全部关闭、超时和响应拒绝；补实际 JSON-RPC 请求捕获回归测试，并说明网页 diff 已支持的明确未加引号文本重命名。字段校准不证明真实 Agent 兼容或业务验收，#464 整票仍为 Partial。
+
+- #705 在现有 macOS picker 失败点增加父进程关闭后的有限 Xcode 日志快照：只发布固定状态、标记和允许的错误域/码，保留私有文件/FD 边界、原错误及清理语义；退出 65 的实际根因和原生验收仍为未知，未改变 45 秒或启动/身份/ACK 门禁。
+
+- #705 未发行的 macOS picker 验收包将 Format1 描述文件的唯一 UI 测试目标绑定到已构建并签名的固定 owned app；清单记录最终描述文件字节，保留原描述文件证据。此项不证明历史 exit65 根因，真实启动、身份/ACK、选择取消与关闭门禁仍须新 head 原生验收。
+
+- 活动记录增加 Windows / Linux X11 被动采集、平台应用身份、本地 OCR 语言与系统通知回执；Wayland/受限环境提供主动 PNG 导入，保留人工确认和来源未知边界（#758）。
+
+- Refs #752–#754：新增个人工作中心（今日、待办、资料与活动记录），侧栏保留对话入口；指定 macOS 前台应用截图与本地 OCR 默认关闭，模型分析单独选择。候选经用户确认后成为待办，保留来源并分别跟踪处理与反馈；本机后台服务持久安排提醒，明确系统通知提交不代表已读。无接口聊天不能覆盖不可见的群与历史；其他平台暂不支持此截图路径。
+- Refs #754：一句话设置接入模型语义候选与逐项预览，显式确认后沿用原配置保存并读取核对。语音结束只填草稿；权限、语音偏好、记录与提醒策略需要在对应入口单独核对，不虚构自动应用结果。
+
+- Refs #747: route Windows offline desktop assets through the existing nonce-aware, exact-URL response handler instead of virtual-folder mapping, which bypassed that handler. Fail closed if nonce/navigation or resource-handler registration fails; keep CSP and all native acceptance assertions. Source-derived nonce regressions do not replace Windows native validation or explain the separate heap-crash receipt.
+
+- Refs #747: terminal acceptance observes the owned PTY PID when real data arrives, allowing the locked Windows implementation's initial PID 0; completion still requires a positive stable PID on the same handle and actual exit. Added inert real-producer regressions; native Windows acceptance remains required.
+
+- Refs #747/#476: add a closed first-observed refusal code to the unshipped terminal acceptance fixture only; preserve original failures, native45s, authority and cleanup. Codes identify original rejection groups, not Windows physical causes; current native failure remains blocking.
+
+- **#476 桌面用户终端开发候选**：从已明确绑定的对话目录，经原生确认进入原单 PTY 与离线 xterm；所选终端摘录另行确认后保存到原对话。目录缺失诚实不可用，该早期终端独立候选不含桌面 Agent／新目录选择；当前组合保留 #705 的工作区选择和 Agent 路径，两者仍须各自原生验收。不自动开启模块、默认目录或模型尾部读取。保留当前归档／浏览器与 ACP claims；当前组合的真实 Windows/macOS 原生验收尚未执行，不发版、不关闭整票。
 
 - Refs #723/#755: bind the native-host registrar’s six filesystem reads to the built-in PowerShell Management module after a bounded Windows command-resolution comparison; retain ownership, reparse checks and cleanup. Native full-flow acceptance remains required.
 
@@ -54,6 +127,8 @@
 - **#726 Windows 选夹验收路径域**：仅测试的预期工作区使用原生 realpath 规范化，避免成功选夹返回的长路径与临时目录的 8.3 短名直接比较。保留实际选夹、绑定、取消、ACP cwd、所有者和清理断言；增加真实 Node JS realpath 与显式原生绑定 seam 的 LF/CRLF 回归。受控 CPU 通过不代替新 head 的 Windows 原生验收。
 
 ### Fixed
+
+- 原生本地终端验收在原期限已失败后，只按确实观察到的自身 PTY 退出、关闭与槽位释放事实收回占用；保留原始失败，不新增清理计时或释放未知资源。
 
 - Refs #732：hosted reload 验收先通过真实 stock 导航选择并核已提交 owner，再打开历史面板，避免 header 先于异步线程 hydrate 时被正常 owner 切换关闭。生产 owner、原导航／业务时限和原生历史断言不变；CPU 调度回归不代表当前远端首错或原生通过。
 

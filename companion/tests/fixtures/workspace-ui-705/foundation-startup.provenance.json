@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "sourceHead": "cdc1b124a1ab50828b313d20d350bedd1d1a8e78",
+  "producer": "OwnedUIProtocol.swift and unchanged WorkspacePickerUITests.swift startup statement; Foundation-only owned filesystem run",
+  "protocolSHA256": "9c0a4b91083258771f3853fa04bef3b54e0d1098e15a75c255cf35d30dd96d32",
+  "producerMainSHA256": "7e79bd0e859904f08ea436a43174337cb76e8b12333a1a8961903394875d1af2",
+  "receiptSHA256": "1cab61342201156b87e8795633677a0c253a1c062046d57c74f3d7bcebb8a4ee",
+  "nativeUIExecution": false,
+  "description": "Verbatim public owned fixture. PID is historical data, never used for process lookup or signaling. Positive test consumes this real Swift-produced receipt without constructing a matching Node URL."
+}

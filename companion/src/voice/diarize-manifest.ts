@@ -21,7 +21,7 @@ export type { WhisperManifestFile as DiarizeManifestFile }
 const diarizeManifestSchema = z
   .object({
     schemaVersion: z.literal(1),
-    models: z.record(modelEntrySchema),
+    models: z.record(z.string(), modelEntrySchema),
   })
   .strict()
 

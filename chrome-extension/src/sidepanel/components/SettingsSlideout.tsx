@@ -833,7 +833,10 @@ export function SettingsSlideout() {
             <select aria-label="设置分类" value={activeSettingsPage} onChange={event => selectSettingsPage(event.target.value as SettingsSectionId)}>{SETTINGS_PAGES.map(page => <option value={page.id} key={page.id}>{page.title}</option>)}</select>
           </label>
           <div className="cm-settings-body" style={styles.body}>
-            <details className="cm-settings-assistant" onToggle={event => setSettingsAssistantOpen(event.currentTarget.open)}><summary>用一句话调整设置</summary><SettingsIntentBar onIntent={applySettingsIntent} active={settingsAssistantOpen && state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)} /></details>
+            <details className="cm-settings-assistant" onToggle={event => setSettingsAssistantOpen(event.currentTarget.open)}><summary>用一句话调整设置</summary><SettingsIntentBar onIntent={applySettingsIntent} onOpenSection={section => selectSettingsPage(section, true)} onOpenDestination={destination => {
+              dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+              requestAnimationFrame(() => window.dispatchEvent(new CustomEvent("cmspark:open-workspace-destination", { detail: destination })))
+            }} active={settingsAssistantOpen && state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)} /></details>
 
           <div data-settings-page="connection" hidden={activeSettingsPage !== "connection"}>
             <SettingsPage

@@ -210,6 +210,17 @@ else
 fi
 echo "  qwen-vl-worker.py (Qwen3-VL experimental locate; models on-demand)"
 
+# Native activity resources must survive flattened JS and Windows SEA packaging.
+case "${PLATFORM}" in
+  windows-*)
+    node "${ROOT_DIR}/scripts/stage-activity-notifier.mjs" "${ROOT_DIR}/companion" "${STAGING}"
+    ;;
+  linux-*)
+    test -f companion/dist/activity/linux-recorder.py || { echo "ERROR: linux-recorder.py missing; build the complete companion first" >&2; exit 1; }
+    cp companion/dist/activity/linux-recorder.py "${STAGING}/linux-recorder.py"
+    ;;
+esac
+
 # WASM
 cp companion/node_modules/sql.js/dist/sql-wasm.wasm "${STAGING}/"
 

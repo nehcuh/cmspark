@@ -1,5 +1,7 @@
 # Windows 开发与失败定位
 
+同时编译 Node 与 DOM 类型时，Windows Job 的 cwd 使用从 `node:url` 导入的 URL 构造器收窄；不依赖可能由 DOM 声明合并的全局 `URL`。字符串与文件 URL 仍走原路径规范化及所有权检查。
+
 安装器与 ZIP 卸载的进程查询先以固定两名称 WQL `-Filter` 请求 `node.exe` 或 `cmspark-agent.exe`，随后仍执行原完整 Name／ExecutablePath／安装目录和系统 Node 首脚本／模式检查。不得把安装路径拼进 WQL 或以过滤替代所有权检查。NSIS 观察器须匹配真实查询全文，并保留整脚本 BOM／CRLF 字节逆变换。`cim-enter` 在命令调用前，未出现首行不能区分命令解析、查询初始化或 CIM 内部等待；过滤不保证 provider 内部免全扫描，也不证明历史超时根因。原完整 Windows stop／sibling 存活验收及 30 秒上限保留。接口依据：[Get-CimInstance 5.1 的 Filter](https://learn.microsoft.com/en-us/powershell/module/cimcmdlets/get-ciminstance?view=powershell-5.1)。
 
 Windows 继承验收须区分句柄数值槽位与内核对象身份：`GetHandleInformation` 成功只能证明当前槽位有效，不能证明它是父进程的原 protected pipe/process。#480 sibling 夹具在恢复 suspended checker 前，由父进程以不可继承、零访问权副本及 `CompareObjectHandles` 核三份原对象，raw exit mask 与 identity mask 分开保存；真实泄漏、缺少／UNKNOWN 身份、checker 或 cleanup 失败仍拒绝。源码受控反例不认定历史失败槽位的实际对象，历史原因保持 UNKNOWN；原生门禁、权限、原累计时限均不删改，也不重置旧诊断上限。官方接口依据：[GetHandleInformation](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-gethandleinformation)、[CompareObjectHandles](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-compareobjecthandles)。
@@ -7,6 +9,8 @@ Windows 继承验收须区分句柄数值槽位与内核对象身份：`GetHandl
 跨 Node／Framework 的同一文件须核双向 access/share 兼容。Node lease 的 `wx+` 即使共享 Read/Write/Delete，Framework 默认 `File.ReadAllText` 仍只共享 Read，会拒绝现存写句柄；读取者的 share 必须允许已有 access，不能提前关 owner 或放宽权限掩盖。#723 Job CPU fixture 的修复保持 Read access、显式 ReadWrite|Delete share 和后续原 nonce/claim 校验；真实 Windows 还验证旧读的精确 sharing violation。惰性共享模型／原厂源码链不等于已观测某次 CPU 内部异常，也不等于 native 窗口身份成功。原厂依据：[Framework StreamReader](https://github.com/microsoft/referencesource/blob/ec9fa9ae770d522a5b5f0607898044b7478574a3/mscorlib/system/io/streamreader.cs)、[CreateFile 的双向共享规则](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)。
 
 适用于 coding agent 和贡献者。先按当前 Issue 的原始 DoD、精确 head/main 和实际失败阶段定位；历史 Windows 红灯不是同一个系统根因。本文是已有调试、隔离与验收纪律的短入口，不新增模型、全仓重测或平台前置门。测试地图见 [TESTING](TESTING.md)，开发约定见 [CONTRIBUTING](../CONTRIBUTING.md)。
+
+Windows 终端原生夹具须将首次表单安装与同一 HWND、GWLP_USERDATA、文档代数、连接 epoch 和 WebView 的实际可见前台状态汇合；收到 `desktop.window` 或 DOM focus 不证明已获系统前台。文档就绪现场检查覆盖先激活的顺序，原窗口 `WM_ACTIVATE` 经默认处理后的检查覆盖后激活；安装请求仅一次。启动后的每次输入和 COM 回调仍按原前台守卫立即拒绝，不排队等待重新获得焦点。系统始终未授予前台时，原 45 秒验收必须失败；源码 CPU 排程不等于历史失败归因或原生通过。接口依据：[WM_ACTIVATE](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-activate)、[SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow)。
 
 ## 系统化调试：先亲证，再改动
 
@@ -28,6 +32,10 @@ Windows 继承验收须区分句柄数值槽位与内核对象身份：`GetHandl
 - **64 位文件身份**：`lstat` 与打开后的 `fstat` 比较 device/inode 时，两端都使用 `{ bigint: true }`。不同的 64 位值转换成 JavaScript Number 后可能相等，不能据此放行替换文件。正控须允许相同的大整数身份，负控须在读取 transcript 前拒绝不同身份；保留真实文件替换回归。CPU 精度反例不独立证明某次远端失败的实际文件 ID。
 
 以上只按本次影响选择必要证据；不是要求每个文档或普通改动执行全部原生/全仓测试。
+
+桌面 host 的有意关闭与暂时断线分开处理：仅已验证的 `desktop.close` 与 owned `WM_CLOSE`／`WM_DESTROY` 在清理前锁存关闭状态，网络线程看到后不再发布 offline 或重连。暂时断线仍保持原 5 秒重连及未 ready 的 exit41。源码提取 CPU 对照只能证明这类关闭竞争可达；若 UI 关闭消息尚未派发，关闭状态尚未设置，不能据此解释历史第二连接。真实 Windows 原生回归继续要求单连接与原 45 秒上限。选择器夹具只操作同次 retained dialog、nonce、owner、UI thread 与真实 Cancel 按钮，不把 `Close` 的 SUCCEEDED 或观察回执当完整用例通过。
+
+通道主动关闭先撤销该 host 的能力，再向本次拥有的已认证连接发送最终 `desktop.close` 并正常关闭连接；同步撤销监听器不会提前终止这些连接。直接 registry 撤销、未认证连接和其它 host 仍沿用原拒绝；重入关闭只清理本次标记，不能移除外层关闭标记。原生验收必须亲证单连接和真实 exit0，源码或按钮回执不能替代。
 
 ## 已证类别的公共仓库案例
 
@@ -148,3 +156,67 @@ CI, Windows SEA packaging and native builds use exact Node 22.23.4, including ma
 编译、协议、Windows HANDLE/进程与资源清理仍是必需验收。前台、键盘、原生确认等交互用例只有在证明当前环境不满足具体前提后，才考虑迁到经过验证的专用交互 runner，并保留同一提交/产物的必需结果。GitHub Windows 并非天然无法运行图形测试；[微软提供了 windows-latest UI 示例](https://learn.microsoft.com/en-us/windows/apps/develop/ai-assisted/testing#run-tests-in-ci)，但它不保证本项目所有 Win32 焦点前提。
 
 输入框未创建、进程异常退出、身份或清理未完成仍按失败处理。此分层没有移除测试、放宽断言/时限、增加重试或启用 continue-on-error，也不宣称修复 #705/#747/#723 的原生根因。
+
+
+## Windows 桌面资源的唯一 nonce 响应路径（#705 / #747）
+
+WebView2 virtual-host folder mapping 会绕过 `WebResourceRequested`，而桌面 HTML 的 nonce 只由现有 response handler 注入。该 origin 因而只使用原精确 URL handler；进入 `Navigate` 前须核 `NavigationStarting`、resource filter、resource handler 的注册 HRESULT，失败保原 exit54 并返回实际 HRESULT。参考 [WebResourceRequested 与 virtual-host mapping](https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/webresourcerequested)。
+
+组合保留 #705 两个独立 CSP/meta 占位符的完整 nonce helper、七项资源的原顺序/MIME、nosniff、403 未知资源拒绝、精确同源文档身份及 local/workspace/browser/archive/dialog/confirmation 退休顺序。测试须从这份真实 helper 和固定 xterm transform 导出，不能直接套用另一分支的单标记 fixture。四个实际 xterm style factory 的 CPU 反例约束占位符拒绝和响应 nonce，但不代替 Windows WebView/native 验收，也不证明历史 macOS exit65、Windows picker/焦点拒绝或独立 `0xC0000374` 回执的唯一原因；这些原因保持 UNKNOWN。原时限、CI 条件与全部原生断言不变。
+
+
+## Owned native test suppliers and resize constraints
+
+The terminal-only acceptance fixture requests a 120-pixel inward resize and still
+requires both real GetWindowRect calls, successful SetWindowPos, the exact measured
+delta, subsequent terminal dimensions and every original completion assertion.
+This avoids requiring a window to grow beyond its effective upper size limit;
+it does not prove which operand of an earlier W16 refusal failed. The original
+foreground, owner, trusted input, ACK, Stop, real exit and 45-second limits remain.
+
+The Windows Session suite prepares its small current-source Win32 lock holder once
+through the shared test runner, using installed Visual Studio/Windows SDK tooling
+and the existing private test-run directory. It opens the actual conversation file
+with read/write sharing and no delete sharing. Both native cases still require
+real rename refusals, the original five-attempt/150 ms replacement policy, actual
+holder close and exact history preservation. Its 5-second readiness and 15-second
+case limits remain unchanged. Preparation failure is a failure; direct node --test
+bypasses that preparation. Use the targeted shared-runner command in
+[TESTING.md](TESTING.md#windows-conversation-save-rename-recovery). No SDK download or executable cache
+is introduced for this supplier.
+
+
+## Local state consumption and final output acknowledgements
+
+A hide/open transition can leave an untracked local-state reply in flight. The
+local view returns whether it actually consumed the reply, the app adapter forwards
+that result, and the unshipped acceptance observer advances only on a consumed
+reply. This does not authorize a button, bypass disabled controls or infer an agent
+start from a retirement snapshot.
+
+An xterm parse callback can complete after its real PTY has closed. The native
+adapters keep at most one server-only, exact-session ACK capability for genuinely
+outstanding sequences. The closed branch settles the original byte accounting;
+it cannot invoke the handle, resume output, refresh activity, input, resize or ping.
+Owner retirement, socket closure, reset and any new successful PTY spawn invalidate
+it. A failed open does not revoke the existing session's receipts. The renderer
+also requires the same retained operation object and current document. Generic
+PTY ACK behavior remains unchanged.
+
+Reopened history is not an ACK drain barrier. The terminal acceptance form emits
+DONE only after its real successful ACK count equals its received output count;
+its original R14/R15 refusals and the parent's exact output/ACK sequence comparison
+remain mandatory. CPU schedules establish these reachable ordering defects, not
+the unique physical cause of a prior hosted run. Exact-head Windows/macOS native
+acceptance is still required.
+
+
+## Source seals and fixture line endings
+
+The local-state acceptance consumer matches the complete guard statement without
+assuming a line terminator, and exercises the same actual HMAC replies under LF
+and CRLF. The two SHA-sealed workspace XCTest Swift sources have exact LF Git
+attributes; their raw-byte seal assertions remain unchanged. Do not normalize
+compiled output or official evidence to satisfy a source seal. The bounded picker
+identity census reports only fixed enum classes, never button strings or paths,
+and supplies no UI success or cleanup authority.

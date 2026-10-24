@@ -56,6 +56,7 @@ jobs:
         run: |
           bash -n scripts/tests/test-package-gates.sh
           bash scripts/tests/test-package-gates.sh
+          node --test scripts/tests/activity-notifier-package.test.cjs
 
       - name: Build companion
         run: |
@@ -279,6 +280,15 @@ jobs:
         run: |
           cd companion
           npx tsc -p tsconfig.test.json
+
+      - name: "Actual passive activity capture and local OCR (#758)"
+        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
+        shell: bash
+        env:
+          CMSPARK_ACTIVITY_NATIVE_758: '1'
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/activity-platform-native-758.test.js
 
       - name: "Windows cockpit Node scalar selection (#723)"
         if: matrix.os == 'windows-latest'
@@ -726,6 +736,37 @@ jobs:
           node "$moduleScopeProbe650" "$env:CMSPARK_650_FINISHED_PUBLIC_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+
+  activity-linux-x11:
+    name: activity (Linux X11 native)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: |
+            companion/package-lock.json
+            chrome-extension/package-lock.json
+      - name: Install local desktop and OCR dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3 python3-tk python3-dbus python3-gi libglib2.0-bin libx11-6 libxss1 libxres1 xvfb openbox x11-utils x11-xserver-utils fonts-dejavu-core tesseract-ocr tesseract-ocr-chi-sim libnotify-bin dunst dbus-x11
+      - name: Install and compile canonical inputs
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: |
+          cd chrome-extension && npm ci
+          cd ../companion && npm ci && npm run build
+          npx tsc -p tsconfig.test.json
+      - name: Actual owned X11 window capture, XRes identity and local OCR
+        env:
+          CMSPARK_ACTIVITY_NATIVE_758: '1'
+          XDG_SESSION_TYPE: x11
+        run: |
+          cd companion
+          bash scripts/test-activity-x11-758.sh
 
   acp-history-restart:
     needs: build

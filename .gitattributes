@@ -13,3 +13,6 @@
 /companion/tests/fixtures/code-review-rename-464.patch text eol=lf
 # The fixed CFT member/layout source is fingerprinted as exact committed bytes.
 /chrome-extension/scripts/fixtures/cft-linux64-732.json text eol=lf
+# Owned XCTest source seals must survive Windows checkout byte-for-byte.
+/companion/tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift text eol=lf
+/companion/tests/fixtures/workspace-ui-705/OwnedUIProtocol.swift text eol=lf
