@@ -6,6 +6,7 @@
  const original=window.cmsparkDesktopReceive;window.cmsparkDesktopReceive=f=>{original(f);
   if(f.type==='thread.list'&&phase===0){phase=1;pick('local');return}
   if(f.type==='desktop.local.state.result'){
+   if(![1,9,13].includes(phase))return; // Actual hide/openDialog emits an untracked retirement state.
    if(!f.ok||!f.state.bound){fail(5);return}
    if(phase===1){phase=2;key('local-terminal-open');return}
    if(phase===9||phase===13){const follow=phase===13;phase=follow?14:10;$('local-goal').value=follow?'owned native hang':'owned native task';key('local-agent-start');return}fail(6);return

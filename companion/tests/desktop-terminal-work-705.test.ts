@@ -12,6 +12,7 @@ import {ThreadManager} from '../src/threads/thread-manager'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import vm from 'node:vm'
 const methods=['desktop.local.state','desktop.terminal.open','desktop.terminal.input','desktop.terminal.resize','desktop.terminal.ack','desktop.terminal.ping','desktop.terminal.close','desktop.terminal.return']
 function fixture(t:any){
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'local-work-476-'))),before=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=root
@@ -163,4 +164,15 @@ test('connection retirement aborts pending approval without closing an unstarted
 })
 test('connection retirement does not close an operation whose actual runtime owner changed',async t=>{
  const f=fixture(t);await open(f);f.runtime.terminalContext=()=>false;f.ws.terminate();await f.tick();assert.deepEqual(f.calls,['open']);assert.equal(f.manager.pendingCount(),0)
+})
+
+test('705 local acceptance ignores actual untracked retirement snapshots while preserving expected-state refusals',async t=>{
+ const f=fixture(t),first=await f.send({type:'desktop.local.state',id:'owned-first',thread_id:'local-work-A'}),retirement=await f.send({type:'desktop.local.state',id:'owned-retirement',thread_id:'local-work-A'}),unbound=await f.send({type:'desktop.local.state',id:'owned-unbound',thread_id:'local-work-B'})
+ assert.equal(first.state.bound,true);assert.equal(retirement.state.bound,true);assert.equal(unbound.state.bound,false);assert.deepEqual(f.calls,[])
+ const actual=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/local-form.js'),'utf8'),guard="   if(![1,9,13].includes(phase))return; // Actual hide/openDialog emits an untracked retirement state.\n"
+ assert.equal(actual.split(guard).length,2)
+ const run=(source:string,initial:any,extra?:any)=>{const out:string[]=[],button={disabled:false,focus(){},getAttribute:()=> 'native-local-A'},nodes:Record<string,any>={status:{textContent:''},list:{querySelectorAll:()=>[button]},'local-terminal-open':button},scope={documentGeneration:'owned',Uint8Array,TextDecoder,atob,document:{getElementById:(id:string)=>nodes[id],addEventListener(){}},window:{cmsparkDesktopReceive(){},chrome:{webview:{postMessage:(frame:any)=>out.push(frame.id)}}}};vm.runInNewContext(source,scope);const receive=scope.window.cmsparkDesktopReceive as (frame:any)=>void;receive({type:'thread.list'});receive(initial);if(extra)receive(extra);return out}
+ const current=run(actual,first,retirement);assert.equal(current.filter(x=>x==='D476_LOCAL_KEY').length,2);assert.equal(current.includes('D476_LOCAL_FAIL'),false)
+ const old=run(actual.replace(guard,''),first,retirement);assert.ok(old.includes('D476_LOCAL_FIRST_R_6'));assert.ok(old.includes('D476_LOCAL_FAIL'))
+ const refused=run(actual,unbound);assert.ok(refused.includes('D476_LOCAL_FIRST_R_5'));assert.ok(refused.includes('D476_LOCAL_FAIL'));assert.deepEqual(f.calls,[])
 })
