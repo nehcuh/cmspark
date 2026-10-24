@@ -207,3 +207,14 @@ its original R14/R15 refusals and the parent's exact output/ACK sequence compari
 remain mandatory. CPU schedules establish these reachable ordering defects, not
 the unique physical cause of a prior hosted run. Exact-head Windows/macOS native
 acceptance is still required.
+
+
+## Source seals and fixture line endings
+
+The local-state acceptance consumer matches the complete guard statement without
+assuming a line terminator, and exercises the same actual HMAC replies under LF
+and CRLF. The two SHA-sealed workspace XCTest Swift sources have exact LF Git
+attributes; their raw-byte seal assertions remain unchanged. Do not normalize
+compiled output or official evidence to satisfy a source seal. The bounded picker
+identity census reports only fixed enum classes, never button strings or paths,
+and supplies no UI success or cleanup authority.

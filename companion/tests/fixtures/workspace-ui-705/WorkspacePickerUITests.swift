@@ -70,8 +70,16 @@ final class WorkspacePicker705:XCTestCase {
    let sheetButtonCount=first.buttons.count
    let ownerLabelCount=app.windows.matching(identifier:scene.nonce).buttons.matching(NSPredicate(format:"label IN %@",["Choose","Open"])).count
    guard sheetLabelCount>=0,sheetButtonCount>=0,ownerLabelCount>=0 else{return}
-   // No receipt if a synchronous framework call does not return; missing is UNKNOWN.
-   try? scene.write(.uiChooseCensus,["schema":1,"nonce":scene.nonce,"status":"OBSERVED","sheetLabelCount":min(sheetLabelCount,2),"sheetButtonCount":min(sheetButtonCount,2),"ownerLabelCount":min(ownerLabelCount,2)])
+   // Reuse that same count; this is non-atomic evidence, never button authority.
+   var buttonIdentityRows=[[Int]]()
+   for index in 0..<min(sheetButtonCount,8) {
+    let button=first.buttons.element(boundBy:index)
+    let label=OwnedUI705ButtonIdentity(button.label).rawValue
+    let identifier=OwnedUI705ButtonIdentity(button.identifier).rawValue
+    buttonIdentityRows.append([label,identifier])
+   }
+   // No receipt if any synchronous framework call does not return; missing is UNKNOWN.
+   try? scene.write(.uiChooseCensus,["schema":1,"nonce":scene.nonce,"status":"OBSERVED","sheetLabelCount":min(sheetLabelCount,2),"sheetButtonCount":min(sheetButtonCount,2),"ownerLabelCount":min(ownerLabelCount,2),"buttonCount":min(sheetButtonCount,8),"buttonsMore":sheetButtonCount>8,"buttonIdentityRows":buttonIdentityRows])
   }
   uiStage=11;uiDetail=0;observeUIStage();let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();observeChooseCensus();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout);uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;observeUIStage();guard chooseCount==1 else{throw OwnedUI705Error.refused}
   uiStage=12;uiDetail=0;observeUIStage();let chooseHittable=choose.element.isHittable;uiDetail=chooseHittable ? 2:1;observeUIStage();guard chooseHittable else{throw OwnedUI705Error.refused}

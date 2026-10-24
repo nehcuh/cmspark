@@ -5,6 +5,20 @@ import CoreFoundation
 enum OwnedUI705Error: Error { case refused }
 // Optional fixed startup-write observation; never an authority or recovery path.
 enum OwnedUI705WriteStep: Int { case checkInitial=1, serialize, openFile, statFile, writeData, syncFile, checkBeforePublish, linkFile, unlinkTemporary, checkAfterPublish }
+// Fixed local mapping only. Raw AX strings never enter a receipt or log.
+enum OwnedUI705ButtonIdentity: Int {
+ case empty=0, choose=1, open=2, go=3, cancel=4, other=5
+ init(_ value:String) {
+  switch value {
+  case "":self = .empty
+  case "Choose":self = .choose
+  case "Open":self = .open
+  case "Go":self = .go
+  case "Cancel":self = .cancel
+  default:self = .other
+  }
+ }
+}
 enum OwnedUI705File: String {
  case input="input.json", startup="runner-start.json", ack="owner-ack.json", begin="ui-begin.json", returned="ui-quiescent.json", closed="runner-closed.json", cancel="cancel.json", first="picker-first.json", second="picker-second.json", uiRefusal="ui-refusal.json", uiProgress="ui-progress.json", uiChooseCensus="ui-choose-census.json"
 }

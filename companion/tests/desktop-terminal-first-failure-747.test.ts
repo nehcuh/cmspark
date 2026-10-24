@@ -106,7 +106,9 @@ function closedAckInverseForm747(raw:string){
 // Independent preceding Git source SHA is preserved; no result-derived baseline.
 function chooseCensusInverseParent705(raw:string){
  const pairs:[string,string][]=[["let uiChooseCensus:{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null}|null=null;try{if(primaryFailed)uiChooseCensus=uiOwner?.scene.uiChooseCensus()??null}catch{};", ""], ["{uiRefusal,uiProgress,uiChooseCensus}", "{uiRefusal,uiProgress}"]]
- let value=raw;for(const [current,previous]of pairs){assert.equal(value.split(current).length,2,"one exact increment hunk");value=value.replace(current,previous)}
+ // Undo only the fixed identity-enum extension before the existing whole-source authority.
+ const identityPair:[string,string]=["let uiChooseCensus:{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null;buttonCount:number|null;buttonsMore:boolean|null;buttonIdentityRows:Array<[number,number]>|null}|null=null;","let uiChooseCensus:{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null}|null=null;"]
+ let value=raw;assert.equal(value.split(identityPair[0]).length,2,"one exact identity type hunk");value=value.replace(identityPair[0],identityPair[1]);assert.equal(createHash("sha256").update(value).digest("hex"),"2f2a3d08eafb54b2eef26450e30b12000844479e759316eff3773ebad8364f2e","entire pre-identity parent conserved");for(const [current,previous]of pairs){assert.equal(value.split(current).length,2,"one exact increment hunk");value=value.replace(current,previous)}
  assert.equal(createHash("sha256").update(value).digest("hex"),"ba6a17d9ba68cefa2ea0a4feae84a2ef41ada61c83073a5d7b47e7755b4f9b5e","entire preceding source conserved");return value
 }
 

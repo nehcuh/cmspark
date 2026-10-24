@@ -79,7 +79,7 @@ const result705Unknown=(reason:Result705Projection['reason']):Result705Projectio
 const RESULT705_IDS=new Set(['WorkspacePicker705/testOwnedPanel','WorkspacePicker705/testOwnedPanel()','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel()'])
 const RESULT705_TYPES=new Set(['Test Plan','Unit test bundle','UI test bundle','Test Suite','Test Case','Device','Test Plan Configuration','Arguments','Repetition','Test Case Run','Failure Message','Source Code Reference','Attachment','Expression','Test Value','Runtime Warning'])
 // Both hashes are independently bound to b975 actual source; paths never come from runtime JSON.
-const RESULT705_SOURCES=[['WorkspacePickerUITests.swift','d9e11574d3a835f3ce1bf85c3e40975d4eb5adb413c20dad6dc43d3c6ab4a463'],['OwnedUIProtocol.swift','5d42b55aa35a1559b026a1aa2475bf9393bc93ed524b4ec0fedee908883b54b1']] as const
+const RESULT705_SOURCES=[['WorkspacePickerUITests.swift','182d2773a37134d289fec9c80a27107b5359c51d2cab1545bdfd62c3f6a2cee4'],['OwnedUIProtocol.swift','fbad4db2905d6bb58a40062ec844716554fb4bb8f52ae73f3f5b094ec27c979c']] as const
 // Actual Tests response: nodeIdentifier is optional in the official schema.
 // Only a present allowlisted Test Case identifier counts; never derive one from name.
 function result705Select(data:Buffer):string {
@@ -202,10 +202,16 @@ export class OwnedUI705Boundary {
  uiProgress():{stage:number;detail:number}|null {
   try{const v=this.read('ui-progress.json');if(v===undefined)return null;this.fields(v,['schema','nonce','stage','detail']);if(!Number.isInteger(v.stage)||v.stage<1||v.stage>20||!Number.isInteger(v.detail)||v.detail<0||v.detail>5)return null;return{stage:v.stage,detail:v.detail}}catch{return null}
  }
- // One fixed, saturated AX census. Never a UI outcome or lifecycle/cleanup receipt.
- uiChooseCensus():{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null} {
-  const unknown=()=>({schema:1 as const,status:'UNKNOWN' as const,sheetLabelCount:null,sheetButtonCount:null,ownerLabelCount:null})
-  try{const v=this.read('ui-choose-census.json');if(v===undefined)return unknown();this.fields(v,['schema','nonce','status','sheetLabelCount','sheetButtonCount','ownerLabelCount']);if(v.status!=='OBSERVED'||![v.sheetLabelCount,v.sheetButtonCount,v.ownerLabelCount].every(n=>Number.isInteger(n)&&n>=0&&n<=2))return unknown();return{schema:1,status:'OBSERVED',sheetLabelCount:v.sheetLabelCount,sheetButtonCount:v.sheetButtonCount,ownerLabelCount:v.ownerLabelCount}}catch{return unknown()}
+ // Fixed saturated counts and local identity enums only; never UI/closure authority.
+ uiChooseCensus():{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null;buttonCount:number|null;buttonsMore:boolean|null;buttonIdentityRows:Array<[number,number]>|null} {
+  const unknown=()=>({schema:1 as const,status:'UNKNOWN' as const,sheetLabelCount:null,sheetButtonCount:null,ownerLabelCount:null,buttonCount:null,buttonsMore:null,buttonIdentityRows:null})
+  try{
+   const v=this.read('ui-choose-census.json');if(v===undefined)return unknown()
+   this.fields(v,['schema','nonce','status','sheetLabelCount','sheetButtonCount','ownerLabelCount','buttonCount','buttonsMore','buttonIdentityRows'])
+   if(v.status!=='OBSERVED'||![v.sheetLabelCount,v.sheetButtonCount,v.ownerLabelCount].every(n=>Number.isInteger(n)&&n>=0&&n<=2)||!Number.isInteger(v.buttonCount)||v.buttonCount<0||v.buttonCount>8||typeof v.buttonsMore!=='boolean'||v.buttonsMore&&v.buttonCount!==8||v.sheetButtonCount!==Math.min(v.buttonCount,2))return unknown()
+   if(!Array.isArray(v.buttonIdentityRows)||v.buttonIdentityRows.length!==v.buttonCount||!v.buttonIdentityRows.every(row=>Array.isArray(row)&&row.length===2&&row.every(n=>Number.isInteger(n)&&n>=0&&n<=5)))return unknown()
+   return{schema:1,status:'OBSERVED',sheetLabelCount:v.sheetLabelCount,sheetButtonCount:v.sheetButtonCount,ownerLabelCount:v.ownerLabelCount,buttonCount:v.buttonCount,buttonsMore:v.buttonsMore,buttonIdentityRows:v.buttonIdentityRows.map(row=>[row[0],row[1]] as [number,number])}
+  }catch{return unknown()}
  }
  // Passive, non-atomic observation only. Neither a success nor a cleanup receipt.
  receiptMask():number|null {

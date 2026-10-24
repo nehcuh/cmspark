@@ -169,10 +169,14 @@ test('connection retirement does not close an operation whose actual runtime own
 test('705 local acceptance ignores actual untracked retirement snapshots while preserving expected-state refusals',async t=>{
  const f=fixture(t),first=await f.send({type:'desktop.local.state',id:'owned-first',thread_id:'local-work-A'}),retirement=await f.send({type:'desktop.local.state',id:'owned-retirement',thread_id:'local-work-A'}),unbound=await f.send({type:'desktop.local.state',id:'owned-unbound',thread_id:'local-work-B'})
  assert.equal(first.state.bound,true);assert.equal(retirement.state.bound,true);assert.equal(unbound.state.bound,false);assert.deepEqual(f.calls,[])
- const actual=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/local-form.js'),'utf8'),guard="   if(![1,9,13].includes(phase))return; // Actual hide/openDialog emits an untracked retirement state.\n"
+ const actual=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/local-form.js'),'utf8'),guard="   if(consumed!==true||![1,9,13].includes(phase))return; // Only a state reply handled by the actual view can advance its next action."
  assert.equal(actual.split(guard).length,2)
- const run=(source:string,initial:any,extra?:any)=>{const out:string[]=[],button={disabled:false,focus(){},getAttribute:()=> 'native-local-A'},nodes:Record<string,any>={status:{textContent:''},list:{querySelectorAll:()=>[button]},'local-terminal-open':button},scope={documentGeneration:'owned',Uint8Array,TextDecoder,atob,document:{getElementById:(id:string)=>nodes[id],addEventListener(){}},window:{cmsparkDesktopReceive(){},chrome:{webview:{postMessage:(frame:any)=>out.push(frame.id)}}}};vm.runInNewContext(source,scope);const receive=scope.window.cmsparkDesktopReceive as (frame:any)=>void;receive({type:'thread.list'});receive(initial);if(extra)receive(extra);return out}
- const current=run(actual,first,retirement);assert.equal(current.filter(x=>x==='D476_LOCAL_KEY').length,2);assert.equal(current.includes('D476_LOCAL_FAIL'),false)
- const old=run(actual.replace(guard,''),first,retirement);assert.ok(old.includes('D476_LOCAL_FIRST_R_6'));assert.ok(old.includes('D476_LOCAL_FAIL'))
- const refused=run(actual,unbound);assert.ok(refused.includes('D476_LOCAL_FIRST_R_5'));assert.ok(refused.includes('D476_LOCAL_FAIL'));assert.deepEqual(f.calls,[])
+ const run=(source:string,initial:any,extra?:any)=>{const out:string[]=[],button={disabled:false,focus(){},getAttribute:()=> 'native-local-A'},nodes:Record<string,any>={status:{textContent:''},list:{querySelectorAll:()=>[button]},'local-terminal-open':button},scope={documentGeneration:'owned',Uint8Array,TextDecoder,atob,document:{getElementById:(id:string)=>nodes[id],addEventListener(){}},window:{cmsparkDesktopReceive(frame:any){return frame.type==='desktop.local.state.result'&&(frame.id==='owned-first'||frame.id==='owned-unbound')},chrome:{webview:{postMessage:(frame:any)=>out.push(frame.id)}}}};vm.runInNewContext(source,scope);const receive=scope.window.cmsparkDesktopReceive as (frame:any)=>void;receive({type:'thread.list'});receive(initial);if(extra)receive(extra);return out}
+ for(const source of [actual.replace(/\r\n/g,'\n'),actual.replace(/\r?\n/g,'\r\n')]){
+  assert.equal(source.split(guard).length,2)
+ const untracked=run(source,retirement);assert.equal(untracked.filter(x=>x==='D476_LOCAL_KEY').length,1);assert.equal(untracked.includes('D476_LOCAL_FAIL'),false)
+ const current=run(source,first,retirement);assert.equal(current.filter(x=>x==='D476_LOCAL_KEY').length,2);assert.equal(current.includes('D476_LOCAL_FAIL'),false)
+ const old=run(source.replace(guard,''),first,retirement);assert.ok(old.includes('D476_LOCAL_FIRST_R_6'));assert.ok(old.includes('D476_LOCAL_FAIL'))
+ const refused=run(source,unbound);assert.ok(refused.includes('D476_LOCAL_FIRST_R_5'));assert.ok(refused.includes('D476_LOCAL_FAIL'));assert.deepEqual(f.calls,[])
+ }
 })
