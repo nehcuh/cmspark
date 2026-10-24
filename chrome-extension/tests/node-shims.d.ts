@@ -32,6 +32,7 @@ declare const process: { cwd(): string }
 
 declare module "node:assert/strict" {
   interface Assert {
+    fail(message?: string | Error): never
     equal(actual: unknown, expected: unknown, message?: string): void
     deepEqual(actual: unknown, expected: unknown, message?: string): void
     notStrictEqual(actual: unknown, expected: unknown, message?: string): void
@@ -43,6 +44,6 @@ declare module "node:assert/strict" {
   export default assert
 }
 declare module "node:vm" {
-  const vm: { runInNewContext(code: string, context: Record<string, unknown>, options?: { timeout?: number }): any }
+  const vm: { runInNewContext(code: string, context: Record<string, unknown>, options?: { timeout?: number; filename?: string }): any }
   export default vm
 }

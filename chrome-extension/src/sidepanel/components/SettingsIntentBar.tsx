@@ -8,7 +8,7 @@ import { tokens } from "../ui/tokens"
 
 export type SettingsIntentBarProps = {
   /** Existing explicit navigation only; semantic configuration never invokes regex mutations. */
-  onIntent: (intent: SettingsIntent) => string
+  onIntent: (intent: SettingsIntent, isCurrent: () => boolean) => string | Promise<string>
   onOpenSection?: (section: SettingsSectionId) => void
   onOpenDestination?: (destination: "activity" | "todos") => void
   disabled?: boolean
@@ -18,7 +18,7 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
   const [text, setText] = useState("")
   const [status, setStatus] = useState<string | null>(null)
   const [listening, setListening] = useState(false)
-  const [busy, setBusy] = useState<"propose" | "apply" | null>(null)
+  const [busy, setBusy] = useState<"propose" | "apply" | "navigate" | null>(null)
   const [proposal, setProposal] = useState<SemanticProposal | null>(null)
   const [candidateId, setCandidateId] = useState("")
   const [selected, setSelected] = useState<string[]>([])
@@ -27,6 +27,12 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
   const [error, setError] = useState("")
   const recRef = useRef<{ stop: () => void; abort: () => void } | null>(null)
   const generationRef = useRef(0)
+  const navigationOwnerRef = useRef({ active, disabled })
+  // Invalidate the local navigation lease at render, before passive cleanup can run.
+  if (navigationOwnerRef.current.active !== active || navigationOwnerRef.current.disabled !== disabled) {
+    generationRef.current += 1
+    navigationOwnerRef.current = { active, disabled }
+  }
   const requestRef = useRef<AbortController | null>(null)
   useEffect(() => {
     const cancel = () => {
@@ -93,6 +99,17 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
     recRef.current = r; setListening(true); setStatus("请描述希望改善的体验…")
     try { r.start() } catch { setListening(false); recRef.current = null; setStatus("无法启动麦克风") }
   }, [disabled, active, listening, busy])
+  const navigateRule = async () => {
+    if (disabled || !active || busy) return
+    const generation = ++generationRef.current
+    const isCurrent = () => generation === generationRef.current
+    setBusy("navigate"); setError(""); setStatus(null)
+    try {
+      const result = await onIntent(rule, isCurrent)
+      if (isCurrent()) setStatus(result)
+    } catch { if (isCurrent()) setError("无法打开目标，请完成当前操作后再试。") }
+    finally { if (isCurrent()) setBusy(null) }
+  }
   const candidate = proposal?.candidates.find(item => item.id === candidateId)
   const rule = parseSettingsIntent(text)
   const canNavigateRule = rule.type === "open_meeting" || rule.type === "open_packs"
@@ -104,7 +121,7 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
       <button type="button" disabled={disabled || !!busy || listening || !text.trim()} style={styles.btn} onClick={() => void propose()}>{busy === "propose" ? "理解中…" : "生成候选"}</button>
       <button type="button" disabled={disabled || !!busy} style={{ ...styles.btn, ...(listening ? styles.btnLive : {}) }} onClick={() => listening ? stopVoice() : startVoice()} title="语音只填写描述，不自动修改设置">{listening ? "停止" : "语音"}</button>
     </div>
-    {canNavigateRule && <button type="button" style={styles.btn} disabled={disabled || !!busy} onClick={() => setStatus(onIntent(rule))}>规则导航：{rule.type === "open_meeting" ? "打开会议" : "打开场景"}</button>}
+    {canNavigateRule && <button type="button" style={styles.btn} disabled={disabled || !!busy} onClick={() => void navigateRule()}>规则导航：{rule.type === "open_meeting" ? "打开会议" : "打开场景"}</button>}
     {status && <p role="status" style={styles.status}>{status}</p>}
     {error && <p role="alert" style={styles.error}>{error}</p>}
     {proposal && <div style={styles.proposal}>

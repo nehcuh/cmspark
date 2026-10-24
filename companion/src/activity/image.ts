@@ -7,7 +7,7 @@ export const languageOf = (config: ActivityConfig): LocalLanguage => config.ocr_
 
 /** Reject oversized/ambiguous image inputs before handing bytes to a native decoder. */
 export function validatePng(image: Buffer): void {
-  if (image.length < 33 || image.length > 8 * 1024 * 1024 || !image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) || image.toString('ascii', 12, 16) !== 'IHDR') throw new ActivityError('INVALID_IMAGE', '请选择不超过 8 MB 的 PNG 截图')
+  if (image.length < 33 || image.length > 8 * 1024 * 1024 || !image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) || image.toString('ascii', 12, 16) !== 'IHDR') throw new ActivityError('INVALID_IMAGE', '请提供有效 PNG；手动导入上限为 6 MiB，本地解码上限为 8 MiB')
   const width = image.readUInt32BE(16), height = image.readUInt32BE(20)
   if (!width || !height || width > 8192 || height > 8192 || width * height > 16_777_216) throw new ActivityError('INVALID_IMAGE', '截图尺寸超过本地 OCR 的限制')
 }

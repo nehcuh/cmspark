@@ -91,6 +91,3 @@ export function parseSettingsIntent(raw: string): SettingsIntent {
 
   return { type: "unknown", reason: "no_match" }
 }
-
-export const SETTINGS_INTENT_HELP =
-  "可说/输入：开启连续听写 · 开启实时出字 · 浏览器听写 · 本机听写 · 开启按住说话 · 开启纠错 · 打开会议 · 打开场景"

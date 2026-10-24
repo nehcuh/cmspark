@@ -32,6 +32,11 @@ export class ActivityStore {
     }
   }
   state(): ActivityState { return clone(this.value) }
+  /** Exclude raw OCR before cloning the state sent to the workspace. */
+  stateMetadata(): Omit<ActivityState, 'sources'> & { sources: Array<Omit<ActivitySource, 'ocr_text'>> } {
+    const { sources, ...metadata } = this.value
+    return { ...clone(metadata), sources: sources.map(({ ocr_text: _privateText, ...source }) => clone(source)) }
+  }
   /** Scheduler reads must not serialize retained screenshots' OCR every second. */
   config(): ActivityConfig { return clone(this.value.config) }
   dueReminders(now: number): PersonalTodo[] {

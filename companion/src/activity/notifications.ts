@@ -19,9 +19,9 @@ export function resolveWindowsToast(architecture = process.arch): string {
   return path.join(path.dirname(localRequire.resolve('node-notifier/package.json')), 'vendor', 'snoreToast', name)
 }
 /** The package callback suppresses several spawn failures. Observe the actual child instead. */
-export async function submitWindowsReminder(run: ToastExecutor = exec, binary = resolveWindowsToast()): Promise<void> {
+export async function submitWindowsReminder(run: ToastExecutor = exec, binary?: string): Promise<void> {
   try {
-    await run(binary, ['-t', 'CMspark 待办提醒', '-m', '有待办需要处理或反馈，请打开 CMspark 待办查看。', '-silent'], { timeout: 10000, windowsHide: true, maxBuffer: 4096 })
+    await run(binary === undefined ? resolveWindowsToast() : binary, ['-t', 'CMspark 待办提醒', '-m', '有待办需要处理或反馈，请打开 CMspark 待办查看。', '-silent'], { timeout: 10000, windowsHide: true, maxBuffer: 4096 })
   } catch (error) {
     const value = error as { code?: unknown; killed?: boolean; signal?: string }
     // SnoreToast's documented hidden/dismissed/expired/action exit codes prove submission,

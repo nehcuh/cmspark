@@ -635,6 +635,12 @@ Companion `activity-752.test.ts`、`settings-assistant.test.ts`、`personal-work
 `chrome-extension/scripts/render-workspace-fixture.cjs` 与 `personal-workspace-ui-fixture.cjs` 可构建真实 App 的受控演示；后者使用真实后台处理器和独立临时数据，替换采集、模型和通知。当前证据及完整命令见 [机器报告](audit/reviews/2026-10-21-chat-action-workspace-machine.md)。这些检查不证明真实 TCC/屏幕录制/Vision、模型准确率或通知展示，不能替代平台现场验收。
 
 
+### #756 非阻断后续回归
+
+`activity-752.test.ts` 使用实际存储 producer 达到 16 MiB 元数据边界，核超额编辑/提醒拒绝时持久字节不变，以及清理来源后保留确认事项并恢复写入。另用实际服务响应检查状态读取不先克隆原始 OCR，返回的来源、配置、证据和运行状态相互隔离。`semantic-settings.test.ts` 用真实设置/工作中心/面板组件及实际线程 reducer 覆盖导航受阻、已接受导航和线程切换后的迟到结果。
+
+缺少 Windows 通知资源的回归使用实际独立打包产物；缺失路径必须返回 `NOTIFICATION_FAILED`，不把通知请求视为成功展示。这些 CPU 与打包检查不替代真实平台原生 CI。
+
 ## 活动记录平台适配（#758）
 
 `activity-platform-758.test.ts` 验证真实服务的适配器选择、PNG/WS 预算、导入权限和迟到结果、手动来源日期、Windows Passive 路径/身份/桌面/权限、固定 OCR 和系统通知退出状态。`activity-platform-native-758.test.ts` 仅在显式原生 driver 中启用，复用原 `native-surface-650` 桌面 lease；Windows hosted 自有 WPF 窗口验证实际 helper/WinRT OCR/不抢焦点/最小化拒绝和通知提交。Linux `cd companion && bash scripts/test-activity-x11-758.sh`总是创建私有 D-Bus 和 Xvfb，实际 XRes/焦点/像素/Tesseract、伪造 PID、遮挡、最小化、XScreenSaver 与通知提交均执行。桌面屏幕锁定 D-Bus 协议使用明确的受控服务，测试 true/false/服务退出后 unknown 拒绝；这不是实际 GNOME/KDE 锁屏的证明。原生 driver 依赖见 CI 新 Linux lane；不连接真实聊天、模型或现有安装配置。

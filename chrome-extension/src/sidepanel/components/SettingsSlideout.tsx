@@ -358,66 +358,23 @@ export function SettingsSlideout() {
    * MUST stay above the settingsOpen early-return — React #310 if hooks run only when open.
    */
   const applySettingsIntent = useCallback(
-    (intent: SettingsIntent): string => {
-      if (intent.type.startsWith("set_") || intent.type === "enable_hotkey_default") selectSettingsPage("voice")
+    async (intent: SettingsIntent, isCurrent: () => boolean): Promise<string> => {
       switch (intent.type) {
-        case "set_dictation_mode":
-          dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: intent.mode })
-          return intent.mode === "continuous"
-            ? "已开启连续听写"
-            : "已切换为经典短听"
-        case "set_hotkey_enabled":
-          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: intent.enabled })
-          return intent.enabled ? "已启用按住说话热键" : "已关闭按住说话热键"
-        case "set_asr_refiner":
-          dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: intent.enabled })
-          return intent.enabled ? "已开启 ASR 纠错" : "已关闭 ASR 纠错"
-        case "set_realtime_streaming":
-          dispatch({
-            type: "SET_VOICE_REALTIME_STREAMING",
-            enabled: intent.enabled,
-            preferContinuous: intent.enabled === true,
-          })
-          return intent.enabled
-            ? "已开启实时出字（浏览器字级 interim；本机约 8 秒一段）"
-            : "已关闭实时出字优先"
-        case "set_stt_engine":
-          if (intent.engine === "browser") {
-            try {
-              chrome.runtime.sendMessage({
-                type: "voice.model.set_engine",
-                engine: "browser",
-                source: "settings",
-              })
-            } catch {
-              /* */
-            }
-            setEngineDraft("browser")
-            return "已切换为浏览器听写（支持字级实时）"
-          }
-          setEngineDraft("local")
-          return "请在「输入与语音 → 听写方式」下载模型后点「启用本机转写」"
-        case "enable_hotkey_default":
-          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: true })
-          dispatch({
-            type: "SET_DICTATION_HOTKEY_CHORD",
-            chord: DICTATION_HOTKEY_DEFAULT_CHORD,
-          })
-          return `已启用热键：${DICTATION_HOTKEY_DEFAULT_CHORD}`
         case "open_meeting":
+        case "open_packs": {
+          if (!host) return "此处无法打开面板，请保留设置并从工作区导航打开。"
+          const opened = await host.openPanelForce(intent.type === "open_meeting" ? "meeting" : "packs")
+          if (!isCurrent()) return "导航已取消，设置保持原状。"
+          if (!opened) return "面板尚未打开，请先完成当前操作后再试。"
           dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-          host?.openPanelForce("meeting")
-          return "已打开会议工作台"
-        case "open_packs":
-          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-          host?.openPanelForce("packs")
-          return "已打开场景面板"
+          return intent.type === "open_meeting" ? "已打开会议工作台" : "已打开场景面板"
+        }
         case "unknown":
         default:
-          return "未识别。试试：开启连续听写 / 开启实时出字 / 打开会议 / 浏览器听写"
+          return "未识别导航。请描述目标并生成设置候选，或输入「打开会议」「打开场景」使用规则导航。"
       }
     },
-    [dispatch, host, selectSettingsPage],
+    [dispatch, host],
   )
 
   if (!state.settingsOpen) return null
@@ -834,8 +791,7 @@ export function SettingsSlideout() {
           </label>
           <div className="cm-settings-body" style={styles.body}>
             <details className="cm-settings-assistant" onToggle={event => setSettingsAssistantOpen(event.currentTarget.open)}><summary>用一句话调整设置</summary><SettingsIntentBar onIntent={applySettingsIntent} onOpenSection={section => selectSettingsPage(section, true)} onOpenDestination={destination => {
-              dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-              requestAnimationFrame(() => window.dispatchEvent(new CustomEvent("cmspark:open-workspace-destination", { detail: destination })))
+              window.dispatchEvent(new CustomEvent("cmspark:open-workspace-destination", { detail: destination }))
             }} active={settingsAssistantOpen && state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)} /></details>
 
           <div data-settings-page="connection" hidden={activeSettingsPage !== "connection"}>
