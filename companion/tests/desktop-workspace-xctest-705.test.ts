@@ -16,7 +16,7 @@ function loadBoundary(mutant?:[string,string],capturedRoot?:string){
  const nonce='a'.repeat(64),root=capturedRoot??'/owned/cmspark-workspace-ui-705-'+nonce,store=new Map<string,any>(),fd=new Map<number,string>();let serial=3,opens=0
  const stat=(f:string)=>{if(f===root)return{isDirectory:()=>true,isSymbolicLink:()=>false,dev:1,ino:2,uid:7,mode:0o700};const v=store.get(f);if(!v)throw Object.assign(Error('ENOENT'),{code:'ENOENT'});return{isFile:()=>!v.nonfile,isSymbolicLink:()=>!!v.symlink,nlink:v.nlink??1,uid:v.uid??7,mode:v.mode??0o600,size:v.bytes.length,dev:1,ino:v.ino??8}}
  const flags={O_RDONLY:0,O_NOFOLLOW:0x20000,O_NONBLOCK:0x4}
- const mock={constants:flags,lstatSync:stat,realpathSync:(s:string)=>s,openSync:(s:string,bits:number)=>{opens++;assert.ok(bits&flags.O_NONBLOCK);assert.ok(bits&flags.O_NOFOLLOW);stat(s);fd.set(++serial,s);return serial},fstatSync:(n:number)=>stat(fd.get(n)!),readSync:(n:number,b:Buffer)=>{const v=store.get(fd.get(n)!);v.bytes.copy(b);return v.bytes.length},closeSync:(n:number)=>fd.delete(n),writeFileSync:(s:string,b:Buffer)=>{if(store.has(s))throw Error('EXISTS');store.set(s,{bytes:b})}}
+ const mock={constants:flags,lstatSync:stat,realpathSync:(s:string)=>s,openSync:(s:string,bits:number|string)=>{opens++;if(bits==='wx'){assert.equal(store.has(s),false);store.set(s,{bytes:Buffer.alloc(0),ino:serial+10});fd.set(++serial,s);return serial}assert.equal(typeof bits,'number');assert.ok(Number(bits)&flags.O_NONBLOCK);assert.ok(Number(bits)&flags.O_NOFOLLOW);stat(s);fd.set(++serial,s);return serial},fstatSync:(n:number)=>stat(fd.get(n)!),readSync:(n:number,b:Buffer)=>{const v=store.get(fd.get(n)!);v.bytes.copy(b);return v.bytes.length},closeSync:(n:number)=>fd.delete(n),writeFileSync:(s:string|number,b:Buffer)=>{if(typeof s==='number'){assert.ok(fd.has(s));store.get(fd.get(s)!).bytes=Buffer.from(b);return}if(store.has(s))throw Error('EXISTS');store.set(s,{bytes:Buffer.from(b)})},fsyncSync:(n:number)=>{assert.ok(fd.has(n))},linkSync:(from:string,to:string)=>{assert.equal(store.has(to),false);const item=store.get(from);assert.ok(item);item.nlink=2;store.set(to,item)},unlinkSync:(name:string)=>{const item=store.get(name);assert.ok(item);item.nlink--;assert.ok(store.delete(name))}}
  const mod:any={exports:{}};vm.runInNewContext(out.outputText,{module:mod,exports:mod.exports,fs:mock,path:path.posix,pathToFileURL:(p:string)=>pathToFileURL(p,{windows:false}),Buffer,TextDecoder,process:{getuid:()=>7,pid:123}})
  const api=new mod.exports.OwnedUI705Boundary(root,nonce),put=(name:string,value:any,extra:any={})=>store.set(root+'/'+name,{bytes:Buffer.from(JSON.stringify(Object.fromEntries(Object.keys(value).sort().map(k=>[k,value[k]])))),...extra})
  const base={schema:1,nonce},pid=321
@@ -303,8 +303,18 @@ test('705 failure-only UI stage is closed bounded and never a lifecycle authorit
 })
 
 
+// Source-only exact census inverse. Never normalize runtime JSON, TAP or emitted evidence.
+function previousCensus705(kind:'ui'|'protocol'|'helper'|'native',raw:string){
+ const pairs={"ui":[["uiDetail=3;observeUIStage();observeChooseCensus();let chooseTimeout=try remaining()","uiDetail=3;observeUIStage();let chooseTimeout=try remaining()"],["  let choose=first.buttons.matching(NSPredicate(format:\"label IN %@\",[\"Choose\",\"Open\"]))\n  // One diagnostic census only. Separate non-atomic AX queries; no labels leave this process.\n  var chooseCensusAttempted=false\n  func observeChooseCensus(){\n   if chooseCensusAttempted{return};chooseCensusAttempted=true\n   let sheetLabelCount=choose.count\n   let sheetButtonCount=first.buttons.count\n   let ownerLabelCount=app.windows.matching(identifier:scene.nonce).buttons.matching(NSPredicate(format:\"label IN %@\",[\"Choose\",\"Open\"])).count\n   guard sheetLabelCount>=0,sheetButtonCount>=0,ownerLabelCount>=0 else{return}\n   // No receipt if a synchronous framework call does not return; missing is UNKNOWN.\n   try? scene.write(.uiChooseCensus,[\"schema\":1,\"nonce\":scene.nonce,\"status\":\"OBSERVED\",\"sheetLabelCount\":min(sheetLabelCount,2),\"sheetButtonCount\":min(sheetButtonCount,2),\"ownerLabelCount\":min(ownerLabelCount,2)])\n  }\n","  let choose=first.buttons.matching(NSPredicate(format:\"label IN %@\",[\"Choose\",\"Open\"]))\n"]],"protocol":[["uiProgress=\"ui-progress.json\", uiChooseCensus=\"ui-choose-census.json\"","uiProgress=\"ui-progress.json\""]],"helper":[["5d42b55aa35a1559b026a1aa2475bf9393bc93ed524b4ec0fedee908883b54b1","01ca276b55894f4897901403291a891d9e4993c743de3d2c1f0f2dd6deb07310"],["d9e11574d3a835f3ce1bf85c3e40975d4eb5adb413c20dad6dc43d3c6ab4a463","79439b217dffda4fd07095be6fc8a250aaf27bff0e34198c0d0cdc44bdae8b09"],[" // One fixed, saturated AX census. Never a UI outcome or lifecycle/cleanup receipt.\n uiChooseCensus():{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null} {\n  const unknown=()=>({schema:1 as const,status:'UNKNOWN' as const,sheetLabelCount:null,sheetButtonCount:null,ownerLabelCount:null})\n  try{const v=this.read('ui-choose-census.json');if(v===undefined)return unknown();this.fields(v,['schema','nonce','status','sheetLabelCount','sheetButtonCount','ownerLabelCount']);if(v.status!=='OBSERVED'||![v.sheetLabelCount,v.sheetButtonCount,v.ownerLabelCount].every(n=>Number.isInteger(n)&&n>=0&&n<=2))return unknown();return{schema:1,status:'OBSERVED',sheetLabelCount:v.sheetLabelCount,sheetButtonCount:v.sheetButtonCount,ownerLabelCount:v.ownerLabelCount}}catch{return unknown()}\n }\n // Passive, non-atomic observation only. Neither a success nor a cleanup receipt.\n"," // Passive, non-atomic observation only. Neither a success nor a cleanup receipt.\n"],["'ui-refusal.json','ui-progress.json','ui-choose-census.json'] as const","'ui-refusal.json','ui-progress.json'] as const"]],"native":[["...(uiOwner?{uiRefusal,uiProgress,uiChooseCensus}:{})","...(uiOwner?{uiRefusal,uiProgress}:{})"],["let uiProgress:{stage:number;detail:number}|null=null;try{if(primaryFailed)uiProgress=uiOwner?.scene.uiProgress()??null}catch{};let uiChooseCensus:{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null}|null=null;try{if(primaryFailed)uiChooseCensus=uiOwner?.scene.uiChooseCensus()??null}catch{};","let uiProgress:{stage:number;detail:number}|null=null;try{if(primaryFailed)uiProgress=uiOwner?.scene.uiProgress()??null}catch{};"]]} as const
+ const authority={"ui":"79439b217dffda4fd07095be6fc8a250aaf27bff0e34198c0d0cdc44bdae8b09","protocol":"01ca276b55894f4897901403291a891d9e4993c743de3d2c1f0f2dd6deb07310","helper":"d69c5c5f74fdba1788c32db463e576feb4a6a5d2925c6425079dbcfa549c2752","native":"ba6a17d9ba68cefa2ea0a4feae84a2ef41ada61c83073a5d7b47e7755b4f9b5e"} as const
+ let source=raw.replace(/\r\n/g,'\n')
+ for(const [current,prior]of pairs[kind]){assert.equal(source.split(current).length,2,'one exact census source hunk');source=source.replace(current,prior)}
+ assert.equal(createHash('sha256').update(source).digest('hex'),authority[kind]);return source
+}
+
 // This inverse is static source text only; no compiled/TAP/JSON/evidence normalization.
 function previousChoose705(source:string){
+ source=previousCensus705('ui',source)
  const current='let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout)',previous='let chooseSeen=choose.firstMatch.waitForExistence(timeout:try remaining())'
  assert.equal(source.split(current).length,2);return source.replace(current,previous)
 }
@@ -347,7 +357,7 @@ test('705 main-thread progress publisher preserves every original UI action auth
  function verifyConservation(protocol:string,ui:string,source:string,native:string){
   // Static source text only: never normalize runtime JSON, compiled bytes, TAP or evidence.
   const canonical=(value:string)=>value.replace(/\r\n/g,'\n')
-  protocol=canonical(protocol);ui=previousChoose705(canonical(ui));source=canonical(source);native=canonical(native)
+  protocol=previousCensus705('protocol',canonical(protocol));ui=previousChoose705(canonical(ui));source=previousCensus705('helper',canonical(source));native=previousCensus705('native',canonical(native))
   // Remove only the new result observation before applying the unchanged preceding conservation oracle.
   const resultStart=source.indexOf('// Two post-close, read-only test-result queries share 5s/1MiB per stream each.'),resultEnd=source.indexOf('type File705=',resultStart);assert.ok(resultStart>=0&&resultEnd>resultStart);source=source.slice(0,resultStart)+source.slice(resultEnd)
   for(const extra of [' private xcodeResultObservationStarted=false\n',' private readonly resultSourceRoot:string\n',"  this.resultSourceRoot=path.resolve(native,'../../tests/fixtures/workspace-ui-705')\n"]){assert.equal(source.split(extra).length,2);source=source.replace(extra,'')}
@@ -370,13 +380,14 @@ test('705 actual failure progress projection precedes cancel and isolates reader
  const file=path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),source=fs.readFileSync(file,'utf8'),ast=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true);let block:ts.Block|undefined
  function visit(n:ts.Node){if(ts.isTryStatement(n)&&n.finallyBlock?.getText(ast).includes('D476_WORKSPACE_NATIVE_PHASE'))block=n.finallyBlock;ts.forEachChild(n,visit)}visit(ast);assert.ok(block)
  const cut=block.statements.findIndex(n=>n.getText(ast).includes('child?.terminate()'));assert.ok(cut>0);const prefix=block.statements.slice(0,cut).map(n=>n.getText(ast)).join('\n'),compiled=ts.transpileModule(prefix,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
- for(const variant of['good','success','readerFault','sceneGetter','loggerFault','cancelFault']){
-  const trace:string[]=[],rows:string[]=[],cancelError=Error('OWNED_CANCEL'),value=swiftProgress705(9,0,'a'.repeat(64)),owner:any={diagnostic:()=>({begun:true}),scene:{receiptMask:()=>7,uiRefusal:()=>null,uiProgress(){trace.push('progress');if(variant==='readerFault')throw Error('OWNED_PRIVATE_PROGRESS');return{stage:value.stage,detail:value.detail}}},xcodeFailureObservation(){throw Error('OWNED_PRIVATE_XCODE')},cancel(){trace.push('cancel');if(variant==='cancelFault')throw cancelError}}
+ const census=loadBoundary();actualChooseCensus705((name,value)=>census.api.write(name,value),[0,1,2]).observe()
+ for(const variant of['good','success','readerFault','sceneGetter','loggerFault','cancelFault','censusFault']){
+  const trace:string[]=[],rows:string[]=[],cancelError=Error('OWNED_CANCEL'),value=swiftProgress705(9,0,'a'.repeat(64)),owner:any={diagnostic:()=>({begun:true}),scene:{receiptMask:()=>7,uiRefusal:()=>null,uiProgress(){trace.push('progress');if(variant==='readerFault')throw Error('OWNED_PRIVATE_PROGRESS');return{stage:value.stage,detail:value.detail}},uiChooseCensus(){trace.push('census');if(variant==='censusFault')throw Error('OWNED_PRIVATE_CENSUS');return census.api.uiChooseCensus()}},xcodeFailureObservation(){throw Error('OWNED_PRIVATE_XCODE')},cancel(){trace.push('cancel');if(variant==='cancelFault')throw cancelError}}
   if(variant==='sceneGetter')Object.defineProperty(owner,'scene',{get(){throw Error('OWNED_PRIVATE_SCENE')}})
   const scope:any={uiOwner:owner,primaryFailed:variant!=='success',surfaceLease:{retain(){}},required:[],receipts:new Set(),picks:1,pickerObserved:1,pickerReturned:0,cancelReturned:0,connections:1,authenticated:true,windowRequested:true,settled:false,childExitCode:null,firstFailedAssertion:0,failed:true,failureSite:9,pickOutcome:1,pickerLifecycle:null,nativeDiagnostic:null,diagnosticInvalid:false,selectedOutcome:null,selectedIdentity:null,cancelClose:null,cancelShow:null,cancelSettled:null,cancelCurrent:null,Buffer,t:{diagnostic(s:string){if(variant==='loggerFault')throw Error('OWNED_PRIVATE_LOGGER');rows.push(s)}}}
   if(variant==='cancelFault')assert.throws(()=>vm.runInNewContext(compiled,scope),error=>error===cancelError);else assert.doesNotThrow(()=>vm.runInNewContext(compiled,scope))
-  assert.equal(trace.filter(x=>x==='cancel').length,1);assert.equal(trace.filter(x=>x==='progress').length,['success','sceneGetter'].includes(variant)?0:1);if(trace.includes('progress'))assert.ok(trace.indexOf('progress')<trace.indexOf('cancel'));assert.equal(scope.primaryFailed,variant!=='success');assert.equal(scope.failureSite,9);assert.equal(scope.failed,true)
-  const records=rows.filter(s=>s.startsWith('D476_WORKSPACE_NATIVE_PHASE '));assert.equal(records.length,['loggerFault','cancelFault'].includes(variant)?0:1);for(const record of records){const actual=JSON.parse(record.slice('D476_WORKSPACE_NATIVE_PHASE '.length));assert.deepEqual(actual.uiProgress,variant==='good'?{stage:9,detail:0}:null);assert.equal(actual.failureSite,9);assert.equal(record.includes('OWNED_PRIVATE'),false)}
+  assert.equal(trace.filter(x=>x==='cancel').length,1);assert.equal(trace.filter(x=>x==='progress').length,['success','sceneGetter'].includes(variant)?0:1);if(trace.includes('progress'))assert.ok(trace.indexOf('progress')<trace.indexOf('cancel'));assert.equal(trace.filter(x=>x==='census').length,['success','sceneGetter'].includes(variant)?0:1);if(trace.includes('census'))assert.ok(trace.indexOf('census')<trace.indexOf('cancel'));assert.equal(scope.primaryFailed,variant!=='success');assert.equal(scope.failureSite,9);assert.equal(scope.failed,true)
+  const records=rows.filter(s=>s.startsWith('D476_WORKSPACE_NATIVE_PHASE '));assert.equal(records.length,['loggerFault','cancelFault'].includes(variant)?0:1);for(const record of records){const actual=JSON.parse(record.slice('D476_WORKSPACE_NATIVE_PHASE '.length));assert.deepEqual(actual.uiProgress,['good','censusFault'].includes(variant)?{stage:9,detail:0}:null);assert.deepEqual(actual.uiChooseCensus,['success','sceneGetter','censusFault'].includes(variant)?null:JSON.parse(JSON.stringify(census.api.uiChooseCensus())));assert.equal(actual.failureSite,9);assert.equal(record.includes('OWNED_PRIVATE'),false)}
  }
 })
 
@@ -438,4 +449,53 @@ test('705 actual post-cancel projection uses strict closed snapshots once and is
  }
  assert.equal(prefix.split('uiOwner?.cancel()').length,2);assert.equal(prefix.split('owner.observeXcodeCloseOnce(').length,2)
  assert.ok(prefix.indexOf("'D705_XCODE_FAILURE '")<prefix.indexOf('uiOwner?.cancel()'));assert.ok(prefix.indexOf('uiOwner?.cancel()')<prefix.indexOf('owner.observeXcodeCloseOnce('))
+})
+
+
+// Extract only the actual closed Swift census body; no XCTest/AppKit execution.
+function actualChooseCensus705(publish:(name:string,value:any)=>void,counts:number[]){
+ const source=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8').replace(/\r\n/g,'\n'),match=/  func observeChooseCensus\(\)\{([\s\S]*?)\n  \}/.exec(source);assert.ok(match)
+ let body=match[1],payload=/try\? scene\.write\(\.uiChooseCensus,(\["schema":1,[^\n]+\])\)/.exec(body);assert.ok(payload)
+ const object='{'+payload[1].slice(1,-1).replace(/\bmin\(/g,'Math.min(')+'}'
+ body=body.replace(payload[0],'try{scene.write("ui-choose-census.json",'+object+')}catch{}').replace('if chooseCensusAttempted{return};chooseCensusAttempted=true','if(chooseCensusAttempted){return};chooseCensusAttempted=true').replace(/\blet /g,'const ').replace('guard sheetLabelCount>=0,sheetButtonCount>=0,ownerLabelCount>=0 else{return}','if(!(sheetLabelCount>=0&&sheetButtonCount>=0&&ownerLabelCount>=0)){return}').replace('matching(identifier:scene.nonce)','matching({identifier:scene.nonce})').replace('NSPredicate(format:"label IN %@",["Choose","Open"])','({format:"label IN %@",values:["Choose","Open"]})')
+ assert.doesNotMatch(body,/try\?|\bguard\b|OwnedUI|\blet\b|NSPredicate|matching\(identifier:/)
+ const calls:string[]=[]
+ const count=(index:number)=>{calls.push(['sheetLabel','sheetButtons','ownerLabel'][index]);return counts[index]}
+ const scene={nonce:'a'.repeat(64),write(name:string,value:any){calls.push('write');publish(name,value)}}
+ const scope:any={
+  scene,
+  choose:{get count(){return count(0)}},
+  first:{buttons:{get count(){return count(1)}}},
+  app:{windows:{matching(query:any){
+   assert.equal(query.identifier,scene.nonce)
+   return{buttons:{matching(predicate:any){
+    assert.equal(predicate.format,'label IN %@');assert.equal(JSON.stringify(predicate.values),'["Choose","Open"]')
+    return{get count(){return count(2)}}
+   }}}
+  }}}
+ }
+ vm.runInNewContext('let chooseCensusAttempted=false;globalThis.observe=()=>{'+body+'}',scope,{timeout:1000});return{observe:()=>scope.observe(),calls}
+}
+test('705 choose census uses the actual Swift producer and strict owned receipt without lifecycle authority',()=>{
+ for(const counts of[[0,0,0],[1,1,1],[2,3,7],[99,10,100]]){
+  const f=loadBoundary();assert.equal(f.api.uiChooseCensus().status,'UNKNOWN');let writes=0
+  const actual=actualChooseCensus705((name,value)=>{writes++;f.api.write(name,value)},counts);actual.observe();actual.observe();assert.equal(writes,1);assert.deepEqual(actual.calls,['sheetLabel','sheetButtons','ownerLabel','write'])
+  const receipt=JSON.parse(f.store.get(f.root+'/ui-choose-census.json').bytes.toString('utf8')),value=JSON.parse(JSON.stringify(f.api.uiChooseCensus()));assert.equal(value.status,'OBSERVED');assert.equal(value.schema,1);for(const [field,index]of[['sheetLabelCount',0],['sheetButtonCount',1],['ownerLabelCount',2]]as const)assert.equal(value[field],Math.min(counts[index],2))
+  assert.equal(f.api.uiRefusal(),null);assert.equal(f.api.uiProgress(),null);assert.equal(f.api.receiptMask(),0);assert.equal(f.api.closure(true,true),false)
+  const unknown=()=>{const v=f.api.uiChooseCensus();assert.equal(v.status,'UNKNOWN');for(const field of['sheetLabelCount','sheetButtonCount','ownerLabelCount'])assert.equal(v[field],null);assert.equal(JSON.stringify(v).includes('PRIVATE_CENSUS'),false)}
+  for(const mutation of[{schema:2},{nonce:'b'.repeat(64)},{status:'PRIVATE_CENSUS'},{extra:'PRIVATE_CENSUS'},...['sheetLabelCount','sheetButtonCount','ownerLabelCount'].flatMap(field=>[-1,3,1.5,true,'1',null].map(bad=>({[field]:bad})))]){f.put('ui-choose-census.json',{...receipt,...mutation});unknown()}
+  for(const field of['schema','nonce','status','sheetLabelCount','sheetButtonCount','ownerLabelCount']){const v={...receipt};delete v[field];f.put('ui-choose-census.json',v);unknown()}
+  for(const fault of['nonfile','symlink','nlink','uid','mode','oversize','empty','utf8','duplicate']){f.put('ui-choose-census.json',receipt);const row=f.store.get(f.root+'/ui-choose-census.json');if(fault==='nonfile')row.nonfile=true;if(fault==='symlink')row.symlink=true;if(fault==='nlink')row.nlink=2;if(fault==='uid')row.uid=8;if(fault==='mode')row.mode=0o644;if(fault==='oversize')row.bytes=Buffer.alloc(4097,65);if(fault==='empty')row.bytes=Buffer.alloc(0);if(fault==='utf8')row.bytes=Buffer.from([255]);if(fault==='duplicate')row.bytes=Buffer.from(row.bytes.toString().replace('"schema":1','"schema":1,"schema":1'));unknown()}
+  f.store.delete(f.root+'/ui-choose-census.json');unknown();f.full();assert.equal(f.api.receiptMask(),31);assert.equal(f.api.closure(true,true),true);f.put('ui-choose-census.json',receipt);assert.equal(f.api.uiChooseCensus().status,'OBSERVED');assert.equal(f.api.receiptMask(),31);assert.equal(f.api.closure(true,true),true)
+ }
+ let writes=0;const refused=actualChooseCensus705(()=>{writes++;throw Error('PRIVATE_CENSUS')},[1,2,3]);assert.doesNotThrow(refused.observe);assert.doesNotThrow(refused.observe);assert.equal(writes,1)
+ const invalid=actualChooseCensus705(()=>assert.fail('no publication'),[-1,1,1]);invalid.observe();invalid.observe();assert.deepEqual(invalid.calls,['sheetLabel','sheetButtons','ownerLabel'])
+})
+test('705 choose census restores all four prior sources and preserves original query budget and actions',()=>{
+ const actual={ui:fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8'),protocol:fs.readFileSync(path.join(files,'OwnedUIProtocol.swift'),'utf8'),helper:fs.readFileSync(helper,'utf8'),native:fs.readFileSync(path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'utf8')}
+ for(const eol of['\n','\r\n'])for(const kind of['ui','protocol','helper','native']as const){const source=actual[kind].replace(/\r\n/g,'\n').replace(/\n/g,eol);assert.ok(previousCensus705(kind,source));assert.throws(()=>previousCensus705(kind,source+'\n'),{code:'ERR_ASSERTION'})}
+ const ui=actual.ui.replace(/\r\n/g,'\n'),start=ui.indexOf('  uiStage=11;'),end=ui.indexOf('  uiStage=12;',start);assert.ok(start>=0&&end>start);const sequence=ui.slice(start,end),ordered=['let chooseElement=choose.firstMatch','observeChooseCensus()','let chooseTimeout=try remaining()','let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout)','guard chooseSeen else','let chooseCount=choose.count','guard chooseCount==1 else'];let at=-1;for(const piece of ordered){const next=sequence.indexOf(piece);assert.ok(next>at,piece);at=next}
+ assert.equal(ui.split('observeChooseCensus();').length,2);assert.equal(sequence.match(/waitForExistence\(/g)?.length,1);assert.equal(sequence.match(/try remaining\(\)/g)?.length,1);assert.ok(ui.includes('guard chooseHittable else{throw OwnedUI705Error.refused}'));assert.ok(ui.includes('choose.element.click()'));assert.ok(ui.includes('guard r>0,r<=45 else'))
+ const census=ui.slice(ui.indexOf('  func observeChooseCensus(){'),start);assert.doesNotMatch(census,/\.label\b|\.identifier\b|debugDescription|allElements|\.click\(|\.waitForExistence\(|Timer|sleep|Dispatch|Task\./)
+ const file=fs.readFileSync(helper,'utf8');for(const name of['WorkspacePickerUITests.swift','OwnedUIProtocol.swift'])assert.ok(file.includes(createHash('sha256').update(fs.readFileSync(path.join(files,name))).digest('hex')))
 })

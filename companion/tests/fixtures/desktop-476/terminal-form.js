@@ -39,6 +39,8 @@
  const readinessSeen747=new Set();
  const noteReady747=(enter,marker,ack)=>{try{if(phase!==7)return;const id="D476_TERMINAL_READY_"+(enter?1:0)+"_"+(marker===null?"X":marker?1:0)+"_"+(ack?1:0);if(readinessSeen747.has(id))return;readinessSeen747.add(id);post(id)}catch{}};
  const outputReady=()=>{let marker=null;outputComplete=phase===7&&typedEnter&&new TextEncoder().encode(output).length>16384&&(marker=parsedMarker747(ownedTerminal,"D476_TERMINAL_中"));noteReady747(typedEnter,marker,ackFrames===dataFrames);if(phase===7&&outputComplete&&ackFrames===dataFrames){typing=false;pendingTarget=null;phase=8;post("D476_TERMINAL_OUTPUT");post("D476_TERMINAL_RESIZE")}};
+ // REOPENED is not a receipt-drain barrier. DONE follows only actual ACK results.
+ const finish747=()=>{if(phase===13&&ackFrames===dataFrames){phase=14;post("D476_TERMINAL_DONE")}};
  const pick=kind=>[...$("list").querySelectorAll("[data-thread-"+kind+"]")].find(b=>b.getAttribute("data-thread-"+kind)===target);
  document.addEventListener("keydown",e=>{
   if(e.key!=="Enter")return;
@@ -73,11 +75,11 @@
    if(output.length>256*1024){fail(13);return}
    outputReady();return;
   }
-  if(f.type==="desktop.terminal.ack.result"){if(f.thread_id!==target||f.operation_id!==ownedOperation||f.ok!==true){fail(14);return}ackFrames++;if(ackFrames>dataFrames){fail(15);return}outputReady();return}
+  if(f.type==="desktop.terminal.ack.result"){if(f.thread_id!==target||f.operation_id!==ownedOperation||f.ok!==true){fail(14);return}ackFrames++;if(ackFrames>dataFrames){fail(15);return}outputReady();finish747();return}
   if(f.type==="desktop.terminal.resize.result"&&phase===8){if(f.ok!==true){fail(16);return}phase=9;post("D476_TERMINAL_RESIZED");key(7,$("local-stop"));return}
   if(f.type==="desktop.terminal.close.result"&&phase===9){if(f.ok!==true||f.status!=="closed"){fail(17);return}phase=10;post("D476_TERMINAL_STOPPED");key(8,$("local-select"));return}
   if(f.type==="desktop.terminal.return.result"&&phase===11){if(f.ok!==true||f.status!=="saved"||f.partial!==true){fail(18);return}phase=12;post("D476_TERMINAL_SAVED");key(10,pick("dialog"));return}
-  if(f.type==="desktop.thread.open.result"&&phase===12){if(f.ok!==true||f.thread_id!==target||!f.history?.messages?.some(m=>m.content.includes("D476_TERMINAL_中")&&m.content.includes("partial"))||!$("dialog-history").textContent.includes("D476_TERMINAL_中")||requested!==10||keyMask!==1023){fail(19);return}phase=13;post("D476_TERMINAL_REOPENED");post("D476_TERMINAL_DONE")}
+  if(f.type==="desktop.thread.open.result"&&phase===12){if(f.ok!==true||f.thread_id!==target||!f.history?.messages?.some(m=>m.content.includes("D476_TERMINAL_中")&&m.content.includes("partial"))||!$("dialog-history").textContent.includes("D476_TERMINAL_中")||requested!==10||keyMask!==1023){fail(19);return}phase=13;post("D476_TERMINAL_REOPENED");finish747()}
  };
  if($("status").textContent==="已连接 · MCP 保存需确认")start();
 })();

@@ -6,7 +6,7 @@ import path from 'node:path'
 import vm from 'node:vm'
 import os from 'node:os'
 import {EventEmitter} from 'node:events'
-import {createHmac} from 'node:crypto'
+import {createHmac,createHash} from 'node:crypto'
 import {ThreadManager} from '../src/threads/thread-manager'
 import {DesktopIdentityRegistry} from '../src/desktop/identity'
 import {createDesktopChannel} from '../src/desktop/channel'
@@ -64,4 +64,123 @@ test('lost Stop ACK remains latched until explicit fresh owner state proves clos
 })
 test('after two sequential terminals, explicit return selects the current terminal rather than a closed predecessor',()=>{
  const f=fixture();f.open();const first=f.start();f.terminals[0].selection='old selected excerpt';f.view.receive({type:'desktop.terminal.closed',thread_id:'A',operation_id:first.id,status:'closed'});f.open();const next=f.start();f.terminals[1].selection='new selected excerpt';f.get('local-return').click();assert.equal(f.posted.at(-1).operation_id,next.id);assert.equal(f.posted.at(-1).text,'new selected excerpt')
+})
+
+
+// Source-only inverse profiles below never normalize runtime/evidence/compiled bytes.
+const localReadiness705={
+ appAfter:'if(localWork?.receive(frame))return true;',appBefore:'if(localWork?.receive(frame))return;',
+ captureAfter:'const consumed=original(f);',captureBefore:'original(f);',
+ gateAfter:'if(consumed!==true||![1,9,13].includes(phase))return; // Only a state reply handled by the actual view can advance its next action.',
+ gateBefore:'if(![1,9,13].includes(phase))return; // Actual hide/openDialog emits an untracked retirement state.',
+ appBeforeSHA:'c910a84319d34da34efd8138c40f5f4495660c69c58beb5e8262df8287fbaea6',formBeforeSHA:'c0c0ce7502ba49207735f9e95da33dab2e5788c21271bdcb3ec0e79f0b2922ed',
+}
+function localSource705(rel:string){return fs.readFileSync(path.resolve(__dirname,'../../'+rel),'utf8')}
+function localReplace705(text:string,before:string,after:string){assert.equal(text.split(before).length,2,before);return text.replace(before,after)}
+function localReadinessPair705(){
+ const app=localSource705('src/desktop/assets/app.js'),form=localSource705('tests/fixtures/desktop-476/local-form.js')
+ const beforeApp=localReplace705(app,localReadiness705.appAfter,localReadiness705.appBefore),beforeForm=localReplace705(localReplace705(form,localReadiness705.captureAfter,localReadiness705.captureBefore),localReadiness705.gateAfter,localReadiness705.gateBefore)
+ // This is explicitly a source-only conservation boundary, local to these reads.
+ const sha=(source:string)=>createHash('sha256').update(source.replace(/\r\n/g,'\n')).digest('hex')
+ assert.equal(sha(beforeApp),localReadiness705.appBeforeSHA);assert.equal(sha(beforeForm),localReadiness705.formBeforeSHA)
+ return{app,form,beforeApp,beforeForm}
+}
+test('705 local handled-state change preserves the entire previous app and fixture in LF/CRLF',()=>{
+ const {app,form}=localReadinessPair705()
+ for(const eol of ['\n','\r\n']){
+  const profile=(text:string)=>text.replace(/\r\n/g,'\n').replace(/\n/g,eol),a=profile(app),f=profile(form)
+  const beforeApp=localReplace705(a,localReadiness705.appAfter,localReadiness705.appBefore),beforeForm=localReplace705(localReplace705(f,localReadiness705.captureAfter,localReadiness705.captureBefore),localReadiness705.gateAfter,localReadiness705.gateBefore)
+  const sourceSHA=(text:string)=>createHash('sha256').update(text.replace(/\r\n/g,'\n')).digest('hex')
+  assert.equal(sourceSHA(beforeApp),localReadiness705.appBeforeSHA);assert.equal(sourceSHA(beforeForm),localReadiness705.formBeforeSHA)
+  assert.equal(localReplace705(beforeApp,localReadiness705.appBefore,localReadiness705.appAfter),a)
+  assert.equal(localReplace705(localReplace705(beforeForm,localReadiness705.captureBefore,localReadiness705.captureAfter),localReadiness705.gateBefore,localReadiness705.gateAfter),f)
+ }
+})
+
+/** Whole renderer + whole fixture; only app's exact local receive statement is projected.
+ * The phase13 setup is explicit, single-shot and inverse-checked, not a whole native
+ * terminal/history/permission replay. DOM/focus and xterm boundaries are inert.
+ */
+function localReadinessDOM705(app:string,form:string){
+ const nodes=new Map<string,any>(),posted:any[]=[],pings:any[]=[],focused:string[]=[],intervals=new Map<number,()=>void>();let sequence=0,documentId='owned-document',missing=false
+ const element=(id='')=>({id,textContent:'',value:'',hidden:false,disabled:false,children:[]as any[],events:{}as Record<string,()=>void>,setAttribute(){},getAttribute(){return null},remove(){},append(v:any){this.children.push(v)},replaceChildren(...v:any[]){this.children=v},querySelectorAll(){return[]},querySelector(){return null},addEventListener(k:string,f:()=>void){this.events[k]=f},focus(){focused.push(this.id)}})
+ const get=(id:string)=>{if(missing&&id==='local-agent-start')return undefined;if(!nodes.has(id))nodes.set(id,element(id));return nodes.get(id)}
+ const window:any={addEventListener(){},chrome:{webview:{postMessage:(v:any)=>pings.push(JSON.parse(JSON.stringify(v)))}}},document={getElementById:get,createElement:element,addEventListener(){}}
+ const context=vm.createContext({window,document,documentGeneration:'owned-document',TextEncoder,TextDecoder,Uint8Array,btoa:(s:string)=>Buffer.from(s,'binary').toString('base64'),atob:(s:string)=>Buffer.from(s,'base64').toString('binary'),setInterval:(f:()=>void)=>{intervals.set(++sequence,f);return sequence},clearInterval:(id:number)=>intervals.delete(id)})
+ vm.runInContext(localSource705('src/desktop/assets/local-work.js'),context,{timeout:1000})
+ const view=window.cmsparkLocalWork({post:(v:any)=>posted.push(JSON.parse(JSON.stringify(v))),currentDocument:()=>documentId})
+ const branch=app.includes(localReadiness705.appAfter)?localReadiness705.appAfter:localReadiness705.appBefore
+ assert.equal(app.split(branch).length,2);assert.ok(app.indexOf(branch)>app.indexOf('window.cmsparkDesktopReceive=frame=>{'))
+ // Only desktop.local.state.result enters this projection. Other app routes and
+ // UI actions are not represented or counted as passed.
+ const route=vm.runInNewContext('(frame)=>{'+branch+'}',{localWork:view})
+ let afterRoute:undefined|(()=>void)
+ window.cmsparkDesktopReceive=(frame:any)=>{assert.equal(frame.type,'desktop.local.state.result');const consumed=route(frame);afterRoute?.();return consumed}
+ return{view,posted,pings,focused,intervals,get,
+  open(){view.open('native-local-A')},
+  deliver(frame:any){window.cmsparkDesktopReceive(frame)},
+  nextDocument(){documentId='replacement-document'},
+  removeAgentAfterHandled(){afterRoute=()=>{missing=true}},
+  disableAgentAfterHandled(){afterRoute=()=>{get('local-agent-start').disabled=true}},
+  loadForm(){
+   const anchor=' const original=window.cmsparkDesktopReceive;'
+   const hook=' window.__ownedPhase13=()=>{if(phase!==0)throw Error("COUNTER_PRECONDITION");phase=13;delete window.__ownedPhase13};\n'
+   assert.equal(form.split(anchor).length,2);const instrumented=form.replace(anchor,hook+anchor);assert.equal(instrumented.replace(hook,''),form)
+   vm.runInContext(instrumented,context,{timeout:1000});window.__ownedPhase13()
+  },
+ }
+}
+test('705 actual HMAC state replies advance the handled local fixture exactly once and retain every refusal',async t=>{
+ const pair=localReadinessPair705(),root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'local-stale-state-705-'))),prior=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=root
+ // ThreadManager's real first-run paths own their directories; no unrelated
+ // initDataDir/builtin-template bootstrap or native/provider runtime is needed.
+ const threads=new ThreadManager();threads.create('Owned','native-local-A');threads.update('native-local-A',{workspace_root:root})
+ const effects:string[]=[],deny=(name:string)=>{effects.push(name);throw Error('UNEXPECTED_RUNTIME_EFFECT')};let enabled=true
+ const runtime:any={modules:()=>({terminal:enabled,agent:enabled}),agents:()=>[{id:'owned-agent',label:'Owned agent',identity:'owned-identity'}],activity:()=>deny('activity'),shell:()=>deny('shell'),openTerminal:()=>deny('openTerminal'),terminalContext:()=>deny('terminalContext'),terminalBusy:()=>deny('terminalBusy'),input:()=>deny('input'),resize:()=>deny('resize'),ack:()=>deny('ack'),ping:()=>deny('ping'),close:()=>deny('close'),startAgent:()=>deny('startAgent'),promptAgent:()=>deny('promptAgent'),cancelAgent:()=>deny('cancelAgent')}
+ const registry=new DesktopIdentityRegistry(),manager=new SecurityConfirmationManager(),channel=createDesktopChannel({registry,services:{threads,skills:{list:()=>[],listKnowledge:()=>[]},mcp:{listServers:()=>[]}},securityConfirmations:manager,localRuntime:runtime,maxPayload:10485760}),ws:any=new EventEmitter(),frames:any[]=[]
+ ws.readyState=1;ws.send=(raw:string)=>frames.push(JSON.parse(raw));ws.terminate=ws.close=()=>{if(ws.readyState===3)return;ws.readyState=3;ws.emit('close')}
+ t.after(()=>{ws.terminate();channel.wss.emit('close');manager.rejectAll('disconnect');if(prior===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=prior;fs.rmSync(root,{recursive:true,force:true})})
+ channel.wss.emit('connection',ws);assert.equal(frames.shift().type,'desktop.challenge.request');const boot=registry.issue('owned-state-readiness'),emit=(f:any)=>ws.emit('message',Buffer.from(JSON.stringify(f)))
+ emit({type:'desktop.hello',capability_id:boot.capabilityId,protocol_version:1});const challenge=frames.shift();emit({type:'desktop.authenticate',capability_id:boot.capabilityId,protocol_version:1,proof:createHmac('sha256',Buffer.from(boot.secret,'hex')).update(JSON.stringify(['cmspark.desktop.auth.v1',boot.capabilityId,challenge.connection_id,1,challenge.nonce])).digest('hex')});assert.equal(frames.shift().type,'desktop.ready')
+ const response=async(request:any)=>{assert.equal(request.type,'desktop.local.state');assert.equal(frames.length,0);emit(request);await new Promise<void>(r=>setImmediate(r));assert.equal(frames.length,1);const result=frames.shift();assert.equal(result.type,'desktop.local.state.result');assert.equal(result.id,request.id);return result}
+ const setup=async(app=pair.app,form=pair.form)=>{
+  enabled=true;threads.update('native-local-A',{workspace_root:root,agent_role:'normal'})
+  const d=localReadinessDOM705(app,form);d.open();const initial=await response(d.posted.at(-1));assert.equal(initial.ok,true);assert.equal(initial.state.bound,true);d.deliver(initial);assert.equal(d.get('local-agent-start').disabled,false)
+  d.loadForm();const from=d.posted.length;d.open();const requests=d.posted.slice(from);assert.equal(requests.length,2);assert.notEqual(requests[0].id,requests[1].id);assert.equal(d.get('local-agent-start').disabled,true)
+  return{d,requests}
+ }
+ const noEffects=(d:ReturnType<typeof localReadinessDOM705>)=>{assert.equal(d.posted.some(f=>f.type==='desktop.agent.start'),false);assert.equal(d.intervals.size,0);assert.deepEqual(effects,[]);assert.equal(manager.pendingCount(),0)}
+ // Both orderings use actual state DTOs, from actual captured retirement/tracked IDs.
+ for(const old of [true,false])for(const first of ['retirement','tracked']){
+  const {d,requests}=await setup(old?pair.beforeApp:pair.app,old?pair.beforeForm:pair.form),retirement=await response(requests[0]),tracked=await response(requests[1]);assert.equal(retirement.ok,true);assert.equal(tracked.ok,true)
+  d.deliver(first==='retirement'?retirement:tracked)
+  if(old&&first==='retirement'){
+   assert.equal(d.get('local-agent-start').disabled,true);assert.deepEqual(d.pings.map(f=>f.id),['D476_LOCAL_FIRST_R_1','D476_LOCAL_FAIL']);d.deliver(tracked);assert.equal(d.get('local-agent-start').disabled,false);assert.equal(d.focused.length,0)
+  }else{
+   if(first==='retirement'){assert.equal(d.pings.length,0);assert.equal(d.get('local-agent-start').disabled,true);d.deliver(tracked)}
+   else d.deliver(retirement)
+   assert.deepEqual(d.pings.map(f=>f.id),['D476_LOCAL_KEY']);assert.deepEqual(d.focused,['local-agent-start']);d.deliver(tracked);assert.equal(d.pings.length,1)
+  }
+  noEffects(d)
+ }
+ // This integration counter catches a fixture-only half-fix: the original app
+ // swallowed true, so new fixture alone must NOT claim a successful advance.
+ {const {d,requests}=await setup(pair.beforeApp,pair.form);await response(requests[0]);d.deliver(await response(requests[1]));assert.equal(d.get('local-agent-start').disabled,false);assert.equal(d.pings.length,0);assert.equal(d.focused.length,0);noEffects(d)}
+ for(const fault of ['actor-denied','unbound','modules-disabled','wrong-thread','malformed-state','new-document','missing-button','disabled-button']){
+  const {d,requests}=await setup();await response(requests[0])
+  if(fault==='actor-denied')threads.update('native-local-A',{agent_role:'worker'} as any)
+  if(fault==='unbound')threads.update('native-local-A',{workspace_root:undefined})
+  if(fault==='modules-disabled')enabled=false
+  let frame=await response(requests[1]);if(fault==='actor-denied')assert.equal(frame.ok,false);else assert.equal(frame.ok,true)
+  if(fault==='wrong-thread')frame={...frame,thread_id:'foreign-thread'}
+  if(fault==='malformed-state')frame={...frame,state:{...frame.state,bound:'invalid'}}
+  if(fault==='new-document')d.nextDocument()
+  // Explicit DOM negative seams only: no product/button assertion is bypassed.
+  if(fault==='missing-button')d.removeAgentAfterHandled()
+  if(fault==='disabled-button')d.disableAgentAfterHandled()
+  d.deliver(frame)
+  const site=['actor-denied','unbound','modules-disabled'].includes(fault)?5:1
+  assert.deepEqual(d.pings.map(f=>f.id),['D476_LOCAL_FIRST_R_'+site,'D476_LOCAL_FAIL'],fault);assert.equal(d.focused.length,0);noEffects(d)
+ }
+ assert.deepEqual(effects,[]);assert.equal(frames.length,0)
 })

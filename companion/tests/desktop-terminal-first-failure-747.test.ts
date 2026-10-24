@@ -93,6 +93,23 @@ function businessInverseCpp(raw:string){
  return value.replace("{note(&h,L'W',28);ExitProcess(64);}",'ExitProcess(64);')
 }
 function businessInverseForm(raw:string){return raw.replace('outputComplete=false,firstFailure=false;','outputComplete=false;').replace('fail=site=>{if(!firstFailure){firstFailure=true;try{post("D476_TERMINAL_FIRST_R_"+site)}catch{}}post("D476_TERMINAL_FAIL")}','fail=()=>post("D476_TERMINAL_FAIL")').replace(/fail\([1-9][0-9]?\)/g,'fail()')}
+
+// Exact inverse of the separately reviewed receipt-lifecycle increment.
+// Independent preceding Git source SHA is preserved; no result-derived baseline.
+function closedAckInverseForm747(raw:string){
+ const pairs:[string,string][]=[[" // REOPENED is not a receipt-drain barrier. DONE follows only actual ACK results.\n const finish747=()=>{if(phase===13&&ackFrames===dataFrames){phase=14;post(\"D476_TERMINAL_DONE\")}};\n", ""], ["  if(f.type===\"desktop.terminal.ack.result\"){if(f.thread_id!==target||f.operation_id!==ownedOperation||f.ok!==true){fail(14);return}ackFrames++;if(ackFrames>dataFrames){fail(15);return}outputReady();finish747();return}\n", "  if(f.type===\"desktop.terminal.ack.result\"){if(f.thread_id!==target||f.operation_id!==ownedOperation||f.ok!==true){fail(14);return}ackFrames++;if(ackFrames>dataFrames){fail(15);return}outputReady();return}\n"], ["  if(f.type===\"desktop.thread.open.result\"&&phase===12){if(f.ok!==true||f.thread_id!==target||!f.history?.messages?.some(m=>m.content.includes(\"D476_TERMINAL_中\")&&m.content.includes(\"partial\"))||!$(\"dialog-history\").textContent.includes(\"D476_TERMINAL_中\")||requested!==10||keyMask!==1023){fail(19);return}phase=13;post(\"D476_TERMINAL_REOPENED\");finish747()}\n", "  if(f.type===\"desktop.thread.open.result\"&&phase===12){if(f.ok!==true||f.thread_id!==target||!f.history?.messages?.some(m=>m.content.includes(\"D476_TERMINAL_中\")&&m.content.includes(\"partial\"))||!$(\"dialog-history\").textContent.includes(\"D476_TERMINAL_中\")||requested!==10||keyMask!==1023){fail(19);return}phase=13;post(\"D476_TERMINAL_REOPENED\");post(\"D476_TERMINAL_DONE\")}\n"]]
+ let value=raw;for(const [current,previous]of pairs){assert.equal(value.split(current).length,2,"one exact increment hunk");value=value.replace(current,previous)}
+ assert.equal(createHash("sha256").update(value).digest("hex"),"c0eef33b9ba5e79823b20dd6b4e7adf97b0a6941e6334d779da9143996edf0e4","entire preceding source conserved");return value
+}
+
+// Exact inverse of the separately reviewed receipt-lifecycle increment.
+// Independent preceding Git source SHA is preserved; no result-derived baseline.
+function chooseCensusInverseParent705(raw:string){
+ const pairs:[string,string][]=[["let uiChooseCensus:{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null}|null=null;try{if(primaryFailed)uiChooseCensus=uiOwner?.scene.uiChooseCensus()??null}catch{};", ""], ["{uiRefusal,uiProgress,uiChooseCensus}", "{uiRefusal,uiProgress}"]]
+ let value=raw;for(const [current,previous]of pairs){assert.equal(value.split(current).length,2,"one exact increment hunk");value=value.replace(current,previous)}
+ assert.equal(createHash("sha256").update(value).digest("hex"),"ba6a17d9ba68cefa2ea0a4feae84a2ef41ada61c83073a5d7b47e7755b4f9b5e","entire preceding source conserved");return value
+}
+
 function readinessInverseForm747(raw:string){
  const begin=raw.indexOf(' // Observe only operands already reached'),end=raw.indexOf(' const outputReady=',begin);assert.ok(begin>=0&&end>begin)
  return(raw.slice(0,begin)+raw.slice(end)).replace('const outputReady=()=>{let marker=null;outputComplete=','const outputReady=()=>{outputComplete=').replace('&&(marker=parsedMarker747(ownedTerminal,"D476_TERMINAL_中"));noteReady747(typedEnter,marker,ackFrames===dataFrames);','&&parsedMarker747(ownedTerminal,"D476_TERMINAL_中");')
@@ -149,7 +166,7 @@ test('747 actual C++ readiness forwarding is closed, owner-guarded, passive and 
  for(const fail of [false,true])for(const id of [...ids,'D476_TERMINAL_READY_2_1_1','D476_TERMINAL_READY_1_1_1\n','unrelated']){const emitted:string[]=[],c:any={id,h:{},emit:(_h:any,v:string)=>{emitted.push(v);if(fail)throw Error('inert sink')}};vm.runInNewContext('(function(){'+lower+'})()',c,{timeout:1000});assert.deepEqual(emitted,ids.includes(id)?[id]:[])}
 })
 test('747 readiness projection whole-source inverse restores the exact preceding form, controller and native caller',()=>{
- const hash=(s:string)=>createHash('sha256').update(s).digest('hex');for(const crlf of [false,true]){const lower=(s:string)=>(crlf?s.replace(/\r?\n/g,'\r\n'):s).replace(/\r\n/g,'\n');assert.equal(hash(readinessInverseForm747(lower(form))),'9182d9eb1377b862ecb73b3770e1b9f0c484708bcdb2ffb543dfdb61548015a7');assert.equal(hash(readinessInverseCpp747(resizeInverseCpp747(lower(cpp)))),'1a1fadf7a1b7cd26d3c99f3144f7c95c9f380d6afe6e26e2f531ed897d7913a7');assert.equal(hash(readinessInverseParent747(boundaryInverseParent705(lower(parent)))),'ac59fe4e8307e8f28bf7966f222800e12c105a5b39c21479eacb8e6c6555ecfe')}
+ const hash=(s:string)=>createHash('sha256').update(s).digest('hex');for(const crlf of [false,true]){const lower=(s:string)=>(crlf?s.replace(/\r?\n/g,'\r\n'):s).replace(/\r\n/g,'\n');assert.equal(hash(readinessInverseForm747(closedAckInverseForm747(lower(form)))),'9182d9eb1377b862ecb73b3770e1b9f0c484708bcdb2ffb543dfdb61548015a7');assert.equal(hash(readinessInverseCpp747(resizeInverseCpp747(lower(cpp)))),'1a1fadf7a1b7cd26d3c99f3144f7c95c9f380d6afe6e26e2f531ed897d7913a7');assert.equal(hash(readinessInverseParent747(boundaryInverseParent705(chooseCensusInverseParent705(lower(parent))))),'ac59fe4e8307e8f28bf7966f222800e12c105a5b39c21479eacb8e6c6555ecfe')}
 })
 test('747 actual input and raw-output producers retain bytes, decoding and delegation while observing only booleans',()=>{
  const f=ts.createSourceFile('native.ts',parent,ts.ScriptTarget.Latest,true),leaves=f.statements.filter((n):n is ts.ExpressionStatement=>ts.isExpressionStatement(n)&&ts.isCallExpression(n.expression)&&n.expression.expression.getText(f)==='test'&&ts.isStringLiteral(n.expression.arguments[0])&&n.expression.arguments[0].text==='#476 terminal-only native confirmation→real user PTY→selected partial excerpt→canonical reopen');assert.equal(leaves.length,1);const call=leaves[0].expression as ts.CallExpression;assert.ok(ts.isArrowFunction(call.arguments[2]));let input='';const visit=(n:ts.Node)=>{if(ts.isBinaryExpression(n)&&n.operatorToken.kind===ts.SyntaxKind.EqualsToken&&n.left.getText(f)==='runtime.input'){assert.equal(input,'');input=n.right.getText(f)}ts.forEachChild(n,visit)};visit(call.arguments[2]);assert.ok(input)
@@ -164,7 +181,7 @@ test('747 actual input and raw-output producers retain bytes, decoding and deleg
 })
 test('747 complete fixture business inverse retains every original predicate, action and short-circuit in LF/CRLF',()=>{
  const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
- for(const crlf of [false,true]){const lower=(s:string)=>crlf?s.replace(/\r?\n/g,'\r\n'):s;assert.equal(hash(businessInverseCpp(readinessInverseCpp747(resizeInverseCpp747(lower(cpp).replace(/\r\n/g,'\n'))))),'9198ce3a80a14b69bda7846fcf091d79a321a029bcbfbd1186af5ce87408ea7c');assert.equal(hash(businessInverseForm(observerInverseForm747(readinessInverseForm747(lower(form).replace(/\r\n/g,'\n'))))),'0cf56c94371a52a38053809c548fbf9125838cc594c37bed942e920abf605596')}
+ for(const crlf of [false,true]){const lower=(s:string)=>crlf?s.replace(/\r?\n/g,'\r\n'):s;assert.equal(hash(businessInverseCpp(readinessInverseCpp747(resizeInverseCpp747(lower(cpp).replace(/\r\n/g,'\n'))))),'9198ce3a80a14b69bda7846fcf091d79a321a029bcbfbd1186af5ce87408ea7c');assert.equal(hash(businessInverseForm(observerInverseForm747(readinessInverseForm747(closedAckInverseForm747(lower(form).replace(/\r\n/g,'\n')))))),'0cf56c94371a52a38053809c548fbf9125838cc594c37bed942e920abf605596')}
  const seen=[...cpp.matchAll(/failure\((?:h|target),([1-9][0-9]?)\)/g)].map(m=>Number(m[1]));assert.deepEqual(seen.sort((a,b)=>a-b),Array.from({length:27},(_,i)=>i+1).filter(i=>i!==4&&i!==8))
 })
 

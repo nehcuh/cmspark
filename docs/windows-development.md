@@ -182,3 +182,28 @@ case limits remain unchanged. Preparation failure is a failure; direct node --te
 bypasses that preparation. Use the targeted shared-runner command in
 [TESTING.md](TESTING.md#windows-conversation-save-rename-recovery). No SDK download or executable cache
 is introduced for this supplier.
+
+
+## Local state consumption and final output acknowledgements
+
+A hide/open transition can leave an untracked local-state reply in flight. The
+local view returns whether it actually consumed the reply, the app adapter forwards
+that result, and the unshipped acceptance observer advances only on a consumed
+reply. This does not authorize a button, bypass disabled controls or infer an agent
+start from a retirement snapshot.
+
+An xterm parse callback can complete after its real PTY has closed. The native
+adapters keep at most one server-only, exact-session ACK capability for genuinely
+outstanding sequences. The closed branch settles the original byte accounting;
+it cannot invoke the handle, resume output, refresh activity, input, resize or ping.
+Owner retirement, socket closure, reset and any new successful PTY spawn invalidate
+it. A failed open does not revoke the existing session's receipts. The renderer
+also requires the same retained operation object and current document. Generic
+PTY ACK behavior remains unchanged.
+
+Reopened history is not an ACK drain barrier. The terminal acceptance form emits
+DONE only after its real successful ACK count equals its received output count;
+its original R14/R15 refusals and the parent's exact output/ACK sequence comparison
+remain mandatory. CPU schedules establish these reachable ordering defects, not
+the unique physical cause of a prior hosted run. Exact-head Windows/macOS native
+acceptance is still required.

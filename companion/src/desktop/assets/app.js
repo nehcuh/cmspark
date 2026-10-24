@@ -178,7 +178,7 @@
       if(frame.ok===true&&frame.saved===true&&validMetadata(frame.metadata)){metadataInitial=frame.metadata;fillMetadata(frame.metadata);metadataFeedback("已保存对话信息。");request("thread.list")}
       else metadataFeedback(frame.error_code==="DESKTOP_METADATA_REDACTED"?"信息含隐藏内容，未保存。请检查草稿。":"保存结果未确认，草稿保留。请刷新核对后重新提交。");return;
     }
-    if(localWork?.receive(frame))return;
+    if(localWork?.receive(frame))return true;
     if(receiveWorkspace(frame))return;
     if(receiveBrowser(frame))return;
     if(receiveArchive(frame))return;

@@ -6,7 +6,7 @@ enum OwnedUI705Error: Error { case refused }
 // Optional fixed startup-write observation; never an authority or recovery path.
 enum OwnedUI705WriteStep: Int { case checkInitial=1, serialize, openFile, statFile, writeData, syncFile, checkBeforePublish, linkFile, unlinkTemporary, checkAfterPublish }
 enum OwnedUI705File: String {
- case input="input.json", startup="runner-start.json", ack="owner-ack.json", begin="ui-begin.json", returned="ui-quiescent.json", closed="runner-closed.json", cancel="cancel.json", first="picker-first.json", second="picker-second.json", uiRefusal="ui-refusal.json", uiProgress="ui-progress.json"
+ case input="input.json", startup="runner-start.json", ack="owner-ack.json", begin="ui-begin.json", returned="ui-quiescent.json", closed="runner-closed.json", cancel="cancel.json", first="picker-first.json", second="picker-second.json", uiRefusal="ui-refusal.json", uiProgress="ui-progress.json", uiChooseCensus="ui-choose-census.json"
 }
 struct OwnedUI705Scene {
  static let runnerID="com.cmspark.tests.workspace-ui-705.xctrunner"

@@ -8,7 +8,7 @@ const refused=()=>Error('OWNED_WORKSPACE_UI_REFUSED')
 const canonical=(o:any)=>JSON.stringify(Object.fromEntries(Object.keys(o).sort().map(k=>[k,o[k]])))
 const regular=(s:fs.Stats)=>s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&(s.mode&0o777)===0o600&&s.uid===process.getuid!()
 export const UI705_RUNNER_ID='com.cmspark.tests.workspace-ui-705.xctrunner'
-export const UI705_FILES=['input.json','runner-start.json','owner-ack.json','ui-begin.json','ui-quiescent.json','runner-closed.json','cancel.json','picker-first.json','picker-second.json','ui-refusal.json','ui-progress.json'] as const
+export const UI705_FILES=['input.json','runner-start.json','owner-ack.json','ui-begin.json','ui-quiescent.json','runner-closed.json','cancel.json','picker-first.json','picker-second.json','ui-refusal.json','ui-progress.json','ui-choose-census.json'] as const
 type Xcode705Status='NOT_CLOSED'|'MISSING'|'EMPTY'|'INVALID'|'CHANGED'|'OVERSIZE'|'READ_FAILED'|'OBSERVED'
 type Xcode705Observation={status:Xcode705Status;firstMarker:'NONE'|'XCODEBUILD_ERROR'|'XCODE_SELECT_ERROR'|'TESTING_FAILED';firstNSError:{kind:'NONE'|'PAIR'|'UNKNOWN';domain:'COCOA'|'POSIX'|'MACH'|'OSSTATUS'|'OTHER'|'UNKNOWN';code:number|null}}
 const xcode705Unavailable=(status:Xcode705Status):Xcode705Observation=>({status,firstMarker:'NONE',firstNSError:{kind:'NONE',domain:'UNKNOWN',code:null}})
@@ -79,7 +79,7 @@ const result705Unknown=(reason:Result705Projection['reason']):Result705Projectio
 const RESULT705_IDS=new Set(['WorkspacePicker705/testOwnedPanel','WorkspacePicker705/testOwnedPanel()','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel()'])
 const RESULT705_TYPES=new Set(['Test Plan','Unit test bundle','UI test bundle','Test Suite','Test Case','Device','Test Plan Configuration','Arguments','Repetition','Test Case Run','Failure Message','Source Code Reference','Attachment','Expression','Test Value','Runtime Warning'])
 // Both hashes are independently bound to b975 actual source; paths never come from runtime JSON.
-const RESULT705_SOURCES=[['WorkspacePickerUITests.swift','79439b217dffda4fd07095be6fc8a250aaf27bff0e34198c0d0cdc44bdae8b09'],['OwnedUIProtocol.swift','01ca276b55894f4897901403291a891d9e4993c743de3d2c1f0f2dd6deb07310']] as const
+const RESULT705_SOURCES=[['WorkspacePickerUITests.swift','d9e11574d3a835f3ce1bf85c3e40975d4eb5adb413c20dad6dc43d3c6ab4a463'],['OwnedUIProtocol.swift','5d42b55aa35a1559b026a1aa2475bf9393bc93ed524b4ec0fedee908883b54b1']] as const
 // Actual Tests response: nodeIdentifier is optional in the official schema.
 // Only a present allowlisted Test Case identifier counts; never derive one from name.
 function result705Select(data:Buffer):string {
@@ -201,6 +201,11 @@ export class OwnedUI705Boundary {
  // It proves neither a UI refusal, success, completed call nor cleanup.
  uiProgress():{stage:number;detail:number}|null {
   try{const v=this.read('ui-progress.json');if(v===undefined)return null;this.fields(v,['schema','nonce','stage','detail']);if(!Number.isInteger(v.stage)||v.stage<1||v.stage>20||!Number.isInteger(v.detail)||v.detail<0||v.detail>5)return null;return{stage:v.stage,detail:v.detail}}catch{return null}
+ }
+ // One fixed, saturated AX census. Never a UI outcome or lifecycle/cleanup receipt.
+ uiChooseCensus():{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null} {
+  const unknown=()=>({schema:1 as const,status:'UNKNOWN' as const,sheetLabelCount:null,sheetButtonCount:null,ownerLabelCount:null})
+  try{const v=this.read('ui-choose-census.json');if(v===undefined)return unknown();this.fields(v,['schema','nonce','status','sheetLabelCount','sheetButtonCount','ownerLabelCount']);if(v.status!=='OBSERVED'||![v.sheetLabelCount,v.sheetButtonCount,v.ownerLabelCount].every(n=>Number.isInteger(n)&&n>=0&&n<=2))return unknown();return{schema:1,status:'OBSERVED',sheetLabelCount:v.sheetLabelCount,sheetButtonCount:v.sheetButtonCount,ownerLabelCount:v.ownerLabelCount}}catch{return unknown()}
  }
  // Passive, non-atomic observation only. Neither a success nor a cleanup receipt.
  receiptMask():number|null {

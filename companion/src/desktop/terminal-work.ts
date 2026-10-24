@@ -13,6 +13,8 @@ export type DesktopTerminalRuntime={
  shell():{file:string;args:readonly string[]}
  openTerminal(input:{id:string;threadId:string;owner:WebSocket;cwd:string;cols:number;rows:number;shell:{file:string;args:readonly string[]};send(frame:TerminalFrame):void}):{ok:boolean}
  terminalContext(id:string,owner:WebSocket):boolean;terminalBusy():boolean
+ /** Private receipt capability only; absent implementations keep closed ACK refused. */
+ terminalAckContext?(id:string,owner:WebSocket):boolean;retireTerminalAck?(id:string,owner:WebSocket):void
  input(id:string,b64:string):{ok:boolean};resize(id:string,cols:number,rows:number):{ok:boolean};ack(id:string,seq:number):{ok:boolean};ping(id:string):{ok:boolean};close(id:string):{ok:boolean}
 }
 type Canonical=NonNullable<ReturnType<ThreadManager['desktopLocalWorkSnapshot']>>
@@ -56,8 +58,9 @@ export function createDesktopTerminalWork(opts:{threads:ThreadManager;runtime:De
   const m=modules();if(m.terminal!==s.modules.terminal||m.agent!==s.modules.agent)refuse('LOCAL_MODULE_DISABLED')
   if(starting){const a=opts.runtime.activity(c.id);if(a!=='idle')refuse(a==='busy'?'LOCAL_BUSY':'LOCAL_ACTIVITY_UNKNOWN')}
  }
+ function retireAck(op:Operation){try{opts.runtime.retireTerminalAck?.(op.id,opts.ws)}catch{/* Revocation must continue for every owned operation. */}}
  function abortPending(){for(const op of operations.values()){op.pending?.abort();if(op.status==='pending'){op.controller.abort();op.retired=true;operations.delete(op.id)}}snapshot=undefined}
- function cancel(){snapshot=undefined;viewThread=undefined;for(const op of operations.values()){op.retired=true;op.pending?.abort();op.controller.abort();try{if(op.status==='running'&&opts.runtime.terminalContext(op.id,opts.ws))opts.runtime.close(op.id);}catch{/* Continue retiring every owned operation. */}}operations.clear()}
+ function cancel(){snapshot=undefined;viewThread=undefined;for(const op of operations.values()){op.retired=true;op.pending?.abort();op.controller.abort();try{if(op.status==='running'&&opts.runtime.terminalContext(op.id,opts.ws))opts.runtime.close(op.id);}catch{/* Continue retiring every owned operation. */}finally{retireAck(op)}}operations.clear()}
  function lookup(f:TerminalFrame){const op=operations.get(String(f.operation_id));if(!op||op.thread!==f.thread_id||!active(op))return refuse('LOCAL_NOT_OWNED');return op}
  function event(op:Operation,f:TerminalFrame){
   if(!active(op)||op.controller.signal.aborted)return
@@ -123,7 +126,7 @@ export function createDesktopTerminalWork(opts:{threads:ThreadManager;runtime:De
     try{
      const approved=await confirm(op,'terminal-open',{revision:s.revision,root:s.root.path,shell:shell.file,args:[...shell.args]},type,true)
      if(!approved)return fail('LOCAL_DENIED');check(s,op,true)
-     {if(opts.runtime.terminalBusy()||JSON.stringify(opts.runtime.shell())!==JSON.stringify(shell))return fail('LOCAL_CONFLICT');const r=opts.runtime.openTerminal({id:op.id,threadId:op.thread,owner:opts.ws,cwd:s.root.path,cols:f.cols as number,rows:f.rows as number,shell:shell!,send:frame=>event(op,frame)});if(!r.ok)return fail('LOCAL_UNAVAILABLE');op.status='running';for(const prior of operations.values()){if(prior!==op&&prior.status==='closed'){prior.pending?.abort();prior.controller.abort();prior.retired=true;operations.delete(prior.id)}}}
+     {if(opts.runtime.terminalBusy()||JSON.stringify(opts.runtime.shell())!==JSON.stringify(shell))return fail('LOCAL_CONFLICT');const r=opts.runtime.openTerminal({id:op.id,threadId:op.thread,owner:opts.ws,cwd:s.root.path,cols:f.cols as number,rows:f.rows as number,shell:shell!,send:frame=>event(op,frame)});if(!r.ok)return fail('LOCAL_UNAVAILABLE');op.status='running';for(const prior of operations.values()){if(prior!==op&&prior.status==='closed'){prior.pending?.abort();prior.controller.abort();prior.retired=true;retireAck(prior);operations.delete(prior.id)}}}
      return{...base,ok:true,operation_id:op.id,status:op.status}
     }finally{if(op.status==='pending'){op.retired=true;op.controller.abort();operations.delete(op.id)}}
    }
@@ -143,6 +146,14 @@ export function createDesktopTerminalWork(opts:{threads:ThreadManager;runtime:De
     try{const messageId=commitLocalWorkMessage(opts.threads,op.thread,'local_'+randomBytes(16).toString('hex'),text,()=>{try{check(op.snapshot,op);return true}catch{return false}});op.returnResult={...base,ok:true,status:'saved',operation_id:op.id,message_id:messageId,partial:true}}
     catch{op.returnResult={...base,ok:false,status:'unknown',operation_id:op.id,error_code:'LOCAL_UNCONFIRMED'}}
     return op.returnResult
+   }
+   // A closed operation retains only a captured receipt capability. All original
+   // canonical/root/module/current checks above remain mandatory; no input resumes.
+   if(type==='desktop.terminal.ack'&&op.status==='closed'){
+    if(!positive(f.seq)||f.seq>op.lastOutput)return fail('LOCAL_INPUT_INVALID')
+    if(opts.runtime.terminalAckContext?.(op.id,opts.ws)!==true)return fail('LOCAL_STALE')
+    const result=opts.runtime.ack(op.id,f.seq)
+    return{...base,ok:result.ok,operation_id:op.id,...(!result.ok?{error_code:'LOCAL_UNAVAILABLE'}:{})}
    }
    if(op.controller.signal.aborted)return fail('LOCAL_STALE')
    if(['desktop.terminal.input','desktop.terminal.resize'].includes(type)&&viewThread!==op.thread)return fail('LOCAL_STALE')

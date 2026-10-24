@@ -27,7 +27,7 @@ window.cmsparkLocalWork=({post,currentDocument})=>{
   if(frame.type==="desktop.offline"){forget();feedback("连接中断；执行与保存状态未确认，不会自动重放。");return false}
   if(frame.type==="desktop.terminal.data"||frame.type==="desktop.terminal.closed"||frame.type==="desktop.agent.event"){
    const op=operations.get(frame.operation_id);if(!op||op.document!==currentDocument()||frame.thread_id!==op.thread)return true;
-   if(frame.type==="desktop.terminal.data"&&op.terminal){let binary;try{binary=atob(frame.b64)}catch{return true}const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));op.terminal.write(bytes,()=>{if(op.document===currentDocument()&&op.status==="running")post({type:"desktop.terminal.ack",id:id(),thread_id:op.thread,operation_id:op.id,seq:frame.seq})})}
+   if(frame.type==="desktop.terminal.data"&&op.terminal){let binary;try{binary=atob(frame.b64)}catch{return true}const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));op.terminal.write(bytes,()=>{if(operations.get(op.id)===op&&op.document===currentDocument()&&(op.status==="running"||op.status==="closed"))post({type:"desktop.terminal.ack",id:id(),thread_id:op.thread,operation_id:op.id,seq:frame.seq})})}
    else if(frame.type==="desktop.terminal.closed"){op.status="closed";clearInterval(op.ping);if(op.thread===target)feedback("终端已结束；可明确选择摘录，内容不是验证过的执行结果。")}else{op.status=frame.status;if(op.thread===target){$("local-agent-output").textContent=frame.tail||$("local-agent-output").textContent;feedback(frame.status==="saved"?"Agent 结果已保存到原对话。":frame.status==="unknown"?"结果持久化未确认，请重开原历史核对。":"Agent 状态："+frame.status)}}controls();return true
   }
   const p=pending.get(frame.id);if(!p||frame.type!==p.method+".result")return false;pending.delete(frame.id)

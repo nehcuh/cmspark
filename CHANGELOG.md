@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- Desktop local acceptance: advance only on a state reply actually consumed by the current view, and forward that handled result through the app adapter. This prevents an untracked retirement reply from triggering the next action; original refusal and completion checks remain.
+- Desktop terminal: retain one private owner-bound receipt capability to settle real outstanding output ACKs after close. Keep input, resize and ping closed; invalidate the capability on retirement, reset or a new successful spawn. The acceptance form waits for actual ACK accounting before DONE. Add a finite macOS picker-query census; missing observations remain unknown and native validation is still required.
+
 - Test fixtures: resize the Windows terminal window inward while retaining exact measured dimensions; set the unshipped macOS workspace picker prompt before presentation while retaining the real UI selection and cancellation. Replace the Session test’s PowerShell lock holder with a run-owned Win32 executable, keeping real sharing violations, both release/persistent controls, and existing deadlines. These changes remove fixture preconditions; remote native validation remains required. Keep prior source-authority hashes and account for the separate passive diagnostic increment through an exact source inverse.
 
 - 原生桌面验收补充分段回执：区分 Agent 请求、确认、启动尝试与句柄返回，并在实际 Xcode 关闭后读取有限测试结果；保留全部原断言、超时和清理结果，不据此宣称 Windows/macOS 已修复。

@@ -5,11 +5,13 @@ import {isModuleEnabled} from '../capability/modules'
 import {getAcpManager,type NativeLocalContext} from '../acp/manager'
 import type {AcpSessionRecord} from '../acp/types'
 import type {ThreadManager} from '../threads/thread-manager'
-import {ackPty,closePty,defaultPtyCommand,getOwnedPtyContext,isPtyBusy,pingPty,resizePty,spawnPtySession,writePtyInput} from '../pty/session'
+import {captureOwnedPtyAckTicket,type OwnedPtyAckTicket,closePty,defaultPtyCommand,getOwnedPtyContext,isPtyBusy,pingPty,resizePty,spawnPtySession,writePtyInput} from '../pty/session'
 import type {LocalAgent,LocalOwner,LocalWorkRuntime} from './local-work'
 import {bindNativeLocalHandback} from './local-handback'
 export function createNativeLocalWorkRuntime(opts:{threads:ThreadManager;activity(thread:string):'idle'|'busy'|'unknown'}):LocalWorkRuntime{
  const manager=getAcpManager(),contexts=new WeakMap<LocalOwner,NativeLocalContext>()
+ let receipt:{id:string;owner:unknown;ticket:OwnedPtyAckTicket}|undefined
+ const retire=()=>{receipt?.ticket.retire();receipt=undefined}
  function native(owner:LocalOwner,agent:string,identity:string):NativeLocalContext{
   let context=contexts.get(owner)
   if(!context){context={current:()=>owner.current()&&launchIdentity(agent)===identity,signal:owner.signal,requestPermission:info=>owner.requestPermission(info)};contexts.set(owner,context)}
@@ -26,8 +28,15 @@ export function createNativeLocalWorkRuntime(opts:{threads:ThreadManager;activit
  return{
   modules:()=>({terminal:isModuleEnabled('devsec-workspace')&&getConfig().embedded_terminal?.enabled===true,agent:isModuleEnabled('devsec-workspace')&&getConfig().acp?.enabled===true}),
   activity:opts.activity,shell:defaultPtyCommand,agents,
-  openTerminal(input){if(JSON.stringify(defaultPtyCommand())!==JSON.stringify(input.shell))return{ok:false};return spawnPtySession({id:input.id,threadId:input.threadId,owner:input.owner,cwd:input.cwd,cols:input.cols,rows:input.rows,send:input.send})},
-  terminalContext:(id,owner)=>!!getOwnedPtyContext(id,owner),terminalBusy:isPtyBusy,input:writePtyInput,resize:resizePty,ack:ackPty,ping:pingPty,close:closePty,
+  openTerminal(input){
+   if(JSON.stringify(defaultPtyCommand())!==JSON.stringify(input.shell))return{ok:false}
+   const result=spawnPtySession({id:input.id,threadId:input.threadId,owner:input.owner,cwd:input.cwd,cols:input.cols,rows:input.rows,send:input.send})
+   if(result.ok){const ticket=captureOwnedPtyAckTicket(input.id,input.owner);retire();if(ticket)receipt={id:input.id,owner:input.owner,ticket}}
+   return result
+  },
+  terminalAckContext:(id,owner)=>receipt?.id===id&&receipt.owner===owner&&receipt.ticket.current(),
+  retireTerminalAck(id,owner){if(receipt?.id===id&&receipt.owner===owner)retire()},
+  terminalContext:(id,owner)=>!!getOwnedPtyContext(id,owner),terminalBusy:isPtyBusy,input:writePtyInput,resize:resizePty,ack:(id,seq)=>receipt?.id===id?receipt.ticket.ack(seq):{ok:false},ping:pingPty,close:closePty,
   async startAgent(input){
    if(!input.owner.current()||input.owner.signal.aborted||launchIdentity(input.agentId)!==input.identity)return{ok:false}
    const context=native(input.owner,input.agentId,input.identity),result=manager.proposeNative({threadId:input.threadId,agentId:input.agentId,goal:input.goal,workspaceRoot:input.cwd,mode:'review_readonly'},context)
