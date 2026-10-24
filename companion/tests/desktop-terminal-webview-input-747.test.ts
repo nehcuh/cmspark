@@ -52,7 +52,7 @@ function callback(extra:any={}){
 }
 test('actual current C++ uses one captured owned WebView COM site, serial callback fences and no guessed keyboard queue',()=>{for(const text of [source,source.replace(/\r?\n/g,'\r\n')])apiContract(text)})
 test('actual fixed command chars then Enter payloads preserve Unicode and JSON shape',()=>{
- const value=command();assert.equal(value,"[Console]::Write(('x'*16384)+('D476_'+'TERMINAL_')+[char]0x4e2d); [Console]::ReadLine() #中");assert.equal(value.includes('D476_TERMINAL_中'),false)
+ const value=command();assert.equal(value,"[Console]::OutputEncoding=[Text.Encoding]::UTF8; [Console]::Write(('x'*16384)+('D476_'+'TERMINAL_')+[char]0x4e2d); [Console]::ReadLine() #中");assert.equal(value.includes('D476_TERMINAL_中'),false)
  for(let cursor=0;cursor<value.length;cursor++)assert.deepEqual(payloads(2,cursor),{type:'char',text:value[cursor],unmodifiedText:value[cursor]})
  assert.deepEqual(payloads(2,value.length),payloads(1,0));assert.deepEqual(payloads(2,value.length+1),payloads(1,1))
  assert.deepEqual(payloads(1,0),{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'})

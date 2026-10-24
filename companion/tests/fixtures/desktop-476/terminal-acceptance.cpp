@@ -42,8 +42,9 @@ void D705TerminalAcceptance::document_ready(Desktop& h){
 }
 // Fixed test-owned browser-engine input, never Win32 queue/hardware fidelity.
 std::wstring const& D705TerminalAcceptance::command(){
+ // This test-owned shell must encode the requested Unicode before ConPTY.
  // The complete output marker is not present in the typed command/echo.
- static const std::wstring value=L"[Console]::Write(('x'*16384)+('D476_'+'TERMINAL_')+[char]0x4e2d); [Console]::ReadLine() #\u4e2d";return value;
+ static const std::wstring value=L"[Console]::OutputEncoding=[Text.Encoding]::UTF8; [Console]::Write(('x'*16384)+('D476_'+'TERMINAL_')+[char]0x4e2d); [Console]::ReadLine() #\u4e2d";return value;
 }
 size_t D705TerminalAcceptance::input_length(unsigned action){return action==1?2:action==2?command().size()+2:0;}
 JsonObject D705TerminalAcceptance::input_payload(unsigned action,size_t cursor){
