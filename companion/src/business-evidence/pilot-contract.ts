@@ -15,8 +15,8 @@ const scope = z.discriminatedUnion("kind", [
 const contractSchema = z.object({
   schema_version: z.literal(1),
   bindings: z.array(z.object({ system_key: nonempty, environment: nonempty, origins: z.array(nonempty).min(1), environment_selector: nonempty.optional(), environment_literal: nonempty.optional() }).strict()),
-  collection_scopes: z.record(z.object({ adapter_id: nonempty, adapter_version: nonempty, scope, empty_marker: nonempty, binding_system_key: nonempty }).strict()),
-  source_bindings: z.record(z.object({ source_system_key: nonempty, from: endpointType, to: endpointType }).strict()),
+  collection_scopes: z.record(z.string(), z.object({ adapter_id: nonempty, adapter_version: nonempty, scope, empty_marker: nonempty, binding_system_key: nonempty }).strict()),
+  source_bindings: z.record(z.string(), z.object({ source_system_key: nonempty, from: endpointType, to: endpointType }).strict()),
   mappings: z.array(z.object({ id: nonempty, relation: nonempty, from: endpoint, to: endpoint, rationale: nonempty }).strict()),
   required_fields: z.array(nonempty),
   pass_values: z.array(nonempty).min(1),

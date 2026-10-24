@@ -660,3 +660,15 @@ test("ensure_project_dir: original empty, oversized and wrong-type boundaries st
     assert.equal(tryParseToolArgs("ensure_project_dir", { name }).ok, false)
   }
 })
+
+
+test("netsec_port_scan: oversized targets are rejected before reading any element", () => {
+  let reads = 0
+  const targets = Array.from({ length: 17 }, () => "example.test")
+  Object.defineProperty(targets, "0", { get() { reads++; throw new Error("element traversal must not start") } })
+  const result = TOOL_ARG_SCHEMAS.netsec_port_scan.safeParse({ targets })
+  assert.equal(result.success, false)
+  assert.equal(reads, 0)
+  if (!result.success) assert.deepEqual(result.error.issues.map(issue => [issue.code, issue.path]), [["too_big", ["targets"]]])
+  assert.equal(TOOL_ARG_SCHEMAS.netsec_port_scan.safeParse({ targets: Array.from({ length: 16 }, () => "example.test") }).success, true)
+})
