@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Test reliability (#480): clone every pinned offline desktop resource and vendor license into owned inheritance and parent-death fixtures; reject incomplete or linked source files before publishing the asset directory. This fixes the demonstrated three-file clone gap without claiming it explains every native timeout.
+
 - Test reliability (#705): ignore out-of-phase retirement snapshots in the local-work acceptance observer, matching the real UI’s untracked hide/open-dialog requests. Required state validation, native actions and final history assertions remain mandatory.
 
 - Test reliability (macOS workspace): wait for the owned panel’s existing Choose/Open query to appear after committing its folder path, within the original remaining deadline; retain unique-button, hittability and real-click requirements. Production panel labels and behavior are unchanged.
