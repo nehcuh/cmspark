@@ -11,26 +11,7 @@ import { DesktopIdentityRegistry } from "../src/desktop/identity"
 import { createDesktopChannel, attachDesktopUpgrade } from "../src/desktop/channel"
 import type { DesktopNativeBinding, DesktopNativeChild } from "../src/desktop/host-launcher"
 const native=path.resolve(__dirname,"../../dist/desktop-native")
-// Test-build-only fixed IDs; observe accepted existing pong responses, never incoming/global auth.
-const nativePhaseNames=["ready_accepted","env_callback","controller_callback","navigation_callback","document_post_attempted","renderer_callback","renderer_admitted","renderer_send_attempted"] as const
-type NativeNavigationObservation={isSuccessHrSucceeded:boolean,isSuccess:boolean,sourceHrSucceeded:boolean,sourceMatches:boolean,readySample:boolean,webErrorHrSucceeded:boolean,webErrorStatus:number|null}
-function decodeNativeNavigationId(id:string):NativeNavigationObservation|undefined{
- const match=/^DESKTOP_480_NAV_H([01])B([01])S([01])O([01])R([01])E([01])W(u|0[0-9]|1[0-8])$/.exec(id)
- if(!match||match[0]!==id||(match[6]==="0"&&match[7]!=="u"))return
- return{isSuccessHrSucceeded:match[1]==="1",isSuccess:match[2]==="1",sourceHrSucceeded:match[3]==="1",sourceMatches:match[4]==="1",readySample:match[5]==="1",webErrorHrSucceeded:match[6]==="1",webErrorStatus:match[7]==="u"?null:Number(match[7])}
-}
-function recordNativePhaseResponse(data:unknown,phases:Set<string>,navigation:{value?:NativeNavigationObservation}={}):void{
- if(phases.size>=8||!(typeof data==="string"||Buffer.isBuffer(data)))return
- let frame:any;try{frame=JSON.parse(String(data))}catch{return}
- if(!frame||typeof frame!=="object"||Array.isArray(frame)||Object.keys(frame).length!==2||frame.type!=="system.pong"||typeof frame.id!=="string")return
- const observation=decodeNativeNavigationId(frame.id)
- if(observation){if(!phases.has("navigation_callback")){phases.add("navigation_callback");navigation.value=observation}return}
- for(const phase of nativePhaseNames)if(phase!=="navigation_callback"&&frame.id===`DESKTOP_480_PHASE_${phase}`){phases.add(phase);return}
-}
-function observeNativePhaseResponses(ws:any,phases:Set<string>,navigation:{value?:NativeNavigationObservation}={}):void{
- const original=ws.send
- ws.send=function(this:unknown,...args:unknown[]){const result=Reflect.apply(original,this,args);try{recordNativePhaseResponse(args[0],phases,navigation)}catch{/* Preserve original send, callback, return and throw behavior. */}return result}
-}
+import {nativePhaseNames,observeNativePhaseResponses,type NativeNavigationObservation} from "./fixtures/desktop-480/native-phase-observation"
 
 test("Windows real SYNCHRONIZE-only process handle API rejects extra rights, other objects and dead handles",{skip:process.platform!=="win32",timeout:20000},()=>{
  const result=spawnSync(path.join(native,"desktop-synchronize-handle-probe.exe"),[],{encoding:"utf8",timeout:10000,windowsHide:true})

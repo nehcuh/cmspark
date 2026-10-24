@@ -1,4 +1,5 @@
 import { withSurface650, parseSurfaceBorrow650, type SurfaceBorrow650 } from "../native-surface-650"
+import {nativePhaseNames,recordNativePhaseResponse,type NativeNavigationObservation} from "./native-phase-observation"
 /* Owned #480 acceptance coordinator. Imported by tests only, never product runtime. */
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -58,6 +59,8 @@ export function requireInheritance(value: { sidecar_valid: boolean; control_mask
 // Observe production-admitted responses only. Incoming phase/proof text is never
 // a success receipt; ready is bound by the channel's synchronous authenticated callback.
 export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { host: string; capabilityId: string }, registry: DesktopIdentityRegistry, record: (receipt: AcceptanceReceipt) => void, proof: (value: string) => void, activity: () => void = () => {}) {
+  // Native attempts are lifetime-once in the producer, not per-connection epochs.
+  const nativePhases=new Set<string>(),nativeNavigation:{value?:NativeNavigationObservation}={}
   let ready: { ws: WebSocket; proof: string } | undefined
   let current: { ws: WebSocket; host: string; capabilityId: string } | undefined
   const currentSocket = () => current && current.host === owned().host && current.capabilityId === owned().capabilityId && current.ws.readyState === WebSocket.OPEN ? current.ws : undefined
@@ -77,6 +80,7 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
       if (this !== ws || !frame || typeof frame !== "object" || Array.isArray(frame) || Object.keys(frame).length !== 2) return result
       if (frame.type === "desktop.ready" && frame.protocol_version === 1 && ws.readyState === WebSocket.OPEN) ready = { ws, proof: candidateProof }
       else if (frame.type === "system.pong" && currentSocket() === ws) {
+        try{recordNativePhaseResponse(args[0],nativePhases,nativeNavigation)}catch{/* Observation cannot replace original send behavior. */}
         const receipt = acceptanceReceipt(frame.id)
         if (receipt) record(receipt)
       }
@@ -86,6 +90,7 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
   })
   return {
     currentSocket,
+    nativeLifetime:()=>({scope:"mode-union" as const,producerScope:"process-lifetime-once" as const,reconnectEpochAttributed:false,processInstanceAttributed:false,phases:nativePhaseNames.filter(name=>nativePhases.has(name)),navigation:nativeNavigation.value?{...nativeNavigation.value}:null}),
     authenticated(host: string): boolean {
       const admitted = ready; ready = undefined
       const expected = owned()
@@ -198,7 +203,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   const has = (name: string) => observations.some(r => r.kind === "fixed" && r.name === name)
   let diagnosticPhase = "starting"
   const diagnostic = (reason: "deadline" | "cleanup") => {
-    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify(acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads, lastExitCode }, observations)) + "\n") }
+    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify({...acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads, lastExitCode }, observations),nativeLifetime:observer.nativeLifetime()}) + "\n") }
     catch { /* Observation must not replace the original test failure. */ }
   }
   const deadlineDiagnostic = () => diagnostic("deadline")
@@ -257,7 +262,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     diagnosticPhase = "complete"
     // A token is never returned, logged or persisted. Keep only finite scoped counts.
     assert.equal(secret.length, 64)
-    console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
+    console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, nativeLifetime:observer.nativeLifetime(), fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
   } finally {
     surfaceLease.retain()
     diagnostic("cleanup")

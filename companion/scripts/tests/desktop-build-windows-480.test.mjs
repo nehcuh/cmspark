@@ -153,10 +153,11 @@ test('all actual C++ acceptance compiler arguments preserve Unicode input withou
   // Evaluate all three actual argv expressions; never invoke a compiler.
   const calls=[...helperSource.matchAll(/checked\(cl,(\["\/nologo","\/std:c\+\+20"[^\n]+?\]),\{env,cwd:output,buildDiagnostic:true\}\)/g)]
   assert.equal(calls.length,3,'all actual native acceptance compile sites')
-  for(const match of calls) for(const mode of ['visual','hostile','inheritance','parent']) {
+  for(const [index,match] of calls.entries()) for(const mode of ['visual','hostile','inheritance','parent']) {
     const argv=new Function('path','mode','sdk','generated','root','source','mcpSource','binary','mcpBinary','terminalSource','terminalBinary',`return ${match[1]}`)(path.win32,mode,'C:\\sdk','C:\\generated','C:\\repo','C:\\owned.cpp','C:\\owned-mcp.cpp','C:\\owned.exe','C:\\owned-mcp.exe','C:\\owned-terminal.cpp','C:\\owned-terminal.exe')
     assert.equal(argv.filter(arg=>arg==='/utf-8').length,1,'acceptance C++ has the same explicit source encoding as production')
     assert.ok(argv.includes('/DUNICODE')&&argv.includes('/D_UNICODE'))
+    assert.equal(argv.filter(arg=>arg==='/DCMSPARK_DESKTOP_TEST_PHASES').length,index===0?1:0,'only actual 480 acceptance variants observe existing process-lifetime phases')
   }
   const nativeTest=fs.readFileSync(new URL('../../tests/desktop-native-mcp-476.test.ts',import.meta.url),'utf8')
   const form=fs.readFileSync(new URL('../../tests/fixtures/desktop-476/native-form.js',import.meta.url),'utf8')

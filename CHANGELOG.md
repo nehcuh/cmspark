@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Test diagnostics (#480): enable existing closed Windows native phase observations in acceptance fixtures and record them only from the current authenticated response socket. Reports explicitly describe lifetime-once attempts without reconnect-epoch attribution; success assertions and original deadlines remain unchanged.
+
 - Security: upgrade body-parser to 2.4.0 and Zod to 4.6.6 for the current high-severity advisories, with OpenAI SDK 6.0.0 for Zod 4 compatibility. Refresh the actual legacy outbound-schema recording and retain safe-integer argument bounds; existing moderate audit findings remain tracked.
 
 - Test diagnostics (#705): record a one-shot local terminal data-receipt observation and bounded daemon send counts without publishing terminal text or changing success assertions. Reap only the local acceptance callback’s exact PTY handles and confirm their real exits plus slot release before settling its native surface.
