@@ -61,12 +61,13 @@ final class WorkspacePicker705:XCTestCase {
   uiStage=8;uiDetail=0;observeUIStage();let inputCount=inputs.count;uiDetail=min(inputCount,2)+1;observeUIStage();guard inputCount==1 else{throw OwnedUI705Error.refused}
   uiStage=9;uiDetail=0;observeUIStage();let inputHittable=inputs.element.isHittable;uiDetail=inputHittable ? 2:1;observeUIStage();guard inputHittable else{throw OwnedUI705Error.refused}
   uiStage=10;uiDetail=0;observeUIStage();_ = try remaining();inputs.element.click();_ = try remaining();inputs.element.typeText(scene.selection.path);_ = try remaining();inputs.element.typeKey("\r",modifierFlags:[])
-  let choose=first.buttons.matching(NSPredicate(format:"label IN %@",["Choose","Open"]))
+  let choose=first.buttons.matching(NSPredicate(format:"label IN %@ OR title IN %@",["Choose","Open"],["Choose","Open"]))
+  let labelChoose=first.buttons.matching(NSPredicate(format:"label IN %@",["Choose","Open"]))
   // One diagnostic census only. Separate non-atomic AX queries; no labels leave this process.
   var chooseCensusAttempted=false
   func observeChooseCensus(){
    if chooseCensusAttempted{return};chooseCensusAttempted=true
-   let sheetLabelCount=choose.count
+   let sheetLabelCount=labelChoose.count
    let sheetButtonCount=first.buttons.count
    let ownerLabelCount=app.windows.matching(identifier:scene.nonce).buttons.matching(NSPredicate(format:"label IN %@",["Choose","Open"])).count
    guard sheetLabelCount>=0,sheetButtonCount>=0,ownerLabelCount>=0 else{return}
@@ -75,8 +76,8 @@ final class WorkspacePicker705:XCTestCase {
    for index in 0..<min(sheetButtonCount,8) {
     let button=first.buttons.element(boundBy:index)
     let label=OwnedUI705ButtonIdentity(button.label).rawValue
-    let identifier=OwnedUI705ButtonIdentity(button.identifier).rawValue
-    buttonIdentityRows.append([label,identifier])
+    let title=OwnedUI705ButtonIdentity(button.title).rawValue
+    buttonIdentityRows.append([label,title])
    }
    // No receipt if any synchronous framework call does not return; missing is UNKNOWN.
    try? scene.write(.uiChooseCensus,["schema":1,"nonce":scene.nonce,"status":"OBSERVED","sheetLabelCount":min(sheetLabelCount,2),"sheetButtonCount":min(sheetButtonCount,2),"ownerLabelCount":min(ownerLabelCount,2),"buttonCount":min(sheetButtonCount,8),"buttonsMore":sheetButtonCount>8,"buttonIdentityRows":buttonIdentityRows])
