@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Test diagnostics (#705): record a one-shot local terminal data-receipt observation and bounded daemon send counts without publishing terminal text or changing success assertions. Reap only the local acceptance callback’s exact PTY handles and confirm their real exits plus slot release before settling its native surface.
+
 - Test reliability (#480): clone every pinned offline desktop resource and vendor license into owned inheritance and parent-death fixtures; reject incomplete or linked source files before publishing the asset directory. This fixes the demonstrated three-file clone gap without claiming it explains every native timeout.
 
 - Test reliability (#705): ignore out-of-phase retirement snapshots in the local-work acceptance observer, matching the real UI’s untracked hide/open-dialog requests. Required state validation, native actions and final history assertions remain mandatory.

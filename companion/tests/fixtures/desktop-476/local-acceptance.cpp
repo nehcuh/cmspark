@@ -1,13 +1,13 @@
 #include <cwchar>
 class Desktop;
-struct D476LocalAcceptance{static bool firstNative,firstRenderer;static void observe(Desktop&,wchar_t const*) noexcept;static bool rendererSite(Desktop&,wchar_t const*) noexcept;static bool done;static bool complete(Desktop&,JsonObject const&);static unsigned confirmations;static std::wstring documentId;static void document(Desktop&);static void confirmation(Desktop&);static void renderer(Desktop&,JsonObject const&);static void emit(Desktop&,wchar_t const*);static void key(Desktop&,bool);};
+struct D476LocalAcceptance{static bool firstNative,firstRenderer,dataSeen;static void observe(Desktop&,wchar_t const*) noexcept;static bool rendererSite(Desktop&,wchar_t const*) noexcept;static bool done;static bool complete(Desktop&,JsonObject const&);static unsigned confirmations;static std::wstring documentId;static void document(Desktop&);static void confirmation(Desktop&);static void renderer(Desktop&,JsonObject const&);static void emit(Desktop&,wchar_t const*);static void key(Desktop&,bool);};
 /* D476 LOCAL IMPLEMENTATION */
 bool D476LocalAcceptance::done=false;
 bool D476LocalAcceptance::complete(Desktop& h,JsonObject const& f){if(text(f,L"type")!=L"D476.local.complete")return false;if(!h.ready||h.generation!=documentId||!done||confirmations!=5||!keys(f,{L"type",L"result"})||text(f,L"result")!=L"COMPLETE")ExitProcess(64);ExitProcess(77);return true;}
 unsigned D476LocalAcceptance::confirmations=0;std::wstring D476LocalAcceptance::documentId;
 void D476LocalAcceptance::emit(Desktop& h,wchar_t const* id){JsonObject f;put(f,L"type",L"system.ping");put(f,L"id",id);h.send(f);}
 
-bool D476LocalAcceptance::firstNative=false;bool D476LocalAcceptance::firstRenderer=false;
+bool D476LocalAcceptance::firstNative=false;bool D476LocalAcceptance::firstRenderer=false;bool D476LocalAcceptance::dataSeen=false;
 void D476LocalAcceptance::observe(Desktop& h,wchar_t const* id) noexcept {
  if(firstNative)return;
  static wchar_t const* known[]={L"D476_LOCAL_FIRST_W_1",L"D476_LOCAL_FIRST_W_2",L"D476_LOCAL_FIRST_W_3",L"D476_LOCAL_FIRST_W_4",L"D476_LOCAL_FIRST_W_5",L"D476_LOCAL_FIRST_W_6",L"D476_LOCAL_FIRST_W_7",L"D476_LOCAL_FIRST_W_8",L"D476_LOCAL_FIRST_W_9",L"D476_LOCAL_FIRST_W_10",L"D476_LOCAL_FIRST_W_11",L"D476_LOCAL_FIRST_W_12",L"D476_LOCAL_FIRST_W_13"};
@@ -34,6 +34,7 @@ void D476LocalAcceptance::key(Desktop& h,bool type){
 }
 void D476LocalAcceptance::renderer(Desktop& h,JsonObject const& f){
  if(text(f,L"type")!=L"system.ping"||h.generation!=documentId)return;auto id=text(f,L"id");if(rendererSite(h,id.c_str()))return;
+  if(id==L"D476_LOCAL_DATA_SEEN"){if(!dataSeen){dataSeen=true;try{emit(h,L"D476_LOCAL_DATA_SEEN");}catch(...){}}return;}
  if(id==L"D476_LOCAL_KEY"){key(h,false);return;}if(id==L"D476_LOCAL_TYPE"){key(h,true);return;}
  if(id==L"D476_LOCAL_RESIZE"){RECT r{};if(!GetWindowRect(h.window,&r)||!SetWindowPos(h.window,nullptr,0,0,r.right-r.left+120,r.bottom-r.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE))(observe(h,L"D476_LOCAL_FIRST_W_12"),emit(h,L"D476_LOCAL_FAIL"));return;}
  if(id==L"D476_LOCAL_DONE"){if(confirmations!=5){(observe(h,L"D476_LOCAL_FIRST_W_13"),emit(h,L"D476_LOCAL_FAIL"));return;}done=true;emit(h,L"D476_LOCAL_DONE");return;}
