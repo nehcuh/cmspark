@@ -161,3 +161,24 @@ CI, Windows SEA packaging and native builds use exact Node 22.23.4, including ma
 WebView2 virtual-host folder mapping 会绕过 `WebResourceRequested`，而桌面 HTML 的 nonce 只由现有 response handler 注入。该 origin 因而只使用原精确 URL handler；进入 `Navigate` 前须核 `NavigationStarting`、resource filter、resource handler 的注册 HRESULT，失败保原 exit54 并返回实际 HRESULT。参考 [WebResourceRequested 与 virtual-host mapping](https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/webresourcerequested)。
 
 组合保留 #705 两个独立 CSP/meta 占位符的完整 nonce helper、七项资源的原顺序/MIME、nosniff、403 未知资源拒绝、精确同源文档身份及 local/workspace/browser/archive/dialog/confirmation 退休顺序。测试须从这份真实 helper 和固定 xterm transform 导出，不能直接套用另一分支的单标记 fixture。四个实际 xterm style factory 的 CPU 反例约束占位符拒绝和响应 nonce，但不代替 Windows WebView/native 验收，也不证明历史 macOS exit65、Windows picker/焦点拒绝或独立 `0xC0000374` 回执的唯一原因；这些原因保持 UNKNOWN。原时限、CI 条件与全部原生断言不变。
+
+
+## Owned native test suppliers and resize constraints
+
+The terminal-only acceptance fixture requests a 120-pixel inward resize and still
+requires both real GetWindowRect calls, successful SetWindowPos, the exact measured
+delta, subsequent terminal dimensions and every original completion assertion.
+This avoids requiring a window to grow beyond its effective upper size limit;
+it does not prove which operand of an earlier W16 refusal failed. The original
+foreground, owner, trusted input, ACK, Stop, real exit and 45-second limits remain.
+
+The Windows Session suite prepares its small current-source Win32 lock holder once
+through the shared test runner, using installed Visual Studio/Windows SDK tooling
+and the existing private test-run directory. It opens the actual conversation file
+with read/write sharing and no delete sharing. Both native cases still require
+real rename refusals, the original five-attempt/150 ms replacement policy, actual
+holder close and exact history preservation. Its 5-second readiness and 15-second
+case limits remain unchanged. Preparation failure is a failure; direct node --test
+bypasses that preparation. Use the targeted shared-runner command in
+[TESTING.md](TESTING.md#windows-conversation-save-rename-recovery). No SDK download or executable cache
+is introduced for this supplier.

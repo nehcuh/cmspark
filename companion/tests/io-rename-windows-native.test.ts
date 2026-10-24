@@ -21,26 +21,17 @@ async function holdFile(file: string, root: string) {
   const systemRoot = process.env.SystemRoot
   assert.ok(systemRoot && path.isAbsolute(systemRoot))
   const release = path.join(root, "release")
-  const script = `
-    $ErrorActionPreference = 'Stop'
-    $handle = [System.IO.File]::Open($env:CMSPARK_LOCK_FILE, [System.IO.FileMode]::Open,
-      [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-    try {
-      [Console]::Out.WriteLine('LOCKED')
-      [Console]::Out.Flush()
-      $clock = [System.Diagnostics.Stopwatch]::StartNew()
-      while (-not [System.IO.File]::Exists($env:CMSPARK_RELEASE_FILE)) {
-        if ($clock.ElapsedMilliseconds -gt 10000) { throw 'owned lock release deadline' }
-        [System.Threading.Thread]::Sleep(1)
-      }
-    } finally { $handle.Dispose() }
-  `
-  const child = spawn(path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-    ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
-      windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
-      env: { SystemRoot: systemRoot, windir: systemRoot, TEMP: root, TMP: root,
-        CMSPARK_LOCK_FILE: file, CMSPARK_RELEASE_FILE: release },
-    })
+  const runDir = process.env.CMSPARK_TEST_RUN_DIR
+  assert.ok(runDir && path.isAbsolute(runDir), "SESSION_LOCK_HOLDER_PREPARATION_REQUIRED")
+  const runStat = fs.lstatSync(runDir)
+  assert.ok(runStat.isDirectory() && !runStat.isSymbolicLink())
+  const binary = path.join(fs.realpathSync(runDir), "session-lock-holder.exe")
+  const binaryStat = fs.lstatSync(binary)
+  assert.ok(binaryStat.isFile() && !binaryStat.isSymbolicLink() && binaryStat.nlink === 1 && binaryStat.size > 0)
+  const child = spawn(binary, [file, release], {
+    windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+    env: { SystemRoot: systemRoot, windir: systemRoot, TEMP: root, TMP: root },
+  })
   let closed = false
   const close = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => {
     child.once("close", (code, signal) => { closed = true; resolve({ code, signal }) })

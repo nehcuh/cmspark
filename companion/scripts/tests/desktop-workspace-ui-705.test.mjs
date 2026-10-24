@@ -202,3 +202,18 @@ test('705 actual binding refuses duplicate final publication and preserves the a
   assert.throws(()=>actual.bind(original,{package:s.stage,work}),/OWNED_UI_BUILD_TARGET_BINDING/);assert.deepEqual(fs.readFileSync(s.descriptor),before);assert.equal(calls,2);assert.equal(fs.existsSync(path.join(work,'descriptor-binding-proof.json')),false)
  }finally{s.clean()}
 })
+
+// The fixture owns this input; no claim about a historical runner's actual label.
+test('705 generated Mac workspace fixes Choose before presentation and retains exact normal-host inverse',()=>{
+ const normal=fs.readFileSync(path.join(root,'src/desktop/native/DesktopHost.swift'),'utf8'),fixture=fs.readFileSync(path.join(root,'tests/fixtures/desktop-476/workspace-acceptance.swift'),'utf8'),form=fs.readFileSync(path.join(root,'tests/fixtures/desktop-476/workspace-form.js'),'utf8'),ui=fs.readFileSync(path.join(root,'tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift'),'utf8')
+ const anchor='p.panel.beginSheetModal(for:owner){',owned='p.panel.prompt="Choose";'+anchor
+ assert.equal(normal.split(anchor).length,2);assert.equal(normal.includes('p.panel.prompt='),false)
+ for(const eol of ['\n','\r\n']){
+  const original=normal.replace(/\r\n/g,'\n').replace(/\n/g,eol),built=desktopWorkspaceFixture('swift',original,fixture,form)
+  assert.equal(built.inverse,original);assert.equal(built.source.split(owned).length,2)
+  assert.throws(()=>desktopWorkspaceFixture('swift',original.replace(anchor,'MISSING_PICKER_PRESENTATION'),fixture,form),/DESKTOP_WORKSPACE_FIXTURE_ANCHOR/)
+  assert.throws(()=>desktopWorkspaceFixture('swift',original+'\n'+anchor,fixture,form),/DESKTOP_WORKSPACE_FIXTURE_ANCHOR/)
+ }
+ for(const exact of ['label IN %@','["Choose","Open"]','guard chooseCount==1 else','guard chooseHittable else','choose.element.click()','try ready(.second,2)','cancel.element.click()','guard r>0,r<=45 else'])assert.ok(ui.includes(exact),exact)
+ assert.doesNotMatch(ui,/\.prompt\s*=|\.launch\(|\.activate\(|\.terminate\(/)
+})

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Test fixtures: resize the Windows terminal window inward while retaining exact measured dimensions; set the unshipped macOS workspace picker prompt before presentation while retaining the real UI selection and cancellation. Replace the Session test’s PowerShell lock holder with a run-owned Win32 executable, keeping real sharing violations, both release/persistent controls, and existing deadlines. These changes remove fixture preconditions; remote native validation remains required. Keep prior source-authority hashes and account for the separate passive diagnostic increment through an exact source inverse.
+
 - 原生桌面验收补充分段回执：区分 Agent 请求、确认、启动尝试与句柄返回，并在实际 Xcode 关闭后读取有限测试结果；保留全部原断言、超时和清理结果，不据此宣称 Windows/macOS 已修复。
 - Test fixture (Windows terminal): explicitly select UTF-8 for the owned PowerShell Console writer before producing the fixed CJK output. This removes a locale-dependent fixture precondition; the original parser, output volume, browser-engine input route, ACK, resize, Stop, ownership and 45-second assertions remain. Native validation is required; this is not a claim that an earlier runner used a particular code page.
 

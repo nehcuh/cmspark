@@ -92,7 +92,7 @@ void D705TerminalAcceptance::type_command(Desktop& h){
 }
 void D705TerminalAcceptance::resize(Desktop& h){
  if(!current(h)||resized||!typed||key_count!=6||confirm_count!=3||receipt_mask!=7||GetForegroundWindow()!=h.window){failure(h,15);return;}resized=true;
- RECT before{},after{};if(!GetWindowRect(h.window,&before)||!SetWindowPos(h.window,nullptr,0,0,before.right-before.left+120,before.bottom-before.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE)||!GetWindowRect(h.window,&after)||after.right-after.left!=before.right-before.left+120){failure(h,16);return;}
+ RECT before{},after{};if(!GetWindowRect(h.window,&before)||!SetWindowPos(h.window,nullptr,0,0,before.right-before.left-120,before.bottom-before.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE)||!GetWindowRect(h.window,&after)||after.right-after.left!=before.right-before.left-120){failure(h,16);return;}
 }
 void D705TerminalAcceptance::confirmation(Desktop& h){
  if(!current(h)||!h.confirmation||confirm_count>=4){failure(h,17);return;}
