@@ -419,6 +419,21 @@ function createTerminalFirstFailure747(){
  }
 }
 
+/** Passive observed-state bitset only: not a last-state or success authority. */
+function createTerminalReadiness747(){
+ let seenMask=0
+ const own=(value:object,key:string)=>{const d=Object.getOwnPropertyDescriptor(value,key);return d&&Object.hasOwn(d,'value')?d.value:undefined}
+ return{
+  observe(value:unknown){try{
+   if(!value||typeof value!=='object'||Object.getOwnPropertyNames(value).sort().join()!=='id,type'||Object.getOwnPropertySymbols(value).length||own(value,'type')!=='system.ping')return
+   const id=own(value,'id');if(typeof id!=='string'||id.length!==25)return
+   const m=/^D476_TERMINAL_READY_([01])_([X01])_([01])$/.exec(id);if(!m)return
+   const index=Number(m[1])*6+['X','0','1'].indexOf(m[2])*2+Number(m[3]);seenMask|=1<<index
+  }catch{/* Observation cannot alter the original result or cleanup. */}},
+  snapshot(){return{schema:1,seenMask}}
+ }
+}
+
 /** New terminal-only leaf: same serialized foreground file, never a new worker. */
 function hostedTerminalAdmission705() {
  assert.ok(process.platform==='darwin'||process.platform==='win32','TERMINAL705_SUPPORTED_HOST_REQUIRED')
@@ -447,6 +462,7 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
   const threads=new ThreadManager();threads.create('Native terminal A','native-terminal-A');threads.create('Unchanged sibling','native-terminal-B');threads.update('native-terminal-A',{workspace_root:dir})
   const registry=new DesktopIdentityRegistry(),boot=registry.issue('owned-native-terminal705'),confirmations=new SecurityConfirmationManager(),runtime=createNativeTerminalRuntime(()=> 'idle')
   const outputDecoder=new TextDecoder(),inputDecoder=new TextDecoder();let outputSuffix='',inputSuffix='';const actualHandles:Array<{kill():void;pid():number;exited:boolean}>=[];let completionFailure:unknown
+  const readiness=createTerminalReadiness747();let inputEnterObserved=false,rawOutputMarkerSeen=false
   const firstFailure=createTerminalFirstFailure747()
   const required=['DENIED','CANCELLED','OUTPUT','RESIZED','STOPPED','SAVED','REOPENED','DONE'].map(n=>'D476_TERMINAL_'+n),receipts=new Set<string>(),outputSeq=new Set<number>(),ackSeq=new Set<number>(),dimensions=new Set<string>(),childExits:Promise<void>[]=[]
   let child:DesktopNativeChild|undefined,childExited=false,authenticated=false,windowRequested=false,failed=false,connections=0,primary:any,completion:Promise<void>|undefined,foreign:InstanceType<typeof WebSocket>|undefined,foreignCheck:Promise<void>|undefined,actualSpawns=0,openAttempts=0,confirmationRequests=0,decisions=0,deniedResults=0,outputBytes=0,largestFrame=0,lastOutput=0,inputUnicode=false,outputUnicode=false,stops=0,ownedPid=0,actualProcessExit=false,exitResolve!:(n:number)=>void,failResolve!:()=>void,primaryFailure:unknown
@@ -468,7 +484,7 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
   })
   const realOpen=runtime.openTerminal,realInput=runtime.input,realResize=runtime.resize,realAck=runtime.ack,realClose=runtime.close
   runtime.openTerminal=input=>{openAttempts++;assert.equal(input.owner,primary);assert.equal(confirmations.pendingCount(),0);const observation=outputObserver.reserveOpen(input);const result=realOpen(input);outputObserver.commitOpen(observation,result.ok);if(result.ok){assert.ok(pty.getOwnedPtyContext(input.id,primary));assert.equal(pty.getOwnedPtyContext(input.id,null),null);assert.equal(pty.getOwnedPtyContext(input.id,{}),null);assert.equal(pty.readPtyTail(input.id,primary,'native-terminal-A').success,false,'shell consent is not private model-tail consent')}return result}
-  runtime.input=(id,b64)=>{const bytes=Buffer.from(b64,'base64');assert.ok(bytes.length<=16384);inputSuffix=(inputSuffix+inputDecoder.decode(bytes,{stream:true})).slice(-256);assert.equal(inputSuffix.includes('D476_TERMINAL_中'),false,'complete output marker must not come from input echo');if(inputSuffix.includes('中'))inputUnicode=true;return realInput(id,b64)}
+  runtime.input=(id,b64)=>{const bytes=Buffer.from(b64,'base64');assert.ok(bytes.length<=16384);inputEnterObserved=inputEnterObserved||bytes.includes(13);inputSuffix=(inputSuffix+inputDecoder.decode(bytes,{stream:true})).slice(-256);assert.equal(inputSuffix.includes('D476_TERMINAL_中'),false,'complete output marker must not come from input echo');if(inputSuffix.includes('中'))inputUnicode=true;return realInput(id,b64)}
   runtime.resize=(id,c,r)=>{const observation=outputObserver.reserveResize(id,c,r);const value=realResize(id,c,r);outputObserver.commitResize(observation,value.ok);if(value.ok)dimensions.add(c+'x'+r);return value}
   runtime.ack=(id,seq)=>{const value=realAck(id,seq);if(value.ok)ackSeq.add(seq);return value}
   runtime.close=id=>{stops++;return realClose(id)}
@@ -492,13 +508,14 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
       if(f.ok===false&&f.error_code==='LOCAL_DENIED'){deniedResults++;assert.equal(actualSpawns,0);assert.equal(openAttempts,0)}
       if(f.ok===true){assert.equal(deniedResults,2);foreignCheck=foreignOwner(f.operation_id);foreignCheck.catch(error=>{completionFailure=error;fail()})}
      }
-     if(f.type==='desktop.terminal.data'){const bytes=Buffer.from(f.b64,'base64');assert.ok(bytes.length<=16384);assert.equal(f.seq,lastOutput+1);lastOutput=f.seq;outputSeq.add(f.seq);outputBytes+=bytes.length;largestFrame=Math.max(largestFrame,bytes.length);outputSuffix=rawMarker747(outputSuffix,outputDecoder.decode(bytes,{stream:true})).suffix;outputObserver.data(f.operation_id,f.thread_id,ws,bytes)}
+     if(f.type==='desktop.terminal.data'){const bytes=Buffer.from(f.b64,'base64');assert.ok(bytes.length<=16384);assert.equal(f.seq,lastOutput+1);lastOutput=f.seq;outputSeq.add(f.seq);outputBytes+=bytes.length;largestFrame=Math.max(largestFrame,bytes.length);const rawObservation=rawMarker747(outputSuffix,outputDecoder.decode(bytes,{stream:true}));outputSuffix=rawObservation.suffix;rawOutputMarkerSeen=rawOutputMarkerSeen||rawObservation.found;outputObserver.data(f.operation_id,f.thread_id,ws,bytes)}
     }
     return Reflect.apply(original,ws,[data,...args])
    })as typeof ws.send
    ws.on('message',raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(ws!==primary||!authenticated)return
     if(f.type==='desktop.confirmation.decision'&&f.purpose==='local-work')decisions++
     if(f.type!=='system.ping'||typeof f.id!=='string')return
+    readiness.observe(f)
     firstFailure.observe(f)
     if(f.id==='D476_TERMINAL_FAIL'){fail();return}
     if(!required.includes(f.id))return;if(receipts.has(f.id)){fail();return}receipts.add(f.id)
@@ -520,7 +537,7 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
    assert.equal(await Promise.race([exited,failure.then(()=>{throw completionFailure??Error('OWNED_TERMINAL705_NATIVE_PHASE_FAILED')}),deadline]),77);if(completion)await completion;assert.equal(failed,false);assert.equal(authenticated,true);assert.equal(windowRequested,true);assert.equal(connections,2);assert.deepEqual([...receipts].sort(),[...required].sort())
    process.stdout.write('DESKTOP_TERMINAL_705 {"native":true,"realPty":true,"syntheticNativeApproval":true,"humanApproval":false,"deniedAndCancelledZeroLaunch":true,"unicode":true,"over16KiBOutput":true,"seqAck":true,"resized":true,"stoppedActualExit":true,"selectedPartialReturn":true,"diskReopened":true,"foreignAndNullRefused":true}\n')
   }catch(error){primaryFailure=error;throw error}finally{
-   firstFailure.seal();surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,firstFailure:firstFailure.snapshot(),failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),actualSpawns,openAttempts,confirmationRequests,decisions,deniedResults,outputBytes,largestFrame,outputFrames:outputSeq.size,acks:ackSeq.size,dimensions:dimensions.size,inputUnicode,outputUnicode,stops,actualProcessExit,authenticated,windowRequested,connections,childExited}))}catch{}
+   firstFailure.seal();surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,firstFailure:firstFailure.snapshot(),readiness:readiness.snapshot(),inputEnterObserved,rawOutputMarkerSeen,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),actualSpawns,openAttempts,confirmationRequests,decisions,deniedResults,outputBytes,largestFrame,outputFrames:outputSeq.size,acks:ackSeq.size,dimensions:dimensions.size,inputUnicode,outputUnicode,stops,actualProcessExit,authenticated,windowRequested,connections,childExited}))}catch{}
    let cleanupError:unknown;const clean=async(fn:()=>unknown)=>{try{await fn()}catch(error){cleanupError??=error}}
    await clean(()=>outputObserver.dispose());await clean(async()=>{child?.terminate();if(child&&!childExited)await exited});await clean(()=>{foreign?.terminate();for(const ws of channel.wss.clients)ws.terminate();confirmations.rejectAll('disconnect')})
    await clean(()=>{for(const handle of actualHandles)if(!handle.exited)handle.kill()});await clean(async()=>{await Promise.race([Promise.all(childExits),deadline]);assert.equal(pty.isPtyBusy(),false)});await clean(()=>Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]));await clean(()=>new Promise<void>(r=>server.close(()=>r())))

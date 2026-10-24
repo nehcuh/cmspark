@@ -34,7 +34,11 @@
  const capture=captureTerminal747(window,document,()=>documentGeneration);let ownedTerminal,ownedOperation=null;
  const names=["ROW","OPEN_DENY","REFRESH_DENY","OPEN_CANCEL","REFRESH_CANCEL","OPEN_APPROVE","STOP","SELECT","RETURN","REOPEN"];
  const key=(index,button)=>{if(!button||button.disabled||index!==requested+1){fail(1);return}button.focus();if(document.activeElement!==button){fail(2);return}requested=index;pendingTarget=button;post("D476_TERMINAL_"+names[index-1]+"_KEY")};
- const outputReady=()=>{outputComplete=phase===7&&typedEnter&&new TextEncoder().encode(output).length>16384&&parsedMarker747(ownedTerminal,"D476_TERMINAL_中");if(phase===7&&outputComplete&&ackFrames===dataFrames){typing=false;pendingTarget=null;phase=8;post("D476_TERMINAL_OUTPUT");post("D476_TERMINAL_RESIZE")}};
+ // Observe only operands already reached by the original short-circuit. X is
+ // not evaluated, not false; the finite set records seen states, not the last.
+ const readinessSeen747=new Set();
+ const noteReady747=(enter,marker,ack)=>{try{if(phase!==7)return;const id="D476_TERMINAL_READY_"+(enter?1:0)+"_"+(marker===null?"X":marker?1:0)+"_"+(ack?1:0);if(readinessSeen747.has(id))return;readinessSeen747.add(id);post(id)}catch{}};
+ const outputReady=()=>{let marker=null;outputComplete=phase===7&&typedEnter&&new TextEncoder().encode(output).length>16384&&(marker=parsedMarker747(ownedTerminal,"D476_TERMINAL_中"));noteReady747(typedEnter,marker,ackFrames===dataFrames);if(phase===7&&outputComplete&&ackFrames===dataFrames){typing=false;pendingTarget=null;phase=8;post("D476_TERMINAL_OUTPUT");post("D476_TERMINAL_RESIZE")}};
  const pick=kind=>[...$("list").querySelectorAll("[data-thread-"+kind+"]")].find(b=>b.getAttribute("data-thread-"+kind)===target);
  document.addEventListener("keydown",e=>{
   if(e.key!=="Enter")return;

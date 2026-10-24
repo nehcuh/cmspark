@@ -69,6 +69,7 @@ for(const variant of ['untrusted','late','body','duplicate'] as const)test('term
 })
 test('whole real app/form→actual HMAC actor→owned store drives ten keys and four decisions; CPU PTY is inert',async t=>{
  const b=backend(t),r=renderer(),receipts:string[]=[],keys:string[]=[];let posted=0,decisions=0,typed=false,resized=false,steps=0,holdAck=true;const heldAck:any[]=[]
+ const readinessIds=new Set([...source('tests/fixtures/desktop-476/terminal-acceptance.cpp').matchAll(/L"(D476_TERMINAL_READY_[01]_[X01]_[01])"/g)].map(m=>m[1])),readinessSeen=new Set<string>();assert.equal(readinessIds.size,12)
  const priorInput=b.runtime.input;b.runtime.input=(id:string,b64:string)=>{const value=priorInput(id,b64);if(!typed){typed=true;assert.ok(Buffer.from(b64,'base64').toString('utf8').includes('中'));const bytes=Buffer.from('x'.repeat(16384)+'D476_TERMINAL_中');b.output({type:'terminal.data',seq:1,b64:bytes.subarray(0,16384).toString('base64')});b.output({type:'terminal.data',seq:2,b64:bytes.subarray(16384).toString('base64')})}return value}
  while(steps++<200){
   while(posted<r.posted.length){const f=r.posted[posted++];if(f.type==='system.ping'){
@@ -76,6 +77,7 @@ test('whole real app/form→actual HMAC actor→owned store drives ten keys and 
     if(f.id.endsWith('_KEY')){keys.push(f.id);const target=r.document.activeElement;r.event('keydown',target);target.click();r.event('keyup',target)}
     else if(f.id==='D476_TERMINAL_TYPE'){assert.equal(r.document.activeElement.className,'xterm-helper-textarea');r.event('keydown',r.document.activeElement);r.terminals[0].data('owned synthetic command #中\r');r.event('keyup',r.document.activeElement)}
     else if(f.id==='D476_TERMINAL_RESIZE'){resized=true;for(const fn of r.window.events.resize??[])fn()}
+    else if(readinessIds.has(f.id)){assert.equal(readinessSeen.has(f.id),false);readinessSeen.add(f.id)}
     else receipts.push(f.id)
    }else {const {generation,...wire}=f;b.emit(wire)}}
   await b.tick();await r.drain()
@@ -85,6 +87,7 @@ test('whole real app/form→actual HMAC actor→owned store drives ten keys and 
  }
  assert.ok(steps<200);assert.equal(heldAck.length,2);assert.equal(holdAck,false);assert.equal(decisions,4);assert.equal(keys.length,10);assert.equal(new Set(keys).size,10);assert.equal(typed,true);assert.equal(resized,true)
  assert.deepEqual(receipts,['D476_TERMINAL_DENIED','D476_TERMINAL_CANCELLED','D476_TERMINAL_OUTPUT','D476_TERMINAL_RESIZED','D476_TERMINAL_STOPPED','D476_TERMINAL_SAVED','D476_TERMINAL_REOPENED','D476_TERMINAL_DONE'])
+ assert.ok(readinessSeen.has('D476_TERMINAL_READY_1_1_0'),'actual parsed output observed before held ACKs');assert.ok(readinessSeen.has('D476_TERMINAL_READY_1_1_1'),'actual parsed output observed with all ACKs before original OUTPUT');assert.ok(readinessSeen.size<=12)
  assert.equal(b.calls.filter((v:string)=>v==='open').length,1);assert.equal(b.calls.filter((v:string)=>v==='close').length,1);assert.equal(b.tm.readDesktopDialog('native-terminal-A').messages.length,1);assert.equal(b.tm.readDesktopDialog('native-terminal-B').messages.length,0);assert.equal(b.manager.pendingCount(),0)
 })
 test('native admission refuses manual supported hosts before native imports or environment value reads',()=>{

@@ -118,6 +118,9 @@ void D705TerminalAcceptance::renderer(Desktop& h,JsonObject const& frame){
   if(key_count!=index||confirm_count!=expected_confirm||receipt_mask!=expected_receipts[index]||(index>=6&&(!typed||!resized))){failure(h,25);return;}key_count=index+1;(void)key(h,VK_RETURN);return;
  }
  if(id==L"D476_TERMINAL_TYPE"){type_command(h);return;}if(id==L"D476_TERMINAL_RESIZE"){resize(h);return;}
+ // Passive closed observations, after the original current/document checks.
+ static wchar_t const* const ready[]={L"D476_TERMINAL_READY_0_X_0",L"D476_TERMINAL_READY_0_X_1",L"D476_TERMINAL_READY_0_0_0",L"D476_TERMINAL_READY_0_0_1",L"D476_TERMINAL_READY_0_1_0",L"D476_TERMINAL_READY_0_1_1",L"D476_TERMINAL_READY_1_X_0",L"D476_TERMINAL_READY_1_X_1",L"D476_TERMINAL_READY_1_0_0",L"D476_TERMINAL_READY_1_0_1",L"D476_TERMINAL_READY_1_1_0",L"D476_TERMINAL_READY_1_1_1"};
+ for(auto observed:ready)if(id==observed){try{emit(h,observed);}catch(...){}return;}
  const wchar_t* receipts[]={L"DENIED",L"CANCELLED",L"OUTPUT",L"RESIZED",L"STOPPED",L"SAVED",L"REOPENED",L"DONE"};
  for(unsigned index=0;index<8;index++)if(id==std::wstring(L"D476_TERMINAL_")+receipts[index]){
   if(receipt_mask!=((1u<<index)-1)){failure(h,26);return;}receipt_mask|=1u<<index;

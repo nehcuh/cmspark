@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- Test diagnostics (terminal acceptance): record the bounded set of readiness operands actually observed by the original renderer short-circuit, plus input-CR and raw-output-marker booleans. Keep the command, parser calls, input actions, deadlines and success/refusal assertions unchanged; missing observations remain unknown.
 - Test diagnostics (macOS workspace): split only the existing Choose first-match/deadline/wait observation boundaries and emit one separately marked strict Xcode snapshot to bounded stdout after its real close following cancellation, so a completed test context cannot silently drop the late observation. Keep UI actions, assertions, deadlines and cleanup authority unchanged; this is diagnostic coverage, not a proven GUI behavior fix.
 - ACP native progress: deliver each current owner-bound update without the legacy broadcast throttle, preserving private routing, bounded payloads and legacy pacing.
 
