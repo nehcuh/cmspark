@@ -44,9 +44,9 @@ function fixture() {
   })
   let enabled = true, role = "main", serial = 0, managerCalls = 0
   const managerSource = source("acp/manager.ts")
-  const propose = ["propose", "expireOfferedSessions"].map(name => extract(managerSource, n => ts.isMethodDeclaration(n) && n.name.getText(managerSource) === name)).join("\n")
+  const propose = ["propose", "proposeOwned", "visibleHolder", "expireOfferedSessions"].map(name => extract(managerSource, n => ts.isMethodDeclaration(n) && n.name.getText(managerSource) === name)).join("\n")
   const Manager = compile(`export class ActualPropose {
-    sessions=new Map(); executionClaims=new Map();failedSpawnChildren=new WeakSet();startupPreparations=new Map();processes=new Map();protocolHandles=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();
+    sessions=new Map(); nativeBindings=new WeakMap(); executionClaims=new Map();failedSpawnChildren=new WeakSet();startupPreparations=new Map();processes=new Map();protocolHandles=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();
     resolveServer(){return {enabled:true,command:'INERT_NOT_EXECUTED',policy:{profile:'review_readonly'}}}
     emitProgress(){}; ${propose}
   }`, {
@@ -165,7 +165,7 @@ test("#722 actual workspace containment still denies the data-root name", async 
 function admissionFixture(platform: "linux" | "win32", deferredPreparation = false) {
   const { EventEmitter } = require("node:events") as typeof import("node:events")
   const managerSource = source("acp/manager.ts")
-  const methods = ["propose", "reserveExecutionClaim", "releaseExecutionClaim", "start", "startCliBridge", "trackChild", "noteHistory", "getSession", "listSessionsForThread", "cancel", "shutdown", "expireOfferedSessions", "checkStartAdmission", "promptSession", "followup"].map(name =>
+  const methods = ["propose", "proposeOwned", "visibleHolder", "nativeCurrent", "detachNativeAbort", "cancelOwned", "reserveExecutionClaim", "releaseExecutionClaim", "start", "startCliBridge", "trackChild", "noteHistory", "getSession", "listSessionsForThread", "cancel", "shutdown", "expireOfferedSessions", "checkStartAdmission", "promptSession", "followup"].map(name =>
     extract(managerSource, n => ts.isMethodDeclaration(n) && n.name.getText(managerSource) === name)).join("\n")
   const children: any[] = [], preparations: Array<() => void> = [], tracked: Promise<any>[] = []
   let serial = 0, prepareCalls = 0, startCalls = 0, envCalls = 0, kills = 0, enabled = true, preparationReleased = !deferredPreparation
@@ -174,7 +174,7 @@ function admissionFixture(platform: "linux" | "win32", deferredPreparation = fal
   const firstChild = new Promise<void>(resolve => { entered = resolve })
   const secondChild = new Promise<void>(resolve => { enteredSecond = resolve })
   const exports = compile(`export class ActualAdmission {
-    sessions=new Map();executionClaims=new Map();failedSpawnChildren=new WeakSet();processes=new Map();ownedChildren=new Set();startupPreparations=new Map();
+    sessions=new Map();nativeBindings=new WeakMap();executionClaims=new Map();failedSpawnChildren=new WeakSet();processes=new Map();ownedChildren=new Set();startupPreparations=new Map();
     protocolHandles=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();shuttingDown=false;unsubscribeEmbedSpawn(){};
     resolveServer(){return {enabled:true,command:'INERT_NEVER_EXECUTED',protocol:'cli',policy:{profile:'review_readonly'}}};
     emitProgress(){};emitTerminal(){};pushTimeline(){};buildUserPrompt(){return 'synthetic task'};maybeOpenLocalTerminal(){};

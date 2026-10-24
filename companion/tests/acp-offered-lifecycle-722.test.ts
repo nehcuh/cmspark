@@ -11,12 +11,12 @@ function compile(code: string, globals: Record<string, unknown> = {}) { const ex
 function fixture() {
   let now = 1_000_000, serial = 0
   const effects = { external: 0, token: 0, native: 0 }, deny = () => { effects.external++; throw Error("OWNED_EXTERNAL_FORBIDDEN") }
-  const sf = source("acp/manager.ts"), names = new Set(["propose", "getSession", "listSessionsForThread", "cancel", "expireOfferedSessions", "checkStartAdmission"]), selected: string[] = []
+  const sf = source("acp/manager.ts"), names = new Set(["propose", "proposeOwned", "visibleHolder", "nativeCurrent", "getSession", "listSessionsForThread", "cancel", "cancelOwned", "expireOfferedSessions", "checkStartAdmission"]), selected: string[] = []
   function walk(n: ts.Node) { if (ts.isMethodDeclaration(n) && names.has(n.name.getText(sf))) selected.push(n.getText(sf)); ts.forEachChild(n, walk) } walk(sf)
   const config = { acp: { enabled: true, max_concurrent_sessions: 1 }, coding_handoff: { open_local_terminal: false } }
   class Clock extends Date { constructor(value?: any) { super(value === undefined ? now : value) } static now() { return now } }
   const Actual = compile(`export class Actual {
-    sessions=new Map();executionClaims=new Map();shuttingDown=false;startupPreparations=new Map();protocolHandles=new Map();processes=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();events=[];
+    sessions=new Map();nativeBindings=new WeakMap();executionClaims=new Map();shuttingDown=false;startupPreparations=new Map();protocolHandles=new Map();processes=new Map();manualEntryLaunches=new Map();lastProgressAt=new Map();events=[];
     resolveServer(){return{enabled:true,command:'INERT_NOT_EXECUTED',policy:{profile:'review_readonly'}}}
     emitProgress(session,tail){this.events.push(JSON.parse(JSON.stringify({session,tail}))) }pushTimeline(){};emitTerminal(){};
     ${selected.join("\n")}

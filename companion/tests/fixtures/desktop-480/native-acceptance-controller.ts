@@ -1,4 +1,5 @@
 import { withSurface650, parseSurfaceBorrow650, type SurfaceBorrow650 } from "../native-surface-650"
+import {nativePhaseNames,recordNativePhaseResponse,type NativeNavigationObservation} from "./native-phase-observation"
 /* Owned #480 acceptance coordinator. Imported by tests only, never product runtime. */
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -58,6 +59,8 @@ export function requireInheritance(value: { sidecar_valid: boolean; control_mask
 // Observe production-admitted responses only. Incoming phase/proof text is never
 // a success receipt; ready is bound by the channel's synchronous authenticated callback.
 export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { host: string; capabilityId: string }, registry: DesktopIdentityRegistry, record: (receipt: AcceptanceReceipt) => void, proof: (value: string) => void, activity: () => void = () => {}) {
+  // Native attempts are lifetime-once in the producer, not per-connection epochs.
+  const nativePhases=new Set<string>(),nativeNavigation:{value?:NativeNavigationObservation}={}
   let ready: { ws: WebSocket; proof: string } | undefined
   let current: { ws: WebSocket; host: string; capabilityId: string } | undefined
   const currentSocket = () => current && current.host === owned().host && current.capabilityId === owned().capabilityId && current.ws.readyState === WebSocket.OPEN ? current.ws : undefined
@@ -77,6 +80,7 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
       if (this !== ws || !frame || typeof frame !== "object" || Array.isArray(frame) || Object.keys(frame).length !== 2) return result
       if (frame.type === "desktop.ready" && frame.protocol_version === 1 && ws.readyState === WebSocket.OPEN) ready = { ws, proof: candidateProof }
       else if (frame.type === "system.pong" && currentSocket() === ws) {
+        try{recordNativePhaseResponse(args[0],nativePhases,nativeNavigation)}catch{/* Observation cannot replace original send behavior. */}
         const receipt = acceptanceReceipt(frame.id)
         if (receipt) record(receipt)
       }
@@ -86,6 +90,7 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
   })
   return {
     currentSocket,
+    nativeLifetime:()=>({scope:"mode-union" as const,producerScope:"process-lifetime-once" as const,reconnectEpochAttributed:false,processInstanceAttributed:false,phases:nativePhaseNames.filter(name=>nativePhases.has(name)),navigation:nativeNavigation.value?{...nativeNavigation.value}:null}),
     authenticated(host: string): boolean {
       const admitted = ready; ready = undefined
       const expected = owned()
@@ -128,6 +133,16 @@ export function ownedDirectoryIdentity(directory: string): { dev: number; ino: n
 export function requireOwnedDirectory(directory: string, expected: { dev: number; ino: number; real: string }): void {
   assert.deepEqual(ownedDirectoryIdentity(directory), expected, "Owned directory identity changed; refuse cleanup")
 }
+// Exact fixed inventory is contract-checked against the canonical build copier.
+export const OFFLINE_ACCEPTANCE_ASSETS_480 = Object.freeze(['index.html','app.css','app.js','local-work.js','terminal-core.js','terminal-fit.js','terminal.css','terminal-core.LICENSE.txt','terminal-fit.LICENSE.txt'])
+export function copyOwnedAcceptanceAssets(sourceRoot:string,destinationRoot:string):void {
+ const source=path.join(sourceRoot,"assets"),destination=path.join(destinationRoot,"assets"),sourceIdentity=ownedDirectoryIdentity(source),destinationIdentity=ownedDirectoryIdentity(destinationRoot)
+ const inputs=OFFLINE_ACCEPTANCE_ASSETS_480.map(name=>{const input=path.join(source,name),stat=fs.lstatSync(input);assert.ok(stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1,"Owned regular offline asset required");return{input,name}})
+ requireOwnedDirectory(source,sourceIdentity);requireOwnedDirectory(destinationRoot,destinationIdentity)
+ fs.mkdirSync(destination)
+ for(const {input,name}of inputs)fs.copyFileSync(input,path.join(destination,name),fs.constants.COPYFILE_EXCL)
+ requireOwnedDirectory(source,sourceIdentity);requireOwnedDirectory(destinationRoot,destinationIdentity)
+}
 function ownDataRoot(): string {
   const root = process.env.CMSPARK_TEST_RUN_DIR, data = process.env.CMSPARK_DATA_DIR
   assert.ok(root && data && path.isAbsolute(root) && path.isAbsolute(data), "Existing owned test-data preload required")
@@ -143,8 +158,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   if (mode === "inheritance") {
     ownedClone = fs.mkdtempSync(path.join(fs.realpathSync(path.dirname(artifactRoot)), "owned-consumed-")); cloneIdentity = ownedDirectoryIdentity(ownedClone)
     for (const name of ["cmspark-desktop.exe", "desktop-inheritance.exe"]) { const input = path.join(artifactRoot, name); const stat = fs.lstatSync(input); assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1); fs.copyFileSync(input, path.join(ownedClone, name), fs.constants.COPYFILE_EXCL) }
-    fs.mkdirSync(path.join(ownedClone, "assets"))
-    for (const name of ["index.html", "app.css", "app.js"]) fs.copyFileSync(path.join(artifactRoot, "assets", name), path.join(ownedClone, "assets", name), fs.constants.COPYFILE_EXCL)
+    copyOwnedAcceptanceAssets(artifactRoot,ownedClone)
     artifactRoot = ownedClone
   }
   if (mode === "parent") {
@@ -189,7 +203,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   const has = (name: string) => observations.some(r => r.kind === "fixed" && r.name === name)
   let diagnosticPhase = "starting"
   const diagnostic = (reason: "deadline" | "cleanup") => {
-    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify(acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads, lastExitCode }, observations)) + "\n") }
+    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify({...acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads, lastExitCode }, observations),nativeLifetime:observer.nativeLifetime()}) + "\n") }
     catch { /* Observation must not replace the original test failure. */ }
   }
   const deadlineDiagnostic = () => diagnostic("deadline")
@@ -248,7 +262,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     diagnosticPhase = "complete"
     // A token is never returned, logged or persisted. Keep only finite scoped counts.
     assert.equal(secret.length, 64)
-    console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
+    console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, nativeLifetime:observer.nativeLifetime(), fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
   } finally {
     surfaceLease.retain()
     diagnostic("cleanup")
@@ -290,7 +304,7 @@ export async function nativeParentDeath(t: TestContext): Promise<void> {
   try{
     const source=path.resolve("dist/desktop-native/acceptance/parent"),binary=process.platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop",checker=process.platform==="win32"?"desktop-parent-probe.exe":"desktop-parent-probe"
     for(const name of [binary,checker]){const input=path.join(source,name),stat=fs.lstatSync(input);assert.ok(stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1);fs.copyFileSync(input,path.join(directory,name),fs.constants.COPYFILE_EXCL)}
-    fs.mkdirSync(path.join(directory,"assets"));for(const name of ["index.html","app.css","app.js"])fs.copyFileSync(path.join(source,"assets",name),path.join(directory,"assets",name),fs.constants.COPYFILE_EXCL)
+    copyOwnedAcceptanceAssets(source,directory)
     const env:NodeJS.ProcessEnv={CMSPARK_TEST_RUN_DIR:process.env.CMSPARK_TEST_RUN_DIR,CMSPARK_NATIVE_SURFACE_650_BORROW:JSON.stringify(surfaceLease.borrow())}
     for(const key of ["SystemRoot","SYSTEMROOT","TEMP","TMP","TMPDIR","PATH"])if(process.env[key])env[key]=process.env[key]
     // This is the actual owned issuer, not a secret-forwarding intermediary. Registry/native/bootstrap remain inside it.

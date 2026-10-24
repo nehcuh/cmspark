@@ -8,7 +8,7 @@ import { desktopIntegrity, stageDesktop } from "../desktop-artifacts.mjs"
 function fixture(t, platform="darwin") {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),"cmspark-desktop-build-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}))
  const source=path.join(root,"input");fs.mkdirSync(path.join(source,"assets"),{recursive:true})
- for(const name of [platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop","desktop-launcher.node","assets/index.html","assets/app.css","assets/app.js",...(platform==="win32"?["licenses/WebView2.LICENSE.txt"]:[])]){fs.mkdirSync(path.dirname(path.join(source,name)),{recursive:true});fs.writeFileSync(path.join(source,name),`inert build-only fixture ${name}\n`)}
+ for(const name of [platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop","desktop-launcher.node","assets/index.html","assets/app.css","assets/app.js","assets/local-work.js","assets/terminal-core.js","assets/terminal-fit.js","assets/terminal.css","assets/terminal-core.LICENSE.txt","assets/terminal-fit.LICENSE.txt",...(platform==="win32"?["licenses/WebView2.LICENSE.txt"]:[])]){fs.mkdirSync(path.dirname(path.join(source,name)),{recursive:true});fs.writeFileSync(path.join(source,name),`inert build-only fixture ${name}\n`)}
  const expected=desktopIntegrity(source,platform);fs.writeFileSync(path.join(source,"integrity.json"),JSON.stringify(expected));return{root,source,expected}
 }
 test("fixed exact desktop files stage into bin/desktop-native for each platform",t=>{

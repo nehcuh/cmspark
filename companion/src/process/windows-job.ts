@@ -3,7 +3,7 @@
 // that exits before its descendants and a forcefully terminated Companion.
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, URL as NodeURL } from "node:url"
 import { randomBytes } from "node:crypto"
 import { windowsCmdExePath, windowsPowerShellExePath } from "../acp/win-spawn"
 import { windowsTargetEnvironment } from "./windows-env"
@@ -142,7 +142,7 @@ const psLiteral = (value: string) => "'" + value.replace(/'/g, "''") + "'"
 export function spawnWindowsJob(command: string, args: string[], options: SpawnOptions): ChildProcess {
   // Isolate cross-spawn's pinned parser so npm shims retain their existing argv
   // behavior. Never trust ComSpec or PATH to select the Windows control shell.
-  const cwd = options.cwd ? path.resolve(options.cwd instanceof URL ? fileURLToPath(options.cwd) : options.cwd) : undefined
+  const cwd = options.cwd ? path.resolve(options.cwd instanceof NodeURL ? fileURLToPath(options.cwd) : options.cwd) : undefined
   const created = windowsJobOwner.created
   const parsed = require("cross-spawn")._parse(command, args, { ...options, shell: false })
   if (!parsed.file) throw Object.assign(new Error(`spawn ${command} ENOENT`), { code: "ENOENT" })

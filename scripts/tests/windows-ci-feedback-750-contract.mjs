@@ -13,6 +13,9 @@ assert.equal(cockpit.sourceCommit, '6521db567a06c01711b6527e96cdfcde65094342')
 assert.equal(cockpit.sourceWorkflowSha256, '5cc02dfea08c5357a90c437f5ee6bbf5bdec4df054dd137c14fa9f061c280c2a')
 const canonical = value => value === null || typeof value !== 'object' ? JSON.stringify(value) : Array.isArray(value) ? '[' + value.map(canonical).join(',') + ']' : '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + canonical(value[k])).join(',') + '}'
 const digest = value => createHash('sha256').update(canonical(value)).digest('hex')
+// Recorded from the actual #758 YAML producer, not a hand-built shadow job.
+const activity758 = JSON.parse(fs.readFileSync(new URL('./activity-platform-758-workflow.json', import.meta.url), 'utf8'))
+assert.equal(digest(activity758), '401ffbb6db6f576120cf2765deabfbba02795ab6f1d75f2367433277ec8fc56f')
 const omit = (value, keys) => Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)))
 const key = step => step.name ?? step.uses
 export const MATRIX750 = Object.freeze([
@@ -71,6 +74,13 @@ export function condition750(source, context) {
 // removes only the experimental first-identity execution and its own upload;
 // the archived supplement remains unchanged as evidence of the old schedule.
 export function validateCockpitSteps748(steps) {
+  const additions = steps.filter(step => key(step) === activity758.nativeStep.name)
+  assert.equal(additions.length, 1, 'one exact #758 native addition')
+  assert.deepEqual(additions[0], activity758.nativeStep, '#758 native command, lane, environment and failure semantics are exact')
+  const compiled = steps.findIndex(step => step.name === 'Compile shared companion test inputs (#650)')
+  assert.equal(steps.indexOf(additions[0]), compiled + 1, '#758 native consumes the just-compiled inputs')
+  // Remove only this fully checked addition; all original pins remain intact.
+  steps = steps.filter(step => step !== additions[0])
   const scalarName = COCKPIT_NAMES[0]
   const selected = steps.filter(step => key(step) === scalarName)
   assert.equal(selected.length, 1, 'one exact cockpit scalar step')
@@ -109,7 +119,8 @@ export function validateWindowsCiFeedback750(text) {
   const doc = yaml.load(text)
   doc.jobs['smoke-os'].steps = collapseNativeStages760(doc.jobs['smoke-os'].steps)
   assert.equal(digest(omit(doc, ['jobs'])), baseline.workflowWithoutJobs)
-  assert.deepEqual(Object.keys(doc.jobs).sort(), ['acp-history-restart', 'build', 'smoke-os'])
+  assert.deepEqual(Object.keys(doc.jobs).sort(), ['acp-history-restart', 'activity-linux-x11', 'build', 'smoke-os'])
+  assert.deepEqual(doc.jobs['activity-linux-x11'], activity758.linuxJob, '#758 owned X11 job is exact, including dependencies and failure semantics')
   // #759 accepts only the exact reviewed security-pin delta; the historical
   // digest still guards every other history job field and command.
   const history = structuredClone(doc.jobs['acp-history-restart'])
@@ -164,6 +175,12 @@ export function validateWindowsCiFeedback750(text) {
   cache750(build.steps.find(s => s.name === 'Setup Node.js'), '22.23.4')
   for (const old of baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js')) {
     let step = build.steps.find(s => key(s) === old.key)
+    if (old.key === activity758.buildStep.name) {
+      assert.deepEqual(step, activity758.buildStep, '#758 bundle resource control is exact')
+      const command = 'node --test scripts/tests/activity-notifier-package.test.cjs\n'
+      assert.equal(step.run.split(command).length, 2)
+      step = { ...step, run: step.run.replace(command, '') }
+    }
     if (old.key === 'Setup Node.js') step = { ...step, with: { ...omit(step.with, ['cache-dependency-path']), 'node-version': '22' } }
     assert.equal(digest(step), old.object, 'unrelated build command/permission changed: ' + old.key)
   }

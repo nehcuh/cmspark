@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import ts from "typescript"
-import { ownedDirectoryIdentity, requireOwnedDirectory, requireInheritance } from "./fixtures/desktop-480/native-acceptance-controller"
+import { ownedDirectoryIdentity, requireOwnedDirectory, requireInheritance, copyOwnedAcceptanceAssets, OFFLINE_ACCEPTANCE_ASSETS_480 } from "./fixtures/desktop-480/native-acceptance-controller"
 const source=fs.readFileSync(path.resolve("tests/desktop-native-windows-480.test.ts"),"utf8")
 const tree=ts.createSourceFile("desktop-native-windows-480.test.ts",source,ts.ScriptTarget.Latest,true)
 const callbacks:ts.ArrowFunction[]=[]
@@ -53,4 +53,17 @@ for(const [name,observed,expectedFailure]of[
   assert.equal(launched,1);assert.equal(inspected,1);assert.equal(terminated,1);assert.equal(cleanup,1);assert.equal(fs.existsSync(run),false);assert.equal(loaded,path.join(input,"desktop-inheritance.node"));assert.deepEqual(copies,["desktop-inheritance.exe"])
   for(const f of["desktop-inheritance.node","desktop-inheritance.exe"])assert.equal(fs.readFileSync(path.join(input,f),"utf8"),"inert-not-executable")
  }finally{fs.rmSync(root,{recursive:true,force:true})}
+})
+
+test('480 cloned acceptance assets preserve the complete canonical offline inventory and reject incomplete or redirected input',t=>{
+ const build=ts.createSourceFile('desktop-assets.mjs',fs.readFileSync(path.resolve('scripts/desktop-assets.mjs'),'utf8'),ts.ScriptTarget.Latest,true),declarations=build.statements.filter(ts.isVariableStatement).flatMap(s=>[...s.declarationList.declarations]),declaration=declarations.find(d=>d.name.getText(build)==='DESKTOP_ASSET_NAMES')
+ assert.ok(declaration&&declaration.initializer&&ts.isCallExpression(declaration.initializer));const array=declaration.initializer.arguments[0];assert.ok(ts.isArrayLiteralExpression(array));const names=array.elements.map(e=>{assert.ok(ts.isStringLiteral(e));return e.text})
+ assert.deepEqual([...OFFLINE_ACCEPTANCE_ASSETS_480],names)
+ const html=fs.readFileSync(path.resolve('src/desktop/assets/index.html'),'utf8'),references=[...html.matchAll(/(?:src|href)="([^"#]+)"/g)].map(m=>m[1]);assert.equal(references.length,6);for(const name of references)assert.ok(names.includes(name))
+ const root=fs.mkdtempSync(path.join(process.env.CMSPARK_DATA_DIR!,'acceptance-assets-480-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}))
+ const source=path.join(root,'source');fs.mkdirSync(source);fs.mkdirSync(path.join(source,'assets'));for(const name of names)fs.writeFileSync(path.join(source,'assets',name),'OWNED_INERT_ASSET:'+name,{flag:'wx'})
+ const target=path.join(root,'target');fs.mkdirSync(target);copyOwnedAcceptanceAssets(source,target);assert.deepEqual(fs.readdirSync(path.join(target,'assets')).sort(),[...names].sort());for(const name of names)assert.deepEqual(fs.readFileSync(path.join(target,'assets',name)),fs.readFileSync(path.join(source,'assets',name)))
+ const missing=path.join(root,'missing');fs.mkdirSync(missing);const last=path.join(source,'assets',names.at(-1)!),bytes=fs.readFileSync(last);fs.unlinkSync(last);assert.throws(()=>copyOwnedAcceptanceAssets(source,missing));assert.equal(fs.existsSync(path.join(missing,'assets')),false);fs.writeFileSync(last,bytes)
+ const linked=path.join(root,'linked');fs.mkdirSync(linked);const alias=path.join(root,'owned-alias');fs.linkSync(last,alias);assert.throws(()=>copyOwnedAcceptanceAssets(source,linked),/Owned regular offline asset required/);assert.equal(fs.existsSync(path.join(linked,'assets')),false);fs.unlinkSync(alias)
+ const occupied=path.join(root,'occupied');fs.mkdirSync(occupied);fs.mkdirSync(path.join(occupied,'assets'));const sentinel=path.join(occupied,'assets','sentinel');fs.writeFileSync(sentinel,'OWNED_UNCHANGED');assert.throws(()=>copyOwnedAcceptanceAssets(source,occupied));assert.equal(fs.readFileSync(sentinel,'utf8'),'OWNED_UNCHANGED')
 })

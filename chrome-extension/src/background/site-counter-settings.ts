@@ -1,4 +1,5 @@
 import { getActiveTabContext } from "./active-tab-hostname"
+import { workspaceSenderAllowed } from "./workspace-sender"
 
 let selection: { threadId: string } | undefined
 /** Mirrors only accepted outbound thread.select; Companion owns the real gate. */
@@ -6,10 +7,10 @@ export function noteSiteCounterUiSelection(threadId: unknown): void {
   selection = typeof threadId === "string" && threadId ? { threadId } : undefined
 }
 export function isSiteCounterSettingsSender(sender?: chrome.runtime.MessageSender): boolean {
-  if (!sender || sender.id !== chrome.runtime.id || sender.tab || (sender.frameId !== undefined && sender.frameId !== 0)) return false
+  if (!workspaceSenderAllowed(sender, chrome.runtime.id)) return false
   try {
-    const url = new URL(sender.url || "")
-    return url.protocol === "chrome-extension:" && url.hostname === chrome.runtime.id && url.pathname === "/sidepanel.html"
+    const url = new URL(sender?.url || "")
+    return (!sender?.tab || url.pathname === "/tabs/workspace.html")
       && !url.username && !url.password && !url.port
   } catch { return false }
 }

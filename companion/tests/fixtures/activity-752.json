@@ -1,0 +1,183 @@
+{
+  "state": {
+    "type": "activity.result",
+    "id": "fixture-state",
+    "ok": true,
+    "state": {
+      "version": 1,
+      "revision": 2,
+      "config": {
+        "enabled": false,
+        "allowed_apps": [],
+        "interval_ms": 30000,
+        "ocr_ai_enabled": false,
+        "retention_days": 14,
+        "max_storage_mb": 512
+      },
+      "sources": [
+        {
+          "captured_at": "2026-10-21T10:00:00.000Z",
+          "app_id": "com.tencent.xinWeChat",
+          "app_name": "微信",
+          "window_title": "示例项目群",
+          "id": "7093360b-b1b9-400b-a011-b9269884b1fe",
+          "bytes": 70,
+          "sha256": "2640059609118b695c139804676372eca75c30d30e5906775902d13e44f5356c"
+        }
+      ],
+      "candidates": [
+        {
+          "title": "提交方案",
+          "owner": "",
+          "due_at": null,
+          "feedback_to": "项目群",
+          "feedback_required": true,
+          "evidence": {
+            "source_id": "7093360b-b1b9-400b-a011-b9269884b1fe",
+            "app_id": "com.tencent.xinWeChat",
+            "group": "示例项目群",
+            "sender": "小王",
+            "message_time": "",
+            "quote": "请周五前提交方案，并在项目群反馈。"
+          },
+          "id": "d3c7e21d-b198-46dd-a776-645954ede65c",
+          "revision": 0,
+          "created_at": "2026-10-21T10:00:00.000Z",
+          "status": "pending"
+        }
+      ],
+      "todos": [],
+      "runtime": {
+        "platform": "darwin",
+        "supported": true,
+        "running": false,
+        "scanning": false,
+        "last_scan_at": null,
+        "last_success_at": null,
+        "status": "stopped",
+        "error": null,
+        "coverage": "仅记录已授权且位于前台的应用窗口可见内容；不会切换聊天、滚动或读取未显示消息。提醒要求本机 Companion 运行；系统可能抑制通知。"
+      }
+    }
+  },
+  "source": {
+    "type": "activity.result",
+    "id": "fixture-source",
+    "ok": true,
+    "source": {
+      "captured_at": "2026-10-21T10:00:00.000Z",
+      "app_id": "com.tencent.xinWeChat",
+      "app_name": "微信",
+      "window_title": "示例项目群",
+      "ocr_text": "示例项目群\n小王\n请周五前提交方案，并在项目群反馈。",
+      "id": "7093360b-b1b9-400b-a011-b9269884b1fe",
+      "bytes": 70,
+      "sha256": "2640059609118b695c139804676372eca75c30d30e5906775902d13e44f5356c",
+      "image_data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="
+    }
+  },
+  "confirmed": {
+    "type": "activity.result",
+    "id": "fixture-confirmed",
+    "ok": true,
+    "state": {
+      "version": 1,
+      "revision": 3,
+      "config": {
+        "enabled": false,
+        "allowed_apps": [],
+        "interval_ms": 30000,
+        "ocr_ai_enabled": false,
+        "retention_days": 14,
+        "max_storage_mb": 512
+      },
+      "sources": [
+        {
+          "captured_at": "2026-10-21T10:00:00.000Z",
+          "app_id": "com.tencent.xinWeChat",
+          "app_name": "微信",
+          "window_title": "示例项目群",
+          "id": "7093360b-b1b9-400b-a011-b9269884b1fe",
+          "bytes": 70,
+          "sha256": "2640059609118b695c139804676372eca75c30d30e5906775902d13e44f5356c"
+        }
+      ],
+      "candidates": [
+        {
+          "title": "提交方案",
+          "owner": "",
+          "due_at": null,
+          "feedback_to": "项目群",
+          "feedback_required": true,
+          "evidence": {
+            "source_id": "7093360b-b1b9-400b-a011-b9269884b1fe",
+            "app_id": "com.tencent.xinWeChat",
+            "group": "示例项目群",
+            "sender": "小王",
+            "message_time": "",
+            "quote": "请周五前提交方案，并在项目群反馈。"
+          },
+          "id": "d3c7e21d-b198-46dd-a776-645954ede65c",
+          "revision": 1,
+          "created_at": "2026-10-21T10:00:00.000Z",
+          "status": "confirmed",
+          "todo_id": "b6e16858-129f-4d2c-9d45-8bab3fbc3557"
+        }
+      ],
+      "todos": [
+        {
+          "id": "b6e16858-129f-4d2c-9d45-8bab3fbc3557",
+          "revision": 0,
+          "created_at": "2026-10-21T10:00:00.000Z",
+          "updated_at": "2026-10-21T10:00:00.000Z",
+          "title": "提交方案",
+          "owner": "本人",
+          "due_at": "2026-10-21T10:00:00.000Z",
+          "remind_at": "2026-10-21T09:00:00.000Z",
+          "feedback_to": "项目群",
+          "feedback_required": true,
+          "kind": "own",
+          "handling_status": "open",
+          "feedback_status": "pending",
+          "evidence": {
+            "source_id": "7093360b-b1b9-400b-a011-b9269884b1fe",
+            "app_id": "com.tencent.xinWeChat",
+            "group": "示例项目群",
+            "sender": "小王",
+            "message_time": "",
+            "quote": "请周五前提交方案，并在项目群反馈。"
+          },
+          "reminder": {
+            "status": "scheduled"
+          }
+        }
+      ],
+      "runtime": {
+        "platform": "darwin",
+        "supported": true,
+        "running": false,
+        "scanning": false,
+        "last_scan_at": null,
+        "last_success_at": null,
+        "status": "stopped",
+        "error": null,
+        "coverage": "仅记录已授权且位于前台的应用窗口可见内容；不会切换聊天、滚动或读取未显示消息。提醒要求本机 Companion 运行；系统可能抑制通知。"
+      }
+    }
+  },
+  "apps": {
+    "type": "activity.result",
+    "id": "fixture-apps",
+    "ok": true,
+    "apps": [
+      {
+        "app_id": "com.tencent.xinWeChat",
+        "app_name": "微信"
+      },
+      {
+        "app_id": "com.alibaba.DingTalkMac",
+        "app_name": "钉钉"
+      }
+    ]
+  }
+}

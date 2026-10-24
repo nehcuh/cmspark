@@ -128,6 +128,17 @@ function settingsWebIsolationArgs() {
 const testRunDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-test-run-"))
 let code = 1
 try {
+  // Build once in the existing private run root, before either 15s native case.
+  // Session's explicit selection and the complete Windows census share this route.
+  if (process.platform === "win32") {
+    const session = path.join(testsRoot, "io-rename-windows-native.test.js")
+    if (fs.existsSync(session) && main.includes(fs.realpathSync(session))) {
+      const build = spawnSync(process.execPath, [path.join(root, "scripts/build-session-lock-holder-windows.mjs"), testRunDir], {
+        cwd: root, stdio: "inherit", env: process.env,
+      })
+      if (build.error || build.status !== 0 || build.signal) throw new Error("SESSION_LOCK_HOLDER_PREPARATION_FAILED")
+    }
+  }
   // Native input-desktop owners must not consume another file's test budget
   // while waiting for its lease. Keep each original case deadline unchanged.
   code = runNodeTest(main, process.platform === "win32" ? ["--test-concurrency=1"] : [])

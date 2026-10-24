@@ -4,6 +4,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DESKTOP_WINDOWS_INPUTS, prepareDesktopNodeHeaders, extractDesktopSdk, desktopWindowsCompilePlan } from '../build-desktop-windows.mjs'
+import './desktop-local-native-476.test.mjs'
+if(process.platform!=='win32')await import('./desktop-workspace-ui-705.test.mjs')
 
 test('declared SDK output itself cannot redirect into an unrelated sibling', async () => {
   const owned=fs.mkdtempSync(path.join(os.tmpdir(),'desktop-sdk-output-'))
@@ -148,13 +150,14 @@ test('production C++ compile plan preserves UTF-8 native strings independently o
 })
 
 test('all actual C++ acceptance compiler arguments preserve Unicode input without weakening its assertion', () => {
-  // Evaluate only the two actual argv expressions; never invoke a compiler.
+  // Evaluate all three actual argv expressions; never invoke a compiler.
   const calls=[...helperSource.matchAll(/checked\(cl,(\["\/nologo","\/std:c\+\+20"[^\n]+?\]),\{env,cwd:output,buildDiagnostic:true\}\)/g)]
-  assert.equal(calls.length,2,'all actual native acceptance compile sites')
-  for(const match of calls) for(const mode of ['visual','hostile','inheritance','parent']) {
-    const argv=new Function('path','mode','sdk','generated','root','source','mcpSource','binary','mcpBinary',`return ${match[1]}`)(path.win32,mode,'C:\\sdk','C:\\generated','C:\\repo','C:\\owned.cpp','C:\\owned-mcp.cpp','C:\\owned.exe','C:\\owned-mcp.exe')
+  assert.equal(calls.length,3,'all actual native acceptance compile sites')
+  for(const [index,match] of calls.entries()) for(const mode of ['visual','hostile','inheritance','parent']) {
+    const argv=new Function('path','mode','sdk','generated','root','source','mcpSource','binary','mcpBinary','terminalSource','terminalBinary',`return ${match[1]}`)(path.win32,mode,'C:\\sdk','C:\\generated','C:\\repo','C:\\owned.cpp','C:\\owned-mcp.cpp','C:\\owned.exe','C:\\owned-mcp.exe','C:\\owned-terminal.cpp','C:\\owned-terminal.exe')
     assert.equal(argv.filter(arg=>arg==='/utf-8').length,1,'acceptance C++ has the same explicit source encoding as production')
     assert.ok(argv.includes('/DUNICODE')&&argv.includes('/D_UNICODE'))
+    assert.equal(argv.filter(arg=>arg==='/DCMSPARK_DESKTOP_TEST_PHASES').length,index===0?1:0,'only actual 480 acceptance variants observe existing process-lifetime phases')
   }
   const nativeTest=fs.readFileSync(new URL('../../tests/desktop-native-mcp-476.test.ts',import.meta.url),'utf8')
   const form=fs.readFileSync(new URL('../../tests/fixtures/desktop-476/native-form.js',import.meta.url),'utf8')
@@ -517,3 +520,10 @@ test('case36 actual N-API producer publishes both identity values separately fro
   assert.ok(create.includes('fixture_sibling_identity=sibling.valid?sibling.objects:256;'))
   assert.ok(create.includes('return CreateProcessW(app,command,process,thread,inherit,flags,environment,cwd,startup,pi);'))
 })
+
+// Actual /W4 /WX failure C4456: V2 text must not hide the module-path buffer.
+test('705 actual V2 sidecar reader keeps module path and event text in distinct local names',()=>{
+ const s=sentinelSource705(),a=s.indexOf('static int fixture_read_known(HANDLE known[3]) {'),b=s.indexOf('static unsigned fixture_mask',a);assert.ok(a>=0&&b>a);const body=s.slice(a,b);
+ const outer=/wchar_t ([A-Za-z_][A-Za-z0-9_]*)\[32768\]; DWORD n=GetModuleFileNameW\(NULL,\1,32768\)/.exec(body),inner=/char ([A-Za-z_][A-Za-z0-9_]*)\[96\]=\{0\}/.exec(body);assert.ok(outer&&inner,'actual two buffer declarations');assert.notEqual(outer[1],inner[1],'V2 inner local must not shadow outer module path under /W4 /WX');
+ assert.ok(body.includes('wcscat_s('+outer[1]+',32768,L".handles")'));assert.ok(body.includes('CreateFileW('+outer[1]+',GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL)'));
+});

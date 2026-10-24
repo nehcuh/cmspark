@@ -38,7 +38,7 @@ export type DraftCreateRequest = ReturnType<typeof parseDraftCreate>
 
 const updateSchema = z.object({
   draft_id: z.string().min(1), expected_revision: z.number().int().safe().positive(), request_id: requestId,
-  fields: z.record(z.unknown()).optional(), relations: z.record(z.unknown()).optional(),
+  fields: z.record(z.string(), z.unknown()).optional(), relations: z.record(z.string(), z.unknown()).optional(),
   story_draft_text: text.nullable().optional(),
 }).strict()
 

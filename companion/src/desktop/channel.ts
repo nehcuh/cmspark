@@ -11,9 +11,12 @@ import type { ThreadManager } from "../threads/thread-manager"
 import { desktopThreadMetadata } from "./thread-metadata"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import { createDesktopResources, DESKTOP_RESOURCE_METHODS } from "./resources"
+import {createDesktopLocalWork,DESKTOP_LOCAL_WORK_METHODS,type LocalWorkRuntime} from "./local-work"
+import { createDesktopWorkspace, DESKTOP_WORKSPACE_METHODS, type WorkspaceRuntime } from "./workspace"
 import { createDesktopArchive, DESKTOP_ARCHIVE_METHODS } from "./archive"
 import { createDesktopBrowser, DESKTOP_BROWSER_METHODS } from "./browser"
 import type { DesktopBrowserPeer } from "./browser-peer"
+import { createDesktopTerminalWork, DESKTOP_TERMINAL_METHODS, type DesktopTerminalRuntime } from "./terminal-work"
 import { pendingToolCalls } from "../ws/tool-forward"
 
 const hexId = /^[0-9a-f]{32}$/
@@ -28,12 +31,13 @@ export function attachDesktopUpgrade(server: http.Server, legacy: WebSocketServe
     target.handleUpgrade(req, socket, head, ws => target.emit("connection", ws, req))
   })
 }
-export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; services: DesktopReadServices; maxPayload: number; securityConfirmations?: SecurityConfirmationManager; onDisconnect?: (ws: WebSocket) => void; onAuthenticated?: (host: string) => void; dialogRuntime?: (owner: { ws: WebSocket; current(): boolean }) => NativeDialogRuntime; archiveActivity?: (id: string) => "idle" | "busy" | "unknown"; browserPeers?: () => DesktopBrowserPeer[] }) {
+export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; services: DesktopReadServices; maxPayload: number; securityConfirmations?: SecurityConfirmationManager; onDisconnect?: (ws: WebSocket) => void; onAuthenticated?: (host: string) => void; dialogRuntime?: (owner: { ws: WebSocket; current(): boolean }) => NativeDialogRuntime; workspaceRuntime?: WorkspaceRuntime; localRuntime?: LocalWorkRuntime; terminalRuntime?: DesktopTerminalRuntime; archiveActivity?: (id: string) => "idle" | "busy" | "unknown"; browserPeers?: () => DesktopBrowserPeer[] }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: opts.maxPayload })
   const active = new Map<WebSocket, DesktopPrincipal>()
   const pending = new Map<WebSocket, string>()
+  const gracefulClose = new Set<WebSocket>()
   const retire = new Map<WebSocket, () => void>()
-  const unbind = opts.registry.onRevoke(id => { for (const [ws, cap] of pending) if (cap === id) { retire.get(ws)?.(); ws.terminate() } })
+  const unbind = opts.registry.onRevoke(id => { for (const [ws, cap] of pending) if (cap === id) { retire.get(ws)?.(); if (!gracefulClose.has(ws)) ws.terminate() } })
   wss.once("close", unbind)
   wss.on("connection", ws => {
     // Reuse the existing legacy admission bound; no unauthenticated desktop growth.
@@ -46,6 +50,34 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
     let resources: ReturnType<typeof createDesktopResources> | undefined
     let archive: ReturnType<typeof createDesktopArchive> | undefined
     let browser: ReturnType<typeof createDesktopBrowser> | undefined
+    let workspace: ReturnType<typeof createDesktopWorkspace> | undefined
+    let local: ReturnType<typeof createDesktopLocalWork> | undefined
+    let terminal: ReturnType<typeof createDesktopTerminalWork> | undefined
+    function sendLocal(frame: Record<string,unknown>):boolean {
+      if(ws.readyState!==WebSocket.OPEN)return false
+      try { const encoded=JSON.stringify(frame);if(Buffer.byteLength(encoded,"utf8")<=opts.maxPayload){ws.send(encoded);return true} }catch{/* Owner delivery cannot authorize execution. */}
+      local?.cancel();ws.close(1009);return false
+    }
+    function sendTerminal(frame: Record<string, unknown>): boolean {
+      if (ws.readyState !== WebSocket.OPEN) return false
+      try { const body = JSON.stringify(frame); if (Buffer.byteLength(body, "utf8") <= opts.maxPayload) { ws.send(body); return true } } catch { /* Lost delivery cannot grant or repeat effects. */ }
+      terminal?.cancel(); ws.close(1009); return false
+    }
+    function sendWorkspace(frame: Record<string, unknown>): boolean {
+      if (ws.readyState !== WebSocket.OPEN) return false
+      const privatePicker = typeof frame.type === "string" && frame.type.startsWith("desktop.workspace.picker.")
+      let encoded: string | undefined
+      try { encoded = JSON.stringify(frame) } catch { /* Refuse without inspecting arbitrary errors. */ }
+      if (encoded !== undefined && Buffer.byteLength(encoded, "utf8") <= opts.maxPayload) { try { ws.send(encoded); return true } catch { if (!privatePicker) workspace?.cancel(); return false } }
+      if (privatePicker) return false // The original actor settles its own unavailable selection once.
+      workspace?.cancel()
+      // A confirmation notification cannot settle the associated request.
+      if (String(frame.type).startsWith("desktop.confirmation.") || String(frame.type).startsWith("desktop.workspace.picker.")) return false
+      const failure = JSON.stringify({ type: frame.type, id: frame.id, thread_id: frame.thread_id, ok: false, error_code: frame.type === "desktop.workspace.pick.result" ? "WORKSPACE_UNCONFIRMED" : "WORKSPACE_UNAVAILABLE", ...(frame.type === "desktop.workspace.pick.result" ? { outcome: "unconfirmed" } : {}) })
+      if (Buffer.byteLength(failure, "utf8") <= opts.maxPayload) { try { ws.send(failure) } catch { workspace?.cancel() } }
+      else ws.close(1009)
+      return false
+    }
     function sendResource(value: unknown) {
       if (ws.readyState !== WebSocket.OPEN) return false
       let encoded: string | undefined
@@ -65,7 +97,7 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
       else ws.close(1009)
       return false
     }
-    retire.set(ws, () => { browser?.cancel(); archive?.cancel(); try { dialog?.cancel() } catch { /* Continue retiring other pending work. */ } try { mcpSave?.cancel() } catch { /* Socket teardown must continue. */ } try { resources?.cancel() } catch { /* Finish socket retirement. */ } })
+    retire.set(ws, () => { try { browser?.cancel() } catch { /* Retire every owned family. */ } try { archive?.cancel() } catch { /* Continue retirement. */ } try { local?.cancel() } catch { /* Retire every owned family. */ } try { terminal?.cancel() } catch { /* Continue retirement of the selected terminal actor. */ } try { workspace?.cancel() } catch { /* Continue retiring other pending work. */ } try { dialog?.cancel() } catch { /* Continue retiring other pending work. */ } try { mcpSave?.cancel() } catch { /* Socket teardown must continue. */ } try { resources?.cancel() } catch { /* Finish socket retirement. */ } })
     const timer = setTimeout(() => ws.terminate(), DESKTOP_CHALLENGE_TTL_MS)
     ws.on("error", () => {})
     send(ws, { type: "desktop.challenge.request" })
@@ -88,12 +120,18 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
           active.set(ws, principal); clearTimeout(timer)
           if (opts.securityConfirmations) { const owner = principal; mcpSave = createDesktopMcpSave({ ws, services: opts.services, manager: opts.securityConfirmations, current: () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.mcp.save"), send: frame => send(ws, frame) }) }
           if (opts.securityConfirmations && opts.services.skills.createDesktopResourceStore) { const owner = principal; resources = createDesktopResources({ ws, store: opts.services.skills.createDesktopResourceStore(), manager: opts.securityConfirmations, current: () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.resource.import"), send: sendResource }) }
+          if (opts.securityConfirmations && opts.workspaceRuntime) { const owner = principal; workspace = createDesktopWorkspace({ ws, threads: opts.services.threads as ThreadManager, runtime: opts.workspaceRuntime, manager: opts.securityConfirmations, current: () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.workspace.pick"), send: sendWorkspace }) }
           { const owner = principal; browser = createDesktopBrowser({ current: () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.browser.visibility"), hasThread: id => opts.services.threads.desktopMetadataSnapshot().some(t => t.id === id), peers: opts.browserPeers || (() => []), busy: (tab, thread) => [...pendingToolCalls.values()].some(p => p.tabId === tab) || opts.securityConfirmations?.hasPendingForWorker(thread) === true || opts.securityConfirmations?.hasPendingForOriginWs(ws) === true }) }
           { const owner = principal; const current = () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.chat.send"); dialog = createDesktopDialog({ threads: opts.services.threads as ThreadManager, runtime: opts.dialogRuntime?.({ ws, current }), current, send: frame => send(ws, frame), maxPayload: opts.maxPayload, browser }) }
           { const owner = principal; archive = createDesktopArchive({ threads: {
             desktopArchiveSnapshot: () => { if (!opts.services.threads.desktopArchiveSnapshot) throw Error("DESKTOP_ARCHIVE_UNAVAILABLE"); return opts.services.threads.desktopArchiveSnapshot() },
             setDesktopArchive: (id, expected, archived) => { if (!opts.services.threads.setDesktopArchive) throw Error("DESKTOP_ARCHIVE_UNAVAILABLE"); return opts.services.threads.setDesktopArchive(id, expected, archived) },
           }, current: method => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, method), activity: opts.archiveActivity }) }
+          // One actor owns the shared terminal methods and local-work confirmations.
+          // Full local work retains workspace/agent support; the terminal-only runtime
+          // remains an injectable fallback for hosts which do not supply localRuntime.
+          if(opts.securityConfirmations&&opts.localRuntime){const owner=principal;local=createDesktopLocalWork({threads:opts.services.threads as ThreadManager,runtime:opts.localRuntime,manager:opts.securityConfirmations,ws,current:()=>ws.readyState===WebSocket.OPEN&&opts.registry.allows(owner,"desktop.terminal.open"),send:sendLocal,maxPayload:opts.maxPayload})}
+          else if (opts.securityConfirmations && opts.terminalRuntime) { const owner = principal; terminal = createDesktopTerminalWork({ ws, threads: opts.services.threads as ThreadManager, runtime: opts.terminalRuntime, manager: opts.securityConfirmations, current: () => ws.readyState === WebSocket.OPEN && opts.registry.allows(owner, "desktop.terminal.open"), send: sendTerminal, maxPayload: opts.maxPayload }) }
           send(ws, { type: "desktop.ready", protocol_version: 1 }); opts.onAuthenticated?.(principal.hostSessionId); return
         }
         ws.terminate(); return
@@ -106,13 +144,33 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
         return
       }
       browser?.intent(String(frame.type), frame.thread_id)
+      if((DESKTOP_LOCAL_WORK_METHODS as readonly string[]).includes(String(frame.type)) && (local || !(DESKTOP_TERMINAL_METHODS as readonly string[]).includes(String(frame.type)))){
+        if(!local||!opts.registry.allows(principal,String(frame.type))){send(ws,{type:"desktop.error",id:frame.id,error_code:"DESKTOP_METHOD_DENIED"});return}
+        const owner=principal;void local.handle(frame).then(result=>{if(opts.registry.allows(owner,String(frame.type)))sendLocal(result)}).catch(()=>{if(opts.registry.allows(owner,String(frame.type)))sendLocal({type:String(frame.type)+".result",id:frame.id,thread_id:frame.thread_id,ok:false,error_code:"LOCAL_UNAVAILABLE"})});return
+      }
       if ((DESKTOP_ARCHIVE_METHODS as readonly string[]).includes(String(frame.type))) {
         if (!archive || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: String(frame.type) + ".result", id: frame.id, ok: false, ...(frame.thread_id === undefined ? {} : { thread_id: frame.thread_id }), ...(frame.type === "desktop.archive.set" ? { saved: false } : {}), error_code: "DESKTOP_ARCHIVE_METHOD_DENIED" }); return }
         send(ws, archive.handle(frame)); return
       }
+      if ((DESKTOP_TERMINAL_METHODS as readonly string[]).includes(String(frame.type))) {
+        if (!terminal || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: String(frame.type) + ".result", id: frame.id, thread_id: frame.thread_id, ok: false, error_code: "DESKTOP_METHOD_DENIED" }); return }
+        const owner = principal
+        void terminal.handle(frame).then(result => { if (opts.registry.allows(owner, String(frame.type))) sendTerminal(result) }).catch(() => { if (opts.registry.allows(owner, String(frame.type))) sendTerminal({ type: String(frame.type) + ".result", id: frame.id, thread_id: frame.thread_id, ok: false, error_code: "LOCAL_UNAVAILABLE" }) })
+        return
+      }
       if ((DESKTOP_DIALOG_METHODS as readonly string[]).includes(String(frame.type))) {
         if (!dialog || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", id: frame.id, error_code: "DESKTOP_METHOD_DENIED" }); return }
         dialog.handle(frame); return
+      }
+      if (frame.type === "desktop.workspace.picker.result") {
+        if (workspace && opts.registry.allows(principal, "desktop.workspace.picker.result")) workspace.selected(frame)
+        return
+      }
+      if ((DESKTOP_WORKSPACE_METHODS as readonly string[]).includes(String(frame.type))) {
+        if (!workspace || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", id: frame.id, error_code: "DESKTOP_METHOD_DENIED" }); return }
+        const owner = principal
+        void workspace.handle(frame).then(result => { if (opts.registry.allows(owner, String(frame.type))) sendWorkspace(result) }).catch(() => { if (opts.registry.allows(owner, String(frame.type))) sendWorkspace({ type: String(frame.type) + ".result", id: frame.id, thread_id: frame.thread_id, ok: false, error_code: "WORKSPACE_UNAVAILABLE", ...(frame.type === "desktop.workspace.pick" ? { outcome: "unavailable" } : {}) }) })
+        return
       }
       if (["desktop.thread.metadata.edit", "desktop.thread.metadata.save"].includes(String(frame.type))) {
         const owner = principal
@@ -130,7 +188,7 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
       }
       if (["desktop.mcp.edit", "desktop.mcp.save", "desktop.confirmation.decision"].includes(String(frame.type))) {
         if (!mcpSave || !opts.registry.allows(principal, String(frame.type))) { send(ws, { type: "desktop.error", error_code: "DESKTOP_METHOD_DENIED", ...(typeof frame.id === "string" ? { id: frame.id } : {}) }); return }
-        if (frame.type === "desktop.confirmation.decision") { if (frame.purpose === "resource") resources?.decide(frame); else if (!Object.hasOwn(frame, "purpose")) mcpSave.decide(frame); return }
+        if (frame.type === "desktop.confirmation.decision") { if (frame.purpose === "local-work") { if (local) local.decide(frame); else terminal?.decide(frame) } else if (frame.purpose === "workspace") workspace?.decide(frame); else if (frame.purpose === "resource") resources?.decide(frame); else if (!Object.hasOwn(frame, "purpose")) mcpSave.decide(frame); return }
         const owner = principal
         void mcpSave.handle(frame).then(result => { if (opts.registry.allows(owner, String(frame.type))) send(ws, result) }).catch(() => { if (opts.registry.allows(owner, String(frame.type))) send(ws, { type: "desktop.error", error_code: "DESKTOP_MCP_SAVE_FAILED", ...(typeof frame.id === "string" ? { id: frame.id } : {}) }) })
         return
@@ -163,6 +221,15 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
       for (const [ws, p] of active) if (p.hostSessionId === host && opts.registry.allows(p, "system.ping")) { send(ws, { type: "desktop.window", view }); return true }
       return false
     },
-    revokeHost(host: string): void { opts.registry.revokeHost(host); for (const [ws,p] of active) if(p.hostSessionId === host) { send(ws,{type:"desktop.close"}); ws.close(); active.delete(ws) } },
+    revokeHost(host: string): void {
+      const targets: WebSocket[] = []
+      for (const [ws, p] of active) if (p.hostSessionId === host && !gracefulClose.has(ws)) targets.push(ws)
+      for (const ws of targets) gracefulClose.add(ws)
+      try {
+        // Revoke authority and retire effects before graceful transport shutdown.
+        opts.registry.revokeHost(host)
+        for (const ws of targets) { send(ws,{type:"desktop.close"}); ws.close(); active.delete(ws) }
+      } finally { for (const ws of targets) gracefulClose.delete(ws) }
+    },
   }
 }

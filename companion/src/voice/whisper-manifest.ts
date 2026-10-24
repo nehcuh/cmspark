@@ -49,7 +49,7 @@ export const modelEntrySchema = z
 const manifestSchema = z
   .object({
     schemaVersion: z.literal(1),
-    models: z.record(modelEntrySchema),
+    models: z.record(z.string(), modelEntrySchema),
   })
   .strict()
 

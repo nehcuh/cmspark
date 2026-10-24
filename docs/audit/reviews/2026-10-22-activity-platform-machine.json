@@ -1,0 +1,149 @@
+{
+  "timestamp_utc": "2026-10-21T23:56:35.042032+00:00",
+  "issue": 758,
+  "base": "57b808651dccede3555ac64ebbd45aead393ab73",
+  "branch": "codex/chat-action-workspace-752",
+  "blast_tier": "T3",
+  "checks": [
+    {
+      "name": "companion_focused",
+      "command": "clean-env Node22.23.2 companion runner: eight affected families; exit 0",
+      "exit_code": 0,
+      "counts": {
+        "tests": 83,
+        "passed": 83,
+        "skipped": 0,
+        "fail": 0,
+        "cancelled": 0
+      },
+      "log_sha256": "fae3163eca9c14589d83e701faeab9efefc504ebde01b55934e7552b5bdbcd69"
+    },
+    {
+      "name": "linux_delta",
+      "command": "Linux aarch64 Node22.23.3 final source, five affected families; exit 0",
+      "exit_code": 0,
+      "counts": {
+        "tests": 55,
+        "passed": 55,
+        "skipped": 0,
+        "fail": 0,
+        "cancelled": 0
+      },
+      "log_sha256": "5e642093254ed4cf2426eebe1c4cdf7ad23681fc2592df3b9760b5a11b0650ca"
+    },
+    {
+      "name": "linux_native",
+      "command": "owned private D-Bus/Xvfb, real XRes/pixels/Tesseract/notification, controlled lock broker; exit 0",
+      "exit_code": 0,
+      "counts": {
+        "tests": 1,
+        "passed": 1,
+        "skipped": 0,
+        "fail": 0,
+        "cancelled": 0
+      },
+      "log_sha256": "7836f1aa8e7d2fb572cde9cda5fb1b98da3b8eef495c867caf64674e4a8c979d"
+    },
+    {
+      "name": "linux_full_snapshot",
+      "command": "non-root --init Linux companion npm test; snapshot predates final lock broker/local DISPLAY hardening; exit 0",
+      "exit_code": 0,
+      "counts": {
+        "tests": 8703,
+        "passed": 8524,
+        "skipped": 179,
+        "fail": 0,
+        "cancelled": 0
+      },
+      "log_sha256": "87e00c55d92584fa076236c6e3e2ad4dde518ebc1ad582b720c72661bb1d5c84"
+    },
+    {
+      "name": "extension",
+      "command": "extension npm test; exit 0",
+      "exit_code": 0,
+      "counts": {
+        "tests": 1807,
+        "passed": 1807,
+        "skipped": 0,
+        "fail": 0,
+        "cancelled": 0
+      },
+      "log_sha256": "6d63d64691528470e2f34239b76c5474c4a46008c9ca0f9a89503c2f922d4744"
+    },
+    {
+      "name": "acp_consumers",
+      "command": "existing ACP source-derived consumers; exit 0",
+      "exit_code": 0,
+      "counts": {
+        "tests": 86,
+        "passed": 86,
+        "skipped": 0,
+        "fail": 0,
+        "cancelled": 0
+      },
+      "log_sha256": "8b8e99b397e89d825b1951fcc2ce9d3e245f94d21ac025fb5e78c99c29dad7fb"
+    }
+  ],
+  "browser_checks": 9,
+  "browser_errors": 0,
+  "package_gates": {
+    "linux_passed": 159,
+    "linux_failed": 0,
+    "macos_local": "160 pass / 1 setup failure: tray exists but host/scpt prerequisites absent; no changed assertion"
+  },
+  "windows_native": "NOT_RUN until exact-head hosted CI",
+  "gnome_kde_real_lock": "NOT_RUN; controlled D-Bus broker protocol only",
+  "wayland": "manual PNG import/local OCR/human confirmation only",
+  "evidence_path": "/Users/huchen/.codex/visualizations/2026/10/21/01a15d93-9994-79a0-bf33-cf9b533d3285/platform-758",
+  "machine": "PASS_WITH_DECLARED_SCOPE; native Windows pending CI",
+  "adversary": "APPROVE",
+  "pi": "APPROVE_WITH_NITS",
+  "merged": false,
+  "cycle1_blocker": "Windows SEA notifier resources; fixed static sidecar staging + filesystem fallback resolver",
+  "cycle1_incremental": {
+    "companion_build": 0,
+    "platform_tests": 12,
+    "standalone_package_mac": 1,
+    "standalone_package_linux": 1,
+    "linux_package_gates": 159,
+    "all_failures": 0
+  },
+  "ci_consumer_followup": "initial RED: pinned old workflow rejected added758 job/step/build test; exact recorded delta normalized only after full object/hash validation; original negative controls plus8new controls PASS; Pi interrupted before result",
+  "gate": {
+    "timestamp_utc": "2026-10-22T00:08:25.895627+00:00",
+    "blast_tier": "T3",
+    "machine": "PASS_WITH_DECLARED_SCOPE; Windows native pending exact CI",
+    "adversary": "APPROVE",
+    "adversary_reports": [
+      "2026-10-22-activity-platform-adversary.md",
+      "2026-10-22-activity-platform-adversary-r2.md",
+      "2026-10-22-activity-platform-adversary-r3.md"
+    ],
+    "pi": "APPROVE_WITH_NITS",
+    "pi_cli": "0.85.1",
+    "pi_self_reported_provider": "deepseek",
+    "pi_self_reported_model": "deepseek-v4-flash",
+    "pi_identity_source": "self reported in report; not provider-attested",
+    "reviewed_diff_sha256": "d83e4ed54962359eccea7005b0728b55c662a03713ec96a3a40dc8440b75179f",
+    "nonblocking_followup": "https://github.com/nehcuh/cmspark/issues/756",
+    "ci": "PENDING_AFTER_PUSH",
+    "merged": false
+  },
+  "final_ci_consumer_counts": {
+    "workflow": {
+      "pass": 87,
+      "fail": 0,
+      "skip": 0
+    },
+    "siblings": {
+      "pass": 122,
+      "fail": 0,
+      "skip": 1
+    },
+    "companion_source": {
+      "pass": 31,
+      "fail": 0,
+      "skip": 0
+    }
+  }
+}

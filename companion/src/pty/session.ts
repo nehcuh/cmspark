@@ -85,6 +85,9 @@ type LiveSession = {
 // Private exact-object consent and memory; never a wire boolean or session-id grant.
 const readableTail = new WeakMap<LiveSession, { text: string; rolled: boolean; pending: string }>()
 
+// One opaque lifetime token invalidates captured native ACK authority on any new
+// PTY spawn/reset. No closed-session registry, timer, or wire token is retained.
+let nativeAckLifetime: symbol = Symbol("native-pty-ack")
 let live: LiveSession | null = null
 // A closing terminal no longer accepts input/data, but reserves the only PTY slot
 // until its process tree and native handle have actually been released.
@@ -112,6 +115,7 @@ export function __testSetPtyPlatform(p?: NodeJS.Platform): void {
 }
 
 export function __testResetPtySessions(): void {
+  nativeAckLifetime = Symbol("native-pty-ack")
   const s = live
   const pending = closing
   if (s) readableTail.delete(s)
@@ -346,6 +350,13 @@ function emitChunks(s: LiveSession, text: string): void {
   }
 }
 
+/** Server-only snapshot of the exact existing default user shell. Not renderer input. */
+export function defaultPtyCommand(): {file:string;args:string[]} {
+  if(ptyHostPlatform()==="win32")return {file:"powershell.exe",args:[]}
+  const shell=process.env.SHELL?.trim()
+  return {file:shell?shell:"/bin/zsh",args:["-l"]}
+}
+
 export function spawnPtySession(opts: {
   id: string
   cols: number
@@ -408,17 +419,7 @@ export function spawnPtySession(opts: {
   // an unrequested login shell. Refused before env work and before any spawnFn call.
   let file: string
   if (opts.file === undefined) {
-    if (hostPlatform === "win32") {
-      // #584: Windows 没有 `$SHELL` 惯例——MSYS/Git-Bash 反而会注入 POSIX 路径
-      // （如 /usr/bin/bash），在 win32 spawn 必 ENOENT，故整段忽略 `$SHELL`，
-      // 缺省 PowerShell（node-pty 直收 PATH 裸名）。
-      file = "powershell.exe"
-    } else {
-      // `$SHELL` is trimmed ONCE and the trimmed value is what spawns: `" /bin/bash "` cannot exist
-      // as a path, so trimming only for the emptiness check would guarantee ENOENT.
-      const shell = process.env.SHELL?.trim()
-      file = shell ? shell : "/bin/zsh"
-    }
+    file = defaultPtyCommand().file
   } else if (typeof opts.file === "string" && opts.file.length > 0 && isAbsolute(opts.file)) {
     // Used exactly as given: no trim/normalization of a malformed supplied path. This no-trim rule
     // deliberately diverges from `rejectNonAbsoluteCommand` (src/acp/open-local-terminal.ts), which
@@ -508,6 +509,7 @@ export function spawnPtySession(opts: {
     send: opts.send,
   }
   session.heartbeat.unref?.()
+  nativeAckLifetime = Symbol("native-pty-ack")
   live = session
 
   const prefillTask = createKimiTaskPrefill(hasFile ? opts.initialPrompt : undefined, text => handle.write(text))
@@ -587,6 +589,45 @@ export function resizePty(id: string, cols: number, rows: number): { ok: true } 
     return { ok: false, error: e?.message || String(e) }
   }
   return { ok: true }
+}
+
+/** Server-only exact-session receipt capability. Never a renderer-provided token. */
+export type OwnedPtyAckTicket = {
+  current(): boolean
+  ack(seq: number): { ok: true } | { ok: false; error: string }
+  retire(): void
+}
+
+/** Capture only while the actual owner has this exact live PTY. A closed branch
+ * consumes real outstanding bytes, without native handle, resume or activity effects.
+ * The native adapter owns at most one ticket and retires it on next open/cancel. */
+export function captureOwnedPtyAckTicket(id: string, owner: unknown): OwnedPtyAckTicket | null {
+  const s = live
+  if (!s || getOwnedPtyContext(id, owner) !== s) return null
+  const lifetime = nativeAckLifetime
+  let retired = false
+  const current = () => {
+    if (retired) return false
+    if (nativeAckLifetime !== lifetime || s.owner !== owner || !owner ||
+        typeof owner !== "object" || !("readyState" in owner) || owner.readyState !== 1) retired = true
+    return !retired
+  }
+  return {
+    current,
+    retire() { retired = true },
+    ack(seq) {
+      if (!current() || !Number.isSafeInteger(seq) || seq < 1 || seq > s.seq) return { ok: false, error: "terminal_not_found" }
+      if (live === s) return ackPty(id, seq)
+      // No empty success for a duplicate or fabricated closed ACK. The original
+      // emitted sequence must still own outstanding bytes in this exact session.
+      if (!s.unacked.has(seq)) return { ok: false, error: "terminal_not_found" }
+      const bytes = s.unacked.get(seq)!
+      s.unacked.delete(seq)
+      s.unackedBytes = Math.max(0, s.unackedBytes - bytes)
+      s.ackFrames = Math.min(Number.MAX_SAFE_INTEGER, s.ackFrames + 1)
+      return { ok: true }
+    },
+  }
 }
 
 export function ackPty(id: string, seq: number): { ok: true } | { ok: false; error: string } {

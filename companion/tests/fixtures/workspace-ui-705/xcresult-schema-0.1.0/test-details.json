@@ -1,0 +1,244 @@
+{
+    "schemas": {
+        "TestDetails": {
+            "type": "object",
+            "properties": {
+                "testIdentifier": {
+                    "type": "string"
+                },
+                "testIdentifierURL": {
+                    "type": "string"
+                },
+                "testName": {
+                    "type": "string"
+                },
+                "testDescription": {
+                    "type": "string"
+                },
+                "duration": {
+                    "type": "string",
+                    "description": "Human-readable duration with optional components of days, hours, minutes and seconds"
+                },
+                "durationInSeconds": {
+                    "type": "number",
+                    "format": "double",
+                    "description": "Time interval in seconds"
+                },
+                "startTime": {
+                    "type": "number",
+                    "format": "double",
+                    "description": "Date as a UNIX timestamp (seconds since midnight UTC on January 1, 1970)"
+                },
+                "testPlanConfigurations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/schemas/Configuration"
+                    }
+                },
+                "devices": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/schemas/Device"
+                    }
+                },
+                "arguments": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "value": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "value"
+                        ]
+                    }
+                },
+                "testRuns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/schemas/TestNode"
+                    }
+                },
+                "testResult": {
+                    "$ref": "#/schemas/TestResult"
+                },
+                "hasPerformanceMetrics": {
+                    "type": "boolean"
+                },
+                "hasMediaAttachments": {
+                    "type": "boolean"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "bugs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/schemas/Bug"
+                    }
+                },
+                "functionName": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "testIdentifier",
+                "testName",
+                "testDescription",
+                "duration",
+                "testPlanConfigurations",
+                "devices",
+                "testRuns",
+                "testResult",
+                "hasPerformanceMetrics",
+                "hasMediaAttachments"
+            ]
+        },
+        "Configuration": {
+            "type": "object",
+            "properties": {
+                "configurationId": {
+                    "type": "string"
+                },
+                "configurationName": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "configurationId",
+                "configurationName"
+            ]
+        },
+        "Device": {
+            "type": "object",
+            "properties": {
+                "deviceId": {
+                    "type": "string"
+                },
+                "deviceName": {
+                    "type": "string"
+                },
+                "architecture": {
+                    "type": "string"
+                },
+                "modelName": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "osVersion": {
+                    "type": "string"
+                },
+                "osBuildNumber": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "deviceId",
+                "deviceName",
+                "architecture",
+                "modelName",
+                "osVersion"
+            ]
+        },
+        "TestNode": {
+            "type": "object",
+            "properties": {
+                "nodeIdentifier": {
+                    "type": "string"
+                },
+                "nodeIdentifierURL": {
+                    "type": "string"
+                },
+                "nodeType": {
+                    "$ref": "#/schemas/TestNodeType"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "details": {
+                    "type": "string"
+                },
+                "duration": {
+                    "type": "string",
+                    "description": "Human-readable duration with optional components of days, hours, minutes and seconds"
+                },
+                "durationInSeconds": {
+                    "type": "number",
+                    "format": "double",
+                    "description": "Time interval in seconds"
+                },
+                "result": {
+                    "$ref": "#/schemas/TestResult"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/schemas/TestNode"
+                    }
+                }
+            },
+            "required": [
+                "nodeType",
+                "name"
+            ]
+        },
+        "TestResult": {
+            "type": "string",
+            "enum": [
+                "Passed",
+                "Failed",
+                "Skipped",
+                "Expected Failure",
+                "unknown"
+            ]
+        },
+        "TestNodeType": {
+            "type": "string",
+            "enum": [
+                "Test Plan",
+                "Unit test bundle",
+                "UI test bundle",
+                "Test Suite",
+                "Test Case",
+                "Device",
+                "Test Plan Configuration",
+                "Arguments",
+                "Repetition",
+                "Test Case Run",
+                "Failure Message",
+                "Source Code Reference",
+                "Attachment",
+                "Expression",
+                "Test Value",
+                "Runtime Warning"
+            ]
+        },
+        "Bug": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string"
+                },
+                "identifier": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

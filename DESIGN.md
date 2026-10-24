@@ -1,7 +1,7 @@
 # Design
 
 ## Source of truth
-Active · 2026-09-09 · GitHub [#481](https://github.com/nehcuh/cmspark/issues/481), [#488](https://github.com/nehcuh/cmspark/issues/488), [#490](https://github.com/nehcuh/cmspark/issues/490), [#497](https://github.com/nehcuh/cmspark/issues/497).
+Active · 2026-10-21 · GitHub [#752](https://github.com/nehcuh/cmspark/issues/752), [#753](https://github.com/nehcuh/cmspark/issues/753), [#754](https://github.com/nehcuh/cmspark/issues/754); baseline [#481](https://github.com/nehcuh/cmspark/issues/481), [#488](https://github.com/nehcuh/cmspark/issues/488), [#490](https://github.com/nehcuh/cmspark/issues/490), [#497](https://github.com/nehcuh/cmspark/issues/497).
 This is the current UI/UX contract for the extension workspace, summoner, settings,
 code panel, terminal, confirmation cockpit, meetings, graphs and tray. It consolidates
 #469 / #471 / #473 / #474 / #476 / #477 instead of appending competing layout rules.
@@ -46,6 +46,10 @@ repositories with optional programming agents. Others read websites, dictate a
 message or record meetings. Ordinary conversations require no repository or project.
 
 ## Information architecture
+2026-10-21 approved addition (#752–#754): full workspace starts in Today and offers Todos, Chat, Materials and Activity Records; browser side panel remains chat-first with a brief todo projection and explicit full-workspace entry. Preserve all existing capabilities below. Personal todos have independent handling and feedback states, confirmed source provenance and persistent reminders. Candidate extraction never silently commits a todo. Activity capture is off by default, selected visible frontmost apps only; OCR model processing has a separate opt-in.
+
+Semantic settings use the configured AI to generate constrained alternatives with old/new values, reasons and prerequisites. Input/voice-end never applies changes. Users select changes and explicitly apply; stale proposals are rejected and saved values are read back. No secrets or privilege changes through model-generated keys. [Approved design](docs/superpowers/specs/2026-10-21-workspace-and-semantic-settings-design.md).
+
 Wide extension navigation (#497): new conversation; supporting resources above
 conversations, expanded by default; collapsible recent conversations with visible
 management; settings. Resource and conversation sections can be independently
