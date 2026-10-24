@@ -209,8 +209,8 @@ export class OwnedUI705Boundary {
    const v=this.read('ui-choose-census.json');if(v===undefined)return unknown()
    this.fields(v,['schema','nonce','status','sheetLabelCount','sheetButtonCount','ownerLabelCount','buttonCount','buttonsMore','buttonIdentityRows'])
    if(v.status!=='OBSERVED'||![v.sheetLabelCount,v.sheetButtonCount,v.ownerLabelCount].every(n=>Number.isInteger(n)&&n>=0&&n<=2)||!Number.isInteger(v.buttonCount)||v.buttonCount<0||v.buttonCount>8||typeof v.buttonsMore!=='boolean'||v.buttonsMore&&v.buttonCount!==8||v.sheetButtonCount!==Math.min(v.buttonCount,2))return unknown()
-   if(!Array.isArray(v.buttonIdentityRows)||v.buttonIdentityRows.length!==v.buttonCount||!v.buttonIdentityRows.every(row=>Array.isArray(row)&&row.length===2&&row.every(n=>Number.isInteger(n)&&n>=0&&n<=5)))return unknown()
-   return{schema:1,status:'OBSERVED',sheetLabelCount:v.sheetLabelCount,sheetButtonCount:v.sheetButtonCount,ownerLabelCount:v.ownerLabelCount,buttonCount:v.buttonCount,buttonsMore:v.buttonsMore,buttonIdentityRows:v.buttonIdentityRows.map(row=>[row[0],row[1]] as [number,number])}
+   if(!Array.isArray(v.buttonIdentityRows)||v.buttonIdentityRows.length!==v.buttonCount||!v.buttonIdentityRows.every((row:unknown)=>Array.isArray(row)&&row.length===2&&row.every(n=>Number.isInteger(n)&&n>=0&&n<=5)))return unknown()
+   return{schema:1,status:'OBSERVED',sheetLabelCount:v.sheetLabelCount,sheetButtonCount:v.sheetButtonCount,ownerLabelCount:v.ownerLabelCount,buttonCount:v.buttonCount,buttonsMore:v.buttonsMore,buttonIdentityRows:v.buttonIdentityRows.map((row:number[])=>[row[0],row[1]] as [number,number])}
   }catch{return unknown()}
  }
  // Passive, non-atomic observation only. Neither a success nor a cleanup receipt.
