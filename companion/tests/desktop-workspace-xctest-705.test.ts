@@ -302,8 +302,15 @@ test('705 failure-only UI stage is closed bounded and never a lifecycle authorit
  const p=fs.readFileSync(path.join(files,'OwnedUIProtocol.swift'),'utf8'),u=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8');assert.match(p,/uiRefusal="ui-refusal.json"/);assert.match(u,/if preflightStage==0 && \(1\.\.\.20\).contains\(uiStage\),let scene=uiScene \{try\? scene.write\(\.uiRefusal/);assert.ok(u.indexOf('scene.write(.uiRefusal')<u.lastIndexOf('throw error'));assert.equal(u.split('scene.write(.uiRefusal').length,2)
 })
 
+
+// This inverse is static source text only; no compiled/TAP/JSON/evidence normalization.
+function previousChoose705(source:string){
+ const current='let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout)',previous='let chooseSeen=choose.firstMatch.waitForExistence(timeout:try remaining())'
+ assert.equal(source.split(current).length,2);return source.replace(current,previous)
+}
+
 test('705 owned Choose query waits within the original deadline before preserving uniqueness and hittability',()=>{
- const swift=fs.readFileSync(path.resolve('tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift'),'utf8')
+ const swift=previousChoose705(fs.readFileSync(path.resolve('tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift'),'utf8'))
  const start=swift.indexOf('let choose=first.buttons.matching('),end=swift.indexOf('uiStage=14;',start),fragment=swift.slice(start,end)
  assert.ok(start>=0&&end>start)
  assert.match(fragment,/choose\.firstMatch\.waitForExistence\(timeout:try remaining\(\)\)/)
@@ -340,7 +347,8 @@ test('705 main-thread progress publisher preserves every original UI action auth
  function verifyConservation(protocol:string,ui:string,source:string,native:string){
   // Static source text only: never normalize runtime JSON, compiled bytes, TAP or evidence.
   const canonical=(value:string)=>value.replace(/\r\n/g,'\n')
-  protocol=canonical(protocol);ui=canonical(ui);source=canonical(source);native=canonical(native)
+  protocol=canonical(protocol);ui=previousChoose705(canonical(ui));source=canonical(source);native=canonical(native)
+  const passiveStart=source.indexOf(' // One passive close listener only.'),passiveEnd=source.indexOf(' canSettle(){',passiveStart);assert.ok(passiveStart>=0&&passiveEnd>passiveStart);source=(source.slice(0,passiveStart)+source.slice(passiveEnd)).replace(" private xcodeCloseObservationRegistered=false\n",'');native=native.replace("try{if(primaryFailed&&uiOwner){const owner=uiOwner;owner.observeXcodeCloseOnce(()=>{try{const observation=JSON.stringify(owner.xcodeFailureObservation());if(Buffer.byteLength(observation,'utf8')<=1024)process.stdout.write('D705_XCODE_FAILURE_AFTER_CANCEL '+observation+'\\n')}catch{}})}}catch{};",'')
   const a=protocol.indexOf(' // Best-effort main-thread stage snapshot only;'),b=protocol.indexOf(' func tuple(',a);assert.ok(a>=0&&b>a);const writer=protocol.slice(a,b)
   assert.match(writer,/guard Thread\.isMainThread,\(1\.\.\.20\).contains\(stage\),\(0\.\.\.5\).contains\(detail\)/);assert.match(writer,/OwnedUI705File\.uiProgress/);assert.match(writer,/O_WRONLY\|O_CREAT\|O_EXCL\|O_NOFOLLOW,0o600/);assert.match(writer,/pending\.st_dev==owned\.st_dev,pending\.st_ino==owned\.st_ino/);assert.match(writer,/current\.st_dev==previous\.st_dev,current\.st_ino==previous\.st_ino/);assert.match(writer,/published\.st_dev==owned\.st_dev,published\.st_ino==owned\.st_ino/);assert.ok(writer.indexOf('fsync(fd)')<writer.indexOf('rename(temp,file)'));assert.doesNotMatch(writer,/Dispatch|Timer|Task\.|async|sleep|XCTest|XCUIApplication|Int\(oldStage\)|Int\(oldDetail\)/)
   const originalProtocol=protocol.slice(0,a)+protocol.slice(b);assert.equal(createHash('sha256').update(originalProtocol.replace(', uiProgress="ui-progress.json"','')).digest('hex'),'757299efa1cc922ac5551e16e763755b790fc0ccd49d969df24aadb2b1fb94d4')
@@ -366,4 +374,64 @@ test('705 actual failure progress projection precedes cancel and isolates reader
   assert.equal(trace.filter(x=>x==='cancel').length,1);assert.equal(trace.filter(x=>x==='progress').length,['success','sceneGetter'].includes(variant)?0:1);if(trace.includes('progress'))assert.ok(trace.indexOf('progress')<trace.indexOf('cancel'));assert.equal(scope.primaryFailed,variant!=='success');assert.equal(scope.failureSite,9);assert.equal(scope.failed,true)
   const records=rows.filter(s=>s.startsWith('D476_WORKSPACE_NATIVE_PHASE '));assert.equal(records.length,['loggerFault','cancelFault'].includes(variant)?0:1);for(const record of records){const actual=JSON.parse(record.slice('D476_WORKSPACE_NATIVE_PHASE '.length));assert.deepEqual(actual.uiProgress,variant==='good'?{stage:9,detail:0}:null);assert.equal(actual.failureSite,9);assert.equal(record.includes('OWNED_PRIVATE'),false)}
  }
+})
+
+
+test('705 Choose stage11 splits only original firstMatch remaining and wait boundaries with whole-source conservation',()=>{
+ const actual=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8')
+ for(const eol of['\n','\r\n']){
+  const source=actual.replace(/\r\n/g,'\n').replace(/\n/g,eol),prior=previousChoose705(source)
+  // Git source-only LF digest binds all other actions, deadlines and assertions.
+  assert.equal(createHash('sha256').update(prior.replace(/\r\n/g,'\n')).digest('hex'),'6efad44df4a39d7b4aa33a2509dd01b17e97f8ed333252169c058aa5815f064e')
+  const fragment=source.slice(source.indexOf('uiStage=11;'),source.indexOf('uiStage=12;'))
+  const ordered=['uiDetail=0;observeUIStage()','let chooseElement=choose.firstMatch','uiDetail=3;observeUIStage()','let chooseTimeout=try remaining()','uiDetail=4;observeUIStage()','let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout)','uiDetail=chooseSeen ? 2:1;observeUIStage()','guard chooseSeen else','let chooseCount=choose.count','guard chooseCount==1 else']
+  let position=-1;for(const item of ordered){const at=fragment.indexOf(item);assert.ok(at>position,item);position=at}
+  assert.equal(fragment.match(/choose\.firstMatch/g)?.length,1);assert.equal(fragment.match(/try remaining\(\)/g)?.length,1);assert.equal(fragment.match(/waitForExistence\(/g)?.length,1)
+  assert.doesNotMatch(fragment,/Timer|Task\.|Dispatch|sleep|setPrompt|\.prompt\s*=|debugDescription|snapshot/)
+ }
+})
+function loadXcodeClose705(){
+ const source=fs.readFileSync(helper,'utf8'),ast=ts.createSourceFile(helper,source,ts.ScriptTarget.Latest,true),owner=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='OwnedWorkspaceUI705') as ts.ClassDeclaration
+ const method=owner?.members.find(n=>ts.isMethodDeclaration(n)&&n.name.getText(ast)==='observeXcodeCloseOnce'),start=owner?.members.find(n=>ts.isMethodDeclaration(n)&&n.name.getText(ast)==='start');assert.ok(method&&start)
+ let close:ts.ArrowFunction|undefined;function walk(n:ts.Node){if(ts.isCallExpression(n)&&ts.isPropertyAccessExpression(n.expression)&&n.expression.name.text==='on'&&ts.isStringLiteral(n.arguments[0])&&n.arguments[0].text==='close')close=n.arguments[1] as ts.ArrowFunction;ts.forEachChild(n,walk)}walk(start);assert.ok(close)
+ const compiled=ts.transpileModule('class Actual{'+method.getText(ast)+'};globalThis.register=(owner:any,observe:()=>void)=>Actual.prototype.observeXcodeCloseOnce.call(owner,observe);globalThis.primary=(owner:any)=>function(){const kind="xcode";return ('+close.getText(ast)+')}.call(owner)',{compilerOptions:{target:ts.ScriptTarget.ES2022},reportDiagnostics:true});assert.equal(compiled.diagnostics!.length,0)
+ const scope:any={};vm.runInNewContext(compiled.outputText,scope,{timeout:1000});return scope as{register:(owner:any,observe:()=>void)=>void;primary:(owner:any)=>(code:number)=>void}
+}
+test('705 actual passive xcode close registration is once for already closed late close duplicates and observer faults',()=>{
+ const actual=loadXcodeClose705()
+ for(const variant of['alreadyClosed','lateClose','observerThrow','registrationThrow','missingChild']){
+  const trace:string[]=[],callbacks:Array<()=>void>=[],state:any={xcodeClosed:variant==='alreadyClosed',xcodeCode:null,notify(){trace.push('notify')}}
+  state.xcode=variant==='missingChild'?undefined:{once(event:string,callback:()=>void){assert.equal(event,'close');trace.push('register');if(variant==='registrationThrow')throw Error('OWNED_PRIVATE');callbacks.push(callback)}}
+  let observations=0;const observe=()=>{trace.push('observe');observations++;if(variant==='observerThrow')throw Error('OWNED_PRIVATE')}
+  assert.doesNotThrow(()=>actual.register(state,observe));assert.doesNotThrow(()=>actual.register(state,()=>{throw Error('DUPLICATE_CALLBACK')}))
+  if(variant==='alreadyClosed'){assert.equal(observations,1);assert.deepEqual(trace,['observe'])}
+  else if(variant==='registrationThrow'||variant==='missingChild'){assert.equal(observations,0);assert.equal(callbacks.length,0)}
+  else{assert.deepEqual(trace,['register']);assert.equal(observations,0);actual.primary(state)(65);assert.equal(state.xcodeClosed,true);assert.equal(state.xcodeCode,65);for(let repeat=0;repeat<2;repeat++)assert.doesNotThrow(()=>callbacks[0]());assert.equal(observations,1);assert.deepEqual(trace,['register','notify','observe'])}
+  assert.equal(trace.filter(v=>v==='notify').length,['lateClose','observerThrow'].includes(variant)?1:0)
+ }
+ const source=fs.readFileSync(helper,'utf8'),a=source.indexOf(' // One passive close listener only.'),b=source.indexOf(' canSettle(){',a),method=source.slice(a,b)
+ assert.doesNotMatch(method,/await|Promise|Timer|setTimeout|setInterval|notify\(|canSettle\(|cancel\(|cleanup\(|\.kill\(|fs\.|scene\.|observeXcodeCloseOnce\(observeXcodeCloseOnce/)
+})
+test('705 actual post-cancel projection uses strict closed snapshots once and isolates registration snapshot and logger failures',()=>{
+ const source=fs.readFileSync(path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'utf8'),ast=ts.createSourceFile('native.ts',source,ts.ScriptTarget.Latest,true);let block:ts.Block|undefined
+ function visit(n:ts.Node){if(ts.isTryStatement(n)&&n.finallyBlock?.getText(ast).includes('D476_WORKSPACE_NATIVE_PHASE'))block=n.finallyBlock;ts.forEachChild(n,visit)}visit(ast);assert.ok(block)
+ const cut=block.statements.findIndex(n=>n.getText(ast).includes('child?.terminate()'));assert.ok(cut>0);const prefix=block.statements.slice(0,cut).map(n=>n.getText(ast)).join('\n'),compiled=ts.transpileModule(prefix,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
+ const actual=loadXcodeClose705()
+ for(const variant of['lateClose','alreadyClosed','success','registrationThrow','snapshotThrow','snapshotReadFailed','loggerThrow','endedContext','stdoutThrow','oversize','oversizeUTF8']){
+  const f=xcodeModel705(),owner:any=f.state,trace:string[]=[],rows:string[]=[],stdoutRows:string[]=[],callbacks:Array<()=>void>=[];let postRegistered=false,notifications=0
+  owner.xcodeClosed=variant==='alreadyClosed';owner.xcode={once(event:string,callback:()=>void){assert.equal(event,'close');callbacks.push(callback)}};owner.notify=()=>{notifications++}
+  owner.diagnostic=()=>({begun:true});owner.scene.receiptMask=()=>7;owner.scene.uiRefusal=()=>null;owner.scene.uiProgress=()=>({stage:11,detail:0});owner.cancel=()=>{trace.push('cancel')}
+  owner.xcodeFailureObservation=()=>{if(postRegistered&&variant==='snapshotThrow')throw Error('OWNED_PRIVATE');if(postRegistered&&variant==='oversize')return{secret:'x'.repeat(1025)};if(postRegistered&&variant==='oversizeUTF8')return{secret:'é'.repeat(513)};return loadXcode705(f.io,{getuid:()=>7})(owner)}
+  owner.observeXcodeCloseOnce=(observe:()=>void)=>{trace.push('register');postRegistered=true;if(variant==='registrationThrow')throw Error('OWNED_PRIVATE');actual.register(owner,observe)}
+  const scope:any={uiOwner:owner,primaryFailed:variant!=='success',surfaceLease:{retain(){}},required:[],receipts:new Set(),picks:1,pickerObserved:1,pickerReturned:0,cancelReturned:0,connections:1,authenticated:true,windowRequested:true,settled:false,childExitCode:null,firstFailedAssertion:0,failed:true,failureSite:9,pickOutcome:1,pickerLifecycle:null,nativeDiagnostic:null,diagnosticInvalid:false,selectedOutcome:null,selectedIdentity:null,cancelClose:null,cancelShow:null,cancelSettled:null,cancelCurrent:null,Buffer,process:{stdout:{write(row:string){assert.equal(typeof row,'string');if(variant==='stdoutThrow')throw Error('OWNED_PRIVATE');stdoutRows.push(row);return true}}},t:{diagnostic(row:string){if(variant==='endedContext'||postRegistered&&variant==='loggerThrow')throw Error('OWNED_PRIVATE');rows.push(row)}}}
+  assert.doesNotThrow(()=>vm.runInNewContext(compiled,scope,{timeout:1000}));assert.equal(trace[0],'cancel');assert.equal(trace.filter(v=>v==='cancel').length,1)
+  if(variant!=='success')assert.equal(trace[1],'register');else assert.deepEqual(trace,['cancel'])
+  if(callbacks.length){if(variant==='snapshotReadFailed')f.io.readSync=()=>{throw Error('OWNED_PRIVATE')};actual.primary(owner)(65);assert.doesNotThrow(()=>callbacks[0]());assert.doesNotThrow(()=>callbacks[0]())}
+  const before=rows.filter(row=>row.startsWith('D705_XCODE_FAILURE ')),after=stdoutRows.filter(row=>row.startsWith('D705_XCODE_FAILURE_AFTER_CANCEL '));assert.equal(before.length,['success','endedContext'].includes(variant)?0:1)
+  const expected=['lateClose','alreadyClosed','snapshotReadFailed','loggerThrow','endedContext'].includes(variant);assert.equal(after.length,expected?1:0,variant)
+  assert.equal(stdoutRows.length,expected?1:0);if(expected){assert.ok(after[0].endsWith('\n'));assert.equal(after[0].split('\n').length,2);const observation=JSON.parse(after[0].slice('D705_XCODE_FAILURE_AFTER_CANCEL '.length));assert.equal(observation.schema,1);assert.equal(observation.stdout.status,variant==='snapshotReadFailed'?'READ_FAILED':'OBSERVED');assert.equal(after[0].includes('OWNED_PRIVATE'),false)}
+  assert.equal(scope.primaryFailed,variant!=='success');assert.equal(scope.failed,true);assert.equal(scope.failureSite,9);assert.equal(notifications,callbacks.length?1:0);assert.equal(f.fds.size,0)
+ }
+ assert.equal(prefix.split('uiOwner?.cancel()').length,2);assert.equal(prefix.split('owner.observeXcodeCloseOnce(').length,2)
+ assert.ok(prefix.indexOf("'D705_XCODE_FAILURE '")<prefix.indexOf('uiOwner?.cancel()'));assert.ok(prefix.indexOf('uiOwner?.cancel()')<prefix.indexOf('owner.observeXcodeCloseOnce('))
 })

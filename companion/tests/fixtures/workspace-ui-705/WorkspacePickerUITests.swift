@@ -62,7 +62,7 @@ final class WorkspacePicker705:XCTestCase {
   uiStage=9;uiDetail=0;observeUIStage();let inputHittable=inputs.element.isHittable;uiDetail=inputHittable ? 2:1;observeUIStage();guard inputHittable else{throw OwnedUI705Error.refused}
   uiStage=10;uiDetail=0;observeUIStage();_ = try remaining();inputs.element.click();_ = try remaining();inputs.element.typeText(scene.selection.path);_ = try remaining();inputs.element.typeKey("\r",modifierFlags:[])
   let choose=first.buttons.matching(NSPredicate(format:"label IN %@",["Choose","Open"]))
-  uiStage=11;uiDetail=0;observeUIStage();let chooseSeen=choose.firstMatch.waitForExistence(timeout:try remaining());uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;observeUIStage();guard chooseCount==1 else{throw OwnedUI705Error.refused}
+  uiStage=11;uiDetail=0;observeUIStage();let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout);uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;observeUIStage();guard chooseCount==1 else{throw OwnedUI705Error.refused}
   uiStage=12;uiDetail=0;observeUIStage();let chooseHittable=choose.element.isHittable;uiDetail=chooseHittable ? 2:1;observeUIStage();guard chooseHittable else{throw OwnedUI705Error.refused}
   uiStage=13;uiDetail=0;observeUIStage();_ = try remaining();choose.element.click()
   uiStage=14;uiDetail=0;observeUIStage();try ready(.second,2);let second=try sheet(15),cancel=second.buttons.matching(identifier:"Cancel")

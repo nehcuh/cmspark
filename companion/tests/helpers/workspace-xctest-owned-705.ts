@@ -145,6 +145,7 @@ function copyManifest(source:string,target:string){
 }
 export class OwnedWorkspaceUI705 {
  readonly scene:OwnedUI705Boundary;readonly appExecutable:string
+ private xcodeCloseObservationRegistered=false
  private observer?:ChildProcess;private xcode?:ChildProcess;private observerClosed=false;private xcodeClosed=false;private observerCode:number|null=null;private xcodeCode:number|null=null;private changed=new Set<()=>void>();private watcher:fs.FSWatcher;private begun=false;private invalid=false
  constructor(native:string,parent:string,readonly deadline:number,readonly signal:AbortSignal){
   if(process.platform!=='darwin'||!Number.isSafeInteger(deadline)||deadline<=Date.now()||deadline>Date.now()+45000)throw refused()
@@ -166,6 +167,12 @@ export class OwnedWorkspaceUI705 {
   // Access and per-stream faults cannot replace the existing primary/cleanup.
   const observe=(name:'xcode.stdout'|'xcode.stderr')=>{try{return xcode705Snapshot(this.scene,name)}catch{return xcode705Unavailable('READ_FAILED')}}
   return{schema:1,stdout:observe('xcode.stdout'),stderr:observe('xcode.stderr')}
+ }
+ // One passive close listener only. Never a wait, lifecycle or cleanup authority.
+ observeXcodeCloseOnce(observe:()=>void){
+  if(this.xcodeCloseObservationRegistered)return;this.xcodeCloseObservationRegistered=true
+  let observed=false;const once=()=>{if(observed)return;observed=true;try{observe()}catch{}}
+  try{if(this.xcodeClosed)once();else this.xcode?.once('close',once)}catch{}
  }
  canSettle(){if(!this.begun)return true;return !this.invalid&&this.observerCode===0&&this.scene.closure(this.observerClosed,this.xcodeClosed)}
  async complete(){await this.wait(()=>this.canSettle()||this.invalid||(this.xcodeClosed&&this.xcodeCode!==0)||(this.observerClosed&&this.observerCode!==0));if(!this.canSettle()||this.xcodeCode!==0)throw refused()}

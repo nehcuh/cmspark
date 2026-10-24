@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- Test diagnostics (macOS workspace): split only the existing Choose first-match/deadline/wait observation boundaries and emit one separately marked strict Xcode snapshot to bounded stdout after its real close following cancellation, so a completed test context cannot silently drop the late observation. Keep UI actions, assertions, deadlines and cleanup authority unchanged; this is diagnostic coverage, not a proven GUI behavior fix.
+- ACP native progress: deliver each current owner-bound update without the legacy broadcast throttle, preserving private routing, bounded payloads and legacy pacing.
+
 - Test diagnostics (macOS workspace): publish a bounded main-thread UI stage snapshot before the existing XCTest calls, so the owner can report the last published stage even when a synchronous call has not returned. Keep original actions, 45-second deadline, refusal, success and cleanup authorities unchanged; a stage snapshot does not identify the physical cause of the earlier hang.
 
 - Test diagnostics (#480): enable existing closed Windows native phase observations in acceptance fixtures and record them only from the current authenticated response socket. Reports explicitly describe lifetime-once attempts without reconnect-epoch attribution; success assertions and original deadlines remain unchanged.

@@ -12,6 +12,8 @@ import * as protocol from "../src/acp/protocol-session"
 import * as launch from "../src/acp/win-spawn"
 import * as opener from "../src/acp/open-local-terminal"
 import * as agentEnv from "../src/acp/agent-env"
+import vm from "node:vm"
+import { parseSessionUpdate } from "../src/acp/timeline"
 
 async function fixture(t: any) {
   await initDataDir()
@@ -177,4 +179,50 @@ test("native live global slot also blocks a pre-existing legacy offer",async t=>
  const n=f.manager.start(native.session.session_id);await f.started
  const l=f.manager.start(legacy.session.session_id);f.finish();await n
  assert.equal((await l).ok,false);assert.equal(f.counts().spawned,1)
+})
+
+test("native single producer chunk survives immediate connected progress and stays owner private",async t=>{
+ const f=await fixture(t),native:any[]=[],foreign:any[]=[],legacy:any[]=[]
+ let now:number
+ f.manager.onNativeEvent(f.context,(frame:any)=>native.push(frame))
+ f.manager.onNativeEvent({...f.context},(frame:any)=>foreign.push(frame))
+ f.manager.onEvent((frame:any)=>legacy.push(frame))
+ // Execute the genuine controlled agent's prompt producer; no child, timers,
+ // repository/config access or hand-authored session/update payload.
+ const source=fs.readFileSync(path.resolve(process.cwd(),"tests/fixtures/desktop-476/local-agent.cjs"),"utf8")
+ let line!:(value:string)=>void,writes=0;const produced:any[]=[]
+ vm.runInNewContext(source,{require(name:string){
+  if(name==="node:fs")return{writeFileSync(){writes++;throw Error("UNEXPECTED_PERMISSION_WRITE")}}
+  if(name==="node:readline")return{createInterface(){return{on(event:string,fn:(value:string)=>void){assert.equal(event,"line");line=fn;return this}}}}
+  throw Error("UNEXPECTED_FIXTURE_REQUIRE")
+ },process:{stdin:{},stdout:{write(value:string){produced.push(JSON.parse(value));return true}},env:{}}})
+ line(JSON.stringify({id:5,method:"session/prompt",params:{prompt:[{type:"text",text:"owned native hang"}]}}))
+ assert.equal(produced.length,1);assert.equal(produced[0].method,"session/update");assert.equal(writes,0)
+ const parsed=parseSessionUpdate(produced[0].params);assert.equal(parsed.progress,"D476_AGENT_RUNNING");assert.equal(parsed.items.length,1)
+ const offered=f.manager.proposeNative({...f.opts,goal:"owned native hang"},f.context)
+ assert.equal(offered.ok,true);const run=f.manager.start(offered.session.session_id);await f.started
+ now=Date.now();t.mock.method(Date,"now",()=>now)
+ native.length=0;f.manager.emitProgress(offered.session,"ACP Client connected",true);now++
+ // The actual protocol hook delegates into the real manager and private outlet.
+ f.hooks().onTimeline(parsed.items,parsed.progress)
+ assert.equal(native.length,2);assert.equal(native[0].progress_tail,"ACP Client connected");assert.equal(native[1].progress_tail,parsed.progress)
+ now++;f.hooks().onTimeline(parsed.items,parsed.progress);assert.equal(native.length,3)
+ assert.equal(foreign.length,0);assert.equal(legacy.length,0)
+ f.stale();f.hooks().onTimeline(parsed.items,parsed.progress);assert.equal(native.length,3)
+ f.finish();assert.equal((await run).ok,false)
+ assert.equal(legacy.length,0);assert.equal(foreign.length,0)
+ assert.deepEqual(f.counts(),{spawned:1,global:0,local:0,opened:0})
+})
+
+test("legacy progress retains its exact 800ms pacing and forced delivery",async t=>{
+ const f=await fixture(t),frames:any[]=[];let now:number
+ f.manager.onEvent((frame:any)=>frames.push(frame))
+ const offered=f.manager.propose(f.opts);assert.equal(offered.ok,true);frames.length=0
+ now=Date.now();t.mock.method(Date,"now",()=>now)
+ f.manager.emitProgress(offered.session,"first",true);now++
+ f.manager.emitProgress(offered.session,"withheld",false);assert.equal(frames.length,1)
+ f.manager.emitProgress(offered.session,"forced",true);assert.equal(frames.length,2);assert.equal(frames[1].progress_tail,"forced")
+ now+=799;f.manager.emitProgress(offered.session,"still withheld",false);assert.equal(frames.length,2)
+ now++;f.manager.emitProgress(offered.session,"at boundary",false);assert.equal(frames.length,3);assert.equal(frames[2].progress_tail,"at boundary")
+ assert.deepEqual(f.counts(),{spawned:0,global:0,local:0,opened:0})
 })

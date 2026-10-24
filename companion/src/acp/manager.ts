@@ -295,7 +295,10 @@ export class AcpManager {
     this.noteHistory(session)
     const now = Date.now()
     const last = this.lastProgressAt.get(session.session_id) || 0
-    if (!force && now - last < 800) return
+    const native = this.nativeBindings.get(session)
+    // A single private native update may be the only progress before Stop.
+    // Keep legacy broadcast pacing without dropping that owner-bound update.
+    if (!native && !force && now - last < 800) return
     this.lastProgressAt.set(session.session_id, now)
     const display = this.agentDisplayName(session.agent_id)
     // Cap live WS payload: full handback only via acp.handback.message inject.
@@ -338,7 +341,6 @@ export class AcpManager {
       terminal_command_expires_at: session.terminal_command_expires_at,
     })
     if (event) {
-      const native = this.nativeBindings.get(session)
       if (!native) this.emit(event)
       else if (this.nativeCurrent(session)) for (const listener of this.nativeListeners.get(native.identity) || []) {
         try { listener(event) } catch { logger.warn("acp.native_listener_failed") }
