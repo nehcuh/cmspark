@@ -29,6 +29,12 @@ test("#521 outbound equals real legacy recording", () => {
  const recorded = JSON.parse(fs.readFileSync(path.join(process.cwd(), "tests/fixtures/interactive-snapshot-521-outbound-legacy.json"), "utf8"))
  for (const tool of ["click", "type"]) {
   const name = "cmspark__" + tool; assert.deepEqual(outboundToolArgumentSchema(name), recorded[name])
+  assert.equal(outboundToolArgumentSchema(name).properties.tabId.maximum, Number.MAX_SAFE_INTEGER)
+  const legacy = { tabId: Number.MAX_SAFE_INTEGER, text: "Save", ...(tool === "type" ? { value: "OWNED" } : {}) }
+  assert.equal(validateOutboundToolArgs(name, legacy), null)
+  assert.equal(tryParseToolArgs(tool, legacy).ok, true)
+  assert.ok(validateOutboundToolArgs(name, { ...legacy, tabId: Number.MAX_SAFE_INTEGER + 1 }))
+  assert.equal(tryParseToolArgs(tool, { ...legacy, tabId: Number.MAX_SAFE_INTEGER + 1 }).ok, false)
   assert.ok(validateOutboundToolArgs(name, { tabId: 7, snapshot_id: id, element_id: 1, ...(tool === "type" ? { value: "OWNED" } : {}) }))
  }
  for (const tools of Object.values(OUTBOUND_PROFILE_TOOLS)) assert.equal(tools.includes("cmspark__get_interactive_snapshot"), false)

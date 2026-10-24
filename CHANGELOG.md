@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Security: upgrade body-parser to 2.4.0 and Zod to 4.6.6 for the current high-severity advisories, with OpenAI SDK 6.0.0 for Zod 4 compatibility. Refresh the actual legacy outbound-schema recording and retain safe-integer argument bounds; existing moderate audit findings remain tracked.
+
 - Test diagnostics (#705): record a one-shot local terminal data-receipt observation and bounded daemon send counts without publishing terminal text or changing success assertions. Reap only the local acceptance callback’s exact PTY handles and confirm their real exits plus slot release before settling its native surface.
 
 - Test reliability (#480): clone every pinned offline desktop resource and vendor license into owned inheritance and parent-death fixtures; reject incomplete or linked source files before publishing the asset directory. This fixes the demonstrated three-file clone gap without claiming it explains every native timeout.
