@@ -313,9 +313,21 @@ function censusTerminalInverseParent747(raw:string){
  assert.equal(createHash('sha256').update(value).digest('hex'),'bdba454b129cdc8364cb937a1445f57661a374b54ef1ff6904398d08cbde61e3','entire f522 native parent conserved');return value
 }
 
+// Exact inverse for removing only the optional synchronous census call from
+// the live UI sequence. Older authority digests below are not refreshed.
+function previousCriticalCensus705(kind:'ui'|'protocol'|'helper'|'native',raw:string){
+ let source=raw.replace(/\r\n/g,'\n')
+ if(kind==='ui'||kind==='helper'){
+  const current=kind==='ui'?"uiDetail=3;observeUIStage();let chooseTimeout=try remaining()":"0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572",prior=kind==='ui'?"uiDetail=3;observeUIStage();observeChooseCensus();let chooseTimeout=try remaining()":"1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68"
+  assert.equal(source.split(current).length,2,'one exact critical-path census removal hunk');source=source.replace(current,prior)
+  assert.equal(createHash('sha256').update(source).digest('hex'),kind==='ui'?"1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68":"8f3a773a53ec672565fe56148e0238f5a233c3e32f6a6e3c68d3a43d97f0cc81",'entire dc9 source restored before older authority')
+ }
+ return source
+}
+
 function previousTitle705(kind:'ui'|'protocol'|'helper'|'native',raw:string){
  const pairs={"ui":[["    let title=OwnedUI705ButtonIdentity(button.title).rawValue\n    buttonIdentityRows.append([label,title])","    let identifier=OwnedUI705ButtonIdentity(button.identifier).rawValue\n    buttonIdentityRows.append([label,identifier])"],["   let sheetLabelCount=labelChoose.count","   let sheetLabelCount=choose.count"],["  let choose=first.buttons.matching(NSPredicate(format:\"label IN %@ OR title IN %@\",[\"Choose\",\"Open\"],[\"Choose\",\"Open\"]))\n  let labelChoose=first.buttons.matching(NSPredicate(format:\"label IN %@\",[\"Choose\",\"Open\"]))","  let choose=first.buttons.matching(NSPredicate(format:\"label IN %@\",[\"Choose\",\"Open\"]))"]],"helper":[["1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68","182d2773a37134d289fec9c80a27107b5359c51d2cab1545bdfd62c3f6a2cee4"]]} as const
- let source=raw.replace(/\r\n/g,'\n')
+ let source=previousCriticalCensus705(kind,raw)
  if(kind==='native')source=censusTerminalInverseParent747(source)
  if(kind==='ui'||kind==='helper')for(const [current,prior]of pairs[kind]){assert.equal(source.split(current).length,2,'one exact title compatibility hunk');source=source.replace(current,prior)}
  return source
@@ -545,7 +557,7 @@ test('705 choose census uses the actual Swift producer and strict owned receipt 
 test('705 choose census restores all four prior sources and preserves original query budget and actions',()=>{
  const actual={ui:fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8'),protocol:fs.readFileSync(path.join(files,'OwnedUIProtocol.swift'),'utf8'),helper:fs.readFileSync(helper,'utf8'),native:fs.readFileSync(path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'utf8')}
  for(const eol of['\n','\r\n'])for(const kind of['ui','protocol','helper','native']as const){const source=actual[kind].replace(/\r\n/g,'\n').replace(/\n/g,eol);assert.ok(previousCensus705(kind,source));assert.throws(()=>previousCensus705(kind,source+'\n'),{code:'ERR_ASSERTION'})}
- const ui=actual.ui.replace(/\r\n/g,'\n'),start=ui.indexOf('  uiStage=11;'),end=ui.indexOf('  uiStage=12;',start);assert.ok(start>=0&&end>start);const sequence=ui.slice(start,end),ordered=['let chooseElement=choose.firstMatch','observeChooseCensus()','let chooseTimeout=try remaining()','let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout)','guard chooseSeen else','let chooseCount=choose.count','guard chooseCount==1 else'];let at=-1;for(const piece of ordered){const next=sequence.indexOf(piece);assert.ok(next>at,piece);at=next}
+ const ui=previousCriticalCensus705('ui',actual.ui),start=ui.indexOf('  uiStage=11;'),end=ui.indexOf('  uiStage=12;',start);assert.ok(start>=0&&end>start);const sequence=ui.slice(start,end),ordered=['let chooseElement=choose.firstMatch','observeChooseCensus()','let chooseTimeout=try remaining()','let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout)','guard chooseSeen else','let chooseCount=choose.count','guard chooseCount==1 else'];let at=-1;for(const piece of ordered){const next=sequence.indexOf(piece);assert.ok(next>at,piece);at=next}
  assert.equal(ui.split('observeChooseCensus();').length,2);assert.equal(sequence.match(/waitForExistence\(/g)?.length,1);assert.equal(sequence.match(/try remaining\(\)/g)?.length,1);assert.ok(ui.includes('guard chooseHittable else{throw OwnedUI705Error.refused}'));assert.ok(ui.includes('choose.element.click()'));assert.ok(ui.includes('guard r>0,r<=45 else'))
  const census=ui.slice(ui.indexOf('  func observeChooseCensus(){'),start);assert.doesNotMatch(census,/debugDescription|allElements|\.click\(|\.waitForExistence\(|Timer|sleep|Dispatch|Task\./);assert.equal(census.split('button.label').length,2);assert.equal(census.split('button.title').length,2);assert.equal(census.split('for index in 0..<min(sheetButtonCount,8)').length,2);assert.equal(census.match(/\.count\b/g)?.length,3);const payload=/try\? scene\.write\(\.uiChooseCensus,([^\n]+)/.exec(census);assert.ok(payload);assert.doesNotMatch(payload[1],/button\.label|button\.title|description/)
  const attributes=fs.readFileSync(path.resolve('../.gitattributes'),'utf8').replace(/\r\n/g,'\n'),file=fs.readFileSync(helper,'utf8');for(const name of['WorkspacePickerUITests.swift','OwnedUIProtocol.swift']){assert.equal(attributes.split('/companion/tests/fixtures/workspace-ui-705/'+name+' text eol=lf\n').length,2);assert.ok(file.includes(createHash('sha256').update(fs.readFileSync(path.join(files,name))).digest('hex')))}
@@ -579,4 +591,37 @@ test('705 actual POSIX snapshot model is independent of the host path namespace'
   // A Windows join against the POSIX-keyed inert store is the original mismatch.
   assert.equal(loadXcode705(f.io,{getuid:()=>7},path.win32)(f.state).stdout.status,'MISSING')
  }
+})
+
+
+test('705 live Choose path omits the synchronous auxiliary census and restores entire dc9 authorities',()=>{
+ const actual=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8'),owner=fs.readFileSync(helper,'utf8')
+ for(const eol of ['\n','\r\n']){
+  const source=actual.replace(/\r\n/g,'\n').replace(/\n/g,eol),canonical=source.replace(/\r\n/g,'\n'),prior=previousCriticalCensus705('ui',source)
+  assert.equal(canonical.split('observeChooseCensus();').length,1,'historical census definition is not invoked')
+  assert.equal(prior.split('observeChooseCensus();').length,2,'inverse restores the original one call')
+  assert.equal(previousCriticalCensus705('helper',owner).includes('1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68'),true)
+  for(const mutant of [source+'\n',source.replace('guard chooseCount==1 else','guard chooseCount>=1 else'),source.replace('guard chooseHittable else','guard true else'),source.replace('choose.element.click()','choose.element.doubleClick()'),source.replace('guard r>0,r<=45 else','guard r>0,r<=46 else')])assert.throws(()=>previousCriticalCensus705('ui',mutant),{code:'ERR_ASSERTION'})
+  assert.throws(()=>previousCriticalCensus705('helper',owner+'\n'),{code:'ERR_ASSERTION'})
+ }
+ // Project the actual stage11→13 statements; this is a controlled synchronous
+ // framework fault, not an AX/macOS execution or the hosted physical cause.
+ function run(source:string,{seen=true,count=1,hittable=true}={}){
+  const ui=source.replace(/\r\n/g,'\n'),start=ui.indexOf('  uiStage=11;'),end=ui.indexOf('  uiStage=14;',start);assert.ok(start>=0&&end>start)
+  let body=ui.slice(start,end)
+  for(const [current,replacement]of [
+   ['guard chooseSeen else{throw OwnedUI705Error.refused}',"if(!chooseSeen){throw Error('OWNED_UI_REFUSED')}"],
+   ['guard chooseCount==1 else{throw OwnedUI705Error.refused}',"if(!(chooseCount==1)){throw Error('OWNED_UI_REFUSED')}"],
+   ['guard chooseHittable else{throw OwnedUI705Error.refused}',"if(!chooseHittable){throw Error('OWNED_UI_REFUSED')}"],
+   ['chooseElement.waitForExistence(timeout:chooseTimeout)','chooseElement.waitForExistence({timeout:chooseTimeout})']
+  ]){assert.equal(body.split(current).length,2,current);body=body.replace(current,replacement)}
+  body=body.replaceAll('_ = try remaining()','remaining()').replaceAll('try remaining()','remaining()').replaceAll('let ','const ').replaceAll('min(chooseCount,2)','Math.min(chooseCount,2)')
+  assert.doesNotMatch(body,/\bguard\b|\btry\b|OwnedUI|waitForExistence\(timeout:|_ =|\blet\b/)
+  const calls:string[]=[],element={get isHittable(){calls.push('hittable');return hittable},click(){calls.push('click')}}
+  const scope={Math,observeUIStage(){},observeChooseCensus(){calls.push('census');throw Error('OWNED_CENSUS_INTERFERENCE')},remaining(){calls.push('remaining');return 1},choose:{get firstMatch(){calls.push('firstMatch');return{waitForExistence(value:{timeout:number}){assert.equal(value.timeout,1);calls.push('wait');return seen}}},get count(){calls.push('count');return count},element}}
+  return{calls,run:()=>vm.runInNewContext('let uiStage=0,uiDetail=0;'+body,scope,{timeout:1000})}
+ }
+ const current=run(actual);assert.doesNotThrow(current.run);assert.deepEqual(current.calls,['firstMatch','remaining','wait','count','hittable','remaining','click'])
+ const old=run(previousCriticalCensus705('ui',actual));assert.throws(old.run,/OWNED_CENSUS_INTERFERENCE/);assert.deepEqual(old.calls,['firstMatch','census'])
+ for(const options of [{seen:false},{count:0},{count:2},{hittable:false}]){const refusal=run(actual,options);assert.throws(refusal.run,/OWNED_UI_REFUSED/);assert.equal(refusal.calls.includes('click'),false);assert.equal(refusal.calls.includes('census'),false)}
 })

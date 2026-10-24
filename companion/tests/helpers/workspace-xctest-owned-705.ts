@@ -79,7 +79,7 @@ const result705Unknown=(reason:Result705Projection['reason']):Result705Projectio
 const RESULT705_IDS=new Set(['WorkspacePicker705/testOwnedPanel','WorkspacePicker705/testOwnedPanel()','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel()'])
 const RESULT705_TYPES=new Set(['Test Plan','Unit test bundle','UI test bundle','Test Suite','Test Case','Device','Test Plan Configuration','Arguments','Repetition','Test Case Run','Failure Message','Source Code Reference','Attachment','Expression','Test Value','Runtime Warning'])
 // Both hashes are independently bound to b975 actual source; paths never come from runtime JSON.
-const RESULT705_SOURCES=[['WorkspacePickerUITests.swift','1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68'],['OwnedUIProtocol.swift','fbad4db2905d6bb58a40062ec844716554fb4bb8f52ae73f3f5b094ec27c979c']] as const
+const RESULT705_SOURCES=[['WorkspacePickerUITests.swift','0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572'],['OwnedUIProtocol.swift','fbad4db2905d6bb58a40062ec844716554fb4bb8f52ae73f3f5b094ec27c979c']] as const
 // Actual Tests response: nodeIdentifier is optional in the official schema.
 // Only a present allowlisted Test Case identifier counts; never derive one from name.
 function result705Select(data:Buffer):string {
