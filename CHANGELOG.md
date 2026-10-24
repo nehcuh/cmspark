@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Fix (desktop): revoke host authority before graceful shutdown without terminating the authenticated socket before its final close frame; preserve immediate direct revocation, foreign hosts and reentrant retirement. Configure only the unshipped macOS XCTest runner to publish its owned scene handshake outside App Sandbox; retain strict file identity and original native assertions.
+
+- Fix (Windows desktop): stop reconnecting after a validated terminal close begins, while retaining transient reconnect and authentication failure handling. Native workspace acceptance uses the retained dialog’s real Cancel button and reports bounded failure identities without changing its assertions or deadline.
+
 - Fix (#752/#757): keep not-required feedback canonical after partial todo updates, so status-only edits cannot make completed tasks due again. Cover the real create/update response and reloaded state; retain required-feedback reminders.
 
 - Security: update the extension's DOMPurify dependency from 3.4.16 to 3.4.17 to resolve the production dependency audit advisories, including GHSA-cg2g-xh64-v4q7. No other dependencies or audit gates are changed.

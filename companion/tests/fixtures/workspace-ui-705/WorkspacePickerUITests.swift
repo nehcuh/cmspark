@@ -5,11 +5,27 @@ import Darwin
 final class WorkspacePicker705:XCTestCase {
  @MainActor func testOwnedPanel() throws {
   continueAfterFailure=false
+  var preflightStage=0,writeStep=0
+  var writeErrno:Int32=0
+  do {
+  preflightStage=1
   guard let path=ProcessInfo.processInfo.environment["CMSPARK_UI_SCENE"] else{throw OwnedUI705Error.refused}
+  preflightStage=2
   let scene=try OwnedUI705Scene(path)
-  guard Bundle.main.bundleIdentifier==OwnedUI705Scene.runnerID,try OwnedUI705Scene.exactURL(Bundle.main.bundleURL,scene.runnerBundle),try OwnedUI705Scene.exactURL(Bundle.main.executableURL,scene.runnerExecutable),let input=try scene.read(.input) else{throw OwnedUI705Error.refused}
+  preflightStage=3
+  guard Bundle.main.bundleIdentifier==OwnedUI705Scene.runnerID else{throw OwnedUI705Error.refused}
+  preflightStage=4
+  guard try OwnedUI705Scene.exactURL(Bundle.main.bundleURL,scene.runnerBundle) else{throw OwnedUI705Error.refused}
+  preflightStage=5
+  guard try OwnedUI705Scene.exactURL(Bundle.main.executableURL,scene.runnerExecutable) else{throw OwnedUI705Error.refused}
+  preflightStage=6
+  guard let input=try scene.read(.input) else{throw OwnedUI705Error.refused}
+  preflightStage=7
   try scene.tuple(input,["schema","nonce","deadline_ms"])
-  let deadline=try OwnedUI705Scene.number(input["deadline_ms"]);guard deadline.rounded(.down)==deadline else{throw OwnedUI705Error.refused}
+  preflightStage=8
+  let deadline=try OwnedUI705Scene.number(input["deadline_ms"])
+  preflightStage=9
+  guard deadline.rounded(.down)==deadline else{throw OwnedUI705Error.refused}
   func remaining() throws ->TimeInterval {try scene.requireActive();let r=(deadline-Date().timeIntervalSince1970*1000)/1000;guard r>0,r<=45 else{throw OwnedUI705Error.refused};return r}
   func waitFile(_ name:OwnedUI705File) throws ->[String:Any] {
    let fd=open(scene.root.path,O_EVTONLY|O_NOFOLLOW);guard fd>=0 else{throw OwnedUI705Error.refused}
@@ -18,7 +34,9 @@ final class WorkspacePicker705:XCTestCase {
    source.setCancelHandler{close(fd)};source.setEventHandler{check()};source.resume();defer{source.cancel()};check();wait(for:[e],timeout:try remaining())
    _ = try remaining();guard let value=try scene.read(name) else{throw OwnedUI705Error.refused};return value
   }
-  let pid=getpid();try scene.write(.startup,["schema":1,"nonce":scene.nonce,"pid":pid,"bundle_url":scene.runnerBundle.absoluteString,"executable_url":scene.runnerExecutable.absoluteString,"bundle_id":OwnedUI705Scene.runnerID])
+  preflightStage=10
+  let pid=getpid();try scene.write(.startup,["schema":1,"nonce":scene.nonce,"pid":pid,"bundle_url":scene.runnerBundle.absoluteString,"executable_url":scene.runnerExecutable.absoluteString,"bundle_id":OwnedUI705Scene.runnerID]){step,code in writeStep=step.rawValue;writeErrno=code}
+  preflightStage=0
   let ack=try waitFile(.ack);try scene.tuple(ack,["schema","nonce","pid","identity_bound"]);guard try OwnedUI705Scene.pid(ack["pid"])==pid,try OwnedUI705Scene.boolean(ack["identity_bound"]) else{throw OwnedUI705Error.refused}
   _ = try remaining();try scene.write(.begin,["schema":1,"nonce":scene.nonce,"pid":pid,"phase":"UI_SEQUENCE_STARTED"])
   // No quiescent receipt if an Objective-C exception, timeout or termination interrupts a synchronous UI call.
@@ -36,5 +54,16 @@ final class WorkspacePicker705:XCTestCase {
   guard choose.count==1,choose.element.isHittable else{throw OwnedUI705Error.refused};_ = try remaining();choose.element.click()
   try ready(.second,2);let second=try sheet(),cancel=second.buttons.matching(identifier:"Cancel")
   guard cancel.count==1,cancel.element.isHittable else{throw OwnedUI705Error.refused};_ = try remaining();cancel.element.click()
+  } catch {
+   // Fixed test-only identity: never expose the scene path, environment or error body.
+   if (1...10).contains(preflightStage) {
+    let priorFailurePolicy=continueAfterFailure
+    continueAfterFailure=true
+    defer { continueAfterFailure=priorFailurePolicy }
+    XCTFail("OWNED_UI705_PREFLIGHT_"+String(preflightStage))
+    if preflightStage==10 && (1...10).contains(writeStep) {let code=(0...4095).contains(writeErrno) ? writeErrno:0;XCTFail("OWNED_UI705_WRITE_S"+String(writeStep)+"_E"+String(code))}
+   }
+   throw error
+  }
  }
 }

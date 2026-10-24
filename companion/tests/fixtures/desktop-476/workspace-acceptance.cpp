@@ -72,10 +72,21 @@ void D476Acceptance::panel(Desktop& h){
   ComPtr<IShellItem> folder;int order=1;if(activeDialog->GetFolder(folder.GetAddressOf())!=S_OK||!folder||!expectedDirectory||folder->Compare(expectedDirectory.Get(),SICHINT_CANONICAL,&order)!=S_OK||order!=0)return;
  }
  if(owner!=&h||h.generation!=documentGeneration||!h.picker_current(p)||p->nonce!=pickerNonce||p->settled||p->dialog.Get()!=activeDialog.Get()){if(h.workspace_selection==p)KillTimer(h.window,476);return;}
- auto button=GetDlgItem(dialog,IDOK);if(!cancelPicker&&(!button||!IsWindowEnabled(button)))return;note(h,8,0,1,1,2u,2u);
+ auto button=GetDlgItem(dialog,cancelPicker?IDCANCEL:IDOK);
+ const auto ownedNonce=p->nonce;
+ // Diagnostic arm only: same UI STA, exact retained dialog and its real public Cancel button.
+ auto cancelButtonCurrent=[&](){
+  wchar_t buttonClass[16]{};
+  return owner==&h&&h.generation==documentGeneration&&h.picker_current(p)&&p->nonce==ownedNonce&&!p->settled&&p->dialog.Get()==activeDialog.Get()
+   &&d476OwnedDialog705(dialog,h.window)&&button&&GetDlgItem(dialog,IDCANCEL)==button&&IsWindow(button)&&IsChild(dialog,button)
+   &&GetDlgCtrlID(button)==IDCANCEL&&IsWindowVisible(button)&&IsWindowEnabled(button)
+   &&GetClassNameW(button,buttonClass,16)>0&&lstrcmpiW(buttonClass,L"Button")==0
+   &&GetWindowThreadProcessId(dialog,nullptr)==GetCurrentThreadId()&&GetWindowThreadProcessId(button,nullptr)==GetCurrentThreadId();
+ };
+ if(cancelPicker?!cancelButtonCurrent():(!button||!IsWindowEnabled(button)))return;note(h,8,0,1,1,2u,2u);
  KillTimer(h.window,476);++panels;pickerNonce.clear();expectedDirectory.Reset();emit(h,panels==1?L"D476_WS_PICKER_SELECTED":L"D476_WS_PICKER_CANCELLED");note(h,16,0,1,1);
  // Actual typed cancellation or the current real dialog's public OK button. No injected result.
- if(cancelPicker){auto closed=activeDialog->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));if(FAILED(closed)){cancelNote(h,L"D476_WS_CANCEL_CLOSE_FAIL");fail(h,0);return;}cancelNote(h,L"D476_WS_CANCEL_CLOSE_OK");}else SendMessageW(button,BM_CLICK,0,0);
+ if(cancelPicker){if(!cancelButtonCurrent()){fail(h,0);return;}SendMessageW(button,BM_CLICK,0,0);}else SendMessageW(button,BM_CLICK,0,0);
  note(h,32,0,1,1,IsWindow(dialog)?4u:0u,4u);
 }
 void D476Acceptance::renderer(Desktop& h,JsonObject const& f){if(owner!=&h||h.generation!=documentGeneration||text(f,L"type")!=L"system.ping")return;auto id=text(f,L"id");static wchar_t const* names[]={L"D476_WS_UNBOUND",L"D476_WS_COMMITTED",L"D476_WS_LISTED",L"D476_WS_READ",L"D476_WS_REOPENED",L"D476_WS_CANCELLED",L"D476_WS_DONE"};for(unsigned i=0;i<7;i++)if(id==names[i]){if(receipts&(1u<<i)){fail(h,14);return;}receipts|=1u<<i;emit(h,names[i]);if(i==6){if(receipts!=127||panels!=2||confirmations!=1)fail(h,15);}return;}if(id==L"D476_WS_FAIL")fail(h,16);}

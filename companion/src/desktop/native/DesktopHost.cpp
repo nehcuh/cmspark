@@ -95,7 +95,7 @@ class Desktop {
  static double wall_ms(){return std::chrono::duration<double,std::milli>(std::chrono::system_clock::now().time_since_epoch()).count();}
  HWND window=nullptr;std::wstring cap,secret,root,generation,style_nonce,view=L"compact";INTERNET_PORT port=0;
  ComPtr<ICoreWebView2Environment> environment;ComPtr<ICoreWebView2Controller> controller;ComPtr<ICoreWebView2> web;
- std::mutex socket_lock;HINTERNET socket=nullptr;std::atomic<bool> ready{false};std::atomic<unsigned long> epoch{0};
+ std::mutex socket_lock;HINTERNET socket=nullptr;std::atomic<bool> ready{false};std::atomic<bool> closing{false};std::atomic<unsigned long> epoch{0};
  struct LocalRequest{Pending pending;std::wstring method,operation;};
  std::map<std::wstring,Pending> local_operations;std::map<std::wstring,LocalRequest> local_requests;std::set<std::wstring> local_closed;std::wstring local_thread;
  std::wstring workspace_owner,browser_request,browser_thread,archive_target;
@@ -233,7 +233,7 @@ class Desktop {
   local_requests.erase(request);put(frame,L"id",value.pending.ui_id);deliver(frame);return true;
  }
  void document(){retire_local();retire_workspace();if(!retire_browser(true))ExitProcess(46);retire_archive();retire_dialog();retire_confirmation(0);requests.clear();generation=random_id();JsonObject frame;put(frame,L"type",L"desktop.document");put(frame,L"generation",generation);deliver(frame);DESKTOP_TEST_NOTE(document_post_attempted)}
- void start_network(){std::thread([this](){winrt::init_apartment(winrt::apartment_type::multi_threaded);while(true){
+ void start_network(){std::thread([this](){winrt::init_apartment(winrt::apartment_type::multi_threaded);while(!closing.load()){
    auto id=++epoch;ready=false;post(native_connect,id);
    HINTERNET session=WinHttpOpen(L"CMsparkDesktop/1",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0),connection=nullptr,request=nullptr,ws=nullptr;
    if(session){WinHttpSetTimeouts(session,10000,10000,10000,10000);connection=WinHttpConnect(session,L"127.0.0.1",port,0);}
@@ -246,6 +246,7 @@ class Desktop {
    }
    {std::lock_guard<std::mutex> lock(socket_lock);socket=nullptr;if(ws)WinHttpCloseHandle(ws);}
    if(connection)WinHttpCloseHandle(connection);if(session)WinHttpCloseHandle(session);
+   if(closing.load())return;
    if(!ready.load())ExitProcess(41);post(native_offline,id);Sleep(5000); // UI drains earlier frames before clearing ready; no credential fallback.
  }}).detach();}
  bool method(std::wstring const& s){for(auto value:desktop_read_methods)if(s==value)return true;return false;}
@@ -325,7 +326,7 @@ class Desktop {
   // The network may retire this epoch after the UI dispatch check.
   if(!ready||phase!=L"ready"){if(frame_epoch!=epoch)return;throw std::runtime_error("PHASE");}
   if(type==L"desktop.window"){frame=flat(body);if(!keys(frame,{L"type",L"view"}))throw std::runtime_error("CONTROL");auto next=text(frame,L"view");if(next!=L"compact"&&next!=L"workspace")throw std::runtime_error("VIEW");show(next);return;}
-  if(type==L"desktop.close"){flat(body);if(!keys(frame,{L"type"}))throw std::runtime_error("CONTROL");retire_workspace();retire_dialog();retire_confirmation(0);DestroyWindow(window);return;}
+  if(type==L"desktop.close"){flat(body);if(!keys(frame,{L"type"}))throw std::runtime_error("CONTROL");closing=true;retire_workspace();retire_dialog();retire_confirmation(0);DestroyWindow(window);return;}
   if(type==L"desktop.workspace.picker.request"){begin_picker(flat(body));return;}
   if(type==L"desktop.workspace.picker.cancel"){cancel_picker(flat(body));return;}
   if(type==L"desktop.confirmation.request"){begin_confirmation(flat(body));return;}
@@ -432,7 +433,7 @@ class Desktop {
   if(message==WM_SIZE&&self->controller){RECT bounds{};GetClientRect(hwnd,&bounds);self->controller->put_Bounds(bounds);return 0;}
   if(message==native_frame||message==native_connect||message==native_offline){std::unique_ptr<Frame> frame((Frame*)l);if(frame->epoch!=self->epoch)return 0;try{if(message==native_connect){self->retire_local();self->retire_picker();self->retire_confirmation();self->phase=L"initial";self->generation.clear();self->requests.clear();}else if(message==native_offline){self->retire_local();self->retire_picker();self->retire_confirmation();self->ready=false;self->archive_target.clear();self->browser_request.clear();self->browser_thread.clear();self->generation.clear();self->requests.clear();if(self->web){JsonObject offline;put(offline,L"type",L"desktop.offline");self->web->PostWebMessageAsJson(offline.Stringify().c_str());}}else self->accept(frame->value,frame->epoch);}catch(...){ExitProcess(45);}return 0;}
   if(message==WM_TIMER&&w==workspace_picker_timer){auto p=self->workspace_selection;if(p&&!p->settled&&wall_ms()>=p->deadline)self->finish_picker(p,L"unavailable");return 0;}
-  if(message==WM_CLOSE){self->retire_local();self->retire_workspace();if(!self->retire_browser(true))ExitProcess(46);self->retire_archive();self->retire_dialog();self->retire_confirmation(0);DestroyWindow(hwnd);return 0;}if(message==WM_DESTROY){if(self->controller)self->controller->Close();PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,message,w,l);
+  if(message==WM_CLOSE){self->closing=true;self->retire_local();self->retire_workspace();if(!self->retire_browser(true))ExitProcess(46);self->retire_archive();self->retire_dialog();self->retire_confirmation(0);DestroyWindow(hwnd);return 0;}if(message==WM_DESTROY){self->closing=true;if(self->controller)self->controller->Close();PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,message,w,l);
  }
  int run(HINSTANCE instance){WNDCLASSW cls{};cls.lpfnWndProc=proc;cls.hInstance=instance;cls.lpszClassName=L"CMsparkDesktopOwnedWindow";cls.hCursor=LoadCursor(nullptr,IDC_ARROW);if(!RegisterClassW(&cls))return 60;RECT rect{0,0,360,420};AdjustWindowRectEx(&rect,WS_OVERLAPPEDWINDOW,FALSE,0);window=CreateWindowExW(0,cls.lpszClassName,L"CMspark 工作台",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,instance,this);if(!window)return 61;start_network();MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}ExitProcess((UINT)msg.wParam);return(int)msg.wParam;}
 };

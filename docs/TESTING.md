@@ -1,5 +1,11 @@
 # TESTING
 
+### #705 原生工作区的测试 Runner 签名
+
+macOS 固定 `OwnedPickerUITests` 是未发布的 UI 验收目标。其 Debug 配置显式使用 fixture 内唯一的 entitlement 文件，将 `com.apple.security.app-sandbox` 设为 false，使同次 Runner 可以在 Node 自有场景目录发布握手；不改变生产应用或 observer 权限。构建声明不等于实际签名，须核实际生成 Runner 的签名及原生用例结果。
+
+场景仍要求相同 nonce、PID、bundle/executable URL、0700 目录、0600 单链接文件和完整 ACK／UI 返回／进程关闭；原 45 秒预算及全部断言不变。启动失败只追加闭集阶段／errno 回执并保留原错误，不以 completion 或诊断回执覆盖失败。Windows 夹具使用同次 retained dialog 的真实 Cancel 按钮；其惰性源码消费者必须读取实际捕获的 nonce 和完整当前性谓词，不继续断言旧 COM Close。
+
 ### #723 Job CPU 的 live claim 共享
 
 `cockpit-bridge-chrome-job-cpu.cs` 在 Node 的 `wx+` owner 句柄仍存活时读取原 claim。Framework `File.ReadAllText` 默认只共享 Read，不能与现存写访问兼容；fixture 改用 Read access、`ReadWrite|Delete` share 的显式流，沿用原文本读取和后续 `JobInput.Parse/CheckClaim` 的 nonce、64/65 字节与所有权拒绝。真实 Windows 自检还须亲证旧默认读以 sharing violation（Win32 32）拒绝，不能把任意 IOException 当正控；不关闭或降级父 lease。

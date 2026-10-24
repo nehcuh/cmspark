@@ -6,6 +6,7 @@ import {createHmac} from 'node:crypto'
 import {DesktopIdentityRegistry} from '../src/desktop/identity'
 import {createDesktopChannel} from '../src/desktop/channel'
 import {DESKTOP_NATIVE_METHODS} from '../src/desktop/capabilities'
+import {DESKTOP_TERMINAL_METHODS} from '../src/desktop/terminal-work'
 import {SecurityConfirmationManager} from '../src/security-confirmation'
 import {ThreadManager} from '../src/threads/thread-manager'
 import fs from 'node:fs'
@@ -93,9 +94,17 @@ test('existing PTY heartbeat is emitted only to the original native operation wi
 })
 
 
-test('terminal-only leaf preserves shipped archive/browser and does not issue Agent authority',()=>{
+test('terminal-only leaf preserves shipped archive/browser and does not issue Agent authority',async t=>{
  for(const method of ['desktop.archive.list','desktop.archive.state','desktop.archive.set','desktop.browser.status','desktop.browser.tasks','desktop.browser.visibility','desktop.browser.retire'])assert.ok((DESKTOP_NATIVE_METHODS as readonly string[]).includes(method),method)
- for(const method of ['desktop.agent.start','desktop.agent.prompt','desktop.agent.cancel'])assert.equal((DESKTOP_NATIVE_METHODS as readonly string[]).includes(method),false)
+ assert.deepEqual([...DESKTOP_TERMINAL_METHODS],methods)
+ const f=fixture(t)
+ for(const method of ['desktop.agent.start','desktop.agent.prompt','desktop.agent.cancel']){
+  assert.equal((DESKTOP_TERMINAL_METHODS as readonly string[]).includes(method),false)
+  const id='terminal-only-'+method
+  assert.deepEqual(await f.send({type:method,id,thread_id:'local-work-A'}),{type:'desktop.error',id,error_code:'DESKTOP_METHOD_DENIED'})
+ }
+ assert.deepEqual(f.calls,[])
+ assert.equal(f.manager.pendingCount(),0)
 })
 test('null/foreign manager callers and forged decision framing cannot approve native terminal',async t=>{
  const f=fixture(t),s=await state(f),c=await f.send({type:'desktop.terminal.open',id:'guarded',thread_id:'local-work-A',revision:s.state.revision,cols:80,rows:24})

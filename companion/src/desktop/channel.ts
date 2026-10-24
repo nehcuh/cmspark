@@ -35,8 +35,9 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
   const wss = new WebSocketServer({ noServer: true, maxPayload: opts.maxPayload })
   const active = new Map<WebSocket, DesktopPrincipal>()
   const pending = new Map<WebSocket, string>()
+  const gracefulClose = new Set<WebSocket>()
   const retire = new Map<WebSocket, () => void>()
-  const unbind = opts.registry.onRevoke(id => { for (const [ws, cap] of pending) if (cap === id) { retire.get(ws)?.(); ws.terminate() } })
+  const unbind = opts.registry.onRevoke(id => { for (const [ws, cap] of pending) if (cap === id) { retire.get(ws)?.(); if (!gracefulClose.has(ws)) ws.terminate() } })
   wss.once("close", unbind)
   wss.on("connection", ws => {
     // Reuse the existing legacy admission bound; no unauthenticated desktop growth.
@@ -220,6 +221,15 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
       for (const [ws, p] of active) if (p.hostSessionId === host && opts.registry.allows(p, "system.ping")) { send(ws, { type: "desktop.window", view }); return true }
       return false
     },
-    revokeHost(host: string): void { opts.registry.revokeHost(host); for (const [ws,p] of active) if(p.hostSessionId === host) { send(ws,{type:"desktop.close"}); ws.close(); active.delete(ws) } },
+    revokeHost(host: string): void {
+      const targets: WebSocket[] = []
+      for (const [ws, p] of active) if (p.hostSessionId === host && !gracefulClose.has(ws)) targets.push(ws)
+      for (const ws of targets) gracefulClose.add(ws)
+      try {
+        // Revoke authority and retire effects before graceful transport shutdown.
+        opts.registry.revokeHost(host)
+        for (const ws of targets) { send(ws,{type:"desktop.close"}); ws.close(); active.delete(ws) }
+      } finally { for (const ws of targets) gracefulClose.delete(ws) }
+    },
   }
 }

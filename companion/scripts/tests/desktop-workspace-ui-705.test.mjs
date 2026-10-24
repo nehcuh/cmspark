@@ -92,20 +92,21 @@ test('705 fixed binding final descriptor digest distinguishes the stale row from
 
 // The actual retained dialog/production branch is lowered only for inert CPU execution.
 const workspaceCpp705=()=>fs.readFileSync(path.join(root,'tests/fixtures/desktop-476/workspace-acceptance.cpp'),'utf8')
-function cancelSuffix705(source,hr){
- const anchor='KillTimer(h.window,476);++panels;pickerNonce.clear();expectedDirectory.Reset();'
- assert.equal(source.split(anchor).length,2)
- const start=source.indexOf(anchor),body=source.slice(start,source.indexOf('\n}',start)).replace(/\bL"/g,'"').replace(/\(void\)/g,'').replace(/->/g,'.').replace(/auto closed=/g,'const closed=').replace(/(\d+)u\b/g,'$1')
- const trace=[],s={panels:1,cancelPicker:true,h:{window:1},dialog:2,button:3,pickerNonce:{clear(){}},expectedDirectory:{Reset(){}},KillTimer(){},emit(_,id){trace.push(id)},note(){},fail(){trace.push('FAIL')},cancelNote(_,id){trace.push(id)},activeDialog:{Close(){trace.push('Close');return hr}},FAILED:v=>v<0,HRESULT_FROM_WIN32:v=>v,ERROR_CANCELLED:1223,SendMessageW(){throw Error('UNEXPECTED_CLICK')},BM_CLICK:0,IsWindow:()=>true}
- vm.compileFunction(body,Object.keys(s))(...Object.values(s));return trace
+function cancelSuffix705(source,options={}){
+ const anchor='KillTimer(h.window,476);++panels;pickerNonce.clear();expectedDirectory.Reset();',capture='const auto ownedNonce=p->nonce;',lambda='auto cancelButtonCurrent=[&](){'
+ assert.equal(source.split(anchor).length,2);assert.equal(source.split(capture).length,2);assert.equal(source.split(lambda).length,2)
+ const start=source.indexOf(anchor),end=source.indexOf('\n}',start),prelude=source.slice(source.indexOf(capture),source.indexOf(' };',source.indexOf(lambda))+3)
+ assert.ok(end>start&&prelude.includes('wchar_t buttonClass[16]{};'))
+ const lower=text=>text.replace(/\bL"/g,'"').replace(/->/g,'.').replace(/\bconst auto /g,'const ').replace('auto cancelButtonCurrent=[&](){','const cancelButtonCurrent=()=>{').replace('wchar_t buttonClass[16]{};','const buttonClass=[];').replace(/owner==&h/g,'owner===h').replace(/(\d+)u\b/g,'$1').replace(/\bnullptr\b/g,'null')
+ const trace=[],h={window:1,generation:7,picker_current:()=>true},p={nonce:'captured',settled:false,dialog:{Get:()=>4}},s={h,p,owner:h,documentGeneration:7,panels:1,cancelPicker:true,dialog:2,button:3,pickerNonce:{clear(){trace.push('NONCE_CLEARED')}},expectedDirectory:{Reset(){}},activeDialog:{Get:()=>4,Close(){assert.fail('obsolete COM Close must not be called')}},KillTimer(){},emit(_,id){trace.push(id);if(options.invalidateAfterMarker)p.settled=true},note(){},fail(){trace.push('FAIL')},d476OwnedDialog705:()=>options.owned!==false,GetDlgItem:()=>3,IDCANCEL:2,IsWindow:()=>true,IsChild:()=>true,GetDlgCtrlID:()=>2,IsWindowVisible:()=>true,IsWindowEnabled:()=>true,GetClassNameW(_,out){out[0]=options.buttonClass??'Button';return 1},lstrcmpiW:(a,b)=>a[0].toLowerCase()===b.toLowerCase()?0:1,GetWindowThreadProcessId:()=>options.thread??1,GetCurrentThreadId:()=>1,SendMessageW(target,message){assert.equal(target,3);assert.equal(message,0xf5);trace.push('IDCANCEL_CLICK')},BM_CLICK:0xf5}
+ vm.compileFunction(lower(prelude+'\n'+source.slice(start,end)),Object.keys(s))(...Object.values(s));return trace
 }
-test('705 actual cancellation requires the retained Close result, not the earlier readiness marker',()=>{
+test('705 actual cancellation clicks only the still-owned real Cancel button after readiness',()=>{
  for(const source of [workspaceCpp705(),workspaceCpp705().replace(/\r?\n/g,'\r\n')]){
-  const ok=cancelSuffix705(source,0),bad=cancelSuffix705(source,-1)
-  assert.ok(ok.indexOf('D476_WS_PICKER_CANCELLED')<ok.indexOf('Close'))
-  assert.ok(ok.includes('D476_WS_CANCEL_CLOSE_OK'));assert.equal(ok.includes('FAIL'),false)
-  assert.ok(bad.includes('D476_WS_CANCEL_CLOSE_FAIL'));assert.ok(bad.includes('FAIL'));assert.equal(bad.includes('D476_WS_CANCEL_CLOSE_OK'),false)
-  assert.equal(ok.filter(x=>x==='Close').length,1);assert.equal(bad.filter(x=>x==='Close').length,1)
+  const ok=cancelSuffix705(source)
+  assert.ok(ok.indexOf('D476_WS_PICKER_CANCELLED')<ok.indexOf('IDCANCEL_CLICK'));assert.equal(ok.filter(x=>x==='IDCANCEL_CLICK').length,1);assert.equal(ok.includes('FAIL'),false)
+  assert.ok(ok.indexOf('NONCE_CLEARED')<ok.indexOf('IDCANCEL_CLICK'),'actual captured nonce survives readiness retirement')
+  for(const options of[{owned:false},{buttonClass:'Other'},{thread:2},{invalidateAfterMarker:true}]){const bad=cancelSuffix705(source,options);assert.ok(bad.includes('FAIL'));assert.equal(bad.includes('IDCANCEL_CLICK'),false)}
  }
 })
 test('705 generated post-Show observer preserves the actual guard and normal-host inverse',()=>{
@@ -128,8 +129,8 @@ test('705 actual Show result observer cannot bypass original stale or settled gu
   assert.deepEqual(output,[`D476_WS_CANCEL_SHOW_${kind}_${+settled}_${+current}`]);let got=null
   vm.compileFunction(branch,['p','shown','picker_current','finish_picker','HRESULT_FROM_WIN32','ERROR_CANCELLED','FAILED','wall_ms','deadline'])({settled},shown,()=>current,(_,v)=>got=v,x=>x,1223,x=>x<0,()=>0,1);assert.equal(got,expected)
  }
- // Close's success cannot manufacture a Show return; no hook executes in that schedule.
- assert.equal(cancelSuffix705(cpp,0).some(x=>x.startsWith('D476_WS_CANCEL_SHOW_')),false)
+ // A real button click does not itself manufacture a Show return.
+ assert.equal(cancelSuffix705(cpp).some(x=>x.startsWith('D476_WS_CANCEL_SHOW_')),false)
  const quiet=[];vm.compileFunction(body,['h','result','settled','current','cancelPicker','HRESULT_FROM_WIN32','ERROR_CANCELLED','FAILED','cancelNote'])({},1223,false,true,false,x=>x,1223,x=>x<0,(_,id)=>quiet.push(id));assert.deepEqual(quiet,[])
 })
 
