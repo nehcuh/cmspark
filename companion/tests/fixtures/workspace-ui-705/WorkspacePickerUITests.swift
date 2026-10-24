@@ -60,7 +60,7 @@ final class WorkspacePicker705:XCTestCase {
   uiStage=9;uiDetail=0;let inputHittable=inputs.element.isHittable;uiDetail=inputHittable ? 2:1;guard inputHittable else{throw OwnedUI705Error.refused}
   uiStage=10;uiDetail=0;_ = try remaining();inputs.element.click();_ = try remaining();inputs.element.typeText(scene.selection.path);_ = try remaining();inputs.element.typeKey("\r",modifierFlags:[])
   let choose=first.buttons.matching(NSPredicate(format:"label IN %@",["Choose","Open"]))
-  uiStage=11;uiDetail=0;let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;guard chooseCount==1 else{throw OwnedUI705Error.refused}
+  uiStage=11;uiDetail=0;let chooseSeen=choose.firstMatch.waitForExistence(timeout:try remaining());uiDetail=chooseSeen ? 2:1;guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;guard chooseCount==1 else{throw OwnedUI705Error.refused}
   uiStage=12;uiDetail=0;let chooseHittable=choose.element.isHittable;uiDetail=chooseHittable ? 2:1;guard chooseHittable else{throw OwnedUI705Error.refused}
   uiStage=13;uiDetail=0;_ = try remaining();choose.element.click()
   uiStage=14;uiDetail=0;try ready(.second,2);let second=try sheet(15),cancel=second.buttons.matching(identifier:"Cancel")

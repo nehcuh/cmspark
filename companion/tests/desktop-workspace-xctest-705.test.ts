@@ -301,3 +301,16 @@ test('705 failure-only UI stage is closed bounded and never a lifecycle authorit
  for(let stage=1;stage<=20;stage++)for(let detail=0;detail<=5;detail++){f.put('ui-refusal.json',{...f.base,stage,detail});assert.deepEqual(JSON.parse(JSON.stringify(f.api.uiRefusal())),{stage,detail})}
  const p=fs.readFileSync(path.join(files,'OwnedUIProtocol.swift'),'utf8'),u=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8');assert.match(p,/uiRefusal="ui-refusal.json"/);assert.match(u,/if preflightStage==0 && \(1\.\.\.20\).contains\(uiStage\),let scene=uiScene \{try\? scene.write\(\.uiRefusal/);assert.ok(u.indexOf('scene.write(.uiRefusal')<u.lastIndexOf('throw error'));assert.equal(u.split('scene.write(.uiRefusal').length,2)
 })
+
+test('705 owned Choose query waits within the original deadline before preserving uniqueness and hittability',()=>{
+ const swift=fs.readFileSync(path.resolve('tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift'),'utf8')
+ const start=swift.indexOf('let choose=first.buttons.matching('),end=swift.indexOf('uiStage=14;',start),fragment=swift.slice(start,end)
+ assert.ok(start>=0&&end>start)
+ assert.match(fragment,/choose\.firstMatch\.waitForExistence\(timeout:try remaining\(\)\)/)
+ const wait=fragment.indexOf('waitForExistence('),present=fragment.indexOf('guard chooseSeen else'),count=fragment.indexOf('let chooseCount=choose.count'),unique=fragment.indexOf('guard chooseCount==1 else'),hit=fragment.indexOf('let chooseHittable=choose.element.isHittable'),click=fragment.indexOf('choose.element.click()')
+ assert.ok(wait<present&&present<count&&count<unique&&unique<hit&&hit<click)
+ assert.match(fragment,/guard chooseHittable else\{throw OwnedUI705Error\.refused\}/)
+ assert.equal(fragment.match(/waitForExistence\(/g)?.length,1)
+ assert.doesNotMatch(fragment,/sleep|activate\(|launch\(|terminate\(|setPrompt|\.prompt=/)
+ assert.match(swift,/guard r>0,r<=45 else/)
+})
