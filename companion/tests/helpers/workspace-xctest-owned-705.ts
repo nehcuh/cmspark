@@ -72,6 +72,106 @@ function xcode705Snapshot(scene:OwnedUI705Boundary,name:'xcode.stdout'|'xcode.st
  }
  return out
 }
+// Two post-close, read-only test-result queries share 5s/1MiB per stream each.
+// This is not awaited by the case, cleanup, lease, complete(), or canSettle().
+type Result705Projection={schema:1;status:'UNKNOWN'|'OBSERVED';reason:'NOT_CLOSED'|'BUNDLE_UNAVAILABLE'|'SOURCE_UNAVAILABLE'|'TOOL_FAILURE'|'LIMIT'|'INVALID_RESULT'|'OBSERVED';testCaseID:1;testPresent:boolean|null;testResult:'Passed'|'Failed'|'Skipped'|'Expected Failure'|'unknown'|'UNKNOWN';failureNodeCount:number|null;sourceCoordinates:{sourceID:1|2;startingLineRaw:number;startingColumnRaw:number|null;coordinateBase:'UNKNOWN'}[];coordinatesMore:boolean;activities:'SCHEMA_NOT_ADMITTED';nativePassClaim:false}
+const result705Unknown=(reason:Result705Projection['reason']):Result705Projection=>({schema:1,status:'UNKNOWN',reason,testCaseID:1,testPresent:null,testResult:'UNKNOWN',failureNodeCount:null,sourceCoordinates:[],coordinatesMore:false,activities:'SCHEMA_NOT_ADMITTED',nativePassClaim:false})
+const RESULT705_IDS=new Set(['WorkspacePicker705/testOwnedPanel','WorkspacePicker705/testOwnedPanel()','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel()'])
+const RESULT705_TYPES=new Set(['Test Plan','Unit test bundle','UI test bundle','Test Suite','Test Case','Device','Test Plan Configuration','Arguments','Repetition','Test Case Run','Failure Message','Source Code Reference','Attachment','Expression','Test Value','Runtime Warning'])
+// Both hashes are independently bound to b975 actual source; paths never come from runtime JSON.
+const RESULT705_SOURCES=[['WorkspacePickerUITests.swift','79439b217dffda4fd07095be6fc8a250aaf27bff0e34198c0d0cdc44bdae8b09'],['OwnedUIProtocol.swift','01ca276b55894f4897901403291a891d9e4993c743de3d2c1f0f2dd6deb07310']] as const
+// Actual Tests response: nodeIdentifier is optional in the official schema.
+// Only a present allowlisted Test Case identifier counts; never derive one from name.
+function result705Select(data:Buffer):string {
+ if(data.length>1048576)throw refused()
+ const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(data)),object=(v:any)=>v!==null&&typeof v==='object'&&!Array.isArray(v)
+ if(!object(value)||!Array.isArray(value.testNodes))throw refused()
+ let nodes=0;const matches:string[]=[]
+ const walk=(rows:any[],depth:number)=>{
+  if(depth>24||!Array.isArray(rows))throw refused()
+  for(const n of rows){
+   if(++nodes>512||!object(n)||!RESULT705_TYPES.has(n.nodeType)||typeof n.name!=='string'||Buffer.byteLength(n.name)>8192)throw refused()
+   if(Object.hasOwn(n,'nodeIdentifier')&&(typeof n.nodeIdentifier!=='string'||Buffer.byteLength(n.nodeIdentifier)>1024))throw refused()
+   if(n.nodeType==='Test Case'&&RESULT705_IDS.has(n.nodeIdentifier))matches.push(n.nodeIdentifier)
+   if(Object.hasOwn(n,'children'))walk(n.children,depth+1)
+  }
+ }
+ walk(value.testNodes,0);if(matches.length!==1)throw refused();return matches[0]
+}
+function result705Project(data:Buffer,sourceRoot:string,identifier:string):Result705Projection {
+ if(data.length>1048576)throw refused()
+ const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(data)),object=(v:any)=>v!==null&&typeof v==='object'&&!Array.isArray(v)
+ if(!object(value)||!RESULT705_IDS.has(identifier)||value.testIdentifier!==identifier||!['Passed','Failed','Skipped','Expected Failure','unknown'].includes(value.testResult)||!Array.isArray(value.testRuns))throw refused()
+ const coordinates=new Map<string,Result705Projection['sourceCoordinates'][number]>();let nodes=0,failures=0
+ const source=(url:string)=>{
+  // Schema supplies a string URL, but NOT its fragment grammar or coordinate base.
+  // Recognize only this literal grammar; report raw numbers, never a converted source line.
+  if(url.length>8192||/[\x00-\x1f\x7f]/.test(url)||/%(?:2f|5c|00)/i.test(url))return
+  const u=new URL(url);if(u.protocol!=='file:'||!['','localhost'].includes(u.hostname)||u.username||u.password||u.port||u.search)return
+  let file:string;try{file=decodeURIComponent(u.pathname)}catch{return}
+  const i=RESULT705_SOURCES.findIndex(row=>file===path.join(sourceRoot,row[0]));if(i<0)return
+  const bytes=fs.readFileSync(path.join(sourceRoot,RESULT705_SOURCES[i][0]));if(createHash('sha256').update(bytes).digest('hex')!==RESULT705_SOURCES[i][1])throw refused()
+  const fragment=u.hash.slice(1),fields=new URLSearchParams(fragment),allowed=new Set(['StartingLineNumber','EndingLineNumber','StartingColumnNumber','EndingColumnNumber','CharacterRangeLoc','CharacterRangeLen'])
+  const keys=[...fields.keys()];if(!keys.length||keys.some(k=>!allowed.has(k))||new Set(keys).size!==keys.length)return
+  const decimal=(key:string,max:number)=>{const raw=fields.get(key);if(raw===null||!/^(?:0|[1-9][0-9]{0,5})$/.test(raw))return null;const n=Number(raw);return n<=max?n:null}
+  const line=decimal('StartingLineNumber',bytes.toString('utf8').split('\n').length);if(line===null)return
+  const col=fields.has('StartingColumnNumber')?decimal('StartingColumnNumber',65535):null;if(fields.has('StartingColumnNumber')&&col===null)return
+  const row={sourceID:(i+1)as 1|2,startingLineRaw:line,startingColumnRaw:col,coordinateBase:'UNKNOWN' as const};coordinates.set(JSON.stringify(row),row)
+ }
+ const walk=(rows:any[],depth:number)=>{
+  if(depth>24||!Array.isArray(rows))throw refused()
+  for(const n of rows){if(++nodes>512||!object(n)||!RESULT705_TYPES.has(n.nodeType)||typeof n.name!=='string'||Buffer.byteLength(n.name)>8192)throw refused()
+   if(n.nodeType==='Failure Message')failures++
+   if(n.nodeType==='Source Code Reference'&&typeof n.nodeIdentifierURL==='string')try{source(n.nodeIdentifierURL)}catch{throw refused()}
+   if(Object.hasOwn(n,'children'))walk(n.children,depth+1)
+   // name/details/descriptions/attachment IDs/URLs are never copied to output.
+  }
+ }
+ walk(value.testRuns,0)
+ const rows=[...coordinates.values()].sort((a,b)=>a.sourceID-b.sourceID||a.startingLineRaw-b.startingLineRaw||(a.startingColumnRaw??-1)-(b.startingColumnRaw??-1))
+ return{schema:1,status:'OBSERVED',reason:'OBSERVED',testCaseID:1,testPresent:true,testResult:value.testResult,failureNodeCount:failures,sourceCoordinates:rows.slice(0,4),coordinatesMore:rows.length>4,activities:'SCHEMA_NOT_ADMITTED',nativePassClaim:false}
+}
+function result705AfterActualClose(scene:OwnedUI705Boundary,sourceRoot:string,emit:(value:Result705Projection)=>void){
+ const CAP=1048576,expires=performance.now()+5000;let sent=false,limited=false,current:ChildProcess|undefined,timer:ReturnType<typeof setTimeout>|undefined
+ const send=(v:Result705Projection)=>{if(sent)return;sent=true;if(timer)clearTimeout(timer);try{if(v.status==='OBSERVED'&&performance.now()>=expires)v=result705Unknown('LIMIT');emit(Buffer.byteLength(JSON.stringify(v),'utf8')<=1024?v:result705Unknown('LIMIT'))}catch{}}
+ let bundleStat:fs.Stats
+ const bundle=path.join(scene.root,'Result.xcresult')
+ const sameBundle=()=>{scene.check();const s=fs.lstatSync(bundle);return s.isDirectory()&&!s.isSymbolicLink()&&s.uid===process.getuid!()&&s.dev===bundleStat.dev&&s.ino===bundleStat.ino&&fs.realpathSync(bundle)===bundle}
+ try{scene.check();bundleStat=fs.lstatSync(bundle);if(!sameBundle()){send(result705Unknown('BUNDLE_UNAVAILABLE'));return}}catch{send(result705Unknown('BUNDLE_UNAVAILABLE'));return}
+ const sourcesCurrent=()=>{for(const [name,digest]of RESULT705_SOURCES){const file=path.join(sourceRoot,name),s=fs.lstatSync(file);if(!s.isFile()||s.isSymbolicLink()||s.size<1||s.size>CAP||createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==digest)throw refused()}}
+ try{sourcesCurrent()}catch{send(result705Unknown('SOURCE_UNAVAILABLE'));return}
+ // Two distinct APIs, lookup then details, share this ONE deadline. No alias retry.
+ timer=setTimeout(()=>{limited=true;try{if(current)current.kill('SIGKILL');else send(result705Unknown('LIMIT'))}catch{}},Math.max(0,expires-performance.now()))
+ const capture=(args:string[],consume:(data:Buffer)=>void)=>{
+  if(sent)return
+  if(limited||performance.now()>=expires){send(result705Unknown('LIMIT'));return}
+  let child:ChildProcess|undefined,spawnError=false,outEOF=false,errEOF=false,outBytes=0,errBytes=0
+  const chunks:Buffer[]=[]
+  try{
+   child=spawn('/usr/bin/xcrun',['xcresulttool','get','test-results',...args],{cwd:scene.root,env:{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',LC_ALL:'C'},stdio:['ignore','pipe','pipe']});current=child
+   child.on('error',()=>{spawnError=true})
+   child.stdout!.on('data',(b:Buffer)=>{try{if(!Buffer.isBuffer(b)){spawnError=true;return};outBytes+=b.length;if(outBytes>CAP){limited=true;chunks.length=0}else if(!limited)chunks.push(Buffer.from(b))}catch{spawnError=true;chunks.length=0}})
+   child.stderr!.on('data',(b:Buffer)=>{try{if(!Buffer.isBuffer(b)){spawnError=true;return};errBytes+=b.length;if(errBytes>CAP)limited=true}catch{spawnError=true}})
+   child.stdout!.on('end',()=>{outEOF=true});child.stderr!.on('end',()=>{errEOF=true})
+   child.stdout!.on('error',()=>{spawnError=true});child.stderr!.on('error',()=>{spawnError=true})
+   // Continuously drain refusal/flood; do not destroy a pipe to manufacture close.
+   child.once('close',(code,signal)=>{
+    if(current===child)current=undefined
+    if(limited||performance.now()>=expires){chunks.length=0;send(result705Unknown('LIMIT'));return}
+    if(spawnError||code!==0||signal!==null||!outEOF||!errEOF||errBytes!==0){chunks.length=0;send(result705Unknown('TOOL_FAILURE'));return}
+    try{if(!sameBundle()){send(result705Unknown('BUNDLE_UNAVAILABLE'));return};sourcesCurrent();const data=Buffer.concat(chunks);chunks.length=0;consume(data)}catch{send(result705Unknown('INVALID_RESULT'))}finally{chunks.length=0}
+   })
+  }catch{
+   if(child){current=child;child.stdout?.resume();child.stderr?.resume();child.once('close',()=>{if(current===child)current=undefined;send(result705Unknown('TOOL_FAILURE'))});try{child.kill('SIGKILL')}catch{}}
+   else send(result705Unknown('TOOL_FAILURE'))
+  }
+ }
+ capture(['tests','--schema-version','0.1.0','--path',bundle,'--compact'],data=>{
+  const identifier=result705Select(data)
+  capture(['test-details','--schema-version','0.1.0','--path',bundle,'--compact','--test-id',identifier],details=>send(result705Project(details,sourceRoot,identifier)))
+ })
+}
+
 type File705=typeof UI705_FILES[number]
 export class OwnedUI705Boundary {
  readonly identity:{dev:number;ino:number;uid:number}
@@ -145,9 +245,12 @@ function copyManifest(source:string,target:string){
 }
 export class OwnedWorkspaceUI705 {
  readonly scene:OwnedUI705Boundary;readonly appExecutable:string
+ private xcodeResultObservationStarted=false
+ private readonly resultSourceRoot:string
  private xcodeCloseObservationRegistered=false
  private observer?:ChildProcess;private xcode?:ChildProcess;private observerClosed=false;private xcodeClosed=false;private observerCode:number|null=null;private xcodeCode:number|null=null;private changed=new Set<()=>void>();private watcher:fs.FSWatcher;private begun=false;private invalid=false
  constructor(native:string,parent:string,readonly deadline:number,readonly signal:AbortSignal){
+  this.resultSourceRoot=path.resolve(native,'../../tests/fixtures/workspace-ui-705')
   if(process.platform!=='darwin'||!Number.isSafeInteger(deadline)||deadline<=Date.now()||deadline>Date.now()+45000)throw refused()
   const nonce=randomBytes(32).toString('hex'),root=path.join(parent,'cmspark-workspace-ui-705-'+nonce);copyManifest(path.join(native,'acceptance/workspace-ui'),root);this.scene=new OwnedUI705Boundary(root,nonce);this.appExecutable=path.join(root,'OwnedPicker705.app/Contents/MacOS/cmspark-desktop');this.scene.write('input.json',{schema:1,nonce,deadline_ms:deadline})
   this.watcher=fs.watch(root,()=>this.notify());this.watcher.on('error',()=>{this.invalid=true;this.notify()})
@@ -173,6 +276,12 @@ export class OwnedWorkspaceUI705 {
   if(this.xcodeCloseObservationRegistered)return;this.xcodeCloseObservationRegistered=true
   let observed=false;const once=()=>{if(observed)return;observed=true;try{observe()}catch{}}
   try{if(this.xcodeClosed)once();else this.xcode?.once('close',once)}catch{}
+ }
+ // This reads only after this exact ChildProcess close; caller never supplies a flag/path.
+ observeClosedXcodeResultOnce(emit:(value:Result705Projection)=>void){
+  if(this.xcodeResultObservationStarted)return;this.xcodeResultObservationStarted=true
+  if(!this.xcodeClosed){try{emit(result705Unknown('NOT_CLOSED'))}catch{};return}
+  try{result705AfterActualClose(this.scene,this.resultSourceRoot,emit)}catch{try{emit(result705Unknown('INVALID_RESULT'))}catch{}}
  }
  canSettle(){if(!this.begun)return true;return !this.invalid&&this.observerCode===0&&this.scene.closure(this.observerClosed,this.xcodeClosed)}
  async complete(){await this.wait(()=>this.canSettle()||this.invalid||(this.xcodeClosed&&this.xcodeCode!==0)||(this.observerClosed&&this.observerCode!==0));if(!this.canSettle()||this.xcodeCode!==0)throw refused()}

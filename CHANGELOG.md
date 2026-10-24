@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 原生桌面验收补充分段回执：区分 Agent 请求、确认、启动尝试与句柄返回，并在实际 Xcode 关闭后读取有限测试结果；保留全部原断言、超时和清理结果，不据此宣称 Windows/macOS 已修复。
 - Test fixture (Windows terminal): explicitly select UTF-8 for the owned PowerShell Console writer before producing the fixed CJK output. This removes a locale-dependent fixture precondition; the original parser, output volume, browser-engine input route, ACK, resize, Stop, ownership and 45-second assertions remain. Native validation is required; this is not a claim that an earlier runner used a particular code page.
 
 - Test diagnostics (terminal acceptance): record the bounded set of readiness operands actually observed by the original renderer short-circuit, plus input-CR and raw-output-marker booleans. Keep the command, parser calls, input actions, deadlines and success/refusal assertions unchanged; missing observations remain unknown.
