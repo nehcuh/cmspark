@@ -293,3 +293,11 @@ test('705 actual native failure observer preserves primary errors and hostile co
   assert.equal(thrown,true);assert.equal(escaped,error);assert.equal(scope.primaryFailed,true);assert.equal(scope.firstFailedAssertion,error===plain?7:0)
  }
 })
+
+
+test('705 failure-only UI stage is closed bounded and never a lifecycle authority',()=>{
+ const f=loadBoundary();assert.equal(f.api.uiRefusal(),null);const value={...f.base,stage:9,detail:1};f.put('ui-refusal.json',value);assert.deepEqual(JSON.parse(JSON.stringify(f.api.uiRefusal())),{stage:9,detail:1});assert.equal(f.api.receiptMask(),0);assert.equal(f.api.closure(true,true),false)
+ for(const bad of[{...value,stage:0},{...value,stage:21},{...value,stage:true},{...value,stage:1.5},{...value,detail:-1},{...value,detail:6},{...value,detail:true},{...value,nonce:'b'.repeat(64)},{...value,extra:'PRIVATE_UI_SENTINEL'}]){f.put('ui-refusal.json',bad);assert.equal(f.api.uiRefusal(),null)}
+ for(let stage=1;stage<=20;stage++)for(let detail=0;detail<=5;detail++){f.put('ui-refusal.json',{...f.base,stage,detail});assert.deepEqual(JSON.parse(JSON.stringify(f.api.uiRefusal())),{stage,detail})}
+ const p=fs.readFileSync(path.join(files,'OwnedUIProtocol.swift'),'utf8'),u=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8');assert.match(p,/uiRefusal="ui-refusal.json"/);assert.match(u,/if preflightStage==0 && \(1\.\.\.20\).contains\(uiStage\),let scene=uiScene \{try\? scene.write\(\.uiRefusal/);assert.ok(u.indexOf('scene.write(.uiRefusal')<u.lastIndexOf('throw error'));assert.equal(u.split('scene.write(.uiRefusal').length,2)
+})
