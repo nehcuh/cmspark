@@ -451,7 +451,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){try{
  auto parent_text=text(boot,L"parent_handle");if(parent_text.empty()||parent_text[0]==L'0'||!std::all_of(parent_text.begin(),parent_text.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}))return 16;size_t used=0;auto number=std::stoull(parent_text,&used,10);if(used!=parent_text.size()||number>(uintptr_t)-1)return 16;HANDLE parent=(HANDLE)(uintptr_t)number;if(!sync_parent(parent))return 16;if(!d480_client_finish(&bootstrap,parent))return 16;
  CloseHandle(input);bootstrap.pipe=nullptr;
  d480_client_close(&bootstrap);
- std::thread([parent](){if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)ExitProcess(1);ExitProcess(17);}).detach();
+ std::thread([parent](){if(WaitForSingleObject(parent,INFINITE)==WAIT_OBJECT_0)TerminateProcess(GetCurrentProcess(),1);ExitProcess(17);}).detach();
  wchar_t binary[32768];DWORD length=GetModuleFileNameW(nullptr,binary,32768);if(!length||length==32768)return 18;std::wstring root(binary,length);auto slash=root.find_last_of(L"\\/");if(slash==std::wstring::npos)return 18;root.resize(slash);
  Desktop app(text(boot,L"capability_id"),text(boot,L"secret"),(INTERNET_PORT)port,root);return app.run(instance);
  }catch(...){return 15;}}

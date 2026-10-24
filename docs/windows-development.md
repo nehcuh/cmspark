@@ -1,5 +1,7 @@
 # Windows 开发与失败定位
 
+Windows 原生宿主的 owner-death 是异常孤儿回收路径：在原 SYNCHRONIZE parent HANDLE 已实际 signaled 后，只终止当前宿主并保留 exit1。未知其它线程状态时，`ExitProcess` 的 DLL detach 可能争用被终止线程持有的锁；该路径使用 `TerminateProcess(GetCurrentProcess(),1)`，避免执行 DLL detach。正常 UI 关闭流程不变。测试仍须等待同一 native HANDLE signaled、核 exit1 和原文件锁/字节，不能把调用终止 API 当作已退出；pending I/O 仍可能影响退出。源码模型不证明历史超时就是 DLL 死锁。接口依据：[ExitProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess)、[TerminateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess)。
+
 同时编译 Node 与 DOM 类型时，Windows Job 的 cwd 使用从 `node:url` 导入的 URL 构造器收窄；不依赖可能由 DOM 声明合并的全局 `URL`。字符串与文件 URL 仍走原路径规范化及所有权检查。
 
 安装器与 ZIP 卸载的进程查询先以固定两名称 WQL `-Filter` 请求 `node.exe` 或 `cmspark-agent.exe`，随后仍执行原完整 Name／ExecutablePath／安装目录和系统 Node 首脚本／模式检查。不得把安装路径拼进 WQL 或以过滤替代所有权检查。NSIS 观察器须匹配真实查询全文，并保留整脚本 BOM／CRLF 字节逆变换。`cim-enter` 在命令调用前，未出现首行不能区分命令解析、查询初始化或 CIM 内部等待；过滤不保证 provider 内部免全扫描，也不证明历史超时根因。原完整 Windows stop／sibling 存活验收及 30 秒上限保留。接口依据：[Get-CimInstance 5.1 的 Filter](https://learn.microsoft.com/en-us/powershell/module/cimcmdlets/get-ciminstance?view=powershell-5.1)。

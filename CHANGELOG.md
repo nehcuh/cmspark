@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Windows desktop: use process self-termination when the exact owner has died, avoiding DLL detach on unknown live-thread state. Keep the original owner handle, exit code and native process-settlement checks. This addresses a documented shutdown risk; the earlier timeout’s physical cause remains unknown.
+
 - Fix (#756): keep settings open and report blocked workspace navigation; report meeting and pack navigation only after the current thread's host accepts it. Invalidate pending navigation on thread selection changes, including A→B→A. Remove unreachable legacy intent branches while preserving the parser and saved-source compatibility.
 - Workspace activity: omit retained source OCR before cloning state responses, preserve isolated metadata and evidence, clarify webpage context and the independent 16 MiB metadata budget, and distinguish the 6 MiB import limit from the 8 MiB decoder limit. Cover atomic quota refusal and cleanup recovery with real store-produced records.
 
