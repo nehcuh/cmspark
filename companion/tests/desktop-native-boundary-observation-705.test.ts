@@ -64,10 +64,17 @@ function actualResultParser705(){
 }
 test('705 actual xcresult consumers reject authentic schema documents as the wrong producer',()=>{
  const parser=actualResultParser705()
- for(const [name,digest]of [['tests.json','18adcaa0c1bb43c466c0e0587816dbbe127c86e69e0f07fcde601ab7398d47da'],['test-details.json','fd41cd2862c44e50e3c70127e5bb3830ec0773d89263d767fa648c1d549db5da']]){
+ for(const [name,profiles]of [
+  ['tests.json',[[4561,'18adcaa0c1bb43c466c0e0587816dbbe127c86e69e0f07fcde601ab7398d47da'],[4720,'a49f9ad543dfb71d83ea8fff2073963fea2af23f709101e7eca8b20626317d3a']]],
+  ['test-details.json',[[7378,'fd41cd2862c44e50e3c70127e5bb3830ec0773d89263d767fa648c1d549db5da'],[7622,'51c37605e9a3dd10b153d0d85f67abbefd84ba2aa1a506975f43ea82585e471f']]],
+ ]as const){
   // Complete public schema capture: official run40040434849/artifact12539400475.
-  // This is deliberately NOT a runtime-positive TestDetails fixture.
-  const bytes=Buffer.from(read('tests/fixtures/workspace-ui-705/xcresult-schema-0.1.0/'+name));assert.equal(createHash('sha256').update(bytes).digest('hex'),digest)
+  // Exact LF and CRLF source checkout fingerprints independently derived from those Git blobs.
+  // Neither record is a runtime-positive TestDetails fixture; original bytes go to the actual parser unchanged.
+  const bytes=Buffer.from(read('tests/fixtures/workspace-ui-705/xcresult-schema-0.1.0/'+name))
+  const admitted=(value:Buffer)=>profiles.some(([length,digest])=>value.length===length&&createHash('sha256').update(value).digest('hex')===digest)
+  assert.equal(admitted(bytes),true,'one exact captured source checkout profile required')
+  const drift=Buffer.from(bytes);drift[drift.length-1]^=1;assert.equal(admitted(drift),false,'same-size source drift remains refused')
   assert.throws(()=>parser.select(bytes));assert.throws(()=>parser.project(bytes,'/unread-source','WorkspacePicker705/testOwnedPanel()'))
   const schema=JSON.parse(bytes.toString('utf8'));assert.deepEqual(plain(parser.types),schema.schemas.TestNodeType.enum)
  }

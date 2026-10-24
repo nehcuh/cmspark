@@ -94,10 +94,10 @@ test('Windows has one intercepted asset path and rejects setup failure before na
  }
 })
 
-function nonceResponse(input:string,nonce:string){
+function nonceResponse(input:string,nonce:string,sourceText=cpp){
  // Lower #705's complete two-marker helper, not #747's different one-marker helper.
  // All source predicates and replacement order remain; this is string semantics only.
- const body=/static bool desktop_style_html\(std::string& data,std::wstring const& nonce\)\{([\s\S]*?)\n\}\nstatic JsonObject parse/.exec(cpp)?.[1];assert.ok(body)
+ const body=/static bool desktop_style_html\(std::string& data,std::wstring const& nonce\)\{([\s\S]*?)\n\}\nstatic JsonObject parse/.exec(sourceText.replace(/\r\n/g,'\n'))?.[1];assert.ok(body)
  const loop='for(auto marker:{"__CMSPARK_STYLE_NONCE_CSP__","__CMSPARK_STYLE_NONCE_META__"})'
  assert.equal(body.split(loop).length,3)
  let js=body.split(loop).join('for(const marker of ["__CMSPARK_STYLE_NONCE_CSP__","__CMSPARK_STYLE_NONCE_META__"])').replace(/auto /g,'const ').replace(/data.find\(/g,'data.indexOf(').replace(/std::string::npos/g,'-1').replace(/std::strlen\(marker\)/g,'marker.length')
@@ -121,6 +121,9 @@ function styleFrom(factory:(doc:unknown)=>unknown,html:string){
 }
 test('actual packaged HTML fails all four pinned style factories until the real nonce helper produces the response',()=>{
  const raw=fs.readFileSync(path.join(companion,'src/desktop/assets/index.html'),'utf8'),factories=styleFactories()
+ // Only source extraction canonicalizes line endings; actual HTML bytes are never rewritten.
+ const expected=nonceResponse(raw,'a'.repeat(64))
+ for(const profile of [cpp.replace(/\r\n/g,'\n'),cpp.replace(/\r?\n/g,'\r\n')]){assert.equal(nonceResponse(raw,'a'.repeat(64),profile),expected);assert.equal(nonceResponse(raw,'',profile),false)}
  for(const marker of ['__CMSPARK_STYLE_NONCE_CSP__','__CMSPARK_STYLE_NONCE_META__'])assert.equal(raw.split(marker).length,2)
  for(const factory of factories)assert.throws(()=>styleFrom(factory,raw),/XTERM_STYLE_NONCE_UNAVAILABLE/)
  // Distinct synthetic navigation nonces enter the actual producer helper. They

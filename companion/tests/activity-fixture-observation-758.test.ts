@@ -120,9 +120,14 @@ test('#758 compiler abort joins actual child close before rejecting to directory
 
 // Read the actual Linux producer; parsing incomplete final JSON must stay a failure.
 test('#758 Linux fixture publishes ready and acknowledgement only after complete JSON close',()=>{
-  const producer=fs.readFileSync(path.resolve('tests/fixtures/activity-linux-758.py'),'utf8')
+  const raw=fs.readFileSync(path.resolve('tests/fixtures/activity-linux-758.py'),'utf8')
+  const verify=(raw:string)=>{
+  const producer=raw.replace(/\r\n/g,'\n') // Source extraction only; never receipt/runtime JSON.
   assert.match(producer,/def record\(name, value\):\n    pending = directory \/ \(name \+ "\.pending"\)\n    with pending\.open\("x", encoding="utf-8"\) as stream:\n        json\.dump\(value, stream\)\n    pending\.rename\(directory \/ name\)/)
   assert.match(producer,/record\("ack\.json", \{"command": command\}\)/)
   assert.match(producer,/root\.after\(500, lambda: record\("ready\.json", \{"pid": os\.getpid\(\)\}\)\)/)
   assert.doesNotMatch(producer,/\(directory \/ "(?:ready|ack)\.json"\)\.write_text/)
+  }
+  for(const profile of [raw.replace(/\r\n/g,'\n'),raw.replace(/\r?\n/g,'\r\n')])verify(profile)
+  assert.throws(()=>verify(raw.replace('pending.rename(directory / name)','pass')),{code:'ERR_ASSERTION'})
 })

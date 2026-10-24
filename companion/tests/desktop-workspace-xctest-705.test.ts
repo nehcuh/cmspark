@@ -181,10 +181,10 @@ test('705 actual receipt callbacks tolerate absent or empty TMPDIR without mutat
 })
 
 // Execute the actual passive producer, not a handwritten diagnostic payload.
-function loadXcode705(io:any=fs,localProcess:any=process){
+function loadXcode705(io:any=fs,localProcess:any=process,localPath:typeof path=path){
  const source=fs.readFileSync(helper,'utf8'),ast=ts.createSourceFile(helper,source,ts.ScriptTarget.Latest,true),owner=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='OwnedWorkspaceUI705') as ts.ClassDeclaration,method=owner?.members.find(n=>ts.isMethodDeclaration(n)&&n.name.getText(ast)==='xcodeFailureObservation')
  assert.ok(method,'the actual owner must retain a bounded Xcode failure observation')
- const selected=ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&['xcode705Parse','xcode705Snapshot'].includes(n.name!.text)||ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(ast)==='xcode705Unavailable')).map(n=>n.getText(ast)).join('\n'),compiled=ts.transpileModule(selected+'\nclass Actual {'+method.getText(ast)+'};globalThis.observe=(value:any)=>Actual.prototype.xcodeFailureObservation.call(value)',{compilerOptions:{target:ts.ScriptTarget.ES2022},reportDiagnostics:true}),scope:any={fs:io,path,process:localProcess,Buffer,TextDecoder,refused:()=>Error('OWNED_REFUSED')}
+ const selected=ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&['xcode705Parse','xcode705Snapshot'].includes(n.name!.text)||ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(ast)==='xcode705Unavailable')).map(n=>n.getText(ast)).join('\n'),compiled=ts.transpileModule(selected+'\nclass Actual {'+method.getText(ast)+'};globalThis.observe=(value:any)=>Actual.prototype.xcodeFailureObservation.call(value)',{compilerOptions:{target:ts.ScriptTarget.ES2022},reportDiagnostics:true}),scope:any={fs:io,path:localPath,process:localProcess,Buffer,TextDecoder,refused:()=>Error('OWNED_REFUSED')}
  assert.equal(compiled.diagnostics!.length,0);vm.runInNewContext(compiled.outputText,scope,{timeout:1000});return scope.observe as(value:any)=>any
 }
 function xcodeModel705(){
@@ -192,7 +192,7 @@ function xcodeModel705(){
  const stat=(name:string)=>{if(name===root)return{uid:7n,mode:0o40700n,isDirectory:()=>true,isSymbolicLink:()=>false};const item=files.get(name);if(!item)throw Object.assign(Error('OWNED_PRIVATE'),{code:'ENOENT'});return{dev:1n,ino:item.ino??9n,uid:7n,mode:0o100600n,nlink:1n,size:BigInt(item.data.length),mtimeNs:4n,ctimeNs:5n,isFile:()=>true,isSymbolicLink:()=>false,...item.stat}}
  for(const name of['xcode.stdout','xcode.stderr'])files.set(root+'/'+name,{data:text})
  const io:any={constants:{O_RDONLY:0,O_NOFOLLOW:16,O_NONBLOCK:32},lstatSync:(name:string)=>stat(name),openSync:(name:string,flags:number)=>{assert.equal(flags,48);stat(name);fds.set(++serial,name);return serial},fstatSync:(fd:number)=>{assert.ok(fds.has(fd));return stat(fds.get(fd)!)},readSync:(fd:number,b:Buffer,off:number,length:number,pos:number)=>{reads++;assert.equal(off,0);assert.equal(length,262145);assert.equal(pos,0);const data=files.get(fds.get(fd)!).data;data.copy(b);return Math.min(data.length,b.length)},closeSync:(fd:number)=>{closes++;assert.ok(fds.delete(fd))}}
- const state={xcodeClosed:true,scene:{root,check(){checks++}}},observe=()=>loadXcode705(io,{getuid:()=>7})(state)
+ const state={xcodeClosed:true,scene:{root,check(){checks++}}},observe=()=>loadXcode705(io,{getuid:()=>7},path.posix)(state)
  return{io,files,fds,root,state,observe,counts:()=>({reads,closes,checks}),stat}
 }
 test('705 actual Xcode failure producer gates closed state before every scene or FS read',()=>{
@@ -453,7 +453,7 @@ test('705 actual post-cancel projection uses strict closed snapshots once and is
   const f=xcodeModel705(),owner:any=f.state,trace:string[]=[],rows:string[]=[],stdoutRows:string[]=[],callbacks:Array<()=>void>=[];let postRegistered=false,notifications=0
   owner.xcodeClosed=variant==='alreadyClosed';owner.xcode={once(event:string,callback:()=>void){assert.equal(event,'close');callbacks.push(callback)}};owner.notify=()=>{notifications++}
   owner.diagnostic=()=>({begun:true});owner.scene.receiptMask=()=>7;owner.scene.uiRefusal=()=>null;owner.scene.uiProgress=()=>({stage:11,detail:0});owner.cancel=()=>{trace.push('cancel')}
-  owner.xcodeFailureObservation=()=>{if(postRegistered&&variant==='snapshotThrow')throw Error('OWNED_PRIVATE');if(postRegistered&&variant==='oversize')return{secret:'x'.repeat(1025)};if(postRegistered&&variant==='oversizeUTF8')return{secret:'é'.repeat(513)};return loadXcode705(f.io,{getuid:()=>7})(owner)}
+  owner.xcodeFailureObservation=()=>{if(postRegistered&&variant==='snapshotThrow')throw Error('OWNED_PRIVATE');if(postRegistered&&variant==='oversize')return{secret:'x'.repeat(1025)};if(postRegistered&&variant==='oversizeUTF8')return{secret:'é'.repeat(513)};return loadXcode705(f.io,{getuid:()=>7},path.posix)(owner)}
   owner.observeXcodeCloseOnce=(observe:()=>void)=>{trace.push('register');postRegistered=true;if(variant==='registrationThrow')throw Error('OWNED_PRIVATE');actual.register(owner,observe)}
   const scope:any={uiOwner:owner,primaryFailed:variant!=='success',surfaceLease:{retain(){}},required:[],receipts:new Set(),picks:1,pickerObserved:1,pickerReturned:0,cancelReturned:0,connections:1,authenticated:true,windowRequested:true,settled:false,childExitCode:null,firstFailedAssertion:0,failed:true,failureSite:9,pickOutcome:1,pickerLifecycle:null,nativeDiagnostic:null,diagnosticInvalid:false,selectedOutcome:null,selectedIdentity:null,cancelClose:null,cancelShow:null,cancelSettled:null,cancelCurrent:null,Buffer,process:{stdout:{write(row:string){assert.equal(typeof row,'string');if(variant==='stdoutThrow')throw Error('OWNED_PRIVATE');stdoutRows.push(row);return true}}},t:{diagnostic(row:string){if(variant==='endedContext'||postRegistered&&variant==='loggerThrow')throw Error('OWNED_PRIVATE');rows.push(row)}}}
   assert.doesNotThrow(()=>vm.runInNewContext(compiled,scope,{timeout:1000}));assert.equal(trace[0],'cancel');assert.equal(trace.filter(v=>v==='cancel').length,1)
@@ -557,4 +557,16 @@ test('705 same owned sheet title or label query preserves one unique hittable ap
  assert.ok(ui.includes('let sheetLabelCount=labelChoose.count'));assert.ok(ui.includes('buttonIdentityRows.append([label,title])'))
  assert.ok(ui.includes('guard r>0,r<=45 else'));assert.ok(ui.includes('cancel=second.buttons.matching(identifier:"Cancel")'))
  assert.equal(createHash('sha256').update(previousTitle705('ui',ui)).digest('hex'),"182d2773a37134d289fec9c80a27107b5359c51d2cab1545bdfd62c3f6a2cee4")
+})
+
+test('705 actual POSIX snapshot model is independent of the host path namespace',()=>{
+ const current=fs.readFileSync(path.resolve('tests/desktop-workspace-xctest-705.test.ts'),'utf8'),ast=ts.createSourceFile('current.ts',current,ts.ScriptTarget.Latest,true)
+ const functions=ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&['loadXcode705','xcodeModel705'].includes(n.name?.text??''));assert.equal(functions.length,2)
+ const code=ts.transpileModule(functions.map(n=>n.getText(ast)).join('\n')+';globalThis.model=xcodeModel705',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
+ for(const hostPath of[path.posix,path.win32]){
+  const scope:any={fs,helper,ts,vm,Buffer,TextDecoder,assert,path:hostPath,process};vm.runInNewContext(code,scope,{timeout:1000})
+  const f=scope.model(),value=f.observe();assert.equal(value.stdout.status,'OBSERVED');assert.equal(value.stdout.firstNSError.code,4);assert.equal(f.fds.size,0)
+  // A Windows join against the POSIX-keyed inert store is the original mismatch.
+  assert.equal(loadXcode705(f.io,{getuid:()=>7},path.win32)(f.state).stdout.status,'MISSING')
+ }
 })

@@ -49,10 +49,15 @@ test('747 every actual form refusal body carries a unique finite reason; sink fa
  r.window.__firstControl.fail(3);r.window.__firstControl.fail(6);assert.equal(legacy,2);assert.equal(r.posted.filter((f:any)=>f.id?.includes('FIRST_')).length,0)
 })
 test('747 actual native caller freezes on original failure, abort, child-close and finally without changing authority',()=>{
- assert.ok(parent.includes('firstFailure.observe(f)\n    if(f.id===\'D476_TERMINAL_FAIL\'){fail();return}'))
- assert.ok(parent.includes("fail=()=>{firstFailure.seal();failed=true;failResolve()}"));assert.ok(parent.includes("abort',()=>{firstFailure.seal();reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))"));assert.ok(parent.includes('code=>{firstFailure.seal();childExited=true;exitResolve(code)}'))
- assert.ok(parent.includes("firstFailure.seal();surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '"));assert.ok(parent.includes('timeout:45000,concurrency:false'))
- assert.ok(parent.includes('assert.equal(await Promise.race([exited,failure.then('));assert.ok(parent.includes('assert.equal(actualSpawns,1)'));assert.ok(parent.includes('assert.equal(receipts.size,required.length)'))
+ const verify=(raw:string)=>{
+  const current=raw.replace(/\r\n/g,'\n') // Source contract only; never runtime bytes, receipts or compiled evidence.
+ assert.ok(current.includes('firstFailure.observe(f)\n    if(f.id===\'D476_TERMINAL_FAIL\'){fail();return}'))
+ assert.ok(current.includes("fail=()=>{firstFailure.seal();failed=true;failResolve()}"));assert.ok(current.includes("abort',()=>{firstFailure.seal();reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))"));assert.ok(current.includes('code=>{firstFailure.seal();childExited=true;exitResolve(code)}'))
+ assert.ok(current.includes("firstFailure.seal();surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '"));assert.ok(current.includes('timeout:45000,concurrency:false'))
+ assert.ok(current.includes('assert.equal(await Promise.race([exited,failure.then('));assert.ok(current.includes('assert.equal(actualSpawns,1)'));assert.ok(current.includes('assert.equal(receipts.size,required.length)'))
+ }
+ for(const profile of [parent.replace(/\r\n/g,'\n'),parent.replace(/\r?\n/g,'\r\n')])verify(profile)
+ assert.throws(()=>verify(parent.replace('fail=()=>{firstFailure.seal();failed=true;failResolve()}','fail=()=>{failed=true;failResolve()}')),{code:'ERR_ASSERTION'})
 })
 test('747 whole actual form one-fault schedules classify each reachable refusal without a new success action',()=>{
  const expose=`window.__case={key,set(v){if('phase'in v)phase=v.phase;if('typing'in v)typing=v.typing;if('pendingTarget'in v)pendingTarget=v.pendingTarget;if('selectPressed'in v)selectPressed=v.selectPressed;if('requested'in v)requested=v.requested;if('ackFrames'in v)ackFrames=v.ackFrames;if('dataFrames'in v)dataFrames=v.dataFrames;if('ownedOperation'in v)ownedOperation=v.ownedOperation}};`
