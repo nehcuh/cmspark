@@ -6,6 +6,8 @@ struct D705TerminalAcceptance {
  static bool current(Desktop&);static void emit(Desktop&,wchar_t const*);static void failure(Desktop&,unsigned=0);
  static wchar_t first_origin;static unsigned first_site;static void note(Desktop*,wchar_t,unsigned) noexcept;
  static void document_ready(Desktop&);static void renderer(Desktop&,JsonObject const&);static void confirmation(Desktop&);
+ static bool form_requested;static HWND form_window;static ComPtr<ICoreWebView2> form_web;
+ static void begin_form(Desktop&);
  static bool key(Desktop&,WORD);static void type_command(Desktop&);static void resize(Desktop&);
  static bool input_active,input_done_emitted;static unsigned input_action,input_pending;static size_t input_cursor;static ComPtr<ICoreWebView2> input_web;
  static std::wstring const& command();static size_t input_length(unsigned);static JsonObject input_payload(unsigned,size_t);
@@ -16,6 +18,9 @@ struct D705TerminalAcceptance {
 Desktop* D705TerminalAcceptance::owner=nullptr;
 std::wstring D705TerminalAcceptance::document;
 unsigned long D705TerminalAcceptance::epoch=0;
+bool D705TerminalAcceptance::form_requested=false;
+HWND D705TerminalAcceptance::form_window=nullptr;
+ComPtr<ICoreWebView2> D705TerminalAcceptance::form_web;
 unsigned D705TerminalAcceptance::key_count=0,D705TerminalAcceptance::confirm_count=0,D705TerminalAcceptance::receipt_mask=0;
 bool D705TerminalAcceptance::typed=false,D705TerminalAcceptance::resized=false,D705TerminalAcceptance::done=false,D705TerminalAcceptance::failed=false;
 bool D705TerminalAcceptance::input_active=false,D705TerminalAcceptance::input_done_emitted=false;
@@ -37,6 +42,14 @@ void D705TerminalAcceptance::emit(Desktop& h,wchar_t const* id){JsonObject frame
 void D705TerminalAcceptance::failure(Desktop& h,unsigned site){if(failed)return;failed=true;input_active=false;input_pending=0;input_web.Reset();note(&h,L'W',site);emit(h,L"D476_TERMINAL_FAIL");}
 void D705TerminalAcceptance::document_ready(Desktop& h){
  if(owner||!h.ready||h.generation.empty()||!h.web){failure(h,1);return;}owner=&h;document=h.generation;epoch=h.epoch;
+ form_window=h.window;form_web=h.web;begin_form(h);
+}
+void D705TerminalAcceptance::begin_form(Desktop& h){
+ // Join only the first owned document and actual native activation. Never acquire focus.
+ if(!owner||owner!=&h||form_requested||failed)return;
+ if(!form_window||!IsWindow(form_window)||GetWindowLongPtrW(form_window,GWLP_USERDATA)!=(LONG_PTR)owner||h.window!=form_window||!h.ready||h.generation!=document||h.epoch!=epoch||!h.web||h.web.Get()!=form_web.Get()||!h.controller){failure(h);return;}
+ if(!IsWindowVisible(form_window)||GetForegroundWindow()!=form_window)return;
+ form_requested=true;
  std::wstring code=L"const documentGeneration="+std::wstring(JsonValue::CreateStringValue(document).Stringify())+L";"+D705_TERMINAL_FORM_SOURCE+L";true";
  auto result=h.web->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT status,LPCWSTR scriptResult)->HRESULT{if(FAILED(status)||!current(h)||!scriptResult||std::wstring(scriptResult)!=L"true")failure(h,2);return S_OK;}).Get());if(FAILED(result))failure(h,3);
 }

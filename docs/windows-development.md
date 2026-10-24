@@ -10,6 +10,8 @@ Windows 继承验收须区分句柄数值槽位与内核对象身份：`GetHandl
 
 适用于 coding agent 和贡献者。先按当前 Issue 的原始 DoD、精确 head/main 和实际失败阶段定位；历史 Windows 红灯不是同一个系统根因。本文是已有调试、隔离与验收纪律的短入口，不新增模型、全仓重测或平台前置门。测试地图见 [TESTING](TESTING.md)，开发约定见 [CONTRIBUTING](../CONTRIBUTING.md)。
 
+Windows 终端原生夹具须将首次表单安装与同一 HWND、GWLP_USERDATA、文档代数、连接 epoch 和 WebView 的实际可见前台状态汇合；收到 `desktop.window` 或 DOM focus 不证明已获系统前台。文档就绪现场检查覆盖先激活的顺序，原窗口 `WM_ACTIVATE` 经默认处理后的检查覆盖后激活；安装请求仅一次。启动后的每次输入和 COM 回调仍按原前台守卫立即拒绝，不排队等待重新获得焦点。系统始终未授予前台时，原 45 秒验收必须失败；源码 CPU 排程不等于历史失败归因或原生通过。接口依据：[WM_ACTIVATE](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-activate)、[SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow)。
+
 ## 系统化调试：先亲证，再改动
 
 1. **复现**：固定 commit/tree、运行命令、cwd、Node/依赖、编译源与产物，找到最小真实 producer/原 callback。先核复现输入有效；无法复现就写 UNKNOWN，不修猜测。

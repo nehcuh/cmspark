@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
+import ts from 'typescript'
+import {createHash} from 'node:crypto'
 const file=path.resolve(__dirname,'../..','tests/fixtures/desktop-476/terminal-acceptance.cpp')
 // Remove only fixed diagnostic call arguments for the unchanged control-flow oracle.
 const source=fs.readFileSync(file,'utf8').replace(/failure\((h|target),[1-9][0-9]?\)/g,'failure($1)')
@@ -127,4 +129,74 @@ test('actual foreign foreground after Cancel still rejects without advancing inp
 })
 test('actual wrong owned-panel relationship rejects before any Cancel effect',()=>{
  const f=confirmationFixture(2);f.realm.GetWindow=()=> 'foreign-owner';f.realm.confirmation(f.h);assert.equal(f.realm.failed,true);assert.equal(f.effects.length,0)
+})
+
+// Execute the actual admission bodies with inert window API returns. This
+// controls schedules; it does not execute Win32, WebView or trusted DOM input.
+function initialForm747(text=fs.readFileSync(file,'utf8')){
+ const h:any={window:'owned-window',web:{},controller:{},ready:true,generation:'owned-document',epoch:7}
+ const effects:string[]=[],r:any={h,owner:null,document:'',epoch:0,failed:false,form_requested:false,form_window:null,form_web:null,GWLP_USERDATA:0,
+  IsWindow:()=>true,IsWindowVisible:()=>true,GetWindowLongPtrW:()=>h,GetForegroundWindow:()=> 'foreign-window',
+  failure:()=>{r.failed=true},install:()=>{effects.push('install');r.reenter?.();r.onInstall?.()}}
+ vm.createContext(r)
+ const convert=(body:string)=>lower(body).replace(/\(LONG_PTR\)owner/g,'owner').replace(/&h\b/g,'h').replace(/nullptr/g,'null').replace(/h\.generation\.empty\(\)/g,'!h.generation.length').replace(/(h\.web|form_web)\.Get\(\)/g,'$1')
+ const script='std::wstring code=',doc=member('document_ready',text),isJoined=text.includes('void D705TerminalAcceptance::begin_form(')
+ const installPrefix=(body:string)=>{assert.equal(body.split(script).length,2);return body.slice(0,body.indexOf(script))+'install();'}
+ if(isJoined)vm.runInContext('begin_form=function(h){'+convert(installPrefix(member('begin_form',text)))+'}',r,{timeout:1000})
+ vm.runInContext('document_ready=function(h){'+convert(isJoined?doc:installPrefix(doc))+'}',r,{timeout:1000})
+ // Keep the complete pre-existing ExecuteScript operation and callback intact.
+ if(isJoined){const now=member('begin_form',text).slice(member('begin_form',text).indexOf(script));assert.ok(now.includes('ExecuteScript(code.c_str()'));assert.ok(now.includes('FAILED(status)||!current(h)||!scriptResult||std::wstring(scriptResult)!=L"true"'));assert.ok(now.includes('if(FAILED(result))failure(h)'))}
+ return{h,r,effects,activate:()=>r.begin_form?.(h)}
+}
+function oldInitialCpp747(raw:string){
+ const p=path.resolve(__dirname,'../..','tests/desktop-terminal-first-failure-747.test.ts'),text=fs.readFileSync(p,'utf8'),f=ts.createSourceFile(p,text,ts.ScriptTarget.Latest,true)
+ const declarations=f.statements.filter((n):n is ts.FunctionDeclaration=>ts.isFunctionDeclaration(n)&&n.name?.text==='activationInverseCpp747');assert.equal(declarations.length,1)
+ const context:any={assert};vm.runInNewContext(ts.transpileModule(declarations[0].getText(f)+'\nglobalThis.inverse=activationInverseCpp747',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context,{timeout:1000})
+ const old=context.inverse(raw.replace(/\r\n/g,'\n'));assert.equal(createHash('sha256').update(old).digest('hex'),'7b04e77bf0bce117dad6bbda6f14acd255d19d6bbfcadc47c9dc471db0a0a098');return old
+}
+function actualInitialRow747(foreground:string,text:string){
+ const native=context({GetForegroundWindow:()=>foreground}),r=native.realm
+ for(const [name,args]of [['input_length','action'],['input_request','h,action'],['key','h,code']])vm.runInContext(name+'=function('+args+'){'+lower(member(name,text))+'}',r,{timeout:1000})
+ const posted:any[]=[],document:any={activeElement:null,addEventListener(){}},row={disabled:false,getAttribute:()=> 'native-terminal-A',focus(){document.activeElement=row}}
+ document.getElementById=(id:string)=>id==='list'?{querySelectorAll:()=>[row]}:{textContent:'waiting'}
+ const window:any={Terminal:class{constructor(){throw Error('INITIAL_FORM_MUST_NOT_OPEN_TERMINAL')}},cmsparkDesktopReceive(){},chrome:{webview:{postMessage(frame:any){posted.push(JSON.parse(JSON.stringify(frame)))}}}}
+ const form=fs.readFileSync(path.resolve(__dirname,'../..','tests/fixtures/desktop-476/terminal-form.js'),'utf8')
+ vm.runInNewContext('const documentGeneration="owned-activation-document";'+form,{window,document,TextDecoder,TextEncoder,Uint8Array},{timeout:1000})
+ window.cmsparkDesktopReceive({type:'thread.list'});assert.equal(document.activeElement,row)
+ assert.deepEqual(posted,[{type:'system.ping',id:'D476_TERMINAL_ROW_KEY',generation:'owned-activation-document'}])
+ return{...native,accepted:r.key(native.h,13)}
+}
+test('actual initial form joins document and owned activation once; old source installs before foreground',()=>{
+ const raw=fs.readFileSync(file,'utf8'),oldSource=oldInitialCpp747(raw)
+ for(let round=0;round<3;round++){
+ const old=initialForm747(oldSource);old.r.onInstall=()=>{const input=actualInitialRow747('foreign-window',oldSource);assert.equal(input.accepted,false);assert.equal(input.realm.failed,true);assert.equal(input.calls.filter(x=>x[0]==='step').length,0)};old.r.document_ready(old.h);assert.deepEqual(old.effects,['install'],'real old document body starts form/key before foreground')
+ for(const eol of [raw.replace(/\r\n/g,'\n'),raw.replace(/\r?\n/g,'\r\n')]){
+  const first=initialForm747(eol);first.r.document_ready(first.h);assert.deepEqual(first.effects,[]);first.activate();assert.deepEqual(first.effects,[])
+  first.r.GetForegroundWindow=()=>first.h.window;first.r.reenter=first.activate;first.r.onInstall=()=>{const input=actualInitialRow747(first.h.window,eol);assert.equal(input.accepted,true);assert.equal(input.realm.failed,false);assert.equal(input.calls.filter(x=>x[0]==='step').length,1)};first.activate();first.activate();assert.deepEqual(first.effects,['install'],'latch precedes reentrant script work')
+  const already=initialForm747(eol);already.r.GetForegroundWindow=()=>already.h.window;already.activate();assert.deepEqual(already.effects,[]);already.r.document_ready(already.h);already.activate();assert.deepEqual(already.effects,['install'])
+  // Initial waiting must not absorb later foreground loss: use original bodies.
+  const input=context({GetForegroundWindow:()=> 'foreign-window'});assert.equal(input.realm.input_request(input.h,1),false);assert.equal(input.realm.failed,true);assert.equal(input.calls.length,1);assert.equal(input.calls.filter(x=>x[0]==='step').length,0)
+  for(const fault of ['dead','userdata','window','ready','document','epoch','web','controller','hidden','foreground','foreign-owner','failed']){
+   const f=initialForm747(eol);f.r.document_ready(f.h);f.r.GetForegroundWindow=()=>f.h.window
+   if(fault==='dead')f.r.IsWindow=()=>false;else if(fault==='userdata')f.r.GetWindowLongPtrW=()=>({});else if(fault==='window')f.h.window='replacement';else if(fault==='ready')f.h.ready=false;else if(fault==='document')f.h.generation='replacement';else if(fault==='epoch')f.h.epoch++;else if(fault==='web')f.h.web={};else if(fault==='controller')f.h.controller=null;else if(fault==='hidden')f.r.IsWindowVisible=()=>false;else if(fault==='foreground')f.r.GetForegroundWindow=()=> 'foreign';else if(fault==='foreign-owner')f.r.owner={};else f.r.failed=true
+   f.activate();assert.deepEqual(f.effects,[],fault)
+  }
+  const duplicate=initialForm747(eol);duplicate.r.document_ready(duplicate.h);duplicate.r.document_ready(duplicate.h);duplicate.r.GetForegroundWindow=()=>duplicate.h.window;duplicate.activate();assert.equal(duplicate.r.failed,true);assert.deepEqual(duplicate.effects,[])
+ }
+ }
+ // The exact injected OS branch runs default processing before re-evaluation;
+ // inactive/foreign messages cannot manufacture an owned activation.
+ const root=path.resolve(__dirname,'../..'),builder=require(path.join(root,'scripts/desktop-terminal-fixture.mjs')),read=(p:string)=>fs.readFileSync(path.join(root,p),'utf8')
+ const variant=builder.desktopTerminalFixture('cpp',read('src/desktop/native/DesktopHost.cpp'),raw,read('tests/fixtures/desktop-476/terminal-form.js'))
+ const marker='if(message==WM_ACTIVATE)',at=variant.source.indexOf(marker);assert.ok(at>=0);assert.equal(variant.source.split(marker).length,2)
+ const body=block(variant.source,at).replace('const auto result=','const result=').replace('D705TerminalAcceptance::begin_form(*self)','begin_form(self)')
+ for(const active of [false,true]){const order:string[]=[],c:any={hwnd:'owned',message:6,w:active?1:0,l:0,self:{},LOWORD:(n:number)=>n,WA_INACTIVE:0,DefWindowProcW:()=>{order.push('default');return 19},begin_form:()=>order.push('begin')};assert.equal(vm.runInNewContext('(function(){'+body+'})()',c,{timeout:1000}),19);assert.deepEqual(order,active?['default','begin']:['default'])}
+})
+test('actual original terminal builder callback executes fully without loading its product imports',()=>{
+ const root=path.resolve(__dirname,'../..'),p=path.join(root,'tests/desktop-terminal-native-fixture-705.test.ts'),text=fs.readFileSync(p,'utf8'),f=ts.createSourceFile(p,text,ts.ScriptTarget.Latest,true)
+ const title='both terminal acceptance native variants invert every product byte, preserve guards and fail closed on anchor drift'
+ const leaves=f.statements.filter((n):n is ts.ExpressionStatement=>ts.isExpressionStatement(n)&&ts.isCallExpression(n.expression)&&n.expression.expression.getText(f)==='test'&&ts.isStringLiteral(n.expression.arguments[0])&&n.expression.arguments[0].text===title);assert.equal(leaves.length,1)
+ const call=leaves[0].expression as ts.CallExpression,callback=call.arguments[1];assert.ok(ts.isArrowFunction(callback)&&ts.isBlock(callback.body))
+ const target=path.join(root,'scripts/desktop-terminal-fixture.mjs'),builder=require(target),context:any={assert,path,root,source:(p:string)=>fs.readFileSync(path.join(root,p),'utf8'),require:(p:string)=>{assert.equal(p,target);return builder}}
+ vm.runInNewContext('('+callback.getText(f)+')()',context,{timeout:1000})
 })
