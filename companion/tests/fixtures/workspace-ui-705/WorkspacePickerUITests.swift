@@ -57,7 +57,10 @@ final class WorkspacePicker705:XCTestCase {
   }
   uiStage=2;uiDetail=0;observeUIStage();try ready(.first,1);let first=try sheet(3)
   uiStage=6;uiDetail=0;observeUIStage();_ = try remaining();first.typeKey("g",modifierFlags:[.command,.shift])
-  uiStage=7;uiDetail=0;observeUIStage();let comboCount=first.comboBoxes.count;uiDetail=min(comboCount,2)+1;observeUIStage();let inputs=comboCount==1 ? first.comboBoxes:first.textFields
+  uiStage=7;uiDetail=0;observeUIStage()
+  let inputCandidates=first.descendants(matching:.any).matching(NSPredicate(format:"elementType IN %@",[XCUIElement.ElementType.comboBox.rawValue,XCUIElement.ElementType.textField.rawValue]))
+  guard inputCandidates.firstMatch.waitForExistence(timeout:try remaining()) else{throw OwnedUI705Error.refused}
+  let comboCount=first.comboBoxes.count;uiDetail=min(comboCount,2)+1;observeUIStage();let inputs=comboCount==1 ? first.comboBoxes:first.textFields
   uiStage=8;uiDetail=0;observeUIStage();let inputCount=inputs.count;uiDetail=min(inputCount,2)+1;observeUIStage();guard inputCount==1 else{throw OwnedUI705Error.refused}
   uiStage=9;uiDetail=0;observeUIStage();let inputHittable=inputs.element.isHittable;uiDetail=inputHittable ? 2:1;observeUIStage();guard inputHittable else{throw OwnedUI705Error.refused}
   uiStage=10;uiDetail=0;observeUIStage();_ = try remaining();inputs.element.click();_ = try remaining();inputs.element.typeText(scene.selection.path);_ = try remaining();inputs.element.typeKey("\r",modifierFlags:[])

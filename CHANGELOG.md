@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- macOS workspace acceptance: wait for an input candidate in the same owned picker after the Go to Folder shortcut, within the original shared deadline. Keep the original control-type selection, unique input, hittability, real path entry, selection, cancellation and cleanup checks.
+
 - Windows terminal acceptance: join the first owned document with actual visible foreground readiness before installing the test form. Keep the original per-input, callback, confirmation, output, cleanup and 45-second guards; no focus request or retry is added.
 
 - CI acceptance: check the fixed CFT runtime version and supplier close/EOF facts on the single actual ACP history business browser, replacing the separate startup witness. Keep all business assertions and existing deadlines. Preserve bounded terminal failure metadata in public census accounting and snapshot it on abort; raw output remains private and an observed failure remains a failure.
