@@ -139,6 +139,14 @@ export async function runPinnedPipeline(io){
   catch{code=1}finally{try{await bundle?.dispose()}catch{code=1}}
   return code
 }
+// Current CI path: one admitted supply and one full real business, never a fake witness success.
+// runPinnedPipeline above remains the older utility contract for inert controls only.
+export async function runPinnedBusiness(io){
+  let bundle,code=1
+  try{bundle=await io.supply();code=await io.business(bundle);if(code!==0)code=1}
+  catch{code=1}finally{try{await bundle?.dispose()}catch{code=1}}
+  return code
+}
 const limit=(p,ms)=>{if(!Number.isFinite(ms)||ms<=0)refuse();let timer;return Promise.race([p,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('PINNED_SUPPLIER_REFUSED')),ms)})]).finally(()=>clearTimeout(timer))}
 // A display number is a readiness frame, not proof its owning process is alive.
 // Only finite observations leave this boundary; pipe/error bodies stay private.
@@ -188,9 +196,13 @@ export function observeSupplierChild(child){
   for(const [key,done] of [['stdout',stdout],['stderr',stderr]]){const stream=child[key];if(!stream)refuse();stream.on('error',()=>{state.error=true});stream.on('data',()=>{});stream.once('end',()=>{state[key+'EOF']=true;done()});stream.resume()}
   return state
 }
+export async function awaitSupplierChildClosed(state,remaining){
+  await limit(Promise.all([state.close,state.stdoutEnd,state.stderrEnd]),remaining())
+  if(state.error||!state.closed||!state.stdoutEOF||!state.stderrEOF)refuse()
+}
 export async function closeSupplierChild(state,remaining){
   const c=state.child;if(!state.closed&&c.exitCode===null&&c.signalCode===null&&c.kill('SIGTERM')===false&&c.exitCode===null&&c.signalCode===null)refuse()
-  await limit(Promise.all([state.close,state.stdoutEnd,state.stderrEnd]),remaining());if(!state.closed||!state.stdoutEOF||!state.stderrEOF)refuse()
+  await awaitSupplierChildClosed(state,remaining)
 }
 // Same source-driven port grammar as the original business, supplied explicitly
 // by its private caller. No daemon, pairing, grant or authentication is accepted.

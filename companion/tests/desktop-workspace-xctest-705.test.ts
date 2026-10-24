@@ -304,9 +304,19 @@ test('705 failure-only UI stage is closed bounded and never a lifecycle authorit
 
 
 // Exact source-only inverse of the macOS title compatibility change. Never applies to receipts or compiled evidence.
+// Undo only the separately reviewed census observation extraction before the
+// existing whole-parent authorities. Every old digest remains unchanged.
+function censusTerminalInverseParent747(raw:string){
+ const pairs:[string,string][]=[["  let terminalPhaseEmitted=false,terminalPhaseEmitting=false\n  const emitTerminalPhase=(moment='FINALLY')=>{\n   if(terminalPhaseEmitted||terminalPhaseEmitting)return\n   terminalPhaseEmitting=true\n   try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,moment,firstFailure:firstFailure.snapshot(),readiness:readiness.snapshot(),inputEnterObserved,rawOutputMarkerSeen,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),actualSpawns,openAttempts,confirmationRequests,decisions,deniedResults,outputBytes,largestFrame,outputFrames:outputSeq.size,acks:ackSeq.size,dimensions:dimensions.size,inputUnicode,outputUnicode,stops,actualProcessExit,authenticated,windowRequested,connections,childExited}));terminalPhaseEmitted=true}catch{}finally{terminalPhaseEmitting=false}\n  }\n",""],["t.signal.addEventListener('abort',()=>{firstFailure.seal();emitTerminalPhase('ABORT');reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))},{once:true})","t.signal.addEventListener('abort',()=>{firstFailure.seal();reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))},{once:true})"],["firstFailure.seal();surfaceLease.retain();emitTerminalPhase('FINALLY')","firstFailure.seal();surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,firstFailure:firstFailure.snapshot(),readiness:readiness.snapshot(),inputEnterObserved,rawOutputMarkerSeen,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),actualSpawns,openAttempts,confirmationRequests,decisions,deniedResults,outputBytes,largestFrame,outputFrames:outputSeq.size,acks:ackSeq.size,dimensions:dimensions.size,inputUnicode,outputUnicode,stops,actualProcessExit,authenticated,windowRequested,connections,childExited}))}catch{}"]]
+ let value=raw
+ for(const [current,prior]of pairs){assert.equal(value.split(current).length,2,'one exact census terminal observation hunk');value=value.replace(current,prior)}
+ assert.equal(createHash('sha256').update(value).digest('hex'),'bdba454b129cdc8364cb937a1445f57661a374b54ef1ff6904398d08cbde61e3','entire f522 native parent conserved');return value
+}
+
 function previousTitle705(kind:'ui'|'protocol'|'helper'|'native',raw:string){
  const pairs={"ui":[["    let title=OwnedUI705ButtonIdentity(button.title).rawValue\n    buttonIdentityRows.append([label,title])","    let identifier=OwnedUI705ButtonIdentity(button.identifier).rawValue\n    buttonIdentityRows.append([label,identifier])"],["   let sheetLabelCount=labelChoose.count","   let sheetLabelCount=choose.count"],["  let choose=first.buttons.matching(NSPredicate(format:\"label IN %@ OR title IN %@\",[\"Choose\",\"Open\"],[\"Choose\",\"Open\"]))\n  let labelChoose=first.buttons.matching(NSPredicate(format:\"label IN %@\",[\"Choose\",\"Open\"]))","  let choose=first.buttons.matching(NSPredicate(format:\"label IN %@\",[\"Choose\",\"Open\"]))"]],"helper":[["1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68","182d2773a37134d289fec9c80a27107b5359c51d2cab1545bdfd62c3f6a2cee4"]]} as const
  let source=raw.replace(/\r\n/g,'\n')
+ if(kind==='native')source=censusTerminalInverseParent747(source)
  if(kind==='ui'||kind==='helper')for(const [current,prior]of pairs[kind]){assert.equal(source.split(current).length,2,'one exact title compatibility hunk');source=source.replace(current,prior)}
  return source
 }

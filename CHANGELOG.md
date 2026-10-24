@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- CI acceptance: check the fixed CFT runtime version and supplier close/EOF facts on the single actual ACP history business browser, replacing the separate startup witness. Keep all business assertions and existing deadlines. Preserve bounded terminal failure metadata in public census accounting and snapshot it on abort; raw output remains private and an observed failure remains a failure.
+
 - Desktop acceptance source contracts: update the local-state consumer to retain the handled-reply guard and exercise its real refusal cases under LF and CRLF. Preserve the raw Swift source seals with exact LF checkout attributes. Bound macOS picker-button identity diagnostics to fixed enum values; keep the original UI actions, assertions, deadlines and cleanup authority.
 
 - Desktop local acceptance: advance only on a state reply actually consumed by the current view, and forward that handled result through the app adapter. This prevents an untracked retirement reply from triggering the next action; original refusal and completion checks remain.

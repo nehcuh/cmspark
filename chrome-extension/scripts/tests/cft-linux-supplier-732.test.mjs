@@ -1,4 +1,5 @@
 import test from 'node:test'
+import * as supplier from '../cft-linux-supplier-732.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -6,14 +7,14 @@ import os from 'node:os'
 import vm from 'node:vm'
 import { EventEmitter } from 'node:events'
 import { PIN,SOURCE_PIN_SHA256,validateFixedLayout,createOwnedLedger,downloadFixedArchive,supplierReceipt,runPinnedPipeline,observeSupplierChild,observeDisplayReady,displayReadyProjection,runSupplierWitness } from '../cft-linux-supplier-732.mjs'
-import {devToolsPortSnapshot,childEnvironment,chromeArgs} from '../accept-acp-history-hosted-732.mjs'
+import {devToolsPortSnapshot,childEnvironment,chromeArgs,limit} from '../accept-acp-history-hosted-732.mjs'
 const source=new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)
-test('actual direct entry must supply and witness before the business gate',async()=>{
+test('actual direct entry reaches the current single-business admission',async()=>{
   const text=fs.readFileSync(source,'utf8'),line=text.split('\n').find(x=>x.startsWith('if(directEntry)process.exitCode=await ')),calls=[]
   assert.ok(line)
-  const ctx={directEntry:true,process:{},main:async()=>{calls.push('business');return 0},pinnedEntry:async()=>{calls.push('supply','witness','business');return 0}}
+  const ctx={directEntry:true,process:{},main:async()=>{calls.push('business');return 0},pinnedEntry:async()=>{calls.push('supply','business');return 0}}
   await vm.runInNewContext('(async()=>{'+line+'})()',ctx)
-  assert.deepEqual(calls,['supply','witness','business'])
+  assert.deepEqual(calls,['supply','business'])
 })
 test('fixed source declares exactly the admitted archive and member/layout bounds',()=>{
   assert.equal(PIN.members.length,309);assert.equal(PIN.totalMemberBytes,417963103);assert.equal(PIN.archiveBytes,199014491)
@@ -69,15 +70,34 @@ test('display diagnostics project only fixed scalars without executing getters o
   assert.equal(receipt.passed,false);assert.equal(receipt.display.state,'READY');assert.ok(Buffer.byteLength(JSON.stringify(receipt))<1024)
 })
 test('actual private supplier display producer uses the shared readiness lifecycle',async()=>{
-  const text=fs.readFileSync(source,'utf8'),start=text.indexOf("      display(){const state=retainedChild('/usr/bin/Xvfb'"),end=text.indexOf('\n      browser:',start)
-  assert.ok(start>0&&end>start)
-  const c=displayChild(),state={child:c};let spawns=0
-  const io=vm.runInNewContext('({'+text.slice(start,end)+'})',{observeDisplayReady,env:{},retainedChild(exe,args,env,stdio){
-    spawns++;assert.equal(exe,'/usr/bin/Xvfb');assert.deepEqual(Array.from(args),['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp']);assert.deepEqual(Array.from(stdio),['ignore','pipe','pipe','pipe']);return state
-  }})
-  const actual=io.display(),rejected=assert.rejects(actual.ready,{message:'DISPLAY_REFUSED'})
-  c.stdio[3].emit('end');await rejected;assert.equal(actual.state,state);assert.equal(actual.isLive(),false);assert.equal(spawns,1)
+  // The independent producer was retired. Consume the real main factory and its
+  // display -> liveness -> pinned binary startup segment, not a deleted marker.
+  const text=fs.readFileSync(source,'utf8'),factoryStart=text.indexOf('  const child='),factoryEnd=text.indexOf('\n  const connect=',factoryStart),start=text.indexOf("    stage='BROWSER';"),end=text.indexOf('    const parts=await poll',start)
+  assert.ok(factoryStart>0&&factoryEnd>factoryStart&&start>factoryEnd&&end>start)
+  const factory=text.slice(factoryStart,factoryEnd),segment=text.slice(start,end)
+  function actual(mode){
+    const display=displayChild(),chrome=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null})
+    for(const c of [display,chrome])for(const key of ['stdout','stderr']){c[key]=new EventEmitter();c[key].resume=()=>{}}
+    const order=[],states=new Map(),env={},remaining=()=>100;let observed
+    const context={path,env,remaining,owned:'/owned',extension:'/owned/extension',input:{},stage:'PREFLIGHT',browserPhase:null,xvfb:undefined,chromium:undefined,display:undefined,children:new Set(),supplierStates:states,observeSupplierChild,awaitSupplierChildClosed:supplier.awaitSupplierChildClosed,observeDisplayReady(child){observed=observeDisplayReady(child);return observed},limit,chromeArgs,childEnvironment,
+      fail(){throw Error('OWNED_ACCEPTANCE_REFUSED')},activeSupplier:{binary:'/owned/fixed/chrome',check(value){assert.equal(value,remaining);order.push('pin');if(mode==='pin')throw Error('INERT_PIN_REFUSED')}},
+      spawn(exe,args,options){
+        if(exe==='/usr/bin/Xvfb'){order.push('display');assert.deepEqual(Array.from(args),['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp']);assert.equal(options.env,env);assert.deepEqual(Array.from(options.stdio),['ignore','pipe','pipe','pipe']);return display}
+        order.push('browser');assert.equal(exe,'/owned/fixed/chrome');assert.deepEqual(Array.from(args),chromeArgs('/owned','/owned/extension'));assert.equal(options.env.HOME,undefined);assert.equal(options.env.DISPLAY,':23');assert.deepEqual(Array.from(options.stdio),['ignore','pipe','pipe']);return chrome
+      }}
+    const pending=vm.runInNewContext(`(async()=>{${factory}\n${segment};return {xvfb,chromium,screen,browserPhase}})()`,context)
+    return {display,chrome,order,states,pending,observed:()=>observed}
+  }
+  const ended=actual('end'),rejected=assert.rejects(ended.pending,{message:'DISPLAY_REFUSED'})
+  ended.display.stdio[3].emit('end');await rejected;assert.equal(ended.observed().isLive(),false);assert.equal(ended.states.get(ended.display).child,ended.display);assert.deepEqual(ended.order,['display'])
+  const dead=actual('dead'),notLive=assert.rejects(dead.pending,{message:'OWNED_ACCEPTANCE_REFUSED'})
+  dead.display.exitCode=0;dead.display.emit('exit',0,null);dead.display.stdio[3].emit('data',Buffer.from('23\n'));await notLive;assert.equal(dead.observed().isLive(),false);assert.deepEqual(dead.order,['display'])
+  const pin=actual('pin'),pinRejected=assert.rejects(pin.pending,{message:'INERT_PIN_REFUSED'})
+  pin.display.stdio[3].emit('data',Buffer.from('23\n'));await pinRejected;assert.deepEqual(pin.order,['display','pin'])
+  const ready=actual('ready');for(const b of ['2','3','\n'])ready.display.stdio[3].emit('data',Buffer.from(b))
+  const result=await ready.pending;assert.equal(result.xvfb,ready.display);assert.equal(result.chromium,ready.chrome);assert.equal(result.screen,':23');assert.equal(ready.observed().isLive(),true);assert.deepEqual(ready.order,['display','pin','browser']);assert.equal(ready.states.size,2)
 })
+
 function flow(overrides={}){const calls=[],bundle={check(){calls.push('check')},dispose(){calls.push('dispose')}},io={supply:async()=>{calls.push('supply');return bundle},witness:async b=>{assert.equal(b,bundle);calls.push('witness');return true},business:async b=>{assert.equal(b,bundle);calls.push('business');return 0},...overrides};return {calls,bundle,io}}
 test('actual pipeline orders one supply/witness/business and disposes exactly once',async()=>{const s=flow();assert.equal(await runPinnedPipeline(s.io),0);assert.deepEqual(s.calls,['supply','witness','business','dispose'])})
 for(const point of ['supply','witness','business'])test('failed '+point+' refuses downstream and preserves cleanup',async()=>{const s=flow();s.io[point]=async()=>{s.calls.push(point);throw Error('PRIVATE')};assert.equal(await runPinnedPipeline(s.io),1);assert.equal(s.calls.filter(x=>x===point).length,1);if(point!=='business')assert.equal(s.calls.includes('business'),false);assert.equal(s.calls.includes('dispose'),point!=='supply')})
@@ -115,7 +135,7 @@ test('actual business finally retains an unknown child bundle before a throwing 
   assert.ok(begin>start&&end>begin);const body=text.slice(begin+'\n  finally {'.length,end).replace(/\n  }$/,'')
   let retained=0,removed=0
   const supplier={retain(){retained++},check(){throw Error('PIN_REFUSED')},dispose(){if(retained)throw Error('RETAINED');removed++}}
-  const context={activeSupplier:supplier,browserPhase:null,chromium:undefined,xvfb:undefined,browserStartup:undefined,observeBrowserStartup:()=>({}),observers:new Set(),clients:new Set(),children:new Set([{}]),closeOwnedChild:async()=>{throw Error('UNKNOWN_CLOSE')},limit:async p=>p,remaining:()=>100,deadline:Date.now()+1000,abort:{signal:{aborted:false}},clearTimeout,timer:undefined,Date,secret:'PUBLIC',owned:undefined,checks:{},stage:'COMPLETE'}
+  const context={versionObserved:false,display:undefined,displayProof:undefined,supplierProof:undefined,supplierStates:new Map(),joinSupplierChild:async()=>{throw Error('UNKNOWN_EOF')},activeSupplier:supplier,browserPhase:null,chromium:undefined,xvfb:undefined,browserStartup:undefined,observeBrowserStartup:()=>({}),observers:new Set(),clients:new Set(),children:new Set([{}]),closeOwnedChild:async()=>{throw Error('UNKNOWN_CLOSE')},limit:async p=>p,remaining:()=>100,deadline:Date.now()+1000,abort:{signal:{aborted:false}},clearTimeout,timer:undefined,Date,secret:'PUBLIC',owned:undefined,checks:{},stage:'COMPLETE'}
   const result=await vm.runInNewContext('(async()=>{'+body+';return {checks,stage}})()',context)
   assert.equal(result.checks.cleanup,false);assert.equal(result.stage,'CLEANUP');assert.equal(retained,1);assert.throws(()=>supplier.dispose());assert.equal(removed,0)
 })
@@ -159,4 +179,29 @@ test('the existing canonical build guard command registers old and fixed-supplie
   assert.equal(workflow.split('\n').filter(line=>line===command).length,1)
   assert.equal(workflow.split('\n').filter(line=>line==='        run: node chrome-extension/scripts/accept-acp-history-hosted-732.mjs').length,1)
   assert.equal(workflow.includes('run: node chrome-extension/scripts/diagnose-acp-history-supplier-ab-732.mjs'),false)
+})
+
+test('actual current pipeline supplies once, runs the sole full business and closes the bundle',async()=>{
+  assert.equal(typeof supplier.runPinnedBusiness,'function')
+  const calls=[],bundle={dispose(){calls.push('dispose')}},io={supply:async()=>{calls.push('supply');return bundle},business:async b=>{assert.equal(b,bundle);calls.push('business');return 0}}
+  assert.equal(await supplier.runPinnedBusiness(io),0);assert.deepEqual(calls,['supply','business','dispose'])
+})
+for(const mode of ['supply','business','business-code','dispose'])test('single business pipeline cannot turn '+mode+' refusal into success',async()=>{
+  assert.equal(typeof supplier.runPinnedBusiness,'function')
+  const calls=[],bundle={dispose(){calls.push('dispose');if(mode==='dispose')throw Error('PRIVATE')}},io={supply:async()=>{calls.push('supply');if(mode==='supply')throw Error('PRIVATE');return bundle},business:async()=>{calls.push('business');if(mode==='business')throw Error('PRIVATE');return mode==='business-code'?1:0}}
+  assert.equal(await supplier.runPinnedBusiness(io),1);assert.equal(calls.includes('business'),mode!=='supply');assert.equal(calls.includes('dispose'),mode!=='supply')
+})
+test('actual production entry contains no independent witness call or fabricated witness receipt',()=>{
+  const text=fs.readFileSync(source,'utf8'),entry=text.slice(text.indexOf('async function pinnedEntry()'))
+  assert.ok(entry.includes('runPinnedBusiness({supply:()=>supplyFixedCft(temp),business:async bundle=>'))
+  assert.equal(entry.includes('independentSupplierWitness'),false);assert.equal(entry.includes('runSupplierWitness'),false);assert.equal(entry.includes('witness:'),false)
+  assert.equal(entry.includes("supplierReceipt('COMPLETE')"),false);assert.equal(text.includes('async function independentSupplierWitness('),false)
+})
+
+test('actual private pinned entry uses supply then one business with no diagnostic launch',async()=>{
+  assert.equal(typeof supplier.runPinnedBusiness,'function')
+  const text=fs.readFileSync(source,'utf8'),begin=text.indexOf('async function pinnedEntry() {');assert.ok(begin>0)
+  const calls=[],receipts=[],sha='1'.repeat(40),bundle={dispose(){calls.push('dispose')}},context={ROOT:'/owned/repo',activeSupplier:undefined,path,process:{env:{GITHUB_SHA:sha},platform:'linux',arch:'x64',versions:{node:'22.23.4'}},preflight:()=>'/owned',manifestPaths:()=>({worker:'worker.js',page:'panel.html'}),fs:{readFileSync:file=>file.endsWith('acceptance-build-sha.txt')?sha+'\n':'{}',readdirSync:()=>[]},supplyFixedCft:async()=>{calls.push('supply');return bundle},runPinnedBusiness:supplier.runPinnedBusiness,supplierReceipt:()=>({passed:false}),console:{log(value){receipts.push(value)}},main:async()=>{assert.equal(context.activeSupplier,bundle);calls.push('business');return 0},independentSupplierWitness(){throw Error('RETIRED_WITNESS_MUST_NOT_RUN')}}
+  const entry=vm.runInNewContext('('+text.slice(begin).trim()+')',context)
+  assert.equal(await entry(),0);assert.deepEqual(calls,['supply','business','dispose']);assert.equal(context.activeSupplier,undefined);assert.deepEqual(receipts,[])
 })

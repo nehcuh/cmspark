@@ -35,13 +35,13 @@ PR735 的真实 hosted Linux 场景已完成正常 daemon 重启、既有页面�
 
 Xvfb 显示号就绪由供应正证与历史业务共享同一个消费者：保留最多 8 字节、1–5 位十进制数字加 LF 的帧与原 5 秒就绪期限；帧前的 fd3 EOF/关闭/错误、子进程错误/真实关闭立即拒绝。`exit` 可能先于末尾管道数据，故不据此丢弃尚在传输的帧；但帧就绪后仍须核原子进程存活，才可启动 Chrome。帧后的正常 fd3 EOF 不使仍存活的显示服务器失败。原 120 秒、浏览器启动参数、完整历史断言及 owned close/EOF 清理不变。
 
-供应有限回执增加 `display`：固定 `state`、饱和到 9 的字节计数、EOF/close 布尔、有限退出码与信号类别，均在清理前快照；不输出管道、stderr、错误正文或路径，也不参与原通过谓词。`PENDING` 只表示未观察到帧或已知终态，不证明具体底层原因。run `39800748286` 的旧 `XVFB/childCount:1/cleanup:true` 缺少这些观察，实际物理原因仍为 UNKNOWN；不能把源码生命周期反例当作该次 runner 的实测根因。
+历史供应有限回执增加 `display`：固定 `state`、饱和到 9 的字节计数、EOF/close 布尔、有限退出码与信号类别，均在清理前快照；不输出管道、stderr、错误正文或路径，当时不参与原通过谓词。当前单业务候选的 schema2 将真实精确版本、清理前 READY／存活快照及两个 supplier 子进程的 close／双 EOF／无错误事实共同作为成功条件；缺失或未知仍拒绝，零子进程不得成为 allClosed 正证。`PENDING` 只表示未观察到帧或已知终态，不证明具体底层原因。run `39800748286` 的旧 `XVFB/childCount:1/cleanup:true` 缺少这些观察，实际物理原因仍为 UNKNOWN；不能把源码生命周期反例当作该次 runner 的实测根因。
 
-`accept-acp-history-hosted-732.mjs` 仅在 Node22、Linux x64、GitHub-hosted Ubuntu22 的正常 build artifact 身份核对后运行：一次官方 CFT155.0.8059.84 固定包供应 → 一次独立端口及精确 `Browser.getVersion` 正证 → 原完整原生 SidePanel／正常 daemon 重启／历史／reload 业务。包199014491字节与309成员的 SHA256、CRC、布局、普通文件身份及只读模式全部固定；无系统安装、外部解包工具、缓存、重定向、重试或任意 executable override。
+`accept-acp-history-hosted-732.mjs` 仅在 Node22、Linux x64、GitHub-hosted Ubuntu22 的正常 build artifact 身份核对后运行：一次官方 CFT155.0.8059.84 固定包供应 → 唯一真实业务浏览器上的端口及精确 `Browser.getVersion` 核对 → 原完整原生 SidePanel／正常 daemon 重启／历史／reload 业务。独立 supplier 浏览器启动不再是生产入口，不把旧 utility 的受控正例或失败正证记作当前业务成功。包199014491字节与309成员的 SHA256、CRC、布局、普通文件身份及只读模式全部固定；无系统安装、外部解包工具、缓存、重定向、重试或任意 executable override。
 
-供应和独立正证各有明确120秒新阶段；原业务120秒、端口10秒、导航60秒、认证5秒和工具15秒不变。两阶段使用不同 owned profile／子进程／端点，无 daemon、认证或存储复用；HOME、sandbox 和原启动参数不变。前置正证可能热 OS 页缓存，不能再称未预热冷启动。旧 image-supplier A/B 工作流步骤明确退休，原代码／受控测试／拒绝 raw 仍保留，未被记作成功。
+本次是明确的 CI 契约整合：保留供应120秒，移除独立正证120秒阶段；唯一业务仍为原120秒，Xvfb就绪5秒、端口10秒、导航60秒、认证5秒和工具15秒不变。版本和后续 SidePanel／历史操作来自同一个真实业务 CDP／profile／端点；仅 Xvfb 与 Chrome 增加管道双 EOF／错误事实核验，daemon 的原关闭路径不变。HOME、sandbox 和原启动参数不变，不声称冷启动或已解释历史原因。旧 image-supplier A/B 步骤及独立 witness 的原源码／受控测试／拒绝 raw 仍保留，不据旧正例声称当前运行成功。
 
-独立正证必须精确 `Chrome/155.0.8059.84`、managed child 真 close、stdout/stderr 两 EOF、包身份与清理全部通过；失败或未知不进入业务。close 未知先保留包，禁止清理过程中抛错后误删仍在使用的 executable。该边界只属于验收，不增加产品权限。纯 CPU、实际包纯文件解压和 ELF 静态读取不是浏览器启动／安装／原生或真实 SidePanel 通过。PR735 head `ac686c0e59f4e739f04ed0f14fae9845d8f86b56` 的真实远端供应 witness 已完成端口、精确版本、close、两 EOF 和清理正证；原完整业务随后在 `AUTH_DONE`／`PANEL` 拒绝、尚未进入 durable，仍 NOT_READY。历史 BINARY_SELECTED／PANEL 唯一原因仍 UNKNOWN，原三轮上限不重置；不得本机启动测试浏览器。
+当前业务必须精确 `Chrome/155.0.8059.84`，其两个 supplier 子进程须真实 close、stdout/stderr 两 EOF、无 child/pipe 错误，包身份、全部原业务断言与清理也须通过；任一失败或未知最终退出非零，不以独立 witness 失败作为成功。close 未知先保留包，禁止清理过程中抛错后误删仍在使用的 executable。该边界只属于验收，不增加产品权限。纯 CPU、实际包纯文件解压和 ELF 静态读取不是浏览器启动／安装／原生或真实 SidePanel 通过。PR735 head `ac686c0e59f4e739f04ed0f14fae9845d8f86b56` 的真实远端供应 witness 已完成端口、精确版本、close、两 EOF 和清理正证；原完整业务随后在 `AUTH_DONE`／`PANEL` 拒绝、尚未进入 durable，仍 NOT_READY。历史 BINARY_SELECTED／PANEL 唯一原因仍 UNKNOWN，原三轮上限不重置；不得本机启动测试浏览器。
 
 ### #723 固定构建前置正控
 

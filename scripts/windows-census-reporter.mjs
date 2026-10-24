@@ -58,6 +58,82 @@ function childFailureChain(error) {
   }
   return chain
 }
+// Public diagnostic admission is exact-source/marker/schema only. No message,
+// arbitrary path, raw byte or error object is copied into the finite receipt.
+export const terminalDiagnosticFile = '.test-dist/tests/desktop-native-thread-metadata-476.test.js'
+const terminalMarker = 'D476_TERMINAL_NATIVE_PHASE '
+const terminalBooleans = ['inputEnterObserved', 'rawOutputMarkerSeen', 'failed', 'inputUnicode', 'outputUnicode', 'actualProcessExit', 'authenticated', 'windowRequested', 'childExited']
+const terminalCounters = ['actualSpawns', 'openAttempts', 'confirmationRequests', 'decisions', 'deniedResults', 'outputBytes', 'largestFrame', 'outputFrames', 'acks', 'dimensions', 'stops', 'connections']
+const exactKeys = (value, keys) => value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join('\0') === [...keys].sort().join('\0')
+const unsigned = value => Number.isSafeInteger(value) && value >= 0
+function terminalSnapshot(value) {
+  const keys = ['schema', 'moment', 'firstFailure', 'readiness', 'receiptMask', ...terminalBooleans, ...terminalCounters]
+  if (!exactKeys(value, keys) || value.schema !== 1 || !['ABORT', 'FINALLY'].includes(value.moment)) return null
+  const first = value.firstFailure, ready = value.readiness
+  if (!exactKeys(first, ['schema', 'source', 'first']) || first.schema !== 1 || first.source !== 'ffe3514318883fc863bf2347093f328354ee841b') return null
+  if (first.first !== null && (!exactKeys(first.first, ['origin', 'site']) || !['W', 'R'].includes(first.first.origin) || !Number.isSafeInteger(first.first.site) || first.first.site < 1 || first.first.site > (first.first.origin === 'W' ? 28 : 19))) return null
+  if (!exactKeys(ready, ['schema', 'seenMask']) || ready.schema !== 1 || !unsigned(ready.seenMask) || ready.seenMask > 4095 || !unsigned(value.receiptMask) || value.receiptMask > 255) return null
+  if (terminalBooleans.some(key => typeof value[key] !== 'boolean') || terminalCounters.some(key => !unsigned(value[key]))) return null
+  // Match the actual producer order too. Duplicate JSON keys or noncanonical
+  // encodings cannot be accepted through JSON.parse's last-key-wins behavior.
+  return { schema: 1, moment: value.moment,
+    firstFailure: { schema: 1, source: 'ffe3514318883fc863bf2347093f328354ee841b', first: first.first === null ? null : { origin: first.first.origin, site: first.first.site } },
+    readiness: { schema: 1, seenMask: ready.seenMask }, inputEnterObserved: value.inputEnterObserved, rawOutputMarkerSeen: value.rawOutputMarkerSeen,
+    failed: value.failed, receiptMask: value.receiptMask, actualSpawns: value.actualSpawns, openAttempts: value.openAttempts, confirmationRequests: value.confirmationRequests,
+    decisions: value.decisions, deniedResults: value.deniedResults, outputBytes: value.outputBytes, largestFrame: value.largestFrame, outputFrames: value.outputFrames,
+    acks: value.acks, dimensions: value.dimensions, inputUnicode: value.inputUnicode, outputUnicode: value.outputUnicode, stops: value.stops,
+    actualProcessExit: value.actualProcessExit, authenticated: value.authenticated, windowRequested: value.windowRequested, connections: value.connections, childExited: value.childExited }
+}
+export function terminalDiagnostic(message) {
+  if (typeof message !== 'string' || !message.startsWith(terminalMarker)) return null
+  if (message.length > 4096 || Buffer.byteLength(message, 'utf8') > 4096) return { status: 'UNKNOWN', reason: 'OVERSIZE' }
+  try {
+    const payload = message.slice(terminalMarker.length), snapshot = terminalSnapshot(JSON.parse(payload))
+    if (!snapshot || JSON.stringify(snapshot) !== payload) return { status: 'UNKNOWN', reason: 'INVALID_SNAPSHOT' }
+    return { status: 'OBSERVED', snapshot }
+  } catch { return { status: 'UNKNOWN', reason: 'INVALID_SNAPSHOT' } }
+}
+export function publicTerminalDiagnostic(value) {
+  if (exactKeys(value, ['status', 'reason']) && value.status === 'UNKNOWN' && ['OVERSIZE', 'INVALID_SNAPSHOT'].includes(value.reason)) return { status: 'UNKNOWN', reason: value.reason }
+  if (!exactKeys(value, ['status', 'snapshot']) || value.status !== 'OBSERVED') throw Error('CENSUS_METADATA_INVALID')
+  const snapshot = terminalSnapshot(value.snapshot)
+  if (!snapshot || JSON.stringify(snapshot) !== JSON.stringify(value.snapshot)) throw Error('CENSUS_METADATA_INVALID')
+  return { status: 'OBSERVED', snapshot }
+}
+export function publicFailureMetadata(event) {
+  if (event.failure_type === undefined) {
+    if (['error_code', 'exit_code', 'signal', 'child_failure_chain'].some(key => event[key] !== undefined)) throw Error('CENSUS_METADATA_INVALID')
+    return { status: 'UNAVAILABLE' }
+  }
+  const failures = ['testCodeFailure', 'subtestsFailed', 'testTimeoutFailure', 'cancelledByParent', 'hookFailed', 'testAbortedFailure', 'testCreationFailure', 'asyncActivity', 'testFailed', 'UNCLASSIFIED']
+  const signals = ['SIGKILL', 'SIGTERM', 'SIGABRT', 'SIGSEGV']
+  if (!failures.includes(event.failure_type) || !['ERR_TEST_FAILURE', 'ERR_ASSERTION', 'UNCLASSIFIED'].includes(event.error_code) || !(event.exit_code === null || typeof event.exit_code === 'number' && Number.isFinite(event.exit_code) && event.exit_code >= 0) || !(event.signal === null || signals.includes(event.signal))) throw Error('CENSUS_METADATA_INVALID')
+  const result = { status: 'OBSERVED', failure_type: event.failure_type, error_code: event.error_code, exit_code: event.exit_code, signal: event.signal }
+  if (event.child_failure_chain !== undefined) {
+    const rows = event.child_failure_chain
+    if (!Array.isArray(rows) || rows.length < 1 || rows.length > 4) throw Error('CENSUS_METADATA_INVALID')
+    let prior = -1
+    result.child_failure_chain = rows.map(row => {
+      const keys = ['depth', 'code', 'exitCode', 'status', 'errno', 'killed', 'signal', 'stdout_bytes', 'stderr_bytes', 'stdout_exceeds_projection_bound', 'stderr_exceeds_projection_bound']
+      if (!row || typeof row !== 'object' || Array.isArray(row) || Object.keys(row).some(key => !keys.includes(key)) || !Number.isSafeInteger(row.depth) || row.depth <= prior || row.depth > 3 || Object.keys(row).length < 2) throw Error('CENSUS_METADATA_INVALID')
+      prior = row.depth
+      const copy = { depth: row.depth }
+      for (const key of ['code', 'exitCode', 'status', 'errno']) if (Object.hasOwn(row, key)) {
+        if (!Number.isSafeInteger(row[key]) || row[key] < -2147483648 || row[key] > 2147483647) throw Error('CENSUS_METADATA_INVALID')
+        copy[key] = row[key]
+      }
+      if (Object.hasOwn(row, 'killed')) { if (typeof row.killed !== 'boolean') throw Error('CENSUS_METADATA_INVALID'); copy.killed = row.killed }
+      if (Object.hasOwn(row, 'signal')) { if (!signals.includes(row.signal)) throw Error('CENSUS_METADATA_INVALID'); copy.signal = row.signal }
+      for (const key of ['stdout', 'stderr']) {
+        if (Object.hasOwn(row, key + '_bytes')) { if (!unsigned(row[key + '_bytes'])) throw Error('CENSUS_METADATA_INVALID'); copy[key + '_bytes'] = row[key + '_bytes'] }
+        if (Object.hasOwn(row, key + '_exceeds_projection_bound')) { if (row[key + '_exceeds_projection_bound'] !== true || Object.hasOwn(row, key + '_bytes')) throw Error('CENSUS_METADATA_INVALID'); copy[key + '_exceeds_projection_bound'] = true }
+      }
+      return copy
+    })
+  }
+  return result
+}
+
 export function project(event, seq, root) {
   if (!types.has(event.type)) throw Error('CENSUS_UNKNOWN_EVENT')
   const d = event.data ?? {}
@@ -73,6 +149,10 @@ export function project(event, seq, root) {
   }
   if (typeof d.success === 'boolean') record.success = d.success
   if (d.counts) record.counts = Object.fromEntries(['cancelled', 'failed', 'passed', 'skipped', 'suites', 'tests', 'todo', 'topLevel'].map(k => [k, numeric(d.counts[k])]))
+  if (event.type === 'test:diagnostic' && file === terminalDiagnosticFile) {
+    const finite = terminalDiagnostic(d.message)
+    if (finite) record.terminal_phase = finite
+  }
   const e = d.details?.error
   if (e) {
     record.failure_type = ['testCodeFailure', 'subtestsFailed', 'testTimeoutFailure', 'cancelledByParent', 'hookFailed', 'testAbortedFailure', 'testCreationFailure', 'asyncActivity', 'testFailed'].includes(e.failureType) ? e.failureType : 'UNCLASSIFIED'

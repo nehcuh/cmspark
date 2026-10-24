@@ -7,8 +7,10 @@ import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { EventEmitter } from 'node:events'
 import { spawnSync } from 'node:child_process'
-import { observeDisplayReady } from '../cft-linux-supplier-732.mjs'
-import { BOUNDS,preflight,childEnvironment,chromeArgs,manifestPaths,choosePanel,finiteReceipt,CDP,reloadDocument,restartSequence,historyObservationExpression,closeOwnedChild,loadedExpression,privateRead,limit,observeBrowserStartup } from '../accept-acp-history-hosted-732.mjs'
+import { PIN,observeSupplierChild,observeDisplayReady } from '../cft-linux-supplier-732.mjs'
+import * as supplierLifecycle from '../cft-linux-supplier-732.mjs'
+const {awaitSupplierChildClosed}=supplierLifecycle
+import { BOUNDS,preflight,childEnvironment,chromeArgs,manifestPaths,choosePanel,finiteReceipt,CDP,reloadDocument,restartSequence,historyObservationExpression,closeOwnedChild,loadedExpression,privateRead,limit,observeBrowserStartup,businessSupplierProjection } from '../accept-acp-history-hosted-732.mjs'
 const root='/owned',url='chrome-extension://'+'a'.repeat(32)+'/sidepanel.html'
 const defer=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject}}
 const hosted={GITHUB_ACTIONS:'true',RUNNER_OS:'Linux',RUNNER_ENVIRONMENT:'github-hosted',ImageOS:'ubuntu22',RUNNER_TEMP:root}
@@ -34,7 +36,13 @@ test('exact child close is awaited; child kill dispatch alone is insufficient',a
 test('closed child never receives a new signal',async()=>{const signals=[];await closeOwnedChild({exitCode:0,signalCode:null,closed:Promise.resolve(),kill:s=>signals.push(s)},()=>100);assert.deepEqual(signals,[])})
 test('actual serialized observation only returns interrupted/noGhost fixed booleans',()=>{const row={textContent:'date · OWNED_SESSION',parentElement:{textContent:'已中断；无法恢复原进程关联'}},history={querySelectorAll:()=>[row]};const run=live=>vm.runInNewContext(historyObservationExpression('OWNED_SESSION'),{document:{querySelectorAll:()=>[history],querySelector:s=>s==='[data-agent-live-log]'&&live?{}:null}});assert.equal(run(false).interrupted,true);assert.equal(run(false).noGhost,true);assert.equal(run(true).noGhost,false);assert.deepEqual(Object.keys(run(false)).sort(),['interrupted','noGhost'])})
 test('closed receipt does not invoke getters or return supplied private fields',()=>{let calls=0;const c={private:'SECRET'};Object.defineProperty(c,'durable',{get(){calls++;throw Error('SECRET')}});const r=finiteReceipt('DURABLE',c);assert.equal(calls,0);assert.equal(r.checks.durable,false);assert.equal(JSON.stringify(r).includes('SECRET'),false);assert.equal(r.passed,false);assert.throws(()=>finiteReceipt('SECRET',{}))})
-test('full success requires every declared check; UNKNOWN is not success',()=>{const r=finiteReceipt('COMPLETE',{});assert.equal(r.passed,false);const c=Object.fromEntries(Object.keys(r.checks).map(k=>[k,true]));assert.equal(finiteReceipt('COMPLETE',c).passed,true);assert.equal(finiteReceipt('CLEANUP',c).passed,false)})
+function completeBusinessFacts(){
+  const children=Array.from({length:2},()=>{const c=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null,stdio:[null,null,null,new EventEmitter()]});c.stdio[3].resume=()=>{};for(const k of ['stdout','stderr']){c[k]=new EventEmitter();c[k].resume=()=>{}}return c})
+  const states=children.map(observeSupplierChild),display=observeDisplayReady(children[0]);children[0].stdio[3].emit('data',Buffer.from('23\n'));const snapshot=display.snapshot()
+  for(const child of children){child.stdout.emit('end');child.stderr.emit('end');child.exitCode=0;child.emit('close',0,null)}
+  return {versionObserved:true,display:snapshot,xvfb:states[0],browser:states[1]}
+}
+test('full success requires every declared check; UNKNOWN is not success',()=>{const r=finiteReceipt('COMPLETE',{});assert.equal(r.passed,false);const c=Object.fromEntries(Object.keys(r.checks).map(k=>[k,true]));assert.equal(finiteReceipt('COMPLETE',c).passed,false);assert.equal(finiteReceipt('COMPLETE',c,undefined,completeBusinessFacts()).passed,true);assert.equal(finiteReceipt('CLEANUP',c,undefined,completeBusinessFacts()).passed,false)})
 test('source preserves canonical daemon, HMAC, strict file bounds, real fixture and hard budgets',()=>{const s=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8');for(const literal of ["'daemon','start'","'SIGKILL'","'acp.sessions.list'","crypto.createHmac('sha256',secret)","fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK","'companion/tests/fixtures/acp-lifecycle.cjs'","'ws_secret'"])assert.equal(s.includes(literal),true,literal);assert.deepEqual(BOUNDS,{outer:120000,navigation:60000,auth:5000,tool:15000});assert.equal(s.includes('createTransport('),false);assert.equal(s.includes('WebSocketServer'),false)})
 test('load expression is native chrome API, rejects foreign tab/url and keeps one bounded timer',()=>{assert.throws(()=>loadedExpression(-1,url,10));assert.throws(()=>loadedExpression(1,'https://foreign.example/',10));const s=loadedExpression(1,url,10,'navigate');assert.equal(s.includes('chrome.tabs.onUpdated.addListener(updated)'),true);assert.equal(s.includes('chrome.tabs.update(id,{url:expected})'),true);assert.equal(s.includes('remaining'),true)})
 
@@ -70,7 +78,7 @@ function actualFinally(overrides={},source=fs.readFileSync(fileURLToPath(new URL
   let deletes=0,aborts=0
   const sameOwnedRoot=source.includes('export function sameOwnedRoot(')?vm.runInNewContext('('+source.slice(source.indexOf('export function sameOwnedRoot(')+'export '.length,source.indexOf('export async function main()',source.indexOf('export function sameOwnedRoot('))).trim()+')',{fs:{},process:{getuid:()=>1000}}):()=>{throw Error('ABSENT_ROOT_FENCE')}
   const rootStat={dev:1,ino:2,uid:1000,mode:0o40700,isDirectory:()=>true,isSymbolicLink:()=>false}
-  const context={activeSupplier:undefined,browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,ownedIdentity:rootStat,sameOwnedRoot:(r,i)=>sameOwnedRoot(r,i,()=>({...rootStat,mtimeMs:999,...overrides.currentRootStat}),x=>overrides.rootRealpath??x,1000),observer:{terminate(){aborts++}},observers:new Set([{terminate(){aborts++},closed:Promise.resolve()}]),clients:new Set([{abort(){aborts++},settled:Promise.resolve()}]),pending:new Set(),children:new Set(),remaining:()=>10,deadline:Date.now()+1000,abort:{signal:{aborted:false}},timer:undefined,secret:'PRIVATE',owned:'/owned',fs:{rmSync(){deletes++}},checks:{},stage:'COMPLETE',closeOwnedChild,limit,clearTimeout,Date,Promise,...overrides}
+  const context={versionObserved:false,display:undefined,displayProof:undefined,supplierProof:undefined,supplierStates:new Map(),activeSupplier:undefined,browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,ownedIdentity:rootStat,sameOwnedRoot:(r,i)=>sameOwnedRoot(r,i,()=>({...rootStat,mtimeMs:999,...overrides.currentRootStat}),x=>overrides.rootRealpath??x,1000),observer:{terminate(){aborts++}},observers:new Set([{terminate(){aborts++},closed:Promise.resolve()}]),clients:new Set([{abort(){aborts++},settled:Promise.resolve()}]),pending:new Set(),children:new Set(),remaining:()=>10,deadline:Date.now()+1000,abort:{signal:{aborted:false}},timer:undefined,secret:'PRIVATE',owned:'/owned',fs:{rmSync(){deletes++}},checks:{},stage:'COMPLETE',closeOwnedChild,limit,clearTimeout,Date,Promise,...overrides}
   if(overrides.pending)context.clients=new Set([{abort(){},settled:Promise.allSettled([...overrides.pending])}])
   return {run:()=>vm.runInNewContext(`(async()=>{${finallyBlock};return {checks,stage,secret,browserStartup}})()`,context),deletes:()=>deletes,aborts:()=>aborts}
 }
@@ -141,7 +149,7 @@ for(const mode of ['timeout','open-error','success-no-close','success-close'])te
   try {
     const connect=vm.runInNewContext(`(()=>{${declaration};return connect})()`,{CDP,WebSocket:OwnedSocket,clients,BOUNDS,remaining:()=>2})
     try{await connect('ws://owned-inert')}catch{rejected=true}
-    const context={activeSupplier:undefined,browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,observers:new Set(),clients,children:new Set(),remaining:()=>5,deadline:Date.now()+100,abort:{signal:{aborted:false}},timer:undefined,secret:'PUBLIC',owned:'/owned',ownedIdentity:{},sameOwnedRoot:()=>true,fs:{rmSync(){deleted++}},checks:{},stage:'BROWSER',closeOwnedChild,limit,clearTimeout,Date,Promise}
+    const context={versionObserved:false,display:undefined,displayProof:undefined,supplierProof:undefined,supplierStates:new Map(),activeSupplier:undefined,browserPhase:'PORT_FILE',browserStartup:undefined,chromium:{exitCode:65},xvfb:{exitCode:null},observeBrowserStartup,observers:new Set(),clients,children:new Set(),remaining:()=>5,deadline:Date.now()+100,abort:{signal:{aborted:false}},timer:undefined,secret:'PUBLIC',owned:'/owned',ownedIdentity:{},sameOwnedRoot:()=>true,fs:{rmSync(){deleted++}},checks:{},stage:'BROWSER',closeOwnedChild,limit,clearTimeout,Date,Promise}
     const result=await vm.runInNewContext(`(async()=>{${body};return checks.cleanup})()`,context)
     assert.equal(rejected,mode==='timeout'||mode==='open-error')
     assert.equal(clients.size,1,'every already-created client must be retained, including failed open')
@@ -154,13 +162,13 @@ for(const mode of ['timeout','open-error','success-no-close','success-close'])te
 
 // #735 finite browser progress: actual published startup segment, inert transports.
 import * as startupHarness from '../accept-acp-history-hosted-732.mjs'
-function browserSegment(fault='none') {
-  const source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')
+const hostedSource=()=>fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')
+function browserSegment(fault='none',source=hostedSource()) {
   const begin=source.indexOf("    stage='BROWSER';"),end=source.indexOf("stage='PANEL';",begin)
   assert.ok(begin>0&&end>begin)
   const body=source.slice(begin,end),cleanup=source.slice(source.indexOf('  finally {\n',end),source.indexOf('    let clean=true',end))
   const capture=cleanup.includes('browserStartup=observeBrowserStartup(browserPhase,chromium,xvfb)')?'browserStartup=observeBrowserStartup(browserPhase,chromium,xvfb)':''
-  const receiptCall=source.match(/const out=(finiteReceipt\(stage,checks(?:,browserStartup)?\));/)
+  const receiptCall=source.match(/const out=(finiteReceipt\(stage,checks(?:,browserStartup)?(?:,supplierProof)?\));/)
   assert.ok(receiptCall)
   const marker='OWNED_ERROR_DO_NOT_REFLECT_PATH_PID_BODY',fail=()=>{throw Error(marker)}
   const origin='chrome-extension://'+'a'.repeat(32),workerPath='static/background/index.js'
@@ -172,16 +180,17 @@ function browserSegment(fault='none') {
     if(expression.startsWith('chrome.debugger.getTargets')){if(fault==='pairtarget')fail();return 'pair'}
     if(fault==='navigate')fail();return true
   }}
-  const browser={call:async()=>({targetInfos:fault==='workerdiscovery'?[]:[{targetId:'worker',type:'service_worker',url:origin+'/'+workerPath}]})}
+  const browserCalls=[]
+  const browser={call:async name=>{browserCalls.push(name);if(name==='Browser.getVersion')return {product:fault==='version'?'Chrome/0':fault==='missingversion'?undefined:'Chrome/'+PIN.version};return {targetInfos:fault==='workerdiscovery'?[]:[{targetId:'worker',type:'service_worker',url:origin+'/'+workerPath}]}}}
   const pair={evaluate:async()=>{if(fault==='pairsecret')fail();return true}}
   class Socket extends EventEmitter {
     static OPEN=1
     constructor(){super();this.readyState=1;queueMicrotask(()=>fault==='auth'?this.emit('error',Error(marker)):this.emit('message',JSON.stringify({type:'auth.challenge',nonce:'public'})))}
     send(){queueMicrotask(()=>this.emit('message',JSON.stringify({type:'auth.ok'})))}
   }
-  const context={activeSupplier:{binary:'/owned/fixed/chrome',check(){if(fault==='binary')fail()}},stage:'BROWSER',browserPhase:null,browserStartup:undefined,chromium:undefined,xvfb:undefined,browser:undefined,worker:undefined,observer:undefined,secret:'PUBLIC_SYNTHETIC_ONLY',owned:'/owned',paths:{worker:workerPath,page:'sidepanel.html'},navigationDeadline:undefined,
-    child(exe){if(exe==='/usr/bin/Xvfb'){queueMicrotask(()=>xvfb.stdio[3].emit('data',Buffer.from('23\n')));return xvfb}return chrome},
-    env:{},input:{},extension:'/owned/extension',chromeArgs:startupHarness.chromeArgs,childEnvironment:()=>({}),remaining:()=>1000,nav:()=>1000,BOUNDS,
+  const inertChild=exe=>{if(exe==='/usr/bin/Xvfb'){queueMicrotask(()=>xvfb.stdio[3].emit('data',Buffer.from('23\n')));return xvfb}return chrome}
+  const context={browserCalls,child:inertChild,supplierChild:inertChild,versionObserved:false,supplierProof:undefined,display:undefined,activeSupplier:{binary:'/owned/fixed/chrome',check(){if(fault==='binary')fail()}},stage:'BROWSER',browserPhase:null,browserStartup:undefined,chromium:undefined,xvfb:undefined,browser:undefined,worker:undefined,observer:undefined,secret:'PUBLIC_SYNTHETIC_ONLY',owned:'/owned',paths:{worker:workerPath,page:'sidepanel.html'},navigationDeadline:undefined,
+    PIN,env:{},input:{},extension:'/owned/extension',chromeArgs:startupHarness.chromeArgs,childEnvironment:()=>({}),remaining:()=>1000,nav:()=>1000,BOUNDS,
     deferred:defer,observeDisplayReady,limit:async promise=>{if(++limitCount===1&&fault==='display')fail();return promise},
     poll:async fn=>{const v=await fn();if(!v)fail();return v},
     connect:async()=>{connectCount++;if(fault===['browserconnect','workerconnect','pairconnect'][connectCount-1])fail();return [browser,worker,pair][connectCount-1]},
@@ -190,10 +199,10 @@ function browserSegment(fault='none') {
     WebSocket:Socket,observers:new Set(),crypto:{createHmac:()=>({update:()=>({digest:()=> 'PUBLIC_PROOF'})})},AbortSignal,loadedExpression:()=> 'OWNED_NAVIGATION_EXPRESSION',Math,Date,path,fail,
     observeBrowserStartup:startupHarness.observeBrowserStartup,finiteReceipt:startupHarness.finiteReceipt,devToolsPortSnapshot:startupHarness.devToolsPortSnapshot,
   }
-  return vm.runInNewContext(`(async()=>{let startupError=false;try{${body}}catch{startupError=true} ${capture}; const checks={cleanup:true};return {receipt:${receiptCall[1]},startupError}})()`,context)
+  return vm.runInNewContext(`(async()=>{let startupError=false;try{${body}}catch{startupError=true} ${capture}; const checks={cleanup:true};return {receipt:${receiptCall[1]},startupError,browserCalls,versionObserved}})()`,context)
 }
 test('#735 actual browser awaits report only the last observed fixed phase and never pass a failed startup',async()=>{
-  const cases={display:'XVFB_REQUEST',binary:'DISPLAY_OBSERVED',port:'BINARY_SELECTED',browserconnect:'PORT_FILE',workerdiscovery:'CDP_CONNECTED',workerconnect:'WORKER_FOUND',workerfetch:'WORKER_FOUND',workerjson:'WORKER_FOUND',workerready:'WORKER_FOUND',runtimeenable:'WORKER_READY',tabcreate:'WORKER_READY',navigate:'WORKER_READY',pairtarget:'PAIR_PAGE',pairconnect:'PAIR_PAGE',pairfetch:'PAIR_PAGE',pairjson:'PAIR_PAGE',pairsecret:'PAIR_PAGE',auth:'PAIRED',none:'AUTH_DONE'}
+  const cases={display:'XVFB_REQUEST',binary:'DISPLAY_OBSERVED',port:'BINARY_SELECTED',browserconnect:'PORT_FILE',version:'CDP_CONNECTED',missingversion:'CDP_CONNECTED',workerdiscovery:'CDP_CONNECTED',workerconnect:'WORKER_FOUND',workerfetch:'WORKER_FOUND',workerjson:'WORKER_FOUND',workerready:'WORKER_FOUND',runtimeenable:'WORKER_READY',tabcreate:'WORKER_READY',navigate:'WORKER_READY',pairtarget:'PAIR_PAGE',pairconnect:'PAIR_PAGE',pairfetch:'PAIR_PAGE',pairjson:'PAIR_PAGE',pairsecret:'PAIR_PAGE',auth:'PAIRED',none:'AUTH_DONE'}
   for(const [fault,phase]of Object.entries(cases)){const r=await browserSegment(fault);assert.equal(r.receipt.browserPhase,phase,fault);assert.equal(r.startupError,fault!=='none',fault);assert.equal(r.receipt.passed,false,fault);assert.equal(r.receipt.stage,'BROWSER');assert.equal(r.receipt.checks.cleanup,true);assert.equal(JSON.stringify(r).includes('DO_NOT_REFLECT'),false)}
 })
 test('#735 browser receipt projection refuses unknown scalars, getters, proxies and unrelated text',()=>{
@@ -222,11 +231,11 @@ async function activePortPublication(parts,mutateAfterRead=false) {
   fs.mkdirSync(profile,{mode:0o700})
   let reads=0,writes=0,timer
   const deadline=Date.now()+100
-  const context={activeSupplier:{binary:'/owned/fixed/chrome',check(){}},path,Date,Promise,setTimeout,deadline,owned,extension:path.join(owned,'extension'),input:{},screen:':23',chromium:undefined,browserPhase:'DISPLAY_OBSERVED',
+  const context={versionObserved:false,supplierProof:undefined,display:undefined,activeSupplier:{binary:'/owned/fixed/chrome',check(){}},path,Date,Promise,setTimeout,deadline,owned,extension:path.join(owned,'extension'),input:{},screen:':23',chromium:undefined,browserPhase:'DISPLAY_OBSERVED',
     chromeArgs,childEnvironment,devToolsPortSnapshot:startupHarness.devToolsPortSnapshot,
     remaining:()=>{if(Date.now()>=deadline)throw Error('OWNED_TEST_DEADLINE')},fail:()=>{throw Error('OWNED_ACCEPTANCE_REFUSED')},
     fs:{statSync:()=>({isFile:()=>true}),readFileSync(p,encoding){assert.equal(p,file);assert.equal(encoding,'utf8');reads++;const text=fs.readFileSync(p,encoding);if(mutateAfterRead)fs.writeFileSync(file,'INVALID_AFTER_SNAPSHOT');return text}},
-    child(_binary,args,env){assert.deepEqual(Array.from(args),chromeArgs(owned,path.join(owned,'extension')));assert.equal(env.HOME,undefined);fs.writeFileSync(file,parts[0]);writes++;if(parts.length===2)timer=setTimeout(()=>{fs.appendFileSync(file,parts[1]);writes++},5);return {exitCode:null,signalCode:null}},
+    supplierChild(_binary,args,env){assert.deepEqual(Array.from(args),chromeArgs(owned,path.join(owned,'extension')));assert.equal(env.HOME,undefined);fs.writeFileSync(file,parts[0]);writes++;if(parts.length===2)timer=setTimeout(()=>{fs.appendFileSync(file,parts[1]);writes++},5);return {exitCode:null,signalCode:null}},
   }
   try {
     const result=await vm.runInNewContext(`(async()=>{${poll};try{${source.slice(begin,end)};return {ok:true,phase:browserPhase,parts}}catch{return {ok:false,phase:browserPhase}}})()`,context)
@@ -247,10 +256,10 @@ test('#735 complete malformed active-port content never becomes a usable endpoin
     const result=await activePortPublication([text]);assert.equal(result.ok,false);assert.equal(result.phase,'BINARY_SELECTED');assert.equal(result.parts,undefined)
   }
 })
-test('#735 original pass predicate ignores startup diagnostics and still requires all ten checks',()=>{
+test('#735 original ten business checks remain mandatory alongside supplier attestation',()=>{
   const keys=Object.keys(finiteReceipt('COMPLETE',{}).checks),all=Object.fromEntries(keys.map(k=>[k,true]));assert.equal(keys.length,10)
-  assert.equal(finiteReceipt('COMPLETE',all,{browserPhase:null}).passed,true)
-  for(const key of keys){const r=finiteReceipt('COMPLETE',{...all,[key]:false},{browserPhase:'AUTH_DONE',browserPresent:true,browserExitCode:0,xvfbPresent:true,xvfbExitCode:0});assert.equal(r.passed,false)}
+  assert.equal(finiteReceipt('COMPLETE',all,{browserPhase:null}).passed,false);assert.equal(finiteReceipt('COMPLETE',all,{browserPhase:null},completeBusinessFacts()).passed,true)
+  for(const key of keys){const r=finiteReceipt('COMPLETE',{...all,[key]:false},{browserPhase:'AUTH_DONE',browserPresent:true,browserExitCode:0,xvfbPresent:true,xvfbExitCode:0},completeBusinessFacts());assert.equal(r.passed,false)}
   assert.equal(finiteReceipt('BROWSER',all,{browserPhase:'AUTH_DONE'}).passed,false)
 })
 
@@ -413,4 +422,54 @@ test('fresh document missing or disabled owned navigation row cannot open or que
 })
 test('fresh document owner changes still close panel and refuse foreign history',async()=>{
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-owner-')));try{const f=await freshOwnerControl(dir,{ready:true});await f.run();f.render();assert.equal(f.isOpen(),true);f.dispatch({type:'SET_ACTIVE_THREAD',threadId:'foreign'});f.render();assert.equal(f.isOpen(),false);f.readHistory();assert.equal(f.wire.length,0)}finally{fs.rmSync(dir,{recursive:true,force:true})}
+})
+
+// Current single-business contract: source-extracted factory and real supplier lifecycle helpers.
+function actualBusinessChildFactory(remaining=()=>100,source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8')) {
+  const begin=source.indexOf('  const child='),end=source.indexOf('\n  const connect=',begin)
+  assert.ok(begin>0&&end>begin)
+  const handles=[],states=new Map(),context={remaining,children:new Set(),supplierStates:states,observeSupplierChild,awaitSupplierChildClosed,fail(){throw Error('UNTRACKED_CHILD')},spawn(){const child=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null});for(const key of ['stdout','stderr']){child[key]=new EventEmitter();child[key].resume=()=>{}}handles.push(child);return child}}
+  const actual=vm.runInNewContext(`(()=>{${source.slice(begin,end)};return {child:supplierChild,waitChildClosed:joinSupplierChild}})()`,context)
+  return {actual,handles,states}
+}
+test('actual supplier child close remains nonrejecting and waits both real EOF facts',async()=>{
+  const s=actualBusinessChildFactory(),child=s.actual.child('inert',[],{});let closed=false,done=false
+  child.closed.then(()=>{closed=true},()=>{throw Error('CLOSE_MUST_NOT_REJECT')})
+  const pending=s.actual.waitChildClosed(child).then(()=>{done=true})
+  child.emit('close',0,null);await child.closed;assert.equal(closed,true);await Promise.resolve();assert.equal(done,false)
+  child.stdout.emit('end');await Promise.resolve();assert.equal(done,false)
+  child.stderr.emit('end');await pending;assert.equal(done,true)
+})
+for(const kind of ['child-error','stdout-error','stderr-error'])test('actual supplier close rejects '+kind+' only when explicitly awaited',async()=>{
+  const s=actualBusinessChildFactory(),child=s.actual.child('inert',[],{});let closeRejected=false
+  child.closed.catch(()=>{closeRejected=true})
+  if(kind==='child-error')child.emit('error',Error('PRIVATE'))
+  else child[kind.startsWith('stdout')?'stdout':'stderr'].emit('error',Error('PRIVATE'))
+  child.stdout.emit('end');child.stderr.emit('end');child.emit('close',0,null);await child.closed
+  assert.equal(closeRejected,false);await assert.rejects(s.actual.waitChildClosed(child),{message:'PINNED_SUPPLIER_REFUSED'})
+})
+for(const missing of ['stdout','stderr'])test('actual supplier refuses missing '+missing+' EOF despite child.close',async()=>{
+  const s=actualBusinessChildFactory(()=>1),child=s.actual.child('inert',[],{});child[missing==='stdout'?'stderr':'stdout'].emit('end');child.emit('close',0,null)
+  await assert.rejects(s.actual.waitChildClosed(child),{message:'PINNED_SUPPLIER_REFUSED'})
+})
+test('actual same business browser supplies the exact version before target discovery',async()=>{
+  const positive=await browserSegment();assert.equal(positive.startupError,false);assert.equal(positive.versionObserved,true);assert.equal(positive.browserCalls[0],'Browser.getVersion');assert.ok(positive.browserCalls.includes('Target.getTargets'))
+  for(const mode of ['version','missingversion']){const r=await browserSegment(mode);assert.equal(r.startupError,true);assert.deepEqual(r.browserCalls,['Browser.getVersion']);assert.equal(r.receipt.passed,false)}
+})
+test('actual main keeps generic close paths and only joins supplier EOF in finally',()=>{
+  const source=fs.readFileSync(fileURLToPath(new URL('../accept-acp-history-hosted-732.mjs',import.meta.url)),'utf8'),main=source.slice(source.indexOf('export async function main() {'),source.indexOf('\nlet directEntry=false'))
+  for(const literal of ['await limit(prepared.closed,remaining());if(prepared.exitCode!==0)fail()', 'closed:async c=>{await limit(c.closed,remaining());await poll', 'await closeOwnedChild(daemon,remaining);const records=', 'for(const c of [...children].reverse())try{await closeOwnedChild(c,remaining);if(supplierStates.has(c))await joinSupplierChild(c)}catch{clean=false}'])assert.ok(main.includes(literal),literal)
+  assert.equal(main.split("xvfb=supplierChild('/usr/bin/Xvfb'").length,2);assert.equal(main.split('chromium=supplierChild(binary,').length,2);assert.equal(main.includes('waitChildClosed(prepared)'),false)
+  assert.ok(main.indexOf('displayProof=display?.snapshot()')<main.indexOf('for(const socket of observers)socket.terminate()'))
+})
+test('schema2 requires version, precleanup display and two distinct real observer close/EOF/error facts',()=>{
+  const all=Object.fromEntries(Object.keys(finiteReceipt('COMPLETE',{}).checks).map(k=>[k,true])),facts=completeBusinessFacts(),r=finiteReceipt('COMPLETE',all,undefined,facts)
+  assert.equal(r.schema,2);assert.equal(r.passed,true);assert.equal(r.supplier.versionObserved,true);assert.equal(r.supplier.childCount,2);assert.equal(r.supplier.display.state,'READY');assert.equal(r.supplier.display.closed,false);assert.ok(r.supplier.children.every(c=>c.closed&&c.stdoutEOF&&c.stderrEOF&&c.error===false));assert.ok(Buffer.byteLength(JSON.stringify(r))<=1024)
+  for(const bad of [undefined,{}, {...facts,versionObserved:false},{...facts,browser:undefined},{...facts,browser:facts.xvfb},{...facts,display:{...facts.display,exitCode:undefined}},{...facts,display:{...facts.display,state:'PENDING'}}])assert.equal(finiteReceipt('COMPLETE',all,undefined,bad).passed,false)
+  for(const role of ['xvfb','browser'])for(const patch of [{closed:false},{stdoutEOF:false},{stderrEOF:false},{error:true},{error:undefined}])assert.equal(finiteReceipt('COMPLETE',all,undefined,{...facts,[role]:{...facts[role],...patch}}).passed,false)
+})
+test('supplier attestation is closed and getter-safe with unknown facts never becoming pass',()=>{
+  let reads=0;const facts={private:'SECRET'};Object.defineProperty(facts,'versionObserved',{get(){reads++;throw Error('SECRET')}})
+  const r=businessSupplierProjection(facts);assert.equal(reads,0);assert.equal(r.passed,false);assert.equal(r.childCount,0);assert.equal(r.allClosed,false);assert.equal(r.bothEOF,false);assert.equal(r.childError,null);assert.equal(JSON.stringify(r).includes('SECRET'),false)
+  const proxy=businessSupplierProjection(new Proxy({},{getOwnPropertyDescriptor(){throw Error('SECRET')}}));assert.equal(proxy.passed,false);assert.equal(proxy.childCount,0)
 })

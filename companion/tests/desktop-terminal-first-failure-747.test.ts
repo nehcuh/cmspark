@@ -52,12 +52,21 @@ test('747 actual native caller freezes on original failure, abort, child-close a
  const verify=(raw:string)=>{
   const current=raw.replace(/\r\n/g,'\n') // Source contract only; never runtime bytes, receipts or compiled evidence.
  assert.ok(current.includes('firstFailure.observe(f)\n    if(f.id===\'D476_TERMINAL_FAIL\'){fail();return}'))
- assert.ok(current.includes("fail=()=>{firstFailure.seal();failed=true;failResolve()}"));assert.ok(current.includes("abort',()=>{firstFailure.seal();reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))"));assert.ok(current.includes('code=>{firstFailure.seal();childExited=true;exitResolve(code)}'))
- assert.ok(current.includes("firstFailure.seal();surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '"));assert.ok(current.includes('timeout:45000,concurrency:false'))
+ assert.ok(current.includes("fail=()=>{firstFailure.seal();failed=true;failResolve()}"));assert.ok(current.includes("abort',()=>{firstFailure.seal();emitTerminalPhase('ABORT');reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))"));assert.ok(current.includes('code=>{firstFailure.seal();childExited=true;exitResolve(code)}'))
+ assert.ok(current.includes("firstFailure.seal();surfaceLease.retain();emitTerminalPhase('FINALLY')"));assert.ok(current.includes('timeout:45000,concurrency:false'))
+ assert.ok(current.includes("try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,moment,firstFailure:firstFailure.snapshot()"))
+ const emitter=current.indexOf("  const emitTerminalPhase=(moment='FINALLY')=>{"),abort=current.indexOf("t.signal.addEventListener('abort',()=>{firstFailure.seal();emitTerminalPhase('ABORT');reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))")
+ assert.ok(emitter>=0&&abort>emitter,'initialized finite emitter precedes original abort listener')
  assert.ok(current.includes('assert.equal(await Promise.race([exited,failure.then('));assert.ok(current.includes('assert.equal(actualSpawns,1)'));assert.ok(current.includes('assert.equal(receipts.size,required.length)'))
  }
  for(const profile of [parent.replace(/\r\n/g,'\n'),parent.replace(/\r?\n/g,'\r\n')])verify(profile)
  assert.throws(()=>verify(parent.replace('fail=()=>{firstFailure.seal();failed=true;failResolve()}','fail=()=>{failed=true;failResolve()}')),{code:'ERR_ASSERTION'})
+ for(const [current,mutant]of [
+  ["firstFailure.seal();emitTerminalPhase('ABORT');reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))","emitTerminalPhase('ABORT');reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))"],
+  ["firstFailure.seal();surfaceLease.retain();emitTerminalPhase('FINALLY')","firstFailure.seal();emitTerminalPhase('FINALLY')"],
+  ["try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,moment,firstFailure:firstFailure.snapshot()","try{t.diagnostic('MISSING_TERMINAL_PHASE '+JSON.stringify({schema:1,moment,firstFailure:firstFailure.snapshot()"],
+ ]as const){assert.equal(parent.split(current).length,2);assert.throws(()=>verify(parent.replace(current,mutant)),{code:'ERR_ASSERTION'})}
+
 })
 test('747 whole actual form one-fault schedules classify each reachable refusal without a new success action',()=>{
  const expose=`window.__case={key,set(v){if('phase'in v)phase=v.phase;if('typing'in v)typing=v.typing;if('pendingTarget'in v)pendingTarget=v.pendingTarget;if('selectPressed'in v)selectPressed=v.selectPressed;if('requested'in v)requested=v.requested;if('ackFrames'in v)ackFrames=v.ackFrames;if('dataFrames'in v)dataFrames=v.dataFrames;if('ownedOperation'in v)ownedOperation=v.ownedOperation}};`
@@ -109,6 +118,15 @@ function closedAckInverseForm747(raw:string){
 
 // Exact inverse of the separately reviewed receipt-lifecycle increment.
 // Independent preceding Git source SHA is preserved; no result-derived baseline.
+// Undo only the separately reviewed census observation extraction before the
+// existing whole-parent authorities. Every old digest remains unchanged.
+function censusTerminalInverseParent747(raw:string){
+ const pairs:[string,string][]=[["  let terminalPhaseEmitted=false,terminalPhaseEmitting=false\n  const emitTerminalPhase=(moment='FINALLY')=>{\n   if(terminalPhaseEmitted||terminalPhaseEmitting)return\n   terminalPhaseEmitting=true\n   try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,moment,firstFailure:firstFailure.snapshot(),readiness:readiness.snapshot(),inputEnterObserved,rawOutputMarkerSeen,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),actualSpawns,openAttempts,confirmationRequests,decisions,deniedResults,outputBytes,largestFrame,outputFrames:outputSeq.size,acks:ackSeq.size,dimensions:dimensions.size,inputUnicode,outputUnicode,stops,actualProcessExit,authenticated,windowRequested,connections,childExited}));terminalPhaseEmitted=true}catch{}finally{terminalPhaseEmitting=false}\n  }\n",""],["t.signal.addEventListener('abort',()=>{firstFailure.seal();emitTerminalPhase('ABORT');reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))},{once:true})","t.signal.addEventListener('abort',()=>{firstFailure.seal();reject(Error('OWNED_TERMINAL705_NATIVE_DEADLINE'))},{once:true})"],["firstFailure.seal();surfaceLease.retain();emitTerminalPhase('FINALLY')","firstFailure.seal();surfaceLease.retain();try{t.diagnostic('D476_TERMINAL_NATIVE_PHASE '+JSON.stringify({schema:1,firstFailure:firstFailure.snapshot(),readiness:readiness.snapshot(),inputEnterObserved,rawOutputMarkerSeen,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),actualSpawns,openAttempts,confirmationRequests,decisions,deniedResults,outputBytes,largestFrame,outputFrames:outputSeq.size,acks:ackSeq.size,dimensions:dimensions.size,inputUnicode,outputUnicode,stops,actualProcessExit,authenticated,windowRequested,connections,childExited}))}catch{}"]]
+ let value=raw
+ for(const [current,prior]of pairs){assert.equal(value.split(current).length,2,'one exact census terminal observation hunk');value=value.replace(current,prior)}
+ assert.equal(createHash('sha256').update(value).digest('hex'),'bdba454b129cdc8364cb937a1445f57661a374b54ef1ff6904398d08cbde61e3','entire f522 native parent conserved');return value
+}
+
 function chooseCensusInverseParent705(raw:string){
  const pairs:[string,string][]=[["let uiChooseCensus:{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null}|null=null;try{if(primaryFailed)uiChooseCensus=uiOwner?.scene.uiChooseCensus()??null}catch{};", ""], ["{uiRefusal,uiProgress,uiChooseCensus}", "{uiRefusal,uiProgress}"]]
  // Undo only the fixed identity-enum extension before the existing whole-source authority.
@@ -173,7 +191,7 @@ test('747 actual C++ readiness forwarding is closed, owner-guarded, passive and 
  for(const fail of [false,true])for(const id of [...ids,'D476_TERMINAL_READY_2_1_1','D476_TERMINAL_READY_1_1_1\n','unrelated']){const emitted:string[]=[],c:any={id,h:{},emit:(_h:any,v:string)=>{emitted.push(v);if(fail)throw Error('inert sink')}};vm.runInNewContext('(function(){'+lower+'})()',c,{timeout:1000});assert.deepEqual(emitted,ids.includes(id)?[id]:[])}
 })
 test('747 readiness projection whole-source inverse restores the exact preceding form, controller and native caller',()=>{
- const hash=(s:string)=>createHash('sha256').update(s).digest('hex');for(const crlf of [false,true]){const lower=(s:string)=>(crlf?s.replace(/\r?\n/g,'\r\n'):s).replace(/\r\n/g,'\n');assert.equal(hash(readinessInverseForm747(closedAckInverseForm747(lower(form)))),'9182d9eb1377b862ecb73b3770e1b9f0c484708bcdb2ffb543dfdb61548015a7');assert.equal(hash(readinessInverseCpp747(resizeInverseCpp747(lower(cpp)))),'1a1fadf7a1b7cd26d3c99f3144f7c95c9f380d6afe6e26e2f531ed897d7913a7');assert.equal(hash(readinessInverseParent747(boundaryInverseParent705(chooseCensusInverseParent705(lower(parent))))),'ac59fe4e8307e8f28bf7966f222800e12c105a5b39c21479eacb8e6c6555ecfe')}
+ const hash=(s:string)=>createHash('sha256').update(s).digest('hex');for(const crlf of [false,true]){const lower=(s:string)=>(crlf?s.replace(/\r?\n/g,'\r\n'):s).replace(/\r\n/g,'\n');assert.equal(hash(readinessInverseForm747(closedAckInverseForm747(lower(form)))),'9182d9eb1377b862ecb73b3770e1b9f0c484708bcdb2ffb543dfdb61548015a7');assert.equal(hash(readinessInverseCpp747(resizeInverseCpp747(lower(cpp)))),'1a1fadf7a1b7cd26d3c99f3144f7c95c9f380d6afe6e26e2f531ed897d7913a7');assert.equal(hash(readinessInverseParent747(boundaryInverseParent705(chooseCensusInverseParent705(censusTerminalInverseParent747(lower(parent)))))),'ac59fe4e8307e8f28bf7966f222800e12c105a5b39c21479eacb8e6c6555ecfe')}
 })
 test('747 actual input and raw-output producers retain bytes, decoding and delegation while observing only booleans',()=>{
  const f=ts.createSourceFile('native.ts',parent,ts.ScriptTarget.Latest,true),leaves=f.statements.filter((n):n is ts.ExpressionStatement=>ts.isExpressionStatement(n)&&ts.isCallExpression(n.expression)&&n.expression.expression.getText(f)==='test'&&ts.isStringLiteral(n.expression.arguments[0])&&n.expression.arguments[0].text==='#476 terminal-only native confirmation→real user PTY→selected partial excerpt→canonical reopen');assert.equal(leaves.length,1);const call=leaves[0].expression as ts.CallExpression;assert.ok(ts.isArrowFunction(call.arguments[2]));let input='';const visit=(n:ts.Node)=>{if(ts.isBinaryExpression(n)&&n.operatorToken.kind===ts.SyntaxKind.EqualsToken&&n.left.getText(f)==='runtime.input'){assert.equal(input,'');input=n.right.getText(f)}ts.forEachChild(n,visit)};visit(call.arguments[2]);assert.ok(input)

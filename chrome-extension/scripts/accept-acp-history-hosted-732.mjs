@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
-import { supplyFixedCft,runPinnedPipeline,runSupplierWitness,observeSupplierChild,observeDisplayReady,supplierReceipt } from './cft-linux-supplier-732.mjs'
+import { PIN,supplyFixedCft,runPinnedBusiness,observeSupplierChild,awaitSupplierChildClosed,observeDisplayReady,displayReadyProjection,supplierReceipt } from './cft-linux-supplier-732.mjs'
 let activeSupplier
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..')
 export const BOUNDS=Object.freeze({outer:120000,navigation:60000,auth:5000,tool:15000})
@@ -29,7 +29,21 @@ export function observeBrowserStartup(phase,browser,xvfb) {
   return browserStartupProjection({browserPhase:phase,browserPresent:browser!=null,browserExitCode:ownStartupValue(browser,'exitCode'),
     xvfbPresent:xvfb!=null,xvfbExitCode:ownStartupValue(xvfb,'exitCode')})
 }
-export function finiteReceipt(stage,checks,startup) {
+// Closed CI attestation only. It is not an authorization token or arbitrary
+// checks=true override; main supplies these facts from its actual owned observers.
+export function businessSupplierProjection(value){
+  const own=(v,k)=>{try{const d=Object.getOwnPropertyDescriptor(v,k);return d&&Object.hasOwn(d,'value')?d.value:undefined}catch{return undefined}}
+  const x=own(value,'xvfb'),b=own(value,'browser'),raw=own(value,'display')
+  const present=v=>{try{return !!v&&typeof v==='object'&&!Array.isArray(v)}catch{return false}}
+  const row=(role,v)=>{const ok=present(v),error=own(v,'error');return {role,present:ok,closed:own(v,'closed')===true,stdoutEOF:own(v,'stdoutEOF')===true,stderrEOF:own(v,'stderrEOF')===true,error:typeof error==='boolean'?error:null}}
+  const d=Object.fromEntries(['state','bytes','eof','closed','exitCode','signal'].map(k=>[k,own(raw,k)]))
+  const children=[row('xvfb',x),row('browser',b)],childCount=present(x)+present(b)-(present(x)&&x===b?1:0),versionObserved=own(value,'versionObserved')===true
+  const display=displayReadyProjection(d),validDisplay=d.state==='READY'&&Number.isInteger(d.bytes)&&d.bytes>=2&&d.bytes<=6&&typeof d.eof==='boolean'&&d.closed===false&&d.exitCode===null&&d.signal==='NONE'
+  const allClosed=childCount===2&&children.every(c=>c.present&&c.closed),bothEOF=childCount===2&&children.every(c=>c.present&&c.stdoutEOF&&c.stderrEOF),childError=children.some(c=>c.error===true)?true:childCount===2&&children.every(c=>c.error===false)?false:null
+  const passed=versionObserved&&validDisplay&&allClosed&&bothEOF&&childError===false
+  return {schema:1,versionObserved,display,childCount,children,allClosed,bothEOF,childError,passed}
+}
+export function finiteReceipt(stage,checks,startup,supplierFacts) {
   const stages=['PREFLIGHT','ARTIFACT','DAEMON','BROWSER','PANEL','START','DURABLE','CRASH','RECONNECT','EXISTING_DOCUMENT','RELOAD','TERMINAL','CLEANUP','COMPLETE']
   if(!stages.includes(stage))fail()
   const output={}
@@ -37,7 +51,9 @@ export function finiteReceipt(stage,checks,startup) {
     let d;try{d=Object.getOwnPropertyDescriptor(checks,key)}catch{}
     output[key]=!!d&&Object.hasOwn(d,'value')&&d.value===true
   }
-  return {schema:1,stage,boundary:'REAL_DAEMON_PRODUCTION_EXTENSION_TRUE_SIDEPANEL_SYNTHETIC_ACP',checks:output,passed:stage==='COMPLETE'&&Object.values(output).every(Boolean),...browserStartupProjection(startup)}
+  const supplier=businessSupplierProjection(supplierFacts),out={schema:2,stage,boundary:'REAL_DAEMON_PRODUCTION_EXTENSION_TRUE_SIDEPANEL_SYNTHETIC_ACP',checks:output,passed:stage==='COMPLETE'&&Object.values(output).every(Boolean)&&supplier.passed,...browserStartupProjection(startup),supplier}
+  if(Buffer.byteLength(JSON.stringify(out))>1024)fail()
+  return out
 }
 export function preflight(env,platform,stat=fs.lstatSync,realpath=fs.realpathSync,uid=process.getuid?.()) {
   if(platform!=='linux'||env.GITHUB_ACTIONS!=='true'||env.RUNNER_OS!=='Linux'||env.RUNNER_ENVIRONMENT!=='github-hosted'||env.ImageOS!=='ubuntu22'||!path.isAbsolute(env.RUNNER_TEMP||''))fail()
@@ -386,12 +402,14 @@ export function sameOwnedRoot(root,identity,stat=fs.lstatSync,realpath=fs.realpa
 }
 export async function main() {
   if(!activeSupplier)fail()
-  let stage='PREFLIGHT',browserPhase=null,browserStartup,owned,ownedIdentity,daemon,browser,worker,view,observer,xvfb,chromium,timer,secret,peerIdentity,session,thread
-  const checks={},children=new Set(),clients=new Set(),observers=new Set(),deadline=Date.now()+BOUNDS.outer,abort=new AbortController()
+  let stage='PREFLIGHT',browserPhase=null,browserStartup,versionObserved=false,display,displayProof,supplierProof,owned,ownedIdentity,daemon,browser,worker,view,observer,xvfb,chromium,timer,secret,peerIdentity,session,thread
+  const checks={},children=new Set(),supplierStates=new Map(),clients=new Set(),observers=new Set(),deadline=Date.now()+BOUNDS.outer,abort=new AbortController()
   const remaining=()=>{const n=deadline-Date.now();if(n<=0||abort.signal.aborted)fail();return n}
   let navigationDeadline;const nav=()=>{const n=Math.min(remaining(),(navigationDeadline??deadline)-Date.now());if(n<=0)fail();return n}
   const poll=async(fn,ms)=>{const end=Math.min(deadline,Date.now()+ms);while(Date.now()<end){remaining();const v=await fn();if(v)return v;await new Promise(r=>setTimeout(r,25))}fail()}
   const child=(exe,args,env,stdio=['ignore','ignore','pipe'])=>{remaining();const c=spawn(exe,args,{env,stdio});c.closed=new Promise(resolve=>c.once('close',resolve));c.on('error',()=>{});c.stderr?.on('data',()=>{});c.stderr?.on('error',()=>{});children.add(c);return c}
+  const supplierChild=(exe,args,env,stdio=['ignore','pipe','pipe'])=>{const c=child(exe,args,env,stdio);supplierStates.set(c,observeSupplierChild(c));return c}
+  const joinSupplierChild=c=>{const state=supplierStates.get(c);if(!state)fail();return awaitSupplierChildClosed(state,remaining)}
   const connect=async(url)=>CDP.connect(WebSocket,url,Math.min(BOUNDS.auth,remaining()),clients)
   let WebSocket
   const originalConsole=Object.fromEntries(['log','info','warn','error','debug'].map(k=>[k,console[k]]))
@@ -418,11 +436,11 @@ export async function main() {
     if(await health())fail()
     const start=async()=>{daemon=child(process.execPath,[path.join(ROOT,'companion/dist/index.js'),'daemon','start'],env);await poll(async()=>{if(daemon.exitCode!==null||daemon.signalCode!==null)fail();return health()},BOUNDS.auth);return daemon}
     stage='DAEMON';await start();secret=privateRead(env.CMSPARK_DATA_DIR,'ws_secret',256).trim();if(!/^[a-f0-9]{64}$/.test(secret))fail()
-    stage='BROWSER';browserPhase='XVFB_REQUEST';xvfb=child('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','ignore','pipe','pipe']);const display=observeDisplayReady(xvfb);const screen=await limit(display.ready,Math.min(5000,remaining()));if(!display.isLive())fail();browserPhase='DISPLAY_OBSERVED'
+    stage='BROWSER';browserPhase='XVFB_REQUEST';xvfb=supplierChild('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','pipe','pipe','pipe']);display=observeDisplayReady(xvfb);const screen=await limit(display.ready,Math.min(5000,remaining()));if(!display.isLive())fail();browserPhase='DISPLAY_OBSERVED'
     if(!activeSupplier)fail();activeSupplier.check(remaining);const binary=activeSupplier.binary;browserPhase='BINARY_SELECTED'
-    chromium=child(binary,chromeArgs(owned,extension),childEnvironment(owned,input,screen));const portFile=path.join(owned,'profile/DevToolsActivePort')
+    chromium=supplierChild(binary,chromeArgs(owned,extension),childEnvironment(owned,input,screen));const portFile=path.join(owned,'profile/DevToolsActivePort')
     const parts=await poll(()=>{try{return devToolsPortSnapshot(fs.readFileSync(portFile,'utf8'))}catch{return false}},10000);browserPhase='PORT_FILE'
-    const socketBase='ws://127.0.0.1:'+parts[0];browser=await connect(socketBase+parts[1]);browserPhase='CDP_CONNECTED';const targets=()=>browser.call('Target.getTargets',{},remaining()).then(r=>r.targetInfos)
+    const socketBase='ws://127.0.0.1:'+parts[0];browser=await connect(socketBase+parts[1]);browserPhase='CDP_CONNECTED';const version=await browser.call('Browser.getVersion',{},Math.min(BOUNDS.auth,remaining()));if(version?.product!=='Chrome/'+PIN.version)fail();versionObserved=true;const targets=()=>browser.call('Target.getTargets',{},remaining()).then(r=>r.targetInfos)
     const targetSocket=async id=>{const list=await (await fetch('http://127.0.0.1:'+parts[0]+'/json/list',{signal:AbortSignal.timeout(Math.min(BOUNDS.auth,remaining()))})).json();const matches=list.filter(t=>t.id===id);if(matches.length!==1||typeof matches[0].webSocketDebuggerUrl!=='string'||!matches[0].webSocketDebuggerUrl.startsWith(socketBase+'/devtools/'))fail();return matches[0].webSocketDebuggerUrl}
     const sw=await poll(async()=>{const list=(await targets()).filter(t=>t.type==='service_worker'&&new RegExp('^chrome-extension://[a-p]{32}/'+paths.worker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$').test(t.url));if(list.length>1)fail();return list[0]},10000),origin='chrome-extension://'+sw.url.split('/')[2];browserPhase='WORKER_FOUND'
     worker=await connect(await targetSocket(sw.targetId));await worker.workerScriptReady(Math.min(BOUNDS.auth,remaining()));browserPhase='WORKER_READY';await worker.call('Runtime.enable',{},remaining())
@@ -472,25 +490,27 @@ await openPanel();const o=await waitDOM(`(()=>{const r=${historyObservationExpre
   finally {
     // Snapshot before cleanup termination can change either exitCode.
     browserStartup=observeBrowserStartup(browserPhase,chromium,xvfb)
+    try{displayProof=display?.snapshot()}catch{displayProof=undefined}
     let clean=true
     for(const socket of observers)socket.terminate()
     for(const c of clients)c.abort()
     try{await limit(Promise.all([...observers].map(s=>s.closed).concat([...clients].map(c=>c.settled))),remaining())}catch{clean=false}
-    for(const c of [...children].reverse())try{await closeOwnedChild(c,remaining)}catch{clean=false}
+    for(const c of [...children].reverse())try{await closeOwnedChild(c,remaining);if(supplierStates.has(c))await joinSupplierChild(c)}catch{clean=false}
     if(activeSupplier)try{if(!clean)activeSupplier.retain();activeSupplier.check(remaining);activeSupplier.dispose()}catch{clean=false}
     if(Date.now()>=deadline||abort.signal.aborted)clean=false
     clearTimeout(timer);secret=undefined
     if(owned&&clean){if(!sameOwnedRoot(owned,ownedIdentity))clean=false;else try{fs.rmSync(owned,{recursive:true,force:true})}catch{clean=false}}
     checks.cleanup=clean;if(!clean)stage='CLEANUP'
+    supplierProof={versionObserved,display:displayProof,xvfb:supplierStates.get(xvfb),browser:supplierStates.get(chromium)}
   }
-  Object.assign(console,originalConsole);const out=finiteReceipt(stage,checks,browserStartup);console.log(JSON.stringify(out));return out.passed?0:1
+  Object.assign(console,originalConsole);const out=finiteReceipt(stage,checks,browserStartup,supplierProof);console.log(JSON.stringify(out));return out.passed?0:1
 }
 let directEntry=false
 try{directEntry=!!process.argv[1]&&fs.realpathSync(process.argv[1])===fs.realpathSync(fileURLToPath(import.meta.url))}catch{}
 if(directEntry)process.exitCode=await pinnedEntry()
 
-// One new supplier phase and one independent witness precede the unchanged full
-// business clock. This can warm OS pages; it is not a cold-image experiment.
+// Supply remains mandatory. Only the real business browser proves runtime version,
+// application acceptance and owned close/EOF; no independent startup is called or reported passed.
 async function pinnedEntry() {
   const input=Object.fromEntries(['GITHUB_ACTIONS','RUNNER_OS','RUNNER_ENVIRONMENT','ImageOS','RUNNER_TEMP','GITHUB_SHA','RUNNER_TRACKING_ID'].map(k=>[k,process.env[k]]))
   let temp,built,paths
@@ -500,33 +520,10 @@ async function pinnedEntry() {
     built=path.join(ROOT,'chrome-extension/build/chrome-mv3-prod');paths=manifestPaths(JSON.parse(fs.readFileSync(path.join(built,'manifest.json'),'utf8')))
     const inspect=dir=>{for(const entry of fs.readdirSync(dir,{withFileTypes:true})){if(entry.isSymbolicLink()||!entry.isDirectory()&&!entry.isFile())fail();if(entry.isDirectory())inspect(path.join(dir,entry.name))}};inspect(built)
   }catch{console.log(JSON.stringify(finiteReceipt('PREFLIGHT',{})));return 1}
-  let witnessed=false
-  const code=await runPinnedPipeline({supply:()=>supplyFixedCft(temp),witness:async bundle=>{
-    const out=await independentSupplierWitness(bundle,temp,input,built,paths);console.log(JSON.stringify(out));witnessed=true;if(!out.cleanup)bundle.retain();return out.passed
-  },business:async bundle=>{activeSupplier=bundle;try{return await main()}finally{activeSupplier=undefined}}})
-  if(!witnessed)console.log(JSON.stringify(supplierReceipt('PREFLIGHT')))
+  let businessStarted=false
+  const code=await runPinnedBusiness({supply:()=>supplyFixedCft(temp),business:async bundle=>{
+    businessStarted=true;activeSupplier=bundle;try{return await main()}finally{activeSupplier=undefined}
+  }})
+  if(!businessStarted)console.log(JSON.stringify(supplierReceipt('PREFLIGHT')))
   return code
-}
-async function independentSupplierWitness(bundle,temp,input,built,paths) {
-  let owned,identity,timer,expired=false
-  const retained=new Set(),clients=new Set(),deadline=Date.now()+120000
-  const remaining=()=>{const n=deadline-Date.now();if(n<=0||expired)fail();return n}
-  const terminate=()=>{expired=true;for(const s of retained)if(!s.closed&&s.child.exitCode===null&&s.child.signalCode===null)try{s.child.kill('SIGKILL')}catch{s.error=true}}
-  try{
-    bundle.check(remaining)
-    owned=fs.mkdtempSync(path.join(temp,'cmspark-cft-witness732-'));fs.chmodSync(owned,0o700);identity=fs.lstatSync(owned);if(!sameOwnedRoot(owned,identity))fail()
-    const env=childEnvironment(owned,input),extension=path.join(owned,'extension')
-    for(const k of ['TMPDIR','XDG_CONFIG_HOME','XDG_CACHE_HOME','CMSPARK_DATA_DIR'])fs.mkdirSync(env[k],{mode:0o700})
-    fs.cpSync(built,extension,{recursive:true,dereference:false});for(const rel of [paths.worker,paths.page])if(!fs.lstatSync(path.join(extension,rel)).isFile())fail()
-    const require=createRequire(path.join(ROOT,'companion/package.json')),{WebSocket}=require('ws')
-    const retainedChild=(exe,args,childEnv,stdio)=>{remaining();bundle.check(remaining);const s=observeSupplierChild(spawn(exe,args,{env:childEnv,stdio}));retained.add(s);return s}
-    timer=setTimeout(terminate,remaining())
-    return await runSupplierWitness({deadline,remaining,now:Date.now,wait:ms=>new Promise(r=>setTimeout(r,ms)),checkPayload:()=>bundle.check(remaining),parsePort:devToolsPortSnapshot,
-      display(){const state=retainedChild('/usr/bin/Xvfb',['-displayfd','3','-screen','0','1280x800x24','-nolisten','tcp'],env,['ignore','pipe','pipe','pipe']);return {state,...observeDisplayReady(state.child)}},
-      browser:display=>retainedChild(bundle.binary,chromeArgs(owned,extension),childEnvironment(owned,input,display),['ignore','pipe','pipe']),
-      readPort:()=>fs.readFileSync(path.join(owned,'profile/DevToolsActivePort'),'utf8'),connect:parts=>CDP.connect(WebSocket,'ws://127.0.0.1:'+parts[0]+parts[1],Math.min(5000,remaining()),clients),
-      closeClients:async()=>{for(const c of clients)c.abort();await limit(Promise.all([...clients].map(c=>c.settled)),remaining())},
-      removeOwned(){if(!sameOwnedRoot(owned,identity))fail();fs.rmSync(owned,{recursive:true,force:true});owned=undefined}})
-  }catch{return supplierReceipt('PREFLIGHT')}
-  finally{clearTimeout(timer);if(expired||Date.now()>=deadline)terminate();/* Unknown close/EOF retains scratch. No foreign scan or fallback cleanup. */}
 }
