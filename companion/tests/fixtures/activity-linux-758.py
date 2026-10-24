@@ -16,6 +16,13 @@ overlay = None
 seen = ""
 
 
+def record(name, value):
+    pending = directory / (name + ".pending")
+    with pending.open("x", encoding="utf-8") as stream:
+        json.dump(value, stream)
+    pending.rename(directory / name)
+
+
 def poll():
     global seen, overlay
     control = directory / "control.json"
@@ -39,10 +46,10 @@ def poll():
                 root.destroy()
                 return
             root.update_idletasks()
-            (directory / "ack.json").write_text(json.dumps({"command": command}))
+            record("ack.json", {"command": command})
     root.after(50, poll)
 
 
-root.after(500, lambda: (directory / "ready.json").write_text(json.dumps({"pid": os.getpid()})))
+root.after(500, lambda: record("ready.json", {"pid": os.getpid()}))
 root.after(50, poll)
 root.mainloop()

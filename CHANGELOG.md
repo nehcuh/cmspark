@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Test reliability (#758): publish the owned Linux window fixture’s ready and acknowledgement JSON only after an exclusive temporary write and close, preventing the watcher from parsing an empty final file. Preserve the original receipt parser, child-close rejection, desktop assertions and time limits.
+
 - Fix (desktop): revoke host authority before graceful shutdown without terminating the authenticated socket before its final close frame; preserve immediate direct revocation, foreign hosts and reentrant retirement. Configure only the unshipped macOS XCTest runner to publish its owned scene handshake outside App Sandbox; retain strict file identity and original native assertions.
 
 - Fix (Windows desktop): stop reconnecting after a validated terminal close begins, while retaining transient reconnect and authentication failure handling. Native workspace acceptance uses the retained dialog’s real Cancel button and reports bounded failure identities without changing its assertions or deadline.
