@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Test diagnostics (macOS workspace): publish a bounded main-thread UI stage snapshot before the existing XCTest calls, so the owner can report the last published stage even when a synchronous call has not returned. Keep original actions, 45-second deadline, refusal, success and cleanup authorities unchanged; a stage snapshot does not identify the physical cause of the earlier hang.
+
 - Test diagnostics (#480): enable existing closed Windows native phase observations in acceptance fixtures and record them only from the current authenticated response socket. Reports explicitly describe lifetime-once attempts without reconnect-epoch attribution; success assertions and original deadlines remain unchanged.
 
 - Security: upgrade body-parser to 2.4.0 and Zod to 4.6.6 for the current high-severity advisories, with OpenAI SDK 6.0.0 for Zod 4 compatibility. Refresh the actual legacy outbound-schema recording and retain safe-integer argument bounds; existing moderate audit findings remain tracked.
@@ -105,6 +107,8 @@
 - **#726 Windows 选夹验收路径域**：仅测试的预期工作区使用原生 realpath 规范化，避免成功选夹返回的长路径与临时目录的 8.3 短名直接比较。保留实际选夹、绑定、取消、ACP cwd、所有者和清理断言；增加真实 Node JS realpath 与显式原生绑定 seam 的 LF/CRLF 回归。受控 CPU 通过不代替新 head 的 Windows 原生验收。
 
 ### Fixed
+
+- 原生本地终端验收在原期限已失败后，只按确实观察到的自身 PTY 退出、关闭与槽位释放事实收回占用；保留原始失败，不新增清理计时或释放未知资源。
 
 - Refs #732：hosted reload 验收先通过真实 stock 导航选择并核已提交 owner，再打开历史面板，避免 header 先于异步线程 hydrate 时被正常 owner 切换关闭。生产 owner、原导航／业务时限和原生历史断言不变；CPU 调度回归不代表当前远端首错或原生通过。
 

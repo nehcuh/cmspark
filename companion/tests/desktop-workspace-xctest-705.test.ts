@@ -314,3 +314,56 @@ test('705 owned Choose query waits within the original deadline before preservin
  assert.doesNotMatch(fragment,/sleep|activate\(|launch\(|terminate\(|setPrompt|\.prompt=/)
  assert.match(swift,/guard r>0,r<=45 else/)
 })
+
+
+// Diagnostic payloads come from the exact current Swift writer dictionary, not
+// hand-invented field names. This is a CPU source projection, not a Swift run.
+function swiftProgress705(stage:number,detail:number,nonce:string){
+ const source=fs.readFileSync(path.join(files,'OwnedUIProtocol.swift'),'utf8'),match=/let value:\[String:Any\]=(\["schema":1,"nonce":nonce,"stage":stage,"detail":detail\])/.exec(source);assert.ok(match)
+ const body=match[1].slice(1,-1).replace(/:nonce(?=,|$)/g,':'+JSON.stringify(nonce)).replace(/:stage(?=,|$)/g,':'+JSON.stringify(stage)).replace(/:detail(?=,|$)/g,':'+JSON.stringify(detail))
+ return JSON.parse('{'+body+'}')
+}
+test('705 published UI progress is producer-derived closed and independent of refusal and lifecycle authority',()=>{
+ const f=loadBoundary();assert.equal(f.api.uiProgress(),null)
+ for(let stage=1;stage<=20;stage++)for(let detail=0;detail<=5;detail++){
+  const value=swiftProgress705(stage,detail,f.base.nonce);f.put('ui-progress.json',value);assert.deepEqual(JSON.parse(JSON.stringify(f.api.uiProgress())),{stage,detail});assert.equal(f.api.uiRefusal(),null);assert.equal(f.api.receiptMask(),0);assert.equal(f.api.closure(true,true),false)
+ }
+ const value=swiftProgress705(10,0,f.base.nonce)
+ for(const change of[{stage:0},{stage:21},{stage:true},{stage:1.5},{stage:Number.MAX_VALUE},{detail:-1},{detail:6},{detail:true},{nonce:'b'.repeat(64)},{extra:'OWNED_PRIVATE_PROGRESS'}]){f.put('ui-progress.json',{...value,...change});assert.equal(f.api.uiProgress(),null)}
+ for(const fault of['nonfile','symlink','nlink','uid','mode','oversize','empty']){
+  const g=loadBoundary();g.put('ui-progress.json',swiftProgress705(3,0,g.base.nonce));const row=g.store.get(g.root+'/ui-progress.json');if(fault==='nonfile')row.nonfile=true;if(fault==='symlink')row.symlink=true;if(fault==='nlink')row.nlink=2;if(fault==='uid')row.uid=8;if(fault==='mode')row.mode=0o644;if(fault==='oversize')row.bytes=Buffer.alloc(4097,65);if(fault==='empty')row.bytes=Buffer.alloc(0);assert.equal(g.api.uiProgress(),null,fault)
+ }
+ f.full();f.put('ui-progress.json',value);assert.equal(f.api.receiptMask(),31);assert.equal(f.api.closure(true,true),true);f.put('ui-progress.json',{...value,stage:0});assert.equal(f.api.uiProgress(),null);assert.equal(f.api.receiptMask(),31);assert.equal(f.api.closure(true,true),true)
+})
+test('705 main-thread progress publisher preserves every original UI action authority and atomic fixed-file boundary',()=>{
+ const actualProtocol=fs.readFileSync(path.join(files,'OwnedUIProtocol.swift'),'utf8'),actualUI=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8'),actualSource=fs.readFileSync(helper,'utf8'),actualNative=fs.readFileSync(path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'utf8')
+ function verifyConservation(protocol:string,ui:string,source:string,native:string){
+  // Static source text only: never normalize runtime JSON, compiled bytes, TAP or evidence.
+  const canonical=(value:string)=>value.replace(/\r\n/g,'\n')
+  protocol=canonical(protocol);ui=canonical(ui);source=canonical(source);native=canonical(native)
+  const a=protocol.indexOf(' // Best-effort main-thread stage snapshot only;'),b=protocol.indexOf(' func tuple(',a);assert.ok(a>=0&&b>a);const writer=protocol.slice(a,b)
+  assert.match(writer,/guard Thread\.isMainThread,\(1\.\.\.20\).contains\(stage\),\(0\.\.\.5\).contains\(detail\)/);assert.match(writer,/OwnedUI705File\.uiProgress/);assert.match(writer,/O_WRONLY\|O_CREAT\|O_EXCL\|O_NOFOLLOW,0o600/);assert.match(writer,/pending\.st_dev==owned\.st_dev,pending\.st_ino==owned\.st_ino/);assert.match(writer,/current\.st_dev==previous\.st_dev,current\.st_ino==previous\.st_ino/);assert.match(writer,/published\.st_dev==owned\.st_dev,published\.st_ino==owned\.st_ino/);assert.ok(writer.indexOf('fsync(fd)')<writer.indexOf('rename(temp,file)'));assert.doesNotMatch(writer,/Dispatch|Timer|Task\.|async|sleep|XCTest|XCUIApplication|Int\(oldStage\)|Int\(oldDetail\)/)
+  const originalProtocol=protocol.slice(0,a)+protocol.slice(b);assert.equal(createHash('sha256').update(originalProtocol.replace(', uiProgress="ui-progress.json"','')).digest('hex'),'757299efa1cc922ac5551e16e763755b790fc0ccd49d969df24aadb2b1fb94d4')
+  assert.equal(ui.match(/uiStage=(?:stage(?:\+[12])?|\d+);uiDetail=0;observeUIStage\(\)/g)?.length,17);assert.match(ui,/@MainActor func testOwnedPanel/);assert.match(ui,/func observeUIStage\(\)\{try\? scene.writeUIProgress\(uiStage,uiDetail\)\}/)
+  const originalUI=ui.replace('  func observeUIStage(){try? scene.writeUIProgress(uiStage,uiDetail)}\n','').replaceAll(';observeUIStage()','').replace('  observeUIStage()\n','');assert.equal(createHash('sha256').update(originalUI).digest('hex'),'ab75e477a7f678cbc86191ca3997ea9d55fa8e6ba9cca6a408536af82afa7a79')
+  const c=source.indexOf(' // Last published main-thread stage only;'),d=source.indexOf(' // Passive, non-atomic observation only.',c);assert.ok(c>=0&&d>c);assert.equal(createHash('sha256').update((source.slice(0,c)+source.slice(d)).replace(",'ui-progress.json'] as const","] as const")).digest('hex'),'bc35145a80691993219c237dce088534604a99a001cf5a7414229562963438cb')
+  const nativeStart=native.indexOf('   surfaceLease.retain();let uiLifecycle:'),nativeEnd=native.indexOf('\n  }\n })\n})',nativeStart);assert.ok(nativeStart>=0&&nativeEnd>nativeStart);const originalNative=native.slice(nativeStart,nativeEnd).replace("let uiProgress:{stage:number;detail:number}|null=null;try{if(primaryFailed)uiProgress=uiOwner?.scene.uiProgress()??null}catch{};",'').replace('...(uiOwner?{uiRefusal,uiProgress}:{})','...(uiOwner?{uiRefusal}:{})');assert.equal(createHash('sha256').update(originalNative).digest('hex'),'aa950d5bf4a8cbb67fce423534261f026acb99c7e7057b2f8988c69009e2c52e')
+ }
+ for(const eol of ['\n','\r\n']){
+  const profile=(value:string)=>value.replace(/\r\n/g,'\n').replace(/\n/g,eol)
+  verifyConservation(profile(actualProtocol),profile(actualUI),profile(actualSource),profile(actualNative))
+ }
+})
+test('705 actual failure progress projection precedes cancel and isolates reader scene logger and cancellation faults',()=>{
+ const file=path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),source=fs.readFileSync(file,'utf8'),ast=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true);let block:ts.Block|undefined
+ function visit(n:ts.Node){if(ts.isTryStatement(n)&&n.finallyBlock?.getText(ast).includes('D476_WORKSPACE_NATIVE_PHASE'))block=n.finallyBlock;ts.forEachChild(n,visit)}visit(ast);assert.ok(block)
+ const cut=block.statements.findIndex(n=>n.getText(ast).includes('child?.terminate()'));assert.ok(cut>0);const prefix=block.statements.slice(0,cut).map(n=>n.getText(ast)).join('\n'),compiled=ts.transpileModule(prefix,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
+ for(const variant of['good','success','readerFault','sceneGetter','loggerFault','cancelFault']){
+  const trace:string[]=[],rows:string[]=[],cancelError=Error('OWNED_CANCEL'),value=swiftProgress705(9,0,'a'.repeat(64)),owner:any={diagnostic:()=>({begun:true}),scene:{receiptMask:()=>7,uiRefusal:()=>null,uiProgress(){trace.push('progress');if(variant==='readerFault')throw Error('OWNED_PRIVATE_PROGRESS');return{stage:value.stage,detail:value.detail}}},xcodeFailureObservation(){throw Error('OWNED_PRIVATE_XCODE')},cancel(){trace.push('cancel');if(variant==='cancelFault')throw cancelError}}
+  if(variant==='sceneGetter')Object.defineProperty(owner,'scene',{get(){throw Error('OWNED_PRIVATE_SCENE')}})
+  const scope:any={uiOwner:owner,primaryFailed:variant!=='success',surfaceLease:{retain(){}},required:[],receipts:new Set(),picks:1,pickerObserved:1,pickerReturned:0,cancelReturned:0,connections:1,authenticated:true,windowRequested:true,settled:false,childExitCode:null,firstFailedAssertion:0,failed:true,failureSite:9,pickOutcome:1,pickerLifecycle:null,nativeDiagnostic:null,diagnosticInvalid:false,selectedOutcome:null,selectedIdentity:null,cancelClose:null,cancelShow:null,cancelSettled:null,cancelCurrent:null,Buffer,t:{diagnostic(s:string){if(variant==='loggerFault')throw Error('OWNED_PRIVATE_LOGGER');rows.push(s)}}}
+  if(variant==='cancelFault')assert.throws(()=>vm.runInNewContext(compiled,scope),error=>error===cancelError);else assert.doesNotThrow(()=>vm.runInNewContext(compiled,scope))
+  assert.equal(trace.filter(x=>x==='cancel').length,1);assert.equal(trace.filter(x=>x==='progress').length,['success','sceneGetter'].includes(variant)?0:1);if(trace.includes('progress'))assert.ok(trace.indexOf('progress')<trace.indexOf('cancel'));assert.equal(scope.primaryFailed,variant!=='success');assert.equal(scope.failureSite,9);assert.equal(scope.failed,true)
+  const records=rows.filter(s=>s.startsWith('D476_WORKSPACE_NATIVE_PHASE '));assert.equal(records.length,['loggerFault','cancelFault'].includes(variant)?0:1);for(const record of records){const actual=JSON.parse(record.slice('D476_WORKSPACE_NATIVE_PHASE '.length));assert.deepEqual(actual.uiProgress,variant==='good'?{stage:9,detail:0}:null);assert.equal(actual.failureSite,9);assert.equal(record.includes('OWNED_PRIVATE'),false)}
+ }
+})

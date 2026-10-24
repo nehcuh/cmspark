@@ -144,3 +144,102 @@ test('705 local data observation uses actual renderer and bounded Node producer 
  for(const code of forwards)for(const sinkThrows of [false,true]){let calls=0;const forwarding={id:'D476_LOCAL_DATA_SEEN',dataSeen:false,h:{},emit(){calls++;if(sinkThrows)throw Error('OWNED_OBSERVATION_SINK')},observation(){calls++;return}};vm.runInNewContext('globalThis.forward=()=>{'+code+'}',forwarding);forwarding.forward();forwarding.forward();assert.equal(calls,1);assert.equal(forwarding.dataSeen,true)}
  const callback=ast.statements.find(n=>ts705.isExpressionStatement(n)&&ts705.isCallExpression(n.expression)&&n.expression.arguments[0]?.text?.startsWith('#476 native local-work keys'));assert.ok(callback);const body=callback.getText(ast),required=/required=\[([^\]]+)\]/.exec(body);assert.ok(required);assert.equal(required[1].includes('DATA_SEEN'),false);assert.match(body,/Object.keys\(frame\).sort\(\).join\(\)===\x27id,type\x27/);assert.match(body,/input.send\(frame\)/)
 })
+
+
+test('705 actual local teardown reconciles confirmed owned closes after the original deadline without hiding primary failure',async()=>{
+ const source=localMeta705(),ast=ts705.createSourceFile('metadata.ts',source,ts705.ScriptTarget.Latest,true),candidates=[];
+ function walk(n){if(ts705.isCallExpression(n)&&n.expression.getText(ast)==='test'&&n.arguments[0]?.text==='#476 native local-work keys→real PTY/ACP→explicit handback→same history')candidates.push(n);ts705.forEachChild(n,walk)}walk(ast);assert.equal(candidates.length,1);
+ const outer=candidates[0].arguments.at(-1),action=outer.body.arguments.at(-1),original=action.body.statements.filter(ts705.isTryStatement).find(n=>n.finallyBlock?.getText(ast).includes("t.diagnostic('D476_LOCAL_NATIVE_PHASE '"));assert.ok(original?.catchClause&&original.finallyBlock);
+ const helper=ast.statements.find(n=>ts705.isFunctionDeclaration(n)&&n.name?.text==='createLocalDataObservation705');assert.ok(helper);
+ // Only replace the scenario's try body. Keep its real catch and entire finally.
+ const actual=original.getText(ast),start=original.tryBlock.getStart(ast)-original.getStart(ast),end=original.tryBlock.end-original.getStart(ast),program=helper.getText(ast).replace(/^export /,'')+'\nglobalThis.run=async()=>{'+actual.slice(0,start)+'{throw primary}'+actual.slice(end)+'};';
+ const code=ts705.transpileModule(program,{compilerOptions:{target:ts705.ScriptTarget.ES2022}}).outputText;
+ let controls=0;
+ for(const [ownExited,closedFact,busy,matchingCounts,shouldSettle]of[[true,true,false,true,true],[false,true,false,true,false],[true,false,false,true,false],[true,true,true,true,false],[true,true,false,false,false]]){
+  const primary=Error('OWNED_ORIGINAL_TIMEOUT'),deadline=Promise.reject(Error('OWNED_ALREADY_ABORTED'));deadline.catch(()=>{});let deletes=0,settlements=0,foreignKills=0;
+  const own={exited:ownExited,kill(){}},scope={assert,Buffer,Promise,Error,primary,primaryFailed:false,
+   t:{diagnostic(){}},surfaceLease:{retain(){},settled(){settlements++}},failed:false,required:[],receipts:new Set(),protocolStarts:0,saved:0,inputUnicode:false,resizeCalls:0,terminalStops:0,authenticated:true,windowRequested:true,connections:1,settled:true,localFirstSite:{R:null,W:null,M:null},localFocusResult:null,
+   native:{terminate(){}},exited:Promise.resolve(77),channel:{wss:{clients:new Set([{terminate(){}}]),close(done){done()}}},confirmations:{rejectAll(){}},manager:{async shutdown(){},setHandbackSink(){},hasProjectThreadActivity(){return false}},
+   actualHandles:[own],ptyExits:[Promise.resolve()],ptyClosed:[Promise.resolve()],ptyClosedStates:matchingCounts?[{closed:closedFact}]:[],deadline,pty:{isPtyBusy(){return busy}},legacy:{close(done){done()}},server:{close(done){done()}},previous:undefined,skipLogin:undefined,process:{env:{}},dir:'/owned/cpu-local',fs:{rmSync(file,options){assert.equal(file,'/owned/cpu-local');assert.equal(options.recursive,true);assert.equal(options.force,true);assert.equal(own.exited,true);assert.equal(closedFact,true);assert.equal(busy,false);deletes++}},foreign:{kill(){foreignKills++}}};
+  vm.createContext(scope);vm.runInContext(code,scope);scope.dataObservation=vm.runInContext('createLocalDataObservation705()',scope);let caught=false;try{await scope.run()}catch(error){caught=true;assert.strictEqual(error,primary)}assert.equal(caught,true);assert.equal(scope.primaryFailed,true);assert.equal(settlements,shouldSettle?1:0);assert.equal(deletes,shouldSettle?1:0);assert.equal(foreignKills,0);controls++;
+ }
+ assert.equal(controls,5);
+});
+
+// Project exact fixed C++ input bodies, never evaluate COM/DOM/Win32 APIs.
+function localInputBlock705(text,start){
+ const begin=text.indexOf('{',start);assert.ok(begin>=0);let depth=0,quote='',comment=false
+ for(let i=begin;i<text.length;i++){
+  const c=text[i];if(comment){if(c==='\n')comment=false;continue}
+  if(quote){if(c==='\\')i++;else if(c===quote)quote='';continue}
+  if(c==='/'&&text[i+1]==='/'){comment=true;i++;continue}
+  if(c==='"'||c==="'"){quote=c;continue}
+  if(c==='{')depth++;if(c==='}'&&!--depth)return text.slice(begin+1,i)
+ }throw Error('UNTERMINATED_LOCAL_INPUT_SOURCE')
+}
+function localInputMember705(name,text=read('tests/fixtures/desktop-476/local-acceptance.cpp')){
+ const marker='D476LocalAcceptance::'+name+'(';assert.equal(text.split(marker).length,2,marker);return localInputBlock705(text,text.indexOf(marker))
+}
+function localInputLower705(text){return text.replace(/\bL(?=["'])/g,'').replace(/owner==&h/g,'owner===h').replace(/for\(auto c:command\(\)\)/g,'for(const c of command())').replace(/command\(\)\.size\(\)/g,'command().length').replace(/std::wstring\(1,c\)/g,'c').replace(/const size_t /g,'const ').replace(/size_t (count|at)=/g,'let $1=').replace(/JsonObject payload;/g,'const payload=new JsonObject();').replace(/JsonValue::CreateNumberValue\(/g,'Number(').replace(/throw std::runtime_error\(/g,'throw Error(').replace(/input_web\.Reset\(\)/g,'input_web=null').replace(/FAILED\((\w+)\)/g,'($1<0)')}
+function localCommand705(text=read('tests/fixtures/desktop-476/local-acceptance.cpp')){const match=/static const std::wstring value=L("[^\n]+");return value;/.exec(localInputMember705('command',text));assert.ok(match);return JSON.parse(match[1])}
+function localPayload705(cursor,text=read('tests/fixtures/desktop-476/local-acceptance.cpp')){
+ class JsonObject{Insert(k,v){this[k]=v}}
+ const s={JsonObject,VK_RETURN:13,command:()=>localCommand705(text),put:(o,k,v)=>{assert.equal(typeof v,'string');o.Insert(k,v)}}
+ vm.runInNewContext('globalThis.payload=function(cursor){'+localInputLower705(localInputMember705('input_payload',text))+'}',s)
+ return JSON.parse(JSON.stringify(s.payload(cursor)))
+}
+function localInputContext705(extra={}){
+ const h={web:{owned:'web'},controller:{},window:'owned-window',generation:'owned-document',epoch:7,ready:true,closing:false},calls=[]
+ const s={h,owner:h,documentId:'owned-document',epoch:7,input_failed:false,input_active:false,input_typed:false,input_pending_key:false,input_cursor:0,input_web:null,done:false,done_emitted:false,
+  GetForegroundWindow:()=>h.window,IsWindowVisible:()=>true,command:()=>localCommand705(),observe:(_,id)=>calls.push(['observe',id]),emit:(_,id)=>calls.push(['emit',id]),input_step:()=>calls.push(['step']),key:(_,type)=>calls.push(['key',type]),...extra}
+ vm.createContext(s)
+ for(const [name,args]of [['current','h'],['input_failure','h'],['input_length',''],['input_request','h'],['input_finished','h']])vm.runInContext('globalThis.'+name+'=function('+args+'){'+localInputLower705(localInputMember705(name))+'}',s)
+ return{s,h,calls}
+}
+function localInputCallback705(extra={}){
+ const f=localInputContext705(),raw=localInputMember705('input_step'),mark='](HRESULT status,LPCWSTR result)->HRESULT',at=raw.indexOf(mark);assert.ok(at>=0)
+ const body=localInputLower705(localInputBlock705(raw,at)).replace(/\(LONG_PTR\)expected/g,'expected').replace(/auto& target=\*expected;/g,'const target=expected;').replace(/(target\.web|input_web|web)\.Get\(\)/g,'$1').replace(/JsonObject::Parse\(result\)\.Size\(\)/g,'parseResult(result)').replace(/catch\(\.\.\.\)/g,'catch(error)')
+ Object.assign(f.s,{expected:f.h,window:f.h.window,web:f.h.web,cursor:0,IsWindow:()=>true,GetWindowLongPtrW:()=>f.h,GWLP_USERDATA:0,S_OK:0,parseResult:value=>{const x=JSON.parse(value);if(!x||typeof x!=='object'||Array.isArray(x))throw Error('NOT_JSON_OBJECT');return Object.keys(x).length},input_active:true,input_typed:true,input_web:f.h.web,...extra})
+ vm.runInContext('globalThis.completeCallback=function(status,result){'+body+'}',f.s);return f
+}
+function localInputContract705(text){
+ const step=localInputMember705('input_step',text)
+ assert.equal(step.split('web->CallDevToolsProtocolMethod(L"Input.dispatchKeyEvent",payload.c_str(),Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>').length,2)
+ for(const token of ['GetForegroundWindow()!=h.window','input_web.Get()!=h.web.Get()','input_cursor>=input_length()','[expected,window,web,cursor]','owner!=expected','!IsWindow(window)','GetWindowLongPtrW(window,GWLP_USERDATA)!=(LONG_PTR)expected','FAILED(status)','!current(target)','GetForegroundWindow()!=window','target.web.Get()!=web.Get()','input_web.Get()!=web.Get()','!input_active','input_cursor!=cursor','JsonObject::Parse(result).Size()!=0','++input_cursor','input_finished(target);else input_step(target)','if(FAILED(submitted))input_failure(h)'])assert.ok(step.includes(token),token)
+ assert.ok(step.indexOf('GetWindowLongPtrW')<step.indexOf('auto& target=*expected'))
+ assert.ok(step.indexOf('JsonObject::Parse(result)')<step.indexOf('++input_cursor'))
+ for(const token of ['owner==&h','!input_failed','!h.closing','h.generation==documentId','h.epoch==epoch','h.web&&h.controller&&h.window'])assert.ok(localInputMember705('current',text).includes(token),token)
+ assert.equal(text.includes('WM_CHAR'),false);assert.equal(text.includes('Input.insertText'),false)
+ assert.ok(localInputMember705('key',text).includes('PostMessageW(info.hwndFocus,WM_KEYDOWN,VK_RETURN'))
+ assert.ok(localInputMember705('key',text).includes('PostMessageW(info.hwndFocus,WM_KEYUP,VK_RETURN'))
+ assert.ok(localInputMember705('complete',text).includes('!done_emitted||input_active||input_pending_key'))
+}
+test('705 local actual engine stream preserves both original lines and expands only CR into Enter down/up',()=>{
+ const command=localCommand705();assert.equal(command,"#中\rWrite-Output ('D476_' + 'LOCAL_' + [char]0x4e2d)\r");assert.equal(command.includes('D476_LOCAL_中'),false)
+ let cursor=0,reconstructed='',enters=0
+ for(const c of command){if(c==='\r'){
+  assert.deepEqual(localPayload705(cursor++),{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'})
+  assert.deepEqual(localPayload705(cursor++),{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13});enters++
+ }else assert.deepEqual(localPayload705(cursor++),{type:'char',text:c,unmodifiedText:c});reconstructed+=c}
+ const f=localInputContext705();assert.equal(cursor,f.s.input_length());assert.equal(enters,2);assert.equal(reconstructed,command);assert.throws(()=>localPayload705(cursor),/LOCAL_INPUT_STATE/)
+})
+test('705 local actual input has current owner, epoch and captured WebView serial fences with old button Enter retained',()=>{
+ const source=read('tests/fixtures/desktop-476/local-acceptance.cpp');for(const text of [source,source.replace(/\r?\n/g,'\r\n')])localInputContract705(text)
+ for(const [before,after]of [['input_cursor!=cursor','false'],['target.web.Get()!=web.Get()','false'],['JsonObject::Parse(result).Size()!=0','false'],['if(FAILED(submitted))input_failure(h)',''],['h.epoch==epoch','true']]){assert.equal(source.split(before).length,2,before);assert.throws(()=>localInputContract705(source.replace(before,after)),{name:'AssertionError'})}
+})
+test('705 local actual typing admission is single shot and refuses stale owner, epoch and foreground before input',()=>{
+ for(const fault of ['none','owner','generation','epoch','closing','foreground']){const f=localInputContext705();if(fault==='owner')f.s.owner={};if(fault==='generation')f.h.generation='other';if(fault==='epoch')f.h.epoch++;if(fault==='closing')f.h.closing=true;if(fault==='foreground')f.s.GetForegroundWindow=()=> 'other';f.s.input_request(f.h);assert.equal(f.calls.filter(x=>x[0]==='step').length,fault==='none'?1:0);assert.equal(f.s.input_failed,fault!=='none');if(fault==='none'){f.s.input_request(f.h);assert.equal(f.s.input_failed,true);assert.equal(f.calls.filter(x=>x[0]==='step').length,1)}}
+})
+test('705 local actual callback advances exactly once only after successful protocol return',()=>{
+ const f=localInputCallback705();assert.equal(f.s.completeCallback(0,'{}'),0);assert.equal(f.s.input_cursor,1);assert.equal(f.calls.filter(x=>x[0]==='step').length,1)
+ // A duplicate queued callback cannot replay an input event.
+ f.s.completeCallback(0,'{}');assert.equal(f.s.input_failed,true);assert.equal(f.s.input_cursor,1);assert.equal(f.calls.filter(x=>x[0]==='step').length,1)
+})
+test('705 local actual callback refuses protocol, stale WebView and lifetime failures without another input effect',()=>{
+ for(const fault of ['status','null','json','array','nonempty','owner','window','userdata','epoch','foreground','web','cursor','inactive']){const f=localInputCallback705();let status=0,result='{}';if(fault==='status')status=-1;if(fault==='null')result=null;if(fault==='json')result='bad';if(fault==='array')result='[]';if(fault==='nonempty')result='{"fixed":1}';if(fault==='owner')f.s.owner={};if(fault==='window')f.s.IsWindow=()=>false;if(fault==='userdata')f.s.GetWindowLongPtrW=()=>({});if(fault==='epoch')f.h.epoch++;if(fault==='foreground')f.s.GetForegroundWindow=()=> 'other';if(fault==='web')f.h.web={};if(fault==='cursor')f.s.input_cursor++;if(fault==='inactive')f.s.input_active=false;f.s.completeCallback(status,result);assert.equal(f.s.input_failed,true,fault);assert.equal(f.calls.filter(x=>x[0]==='step').length,0,fault)}
+})
+test('705 local actual last callback drains before pending original button Enter and one DONE receipt',()=>{
+ const f=localInputCallback705({done:true,input_pending_key:true}),last=f.s.input_length()-1;f.s.cursor=last;f.s.input_cursor=last;f.s.completeCallback(0,'{}');assert.equal(f.s.input_active,false);assert.equal(f.s.input_pending_key,false);assert.equal(f.s.done_emitted,true);assert.deepEqual(f.calls,[['key',false],['emit','D476_LOCAL_DONE']]);f.s.input_finished(f.h);assert.equal(f.calls.filter(x=>x[1]==='D476_LOCAL_DONE').length,1)
+ const key=localInputMember705('key');assert.ok(key.includes('if(input_active){if(input_pending_key){input_failure(h);return;}input_pending_key=true;return;}'))
+ const renderer=localInputMember705('renderer');assert.ok(renderer.includes('done=true;if(input_active||input_pending_key)return;done_emitted=true;emit(h,L"D476_LOCAL_DONE")'))
+})

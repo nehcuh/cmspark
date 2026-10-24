@@ -40,33 +40,35 @@ final class WorkspacePicker705:XCTestCase {
   preflightStage=0
   let ack=try waitFile(.ack);try scene.tuple(ack,["schema","nonce","pid","identity_bound"]);guard try OwnedUI705Scene.pid(ack["pid"])==pid,try OwnedUI705Scene.boolean(ack["identity_bound"]) else{throw OwnedUI705Error.refused}
   _ = try remaining();try scene.write(.begin,["schema":1,"nonce":scene.nonce,"pid":pid,"phase":"UI_SEQUENCE_STARTED"])
+  func observeUIStage(){try? scene.writeUIProgress(uiStage,uiDetail)}
   // No quiescent receipt if an Objective-C exception, timeout or termination interrupts a synchronous UI call.
   defer{do{try scene.write(.returned,["schema":1,"nonce":scene.nonce,"pid":pid,"phase":"UI_SEQUENCE_RETURNED"])}catch{XCTFail("OWNED_UI_QUIESCENCE_REFUSED")}}
-  uiStage=1;uiDetail=0
+  uiStage=1;uiDetail=0;observeUIStage()
   let app=XCUIApplication(url:scene.appBundle) // Proxy only. Never launch/activate/terminate another instance.
   let observedState=app.state
   switch observedState {case .notRunning:uiDetail=1;case .runningForeground:uiDetail=2;case .runningBackground:uiDetail=3;default:uiDetail=4}
+  observeUIStage()
   guard observedState == .runningForeground || observedState == .runningBackground else{throw OwnedUI705Error.refused}
   func ready(_ file:OwnedUI705File,_ number:Int) throws {let f=try waitFile(file);try scene.tuple(f,["schema","nonce","number"]);guard try OwnedUI705Scene.number(f["number"])==Double(number) else{throw OwnedUI705Error.refused}}
   func sheet(_ stage:Int) throws ->XCUIElement {
-   uiStage=stage;uiDetail=0;let windows=app.windows.matching(identifier:scene.nonce),count=windows.count;uiDetail=min(count,2)+1;guard count==1 else{throw OwnedUI705Error.refused};let w=windows.element
-   uiStage=stage+1;uiDetail=0;let exists=w.sheets.element.waitForExistence(timeout:try remaining());uiDetail=exists ? 2:1;guard exists else{throw OwnedUI705Error.refused}
-   uiStage=stage+2;uiDetail=0;let sheets=w.sheets.count;uiDetail=min(sheets,2)+1;guard sheets==1 else{throw OwnedUI705Error.refused};return w.sheets.element
+   uiStage=stage;uiDetail=0;observeUIStage();let windows=app.windows.matching(identifier:scene.nonce),count=windows.count;uiDetail=min(count,2)+1;observeUIStage();guard count==1 else{throw OwnedUI705Error.refused};let w=windows.element
+   uiStage=stage+1;uiDetail=0;observeUIStage();let exists=w.sheets.element.waitForExistence(timeout:try remaining());uiDetail=exists ? 2:1;observeUIStage();guard exists else{throw OwnedUI705Error.refused}
+   uiStage=stage+2;uiDetail=0;observeUIStage();let sheets=w.sheets.count;uiDetail=min(sheets,2)+1;observeUIStage();guard sheets==1 else{throw OwnedUI705Error.refused};return w.sheets.element
   }
-  uiStage=2;uiDetail=0;try ready(.first,1);let first=try sheet(3)
-  uiStage=6;uiDetail=0;_ = try remaining();first.typeKey("g",modifierFlags:[.command,.shift])
-  uiStage=7;uiDetail=0;let comboCount=first.comboBoxes.count;uiDetail=min(comboCount,2)+1;let inputs=comboCount==1 ? first.comboBoxes:first.textFields
-  uiStage=8;uiDetail=0;let inputCount=inputs.count;uiDetail=min(inputCount,2)+1;guard inputCount==1 else{throw OwnedUI705Error.refused}
-  uiStage=9;uiDetail=0;let inputHittable=inputs.element.isHittable;uiDetail=inputHittable ? 2:1;guard inputHittable else{throw OwnedUI705Error.refused}
-  uiStage=10;uiDetail=0;_ = try remaining();inputs.element.click();_ = try remaining();inputs.element.typeText(scene.selection.path);_ = try remaining();inputs.element.typeKey("\r",modifierFlags:[])
+  uiStage=2;uiDetail=0;observeUIStage();try ready(.first,1);let first=try sheet(3)
+  uiStage=6;uiDetail=0;observeUIStage();_ = try remaining();first.typeKey("g",modifierFlags:[.command,.shift])
+  uiStage=7;uiDetail=0;observeUIStage();let comboCount=first.comboBoxes.count;uiDetail=min(comboCount,2)+1;observeUIStage();let inputs=comboCount==1 ? first.comboBoxes:first.textFields
+  uiStage=8;uiDetail=0;observeUIStage();let inputCount=inputs.count;uiDetail=min(inputCount,2)+1;observeUIStage();guard inputCount==1 else{throw OwnedUI705Error.refused}
+  uiStage=9;uiDetail=0;observeUIStage();let inputHittable=inputs.element.isHittable;uiDetail=inputHittable ? 2:1;observeUIStage();guard inputHittable else{throw OwnedUI705Error.refused}
+  uiStage=10;uiDetail=0;observeUIStage();_ = try remaining();inputs.element.click();_ = try remaining();inputs.element.typeText(scene.selection.path);_ = try remaining();inputs.element.typeKey("\r",modifierFlags:[])
   let choose=first.buttons.matching(NSPredicate(format:"label IN %@",["Choose","Open"]))
-  uiStage=11;uiDetail=0;let chooseSeen=choose.firstMatch.waitForExistence(timeout:try remaining());uiDetail=chooseSeen ? 2:1;guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;guard chooseCount==1 else{throw OwnedUI705Error.refused}
-  uiStage=12;uiDetail=0;let chooseHittable=choose.element.isHittable;uiDetail=chooseHittable ? 2:1;guard chooseHittable else{throw OwnedUI705Error.refused}
-  uiStage=13;uiDetail=0;_ = try remaining();choose.element.click()
-  uiStage=14;uiDetail=0;try ready(.second,2);let second=try sheet(15),cancel=second.buttons.matching(identifier:"Cancel")
-  uiStage=18;uiDetail=0;let cancelCount=cancel.count;uiDetail=min(cancelCount,2)+1;guard cancelCount==1 else{throw OwnedUI705Error.refused}
-  uiStage=19;uiDetail=0;let cancelHittable=cancel.element.isHittable;uiDetail=cancelHittable ? 2:1;guard cancelHittable else{throw OwnedUI705Error.refused}
-  uiStage=20;uiDetail=0;_ = try remaining();cancel.element.click()
+  uiStage=11;uiDetail=0;observeUIStage();let chooseSeen=choose.firstMatch.waitForExistence(timeout:try remaining());uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;observeUIStage();guard chooseCount==1 else{throw OwnedUI705Error.refused}
+  uiStage=12;uiDetail=0;observeUIStage();let chooseHittable=choose.element.isHittable;uiDetail=chooseHittable ? 2:1;observeUIStage();guard chooseHittable else{throw OwnedUI705Error.refused}
+  uiStage=13;uiDetail=0;observeUIStage();_ = try remaining();choose.element.click()
+  uiStage=14;uiDetail=0;observeUIStage();try ready(.second,2);let second=try sheet(15),cancel=second.buttons.matching(identifier:"Cancel")
+  uiStage=18;uiDetail=0;observeUIStage();let cancelCount=cancel.count;uiDetail=min(cancelCount,2)+1;observeUIStage();guard cancelCount==1 else{throw OwnedUI705Error.refused}
+  uiStage=19;uiDetail=0;observeUIStage();let cancelHittable=cancel.element.isHittable;uiDetail=cancelHittable ? 2:1;observeUIStage();guard cancelHittable else{throw OwnedUI705Error.refused}
+  uiStage=20;uiDetail=0;observeUIStage();_ = try remaining();cancel.element.click()
   } catch {
    // Failure-only closed integers; a logging refusal never replaces this error.
    if preflightStage==0 && (1...20).contains(uiStage),let scene=uiScene {try? scene.write(.uiRefusal,["schema":1,"nonce":scene.nonce,"stage":uiStage,"detail":uiDetail])}

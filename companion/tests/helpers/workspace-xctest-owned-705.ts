@@ -8,7 +8,7 @@ const refused=()=>Error('OWNED_WORKSPACE_UI_REFUSED')
 const canonical=(o:any)=>JSON.stringify(Object.fromEntries(Object.keys(o).sort().map(k=>[k,o[k]])))
 const regular=(s:fs.Stats)=>s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&(s.mode&0o777)===0o600&&s.uid===process.getuid!()
 export const UI705_RUNNER_ID='com.cmspark.tests.workspace-ui-705.xctrunner'
-export const UI705_FILES=['input.json','runner-start.json','owner-ack.json','ui-begin.json','ui-quiescent.json','runner-closed.json','cancel.json','picker-first.json','picker-second.json','ui-refusal.json'] as const
+export const UI705_FILES=['input.json','runner-start.json','owner-ack.json','ui-begin.json','ui-quiescent.json','runner-closed.json','cancel.json','picker-first.json','picker-second.json','ui-refusal.json','ui-progress.json'] as const
 type Xcode705Status='NOT_CLOSED'|'MISSING'|'EMPTY'|'INVALID'|'CHANGED'|'OVERSIZE'|'READ_FAILED'|'OBSERVED'
 type Xcode705Observation={status:Xcode705Status;firstMarker:'NONE'|'XCODEBUILD_ERROR'|'XCODE_SELECT_ERROR'|'TESTING_FAILED';firstNSError:{kind:'NONE'|'PAIR'|'UNKNOWN';domain:'COCOA'|'POSIX'|'MACH'|'OSSTATUS'|'OTHER'|'UNKNOWN';code:number|null}}
 const xcode705Unavailable=(status:Xcode705Status):Xcode705Observation=>({status,firstMarker:'NONE',firstNSError:{kind:'NONE',domain:'UNKNOWN',code:null}})
@@ -96,6 +96,11 @@ export class OwnedUI705Boundary {
  // Failure-only fixed UI observation. Never a lifecycle/cleanup authority.
  uiRefusal():{stage:number;detail:number}|null {
   try{const v=this.read('ui-refusal.json');if(v===undefined)return null;this.fields(v,['schema','nonce','stage','detail']);if(!Number.isInteger(v.stage)||v.stage<1||v.stage>20||!Number.isInteger(v.detail)||v.detail<0||v.detail>5)return null;return{stage:v.stage,detail:v.detail}}catch{return null}
+ }
+ // Last published main-thread stage only; may lag if an observation write fails.
+ // It proves neither a UI refusal, success, completed call nor cleanup.
+ uiProgress():{stage:number;detail:number}|null {
+  try{const v=this.read('ui-progress.json');if(v===undefined)return null;this.fields(v,['schema','nonce','stage','detail']);if(!Number.isInteger(v.stage)||v.stage<1||v.stage>20||!Number.isInteger(v.detail)||v.detail<0||v.detail>5)return null;return{stage:v.stage,detail:v.detail}}catch{return null}
  }
  // Passive, non-atomic observation only. Neither a success nor a cleanup receipt.
  receiptMask():number|null {

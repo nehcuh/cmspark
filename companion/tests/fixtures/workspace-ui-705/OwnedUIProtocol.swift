@@ -6,7 +6,7 @@ enum OwnedUI705Error: Error { case refused }
 // Optional fixed startup-write observation; never an authority or recovery path.
 enum OwnedUI705WriteStep: Int { case checkInitial=1, serialize, openFile, statFile, writeData, syncFile, checkBeforePublish, linkFile, unlinkTemporary, checkAfterPublish }
 enum OwnedUI705File: String {
- case input="input.json", startup="runner-start.json", ack="owner-ack.json", begin="ui-begin.json", returned="ui-quiescent.json", closed="runner-closed.json", cancel="cancel.json", first="picker-first.json", second="picker-second.json", uiRefusal="ui-refusal.json"
+ case input="input.json", startup="runner-start.json", ack="owner-ack.json", begin="ui-begin.json", returned="ui-quiescent.json", closed="runner-closed.json", cancel="cancel.json", first="picker-first.json", second="picker-second.json", uiRefusal="ui-refusal.json", uiProgress="ui-progress.json"
 }
 struct OwnedUI705Scene {
  static let runnerID="com.cmspark.tests.workspace-ui-705.xctrunner"
@@ -46,6 +46,30 @@ struct OwnedUI705Scene {
   progress?(.syncFile,0);guard fsync(fd)==0 else{let code=errno;progress?(.syncFile,code);throw OwnedUI705Error.refused};progress?(.checkBeforePublish,0);try check()
   progress?(.linkFile,0);guard link(temp,file)==0 else{let code=errno;progress?(.linkFile,code);throw OwnedUI705Error.refused}
   progress?(.unlinkTemporary,0);guard unlink(temp)==0 else{let code=errno;progress?(.unlinkTemporary,code);throw OwnedUI705Error.refused};temporary=false;progress?(.checkAfterPublish,0);try check()
+ }
+ // Best-effort main-thread stage snapshot only; never a lifecycle/refusal receipt.
+ func writeUIProgress(_ stage:Int,_ detail:Int) throws {
+  guard Thread.isMainThread,(1...20).contains(stage),(0...5).contains(detail) else{throw OwnedUI705Error.refused}
+  try check();let name=OwnedUI705File.uiProgress,file=root.appendingPathComponent(name.rawValue).path,temp=root.appendingPathComponent("."+name.rawValue+".pending").path
+  func regularProgress(_ s:stat)->Bool {s.st_mode & mode_t(S_IFMT)==mode_t(S_IFREG) && s.st_mode & 0o777==0o600 && s.st_uid==geteuid() && s.st_nlink==1}
+  var previous=stat();let replacing=lstat(file,&previous)==0
+  if replacing {
+   guard regularProgress(previous),let old=try read(name) else{throw OwnedUI705Error.refused};try tuple(old,["schema","nonce","stage","detail"])
+   let oldStage=try Self.number(old["stage"]),oldDetail=try Self.number(old["detail"])
+   guard oldStage.rounded(.down)==oldStage,oldStage>=1,oldStage<=20,oldDetail.rounded(.down)==oldDetail,oldDetail>=0,oldDetail<=5 else{throw OwnedUI705Error.refused}
+  }else if errno != ENOENT{throw OwnedUI705Error.refused}
+  let value:[String:Any]=["schema":1,"nonce":nonce,"stage":stage,"detail":detail]
+  let d=try Self.bytes(value),fd=open(temp,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0o600);guard fd>=0 else{throw OwnedUI705Error.refused}
+  var owned=stat();guard fstat(fd,&owned)==0,regularProgress(owned) else{close(fd);throw OwnedUI705Error.refused};var temporary=true
+  defer{close(fd);if temporary{var current=stat();if lstat(temp,&current)==0,current.st_dev==owned.st_dev,current.st_ino==owned.st_ino{_ = unlink(temp)}}}
+  try d.withUnsafeBytes{buf in var offset=0;while offset<buf.count{let n=Darwin.write(fd,buf.baseAddress!.advanced(by:offset),buf.count-offset);if n<0&&errno==EINTR{continue};guard n>0 else{throw OwnedUI705Error.refused};offset+=n}}
+  guard fsync(fd)==0 else{throw OwnedUI705Error.refused};try check()
+  var pending=stat(),opened=stat();guard lstat(temp,&pending)==0,fstat(fd,&opened)==0,regularProgress(pending),regularProgress(opened),pending.st_dev==owned.st_dev,pending.st_ino==owned.st_ino,opened.st_dev==owned.st_dev,opened.st_ino==owned.st_ino,opened.st_size==d.count,pending.st_size==opened.st_size else{throw OwnedUI705Error.refused}
+  var current=stat();let present=lstat(file,&current)==0
+  if replacing {guard present,regularProgress(current),current.st_dev==previous.st_dev,current.st_ino==previous.st_ino,current.st_size==previous.st_size else{throw OwnedUI705Error.refused}}
+  else {guard !present,errno==ENOENT else{throw OwnedUI705Error.refused}}
+  guard rename(temp,file)==0 else{throw OwnedUI705Error.refused};temporary=false
+  var published=stat();guard lstat(file,&published)==0,regularProgress(published),published.st_dev==owned.st_dev,published.st_ino==owned.st_ino,published.st_size==d.count else{throw OwnedUI705Error.refused};try check()
  }
  func tuple(_ value:[String:Any],_ fields:Set<String>) throws {guard Set(value.keys)==fields,try Self.number(value["schema"])==1,value["nonce"] as? String==nonce else{throw OwnedUI705Error.refused}}
  static func number(_ value:Any?) throws ->Double {guard let n=value as? NSNumber,CFGetTypeID(n) != CFBooleanGetTypeID(),n.doubleValue.isFinite else{throw OwnedUI705Error.refused};return n.doubleValue}
