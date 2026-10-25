@@ -67,7 +67,7 @@ export class ActivityStore {
   addSource(input: Omit<ActivitySource, 'id' | 'bytes' | 'sha256'>, image: Buffer): ActivitySource | null {
     if (image.length === 0 || image.length > 16 * 1024 * 1024) throw new ActivityError('QUOTA_EXCEEDED', '截图大小不合适')
     const sha256 = digest(image)
-    const same = this.value.sources.find(s => !s.deleted && s.app_id === input.app_id && s.window_title === input.window_title && (s.sha256 === sha256 || s.ocr_text === input.ocr_text))
+    const same = this.value.sources.find(s => !s.deleted && s.app_id === input.app_id && s.window_title === input.window_title && (s.sha256 === sha256 || (input.ocr_text.trim().length > 0 && s.ocr_text === input.ocr_text)))
     if (same) return null
     if (this.value.sources.length >= 2000) throw new ActivityError('QUOTA_EXCEEDED', '活动记录数已达上限')
     const source: ActivitySource = { ...input, id: randomUUID(), bytes: image.length, sha256 }
