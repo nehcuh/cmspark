@@ -10,6 +10,7 @@ import { NetSecSettingsSection } from "./NetSecSettingsSection"
 import { CapabilityProfileSection } from "./CapabilityProfileSection"
 import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
 import { CodingHandoffSettingsSection } from "./CodingHandoffSettingsSection"
+import { LcuSettingsSection } from "./LcuSettingsSection"
 import { SettingsPage, SETTINGS_PAGES } from "./SettingsPage"
 import { SettingsIntentBar } from "./SettingsIntentBar"
 import { HotkeyCaptureField } from "./HotkeyCaptureField"
@@ -3169,6 +3170,9 @@ export function SettingsSlideout() {
 
                     {/* --- Outbound MCP L4+ grants --- */}
           <OutboundMcpSettingsSection />
+
+          <div style={styles.divider} />
+          <LcuSettingsSection />
 
           <div style={styles.divider} />
           <CodingHandoffSettingsSection

@@ -1085,6 +1085,9 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}`,
                 ...(msg?.type === "board.add_hint" ? { family: "board", request_type: "board.add_hint",
                   id: msg.id, thread_id: msg.thread_id } : {}),
+                ...(typeof msg?.type === "string" && msg.type.startsWith("computer.lcu.") &&
+                    typeof msg.request_id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(msg.request_id)
+                  ? { family: "computer.lcu", code: "LCU_SETTINGS_REQUEST_INVALID", request_id: msg.request_id } : {}),
               }))
             }
           }
@@ -1508,7 +1511,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               // origin-bound confirmation channel as executeTool's
               // sendConfirmation above — nonce-carrying confirmations resolve
               // only on the socket that requested them (amendment A1).
-              requestConfirmation: (details) =>
+              requestConfirmation: (details, signal) =>
                 requireRt().securityConfirmations.request(
                   (data) => {
                     if (ws.readyState === WebSocket.OPEN) {
@@ -1516,7 +1519,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                     }
                   },
                   details,
-                  { originWs: ws },
+                  { originWs: ws, signal },
                 ),
               broadcast: (data: any) => {
                 const message = JSON.stringify(data)

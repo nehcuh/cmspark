@@ -32,6 +32,8 @@ export const COMPACT_SENSITIVE_CODE_TOOLS = new Set([
   "host_write",
   "host_app",
   "host_computer",
+  "lcu_js",
+  "lcu_js_reset",
   "shell_exec",
   // #725: direct tool-payload projections only. Ordinary assistant prose
   // retains its existing semantics and may quote the disclosed screen text.
@@ -220,7 +222,7 @@ export function redactMessagesForCompaction(messages: CanonicalChatMessage[]): C
     }
     // tool
     const name = idToName.get(m.tool_call_id) ||
-      (m.name === "terminal_tail_read" ? m.name : "tool")
+      (["terminal_tail_read", "lcu_js", "lcu_js_reset"].includes(m.name ?? "") ? m.name! : "tool")
     if (COMPACT_SENSITIVE_COOKIE_TOOLS.has(name)) {
       return { role: "tool", tool_call_id: m.tool_call_id, content: `[${name}: redacted]` }
     }

@@ -14,6 +14,18 @@ import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pc
 import { validBinaryDriftMessage } from "../apps/binary-drift-state"
 import { validateActivityMessage } from "../activity"
 import { validateSettingsAssistantMessage } from "../settings-assistant"
+import { validLcuCommand } from "../computer/lcu/contract"
+
+function validateLcuSettings(message: any, field?: "command" | "enabled"): WsValidationResult {
+  const keys = ["type", "source", "request_id", ...(field ? [field] : [])]
+  if (message.source !== "settings" || typeof message.request_id !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(message.request_id) || Object.keys(message).some(key => !keys.includes(key))) {
+    return { valid: false, error: "Invalid LCU settings request" }
+  }
+  if (field === "command" && message.command !== null && !validLcuCommand(message.command)) return { valid: false, error: "Invalid LCU executable path" }
+  if (field === "enabled" && typeof message.enabled !== "boolean") return { valid: false, error: "Invalid LCU enabled flag" }
+  return { valid: true }
+}
 
 function personalWorkspaceSchema(message: any): WsValidationResult {
   const valid = message.type.startsWith("settings.assistant.") ? validateSettingsAssistantMessage(message) : validateActivityMessage(message)
@@ -1742,6 +1754,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "security.unattended.disarm": () => ({ valid: true }),
     "computer.get_state": () => ({ valid: true }),
+    "computer.lcu.get_state": (m) => validateLcuSettings(m),
+    "computer.lcu.probe": (m) => validateLcuSettings(m),
+    "computer.lcu.configure": (m) => validateLcuSettings(m, "command"),
+    "computer.lcu.set_enabled": (m) => validateLcuSettings(m, "enabled"),
     "computer.set_enabled": (m) => {
       if (typeof m.enabled !== "boolean") {
         return { valid: false, error: "computer.set_enabled requires boolean enabled" }
