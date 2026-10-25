@@ -2,6 +2,17 @@
 // Keep English machine tokens in the string so classifyError() still matches recoverability.
 // Lock-step: chrome-extension/src/sidepanel/utils/gate-error-copy.ts key phrases.
 
+/** Exact host-generated MCP refusal suffixes, including older installed builds. */
+function mcpConfirmationFailureKind(raw: string): "denied" | "timeout" | "disconnect" | "unavailable" | undefined {
+  const value = raw.trim()
+  if (!/^Security Block:\s*MCP (?:tool|meta-tool) [^\r\n]+/i.test(value)) return
+  if (/ (?:confirmation timed out before dispatch|timeout by user)$/i.test(value)) return "timeout"
+  if (/ (?:confirmation channel disconnected before dispatch|disconnect by user)$/i.test(value)) return "disconnect"
+  if (/ (?:confirmation unavailable before dispatch|unavailable by user)$/i.test(value)) return "unavailable"
+  if (/ denied by user$/i.test(value)) return "denied"
+  return
+}
+
 /**
  * Legacy / edge gate when an explicit bind is still required by a caller.
  * Happy path: workspace_* uses default sandbox ~/CMspark-projects without pick.
@@ -49,6 +60,12 @@ export function humanizeChatErrorForUser(raw: string): string {
     .replace(/^不可恢复错误:\s*/i, "")
     .replace(/^❌\s*/u, "")
     .trim()
+
+  const mcpConfirmation = mcpConfirmationFailureKind(e)
+  if (mcpConfirmation === "timeout") return "MCP 工具的安全确认等待超时，尚未获得批准，工具未执行。\n请查看确认台；如需继续，请重新发起并明确批准。"
+  if (mcpConfirmation === "denied") return "你拒绝了这次 MCP 工具调用，工具未执行。\n如需继续，请重新发起并在确认台批准。"
+  if (mcpConfirmation === "disconnect") return "MCP 工具的确认连接已断开，未能获得有效批准，工具未执行。\n请重新连接后查看确认台；如需继续，请重新发起。"
+  if (mcpConfirmation === "unavailable") return "MCP 工具需要安全确认，但确认通道不可用，工具未执行。\n请连接确认台后重新发起。"
 
   if (/default_sandbox_unavailable|cannot create default sandbox/i.test(body)) {
     return (
@@ -172,6 +189,7 @@ export function formatChatErrorLine(
     return human
   }
   if (errorLevel === "security") {
+    if (mcpConfirmationFailureKind(rawError)) return `操作未通过安全确认：${human}`
     if (looksLikeUserDeniedGateCopy(`${rawError}\n${human}`)) {
       return `操作未通过安全确认：${human}\n若你已拒绝弹窗，可重新发起并选择批准；企业 shell/netsec 可能仍需单独确认。`
     }

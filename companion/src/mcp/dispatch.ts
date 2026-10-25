@@ -16,7 +16,7 @@ import {
   CRITICAL_MCP_META_TOOLS,
 } from "../security"
 import { isFullAutonomyCruise } from "../tool/l2-admission"
-import type { SecurityConfirmationManager } from "../security-confirmation"
+import type { SecurityConfirmationDecision, SecurityConfirmationManager } from "../security-confirmation"
 import type { ThreadManager } from "../threads/thread-manager"
 import { carryMcpWorkspaceObservation } from "./workspace-observation"
 import { getMcpManager } from "./manager"
@@ -49,6 +49,16 @@ export const DESTRUCTIVE_MCP_TOOL_PATTERN =
 export type NativeMcpOwner = { current(): boolean; unavailable(): Promise<void> }
 const nativeMcpStale = (owner?: NativeMcpOwner) => owner != null && owner.current() !== true
 const nativeMcpStaleResult = () => ({ success: false as const, error: "DESKTOP_SESSION_STALE" })
+
+/** A missing approval is never attributed to a deliberate user refusal. */
+export function mcpConfirmationFailureMessage(label: string, reason: SecurityConfirmationDecision["reason"]): string {
+  const outcome = reason === "denied" ? "denied by user"
+    : reason === "timeout" ? "confirmation timed out before dispatch"
+      : reason === "disconnect" ? "confirmation channel disconnected before dispatch"
+        : "confirmation unavailable before dispatch"
+  // Keep the existing security classification, including for timeouts/disconnects.
+  return `Security Block: ${label} ${outcome}`
+}
 async function nativeMcpUnavailable(owner: NativeMcpOwner) {
   try { await owner.unavailable() } catch { /* An unavailable confirmation never authorizes dispatch. */ }
   return { success: false as const, error: "DESKTOP_CONFIRMATION_UNAVAILABLE" }
@@ -415,7 +425,7 @@ export async function executeMcpTool(
       }
       return {
         success: false,
-        error: `Security Block: MCP tool ${route.serverName}/${route.toolName} ${reason} by user`,
+        error: mcpConfirmationFailureMessage(`MCP tool ${route.serverName}/${route.toolName}`, decision.reason),
       }
     }
     // Only cache first-use approvals for NON-critical calls. Critical calls
@@ -877,7 +887,7 @@ export async function executeMcpMetaTool(
       }
       return {
         success: false,
-        error: `Security Block: MCP meta-tool ${toolName} (${serverName}) ${reason} by user`,
+        error: mcpConfirmationFailureMessage(`MCP meta-tool ${toolName} (${serverName})`, decision.reason),
       }
     }
     // Only cache first-use approvals for NON-critical meta-tools (mcp_list_resources).

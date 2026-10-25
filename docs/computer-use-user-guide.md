@@ -1,7 +1,7 @@
 # Computer Use 使用说明
 
 > **面向使用者**：如何开启桌面坐标操控、确认台里怎么批/急停、session-trust 是什么、平台与限制。  
-> **产品版本**：0.6.8 · **决策摘要**：[ADR-017](adr/017-computer-use.md)  
+> **产品版本**：0.6.14 · **决策摘要**：[ADR-017](adr/017-computer-use.md)
 > **确认台 UI**：[confirm-center-user-guide.md](confirm-center-user-guide.md) · **Host / Apps**：[host-and-apps.md](host-and-apps.md)  
 > **过程史（非规范）**：[decisions/coordinate-computer-use-plan.md](decisions/coordinate-computer-use-plan.md)
 
@@ -14,6 +14,22 @@
 | **Autonomy** | 通常单线程任务；与 multi-worker **正交**（Worker 硬禁 host_*） |
 | **Trust** | 双开关 + **任务级 L2**；god-mode / auto_approve **永不**跳过；session-trust 有条件抑后续 initial L2（§5） |
 | **规范** | [ADR-020](adr/020-capability-model-three-axes.md) · [ADR-017](adr/017-computer-use.md) |
+
+---
+
+## 可选 LCU 桌面后端（实验）
+
+设置 → 工具 → **LCU 桌面操作**提供独立入口。当前适配 [LCU v0.13.0](https://github.com/amontlabs/lcu/releases/tag/v0.13.0)，依赖本机官方 **ChatGPT 桌面应用**提供运行时；仅安装 Codex CLI 不满足要求。CMspark 不自动安装或更新这些依赖，也不打包其运行时。
+
+- macOS Apple Silicon 可检查兼容性并申请启用。Linux 当前只发现安装路径；Windows、Intel Mac 当前不可用。上游支持的平台不等于 CMspark 已验证的平台。
+- 默认关闭。先开启现有 Computer Use 总开关，在 LCU 区域保存可执行文件路径（默认安装位置可留空），主动检查兼容性，再授权启用。修改路径会停用旧授权；检查成功仅表示版本组合符合上游记录。
+- 启用后的每次已选择 LCU 的聊天运行还会重新执行固定 `lcu status --json` 检查，避免沿用过期的运行时兼容结果。代码、标题和其他调用参数只保存长度与摘要，原始桌面文字结果同样折叠。
+- 勾选“在当前对话提供 LCU 工具”后，仅认证主对话与当前支持图像的模型获得 `lcu_js` / `lcu_js_reset`。不会自动换模型；worker、召唤器及外部 MCP 调用不获得这两个工具。
+- 每次代码调用均需确认台展示完整代码并通过原生系统认证。原始运行时提出的 App 授权另行确认，仅批准本次请求，不保存 session/always 授权。自动巡航、协议解锁或旧工具的信任缓存不替代这些确认。
+- 原始桌面截图发送给当前视觉模型，作为工具观察而非新的人类指令；不写入工具结果 JSON、聊天历史或日志。单次观察批次最多 4 张、合计 16 MiB。桌面内容可能包含敏感信息，请先关闭不希望模型看到的内容。
+- 停止聊天、停用 LCU、关闭总开关或撤销授权会停止当前拥有的连接，拒绝迟到批准与新动作。清理回执不完整时阻止后续 LCU 和本机桌面任务，需检查并重启 Companion；不能把“请求停止”视为已证明所有原生输入结束。
+
+LCU 运行任意桌面 JS，与下文 `host_computer` 的窗口白名单、像素遮罩和 session-trust 合同不同；下文这些保证不能套用到 LCU。此接入仍标为**桌面实操未验收**，CPU 协议测试和上游兼容记录不构成实际桌面验证。完整边界见 [LCU 接入规格](superpowers/specs/2026-10-25-lcu-computer-use.md)。
 
 ---
 

@@ -108,6 +108,8 @@ export const EXEC_FOLD_TOOLS: ReadonlySet<string> = new Set([
   "host_write",
   "host_app",
   "host_computer",
+  "lcu_js",
+  "lcu_js_reset",
   "shell_exec",
   "netsec_port_scan",
   "workspace_read_file",
@@ -259,6 +261,15 @@ export function redactCodeishParams(
   params: Record<string, unknown>,
   toolName?: string,
 ): Record<string, unknown> {
+  // Raw desktop code can also carry private content in title or unexpected
+  // arguments rejected later by the runtime. Fold the complete LCU operand,
+  // rather than relying on a finite list of known secret-bearing field names.
+  if (toolName === "lcu_js" || toolName === "lcu_js_reset") {
+    try {
+      const body = JSON.stringify(params)
+      return { redacted: true, len: body.length, sha256: shortHash(body) }
+    } catch { return { redacted: true, omission: "security" } }
+  }
   const redacted: Record<string, unknown> = { ...params }
   for (const key of ["code", "expression", "security_token", "command", "body"]) {
     if (key in redacted && typeof redacted[key] === "string") {

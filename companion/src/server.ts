@@ -117,6 +117,7 @@ export {
 import {
   flipAllComputerTaskAborts,
   getComputerTaskAbortRegistry,
+  notifyComputerTaskAbort,
 } from "./computer/task-abort-registry"
 
 /** User-facing tool labels for scene whitelist errors (product SoT §14.1). */
@@ -257,6 +258,7 @@ export function handleComputerTaskAbort(
     matched = flipAllComputerTaskAborts()
   } else if (tid && computerTaskAbort.has(tid)) {
     computerTaskAbort.set(tid, true)
+    notifyComputerTaskAbort(tid)
     matched = 1
   }
   if (matched > 0) logger.warn("computer.task.abort.requested", { taskId: tid, matched })

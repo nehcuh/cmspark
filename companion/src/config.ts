@@ -107,6 +107,8 @@ export interface FileUploadConfig {
 export interface ComputerConfig {
   /** A10 global switch — default false. Coordinate tools fail-closed when off. */
   coordinateEnabled: boolean
+  /** #775: separately approved optional runtime; missing means disabled. */
+  lcu?: { enabled: boolean; command?: string }
   /** Per-task action budget ceiling override (default 15, max 30). */
   budget?: number
   /**
@@ -1148,6 +1150,31 @@ export function setComputerCoordinateEnabled(enabled: boolean): CompanionConfig 
   if (envKey && toSave.llm?.api_key === envKey) {
     toSave.llm.api_key = ""
   }
+  atomicWriteJSON(configPath, toSave)
+  cachedConfig = updated
+  cachedConfigMtimeMs = configFileMtimeMs()
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
+}
+
+/** #775: authenticated settings handler owns validation and human authorization. */
+export function setComputerLcuFields(patch: { enabled?: boolean; command?: string | null }): CompanionConfig {
+  const current = getConfig()
+  const previous = current.computer?.lcu
+  const updated: CompanionConfig = {
+    ...current,
+    computer: {
+      ...(current.computer ?? { coordinateEnabled: false }),
+      lcu: {
+        enabled: patch.enabled === undefined ? previous?.enabled === true : patch.enabled === true,
+        ...(patch.command !== undefined ? patch.command === null ? {} : { command: patch.command } : previous?.command ? { command: previous.command } : {}),
+      },
+    },
+  }
+  const configPath = path.join(getConfigDir(), "config.json")
+  const toSave = JSON.parse(JSON.stringify(updated))
+  const envKey = getEnvApiKey()
+  if (envKey && toSave.llm?.api_key === envKey) toSave.llm.api_key = ""
   atomicWriteJSON(configPath, toSave)
   cachedConfig = updated
   cachedConfigMtimeMs = configFileMtimeMs()

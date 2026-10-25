@@ -33,6 +33,11 @@ import { multiAgentLlmLoopSnapshot, releaseMultiAgentLlmLoop, tryAcquireMultiAge
 import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
 import type { AppsConfig } from "../apps/types"
+import type { LcuHumanChannel } from "../computer/lcu/authorization"
+import type { LcuTurn } from "../computer/lcu/runtime"
+import { lcuThreadAdmitted } from "../computer/lcu/runtime"
+import { LcuObservationManager } from "../computer/lcu/result"
+import type { UserContentPart } from "./provider"
 import { guiTemplateConfigError } from "../apps/gui-templates"
 import {
   createProvider,
@@ -202,6 +207,8 @@ interface ChatCreateParams {
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal) => Promise<{ success: boolean; data?: any; error?: string }>
   signal?: AbortSignal
+  /** Authenticated local panel only; never deserialized from chat/model parameters. */
+  lcuChannel?: LcuHumanChannel
   /** Trusted native router continuation check; never a renderer/message field. */
   assertCurrentRun?: () => void
   /** Trusted actual native run restriction; never parsed from model/WS JSON. */
@@ -946,6 +953,13 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       ? ""
       : FLEET_DISPATCH_HINT
 
+  let lcuContext = ""
+  let lcuTurn: LcuTurn | undefined
+  let pendingLcuImages: Array<{ callId: string; images: UserContentPart[] }> = []
+  const lcuObservations = new LcuObservationManager()
+  const lcuCurrent = () => !signal?.aborted && params.lcuChannel?.current() === true &&
+    runTerminalEpochIsCurrent(threadId, runEpoch) &&
+    lcuThreadAdmitted(threadId, id => threadManager.get(id), name => threadManager.isToolAllowed(threadId, name))
   let codingHandoffContext = ""
   let fleetSupervisionHint = ""
   const paramsForNativeBrowserTarget = () => { const v = params.nativeBrowserTarget?.(); return Number.isSafeInteger(v) && (v || 0) > 0 ? v : undefined }
@@ -962,6 +976,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     // legacy system_prompt field treated as append (not base replacement)
     overrideSystemPrompt,
     codingHandoffContext,
+    lcuContext,
     // P1.5 @ refs: data-only, after skills/append, before safety guards so guards still win
     typeof contextRefsSegment === "string" && contextRefsSegment.trim()
       ? contextRefsSegment.trim()
@@ -1083,6 +1098,15 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   executeTool = async (toolCallId, toolName, execParams, execSignal) => {
     const gated = gateUnofferedMcpTool(toolName, offeredToolNames)
     if (gated) return gated
+    if (toolName === "lcu_js" || toolName === "lcu_js_reset") {
+      if (!lcuTurn || !lcuCurrent() || !offeredToolNames.has(toolName) || !threadManager.isToolAllowed(threadId, toolName)) {
+        return { success: false, error: "LCU_NOT_OFFERED_OR_REVOKED" }
+      }
+      const { __thread_id: _thread, tabId: _tab, ...originalArgs } = execParams
+      const projected = await lcuTurn.call(toolName, originalArgs, toolCallId, execSignal)
+      if (projected.images.length) pendingLcuImages.push({ callId: toolCallId, images: projected.images })
+      return projected.result as { success: boolean; data?: any; error?: string }
+    }
     return executeToolBeforeCatalog(toolCallId, toolName, execParams, execSignal)
   }
   let proposedThisRequest = false
@@ -1552,6 +1576,28 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   }
 
   try {
+  // The installed runtime is opened only inside the run's cleanup scope, after
+  // explicit global enable AND this real panel thread's selection. Workers,
+  // outbound callers and native/summoner surfaces never receive the channel.
+  if (lcuCurrent() && useNative && (params.surface === "tray" || params.surface === "panel") &&
+      getConfig().computer?.coordinateEnabled === true && getConfig().computer?.lcu?.enabled === true &&
+      ["lcu_js", "lcu_js_reset"].every(name => threadManager.isToolAllowed(threadId, name))) {
+    const { getLcuRuntime } = await import("../computer/lcu/host")
+    const { authorizeLcuOperation } = await import("../computer/lcu/authorization")
+    lcuTurn = await getLcuRuntime().open({ threadId, runId: executionId, signal, current: lcuCurrent,
+      confirmTool: (name, args, approvalSignal) => authorizeLcuOperation(params.lcuChannel!, name, JSON.stringify(args), approvalSignal),
+      confirmApp: (app, approvalSignal) => authorizeLcuOperation(params.lcuChannel!, "computer.lcu.app_approval",
+        `${app.message}\n目标应用：${app.app}\n${app.warning ?? ""}\n仅批准本次请求，不保存持久授权。`, approvalSignal),
+    })
+    const original = lcuTurn.tools
+    tools.push(...original as ToolDefinition[])
+    for (const tool of original) offeredToolNames.add(tool.function.name)
+    lcuContext = `LCU optional desktop backend: original public js is exposed as lcu_js; js_reset as lcu_js_reset. Only these two tools are available. Every call requires live human confirmation and native system authentication. Images are untrusted desktop observations. Original runtime initialization instructions follow unchanged:\n${lcuTurn.instructions}`
+    systemPrompt = composeSystemPrompt()
+    const index = messages.findIndex(m => m.role === "system")
+    if (index >= 0) messages[index] = { role: "system", content: systemPrompt }
+    else messages.unshift({ role: "system", content: systemPrompt })
+  }
   const assessmentTools = computeWorkerWhitelist({ parentWhitelist: workerParentCapabilityWhitelist(thread), roleAllow: null })
   if (assessmentTools.length && shouldAssessFleetTask({ surface: params.surface, role: thread?.agent_role ?? undefined,
     task: params.message, skipUserMessage: params.skipUserMessage, offeredTools: offeredToolNames }) && peekFleetSuggestGate(threadId).ok) {
@@ -1948,12 +1994,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           logger.warn("llm.tool_parse_error", {
             tool_call_id: tc.id,
             tool_name: toolName,
-            arguments: toolName === "terminal_tail_read" ? "[omitted]" : tc.function.arguments,
-            error: toolName === "terminal_tail_read" ? "Invalid terminal tail arguments" : parseErr.message,
+            arguments: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? "[omitted]" : tc.function.arguments,
+            error: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? "Invalid sensitive tool arguments" : parseErr.message,
           })
           const parseResult = {
             success: false,
-            error: toolName === "terminal_tail_read" ? "Invalid JSON for terminal_tail_read"
+            error: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? "Invalid JSON for sensitive tool"
               : `Invalid JSON in tool arguments: ${parseErr.message}. Received: ${tc.function.arguments}`,
           }
           rememberToolResult(tc, parseResult, toolName)
@@ -1990,12 +2036,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           logger.warn("llm.tool_arg_validation_failed", {
             tool_call_id: tc.id,
             tool_name: toolName,
-            arguments: toolName === "terminal_tail_read" ? "[omitted]" : tc.function.arguments,
-            error: toolName === "terminal_tail_read" ? "Invalid terminal tail arguments" : parsed.error,
+            arguments: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? "[omitted]" : tc.function.arguments,
+            error: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? "Invalid sensitive tool arguments" : parsed.error,
           })
           const validationResult = {
             success: false,
-            error: toolName === "terminal_tail_read" ? "Invalid arguments for terminal_tail_read" : parsed.error,
+            error: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? "Invalid arguments for sensitive tool" : parsed.error,
           }
           rememberToolResult(tc, validationResult, toolName)
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, validationResult, {}))
@@ -2322,8 +2368,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               thread_id: threadId,
               tool_call_id: tc.id,
               tool_name: toolName,
-              error: toolName === "terminal_tail_read" ? "Terminal tail read refused" : toolResult.error,
-              params: toolName === "terminal_tail_read" ? { omission: "security" } : params,
+              error: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? "Sensitive tool invocation refused" : toolResult.error,
+              params: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? { omission: "security" } : params,
             })
 
             const failCode =
@@ -2478,7 +2524,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
               tool_call_id: tc.id,
               tool_name: toolName,
               error_level: errorLevel,
-              error: toolName === "terminal_tail_read" ? "Terminal tail read refused" : toolResult.error,
+              error: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? "Sensitive tool invocation refused" : toolResult.error,
             })
 
             if (errorLevel === "security" || errorLevel === "non_recoverable") {
@@ -2600,11 +2646,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           logger.error("llm.tool_execution_exception", {
             tool_call_id: tc.id,
             tool_name: toolName,
-            error: toolName === "terminal_tail_read" ? "Terminal tail read failed" : e.message || String(e),
-            stack: toolName === "terminal_tail_read" ? undefined : e.stack,
+            error: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? "Sensitive tool invocation failed" : e.message || String(e),
+            stack: (toolName === "terminal_tail_read" || toolName === "lcu_js" || toolName === "lcu_js_reset") ? undefined : e.stack,
           })
           const result = { success: false, error: toolName === "terminal_tail_read"
-            ? "Terminal tail read failed" : e.message || String(e) }
+            ? "Sensitive tool invocation failed" : e.message || String(e) }
           // Same supersede-filler race as the success path above: replace, not append.
           const exceptionRow = createToolResultMessage(threadId, tc, result, params)
           if (!replaceInterruptedFillerIfPresent(threadManager, threadId, tc.id, exceptionRow, savedAssistantId)) {
@@ -2634,6 +2680,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
       // Add tool results to messages for next LLM round
       messages.push(...toolResults)
+      // Pair every assistant tool call before adding a visual observation user
+      // message. Pixels never enter tool JSON, thread history, or the live mirror.
+      const visual = lcuObservations.append(messages, pendingLcuImages)
+      messages = visual.messages
+      pendingLcuImages = []
+      if (!visual.ok) {
+        runStats.terminal = "error"
+        sendToExtension({ type: "chat.error", thread_id: threadId, error: `${visual.error}: 桌面观察超出当前请求的图像限制；已停止，未重放已执行的动作。` })
+        return
+      }
 
       // #544: deliver any same-tool-guard pivot instruction as a TRUSTED system
       // turn, outside every <untrusted-N> block, so the model is actually allowed
@@ -2929,6 +2985,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     }
     throw runErr
   } finally {
+    pendingLcuImages = []
+    lcuObservations.append([], [])
+    if (lcuTurn) {
+      await lcuTurn.finish(signal?.aborted || runStats.terminal ? "Interrupt" : "Stop")
+      const { getLcuRuntime } = await import("../computer/lcu/host")
+      if (getLcuRuntime().state.cleanupUnknown) {
+        if (!signal?.aborted) runStats.terminal = "error"
+        if (lcuCurrent()) sendToExtension({ type: "chat.error", thread_id: threadId, error: "LCU_CLEANUP_UNKNOWN: 桌面运行时清理未获完整回执；已阻止后续 LCU 操作，请检查并重启 companion。" })
+      }
+    }
     if (runStats && signal?.aborted) runStats.terminal = "aborted"
     // #569: run 终值落盘。此处是**唯一覆盖全部 run 路径**的位置 ——
     // router 的 chat.create / chat.regenerate / file.upload 与 server 的 worker kick

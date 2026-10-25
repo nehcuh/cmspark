@@ -6,6 +6,17 @@ import { retireComputerReadonlyThread } from "./readonly-session"
  */
 
 const computerTaskAbort = new Map<string, boolean>()
+const abortListeners = new Set<(taskId: string) => void>()
+
+/** Optional owned backends receive the same panic/target stop, even during initialization. */
+export function onComputerTaskAbort(listener: (taskId: string) => void): () => void {
+  abortListeners.add(listener)
+  return () => { abortListeners.delete(listener) }
+}
+
+export function notifyComputerTaskAbort(taskId: string): void {
+  for (const listener of abortListeners) { try { listener(taskId) } catch { /* stopping other tasks must continue */ } }
+}
 
 /** Full registry — tests seed fake in-flight tasks via this map. */
 export function getComputerTaskAbortRegistry(): Map<string, boolean> {
@@ -23,5 +34,6 @@ export function flipAllComputerTaskAborts(): number {
     computerTaskAbort.set(k, true)
     matched++
   }
+  notifyComputerTaskAbort("*")
   return matched
 }

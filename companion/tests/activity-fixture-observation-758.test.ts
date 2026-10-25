@@ -125,7 +125,8 @@ test('#758 Linux fixture publishes ready and acknowledgement only after complete
   const producer=raw.replace(/\r\n/g,'\n') // Source extraction only; never receipt/runtime JSON.
   assert.match(producer,/def record\(name, value\):\n    pending = directory \/ \(name \+ "\.pending"\)\n    with pending\.open\("x", encoding="utf-8"\) as stream:\n        json\.dump\(value, stream\)\n    pending\.rename\(directory \/ name\)/)
   assert.match(producer,/record\("ack\.json", \{"command": command\}\)/)
-  assert.match(producer,/root\.after\(500, lambda: record\("ready\.json", \{"pid": os\.getpid\(\)\}\)\)/)
+  assert.match(producer,/detach = await_managed_ready\(root, observer, os\.getpid\(\), lambda: record\("ready\.json", \{"pid": os\.getpid\(\)\}\)\)/)
+  assert.doesNotMatch(producer,/root\.after\(\d+, lambda: record\("ready\.json"/)
   assert.doesNotMatch(producer,/\(directory \/ "(?:ready|ack)\.json"\)\.write_text/)
   }
   for(const profile of [raw.replace(/\r\n/g,'\n'),raw.replace(/\r?\n/g,'\r\n')])verify(profile)
