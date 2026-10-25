@@ -369,3 +369,49 @@ test("#756 actual settings navigation generation cancels late host result before
     assert.doesNotMatch(navigationText(ui), /已打开会议工作台/)
   } finally { f.close() }
 })
+
+
+test("#754 actual offline voice rules navigate to voice settings without model requests or config writes", async () => {
+  const phrases = ["开启连续听写", "经典短听", "开启热键", "关闭热键", "默认热键", "开启纠错", "关闭纠错", "浏览器听写", "本机识别", "开启实时出字", "关闭实时"]
+  for (const phrase of phrases) {
+    const f = settingsNavigationHarness()
+    try {
+      const props = f.assistant(); let ui = f.renderBar(props)
+      f.find(ui, n => n.type === "input" && n.props.type === "text").props.onChange({ target: { value: phrase } })
+      ui = f.renderBar(props)
+      const beforeConfig = JSON.stringify(f.state().config), beforeActions = f.actions.length, beforeMessages = f.messages.length
+      await f.find(ui, n => n.type === "button" && navigationText(n) === "规则导航：打开语音设置").props.onClick()
+      const settings = f.renderSlideout()
+      assert.equal(f.find(settings, n => n.props?.["data-settings-page"] === "voice").props.hidden, false, phrase)
+      assert.equal(f.state().settingsOpen, true)
+      assert.equal(JSON.stringify(f.state().config), beforeConfig)
+      assert.equal(f.actions.length, beforeActions); assert.equal(f.messages.length, beforeMessages)
+      assert.equal(f.intentResults.length, 0); assert.equal(f.tabRequests.length, 0)
+      assert.match(navigationText(f.renderBar(props)), /已打开语音设置，请核对后手动更改/)
+    } finally { f.close() }
+  }
+})
+
+test("#754 offline rule navigation refuses missing destinations and stale inactive or disabled clicks", async () => {
+  for (const mode of ["missing", "inactive", "disabled", "unknown"] as const) {
+    const f = settingsNavigationHarness()
+    try {
+      const props = f.assistant(); let ui = f.renderBar(props)
+      f.find(ui, n => n.type === "input" && n.props.type === "text").props.onChange({ target: { value: mode === "unknown" ? "随便说说" : "开启连续听写" } })
+      ui = f.renderBar(mode === "missing" ? { ...props, onOpenSection: undefined } : props)
+      const buttons = f.rows(ui).filter(n => n.type === "button" && navigationText(n).startsWith("规则导航"))
+      if (mode === "missing" || mode === "unknown") assert.equal(buttons.length, 0)
+      else {
+        assert.equal(buttons.length, 1)
+        f.deferEffects()
+        f.renderBar(mode === "inactive" ? { ...props, active: false } : { ...props, disabled: true })
+        assert.ok(f.pendingEffects() > 0, "changed render has not run passive cleanup")
+        // Invoke the prior render's real callback before passive cleanup can help it.
+        await buttons[0].props.onClick()
+        assert.ok(f.pendingEffects() > 0, "stale callback refused before passive cleanup")
+      }
+      assert.equal(f.find(f.renderSlideout(), n => n.props?.["data-settings-page"] === "voice").props.hidden, true)
+      assert.equal(f.state().settingsOpen, true); assert.equal(f.intentResults.length, 0)
+    } finally { f.close() }
+  }
+})

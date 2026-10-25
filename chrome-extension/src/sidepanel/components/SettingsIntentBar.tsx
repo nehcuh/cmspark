@@ -100,19 +100,25 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
     try { r.start() } catch { setListening(false); recRef.current = null; setStatus("无法启动麦克风") }
   }, [disabled, active, listening, busy])
   const navigateRule = async () => {
-    if (disabled || !active || busy) return
+    if (disabled || !active || busy || !navigationOwnerRef.current.active || navigationOwnerRef.current.disabled) return
     const generation = ++generationRef.current
     const isCurrent = () => generation === generationRef.current
     setBusy("navigate"); setError(""); setStatus(null)
     try {
-      const result = await onIntent(rule, isCurrent)
-      if (isCurrent()) setStatus(result)
+      if (isVoiceRule && onOpenSection) {
+        onOpenSection("voice")
+        if (isCurrent()) setStatus("已打开语音设置，请核对后手动更改。")
+      } else {
+        const result = await onIntent(rule, isCurrent)
+        if (isCurrent()) setStatus(result)
+      }
     } catch { if (isCurrent()) setError("无法打开目标，请完成当前操作后再试。") }
     finally { if (isCurrent()) setBusy(null) }
   }
   const candidate = proposal?.candidates.find(item => item.id === candidateId)
   const rule = parseSettingsIntent(text)
-  const canNavigateRule = rule.type === "open_meeting" || rule.type === "open_packs"
+  const isVoiceRule = rule.type === "set_dictation_mode" || rule.type === "set_hotkey_enabled" || rule.type === "set_asr_refiner" || rule.type === "set_stt_engine" || rule.type === "set_realtime_streaming" || rule.type === "enable_hotkey_default"
+  const canNavigateRule = rule.type === "open_meeting" || rule.type === "open_packs" || (isVoiceRule && !!onOpenSection)
   return <div style={styles.wrap} data-testid="settings-intent-bar" aria-busy={!!busy}>
     <div style={styles.title}>描述目标，比较设置候选</div>
     <p style={styles.hint}>例如：语音错字太多；少打扰我，但别漏掉待办。AI 使用当前模型理解描述，只接收允许公开的设置目录和值。请勿输入密钥。</p>
@@ -121,7 +127,7 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
       <button type="button" disabled={disabled || !!busy || listening || !text.trim()} style={styles.btn} onClick={() => void propose()}>{busy === "propose" ? "理解中…" : "生成候选"}</button>
       <button type="button" disabled={disabled || !!busy} style={{ ...styles.btn, ...(listening ? styles.btnLive : {}) }} onClick={() => listening ? stopVoice() : startVoice()} title="语音只填写描述，不自动修改设置">{listening ? "停止" : "语音"}</button>
     </div>
-    {canNavigateRule && <button type="button" style={styles.btn} disabled={disabled || !!busy} onClick={() => void navigateRule()}>规则导航：{rule.type === "open_meeting" ? "打开会议" : "打开场景"}</button>}
+    {canNavigateRule && <button type="button" style={styles.btn} disabled={disabled || !!busy} onClick={() => void navigateRule()}>规则导航：{isVoiceRule ? "打开语音设置" : rule.type === "open_meeting" ? "打开会议" : "打开场景"}</button>}
     {status && <p role="status" style={styles.status}>{status}</p>}
     {error && <p role="alert" style={styles.error}>{error}</p>}
     {proposal && <div style={styles.proposal}>
