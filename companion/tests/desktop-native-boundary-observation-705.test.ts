@@ -24,7 +24,7 @@ test('705 activation decoder is a closed relation, never a window identity or su
 test('705 passive counters distinguish a protocol attempt from a returned handle',()=>{
  const {progress:p}=observers();p.attempt();assert.equal(p.snapshot().protocolAttempts,1);assert.equal(p.snapshot().protocolHandles,0);p.handle();assert.equal(p.snapshot().protocolHandles,1)
  const attempt='localProgress.attempt();const handle=await realStart(opts);if(handle){localProgress.handle();protocolStarts++;';assert.equal(native.split(attempt).length,2)
- assert.ok(native.includes('return Reflect.apply(realAgentStart!,runtime,[input])'));assert.ok(native.includes('return Reflect.apply(originalSend,this,[data,...args])'))
+ assert.ok(native.includes('return Reflect.apply(realAgentStart!,runtime,[input])'));assert.equal(native.split('const result772=Reflect.apply(originalSend,this,[data,...args]);if(observedOrdinal772)confirmationObservation772.server(2,observedOrdinal772);return result772').length,2,'original send forwards once and returns its actual result before observation can imply delivery')
  assert.ok(Buffer.byteLength(JSON.stringify(p.snapshot()))<512)
 })
 test('705 actual HMAC producer frames identify request, bound confirmation and result without native effects',async t=>{

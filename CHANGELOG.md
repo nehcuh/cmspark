@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Windows 原生验收：为未分发的 local/terminal 确认夹具补充按请求序号区分的有限阶段回执，保留完整生产源码逆变、原权限/断言/时限；不将观察或发送返回当作确认完成。
+
 - Workspace (#753): add explicit full-page multi-selection for separately recording handling, feedback, or dismissing pending candidates. Save sequentially against original item revisions, stop on the first unconfirmed result or lost page/connection ownership, and retain per-item outcomes without automatic retry or outgoing messages.
 
 - Fix (#754): expose offline voice-setting rule navigation through the existing settings destination. Keep configuration changes behind manual controls or explicitly confirmed semantic proposals; reject stale inactive/disabled navigation callbacks.
