@@ -30,7 +30,7 @@ Windows 终端原生夹具须将首次表单安装与同一 HWND、GWLP_USERDATA
 - **编译与工具闭包**：使用本次工程的实际 tsconfig/include、ambient shims、文件名、cwd 和 Node 版本；selected 零诊断不冒完整项目通过，诊断为零也不等 emit 成功。从实际 package/lock 核 helper、版本、argv、输出/参数预算；部署完整所需 package scope（含 package.json、相对资源、类型），不只搬 trace 中几个 JS。无关已通过机器按精确输入复用。
 - **夹具与操作器**：在 import 应用前设独立 test-owned DATA_DIR，沿用 [preload](../companion/scripts/test-data-dir.cjs)；不改 HOME、不接触 live config，不继承 provider/key/proxy 全环境。保留原 runner 必需的 Windows 允许变量。先核 driver 语法、入口、cwd、目录 UID/ACL、依赖、输出可写性、guard 和真实包路径，再启动；setup 错误保留但不计产品 RED。不靠逐次失败无限加 allowlist。
 - **字节与语言语义**：真实 TS 字符串先解码/编译再分析反斜杠，不能数工具展示的转义。中文文件内容与 stdout 编码分开；UTF-8 分块、非 UTF-8 与 stderr 均据真实字节/声明判断，不猜 GBK或更改系统代码页。PS 比较规则、C++ 字符串/SDK 参数所有权必须按真实语言；保留实际 MSVC warning/UTF-8 选项，不压警告换绿。
-- **原生身份与生命周期**：请求 Activate/Invoke、收到 ACK 或文件存在，不等于实际前台/效果/完整 ready。固定 owned PID/TID/HWND/对象身份与同次请求；数字 HANDLE、MainWindowHandle、标题或字节相同不独立证明所有权。ready JSON 完整发布后才可见；成功终态、exit、stdio close、cancel 与 cleanup 分开。槽和共享桌面 lease 保留到真实 close/teardown，不能用 UI closed 或 timeout 提前释放仍存活的 worker。
+- **原生身份与生命周期**：请求 Activate/Invoke、收到 ACK 或文件存在，不等于实际前台/效果/完整 ready。固定 owned PID/TID/HWND/对象身份与同次请求；数字 HANDLE、MainWindowHandle、标题或字节相同不独立证明所有权。ready JSON 完整发布后才可见；成功终态、exit、stdio close、cancel 与 cleanup 分开。槽和共享桌面 lease 保留到真实 close/teardown，不能用 UI closed 或 timeout 提前释放仍存活的 worker。ACP 清理按同一 ChildProcess 对象在 spawn 时记录的实际 close 判断；退出码或退出信号本身不代表 stdio 已关闭。已实际关闭后再请求清理不会等待一个丢失的未来事件，原 2 秒加 1 秒的有界拒绝保持。
 - **64 位文件身份**：`lstat` 与打开后的 `fstat` 比较 device/inode 时，两端都使用 `{ bigint: true }`。不同的 64 位值转换成 JavaScript Number 后可能相等，不能据此放行替换文件。正控须允许相同的大整数身份，负控须在读取 transcript 前拒绝不同身份；保留真实文件替换回归。CPU 精度反例不独立证明某次远端失败的实际文件 ID。
 
 以上只按本次影响选择必要证据；不是要求每个文档或普通改动执行全部原生/全仓测试。
