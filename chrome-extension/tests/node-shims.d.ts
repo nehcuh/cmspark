@@ -10,6 +10,8 @@ declare module "node:timers" {
 
 declare module "node:fs" {
   export function readFileSync(path: string, encoding: string): string
+  export function mkdtempSync(prefix: string): string
+  export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void
   export function existsSync(path: string): boolean
   export function readdirSync(path: string): string[]
   export function statSync(path: string): { isDirectory(): boolean; isFile(): boolean }
@@ -28,7 +30,7 @@ declare module "node:module" {
 
 declare const __dirname: string
 
-declare const process: { cwd(): string }
+declare const process: { cwd(): string; env: Record<string, string | undefined> }
 
 declare module "node:assert/strict" {
   interface Assert {
@@ -44,6 +46,18 @@ declare module "node:assert/strict" {
   export default assert
 }
 declare module "node:vm" {
-  const vm: { runInNewContext(code: string, context: Record<string, unknown>, options?: { timeout?: number; filename?: string }): any }
+  const vm: {
+    createContext(context?: Record<string, unknown>): Record<string, unknown>
+    runInContext(code: string, context: Record<string, unknown>, options?: { timeout?: number; filename?: string }): any
+    runInNewContext(code: string, context: Record<string, unknown>, options?: { timeout?: number; filename?: string }): any
+  }
   export default vm
+}
+
+declare module "node:os" {
+  export function tmpdir(): string
+}
+
+declare module "node:buffer" {
+  export const Buffer: { from(value: string): Uint8Array }
 }

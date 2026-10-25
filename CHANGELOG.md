@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Workspace (#753): add explicit full-page multi-selection for separately recording handling, feedback, or dismissing pending candidates. Save sequentially against original item revisions, stop on the first unconfirmed result or lost page/connection ownership, and retain per-item outcomes without automatic retry or outgoing messages.
+
 - Fix (#754): expose offline voice-setting rule navigation through the existing settings destination. Keep configuration changes behind manual controls or explicitly confirmed semantic proposals; reject stale inactive/disabled navigation callbacks.
 
 - ACP (#476): wait for the actual child close before reporting teardown complete, including exit-before-stdio-close; retain already-closed observation and the original bounded cleanup.
