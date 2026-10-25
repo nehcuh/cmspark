@@ -330,14 +330,24 @@ describe("acp manager protocol argv wiring", () => {
         "tryStartProtocolSession",
         async (opts: any) => {
           captured.push({ agentId: opts.session.agent_id, args: [...opts.args] })
+          const child = Object.assign(new EventEmitter(), { pid: 43210, exitCode: 0, signalCode: null, kill: () => true })
+          // An exited process can still have open stdio. Match the real
+          // supplier's ownership hook and asynchronous close after kill.
+          opts.hooks?.onSpawn?.(child)
+          let closeRequested = false
+          const close = () => {
+            if (closeRequested) return
+            closeRequested = true
+            queueMicrotask(() => child.emit("close", 0, null))
+          }
           return {
-            child: Object.assign(new EventEmitter(), { pid: 43210, exitCode: 0, signalCode: null, kill: () => true }),
+            child,
             client: null,
             agentSessionId: "agent-sess-stub",
             transport: "acp",
             prompt: async () => {},
             cancel: () => {},
-            kill: () => {},
+            kill: close,
           }
         },
       )

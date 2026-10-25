@@ -306,6 +306,12 @@ export function resolveAcpSpawn(
 }
 
 const ownedPosixChildren = new WeakSet<ChildProcess>()
+// Exit code only proves process exit, not that its inherited stdio has closed.
+// Observe at admission so teardown also recognizes a close that already fired.
+const closedAcpChildren = new WeakSet<ChildProcess>()
+function observeAcpClose(child: ChildProcess): void {
+  child.once("close", () => { closedAcpChildren.add(child) })
+}
 
 export function spawnAcpChild(
   command: string,
@@ -315,7 +321,9 @@ export function spawnAcpChild(
   if (process.platform === "win32") {
     const { spawnWindowsJob } = require("../process/windows-job") as typeof import("../process/windows-job")
     const spec = resolveAcpSpawn(command, args)
-    return spawnWindowsJob(spec.command, spec.args, { ...options, ...spec.options, windowsHide: true })
+    const child = spawnWindowsJob(spec.command, spec.args, { ...options, ...spec.options, windowsHide: true })
+    observeAcpClose(child)
+    return child
   }
   const spec = resolveAcpSpawn(command, args)
   const child = spawn(spec.command, spec.args, {
@@ -327,6 +335,7 @@ export function spawnAcpChild(
       spec.options.windowsVerbatimArguments ??
       (options.windowsVerbatimArguments as boolean | undefined),
   })
+  observeAcpClose(child)
   {
     ownedPosixChildren.add(child)
     // Reclaim descendants synchronously while this owned group identity is
@@ -443,7 +452,7 @@ export function closeAcpChild(child: ChildProcess): Promise<void> {
       }, 1000)
     }, 2000)
     killAcpChild(child, "SIGTERM")
-    if (child.exitCode != null || child.signalCode != null || !child.pid) finish()
+    if (closedAcpChildren.has(child) || !child.pid) finish()
   })
   acpClosing.set(child, closing)
   return closing

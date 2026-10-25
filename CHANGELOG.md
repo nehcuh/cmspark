@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- ACP (#476): wait for the actual child close before reporting teardown complete, including exit-before-stdio-close; retain already-closed observation and the original bounded cleanup.
+
 - Fix (#752): retain different screenshots when OCR is empty or whitespace-only. Keep image-identity and nonempty exact-text deduplication, original application/window scope and stored OCR unchanged.
 
 - Windows desktop: use process self-termination when the exact owner has died, avoiding DLL detach on unknown live-thread state. Keep the original owner handle, exit code and native process-settlement checks. This addresses a documented shutdown risk; the earlier timeout’s physical cause remains unknown.
