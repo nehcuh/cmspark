@@ -564,3 +564,58 @@ test('#756 workspace state excludes OCR before cloning and preserves isolated so
     assert.equal(rawStateReads, 0)
   } finally { f.cleanup() }
 })
+
+
+test('#752 empty OCR cannot deduplicate different captured images while image and meaningful-text identities still deduplicate', async () => {
+  const f = fixture()
+  const captures = [
+    { text: '', image: 'empty-ocr-image-a', status: 'captured', count: 1 },
+    { text: '', image: 'empty-ocr-image-b', status: 'captured', count: 2 },
+    { text: '', image: 'empty-ocr-image-b', status: 'unchanged', count: 2 },
+    { text: ' \n ', image: 'whitespace-ocr-image-a', status: 'captured', count: 3 },
+    { text: ' \n ', image: 'whitespace-ocr-image-b', status: 'captured', count: 4 },
+    { text: '请核对事项', image: 'meaningful-ocr-image-a', status: 'captured', count: 5 },
+    { text: '请核对事项', image: 'meaningful-ocr-image-b', status: 'unchanged', count: 5 },
+    // The original APP + exact window-title scope must also stay intact.
+    { text: '请核对事项', image: 'meaningful-ocr-image-c', window: '另一个群', status: 'captured', count: 6 },
+    { text: '请核对事项', image: 'meaningful-ocr-image-d', app: 'com.alibaba.DingTalkMac', status: 'captured', count: 7 },
+  ]
+  let index = 0, extractionCalls = 0, notificationCalls = 0
+  const service = new ActivityService({ dataDir: f.dir, platform: 'darwin', now: () => NOW,
+    // This is the explicit RecorderAdapter CPU boundary, not a native screenshot
+    // or a handcrafted activity.result. All persisted/wire state comes from
+    // the actual ActivityService + ActivityStore producers below.
+    recorder: { capture: async () => {
+      const capture = captures[index++]
+      assert.ok(capture, 'no unplanned capture')
+      return { app_id: capture.app ?? 'com.tencent.xinWeChat', app_name: 'Controlled capture app', window_title: capture.window ?? '项目群', ocr_text: capture.text, image: Buffer.from(capture.image) }
+    } },
+    extract: async () => { extractionCalls++; throw new Error('AI consent is disabled') },
+    notify: async () => { notificationCalls++; throw new Error('scheduler must not run') },
+  })
+  try {
+    const configured = await service.handle({ type: 'activity.configure', expected_revision: 0, patch: { enabled: true, allowed_apps: ['com.tencent.xinWeChat', 'com.alibaba.DingTalkMac'] } })
+    assert.equal(configured.ok, true)
+    for (const capture of captures) {
+      const reply = await service.handle({ type: 'activity.scan' })
+      assert.equal(reply.ok, true)
+      const state = reply.state as ReturnType<ActivityService['state']>
+      assert.equal(state.sources.length, capture.count)
+      assert.equal(state.runtime.status, capture.status)
+      assert.equal(state.candidates.length, 0)
+      assert.equal(state.todos.length, 0)
+    }
+    const state = service.state()
+    assert.equal(new Set(state.sources.map(source => source.id)).size, 7)
+    const retained = state.sources.map(source => service.store.source(source.id))
+    for (const value of ['empty-ocr-image-a', 'empty-ocr-image-b', 'whitespace-ocr-image-a', 'whitespace-ocr-image-b', 'meaningful-ocr-image-a']) {
+      assert.equal(retained.some(source => source.image_data_url === 'data:image/png;base64,' + Buffer.from(value).toString('base64')), true)
+    }
+    assert.equal(retained.filter(source => source.ocr_text === '').length, 2)
+    assert.equal(retained.filter(source => source.ocr_text === ' \n ').length, 2, 'stored OCR is not normalized')
+    assert.equal(index, captures.length)
+    assert.equal(extractionCalls, 0)
+    assert.equal(notificationCalls, 0)
+    assert.equal(fs.readdirSync(service.store.root).filter(name => name.endsWith('.png')).length, 7)
+  } finally { await service.stop(); f.cleanup() }
+})

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix (#752): retain different screenshots when OCR is empty or whitespace-only. Keep image-identity and nonempty exact-text deduplication, original application/window scope and stored OCR unchanged.
+
 - Windows desktop: use process self-termination when the exact owner has died, avoiding DLL detach on unknown live-thread state. Keep the original owner handle, exit code and native process-settlement checks. This addresses a documented shutdown risk; the earlier timeout’s physical cause remains unknown.
 
 - Fix (#756): keep settings open and report blocked workspace navigation; report meeting and pack navigation only after the current thread's host accepts it. Invalidate pending navigation on thread selection changes, including A→B→A. Remove unreachable legacy intent branches while preserving the parser and saved-source compatibility.
