@@ -61,6 +61,19 @@ export function requireInheritance(value: { sidecar_valid: boolean; control_mask
 export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { host: string; capabilityId: string }, registry: DesktopIdentityRegistry, record: (receipt: AcceptanceReceipt) => void, proof: (value: string) => void, activity: () => void = () => {}) {
   // Native attempts are lifetime-once in the producer, not per-connection epochs.
   const nativePhases=new Set<string>(),nativeNavigation:{value?:NativeNavigationObservation}={}
+  // #773 observes only real responses on the current HMAC-owned channel. No receipt authority.
+  const bootstrapRows773:number[][]=[],bootstrapSeen773=new Set<string>()
+  const bootstrapRecord773=(id:unknown)=>{
+    if(typeof id!=="string"||id.length>128||bootstrapRows773.length>=192)return
+    const match=/^D480A_BOOT_([1-9]\d?)_([1-8])_([0-2])_(0|[1-9]\d{0,2})_(0|[1-9]\d{0,9})_([0-2])$/.exec(id)
+    if(!match||match[0]!==id)return
+    const row=match.slice(1).map(Number),[point,ordinal,edge,bucket,code,present]=row
+    if(!row.every(Number.isSafeInteger)||point>30||bucket>361||code>0xffffffff)return
+    if(edge===0&&(code!==0||present!==2)||edge===1&&present!==2||edge===2&&(![6,8].includes(point)||present===2))return
+    const key=point+":"+ordinal+":"+edge;if(bootstrapSeen773.has(key))return
+    bootstrapSeen773.add(key);bootstrapRows773.push(row)
+  }
+
   let ready: { ws: WebSocket; proof: string } | undefined
   let current: { ws: WebSocket; host: string; capabilityId: string } | undefined
   const currentSocket = () => current && current.host === owned().host && current.capabilityId === owned().capabilityId && current.ws.readyState === WebSocket.OPEN ? current.ws : undefined
@@ -81,6 +94,7 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
       if (frame.type === "desktop.ready" && frame.protocol_version === 1 && ws.readyState === WebSocket.OPEN) ready = { ws, proof: candidateProof }
       else if (frame.type === "system.pong" && currentSocket() === ws) {
         try{recordNativePhaseResponse(args[0],nativePhases,nativeNavigation)}catch{/* Observation cannot replace original send behavior. */}
+        try{bootstrapRecord773(frame.id)}catch{/* Preserve original send, callback, return and throw. */}
         const receipt = acceptanceReceipt(frame.id)
         if (receipt) record(receipt)
       }
@@ -90,6 +104,7 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
   })
   return {
     currentSocket,
+    bootstrapObservation773:()=>({clock:"native-first-hook-250ms" as const,processInstanceAttributed:false,rows:bootstrapRows773.map(row=>[...row])}),
     nativeLifetime:()=>({scope:"mode-union" as const,producerScope:"process-lifetime-once" as const,reconnectEpochAttributed:false,processInstanceAttributed:false,phases:nativePhaseNames.filter(name=>nativePhases.has(name)),navigation:nativeNavigation.value?{...nativeNavigation.value}:null}),
     authenticated(host: string): boolean {
       const admitted = ready; ready = undefined
@@ -203,7 +218,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   const has = (name: string) => observations.some(r => r.kind === "fixed" && r.name === name)
   let diagnosticPhase = "starting"
   const diagnostic = (reason: "deadline" | "cleanup") => {
-    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify({...acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads, lastExitCode }, observations),nativeLifetime:observer.nativeLifetime()}) + "\n") }
+    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify({...acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads, lastExitCode }, observations),nativeLifetime:observer.nativeLifetime(),bootstrap773:mode==="inheritance"?observer.bootstrapObservation773():null}) + "\n") }
     catch { /* Observation must not replace the original test failure. */ }
   }
   const deadlineDiagnostic = () => diagnostic("deadline")
@@ -262,7 +277,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     diagnosticPhase = "complete"
     // A token is never returned, logged or persisted. Keep only finite scoped counts.
     assert.equal(secret.length, 64)
-    console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, nativeLifetime:observer.nativeLifetime(), fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
+    console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, nativeLifetime:observer.nativeLifetime(),bootstrap773:mode==="inheritance"?observer.bootstrapObservation773():null, fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
   } finally {
     surfaceLease.retain()
     diagnostic("cleanup")

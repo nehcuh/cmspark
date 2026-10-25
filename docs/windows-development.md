@@ -1,5 +1,7 @@
 # Windows 开发与失败定位
 
+Windows #480 继承模式的额外观察只编入未分发测试宿主：同一 native 首 hook 时钟以 250ms bucket 记录原 checker、WebView2 API 与回调的有界 entry/return，使用原已认证通道发送。返回 HRESULT、收到回执或缺失阶段均不能替代 metadata、完整用例或真实进程清理；不跨钟域相减，原 20 秒保持。Linux #758 的测试副本仅投影真实窗口栈与逐窗口拒绝类别；空应用列表本身不能区分空栈和全部拒绝。
+
 原生确认验收的有限观察只编入未分发的 Windows local/terminal 测试宿主。每个原确认请求序号分别记录首次固定阶段/原拒绝谓词及各自时钟的 250ms bucket；server-send 返回不是 native 收帧，确认窗创建不是 foreground/用户决定，跨两个钟域不能相减。测试夹具可逆还原完整生产源码，原断言、权限与 45 秒截止不变。Windows census 将 `D476_NATIVE_CONFIRMATION_PHASE` 按原测试 title hash/注册位置/唯一诊断关联，未观测、歧义及未覆盖阶段仍为 UNKNOWN；新增观察本身不证明修复了历史超时。
 
 Windows 原生宿主的 owner-death 是异常孤儿回收路径：在原 SYNCHRONIZE parent HANDLE 已实际 signaled 后，只终止当前宿主并保留 exit1。未知其它线程状态时，`ExitProcess` 的 DLL detach 可能争用被终止线程持有的锁；该路径使用 `TerminateProcess(GetCurrentProcess(),1)`，避免执行 DLL detach。正常 UI 关闭流程不变。测试仍须等待同一 native HANDLE signaled、核 exit1 和原文件锁/字节，不能把调用终止 API 当作已退出；pending I/O 仍可能影响退出。源码模型不证明历史超时就是 DLL 死锁。接口依据：[ExitProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess)、[TerminateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess)。
