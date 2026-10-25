@@ -1,3 +1,5 @@
+import './desktop-bootstrap-observation-773.test.mjs'
+import './activity-linux-apps-observation-758.test.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'

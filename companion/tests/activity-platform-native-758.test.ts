@@ -6,7 +6,7 @@ import * as path from 'node:path'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
 import { withSurface650 } from './fixtures/native-surface-650'
-import { WindowsPassiveRecorder, LinuxPassiveRecorder, resolveLinuxRecorder } from '../src/activity/platform'
+import { WindowsPassiveRecorder, LinuxPassiveRecorder, resolveLinuxRecorder, runLinux, type LinuxRunner } from '../src/activity/platform'
 import { resolveWinScript, runPs } from '../src/host-use/win/powershell'
 import { DEFAULT_ACTIVITY_CONFIG } from '../src/activity/types'
 import { submitReminder } from '../src/activity/adapters'
@@ -61,7 +61,24 @@ test('#758 actual desktop foreground identity, passive pixels and local OCR; min
     }else{
       await assert.rejects(exec('/usr/bin/python3',['-I',resolveLinuxRecorder(),'probe'],{env:{...process.env,WAYLAND_DISPLAY:'wayland-owned758',XDG_SESSION_TYPE:'wayland'},signal:owned.signal,timeout:5000}),error=>String((error as any).stderr).trim()==='X11_DESKTOP_REQUIRED')
     }
-    const adapter=win?new WindowsPassiveRecorder(root):new LinuxPassiveRecorder(root)
+    let linuxAppsRunner758:LinuxRunner=runLinux
+    if(!win){
+      const observation758=require(path.resolve('scripts/desktop-linux-apps-observation-fixture-758.mjs'))
+      const helper758=resolveLinuxRecorder(),original758=fs.readFileSync(helper758,'utf8'),projected758=observation758.desktopLinuxAppsObservation758(original758)
+      assert.equal(projected758.inverse,original758,'test-only Linux app observation must restore the entire production helper')
+      const observedHelper758=path.join(dir,'linux-apps-observed-758.py');fs.writeFileSync(observedHelper758,projected758.source,{flag:'wx',mode:0o600})
+      linuxAppsRunner758=async(executable,args,signal)=>{
+        const isApps758=executable==='/usr/bin/python3'&&args.length===3&&args[0]==='-I'&&args[1]===helper758&&args[2]==='apps'
+        const output=await runLinux(executable,isApps758?['-I',observedHelper758,'apps']:args,signal)
+        if(isApps758){
+          let finite758:{status:string;reason?:string;snapshot?:unknown}={status:'UNKNOWN',reason:'INVALID_SNAPSHOT'}
+          try{finite758=observation758.projectLinuxAppsObservation758(JSON.parse(output).observation758)}catch{}
+          try{t.diagnostic('D758_LINUX_APPS_PHASE '+JSON.stringify(finite758))}catch{}
+        }
+        return output
+      }
+    }
+    const adapter=win?new WindowsPassiveRecorder(root):new LinuxPassiveRecorder(root,linuxAppsRunner758)
     const apps=await adapter.listApps(owned.signal)
     assert.ok(apps.length>0)
     let native:any

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 原生验收 (#773)：为未分发的 Windows 继承夹具与 Linux 应用枚举补充有界阶段观察，区分原 API 返回、空列表与实际身份拒绝；保留生产源码、权限、断言及原截止时间。
+
 - Windows 原生验收：为未分发的 local/terminal 确认夹具补充按请求序号区分的有限阶段回执，保留完整生产源码逆变、原权限/断言/时限；不将观察或发送返回当作确认完成。
 
 - Workspace (#753): add explicit full-page multi-selection for separately recording handling, feedback, or dismissing pending candidates. Save sequentially against original item revisions, stop on the first unconfirmed result or lost page/connection ownership, and retain per-item outcomes without automatic retry or outgoing messages.

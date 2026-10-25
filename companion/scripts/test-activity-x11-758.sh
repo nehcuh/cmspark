@@ -2,6 +2,7 @@
 # Test-only. Always allocate a fresh display and notification bus before entering.
 set -euo pipefail
 if [ "${1:-}" != '--owned-x11' ]; then
+  node --max-old-space-size=3072 scripts/tests/activity-linux-apps-observation-758.cpu.mjs
   exec dbus-run-session -- xvfb-run -a -s '-screen 0 1280x900x24 -nolisten tcp' bash "$0" --owned-x11
 fi
 : "${DISPLAY:?owned Xvfb display required}"
