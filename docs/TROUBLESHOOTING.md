@@ -88,6 +88,12 @@ server 没连上或没声明 `tools` capability。先解决上面的连接问题
 
 **解决：** 在 `args` 里加上你想访问的目录，并确保目录存在。详细配置见 [`docs/mcp.md`](./mcp.md)。
 
+### filesystem `edit_file` 提示 "Could not find exact match for edit:"
+
+这是旧文本与文件当前内容不匹配。重新读取该文件，从真实内容构造 `oldText` 后再提交修正；不要原样重复失败的编辑，也不要整文件覆盖来绕过匹配。失败批次应保持文件不变。
+
+该错误应保留 `MCP_EDIT_MATCH_NOT_FOUND` 可恢复分类。回显旧文本中的 `access denied` 等词不是目录授权依据，不应因此触发目录扩权、重载或自动重放写操作。真实路径拒绝仍按原确认门禁处理。如果仍出现“安全熔断”，请提供构建号、同一次调用的错误码与运行终态，勿提交业务正文。
+
 ### LLM 反复调用 `mcp_list_resources` 失败
 
 只有声明了 `resources` 能力的 server 才支持 `mcp_list_resources`。filesystem / brave-search 等 tools-only server 应该使用 `mcp__<server>__<tool>` 形式的 namespaced 工具。如果 LLM 仍反复误用，检查 server 是否已正常连接；连接正常时 meta tools 会按 capability 动态暴露。
