@@ -1,5 +1,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
+import vm from "node:vm"
+import ts from "typescript"
 import { upstreamStatus } from "./fixtures/lcu-v0.13.0/producer"
 import { projectLcuStatus, lcuEnableRefusal, lcuCandidates, lcuEnvironment, lcuAppRequest, lcuAppResponse, supportedLcuPlatform, validLcuCommand } from "../src/computer/lcu/contract"
 import { discoverLcu, probeLcu, type LcuCommandIdentity } from "../src/computer/lcu/discovery"
@@ -55,6 +59,20 @@ test("command selection cannot accept an argv string, relative path, control cha
   assert.equal(validLcuCommand("/owned/my installation/bin/lcu"), true)
   assert.deepEqual(lcuCandidates("win32", "x64", "/home/a", "/owned/bin/lcu"), [])
   assert.deepEqual(lcuCandidates("darwin", "arm64", "/home/a"), ["/home/a/.local/share/lcu/current/bin/lcu"])
+})
+
+test("LCU POSIX candidate and executable grammar is invariant under actual win32 and posix path producers", () => {
+  const source = fs.readFileSync(path.join(process.env.CMSPARK_SOURCE_ROOT ?? path.resolve(__dirname, "../../src"), "computer/lcu/contract.ts"), "utf8")
+  const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText
+  for (const semantics of [path.win32, path.posix]) {
+    const exports: any = {}
+    vm.runInNewContext(js, { exports, require(id: string) { assert.equal(id, "node:path"); return { ...semantics, posix: path.posix } } }, { timeout: 1000 })
+    assert.equal(JSON.stringify(exports.lcuCandidates("darwin", "arm64", "/owned/home")), JSON.stringify(["/owned/home/.local/share/lcu/current/bin/lcu"]))
+    assert.equal(JSON.stringify(exports.lcuCandidates("linux", "x64", "/owned/home")), JSON.stringify(["/opt/lcu/current/bin/lcu", "/owned/home/.local/share/lcu/current/bin/lcu"]))
+    assert.equal(exports.validLcuCommand("/owned/my installation/bin/lcu"), true)
+    for (const value of ["C:\\owned\\lcu", "\\owned\\lcu", "\\\\server\\share\\lcu", "lcu", "/owned/lcu --flag", "/owned/lcu\n"]) assert.equal(exports.validLcuCommand(value), false)
+    assert.equal(JSON.stringify(exports.lcuCandidates("win32", "x64", "/owned/home")), "[]")
+  }
 })
 
 test("LCU child environment excludes credential, loader, approval override and sandbox-disable variables", () => {

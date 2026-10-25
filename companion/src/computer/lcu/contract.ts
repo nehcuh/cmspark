@@ -41,12 +41,14 @@ export function lcuCandidates(platform: string, arch: string, home: string, cust
   if (supportedLcuPlatform(platform, arch) === "unsupported") return []
   if (custom !== undefined) return validLcuCommand(custom) ? [custom] : []
   return platform === "darwin"
-    ? [path.join(home, ".local/share/lcu/current/bin/lcu")]
-    : ["/opt/lcu/current/bin/lcu", path.join(home, ".local/share/lcu/current/bin/lcu")]
+    ? [path.posix.join(home, ".local/share/lcu/current/bin/lcu")]
+    : ["/opt/lcu/current/bin/lcu", path.posix.join(home, ".local/share/lcu/current/bin/lcu")]
 }
 
 export function validLcuCommand(value: unknown): value is string {
-  return bounded(value, 4096) && path.isAbsolute(value) && path.basename(value) === "lcu"
+  // Both supported runtime platforms use POSIX paths, even when their pure
+  // detection contract is evaluated by a Windows caller/test host.
+  return bounded(value, 4096) && path.posix.isAbsolute(value) && path.posix.basename(value) === "lcu"
 }
 
 /** Project only actual fields emitted by upstream lcu/status.mjs collect(). */

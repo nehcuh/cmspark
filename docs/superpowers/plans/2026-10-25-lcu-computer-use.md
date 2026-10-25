@@ -24,3 +24,7 @@ GitHub: #775。规格：`../specs/2026-10-25-lcu-computer-use.md`。
 - 增补计划只读优先、逐线程取消选择/白名单撤销即停止旧连接，并覆盖保存失败后内存已撤销的情况。全自动三旗不扩大这些新授权边界。
 - #776 仅修已证明的确认原因文案；实际 producer→dispatch→copy 五项通过，保留原安全分类。截图编辑匹配失败后的部署与熔断关联仍 UNKNOWN。
 - 本机只被动检查默认安装位置：ChatGPT.app 目录存在，LCU 默认入口不存在；未安装/运行任何桌面依赖。此批若合并，仅是默认关闭实验接线，#775 整体原生验收保持未完成。两路复审必须明确评估这一限制，不能把 CPU 结果当桌面成功。
+- PR #777 首次正式 CI 保留真实失败：旧 MCP meta 测试遗漏新增文案 helper，Linux 自有 Xvfb 回执观察到空窗口栈（尚未进入身份拒绝）。补齐测试的真实 helper 依赖，并将夹具的固定 500 毫秒就绪改为原生产 `info(window, False)` 确认自有已映射 XRes 身份后发布，事件只在独立连接观察；不改生产采集逻辑、焦点或权限。历史唯一物理原因仍 UNKNOWN。
+- R3 仅补受影响 4 项现有用例及正常 Program（5 roots / 950 sources，零诊断）；另 12 个纯 Python CPU 场景执行实际就绪函数，以真实旧源码证明无窗口也会被原计时器误报。保留 10 秒就绪、90 秒业务与全部原断言；既有 64 项不重跑。新增量仍需同两路复审和一次修改后正常 CI，不作 unchanged-head 重试。
+- 事件实现依据：[Python Tk file handlers](https://docs.python.org/3/library/tkinter.html#file-handlers)、[Xlib event selection / XEvent](https://www.x.org/releases/X11R7.6/doc/libX11/specs/libX11/libX11.html)。本地仅执行 AST 选取函数和惰性边界，未启动 Tk/X11。
+- 首次 Windows census 的公开源绑定及逐 case 账本确认另外两处路径用例失败：显式检测 macOS/Linux 时使用了宿主 `path.join`。改为 `path.posix`，R8 仅补两处失败和一项真实 win32/posix producer 对照，3 PASS；真实旧源码在 win32 producer 下产生错误路径，新版在两者下均通过。Windows LCU 仍拒绝，不增加 skip。原其他 64 项仅保留不受影响部分；总计 69 项唯一 focused 用例有效（含 4 项既有受影响测试），另有 12 项纯 Python 场景。
