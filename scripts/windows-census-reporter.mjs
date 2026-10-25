@@ -100,6 +100,135 @@ export function publicTerminalDiagnostic(value) {
   if (!snapshot || JSON.stringify(snapshot) !== JSON.stringify(value.snapshot)) throw Error('CENSUS_METADATA_INVALID')
   return { status: 'OBSERVED', snapshot }
 }
+// Independent passive confirmation observations. Only these two actual public
+// registration-name hashes may receive this field; locations still bind the
+// diagnostic to one failure in its original canonical TestsStream document.
+const confirmationRoles = new Map([
+  ['1c1ad79cba22b289046bad930054f0e6a6dd5e22c15d9c72d497730d62b8657b', 'LOCAL'],
+  ['8bae2561b67e9ced4b87fd83f1ffad8d4c9bf39e6f610dba6ab9d15440e7288d', 'TERMINAL'],
+])
+export function confirmationRoleForNameHash(nameHash) { return confirmationRoles.get(nameHash) ?? null }
+const confirmationMarker = 'D476_NATIVE_CONFIRMATION_PHASE '
+// Read own data only. In particular, neither Proxy traps, accessors, inherited
+// toJSON methods nor overridden array methods run at the public object boundary.
+function confirmationData(value, keys) {
+  if (!value || typeof value !== 'object' || utilTypes.isProxy(value) || Array.isArray(value)) return null
+  try {
+    const own = Reflect.ownKeys(value)
+    if (own.length !== keys.length || own.some((key, index) => key !== keys[index])) return null
+    const result = {}
+    for (const key of keys) {
+      const property = Object.getOwnPropertyDescriptor(value, key)
+      if (!property || !Object.hasOwn(property, 'value')) return null
+      result[key] = property.value
+    }
+    return result
+  } catch { return null }
+}
+function confirmationArray(value, maximum) {
+  if (!value || typeof value !== 'object' || utilTypes.isProxy(value) || !Array.isArray(value)) return null
+  try {
+    const length = Object.getOwnPropertyDescriptor(value, 'length')?.value
+    if (!Number.isSafeInteger(length) || length < 0 || length > maximum) return null
+    const keys = Reflect.ownKeys(value)
+    if (keys.length !== length + 1 || keys[length] !== 'length') return null
+    const result = []
+    for (let index = 0; index < length; index++) {
+      if (keys[index] !== String(index)) return null
+      const property = Object.getOwnPropertyDescriptor(value, String(index))
+      if (!property || !Object.hasOwn(property, 'value')) return null
+      result.push(property.value)
+    }
+    return result
+  } catch { return null }
+}
+function confirmationRows(value, maxPoint, maximum, withValue = false) {
+  const rows = confirmationArray(value, maximum)
+  if (!rows) return null
+  const seen = new Set(), result = []
+  for (const row of rows) {
+    const tuple = confirmationArray(row, withValue ? 4 : 3)
+    if (!tuple || tuple.length !== (withValue ? 4 : 3)) return null
+    const [point, ordinal, bucket] = tuple
+    if (!Number.isSafeInteger(point) || point < 1 || point > maxPoint || !Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 8 || !Number.isSafeInteger(bucket) || bucket < 0 || bucket > 240) return null
+    if (withValue && typeof tuple[3] !== 'boolean') return null
+    const pair = `${point}:${ordinal}`
+    if (seen.has(pair)) return null
+    seen.add(pair)
+    // Preserve actual observation order. Each domain owns its own clock;
+    // neither site order nor a server/native time difference is inferred.
+    result.push(withValue ? [point, ordinal, bucket, tuple[3]] : [point, ordinal, bucket])
+  }
+  return result
+}
+function confirmationSnapshot(value) {
+  const data = confirmationData(value, ['schema', 'role', 'moment', 'server', 'native', 'malformed'])
+  if (!data || data.schema !== 1 || !['LOCAL', 'TERMINAL'].includes(data.role) || !['ABORT', 'FINALLY'].includes(data.moment) || typeof data.malformed !== 'boolean') return null
+  const server = confirmationRows(data.server, 5, 40), native = confirmationRows(data.native, 128, 1024, true)
+  if (!server || !native) return null
+  return { schema: 1, role: data.role, moment: data.moment, server, native, malformed: data.malformed }
+}
+export function confirmationDiagnostic(message) {
+  if (typeof message !== 'string' || !message.startsWith(confirmationMarker)) return null
+  if (message.length > 32768 || Buffer.byteLength(message, 'utf8') > 32768) return { status: 'UNKNOWN', reason: 'OVERSIZE' }
+  try {
+    const payload = message.slice(confirmationMarker.length), snapshot = confirmationSnapshot(JSON.parse(payload))
+    if (!snapshot || JSON.stringify(snapshot) !== payload) return { status: 'UNKNOWN', reason: 'INVALID_SNAPSHOT' }
+    return { status: 'OBSERVED', snapshot }
+  } catch { return { status: 'UNKNOWN', reason: 'INVALID_SNAPSHOT' } }
+}
+export function publicConfirmationDiagnostic(value) {
+  const unknown = confirmationData(value, ['status', 'reason'])
+  if (unknown && unknown.status === 'UNKNOWN' && ['OVERSIZE', 'INVALID_SNAPSHOT'].includes(unknown.reason)) return { status: 'UNKNOWN', reason: unknown.reason }
+  const observed = confirmationData(value, ['status', 'snapshot'])
+  if (!observed || observed.status !== 'OBSERVED') throw Error('CENSUS_METADATA_INVALID')
+  const snapshot = confirmationSnapshot(observed.snapshot)
+  // Never serialize the incoming object: even an inherited toJSON method is
+  // outside this finite contract. Only the fresh primitive copy is serialized.
+  if (!snapshot || Buffer.byteLength(confirmationMarker + JSON.stringify(snapshot), 'utf8') > 32768) throw Error('CENSUS_METADATA_INVALID')
+  return { status: 'OBSERVED', snapshot }
+}
+const localMarker = 'D476_LOCAL_NATIVE_PHASE '
+const localBooleanKeys = ['failed', 'inputUnicode', 'authenticated', 'windowRequested', 'childExited']
+const localCounterKeys = ['protocolStarts', 'saved', 'resizeCalls', 'terminalStops', 'connections']
+const localProgressKeys = ['agentRequests', 'agentResults', 'agentAccepted', 'agentConfirmations', 'agentDecisions', 'agentApprovals', 'runtimeStarts', 'protocolAttempts', 'protocolHandles']
+function localSnapshot(value) {
+  const data = confirmationData(value, ['schema', 'failed', 'receiptMask', 'protocolStarts', 'saved', 'inputUnicode', 'resizeCalls', 'terminalStops', 'authenticated', 'windowRequested', 'connections', 'childExited', 'localFirstSite', 'localFocusResult', 'localActivation', 'localData', 'localProgress'])
+  if (!data || data.schema !== 1 || !unsigned(data.receiptMask) || data.receiptMask > 255 || localBooleanKeys.some(key => typeof data[key] !== 'boolean') || localCounterKeys.some(key => !unsigned(data[key]))) return null
+  const first = confirmationData(data.localFirstSite, ['R', 'W', 'M'])
+  if (!first || [['R', 17], ['W', 13], ['M', 8]].some(([key, maximum]) => first[key] !== null && (!Number.isSafeInteger(first[key]) || first[key] < 1 || first[key] > maximum))) return null
+  if (data.localFocusResult !== null && !['MOVE_FOCUS_FAILED', 'FOREGROUND_MISMATCH'].includes(data.localFocusResult)) return null
+  let activation = null
+  if (data.localActivation !== null) {
+    activation = confirmationData(data.localActivation, ['requested', 'foreground'])
+    if (!activation || typeof activation.requested !== 'boolean' || !['NOT_READ', 'NULL', 'OWNED', 'OTHER'].includes(activation.foreground)) return null
+  }
+  const bytes = confirmationData(data.localData, ['rendererFirstData', 'terminalDataFrames', 'terminalDataBytes', 'terminalDataIncomplete'])
+  if (!bytes || typeof bytes.rendererFirstData !== 'boolean' || typeof bytes.terminalDataIncomplete !== 'boolean' || !unsigned(bytes.terminalDataFrames) || bytes.terminalDataFrames > 65535 || !unsigned(bytes.terminalDataBytes) || bytes.terminalDataBytes > 16777216) return null
+  const progress = confirmationData(data.localProgress, localProgressKeys)
+  if (!progress || localProgressKeys.some(key => !unsigned(progress[key]) || progress[key] > 65535)) return null
+  return { schema: 1, failed: data.failed, receiptMask: data.receiptMask, protocolStarts: data.protocolStarts, saved: data.saved, inputUnicode: data.inputUnicode, resizeCalls: data.resizeCalls, terminalStops: data.terminalStops,
+    authenticated: data.authenticated, windowRequested: data.windowRequested, connections: data.connections, childExited: data.childExited,
+    localFirstSite: first, localFocusResult: data.localFocusResult, localActivation: activation, localData: bytes, localProgress: progress }
+}
+export function localDiagnostic(message) {
+  if (typeof message !== 'string' || !message.startsWith(localMarker)) return null
+  if (message.length > 4096 || Buffer.byteLength(message, 'utf8') > 4096) return { status: 'UNKNOWN', reason: 'OVERSIZE' }
+  try {
+    const payload = message.slice(localMarker.length), snapshot = localSnapshot(JSON.parse(payload))
+    if (!snapshot || JSON.stringify(snapshot) !== payload) return { status: 'UNKNOWN', reason: 'INVALID_SNAPSHOT' }
+    return { status: 'OBSERVED', snapshot }
+  } catch { return { status: 'UNKNOWN', reason: 'INVALID_SNAPSHOT' } }
+}
+export function publicLocalDiagnostic(value) {
+  const unknown = confirmationData(value, ['status', 'reason'])
+  if (unknown && unknown.status === 'UNKNOWN' && ['OVERSIZE', 'INVALID_SNAPSHOT'].includes(unknown.reason)) return { status: 'UNKNOWN', reason: unknown.reason }
+  const observed = confirmationData(value, ['status', 'snapshot'])
+  if (!observed || observed.status !== 'OBSERVED') throw Error('CENSUS_METADATA_INVALID')
+  const snapshot = localSnapshot(observed.snapshot)
+  if (!snapshot || Buffer.byteLength(localMarker + JSON.stringify(snapshot), 'utf8') > 4096) throw Error('CENSUS_METADATA_INVALID')
+  return { status: 'OBSERVED', snapshot }
+}
 export function publicFailureMetadata(event) {
   if (event.failure_type === undefined) {
     if (['error_code', 'exit_code', 'signal', 'child_failure_chain'].some(key => event[key] !== undefined)) throw Error('CENSUS_METADATA_INVALID')
@@ -152,6 +281,10 @@ export function project(event, seq, root) {
   if (event.type === 'test:diagnostic' && file === terminalDiagnosticFile) {
     const finite = terminalDiagnostic(d.message)
     if (finite) record.terminal_phase = finite
+    const confirmation = confirmationDiagnostic(d.message)
+    if (confirmation) record.confirmation_phase = confirmation
+    const local = localDiagnostic(d.message)
+    if (local) record.local_phase = local
   }
   const e = d.details?.error
   if (e) {

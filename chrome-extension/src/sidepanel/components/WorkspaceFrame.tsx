@@ -31,7 +31,7 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
   const [wide, setWide] = useState(() => window.matchMedia("(min-width: 760px)").matches)
   const [open, setOpen] = useState(false)
   const [openingError, setOpeningError] = useState("")
-  const controller = useActivity(state.connectionState === "connected")
+  const controller = useActivity(state.connectionState === "connected", state.codingHistoryConnectionRevision)
   const navRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
   const destinationBlocked = state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)
@@ -126,7 +126,7 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
       {openingError && <p role="alert" className="cm-personal-fieldnote">{openingError}</p>}
       {full && visibleView !== "chat" && state.meetingCaptureActive && <div className="cm-personal-banner" role="status"><span>会议录制中</span><button className="cm-icon-button" type="button" onClick={() => openResource("meeting")}>返回会议</button></div>}
       <div className="cm-chat-mount" hidden={full && visibleView !== "chat"}>{children}</div>
-      {full && (["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} navigate={navigate} openResource={openResource} /></div>)}
+      {full && (["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource} /></div>)}
     </main>
   </div>
 }

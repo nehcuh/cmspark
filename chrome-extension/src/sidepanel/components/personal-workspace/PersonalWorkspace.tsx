@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { CONTEXT_PANEL_TABS, type ContextPanelId } from '../ContextPanelHost'
 import { datetimeInput, taskDatePatch, dueToday, formatTaskTime, requestActivity, taskComplete, type ActivityApp, type ActivityConfig, type ActivityReply, type PersonalTodo, type TaskEvidence, type TodoCandidate } from './activity-request'
-import type { ActivityController } from './useActivity'
+import type { ActivityBulkAction, ActivityBulkItem, ActivityBulkResult, ActivityController } from './useActivity'
 import { RecentActivitySources } from './RecentActivitySources'
 
 export type WorkspaceDestination = 'today' | 'todos' | 'chat' | 'materials' | 'activity'
@@ -10,8 +10,8 @@ export const WORKSPACE_DESTINATIONS: Array<{ id: WorkspaceDestination; label: st
 ]
 const reminderLabels: Record<PersonalTodo['reminder']['status'], string> = { none: '未设置提醒', scheduled: '已排程', attempting: '正在提交系统通知', submitted: '已提交系统通知（不代表已读）', failed: '提醒提交失败', unknown: '提醒结果未知，请核实' }
 
-export function PersonalWorkspace({ destination, controller, connected, navigate, openResource }: {
-  destination: Exclude<WorkspaceDestination, 'chat'>; controller: ActivityController; connected: boolean; navigate: (view: WorkspaceDestination) => void; openResource: (panel: ContextPanelId) => void
+export function PersonalWorkspace({ destination, controller, connected, active, navigationOwner, navigate, openResource }: {
+  destination: Exclude<WorkspaceDestination, 'chat'>; controller: ActivityController; connected: boolean; active: boolean; navigationOwner: object; navigate: (view: WorkspaceDestination) => void; openResource: (panel: ContextPanelId) => void
 }) {
   const { snapshot, loading, busy, error, notice, refresh } = controller
   const title = WORKSPACE_DESTINATIONS.find(item => item.id === destination)!.label
@@ -29,15 +29,48 @@ export function PersonalWorkspace({ destination, controller, connected, navigate
     {error && <div className="cm-personal-banner" role="alert">{error}</div>}
     {notice && <div className="cm-personal-banner" role="status">{notice}</div>}
     <div className="cm-personal-body">
-      {destination === 'materials' ? <MaterialsPanel openResource={openResource} /> : !snapshot ? <div className="cm-personal-empty"><h2>{loading ? '正在读取本机记录' : '还没有读取到工作记录'}</h2><p>{connected ? '点击刷新获取本机 Companion 的待办与采集状态。读取失败不会生成示例事项。' : '请先连接本机 Companion；待办与来源由同一后台服务保管。'}</p></div> : destination === 'activity' ? <ActivityPanel controller={controller} connected={connected} /> : <TodoPanel today={destination === 'today'} controller={controller} connected={connected} navigate={navigate} />}
+      {destination === 'materials' ? <MaterialsPanel openResource={openResource} /> : !snapshot ? <div className="cm-personal-empty"><h2>{loading ? '正在读取本机记录' : '还没有读取到工作记录'}</h2><p>{connected ? '点击刷新获取本机 Companion 的待办与采集状态。读取失败不会生成示例事项。' : '请先连接本机 Companion；待办与来源由同一后台服务保管。'}</p></div> : destination === 'activity' ? <ActivityPanel controller={controller} connected={connected} /> : <TodoPanel today={destination === 'today'} controller={controller} connected={connected} active={active} navigationOwner={navigationOwner} navigate={navigate} />}
     </div>
   </section>
 }
 
-function TodoPanel({ today, controller, connected, navigate }: { today: boolean; controller: ActivityController; connected: boolean; navigate: (view: WorkspaceDestination) => void }) {
+function TodoPanel({ today, controller, connected, active, navigationOwner, navigate }: { today: boolean; controller: ActivityController; connected: boolean; active: boolean; navigationOwner: object; navigate: (view: WorkspaceDestination) => void }) {
   const { snapshot, busy, mutate } = controller
   const [filter, setFilter] = useState('open'), [query, setQuery] = useState(''), [selected, setSelected] = useState<string | null>(null)
   const [showCandidates, setShowCandidates] = useState(false)
+  const [bulkSelected, setBulkSelected] = useState<ActivityBulkItem[]>([]), [bulkAction, setBulkAction] = useState<ActivityBulkAction | null>(null)
+  const [bulkResults, setBulkResults] = useState<ActivityBulkResult[]>([])
+  const bulkSelection = useRef(bulkSelected), selectionSession = useRef<typeof controller.session | null>(null), mounted = useRef(true), runningBulk = useRef<object | null>(null)
+  bulkSelection.current = bulkSelected
+  const bulkEnabled = !today && active && connected
+  const bulkOwner = useRef({ enabled: bulkEnabled, session: controller.session, navigationOwner, filter, query, showCandidates })
+  if (bulkOwner.current.enabled !== bulkEnabled || bulkOwner.current.session !== controller.session || bulkOwner.current.navigationOwner !== navigationOwner || bulkOwner.current.filter !== filter || bulkOwner.current.query !== query || bulkOwner.current.showCandidates !== showCandidates) {
+    bulkOwner.current = { enabled: bulkEnabled, session: controller.session, navigationOwner, filter, query, showCandidates }
+  }
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const clearBulk = () => { bulkSelection.current = []; selectionSession.current = null; setBulkSelected([]); setBulkAction(null); setBulkResults([]) }
+  const toggleBulk = (kind: ActivityBulkItem['kind'], item: PersonalTodo | TodoCandidate) => {
+    if (!bulkEnabled || busy) return
+    if (bulkSelection.current.length && selectionSession.current !== controller.session) return
+    const previous = bulkSelection.current, found = previous.some(value => value.kind === kind && value.id === item.id)
+    const next = found ? previous.filter(value => value.kind !== kind || value.id !== item.id) : [...previous, { kind, id: item.id, revision: item.revision, title: item.title }]
+    selectionSession.current = controller.session; bulkSelection.current = next; setBulkSelected(next); setBulkAction(null); setBulkResults([])
+  }
+  const bulkStale = bulkSelected.length > 0 && (selectionSession.current !== controller.session || bulkSelected.some(item => {
+    const record = item.kind === 'candidate' ? snapshot!.candidates.find(value => value.id === item.id) : snapshot!.todos.find(value => value.id === item.id)
+    return !record || record.revision !== item.revision
+  }))
+  const selectAction = (action: ActivityBulkAction) => { if (bulkEnabled && !busy && !bulkStale) { setBulkAction(action); setBulkResults([]) } }
+  const submitBulk = async () => {
+    const items = bulkSelection.current, owner = bulkOwner.current, action = bulkAction
+    if (!action || !owner.enabled || busy || runningBulk.current || bulkStale || selectionSession.current !== controller.session) return
+    const run = {}; runningBulk.current = run; setBulkAction(null)
+    const current = () => mounted.current && bulkOwner.current === owner && owner.enabled && bulkSelection.current === items
+    try {
+      const results = await controller.mutateBulk(action, items, current)
+      if (mounted.current) setBulkResults(results)
+    } finally { if (runningBulk.current === run) runningBulk.current = null }
+  }
   const candidates = snapshot!.candidates.filter(item => item.status === 'pending')
   const sourceAppName = (evidence: TaskEvidence) => snapshot!.sources.find(source => source.id === evidence.source_id)?.app_name
   const todos = snapshot!.todos.filter(item => {
@@ -47,7 +80,7 @@ function TodoPanel({ today, controller, connected, navigate }: { today: boolean;
     if (!today && filter === 'supervise' && (item.kind !== 'supervise' || taskComplete(item))) return false
     if (!today && filter === 'feedback' && item.feedback_status !== 'pending') return false
     if (!today && filter === 'done' && !taskComplete(item)) return false
-    return `${item.title} ${item.owner} ${item.evidence.group} ${item.evidence.sender} ${item.feedback_to}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+    return `${item.title} ${item.owner} ${item.evidence.group} ${item.evidence.sender} ${item.feedback_to} ${sourceAppName(item.evidence) || ''} ${item.evidence.app_id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
   }).sort((a, b) => (a.due_at || '9999').localeCompare(b.due_at || '9999'))
   const selection = snapshot!.todos.find(item => item.id === selected) || candidates.find(item => item.id === selected)
   const [confirmDismiss, setConfirmDismiss] = useState<string | null>(null)
@@ -56,22 +89,36 @@ function TodoPanel({ today, controller, connected, navigate }: { today: boolean;
   const listCandidates = showCandidates || today
   return <>
     {!today && <div className="cm-personal-filters" aria-label="待办筛选">
-      {[['open', '全部待处理'], ['own', '我的待办'], ['supervise', '我督办的'], ['feedback', '待反馈'], ['done', '已完成']].map(([id, label]) => <button key={id} type="button" aria-pressed={!showCandidates && filter === id} onClick={() => { setFilter(id); setShowCandidates(false); setSelected(null) }}>{label}</button>)}
-      <button type="button" aria-pressed={showCandidates} onClick={() => { setShowCandidates(true); setSelected(null) }}>待整理 {candidates.length}</button>
-      <input className="cm-personal-search" aria-label="搜索待办及来源" placeholder="查找事项、群或提出人" value={query} onChange={event => setQuery(event.target.value)} />
+      {[['open', '全部待处理'], ['own', '我的待办'], ['supervise', '我督办的'], ['feedback', '待反馈'], ['done', '已完成']].map(([id, label]) => <button key={id} type="button" aria-pressed={!showCandidates && filter === id} disabled={busy} onClick={() => { setBulkAction(null); setFilter(id); setShowCandidates(false); setSelected(null) }}>{label}</button>)}
+      <button type="button" aria-pressed={showCandidates} disabled={busy} onClick={() => { setBulkAction(null); setShowCandidates(true); setSelected(null) }}>待整理 {candidates.length}</button>
+      <input className="cm-personal-search" aria-label="搜索待办及来源" placeholder="查找事项、群或提出人" value={query} disabled={busy} onChange={event => { setBulkAction(null); setQuery(event.target.value) }} />
     </div>}
+    {!today && <section className="cm-personal-bulk" aria-label="批量整理个人事项">
+      <div className="cm-personal-actions"><span className="cm-personal-fieldnote">已选择 {bulkSelected.length} 项</span><button type="button" className="cm-p-link" disabled={busy || !bulkSelected.length} onClick={clearBulk}>清除选择</button>
+        {showCandidates ? <button type="button" className="cm-p-button cm-p-danger" disabled={!bulkEnabled || busy || bulkStale || !bulkSelected.length || bulkSelected.some(item => item.kind !== 'candidate')} onClick={() => selectAction('dismiss')}>忽略所选候选</button> : <>
+          <button type="button" className="cm-p-button" disabled={!bulkEnabled || busy || bulkStale || !bulkSelected.length || bulkSelected.some(item => item.kind !== 'todo' || snapshot!.todos.find(value => value.id === item.id)?.handling_status !== 'open')} onClick={() => selectAction('handling_done')}>记录所选已处理</button>
+          <button type="button" className="cm-p-button" disabled={!bulkEnabled || busy || bulkStale || !bulkSelected.length || bulkSelected.some(item => { const todo = snapshot!.todos.find(value => value.id === item.id); return item.kind !== 'todo' || !todo?.feedback_required || todo.feedback_status !== 'pending' })} onClick={() => selectAction('feedback_done')}>记录所选已反馈</button>
+        </>}
+      </div>
+      <p className="cm-personal-fieldnote">逐项保存，首项未确认即停止后续提交。处理与反馈分别记录；不会向来源聊天发送消息。候选仍需逐条核对后才能建立待办。</p>
+      {bulkSelected.length > 0 && <details><summary className="cm-personal-fieldnote">核对所选 {bulkSelected.length} 项（包含当前筛选外的选择）</summary><ul className="cm-personal-bulk-results">{bulkSelected.map(item => <li key={`${item.kind}:${item.id}`}><span>{item.title}</span><span>{item.kind === 'candidate' ? '待整理候选' : '个人事项'}</span></li>)}</ul></details>}
+      {bulkStale && <p role="alert" className="cm-personal-fieldnote">选择中的事项或连接已有变化。选择保留；请先刷新核实，再清除选择并重新核对。</p>}
+      {bulkAction && <div className="cm-personal-save"><p className="cm-personal-fieldnote">{bulkAction === 'dismiss' ? `确认忽略这 ${bulkSelected.length} 条候选？来源记录保留。` : bulkAction === 'handling_done' ? `确认将所选 ${bulkSelected.length} 项记为已处理？需要反馈的事项仍保持待反馈。` : `确认你已实际完成所选 ${bulkSelected.length} 项的反馈？这里只保存记录，不发送消息。`}</p><button type="button" className="cm-p-button cm-p-primary" disabled={!bulkEnabled || busy || bulkStale} onClick={() => void submitBulk()}>确认逐项保存</button><button type="button" className="cm-p-link" disabled={busy} onClick={() => setBulkAction(null)}>取消</button></div>}
+      {busy && bulkSelected.length > 0 && <p role="status" className="cm-personal-fieldnote">正在等待逐项后台回执…</p>}
+      {bulkResults.length > 0 && <div role="status" aria-live="polite"><p className="cm-personal-fieldnote">后台确认 {bulkResults.filter(item => item.status === 'confirmed').length} 项，未确认 {bulkResults.filter(item => item.status === 'unconfirmed').length} 项，未发送 {bulkResults.filter(item => item.status === 'not_sent').length} 项。选择保留，不会自动重试。</p><ul className="cm-personal-bulk-results">{bulkResults.map(item => <li key={`${item.kind}:${item.id}`}><span>{item.title}</span><span>{item.message}</span></li>)}</ul></div>}
+    </section>}
     <div className="cm-personal-split" data-detail={!!selection}>
       <div className="cm-personal-list">
         {!showCandidates && <><div className="cm-personal-section-title"><h2>{today ? '今天及已逾期' : filter === 'done' ? '已完成事项' : '确认的事项'}</h2><span className="cm-personal-count">{todos.length} 项</span></div>
-          <div className="cm-personal-ledger">{todos.map(todo => <button type="button" className="cm-personal-row" key={todo.id} aria-current={selected === todo.id ? 'true' : undefined} onClick={() => { setSelected(todo.id); setConfirmDismiss(null) }}>
+          <div className="cm-personal-ledger">{todos.map(todo => <div className="cm-personal-selectable" key={todo.id}>{!today && <input type="checkbox" aria-label={`选择待办：${todo.title}`} checked={bulkSelected.some(item => item.kind === 'todo' && item.id === todo.id)} disabled={!bulkEnabled || busy || bulkStale} onChange={() => toggleBulk('todo', todo)} />}<button type="button" className="cm-personal-row" aria-current={selected === todo.id ? 'true' : undefined} onClick={() => { setSelected(todo.id); setConfirmDismiss(null) }}>
             <span className="cm-personal-row-main"><span className="cm-personal-row-title">{todo.title}</span><span className="cm-personal-source-line">{sourceLine(todo.evidence, sourceAppName(todo.evidence))} · 负责人 {todo.owner}</span><span className="cm-personal-source-line">反馈至 {todo.feedback_to || '未指定'}{todo.kind === 'supervise' ? ' · 我督办的' : ''}</span></span>
             <span className="cm-personal-row-status"><span>{todo.due_at ? formatTaskTime(todo.due_at) : '无截止时间'}</span><span className="cm-personal-tag" data-warning={todo.feedback_status === 'pending'}>{todo.handling_status === 'open' ? '待处理' : todo.feedback_status === 'pending' ? '已处理 · 待反馈' : '已完成'}</span></span>
-          </button>)}</div>
+          </button></div>)}</div>
           {!todos.length && <div className="cm-personal-empty"><h2>{today ? '今天没有临期事项' : '这个分类还没有事项'}</h2><p>{today ? '有截止时间且尚未完成的事项会显示在这里。没有截止时间的事项仍可在待办中查看。' : '聊天抽取结果先进入待整理，只有你确认后才成为正式待办。'}</p><button type="button" className="cm-p-link" onClick={() => navigate(today ? 'todos' : 'activity')}>{today ? '查看全部待办' : '设置聊天采集'}</button></div>}
         </>}
         {listCandidates && <section style={{ marginTop: today ? 32 : 0 }} aria-label="待整理候选"><div className="cm-personal-section-title"><h2>从聊天中发现</h2><span className="cm-personal-count">{candidates.length} 项待确认</span></div>
           <p className="cm-personal-fieldnote" style={{ marginBottom: 14 }}>抽取可能误认责任人或时间；请核对原文后确认。不会自动变成待办或发出反馈。</p>
-          <div className="cm-personal-ledger">{candidates.filter(item => `${item.title} ${item.evidence.group} ${item.evidence.sender}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map(candidate => <button type="button" className="cm-personal-row cm-personal-candidate" key={candidate.id} aria-current={selected === candidate.id ? 'true' : undefined} onClick={() => { setSelected(candidate.id); setConfirmDismiss(null) }}><span className="cm-personal-row-main"><span className="cm-personal-row-title">{candidate.title}</span><span className="cm-personal-source-line">{sourceLine(candidate.evidence, sourceAppName(candidate.evidence))}</span></span><span className="cm-personal-tag">核对并整理</span></button>)}</div>
+          <div className="cm-personal-ledger">{candidates.filter(item => `${item.title} ${item.evidence.group} ${item.evidence.sender} ${sourceAppName(item.evidence) || ''} ${item.evidence.app_id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map(candidate => <div className="cm-personal-selectable" key={candidate.id}>{!today && <input type="checkbox" aria-label={`选择候选：${candidate.title}`} checked={bulkSelected.some(item => item.kind === 'candidate' && item.id === candidate.id)} disabled={!bulkEnabled || busy || bulkStale} onChange={() => toggleBulk('candidate', candidate)} />}<button type="button" className="cm-personal-row cm-personal-candidate" aria-current={selected === candidate.id ? 'true' : undefined} onClick={() => { setSelected(candidate.id); setConfirmDismiss(null) }}><span className="cm-personal-row-main"><span className="cm-personal-row-title">{candidate.title}</span><span className="cm-personal-source-line">{sourceLine(candidate.evidence, sourceAppName(candidate.evidence))}</span></span><span className="cm-personal-tag">核对并整理</span></button></div>)}</div>
           {!candidates.length && <p className="cm-personal-fieldnote">暂无待整理内容。<button type="button" className="cm-p-link" onClick={() => navigate('activity')}>查看采集范围</button></p>}
         </section>}
       </div>

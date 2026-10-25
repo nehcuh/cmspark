@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { relativeFile, terminalDiagnosticFile, publicFailureMetadata, publicTerminalDiagnostic } from './windows-census-reporter.mjs'
+import { relativeFile, terminalDiagnosticFile, publicFailureMetadata, publicTerminalDiagnostic, confirmationRoleForNameHash, publicConfirmationDiagnostic, publicLocalDiagnostic } from './windows-census-reporter.mjs'
 import { sealEvidence } from './windows-census-evidence.mjs'
 import { prepareOwnedShortRoots } from './windows-census-owned-short-path.mjs'
 
@@ -277,6 +277,22 @@ export async function reconcile({ companion, receipts, rawFile, discovery, execu
             : observations.length === 0 ? { status: 'MISSING' }
             : observations.length !== 1 ? { status: 'UNKNOWN', reason: 'AMBIGUOUS' }
             : publicTerminalDiagnostic(observations[0].terminal_phase)
+          const role = confirmationRoleForNameHash(current.name_hash)
+          if (role !== null) {
+            const confirmations = doc.events.filter(other => other.type === 'test:diagnostic' && other.confirmation_phase !== undefined && sameLocation(other))
+            current.confirmation_phase = !located || failures.length !== 1 ? { status: 'UNKNOWN', reason: 'UNRESOLVED_LOCATION' }
+              : confirmations.length === 0 ? { status: 'MISSING' }
+              : confirmations.length !== 1 ? { status: 'UNKNOWN', reason: 'AMBIGUOUS' }
+              : publicConfirmationDiagnostic(confirmations[0].confirmation_phase)
+            if (current.confirmation_phase.status === 'OBSERVED' && current.confirmation_phase.snapshot.role !== role) current.confirmation_phase = { status: 'UNKNOWN', reason: 'ROLE_MISMATCH' }
+            if (role === 'LOCAL') {
+              const local = doc.events.filter(other => other.type === 'test:diagnostic' && other.local_phase !== undefined && sameLocation(other))
+              current.local_phase = !located || failures.length !== 1 ? { status: 'UNKNOWN', reason: 'UNRESOLVED_LOCATION' }
+                : local.length === 0 ? { status: 'MISSING' }
+                : local.length !== 1 ? { status: 'UNKNOWN', reason: 'AMBIGUOUS' }
+                : publicLocalDiagnostic(local[0].local_phase)
+            }
+          }
         }
       }
       cases.push(current)
