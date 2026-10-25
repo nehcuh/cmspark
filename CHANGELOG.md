@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+- Windows desktop: use process self-termination when the exact owner has died, avoiding DLL detach on unknown live-thread state. Keep the original owner handle, exit code and native process-settlement checks. This addresses a documented shutdown risk; the earlier timeout’s physical cause remains unknown.
+
+- Fix (#756): keep settings open and report blocked workspace navigation; report meeting and pack navigation only after the current thread's host accepts it. Invalidate pending navigation on thread selection changes, including A→B→A. Remove unreachable legacy intent branches while preserving the parser and saved-source compatibility.
+- Workspace activity: omit retained source OCR before cloning state responses, preserve isolated metadata and evidence, clarify webpage context and the independent 16 MiB metadata budget, and distinguish the 6 MiB import limit from the 8 MiB decoder limit. Cover atomic quota refusal and cleanup recovery with real store-produced records.
+
+- Fix (#756): classify missing Windows reminder sidecars or development packages as `NOTIFICATION_FAILED` inside the existing submission error boundary. Preserve explicit helper paths, timeout handling and failed reminder state; a missing helper never counts as successful delivery.
+
 - macOS workspace acceptance: wait for an input candidate in the same owned picker after the Go to Folder shortcut, within the original shared deadline. Keep the original control-type selection, unique input, hittability, real path entry, selection, cancellation and cleanup checks.
 
 - Windows terminal acceptance: join the first owned document with actual visible foreground readiness before installing the test form. Keep the original per-input, callback, confirmation, output, cleanup and 45-second guards; no focus request or retry is added.

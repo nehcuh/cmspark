@@ -123,8 +123,8 @@ export type ContextPanelHostApi = {
   activePanel: ContextPanelId | null
   /** Toggle: same id closes; different id opens + loads. */
   openPanel: (id: ContextPanelId) => void
-  /** Force-open (no toggle) — used by slash / custom events. */
-  openPanelForce: (id: ContextPanelId) => void
+  /** Force-open; true only for this current request, thread and active panel. */
+  openPanelForce: (id: ContextPanelId) => Promise<boolean>
   closePanel: () => void
   /** A recording panel can finish its last segment before navigation unmounts it. */
   registerBeforeClose: (guard: () => Promise<boolean>) => () => void
@@ -166,6 +166,8 @@ export function ContextPanelHostProvider({
   const activeThreadId = state.activeThreadId
   const activeThreadRef = useRef(activeThreadId)
   activeThreadRef.current = activeThreadId
+  const activeThreadSelectionRef = useRef(state.activeThreadSelectionRevision)
+  activeThreadSelectionRef.current = state.activeThreadSelectionRevision
 
   const allowedIds = useMemo(
     () => new Set(contextBarTabsForLevel(capabilityLevel)),
@@ -220,8 +222,11 @@ export function ContextPanelHostProvider({
   }, [state.settingsOpen, closePanel, dispatch, requestPanelChange])
 
   const openPanelForce = useCallback(
-    (id: ContextPanelId) => {
-      void requestPanelChange(id)
+    (id: ContextPanelId): Promise<boolean> => {
+      const thread = activeThreadRef.current, selectionRevision = activeThreadSelectionRef.current
+      const pending = requestPanelChange(id)
+      const version = transitionVersion.current
+      return pending.then(allowed => allowed && version === transitionVersion.current && activeThreadRef.current === thread && activeThreadSelectionRef.current === selectionRevision && activePanelRef.current === id)
     },
     [requestPanelChange],
   )

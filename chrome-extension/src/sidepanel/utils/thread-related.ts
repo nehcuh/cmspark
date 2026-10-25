@@ -23,7 +23,7 @@ export interface RelatedThreadInput {
   } | null
   agent_role?: string
   trashed_at?: string | null
-  first_user_preview?: string
+  first_user_preview?: string | null
 }
 
 export interface RelatedHit {

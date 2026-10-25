@@ -7,7 +7,7 @@ import { ActivityStore } from '../src/activity/store'
 import { ActivityService } from '../src/activity/service'
 import { parseExtractedCandidates, MacPassiveRecorder } from '../src/activity/adapters'
 import { validateActivityMessage } from '../src/activity/validation'
-import { DEFAULT_ACTIVITY_CONFIG, type ActivitySource } from '../src/activity/types'
+import { ActivityError, DEFAULT_ACTIVITY_CONFIG, type ActivitySource } from '../src/activity/types'
 const NOW = Date.parse('2026-10-21T10:00:00Z')
 const stamp = new Date(NOW).toISOString()
 function fixture() {
@@ -474,4 +474,93 @@ test('retention config change fences ongoing extraction before admitting late ca
     assert.equal((await pending).error_code, 'CANCELLED')
     assert.equal(service.state().candidates.length, 0)
   } finally { await service.stop(); f.cleanup() }
+})
+
+
+test('#756 metadata quota refuses growth atomically and source cleanup restores edits and reminder receipts', () => {
+  const f = fixture(), limit = 16 * 1024 * 1024
+  try {
+    const todo = formalTask(f.store)
+    const file = path.join(f.store.root, 'state.json')
+    const image = Buffer.from('controlled-metadata-quota-image')
+    const sourceInput = { captured_at: stamp, app_id: 'controlled.metadata', app_name: 'Controlled metadata fixture', window_title: 'metadata-boundary', ocr_text: 'm' }
+    // Measure the envelope produced by the real store, then replace only this
+    // temporary source's OCR length. No handcrafted persisted state or error DTO.
+    const probe = f.store.addSource(sourceInput, image)!
+    assert.ok(probe)
+    const measuredBytes = fs.statSync(file).size, measuredRevision = f.store.state().revision
+    assert.equal(String(measuredRevision).length, String(measuredRevision + 2).length)
+    const fillerBytes = limit - measuredBytes + 1
+    assert.ok(fillerBytes > 0)
+    f.store.deleteSources(probe.id)
+    const fullSource = f.store.addSource({ ...sourceInput, ocr_text: 'm'.repeat(fillerBytes) }, image)!
+    assert.ok(fullSource)
+    const atLimit = fs.readFileSync(file), full = f.store.state()
+    assert.equal(atLimit.length, limit)
+    assert.ok(full.sources.reduce((total, source) => total + source.bytes, 0) < 1024)
+    assert.equal(f.store.config().max_storage_mb, DEFAULT_ACTIVITY_CONFIG.max_storage_mb)
+    const quota = (error: unknown) => error instanceof ActivityError && error.code === 'QUOTA_EXCEEDED'
+    assert.throws(() => f.store.update(todo.id, todo.revision, { title: todo.title + '（扩展）' }, stamp), quota)
+    assert.throws(() => f.store.claimReminder(todo.id, stamp), quota)
+    assert.equal(fs.readFileSync(file).equals(atLimit), true)
+    const refused = f.store.state()
+    assert.equal(refused.revision, full.revision)
+    assert.equal(refused.todos[0].title, todo.title)
+    assert.equal(refused.todos[0].reminder.status, 'scheduled')
+
+    // The same public cleanup path is admitted even at the independent metadata
+    // ceiling. Confirmed identity survives; source content and candidates do not.
+    f.store.deleteSources()
+    const cleaned = f.store.state()
+    assert.equal(cleaned.sources.length, 0)
+    assert.equal(cleaned.candidates.length, 0)
+    assert.equal(cleaned.todos.length, 1)
+    assert.equal(cleaned.todos[0].id, todo.id)
+    assert.equal(cleaned.todos[0].evidence.quote, '')
+    assert.equal(fs.existsSync(path.join(f.store.root, `${fullSource.id}.png`)), false)
+    f.store.update(todo.id, cleaned.todos[0].revision, { title: '清理后可继续编辑' }, stamp)
+    assert.equal(f.store.claimReminder(todo.id, stamp), true)
+    f.store.finishReminder(todo.id, stamp, 'failed', 'controlled-no-notification')
+    const reloaded = new ActivityStore(f.dir).state()
+    assert.equal(reloaded.todos[0].id, todo.id)
+    assert.equal(reloaded.todos[0].title, '清理后可继续编辑')
+    assert.equal(reloaded.todos[0].reminder.status, 'failed')
+    assert.equal(reloaded.todos[0].reminder.attempted_at, stamp)
+    assert.ok(fs.statSync(file).size < limit)
+  } finally { f.cleanup() }
+})
+
+
+test('#756 workspace state excludes OCR before cloning and preserves isolated source, evidence and runtime metadata', async () => {
+  const f = fixture()
+  const unavailable = async (): Promise<never> => { throw new Error('unexpected native or provider operation') }
+  try {
+    const todo = formalTask(f.store), retained = f.store.state()
+    const service = new ActivityService({ dataDir: f.dir, platform: 'freebsd', recorder: { capture: unavailable }, extract: unavailable, notify: unavailable })
+    const readState = service.store.state.bind(service.store)
+    let rawStateReads = 0
+    service.store.state = () => { rawStateReads++; return readState() }
+    const response = await service.handle({ type: 'activity.state', id: 'controlled-workspace-state' })
+    assert.equal(response.ok, true)
+    assert.equal(rawStateReads, 0, 'wire reads must not first clone all retained OCR')
+    const state = response.state as ReturnType<ActivityService['state']>
+    const source = state.sources[0]
+    assert.equal(Object.hasOwn(source, 'ocr_text'), false)
+    assert.equal(source.id, retained.sources[0].id)
+    assert.equal(source.sha256, retained.sources[0].sha256)
+    assert.equal(source.bytes, retained.sources[0].bytes)
+    assert.equal(state.todos[0].id, todo.id)
+    assert.equal(state.todos[0].evidence.quote, todo.evidence.quote)
+    assert.equal(JSON.stringify(response).includes(f.dir), false)
+    state.config.allowed_apps.push('controlled.copy')
+    source.app_name = 'changed wire copy'
+    state.todos[0].evidence.quote = 'changed wire evidence'
+    state.runtime.status = 'error'
+    assert.deepEqual(service.store.config().allowed_apps, retained.config.allowed_apps)
+    assert.equal(service.store.sourceMetadata(source.id).app_name, retained.sources[0].app_name)
+    assert.equal(service.store.sourceMetadata(source.id).ocr_text, retained.sources[0].ocr_text)
+    assert.equal(readState().todos[0].evidence.quote, todo.evidence.quote)
+    assert.equal(service.state().runtime.status, 'stopped')
+    assert.equal(rawStateReads, 0)
+  } finally { f.cleanup() }
 })

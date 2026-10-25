@@ -38,7 +38,7 @@ export class ActivityService {
     this.extract = deps.extract ?? extractActivity
     this.notify = deps.notify ?? submitReminder
   }
-  state(): ActivityWireState { const state = this.store.state(); return { ...state, sources: state.sources.map(({ ocr_text: _privateText, ...source }) => source), runtime: { ...this.runtime } } }
+  state(): ActivityWireState { return { ...this.store.stateMetadata(), runtime: { ...this.runtime } } }
   start(): void {
     if (this.timer) return
     this.stopping = false; this.runtime.running = true; this.runtime.status = 'idle'; this.lastMaintenance = null

@@ -7,6 +7,26 @@ const native=fs.readFileSync(path.resolve(__dirname,"../../src/desktop/native/De
 const main=native.slice(native.indexOf("int WINAPI wWinMain("))
 const once=(needle:string)=>{const first=main.indexOf(needle);assert.ok(first>=0,needle);assert.equal(main.indexOf(needle,first+needle.length),-1,needle);return first}
 
+// Execute the complete production watcher body with inert Win32 seams. This
+// checks API selection and fail-closed ownership; it does not reproduce a DLL
+// loader deadlock or prove that a real Windows process has finished exiting.
+test("Windows owner-death watcher self-terminates without invoking DLL detach",()=>{
+ const matches=[...main.matchAll(/std::thread\(\[parent\]\(\)\{([^\n]+)\}\)\.detach\(\);/g)]
+ assert.equal(matches.length,1,"One actual owner watcher required")
+ const run=new Function("parent","WaitForSingleObject","INFINITE","WAIT_OBJECT_0","GetCurrentProcess","TerminateProcess","ExitProcess",matches[0][1])
+ for(const waitResult of [0,258,0xffffffff])for(const selfTerminationReturns of [false,true]){
+  const parent={},self={},terminated={},failure={},trace:string[]=[]
+  const wait=(handle:unknown,timeout:number)=>{assert.equal(handle,parent);assert.equal(timeout,0xffffffff);trace.push("wait");return waitResult}
+  const current=()=>{trace.push("self");return self}
+  const terminate=(handle:unknown,code:number)=>{assert.equal(handle,self);assert.equal(code,1);trace.push("terminate1");if(!selfTerminationReturns)throw terminated;return false}
+  const exit=(code:number)=>{assert.equal(code,17,"Owner death must bypass DLL detach; unexpected wait/termination failure stays fatal");trace.push("failure17");throw failure}
+  const expected=waitResult===0&&!selfTerminationReturns?terminated:failure
+  assert.throws(()=>run(parent,wait,0xffffffff,0,current,terminate,exit),error=>error===expected)
+  const calls=waitResult===0?["wait","self","terminate1",...(selfTerminationReturns?["failure17"]:[])]:["wait","failure17"]
+  assert.deepEqual(trace,calls)
+ }
+})
+
 test("Windows bootstrap validates the complete existing URL before acknowledging consumed bootstrap",()=>{
  const ack=once("d480_client_finish(&bootstrap,parent)")
  for(const field of [

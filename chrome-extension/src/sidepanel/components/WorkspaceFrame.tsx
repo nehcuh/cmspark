@@ -34,6 +34,13 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
   const controller = useActivity(state.connectionState === "connected")
   const navRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
+  const destinationBlocked = state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)
+  const destinationOwnerRef = useRef({ threadId: state.activeThreadId, selectionRevision: state.activeThreadSelectionRevision, settingsOpen: state.settingsOpen, blocked: destinationBlocked })
+  const previousDestinationOwner = destinationOwnerRef.current
+  if (previousDestinationOwner.threadId !== state.activeThreadId || previousDestinationOwner.selectionRevision !== state.activeThreadSelectionRevision || previousDestinationOwner.settingsOpen !== state.settingsOpen || previousDestinationOwner.blocked !== destinationBlocked) {
+    destinationOwnerRef.current = { threadId: state.activeThreadId, selectionRevision: state.activeThreadSelectionRevision, settingsOpen: state.settingsOpen, blocked: destinationBlocked }
+  }
+  const destinationOwner = destinationOwnerRef.current
   const forceChat = state.settingsOpen || state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)
   const visibleView = forceChat ? "chat" : view
   const navigate = (destination: WorkspaceDestination) => {
@@ -73,17 +80,38 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
     void chrome.tabs.create({ url: chrome.runtime.getURL("tabs/workspace.html") }).catch(() => setOpeningError("无法打开工作中心，请重试。"))
   }
   useEffect(() => {
+    let current = true, opening = false
+    const isCurrent = () => current && destinationOwnerRef.current === destinationOwner
+    const notify = (message: string) => window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: message }))
     const openDestination = (event: Event) => {
       const detail = (event as CustomEvent<unknown>).detail
       const destination = typeof detail === "string" ? detail : detail && typeof detail === "object" && "view" in detail ? detail.view : undefined
       if (destination !== "activity" && destination !== "todos") return
-      if (state.pendingSecurityConfirmations.length || state.computerTask && ["running", "paused"].includes(state.computerTask.status)) return
-      if (full) { dispatch({ type: "SET_SETTINGS_OPEN", open: false }); setView(destination) }
-      else void chrome.tabs.create({ url: chrome.runtime.getURL(`tabs/workspace.html?view=${destination}`) }).catch(() => setOpeningError("无法打开工作中心，请重试。"))
+      if (!isCurrent()) {
+        notify(destinationOwnerRef.current.blocked ? "先处理待确认操作或结束电脑执行，再切换工作区。" : "页面已变化，请重试。")
+        return
+      }
+      if (state.pendingSecurityConfirmations.length || state.computerTask && ["running", "paused"].includes(state.computerTask.status)) {
+        notify("先处理待确认操作或结束电脑执行，再切换工作区。")
+        return
+      }
+      if (full) { setView(destination); dispatch({ type: "SET_SETTINGS_OPEN", open: false }) }
+      else {
+        if (opening) { notify("工作中心正在打开，请稍候。"); return }
+        opening = true
+        setOpeningError("")
+        void chrome.tabs.create({ url: chrome.runtime.getURL(`tabs/workspace.html?view=${destination}`) }).then(() => {
+          if (isCurrent()) dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+        }).catch(() => {
+          if (!isCurrent()) return
+          setOpeningError("无法打开工作中心，请重试。")
+          notify("无法打开工作中心，请重试。")
+        }).finally(() => { opening = false })
+      }
     }
     window.addEventListener("cmspark:open-workspace-destination", openDestination)
-    return () => window.removeEventListener("cmspark:open-workspace-destination", openDestination)
-  }, [dispatch, full, state.pendingSecurityConfirmations.length, state.computerTask])
+    return () => { current = false; window.removeEventListener("cmspark:open-workspace-destination", openDestination) }
+  }, [dispatch, full, destinationOwner, state.settingsOpen, state.activeThreadId, state.activeThreadSelectionRevision, state.pendingSecurityConfirmations.length, state.computerTask])
   const openResource = (panel: Parameters<typeof openPanelForce>[0]) => { navigate("chat"); openPanelForce(panel) }
   const navProps = { full, destination: visibleView, onView: navigate }
   return <div className={`cm-workspace${full ? " cm-workspace-full" : ""}`}>

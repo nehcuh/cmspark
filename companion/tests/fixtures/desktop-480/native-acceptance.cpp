@@ -307,7 +307,7 @@ void D480Acceptance::parentObserved(){
  if(!parentReceipt)return;BY_HANDLE_FILE_INFORMATION info{};DWORD wrote=0;
  if(!GetFileInformationByHandle(parentReceipt,&info)||info.dwVolumeSerialNumber!=parentReceiptInfo.dwVolumeSerialNumber||info.nFileIndexHigh!=parentReceiptInfo.nFileIndexHigh||info.nFileIndexLow!=parentReceiptInfo.nFileIndexLow||info.nNumberOfLinks!=1||info.nFileSizeHigh||info.nFileSizeLow)return;
  (void)WriteFile(parentReceipt,"1",1,&wrote,nullptr);(void)FlushFileBuffers(parentReceipt);
- // Hold the lock until the immediately following original ExitProcess(1). No CloseHandle here.
+ // Hold the lock until the immediately following owned self-termination. No CloseHandle here.
 #endif
 }
 

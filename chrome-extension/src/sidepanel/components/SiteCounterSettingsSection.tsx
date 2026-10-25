@@ -79,6 +79,7 @@ export function SiteCounterSettingsSection({ visible }: { visible: boolean }) {
   }, [visible,connected,threadId,selectionRevision])
   return <section aria-label="站点失败计数" style={{marginBottom:16,padding:12,border:`1px solid ${tokens.border}`,borderRadius:8}}>
     <h3 style={{margin:"0 0 8px",fontSize:13}}>站点失败计数</h3>
+    <p style={{fontSize:12,color:tokens.textMuted}}>完整工作页不是被统计网页。需要操作某个站点时，请在该网页打开侧栏，再刷新或重置站点状态。</p>
     {counter ? <>
       <p style={{fontSize:12,overflowWrap:"anywhere"}}>当前对话 · {counter.origin}</p>
       <p>失败计数：{counter.fails} / {counter.threshold}</p><p>最后错误码：{counter.last_code}</p>
