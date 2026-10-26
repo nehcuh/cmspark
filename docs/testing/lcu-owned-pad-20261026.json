@@ -1,0 +1,80 @@
+{
+  "qualificationID": "macos-arm64-20261026",
+  "issue": 775,
+  "date": "2026-10-26",
+  "scope": "one owned blank AppKit pad; bridge mechanics only",
+  "tuple": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "lcuVersion": "0.13.0",
+    "appVersion": "26.1016.61520",
+    "runtimeVersion": "0.0.33/20261020111233-d92591792fee"
+  },
+  "upstreamSource": "c38f4b6286ba74ebf053c2b3d1970e387556a559",
+  "officialArchiveSHA256": "ec5640fcbcc43a2295f41c454e092efa3577b5c6e350a6e73ff67d432519f169",
+  "upstreamPair": "untested",
+  "nativeVerified": false,
+  "sourceTreeAtQualification": "e4c36d832ec18936fe99a7698fbb4e84f021cb05",
+  "executedBridgeSources": [
+    {
+      "path": "computer/lcu/session.ts",
+      "sourceSHA256": "f3ab645da0365623bd609342f6d6d2fb000765315883cfa94ab609428595d630",
+      "emittedSHA256": "ebc2d9d5560a5d7864d97b848067f4569738292fc4e2019f3bd86ae4ca2ac417"
+    },
+    {
+      "path": "computer/lcu/result.ts",
+      "sourceSHA256": "40c633c3349f666c6532af68e4c6c225d4cd5bf5105e9cbed28f765b5f5d5324",
+      "emittedSHA256": "6c4e286c850a92acd2a12208630deec31ac687808fda0b04082726084df91198"
+    },
+    {
+      "path": "computer/lcu/authorization.ts",
+      "sourceSHA256": "f419389c02d76877b5030eb609bf5a187507518e61d4c67167a0d9276b495cc0",
+      "emittedSHA256": "c495e955bf77259296c49c327fea014efecf404500488e7bd89ef54f1b84f4df"
+    },
+    {
+      "path": "mcp/stdio-transport.ts",
+      "sourceSHA256": "909df9cb4d76ca9cd5f34cf15cf0f26472e9a769de94854bc16c3f474ac4c2c2",
+      "emittedSHA256": "d1f54bcf9d04489c5b8ba03bc46a3e2b84569792890cd83ce927ee9dd701f370"
+    }
+  ],
+  "facts": {
+    "toolCalls": 3,
+    "actualWindowRead": true,
+    "actualControlledInput": true,
+    "actualOwnProducerContentMatch": true,
+    "actualAXValueMatch": true,
+    "actualImageResult": {
+      "mimeType": "image/jpeg",
+      "images": 1,
+      "persistedPixels": false,
+      "visualPixelInspection": false
+    },
+    "stopSettlement": {
+      "cleanup": "complete",
+      "transport": "closed"
+    },
+    "nativeProcessNaturalExit": 0,
+    "postStopOwnedFileUnchanged": true,
+    "postStopCallsMade": 0,
+    "notAPostStopActionAttempt": true,
+    "persistentAppGrant": false,
+    "otherAppsOperated": false
+  },
+  "humanAuthorization": "real per-operation previews and native Touch ID; separate one-use App approval; no approval store writes",
+  "limits": [
+    "independent original LcuSession path, not a full production chat/model run",
+    "real JPEG was returned; pixels were not visually inspected or persisted",
+    "no claim about other applications, installations or updated runtime tuples",
+    "Stop closed the transport; no native post-Stop action attempt was made"
+  ],
+  "retainedFailures": [
+    "prior missing human approvals or failed biometric checks were failures",
+    "original owned fixture required argv and crashed on LCU no-argument launch; corrected fixture B used",
+    "one harness restart omitted NODE_PATH and failed before runtime launch; corrected invocation retained"
+  ],
+  "finiteReceiptSHA256": {
+    "native-qualification-result.json": "8d6fdb3baf99ff60d3ffd71a61a1d5730fec0d3afe5b2246268016a2ffbbfa43",
+    "actual-input-proof.json": "76f47c1e0f96760ddcc9ef2ad1f1262baa3e7b6ef6a30406a4e8b71640507e80",
+    "finite-events-8fc77910-c3b3-43f8-ad13-052c02d67bff.json": "dd3ffef4d2ab2b22b31600146cfd5f052f99dbe42c52797d7ca2808a070cf20a"
+  }
+}

@@ -55,3 +55,8 @@ GitHub: #775 — https://github.com/nehcuh/cmspark/issues/775
 T3，新默认关闭的桌面执行桥。Surface=L2 本机主对话；L2-classes=桌面读/输入与执行；Compose=认证连接+真实 run+owned MCP transport；Autonomy=不变；Trust=仅显式授权，不从页面/模型提升；Channel=既有认证 UI 与原生确认。
 
 不扩大旧 Windows 诊断次数、旧冻结能力或 #723 的 self/mask 范围。先前已完成的 PR、CPU、源码票和主线 CI 不重做。
+
+
+## 2026-10-26 有限原生资格记录
+
+精确 darwin/arm64、LCU 0.13.0、ChatGPT 26.1016.61520、CUA `0.0.33/20261020111233-d92591792fee` 已在自有空白窗口完成读取、固定输入、AX 与自身 producer 内容核对、JPEG 返回及 Stop 清理。只允许这个精确 tuple 使用独立 CMspark 资格记录，不改上游 `untested` 或 `nativeVerified:false`，不外推其它应用、像素正确性或完整模型任务。未知/更新组合继续拒绝；逐次检测、安装身份、人工确认、Touch ID、App 当次授权和 cleanup quarantine 保留。[有限记录](../../testing/lcu-owned-pad-20261026.json)。

@@ -22,6 +22,7 @@ interface LcuState {
     nativeVerified: false
   }
   refusal?: string
+  ownedPadQualification?: "macos-arm64-20261026"
   activeRuns?: number
   cleanupUnknown?: boolean
   nativeVerified: false
@@ -32,7 +33,7 @@ const messages: Record<string, string> = {
   LCU_VERSION_UNSUPPORTED: "当前仅适配 LCU v0.13.0。",
   LCU_PLATFORM_APPROVAL_NOT_VERIFIED: "Linux 当前仅发现安装路径，兼容检查与桌面操作尚未开放。",
   LCU_RUNTIME_CHANGED: "安装后运行时已变化，请重新核实兼容性。",
-  LCU_RUNTIME_PAIR_UNVERIFIED: "上游尚未验证这一桌面应用与运行时组合。",
+  LCU_RUNTIME_PAIR_UNVERIFIED: "此版本组合既无上游兼容记录，也不在 CMspark 有限实测范围内；应用更新后需重新核验。",
   LCU_OWNER_UNAVAILABLE: "认证连接已失效，请重新连接后操作。",
   LCU_COMMAND_INVALID: "请填写以 lcu 结尾的绝对可执行文件路径，不包含参数。",
   LCU_ENABLED_INVALID: "启用请求格式无效。",
@@ -54,6 +55,7 @@ function validState(value: unknown): value is LcuState {
   return typeof s.enabled === "boolean" && typeof s.coordinateEnabled === "boolean" &&
     typeof s.platform === "string" && typeof s.architecture === "string" && s.nativeVerified === false &&
     (s.command === undefined || typeof s.command === "string") &&
+    (s.ownedPadQualification === undefined || (s.ownedPadQualification === "macos-arm64-20261026" && !!s.observed)) &&
     (s.refusal === undefined || (typeof s.refusal === "string" && /^LCU_[A-Z0-9_]{1,80}$/.test(s.refusal))) &&
     (s.cleanupUnknown === undefined || typeof s.cleanupUnknown === "boolean") &&
     (s.activeRuns === undefined || (Number.isSafeInteger(s.activeRuns) && s.activeRuns >= 0)) &&
@@ -164,6 +166,7 @@ export function LcuSettingsSection() {
       <dt>ChatGPT</dt><dd>{state.observed.appVersion}</dd>
       <dt>运行时</dt><dd>{state.observed.runtimeVersion}</dd>
       <dt>上游兼容记录</dt><dd>{state.observed.pair === "tested" ? "已覆盖此组合" : state.observed.pair === "untested" ? "未覆盖此组合" : "未知"}</dd>
+      <dt>CMspark 实测</dt><dd>{state.ownedPadQualification ? "此精确组合已完成自有测试窗口验收（2026-10-26）" : "未覆盖此组合"}</dd>
     </dl>}
     {state?.refusal && <p style={styles.help}>{refusalText(state.refusal)}</p>}
     {state && !state.coordinateEnabled && <p style={styles.help}>请先开启 Computer Use 总开关。启用 LCU 不会自动开启总开关。</p>}
@@ -173,7 +176,7 @@ export function LcuSettingsSection() {
       <button style={styles.button} disabled={!state || (!state.enabled && !busy)} onClick={() => send("computer.lcu.set_enabled", { enabled: false })}>停用并停止</button>
     </div>
     <label style={styles.checkbox}><input type="checkbox" checked={selected} disabled={!agent.activeThreadId || agent.connectionState !== "connected" || (!selected && (!state?.enabled || agent.threads.find(thread => thread.id === agent.activeThreadId)?.agent_role === "worker"))} onChange={toggleThread} />在当前对话提供 LCU 工具</label>
-    <p style={styles.help}>每次桌面动作仍需确认与原生身份验证，App 授权单独确认。仅交互式主对话可用；需要当前模型支持图像。桌面实操尚未验收，兼容记录不代表 CMspark 已完成原生验证。</p>
+    <p style={styles.help}>每次桌面动作仍需确认与原生身份验证，App 授权单独确认。仅交互式主对话可用；需要当前模型支持图像。{state?.ownedPadQualification ? "本次实测仅覆盖自有空白窗口的读取、固定文字输入、图片返回和停止；未验证图片像素、其它应用或完整模型任务。" : "此组合尚无 CMspark 桌面实测；上游兼容记录不代表本机任务已验证。"} ChatGPT 或运行时更新后可能需要重新核验。</p>
     {typeof state?.activeRuns === "number" && state.activeRuns > 0 && <p style={styles.help}>当前桌面连接：{state.activeRuns}</p>}
     {busy && <p style={styles.help} role="status">正在处理；如出现确认请求，请在确认台处理。</p>}
     {error && <p style={styles.error} role="alert">{error}</p>}
