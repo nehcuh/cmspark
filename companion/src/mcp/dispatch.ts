@@ -517,8 +517,12 @@ export async function executeMcpTool(
 
   let outcome = await runOnce()
 
-  // P2: access denied under home → L2 offer to add allow-dir, then one retry
-  if (!outcome.success && outcome.rawErr) {
+  // A confirmed edit mismatch echoes oldText, which is document content, not
+  // an access-denial diagnostic. Do not let its words propose a directory
+  // grant, replay a write, or overwrite the recoverable mismatch result.
+  const editMismatch = outcome.error?.startsWith("MCP_EDIT_MATCH_NOT_FOUND:") === true
+  // P2: actual access denial → L2 offer to add allow-dir, then one retry.
+  if (!outcome.success && outcome.rawErr && !editMismatch) {
     const expanded = await tryExpandFilesystemAllowDirOnDenial({
       route,
       params: dispatchedArgs,
