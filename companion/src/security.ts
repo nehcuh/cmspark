@@ -1380,6 +1380,14 @@ export function classifyError(
     "required parameters",
     "tabid not in url cache",
     "not in url cache",
+    // Mutually-exclusive option combos rejected by server-side validation.
+    // Servers (e.g. filesystem read_text_file head+tail, thread w85kxr) often
+    // do not declare the exclusivity in description/schema, so the rejection
+    // is the only channel teaching the LLM the contract — it re-calls with
+    // one of the options instead of halting the turn behind chat.error.
+    "cannot specify both",
+    "mutually exclusive",
+    "cannot be used together",
     // MCP filesystem path / allowlist — agent can mkdir parent or ask user to expand allow-dirs
     // (was non_recoverable "不可恢复错误" for Parent directory does not exist — thread 6zhrh6)
     "parent directory does not exist",
