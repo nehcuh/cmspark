@@ -1,3 +1,4 @@
+import { archiveObservationInverse782 } from "./fixtures/archive-first-failure-782"
 /** Fixed source-derived diagnostic controls only; no native/COM/PTY process. */
 import test, {afterEach} from 'node:test'
 import {cpuTerminalAdapter747,cleanupCpuTerminalAdapters747,observerInverseForm747} from './fixtures/desktop-476/terminal-parser-cpu'
@@ -244,6 +245,7 @@ function confirmationObservationInverse772(raw:string){
 
 // Newest test-private source observation is undone before every unchanged old authority.
 function workspaceAbortPhaseInverse705(raw:string){
+ raw=archiveObservationInverse782(raw)
  const eol=raw.includes('\r\n')?'\r\n':'\n'
  const current="try{const workspacePhase705='D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,childExitCode,firstFailedAssertion,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity,uiLifecycle,uiReceiptMask,...(uiOwner?{uiRefusal,uiProgress,uiChooseCensus}:{}),cancelClose,cancelShow,cancelSettled,cancelCurrent});try{t.diagnostic(workspacePhase705)}catch{};if(t.signal.aborted)try{const workspaceLine705=workspacePhase705+'\\n';if(Buffer.byteLength(workspaceLine705,'utf8')<=4096)process.stdout.write(workspaceLine705)}catch{}}catch{}".replace(/\n/g,eol),prior="try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,childExitCode,firstFailedAssertion,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity,uiLifecycle,uiReceiptMask,...(uiOwner?{uiRefusal,uiProgress,uiChooseCensus}:{}),cancelClose,cancelShow,cancelSettled,cancelCurrent}))}catch{}".replace(/\n/g,eol)
  assert.equal(raw.split(current).length,2,'one exact abort-phase delivery block')

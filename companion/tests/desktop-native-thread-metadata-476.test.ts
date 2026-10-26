@@ -1,3 +1,4 @@
+import { createArchiveFirstFailure782 } from "./fixtures/archive-first-failure-782"
 import { createConfirmationObservation772 } from "./fixtures/native-confirmation-observer-772"
 import { createTerminalObserver747, rawMarker747 } from "./helpers/terminal-observer-747"
 import { prepareDialogL2Fixture } from "./helpers/desktop-dialog-l2-fixture-476"
@@ -402,6 +403,7 @@ test("#476 actual native permanent archive history restore and lost ACK use the 
   const threads=new ThreadManager();threads.create("归档对话","native-archive-A");threads.create("另一对话","native-archive-B");threads.addMessage("native-archive-A",{thread_id:"native-archive-A",role:"user",content:"owned archive history"})
   const attachment=path.join(dir,"threads/native-archive-A.files/owned.txt"),attachmentBytes=Buffer.from("owned archive attachment");fs.mkdirSync(path.dirname(attachment));fs.writeFileSync(attachment,attachmentBytes)
   const originalMessages=JSON.stringify(threads.getMessages("native-archive-A")),originalSibling=JSON.stringify(threads.get("native-archive-B")),registry=new DesktopIdentityRegistry(),boot=registry.issue("owned-native-archive-476")
+  const archiveObservation=createArchiveFirstFailure782(process.platform)
   const required=["D476_ARCHIVE_ARCHIVED","D476_ARCHIVE_VIEW","D476_ARCHIVE_HISTORY","D476_ARCHIVE_RESTORED","D476_ARCHIVE_BUSY","D476_ARCHIVE_BEFORE_LOST_ACK"],receipts=new Set<string>()
   let child:DesktopNativeChild|undefined,childExited=false,authenticated=false,windowRequested=false,connections=0,failed=false,blocked=false,droppedAck=false,sets=0,archived=false,restored=false,exitResolve!:(n:number)=>void,failResolve!:()=>void,primary:unknown
   const exit=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r)
@@ -412,7 +414,7 @@ test("#476 actual native permanent archive history restore and lost ACK use the 
     if(f.type==="desktop.archive.set.result"&&f.thread_id==="native-archive-A"&&f.ok===true&&f.saved===true){sets++;const saved=new ThreadManager().get("native-archive-A")!;if(sets===1)archived=!!saved.archived_at&&f.archived===true;if(sets===2)restored=saved.archived_at===null&&f.archived===false;if(sets===3){droppedAck=true;ws.terminate();return}}
     return Reflect.apply(originalSend,ws,[data,...args])
    })as typeof ws.send
-   ws.on("message",raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(!authenticated||f.type!=="system.ping")return;if(f.id==="D476_ARCHIVE_BLOCK"){blocked=true;return}if(f.id==="D476_ARCHIVE_UNBLOCK"){blocked=false;return}if(f.id==="D476_FAIL_ARCHIVE_PHASE"||f.id==="D476_FAIL_SCRIPT"){failed=true;failResolve();return}if(required.includes(f.id)){if(receipts.has(f.id)){failed=true;failResolve()}receipts.add(f.id)}})
+   ws.on("message",raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(!authenticated||f.type!=="system.ping")return;archiveObservation.observe(f);if(f.id==="D476_ARCHIVE_BLOCK"){blocked=true;return}if(f.id==="D476_ARCHIVE_UNBLOCK"){blocked=false;return}if(f.id==="D476_FAIL_ARCHIVE_PHASE"||f.id==="D476_FAIL_SCRIPT"){archiveObservation.failure(f.id);failed=true;failResolve();return}if(required.includes(f.id)){if(receipts.has(f.id)){archiveObservation.failure("DUPLICATE");failed=true;failResolve()}receipts.add(f.id)}})
   })
   server.listen(0,"127.0.0.1");await once(server,"listening")
   try{
@@ -425,7 +427,7 @@ test("#476 actual native permanent archive history restore and lost ACK use the 
    process.stdout.write('DESKTOP_ARCHIVE_476 {"native":true,"archived":true,"restored":true,"historyUnchanged":true,"otherThreadUnchanged":true,"nativeKeys":10,"busyRefused":true,"lostAck":true,"offlineUnconfirmed":true}\n')
   }catch(error){primary=error;throw error}finally{
    surfaceLease.retain()
-   try{t.diagnostic("D476_ARCHIVE_NATIVE_PHASE "+JSON.stringify({schema:1,failed,receiptMask:required.reduce((mask,id,i)=>mask|(receipts.has(id)?1<<i:0),0),sets,archived,restored,droppedAck,connections,authenticated,windowRequested,childExited}))}catch{}
+   try{t.diagnostic("D476_ARCHIVE_NATIVE_PHASE "+JSON.stringify({schema:1,failed,receiptMask:required.reduce((mask,id,i)=>mask|(receipts.has(id)?1<<i:0),0),sets,archived,restored,droppedAck,connections,authenticated,windowRequested,childExited,firstFailure:archiveObservation.snapshot()}))}catch{}
    try{child?.terminate();if(child&&!childExited)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()}
    catch(error){if(primary===undefined)throw error;try{t.diagnostic("D476_ARCHIVE_CLEANUP_FAILED")}catch{}}
   }

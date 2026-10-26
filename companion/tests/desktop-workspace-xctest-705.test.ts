@@ -1,3 +1,4 @@
+import { archiveObservationInverse782 } from "./fixtures/archive-first-failure-782"
 /** Guarded source-derived protocol controls. Never starts a UI test or native executable. */
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -752,6 +753,7 @@ function confirmationObservationInverse772(raw:string){
 
 // Undo only the aborted-context delivery addition, before all existing raw source authorities.
 function workspaceAbortPhaseInverse705(raw:string){
+ raw=archiveObservationInverse782(raw)
  const eol=raw.includes('\r\n')?'\r\n':'\n'
  const current="try{const workspacePhase705='D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,childExitCode,firstFailedAssertion,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity,uiLifecycle,uiReceiptMask,...(uiOwner?{uiRefusal,uiProgress,uiChooseCensus}:{}),cancelClose,cancelShow,cancelSettled,cancelCurrent});try{t.diagnostic(workspacePhase705)}catch{};if(t.signal.aborted)try{const workspaceLine705=workspacePhase705+'\\n';if(Buffer.byteLength(workspaceLine705,'utf8')<=4096)process.stdout.write(workspaceLine705)}catch{}}catch{}".replace(/\n/g,eol),prior="try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,childExitCode,firstFailedAssertion,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity,uiLifecycle,uiReceiptMask,...(uiOwner?{uiRefusal,uiProgress,uiChooseCensus}:{}),cancelClose,cancelShow,cancelSettled,cancelCurrent}))}catch{}".replace(/\n/g,eol)
  assert.equal(raw.split(current).length,2,'one exact abort-phase delivery block')

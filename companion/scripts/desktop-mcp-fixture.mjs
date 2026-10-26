@@ -145,6 +145,11 @@ export function desktopLocalFixture(language,original,controller,form){
 // Separate unshipped archive acceptance; no shipped source hook.
 export function desktopArchiveFixture(language, original, fixture, form, metadata) {
   if(typeof metadata!=="string"||!metadata.length)throw Error("DESKTOP_ARCHIVE_FIXTURE_KIND")
+  // Archive-only copy: shared controller and other fixture families stay unchanged.
+  if(language==="cpp"){
+    const pairs=[['if(FAILED(code))emit(h,L"D476_FAIL_SCRIPT");','if(FAILED(code)){try{emit(h,L"D476_ARCHIVE_FIRST_S_2");}catch(...){}emit(h,L"D476_FAIL_SCRIPT");}'],['if(FAILED(result))emit(h,L"D476_FAIL_SCRIPT");','if(FAILED(result)){try{emit(h,L"D476_ARCHIVE_FIRST_S_1");}catch(...){}emit(h,L"D476_FAIL_SCRIPT");}']]
+    for(const [before,after]of pairs){if(fixture.split(before).length!==2)throw Error("DESKTOP_ARCHIVE_SCRIPT_OBSERVATION_ANCHOR");fixture=fixture.replace(before,after)}
+  }
   const base=desktopMcpFixture(language,original,fixture,form)
   const parts=metadata.split("/* D476 ARCHIVE IMPLEMENTATION */")
   const patches=language==="cpp" ? [
