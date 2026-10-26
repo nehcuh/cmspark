@@ -53,6 +53,9 @@ jobs:
 
       - name: Install companion deps
         run: cd companion && npm ci
+      # Companion's real Hint/MeetingPanel SSR fixtures load the locked frontend React runtime.
+      - name: Install extension test dependencies
+        run: cd chrome-extension && npm ci
       - name: Build companion
         run: cd companion && npm run build
       - name: Run companion tests
@@ -61,7 +64,7 @@ jobs:
         run: cd companion && npm audit --omit=dev --audit-level=high
       - name: Build + test chrome-extension
         run: |
-          cd chrome-extension && npm ci && npm run build && npm test
+          cd chrome-extension && npm run build && npm test
 
   package:
     name: Build (${{ matrix.platform }})
@@ -281,6 +284,9 @@ jobs:
             ## CMspark ${{ github.ref_name }}
 
             Distributable zips (all platforms) plus a Windows NSIS Setup.exe.
+            All included optimizations, fixes and known limitations are recorded in
+            [CHANGELOG](https://github.com/nehcuh/cmspark/blob/${{ github.ref_name }}/CHANGELOG.md)
+            and [release status](https://github.com/nehcuh/cmspark/blob/${{ github.ref_name }}/docs/release-status.md) at this tag.
             See
             [`docs/remediation-plan-2026-07-09.md`](https://github.com/nehcuh/cmspark/blob/main/docs/remediation-plan-2026-07-09.md)
             and [`docs/supply-chain.md`](https://github.com/nehcuh/cmspark/blob/main/docs/supply-chain.md).

@@ -17,7 +17,7 @@ private enum D476ArchiveAcceptance {
         guard f["type"] as? String=="system.ping",let id=f["id"] as? String else{return}
         let names=["ROW","SAVE","VIEW","HISTORY","RESTORE_ROW","RESTORE_SAVE","NORMAL","BUSY_ROW","RETRY_ROW","LOST_SAVE"]
         for (index,name) in names.enumerated() {if id=="D476_ARCHIVE_"+name+"_KEY" {guard keys==index,saves==(index<2 ? 0:index<6 ? 1:2) else{failure(h);return};keys=index+1;key(h,36,"\r");return}}
-        if ["D476_ARCHIVE_ARCHIVED","D476_ARCHIVE_VIEW","D476_ARCHIVE_HISTORY","D476_ARCHIVE_RESTORED","D476_ARCHIVE_BUSY","D476_ARCHIVE_BEFORE_LOST_ACK","D476_ARCHIVE_BLOCK","D476_ARCHIVE_UNBLOCK","D476_FAIL_ARCHIVE_PHASE"].contains(id){D476Acceptance.emit(h,id)}
+        if ["D476_ARCHIVE_FIRST_R_1","D476_ARCHIVE_FIRST_R_2","D476_ARCHIVE_FIRST_R_3","D476_ARCHIVE_FIRST_R_4","D476_ARCHIVE_FIRST_R_5","D476_ARCHIVE_FIRST_R_6","D476_ARCHIVE_FIRST_R_7","D476_ARCHIVE_FIRST_R_8","D476_ARCHIVE_FIRST_R_9","D476_ARCHIVE_FIRST_R_10","D476_ARCHIVE_ARCHIVED","D476_ARCHIVE_VIEW","D476_ARCHIVE_HISTORY","D476_ARCHIVE_RESTORED","D476_ARCHIVE_BUSY","D476_ARCHIVE_BEFORE_LOST_ACK","D476_ARCHIVE_BLOCK","D476_ARCHIVE_UNBLOCK","D476_FAIL_ARCHIVE_PHASE"].contains(id){D476Acceptance.emit(h,id)}
     }
     static func lost(_ h:NativeDesktop){loss=owner === h && h.authenticated && h.generation==document && keys==10 && saves==3}
     static func observe(_ h:NativeDesktop,_ message:WKScriptMessage)->Bool{

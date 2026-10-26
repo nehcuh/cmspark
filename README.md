@@ -3,7 +3,7 @@
 > 对着**已经登录的 Chrome** 干活的本机手：热键召唤开口，危险走**确认台**，Codex / Claude Code / Grok 可**租同一只手**（Outbound MCP）。家是 **已登录 Chrome + 硬闸**，不是 Side Panel。  
 > 能力叠加：**默认**网页问答与页内操控；**按需** Skills / Knowledge / MCP / 任务包；**opt-in** 桌面 Computer Use 与企业模块。产品句：[PRODUCT.md](PRODUCT.md)。
 
-源码开发版本 **0.6.14（尚未正式发布）**；正式安装包与源码进度请看[版本与交付状态](docs/release-status.md)和[变更记录](CHANGELOG.md)。
+源码开发版本 **0.7.0（尚未正式发布）**；正式安装包与源码进度请看[版本与交付状态](docs/release-status.md)和[变更记录](CHANGELOG.md)。
 
 ---
 

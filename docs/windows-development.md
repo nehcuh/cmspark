@@ -1,8 +1,10 @@
 # Windows 开发与失败定位
 
+归档原生验收的首错观察仅在未分发夹具中区分固定脚本、renderer 和 Windows 分支编号；经原已认证通道锁存首个编号及原失败类别。组合 guard 编号不区分内部每个条件，缺失观察保持 UNKNOWN。原失败、真实按键、20 秒、退出码与清理断言不变；其它测试宿主和生产源码不增加 hook，也不把观察当作历史根因或修复成功。
+
 Windows OCR 原生预检 (#780) 仅在原来那一次调用上使用可逐字节还原的测试脚本变体；产品 `computer-ocr.ps1` 不变，不增加语言探测、第二次 OCR 或预热。原 Node 15 秒和用例 90 秒时限、argv、环境及全部业务/身份/清理断言保留。观察只投影固定子进程数值/布尔/信号枚举、输出字节数，以及脚本自身 Stopwatch 的 250ms 阶段 bucket 和捕获异常的数值 HRESULT；不输出原始命令、路径、正文或异常文本。脚本与 Node 时钟不能相减，最后阶段只约束未完成区间，缺失/损坏观察为 UNKNOWN；成功调用的 stderr 未由原 runner 返回，明确记 UNKNOWN。原结果与错误对象保持，观察写入或投递失败不能覆盖它们。
 
-Windows #480 继承模式的额外观察只编入未分发测试宿主：同一 native 首 hook 时钟以 250ms bucket 记录原 checker、WebView2 API 与回调的有界 entry/return，使用原已认证通道发送。返回 HRESULT、收到回执或缺失阶段均不能替代 metadata、完整用例或真实进程清理；不跨钟域相减，原 20 秒保持。Linux #758 的测试副本仅投影真实窗口栈与逐窗口拒绝类别；空应用列表本身不能区分空栈和全部拒绝。
+Windows #480 的额外观察只编入未分发的 inheritance 与 visual 测试宿主；reconnect/relaunch 实际共用 visual 二进制，只有 inheritance/relaunch 用例投影这些行。同一 native 首 hook 时钟以 250ms bucket 记录原 checker、WebView2 API 与回调的有界 entry/return，使用原已认证通道发送。relaunch 两个进程的行可能合并、去重，不能归属某次进程；等待首次 metadata 的失败也不能写成重启清理失败。返回 HRESULT、收到回执或缺失阶段均不能替代 metadata、完整用例或真实进程清理；不跨钟域相减，原 20 秒保持。Linux #758 的测试副本仅投影真实窗口栈与逐窗口拒绝类别；空应用列表本身不能区分空栈和全部拒绝。
 
 原生确认验收的有限观察只编入未分发的 Windows local/terminal 测试宿主。每个原确认请求序号分别记录首次固定阶段/原拒绝谓词及各自时钟的 250ms bucket；server-send 返回不是 native 收帧，确认窗创建不是 foreground/用户决定，跨两个钟域不能相减。测试夹具可逆还原完整生产源码，原断言、权限与 45 秒截止不变。Windows census 将 `D476_NATIVE_CONFIRMATION_PHASE` 按原测试 title hash/注册位置/唯一诊断关联，未观测、歧义及未覆盖阶段仍为 UNKNOWN；新增观察本身不证明修复了历史超时。
 
@@ -228,3 +230,32 @@ attributes; their raw-byte seal assertions remain unchanged. Do not normalize
 compiled output or official evidence to satisfy a source seal. The bounded picker
 identity census reports only fixed enum classes, never button strings or paths,
 and supplies no UI success or cleanup authority.
+
+
+## OCR 观察与负向夹具的换行契约（#780 / #781）
+
+闭集观察必须保留原生产脚本全部字节、BOM、LF/CRLF、原调用与业务截止时间；同一用例只调用原 OCR 一次，不通过预热、重试、放大时限或放宽断言获得绿色。Node 与 PowerShell 时钟分别记录，缺失数据保持 UNKNOWN；总耗时不能证明具体 API 或超时原因。
+
+测试若按脚本实际行尾寻找唯一锚点，构造“重复锚点”反例也必须沿用该行尾。固定追加 LF 在 Windows CRLF 源码上可能根本没有制造重复，导致 assert.throws 误报；对真实源派生 LF 与 CRLF 两组，分别核实缺失及重复锚点，不归一化官方证据来迎合预期。
+
+验收器应把测试断言完成与结果收集分开记账。收集器写入越过自有输出目录而退出 1，不能宣称整个机器检查成功；保留错误、复用已经确证完成的检查，只补缺口。交付还须核精确 head/main 全部 jobs、受审全树与实际逐项回执；一次成功不证明旧原生失败的唯一物理原因。
+
+Node:test 用例超时后，`t.diagnostic()` 可能不再进入 TAP。需要保留截止现场时，仅把既有闭集快照写入有字节上限的 stdout；日志异常不得覆盖原失败或中断清理。不得据后续无回执的排队超时推断多个独立原生故障。
+
+## Office staged 复制与固定 Node 的 Windows 路径（#611）
+
+固定 Node 22.23.4 的无过滤递归复制会进入 `cpSyncCopyDir`；其 Windows
+C++ 路径处理与普通 UTF-8 文件 API 不同，文件系统错误还可能导致进程终止。
+仅加恒真过滤器不够：重复覆盖已存在文件仍可能进入 `cpSyncOverrideFile`。
+见该版本的 [目录复制实现](https://github.com/nodejs/node/blob/v22.23.4/src/node_file.cc)
+及上游 [错误转换问题](https://github.com/nodejs/node/issues/63970)。
+
+Office 的 Windows staged 消费器复用生产器的图重建方式：复制每个记录包时
+排除该包根的 `node_modules`，再由真实 staging 记录逐个复制所选嵌套依赖，
+避免提前复制后再次覆盖。普通资源不被过滤，中文路径、完整哈希和真实转换
+断言都保留；不得靠去掉中文、重试、补缺文件或跳过校验消红。此策略依赖实际
+staging 生产器和完整记录，不能作为任意目录复制的通用过滤规则。
+
+排查时区分源端、复制返回后和校验前的固定元数据状态。源端完整而目标缺失
+证明复制边界失效，不单独证明历史唯一物理机制；受控文件或模拟复制用例
+通过也不替代 Windows 正式打包及转换验收。

@@ -1,3 +1,4 @@
+import { archiveObservationInverse782 } from "./fixtures/archive-first-failure-782"
 /** Fixed source-derived diagnostic controls only; no native/COM/PTY process. */
 import test, {afterEach} from 'node:test'
 import {cpuTerminalAdapter747,cleanupCpuTerminalAdapters747,observerInverseForm747} from './fixtures/desktop-476/terminal-parser-cpu'
@@ -10,7 +11,7 @@ import ts from 'typescript'
 import {createHash} from 'node:crypto'
 const root=process.env.CMSPARK_TERMINAL747_SOURCE_ROOT??path.resolve(__dirname,'../..')
 const source=(p:string)=>fs.readFileSync(path.join(root,p),'utf8')
-const cpp=source('tests/fixtures/desktop-476/terminal-acceptance.cpp'),form=source('tests/fixtures/desktop-476/terminal-form.js'),parent=confirmationObservationInverse772(source('tests/desktop-native-thread-metadata-476.test.ts'))
+const cpp=source('tests/fixtures/desktop-476/terminal-acceptance.cpp'),form=source('tests/fixtures/desktop-476/terminal-form.js'),parent=confirmationObservationInverse772(workspaceAbortPhaseInverse705(source('tests/desktop-native-thread-metadata-476.test.ts')))
 function block(text:string,start:number){const begin=text.indexOf('{',start);assert.ok(begin>=0);let depth=0,quote='',comment=false;for(let i=begin;i<text.length;i++){const c=text[i];if(comment){if(c==='\n')comment=false;continue}if(quote){if(c==='\\')i++;else if(c===quote)quote='';continue}if(c==='/'&&text[i+1]==='/'){comment=true;i++;continue}if(c==='"'||c==="'"){quote=c;continue}if(c==='{')depth++;if(c==='}'&&!--depth)return text.slice(begin+1,i)}throw Error('UNCLOSED')}
 function collector(){const file=ts.createSourceFile('native.ts',parent,ts.ScriptTarget.Latest,true),defs=file.statements.filter((n):n is ts.FunctionDeclaration=>ts.isFunctionDeclaration(n)&&n.name?.text==='createTerminalFirstFailure747');assert.equal(defs.length,1,'actual native caller must define one finite collector');const c:any={};vm.runInNewContext(ts.transpileModule(defs[0].getText(file)+';globalThis.create=createTerminalFirstFailure747;',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,c,{timeout:1000});return c.create()}
 function note(){const signature='void D705TerminalAcceptance::note(';assert.equal(cpp.split(signature).length,2,'actual controller must have one finite latch');let body=block(cpp,cpp.indexOf(signature)).replace(/L(?=["'])/g,'').replace(/(28|19)u\b/g,'$1').replace(/static wchar_t const\* const (native|renderer)\[\]=\{([^}]+)\};/g,'const $1=[$2];').replace('emit(*host,','emit(host,').replace('catch(...)','catch(error)');const emitted:string[]=[],realm:any={first_origin:0,first_site:0,emit:(_h:any,id:string)=>emitted.push(id)};vm.createContext(realm);vm.runInContext('note=function(host,origin,site){'+body+'}',realm,{timeout:1000});return{realm,emitted}}
@@ -241,3 +242,25 @@ function confirmationObservationInverse772(raw:string){
  for(const [current,prior]of pairs){assert.equal(value.split(current).length,2,'one exact #772 observation-only source hunk');value=value.replace(current,prior)}
  assert.equal(createHash('sha256').update(value).digest('hex'),'6d79c72e958fb35b40c42086c098235425b1f2b1b63e4ef95295d4c085007b4b','whole original native source conserved before all older authorities');return value
 }
+
+// Newest test-private source observation is undone before every unchanged old authority.
+function workspaceAbortPhaseInverse705(raw:string){
+ raw=archiveObservationInverse782(raw)
+ const eol=raw.includes('\r\n')?'\r\n':'\n'
+ const current="try{const workspacePhase705='D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,childExitCode,firstFailedAssertion,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity,uiLifecycle,uiReceiptMask,...(uiOwner?{uiRefusal,uiProgress,uiChooseCensus}:{}),cancelClose,cancelShow,cancelSettled,cancelCurrent});try{t.diagnostic(workspacePhase705)}catch{};if(t.signal.aborted)try{const workspaceLine705=workspacePhase705+'\\n';if(Buffer.byteLength(workspaceLine705,'utf8')<=4096)process.stdout.write(workspaceLine705)}catch{}}catch{}".replace(/\n/g,eol),prior="try{t.diagnostic('D476_WORKSPACE_NATIVE_PHASE '+JSON.stringify({schema:1,failed,receiptMask:required.reduce((m,id,i)=>m|(receipts.has(id)?1<<i:0),0),picks,pickerObserved,pickerReturned,cancelReturned,connections,authenticated,windowRequested,childExited:settled,childExitCode,firstFailedAssertion,diagnosticVersion:2,failureSite,pickOutcome,pickerLifecycle,nativeDiagnostic,diagnosticInvalid,selectedOutcome,selectedIdentity,uiLifecycle,uiReceiptMask,...(uiOwner?{uiRefusal,uiProgress,uiChooseCensus}:{}),cancelClose,cancelShow,cancelSettled,cancelCurrent}))}catch{}".replace(/\n/g,eol)
+ assert.equal(raw.split(current).length,2,'one exact abort-phase delivery block')
+ return raw.replace(current,prior)
+}
+
+for(const [eol,expected]of [['LF','6fadbe6027b50d5a1b0654ba30641d260e7dcaa098d38ad90a398fe4639eed3c'],['CRLF','7c5d8b54f03c68fa285d60d8fd029cd10dbbf5c0073e79d5944778435e3d1288']]as const)test(`747 workspace abort observation inverse preserves every previous source authority ${eol}`,()=>{
+ const raw=source('tests/desktop-native-thread-metadata-476.test.ts'),profile=raw.replace(/\r?\n/g,eol==='LF'?'\n':'\r\n'),previous=workspaceAbortPhaseInverse705(profile)
+ // These seals are from the pre-R3 Git source, never from the failing CI residue.
+ assert.equal(createHash('sha256').update(previous).digest('hex'),expected)
+ assert.equal(createHash('sha256').update(confirmationObservationInverse772(previous)).digest('hex'),'6d79c72e958fb35b40c42086c098235425b1f2b1b63e4ef95295d4c085007b4b')
+ assert.throws(()=>confirmationObservationInverse772(profile),error=>(error as any)?.code==='ERR_ASSERTION'&&(error as any).message.includes('whole original native source conserved before all older authorities'),'actual unchanged old consumer rejects the actual new producer')
+ assert.throws(()=>workspaceAbortPhaseInverse705(previous),{code:'ERR_ASSERTION'},'missing block and old source refuse')
+ assert.throws(()=>workspaceAbortPhaseInverse705(profile+profile),{code:'ERR_ASSERTION'},'duplicate block refuses')
+ for(const [current,drift]of [["Buffer.byteLength(workspaceLine705,'utf8')<=4096","Buffer.byteLength(workspaceLine705,'utf8')<=8192"],['if(t.signal.aborted)try{const workspaceLine705=','if(false)try{const workspaceLine705=']]as const){assert.equal(profile.split(current).length,2);assert.throws(()=>workspaceAbortPhaseInverse705(profile.replace(current,drift)),{code:'ERR_ASSERTION'})}
+ const outside=profile.replace('timeout:45000','timeout:45001');assert.notEqual(outside,profile)
+ assert.throws(()=>confirmationObservationInverse772(workspaceAbortPhaseInverse705(outside)),{code:'ERR_ASSERTION'},'original whole-source authority still rejects changes outside the observation')
+})

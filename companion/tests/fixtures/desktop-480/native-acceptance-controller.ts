@@ -218,7 +218,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
   const has = (name: string) => observations.some(r => r.kind === "fixed" && r.name === name)
   let diagnosticPhase = "starting"
   const diagnostic = (reason: "deadline" | "cleanup") => {
-    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify({...acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads, lastExitCode }, observations),nativeLifetime:observer.nativeLifetime(),bootstrap773:mode==="inheritance"?observer.bootstrapObservation773():null}) + "\n") }
+    try { fs.writeSync(1, "DESKTOP_480_ACCEPTANCE_PHASE " + JSON.stringify({...acceptanceDiagnostic(reason, diagnosticPhase, mode, { auths, issues, launches, exits, listReads, lastExitCode }, observations),nativeLifetime:observer.nativeLifetime(),bootstrap773:mode==="inheritance"||mode==="relaunch"?observer.bootstrapObservation773():null}) + "\n") }
     catch { /* Observation must not replace the original test failure. */ }
   }
   const deadlineDiagnostic = () => diagnostic("deadline")
@@ -277,7 +277,7 @@ export async function nativeAcceptance(t: TestContext, mode: "visual" | "hostile
     diagnosticPhase = "complete"
     // A token is never returned, logged or persisted. Keep only finite scoped counts.
     assert.equal(secret.length, 64)
-    console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, nativeLifetime:observer.nativeLifetime(),bootstrap773:mode==="inheritance"?observer.bootstrapObservation773():null, fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
+    console.log("DESKTOP_480_ACCEPTANCE " + JSON.stringify({ mode, auths, issues, launches, actualStoreReads: listReads, nativeLifetime:observer.nativeLifetime(),bootstrap773:mode==="inheritance"||mode==="relaunch"?observer.bootstrapObservation773():null, fixed: observations.filter(r => r.kind === "fixed").map(r => (r as { name: string }).name), windows: observations.filter(r => r.kind === "window") }))
   } finally {
     surfaceLease.retain()
     diagnostic("cleanup")

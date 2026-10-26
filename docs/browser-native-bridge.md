@@ -1,6 +1,6 @@
 # Cockpit native bridge：首个身份纵向开发门（#723 D2）
 
-此实现属于 **0.6.14 开发候选**。新增的扩展权限仅为 `nativeMessaging`，固定 host 为 `com.cmspark.cockpit`；它不能执行通用命令，也不增加 screen/debug 权限或常驻服务。当前只接 bind/dispose，sample、pair、geometry 和双帧遮罩尚未实现。PR748 精确 head 曾通过真实 Windows/Chrome 身份首门，但同树 main 的原 45 秒门失败；历史原因仍 UNKNOWN，不据 head 通过宣称 main 完成。本页不是发版或本机安装指令。
+此实现属于 **0.7.0 源码中的有限实现**。新增的扩展权限仅为 `nativeMessaging`，固定 host 为 `com.cmspark.cockpit`；它不能执行通用命令，也不增加 screen/debug 权限或常驻服务。当前只接 bind/dispose，sample、pair、geometry 和双帧遮罩尚未实现。PR748 精确 head 曾通过真实 Windows/Chrome 身份首门，但同树 main 的原 45 秒门失败；历史原因仍 UNKNOWN，不据 head 通过宣称 main 完成。本页不是发版或本机安装指令。
 
 实际 cockpit document 的独立 runtime Port 经当前 owner 检查、已认证 WS 的一次性 5 秒 challenge，再由该 document 的 `connectNative` 启动固定 host。原 hydration/log Port 保留。host 从浏览器启动参数取得 parent HWND，不接受消息指定 HWND；同一进程标准输入/输出 pipe 的浏览器 PID、parent HWND PID/TID、实例内随机窗口属性和当前 document/owner 必须都成立。`GetNamedPipeServerProcessId` 对实际 Chrome 继承句柄的支持仍是 **UNKNOWN / STOP 前提**，argv、标题、Chrome windowId 或 PID 不能替代证明。窗口属性没有 CAS 或 HWND 对象锁，不能单独宣称消除所有复用竞态。
 

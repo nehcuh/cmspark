@@ -1,4 +1,4 @@
-// Unshipped #773 inheritance-only observations. Production source is never rewritten.
+// Unshipped #773 observations for inheritance and the shared visual test family. Production source is never rewritten.
 export const bootstrapObservationSites773 = Object.freeze([
   'preConsume', 'parentCleared', 'sentinelChecker', 'descendantChecker',
   'CreateCoreWebView2EnvironmentWithOptions', 'environmentCallback', 'CreateCoreWebView2Controller', 'controllerCallback',
@@ -28,7 +28,7 @@ const declarations = `
  private:
 `;
 const implementation = `
-// #773 unshipped inheritance source; missing observations never replace original success/failure.
+// #773 unshipped acceptance source; missing observations never replace original success/failure.
 unsigned D480Acceptance::obBegin773(unsigned point){
  if(point<1||point>30)return 0;
  unsigned ordinal=++obOrdinals773[point];
