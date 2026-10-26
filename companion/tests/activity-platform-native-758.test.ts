@@ -11,6 +11,7 @@ import { resolveWinScript, runPs } from '../src/host-use/win/powershell'
 import { DEFAULT_ACTIVITY_CONFIG } from '../src/activity/types'
 import { submitReminder } from '../src/activity/adapters'
 import { buildOwnedWpf758 } from './helpers/activity-native-fixture-758'
+import { observedOcrCall758 } from './helpers/activity-ocr-observation-758'
 const exec=promisify(execFile)
 const enabled=process.env.CMSPARK_ACTIVITY_NATIVE_758==='1'
 
@@ -57,7 +58,7 @@ test('#758 actual desktop foreground identity, passive pixels and local OCR; min
       const listed=JSON.parse(await runPs(resolveWinScript('activity-windows.ps1'),['-Mode','Apps']))
       assert.equal(listed.ok,true);assert.ok(Array.isArray(listed.windows))
       const image=path.join(dir,'owned OCR 原生.png');fs.copyFileSync(path.resolve('tests/fixtures/activity-linux-758.png'),image)
-      const ocr=JSON.parse(await runPs(resolveWinScript('computer-ocr.ps1'),['-ImagePath',image,'-Language','en-US']))
+      const ocr=JSON.parse(await observedOcrCall758(resolveWinScript('computer-ocr.ps1'),['-ImagePath',image,'-Language','en-US'],dir,runPs,line=>t.diagnostic(line)))
       assert.equal(ocr.ok,true);assert.ok(ocr.words.some((w:any)=>/PROJECT/i.test(w.text)))
     }else{
       await assert.rejects(exec('/usr/bin/python3',['-I',resolveLinuxRecorder(),'probe'],{env:{...process.env,WAYLAND_DISPLAY:'wayland-owned758',XDG_SESSION_TYPE:'wayland'},signal:owned.signal,timeout:5000}),error=>String((error as any).stderr).trim()==='X11_DESKTOP_REQUIRED')
