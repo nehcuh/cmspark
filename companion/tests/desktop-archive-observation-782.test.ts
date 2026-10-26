@@ -49,21 +49,29 @@ test("782 actual Archive form preserves every refusal and emits its real fixed s
 })
 
 test("782 Windows original key branches emit their own site without extra API calls",()=>{
- const source=read("tests/fixtures/desktop-476/archive-acceptance.cpp"),begin="void D476ArchiveAcceptance::key(Desktop& h,WORD code){",body=source.split(begin)[1]?.split("\n}\n")[0];assert(body)
- const lowered=body.replaceAll("owner!=&h","owner!==h").replaceAll("->",".").replace("GUITHREADINFO info{};","let info={};").replace("sizeof(info)","64").replaceAll("&info","info").replace("const LPARAM scan=(LPARAM)","const scan=").replaceAll("((LPARAM)1","(1").replace("0xffu","0xff")
+ for(const eol of ["\n","\r\n"]){
+ const source=read("tests/fixtures/desktop-476/archive-acceptance.cpp").replace(/\r?\n/g,eol),begin="void D476ArchiveAcceptance::key(Desktop& h,WORD code){",body=source.split(begin)[1]?.split(/\r?\n}\r?\n/)[0];assert(body)
+ const lower=(text:string)=>text.replaceAll("owner!=&h","owner!==h").replaceAll("->",".").replace("GUITHREADINFO info{};","let info={};").replace("sizeof(info)","64").replaceAll("&info","info").replace("const LPARAM scan=(LPARAM)","const scan=").replaceAll("((LPARAM)1","(1").replace("0xffu","0xff")
+ const lowered=lower(body),prior=source.split(begin)[1]?.split("\n}\n")[0];assert(prior)
+ if(eol==="\r\n"){assert.notEqual(prior,body);assert.throws(()=>new vm.Script("(function(){"+lower(prior)+"})()"),{name:"SyntaxError"})}else assert.equal(prior,body)
  for(const mode of["guard","move","foreground","gui","post","pass"]as const){
   const calls:string[]=[],sites:number[]=[],h={ready:true,generation:"owned",controller:{MoveFocus(){calls.push("move");return mode==="move"?-1:0}},window:{}},scope:any={h,owner:mode==="guard"?{}:h,loss:false,document:"owned",code:13,IsWindowVisible(){calls.push("visible");return true},SetForegroundWindow(){calls.push("foreground-request");return false},FAILED:(x:number)=>x<0,COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC:0,GetForegroundWindow(){calls.push("foreground-read");return mode==="foreground"?{}:h.window},GetGUIThreadInfo(_zero:number,info:any){calls.push("gui");info.hwndFocus={};return mode!=="gui"},GetAncestor(){calls.push("ancestor");return h.window},GA_ROOT:2,MapVirtualKeyW(){calls.push("scan");return 0},MAPVK_VK_TO_VSC:0,PostMessageW(){calls.push("post");return mode!=="post"},WM_KEYDOWN:1,WM_KEYUP:2,failure(_h:any,site:number){sites.push(site)}}
   vm.runInNewContext("(function(){"+lowered+"})()",scope,{timeout:1000});assert.deepEqual(sites,mode==="pass"?[]:[{guard:2,move:3,foreground:4,gui:5,post:6}[mode]])
   for(const name of["visible","foreground-request","move","foreground-read","gui","ancestor","scan"])assert(calls.filter(x=>x===name).length<=1,name)
   assert.equal(calls.filter(x=>x==="post").length,mode==="pass"?2:mode==="post"?1:0,"original short circuit is retained")
  }
+ }
 })
 
 test("782 Archive-only generated script distinguishes immediate and completion refusal",async()=>{
  const {pathToFileURL}=require("node:url"),{desktopArchiveFixture}=await(new Function("u","return import(u)"))(pathToFileURL(path.join(root,"scripts/desktop-mcp-fixture.mjs")).href),built=desktopArchiveFixture("cpp",read("src/desktop/native/DesktopHost.cpp"),read("tests/fixtures/desktop-476/native-acceptance.cpp"),read("tests/fixtures/desktop-476/archive-form.js"),read("tests/fixtures/desktop-476/archive-acceptance.cpp"))
- const declaration="void D476Acceptance::document(Desktop& h){",original=built.source.split(declaration)[1]?.split("\n}\n")[0];assert(original)
- const body=original.replace(/std::wstring code=[^\n]+;/,"const code='owned script';").replace("auto result=h.web->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT code,LPCWSTR)->HRESULT{","const result=execute(code,(code)=>{").replace("}).Get());","});").replaceAll("catch(...)","catch(_error)")
+ for(const eol of ["\n","\r\n"]){
+ const source=built.source.replace(/\r?\n/g,eol),declaration="void D476Acceptance::document(Desktop& h){",original=source.split(declaration)[1]?.split(/\r?\n}\r?\n/)[0];assert(original)
+ const lower=(text:string)=>text.replace(/std::wstring code=[^\n]+;/,"const code='owned script';").replace("auto result=h.web->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT code,LPCWSTR)->HRESULT{","const result=execute(code,(code)=>{").replace("}).Get());","});").replaceAll("catch(...)","catch(_error)")
+ const body=lower(original),prior=source.split(declaration)[1]?.split("\n}\n")[0];assert(prior)
+ if(eol==="\r\n"){assert.notEqual(prior,original);assert.throws(()=>new vm.Script("(function(){"+lower(prior).replaceAll('L"','"')+"})()"),{name:"SyntaxError"})}else assert.equal(prior,original)
  for(const mode of["immediate","completion","success","observer-throws"]){const ids:string[]=[],trace:string[]=[],scope={S_OK:0,FAILED:(x:number)=>x<0,execute(_script:string,callback:(code:number)=>void){trace.push("execute");if(mode!=="immediate")callback(mode==="success"?0:-1);return mode==="immediate"?-1:0},emit(_h:any,id:string){if(mode==="observer-throws"&&id.startsWith("D476_ARCHIVE_FIRST_"))throw Error("OWNED");ids.push(id)},h:{}};vm.runInNewContext("(function(){"+body.replaceAll('L"','"')+"})()",scope,{timeout:1000});assert.equal(trace.length,1);assert.deepEqual(ids,mode==="success"?[]:mode==="observer-throws"?["D476_FAIL_SCRIPT"]:[`D476_ARCHIVE_FIRST_S_${mode==="immediate"?1:2}`,"D476_FAIL_SCRIPT"])}
+ }
 })
 
 for(const eol of["\n","\r\n"])test(`782 new observation inverse preserves the entire previous native source ${eol==="\n"?"LF":"CRLF"}`,()=>{

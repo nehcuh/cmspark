@@ -169,7 +169,8 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
       copyDesktopAssets(root,assets)
       const original=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),fixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-480/native-acceptance.cpp"),"utf8"),variant=desktopAcceptanceVariant("cpp",original,fixture)
       if(variant.inverse!==original)throw new Error("DESKTOP_ACCEPTANCE_SOURCE_DRIFT")
-      const observed=mode==="inheritance"?desktopBootstrapObservationFixture773(variant.source):{source:variant.source,inverse:variant.source};if(observed.inverse!==variant.source)throw Error("BOOT773_BUILD_INVERSE");
+      // visual is also the actual reconnect/relaunch binary; observation never selects a product build.
+      const observed=mode==="inheritance"||mode==="visual"?desktopBootstrapObservationFixture773(variant.source):{source:variant.source,inverse:variant.source};if(observed.inverse!==variant.source)throw Error("BOOT773_BUILD_INVERSE");
       const source=path.join(output,`acceptance-${mode}.cpp`),binary=path.join(output,`acceptance-${mode}.exe`);fs.writeFileSync(source,observed.source,{flag:"wx"})
       checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE","/DCMSPARK_DESKTOP_TEST_PHASES",mode==="hostile"?"/DD480_HOSTILE":mode==="inheritance"?"/DD480_INHERITANCE":mode==="parent"?"/DD480_PARENT":"/DD480_VISUAL",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,source,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${binary}`],{env,cwd:output,buildDiagnostic:true})
       publish(binary,path.join(directory,"cmspark-desktop.exe"))

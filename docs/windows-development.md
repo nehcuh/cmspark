@@ -4,7 +4,7 @@
 
 Windows OCR 原生预检 (#780) 仅在原来那一次调用上使用可逐字节还原的测试脚本变体；产品 `computer-ocr.ps1` 不变，不增加语言探测、第二次 OCR 或预热。原 Node 15 秒和用例 90 秒时限、argv、环境及全部业务/身份/清理断言保留。观察只投影固定子进程数值/布尔/信号枚举、输出字节数，以及脚本自身 Stopwatch 的 250ms 阶段 bucket 和捕获异常的数值 HRESULT；不输出原始命令、路径、正文或异常文本。脚本与 Node 时钟不能相减，最后阶段只约束未完成区间，缺失/损坏观察为 UNKNOWN；成功调用的 stderr 未由原 runner 返回，明确记 UNKNOWN。原结果与错误对象保持，观察写入或投递失败不能覆盖它们。
 
-Windows #480 继承模式的额外观察只编入未分发测试宿主：同一 native 首 hook 时钟以 250ms bucket 记录原 checker、WebView2 API 与回调的有界 entry/return，使用原已认证通道发送。返回 HRESULT、收到回执或缺失阶段均不能替代 metadata、完整用例或真实进程清理；不跨钟域相减，原 20 秒保持。Linux #758 的测试副本仅投影真实窗口栈与逐窗口拒绝类别；空应用列表本身不能区分空栈和全部拒绝。
+Windows #480 的额外观察只编入未分发的 inheritance 与 visual 测试宿主；reconnect/relaunch 实际共用 visual 二进制，只有 inheritance/relaunch 用例投影这些行。同一 native 首 hook 时钟以 250ms bucket 记录原 checker、WebView2 API 与回调的有界 entry/return，使用原已认证通道发送。relaunch 两个进程的行可能合并、去重，不能归属某次进程；等待首次 metadata 的失败也不能写成重启清理失败。返回 HRESULT、收到回执或缺失阶段均不能替代 metadata、完整用例或真实进程清理；不跨钟域相减，原 20 秒保持。Linux #758 的测试副本仅投影真实窗口栈与逐窗口拒绝类别；空应用列表本身不能区分空栈和全部拒绝。
 
 原生确认验收的有限观察只编入未分发的 Windows local/terminal 测试宿主。每个原确认请求序号分别记录首次固定阶段/原拒绝谓词及各自时钟的 250ms bucket；server-send 返回不是 native 收帧，确认窗创建不是 foreground/用户决定，跨两个钟域不能相减。测试夹具可逆还原完整生产源码，原断言、权限与 45 秒截止不变。Windows census 将 `D476_NATIVE_CONFIRMATION_PHASE` 按原测试 title hash/注册位置/唯一诊断关联，未观测、歧义及未覆盖阶段仍为 UNKNOWN；新增观察本身不证明修复了历史超时。
 
