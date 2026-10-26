@@ -50,6 +50,39 @@ test("edit recovery does not relabel unrelated tool errors or access denials", (
   assert.match(out, /denied path access/)
 })
 
+// Thread w85kxr: filesystem read_text_file rejected head+tail with "Cannot
+// specify both head and tail parameters simultaneously". Server v2.0.1 never
+// declares that exclusivity in description/schema, so the rejection is the
+// only channel teaching the model the contract — yet classifyError defaulted
+// it to non_recoverable, halted the turn behind chat.error, and the user had
+// to type 「继续」 before the corrected call went through.
+test("mutually-exclusive argument rejection stays recoverable with a re-call hint", () => {
+  const server = "Cannot specify both head and tail parameters simultaneously"
+  const raw = `MCP fs/read_text_file returned error: ${server}`
+  const conflictRoute = { serverName: "fs", toolName: "read_text_file" }
+  const out = enhanceMcpError(raw, conflictRoute, { path: "C:/repo/design.md", head: 30, tail: 30 })
+  assert.match(out, /mutually exclusive/i)
+  assert.match(out, /only one of the conflicting options/i)
+  assert.ok(out.includes(server), "preserve the server diagnostic")
+  // runOnce's prefix must not be stacked a second time by the fallback.
+  assert.doesNotMatch(out, /failed: MCP fs\/read_text_file returned error:/)
+  assert.equal(classifyError(out, { toolName: "mcp__fs__read_text_file" }), "recoverable")
+})
+
+test("fallback states the server/tool context once, keeping the server-error contract", () => {
+  const conflictRoute = { serverName: "fs", toolName: "read_text_file" }
+  // Prefixed server rejection: no doubled "MCP fs/read_text_file" prefix, but
+  // "returned error" survives — the projection contract (mcp-protocol-reliability).
+  const prefixed = enhanceMcpError(`MCP fs/read_text_file returned error: boom`, conflictRoute, {})
+  assert.equal(prefixed, "MCP call to MCP fs/read_text_file failed: server returned error: boom")
+  assert.equal(prefixed.match(/fs\/read_text_file/g)?.length, 1, "server/tool named once")
+  // Bare exception path keeps the plain context prefix.
+  assert.equal(
+    enhanceMcpError(`boom`, conflictRoute, {}),
+    "MCP call to MCP fs/read_text_file failed: boom",
+  )
+})
+
 test("real filesystem rejects a multi-edit placeholder atomically, then accepts a corrected patch", { timeout: 15000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-edit-match-"))
   const file = path.join(root, "report.html")
