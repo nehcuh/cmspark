@@ -53,7 +53,7 @@ N>1 仅支持提案时明确 `open_local_terminal=false` 的纯 bridge；已有�
 
 面板列表保留本对话各会话，进度／handback 不抢当前选择；每个按钮只操作选中项。`execution_phase` 分为准备、受管 bridge 已 spawn、关闭中、占位已释放；旧后台缺该字段时保持未知。迟到操作回执按原 session 和两次 UI 选择修订关联；同线程 A→B→A 也不能覆盖新反馈。旧未关联错误仅标作“回执关联未知”，不宣布当前操作成功。最多保留64个本地待唯一回执操作（16项元数据×4类现有操作）；重复／满时显式拒绝，不淘汰未完成项、不自动重试，断线清理关联但不授予执行权。
 
-本实现的受控 CPU 与 Linux ARM 验证不能替代真实 Windows owned bridge 重叠／取消验收，也不声称已验证配置的 Claude、Codex、Pi 或任何 provider。开发版仍为0.6.14，源批准、精确 head/main CI 与真实平台门禁完成前不得把本节视为整票完成或安装承诺。
+本实现的受控 CPU 与 Linux ARM 验证不能替代真实 Windows owned bridge 重叠／取消验收，也不声称已验证配置的 Claude、Codex、Pi 或任何 provider。本实现纳入0.7.0源码，源批准、精确 head/main CI 与真实平台门禁完成前不得把本节视为整票完成或安装承诺。
 
 ### 环境变量（与终端一致）
 

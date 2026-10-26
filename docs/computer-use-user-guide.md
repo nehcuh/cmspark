@@ -1,7 +1,7 @@
 # Computer Use 使用说明
 
 > **面向使用者**：如何开启桌面坐标操控、确认台里怎么批/急停、session-trust 是什么、平台与限制。  
-> **产品版本**：0.6.14 · **决策摘要**：[ADR-017](adr/017-computer-use.md)
+> **产品版本**：0.7.0 · **决策摘要**：[ADR-017](adr/017-computer-use.md)
 > **确认台 UI**：[confirm-center-user-guide.md](confirm-center-user-guide.md) · **Host / Apps**：[host-and-apps.md](host-and-apps.md)  
 > **过程史（非规范）**：[decisions/coordinate-computer-use-plan.md](decisions/coordinate-computer-use-plan.md)
 
@@ -249,7 +249,7 @@ Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打
 
 坐标全局和应用开关/结构排除仍保留。只读捕获尝试使用独立原30次/60秒限率，失败也计，等待不计；原注入限率不变。全读取started只留后台，首次确认或暂停仍按原显眼性规则显示。CPU受控与源码通过不等于真实浏览器焦点、Windows捕获或D2遮罩已完成；本票仍部分完成。
 
-## Windows 观察质量（#723，0.6.14 开发候选）
+## Windows 观察质量（#723，纳入 0.7.0 的有限实现）
 
 `host_computer` 的 Windows 截图和 describe 带有捕获来源和质量标签。`printwindow / ok` 只表示拿到了窗口渲染源，不证明内容正确或任务完成；`bitblt / occluded` 表示采样看到了上层交叠窗口，`bitblt / partial` 表示两次有界采样未见交叠，仍不证明整个截图期间无遮挡。API、目标身份、DPI 域或采样不确定时捕获不可用，不能猜测为 ok。
 

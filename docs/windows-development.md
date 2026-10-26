@@ -228,3 +228,12 @@ attributes; their raw-byte seal assertions remain unchanged. Do not normalize
 compiled output or official evidence to satisfy a source seal. The bounded picker
 identity census reports only fixed enum classes, never button strings or paths,
 and supplies no UI success or cleanup authority.
+
+
+## OCR 观察与负向夹具的换行契约（#780 / #781）
+
+闭集观察必须保留原生产脚本全部字节、BOM、LF/CRLF、原调用与业务截止时间；同一用例只调用原 OCR 一次，不通过预热、重试、放大时限或放宽断言获得绿色。Node 与 PowerShell 时钟分别记录，缺失数据保持 UNKNOWN；总耗时不能证明具体 API 或超时原因。
+
+测试若按脚本实际行尾寻找唯一锚点，构造“重复锚点”反例也必须沿用该行尾。固定追加 LF 在 Windows CRLF 源码上可能根本没有制造重复，导致 assert.throws 误报；对真实源派生 LF 与 CRLF 两组，分别核实缺失及重复锚点，不归一化官方证据来迎合预期。
+
+验收器应把测试断言完成与结果收集分开记账。收集器写入越过自有输出目录而退出 1，不能宣称整个机器检查成功；保留错误、复用已经确证完成的检查，只补缺口。交付还须核精确 head/main 全部 jobs、受审全树与实际逐项回执；一次成功不证明旧原生失败的唯一物理原因。
