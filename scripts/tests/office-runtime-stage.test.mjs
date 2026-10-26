@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { officeTarget, verifyOfficeEngine, stageOfficeRuntime } from '../stage-office-runtime.mjs'
 import { removeOfficeSmokeRuntime } from '../office-smoke-cleanup.mjs'
 import './office-smoke-fonts-666.test.mjs'
+import './office-staged-relocation.test.mjs'
 const { createOfficeSmokeObserver, observeOfficeIntegrationParse } = createRequire(import.meta.url)('../office-smoke-observer.cjs')
 
 test('Office target selects published Linux WASM and exact native architecture', () => {

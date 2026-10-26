@@ -8,6 +8,21 @@ import { fileURLToPath } from 'node:url'
 import { stageOfficeRuntime, verifyOfficeEngine, officeTarget } from './stage-office-runtime.mjs'
 import { removeOfficeSmokeRuntime } from './office-smoke-cleanup.mjs'
 
+// Observe only fixed metadata paths; never emit paths, contents or raw errors.
+// These snapshots distinguish boundaries, not the cause of an absent file.
+function officeRelocationMetadata(root) {
+  const kind = (file, follow) => {
+    try {
+      const stat = follow ? fs.statSync(file) : fs.lstatSync(file)
+      return stat.isSymbolicLink() ? 'link' : stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other'
+    } catch (error) { return error?.code === 'ENOENT' ? 'missing' : 'unavailable' }
+  }
+  return ['.', 'package.json', 'prebuilds.json'].map(name => {
+    const file = path.join(root, name)
+    return [kind(file, false), kind(file, true)]
+  })
+}
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const options = {}
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -24,15 +39,28 @@ try {
     record = JSON.parse(fs.readFileSync(path.join(staged, 'office-runtime.json'), 'utf8'))
     const target = officeTarget(platform)
     if (record.platform !== platform || record.kitVersion !== '0.1.5' || record.engine !== target.engine) throw new Error('Staged Office target mismatch')
-    for (const pkg of record.packages) {
-      if (typeof pkg.path !== 'string' || !pkg.path.startsWith('node_modules/') || pkg.path.includes('..') || pkg.path.includes('\\')) throw new Error('Invalid staged Office package path')
-      const output = path.join(temporary, pkg.path)
-      fs.mkdirSync(path.dirname(output), {recursive:true})
-      fs.cpSync(path.join(staged, pkg.path), output, {recursive:true,verbatimSymlinks:true})
-    }
     const engine = record.packages.find(pkg => pkg.name === target.engine)
     if (!engine) throw new Error('Staged Office engine missing')
-    verifyOfficeEngine(path.join(temporary, engine.path), target.engine, target)
+    // Validate before observing the engine path, using the original copy gate.
+    if (typeof engine.path !== 'string' || !engine.path.startsWith('node_modules/') || engine.path.includes('..') || engine.path.includes('\\')) throw new Error('Invalid staged Office package path')
+    const observation = {schema:'office-staged-relocation-v1',phase:'copy',copyIndex:0,
+      source:officeRelocationMetadata(path.join(staged,engine.path)),afterCopy:null,beforeVerify:null}
+    try {
+      for (const [index, pkg] of record.packages.entries()) {
+        observation.copyIndex = Number.isSafeInteger(index) && index <= 1_000_000 ? index : null
+        if (typeof pkg.path !== 'string' || !pkg.path.startsWith('node_modules/') || pkg.path.includes('..') || pkg.path.includes('\\')) throw new Error('Invalid staged Office package path')
+        const output = path.join(temporary, pkg.path)
+        fs.mkdirSync(path.dirname(output), {recursive:true})
+        fs.cpSync(path.join(staged, pkg.path), output, {recursive:true,verbatimSymlinks:true})
+        if (pkg === engine) observation.afterCopy = officeRelocationMetadata(output)
+      }
+      observation.phase = 'verify'
+      observation.beforeVerify = officeRelocationMetadata(path.join(temporary,engine.path))
+      verifyOfficeEngine(path.join(temporary, engine.path), target.engine, target)
+    } catch (error) {
+      try { console.error(JSON.stringify(observation)) } catch { /* preserve the original copy/verification failure */ }
+      throw error
+    }
   } else record = stageOfficeRuntime({ source, destination: temporary, platform })
   const runtime = path.join(temporary, process.platform === 'win32' ? 'node.exe' : 'node')
   fs.copyFileSync(path.resolve(options.runtime ?? process.execPath), runtime)
