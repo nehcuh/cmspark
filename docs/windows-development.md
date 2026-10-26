@@ -239,3 +239,21 @@ and supplies no UI success or cleanup authority.
 验收器应把测试断言完成与结果收集分开记账。收集器写入越过自有输出目录而退出 1，不能宣称整个机器检查成功；保留错误、复用已经确证完成的检查，只补缺口。交付还须核精确 head/main 全部 jobs、受审全树与实际逐项回执；一次成功不证明旧原生失败的唯一物理原因。
 
 Node:test 用例超时后，`t.diagnostic()` 可能不再进入 TAP。需要保留截止现场时，仅把既有闭集快照写入有字节上限的 stdout；日志异常不得覆盖原失败或中断清理。不得据后续无回执的排队超时推断多个独立原生故障。
+
+## Office staged 复制与固定 Node 的 Windows 路径（#611）
+
+固定 Node 22.23.4 的无过滤递归复制会进入 `cpSyncCopyDir`；其 Windows
+C++ 路径处理与普通 UTF-8 文件 API 不同，文件系统错误还可能导致进程终止。
+仅加恒真过滤器不够：重复覆盖已存在文件仍可能进入 `cpSyncOverrideFile`。
+见该版本的 [目录复制实现](https://github.com/nodejs/node/blob/v22.23.4/src/node_file.cc)
+及上游 [错误转换问题](https://github.com/nodejs/node/issues/63970)。
+
+Office 的 Windows staged 消费器复用生产器的图重建方式：复制每个记录包时
+排除该包根的 `node_modules`，再由真实 staging 记录逐个复制所选嵌套依赖，
+避免提前复制后再次覆盖。普通资源不被过滤，中文路径、完整哈希和真实转换
+断言都保留；不得靠去掉中文、重试、补缺文件或跳过校验消红。此策略依赖实际
+staging 生产器和完整记录，不能作为任意目录复制的通用过滤规则。
+
+排查时区分源端、复制返回后和校验前的固定元数据状态。源端完整而目标缺失
+证明复制边界失效，不单独证明历史唯一物理机制；受控文件或模拟复制用例
+通过也不替代 Windows 正式打包及转换验收。

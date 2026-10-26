@@ -51,7 +51,11 @@ try {
         if (typeof pkg.path !== 'string' || !pkg.path.startsWith('node_modules/') || pkg.path.includes('..') || pkg.path.includes('\\')) throw new Error('Invalid staged Office package path')
         const output = path.join(temporary, pkg.path)
         fs.mkdirSync(path.dirname(output), {recursive:true})
-        fs.cpSync(path.join(staged, pkg.path), output, {recursive:true,verbatimSymlinks:true})
+        // Node 22's native copyDir/overwrite paths use narrow Windows paths.
+        // Mirror the producer's graph walk: each nested package has its own
+        // record, so exclude only this root's node_modules and copy it once.
+        fs.cpSync(path.join(staged, pkg.path), output, {recursive:true,verbatimSymlinks:true,
+          ...(process.platform === 'win32' ? {filter:item => item !== path.join(staged,pkg.path,'node_modules')} : {})})
         if (pkg === engine) observation.afterCopy = officeRelocationMetadata(output)
       }
       observation.phase = 'verify'
