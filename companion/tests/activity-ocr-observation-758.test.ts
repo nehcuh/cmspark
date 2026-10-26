@@ -30,8 +30,11 @@ test('758 OCR observation preserves the entire real BOM source under LF and CRLF
   }
 })
 test('758 OCR observation refuses missing or ambiguous source anchors and unsafe trace operands', () => {
-  assert.throws(() => observedOcrSource758(original.replace('  $task.Wait()', '  $task.Wrong()'), 'owned'), /ANCHOR_REFUSED/)
-  assert.throws(() => observedOcrSource758(original + '\n  $task.Wait()\n', 'owned'), /ANCHOR_REFUSED/)
+  for (const eol of ['\n', '\r\n']) {
+    const source = original.replace(/\r?\n/g, eol)
+    assert.throws(() => observedOcrSource758(source.replace('  $task.Wait()', '  $task.Wrong()'), 'owned'), /ANCHOR_REFUSED/)
+    assert.throws(() => observedOcrSource758(source + eol + '  $task.Wait()' + eol, 'owned'), /ANCHOR_REFUSED/)
+  }
   assert.throws(() => observedOcrSource758(original + '\n# TraceOcr758', 'owned'), /SOURCE_REFUSED/)
   for (const trace of ['', 'a\nb', 'a\rb', 'a\0b']) assert.throws(() => observedOcrSource758(original, trace), /SOURCE_REFUSED/)
 })
