@@ -849,6 +849,11 @@ else
 fi
 
 echo ""
+if node --test "${ROOT}/scripts/tests/windows-host-scripts.test.mjs"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 if [ "${FAIL}" -ne 0 ]; then
   exit 1

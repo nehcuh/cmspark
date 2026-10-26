@@ -100,6 +100,9 @@ if [ "${missing}" != "0" ]; then
   exit 1
 fi
 
+node "${ROOT_DIR}/scripts/verify-windows-host-scripts.mjs" \
+  "${ROOT_DIR}/companion/src/host-use/win/scripts" "${STAGING}/host-scripts-win"
+
 rm -f "${OUTFILE}"
 
 # Git Bash converts argv starting with / into Windows paths. Never pass /D…
