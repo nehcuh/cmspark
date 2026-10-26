@@ -169,7 +169,17 @@ test('705 actual physical receipt callback is portable without host getuid POSIX
   try{vm.runInNewContext(compiled,{module:mod,exports:mod.exports,require:(name:string)=>name==='node:fs'?windowsFS:name==='node:test'?(name:string,callback:()=>void)=>cases.set(name,callback):require(name),process:localProcess,Buffer,TextDecoder,URL,console},{timeout:3000});const actual=cases.get('705 receipt mask actual strict reader handles owned files links directory and partial publication');assert.ok(actual);actual();assert.deepEqual(links,['junction']);assert.equal(fds.size,0)}finally{for(const fd of fds)fs.closeSync(fd);fs.rmSync(parent,{recursive:true,force:true})}
  }
 })
-function createRequireForReceipt705(){return (name:string)=>{if(name==='node:test')return test;if(name==='node:assert/strict')return assert;if(name==='node:fs')return fs;if(name==='node:path')return path;if(name==='node:vm')return vm;if(name==='node:os')return os;if(name==='typescript')return ts;if(name==='node:url')return{pathToFileURL};if(name==='node:crypto')return{createHash};throw Error('OWNED_TEST_IMPORT_REFUSED')}}
+function createRequireForReceipt705(){return (name:string)=>{if(name==='./fixtures/archive-first-failure-782')return{archiveObservationInverse782};if(name==='node:test')return test;if(name==='node:assert/strict')return assert;if(name==='node:fs')return fs;if(name==='node:path')return path;if(name==='node:vm')return vm;if(name==='node:os')return os;if(name==='typescript')return ts;if(name==='node:url')return{pathToFileURL};if(name==='node:crypto')return{createHash};throw Error('OWNED_TEST_IMPORT_REFUSED')}}
+
+
+test('705 receipt importer admits only the exact actual Archive inverse and preserves refusal',()=>{
+ const source=fs.readFileSync(path.resolve('tests/desktop-workspace-xctest-705.test.ts'),'utf8'),ast=ts.createSourceFile('actual.ts',source,ts.ScriptTarget.Latest,true),fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='createRequireForReceipt705');assert.ok(fn)
+ const current=fn.getText(ast),added="if(name==='./fixtures/archive-first-failure-782')return{archiveObservationInverse782};";assert.equal(current.split(added).length,2)
+ const load=(text:string)=>{const scope:any={test,assert,fs,path,vm,os,ts,pathToFileURL,createHash,archiveObservationInverse782};vm.runInNewContext(ts.transpileModule(text+';globalThis.factory=createRequireForReceipt705',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,scope,{timeout:1000});return scope.factory()}
+ const actual=load(current),name='./fixtures/archive-first-failure-782';assert.equal(actual(name).archiveObservationInverse782,archiveObservationInverse782)
+ for(const unknown of[name+'.ts',name+'/foreign','node:child_process','./fixtures/foreign'])assert.throws(()=>actual(unknown),/OWNED_TEST_IMPORT_REFUSED/)
+ assert.throws(()=>load(current.replace(added,''))(name),/OWNED_TEST_IMPORT_REFUSED/,'the actual prior resolver rejects the newly imported exact module')
+})
 
 
 test('705 actual receipt callbacks tolerate absent or empty TMPDIR without mutating the global environment',()=>{
