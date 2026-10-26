@@ -435,12 +435,8 @@ case "${PLATFORM}" in
       exit 1
     fi
     mkdir -p "${STAGING}/host-scripts-win"
-    # Prefer already-staged dist copy when present; else source tree.
-    if ls "${ROOT_DIR}/companion/dist/host-scripts-win/"*.ps1 >/dev/null 2>&1; then
-      cp "${ROOT_DIR}/companion/dist/host-scripts-win/"*.ps1 "${STAGING}/host-scripts-win/"
-    else
-      cp "${WIN_SCRIPTS_SRC}/"*.ps1 "${STAGING}/host-scripts-win/"
-    fi
+    # TypeScript build does not refresh PS1 assets: an old nonempty dist is not authoritative.
+    cp "${WIN_SCRIPTS_SRC}/"*.ps1 "${STAGING}/host-scripts-win/"
     # shellcheck disable=SC2012
     win_ps1_count="$(ls -1 "${STAGING}/host-scripts-win/"*.ps1 2>/dev/null | wc -l | tr -d ' ')"
     if [ "${win_ps1_count}" = "0" ]; then
@@ -448,6 +444,7 @@ case "${PLATFORM}" in
       exit 1
     fi
     echo "  host-scripts-win/: ${win_ps1_count} ps1 scripts"
+    node "${ROOT_DIR}/scripts/verify-windows-host-scripts.mjs" "${WIN_SCRIPTS_SRC}" "${STAGING}/host-scripts-win"
     node "${ROOT_DIR}/companion/scripts/build-computer-uia-no-focus.mjs" --stage "${STAGING}/host-scripts-win"
     # No ORT/tinyclick hard-gate — Qwen3-VL worker staged above for all platforms.
     # Path B: cmspark-whisper (win-x64) + DLLs. Auto-fetch when missing unless AUTO_FETCH=0.
