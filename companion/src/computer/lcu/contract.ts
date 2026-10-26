@@ -26,6 +26,18 @@ export interface LcuObservedStatus {
   nativeVerified: false
 }
 
+/** A dated, finite bridge qualification, not an upstream or per-install attestation. */
+export function lcuOwnedPadQualification(status: LcuObservedStatus | undefined): "macos-arm64-20261026" | undefined {
+  // Evidence and limitations: docs/testing/lcu-owned-pad-20261026.json.
+  // Keep upstream pair/nativeVerified untouched; updates require a new qualification.
+  if (status?.pair === "untested" && status.changedSinceInstall === false &&
+      status.lcuVersion === "0.13.0" && status.platform === "darwin" && status.architecture === "arm64" &&
+      status.appVersion === "26.1016.61520" && status.runtimeVersion === "0.0.33/20261020111233-d92591792fee") {
+    return "macos-arm64-20261026"
+  }
+  return undefined
+}
+
 const record = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v)
 const bounded = (v: unknown, max = 256): v is string =>
@@ -79,7 +91,7 @@ export function lcuEnableRefusal(status: LcuObservedStatus | undefined): string 
   if (status.lcuVersion !== LCU_VERSION) return "LCU_VERSION_UNSUPPORTED"
   if (status.platform !== "darwin" || status.architecture !== "arm64") return "LCU_PLATFORM_APPROVAL_NOT_VERIFIED"
   if (status.changedSinceInstall) return "LCU_RUNTIME_CHANGED"
-  if (status.pair !== "tested") return "LCU_RUNTIME_PAIR_UNVERIFIED"
+  if (status.pair !== "tested" && !lcuOwnedPadQualification(status)) return "LCU_RUNTIME_PAIR_UNVERIFIED"
   return undefined
 }
 

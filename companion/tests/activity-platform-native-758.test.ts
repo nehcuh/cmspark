@@ -24,7 +24,8 @@ function receipt(file:string,child:ChildProcess,signal:AbortSignal,diagnostic:()
       if(allowReady&&fs.existsSync(file))finish(undefined,JSON.parse(fs.readFileSync(file,'utf8')))
     }catch(e){finish(e)}}
     const closed=()=>{check(false);if(!finished)finish(Error('OWNED_ACTIVITY_FIXTURE_CLOSED '+diagnostic()))},aborted=()=>finish(signal.reason)
-    const watch=fs.watch(path.dirname(file),()=>check()),timer=setTimeout(()=>finish(Error('OWNED_ACTIVITY_FIXTURE_NOT_READY '+diagnostic())),10_000)
+    // Watch delivery is advisory: reconcile once at the original deadline.
+    const watch=fs.watch(path.dirname(file),()=>check()),timer=setTimeout(()=>{check();if(!finished)finish(Error('OWNED_ACTIVITY_FIXTURE_NOT_READY '+diagnostic()))},10_000)
     child.once('close',closed);signal.addEventListener('abort',aborted,{once:true});if(signal.aborted)aborted();else check()
   })
 }

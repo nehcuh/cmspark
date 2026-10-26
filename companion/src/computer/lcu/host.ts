@@ -1,6 +1,6 @@
 // #775: the only host edge which may execute an explicitly selected installation.
 import { discoverLcu, lcuCommandIdentity, probeLcu } from "./discovery"
-import { lcuEnableRefusal, lcuEnvironment, validLcuCommand, type LcuObservedStatus } from "./contract"
+import { lcuEnableRefusal, lcuEnvironment, lcuOwnedPadQualification, validLcuCommand, type LcuObservedStatus } from "./contract"
 import { authorizeLcuOperation, type LcuHumanChannel } from "./authorization"
 import { LcuRuntime, type LcuRuntimeConfig } from "./runtime"
 import { OwnedStdioTransport } from "../../mcp/stdio-transport"
@@ -14,6 +14,7 @@ export interface LcuSettingsState {
   detection: "unsupported_platform" | "invalid_command" | "missing_lcu" | "detected_unverified"
   command?: string
   observed?: LcuObservedStatus
+  ownedPadQualification?: "macos-arm64-20261026"
   refusal?: string
   activeRuns: number
   cleanupUnknown: boolean
@@ -60,11 +61,13 @@ export function getLcuRuntime(): LcuRuntime {
 export async function getLcuState(): Promise<LcuSettingsState> {
   const selected = config(), found = await discoverLcu(selected.command)
   const command = found.status === "detected_unverified" ? found.identity.command : selected.command
+  const qualification = cached && cached.command === command ? lcuOwnedPadQualification(cached.observed) : undefined
   return {
     enabled: selected.enabled, coordinateEnabled: selected.coordinateEnabled,
     platform: process.platform, architecture: process.arch, detection: found.status,
     ...(command ? { command } : {}),
     ...(cached && cached.command === command ? { observed: cached.observed, ...(cached.refusal ? { refusal: cached.refusal } : {}) } : {}),
+    ...(qualification ? { ownedPadQualification: qualification } : {}),
     activeRuns: runtime?.state.activeRuns ?? 0, cleanupUnknown: runtime?.state.cleanupUnknown ?? false, nativeVerified: false,
   }
 }
@@ -131,7 +134,8 @@ export async function setLcuEnabledFromSettings(enabled: boolean, channel: LcuHu
     if (refusal) throw new Error(refusal)
     // The approved probe preview is read-only; enabling desktop use is a separate explicit act.
     if (!await authorizeLcuOperation(bound, "computer.lcu.set_enabled",
-      "启用可选 LCU 桌面工具（实验性）。仅当前会话显式选择后提供；每次代码调用仍需人工确认和系统认证。桌面内容可能包含敏感信息，并将发送给当前视觉模型；原生操作尚未经 CMspark 实测。", signal)) throw new Error("LCU_HUMAN_APPROVAL_REQUIRED")
+      "启用可选 LCU 桌面工具（实验性）。仅当前会话显式选择后提供；每次代码调用仍需人工确认和系统认证。桌面内容可能包含敏感信息，并将发送给当前视觉模型。" +
+      (lcuOwnedPadQualification(inspected.observed) ? "此精确版本组合仅完成 CMspark 自有空白窗口的读取、输入、图片返回和停止验收，不代表其它应用或完整模型任务已验证。" : "此组合尚未经 CMspark 桌面实测。"), signal)) throw new Error("LCU_HUMAN_APPROVAL_REQUIRED")
     if (!bound.current() || initial !== JSON.stringify(config())) throw new Error("LCU_OWNER_OR_CONFIG_REVOKED")
     const before = inspected.identity && await lcuCommandIdentity(inspected.identity.command)
     if (!before || JSON.stringify(before) !== JSON.stringify(inspected.identity)) throw new Error("LCU_INSTALLATION_CHANGED")
