@@ -793,8 +793,27 @@ export function enhanceMcpError(
       `Default mode does not auto-expand MCP allow-dirs; three-flag cruise auto-adds allowed dirs. Underlying: ${rawErr}`
     )
   }
+  // Mutually-exclusive argument combos (thread w85kxr: filesystem
+  // read_text_file head+tail). The server's description/schema may not declare
+  // the exclusivity, so this rejection is the only contract lesson — point the
+  // LLM at a single-option re-call instead of leaving a bare server string.
+  if (/cannot specify both|mutually exclusive|cannot be used together/i.test(rawErr)) {
+    return (
+      `${ctx} rejected the argument combination: these options are mutually exclusive. ` +
+      `Re-read the tool schema and call again with only one of the conflicting options. ` +
+      `Underlying error: ${rawErr}`
+    )
+  }
   // Fallback — keep the original but prefix with context so the LLM knows which
   // server/tool produced it (multi-server setups would otherwise be ambiguous).
+  // runOnce already prefixes server errors with `${ctx} returned error: `;
+  // state the context once, but keep the "returned error" wording — it is the
+  // contract dispatch consumers rely on to see that the SERVER rejected the
+  // call (mcp-protocol-reliability).
+  const serverErrorPrefix = `${ctx} returned error: `
+  if (rawErr.startsWith(serverErrorPrefix)) {
+    return `MCP call to ${ctx} failed: server returned error: ${rawErr.slice(serverErrorPrefix.length)}`
+  }
   return `MCP call to ${ctx} failed: ${rawErr}`
 }
 
