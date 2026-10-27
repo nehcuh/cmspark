@@ -16,3 +16,12 @@
 # Owned XCTest source seals must survive Windows checkout byte-for-byte.
 /companion/tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift text eol=lf
 /companion/tests/fixtures/workspace-ui-705/OwnedUIProtocol.swift text eol=lf
+# Observation inverse contracts compare these exact committed source bytes.
+/companion/tests/fixtures/desktop-476/local-acceptance.cpp text eol=lf
+/companion/tests/fixtures/desktop-476/archive-acceptance.cpp text eol=lf
+/companion/tests/fixtures/desktop-476/terminal-acceptance.cpp text eol=lf
+/companion/tests/fixtures/desktop-476/terminal-form.js text eol=lf
+/companion/scripts/desktop-terminal-fixture.mjs text eol=lf
+/companion/tests/fixtures/native-surface-650.ts text eol=lf
+/companion/tests/helpers/workspace-xctest-owned-705.ts text eol=lf
+/companion/tests/desktop-native-thread-metadata-476.test.ts text eol=lf
