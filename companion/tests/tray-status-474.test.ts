@@ -19,3 +19,19 @@ test("tray has no adjacent title and status changes preserve menu action routing
     assert.equal(tray.seqMap[2].type, "restart")
   }
 })
+
+test("Linux starts the packaged tray binary directly instead of using a cache copy", async () => {
+  const tray = new SysTray2Adapter() as any
+  let options: any
+  tray.loadModule = () => class {
+    constructor(config: any) { options = config }
+    async ready() {}
+    onClick() {}
+    onExit() {}
+    onError() {}
+  }
+
+  await tray.start({} as any)
+
+  assert.equal(options.copyDir, process.platform !== "linux")
+})

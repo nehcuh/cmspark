@@ -482,6 +482,11 @@ case "${PLATFORM}" in
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
+    test -f "${STAGING}/node_modules/systray2/traybin/tray_linux_release" || {
+      echo "ERROR: systray2 Linux tray binary missing; package would lack tray support" >&2
+      exit 1
+    }
+    chmod 0755 "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
     if [ "${PLATFORM}" = "linux-arm64" ]; then strip_ort_napi linux arm64; else strip_ort_napi linux x64; fi
     # No ORT/TinyClick stage — experimental locate is Qwen3-VL.
     # cmspark-whisper-linux-x64 is intentionally NOT staged (#379): the

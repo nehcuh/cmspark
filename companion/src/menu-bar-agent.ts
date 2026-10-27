@@ -23,7 +23,8 @@ import {
   RecentThreadItem,
 } from "./tray/tray-adapter"
 import { CompanionClient } from "./tray/companion-client"
-import { readPairingSecret, hasPaired, resolveClipboardCommand } from "./tray/pairing"
+import { readPairingSecret, hasPaired } from "./tray/pairing"
+import { copyTextToClipboard } from "./tray/clipboard"
 import { OSASCRIPT_BIN } from "./process-path"
 import {
   attachChromeOnly,
@@ -454,35 +455,6 @@ async function toggleAutoStart(): Promise<void> {
 
 const PAIRING_TARGET_LABEL = "Chrome 扩展 → 设置 → 连接 →「WS 配对密钥」"
 
-function commandAvailable(cmd: string): boolean {
-  try {
-    const r = child_process.spawnSync("which", [cmd], { stdio: "ignore", timeout: 1500 })
-    return r.status === 0
-  } catch {
-    return false
-  }
-}
-
-/** Copy text to the system clipboard. Returns false if no clipboard tool is available. */
-function copyToClipboard(text: string): boolean {
-  const resolved = resolveClipboardCommand(process.platform, {
-    xclip: commandAvailable("xclip"),
-    xsel: commandAvailable("xsel"),
-  })
-  if (!resolved) return false
-  try {
-    const child = child_process.spawnSync(resolved.cmd, resolved.args, {
-      input: text,
-      stdio: ["pipe", "ignore", "ignore"],
-      timeout: 3000,
-      windowsHide: true,
-    })
-    return child.status === 0
-  } catch {
-    return false
-  }
-}
-
 /** Append a line to tray-debug.log (stdout is often discarded for packaged tray). */
 function trayDebugLog(message: string): void {
   try {
@@ -514,7 +486,7 @@ function showPairingCode(): void {
   // Always copy to clipboard first so the user gets a usable secret even if the
   // native window fails to front on macOS 14+ accessory apps (or stdin is stuck).
   // Notification must NEVER include the secret itself (lock-screen visible).
-  const copied = copyToClipboard(secret)
+  const copied = copyTextToClipboard(secret)
   trayDebugLog(`showPairingCode: clipboardCopied=${copied}`)
 
   if (activeBackend === "swift" && trayInstance) {
@@ -541,7 +513,7 @@ function showPairingCode(): void {
     title: "🔑 CMspark 配对码",
     message: copied
       ? `配对码已复制到剪贴板。请粘贴到 ${PAIRING_TARGET_LABEL} 完成配对。`
-      : "未检测到剪贴板工具（请安装 xclip/xsel），无法自动复制。请通过菜单 →「设置」打开设置页查看配对码。",
+      : "配对码自动复制失败（需要可用的 xclip、xsel 或 wl-copy）。请在终端运行 cmspark-agent settings --ws-secret 获取配对码。",
     timeout: 10,
   })
 }

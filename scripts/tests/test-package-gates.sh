@@ -78,6 +78,10 @@ assert_file_has "${PACKAGE_SH}" 'host-scripts/\*\.scpt missing' \
   "package.sh errors on missing scpt"
 assert_file_has "${PACKAGE_SH}" 'cmspark-tray missing' \
   "package.sh errors on missing cmspark-tray (macos-arm64)"
+assert_file_has "${PACKAGE_SH}" 'ERROR: systray2 Linux tray binary missing' \
+  "package.sh errors on missing Linux systray2 binary"
+assert_file_has "${PACKAGE_SH}" 'chmod 0755 "\$\{STAGING\}/node_modules/systray2/traybin/tray_linux_release"' \
+  "package.sh makes the Linux systray2 binary executable"
 assert_file_lacks "${PACKAGE_SH}" 'WARNING: companion/dist/cmspark-host not built' \
   "package.sh no longer soft-WARNINGs missing host"
 # P2 esbuild SoT: externals live in companion/scripts/esbuild-bundle-args.json;
@@ -849,6 +853,11 @@ else
 fi
 
 echo ""
+if bash "${ROOT}/scripts/tests/linux-deb-package.test.sh"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
 if node --test "${ROOT}/scripts/tests/windows-host-scripts.test.mjs"; then
   PASS=$((PASS + 1))
 else
