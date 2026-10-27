@@ -12,6 +12,7 @@ import { defaultFilesystemServerConfig } from "./mcp/filesystem-home"
 import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
 import { resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
+import { effectiveReasoningEffort, isReasoningEffort } from "./llm/reasoning-effort"
 import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
 
 export const configEvents = new EventEmitter()
@@ -228,6 +229,8 @@ export type LlmClientHeaderProfile = "none" | "claude_code_compat"
 export type ContextCompactionMode = "auto" | "prompt" | "off"
 
 export interface LlmConfig {
+  /** User preference; actual wire support depends on model and endpoint. */
+  reasoning_effort?: import("./llm/reasoning-effort").ReasoningEffort
   base_url: string
   api_key: string
   model_name: string
@@ -461,6 +464,7 @@ const defaultConfig: CompanionConfig = {
     api_key: "",
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
+    reasoning_effort: "medium",
     // Factory default 512k is an Agent working budget; auto-compact triggers later; fill the model's real window.
     context_window: CONTEXT_WINDOW_DEFAULT,
     // Chat output cap — glm-5.x thinking burns a hardcoded 8192 Anthropic cap.
@@ -725,6 +729,14 @@ function loadConfigFile(configPath: string): CompanionConfig {
   // Runtime key injection mutates the loaded config, so no nested defaults may
   // alias the persistent factory template when the on-disk block is missing.
   const merged = deepMerge(structuredClone(defaultConfig), parsed) as CompanionConfig
+  if (!merged.llm || typeof merged.llm !== "object" || Array.isArray(merged.llm)) {
+    console.warn("[cmspark-agent] invalid saved LLM configuration; using defaults")
+    // Resolve environment credentials later, using the current environment.
+    merged.llm = { ...structuredClone(defaultConfig.llm), api_key: "" }
+  } else if (!isReasoningEffort(merged.llm.reasoning_effort)) {
+    console.warn("[cmspark-agent] invalid saved reasoning effort; using medium")
+    merged.llm.reasoning_effort = "medium"
+  }
   // mcp.servers is a named map (same idea as replaceMcpServers): if the key exists on disk,
   // the file is the full map — deepMerge must NOT resurrect default "filesystem" after the
   // user deletes it or clears the map. Product default FS@home only applies when:
@@ -1381,6 +1393,10 @@ function sanitizeDomainPatternsOnLoad(cfg: CompanionConfig): CompanionConfig {
 }
 
 export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
+  if (config.llm && Object.prototype.hasOwnProperty.call(config.llm, "reasoning_effort")) {
+    const { isReasoningEffort } = require("./llm/reasoning-effort") as typeof import("./llm/reasoning-effort")
+    if (!isReasoningEffort(config.llm.reasoning_effort)) throw new Error("INVALID_REASONING_EFFORT")
+  }
   // S-P0-4 (2026-07-24): previously these were advisory warnings. Now we
   // FILTER OUT dangerous patterns at saveConfig time — `*`, `*.com`, `*.cn`,
   // `*.co.uk`, etc. The runtime matchDomain still handles them (for legacy
@@ -1521,19 +1537,18 @@ export interface ModelMigration {
  * past the 2026-07-24 retirement without a hard break, and return what changed so
  * the caller can log it. Idempotent — a no-op once the model is already a V4 id.
  * Only EXACT-match legacy ids are rewritten; custom/other models (and the higher-
- * tier `deepseek-v4-pro`) are left untouched. Only `llm.model_name` is touched —
- * api_key / trusted_domains / everything else is preserved (deepMerge + the spread
- * below). Runs at startup before the model-validity probe (server.ts startServer)
+ * tier `deepseek-v4-pro`) are left untouched. An invalid saved reasoning effort is
+ * normalized to its default so it cannot block migration; other settings are preserved
+ * by deepMerge and the spread below. Runs at startup before the model-validity probe
  * so the probe validates the migrated name.
  */
 export function migrateLegacyModelName(): ModelMigration {
   const cfg = getConfig()
   const target = DEPRECATED_MODEL_MAP[cfg.llm.model_name]
   if (!target) return { migrated: false }
-  // Spread the full llm block (type-safe, no cast) and override only model_name;
-  // saveConfig deep-merges against the latest cached state and re-resolves the api
-  // key (env keys are still masked on disk), so nothing but model_name changes.
-  saveConfig({ llm: { ...cfg.llm, model_name: target } })
+  // Preserve the llm block and normalize an invalid stored effort before saveConfig
+  // validates it. The save path re-resolves and masks environment-sourced keys.
+  saveConfig({ llm: { ...cfg.llm, model_name: target, reasoning_effort: effectiveReasoningEffort(cfg.llm.reasoning_effort) } })
   return { migrated: true, from: cfg.llm.model_name, to: target }
 }
 

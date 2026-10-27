@@ -236,6 +236,7 @@ test("normalizeConfig flattens companion config and keeps masked API keys out of
     // without ever exposing the real key.
     api_key_set: true,
     model_name: "model-x",
+    reasoning_effort: "medium",
     temperature: 0.2,
     context_window: 4096,
     protocol: "openai",

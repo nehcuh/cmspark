@@ -173,7 +173,7 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
     }
     vm.runInNewContext(code, { exports: output, require: loadDependency, window: windowValue, chrome: chromeValue,
       document: { querySelector: () => null }, localStorage: { getItem: () => null, setItem() {} },
-      CustomEvent: CustomEventValue, URLSearchParams, AbortController, TextEncoder, TextDecoder,
+      CustomEvent: CustomEventValue, URL, URLSearchParams, AbortController, TextEncoder, TextDecoder,
       requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout: () => 1, clearTimeout() {}, console,
     }, { timeout: 1000, filename })
     return output
@@ -240,6 +240,27 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
     close() { flushEffects(); for (const entry of slots.values()) for (const effect of entry.effects) effect?.cleanup?.(); listeners.clear(); stateWrites.clear() },
   }
 }
+test("#789 actual settings select defaults to medium and saves the chosen effort", () => {
+  const f = settingsNavigationHarness()
+  try {
+    f.setState({ configHydratedFromCompanion: true })
+    let ui = f.renderSlideout()
+    const select = f.find(ui, n => n.type === "select" && n.props.id === "reasoning-effort")
+    assert.equal(select.props.value, "medium")
+    assert.match(navigationText(ui), /中与高均使用高/)
+    assert.equal(f.rows(select).filter((n: any) => n.type === "option").map((n: any) => n.props.value).join(","), "low,medium,high,xhigh")
+    select.props.onChange({ target: { value: "xhigh" } })
+    assert.equal(f.state().config.reasoning_effort, "xhigh")
+    ui = f.renderSlideout()
+    f.find(ui, n => n.type === "button" && n.props.children === "保存并关闭").props.onClick()
+    const sent = f.messages.filter((m: any) => m.type === "config.set")
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0].config.reasoning_effort, "xhigh")
+    f.setState({ config: { ...f.state().config, base_url: "https://relay.example/v1" } })
+    assert.match(navigationText(f.renderSlideout()), /暂未确认支持/)
+  } finally { f.close() }
+})
+
 const navigationTurn = async () => { for (let index = 0; index < 12; index++) await Promise.resolve() }
 const navigationText = (node: any): string => Array.isArray(node) ? node.map(navigationText).join("") : node && typeof node === "object" ? navigationText(node.props?.children) : String(node ?? "")
 

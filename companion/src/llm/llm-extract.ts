@@ -18,6 +18,7 @@ export interface LlmExtractConfig {
   api_key: string
   model_name: string
   temperature: number
+  reasoning_effort?: import("../config").LlmConfig["reasoning_effort"]
   /** Optional; default openai. When callers pass full getConfig().llm these flow through. */
   protocol?: LlmProtocol
   auth_style?: LlmAuthStyle
@@ -36,6 +37,7 @@ function toLlmConfig(config: LlmExtractConfig): LlmConfig {
     api_key: config.api_key,
     model_name: config.model_name,
     temperature: config.temperature,
+    reasoning_effort: config.reasoning_effort,
     context_window: config.context_window ?? 100_000,
     max_tokens: config.max_tokens,
     protocol: config.protocol ?? "openai",

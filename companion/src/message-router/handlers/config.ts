@@ -3,6 +3,7 @@
 
 import OpenAI from "openai"
 import { getConfig, saveConfig, isMaskedApiKey } from "../../config"
+import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
 import { normalizeVisionBaseUrl } from "../../llm/vision-pipeline"
@@ -65,6 +66,9 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (hasPrototypePollutionKey(cfg)) {
         return { type: "error", error: "Invalid config keys detected" }
       }
+      const hasNestedEffort = cfg.llm != null && Object.prototype.hasOwnProperty.call(cfg.llm, "reasoning_effort")
+      const hasFlatEffort = Object.prototype.hasOwnProperty.call(cfg, "reasoning_effort")
+      if ((hasNestedEffort && !isReasoningEffort(cfg.llm.reasoning_effort)) || (hasFlatEffort && !isReasoningEffort(cfg.reasoning_effort))) return { type: "error", error: "INVALID_REASONING_EFFORT" }
       // Normalize: if caller sends flat LLM fields, nest them under llm
       const normalized: any = {}
       if (cfg.llm) {
@@ -75,6 +79,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         cfg.model_name ||
         cfg.temperature !== undefined ||
         cfg.context_window !== undefined ||
+        cfg.reasoning_effort !== undefined ||
         cfg.context_compaction !== undefined ||
         cfg.protocol !== undefined ||
         cfg.client_header_profile !== undefined ||
@@ -85,6 +90,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         if (cfg.api_key && !isMaskedApiKey(cfg.api_key)) normalized.llm.api_key = cfg.api_key
         if (cfg.model_name) normalized.llm.model_name = cfg.model_name
         if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
+        if (cfg.reasoning_effort !== undefined) normalized.llm.reasoning_effort = cfg.reasoning_effort
         if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
         if (
           cfg.context_compaction === "auto" ||
@@ -432,6 +438,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           model_name: config.llm.model_name,
           temperature: config.llm.temperature,
           context_window: config.llm.context_window,
+          reasoning_effort: isReasoningEffort(config.llm.reasoning_effort) ? config.llm.reasoning_effort : "medium",
           context_compaction: config.llm.context_compaction ?? "auto",
           context_compaction_m2: config.llm.context_compaction_m2 !== false,
           protocol: config.llm.protocol ?? "openai",
@@ -446,11 +453,13 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (hasPrototypePollutionKey(cfg)) {
         return { type: "error", error: "Invalid config keys detected" }
       }
+      if (Object.prototype.hasOwnProperty.call(cfg, "reasoning_effort") && !isReasoningEffort(cfg.reasoning_effort)) return { type: "error", error: "INVALID_REASONING_EFFORT" }
       const normalized: any = { llm: {} }
       if (cfg.api_key && !isMaskedApiKey(cfg.api_key)) normalized.llm.api_key = cfg.api_key
       if (cfg.base_url) normalized.llm.base_url = cfg.base_url
       if (cfg.model_name) normalized.llm.model_name = cfg.model_name
       if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
+      if (cfg.reasoning_effort !== undefined) normalized.llm.reasoning_effort = cfg.reasoning_effort
       if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
       if (
         cfg.context_compaction === "auto" ||
@@ -502,6 +511,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           model_name: updated.llm.model_name,
           temperature: updated.llm.temperature,
           context_window: updated.llm.context_window,
+          reasoning_effort: isReasoningEffort(updated.llm.reasoning_effort) ? updated.llm.reasoning_effort : "medium",
           context_compaction: updated.llm.context_compaction ?? "auto",
           context_compaction_m2: updated.llm.context_compaction_m2 !== false,
         },

@@ -5,6 +5,7 @@
 
 import type { LlmConfig } from "../../config"
 import { logger } from "../../logger"
+import { reasoningSupport, reasoningWireEffort } from "../reasoning-effort"
 import { throwIfLlmEndpointBlocked } from "../../security"
 import type {
   CanonicalStreamEvent,
@@ -85,6 +86,9 @@ export class AnthropicProvider implements LlmProvider {
       maxTokens: streamMax,
     })
 
+    const effort = reasoningWireEffort(reasoningSupport(this.config.protocol, this.config.base_url, model), this.config.reasoning_effort)
+    if (effort) body.output_config = { effort }
+
     const response = await fetch(url, {
       method: "POST",
       headers,
@@ -132,6 +136,9 @@ export class AnthropicProvider implements LlmProvider {
       stream: false,
       maxTokens: completeMax,
     })
+
+    const effort = reasoningWireEffort(reasoningSupport(this.config.protocol, this.config.base_url, model), this.config.reasoning_effort)
+    if (effort) body.output_config = { effort }
 
     const response = await fetch(url, {
       method: "POST",
