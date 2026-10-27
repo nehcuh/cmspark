@@ -7,6 +7,7 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import {createHash} from 'node:crypto'
 const file=path.resolve(__dirname,'../..','tests/fixtures/desktop-476/terminal-acceptance.cpp')
+const restore788=(value:string)=>require(path.join(__dirname,'../..','scripts/tests/observation-788-inverse.mjs')).restoreObservation788(value)
 // Remove only fixed diagnostic call arguments for the unchanged control-flow oracle.
 const source=fs.readFileSync(file,'utf8').replace(/failure\((h|target),[1-9][0-9]?\)/g,'failure($1)')
 function block(text:string,start:number){
@@ -134,6 +135,7 @@ test('actual wrong owned-panel relationship rejects before any Cancel effect',()
 // Execute the actual admission bodies with inert window API returns. This
 // controls schedules; it does not execute Win32, WebView or trusted DOM input.
 function initialForm747(text=fs.readFileSync(file,'utf8')){
+ text=restore788(text)
  const h:any={window:'owned-window',web:{},controller:{},ready:true,generation:'owned-document',epoch:7}
  const effects:string[]=[],r:any={h,owner:null,document:'',epoch:0,failed:false,form_requested:false,form_window:null,form_web:null,GWLP_USERDATA:0,
   IsWindow:()=>true,IsWindowVisible:()=>true,GetWindowLongPtrW:()=>h,GetForegroundWindow:()=> 'foreign-window',
@@ -151,10 +153,11 @@ function initialForm747(text=fs.readFileSync(file,'utf8')){
 function oldInitialCpp747(raw:string){
  const p=path.resolve(__dirname,'../..','tests/desktop-terminal-first-failure-747.test.ts'),text=fs.readFileSync(p,'utf8'),f=ts.createSourceFile(p,text,ts.ScriptTarget.Latest,true)
  const declarations=f.statements.filter((n):n is ts.FunctionDeclaration=>ts.isFunctionDeclaration(n)&&n.name?.text==='activationInverseCpp747');assert.equal(declarations.length,1)
- const context:any={assert};vm.runInNewContext(ts.transpileModule(declarations[0].getText(f)+'\nglobalThis.inverse=activationInverseCpp747',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context,{timeout:1000})
+ const context:any={assert,restore788};vm.runInNewContext(ts.transpileModule(declarations[0].getText(f)+'\nglobalThis.inverse=activationInverseCpp747',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context,{timeout:1000})
  const old=context.inverse(raw.replace(/\r\n/g,'\n'));assert.equal(createHash('sha256').update(old).digest('hex'),'7b04e77bf0bce117dad6bbda6f14acd255d19d6bbfcadc47c9dc471db0a0a098');return old
 }
 function actualInitialRow747(foreground:string,text:string){
+ text=restore788(text)
  const native=context({GetForegroundWindow:()=>foreground}),r=native.realm
  for(const [name,args]of [['input_length','action'],['input_request','h,action'],['key','h,code']])vm.runInContext(name+'=function('+args+'){'+lower(member(name,text))+'}',r,{timeout:1000})
  const posted:any[]=[],document:any={activeElement:null,addEventListener(){}},row={disabled:false,getAttribute:()=> 'native-terminal-A',focus(){document.activeElement=row}}
@@ -163,7 +166,7 @@ function actualInitialRow747(foreground:string,text:string){
  const form=fs.readFileSync(path.resolve(__dirname,'../..','tests/fixtures/desktop-476/terminal-form.js'),'utf8')
  vm.runInNewContext('const documentGeneration="owned-activation-document";'+form,{window,document,TextDecoder,TextEncoder,Uint8Array},{timeout:1000})
  window.cmsparkDesktopReceive({type:'thread.list'});assert.equal(document.activeElement,row)
- assert.deepEqual(posted,[{type:'system.ping',id:'D476_TERMINAL_ROW_KEY',generation:'owned-activation-document'}])
+ assert.deepEqual(posted,['D476_OBS788_T_5','D476_OBS788_T_6','D476_OBS788_T_9','D476_OBS788_T_10','D476_TERMINAL_ROW_KEY'].map(id=>({type:'system.ping',id,generation:'owned-activation-document'})))
  return{...native,accepted:r.key(native.h,13)}
 }
 test('actual initial form joins document and owned activation once; old source installs before foreground',()=>{
@@ -189,7 +192,7 @@ test('actual initial form joins document and owned activation once; old source i
  const root=path.resolve(__dirname,'../..'),builder=require(path.join(root,'scripts/desktop-terminal-fixture.mjs')),read=(p:string)=>fs.readFileSync(path.join(root,p),'utf8')
  const variant=builder.desktopTerminalFixture('cpp',read('src/desktop/native/DesktopHost.cpp'),raw,read('tests/fixtures/desktop-476/terminal-form.js'))
  const marker='if(message==WM_ACTIVATE)',at=variant.source.indexOf(marker);assert.ok(at>=0);assert.equal(variant.source.split(marker).length,2)
- const body=block(variant.source,at).replace('const auto result=','const result=').replace('D705TerminalAcceptance::begin_form(*self)','begin_form(self)')
+ const body=restore788(block(variant.source,at)).replace('const auto result=','const result=').replace('D705TerminalAcceptance::begin_form(*self)','begin_form(self)')
  for(const active of [false,true]){const order:string[]=[],c:any={hwnd:'owned',message:6,w:active?1:0,l:0,self:{},LOWORD:(n:number)=>n,WA_INACTIVE:0,DefWindowProcW:()=>{order.push('default');return 19},begin_form:()=>order.push('begin')};assert.equal(vm.runInNewContext('(function(){'+body+'})()',c,{timeout:1000}),19);assert.deepEqual(order,active?['default','begin']:['default'])}
 })
 test('actual original terminal builder callback executes fully without loading its product imports',()=>{
