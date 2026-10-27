@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 源码开发版本 **0.7.0（尚未正式发布）** · 入口 README：[仓库根 README.md](../README.md)
+> 源码版本 **0.7.0（已于 2026-10-27 正式发布）** · 入口 README：[仓库根 README.md](../README.md)
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
@@ -19,7 +19,7 @@
 | [summoner-user-guide.md](summoner-user-guide.md) | **Capture** | 召唤器 HTML 卡默认 1040×760（紧凑 360×420）、流式、永不审批、请点工具栏 C |
 | [confirm-center-user-guide.md](confirm-center-user-guide.md) | **横切 Trust UI**（L1/L2） | 确认台 / Cockpit、高危审批、CU 操控台 |
 | [mcp.md](mcp.md) | **Composition** | MCP server（Inbound + **Outbound ADR-022**）、Grok `config.toml`、信任级别、Resources/Prompts、排错 |
-| [enterprise-pilot.md](enterprise-pilot.md) | **Composition · 0.7.0 开发中** | 两个企业材料场景的试点配置、来源契约和真实验收要求；尚未发布 |
+| [enterprise-pilot.md](enterprise-pilot.md) | **Composition · 企业里程碑验收中** | 两个企业材料场景的试点配置、来源契约和真实验收要求；0.7.0 已发布不代表双场景验收已通过 |
 | [user-env.md](user-env.md) | **Composition**（密钥） | skill / shell / MCP 子进程 Secrets（如 Datayes） |
 | [mission-pack-usage.md](mission-pack-usage.md) | **Composition**（+ 企业 Channel） | 任务包、模块、workspace/shell/netsec |
 | [computer-use-user-guide.md](computer-use-user-guide.md) | **Surface L2** | 坐标桌面、急停、session-trust、平台限制 |
@@ -46,9 +46,9 @@
 | 文档 | 说明 |
 |------|------|
 | [architecture.md](architecture.md) | 活架构：双层拓扑 + 桌面面、MCP/CU/Host/编排/Board/Packs |
-| [enterprise-architecture.md](enterprise-architecture.md) | 企业上下文、证据/核对、Mission 和可选 MCP 的职责边界；[发布验收台账](audit/0.7.0-20260907/release-acceptance.md) |
+| [enterprise-architecture.md](enterprise-architecture.md) | 企业上下文、证据/核对、Mission 和可选 MCP 的职责边界；[历史发布验收台账](audit/0.7.0-20260907/release-acceptance.md) |
 | **[ADR-020 能力三轴](adr/020-capability-model-three-axes.md)** | **Surface · Composition · Autonomy** 本体（能力叠加与防「杂」纪律） |
-| [GOAL.md](GOAL.md) | 项目目标与阶段（与 **0.6.8** 对齐；扩展目标带轴标注） |
+| [GOAL.md](GOAL.md) | 项目目标与阶段（当前版本见包清单；扩展目标带轴标注） |
 | [../PRODUCT.md](../PRODUCT.md) | 产品一句话 / 四面（Capture·Operate·Confirm·租手）；家 = 已登录 Chrome + 硬闸 |
 | [2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md) | **形态深化 SoT**（定位、文案合同、L8、五分钟租手、切片 DoD） |
 | [2026-08-27-post-227-status.md](superpowers/specs/2026-08-27-post-227-status.md) | **SNAPSHOT** 0.5.3 / #227（T1 已记分；**不是**活状态） |
@@ -174,5 +174,5 @@
 ## 维护提示
 
 - 新功能 PR：更新根 README 能力矩阵一行 + 本导航表（若新增用户文档）+ 必要时 ADR + [CONTRIBUTING 文档 checklist](../CONTRIBUTING.md#文档-checklist功能-pr-合并前)。  
-- 事实以 **0.6.8 代码**（`companion`/`chrome-extension` `package.json`）与 live ADR 为准；过程稿冲突时以 ADR / architecture / 用户指南为准。  
+- 事实以当前代码（`companion`/`chrome-extension` `package.json`）与 live ADR 为准；过程稿冲突时以 ADR / architecture / 用户指南为准。
 - 详细 DoD 与分阶段： [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)。
