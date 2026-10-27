@@ -135,7 +135,7 @@ before(async () => {
       api_key: "sk-test",
       model_name: VISION_MODEL,
     },
-  } as any)
+  } as any, { llmKey: true, visionKey: true })
 
   // Patch OpenAI completions.create to avoid real network calls. The same
   // prototype serves the main provider (stream:true), analyzeImage (vision

@@ -76,6 +76,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         if (isMaskedApiKey(normalized.llm.api_key)) delete normalized.llm.api_key
       } else if (
         cfg.base_url ||
+        cfg.api_key ||
         cfg.model_name ||
         cfg.temperature !== undefined ||
         cfg.context_window !== undefined ||
@@ -205,9 +206,9 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (cfg.vision) {
         normalized.vision = { ...cfg.vision }
         if (isMaskedApiKey(normalized.vision.api_key)) delete normalized.vision.api_key
-      } else if (cfg.vision_enabled !== undefined || cfg.vision_base_url || cfg.vision_model_name) {
-        const current = getConfig()
-        normalized.vision = { ...(current.vision || {}) }
+      } else if (cfg.vision_enabled !== undefined || cfg.vision_base_url || cfg.vision_model_name || cfg.vision_api_key) {
+        // Submit only explicit fields: current vision credentials may be inherited.
+        normalized.vision = {}
         if (cfg.vision_enabled !== undefined) normalized.vision.enabled = !!cfg.vision_enabled
         if (cfg.vision_api_key && !isMaskedApiKey(cfg.vision_api_key)) normalized.vision.api_key = cfg.vision_api_key
         if (cfg.vision_base_url) normalized.vision.base_url = cfg.vision_base_url
@@ -308,7 +309,10 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (normalized.llm) {
         delete normalized.llm.native_vision_detected
       }
-      const updated = saveConfig(normalized)
+      const updated = saveConfig(normalized, {
+        llmKey: Object.prototype.hasOwnProperty.call(normalized.llm ?? {}, "api_key"),
+        visionKey: Object.prototype.hasOwnProperty.call(normalized.vision ?? {}, "api_key"),
+      })
       if (armingFlags.length > 0) {
         logger.warn("security.flag_armed", {
           flags: armingFlags,
@@ -502,7 +506,9 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         }
       }
 
-      const updated = saveConfig(normalized)
+      const updated = saveConfig(normalized, {
+        llmKey: Object.prototype.hasOwnProperty.call(normalized.llm ?? {}, "api_key"),
+      })
       return {
         type: "settings.saved",
         settings: {

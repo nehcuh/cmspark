@@ -25,7 +25,8 @@ function evaluate(code: string, globals: Record<string, unknown> = {}) {
 function configFixture() {
   const types = evaluate(source("acp/types.ts")), writes: any[] = [], events: any[] = []
   let current: any = { llm: {}, acp: types.sanitizeAcpConfig({ enabled: true, servers: { A: { enabled: true, command: "INERT" } } }) }
-  const save = evaluate(`let cachedConfig, cachedConfigMtimeMs;\n${functions("config.ts", ["saveConfig", "deepMerge", "stripCompanionUiProcessContinueDeny"])}`, {
+  const save = evaluate(`let cachedConfig, cachedConfigMtimeMs, storedLlmKey = "", storedVisionKey = "", visionUsesLlm = false;\n${functions("config.ts", ["saveConfig", "saveConfigSnapshot", "deepMerge", "stripCompanionUiProcessContinueDeny"])}`, {
+    structuredClone, isMaskedApiKey: () => false,
     getConfig: () => current, PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), require: (n: string) => { assert.equal(n, "./acp/types"); return types },
     getEnvApiKey: () => undefined, resolveApiKey: () => undefined, path, getConfigDir: () => "/inert/config", console: { warn() {} },
     atomicWriteJSON: (p: string, value: any) => { assert.equal(p, path.join("/inert/config", "config.json")); writes.push(value) }, configFileMtimeMs: () => 1,

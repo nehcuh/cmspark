@@ -156,7 +156,7 @@ before(async () => {
       api_key: "sk-test",
       model_name: VISION_MODEL,
     },
-  } as any)
+  } as any, { llmKey: true, visionKey: true })
 
   const cjsRequire = createRequire(__filename)
   const openaiMod = cjsRequire("openai")

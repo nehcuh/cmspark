@@ -154,24 +154,24 @@ describe("saveConfig API key priority", { concurrency: 1 }, () => {
         allow_all_schemes: false,
         companion_ui_exe_basenames: [],
       },
-    })
+    }, { llmKey: true })
   })
 
   test("persists user-provided key to disk when no env var is set", () => {
-    saveConfig({ llm: { api_key: "sk-user-provided" } as any })
+    saveConfig({ llm: { api_key: "sk-user-provided" } as any }, { llmKey: true })
 
     assert.equal(getConfig().llm.api_key, "sk-user-provided")
     assert.equal(readSavedConfig().llm.api_key, "sk-user-provided")
   })
 
   test("masked key does not overwrite existing user key", () => {
-    saveConfig({ llm: { api_key: "sk-****xyz" } as any })
+    saveConfig({ llm: { api_key: "sk-****xyz" } as any }, { llmKey: true })
 
     assert.equal(getConfig().llm.api_key, "sk-user-provided")
   })
 
   test("new user-provided key takes priority over current user key", () => {
-    saveConfig({ llm: { api_key: "sk-new-key" } as any })
+    saveConfig({ llm: { api_key: "sk-new-key" } as any }, { llmKey: true })
 
     assert.equal(getConfig().llm.api_key, "sk-new-key")
     assert.equal(readSavedConfig().llm.api_key, "sk-new-key")
@@ -204,7 +204,7 @@ describe("saveConfig with DEEPSEEK_API_KEY env var", { concurrency: 1 }, () => {
         allow_all_schemes: false,
         companion_ui_exe_basenames: [],
       },
-    })
+    }, { llmKey: true })
   })
 
   after(() => {
@@ -220,7 +220,7 @@ describe("saveConfig with DEEPSEEK_API_KEY env var", { concurrency: 1 }, () => {
   })
 
   test("user-provided key different from env var is persisted", () => {
-    saveConfig({ llm: { api_key: "sk-user-different" } as any })
+    saveConfig({ llm: { api_key: "sk-user-different" } as any }, { llmKey: true })
 
     assert.equal(getConfig().llm.api_key, "sk-user-different")
     assert.equal(readSavedConfig().llm.api_key, "sk-user-different")
@@ -232,7 +232,7 @@ describe("saveConfig with DEEPSEEK_API_KEY env var", { concurrency: 1 }, () => {
   })
 
   test("masked caller key keeps current user-provided key when env var is set", () => {
-    saveConfig({ llm: { api_key: "sk-****xyz" } as any })
+    saveConfig({ llm: { api_key: "sk-****xyz" } as any }, { llmKey: true })
 
     assert.equal(getConfig().llm.api_key, "sk-user-different")
     assert.equal(readSavedConfig().llm.api_key, "sk-user-different")
@@ -273,18 +273,18 @@ describe("saveConfig vision API key", { concurrency: 1 }, () => {
         allow_all_schemes: false,
         companion_ui_exe_basenames: [],
       },
-    })
+    }, { llmKey: true, visionKey: true })
   })
 
   test("persists user-provided vision key", () => {
-    saveConfig({ vision: { api_key: "vision-user-key" } as any })
+    saveConfig({ vision: { api_key: "vision-user-key" } as any }, { visionKey: true })
 
     assert.equal(getConfig().vision?.api_key, "vision-user-key")
     assert.equal(readSavedConfig().vision.api_key, "vision-user-key")
   })
 
   test("masked vision key does not overwrite current vision key", () => {
-    saveConfig({ vision: { api_key: "vis-****xyz" } as any })
+    saveConfig({ vision: { api_key: "vis-****xyz" } as any }, { visionKey: true })
 
     assert.equal(getConfig().vision?.api_key, "vision-user-key")
     assert.equal(readSavedConfig().vision.api_key, "vision-user-key")
@@ -475,7 +475,7 @@ describe("migrateLegacyModelName (DeepSeek 2026-07-24 deprecation)", { concurren
     saveConfig({
       llm: { api_key: "sk-secret", model_name: "deepseek-chat" } as any,
       trusted_domains: ["a.example.com"],
-    })
+    }, { llmKey: true })
     migrateLegacyModelName()
     const cfg = getConfig()
     assert.equal(cfg.llm.model_name, "deepseek-v4-flash")
@@ -538,7 +538,7 @@ describe("saveConfig prototype-pollution defense", { concurrency: 1 }, () => {
 
   test("string value 'prototype' is preserved as a normal value (not a pollution key)", () => {
     // Regression: the previous value-string check rejected harmless string values.
-    saveConfig({ llm: { api_key: "prototype" } as any })
+    saveConfig({ llm: { api_key: "prototype" } as any }, { llmKey: true })
     assert.equal(getConfig().llm.api_key, "prototype")
   })
 })
@@ -793,7 +793,7 @@ describe("saveConfig vision key inherit when endpoints match main LLM", { concur
         fallback: "metadata",
         cache_ttl_seconds: 300,
       },
-    })
+    }, { llmKey: true, visionKey: true })
   })
 
   test("inherits llm.api_key when vision url+model match and vision key is placeholder", () => {
@@ -804,7 +804,7 @@ describe("saveConfig vision key inherit when endpoints match main LLM", { concur
         model_name: "gpt-4o",
         api_key: "ollama",
       } as any,
-    })
+    }, { visionKey: true })
     assert.equal(getConfig().vision?.api_key, "sk-main-real")
   })
 
@@ -816,7 +816,7 @@ describe("saveConfig vision key inherit when endpoints match main LLM", { concur
         model_name: "gpt-4o",
         api_key: "sk-vision-dedicated",
       } as any,
-    })
+    }, { visionKey: true })
     assert.equal(getConfig().vision?.api_key, "sk-vision-dedicated")
   })
 })
@@ -906,7 +906,7 @@ describe("saveConfig vision inherit does not persist env-sourced keys", { concur
         fallback: "metadata",
         cache_ttl_seconds: 300,
       },
-    })
+    }, { llmKey: true, visionKey: true })
   })
 
   after(() => {
@@ -922,7 +922,7 @@ describe("saveConfig vision inherit does not persist env-sourced keys", { concur
         model_name: "gpt-4o",
         api_key: "ollama",
       } as any,
-    })
+    }, { visionKey: true })
     // In-memory runtime may use the env-sourced key after inherit
     assert.equal(getConfig().vision?.api_key, "sk-env-vision-inherit")
     // Disk must not store the environment secret under vision either
