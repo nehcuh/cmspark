@@ -13,6 +13,7 @@ const NSIS_MAX_RECORD_BYTES = Math.max(...['section-enter', ...MACRO_PHASES, 'ma
 const PREFIX = '# CMSPARK_NSIS_OBSERVE_V1_';
 const MACRO_PREFIX = '; CMSPARK_NSIS_MACRO_OBSERVE_V1_';
 const PHASES = ['section-enter', 'plugin-dir-ready', 'script-extracted', 'exec-enter', 'helper-enter', 'cim-enter', 'first-row', 'pipeline-return', 'helper-end', 'exec-return', 'macro-return'];
+const POINTS = ['row-filter-enter', 'row-owned-enter', 'row-command-enter', 'stop-enter', 'stop-return'];
 const originalPath = fileURLToPath(new URL('../../companion/stop-installed-agent.ps1', import.meta.url));
 const originalInstallerPath = fileURLToPath(new URL('../installer.nsi', import.meta.url));
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
@@ -41,6 +42,8 @@ function once(text, needle, replacement) {
 const prelude = `$script:cmsparkSmokeObservationGap = $false
 $script:cmsparkSmokeObservationFirst = $false
 $script:cmsparkSmokeObservationAttempts = [long]0
+$script:cmsparkSmokeObservationRows = [long]0
+$script:cmsparkSmokeObservationPoints = @{}
 function Write-CMsparkSmokeObservation([string]$record) {
     try {
         $bytes = [Text.Encoding]::ASCII.GetBytes($record + "\r\n")
@@ -53,6 +56,12 @@ function Write-CMsparkSmokeObservation([string]$record) {
         } finally { if ($null -ne $stream) { $stream.Dispose() } }
     } catch { $script:cmsparkSmokeObservationGap = $true }
 }
+function Write-CMsparkSmokePoint([string]$point) {
+    if (-not $script:cmsparkSmokeObservationPoints.ContainsKey($point)) {
+        $script:cmsparkSmokeObservationPoints[$point] = $true
+        Write-CMsparkSmokeObservation ('point:' + $point)
+    }
+}
 Write-CMsparkSmokeObservation 'phase:helper-enter'`;
 
 export function buildObservedHelper(bytes) {
@@ -61,11 +70,18 @@ export function buildObservedHelper(bytes) {
   const original=bytes.subarray(hasBOM?3:0).toString('utf8');
   if (!Buffer.from(original,'utf8').equals(bytes.subarray(hasBOM?3:0)) || original.includes(PREFIX) || original.includes('cmsparkSmokeObservation')) fail();
   let out=once(original,"$ErrorActionPreference = 'Stop'", "$ErrorActionPreference = 'Stop'"+block('prelude',prelude));
-  out=once(out,'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\' OR Name = \'cmspark-agent.exe\'" | ForEach-Object {', block('before-cim',"Write-CMsparkSmokeObservation 'phase:cim-enter'")+'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\' OR Name = \'cmspark-agent.exe\'" | ForEach-Object {'+block('first-row',`    if (-not $script:cmsparkSmokeObservationFirst) {
+  out=once(out,'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\' OR Name = \'cmspark-agent.exe\'" | ForEach-Object {', block('before-cim',"Write-CMsparkSmokeObservation 'phase:cim-enter'")+'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\' OR Name = \'cmspark-agent.exe\'" | ForEach-Object {'+block('first-row',`    $script:cmsparkSmokeObservationRows++
+    if (-not $script:cmsparkSmokeObservationFirst) {
         $script:cmsparkSmokeObservationFirst = $true
         Write-CMsparkSmokeObservation 'phase:first-row'
     }`));
-  out=once(out,'Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue',block('stop-attempt','    $script:cmsparkSmokeObservationAttempts++')+'Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue');
+  for (const [name,needle] of [
+    ['row-filter-enter', "    if (($_.Name -ne 'node.exe'"],
+    ['row-owned-enter', '    $owned = $_.ExecutablePath.StartsWith('],
+    ['row-command-enter', "    if (-not $owned -and $_.Name -eq 'node.exe'"],
+  ]) out=once(out,needle,block(name,`    if ($script:cmsparkSmokeObservationRows -eq 1) { Write-CMsparkSmokePoint '${name}' }`)+needle);
+  const stop='Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue';
+  out=once(out,stop,block('stop-attempt',"    $script:cmsparkSmokeObservationAttempts++\n    Write-CMsparkSmokePoint 'stop-enter'")+stop+block('stop-return',"    Write-CMsparkSmokePoint 'stop-return'"));
   out+=block('after-pipeline',`Write-CMsparkSmokeObservation 'phase:pipeline-return'
 Write-CMsparkSmokeObservation ('attempts:' + $script:cmsparkSmokeObservationAttempts.ToString([Globalization.CultureInfo]::InvariantCulture))
 Write-CMsparkSmokeObservation 'phase:helper-end'
@@ -79,7 +95,7 @@ if ($script:cmsparkSmokeObservationGap) { exit 149 }`);
 export function restoreOriginalHelper(bytes) {
   let text=bytes.toString('utf8');
   if (!text.startsWith('\ufeff')) fail(); text=text.slice(1);
-  const names=['original-bom','prelude','before-cim','first-row','stop-attempt','after-pipeline'];
+  const names=['original-bom','prelude','before-cim','first-row','row-filter-enter','row-owned-enter','row-command-enter','stop-attempt','stop-return','after-pipeline'];
   let originalBOM=false;
   for (const name of names) {
     const begin=`\n${PREFIX}BEGIN:${name}\n`,end=`\n${PREFIX}END:${name}\n`;
@@ -225,7 +241,7 @@ export function collectObservation(input, expected) {
   if (!equalIdentity(identity(ordinary(root,true)),expected.rootIdentity)||!equalIdentity(identity(ordinary(inside,true)),expected.insideIdentity))fail();
   const text=data.toString('ascii');if(!Buffer.from(text,'ascii').equals(data)||text&& !text.endsWith('\n'))fail();
   const lines=text?text.replace(/\r\n/g,'\n').slice(0,-1).split('\n'):[];
-  const phases=[];let attempts=null,gap=false;
+  const phases=[],points=[];let attempts=null,gap=false;
   for(const line of lines){
     if(line.startsWith('phase:')){
       const value=line.slice(6);
@@ -235,6 +251,11 @@ export function collectObservation(input, expected) {
       if(value!=='nsis-failed'&&PHASES.indexOf(value)<=PHASES.indexOf(phases.at(-1)))fail();
       phases.push(value);
     }
+    else if(line.startsWith('point:')) {
+      const value=line.slice(6);
+      if(!POINTS.includes(value)||points.includes(value)||!phases.includes('first-row')||phases.includes('pipeline-return'))fail();
+      points.push(value);
+    }
     else if(/^attempts:(?:0|[1-9][0-9]{0,9})$/.test(line)&&attempts===null){
       if(JSON.stringify(phases)!==JSON.stringify(PHASES.slice(0,PHASES.indexOf('pipeline-return')+1)))fail();
       attempts=Number(line.slice(9));if(attempts>2147483647)fail();
@@ -243,7 +264,7 @@ export function collectObservation(input, expected) {
   }
   const complete=JSON.stringify(phases)===JSON.stringify(PHASES)&&attempts!==null;
   gap=!complete;
-  return {schema:1,kind:KIND,complete,capture:complete?'complete':'incomplete',gap,phases,stopAttempts:attempts,recordBytes:data.length,identityVerified:true,helperInverseExact:true,stopOrSiblingAcceptanceProvided:false};
+  return {schema:1,kind:KIND,complete,capture:complete?'complete':'incomplete',gap,phases,points,stopAttempts:attempts,recordBytes:data.length,identityVerified:true,helperInverseExact:true,stopOrSiblingAcceptanceProvided:false};
 }
 let main=false;
 try{main=!!process.argv[1]&&fs.realpathSync(process.argv[1])===fs.realpathSync(fileURLToPath(import.meta.url));}catch{}
@@ -252,5 +273,5 @@ if(main){
     if(process.argv[2]==='prepare'&&process.argv.length===4)process.stdout.write(JSON.stringify(createObservation(process.argv[3]))+'\n');
     else if(process.argv[2]==='collect'&&process.argv.length===5&&process.argv[4].length<=16384){const value=JSON.parse(Buffer.from(process.argv[4],'base64').toString('utf8'));process.stdout.write(JSON.stringify(collectObservation(process.argv[3],value))+'\n');}
     else fail();
-  }catch{process.stdout.write(JSON.stringify({schema:1,kind:KIND,complete:false,capture:'incomplete',gap:true,phases:[],stopAttempts:null,identityVerified:false,helperInverseExact:false,stopOrSiblingAcceptanceProvided:false})+'\n');process.exitCode=1;}
+  }catch{process.stdout.write(JSON.stringify({schema:1,kind:KIND,complete:false,capture:'incomplete',gap:true,phases:[],points:[],stopAttempts:null,identityVerified:false,helperInverseExact:false,stopOrSiblingAcceptanceProvided:false})+'\n');process.exitCode=1;}
 }
