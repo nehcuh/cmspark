@@ -1,3 +1,4 @@
+import {joinDiagnostic788} from './tests/native-join-observation-788.mjs'
 // #650: observation only. Original events reach Node's builtin TAP unchanged.
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -309,6 +310,8 @@ export function project(event, seq, root) {
   if (typeof d.success === 'boolean') record.success = d.success
   if (d.counts) record.counts = Object.fromEntries(['cancelled', 'failed', 'passed', 'skipped', 'suites', 'tests', 'todo', 'topLevel'].map(k => [k, numeric(d.counts[k])]))
   if (event.type === 'test:diagnostic' && file === terminalDiagnosticFile) {
+    const join788 = joinDiagnostic788(d.message)
+    if (join788) record.native_join788 = join788
     const finite = terminalDiagnostic(d.message)
     if (finite) record.terminal_phase = finite
     const confirmation = confirmationDiagnostic(d.message)

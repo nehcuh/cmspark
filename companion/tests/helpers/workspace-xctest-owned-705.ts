@@ -307,7 +307,12 @@ export class OwnedWorkspaceUI705 {
   try{result705AfterActualClose(this.scene,this.resultSourceRoot,emit)}catch{try{emit(result705Unknown('INVALID_RESULT'))}catch{}}
  }
  canSettle(){if(!this.begun)return true;return !this.invalid&&this.observerCode===0&&this.scene.closure(this.observerClosed,this.xcodeClosed)}
- async complete(){await this.wait(()=>this.canSettle()||this.invalid||(this.xcodeClosed&&this.xcodeCode!==0)||(this.observerClosed&&this.observerCode!==0));if(!this.canSettle()||this.xcodeCode!==0)throw refused()}
+/*OBS788_JOIN_BEGIN*/
+ completeRejection788(){
+  const exit=(closed:boolean,code:number|null)=>!closed?'NOT_CLOSED':code===0?'ZERO':typeof code==='number'&&Number.isInteger(code)?'NONZERO':'UNKNOWN'
+  return{schema:1,aborted:this.signal.aborted,invalid:this.invalid,observerClosed:this.observerClosed,xcodeClosed:this.xcodeClosed,observerExit:exit(this.observerClosed,this.observerCode),xcodeExit:exit(this.xcodeClosed,this.xcodeCode)}
+ }
+/*OBS788_JOIN_END*/ async complete(){await this.wait(()=>this.canSettle()||this.invalid||(this.xcodeClosed&&this.xcodeCode!==0)||(this.observerClosed&&this.observerCode!==0));if(!this.canSettle()||this.xcodeCode!==0)throw refused()}
  private wait(done:()=>boolean){return new Promise<void>((resolve,reject)=>{const finish=()=>{this.changed.delete(check);this.signal.removeEventListener('abort',abort)},abort=()=>{finish();reject(refused())},check=()=>{try{if(done()){finish();resolve()}else if(this.signal.aborted)abort()}catch{abort()}};this.changed.add(check);this.signal.addEventListener('abort',abort,{once:true});check()})}
  async cleanup(){if(!this.begun){this.watcher.close();return};this.cancel();try{await this.wait(()=>this.canSettle()||(this.observerClosed&&this.observerCode!==0));if(!this.canSettle())throw refused();this.watcher.close()}catch{this.watcher.unref();this.xcode?.unref();this.observer?.unref();throw refused()}}
 }

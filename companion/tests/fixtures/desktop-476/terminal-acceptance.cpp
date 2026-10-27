@@ -7,7 +7,10 @@ struct D705TerminalAcceptance {
  static wchar_t first_origin;static unsigned first_site;static void note(Desktop*,wchar_t,unsigned) noexcept;
  static void document_ready(Desktop&);static void renderer(Desktop&,JsonObject const&);static void confirmation(Desktop&);
  static bool form_requested;static HWND form_window;static ComPtr<ICoreWebView2> form_web;
- static void begin_form(Desktop&);
+ static void begin_form(Desktop&);/*OBS788_JOIN_BEGIN*/
+ static unsigned join_document788,join_active788,join_first788,join_last788,join_sent788;static std::wstring join_previous788;
+ static void markJoin788(Desktop&,unsigned) noexcept;static void join788(Desktop&,unsigned,unsigned) noexcept;
+/*OBS788_JOIN_END*/
  static bool key(Desktop&,WORD);static void type_command(Desktop&);static void resize(Desktop&);
  static bool input_active,input_done_emitted;static unsigned input_action,input_pending;static size_t input_cursor;static ComPtr<ICoreWebView2> input_web;
  static std::wstring const& command();static size_t input_length(unsigned);static JsonObject input_payload(unsigned,size_t);
@@ -48,14 +51,14 @@ void D705TerminalAcceptance::emit(Desktop& h,wchar_t const* id){JsonObject frame
 void D705TerminalAcceptance::failure(Desktop& h,unsigned site){if(failed)return;failed=true;input_active=false;input_pending=0;input_web.Reset();note(&h,L'W',site);emit(h,L"D476_TERMINAL_FAIL");}
 void D705TerminalAcceptance::document_ready(Desktop& h){
  if(owner||!h.ready||h.generation.empty()||!h.web){failure(h,1);return;}owner=&h;document=h.generation;epoch=h.epoch;
- form_window=h.window;form_web=h.web;/*OBS788_BEGIN*/try{observe788(h,1);}catch(...){}/*OBS788_END*/begin_form(h);
+ form_window=h.window;form_web=h.web;/*OBS788_JOIN_BEGIN*/try{markJoin788(h,1);}catch(...){}/*OBS788_JOIN_END*//*OBS788_BEGIN*/try{observe788(h,1);}catch(...){}/*OBS788_END*/begin_form(h);
 }
 void D705TerminalAcceptance::begin_form(Desktop& h){
  // Join only the first owned document and actual native activation. Never acquire focus.
- if(!owner||owner!=&h||form_requested||failed)return;
- if(!form_window||!IsWindow(form_window)||GetWindowLongPtrW(form_window,GWLP_USERDATA)!=(LONG_PTR)owner||h.window!=form_window||!h.ready||h.generation!=document||h.epoch!=epoch||!h.web||h.web.Get()!=form_web.Get()||!h.controller){failure(h);return;}
- /*OBS788_BEGIN*/bool visible788=false;HWND foreground788=nullptr;/*OBS788_END*/if(!/*OBS788_BEGIN*/(visible788=/*OBS788_END*/IsWindowVisible(form_window)/*OBS788_BEGIN*/)/*OBS788_END*/||/*OBS788_BEGIN*/(foreground788=/*OBS788_END*/GetForegroundWindow()/*OBS788_BEGIN*/)/*OBS788_END*/!=form_window)/*OBS788_BEGIN*/{try{observe788(h,visible788?6u+relation788(h,foreground788):5u);}catch(...){}/*OBS788_END*/return;/*OBS788_BEGIN*/}/*OBS788_END*/
- form_requested=true;
+ if(!owner||owner!=&h||form_requested||failed)/*OBS788_JOIN_BEGIN*/{try{join788(h,0,0);}catch(...){}/*OBS788_JOIN_END*/return;/*OBS788_JOIN_BEGIN*/}/*OBS788_JOIN_END*/
+ if(!form_window||!IsWindow(form_window)||GetWindowLongPtrW(form_window,GWLP_USERDATA)!=(LONG_PTR)owner||h.window!=form_window||!h.ready||h.generation!=document||h.epoch!=epoch||!h.web||h.web.Get()!=form_web.Get()||!h.controller){/*OBS788_JOIN_BEGIN*/try{join788(h,2,0);}catch(...){}/*OBS788_JOIN_END*/failure(h);return;}
+ /*OBS788_BEGIN*/bool visible788=false;HWND foreground788=nullptr;/*OBS788_END*/if(!/*OBS788_BEGIN*/(visible788=/*OBS788_END*/IsWindowVisible(form_window)/*OBS788_BEGIN*/)/*OBS788_END*/||/*OBS788_BEGIN*/(foreground788=/*OBS788_END*/GetForegroundWindow()/*OBS788_BEGIN*/)/*OBS788_END*/!=form_window)/*OBS788_BEGIN*/{try{observe788(h,visible788?6u+relation788(h,foreground788):5u);/*OBS788_JOIN_BEGIN*/join788(h,1,visible788?(foreground788?3u:1u):4u);/*OBS788_JOIN_END*/}catch(...){}/*OBS788_END*/return;/*OBS788_BEGIN*/}/*OBS788_END*/
+ /*OBS788_JOIN_BEGIN*/try{join788(h,1,2);}catch(...){}/*OBS788_JOIN_END*/form_requested=true;
  std::wstring code=L"const documentGeneration="+std::wstring(JsonValue::CreateStringValue(document).Stringify())+L";"+D705_TERMINAL_FORM_SOURCE+L";true";
  auto result=h.web->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT status,LPCWSTR scriptResult)->HRESULT{if(FAILED(status)||!current(h)||!scriptResult||std::wstring(scriptResult)!=L"true")failure(h,2);/*OBS788_BEGIN*/else try{observe788(h,4);}catch(...){}/*OBS788_END*/return S_OK;}).Get());if(FAILED(result))failure(h,3);/*OBS788_BEGIN*/else try{observe788(h,3);}catch(...){}/*OBS788_END*/
 }
@@ -173,4 +176,17 @@ void D705TerminalAcceptance::observe788(Desktop& h,unsigned code) noexcept {
  if(code<1||code>16||(seen788&(1u<<(code-1))))return;seen788|=1u<<(code-1);
  try{static wchar_t const* names[]={L"D476_OBS788_T_1",L"D476_OBS788_T_2",L"D476_OBS788_T_3",L"D476_OBS788_T_4",L"D476_OBS788_SKIP_V",L"D476_OBS788_SKIP_0",L"D476_OBS788_SKIP_1",L"D476_OBS788_SKIP_2",L"D476_OBS788_SKIP_3",L"D476_OBS788_SKIP_4",L"D476_OBS788_SKIP_5"};if(code<=11)emit(h,names[code-1]);}catch(...){} // A diagnostic fault cannot replace the original action/refusal.
 }
-/*OBS788_END*/
+/*OBS788_END*//*OBS788_JOIN_BEGIN*/
+unsigned D705TerminalAcceptance::join_document788=0,D705TerminalAcceptance::join_active788=0,D705TerminalAcceptance::join_first788=0,D705TerminalAcceptance::join_last788=0,D705TerminalAcceptance::join_sent788=0;
+std::wstring D705TerminalAcceptance::join_previous788;
+void D705TerminalAcceptance::markJoin788(Desktop& h,unsigned source) noexcept {
+ if(source!=1&&source!=2)return;
+ if(!join_first788)join_first788=source;join_last788=source;
+ if(source==1){if(join_document788<3)++join_document788;}else if(join_active788<3)++join_active788;
+}
+void D705TerminalAcceptance::join788(Desktop& h,unsigned owned,unsigned foreground) noexcept {
+ if(!join_first788||!join_last788||join_sent788>=8)return;
+ try{const std::wstring id=L"D476_OBS788_JOIN_"+std::to_wstring(join_document788)+std::to_wstring(join_active788)+std::to_wstring(join_first788)+std::to_wstring(join_last788)+std::to_wstring(owned)+std::to_wstring(foreground);
+ if(id==join_previous788)return;join_previous788=id;++join_sent788;emit(h,id.c_str());}catch(...){}
+}
+/*OBS788_JOIN_END*/

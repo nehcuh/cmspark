@@ -216,7 +216,7 @@ if(typeof f.id==='string'&&f.id.startsWith('D476_WS_DIAG_')){try{const d=parseNa
    const native=path.resolve(__dirname,'../../dist/desktop-native');if(process.platform==='darwin'){const {OwnedWorkspaceUI705}=await import('./helpers/workspace-xctest-owned-705');uiOwner=new OwnedWorkspaceUI705(native,dir,uiDeadline,t.signal)};const binary=uiOwner?.appExecutable??path.join(native,'acceptance/workspace',process.platform==='win32'?'cmspark-desktop.exe':'cmspark-desktop')
    assertionSite=1;assert.ok(fs.existsSync(binary),'actual workspace acceptance binary must be built');surfaceLease.checkpoint()
    child=(require(path.join(native,'desktop-launcher.node'))as DesktopNativeBinding).launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address()as any).port}/desktop`,n=>{childExitCode=Number.isInteger(n)&&n>=-2147483648&&n<=4294967295?n:null;settled=true;exitResolve(n)})
-   if(uiOwner){uiOwner.start();uiDone=uiOwner.complete().then(()=>({ok:true}),()=>{fail(9);return{ok:false}})}
+   if(uiOwner){uiOwner.start();uiDone=uiOwner.complete().then(()=>({ok:true}),()=>{/*OBS788_JOIN_BEGIN*/try{t.diagnostic('D476_WORKSPACE_COMPLETE_788 '+JSON.stringify(uiOwner!.completeRejection788()))}catch{}/*OBS788_JOIN_END*/fail(9);return{ok:false}})}
    assertionSite=2;assert.equal(await Promise.race([exit,failure.then(()=>{throw Error('OWNED_WORKSPACE_NATIVE_PHASE_FAILED')}),new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_WORKSPACE_NATIVE_DEADLINE')),{once:true}))]),0)
    if(uiDone){assertionSite=3;assert.equal((await uiDone).ok,true,'owned acknowledged UI runner must genuinely close quiescent')}
    assertionSite=4;assert.equal(failed,false);assertionSite=5;assert.equal(authenticated,true);assertionSite=6;assert.equal(windowRequested,true);assertionSite=7;assert.equal(connections,1);assertionSite=8;assert.equal(picks,2);assertionSite=9;assert.equal(pickerObserved,2);assertionSite=10;assert.equal(pickerReturned,1);assertionSite=11;assert.equal(cancelReturned,1);assertionSite=12;assert.deepEqual([...receipts].sort(),[...required].sort());assertionSite=13;assert.equal(manager.pendingCount(),0)
@@ -558,7 +558,7 @@ test('#476 terminal-only native confirmation→real user PTY→selected partial 
     confirmationObservation772.native(f)
      if(f.type==='desktop.confirmation.decision'&&f.purpose==='local-work'){decisions++;confirmationObservation772.server(3,decisions)}
     if(f.type!=='system.ping'||typeof f.id!=='string')return
-    readiness.observe(f)/*OBS788_BEGIN*/;try{if(process.platform==='win32'&&Object.keys(f).sort().join()==='id,type')nativeObservation788.native(f.id)}catch{}/*OBS788_END*/
+    readiness.observe(f)/*OBS788_BEGIN*/;try{if(process.platform==='win32'&&Object.keys(f).sort().join()==='id,type')nativeObservation788.native(f.id)}catch{}/*OBS788_END*//*OBS788_JOIN_BEGIN*/;try{if(process.platform==='win32'&&Object.keys(f).sort().join()==='id,type'&&typeof f.id==='string'&&/^D476_OBS788_JOIN_[0-3]{2}[12]{2}[012][0-4]$/.test(f.id))t.diagnostic(f.id)}catch{}/*OBS788_JOIN_END*/
     firstFailure.observe(f)
     if(f.id==='D476_TERMINAL_FAIL'){fail();return}
     if(!required.includes(f.id))return;if(receipts.has(f.id)){fail();return}receipts.add(f.id)

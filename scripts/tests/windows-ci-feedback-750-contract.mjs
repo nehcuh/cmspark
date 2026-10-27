@@ -176,6 +176,10 @@ export function validateWindowsCiFeedback750(text) {
   for (const old of baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js')) {
     let step = build.steps.find(s => key(s) === old.key)
     if (old.key === activity758.buildStep.name) {
+      const join788 = 'node --test scripts/tests/native-join-observation-788.test.cjs\n'
+      assert.deepEqual(step, { ...activity758.buildStep, run: activity758.buildStep.run + join788 }, '#788 CPU join controls retain exact package failure semantics')
+      assert.equal(step.run.split(join788).length, 2)
+      step = { ...step, run: step.run.replace(join788, '') }
       assert.deepEqual(step, activity758.buildStep, '#758 bundle resource control is exact')
       const command = 'node --test scripts/tests/activity-notifier-package.test.cjs\n'
       assert.equal(step.run.split(command).length, 2)
