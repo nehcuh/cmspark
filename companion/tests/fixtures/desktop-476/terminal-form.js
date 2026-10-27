@@ -32,8 +32,10 @@
   }};
  }
  const capture=captureTerminal747(window,document,()=>documentGeneration);let ownedTerminal,ownedOperation=null;
- const names=["ROW","OPEN_DENY","REFRESH_DENY","OPEN_CANCEL","REFRESH_CANCEL","OPEN_APPROVE","STOP","SELECT","RETURN","REOPEN"];
- const key=(index,button)=>{if(!button||button.disabled||index!==requested+1){fail(1);return}button.focus();if(document.activeElement!==button){fail(2);return}requested=index;pendingTarget=button;post("D476_TERMINAL_"+names[index-1]+"_KEY")};
+/*OBS788_BEGIN*/
+ const observed788=new Set();const observe788=n=>{try{if(!Number.isInteger(n)||n<5||n>10||observed788.has(n))return;observed788.add(n);post('D476_OBS788_T_'+n)}catch{}};
+/*OBS788_END*/ const names=["ROW","OPEN_DENY","REFRESH_DENY","OPEN_CANCEL","REFRESH_CANCEL","OPEN_APPROVE","STOP","SELECT","RETURN","REOPEN"];
+ const key=(index,button)=>{if(!button||button.disabled||index!==requested+1){fail(1);return}button.focus();if(document.activeElement!==button){fail(2);return}requested=index;pendingTarget=button;/*OBS788_BEGIN*/if(index===1)observe788(10);/*OBS788_END*/post("D476_TERMINAL_"+names[index-1]+"_KEY")};
  // Observe only operands already reached by the original short-circuit. X is
  // not evaluated, not false; the finite set records seen states, not the last.
  const readinessSeen747=new Set();
@@ -49,12 +51,12 @@
   keyMask|=1<<(requested-1);selectPressed=requested===8;pendingTarget=null;
  },true);
  document.addEventListener("keyup",e=>{if(e.key!=="Enter"||!selectPressed)return;selectPressed=false;if(e.isTrusted!==true||e.target!==$("local-select")||phase!==10||!$("local-feedback").textContent.includes("已选择")){fail(5);return}phase=11;key(9,$("local-return"))});
- const start=()=>{if(started)return;const row=pick("local");if(!row)return;started=true;phase=1;key(1,row)};
+ const start=()=>{if(started)return;const row=pick("local");/*OBS788_BEGIN*/observe788(row?9:8);/*OBS788_END*/if(!row)return;started=true;phase=1;key(1,row)};
  const original=window.cmsparkDesktopReceive;
  window.cmsparkDesktopReceive=f=>{
   original(f);
-  if(f.type==="desktop.document"){start();return}
-  if(f.type==="thread.list"&&phase===0){start();return}
+  if(f.type==="desktop.document"){/*OBS788_BEGIN*/observe788(7);/*OBS788_END*/start();return}
+  if(f.type==="thread.list"&&phase===0){/*OBS788_BEGIN*/observe788(6);/*OBS788_END*/start();return}
   if(f.type==="desktop.local.state.result"){
    if(![1,3,5].includes(phase))return; // Actual hide/openDialog emits an untracked retirement state.
    if(f.ok!==true||f.thread_id!==target||!f.state?.bound||!f.state.modules?.terminal||f.state.modules.agent!==false||!["windows","macos"].includes(f.state.platform)){fail(6);return}platform=f.state.platform;
@@ -81,5 +83,6 @@
   if(f.type==="desktop.terminal.return.result"&&phase===11){if(f.ok!==true||f.status!=="saved"||f.partial!==true){fail(18);return}phase=12;post("D476_TERMINAL_SAVED");key(10,pick("dialog"));return}
   if(f.type==="desktop.thread.open.result"&&phase===12){if(f.ok!==true||f.thread_id!==target||!f.history?.messages?.some(m=>m.content.includes("D476_TERMINAL_中")&&m.content.includes("partial"))||!$("dialog-history").textContent.includes("D476_TERMINAL_中")||requested!==10||keyMask!==1023){fail(19);return}phase=13;post("D476_TERMINAL_REOPENED");finish747()}
  };
- if($("status").textContent==="已连接 · MCP 保存需确认")start();
+/*OBS788_BEGIN*/ observe788(5);
+/*OBS788_END*/ if($("status").textContent==="已连接 · MCP 保存需确认")start();
 })();

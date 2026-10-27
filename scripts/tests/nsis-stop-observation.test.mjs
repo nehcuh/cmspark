@@ -87,7 +87,7 @@ test('complete finite phases retain no raw source, path, PID or observation-as-a
   assert.deepEqual(summary.phases, phases)
   const wire = JSON.stringify(summary)
   assert.equal(wire.includes(root), false); assert.equal(wire.includes(descriptor.sourceSHA256), false)
-  assert.deepEqual(Object.keys(summary).sort(), ['schema', 'kind', 'complete', 'capture', 'gap', 'phases', 'stopAttempts', 'recordBytes', 'identityVerified', 'helperInverseExact', 'stopOrSiblingAcceptanceProvided'].sort())
+  assert.deepEqual(Object.keys(summary).sort(), ['schema', 'kind', 'complete', 'capture', 'gap', 'phases', 'points', 'stopAttempts', 'recordBytes', 'identityVerified', 'helperInverseExact', 'stopOrSiblingAcceptanceProvided'].sort())
 }))
 
 test('missing or failure phases never become complete', () => {
@@ -342,4 +342,38 @@ test('real file replay of emitted logger retains plugin-result sentinel, prior e
       if(state!=='normal')assert.equal(fs.readFileSync(trace,'utf8'),data)
     }
   })
+})
+
+
+test('bounded first-row and stop points are optional, finite, unique and never acceptance', () => owned(root => {
+  const descriptor = createObservation(root)
+  const prefix = phases.slice(0, 7).map(p => `phase:${p}\n`).join('')
+  for (const point of ['row-filter-enter','row-owned-enter','row-command-enter','stop-enter','stop-return']) {
+    write(root, prefix + `point:${point}\n`)
+    const summary = collectObservation(root, descriptor)
+    assert.equal(summary.complete, false); assert.equal(summary.gap, true)
+    assert.deepEqual(summary.points, [point]); assert.equal(summary.stopAttempts, null)
+    assert.equal(summary.stopOrSiblingAcceptanceProvided, false)
+  }
+  for (const value of [prefix+'point:PRIVATE_PATH\n',prefix+'point:stop-enter\npoint:stop-enter\n','point:stop-enter\n',complete+'point:stop-enter\n']) {
+    write(root, value); assert.throws(() => collectObservation(root, descriptor), invalid)
+  }
+}))
+
+
+test('new point insertions bind real helper anchors and preserve byte inverse', () => {
+  const text=original.toString('utf8'), observed=buildObservedHelper(original).toString('utf8')
+  const anchors=[
+    ["row-filter-enter", "    if (($_.Name -ne 'node.exe'"],
+    ['row-owned-enter', '    $owned = $_.ExecutablePath.StartsWith('],
+    ['row-command-enter', "    if (-not $owned -and $_.Name -eq 'node.exe'"],
+  ]
+  for (const [name,anchor] of anchors) {
+    assert.ok(observed.indexOf('BEGIN:'+name) < observed.indexOf(anchor))
+    assert.throws(() => buildObservedHelper(Buffer.from(text.replace(anchor,'REMOVED'))), invalid)
+    assert.throws(() => buildObservedHelper(Buffer.from(text+'\n'+anchor)), invalid)
+  }
+  const enter=observed.indexOf("Write-CMsparkSmokePoint 'stop-enter'"),stop=observed.indexOf('Stop-Process -Id $_.ProcessId'),after=observed.indexOf("Write-CMsparkSmokePoint 'stop-return'")
+  assert.ok(enter<stop && stop<after)
+  assert.deepEqual(restoreOriginalHelper(Buffer.from(observed)),original)
 })

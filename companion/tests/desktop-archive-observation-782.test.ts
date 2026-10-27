@@ -50,7 +50,7 @@ test("782 actual Archive form preserves every refusal and emits its real fixed s
 
 test("782 Windows original key branches emit their own site without extra API calls",()=>{
  for(const eol of ["\n","\r\n"]){
- const source=read("tests/fixtures/desktop-476/archive-acceptance.cpp").replace(/\r?\n/g,eol),begin="void D476ArchiveAcceptance::key(Desktop& h,WORD code){",body=source.split(begin)[1]?.split(/\r?\n}\r?\n/)[0];assert(body)
+ const {restoreObservation788}=require(path.join(root,"scripts/tests/observation-788-inverse.mjs"));const source=restoreObservation788(read("tests/fixtures/desktop-476/archive-acceptance.cpp")).replace(/\r?\n/g,eol),begin="void D476ArchiveAcceptance::key(Desktop& h,WORD code){",body=source.split(begin)[1]?.split(/\r?\n}\r?\n/)[0];assert(body)
  const lower=(text:string)=>text.replaceAll("owner!=&h","owner!==h").replaceAll("->",".").replace("GUITHREADINFO info{};","let info={};").replace("sizeof(info)","64").replaceAll("&info","info").replace("const LPARAM scan=(LPARAM)","const scan=").replaceAll("((LPARAM)1","(1").replace("0xffu","0xff")
  const lowered=lower(body),prior=source.split(begin)[1]?.split("\n}\n")[0];assert(prior)
  if(eol==="\r\n"){assert.notEqual(prior,body);assert.throws(()=>new vm.Script("(function(){"+lower(prior)+"})()"),{name:"SyntaxError"})}else assert.equal(prior,body)
@@ -75,6 +75,6 @@ test("782 Archive-only generated script distinguishes immediate and completion r
 })
 
 for(const eol of["\n","\r\n"])test(`782 new observation inverse preserves the entire previous native source ${eol==="\n"?"LF":"CRLF"}`,()=>{
- const raw=read("tests/desktop-native-thread-metadata-476.test.ts").replace(/\r?\n/g,eol),prior=archiveObservationInverse782(raw),expected=eol==="\n"?"33b233999fcfcc764b4882749d7264aa534fc45938ff717dd23bcc51f4cdeaa6":"f4b0ae09fd52e2ed4fa2d112ebc041e1a33e5323776ddc3e00291c1a4bea4675"
+ const {restoreObservation788}=require(path.join(root,"scripts/tests/observation-788-inverse.mjs"));const raw=restoreObservation788(read("tests/desktop-native-thread-metadata-476.test.ts")).replace(/\r?\n/g,eol),prior=archiveObservationInverse782(raw),expected=eol==="\n"?"33b233999fcfcc764b4882749d7264aa534fc45938ff717dd23bcc51f4cdeaa6":"f4b0ae09fd52e2ed4fa2d112ebc041e1a33e5323776ddc3e00291c1a4bea4675"
  assert.equal(createHash("sha256").update(prior).digest("hex"),expected);assert.throws(()=>archiveObservationInverse782(prior));assert.throws(()=>archiveObservationInverse782(raw+raw));assert.throws(()=>archiveObservationInverse782(raw.replace('timeout:20000','timeout:20001')));assert.equal(raw.split('{ llmKey: true }').length,2);assert.throws(()=>archiveObservationInverse782(raw.replace('{ llmKey: true }','{ llmKey: false }')));assert.throws(()=>archiveObservationInverse782(raw.replace(', { llmKey: true }','')));assert.throws(()=>archiveObservationInverse782(raw.replace(', { llmKey: true }',', { llmKey: true }, { llmKey: true }')))
 })

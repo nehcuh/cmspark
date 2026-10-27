@@ -140,7 +140,7 @@ export function desktopLocalFixture(language,original,controller,form){
  for(const [before,after]of patches){if(source.split(before).length!==2)throw Error('DESKTOP_LOCAL_FIXTURE_ANCHOR');source=source.replace(before,after)}
  const suffix='\n/* D476 unshipped local-work acceptance */\n'+(language==='cpp'?filled[1]:controller);source+=suffix;let inverse=source.slice(0,-suffix.length)
  for(const [before,after]of [...patches].reverse()){if(inverse.split(after).length!==2)throw Error('DESKTOP_LOCAL_FIXTURE_INVERSE');inverse=inverse.replace(after,before)}
- if(inverse!==original)throw Error('DESKTOP_LOCAL_SOURCE_DRIFT');return{source,inverse}
+ if(inverse!==original)throw Error('DESKTOP_LOCAL_SOURCE_DRIFT');return desktopInitialActivation788(language,source,inverse,'LOCAL')
 }
 // Separate unshipped archive acceptance; no shipped source hook.
 export function desktopArchiveFixture(language, original, fixture, form, metadata) {
@@ -171,5 +171,48 @@ export function desktopArchiveFixture(language, original, fixture, form, metadat
   let inverse=source.slice(0,-suffix.length)
   for(const [before,after]of [...patches].reverse()){if(inverse.split(after).length!==2)throw Error("DESKTOP_ARCHIVE_FIXTURE_INVERSE");inverse=inverse.replace(after,before)}
   if(inverse!==base.source||base.inverse!==original)throw Error("DESKTOP_ARCHIVE_SOURCE_DRIFT")
-  return {source,inverse:base.inverse}
+  return desktopInitialActivation788(language,source,base.inverse,'ARCHIVE')
+}
+
+// Windows acceptance-only first-input readiness. Does not activate/focus or grant authority.
+function desktopInitialActivation788(language,source,inverse,kind){
+ if(language!=='cpp')return{source,inverse}
+ if(kind!=='LOCAL'&&kind!=='ARCHIVE')throw Error('DESKTOP_INITIAL_ACTIVATION_KIND')
+ const cls=kind==='LOCAL'?'D476LocalInitialActivation788':'D476ArchiveInitialActivation788'
+ const call=kind==='LOCAL'?'D476LocalAcceptance::document(*this);':'D476ArchiveAcceptance::arm(*this);D476Acceptance::document(*this);'
+ const start=kind==='LOCAL'?'D476LocalAcceptance::document(h);':'D476ArchiveAcceptance::arm(h);D476Acceptance::document(h);'
+ const failure=kind==='LOCAL'?'D476LocalAcceptance::observe(h,reason==1?L"D476_LOCAL_FIRST_W_1":L"D476_LOCAL_FIRST_W_7");D476LocalAcceptance::emit(h,L"D476_LOCAL_FAIL");':'D476ArchiveAcceptance::failure(h,reason==1?1:2);'
+ const suffix=kind==='LOCAL'?'/* D476 unshipped local-work acceptance */':'/* D476 unshipped archive acceptance */'
+ const windows=[...source.matchAll(/return 0;}return DefWindowProcW\(hwnd,message,w,l\);(\r?\n) }/g)]
+ if(windows.length!==1)throw Error('DESKTOP_INITIAL_ACTIVATION_PROC')
+ const eol=windows[0][1],lines=value=>value.replace(/\n/g,eol)
+ const declaration=lines(`struct ${cls} {
+ static Desktop* owner;static HWND window;static std::wstring document;static unsigned long epoch;
+ static ComPtr<ICoreWebView2> web;static ComPtr<ICoreWebView2Controller> controller;static bool started,failed;
+ static void documentReady(Desktop&);static void begin(Desktop&);static void fail(Desktop&,unsigned) noexcept;
+};
+`)
+ const implementation=lines(`Desktop* ${cls}::owner=nullptr;HWND ${cls}::window=nullptr;std::wstring ${cls}::document;unsigned long ${cls}::epoch=0;
+ComPtr<ICoreWebView2> ${cls}::web;ComPtr<ICoreWebView2Controller> ${cls}::controller;bool ${cls}::started=false,${cls}::failed=false;
+void ${cls}::fail(Desktop& h,unsigned reason) noexcept {if(failed)return;failed=true;try{${failure}}catch(...){}}
+void ${cls}::documentReady(Desktop& h){
+ if(owner||failed){fail(h,1);return;}
+ owner=&h;window=h.window;document=h.generation;epoch=h.epoch;web=h.web;controller=h.controller;begin(h);
+}
+void ${cls}::begin(Desktop& h){
+ if(!owner||owner!=&h||started||failed)return;
+ if(h.closing||!h.ready||h.generation.empty()||h.generation!=document||h.epoch!=epoch||h.window!=window||!window||!IsWindow(window)||GetWindowLongPtrW(window,GWLP_USERDATA)!=(LONG_PTR)owner||!h.web||h.web.Get()!=web.Get()||!h.controller||h.controller.Get()!=controller.Get()){fail(h,2);return;}
+ if(!IsWindowVisible(window)||GetForegroundWindow()!=window)return;
+ started=true;
+ ${start}
+}
+`)
+ const proc=windows[0][0],active=`return 0;}if(message==WM_ACTIVATE){const auto result=DefWindowProcW(hwnd,message,w,l);if(LOWORD(w)!=WA_INACTIVE)${cls}::begin(*self);return result;}return DefWindowProcW(hwnd,message,w,l);${eol} }`
+ const pairs=[['class Desktop {',declaration+`class Desktop {${eol} friend struct ${cls};`],[call,`${cls}::documentReady(*this);`],[proc,active],[suffix,implementation+suffix]]
+ let value=source
+ for(const[before,after]of pairs){if(value.split(before).length!==2)throw Error('DESKTOP_INITIAL_ACTIVATION_ANCHOR');value=value.replace(before,after)}
+ let restored=value
+ for(const[before,after]of [...pairs].reverse()){if(restored.split(after).length!==2)throw Error('DESKTOP_INITIAL_ACTIVATION_INVERSE');restored=restored.replace(after,before)}
+ if(restored!==source)throw Error('DESKTOP_INITIAL_ACTIVATION_SOURCE_DRIFT')
+ return{source:value,inverse}
 }

@@ -40,7 +40,15 @@ final class WorkspacePicker705:XCTestCase {
   preflightStage=0
   let ack=try waitFile(.ack);try scene.tuple(ack,["schema","nonce","pid","identity_bound"]);guard try OwnedUI705Scene.pid(ack["pid"])==pid,try OwnedUI705Scene.boolean(ack["identity_bound"]) else{throw OwnedUI705Error.refused}
   _ = try remaining();try scene.write(.begin,["schema":1,"nonce":scene.nonce,"pid":pid,"phase":"UI_SEQUENCE_STARTED"])
-  func observeUIStage(){try? scene.writeUIProgress(uiStage,uiDetail)}
+/*OBS788_BEGIN*/  let timingOrigin788=ProcessInfo.processInfo.systemUptime;var timingFailures788=0
+  func observeCancelTiming788(_ stage:Int,_ returned:Bool){
+   guard (18...20).contains(stage) else{return}
+   let elapsedRaw=(ProcessInfo.processInfo.systemUptime-timingOrigin788)*1000,remainingRaw=deadline-Date().timeIntervalSince1970*1000
+   guard elapsedRaw.isFinite,remainingRaw.isFinite else{timingFailures788=min(6,timingFailures788+1);return}
+   let elapsed=Int(max(0,min(45001,elapsedRaw))),remaining=Int(max(0,min(45001,remainingRaw)))
+   do{try scene.writeCancelTiming788(stage,returned,elapsed,remaining,timingFailures788)}catch{timingFailures788=min(6,timingFailures788+1)}
+  }
+/*OBS788_END*/  func observeUIStage(){try? scene.writeUIProgress(uiStage,uiDetail)/*OBS788_BEGIN*/;observeCancelTiming788(uiStage,uiDetail != 0)/*OBS788_END*/}
   // No quiescent receipt if an Objective-C exception, timeout or termination interrupts a synchronous UI call.
   defer{do{try scene.write(.returned,["schema":1,"nonce":scene.nonce,"pid":pid,"phase":"UI_SEQUENCE_RETURNED"])}catch{XCTFail("OWNED_UI_QUIESCENCE_REFUSED")}}
   uiStage=1;uiDetail=0;observeUIStage()
@@ -91,7 +99,7 @@ final class WorkspacePicker705:XCTestCase {
   uiStage=14;uiDetail=0;observeUIStage();try ready(.second,2);let second=try sheet(15),cancel=second.buttons.matching(identifier:"Cancel")
   uiStage=18;uiDetail=0;observeUIStage();let cancelCount=cancel.count;uiDetail=min(cancelCount,2)+1;observeUIStage();guard cancelCount==1 else{throw OwnedUI705Error.refused}
   uiStage=19;uiDetail=0;observeUIStage();let cancelHittable=cancel.element.isHittable;uiDetail=cancelHittable ? 2:1;observeUIStage();guard cancelHittable else{throw OwnedUI705Error.refused}
-  uiStage=20;uiDetail=0;observeUIStage();_ = try remaining();cancel.element.click()
+  uiStage=20;uiDetail=0;observeUIStage();_ = try remaining();cancel.element.click()/*OBS788_BEGIN*/;observeCancelTiming788(20,true)/*OBS788_END*/
   } catch {
    // Failure-only closed integers; a logging refusal never replaces this error.
    if preflightStage==0 && (1...20).contains(uiStage),let scene=uiScene {try? scene.write(.uiRefusal,["schema":1,"nonce":scene.nonce,"stage":uiStage,"detail":uiDetail])}

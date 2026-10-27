@@ -25,11 +25,11 @@ function evaluate(code:string,throwInActualForm=false) {
  return {value,error,frames,events,window}
 }
 for(const language of ['cpp','swift'] as const)test('actual '+language+' install script returns only fixed true after whole form installs',()=>{
- const good=evaluate(installScript(language));assert.equal(good.error,undefined);assert.equal(good.value,true);assert.equal(good.frames.length,0);assert.deepEqual(good.events,['keydown','keyup'])
- const bad=evaluate(installScript(language),true);assert.ok(bad.error);assert.equal(bad.value,undefined);assert.equal(bad.frames.length,0)
+ const good=evaluate(installScript(language));assert.equal(good.error,undefined);assert.equal(good.value,true);assert.deepEqual(good.frames.map((f:any)=>f.id),['D476_OBS788_T_5']);assert.deepEqual(good.events,['keydown','keyup'])
+ const bad=evaluate(installScript(language),true);assert.ok(bad.error);assert.equal(bad.value,undefined);assert.deepEqual(bad.frames.map((f:any)=>f.id),['D476_OBS788_T_5'])
 })
 test('actual C++ completion rejects null/false/wrong result and retains HRESULT/current fences',()=>{
- const source=controller('cpp'),matches=[...source.matchAll(/\[&h\]\(HRESULT status,LPCWSTR(?: scriptResult)?\)->HRESULT\{if\(([^\n]+?)\)failure\(h(?:,[1-9][0-9]?)?\);return S_OK;\}/g)]
+ const source=require(path.join(root,'scripts/tests/observation-788-inverse.mjs')).restoreObservation788(controller('cpp')) as string,matches=[...source.matchAll(/\[&h\]\(HRESULT status,LPCWSTR(?: scriptResult)?\)->HRESULT\{if\(([^\n]+?)\)failure\(h(?:,[1-9][0-9]?)?\);return S_OK;\}/g)]
  assert.equal(matches.length,1,'unique actual ExecuteScript callback')
  const condition=matches[0][1].replace('FAILED(status)','(status<0)').replace('current(h)','isCurrent').replace('std::wstring(scriptResult)!=L"true"','scriptResult!=="true"')
  const refuses=new Function('status','scriptResult','isCurrent','return '+condition) as (status:number,result:unknown,isCurrent:boolean)=>boolean

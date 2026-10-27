@@ -236,7 +236,8 @@ test('whole real app/form waits after saved history for its final actual ACK bef
   if(receipts.includes('D476_TERMINAL_DONE'))break
  }
  assert.ok(steps<240);assert.equal(late,true);assert.equal(typed,true);assert.equal(decisions,4)
- assert.deepEqual(receipts,['D476_TERMINAL_DENIED','D476_TERMINAL_CANCELLED','D476_TERMINAL_OUTPUT','D476_TERMINAL_RESIZED','D476_TERMINAL_STOPPED','D476_TERMINAL_SAVED','D476_TERMINAL_REOPENED','D476_TERMINAL_DONE'])
+ assert.deepEqual(receipts.slice(0,5),['D476_OBS788_T_5','D476_OBS788_T_8','D476_OBS788_T_6','D476_OBS788_T_9','D476_OBS788_T_10'])
+ assert.deepEqual(receipts.slice(5),['D476_TERMINAL_DENIED','D476_TERMINAL_CANCELLED','D476_TERMINAL_OUTPUT','D476_TERMINAL_RESIZED','D476_TERMINAL_STOPPED','D476_TERMINAL_SAVED','D476_TERMINAL_REOPENED','D476_TERMINAL_DONE'])
  assert.deepEqual([...successAckSeq].sort((a,b)=>a-b),[1,2,3]);assert.ok(actualState);assert.equal(actualState.unackedBytes,0);assert.equal(actualState.unacked.size,0)
  assert.equal(f.tm.readDesktopDialog('native-terminal-A').messages.length,1);assert.equal(f.tm.readDesktopDialog('native-terminal-B').messages.length,0)
  assert.equal(handles.length,1);assert.equal(handles[0].pid,0);assert.equal(handles[0].kills,1)

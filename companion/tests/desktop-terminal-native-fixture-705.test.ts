@@ -86,7 +86,8 @@ test('whole real app/form→actual HMAC actor→owned store drives ten keys and 
   if(receipts.includes('D476_TERMINAL_DONE'))break
  }
  assert.ok(steps<200);assert.equal(heldAck.length,2);assert.equal(holdAck,false);assert.equal(decisions,4);assert.equal(keys.length,10);assert.equal(new Set(keys).size,10);assert.equal(typed,true);assert.equal(resized,true)
- assert.deepEqual(receipts,['D476_TERMINAL_DENIED','D476_TERMINAL_CANCELLED','D476_TERMINAL_OUTPUT','D476_TERMINAL_RESIZED','D476_TERMINAL_STOPPED','D476_TERMINAL_SAVED','D476_TERMINAL_REOPENED','D476_TERMINAL_DONE'])
+ assert.deepEqual(receipts.slice(0,5),['D476_OBS788_T_5','D476_OBS788_T_8','D476_OBS788_T_6','D476_OBS788_T_9','D476_OBS788_T_10'])
+ assert.deepEqual(receipts.slice(5),['D476_TERMINAL_DENIED','D476_TERMINAL_CANCELLED','D476_TERMINAL_OUTPUT','D476_TERMINAL_RESIZED','D476_TERMINAL_STOPPED','D476_TERMINAL_SAVED','D476_TERMINAL_REOPENED','D476_TERMINAL_DONE'])
  assert.ok(readinessSeen.has('D476_TERMINAL_READY_1_1_0'),'actual parsed output observed before held ACKs');assert.ok(readinessSeen.has('D476_TERMINAL_READY_1_1_1'),'actual parsed output observed with all ACKs before original OUTPUT');assert.ok(readinessSeen.size<=12)
  assert.equal(b.calls.filter((v:string)=>v==='open').length,1);assert.equal(b.calls.filter((v:string)=>v==='close').length,1);assert.equal(b.tm.readDesktopDialog('native-terminal-A').messages.length,1);assert.equal(b.tm.readDesktopDialog('native-terminal-B').messages.length,0);assert.equal(b.manager.pendingCount(),0)
 })

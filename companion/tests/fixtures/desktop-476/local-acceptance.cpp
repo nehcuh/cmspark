@@ -1,7 +1,13 @@
 #include <cwchar>
 class Desktop;
-struct D476LocalAcceptance{static bool firstNative,firstRenderer,dataSeen;static void observe(Desktop&,wchar_t const*) noexcept;static bool rendererSite(Desktop&,wchar_t const*) noexcept;static bool done;static bool complete(Desktop&,JsonObject const&);static unsigned confirmations;static std::wstring documentId;static void document(Desktop&);static void confirmation(Desktop&);static void renderer(Desktop&,JsonObject const&);static void emit(Desktop&,wchar_t const*);static void key(Desktop&,bool);static Desktop* owner;static unsigned long epoch;static bool input_active,input_failed,input_typed,input_pending_key,done_emitted;static size_t input_cursor;static ComPtr<ICoreWebView2> input_web;static bool current(Desktop&);static void input_failure(Desktop&);static std::wstring const& command();static size_t input_length();static JsonObject input_payload(size_t);static void input_request(Desktop&);static void input_step(Desktop&);static void input_finished(Desktop&);};
-/* D476 LOCAL IMPLEMENTATION */
+struct D476LocalAcceptance{static bool firstNative,firstRenderer,dataSeen;static void observe(Desktop&,wchar_t const*) noexcept;static bool rendererSite(Desktop&,wchar_t const*) noexcept;static bool done;static bool complete(Desktop&,JsonObject const&);static unsigned confirmations;static std::wstring documentId;static void document(Desktop&);static void confirmation(Desktop&);static void renderer(Desktop&,JsonObject const&);static void emit(Desktop&,wchar_t const*);static void key(Desktop&,bool);static Desktop* owner;static unsigned long epoch;static bool input_active,input_failed,input_typed,input_pending_key,done_emitted;static size_t input_cursor;static ComPtr<ICoreWebView2> input_web;static bool current(Desktop&);static void input_failure(Desktop&);static std::wstring const& command();static size_t input_length();static JsonObject input_payload(size_t);static void input_request(Desktop&);static void input_step(Desktop&);static void input_finished(Desktop&);/*OBS788_BEGIN*/
+ static unsigned relation788(Desktop&,HWND) noexcept;
+ static void observe788(Desktop&,unsigned) noexcept;
+ static unsigned seen788;
+/*OBS788_END*/};
+/*OBS788_BEGIN*/
+// Passive classification only. Never a key/focus/authority gate.
+/*OBS788_END*//* D476 LOCAL IMPLEMENTATION */
 bool D476LocalAcceptance::done=false;
 bool D476LocalAcceptance::complete(Desktop& h,JsonObject const& f){if(text(f,L"type")!=L"D476.local.complete")return false;if(!current(h)||!done||!done_emitted||input_active||input_pending_key||confirmations!=5||!keys(f,{L"type",L"result"})||text(f,L"result")!=L"COMPLETE")ExitProcess(64);ExitProcess(77);return true;}
 unsigned D476LocalAcceptance::confirmations=0;std::wstring D476LocalAcceptance::documentId;
@@ -67,7 +73,7 @@ void D476LocalAcceptance::confirmation(Desktop& h){
 }
 void D476LocalAcceptance::key(Desktop& h,bool type){
  if(!current(h)){(observe(h,L"D476_LOCAL_FIRST_W_7"),emit(h,L"D476_LOCAL_FAIL"));return;}
- const BOOL activation=SetForegroundWindow(h.window);const auto focusStatus=h.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);const bool focusFailed=FAILED(focusStatus);const HWND observedForeground=focusFailed?nullptr:GetForegroundWindow();const bool foregroundMismatch=!focusFailed&&observedForeground!=h.window;if(focusFailed||foregroundMismatch){try{const wchar_t* id=activation?(focusFailed?L"D476_LOCAL_ACTIVATE_1_X":observedForeground==nullptr?L"D476_LOCAL_ACTIVATE_1_0":observedForeground==h.window?L"D476_LOCAL_ACTIVATE_1_1":L"D476_LOCAL_ACTIVATE_1_2"):(focusFailed?L"D476_LOCAL_ACTIVATE_0_X":observedForeground==nullptr?L"D476_LOCAL_ACTIVATE_0_0":observedForeground==h.window?L"D476_LOCAL_ACTIVATE_0_1":L"D476_LOCAL_ACTIVATE_0_2");emit(h,id);}catch(...){}try{emit(h,focusFailed?L"D476_LOCAL_FOCUS_MOVE_FOCUS_FAILED":L"D476_LOCAL_FOCUS_FOREGROUND_MISMATCH");}catch(...){} (observe(h,L"D476_LOCAL_FIRST_W_8"),emit(h,L"D476_LOCAL_FAIL"));return;}GUITHREADINFO info{};info.cbSize=sizeof(info);if(!GetGUIThreadInfo(0,&info)||!info.hwndFocus||GetAncestor(info.hwndFocus,GA_ROOT)!=h.window){(observe(h,L"D476_LOCAL_FIRST_W_9"),emit(h,L"D476_LOCAL_FAIL"));return;}
+ const BOOL activation=SetForegroundWindow(h.window);const auto focusStatus=h.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);const bool focusFailed=FAILED(focusStatus);const HWND observedForeground=focusFailed?nullptr:GetForegroundWindow();const bool foregroundMismatch=!focusFailed&&observedForeground!=h.window;if(focusFailed||foregroundMismatch){try{const wchar_t* id=activation?(focusFailed?L"D476_LOCAL_ACTIVATE_1_X":observedForeground==nullptr?L"D476_LOCAL_ACTIVATE_1_0":observedForeground==h.window?L"D476_LOCAL_ACTIVATE_1_1":L"D476_LOCAL_ACTIVATE_1_2"):(focusFailed?L"D476_LOCAL_ACTIVATE_0_X":observedForeground==nullptr?L"D476_LOCAL_ACTIVATE_0_0":observedForeground==h.window?L"D476_LOCAL_ACTIVATE_0_1":L"D476_LOCAL_ACTIVATE_0_2");emit(h,id);}catch(...){}try{emit(h,focusFailed?L"D476_LOCAL_FOCUS_MOVE_FOCUS_FAILED":L"D476_LOCAL_FOCUS_FOREGROUND_MISMATCH");}catch(...){}/*OBS788_BEGIN*/ try{observe788(h,(activation?7u:0u)+(focusFailed?6u:relation788(h,observedForeground))+1u);}catch(...){}/*OBS788_END*/ (observe(h,L"D476_LOCAL_FIRST_W_8"),emit(h,L"D476_LOCAL_FAIL"));return;}GUITHREADINFO info{};info.cbSize=sizeof(info);if(!GetGUIThreadInfo(0,&info)||!info.hwndFocus||GetAncestor(info.hwndFocus,GA_ROOT)!=h.window){(observe(h,L"D476_LOCAL_FIRST_W_9"),emit(h,L"D476_LOCAL_FAIL"));return;}
  if(type){input_request(h);return;}
  if(input_active){if(input_pending_key){input_failure(h);return;}input_pending_key=true;return;}
  {auto scan=(LPARAM)(MapVirtualKeyW(VK_RETURN,MAPVK_VK_TO_VSC)&0xffu)<<16;if(!PostMessageW(info.hwndFocus,WM_KEYDOWN,VK_RETURN,1|scan)||!PostMessageW(info.hwndFocus,WM_KEYUP,VK_RETURN,1|scan|((LPARAM)1<<30)|((LPARAM)1<<31)))(observe(h,L"D476_LOCAL_FIRST_W_11"),emit(h,L"D476_LOCAL_FAIL"));}
@@ -80,3 +86,18 @@ void D476LocalAcceptance::renderer(Desktop& h,JsonObject const& f){
  if(id==L"D476_LOCAL_DONE"){if(confirmations!=5){(observe(h,L"D476_LOCAL_FIRST_W_13"),emit(h,L"D476_LOCAL_FAIL"));return;}done=true;if(input_active||input_pending_key)return;done_emitted=true;emit(h,L"D476_LOCAL_DONE");return;}
  for(auto name:{L"D476_LOCAL_OUTPUT",L"D476_LOCAL_RESIZED",L"D476_LOCAL_STOPPED",L"D476_LOCAL_SAVED",L"D476_LOCAL_REOPENED",L"D476_LOCAL_AGENT_SAVED",L"D476_LOCAL_AGENT_STOPPED",L"D476_LOCAL_FAIL"})if(id==name){emit(h,name);return;}
 }
+/*OBS788_BEGIN*/
+unsigned D476LocalAcceptance::seen788=0;
+unsigned D476LocalAcceptance::relation788(Desktop& h,HWND observed) noexcept {
+ if(!observed)return 0;
+ if(observed==h.window)return 1;
+ if(h.confirmation&&h.confirmation->generation==h.generation&&h.confirmation->epoch==h.epoch&&observed==h.confirmation->window)return 2;
+ DWORD pid=0;const auto thread=GetWindowThreadProcessId(observed,&pid);
+ if(!thread||!pid||GetForegroundWindow()!=observed)return 5;
+ return pid==GetCurrentProcessId()?3:4;
+}
+void D476LocalAcceptance::observe788(Desktop& h,unsigned code) noexcept {
+ if(code<1||code>16||(seen788&(1u<<(code-1))))return;seen788|=1u<<(code-1);
+ try{if(code>14)return;const auto activation=(code-1)/7,relation=(code-1)%7;auto id=std::wstring(L"D476_OBS788_FG_L_")+std::to_wstring(activation)+L"_"+(relation==6?L"X":std::to_wstring(relation));emit(h,id.c_str());}catch(...){} // A diagnostic fault cannot replace the original action/refusal.
+}
+/*OBS788_END*/

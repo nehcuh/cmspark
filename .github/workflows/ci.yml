@@ -57,6 +57,7 @@ jobs:
           bash -n scripts/tests/test-package-gates.sh
           bash scripts/tests/test-package-gates.sh
           node --test scripts/tests/activity-notifier-package.test.cjs
+          node --test scripts/tests/native-join-observation-788.test.cjs
 
       - name: Build companion
         run: |

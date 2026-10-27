@@ -8,7 +8,7 @@ const refused=()=>Error('OWNED_WORKSPACE_UI_REFUSED')
 const canonical=(o:any)=>JSON.stringify(Object.fromEntries(Object.keys(o).sort().map(k=>[k,o[k]])))
 const regular=(s:fs.Stats)=>s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&(s.mode&0o777)===0o600&&s.uid===process.getuid!()
 export const UI705_RUNNER_ID='com.cmspark.tests.workspace-ui-705.xctrunner'
-export const UI705_FILES=['input.json','runner-start.json','owner-ack.json','ui-begin.json','ui-quiescent.json','runner-closed.json','cancel.json','picker-first.json','picker-second.json','ui-refusal.json','ui-progress.json','ui-choose-census.json'] as const
+export const UI705_FILES=['input.json','runner-start.json','owner-ack.json','ui-begin.json','ui-quiescent.json','runner-closed.json','cancel.json','picker-first.json','picker-second.json','ui-refusal.json','ui-progress.json','ui-choose-census.json'/*OBS788_BEGIN*/, 'cancel-18-enter.json','cancel-18-return.json','cancel-19-enter.json','cancel-19-return.json','cancel-20-enter.json','cancel-20-return.json'/*OBS788_END*/] as const
 type Xcode705Status='NOT_CLOSED'|'MISSING'|'EMPTY'|'INVALID'|'CHANGED'|'OVERSIZE'|'READ_FAILED'|'OBSERVED'
 type Xcode705Observation={status:Xcode705Status;firstMarker:'NONE'|'XCODEBUILD_ERROR'|'XCODE_SELECT_ERROR'|'TESTING_FAILED';firstNSError:{kind:'NONE'|'PAIR'|'UNKNOWN';domain:'COCOA'|'POSIX'|'MACH'|'OSSTATUS'|'OTHER'|'UNKNOWN';code:number|null}}
 const xcode705Unavailable=(status:Xcode705Status):Xcode705Observation=>({status,firstMarker:'NONE',firstNSError:{kind:'NONE',domain:'UNKNOWN',code:null}})
@@ -79,7 +79,7 @@ const result705Unknown=(reason:Result705Projection['reason']):Result705Projectio
 const RESULT705_IDS=new Set(['WorkspacePicker705/testOwnedPanel','WorkspacePicker705/testOwnedPanel()','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel()'])
 const RESULT705_TYPES=new Set(['Test Plan','Unit test bundle','UI test bundle','Test Suite','Test Case','Device','Test Plan Configuration','Arguments','Repetition','Test Case Run','Failure Message','Source Code Reference','Attachment','Expression','Test Value','Runtime Warning'])
 // Both hashes are independently bound to b975 actual source; paths never come from runtime JSON.
-const RESULT705_SOURCES=[['WorkspacePickerUITests.swift','fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076'],['OwnedUIProtocol.swift','fbad4db2905d6bb58a40062ec844716554fb4bb8f52ae73f3f5b094ec27c979c']] as const
+const RESULT705_SOURCES=[['WorkspacePickerUITests.swift',/*OBS788_VALUE:fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076*/'1b4837f6ce7945273d0a1ead0542712503191a422f36b8a743a9622aab89c37a'/*OBS788_END_VALUE*/],['OwnedUIProtocol.swift',/*OBS788_VALUE:fbad4db2905d6bb58a40062ec844716554fb4bb8f52ae73f3f5b094ec27c979c*/'69b5fb718b3d0cd405f8285fd89db3c506872ef80e340360ab69d3f2a6feabe5'/*OBS788_END_VALUE*/]] as const
 // Actual Tests response: nodeIdentifier is optional in the official schema.
 // Only a present allowlisted Test Case identifier counts; never derive one from name.
 function result705Select(data:Buffer):string {
@@ -202,7 +202,19 @@ export class OwnedUI705Boundary {
  uiProgress():{stage:number;detail:number}|null {
   try{const v=this.read('ui-progress.json');if(v===undefined)return null;this.fields(v,['schema','nonce','stage','detail']);if(!Number.isInteger(v.stage)||v.stage<1||v.stage>20||!Number.isInteger(v.detail)||v.detail<0||v.detail>5)return null;return{stage:v.stage,detail:v.detail}}catch{return null}
  }
- // Fixed saturated counts and local identity enums only; never UI/closure authority.
+/*OBS788_BEGIN*/ // Read only the six fixed producer timing files; missing/invalid is never success.
+ cancelTiming788(){
+  const events:Array<[number,boolean,number,number,number]>=[];let invalid=false
+  const files=[['cancel-18-enter.json',18,false],['cancel-18-return.json',18,true],['cancel-19-enter.json',19,false],['cancel-19-return.json',19,true],['cancel-20-enter.json',20,false],['cancel-20-return.json',20,true]] as const
+  for(const [file,stage,returned]of files)try{
+   const v=this.read(file);if(v===undefined)continue
+   this.fields(v,['schema','nonce','stage','returned','elapsed_ms','remaining_ms','prior_publish_failures'])
+   if(v.stage!==stage||v.returned!==returned||![v.elapsed_ms,v.remaining_ms].every(n=>Number.isInteger(n)&&n>=0&&n<=45001)||!Number.isInteger(v.prior_publish_failures)||v.prior_publish_failures<0||v.prior_publish_failures>6)throw refused()
+   events.push([stage,returned,v.elapsed_ms,v.remaining_ms,v.prior_publish_failures])
+  }catch{invalid=true}
+  return{schema:1,events,invalid}
+ }
+/*OBS788_END*/ // Fixed saturated counts and local identity enums only; never UI/closure authority.
  uiChooseCensus():{schema:1;status:'OBSERVED'|'UNKNOWN';sheetLabelCount:number|null;sheetButtonCount:number|null;ownerLabelCount:number|null;buttonCount:number|null;buttonsMore:boolean|null;buttonIdentityRows:Array<[number,number]>|null} {
   const unknown=()=>({schema:1 as const,status:'UNKNOWN' as const,sheetLabelCount:null,sheetButtonCount:null,ownerLabelCount:null,buttonCount:null,buttonsMore:null,buttonIdentityRows:null})
   try{
@@ -295,7 +307,12 @@ export class OwnedWorkspaceUI705 {
   try{result705AfterActualClose(this.scene,this.resultSourceRoot,emit)}catch{try{emit(result705Unknown('INVALID_RESULT'))}catch{}}
  }
  canSettle(){if(!this.begun)return true;return !this.invalid&&this.observerCode===0&&this.scene.closure(this.observerClosed,this.xcodeClosed)}
- async complete(){await this.wait(()=>this.canSettle()||this.invalid||(this.xcodeClosed&&this.xcodeCode!==0)||(this.observerClosed&&this.observerCode!==0));if(!this.canSettle()||this.xcodeCode!==0)throw refused()}
+/*OBS788_JOIN_BEGIN*/
+ completeRejection788(){
+  const exit=(closed:boolean,code:number|null)=>!closed?'NOT_CLOSED':code===0?'ZERO':typeof code==='number'&&Number.isInteger(code)?'NONZERO':'UNKNOWN'
+  return{schema:1,aborted:this.signal.aborted,invalid:this.invalid,observerClosed:this.observerClosed,xcodeClosed:this.xcodeClosed,observerExit:exit(this.observerClosed,this.observerCode),xcodeExit:exit(this.xcodeClosed,this.xcodeCode)}
+ }
+/*OBS788_JOIN_END*/ async complete(){await this.wait(()=>this.canSettle()||this.invalid||(this.xcodeClosed&&this.xcodeCode!==0)||(this.observerClosed&&this.observerCode!==0));if(!this.canSettle()||this.xcodeCode!==0)throw refused()}
  private wait(done:()=>boolean){return new Promise<void>((resolve,reject)=>{const finish=()=>{this.changed.delete(check);this.signal.removeEventListener('abort',abort)},abort=()=>{finish();reject(refused())},check=()=>{try{if(done()){finish();resolve()}else if(this.signal.aborted)abort()}catch{abort()}};this.changed.add(check);this.signal.addEventListener('abort',abort,{once:true});check()})}
  async cleanup(){if(!this.begun){this.watcher.close();return};this.cancel();try{await this.wait(()=>this.canSettle()||(this.observerClosed&&this.observerCode!==0));if(!this.canSettle())throw refused();this.watcher.close()}catch{this.watcher.unref();this.xcode?.unref();this.observer?.unref();throw refused()}}
 }

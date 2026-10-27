@@ -18,7 +18,6 @@ let captureObserver723: ((args: any[]) => any) | undefined
 for (const mode of modes723) test(`723 D1 actual Windows capture ${mode}`, { skip: process.platform !== "win32", timeout: 45_000 }, async t => {
   assert.ok(process.env.GITHUB_ACTIONS === "true" && process.env.RUNNER_OS === "Windows", "D1_723_REMOTE_WINDOWS_ONLY")
   await withSurface650(t, async (owned, lease) => {
-    lease.retain()
     const deadline = performance.now() + 45_000
     const data = process.env.CMSPARK_DATA_DIR
     assert.ok(data && path.isAbsolute(data))
@@ -51,6 +50,8 @@ for (const mode of modes723) test(`723 D1 actual Windows capture ${mode}`, { ski
       result.catch(() => {}); return result
     }
     try {
+      // Retain only after entering the cleanup scope and before any child starts.
+      lease.retain()
       fs.mkdirSync(temp); process.env.TEMP = temp; process.env.TMP = temp; process.env.TMPDIR = temp
       originalScript = fs.readFileSync(script)
       cp.execFile = wrapped
