@@ -11,6 +11,7 @@ import { resolveWinScript, runPs } from '../src/host-use/win/powershell'
 import { DEFAULT_ACTIVITY_CONFIG } from '../src/activity/types'
 import { submitReminder } from '../src/activity/adapters'
 import { buildOwnedWpf758 } from './helpers/activity-native-fixture-758'
+import { compilerFailureObservation758 } from './helpers/activity-compiler-observation-758'
 import { observedOcrCall758 } from './helpers/activity-ocr-observation-758'
 const exec=promisify(execFile)
 const enabled=process.env.CMSPARK_ACTIVITY_NATIVE_758==='1'
@@ -36,7 +37,7 @@ test('#758 actual desktop foreground identity, passive pixels and local OCR; min
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cmspark-activity758-原生 with spaces-'))
   const win=process.platform==='win32'
   let binary=''
-  try{if(win)binary=await buildOwnedWpf758(dir,owned.signal)}catch(error){fs.rmSync(dir,{recursive:true,force:true});throw error}
+  try{if(win)binary=await buildOwnedWpf758(dir,owned.signal)}catch(error){try{t.diagnostic('ACTIVITY758_COMPILER_FAILURE '+JSON.stringify(compilerFailureObservation758(error)))}catch{}fs.rmSync(dir,{recursive:true,force:true});throw error}
   const child=win?spawn(binary,[dir],{windowsHide:false,stdio:['ignore','ignore','pipe']}):spawn('/usr/bin/python3',[path.resolve('tests/fixtures/activity-linux-758.py'),dir],{stdio:['ignore','ignore','pipe']})
   let stderr=Buffer.alloc(0)
   child.stderr?.on('data',(chunk:Buffer)=>{if(stderr.length<4096)stderr=Buffer.concat([stderr,chunk.subarray(0,4096-stderr.length)])}) // keep draining after the finite prefix

@@ -10,6 +10,7 @@ import ts from 'typescript'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { buildOwnedWpf758, runOwnedCompiler758 } from './helpers/activity-native-fixture-758'
+import { compilerFailureObservation758 } from './helpers/activity-compiler-observation-758'
 
 const file=path.resolve('tests/activity-platform-native-758.test.ts')
 const source=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true)
@@ -131,4 +132,26 @@ test('#758 Linux fixture publishes ready and acknowledgement only after complete
   }
   for(const profile of [raw.replace(/\r\n/g,'\n'),raw.replace(/\r?\n/g,'\r\n')])verify(profile)
   assert.throws(()=>verify(raw.replace('pending.rename(directory / name)','pass')),{code:'ERR_ASSERTION'})
+})
+
+// Actual build producer with only the compiler process replaced by an inert
+// throwing boundary. The exact primary error and partial-output cleanup remain.
+test('#758 actual build failure projects finite facts without replacing primary error', async () => {
+  const owned=ownedCompiler()
+  try {
+    const failure=Object.assign(new Error('OWNED_PRIVATE_PATH'), {code:1,killed:false,signal:null,stdout:'OWNED_PRIVATE_PATH error CS1002: PRIVATE',stderr:''})
+    let actual: unknown
+    try {
+      await buildOwnedWpf758(owned.output,new AbortController().signal,async()=>{
+        fs.writeFileSync(path.join(owned.output,'activity-fixture.exe'),'INERT_PARTIAL')
+        throw failure
+      },owned.system)
+      assert.fail('real builder must reject compiler failure')
+    } catch (error) { actual=error }
+    assert.equal(actual,failure)
+    assert.equal(fs.existsSync(path.join(owned.output,'activity-fixture.exe')),false)
+    const finite=compilerFailureObservation758(actual)
+    assert.deepEqual(finite,{version:1,kind:'COMPILER_FAILURE',code:1,spawnCode:null,signal:null,killed:false,outputState:'PRESENT',compilerCodes:['CS1002'],compilerMore:false})
+    assert.equal(JSON.stringify(finite).includes('PRIVATE'),false)
+  } finally {fs.rmSync(owned.root,{recursive:true,force:true})}
 })
