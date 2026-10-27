@@ -4,10 +4,36 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
+import { acquireSurface650, withSurface650 } from "./fixtures/native-surface-650"
 import { modes723, forcedFallback723, remaining723, receipt723, assertSetup723, assertUnchanged723, cleanup723, waitReceipt723, type Receipt723 } from "./helpers/capture-native-723"
 const testsRoot = path.resolve(__dirname, path.basename(path.dirname(__dirname)) === ".test-dist" ? "../../tests" : ".")
 const ps = () => fs.readFileSync(path.join(testsRoot, "../src/host-use/win/scripts/computer-capture.ps1"), "utf8")
 const sample = (): Receipt723 => ({ hwnd: 7, other: 0, foreground: 7, minimized: false, desktop51: true })
+test("723 actual callback releases real surface after setup failures without starting a child", { timeout: 5000 }, async t => {
+  const helpers = require("./helpers/capture-native-723")
+  const { runFailure723 } = require(path.join(testsRoot, "helpers/capture-lease-regression-723.cjs"))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-test-run-")), data = fs.mkdtempSync(path.join(root, "process-"))
+  const claim = path.join(root, "native-surface-650", "claim")
+  const previousRoot = process.env.CMSPARK_TEST_RUN_DIR, previousData = process.env.CMSPARK_DATA_DIR
+  process.env.CMSPARK_TEST_RUN_DIR = root; process.env.CMSPARK_DATA_DIR = data
+  try {
+    for (const point of ["before", "inside"]) {
+      const result = await runFailure723(path.join(testsRoot, "computer-capture-windows-native-723.test.ts"), data, { withSurface650 }, helpers, point, t.signal)
+      if (point === "before") assert.equal(result.error, result.injected, "pre-scope primary error is preserved")
+      else assert.equal(result.error?.message, "D1_CAPTURE_723_SETUP_FAILED", "existing setup error remains primary")
+      assert.equal(result.subprocessCalls, 0)
+      assert.deepEqual([result.env.TEMP, result.env.TMP, result.env.TMPDIR], ["original-temp", "original-tmp", "original-tmpdir"])
+      assert.equal(fs.existsSync(claim), false)
+      assert.deepEqual(fs.readdirSync(data), [])
+      const next = await acquireSurface650(root, data, t.signal); next.checkpoint(); next.release()
+      assert.equal(fs.existsSync(claim), false)
+    }
+  } finally {
+    if (previousRoot === undefined) delete process.env.CMSPARK_TEST_RUN_DIR; else process.env.CMSPARK_TEST_RUN_DIR = previousRoot
+    if (previousData === undefined) delete process.env.CMSPARK_DATA_DIR; else process.env.CMSPARK_DATA_DIR = previousData
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
 test("723 unshipped variant preserves complete real PS bytes in LF/CRLF and performs real PrintWindow first", () => {
   for (const source of [ps().replace(/\r\n/g, "\n"), ps().replace(/\r?\n/g, "\r\n")]) {
     const variant = forcedFallback723(source)
