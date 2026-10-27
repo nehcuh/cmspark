@@ -38,7 +38,7 @@ CMspark — 浏览器内 AI Agent。通过 Chrome Side Panel 与用户交互，�
 
 双层拓扑：Chrome Extension (Plasmo + React) ↔ WebSocket ↔ Companion (Node.js + TypeScript)
 
-当前阶段：源码开发版本 **0.7.0（尚未正式发布）**。发行包与当前源码、验收边界见 [版本与交付状态](docs/release-status.md)。家 = **已登录 Chrome + 硬闸**，侧栏是 Operate 面之一。操作面已完成工具步骤收成审计芯、舰队 Glance/Inspect、spawn kick、子任务不摊成平级聊天。Capture HTML 卡默认 **1040×760**（紧凑切换 **360×420**；流式出字）· ChatShell「要对这页做什么 / 弹出对话框」· 租手钥匙 CLI + L8 · 知识 CRUD 诚实（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）· 知识默认 TF-IDF top-k 注入 · 知识图谱（#427）· 内嵌终端（#432/#584，macOS/Windows，默认关）· `search_threads`/`search_knowledge`（#439）· 技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成里程碑——T1 已记分（CMspark 臂 Y / Playwright `ERR_EMPTY_RESPONSE`），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。Side Panel ↔ Companion 闭环、线程持久化、确认台、Pack/MCP/Multi-agent、CU（实验定位仅 **Qwen3-VL**；#363 摘帽门未过）已交付。**听写+ / 本机 Whisper（含 M2、自动激活、当次会话回退横幅、HF 镜像）/ 会议工作台（说话人「自动」档）** 已交付（[用户指南](docs/meeting-and-dictation-user-guide.md)，ADR-023/024）。**对话框用户附图**（粘贴 / 点选 / 拖入；主模型多模态则原生看图）。**Obsidian 导出**（[ADR-008](docs/adr/008-obsidian-export.md)）· **Mermaid**（[ADR-009](docs/adr/009-mermaid-rendering.md)）· **Mission Pack**（[ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)）见既有文档。
+当前阶段：源码版本 **0.7.0（已于 2026-10-27 正式发布）**。发行包与当前源码、验收边界见 [版本与交付状态](docs/release-status.md)。家 = **已登录 Chrome + 硬闸**，侧栏是 Operate 面之一。操作面已完成工具步骤收成审计芯、舰队 Glance/Inspect、spawn kick、子任务不摊成平级聊天。Capture HTML 卡默认 **1040×760**（紧凑切换 **360×420**；流式出字）· ChatShell「要对这页做什么 / 弹出对话框」· 租手钥匙 CLI + L8 · 知识 CRUD 诚实（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）· 知识默认 TF-IDF top-k 注入 · 知识图谱（#427）· 内嵌终端（#432/#584，macOS/Windows，默认关）· `search_threads`/`search_knowledge`（#439）· 技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成里程碑——T1 已记分（CMspark 臂 Y / Playwright `ERR_EMPTY_RESPONSE`），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。Side Panel ↔ Companion 闭环、线程持久化、确认台、Pack/MCP/Multi-agent、CU（实验定位仅 **Qwen3-VL**；#363 摘帽门未过）已交付。**听写+ / 本机 Whisper（含 M2、自动激活、当次会话回退横幅、HF 镜像）/ 会议工作台（说话人「自动」档）** 已交付（[用户指南](docs/meeting-and-dictation-user-guide.md)，ADR-023/024）。**对话框用户附图**（粘贴 / 点选 / 拖入；主模型多模态则原生看图）。**Obsidian 导出**（[ADR-008](docs/adr/008-obsidian-export.md)）· **Mermaid**（[ADR-009](docs/adr/009-mermaid-rendering.md)）· **Mission Pack**（[ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)）见既有文档。
 
 ## Quick Start
 
@@ -138,7 +138,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 
 - docs/README.md — 文档导航（用户 / 架构 / ADR / 工程 / 归档）
 - CONTRIBUTING.md — 需求设计 **Issue-first**（新行为必须先开 GitHub Issue）
-- CHANGELOG.md — **活切点 0.7.0（开发版本，尚未正式发布）**：包含此前全部未发布增量、Node 安全升级、桌面/终端/会话恢复、Windows/macOS 原生验收修复、LCU 有限接入及 MCP 编辑恢复修复；历史版本保留原记录。当前发行包和未完成验收见 [docs/release-status.md](docs/release-status.md)。
+- CHANGELOG.md — **活切点 0.7.0（已于 2026-10-27 正式发布）**：包含此前全部未发布增量、Node 安全升级、桌面/终端/会话恢复、Windows/macOS 原生验收修复、LCU 有限接入及 MCP 编辑恢复修复；历史版本保留原记录。当前发行包和未完成验收见 [docs/release-status.md](docs/release-status.md)。
 - docs/superpowers/specs/2026-08-27-post-227-status.md — **SNAPSHOT** 0.5.3 / #227；不是活状态
 - docs/GOAL.md — 项目目标与阶段规划
 - docs/architecture.md — 完整架构文档（§0 能力三轴 · §7 Packs · §8–11 MCP/CU·Host·Apps/Orchestrator·Board）

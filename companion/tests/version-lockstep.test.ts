@@ -16,6 +16,22 @@ function src(rel: string): string {
   return fs.readFileSync(path.join(ROOT, "src", rel), "utf8")
 }
 
+function sourceVersionLabel(version: string, heading: string): string {
+  const v = version.replace(/\./g, "\\.")
+  const match = heading.replace(/\r$/, "").match(new RegExp(`^## \\[${v}\\] — (\\d{4}-\\d{2}-\\d{2})（(正式发布|发布准备)）$`))
+  assert.ok(match, "version heading must declare 发布准备 or 正式发布")
+  return match[2] === "正式发布"
+    ? `源码版本 **${version}（已于 ${match[1]} 正式发布）**`
+    : `源码开发版本 **${version}（尚未正式发布）**`
+}
+
+test("version lockstep: development and released status stay distinct", () => {
+  assert.equal(sourceVersionLabel("0.7.1", "## [0.7.1] — 2026-10-27（发布准备）"), "源码开发版本 **0.7.1（尚未正式发布）**")
+  assert.equal(sourceVersionLabel("0.7.1", "## [0.7.1] — 2026-10-27（正式发布）"), "源码版本 **0.7.1（已于 2026-10-27 正式发布）**")
+  assert.equal(sourceVersionLabel("0.7.1", "## [0.7.1] — 2026-10-27（正式发布）\r"), "源码版本 **0.7.1（已于 2026-10-27 正式发布）**")
+  assert.throws(() => sourceVersionLabel("0.7.1", "## [0.7.1] — 2026-10-27（发布完成）"))
+})
+
 test("version lockstep: embedded literals match package.json", () => {
   assert.ok(VERSION, "package.json must carry a version")
   const v = VERSION.replace(/\./g, "\\.")
@@ -57,13 +73,24 @@ test("version lockstep: Windows installer fallback matches companion", () => {
   assert.equal(fallback?.[1], VERSION)
 })
 
+// This checks document consistency; release existence is verified by release gates.
 test("version lockstep: live docs and changelog identify the source version", () => {
   const repo = path.join(ROOT, "..")
   const read = (rel: string) => fs.readFileSync(path.join(repo, rel), "utf8")
-  const liveVersion = `源码开发版本 **${VERSION}（尚未正式发布）**`
-  assert.ok(read("README.md").includes(liveVersion))
-  assert.ok(read("CLAUDE.md").includes(liveVersion))
-  assert.ok(read("docs/README.md").includes(liveVersion))
-  assert.ok(read("docs/release-status.md").includes(liveVersion))
-  assert.ok(read("CHANGELOG.md").split("\n").some(line => line.startsWith(`## [${VERSION}] — `)))
+  const heading = read("CHANGELOG.md").split("\n").find(line => line.startsWith(`## [${VERSION}] — `))
+  assert.ok(heading, "CHANGELOG.md must identify the source version")
+  const status = sourceVersionLabel(VERSION, heading)
+  const v = VERSION.replace(/\./g, "\\.")
+  const opposite = heading.replace(/\r$/, "").endsWith("（正式发布）")
+    ? new RegExp(`源码开发版本 \\*\\*${v}（尚未正式发布）\\*\\*`)
+    : new RegExp(`源码版本 \\*\\*${v}（已于 \\d{4}-\\d{2}-\\d{2} 正式发布）\\*\\*`)
+  for (const rel of ["README.md", "CLAUDE.md", "docs/README.md", "docs/release-status.md"]) {
+    assert.ok(read(rel).includes(status), `${rel} must identify the same source version and release status`)
+    assert.doesNotMatch(read(rel), opposite, `${rel} must not claim the opposite release status`)
+  }
+  assert.ok(read("PRODUCT.md").includes(`Version lock: companion/extension **${VERSION}**`))
+  assert.ok(read("docs/GOAL.md").includes(`产品 ${VERSION}**`))
+  assert.ok(read("docs/GOAL.md").includes(`[CHANGELOG](../CHANGELOG.md) **${VERSION}**`))
+  assert.ok(read("README.md").includes(`当前阶段（${VERSION}）`))
+  assert.ok(read("docs/architecture.md").includes(`当前源码版本 **${VERSION}**`))
 })
