@@ -50,7 +50,7 @@ before(async () => {
       temperature: 0.2,
       context_window: 512000,
     },
-  })
+  }, { llmKey: true })
 })
 
 after(() => {

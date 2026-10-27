@@ -116,7 +116,7 @@ test("thread.update route persists pinned tabs through the message router", asyn
 })
 
 test("config.set persists trusted domains without saving masked API keys", async () => {
-  saveConfig({ llm: { api_key: "real-key" } as any, trusted_domains: [] })
+  saveConfig({ llm: { api_key: "real-key" } as any, trusted_domains: [] }, { llmKey: true })
 
   const response = await handleMessage(
     {

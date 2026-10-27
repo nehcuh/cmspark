@@ -258,3 +258,6 @@ test('#70 explicit JSON input binding preserves the complete signed sampler inve
   assert.throws(() => inverse(source.replace('} finally {', '} # removed-finally {')))
   assert.throws(() => inverse(source.replace(' -InputObject ', ' ')))
 })
+
+// Exercise the finite-stage contract through the existing CI test entry.
+import "./app-gallery-failure-stage-incident.test.mjs"

@@ -28,7 +28,7 @@ let __testSetKnowledgeExtractImpl: (impl?: ExtractImpl) => void
 let __testSetPickFolderNative: (impl?: unknown) => void
 let SkillEngine: new () => SkillEngineT
 let initDataDir: () => Promise<void>
-let saveConfig: (c: Record<string, unknown>) => unknown
+let saveConfig: (c: Record<string, unknown>, intent?: { llmKey?: boolean; visionKey?: boolean }) => unknown
 let getConfigDir: () => string
 let validateWsMessage: (m: unknown) => { valid: boolean; error?: string }
 let parseKnowledgeSuggestion: (raw: string) => { description?: string; tags?: string[] } | null
@@ -68,7 +68,7 @@ function setLlmConfigured(configured: boolean) {
   if (configured) {
     saveConfig({
       llm: { api_key: "sk-test-extract", base_url: "http://127.0.0.1:9/v1", model_name: "test-model" },
-    })
+    }, { llmKey: true })
     return
   }
   // saveConfig REFUSES to clear api_key (resolveApiKey keeps the current key

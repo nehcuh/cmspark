@@ -136,7 +136,8 @@ export function sampleFailureDiagnostic(error) {
     signal: ['SIGTERM', 'SIGKILL'].includes(signal) ? signal : null }
 }
 
-export async function main(output) {
+export async function main(output, failure = { seen: false }) {
+  const mark = (stage, error) => { failure.seen = true; failure.stage = stage; failure.error = error }
   requireHostedWindows()
   if (!output || !path.isAbsolute(output)) throw new Error('ABSOLUTE_NEW_OUTPUT_REQUIRED')
   // Reserve before acquisition, so an existing evidence file cannot be overwritten.
@@ -150,21 +151,25 @@ export async function main(output) {
       const archive = path.join(owned, `${i}.zip`)
       const exe = path.join(owned, app.reference.referenceEXERelativePath)
       try {
-        const pkg = await downloadArchive(app, archive)
+        let pkg
+        try { pkg = await downloadArchive(app, archive) } catch (e) { mark('DOWNLOAD', e); throw e }
         // Existing runner's 15s/16MiB bounds, unmodified. No application execution.
         const raw = await runPs(path.join(root, 'scripts/fixtures/app-gallery-reference-70.ps1'),
           [archive, exe, app.reference.referenceEXERelativePath, app.reference.packageSHA256])
+          .catch(e => { mark('RUN_PS', e); throw e })
+        let sample
+        try { sample = parseSample(raw, app) } catch (e) { mark('PARSE', e); throw e }
         samples.push({ token: app.token, release: app.reference.release, architecture: app.reference.architecture,
-          artifactURL: app.reference.artifactURL, packageBytes: pkg.bytes, packageSHA256: pkg.sha256, ...parseSample(raw, app), nativeStdout: raw })
+          artifactURL: app.reference.artifactURL, packageBytes: pkg.bytes, packageSHA256: pkg.sha256, ...sample, nativeStdout: raw })
       } finally {
         // Only exact files we exclusively own; never recursive removal/extraction.
-        for (const target of [exe, archive]) { try { fs.unlinkSync(target) } catch (e) { if (e.code !== 'ENOENT') throw e } }
+        for (const target of [exe, archive]) { try { fs.unlinkSync(target) } catch (e) { if (e.code !== 'ENOENT') { mark('CLEANUP', e); throw e } } }
       }
     }
     fs.writeFileSync(evidence, JSON.stringify({ issue: 70, meaning: 'Fixed-release witness; installed file not compared; no authorization', samples }, null, 2) + '\n')
   } finally {
-    fs.closeSync(evidence)
-    if (owned) fs.rmdirSync(owned)
+    try { fs.closeSync(evidence) } catch (e) { mark('CLEANUP', e); throw e }
+    if (owned) { try { fs.rmdirSync(owned) } catch (e) { mark('CLEANUP', e); throw e } }
   }
 }
 
@@ -180,13 +185,15 @@ export function isCLIEntrypoint(entry, moduleURL = import.meta.url) {
 }
 
 if (isCLIEntrypoint(process.argv[1])) {
-  main(process.argv[2]).catch(err => {
+  const failure = { seen: false }
+  main(process.argv[2], failure).catch(err => {
     // Fixed public failure enums only; never print subprocess argv/env/raw errors.
     const known = ['PS51_REQUIRED', 'HOSTED_WINDOWS_ONLY', 'UNPINNED_ENTRY', 'OWNED_PATH_REQUIRED', 'ARCHIVE_LIMIT',
       'PACKAGE_SHA_MISMATCH', 'EXACT_ONE_ENTRY_REQUIRED', 'ENTRY_REJECTED', 'ENTRY_LIMIT', 'ENTRY_LENGTH_MISMATCH',
       'PE_REJECTED', 'X64_REQUIRED', 'SIGNATURE_NOT_VALID', 'EXE_SHA_MISMATCH', 'SAMPLE_WIRE', 'REDIRECT_REJECTED', 'DOWNLOAD_REJECTED']
     const code = known.find(c => err?.message === c || String(err?.stderr || '').includes("'" + c + "'")) || 'GALLERY_REFERENCE_COLLECTION_FAILED'
     console.error(code)
+    console.error('GALLERY70_FAILURE_STAGE=' + (failure.seen && Object.is(failure.error, err) ? failure.stage : 'UNKNOWN'))
     console.error(JSON.stringify(sampleFailureDiagnostic(err)))
     process.exitCode = 1
   })

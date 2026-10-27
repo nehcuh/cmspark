@@ -119,7 +119,7 @@ before(async () => {
       temperature: 0.5,
       context_window: 8000,
     },
-  } as any)
+  } as any, { llmKey: true })
 
   server = http.createServer((req, res) => {
     const chunks: Buffer[] = []
@@ -155,7 +155,7 @@ before(async () => {
       temperature: 0.5,
       context_window: 8000,
     },
-  } as any)
+  } as any, { llmKey: true })
 })
 
 after(async () => {

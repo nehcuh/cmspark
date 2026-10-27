@@ -349,8 +349,6 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
           if (res.writableEnded) return
           const data = JSON.parse(body)
           const update: any = {}
-          const current = getConfig()
-
           // LLM config
           if (data.llm) {
             const llm = { ...data.llm }
@@ -358,7 +356,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
             if (isMaskedApiKey(llm.api_key) || llm.api_key === "") {
               delete llm.api_key
             }
-            update.llm = { ...current.llm, ...llm }
+            update.llm = llm
           }
           // Vision config
           if (data.vision) {
@@ -367,9 +365,12 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
             if (isMaskedApiKey(vision.api_key) || vision.api_key === "") {
               delete vision.api_key
             }
-            update.vision = { ...(current.vision || {}), ...vision }
+            update.vision = vision
           }
-          const updated = saveConfig(update)
+          const updated = saveConfig(update, {
+            llmKey: Object.prototype.hasOwnProperty.call(update.llm ?? {}, "api_key"),
+            visionKey: Object.prototype.hasOwnProperty.call(update.vision ?? {}, "api_key"),
+          })
           jsonResponse(res, {
             ok: true,
             llm: { ...updated.llm, api_key: maskApiKey(updated.llm.api_key) },

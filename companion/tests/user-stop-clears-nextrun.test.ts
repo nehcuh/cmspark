@@ -106,7 +106,7 @@ before(async () => {
       temperature: 0.5,
       context_window: 4000,
     },
-  } as any)
+  } as any, { llmKey: true })
 
   const cjsRequire = createRequire(__filename)
   const openaiMod = cjsRequire("openai")

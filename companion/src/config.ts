@@ -11,7 +11,7 @@ import type { McpConfig, McpServerConfig } from "./mcp/types"
 import { defaultFilesystemServerConfig } from "./mcp/filesystem-home"
 import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
-import { resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
+import { endpointsMatch, isPlaceholderVisionKey, resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
 import { effectiveReasoningEffort, isReasoningEffort } from "./llm/reasoning-effort"
 import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
 
@@ -459,7 +459,9 @@ const defaultConfig: CompanionConfig = {
   port: 23401,
   llm: {
     base_url: "https://api.deepseek.com/v1",
-    api_key: getEnvApiKey(),
+    // The factory template is written to disk. Resolve environment keys only
+    // when loading runtime config, never into this persistent default.
+    api_key: "",
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
     reasoning_effort: "medium",
@@ -617,6 +619,11 @@ const defaultConfig: CompanionConfig = {
 }
 
 let cachedConfig: CompanionConfig | null = null
+// Stored credentials are tracked separately from runtime environment fallbacks.
+// Equality to the current environment value cannot establish provenance.
+let storedLlmKey = ""
+let storedVisionKey = ""
+let visionUsesLlm = false
 /** mtimeMs of config.json when cache was loaded — hand-edits invalidate cache */
 let cachedConfigMtimeMs: number | null = null
 
@@ -624,6 +631,35 @@ let cachedConfigMtimeMs: number | null = null
 export function clearConfigCache(): void {
   cachedConfig = null
   cachedConfigMtimeMs = null
+  storedLlmKey = ""
+  storedVisionKey = ""
+  visionUsesLlm = false
+}
+
+function refreshRuntimeCredentials(config: CompanionConfig): void {
+  config.llm.api_key = storedLlmKey || getEnvApiKey()
+  if (config.vision && visionUsesLlm) {
+    config.vision.api_key = resolveInheritedVisionApiKey({
+      llmBaseUrl: config.llm.base_url, llmModelName: config.llm.model_name,
+      llmApiKey: config.llm.api_key, llmProtocol: config.llm.protocol,
+      visionBaseUrl: config.vision.base_url, visionModelName: config.vision.model_name,
+      visionApiKey: storedVisionKey,
+    }) ?? storedVisionKey
+  }
+}
+
+function saveConfigSnapshot(updated: CompanionConfig, llmKey = storedLlmKey, visionKey = storedVisionKey, inherited = visionUsesLlm): CompanionConfig {
+  const toSave = JSON.parse(JSON.stringify(updated)) as CompanionConfig
+  toSave.llm.api_key = llmKey
+  if (toSave.vision) toSave.vision.api_key = visionKey
+  atomicWriteJSON(path.join(getConfigDir(), "config.json"), toSave)
+  storedLlmKey = llmKey
+  storedVisionKey = visionKey
+  visionUsesLlm = inherited
+  cachedConfig = updated
+  cachedConfigMtimeMs = configFileMtimeMs()
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
 }
 
 function configFileMtimeMs(): number | null {
@@ -724,11 +760,12 @@ function loadConfigFile(configPath: string): CompanionConfig {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error("config root is not a JSON object")
   }
-  const merged = deepMerge(defaultConfig, parsed) as CompanionConfig
+  // Runtime key injection mutates the loaded config, so no nested defaults may
+  // alias the persistent factory template when the on-disk block is missing.
+  const merged = deepMerge(structuredClone(defaultConfig), parsed) as CompanionConfig
   if (!merged.llm || typeof merged.llm !== "object" || Array.isArray(merged.llm)) {
     console.warn("[cmspark-agent] invalid saved LLM configuration; using defaults")
     // Resolve environment credentials later, using the current environment.
-    // The module-level default may contain an old import-time environment key.
     merged.llm = { ...structuredClone(defaultConfig.llm), api_key: "" }
   } else if (!isReasoningEffort(merged.llm.reasoning_effort)) {
     console.warn("[cmspark-agent] invalid saved reasoning effort; using medium")
@@ -786,10 +823,7 @@ export function getConfig(): CompanionConfig {
     }
   }
   if (cachedConfig) {
-    // Refresh env var ONLY if no user-provided key exists
-    if (getEnvApiKey() && !isUserProvidedApiKey(cachedConfig.llm.api_key)) {
-      cachedConfig.llm.api_key = getEnvApiKey()
-    }
+    refreshRuntimeCredentials(cachedConfig)
     return cachedConfig
   }
   const configPath = path.join(getConfigDir(), "config.json")
@@ -807,11 +841,11 @@ export function getConfig(): CompanionConfig {
     cachedConfig = structuredClone(defaultConfig)
     cachedConfigMtimeMs = configFileMtimeMs()
   }
-  // Environment variable takes priority ONLY when no user-provided key exists.
-  // If the file has a user-provided API key (non-empty, not masked), respect it.
-  if (getEnvApiKey() && !isUserProvidedApiKey(cachedConfig.llm.api_key)) {
-    cachedConfig.llm.api_key = getEnvApiKey()
-  }
+  storedLlmKey = cachedConfig.llm.api_key && !isMaskedApiKey(cachedConfig.llm.api_key) ? cachedConfig.llm.api_key : ""
+  storedVisionKey = cachedConfig.vision?.api_key && !isMaskedApiKey(cachedConfig.vision.api_key) ? cachedConfig.vision.api_key : ""
+  visionUsesLlm = !!cachedConfig.vision && storedVisionKey === "" && cachedConfig.llm.protocol !== "anthropic" &&
+    endpointsMatch(cachedConfig.llm, cachedConfig.vision)
+  refreshRuntimeCredentials(cachedConfig)
   // Ensure mcp config exists with sane defaults (older config.json may not have it)
   if (!cachedConfig.mcp) {
     cachedConfig.mcp = structuredClone(defaultConfig.mcp)
@@ -1088,17 +1122,7 @@ export function replaceMcpServers(servers: McpConfig["servers"], options?: Reado
       servers: { ...servers },
     },
   }
-  const configPath = path.join(getConfigDir(), "config.json")
-  const toSave = JSON.parse(JSON.stringify(updated))
-  const envKey = getEnvApiKey()
-  if (envKey && toSave.llm?.api_key === envKey) {
-    toSave.llm.api_key = ""
-  }
-  atomicWriteJSON(configPath, toSave)
-  cachedConfig = updated
-  cachedConfigMtimeMs = configFileMtimeMs()
-  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
-  return updated
+  return saveConfigSnapshot(updated)
 }
 
 /**
@@ -1130,17 +1154,7 @@ export function replaceAppsEntries(entries: AppsConfig["entries"]): CompanionCon
       entries: { ...entries },
     },
   }
-  const configPath = path.join(getConfigDir(), "config.json")
-  const toSave = JSON.parse(JSON.stringify(updated))
-  const envKey = getEnvApiKey()
-  if (envKey && toSave.llm?.api_key === envKey) {
-    toSave.llm.api_key = ""
-  }
-  atomicWriteJSON(configPath, toSave)
-  cachedConfig = updated
-  cachedConfigMtimeMs = configFileMtimeMs()
-  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
-  return updated
+  return saveConfigSnapshot(updated)
 }
 
 /**
@@ -1157,17 +1171,7 @@ export function setComputerCoordinateEnabled(enabled: boolean): CompanionConfig 
       coordinateEnabled: enabled === true,
     },
   }
-  const configPath = path.join(getConfigDir(), "config.json")
-  const toSave = JSON.parse(JSON.stringify(updated))
-  const envKey = getEnvApiKey()
-  if (envKey && toSave.llm?.api_key === envKey) {
-    toSave.llm.api_key = ""
-  }
-  atomicWriteJSON(configPath, toSave)
-  cachedConfig = updated
-  cachedConfigMtimeMs = configFileMtimeMs()
-  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
-  return updated
+  return saveConfigSnapshot(updated)
 }
 
 /** #775: authenticated settings handler owns validation and human authorization. */
@@ -1184,15 +1188,7 @@ export function setComputerLcuFields(patch: { enabled?: boolean; command?: strin
       },
     },
   }
-  const configPath = path.join(getConfigDir(), "config.json")
-  const toSave = JSON.parse(JSON.stringify(updated))
-  const envKey = getEnvApiKey()
-  if (envKey && toSave.llm?.api_key === envKey) toSave.llm.api_key = ""
-  atomicWriteJSON(configPath, toSave)
-  cachedConfig = updated
-  cachedConfigMtimeMs = configFileMtimeMs()
-  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
-  return updated
+  return saveConfigSnapshot(updated)
 }
 
 /**
@@ -1226,17 +1222,7 @@ export function setComputerModelFields(
       coordinateEnabled: current.computer?.coordinateEnabled === true,
     },
   }
-  const configPath = path.join(getConfigDir(), "config.json")
-  const toSave = JSON.parse(JSON.stringify(updated))
-  const envKey = getEnvApiKey()
-  if (envKey && toSave.llm?.api_key === envKey) {
-    toSave.llm.api_key = ""
-  }
-  atomicWriteJSON(configPath, toSave)
-  cachedConfig = updated
-  cachedConfigMtimeMs = configFileMtimeMs()
-  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
-  return updated
+  return saveConfigSnapshot(updated)
 }
 
 /**
@@ -1258,17 +1244,7 @@ export function setVoiceFields(partial: Partial<VoiceConfig>): CompanionConfig {
       ...partial,
     },
   }
-  const configPath = path.join(getConfigDir(), "config.json")
-  const toSave = JSON.parse(JSON.stringify(updated))
-  const envKey = getEnvApiKey()
-  if (envKey && toSave.llm?.api_key === envKey) {
-    toSave.llm.api_key = ""
-  }
-  atomicWriteJSON(configPath, toSave)
-  cachedConfig = updated
-  cachedConfigMtimeMs = configFileMtimeMs()
-  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
-  return updated
+  return saveConfigSnapshot(updated)
 }
 
 /**
@@ -1291,48 +1267,6 @@ export function isMaskedApiKey(key: string | undefined | null): boolean {
   // Some UIs use dots instead of asterisks
   if (key.includes("....") && key.length >= 10) return true
   return false
-}
-
-/**
- * Check if an API key is explicitly provided by the user (not from env var).
- * A user-provided key should be persisted to disk, while env var keys should not.
- */
-function isUserProvidedApiKey(key: string | undefined): boolean {
-  if (!key || typeof key !== "string") return false
-  // If it's a masked placeholder, it's not a real user-provided key
-  if (isMaskedApiKey(key)) return false
-  const envKey = getEnvApiKey()
-  return !envKey || key !== envKey
-}
-
-/**
- * Resolve which API key should be kept when saving config.
- *
- * Priority:
- * 1. New, non-masked key provided by the caller
- * 2. Current user-provided key (not masked, not from env)
- * 3. Environment variable key (if provided)
- *
- * Returns undefined when no preference exists, letting the caller keep the
- * deepMerge result unchanged.
- */
-function resolveApiKey(
-  callerKey: string | undefined,
-  currentKey: string | undefined,
-  envKey: string | undefined,
-): string | undefined {
-  if (callerKey && !isMaskedApiKey(callerKey)) {
-    return callerKey
-  }
-  if (currentKey && !isMaskedApiKey(currentKey)) {
-    if (!envKey || currentKey !== envKey) {
-      return currentKey
-    }
-  }
-  if (envKey) {
-    return envKey
-  }
-  return undefined
 }
 
 /** Shared domain-pattern filter (saveConfig + loadConfig P1 SEC-06). */
@@ -1389,7 +1323,11 @@ function sanitizeDomainPatternsOnLoad(cfg: CompanionConfig): CompanionConfig {
   return cfg
 }
 
-export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
+/** Persist settings; credential updates require explicit intent from the input boundary.
+ * Without it, keys in the patch are treated as runtime snapshots and never stored.
+ * Empty or masked values retain the existing credential.
+ */
+export function saveConfig(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }): CompanionConfig {
   if (config.llm && Object.prototype.hasOwnProperty.call(config.llm, "reasoning_effort")) {
     const { isReasoningEffort } = require("./llm/reasoning-effort") as typeof import("./llm/reasoning-effort")
     if (!isReasoningEffort(config.llm.reasoning_effort)) throw new Error("INVALID_REASONING_EFFORT")
@@ -1441,7 +1379,9 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // function without first adding serialization — otherwise the whitelist
   // append and concurrent settings writes will silently lose data.
   const current = getConfig()
-  const updated = stripCompanionUiProcessContinueDeny(deepMerge(current, config) as CompanionConfig)
+  // Credential projection must not mutate the cached snapshot before the
+  // atomic write succeeds, including when a section is absent from the patch.
+  const updated = stripCompanionUiProcessContinueDeny(deepMerge(structuredClone(current), config) as CompanionConfig)
 
   // ACP: re-sanitize after deepMerge so hand-edited/partial writes cannot skip
   // profile coercion (review_readonly) that load-time sanitize already enforces.
@@ -1453,56 +1393,33 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
     updated.acp = sanitizeAcpConfig(updated.acp)
   }
 
-  // Resolve LLM and vision API keys using the same priority rules.
-  // Note: vision has no env-var equivalent, so envKey is undefined for it.
-  const envKey = getEnvApiKey()
-  const resolvedLlmKey = resolveApiKey(config.llm?.api_key, current.llm.api_key, envKey)
-  if (resolvedLlmKey !== undefined) {
-    updated.llm.api_key = resolvedLlmKey
-  }
+  // A configuration snapshot cannot prove credential provenance: even a
+  // detached clone can contain an earlier environment fallback. Only callers
+  // that received an explicit user credential may request a key change.
+  const explicitLlm = intent?.llmKey === true && config.llm?.api_key && !isMaskedApiKey(config.llm.api_key)
+    ? config.llm.api_key : undefined
+  const explicitVision = intent?.visionKey === true && config.vision?.api_key && !isMaskedApiKey(config.vision.api_key)
+    ? config.vision.api_key : undefined
+  const nextLlmKey = explicitLlm ?? storedLlmKey
+  let nextVisionKey = explicitVision ?? storedVisionKey
+  updated.llm.api_key = nextLlmKey || getEnvApiKey()
+  let inherited = false
   if (updated.vision) {
-    const resolvedVisionKey = resolveApiKey(config.vision?.api_key, current.vision?.api_key, undefined)
-    if (resolvedVisionKey !== undefined) {
-      updated.vision.api_key = resolvedVisionKey
-    }
-    // Multi-adversarial P0 (2026-08-08): when vision endpoint matches main LLM and
-    // vision key is still empty/placeholder, inherit llm.api_key (no new schema field).
-    const inherited = resolveInheritedVisionApiKey({
-      llmBaseUrl: updated.llm.base_url,
-      llmModelName: updated.llm.model_name,
-      llmApiKey: updated.llm.api_key,
-      llmProtocol: updated.llm.protocol,
-      visionBaseUrl: updated.vision.base_url,
-      visionModelName: updated.vision.model_name,
-      visionApiKey: updated.vision.api_key,
+    updated.vision.api_key = nextVisionKey
+    const candidate = resolveInheritedVisionApiKey({
+      llmBaseUrl: updated.llm.base_url, llmModelName: updated.llm.model_name,
+      llmApiKey: updated.llm.api_key, llmProtocol: updated.llm.protocol,
+      visionBaseUrl: updated.vision.base_url, visionModelName: updated.vision.model_name,
+      visionApiKey: nextVisionKey,
     })
-    if (inherited !== undefined) {
-      updated.vision.api_key = inherited
+    if (isPlaceholderVisionKey(nextVisionKey) && updated.llm.protocol !== "anthropic" && endpointsMatch(updated.llm, updated.vision)) {
+      updated.vision.api_key = candidate ?? ""
+      inherited = true
+      // Inherited credentials are runtime-only, not a stored vision key.
+      nextVisionKey = ""
     }
   }
-
-  const configPath = path.join(getConfigDir(), "config.json")
-  // Save to file with api_key masked (don't persist the env var to disk)
-  const toSave = JSON.parse(JSON.stringify(updated))
-  // Only mask the LLM API key if it matches the env var (don't leak env to disk)
-  // If the user provided a different key, persist it
-  if (envKey && toSave.llm?.api_key === envKey) {
-    toSave.llm.api_key = ""  // Don't write env var to disk
-  }
-  // Vision may inherit llm.api_key when endpoints match; if that value is the
-  // env-sourced key, blank it on disk the same way (runtime cache still has it).
-  if (envKey && toSave.vision?.api_key === envKey) {
-    toSave.vision.api_key = ""
-  }
-  // H3 (audit): atomic write (tmp + rename) so a crash mid-save can't leave a truncated
-  // config.json (which the H4 load path would then treat as corrupt). mode 0o600 — holds api_key.
-  // (Supersedes the P0-3 writeFileSync+chmod: atomicWriteJSON already does atomic + 0o600 + chmod
-  // internally — merged from PR #13.)
-  atomicWriteJSON(configPath, toSave)
-  cachedConfig = updated
-  cachedConfigMtimeMs = configFileMtimeMs()
-  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
-  return updated
+  return saveConfigSnapshot(updated, nextLlmKey, nextVisionKey, inherited)
 }
 
 /**
@@ -1536,16 +1453,15 @@ export interface ModelMigration {
  * Only EXACT-match legacy ids are rewritten; custom/other models (and the higher-
  * tier `deepseek-v4-pro`) are left untouched. An invalid saved reasoning effort is
  * normalized to its default so it cannot block migration; other settings are preserved
- * by deepMerge and the spread below. Runs at startup before the model-validity probe
+ * by deepMerge. Runs at startup before the model-validity probe
  * so the probe validates the migrated name.
  */
 export function migrateLegacyModelName(): ModelMigration {
   const cfg = getConfig()
   const target = DEPRECATED_MODEL_MAP[cfg.llm.model_name]
   if (!target) return { migrated: false }
-  // Preserve the llm block and normalize an invalid stored effort before saveConfig
-  // validates it. The save path re-resolves and masks environment-sourced keys.
-  saveConfig({ llm: { ...cfg.llm, model_name: target, reasoning_effort: effectiveReasoningEffort(cfg.llm.reasoning_effort) } })
+  // Submit only the changed fields; the runtime key may be an environment fallback.
+  saveConfig({ llm: { model_name: target, reasoning_effort: effectiveReasoningEffort(cfg.llm.reasoning_effort) } as LlmConfig })
   return { migrated: true, from: cfg.llm.model_name, to: target }
 }
 

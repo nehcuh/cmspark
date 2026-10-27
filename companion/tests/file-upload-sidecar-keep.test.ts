@@ -54,7 +54,7 @@ before(async () => {
       temperature: 0.5,
       context_window: 4000,
     },
-  } as any)
+  } as any, { llmKey: true })
 
   // Patch OpenAI completions.create to avoid real network calls.
   const openaiMod = await import("openai")

@@ -53,7 +53,7 @@ before(async () => {
       allow_all_schemes: false,
       companion_ui_exe_basenames: [],
     },
-  })
+  }, { llmKey: true })
 })
 
 after(() => {
@@ -431,7 +431,7 @@ describe("settings-cli", { concurrency: 1 }, () => {
       allow_all_schemes: false,
       companion_ui_exe_basenames: [],
     },
-  })
+  }, { llmKey: true })
 
   const result = withExitIntercept(() =>
     runNonInteractiveSettings(["api_key=sk-leaked-key-1234"]),

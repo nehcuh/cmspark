@@ -17,7 +17,7 @@ delete process.env.DEEPSEEK_API_KEY
 
 let initDataDir: typeof import("../src/config").initDataDir
 let DATA_DIR: string
-let saveConfig: (c: Record<string, unknown>) => unknown
+let saveConfig: (c: Record<string, unknown>, intent?: { llmKey?: boolean; visionKey?: boolean }) => unknown
 let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
 let kg: typeof import("../src/skills/knowledge-graph")
 let clusters: typeof import("../src/skills/knowledge-clusters")
@@ -39,7 +39,7 @@ before(async () => {
   validateWsMessage = (await import("../src/ws/validate")).validateWsMessage
   await initDataDir()
   // 过 knowledgeExtractLlmConfig 闸（impl 已被测试钩子替换，不走网络）
-  saveConfig({ llm: { api_key: "sk-test-graph", base_url: "http://127.0.0.1:9/v1", model_name: "test-model" } })
+  saveConfig({ llm: { api_key: "sk-test-graph", base_url: "http://127.0.0.1:9/v1", model_name: "test-model" } }, { llmKey: true })
 })
 
 after(() => {
