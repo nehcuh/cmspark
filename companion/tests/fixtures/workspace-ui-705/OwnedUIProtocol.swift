@@ -19,7 +19,9 @@ enum OwnedUI705ButtonIdentity: Int {
   }
  }
 }
-enum OwnedUI705File: String {
+enum OwnedUI705File: String {/*OBS788_BEGIN*/
+ case cancel18Enter="cancel-18-enter.json",cancel18Return="cancel-18-return.json",cancel19Enter="cancel-19-enter.json",cancel19Return="cancel-19-return.json",cancel20Enter="cancel-20-enter.json",cancel20Return="cancel-20-return.json"
+/*OBS788_END*/
  case input="input.json", startup="runner-start.json", ack="owner-ack.json", begin="ui-begin.json", returned="ui-quiescent.json", closed="runner-closed.json", cancel="cancel.json", first="picker-first.json", second="picker-second.json", uiRefusal="ui-refusal.json", uiProgress="ui-progress.json", uiChooseCensus="ui-choose-census.json"
 }
 struct OwnedUI705Scene {
@@ -85,7 +87,15 @@ struct OwnedUI705Scene {
   guard rename(temp,file)==0 else{throw OwnedUI705Error.refused};temporary=false
   var published=stat();guard lstat(file,&published)==0,regularProgress(published),published.st_dev==owned.st_dev,published.st_ino==owned.st_ino,published.st_size==d.count else{throw OwnedUI705Error.refused};try check()
  }
- func tuple(_ value:[String:Any],_ fields:Set<String>) throws {guard Set(value.keys)==fields,try Self.number(value["schema"])==1,value["nonce"] as? String==nonce else{throw OwnedUI705Error.refused}}
+/*OBS788_BEGIN*/ // Timing observations never establish UI outcome or quiescence.
+ func writeCancelTiming788(_ stage:Int,_ returned:Bool,_ elapsed:Int,_ remaining:Int,_ failures:Int) throws {
+  guard Thread.isMainThread,(18...20).contains(stage),(0...45001).contains(elapsed),(0...45001).contains(remaining),(0...6).contains(failures) else{throw OwnedUI705Error.refused}
+  let name:OwnedUI705File
+  switch(stage,returned){case(18,false):name = .cancel18Enter;case(18,true):name = .cancel18Return;case(19,false):name = .cancel19Enter;case(19,true):name = .cancel19Return;case(20,false):name = .cancel20Enter;case(20,true):name = .cancel20Return;default:throw OwnedUI705Error.refused}
+  let value788:[String:Any]=["schema":1,"nonce":nonce,"stage":stage,"returned":returned,"elapsed_ms":elapsed,"remaining_ms":remaining,"prior_publish_failures":failures]
+  try write(name,value788)
+ }
+/*OBS788_END*/ func tuple(_ value:[String:Any],_ fields:Set<String>) throws {guard Set(value.keys)==fields,try Self.number(value["schema"])==1,value["nonce"] as? String==nonce else{throw OwnedUI705Error.refused}}
  static func number(_ value:Any?) throws ->Double {guard let n=value as? NSNumber,CFGetTypeID(n) != CFBooleanGetTypeID(),n.doubleValue.isFinite else{throw OwnedUI705Error.refused};return n.doubleValue}
  static func boolean(_ value:Any?) throws ->Bool {guard let n=value as? NSNumber,CFGetTypeID(n)==CFBooleanGetTypeID() else{throw OwnedUI705Error.refused};return n.boolValue}
  static func pid(_ value:Any?) throws ->pid_t {guard let n=value as? NSNumber,CFGetTypeID(n) != CFBooleanGetTypeID(),n.doubleValue.isFinite,n.doubleValue.rounded(.down)==n.doubleValue,n.doubleValue>1,n.doubleValue<=Double(Int32.max) else{throw OwnedUI705Error.refused};return pid_t(n.int32Value)}

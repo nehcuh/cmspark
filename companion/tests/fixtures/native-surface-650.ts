@@ -150,13 +150,33 @@ export async function acquireSurface650(rootInput: string | undefined, dataInput
   }
 }
 
-export async function withSurface650<T>(t: TestContext, action: (t: TestContext, lease: SurfaceLease650) => Promise<T>, borrowed?: SurfaceBorrow650): Promise<T> {
+/*OBS788_BEGIN*/
+export function createSurfaceTrace788(name:unknown,clock:()=>number,publish:(line:string)=>void){
+ const cases:Record<string,[string,number]>={
+  '#476 actual native workspace picker binds canonical root, reopens lists/reads and cancels the second OS picker':['WORKSPACE',45000],
+  '#476 native local-work keys→real PTY/ACP→explicit handback→same history':['LOCAL',45000],
+  '#476 actual native permanent archive history restore and lost ACK use the canonical index':['ARCHIVE',20000],
+  '#476 terminal-only native confirmation→real user PTY→selected partial excerpt→canonical reopen':['TERMINAL',45000],
+ }
+ const selected=typeof name==='string'&&Object.hasOwn(cases,name)?cases[name]:null
+ if(!selected)return(_phase:unknown)=>{}
+ const seen=new Set<string>();let start:number|null=null
+ try{const n=clock();if(Number.isFinite(n))start=n}catch{}
+ return(phase:unknown)=>{try{
+  if(typeof phase!=='string'||!['ACQUIRE_ENTER','ACQUIRED','ACQUIRE_REFUSED','CALLBACK_ENTER','CLEANUP_ENTER','ACTION_SETTLED','RELEASE_ENTER','RELEASED','RELEASE_REFUSED'].includes(phase)||seen.has(phase))return
+  seen.add(phase);let elapsed_ms:number|null=null,over_budget:boolean|null=null
+  try{const elapsed=clock()-start!;if(start!==null&&Number.isFinite(elapsed)&&elapsed>=0){elapsed_ms=Math.min(selected[1],Math.floor(elapsed));over_budget=elapsed>selected[1]}}catch{}
+  publish('D476_SURFACE_788 '+JSON.stringify({schema:1,case:selected[0],phase,elapsed_ms,over_budget}))
+ }catch{}}
+}
+/*OBS788_END*/export async function withSurface650<T>(t: TestContext, action: (t: TestContext, lease: SurfaceLease650/*OBS788_BEGIN*/,observe788:(phase:unknown)=>void/*OBS788_END*/) => Promise<T>, borrowed?: SurfaceBorrow650): Promise<T> {
   const root = process.env.CMSPARK_TEST_RUN_DIR
   // Explicit other-run fixtures retain their existing acquire contract.
   const data = root === runnerRoot650 ? runnerData650 : process.env.CMSPARK_DATA_DIR
-  const lease = await acquireSurface650(root, data, t.signal, borrowed)
+  /*OBS788_BEGIN*/let observe788:ReturnType<typeof createSurfaceTrace788>=()=>{};try{observe788=createSurfaceTrace788(t.name,()=>performance.now(),line=>{try{t.diagnostic(line)}catch{};if(t.signal.aborted)try{process.stdout.write(line+'\n')}catch{}})}catch{};observe788('ACQUIRE_ENTER')
+/*OBS788_END*/const lease = await acquireSurface650(root, data, t.signal, borrowed)/*OBS788_BEGIN*/.catch(error=>{observe788('ACQUIRE_REFUSED');throw error});observe788('ACQUIRED')/*OBS788_END*/
   const context = new Proxy(t, { get(target, key) { const value = key === "signal" ? lease.signal : Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value } })
   let primary: unknown, failed = false
-  try { lease.checkpoint(); return await action(context, lease) } catch (e) { failed = true; primary = e; throw e }
-  finally { try { lease.release() } catch (e) { try { t.diagnostic("NATIVE_SURFACE_650_CLEANUP_REFUSED") } catch {} if (!failed) throw e; void primary /* Preserve the original assertion/abort/producer failure. */ } }
+  try { lease.checkpoint(); /*OBS788_BEGIN*/observe788('CALLBACK_ENTER');/*OBS788_END*/return await action(context, lease/*OBS788_BEGIN*/,observe788/*OBS788_END*/) } catch (e) { failed = true; primary = e; throw e }
+  finally { /*OBS788_BEGIN*/observe788('ACTION_SETTLED');observe788('RELEASE_ENTER');/*OBS788_END*/try { lease.release()/*OBS788_BEGIN*/;observe788('RELEASED')/*OBS788_END*/ } catch (e) {/*OBS788_BEGIN*/observe788('RELEASE_REFUSED');/*OBS788_END*/ try { t.diagnostic("NATIVE_SURFACE_650_CLEANUP_REFUSED") } catch {} if (!failed) throw e; void primary /* Preserve the original assertion/abort/producer failure. */ } }
 }

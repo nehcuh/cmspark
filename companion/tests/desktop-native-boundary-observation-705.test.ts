@@ -47,7 +47,7 @@ test('705 actual HMAC producer frames identify request, bound confirmation and r
  assert.deepEqual(plain(f.calls),[],'inert fixture never opens a terminal')
 })
 test('705 local activation observation inverse restores the complete preceding controller',()=>{
- let cpp=read('tests/fixtures/desktop-476/local-acceptance.cpp').replace(/\r\n/g,'\n')
+ let cpp=require(path.join(root,'scripts/tests/observation-788-inverse.mjs')).restoreObservation788(read('tests/fixtures/desktop-476/local-acceptance.cpp')).replace(/\r\n/g,'\n')
  const capture='const BOOL activation=SetForegroundWindow(h.window);const auto focusStatus=h.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);const bool focusFailed=FAILED(focusStatus);const HWND observedForeground=focusFailed?nullptr:GetForegroundWindow();const bool foregroundMismatch=!focusFailed&&observedForeground!=h.window;'
  const original='SetForegroundWindow(h.window);const auto focusStatus=h.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);const bool focusFailed=FAILED(focusStatus);const bool foregroundMismatch=!focusFailed&&GetForegroundWindow()!=h.window;'
  const observation='try{const wchar_t* id=activation?(focusFailed?L"D476_LOCAL_ACTIVATE_1_X":observedForeground==nullptr?L"D476_LOCAL_ACTIVATE_1_0":observedForeground==h.window?L"D476_LOCAL_ACTIVATE_1_1":L"D476_LOCAL_ACTIVATE_1_2"):(focusFailed?L"D476_LOCAL_ACTIVATE_0_X":observedForeground==nullptr?L"D476_LOCAL_ACTIVATE_0_0":observedForeground==h.window?L"D476_LOCAL_ACTIVATE_0_1":L"D476_LOCAL_ACTIVATE_0_2");emit(h,id);}catch(...){}'

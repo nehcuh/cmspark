@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createConfirmationObservation772 } from './fixtures/native-confirmation-observer-772'
+import { createNativeObservation788 } from './fixtures/native-observation-788'
 
 // Both real source-parent and normal .test-dist/tests filenames are supported.
 const sourceRoot = path.resolve(__dirname, '../..')
@@ -14,7 +15,7 @@ const supplied = (globalThis as any)[Symbol.for('cmspark.owned.confirmation772.n
 // projection. Ordinary CI reads the actual tsc-emitted sibling without importing
 // or executing that complete native module. The observer above is always real.
 if (supplied !== undefined) assert.equal(supplied.normalEmitBound, true)
-const actualLocal = supplied?.actualLocal ?? extractActualLocalObservation772(require('typescript'), fs.readFileSync(path.join(__dirname, 'desktop-native-thread-metadata-476.test.js'), 'utf8'))
+const actualLocal = supplied?.actualLocal ?? extractActualLocalObservation772(require('typescript'), fs.readFileSync(path.join(__dirname, 'desktop-native-thread-metadata-476.test.js'), 'utf8'), createNativeObservation788)
 const controls = createConfirmationContracts772({ createConfirmationObservation772, nativeFrame: nativeConfirmationFrame772, actualLocal })
 assert.equal(controls.length, 6)
 const names = [

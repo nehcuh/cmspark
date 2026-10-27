@@ -19,7 +19,7 @@ export function nativeConfirmationFrame772(role, point, ordinal, bucket, value) 
 export const confirmationCpuSlot772 = 'cmspark.owned.confirmation772.normal-emits'
 
 /** Select only original normal-emitted pure helpers and the actual local DTO expression. */
-export function extractActualLocalObservation772(ts, normalJavaScript) {
+export function extractActualLocalObservation772(ts, normalJavaScript, createNativeObservation788) {
   const sf = ts.createSourceFile('desktop-native-thread-metadata-476.test.js', normalJavaScript, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS)
   assert.equal(sf.parseDiagnostics.length, 0)
   const names = ['parseLocalFirstSite705', 'parseLocalFocus705', 'parseLocalActivation705', 'createLocalDataObservation705', 'createLocalProgress705']
@@ -51,8 +51,8 @@ export function extractActualLocalObservation772(ts, normalJavaScript) {
   // receipt-mask expression and nested observation objects are original producers.
   const factoryCode = `(() => {
     ${helpers.join('\n')}
-    const dataObservation=createLocalDataObservation705(),localProgress=createLocalProgress705();
-    return {dataObservation,localProgress,marker(seed={}){
+    const dataObservation=createLocalDataObservation705(),localProgress=createLocalProgress705(),nativeObservation788=createNativeObservation788();
+    return {dataObservation,localProgress,nativeObservation788,marker(seed={}){
       const required=${required[0]},receipts=new Set((seed.receiptIndexes??[]).map(index=>required[index]));
       const localFirstSite=${first[0]};
       for(const text of seed.first??[]){const result=parseLocalFirstSite705(text);if(result&&localFirstSite[result.origin]===null)localFirstSite[result.origin]=result.site;}
@@ -61,7 +61,7 @@ export function extractActualLocalObservation772(ts, normalJavaScript) {
       return ${diagnostic[0]};
     }};
   })()`
-  return { factoryCode, create: () => vm.runInNewContext(factoryCode, { Buffer, Set }, { timeout: 1000 }),
+  return { factoryCode, create: () => vm.runInNewContext(factoryCode, { Buffer, Set, createNativeObservation788 }, { timeout: 1000 }),
     proof: { normalJavaScriptSHA256: hash(normalJavaScript), helperNames: names, helperSHA256: helpers.map(hash), payloadExpressionSHA256: hash(diagnostic[0]), requiredExpressionSHA256: hash(required[0]), firstInitializerSHA256: hash(first[0]), wholeNativeModuleExecuted: false } }
 }
 

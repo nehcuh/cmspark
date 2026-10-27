@@ -13,8 +13,14 @@ struct D705TerminalAcceptance {
  static std::wstring const& command();static size_t input_length(unsigned);static JsonObject input_payload(unsigned,size_t);
  static bool input_request(Desktop&,unsigned);static void input_step(Desktop&);static void input_finished(Desktop&);
  static bool complete(Desktop&,JsonObject const&);
-};
-/* D705 TERMINAL IMPLEMENTATION */
+/*OBS788_BEGIN*/
+ static unsigned relation788(Desktop&,HWND) noexcept;
+ static void observe788(Desktop&,unsigned) noexcept;
+ static unsigned seen788;
+/*OBS788_END*/};
+/*OBS788_BEGIN*/
+// Passive classification only. Never a key/focus/authority gate.
+/*OBS788_END*//* D705 TERMINAL IMPLEMENTATION */
 Desktop* D705TerminalAcceptance::owner=nullptr;
 std::wstring D705TerminalAcceptance::document;
 unsigned long D705TerminalAcceptance::epoch=0;
@@ -42,16 +48,16 @@ void D705TerminalAcceptance::emit(Desktop& h,wchar_t const* id){JsonObject frame
 void D705TerminalAcceptance::failure(Desktop& h,unsigned site){if(failed)return;failed=true;input_active=false;input_pending=0;input_web.Reset();note(&h,L'W',site);emit(h,L"D476_TERMINAL_FAIL");}
 void D705TerminalAcceptance::document_ready(Desktop& h){
  if(owner||!h.ready||h.generation.empty()||!h.web){failure(h,1);return;}owner=&h;document=h.generation;epoch=h.epoch;
- form_window=h.window;form_web=h.web;begin_form(h);
+ form_window=h.window;form_web=h.web;/*OBS788_BEGIN*/try{observe788(h,1);}catch(...){}/*OBS788_END*/begin_form(h);
 }
 void D705TerminalAcceptance::begin_form(Desktop& h){
  // Join only the first owned document and actual native activation. Never acquire focus.
  if(!owner||owner!=&h||form_requested||failed)return;
  if(!form_window||!IsWindow(form_window)||GetWindowLongPtrW(form_window,GWLP_USERDATA)!=(LONG_PTR)owner||h.window!=form_window||!h.ready||h.generation!=document||h.epoch!=epoch||!h.web||h.web.Get()!=form_web.Get()||!h.controller){failure(h);return;}
- if(!IsWindowVisible(form_window)||GetForegroundWindow()!=form_window)return;
+ /*OBS788_BEGIN*/bool visible788=false;HWND foreground788=nullptr;/*OBS788_END*/if(!/*OBS788_BEGIN*/(visible788=/*OBS788_END*/IsWindowVisible(form_window)/*OBS788_BEGIN*/)/*OBS788_END*/||/*OBS788_BEGIN*/(foreground788=/*OBS788_END*/GetForegroundWindow()/*OBS788_BEGIN*/)/*OBS788_END*/!=form_window)/*OBS788_BEGIN*/{try{observe788(h,visible788?6u+relation788(h,foreground788):5u);}catch(...){}/*OBS788_END*/return;/*OBS788_BEGIN*/}/*OBS788_END*/
  form_requested=true;
  std::wstring code=L"const documentGeneration="+std::wstring(JsonValue::CreateStringValue(document).Stringify())+L";"+D705_TERMINAL_FORM_SOURCE+L";true";
- auto result=h.web->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT status,LPCWSTR scriptResult)->HRESULT{if(FAILED(status)||!current(h)||!scriptResult||std::wstring(scriptResult)!=L"true")failure(h,2);return S_OK;}).Get());if(FAILED(result))failure(h,3);
+ auto result=h.web->ExecuteScript(code.c_str(),Callback<ICoreWebView2ExecuteScriptCompletedHandler>([&h](HRESULT status,LPCWSTR scriptResult)->HRESULT{if(FAILED(status)||!current(h)||!scriptResult||std::wstring(scriptResult)!=L"true")failure(h,2);/*OBS788_BEGIN*/else try{observe788(h,4);}catch(...){}/*OBS788_END*/return S_OK;}).Get());if(FAILED(result))failure(h,3);/*OBS788_BEGIN*/else try{observe788(h,3);}catch(...){}/*OBS788_END*/
 }
 // Fixed test-owned browser-engine input, never Win32 queue/hardware fidelity.
 std::wstring const& D705TerminalAcceptance::command(){
@@ -134,7 +140,11 @@ void D705TerminalAcceptance::renderer(Desktop& h,JsonObject const& frame){
  if(id==L"D476_TERMINAL_TYPE"){type_command(h);return;}if(id==L"D476_TERMINAL_RESIZE"){resize(h);return;}
  // Passive closed observations, after the original current/document checks.
  static wchar_t const* const ready[]={L"D476_TERMINAL_READY_0_X_0",L"D476_TERMINAL_READY_0_X_1",L"D476_TERMINAL_READY_0_0_0",L"D476_TERMINAL_READY_0_0_1",L"D476_TERMINAL_READY_0_1_0",L"D476_TERMINAL_READY_0_1_1",L"D476_TERMINAL_READY_1_X_0",L"D476_TERMINAL_READY_1_X_1",L"D476_TERMINAL_READY_1_0_0",L"D476_TERMINAL_READY_1_0_1",L"D476_TERMINAL_READY_1_1_0",L"D476_TERMINAL_READY_1_1_1"};
- for(auto observed:ready)if(id==observed){try{emit(h,observed);}catch(...){}return;}
+ for(auto observed:ready)if(id==observed){try{emit(h,observed);}catch(...){}return;}/*OBS788_BEGIN*/
+ // Renderer observations cross only the original current/generation authenticated path.
+ static wchar_t const* milestones788[]={L"D476_OBS788_T_5",L"D476_OBS788_T_6",L"D476_OBS788_T_7",L"D476_OBS788_T_8",L"D476_OBS788_T_9",L"D476_OBS788_T_10"};
+ for(auto observed:milestones788)if(id==observed){try{emit(h,observed);}catch(...){}return;}
+/*OBS788_END*/
  const wchar_t* receipts[]={L"DENIED",L"CANCELLED",L"OUTPUT",L"RESIZED",L"STOPPED",L"SAVED",L"REOPENED",L"DONE"};
  for(unsigned index=0;index<8;index++)if(id==std::wstring(L"D476_TERMINAL_")+receipts[index]){
   if(receipt_mask!=((1u<<index)-1)){failure(h,26);return;}receipt_mask|=1u<<index;
@@ -149,3 +159,18 @@ bool D705TerminalAcceptance::complete(Desktop& h,JsonObject const& frame){
  if(!current(h)||GetForegroundWindow()!=h.window||!done||!input_done_emitted||input_active||input_pending||key_count!=10||confirm_count!=4||receipt_mask!=255||!typed||!resized||!::keys(frame,{L"type",L"result"})||text(frame,L"result")!=L"COMPLETE"){note(&h,L'W',28);ExitProcess(64);}
  done=false;ExitProcess(77);return true;
 }
+/*OBS788_BEGIN*/
+unsigned D705TerminalAcceptance::seen788=0;
+unsigned D705TerminalAcceptance::relation788(Desktop& h,HWND observed) noexcept {
+ if(!observed)return 0;
+ if(observed==h.window)return 1;
+ if(h.confirmation&&h.confirmation->generation==h.generation&&h.confirmation->epoch==h.epoch&&observed==h.confirmation->window)return 2;
+ DWORD pid=0;const auto thread=GetWindowThreadProcessId(observed,&pid);
+ if(!thread||!pid||GetForegroundWindow()!=observed)return 5;
+ return pid==GetCurrentProcessId()?3:4;
+}
+void D705TerminalAcceptance::observe788(Desktop& h,unsigned code) noexcept {
+ if(code<1||code>16||(seen788&(1u<<(code-1))))return;seen788|=1u<<(code-1);
+ try{static wchar_t const* names[]={L"D476_OBS788_T_1",L"D476_OBS788_T_2",L"D476_OBS788_T_3",L"D476_OBS788_T_4",L"D476_OBS788_SKIP_V",L"D476_OBS788_SKIP_0",L"D476_OBS788_SKIP_1",L"D476_OBS788_SKIP_2",L"D476_OBS788_SKIP_3",L"D476_OBS788_SKIP_4",L"D476_OBS788_SKIP_5"};if(code<=11)emit(h,names[code-1]);}catch(...){} // A diagnostic fault cannot replace the original action/refusal.
+}
+/*OBS788_END*/

@@ -109,6 +109,7 @@ export function createConfirmationContracts772({ createConfirmationObservation77
     local.localProgress.incoming({ type: 'desktop.agent.start' })
     local.localProgress.outgoing(JSON.stringify({ type: 'desktop.confirmation.request', purpose: 'local-work', request_method: 'desktop.agent.start', confirmation_id: 'PRIVATE_CONFIRMATION_ID' }))
     local.localProgress.incoming({ type: 'desktop.confirmation.decision', purpose: 'local-work', confirmation_id: 'PRIVATE_CONFIRMATION_ID', approved: false })
+    local.nativeObservation788.native('D476_OBS788_FG_L_1_4')
     const message = local.marker({ first: ['D476_LOCAL_FIRST_W_8'], focus: 'D476_LOCAL_FOCUS_FOREGROUND_MISMATCH', activation: 'D476_LOCAL_ACTIVATE_1_2', receiptIndexes: [0, 1] })
     const finite = localDiagnostic(message)
     assert.equal(finite.status, 'OBSERVED'); assert.deepEqual(publicLocalDiagnostic(finite), finite)
@@ -121,6 +122,13 @@ export function createConfirmationContracts772({ createConfirmationObservation77
     assert.equal(finite.snapshot.localFocusResult, 'FOREGROUND_MISMATCH')
     assert.equal(finite.snapshot.localActivation.foreground, 'OTHER')
     assert.equal(finite.snapshot.receiptMask, 3)
+    assert.equal(finite.snapshot.observation788.local.relation, 'OTHER_PROCESS')
+    assert.equal(finite.snapshot.observation788.local.activationReturned, true)
+    const legacy = clone(finite.snapshot); delete legacy.observation788
+    const legacyFinite = localDiagnostic(LOCAL + JSON.stringify(legacy))
+    assert.equal(legacyFinite.status, 'OBSERVED'); assert.deepEqual(publicLocalDiagnostic(legacyFinite), legacyFinite)
+    const noncanonical = JSON.stringify(finite.snapshot).replace('"schema":1', '"schema":1,"schema":1')
+    assert.equal(localDiagnostic(LOCAL + noncanonical).status, 'UNKNOWN')
     assert.equal(JSON.stringify(finite).includes('PRIVATE_'), false)
     assert.equal(confirmationDiagnostic(message), null); assert.equal(terminalDiagnostic(message), null)
     assert.equal(actualLocal.proof.wholeNativeModuleExecuted, false)
@@ -134,6 +142,9 @@ export function createConfirmationContracts772({ createConfirmationObservation77
       snapshot => { snapshot.localFocusResult = 'PRIVATE' }, snapshot => { snapshot.localActivation = { requested: true, foreground: 'PRIVATE' } },
       snapshot => { snapshot.localProgress.protocolAttempts = 65536 }, snapshot => { snapshot.localData.terminalDataBytes = 16777217 },
       snapshot => { snapshot.localData.rendererFirstData = 1 }, snapshot => { snapshot.receiptMask = 256 },
+      snapshot => { snapshot.observation788.local = { activationReturned: true, focusSucceeded: true, relation: 'PRIVATE' } },
+      snapshot => { snapshot.observation788.terminal.seenMask = 1024 },
+      snapshot => { snapshot.observation788.extra = 'PRIVATE' },
     ]) { const changed = clone(actual.snapshot); mutate(changed); assert.deepEqual(localDiagnostic(LOCAL + JSON.stringify(changed)), { status: 'UNKNOWN', reason: 'INVALID_SNAPSHOT' }) }
     let touched = 0
     const getter = clone(actual); Object.defineProperty(getter.snapshot, 'localProgress', { get() { touched++; throw Error('PRIVATE') } })
