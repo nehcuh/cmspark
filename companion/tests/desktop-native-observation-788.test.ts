@@ -39,8 +39,8 @@ test('788 marked observation increments invert exactly to the ten original actio
   "tests/fixtures/workspace-ui-705/OwnedUIProtocol.swift": "fbad4db2905d6bb58a40062ec844716554fb4bb8f52ae73f3f5b094ec27c979c",
   "tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift": "fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076",
   "tests/helpers/workspace-xctest-owned-705.ts": "873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b",
-  "tests/desktop-native-thread-metadata-476.test.ts": "56abd88e272e8982388507c79c4046936401937e534d5333d5f42885f563f313"
-};assert.equal(Object.keys(hashes).length,10);for(const [file,expected]of Object.entries(hashes))assert.equal(createHash('sha256').update(restoreObservation788(read(file))).digest('hex'),expected,file)})
+  "tests/desktop-native-thread-metadata-476.test.ts": "5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018"
+};assert.equal(Object.keys(hashes).length,10);for(const [file,expected]of Object.entries(hashes)){const restored=restoreObservation788(read(file));assert.equal(createHash('sha256').update(restored).digest('hex'),expected,file);if(file==='tests/desktop-native-thread-metadata-476.test.ts'){const current=', { llmKey: true }';assert.equal(restored.split(current).length,2);const prior=restored.replace(current,'');assert.equal(createHash('sha256').update(prior).digest('hex'),'56abd88e272e8982388507c79c4046936401937e534d5333d5f42885f563f313')}}})
 
 function actualReceiver788(role:'LOCAL'|'ARCHIVE'|'TERMINAL'){
  const source=read('tests/desktop-native-thread-metadata-476.test.ts'),ast=ts.createSourceFile('native.ts',source,ts.ScriptTarget.Latest,true),nodes:ts.ArrowFunction[]=[]
