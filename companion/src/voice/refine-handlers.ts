@@ -38,6 +38,7 @@ function llmConfigFromCompanion(): LlmExtractConfig | null {
       api_key: llm.api_key,
       model_name: llm.model_name,
       temperature: typeof llm.temperature === "number" ? llm.temperature : 0.3,
+      reasoning_effort: llm.reasoning_effort,
       protocol: llm.protocol,
       auth_style: llm.auth_style,
       client_header_profile: llm.client_header_profile,

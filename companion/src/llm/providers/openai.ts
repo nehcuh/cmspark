@@ -18,6 +18,7 @@ import type {
 import { throwIfLlmEndpointBlocked } from "../../security"
 import { isBenignStreamTailClose } from "../transport-error"
 import { cleanCompanionUserAgent } from "./headers"
+import { reasoningSupport, reasoningWireEffort } from "../reasoning-effort"
 
 export class OpenAIProvider implements LlmProvider {
   private readonly client: OpenAI
@@ -40,18 +41,22 @@ export class OpenAIProvider implements LlmProvider {
     await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
+    const support = reasoningSupport(this.config.protocol, this.config.base_url, model)
+    const effort = reasoningWireEffort(support, this.config.reasoning_effort)
     const messages = toWireMessages(params.messages)
     const tools = params.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined
 
     const createParams: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
       model,
       messages,
-      temperature,
+      ...(support === "openai" ? {} : { temperature }),
       stream: true,
       stream_options: { include_usage: true },
     }
+    if (effort) (createParams as unknown as { reasoning_effort: string }).reasoning_effort = effort
     if (typeof params.max_tokens === "number" && params.max_tokens > 0) {
-      createParams.max_tokens = params.max_tokens
+      if (support === "openai") createParams.max_completion_tokens = params.max_tokens
+      else createParams.max_tokens = params.max_tokens
     }
     if (tools && tools.length > 0) {
       createParams.tools = tools
@@ -125,17 +130,21 @@ export class OpenAIProvider implements LlmProvider {
     await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
+    const support = reasoningSupport(this.config.protocol, this.config.base_url, model)
+    const effort = reasoningWireEffort(support, this.config.reasoning_effort)
     const messages = toWireMessages(params.messages)
 
     const createParams: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
       model,
-      temperature,
+      ...(support === "openai" ? {} : { temperature }),
       messages,
     }
+    if (effort) (createParams as unknown as { reasoning_effort: string }).reasoning_effort = effort
     // Same policy as streamChat: send a cap only when explicitly requested.
     const completeMax = params.max_tokens ?? this.config.max_tokens
     if (typeof completeMax === "number" && completeMax > 0) {
-      createParams.max_tokens = completeMax
+      if (support === "openai") createParams.max_completion_tokens = completeMax
+      else createParams.max_tokens = completeMax
     }
 
     const response = await this.client.chat.completions.create(createParams, {

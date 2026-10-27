@@ -738,6 +738,7 @@ export const initialState: AgentState = {
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
     context_window: 512000,
+    reasoning_effort: "medium",
     context_compaction: "auto",
     context_compaction_m2: true,
     protocol: "openai",

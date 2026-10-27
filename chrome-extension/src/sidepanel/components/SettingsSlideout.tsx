@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
+import { effectiveReasoningEffort, reasoningSupport, type ReasoningEffort } from "../utils/reasoning-effort"
 import { UserEnvSection } from "./UserEnvSection"
 import { SiteCounterSettingsSection } from "./SiteCounterSettingsSection"
 import { NetSecSettingsSection } from "./NetSecSettingsSection"
@@ -1052,6 +1053,25 @@ export function SettingsSlideout() {
                 当前使用 Companion 全局配置： {state.companionConfig.model_name}
               </div>
             )}
+          </div>
+
+          <div style={styles.field}>
+            <label htmlFor="reasoning-effort" style={styles.label}>思考强度</label>
+            <select id="reasoning-effort" style={styles.input} value={effectiveReasoningEffort(config.reasoning_effort)}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { reasoning_effort: e.target.value as ReasoningEffort } })}>
+              <option value="low">低</option>
+              <option value="medium">中（默认）</option>
+              <option value="high">高</option>
+              <option value="xhigh">极高</option>
+            </select>
+            <div style={styles.helpText}>
+              {reasoningSupport(config.protocol, config.base_url, config.model_name) === "unsupported"
+                ? "当前服务或模型暂未确认支持；将保存偏好，但不会发送强度参数。"
+                : reasoningSupport(config.protocol, config.base_url, config.model_name) === "deepseek"
+                  ? "DeepSeek 原生提供低、高、最高三档：中与高均使用高，极高使用最高。"
+                  : "所选强度将在对话模型请求中发送；更高强度可能增加耗时和费用。"}
+              测试连接只验证连通性，不验证强度是否生效。
+            </div>
           </div>
 
           <div style={styles.field}>

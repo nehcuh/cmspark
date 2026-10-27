@@ -205,8 +205,11 @@ Companion 默认在 `ws://127.0.0.1:23401` 启动 WebSocket 服务。
 | `api_key` | LLM API Key | 读取 `DEEPSEEK_API_KEY` 环境变量 |
 | `base_url` | API 基础地址 | `https://api.deepseek.com/v1` |
 | `model_name` | 模型名称 | `deepseek-v4-flash` |
+| `reasoning_effort` | 思考强度：低、中、高、极高 | `medium`（中） |
 | `temperature` | 温度参数 | `0.7` |
 | `context_window` | 上下文窗口大小 | `512000` |
+
+思考强度仅发送给已确认支持的官方模型与端点；其他模型保留设置但不发送该参数。DeepSeek 的原生档位只有低、高、最高：中与高均映射为高，极高映射为最高。设置中的「测试连接」不验证强度是否生效。
 
 ---
 
