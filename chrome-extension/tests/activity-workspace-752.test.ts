@@ -86,7 +86,8 @@ test('ordinary TaskEditor date patch leaves original sub-minute instants untouch
   assert.deepEqual(taskDatePatch(false, initial, { ...initial, remind: '' }), { remind_at: null })
   const changedDue = initial.due.slice(0, -2) + '01'
   assert.deepEqual(taskDatePatch(false, initial, { ...initial, due: changedDue }), { due_at: datetimeISO(changedDue) })
-  assert.deepEqual(taskDatePatch(true, initial, { ...initial }), { due_at: datetimeISO(initial.due), remind_at: datetimeISO(initial.remind) })
+  assert.deepEqual(taskDatePatch(true, initial, { ...initial }), { remind_at: datetimeISO(initial.remind) })
+  assert.deepEqual(taskDatePatch(true, initial, { ...initial, due: '' }), { due_at: null, remind_at: datetimeISO(initial.remind) })
 })
 test('actual recent-source component exposes newest source and its manual-review action beyond thirty captures', () => {
   const original = recorded.state.state.sources[0]

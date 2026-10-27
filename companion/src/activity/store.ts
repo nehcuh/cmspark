@@ -3,6 +3,7 @@ import * as path from 'path'
 import { createHash, randomUUID } from 'crypto'
 import { ActivityError, DEFAULT_ACTIVITY_CONFIG, type ActivityConfig, type ActivityState, type ActivitySource, type PersonalTodo, type TodoCandidate, type TaskEvidence } from './types'
 import { iso, validateConfig, validateTask } from './validation'
+import { evidencedDeadline } from './deadline-evidence'
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
 const digest = (v: string | Buffer): string => createHash('sha256').update(v).digest('hex')
 export class ActivityStore {
@@ -35,7 +36,16 @@ export class ActivityStore {
   /** Exclude raw OCR before cloning the state sent to the workspace. */
   stateMetadata(): Omit<ActivityState, 'sources'> & { sources: Array<Omit<ActivitySource, 'ocr_text'>> } {
     const { sources, ...metadata } = this.value
-    return { ...clone(metadata), sources: sources.map(({ ocr_text: _privateText, ...source }) => clone(source)) }
+    const projected = clone(metadata)
+    for (const candidate of projected.candidates) if (candidate.status === 'pending') candidate.due_at = this.candidateDeadline(candidate)
+    return { ...projected, sources: sources.map(({ ocr_text: _privateText, ...source }) => clone(source)) }
+  }
+  private candidateDeadline(candidate: TodoCandidate): string | null {
+    const evidence = candidate.evidence
+    if (!evidence || typeof evidence.source_id !== 'string') return null
+    const source = this.value.sources.find(item => item.id === evidence.source_id && !item.deleted)
+    const quote = evidence.quote
+    return source && source.origin !== 'manual_import' && typeof source.ocr_text === 'string' && typeof quote === 'string' && quote && source.ocr_text.includes(quote) ? evidencedDeadline(source.ocr_text, quote, candidate.due_at) : null
   }
   /** Scheduler reads must not serialize retained screenshots' OCR every second. */
   config(): ActivityConfig { return clone(this.value.config) }
@@ -101,7 +111,7 @@ export class ActivityStore {
     const remind_at = patch.remind_at === undefined ? null : iso(patch.remind_at)
     const todo: PersonalTodo = {
       id: randomUUID(), revision: 0, created_at: now, updated_at: now,
-      title: String(patch.title).trim(), owner: String(patch.owner).trim(), due_at: patch.due_at === undefined ? candidate.due_at : iso(patch.due_at), remind_at,
+      title: String(patch.title).trim(), owner: String(patch.owner).trim(), due_at: patch.due_at === undefined ? this.candidateDeadline(candidate) : iso(patch.due_at), remind_at,
       feedback_to: typeof patch.feedback_to === 'string' ? patch.feedback_to.trim() : candidate.feedback_to, feedback_required: feedback,
       kind: patch.kind === 'supervise' ? 'supervise' : 'own', handling_status: 'open', feedback_status: feedback ? 'pending' : 'not_required', evidence: clone(candidate.evidence), reminder: { status: remind_at ? 'scheduled' : 'none' },
     }

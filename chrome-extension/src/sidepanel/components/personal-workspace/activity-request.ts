@@ -68,5 +68,5 @@ export function datetimeISO(value: string): string | null { return value ? new D
 
 /** datetime-local displays minutes. Untouched controls must not rewrite stored seconds or receipts. */
 export function taskDatePatch(candidate: boolean, initial: { due: string; remind: string }, current: { due: string; remind: string }): { due_at?: string | null; remind_at?: string | null } {
-  return { ...(candidate || current.due !== initial.due ? { due_at: datetimeISO(current.due) } : {}), ...(candidate || current.remind !== initial.remind ? { remind_at: datetimeISO(current.remind) } : {}) }
+  return { ...(current.due !== initial.due ? { due_at: datetimeISO(current.due) } : {}), ...(candidate || current.remind !== initial.remind ? { remind_at: datetimeISO(current.remind) } : {}) }
 }
