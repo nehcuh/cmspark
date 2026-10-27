@@ -36,7 +36,7 @@ before(async () => {
       temperature: 0.7,
       context_window: 128000,
     },
-  })
+  }, { llmKey: true })
 })
 
 test("config.test echoes the tested {base_url, model_name} with the probe bit", async () => {

@@ -62,7 +62,7 @@ function saveUploadConfig(types: readonly string[], vision = false) {
     file_upload: { allowed_types: [...types], enable_vision_analysis: vision },
     llm: { base_url: "http://127.0.0.1:9", api_key: "sk-test", model_name: "deepseek-chat" },
     vision: { enabled: vision, base_url: "http://127.0.0.1:9", api_key: "sk-test", model_name: "entry-vision", fallback: "metadata" },
-  } as any)
+  } as any, { llmKey: true, visionKey: true })
 }
 
 test("new installations include the five additional Office MIME types", () => {

@@ -17,7 +17,7 @@ delete process.env.DEEPSEEK_API_KEY
 
 let initDataDir: typeof import("../src/config").initDataDir
 let DATA_DIR: string
-let saveConfig: (c: Record<string, unknown>) => unknown
+let saveConfig: (c: Record<string, unknown>, intent?: { llmKey?: boolean; visionKey?: boolean }) => unknown
 let getConfigDir: typeof import("../src/config").getConfigDir
 let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
 let clusters: typeof import("../src/skills/knowledge-clusters")
@@ -38,7 +38,7 @@ before(async () => {
   handleMessage = mr.handleMessage
   __testSetKnowledgeGraphOrganizeImpl = mr.__testSetKnowledgeGraphOrganizeImpl
   await initDataDir()
-  saveConfig({ llm: { api_key: "sk-test-org", base_url: "http://127.0.0.1:9/v1", model_name: "test-model" } })
+  saveConfig({ llm: { api_key: "sk-test-org", base_url: "http://127.0.0.1:9/v1", model_name: "test-model" } }, { llmKey: true })
 })
 
 after(() => {
@@ -88,7 +88,7 @@ let configMtimeSeed = Date.now()
 /** saveConfig 拒清 api_key —— 直写 config.json + utimes 让 getConfig 重载（诚实模拟未配置）。 */
 function setLlmConfigured(configured: boolean): void {
   if (configured) {
-    saveConfig({ llm: { api_key: "sk-test-org", base_url: "http://127.0.0.1:9/v1", model_name: "test-model" } })
+    saveConfig({ llm: { api_key: "sk-test-org", base_url: "http://127.0.0.1:9/v1", model_name: "test-model" } }, { llmKey: true })
     return
   }
   const configPath = path.join(getConfigDir(), "config.json")

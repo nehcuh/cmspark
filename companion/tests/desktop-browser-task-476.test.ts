@@ -275,7 +275,7 @@ import * as providers from "../src/llm/provider"
 test("authenticated desktop selection binds at real canonical registration and persists the selected read through actual chat adapter with existing cleared-progress state", async t => {
   _resetTabLeasesForTests(); const dir=fs.mkdtempSync(path.join(os.tmpdir(),"browser-476-owned-")),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
   t.after(()=>{if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true});_resetTabLeasesForTests()})
-  await initDataDir();saveConfig({llm:{base_url:"http://127.0.0.1:1",api_key:"owned-inert-only",model_name:"owned",temperature:0,context_window:8000}}as any)
+  await initDataDir();saveConfig({llm:{base_url:"http://127.0.0.1:1",api_key:"owned-inert-only",model_name:"owned",temperature:0,context_window:8000}}as any, { llmKey: true })
   const manager=new ThreadManager(),thread=manager.create("Owned browser task");manager.update(thread.id,{tool_whitelist:["get_page_text"],skill_selection_mode:"manual",knowledge_selection_mode:"manual",run_progress:null});const skills=new SkillEngine();skills.bindThreadManager(manager);const history=new HistoryStore();t.after(()=>history.close())
   let clock=0; t.mock.method(performance,"now",()=>clock)
   let providerCalls=0,executorCalls=0,registered=false,browser:any;const executorNames:string[]=[]

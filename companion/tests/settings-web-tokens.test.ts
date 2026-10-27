@@ -100,7 +100,7 @@ before(async () => {
   saveConfig = cfg.saveConfig
   getConfig = cfg.getConfig
   await cfg.initDataDir()
-  saveConfig({ port: 23491, llm: { api_key: "sk-test", base_url: "https://x", model_name: "m", temperature: 0.7, context_window: 128000 } })
+  saveConfig({ port: 23491, llm: { api_key: "sk-test", base_url: "https://x", model_name: "m", temperature: 0.7, context_window: 128000 } }, { llmKey: true })
   started = await startSettingsServer(23491)
 })
 

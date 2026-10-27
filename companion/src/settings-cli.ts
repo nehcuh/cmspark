@@ -8,7 +8,7 @@
 // CMSPARK_API_KEY env var (also CMSPARK_<UPPER_KEY> for other sensitive keys).
 
 import * as readline from "readline"
-import { getConfig, saveConfig, getConfigDir } from "./config"
+import { getConfig, saveConfig, getConfigDir, type LlmConfig } from "./config"
 
 const VALID_KEYS = ["api_key", "base_url", "model_name", "temperature", "context_window"]
 
@@ -64,20 +64,20 @@ function applySetting(key: string, value: string): { ok: boolean; error?: string
   const validationError = validateValue(key, value)
   if (validationError) return { ok: false, error: validationError }
 
-  const config = getConfig()
+  const llm: Partial<LlmConfig> = {}
   if (key === "api_key") {
-    config.llm.api_key = value
+    llm.api_key = value
   } else if (key === "base_url") {
-    config.llm.base_url = value
+    llm.base_url = value
   } else if (key === "model_name") {
-    config.llm.model_name = value
+    llm.model_name = value
   } else if (key === "temperature") {
-    config.llm.temperature = parseFloat(value)
+    llm.temperature = parseFloat(value)
   } else if (key === "context_window") {
-    config.llm.context_window = parseInt(value, 10)
+    llm.context_window = parseInt(value, 10)
   }
 
-  saveConfig(config)
+  saveConfig({ llm: llm as LlmConfig }, { llmKey: key === "api_key" })
   return { ok: true }
 }
 

@@ -90,7 +90,7 @@ test("message-router: config.get returns config with masked API key", async () =
   saveConfig({
     llm: { base_url: "https://api.test.com", api_key: "sk-real-key", model_name: "gpt-4", temperature: 0.5, context_window: 4000 },
     trusted_domains: [],
-  } as any)
+  } as any, { llmKey: true })
 
   const response = await handleMessage(
     { type: "config.get" },
@@ -118,7 +118,7 @@ test("message-router: config.get redacts MCP env/headers (wire SoT)", async () =
         },
       },
     },
-  } as any)
+  } as any, { llmKey: true })
 
   const response = await handleMessage(
     { type: "config.get" },
@@ -190,7 +190,7 @@ test("message-router: config.test with placeholder API key returns error", async
   saveConfig({
     llm: { base_url: "https://api.test.com", api_key: "sk-placeholder", model_name: "gpt-4", temperature: 0.5, context_window: 4000 },
     trusted_domains: [],
-  } as any)
+  } as any, { llmKey: true })
 
   const response = await handleMessage(
     { type: "config.test" },
@@ -207,7 +207,7 @@ test("message-router: config.test without API key returns error", async () => {
   saveConfig({
     llm: { base_url: "https://api.test.com", api_key: "sk-placeholder", model_name: "gpt-4", temperature: 0.5, context_window: 4000 },
     trusted_domains: [],
-  } as any)
+  } as any, { llmKey: true })
 
   const response = await handleMessage(
     { type: "config.test" },
@@ -1226,7 +1226,7 @@ test("integration: config changes are isolated per config key", async () => {
   saveConfig({
     llm: { base_url: "https://api.test.com", api_key: "initial-key", model_name: "gpt-3", temperature: 0.5, context_window: 4000 },
     trusted_domains: ["initial.com"],
-  } as any)
+  } as any, { llmKey: true })
 
   // Update only trusted_domains
   await handleMessage(

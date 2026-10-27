@@ -61,7 +61,7 @@ before(async () => {
       temperature: 0.5,
       context_window: 4000,
     },
-  } as any)
+  } as any, { llmKey: true })
 
   const openaiMod = await import("openai")
   const OpenAI = (openaiMod as any).default || openaiMod
