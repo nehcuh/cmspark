@@ -596,6 +596,7 @@ function knowledgeExtractLlmConfig(): LlmExtractConfig | null {
     api_key: key,
     model_name: config.llm.model_name,
     temperature: config.llm.temperature ?? 0.3,
+    reasoning_effort: config.llm.reasoning_effort,
     protocol: config.llm.protocol,
     auth_style: config.llm.auth_style,
     client_header_profile: config.llm.client_header_profile,
@@ -1291,7 +1292,7 @@ async function dispatchMessage(
       // (1) apply extension-level llm_override if it carries a valid API key
       const msgOverride = rest.llm_override as Record<string, unknown> | undefined
       if (msgOverride?.api_key && !isMaskedApiKey(msgOverride.api_key as string)) {
-        for (const k of ["api_key", "base_url", "model_name", "temperature", "context_window"] as const) {
+        for (const k of ["api_key", "base_url", "model_name", "temperature", "context_window", "reasoning_effort"] as const) {
           if (msgOverride[k] !== undefined && msgOverride[k] !== null) {
             (effectiveLLMConfig as any)[k] = msgOverride[k]
           }

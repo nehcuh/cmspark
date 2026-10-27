@@ -45,6 +45,7 @@ export interface AnthropicRequestBody {
   messages: AnthropicMessage[]
   system?: string
   temperature?: number
+  output_config?: { effort: "low" | "medium" | "high" | "xhigh" | "max" }
   tools?: AnthropicTool[]
   stream?: boolean
 }
