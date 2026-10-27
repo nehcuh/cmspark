@@ -2,6 +2,7 @@
 // Companion is secret SoT — masked keys never enter editable UI fields.
 
 import type { LLMConfig } from "../types"
+import { effectiveReasoningEffort } from "./reasoning-effort"
 
 function isMaskedApiKey(key: string | undefined | null): boolean {
   if (!key || typeof key !== "string") return false
@@ -25,6 +26,7 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     api_key: llmKeyMasked ? "" : llm.api_key,
     api_key_set: llmKeyMasked ? true : (llm.api_key ? true : false),
     model_name: llm.model_name,
+    reasoning_effort: effectiveReasoningEffort(llm.reasoning_effort),
     temperature: llm.temperature,
     context_window: llm.context_window,
     context_compaction:
