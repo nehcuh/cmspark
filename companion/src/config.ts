@@ -456,7 +456,9 @@ const defaultConfig: CompanionConfig = {
   port: 23401,
   llm: {
     base_url: "https://api.deepseek.com/v1",
-    api_key: getEnvApiKey(),
+    // The factory template is written to disk. Resolve environment keys only
+    // when loading runtime config, never into this persistent default.
+    api_key: "",
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
     // Factory default 512k is an Agent working budget; auto-compact triggers later; fill the model's real window.
@@ -720,7 +722,9 @@ function loadConfigFile(configPath: string): CompanionConfig {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error("config root is not a JSON object")
   }
-  const merged = deepMerge(defaultConfig, parsed) as CompanionConfig
+  // Runtime key injection mutates the loaded config, so no nested defaults may
+  // alias the persistent factory template when the on-disk block is missing.
+  const merged = deepMerge(structuredClone(defaultConfig), parsed) as CompanionConfig
   // mcp.servers is a named map (same idea as replaceMcpServers): if the key exists on disk,
   // the file is the full map — deepMerge must NOT resurrect default "filesystem" after the
   // user deletes it or clears the map. Product default FS@home only applies when:
