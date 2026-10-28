@@ -115,6 +115,10 @@ assert_file_has "${PACKAGE_SH}" '@modelcontextprotocol/server-filesystem' \
   "package.sh stages official filesystem MCP"
 assert_file_has "${PACKAGE_SH}" 'official filesystem MCP entry missing' \
   "package.sh hard-fails when official filesystem MCP is missing"
+assert_file_lacks "${PACKAGE_SH}" 'require\.resolve\(pkgName' \
+  "package.sh resolves dependency manifests from node_modules directly (exports-safe)"
+assert_file_has "${PACKAGE_SH}" 'libonnxruntime_providers_cuda\.so' \
+  "package.sh removes the unused CUDA ONNX provider"
 assert_file_exists "${ROOT}/companion/assets/qwen-vl.manifest.json" \
   "qwen-vl.manifest.json present (release-pinned sha256, #359)"
 assert_file_lacks "${PACKAGE_SH}" 'stage_onnxruntime' \
