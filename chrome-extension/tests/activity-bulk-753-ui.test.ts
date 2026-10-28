@@ -60,6 +60,8 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
   }
   const jsx = { jsx: (type: any, props: any, key: any) => ({ type, props, key }), jsxs: (type: any, props: any, key: any) => ({ type, props, key }), Fragment: 'fragment' }
   const unrelated = () => assert.fail('unrelated UI, browser, provider or native boundary executed')
+  const activityApps = Array.from({ length: 20 }, (_, index) => ({ app_id: `linux.${String(index + 1).repeat(64)}`, app_name: `应用 ${String(index + 1).padStart(2, '0')}` }))
+  const chromeListeners = new Set<(message: any) => void>()
   const browserWindow = {
     location: { pathname: full ? '/tabs/workspace.html' : '/sidepanel.html', search: '?view=' + initialView },
     matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
@@ -92,8 +94,21 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
     const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText
     vm.runInNewContext(code, { exports, require: requireValue, window: browserWindow,
       document: { querySelector: () => null }, localStorage: { getItem: () => null, setItem() {} },
-      chrome: { runtime: { getURL: unrelated, sendMessage: unrelated }, tabs: { create: unrelated, query: unrelated } },
-      CustomEvent: CustomEventValue, URLSearchParams, AbortController, console,
+      chrome: { runtime: {
+        getURL: unrelated,
+        onMessage: {
+          addListener: (fn: any) => chromeListeners.add(fn),
+          removeListener: (fn: any) => chromeListeners.delete(fn),
+        },
+        sendMessage: (message: any) => {
+          if (message.type === 'activity.apps') {
+            Promise.resolve().then(() => { for (const fn of [...chromeListeners]) fn({ type: 'activity.result', id: message.id, ok: true, apps: activityApps }) })
+            return Promise.resolve({ ok: true })
+          }
+          return unrelated()
+        },
+      }, tabs: { create: unrelated, query: unrelated } },
+      CustomEvent: CustomEventValue, URLSearchParams, AbortController, console, crypto: globalThis.crypto, setTimeout, clearTimeout,
     }, { timeout: 1000, filename: file })
     return exports
   }
@@ -115,6 +130,16 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
     const child = rows(rootUI).find(node => node.type === personal.PersonalWorkspace && node.props.destination === destination)
     if (!child) return { root: rootUI, personal: null, panel: null }
     const personalUI = renderComponent('personal:' + destination, personal.PersonalWorkspace, child.props)
+    const activity = rows(personalUI).find(node => typeof node.type === 'function' && node.type.name === 'ActivityPanel')
+    if (activity) {
+      const panel = renderComponent('activity:' + destination, activity.type, activity.props)
+      const editor = rows(panel).find(node => typeof node.type === 'function' && node.type.name === 'ActivityConfigEditor')
+      if (editor) {
+        const editorUI = renderComponent('activity-editor:' + destination, editor.type, editor.props)
+        return { root: rootUI, personal: personalUI, panel: [panel, editorUI] }
+      }
+      return { root: rootUI, personal: personalUI, panel }
+    }
     const todo = find(personalUI, node => typeof node.type === 'function' && node.type.name === 'TodoPanel')
     const panel = renderComponent('todo:' + destination, todo.type, todo.props)
     return { root: rootUI, personal: personalUI, panel }
@@ -281,4 +306,55 @@ test('752 actual real-source APP search retains only matching todos and pending 
     ui.button(panel, '全部待处理').props.onClick()
   }
   assert.equal(ui.calls.length, 0)
+}))
+
+test('796 running app picker reaches all 20 apps across pages and preserves cross-page selection', async () => withUI(async (_fixture, ui) => {
+  let panel = ui.render('activity').panel
+  ui.button(panel, '设置应用与隐私').props.onClick()
+  panel = ui.render('activity').panel
+  assert.ok(ui.text(panel).includes('选择正在运行的应用'), ui.text(panel))
+  ui.button(panel, '选择正在运行的应用').props.onClick()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  panel = ui.render('activity').panel
+
+  const visible = () => ui.rows(panel).filter(node => node.type === 'label' && node.props.className === 'cm-personal-check').map(node => ui.text(node))
+  const checkbox = (name: string) => {
+    const label = ui.find(panel, node => node.type === 'label' && ui.text(node).includes(name))
+    return ui.rows(label).find(node => node.type === 'input')
+  }
+  const next = () => { ui.button(panel, '下一页').props.onClick(); panel = ui.render('activity').panel }
+  const previous = () => { ui.button(panel, '上一页').props.onClick(); panel = ui.render('activity').panel }
+
+  assert.equal(visible().length, 6)
+  assert.ok(visible().some(name => name.includes('应用 01')))
+  assert.ok(visible().some(name => name.includes('应用 06')))
+  assert.equal(visible().some(name => name.includes('应用 07')), false)
+  assert.ok(ui.text(panel).includes('第 1 / 4 页 · 共 20 个应用'))
+  assert.equal(ui.button(panel, '上一页').props.disabled, true)
+
+  next()
+  assert.ok(ui.text(panel).includes('第 2 / 4 页'))
+  assert.ok(visible().some(name => name.includes('应用 07')))
+  assert.ok(visible().some(name => name.includes('应用 12')))
+  checkbox('应用 12').props.onChange({ target: { checked: true } })
+  panel = ui.render('activity').panel
+
+  next()
+  assert.ok(ui.text(panel).includes('第 3 / 4 页'))
+  checkbox('应用 18').props.onChange({ target: { checked: true } })
+  panel = ui.render('activity').panel
+
+  next()
+  assert.equal(visible().length, 2)
+  assert.ok(visible().some(name => name.includes('应用 19')))
+  assert.ok(visible().some(name => name.includes('应用 20')))
+  assert.ok(ui.text(panel).includes('第 4 / 4 页'))
+  assert.ok(ui.text(panel).includes('已选择 2 / 20 个'))
+  assert.equal(ui.button(panel, '下一页').props.disabled, true)
+
+  previous()
+  assert.equal(checkbox('应用 18').props.checked, true)
+  previous()
+  assert.equal(checkbox('应用 12').props.checked, true)
 }))

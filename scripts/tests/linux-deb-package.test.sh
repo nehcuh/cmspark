@@ -31,11 +31,13 @@ STAGING="${TMP_DIR}/staging"
 mkdir -p \
   "${STAGING}/assets" \
   "${STAGING}/chrome-extension" \
-  "${STAGING}/node_modules/systray2/traybin"
+  "${STAGING}/node_modules/systray2/traybin" \
+  "${STAGING}/node_modules/@modelcontextprotocol/server-filesystem/dist"
 printf 'bundle\n' > "${STAGING}/cmspark-agent.js"
 printf '#!/bin/sh\n' > "${STAGING}/launch-companion.sh"
 printf '#!/bin/sh\n' > "${STAGING}/node"
 printf '#!/bin/sh\n' > "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
+printf '// official filesystem fixture\n' > "${STAGING}/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js"
 printf '{"manifest_version":3}\n' > "${STAGING}/chrome-extension/manifest.json"
 cp "${ROOT_DIR}/companion/assets/cmspark.png" "${STAGING}/assets/cmspark.png"
 chmod 0755 "${STAGING}/launch-companion.sh" "${STAGING}/node" \
@@ -52,6 +54,7 @@ dpkg-deb -R "${DEB}" "${EXTRACTED}"
 
 for file in \
   opt/cmspark/launch-desktop.sh \
+  opt/cmspark/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js \
   usr/bin/cmspark-agent \
   usr/lib/systemd/user/cmspark-companion.service \
   usr/lib/systemd/user/cmspark-tray.service \

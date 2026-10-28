@@ -111,6 +111,10 @@ assert_file_has "${PACKAGE_SH}" 'host-scripts-win' \
   "package.sh stages host-scripts-win"
 assert_file_has "${PACKAGE_SH}" 'qwen-vl-worker\.py' \
   "package.sh stages qwen-vl-worker.py (Qwen3-VL)"
+assert_file_has "${PACKAGE_SH}" '@modelcontextprotocol/server-filesystem' \
+  "package.sh stages official filesystem MCP"
+assert_file_has "${PACKAGE_SH}" 'official filesystem MCP entry missing' \
+  "package.sh hard-fails when official filesystem MCP is missing"
 assert_file_exists "${ROOT}/companion/assets/qwen-vl.manifest.json" \
   "qwen-vl.manifest.json present (release-pinned sha256, #359)"
 assert_file_lacks "${PACKAGE_SH}" 'stage_onnxruntime' \
