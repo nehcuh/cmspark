@@ -260,8 +260,7 @@ test -f "${FILESYSTEM_MCP}/dist/index.js" || {
   echo "ERROR: official filesystem MCP entry missing; package would fail with spawn npx ENOENT" >&2
   exit 1
 }
-mkdir -p "${STAGING}/node_modules/@modelcontextprotocol"
-cp -r "${FILESYSTEM_MCP}" "${STAGING}/node_modules/@modelcontextprotocol/"
+node "${ROOT_DIR}/scripts/stage-filesystem-runtime.mjs" --source "${ROOT_DIR}/companion" --destination "${STAGING}"
 # #725: no uncorrected Windows sidecar, even when npm lifecycle scripts were omitted.
 case "${PLATFORM}" in
   windows-*) node "${ROOT_DIR}/scripts/patch-node-pty-worker.cjs" --windows-package ;;
@@ -297,7 +296,7 @@ function copyDeps(pkgName) {
     }
   } catch {}
 }
-['node-notifier', 'systray2', 'onnxruntime-node', '@lydell/node-pty', '@modelcontextprotocol/server-filesystem'].forEach(copyDeps);
+['node-notifier', 'systray2', 'onnxruntime-node', '@lydell/node-pty'].forEach(copyDeps);
 console.log('Copied ' + visited.size + ' transitive deps');
 " 2>&1
 cd "${ROOT_DIR}"

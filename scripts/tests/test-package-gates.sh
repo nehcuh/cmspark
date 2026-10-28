@@ -861,12 +861,22 @@ else
 fi
 
 echo ""
+if node --test "${ROOT}/scripts/tests/stage-filesystem-runtime.test.mjs"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
 if bash "${ROOT}/scripts/tests/linux-deb-package.test.sh"; then
   PASS=$((PASS + 1))
 else
   FAIL=$((FAIL + 1))
 fi
 if node --test "${ROOT}/scripts/tests/windows-host-scripts.test.mjs"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
+if node --test "${ROOT}/scripts/tests/release-zip-listing.test.mjs"; then
   PASS=$((PASS + 1))
 else
   FAIL=$((FAIL + 1))

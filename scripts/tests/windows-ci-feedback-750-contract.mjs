@@ -108,6 +108,24 @@ export function validateCockpitSteps748(steps) {
   return steps.filter(step => step !== selected[0])
 }
 
+// #796: record the actual reviewed YAML addition, then remove only this
+// fully checked object for the unchanged historical whole-build comparison.
+function conservedBuildSteps794(steps) {
+  const expected = {
+  "name": "Clean staged filesystem MCP closure (#796)",
+  "timeout-minutes": 3,
+  "run": ": \"${RUNNER_TEMP:?}\"\nNODE_BIN=\"$(command -v node)\"\n/usr/bin/env -i PATH=\"$(dirname \"${NODE_BIN}\"):/usr/bin:/bin\" HOME=\"${RUNNER_TEMP}\" TMPDIR=\"${RUNNER_TEMP}\" \\\n  LANG=C.UTF-8 LC_ALL=C.UTF-8 GITHUB_ACTIONS=\"${GITHUB_ACTIONS}\" RUNNER_OS=\"${RUNNER_OS}\" \\\n  CMSPARK_STAGED_FILESYSTEM_CI=1 \"${NODE_BIN}\" --max-old-space-size=3072 \\\n  --test --experimental-test-isolation=none scripts/tests/filesystem-staged-handshake-794.test.mjs\n"
+}
+  const selected = steps.filter(step => step.name === expected.name)
+  assert.equal(selected.length, 1, 'one exact clean staged filesystem gate')
+  assert.deepEqual(selected[0], expected, 'clean staged filesystem command and failure semantics are exact')
+  const at = steps.indexOf(selected[0])
+  assert.equal(steps[at - 1]?.name, 'Build companion', 'clean stage consumes the normal build')
+  assert.equal(steps[at + 1]?.name, 'Run companion tests', 'clean stage precedes the original tests')
+  assert.ok(steps.findIndex(step => step.name === 'Install dependencies') < at - 1, 'locked dependencies precede the normal build')
+  return steps.filter(step => step !== selected[0])
+}
+
 function cache750(step, nodeVersion) {
   assert.equal(step.uses, 'actions/setup-node@v4')
   assert.deepEqual(omit(step.with, ['cache-dependency-path']), { 'node-version': nodeVersion, cache: 'npm' })
@@ -171,10 +189,11 @@ export function validateWindowsCiFeedback750(text) {
   }
   const build = doc.jobs.build
   assert.equal(digest(omit(build, ['steps'])), baseline.buildOther)
-  assert.deepEqual(build.steps.map(key), baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js').map(s => s.key))
+  const buildSteps = conservedBuildSteps794(build.steps)
+  assert.deepEqual(buildSteps.map(key), baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js').map(s => s.key))
   cache750(build.steps.find(s => s.name === 'Setup Node.js'), '22.23.4')
   for (const old of baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js')) {
-    let step = build.steps.find(s => key(s) === old.key)
+    let step = buildSteps.find(s => key(s) === old.key)
     if (old.key === activity758.buildStep.name) {
       const join788 = 'node --test scripts/tests/native-join-observation-788.test.cjs\n'
       assert.deepEqual(step, { ...activity758.buildStep, run: activity758.buildStep.run + join788 }, '#788 CPU join controls retain exact package failure semantics')

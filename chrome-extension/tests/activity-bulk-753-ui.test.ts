@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
+import { createHash } from 'node:crypto'
 import ts from 'typescript'
 import { createActivityFixture } from './helpers/activity-bulk-753'
 
@@ -17,16 +18,23 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = n
  * boundaries. The controller is a deferred observation port, not a replacement
  * bulk algorithm; request/service sequencing has its own owning test file.
  */
-function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}) {
+function uiHarness(fixture: Fixture, { full = true, initialView = 'todos', allowConfigure = false } = {}) {
   const root = path.resolve(process.cwd(), 'src/sidepanel'), at = (name: string) => path.resolve(root, name)
   const modules = new Map<string, any>(), frames = new Map<string, { cells: any[]; effects: any[] }>()
   const effects: Array<() => void> = [], listeners = new Map<string, Set<(event: any) => void>>()
+  const configurationCalls: Array<{ action: string; payload: any; promise: Promise<any> }> = []
   const calls: BulkCall[] = [], writes: Array<{ frame: string; value: any }> = []
   const resultWaiters: Array<() => void> = []
   let frame: { cells: any[]; effects: any[] } | undefined, frameName = '', cursor = 0, effectCursor = 0, deferEffects = false
   let store: any, state: any
   const controller: any = { snapshot: plain(fixture.initial), busy: false, loading: false, error: '', notice: '', session: { connected: true },
-    refresh: () => assert.fail('unrelated state refresh invoked'), mutate: () => assert.fail('individual editor was not selected'),
+    refresh: () => assert.fail('unrelated state refresh invoked'), mutate(action: string, payload: any) {
+      assert.equal(allowConfigure, true, 'individual editor was not selected')
+      assert.equal(action, 'activity.configure')
+      const promise = fixture.handle({ type: action, id: 'controlled-ui-configure', ...payload })
+      configurationCalls.push({ action, payload: plain(payload), promise })
+      return promise.then(reply => { if (reply.ok) controller.snapshot = reply.state; return reply.ok === true })
+    },
     mutateBulk(action: string, items: any[], current: () => boolean) {
       const pending = deferred<any[]>(); calls.push({ action, items, current, ...pending }); return pending.promise
     },
@@ -60,7 +68,7 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
   }
   const jsx = { jsx: (type: any, props: any, key: any) => ({ type, props, key }), jsxs: (type: any, props: any, key: any) => ({ type, props, key }), Fragment: 'fragment' }
   const unrelated = () => assert.fail('unrelated UI, browser, provider or native boundary executed')
-  const activityApps = Array.from({ length: 20 }, (_, index) => ({ app_id: `linux.${String(index + 1).repeat(64)}`, app_name: `应用 ${String(index + 1).padStart(2, '0')}` }))
+  const activityApps = Array.from({ length: 20 }, (_, index) => ({ app_id: `linux.${createHash('sha256').update(`/owned-fixture/apps/app-${index + 1}`).digest('hex')}`, app_name: `应用 ${String(index + 1).padStart(2, '0')}` }))
   const chromeListeners = new Set<(message: any) => void>()
   const browserWindow = {
     location: { pathname: full ? '/tabs/workspace.html' : '/sidepanel.html', search: '?view=' + initialView },
@@ -155,7 +163,7 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
   const navigate = (destination: string) => { const ui = render().root; const nav = find(ui, node => typeof node.type === 'function' && node.type.name === 'WorkspaceNavigation'); nav.props.onView(destination) }
   render(); render()
   return {
-    controller, calls, writes, rows, text, find, render, button, box, select, begin, navigate,
+    controller, calls, configurationCalls, activityApps, writes, rows, text, find, render, button, box, select, begin, navigate,
     setState(patch: any) { state = { ...state, ...patch } },
     state: () => state,
     defer() { deferEffects = true }, flush() { deferEffects = false; flush() },
@@ -166,9 +174,9 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
   }
 }
 
-async function withUI(run: (fixture: Fixture, ui: ReturnType<typeof uiHarness>) => Promise<void>) {
+async function withUI(run: (fixture: Fixture, ui: ReturnType<typeof uiHarness>) => Promise<void>, options: Parameters<typeof uiHarness>[1] = {}) {
   const fixture = await createActivityFixture(); let ui: ReturnType<typeof uiHarness> | undefined
-  try { ui = uiHarness(fixture); await run(fixture, ui) } finally { if (ui) await ui.dispose(); fixture.dispose() }
+  try { ui = uiHarness(fixture, options); await run(fixture, ui) } finally { if (ui) await ui.dispose(); fixture.dispose() }
 }
 
 test('753 actual full-page rows select explicit identities with sibling controls and preserve filtered selection preview', async () => withUI(async (fixture, ui) => {
@@ -308,7 +316,7 @@ test('752 actual real-source APP search retains only matching todos and pending 
   assert.equal(ui.calls.length, 0)
 }))
 
-test('796 running app picker reaches all 20 apps across pages and preserves cross-page selection', async () => withUI(async (_fixture, ui) => {
+test('796 running app picker reaches all 20 apps across pages and preserves cross-page selection', async () => withUI(async (fixture, ui) => {
   let panel = ui.render('activity').panel
   ui.button(panel, '设置应用与隐私').props.onClick()
   panel = ui.render('activity').panel
@@ -353,8 +361,41 @@ test('796 running app picker reaches all 20 apps across pages and preserves cros
   assert.ok(ui.text(panel).includes('已选择 2 / 20 个'))
   assert.equal(ui.button(panel, '下一页').props.disabled, true)
 
+  // The original first/last-page and selection assertions remain above.
+  // Saving must also pass the actual UI validator and real service/store.
+  checkbox('应用 20').props.onChange({ target: { checked: true } })
+  panel = ui.render('activity').panel
   previous()
   assert.equal(checkbox('应用 18').props.checked, true)
   previous()
   assert.equal(checkbox('应用 12').props.checked, true)
-}))
+  assert.equal(ui.activityApps.length, 20)
+  assert.equal(new Set(ui.activityApps.map(app => app.app_id)).size, 20)
+  assert.equal(ui.activityApps.every(app => /^linux\.[a-f0-9]{64}$/.test(app.app_id)), true)
+  assert.equal(ui.configurationCalls.length, 0, 'selection alone must not save')
+  const before = fixture.state()
+  let prevented = 0
+  const form = ui.find(panel, node => node.type === 'form')
+  form.props.onSubmit({ preventDefault() { prevented++ } })
+  assert.equal(prevented, 1)
+  assert.equal(ui.configurationCalls.length, 1, 'actual form validation must reach the controlled service')
+  const call = ui.configurationCalls[0], reply = await call.promise
+  assert.equal(call.action, 'activity.configure')
+  assert.equal(call.payload.expected_revision, before.revision)
+  assert.equal(reply.ok, true)
+  const expected = [11, 17, 19].map(index => ui.activityApps[index].app_id)
+  assert.deepEqual(plain(call.payload.patch.allowed_apps), expected)
+  assert.equal(reply.state.revision, before.revision + 1)
+  assert.deepEqual(reply.state.config.allowed_apps, expected)
+  assert.equal(reply.state.config.enabled, false, 'saving scope must not start collection')
+  assert.deepEqual(fixture.state().config.allowed_apps, expected)
+  assert.equal(fixture.state().revision, reply.state.revision)
+  const persisted = JSON.parse(fs.readFileSync(path.join(fixture.directory, 'personal-activity/state.json'), 'utf8'))
+  assert.deepEqual(persisted.config.allowed_apps, expected)
+  assert.equal(persisted.revision, reply.state.revision)
+  assert.equal(persisted.config.enabled, false)
+  const refreshed = await fixture.handle({ type: 'activity.state', id: 'controlled-read-saved-scope' })
+  assert.equal(refreshed.ok, true)
+  assert.deepEqual(refreshed.state.config, persisted.config)
+  assert.equal(ui.configurationCalls.length, 1, 'no automatic second save')
+}, { allowConfigure: true }))

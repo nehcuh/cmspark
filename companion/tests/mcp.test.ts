@@ -454,7 +454,10 @@ test("createTransport: stdio launches bundled official filesystem with original 
     })
     const params = (transport as any)._serverParams
     assert.equal(params.command, process.execPath)
-    assert.deepEqual(params.args, [require.resolve("@modelcontextprotocol/server-filesystem/dist/index.js"), "/tmp"])
+    const entry = require.resolve("@modelcontextprotocol/server-filesystem/dist/index.js")
+    // Production normalizes absolute Windows argv paths; command/cwd remain original.
+    const expectedEntry = process.platform === "win32" ? entry.replace(/\\/g, "/") : entry
+    assert.deepEqual(params.args, [expectedEntry, "/tmp"])
     assert.equal(params.cwd, cwd)
     assert.equal(params.stderr, "pipe", "stderr should be piped so onStderr can capture it")
   } finally {
