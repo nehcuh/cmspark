@@ -3,6 +3,8 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { normalizeQwenVlPoint } from "../src/computer/qwen-vl-coords"
 
 test("normalize: relative [0,1000] maps to image pixels", () => {
@@ -27,4 +29,16 @@ test("normalize: out-of-range values map then clamp (safety net)", () => {
 
 test("normalize: invalid size → 0,0", () => {
   assert.deepEqual(normalizeQwenVlPoint(10, 10, 0, 100), { x: 0, y: 0 })
+})
+
+// The actual worker prompt must request the domain both worker and TS parsers consume.
+test("worker prompt requests relative original-image coordinates", () => {
+  const worker = readFileSync(resolve(__dirname, "../../src/computer/qwen-vl-worker.py"), "utf8")
+  const start = worker.indexOf("def _infer(")
+  const end = worker.indexOf("    # Prefer chat template", start)
+  assert.ok(start >= 0 && end > start, "worker inference prompt anchor")
+  const infer = worker.slice(start, end)
+  assert.match(infer, /coordinates relative to the original image, each on a 0-1000 scale/)
+  assert.doesNotMatch(infer, /image pixel coordinates/)
+  assert.match(infer, /f"User command: \{command\}"/)
 })

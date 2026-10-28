@@ -203,7 +203,7 @@ def _infer(image_path: str, command: str, width: int, height: int) -> dict:
     prompt = (
         "You are a GUI grounding assistant. Look at the screenshot and locate the UI element "
         "described by the user command. Reply with ONLY a JSON object of the click point in "
-        "image pixel coordinates: {\"x\": <int>, \"y\": <int>}. "
+        "coordinates relative to the original image, each on a 0-1000 scale: {\"x\": <int>, \"y\": <int>}. "
         "Do not include any other text.\n"
         f"User command: {command}"
     )
