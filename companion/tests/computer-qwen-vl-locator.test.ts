@@ -79,3 +79,22 @@ test("Path C: start_box four-number raw → box center via parseGuiClickPoint", 
     assert.match(String(r.raw), /start_box/)
   }
 })
+
+test("truncated worker raw cannot replace the full-text worker coordinate", async () => {
+  const raw = ("a".repeat(486) + '{"x":1,"y":1000}').slice(0, 500)
+  const loc = new QwenVlLocator({
+    session: { locate: async () => ({ point: { x: 0, y: 499 }, ms: 1, raw }) },
+  })
+  const result = await loc.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
+  assert.equal(result.kind, "hit")
+  if (result.kind === "hit") assert.deepEqual(result.point, { x: 0, y: 499 })
+})
+
+test("ambiguous capped raw without a worker coordinate fails closed", async () => {
+  const raw = ("a".repeat(486) + '{"x":1,"y":1000}').slice(0, 500)
+  const loc = new QwenVlLocator({
+    session: { locate: async () => ({ point: null, ms: 1, raw }) },
+  })
+  const result = await loc.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
+  assert.deepEqual(result, { kind: "error", reason: QWEN_VL_REASON.ERROR })
+})

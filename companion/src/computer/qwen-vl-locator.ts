@@ -86,9 +86,11 @@ export class QwenVlLocator {
       const r = await this.session.locate(cmd, imagePath, width, height)
       // Path C: prefer/recover points from free-text raw via gui-action-parse
       // (UI-TARS-like start_box center, JSON, etc.). Worker may already return
-      // a point; reparse wins when raw yields a finite coordinate.
+      // a point; reparse wins when complete raw yields a finite coordinate.
+      // The Python worker caps raw at 500 characters. At that boundary the
+      // text may be truncated, and parsing a partial number can move a click.
       let point = r.point && Number.isFinite(r.point.x) && Number.isFinite(r.point.y) ? r.point : null
-      if (r.raw) {
+      if (r.raw && r.raw.length < 500) {
         const fromRaw = parseGuiClickPoint(r.raw, width, height)
         if (fromRaw) point = fromRaw
       }
