@@ -49,8 +49,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          node --test --test-reporter=tap --test-name-pattern='^(?!actual macOS producer stages a controlled set of pinned headers without download$|missing runtime headers use the original download path$|archive appearing during runtime staging still receives original integrity check$)' companion/scripts/tests/desktop-runtime-headers-480.test.mjs | tee "$RUNNER_TEMP/header-arm.tap"
-          grep -Fx '# tests 16' "$RUNNER_TEMP/header-arm.tap"
+          pattern='^(pinned fixture attributes and bytes are present|validated runtime header set is staged using exactly the verified bytes|an incomplete set falls back without publishing partial headers|a modified runtime header is refused before staging|missing input cannot hide a separate integrity failure|pin set cannot introduce extra or path-traversal members|separate staging calls never replace each others outputs|symlink and hardlink inputs are refused without staging|copy uses the verified buffer even if the input path changes after reading|corrupt existing archive cache is not bypassed by runtime preference|Windows preference keeps the original download route|macOS native header consumers only request members in the pinned set|unsafe or empty existing archive is refused without fetching)$'
+          node -e 'const fs=require("node:fs"),assert=require("node:assert/strict"),crypto=require("node:crypto");const s=fs.readFileSync("companion/scripts/tests/desktop-runtime-headers-480.test.mjs","utf8");assert.equal(crypto.createHash("sha256").update(s).digest("hex"),"eb3a7a2537a6f225164a440a9fadd64d2daeb567dfa997455e848505e7cc7045");const n=[...s.matchAll(/^test\(\x27([^\x27]+)\x27/gm)].map(x=>x[1]);const p=new RegExp(process.argv[1]);assert.equal(n.length,16);assert.equal(new Set(n).size,16);assert.equal(n.filter(x=>p.test(x)).length,13);assert.deepEqual(n.filter(x=>!p.test(x)),["actual macOS producer stages a controlled set of pinned headers without download","missing runtime headers use the original download path","archive appearing during runtime staging still receives original integrity check"])' "$pattern"
+          node --test --test-reporter=tap --test-name-pattern="$pattern" companion/scripts/tests/desktop-runtime-headers-480.test.mjs | tee "$RUNNER_TEMP/header-arm.tap"
+          grep -Fx '# tests 13' "$RUNNER_TEMP/header-arm.tap"
           grep -Fx '# pass 13' "$RUNNER_TEMP/header-arm.tap"
           grep -Fx '# fail 0' "$RUNNER_TEMP/header-arm.tap"
-          grep -Fx '# skipped 3' "$RUNNER_TEMP/header-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/header-arm.tap"
