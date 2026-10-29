@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { DESKTOP_WINDOWS_INPUTS, prepareDesktopNodeHeaders, stageVerifiedRuntimeHeaders } from '../build-desktop-windows.mjs'
 
 const names = ['node_api.h', 'node_api_types.h', 'js_native_api.h', 'js_native_api_types.h']
@@ -37,6 +38,22 @@ function ownedRuntime(root) {
   }
   return path.join(base, 'bin', 'node')
 }
+
+test('pinned fixture bytes survive an autocrlf checkout', t => {
+  const f = fixture(t), repo = path.join(f.root, 'repo')
+  fs.mkdirSync(repo)
+  const git = (...args) => execFileSync('git', ['-c', 'core.autocrlf=true', '-c', 'core.safecrlf=false', ...args], { cwd: repo, stdio: 'pipe' })
+  git('init', '-q')
+  const relative = 'companion/scripts/tests/fixtures/node-22.23.4-headers'
+  const directory = path.join(repo, relative)
+  fs.mkdirSync(directory, { recursive: true })
+  fs.copyFileSync(new URL('../../../.gitattributes', import.meta.url), path.join(repo, '.gitattributes'))
+  for (const name of names) fs.copyFileSync(new URL(`./fixtures/node-22.23.4-headers/${name}`, import.meta.url), path.join(directory, name))
+  git('add', '--', '.gitattributes', relative)
+  for (const name of names) fs.unlinkSync(path.join(directory, name))
+  git('checkout-index', '-f', '--', ...names.map(name => `${relative}/${name}`))
+  for (const name of names) assert.equal(hash(fs.readFileSync(path.join(directory, name))), officialPins[name], name)
+})
 
 test('validated runtime header set is staged using exactly the verified bytes', t => {
   const f = fixture(t), result = stageVerifiedRuntimeHeaders(f)
