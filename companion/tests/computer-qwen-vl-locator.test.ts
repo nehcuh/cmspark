@@ -2,9 +2,12 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import {
   QwenVlLocator,
   QWEN_VL_REASON,
+  QWEN_VL_WORKER_RAW_CAP,
 } from "../src/computer/qwen-vl-locator"
 import type { CaptureMeta } from "../src/computer/types"
 
@@ -97,4 +100,22 @@ test("ambiguous capped raw without a worker coordinate fails closed", async () =
   })
   const result = await loc.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
   assert.deepEqual(result, { kind: "error", reason: QWEN_VL_REASON.ERROR })
+})
+
+test("worker success raw cap agrees with locator admission boundary", () => {
+  const worker = readFileSync(join(process.cwd(), "src/computer/qwen-vl-worker.py"), "utf8")
+  const match = worker.match(/return\s+\{"ok": True, "x": x, "y": y, "raw": raw\[:(\d+)\]\}/)
+  assert.ok(match, "worker success response must expose its raw slice limit")
+  assert.equal(Number(match[1]), QWEN_VL_WORKER_RAW_CAP)
+})
+
+test("499-character raw preserves the existing reparse behavior", async () => {
+  const point = '{"x":100,"y":200}'
+  const raw = "a".repeat(499 - point.length) + point
+  const loc = new QwenVlLocator({
+    session: { locate: async () => ({ point: { x: 1, y: 1 }, ms: 1, raw }) },
+  })
+  const result = await loc.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
+  assert.equal(result.kind, "hit")
+  if (result.kind === "hit") assert.deepEqual(result.point, { x: 50, y: 100 })
 })

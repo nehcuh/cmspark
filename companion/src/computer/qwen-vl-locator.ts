@@ -9,6 +9,7 @@ import type { QwenVlSession } from "./qwen-vl-session"
 export const MAX_COMMAND_CHARS = 200
 export const MAX_FRAME_WIDTH = 3840
 export const COLLAPSE_TOLERANCE_PX = 8
+export const QWEN_VL_WORKER_RAW_CAP = 500
 
 export const QWEN_VL_REASON = {
   TOO_LONG: "qwen-vl-envelope:too-long",
@@ -90,7 +91,7 @@ export class QwenVlLocator {
       // The Python worker caps raw at 500 characters. At that boundary the
       // text may be truncated, and parsing a partial number can move a click.
       let point = r.point && Number.isFinite(r.point.x) && Number.isFinite(r.point.y) ? r.point : null
-      if (r.raw && r.raw.length < 500) {
+      if (r.raw && r.raw.length < QWEN_VL_WORKER_RAW_CAP) {
         const fromRaw = parseGuiClickPoint(r.raw, width, height)
         if (fromRaw) point = fromRaw
       }
