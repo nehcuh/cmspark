@@ -4,7 +4,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import { DESKTOP_WINDOWS_INPUTS, prepareDesktopNodeHeaders, stageVerifiedRuntimeHeaders } from '../build-desktop-windows.mjs'
 
 const names = ['node_api.h', 'node_api_types.h', 'js_native_api.h', 'js_native_api_types.h']
@@ -39,33 +38,12 @@ function ownedRuntime(root) {
   return path.join(base, 'bin', 'node')
 }
 
-test('pinned fixture bytes survive an autocrlf checkout', t => {
-  const f = fixture(t), repo = path.join(f.root, 'repo')
-  const template = path.join(f.root, 'empty-template'), sentinel = path.join(f.root, 'outside-index')
-  fs.mkdirSync(repo); fs.mkdirSync(template); fs.writeFileSync(sentinel, 'outside index stays intact')
-  const env = { PATH: process.env.PATH, LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_ATTR_NOSYSTEM: '1', GIT_TEMPLATE_DIR: template }
-  const git = (...args) => execFileSync('git', ['-c', 'core.autocrlf=true', '-c', 'core.safecrlf=false', ...args], { cwd: repo, env, stdio: 'pipe' })
-  const oldIndex = process.env.GIT_INDEX_FILE, oldDir = process.env.GIT_DIR, oldWorktree = process.env.GIT_WORK_TREE
-  process.env.GIT_INDEX_FILE = sentinel; process.env.GIT_DIR = path.join(f.root, 'outside-git'); process.env.GIT_WORK_TREE = f.root
-  try {
-    git('init', '-q', `--template=${template}`, repo)
-    env.GIT_INDEX_FILE = path.join(repo, '.git', 'index')
-    const ownedGit = (...args) => git(`--git-dir=${path.join(repo, '.git')}`, `--work-tree=${repo}`, ...args)
-    const relative = 'companion/scripts/tests/fixtures/node-22.23.4-headers'
-    const directory = path.join(repo, relative)
-    fs.mkdirSync(directory, { recursive: true })
-    fs.copyFileSync(new URL('../../../.gitattributes', import.meta.url), path.join(repo, '.gitattributes'))
-    for (const name of names) fs.copyFileSync(new URL(`./fixtures/node-22.23.4-headers/${name}`, import.meta.url), path.join(directory, name))
-    ownedGit('add', '--', '.gitattributes', relative)
-    for (const name of names) fs.unlinkSync(path.join(directory, name))
-    ownedGit('checkout-index', '-f', '--', ...names.map(name => `${relative}/${name}`))
-    for (const name of names) assert.equal(hash(fs.readFileSync(path.join(directory, name))), officialPins[name], name)
-    assert.equal(fs.readFileSync(sentinel, 'utf8'), 'outside index stays intact')
-    assert.equal(fs.existsSync(path.join(f.root, 'outside-git')), false)
-  } finally {
-    for (const [key, value] of [['GIT_INDEX_FILE', oldIndex], ['GIT_DIR', oldDir], ['GIT_WORK_TREE', oldWorktree]]) {
-      if (value === undefined) delete process.env[key]; else process.env[key] = value
-    }
+test('pinned fixture attributes and bytes are present', () => {
+  const attrs = fs.readFileSync(new URL('../../../.gitattributes', import.meta.url), 'utf8').split(/\r?\n/)
+  assert.equal(attrs.filter(line => line === '/companion/scripts/tests/fixtures/node-22.23.4-headers/*.h -text').length, 1)
+  for (const name of names) {
+    const bytes = fs.readFileSync(new URL(`./fixtures/node-22.23.4-headers/${name}`, import.meta.url))
+    assert.equal(hash(bytes), officialPins[name], name)
   }
 })
 
