@@ -24,6 +24,19 @@ function fixture(t) {
   const pins = Object.fromEntries(names.map(name => [name, hash(contents[name])]))
   return { root, directory, cache, contents, pins }
 }
+// Exact members of the independently verified Node 22.23.4 headers archive.
+// A private runtime layout makes these integration controls independent of the
+// machine's Node installation while exercising the actual production caller.
+function ownedRuntime(root) {
+  const base = path.join(root, 'runtime'), directory = path.join(base, 'include', 'node')
+  fs.mkdirSync(directory, { recursive: true })
+  for (const name of names) {
+    const bytes = fs.readFileSync(new URL(`./fixtures/node-22.23.4-headers/${name}`, import.meta.url))
+    assert.equal(hash(bytes), officialPins[name])
+    fs.writeFileSync(path.join(directory, name), bytes, { flag: 'wx' })
+  }
+  return path.join(base, 'bin', 'node')
+}
 
 test('validated runtime header set is staged using exactly the verified bytes', t => {
   const f = fixture(t), result = stageVerifiedRuntimeHeaders(f)
@@ -106,17 +119,19 @@ test('corrupt existing archive cache is not bypassed by runtime preference', asy
   } finally { globalThis.fetch = original }
 })
 
-test('actual macOS Node installation supplies the four pinned headers without download', async t => {
+test('actual macOS producer stages a controlled set of pinned headers without download', async t => {
   assert.equal(process.platform, 'darwin'); assert.equal(process.version, 'v22.23.4')
   const f = fixture(t), dest = path.join(f.root, 'output'), original = globalThis.fetch
   let calls = 0
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'execPath')
   try {
+    Object.defineProperty(process, 'execPath', { ...descriptor, value: ownedRuntime(f.root) })
     globalThis.fetch = async () => { calls++; throw new Error('unexpected fetch') }
     const result = await prepareDesktopNodeHeaders({ dest, preferRuntimeHeaders: true })
     assert.deepEqual(fs.readdirSync(result).sort(), [...names].sort())
     for (const name of names) assert.equal(hash(fs.readFileSync(path.join(result, name))), officialPins[name])
     assert.equal(calls, 0)
-  } finally { globalThis.fetch = original }
+  } finally { Object.defineProperty(process, 'execPath', descriptor); globalThis.fetch = original }
 })
 
 test('missing runtime headers use the original download path', async t => {
@@ -138,7 +153,9 @@ test('archive appearing during runtime staging still receives original integrity
   fs.mkdirSync(dest)
   const archive = path.join(fs.realpathSync(dest), '.desktop-sdk-build', `headers-${DESKTOP_WINDOWS_INPUTS.headers.sha256}`)
   const originalStat = fs.lstatSync, originalFetch = globalThis.fetch; let checks = 0, calls = 0
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'execPath')
   try {
+    Object.defineProperty(process, 'execPath', { ...descriptor, value: ownedRuntime(f.root) })
     fs.lstatSync = function (file, ...args) {
       if (file === archive && ++checks === 2) fs.writeFileSync(archive, 'corrupt', { flag: 'wx' })
       return originalStat.call(this, file, ...args)
@@ -147,7 +164,7 @@ test('archive appearing during runtime staging still receives original integrity
     await assert.rejects(() => prepareDesktopNodeHeaders({ dest, preferRuntimeHeaders: true }), /DESKTOP_SDK_INTEGRITY/)
     assert.equal(checks, 3); assert.equal(calls, 0)
     assert.equal(fs.readFileSync(archive, 'utf8'), 'corrupt')
-  } finally { fs.lstatSync = originalStat; globalThis.fetch = originalFetch }
+  } finally { Object.defineProperty(process, 'execPath', descriptor); fs.lstatSync = originalStat; globalThis.fetch = originalFetch }
 })
 
 test('Windows preference keeps the original download route', async t => {
