@@ -962,13 +962,12 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       }
 
       case "config.set": {
-        // Persist locally so settings survive SW restarts, then forward to companion
-        // so it becomes the global source of truth.
+        // Companion remains the source of truth. Only its config.updated frames
+        // update the extension cache; sending or queueing is not persistence.
         // P1-1: pass through non-empty confirmation_phrase for security flag arm step-up.
         // Empty string is omitted (companion rejects empty as missing_phrase anyway).
         // P0-4: report actual ws send result (same as acp.* forward) — do not claim ok
         // when Companion is disconnected.
-        saveExtensionConfig(message.config || {})
         const armPhrase =
           typeof message.confirmation_phrase === "string"
             ? message.confirmation_phrase.trim()
