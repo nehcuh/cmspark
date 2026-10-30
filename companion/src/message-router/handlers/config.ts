@@ -2,11 +2,12 @@
 // Zero behavior change — cases config.* + settings.* only.
 
 import OpenAI from "openai"
-import { getConfig, saveConfig, isMaskedApiKey } from "../../config"
+import { getConfig, getConfigSnapshot, saveConfig, isMaskedApiKey } from "../../config"
 import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
 import { normalizeVisionBaseUrl } from "../../llm/vision-pipeline"
+import { isPlaceholderVisionKey } from "../../llm/vision-reuse-inherit"
 import {
   findArmingSecurityFlags,
   findDisarmingSecurityFlags,
@@ -55,13 +56,19 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
   switch (type) {
     case "config.get": {
       // SoT: same redaction as config.updated broadcast (MCP env/headers + llm keys).
+      const snapshot = getConfigSnapshot()
       return {
         type: "config.updated",
-        config: redactConfigForWire(getConfig()),
+        config: redactConfigForWire(snapshot.config),
+        config_revision: snapshot.revision,
       }
     }
     case "config.set": {
       const cfg = rest.config
+      if (rest.config_revision !== undefined &&
+          (typeof rest.config_revision !== "string" || rest.config_revision.length === 0 || rest.config_revision.length > 128)) {
+        return { type: "error", error: "INVALID_CONFIG_REVISION" }
+      }
       // Reject prototype pollution keys (P0)
       if (hasPrototypePollutionKey(cfg)) {
         return { type: "error", error: "Invalid config keys detected" }
@@ -75,7 +82,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         normalized.llm = sanitizeConfig({ ...cfg.llm })
         if (isMaskedApiKey(normalized.llm.api_key)) delete normalized.llm.api_key
       } else if (
-        cfg.base_url ||
+        typeof cfg.base_url === "string" ||
         cfg.api_key ||
         cfg.model_name ||
         cfg.temperature !== undefined ||
@@ -89,7 +96,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         cfg.auth_style !== undefined
       ) {
         normalized.llm = {}
-        if (cfg.base_url) normalized.llm.base_url = cfg.base_url
+        if (typeof cfg.base_url === "string") normalized.llm.base_url = cfg.base_url
         if (cfg.api_key && !isMaskedApiKey(cfg.api_key)) normalized.llm.api_key = cfg.api_key
         if (cfg.model_name) normalized.llm.model_name = cfg.model_name
         if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
@@ -205,7 +212,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         }
       }
       // Vision config: normalize flat vision_* fields into nested vision object
-      const hasLegacyVisionFields = cfg.vision_enabled !== undefined || !!cfg.vision_base_url || !!cfg.vision_model_name || !!cfg.vision_api_key
+      const hasLegacyVisionFields = cfg.vision_enabled !== undefined || typeof cfg.vision_base_url === "string" || typeof cfg.vision_model_name === "string" || !!cfg.vision_api_key
       const hasValidVisionTimeout = typeof cfg.vision_timeout_ms === "number" && Number.isFinite(cfg.vision_timeout_ms)
       const hasValidVisionFallback = cfg.vision_fallback === "metadata" || cfg.vision_fallback === "passthrough" || cfg.vision_fallback === "error"
       if (cfg.vision) {
@@ -218,8 +225,8 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         normalized.vision = {}
         if (cfg.vision_enabled !== undefined) normalized.vision.enabled = !!cfg.vision_enabled
         if (cfg.vision_api_key && !isMaskedApiKey(cfg.vision_api_key)) normalized.vision.api_key = cfg.vision_api_key
-        if (cfg.vision_base_url) normalized.vision.base_url = cfg.vision_base_url
-        if (cfg.vision_model_name) normalized.vision.model_name = cfg.vision_model_name
+        if (typeof cfg.vision_base_url === "string") normalized.vision.base_url = cfg.vision_base_url
+        if (typeof cfg.vision_model_name === "string") normalized.vision.model_name = cfg.vision_model_name
         if (cfg.vision_timeout_ms !== undefined && (hasLegacyVisionFields || hasValidVisionTimeout)) {
           normalized.vision.timeout_ms = cfg.vision_timeout_ms
         }
@@ -236,6 +243,14 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         if (cfg.file_upload_max_size !== undefined) normalized.file_upload.max_file_size = cfg.file_upload_max_size
         if (cfg.file_upload_max_tokens !== undefined) normalized.file_upload.max_file_tokens = cfg.file_upload_max_tokens
         if (cfg.file_upload_vision !== undefined) normalized.file_upload.enable_vision_analysis = !!cfg.file_upload_vision
+      }
+      // The side panel edits this flat field. Preserve the rest of the vault
+      // configuration, and treat an empty input as an explicit clear.
+      if (cfg.obsidian_vault_path !== undefined) {
+        if (typeof cfg.obsidian_vault_path !== "string" || cfg.obsidian_vault_path.includes("\0")) {
+          return { type: "error", error: "INVALID_OBSIDIAN_VAULT_PATH" }
+        }
+        normalized.obsidian = { ...getConfig().obsidian, vault_path: cfg.obsidian_vault_path || null }
       }
       // Thread History IA Wave B: thread_digest coverage engine (default off)
       if (cfg.thread_digest && typeof cfg.thread_digest === "object") {
@@ -320,10 +335,18 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (normalized.llm) {
         delete normalized.llm.native_vision_detected
       }
-      const updated = saveConfig(normalized, {
+      const currentSnapshot = getConfigSnapshot()
+      if (rest.config_revision !== undefined && rest.config_revision !== currentSnapshot.revision) {
+        return {
+          type: "config.conflict",
+          config: redactConfigForWire(currentSnapshot.config),
+          config_revision: currentSnapshot.revision,
+        }
+      }
+      const written = saveConfig(normalized, {
         llmKey: Object.prototype.hasOwnProperty.call(normalized.llm ?? {}, "api_key"),
         visionKey: Object.prototype.hasOwnProperty.call(normalized.vision ?? {}, "api_key"),
-      })
+      }, rest.config_revision)
       if (armingFlags.length > 0) {
         logger.warn("security.flag_armed", {
           flags: armingFlags,
@@ -348,9 +371,21 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           source: "ws_config_set",
         })
       }
+      const savedSnapshot = getConfigSnapshot()
+      // Confirm only explicit credentials that this write actually retained.
+      // A synchronous listener may have written again before this reply.
+      const appliedSecretFields: string[] = []
+      if (savedSnapshot.config === written) {
+        const llmKey = normalized.llm?.api_key
+        if (typeof llmKey === "string" && llmKey && llmKey === written.llm.api_key) appliedSecretFields.push("api_key")
+        const visionKey = normalized.vision?.api_key
+        if (typeof visionKey === "string" && !isPlaceholderVisionKey(visionKey) && visionKey === written.vision?.api_key) appliedSecretFields.push("vision_api_key")
+      }
       return {
         type: "config.updated",
-        config: redactConfigForWire(updated),
+        config: redactConfigForWire(savedSnapshot.config),
+        config_revision: savedSnapshot.revision,
+        ...(appliedSecretFields.length ? { config_applied_secret_fields: appliedSecretFields } : {}),
       }
     }
 

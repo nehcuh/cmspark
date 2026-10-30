@@ -1,0 +1,130 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
+import { normalizeConfig } from "../src/sidepanel/utils/normalize-config"
+
+const frame = (model: string) => normalizeConfig({
+  llm: { base_url: "https://example.test/v1", model_name: model, api_key: "***" },
+  trusted_domains: ["example.test"],
+})
+
+test("actual store keeps drafts while authoritative snapshots update", () => {
+  let state = agentReducer(initialState, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("remote"), revision: "epoch:2" })
+  assert.equal(state.config.model_name, "remote")
+  assert.equal(state.settingsDraft?.value.model_name, "mine")
+  assert.equal(state.settingsDraft?.conflicts.model_name, true)
+})
+
+test("legacy snapshots cannot discard or authorize a draft", () => {
+  let state = agentReducer(initialState, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("remote"), revision: null })
+  assert.equal(state.configRevision, null)
+  assert.equal(state.settingsDraft?.value.model_name, "mine")
+  assert.equal(state.settingsDraft?.revision, "epoch:1")
+})
+
+test("only the matching save receipt can settle a draft and later edits survive", async () => {
+  const { prepareSettingsSubmission } = await import("../src/sidepanel/utils/settings-draft")
+  let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "first" } })
+  const submission = prepareSettingsSubmission(state.settingsDraft!, "own:1")
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_SAVE", submission })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "second" } })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("first"), revision: "epoch:2", id: "other" })
+  assert.equal(state.settingsSave.status, "pending")
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("first"), revision: "epoch:2", id: "own:1" })
+  assert.equal(state.settingsSave.status, "review")
+  assert.equal(state.settingsDraft?.value.model_name, "second")
+  assert.ok(state.settingsDraft?.dirty.model_name)
+})
+
+test("disconnect and a correlated conflict preserve drafts without claiming success", async () => {
+  const { prepareSettingsSubmission } = await import("../src/sidepanel/utils/settings-draft")
+  let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+  const submission = prepareSettingsSubmission(state.settingsDraft!, "own:2")
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_SAVE", submission })
+  const disconnected = agentReducer(state, { type: "SET_CONNECTION", state: "disconnected" })
+  assert.equal(disconnected.settingsSave.status, "unknown")
+  assert.equal(disconnected.settingsDraft?.value.model_name, "mine")
+  const conflicted = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("remote"), revision: "epoch:2", id: "own:2", conflict: true })
+  assert.equal(conflicted.settingsSave.status, "conflict")
+  assert.equal(conflicted.settingsDraft?.value.model_name, "mine")
+  assert.equal(conflicted.settingsDraft?.conflicts.model_name, true)
+})
+
+
+test("correlated error preserves the draft and late errors cannot change another save", async () => {
+  const { prepareSettingsSubmission, isSettingsSaveError } = await import("../src/sidepanel/utils/settings-draft")
+  assert.equal(isSettingsSaveError({ type: "error", id: "settings-save:abc" }), true)
+  assert.equal(isSettingsSaveError({ type: "error", id: "other:abc" }), false)
+  let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+  const submission = prepareSettingsSubmission(state.settingsDraft!, "settings-save:abc")
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_SAVE", submission })
+  state = agentReducer(state, { type: "SETTINGS_SAVE_UNKNOWN", id: "settings-save:other" })
+  assert.equal(state.settingsSave.status, "pending")
+  state = agentReducer(state, { type: "SETTINGS_SAVE_UNKNOWN", id: "settings-save:abc" })
+  assert.equal(state.settingsSave.status, "unknown")
+  assert.equal(state.settingsDraft?.value.model_name, "mine")
+})
+
+test("older replies cannot roll back a newer snapshot or falsely complete a save", async () => {
+  const { prepareSettingsSubmission } = await import("../src/sidepanel/utils/settings-draft")
+  let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("initial"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+  const submission = prepareSettingsSubmission(state.settingsDraft!, "own:old")
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_SAVE", submission })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("newest"), revision: "epoch:3" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("mine"), revision: "epoch:2", id: "own:old" })
+  assert.equal(state.config.model_name, "newest")
+  assert.equal(state.configRevision, "epoch:3")
+  assert.equal(state.settingsSave.status, "unknown")
+  assert.equal(state.settingsDraft?.value.model_name, "mine")
+})
+
+test("an unordered epoch cannot regain write authority until reconnect", () => {
+  let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("first"), revision: "epoch-a:2" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("foreign"), revision: "epoch-b:1" })
+  assert.equal(state.configEpochInvalid, true)
+  assert.equal(state.configRevision, null)
+  assert.equal(state.config.model_name, "first")
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch-a:3" })
+  assert.equal(state.config.model_name, "first")
+  state = agentReducer(state, { type: "SET_CONNECTION", state: "disconnected" })
+  state = agentReducer(state, { type: "SET_CONNECTION", state: "connected" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("fresh"), revision: "epoch-b:1" })
+  assert.equal(state.config.model_name, "fresh")
+  assert.equal(state.configRevision, "epoch-b:1")
+})
+
+
+test("a reconnect-in-progress invalidates write authority and preserves drafts", () => {
+  let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+  state = agentReducer(state, { type: "SET_CONNECTION", state: "connecting" })
+  assert.equal(state.configRevision, null)
+  assert.equal(state.settingsDraft?.value.model_name, "mine")
+})

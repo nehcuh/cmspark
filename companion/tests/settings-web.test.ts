@@ -18,6 +18,7 @@ let startSettingsServer: typeof import("../src/settings-web").startSettingsServe
 let stopSettingsServer: typeof import("../src/settings-web").stopSettingsServer
 let saveConfig: typeof import("../src/config").saveConfig
 let getConfig: typeof import("../src/config").getConfig
+let configEvents: typeof import("../src/config").configEvents
 
 before(async () => {
   process.env.HOME = tempHome
@@ -31,6 +32,7 @@ before(async () => {
   stopSettingsServer = sw.stopSettingsServer
   saveConfig = cfg.saveConfig
   getConfig = cfg.getConfig
+  configEvents = cfg.configEvents
 
   await cfg.initDataDir()
   saveConfig({
@@ -134,6 +136,7 @@ test("GET /api/config with right token → 200", async () => {
   assert.equal(r.status, 200)
   const data = JSON.parse(r.body)
   assert.ok(data.llm)
+  assert.equal(typeof data.config_revision, "string")
   // api_key must be masked
   assert.equal(data.llm.api_key.includes("sk-test-1234"), false)
   assert.ok(data.llm.api_key.includes("*"))
@@ -169,17 +172,50 @@ test("POST /api/config with right token + bad Host → 403", async () => {
 
 test("POST /api/config with right token + valid Origin → 200", async () => {
   const { port, token } = await ensureStarted()
+  const snapshot = await request({ method: "GET", port, path: `/api/config?token=${token}` })
+  const revision = JSON.parse(snapshot.body).config_revision
   const r = await request({
     method: "POST",
     port,
     path: `/api/config?token=${token}`,
     headers: jsonHeaders(token),
-    body: JSON.stringify({ llm: { temperature: 0.42 } }),
+    body: JSON.stringify({ config_revision: revision, llm: { temperature: 0.42 } }),
   })
   assert.equal(r.status, 200, r.body)
   const data = JSON.parse(r.body)
   assert.equal(data.ok, true)
   assert.equal(data.llm.temperature, 0.42)
+  assert.equal(typeof data.config_revision, "string")
+  assert.notEqual(data.config_revision, revision)
+})
+
+test("POST refuses stale and missing revisions without overwriting another client", async () => {
+  const { port, token } = await ensureStarted()
+  const snapshot = JSON.parse((await request({ method: "GET", port, path: `/api/config?token=${token}` })).body)
+  saveConfig({ llm: { model_name: "owned-other-client" } } as any)
+  const post = (data: unknown) => request({ method: "POST", port, path: `/api/config?token=${token}`, headers: jsonHeaders(token), body: JSON.stringify(data) })
+  const stale = await post({ config_revision: snapshot.config_revision, llm: { model_name: "owned-stale-draft" } })
+  assert.equal(stale.status, 409)
+  assert.equal(JSON.parse(stale.body).error, "CONFIG_REVISION_CONFLICT")
+  assert.equal(getConfig().llm.model_name, "owned-other-client")
+  const missing = await post({ llm: { model_name: "owned-unversioned" } })
+  assert.equal(missing.status, 400)
+  assert.equal(JSON.parse(missing.body).error, "CONFIG_REVISION_REQUIRED")
+  assert.equal(getConfig().llm.model_name, "owned-other-client")
+})
+
+test("POST never labels a synchronous newer save with an older response", async () => {
+  const { port, token } = await ensureStarted()
+  const snapshot = JSON.parse((await request({ method: "GET", port, path: `/api/config?token=${token}` })).body)
+  const nested = () => saveConfig({ llm: { model_name: "owned-nested-client" } } as any)
+  configEvents.once("config.change", nested)
+  try {
+    const response = await request({ method: "POST", port, path: `/api/config?token=${token}`, headers: jsonHeaders(token), body: JSON.stringify({ config_revision: snapshot.config_revision, llm: { model_name: "owned-web-draft" } }) })
+    assert.equal(response.status, 409)
+    assert.equal(JSON.parse(response.body).error, "CONFIG_SAVE_SUPERSEDED")
+    assert.equal(getConfig().llm.model_name, "owned-nested-client")
+    assert.equal(response.body.includes("sk-test-1234567890abcdef"), false)
+  } finally { configEvents.removeListener("config.change", nested) }
 })
 
 test("POST /api/test with AWS metadata IP → 403 / SSRF blocked", async () => {

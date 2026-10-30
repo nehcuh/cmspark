@@ -27,18 +27,21 @@ function fn(source:ts.SourceFile,name:string) {
 }
 function producer(field:string, input:unknown) {
  const found:ts.ArrowFunction[]=[]
- const walk=(n:ts.Node)=>{ if(ts.isJsxAttribute(n)&&n.name.getText(ui)==='onChange'&&n.initializer&&ts.isJsxExpression(n.initializer)&&n.initializer.expression&&ts.isArrowFunction(n.initializer.expression)) { const text=n.initializer.expression.getText(ui); if(new RegExp('\\b'+field+'\\s*:').test(text)&&text.includes('SET_CONFIG'))found.push(n.initializer.expression) } ts.forEachChild(n,walk) }
+ const walk=(n:ts.Node)=>{ if(ts.isJsxAttribute(n)&&n.name.getText(ui)==='onChange'&&n.initializer&&ts.isJsxExpression(n.initializer)&&n.initializer.expression&&ts.isArrowFunction(n.initializer.expression)) { const text=n.initializer.expression.getText(ui); if(new RegExp('\\b'+field+'\\s*:').test(text)&&text.includes('EDIT_SETTINGS_DRAFT'))found.push(n.initializer.expression) } ts.forEachChild(n,walk) }
  walk(ui); assert.equal(found.length,1,`unique JSX producer ${field}`)
  const code=ts.transpileModule(`globalThis.produce = (${found[0].getText(ui)})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
  let action:any; const ctx:any={dispatch:(a:any)=>{action=a}, parseInt}; vm.runInNewContext(code,ctx,{timeout:1000})
  ctx.produce({target:{value:input,checked:input}})
- assert.equal(action.type,'SET_CONFIG'); assert.deepEqual(Object.keys(action.config),[field]); return action.config
+ assert.equal(action.type,'EDIT_SETTINGS_DRAFT'); assert.deepEqual(Object.keys(action.config),[field]); return action.config
 }
 function handler() {
  let current:any={llm:{base_url:'https://owned.invalid', model_name:'owned-model',api_key:'owned-llm',context_compaction_m2:true,native_vision:'auto'},vision:{enabled:true,base_url:'https://different.invalid',model_name:'vision',api_key:'owned-vision',timeout_ms:30000,fallback:'metadata'},security:{auto_approve_dangerous:false,allow_all_schemes:false,auto_approve_enterprise_tools:false},trusted_domains:['owned.invalid']}
  const source=[fn(router,'hasPrototypePollutionKey'),fn(router,'sanitizeConfig'),fn(router,'handleConfigFamily'),fn(config,'deepMerge'),fn(config,'saveConfig')].join('\n')+'\nglobalThis.handle=handleConfigFamily'
  const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
  const context:any={PROTOTYPE_POLLUTION_KEYS:new Set(['__proto__','constructor','prototype']),structuredClone, getConfig:()=>current,
+  // Revision transport is outside this isolated producer test; the real
+  // snapshot returns the current config and its process-scoped revision.
+  getConfigSnapshot:()=>({config:current,revision:"owned-fixture:0"}),
   saveConfigSnapshot:(value:any)=>{current=value;return value},storedLlmKey:'owned-llm',storedVisionKey:'owned-vision',visionUsesLlm:false,
   stripCompanionUiProcessContinueDeny:(v:any)=>v, filterDomainPatterns:(v:any)=>v, isMaskedApiKey:(s:any)=>typeof s==='string'&&s.includes('***'),
   getEnvApiKey:()=>'',resolveInheritedVisionApiKey:()=>undefined,isPlaceholderVisionKey:()=>false,endpointsMatch:()=>false,

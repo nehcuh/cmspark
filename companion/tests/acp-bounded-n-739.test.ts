@@ -25,15 +25,18 @@ function evaluate(code: string, globals: Record<string, unknown> = {}) {
 function configFixture() {
   const types = evaluate(source("acp/types.ts")), writes: any[] = [], events: any[] = []
   let current: any = { llm: {}, acp: types.sanitizeAcpConfig({ enabled: true, servers: { A: { enabled: true, command: "INERT" } } }) }
+  let revision = 0 // Inert revision transport; no cross-process claim in this fixture.
   const save = evaluate(`let cachedConfig, cachedConfigMtimeMs, storedLlmKey = "", storedVisionKey = "", visionUsesLlm = false;\n${functions("config.ts", ["saveConfig", "saveConfigSnapshot", "deepMerge", "stripCompanionUiProcessContinueDeny"])}`, {
     structuredClone, isMaskedApiKey: () => false,
     getConfig: () => current, PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), require: (n: string) => { assert.equal(n, "./acp/types"); return types },
     getEnvApiKey: () => undefined, resolveApiKey: () => undefined, path, getConfigDir: () => "/inert/config", console: { warn() {} },
     atomicWriteJSON: (p: string, value: any) => { assert.equal(p, path.join("/inert/config", "config.json")); writes.push(value) }, configFileMtimeMs: () => 1,
+    advanceConfigRevision: () => { revision++ },
     configEvents: { emit: (_: string, value: any) => { current = value; events.push(value) } }, CONFIG_CHANGE_EVENT: "inert-config",
   }).saveConfig
   const handler = evaluate(functions("message-router/handlers/config.ts", ["handleConfigFamily", "hasPrototypePollutionKey", "sanitizeConfig"]), {
-    getConfig: () => current, saveConfig: save, validateAcpConcurrencyLimit: types.validateAcpConcurrencyLimit,
+    getConfig: () => current, getConfigSnapshot: () => ({ config: current, revision: `owned-fixture:${revision}` }),
+    saveConfig: save, validateAcpConcurrencyLimit: types.validateAcpConcurrencyLimit,
     PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), redactConfigForWire: (v: any) => v, isMaskedApiKey: () => false,
   }).handleConfigFamily
   return { save, handler, writes, events, current: () => current }
@@ -41,7 +44,7 @@ function configFixture() {
 
 test("#739 real saveConfig/handler persist explicit N and preserve servers; invalid updates perform zero writes/events", async () => {
   const h = configFixture()
-  for (const n of [2, 4, 1]) { const result = await h.handler("config.set", { config: { acp: { max_concurrent_sessions: n, servers: { injected: {} }, policy: {} } } }); assert.equal(result.type, "config.updated"); assert.equal(h.current().acp.max_concurrent_sessions, n); assert.deepEqual(Object.keys(h.current().acp.servers), ["A"]) }
+  for (const [index, n] of [2, 4, 1].entries()) { const result = await h.handler("config.set", { config: { acp: { max_concurrent_sessions: n, servers: { injected: {} }, policy: {} } } }); assert.equal(result.type, "config.updated"); assert.equal(result.config_revision, `owned-fixture:${index + 1}`); assert.equal(h.current().acp.max_concurrent_sessions, n); assert.deepEqual(Object.keys(h.current().acp.servers), ["A"]) }
   const before = JSON.stringify(h.current()), count = h.writes.length
   for (const n of [undefined, null, "2", true, [], {}, NaN, Infinity, 0, 5, 1.5]) {
     assert.throws(() => h.save({ acp: { max_concurrent_sessions: n } }))

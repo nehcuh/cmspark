@@ -10,6 +10,7 @@ import { codingControlAction } from "../src/sidepanel/utils/coding-control-messa
 import { agentReducer, initialState, selectCodingSession, type AgentState } from "../src/sidepanel/store/agentStore"
 import { sendCodingOperation, takeCodingOperationReply, clearCodingOperationFeedback, captureCodingSelection } from "../src/sidepanel/utils/coding-operation-send"
 import { WorkspaceHints } from "../src/sidepanel/coding-handoff/workspace-hints"
+import { isSettingsSaveError } from "../src/sidepanel/utils/settings-draft"
 
 const switchTo = (s: AgentState, threadId: string) => agentReducer(s, { type: "SET_ACTIVE_THREAD", threadId })
 function offer(s: AgentState, sessionId: string, threadId = "owner") {
@@ -148,7 +149,7 @@ test("#739 actual whole WS listener correlates exact receipts and retains Stop/m
   const dispatch = (a: any) => { actions.push(a); s = agentReducer(s, a) }
   const exported: any = {}
   const code = ts.transpileModule(`export const ${listener.getText(sf)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
-  vm.runInNewContext(code, { exports: exported, takeCodingOperationReply, dispatch, codingManualEntryAction, codingControlAction,
+  vm.runInNewContext(code, { exports: exported, takeCodingOperationReply, dispatch, codingManualEntryAction, codingControlAction, isSettingsSaveError,
     activeThreadRef: { current: "owner" }, isBoardHintReply: () => false, isManagedThreadMutationReply: () => false,
     workspaceHintsRef: { current: new WorkspaceHints() }, workspaceHintSelectionRef: { current: s.activeThreadSelectionRevision },
     nextHydrateRetry: () => "none", knowledgePreviewErrorText: () => null, isComputerModelErrorMessage: () => false,
