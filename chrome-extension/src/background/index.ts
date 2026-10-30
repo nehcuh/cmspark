@@ -962,24 +962,42 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       }
 
       case "config.set": {
-        // Persist locally so settings survive SW restarts, then forward to companion
-        // so it becomes the global source of truth.
+        // Companion remains the source of truth. Only its config.updated frames
+        // update the extension cache; sending or queueing is not persistence.
         // P1-1: pass through non-empty confirmation_phrase for security flag arm step-up.
         // Empty string is omitted (companion rejects empty as missing_phrase anyway).
         // P0-4: report actual ws send result (same as acp.* forward) — do not claim ok
         // when Companion is disconnected.
-        saveExtensionConfig(message.config || {})
         const armPhrase =
           typeof message.confirmation_phrase === "string"
             ? message.confirmation_phrase.trim()
             : ""
+        if (message.id !== undefined &&
+            (typeof message.id !== "string" || !/^[A-Za-z0-9:_-]{1,100}$/.test(message.id))) {
+          sendResponse({ ok: false, error: "INVALID_CONFIG_REQUEST_ID" })
+          return true
+        }
+        if (message.config_revision !== undefined &&
+            (typeof message.config_revision !== "string" || message.config_revision.length === 0 || message.config_revision.length > 128)) {
+          sendResponse({ ok: false, error: "INVALID_CONFIG_REVISION" })
+          return true
+        }
         if (!wsClient) {
           sendResponse({ ok: false, error: "Service worker 未初始化，请重载扩展" })
+          return true
+        }
+        // Correlated draft writes must never be queued across authentication or
+        // reconnect: a later replay can overwrite a newer session's choice.
+        if (message.id !== undefined && message.config_revision !== undefined &&
+            !wsClient.desktopBrowserConnectionCurrent()()) {
+          sendResponse({ ok: false, error: "CONFIG_CONNECTION_NOT_READY" })
           return true
         }
         const sent = wsClient.send({
           type: "config.set",
           config: message.config,
+          ...(message.id !== undefined ? { id: message.id } : {}),
+          ...(message.config_revision !== undefined ? { config_revision: message.config_revision } : {}),
           ...(armPhrase ? { confirmation_phrase: armPhrase } : {}),
         })
         if (!sent) {

@@ -7,6 +7,7 @@ import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, Op
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 import { normalizeDocumentWarning } from "../utils/document-warning"
+import { acknowledgeSettingsSubmission, compareSettingsRevisions, createSettingsDraft, editSettingsDraft, receiveSettingsSnapshot, resolveSettingsConflict, type SettingsDraft, type SettingsSubmission } from "../utils/settings-draft"
 import { pruneCodingSessionCache, codingSessionMembership } from "../utils/coding-session-cache"
 import { parseCodingHistory, type CodingHistory } from "../coding-handoff/history"
 
@@ -173,6 +174,10 @@ export interface AgentState {
   activeSkillIds: string[]
   operations: OperationRecord[]
   config: LLMConfig
+  configRevision: string | null
+  configEpochInvalid: boolean
+  settingsDraft: SettingsDraft<LLMConfig> | null
+  settingsSave: { status: "idle" | "pending" | "unknown" | "conflict" | "review" | "saved"; pending: SettingsSubmission<LLMConfig> | null }
   settingsOpen: boolean
   /** Deep-link target for settings accordion (F-UX7). Cleared after Settings applies. */
   settingsFocusSection: string | null
@@ -497,6 +502,14 @@ export type AgentAction =
   | { type: "TOGGLE_SKILL"; skillId: string }
   | { type: "SET_OPERATIONS"; operations: OperationRecord[] }
   | { type: "SET_CONFIG"; config: Partial<LLMConfig> }
+  | { type: "SET_CONFIG_SNAPSHOT"; config: Partial<LLMConfig>; revision: string | null; id?: string; conflict?: boolean; confirmedSecrets?: Array<"api_key" | "vision_api_key"> }
+  | { type: "BEGIN_SETTINGS_SAVE"; submission: SettingsSubmission<LLMConfig> }
+  | { type: "SETTINGS_SAVE_UNKNOWN"; id: string }
+  | { type: "RESOLVE_SETTINGS_CONFLICT"; key: keyof LLMConfig; choice: "mine" | "remote" }
+  | { type: "BEGIN_SETTINGS_DRAFT" }
+  | { type: "END_SETTINGS_DRAFT" }
+  | { type: "SETTINGS_SAVE_RETRY" }
+  | { type: "EDIT_SETTINGS_DRAFT"; config: Partial<LLMConfig> }
   | { type: "TOGGLE_SETTINGS" }
   | { type: "SET_SETTINGS_OPEN"; open: boolean }
   | { type: "OPEN_SETTINGS_SECTION"; section: string }
@@ -758,6 +771,10 @@ export const initialState: AgentState = {
     file_upload_max_tokens: 50000,
     file_upload_vision: true,
   },
+  configRevision: null,
+  configEpochInvalid: false,
+  settingsDraft: null,
+  settingsSave: { status: "idle", pending: null },
   settingsOpen: false,
   settingsFocusSection: null,
   tabList: [],
@@ -1182,6 +1199,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           ...state,
           workspaceHints: null,
           connectionState: action.state,
+          configRevision: null,
+          configEpochInvalid: false,
+          settingsSave: state.settingsSave.pending ? { status: "unknown", pending: null } : state.settingsSave,
           codingHistoryConnectionRevision,
           codingHistory: null,
           isProcessing: false,
@@ -1191,6 +1211,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         }
       }
       return { ...state, connectionState: action.state, codingHistoryConnectionRevision,
+        ...(action.type === "SET_CONNECTION" && action.state !== "connected" ? {
+          configRevision: null, configEpochInvalid: false,
+          settingsSave: state.settingsSave.pending ? { status: "unknown" as const, pending: null } : state.settingsSave,
+        } : {}),
         codingHistory: action.state === "connected" ? state.codingHistory : null,
         workspaceHints: action.state === "connected" ? state.workspaceHints : null }
     }
@@ -1366,6 +1390,69 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, operations: action.operations }
     case "SET_CONFIG":
       return { ...state, config: { ...state.config, ...action.config } }
+    case "SET_CONFIG_SNAPSHOT": {
+      const pending = state.settingsSave.pending
+      const matched = !!pending && !!action.id && action.id === pending.id
+      if (state.configEpochInvalid) return state
+      if (state.configRevision) {
+        const order = action.revision ? compareSettingsRevisions(state.configRevision, action.revision) : "unordered"
+        if (order === "older" || order === "unordered") {
+          return { ...state,
+            // An unorderable epoch needs a fresh connection/snapshot before saving.
+            configRevision: order === "unordered" ? null : state.configRevision,
+            configEpochInvalid: order === "unordered",
+            settingsSave: matched || (order === "unordered" && pending)
+              ? { status: "unknown", pending: null } : state.settingsSave,
+          }
+        }
+      }
+      const config = { ...state.config, ...action.config }
+      // Missing revision cannot provide any cross-writer guarantee. Do not let
+      // a legacy snapshot erase an in-memory draft or make it saveable.
+      const draft = state.settingsDraft
+      const revision = action.revision
+      const opaque = new Set<keyof LLMConfig>(["api_key", "vision_api_key"])
+      const settingsDraft = draft && revision
+        ? matched && !action.conflict
+          ? acknowledgeSettingsSubmission(draft, pending!, action.id!, config, revision, opaque, new Set(action.confirmedSecrets ?? []))
+          : receiveSettingsSnapshot(draft, config, revision, opaque)
+        : draft
+      let settingsSave = state.settingsSave
+      if (matched) {
+        const status = !revision || !settingsDraft ? "unknown" : action.conflict ? "conflict"
+          : Object.keys(settingsDraft.dirty).length || Object.keys(settingsDraft.conflicts).length ? "review" : "saved"
+        settingsSave = { status, pending: null }
+      }
+      return { ...state, config, configRevision: revision, settingsDraft, settingsSave }
+    }
+    case "BEGIN_SETTINGS_DRAFT":
+      return state.settingsDraft || !state.configHydratedFromCompanion ? state : {
+        ...state, settingsDraft: createSettingsDraft(state.config, state.configRevision ?? ""),
+      }
+    case "END_SETTINGS_DRAFT":
+      return { ...state, settingsDraft: null, settingsSave: { status: "idle", pending: null } }
+    case "SETTINGS_SAVE_RETRY":
+      return state.settingsSave.pending ? state : { ...state, settingsSave: { status: "idle", pending: null } }
+    case "EDIT_SETTINGS_DRAFT": {
+      if (!state.configHydratedFromCompanion) return state
+      const draft = state.settingsDraft ?? createSettingsDraft(state.config, state.configRevision ?? "")
+      return { ...state, settingsDraft: editSettingsDraft(draft, action.config),
+        settingsSave: state.settingsSave.status === "saved" ? { status: "idle", pending: null } : state.settingsSave }
+    }
+    case "BEGIN_SETTINGS_SAVE":
+      return !state.settingsDraft || state.settingsSave.pending || state.connectionState !== "connected" ||
+        !state.configRevision || state.configRevision !== action.submission.revision ||
+        Object.keys(state.settingsDraft.conflicts).length ? state : {
+          ...state, settingsSave: { status: "pending", pending: action.submission },
+        }
+    case "SETTINGS_SAVE_UNKNOWN":
+      return state.settingsSave.pending?.id !== action.id ? state : {
+        ...state, settingsSave: { status: "unknown", pending: null },
+      }
+    case "RESOLVE_SETTINGS_CONFLICT":
+      return state.settingsDraft ? {
+        ...state, settingsDraft: resolveSettingsConflict(state.settingsDraft, action.key, action.choice),
+      } : state
     case "SET_UNATTENDED_STATUS":
       return { ...state, unattended: action.unattended }
     case "SET_CONTEXT_COMPACTED":

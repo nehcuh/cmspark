@@ -27,6 +27,7 @@ import { requestDesktopOpen } from "../desktop/open"
 import http from "http"
 import {
   getConfig,
+  getConfigSnapshot,
   saveConfig,
   configEvents,
   CONFIG_CHANGE_EVENT,
@@ -872,10 +873,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   // redact llm/vision api_key and mcp.servers env/headers values before send.
   // applyConfig MUST receive the unredacted config (secrets needed for process spawn).
   configEvents.on(CONFIG_CHANGE_EVENT, async (updatedConfig: any) => {
+    const snapshot = getConfigSnapshot()
     broadcastToClients({
       type: "config.updated",
-      config: redactConfigForWire(updatedConfig),
+      config: redactConfigForWire(snapshot.config),
       source: "companion",
+      config_revision: snapshot.revision,
     })
 
     // Apply MCP diff (start/stop/restart servers based on what changed)

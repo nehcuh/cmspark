@@ -59,6 +59,9 @@ jobs:
           node --test scripts/tests/activity-notifier-package.test.cjs
           node --test scripts/tests/native-join-observation-788.test.cjs
 
+      - name: Settings cache commit boundary (#806)
+        run: node --test scripts/tests/config-cache-806.test.cjs
+
       - name: Build companion
         run: |
           cd companion && npm run build

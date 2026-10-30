@@ -97,7 +97,7 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
   const root = path.resolve(process.cwd(), "src/sidepanel"), at = (relative: string) => path.resolve(root, relative)
   const modules = new Map<string, any>()
   const listeners = new Map<string, Set<(event: any) => void>>()
-  const toasts: string[] = [], actions: any[] = [], messages: any[] = [], tabRequests: any[] = [], intentResults: Promise<string>[] = []
+  const toasts: string[] = [], actions: any[] = [], messages: any[] = [], messageCallbacks: any[] = [], tabRequests: any[] = [], intentResults: Promise<string>[] = []
   const stateWrites = new Set<(owner: unknown, value: any) => void>()
   const deferred = () => { let resolve!: (value?: any) => void, reject!: (reason?: any) => void; const promise = new Promise<any>((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
   const slots = new Map<string, { cells: any[]; effects: any[] }>()
@@ -139,7 +139,7 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
   }
   const chromeValue = { runtime: {
     getURL: (value: string) => "chrome-extension://owned/" + value,
-    sendMessage: (...args: any[]) => { messages.push(args[0]); return Promise.resolve(undefined) },
+    sendMessage: (...args: any[]) => { messages.push(args[0]); if (typeof args[1] === "function") messageCallbacks.push(args[1]); return Promise.resolve(undefined) },
     onMessage: { addListener() {}, removeListener() {} },
   }, tabs: { create: (options: any) => { const pending = deferred(); tabRequests.push({ options, ...pending }); return pending.promise }, query() { assert.fail("unrelated tab query") } } }
   const leafExports: Record<string, string[]> = {
@@ -173,7 +173,7 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
     }
     vm.runInNewContext(code, { exports: output, require: loadDependency, window: windowValue, chrome: chromeValue,
       document: { querySelector: () => null }, localStorage: { getItem: () => null, setItem() {} },
-      CustomEvent: CustomEventValue, URL, URLSearchParams, AbortController, TextEncoder, TextDecoder,
+      CustomEvent: CustomEventValue, URL, URLSearchParams, AbortController, TextEncoder, TextDecoder, crypto: { randomUUID: () => "owned-uuid" },
       requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout: () => 1, clearTimeout() {}, console,
     }, { timeout: 1000, filename })
     return output
@@ -206,7 +206,7 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
   }
   renderHost(); renderWorkspace()
   return {
-    actions, messages, toasts, tabRequests, intentResults, deferred, rows, find, renderHost, renderWorkspace, renderSlideout, assistant,
+    actions, messages, messageCallbacks, dispatch, toasts, tabRequests, intentResults, deferred, rows, find, renderHost, renderWorkspace, renderSlideout, assistant,
     host: () => host, state: () => state,
     setState(patch: any) { state = { ...state, ...patch }; renderHost(); renderWorkspace() },
     setSettingsOpen(open: boolean) { dispatch({ type: "SET_SETTINGS_OPEN", open }); renderHost(); renderWorkspace() },
@@ -243,14 +243,15 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
 test("#789 actual settings select defaults to medium and saves the chosen effort", () => {
   const f = settingsNavigationHarness()
   try {
-    f.setState({ configHydratedFromCompanion: true })
+    f.setState({ configHydratedFromCompanion: true, configRevision: "epoch:1", connectionState: "connected" })
     let ui = f.renderSlideout()
     const select = f.find(ui, n => n.type === "select" && n.props.id === "reasoning-effort")
     assert.equal(select.props.value, "medium")
     assert.match(navigationText(ui), /中与高均使用高/)
     assert.equal(f.rows(select).filter((n: any) => n.type === "option").map((n: any) => n.props.value).join(","), "low,medium,high,xhigh")
     select.props.onChange({ target: { value: "xhigh" } })
-    assert.equal(f.state().config.reasoning_effort, "xhigh")
+    assert.equal(f.state().settingsDraft.value.reasoning_effort, "xhigh")
+    assert.equal(f.state().config.reasoning_effort, "medium")
     ui = f.renderSlideout()
     f.find(ui, n => n.type === "button" && n.props.children === "保存并关闭").props.onClick()
     const sent = f.messages.filter((m: any) => m.type === "config.set")
@@ -435,4 +436,47 @@ test("#754 offline rule navigation refuses missing destinations and stale inacti
       assert.equal(f.state().settingsOpen, true); assert.equal(f.intentResults.length, 0)
     } finally { f.close() }
   }
+})
+
+
+test("actual settings preserves edited field until correlated save receipt", () => {
+  const h = settingsNavigationHarness()
+  h.dispatch({ type: "SET_CONNECTION", state: "connected" })
+  h.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { base_url: "https://old.test/v1", model_name: "old" }, revision: "epoch:1" })
+  h.dispatch({ type: "SET_CONFIG_HYDRATED", hydrated: true })
+  let ui = h.renderSlideout()
+  ui = h.renderSlideout()
+  h.find(ui, n => n.type === "input" && n.props.value === "https://old.test/v1").props.onChange({ target: { value: "https://new.test/v1" } })
+  h.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { base_url: "https://old.test/v1", model_name: "remote" }, revision: "epoch:2" })
+  ui = h.renderSlideout()
+  assert.equal(h.find(ui, n => n.type === "input" && n.props.value === "https://new.test/v1").props.value, "https://new.test/v1")
+  h.find(ui, n => n.type === "button" && n.props.className === "cm-settings-save").props.onClick()
+  const sent = h.messages.filter(m => m.type === "config.set").at(-1)
+  assert.equal(sent.id, "settings-save:owned-uuid")
+  assert.equal(sent.config_revision, "epoch:2")
+  assert.deepEqual(Object.keys(sent.config), ["base_url"])
+  assert.equal(h.state().settingsOpen, true)
+  h.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { base_url: "https://new.test/v1", model_name: "remote" }, revision: "epoch:3", id: sent.id })
+  h.renderSlideout()
+  assert.equal(h.state().settingsOpen, false)
+})
+
+test("actual settings keeps draft visible when a save outcome is unknown", () => {
+  const h = settingsNavigationHarness()
+  try {
+    h.dispatch({ type: "SET_CONNECTION", state: "connected" })
+    h.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { base_url: "https://old.test/v1" }, revision: "epoch:1" })
+    h.dispatch({ type: "SET_CONFIG_HYDRATED", hydrated: true })
+    h.renderSlideout()
+    let ui = h.renderSlideout()
+    h.find(ui, n => n.type === "input" && n.props.value === "https://old.test/v1").props.onChange({ target: { value: "https://new.test/v1" } })
+    ui = h.renderSlideout()
+    h.find(ui, n => n.type === "button" && n.props.className === "cm-settings-save").props.onClick()
+    h.dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id: "settings-save:owned-uuid" })
+    ui = h.renderSlideout()
+    assert.equal(h.state().settingsOpen, true)
+    assert.match(navigationText(ui), /保存结果未知/)
+    assert.equal(h.find(ui, n => n.type === "input" && n.props.value === "https://new.test/v1").props.value, "https://new.test/v1")
+    assert.equal(h.find(ui, n => n.type === "button" && n.props.className === "cm-settings-save").props.disabled, true)
+  } finally { h.close() }
 })

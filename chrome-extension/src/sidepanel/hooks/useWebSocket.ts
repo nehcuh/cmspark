@@ -27,6 +27,7 @@ import {
 } from "../utils/knowledge-distribution"
 
 import { normalizeConfig } from "../utils/normalize-config"
+import { isSettingsSaveError } from "../utils/settings-draft"
 export { normalizeConfig }
 
 const hydrateRetryIds = new Set<string>()
@@ -928,8 +929,13 @@ export function useWebSocket() {
           break
 
         case "config.updated":
+        case "config.conflict":
           if (msg.config?.acp?.enabled === false) dispatch({ type: "ACP_HISTORY_INVALIDATE" })
-          dispatch({ type: "SET_CONFIG", config: normalizeConfig(msg.config) })
+          dispatch({ type: "SET_CONFIG_SNAPSHOT", config: normalizeConfig(msg.config),
+            revision: typeof msg.config_revision === "string" && msg.config_revision.length > 0 && msg.config_revision.length <= 128 ? msg.config_revision : null,
+            ...(typeof msg.id === "string" ? { id: msg.id } : {}), conflict: msg.type === "config.conflict",
+            confirmedSecrets: Array.isArray(msg.config_applied_secret_fields)
+              ? msg.config_applied_secret_fields.filter((key: unknown): key is "api_key" | "vision_api_key" => key === "api_key" || key === "vision_api_key") : [] })
           dispatch({ type: "SET_CONFIG_HYDRATED", hydrated: true })
           if (msg.source === "companion" && msg.config?.llm) {
             dispatch({ type: "SET_COMPANION_CONFIG", config: normalizeConfig(msg.config) as any })
@@ -2240,7 +2246,7 @@ export function useWebSocket() {
           // Native folder-picker result from the companion. Adopt the path (config binds to
           // the input); clear the spinner. A cancel is silent; a real error is surfaced.
           if (msg.path) {
-            dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: msg.path } })
+            dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { obsidian_vault_path: msg.path } })
             dispatch({ type: "SET_VAULT_PICKER", picking: false, error: null })
           } else if (msg.error === "cancelled") {
             dispatch({ type: "SET_VAULT_PICKER", picking: false, error: null })
@@ -2377,6 +2383,12 @@ export function useWebSocket() {
           break
 
         case "error": {
+          // The handler may throw before or after persistence: the receipt is
+          // UNKNOWN, and it must not be appended to an unrelated chat.
+          if (isSettingsSaveError(msg)) {
+            dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id: msg.id })
+            break
+          }
           if (msg.family === "acp" && msg.request_type === "acp.sessions.list") {
             dispatch({ type: "ACP_HISTORY_RESULT", message: { type: "acp.sessions.list_result",
               thread_id: msg.thread_id, request_id: msg.request_id, status: "unavailable", rows: [] } })

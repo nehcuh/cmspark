@@ -116,6 +116,7 @@ function conservedBuildSteps794(steps) {
   "timeout-minutes": 3,
   "run": ": \"${RUNNER_TEMP:?}\"\nNODE_BIN=\"$(command -v node)\"\n/usr/bin/env -i PATH=\"$(dirname \"${NODE_BIN}\"):/usr/bin:/bin\" HOME=\"${RUNNER_TEMP}\" TMPDIR=\"${RUNNER_TEMP}\" \\\n  LANG=C.UTF-8 LC_ALL=C.UTF-8 GITHUB_ACTIONS=\"${GITHUB_ACTIONS}\" RUNNER_OS=\"${RUNNER_OS}\" \\\n  CMSPARK_STAGED_FILESYSTEM_CI=1 \"${NODE_BIN}\" --max-old-space-size=3072 \\\n  --test --experimental-test-isolation=none scripts/tests/filesystem-staged-handshake-794.test.mjs\n"
 }
+
   const selected = steps.filter(step => step.name === expected.name)
   assert.equal(selected.length, 1, 'one exact clean staged filesystem gate')
   assert.deepEqual(selected[0], expected, 'clean staged filesystem command and failure semantics are exact')
@@ -123,6 +124,18 @@ function conservedBuildSteps794(steps) {
   assert.equal(steps[at - 1]?.name, 'Build companion', 'clean stage consumes the normal build')
   assert.equal(steps[at + 1]?.name, 'Run companion tests', 'clean stage precedes the original tests')
   assert.ok(steps.findIndex(step => step.name === 'Install dependencies') < at - 1, 'locked dependencies precede the normal build')
+  return steps.filter(step => step !== selected[0])
+}
+
+// #806: admit only the exact cache control and keep all historic build gates.
+function conservedBuildSteps806(steps) {
+  const expected = { name: 'Settings cache commit boundary (#806)', run: 'node --test scripts/tests/config-cache-806.test.cjs' }
+  const selected = steps.filter(step => step.name === expected.name)
+  assert.equal(selected.length, 1, 'one exact settings cache gate')
+  assert.deepEqual(selected[0], expected, 'settings cache command and failure semantics are exact')
+  const at = steps.indexOf(selected[0])
+  assert.equal(steps[at - 1]?.name, 'Package fail-closed gates (P0-D nits)')
+  assert.equal(steps[at + 1]?.name, 'Build companion')
   return steps.filter(step => step !== selected[0])
 }
 
@@ -201,7 +214,7 @@ export function validateWindowsCiFeedback750(text) {
   assert.equal(traySteps.length, 1, 'exactly one tray CPU control')
   assert.deepEqual(traySteps[0], { name: trayControl, run: 'node --test companion/scripts/tests/swift-tray-package-pin.test.mjs companion/scripts/tests/swift-tray-bundle-entry.test.mjs companion/scripts/tests/swift-tray-source-freshness.test.mjs companion/scripts/tests/swift-tray-build-output.test.mjs companion/scripts/tests/swift-tray-package-copy.test.mjs\n' })
   assert.equal(build.steps.indexOf(traySteps[0]), build.steps.findIndex(s => key(s) === 'Run companion tests') + 1)
-  const buildSteps = conservedBuildSteps794(build.steps.filter(s => key(s) !== trayControl))
+  const buildSteps = conservedBuildSteps794(conservedBuildSteps806(build.steps.filter(s => key(s) !== trayControl)))
   assert.deepEqual(buildSteps.map(key), baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js').map(s => s.key))
   cache750(build.steps.find(s => s.name === 'Setup Node.js'), '22.23.4')
   for (const old of baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js')) {
