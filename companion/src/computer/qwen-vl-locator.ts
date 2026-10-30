@@ -9,6 +9,7 @@ import type { QwenVlSession } from "./qwen-vl-session"
 export const MAX_COMMAND_CHARS = 200
 export const MAX_FRAME_WIDTH = 3840
 export const COLLAPSE_TOLERANCE_PX = 8
+export const QWEN_VL_WORKER_RAW_CAP = 500
 
 export const QWEN_VL_REASON = {
   TOO_LONG: "qwen-vl-envelope:too-long",
@@ -86,9 +87,11 @@ export class QwenVlLocator {
       const r = await this.session.locate(cmd, imagePath, width, height)
       // Path C: prefer/recover points from free-text raw via gui-action-parse
       // (UI-TARS-like start_box center, JSON, etc.). Worker may already return
-      // a point; reparse wins when raw yields a finite coordinate.
+      // a point; reparse wins when complete raw yields a finite coordinate.
+      // The worker counts Python characters before slicing. Older workers lack
+      // the flag, so retain the conservative UTF-16 length fallback for them.
       let point = r.point && Number.isFinite(r.point.x) && Number.isFinite(r.point.y) ? r.point : null
-      if (r.raw) {
+      if (r.raw && (r.rawComplete === true || (r.rawComplete === undefined && r.raw.length < QWEN_VL_WORKER_RAW_CAP))) {
         const fromRaw = parseGuiClickPoint(r.raw, width, height)
         if (fromRaw) point = fromRaw
       }

@@ -1,0 +1,58 @@
+name: ARM acceptance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  affected-cpu:
+    name: Affected CPU controls (Linux ARM64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify checked-out revision
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          git rev-parse HEAD^{tree}
+          sha256sum companion/package-lock.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Verify runtime
+        run: node -e "if (process.platform !== 'linux' || process.arch !== 'arm64' || process.version !== 'v22.23.4') process.exit(1); console.log(process.platform, process.arch, process.version)"
+      - name: Install locked companion dependencies
+        working-directory: companion
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: npm ci
+      - name: Check lockfile unchanged
+        run: git diff --exit-code HEAD -- companion/package-lock.json
+      - name: Typecheck companion and tests
+        working-directory: companion
+        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.test.json
+      - name: Qwen locator CPU controls
+        working-directory: companion
+        run: node --import tsx --test tests/computer-qwen-vl-locator.test.ts
+      - name: Windows workflow contract CPU controls
+        working-directory: companion
+        run: node --test ../scripts/tests/windows-ci-feedback-750.test.mjs
+      # The three producer tests assert Darwin explicitly; the existing macOS
+      # CI runs the entire file, including those three. Account for the 13
+      # portable cases here so an empty or changed selection cannot pass.
+      - name: Runtime header portable CPU controls
+        shell: bash
+        run: |
+          set -o pipefail
+          pattern='^(pinned fixture attributes and bytes are present|validated runtime header set is staged using exactly the verified bytes|an incomplete set falls back without publishing partial headers|a modified runtime header is refused before staging|missing input cannot hide a separate integrity failure|pin set cannot introduce extra or path-traversal members|separate staging calls never replace each others outputs|symlink and hardlink inputs are refused without staging|copy uses the verified buffer even if the input path changes after reading|corrupt existing archive cache is not bypassed by runtime preference|Windows preference keeps the original download route|macOS native header consumers only request members in the pinned set|unsafe or empty existing archive is refused without fetching)$'
+          node -e 'const fs=require("node:fs"),assert=require("node:assert/strict"),crypto=require("node:crypto");const s=fs.readFileSync("companion/scripts/tests/desktop-runtime-headers-480.test.mjs","utf8");assert.equal(crypto.createHash("sha256").update(s).digest("hex"),"eb3a7a2537a6f225164a440a9fadd64d2daeb567dfa997455e848505e7cc7045");const n=[...s.matchAll(/^test\(\x27([^\x27]+)\x27/gm)].map(x=>x[1]);const p=new RegExp(process.argv[1]);assert.equal(n.length,16);assert.equal(new Set(n).size,16);assert.equal(n.filter(x=>p.test(x)).length,13);assert.deepEqual(n.filter(x=>!p.test(x)),["actual macOS producer stages a controlled set of pinned headers without download","missing runtime headers use the original download path","archive appearing during runtime staging still receives original integrity check"])' "$pattern"
+          node --test --test-reporter=tap --test-name-pattern="$pattern" companion/scripts/tests/desktop-runtime-headers-480.test.mjs | tee "$RUNNER_TEMP/header-arm.tap"
+          grep -Fx '# tests 13' "$RUNNER_TEMP/header-arm.tap"
+          grep -Fx '# pass 13' "$RUNNER_TEMP/header-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/header-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/header-arm.tap"

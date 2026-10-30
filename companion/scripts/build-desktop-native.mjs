@@ -26,7 +26,7 @@ directory(dest);directory(generated)
 if (!["darwin", "win32"].includes(process.platform)) throw new Error("Native platform build command not implemented for this OS")
 if (process.version !== "v22.23.4") throw new Error("Pinned Node22.23.4 build runtime required")
 const { prepareDesktopNodeHeaders, desktopAcceptanceVariant } = await import("./build-desktop-windows.mjs")
-const headers = process.platform === "darwin" ? await prepareDesktopNodeHeaders({dest}) : undefined
+const headers = process.platform === "darwin" ? await prepareDesktopNodeHeaders({dest,preferRuntimeHeaders:true}) : undefined
 // Erasable TypeScript is supported by pinned Node22.23.4. This is the sole editable method table.
 const { DESKTOP_READ_METHODS, DESKTOP_RENDERER_METHODS, DESKTOP_NATIVE_METHODS, DESKTOP_METHOD_SET_VERSION } = await import(pathToFileURL(path.join(root, "src/desktop/capabilities.ts")))
 if (!DESKTOP_READ_METHODS.every(v => typeof v === "string" && (/^[a-z]+\.[a-z]+$/.test(v) || ["desktop.archive.list", "desktop.archive.state", "desktop.browser.status", "desktop.browser.tasks", "desktop.workspace.state","desktop.workspace.list","desktop.workspace.read","desktop.local.state"].includes(v)))) throw new Error("Invalid native method table")

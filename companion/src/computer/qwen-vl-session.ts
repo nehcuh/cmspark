@@ -18,6 +18,7 @@ import { ModelRuntimeError, QwenVlRuntime, type QwenVlRuntimeDeps } from "./qwen
 export interface QwenVlLocateResult {
   point: { x: number; y: number } | null
   raw?: string
+  rawComplete?: boolean
   ms: number
 }
 
@@ -147,7 +148,7 @@ export class QwenVlSession {
     }
     try {
       const r = await this.runtime.infer({ imagePath, command, width, height })
-      return { point: { x: r.x, y: r.y }, raw: r.raw, ms: r.ms }
+      return { point: { x: r.x, y: r.y }, raw: r.raw, rawComplete: r.rawComplete, ms: r.ms }
     } catch (e) {
       if (e instanceof ModelRuntimeError) throw e
       throw new ModelRuntimeError("infer-error", e instanceof Error ? e.message : String(e))
