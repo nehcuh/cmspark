@@ -50,8 +50,8 @@ jobs:
         run: |
           set -o pipefail
           node --test --test-reporter=tap companion/scripts/tests/whisper-builder-783.test.mjs | tee "$RUNNER_TEMP/whisper-builder-783-arm.tap"
-          grep -Fx '# tests 34' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
-          grep -Fx '# pass 34' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          grep -Fx '# tests 38' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          grep -Fx '# pass 38' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
           grep -Fx '# fail 0' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
           grep -Fx '# skipped 0' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
           bash scripts/tests/test-package-otool-783.sh scripts/package.sh

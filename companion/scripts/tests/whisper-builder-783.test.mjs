@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 // these text fixtures are not Mach-O/signature/provenance or actual macOS evidence.
 const source = fs.readFileSync(new URL('../build-cmspark-whisper.sh', import.meta.url));
 const pinBefore = 'owned source pin sentinel; no production digest is updated\n';
-const utilities = ['dirname', 'chmod', 'mkdir', 'rm', 'ln', 'basename', 'wc', 'tr'];
+const utilities = ['dirname', 'chmod', 'mkdir', 'ln', 'basename', 'wc', 'tr'];
 function fixture(t, fault = '', missing = '', platform = 'Darwin') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark (compatibility version backup) builder 783-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -22,7 +22,7 @@ function fixture(t, fault = '', missing = '', platform = 'Darwin') {
   const input = path.join(root, 'input'), lib = path.join(input, 'lib');
   fs.mkdirSync(lib, { recursive: true });
   const primary = path.join(input, 'whisper-cli'); fs.writeFileSync(primary, 'inert primary text\n');
-  for (const name of ['libwhisper.1.2.dylib', 'libggml.0.1.dylib']) fs.writeFileSync(path.join(lib, name), 'inert library text\n');
+  for (const name of ['libwhisper.1.2.dylib', 'libggml.0.1.dylib', ...(fault === 'missing-omp' ? [] : ['libomp.dylib'])]) fs.writeFileSync(path.join(lib, name), 'inert library text\n');
   for (const name of utilities) {
     const target = ['/bin', '/usr/bin'].map(p => path.join(p, name)).find(p => fs.existsSync(p));
     assert.ok(target, `required ownedFS/Bash utility ${name}`);
@@ -33,6 +33,7 @@ function fixture(t, fault = '', missing = '', platform = 'Darwin') {
   };
   const awk = ['/usr/bin/awk', '/bin/awk'].find(p => fs.existsSync(p)); assert.ok(awk);
   const cp = ['/bin/cp', '/usr/bin/cp'].find(p => fs.existsSync(p)); assert.ok(cp);
+  const rm = ['/bin/rm', '/usr/bin/rm'].find(p => fs.existsSync(p)); assert.ok(rm);
   const find = ['/usr/bin/find', '/bin/find'].find(p => fs.existsSync(p)); assert.ok(find);
   const parseCount = path.join(root, 'parse-count'); fs.writeFileSync(parseCount, '0');
   writeCommand('awk', `if [[ "$1" == *'compatibility version'* ]]; then
@@ -47,9 +48,12 @@ exec "$AWK_BINARY" "$@"`);
   case "$arg" in
     *libwhisper*.dylib) if [[ "$FAULT" == copy-whisper ]]; then printf 'fault:copy-whisper\\n' >> "$TRACE"; exit 44; fi ;;
     *libggml*.dylib) if [[ "$FAULT" == copy-ggml ]]; then printf 'fault:copy-ggml\\n' >> "$TRACE"; exit 44; fi ;;
+    *libomp*.dylib) if [[ "$FAULT" == copy-omp ]]; then printf 'fault:copy-omp\\n' >> "$TRACE"; exit 44; fi ;;
   esac
 done
 exec "$CP_BINARY" "$@"`);
+  writeCommand('rm', `if [[ "$FAULT" == cleanup-libs ]]; then printf 'fault:cleanup-libs\\n' >> "$TRACE"; exit 45; fi
+exec "$RM_BINARY" "$@"`);
   writeCommand('find', `family=''
 for arg in "$@"; do
   case "$arg" in
@@ -62,9 +66,9 @@ rc=0
 if [[ -n "$family" ]]; then printf 'find:%s:%s\\n' "$family" "$rc" >> "$TRACE"; fi
 exit "$rc"`);
   writeCommand('uname', `case "$1" in -s) printf '%s\\n' "$PLATFORM";; -m) printf '%s\\n' arm64;; *) exit 97;; esac`);
-  writeCommand('brew', `[[ "$1" == --prefix && ( "$2" == whisper-cpp || "$2" == ggml ) ]] || exit 97\nprintf '%s\\n' "$INPUT"`);
-  writeCommand('otool', `[[ "$1" == -L ]] || exit 97\nrole=lib; [[ "$2" == "$PRIMARY_OUT" ]] && role=primary\nprintf 'inspect:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "inspect-$role" ]] || exit 41\nprintf '%s:\\n' "$2"\n[[ "$FAULT" != empty-dependencies ]] || exit 0\nif [[ "$FAULT" == "malformed-$role" ]]; then printf 'not an otool dependency\\n'; exit 0; fi\nif [[ "$FAULT" == "control-$role" ]]; then printf '\\t/owned/control\\rpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\nif [[ "$FAULT" == "internal-tab-$role" ]]; then printf '\\t/owned/control\\tpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\ncase "$FAULT" in\n  "prefix-cr-$role") printf '\\t\\r/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-vt-$role") printf '\\t\\v/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-ff-$role") printf '\\t\\f/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-tab-$role") printf '\\t\\t/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\nesac\nif [[ "$FAULT" == "missing-newline-$role" ]]; then printf '\\t%s (compatibility version 1.0.0, current version 1.0.0)' "$INPUT/lib/libwhisper.1.2.dylib"; exit 0; fi\nprintf '\\t%s (compatibility version 1.0.0, current version 1.0.0)\\n' "$INPUT/lib/libwhisper.1.2.dylib"\nif [[ "$FAULT" == "trailing-empty-$role" ]]; then printf '\\n'; fi`);
-  writeCommand('install_name_tool', `case "$1" in -id) action=id;; -change) action=change;; *) exit 97;; esac\nprintf 'relocate:%s\\n' "$action" >> "$TRACE"\nif [[ "$action" == change && "$2" != "$INPUT/lib/libwhisper.1.2.dylib" ]]; then exit 99; fi\n[[ "$FAULT" != "relocate-$action" ]] || exit 41`);
+  writeCommand('brew', `[[ "$1" == --prefix && ( "$2" == whisper-cpp || "$2" == ggml || "$2" == libomp ) ]] || exit 97\nprintf '%s\\n' "$INPUT"`);
+  writeCommand('otool', `[[ "$1" == -L ]] || exit 97\nrole=lib; [[ "$2" == "$PRIMARY_OUT" ]] && role=primary\nprintf 'inspect:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "inspect-$role" ]] || exit 41\nprintf '%s:\\n' "$2"\n[[ "$FAULT" != empty-dependencies ]] || exit 0\nif [[ "$FAULT" == "malformed-$role" ]]; then printf 'not an otool dependency\\n'; exit 0; fi\nif [[ "$FAULT" == "control-$role" ]]; then printf '\\t/owned/control\\rpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\nif [[ "$FAULT" == "internal-tab-$role" ]]; then printf '\\t/owned/control\\tpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\ncase "$FAULT" in\n  "prefix-cr-$role") printf '\\t\\r/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-vt-$role") printf '\\t\\v/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-ff-$role") printf '\\t\\f/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-tab-$role") printf '\\t\\t/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\nesac\nif [[ "$FAULT" == "missing-newline-$role" ]]; then printf '\\t%s (compatibility version 1.0.0, current version 1.0.0)' "$INPUT/lib/libwhisper.1.2.dylib"; exit 0; fi\nprintf '\\t%s (compatibility version 1.0.0, current version 1.0.0)\\n' "$INPUT/lib/libwhisper.1.2.dylib"\nif [[ "$2" == *libggml.0.1.dylib ]]; then printf '\\t%s (compatibility version 1.0.0, current version 1.0.0)\\n' "$INPUT/lib/libomp.dylib"; fi\nif [[ "$FAULT" == "trailing-empty-$role" ]]; then printf '\\n'; fi`);
+  writeCommand('install_name_tool', `case "$1" in -id) action=id;; -change) action=change;; *) exit 97;; esac\nprintf 'relocate:%s\\n' "$action" >> "$TRACE"\nif [[ "$action" == change && "$2" != "$INPUT/lib/libwhisper.1.2.dylib" && "$2" != "$INPUT/lib/libomp.dylib" ]]; then exit 99; fi\n[[ "$FAULT" != "relocate-$action" ]] || exit 41`);
   writeCommand('codesign', `[[ "$1" == --force && "$2" == --sign && "$3" == - && "$#" == 4 ]] || exit 97\nrole=lib; [[ "$4" == "$PRIMARY_OUT" ]] && role=primary\nprintf 'sign:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "sign-$role" ]] || exit 41`);
   writeCommand('shasum', `printf 'hash\\n' >> "$TRACE"\nprintf '%064d  inert-output\\n' 0`);
   writeCommand('stat', `printf '1\\n'`);
@@ -74,7 +78,7 @@ exit "$rc"`);
   const trace = path.join(root, 'trace'); fs.writeFileSync(trace, '');
   const primaryOut = path.join(companion, 'dist/bin/cmspark-whisper-darwin-arm64');
   const env = { PATH: bin, TMPDIR: root, LANG: 'C', LC_ALL: 'C',
-    CMSPARK_WHISPER_SRC: primary, INPUT: input, PRIMARY_OUT: primaryOut, TRACE: trace, FAULT: fault, PLATFORM: platform, AWK_BINARY: awk, CP_BINARY: cp, FIND_BINARY: find, PARSE_COUNT: parseCount };
+    CMSPARK_WHISPER_SRC: primary, INPUT: input, PRIMARY_OUT: primaryOut, TRACE: trace, FAULT: fault, PLATFORM: platform, AWK_BINARY: awk, CP_BINARY: cp, RM_BINARY: rm, FIND_BINARY: find, PARSE_COUNT: parseCount };
   const run = args => {
     const r = spawnSync('/bin/bash', [script, ...args], { cwd: root, env, encoding: 'utf8', timeout: 10_000, maxBuffer: 128 * 1024 });
     assert.equal(r.error, undefined, 'owned Bash child completed naturally'); assert.equal(r.signal, null);
@@ -144,6 +148,32 @@ test('783 missing inspected dependency data refuses before signing or updating a
   assert.notEqual(r.status, 0); assert.doesNotMatch(r.stdout, /SUCCESS:/);
   assert.equal(r.trace.includes('relocate:change'), false);
   assert.equal(r.trace.includes('sign:primary'), false);
+  assert.equal(r.trace.includes('hash'), false); assert.equal(r.trace.includes('write-pins'), false);
+  assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
+});
+
+test('783 actual Darwin builder stages the required libomp runtime', t => {
+  const f = fixture(t), r = f.run([]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.readFileSync(path.join(f.root, 'companion/dist/lib/libomp.dylib'), 'utf8'), 'inert library text\n');
+  assert.ok(r.trace.includes('sign:lib'));
+});
+test('783 libomp copy failure stops before hash or pin update', t => {
+  const f = fixture(t, 'copy-omp'), r = f.run(['--write-pins']);
+  assert.notEqual(r.status, 0); assert.ok(r.trace.includes('fault:copy-omp'));
+  assert.equal(r.trace.includes('hash'), false); assert.equal(r.trace.includes('write-pins'), false);
+  assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
+});
+test('783 failed library cleanup stops before hash or pin update', t => {
+  const f = fixture(t, 'cleanup-libs'), r = f.run(['--write-pins']);
+  assert.notEqual(r.status, 0); assert.ok(r.trace.includes('fault:cleanup-libs'));
+  assert.match(r.stderr, /failed to clear staged libraries/);
+  assert.equal(r.trace.includes('hash'), false); assert.equal(r.trace.includes('write-pins'), false);
+  assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
+});
+test('783 unresolved library stops before hash or pin update', t => {
+  const f = fixture(t, 'missing-omp'), r = f.run(['--write-pins']);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /missing staged library dependency/);
   assert.equal(r.trace.includes('hash'), false); assert.equal(r.trace.includes('write-pins'), false);
   assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
 });

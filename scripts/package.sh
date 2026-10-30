@@ -413,8 +413,14 @@ case "${PLATFORM}" in
             echo "ERROR: failed to stage ggml dylibs" >&2
             exit 1
           fi
+          if ls companion/dist/lib/libomp*.dylib >/dev/null 2>&1; then
+            if ! cp -f companion/dist/lib/libomp*.dylib "${STAGING}/lib/"; then
+              echo "ERROR: failed to stage libomp dylibs" >&2
+              exit 1
+            fi
+          fi
           # preserve versioned symlinks if present as files/links
-          for _l in companion/dist/lib/libwhisper*.dylib companion/dist/lib/libggml*.dylib; do
+          for _l in companion/dist/lib/libwhisper*.dylib companion/dist/lib/libggml*.dylib companion/dist/lib/libomp*.dylib; do
             [ -e "${_l}" ] || continue
             _dylib_count=$((_dylib_count + 1))
           done

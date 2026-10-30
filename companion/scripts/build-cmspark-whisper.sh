@@ -147,13 +147,18 @@ if [[ "${OS}" == "Darwin" ]]; then
   LIB_OUT="${COMPANION_ROOT}/dist/lib"
   mkdir -p "${LIB_OUT}"
   # Clear previous staged libs for a clean set
-  rm -f "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib 2>/dev/null || true
+  if ! rm -f "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib "${LIB_OUT}"/libomp*.dylib; then
+    echo "[build-cmspark-whisper] ERROR: failed to clear staged libraries" >&2
+    exit 1
+  fi
 
   WHISPER_PREFIX=""
   GGML_PREFIX=""
+  OMP_PREFIX=""
   if command -v brew >/dev/null 2>&1; then
     WHISPER_PREFIX="$(brew --prefix whisper-cpp 2>/dev/null || true)"
     GGML_PREFIX="$(brew --prefix ggml 2>/dev/null || true)"
+    OMP_PREFIX="$(brew --prefix libomp 2>/dev/null || true)"
   fi
   # Copy real (non-symlink) dylibs
   if [[ -n "${WHISPER_PREFIX}" && -d "${WHISPER_PREFIX}/lib" ]]; then
@@ -161,6 +166,9 @@ if [[ "${OS}" == "Darwin" ]]; then
   fi
   if [[ -n "${GGML_PREFIX}" && -d "${GGML_PREFIX}/lib" ]]; then
     find "${GGML_PREFIX}/lib" -maxdepth 1 -type f -name 'libggml*.dylib' -exec /bin/sh -c 'dest=$1; shift; exec cp -f "$@" "$dest"' sh "${LIB_OUT}/" {} +
+  fi
+  if [[ -n "${OMP_PREFIX}" && -d "${OMP_PREFIX}/lib" ]]; then
+    find "${OMP_PREFIX}/lib" -maxdepth 1 -type f -name 'libomp*.dylib' -exec /bin/sh -c 'dest=$1; shift; exec cp -f "$@" "$dest"' sh "${LIB_OUT}/" {} +
   fi
   # Common soname symlinks
   (
@@ -222,6 +230,9 @@ if [[ "${OS}" == "Darwin" ]]; then
       depbase="$(basename "${dep}")"
       if [[ -e "${LIB_OUT}/${depbase}" ]]; then
         install_name_tool -change "${dep}" "@loader_path/../lib/${depbase}" "${OUT_BIN}" 2>/dev/null
+      else
+        echo "[build-cmspark-whisper] ERROR: missing staged primary dependency" >&2
+        exit 1
       fi
     done <<< "${cli_dependencies}"
 
@@ -240,13 +251,16 @@ if [[ "${OS}" == "Darwin" ]]; then
         local depbase; depbase="$(basename "${dep}")"
         if [[ -e "${LIB_OUT}/${depbase}" ]]; then
           install_name_tool -change "${dep}" "@loader_path/${depbase}" "${lib}" 2>/dev/null
+        else
+          echo "[build-cmspark-whisper] ERROR: missing staged library dependency" >&2
+          return 1
         fi
       done <<< "${library_dependencies}"
     }
-    for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib; do
+    for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib "${LIB_OUT}"/libomp*.dylib; do
       rewrite_lib "${lib}"
     done
-      for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib; do
+      for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib "${LIB_OUT}"/libomp*.dylib; do
         [[ -f "${lib}" && ! -L "${lib}" ]] || continue
         codesign --force --sign - "${lib}" >/dev/null 2>&1
       done
