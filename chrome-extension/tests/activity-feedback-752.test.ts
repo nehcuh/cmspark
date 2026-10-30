@@ -86,6 +86,13 @@ test('752 stale disconnected snapshot does not claim current capture state', () 
   h.controller.snapshotCurrent = false
   assert.doesNotMatch(h.text(h.render(true)), /未能安全完成前台窗口采集/)
   assert.match(h.text(h.render(true)), /采集状态待确认/)
+  h.controller.snapshot.config.enabled = false
+  h.controller.snapshot.runtime.error = '旧连接的错误'
+  assert.match(h.text(h.render(true)), /采集状态待确认/)
+  assert.doesNotMatch(h.text(h.render(true)), /采集已暂停|旧连接的错误/)
+  h.controller.snapshotCurrent = true
+  assert.match(h.text(h.render(true)), /采集已暂停/)
+  assert.match(h.text(h.render(true)), /旧连接的错误/)
 })
 
 test('752 same-named applications remain visually distinguishable', async () => {

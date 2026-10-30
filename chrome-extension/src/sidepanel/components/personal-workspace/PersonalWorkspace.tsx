@@ -194,12 +194,12 @@ function ActivityPanel({ controller, connected }: { controller: ActivityControll
   const [loadedSource, setLoadedSource] = useState<ActivityReply['source']>(), [manual, setManual] = useState(false)
   const runtime = snapshot!.runtime, config = snapshot!.config
   const source = snapshot!.sources.find(item => item.id === sourceId)
-  const status = !runtime.supported ? '当前环境仅支持主动导入截图' : config.enabled && !controller.snapshotCurrent ? '采集状态待确认' : runtime.scanning ? '正在采集与分析' : config.enabled && !runtime.running ? '采集后台未运行' : config.enabled ? '采集已开启' : '采集已暂停'
+  const status = !controller.snapshotCurrent ? '采集状态待确认' : !runtime.supported ? '当前环境仅支持主动导入截图' : runtime.scanning ? '正在采集与分析' : config.enabled && !runtime.running ? '采集后台未运行' : config.enabled ? '采集已开启' : '采集已暂停'
   return <>
     <div className="cm-personal-config"><div className="cm-personal-section-title"><h2>{status}</h2><button type="button" className="cm-p-button" disabled={!connected || busy || !runtime.supported || !config.enabled && !config.allowed_apps.length} onClick={() => void mutate('activity.configure', { expected_revision: snapshot!.revision, patch: { enabled: !config.enabled } }, config.enabled ? '已暂停后续采集。' : '采集已开启；仅覆盖指定的前台应用。')}>{config.enabled ? '暂停采集' : '开启采集'}</button></div>
       <p className="cm-personal-fieldnote">{runtime.coverage}</p><p className="cm-personal-fieldnote">{runtime.platform_note}</p>
       <div className="cm-personal-runtime"><div><span>最近成功采集</span><strong>{formatTaskTime(runtime.last_success_at)}</strong></div><div><span>指定应用</span><strong>{config.allowed_apps.length} 个 · 每 {config.interval_ms / 1000} 秒检查</strong></div><div><span>已保存来源</span><strong>{snapshot!.sources.length} 张 · {(snapshot!.sources.reduce((total, item) => total + item.bytes, 0) / 1024 / 1024).toFixed(1)} MiB</strong></div></div>
-      {runtime.error && <p role="alert">采集未完成：{runtime.error}</p>}
+      {controller.snapshotCurrent && runtime.error && <p role="alert">采集未完成：{runtime.error}</p>}
       {connected && controller.snapshotCurrent && config.enabled && !runtime.running && <p role="status" className="cm-personal-fieldnote">采集后台当前未运行，请重新启动 Companion 或稍后重新查看。</p>}
       {connected && controller.snapshotCurrent && config.enabled && runtime.running && runtime.status === 'no_visible_allowed_window' && <p role="status" className="cm-personal-fieldnote">本次未能安全完成前台窗口采集，未保存截图。请确认选择的是对应应用，并在检查期间保持目标窗口处于前台。</p>}
       {connected && controller.snapshotCurrent && config.enabled && runtime.running && runtime.status === 'unchanged' && <p role="status" className="cm-personal-fieldnote">已检查前台窗口，截图或识别文字与已有来源重复，因此没有新增截图。</p>}
