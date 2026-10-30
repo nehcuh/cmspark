@@ -434,6 +434,9 @@ case "${PLATFORM}" in
           ls -la "${STAGING}/lib" >&2 || true
           exit 1
         fi
+        # Inspect the transitive staged graph, not just the executable. A
+        # bundled dylib can itself retain an absolute Homebrew dependency.
+        node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${STAGING}" "${_WHISPER_BIN}"
         # Fail-closed: staged binary must not retain absolute Homebrew load paths
         if command -v otool >/dev/null 2>&1; then
           if ! _otool_output=$(otool -L "${STAGING}/bin/${_WHISPER_BIN}"; _otool_rc=$?; printf '\034'; exit "${_otool_rc}"); then
