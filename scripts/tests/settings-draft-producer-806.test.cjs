@@ -64,3 +64,47 @@ test('real save, stale writer and security gate preserve the right draft', async
   }
 });
 test.after(() => unregister());
+
+test('real config handler round-trips independent editable fields without overwriting a secret', async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-config-fields-owned-')));
+  const identity = fs.lstatSync(dir), prior = process.env.CMSPARK_DATA_DIR;
+  process.env.CMSPARK_DATA_DIR = dir;
+  try {
+    const config = require(path.join(root, 'companion/src/config.ts'));
+    const { handleConfigFamily } = require(path.join(root, 'companion/src/message-router/handlers/config.ts'));
+    const { normalizeConfig } = require(path.join(root, 'chrome-extension/src/sidepanel/utils/normalize-config.ts'));
+    config.clearConfigCache();
+    config.saveConfig({ llm: { ...config.getConfig().llm, api_key: 'owned-synthetic-key' } }, { llmKey: true });
+    const fields = [
+      ['base_url', 'https://owned.example/v1'], ['model_name', 'owned-model'],
+      ['reasoning_effort', 'high'], ['temperature', 0.4], ['context_window', 131072],
+      ['context_compaction', 'prompt'], ['native_vision', 'off'],
+      ['vision_enabled', true], ['vision_base_url', 'https://vision.example/v1'],
+      ['vision_model_name', 'owned-vision'], ['vision_timeout_ms', 12345], ['vision_fallback', 'error'],
+      ['file_upload_max_size', 2097152], ['file_upload_max_tokens', 12000], ['file_upload_vision', false],
+      ['thread_digest_enabled', true], ['thread_digest_on_idle_hours', 12], ['thread_digest_max_per_day', 8],
+      ['trusted_domains', ['owned.example']], ['auto_approved_domains', ['owned.example']],
+      ['obsidian_vault_path', '/owned/synthetic/vault'], ['obsidian_vault_path', ''],
+    ];
+    for (const [key, value] of fields) {
+      const before = await handleConfigFamily('config.get', {});
+      const reply = await handleConfigFamily('config.set', { config: { [key]: value }, config_revision: before.config_revision });
+      assert.equal(reply.type, 'config.updated', key);
+      assert.deepEqual(normalizeConfig(reply.config)[key], value, key);
+      assert.equal(reply.config.llm.api_key, '***', key);
+    }
+    assert.equal(config.getConfig().obsidian.vault_path, null);
+    assert.equal(config.getConfig().obsidian.name_template, '{{date}} {{first_user_line}}');
+    const beforeInvalid = await handleConfigFamily('config.get', {});
+    const invalid = await handleConfigFamily('config.set', { config: { obsidian_vault_path: 'owned\0invalid' }, config_revision: beforeInvalid.config_revision });
+    assert.equal(invalid.type, 'error');
+    assert.equal(invalid.error, 'INVALID_OBSIDIAN_VAULT_PATH');
+    assert.equal(config.getConfigRevision(), beforeInvalid.config_revision);
+    assert.equal(config.getConfig().obsidian.vault_path, null);
+  } finally {
+    if (prior === undefined) delete process.env.CMSPARK_DATA_DIR; else process.env.CMSPARK_DATA_DIR = prior;
+    const now = fs.lstatSync(dir);
+    assert.equal(now.isSymbolicLink(), false); assert.equal(now.dev, identity.dev); assert.equal(now.ino, identity.ino);
+    fs.rmSync(dir, { recursive: true });
+  }
+});

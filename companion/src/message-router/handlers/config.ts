@@ -243,6 +243,14 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         if (cfg.file_upload_max_tokens !== undefined) normalized.file_upload.max_file_tokens = cfg.file_upload_max_tokens
         if (cfg.file_upload_vision !== undefined) normalized.file_upload.enable_vision_analysis = !!cfg.file_upload_vision
       }
+      // The side panel edits this flat field. Preserve the rest of the vault
+      // configuration, and treat an empty input as an explicit clear.
+      if (cfg.obsidian_vault_path !== undefined) {
+        if (typeof cfg.obsidian_vault_path !== "string" || cfg.obsidian_vault_path.includes("\0")) {
+          return { type: "error", error: "INVALID_OBSIDIAN_VAULT_PATH" }
+        }
+        normalized.obsidian = { ...getConfig().obsidian, vault_path: cfg.obsidian_vault_path || null }
+      }
       // Thread History IA Wave B: thread_digest coverage engine (default off)
       if (cfg.thread_digest && typeof cfg.thread_digest === "object") {
         const current = getConfig()

@@ -91,8 +91,8 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     normalized.file_upload_vision = !!fileUpload.enable_vision_analysis
   }
   // Obsidian export: flatten config.obsidian.vault_path
-  if (config.obsidian && typeof config.obsidian.vault_path === "string") {
-    normalized.obsidian_vault_path = config.obsidian.vault_path
+  if (config.obsidian && (typeof config.obsidian.vault_path === "string" || config.obsidian.vault_path === null)) {
+    normalized.obsidian_vault_path = config.obsidian.vault_path ?? ""
   }
   // Global MCP kill-switch: flatten config.mcp.enabled so the UI can render
   // the master toggle without a separate dispatch path.
