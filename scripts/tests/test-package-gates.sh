@@ -876,6 +876,11 @@ if node --test "${ROOT}/scripts/tests/windows-host-scripts.test.mjs"; then
 else
   FAIL=$((FAIL + 1))
 fi
+if node --test "${ROOT}/scripts/tests/whisper-soname-783.test.cjs"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
 if node --test "${ROOT}/scripts/tests/release-zip-listing.test.mjs"; then
   PASS=$((PASS + 1))
 else

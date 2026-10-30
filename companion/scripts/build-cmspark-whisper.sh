@@ -154,22 +154,33 @@ if [[ "${OS}" == "Darwin" ]]; then
   # Common soname symlinks
   (
     cd "${LIB_OUT}"
+    # A copied library can already have its soname. Never replace it or any
+    # other existing entry; a conflicting alias is not an authenticated set.
+    create_soname_alias() {
+      local source="$1" alias="$2"
+      [[ "${source}" == "${alias}" ]] && return 0
+      if [[ -e "${alias}" || -L "${alias}" ]]; then
+        echo "[build-cmspark-whisper] ERROR: conflicting library alias: ${alias}" >&2
+        return 1
+      fi
+      ln -s "${source}" "${alias}"
+    }
     for f in libwhisper.*.dylib; do
       [[ -f "$f" && ! -L "$f" ]] || continue
-      ln -sfn "$f" libwhisper.1.dylib
-      ln -sfn "$f" libwhisper.dylib
+      create_soname_alias "$f" libwhisper.1.dylib
+      create_soname_alias "$f" libwhisper.dylib
       break
     done
     for f in libggml.[0-9]*.dylib; do
       [[ -f "$f" && ! -L "$f" ]] || continue
-      ln -sfn "$f" libggml.0.dylib 2>/dev/null || true
-      ln -sfn "$f" libggml.dylib 2>/dev/null || true
+      create_soname_alias "$f" libggml.0.dylib
+      create_soname_alias "$f" libggml.dylib
       break
     done
     for f in libggml-base.[0-9]*.dylib; do
       [[ -f "$f" && ! -L "$f" ]] || continue
-      ln -sfn "$f" libggml-base.0.dylib 2>/dev/null || true
-      ln -sfn "$f" libggml-base.dylib 2>/dev/null || true
+      create_soname_alias "$f" libggml-base.0.dylib
+      create_soname_alias "$f" libggml-base.dylib
       break
     done
   )
