@@ -196,7 +196,12 @@ export function validateWindowsCiFeedback750(text) {
   }
   const build = doc.jobs.build
   assert.equal(digest(omit(build, ['steps'])), baseline.buildOther)
-  const buildSteps = conservedBuildSteps794(build.steps)
+  const trayControl = 'Swift tray packaging CPU controls'
+  const traySteps = build.steps.filter(s => key(s) === trayControl)
+  assert.equal(traySteps.length, 1, 'exactly one tray CPU control')
+  assert.deepEqual(traySteps[0], { name: trayControl, run: 'node --test companion/scripts/tests/swift-tray-package-pin.test.mjs companion/scripts/tests/swift-tray-bundle-entry.test.mjs companion/scripts/tests/swift-tray-source-freshness.test.mjs companion/scripts/tests/swift-tray-build-output.test.mjs companion/scripts/tests/swift-tray-package-copy.test.mjs\n' })
+  assert.equal(build.steps.indexOf(traySteps[0]), build.steps.findIndex(s => key(s) === 'Run companion tests') + 1)
+  const buildSteps = conservedBuildSteps794(build.steps.filter(s => key(s) !== trayControl))
   assert.deepEqual(buildSteps.map(key), baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js').map(s => s.key))
   cache750(build.steps.find(s => s.name === 'Setup Node.js'), '22.23.4')
   for (const old of baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js')) {

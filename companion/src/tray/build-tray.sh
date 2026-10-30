@@ -8,6 +8,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${PROJECT_ROOT}/dist"
 OUTPUT_BIN="${OUTPUT_DIR}/cmspark-tray"
+if [ "$#" -ne 0 ]; then
+  if [ "$#" -ne 2 ] || [ "$1" != "--output" ] || [ "$(basename "$2")" != "cmspark-tray" ] || [ ! -d "$(dirname "$2")" ] || [ -e "$2" ] || [ -L "$2" ]; then
+    echo "[build-tray] ERROR: --output requires a new cmspark-tray file in an existing directory" >&2
+    exit 1
+  fi
+  OUTPUT_BIN="$2"
+  OUTPUT_DIR="$(dirname "$OUTPUT_BIN")"
+fi
 
 echo "[build-tray] Building CMspark Swift Tray..."
 echo "[build-tray] Source: ${SCRIPT_DIR}/Tray.swift"

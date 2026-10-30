@@ -116,6 +116,10 @@ if [[ "${PLATFORM}" == macos-* ]]; then
   else
     echo "[2b/9] Skipping build:host (CMSPARK_SKIP_HOST_BUILD=1 — test-only)"
   fi
+  if [ "${PLATFORM}" = "macos-arm64" ] && [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" != "1" ]; then
+    echo "[2c/9] Building the Swift tray for this package..."
+    (cd "${ROOT_DIR}/companion" && ./src/tray/build-tray.sh)
+  fi
   if [ ! -f "${ROOT_DIR}/companion/dist/cmspark-host" ]; then
     echo "ERROR: companion/dist/cmspark-host missing after build:host — macOS package refuses to ship without host binary" >&2
     exit 1
@@ -181,7 +185,11 @@ cd "${ROOT_DIR}/companion"
 # Keep onnxruntime-node external if any residual import remains in the graph;
 # we do NOT stage ORT into the zip (Qwen3-VL is the experimental locate layer).
 # SoT: companion/scripts/esbuild-bundle-args.json via run-esbuild-bundle.mjs
-node scripts/run-esbuild-bundle.mjs 2>&1 | tail -3
+if [ "${PLATFORM}" = "macos-arm64" ]; then
+  node scripts/run-esbuild-bundle.mjs --packaged-macos-arm64-tray 2>&1 | tail -3
+else
+  node scripts/run-esbuild-bundle.mjs 2>&1 | tail -3
+fi
 
 # --- Step 3: Stage files ---
 echo "[4/9] Staging distribution files..."
@@ -626,6 +634,13 @@ cp companion/README.txt "${STAGING}/" 2>/dev/null || true
 # --- Step 7: Package size summary ---
 echo "[8/9] Package summary:"
 echo "  $(du -sh "${STAGING}" | cut -f1) total"
+
+# The bundle producer checked this exact pair. Staging must not change either
+# member before it is archived; the runtime pin remains embedded in the bundle.
+if [ "${PLATFORM}" = "macos-arm64" ]; then
+  cmp -s "${ROOT_DIR}/companion/dist/cmspark-agent.js" "${STAGING}/cmspark-agent.js" || { echo "ERROR: staged agent differs from checked bundle" >&2; exit 1; }
+  cmp -s "${ROOT_DIR}/companion/dist/cmspark-tray" "${STAGING}/cmspark-tray" || { echo "ERROR: staged tray differs from checked binary" >&2; exit 1; }
+fi
 
 # --- Step 8: Zip ---
 echo "[9/9] Compressing..."

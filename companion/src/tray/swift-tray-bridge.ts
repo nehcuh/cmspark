@@ -53,10 +53,20 @@ import {
 // Binary management
 // ---------------------------------------------------------------------------
 
-/** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-// Updated 2026-09-08 #474 — native connection icon; local arm64 build-tray.sh output
+/** Build-time literal; never sourced from environment or a mutable sidecar at runtime. */
+declare const __CMSPARK_SWIFT_TRAY_SHA256__: string | undefined
+declare const __CMSPARK_PACKAGED_TRAY__: boolean | undefined
+// Non-bundled development retains the historic fixed pin. Production build
+// integration must supply a pin from the controlled, signed tray build.
 /** Mac 菜单/热键「召唤器」= HTML Capture 卡（与侧栏弹出对话框同一出口）。 */
-const SWIFT_TRAY_SHA256 = "523638554705e3801eecd035dbee0841db8d726129dfdf3eb02e0cd38f1c33dd"
+const packagedTray = typeof __CMSPARK_PACKAGED_TRAY__ !== "undefined" && __CMSPARK_PACKAGED_TRAY__ === true
+const buildTrayPin = typeof __CMSPARK_SWIFT_TRAY_SHA256__ === "undefined" ? undefined : __CMSPARK_SWIFT_TRAY_SHA256__
+const trayPinPrefix = ["CMSPARK", "SWIFT", "TRAY", "SHA256", "V1:"].join("_")
+const packagedDigest = typeof buildTrayPin === "string" && buildTrayPin.startsWith(trayPinPrefix)
+  ? buildTrayPin.slice(trayPinPrefix.length) : ""
+const SWIFT_TRAY_SHA256 = packagedTray
+  ? (/^[0-9a-f]{64}$/.test(packagedDigest) ? packagedDigest : "INVALID_PACKAGED_TRAY_PIN")
+  : "523638554705e3801eecd035dbee0841db8d726129dfdf3eb02e0cd38f1c33dd"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

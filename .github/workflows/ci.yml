@@ -77,6 +77,12 @@ jobs:
         run: |
           cd companion && npm test
 
+      - name: Swift tray packaging CPU controls
+        # Inert fixtures and source checks only; macOS packaging is verified
+        # separately by the real release build.
+        run: |
+          node --test companion/scripts/tests/swift-tray-package-pin.test.mjs companion/scripts/tests/swift-tray-bundle-entry.test.mjs companion/scripts/tests/swift-tray-source-freshness.test.mjs companion/scripts/tests/swift-tray-build-output.test.mjs companion/scripts/tests/swift-tray-package-copy.test.mjs
+
       - name: Supply-chain audit — companion (gating, high+)
         # Companion ships to users in the packaged binary; its production deps
         # (dependencies, not devDependencies) must be free of high/critical
