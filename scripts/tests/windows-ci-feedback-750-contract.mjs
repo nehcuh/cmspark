@@ -151,7 +151,14 @@ export function validateWindowsCiFeedback750(text) {
   assert.equal(digest(omit(job, ['name', 'runs-on', 'strategy', 'steps'])), baseline.smokeOther)
   assert.equal(job.name, '${{ matrix.name }}'); assert.equal(job['runs-on'], '${{ matrix.os }}')
   assert.deepEqual(job.strategy, { 'fail-fast': false, matrix: { include: MATRIX750 } })
-  const keys = validateCockpitSteps748(steps).map(key)
+  const runtimeHeaders = steps.filter(step => key(step) === 'Pinned runtime header controls (macOS)')
+  assert.equal(runtimeHeaders.length, 1)
+  assert.deepEqual(runtimeHeaders[0], { name: 'Pinned runtime header controls (macOS)', if: "matrix.os == 'macos-latest'", run: 'node --test companion/scripts/tests/desktop-runtime-headers-480.test.mjs' })
+  assert.equal(steps.indexOf(runtimeHeaders[0]), steps.findIndex(step => key(step) === 'Desktop build helper controls (#480)') + 1)
+  for (const matrix of MATRIX750) for (const success of [true, false]) {
+    assert.equal(condition750(runtimeHeaders[0].if, { success, cancelled: false, values: { 'matrix.os': matrix.os, 'matrix.lane': matrix.lane } }), success && matrix.os === 'macos-latest')
+  }
+  const keys = validateCockpitSteps748(steps).filter(step => step !== runtimeHeaders[0]).map(key)
   assert.deepEqual(keys.filter(name => name !== NSIS && name !== FRONT && name !== STAGE), baseline.steps.map(s => s.key).filter(name => name !== NSIS), 'all old steps retain order/cardinality')
   assert.equal(keys.filter(name => name === NSIS).length, 1)
   assert.equal(keys.filter(name => name === FRONT).length, 1)

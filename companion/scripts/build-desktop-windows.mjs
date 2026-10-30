@@ -23,6 +23,51 @@ export const DESKTOP_WINDOWS_INPUTS = Object.freeze({
 const headerMembers = ["node_api.h", "node_api_types.h", "js_native_api.h", "js_native_api_types.h"].map(v => `node-v${NODE_VERSION}/include/node/${v}`)
 const webviewMembers = ["build/native/include/WebView2.h", "build/native/x64/WebView2LoaderStatic.lib", "LICENSE.txt"]
 
+// Derived from the four members of the archive pinned in DESKTOP_WINDOWS_INPUTS.
+const RUNTIME_HEADER_SHA256 = Object.freeze({
+  "node_api.h": "2d4560831e525b47b060ec8a0864ab73993df9e20215ce9f0fe7b24cd31af32a",
+  "node_api_types.h": "088766b3cf1f0cd9b292c361ad30f7a04e7cc6db35a20ca52c572c1adf9635e7",
+  "js_native_api.h": "624b39a85f0fe332f7cc1eb537e98f0e119be8503c742265fef6bdd53893adc8",
+  "js_native_api_types.h": "c63d227f42878411e2a291ce81e0adf83ce57b81c0ea806740108b979b741156",
+})
+
+// `pins` is supplied by the caller; the build entry point always supplies the
+// closed table above. The generic seam permits inert fixtures to exercise the
+// same reader without substituting the build's trust roots.
+export function stageVerifiedRuntimeHeaders({ directory, cache, pins }) {
+  const names = Object.keys(RUNTIME_HEADER_SHA256).sort()
+  if (!pins || JSON.stringify(Object.keys(pins).sort()) !== JSON.stringify(names) ||
+      names.some(name => !/^[0-9a-f]{64}$/.test(pins[name]))) throw new Error("DESKTOP_SDK_RUNTIME_PINS")
+  const bytesByName = new Map(); let missing = false
+  for (const [name, expected] of Object.entries(pins)) {
+    let fd
+    try {
+      fd = fs.openSync(path.join(directory, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK)
+    } catch (error) {
+      if (error.code === "ENOENT") { missing = true; continue }
+      throw new Error("DESKTOP_SDK_RUNTIME_IDENTITY", { cause: error })
+    }
+    try {
+      const stat = fs.fstatSync(fd)
+      if (!stat.isFile() || stat.nlink !== 1 || stat.size <= 0 || stat.size > 1024 * 1024) throw new Error("DESKTOP_SDK_RUNTIME_IDENTITY")
+      const bytes = Buffer.alloc(stat.size); let offset = 0
+      while (offset < bytes.length) {
+        const n = fs.readSync(fd, bytes, offset, bytes.length - offset, offset)
+        if (!n) throw new Error("DESKTOP_SDK_RUNTIME_IDENTITY")
+        offset += n
+      }
+      const after = fs.fstatSync(fd)
+      if (!after.isFile() || after.nlink !== 1 || after.dev !== stat.dev || after.ino !== stat.ino || after.size !== stat.size ||
+          createHash("sha256").update(bytes).digest("hex") !== expected) throw new Error("DESKTOP_SDK_RUNTIME_INTEGRITY")
+      bytesByName.set(name, bytes)
+    } finally { fs.closeSync(fd) }
+  }
+  if (missing) return null
+  const output = fs.mkdtempSync(path.join(cache, "runtime-headers-"))
+  for (const [name, bytes] of bytesByName) fs.writeFileSync(path.join(output, name), bytes, { flag: "wx", mode: 0o600 })
+  return output
+}
+
 export function verifyDesktopSdkBytes(id, bytes) {
   const spec = Object.hasOwn(DESKTOP_WINDOWS_INPUTS, id) ? DESKTOP_WINDOWS_INPUTS[id] : undefined
   if (!spec || !Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_INPUT_BYTES ||
@@ -100,8 +145,18 @@ export function extractDesktopSdk(id, bytes, cache) {
   return dest
 }
 
-export async function prepareDesktopNodeHeaders({ dest }) {
+export async function prepareDesktopNodeHeaders({ dest, preferRuntimeHeaders = false }) {
   const cache = ownedDirectory(dest)
+  const archive = path.join(cache, `headers-${DESKTOP_WINDOWS_INPUTS.headers.sha256}`)
+  const archivePresent = () => {
+    try { fs.lstatSync(archive); return true } catch (error) { if (error.code === "ENOENT") return false; throw error }
+  }
+  if (preferRuntimeHeaders && process.platform === "darwin" && process.version === `v${NODE_VERSION}` && !archivePresent()) {
+    const directory = path.join(path.dirname(path.dirname(process.execPath)), "include", "node")
+    const local = stageVerifiedRuntimeHeaders({ directory, cache, pins: RUNTIME_HEADER_SHA256 })
+    // Do not bypass a cache entry that appeared while the local set was read.
+    if (local && !archivePresent()) return local
+  }
   const bytes = await download("headers", cache)
   return path.join(extractDesktopSdk("headers", bytes, cache), `node-v${NODE_VERSION}`, "include", "node")
 }
