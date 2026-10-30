@@ -78,3 +78,6 @@ test('788 initial action exceptions propagate after once latch and failed diagno
 
 // Keep the macOS failure-only observer controls in the same fail-closed CI gate.
 require('./macos-observer-close-795.test.cjs');
+
+// ACP promise boundary checks share the existing fail-closed test gate.
+require("./local-acp-observation-795.test.cjs");
