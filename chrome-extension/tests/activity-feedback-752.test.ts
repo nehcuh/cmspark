@@ -23,7 +23,7 @@ function harness(platform: 'win32' | 'darwin' = 'win32', separated = false) {
   const appName = platform === 'darwin' ? '微信' : 'WeChat'
   const apps = separated ? [{ app_id: appA, app_name: appName }, ...Array.from({ length: 5 }, (_, i) => ({ app_id: `com.example.other${i}`, app_name: `Other ${i}` })), { app_id: appB, app_name: appName }] : [{ app_id: appA, app_name: appName }, { app_id: appB, app_name: appName }]
   const saves: any[] = []
-  const controller = { snapshot: { revision: 7, sources: [], runtime: { supported: true, platform, running: true, scanning: false, status: 'no_visible_allowed_window', coverage: '', platform_note: '', last_success_at: null, error: '' }, config: { enabled: true, allowed_apps: [], interval_ms: 30000, retention_days: 7, max_storage_mb: 128, ocr_ai_enabled: false, ocr_language: 'zh-Hans' } }, busy: false, loading: false, error: '', notice: '', refresh() {}, async mutate(type: string, value: any) { saves.push({ type, value }); return true } }
+  const controller = { snapshotCurrent: true, snapshot: { revision: 7, sources: [], runtime: { supported: true, platform, running: true, scanning: false, status: 'no_visible_allowed_window', coverage: '', platform_note: '', last_success_at: null, error: '' }, config: { enabled: true, allowed_apps: [], interval_ms: 30000, retention_days: 7, max_storage_mb: 128, ocr_ai_enabled: false, ocr_language: 'zh-Hans' } }, busy: false, loading: false, error: '', notice: '', refresh() {}, async mutate(type: string, value: any) { saves.push({ type, value }); return true } }
   const exports: any = {}
   const requireValue = (id: string) => {
     if (id === 'react') return react
@@ -82,6 +82,8 @@ test('752 stale disconnected snapshot does not claim current capture state', () 
   h.controller.snapshot.runtime.running = true
   h.controller.snapshot.runtime.status = 'no_visible_allowed_window'
   assert.doesNotMatch(h.text(h.render(false)), /未能安全完成前台窗口采集/)
+  h.controller.snapshotCurrent = false
+  assert.doesNotMatch(h.text(h.render(true)), /未能安全完成前台窗口采集/)
 })
 
 test('752 same-named applications remain visually distinguishable', async () => {
