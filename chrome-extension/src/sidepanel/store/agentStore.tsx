@@ -7,7 +7,7 @@ import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, Op
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 import { normalizeDocumentWarning } from "../utils/document-warning"
-import { acknowledgeSettingsSubmission, createSettingsDraft, editSettingsDraft, receiveSettingsSnapshot, resolveSettingsConflict, type SettingsDraft, type SettingsSubmission } from "../utils/settings-draft"
+import { acknowledgeSettingsSubmission, compareSettingsRevisions, createSettingsDraft, editSettingsDraft, receiveSettingsSnapshot, resolveSettingsConflict, type SettingsDraft, type SettingsSubmission } from "../utils/settings-draft"
 import { pruneCodingSessionCache, codingSessionMembership } from "../utils/coding-session-cache"
 import { parseCodingHistory, type CodingHistory } from "../coding-handoff/history"
 
@@ -175,6 +175,7 @@ export interface AgentState {
   operations: OperationRecord[]
   config: LLMConfig
   configRevision: string | null
+  configEpochInvalid: boolean
   settingsDraft: SettingsDraft<LLMConfig> | null
   settingsSave: { status: "idle" | "pending" | "unknown" | "conflict" | "review" | "saved"; pending: SettingsSubmission<LLMConfig> | null }
   settingsOpen: boolean
@@ -771,6 +772,7 @@ export const initialState: AgentState = {
     file_upload_vision: true,
   },
   configRevision: null,
+  configEpochInvalid: false,
   settingsDraft: null,
   settingsSave: { status: "idle", pending: null },
   settingsOpen: false,
@@ -1197,6 +1199,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           ...state,
           workspaceHints: null,
           connectionState: action.state,
+          configRevision: null,
+          configEpochInvalid: false,
           settingsSave: state.settingsSave.pending ? { status: "unknown", pending: null } : state.settingsSave,
           codingHistoryConnectionRevision,
           codingHistory: null,
@@ -1207,6 +1211,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         }
       }
       return { ...state, connectionState: action.state, codingHistoryConnectionRevision,
+        ...(action.type === "SET_CONNECTION" && action.state !== "connected" ? {
+          configRevision: null, configEpochInvalid: false,
+          settingsSave: state.settingsSave.pending ? { status: "unknown" as const, pending: null } : state.settingsSave,
+        } : {}),
         codingHistory: action.state === "connected" ? state.codingHistory : null,
         workspaceHints: action.state === "connected" ? state.workspaceHints : null }
     }
@@ -1383,14 +1391,27 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_CONFIG":
       return { ...state, config: { ...state.config, ...action.config } }
     case "SET_CONFIG_SNAPSHOT": {
+      const pending = state.settingsSave.pending
+      const matched = !!pending && !!action.id && action.id === pending.id
+      if (state.configEpochInvalid) return state
+      if (state.configRevision) {
+        const order = action.revision ? compareSettingsRevisions(state.configRevision, action.revision) : "unordered"
+        if (order === "older" || order === "unordered") {
+          return { ...state,
+            // An unorderable epoch needs a fresh connection/snapshot before saving.
+            configRevision: order === "unordered" ? null : state.configRevision,
+            configEpochInvalid: order === "unordered",
+            settingsSave: matched || (order === "unordered" && pending)
+              ? { status: "unknown", pending: null } : state.settingsSave,
+          }
+        }
+      }
       const config = { ...state.config, ...action.config }
       // Missing revision cannot provide any cross-writer guarantee. Do not let
       // a legacy snapshot erase an in-memory draft or make it saveable.
       const draft = state.settingsDraft
       const revision = action.revision
       const opaque = new Set<keyof LLMConfig>(["api_key", "vision_api_key"])
-      const pending = state.settingsSave.pending
-      const matched = !!pending && !!action.id && action.id === pending.id
       const settingsDraft = draft && revision
         ? matched && !action.conflict
           ? acknowledgeSettingsSubmission(draft, pending!, action.id!, config, revision, opaque)

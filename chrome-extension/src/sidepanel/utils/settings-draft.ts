@@ -97,3 +97,17 @@ export function acknowledgeSettingsSubmission<T extends object>(
 export function isSettingsSaveError(message: { type?: unknown; id?: unknown }): message is { type: "error"; id: string } {
   return message.type === "error" && typeof message.id === "string" && /^settings-save:[A-Za-z0-9_-]{1,70}$/.test(message.id)
 }
+
+/** Compare revisions only within the same process epoch; other epochs are unordered. */
+export function compareSettingsRevisions(current: string, incoming: string): "older" | "current" | "newer" | "unordered" {
+  if (current === incoming) return "current"
+  const parse = (value: string) => {
+    const match = /^(.*):(0|[1-9][0-9]*)$/.exec(value)
+    if (!match || !match[1]) return null
+    const sequence = Number(match[2])
+    return Number.isSafeInteger(sequence) ? { epoch: match[1], sequence } : null
+  }
+  const a = parse(current), b = parse(incoming)
+  if (!a || !b || a.epoch !== b.epoch) return "unordered"
+  return b.sequence < a.sequence ? "older" : "newer"
+}

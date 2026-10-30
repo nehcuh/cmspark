@@ -4216,7 +4216,7 @@ export function SettingsSlideout() {
         <div className="cm-settings-footer" style={styles.footer}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
             <span className="cm-settings-save-scope">保存配置草稿；独立表单与授权需分别提交。</span>
-            {!state.configRevision && <span role="status">当前 Companion 未提供配置版本，请升级后保存草稿。</span>}
+            {state.configEpochInvalid ? <span role="alert">配置版本无法确认，请重新连接 Companion；草稿已保留。</span> : !state.configRevision && <span role="status">当前 Companion 未提供配置版本，请升级后保存草稿。</span>}
             {state.settingsSave.status === "pending" && <span role="status">正在等待 Companion 保存回执…</span>}
             {state.settingsSave.status === "unknown" && <span role="alert">保存结果未知，草稿已保留。请先核对当前配置，再选择重新保存。 <button type="button" onClick={() => { chrome.runtime.sendMessage({ type: "config.get" }); dispatch({ type: "SETTINGS_SAVE_RETRY" }) }}>我已核对，允许重新保存</button></span>}
             {state.settingsSave.status === "conflict" && <span role="alert">配置已在别处更改，请核对草稿后再保存。</span>}
