@@ -7,7 +7,7 @@ import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, Op
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 import { normalizeDocumentWarning } from "../utils/document-warning"
-import { createSettingsDraft, editSettingsDraft, receiveSettingsSnapshot, type SettingsDraft } from "../utils/settings-draft"
+import { acknowledgeSettingsSubmission, createSettingsDraft, editSettingsDraft, receiveSettingsSnapshot, resolveSettingsConflict, type SettingsDraft, type SettingsSubmission } from "../utils/settings-draft"
 import { pruneCodingSessionCache, codingSessionMembership } from "../utils/coding-session-cache"
 import { parseCodingHistory, type CodingHistory } from "../coding-handoff/history"
 
@@ -176,6 +176,7 @@ export interface AgentState {
   config: LLMConfig
   configRevision: string | null
   settingsDraft: SettingsDraft<LLMConfig> | null
+  settingsSave: { status: "idle" | "pending" | "unknown" | "conflict" | "review" | "saved"; pending: SettingsSubmission<LLMConfig> | null }
   settingsOpen: boolean
   /** Deep-link target for settings accordion (F-UX7). Cleared after Settings applies. */
   settingsFocusSection: string | null
@@ -500,7 +501,10 @@ export type AgentAction =
   | { type: "TOGGLE_SKILL"; skillId: string }
   | { type: "SET_OPERATIONS"; operations: OperationRecord[] }
   | { type: "SET_CONFIG"; config: Partial<LLMConfig> }
-  | { type: "SET_CONFIG_SNAPSHOT"; config: Partial<LLMConfig>; revision: string | null }
+  | { type: "SET_CONFIG_SNAPSHOT"; config: Partial<LLMConfig>; revision: string | null; id?: string; conflict?: boolean }
+  | { type: "BEGIN_SETTINGS_SAVE"; submission: SettingsSubmission<LLMConfig> }
+  | { type: "SETTINGS_SAVE_UNKNOWN"; id: string }
+  | { type: "RESOLVE_SETTINGS_CONFLICT"; key: keyof LLMConfig; choice: "mine" | "remote" }
   | { type: "BEGIN_SETTINGS_DRAFT" }
   | { type: "EDIT_SETTINGS_DRAFT"; config: Partial<LLMConfig> }
   | { type: "TOGGLE_SETTINGS" }
@@ -766,6 +770,7 @@ export const initialState: AgentState = {
   },
   configRevision: null,
   settingsDraft: null,
+  settingsSave: { status: "idle", pending: null },
   settingsOpen: false,
   settingsFocusSection: null,
   tabList: [],
@@ -1190,6 +1195,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           ...state,
           workspaceHints: null,
           connectionState: action.state,
+          settingsSave: state.settingsSave.pending ? { status: "unknown", pending: null } : state.settingsSave,
           codingHistoryConnectionRevision,
           codingHistory: null,
           isProcessing: false,
@@ -1380,10 +1386,21 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       // a legacy snapshot erase an in-memory draft or make it saveable.
       const draft = state.settingsDraft
       const revision = action.revision
+      const opaque = new Set<keyof LLMConfig>(["api_key", "vision_api_key"])
+      const pending = state.settingsSave.pending
+      const matched = !!pending && !!action.id && action.id === pending.id
       const settingsDraft = draft && revision
-        ? receiveSettingsSnapshot(draft, config, revision, new Set<keyof LLMConfig>(["api_key", "vision_api_key"]))
+        ? matched && !action.conflict
+          ? acknowledgeSettingsSubmission(draft, pending!, action.id!, config, revision, opaque)
+          : receiveSettingsSnapshot(draft, config, revision, opaque)
         : draft
-      return { ...state, config, configRevision: revision, settingsDraft }
+      let settingsSave = state.settingsSave
+      if (matched) {
+        const status = !revision || !settingsDraft ? "unknown" : action.conflict ? "conflict"
+          : Object.keys(settingsDraft.dirty).length || Object.keys(settingsDraft.conflicts).length ? "review" : "saved"
+        settingsSave = { status, pending: null }
+      }
+      return { ...state, config, configRevision: revision, settingsDraft, settingsSave }
     }
     case "BEGIN_SETTINGS_DRAFT":
       return state.settingsDraft || !state.configRevision ? state : {
@@ -1392,6 +1409,20 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "EDIT_SETTINGS_DRAFT":
       return state.settingsDraft ? {
         ...state, settingsDraft: editSettingsDraft(state.settingsDraft, action.config),
+      } : state
+    case "BEGIN_SETTINGS_SAVE":
+      return !state.settingsDraft || state.settingsSave.pending || state.connectionState !== "connected" ||
+        !state.configRevision || state.configRevision !== action.submission.revision ||
+        Object.keys(state.settingsDraft.conflicts).length ? state : {
+          ...state, settingsSave: { status: "pending", pending: action.submission },
+        }
+    case "SETTINGS_SAVE_UNKNOWN":
+      return state.settingsSave.pending?.id !== action.id ? state : {
+        ...state, settingsSave: { status: "unknown", pending: null },
+      }
+    case "RESOLVE_SETTINGS_CONFLICT":
+      return state.settingsDraft ? {
+        ...state, settingsDraft: resolveSettingsConflict(state.settingsDraft, action.key, action.choice),
       } : state
     case "SET_UNATTENDED_STATUS":
       return { ...state, unattended: action.unattended }
