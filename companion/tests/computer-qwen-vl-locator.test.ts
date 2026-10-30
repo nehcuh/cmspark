@@ -10,6 +10,8 @@ import {
   QWEN_VL_WORKER_RAW_CAP,
 } from "../src/computer/qwen-vl-locator"
 import type { CaptureMeta } from "../src/computer/types"
+import { QwenVlRuntime } from "../src/computer/qwen-vl-runtime"
+import { QwenVlSession } from "../src/computer/qwen-vl-session"
 
 function shot(over: Partial<CaptureMeta> & { path?: string } = {}): CaptureMeta {
   return {
@@ -150,4 +152,34 @@ test("legacy capped Unicode raw remains conservative", async () => {
   const result = await loc.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
   assert.equal(result.kind, "hit")
   if (result.kind === "hit") assert.deepEqual(result.point, { x: 0, y: 0 })
+})
+
+test("producer responses preserve completeness through transport, runtime, and session", async () => {
+  const fixture = JSON.parse(readFileSync(join(process.cwd(), "tests/fixtures/qwen-raw-completeness-producer.json"), "utf8")) as Record<string, string>
+  const runtime = new QwenVlRuntime({
+    variant: "2b", pythonBin: process.execPath,
+    workerScript: join(process.cwd(), "src/computer/qwen-vl-worker.py"),
+  })
+  const internal = runtime as any
+  // Replace only the process request, keeping real transport decoding and the
+  // real runtime/session/locator propagation. No Python worker is spawned.
+  internal.prepared = true
+  const session = new QwenVlSession({ variant: "2b" })
+  ;(session as any).runtime = runtime
+  const locator = new QwenVlLocator({ session })
+  const check = async (wire: string, expectedX: number) => {
+    internal.transport.request = async () => JSON.parse(wire)
+    const result = await locator.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
+    assert.equal(result.kind, "hit")
+    if (result.kind === "hit") assert.deepEqual(result.point, { x: expectedX, y: 0 })
+  }
+  await check(fixture.unicode499, 1)
+  await check(fixture.ascii500, 0)
+  await check(fixture.surrogate500, 0)
+  await check(fixture.truncated, 0)
+  const legacy = JSON.parse(fixture.unicode499)
+  delete legacy.raw_complete
+  await check(JSON.stringify(legacy), 0)
+  legacy.raw_complete = "true"
+  await check(JSON.stringify(legacy), 0)
 })
