@@ -186,22 +186,9 @@ function desktopInitialActivation788(language,source,inverse,kind){
  const windows=[...source.matchAll(/return 0;}return DefWindowProcW\(hwnd,message,w,l\);(\r?\n) }/g)]
  if(windows.length!==1)throw Error('DESKTOP_INITIAL_ACTIVATION_PROC')
  const eol=windows[0][1],lines=value=>value.replace(/\n/g,eol)
- // Draft is not admitted: the existing synchronous send may block the UI thread.
- const observationDecl=kind==='ARCHIVE'?`/*OBS788_BEGIN*/static unsigned seen476,sent476;static bool saturated476;static void note476(Desktop&,unsigned) noexcept;/*OBS788_END*/`:''
- const readyObservation=kind==='ARCHIVE'?`/*OBS788_BEGIN*/note476(h,0);/*OBS788_END*/`:''
- const passObservation=kind==='ARCHIVE'?`/*OBS788_BEGIN*/note476(h,8);/*OBS788_END*/`:''
- const gate=kind==='ARCHIVE'?`/*OBS788_BEGIN*/bool visible476=false;HWND foreground476=nullptr;/*OBS788_END*/if(!/*OBS788_BEGIN*/(visible476=/*OBS788_END*/IsWindowVisible(window)/*OBS788_BEGIN*/)/*OBS788_END*/||/*OBS788_BEGIN*/(foreground476=/*OBS788_END*/GetForegroundWindow()/*OBS788_BEGIN*/)/*OBS788_END*/!=window)/*OBS788_BEGIN*/{try{note476(h,visible476?2u+D476ArchiveAcceptance::relation788(h,foreground476):1u);}catch(...){}/*OBS788_END*/return;/*OBS788_BEGIN*/}/*OBS788_END*/`:`if(!IsWindowVisible(window)||GetForegroundWindow()!=window)return;`
- const observationImpl=kind==='ARCHIVE'?`/*OBS788_BEGIN*/
-unsigned ${cls}::seen476=0,${cls}::sent476=0;bool ${cls}::saturated476=false;
-void ${cls}::note476(Desktop& h,unsigned code) noexcept {
- if(code>8||(seen476&(1u<<code)))return;seen476|=1u<<code;
- try{if(sent476>=7){if(!saturated476){saturated476=true;D476Acceptance::emit(h,L"D476_PRE_A_SAT");}return;}
- static wchar_t const* ids[]={L"D476_PRE_A_READY",L"D476_PRE_A_HIDDEN",L"D476_PRE_A_R0",L"D476_PRE_A_R1",L"D476_PRE_A_R2",L"D476_PRE_A_R3",L"D476_PRE_A_R4",L"D476_PRE_A_R5",L"D476_PRE_A_PASS"};++sent476;D476Acceptance::emit(h,ids[code]);}catch(...){}
-}
-/*OBS788_END*/`:''
  const declaration=lines(`struct ${cls} {
  static Desktop* owner;static HWND window;static std::wstring document;static unsigned long epoch;
- static ComPtr<ICoreWebView2> web;static ComPtr<ICoreWebView2Controller> controller;static bool started,failed;${observationDecl}
+ static ComPtr<ICoreWebView2> web;static ComPtr<ICoreWebView2Controller> controller;static bool started,failed;
  static void documentReady(Desktop&);static void begin(Desktop&);static void fail(Desktop&,unsigned) noexcept;
 };
 `)
@@ -210,15 +197,15 @@ ComPtr<ICoreWebView2> ${cls}::web;ComPtr<ICoreWebView2Controller> ${cls}::contro
 void ${cls}::fail(Desktop& h,unsigned reason) noexcept {if(failed)return;failed=true;try{${failure}}catch(...){}}
 void ${cls}::documentReady(Desktop& h){
  if(owner||failed){fail(h,1);return;}
- owner=&h;window=h.window;document=h.generation;epoch=h.epoch;web=h.web;controller=h.controller;${readyObservation}begin(h);
+ owner=&h;window=h.window;document=h.generation;epoch=h.epoch;web=h.web;controller=h.controller;begin(h);
 }
 void ${cls}::begin(Desktop& h){
  if(!owner||owner!=&h||started||failed)return;
  if(h.closing||!h.ready||h.generation.empty()||h.generation!=document||h.epoch!=epoch||h.window!=window||!window||!IsWindow(window)||GetWindowLongPtrW(window,GWLP_USERDATA)!=(LONG_PTR)owner||!h.web||h.web.Get()!=web.Get()||!h.controller||h.controller.Get()!=controller.Get()){fail(h,2);return;}
- ${gate}
- started=true;${passObservation}
+ if(!IsWindowVisible(window)||GetForegroundWindow()!=window)return;
+ started=true;
  ${start}
-}${observationImpl}
+}
 `)
  const proc=windows[0][0],active=`return 0;}if(message==WM_ACTIVATE){const auto result=DefWindowProcW(hwnd,message,w,l);if(LOWORD(w)!=WA_INACTIVE)${cls}::begin(*self);return result;}return DefWindowProcW(hwnd,message,w,l);${eol} }`
  const pairs=[['class Desktop {',declaration+`class Desktop {${eol} friend struct ${cls};`],[call,`${cls}::documentReady(*this);`],[proc,active],[suffix,implementation+suffix]]

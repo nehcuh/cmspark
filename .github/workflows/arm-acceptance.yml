@@ -62,16 +62,6 @@ jobs:
           grep -Fx '# fail 0' "$RUNNER_TEMP/whisper-closure-783-arm.tap"
           grep -Fx '# cancelled 0' "$RUNNER_TEMP/whisper-closure-783-arm.tap"
           grep -Fx '# skipped 0' "$RUNNER_TEMP/whisper-closure-783-arm.tap"
-      - name: Archive initial gate observation controls
-        shell: bash
-        run: |
-          set -o pipefail
-          node --experimental-strip-types --test --test-reporter=tap companion/scripts/tests/archive-initial-gate-476.test.mjs | tee "$RUNNER_TEMP/archive-initial-gate-476-arm.tap"
-          grep -Fx '# tests 3' "$RUNNER_TEMP/archive-initial-gate-476-arm.tap"
-          grep -Fx '# pass 3' "$RUNNER_TEMP/archive-initial-gate-476-arm.tap"
-          grep -Fx '# fail 0' "$RUNNER_TEMP/archive-initial-gate-476-arm.tap"
-          grep -Fx '# cancelled 0' "$RUNNER_TEMP/archive-initial-gate-476-arm.tap"
-          grep -Fx '# skipped 0' "$RUNNER_TEMP/archive-initial-gate-476-arm.tap"
       - name: Swift tray packaging CPU controls
         shell: bash
         run: |

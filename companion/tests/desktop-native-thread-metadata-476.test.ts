@@ -1,6 +1,5 @@
 /*OBS788_JOIN_BEGIN*/import {createLocalAcpObservation795} from './fixtures/local-acp-observation-795'
 /*OBS788_JOIN_END*//*OBS788_BEGIN*/import {createNativeObservation788} from './fixtures/native-observation-788'
-import {createArchiveInitialGate476} from './fixtures/native-archive-initial-gate-476'
 /*OBS788_END*/import { createArchiveFirstFailure782 } from "./fixtures/archive-first-failure-782"
 import { createConfirmationObservation772 } from "./fixtures/native-confirmation-observer-772"
 import { createTerminalObserver747, rawMarker747 } from "./helpers/terminal-observer-747"
@@ -408,9 +407,7 @@ test("#476 actual native permanent archive history restore and lost ACK use the 
   const threads=new ThreadManager();threads.create("归档对话","native-archive-A");threads.create("另一对话","native-archive-B");threads.addMessage("native-archive-A",{thread_id:"native-archive-A",role:"user",content:"owned archive history"})
   const attachment=path.join(dir,"threads/native-archive-A.files/owned.txt"),attachmentBytes=Buffer.from("owned archive attachment");fs.mkdirSync(path.dirname(attachment));fs.writeFileSync(attachment,attachmentBytes)
   const originalMessages=JSON.stringify(threads.getMessages("native-archive-A")),originalSibling=JSON.stringify(threads.get("native-archive-B")),registry=new DesktopIdentityRegistry(),boot=registry.issue("owned-native-archive-476")
-  const archiveObservation=createArchiveFirstFailure782(process.platform)/*OBS788_BEGIN*/,nativeObservation788=createNativeObservation788()/*OBS788_END*//*OBS788_BEGIN*/
-  const initialGate476=createArchiveInitialGate476();let initialGateAbort476=false
-  if(process.platform==='win32')t.signal.addEventListener('abort',()=>{try{if(initialGateAbort476)return;initialGateAbort476=true;const line='D476_ARCHIVE_PRE_GATE '+JSON.stringify(initialGate476.snapshot())+'\n';if(Buffer.byteLength(line,'utf8')<=512)process.stdout.write(line)}catch{}},{once:true})/*OBS788_END*/
+  const archiveObservation=createArchiveFirstFailure782(process.platform)/*OBS788_BEGIN*/,nativeObservation788=createNativeObservation788()/*OBS788_END*/
   const required=["D476_ARCHIVE_ARCHIVED","D476_ARCHIVE_VIEW","D476_ARCHIVE_HISTORY","D476_ARCHIVE_RESTORED","D476_ARCHIVE_BUSY","D476_ARCHIVE_BEFORE_LOST_ACK"],receipts=new Set<string>()
   let child:DesktopNativeChild|undefined,childExited=false,authenticated=false,windowRequested=false,connections=0,failed=false,blocked=false,droppedAck=false,sets=0,archived=false,restored=false,exitResolve!:(n:number)=>void,failResolve!:()=>void,primary:unknown
   const exit=new Promise<number>(r=>exitResolve=r),failure=new Promise<void>(r=>failResolve=r)
@@ -421,7 +418,7 @@ test("#476 actual native permanent archive history restore and lost ACK use the 
     if(f.type==="desktop.archive.set.result"&&f.thread_id==="native-archive-A"&&f.ok===true&&f.saved===true){sets++;const saved=new ThreadManager().get("native-archive-A")!;if(sets===1)archived=!!saved.archived_at&&f.archived===true;if(sets===2)restored=saved.archived_at===null&&f.archived===false;if(sets===3){droppedAck=true;ws.terminate();return}}
     return Reflect.apply(originalSend,ws,[data,...args])
    })as typeof ws.send
-   ws.on("message",raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(!authenticated||f.type!=="system.ping")return;archiveObservation.observe(f);/*OBS788_BEGIN*/try{if(process.platform==='win32'&&Object.keys(f).sort().join()==='id,type'){nativeObservation788.native(f.id);initialGate476.observe(f.id)}}catch{};/*OBS788_END*/if(f.id==="D476_ARCHIVE_BLOCK"){blocked=true;return}if(f.id==="D476_ARCHIVE_UNBLOCK"){blocked=false;return}if(f.id==="D476_FAIL_ARCHIVE_PHASE"||f.id==="D476_FAIL_SCRIPT"){archiveObservation.failure(f.id);failed=true;failResolve();return}if(required.includes(f.id)){if(receipts.has(f.id)){archiveObservation.failure("DUPLICATE");failed=true;failResolve()}receipts.add(f.id)}})
+   ws.on("message",raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}if(!authenticated||f.type!=="system.ping")return;archiveObservation.observe(f);/*OBS788_BEGIN*/try{if(process.platform==='win32'&&Object.keys(f).sort().join()==='id,type')nativeObservation788.native(f.id)}catch{};/*OBS788_END*/if(f.id==="D476_ARCHIVE_BLOCK"){blocked=true;return}if(f.id==="D476_ARCHIVE_UNBLOCK"){blocked=false;return}if(f.id==="D476_FAIL_ARCHIVE_PHASE"||f.id==="D476_FAIL_SCRIPT"){archiveObservation.failure(f.id);failed=true;failResolve();return}if(required.includes(f.id)){if(receipts.has(f.id)){archiveObservation.failure("DUPLICATE");failed=true;failResolve()}receipts.add(f.id)}})
   })
   server.listen(0,"127.0.0.1");await once(server,"listening")
   try{
@@ -433,8 +430,7 @@ test("#476 actual native permanent archive history restore and lost ACK use the 
    const disk=new ThreadManager();assert.ok(disk.get("native-archive-A")!.archived_at);assert.equal(JSON.stringify(disk.getMessages("native-archive-A")),originalMessages);assert.equal(JSON.stringify(disk.get("native-archive-B")),originalSibling);assert.deepEqual(fs.readFileSync(attachment),attachmentBytes)
    process.stdout.write('DESKTOP_ARCHIVE_476 {"native":true,"archived":true,"restored":true,"historyUnchanged":true,"otherThreadUnchanged":true,"nativeKeys":10,"busyRefused":true,"lostAck":true,"offlineUnconfirmed":true}\n')
   }catch(error){primary=error;throw error}finally{
-/*OBS788_BEGIN*/try{observeSurface788('CLEANUP_ENTER')}catch{};/*OBS788_END*/   surfaceLease.retain()/*OBS788_BEGIN*/
-   try{if(process.platform==='win32'&&!initialGateAbort476)t.diagnostic('D476_ARCHIVE_PRE_GATE '+JSON.stringify(initialGate476.snapshot()))}catch{};/*OBS788_END*/
+/*OBS788_BEGIN*/try{observeSurface788('CLEANUP_ENTER')}catch{};/*OBS788_END*/   surfaceLease.retain()
    try{t.diagnostic("D476_ARCHIVE_NATIVE_PHASE "+JSON.stringify({schema:1,failed,receiptMask:required.reduce((mask,id,i)=>mask|(receipts.has(id)?1<<i:0),0),sets,archived,restored,droppedAck,connections,authenticated,windowRequested,childExited,firstFailure:archiveObservation.snapshot()/*OBS788_BEGIN*/,observation788:nativeObservation788.snapshot()/*OBS788_END*/}))}catch{}
    try{child?.terminate();if(child&&!childExited)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true});surfaceLease.settled()}
    catch(error){if(primary===undefined)throw error;try{t.diagnostic("D476_ARCHIVE_CLEANUP_FAILED")}catch{}}
