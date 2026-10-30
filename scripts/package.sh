@@ -430,10 +430,35 @@ case "${PLATFORM}" in
         fi
         # Fail-closed: staged binary must not retain absolute Homebrew load paths
         if command -v otool >/dev/null 2>&1; then
-          if otool -L "${STAGING}/bin/${_WHISPER_BIN}" 2>/dev/null | grep -E '/opt/homebrew|/usr/local/opt|Cellar' >/dev/null; then
-            echo "ERROR: ${_WHISPER_BIN} still links absolute Homebrew paths — rewrite install names before packaging" >&2
-            otool -L "${STAGING}/bin/${_WHISPER_BIN}" >&2 || true
+          if ! _otool_output=$(otool -L "${STAGING}/bin/${_WHISPER_BIN}"; _otool_rc=$?; printf '\034'; exit "${_otool_rc}"); then
+            echo "ERROR: otool failed — cannot verify whisper install names" >&2
             exit 1
+          fi
+          _otool_output="${_otool_output%$'\034'}"
+          if [ "${_otool_output%%$'\n'*}" != "${STAGING}/bin/${_WHISPER_BIN}:" ] || [[ "${_otool_output}" != *$'\n' || "${_otool_output}" == *$'\n\n' ]]; then
+            echo "ERROR: invalid otool output — cannot verify whisper install names" >&2
+            exit 1
+          fi
+          # Match the thin Mach-O dependency lines printed by Apple cctools.
+          # Architecture headings or other unrecognized output fail closed.
+          if ! printf '%s' "${_otool_output}" | LC_ALL=C awk '
+            NR == 1 { next }
+            !/^[[:space:]]+[^[:space:]].* \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/ { invalid = 1 }
+            END { if (NR < 2 || invalid) exit 1 }
+          '; then
+            echo "ERROR: invalid otool dependency lines — cannot verify whisper install names" >&2
+            exit 1
+          fi
+          if printf '%s' "${_otool_output}" | grep -E '/opt/homebrew|/usr/local/opt|Cellar' >/dev/null; then
+            echo "ERROR: ${_WHISPER_BIN} still links absolute Homebrew paths — rewrite install names before packaging" >&2
+            printf '%s\n' "${_otool_output}" >&2
+            exit 1
+          else
+            _grep_status=$?
+            if [ "${_grep_status}" -ne 1 ]; then
+              echo "ERROR: failed to inspect whisper install names" >&2
+              exit 1
+            fi
           fi
         else
           echo "ERROR: otool not found — cannot verify whisper install names on darwin package" >&2

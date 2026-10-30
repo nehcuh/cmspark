@@ -45,6 +45,16 @@ jobs:
           grep -Fx '# pass 11' "$RUNNER_TEMP/settings-partial-806-arm.tap"
           grep -Fx '# fail 0' "$RUNNER_TEMP/settings-partial-806-arm.tap"
           grep -Fx '# skipped 0' "$RUNNER_TEMP/settings-partial-806-arm.tap"
+      - name: Whisper failure controls
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap companion/scripts/tests/whisper-builder-783.test.mjs | tee "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          grep -Fx '# tests 20' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          grep -Fx '# pass 20' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          bash scripts/tests/test-package-otool-783.sh scripts/package.sh
       - name: Swift tray packaging CPU controls
         shell: bash
         run: |

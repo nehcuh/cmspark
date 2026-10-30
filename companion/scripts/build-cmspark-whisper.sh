@@ -124,6 +124,17 @@ if [[ ! -f "${SRC}" ]]; then
   exit 1
 fi
 
+# Darwin relocation and signing are required, even when the source is supplied explicitly.
+# Refuse missing tools before copying an output that could later be mistaken for usable.
+if [[ "${OS}" == "Darwin" ]]; then
+  for tool in otool install_name_tool codesign awk; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+      echo "[build-cmspark-whisper] ERROR: required macOS tool missing: ${tool}" >&2
+      exit 1
+    fi
+  done
+fi
+
 mkdir -p "$(dirname "${OUT_BIN}")"
 cp "${SRC}" "${OUT_BIN}"
 chmod +x "${OUT_BIN}"
@@ -185,44 +196,61 @@ if [[ "${OS}" == "Darwin" ]]; then
     done
   )
 
-  if command -v install_name_tool >/dev/null 2>&1 && command -v otool >/dev/null 2>&1; then
+    # A failed or malformed inspection must not be treated as an empty dependency set.
+    inspect_dependencies() {
+      local target="$1" links
+      links="$(otool -L "${target}"; rc=$?; printf '\034'; exit "$rc")" || return $?
+      links="${links%$'\034'}"
+      if [[ "${links%%$'\n'*}" != "${target}:" || "${links}" != *$'\n' || "${links}" == *$'\n\n' ]]; then
+        echo "[build-cmspark-whisper] ERROR: invalid otool output" >&2
+        return 1
+      fi
+      printf '%s' "${links}" | LC_ALL=C awk '
+        NR == 1 { next }
+        !/^[[:space:]]+[^[:space:]].* \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/ { invalid = 1; next }
+        { sub(/^[[:space:]]+/, ""); sub(/ \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/, ""); print }
+        END { if (NR < 2 || invalid) exit 1 }
+      '
+    }
+    cli_dependencies="$(inspect_dependencies "${OUT_BIN}")"
     # Point CLI at @loader_path/../lib/*
-    while read -r dep; do
+    while IFS= read -r dep; do
+      [[ -n "${dep}" ]] || continue
       case "${dep}" in
         /usr/lib/*|/System/*) continue ;;
       esac
       depbase="$(basename "${dep}")"
       if [[ -e "${LIB_OUT}/${depbase}" ]]; then
-        install_name_tool -change "${dep}" "@loader_path/../lib/${depbase}" "${OUT_BIN}" 2>/dev/null || true
+        install_name_tool -change "${dep}" "@loader_path/../lib/${depbase}" "${OUT_BIN}" 2>/dev/null
       fi
-    done < <(otool -L "${OUT_BIN}" | awk 'NR>1 {print $1}')
+    done <<< "${cli_dependencies}"
 
     rewrite_lib() {
       local lib="$1"
       [[ -f "${lib}" && ! -L "${lib}" ]] || return 0
       local base; base="$(basename "${lib}")"
-      install_name_tool -id "@loader_path/${base}" "${lib}" 2>/dev/null || true
-      while read -r dep; do
+      local library_dependencies
+      install_name_tool -id "@loader_path/${base}" "${lib}" 2>/dev/null
+      library_dependencies="$(inspect_dependencies "${lib}")"
+      while IFS= read -r dep; do
+        [[ -n "${dep}" ]] || continue
         case "${dep}" in
           /usr/lib/*|/System/*|@loader_path/*) continue ;;
         esac
         local depbase; depbase="$(basename "${dep}")"
         if [[ -e "${LIB_OUT}/${depbase}" ]]; then
-          install_name_tool -change "${dep}" "@loader_path/${depbase}" "${lib}" 2>/dev/null || true
+          install_name_tool -change "${dep}" "@loader_path/${depbase}" "${lib}" 2>/dev/null
         fi
-      done < <(otool -L "${lib}" | awk 'NR>1 {print $1}')
+      done <<< "${library_dependencies}"
     }
     for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib; do
       rewrite_lib "${lib}"
     done
-    if command -v codesign >/dev/null 2>&1; then
       for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib; do
         [[ -f "${lib}" && ! -L "${lib}" ]] || continue
-        codesign --force --sign - "${lib}" >/dev/null 2>&1 || true
+        codesign --force --sign - "${lib}" >/dev/null 2>&1
       done
-      codesign --force --sign - "${OUT_BIN}" >/dev/null 2>&1 || true
-    fi
-  fi
+      codesign --force --sign - "${OUT_BIN}" >/dev/null 2>&1
 
   _n="$(find "${LIB_OUT}" -maxdepth 1 \( -type f -o -type l \) -name 'lib*.dylib' | wc -l | tr -d ' ')"
   echo "[build-cmspark-whisper]         staged dist/lib (${_n} dylib entries)"
