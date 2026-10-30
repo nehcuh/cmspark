@@ -933,7 +933,9 @@ export function useWebSocket() {
           if (msg.config?.acp?.enabled === false) dispatch({ type: "ACP_HISTORY_INVALIDATE" })
           dispatch({ type: "SET_CONFIG_SNAPSHOT", config: normalizeConfig(msg.config),
             revision: typeof msg.config_revision === "string" && msg.config_revision.length > 0 && msg.config_revision.length <= 128 ? msg.config_revision : null,
-            ...(typeof msg.id === "string" ? { id: msg.id } : {}), conflict: msg.type === "config.conflict" })
+            ...(typeof msg.id === "string" ? { id: msg.id } : {}), conflict: msg.type === "config.conflict",
+            confirmedSecrets: Array.isArray(msg.config_applied_secret_fields)
+              ? msg.config_applied_secret_fields.filter((key: unknown): key is "api_key" | "vision_api_key" => key === "api_key" || key === "vision_api_key") : [] })
           dispatch({ type: "SET_CONFIG_HYDRATED", hydrated: true })
           if (msg.source === "companion" && msg.config?.llm) {
             dispatch({ type: "SET_COMPANION_CONFIG", config: normalizeConfig(msg.config) as any })

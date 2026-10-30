@@ -75,14 +75,14 @@ export function resolveSettingsConflict<T extends object>(
 /** Only a correlated result can settle a field, and later edits remain dirty. */
 export function acknowledgeSettingsSubmission<T extends object>(
   draft: SettingsDraft<T>, submission: SettingsSubmission<T>, id: string,
-  snapshot: T, revision: string, opaque: ReadonlySet<keyof T>,
+  snapshot: T, revision: string, opaque: ReadonlySet<keyof T>, confirmedOpaque: ReadonlySet<keyof T> = new Set(),
 ): SettingsDraft<T> {
   if (submission.id !== id) return receiveSettingsSnapshot(draft, snapshot, revision, opaque)
   const next = receiveSettingsSnapshot(draft, snapshot, revision, opaque)
   for (const key of Object.keys(submission.generations) as Array<keyof T>) {
     if (draft.dirty[key] !== submission.generations[key]) continue
-    // A masked response cannot prove the exact secret survived a later write.
-    if (opaque.has(key) || !sameValue(submission.patch[key], snapshot[key])) {
+    // Only a correlated server receipt can confirm a masked credential.
+    if (opaque.has(key) ? !confirmedOpaque.has(key) : !sameValue(submission.patch[key], snapshot[key])) {
       next.conflicts[key] = true
       continue
     }

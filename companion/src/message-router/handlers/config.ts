@@ -7,6 +7,7 @@ import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
 import { normalizeVisionBaseUrl } from "../../llm/vision-pipeline"
+import { isPlaceholderVisionKey } from "../../llm/vision-reuse-inherit"
 import {
   findArmingSecurityFlags,
   findDisarmingSecurityFlags,
@@ -342,7 +343,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           config_revision: currentSnapshot.revision,
         }
       }
-      saveConfig(normalized, {
+      const written = saveConfig(normalized, {
         llmKey: Object.prototype.hasOwnProperty.call(normalized.llm ?? {}, "api_key"),
         visionKey: Object.prototype.hasOwnProperty.call(normalized.vision ?? {}, "api_key"),
       }, rest.config_revision)
@@ -371,10 +372,20 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         })
       }
       const savedSnapshot = getConfigSnapshot()
+      // Confirm only explicit credentials that this write actually retained.
+      // A synchronous listener may have written again before this reply.
+      const appliedSecretFields: string[] = []
+      if (savedSnapshot.config === written) {
+        const llmKey = normalized.llm?.api_key
+        if (typeof llmKey === "string" && llmKey && llmKey === written.llm.api_key) appliedSecretFields.push("api_key")
+        const visionKey = normalized.vision?.api_key
+        if (typeof visionKey === "string" && !isPlaceholderVisionKey(visionKey) && visionKey === written.vision?.api_key) appliedSecretFields.push("vision_api_key")
+      }
       return {
         type: "config.updated",
         config: redactConfigForWire(savedSnapshot.config),
         config_revision: savedSnapshot.revision,
+        ...(appliedSecretFields.length ? { config_applied_secret_fields: appliedSecretFields } : {}),
       }
     }
 

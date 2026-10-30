@@ -108,3 +108,49 @@ test('real config handler round-trips independent editable fields without overwr
     fs.rmSync(dir, { recursive: true });
   }
 });
+
+test('real secret receipt confirms only an explicit write that remains current', async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-config-secret-owned-')));
+  const identity = fs.lstatSync(dir), prior = process.env.CMSPARK_DATA_DIR;
+  process.env.CMSPARK_DATA_DIR = dir;
+  try {
+    const config = require(path.join(root, 'companion/src/config.ts'));
+    const { handleConfigFamily } = require(path.join(root, 'companion/src/message-router/handlers/config.ts'));
+    const { agentReducer, initialState } = require(path.join(root, 'chrome-extension/src/sidepanel/store/agentStore.tsx'));
+    const { normalizeConfig } = require(path.join(root, 'chrome-extension/src/sidepanel/utils/normalize-config.ts'));
+    const { prepareSettingsSubmission } = require(path.join(root, 'chrome-extension/src/sidepanel/utils/settings-draft.ts'));
+    config.clearConfigCache();
+    const before = await handleConfigFamily('config.get', {});
+    let state = agentReducer(initialState, { type: 'SET_CONNECTION', state: 'connected' });
+    state = agentReducer(state, { type: 'SET_CONFIG_SNAPSHOT', config: normalizeConfig(before.config), revision: before.config_revision });
+    state = agentReducer(state, { type: 'SET_CONFIG_HYDRATED', hydrated: true });
+    state = agentReducer(state, { type: 'EDIT_SETTINGS_DRAFT', config: { api_key: 'owned-synthetic-new' } });
+    const sent = prepareSettingsSubmission(state.settingsDraft, 'settings-save:owned-secret');
+    state = agentReducer(state, { type: 'BEGIN_SETTINGS_SAVE', submission: sent });
+    const reply = await handleConfigFamily('config.set', { config: sent.patch, config_revision: sent.revision });
+    assert.deepEqual(reply.config_applied_secret_fields, ['api_key']);
+    assert.equal(JSON.stringify(reply).includes('owned-synthetic-new'), false);
+    state = agentReducer(state, { type: 'SET_CONFIG_SNAPSHOT', config: normalizeConfig(reply.config), revision: reply.config_revision, id: sent.id, confirmedSecrets: reply.config_applied_secret_fields });
+    assert.equal(state.settingsSave.status, 'saved');
+    assert.equal(state.settingsDraft.value.api_key, '');
+    const vision = await handleConfigFamily('config.set', { config: { vision_api_key: 'owned-vision-secret' }, config_revision: reply.config_revision });
+    assert.deepEqual(vision.config_applied_secret_fields, ['vision_api_key']);
+    assert.equal(JSON.stringify(vision).includes('owned-vision-secret'), false);
+    const listener = () => {
+      config.configEvents.off(config.CONFIG_CHANGE_EVENT, listener);
+      config.saveConfig({ llm: { ...config.getConfig().llm, model_name: 'owned-reentrant' } });
+    };
+    config.configEvents.on(config.CONFIG_CHANGE_EVENT, listener);
+    try {
+      const raced = await handleConfigFamily('config.set', { config: { api_key: 'owned-raced-key' }, config_revision: vision.config_revision });
+      assert.equal(raced.type, 'config.updated');
+      assert.equal(raced.config_applied_secret_fields, undefined);
+      assert.equal(JSON.stringify(raced).includes('owned-raced-key'), false);
+    } finally { config.configEvents.off(config.CONFIG_CHANGE_EVENT, listener); }
+  } finally {
+    if (prior === undefined) delete process.env.CMSPARK_DATA_DIR; else process.env.CMSPARK_DATA_DIR = prior;
+    const now = fs.lstatSync(dir);
+    assert.equal(now.isSymbolicLink(), false); assert.equal(now.dev, identity.dev); assert.equal(now.ino, identity.ino);
+    fs.rmSync(dir, { recursive: true });
+  }
+});

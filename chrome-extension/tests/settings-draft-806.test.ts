@@ -60,3 +60,13 @@ test("a conflicting edit requires an explicit choice before it can be sent", () 
   const mine = resolveSettingsConflict(draft, "model_name", "mine")
   assert.equal(prepareSettingsSubmission(mine, "request-2").patch.model_name, "mine")
 })
+
+test("a confirmed secret receipt does not erase a newer secret edit", () => {
+  let draft = createSettingsDraft(wire("old", "synthetic-old"), "epoch:1")
+  draft = editSettingsDraft(draft, { api_key: "first-synthetic" })
+  const pending = prepareSettingsSubmission(draft, "request-1")
+  draft = editSettingsDraft(draft, { api_key: "second-synthetic" })
+  draft = acknowledgeSettingsSubmission(draft, pending, "request-1", wire("old", "first-synthetic"), "epoch:2", opaque, new Set(["api_key"]))
+  assert.equal(draft.value.api_key, "second-synthetic")
+  assert.ok(draft.dirty.api_key)
+})
