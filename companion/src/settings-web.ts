@@ -18,7 +18,7 @@
 import * as http from "http"
 import * as crypto from "crypto"
 import * as net from "net"
-import { getConfig, saveConfig, isMaskedApiKey } from "./config"
+import { getConfig, getConfigSnapshot, saveConfig, isMaskedApiKey } from "./config"
 import { probeLlmConnection } from "./llm/connection-test"
 import {
   LLM_ENDPOINT_DNS_ERROR,
@@ -341,10 +341,11 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
     }
 
     if (pathOnly === "/api/config" && req.method === "GET") {
-      const config = getConfig()
+      const { config, revision } = getConfigSnapshot()
       const vision = config.vision
       const llmPublic = settingsWebLlmResponse(config.llm)
       jsonResponse(res, {
+        config_revision: revision,
         llm: llmPublic,
         vision: vision
           ? { ...vision, api_key: maskApiKey(vision.api_key) }
@@ -363,6 +364,10 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
         .then((body) => {
           if (res.writableEnded) return
           const data = JSON.parse(body)
+          if (typeof data?.config_revision !== "string" || data.config_revision.length === 0 || data.config_revision.length > 128) {
+            jsonResponse(res, { ok: false, error: "CONFIG_REVISION_REQUIRED" }, 400)
+            return
+          }
           const update: any = {}
           // LLM config
           if (data.llm) {
@@ -380,9 +385,17 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
           const updated = saveConfig(update, {
             llmKey: Object.prototype.hasOwnProperty.call(update.llm ?? {}, "api_key"),
             visionKey: Object.prototype.hasOwnProperty.call(update.vision ?? {}, "api_key"),
-          })
+          }, data.config_revision)
+          // A synchronous config-change subscriber can save again before this
+          // call returns. Do not attach its newer revision to our older fields.
+          const snapshot = getConfigSnapshot()
+          if (snapshot.config !== updated) {
+            jsonResponse(res, { ok: false, error: "CONFIG_SAVE_SUPERSEDED" }, 409)
+            return
+          }
           jsonResponse(res, {
             ok: true,
+            config_revision: snapshot.revision,
             llm: settingsWebLlmResponse(updated.llm),
             vision: updated.vision
               ? { ...updated.vision, api_key: maskApiKey(updated.vision.api_key) }
@@ -390,7 +403,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
           })
         })
         .catch((e: any) => {
-          if (!res.writableEnded) jsonResponse(res, { error: e.message }, 400)
+          if (!res.writableEnded) jsonResponse(res, { ok: false, error: e.message }, e.message === "CONFIG_REVISION_CONFLICT" ? 409 : 400)
         })
       return
     }
@@ -780,6 +793,10 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       visionModelEl=$("visionModel"),visionTimeoutEl=$("visionTimeout"),
       visionTimeoutValEl=$("visionTimeoutVal"),visionFallbackEl=$("visionFallback"),
       visionResultEl=$("visionResult");
+  var configRevision=null,configLoaded=false,savePending=false;
+  var editControls=[apiKeyEl,baseUrlEl,modelNameEl,tempEl,ctxWinEl,protocolEl,compatEl,
+    visionEnabledEl,visionApiKeyEl,visionBaseUrlEl,visionModelEl,visionTimeoutEl,visionFallbackEl];
+  editControls.forEach(function(el){el.disabled=true});
 
   function hostnameFromUrl(u){
     try{
@@ -791,7 +808,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   }
   function isMaskedKey(k){
     k=(k||"").trim();
-    return !k||k==="***"||/^\*+$/.test(k)||k.indexOf("****")>=0
+    return !k||k==="***"||/^\\*+$/.test(k)||k.indexOf("****")>=0
   }
   function syncVisionReuseUi(){
     var on=visionEnabledEl.checked;
@@ -836,6 +853,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
   document.querySelectorAll("#protocolPresets .preset").forEach(function(el){
     el.onclick=function(){
+      if(!configLoaded)return;
       protocolEl.value=el.getAttribute("data-proto")||"openai";
       compatEl.checked=(el.getAttribute("data-profile")==="claude_code_compat");
       var u=el.getAttribute("data-url");
@@ -847,6 +865,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
   function load(){
     fetch(url("/api/config")).then(function(r){return r.json()}).then(function(d){
+      if(typeof d.config_revision!=="string"||!d.config_revision){throw new Error("CONFIG_REVISION_REQUIRED")}
       var llm=d.llm||{};
       apiKeyEl.value=llm.api_key||"";
       baseUrlEl.value=llm.base_url||"";
@@ -867,11 +886,15 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       visionTimeoutValEl.textContent=visionTimeoutEl.value+"s";
       visionFallbackEl.value=vision.fallback||"metadata";
       toggleVisionFields();
+      configRevision=d.config_revision;
+      configLoaded=true;
+      editControls.forEach(function(el){el.disabled=false});
       statusDot.classList.remove("offline");
     }).catch(function(){
       statusDot.classList.add("offline");
+      showResult("无法加载配置，请刷新页面后重试。",false);
     });
-    if(process&&process.env&&process.env.DEEPSEEK_API_KEY){$("envBanner").style.display="block"}
+    if(typeof process!=="undefined"&&process.env&&process.env.DEEPSEEK_API_KEY){$("envBanner").style.display="block"}
   }
 
   function collect(){
@@ -905,17 +928,25 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   }
 
   $("saveBtn").onclick=function(){
+    if(savePending)return;
+    if(!configRevision){showResult("配置版本不可用；请先保存草稿，再刷新页面核对。",false);return}
     resultEl.className="result";
-    fetch(url("/api/config"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(collect())})
+    var payload=collect();payload.config_revision=configRevision;savePending=true;
+    fetch(url("/api/config"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
     .then(function(r){return r.json()}).then(function(d){
-      if(d.ok){
+      if(d.ok&&typeof d.config_revision==="string"&&d.config_revision){
+        configRevision=d.config_revision;
         savedFlash.classList.add("show");
         setTimeout(function(){savedFlash.classList.remove("show")},1500);
         // Do NOT replace the api_key input with the masked value — that would
         // overwrite the user's plaintext key with '****', making it look lost.
         // The key is safely stored; the field retains what the user typed.
-      }else{showResult(d.error||"Save failed",false)}
-    }).catch(function(e){showResult("Save failed: "+e.message,false)});
+      }else{
+        configRevision=null;
+        showResult("配置可能已变化或保存结果未知；草稿已保留，请先复制草稿，再刷新页面核对。",false);
+      }
+    }).catch(function(){configRevision=null;showResult("保存结果未知；草稿已保留，请先复制草稿，再刷新页面核对。",false)})
+      .finally(function(){savePending=false});
   };
 
   $("testBtn").onclick=function(){
@@ -977,6 +1008,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   var useMainBtn=$("useMainForVisionBtn");
   if(useMainBtn){
     useMainBtn.onclick=function(){
+      if(!configLoaded)return;
       if(protocolEl.value==="anthropic"){
         visionResultEl.textContent="Cannot reuse: main protocol is Anthropic Messages; vision needs OpenAI-compatible endpoint.";
         visionResultEl.className="result error";
@@ -997,7 +1029,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
   var presets=document.querySelectorAll(".preset");
   for(var i=0;i<presets.length;i++){
-    presets[i].onclick=function(){modelNameEl.value=this.getAttribute("data-model")};
+    presets[i].onclick=function(){if(configLoaded)modelNameEl.value=this.getAttribute("data-model")};
   }
 
   load();
