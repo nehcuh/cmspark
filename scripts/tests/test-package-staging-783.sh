@@ -7,8 +7,8 @@ cmp -s "$source_script" "$repo_root/scripts/package.sh" || { echo 'package sourc
 tap=$(mktemp "${TMPDIR:-/tmp}/cmspark-package-generation.XXXXXX")
 trap 'rm -f "$tap"' EXIT
 node --test --test-reporter=tap "$repo_root/scripts/tests/whisper-package-generation.test.mjs" | tee "$tap"
-grep -Fx '# tests 10' "$tap"
-grep -Fx '# pass 10' "$tap"
+grep -Fx '# tests 13' "$tap"
+grep -Fx '# pass 13' "$tap"
 grep -Fx '# fail 0' "$tap"
 grep -Fx '# cancelled 0' "$tap"
 grep -Fx '# skipped 0' "$tap"

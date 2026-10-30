@@ -37,9 +37,9 @@ function fixture(t, withOmp = true) {
   const runner = path.join(root, 'runner');
   fs.writeFileSync(runner, 'set -euo pipefail\n' + block);
   const pin = crypto.createHash('sha256').update('bin').digest('hex');
-  const run = (expected = pin, proofRc = 0) => spawnSync('/bin/bash', [runner], { cwd: root, env: {
+  const run = (expected = pin, proofRc = 0, injected = {}) => spawnSync('/bin/bash', [runner], { cwd: root, env: {
     ...process.env, PATH: commands + ':' + path.dirname(process.execPath) + ':/usr/bin:/bin', NODE_BINARY: process.execPath,
-    ROOT_DIR: root, STAGING: out, PLATFORM: 'macos-arm64', _WHISPER_BIN: 'cmspark-whisper-darwin-arm64', TEST_PIN: expected, PROOF_RC: String(proofRc),
+    ...injected, ROOT_DIR: root, STAGING: out, PLATFORM: 'macos-arm64', _WHISPER_BIN: 'cmspark-whisper-darwin-arm64', TEST_PIN: expected, PROOF_RC: String(proofRc),
   }, encoding: 'utf8' });
   return { root, dist, store, gen, current, out, pin, run };
 }
@@ -82,3 +82,18 @@ test('a generation without OpenMP stages when its static graph needs no OpenMP',
   const f = fixture(t, false); ready(f); const r = f.run(); assert.equal(r.status, 0, r.stderr);
   assert.equal(fs.existsSync(path.join(f.out, 'lib/libomp.dylib')), false);
 });
+
+for (const name of ['libwhisper.1.dylib', 'libggml.1.dylib', 'libomp.dylib']) {
+  test(`real package block rejects ${name} write failure`, t => {
+    const f = fixture(t); ready(f);
+    const target = path.join(fs.realpathSync(f.out), 'lib', name);
+    const flag = path.join(f.root, 'fault-hit');
+    const hook = path.join(f.root, 'inject.cjs');
+    fs.writeFileSync(hook, `const fs = require('node:fs'); const write = fs.writeFileSync; fs.writeFileSync = function(p, ...args) { if (p === process.env.FAULT_TARGET) { write(process.env.FAULT_FLAG, 'hit'); const e = new Error('owned write failure'); e.code = 'EIO'; throw e; } return write.call(this, p, ...args); };`);
+    const r = f.run(f.pin, 0, { NODE_OPTIONS: '--require=' + hook, FAULT_TARGET: target, FAULT_FLAG: flag });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /WHISPER_GENERATION_FAILED/);
+    assert.equal(fs.readFileSync(flag, 'utf8'), 'hit');
+    assert.equal(fs.existsSync(target), false);
+  });
+}
