@@ -645,12 +645,23 @@ export function installWhisperFromBrewDarwin(opts: {
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
+    const result = e as { status?: unknown; signal?: unknown; code?: unknown; killed?: unknown; stderr?: unknown } | null
+    const stderr = typeof result?.stderr === "string" || Buffer.isBuffer(result?.stderr)
+      ? String(result.stderr)
+      : ""
     // -h often exits non-zero after printing help; dyld failures include "Library not loaded"
-    if (/Library not loaded|image not found|dyld/i.test(msg)) {
+    if (/Library not loaded|image not found|dyld/i.test(`${msg}\n${stderr}`)) {
       throw new WhisperBinaryDownloadError(
         "extract-failed",
-        `brew 组件安装后仍无法加载动态库：${msg}`,
+        "brew 组件安装后仍无法加载动态库。",
       )
+    }
+    // Only a normal non-zero process exit is an acceptable help response.
+    // Spawn errors, signals and timeouts must not create a success manifest.
+    if (!Number.isInteger(result?.status) || (result!.status as number) < 1 ||
+        (result!.status as number) > 255 || result?.signal != null ||
+        result?.code != null || result?.killed === true) {
+      throw new WhisperBinaryDownloadError("extract-failed", "brew 组件启动检查未正常完成。")
     }
   }
 
