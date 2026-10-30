@@ -31,6 +31,7 @@ function snapshot(root, arch) {
   if (fs.lstatSync(binary).isSymbolicLink() || !fs.statSync(binary).isFile()) fail('BINARY');
   const names = fs.readdirSync(lib).sort();
   if (!names.length || names.length > 256 || names.some(name => !allowed(name))) fail('LIBRARY_NAMES');
+  if (!names.some(name => name.startsWith('libwhisper')) || !names.some(name => name.startsWith('libggml'))) fail('INCOMPLETE');
   const data = new Map();
   let total = 0;
   const read = (name, file) => {
@@ -59,7 +60,9 @@ export function seal(root, arch) {
 
 function readSealed(generation, arch) {
   const manifestPath = path.join(generation, 'manifest.json');
-  if (fs.lstatSync(manifestPath).isSymbolicLink()) fail('MANIFEST_LINK');
+  const entry = fs.lstatSync(manifestPath);
+  if (entry.isSymbolicLink()) fail('MANIFEST_LINK');
+  if (!entry.isFile() || entry.size > 65536) fail('MANIFEST_SIZE');
   const text = fs.readFileSync(manifestPath, 'utf8');
   if (Buffer.byteLength(text) > 65536) fail('MANIFEST_SIZE');
   const manifest = JSON.parse(text);
@@ -77,7 +80,11 @@ export function publish(root, store, current, arch) {
   try { previous = fs.lstatSync(current); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (previous) {
     if (!previous.isSymbolicLink()) fail('CURRENT_NOT_LINK');
-    const prior = fs.realpathSync(current);
+    let prior;
+    try { prior = fs.realpathSync(current); } catch (error) {
+      if (error.code === 'ENOENT') fail('CURRENT_DANGLING');
+      throw error;
+    }
     if (path.dirname(prior) !== parent) fail('CURRENT_ESCAPE');
     readSealed(prior, arch);
   }
@@ -112,6 +119,17 @@ export function stage(store, current, arch, stageRoot, expected) {
   return result.manifest;
 }
 
+export function verifyStaged(store, current, arch, stageRoot, expected) {
+  if (!/^[0-9a-f]{64}$/.test(expected)) fail('PIN');
+  const parent = storePath(store);
+  if (!fs.lstatSync(current).isSymbolicLink()) fail('CURRENT_NOT_LINK');
+  const generation = fs.realpathSync(current);
+  if (path.dirname(generation) !== parent) fail('GENERATION_ESCAPE');
+  const result = readSealed(generation, arch);
+  if (result.manifest.primary !== expected) fail('PIN_MISMATCH');
+  if (JSON.stringify(snapshot(stageRoot, arch).manifest) !== JSON.stringify(result.manifest)) fail('STAGED_MISMATCH');
+}
+
 let isMain = false;
 try { isMain = Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); } catch { /* Imported from stdin or an unavailable path. */ }
 if (isMain) {
@@ -120,6 +138,7 @@ if (isMain) {
     if (mode === 'seal' && args.length === 2) seal(...args);
     else if (mode === 'publish' && args.length === 4) publish(...args);
     else if (mode === 'stage' && args.length === 5) stage(...args);
+    else if (mode === 'verify' && args.length === 5) verifyStaged(...args);
     else fail('ARGUMENTS');
   } catch (error) {
     console.error(error instanceof Error && /^WHISPER_GENERATION_[A-Z_]+$/.test(error.message) ? error.message : 'WHISPER_GENERATION_FAILED');

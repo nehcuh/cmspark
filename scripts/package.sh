@@ -397,53 +397,17 @@ case "${PLATFORM}" in
       *)           _WHISPER_BIN="" ;;
     esac
     if [ -n "${_WHISPER_BIN}" ]; then
-      if [ -f "companion/dist/bin/${_WHISPER_BIN}" ]; then
+      _WHISPER_ARCH="${_WHISPER_BIN#cmspark-whisper-}"
+      _WHISPER_CURRENT="companion/dist/whisper-current-${_WHISPER_ARCH}"
+      if [ -L "${_WHISPER_CURRENT}" ] || [ -e "${_WHISPER_CURRENT}" ]; then
+        if ! _WHISPER_PIN="$(cd "${ROOT_DIR}/companion" && node scripts/run-esbuild-bundle.mjs "--verify-whisper-${PLATFORM}")"; then
+          echo "ERROR: cannot verify the bundled whisper pin" >&2; exit 1
+        fi
+        if [[ ! "${_WHISPER_PIN}" =~ ^[0-9a-f]{64}$ ]]; then
+          echo "ERROR: invalid verified whisper pin" >&2; exit 1
+        fi
         mkdir -p "${STAGING}/bin" "${STAGING}/lib"
-        cp "companion/dist/bin/${_WHISPER_BIN}" "${STAGING}/bin/"
-        chmod +x "${STAGING}/bin/${_WHISPER_BIN}" 2>/dev/null || true
-        # macOS brew-linked whisper-cli needs sibling dylibs under ../lib (rpath).
-        # Windows path already stages *.dll next to the exe; mirror that for Darwin.
-        _dylib_count=0
-        if ls companion/dist/lib/libwhisper*.dylib >/dev/null 2>&1; then
-          if ! cp -f companion/dist/lib/libwhisper*.dylib "${STAGING}/lib/"; then
-            echo "ERROR: failed to stage whisper dylibs" >&2
-            exit 1
-          fi
-          if ! cp -f companion/dist/lib/libggml*.dylib "${STAGING}/lib/"; then
-            echo "ERROR: failed to stage ggml dylibs" >&2
-            exit 1
-          fi
-          . "${ROOT_DIR}/scripts/whisper-omp-name.sh"
-          for _omp in companion/dist/lib/libomp*.dylib; do
-            [ -e "${_omp}" ] || continue
-            is_whisper_omp_name "${_omp##*/}" || continue
-            if ! cp -f "${_omp}" "${STAGING}/lib/"; then
-              echo "ERROR: failed to stage libomp dylibs" >&2
-              exit 1
-            fi
-          done
-          # preserve versioned symlinks if present as files/links
-          for _l in companion/dist/lib/libwhisper*.dylib companion/dist/lib/libggml*.dylib companion/dist/lib/libomp*.dylib; do
-            [ -e "${_l}" ] || continue
-            if [[ "${_l##*/}" == libomp* ]] && ! is_whisper_omp_name "${_l##*/}"; then continue; fi
-            _dylib_count=$((_dylib_count + 1))
-          done
-        fi
-        echo "  staged bin/${_WHISPER_BIN} + lib/ (${_dylib_count} dylibs, local STT)"
-        if [ "${_dylib_count}" = "0" ]; then
-          echo "ERROR: no companion/dist/lib/*.dylib — refuse to ship broken macOS local STT (run companion/scripts/build-cmspark-whisper.sh)" >&2
-          exit 1
-        fi
-        # Partial set is also broken (Pi nit): need libwhisper + at least one libggml*
-        _has_whisper=0
-        _has_ggml=0
-        ls "${STAGING}/lib"/libwhisper*.dylib >/dev/null 2>&1 && _has_whisper=1
-        ls "${STAGING}/lib"/libggml*.dylib >/dev/null 2>&1 && _has_ggml=1
-        if [ "${_has_whisper}" != "1" ] || [ "${_has_ggml}" != "1" ]; then
-          echo "ERROR: incomplete dylib set under ${STAGING}/lib (need libwhisper* and libggml*)" >&2
-          ls -la "${STAGING}/lib" >&2 || true
-          exit 1
-        fi
+        node "${ROOT_DIR}/scripts/whisper-generation.mjs" stage "companion/dist/.whisper-generations" "${_WHISPER_CURRENT}" "${_WHISPER_ARCH}" "${STAGING}" "${_WHISPER_PIN}"
         # Inspect the transitive staged graph, not just the executable. A
         # bundled dylib can itself retain an absolute Homebrew dependency.
         node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${STAGING}" "${_WHISPER_BIN}"
@@ -485,7 +449,10 @@ case "${PLATFORM}" in
           exit 1
         fi
       else
-        echo "WARNING: companion/dist/bin/${_WHISPER_BIN} missing — local STT disabled in package (run companion/scripts/build-cmspark-whisper.sh)" >&2
+        if [ -e "companion/dist/bin/${_WHISPER_BIN}" ] || [ -L "companion/dist/bin/${_WHISPER_BIN}" ]; then
+          echo "ERROR: legacy unsealed whisper binary cannot be packaged; rebuild it first" >&2; exit 1
+        fi
+        echo "WARNING: local STT disabled (no sealed whisper generation)" >&2
       fi
     fi
     ;;

@@ -46,6 +46,24 @@ fi
 # Rebuild the bundle into a private directory and compare to staging.
 node "${ROOT_DIR}/companion/scripts/run-esbuild-bundle.mjs" --verify-macos-arm64-tray
 
+# Standalone DMG creation may be pointed at old staging. Bind any staged
+# whisper helper and libraries to the selected generation and bundled pin.
+_WHISPER_CURRENT="${ROOT_DIR}/companion/dist/whisper-current-darwin-arm64"
+_WHISPER_STORE="${ROOT_DIR}/companion/dist/.whisper-generations"
+_WHISPER_BIN="${STAGING}/bin/cmspark-whisper-darwin-arm64"
+_WHISPER_PIN=""
+if [ -e "${_WHISPER_BIN}" ] || [ -L "${_WHISPER_BIN}" ] || [ -e "${_WHISPER_CURRENT}" ] || [ -L "${_WHISPER_CURRENT}" ]; then
+  if ! _WHISPER_PIN="$(cd "${ROOT_DIR}/companion" && node scripts/run-esbuild-bundle.mjs --verify-whisper-macos-arm64)"; then
+    echo "[create-dmg] ERROR: cannot verify the bundled whisper pin" >&2; exit 1
+  fi
+  if [[ ! "${_WHISPER_PIN}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[create-dmg] ERROR: invalid verified whisper pin" >&2; exit 1
+  fi
+  cmp -s "${STAGING}/cmspark-agent.js" "${ROOT_DIR}/companion/dist/cmspark-agent.js" || { echo "[create-dmg] ERROR: staged agent differs from verified bundle" >&2; exit 1; }
+  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" darwin-arm64 "${STAGING}" "${_WHISPER_PIN}"
+  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${STAGING}" cmspark-whisper-darwin-arm64
+fi
+
 if [ ! -d "${ICONSET}" ]; then
   echo "[ERROR] Icon set not found: ${ICONSET}"
   echo "        Run 'cd chrome-extension && node scripts/generate-icons.mjs' first."
@@ -141,6 +159,10 @@ node "${ROOT_DIR}/companion/scripts/desktop-artifacts.mjs" verify "${RESOURCES}/
 # Deep signing must not change the pair checked by the package producer.
 cmp -s "${STAGING}/cmspark-agent.js" "${RESOURCES}/cmspark-agent.js" || { echo "[create-dmg] ERROR: signed agent differs from staging" >&2; exit 1; }
 cmp -s "${STAGING}/cmspark-tray" "${RESOURCES}/cmspark-tray" || { echo "[create-dmg] ERROR: signed tray differs from staging" >&2; exit 1; }
+if [ -n "${_WHISPER_PIN}" ]; then
+  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" darwin-arm64 "${RESOURCES}" "${_WHISPER_PIN}"
+  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${RESOURCES}" cmspark-whisper-darwin-arm64
+fi
 
 
 # --- Step 4: Create DMG ---
@@ -198,6 +220,15 @@ if ! cmp -s "${STAGING}/cmspark-agent.js" "${VOLUME}/CMspark.app/Contents/Resour
   echo "[create-dmg] ERROR: DMG copy differs from checked staging pair" >&2
   hdiutil detach "${DEVICE}" -quiet 2>/dev/null || true
   exit 1
+fi
+if [ -n "${_WHISPER_PIN}" ]; then
+  _DMG_RESOURCES="${VOLUME}/CMspark.app/Contents/Resources"
+  if ! node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" darwin-arm64 "${_DMG_RESOURCES}" "${_WHISPER_PIN}" || \
+     ! node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${_DMG_RESOURCES}" cmspark-whisper-darwin-arm64; then
+    echo "[create-dmg] ERROR: DMG whisper copy differs from the verified generation" >&2
+    if ! hdiutil detach "${DEVICE}" -quiet; then echo "[create-dmg] ERROR: failed to detach DMG" >&2; fi
+    exit 1
+  fi
 fi
 
 # Set Finder window layout via AppleScript

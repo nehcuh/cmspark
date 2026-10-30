@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Copy host whisper-cli into companion/dist/bin as cmspark-whisper-<arch>
-# and print SHA256 for whisper-binary-pins.ts.
+# Copy host whisper-cli and print SHA256 for whisper-binary-pins.ts.
+# On macOS, the default output is a sealed generation under dist; old
+# generations are retained, and Node.js 22 is required. Custom OUT is not
+# published for packaging. On other platforms the original dist/bin path remains.
 #
 # Dev path (M1): brew install whisper-cpp → this script → pin file.
 # CI/prod may later build whisper.cpp from source; same output layout.
@@ -12,6 +14,10 @@
 # Env:
 #   CMSPARK_WHISPER_SRC  override source binary path
 #   CMSPARK_WHISPER_OUT  override output path (full file path)
+#
+# Update the pin before compiling and bundling the application. If publication
+# fails after the pin changes, packaging rejects any pin/previous-generation
+# mismatch. Inspect a dangling current pointer rather than deleting it blindly.
 
 set -euo pipefail
 
@@ -22,7 +28,7 @@ for arg in "$@"; do
   case "$arg" in
     --write-pins) WRITE_PINS=1 ;;
     -h|--help)
-      sed -n '2,16p' "$0" | sed 's/^# \?//'
+      sed -n '2,20p' "$0" | sed 's/^# *//'
       exit 0
       ;;
   esac

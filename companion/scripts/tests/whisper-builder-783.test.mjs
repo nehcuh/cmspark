@@ -241,3 +241,11 @@ test('783 custom output retains its explicit path and does not publish a generat
   assert.equal(fs.readFileSync(path.join(f.root, 'companion/dist/lib/libomp.dylib'), 'utf8'), 'inert library text\n');
   assert.equal(fs.existsSync(path.join(f.root, 'companion/dist/whisper-current-darwin-arm64')), false);
 });
+test('783 help describes sealed macOS generations without shell comment markers', t => {
+  const f = fixture(t), sed = ['/usr/bin/sed', '/bin/sed'].find(file => fs.existsSync(file));
+  assert.ok(sed); fs.symlinkSync(sed, path.join(f.root, 'commands/sed'));
+  const r = f.run(['--help']);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /sealed generation/);
+  assert.match(r.stdout, /Node\.js 22 is required/); assert.doesNotMatch(r.stdout, /^#/m);
+  assert.deepEqual(r.trace, []);
+});
