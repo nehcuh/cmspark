@@ -254,6 +254,13 @@ for pkg in node-notifier systray2 onnxruntime-node; do
     cp -r "companion/node_modules/${pkg}" "${STAGING}/node_modules/"
   fi
 done
+# Official filesystem MCP is launched directly by the bundled Node without npx.
+FILESYSTEM_MCP="companion/node_modules/@modelcontextprotocol/server-filesystem"
+test -f "${FILESYSTEM_MCP}/dist/index.js" || {
+  echo "ERROR: official filesystem MCP entry missing; package would fail with spawn npx ENOENT" >&2
+  exit 1
+}
+node "${ROOT_DIR}/scripts/stage-filesystem-runtime.mjs" --source "${ROOT_DIR}/companion" --destination "${STAGING}"
 # #725: no uncorrected Windows sidecar, even when npm lifecycle scripts were omitted.
 case "${PLATFORM}" in
   windows-*) node "${ROOT_DIR}/scripts/patch-node-pty-worker.cjs" --windows-package ;;
@@ -275,7 +282,7 @@ function copyDeps(pkgName) {
   if (visited.has(pkgName)) return;
   visited.add(pkgName);
   try {
-    const pkgJson = require.resolve(pkgName + '/package.json');
+    const pkgJson = path.join(nm, pkgName, 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
     if (pkg.dependencies) {
       for (const dep of Object.keys(pkg.dependencies)) {
@@ -332,6 +339,17 @@ strip_ort_napi() {
     echo "  staged onnxruntime-node napi ${os}/${arch} (#260 speaker diarize)"
   fi
 }
+
+# Linux builds run the speaker-embedding model on CPU. The upstream npm package
+# also ships CUDA/TensorRT provider libraries; those need NVIDIA system libs and
+# are unusable in the self-contained DEB, so remove the optional GPU providers
+# after the target NAPI directory is selected. CPU inference keeps the core
+# libonnxruntime binary and binding.
+strip_ort_optional_providers() {
+  rm -f "${STAGING}/node_modules/onnxruntime-node/bin/napi-"*"/"*"/"*"/libonnxruntime_providers_cuda.so"
+  rm -f "${STAGING}/node_modules/onnxruntime-node/bin/napi-"*"/"*"/"*"/libonnxruntime_providers_tensorrt.so"
+}
+
 case "${PLATFORM}" in
   macos-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_windows_release.exe"
@@ -482,7 +500,13 @@ case "${PLATFORM}" in
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
+    test -f "${STAGING}/node_modules/systray2/traybin/tray_linux_release" || {
+      echo "ERROR: systray2 Linux tray binary missing; package would lack tray support" >&2
+      exit 1
+    }
+    chmod 0755 "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
     if [ "${PLATFORM}" = "linux-arm64" ]; then strip_ort_napi linux arm64; else strip_ort_napi linux x64; fi
+    strip_ort_optional_providers
     # No ORT/TinyClick stage — experimental locate is Qwen3-VL.
     # cmspark-whisper-linux-x64 is intentionally NOT staged (#379): the
     # runtime pin matrix has no linux-x64 entry (whisper-binary-pins.ts) and

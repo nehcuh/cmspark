@@ -722,7 +722,18 @@ make uninstall-windows                             # 卸载
 
 ### Linux
 
-#### 安装
+#### DEB 构建与安装（Debian / Ubuntu / 麒麟 x86_64）
+
+```bash
+make package-linux-deb
+sudo apt install ./dist-package/cmspark_0.7.0-1_amd64.deb
+```
+
+DEB 包含内置 Node.js、Companion、Chrome 扩展、桌面入口和 systemd 用户服务。通过 `sudo apt` 安装时，安装脚本会为对应的桌面用户启用并启动 Companion 和托盘；没有活动桌面会话时，安装后点击应用菜单中的 **CMspark** 即可启动，无需手工执行 `systemctl --user enable --now`。
+
+点击托盘「显示配对码」会复制配对码。X11 使用 `xclip` 或 `xsel`，Wayland 优先使用 `wl-copy`；DEB 会安装 X11 必需工具并推荐 `wl-clipboard`。复制失败时可在终端执行 `cmspark-agent settings --ws-secret` 查看，配对密钥不要发送给他人。
+
+#### 源码安装（开发）
 
 ```bash
 make install-linux
@@ -735,7 +746,7 @@ make install-linux
 #### 启动菜单栏代理
 
 ```bash
-cd companion && npm run menu-bar
+cd companion && npm run tray
 ```
 
 #### 常用命令
@@ -745,7 +756,8 @@ systemctl --user start   cmspark-companion    # 启动服务
 systemctl --user stop    cmspark-companion    # 停止服务
 systemctl --user status  cmspark-companion    # 查看状态
 journalctl --user -u     cmspark-companion    # 查看日志
-make uninstall-linux                          # 卸载
+make uninstall-linux                          # 源码安装卸载
+sudo apt remove cmspark                       # DEB 卸载
 ```
 
 #### Linux 功能缺口总表
@@ -844,6 +856,7 @@ make package
 | **Windows (x64)** | `make package-windows` / CI `package.sh` | `dist-package/cmspark-v*-windows-x64.zip` + `CMspark-Setup-v*.exe` | **官方发布 SoT**：`scripts/package.sh` 打 zip（`node.exe` + `cmspark-agent.js` + 扩展）；NSIS 安装器包**同一份** staging。CI 缺 `makensis` 则失败，不静默只发 zip |
 | **Windows SEA（可选）** | `scripts/build-windows-exe.ps1` / `build-package.bat` | `cmspark-agent.exe` + `CMspark-v*-windows-x64.zip` | 本地/进阶单 exe；**不**生成官方 `CMspark-Setup-v*.exe` |
 | **Linux (x64)** | `make package-linux` | `dist-package/cmspark-v*-linux-x64.zip` | 嵌入 Node 运行时的压缩包 |
+| **Linux DEB (amd64)** | `make package-linux-deb` | `dist-package/cmspark_*_amd64.deb`（同时生成 ZIP） | 含桌面入口、用户服务生命周期和剪贴板依赖 |
 | **当前平台** | `make package` | `dist-package/cmspark-v*-<platform>.zip` | 自动检测平台 |
 
 **Windows 产物 Source of Truth（2026-08 诊断对齐）**

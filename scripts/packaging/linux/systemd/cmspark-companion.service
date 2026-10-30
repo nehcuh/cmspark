@@ -1,0 +1,23 @@
+[Unit]
+Description=CMspark Browser Agent Companion
+Documentation=https://github.com/nehcuh/cmspark
+After=network-online.target
+Wants=network-online.target
+Wants=cmspark-tray.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/install -d -m 700 -- %h/.cmspark-agent %h/.cmspark-agent/logs
+ExecStart=/opt/cmspark/node /opt/cmspark/cmspark-agent.js daemon start
+ExecStop=/opt/cmspark/node /opt/cmspark/cmspark-agent.js daemon stop
+Restart=on-failure
+RestartSec=30
+StartLimitInterval=300
+StartLimitBurst=3
+Environment="NODE_ENV=production"
+Environment="CMSPARK_DATA_DIR=%h/.cmspark-agent"
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

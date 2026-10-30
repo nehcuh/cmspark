@@ -47,7 +47,7 @@ BASENAME="$(basename "${ARCHIVE}")"
 # hypothetical ".tarXgz"). awk prints nothing and exits 0 on no-match, so no
 # `|| true` guard is needed and the empty-check below always runs (an earlier
 # grep-based version aborted silently under `set -euo pipefail` on no-match).
-EXPECTED="$(awk -v bn="${BASENAME}" '$1 ~ /^[0-9a-f]{64}$/ && $2 == bn {print $1; exit}' "${SHASUMS}")"
+EXPECTED="$(awk -v bn="${BASENAME}" 'length($1) == 64 && $1 ~ /^[0-9a-f][0-9a-f]*$/ && $2 == bn {print $1; exit}' "${SHASUMS}")"
 if [ -z "${EXPECTED}" ]; then
   echo "ERROR: no SHASUMS256.txt entry for ${BASENAME} — manifest mismatch or wrong version." >&2
   echo "  Aborting; cannot verify supply-chain integrity of Node ${LABEL}." >&2

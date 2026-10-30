@@ -15,6 +15,7 @@ import fs from "node:fs"
 import { logger } from "../logger.js"
 import { getUserEnvVars, isUnsafeLoaderEnvKey } from "../user-env.js"
 import { keepOnlyDirectories, splitPathEnv } from "../process-path.js"
+import { resolveBundledFilesystemConfig } from "./filesystem-launch.js"
 import type { McpServerConfig } from "./types.js"
 
 export interface TransportExtras {
@@ -245,6 +246,7 @@ export function buildMcpStdioEnv(
 
 export function createTransport(config: McpServerConfig, extras?: TransportExtras): Transport {
   if (config.transport === "stdio") {
+    config = resolveBundledFilesystemConfig(config)
     // P0 SEC-02: minimal allowlist — do NOT spread process.env or getUserEnvVars()
     // (API keys / SSH / cloud creds must not leak into npx/uvx MCP children).
     // Per-server config.env is still applied (operator intent).

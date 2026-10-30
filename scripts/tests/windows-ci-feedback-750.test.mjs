@@ -116,3 +116,36 @@ for (const [label, mutate] of cockpitMutations) {
     for (const value of [source, source.replaceAll('\n', '\r\n')]) assert.throws(() => validateWindowsCiFeedback750(value))
   })
 }
+
+// Use the genuine parsed producer first; rejection cannot be manufactured by
+// an unrelated broken baseline. No workflow command or MCP entry is executed.
+test('#796 clean staged filesystem CI gate preserves exact command and failure boundaries', () => {
+  validateWindowsCiFeedback750(workflow)
+  const name = 'Clean staged filesystem MCP closure (#796)'
+  const gate = doc => doc.jobs.build.steps.find(step => step.name === name)
+  const cases = [
+    ['missing', doc => { doc.jobs.build.steps = doc.jobs.build.steps.filter(step => step.name !== name) }],
+    ['duplicate', doc => { doc.jobs.build.steps.push(structuredClone(gate(doc))) }],
+    ['renamed', doc => { gate(doc).name += ' renamed' }],
+    ['omitted test command', doc => { gate(doc).run = gate(doc).run.replace('--test --experimental-test-isolation=none scripts/tests/filesystem-staged-handshake-794.test.mjs', 'echo omitted') }],
+    ['extra command', doc => { gate(doc).run += 'echo unreviewed\n' }],
+    ['waived failure', doc => { gate(doc)['continue-on-error'] = true }],
+    ['conditional omission', doc => { gate(doc).if = 'false' }],
+    ['larger timeout', doc => { gate(doc)['timeout-minutes'] = 4 }],
+    ['timeout omitted', doc => { delete gate(doc)['timeout-minutes'] }],
+    ['inherited credentials', doc => { gate(doc).run = gate(doc).run.replace('/usr/bin/env -i ', '/usr/bin/env ') }],
+    ['child admission omitted', doc => { gate(doc).run = gate(doc).run.replace('CMSPARK_STAGED_FILESYSTEM_CI=1 ', '') }],
+    ['before build', doc => { const steps = doc.jobs.build.steps; const step = steps.splice(steps.findIndex(s => s.name === name), 1)[0]; steps.splice(steps.findIndex(s => s.name === 'Build companion'), 0, step) }],
+    ['after original tests', doc => { const steps = doc.jobs.build.steps; const step = steps.splice(steps.findIndex(s => s.name === name), 1)[0]; steps.splice(steps.findIndex(s => s.name === 'Run companion tests') + 1, 0, step) }],
+    ['locked install omitted', doc => { doc.jobs.build.steps = doc.jobs.build.steps.filter(step => step.name !== 'Install dependencies') }],
+    ['locked install weakened', doc => { const step = doc.jobs.build.steps.find(s => s.name === 'Install dependencies'); step.run = step.run.replaceAll('npm ci', 'npm install') }],
+  ]
+  for (const [label, mutate] of cases) {
+    const doc = parseWorkflow750(workflow)
+    mutate(doc)
+    const source = printWorkflow750(doc)
+    for (const value of [source, source.replaceAll('\n', '\r\n')]) {
+      assert.throws(() => validateWindowsCiFeedback750(value), { code: 'ERR_ASSERTION' }, label)
+    }
+  }
+})
