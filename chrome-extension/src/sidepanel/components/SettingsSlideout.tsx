@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { prepareSettingsSubmission } from "../utils/settings-draft"
+import type { LLMConfig } from "../types"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
 import { effectiveReasoningEffort, reasoningSupport, type ReasoningEffort } from "../utils/reasoning-effort"
@@ -379,16 +381,45 @@ export function SettingsSlideout() {
     [dispatch, host],
   )
 
+  useEffect(() => {
+    if (state.settingsOpen && state.configHydratedFromCompanion) dispatch({ type: "BEGIN_SETTINGS_DRAFT" })
+  }, [state.settingsOpen, state.configHydratedFromCompanion, dispatch])
+
+  useEffect(() => {
+    if (state.settingsOpen && state.settingsSave.status === "saved") {
+      dispatch({ type: "END_SETTINGS_DRAFT" })
+      dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+    }
+  }, [state.settingsOpen, state.settingsSave.status, dispatch])
+
   if (!state.settingsOpen) return null
 
-  const config = state.config
+  // Security controls with their own immediate, phrase-protected writes keep
+  // reading authoritative state. Overlay only fields the user is editing.
+  const config = { ...state.config }
+  const draft = state.settingsDraft
+  if (draft) {
+    for (const key of Object.keys(draft.dirty) as Array<keyof LLMConfig>) {
+      Object.assign(config, { [key]: draft.value[key] })
+    }
+  }
+  const saveBlocked = settingsSaveDisabled(state.configHydratedFromCompanion) || !draft ||
+    !state.configRevision || state.connectionState !== "connected" || !!state.settingsSave.pending ||
+    state.settingsSave.status === "unknown" || Object.keys(draft?.conflicts ?? {}).length > 0
 
   const handleSave = () => {
-    if (settingsSaveDisabled(state.configHydratedFromCompanion)) return
-    // Probe bit is session-only; never persist native_vision_detected.
-    const { native_vision_detected: _drop, ...toSave } = config
-    chrome.runtime.sendMessage({ type: "config.set", config: toSave }, () => {
-      dispatch({ type: "TOGGLE_SETTINGS" })
+    if (saveBlocked || !draft || !state.configRevision || draft.revision !== state.configRevision) return
+    if (!Object.keys(draft.dirty).length) {
+      dispatch({ type: "END_SETTINGS_DRAFT" })
+      dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+      return
+    }
+    const id = `settings-save:${crypto.randomUUID()}`
+    const submission = prepareSettingsSubmission(draft, id)
+    dispatch({ type: "BEGIN_SETTINGS_SAVE", submission })
+    chrome.runtime.sendMessage({ type: "config.set", id, config_revision: submission.revision, config: submission.patch }, (response) => {
+      // This callback only reports transport admission, never persistence.
+      if (chrome.runtime.lastError || !response?.ok) dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id })
     })
   }
 
@@ -418,7 +449,7 @@ export function SettingsSlideout() {
       .split(/\n|,/)
       .map(domain => domain.trim())
       .filter(Boolean)
-    dispatch({ type: "SET_CONFIG", config: { trusted_domains } })
+    dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { trusted_domains } })
   }
 
   const handleAutoApprovedDomainsChange = (value: string) => {
@@ -426,7 +457,7 @@ export function SettingsSlideout() {
       .split(/\n|,/)
       .map(domain => domain.trim())
       .filter(Boolean)
-    dispatch({ type: "SET_CONFIG", config: { auto_approved_domains } })
+    dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { auto_approved_domains } })
   }
 
   // P1-1: arm paths send focused config.set + confirmation_phrase so companion
@@ -877,7 +908,7 @@ export function SettingsSlideout() {
               onChange={e => {
                 const protocol = e.target.value === "anthropic" ? "anthropic" as const : "openai" as const
                 dispatch({
-                  type: "SET_CONFIG",
+                  type: "EDIT_SETTINGS_DRAFT",
                   config: {
                     protocol,
                     // Leaving anthropic clears compat profile (only valid under anthropic)
@@ -902,7 +933,7 @@ export function SettingsSlideout() {
               style={styles.input}
               type="text"
               value={config.base_url}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { base_url: e.target.value } })}
+              onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { base_url: e.target.value } })}
               placeholder={
                 config.protocol === "anthropic"
                   ? "https://api.anthropic.com 或中继 https://host/v1"
@@ -934,7 +965,7 @@ export function SettingsSlideout() {
                 style={{ ...styles.input, flex: 1 }}
                 type={showKey ? "text" : "password"}
                 value={config.api_key}
-                onChange={e => dispatch({ type: "SET_CONFIG", config: { api_key: e.target.value } })}
+                onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { api_key: e.target.value } })}
                 placeholder={state.companionConfig?.api_key_set ? "（已配置，留空保持不变；输入新值覆盖）" : "sk-..."}
               />
               <button style={styles.toggleBtn} onClick={() => setShowKey(!showKey)}>
@@ -956,7 +987,7 @@ export function SettingsSlideout() {
                   checked={config.client_header_profile === "claude_code_compat"}
                   onChange={e =>
                     dispatch({
-                      type: "SET_CONFIG",
+                      type: "EDIT_SETTINGS_DRAFT",
                       config: {
                         client_header_profile: e.target.checked ? "claude_code_compat" : "none",
                       },
@@ -982,7 +1013,7 @@ export function SettingsSlideout() {
                 style={styles.toggleBtn}
                 onClick={() =>
                   dispatch({
-                    type: "SET_CONFIG",
+                    type: "EDIT_SETTINGS_DRAFT",
                     config: {
                       protocol: "openai",
                       client_header_profile: "none",
@@ -998,7 +1029,7 @@ export function SettingsSlideout() {
                 style={styles.toggleBtn}
                 onClick={() =>
                   dispatch({
-                    type: "SET_CONFIG",
+                    type: "EDIT_SETTINGS_DRAFT",
                     config: {
                       protocol: "anthropic",
                       client_header_profile: "none",
@@ -1014,7 +1045,7 @@ export function SettingsSlideout() {
                 style={styles.toggleBtn}
                 onClick={() =>
                   dispatch({
-                    type: "SET_CONFIG",
+                    type: "EDIT_SETTINGS_DRAFT",
                     config: {
                       protocol: "anthropic",
                       client_header_profile: "claude_code_compat",
@@ -1035,7 +1066,7 @@ export function SettingsSlideout() {
               list="model-options"
               type="text"
               value={config.model_name}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { model_name: e.target.value } })}
+              onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { model_name: e.target.value } })}
               placeholder="输入模型名称或从列表选择"
             />
             <datalist id="model-options">
@@ -1058,7 +1089,7 @@ export function SettingsSlideout() {
           <div style={styles.field}>
             <label htmlFor="reasoning-effort" style={styles.label}>思考强度</label>
             <select id="reasoning-effort" style={styles.input} value={effectiveReasoningEffort(config.reasoning_effort)}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { reasoning_effort: e.target.value as ReasoningEffort } })}>
+              onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { reasoning_effort: e.target.value as ReasoningEffort } })}>
               <option value="low">低</option>
               <option value="medium">中（默认）</option>
               <option value="high">高</option>
@@ -1081,7 +1112,7 @@ export function SettingsSlideout() {
               value={config.native_vision || "auto"}
               onChange={(e) =>
                 dispatch({
-                  type: "SET_CONFIG",
+                  type: "EDIT_SETTINGS_DRAFT",
                   config: { native_vision: e.target.value as "auto" | "on" | "off" },
                 })
               }
@@ -1110,7 +1141,7 @@ export function SettingsSlideout() {
               max={2}
               step={0.1}
               value={config.temperature}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { temperature: parseFloat(e.target.value) } })}
+              onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { temperature: parseFloat(e.target.value) } })}
             />
           </div>
 
@@ -1120,7 +1151,7 @@ export function SettingsSlideout() {
               style={styles.input}
               type="number"
               value={config.context_window}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { context_window: parseInt(e.target.value) || 512000 } })}
+              onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { context_window: parseInt(e.target.value) || 512000 } })}
               min={1024}
               max={1000000}
               step={1024}
@@ -1150,7 +1181,7 @@ export function SettingsSlideout() {
                   )
                   if (!ok) return
                 }
-                dispatch({ type: "SET_CONFIG", config: { context_compaction: v } })
+                dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { context_compaction: v } })
               }}
             >
               <option value="auto">自动压缩（超预算时）</option>
@@ -1170,7 +1201,7 @@ export function SettingsSlideout() {
                   checked={config.context_compaction_m2 !== false}
                   onChange={e =>
                     dispatch({
-                      type: "SET_CONFIG",
+                      type: "EDIT_SETTINGS_DRAFT",
                       config: { context_compaction_m2: e.target.checked },
                     })
                   }
@@ -1215,7 +1246,7 @@ export function SettingsSlideout() {
                 checked={config.vision_enabled || false}
                 onChange={e => {
                   const on = e.target.checked
-                  dispatch({ type: "SET_CONFIG", config: { vision_enabled: on } })
+                  dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { vision_enabled: on } })
                   setVisionReuseHint(null)
                   if (!on) {
                     setVisionReuseBanner(false)
@@ -1284,7 +1315,7 @@ export function SettingsSlideout() {
                       if (!window.confirm(VISION_COPY.overwriteConfirm)) return
                     }
                     const result = applyVisionReuseFromMain(main)
-                    dispatch({ type: "SET_CONFIG", config: result.patch })
+                    dispatch({ type: "EDIT_SETTINGS_DRAFT", config: result.patch })
                     setVisionReuseBanner(false)
                     setVisionReuseBannerDismissed(true)
                     setVisionAdvancedOpen(false)
@@ -1373,7 +1404,7 @@ export function SettingsSlideout() {
                     style={{ ...styles.input, flex: 1 }}
                     type={showKey ? "text" : "password"}
                     value={config.vision_api_key || ""}
-                    onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_api_key: e.target.value } })}
+                    onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { vision_api_key: e.target.value } })}
                     placeholder={
                       state.companionConfig?.vision_api_key_set
                         ? "（已配置，留空保持不变；输入新值覆盖）"
@@ -1392,7 +1423,7 @@ export function SettingsSlideout() {
                   style={styles.input}
                   type="text"
                   value={config.vision_base_url || "http://localhost:11434/v1"}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_base_url: e.target.value } })}
+                  onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { vision_base_url: e.target.value } })}
                   placeholder="http://localhost:11434/v1 或云端 OpenAI 兼容端点"
                 />
               </div>
@@ -1404,7 +1435,7 @@ export function SettingsSlideout() {
                   list="vision-model-options"
                   type="text"
                   value={config.vision_model_name || ""}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_model_name: e.target.value } })}
+                  onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { vision_model_name: e.target.value } })}
                   placeholder="输入模型名称或从列表选择"
                 />
                 <datalist id="vision-model-options">
@@ -1429,7 +1460,7 @@ export function SettingsSlideout() {
                   max={60000}
                   step={5000}
                   value={config.vision_timeout_ms || 30000}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_timeout_ms: parseInt(e.target.value) } })}
+                  onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { vision_timeout_ms: parseInt(e.target.value) } })}
                 />
               </div>
 
@@ -1438,7 +1469,7 @@ export function SettingsSlideout() {
                 <select
                   style={styles.select}
                   value={config.vision_fallback || "metadata"}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_fallback: e.target.value as "metadata" | "passthrough" | "error" } })}
+                  onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { vision_fallback: e.target.value as "metadata" | "passthrough" | "error" } })}
                 >
                   <option value="metadata">{VISION_COPY.fallbackMetadata}</option>
                   <option value="passthrough">{VISION_COPY.fallbackPassthrough}</option>
@@ -3319,7 +3350,7 @@ export function SettingsSlideout() {
               max={100}
               step={1}
               value={(config.file_upload_max_size ?? 10485760) / (1024 * 1024)}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_size: parseInt(e.target.value) * 1024 * 1024 } })}
+              onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { file_upload_max_size: parseInt(e.target.value) * 1024 * 1024 } })}
             />
             <div style={styles.helpText}>
               上传文件的大小上限，范围 1–100 MB。此上限不提高图片预算（压缩后单张 ≤4MB，合计 ≤6MB）。
@@ -3332,7 +3363,7 @@ export function SettingsSlideout() {
               style={styles.input}
               type="number"
               value={config.file_upload_max_tokens ?? 50000}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_tokens: parseInt(e.target.value) || 50000 } })}
+              onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { file_upload_max_tokens: parseInt(e.target.value) || 50000 } })}
               min={1000}
               max={200000}
               step={1000}
@@ -3347,7 +3378,7 @@ export function SettingsSlideout() {
               <input
                 type="checkbox"
                 checked={config.file_upload_vision ?? true}
-                onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_vision: e.target.checked } })}
+                onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { file_upload_vision: e.target.checked } })}
               />
               启用文件视觉分析
             </label>
@@ -3371,7 +3402,7 @@ export function SettingsSlideout() {
                 }}
                 onClick={() =>
                   dispatch({
-                    type: "SET_CONFIG",
+                    type: "EDIT_SETTINGS_DRAFT",
                     config: { thread_digest_enabled: !config.thread_digest_enabled },
                   })
                 }
@@ -3393,7 +3424,7 @@ export function SettingsSlideout() {
               value={config.thread_digest_on_idle_hours ?? 24}
               onChange={(e) =>
                 dispatch({
-                  type: "SET_CONFIG",
+                  type: "EDIT_SETTINGS_DRAFT",
                   config: {
                     thread_digest_on_idle_hours: Math.max(
                       0,
@@ -3415,7 +3446,7 @@ export function SettingsSlideout() {
               value={config.thread_digest_max_per_day ?? 20}
               onChange={(e) =>
                 dispatch({
-                  type: "SET_CONFIG",
+                  type: "EDIT_SETTINGS_DRAFT",
                   config: {
                     thread_digest_max_per_day: Math.max(
                       0,
@@ -3426,7 +3457,7 @@ export function SettingsSlideout() {
               }
             />
             <div style={styles.helpText}>
-              含惰性自动批；单批仍 ≤20。开关立即影响当前面板；点「保存」写入 Companion 持久配置。
+              含惰性自动批；单批仍 ≤20。点「保存」后写入 Companion 并生效。
             </div>
           </div>
 
@@ -3493,7 +3524,7 @@ export function SettingsSlideout() {
             <input
               style={styles.input}
               value={config.obsidian_vault_path || ""}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
+              onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { obsidian_vault_path: e.target.value } })}
               placeholder="/path/to/your/notes"
             />
             <button
@@ -4185,6 +4216,12 @@ export function SettingsSlideout() {
         <div className="cm-settings-footer" style={styles.footer}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
             <span className="cm-settings-save-scope">保存配置草稿；独立表单与授权需分别提交。</span>
+            {!state.configRevision && <span role="status">当前 Companion 未提供配置版本，请升级后保存草稿。</span>}
+            {state.settingsSave.status === "pending" && <span role="status">正在等待 Companion 保存回执…</span>}
+            {state.settingsSave.status === "unknown" && <span role="alert">保存结果未知，草稿已保留。请先核对当前配置，再选择重新保存。 <button type="button" onClick={() => { chrome.runtime.sendMessage({ type: "config.get" }); dispatch({ type: "SETTINGS_SAVE_RETRY" }) }}>我已核对，允许重新保存</button></span>}
+            {state.settingsSave.status === "conflict" && <span role="alert">配置已在别处更改，请核对草稿后再保存。</span>}
+            {state.settingsSave.status === "review" && <span role="status">部分草稿仍需确认，未自动关闭。</span>}
+            {draft && Object.keys(draft.conflicts).map(key => <span role="alert" key={key}>字段 {key} 已变化，选择保留哪一份： <button type="button" onClick={() => dispatch({ type: "RESOLVE_SETTINGS_CONFLICT", key: key as keyof LLMConfig, choice: "mine" })}>保留我的编辑</button> <button type="button" onClick={() => dispatch({ type: "RESOLVE_SETTINGS_CONFLICT", key: key as keyof LLMConfig, choice: "remote" })}>使用当前配置</button></span>)}
             {state.testResult && (
               <span style={{
                 fontSize: 12,
@@ -4204,14 +4241,14 @@ export function SettingsSlideout() {
           <button
             style={{
               ...styles.saveBtn,
-              ...(settingsSaveDisabled(state.configHydratedFromCompanion)
+              ...(saveBlocked
                 ? { opacity: 0.5, cursor: "not-allowed" }
                 : {}),
             }}
             className="cm-settings-save"
             onClick={handleSave}
-            disabled={settingsSaveDisabled(state.configHydratedFromCompanion)}
-            title={settingsSaveDisabledTitle(state.configHydratedFromCompanion)}
+            disabled={saveBlocked}
+            title={settingsSaveDisabledTitle(state.configHydratedFromCompanion) ?? (saveBlocked ? "等待连接、回执或处理冲突" : undefined)}
           >保存并关闭</button>
         </div>
 

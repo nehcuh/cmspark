@@ -10,6 +10,7 @@ const frame = (model: string) => normalizeConfig({
 
 test("actual store keeps drafts while authoritative snapshots update", () => {
   let state = agentReducer(initialState, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
   state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
   state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
   state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("remote"), revision: "epoch:2" })
@@ -20,6 +21,7 @@ test("actual store keeps drafts while authoritative snapshots update", () => {
 
 test("legacy snapshots cannot discard or authorize a draft", () => {
   let state = agentReducer(initialState, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
   state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
   state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
   state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("remote"), revision: null })
@@ -32,6 +34,7 @@ test("only the matching save receipt can settle a draft and later edits survive"
   const { prepareSettingsSubmission } = await import("../src/sidepanel/utils/settings-draft")
   let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
   state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
   state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
   state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "first" } })
   const submission = prepareSettingsSubmission(state.settingsDraft!, "own:1")
@@ -49,6 +52,7 @@ test("disconnect and a correlated conflict preserve drafts without claiming succ
   const { prepareSettingsSubmission } = await import("../src/sidepanel/utils/settings-draft")
   let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
   state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
   state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
   state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
   const submission = prepareSettingsSubmission(state.settingsDraft!, "own:2")
@@ -69,6 +73,7 @@ test("correlated error preserves the draft and late errors cannot change another
   assert.equal(isSettingsSaveError({ type: "error", id: "other:abc" }), false)
   let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
   state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
   state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
   state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
   const submission = prepareSettingsSubmission(state.settingsDraft!, "settings-save:abc")

@@ -2244,7 +2244,7 @@ export function useWebSocket() {
           // Native folder-picker result from the companion. Adopt the path (config binds to
           // the input); clear the spinner. A cancel is silent; a real error is surfaced.
           if (msg.path) {
-            dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: msg.path } })
+            dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { obsidian_vault_path: msg.path } })
             dispatch({ type: "SET_VAULT_PICKER", picking: false, error: null })
           } else if (msg.error === "cancelled") {
             dispatch({ type: "SET_VAULT_PICKER", picking: false, error: null })

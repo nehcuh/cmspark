@@ -506,6 +506,8 @@ export type AgentAction =
   | { type: "SETTINGS_SAVE_UNKNOWN"; id: string }
   | { type: "RESOLVE_SETTINGS_CONFLICT"; key: keyof LLMConfig; choice: "mine" | "remote" }
   | { type: "BEGIN_SETTINGS_DRAFT" }
+  | { type: "END_SETTINGS_DRAFT" }
+  | { type: "SETTINGS_SAVE_RETRY" }
   | { type: "EDIT_SETTINGS_DRAFT"; config: Partial<LLMConfig> }
   | { type: "TOGGLE_SETTINGS" }
   | { type: "SET_SETTINGS_OPEN"; open: boolean }
@@ -1403,13 +1405,19 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, config, configRevision: revision, settingsDraft, settingsSave }
     }
     case "BEGIN_SETTINGS_DRAFT":
-      return state.settingsDraft || !state.configRevision ? state : {
-        ...state, settingsDraft: createSettingsDraft(state.config, state.configRevision),
+      return state.settingsDraft || !state.configHydratedFromCompanion ? state : {
+        ...state, settingsDraft: createSettingsDraft(state.config, state.configRevision ?? ""),
       }
-    case "EDIT_SETTINGS_DRAFT":
-      return state.settingsDraft ? {
-        ...state, settingsDraft: editSettingsDraft(state.settingsDraft, action.config),
-      } : state
+    case "END_SETTINGS_DRAFT":
+      return { ...state, settingsDraft: null, settingsSave: { status: "idle", pending: null } }
+    case "SETTINGS_SAVE_RETRY":
+      return state.settingsSave.pending ? state : { ...state, settingsSave: { status: "idle", pending: null } }
+    case "EDIT_SETTINGS_DRAFT": {
+      if (!state.configHydratedFromCompanion) return state
+      const draft = state.settingsDraft ?? createSettingsDraft(state.config, state.configRevision ?? "")
+      return { ...state, settingsDraft: editSettingsDraft(draft, action.config),
+        settingsSave: state.settingsSave.status === "saved" ? { status: "idle", pending: null } : state.settingsSave }
+    }
     case "BEGIN_SETTINGS_SAVE":
       return !state.settingsDraft || state.settingsSave.pending || state.connectionState !== "connected" ||
         !state.configRevision || state.configRevision !== action.submission.revision ||
