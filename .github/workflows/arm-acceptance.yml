@@ -36,6 +36,20 @@ jobs:
       - name: Typecheck companion and tests
         working-directory: companion
         run: ./node_modules/.bin/tsc -p tsconfig.test.json
+      - name: Swift tray packaging CPU controls
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap companion/scripts/tests/swift-tray-package-pin.test.mjs companion/scripts/tests/swift-tray-bundle-entry.test.mjs companion/scripts/tests/swift-tray-source-freshness.test.mjs companion/scripts/tests/swift-tray-build-output.test.mjs companion/scripts/tests/swift-tray-package-copy.test.mjs | tee "$RUNNER_TEMP/tray-scripts-arm.tap"
+          grep -Fx '# tests 17' "$RUNNER_TEMP/tray-scripts-arm.tap"
+          grep -Fx '# pass 17' "$RUNNER_TEMP/tray-scripts-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/tray-scripts-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/tray-scripts-arm.tap"
+          node --test --test-reporter=tap companion/.test-dist/tests/swift-tray-build-pin.test.js | tee "$RUNNER_TEMP/tray-consumer-arm.tap"
+          grep -Fx '# tests 7' "$RUNNER_TEMP/tray-consumer-arm.tap"
+          grep -Fx '# pass 7' "$RUNNER_TEMP/tray-consumer-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/tray-consumer-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/tray-consumer-arm.tap"
       - name: Qwen locator CPU controls
         working-directory: companion
         run: node --import tsx --test tests/computer-qwen-vl-locator.test.ts
