@@ -28,6 +28,9 @@ test("settings web keeps edits while saves and conflicts are in flight", async (
   assert.equal(element("modelName").disabled, true)
   preset.onclick()
   assert.equal(element("modelName").value, "")
+  element("testBtn").onclick()
+  element("testVisionBtn").onclick()
+  assert.equal(pending.length, 1, "pre-hydration connection tests do not run")
   element("saveBtn").onclick()
   assert.equal(pending.length, 1, "unhydrated settings cannot save")
   pending[0].resolve({ config_revision: "epoch:1", llm: { model_name: "base" }, vision: {} })
@@ -36,6 +39,7 @@ test("settings web keeps edits while saves and conflicts are in flight", async (
   element("modelName").value = "draft-A"
   element("saveBtn").onclick()
   assert.equal(pending.length, 2)
+  assert.equal(element("result").className, "result pending")
   assert.equal(pending[1].body.config_revision, "epoch:1")
   assert.equal(pending[1].body.llm.model_name, "draft-A")
   element("modelName").value = "draft-B"
@@ -44,6 +48,7 @@ test("settings web keeps edits while saves and conflicts are in flight", async (
   pending[1].resolve({ ok: true, config_revision: "epoch:2" })
   await flush()
   assert.equal(element("modelName").value, "draft-B")
+  assert.match(element("result").textContent, /当前修改尚未保存/)
   element("saveBtn").onclick()
   assert.equal(pending[2].body.config_revision, "epoch:2")
   assert.equal(pending[2].body.llm.model_name, "draft-B")

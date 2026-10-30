@@ -584,6 +584,7 @@ input:focus{border-color:var(--accent)}
 .result{margin-top:12px;padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;display:none}
 .result.success{display:block;background:var(--success-soft);color:var(--success);border:1px solid var(--success-border)}
 .result.error{display:block;background:var(--danger-soft);color:var(--danger);border:1px solid var(--danger-border)}
+.result.pending{display:block;color:var(--muted);border:1px solid var(--border)}
 .input-row{display:flex;gap:6px}
 .input-row input{flex:1}
 .btn-icon{padding:8px 10px;background:var(--field-bg);border:1px solid var(--field-border);border-radius:var(--radius-sm);color:var(--muted);cursor:pointer;font-size:13px;line-height:1}
@@ -929,15 +930,20 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
   $("saveBtn").onclick=function(){
     if(savePending)return;
-    if(!configRevision){showResult("配置版本不可用；请先保存草稿，再刷新页面核对。",false);return}
-    resultEl.className="result";
-    var payload=collect();payload.config_revision=configRevision;savePending=true;
+    if(!configRevision){showResult("配置版本不可用；请先复制当前内容，再刷新页面核对。",false);return}
+    resultEl.textContent="正在保存上次提交…";resultEl.className="result pending";
+    var payload=collect(),submitted=JSON.stringify(payload);payload.config_revision=configRevision;savePending=true;
     fetch(url("/api/config"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
     .then(function(r){return r.json()}).then(function(d){
       if(d.ok&&typeof d.config_revision==="string"&&d.config_revision){
         configRevision=d.config_revision;
-        savedFlash.classList.add("show");
-        setTimeout(function(){savedFlash.classList.remove("show")},1500);
+        if(JSON.stringify(collect())===submitted){
+          resultEl.className="result";
+          savedFlash.classList.add("show");
+          setTimeout(function(){savedFlash.classList.remove("show")},1500);
+        }else{
+          showResult("上次提交已保存；当前修改尚未保存。",true);
+        }
         // Do NOT replace the api_key input with the masked value — that would
         // overwrite the user's plaintext key with '****', making it look lost.
         // The key is safely stored; the field retains what the user typed.
@@ -950,6 +956,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   };
 
   $("testBtn").onclick=function(){
+    if(!configLoaded){showResult("配置尚未加载，请刷新页面后重试。",false);return}
     var data=collect();
     resultEl.className="result";
     $("testBtn").textContent="Testing...";
@@ -985,6 +992,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   visionTimeoutEl.oninput=function(){visionTimeoutValEl.textContent=visionTimeoutEl.value+"s"};
 
   $("testVisionBtn").onclick=function(){
+    if(!configLoaded){showResult("配置尚未加载，请刷新页面后重试。",false);return}
     visionResultEl.className="result";
     $("testVisionBtn").textContent="Testing...";
     $("testVisionBtn").disabled=true;
