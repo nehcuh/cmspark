@@ -38,6 +38,29 @@ function maskApiKey(key: string): string {
   return key.slice(0, 4) + "****" + key.slice(-4)
 }
 
+/** Masked header values are display placeholders, not replacement credentials. */
+export function settingsWebLlmUpdate(input: Record<string, unknown>): Record<string, unknown> {
+  const llm = { ...input }
+  if (typeof llm.api_key === "string" && (isMaskedApiKey(llm.api_key) || llm.api_key === "")) {
+    delete llm.api_key
+  }
+  if (llm.extra_headers && typeof llm.extra_headers === "object" && !Array.isArray(llm.extra_headers)) {
+    llm.extra_headers = Object.fromEntries(
+      Object.entries(llm.extra_headers).filter(([, value]) => value !== "***"),
+    )
+  }
+  return llm
+}
+
+/** The HTTP save response must provide the same header redaction as GET. */
+export function settingsWebLlmResponse(llm: Record<string, any>): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...llm, api_key: maskApiKey(llm.api_key) }
+  if (llm.extra_headers && typeof llm.extra_headers === "object") {
+    result.extra_headers = Object.fromEntries(Object.keys(llm.extra_headers).map(k => [k, "***"]))
+  }
+  return result
+}
+
 async function findAvailablePort(startPort: number): Promise<number> {
   for (let port = startPort; port < startPort + 10; port++) {
     try {
@@ -320,15 +343,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
     if (pathOnly === "/api/config" && req.method === "GET") {
       const config = getConfig()
       const vision = config.vision
-      const llmPublic: Record<string, unknown> = {
-        ...config.llm,
-        api_key: maskApiKey(config.llm.api_key),
-      }
-      if (config.llm.extra_headers && typeof config.llm.extra_headers === "object") {
-        llmPublic.extra_headers = Object.fromEntries(
-          Object.keys(config.llm.extra_headers).map((k) => [k, "***"]),
-        )
-      }
+      const llmPublic = settingsWebLlmResponse(config.llm)
       jsonResponse(res, {
         llm: llmPublic,
         vision: vision
@@ -351,12 +366,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
           const update: any = {}
           // LLM config
           if (data.llm) {
-            const llm = { ...data.llm }
-            // Skip masked/empty API keys to keep the existing value
-            if (isMaskedApiKey(llm.api_key) || llm.api_key === "") {
-              delete llm.api_key
-            }
-            update.llm = llm
+            update.llm = settingsWebLlmUpdate(data.llm)
           }
           // Vision config
           if (data.vision) {
@@ -373,7 +383,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
           })
           jsonResponse(res, {
             ok: true,
-            llm: { ...updated.llm, api_key: maskApiKey(updated.llm.api_key) },
+            llm: settingsWebLlmResponse(updated.llm),
             vision: updated.vision
               ? { ...updated.vision, api_key: maskApiKey(updated.vision.api_key) }
               : undefined,
