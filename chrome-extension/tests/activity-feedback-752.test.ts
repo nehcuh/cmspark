@@ -68,6 +68,7 @@ test('752 stopped service and unchanged capture have distinct explanations', () 
   const h = harness()
   h.controller.snapshot.runtime.running = false
   assert.match(h.text(h.render()), /采集后台当前未运行/)
+  assert.doesNotMatch(h.text(h.render()), /采集已开启/)
   assert.doesNotMatch(h.text(h.render()), /未能安全完成前台窗口采集/)
   h.controller.snapshot.runtime.running = true
   h.controller.snapshot.runtime.status = 'unchanged'
@@ -84,6 +85,7 @@ test('752 stale disconnected snapshot does not claim current capture state', () 
   assert.doesNotMatch(h.text(h.render(false)), /未能安全完成前台窗口采集/)
   h.controller.snapshotCurrent = false
   assert.doesNotMatch(h.text(h.render(true)), /未能安全完成前台窗口采集/)
+  assert.match(h.text(h.render(true)), /采集状态待确认/)
 })
 
 test('752 same-named applications remain visually distinguishable', async () => {
