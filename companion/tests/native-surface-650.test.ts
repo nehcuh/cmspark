@@ -247,3 +247,47 @@ boundedTest("wrapper keeps its preload data binding while a previous native call
     await api.withSurface650({signal:t.signal} as TestContext,async(_t,lease)=>{lease.checkpoint();assert.equal(fs.existsSync(other.claim),true)})
   }finally{abort.abort();if(owner)try{owner.release()}catch{};if(pending)await pending.catch(()=>{});for(const o of [original,outside,other])o.cleanup()}
 })
+
+boundedTest("terminal admission waits for the real surface owner before reading mutable data", async t => {
+  const ts = require("typescript") as typeof import("typescript")
+  const source = fs.readFileSync(path.resolve(__dirname, "../../tests/desktop-native-thread-metadata-476.test.ts"), "utf8")
+  const ast = ts.createSourceFile("desktop-native-thread-metadata-476.test.ts", source, ts.ScriptTarget.Latest, true)
+  const declaration = (name: string) => {
+    const matches = ast.statements.filter((n): n is import("typescript").FunctionDeclaration => ts.isFunctionDeclaration(n) && n.name?.text === name)
+    assert.equal(matches.length, 1); return matches[0]
+  }
+  const tests = ast.statements.filter(ts.isExpressionStatement).map(n => n.expression).filter((n): n is import("typescript").CallExpression =>
+    ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "test" && ts.isStringLiteral(n.arguments[0]) && n.arguments[0].text === "#476 terminal-only native confirmation→real user PTY→selected partial excerpt→canonical reopen")
+  assert.equal(tests.length, 1)
+  const outer = tests[0].arguments[2]; assert.ok(ts.isArrowFunction(outer) && ts.isBlock(outer.body))
+  const statements = outer.body.statements
+  assert.ok(ts.isExpressionStatement(statements[0]) && ts.isCallExpression(statements[0].expression) && statements[0].expression.expression.getText(ast) === "hostedTerminalHost705")
+  assert.ok(ts.isReturnStatement(statements[1]) && statements[1].expression && ts.isCallExpression(statements[1].expression) && statements[1].expression.expression.getText(ast) === "withSurface650")
+  const body = statements[1].expression.arguments[1]; assert.ok(ts.isArrowFunction(body) && ts.isBlock(body.body))
+  const first = body.body.statements[0]; assert.ok(ts.isVariableStatement(first))
+  const init = first.declarationList.declarations[0].initializer
+  assert.ok(init && ts.isCallExpression(init) && init.expression.getText(ast) === "hostedTerminalAdmission705")
+
+  const original=owned(), outside=owned(), code=fs.readFileSync(path.join(__dirname,"fixtures/native-surface-650.js"),"utf8")
+  const boot:any={CMSPARK_TEST_RUN_DIR:original.root,CMSPARK_DATA_DIR:original.data,GITHUB_ACTIONS:"true",RUNNER_OS:"macOS",PATH:"/usr/bin:/bin"}
+  const proc={platform:"darwin",env:boot}, mod:{exports:any}={exports:{}}, allowed:any={"node:fs":fs,"node:path":path,"node:crypto":crypto}
+  vm.runInNewContext(code,{module:mod,exports:mod.exports,require:(name:string)=>{assert.ok(Object.hasOwn(allowed,name));return allowed[name]},process:proc,AbortController,AbortSignal,Buffer})
+  const api=mod.exports as {acquireSurface650:typeof acquireSurface650;withSurface650:typeof withSurface650}
+  const admit=vm.runInNewContext(declaration("hostedTerminalHost705").getText(ast)+";"+declaration("hostedTerminalAdmission705").getText(ast)+";hostedTerminalAdmission705",{process:proc,assert,fs,path,Set}) as ()=>string
+  let owner:Awaited<ReturnType<typeof acquireSurface650>>|undefined, pending:Promise<unknown>|undefined,entered=0
+  const cancel=new AbortController(),context={signal:AbortSignal.any([t.signal,cancel.signal])} as TestContext
+  try {
+    boot.GITHUB_ACTIONS="false"; assert.throws(admit,/TERMINAL705_REMOTE_GHA_REQUIRED/); assert.equal(fs.existsSync(original.claim),false); boot.GITHUB_ACTIONS="true"
+    owner=await api.acquireSurface650(original.root,original.data,t.signal); owner.retain()
+    boot.CMSPARK_DATA_DIR=outside.data
+    assert.throws(admit,/TERMINAL705_OWNED_DATA_REQUIRED/,"the former pre-lease read encounters the prior owner's data")
+    pending=api.withSurface650(context,async(_t,lease)=>{entered++;lease.checkpoint();return admit()})
+    await Promise.resolve(); assert.equal(entered,0)
+    boot.CMSPARK_DATA_DIR=original.data; owner.settled(); owner.release(); owner=undefined
+    assert.equal(await pending,fs.realpathSync(original.data)); pending=undefined; assert.equal(entered,1)
+    owner=await api.acquireSurface650(original.root,original.data,t.signal); owner.retain(); const claim=fs.readFileSync(original.claim)
+    pending=api.withSurface650(context,async()=>{entered++;return admit()}); cancel.abort()
+    await assert.rejects(pending); pending=undefined; assert.equal(entered,1); assert.deepEqual(fs.readFileSync(original.claim),claim)
+    owner.settled(); owner.release(); owner=undefined
+  } finally { cancel.abort(); if(owner)try{owner.settled();owner.release()}catch{}; if(pending)await pending.catch(()=>{}); original.cleanup(); outside.cleanup() }
+})

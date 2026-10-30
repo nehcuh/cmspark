@@ -469,10 +469,13 @@ function createTerminalReadiness747(){
 }
 
 /** New terminal-only leaf: same serialized foreground file, never a new worker. */
-function hostedTerminalAdmission705() {
+function hostedTerminalHost705() {
  assert.ok(process.platform==='darwin'||process.platform==='win32','TERMINAL705_SUPPORTED_HOST_REQUIRED')
  assert.equal(process.env.GITHUB_ACTIONS,'true','TERMINAL705_REMOTE_GHA_REQUIRED')
  assert.equal(process.env.RUNNER_OS,process.platform==='win32'?'Windows':'macOS','TERMINAL705_RUNNER_REQUIRED')
+}
+function hostedTerminalAdmission705() {
+ hostedTerminalHost705()
  const run=process.env.CMSPARK_TEST_RUN_DIR,data=process.env.CMSPARK_DATA_DIR
  assert.ok(run&&data&&path.isAbsolute(run)&&path.isAbsolute(data),'TERMINAL705_CANONICAL_PRELOAD_REQUIRED')
  const physical=fs.realpathSync(run),owned=fs.realpathSync(data),relation=path.relative(physical,owned)
@@ -487,8 +490,9 @@ function hostedTerminalAdmission705() {
 }
 
 test('#476 terminal-only native confirmation→real user PTY→selected partial excerpt→canonical reopen',{skip:!['darwin','win32'].includes(process.platform),timeout:45000,concurrency:false},async t=>{
- const owned=hostedTerminalAdmission705()
+ hostedTerminalHost705()
  return withSurface650(t,async(t,surfaceLease/*OBS788_BEGIN*/,observeSurface788/*OBS788_END*/)=>{
+  const owned=hostedTerminalAdmission705()
   const confirmationObservation772=createConfirmationObservation772('TERMINAL',()=>performance.now(),line=>t.diagnostic(line))
   t.signal.addEventListener('abort',()=>confirmationObservation772.emit('ABORT'),{once:true})
   const previous=process.env.CMSPARK_DATA_DIR,dir=fs.realpathSync(fs.mkdtempSync(path.join(owned,'native-terminal705-')));process.env.CMSPARK_DATA_DIR=dir
