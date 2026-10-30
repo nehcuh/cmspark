@@ -92,7 +92,7 @@ test('whole real app/form→actual HMAC actor→owned store drives ten keys and 
  assert.equal(b.calls.filter((v:string)=>v==='open').length,1);assert.equal(b.calls.filter((v:string)=>v==='close').length,1);assert.equal(b.tm.readDesktopDialog('native-terminal-A').messages.length,1);assert.equal(b.tm.readDesktopDialog('native-terminal-B').messages.length,0);assert.equal(b.manager.pendingCount(),0)
 })
 test('native admission refuses manual supported hosts before native imports or environment value reads',()=>{
- const file=source('tests/desktop-native-thread-metadata-476.test.ts'),begin=file.indexOf('function hostedTerminalAdmission705()'),end=file.indexOf("\ntest('#476 terminal-only",begin);assert.ok(begin>=0&&end>begin)
+ const file=source('tests/desktop-native-thread-metadata-476.test.ts'),begin=file.indexOf('function hostedTerminalHost705()'),end=file.indexOf("\ntest('#476 terminal-only",begin);assert.ok(begin>=0&&end>begin)
  const code=ts.transpileModule(file.slice(begin,end)+'\nglobalThis.admit=hostedTerminalAdmission705;',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
  for(const platform of ['win32','darwin']){let reads=0;const env=new Proxy({} as any,{get(){reads++;return undefined},ownKeys(){throw Error('MUST_NOT_SANITIZE_BEFORE_ADMISSION')}}),context:any={assert,fs:{},path:{},process:{platform,env}};vm.runInNewContext(code,context,{timeout:1000});assert.throws(()=>context.admit(),/TERMINAL705_REMOTE_GHA_REQUIRED/);assert.equal(reads,1)}
 })

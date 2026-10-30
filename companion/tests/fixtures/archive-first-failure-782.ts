@@ -19,9 +19,22 @@ export function createArchiveFirstFailure782(platform:string){
  }
 }
 
+/** Reverse the separately reviewed terminal admission ordering before older source seals. */
+export function terminalAdmissionInverse801(raw:string){
+ const eol=raw.includes("\r\n")?"\r\n":"\n"
+ const pairs:[string,string][]=[
+  ["function hostedTerminalHost705() {", "function hostedTerminalAdmission705() {"],
+  ["}\nfunction hostedTerminalAdmission705() {\n hostedTerminalHost705()\n const run=", " const run="],
+  [" hostedTerminalHost705()\n return withSurface650(t,async(t,surfaceLease)=>{\n  const owned=hostedTerminalAdmission705()", " const owned=hostedTerminalAdmission705()\n return withSurface650(t,async(t,surfaceLease)=>{"]
+ ]
+ let value=raw
+ for(const [after,before] of pairs){const from=after.replace(/\n/g,eol),to=before.replace(/\n/g,eol);assert.equal(value.split(from).length,2,'TERMINAL_ADMISSION_801_SOURCE_DRIFT');value=value.replace(from,to)}
+ return value
+}
+
 /** Undo only this Node observation before every older whole-source authority. */
 export function archiveObservationInverse782(raw:string){
- const eol=raw.includes("\r\n")?"\r\n":"\n";let value=raw
+ const eol=raw.includes("\r\n")?"\r\n":"\n";let value=terminalAdmissionInverse801(raw)
  const pairs:[string,string][]=[["await initDataDir();saveConfig({llm:{base_url:\"http://127.0.0.1:1\",api_key:\"owned-native-fixture-only\",model_name:\"owned-controlled\",temperature:0,context_window:8000}}as any, { llmKey: true })","await initDataDir();saveConfig({llm:{base_url:\"http://127.0.0.1:1\",api_key:\"owned-native-fixture-only\",model_name:\"owned-controlled\",temperature:0,context_window:8000}}as any)"],["import { createArchiveFirstFailure782 } from \"./fixtures/archive-first-failure-782\"\nimport { createConfirmationObservation772 }", "import { createConfirmationObservation772 }"], ["  const archiveObservation=createArchiveFirstFailure782(process.platform)\n  const required=[\"D476_ARCHIVE_ARCHIVED\"", "  const required=[\"D476_ARCHIVE_ARCHIVED\""], ["if(!authenticated||f.type!==\"system.ping\")return;archiveObservation.observe(f);if(f.id===\"D476_ARCHIVE_BLOCK\")", "if(!authenticated||f.type!==\"system.ping\")return;if(f.id===\"D476_ARCHIVE_BLOCK\")"], ["if(f.id===\"D476_FAIL_ARCHIVE_PHASE\"||f.id===\"D476_FAIL_SCRIPT\"){archiveObservation.failure(f.id);failed=true;failResolve();return}if(required.includes(f.id)){if(receipts.has(f.id)){archiveObservation.failure(\"DUPLICATE\");failed=true;failResolve()}receipts.add(f.id)}", "if(f.id===\"D476_FAIL_ARCHIVE_PHASE\"||f.id===\"D476_FAIL_SCRIPT\"){failed=true;failResolve();return}if(required.includes(f.id)){if(receipts.has(f.id)){failed=true;failResolve()}receipts.add(f.id)}"], ["schema:1,failed,receiptMask:required.reduce((mask,id,i)=>mask|(receipts.has(id)?1<<i:0),0),sets,archived,restored,droppedAck,connections,authenticated,windowRequested,childExited,firstFailure:archiveObservation.snapshot()}))", "schema:1,failed,receiptMask:required.reduce((mask,id,i)=>mask|(receipts.has(id)?1<<i:0),0),sets,archived,restored,droppedAck,connections,authenticated,windowRequested,childExited}))"]]
  for(const [current,prior]of pairs){const from=current.replace(/\n/g,eol),to=prior.replace(/\n/g,eol);assert.equal(value.split(from).length,2,"ARCHIVE_OBSERVATION_782_SOURCE_DRIFT");value=value.replace(from,to)}
  const expected=eol==="\n"?"33b233999fcfcc764b4882749d7264aa534fc45938ff717dd23bcc51f4cdeaa6":"f4b0ae09fd52e2ed4fa2d112ebc041e1a33e5323776ddc3e00291c1a4bea4675"
