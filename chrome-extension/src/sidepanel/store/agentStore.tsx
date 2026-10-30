@@ -7,6 +7,7 @@ import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, Op
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 import { normalizeDocumentWarning } from "../utils/document-warning"
+import { createSettingsDraft, editSettingsDraft, receiveSettingsSnapshot, type SettingsDraft } from "../utils/settings-draft"
 import { pruneCodingSessionCache, codingSessionMembership } from "../utils/coding-session-cache"
 import { parseCodingHistory, type CodingHistory } from "../coding-handoff/history"
 
@@ -173,6 +174,8 @@ export interface AgentState {
   activeSkillIds: string[]
   operations: OperationRecord[]
   config: LLMConfig
+  configRevision: string | null
+  settingsDraft: SettingsDraft<LLMConfig> | null
   settingsOpen: boolean
   /** Deep-link target for settings accordion (F-UX7). Cleared after Settings applies. */
   settingsFocusSection: string | null
@@ -497,6 +500,9 @@ export type AgentAction =
   | { type: "TOGGLE_SKILL"; skillId: string }
   | { type: "SET_OPERATIONS"; operations: OperationRecord[] }
   | { type: "SET_CONFIG"; config: Partial<LLMConfig> }
+  | { type: "SET_CONFIG_SNAPSHOT"; config: Partial<LLMConfig>; revision: string | null }
+  | { type: "BEGIN_SETTINGS_DRAFT" }
+  | { type: "EDIT_SETTINGS_DRAFT"; config: Partial<LLMConfig> }
   | { type: "TOGGLE_SETTINGS" }
   | { type: "SET_SETTINGS_OPEN"; open: boolean }
   | { type: "OPEN_SETTINGS_SECTION"; section: string }
@@ -758,6 +764,8 @@ export const initialState: AgentState = {
     file_upload_max_tokens: 50000,
     file_upload_vision: true,
   },
+  configRevision: null,
+  settingsDraft: null,
   settingsOpen: false,
   settingsFocusSection: null,
   tabList: [],
@@ -1366,6 +1374,25 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, operations: action.operations }
     case "SET_CONFIG":
       return { ...state, config: { ...state.config, ...action.config } }
+    case "SET_CONFIG_SNAPSHOT": {
+      const config = { ...state.config, ...action.config }
+      // Missing revision cannot provide any cross-writer guarantee. Do not let
+      // a legacy snapshot erase an in-memory draft or make it saveable.
+      const draft = state.settingsDraft
+      const revision = action.revision
+      const settingsDraft = draft && revision
+        ? receiveSettingsSnapshot(draft, config, revision, new Set<keyof LLMConfig>(["api_key", "vision_api_key"]))
+        : draft
+      return { ...state, config, configRevision: revision, settingsDraft }
+    }
+    case "BEGIN_SETTINGS_DRAFT":
+      return state.settingsDraft || !state.configRevision ? state : {
+        ...state, settingsDraft: createSettingsDraft(state.config, state.configRevision),
+      }
+    case "EDIT_SETTINGS_DRAFT":
+      return state.settingsDraft ? {
+        ...state, settingsDraft: editSettingsDraft(state.settingsDraft, action.config),
+      } : state
     case "SET_UNATTENDED_STATUS":
       return { ...state, unattended: action.unattended }
     case "SET_CONTEXT_COMPACTED":

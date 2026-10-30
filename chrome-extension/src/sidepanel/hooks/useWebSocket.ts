@@ -929,7 +929,8 @@ export function useWebSocket() {
 
         case "config.updated":
           if (msg.config?.acp?.enabled === false) dispatch({ type: "ACP_HISTORY_INVALIDATE" })
-          dispatch({ type: "SET_CONFIG", config: normalizeConfig(msg.config) })
+          dispatch({ type: "SET_CONFIG_SNAPSHOT", config: normalizeConfig(msg.config),
+            revision: typeof msg.config_revision === "string" && msg.config_revision.length > 0 && msg.config_revision.length <= 128 ? msg.config_revision : null })
           dispatch({ type: "SET_CONFIG_HYDRATED", hydrated: true })
           if (msg.source === "companion" && msg.config?.llm) {
             dispatch({ type: "SET_COMPANION_CONFIG", config: normalizeConfig(msg.config) as any })

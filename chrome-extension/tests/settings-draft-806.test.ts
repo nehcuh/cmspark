@@ -1,5 +1,5 @@
-import { strict as assert } from "node:assert"
-import { test } from "node:test"
+import assert from "node:assert/strict"
+import test from "node:test"
 import { normalizeConfig } from "../src/sidepanel/utils/normalize-config"
 import { acknowledgeSettingsSubmission, createSettingsDraft, editSettingsDraft, prepareSettingsSubmission, receiveSettingsSnapshot, resolveSettingsConflict } from "../src/sidepanel/utils/settings-draft"
 
@@ -51,7 +51,9 @@ test("a conflicting edit requires an explicit choice before it can be sent", () 
   let draft = createSettingsDraft(wire("old", "synthetic-old"), "epoch:1")
   draft = editSettingsDraft(draft, { model_name: "mine" })
   draft = receiveSettingsSnapshot(draft, wire("remote", "synthetic-old"), "epoch:2", opaque)
-  assert.throws(() => prepareSettingsSubmission(draft, "request-1"), /SETTINGS_DRAFT_CONFLICT/)
+  let conflict = ""
+  try { prepareSettingsSubmission(draft, "request-1") } catch (error) { conflict = String(error) }
+  assert.match(conflict, /SETTINGS_DRAFT_CONFLICT/)
   const remote = resolveSettingsConflict(draft, "model_name", "remote")
   assert.equal(remote.value.model_name, "remote")
   assert.equal(remote.dirty.model_name, undefined)
