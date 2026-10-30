@@ -40,13 +40,29 @@ for executable in launch-companion.sh node node_modules/systray2/traybin/tray_li
     exit 1
   fi
 done
-for tool in node dpkg-deb install md5sum; do
+for tool in node dpkg-deb install md5sum mktemp mv realpath; do
   command -v "${tool}" >/dev/null 2>&1 || { echo "ERROR: required tool not found: ${tool}" >&2; exit 1; }
 done
 
+STAGING_PHYSICAL="$(cd "${STAGING}" && pwd -P)"
+OUTPUT_PHYSICAL="$(realpath -m -- "${OUTPUT_DIR}")"
+case "${OUTPUT_PHYSICAL}" in
+  "${STAGING_PHYSICAL}"|"${STAGING_PHYSICAL}"/*)
+    echo "ERROR: DEB output must not be inside staging" >&2; exit 1 ;;
+esac
+if [[ "${STAGING_PHYSICAL}" == / ]]; then
+  echo "ERROR: DEB output must not be inside staging" >&2; exit 1
+fi
 mkdir -p "${OUTPUT_DIR}"
-PACKAGE_ROOT="${OUTPUT_DIR}/.deb-root-${PLATFORM}"
-rm -rf "${PACKAGE_ROOT}"
+if [[ -L "${DEB_PATH}" || ( -e "${DEB_PATH}" && ! -f "${DEB_PATH}" ) ]]; then
+  echo "ERROR: DEB output is not a regular file: ${DEB_PATH}" >&2
+  exit 1
+fi
+BUILD_ROOT="$(mktemp -d "${OUTPUT_DIR}/.deb-build-${PLATFORM}.XXXXXXXX")"
+PACKAGE_ROOT="${BUILD_ROOT}/root"
+# Retain the private build root: deleting it by pathname could delete another
+# directory if a concurrent owner replaces it before cleanup.
+echo "DEB build files retained at: ${BUILD_ROOT}" >&2
 install -d \
   "${PACKAGE_ROOT}/DEBIAN" \
   "${PACKAGE_ROOT}/opt/cmspark" \
@@ -77,6 +93,9 @@ chmod 0644 "${PACKAGE_ROOT}/DEBIAN/control"
   cd "${PACKAGE_ROOT}"
   find . -type f ! -path './DEBIAN/*' -print0 | sort -z | xargs -0 md5sum > DEBIAN/md5sums
 )
-rm -f "${DEB_PATH}"
-dpkg-deb --root-owner-group --build "${PACKAGE_ROOT}" "${DEB_PATH}"
+dpkg-deb --root-owner-group --build "${PACKAGE_ROOT}" "${BUILD_ROOT}/package.deb"
+[[ -s "${BUILD_ROOT}/package.deb" && -f "${BUILD_ROOT}/package.deb" && ! -L "${BUILD_ROOT}/package.deb" ]] || {
+  echo "ERROR: DEB builder did not produce a regular package" >&2; exit 1;
+}
+mv -fT -- "${BUILD_ROOT}/package.deb" "${DEB_PATH}"
 echo "=== Done: ${DEB_PATH} ==="

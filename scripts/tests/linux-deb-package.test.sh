@@ -27,6 +27,9 @@ actual:
 ${actual}"
 }
 
+# Exercise output ownership with inert tools before the real Linux package run.
+python3 "${ROOT_DIR}/scripts/tests/linux-deb-owned-staging.test.py"
+
 STAGING="${TMP_DIR}/staging"
 mkdir -p \
   "${STAGING}/assets" \
