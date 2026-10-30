@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import * as path from "node:path"
 import { test } from "node:test"
@@ -42,13 +43,24 @@ for (const [label, fields] of [
 ] as const) {
   test(`brew smoke rejects ${label} without recording success`, () => {
     const fixture = installWithSmokeOutcome(Object.assign(new Error("smoke failed"), fields))
-    assert.throws(fixture.run, /brew 组件/)
+    assert.throws(fixture.run, (error: unknown) => {
+      assert.equal((error as { code?: unknown }).code, "extract-failed")
+      return true
+    })
     assert.equal(fixture.count(), 0)
   })
 }
 
 test("brew smoke accepts a normal nonzero help exit", () => {
-  const fixture = installWithSmokeOutcome(Object.assign(new Error("help exit"), { status: 1, signal: null }))
+  let actualError: Error | null = null
+  try {
+    execFileSync(process.execPath, ["-e", "process.exit(1)"], { stdio: "pipe" })
+  } catch (error) {
+    assert.ok(error instanceof Error)
+    actualError = error
+  }
+  assert.ok(actualError, "the Node child must exit nonzero")
+  const fixture = installWithSmokeOutcome(actualError)
   fixture.run()
   assert.equal(fixture.count(), 1)
 })
