@@ -49,6 +49,20 @@ async function harness() {
   return { fixture, sent, emit, respond, render, selected, close, flushEffects, hook: () => current, listenerCount: () => listeners.size }
 }
 
+test('#752 activity snapshot is current only for the connection that supplied it', async () => {
+  const f = await harness()
+  try {
+    assert.equal(f.hook().snapshotCurrent, true)
+    f.emit({ type: 'thread.mutation.connection', state: 'disconnected' })
+    assert.equal(f.render(false, 1).snapshotCurrent, false)
+    const reconnected = f.render(true, 2)
+    assert.ok(reconnected.snapshot, 'previous snapshot remains visible while refreshing')
+    assert.equal(reconnected.snapshotCurrent, false)
+    await f.respond(f.sent.length - 1)
+    assert.equal(f.render().snapshotCurrent, true)
+  } finally { f.close() }
+})
+
 test('#753 actual service confirms serial handling only after each persistence reply and holds the shared writer', async () => {
   const f = await harness()
   try {
