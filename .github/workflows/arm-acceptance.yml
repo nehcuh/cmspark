@@ -36,6 +36,15 @@ jobs:
       - name: Typecheck companion and tests
         working-directory: companion
         run: ./node_modules/.bin/tsc -p tsconfig.test.json
+      - name: Settings partial patch CPU controls
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap companion/.test-dist/tests/settings-partial-patches-806.test.js | tee "$RUNNER_TEMP/settings-partial-806-arm.tap"
+          grep -Fx '# tests 11' "$RUNNER_TEMP/settings-partial-806-arm.tap"
+          grep -Fx '# pass 11' "$RUNNER_TEMP/settings-partial-806-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/settings-partial-806-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/settings-partial-806-arm.tap"
       - name: Swift tray packaging CPU controls
         shell: bash
         run: |
