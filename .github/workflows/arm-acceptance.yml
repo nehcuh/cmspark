@@ -50,10 +50,23 @@ jobs:
         run: |
           set -o pipefail
           node --test --test-reporter=tap companion/scripts/tests/whisper-builder-783.test.mjs | tee "$RUNNER_TEMP/whisper-builder-783-arm.tap"
-          grep -Fx '# tests 43' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
-          grep -Fx '# pass 43' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          grep -Fx '# tests 47' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          grep -Fx '# pass 47' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
           grep -Fx '# fail 0' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          grep -Fx '# cancelled 0' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
           grep -Fx '# skipped 0' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
+          node --test --test-reporter=tap scripts/tests/whisper-generation.test.mjs | tee "$RUNNER_TEMP/whisper-generation-783-arm.tap"
+          grep -Fx '# tests 15' "$RUNNER_TEMP/whisper-generation-783-arm.tap"
+          grep -Fx '# pass 15' "$RUNNER_TEMP/whisper-generation-783-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/whisper-generation-783-arm.tap"
+          grep -Fx '# cancelled 0' "$RUNNER_TEMP/whisper-generation-783-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/whisper-generation-783-arm.tap"
+          node --test --test-reporter=tap scripts/tests/whisper-soname-783.test.cjs | tee "$RUNNER_TEMP/whisper-soname-783-arm.tap"
+          grep -Fx '# tests 7' "$RUNNER_TEMP/whisper-soname-783-arm.tap"
+          grep -Fx '# pass 7' "$RUNNER_TEMP/whisper-soname-783-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/whisper-soname-783-arm.tap"
+          grep -Fx '# cancelled 0' "$RUNNER_TEMP/whisper-soname-783-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/whisper-soname-783-arm.tap"
           bash scripts/tests/test-package-otool-783.sh scripts/package.sh
           bash scripts/tests/test-package-staging-783.sh scripts/package.sh
           node --test --test-reporter=tap scripts/tests/macos-whisper-closure.test.mjs | tee "$RUNNER_TEMP/whisper-closure-783-arm.tap"

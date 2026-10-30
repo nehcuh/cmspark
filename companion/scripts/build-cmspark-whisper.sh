@@ -137,6 +137,23 @@ if [[ "${OS}" == "Darwin" ]]; then
   done
 fi
 
+# Assemble the default Darwin output as a single private generation. Existing
+# generations remain available to a packager that already selected one.
+if [[ "${OS}" == "Darwin" && -z "${CMSPARK_WHISPER_OUT:-}" ]]; then
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[build-cmspark-whisper] ERROR: node required for macOS generation" >&2
+    exit 1
+  fi
+  GEN_ROOT="${COMPANION_ROOT}/dist/.whisper-generations"
+  if [[ -L "${COMPANION_ROOT}/dist" || -L "${GEN_ROOT}" ]]; then
+    echo "[build-cmspark-whisper] ERROR: generation directory is a symlink" >&2
+    exit 1
+  fi
+  mkdir -p "${GEN_ROOT}"
+  GEN_DIR="$(mktemp -d "${GEN_ROOT}/generation.XXXXXXXX")"
+  OUT_BIN="${GEN_DIR}/bin/${OUT_NAME}"
+  LIB_OUT="${GEN_DIR}/lib"
+fi
 mkdir -p "$(dirname "${OUT_BIN}")"
 cp "${SRC}" "${OUT_BIN}"
 chmod +x "${OUT_BIN}"
@@ -146,7 +163,7 @@ chmod +x "${OUT_BIN}"
 #   Resources/lib/libwhisper*.dylib + libggml*.dylib
 # with @loader_path relative install names so the DMG works without Homebrew.
 if [[ "${OS}" == "Darwin" ]]; then
-  LIB_OUT="${COMPANION_ROOT}/dist/lib"
+  LIB_OUT="${LIB_OUT:-${COMPANION_ROOT}/dist/lib}"
   mkdir -p "${LIB_OUT}"
   # Clear previous staged libs for a clean set
   if ! rm -f "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib; then
@@ -322,9 +339,9 @@ else
 fi
 
 SIZE="$(stat -f%z "${OUT_BIN}" 2>/dev/null || stat -c%s "${OUT_BIN}" 2>/dev/null || echo "?")"
-echo "[build-cmspark-whisper] SUCCESS: ${OUT_BIN}"
-echo "[build-cmspark-whisper]         Size: ${SIZE} bytes"
-echo "[build-cmspark-whisper]         SHA256: ${HASH}"
+if [[ -n "${GEN_DIR:-}" ]]; then
+  node "${COMPANION_ROOT}/../scripts/whisper-generation.mjs" seal "${GEN_DIR}" "${WARCH}"
+fi
 
 PINS_TS="${COMPANION_ROOT}/src/voice/whisper-binary-pins.ts"
 if [[ "${WRITE_PINS}" -eq 1 ]]; then
@@ -365,3 +382,10 @@ else
   echo "  \"${WARCH}\": \"${HASH}\","
   echo "[build-cmspark-whisper] Or re-run with --write-pins"
 fi
+
+if [[ -n "${GEN_DIR:-}" ]]; then
+  node "${COMPANION_ROOT}/../scripts/whisper-generation.mjs" publish "${GEN_DIR}" "${GEN_ROOT}" "${COMPANION_ROOT}/dist/whisper-current-${WARCH}" "${WARCH}"
+fi
+echo "[build-cmspark-whisper] SUCCESS: ${OUT_BIN}"
+echo "[build-cmspark-whisper]         Size: ${SIZE} bytes"
+echo "[build-cmspark-whisper]         SHA256: ${HASH}"

@@ -3,16 +3,18 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cp=require('node:child_process');
 const builder=fs.readFileSync(path.resolve(__dirname,'../../companion/scripts/build-cmspark-whisper.sh'));
 const ompRule=fs.readFileSync(path.resolve(__dirname,'../whisper-omp-name.sh'));
+const generationHelper=fs.readFileSync(path.resolve(__dirname,'../whisper-generation.mjs'));
 function fixture(t,libs){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'cmspark-soname-783-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
  const dir=p=>fs.mkdirSync(path.join(root,p),{recursive:true}),write=(p,v)=>fs.writeFileSync(path.join(root,p),v);for(const p of ['companion/scripts','scripts','w/lib','g/lib','stubs'])dir(p);
- write('companion/scripts/build-cmspark-whisper.sh',builder);write('scripts/whisper-omp-name.sh',ompRule);write('source','OWNED_CLI');for(const [p,v] of Object.entries(libs))write(p,v);
+ write('companion/scripts/build-cmspark-whisper.sh',builder);write('scripts/whisper-omp-name.sh',ompRule);write('scripts/whisper-generation.mjs',generationHelper);write('source','OWNED_CLI');for(const [p,v] of Object.entries(libs))write(p,v);
  const stub=(n,body)=>{write('stubs/'+n,'#!/bin/sh\n'+body+'\n');fs.chmodSync(path.join(root,'stubs',n),0o700)};
  stub('uname','case "$1" in -s) printf Darwin;; -m) printf arm64;; esac');stub('brew','case "$2" in whisper-cpp) printf "%s" "$OWNED_ROOT/w";; ggml) printf "%s" "$OWNED_ROOT/g";; esac');
  stub('otool','printf "%s:\\n\\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\\n" "$2"');stub('install_name_tool','exit 0');stub('codesign','exit 0');
- const env={PATH:path.join(root,'stubs')+':/usr/bin:/bin',OWNED_ROOT:root,CMSPARK_WHISPER_SRC:path.join(root,'source')};
+ stub('node','exec "$NODE_BINARY" "$@"');
+ const env={PATH:path.join(root,'stubs')+':/usr/bin:/bin',OWNED_ROOT:root,CMSPARK_WHISPER_SRC:path.join(root,'source'),NODE_BINARY:process.execPath};
  const run=()=>cp.spawnSync('/bin/bash',[path.join(root,'companion/scripts/build-cmspark-whisper.sh')],{cwd:root,env,encoding:'utf8'});
- return {root,run,lib:n=>path.join(root,'companion/dist/lib',n)};
+ return {root,run,lib:n=>{const store=path.join(root,'companion/dist/.whisper-generations');const dirs=fs.readdirSync(store);assert.equal(dirs.length,1);return path.join(store,dirs[0],'lib',n)}};
 }
 test('actual builder preserves regular files whose names already equal their sonames',t=>{
  const f=fixture(t,{'w/lib/libwhisper.1.dylib':'WHISPER','g/lib/libggml.0.dylib':'GGML','g/lib/libggml-base.0.dylib':'BASE'}),r=f.run();assert.equal(r.status,0,r.stderr);

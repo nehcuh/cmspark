@@ -11,6 +11,12 @@ const fail = message => { throw new Error(`WHISPER_GENERATION_${message}`); };
 const allowed = name => /^lib(?:whisper|ggml)[^/]*\.dylib$/.test(name)
   || /^libomp(?:\.[0-9]+(?:\.[0-9]+)*)?\.dylib$/.test(name);
 
+function storePath(store) {
+  const entry = fs.lstatSync(store);
+  if (entry.isSymbolicLink() || !entry.isDirectory()) fail('STORE');
+  return fs.realpathSync(store);
+}
+
 function binaryName(arch) {
   if (!['darwin-arm64', 'darwin-x64'].includes(arch)) fail('ARCH');
   return `cmspark-whisper-${arch}`;
@@ -63,7 +69,7 @@ function readSealed(generation, arch) {
 }
 
 export function publish(root, store, current, arch) {
-  const parent = fs.realpathSync(store);
+  const parent = storePath(store);
   const generation = fs.realpathSync(root);
   if (path.dirname(generation) !== parent) fail('GENERATION_ESCAPE');
   readSealed(generation, arch);
@@ -88,7 +94,7 @@ export function publish(root, store, current, arch) {
 
 export function stage(store, current, arch, stageRoot, expected) {
   if (!/^[0-9a-f]{64}$/.test(expected)) fail('PIN');
-  const parent = fs.realpathSync(store);
+  const parent = storePath(store);
   if (!fs.lstatSync(current).isSymbolicLink()) fail('CURRENT_NOT_LINK');
   const generation = fs.realpathSync(current);
   if (path.dirname(generation) !== parent) fail('GENERATION_ESCAPE');

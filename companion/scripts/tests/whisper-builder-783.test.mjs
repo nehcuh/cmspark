@@ -10,8 +10,9 @@ import { fileURLToPath } from 'node:url';
 // these text fixtures are not Mach-O/signature/provenance or actual macOS evidence.
 const source = fs.readFileSync(new URL('../build-cmspark-whisper.sh', import.meta.url));
 const ompRule = fs.readFileSync(new URL('../../../scripts/whisper-omp-name.sh', import.meta.url));
+const generationHelper = fs.readFileSync(new URL('../../../scripts/whisper-generation.mjs', import.meta.url));
 const pinBefore = 'owned source pin sentinel; no production digest is updated\n';
-const utilities = ['dirname', 'chmod', 'mkdir', 'ln', 'basename', 'wc', 'tr', 'realpath'];
+const utilities = ['dirname', 'chmod', 'mkdir', 'ln', 'basename', 'wc', 'tr', 'realpath', 'mktemp'];
 function fixture(t, fault = '', missing = '', platform = 'Darwin') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark (compatibility version backup) builder 783-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -19,6 +20,7 @@ function fixture(t, fault = '', missing = '', platform = 'Darwin') {
   fs.mkdirSync(bin); fs.mkdirSync(path.join(companion, 'scripts'), { recursive: true });
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.writeFileSync(path.join(root, 'scripts/whisper-omp-name.sh'), ompRule);
+  fs.writeFileSync(path.join(root, 'scripts/whisper-generation.mjs'), generationHelper);
   fs.mkdirSync(path.join(companion, 'src/voice'), { recursive: true });
   const script = path.join(companion, 'scripts/build-cmspark-whisper.sh');
   fs.writeFileSync(script, source);
@@ -78,24 +80,24 @@ if [[ -n "$family" ]]; then printf 'find:%s:%s\\n' "$family" "$rc" >> "$TRACE"; 
 exit "$rc"`);
   writeCommand('uname', `case "$1" in -s) printf '%s\\n' "$PLATFORM";; -m) printf '%s\\n' arm64;; *) exit 97;; esac`);
   writeCommand('brew', `[[ "$1" == --prefix && ( "$2" == whisper-cpp || "$2" == ggml || "$2" == libomp ) ]] || exit 97\nprintf '%s\\n' "$INPUT"`);
-  writeCommand('otool', `[[ "$1" == -L ]] || exit 97\nrole=lib; [[ "$2" == "$PRIMARY_OUT" ]] && role=primary\nprintf 'inspect:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "inspect-$role" ]] || exit 41\nprintf '%s:\\n' "$2"\n[[ "$FAULT" != empty-dependencies ]] || exit 0\nif [[ "$FAULT" == "malformed-$role" ]]; then printf 'not an otool dependency\\n'; exit 0; fi\nif [[ "$FAULT" == "control-$role" ]]; then printf '\\t/owned/control\\rpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\nif [[ "$FAULT" == "internal-tab-$role" ]]; then printf '\\t/owned/control\\tpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\ncase "$FAULT" in\n  "prefix-cr-$role") printf '\\t\\r/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-vt-$role") printf '\\t\\v/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-ff-$role") printf '\\t\\f/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-tab-$role") printf '\\t\\t/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\nesac\nif [[ "$FAULT" == "missing-newline-$role" ]]; then printf '\\t%s (compatibility version 1.0.0, current version 1.0.0)' "$INPUT/lib/libwhisper.1.2.dylib"; exit 0; fi\nprintf '\\t%s (compatibility version 1.0.0, current version 1.0.0)\\n' "$INPUT/lib/libwhisper.1.2.dylib"\nif [[ "$2" == *libggml.0.1.dylib ]]; then printf '\\t%s (compatibility version 1.0.0, current version 1.0.0)\\n' "$INPUT/lib/libomp.dylib"; fi\nif [[ "$FAULT" == "trailing-empty-$role" ]]; then printf '\\n'; fi`);
+  writeCommand('otool', `[[ "$1" == -L ]] || exit 97\nrole=lib; [[ "$2" == *cmspark-whisper-darwin-arm64 ]] && role=primary\nprintf 'inspect:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "inspect-$role" ]] || exit 41\nprintf '%s:\\n' "$2"\n[[ "$FAULT" != empty-dependencies ]] || exit 0\nif [[ "$FAULT" == "malformed-$role" ]]; then printf 'not an otool dependency\\n'; exit 0; fi\nif [[ "$FAULT" == "control-$role" ]]; then printf '\\t/owned/control\\rpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\nif [[ "$FAULT" == "internal-tab-$role" ]]; then printf '\\t/owned/control\\tpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\ncase "$FAULT" in\n  "prefix-cr-$role") printf '\\t\\r/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-vt-$role") printf '\\t\\v/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-ff-$role") printf '\\t\\f/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-tab-$role") printf '\\t\\t/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\nesac\nif [[ "$FAULT" == "missing-newline-$role" ]]; then printf '\\t%s (compatibility version 1.0.0, current version 1.0.0)' "$INPUT/lib/libwhisper.1.2.dylib"; exit 0; fi\nprintf '\\t%s (compatibility version 1.0.0, current version 1.0.0)\\n' "$INPUT/lib/libwhisper.1.2.dylib"\nif [[ "$2" == *libggml.0.1.dylib ]]; then printf '\\t%s (compatibility version 1.0.0, current version 1.0.0)\\n' "$INPUT/lib/libomp.dylib"; fi\nif [[ "$FAULT" == "trailing-empty-$role" ]]; then printf '\\n'; fi`);
   writeCommand('install_name_tool', `case "$1" in -id) action=id;; -change) action=change;; *) exit 97;; esac\nprintf 'relocate:%s\\n' "$action" >> "$TRACE"\nif [[ "$action" == change && "$2" != "$INPUT/lib/libwhisper.1.2.dylib" && "$2" != "$INPUT/lib/libomp.dylib" ]]; then exit 99; fi\n[[ "$FAULT" != "relocate-$action" ]] || exit 41`);
-  writeCommand('codesign', `[[ "$1" == --force && "$2" == --sign && "$3" == - && "$#" == 4 ]] || exit 97\nrole=lib; [[ "$4" == "$PRIMARY_OUT" ]] && role=primary\nprintf 'sign:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "sign-$role" ]] || exit 41`);
+  writeCommand('codesign', `[[ "$1" == --force && "$2" == --sign && "$3" == - && "$#" == 4 ]] || exit 97\nrole=lib; [[ "$4" == *cmspark-whisper-darwin-arm64 ]] && role=primary\nprintf 'sign:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "sign-$role" ]] || exit 41`);
   writeCommand('shasum', `printf 'hash\\n' >> "$TRACE"\nprintf '%064d  inert-output\\n' 0`);
   writeCommand('stat', `printf '1\\n'`);
-  // If a failure incorrectly falls through --write-pins this sentinel makes the call visible;
-  // no real Node compiler/runtime is reachable from the Bash child's isolated PATH.
-  writeCommand('node', `printf 'write-pins\\n' >> "$TRACE"\nexit 79`);
+  // The generation helper runs in Node; a separate sentinel catches an unexpected
+  // --write-pins invocation without changing the source pin fixture.
+  writeCommand('node', `if [[ "$1" == *whisper-generation.mjs ]]; then exec "$NODE_BINARY" "$@"; fi\nprintf 'write-pins\\n' >> "$TRACE"\nexit 79`);
   const trace = path.join(root, 'trace'); fs.writeFileSync(trace, '');
   const primaryOut = path.join(companion, 'dist/bin/cmspark-whisper-darwin-arm64');
   const env = { PATH: bin, TMPDIR: root, LANG: 'C', LC_ALL: 'C',
-    CMSPARK_WHISPER_SRC: primary, INPUT: input, PRIMARY_OUT: primaryOut, TRACE: trace, FAULT: fault, PLATFORM: platform, AWK_BINARY: awk, CP_BINARY: cp, RM_BINARY: rm, FIND_BINARY: find, PARSE_COUNT: parseCount };
+    CMSPARK_WHISPER_SRC: primary, INPUT: input, PRIMARY_OUT: primaryOut, TRACE: trace, FAULT: fault, PLATFORM: platform, AWK_BINARY: awk, CP_BINARY: cp, RM_BINARY: rm, FIND_BINARY: find, PARSE_COUNT: parseCount, NODE_BINARY: process.execPath };
   const run = args => {
     const r = spawnSync('/bin/bash', [script, ...args], { cwd: root, env, encoding: 'utf8', timeout: 10_000, maxBuffer: 128 * 1024 });
     assert.equal(r.error, undefined, 'owned Bash child completed naturally'); assert.equal(r.signal, null);
     return { ...r, trace: fs.readFileSync(trace, 'utf8').trim().split('\n').filter(Boolean) };
   };
-  return { root, run, pin, primaryOut };
+  return { root, run, pin, primaryOut, env, generationLib: path.join(companion, 'dist/whisper-current-darwin-arm64/lib') };
 }
 
 test('783 actual Darwin builder orders required inspection relocation signing before its measured digest', t => {
@@ -166,7 +168,7 @@ test('783 missing inspected dependency data refuses before signing or updating a
 test('783 actual Darwin builder stages the required libomp runtime', t => {
   const f = fixture(t), r = f.run([]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(fs.readFileSync(path.join(f.root, 'companion/dist/lib/libomp.dylib'), 'utf8'), 'inert library text\n');
+  assert.equal(fs.readFileSync(path.join(f.generationLib, 'libomp.dylib'), 'utf8'), 'inert library text\n');
   assert.ok(r.trace.includes('sign:lib'));
 });
 test('783 libomp copy failure stops before hash or pin update', t => {
@@ -191,7 +193,7 @@ test('783 unresolved library stops before hash or pin update', t => {
 test('783 versioned libomp retains a verified source alias', t => {
   const f = fixture(t, 'versioned-omp'), r = f.run([]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(fs.readlinkSync(path.join(f.root, 'companion/dist/lib/libomp.dylib')), 'libomp.5.dylib');
+  assert.equal(fs.readlinkSync(path.join(f.generationLib, 'libomp.dylib')), 'libomp.5.dylib');
 });
 for (const fault of ['foreign-omp', 'ambiguous-omp']) {
   test(`783 ${fault} refuses an unverified libomp alias`, t => {
@@ -203,11 +205,39 @@ for (const fault of ['foreign-omp', 'ambiguous-omp']) {
 test('783 unrelated libomp-prefixed files are not staged', t => {
   const f = fixture(t, 'extra-omp'), r = f.run([]);
   assert.equal(r.status, 0, r.stderr);
-  for (const name of ['libomptarget.dylib', 'libomp.5extra.dylib']) assert.equal(fs.existsSync(path.join(f.root, 'companion/dist/lib', name)), false);
+  for (const name of ['libomptarget.dylib', 'libomp.5extra.dylib']) assert.equal(fs.existsSync(path.join(f.generationLib, name)), false);
 });
 test('783 shared libomp filename policy accepts only numeric sonames', () => {
   const rule = fileURLToPath(new URL('../../../scripts/whisper-omp-name.sh', import.meta.url));
   const script = '. "$1"; shift; for n do is_whisper_omp_name "$n" && printf "Y\\n" || printf "N\\n"; done';
   const r = spawnSync('/bin/sh', ['-c', script, 'sh', rule, 'libomp.dylib', 'libomp.22.1.8.dylib', 'libomptarget.dylib', 'libomp.5extra.dylib', 'libomp.5..1.dylib'], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout, 'Y\nY\nN\nN\nN\n');
+});
+test('783 Darwin builder refuses a symlinked dist before writing to its target', t => {
+  const f = fixture(t), dist = path.join(f.root, 'companion/dist'), other = path.join(f.root, 'other-owned');
+  fs.mkdirSync(other); fs.symlinkSync(other, dist);
+  const r = f.run([]);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /generation directory is a symlink/);
+  assert.deepEqual(fs.readdirSync(other), []); assert.equal(r.trace.includes('hash'), false);
+});
+test('783 Darwin builder refuses a symlinked generation store before writing to its target', t => {
+  const f = fixture(t), dist = path.join(f.root, 'companion/dist'), other = path.join(f.root, 'other-owned');
+  fs.mkdirSync(dist); fs.mkdirSync(other); fs.symlinkSync(other, path.join(dist, '.whisper-generations'));
+  const r = f.run([]);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /generation directory is a symlink/);
+  assert.deepEqual(fs.readdirSync(other), []); assert.equal(r.trace.includes('hash'), false);
+});
+test('783 failed pin write preserves the previously published generation', t => {
+  const f = fixture(t), first = f.run([]), current = path.join(f.root, 'companion/dist/whisper-current-darwin-arm64');
+  assert.equal(first.status, 0, first.stderr); const before = fs.readlinkSync(current);
+  const second = f.run(['--write-pins']);
+  assert.equal(second.status, 79); assert.equal(fs.readlinkSync(current), before);
+  assert.doesNotMatch(second.stdout, /SUCCESS:/); assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
+});
+test('783 custom output retains its explicit path and does not publish a generation', t => {
+  const f = fixture(t), output = path.join(f.root, 'custom', 'whisper'); f.env.CMSPARK_WHISPER_OUT = output;
+  const r = f.run([]); assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'inert primary text\n');
+  assert.equal(fs.readFileSync(path.join(f.root, 'companion/dist/lib/libomp.dylib'), 'utf8'), 'inert library text\n');
+  assert.equal(fs.existsSync(path.join(f.root, 'companion/dist/whisper-current-darwin-arm64')), false);
 });
