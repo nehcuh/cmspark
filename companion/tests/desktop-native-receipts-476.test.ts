@@ -67,21 +67,37 @@ function actualNativeFinally(source:string):string{
 }
 for(const eol of ["LF","CRLF"] as const)for(const diagnosticThrows of [false,true])test(`#476 actual native finally preserves primary failure and all cleanup when diagnosticThrows=${diagnosticThrows} ${eol}`,async()=>{
  const source=read("tests/desktop-native-mcp-476.test.ts"),body=actualNativeFinally(eol==="CRLF"?source.replace(/\r?\n/g,"\r\n"):source)
- const calls:string[]=[],primary=new Error("owned-primary"),diagnostic=new Error("owned-diagnostic")
- const process={stdout:{write:()=>{calls.push("diagnostic");if(diagnosticThrows)throw diagnostic}},env:{CMSPARK_DATA_DIR:"owned-current"}}
- const ctx={process,primary,auth:false,windowRequested:false,receipts:new Set(),settled:true,exit:Promise.resolve(0),old:"owned-original",dir:"owned-current",
+ const calls:string[]=[],writes:string[]=[],primary=new Error("owned-primary"),diagnostic=new Error("owned-diagnostic")
+ const process={stdout:{write:(line:string)=>{calls.push("diagnostic");if(diagnosticThrows)throw diagnostic;writes.push(line)}},env:{CMSPARK_DATA_DIR:"owned-current"}}
+ const ctx={process,primary,auth:false,windowRequested:false,postAuthRequestMask:5,receipts:new Set(),settled:true,exit:Promise.resolve(0),old:"owned-original",dir:"owned-current",
   surfaceLease:{retain:()=>calls.push("surfaceRetain"),settled:()=>calls.push("surfaceSettled")},
   manager:{rejectAll:()=>calls.push("rejectAll")},child:{terminate:()=>calls.push("terminate")},
   channel:{wss:{clients:[{terminate:()=>calls.push("socketTerminate")}],close:(cb:()=>void)=>{calls.push("channelClose");cb()}}},
   legacy:{close:(cb:()=>void)=>{calls.push("legacyClose");cb()}},server:{close:(cb:()=>void)=>{calls.push("serverClose");cb()}},fs:{rmSync:()=>calls.push("rmOwned")}}
- const script="async function execute(ctx:any){const {process,primary,auth,windowRequested,receipts,settled,exit,old,dir,manager,child,channel,legacy,server,fs,surfaceLease}=ctx;try{throw primary}finally{"+body+"}}"
+ const script="async function execute(ctx:any){const {process,primary,auth,windowRequested,postAuthRequestMask,receipts,settled,exit,old,dir,manager,child,channel,legacy,server,fs,surfaceLease}=ctx;try{throw primary}finally{"+body+"}}"
  const run=new Function("ctx",ts.transpileModule(script,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText+";return execute(ctx)")
  await assert.rejects(run(ctx),e=>e===primary,"passive diagnostics cannot replace the original test failure")
  assert.deepEqual(calls,["surfaceRetain","diagnostic","rejectAll","terminate","socketTerminate","channelClose","legacyClose","serverClose","rmOwned","surfaceSettled"])
  assert.equal(process.env.CMSPARK_DATA_DIR,"owned-original")
+ if(!diagnosticThrows){assert.equal(writes.length,1);assert.match(writes[0],/^DESKTOP_476_PROGRESS /);const record=JSON.parse(writes[0].slice("DESKTOP_476_PROGRESS ".length));assert.deepEqual(Object.keys(record).sort(),["authenticated","windowRequested","postAuthRequestMask","exited","windows","approved","denied","done"].sort());assert.equal(record.postAuthRequestMask,5);assert.equal(writes[0].includes("owned-current"),false)}
 })
 test("#476 cleanup projection refuses a missing or ambiguous leased callback",()=>{
  const source=read("tests/desktop-native-mcp-476.test.ts")
  assert.throws(()=>actualNativeFinally(source.replace('manager.rejectAll("disconnect")','manager.otherMethod("disconnect")')))
  assert.throws(()=>actualNativeFinally(source+"\n"+source))
+})
+
+test("#476 actual MCP listener projects only fixed post-auth request types",()=>{
+ const source=read("tests/desktop-native-mcp-476.test.ts"),ast=ts.createSourceFile("native.ts",source,ts.ScriptTarget.Latest,true),callbacks:ts.ArrowFunction[]=[]
+ function visit(node:ts.Node){if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==="on"&&ts.isStringLiteral(node.arguments[0])&&node.arguments[0].text==="message"&&ts.isArrowFunction(node.arguments[1])&&node.arguments[1].getText(ast).includes('D476_'))callbacks.push(node.arguments[1]);ts.forEachChild(node,visit)}
+ visit(ast);assert.equal(callbacks.length,1)
+ let completed=0;const ctx:any={auth:false,postAuthRequestMask:0,receipts:new Set<string>(),failed:undefined,complete:()=>completed++}
+ vm.createContext(ctx);vm.runInContext(ts.transpileModule('globalThis.receive='+callbacks[0].getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,ctx)
+ const send=(frame:unknown)=>ctx.receive(JSON.stringify(frame))
+ send({type:"desktop.mcp.save",payload_json:"PRIVATE"});assert.equal(ctx.postAuthRequestMask,0)
+ ctx.auth=true
+ for(const [type,expectedMask] of [["mcp.list",1],["desktop.mcp.edit",3],["desktop.mcp.save",7],["mcp.list",7]] as const){send({type,id:"PRIVATE",name:"PRIVATE",payload_json:"PRIVATE"});assert.equal(ctx.postAuthRequestMask,expectedMask)}
+ assert.equal(ctx.postAuthRequestMask,7);assert.equal(ctx.receipts.size,0);assert.equal(completed,0)
+ send({type:"desktop.mcp.other",id:"PRIVATE"});ctx.receive("{");assert.equal(ctx.postAuthRequestMask,7)
+ send({type:"system.ping",id:"D476_NATIVE_DONE"});assert.equal(ctx.receipts.has("D476_NATIVE_DONE"),true);assert.equal(completed,1)
 })
