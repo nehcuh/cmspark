@@ -4,6 +4,26 @@ import fs from 'node:fs'
 import { validateWindowsCiFeedback750, condition750, parseWorkflow750, printWorkflow750 } from './windows-ci-feedback-750-contract.mjs'
 
 const workflow = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+
+test('#806 settings cache gate preserves its command and failure boundaries', () => {
+  validateWindowsCiFeedback750(workflow)
+  const name = 'Settings cache commit boundary (#806)'
+  const gate = doc => doc.jobs.build.steps.find(step => step.name === name)
+  const cases = [
+    doc => { doc.jobs.build.steps = doc.jobs.build.steps.filter(step => step.name !== name) },
+    doc => { doc.jobs.build.steps.push(structuredClone(gate(doc))) },
+    doc => { gate(doc).run = 'echo omitted' },
+    doc => { gate(doc).run += '\necho unreviewed' },
+    doc => { gate(doc)['continue-on-error'] = true },
+    doc => { gate(doc).if = 'false' },
+    doc => { const steps = doc.jobs.build.steps; const step = steps.splice(steps.findIndex(s => s.name === name), 1)[0]; steps.push(step) },
+  ]
+  for (const mutate of cases) {
+    const doc = parseWorkflow750(workflow); mutate(doc)
+    const changed = printWorkflow750(doc)
+    for (const value of [changed, changed.replaceAll('\n', '\r\n')]) assert.throws(() => validateWindowsCiFeedback750(value))
+  }
+})
 for (const [label, source] of [['LF', workflow], ['CRLF', workflow.replaceAll('\n', '\r\n')]]) {
   test('#750 actual parsed workflow conserves every original gate and independent lane: ' + label, () => {
     validateWindowsCiFeedback750(source)
