@@ -12,16 +12,18 @@ test('#806 settings cache gate preserves its command and failure boundaries', ()
   const cases = [
     doc => { doc.jobs.build.steps = doc.jobs.build.steps.filter(step => step.name !== name) },
     doc => { doc.jobs.build.steps.push(structuredClone(gate(doc))) },
+    doc => { gate(doc).name = 'Renamed settings cache gate' },
     doc => { gate(doc).run = 'echo omitted' },
     doc => { gate(doc).run += '\necho unreviewed' },
     doc => { gate(doc)['continue-on-error'] = true },
     doc => { gate(doc).if = 'false' },
+    doc => { gate(doc)['timeout-minutes'] = 1 },
     doc => { const steps = doc.jobs.build.steps; const step = steps.splice(steps.findIndex(s => s.name === name), 1)[0]; steps.push(step) },
   ]
   for (const mutate of cases) {
     const doc = parseWorkflow750(workflow); mutate(doc)
     const changed = printWorkflow750(doc)
-    for (const value of [changed, changed.replaceAll('\n', '\r\n')]) assert.throws(() => validateWindowsCiFeedback750(value))
+    for (const value of [changed, changed.replaceAll('\n', '\r\n')]) assert.throws(() => validateWindowsCiFeedback750(value), { code: 'ERR_ASSERTION' })
   }
 })
 for (const [label, source] of [['LF', workflow], ['CRLF', workflow.replaceAll('\n', '\r\n')]]) {
