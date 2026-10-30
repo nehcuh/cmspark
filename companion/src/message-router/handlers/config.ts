@@ -2,7 +2,7 @@
 // Zero behavior change — cases config.* + settings.* only.
 
 import OpenAI from "openai"
-import { getConfig, saveConfig, isMaskedApiKey } from "../../config"
+import { getConfig, getConfigSnapshot, saveConfig, isMaskedApiKey } from "../../config"
 import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
@@ -55,13 +55,19 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
   switch (type) {
     case "config.get": {
       // SoT: same redaction as config.updated broadcast (MCP env/headers + llm keys).
+      const snapshot = getConfigSnapshot()
       return {
         type: "config.updated",
-        config: redactConfigForWire(getConfig()),
+        config: redactConfigForWire(snapshot.config),
+        config_revision: snapshot.revision,
       }
     }
     case "config.set": {
       const cfg = rest.config
+      if (rest.config_revision !== undefined &&
+          (typeof rest.config_revision !== "string" || rest.config_revision.length === 0 || rest.config_revision.length > 128)) {
+        return { type: "error", error: "INVALID_CONFIG_REVISION" }
+      }
       // Reject prototype pollution keys (P0)
       if (hasPrototypePollutionKey(cfg)) {
         return { type: "error", error: "Invalid config keys detected" }
@@ -320,10 +326,18 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (normalized.llm) {
         delete normalized.llm.native_vision_detected
       }
-      const updated = saveConfig(normalized, {
+      const currentSnapshot = getConfigSnapshot()
+      if (rest.config_revision !== undefined && rest.config_revision !== currentSnapshot.revision) {
+        return {
+          type: "config.conflict",
+          config: redactConfigForWire(currentSnapshot.config),
+          config_revision: currentSnapshot.revision,
+        }
+      }
+      saveConfig(normalized, {
         llmKey: Object.prototype.hasOwnProperty.call(normalized.llm ?? {}, "api_key"),
         visionKey: Object.prototype.hasOwnProperty.call(normalized.vision ?? {}, "api_key"),
-      })
+      }, rest.config_revision)
       if (armingFlags.length > 0) {
         logger.warn("security.flag_armed", {
           flags: armingFlags,
@@ -348,9 +362,11 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           source: "ws_config_set",
         })
       }
+      const savedSnapshot = getConfigSnapshot()
       return {
         type: "config.updated",
-        config: redactConfigForWire(updated),
+        config: redactConfigForWire(savedSnapshot.config),
+        config_revision: savedSnapshot.revision,
       }
     }
 

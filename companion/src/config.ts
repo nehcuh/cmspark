@@ -643,8 +643,13 @@ function advanceConfigRevision(): void {
 
 /** Opaque, process-scoped token; a restart intentionally invalidates old tokens. */
 export function getConfigRevision(): string {
-  getConfig()
-  return `${configRevisionEpoch}:${configRevisionSequence}`
+  return getConfigSnapshot().revision
+}
+
+/** Pair the snapshot and token after one cache refresh within this process. */
+export function getConfigSnapshot(): { config: CompanionConfig; revision: string } {
+  const config = getConfig()
+  return { config, revision: `${configRevisionEpoch}:${configRevisionSequence}` }
 }
 
 /** Clear the in-memory config cache. Intended for tests only. */
