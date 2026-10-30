@@ -397,50 +397,62 @@ case "${PLATFORM}" in
       *)           _WHISPER_BIN="" ;;
     esac
     if [ -n "${_WHISPER_BIN}" ]; then
-      if [ -f "companion/dist/bin/${_WHISPER_BIN}" ]; then
+      _WHISPER_ARCH="${_WHISPER_BIN#cmspark-whisper-}"
+      _WHISPER_CURRENT="companion/dist/whisper-current-${_WHISPER_ARCH}"
+      if [ -L "${_WHISPER_CURRENT}" ] || [ -e "${_WHISPER_CURRENT}" ]; then
+        if ! _WHISPER_PIN="$(cd "${ROOT_DIR}/companion" && node scripts/run-esbuild-bundle.mjs "--verify-whisper-${PLATFORM}")"; then
+          echo "ERROR: cannot verify the bundled whisper pin" >&2; exit 1
+        fi
+        if [[ ! "${_WHISPER_PIN}" =~ ^[0-9a-f]{64}$ ]]; then
+          echo "ERROR: invalid verified whisper pin" >&2; exit 1
+        fi
         mkdir -p "${STAGING}/bin" "${STAGING}/lib"
-        cp "companion/dist/bin/${_WHISPER_BIN}" "${STAGING}/bin/"
-        chmod +x "${STAGING}/bin/${_WHISPER_BIN}" 2>/dev/null || true
-        # macOS brew-linked whisper-cli needs sibling dylibs under ../lib (rpath).
-        # Windows path already stages *.dll next to the exe; mirror that for Darwin.
-        _dylib_count=0
-        if ls companion/dist/lib/libwhisper*.dylib >/dev/null 2>&1; then
-          cp -f companion/dist/lib/libwhisper*.dylib "${STAGING}/lib/" 2>/dev/null || true
-          cp -f companion/dist/lib/libggml*.dylib "${STAGING}/lib/" 2>/dev/null || true
-          # preserve versioned symlinks if present as files/links
-          for _l in companion/dist/lib/libwhisper*.dylib companion/dist/lib/libggml*.dylib; do
-            [ -e "${_l}" ] || continue
-            _dylib_count=$((_dylib_count + 1))
-          done
-        fi
-        echo "  staged bin/${_WHISPER_BIN} + lib/ (${_dylib_count} dylibs, local STT)"
-        if [ "${_dylib_count}" = "0" ]; then
-          echo "ERROR: no companion/dist/lib/*.dylib — refuse to ship broken macOS local STT (run companion/scripts/build-cmspark-whisper.sh)" >&2
-          exit 1
-        fi
-        # Partial set is also broken (Pi nit): need libwhisper + at least one libggml*
-        _has_whisper=0
-        _has_ggml=0
-        ls "${STAGING}/lib"/libwhisper*.dylib >/dev/null 2>&1 && _has_whisper=1
-        ls "${STAGING}/lib"/libggml*.dylib >/dev/null 2>&1 && _has_ggml=1
-        if [ "${_has_whisper}" != "1" ] || [ "${_has_ggml}" != "1" ]; then
-          echo "ERROR: incomplete dylib set under ${STAGING}/lib (need libwhisper* and libggml*)" >&2
-          ls -la "${STAGING}/lib" >&2 || true
-          exit 1
-        fi
+        node "${ROOT_DIR}/scripts/whisper-generation.mjs" stage "companion/dist/.whisper-generations" "${_WHISPER_CURRENT}" "${_WHISPER_ARCH}" "${STAGING}" "${_WHISPER_PIN}"
+        # Inspect the transitive staged graph, not just the executable. A
+        # bundled dylib can itself retain an absolute Homebrew dependency.
+        node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${STAGING}" "${_WHISPER_BIN}"
         # Fail-closed: staged binary must not retain absolute Homebrew load paths
         if command -v otool >/dev/null 2>&1; then
-          if otool -L "${STAGING}/bin/${_WHISPER_BIN}" 2>/dev/null | grep -E '/opt/homebrew|/usr/local/opt|Cellar' >/dev/null; then
-            echo "ERROR: ${_WHISPER_BIN} still links absolute Homebrew paths — rewrite install names before packaging" >&2
-            otool -L "${STAGING}/bin/${_WHISPER_BIN}" >&2 || true
+          if ! _otool_output=$(otool -L "${STAGING}/bin/${_WHISPER_BIN}"; _otool_rc=$?; printf '\034'; exit "${_otool_rc}"); then
+            echo "ERROR: otool failed — cannot verify whisper install names" >&2
             exit 1
+          fi
+          _otool_output="${_otool_output%$'\034'}"
+          if [ "${_otool_output%%$'\n'*}" != "${STAGING}/bin/${_WHISPER_BIN}:" ] || [[ "${_otool_output}" != *$'\n' || "${_otool_output}" == *$'\n\n' ]]; then
+            echo "ERROR: invalid otool output — cannot verify whisper install names" >&2
+            exit 1
+          fi
+          # Match the thin Mach-O dependency lines printed by Apple cctools.
+          # Architecture headings or other unrecognized output fail closed.
+          if ! printf '%s' "${_otool_output}" | LC_ALL=C awk '
+            NR == 1 { next }
+            !/^\t[^[:space:][:cntrl:]].* \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/ { invalid = 1; next }
+            { sub(/^\t/, ""); if ($0 ~ /[[:cntrl:]]/) invalid = 1 }
+            END { if (NR < 2 || invalid) exit 1 }
+          '; then
+            echo "ERROR: invalid otool dependency lines — cannot verify whisper install names" >&2
+            exit 1
+          fi
+          if printf '%s' "${_otool_output}" | grep -E '/opt/homebrew|/usr/local/opt|Cellar' >/dev/null; then
+            echo "ERROR: ${_WHISPER_BIN} still links absolute Homebrew paths — rewrite install names before packaging" >&2
+            printf '%s\n' "${_otool_output}" >&2
+            exit 1
+          else
+            _grep_status=$?
+            if [ "${_grep_status}" -ne 1 ]; then
+              echo "ERROR: failed to inspect whisper install names" >&2
+              exit 1
+            fi
           fi
         else
           echo "ERROR: otool not found — cannot verify whisper install names on darwin package" >&2
           exit 1
         fi
       else
-        echo "WARNING: companion/dist/bin/${_WHISPER_BIN} missing — local STT disabled in package (run companion/scripts/build-cmspark-whisper.sh)" >&2
+        if [ -e "companion/dist/bin/${_WHISPER_BIN}" ] || [ -L "companion/dist/bin/${_WHISPER_BIN}" ]; then
+          echo "ERROR: legacy unsealed whisper binary cannot be packaged; rebuild it first" >&2; exit 1
+        fi
+        echo "WARNING: local STT disabled (no sealed whisper generation)" >&2
       fi
     fi
     ;;

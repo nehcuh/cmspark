@@ -73,7 +73,7 @@ const localReadiness705={
  captureAfter:'const consumed=original(f);',captureBefore:'original(f);',
  gateAfter:'if(consumed!==true||![1,9,13].includes(phase))return; // Only a state reply handled by the actual view can advance its next action.',
  gateBefore:'if(![1,9,13].includes(phase))return; // Actual hide/openDialog emits an untracked retirement state.',
- appBeforeSHA:'c910a84319d34da34efd8138c40f5f4495660c69c58beb5e8262df8287fbaea6',formBeforeSHA:'c0c0ce7502ba49207735f9e95da33dab2e5788c21271bdcb3ec0e79f0b2922ed',
+ appBeforeSHA:'c910a84319d34da34efd8138c40f5f4495660c69c58beb5e8262df8287fbaea6',formBeforeSHA:'610d2092d8baa2ca8bc6e4d1531898ba1b8ed4b9cfe2b0d0b3ff12bb2dba4728',
 }
 function localSource705(rel:string){return fs.readFileSync(path.resolve(__dirname,'../../'+rel),'utf8')}
 function localReplace705(text:string,before:string,after:string){assert.equal(text.split(before).length,2,before);return text.replace(before,after)}

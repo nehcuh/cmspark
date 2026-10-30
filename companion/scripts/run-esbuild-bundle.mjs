@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url"
 import { desktopIntegrity } from "./desktop-artifacts.mjs"
 import { assertTrayBundleGraph, trayBuildDefines, verifyTrayPackage } from "./swift-tray-package-pin.mjs"
 import { assertFreshTraySource } from "./swift-tray-source-freshness.mjs"
+import { verifyWhisperPin } from "./whisper-pin-bundle-proof.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const companionRoot = path.resolve(__dirname, "..")
@@ -23,13 +24,19 @@ const externals = Array.isArray(argsJson.externals) ? argsJson.externals : []
 const platform = argsJson.platform || "node"
 const target = argsJson.target || "node22"
 
-const packageTray = process.argv.slice(2)
+const requested = process.argv.slice(2)
+const whisperVerification = requested.length === 1 && ["--verify-whisper-macos-arm64", "--verify-whisper-macos-x64"].includes(requested[0])
+const whisperArch = whisperVerification ? requested[0].slice("--verify-whisper-macos-".length) : null
+const packageTray = whisperVerification ? (whisperArch === "arm64" ? ["--packaged-macos-arm64-tray"] : []) : requested
 const verifyStaging = packageTray[0] === "--verify-macos-arm64-tray"
 if (packageTray.length && (packageTray.length !== 1 || !["--packaged-macos-arm64-tray", "--verify-macos-arm64-tray"].includes(packageTray[0]))) {
   throw new Error("Unrecognized bundle arguments")
 }
 if (packageTray.length && (process.platform !== "darwin" || process.arch !== "arm64")) {
   throw new Error("Packaged Swift tray requires macOS ARM64")
+}
+if (whisperVerification && (process.platform !== "darwin" || process.arch !== whisperArch)) {
+  throw new Error("Whisper bundle verification requires the target macOS architecture")
 }
 if (packageTray.length) {
   const typescript = require("typescript")
@@ -113,12 +120,12 @@ try {
 
 // A private metadata path belongs only to this invocation. The graph check and
 // literal comparison are build-time controls, not a runtime trust sidecar.
-const metadataDir = packageTray.length ? mkdtempSync(path.join(tmpdir(), "cmspark-tray-bundle-")) : null
+const metadataDir = packageTray.length || whisperVerification ? mkdtempSync(path.join(tmpdir(), "cmspark-tray-bundle-")) : null
 const metadataFile = metadataDir ? path.join(metadataDir, "meta.json") : null
-const outputFile = verifyStaging && metadataDir ? path.join(metadataDir, "cmspark-agent.js") : path.join(companionRoot, "dist", "cmspark-agent.js")
+const outputFile = (verifyStaging || whisperVerification) && metadataDir ? path.join(metadataDir, "cmspark-agent.js") : path.join(companionRoot, "dist", "cmspark-agent.js")
 let exitCode
 try {
-  if (verifyStaging) {
+  if (verifyStaging || whisperVerification) {
     const outputArg = spawnSpec.args.findIndex(arg => arg.startsWith("--outfile="))
     if (outputArg < 0) throw new Error("TRAY_BUNDLE_OUTPUT_MISSING")
     spawnSpec.args[outputArg] = `--outfile=${outputFile}`
@@ -130,17 +137,25 @@ try {
   if (exitCode === 0 && metadataFile) {
     const metafile = JSON.parse(readFileSync(metadataFile, "utf8"))
     const outputKey = path.relative(companionRoot, outputFile).split(path.sep).join("/")
-    assertTrayBundleGraph(metafile, outputKey, "dist/tray/swift-tray-bridge.js")
     const bundleBytes = readFileSync(outputFile)
-    verifyTrayPackage(bundleBytes, readFileSync(trayPath))
-    if (verifyStaging && !bundleBytes.equals(readFileSync(path.join(staging, "cmspark-agent.js")))) {
-      throw new Error("TRAY_STAGING_BUNDLE_MISMATCH")
+    if (packageTray.length) {
+      assertTrayBundleGraph(metafile, outputKey, "dist/tray/swift-tray-bridge.js")
+      verifyTrayPackage(bundleBytes, readFileSync(trayPath))
+      if (verifyStaging && !bundleBytes.equals(readFileSync(path.join(staging, "cmspark-agent.js")))) {
+        throw new Error("TRAY_STAGING_BUNDLE_MISMATCH")
+      }
+    }
+    if (whisperVerification) {
+      const pin = verifyWhisperPin({ typescript: require("typescript"), root: companionRoot, metafile,
+        bundle: readFileSync(path.join(companionRoot, "dist", "cmspark-agent.js")), replay: bundleBytes,
+        arch: `darwin-${whisperArch}` })
+      console.log(pin)
     }
   }
 } finally {
   if (metadataFile && metadataDir) {
     rmSync(metadataFile, { force: true })
-    if (verifyStaging) rmSync(outputFile, { force: true })
+    if (verifyStaging || whisperVerification) rmSync(outputFile, { force: true })
     rmdirSync(metadataDir)
   }
 }

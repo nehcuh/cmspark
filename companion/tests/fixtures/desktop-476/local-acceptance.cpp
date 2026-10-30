@@ -1,6 +1,6 @@
 #include <cwchar>
 class Desktop;
-struct D476LocalAcceptance{static bool firstNative,firstRenderer,dataSeen;static void observe(Desktop&,wchar_t const*) noexcept;static bool rendererSite(Desktop&,wchar_t const*) noexcept;static bool done;static bool complete(Desktop&,JsonObject const&);static unsigned confirmations;static std::wstring documentId;static void document(Desktop&);static void confirmation(Desktop&);static void renderer(Desktop&,JsonObject const&);static void emit(Desktop&,wchar_t const*);static void key(Desktop&,bool);static Desktop* owner;static unsigned long epoch;static bool input_active,input_failed,input_typed,input_pending_key,done_emitted;static size_t input_cursor;static ComPtr<ICoreWebView2> input_web;static bool current(Desktop&);static void input_failure(Desktop&);static std::wstring const& command();static size_t input_length();static JsonObject input_payload(size_t);static void input_request(Desktop&);static void input_step(Desktop&);static void input_finished(Desktop&);/*OBS788_BEGIN*/
+struct D476LocalAcceptance{static bool firstNative,firstRenderer,dataSeen/*OBS788_JOIN_BEGIN*/,r14Seen/*OBS788_JOIN_END*/;static void observe(Desktop&,wchar_t const*) noexcept;static bool rendererSite(Desktop&,wchar_t const*) noexcept;static bool done;static bool complete(Desktop&,JsonObject const&);static unsigned confirmations;static std::wstring documentId;static void document(Desktop&);static void confirmation(Desktop&);static void renderer(Desktop&,JsonObject const&);static void emit(Desktop&,wchar_t const*);static void key(Desktop&,bool);static Desktop* owner;static unsigned long epoch;static bool input_active,input_failed,input_typed,input_pending_key,done_emitted;static size_t input_cursor;static ComPtr<ICoreWebView2> input_web;static bool current(Desktop&);static void input_failure(Desktop&);static std::wstring const& command();static size_t input_length();static JsonObject input_payload(size_t);static void input_request(Desktop&);static void input_step(Desktop&);static void input_finished(Desktop&);/*OBS788_BEGIN*/
  static unsigned relation788(Desktop&,HWND) noexcept;
  static void observe788(Desktop&,unsigned) noexcept;
  static unsigned seen788;
@@ -52,7 +52,7 @@ void D476LocalAcceptance::input_step(Desktop& h){
 }
 void D476LocalAcceptance::emit(Desktop& h,wchar_t const* id){JsonObject f;put(f,L"type",L"system.ping");put(f,L"id",id);h.send(f);}
 
-bool D476LocalAcceptance::firstNative=false;bool D476LocalAcceptance::firstRenderer=false;bool D476LocalAcceptance::dataSeen=false;
+bool D476LocalAcceptance::firstNative=false;bool D476LocalAcceptance::firstRenderer=false;bool D476LocalAcceptance::dataSeen=false;/*OBS788_JOIN_BEGIN*/bool D476LocalAcceptance::r14Seen=false;/*OBS788_JOIN_END*/
 void D476LocalAcceptance::observe(Desktop& h,wchar_t const* id) noexcept {
  if(firstNative)return;
  static wchar_t const* known[]={L"D476_LOCAL_FIRST_W_1",L"D476_LOCAL_FIRST_W_2",L"D476_LOCAL_FIRST_W_3",L"D476_LOCAL_FIRST_W_4",L"D476_LOCAL_FIRST_W_5",L"D476_LOCAL_FIRST_W_6",L"D476_LOCAL_FIRST_W_7",L"D476_LOCAL_FIRST_W_8",L"D476_LOCAL_FIRST_W_9",L"D476_LOCAL_FIRST_W_10",L"D476_LOCAL_FIRST_W_11",L"D476_LOCAL_FIRST_W_12",L"D476_LOCAL_FIRST_W_13"};
@@ -79,7 +79,8 @@ void D476LocalAcceptance::key(Desktop& h,bool type){
  {auto scan=(LPARAM)(MapVirtualKeyW(VK_RETURN,MAPVK_VK_TO_VSC)&0xffu)<<16;if(!PostMessageW(info.hwndFocus,WM_KEYDOWN,VK_RETURN,1|scan)||!PostMessageW(info.hwndFocus,WM_KEYUP,VK_RETURN,1|scan|((LPARAM)1<<30)|((LPARAM)1<<31)))(observe(h,L"D476_LOCAL_FIRST_W_11"),emit(h,L"D476_LOCAL_FAIL"));}
 }
 void D476LocalAcceptance::renderer(Desktop& h,JsonObject const& f){
- if(text(f,L"type")!=L"system.ping"||!current(h))return;auto id=text(f,L"id");if(rendererSite(h,id.c_str()))return;
+ if(text(f,L"type")!=L"system.ping"||!current(h))return;auto id=text(f,L"id");if(rendererSite(h,id.c_str()))return;/*OBS788_JOIN_BEGIN*/
+ if(id==L"D476_LOCAL_R14_1"||id==L"D476_LOCAL_R14_2"||id==L"D476_LOCAL_R14_3"){if(!r14Seen){r14Seen=true;try{emit(h,id.c_str());}catch(...){}}return;}/*OBS788_JOIN_END*/
   if(id==L"D476_LOCAL_DATA_SEEN"){if(!dataSeen){dataSeen=true;try{emit(h,L"D476_LOCAL_DATA_SEEN");}catch(...){}}return;}
  if(id==L"D476_LOCAL_KEY"){key(h,false);return;}if(id==L"D476_LOCAL_TYPE"){key(h,true);return;}
  if(id==L"D476_LOCAL_RESIZE"){RECT r{};if(!GetWindowRect(h.window,&r)||!SetWindowPos(h.window,nullptr,0,0,r.right-r.left+120,r.bottom-r.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE))(observe(h,L"D476_LOCAL_FIRST_W_12"),emit(h,L"D476_LOCAL_FAIL"));return;}
