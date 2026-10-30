@@ -65,7 +65,7 @@ if (process.argv[2] === '--producer') {
         if (mode === 'async') await observer.wait(1, () => new Promise(resolve => {
           const timer = setTimeout(resolve, 200)
           t.signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
-          setImmediate(() => actualCallback(Buffer.alloc(4097)))
+          process.nextTick(() => actualCallback(Buffer.alloc(4097)))
         }))
         if (mode === 'target-callback') await observer.wait(1, () => new Promise(resolve => {
           const timer = setTimeout(resolve, 200)
