@@ -56,6 +56,12 @@ jobs:
           grep -Fx '# skipped 0' "$RUNNER_TEMP/whisper-builder-783-arm.tap"
           bash scripts/tests/test-package-otool-783.sh scripts/package.sh
           bash scripts/tests/test-package-staging-783.sh scripts/package.sh
+          node --test --test-reporter=tap scripts/tests/macos-whisper-closure.test.mjs | tee "$RUNNER_TEMP/whisper-closure-783-arm.tap"
+          grep -Fx '# tests 1' "$RUNNER_TEMP/whisper-closure-783-arm.tap"
+          grep -Fx '# pass 1' "$RUNNER_TEMP/whisper-closure-783-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/whisper-closure-783-arm.tap"
+          grep -Fx '# cancelled 0' "$RUNNER_TEMP/whisper-closure-783-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/whisper-closure-783-arm.tap"
       - name: Swift tray packaging CPU controls
         shell: bash
         run: |

@@ -881,6 +881,11 @@ if node --test "${ROOT}/scripts/tests/whisper-soname-783.test.cjs"; then
 else
   FAIL=$((FAIL + 1))
 fi
+if node --test "${ROOT}/scripts/tests/macos-whisper-closure.test.mjs"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
 if node --test "${ROOT}/companion/scripts/tests/whisper-builder-783.test.mjs"; then
   PASS=$((PASS + 1))
 else
