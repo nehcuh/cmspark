@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
+import { setImmediate } from 'node:timers'
 import ts from 'typescript'
 
 // Actual PersonalWorkspace/ActivityPanel/ActivityConfigEditor source, with only
@@ -23,7 +24,7 @@ function harness(platform: 'win32' | 'darwin' = 'win32', separated = false) {
   const appName = platform === 'darwin' ? '微信' : 'WeChat'
   const apps = separated ? [{ app_id: appA, app_name: appName }, ...Array.from({ length: 5 }, (_, i) => ({ app_id: `com.example.other${i}`, app_name: `Other ${i}` })), { app_id: appB, app_name: appName }] : [{ app_id: appA, app_name: appName }, { app_id: appB, app_name: appName }]
   const saves: any[] = []
-  const controller = { snapshotCurrent: true, snapshot: { revision: 7, sources: [], runtime: { supported: true, platform, running: true, scanning: false, status: 'no_visible_allowed_window', coverage: '', platform_note: '', last_success_at: null, error: '' }, config: { enabled: true, allowed_apps: [], interval_ms: 30000, retention_days: 7, max_storage_mb: 128, ocr_ai_enabled: false, ocr_language: 'zh-Hans' } }, busy: false, loading: false, error: '', notice: '', refresh() {}, async mutate(type: string, value: any) { saves.push({ type, value }); return true } }
+  const controller = { snapshotCurrent: true, snapshot: { revision: 7, sources: [], runtime: { supported: true, platform, running: true, scanning: false, status: 'no_visible_allowed_window', coverage: '', platform_note: '', last_success_at: null, error: '' }, config: { enabled: true, allowed_apps: [] as string[], interval_ms: 30000, retention_days: 7, max_storage_mb: 128, ocr_ai_enabled: false, ocr_language: 'zh-Hans' } }, busy: false, loading: false, error: '', notice: '', refresh() {}, async mutate(type: string, value: any) { saves.push({ type, value }); return true } }
   const exports: any = {}
   const requireValue = (id: string) => {
     if (id === 'react') return react
@@ -100,7 +101,7 @@ test('752 same-named applications remain visually distinguishable', async () => 
   h.button(tree, '设置应用与隐私').props.onClick(); tree = h.render()
   h.button(tree, '选择正在运行的应用').props.onClick(); await new Promise<void>(resolve => setImmediate(resolve)); tree = h.render()
   const labels = h.choices(tree); assert.equal(labels.length, 2)
-  assert.notEqual(h.text(labels[0]), h.text(labels[1]), 'identical application names need distinct visible labels')
+  assert.notStrictEqual(h.text(labels[0]), h.text(labels[1]), 'identical application names need distinct visible labels')
 })
 
 test('752 same-named identities can be independently selected and saved', async () => {
