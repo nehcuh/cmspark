@@ -972,6 +972,16 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           typeof message.confirmation_phrase === "string"
             ? message.confirmation_phrase.trim()
             : ""
+        if (message.id !== undefined &&
+            (typeof message.id !== "string" || !/^[A-Za-z0-9:_-]{1,100}$/.test(message.id))) {
+          sendResponse({ ok: false, error: "INVALID_CONFIG_REQUEST_ID" })
+          return true
+        }
+        if (message.config_revision !== undefined &&
+            (typeof message.config_revision !== "string" || message.config_revision.length === 0 || message.config_revision.length > 128)) {
+          sendResponse({ ok: false, error: "INVALID_CONFIG_REVISION" })
+          return true
+        }
         if (!wsClient) {
           sendResponse({ ok: false, error: "Service worker 未初始化，请重载扩展" })
           return true
@@ -979,6 +989,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         const sent = wsClient.send({
           type: "config.set",
           config: message.config,
+          ...(message.id !== undefined ? { id: message.id } : {}),
+          ...(message.config_revision !== undefined ? { config_revision: message.config_revision } : {}),
           ...(armPhrase ? { confirmation_phrase: armPhrase } : {}),
         })
         if (!sent) {

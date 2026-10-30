@@ -17,3 +17,15 @@ function fixture(mode){
 for(const mode of ['missing','disconnected','handshake','open']) test(`actual ${mode} send preserves cache until authoritative update`,()=>{
  const f=fixture(mode);f.send({type:'config.set',config:{model_name:'uncommitted',api_key:'private-test-key'}});assert.equal(f.reply().ok,mode==='handshake'||mode==='open');if(mode==='handshake')assert.equal(f.wsClient.pending.length,1);if(mode==='open')assert.equal(f.frames.length,1);assert.equal(f.writes.length,0);assert.equal(f.get().model_name,'original');f.receive({type:'config.updated',config:{llm:{model_name:'committed',api_key:'***'}}});assert.equal(f.writes.length,1);assert.equal(f.get().model_name,'committed');assert.equal(JSON.stringify(f.writes).includes('private-test-key'),false)
 });
+
+test('actual config forward preserves bounded request id and revision without treating send as persistence',()=>{
+ const f=fixture('open');f.send({type:'config.set',id:'owned-request-1',config_revision:'owned-epoch:7',config:{model_name:'candidate'}});
+ assert.equal(f.reply().ok,true);assert.equal(f.frames.length,1);
+ const frame=JSON.parse(f.frames[0]);assert.equal(frame.id,'owned-request-1');assert.equal(frame.config_revision,'owned-epoch:7');
+ assert.equal(f.writes.length,0);assert.equal(f.get().model_name,'original');
+});
+
+for(const fields of [{id:'invalid id'},{id:42},{config_revision:''},{config_revision:'x'.repeat(129)}]) test('actual config forward rejects malformed correlation metadata',()=>{
+ const f=fixture('open');f.send({type:'config.set',config:{model_name:'candidate'},...fields});
+ assert.equal(f.reply().ok,false);assert.equal(f.frames.length,0);assert.equal(f.writes.length,0);
+});
