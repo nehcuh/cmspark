@@ -40,7 +40,19 @@ test('788 marked observation increments invert exactly to the ten original actio
   "tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift": "fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076",
   "tests/helpers/workspace-xctest-owned-705.ts": "873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b",
   "tests/desktop-native-thread-metadata-476.test.ts": "5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018"
-};assert.equal(Object.keys(hashes).length,10);for(const [file,expected]of Object.entries(hashes)){const restored=restoreObservation788(read(file));assert.equal(createHash('sha256').update(restored).digest('hex'),expected,file);if(file==='tests/desktop-native-thread-metadata-476.test.ts'){const current=', { llmKey: true }';assert.equal(restored.split(current).length,2);const prior=restored.replace(current,'');assert.equal(createHash('sha256').update(prior).digest('hex'),'56abd88e272e8982388507c79c4046936401937e534d5333d5f42885f563f313')}}})
+};assert.equal(Object.keys(hashes).length,10);for(const [file,expected]of Object.entries(hashes)){const observed=restoreObservation788(read(file)),restored=file==='tests/desktop-native-thread-metadata-476.test.ts'?require('./fixtures/archive-first-failure-782').terminalAdmissionInverse801(observed):observed;assert.equal(createHash('sha256').update(restored).digest('hex'),expected,file);if(file==='tests/desktop-native-thread-metadata-476.test.ts'){const current=', { llmKey: true }';assert.equal(restored.split(current).length,2);const prior=restored.replace(current,'');assert.equal(createHash('sha256').update(prior).digest('hex'),'56abd88e272e8982388507c79c4046936401937e534d5333d5f42885f563f313')}}})
+
+test('801 terminal admission inverse rejects drift and duplicates in LF and CRLF',()=>{
+ const {restoreObservation788}=require(path.join(root,'scripts/tests/observation-788-inverse.mjs'))
+ const {terminalAdmissionInverse801}=require('./fixtures/archive-first-failure-782')
+ for(const eol of ['\n','\r\n']){
+  const raw=restoreObservation788(read('tests/desktop-native-thread-metadata-476.test.ts').replace(/\r?\n/g,eol))
+  const prior=terminalAdmissionInverse801(raw)
+  assert.equal(createHash('sha256').update(prior.replace(/\r\n/g,'\n')).digest('hex'),'5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018')
+  assert.throws(()=>terminalAdmissionInverse801(raw.replace(' hostedTerminalHost705()',' hostedTerminalHost706()')))
+  assert.throws(()=>terminalAdmissionInverse801(raw+raw))
+ }
+})
 
 function actualReceiver788(role:'LOCAL'|'ARCHIVE'|'TERMINAL'){
  const source=read('tests/desktop-native-thread-metadata-476.test.ts'),ast=ts.createSourceFile('native.ts',source,ts.ScriptTarget.Latest,true),nodes:ts.ArrowFunction[]=[]

@@ -1,4 +1,4 @@
-import { archiveObservationInverse782 } from "./fixtures/archive-first-failure-782"
+import { archiveObservationInverse782, terminalAdmissionInverse801 } from "./fixtures/archive-first-failure-782"
 /** Fixed source-derived diagnostic controls only; no native/COM/PTY process. */
 import test, {afterEach} from 'node:test'
 import {cpuTerminalAdapter747,cleanupCpuTerminalAdapters747,observerInverseForm747} from './fixtures/desktop-476/terminal-parser-cpu'
@@ -261,7 +261,7 @@ for(const [eol,expected]of [['LF','6fadbe6027b50d5a1b0654ba30641d260e7dcaa098d38
  // The newest callback observation first breaks the old exact hunk; undo only
  // that sealed layer to independently retain the older whole-hash refusal.
  assert.throws(()=>confirmationObservationInverse772(profile),{code:'ERR_ASSERTION',actual:1,expected:2,operator:'strictEqual',message:'one exact #772 observation-only source hunk\n\n1 !== 2\n'},'actual unchanged old consumer rejects the new callback at its exact hunk guard')
- assert.throws(()=>confirmationObservationInverse772(restore788(profile)),error=>(error as any)?.code==='ERR_ASSERTION'&&(error as any).message.includes('whole original native source conserved before all older authorities'),'actual unchanged old consumer retains its whole-source refusal after removing only the newest observation')
+ assert.throws(()=>confirmationObservationInverse772(terminalAdmissionInverse801(restore788(profile))),error=>(error as any)?.code==='ERR_ASSERTION'&&(error as any).message.includes('whole original native source conserved before all older authorities'),'actual unchanged old consumer retains its whole-source refusal after removing only the newest observation')
  assert.throws(()=>workspaceAbortPhaseInverse705(previous),{code:'ERR_ASSERTION'},'missing block and old source refuse')
  assert.throws(()=>workspaceAbortPhaseInverse705(profile+profile),{code:'ERR_ASSERTION'},'duplicate block refuses')
  for(const [current,drift]of [["Buffer.byteLength(workspaceLine705,'utf8')<=4096","Buffer.byteLength(workspaceLine705,'utf8')<=8192"],['if(t.signal.aborted)try{const workspaceLine705=','if(false)try{const workspaceLine705=']]as const){assert.equal(profile.split(current).length,2);assert.throws(()=>workspaceAbortPhaseInverse705(profile.replace(current,drift)),{code:'ERR_ASSERTION'})}
