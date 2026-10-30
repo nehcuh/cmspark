@@ -271,7 +271,8 @@ export class OwnedWorkspaceUI705 {
  private xcodeResultObservationStarted=false
  private readonly resultSourceRoot:string
  private xcodeCloseObservationRegistered=false
- private observer?:ChildProcess;private xcode?:ChildProcess;private observerClosed=false;private xcodeClosed=false;private observerCode:number|null=null;private xcodeCode:number|null=null;private changed=new Set<()=>void>();private watcher:fs.FSWatcher;private begun=false;private invalid=false
+/*OBS788_JOIN_BEGIN*/ private observerCloseObservationRegistered=false
+/*OBS788_JOIN_END*/ private observer?:ChildProcess;private xcode?:ChildProcess;private observerClosed=false;private xcodeClosed=false;private observerCode:number|null=null;private xcodeCode:number|null=null;private changed=new Set<()=>void>();private watcher:fs.FSWatcher;private begun=false;private invalid=false
  constructor(native:string,parent:string,readonly deadline:number,readonly signal:AbortSignal){
   this.resultSourceRoot=path.resolve(native,'../../tests/fixtures/workspace-ui-705')
   if(process.platform!=='darwin'||!Number.isSafeInteger(deadline)||deadline<=Date.now()||deadline>Date.now()+45000)throw refused()
@@ -300,7 +301,14 @@ export class OwnedWorkspaceUI705 {
   let observed=false;const once=()=>{if(observed)return;observed=true;try{observe()}catch{}}
   try{if(this.xcodeClosed)once();else this.xcode?.once('close',once)}catch{}
  }
- // This reads only after this exact ChildProcess close; caller never supplies a flag/path.
+/*OBS788_JOIN_BEGIN*/
+ // Failure-only observation; never a wait or authority for lifecycle and cleanup.
+ observeObserverCloseOnce(observe:(exit:'ZERO'|'NONZERO'|'UNKNOWN')=>void){
+  if(this.observerCloseObservationRegistered)return;this.observerCloseObservationRegistered=true
+  let observed=false;const once=()=>{if(observed)return;observed=true;const code=this.observerCode;const exit=code===0?'ZERO':typeof code==='number'&&Number.isInteger(code)&&code>0&&code<=255?'NONZERO':'UNKNOWN';try{observe(exit)}catch{}}
+  try{if(this.observerClosed)once();else this.observer?.once('close',once)}catch{}
+ }
+/*OBS788_JOIN_END*/ // This reads only after this exact ChildProcess close; caller never supplies a flag/path.
  observeClosedXcodeResultOnce(emit:(value:Result705Projection)=>void){
   if(this.xcodeResultObservationStarted)return;this.xcodeResultObservationStarted=true
   if(!this.xcodeClosed){try{emit(result705Unknown('NOT_CLOSED'))}catch{};return}
