@@ -104,7 +104,7 @@ test("ambiguous capped raw without a worker coordinate fails closed", async () =
 
 test("worker success raw cap agrees with locator admission boundary", () => {
   const worker = readFileSync(join(process.cwd(), "src/computer/qwen-vl-worker.py"), "utf8")
-  const match = worker.match(/return\s+\{"ok": True, "x": x, "y": y, "raw": raw\[:(\d+)\]\}/)
+  const match = worker.match(/return\s+\{"ok": True, "x": x, "y": y, "raw": raw\[:(\d+)\], "raw_complete": len\(raw\) < \1\}/)
   assert.ok(match, "worker success response must expose its raw slice limit")
   assert.equal(Number(match[1]), QWEN_VL_WORKER_RAW_CAP)
 })
@@ -118,4 +118,36 @@ test("499-character raw preserves the existing reparse behavior", async () => {
   const result = await loc.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
   assert.equal(result.kind, "hit")
   if (result.kind === "hit") assert.deepEqual(result.point, { x: 50, y: 100 })
+})
+
+test("complete Unicode raw below the Python cap is reparsed", async () => {
+  // Python len(raw) is 499, while JavaScript raw.length is 500.
+  const raw = "😀" + "a".repeat(485) + '{"x":1,"y":0}'
+  assert.equal([...raw].length, 499)
+  assert.equal(raw.length, 500)
+  const loc = new QwenVlLocator({
+    session: { locate: async () => ({ point: { x: 0, y: 0 }, ms: 1, raw, rawComplete: true }) },
+  })
+  const result = await loc.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
+  assert.equal(result.kind, "hit")
+  if (result.kind === "hit") assert.deepEqual(result.point, { x: 1, y: 0 })
+})
+
+test("explicit incomplete raw never overrides the worker point", async () => {
+  const loc = new QwenVlLocator({
+    session: { locate: async () => ({ point: { x: 0, y: 0 }, ms: 1, raw: '{"x":1,"y":0}', rawComplete: false }) },
+  })
+  const result = await loc.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
+  assert.equal(result.kind, "hit")
+  if (result.kind === "hit") assert.deepEqual(result.point, { x: 0, y: 0 })
+})
+
+test("legacy capped Unicode raw remains conservative", async () => {
+  const raw = "😀" + "a".repeat(485) + '{"x":1,"y":0}'
+  const loc = new QwenVlLocator({
+    session: { locate: async () => ({ point: { x: 0, y: 0 }, ms: 1, raw }) },
+  })
+  const result = await loc.locate({ command: "click", shot: shot({ imageWidth: 500, imageHeight: 500 }) })
+  assert.equal(result.kind, "hit")
+  if (result.kind === "hit") assert.deepEqual(result.point, { x: 0, y: 0 })
 })

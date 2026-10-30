@@ -88,10 +88,10 @@ export class QwenVlLocator {
       // Path C: prefer/recover points from free-text raw via gui-action-parse
       // (UI-TARS-like start_box center, JSON, etc.). Worker may already return
       // a point; reparse wins when complete raw yields a finite coordinate.
-      // The Python worker caps raw at 500 characters. At that boundary the
-      // text may be truncated, and parsing a partial number can move a click.
+      // The worker counts Python characters before slicing. Older workers lack
+      // the flag, so retain the conservative UTF-16 length fallback for them.
       let point = r.point && Number.isFinite(r.point.x) && Number.isFinite(r.point.y) ? r.point : null
-      if (r.raw && r.raw.length < QWEN_VL_WORKER_RAW_CAP) {
+      if (r.raw && (r.rawComplete === true || (r.rawComplete === undefined && r.raw.length < QWEN_VL_WORKER_RAW_CAP))) {
         const fromRaw = parseGuiClickPoint(r.raw, width, height)
         if (fromRaw) point = fromRaw
       }

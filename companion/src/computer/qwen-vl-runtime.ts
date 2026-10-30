@@ -26,6 +26,7 @@ export interface QwenVlInferResult {
   x: number
   y: number
   raw?: string
+  rawComplete?: boolean
   ms: number
 }
 
@@ -51,7 +52,7 @@ export interface QwenVlTransport {
     command: string
     width: number
     height: number
-  }): Promise<{ x: number; y: number; raw?: string }>
+  }): Promise<{ x: number; y: number; raw?: string; rawComplete?: boolean }>
   dispose(): Promise<void>
 }
 
@@ -246,7 +247,7 @@ class PythonLineTransport implements QwenVlTransport {
     command: string
     width: number
     height: number
-  }): Promise<{ x: number; y: number; raw?: string }> {
+  }): Promise<{ x: number; y: number; raw?: string; rawComplete?: boolean }> {
     const msg = await this.request(
       {
         cmd: "infer",
@@ -261,6 +262,7 @@ class PythonLineTransport implements QwenVlTransport {
       x: Number(msg.x),
       y: Number(msg.y),
       raw: typeof msg.raw === "string" ? msg.raw : undefined,
+      rawComplete: typeof msg.raw_complete === "boolean" ? msg.raw_complete : undefined,
     }
   }
 
@@ -375,7 +377,7 @@ export class QwenVlRuntime {
     try {
       const r = await this.transport.infer(args)
       this.faults = 0
-      return { x: r.x, y: r.y, raw: r.raw, ms: Date.now() - t0 }
+      return { x: r.x, y: r.y, raw: r.raw, rawComplete: r.rawComplete, ms: Date.now() - t0 }
     } catch (e) {
       this.faults += 1
       const threshold = this.deps.faultThreshold ?? 3
