@@ -127,6 +127,8 @@ fi
 # Darwin relocation and signing are required, even when the source is supplied explicitly.
 # Refuse missing tools before copying an output that could later be mistaken for usable.
 if [[ "${OS}" == "Darwin" ]]; then
+  # Shared with package.sh so discovery and staging accept the same names.
+  . "${COMPANION_ROOT}/../scripts/whisper-omp-name.sh"
   for tool in otool install_name_tool codesign awk; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
       echo "[build-cmspark-whisper] ERROR: required macOS tool missing: ${tool}" >&2
@@ -147,10 +149,18 @@ if [[ "${OS}" == "Darwin" ]]; then
   LIB_OUT="${COMPANION_ROOT}/dist/lib"
   mkdir -p "${LIB_OUT}"
   # Clear previous staged libs for a clean set
-  if ! rm -f "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib "${LIB_OUT}"/libomp*.dylib; then
+  if ! rm -f "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib; then
     echo "[build-cmspark-whisper] ERROR: failed to clear staged libraries" >&2
     exit 1
   fi
+  for lib in "${LIB_OUT}"/libomp*.dylib; do
+    [[ -e "$lib" || -L "$lib" ]] || continue
+    is_whisper_omp_name "${lib##*/}" || continue
+    if ! rm -f "$lib"; then
+      echo "[build-cmspark-whisper] ERROR: failed to clear staged libraries" >&2
+      exit 1
+    fi
+  done
 
   WHISPER_PREFIX=""
   GGML_PREFIX=""
@@ -168,7 +178,11 @@ if [[ "${OS}" == "Darwin" ]]; then
     find "${GGML_PREFIX}/lib" -maxdepth 1 -type f -name 'libggml*.dylib' -exec /bin/sh -c 'dest=$1; shift; exec cp -f "$@" "$dest"' sh "${LIB_OUT}/" {} +
   fi
   if [[ -n "${OMP_PREFIX}" && -d "${OMP_PREFIX}/lib" ]]; then
-    find "${OMP_PREFIX}/lib" -maxdepth 1 -type f -name 'libomp*.dylib' -exec /bin/sh -c 'dest=$1; shift; exec cp -f "$@" "$dest"' sh "${LIB_OUT}/" {} +
+    for lib in "${OMP_PREFIX}"/lib/libomp*.dylib; do
+      [[ -f "$lib" && ! -L "$lib" ]] || continue
+      is_whisper_omp_name "${lib##*/}" || continue
+      cp -f "$lib" "${LIB_OUT}/"
+    done
   fi
   # Common soname symlinks
   (
@@ -202,6 +216,29 @@ if [[ "${OS}" == "Darwin" ]]; then
       create_soname_alias "$f" libggml-base.dylib
       break
     done
+    if [[ ! -e libomp.dylib && ! -L libomp.dylib ]]; then
+      omp_count=0; omp_candidate=""
+      for f in libomp.*.dylib; do
+        [[ -f "$f" && ! -L "$f" ]] || continue
+        is_whisper_omp_name "$f" || continue
+        omp_count=$((omp_count+1)); omp_candidate="$f"
+      done
+      if [[ "$omp_count" -gt 1 ]]; then
+        echo "[build-cmspark-whisper] ERROR: ambiguous libomp versions" >&2
+        exit 1
+      fi
+      if [[ "$omp_count" -eq 1 ]]; then
+        if [[ ! -L "${OMP_PREFIX}/lib/libomp.dylib" ]] || ! command -v realpath >/dev/null 2>&1; then
+          echo "[build-cmspark-whisper] ERROR: unverified libomp alias" >&2; exit 1
+        fi
+        omp_target="$(realpath "${OMP_PREFIX}/lib/libomp.dylib")" || exit 1
+        omp_expected="$(realpath "${OMP_PREFIX}/lib/${omp_candidate}")" || exit 1
+        if [[ "$omp_target" != "$omp_expected" ]]; then
+          echo "[build-cmspark-whisper] ERROR: mismatched libomp alias" >&2; exit 1
+        fi
+        create_soname_alias "$omp_candidate" libomp.dylib
+      fi
+    fi
   )
 
     # A failed or malformed inspection must not be treated as an empty dependency set.
@@ -258,9 +295,11 @@ if [[ "${OS}" == "Darwin" ]]; then
       done <<< "${library_dependencies}"
     }
     for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib "${LIB_OUT}"/libomp*.dylib; do
+      if [[ "${lib##*/}" == libomp* ]] && ! is_whisper_omp_name "${lib##*/}"; then continue; fi
       rewrite_lib "${lib}"
     done
       for lib in "${LIB_OUT}"/libwhisper*.dylib "${LIB_OUT}"/libggml*.dylib "${LIB_OUT}"/libomp*.dylib; do
+        if [[ "${lib##*/}" == libomp* ]] && ! is_whisper_omp_name "${lib##*/}"; then continue; fi
         [[ -f "${lib}" && ! -L "${lib}" ]] || continue
         codesign --force --sign - "${lib}" >/dev/null 2>&1
       done

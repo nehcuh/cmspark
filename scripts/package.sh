@@ -413,15 +413,19 @@ case "${PLATFORM}" in
             echo "ERROR: failed to stage ggml dylibs" >&2
             exit 1
           fi
-          if ls companion/dist/lib/libomp*.dylib >/dev/null 2>&1; then
-            if ! cp -f companion/dist/lib/libomp*.dylib "${STAGING}/lib/"; then
+          . "${ROOT_DIR}/scripts/whisper-omp-name.sh"
+          for _omp in companion/dist/lib/libomp*.dylib; do
+            [ -e "${_omp}" ] || continue
+            is_whisper_omp_name "${_omp##*/}" || continue
+            if ! cp -f "${_omp}" "${STAGING}/lib/"; then
               echo "ERROR: failed to stage libomp dylibs" >&2
               exit 1
             fi
-          fi
+          done
           # preserve versioned symlinks if present as files/links
           for _l in companion/dist/lib/libwhisper*.dylib companion/dist/lib/libggml*.dylib companion/dist/lib/libomp*.dylib; do
             [ -e "${_l}" ] || continue
+            if [[ "${_l##*/}" == libomp* ]] && ! is_whisper_omp_name "${_l##*/}"; then continue; fi
             _dylib_count=$((_dylib_count + 1))
           done
         fi

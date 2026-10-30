@@ -4,17 +4,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 // Execute the whole production Bash producer. Only external commands are inert boundaries;
 // these text fixtures are not Mach-O/signature/provenance or actual macOS evidence.
 const source = fs.readFileSync(new URL('../build-cmspark-whisper.sh', import.meta.url));
+const ompRule = fs.readFileSync(new URL('../../../scripts/whisper-omp-name.sh', import.meta.url));
 const pinBefore = 'owned source pin sentinel; no production digest is updated\n';
-const utilities = ['dirname', 'chmod', 'mkdir', 'ln', 'basename', 'wc', 'tr'];
+const utilities = ['dirname', 'chmod', 'mkdir', 'ln', 'basename', 'wc', 'tr', 'realpath'];
 function fixture(t, fault = '', missing = '', platform = 'Darwin') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark (compatibility version backup) builder 783-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const bin = path.join(root, 'commands'), companion = path.join(root, 'companion');
   fs.mkdirSync(bin); fs.mkdirSync(path.join(companion, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'scripts'));
+  fs.writeFileSync(path.join(root, 'scripts/whisper-omp-name.sh'), ompRule);
   fs.mkdirSync(path.join(companion, 'src/voice'), { recursive: true });
   const script = path.join(companion, 'scripts/build-cmspark-whisper.sh');
   fs.writeFileSync(script, source);
@@ -22,7 +26,14 @@ function fixture(t, fault = '', missing = '', platform = 'Darwin') {
   const input = path.join(root, 'input'), lib = path.join(input, 'lib');
   fs.mkdirSync(lib, { recursive: true });
   const primary = path.join(input, 'whisper-cli'); fs.writeFileSync(primary, 'inert primary text\n');
-  for (const name of ['libwhisper.1.2.dylib', 'libggml.0.1.dylib', ...(fault === 'missing-omp' ? [] : ['libomp.dylib'])]) fs.writeFileSync(path.join(lib, name), 'inert library text\n');
+  const versioned = ['versioned-omp', 'foreign-omp', 'ambiguous-omp'].includes(fault);
+  for (const name of ['libwhisper.1.2.dylib', 'libggml.0.1.dylib', ...(fault === 'missing-omp' ? [] : [versioned ? 'libomp.5.dylib' : 'libomp.dylib'])]) fs.writeFileSync(path.join(lib, name), 'inert library text\n');
+  if (versioned) {
+    if (fault === 'foreign-omp') fs.writeFileSync(path.join(root, 'foreign.dylib'), 'foreign');
+    fs.symlinkSync(fault === 'foreign-omp' ? path.join(root, 'foreign.dylib') : 'libomp.5.dylib', path.join(lib, 'libomp.dylib'));
+    if (fault === 'ambiguous-omp') fs.writeFileSync(path.join(lib, 'libomp.6.dylib'), 'other version');
+  }
+  if (fault === 'extra-omp') for (const name of ['libomptarget.dylib', 'libomp.5extra.dylib']) fs.writeFileSync(path.join(lib, name), 'unrelated');
   for (const name of utilities) {
     const target = ['/bin', '/usr/bin'].map(p => path.join(p, name)).find(p => fs.existsSync(p));
     assert.ok(target, `required ownedFS/Bash utility ${name}`);
@@ -176,4 +187,27 @@ test('783 unresolved library stops before hash or pin update', t => {
   assert.notEqual(r.status, 0); assert.match(r.stderr, /missing staged library dependency/);
   assert.equal(r.trace.includes('hash'), false); assert.equal(r.trace.includes('write-pins'), false);
   assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
+});
+test('783 versioned libomp retains a verified source alias', t => {
+  const f = fixture(t, 'versioned-omp'), r = f.run([]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.readlinkSync(path.join(f.root, 'companion/dist/lib/libomp.dylib')), 'libomp.5.dylib');
+});
+for (const fault of ['foreign-omp', 'ambiguous-omp']) {
+  test(`783 ${fault} refuses an unverified libomp alias`, t => {
+    const f = fixture(t, fault), r = f.run(['--write-pins']);
+    assert.notEqual(r.status, 0); assert.equal(r.trace.includes('hash'), false);
+    assert.equal(r.trace.includes('write-pins'), false); assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
+  });
+}
+test('783 unrelated libomp-prefixed files are not staged', t => {
+  const f = fixture(t, 'extra-omp'), r = f.run([]);
+  assert.equal(r.status, 0, r.stderr);
+  for (const name of ['libomptarget.dylib', 'libomp.5extra.dylib']) assert.equal(fs.existsSync(path.join(f.root, 'companion/dist/lib', name)), false);
+});
+test('783 shared libomp filename policy accepts only numeric sonames', () => {
+  const rule = fileURLToPath(new URL('../../../scripts/whisper-omp-name.sh', import.meta.url));
+  const script = '. "$1"; shift; for n do is_whisper_omp_name "$n" && printf "Y\\n" || printf "N\\n"; done';
+  const r = spawnSync('/bin/sh', ['-c', script, 'sh', rule, 'libomp.dylib', 'libomp.22.1.8.dylib', 'libomptarget.dylib', 'libomp.5extra.dylib', 'libomp.5..1.dylib'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout, 'Y\nY\nN\nN\nN\n');
 });

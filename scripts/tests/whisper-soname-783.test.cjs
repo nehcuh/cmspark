@@ -2,10 +2,11 @@
 // Real shell builder with owned files and inert tool stubs; never executes Mach-O or signing.
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cp=require('node:child_process');
 const builder=fs.readFileSync(path.resolve(__dirname,'../../companion/scripts/build-cmspark-whisper.sh'));
+const ompRule=fs.readFileSync(path.resolve(__dirname,'../whisper-omp-name.sh'));
 function fixture(t,libs){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'cmspark-soname-783-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
- const dir=p=>fs.mkdirSync(path.join(root,p),{recursive:true}),write=(p,v)=>fs.writeFileSync(path.join(root,p),v);for(const p of ['companion/scripts','w/lib','g/lib','stubs'])dir(p);
- write('companion/scripts/build-cmspark-whisper.sh',builder);write('source','OWNED_CLI');for(const [p,v] of Object.entries(libs))write(p,v);
+ const dir=p=>fs.mkdirSync(path.join(root,p),{recursive:true}),write=(p,v)=>fs.writeFileSync(path.join(root,p),v);for(const p of ['companion/scripts','scripts','w/lib','g/lib','stubs'])dir(p);
+ write('companion/scripts/build-cmspark-whisper.sh',builder);write('scripts/whisper-omp-name.sh',ompRule);write('source','OWNED_CLI');for(const [p,v] of Object.entries(libs))write(p,v);
  const stub=(n,body)=>{write('stubs/'+n,'#!/bin/sh\n'+body+'\n');fs.chmodSync(path.join(root,'stubs',n),0o700)};
  stub('uname','case "$1" in -s) printf Darwin;; -m) printf arm64;; esac');stub('brew','case "$2" in whisper-cpp) printf "%s" "$OWNED_ROOT/w";; ggml) printf "%s" "$OWNED_ROOT/g";; esac');
  stub('otool','printf "%s:\\n\\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\\n" "$2"');stub('install_name_tool','exit 0');stub('codesign','exit 0');
