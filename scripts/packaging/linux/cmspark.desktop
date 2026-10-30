@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=CMspark
+GenericName=Browser Agent
+GenericName[zh_CN]=浏览器智能体
+Comment=Start CMspark Companion and system tray
+Comment[zh_CN]=启动 CMspark Companion 和系统托盘
+Exec=/opt/cmspark/launch-desktop.sh
+Icon=cmspark
+Terminal=false
+Categories=Utility;
+StartupNotify=false

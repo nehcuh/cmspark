@@ -191,9 +191,27 @@ jobs:
             else 7z l "$1"
             fi
           }
-          list_zip "${ZIP}" | grep -E 'onnxruntime-node/bin/napi-v?[0-9]+/linux/x64/onnxruntime_binding\.node'
-          list_zip "${ZIP}" | grep -E 'qwen-vl-worker\.py'
-          list_zip "${ZIP}" | grep -E 'systray2/traybin/tray_linux_release$'
+          # Complete the producer before checking content: never let grep close its pipe.
+          ZIP_LIST="$(mktemp)"
+          trap 'rm -f -- "${ZIP_LIST}"' EXIT
+          if ! list_zip "${ZIP}" > "${ZIP_LIST}"; then
+            echo "ERROR: could not list Linux package ZIP" >&2
+            exit 1
+          fi
+          grep -E 'onnxruntime-node/bin/napi-v?[0-9]+/linux/x64/onnxruntime_binding\.node' "${ZIP_LIST}"
+          grep -E 'onnxruntime-node/bin/napi-v?[0-9]+/linux/x64/libonnxruntime\.so\.1$' "${ZIP_LIST}"
+          if grep -E 'onnxruntime-node/bin/napi-v?[0-9]+/linux/(x64|arm64)/libonnxruntime_providers_(cuda|tensorrt)\.so$' "${ZIP_LIST}" >/dev/null; then
+            echo "ERROR: optional CUDA/TensorRT ONNX Runtime provider leaked into Linux package" >&2
+            exit 1
+          else
+            GREP_STATUS=$?
+            if [[ "${GREP_STATUS}" -ne 1 ]]; then
+              echo "ERROR: could not inspect Linux package ZIP listing" >&2
+              exit 1
+            fi
+          fi
+          grep -E 'qwen-vl-worker\.py' "${ZIP_LIST}"
+          grep -E 'systray2/traybin/tray_linux_release$' "${ZIP_LIST}"
           echo "linux-x64 zip content assert OK"
 
       - name: Assert Windows Setup.exe exists

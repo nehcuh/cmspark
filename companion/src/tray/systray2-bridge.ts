@@ -87,7 +87,7 @@ export class SysTray2Adapter implements UnifiedTray {
     const Tray = this.loadModule()
     const menu = this.buildMenu()
 
-    const instance = new Tray({ menu, debug: !!process.env.CMSPARK_DEBUG, copyDir: true })
+    const instance = new Tray({ menu, debug: !!process.env.CMSPARK_DEBUG, copyDir: process.platform !== "linux" })
     await instance.ready()
     console.log("[tray] Started with systray2 backend")
     console.log("[tray] Platform:", process.platform, "Arch:", process.arch)

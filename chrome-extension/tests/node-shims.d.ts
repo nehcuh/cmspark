@@ -61,3 +61,9 @@ declare module "node:os" {
 declare module "node:buffer" {
   export const Buffer: { from(value: string): Uint8Array }
 }
+
+declare module "node:crypto" {
+  export function createHash(algorithm: string): {
+    update(data: string): { digest(encoding: "hex"): string }
+  }
+}

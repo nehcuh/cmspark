@@ -1,0 +1,55 @@
+name: Linux integration ARM
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Linux integration controls (ARM64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify checked-out revision
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          git rev-parse HEAD^{tree}
+          sha256sum companion/package-lock.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Verify runtime
+        run: node -e "if (process.platform !== 'linux' || process.arch !== 'arm64' || process.version !== 'v22.23.4') process.exit(1); console.log(process.platform, process.arch, process.version)"
+      - name: Install locked companion dependencies
+        working-directory: companion
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: npm ci
+      - name: Build and compile companion tests
+        working-directory: companion
+        run: |
+          npm run build
+          ./node_modules/.bin/tsc -p tsconfig.test.json
+          git diff --exit-code HEAD -- package-lock.json
+      - name: MCP and tray controls
+        working-directory: companion
+        run: |
+          node --test .test-dist/tests/mcp-packaged-filesystem.test.js .test-dist/tests/mcp-transport-path-contract.test.js .test-dist/tests/tray-clipboard.test.js .test-dist/tests/tray-pairing.test.js .test-dist/tests/tray-status-474.test.js
+      - name: Filesystem staging controls
+        run: node --test scripts/tests/stage-filesystem-runtime.test.mjs
+      - name: Owned DEB staging controls
+        run: python3 scripts/tests/linux-deb-owned-staging.test.py
+      - name: Clean staged filesystem MCP closure
+        run: |
+          : "${RUNNER_TEMP:?}"
+          NODE_BIN="$(command -v node)"
+          /usr/bin/env -i PATH="$(dirname "${NODE_BIN}"):/usr/bin:/bin" HOME="${RUNNER_TEMP}" TMPDIR="${RUNNER_TEMP}" \
+            LANG=C.UTF-8 LC_ALL=C.UTF-8 GITHUB_ACTIONS="${GITHUB_ACTIONS}" RUNNER_OS="${RUNNER_OS}" \
+            CMSPARK_STAGED_FILESYSTEM_CI=1 "${NODE_BIN}" --max-old-space-size=3072 \
+            --test --experimental-test-isolation=none scripts/tests/filesystem-staged-handshake-794.test.mjs

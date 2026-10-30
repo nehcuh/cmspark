@@ -1,0 +1,17 @@
+[Unit]
+Description=CMspark Browser Agent Tray
+Documentation=https://github.com/nehcuh/cmspark
+Wants=graphical-session.target
+After=graphical-session.target cmspark-companion.service
+
+[Service]
+Type=simple
+ExecStart=/opt/cmspark/launch-companion.sh tray
+Restart=on-failure
+RestartSec=30
+StartLimitInterval=300
+StartLimitBurst=3
+Environment="NODE_ENV=production"
+Environment="CMSPARK_DATA_DIR=%h/.cmspark-agent"
+StandardOutput=journal
+StandardError=journal

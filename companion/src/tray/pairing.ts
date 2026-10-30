@@ -49,26 +49,42 @@ export function hasPaired(configDir: string): boolean {
   }
 }
 
-/**
- * Resolve the OS clipboard command + stdin-feeding strategy for `text`. Returns null
- * when no supported tool is available (caller then falls back to showing the secret
- * inline in a notification). Pure: availability is injected so the per-platform
- * branch is unit-testable without `which`.
- *
- *   darwin  → pbcopy          (reads the secret from stdin)
- *   win32   → clip            (reads the secret from stdin)
- *   linux   → xclip / xsel -b (whichever the caller confirms is installed)
- */
+export interface ClipboardAvailability {
+  xclip?: boolean
+  xsel?: boolean
+  wlCopy?: boolean
+}
+
+export interface ClipboardCommand {
+  cmd: string
+  args: string[]
+}
+
+/** Resolve clipboard commands in session order; all read the copied text from stdin. */
+export function resolveClipboardCommands(
+  platform: string,
+  available: ClipboardAvailability,
+  session: { wayland?: boolean } = {},
+): ClipboardCommand[] {
+  if (platform === "darwin") return [{ cmd: "pbcopy", args: [] }]
+  if (platform === "win32") return [{ cmd: "clip", args: [] }]
+  if (platform !== "linux") return []
+
+  const commands: Record<keyof ClipboardAvailability, ClipboardCommand> = {
+    xclip: { cmd: "xclip", args: ["-selection", "clipboard"] },
+    xsel: { cmd: "xsel", args: ["--clipboard", "--input"] },
+    wlCopy: { cmd: "wl-copy", args: [] },
+  }
+  const order: Array<keyof ClipboardAvailability> = session.wayland
+    ? ["wlCopy", "xclip", "xsel"]
+    : ["xclip", "xsel", "wlCopy"]
+  return order.filter((tool) => available[tool]).map((tool) => commands[tool])
+}
+
 export function resolveClipboardCommand(
   platform: string,
-  available: { xclip?: boolean; xsel?: boolean },
-): { cmd: string; args: string[] } | null {
-  if (platform === "darwin") return { cmd: "pbcopy", args: [] }
-  if (platform === "win32") return { cmd: "clip", args: [] }
-  if (platform === "linux") {
-    if (available.xclip) return { cmd: "xclip", args: ["-selection", "clipboard"] }
-    if (available.xsel) return { cmd: "xsel", args: ["--clipboard", "--input"] }
-    return null
-  }
-  return null
+  available: ClipboardAvailability,
+  session: { wayland?: boolean } = {},
+): ClipboardCommand | null {
+  return resolveClipboardCommands(platform, available, session)[0] ?? null
 }

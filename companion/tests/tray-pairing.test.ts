@@ -15,6 +15,7 @@ import {
   getWsSecretPath,
   getPairedMarkerPath,
   resolveClipboardCommand,
+  resolveClipboardCommands,
   WS_SECRET_FILENAME,
   PAIRED_MARKER_FILENAME,
 } from "../src/tray/pairing"
@@ -74,6 +75,22 @@ test("resolveClipboardCommand: linux prefers xclip, falls back to xsel, else nul
     { cmd: "xsel", args: ["--clipboard", "--input"] },
   )
   assert.equal(resolveClipboardCommand("linux", {}), null)
+})
+
+test("resolveClipboardCommands orders Linux backends for the display session", () => {
+  const available = { xclip: true, xsel: true, wlCopy: true }
+  assert.deepEqual(
+    resolveClipboardCommands("linux", available, { wayland: false }).map((item) => item.cmd),
+    ["xclip", "xsel", "wl-copy"],
+  )
+  assert.deepEqual(
+    resolveClipboardCommands("linux", available, { wayland: true }).map((item) => item.cmd),
+    ["wl-copy", "xclip", "xsel"],
+  )
+  assert.deepEqual(
+    resolveClipboardCommand("linux", available, { wayland: true }),
+    { cmd: "wl-copy", args: [] },
+  )
 })
 
 test("resolveClipboardCommand: unknown platform → null", () => {

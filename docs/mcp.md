@@ -63,6 +63,8 @@ CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://mod
 | `trust_level` | `trusted` |
 | allow-dir / `roots` / `cwd` | 当前用户主目录（`os.homedir()`，Windows 正斜杠） |
 
+**随包启动**：对未指定版本的官方 npx filesystem 配置，Companion 在随包存在 `node_modules/@modelcontextprotocol/server-filesystem/dist/index.js` 时，会由内置 Node 直接启动该入口，不再要求系统安装 `npx` / `npm`，也不需要启动时联网下载。版本化 npx 包和其他 MCP 命令仍按原配置执行；allow-dir、roots、cwd 与工具权限不变。
+
 | 平台 | 主目录示例（写入 args） | roots URI 示例 |
 |------|-------------------------|----------------|
 | Windows | `C:/Users/HuChen`（正斜杠） | `file:///C:/Users/HuChen` |
@@ -214,7 +216,7 @@ macOS 示例：`args` 末尾用 `"/Users/you"`，`cwd` 同理。
    只有声明了 `resources` 能力的 server 才支持 `mcp_list_resources`。对于 filesystem / brave-search 这类 tools-only server，LLM 会直接用 `mcp__filesystem__read_text_file` 等 namespaced 工具。
 
 4. **命令找不到**  
-   daemon 启动时的 PATH 可能被 macOS launchd 剥离。Companion 会自动补充 nvm、homebrew、~/.local/bin 等常见路径；如果还找不到，就在 `command` 里写完整路径。
+   daemon 启动时的 PATH 可能被 macOS launchd 剥离。Companion 会自动补充 nvm、homebrew、~/.local/bin 等常见路径；如果还找不到，就在 `command` 里写完整路径。默认官方 filesystem 则优先使用随包服务器和内置 Node，无需另装 `npx`；若该入口在包内缺失，打包会硬失败，而不是让安装后反复报 `spawn npx ENOENT`。
 
 ## 修改配置后如何生效
 

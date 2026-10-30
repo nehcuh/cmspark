@@ -124,6 +124,9 @@ async function main() {
         error(`  Note:     ${meta.note}`);
       }
     } else {
+      if (process.platform !== "win32") {
+        fs.chmodSync(binaryPath, 0o755)
+      }
       ok(`${binaryName} → ${actualHash}`);
     }
   }
