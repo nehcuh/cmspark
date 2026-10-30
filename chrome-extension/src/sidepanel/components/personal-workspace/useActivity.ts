@@ -108,6 +108,7 @@ export function useActivity(connected: boolean, connectionRevision: number) {
       return results
     } finally { if (writing.current === write) { writing.current = null; if (live.current) setBusy(false) }; if (controller.current === abort) controller.current = null }
   }, [connected, connectionRevision, accept])
-  return { snapshot, error, notice, busy, loading, refresh, mutate, mutateBulk, session: peer.current }
+  const snapshotCurrent = connected && peer.current.connected && snapshotPeer.current === peer.current && snapshot !== null && snapshotRef.current === snapshot
+  return { snapshot, snapshotCurrent, error, notice, busy, loading, refresh, mutate, mutateBulk, session: peer.current }
 }
 export type ActivityController = ReturnType<typeof useActivity>
