@@ -585,6 +585,7 @@ input:focus{border-color:var(--accent)}
 .result.success{display:block;background:var(--success-soft);color:var(--success);border:1px solid var(--success-border)}
 .result.error{display:block;background:var(--danger-soft);color:var(--danger);border:1px solid var(--danger-border)}
 .result.pending{display:block;color:var(--muted);border:1px solid var(--border)}
+.result.warning{display:block;background:var(--warning-soft);color:var(--warning);border:1px solid var(--border)}
 .input-row{display:flex;gap:6px}
 .input-row input{flex:1}
 .btn-icon{padding:8px 10px;background:var(--field-bg);border:1px solid var(--field-border);border-radius:var(--radius-sm);color:var(--muted);cursor:pointer;font-size:13px;line-height:1}
@@ -930,8 +931,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
   $("saveBtn").onclick=function(){
     if(savePending)return;
-    if(!configRevision){showResult("配置版本不可用；请先复制当前内容，再刷新页面核对。",false);return}
-    resultEl.textContent="正在保存上次提交…";resultEl.className="result pending";
+    if(!configRevision){showResult(configLoaded?"配置版本不可用；请先复制当前内容，再刷新页面核对。":"配置尚未加载，请刷新页面后重试。",false);return}
+    savedFlash.classList.remove("show");
+    resultEl.textContent="正在保存所提交内容…";resultEl.className="result pending";
     var payload=collect(),submitted=JSON.stringify(payload);payload.config_revision=configRevision;savePending=true;
     fetch(url("/api/config"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
     .then(function(r){return r.json()}).then(function(d){
@@ -942,7 +944,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           savedFlash.classList.add("show");
           setTimeout(function(){savedFlash.classList.remove("show")},1500);
         }else{
-          showResult("上次提交已保存；当前修改尚未保存。",true);
+          resultEl.textContent="上次提交已保存；当前修改尚未保存。";resultEl.className="result warning";
         }
         // Do NOT replace the api_key input with the masked value — that would
         // overwrite the user's plaintext key with '****', making it look lost.
