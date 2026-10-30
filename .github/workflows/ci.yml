@@ -32,6 +32,9 @@ jobs:
           cd companion && npm ci
           cd ../chrome-extension && npm ci
 
+      - name: Archive initial gate observation controls
+        run: node --experimental-strip-types --test companion/scripts/tests/archive-initial-gate-476.test.mjs
+
       - name: Verify systray2 binary integrity
         run: |
           cd companion && node ../scripts/verify-systray2.js --strict
