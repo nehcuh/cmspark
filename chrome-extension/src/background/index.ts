@@ -986,6 +986,13 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           sendResponse({ ok: false, error: "Service worker 未初始化，请重载扩展" })
           return true
         }
+        // Correlated draft writes must never be queued across authentication or
+        // reconnect: a later replay can overwrite a newer session's choice.
+        if (message.id !== undefined && message.config_revision !== undefined &&
+            !wsClient.desktopBrowserConnectionCurrent()()) {
+          sendResponse({ ok: false, error: "CONFIG_CONNECTION_NOT_READY" })
+          return true
+        }
         const sent = wsClient.send({
           type: "config.set",
           config: message.config,
