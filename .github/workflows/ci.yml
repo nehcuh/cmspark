@@ -235,6 +235,10 @@ jobs:
       - name: Desktop build helper controls (#480)
         run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs companion/scripts/tests/computer-uia-no-focus-build.test.mjs companion/scripts/tests/computer-uia-no-focus-resolver.test.mjs companion/scripts/tests/computer-uia-native-probe-572.test.mjs scripts/tests/uia-no-autofocus-572.test.mjs scripts/tests/metadata-key-phase-650.test.mjs
 
+      - name: Pinned runtime header controls (macOS)
+        if: matrix.os == 'macos-latest'
+        run: node --test companion/scripts/tests/desktop-runtime-headers-480.test.mjs
+
       - name: Build fixed no-autofocus UIA DLL (#572)
         if: matrix.os == 'windows-latest'
         run: |

@@ -239,7 +239,7 @@ def _infer(image_path: str, command: str, width: int, height: int) -> dict:
     if pt is None:
         return {"ok": False, "error": "no-coordinates", "raw": raw[:500]}
     x, y = pt
-    return {"ok": True, "x": x, "y": y, "raw": raw[:500]}
+    return {"ok": True, "x": x, "y": y, "raw": raw[:500], "raw_complete": len(raw) < 500}
 
 
 def main() -> None:
