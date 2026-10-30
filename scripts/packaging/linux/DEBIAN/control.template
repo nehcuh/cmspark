@@ -1,0 +1,14 @@
+Package: cmspark
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCHITECTURE@
+License: MIT
+Maintainer: CMspark <https://github.com/nehcuh/cmspark>
+Installed-Size: @INSTALLED_SIZE@
+Depends: libc6, libstdc++6, libgcc-s1, libappindicator3-1, libgtk-3-0, xclip | xsel
+Recommends: wl-clipboard
+Homepage: https://github.com/nehcuh/cmspark
+Description: Local companion for CMspark Browser Agent
+ Ships an embedded Node.js runtime, system tray, Chrome extension, desktop launcher,
+ and Linux native dependencies. The Companion and tray run as systemd user services.

@@ -4,7 +4,7 @@
        uninstall-macos daemon-status \
        install-linux uninstall-linux \
        install-windows uninstall-windows \
-       package package-macos package-windows package-linux
+       package package-macos package-windows package-linux package-linux-deb
 
 # 一键启动开发环境（两个进程并行）
 dev: install
@@ -157,3 +157,7 @@ package-windows:
 # 打包 Linux x64
 package-linux: build
 	@bash scripts/package.sh linux-x64
+
+# 打包 Linux x64 Debian 安装包（沿用 package-linux 的 staging）
+package-linux-deb: package-linux
+	@bash scripts/build-linux-deb.sh linux-x64

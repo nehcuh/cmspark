@@ -12,6 +12,7 @@ for(const scheme of ["green","red","yellow","template"]) {
 }
 console.log("Connection tray icons generated (32px PNG, 16/32/48 ICO).")
 
-// Windows desktop/Start menu/installer: static brand, independent of live tray status.
+// Desktop and installer icons use a static brand, independent of live tray status.
 const appImages=[16,24,32,48,64,128,256].map(size=>({size,png:encodePNG(size,size,renderMark(size,"green",true))}))
 writeFileSync(join(assetsDir,"cmspark.ico"),encodeICO(appImages))
+writeFileSync(join(assetsDir,"cmspark.png"),appImages[appImages.length-1].png)

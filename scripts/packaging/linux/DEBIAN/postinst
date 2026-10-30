@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+run_user() {
+  [ -n "${SUDO_USER:-}" ] || return 0
+  [ "${SUDO_USER}" != "root" ] || return 0
+  uid="$(id -u "${SUDO_USER}")"
+  runtime="${CMSPARK_SYSTEMD_USER_RUNTIME_DIR:-/run/user/${uid}}"
+  [ -S "${runtime}/bus" ] || return 0
+  home="$(getent passwd "${SUDO_USER}" | cut -d: -f6)"
+  [ -n "${home}" ] || return 0
+  runuser -u "${SUDO_USER}" -- env \
+    HOME="${home}" USER="${SUDO_USER}" LOGNAME="${SUDO_USER}" \
+    XDG_RUNTIME_DIR="${runtime}" DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime}/bus" \
+    "$@"
+}
+
+if [ "${1:-}" = "configure" ]; then
+  run_user systemctl --user daemon-reload
+  if [ -z "${2:-}" ]; then
+    run_user systemctl --user enable cmspark-companion.service
+  fi
+  if run_user systemctl --user is-active --quiet cmspark-companion.service || \
+     run_user systemctl --user is-active --quiet cmspark-tray.service; then
+    run_user systemctl --user restart cmspark-companion.service cmspark-tray.service
+  elif [ -z "${2:-}" ] || run_user systemctl --user is-enabled --quiet cmspark-companion.service; then
+    run_user systemctl --user start cmspark-companion.service
+  fi
+fi
+
+exit 0

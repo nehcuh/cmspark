@@ -78,6 +78,10 @@ assert_file_has "${PACKAGE_SH}" 'host-scripts/\*\.scpt missing' \
   "package.sh errors on missing scpt"
 assert_file_has "${PACKAGE_SH}" 'cmspark-tray missing' \
   "package.sh errors on missing cmspark-tray (macos-arm64)"
+assert_file_has "${PACKAGE_SH}" 'ERROR: systray2 Linux tray binary missing' \
+  "package.sh errors on missing Linux systray2 binary"
+assert_file_has "${PACKAGE_SH}" 'chmod 0755 "\$\{STAGING\}/node_modules/systray2/traybin/tray_linux_release"' \
+  "package.sh makes the Linux systray2 binary executable"
 assert_file_lacks "${PACKAGE_SH}" 'WARNING: companion/dist/cmspark-host not built' \
   "package.sh no longer soft-WARNINGs missing host"
 # P2 esbuild SoT: externals live in companion/scripts/esbuild-bundle-args.json;
@@ -107,6 +111,14 @@ assert_file_has "${PACKAGE_SH}" 'host-scripts-win' \
   "package.sh stages host-scripts-win"
 assert_file_has "${PACKAGE_SH}" 'qwen-vl-worker\.py' \
   "package.sh stages qwen-vl-worker.py (Qwen3-VL)"
+assert_file_has "${PACKAGE_SH}" '@modelcontextprotocol/server-filesystem' \
+  "package.sh stages official filesystem MCP"
+assert_file_has "${PACKAGE_SH}" 'official filesystem MCP entry missing' \
+  "package.sh hard-fails when official filesystem MCP is missing"
+assert_file_lacks "${PACKAGE_SH}" 'require\.resolve\(pkgName' \
+  "package.sh resolves dependency manifests from node_modules directly (exports-safe)"
+assert_file_has "${PACKAGE_SH}" 'libonnxruntime_providers_cuda\.so' \
+  "package.sh removes the unused CUDA ONNX provider"
 assert_file_exists "${ROOT}/companion/assets/qwen-vl.manifest.json" \
   "qwen-vl.manifest.json present (release-pinned sha256, #359)"
 assert_file_lacks "${PACKAGE_SH}" 'stage_onnxruntime' \
@@ -849,7 +861,22 @@ else
 fi
 
 echo ""
+if node --test "${ROOT}/scripts/tests/stage-filesystem-runtime.test.mjs"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
+if bash "${ROOT}/scripts/tests/linux-deb-package.test.sh"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
 if node --test "${ROOT}/scripts/tests/windows-host-scripts.test.mjs"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
+if node --test "${ROOT}/scripts/tests/release-zip-listing.test.mjs"; then
   PASS=$((PASS + 1))
 else
   FAIL=$((FAIL + 1))

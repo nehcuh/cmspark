@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
+import { createHash } from 'node:crypto'
 import ts from 'typescript'
 import { createActivityFixture } from './helpers/activity-bulk-753'
 
@@ -17,16 +18,23 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = n
  * boundaries. The controller is a deferred observation port, not a replacement
  * bulk algorithm; request/service sequencing has its own owning test file.
  */
-function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}) {
+function uiHarness(fixture: Fixture, { full = true, initialView = 'todos', allowConfigure = false } = {}) {
   const root = path.resolve(process.cwd(), 'src/sidepanel'), at = (name: string) => path.resolve(root, name)
   const modules = new Map<string, any>(), frames = new Map<string, { cells: any[]; effects: any[] }>()
   const effects: Array<() => void> = [], listeners = new Map<string, Set<(event: any) => void>>()
+  const configurationCalls: Array<{ action: string; payload: any; promise: Promise<any> }> = []
   const calls: BulkCall[] = [], writes: Array<{ frame: string; value: any }> = []
   const resultWaiters: Array<() => void> = []
   let frame: { cells: any[]; effects: any[] } | undefined, frameName = '', cursor = 0, effectCursor = 0, deferEffects = false
   let store: any, state: any
   const controller: any = { snapshot: plain(fixture.initial), busy: false, loading: false, error: '', notice: '', session: { connected: true },
-    refresh: () => assert.fail('unrelated state refresh invoked'), mutate: () => assert.fail('individual editor was not selected'),
+    refresh: () => assert.fail('unrelated state refresh invoked'), mutate(action: string, payload: any) {
+      assert.equal(allowConfigure, true, 'individual editor was not selected')
+      assert.equal(action, 'activity.configure')
+      const promise = fixture.handle({ type: action, id: 'controlled-ui-configure', ...payload })
+      configurationCalls.push({ action, payload: plain(payload), promise })
+      return promise.then(reply => { if (reply.ok) controller.snapshot = reply.state; return reply.ok === true })
+    },
     mutateBulk(action: string, items: any[], current: () => boolean) {
       const pending = deferred<any[]>(); calls.push({ action, items, current, ...pending }); return pending.promise
     },
@@ -60,6 +68,8 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
   }
   const jsx = { jsx: (type: any, props: any, key: any) => ({ type, props, key }), jsxs: (type: any, props: any, key: any) => ({ type, props, key }), Fragment: 'fragment' }
   const unrelated = () => assert.fail('unrelated UI, browser, provider or native boundary executed')
+  const activityApps = Array.from({ length: 20 }, (_, index) => ({ app_id: `linux.${createHash('sha256').update(`/owned-fixture/apps/app-${index + 1}`).digest('hex')}`, app_name: `应用 ${String(index + 1).padStart(2, '0')}` }))
+  const chromeListeners = new Set<(message: any) => void>()
   const browserWindow = {
     location: { pathname: full ? '/tabs/workspace.html' : '/sidepanel.html', search: '?view=' + initialView },
     matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
@@ -92,8 +102,21 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
     const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText
     vm.runInNewContext(code, { exports, require: requireValue, window: browserWindow,
       document: { querySelector: () => null }, localStorage: { getItem: () => null, setItem() {} },
-      chrome: { runtime: { getURL: unrelated, sendMessage: unrelated }, tabs: { create: unrelated, query: unrelated } },
-      CustomEvent: CustomEventValue, URLSearchParams, AbortController, console,
+      chrome: { runtime: {
+        getURL: unrelated,
+        onMessage: {
+          addListener: (fn: any) => chromeListeners.add(fn),
+          removeListener: (fn: any) => chromeListeners.delete(fn),
+        },
+        sendMessage: (message: any) => {
+          if (message.type === 'activity.apps') {
+            Promise.resolve().then(() => { for (const fn of [...chromeListeners]) fn({ type: 'activity.result', id: message.id, ok: true, apps: activityApps }) })
+            return Promise.resolve({ ok: true })
+          }
+          return unrelated()
+        },
+      }, tabs: { create: unrelated, query: unrelated } },
+      CustomEvent: CustomEventValue, URLSearchParams, AbortController, console, crypto: globalThis.crypto, setTimeout, clearTimeout,
     }, { timeout: 1000, filename: file })
     return exports
   }
@@ -115,6 +138,16 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
     const child = rows(rootUI).find(node => node.type === personal.PersonalWorkspace && node.props.destination === destination)
     if (!child) return { root: rootUI, personal: null, panel: null }
     const personalUI = renderComponent('personal:' + destination, personal.PersonalWorkspace, child.props)
+    const activity = rows(personalUI).find(node => typeof node.type === 'function' && node.type.name === 'ActivityPanel')
+    if (activity) {
+      const panel = renderComponent('activity:' + destination, activity.type, activity.props)
+      const editor = rows(panel).find(node => typeof node.type === 'function' && node.type.name === 'ActivityConfigEditor')
+      if (editor) {
+        const editorUI = renderComponent('activity-editor:' + destination, editor.type, editor.props)
+        return { root: rootUI, personal: personalUI, panel: [panel, editorUI] }
+      }
+      return { root: rootUI, personal: personalUI, panel }
+    }
     const todo = find(personalUI, node => typeof node.type === 'function' && node.type.name === 'TodoPanel')
     const panel = renderComponent('todo:' + destination, todo.type, todo.props)
     return { root: rootUI, personal: personalUI, panel }
@@ -130,7 +163,7 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
   const navigate = (destination: string) => { const ui = render().root; const nav = find(ui, node => typeof node.type === 'function' && node.type.name === 'WorkspaceNavigation'); nav.props.onView(destination) }
   render(); render()
   return {
-    controller, calls, writes, rows, text, find, render, button, box, select, begin, navigate,
+    controller, calls, configurationCalls, activityApps, writes, rows, text, find, render, button, box, select, begin, navigate,
     setState(patch: any) { state = { ...state, ...patch } },
     state: () => state,
     defer() { deferEffects = true }, flush() { deferEffects = false; flush() },
@@ -141,9 +174,9 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos' } = {}
   }
 }
 
-async function withUI(run: (fixture: Fixture, ui: ReturnType<typeof uiHarness>) => Promise<void>) {
+async function withUI(run: (fixture: Fixture, ui: ReturnType<typeof uiHarness>) => Promise<void>, options: Parameters<typeof uiHarness>[1] = {}) {
   const fixture = await createActivityFixture(); let ui: ReturnType<typeof uiHarness> | undefined
-  try { ui = uiHarness(fixture); await run(fixture, ui) } finally { if (ui) await ui.dispose(); fixture.dispose() }
+  try { ui = uiHarness(fixture, options); await run(fixture, ui) } finally { if (ui) await ui.dispose(); fixture.dispose() }
 }
 
 test('753 actual full-page rows select explicit identities with sibling controls and preserve filtered selection preview', async () => withUI(async (fixture, ui) => {
@@ -282,3 +315,87 @@ test('752 actual real-source APP search retains only matching todos and pending 
   }
   assert.equal(ui.calls.length, 0)
 }))
+
+test('796 running app picker reaches all 20 apps across pages and preserves cross-page selection', async () => withUI(async (fixture, ui) => {
+  let panel = ui.render('activity').panel
+  ui.button(panel, '设置应用与隐私').props.onClick()
+  panel = ui.render('activity').panel
+  assert.ok(ui.text(panel).includes('选择正在运行的应用'), ui.text(panel))
+  ui.button(panel, '选择正在运行的应用').props.onClick()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  panel = ui.render('activity').panel
+
+  const visible = () => ui.rows(panel).filter(node => node.type === 'label' && node.props.className === 'cm-personal-check').map(node => ui.text(node))
+  const checkbox = (name: string) => {
+    const label = ui.find(panel, node => node.type === 'label' && ui.text(node).includes(name))
+    return ui.rows(label).find(node => node.type === 'input')
+  }
+  const next = () => { ui.button(panel, '下一页').props.onClick(); panel = ui.render('activity').panel }
+  const previous = () => { ui.button(panel, '上一页').props.onClick(); panel = ui.render('activity').panel }
+
+  assert.equal(visible().length, 6)
+  assert.ok(visible().some(name => name.includes('应用 01')))
+  assert.ok(visible().some(name => name.includes('应用 06')))
+  assert.equal(visible().some(name => name.includes('应用 07')), false)
+  assert.ok(ui.text(panel).includes('第 1 / 4 页 · 共 20 个应用'))
+  assert.equal(ui.button(panel, '上一页').props.disabled, true)
+
+  next()
+  assert.ok(ui.text(panel).includes('第 2 / 4 页'))
+  assert.ok(visible().some(name => name.includes('应用 07')))
+  assert.ok(visible().some(name => name.includes('应用 12')))
+  checkbox('应用 12').props.onChange({ target: { checked: true } })
+  panel = ui.render('activity').panel
+
+  next()
+  assert.ok(ui.text(panel).includes('第 3 / 4 页'))
+  checkbox('应用 18').props.onChange({ target: { checked: true } })
+  panel = ui.render('activity').panel
+
+  next()
+  assert.equal(visible().length, 2)
+  assert.ok(visible().some(name => name.includes('应用 19')))
+  assert.ok(visible().some(name => name.includes('应用 20')))
+  assert.ok(ui.text(panel).includes('第 4 / 4 页'))
+  assert.ok(ui.text(panel).includes('已选择 2 / 20 个'))
+  assert.equal(ui.button(panel, '下一页').props.disabled, true)
+
+  // The original first/last-page and selection assertions remain above.
+  // Saving must also pass the actual UI validator and real service/store.
+  checkbox('应用 20').props.onChange({ target: { checked: true } })
+  panel = ui.render('activity').panel
+  previous()
+  assert.equal(checkbox('应用 18').props.checked, true)
+  previous()
+  assert.equal(checkbox('应用 12').props.checked, true)
+  assert.equal(ui.activityApps.length, 20)
+  assert.equal(new Set(ui.activityApps.map(app => app.app_id)).size, 20)
+  assert.equal(ui.activityApps.every(app => /^linux\.[a-f0-9]{64}$/.test(app.app_id)), true)
+  assert.equal(ui.configurationCalls.length, 0, 'selection alone must not save')
+  const before = fixture.state()
+  let prevented = 0
+  const form = ui.find(panel, node => node.type === 'form')
+  form.props.onSubmit({ preventDefault() { prevented++ } })
+  assert.equal(prevented, 1)
+  assert.equal(ui.configurationCalls.length, 1, 'actual form validation must reach the controlled service')
+  const call = ui.configurationCalls[0], reply = await call.promise
+  assert.equal(call.action, 'activity.configure')
+  assert.equal(call.payload.expected_revision, before.revision)
+  assert.equal(reply.ok, true)
+  const expected = [11, 17, 19].map(index => ui.activityApps[index].app_id)
+  assert.deepEqual(plain(call.payload.patch.allowed_apps), expected)
+  assert.equal(reply.state.revision, before.revision + 1)
+  assert.deepEqual(reply.state.config.allowed_apps, expected)
+  assert.equal(reply.state.config.enabled, false, 'saving scope must not start collection')
+  assert.deepEqual(fixture.state().config.allowed_apps, expected)
+  assert.equal(fixture.state().revision, reply.state.revision)
+  const persisted = JSON.parse(fs.readFileSync(path.join(fixture.directory, 'personal-activity/state.json'), 'utf8'))
+  assert.deepEqual(persisted.config.allowed_apps, expected)
+  assert.equal(persisted.revision, reply.state.revision)
+  assert.equal(persisted.config.enabled, false)
+  const refreshed = await fixture.handle({ type: 'activity.state', id: 'controlled-read-saved-scope' })
+  assert.equal(refreshed.ok, true)
+  assert.deepEqual(refreshed.state.config, persisted.config)
+  assert.equal(ui.configurationCalls.length, 1, 'no automatic second save')
+}, { allowConfigure: true }))

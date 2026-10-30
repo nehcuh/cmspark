@@ -63,6 +63,16 @@ jobs:
         run: |
           cd companion && npm run build
 
+      - name: Clean staged filesystem MCP closure (#796)
+        timeout-minutes: 3
+        run: |
+          : "${RUNNER_TEMP:?}"
+          NODE_BIN="$(command -v node)"
+          /usr/bin/env -i PATH="$(dirname "${NODE_BIN}"):/usr/bin:/bin" HOME="${RUNNER_TEMP}" TMPDIR="${RUNNER_TEMP}" \
+            LANG=C.UTF-8 LC_ALL=C.UTF-8 GITHUB_ACTIONS="${GITHUB_ACTIONS}" RUNNER_OS="${RUNNER_OS}" \
+            CMSPARK_STAGED_FILESYSTEM_CI=1 "${NODE_BIN}" --max-old-space-size=3072 \
+            --test --experimental-test-isolation=none scripts/tests/filesystem-staged-handshake-794.test.mjs
+
       - name: Run companion tests
         run: |
           cd companion && npm test

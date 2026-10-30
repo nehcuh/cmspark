@@ -436,7 +436,7 @@ test("createTransport: stdio with config.env (no PATH) merges custom vars + buil
   assert.equal(params.env.PATH, buildSpawnPath())
 })
 
-test("createTransport: stdio passes command/args/cwd through to StdioClientTransport", () => {
+test("createTransport: stdio launches bundled official filesystem with original cwd", () => {
   const { createTransport } = require("../src/mcp/transport")
   // Use a real temp dir — transport.ts deliberately falls back to undefined when
   // cwd doesn't exist (to avoid a misleading ENOENT). The old "/var/empty" exists
@@ -453,8 +453,11 @@ test("createTransport: stdio passes command/args/cwd through to StdioClientTrans
       trust_level: "first-use",
     })
     const params = (transport as any)._serverParams
-    assert.equal(params.command, "npx")
-    assert.deepEqual(params.args, ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"])
+    assert.equal(params.command, process.execPath)
+    const entry = require.resolve("@modelcontextprotocol/server-filesystem/dist/index.js")
+    // Production normalizes absolute Windows argv paths; command/cwd remain original.
+    const expectedEntry = process.platform === "win32" ? entry.replace(/\\/g, "/") : entry
+    assert.deepEqual(params.args, [expectedEntry, "/tmp"])
     assert.equal(params.cwd, cwd)
     assert.equal(params.stderr, "pipe", "stderr should be piped so onStderr can capture it")
   } finally {
