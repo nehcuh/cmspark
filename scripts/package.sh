@@ -405,8 +405,14 @@ case "${PLATFORM}" in
         # Windows path already stages *.dll next to the exe; mirror that for Darwin.
         _dylib_count=0
         if ls companion/dist/lib/libwhisper*.dylib >/dev/null 2>&1; then
-          cp -f companion/dist/lib/libwhisper*.dylib "${STAGING}/lib/" 2>/dev/null || true
-          cp -f companion/dist/lib/libggml*.dylib "${STAGING}/lib/" 2>/dev/null || true
+          if ! cp -f companion/dist/lib/libwhisper*.dylib "${STAGING}/lib/"; then
+            echo "ERROR: failed to stage whisper dylibs" >&2
+            exit 1
+          fi
+          if ! cp -f companion/dist/lib/libggml*.dylib "${STAGING}/lib/"; then
+            echo "ERROR: failed to stage ggml dylibs" >&2
+            exit 1
+          fi
           # preserve versioned symlinks if present as files/links
           for _l in companion/dist/lib/libwhisper*.dylib companion/dist/lib/libggml*.dylib; do
             [ -e "${_l}" ] || continue
@@ -443,7 +449,8 @@ case "${PLATFORM}" in
           # Architecture headings or other unrecognized output fail closed.
           if ! printf '%s' "${_otool_output}" | LC_ALL=C awk '
             NR == 1 { next }
-            !/^[[:space:]]+[^[:space:]].* \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/ { invalid = 1 }
+            !/^\t[^[:space:][:cntrl:]].* \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/ { invalid = 1; next }
+            { sub(/^\t/, ""); if ($0 ~ /[[:cntrl:]]/) invalid = 1 }
             END { if (NR < 2 || invalid) exit 1 }
           '; then
             echo "ERROR: invalid otool dependency lines — cannot verify whisper install names" >&2

@@ -891,6 +891,11 @@ if bash "${ROOT}/scripts/tests/test-package-otool-783.sh" "${PACKAGE_SH}"; then
 else
   FAIL=$((FAIL + 1))
 fi
+if bash "${ROOT}/scripts/tests/test-package-staging-783.sh" "${PACKAGE_SH}"; then
+  PASS=$((PASS + 1))
+else
+  FAIL=$((FAIL + 1))
+fi
 if node --test "${ROOT}/scripts/tests/release-zip-listing.test.mjs"; then
   PASS=$((PASS + 1))
 else

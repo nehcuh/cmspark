@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 // these text fixtures are not Mach-O/signature/provenance or actual macOS evidence.
 const source = fs.readFileSync(new URL('../build-cmspark-whisper.sh', import.meta.url));
 const pinBefore = 'owned source pin sentinel; no production digest is updated\n';
-const utilities = ['dirname', 'cp', 'chmod', 'mkdir', 'rm', 'find', 'ln', 'basename', 'wc', 'tr'];
+const utilities = ['dirname', 'chmod', 'mkdir', 'rm', 'ln', 'basename', 'wc', 'tr'];
 function fixture(t, fault = '', missing = '', platform = 'Darwin') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark (compatibility version backup) builder 783-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -32,6 +32,8 @@ function fixture(t, fault = '', missing = '', platform = 'Darwin') {
     if (name !== missing) fs.writeFileSync(path.join(bin, name), `#!/bin/bash\nset -eu\n${body}\n`, { mode: 0o700 });
   };
   const awk = ['/usr/bin/awk', '/bin/awk'].find(p => fs.existsSync(p)); assert.ok(awk);
+  const cp = ['/bin/cp', '/usr/bin/cp'].find(p => fs.existsSync(p)); assert.ok(cp);
+  const find = ['/usr/bin/find', '/bin/find'].find(p => fs.existsSync(p)); assert.ok(find);
   const parseCount = path.join(root, 'parse-count'); fs.writeFileSync(parseCount, '0');
   writeCommand('awk', `if [[ "$1" == *'compatibility version'* ]]; then
   IFS= read -r count < "$PARSE_COUNT" || true
@@ -41,9 +43,27 @@ function fixture(t, fault = '', missing = '', platform = 'Darwin') {
   [[ "$FAULT" != "parse-$role" ]] || exit 43
 fi
 exec "$AWK_BINARY" "$@"`);
+  writeCommand('cp', `for arg in "$@"; do
+  case "$arg" in
+    *libwhisper*.dylib) if [[ "$FAULT" == copy-whisper ]]; then printf 'fault:copy-whisper\\n' >> "$TRACE"; exit 44; fi ;;
+    *libggml*.dylib) if [[ "$FAULT" == copy-ggml ]]; then printf 'fault:copy-ggml\\n' >> "$TRACE"; exit 44; fi ;;
+  esac
+done
+exec "$CP_BINARY" "$@"`);
+  writeCommand('find', `family=''
+for arg in "$@"; do
+  case "$arg" in
+    'libwhisper*.dylib') family=whisper ;;
+    'libggml*.dylib') family=ggml ;;
+  esac
+done
+rc=0
+"$FIND_BINARY" "$@" || rc=$?
+if [[ -n "$family" ]]; then printf 'find:%s:%s\\n' "$family" "$rc" >> "$TRACE"; fi
+exit "$rc"`);
   writeCommand('uname', `case "$1" in -s) printf '%s\\n' "$PLATFORM";; -m) printf '%s\\n' arm64;; *) exit 97;; esac`);
   writeCommand('brew', `[[ "$1" == --prefix && ( "$2" == whisper-cpp || "$2" == ggml ) ]] || exit 97\nprintf '%s\\n' "$INPUT"`);
-  writeCommand('otool', `[[ "$1" == -L ]] || exit 97\nrole=lib; [[ "$2" == "$PRIMARY_OUT" ]] && role=primary\nprintf 'inspect:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "inspect-$role" ]] || exit 41\nprintf '%s:\\n' "$2"\n[[ "$FAULT" != empty-dependencies ]] || exit 0\nif [[ "$FAULT" == "malformed-$role" ]]; then printf 'not an otool dependency\\n'; exit 0; fi\nif [[ "$FAULT" == "missing-newline-$role" ]]; then printf '\\t%s (compatibility version 1.0.0, current version 1.0.0)' "$INPUT/lib/libwhisper.1.2.dylib"; exit 0; fi\nprintf '\\t%s (compatibility version 1.0.0, current version 1.0.0)\\n' "$INPUT/lib/libwhisper.1.2.dylib"\nif [[ "$FAULT" == "trailing-empty-$role" ]]; then printf '\\n'; fi`);
+  writeCommand('otool', `[[ "$1" == -L ]] || exit 97\nrole=lib; [[ "$2" == "$PRIMARY_OUT" ]] && role=primary\nprintf 'inspect:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "inspect-$role" ]] || exit 41\nprintf '%s:\\n' "$2"\n[[ "$FAULT" != empty-dependencies ]] || exit 0\nif [[ "$FAULT" == "malformed-$role" ]]; then printf 'not an otool dependency\\n'; exit 0; fi\nif [[ "$FAULT" == "control-$role" ]]; then printf '\\t/owned/control\\rpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\nif [[ "$FAULT" == "internal-tab-$role" ]]; then printf '\\t/owned/control\\tpath (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0; fi\ncase "$FAULT" in\n  "prefix-cr-$role") printf '\\t\\r/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-vt-$role") printf '\\t\\v/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-ff-$role") printf '\\t\\f/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\n  "prefix-tab-$role") printf '\\t\\t/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\\n'; exit 0 ;;\nesac\nif [[ "$FAULT" == "missing-newline-$role" ]]; then printf '\\t%s (compatibility version 1.0.0, current version 1.0.0)' "$INPUT/lib/libwhisper.1.2.dylib"; exit 0; fi\nprintf '\\t%s (compatibility version 1.0.0, current version 1.0.0)\\n' "$INPUT/lib/libwhisper.1.2.dylib"\nif [[ "$FAULT" == "trailing-empty-$role" ]]; then printf '\\n'; fi`);
   writeCommand('install_name_tool', `case "$1" in -id) action=id;; -change) action=change;; *) exit 97;; esac\nprintf 'relocate:%s\\n' "$action" >> "$TRACE"\nif [[ "$action" == change && "$2" != "$INPUT/lib/libwhisper.1.2.dylib" ]]; then exit 99; fi\n[[ "$FAULT" != "relocate-$action" ]] || exit 41`);
   writeCommand('codesign', `[[ "$1" == --force && "$2" == --sign && "$3" == - && "$#" == 4 ]] || exit 97\nrole=lib; [[ "$4" == "$PRIMARY_OUT" ]] && role=primary\nprintf 'sign:%s\\n' "$role" >> "$TRACE"\n[[ "$FAULT" != "sign-$role" ]] || exit 41`);
   writeCommand('shasum', `printf 'hash\\n' >> "$TRACE"\nprintf '%064d  inert-output\\n' 0`);
@@ -54,7 +74,7 @@ exec "$AWK_BINARY" "$@"`);
   const trace = path.join(root, 'trace'); fs.writeFileSync(trace, '');
   const primaryOut = path.join(companion, 'dist/bin/cmspark-whisper-darwin-arm64');
   const env = { PATH: bin, TMPDIR: root, LANG: 'C', LC_ALL: 'C',
-    CMSPARK_WHISPER_SRC: primary, INPUT: input, PRIMARY_OUT: primaryOut, TRACE: trace, FAULT: fault, PLATFORM: platform, AWK_BINARY: awk, PARSE_COUNT: parseCount };
+    CMSPARK_WHISPER_SRC: primary, INPUT: input, PRIMARY_OUT: primaryOut, TRACE: trace, FAULT: fault, PLATFORM: platform, AWK_BINARY: awk, CP_BINARY: cp, FIND_BINARY: find, PARSE_COUNT: parseCount };
   const run = args => {
     const r = spawnSync('/bin/bash', [script, ...args], { cwd: root, env, encoding: 'utf8', timeout: 10_000, maxBuffer: 128 * 1024 });
     assert.equal(r.error, undefined, 'owned Bash child completed naturally'); assert.equal(r.signal, null);
@@ -72,6 +92,17 @@ test('783 actual Darwin builder orders required inspection relocation signing be
   assert.ok(r.trace.indexOf('sign:primary') < r.trace.indexOf('hash'));
   assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
 });
+for (const fault of ['copy-whisper', 'copy-ggml']) {
+  test(`783 ${fault} failure stops the actual builder before digest or pin update`, t => {
+    const f = fixture(t, fault), r = f.run(['--write-pins']);
+    assert.notEqual(r.status, 0);
+    assert.ok(r.trace.includes(`fault:${fault}`), 'requested copy fault was actually reached');
+    assert.ok(r.trace.some(event => new RegExp(`^find:${fault.slice(5)}:[1-9][0-9]*$`).test(event)), 'find reported the copy failure');
+    assert.doesNotMatch(r.stdout, /SUCCESS:/);
+    assert.equal(r.trace.includes('hash'), false); assert.equal(r.trace.includes('write-pins'), false);
+    assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
+  });
+}
 for (const fault of ['inspect-primary', 'relocate-change', 'relocate-id', 'inspect-lib', 'sign-lib', 'sign-primary', 'parse-primary', 'parse-lib']) {
   test(`783 required ${fault} failure stops the actual builder before hash success or pin update`, t => {
     const f = fixture(t, fault), r = f.run(['--write-pins']);
@@ -80,8 +111,18 @@ for (const fault of ['inspect-primary', 'relocate-change', 'relocate-id', 'inspe
     assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
   });
 }
-for (const fault of ['malformed-primary', 'malformed-lib', 'missing-newline-primary', 'missing-newline-lib', 'trailing-empty-primary', 'trailing-empty-lib']) {
+for (const fault of ['malformed-primary', 'malformed-lib', 'missing-newline-primary', 'missing-newline-lib', 'trailing-empty-primary', 'trailing-empty-lib', 'control-primary', 'control-lib', 'internal-tab-primary', 'internal-tab-lib']) {
   test(`783 ${fault} output refuses before signing the primary or updating a pin`, t => {
+    const f = fixture(t, fault), r = f.run(['--write-pins']);
+    assert.notEqual(r.status, 0); assert.doesNotMatch(r.stdout, /SUCCESS:/);
+    assert.equal(r.trace.includes('sign:primary'), false);
+    assert.equal(r.trace.includes('hash'), false); assert.equal(r.trace.includes('write-pins'), false);
+    assert.equal(fs.readFileSync(f.pin, 'utf8'), pinBefore);
+  });
+}
+for (const control of ['cr', 'vt', 'ff', 'tab']) for (const role of ['primary', 'lib']) {
+  const fault = `prefix-${control}-${role}`;
+  test(`783 ${fault} refuses ambiguous leading bytes before signing or pin update`, t => {
     const f = fixture(t, fault), r = f.run(['--write-pins']);
     assert.notEqual(r.status, 0); assert.doesNotMatch(r.stdout, /SUCCESS:/);
     assert.equal(r.trace.includes('sign:primary'), false);

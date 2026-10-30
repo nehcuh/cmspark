@@ -19,6 +19,12 @@ case "$CASE" in
   good|grep_failure) printf '%s:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\n' "$2" ;;
   trailing_empty) printf '%s:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\n\n' "$2" ;;
   missing_newline) printf '%s:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)' "$2" ;;
+  control) printf '%s:\n\t/owned/control\rpath (compatibility version 1.0.0, current version 1.0.0)\n' "$2" ;;
+  internal_tab) printf '%s:\n\t/owned/control\tpath (compatibility version 1.0.0, current version 1.0.0)\n' "$2" ;;
+  prefix_cr) printf '%s:\n\t\r/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\n' "$2" ;;
+  prefix_vt) printf '%s:\n\t\v/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\n' "$2" ;;
+  prefix_ff) printf '%s:\n\t\f/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\n' "$2" ;;
+  prefix_tab) printf '%s:\n\t\t/owned/lib.dylib (compatibility version 1.0.0, current version 1.0.0)\n' "$2" ;;
   good_weak) printf '%s:\n\t@rpath/My Library.dylib (compatibility version 0.0.0, current version 65535.255.255, weak)\n' "$2" ;;
   prohibited) printf '%s:\n\t/opt/homebrew/lib/libwhisper.dylib (compatibility version 1.0.0, current version 1.0.0)\n' "$2" ;;
 esac
@@ -32,7 +38,7 @@ chmod +x "$owned/bin/otool" "$owned/bin/grep"
 printf '%s\n' 'set -euo pipefail' 'STAGING=$1' '_WHISPER_BIN=cmspark-whisper-darwin-arm64' > "$owned/runner"
 cat "$owned/block" >> "$owned/runner"
 printf '%s\n' 'printf "CONTINUED\n"' >> "$owned/runner"
-for scenario in failure empty malformed malformed_payload blank_payload truncated_payload universal_heading good good_weak grep_failure prohibited trailing_empty missing_newline; do
+for scenario in failure empty malformed malformed_payload blank_payload truncated_payload universal_heading good good_weak grep_failure prohibited trailing_empty missing_newline control prefix_cr prefix_vt prefix_ff prefix_tab internal_tab; do
   rc=0
   CASE=$scenario PATH="$owned/bin:/usr/bin:/bin" bash "$owned/runner" "$owned/stage" > "$owned/out" 2> "$owned/err" || rc=$?
   if [ "$scenario" = good ] || [ "$scenario" = good_weak ]; then

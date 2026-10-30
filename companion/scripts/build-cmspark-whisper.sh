@@ -157,10 +157,10 @@ if [[ "${OS}" == "Darwin" ]]; then
   fi
   # Copy real (non-symlink) dylibs
   if [[ -n "${WHISPER_PREFIX}" && -d "${WHISPER_PREFIX}/lib" ]]; then
-    find "${WHISPER_PREFIX}/lib" -maxdepth 1 -type f -name 'libwhisper*.dylib' -exec cp -f {} "${LIB_OUT}/" \;
+    find "${WHISPER_PREFIX}/lib" -maxdepth 1 -type f -name 'libwhisper*.dylib' -exec /bin/sh -c 'dest=$1; shift; exec cp -f "$@" "$dest"' sh "${LIB_OUT}/" {} +
   fi
   if [[ -n "${GGML_PREFIX}" && -d "${GGML_PREFIX}/lib" ]]; then
-    find "${GGML_PREFIX}/lib" -maxdepth 1 -type f -name 'libggml*.dylib' -exec cp -f {} "${LIB_OUT}/" \;
+    find "${GGML_PREFIX}/lib" -maxdepth 1 -type f -name 'libggml*.dylib' -exec /bin/sh -c 'dest=$1; shift; exec cp -f "$@" "$dest"' sh "${LIB_OUT}/" {} +
   fi
   # Common soname symlinks
   (
@@ -207,8 +207,8 @@ if [[ "${OS}" == "Darwin" ]]; then
       fi
       printf '%s' "${links}" | LC_ALL=C awk '
         NR == 1 { next }
-        !/^[[:space:]]+[^[:space:]].* \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/ { invalid = 1; next }
-        { sub(/^[[:space:]]+/, ""); sub(/ \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/, ""); print }
+        !/^\t[^[:space:][:cntrl:]].* \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/ { invalid = 1; next }
+        { sub(/^\t/, ""); if ($0 ~ /[[:cntrl:]]/) { invalid = 1; next } sub(/ \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(, (weak|reexport|upward|lazy))?\)$/, ""); print }
         END { if (NR < 2 || invalid) exit 1 }
       '
     }
