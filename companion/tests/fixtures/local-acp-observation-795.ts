@@ -2,10 +2,11 @@
 import {types} from 'node:util'
 type Outcome = 'NOT_STARTED' | 'PENDING' | 'HANDLE' | 'NULL' | 'THREW' | 'AMBIGUOUS'
 type ErrorClass = 'ENOENT' | 'EACCES' | 'EPERM' | 'EPIPE' | 'ECONNRESET' | 'ERR_STREAM_DESTROYED' | 'OTHER' | 'UNKNOWN'
+type MessageClass = 'MESSAGE_MATCH_TEARDOWN' | 'OTHER' | 'UNKNOWN'
 export function createLocalAcpObservation795(enabled: boolean, clock: () => number = () => performance.now()) {
   let attempts = 0
   let outcome: Outcome = 'NOT_STARTED'
-  let rejectionBucket: number | null = null, abortBucket: number | null = null, errorClass: ErrorClass | null = null
+  let rejectionBucket: number | null = null, abortBucket: number | null = null, errorClass: ErrorClass | null = null, messageClass: MessageClass | null = null
   let origin: number | null = null
   function now(): number | null { try { const n=clock(); return Number.isFinite(n) && n>=0 ? n : null } catch { return null } }
   if (enabled) origin=now()
@@ -17,6 +18,13 @@ export function createLocalAcpObservation795(enabled: boolean, clock: () => numb
       switch(d.value){case 'ENOENT':case 'EACCES':case 'EPERM':case 'EPIPE':case 'ECONNRESET':case 'ERR_STREAM_DESTROYED':return d.value;default:return 'OTHER'}
     } catch {return 'UNKNOWN'}
   }
+  function classifyMessage(error: unknown): MessageClass {
+    try {
+      if ((typeof error!=='object' && typeof error!=='function')||error===null||types.isProxy(error))return 'UNKNOWN'
+      const d=Object.getOwnPropertyDescriptor(error,'message');if(!d||!('value' in d)||typeof d.value!=='string')return 'UNKNOWN'
+      return d.value==='ACP subprocess teardown timed out'?'MESSAGE_MATCH_TEARDOWN':'OTHER'
+    } catch {return 'UNKNOWN'}
+  }
   function markAbort() { if(enabled && abortBucket===null) abortBucket=bucket() }
   function track<T>(original: Promise<T>): Promise<T> {
     if (!enabled) return original
@@ -26,11 +34,11 @@ export function createLocalAcpObservation795(enabled: boolean, clock: () => numb
       if (attempts === 1) outcome = value ? 'HANDLE' : 'NULL'
       return value
     }, error => {
-      if (attempts === 1) { outcome = 'THREW'; rejectionBucket=bucket(); errorClass=classify(error) }
+      if (attempts === 1) { outcome = 'THREW'; rejectionBucket=bucket(); errorClass=classify(error); messageClass=classifyMessage(error) }
       throw error
     })
   }
   function snapshot() { return { schema: 1, attempts, outcome } }
-  function detail() { return { schema: 1, attempts, outcome, rejectionBucket: attempts===1 ? rejectionBucket : null, abortBucket, errorClass: attempts===1 ? errorClass : null } }
+  function detail() { return { schema: 1, attempts, outcome, rejectionBucket: attempts===1 ? rejectionBucket : null, abortBucket, errorClass: attempts===1 ? errorClass : null, messageClass: attempts===1 ? messageClass : null } }
   return { track, markAbort, snapshot, detail }
 }
