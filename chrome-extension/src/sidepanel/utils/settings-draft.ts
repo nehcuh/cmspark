@@ -92,3 +92,8 @@ export function acknowledgeSettingsSubmission<T extends object>(
   }
   return next
 }
+
+/** Correlation IDs are generated for settings saves, not user content. */
+export function isSettingsSaveError(message: { type?: unknown; id?: unknown }): message is { type: "error"; id: string } {
+  return message.type === "error" && typeof message.id === "string" && /^settings-save:[A-Za-z0-9_-]{1,70}$/.test(message.id)
+}

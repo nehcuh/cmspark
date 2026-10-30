@@ -27,6 +27,7 @@ import {
 } from "../utils/knowledge-distribution"
 
 import { normalizeConfig } from "../utils/normalize-config"
+import { isSettingsSaveError } from "../utils/settings-draft"
 export { normalizeConfig }
 
 const hydrateRetryIds = new Set<string>()
@@ -2380,6 +2381,12 @@ export function useWebSocket() {
           break
 
         case "error": {
+          // The handler may throw before or after persistence: the receipt is
+          // UNKNOWN, and it must not be appended to an unrelated chat.
+          if (isSettingsSaveError(msg)) {
+            dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id: msg.id })
+            break
+          }
           if (msg.family === "acp" && msg.request_type === "acp.sessions.list") {
             dispatch({ type: "ACP_HISTORY_RESULT", message: { type: "acp.sessions.list_result",
               thread_id: msg.thread_id, request_id: msg.request_id, status: "unavailable", rows: [] } })

@@ -61,3 +61,21 @@ test("disconnect and a correlated conflict preserve drafts without claiming succ
   assert.equal(conflicted.settingsDraft?.value.model_name, "mine")
   assert.equal(conflicted.settingsDraft?.conflicts.model_name, true)
 })
+
+
+test("correlated error preserves the draft and late errors cannot change another save", async () => {
+  const { prepareSettingsSubmission, isSettingsSaveError } = await import("../src/sidepanel/utils/settings-draft")
+  assert.equal(isSettingsSaveError({ type: "error", id: "settings-save:abc" }), true)
+  assert.equal(isSettingsSaveError({ type: "error", id: "other:abc" }), false)
+  let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+  const submission = prepareSettingsSubmission(state.settingsDraft!, "settings-save:abc")
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_SAVE", submission })
+  state = agentReducer(state, { type: "SETTINGS_SAVE_UNKNOWN", id: "settings-save:other" })
+  assert.equal(state.settingsSave.status, "pending")
+  state = agentReducer(state, { type: "SETTINGS_SAVE_UNKNOWN", id: "settings-save:abc" })
+  assert.equal(state.settingsSave.status, "unknown")
+  assert.equal(state.settingsDraft?.value.model_name, "mine")
+})
