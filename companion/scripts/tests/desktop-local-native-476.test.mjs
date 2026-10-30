@@ -285,3 +285,6 @@ test('multiple received frames require all unique owned ACKs',()=>{const f=fixtu
 test('duplicate ACK cannot unlock pending output and reports failure',()=>{const f=fixture(read('tests/fixtures/desktop-476/local-form.js'));data(f,1,'prefix');data(f,2);ack(f,'ack-1');ack(f,'ack-1');assert.equal(has(f,'D476_LOCAL_OUTPUT'),0);assert.equal(has(f,'D476_LOCAL_FAIL'),1)});
 test('rejected ACK reports failure without success',()=>{const f=fixture(read('tests/fixtures/desktop-476/local-form.js'));data(f,1);ack(f,'ack-1','owned-op',false);assert.equal(has(f,'D476_LOCAL_OUTPUT'),0);assert.equal(has(f,'D476_LOCAL_FAIL'),1)});
 test('ACK without marker cannot advance',()=>{const f=fixture(read('tests/fixtures/desktop-476/local-form.js'));data(f,1,'prefix');ack(f,'ack-1');assert.equal(has(f,'D476_LOCAL_OUTPUT'),0)});
+test('CRLF fixture also waits for the owned terminal render ACK',()=>{
+ const f=fixture(read('tests/fixtures/desktop-476/local-form.js').replace(/\r?\n/g,'\r\n'));data(f,1);assert.equal(has(f,'D476_LOCAL_OUTPUT'),0);ack(f,'foreign','other-op');assert.equal(has(f,'D476_LOCAL_OUTPUT'),0);ack(f,'ack-1');assert.equal(has(f,'D476_LOCAL_OUTPUT'),1)
+});
