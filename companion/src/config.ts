@@ -3,6 +3,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import { randomUUID } from "crypto"
 import { EventEmitter } from "events"
 import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
@@ -626,9 +627,29 @@ let storedVisionKey = ""
 let visionUsesLlm = false
 /** mtimeMs of config.json when cache was loaded — hand-edits invalidate cache */
 let cachedConfigMtimeMs: number | null = null
+// This token detects changes observed by this process. It is not a filesystem
+// lock and cannot certify concurrent edits made by a non-cooperating process.
+let configRevisionEpoch = randomUUID()
+let configRevisionSequence = 0
+
+function advanceConfigRevision(): void {
+  if (configRevisionSequence >= Number.MAX_SAFE_INTEGER) {
+    configRevisionEpoch = randomUUID()
+    configRevisionSequence = 0
+  } else {
+    configRevisionSequence += 1
+  }
+}
+
+/** Opaque, process-scoped token; a restart intentionally invalidates old tokens. */
+export function getConfigRevision(): string {
+  getConfig()
+  return `${configRevisionEpoch}:${configRevisionSequence}`
+}
 
 /** Clear the in-memory config cache. Intended for tests only. */
 export function clearConfigCache(): void {
+  advanceConfigRevision()
   cachedConfig = null
   cachedConfigMtimeMs = null
   storedLlmKey = ""
@@ -653,6 +674,7 @@ function saveConfigSnapshot(updated: CompanionConfig, llmKey = storedLlmKey, vis
   toSave.llm.api_key = llmKey
   if (toSave.vision) toSave.vision.api_key = visionKey
   atomicWriteJSON(path.join(getConfigDir(), "config.json"), toSave)
+  advanceConfigRevision()
   storedLlmKey = llmKey
   storedVisionKey = visionKey
   visionUsesLlm = inherited
@@ -818,6 +840,7 @@ export function getConfig(): CompanionConfig {
   if (cachedConfig) {
     const mtime = configFileMtimeMs()
     if (mtime != null && cachedConfigMtimeMs != null && mtime !== cachedConfigMtimeMs) {
+      advanceConfigRevision()
       cachedConfig = null
       cachedConfigMtimeMs = null
     }
@@ -1327,7 +1350,7 @@ function sanitizeDomainPatternsOnLoad(cfg: CompanionConfig): CompanionConfig {
  * Without it, keys in the patch are treated as runtime snapshots and never stored.
  * Empty or masked values retain the existing credential.
  */
-export function saveConfig(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }): CompanionConfig {
+export function saveConfig(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }, expectedRevision?: string): CompanionConfig {
   if (config.llm && Object.prototype.hasOwnProperty.call(config.llm, "reasoning_effort")) {
     const { isReasoningEffort } = require("./llm/reasoning-effort") as typeof import("./llm/reasoning-effort")
     if (!isReasoningEffort(config.llm.reasoning_effort)) throw new Error("INVALID_REASONING_EFFORT")
@@ -1379,6 +1402,9 @@ export function saveConfig(config: Partial<CompanionConfig>, intent?: { llmKey?:
   // function without first adding serialization — otherwise the whitelist
   // append and concurrent settings writes will silently lose data.
   const current = getConfig()
+  if (expectedRevision !== undefined && expectedRevision !== `${configRevisionEpoch}:${configRevisionSequence}`) {
+    throw new Error("CONFIG_REVISION_CONFLICT")
+  }
   // Credential projection must not mutate the cached snapshot before the
   // atomic write succeeds, including when a section is absent from the patch.
   const updated = stripCompanionUiProcessContinueDeny(deepMerge(structuredClone(current), config) as CompanionConfig)
