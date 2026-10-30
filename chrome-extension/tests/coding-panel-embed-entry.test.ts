@@ -88,12 +88,12 @@ test("FIX 1: the entry gate is driven by the HYDRATED config, not by a literal",
   assert.deepEqual((hydrated as any).embedded_terminal, { enabled: true })
   assert.equal((hydrated as any).embedded_terminal_enabled, undefined)
   // Wiring proof: the panel reads the gate's input from the hydrated state (`state.config`),
-  // and SET_CONFIG is filled by `normalizeConfig(msg.config)` in useWebSocket.
+  // and SET_CONFIG_SNAPSHOT is filled by `normalizeConfig(msg.config)` in useWebSocket.
   assert.match(
     src(PANEL),
     /const embeddedTerminalConfig = state\.config as \{ embedded_terminal\?: \{ enabled\?: boolean \} \}/,
   )
-  assert.match(src(WS), /dispatch\(\{ type: "SET_CONFIG", config: normalizeConfig\(msg\.config\) \}\)/)
+  assert.match(src(WS), /dispatch\(\{ type: "SET_CONFIG_SNAPSHOT", config: normalizeConfig\(msg\.config\),/)
 })
 
 test("FIX 1: absent / non-boolean / {} / flattened never become truthy", () => {
