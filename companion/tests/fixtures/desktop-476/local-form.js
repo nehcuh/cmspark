@@ -19,7 +19,9 @@
   if(f.type==='desktop.terminal.close.result'){if(phase!==5||!f.ok){fail(12);return}phase=6;post('D476_LOCAL_STOPPED');key('local-select');return}
   if(f.type==='desktop.terminal.return.result'){if(phase!==7||f.status!=='saved'){fail(13);return}phase=8;post('D476_LOCAL_SAVED');pick('dialog');return}
   if(f.type==='desktop.thread.open.result'){
-   if(!f.ok||!f.history.messages.some(m=>m.content.includes('D476_LOCAL_中'))||!$('dialog-history').textContent.includes('D476_LOCAL_中')){fail(14);return}
+   if(!f.ok){try{post('D476_LOCAL_R14_1')}catch{}fail(14);return}
+   if(!f.history.messages.some(m=>m.content.includes('D476_LOCAL_中'))){try{post('D476_LOCAL_R14_2')}catch{}fail(14);return}
+   if(!$('dialog-history').textContent.includes('D476_LOCAL_中')){try{post('D476_LOCAL_R14_3')}catch{}fail(14);return}
    if(phase===8){phase=9;post('D476_LOCAL_REOPENED');pick('local');return}
    if(phase===12&&f.history.messages.some(m=>m.content.includes('D476_AGENT_PERMISSION_DENIED'))){phase=13;pick('local');return}fail(15);return
   }
