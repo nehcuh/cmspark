@@ -139,7 +139,7 @@ package: build
 
 # 打包 macOS ARM64（含 Swift 托盘 + cmspark-host + DMG 安装包）
 # build-host is required: package.sh hard-fails without cmspark-host + *.scpt.
-package-macos: build build-tray build-host
+package-macos: build build-host
 	@bash scripts/package.sh macos-arm64
 	@echo "Building macOS DMG installer..."
 	@bash scripts/create-dmg.sh

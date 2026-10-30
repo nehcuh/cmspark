@@ -76,6 +76,11 @@ const mutations = [
   ['credential free Windows removed', d => { d.jobs['smoke-os'].steps[0].with['persist-credentials'] = true }],
   ['wrong download cache key closure', d => { find(d, 'Setup Node.js').with['cache-dependency-path'] = 'companion/package-lock.json' }],
   ['unrelated build tests lost', d => { d.jobs.build.steps = d.jobs.build.steps.filter(s => s.name !== 'Run companion tests') }],
+  ['tray CPU controls missing', d => { d.jobs.build.steps = d.jobs.build.steps.filter(s => s.name !== 'Swift tray packaging CPU controls') }],
+  ['tray CPU controls duplicated', d => { const a = d.jobs.build.steps; a.push(structuredClone(a.find(s => s.name === 'Swift tray packaging CPU controls'))) }],
+  ['tray CPU controls command changed', d => { d.jobs.build.steps.find(s => s.name === 'Swift tray packaging CPU controls').run = 'echo skipped\n' }],
+  ['tray CPU controls failure waived', d => { d.jobs.build.steps.find(s => s.name === 'Swift tray packaging CPU controls')['continue-on-error'] = true }],
+  ['tray CPU controls moved', d => { const a = d.jobs.build.steps; a.push(a.splice(a.findIndex(s => s.name === 'Swift tray packaging CPU controls'), 1)[0]) }],
   ['history dependency weakened', d => { delete d.jobs['acp-history-restart'].needs }],
 ]
 for (const [label, mutate] of mutations) {

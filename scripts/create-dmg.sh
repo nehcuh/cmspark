@@ -34,6 +34,18 @@ if [ ! -d "${STAGING}" ]; then
   exit 1
 fi
 
+# Rebuild the tray from the current source in a private directory, using the
+# same basename and working directory as the package build. No tray is run.
+(
+  tray_check_dir="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-tray-source-XXXXXX")"
+  trap 'rm -f "${tray_check_dir}/cmspark-tray"; rmdir "${tray_check_dir}"' EXIT
+  cd "${ROOT_DIR}/companion"
+  ./src/tray/build-tray.sh --output "${tray_check_dir}/cmspark-tray"
+  cmp -s "${tray_check_dir}/cmspark-tray" "${STAGING}/cmspark-tray" || { echo "[create-dmg] ERROR: staged tray differs from current source build" >&2; exit 1; }
+)
+# Rebuild the bundle into a private directory and compare to staging.
+node "${ROOT_DIR}/companion/scripts/run-esbuild-bundle.mjs" --verify-macos-arm64-tray
+
 if [ ! -d "${ICONSET}" ]; then
   echo "[ERROR] Icon set not found: ${ICONSET}"
   echo "        Run 'cd chrome-extension && node scripts/generate-icons.mjs' first."
@@ -126,6 +138,10 @@ echo "[create-dmg] A6 OK: single CDHash ${HASH_MAIN}"
 # Deep signing must not silently change the native bytes embedded in the daemon table.
 node "${ROOT_DIR}/companion/scripts/desktop-artifacts.mjs" verify "${RESOURCES}/bin/desktop-native" darwin
 
+# Deep signing must not change the pair checked by the package producer.
+cmp -s "${STAGING}/cmspark-agent.js" "${RESOURCES}/cmspark-agent.js" || { echo "[create-dmg] ERROR: signed agent differs from staging" >&2; exit 1; }
+cmp -s "${STAGING}/cmspark-tray" "${RESOURCES}/cmspark-tray" || { echo "[create-dmg] ERROR: signed tray differs from staging" >&2; exit 1; }
+
 
 # --- Step 4: Create DMG ---
 echo "[5/6] Creating DMG..."
@@ -175,6 +191,12 @@ ln -sf /Applications "${VOLUME}/Applications"
 if ! codesign --verify --verbose "${VOLUME}/CMspark.app"; then
   echo "[create-dmg] ERROR: codesign verify failed for DMG copy of ${APP_BUNDLE}"
   hdiutil detach "${DEVICE}" -force 2>/dev/null || true
+  exit 1
+fi
+if ! cmp -s "${STAGING}/cmspark-agent.js" "${VOLUME}/CMspark.app/Contents/Resources/cmspark-agent.js" || \
+   ! cmp -s "${STAGING}/cmspark-tray" "${VOLUME}/CMspark.app/Contents/Resources/cmspark-tray"; then
+  echo "[create-dmg] ERROR: DMG copy differs from checked staging pair" >&2
+  hdiutil detach "${DEVICE}" -quiet 2>/dev/null || true
   exit 1
 fi
 
