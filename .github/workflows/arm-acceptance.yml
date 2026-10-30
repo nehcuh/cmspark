@@ -35,13 +35,24 @@ jobs:
         run: git diff --exit-code HEAD -- companion/package-lock.json
       - name: Typecheck companion and tests
         working-directory: companion
-        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.test.json
+        run: ./node_modules/.bin/tsc -p tsconfig.test.json
       - name: Qwen locator CPU controls
         working-directory: companion
         run: node --import tsx --test tests/computer-qwen-vl-locator.test.ts
       - name: Windows workflow contract CPU controls
         working-directory: companion
         run: node --test ../scripts/tests/windows-ci-feedback-750.test.mjs
+      - name: MCP native listener passive controls
+        working-directory: companion
+        shell: bash
+        run: |
+          set -o pipefail
+          pattern='^#476 (actual MCP listener projects only fixed post-auth request types|actual native finally preserves primary failure and all cleanup when diagnosticThrows=(false|true) (LF|CRLF))$'
+          node --test --test-reporter=tap --test-name-pattern="$pattern" .test-dist/tests/desktop-native-receipts-476.test.js | tee "$RUNNER_TEMP/mcp-listener-arm.tap"
+          grep -Fx '# tests 5' "$RUNNER_TEMP/mcp-listener-arm.tap"
+          grep -Fx '# pass 5' "$RUNNER_TEMP/mcp-listener-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/mcp-listener-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/mcp-listener-arm.tap"
       # The three producer tests assert Darwin explicitly; the existing macOS
       # CI runs the entire file, including those three. Account for the 13
       # portable cases here so an empty or changed selection cannot pass.
