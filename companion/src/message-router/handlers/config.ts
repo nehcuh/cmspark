@@ -82,6 +82,8 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         cfg.context_window !== undefined ||
         cfg.reasoning_effort !== undefined ||
         cfg.context_compaction !== undefined ||
+        typeof cfg.context_compaction_m2 === "boolean" ||
+        cfg.native_vision === "auto" || cfg.native_vision === "on" || cfg.native_vision === "off" ||
         cfg.protocol !== undefined ||
         cfg.client_header_profile !== undefined ||
         cfg.auth_style !== undefined
@@ -203,18 +205,27 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         }
       }
       // Vision config: normalize flat vision_* fields into nested vision object
+      const hasLegacyVisionFields = cfg.vision_enabled !== undefined || !!cfg.vision_base_url || !!cfg.vision_model_name || !!cfg.vision_api_key
+      const hasValidVisionTimeout = typeof cfg.vision_timeout_ms === "number" && Number.isFinite(cfg.vision_timeout_ms)
+      const hasValidVisionFallback = cfg.vision_fallback === "metadata" || cfg.vision_fallback === "passthrough" || cfg.vision_fallback === "error"
       if (cfg.vision) {
         normalized.vision = { ...cfg.vision }
         if (isMaskedApiKey(normalized.vision.api_key)) delete normalized.vision.api_key
-      } else if (cfg.vision_enabled !== undefined || cfg.vision_base_url || cfg.vision_model_name || cfg.vision_api_key) {
+      } else if (
+        hasLegacyVisionFields || hasValidVisionTimeout || hasValidVisionFallback
+      ) {
         // Submit only explicit fields: current vision credentials may be inherited.
         normalized.vision = {}
         if (cfg.vision_enabled !== undefined) normalized.vision.enabled = !!cfg.vision_enabled
         if (cfg.vision_api_key && !isMaskedApiKey(cfg.vision_api_key)) normalized.vision.api_key = cfg.vision_api_key
         if (cfg.vision_base_url) normalized.vision.base_url = cfg.vision_base_url
         if (cfg.vision_model_name) normalized.vision.model_name = cfg.vision_model_name
-        if (cfg.vision_timeout_ms !== undefined) normalized.vision.timeout_ms = cfg.vision_timeout_ms
-        if (cfg.vision_fallback) normalized.vision.fallback = cfg.vision_fallback
+        if (cfg.vision_timeout_ms !== undefined && (hasLegacyVisionFields || hasValidVisionTimeout)) {
+          normalized.vision.timeout_ms = cfg.vision_timeout_ms
+        }
+        if (cfg.vision_fallback && (hasLegacyVisionFields || hasValidVisionFallback)) {
+          normalized.vision.fallback = cfg.vision_fallback
+        }
       }
       // File upload config: normalize flat file_upload_* fields into nested file_upload object
       if (cfg.file_upload) {
