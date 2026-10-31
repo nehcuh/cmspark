@@ -39,7 +39,7 @@ import {
   type WhisperBinaryArchEntry,
   type WhisperBinaryManifest,
 } from "./whisper-binary-manifest"
-import { expectedWhisperSha256 } from "./whisper-binary-pins"
+import { expectedWhisperSha256, whisperPinResolveOpts } from "./whisper-binary-pins"
 
 export { defaultWhisperBinaryInstallDir }
 
@@ -441,6 +441,17 @@ export function installWhisperFromBrewDarwin(opts: {
 }): { primaryPath: string; destDir: string; arch: string; version: string } {
   if (opts.signal?.aborted) {
     throw new WhisperBinaryDownloadError("aborted", "aborted")
+  }
+  // A self-written install manifest cannot replace a missing release pin.
+  // Refuse before touching an existing install or launching a copied binary.
+  if (opts.arch === "darwin-x64") {
+    const pin = whisperPinResolveOpts(opts.arch, process.env)
+    if (!pin.expectedSha256 && !pin.allowUnpinned) {
+      throw new WhisperBinaryDownloadError(
+        "pin-mismatch",
+        "当前版本没有 macOS x64 组件的发行校验值，无法启用本机听写组件；请等待正式更新。",
+      )
+    }
   }
   const candidates = [
     process.env.CMSPARK_WHISPER_SRC,
