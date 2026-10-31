@@ -39,7 +39,7 @@ import {
   type WhisperBinaryArchEntry,
   type WhisperBinaryManifest,
 } from "./whisper-binary-manifest"
-import { expectedWhisperSha256 } from "./whisper-binary-pins"
+import { expectedWhisperSha256, whisperPinResolveOpts } from "./whisper-binary-pins"
 
 export { defaultWhisperBinaryInstallDir }
 
@@ -441,6 +441,17 @@ export function installWhisperFromBrewDarwin(opts: {
 }): { primaryPath: string; destDir: string; arch: string; version: string } {
   if (opts.signal?.aborted) {
     throw new WhisperBinaryDownloadError("aborted", "aborted")
+  }
+  // A pin alone does not authenticate the Homebrew binary and its dependencies.
+  // Refuse before touching an existing install or launching a copied binary.
+  if (opts.arch === "darwin-x64") {
+    const pin = whisperPinResolveOpts(opts.arch, process.env)
+    if (!pin.forceUnpinned) {
+      throw new WhisperBinaryDownloadError(
+        "pin-mismatch",
+        "当前版本无法验证 macOS x64 本机听写组件及其依赖，无法启用；请等待正式更新。",
+      )
+    }
   }
   const candidates = [
     process.env.CMSPARK_WHISPER_SRC,

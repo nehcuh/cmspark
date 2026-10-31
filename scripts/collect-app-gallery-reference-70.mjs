@@ -28,51 +28,98 @@ function allowedRedirect(value, token) {
 }
 
 /** Exact fixed catalog row, streamed into an exclusive file. No URL from a caller. */
-export async function downloadArchive(app, destination, fetchImpl = fetch) {
+export async function downloadArchive(app, destination, fetchImpl = fetch, trace) {
   const fixed = catalog.find(p => p.token === app.token)
-  if (!fixed || JSON.stringify(app) !== JSON.stringify(fixed)) throw new Error('UNPINNED_ARTIFACT')
+  if (!fixed || JSON.stringify(app) !== JSON.stringify(fixed)) {
+    try { if (trace) Object.assign(trace, { origin: 'FIXED_ROW', thrown: 'FIXED_ROW', cleanup: [] }) } catch {}
+    throw new Error('UNPINNED_ARTIFACT')
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_MS)
   let fd
+  let phase = 'OPEN', origin = 'NONE', thrown = 'NONE'
+  const cleanup = []
+  const event = value => { try { if (cleanup.length < 3) cleanup.push(value) } catch {} }
+  const save = () => { try { if (trace) Object.assign(trace, { origin, thrown, cleanup: [...cleanup] }) } catch {} }
   try {
     fd = fs.openSync(destination, 'wx', 0o600)
     let url = fixed.reference.artifactURL
     let response
     for (let redirects = 0; ; redirects++) {
+      phase = 'REQUEST'
       response = await fetchImpl(url, { redirect: 'manual', signal: controller.signal })
       if (![301, 302, 303, 307, 308].includes(response.status)) break
+      phase = 'REDIRECT'
       const next = new URL(response.headers.get('location') || '', url).href
       await response.body?.cancel()
       if (redirects >= 3 || !allowedRedirect(next, fixed.token)) throw new Error('REDIRECT_REJECTED')
       url = next
     }
+    phase = 'STATUS'
     if (response.status !== 200 || !response.body) throw new Error('DOWNLOAD_REJECTED')
+    phase = 'LENGTH'
     const length = response.headers.get('content-length')
     if (length !== null && (!/^\d+$/.test(length) || Number(length) > ARCHIVE_LIMIT)) throw new Error('ARCHIVE_LIMIT')
+    phase = 'DIGEST'
     const hash = createHash('sha256')
     let bytes = 0
+    phase = 'BODY_READ'
     for await (const chunk of response.body) {
       bytes += chunk.byteLength
       if (bytes > ARCHIVE_LIMIT) throw new Error('ARCHIVE_LIMIT')
+      phase = 'DIGEST'
       hash.update(chunk)
       // writeSync may make partial progress; never silently hash unwritten data.
       let offset = 0
-      while (offset < chunk.byteLength) offset += fs.writeSync(fd, chunk, offset, chunk.byteLength - offset)
+      phase = 'WRITE'
+      while (offset < chunk.byteLength) {
+        const written = fs.writeSync(fd, chunk, offset, chunk.byteLength - offset)
+        if (!Number.isSafeInteger(written) || written <= 0 || written > chunk.byteLength - offset) throw new Error('ARCHIVE_WRITE_NO_PROGRESS')
+        offset += written
+      }
+      phase = 'BODY_READ'
     }
+    phase = 'DIGEST'
     const sha256 = hash.digest('hex')
     if (sha256 !== fixed.reference.packageSHA256) throw new Error('PACKAGE_SHA_MISMATCH')
     return { bytes, sha256 }
   } catch (err) {
+    origin = phase; thrown = phase
     if (fd !== undefined) {
-      fs.closeSync(fd); fd = undefined
-      fs.unlinkSync(destination)
+      try { fs.closeSync(fd); event('CLOSE_RETURNED') } catch (e) { thrown = 'CLOSE'; event('CLOSE_THREW'); throw e }
+      fd = undefined
+      try { fs.unlinkSync(destination); event('UNLINK_RETURNED') } catch (e) { thrown = 'UNLINK'; event('UNLINK_THREW'); throw e }
     }
     throw err
   } finally {
     clearTimeout(timer)
     controller.abort()
-    if (fd !== undefined) fs.closeSync(fd)
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); event('FINALLY_CLOSE_RETURNED') }
+      catch (e) { thrown = 'FINALLY_CLOSE'; event('FINALLY_CLOSE_THREW'); save(); throw e }
+    }
+    save()
   }
+}
+
+/** Fixed download-only observation. No exception, path, URL or response is serialized. */
+export function projectDownloadTrace(value) {
+  try {
+    const phases = new Set(['NONE', 'FIXED_ROW', 'OPEN', 'REQUEST', 'REDIRECT', 'STATUS', 'LENGTH', 'BODY_READ', 'WRITE', 'DIGEST', 'CLOSE', 'UNLINK', 'FINALLY_CLOSE'])
+    const events = new Set(['CLOSE_RETURNED', 'CLOSE_THREW', 'UNLINK_RETURNED', 'UNLINK_THREW', 'FINALLY_CLOSE_RETURNED', 'FINALLY_CLOSE_THREW'])
+    if (!value) return null
+    const origin = value.origin, thrown = value.thrown, rawCleanup = value.cleanup
+    if (!phases.has(origin) || !phases.has(thrown) || !Array.isArray(rawCleanup)) return null
+    const length = rawCleanup.length
+    if (!Number.isSafeInteger(length) || length < 0 || length > 3) return null
+    const cleanup = []
+    for (let i = 0; i < length; i++) {
+      const event = rawCleanup[i]
+      if (!events.has(event)) return null
+      cleanup.push(event)
+    }
+    return { kind: 'GALLERY70_DOWNLOAD_OBSERVATION', origin, downloadThrown: thrown, cleanup }
+  } catch { return null }
 }
 
 /** Strict producer wire; no mocked positive signature receipt is accepted as evidence. */
@@ -152,7 +199,11 @@ export async function main(output, failure = { seen: false }) {
       const exe = path.join(owned, app.reference.referenceEXERelativePath)
       try {
         let pkg
-        try { pkg = await downloadArchive(app, archive) } catch (e) { mark('DOWNLOAD', e); throw e }
+        const trace = {}
+        try { pkg = await downloadArchive(app, archive, fetch, trace) } catch (e) {
+          try { failure.download = trace } catch {}
+          mark('DOWNLOAD', e); throw e
+        }
         // Existing runner's 15s/16MiB bounds, unmodified. No application execution.
         const raw = await runPs(path.join(root, 'scripts/fixtures/app-gallery-reference-70.ps1'),
           [archive, exe, app.reference.referenceEXERelativePath, app.reference.packageSHA256])
@@ -190,11 +241,15 @@ if (isCLIEntrypoint(process.argv[1])) {
     // Fixed public failure enums only; never print subprocess argv/env/raw errors.
     const known = ['PS51_REQUIRED', 'HOSTED_WINDOWS_ONLY', 'UNPINNED_ENTRY', 'OWNED_PATH_REQUIRED', 'ARCHIVE_LIMIT',
       'PACKAGE_SHA_MISMATCH', 'EXACT_ONE_ENTRY_REQUIRED', 'ENTRY_REJECTED', 'ENTRY_LIMIT', 'ENTRY_LENGTH_MISMATCH',
-      'PE_REJECTED', 'X64_REQUIRED', 'SIGNATURE_NOT_VALID', 'EXE_SHA_MISMATCH', 'SAMPLE_WIRE', 'REDIRECT_REJECTED', 'DOWNLOAD_REJECTED']
+      'PE_REJECTED', 'X64_REQUIRED', 'SIGNATURE_NOT_VALID', 'EXE_SHA_MISMATCH', 'SAMPLE_WIRE', 'REDIRECT_REJECTED', 'DOWNLOAD_REJECTED', 'ARCHIVE_WRITE_NO_PROGRESS']
     const code = known.find(c => err?.message === c || String(err?.stderr || '').includes("'" + c + "'")) || 'GALLERY_REFERENCE_COLLECTION_FAILED'
     console.error(code)
     console.error('GALLERY70_FAILURE_STAGE=' + (failure.seen && Object.is(failure.error, err) ? failure.stage : 'UNKNOWN'))
     console.error(JSON.stringify(sampleFailureDiagnostic(err)))
     process.exitCode = 1
+    try {
+      const observation = projectDownloadTrace(failure.download)
+      if (observation) console.error(JSON.stringify(observation))
+    } catch { /* Diagnostics must not alter the original failure. */ }
   })
 }

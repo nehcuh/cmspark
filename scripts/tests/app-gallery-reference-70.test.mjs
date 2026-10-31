@@ -76,6 +76,152 @@ test('#70 download exception cleans exact partially owned archive', async t => {
   await assert.rejects(downloadArchive(catalog[0], target, async () => { throw failure }), e => e === failure)
   assert.equal(fs.existsSync(target), false)
 })
+test('#70 download observation records request failure without leaking the exception', async t => {
+  const target = owned(t), trace = {}, failure = Error('INERT_PRIVATE_PATH_OR_URL')
+  await assert.rejects(downloadArchive(catalog[0], target, async () => { throw failure }, trace), e => e === failure)
+  assert.deepEqual(trace, { origin: 'REQUEST', thrown: 'REQUEST', cleanup: ['CLOSE_RETURNED', 'UNLINK_RETURNED'] })
+  assert.equal(JSON.stringify(trace).includes('INERT_PRIVATE_PATH_OR_URL'), false)
+  assert.equal(fs.existsSync(target), false)
+})
+test('#70 close failure preserves actual thrown error and records both close attempts', async t => {
+  const target = owned(t), trace = {}, failure = Error('INERT_REQUEST'), closeError = Error('INERT_CLOSE')
+  const open = fs.openSync, close = fs.closeSync
+  let archiveFd, closeCalls = 0
+  try {
+    fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+    fs.closeSync = fd => { if (fd === archiveFd && ++closeCalls === 1) throw closeError; return close(fd) }
+    await assert.rejects(downloadArchive(catalog[0], target, async () => { throw failure }, trace), e => e === closeError)
+    assert.deepEqual(trace, { origin: 'REQUEST', thrown: 'CLOSE', cleanup: ['CLOSE_THREW', 'FINALLY_CLOSE_RETURNED'] })
+    assert.equal(JSON.stringify(trace).includes('INERT_'), false)
+    assert.equal(closeCalls, 2)
+  } finally { fs.openSync = open; fs.closeSync = close }
+})
+test('#70 rejected diagnostic sink cannot replace the original failure', async t => {
+  const target = owned(t), failure = Error('INERT_ORIGINAL')
+  const trace = new Proxy({}, { set() { throw Error('INERT_SINK') } })
+  await assert.rejects(downloadArchive(catalog[0], target, async () => { throw failure }, trace), e => e === failure)
+  assert.equal(fs.existsSync(target), false)
+})
+test('#70 download observation is a closed projection, including hostile accessors', () => {
+  const candidate = { origin: 'REQUEST', thrown: 'REQUEST', cleanup: ['CLOSE_RETURNED', 'UNLINK_RETURNED'], private: 'SECRET_DO_NOT_ECHO' }
+  const projected = collector.projectDownloadTrace(candidate)
+  assert.deepEqual(projected, { kind: 'GALLERY70_DOWNLOAD_OBSERVATION', origin: 'REQUEST', downloadThrown: 'REQUEST', cleanup: ['CLOSE_RETURNED', 'UNLINK_RETURNED'] })
+  assert.equal(JSON.stringify(projected).includes('SECRET_DO_NOT_ECHO'), false)
+  for (const bad of [null, { ...candidate, origin: 'SECRET_DO_NOT_ECHO' }, { ...candidate, cleanup: ['SECRET_DO_NOT_ECHO'] }, { ...candidate, cleanup: Array(4).fill('CLOSE_RETURNED') }, new Proxy({}, { get() { throw Error('SECRET_DO_NOT_ECHO') } })]) assert.equal(collector.projectDownloadTrace(bad), null)
+})
+test('#70 observation snapshots changing fields and events before validating', () => {
+  let originReads = 0, eventReads = 0
+  const cleanup = ['CLOSE_RETURNED']
+  Object.defineProperty(cleanup, 0, { get() { return ++eventReads === 1 ? 'CLOSE_RETURNED' : 'SECRET_EVENT' } })
+  const candidate = { get origin() { return ++originReads === 1 ? 'REQUEST' : 'SECRET_ORIGIN' }, thrown: 'REQUEST', cleanup }
+  const value = collector.projectDownloadTrace(candidate)
+  assert.deepEqual(value, { kind: 'GALLERY70_DOWNLOAD_OBSERVATION', origin: 'REQUEST', downloadThrown: 'REQUEST', cleanup: ['CLOSE_RETURNED'] })
+  assert.equal(originReads, 1); assert.equal(eventReads, 1)
+  assert.doesNotMatch(JSON.stringify(value), /SECRET/)
+  assert.equal(collector.projectDownloadTrace({ origin: 'REQUEST', thrown: 'REQUEST', cleanup: Array(1) }), null)
+})
+for (const [name, response, phase] of [
+  ['redirect', () => new Response(null, { status: 302, headers: { location: 'https://example.invalid/secret' } }), 'REDIRECT'],
+  ['status', () => new Response(null, { status: 503 }), 'STATUS'],
+  ['length', () => new Response('inert', { headers: { 'content-length': String(ARCHIVE_LIMIT + 1) } }), 'LENGTH'],
+  ['stream', () => ({ status: 200, headers: new Headers(), body: (async function* () { throw Error('SECRET_STREAM') })() }), 'BODY_READ'],
+]) {
+  test(`#70 download observation classifies ${name} without exposing its payload`, async t => {
+    const target = owned(t), trace = {}
+    await assert.rejects(downloadArchive(catalog[0], target, async () => response(), trace))
+    assert.equal(trace.origin, phase)
+    assert.equal(trace.thrown, phase)
+    assert.deepEqual(trace.cleanup, ['CLOSE_RETURNED', 'UNLINK_RETURNED'])
+    assert.doesNotMatch(JSON.stringify(trace), /SECRET|example\.invalid/)
+  })
+}
+test('#70 zero-progress archive write fails once and cleans only the owned file', async t => {
+  const target = owned(t), sibling = target + '.owned'
+  fs.writeFileSync(sibling, 'preserve')
+  const open = fs.openSync, write = fs.writeSync, stop = Error('OWNED_SECOND_WRITE')
+  let archiveFd, writes = 0
+  try {
+    fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+    fs.writeSync = (...args) => {
+      if (args[0] !== archiveFd) return write(...args)
+      if (++writes === 1) return 0
+      throw stop // Bounds the negative control if the old loop retries.
+    }
+    await assert.rejects(downloadArchive(catalog[0], target, async () => new Response('owned inert bytes')), /ARCHIVE_WRITE_NO_PROGRESS/)
+    assert.equal(writes, 1)
+    assert.equal(fs.existsSync(target), false)
+    assert.equal(fs.readFileSync(sibling, 'utf8'), 'preserve')
+  } finally {
+    fs.openSync = open; fs.writeSync = write
+  }
+})
+for (const invalid of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER, undefined]) {
+  test(`#70 invalid write progress ${String(invalid)} fails closed`, async t => {
+    const target = owned(t), sibling = target + '.owned'
+    fs.writeFileSync(sibling, 'preserve')
+    const open = fs.openSync, write = fs.writeSync, stop = Error('OWNED_SECOND_WRITE')
+    let archiveFd, writes = 0
+    try {
+      fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+      fs.writeSync = (...args) => {
+        if (args[0] !== archiveFd) return write(...args)
+        if (++writes === 1) return invalid
+        throw stop
+      }
+      await assert.rejects(downloadArchive(catalog[0], target, async () => new Response('owned inert bytes')), /ARCHIVE_WRITE_NO_PROGRESS/)
+      assert.equal(writes, 1)
+      assert.equal(fs.existsSync(target), false)
+      assert.equal(fs.readFileSync(sibling, 'utf8'), 'preserve')
+    } finally { fs.openSync = open; fs.writeSync = write }
+  })
+}
+test('#70 partial archive writes keep advancing before pin refusal', async t => {
+  const target = owned(t), bytes = 'owned inert bytes'
+  const open = fs.openSync, write = fs.writeSync
+  let archiveFd, writes = 0, total = 0
+  try {
+    fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+    fs.writeSync = (...args) => {
+      if (args[0] !== archiveFd) return write(...args)
+      writes++
+      const written = write(args[0], args[1], args[2], Math.min(args[3], 2))
+      total += written
+      return written
+    }
+    await assert.rejects(downloadArchive(catalog[0], target, async () => new Response(bytes)), /PACKAGE_SHA_MISMATCH/)
+    assert.ok(writes > 1)
+    assert.equal(total, Buffer.byteLength(bytes))
+    assert.equal(fs.existsSync(target), false)
+  } finally {
+    fs.openSync = open; fs.writeSync = write
+  }
+})
+test('#70 partial writes preserve exact bytes when the owned fixture pin matches', async t => {
+  const target = owned(t), bytes = 'owned inert archive bytes'
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-gallery70-matching-pin-'))
+  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }))
+  const scripts = path.join(fixtureRoot, 'scripts'), data = path.join(fixtureRoot, 'companion/src/apps')
+  fs.mkdirSync(scripts, { recursive: true }); fs.mkdirSync(data, { recursive: true })
+  fs.copyFileSync(path.join(root, 'scripts/collect-app-gallery-reference-70.mjs'), path.join(scripts, 'collector.mjs'))
+  const rows = structuredClone(catalog)
+  rows[0].reference.packageSHA256 = createHash('sha256').update(bytes).digest('hex')
+  fs.writeFileSync(path.join(data, 'preset-gallery-references.json'), JSON.stringify(rows))
+  const { downloadArchive: download } = await import(pathToFileURL(path.join(scripts, 'collector.mjs')).href)
+  const open = fs.openSync, write = fs.writeSync
+  let archiveFd, writes = 0
+  try {
+    fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+    fs.writeSync = (...args) => {
+      if (args[0] !== archiveFd) return write(...args)
+      writes++
+      return write(args[0], args[1], args[2], Math.min(args[3], 2))
+    }
+    const result = await download(rows[0], target, async () => new Response(bytes))
+    assert.ok(writes > 1)
+    assert.deepEqual(result, { bytes: Buffer.byteLength(bytes), sha256: rows[0].reference.packageSHA256 })
+    assert.equal(fs.readFileSync(target, 'utf8'), bytes)
+  } finally { fs.openSync = open; fs.writeSync = write }
+})
 test('#70 malformed/unsigned wire cannot be promoted to certificate evidence', () => {
   for (const raw of ['{}', 'null', '{"signatureStatus":"NotSigned"}', '[]', 'not-json', 'x'.repeat(16_385)]) {
     assert.throws(() => parseSample(raw, catalog[0]))
