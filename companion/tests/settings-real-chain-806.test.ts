@@ -85,7 +85,7 @@ test("#806 actual config producers and source consumers preserve draft provenanc
       try { await fn() } finally { config.configEvents.off(config.CONFIG_CHANGE_EVENT, listener) }
     }
     await t.test("own broadcast and proven ACK retain later edit without false conflict", () => run(async () => {
-      const p = start("model_name", "first", "later"), result = await handleConfigFamily("config.set", { config: p.patch, config_revision: p.revision })
+      const p = start("model_name", "first", "later"), result = await handleConfigFamily("config.set", { id: p.id, config: p.patch, config_revision: p.revision })
       assert.equal(result.config_applied_revision, result.config_revision); echo(result, p.id); assert.equal(frames.length, 2); deliver()
       assert.equal(state.settingsDraft.value.model_name, "later"); assert.ok(state.settingsDraft.dirty.model_name); assert.equal(state.settingsDraft.conflicts.model_name, undefined); assert.equal(state.settingsSave.status, "review")
     }))
@@ -93,33 +93,33 @@ test("#806 actual config producers and source consumers preserve draft provenanc
       const p = start("model_name", "first", "later")
       const reenter = () => { config.configEvents.off(config.CONFIG_CHANGE_EVENT, reenter); config.saveConfig({ llm: { ...config.getConfig().llm, model_name: "first" } }) }
       config.configEvents.on(config.CONFIG_CHANGE_EVENT, reenter)
-      try { const result = await handleConfigFamily("config.set", { config: p.patch, config_revision: p.revision }); assert.equal(result.config_applied_revision, undefined); echo(result, p.id); deliver(); assert.equal(state.settingsDraft.value.model_name, "later"); assert.equal(state.settingsDraft.conflicts.model_name, true) }
+      try { const result = await handleConfigFamily("config.set", { id: p.id, config: p.patch, config_revision: p.revision }); assert.equal(result.config_applied_revision, undefined); echo(result, p.id); deliver(); assert.equal(state.settingsDraft.value.model_name, "later"); assert.equal(state.settingsDraft.conflicts.model_name, true) }
       finally { config.configEvents.off(config.CONFIG_CHANGE_EVENT, reenter) }
     }))
     await t.test("later third-party write conflicts after own ACK", () => run(async () => {
-      const p = start("model_name", "first", "later"), result = await handleConfigFamily("config.set", { config: p.patch, config_revision: p.revision })
+      const p = start("model_name", "first", "later"), result = await handleConfigFamily("config.set", { id: p.id, config: p.patch, config_revision: p.revision })
       echo(result, p.id); deliver(); assert.equal(state.settingsDraft.conflicts.model_name, undefined)
       config.saveConfig({ llm: { ...config.getConfig().llm, model_name: "other" } }); deliver(); assert.equal(state.settingsDraft.conflicts.model_name, true); assert.equal(state.settingsDraft.value.model_name, "later")
     }))
     await t.test("masked secret ACK only confirms original generation", () => run(async () => {
-      const p = start("api_key", "owned-a", "owned-b"), result = await handleConfigFamily("config.set", { config: p.patch, config_revision: p.revision })
+      const p = start("api_key", "owned-a", "owned-b"), result = await handleConfigFamily("config.set", { id: p.id, config: p.patch, config_revision: p.revision })
       assert.deepEqual(result.config_applied_secret_fields, ["api_key"]); assert.equal(result.config.llm.api_key, "***"); echo(result, p.id); deliver()
       assert.equal(state.settingsDraft.value.api_key, "owned-b"); assert.ok(state.settingsDraft.dirty.api_key); assert.equal(state.settingsDraft.conflicts.api_key, undefined)
     }))
     await t.test("third-party write before save causes CAS conflict", () => run(async () => {
       const p = start("model_name", "first", "later"); config.saveConfig({ llm: { ...config.getConfig().llm, model_name: "other" } })
-      const result = await handleConfigFamily("config.set", { config: p.patch, config_revision: p.revision }); assert.equal(result.type, "config.conflict"); assert.equal(result.config_applied_revision, undefined)
+      const result = await handleConfigFamily("config.set", { id: p.id, config: p.patch, config_revision: p.revision }); assert.equal(result.type, "config.conflict"); assert.equal(result.config_applied_revision, undefined)
       echo(result, p.id); deliver(); assert.equal(state.settingsSave.status, "conflict"); assert.equal(state.settingsDraft.value.model_name, "later"); assert.equal(state.settingsDraft.conflicts.model_name, true)
     }))
     await t.test("reentrant masked secret yields no proof and retains conflict", () => run(async () => {
       const p = start("api_key", "owned-a", "owned-b")
       const reenter = () => { config.configEvents.off(config.CONFIG_CHANGE_EVENT, reenter); config.saveConfig({ llm: { ...config.getConfig().llm, api_key: "owned-a" } }, { llmKey: true }) }
       config.configEvents.on(config.CONFIG_CHANGE_EVENT, reenter)
-      try { const result = await handleConfigFamily("config.set", { config: p.patch, config_revision: p.revision }); assert.equal(result.config_applied_revision, undefined); assert.equal(result.config_applied_secret_fields, undefined); assert.equal(result.config.llm.api_key, "***"); echo(result, p.id); deliver(); assert.equal(state.settingsDraft.conflicts.api_key, true); assert.equal(state.settingsDraft.value.api_key, "owned-b") }
+      try { const result = await handleConfigFamily("config.set", { id: p.id, config: p.patch, config_revision: p.revision }); assert.equal(result.config_applied_revision, undefined); assert.equal(result.config_applied_secret_fields, undefined); assert.equal(result.config.llm.api_key, "***"); echo(result, p.id); deliver(); assert.equal(state.settingsDraft.conflicts.api_key, true); assert.equal(state.settingsDraft.value.api_key, "owned-b") }
       finally { config.configEvents.off(config.CONFIG_CHANGE_EVENT, reenter) }
     }))
     await t.test("unrelated later write does not conflict with edited model", () => run(async () => {
-      const p = start("model_name", "first", "later"), result = await handleConfigFamily("config.set", { config: p.patch, config_revision: p.revision })
+      const p = start("model_name", "first", "later"), result = await handleConfigFamily("config.set", { id: p.id, config: p.patch, config_revision: p.revision })
       echo(result, p.id); deliver(); config.saveConfig({ trusted_domains: ["example.invalid"] }); deliver(); assert.equal(state.settingsDraft.value.model_name, "later"); assert.equal(state.settingsDraft.conflicts.model_name, undefined); assert.ok(state.settingsDraft.dirty.model_name)
     }))
   } finally {
