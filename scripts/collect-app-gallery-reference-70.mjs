@@ -59,7 +59,7 @@ export async function downloadArchive(app, destination, fetchImpl = fetch) {
       let offset = 0
       while (offset < chunk.byteLength) {
         const written = fs.writeSync(fd, chunk, offset, chunk.byteLength - offset)
-        if (written === 0) throw new Error('ARCHIVE_WRITE_NO_PROGRESS')
+        if (!Number.isSafeInteger(written) || written <= 0 || written > chunk.byteLength - offset) throw new Error('ARCHIVE_WRITE_NO_PROGRESS')
         offset += written
       }
     }

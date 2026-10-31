@@ -96,6 +96,26 @@ test('#70 zero-progress archive write fails once and cleans only the owned file'
     fs.openSync = open; fs.writeSync = write
   }
 })
+for (const invalid of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER, undefined]) {
+  test(`#70 invalid write progress ${String(invalid)} fails closed`, async t => {
+    const target = owned(t), sibling = target + '.owned'
+    fs.writeFileSync(sibling, 'preserve')
+    const open = fs.openSync, write = fs.writeSync, stop = Error('OWNED_SECOND_WRITE')
+    let archiveFd, writes = 0
+    try {
+      fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+      fs.writeSync = (...args) => {
+        if (args[0] !== archiveFd) return write(...args)
+        if (++writes === 1) return invalid
+        throw stop
+      }
+      await assert.rejects(downloadArchive(catalog[0], target, async () => new Response('owned inert bytes')), /ARCHIVE_WRITE_NO_PROGRESS/)
+      assert.equal(writes, 1)
+      assert.equal(fs.existsSync(target), false)
+      assert.equal(fs.readFileSync(sibling, 'utf8'), 'preserve')
+    } finally { fs.openSync = open; fs.writeSync = write }
+  })
+}
 test('#70 partial archive writes keep advancing before pin refusal', async t => {
   const target = owned(t), bytes = 'owned inert bytes'
   const open = fs.openSync, write = fs.writeSync
@@ -116,6 +136,32 @@ test('#70 partial archive writes keep advancing before pin refusal', async t => 
   } finally {
     fs.openSync = open; fs.writeSync = write
   }
+})
+test('#70 partial writes preserve exact bytes when the owned fixture pin matches', async t => {
+  const target = owned(t), bytes = 'owned inert archive bytes'
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-gallery70-matching-pin-'))
+  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }))
+  const scripts = path.join(fixtureRoot, 'scripts'), data = path.join(fixtureRoot, 'companion/src/apps')
+  fs.mkdirSync(scripts, { recursive: true }); fs.mkdirSync(data, { recursive: true })
+  fs.copyFileSync(path.join(root, 'scripts/collect-app-gallery-reference-70.mjs'), path.join(scripts, 'collector.mjs'))
+  const rows = structuredClone(catalog)
+  rows[0].reference.packageSHA256 = createHash('sha256').update(bytes).digest('hex')
+  fs.writeFileSync(path.join(data, 'preset-gallery-references.json'), JSON.stringify(rows))
+  const { downloadArchive: download } = await import(pathToFileURL(path.join(scripts, 'collector.mjs')).href)
+  const open = fs.openSync, write = fs.writeSync
+  let archiveFd, writes = 0
+  try {
+    fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+    fs.writeSync = (...args) => {
+      if (args[0] !== archiveFd) return write(...args)
+      writes++
+      return write(args[0], args[1], args[2], Math.min(args[3], 2))
+    }
+    const result = await download(rows[0], target, async () => new Response(bytes))
+    assert.ok(writes > 1)
+    assert.deepEqual(result, { bytes: Buffer.byteLength(bytes), sha256: rows[0].reference.packageSHA256 })
+    assert.equal(fs.readFileSync(target, 'utf8'), bytes)
+  } finally { fs.openSync = open; fs.writeSync = write }
 })
 test('#70 malformed/unsigned wire cannot be promoted to certificate evidence', () => {
   for (const raw of ['{}', 'null', '{"signatureStatus":"NotSigned"}', '[]', 'not-json', 'x'.repeat(16_385)]) {
