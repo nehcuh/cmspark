@@ -631,6 +631,14 @@ let cachedConfigMtimeMs: number | null = null
 // lock and cannot certify concurrent edits made by a non-cooperating process.
 let configRevisionEpoch = randomUUID()
 let configRevisionSequence = 0
+// Object identity ties this token to the exact synchronous write before any
+// config-change listener can reenter. No credentials or config data are copied.
+const committedConfigRevisions = new WeakMap<CompanionConfig, string>()
+
+/** Process-local evidence only; not a filesystem lock or a cross-process CAS. */
+export function getCommittedConfigRevision(written: CompanionConfig): string | undefined {
+  return committedConfigRevisions.get(written)
+}
 
 function advanceConfigRevision(): void {
   if (configRevisionSequence >= Number.MAX_SAFE_INTEGER) {
@@ -685,6 +693,7 @@ function saveConfigSnapshot(updated: CompanionConfig, llmKey = storedLlmKey, vis
   visionUsesLlm = inherited
   cachedConfig = updated
   cachedConfigMtimeMs = configFileMtimeMs()
+  committedConfigRevisions.set(updated, `${configRevisionEpoch}:${configRevisionSequence}`)
   configEvents.emit(CONFIG_CHANGE_EVENT, updated)
   return updated
 }

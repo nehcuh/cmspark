@@ -502,7 +502,7 @@ export type AgentAction =
   | { type: "TOGGLE_SKILL"; skillId: string }
   | { type: "SET_OPERATIONS"; operations: OperationRecord[] }
   | { type: "SET_CONFIG"; config: Partial<LLMConfig> }
-  | { type: "SET_CONFIG_SNAPSHOT"; config: Partial<LLMConfig>; revision: string | null; id?: string; conflict?: boolean; confirmedSecrets?: Array<"api_key" | "vision_api_key"> }
+  | { type: "SET_CONFIG_SNAPSHOT"; config: Partial<LLMConfig>; revision: string | null; id?: string; conflict?: boolean; appliedRevision?: string; confirmedSecrets?: Array<"api_key" | "vision_api_key"> }
   | { type: "BEGIN_SETTINGS_SAVE"; submission: SettingsSubmission<LLMConfig> }
   | { type: "SETTINGS_SAVE_UNKNOWN"; id: string }
   | { type: "RESOLVE_SETTINGS_CONFLICT"; key: keyof LLMConfig; choice: "mine" | "remote" }
@@ -1414,7 +1414,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const opaque = new Set<keyof LLMConfig>(["api_key", "vision_api_key"])
       const settingsDraft = draft && revision
         ? matched && !action.conflict
-          ? acknowledgeSettingsSubmission(draft, pending!, action.id!, config, revision, opaque, new Set(action.confirmedSecrets ?? []))
+          ? acknowledgeSettingsSubmission(draft, pending!, action.id!, config, revision, opaque, new Set(action.confirmedSecrets ?? []), action.appliedRevision)
           : receiveSettingsSnapshot(draft, config, revision, opaque)
         : draft
       let settingsSave = state.settingsSave

@@ -42,6 +42,8 @@ function handler() {
   // Revision transport is outside this isolated producer test; the real
   // snapshot returns the current config and its process-scoped revision.
   getConfigSnapshot:()=>({config:current,revision:"owned-fixture:0"}),
+  // Stubbed persistence cannot certify a real committed revision.
+  getCommittedConfigRevision:()=>undefined,
   saveConfigSnapshot:(value:any)=>{current=value;return value},storedLlmKey:'owned-llm',storedVisionKey:'owned-vision',visionUsesLlm:false,
   stripCompanionUiProcessContinueDeny:(v:any)=>v, filterDomainPatterns:(v:any)=>v, isMaskedApiKey:(s:any)=>typeof s==='string'&&s.includes('***'),
   getEnvApiKey:()=>'',resolveInheritedVisionApiKey:()=>undefined,isPlaceholderVisionKey:()=>false,endpointsMatch:()=>false,
