@@ -42,7 +42,11 @@ const updateSchema = z.object({
   story_draft_text: text.nullable().optional(),
 }).strict()
 
-export function parseDraftUpdate(input: unknown, kind: DraftKind) {
+export class UnknownUpdateField extends Error {
+  constructor(readonly kind: DraftKind) { super("DRAFT_UPDATE_UNKNOWN_FIELD") }
+}
+
+export function parseDraftUpdate(input: unknown, kind: DraftKind, source: "stored" | "incoming" = "stored") {
   const request = updateSchema.parse(input)
   const schema = Object.prototype.hasOwnProperty.call(DRAFT_SCHEMAS, kind) ? DRAFT_SCHEMAS[kind] : undefined
   if (!schema) throw new Error("DRAFT_SCHEMA_UNSUPPORTED")
@@ -50,7 +54,10 @@ export function parseDraftUpdate(input: unknown, kind: DraftKind) {
   const relations: Record<string, RelationCandidate> = Object.create(null)
   for (const [name, value] of Object.entries(request.fields || {})) {
     const definition = Object.prototype.hasOwnProperty.call(schema.fields, name) ? schema.fields[name] : undefined
-    if (!definition) throw new Error("INVALID_FIELD")
+    if (!definition) {
+      if (source === "incoming") throw new UnknownUpdateField(kind)
+      throw new Error("INVALID_FIELD")
+    }
     if (definition.type === "scalar") fields[name] = scalarSchema.parse(value)
     else {
       const candidate = collectionSchema.parse(value)

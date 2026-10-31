@@ -1256,6 +1256,7 @@ export function classifyError(
   //     （这正是 #556 要的：页面/调用方可控的文本不得影响分类）。
   //   - 码不在表里，或压根没有码 → 落到下面的文案启发式（**保持原行为**）。
   //     这些「无码」站点是 #560 尚未收口的部分。
+  if (context?.toolName === "draft_update" && context.error_code === "DRAFT_UPDATE_UNKNOWN_FIELD") return "recoverable"
   const byCode = context?.error_code ? ERROR_CODE_LEVELS.get(context.error_code) : undefined
   if (byCode) return byCode
   const msg = errorMessage.toLowerCase()

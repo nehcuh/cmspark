@@ -106,7 +106,7 @@ export class DraftRepository {
     // repeated inside the transaction; a caller cannot choose another schema.
     const id = parseDraftId({ draft_id: (input as any)?.draft_id })
     const prior = this.read({ draft_id: id })
-    const request = parseDraftUpdate(input, prior.kind)
+    const request = parseDraftUpdate(input, prior.kind, "incoming")
     return this.mutate(request, "draft_update", (state, drafts) => {
       const index = drafts.findIndex(draft => draft.id === request.draft_id)
       if (index < 0) throw new Error("DRAFT_NOT_FOUND")
