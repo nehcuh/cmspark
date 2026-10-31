@@ -647,12 +647,18 @@ function observeCommittedConfig(config: CompanionConfig): void {
   evidence.baseline = null
 }
 
-/** Process-local evidence only; not a filesystem lock or a cross-process CAS. */
-export function getCommittedConfigRevision(written: CompanionConfig): string | undefined {
+/** Process-local evidence only; not a filesystem lock or a cross-process CAS.
+ * The caller must consume the proof in a finally block after every peek. */
+export function peekCommittedConfigRevision(written: CompanionConfig): string | undefined {
   observeCommittedConfig(written)
   const evidence = committedConfigRevisions.get(written)
-  committedConfigRevisions.delete(written)
   return evidence && !evidence.tainted ? evidence.revision : undefined
+}
+
+/** Consume the short-lived proof, including when inspection throws. */
+export function getCommittedConfigRevision(written: CompanionConfig): string | undefined {
+  try { return peekCommittedConfigRevision(written) }
+  finally { committedConfigRevisions.delete(written) }
 }
 
 function advanceConfigRevision(): void {

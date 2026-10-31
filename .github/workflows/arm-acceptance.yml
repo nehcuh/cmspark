@@ -45,6 +45,16 @@ jobs:
           grep -Fx '# pass 11' "$RUNNER_TEMP/settings-partial-806-arm.tap"
           grep -Fx '# fail 0' "$RUNNER_TEMP/settings-partial-806-arm.tap"
           grep -Fx '# skipped 0' "$RUNNER_TEMP/settings-partial-806-arm.tap"
+      - name: Capability profile and module isolation controls
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap companion/scripts/tests/profile-module-798.test.cjs companion/scripts/tests/profile-router-798.test.cjs | tee "$RUNNER_TEMP/profile-798-arm.tap"
+          grep -Fx '# tests 30' "$RUNNER_TEMP/profile-798-arm.tap"
+          grep -Fx '# pass 30' "$RUNNER_TEMP/profile-798-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/profile-798-arm.tap"
+          grep -Fx '# cancelled 0' "$RUNNER_TEMP/profile-798-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/profile-798-arm.tap"
       - name: Whisper failure controls
         shell: bash
         run: |

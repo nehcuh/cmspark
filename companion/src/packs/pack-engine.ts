@@ -4,7 +4,7 @@ import * as os from "os"
 import AdmZip from "adm-zip"
 import matter from "../passive-frontmatter"
 import * as yaml from "js-yaml"
-import { getConfigDir, getConfig, saveConfig, type CompanionConfig } from "../config"
+import { getConfigDir, getConfig, saveConfig, getConfigSnapshot, saveConfigWithReceipt, getCommittedConfigRevision, peekCommittedConfigRevision, type CompanionConfig } from "../config"
 import { atomicWriteJSON } from "../io"
 import { SkillEngine } from "../skills/skill-engine"
 import { allocateDocIdentity, isUnsafePathComponent, writeRestrictedFile } from "../skills/doc-identity"
@@ -33,7 +33,7 @@ import {
   type UserPackTrustPolicy,
 } from "./types"
 import { getAllToolDefinitions } from "../bridge/tool-definitions"
-import { setModuleEnabled } from "../capability/modules"
+import { setModuleEnabled, ensureModulesDefaults } from "../capability/modules"
 import {
   isValidSecurityArmPhrase,
   securityArmRejectedError,
@@ -257,31 +257,80 @@ export function setCapabilityProfile(
   if (target !== "community" && target !== "enterprise") {
     return { ok: false, error: "invalid capability_profile — use community|enterprise" }
   }
-  const cfg = getConfig() as any
+  const snapshot = getConfigSnapshot()
+  const cfg = snapshot.config
   const from = cfg.capability_profile === "enterprise" ? "enterprise" : "community"
-  if (from === target) return { ok: true, profile: target, modules_disabled: [] }
-
-  const modules_disabled: string[] = []
+  // Never silently normalize malformed high-risk module state as part of an
+  // unrelated profile request. Refuse before any write; the user can inspect it.
+  if (["shell", "netsec"].some(id => typeof (cfg.modules as any)?.[id]?.enabled !== "boolean")) {
+    return { ok: false, error: "PROFILE_STATE_INVALID" }
+  }
+  if (from === target) {
+    if (target === "community" && ["shell", "netsec"].some(id => (cfg.modules as any)?.[id]?.enabled === true)) {
+      return { ok: false, error: "PROFILE_STATE_INCONSISTENT" }
+    }
+    return { ok: true, profile: target, modules_disabled: [] }
+  }
+  const disabled: string[] = []
+  const modulesPatch: Record<string, any> = {}
   if (target === "community") {
-    for (const mod of ["shell", "netsec"] as const) {
-      if (cfg.modules?.[mod]?.enabled === true) {
-        const r = setModuleEnabled(mod, false, by)
-        if (!r.ok) return { ok: false, error: r.error }
-        modules_disabled.push(mod)
-      }
+    const normalized = ensureModulesDefaults(structuredClone(cfg)) as any
+    for (const id of ["shell", "netsec"] as const) {
+      const module = normalized.modules[id]
+      if (module?.enabled !== true) continue
+      if (module.available !== true) return { ok: false, error: `module not available: ${id}` }
+      modulesPatch[id] = { ...module, enabled: false, enabled_at: null, enabled_by: null }
+      disabled.push(id)
     }
   }
+  let written: CompanionConfig
+  try {
+    written = saveConfigWithReceipt({ capability_profile: target, ...(disabled.length ? { modules: modulesPatch } : {}) } as any, undefined, snapshot.revision)
+  } catch {
+    // A synchronous listener can throw even the conflict code after the write.
+    // The caller cannot tell whether anything was persisted; never assert no change.
+    return { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
+  }
+  // Keep the proof alive across synchronous audit observers, then retire the
+  // credential-bearing baseline on every outcome. It observes only changes
+  // visited by config snapshots; it is not a cross-process lock or full ABA proof.
+  let result: { ok: true; profile: "community" | "enterprise"; modules_disabled: string[] } | { ok: false; error: string } = { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
+  try {
+    const committed = peekCommittedConfigRevision(written)
+    const isCurrent = () => {
+      try {
+        const current = getConfigSnapshot()
+        return !!committed && peekCommittedConfigRevision(written) === committed && current.revision === committed && current.config === written && current.config.capability_profile === target &&
+          (target !== "community" || ["shell", "netsec"].every(id => (current.config.modules as any)?.[id]?.enabled === false))
+      } catch { return false }
+    }
+    const uncertain = () => {
+      try { appendCapabilityAudit({ type: "profile.change_uncertain", from, to: target, by, at: new Date().toISOString(), attempted_modules_disabled: disabled }) } catch { /* best effort */ }
+      return { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" } as const
+    }
+    if (!isCurrent()) result = uncertain()
+    else {
+      try {
+        let current = true
+        for (const id of disabled) {
+          appendCapabilityAudit({ type: "module.disable", module: id, by, at: new Date().toISOString() })
+          if (!isCurrent()) { current = false; break }
+        }
+        if (current) {
+          appendCapabilityAudit({ type: "profile.change", from, to: target, by, at: new Date().toISOString(), modules_disabled: disabled })
+          current = isCurrent()
+        }
+        result = current ? { ok: true, profile: target, modules_disabled: disabled } : uncertain()
+      } catch { result = uncertain() }
+    }
+  } catch {
+    result = { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
+  } finally {
+    try { getCommittedConfigRevision(written) }
+    catch { result = { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" } }
+  }
+  return result
 
-  saveConfig({ capability_profile: target } as any)
-  appendCapabilityAudit({
-    type: "profile.change",
-    from,
-    to: target,
-    by,
-    at: new Date().toISOString(),
-    modules_disabled,
-  })
-  return { ok: true, profile: target, modules_disabled }
 }
 
 /** Restore Trust snapshot captured before pack.apply (best-effort). */
