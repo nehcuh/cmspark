@@ -2,6 +2,7 @@ import { BusinessEvidenceService } from "./service"
 import type { EvidenceScope } from "./content"
 import { criterionIdentity } from "./content"
 import { DRAFT_SCHEMAS } from "./schema"
+import { UnknownUpdateField } from "./draft-contract"
 
 export const DRAFT_TOOLS: ReadonlySet<string> = new Set(["draft_create", "draft_update", "draft_read", "draft_render"])
 
@@ -24,6 +25,17 @@ export function executeDraftTool(dataDir: string, scope: EvidenceScope | undefin
     }
     return data === undefined ? { success: false, error: "UNKNOWN_DRAFT_TOOL" } : { success: true, data }
   } catch (error) {
+    if (tool === "draft_update" && error instanceof UnknownUpdateField) {
+      const schema = DRAFT_SCHEMAS[error.kind]
+      return { success: false, error: "DRAFT_UPDATE_UNKNOWN_FIELD", data: {
+        error_code: "DRAFT_UPDATE_UNKNOWN_FIELD", kind: error.kind,
+        allowed_fields: Object.entries(schema.fields).map(([name, definition]) => ({ name, type: definition.type })),
+        story_draft_text_allowed: error.kind === "development_trace.v1",
+        guidance: error.kind === "development_trace.v1"
+          ? "Use draft_read for field and citation requirements; story_draft_text is top-level."
+          : "Use draft_read for field and citation requirements; story_draft_text is not available for this kind.",
+      } }
+    }
     // Never reflect arbitrary stored/page content from parser errors.
     const code = (error as Error).message
     return { success: false, error: /^[A-Z][A-Z0-9_]+$/.test(code) ? code : "INVALID_DRAFT_REQUEST_OR_STORE" }
