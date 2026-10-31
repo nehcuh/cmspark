@@ -109,6 +109,17 @@ test('#70 download observation is a closed projection, including hostile accesso
   assert.equal(JSON.stringify(projected).includes('SECRET_DO_NOT_ECHO'), false)
   for (const bad of [null, { ...candidate, origin: 'SECRET_DO_NOT_ECHO' }, { ...candidate, cleanup: ['SECRET_DO_NOT_ECHO'] }, { ...candidate, cleanup: Array(4).fill('CLOSE_RETURNED') }, new Proxy({}, { get() { throw Error('SECRET_DO_NOT_ECHO') } })]) assert.equal(collector.projectDownloadTrace(bad), null)
 })
+test('#70 observation snapshots changing fields and events before validating', () => {
+  let originReads = 0, eventReads = 0
+  const cleanup = ['CLOSE_RETURNED']
+  Object.defineProperty(cleanup, 0, { get() { return ++eventReads === 1 ? 'CLOSE_RETURNED' : 'SECRET_EVENT' } })
+  const candidate = { get origin() { return ++originReads === 1 ? 'REQUEST' : 'SECRET_ORIGIN' }, thrown: 'REQUEST', cleanup }
+  const value = collector.projectDownloadTrace(candidate)
+  assert.deepEqual(value, { kind: 'GALLERY70_DOWNLOAD_OBSERVATION', origin: 'REQUEST', downloadThrown: 'REQUEST', cleanup: ['CLOSE_RETURNED'] })
+  assert.equal(originReads, 1); assert.equal(eventReads, 1)
+  assert.doesNotMatch(JSON.stringify(value), /SECRET/)
+  assert.equal(collector.projectDownloadTrace({ origin: 'REQUEST', thrown: 'REQUEST', cleanup: Array(1) }), null)
+})
 for (const [name, response, phase] of [
   ['redirect', () => new Response(null, { status: 302, headers: { location: 'https://example.invalid/secret' } }), 'REDIRECT'],
   ['status', () => new Response(null, { status: 503 }), 'STATUS'],

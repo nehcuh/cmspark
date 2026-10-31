@@ -107,8 +107,18 @@ export function projectDownloadTrace(value) {
   try {
     const phases = new Set(['NONE', 'FIXED_ROW', 'OPEN', 'REQUEST', 'REDIRECT', 'STATUS', 'LENGTH', 'BODY_READ', 'WRITE', 'DIGEST', 'CLOSE', 'UNLINK', 'FINALLY_CLOSE'])
     const events = new Set(['CLOSE_RETURNED', 'CLOSE_THREW', 'UNLINK_RETURNED', 'UNLINK_THREW', 'FINALLY_CLOSE_RETURNED', 'FINALLY_CLOSE_THREW'])
-    if (!value || !phases.has(value.origin) || !phases.has(value.thrown) || !Array.isArray(value.cleanup) || value.cleanup.length > 3 || !value.cleanup.every(event => events.has(event))) return null
-    return { kind: 'GALLERY70_DOWNLOAD_OBSERVATION', origin: value.origin, downloadThrown: value.thrown, cleanup: [...value.cleanup] }
+    if (!value) return null
+    const origin = value.origin, thrown = value.thrown, rawCleanup = value.cleanup
+    if (!phases.has(origin) || !phases.has(thrown) || !Array.isArray(rawCleanup)) return null
+    const length = rawCleanup.length
+    if (!Number.isSafeInteger(length) || length < 0 || length > 3) return null
+    const cleanup = []
+    for (let i = 0; i < length; i++) {
+      const event = rawCleanup[i]
+      if (!events.has(event)) return null
+      cleanup.push(event)
+    }
+    return { kind: 'GALLERY70_DOWNLOAD_OBSERVATION', origin, downloadThrown: thrown, cleanup }
   } catch { return null }
 }
 
