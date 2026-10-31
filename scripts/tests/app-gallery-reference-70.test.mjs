@@ -76,6 +76,54 @@ test('#70 download exception cleans exact partially owned archive', async t => {
   await assert.rejects(downloadArchive(catalog[0], target, async () => { throw failure }), e => e === failure)
   assert.equal(fs.existsSync(target), false)
 })
+test('#70 download observation records request failure without leaking the exception', async t => {
+  const target = owned(t), trace = {}, failure = Error('INERT_PRIVATE_PATH_OR_URL')
+  await assert.rejects(downloadArchive(catalog[0], target, async () => { throw failure }, trace), e => e === failure)
+  assert.deepEqual(trace, { origin: 'REQUEST', thrown: 'REQUEST', cleanup: ['CLOSE_RETURNED', 'UNLINK_RETURNED'] })
+  assert.equal(JSON.stringify(trace).includes('INERT_PRIVATE_PATH_OR_URL'), false)
+  assert.equal(fs.existsSync(target), false)
+})
+test('#70 close failure preserves actual thrown error and records both close attempts', async t => {
+  const target = owned(t), trace = {}, failure = Error('INERT_REQUEST'), closeError = Error('INERT_CLOSE')
+  const open = fs.openSync, close = fs.closeSync
+  let archiveFd, closeCalls = 0
+  try {
+    fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+    fs.closeSync = fd => { if (fd === archiveFd && ++closeCalls === 1) throw closeError; return close(fd) }
+    await assert.rejects(downloadArchive(catalog[0], target, async () => { throw failure }, trace), e => e === closeError)
+    assert.deepEqual(trace, { origin: 'REQUEST', thrown: 'CLOSE', cleanup: ['CLOSE_THREW', 'FINALLY_CLOSE_RETURNED'] })
+    assert.equal(JSON.stringify(trace).includes('INERT_'), false)
+    assert.equal(closeCalls, 2)
+  } finally { fs.openSync = open; fs.closeSync = close }
+})
+test('#70 rejected diagnostic sink cannot replace the original failure', async t => {
+  const target = owned(t), failure = Error('INERT_ORIGINAL')
+  const trace = new Proxy({}, { set() { throw Error('INERT_SINK') } })
+  await assert.rejects(downloadArchive(catalog[0], target, async () => { throw failure }, trace), e => e === failure)
+  assert.equal(fs.existsSync(target), false)
+})
+test('#70 download observation is a closed projection, including hostile accessors', () => {
+  const candidate = { origin: 'REQUEST', thrown: 'REQUEST', cleanup: ['CLOSE_RETURNED', 'UNLINK_RETURNED'], private: 'SECRET_DO_NOT_ECHO' }
+  const projected = collector.projectDownloadTrace(candidate)
+  assert.deepEqual(projected, { kind: 'GALLERY70_DOWNLOAD_OBSERVATION', origin: 'REQUEST', downloadThrown: 'REQUEST', cleanup: ['CLOSE_RETURNED', 'UNLINK_RETURNED'] })
+  assert.equal(JSON.stringify(projected).includes('SECRET_DO_NOT_ECHO'), false)
+  for (const bad of [null, { ...candidate, origin: 'SECRET_DO_NOT_ECHO' }, { ...candidate, cleanup: ['SECRET_DO_NOT_ECHO'] }, { ...candidate, cleanup: Array(4).fill('CLOSE_RETURNED') }, new Proxy({}, { get() { throw Error('SECRET_DO_NOT_ECHO') } })]) assert.equal(collector.projectDownloadTrace(bad), null)
+})
+for (const [name, response, phase] of [
+  ['redirect', () => new Response(null, { status: 302, headers: { location: 'https://example.invalid/secret' } }), 'REDIRECT'],
+  ['status', () => new Response(null, { status: 503 }), 'STATUS'],
+  ['length', () => new Response('inert', { headers: { 'content-length': String(ARCHIVE_LIMIT + 1) } }), 'LENGTH'],
+  ['stream', () => ({ status: 200, headers: new Headers(), body: (async function* () { throw Error('SECRET_STREAM') })() }), 'BODY_READ'],
+]) {
+  test(`#70 download observation classifies ${name} without exposing its payload`, async t => {
+    const target = owned(t), trace = {}
+    await assert.rejects(downloadArchive(catalog[0], target, async () => response(), trace))
+    assert.equal(trace.origin, phase)
+    assert.equal(trace.thrown, phase)
+    assert.deepEqual(trace.cleanup, ['CLOSE_RETURNED', 'UNLINK_RETURNED'])
+    assert.doesNotMatch(JSON.stringify(trace), /SECRET|example\.invalid/)
+  })
+}
 test('#70 zero-progress archive write fails once and cleans only the owned file', async t => {
   const target = owned(t), sibling = target + '.owned'
   fs.writeFileSync(sibling, 'preserve')
