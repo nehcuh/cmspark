@@ -8,7 +8,7 @@ import * as ts from "typescript"
 import { whisperPinResolveOpts } from "../src/voice/whisper-binary-pins"
 
 // Exercise the production installer with inert process and filesystem boundaries.
-function installWithSmokeOutcome(outcome: Error | null, arch = "darwin-arm64", unpinned = false, aborted = false) {
+function installWithSmokeOutcome(outcome: Error | null, arch = "darwin-arm64", unpinned = false, aborted = false, futurePin = false) {
   const source = readFileSync(path.join(process.cwd(), "src/voice/whisper-binary-download.ts"), "utf8")
   const file = ts.createSourceFile("installer.ts", source, ts.ScriptTarget.Latest, true)
   const fn = file.statements.find((statement): statement is ts.FunctionDeclaration =>
@@ -24,7 +24,9 @@ function installWithSmokeOutcome(outcome: Error | null, arch = "darwin-arm64", u
   const commands: string[] = []
   const install = runInNewContext(script, {
     path, Buffer, Error, process: { env: { CMSPARK_WHISPER_SRC: "/source/whisper-cli", ...(unpinned ? { CMSPARK_WHISPER_UNPINNED: "1" } : {}) } },
-    whisperPinResolveOpts,
+    whisperPinResolveOpts: (arch: string, env: NodeJS.ProcessEnv) => futurePin
+      ? { expectedSha256: "a".repeat(64), allowUnpinned: false, forceUnpinned: false }
+      : whisperPinResolveOpts(arch, env),
     existsSync: (p: string) => p === "/source/whisper-cli",
     statSync: () => ({ isFile: () => true }), realpathSync: (p: string) => p,
     readFileSync: () => Buffer.from("fixture"), writeFileSync: () => { writes++ }, mkdirSync: () => { writes++ },
@@ -44,9 +46,17 @@ test("brew x64 without a release pin refuses before writing or launching", () =>
   const fixture = installWithSmokeOutcome(null, "darwin-x64")
   assert.throws(fixture.run, (error: unknown) => {
     assert.equal((error as { reason?: unknown }).reason, "pin-mismatch")
-    assert.match((error as Error).message, /macOS x64.*发行校验值/)
+    assert.match((error as Error).message, /无法验证 macOS x64/)
     return true
   })
+  assert.equal(fixture.writes(), 0)
+  assert.deepEqual(fixture.commands, [])
+  assert.equal(fixture.count(), 0)
+})
+
+test("a future x64 pin cannot authorize an unverified brew executable", () => {
+  const fixture = installWithSmokeOutcome(null, "darwin-x64", false, false, true)
+  assert.throws(fixture.run, (error: unknown) => (error as { reason?: unknown }).reason === "pin-mismatch")
   assert.equal(fixture.writes(), 0)
   assert.deepEqual(fixture.commands, [])
   assert.equal(fixture.count(), 0)

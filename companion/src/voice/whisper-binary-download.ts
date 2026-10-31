@@ -442,14 +442,14 @@ export function installWhisperFromBrewDarwin(opts: {
   if (opts.signal?.aborted) {
     throw new WhisperBinaryDownloadError("aborted", "aborted")
   }
-  // A self-written install manifest cannot replace a missing release pin.
+  // A pin alone does not authenticate the Homebrew binary and its dependencies.
   // Refuse before touching an existing install or launching a copied binary.
   if (opts.arch === "darwin-x64") {
     const pin = whisperPinResolveOpts(opts.arch, process.env)
-    if (!pin.expectedSha256 && !pin.allowUnpinned) {
+    if (!pin.forceUnpinned) {
       throw new WhisperBinaryDownloadError(
         "pin-mismatch",
-        "当前版本没有 macOS x64 组件的发行校验值，无法启用本机听写组件；请等待正式更新。",
+        "当前版本无法验证 macOS x64 本机听写组件及其依赖，无法启用；请等待正式更新。",
       )
     }
   }
