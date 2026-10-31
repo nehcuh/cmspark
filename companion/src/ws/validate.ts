@@ -1322,7 +1322,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
-    "modules.list": () => ({ valid: true }),
+    "modules.list": (m) => m.profile_receipt_protocol === undefined || m.profile_receipt_protocol === 1
+      ? ({ valid: true }) : ({ valid: false, error: "PROFILE_RECEIPT_PROTOCOL_INVALID" }),
     "modules.set_enabled": (m) => {
       if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.set_enabled requires module" }
       if (typeof m.enabled !== "boolean") return { valid: false, error: "modules.set_enabled requires enabled boolean" }
@@ -1334,6 +1335,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "modules.set_profile": (m) => {
+      if (m.profile_receipt_protocol !== undefined && m.profile_receipt_protocol !== 1) return { valid: false, error: "PROFILE_RECEIPT_PROTOCOL_INVALID" }
+      if (m.profile_receipt_protocol === 1 && (typeof m.config_revision !== "string" || !m.config_revision || m.config_revision.length > 128)) return { valid: false, error: "PROFILE_REVISION_INVALID" }
       if (m.profile !== "community" && m.profile !== "enterprise") {
         return { valid: false, error: "modules.set_profile requires profile community|enterprise" }
       }
