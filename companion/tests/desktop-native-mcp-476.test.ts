@@ -38,6 +38,11 @@ test("#476 actual native MCP form + OS-only confirmation approves update/add and
  }finally{
   surfaceLease.retain()
   try{process.stdout.write("DESKTOP_476_PROGRESS "+JSON.stringify({authenticated:auth,windowRequested,postAuthRequestMask,exited:settled,windows:[1,2,3].filter(n=>receipts.has("D476_NATIVE_WINDOW_"+n)).length,approved:receipts.has("D476_SAVE_APPROVED"),denied:receipts.has("D476_SAVE_DENIED"),done:receipts.has("D476_NATIVE_DONE")})+"\n")}catch{/* Passive diagnostics must not skip cleanup or replace the primary test failure. */}
+  if(process.platform==="win32")try{
+   const names=["READY","NAV_000","NAV_001","NAV_010","NAV_011","NAV_100","NAV_101","NAV_110","NAV_111","DOCUMENT","CALL_OK","CALL_FAIL","CALLBACK_OK","CALLBACK_FAIL","JS_BEGIN","CLICK_ENTER","CLICK_RETURN"]
+   const observed=names.reduce((mask,name,i)=>receipts.has("D476_OBS_"+name)?mask|(1<<i):mask,0)
+   process.stdout.write("DESKTOP_MCP_OBSERVATION_812 "+JSON.stringify({schema:1,observed})+"\n")
+  }catch{/* Missing observation is UNKNOWN and cannot replace cleanup or original failure. */}
   manager.rejectAll("disconnect");child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true})
  ;surfaceLease.settled()}
 
