@@ -39,17 +39,28 @@ const DEFAULT_MODULES: Record<ModuleId, ModuleState> = {
 
 export function ensureModulesDefaults(config: CompanionConfig): CompanionConfig {
   const modules = { ...DEFAULT_MODULES, ...(config.modules || {}) } as Record<string, ModuleState>
-  // never silently enable high-risk modules
+  // Read paths must not normalize cached state in place. Clone module records
+  // (and their supported array fields) before applying any defaults.
+  for (const [id, value] of Object.entries(modules)) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      modules[id] = { ...value,
+        ...(Array.isArray(value.target_allowlist) ? { target_allowlist: [...value.target_allowlist] } : {}),
+        ...(Array.isArray(value.allowlist_commands) ? { allowlist_commands: [...value.allowlist_commands] } : {}) }
+    }
+  }
   for (const id of ["shell", "netsec", "devsec-workspace", "appsec"] as ModuleId[]) {
-    if (!modules[id]) modules[id] = { ...DEFAULT_MODULES[id] }
+    if (!modules[id]) {
+      const defaults = DEFAULT_MODULES[id]
+      modules[id] = { ...defaults,
+        ...(Array.isArray(defaults.target_allowlist) ? { target_allowlist: [...defaults.target_allowlist] } : {}),
+        ...(Array.isArray(defaults.allowlist_commands) ? { allowlist_commands: [...defaults.allowlist_commands] } : {}) }
+    }
+    if (typeof modules[id] !== "object" || Array.isArray(modules[id])) throw new TypeError("INVALID_MODULE_STATE")
     if (modules[id].available !== true) modules[id].available = DEFAULT_MODULES[id].available
     if (typeof modules[id].enabled !== "boolean") modules[id].enabled = false
   }
-  config.modules = modules
-  if (config.capability_profile !== "enterprise" && config.capability_profile !== "community") {
-    config.capability_profile = "community"
-  }
-  return config
+  const capability_profile = config.capability_profile === "enterprise" ? "enterprise" : "community"
+  return { ...config, modules, capability_profile }
 }
 
 export function isModuleEnabled(moduleId: ModuleId): boolean {
@@ -96,14 +107,14 @@ export function setModuleEnabled(
   mod.enabled_at = enabled ? new Date().toISOString() : null
   mod.enabled_by = enabled ? by : null
   config.modules[moduleId] = mod
-  saveConfig(config)
+  const written = saveConfig({ modules: { [moduleId]: mod } } as any)
   appendCapabilityAudit({
     type: enabled ? "module.enable" : "module.disable",
     module: moduleId,
     by,
     at: new Date().toISOString(),
   })
-  return { ok: true, modules: config.modules }
+  return { ok: true, modules: structuredClone(written.modules) }
 }
 
 /**
@@ -195,12 +206,12 @@ export function updateModuleConfig(
 
   Object.assign(mod, safe)
   config.modules[moduleId] = mod
-  saveConfig(config)
+  const written = saveConfig({ modules: { [moduleId]: mod } } as any)
   appendCapabilityAudit({
     type: "module.config_update",
     module: moduleId,
     keys: Object.keys(safe),
     at: new Date().toISOString(),
   })
-  return { ok: true, module: mod }
+  return { ok: true, module: structuredClone((written.modules as any)[moduleId]) }
 }

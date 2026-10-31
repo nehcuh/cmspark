@@ -1,0 +1,21 @@
+'use strict';
+const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),os=require('node:os'),ts=require('typescript'),test=require('node:test'),assert=require('node:assert/strict');
+const base=path.resolve(__dirname,'../../src')+path.sep;
+const owned=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'cmspark-profile-798-')));
+const identity=fs.lstatSync(owned,{bigint:true}),prior=process.env.CMSPARK_DATA_DIR;
+process.env.CMSPARK_DATA_DIR=owned;
+test.after(()=>{if(prior===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=prior;const now=fs.lstatSync(owned,{bigint:true});assert.equal(now.isSymbolicLink(),false);assert.equal(now.dev,identity.dev);assert.equal(now.ino,identity.ino);fs.rmSync(owned,{recursive:true})});
+require.extensions['.ts']=(mod,file)=>mod._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,file);
+fs.writeFileSync(path.join(owned,'config.json'),'{}');
+const config=require(base+'config.ts'),modules=require(base+'capability/modules.ts'),audit=require(base+'packs/audit-log.ts');
+config.saveConfig({capability_profile:'enterprise',modules:{shell:{available:true,enabled:false},netsec:{available:true,enabled:false,target_allowlist:[]}}});
+const file='message-router.ts',sf=ts.createSourceFile(file,fs.readFileSync(base+file,'utf8'),ts.ScriptTarget.Latest,true),found=[];
+function walk(n){if(ts.isCaseClause(n)&&ts.isStringLiteral(n.expression)&&['modules.list','modules.set_enabled','modules.set_profile','modules.update'].includes(n.expression.text))found.push(n);ts.forEachChild(n,walk)}walk(sf);assert.equal(found.length,4);
+const source='globalThis.route=async(type,rest)=>{switch(type){'+found.map(n=>n.getText(sf)).join('\n')+'}}';
+const ctx={getConfig:config.getConfig,getConfigSnapshot:config.getConfigSnapshot,saveConfigWithReceipt:config.saveConfigWithReceipt,getCommittedConfigRevision:config.getCommittedConfigRevision,peekCommittedConfigRevision:config.peekCommittedConfigRevision,ensureModulesDefaults:modules.ensureModulesDefaults,appendCapabilityAudit:audit.appendCapabilityAudit,structuredClone,Date,require(id){if(id==='./capability/modules')return modules;if(id==='./packs/pack-engine')return {setCapabilityProfile:ctx.profile};throw Error('unexpected import '+id)}};
+const pf=ts.createSourceFile('profile',fs.readFileSync(base+'packs/pack-engine.ts','utf8'),ts.ScriptTarget.Latest,true);const pn=pf.statements.filter(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='setCapabilityProfile');assert.equal(pn.length,1);vm.runInNewContext(ts.transpileModule(pn[0].getText(pf).replace(/^export\s+/,'')+'\nglobalThis.profile=setCapabilityProfile;',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,ctx);
+vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,ctx);
+test('real modules.list response does not alias config cache',async()=>{const r=await ctx.route('modules.list',{}),before=config.getConfigSnapshot();r.modules.netsec.enabled=true;const after=config.getConfigSnapshot();assert.equal(after.revision,before.revision);assert.equal(after.config.modules.netsec.enabled,false)});
+test('real modules.update response does not alias config allowlist',async()=>{const r=await ctx.route('modules.update',{module:'netsec',patch:{target_allowlist:['owned.example']}});assert.equal(r.type,'modules.updated');const before=config.getConfigSnapshot();r.modules.netsec.target_allowlist.push('other.example');const after=config.getConfigSnapshot();assert.equal(after.revision,before.revision);assert.deepEqual(after.config.modules.netsec.target_allowlist,['owned.example'])});
+
+test('real modules.set_profile response does not alias config cache',async()=>{const r=await ctx.route('modules.set_profile',{profile:'community',by:'owned-test'});assert.equal(r.type,'modules.updated');assert.equal(r.capability_profile,'community');const before=config.getConfigSnapshot();r.modules.shell.enabled=true;const after=config.getConfigSnapshot();assert.equal(after.revision,before.revision);assert.equal(after.config.modules.shell.enabled,false)});

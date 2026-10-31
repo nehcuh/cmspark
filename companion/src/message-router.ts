@@ -5290,7 +5290,7 @@ async function dispatchMessage(
       return {
         type: "modules.list",
         capability_profile: config.capability_profile || "community",
-        modules: config.modules || {},
+        modules: structuredClone(config.modules || {}),
       }
     }
     // --- Outbound MCP L4+ grants (Settings UI) ---
@@ -5429,7 +5429,7 @@ async function dispatchMessage(
       const config = getConfig()
       return {
         type: "modules.updated",
-        modules: config.modules || {},
+        modules: structuredClone(config.modules || {}),
         capability_profile: config.capability_profile || "community",
         modules_disabled: r.modules_disabled,
       }
@@ -5441,7 +5441,7 @@ async function dispatchMessage(
       }
       const r = updateModuleConfig(rest.module as any, rest.patch || {})
       if (!r.ok) return { type: "error", error: r.error }
-      return { type: "modules.updated", module: r.module, modules: getConfig().modules }
+      return { type: "modules.updated", module: r.module, modules: structuredClone(getConfig().modules) }
     }
     case "workspace.pick": {
       // Optional thread_id: pick + bind in one step (avoids UI race / stale set)
