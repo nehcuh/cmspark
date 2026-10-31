@@ -456,9 +456,28 @@ test("actual settings preserves edited field until correlated save receipt", () 
   assert.equal(sent.config_revision, "epoch:2")
   assert.deepEqual(Object.keys(sent.config), ["base_url"])
   assert.equal(h.state().settingsOpen, true)
-  h.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { base_url: "https://new.test/v1", model_name: "remote" }, revision: "epoch:3", id: sent.id })
+  h.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { base_url: "https://new.test/v1", model_name: "remote" }, revision: "epoch:3", id: sent.id, appliedRevision: "epoch:3" })
   h.renderSlideout()
   assert.equal(h.state().settingsOpen, false)
+})
+
+test("actual settings remains open when a conflicting receipt lacks write proof", () => {
+  const h = settingsNavigationHarness()
+  try {
+    h.dispatch({ type: "SET_CONNECTION", state: "connected" })
+    h.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { base_url: "https://old.test/v1" }, revision: "epoch:1" })
+    h.dispatch({ type: "SET_CONFIG_HYDRATED", hydrated: true })
+    h.renderSlideout()
+    let ui = h.renderSlideout()
+    h.find(ui, n => n.type === "input" && n.props.value === "https://old.test/v1").props.onChange({ target: { value: "https://new.test/v1" } })
+    ui = h.renderSlideout()
+    h.find(ui, n => n.type === "button" && n.props.className === "cm-settings-save").props.onClick()
+    const sent = h.messages.filter(m => m.type === "config.set").at(-1)
+    h.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { base_url: "https://new.test/v1" }, revision: "epoch:2", id: sent.id })
+    h.renderSlideout()
+    assert.equal(h.state().settingsOpen, true)
+    assert.equal(h.state().settingsDraft?.conflicts.base_url, true)
+  } finally { h.close() }
 })
 
 test("actual settings keeps draft visible when a save outcome is unknown", () => {

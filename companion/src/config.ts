@@ -5,6 +5,7 @@ import * as path from "path"
 import * as os from "os"
 import { randomUUID } from "crypto"
 import { EventEmitter } from "events"
+import { isDeepStrictEqual } from "node:util"
 import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
 import { atomicWriteJSON } from "./io"
@@ -631,6 +632,28 @@ let cachedConfigMtimeMs: number | null = null
 // lock and cannot certify concurrent edits made by a non-cooperating process.
 let configRevisionEpoch = randomUUID()
 let configRevisionSequence = 0
+// Process-local, in-memory evidence only; never serialized or logged. The
+// baseline catches observable in-place mutation, including a transient value
+// seen by a snapshot consumer before a listener restores the original object.
+type CommittedConfigEvidence = { revision: string; baseline: CompanionConfig | null; tainted: boolean }
+const committedConfigRevisions = new WeakMap<CompanionConfig, CommittedConfigEvidence>()
+function observeCommittedConfig(config: CompanionConfig): void {
+  const evidence = committedConfigRevisions.get(config)
+  if (!evidence || evidence.tainted || !evidence.baseline) return
+  try {
+    if (isDeepStrictEqual(evidence.baseline, config)) return
+  } catch { /* A comparison failure is not proof. */ }
+  evidence.tainted = true
+  evidence.baseline = null
+}
+
+/** Process-local evidence only; not a filesystem lock or a cross-process CAS. */
+export function getCommittedConfigRevision(written: CompanionConfig): string | undefined {
+  observeCommittedConfig(written)
+  const evidence = committedConfigRevisions.get(written)
+  committedConfigRevisions.delete(written)
+  return evidence && !evidence.tainted ? evidence.revision : undefined
+}
 
 function advanceConfigRevision(): void {
   if (configRevisionSequence >= Number.MAX_SAFE_INTEGER) {
@@ -649,6 +672,7 @@ export function getConfigRevision(): string {
 /** Pair the snapshot and token after one cache refresh within this process. */
 export function getConfigSnapshot(): { config: CompanionConfig; revision: string } {
   const config = getConfig()
+  observeCommittedConfig(config)
   return { config, revision: `${configRevisionEpoch}:${configRevisionSequence}` }
 }
 
@@ -674,7 +698,7 @@ function refreshRuntimeCredentials(config: CompanionConfig): void {
   }
 }
 
-function saveConfigSnapshot(updated: CompanionConfig, llmKey = storedLlmKey, visionKey = storedVisionKey, inherited = visionUsesLlm): CompanionConfig {
+function saveConfigSnapshot(updated: CompanionConfig, llmKey = storedLlmKey, visionKey = storedVisionKey, inherited = visionUsesLlm, captureReceipt = false): CompanionConfig {
   const toSave = JSON.parse(JSON.stringify(updated)) as CompanionConfig
   toSave.llm.api_key = llmKey
   if (toSave.vision) toSave.vision.api_key = visionKey
@@ -685,7 +709,16 @@ function saveConfigSnapshot(updated: CompanionConfig, llmKey = storedLlmKey, vis
   visionUsesLlm = inherited
   cachedConfig = updated
   cachedConfigMtimeMs = configFileMtimeMs()
-  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  if (captureReceipt) {
+    try {
+      committedConfigRevisions.set(updated, { revision: `${configRevisionEpoch}:${configRevisionSequence}`, baseline: structuredClone(updated), tainted: false })
+    } catch {
+      // Snapshotting is auxiliary: preserve the write/event contract without proof.
+      committedConfigRevisions.delete(updated)
+    }
+  }
+  try { configEvents.emit(CONFIG_CHANGE_EVENT, updated) }
+  catch (error) { committedConfigRevisions.delete(updated); throw error }
   return updated
 }
 
@@ -1356,6 +1389,15 @@ function sanitizeDomainPatternsOnLoad(cfg: CompanionConfig): CompanionConfig {
  * Empty or masked values retain the existing credential.
  */
 export function saveConfig(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }, expectedRevision?: string): CompanionConfig {
+  return saveConfigInternal(config, intent, expectedRevision, false)
+}
+
+/** Capture provenance only for the synchronous config.set reply. */
+export function saveConfigWithReceipt(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }, expectedRevision?: string): CompanionConfig {
+  return saveConfigInternal(config, intent, expectedRevision, true)
+}
+
+function saveConfigInternal(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }, expectedRevision?: string, captureReceipt = false): CompanionConfig {
   if (config.llm && Object.prototype.hasOwnProperty.call(config.llm, "reasoning_effort")) {
     const { isReasoningEffort } = require("./llm/reasoning-effort") as typeof import("./llm/reasoning-effort")
     if (!isReasoningEffort(config.llm.reasoning_effort)) throw new Error("INVALID_REASONING_EFFORT")
@@ -1450,7 +1492,7 @@ export function saveConfig(config: Partial<CompanionConfig>, intent?: { llmKey?:
       nextVisionKey = ""
     }
   }
-  return saveConfigSnapshot(updated, nextLlmKey, nextVisionKey, inherited)
+  return saveConfigSnapshot(updated, nextLlmKey, nextVisionKey, inherited, captureReceipt)
 }
 
 /**

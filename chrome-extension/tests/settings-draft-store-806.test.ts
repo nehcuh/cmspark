@@ -48,6 +48,27 @@ test("only the matching save receipt can settle a draft and later edits survive"
   assert.ok(state.settingsDraft?.dirty.model_name)
 })
 
+test("own write proof clears only its broadcast conflict and retains a newer edit", async () => {
+  const { prepareSettingsSubmission } = await import("../src/sidepanel/utils/settings-draft")
+  let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("old"), revision: "epoch:1" })
+  state = agentReducer(state, { type: "SET_CONFIG_HYDRATED", hydrated: true })
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_DRAFT" })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "first" } })
+  const submission = prepareSettingsSubmission(state.settingsDraft!, "own:proof")
+  state = agentReducer(state, { type: "BEGIN_SETTINGS_SAVE", submission })
+  state = agentReducer(state, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "second" } })
+  state = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("first"), revision: "epoch:2" })
+  assert.equal(state.settingsDraft?.conflicts.model_name, true)
+  const withoutProof = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("first"), revision: "epoch:2", id: "own:proof" })
+  assert.equal(withoutProof.settingsDraft?.conflicts.model_name, true)
+  const proved = agentReducer(state, { type: "SET_CONFIG_SNAPSHOT", config: frame("first"), revision: "epoch:2", id: "own:proof", appliedRevision: "epoch:2" })
+  assert.equal(proved.settingsDraft?.conflicts.model_name, undefined)
+  assert.equal(proved.settingsDraft?.value.model_name, "second")
+  assert.ok(proved.settingsDraft?.dirty.model_name)
+  assert.equal(proved.settingsSave.status, "review")
+})
+
 test("disconnect and a correlated conflict preserve drafts without claiming success", async () => {
   const { prepareSettingsSubmission } = await import("../src/sidepanel/utils/settings-draft")
   let state = agentReducer(initialState, { type: "SET_CONNECTION", state: "connected" })

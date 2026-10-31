@@ -43,7 +43,47 @@ test("unrelated responses cannot acknowledge a save", () => {
   draft = acknowledgeSettingsSubmission(draft, pending, "other", wire("first", "synthetic-old"), "epoch:2", opaque)
   assert.ok(draft.dirty.model_name)
   draft = acknowledgeSettingsSubmission(draft, pending, "request-1", wire("first", "synthetic-old"), "epoch:2", opaque)
-  assert.equal(draft.dirty.model_name, undefined)
+  assert.ok(draft.dirty.model_name, "an unrelated snapshot is not proved to be this write")
+  assert.equal(draft.conflicts.model_name, true)
+})
+
+test("a proved own broadcast does not conflict with a newer edit", () => {
+  let draft = createSettingsDraft(wire("old", "synthetic-old"), "epoch:1")
+  draft = editSettingsDraft(draft, { model_name: "first" })
+  const pending = prepareSettingsSubmission(draft, "request-1")
+  draft = editSettingsDraft(draft, { model_name: "second" })
+  draft = receiveSettingsSnapshot(draft, wire("first", "synthetic-old"), "epoch:2", opaque)
+  draft = acknowledgeSettingsSubmission(draft, pending, "request-1", wire("first", "synthetic-old"), "epoch:2", opaque, new Set(), "epoch:2")
+  assert.equal(draft.value.model_name, "second")
+  assert.ok(draft.dirty.model_name)
+  assert.equal(draft.conflicts.model_name, undefined)
+})
+
+test("other revisions and absent proof cannot clear a real conflict", () => {
+  let draft = createSettingsDraft(wire("old", "synthetic-old"), "epoch:1")
+  draft = editSettingsDraft(draft, { model_name: "first" })
+  const pending = prepareSettingsSubmission(draft, "request-1")
+  draft = editSettingsDraft(draft, { model_name: "second" })
+  draft = receiveSettingsSnapshot(draft, wire("remote", "synthetic-old"), "epoch:2", opaque)
+  draft = receiveSettingsSnapshot(draft, wire("first", "synthetic-old"), "epoch:3", opaque)
+  const response = wire("first", "synthetic-old")
+  assert.equal(acknowledgeSettingsSubmission(draft, pending, "request-1", response, "epoch:3", opaque, new Set(), "epoch:3").conflicts.model_name, true)
+  const onlyOwn = receiveSettingsSnapshot(editSettingsDraft(createSettingsDraft(wire("old", "synthetic-old"), "epoch:1"), { model_name: "second" }), response, "epoch:2", opaque)
+  assert.equal(acknowledgeSettingsSubmission(onlyOwn, pending, "request-1", response, "epoch:2", opaque).conflicts.model_name, true)
+})
+
+test("masked secrets require proof and a matching applied-secret receipt", () => {
+  let draft = createSettingsDraft(wire("old", "synthetic-old"), "epoch:1")
+  draft = editSettingsDraft(draft, { api_key: "first-synthetic" })
+  const pending = prepareSettingsSubmission(draft, "request-1")
+  draft = editSettingsDraft(draft, { api_key: "second-synthetic" })
+  const response = wire("old", "first-synthetic")
+  draft = receiveSettingsSnapshot(draft, response, "epoch:2", opaque)
+  assert.equal(acknowledgeSettingsSubmission(draft, pending, "request-1", response, "epoch:2", opaque, new Set(), "epoch:2").conflicts.api_key, true)
+  const confirmed = acknowledgeSettingsSubmission(draft, pending, "request-1", response, "epoch:2", opaque, new Set(["api_key"]), "epoch:2")
+  assert.equal(confirmed.value.api_key, "second-synthetic")
+  assert.ok(confirmed.dirty.api_key)
+  assert.equal(confirmed.conflicts.api_key, undefined)
 })
 
 

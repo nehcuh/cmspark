@@ -934,6 +934,7 @@ export function useWebSocket() {
           dispatch({ type: "SET_CONFIG_SNAPSHOT", config: normalizeConfig(msg.config),
             revision: typeof msg.config_revision === "string" && msg.config_revision.length > 0 && msg.config_revision.length <= 128 ? msg.config_revision : null,
             ...(typeof msg.id === "string" ? { id: msg.id } : {}), conflict: msg.type === "config.conflict",
+            ...(typeof msg.config_applied_revision === "string" && msg.config_applied_revision.length <= 128 ? { appliedRevision: msg.config_applied_revision } : {}),
             confirmedSecrets: Array.isArray(msg.config_applied_secret_fields)
               ? msg.config_applied_secret_fields.filter((key: unknown): key is "api_key" | "vision_api_key" => key === "api_key" || key === "vision_api_key") : [] })
           dispatch({ type: "SET_CONFIG_HYDRATED", hydrated: true })

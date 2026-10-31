@@ -2,7 +2,7 @@
 // Zero behavior change — cases config.* + settings.* only.
 
 import OpenAI from "openai"
-import { getConfig, getConfigSnapshot, saveConfig, isMaskedApiKey } from "../../config"
+import { getConfig, getConfigSnapshot, getCommittedConfigRevision, saveConfig, saveConfigWithReceipt, isMaskedApiKey } from "../../config"
 import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
@@ -343,50 +343,58 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           config_revision: currentSnapshot.revision,
         }
       }
-      const written = saveConfig(normalized, {
+      const correlated = typeof rest.id === "string" && /^settings-save:[A-Za-z0-9_-]{1,70}$/.test(rest.id)
+        && typeof rest.config_revision === "string"
+      const written = (correlated ? saveConfigWithReceipt : saveConfig)(normalized, {
         llmKey: Object.prototype.hasOwnProperty.call(normalized.llm ?? {}, "api_key"),
         visionKey: Object.prototype.hasOwnProperty.call(normalized.vision ?? {}, "api_key"),
       }, rest.config_revision)
-      if (armingFlags.length > 0) {
-        logger.warn("security.flag_armed", {
-          flags: armingFlags,
-          source: "ws_phrase_confirmed",
-        })
-        appendCapabilityAudit({
-          type: "security.flag_armed",
-          at: new Date().toISOString(),
-          flags: armingFlags,
-          source: "ws_config_set",
-        })
-      }
-      if (disarmingFlags.length > 0) {
-        logger.info("security.flag_disarmed", {
-          flags: disarmingFlags,
-          source: "ws_config_set",
-        })
-        appendCapabilityAudit({
-          type: "security.flag_disarmed",
-          at: new Date().toISOString(),
-          flags: disarmingFlags,
-          source: "ws_config_set",
-        })
-      }
-      const savedSnapshot = getConfigSnapshot()
-      // Confirm only explicit credentials that this write actually retained.
-      // A synchronous listener may have written again before this reply.
-      const appliedSecretFields: string[] = []
-      if (savedSnapshot.config === written) {
-        const llmKey = normalized.llm?.api_key
-        if (typeof llmKey === "string" && llmKey && llmKey === written.llm.api_key) appliedSecretFields.push("api_key")
-        const visionKey = normalized.vision?.api_key
-        if (typeof visionKey === "string" && !isPlaceholderVisionKey(visionKey) && visionKey === written.vision?.api_key) appliedSecretFields.push("vision_api_key")
-      }
-      return {
-        type: "config.updated",
-        config: redactConfigForWire(savedSnapshot.config),
-        config_revision: savedSnapshot.revision,
-        ...(appliedSecretFields.length ? { config_applied_secret_fields: appliedSecretFields } : {}),
-      }
+      try {
+        if (armingFlags.length > 0) {
+          logger.warn("security.flag_armed", {
+            flags: armingFlags,
+            source: "ws_phrase_confirmed",
+          })
+          appendCapabilityAudit({
+            type: "security.flag_armed",
+            at: new Date().toISOString(),
+            flags: armingFlags,
+            source: "ws_config_set",
+          })
+        }
+        if (disarmingFlags.length > 0) {
+          logger.info("security.flag_disarmed", {
+            flags: disarmingFlags,
+            source: "ws_config_set",
+          })
+          appendCapabilityAudit({
+            type: "security.flag_disarmed",
+            at: new Date().toISOString(),
+            flags: disarmingFlags,
+            source: "ws_config_set",
+          })
+        }
+        const savedSnapshot = getConfigSnapshot()
+        // Confirm only explicit credentials that this write actually retained.
+        // A synchronous listener may have written again before this reply.
+        const committedRevision = getCommittedConfigRevision(written)
+        const appliedRevision = committedRevision && savedSnapshot.config === written && savedSnapshot.revision === committedRevision
+          ? committedRevision : undefined
+        const appliedSecretFields: string[] = []
+        if (appliedRevision || (!correlated && savedSnapshot.config === written)) {
+          const llmKey = normalized.llm?.api_key
+          if (typeof llmKey === "string" && llmKey && llmKey === written.llm.api_key) appliedSecretFields.push("api_key")
+          const visionKey = normalized.vision?.api_key
+          if (typeof visionKey === "string" && !isPlaceholderVisionKey(visionKey) && visionKey === written.vision?.api_key) appliedSecretFields.push("vision_api_key")
+        }
+        return {
+          type: "config.updated",
+          config: redactConfigForWire(savedSnapshot.config),
+          config_revision: savedSnapshot.revision,
+          ...(appliedRevision ? { config_applied_revision: appliedRevision } : {}),
+          ...(appliedSecretFields.length ? { config_applied_secret_fields: appliedSecretFields } : {}),
+        }
+      } finally { getCommittedConfigRevision(written) }
     }
 
     case "config.test":

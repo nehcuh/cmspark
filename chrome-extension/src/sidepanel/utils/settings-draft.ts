@@ -5,6 +5,8 @@ export type SettingsDraft<T extends object> = {
   revision: string
   dirty: Partial<Record<keyof T, number>>
   conflicts: Partial<Record<keyof T, true>>
+  /** Revision that first caused a conflict; null means multiple/unknown origins. */
+  conflictOrigins: Partial<Record<keyof T, string | null>>
   clock: number
 }
 
@@ -22,7 +24,7 @@ function sameValue(a: unknown, b: unknown): boolean {
 }
 
 export function createSettingsDraft<T extends object>(base: T, revision: string): SettingsDraft<T> {
-  return { base: { ...base }, value: { ...base }, revision, dirty: {}, conflicts: {}, clock: 0 }
+  return { base: { ...base }, value: { ...base }, revision, dirty: {}, conflicts: {}, conflictOrigins: {}, clock: 0 }
 }
 
 export function editSettingsDraft<T extends object>(draft: SettingsDraft<T>, patch: Partial<T>): SettingsDraft<T> {
@@ -38,11 +40,15 @@ export function receiveSettingsSnapshot<T extends object>(
 ): SettingsDraft<T> {
   const value = { ...snapshot }
   const conflicts = { ...draft.conflicts }
+  const conflictOrigins = { ...draft.conflictOrigins }
   for (const key of Object.keys(draft.dirty) as Array<keyof T>) {
     value[key] = draft.value[key]
-    if (revision !== draft.revision && (opaque.has(key) || !sameValue(draft.base[key], snapshot[key]))) conflicts[key] = true
+    if (revision !== draft.revision && (opaque.has(key) || !sameValue(draft.base[key], snapshot[key]))) {
+      conflictOrigins[key] = conflicts[key] && conflictOrigins[key] !== revision ? null : revision
+      conflicts[key] = true
+    }
   }
-  return { ...draft, base: { ...snapshot }, value, revision, conflicts }
+  return { ...draft, base: { ...snapshot }, value, revision, conflicts, conflictOrigins }
 }
 
 export function prepareSettingsSubmission<T extends object>(draft: SettingsDraft<T>, id: string): SettingsSubmission<T> {
@@ -62,32 +68,41 @@ export function resolveSettingsConflict<T extends object>(
 ): SettingsDraft<T> {
   if (!draft.conflicts[key]) return draft
   const conflicts = { ...draft.conflicts }
+  const conflictOrigins = { ...draft.conflictOrigins }
   const dirty = { ...draft.dirty }
   const value = { ...draft.value }
   delete conflicts[key]
+  delete conflictOrigins[key]
   if (choice === "remote") {
     delete dirty[key]
     value[key] = draft.base[key]
   }
-  return { ...draft, conflicts, dirty, value }
+  return { ...draft, conflicts, conflictOrigins, dirty, value }
 }
 
 /** Only a correlated result can settle a field, and later edits remain dirty. */
 export function acknowledgeSettingsSubmission<T extends object>(
   draft: SettingsDraft<T>, submission: SettingsSubmission<T>, id: string,
   snapshot: T, revision: string, opaque: ReadonlySet<keyof T>, confirmedOpaque: ReadonlySet<keyof T> = new Set(),
+  appliedRevision?: string,
 ): SettingsDraft<T> {
   if (submission.id !== id) return receiveSettingsSnapshot(draft, snapshot, revision, opaque)
   const next = receiveSettingsSnapshot(draft, snapshot, revision, opaque)
   for (const key of Object.keys(submission.generations) as Array<keyof T>) {
-    if (draft.dirty[key] !== submission.generations[key]) continue
     // Only a correlated server receipt can confirm a masked credential.
-    if (opaque.has(key) ? !confirmedOpaque.has(key) : !sameValue(submission.patch[key], snapshot[key])) {
+    const confirmed = opaque.has(key) ? confirmedOpaque.has(key) : sameValue(submission.patch[key], snapshot[key])
+    const ownConflict = appliedRevision === revision && next.conflictOrigins[key] === revision && confirmed
+    if (ownConflict) {
+      delete next.conflicts[key]
+      delete next.conflictOrigins[key]
+    }
+    if (draft.dirty[key] !== submission.generations[key]) continue
+    if (!confirmed || next.conflicts[key]) {
       next.conflicts[key] = true
+      if (next.conflictOrigins[key] === undefined) next.conflictOrigins[key] = null
       continue
     }
     delete next.dirty[key]
-    delete next.conflicts[key]
     next.value[key] = snapshot[key]
   }
   return next

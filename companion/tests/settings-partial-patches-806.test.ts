@@ -36,12 +36,14 @@ function producer(field:string, input:unknown) {
 }
 function handler() {
  let current:any={llm:{base_url:'https://owned.invalid', model_name:'owned-model',api_key:'owned-llm',context_compaction_m2:true,native_vision:'auto'},vision:{enabled:true,base_url:'https://different.invalid',model_name:'vision',api_key:'owned-vision',timeout_ms:30000,fallback:'metadata'},security:{auto_approve_dangerous:false,allow_all_schemes:false,auto_approve_enterprise_tools:false},trusted_domains:['owned.invalid']}
- const source=[fn(router,'hasPrototypePollutionKey'),fn(router,'sanitizeConfig'),fn(router,'handleConfigFamily'),fn(config,'deepMerge'),fn(config,'saveConfig')].join('\n')+'\nglobalThis.handle=handleConfigFamily'
+ const source=[fn(router,'hasPrototypePollutionKey'),fn(router,'sanitizeConfig'),fn(router,'handleConfigFamily'),fn(config,'deepMerge'),fn(config,'saveConfig'),fn(config,'saveConfigWithReceipt'),fn(config,'saveConfigInternal')].join('\n')+'\nglobalThis.handle=handleConfigFamily'
  const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
  const context:any={PROTOTYPE_POLLUTION_KEYS:new Set(['__proto__','constructor','prototype']),structuredClone, getConfig:()=>current,
   // Revision transport is outside this isolated producer test; the real
   // snapshot returns the current config and its process-scoped revision.
   getConfigSnapshot:()=>({config:current,revision:"owned-fixture:0"}),
+  // Stubbed persistence cannot certify a real committed revision.
+  getCommittedConfigRevision:()=>undefined,
   saveConfigSnapshot:(value:any)=>{current=value;return value},storedLlmKey:'owned-llm',storedVisionKey:'owned-vision',visionUsesLlm:false,
   stripCompanionUiProcessContinueDeny:(v:any)=>v, filterDomainPatterns:(v:any)=>v, isMaskedApiKey:(s:any)=>typeof s==='string'&&s.includes('***'),
   getEnvApiKey:()=>'',resolveInheritedVisionApiKey:()=>undefined,isPlaceholderVisionKey:()=>false,endpointsMatch:()=>false,

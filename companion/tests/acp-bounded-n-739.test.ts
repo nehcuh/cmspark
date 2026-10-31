@@ -7,6 +7,7 @@ import path from "node:path"
 import vm from "node:vm"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
+import { isDeepStrictEqual } from "node:util"
 import ts from "typescript"
 
 const root = path.resolve(__dirname, "../../src")
@@ -26,17 +27,26 @@ function configFixture() {
   const types = evaluate(source("acp/types.ts")), writes: any[] = [], events: any[] = []
   let current: any = { llm: {}, acp: types.sanitizeAcpConfig({ enabled: true, servers: { A: { enabled: true, command: "INERT" } } }) }
   let revision = 0 // Inert revision transport; no cross-process claim in this fixture.
-  const save = evaluate(`let cachedConfig, cachedConfigMtimeMs, storedLlmKey = "", storedVisionKey = "", visionUsesLlm = false;\n${functions("config.ts", ["saveConfig", "saveConfigSnapshot", "deepMerge", "stripCompanionUiProcessContinueDeny"])}`, {
-    structuredClone, isMaskedApiKey: () => false,
-    getConfig: () => current, PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), require: (n: string) => { assert.equal(n, "./acp/types"); return types },
+  let realmClone: (value: unknown) => any = value => value
+  const saveApi = evaluate(`function realmize(value){ if(Array.isArray(value)) return Array.from(value,realmize); if(value && typeof value === "object"){const out={}; for(const key of Object.keys(value)) out[key]=realmize(value[key]); return out} return value } function structuredClone(value){ return realmize(hostClone(value)) } installClone(structuredClone); let cachedConfig, cachedConfigMtimeMs, storedLlmKey = "", storedVisionKey = "", visionUsesLlm = false; let configRevisionEpoch = "owned-fixture", configRevisionSequence = 0; const committedConfigRevisions = new WeakMap(); function advanceConfigRevision(){ recordRevision(++configRevisionSequence) }\n${functions("config.ts", ["saveConfig", "saveConfigWithReceipt", "saveConfigInternal", "saveConfigSnapshot", "observeCommittedConfig", "getCommittedConfigRevision", "deepMerge", "stripCompanionUiProcessContinueDeny"])}`, {
+    hostClone: structuredClone, installClone: (clone: (value: unknown) => any) => { realmClone = clone }, isDeepStrictEqual, isMaskedApiKey: () => false,
+    getConfig: () => current, PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), require: (n: string) => {
+      assert.equal(n, "./acp/types")
+      // The isolated evaluator lives in a different VM realm. Production
+      // sanitizer output and config share one realm, so materialize the
+      // sanitizer's JSON-like result in the config evaluator's realm.
+      return { ...types, sanitizeAcpConfig: (value: unknown) => realmClone(types.sanitizeAcpConfig(value)) }
+    },
     getEnvApiKey: () => undefined, resolveApiKey: () => undefined, path, getConfigDir: () => "/inert/config", console: { warn() {} },
     atomicWriteJSON: (p: string, value: any) => { assert.equal(p, path.join("/inert/config", "config.json")); writes.push(value) }, configFileMtimeMs: () => 1,
-    advanceConfigRevision: () => { revision++ },
+    recordRevision: (value: number) => { revision = value },
     configEvents: { emit: (_: string, value: any) => { current = value; events.push(value) } }, CONFIG_CHANGE_EVENT: "inert-config",
-  }).saveConfig
+  })
+  const save = saveApi.saveConfig
   const handler = evaluate(functions("message-router/handlers/config.ts", ["handleConfigFamily", "hasPrototypePollutionKey", "sanitizeConfig"]), {
     getConfig: () => current, getConfigSnapshot: () => ({ config: current, revision: `owned-fixture:${revision}` }),
-    saveConfig: save, validateAcpConcurrencyLimit: types.validateAcpConcurrencyLimit,
+    getCommittedConfigRevision: saveApi.getCommittedConfigRevision,
+    saveConfig: save, saveConfigWithReceipt: saveApi.saveConfigWithReceipt, validateAcpConcurrencyLimit: types.validateAcpConcurrencyLimit,
     PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), redactConfigForWire: (v: any) => v, isMaskedApiKey: () => false,
   }).handleConfigFamily
   return { save, handler, writes, events, current: () => current }
@@ -44,7 +54,7 @@ function configFixture() {
 
 test("#739 real saveConfig/handler persist explicit N and preserve servers; invalid updates perform zero writes/events", async () => {
   const h = configFixture()
-  for (const [index, n] of [2, 4, 1].entries()) { const result = await h.handler("config.set", { config: { acp: { max_concurrent_sessions: n, servers: { injected: {} }, policy: {} } } }); assert.equal(result.type, "config.updated"); assert.equal(result.config_revision, `owned-fixture:${index + 1}`); assert.equal(h.current().acp.max_concurrent_sessions, n); assert.deepEqual(Object.keys(h.current().acp.servers), ["A"]) }
+  for (const [index, n] of [2, 4, 1].entries()) { const result = await h.handler("config.set", { id: "settings-save:owned", config_revision: `owned-fixture:${index}`, config: { acp: { max_concurrent_sessions: n, servers: { injected: {} }, policy: {} } } }); assert.equal(result.type, "config.updated"); assert.equal(result.config_revision, `owned-fixture:${index + 1}`); assert.equal(result.config_applied_revision, result.config_revision); assert.equal(h.current().acp.max_concurrent_sessions, n); assert.deepEqual(Object.keys(h.current().acp.servers), ["A"]) }
   const before = JSON.stringify(h.current()), count = h.writes.length
   for (const n of [undefined, null, "2", true, [], {}, NaN, Infinity, 0, 5, 1.5]) {
     assert.throws(() => h.save({ acp: { max_concurrent_sessions: n } }))
