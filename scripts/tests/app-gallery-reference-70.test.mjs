@@ -76,6 +76,47 @@ test('#70 download exception cleans exact partially owned archive', async t => {
   await assert.rejects(downloadArchive(catalog[0], target, async () => { throw failure }), e => e === failure)
   assert.equal(fs.existsSync(target), false)
 })
+test('#70 zero-progress archive write fails once and cleans only the owned file', async t => {
+  const target = owned(t), sibling = target + '.owned'
+  fs.writeFileSync(sibling, 'preserve')
+  const open = fs.openSync, write = fs.writeSync, stop = Error('OWNED_SECOND_WRITE')
+  let archiveFd, writes = 0
+  try {
+    fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+    fs.writeSync = (...args) => {
+      if (args[0] !== archiveFd) return write(...args)
+      if (++writes === 1) return 0
+      throw stop // Bounds the negative control if the old loop retries.
+    }
+    await assert.rejects(downloadArchive(catalog[0], target, async () => new Response('owned inert bytes')), /ARCHIVE_WRITE_NO_PROGRESS/)
+    assert.equal(writes, 1)
+    assert.equal(fs.existsSync(target), false)
+    assert.equal(fs.readFileSync(sibling, 'utf8'), 'preserve')
+  } finally {
+    fs.openSync = open; fs.writeSync = write
+  }
+})
+test('#70 partial archive writes keep advancing before pin refusal', async t => {
+  const target = owned(t), bytes = 'owned inert bytes'
+  const open = fs.openSync, write = fs.writeSync
+  let archiveFd, writes = 0, total = 0
+  try {
+    fs.openSync = (...args) => { const fd = open(...args); if (args[0] === target) archiveFd = fd; return fd }
+    fs.writeSync = (...args) => {
+      if (args[0] !== archiveFd) return write(...args)
+      writes++
+      const written = write(args[0], args[1], args[2], Math.min(args[3], 2))
+      total += written
+      return written
+    }
+    await assert.rejects(downloadArchive(catalog[0], target, async () => new Response(bytes)), /PACKAGE_SHA_MISMATCH/)
+    assert.ok(writes > 1)
+    assert.equal(total, Buffer.byteLength(bytes))
+    assert.equal(fs.existsSync(target), false)
+  } finally {
+    fs.openSync = open; fs.writeSync = write
+  }
+})
 test('#70 malformed/unsigned wire cannot be promoted to certificate evidence', () => {
   for (const raw of ['{}', 'null', '{"signatureStatus":"NotSigned"}', '[]', 'not-json', 'x'.repeat(16_385)]) {
     assert.throws(() => parseSample(raw, catalog[0]))

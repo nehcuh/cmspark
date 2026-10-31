@@ -57,7 +57,11 @@ export async function downloadArchive(app, destination, fetchImpl = fetch) {
       hash.update(chunk)
       // writeSync may make partial progress; never silently hash unwritten data.
       let offset = 0
-      while (offset < chunk.byteLength) offset += fs.writeSync(fd, chunk, offset, chunk.byteLength - offset)
+      while (offset < chunk.byteLength) {
+        const written = fs.writeSync(fd, chunk, offset, chunk.byteLength - offset)
+        if (written === 0) throw new Error('ARCHIVE_WRITE_NO_PROGRESS')
+        offset += written
+      }
     }
     const sha256 = hash.digest('hex')
     if (sha256 !== fixed.reference.packageSHA256) throw new Error('PACKAGE_SHA_MISMATCH')
@@ -190,7 +194,7 @@ if (isCLIEntrypoint(process.argv[1])) {
     // Fixed public failure enums only; never print subprocess argv/env/raw errors.
     const known = ['PS51_REQUIRED', 'HOSTED_WINDOWS_ONLY', 'UNPINNED_ENTRY', 'OWNED_PATH_REQUIRED', 'ARCHIVE_LIMIT',
       'PACKAGE_SHA_MISMATCH', 'EXACT_ONE_ENTRY_REQUIRED', 'ENTRY_REJECTED', 'ENTRY_LIMIT', 'ENTRY_LENGTH_MISMATCH',
-      'PE_REJECTED', 'X64_REQUIRED', 'SIGNATURE_NOT_VALID', 'EXE_SHA_MISMATCH', 'SAMPLE_WIRE', 'REDIRECT_REJECTED', 'DOWNLOAD_REJECTED']
+      'PE_REJECTED', 'X64_REQUIRED', 'SIGNATURE_NOT_VALID', 'EXE_SHA_MISMATCH', 'SAMPLE_WIRE', 'REDIRECT_REJECTED', 'DOWNLOAD_REJECTED', 'ARCHIVE_WRITE_NO_PROGRESS']
     const code = known.find(c => err?.message === c || String(err?.stderr || '').includes("'" + c + "'")) || 'GALLERY_REFERENCE_COLLECTION_FAILED'
     console.error(code)
     console.error('GALLERY70_FAILURE_STAGE=' + (failure.seen && Object.is(failure.error, err) ? failure.stage : 'UNKNOWN'))
