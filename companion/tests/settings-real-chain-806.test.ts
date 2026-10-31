@@ -111,6 +111,39 @@ test("#806 actual config producers and source consumers preserve draft provenanc
       const result = await handleConfigFamily("config.set", { id: p.id, config: p.patch, config_revision: p.revision }); assert.equal(result.type, "config.conflict"); assert.equal(result.config_applied_revision, undefined)
       echo(result, p.id); deliver(); assert.equal(state.settingsSave.status, "conflict"); assert.equal(state.settingsDraft.value.model_name, "later"); assert.equal(state.settingsDraft.conflicts.model_name, true)
     }))
+    await t.test("shared runtime forwards both clients' replies without resolving the wrong draft", () => run(async () => {
+      let a = state, b = state
+      a = context.agentReducer(a, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "client-a" } })
+      b = context.agentReducer(b, { type: "EDIT_SETTINGS_DRAFT", config: { model_name: "client-b" } })
+      const pa = context.prepareSettingsSubmission(a.settingsDraft, "settings-save:client-a")
+      const pb = context.prepareSettingsSubmission(b.settingsDraft, "settings-save:client-b")
+      assert.equal(pa.revision, pb.revision); assert.notDeepEqual(pa.patch, pb.patch)
+      a = context.agentReducer(a, { type: "BEGIN_SETTINGS_SAVE", submission: pa })
+      b = context.agentReducer(b, { type: "BEGIN_SETTINGS_SAVE", submission: pb })
+      const ra = await handleConfigFamily("config.set", { id: pa.id, config: pa.patch, config_revision: pa.revision })
+      const rb = await handleConfigFamily("config.set", { id: pb.id, config: pb.patch, config_revision: pb.revision })
+      assert.equal(ra.type, "config.updated"); assert.equal(rb.type, "config.conflict")
+      assert.equal(config.getConfig().llm.model_name, "client-a")
+      echo(ra, pa.id); echo(rb, pb.id)
+      const batch = frames; frames = []
+      assert.equal(batch.filter((frame: any) => !frame.id).length, 1)
+      assert.equal(batch.filter((frame: any) => frame.id === pa.id).length, 1)
+      assert.equal(batch.filter((frame: any) => frame.id === pb.id).length, 1)
+      // The extension service worker forwards replies to every UI listener.
+      const apply = (current: any, frame: any) => { state = current; context.consume(frame); return state }
+      for (const frame of batch) {
+        a = apply(a, frame); b = apply(b, frame)
+        if (frame.id === pa.id) assert.equal(b.settingsSave.pending?.id, pb.id)
+        if (frame.id === pb.id) assert.equal(a.settingsSave.status, "saved")
+      }
+      assert.equal(a.settingsDraft.value.model_name, "client-a")
+      assert.equal(a.settingsDraft.dirty.model_name, undefined)
+      assert.equal(a.settingsSave.status, "saved")
+      assert.equal(b.settingsDraft.value.model_name, "client-b")
+      assert.equal(b.settingsDraft.conflicts.model_name, true)
+      assert.equal(b.settingsSave.status, "conflict")
+      assert.throws(() => context.prepareSettingsSubmission(b.settingsDraft, "settings-save:retry"), /SETTINGS_DRAFT_CONFLICT/)
+    }))
     await t.test("reentrant masked secret yields no proof and retains conflict", () => run(async () => {
       const p = start("api_key", "owned-a", "owned-b")
       const reenter = () => { config.configEvents.off(config.CONFIG_CHANGE_EVENT, reenter); config.saveConfig({ llm: { ...config.getConfig().llm, api_key: "owned-a" } }, { llmKey: true }) }
