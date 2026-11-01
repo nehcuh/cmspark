@@ -13,7 +13,7 @@ tree = ast.parse(body)
 functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "await_managed_ready"]
 assert len(functions) == 1
 code = compile(ast.fix_missing_locations(ast.Module(body=functions, type_ignores=[])), "<actual-owned-readiness>", "exec")
-namespace = {"tk": types.SimpleNamespace(READABLE=2)}
+namespace = {"tk": types.SimpleNamespace(READABLE=2), "mark_ready758": lambda _stage: None}
 exec(code, namespace)
 ready = namespace["await_managed_ready"]
 

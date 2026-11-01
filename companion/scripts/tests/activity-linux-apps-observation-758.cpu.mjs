@@ -50,5 +50,8 @@ try{
  const readiness=JSON.parse(execFileSync('/usr/bin/python3',['-I','-S',readinessPath],{timeout:60000,maxBuffer:131072,stdio:'pipe',env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'}}).toString('utf8'))
  assert.equal(readiness.schema,1);assert.equal(readiness.cases,12);assert.equal(readiness.native,false);assert.equal(readiness.tkImported,false);assert.equal(readiness.foreignCalls,false);assert.equal(readiness.old,null)
  assert.equal(readiness.sourceSHA256,sha(fs.readFileSync(fileURLToPath(new URL('../../tests/fixtures/activity-linux-758.py',import.meta.url)))))
+ const readyObservationPath=fileURLToPath(new URL('./activity-linux-ready-observation-758.cpu.py',import.meta.url))
+ const readyObservation=JSON.parse(execFileSync('/usr/bin/python3',['-I','-S',readyObservationPath],{timeout:60000,maxBuffer:131072,stdio:'pipe',env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'}}).toString('utf8'))
+ assert.equal(readyObservation.schema,1);assert.equal(readyObservation.markers,22);assert.equal(readyObservation.blocks,21);assert.equal(readyObservation.inverse,true);assert.equal(readyObservation.native,false);assert.equal(readyObservation.sourceSHA256,readiness.sourceSHA256)
  process.stdout.write('D758_LINUX_CPU_CONTRACT '+JSON.stringify({schema:1,actualSnapshots:20,negativeMutants:8,sourceInverse:true,apiTracesConserved:true,originalOutputAmbiguityRED:true,nativeExecuted:false})+'\n')
 }finally{fs.rmSync(directory,{recursive:true,force:true})}
