@@ -34,6 +34,7 @@ import {
 } from "./types"
 import { getAllToolDefinitions } from "../bridge/tool-definitions"
 import { setModuleEnabled, ensureModulesDefaults } from "../capability/modules"
+import { copyModulesConfigSnapshot, type ModulesConfigSnapshot } from "../capability/module-snapshot"
 import {
   isValidSecurityArmPhrase,
   securityArmRejectedError,
@@ -253,12 +254,16 @@ export function applyUserPackTrust(
 export function setCapabilityProfile(
   target: "community" | "enterprise",
   by: string = "settings.profile",
-): { ok: true; profile: "community" | "enterprise"; modules_disabled: string[] } | { ok: false; error: string } {
+  receipt = false,
+  expectedRevision?: string,
+): { ok: true; profile: "community" | "enterprise"; modules_disabled: string[]; receipt_snapshot?: ModulesConfigSnapshot; config_applied_revision?: string } | { ok: false; error: string } {
   if (target !== "community" && target !== "enterprise") {
     return { ok: false, error: "invalid capability_profile — use community|enterprise" }
   }
   const snapshot = getConfigSnapshot()
   const cfg = snapshot.config
+  if (receipt && expectedRevision !== snapshot.revision) return { ok: false, error: "PROFILE_REVISION_CONFLICT" }
+  if (receipt && cfg.capability_profile !== "community" && cfg.capability_profile !== "enterprise") return { ok: false, error: "PROFILE_STATE_INVALID" }
   const from = cfg.capability_profile === "enterprise" ? "enterprise" : "community"
   // Never silently normalize malformed high-risk module state as part of an
   // unrelated profile request. Refuse before any write; the user can inspect it.
@@ -269,7 +274,13 @@ export function setCapabilityProfile(
     if (target === "community" && ["shell", "netsec"].some(id => (cfg.modules as any)?.[id]?.enabled === true)) {
       return { ok: false, error: "PROFILE_STATE_INCONSISTENT" }
     }
-    return { ok: true, profile: target, modules_disabled: [] }
+    if (!receipt) return { ok: true, profile: target, modules_disabled: [] }
+    try {
+      const view = copyModulesConfigSnapshot(snapshot)
+      const current = getConfigSnapshot()
+      if (snapshot.revision !== current.revision || snapshot.config !== current.config) return { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
+      return { ok: true, profile: target, modules_disabled: [], receipt_snapshot: view }
+    } catch { return { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" } }
   }
   const disabled: string[] = []
   const modulesPatch: Record<string, any> = {}
@@ -294,7 +305,8 @@ export function setCapabilityProfile(
   // Keep the proof alive across synchronous audit observers, then retire the
   // credential-bearing baseline on every outcome. It observes only changes
   // visited by config snapshots; it is not a cross-process lock or full ABA proof.
-  let result: { ok: true; profile: "community" | "enterprise"; modules_disabled: string[] } | { ok: false; error: string } = { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
+  let result: { ok: true; profile: "community" | "enterprise"; modules_disabled: string[]; receipt_snapshot?: ModulesConfigSnapshot; config_applied_revision?: string } | { ok: false; error: string } = { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
+  let provisional: ModulesConfigSnapshot | undefined
   try {
     const committed = peekCommittedConfigRevision(written)
     const isCurrent = () => {
@@ -320,14 +332,23 @@ export function setCapabilityProfile(
           appendCapabilityAudit({ type: "profile.change", from, to: target, by, at: new Date().toISOString(), modules_disabled: disabled })
           current = isCurrent()
         }
+        if (current && receipt) {
+          provisional = copyModulesConfigSnapshot({ config: written, revision: committed! })
+          current = isCurrent()
+        }
         result = current ? { ok: true, profile: target, modules_disabled: disabled } : uncertain()
       } catch { result = uncertain() }
     }
   } catch {
     result = { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
   } finally {
-    try { getCommittedConfigRevision(written) }
-    catch { result = { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" } }
+    try {
+      const consumed = getCommittedConfigRevision(written)
+      if (receipt && result.ok) {
+        if (!provisional || !consumed || consumed !== provisional.revision) result = { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
+        else result = { ...result, receipt_snapshot: provisional, config_applied_revision: consumed }
+      }
+    } catch { result = { ok: false, error: "PROFILE_CHANGE_RESULT_UNKNOWN" } }
   }
   return result
 

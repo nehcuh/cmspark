@@ -55,6 +55,16 @@ jobs:
           grep -Fx '# fail 0' "$RUNNER_TEMP/profile-798-arm.tap"
           grep -Fx '# cancelled 0' "$RUNNER_TEMP/profile-798-arm.tap"
           grep -Fx '# skipped 0' "$RUNNER_TEMP/profile-798-arm.tap"
+      - name: Capability profile receipt protocol controls
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap companion/scripts/tests/profile-optin-798.test.cjs companion/scripts/tests/profile-snapshot-optin-798.test.cjs companion/scripts/tests/profile-validate-optin-798.test.cjs | tee "$RUNNER_TEMP/profile-optin-798-arm.tap"
+          grep -Fx '# tests 29' "$RUNNER_TEMP/profile-optin-798-arm.tap"
+          grep -Fx '# pass 29' "$RUNNER_TEMP/profile-optin-798-arm.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/profile-optin-798-arm.tap"
+          grep -Fx '# cancelled 0' "$RUNNER_TEMP/profile-optin-798-arm.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/profile-optin-798-arm.tap"
       - name: Whisper failure controls
         shell: bash
         run: |

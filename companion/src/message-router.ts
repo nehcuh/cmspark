@@ -51,6 +51,7 @@ import { isSymlinkOrJunction, isUnsafePathComponent } from "./skills/doc-identit
 import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, isMaskedApiKey, getConfigDir } from "./config"
+import { getModulesConfigSnapshot } from "./capability/module-snapshot"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import {
   MAX_NEXT_RUN,
@@ -5286,6 +5287,13 @@ async function dispatchMessage(
       }
     }
     case "modules.list": {
+      if (rest.profile_receipt_protocol !== undefined && rest.profile_receipt_protocol !== 1) return { type: "error", error: "PROFILE_RECEIPT_PROTOCOL_INVALID" }
+      if (rest.profile_receipt_protocol === 1) {
+        try {
+          const snapshot = getModulesConfigSnapshot()
+          return { type: "modules.profile.snapshot", profile_receipt_protocol: 1, capability_profile: snapshot.capability_profile, modules: snapshot.modules, config_revision: snapshot.revision }
+        } catch { return { type: "error", error: "PROFILE_SNAPSHOT_UNAVAILABLE" } }
+      }
       const config = getConfig()
       return {
         type: "modules.list",
@@ -5423,9 +5431,16 @@ async function dispatchMessage(
       if (rest.profile !== "community" && rest.profile !== "enterprise") {
         return { type: "error", error: "profile must be community|enterprise" }
       }
+      if (rest.profile_receipt_protocol !== undefined && rest.profile_receipt_protocol !== 1) return { type: "error", error: "PROFILE_RECEIPT_PROTOCOL_INVALID" }
+      const receipt = rest.profile_receipt_protocol === 1
+      if (receipt && (typeof rest.config_revision !== "string" || !rest.config_revision || rest.config_revision.length > 128)) return { type: "error", error: "PROFILE_REVISION_INVALID" }
       const { setCapabilityProfile } = await import("./packs/pack-engine")
-      const r = setCapabilityProfile(rest.profile, rest.by || "settings.profile")
+      const r = setCapabilityProfile(rest.profile, rest.by || "settings.profile", receipt, receipt ? rest.config_revision : undefined)
       if (!r.ok) return { type: "error", error: r.error }
+      if (receipt) {
+        if (!r.receipt_snapshot) return { type: "error", error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
+        return { type: "modules.profile.result", profile_receipt_protocol: 1, modules: r.receipt_snapshot.modules, capability_profile: r.receipt_snapshot.capability_profile, config_revision: r.receipt_snapshot.revision, modules_disabled: r.modules_disabled, ...(r.config_applied_revision ? { config_applied_revision: r.config_applied_revision } : {}) }
+      }
       const config = getConfig()
       return {
         type: "modules.updated",
