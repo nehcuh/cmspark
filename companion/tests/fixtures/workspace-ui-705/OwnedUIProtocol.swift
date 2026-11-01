@@ -19,7 +19,9 @@ enum OwnedUI705ButtonIdentity: Int {
   }
  }
 }
-enum OwnedUI705File: String {/*OBS788_BEGIN*/
+enum OwnedUI705File: String {/*OBS476_BOUNDARY_BEGIN*/
+ case observerKvoEnter="observer-kvo-enter.json",observerKvoInstalled="observer-kvo-installed.json",observerCallbackLive="observer-callback-live.json",observerCallbackTerminated="observer-callback-terminated.json",observerCallbackUnknown="observer-callback-unknown.json",observerMainLive="observer-main-live.json",observerMainTerminated="observer-main-terminated.json",observerMainUnknown="observer-main-unknown.json",observerTerminatedConfirmed="observer-terminated-confirmed.json",observerClosedWriteEnter="observer-closed-write-enter.json",observerClosedWriteOk="observer-closed-write-ok.json",observerClosedWriteRefused="observer-closed-write-refused.json"
+/*OBS476_BOUNDARY_END*//*OBS788_BEGIN*/
  case cancel18Enter="cancel-18-enter.json",cancel18Return="cancel-18-return.json",cancel19Enter="cancel-19-enter.json",cancel19Return="cancel-19-return.json",cancel20Enter="cancel-20-enter.json",cancel20Return="cancel-20-return.json"
 /*OBS788_END*/
  case input="input.json", startup="runner-start.json", ack="owner-ack.json", begin="ui-begin.json", returned="ui-quiescent.json", closed="runner-closed.json", cancel="cancel.json", first="picker-first.json", second="picker-second.json", uiRefusal="ui-refusal.json", uiProgress="ui-progress.json", uiChooseCensus="ui-choose-census.json"
@@ -99,4 +101,44 @@ struct OwnedUI705Scene {
  static func number(_ value:Any?) throws ->Double {guard let n=value as? NSNumber,CFGetTypeID(n) != CFBooleanGetTypeID(),n.doubleValue.isFinite else{throw OwnedUI705Error.refused};return n.doubleValue}
  static func boolean(_ value:Any?) throws ->Bool {guard let n=value as? NSNumber,CFGetTypeID(n)==CFBooleanGetTypeID() else{throw OwnedUI705Error.refused};return n.boolValue}
  static func pid(_ value:Any?) throws ->pid_t {guard let n=value as? NSNumber,CFGetTypeID(n) != CFBooleanGetTypeID(),n.doubleValue.isFinite,n.doubleValue.rounded(.down)==n.doubleValue,n.doubleValue>1,n.doubleValue<=Double(Int32.max) else{throw OwnedUI705Error.refused};return pid_t(n.int32Value)}
+}/*OBS476_BOUNDARY_BEGIN*/
+// Optional bounded observer facts. Missing/failed publication means UNKNOWN,
+// never termination, closed-write success, authority or a reason to retry.
+enum OwnedUI705ObserverStage: Int {
+ case kvoEnter=1,kvoInstalled,callbackLive,callbackTerminated,callbackUnknown,mainLive,mainTerminated,mainUnknown,terminatedConfirmed,closedWriteEnter,closedWriteOk,closedWriteRefused
+ var file:OwnedUI705File {
+  switch self {
+  case .kvoEnter:return .observerKvoEnter
+  case .kvoInstalled:return .observerKvoInstalled
+  case .callbackLive:return .observerCallbackLive
+  case .callbackTerminated:return .observerCallbackTerminated
+  case .callbackUnknown:return .observerCallbackUnknown
+  case .mainLive:return .observerMainLive
+  case .mainTerminated:return .observerMainTerminated
+  case .mainUnknown:return .observerMainUnknown
+  case .terminatedConfirmed:return .observerTerminatedConfirmed
+  case .closedWriteEnter:return .observerClosedWriteEnter
+  case .closedWriteOk:return .observerClosedWriteOk
+  case .closedWriteRefused:return .observerClosedWriteRefused
+  }
+ }
 }
+final class OwnedUI705ObserverBoundary {
+ private let scene:OwnedUI705Scene
+ let origin:UInt64
+ private var seen=Set<Int>() // Main-thread-only, as are all scene reads/writes.
+ init(_ scene:OwnedUI705Scene){self.scene=scene;origin=DispatchTime.now().uptimeNanoseconds}
+ static func bucket(origin:UInt64)->Int? {
+  let now=DispatchTime.now().uptimeNanoseconds
+  guard now>=origin else{return nil}
+  return Int(min(UInt64(15),(now-origin)/5_000_000_000))
+ }
+ func record(_ stage:OwnedUI705ObserverStage){record(stage,bucket:Self.bucket(origin:origin))}
+ func record(_ stage:OwnedUI705ObserverStage,bucket:Int?){
+  // Only the original main block may publish callback facts. Invalid/missing
+  // clock or publication means UNKNOWN; never retry a reserved stage.
+  guard Thread.isMainThread,let bucket=bucket,(0...15).contains(bucket),seen.insert(stage.rawValue).inserted else{return}
+  do{try scene.write(stage.file,["schema":1,"nonce":scene.nonce,"stage":stage.rawValue,"bucket":bucket])}catch{}
+ }
+}
+/*OBS476_BOUNDARY_END*/
