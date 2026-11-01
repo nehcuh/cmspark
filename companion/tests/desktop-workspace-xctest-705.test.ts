@@ -24,6 +24,45 @@ function loadBoundary(mutant?:[string,string],capturedRoot?:string){
  const full=()=>{put('runner-start.json',{...base,pid,bundle_id:'com.cmspark.tests.workspace-ui-705.xctrunner',bundle_url:pathToFileURL(api.runner()+'/',{windows:false}).href,executable_url:pathToFileURL(api.runnerExecutable(),{windows:false}).href});put('owner-ack.json',{...base,pid,identity_bound:true});put('runner-closed.json',{...base,pid,terminated:true});put('ui-begin.json',{...base,pid,phase:'UI_SEQUENCE_STARTED'});put('ui-quiescent.json',{...base,pid,phase:'UI_SEQUENCE_RETURNED'})}
  return{api,put,full,store,root,base,pid,opens:()=>opens}
 }
+test('476 observer snapshots admit only fixed producer stages and never authorize closure',()=>{
+ const f=loadBoundary(),plain=(v:any)=>JSON.parse(JSON.stringify(v)),file='observer-kvo-enter.json'
+ assert.deepEqual(plain(f.api.observerBoundary476()),{schema:1,events:[],invalid:false})
+ f.put(file,{...f.base,stage:1,bucket:3});assert.deepEqual(plain(f.api.observerBoundary476()),{schema:1,events:[[1,3]],invalid:false});assert.equal(f.api.closure(true,true),false)
+ for(const bad of [{...f.base,stage:2,bucket:3},{...f.base,stage:1,bucket:16},{...f.base,stage:1,bucket:true},{...f.base,stage:1,bucket:3,extra:'PRIVATE'},{...f.base,nonce:'b'.repeat(64),stage:1,bucket:3}]){
+  f.put(file,bad);assert.deepEqual(plain(f.api.observerBoundary476()),{schema:1,events:[],invalid:true});assert.equal(f.api.closure(true,true),false)
+ }
+ f.store.set(f.root+'/'+file,{bytes:Buffer.from('{"bucket":'),mode:0o600});assert.deepEqual(plain(f.api.observerBoundary476()),{schema:1,events:[],invalid:true})
+ f.put(file,{...f.base,stage:1,bucket:3},{nlink:2});assert.deepEqual(plain(f.api.observerBoundary476()),{schema:1,events:[],invalid:true})
+ f.store.delete(f.root+'/'+file);f.full();f.put(file,{...f.base,stage:1,bucket:3});assert.equal(f.api.closure(true,true),true);f.put(file,{...f.base,stage:4,bucket:3});assert.equal(f.api.closure(true,true),true)
+})
+test('476 Node close observation records only actual close categories with one local clock',()=>{
+ const source=fs.readFileSync(helper,'utf8'),ast=ts.createSourceFile(helper,source,ts.ScriptTarget.Latest,true),owner=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='OwnedWorkspaceUI705') as ts.ClassDeclaration
+ const members=owner.members.filter(n=>ts.isMethodDeclaration(n)&&['noteClose476','closeObservation476'].includes(n.name.getText(ast)));assert.equal(members.length,2)
+ let now=100;const scope:any={performance:{now:()=>now},Number,Math};vm.runInNewContext(ts.transpileModule('class Actual {'+members.map(n=>n.getText(ast)).join('\n')+'};globalThis.Actual=Actual',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,scope,{timeout:1000})
+ const instance=new scope.Actual();instance.closeClock476=100;instance.close476={observer:null,xcode:null};now=610;instance.noteClose476('observer',0,null);now=1000;instance.noteClose476('observer',7,null);instance.noteClose476('xcode',null,'SIGTERM')
+ assert.deepEqual(JSON.parse(JSON.stringify(instance.closeObservation476())),{schema:1,observer:{bucket:2,exit:'ZERO'},xcode:{bucket:3,exit:'SIGNAL'}})
+ for(const code of [null,-1,256,NaN]){instance.close476={observer:null,xcode:null};instance.noteClose476('observer',code,null);assert.equal(instance.closeObservation476().observer.exit,'UNKNOWN')}
+ instance.close476={observer:null,xcode:null};instance.noteClose476('observer',41,null);assert.equal(instance.closeObservation476().observer.exit,'NONZERO');now=99;instance.noteClose476('xcode',0,null);assert.equal(instance.closeObservation476().xcode,null)
+})
+test('476 observation inverse restores complete sealed source without changing original gates',()=>{
+ const sources=[
+  [path.join(files,'OwnedUIProtocol.swift'),'69b5fb718b3d0cd405f8285fd89db3c506872ef80e340360ab69d3f2a6feabe5'],
+  [path.join(files,'OwnerObserver.swift'),'5fd01ad1e08c9e8dd3c86882a217f4f92929178ab9f550f4f320ed119f2ee9d2'],
+  [helper,'b0e30a4e3d7331dd1af008eee5ac96c673907544f4fda75a2e279ac816cba796'],
+  [path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'0b78022a6efaa334ce97d5d1ccfb9c6d59857997ddefed3ad5f7a0e501fb78a4'],
+ ] as const
+ for(const [file,digest]of sources){
+  // This is source-only lineage; test both checkout EOLs below, never normalize runtime evidence.
+  let value=fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')
+  const remove=(begin:string,end:string)=>{const count=value.split(begin).length-1;assert.ok(count>0);assert.equal(value.split(end).length-1,count);value=value.replace(new RegExp(begin.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[\\s\\S]*?'+end.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'),'')}
+  if(file.endsWith('.swift')){remove('/*OBS476_BOUNDARY_BEGIN*/','/*OBS476_BOUNDARY_END*/');if(file.endsWith('OwnerObserver.swift')){assert.equal(value.split('app,change in').length,2);value=value.replace('app,change in','app,_ in')}}
+  else{
+   if(file===helper){const a='/*OBS476_CLOSE_VALUE:69b5fb718b3d0cd405f8285fd89db3c506872ef80e340360ab69d3f2a6feabe5*/\'a96609272104b705e3d970a42c48ba15f3cf62ee84ad8d2f9d7c82326e5e80e6\'/*OBS476_CLOSE_END_VALUE*/',b="'69b5fb718b3d0cd405f8285fd89db3c506872ef80e340360ab69d3f2a6feabe5'";assert.equal(value.split(a).length,2);value=value.replace(a,b);const c='/*OBS476_CLOSE_VALUE_BEGIN*/(code,signal)/*OBS476_CLOSE_VALUE_END*/';assert.equal(value.split(c).length,2);value=value.replace(c,'code')}
+   remove('/*OBS476_CLOSE_BEGIN*/','/*OBS476_CLOSE_END*/')
+  }
+  assert.equal(createHash('sha256').update(value).digest('hex'),digest,file)
+ }
+})
 test('705 actual Foundation startup receipt requires its exact directory URL representation',()=>{
  const bytes=fs.readFileSync(path.join(files,'foundation-startup.json')),provenance=JSON.parse(fs.readFileSync(path.join(files,'foundation-startup.provenance.json'),'utf8'));assert.equal(createHash('sha256').update(bytes).digest('hex'),provenance.receiptSHA256)
  const capture=JSON.parse(bytes.toString('utf8')),prefix=capture.bundle_url.slice('file://'.length),suffix='/Products/Debug/OwnedPickerUITests-Runner.app/'
@@ -315,6 +354,20 @@ test('705 failure-only UI stage is closed bounded and never a lifecycle authorit
 
 
 // Exact source-only inverse of the macOS title compatibility change. Never applies to receipts or compiled evidence.
+function restoreCloseObservation476(kind:'ui'|'protocol'|'observer'|'helper'|'native',raw:string){return require(path.resolve('scripts/tests/observation-788-inverse.mjs')).restoreCloseObservation476(kind,raw)}
+test('476 inverse rejects missing duplicate altered and appended observation sources in LF and CRLF',()=>{
+ const samples=[['protocol',path.join(files,'OwnedUIProtocol.swift'),'/*OBS476_BOUNDARY_BEGIN*/'],['observer',path.join(files,'OwnerObserver.swift'),'/*OBS476_BOUNDARY_BEGIN*/'],['helper',helper,'/*OBS476_CLOSE_BEGIN*/'],['native',path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'/*OBS476_CLOSE_BEGIN*/']] as const
+ for(const [kind,file,marker]of samples)for(const eol of ['\n','\r\n']){
+  const raw=fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n').replace(/\n/g,eol),first=raw.indexOf(marker);assert.ok(first>=0)
+  assert.doesNotThrow(()=>restoreCloseObservation476(kind,raw))
+  for(const bad of [raw.replace(marker,''),raw.replace(marker,marker+marker),raw.slice(0,first)+raw.slice(first).replace('OBS476','OBS475'),raw+eol])assert.throws(()=>restoreCloseObservation476(kind,bad),{code:'ERR_ASSERTION'})
+ }
+})
+test('476 KVO callback captures only value and same-clock bucket before the original main dispatch',()=>{
+ const observer=fs.readFileSync(path.join(files,'OwnerObserver.swift'),'utf8'),start=observer.indexOf('observation=app.observe('),end=observer.indexOf('DispatchQueue.main.async{',start);assert.ok(start>=0&&end>start)
+ const callback=observer.slice(start,end);assert.match(callback,/callbackBucket476=OwnedUI705ObserverBoundary\.bucket\(origin:origin476\),callbackValue476=change\.newValue/);assert.doesNotMatch(callback,/self\?\.|captured|\.record\(|scene\.write|\.isTerminated\b(?!,options)/)
+ const handler=observer.slice(observer.indexOf('func observeBoundary476('),observer.indexOf('/*OBS476_BOUNDARY_END*/ func terminated('));assert.match(handler,/Thread\.isMainThread,app === captured/);assert.match(handler,/record\(callbackStage,bucket:callbackBucket\)/);assert.match(handler,/record\(mainStage,bucket:mainBucket\)/)
+})
 // Undo only the separately reviewed census observation extraction before the
 // existing whole-parent authorities. Every old digest remains unchanged.
 function censusTerminalInverseParent747(raw:string){
@@ -329,6 +382,7 @@ function censusTerminalInverseParent747(raw:string){
 // the live UI sequence. Older authority digests below are not refreshed.
 // Source-only inverse of the owned input readiness barrier; never runtime evidence.
 function previousInputReady705(kind:'ui'|'protocol'|'helper'|'native',raw:string){
+ raw=restoreCloseObservation476(kind,raw)
  raw=require(path.resolve('scripts/tests/observation-788-inverse.mjs')).restoreObservation788(raw)
  let source=raw.replace(/\r\n/g,'\n')
  if(kind==='ui'||kind==='helper'){
@@ -419,8 +473,7 @@ test('705 main-thread progress publisher preserves every original UI action auth
  const actualProtocol=fs.readFileSync(path.join(files,'OwnedUIProtocol.swift'),'utf8'),actualUI=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8'),actualSource=fs.readFileSync(helper,'utf8'),actualNative=fs.readFileSync(path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'utf8')
  function verifyConservation(protocol:string,ui:string,source:string,native:string){
   // Static source text only: never normalize runtime JSON, compiled bytes, TAP or evidence.
-  const restore788=require(path.resolve('scripts/tests/observation-788-inverse.mjs')).restoreObservation788
-  const canonical=(value:string)=>restore788(value.replace(/\r\n/g,'\n'))
+  const canonical=(value:string)=>value.replace(/\r\n/g,'\n')
   protocol=previousCensus705('protocol',canonical(protocol));ui=previousChoose705(canonical(ui));source=previousCensus705('helper',canonical(source));native=previousCensus705('native',canonical(native))
   // Remove only the new result observation before applying the unchanged preceding conservation oracle.
   const resultStart=source.indexOf('// Two post-close, read-only test-result queries share 5s/1MiB per stream each.'),resultEnd=source.indexOf('type File705=',resultStart);assert.ok(resultStart>=0&&resultEnd>resultStart);source=source.slice(0,resultStart)+source.slice(resultEnd)
@@ -765,6 +818,7 @@ function confirmationObservationInverse772(raw:string){
 
 // Undo only the aborted-context delivery addition, before all existing raw source authorities.
 function workspaceAbortPhaseInverse705(raw:string){
+ raw=restoreCloseObservation476('native',raw)
  raw=require(path.resolve('scripts/tests/observation-788-inverse.mjs')).restoreObservation788(raw)
  raw=archiveObservationInverse782(raw)
  const eol=raw.includes('\r\n')?'\r\n':'\n'
