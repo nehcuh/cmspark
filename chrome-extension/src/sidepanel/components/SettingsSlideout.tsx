@@ -123,13 +123,6 @@ const BROWSER_STT_SUPPORT = detectSpeechRecognition(
   typeof window !== "undefined" ? (window as any) : {},
 )
 
-const SAFETY_SKILLS = [
-  { id: "cookie_guard", label: "Cookie 守卫" },
-  { id: "eval_guard", label: "代码执行守卫" },
-  { id: "nav_guard", label: "导航守卫" },
-  { id: "input_guard", label: "输入守卫" },
-]
-
 export function SettingsSlideout() {
   const { state, dispatch } = useAgentStore()
   const host = useContextPanelHostOptional()
@@ -785,14 +778,6 @@ export function SettingsSlideout() {
     if (config.vision_enabled) {
       chrome.runtime.sendMessage({ type: "config.testVision" })
     }
-  }
-
-  const toggleSafetySkill = (skillId: string) => {
-    const current = config.safety_skills_enabled || []
-    const next = current.includes(skillId)
-      ? current.filter(id => id !== skillId)
-      : [...current, skillId]
-    dispatch({ type: "SET_CONFIG", config: { safety_skills_enabled: next } })
   }
 
   return (
@@ -2813,18 +2798,9 @@ export function SettingsSlideout() {
           <div style={styles.sectionTitle}>安全设置</div>
 
           <div style={styles.field}>
-            <label style={styles.label}>安全技能</label>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {SAFETY_SKILLS.map(skill => (
-                <label key={skill.id} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-                  <input
-                    type="checkbox"
-                    checked={(config.safety_skills_enabled || []).includes(skill.id)}
-                    onChange={() => toggleSafetySkill(skill.id)}
-                  />
-                  {skill.label}
-                </label>
-              ))}
+            <div style={styles.label}>安全保护</div>
+            <div style={styles.helpText}>
+              安全技能目前不能在此单独开关。现有安全检查和操作确认仍按配置与权限规则执行。
             </div>
           </div>
 
