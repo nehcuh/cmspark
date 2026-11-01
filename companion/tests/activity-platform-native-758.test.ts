@@ -139,6 +139,7 @@ test('#758 actual desktop foreground identity, passive pixels and local OCR; min
   }finally{
     if(!ended)child.kill()
     await closed
+    if(win)try{const project=require(path.resolve('tests/helpers/activity-wpf-observation-758.cjs'));t.diagnostic('D758_WPF_PHASE '+JSON.stringify({at:'CLOSE',phases:project(dir)}))}catch{}
     fs.rmSync(dir,{recursive:true,force:true});lease.settled()
   }
 }))

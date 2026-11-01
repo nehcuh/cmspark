@@ -40,18 +40,36 @@ test('#758 compiler failure observation handles cancellation and refuses hostile
   assert.deepEqual(compilerFailureObservation758(revoked.proxy), { version: 1, kind: 'UNAVAILABLE' })
 })
 
+// Restore the original controller before checking the original, fixed digest.
+// Every inserted line must appear exactly once; never update the historical pin.
+const wpfDiagnosticLine = "    if(win)try{const project=require(path.resolve('tests/helpers/activity-wpf-observation-758.cjs'));t.diagnostic('D758_WPF_PHASE '+JSON.stringify({at:'CLOSE',phases:project(dir)}))}catch{}\n"
+function restoreController(value: string, eol: string): string {
+  const changes: [string, string][] = [
+    [wpfDiagnosticLine, ''],
+    ["import { compilerFailureObservation758 } from './helpers/activity-compiler-observation-758'\n", ''],
+    ["try{t.diagnostic('ACTIVITY758_COMPILER_FAILURE '+JSON.stringify(compilerFailureObservation758(error)))}catch{}", ''],
+  ]
+  for (const [after, before] of changes) {
+    const from = after.replace(/\n/g, eol)
+    assert.equal(value.split(from).length, 2)
+    value = value.replace(from, before.replace(/\n/g, eol))
+  }
+  return value
+}
+
 for (const [eol, expected] of [['\n', '9898bc1278d7e5958ce01a06b12e046a2d64ba1ee04aea8370db983a66eb44db'], ['\r\n', '3692bea4f30d71a5c5e84d1c13ec32765ddb0de3c705e25c145e4562c99030c5']] as const) {
+  const source = () => fs.readFileSync(path.resolve('tests/activity-platform-native-758.test.ts'), 'utf8').replace(/\r?\n/g, eol)
+  const digest = (value: string) => createHash('sha256').update(value).digest('hex')
   test(`#758 compiler observation preserves the original native source ${eol === '\n' ? 'LF' : 'CRLF'}`, () => {
-    let value = fs.readFileSync(path.resolve('tests/activity-platform-native-758.test.ts'), 'utf8').replace(/\r?\n/g, eol)
-    const changes: [string, string][] = [
-      ["import { compilerFailureObservation758 } from './helpers/activity-compiler-observation-758'\n", ''],
-      ["try{t.diagnostic('ACTIVITY758_COMPILER_FAILURE '+JSON.stringify(compilerFailureObservation758(error)))}catch{}", ''],
-    ]
-    for (const [after, before] of changes) {
-      const from = after.replace(/\n/g, eol)
-      assert.equal(value.split(from).length, 2)
-      value = value.replace(from, before.replace(/\n/g, eol))
-    }
-    assert.equal(createHash('sha256').update(value).digest('hex'), expected)
+    assert.equal(digest(restoreController(source(), eol)), expected)
+  })
+  test(`#758 inverse rejects missing, duplicate and changed controller bytes ${eol === '\n' ? 'LF' : 'CRLF'}`, () => {
+    const original = source(), line = wpfDiagnosticLine.replace(/\n/g, eol)
+    assert.equal(original.split(line).length, 2)
+    assert.throws(() => restoreController(original.replace(line, ''), eol))
+    assert.throws(() => restoreController(original.replace(line, line + line), eol))
+    const changed = original.replace('const enabled=', 'const enabled =')
+    assert.notEqual(changed, original)
+    assert.notEqual(digest(restoreController(changed, eol)), expected)
   })
 }
