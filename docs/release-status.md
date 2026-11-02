@@ -25,6 +25,10 @@ PR #824 最终提交 `8fceac9f` 的[十项 CI 检查](https://github.com/nehcuh/
 
 `0666fc8d` 的[下一轮 CI](https://github.com/nehcuh/cmspark/actions/runs/41521066023)中，[Windows 完整原生任务](audit/reviews/activity-826-windows-native-0666fc8d.md)成功，活动采集 9 项通过且零跳过；普查前的新 CPU 编译仍在 20 秒门失败。[macOS 回执](audit/reviews/activity-826-macos-0666fc8d.md)记录完整原生／UI 回执及取消已返回，45 秒截止时 xcode 完整关闭仍未满足。新增测试现按[明确裁决](audit/reviews/activity-826-cpu-build-separation-coordinator-decision.md)分离构建与运行，承认编译 20→120 秒及 30 秒 runtime-only 的测量边界改变；macOS 仅补有限同钟域关闭与查询事实，原 45 秒及完整关闭资格保持。两设计均通过[独立实验与 GLM 设计门](audit/reviews/activity-826-build-mac-glm-design.md)，实现也已通过非作者源码核验和 [GLM 源码门](audit/reviews/activity-826-build-mac-glm-source.md)；精确提交的实际平台验收继续决定交付。
 
+最新 `67c5e209` 的[CI](https://github.com/nehcuh/cmspark/actions/runs/41529697607)中，[macOS 完整原生 lane](audit/reviews/activity-826-macos-67c5e209.md)成功，工作区在原 45 秒内完成业务、完整关闭与清理；[两个 Windows lane](audit/reviews/activity-826-windows-67c5e209.md)的新 CPU 构建和后置运行均通过，但普查中的原 MCP 用例超出 20 秒，定向采集中的聊天范围夹具未在 10 秒内取得初始前台就绪资格。两项仍阻塞发布；独立快照仅约束其采样时刻的状态，不认定 SDK、冷启动或前台竞争的物理原因。
+
+`67c5e209` 的[三平台 Release 预演](https://github.com/nehcuh/cmspark/actions/runs/41529703415)已全部成功，发布步骤按分支预演规则跳过。原生门仍失败，暂不打标签。另增一次独立、明确非验收的 MCP 延迟测量工具；其[独立源码核验](audit/reviews/activity-826-mcp-probe-independent-source.md)与 [GLM 复审](audit/reviews/activity-826-mcp-probe-glm-source.md)均通过，后续测量不替代原 20 秒验收或三平台预演。
+
 [#457 历史验收台账](audit/0.7.0-20260907/release-acceptance.md) 的企业双场景仍未完成；0.7.0 已发布这一事实不证明该验收通过。0.8.0 沿用现有公开发行范围，不将该企业验收列为本次已完成能力；用户本次明确授权发布，未授权扩大企业能力声明。
 
 ## 已合并与尚待验收的边界
