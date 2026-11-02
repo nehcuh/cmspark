@@ -155,14 +155,14 @@ test("keyed probe cache: exact url+model match, negative bit honored", () => {
 
 // --- shouldOfferVisionReuse ---
 
-test("shouldOfferVisionReuse: anthropic protocol hard-blocks even for claude", () => {
+test("shouldOfferVisionReuse: Anthropic image models can be reused", () => {
   assert.equal(
     shouldOfferVisionReuse({
       model_name: "claude-sonnet-4-6",
       protocol: "anthropic",
       base_url: "https://api.anthropic.com",
     }),
-    false,
+    true,
   )
 })
 
@@ -186,7 +186,7 @@ test("shouldOfferVisionReuse: deepseek never", () => {
 
 // --- apply / equality ---
 
-test("applyVisionReuseFromMain: maps url/model and copies key when present", () => {
+test("applyVisionReuseFromMain: maps url/model and preserves dedicated vision credentials", () => {
   const r = applyVisionReuseFromMain({
     base_url: "https://api.openai.com/v1",
     model_name: "gpt-4o",
@@ -195,7 +195,7 @@ test("applyVisionReuseFromMain: maps url/model and copies key when present", () 
   })
   assert.equal(r.patch.vision_base_url, "https://api.openai.com/v1")
   assert.equal(r.patch.vision_model_name, "gpt-4o")
-  assert.equal(r.patch.vision_api_key, "sk-test")
+  assert.equal(r.patch.vision_api_key, undefined)
   assert.equal(r.needsKeyPaste, false)
   assert.equal(r.destinationHost, "api.openai.com")
 })
@@ -277,4 +277,11 @@ test("normalizeEndpointUrl and placeholder key helpers", () => {
   assert.equal(isVisionKeyPlaceholder(""), true)
   assert.equal(isVisionKeyPlaceholder("ollama"), true)
   assert.equal(isVisionKeyPlaceholder("sk-real"), false)
+})
+
+ test("Anthropic reuse copies protocol and enables backend gateway auth inheritance", () => {
+  const result = applyVisionReuseFromMain({ model_name: "claude-owned", protocol: "anthropic", base_url: "https://owned.example/v1" })
+  assert.equal(result.patch.vision_protocol, "anthropic")
+  assert.equal(result.patch.vision_use_main_auth, true)
+  assert.equal(result.patch.vision_api_key, undefined)
 })

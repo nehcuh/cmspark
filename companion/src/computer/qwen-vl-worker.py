@@ -169,9 +169,10 @@ def _load(model_dir: str, device: str) -> None:
             device = "cpu"
 
     dtype = torch.float16 if device in ("cuda", "mps") else torch.float32
-    processor = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True, local_files_only=True)
     model = AutoModelForImageTextToText.from_pretrained(
         model_dir,
+        local_files_only=True,
         torch_dtype=dtype,
         device_map="auto" if device == "cuda" else None,
         trust_remote_code=True,
@@ -242,6 +243,29 @@ def _infer(image_path: str, command: str, width: int, height: int) -> dict:
     return {"ok": True, "x": x, "y": y, "raw": raw[:500], "raw_complete": len(raw) < 500}
 
 
+def _analyze(image_path: str, prompt: str) -> dict:
+    if _model is None or _processor is None:
+        return {"ok": False, "error": "model-not-loaded"}
+    if not prompt or len(prompt) > 12000:
+        return {"ok": False, "error": "invalid-prompt"}
+    from PIL import Image
+    import torch
+
+    with Image.open(image_path) as source:
+        image = source.convert("RGB")
+    messages = [{"role": "user", "content": [
+        {"type": "image", "image": image}, {"type": "text", "text": prompt},
+    ]}]
+    text = _processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = _processor(text=[text], images=[image], return_tensors="pt", padding=True)
+    inputs = {k: v.to(_device) if hasattr(v, "to") else v for k, v in inputs.items()}
+    with torch.inference_mode():
+        out_ids = _model.generate(**inputs, max_new_tokens=4096, do_sample=False)
+    generated = out_ids[:, inputs["input_ids"].shape[1]:]
+    raw = _processor.batch_decode(generated, skip_special_tokens=True)[0].strip()
+    return {"ok": True, "text": raw}
+
+
 def main() -> None:
     for line in sys.stdin:
         line = line.strip()
@@ -267,6 +291,10 @@ def main() -> None:
                     int(msg.get("width") or 0),
                     int(msg.get("height") or 0),
                 )
+                r["id"] = mid
+                _reply(r)
+            elif cmd == "analyze":
+                r = _analyze(str(msg["image_path"]), str(msg.get("prompt") or ""))
                 r["id"] = mid
                 _reply(r)
             elif cmd == "shutdown":

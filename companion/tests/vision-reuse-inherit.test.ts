@@ -61,7 +61,7 @@ test("resolveInheritedVisionApiKey: ignores masked llm key", () => {
   }
 })
 
-test("resolveInheritedVisionApiKey: anthropic protocol never inherits", () => {
+test("resolveInheritedVisionApiKey: different vision protocol does not inherit Anthropic credentials", () => {
   const key = resolveInheritedVisionApiKey({
     llmBaseUrl: "https://api.anthropic.com",
     llmModelName: "claude-sonnet-4-6",
@@ -130,4 +130,8 @@ test("endpointsMatch + loopback + placeholder helpers", () => {
   assert.equal(isLoopbackVisionHost("not a url"), false)
   assert.equal(isPlaceholderVisionKey("ollama"), true)
   assert.equal(isPlaceholderVisionKey("sk"), false)
+})
+
+test("Anthropic vision inherits only when endpoint, model and protocol match", () => {
+  assert.equal(resolveInheritedVisionApiKey({ llmBaseUrl: "https://owned.example/v1", llmModelName: "claude-owned", llmApiKey: "owned-key", llmProtocol: "anthropic", visionProtocol: "anthropic", visionBaseUrl: "https://owned.example/v1", visionModelName: "claude-owned", visionApiKey: "" }), "owned-key")
 })

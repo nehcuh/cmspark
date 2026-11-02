@@ -279,6 +279,8 @@ export interface LLMConfig {
    */
   auto_approve_enterprise_tools?: boolean
   // Vision model fields (flattened for UI convenience)
+  vision_protocol?: "openai" | "anthropic"
+  vision_use_main_auth?: boolean
   vision_enabled?: boolean
   vision_api_key?: string
   // True when companion reports a non-empty vision api_key (masked as "***").

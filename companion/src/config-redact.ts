@@ -41,6 +41,7 @@ export function redactConfigForWire(config: any): any {
     redacted.vision = {
       ...config.vision,
       api_key: config.vision.api_key ? "***" : "",
+      extra_headers: redactExtraHeaders(config.vision.extra_headers),
     }
   }
 

@@ -151,6 +151,10 @@ export class OpenAIProvider implements LlmProvider {
       signal: params.signal,
     })
 
+    if (!Array.isArray(response.choices)) {
+      const error = (response as unknown as { error?: unknown }).error
+      throw new Error(`Model endpoint returned an error: ${typeof error === "string" ? error : JSON.stringify(error ?? "missing choices")}`)
+    }
     const choice = response.choices[0]
     const content = choice?.message?.content?.trim() || ""
     const reasoning = (choice?.message as { reasoning_content?: string } | undefined)

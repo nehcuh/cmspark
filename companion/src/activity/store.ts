@@ -37,6 +37,10 @@ export class ActivityStore {
   stateMetadata(): Omit<ActivityState, 'sources'> & { sources: Array<Omit<ActivitySource, 'ocr_text'>> } {
     const { sources, ...metadata } = this.value
     const projected = clone(metadata)
+    if (projected.config.dedicated_vision) {
+      const model = projected.config.dedicated_vision
+      projected.config.dedicated_vision = { ...model, api_key: '', api_key_set: !!model.api_key }
+    }
     for (const candidate of projected.candidates) if (candidate.status === 'pending') candidate.due_at = this.candidateDeadline(candidate)
     return { ...projected, sources: sources.map(({ ocr_text: _privateText, ...source }) => clone(source)) }
   }
@@ -72,7 +76,12 @@ export class ActivityStore {
   configure(revision: number, patch: unknown): void {
     validateConfig(patch)
     if (revision !== this.value.revision) throw new ActivityError('REVISION_CONFLICT', '活动设置已变化，请刷新后重试')
-    this.mutate(s => { Object.assign(s.config, patch); s.config.allowed_apps = [...new Set(s.config.allowed_apps)] })
+    this.mutate(s => { const update = patch as Partial<ActivityConfig>
+      const model = update.dedicated_vision
+      const previous = s.config.dedicated_vision
+      Object.assign(s.config, update)
+      if (model) s.config.dedicated_vision = { ...previous, ...model, api_key: !model.api_key || /^\*+$/.test(model.api_key) ? previous?.api_key || '' : model.api_key }
+      s.config.allowed_apps = [...new Set(s.config.allowed_apps)] })
   }
   addSource(input: Omit<ActivitySource, 'id' | 'bytes' | 'sha256'>, image: Buffer): ActivitySource | null {
     if (image.length === 0 || image.length > 16 * 1024 * 1024) throw new ActivityError('QUOTA_EXCEEDED', '截图大小不合适')
@@ -85,6 +94,16 @@ export class ActivityStore {
     fs.writeFileSync(file, image, { flag: 'wx', mode: 0o600 })
     try { this.mutate(s => { s.sources.unshift(source) }) } catch (e) { fs.rmSync(file, { force: true }); throw e }
     return clone(source)
+  }
+  saveVisualTranscript(source: ActivitySource, transcript: string): ActivitySource {
+    if (typeof transcript !== 'string' || !transcript.trim() || transcript.length > 24000) throw new ActivityError('INVALID_MODEL_OUTPUT', '图像模型未返回有效转录')
+    const canonical = this.sourceMetadata(source.id)
+    if (canonical.sha256 !== source.sha256 || canonical.ocr_text !== source.ocr_text || canonical.deleted) throw new ActivityError('SOURCE_EXPIRED', '来源已变化')
+    if (source.ocr_text.includes(transcript)) return canonical
+    const text = source.ocr_text ? source.ocr_text + '\n\n[图像模型转录，待核对]\n' + transcript : transcript
+    if (text.length > 48000) throw new ActivityError('INVALID_MODEL_OUTPUT', '来源转录过长')
+    this.mutate(s => { s.sources.find(item => item.id === source.id)!.ocr_text = text })
+    return this.sourceMetadata(source.id)
   }
   addCandidates(source: ActivitySource, entries: Array<Omit<TodoCandidate, 'id' | 'revision' | 'created_at' | 'status'>>): void {
     const canonical = this.value.sources.find(s => s.id === source.id)

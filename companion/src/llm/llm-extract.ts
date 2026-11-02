@@ -2,7 +2,7 @@
 //
 // Consolidates createProvider().complete for skill-craft / summary / vault profile etc.
 // Callers bring their own system prompt + parser; this just returns the raw text.
-// Vision stays on vision-pipeline (OpenAI-only, L10) — not routed here.
+// Image jobs use vision-pipeline and the same protocol-aware providers.
 
 import type {
   LlmAuthStyle,

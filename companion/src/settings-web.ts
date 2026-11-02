@@ -1,3 +1,4 @@
+import { probeVisionConnection } from "./llm/vision-pipeline"
 // Local Web settings server for CMspark Companion
 // Spawns a temporary HTTP server on 127.0.0.1, opens browser to settings page.
 //
@@ -499,27 +500,11 @@ async function handleTestProxy(
         jsonResponse(res, { ok: false, error: probe.error || "Connection failed" })
       }
     } else {
-      // vision — probe /models (always OpenAI-compatible, L10).
-      // Allowlist skip in validateTestBaseUrl must not bypass DNS-to-IMDS
-      // (P2-A1: /api/test re-gates via probeLlmConnection; this branch did not).
-      const blocked = await assertLlmEndpointAllowedAsync(validatedBaseUrl)
-      if (blocked) {
-        jsonResponse(res, { ok: false, error: blocked })
-        return
-      }
-      const url = validatedBaseUrl.endsWith("/models")
-        ? validatedBaseUrl
-        : validatedBaseUrl.replace(/\/+$/, "") + "/models"
-      const response = await fetch(url, {
-        method: "GET",
-        headers: key ? { Authorization: `Bearer ${key}` } : {},
-        signal: AbortSignal.timeout(10000),
+      await probeVisionConnection({
+        enabled: true, timeout_ms: 10000, max_tokens: 32, fallback: "error", cache_ttl_seconds: 0,
+        ...config.vision, ...parsed, base_url: validatedBaseUrl, api_key: key,
       })
-      if (response.ok) {
-        jsonResponse(res, { ok: true, message: `success: ${response.status} (${model_name || "default"})` })
-      } else {
-        jsonResponse(res, { ok: false, error: `error: upstream returned ${response.status}` })
-      }
+      jsonResponse(res, { ok: true, message: `success: ${model_name || "default"}` })
     }
   } catch (e: any) {
     jsonResponse(res, { ok: false, error: `Connection failed: ${e.message}` })
@@ -703,18 +688,19 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <input type="checkbox" id="visionEnabled" style="width:auto">
         Enable Vision Analysis
       </label>
-      <div class="hint">This section only covers tool screenshots / analyze_image: they are pre-analyzed by the vision rail into text before the main chat. Images you paste, pick, or drop in the composer are separate — if the main model can see images they go to it natively; otherwise they use this vision rail. Use a local VLM (e.g. Ollama llava) or any OpenAI-compatible cloud multimodal endpoint — may match your main LLM. Not the same as experimental Qwen3-VL locate.</div>
+      <div class="hint">This section only covers tool screenshots / analyze_image: they are pre-analyzed by the vision rail into text before the main chat. Images you paste, pick, or drop in the composer are separate — if the main model can see images they go to it natively; otherwise they use this vision rail. Use a local VLM (e.g. Ollama llava) or any OpenAI-compatible or Anthropic Messages multimodal endpoint — may match your main LLM. Work Center can also choose on-device Qwen3-VL.</div>
     </div>
 
     <div id="visionFields" style="opacity:0.4;pointer-events:none">
       <div class="field" id="visionReuseBar" style="display:none">
         <div class="hint" id="visionReuseHint" style="margin-bottom:8px"></div>
         <button class="btn btn-outline" type="button" id="useMainForVisionBtn">Use main LLM for vision</button>
-        <div class="hint" style="margin-top:6px">Copies Base URL / Model / Key from the main LLM above. Screenshots go to that host (OpenAI-compatible only). Save inherits key when endpoints match.</div>
+        <div class="hint" style="margin-top:6px">Copies Base URL / Model / Key from the main LLM above. Screenshots go to that host using its protocol and gateway auth. Save inherits key when endpoints match.</div>
       </div>
       <div class="field" id="visionAnthropicWarn" style="display:none">
-        <div class="hint">Main chat uses Anthropic Messages protocol. Vision rail is OpenAI-compatible only — configure a separate multimodal endpoint (or OpenAI-compat gateway). One-click reuse is disabled.</div>
+        <div class="hint">Vision supports OpenAI-compatible and Anthropic Messages endpoints.</div>
       </div>
+      <div class="field"><label for="visionProtocol">Vision protocol</label><select id="visionProtocol"><option value="openai">OpenAI-compatible</option><option value="anthropic">Anthropic Messages</option></select></div>
       <div class="field">
         <label>API Key</label>
         <div class="input-row">
@@ -791,13 +777,13 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       baseUrlHint=$("baseUrlHint"),
       resultEl=$("result"),savedFlash=$("savedFlash"),statusDot=$("statusDot"),
       visionEnabledEl=$("visionEnabled"),visionFields=$("visionFields"),
-      visionApiKeyEl=$("visionApiKey"),visionBaseUrlEl=$("visionBaseUrl"),
+      visionProtocolEl=$("visionProtocol"),visionUseMainAuth=false,visionApiKeyEl=$("visionApiKey"),visionBaseUrlEl=$("visionBaseUrl"),
       visionModelEl=$("visionModel"),visionTimeoutEl=$("visionTimeout"),
       visionTimeoutValEl=$("visionTimeoutVal"),visionFallbackEl=$("visionFallback"),
       visionResultEl=$("visionResult");
   var configRevision=null,configLoaded=false,savePending=false;
   var editControls=[apiKeyEl,baseUrlEl,modelNameEl,tempEl,ctxWinEl,protocolEl,compatEl,
-    visionEnabledEl,visionApiKeyEl,visionBaseUrlEl,visionModelEl,visionTimeoutEl,visionFallbackEl];
+    visionEnabledEl,visionProtocolEl,visionApiKeyEl,visionBaseUrlEl,visionModelEl,visionTimeoutEl,visionFallbackEl];
   editControls.forEach(function(el){el.disabled=true});
 
   function hostnameFromUrl(u){
@@ -821,16 +807,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       if(warn)warn.style.display="none";
       return
     }
-    if(anth){
-      if(bar)bar.style.display="none";
-      if(warn)warn.style.display="block"
-    }else{
-      if(warn)warn.style.display="none";
-      if(bar){
-        bar.style.display="block";
-        if(hint)hint.textContent="Screenshots will be sent to "+hostnameFromUrl(baseUrlEl.value)+" when you reuse main LLM (pre-analyze → text for main chat)."
-      }
-    }
+    if(warn)warn.style.display="none";
+    if(bar){bar.style.display="block";if(hint)hint.textContent="Screenshots will be sent to "+hostnameFromUrl(baseUrlEl.value)+" when you reuse main LLM."}
   }
   function toggleVisionFields(){
     var on=visionEnabledEl.checked;
@@ -850,6 +828,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   }
 
   visionEnabledEl.onchange=toggleVisionFields;
+  visionProtocolEl.onchange=function(){visionUseMainAuth=false};
   protocolEl.onchange=syncProtocolUi;
   baseUrlEl.oninput=syncVisionReuseUi;
 
@@ -881,6 +860,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       // Vision fields
       var vision=d.vision||{};
       visionEnabledEl.checked=!!vision.enabled;
+      visionProtocolEl.value=vision.protocol||"openai";
+      visionUseMainAuth=vision.use_main_auth===true;
       visionApiKeyEl.value=vision.api_key||"";
       visionBaseUrlEl.value=vision.base_url||"http://localhost:11434/v1";
       visionModelEl.value=vision.model_name||"";
@@ -912,6 +893,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     if(visionEnabledEl.checked){
       data.vision={
         enabled:true,
+        protocol:visionProtocolEl.value,
+        use_main_auth:visionUseMainAuth,
         api_key:visionApiKeyEl.value,
         base_url:visionBaseUrlEl.value||"http://localhost:11434/v1",
         model_name:visionModelEl.value||"llava:7b",
@@ -1001,7 +984,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     fetch(url("/api/testVision"),{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({base_url:visionBaseUrlEl.value,api_key:visionApiKeyEl.value,model_name:visionModelEl.value})
+      body:JSON.stringify({base_url:visionBaseUrlEl.value,api_key:visionApiKeyEl.value,model_name:visionModelEl.value,protocol:visionProtocolEl.value,use_main_auth:visionUseMainAuth})
     }).then(function(r){return r.json()}).then(function(d){
       visionResultEl.textContent=d.ok?d.message:d.error;
       visionResultEl.className="result "+(d.ok?"success":"error");
@@ -1019,18 +1002,12 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   if(useMainBtn){
     useMainBtn.onclick=function(){
       if(!configLoaded)return;
-      if(protocolEl.value==="anthropic"){
-        visionResultEl.textContent="Cannot reuse: main protocol is Anthropic Messages; vision needs OpenAI-compatible endpoint.";
-        visionResultEl.className="result error";
-        return
-      }
+      visionProtocolEl.value=protocolEl.value;
+      visionUseMainAuth=true;
       visionEnabledEl.checked=true;
       toggleVisionFields();
       visionBaseUrlEl.value=baseUrlEl.value||"";
       visionModelEl.value=modelNameEl.value||"";
-      if(!isMaskedKey(apiKeyEl.value)){
-        visionApiKeyEl.value=apiKeyEl.value
-      }
       visionResultEl.textContent="Vision filled from main LLM → "+hostnameFromUrl(baseUrlEl.value)+". Save to persist (key inherits when endpoints match). Then Test Vision.";
       visionResultEl.className="result success";
       syncVisionReuseUi()
