@@ -21,6 +21,14 @@ test("settings web preserves masked headers and never returns their values", asy
     assert.equal(getConfig().llm.extra_headers?.["X-Owned"], "***")
     saveConfig({ llm: { ...original, extra_headers: { "X-Owned": "synthetic-private-value" } } })
 
+    const originalVision = getConfig().vision!
+    saveConfig({ vision: { ...originalVision, extra_headers: { 'X-Vision-Owned': 'synthetic-vision-private' } } })
+    const visionResponse = settingsWebLlmResponse(getConfig().vision!)
+    assert.deepEqual(visionResponse.extra_headers, { 'X-Vision-Owned': '***' })
+    assert.equal(JSON.stringify(visionResponse).includes('synthetic-vision-private'), false)
+    saveConfig({ vision: { ...originalVision, ...settingsWebLlmUpdate(visionResponse) } })
+    assert.equal(getConfig().vision!.extra_headers?.['X-Vision-Owned'], 'synthetic-vision-private')
+
     const response = settingsWebLlmResponse(getConfig().llm)
     assert.deepEqual(response.extra_headers, { "X-Owned": "***" })
     assert.equal(JSON.stringify(response).includes("synthetic-private-value"), false)

@@ -23,12 +23,12 @@ test('Anthropic vision sends image blocks with its auth; prompt changes cannot r
     return new Response(JSON.stringify({ content: [{ type: 'text', text: `result-${bodies.length}` }], stop_reason: 'end_turn' }), { status: 200 })
   }
   try {
-    const config = { enabled: true, base_url: 'https://vision.example/v1', protocol: 'anthropic' as const, api_key: 'owned-test-key', model_name: 'claude-owned-test', timeout_ms: 1000, max_tokens: 4000, cache_ttl_seconds: 60, fallback: 'error' as const }
+    const config = { enabled: true, base_url: 'https://127.0.0.1:8220/v1', protocol: 'anthropic' as const, api_key: 'owned-test-key', model_name: 'claude-owned-test', timeout_ms: 1000, max_tokens: 4000, cache_ttl_seconds: 60, fallback: 'error' as const }
     assert.equal((await analyzeImage(IMAGE, config, 'Describe')).description, 'result-1')
     assert.equal((await analyzeImage(IMAGE, config, 'Extract tasks')).description, 'result-2')
     assert.equal((await analyzeImage(IMAGE, config, 'Extract tasks')).cached, true)
     assert.equal(requests.length, 2)
-    assert.equal(requests[0].url, 'https://vision.example/v1/messages')
+    assert.equal(requests[0].url, 'https://127.0.0.1:8220/v1/messages')
     assert.equal(requests[0].headers['x-api-key'], 'owned-test-key')
     assert.equal(requests[0].headers.Authorization, undefined)
     assert.deepEqual(bodies[0].messages[0].content[0], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } })

@@ -13,13 +13,15 @@ Base: origin/main `5abfa911`。Node `22.23.4`，macOS arm64。所有测试使用
 
 ## 实际界面
 
+模型选择、授权清除与冻结目标提交也已补入真实 UI 回归；视觉请求头遮蔽与 Python unittest 收集回归通过。CI 首轮发现 HTTP 测试桩用了 .example 域名导致 Linux DNS 拒绝，已改用 loopback 假端点并保留生产 DNS 防护。
+
 用真实 React 组件与现有样式、惰性测试后台渲染活动记录。实际操作验证了模式选择、独立 Anthropic URL/model、修改模型后图片授权清除、Qwen 授权保存，以及保存后“选择 PNG 并抽取待办”入口。390 / 768 / 1440 CSS px 的文档宽度分别等于视口，无横向溢出；已查看截图。此界面测试不读取真实聊天或执行真实采集。
 
 ## 本机真实权重烟测
 
 使用已安装 Qwen3-VL 2B、既有独立 Python 环境和仓库合成图片 `companion/tests/fixtures/activity-linux-758.png`，调用实际 Qwen session → worker → 本机权重 → 图像结果解析链。权重校验和加载按生产代码执行，无自动下载，临时 DATA_DIR 与工作进程在结束时清理。
 
-验收要求：转录包含 `PROJECT ALPHA SEND REPORT FRIDAY`，返回提交报告的候选及来自转录的原文引用，正式待办仍需确认。模型输出字段为待核对候选，本烟测不代替模型质量基准或 Windows 原生运行验收。
+验收要求：转录包含 `PROJECT ALPHA SEND REPORT FRIDAY`，返回提交报告的候选及来自转录的原文引用，正式待办仍需确认。最终提示词下的真实结果为 title=提交报告，owner=PROJECT ALPHA；后者是项目名归属误判，需要用户核对。烟测验证实际调用链与行动抽取，不把小模型的每个语义字段当作已验证事实，也不代替模型质量基准或 Windows 原生运行验收。
 
 ## 评审
 

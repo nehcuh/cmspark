@@ -3,11 +3,12 @@
 Qwen3-VL experimental locate worker for CMspark Companion.
 
 Line protocol (JSON per line, UTF-8):
-  stdin  → {"id": str, "cmd": "load"|"infer"|"ping"|"shutdown", ...}
+  stdin  → {"id": str, "cmd": "load"|"infer"|"analyze"|"ping"|"shutdown", ...}
   stdout → {"id": str, "ok": bool, ...}
 
 load:  {"id","cmd":"load","model_dir": str, "device": "auto"|"cpu"|"cuda"|"mps"}
 infer: {"id","cmd":"infer","image_path": str, "command": str, "width": int, "height": int}
+analyze: {"id","cmd":"analyze","image_path": str,"prompt": str} → {"id","ok":true,"text":str}
 ping:  {"id","cmd":"ping"}
 shutdown: {"id","cmd":"shutdown"}
 

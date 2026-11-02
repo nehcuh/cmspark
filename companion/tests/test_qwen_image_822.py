@@ -4,6 +4,7 @@ import importlib.util
 import sys
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("qwen_image_worker", Path(__file__).parents[1] / "src/computer/qwen-vl-worker.py")
@@ -53,5 +54,4 @@ class ImageAnalysisTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    import unittest.mock
     unittest.main()

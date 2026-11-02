@@ -24,7 +24,6 @@ import { probeLlmConnection } from "./llm/connection-test"
 import {
   LLM_ENDPOINT_DNS_ERROR,
   LLM_ENDPOINT_IMDS_ERROR,
-  assertLlmEndpointAllowedAsync,
   canonicalizeLlmHostname,
   classifyLlmHostnameDns,
   normalizeIpLiteral,
@@ -349,7 +348,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
         config_revision: revision,
         llm: llmPublic,
         vision: vision
-          ? { ...vision, api_key: maskApiKey(vision.api_key) }
+          ? settingsWebLlmResponse(vision)
           : { enabled: false, base_url: "http://localhost:11434/v1", api_key: "", model_name: "llava:7b", timeout_ms: 30000, max_tokens: 1024, fallback: "metadata", cache_ttl_seconds: 300 },
       })
       return
@@ -376,12 +375,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
           }
           // Vision config
           if (data.vision) {
-            const vision = { ...data.vision }
-            // Skip masked/empty API keys to keep the existing value
-            if (isMaskedApiKey(vision.api_key) || vision.api_key === "") {
-              delete vision.api_key
-            }
-            update.vision = vision
+            update.vision = settingsWebLlmUpdate(data.vision)
           }
           const updated = saveConfig(update, {
             llmKey: Object.prototype.hasOwnProperty.call(update.llm ?? {}, "api_key"),
@@ -399,7 +393,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
             config_revision: snapshot.revision,
             llm: settingsWebLlmResponse(updated.llm),
             vision: updated.vision
-              ? { ...updated.vision, api_key: maskApiKey(updated.vision.api_key) }
+              ? settingsWebLlmResponse(updated.vision)
               : undefined,
           })
         })
@@ -1008,7 +1002,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       toggleVisionFields();
       visionBaseUrlEl.value=baseUrlEl.value||"";
       visionModelEl.value=modelNameEl.value||"";
-      visionResultEl.textContent="Vision filled from main LLM → "+hostnameFromUrl(baseUrlEl.value)+". Save to persist (key inherits when endpoints match). Then Test Vision.";
+      visionResultEl.textContent="Vision filled from main LLM → "+hostnameFromUrl(baseUrlEl.value)+". Save to persist. Existing dedicated vision key is kept; an empty key inherits main credentials when endpoint and protocol match. Then Test Vision.";
       visionResultEl.className="result success";
       syncVisionReuseUi()
     }
