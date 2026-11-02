@@ -67,6 +67,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
   const validators: Record<string, (m: any) => WsValidationResult> = {
     "activity.state": (m) => personalWorkspaceSchema(m),
     "activity.apps": (m) => personalWorkspaceSchema(m),
+    "activity.preview": (m) => personalWorkspaceSchema(m),
+    "activity.preview_ocr": (m) => personalWorkspaceSchema(m),
     "activity.configure": (m) => personalWorkspaceSchema(m),
     "activity.import": (m) => personalWorkspaceSchema(m),
     "activity.scan": (m) => personalWorkspaceSchema(m),

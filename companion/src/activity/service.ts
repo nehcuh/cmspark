@@ -1,9 +1,10 @@
 import { DATA_DIR } from '../config'
 import { ActivityStore } from './store'
 import { extractActivity, submitReminder, type RecorderAdapter, type ExtractedCandidate } from './adapters'
-import { ActivityError, COVERAGE, type ActivityApp, type ActivityRuntime, type ActivitySource, type ActivityWireState, type PersonalTodo } from './types'
+import { ActivityError, COVERAGE, type ActivityApp, type ActivityRuntime, type ActivitySource, type ActivityWireState, type PersonalTodo, type ActivityPreview, type ActivityRect } from './types'
 import { createRecorder, platformSupport } from './platform'
-import { languageOf, validatePng } from './image'
+import { languageOf, validatePng, type LocalLanguage } from './image'
+import { ActivityScopeSkip, imageSize } from './chat-scope'
 import { activityModelTarget, hasActivityImageConsent } from './model-config'
 import type { extractActivityImage } from './model-extract'
 import { validateActivityMessage } from './validation'
@@ -106,6 +107,39 @@ export class ActivityService {
     if (!this.appListing) this.appListing = this.recorder.listApps(this.abort.signal).finally(() => { this.appListing = null })
     return this.appListing
   }
+  private async calibration<T>(requestCurrent: () => boolean, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (this.runtime.platform !== 'win32') throw new ActivityError('UNSUPPORTED_PLATFORM', '聊天区域校准目前仅支持 Windows')
+    if (this.pending) throw new ActivityError('BUSY', '上一轮采集或校准尚未完成')
+    const epoch = this.generation, signal = this.abort.signal
+    let result!: T
+    this.pending = (async () => {
+      result = await run(signal)
+      if (epoch !== this.generation || signal.aborted || !requestCurrent()) throw new ActivityError('CANCELLED', '页面或设置已变化，本次校准结果已丢弃')
+    })().finally(() => { this.pending = null })
+    await this.pending
+    return result
+  }
+  async preview(appId: string, requestCurrent: () => boolean): Promise<ActivityPreview> {
+    return this.calibration(requestCurrent, async signal => {
+      // Explicit local preview only: bypass old ROIs to allow recalibration,
+      // while the same recorder still enforces app identity and passive safety.
+      const frame = await this.recorder.capture({ ...this.store.config(), allowed_apps: [appId], extraction_mode: 'vision', chat_scopes: [] }, signal)
+      if (!frame || frame.app_id !== appId) throw new ActivityError('PREVIEW_WINDOW_UNAVAILABLE', '请切换到指定聊天应用的可见窗口后重新预览')
+      if (typeof frame.window_class !== 'string' || !frame.window_class.trim() || frame.window_class.length > 256) throw new ActivityError('PREVIEW_WINDOW_UNAVAILABLE', '当前窗口类型无法核实，请刷新并重新预览')
+      const size = imageSize(frame.image)
+      if (frame.image.length > 6 * 1024 * 1024) throw new ActivityError('PREVIEW_TOO_LARGE', '预览超过 6 MiB；请缩小聊天窗口后重新校准')
+      return { app_id: frame.app_id, app_name: frame.app_name, window_title: frame.window_title, window_class: frame.window_class, ...size, image_data_url: 'data:image/png;base64,' + frame.image.toString('base64') }
+    })
+  }
+  async previewOcr(encoded: string, rect: ActivityRect, language: LocalLanguage, requestCurrent: () => boolean): Promise<string> {
+    return this.calibration(requestCurrent, async signal => {
+      if (!this.recorder.ocrTitle) throw new ActivityError('OCR_UNAVAILABLE', '当前系统未提供聊天标题本机 OCR')
+      const image = Buffer.from(encoded, 'base64')
+      if (image.length > 6 * 1024 * 1024 || image.toString('base64') !== encoded) throw new ActivityError('INVALID_IMAGE', '请提供不超过 6 MiB 的有效预览图片')
+      validatePng(image)
+      return this.recorder.ocrTitle(image, rect, language, signal)
+    })
+  }
   async scan(requestCurrent: () => boolean = () => true): Promise<void> {
     if (this.pending) throw new ActivityError('BUSY', '上一轮采集尚未完成')
     const config = this.store.config()
@@ -113,7 +147,7 @@ export class ActivityService {
     if (!this.runtime.supported) throw new ActivityError('UNSUPPORTED_PLATFORM', this.runtime.platform_note || '当前环境不支持自动采集')
     if (!config.allowed_apps.length) throw new ActivityError('NO_ALLOWED_APPS', '请先设置采集应用白名单')
     const epoch = this.generation, signal = this.abort.signal
-    this.lastPoll = this.now(); this.runtime.scanning = true; this.runtime.status = 'scanning'; this.runtime.error = null
+    this.lastPoll = this.now(); this.runtime.scanning = true; this.runtime.status = 'scanning'; this.runtime.error = null; this.runtime.scope_note = null
     this.runtime.last_scan_at = new Date(this.now()).toISOString()
     const current = (): boolean => epoch === this.generation && !signal.aborted && requestCurrent()
     this.pending = (async () => {
@@ -121,7 +155,7 @@ export class ActivityService {
         this.store.prune(this.now())
         const capture = await this.recorder.capture(config, signal)
         if (!current() || !capture) { if (current()) this.runtime.status = 'no_visible_allowed_window'; return }
-        const source = this.store.addSource({ app_id: capture.app_id, app_name: capture.app_name, window_title: capture.window_title, origin: 'foreground', ocr_text: capture.ocr_text, captured_at: new Date(this.now()).toISOString() }, capture.image)
+        const source = this.store.addSource({ app_id: capture.app_id, app_name: capture.app_name, window_title: capture.window_title, ...(capture.conversation_title ? { conversation_title: capture.conversation_title } : {}), origin: 'foreground', ocr_text: capture.ocr_text, captured_at: new Date(this.now()).toISOString() }, capture.image)
         if (!current()) return
         this.runtime.last_success_at = new Date(this.now()).toISOString()
         this.runtime.status = source ? 'captured' : 'unchanged'
@@ -132,6 +166,7 @@ export class ActivityService {
         }
         if (current()) this.store.prune(this.now())
       } catch (error) {
+        if (current() && error instanceof ActivityScopeSkip) { this.runtime.status = error.status; this.runtime.scope_note = error.message; this.runtime.error = null; return }
         if (current()) { this.runtime.status = 'error'; this.runtime.error = error instanceof ActivityError ? error.message : '本轮采集或语义抽取失败，已保存的记录仍可查看'; throw error instanceof ActivityError ? error : new ActivityError('CAPTURE_OR_EXTRACTION_FAILED', this.runtime.error) }
       } finally { this.runtime.scanning = false }
     })().finally(() => { this.pending = null })
@@ -188,6 +223,8 @@ export class ActivityService {
           if (!current()) throw new ActivityError('SESSION_CLOSED', '原请求连接已关闭')
           return { type: 'activity.result', id, ok: true, apps }
         }
+        case 'activity.preview': return { type: 'activity.result', id, ok: true, preview: await this.preview(String(message.app_id), current) }
+        case 'activity.preview_ocr': return { type: 'activity.result', id, ok: true, recognized_title: await this.previewOcr(String(message.image_base64), message.rect as ActivityRect, message.ocr_language as LocalLanguage, current) }
         case 'activity.configure': {
           const patch = { ...(message.patch as Partial<import('./types').ActivityConfig>) }
           const previous = this.store.config()

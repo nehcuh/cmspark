@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { getConfig, type VisionConfig } from '../config'
 import type { ActivityConfig } from './types'
+import { endpointsMatch } from '../llm/vision-reuse-inherit'
 
 export function activityModelTarget(config: ActivityConfig): { id: string; label: string } {
   const mode = config.extraction_mode || 'ocr'
@@ -12,8 +13,19 @@ export function activityModelTarget(config: ActivityConfig): { id: string; label
   }
   const model = mode === 'dedicated' ? config.dedicated_vision : app.vision
   // Include effective gateway auth in the binding without exposing it to the renderer.
-  const auth = mode === 'vision' && app.vision?.use_main_auth ? app.llm : undefined
-  const id = createHash('sha256').update(JSON.stringify([mode, model?.base_url, model?.model_name, model?.protocol, model?.api_key, auth?.auth_style, auth?.client_header_profile, auth?.claude_code_compat_version, auth?.extra_headers, auth?.anthropic_version])).digest('hex')
+  const inherited = mode === 'vision' && app.vision?.use_main_auth && endpointsMatch(app.llm, app.vision) &&
+    (app.llm.protocol ?? 'openai') === (app.vision.protocol ?? 'openai') ? app.llm : undefined
+  const configured = model as Partial<VisionConfig> | undefined
+  // Match resolveVisionLlmConfig's per-field precedence; ignore unused main auth.
+  const auth = {
+    auth_style: inherited?.auth_style ?? configured?.auth_style,
+    client_header_profile: inherited?.client_header_profile ?? configured?.client_header_profile,
+    claude_code_compat_version: inherited?.claude_code_compat_version ?? configured?.claude_code_compat_version,
+    extra_headers: inherited?.extra_headers ?? configured?.extra_headers,
+    anthropic_version: inherited?.anthropic_version ?? configured?.anthropic_version,
+  }
+  const headers = auth.extra_headers === undefined ? undefined : Object.fromEntries(Object.entries(auth.extra_headers).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+  const id = createHash('sha256').update(JSON.stringify([mode, model?.base_url, model?.model_name, model?.protocol, model?.api_key, auth?.auth_style, auth?.client_header_profile, auth?.claude_code_compat_version, headers, auth?.anthropic_version])).digest('hex')
   let host = '未配置端点'
   try { host = new URL(model?.base_url || '').origin } catch { /* show unconfigured */ }
   return { id, label: `${mode === 'dedicated' ? '专用图像模型' : '复用视觉配置'} · ${host} · ${model?.model_name || '未配置模型'} · ${model?.protocol || 'openai'}` }
