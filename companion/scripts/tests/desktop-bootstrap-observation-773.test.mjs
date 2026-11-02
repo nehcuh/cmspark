@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import {desktopAcceptanceVariant} from '../build-desktop-windows.mjs'
-import {desktopBootstrapObservationFixture773,bootstrapObservationSites773} from '../desktop-bootstrap-observation-fixture.mjs'
+import {desktopBootstrapObservationFixture773,desktopMcpBootstrapObservationFixture773,bootstrapObservationSites773} from '../desktop-bootstrap-observation-fixture.mjs'
+import {desktopMcpFixture} from '../desktop-mcp-fixture.mjs'
 const root=path.resolve(import.meta.dirname,'../..')
 const read=p=>fs.readFileSync(path.join(root,p),'utf8')
 test('773 actual inheritance producer source keeps every original byte and operand in LF and CRLF',()=>{
@@ -75,4 +76,40 @@ test('782 relaunch projections expose existing bounded rows without changing aut
  assert.match(source,/bootstrapObservation773:\(\)=>\(\{clock:"native-first-hook-250ms" as const,processInstanceAttributed:false,rows:bootstrapRows773\.map\(row=>\[\.\.\.row\]\)\}\)/)
  assert.match(source,/await until\(\(\) => has\("AUTH_1"\) && listReads > 0\)/)
  assert.match(source,/assert\.equal\(exits, launches, "Every actually launched owned native process must settle"\)/)
+})
+
+test('825 actual MCP producer reuses only WebView 773 sites and restores every source byte in LF/CRLF',()=>{
+ const original=read('src/desktop/native/DesktopHost.cpp'),fixture=read('tests/fixtures/desktop-476/native-acceptance.cpp'),form=read('tests/fixtures/desktop-476/native-form.js')
+ for(const eol of ['\n','\r\n']){
+  const host=original.replace(/\r?\n/g,eol),control=fixture.replace(/\r?\n/g,eol)
+  const base=desktopMcpFixture('cpp',host,control,form),result=desktopMcpBootstrapObservationFixture773(base.source)
+  assert.equal(result.inverse,base.source);assert.equal(base.inverse,host)
+  assert.deepEqual(result.sites,bootstrapObservationSites773)
+  for(const point of [5,7,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,27,28,29])assert.equal(result.source.split('D476Acceptance::obApi773('+point+',').length,2)
+  assert.equal(result.source.split('D476Acceptance::obCallback773(6,hr,env!=nullptr);').length,2)
+  assert.equal(result.source.split('D476Acceptance::obCallback773(8,code,host!=nullptr);').length,2)
+  assert.equal(result.source.split('D476Acceptance::ObScope773 resourceScope773(30);').length,2)
+  assert.ok(result.source.includes('D476Acceptance::obApi773(29,[&](){return web->Navigate(document_url);})'))
+  assert.ok(result.source.includes('D476Acceptance::obApi773(24,[&](){return web->add_NavigationCompleted('))
+  assert.ok(result.source.includes('phase=L"ready";ready=true;DESKTOP_TEST_NOTE(ready_accepted)D476Acceptance::obBind773(*this);'))
+  assert.ok(result.source.includes('void D476Acceptance::emit(Desktop& h,std::wstring const& value){emit(h,(L"D480A_"+value).c_str());}'))
+  assert.equal(result.source.includes('D480Acceptance::'),false,'no #480 behavior is installed')
+  assert.equal(result.source.includes('inheritedChecker'),false)
+  assert.equal(result.source.includes('ObScope773 obScope773(26)'),false)
+  assert.ok(result.source.includes('obRows773[192]'));assert.ok(result.source.includes('ordinal>8'));assert.ok(result.source.includes('elapsed/250'))
+  for(const changed of [base.source.replace('struct D476Acceptance {','struct ChangedAcceptance {'),base.source.replace('web->Navigate(document_url)','web->ChangedNavigate(document_url)'),base.source+base.source])assert.throws(()=>desktopMcpBootstrapObservationFixture773(changed),/BOOT773_/)
+ }
+})
+
+test('825 actual builder selects extra bootstrap observation only for the unshipped MCP family',()=>{
+ const builder=read('scripts/build-desktop-windows.mjs'),selection=/const mcpObserved=([^;]+);if\(mcpObserved&&mcpObserved\.inverse!==mcpVariant\.source\)/g
+ const matches=[...builder.matchAll(selection)];assert.equal(matches.length,1)
+ const select=new Function('family','mcpVariant','desktopMcpBootstrapObservationFixture773','desktopConfirmationObservationFixture','return '+matches[0][1])
+ const variant={source:'owned-generated-source'},mcp=value=>({kind:'mcp',inverse:value}),local=(value,kind)=>({kind,inverse:value})
+ assert.deepEqual(select('mcp',variant,mcp,local),{kind:'mcp',inverse:variant.source})
+ assert.deepEqual(select('local',variant,mcp,local),{kind:'LOCAL',inverse:variant.source})
+ for(const family of ['metadata','dialog','resource','workspace','archive'])assert.equal(select(family,variant,mcp,local),null)
+ const test=read('tests/desktop-native-mcp-476.test.ts');assert.match(test,/timeout:20000/)
+ assert.match(test,/bootstrap773:\{clock:"native-first-hook-250ms",processInstanceAttributed:false,rows:bootstrapRows773\.map\(row=>\[\.\.\.row\]\)\}/)
+ assert.match(test,/observeNativePhaseResponses\(ws,nativePhases,nativeNavigation,\{rows:bootstrapRows773,seen:bootstrapSeen773\}\)/)
 })
