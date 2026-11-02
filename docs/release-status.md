@@ -1,21 +1,23 @@
 # 版本与交付状态
 
-> 源码版本 **0.7.0（已于 2026-10-27 正式发布）** · 核对日期：2026-10-27。
+> 源码开发版本 **0.8.0（尚未正式发布）** · 核对日期：2026-11-02。
 
 ## 源码、发行包与已安装应用
 
 | 项目 | 当前事实 |
 |---|---|
-| 源码版本 | Companion 与扩展统一为 **0.7.0**；CLI、协议版本声明和安装器默认值同步。能力变化见 [CHANGELOG](../CHANGELOG.md)。 |
-| GitHub 正式发行包 | 截至核对日期，最新为 [v0.7.0](https://github.com/nehcuh/cmspark/releases/tag/v0.7.0)，于 2026-10-27 正式发布。0.6.12 / 0.6.13 / 0.6.14 的源码记录已归入该发行版。 |
-| 本机应用 | 2026-10-26 的本机换装记录显示 macOS Companion 从主线提交 `cbf3d656a561c005f45c1206b9d9d90e03782e0c` 构建并安装 0.7.0；是否已换装后续提交的构建尚未核实。源码合并和版本号更新不会自动换装应用、重载扩展或更新 ITCra；请分别核对实际运行版本。 |
-| 本批动作 | 0.7.0 已完成三平台 dry-run 与 tag-triggered Release，正式标签和安装包已发布；企业双场景的历史发布门槛尚未完成，见下文。 |
+| 源码版本 | Companion 与扩展统一为 **0.8.0**；锁文件、CLI、协议声明和安装器默认值同步。 |
+| GitHub 正式发行包 | 发布准备时最新为 [v0.7.0](https://github.com/nehcuh/cmspark/releases/tag/v0.7.0)。0.8.0 须在主线 CI、三平台 dry-run 与 tag Release 成功后才算正式发布。 |
+| 本机应用 | 2026-11-02 换装前实际版本为 `0.7.1-preview.20261031.2`。源码合并和版本号更新不会自动替换本机应用或重载扩展。 |
+| 本批动作 | 归档 0.7.0 后增量，准备 0.8.0；新增跨协议视觉与工作中心截图待办，保留独立模型、本机 Qwen3-VL 和目标绑定授权。 |
 
 ## 发布验收基线
 
-PR #781 已合入主线 `b4a84a0651a3738e32fe9c9948450a198369ab00`，与受审全树一致；[CI 40269449616](https://github.com/nehcuh/cmspark/actions/runs/40269449616) 及会话恢复共 8 项通过，包含 Windows/macOS 原生验收。Windows 官方公开回执核实 5,786 份源码、9,491 PASS / 65 既有 SKIP / 0 FAIL；跳过不算通过，公开回执也不替代 #650 严格密封证据。0.7.0 标签目标 `d99acc564991bb9431ad67fdf36e789b111f4c2d`（可用 `git rev-parse 'v0.7.0^{commit}'` 核对）的主线 CI、会话恢复、三平台发布 dry-run 与正式 Release 分别见 [CI 40420517676](https://github.com/nehcuh/cmspark/actions/runs/40420517676)、[会话恢复 40420518205](https://github.com/nehcuh/cmspark/actions/runs/40420518205)、[dry-run 40440854176](https://github.com/nehcuh/cmspark/actions/runs/40440854176) 和 [Release 40442388831](https://github.com/nehcuh/cmspark/actions/runs/40442388831)，均已成功。此页在标签发布之后更新；标签内页面保留发布前状态。
+视觉功能 [PR #823](https://github.com/nehcuh/cmspark/pull/823) 已合入 `55152f741d06dc64158135cb0ca5e44e9b245ef2`；该提交的 [主线 CI](https://github.com/nehcuh/cmspark/actions/runs/41450565129)、会话恢复与两项 ARM 验收均成功。Linux 夹具观察 [PR #821](https://github.com/nehcuh/cmspark/pull/821) 旧 head 的 Windows 终端用例曾在 45 秒内未开始操作，观察记录前台属于其它进程；这不足以证明唯一根因。集成最新 main 后核对同一提交的完整门禁，不放宽时限、跳过用例或将观察本身当作修复。
 
-0.7.0 包含此前未正式发布的 0.6.12、0.6.13、0.6.14 及全部 Unreleased 优化和修复。[#457 历史验收台账](audit/0.7.0-20260907/release-acceptance.md) 曾将企业双场景列为发布前置条件；0.7.0 已发布这一事实并不证明该验收已通过，#457 仍开放。现有记录尚未核实该历史门槛的豁免或其他处置，不能据此宣称其已通过。
+正式发布前须完成版本一致性、相关测试、精确主线 CI 与 [Release 工作流](../.github/workflows/release.yml) 的三平台 dry-run，再对通过的提交打 `v0.8.0` 标签。发布前页面不预记发布成功；标签内页面保留准备时状态，发布后的回执另更新主线文档。
+
+[#457 历史验收台账](audit/0.7.0-20260907/release-acceptance.md) 的企业双场景仍未完成；0.7.0 已发布这一事实不证明该验收通过。0.8.0 沿用现有公开发行范围，不将该企业验收列为本次已完成能力；用户本次明确授权发布，未授权扩大企业能力声明。
 
 ## 已合并与尚待验收的边界
 
