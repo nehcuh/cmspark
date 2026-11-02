@@ -1,0 +1,47 @@
+{
+  "issue": 825,
+  "gate": "single_test_unit_crlf_extractor_review_before_commit_and_ci",
+  "verdict": "APPROVE",
+  "reviewed_base": "ec9edbd417a7889c5a436ac64b158b547e95d565",
+  "reviewed_source_paths": [
+    "companion/tests/activity-apps-825.test.ts"
+  ],
+  "source_diff_sha256": "69780493fc74939920d5e73b932c7f149fcb31d87915fbe56e49578febccb21d",
+  "prompt_sha256": "080cf64b44a506a19b886478e4f74206051993893fdcc2b21447ebb691c42ae6",
+  "prompt_bytes": 49469,
+  "api_started_at_utc": "2026-11-02T17:00:08.150168+00:00",
+  "recorded_at_utc": "2026-11-02T17:02:16.893747+00:00",
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 13212,
+      "outputTokens": 4760,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.18506,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "process_exit": 0,
+  "is_error": false,
+  "duration_ms": 74981,
+  "num_turns": 1,
+  "review_text_sha256": "6ef1725bb1abe9ff018adc1307cc47a651c646cc8318b92a681310e21e7a61c9",
+  "source_freeze_binding": "Input digest verified before API; coordinator holds source frozen. Reviewer writes only audit records, no product/test changes.",
+  "extra_formatting_api_calls": 0,
+  "evidence_scope": {
+    "prior_windows_head": "Actual Apps825/original758/Scope825 native capabilities passed; producer extraction failed before PowerShell, not SKIP.",
+    "local_fixed_suite": "5 PASS / 2 Windows-specific SKIP / 0 FAIL; real-source LF/CRLF CPU case executed.",
+    "required_next": "Corrected-head Windows producer control must reach PowerShell and pass; all required CI and release gates remain."
+  },
+  "allowed_next_step": "Commit the reviewed one-file test correction and rerun CI",
+  "not_approved_yet": [
+    "corrected-head Windows producer control",
+    "complete final CI",
+    "release publishing"
+  ]
+}

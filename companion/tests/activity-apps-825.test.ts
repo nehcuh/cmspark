@@ -51,18 +51,34 @@ test('#825 Windows Apps rejects invalid states and identities, and excludes sens
   }
 })
 
+function appsProducerParts825(source: string): { functions: string; body: string } {
+  const eol = source.includes('\r\n') ? '\r\n' : '\n'
+  const functions = source.slice(source.indexOf('function Process-Identity'), source.indexOf('function Window-Info'))
+  const start = source.indexOf(`if ($Mode -eq 'Apps') {${eol}  # Window observations`)
+  const end = source.indexOf(`} else {${eol}  $h =`, start)
+  assert.ok(start >= 0 && end > start)
+  assert.ok(functions.includes('function App-Name'))
+  return { functions, body: source.slice(start, end) + '}' }
+}
+
+test('#825 Apps producer extraction preserves real-source LF and CRLF bytes', () => {
+  const lf = fs.readFileSync(resolveWinScript('activity-windows.ps1'), 'utf8').replace(/\r\n/g, '\n')
+  const expected = appsProducerParts825(lf)
+  for (const eol of ['\n', '\r\n']) {
+    const actual = appsProducerParts825(lf.replace(/\n/g, eol))
+    for (const part of ['functions', 'body'] as const) {
+      assert.equal(actual[part], expected[part].replace(/\n/g, eol))
+    }
+  }
+})
+
 test('#825 Windows PowerShell Apps producer keeps 201/4096 identities, excludes foreign/protected paths and refuses 4097', {
   skip: process.platform !== 'win32', timeout: 30_000,
 }, async () => {
   // Execute the actual identity/name/Apps code with inert native/process leaves.
   // This consumes genuine producer JSON, rather than pinning a handwritten DTO.
   const source = fs.readFileSync(resolveWinScript('activity-windows.ps1'), 'utf8')
-  const functions = source.slice(source.indexOf('function Process-Identity'), source.indexOf('function Window-Info'))
-  const start = source.indexOf("if ($Mode -eq 'Apps') {\n  # Window observations")
-  const end = source.indexOf('} else {\n  $h =', start)
-  assert.ok(start >= 0 && end > start)
-  assert.ok(functions.includes('function App-Name'))
-  const body = source.slice(start, end) + '}'
+  const { functions, body } = appsProducerParts825(source)
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-apps825-producer-'))
   try {
     const script = path.join(directory, 'producer.ps1')
