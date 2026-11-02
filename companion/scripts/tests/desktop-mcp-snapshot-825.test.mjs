@@ -63,10 +63,7 @@ function cppDriver(){
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <fstream>
-#include <filesystem>
-#include <iostream>
-#include <map>
+#include <cstdio>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -75,6 +72,7 @@ function cppDriver(){
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#include <io.h>
 using HINTERNET=void*;
 #else
 ${read('tests/fixtures/desktop-476/mcp-snapshot-825-posix.h')}
@@ -83,8 +81,8 @@ int mode825=0;std::atomic<unsigned> clockCalls825{0};uint64_t target825=0;uint64
 BOOL writeProbe825(HANDLE f,void const* data,DWORD size,DWORD* wrote,std::nullptr_t){if(mode825==7){*wrote=0;return false;}return WriteFile(f,data,size,wrote,nullptr);}
 ${actualHeader}
 std::atomic<ULONGLONG> clock773{1000};ULONGLONG GetTickCount773(){return clock773.load();}
-struct JsonObject{std::map<std::wstring,std::wstring> fields;std::wstring Stringify()const{return fields.at(L"id");}};
-void put(JsonObject& out,std::wstring const& key,std::wstring const& value){out.fields[key]=value;}
+struct JsonObject{std::wstring id;std::wstring Stringify()const{return id;}};
+void put(JsonObject& out,std::wstring const& key,std::wstring const& value){if(key==L"id")out.id=value;}
 std::string utf8(std::wstring const& value){return std::string(value.begin(),value.end());}
 std::mutex wireMutex;std::condition_variable changed;std::vector<std::string> wire;bool release825=false,writerDone825=false,uiReady825=false,parked825=false;
 uint64_t probeNow825(){
@@ -109,8 +107,15 @@ class Desktop{std::mutex socket_lock;HINTERNET socket=(void*)1;std::atomic<bool>
 ${functions.replaceAll('GetTickCount64()','GetTickCount773()')}
 void nestedComPump825(){ /* A nested COM/SDK dispatch never executes run()'s hook. */ }
 int main(int argc,char** argv){assert(argc==2);mode825=std::stoi(argv[1]);
- {std::ifstream file(std::filesystem::path(argv[0]).parent_path()/"mcp-startup-825.bin",std::ios::binary);uint32_t seed[32]{};file.read((char*)seed,sizeof(seed));assert(file.gcount()==sizeof(seed));target825=uint64_t(seed[4])|(uint64_t(seed[5])<<32);}
- if(mode825==8)std::filesystem::resize_file(std::filesystem::path(argv[0]).parent_path()/"mcp-startup-825.bin",127);
+ std::string seedPath825(argv[0]);seedPath825.resize(seedPath825.find_last_of("\\\\/")+1);seedPath825+="mcp-startup-825.bin";
+ {FILE* file=std::fopen(seedPath825.c_str(),"rb");assert(file);uint32_t seed[32]{};auto count=std::fread(seed,1,sizeof(seed),file);std::fclose(file);assert(count==sizeof(seed));target825=uint64_t(seed[4])|(uint64_t(seed[5])<<32);}
+ if(mode825==8){FILE* file=std::fopen(seedPath825.c_str(),"r+b");assert(file);
+#ifdef _WIN32
+ int resized=_chsize_s(_fileno(file),127);
+#else
+ int resized=ftruncate(fileno(file),127);
+#endif
+ std::fclose(file);assert(resized==0);}
 #ifndef _WIN32
  std::string executable(argv[0]);module825=std::wstring(executable.begin(),executable.end());
 #endif
@@ -123,7 +128,7 @@ int main(int argc,char** argv){assert(argc==2);mode825=std::stoi(argv[1]);
  {std::lock_guard<std::mutex> lock(wireMutex);uiReady825=true;changed.notify_all();}
  });
  {std::unique_lock<std::mutex> lock(wireMutex);bool done=changed.wait_for(lock,std::chrono::seconds(4),[]{return writerDone825;});assert(done);
-  for(auto const& id:wire)std::cout<<id<<"\\n";
+  for(auto const& id:wire){std::fwrite(id.data(),1,id.size(),stdout);std::fputs("\\n",stdout);}
   release825=true;changed.notify_all();}
  ui.join();worker.join();return 0;
 }
@@ -133,6 +138,7 @@ int main(int argc,char** argv){assert(argc==2);mode825=std::stoi(argv[1]);
 test('825 actual native worker/file reader distinguishes same-wire schedules, coherent publication, nested dispatch and UNKNOWNs', {timeout:30000}, async()=>{
  let clockValue=Date.now();class ControlledClock825 extends Date{static now(){return clockValue}}
  const helper=nodeHelper(ControlledClock825),dir=fs.mkdtempSync(path.join(os.tmpdir(),'mcp-snapshot-owned-825-'))
+ let primary825
  try{
   const cpp=path.join(dir,'probe.cpp'),binary=path.join(dir,process.platform==='win32'?'probe.exe':'probe');fs.writeFileSync(cpp,cppDriver())
   let compiler,args,env
@@ -196,5 +202,18 @@ test('825 actual native worker/file reader distinguishes same-wire schedules, co
   // Missing writer, data corruption and copied-asset drift remain observations/setup failures.
   const owned=path.join(dir,'unavailable');fs.mkdirSync(owned);const receipt=await helper.prepareMcpSnapshot825(native,owned,clockValue+1800);assert.equal(receipt.read().status,'UNKNOWN');receipt.close()
   fs.writeFileSync(path.join(source,'assets','app.js'),'drift');const drift=path.join(dir,'drift');fs.mkdirSync(drift);await assert.rejects(()=>helper.prepareMcpSnapshot825(native,drift,Date.now()+1800),/OWNED_MCP_SNAPSHOT_ASSETS/)
- }finally{fs.rmSync(dir,{recursive:true,force:true})}
+ }catch(error){primary825=error;throw error}finally{try{fs.rmSync(dir,{recursive:true,force:true})}catch(cleanup){if(primary825===undefined)throw cleanup;}}
+})
+
+test('826 actual CPU callback preserves compiler failure through cleanup failure and never hides cleanup-only failure',async()=>{
+ const source=read('scripts/tests/desktop-mcp-snapshot-825.test.mjs'),ast=ts.createSourceFile('actual.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS)
+ const cases=ast.statements.filter(node=>ts.isExpressionStatement(node)&&ts.isCallExpression(node.expression)&&node.expression.expression.getText(ast)==='test'&&node.expression.arguments[0]?.text?.startsWith('825 actual native worker'))
+ assert.equal(cases.length,1);const callback=cases[0].expression.arguments[2],attempts=callback.body.statements.filter(ts.isTryStatement);assert.equal(attempts.length,1)
+ const timeout=Object.assign(Error('owned-compiler-timeout'),{code:'ETIMEDOUT'}),cleanup=Object.assign(Error('owned-cleanup-busy'),{code:'EBUSY'})
+ let removed=0
+ const fsPort={mkdtempSync:()=> 'owned-case',writeFileSync(){},rmSync(){removed++;throw cleanup}}
+ const run=vm.runInNewContext('('+callback.getText(ast)+')',{Date,fs:fsPort,nodeHelper:()=>({}),os,path,process,desktopWindowsToolchain:()=>({cl:'owned-compiler',env:{}}),cppDriver:()=> 'owned inert cpp',spawnSync:()=>({error:timeout,status:null,signal:'SIGTERM',stdout:'',stderr:''}),assert})
+ await assert.rejects(run(),error=>error.code==='ERR_ASSERTION'&&error.actual===timeout);assert.equal(removed,1)
+ const body=attempts[0].finallyBlock.getText(ast),finalize=new Function('fs','dir','primary825',body)
+ assert.throws(()=>finalize(fsPort,'owned-case',undefined),error=>error===cleanup);assert.equal(removed,2)
 })
