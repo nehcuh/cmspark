@@ -31,6 +31,8 @@ PR #824 最终提交 `8fceac9f` 的[十项 CI 检查](https://github.com/nehcuh/
 
 聊天范围夹具现以一次命中自有只读文本框的 OS 点击替换旧激活／焦点请求，模拟用户先选中聊天窗口；该 setup 不改变产品被动采集，也不降低原就绪、10 秒／180 秒与全业务断言。[独立源码验证](audit/reviews/activity-826-scope-input-independent-source.md)及 [GLM 源码复审](audit/reviews/activity-826-scope-input-glm-source.md)已通过，实际 Windows 输入及完整业务继续由精确提交的原生 CI 验收。
 
+新增测量 VM 后，`6d42d79e` 的 CI 在既有 Node 清单合同中实际失败：Release 的 setup-node 作业由 2 个变为 3 个。现只同步该固定数量，原 CI 四处与所有 22.23.4 版本断言保持；完整早期检查 151 项及 13 个独立缺失／重复／错版本反例通过，[独立核验](audit/reviews/activity-826-release-node-inventory-independent.md)与 [GLM 增量门](audit/reviews/activity-826-release-node-inventory-glm-source.md)均批准此消费者同步。下一精确 head 仍须通过完整 CI。
+
 [#457 历史验收台账](audit/0.7.0-20260907/release-acceptance.md) 的企业双场景仍未完成；0.7.0 已发布这一事实不证明该验收通过。0.8.0 沿用现有公开发行范围，不将该企业验收列为本次已完成能力；用户本次明确授权发布，未授权扩大企业能力声明。
 
 ## 已合并与尚待验收的边界
