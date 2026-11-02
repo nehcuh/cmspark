@@ -6,7 +6,7 @@ MCP 测试宿主的初始化区间另外复用原 #773 WebView API 前后、HRES
 
 #826 的新增 Windows CPU 快照驱动按构建→运行验证分离：在既有 `testFixtures` 构建阶段使用当前源生成并编译私有产物，编译接受上限由新增测试原设的 20 秒移至构建命令已有的 120 秒；30 秒 case 改为只计运行验证，旧端到端总界限并非不变。负责人在三次实际编译门失败后作此结构裁决，见[裁决与原 DoD](audit/reviews/activity-826-cpu-build-separation-coordinator-decision.md)。两个 Windows lane 均须在构建后执行明确消费者，核当次生成源、输入、目标和完整二进制摘要；缺失、陈旧或损坏直接失败，不现场重编译或跳过。Mac/Linux 保留原测试内 20 秒编译路径；MCP 原生 20 秒、CPU 运行 30 秒、每 exe 6 秒、业务资格、权限与清理保持。该结构修正不认定 MSVC 历史超时的唯一原因。
 
-#826 的 MCP 延迟测量仅由 Release 手动输入 `mcp_latency_probe_826=true` 开启：独立 Windows VM 从本次真实编译件仅派生注册时限 20→60 秒，原源码／编译件只读，快照仍按原 20 秒截止取样，业务、权限与清理保持。该运行明确为 NON_ACCEPTANCE，跳过打包与发布，也不算三平台预演；正常 dispatch/tag 流程及原十项 CI、20 秒验收不变。设计、实际加载／配置隔离／清理及浅克隆控制均经独立验证与 [GLM 源码门](audit/reviews/activity-826-mcp-probe-glm-source.md)。只进行一次有判别目的的测量：晚成功不证明旧失败实例会完成，更不自动授权扩大验收时限。
+#826 曾在 `6d42d79e` 通过独立 Windows VM 进行一次明确的 NON_ACCEPTANCE 延迟测量，仅将派生测试的注册时限 20→60 秒，原快照仍按 20 秒截止取样。实际完整业务在 7.964 秒通过，属于非判别结果；未扩大原验收时限。该一次测量入口和脚本现已退役，Release 与 Node 清单逐字恢复原流程；[实际回执](audit/reviews/activity-826-mcp-probe-6d42d79e.md)及[当时源码复审](audit/reviews/activity-826-mcp-probe-glm-source.md)归档保留，不再追加测量。
 
 聊天范围的未分发 WPF 夹具以一次受限 OS 点击替换原 `Activate`／`Focus` setup，模拟用户先选中自己的聊天窗口。这是夹具输入契约的改变，不是真人批准，也不改变产品的被动采集。每个新主窗／独立窗只在渲染后派生只读文本框内点，核当前布局、实际 WPF 命中、native root HWND 与本进程 PID 后发送一个 move/down/up 批；遮挡或资格失败即零输入，不抬窗、不重试。只有完整插入后才开启成功围栏，ready 仍须满足原真实前台及键盘焦点条件；短输入后的迟到事件不能发布 ready。命中检查与系统输入并非原子 HWND 绑定；实际原生业务和清理仍须验收，原 10 秒收据和 180 秒用例门不变。
 
@@ -178,6 +178,8 @@ CI, Windows SEA packaging and native builds use exact Node 22.23.4, including ma
 ## CI 原生验收分层（#760）
 
 原先一个步骤包含的四组命令，现按原顺序分别显示：`Build native desktop fixtures (#480)`、`Compile native desktop acceptance tests (#480)`、`Native desktop bootstrap and process acceptance (#480)`、`Native desktop interaction acceptance (#476)`。每步保留相同 OS 条件与 bash 失败退出；任一步失败，后续正常步骤不运行，原 job/check 名和合并验收要求不变。阶段名用于区分构建、编译、进程/协议和桌面交互的失败，不代表每个混合测试文件已进一步拆成单一类别。
+
+#826 将当前需求的 Windows 活动验收前置于完整原生测试编译之后、MCP bootstrap 之前；保留原三个测试文件并明确追加两个源码控制文件。四组原生门保留相对顺序，原连续调度只允许这一个完整验证的步骤介入；750／760 与直接 NSIS 消费者须先严格核唯一位置、完整对象和五个精确参数，再投影至历史密封形状，当前源码不能以旧调度判绿。[负责人裁决](audit/reviews/activity-826-activity-first-coordinator-decision.md)明确承认 native lane 的 UI／输入历史改变，不作为 MCP 修复或原桌面上下文等价证明；census 条件过滤后的 MCP 前实际执行前缀保持逐对象相同。任一原 MCP 20 秒、interaction、census 或活动用例失败，整个任务仍失败。已完成的临时测量同时退役；独立设计与 [GLM 设计门](audit/reviews/activity-826-activity-first-glm-design.md)通过，[独立源码核验](audit/reviews/activity-826-activity-first-independent-source.md)和 [GLM 源码门](audit/reviews/activity-826-activity-first-glm-source.md)也已通过，精确平台结果继续决定交付。
 
 编译、协议、Windows HANDLE/进程与资源清理仍是必需验收。前台、键盘、原生确认等交互用例只有在证明当前环境不满足具体前提后，才考虑迁到经过验证的专用交互 runner，并保留同一提交/产物的必需结果。GitHub Windows 并非天然无法运行图形测试；[微软提供了 windows-latest UI 示例](https://learn.microsoft.com/en-us/windows/apps/develop/ai-assisted/testing#run-tests-in-ci)，但它不保证本项目所有 Win32 焦点前提。
 

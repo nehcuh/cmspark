@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { validateWindowsCiFeedback750, condition750, parseWorkflow750, printWorkflow750 } from './windows-ci-feedback-750-contract.mjs'
+import { validateWindowsCiFeedback750, condition750, parseWorkflow750, printWorkflow750, projectActivityFirst826, ACTIVITY826_NAME, ACTIVITY826_CONTROLS } from './windows-ci-feedback-750-contract.mjs'
 
 const workflow = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
 
@@ -42,6 +42,38 @@ test('#750 finite condition grammar retains status and refuses unknown syntax', 
 })
 
 const find = (doc, name) => doc.jobs['smoke-os'].steps.find(step => step.name === name)
+test('#826 actual current workflow requires the front five-file form, never the complete historical form', () => {
+  for (const source of [workflow, workflow.replaceAll('\n', '\r\n')]) {
+    validateWindowsCiFeedback750(source)
+    const doc = parseWorkflow750(source), projected = projectActivityFirst826(doc.jobs['smoke-os'].steps)
+    doc.jobs['smoke-os'].steps = projected
+    assert.throws(() => validateWindowsCiFeedback750(printWorkflow750(doc)), { code: 'ERR_ASSERTION' }, 'moving back and removing both new operands is not current CI')
+    assert.throws(() => projectActivityFirst826(projected), { code: 'ERR_ASSERTION' }, 'projection cannot silently adopt the historical form')
+  }
+})
+const activityOperands826 = ['activity-platform-native-758', 'activity-apps-825', 'activity-scope825-native'].map(name => ' .test-dist/tests/' + name + '.test.js').concat(ACTIVITY826_CONTROLS)
+for (const operand of activityOperands826) for (const change of ['missing', 'duplicate', 'substitute']) test('#826 current Activity operand refuses ' + change + ': ' + operand.trim(), () => {
+  validateWindowsCiFeedback750(workflow)
+  const doc = parseWorkflow750(workflow), step = find(doc, ACTIVITY826_NAME)
+  const replacement = change === 'missing' ? '' : change === 'duplicate' ? operand + operand : ' .test-dist/tests/foreign.test.js'
+  assert.equal(step.run.split(operand).length, 2); step.run = step.run.replace(operand, replacement)
+  const source = printWorkflow750(doc)
+  for (const value of [source, source.replaceAll('\n', '\r\n')]) assert.throws(() => validateWindowsCiFeedback750(value), { code: 'ERR_ASSERTION' })
+})
+for (const [label, mutate] of [
+  ['duplicated Activity', doc => doc.jobs['smoke-os'].steps.push(structuredClone(find(doc, ACTIVITY826_NAME)))],
+  ['missing original environment', doc => { delete find(doc, ACTIVITY826_NAME).env }],
+  ['changed environment', doc => { find(doc, ACTIVITY826_NAME).env.CMSPARK_ACTIVITY_NATIVE_758 = '0' }],
+  ['always after failure', doc => { find(doc, ACTIVITY826_NAME).if = 'always()' }],
+  ['new timeout', doc => { find(doc, ACTIVITY826_NAME)['timeout-minutes'] = 99 }],
+  ['after bootstrap', doc => { const steps = doc.jobs['smoke-os'].steps, step = steps.splice(steps.findIndex(s => s.name === ACTIVITY826_NAME), 1)[0]; steps.splice(steps.findIndex(s => s.name === 'Native desktop bootstrap and process acceptance (#480)') + 1, 0, step) }],
+  ['unknown Activity interleave', doc => { const steps = doc.jobs['smoke-os'].steps; steps.splice(steps.findIndex(s => s.name === ACTIVITY826_NAME), 0, { name: 'unowned UI', run: 'echo ignored' }) }],
+]) test('#826 current front contract rejects ' + label, () => {
+  validateWindowsCiFeedback750(workflow)
+  const doc = parseWorkflow750(workflow); mutate(doc)
+  const source = printWorkflow750(doc)
+  for (const value of [source, source.replaceAll('\n', '\r\n')]) assert.throws(() => validateWindowsCiFeedback750(value), { code: 'ERR_ASSERTION' })
+})
 const census = 'Complete Windows Companion census (#650)'
 const artifact = 'Windows census finite public receipts (#650)'
 const office = 'Office compatibility and relocated runtime (#611)'

@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { validateCockpitSteps748 } from "./windows-ci-feedback-750-contract.mjs"
+import { validateCockpitSteps748, projectActivityFirst826, ACTIVITY826_CONTROLS, ACTIVITY826_NAME } from "./windows-ci-feedback-750-contract.mjs"
 import { fetchNsisPackage, verifiedNsisSetup, requireWindowsCi, NSIS_PACKAGE_URL, MAX_PACKAGE_BYTES } from "../ensure-ci-nsis.mjs"
 
 test("the failed metadata lookup is replaced by the exact same pinned installer package", async () => {
@@ -304,8 +304,20 @@ function censusStepsWithReviewedFirstEvidence723(raw) {
   const steps = workflowYaml.load(raw).jobs['smoke-os'].steps
   // This checks the exact retained scalar controls and authorized retirement
   // of the first-identity pair before making the unchanged legacy view.
-  return validateCockpitSteps748(steps)
+  return validateCockpitSteps748(projectActivityFirst826(steps))
 }
+test('current early NSIS consumer requires Activity-first and both source-control operands', () => {
+  const raw = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  censusStepsWithReviewedFirstEvidence723(raw)
+  const old = workflowYaml.load(raw), steps = old.jobs['smoke-os'].steps
+  const step = steps.splice(steps.findIndex(value => value.name === ACTIVITY826_NAME), 1)[0]
+  for (const operand of ACTIVITY826_CONTROLS) step.run = step.run.replace(operand, '')
+  steps.splice(steps.findIndex(value => value.name === 'Compile shared companion test inputs (#650)') + 1, 0, step)
+  assert.doesNotThrow(() => validateCockpitSteps748(steps), 'the sealed historical helper still accepts its historical object')
+  for (const source of [workflowYaml.dump(old), workflowYaml.dump(old).replaceAll('\n', '\r\n')]) {
+    assert.throws(() => censusStepsWithReviewedFirstEvidence723(source), { code: 'ERR_ASSERTION' }, 'the complete old form is historical, never current CI')
+  }
+})
 function censusStepsWithReviewedNodeSelection723(raw) {
   return censusStepsWithReviewedFirstEvidence723(raw)
 }

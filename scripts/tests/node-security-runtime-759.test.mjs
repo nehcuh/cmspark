@@ -19,9 +19,7 @@ test('owned package/lock engines require the patched, qualified Node22 line', ()
   }
 })
 test('every CI/release setup-node job and packaged runtime use exact patched Node', () => {
-  // Release adds one explicit, non-acceptance MCP measurement VM; all three
-  // setup-node consumers still require this exact patched runtime.
-  for (const [name, count] of [['ci.yml', 4], ['release.yml', 3]]) {
+  for (const [name, count] of [['ci.yml', 4], ['release.yml', 2]]) {
     const source = read('.github/workflows/' + name)
     const setupCount = [...source.matchAll(/uses: actions\/setup-node@/g)].length
     const versions = [...source.matchAll(/node-version:\s*['"]?([\d.]+)['"]?/g)].map(m => m[1])

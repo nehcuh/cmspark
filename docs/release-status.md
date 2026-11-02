@@ -13,27 +13,21 @@
 
 ## 发布验收基线
 
-视觉功能 [PR #823](https://github.com/nehcuh/cmspark/pull/823) 与 Windows 采集、版本同步及指南 [PR #824](https://github.com/nehcuh/cmspark/pull/824) 已合并，整合提交为 `b585eb6bc29baa2e2a0314dad2793de29a72209b`。
+视觉功能 [PR #823](https://github.com/nehcuh/cmspark/pull/823) 与 Windows 采集、版本和指南 [PR #824](https://github.com/nehcuh/cmspark/pull/824) 已合入主线 `b585eb6bc29baa2e2a0314dad2793de29a72209b`。测试准备和失败回执由 [PR #826](https://github.com/nehcuh/cmspark/pull/826) 继续处理，正式发布仍须等待验收完成。
 
-PR #824 最终提交 `8fceac9f` 的[十项 CI 检查](https://github.com/nehcuh/cmspark/actions/runs/41499020576) 全部成功，Windows 定向活动采集 9 项实际通过、0 跳过；完整普查 9536 项通过、67 项按原平台条件跳过、0 失败。详见[独立集成回执](audit/reviews/activity-825-final-windows-integration-8fceac9f.md)。已有[三平台 Release 预演](https://github.com/nehcuh/cmspark/actions/runs/41492740191) 的预检及全部打包成功；本轮随后修改原生构建入口的测试分支，当前候选仍须再完成三平台预演。
+| 验收项 | 已核对事实 |
+|---|---|
+| 最新已完成 CI | `f3edcae6` 的[十项检查](https://github.com/nehcuh/cmspark/actions/runs/41538438219)为八项成功、两项 Windows 失败；两条 Windows 任务均在原 MCP 20 秒门超时，未进入 Apps／Scope。快照只约束采样时状态，唯一 SDK／OS 原因未知。见[独立 Windows 回执](audit/reviews/activity-826-windows-f3edcae6.md)。 |
+| Windows 完整普查 | `d94d5db5` 的完整 census 为 **9555 leaf PASS、67 SKIP、0 FAIL**；同提交定向任务中 Apps 回执超时、Scope 初始 setup 拒绝，未达到全活动验收。普查成功不能抵消定向失败。见[完整回执](audit/reviews/activity-826-windows-d94d5db5.md)。 |
+| macOS 原生 | `f3edcae6` 全 lane 成功；MCP 在原 20 秒、Workspace 在原 45 秒内完成全部业务、完整关闭和清理。见[回执](audit/reviews/activity-826-macos-f3edcae6.md)。 |
+| 三平台发布预演 | `d94d5db5` 的[正常 Release 预演](https://github.com/nehcuh/cmspark/actions/runs/41534866533)预检及 Windows／macOS／Linux 打包全部成功，发布按分支规则跳过。后续为测试调度、诊断和文档变更，生产源码及原有构建／打包步骤未变；移除临时入口逐字恢复已验证的原版 Release。最终标签工作流仍重建并验证全部发行资产。 |
+| 单次 MCP 反事实测量 | `6d42d79e` 的独立测量完整业务 **7.964 秒通过**，属于既定的非判别结果，不扩大原 20 秒、不替代 CI 或预演。临时入口和两脚本已退役，原 Release／Node 清单逐字恢复。[实际回执](audit/reviews/activity-826-mcp-probe-6d42d79e.md)归档保留。 |
 
-合并后的完整文件树与该受审提交相同；[主线 CI](https://github.com/nehcuh/cmspark/actions/runs/41503331363) 的其余检查通过，但原 Windows MCP 用例在 20 秒内未完成启动，Activity 定向步骤因此未执行。现有回执不能唯一定位其物理原因，正式发布暂缓。补充独立快照的设计与实现已通过独立实验、非作者源码核验及 GLM-Claude 复审（[源码回执](audit/reviews/activity-825-mcp-snapshot-glm-source.md)），下一步由 instrumented Windows CI 亲证；原时限、权限、业务断言与清理继续决定验收。
+测试改动保留新 CPU 驱动的[明确构建／运行边界裁决](audit/reviews/activity-826-cpu-build-separation-coordinator-decision.md)：编译由新增测试的 20 秒移至标准构建原有 120 秒，30 秒 case 仅计运行，不称旧端到端预算不变。Scope 用一次命中自有只读文本框的 OS 点击替换旧激活／焦点 setup，成功围栏与原前台、键盘焦点、10／180 秒及业务／清理断言保持；其[独立源码验证](audit/reviews/activity-826-scope-input-independent-source.md)与 [GLM 源码门](audit/reviews/activity-826-scope-input-glm-source.md)已通过。闭集拒绝原因及等待阶段的 [19 项源码控制与复审](audit/reviews/activity-826-activity-failure-glm-source.md)也已完成，但尚需实际 Windows 活动运行。
 
-正式发布前须完成版本一致性、相关测试、精确主线 CI 与 [Release 工作流](../.github/workflows/release.yml) 的三平台 dry-run，再对通过的提交打 `v0.8.0` 标签。发布前页面不预记发布成功；标签内页面保留准备时状态，发布后的回执另更新主线文档。
+为完成当前需求的独立验证，活动步骤现在于自身准备完成后、MCP bootstrap 前执行；census 的实际 MCP 前缀不变，native lane 输入历史变化由[负责人明确裁决](audit/reviews/activity-826-activity-first-coordinator-decision.md)，[独立与 GLM 设计门](audit/reviews/activity-826-activity-first-glm-design.md)、[非作者源码核验](audit/reviews/activity-826-activity-first-independent-source.md)及 [GLM 源码门](audit/reviews/activity-826-activity-first-glm-source.md)均通过。原 MCP、interaction、census 与整体失败门禁继续生效；下个精确 head 的真实结果决定验收，不重置历史轮数或扩大 MCP 观测。
 
-后续 [PR #826](https://github.com/nehcuh/cmspark/pull/826) 的 `64dbdaaf` [CI](https://github.com/nehcuh/cmspark/actions/runs/41516873187) 中，Windows MCP 业务用例实际通过，但普查前的测试编译门超时、聊天范围初始就绪回执超时，macOS 既有工作区取消路径也超时，仍未满足发布门禁。详见 [Windows 回执](audit/reviews/activity-826-windows-native-64dbdaaf.md)和 [macOS 回执](audit/reviews/activity-826-macos-64dbdaaf.md)。编译调用与聊天范围有限观察的设计及实现已通过独立实验、非作者核验和 [GLM-Claude 源码复审](audit/reviews/activity-826-stdio-scope-glm-source.md)；修正后的精确 head 与主线仍须重新实际验收，不由诊断或旧通过结果替代。
-
-`0666fc8d` 的[下一轮 CI](https://github.com/nehcuh/cmspark/actions/runs/41521066023)中，[Windows 完整原生任务](audit/reviews/activity-826-windows-native-0666fc8d.md)成功，活动采集 9 项通过且零跳过；普查前的新 CPU 编译仍在 20 秒门失败。[macOS 回执](audit/reviews/activity-826-macos-0666fc8d.md)记录完整原生／UI 回执及取消已返回，45 秒截止时 xcode 完整关闭仍未满足。新增测试现按[明确裁决](audit/reviews/activity-826-cpu-build-separation-coordinator-decision.md)分离构建与运行，承认编译 20→120 秒及 30 秒 runtime-only 的测量边界改变；macOS 仅补有限同钟域关闭与查询事实，原 45 秒及完整关闭资格保持。两设计均通过[独立实验与 GLM 设计门](audit/reviews/activity-826-build-mac-glm-design.md)，实现也已通过非作者源码核验和 [GLM 源码门](audit/reviews/activity-826-build-mac-glm-source.md)；精确提交的实际平台验收继续决定交付。
-
-最新 `67c5e209` 的[CI](https://github.com/nehcuh/cmspark/actions/runs/41529697607)中，[macOS 完整原生 lane](audit/reviews/activity-826-macos-67c5e209.md)成功，工作区在原 45 秒内完成业务、完整关闭与清理；[两个 Windows lane](audit/reviews/activity-826-windows-67c5e209.md)的新 CPU 构建和后置运行均通过，但普查中的原 MCP 用例超出 20 秒，定向采集中的聊天范围夹具未在 10 秒内取得初始前台就绪资格。两项仍阻塞发布；独立快照仅约束其采样时刻的状态，不认定 SDK、冷启动或前台竞争的物理原因。
-
-`67c5e209` 的[三平台 Release 预演](https://github.com/nehcuh/cmspark/actions/runs/41529703415)已全部成功，发布步骤按分支预演规则跳过。原生门仍失败，暂不打标签。另增一次独立、明确非验收的 MCP 延迟测量工具；其[独立源码核验](audit/reviews/activity-826-mcp-probe-independent-source.md)与 [GLM 复审](audit/reviews/activity-826-mcp-probe-glm-source.md)均通过，后续测量不替代原 20 秒验收或三平台预演。
-
-聊天范围夹具现以一次命中自有只读文本框的 OS 点击替换旧激活／焦点请求，模拟用户先选中聊天窗口；该 setup 不改变产品被动采集，也不降低原就绪、10 秒／180 秒与全业务断言。[独立源码验证](audit/reviews/activity-826-scope-input-independent-source.md)及 [GLM 源码复审](audit/reviews/activity-826-scope-input-glm-source.md)已通过，实际 Windows 输入及完整业务继续由精确提交的原生 CI 验收。
-
-新增测量 VM 后，`6d42d79e` 的 CI 在既有 Node 清单合同中实际失败：Release 的 setup-node 作业由 2 个变为 3 个。现只同步该固定数量，原 CI 四处与所有 22.23.4 版本断言保持；完整早期检查 151 项及 13 个独立缺失／重复／错版本反例通过，[独立核验](audit/reviews/activity-826-release-node-inventory-independent.md)与 [GLM 增量门](audit/reviews/activity-826-release-node-inventory-glm-source.md)均批准此消费者同步。下一精确 head 仍须通过完整 CI。
-
-`d94d5db5` 的[正常三平台预演](https://github.com/nehcuh/cmspark/actions/runs/41534866533)预检与全部打包成功，非验收测量和发布步骤按分支模式跳过。[macOS 完整 lane](audit/reviews/activity-826-macos-d94d5db5.md)也成功；Windows 定向任务在 Apps 原回执等待、Scope 初始 setup 拒绝处失败，未达到完整活动验收。现补回已丢失的闭集原因及固定等待阶段，通过[独立源码验证](audit/reviews/activity-826-activity-failure-independent-source.md)和 [GLM 复审](audit/reviews/activity-826-activity-failure-glm-source.md)，仍待新提交的原生结果。一次 [MCP 非验收测量](audit/reviews/activity-826-mcp-probe-6d42d79e.md)完整业务在 7.964 秒通过，属于既定的非判别结果；不扩大原 20 秒，也不追加测量。
+正式发布前须完成版本一致性、相关测试、精确 head 和合并后 main CI；预演复用范围须与实际构建输入一致。仅对通过的主线提交打 `v0.8.0`，再验证 [Release 工作流](../.github/workflows/release.yml) 的标签、目标提交和全部发行资产。标签内页面保留准备时事实，发布后的回执另更新主线文档。
 
 [#457 历史验收台账](audit/0.7.0-20260907/release-acceptance.md) 的企业双场景仍未完成；0.7.0 已发布这一事实不证明该验收通过。0.8.0 沿用现有公开发行范围，不将该企业验收列为本次已完成能力；用户本次明确授权发布，未授权扩大企业能力声明。
 

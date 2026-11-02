@@ -1,0 +1,130 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "# 独立源码评审(GLM-Claude source gate)\n\n证据基础:9 路径冻结清单、含 2 处删除的完整 base-f3 统一 diff、7 个当前完整源文件、未动核心/封存约束全文、176/9/6 三组机器与独立日志(附 raw SHA/字节的机械投影谱系)、T0 文档与负责人裁决。diff 与所给当前源逐段一致;清单 base/current 哈希及两删除文件 base 哈希完整闭合。\n\n## UnitA:Activity-first 精确调度迁移 — **APPROVE**\n\n1. **调度最小性有字节级证明**。final-controls 的机械逆变换仅剥离移动块内两个精确操作数并把块放回共享编译之后,所得 SHA256 精确命中 f3 的 `78df6f35…`;即 ci.yml 相对基线只有这一处移动+两个已审源控参数,原条件 `windows-latest && native`、bash、`CMSPARK_ACTIVITY_NATIVE_758`、无 timeout/COE、注释及其余全部字节不变。\n\n2. **`projectActivityFirst826` 满足关键的\"先当前、后历史\"次序**。它先以严格 deepEqual 要求唯一、恰含 name/if/shell/env/run 五键的当前对象,run 为固定顺序的五个精确操作数；缺/重/替任一操作数、新增键(timeout、COE)、删改 env、改条件均使比较失败。继而要求 build→compile→Activity→bootstrap→interaction 五名各出现一次且位置严格连续,拒绝插步、换位、重复与 bootstrap 后置。仅在此之后才克隆生成三操作数 legacy 对象插回唯一共享编译之后;已投影的历史整形因五操作数 deepEqual 失败而被显式拒绝,不存在历史快路径、运行时标记或步骤名/命令泛归一化。\n\n3. **三条当前入口全部前置严格投影**。750 全量校验改为 `collapseNativeStages760(projectActivityFirst826(...))`;直接 NSIS `censusStepsWithReviewedFirstEvidence723` 先投影再入历史 helper;760 raw loader 在返回原始当前 steps 前调用投影断言当前形状。独立 6 项入口控制实测三入口接受当前新形、拒绝完整 f3 旧形(LF/CRLF)。`validateCockpitSteps748` 仅在隔离中接受其历史 fixture;新测试同时证明该历史 helper 接受旧对象而当前 NSIS 入口拒绝同一来源——不构成当前验收绕过。\n\n4. **原语义保全**。census 车道条件过滤后的 MCP 前可执行前缀与 f3 逐对象相同(新步骤 native-only 被滤除,且旧位置本在 bootstrap 之后);raw 五阶段失败模型证明 Activity 失败阻断 bootstrap/interaction、任何失败不转化为作业成功;原 151 项测试全保留,新增 25 项覆盖五操作数×缺/重/替、重复步骤、env 三态、always()、timeout、移位、未知插步;760 核心合同、封存 baseline/supplement/758 fixture 逐字未动;重复共享编译、双 MCP20(含 CPU825 操作数钉)、interaction、census、整作业失败负例均在。本变更被如实界定为 native 车道 UI/输入历史的改变,非旧桌面等价或 MCP 因果/修复证明。\n\n## UnitB:已完成一次性探针退役 — **APPROVE**\n\n1. **字节精确还原**。release.yml 现值 `484078da…`、759 现值 `468818a…` 均等于删除前测试内记录、并经 `git show 67c5e209` 独立逐字节比对的原始对象;diff 仅删 dispatch 输入、package 排除 if、专属 job、两私有文件,以及 759 两行注释与计数 3→2,与恢复后 setup-node 2 处 22.23.4 清单自洽;tag/依赖/权限/发布行为回到已知良好原状。\n\n2. **无残留调用者**。两删除文件的 base 哈希真实;对三个标识符在 `.github`/`scripts`/`companion` 代码目录与各 package 清单的搜索为零;canonical MCP20、snapshot20、CPU 驱动/工件/运行时及六个冻结 Activity 文件逐字节未动;无新探针、无打包重派发。已完成的 7.964s 非判别结果仅作归档事实。\n\n3. **T0 文档(在 9 代码哈希之外)如实陈述**:测量已归档且入口退役、Release/Node 清单逐字恢复、native 车道输入历史改变并链接负责人裁决、census 前缀逐对象相同、0.8.0 尚未正式发布、最终 tag 工作流仍重建并验证全部资产、预演复用仅限相同生产输入。\n\n## 结论\n\nUnitA:**APPROVE**;UnitB:**APPROVE**。二者均为源码门批准:不预支下一 changed-head 的真实 Windows/Activity 结果,不作 MCP 根因或修复声明,不重置历史轮数;合并与发布仍需精确 head、main CI 绿及各自后续规范门。",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 94976,
+      "outputTokens": 10430,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.73563,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 130621,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "activity-first-and-probe-retirement-source",
+  "reviewed_base": "f3edcae61c88acfe7e58e6449b24c1fe8792f626",
+  "source_files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "state": "present",
+      "sha256": "5a45af1d4e302d8304ec065c23116bb73f9ab4fa6adeff0468d4c33dfdfcf0ad"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "state": "present",
+      "sha256": "484078da169a63dfbe5d4fe174568d597dfc48f38d57d05a1e86a67265244480"
+    },
+    {
+      "path": "scripts/tests/node-security-runtime-759.test.mjs",
+      "state": "present",
+      "sha256": "468818a29eacbfabcabe4c90230d2697144eefe6fb8c5e1c5b7b9430cf438fd1"
+    },
+    {
+      "path": "scripts/tests/windows-ci-feedback-750-contract.mjs",
+      "state": "present",
+      "sha256": "6fd2a26cbd931bc145748fef7c50238a5fa479d6083dfd50a2139fad9731da2f"
+    },
+    {
+      "path": "scripts/tests/windows-ci-feedback-750.test.mjs",
+      "state": "present",
+      "sha256": "7d711c7bfaed8856284f5b10ed3d29b93150b3c8584322c14cd6469e09d8b7a2"
+    },
+    {
+      "path": "scripts/tests/native-ci-stages-760.test.mjs",
+      "state": "present",
+      "sha256": "40c183d6d3588da0f5e2a1e3b3f383e73fa28ce74690b0c1b540216a5cd38c5d"
+    },
+    {
+      "path": "scripts/tests/nsis-ci-setup.test.mjs",
+      "state": "present",
+      "sha256": "ed7a7540b5525b0171bfe7e582bdae5d98da021bb8dbf05dcdaf5569ef0f215f"
+    },
+    {
+      "path": "companion/scripts/mcp-latency-probe-826.mjs",
+      "state": "deleted",
+      "base_sha256": "9434a5d43d6c5f3bc4a4e2b30fbf568bce8fc504ec405abee4300083d32391f8"
+    },
+    {
+      "path": "companion/scripts/tests/mcp-latency-probe-826.test.mjs",
+      "state": "deleted",
+      "base_sha256": "8c89dac9656253e1766c3ddb9af7070ddaf4c77a6455b0ace8952b4f86f0a0f4"
+    }
+  ],
+  "source_manifest_sha256": "fa58e0af1753e28bf7a9fc5cb26cad545fc6c9d9a7bf422785f083dd18721ce2",
+  "source_diff_sha256": "573fce2a4a4329125ad4ae867b954291fb8e08f27ed619154c13858466616238",
+  "source_views": "7completepresentfiles/full9pathactualdiffincluding2deletions,wholefile/basehashes;T0docsseparate",
+  "log_projections": {
+    "/tmp/cmspark-826-activity-first-final.log": {
+      "raw_sha256": "0da1a29f9012354ed3afe4910379bdab7b3d54b62d9b6b26f2cb653ff58b3287",
+      "raw_bytes": 40614,
+      "projection_bytes": 15677,
+      "projection_sha256": "c465f2761899b31dc6da8929a5b052ce77ab7081203ddd6682e79d3590954b4c"
+    },
+    "/tmp/cmspark-826-activity-first-independent-tests.log": {
+      "raw_sha256": "5cfc04ba219753a93deb3d3fc6b4d4a1fac6016c60cd632c2caf02fa00672d07",
+      "raw_bytes": 40601,
+      "projection_bytes": 15677,
+      "projection_sha256": "617ecb09d9e4739c6b28d9518ed3de6f72cb27a06682e3313c94073cc0e09ddb"
+    },
+    "/tmp/cmspark-826-activity-first-other-ci-consumers.log": {
+      "raw_sha256": "1d26c464d7261e9efcc8c8c9620952f087eefd1462af76671d1f8a972ebf8658",
+      "raw_bytes": 65729,
+      "projection_bytes": 25576,
+      "projection_sha256": "4d5ef5ba87eb1e744a719688a394ac8b808fb02b505b5304f715e5303669413f"
+    },
+    "/tmp/cmspark-826-activity-first-companion-ci-consumers.log": {
+      "raw_sha256": "c6c792c64b341eb2bc608bfcba48c557c8b3d6028bcd40e7520f8b23de162d4b",
+      "raw_bytes": 9327,
+      "projection_bytes": 3725,
+      "projection_sha256": "60514f22db541c7e8016932333cd6e9a3a0f2ea13e36e130dbd3d9ef873754f9"
+    },
+    "/tmp/cmspark-826-activity-first-selected-local.log": {
+      "raw_sha256": "d5bdaa964b6417712c0fc7eb53a170a0767a086465c56c1940ee144563909d92",
+      "raw_bytes": 7966,
+      "projection_bytes": 3299,
+      "projection_sha256": "b3ab2ba7909fccf8df575e6aa7a67b83b536e0cefaa63d0b1b1c402176b1513c"
+    }
+  },
+  "native_UI_history_changes": true,
+  "old_form_not_current_acceptance": true,
+  "prompt_sha256": "c15cc83d81a20bd9a33e294eb2bce7f5226f5c0908822ab97d2fce3478ef945b",
+  "prompt_bytes": 370935,
+  "prepared_utc": "2026-11-02T23:04:34.871957+00:00",
+  "verdict": "APPROVE",
+  "unit_verdicts": {
+    "activity_first_strict_current_schedule": "APPROVE",
+    "completed_MCP_probe_retirement": "APPROVE"
+  },
+  "verdict_basis": "Actual model explicitly approves each unit, confirms strict current-first historical projection at all3real ingresses, byteexact retirement and honest T0 documentation; no reachable blocker.",
+  "approval_scope": "Commit frozen9path code unit (7present/2deleted) and next purposeful exact-head canonical CI after coordinator gates.",
+  "not_approved": [
+    "Windows/Activity native acceptance",
+    "unchanged native UI/input context",
+    "MCP cause or fix attribution",
+    "new probe dispatch",
+    "merge",
+    "release"
+  ],
+  "review_text_sha256": "594e1f9d3b19568bd64a1edfdaa3c7f64c48675fe1a93007a6ebac5e34e092bc",
+  "recorded_utc": "2026-11-02T23:07:04.817021+00:00"
+}

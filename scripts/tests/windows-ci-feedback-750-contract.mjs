@@ -1,6 +1,6 @@
 // #750 finite parsed-workflow conservation; never runs a workflow command.
 import assert from 'node:assert/strict'
-import { collapseNativeStages760 } from './native-ci-stages-760-contract.mjs'
+import { collapseNativeStages760, NATIVE_STAGES760 } from './native-ci-stages-760-contract.mjs'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
@@ -34,6 +34,32 @@ assert.ok(directedAt > 0)
 const DIRECTED = new Set(baseline.steps.slice(directedAt).map(step => step.key).filter(name => !CENSUS_ONLY.has(name)))
 const COCKPIT_NAMES = ['Windows cockpit Node scalar selection (#723)', 'Windows cockpit native bridge first identity STOP gate (#723)', 'Publish finite cockpit first failure (#723)']
 assert.deepEqual(cockpit.steps.map(key), COCKPIT_NAMES)
+
+export const ACTIVITY826_NAME = activity758.nativeStep.name
+export const ACTIVITY826_CONTROLS = Object.freeze(['activity-scope825-readiness', 'activity-failure-observation-826'].map(name => ' .test-dist/tests/' + name + '.test.js'))
+// Current CI must have this exact front step. Only after checking its complete
+// shape may the historical oracles see the old location/three-file command.
+// This function deliberately refuses an already-projected historical form.
+export function projectActivityFirst826(steps) {
+  const selected = steps.filter(step => step.name === ACTIVITY826_NAME)
+  assert.equal(selected.length, 1, 'one current Activity-first step')
+  const legacy = structuredClone(activity758.nativeStep)
+  legacy.run = legacy.run.trimEnd() + ' .test-dist/tests/activity-apps-825.test.js .test-dist/tests/activity-scope825-native.test.js\n'
+  const expected = { ...legacy, run: legacy.run.trimEnd() + ACTIVITY826_CONTROLS.join('') + '\n' }
+  assert.deepEqual(selected[0], expected, 'current Activity step has exactly five operands, original lane/env/failure semantics')
+  const names = [NATIVE_STAGES760[0][0], NATIVE_STAGES760[1][0], ACTIVITY826_NAME, NATIVE_STAGES760[2][0], NATIVE_STAGES760[3][0]]
+  const positions = names.map(name => {
+    const matches = steps.map((step, at) => ({ step, at })).filter(value => value.step.name === name)
+    assert.equal(matches.length, 1, 'one Activity/native stage: ' + name)
+    return matches[0].at
+  })
+  assert.deepEqual(positions, positions.map((_, index) => positions[0] + index), 'only the exact Activity step separates compile and bootstrap')
+  const projected = steps.filter(step => step !== selected[0])
+  const compile = projected.map((step, at) => ({ step, at })).filter(value => value.step.name === 'Compile shared companion test inputs (#650)')
+  assert.equal(compile.length, 1)
+  projected.splice(compile[0].at + 1, 0, legacy)
+  return projected
+}
 
 // Deliberately small expression grammar. Unknown identifiers/functions/tokens
 // refuse; no eval/Function or access to arbitrary workflow data.
@@ -153,7 +179,7 @@ function cache750(step, nodeVersion) {
 
 export function validateWindowsCiFeedback750(text) {
   const doc = yaml.load(text)
-  doc.jobs['smoke-os'].steps = collapseNativeStages760(doc.jobs['smoke-os'].steps)
+  doc.jobs['smoke-os'].steps = collapseNativeStages760(projectActivityFirst826(doc.jobs['smoke-os'].steps))
   assert.equal(digest(omit(doc, ['jobs'])), baseline.workflowWithoutJobs)
   assert.deepEqual(Object.keys(doc.jobs).sort(), ['acp-history-restart', 'activity-linux-x11', 'build', 'smoke-os'])
   assert.deepEqual(doc.jobs['activity-linux-x11'], activity758.linuxJob, '#758 owned X11 job is exact, including dependencies and failure semantics')

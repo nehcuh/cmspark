@@ -2,10 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { NATIVE_STAGES760, CPU825_OPERAND } from './native-ci-stages-760-contract.mjs'
-import { validateWindowsCiFeedback750, parseWorkflow750, printWorkflow750, condition750, MATRIX750 } from './windows-ci-feedback-750-contract.mjs'
+import { validateWindowsCiFeedback750, parseWorkflow750, printWorkflow750, condition750, MATRIX750, projectActivityFirst826, ACTIVITY826_NAME } from './windows-ci-feedback-750-contract.mjs'
 const text = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
 const names = NATIVE_STAGES760.map(([name]) => name)
-const actual = () => parseWorkflow750(text)
+const actual = () => { const doc = parseWorkflow750(text); projectActivityFirst826(doc.jobs['smoke-os'].steps); return doc }
 const stages = doc => doc.jobs['smoke-os'].steps.filter(s => names.includes(s.name))
 test('#760 all four actual stages retain the original OS/failure/cancellation condition', () => {
   validateWindowsCiFeedback750(text)
@@ -63,4 +63,22 @@ test('#826 exact post-build CPU operand is conserved in both Windows lanes befor
   const changed=actual();change(changed.jobs['smoke-os'].steps.find(s=>s.name===names[2]));for(const input of [printWorkflow750(changed),printWorkflow750(changed).replaceAll('\n','\r\n')])assert.throws(()=>validateWindowsCiFeedback750(input))
  }
  const noFixtures=actual();noFixtures.jobs['smoke-os'].steps.find(s=>s.name===names[0]).run=noFixtures.jobs['smoke-os'].steps.find(s=>s.name===names[0]).run.replace(' --test-fixtures','');assert.throws(()=>validateWindowsCiFeedback750(printWorkflow750(noFixtures)))
+})
+
+test('#826 Activity-first retains all native failure gates and leaves the census pre-MCP executable prefix unchanged', () => {
+  const raw = actual().jobs['smoke-os'].steps, historical = projectActivityFirst826(raw)
+  const bootstrap = names[2]
+  const prefix = steps => steps.slice(0, steps.findIndex(step => step.name === bootstrap)).filter(step => condition750(step.if, { success: true, cancelled: false, values: { 'matrix.os': 'windows-latest', 'matrix.lane': 'census' } }))
+  assert.deepEqual(prefix(raw), prefix(historical))
+  const selected = raw.filter(step => [...names, ACTIVITY826_NAME].includes(step.name))
+  for (const matrix of MATRIX750) {
+    const context = success => ({ success, cancelled: false, values: { 'matrix.os': matrix.os, 'matrix.lane': matrix.lane } })
+    const normal = selected.filter(step => condition750(step.if, context(true))).map(step => step.name)
+    for (const failAt of [...normal, null]) {
+      let success = true; const ran = []
+      for (const step of selected) if (condition750(step.if, context(success))) { ran.push(step.name); if (step.name === failAt) success = false }
+      assert.deepEqual(ran, failAt === null ? normal : normal.slice(0, normal.indexOf(failAt) + 1))
+      assert.equal(success, failAt === null, 'Activity/MCP/interaction failures never become job success')
+    }
+  }
 })

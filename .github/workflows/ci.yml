@@ -281,6 +281,15 @@ jobs:
           cd companion
           ./node_modules/.bin/tsc -p tsconfig.test.json
 
+      - name: "Actual passive activity capture and local OCR (#758)"
+        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
+        shell: bash
+        env:
+          CMSPARK_ACTIVITY_NATIVE_758: '1'
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/activity-platform-native-758.test.js .test-dist/tests/activity-apps-825.test.js .test-dist/tests/activity-scope825-native.test.js .test-dist/tests/activity-scope825-readiness.test.js .test-dist/tests/activity-failure-observation-826.test.js
+
       - name: Native desktop bootstrap and process acceptance (#480)
         if: matrix.os != 'ubuntu-latest'
         shell: bash
@@ -304,15 +313,6 @@ jobs:
         run: |
           cd companion
           npx tsc -p tsconfig.test.json
-
-      - name: "Actual passive activity capture and local OCR (#758)"
-        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
-        shell: bash
-        env:
-          CMSPARK_ACTIVITY_NATIVE_758: '1'
-        run: |
-          cd companion
-          node scripts/run-tests.mjs .test-dist/tests/activity-platform-native-758.test.js .test-dist/tests/activity-apps-825.test.js .test-dist/tests/activity-scope825-native.test.js
 
       - name: "Windows cockpit Node scalar selection (#723)"
         if: matrix.os == 'windows-latest'

@@ -1,0 +1,77 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "# 独立设计评审(GLM)\n\n## UNITA Activity-first 精确调度迁移:APPROVE\n\n1. **位置与依赖闭合成立**。新位置紧随 `Compile native desktop acceptance tests (#480)`、先于 bootstrap/MCP。Activity 全部前置(原生 tsc 全量编译、`stage:win-scripts` 已复制一方 `.ps1` 且有源回退、UIA DLL 与原生 fixture 构建、npm ci 提供的 typescript/node-notifier)均在该位置之前完成;反向路径中 bootstrap/MCP/interaction 自建数据根、能力注册与生命周期,不读取 Activity 文件/画像/候选状态,重复共享编译保留。本地官方 runner 五文件实跑 28 例=24 PASS+4 SKIP,与“9 选中非 9 GUI+19 新源控”算术一致,且明确不冒充 Windows 证明,符合“不以模型/CPU 充当原生证据”。\n\n2. **精确性**。条件 `windows-latest&&native`、bash、`CMSPARK_ACTIVITY_NATIVE_758`、默认失败策略与三旧操作数顺序不变,仅追加两个当前源控文件;无 always/continue-on-error/timeout/权限/车道变更。31 个负例(缺/重/替任一新旧操作数、错车道、错 env/failure、置于编译前或 MCP 后、MCP/interaction/census 删除或豁免、未知插步、共享编译删除)在 LF/CRLF 下全被拒;四矩阵默认失败/取消语义保持任一原门失败即整作业失败,两处 MCP20 门未动。\n\n3. **消费者迁移合规且同构于仓库惯例**。projector 先完整校验新对象与其唯一 compile→Activity→bootstrap 邻接,再仅移除两个新操作数、放回原共享编译位置供封存 750/760 断言;封存 baseline/supplement/fixtures 与全部哈希不变、不删不刷封存。这与既有“先验精确 delta 再归一”模式(#825 操作数、CPU825_OPERAND、794/806/650)同构,非任意 interleaving/步骤名剥离/命令归一;直接 NSIS 消费者 `censusStepsWithReviewedFirstEvidence723` 已被明确纳入并被证明会拒绝未审候选。\n\n4. **边界诚实**。明确此改变 native 车道 UI/输入史,非旧桌面等价调度、非 MCP 修复/因果;census 条件过滤前缀逐字节不变(实测打印前缀一致),不做全局冷启动断言;未发现“MCP 必须首个 UI”的既有要求,四原生组相对次序保留,760 的连续性钉按该唯一对象显式迁移。\n\n**非阻塞实现门**:须核实 `native-ci-stages-760.test.mjs` 若直接对原始 ci.yml 调用 collapse 也经同一 projector;三个已识别消费者之外的加载点由机器检查兜底。758 提交 OS toast 未声明已消除,属既有行为移位;若致后续 MCP 失败,按原语义整作业失败,不得新增清理或放宽。\n\n## UNITB 一次性 60s MCP 路由退役:APPROVE\n\n1. **精确还原**。逆向仅删除 dispatch 输入、package 排除条件、专属 job、两私有脚本与单元,以及 759 的两行注释并把 setup-node 计数 3→2;release.yml 与 759 的 SHA256 分别精确命中 `484078da…`/`468818a…`,与独立推导的 67c5 目标哈希一致,即返回已知良好原始字节,而非新近似的发布流;preflight/package/publish/tag/权限与 Node22 钉随之原样返回。\n\n2. **无残留调用者**。在 `.github`、`scripts`、`companion/scripts|src|tests`(排除两删除文件与 node_modules/.test-dist/dist/.git)对三个标识符的运行时引用搜索为空;历史文档/测量/评审回执仅作归档证据保留,活跃描述改为已归档。759 回调经 AST 提取真实执行:原配对与退役配对通过,3/2 错配拒绝,ci.yml/release.yml 脆弱运行时变异仍拒,canonical MCP20、snapshot20/18.5 采样、CPU 驱动/工件/运行时及其测试未动。\n\n3. **范围克制**。测量已完成且 7.964s≤20s 非区分性,保留 60s 休眠入口无剩余授权测量需求,删除是更小的最终行为;不新增探针、不扩大 MCP 诊断;生产字节不变故不为发布重派发,既有三平台正常构建结果仅在完全相同输入范围内复用,最终 tag 工作流仍重建并校验全部资产。\n\n4. **门与边界**。本次批准仅授权实现及后续机器/独立/sourceGLM/exact-head 规范门;合并与发布仍需 exact-head 与 main CI 绿;不预支 Windows 结果、不重置历史迭代计数、不做一般发布重设计。\n\n## 结论\n\nUNITA:APPROVE;UNITB:APPROVE。二者均按上述限定条件放行至实现与其后规范门,不构成即时 CI/原生验收/合并/发布批准。",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 83362,
+      "outputTokens": 10022,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.66736,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 138852,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "two-unit-exact-activity-schedule-and-probe-retirement-design",
+  "reviewed_base": "f3edcae61c88acfe7e58e6449b24c1fe8792f626",
+  "implementation_diff": null,
+  "source_baseline_hashes": {
+    ".github/workflows/ci.yml": "78df6f357feb7d6c10197ff434bc4cc2e9f6894e5e7745bc185ceddf1eea928d",
+    ".github/workflows/release.yml": "c8e77b5453b7dd29abf8b13b96b127d559fa40758d71b752c4d060eeaa8d3da1",
+    "scripts/tests/windows-ci-feedback-750-contract.mjs": "66deba47883d02c8cbc98c20dd8631f648c1c8e6d8db3c163c876aee22ec01af",
+    "scripts/tests/native-ci-stages-760-contract.mjs": "bbc7471fd1ac288b881057becd3b087c79f5d7be48497fcf66292e4926d5147b",
+    "scripts/tests/nsis-ci-setup.test.mjs": "92029f17d1abe081a5939214831491634a68913a6565893f4e2f60136c7b3b0a",
+    "scripts/tests/windows-ci-feedback-750-baseline.json": "85243502cfcb79bb3269c9a263a4031c929a4ef3f74e60d7bef23c6855d9f605",
+    "scripts/tests/activity-platform-758-workflow.json": "edf6520197bcf1d8005d49e9f4cc8c2bf3791f3dfea32406f4c94c83a04aec00",
+    "scripts/tests/node-security-runtime-759.test.mjs": "4d2603c3ced02f980c601eaea4bbcc747b68d5ffba298e92361ad364e64a114d",
+    "companion/scripts/mcp-latency-probe-826.mjs": "9434a5d43d6c5f3bc4a4e2b30fbf568bce8fc504ec405abee4300083d32391f8",
+    "companion/scripts/tests/mcp-latency-probe-826.test.mjs": "8c89dac9656253e1766c3ddb9af7070ddaf4c77a6455b0ace8952b4f86f0a0f4",
+    "companion/tests/activity-platform-native-758.test.ts": "e377bacb0ee2e4133f4e6a7d4c315bb6478744ca55414187d53910570ffd8cb3",
+    "companion/tests/activity-apps-825.test.ts": "f2641290fc86aa1c36794c8c084e9da3e3030826e5351a009c275b6d73848cf1",
+    "companion/tests/activity-scope825-native.test.ts": "b2cd16df16c98efa255179e75dfa961092d9982a5e4f79f3ebb97c247c348e3e",
+    "companion/tests/helpers/activity-native-fixture-758.ts": "996ec212da0091f4e0b4aac9922f0a9b4e7ae9231b9a1e536c61519fffc4af64",
+    "companion/tests/helpers/activity-scope825-native.ts": "37ccea3fd906c988a3cf70516b089581e2da7e5d2a200c836450e5ec65e2afff",
+    "companion/scripts/run-tests.mjs": "f76f7a9e44b53e28b768c527867f099cda8ac434d52fc498312145be87e335a8"
+  },
+  "retirement_targets": {
+    ".github/workflows/release.yml": {
+      "target_raw_sha256": "484078da169a63dfbe5d4fe174568d597dfc48f38d57d05a1e86a67265244480",
+      "target_bytes": 17116
+    },
+    "scripts/tests/node-security-runtime-759.test.mjs": {
+      "target_raw_sha256": "468818a29eacbfabcabe4c90230d2697144eefe6fb8c5e1c5b7b9430cf438fd1",
+      "target_bytes": 10246
+    }
+  },
+  "native_lane_UI_history_changes": true,
+  "census_pre_MCP_executable_prefix_preserved_by_condition_controls": true,
+  "prompt_sha256": "d4f0d247928712ad3e83d0b6572a56acbdf25177d2b53ad4b3f082383faac6dd",
+  "prompt_bytes": 322925,
+  "prepared_utc": "2026-11-02T22:52:26.897264+00:00",
+  "verdict": "APPROVE",
+  "unit_verdicts": {
+    "activity_first_exact_schedule_migration": "APPROVE",
+    "completed_noninformative_MCP_probe_retirement": "APPROVE"
+  },
+  "verdict_basis": "Actual reviewer explicitly approves both bounded units with exact consumer migration and transparent changed nativeUIhistory; no reachable blocker.",
+  "approval_scope": "Implement exact schedule/consumer migration and raw-byte probe retirement, then machine/independent/sourceGLM/exact-head canonical gates.",
+  "not_approved": [
+    "MCP cause or fix attribution",
+    "unchanged desktop experiment context",
+    "Windows native acceptance",
+    "immediate CI",
+    "merge",
+    "release"
+  ],
+  "review_text_sha256": "e26895af8f177ced7f51096d68da17b6889b460b40d64dfbd371a7d8e3835b99",
+  "recorded_utc": "2026-11-02T22:55:29.630922+00:00"
+}
