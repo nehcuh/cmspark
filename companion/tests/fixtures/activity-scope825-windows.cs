@@ -3,6 +3,7 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Web.Script.Serialization;
 using System.Windows;
@@ -18,7 +19,15 @@ static class ActivityScope825Fixture {
   static readonly UTF8Encoding Encoding = new UTF8Encoding(false);
   static Window Current;
   static FrameworkElement ContentRegion, TitleRegion;
-  static TextBox Focus;
+  static Window ReceiptWindow;
+  static string PendingReceipt;
+  static Action CheckCurrentReceipt;
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  static bool IsReady(Window window, TextBox focus, bool rendered) {
+    if (!rendered || Current != window || ReceiptWindow != window || PendingReceipt == null) return false;
+    var hwnd = new WindowInteropHelper(window).Handle;
+    return hwnd != IntPtr.Zero && GetForegroundWindow() == hwnd && focus.IsKeyboardFocused;
+  }
   static void Write(string name, object data) {
     string file = Path.Combine(Root, name), pending = file + ".pending";
     File.WriteAllText(pending, Json.Serialize(data), Encoding); File.Move(pending, file);
@@ -54,7 +63,24 @@ static class ActivityScope825Fixture {
     var focus = new TextBox { Text = "Message mentions BETA GROUP", IsReadOnly = true, FontSize = 20, Background = Brushes.White, Foreground = Brushes.Black, BorderThickness = new Thickness(0), Margin = new Thickness(12) }; Grid.SetRow(focus, 1); content.Children.Add(focus);
     var image = EmbeddedImage(); Grid.SetRow(image, 2); content.Children.Add(image);
     layout.Children.Add(content); window.Content = layout;
-    Current = window; ContentRegion = content; TitleRegion = title; Focus = focus;
+    Current = window; ContentRegion = content; TitleRegion = title;
+    ReceiptWindow = window; PendingReceipt = popup ? "ack.json" : "ready.json";
+    bool rendered = false, requested = false;
+    Action check = delegate {
+      if (!IsReady(window, focus, rendered)) return;
+      string name = PendingReceipt; PendingReceipt = null;
+      Write(name, Snapshot());
+    };
+    CheckCurrentReceipt = check;
+    window.ContentRendered += delegate {
+      if (Current != window) return;
+      rendered = true;
+      if (!requested) { requested = true; window.Activate(); focus.Focus(); }
+      check();
+    };
+    // Recheck after WPF processes activation/focus; never request them again.
+    window.Activated += delegate { window.Dispatcher.BeginInvoke(DispatcherPriority.Input, check); };
+    focus.GotKeyboardFocus += delegate { window.Dispatcher.BeginInvoke(DispatcherPriority.Input, check); };
     return window;
   }
   [STAThread] static int Main(string[] args) {
@@ -62,7 +88,6 @@ static class ActivityScope825Fixture {
     Root = args[0]; var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
     try {
       var window = Build(false);
-      window.ContentRendered += delegate { if (File.Exists(Path.Combine(Root, "ready.json"))) return; Current.Activate(); Focus.Focus(); Write("ready.json", Snapshot()); };
       var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
       timer.Tick += delegate {
         try {
@@ -70,10 +95,9 @@ static class ActivityScope825Fixture {
           string raw = File.ReadAllText(file, Encoding); if (raw == LastControl) return; LastControl = raw;
           var command = Json.Deserialize<System.Collections.Generic.Dictionary<string, object>>(raw);
           string action = (string)command["command"];
-          if (action == "resize") { Current.Width += 80; Current.UpdateLayout(); }
-          else if (action == "popup") { var old = Current; var popup = Build(true); popup.Show(); old.Hide(); popup.Activate(); Focus.Focus(); popup.UpdateLayout(); }
+          if (action == "resize") { Current.Width += 80; Current.UpdateLayout(); ReceiptWindow = Current; PendingReceipt = "ack.json"; CheckCurrentReceipt(); }
+          else if (action == "popup") { var old = Current; var popup = Build(true); popup.Show(); old.Hide(); popup.UpdateLayout(); }
           else throw new Exception("OWNED_UNKNOWN_CONTROL");
-          Write("ack.json", Snapshot());
         } catch (Exception error) { try { Write("failure.json", new { type = error.GetType().Name, hresult = error.HResult }); } catch { } app.Shutdown(2); }
       };
       timer.Start(); window.Show(); app.Run(); return 0;

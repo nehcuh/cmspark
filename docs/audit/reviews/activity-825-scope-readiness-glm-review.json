@@ -1,0 +1,46 @@
+{
+  "issue": 825,
+  "gate": "scope825_owned_fixture_true_readiness_before_commit_and_ci",
+  "verdict": "APPROVE",
+  "reviewed_base": "bd43d8ac3a39991065ea78ab8b59da5ee5afaebc",
+  "reviewed_source_paths": [
+    "companion/tests/activity-scope825-readiness.test.ts",
+    "companion/tests/fixtures/activity-scope825-windows.cs"
+  ],
+  "source_diff_sha256": "09fa2f70d6d138b14dc92ea92e7da862cb06f5a1b658ef00861f578df89bddbc",
+  "prompt_sha256": "41f5c8fc48650c289eb1350ba8763a48049981dba9d9f98bdddf955d1a5079c0",
+  "prompt_bytes": 58247,
+  "api_started_at_utc": "2026-11-02T17:52:46.535897+00:00",
+  "recorded_at_utc": "2026-11-02T17:56:55.058192+00:00",
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 14713,
+      "outputTokens": 8157,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.27749,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "process_exit": 0,
+  "is_error": false,
+  "duration_ms": 160229,
+  "num_turns": 1,
+  "review_text_sha256": "8d8e139a6bf1c635c4afaee23be8dbb93cb588536893ae53a52aef874384084b",
+  "source_freeze_binding": "Two-path input digest verified before API; coordinator holds source frozen with audit-only additions. Reviewer modifies no source.",
+  "extra_formatting_api_calls": 0,
+  "scope": "C# owned fixture and source-derived CPU controls only; production, Node native assertions, 10s/180s and cleanup unchanged",
+  "physical_foreground_loss_root_cause": "UNKNOWN; only false-readiness publication path is proven",
+  "allowed_next_step": "Commit the two reviewed test-source changes and run final hosted Windows CI",
+  "not_approved_yet": [
+    "Windows foreground granting on corrected head",
+    "Windows C# compilation and native scope case on corrected head",
+    "complete final CI",
+    "release publishing"
+  ]
+}
