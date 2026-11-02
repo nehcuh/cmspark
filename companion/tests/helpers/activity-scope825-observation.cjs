@@ -1,7 +1,7 @@
 'use strict'
 const fs = require('node:fs')
 const path = require('node:path')
-const names = ['RUN_ENTER', 'SOURCE_INITIALIZED', 'LOADED', 'CONTENT_RENDERED', 'READY_WRITTEN', 'RUN_RETURN', 'ACTIVATE_TRUE', 'ACTIVATE_FALSE', 'FOCUS_TRUE', 'FOCUS_FALSE', 'NOT_RENDERED', 'NOT_CURRENT', 'NOT_RECEIPT_WINDOW', 'NO_PENDING', 'NO_HWND', 'NOT_FOREGROUND', 'NO_KEYBOARD_FOCUS', 'QUALIFIED']
+const names = ['RUN_ENTER', 'SOURCE_INITIALIZED', 'LOADED', 'CONTENT_RENDERED', 'READY_WRITTEN', 'RUN_RETURN', 'INPUT_COMPLETE', 'INPUT_REFUSED', 'NOT_RENDERED', 'NOT_CURRENT', 'NOT_RECEIPT_WINDOW', 'NO_PENDING', 'NO_HWND', 'NOT_FOREGROUND', 'NO_KEYBOARD_FOCUS', 'QUALIFIED']
 // Each entry proves a point was observed once, never its deadline/last state.
 module.exports = function projectInitialScope825(dir) {
   const points = Object.create(null)

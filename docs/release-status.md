@@ -29,6 +29,8 @@ PR #824 最终提交 `8fceac9f` 的[十项 CI 检查](https://github.com/nehcuh/
 
 `67c5e209` 的[三平台 Release 预演](https://github.com/nehcuh/cmspark/actions/runs/41529703415)已全部成功，发布步骤按分支预演规则跳过。原生门仍失败，暂不打标签。另增一次独立、明确非验收的 MCP 延迟测量工具；其[独立源码核验](audit/reviews/activity-826-mcp-probe-independent-source.md)与 [GLM 复审](audit/reviews/activity-826-mcp-probe-glm-source.md)均通过，后续测量不替代原 20 秒验收或三平台预演。
 
+聊天范围夹具现以一次命中自有只读文本框的 OS 点击替换旧激活／焦点请求，模拟用户先选中聊天窗口；该 setup 不改变产品被动采集，也不降低原就绪、10 秒／180 秒与全业务断言。[独立源码验证](audit/reviews/activity-826-scope-input-independent-source.md)及 [GLM 源码复审](audit/reviews/activity-826-scope-input-glm-source.md)已通过，实际 Windows 输入及完整业务继续由精确提交的原生 CI 验收。
+
 [#457 历史验收台账](audit/0.7.0-20260907/release-acceptance.md) 的企业双场景仍未完成；0.7.0 已发布这一事实不证明该验收通过。0.8.0 沿用现有公开发行范围，不将该企业验收列为本次已完成能力；用户本次明确授权发布，未授权扩大企业能力声明。
 
 ## 已合并与尚待验收的边界

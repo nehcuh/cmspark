@@ -46,6 +46,56 @@ static class ActivityScope825Fixture {
     return result;
   }
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [StructLayout(LayoutKind.Sequential)] struct NativePoint { public int X, Y; }
+  [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
+  [StructLayout(LayoutKind.Sequential)] struct MouseInput { public int X, Y; public uint Data, Flags, Time; public IntPtr ExtraInfo; }
+  // INPUT's largest union member is MOUSEINPUT; native alignment adds the x64 padding.
+  [StructLayout(LayoutKind.Sequential)] struct Input { public uint Type; public MouseInput Mouse; }
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hwnd, out NativeRect rect);
+  [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr hwnd, ref NativePoint point);
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(NativePoint point);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+  [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint count, Input[] inputs, int size);
+  static bool Finite(double value) { return !Double.IsNaN(value) && !Double.IsInfinity(value); }
+  // Test setup models the user's selecting this inert chat. Capture stays passive.
+  // Hit-test and SendInput are separate calls, not an atomic HWND-targeted input.
+  static void SetupOwnedClick(Window window, TextBox focus, bool rendered) {
+    if (!rendered || Current != window || ReceiptWindow != window || PendingReceipt == null ||
+        !window.IsVisible || !window.IsEnabled || window.WindowState == WindowState.Minimized ||
+        !focus.IsVisible || !focus.IsEnabled || !focus.IsMeasureValid || !focus.IsArrangeValid) throw new Exception("OWNED_SCOPE825_INPUT_PRECONDITION");
+    var hwnd = new WindowInteropHelper(window).Handle;
+    var presentation = PresentationSource.FromVisual(focus) as HwndSource;
+    if (hwnd == IntPtr.Zero || !IsWindowVisible(hwnd) || presentation == null || presentation.Handle != hwnd) throw new Exception("OWNED_SCOPE825_INPUT_WINDOW");
+    double width = focus.ActualWidth, height = focus.ActualHeight;
+    if (!Finite(width) || !Finite(height) || width <= 0 || height <= 0) throw new Exception("OWNED_SCOPE825_INPUT_LAYOUT");
+    var center = new Point(width / 2, height / 2);
+    Point screen = focus.PointToScreen(center);
+    if (!Finite(screen.X) || !Finite(screen.Y) || screen.X < Int32.MinValue || screen.X > Int32.MaxValue || screen.Y < Int32.MinValue || screen.Y > Int32.MaxValue) throw new Exception("OWNED_SCOPE825_INPUT_POINT");
+    var point = new NativePoint { X = (int)Math.Floor(screen.X), Y = (int)Math.Floor(screen.Y) };
+    Point local = focus.PointFromScreen(new Point(point.X, point.Y));
+    if (!Finite(local.X) || !Finite(local.Y) || local.X < 0 || local.X >= width || local.Y < 0 || local.Y >= height) throw new Exception("OWNED_SCOPE825_INPUT_INTERIOR");
+    var hitElement = window.InputHitTest(window.PointFromScreen(new Point(point.X, point.Y))) as DependencyObject;
+    if (hitElement == null || (hitElement != focus && !focus.IsAncestorOf(hitElement))) throw new Exception("OWNED_SCOPE825_INPUT_TEXTBOX");
+    NativeRect client; var clientPoint = point;
+    if (!GetClientRect(hwnd, out client) || !ScreenToClient(hwnd, ref clientPoint) || clientPoint.X < client.Left || clientPoint.X >= client.Right || clientPoint.Y < client.Top || clientPoint.Y >= client.Bottom) throw new Exception("OWNED_SCOPE825_INPUT_CLIENT");
+    int left = GetSystemMetrics(76), top = GetSystemMetrics(77), virtualWidth = GetSystemMetrics(78), virtualHeight = GetSystemMetrics(79);
+    if (virtualWidth <= 1 || virtualHeight <= 1 || point.X < left || point.Y < top || (long)point.X >= (long)left + virtualWidth || (long)point.Y >= (long)top + virtualHeight) throw new Exception("OWNED_SCOPE825_INPUT_SCREEN");
+    int inputSize = Marshal.SizeOf(typeof(Input));
+    if (inputSize != (IntPtr.Size == 8 ? 40 : 28)) throw new Exception("OWNED_SCOPE825_INPUT_ABI");
+    var hit = WindowFromPoint(point);
+    if (hit == IntPtr.Zero || GetAncestor(hit, 2) != hwnd) throw new Exception("OWNED_SCOPE825_INPUT_HIT");
+    uint pid;
+    if (GetWindowThreadProcessId(hwnd, out pid) == 0 || pid != (uint)Process.GetCurrentProcess().Id) throw new Exception("OWNED_SCOPE825_INPUT_OWNER");
+    var batch = new Input[3];
+    batch[0].Mouse.X = (int)Math.Round(((double)point.X - left) * 65535 / (virtualWidth - 1));
+    batch[0].Mouse.Y = (int)Math.Round(((double)point.Y - top) * 65535 / (virtualHeight - 1));
+    batch[0].Mouse.Flags = 0x0001 | 0x8000 | 0x4000; // MOVE | ABSOLUTE | VIRTUALDESK
+    batch[1].Mouse.Flags = 0x0002; batch[2].Mouse.Flags = 0x0004;
+    if (SendInput(3, batch, inputSize) != 3) throw new Exception("OWNED_SCOPE825_INPUT_SHORT");
+  }
   static bool IsReady(Window window, TextBox focus, bool rendered) {
     if (!rendered) return ReadyResult(window, false, "NOT_RENDERED");
     if (Current != window) return ReadyResult(window, false, "NOT_CURRENT");
@@ -95,8 +145,9 @@ static class ActivityScope825Fixture {
     Current = window; ContentRegion = content; TitleRegion = title;
     if (!popup) InitialWindow = window;
     ReceiptWindow = window; PendingReceipt = popup ? "ack.json" : "ready.json";
-    bool rendered = false, requested = false;
+    bool rendered = false, requested = false, setupComplete = false;
     Action check = delegate {
+      if (!setupComplete) return;
       if (!IsReady(window, focus, rendered)) return;
       string name = PendingReceipt; PendingReceipt = null;
       Write(name, Snapshot());
@@ -109,14 +160,18 @@ static class ActivityScope825Fixture {
       rendered = true;
       if (!requested) {
         requested = true;
-        bool activated = window.Activate();
-        if (window == InitialWindow) Observe(activated ? "ACTIVATE_TRUE" : "ACTIVATE_FALSE");
-        bool focused = focus.Focus();
-        if (window == InitialWindow) Observe(focused ? "FOCUS_TRUE" : "FOCUS_FALSE");
+        try {
+          SetupOwnedClick(window, focus, rendered); setupComplete = true;
+          if (window == InitialWindow) Observe("INPUT_COMPLETE");
+        } catch {
+          if (window == InitialWindow) Observe("INPUT_REFUSED");
+          try { Write("failure.json", new { type = "OWNED_SCOPE825_INPUT_SETUP_FAILED" }); } catch { }
+          Application.Current.Shutdown(2); return;
+        }
       }
       check();
     };
-    // Recheck after WPF processes activation/focus; never request them again.
+    // Recheck real activation/focus after the one setup click; never send again.
     window.Activated += delegate { window.Dispatcher.BeginInvoke(DispatcherPriority.Input, check); };
     focus.GotKeyboardFocus += delegate { window.Dispatcher.BeginInvoke(DispatcherPriority.Input, check); };
     if (!popup) {
