@@ -1135,6 +1135,8 @@ async function dispatchMessage(
   switch (type) {
     case "activity.state":
     case "activity.apps":
+    case "activity.preview":
+    case "activity.preview_ocr":
     case "activity.configure":
     case "activity.import":
     case "activity.scan":

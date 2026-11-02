@@ -4,7 +4,9 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolveWinScript, runPs, type PsRunner } from '../host-use/win/powershell'
 import { MacPassiveRecorder, type CapturedWindow, type RecorderAdapter } from './adapters'
-import { ActivityError, PROTECTED_APPS, type ActivityApp, type ActivityConfig } from './types'
+import { ActivityError, PROTECTED_APPS, type ActivityApp, type ActivityConfig, type ActivityRect } from './types'
+import { ActivityScopeSkip, imageSize, profileForFrame, recognizedChatTitle, validateActivityRect } from './chat-scope'
+import { decodeWindowsActivityApps } from './windows-apps'
 
 const exec = promisify(execFile)
 import { languageOf, validatePng, withPendingImage, type LocalLanguage } from './image'
@@ -14,7 +16,7 @@ export const platformSupport = (platform: string = process.platform, env = proce
   return { supported: false, capture_mode: 'manual-only' as const, platform_note: platform === 'linux' ? 'Wayland、无 X11 桌面或会话类型不明：无法核实全局前台应用，不进行后台采集。可主动导入 PNG 截图并在本机 OCR。' : '当前平台不支持自动采集；可用的本地 OCR 取决于系统。' }
 }
 
-interface WinWindow { hwnd: number; pid: number; started: string; app_id: string; app_name: string; exe: string; title: string; geometry: string; safe: boolean }
+interface WinWindow { hwnd: number; pid: number; started: string; app_id: string; app_name: string; exe: string; title: string; geometry: string; safe: boolean; window_class?: string }
 function winWindow(value: any): value is WinWindow {
   return !!value && Number.isSafeInteger(value.hwnd) && value.hwnd > 0 && Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.started === 'string' && /^win\.[a-f0-9]{64}$/.test(value.app_id) && typeof value.app_name === 'string' && typeof value.exe === 'string' && typeof value.title === 'string' && typeof value.geometry === 'string' && value.safe === true && !PROTECTED_APPS.test(value.exe + ' ' + value.app_name)
 }
@@ -26,15 +28,14 @@ export class WindowsPassiveRecorder implements RecorderAdapter {
     catch (error) {
       if (signal.aborted) throw error
       const stderr = String((error as any)?.stderr || '')
+      if (/APP_LIST_LIMIT_EXCEEDED/.test(stderr)) throw new ActivityError('APP_LIST_LIMIT_EXCEEDED', 'Windows 运行进程超过 4096 项，本次列表未更新；已有选择保留')
+      if (name === 'activity-windows.ps1' && args[1] === 'Apps') throw new ActivityError('APP_LIST_FAILED', '无法读取完整 Windows 运行进程列表；请刷新重试，已有选择保留')
       throw new ActivityError('WINDOWS_CAPTURE_UNAVAILABLE', /OCRLANGMISSING/.test(stderr) ? '本机未安装所选 Windows OCR 语言包，请在系统语言设置中安装或选择其他语言' : 'Windows 采集或 OCR 不可用：请核对普通交互桌面、窗口权限及本地 OCR 语言')
     }
   }
   async listApps(signal: AbortSignal): Promise<ActivityApp[]> {
     const value = await this.call('activity-windows.ps1', ['-Mode', 'Apps'], signal)
-    if (value.ok !== true || !Array.isArray(value.windows) || value.windows.length > 4096) throw new ActivityError('APP_LIST_FAILED', '无法读取 Windows 应用列表')
-    const apps = new Map<string, ActivityApp>()
-    for (const row of value.windows) if (winWindow(row) && apps.size < 200) apps.set(row.app_id, { app_id: row.app_id, app_name: row.app_name.slice(0, 200) })
-    return [...apps.values()]
+    return decodeWindowsActivityApps(value)
   }
   async ocrImage(image: Buffer, language: LocalLanguage, signal: AbortSignal): Promise<string> {
     validatePng(image)
@@ -45,21 +46,51 @@ export class WindowsPassiveRecorder implements RecorderAdapter {
     if (result.ok !== true || !Array.isArray(result.words)) throw new ActivityError('OCR_FAILED', 'Windows 本地 OCR 未返回可靠结果')
     return result.words.filter((word: any) => typeof word.text === 'string').map((word: any) => word.text).join('\n').slice(0, 24000)
   }
+  private async crop(file: string, rect: ActivityRect, signal: AbortSignal): Promise<Buffer> {
+    return withPendingImage(this.root, null, async output => {
+      const result = await this.call('computer-capture.ps1', ['-Hwnd', '0', '-OutPath', output, '-CropOf', file, '-CropX', String(rect.x), '-CropY', String(rect.y), '-CropW', String(rect.width), '-CropH', String(rect.height)], signal)
+      if (result.ok !== true || result.mode !== 'crop') throw new ActivityError('CAPTURE_FAILED', '聊天区域裁剪未完成')
+      const image = fs.readFileSync(output), size = imageSize(image)
+      if (size.width !== rect.width || size.height !== rect.height) throw new ActivityError('CAPTURE_FAILED', '聊天区域尺寸已变化，请重新校准')
+      return image
+    })
+  }
+  async ocrTitle(image: Buffer, rect: ActivityRect, language: LocalLanguage, signal: AbortSignal): Promise<string> {
+    const size = imageSize(image); validateActivityRect(rect, size.width, size.height)
+    return withPendingImage(this.root, image, async file => {
+      const cropped = await this.crop(file, rect, signal)
+      return withPendingImage(this.root, cropped, async titleFile => recognizedChatTitle(await this.call('computer-ocr.ps1', ['-ImagePath', titleFile, '-Language', language], signal)))
+    })
+  }
   async capture(config: ActivityConfig, signal: AbortSignal): Promise<CapturedWindow | null> {
     const before = await this.call('activity-windows.ps1', ['-Mode', 'Probe'], signal)
     if (before.ok !== true || !winWindow(before.window) || !config.allowed_apps.includes(before.window.app_id)) return null
     const window: WinWindow = before.window
+    if (config.chat_scopes?.some(scope => scope.app_id === window.app_id && scope.profiles.length === 0)) throw new ActivityScopeSkip('scope_uncalibrated', '此应用已限定对话，但尚未校准聊天区域；请先完成校准')
     return withPendingImage(this.root, null, async file => {
       const security = await this.call('computer-probe.ps1', ['-Hwnd', String(window.hwnd)], signal)
       if (security.desktop !== 'Default' || security.pid !== window.pid || !Number.isInteger(security.ownIl) || !Number.isInteger(security.targetIl) || security.ownIl < 0 || security.targetIl < 0 || security.ownIl < security.targetIl) throw new ActivityError('PERMISSION_REQUIRED', '安全桌面或窗口权限不可验证，已跳过采集')
       const captured = await this.call('computer-capture.ps1', ['-Hwnd', String(window.hwnd), '-OutPath', file, '-Passive', '-AllowFallback'], signal)
       if (captured.ok !== true || captured.restoredFromIconic !== false || !['ok', 'partial'].includes(captured.observation_quality) || !Array.isArray(captured.occludedBy) || captured.occludedBy.length !== 0) throw new ActivityError('CAPTURE_FAILED', 'Windows 被动截图失败')
       const after = await this.call('activity-windows.ps1', ['-Mode', 'Probe'], signal)
-      if (!winWindow(after.window) || ['hwnd', 'pid', 'started', 'app_id', 'exe', 'title', 'geometry'].some(key => (window as any)[key] !== after.window[key])) return null
+      if (!winWindow(after.window) || ['hwnd', 'pid', 'started', 'app_id', 'exe', 'title', 'geometry', 'window_class'].some(key => (window as any)[key] !== after.window[key])) return null
       const stat = fs.lstatSync(file)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024) throw new ActivityError('CAPTURE_FAILED', '截图文件不可读取')
-      const image = fs.readFileSync(file); validatePng(image)
-      return { app_id: window.app_id, app_name: window.app_name, window_title: window.title.slice(0, 500), image, ocr_text: (config.extraction_mode || 'ocr') !== 'ocr' ? '' : await this.ocr(file, languageOf(config), signal) }
+      let image: Buffer = fs.readFileSync(file); validatePng(image)
+      const profile = profileForFrame(config, window.app_id, window.window_class, image)
+      let conversationTitle: string | undefined
+      if (profile) {
+        try { conversationTitle = await this.ocrTitle(image, profile.title, languageOf(config), signal) }
+        catch (error) {
+          if (signal.aborted) throw error
+          throw new ActivityScopeSkip('scope_unreadable', '当前聊天标题无法在本机识别；请核对 OCR 语言与标题区域')
+        }
+        if (!conversationTitle) throw new ActivityScopeSkip('scope_unreadable', '未能识别当前聊天标题；请核对标题区域与本机 OCR 语言')
+        if (!profile.allowed_titles.includes(conversationTitle)) throw new ActivityScopeSkip('scope_title_mismatch', '当前聊天标题不在允许名单，已跳过且未保存截图')
+        image = await this.crop(file, profile.content, signal)
+      }
+      const ocrText = (config.extraction_mode || 'ocr') !== 'ocr' ? '' : profile ? await this.ocrImage(image, languageOf(config), signal) : await this.ocr(file, languageOf(config), signal)
+      return { app_id: window.app_id, app_name: window.app_name, window_title: window.title.slice(0, 500), ...(window.window_class ? { window_class: window.window_class } : {}), ...(conversationTitle ? { conversation_title: conversationTitle } : {}), image, ocr_text: ocrText }
     })
   }
 }

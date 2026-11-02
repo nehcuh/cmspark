@@ -1,0 +1,65 @@
+{
+  "issue": 825,
+  "gate": "MCP_test_only_bootstrap_observation_before_one_purposeful_instrumented_ci",
+  "verdict": "APPROVE",
+  "reviewed_base": "2c8eb4ec6306483bc69a4467eade2a02992841b8",
+  "reviewed_source_paths": [
+    "companion/scripts/build-desktop-windows.mjs",
+    "companion/scripts/desktop-bootstrap-observation-fixture.mjs",
+    "companion/scripts/tests/desktop-bootstrap-observation-773.test.mjs",
+    "companion/tests/desktop-acceptance-diagnostics.test.ts",
+    "companion/tests/desktop-native-mcp-476.test.ts",
+    "companion/tests/desktop-native-phases-480.test.ts",
+    "companion/tests/desktop-native-receipts-476.test.ts",
+    "companion/tests/fixtures/desktop-480/native-acceptance-controller.ts",
+    "companion/tests/fixtures/desktop-480/native-phase-observation.ts",
+    "docs/windows-development.md"
+  ],
+  "source_diff_sha256": "f77601b37e188abd43ce5cfbc0c733e9b54d53fcaa99714d49916729cf84193b",
+  "prompt_sha256": "5e538404f64bdc14992afad4b4d256ba88e09cb404abb27af3b249df728e2e07",
+  "prompt_bytes": 247085,
+  "api_started_at_utc": "2026-11-02T17:24:38.305887+00:00",
+  "recorded_at_utc": "2026-11-02T17:35:59.835721+00:00",
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 65673,
+      "outputTokens": 18956,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.802265,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "process_exit": 0,
+  "is_error": false,
+  "duration_ms": 581132,
+  "num_turns": 1,
+  "review_text_sha256": "b784ba1a004465ff182ee8909c90745c11ce8bc6ef523a364d6fb8fee446fed9",
+  "source_freeze_binding": "10-path digest verified before API; coordinator confirmed source freeze and audit-only additions; reviewer writes no source.",
+  "extra_formatting_api_calls": 0,
+  "historical_root_cause": "UNKNOWN",
+  "allowed_next_step": "Commit the reviewed test-only observation unit and run one purposeful instrumented CI",
+  "not_approved_yet": [
+    "Windows MSVC compilation of the new MCP fixture",
+    "actual native BOOT observations",
+    "original #476 business/cleanup acceptance on instrumented head",
+    "complete final CI",
+    "release publishing"
+  ],
+  "post_prompt_coordinator_evidence": {
+    "source": "docs/audit/reviews/activity-825-census-2c8-public-audit.md",
+    "reported_by": "coordinator after API start; not part of model prompt",
+    "tests_pass": 9527,
+    "tests_skip": 67,
+    "tests_fail": 0,
+    "suites_separate_from_tests": 157,
+    "real_PS_producer_pass_duration_ms": 6413,
+    "GUI_directed": "not executed due to MCP prerequisite failure",
+    "not_full_CI_or_GUI_approval": true
+  }
+}

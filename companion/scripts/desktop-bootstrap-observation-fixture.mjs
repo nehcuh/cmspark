@@ -1,4 +1,4 @@
-// Unshipped #773 observations for inheritance and the shared visual test family. Production source is never rewritten.
+// Unshipped #773 observations. Production source is never rewritten.
 export const bootstrapObservationSites773 = Object.freeze([
   'preConsume', 'parentCleared', 'sentinelChecker', 'descendantChecker',
   'CreateCoreWebView2EnvironmentWithOptions', 'environmentCallback', 'CreateCoreWebView2Controller', 'controllerCallback',
@@ -77,21 +77,34 @@ function balanced(text, start, open, close) {
   throw Error('BOOT773_BALANCE')
 }
 export function desktopBootstrapObservationFixture773(original) {
+  return bootstrapObservationFixture773(original, false)
+}
+export function desktopMcpBootstrapObservationFixture773(original) {
+  return bootstrapObservationFixture773(original, true)
+}
+function bootstrapObservationFixture773(original, mcp) {
   if(typeof original!=='string'||!original.length||original.length>2*1024*1024||original.includes('obRecord773'))throw Error('BOOT773_SOURCE')
+  const owner=mcp?'D476Acceptance':'D480Acceptance'
   let source=original;const patches=[]
   const patchAt=(at,before,after)=>{if(source.slice(at,at+before.length)!==before)throw Error('BOOT773_SPAN');source=source.slice(0,at)+after+source.slice(at+before.length);patches.push([at,before,after])}
   const patch=(before,after)=>patchAt(one(source,before),before,after)
-  patch('class D480Acceptance {','class D480Acceptance {'+declarations)
-  const scope=(anchor,point)=>{one(source,anchor);patch(anchor,anchor+`D480Acceptance::ObScope773 obScope773(${point});`)}
-  scope('void D480Acceptance::preConsume(HANDLE input){',1)
-  scope('void D480Acceptance::parentCleared(HANDLE parent){',2)
-  scope('void D480Acceptance::attach(Desktop& h){',26)
-  patch('CheckerResult result=inheritedChecker(receiver,L"--sentinel");','CheckerResult result=obMeasure773(3,[&](){return inheritedChecker(receiver,L"--sentinel");});')
-  patch('result=inheritedChecker(receiver,L"--descendant");','result=obMeasure773(4,[&](){return inheritedChecker(receiver,L"--descendant");});')
-  patch('void D480Acceptance::auth(Desktop& h){','void D480Acceptance::auth(Desktop& h){obHost773=&h;obFlush773();')
+  if(mcp){
+    // Keep D476's existing public receipt/controller members and wchar_t emit.
+    patch('struct D476Acceptance {','struct D476Acceptance {'+declarations+'\n public:\n static void emit(Desktop&,std::wstring const&);\n static void obBind773(Desktop& h){obHost773=&h;obFlush773();}\n')
+    patch('phase=L"ready";ready=true;DESKTOP_TEST_NOTE(ready_accepted)','phase=L"ready";ready=true;DESKTOP_TEST_NOTE(ready_accepted)D476Acceptance::obBind773(*this);')
+  }else{
+    patch('class D480Acceptance {','class D480Acceptance {'+declarations)
+    const scope=(anchor,point)=>{one(source,anchor);patch(anchor,anchor+`D480Acceptance::ObScope773 obScope773(${point});`)}
+    scope('void D480Acceptance::preConsume(HANDLE input){',1)
+    scope('void D480Acceptance::parentCleared(HANDLE parent){',2)
+    scope('void D480Acceptance::attach(Desktop& h){',26)
+    patch('CheckerResult result=inheritedChecker(receiver,L"--sentinel");','CheckerResult result=obMeasure773(3,[&](){return inheritedChecker(receiver,L"--sentinel");});')
+    patch('result=inheritedChecker(receiver,L"--descendant");','result=obMeasure773(4,[&](){return inheritedChecker(receiver,L"--descendant");});')
+    patch('void D480Acceptance::auth(Desktop& h){','void D480Acceptance::auth(Desktop& h){obHost773=&h;obFlush773();')
+  }
   // Use exact original callback values. Guards remain byte-for-byte and still own decisions.
-  patch('DESKTOP_TEST_NOTE(env_callback)if(FAILED(hr)||!env)', 'DESKTOP_TEST_NOTE(env_callback)D480Acceptance::obCallback773(6,hr,env!=nullptr);if(FAILED(hr)||!env)')
-  patch('DESKTOP_TEST_NOTE(controller_callback)if(FAILED(code)||!host)', 'DESKTOP_TEST_NOTE(controller_callback)D480Acceptance::obCallback773(8,code,host!=nullptr);if(FAILED(code)||!host)')
+  patch('DESKTOP_TEST_NOTE(env_callback)if(FAILED(hr)||!env)', `DESKTOP_TEST_NOTE(env_callback)${owner}::obCallback773(6,hr,env!=nullptr);if(FAILED(hr)||!env)`)
+  patch('DESKTOP_TEST_NOTE(controller_callback)if(FAILED(code)||!host)', `DESKTOP_TEST_NOTE(controller_callback)${owner}::obCallback773(8,code,host!=nullptr);if(FAILED(code)||!host)`)
   const calls=[
     ['host->get_CoreWebView2',9],['web->get_Settings',10],['settings->put_AreDevToolsEnabled',11],
     ['settings->put_AreDefaultContextMenusEnabled',12],['settings->put_AreDefaultScriptDialogsEnabled',13],
@@ -109,13 +122,14 @@ export function desktopBootstrapObservationFixture773(original) {
     const body=source.slice(begin,finish),at=one(body,callee+'('),open=at+callee.length,end=balanced(body,open,'(',')')
     const expression=body.slice(at,end)
     // The complete expression is restored by inverse; original return type is auto-preserved.
-    patchAt(begin+at,expression,`D480Acceptance::obApi773(${point},[&](){return ${expression};})`)
+    patchAt(begin+at,expression,`${owner}::obApi773(${point},[&](){return ${expression};})`)
   }
   // Observe the first eight actual resource callback instances independently.
   const marker='[this](ICoreWebView2*,ICoreWebView2WebResourceRequestedEventArgs* args)->HRESULT{'
-  patch(marker,marker+'D480Acceptance::ObScope773 resourceScope773(30);')
-  source+=implementation
-  let inverse=source.slice(0,-implementation.length)
+  patch(marker,marker+`${owner}::ObScope773 resourceScope773(30);`)
+  const tail=mcp?implementation.replaceAll('D480Acceptance::','D476Acceptance::')+'\nvoid D476Acceptance::emit(Desktop& h,std::wstring const& value){emit(h,(L"D480A_"+value).c_str());}\n':implementation
+  source+=tail
+  let inverse=source.slice(0,-tail.length)
   for(const [at,before,after]of [...patches].reverse()){if(inverse.slice(at,at+after.length)!==after)throw Error('BOOT773_INVERSE_SPAN');inverse=inverse.slice(0,at)+before+inverse.slice(at+after.length)}
   if(inverse!==original)throw Error('BOOT773_INVERSE')
   return{source,inverse,sites:bootstrapObservationSites773}

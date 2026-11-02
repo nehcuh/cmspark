@@ -76,7 +76,12 @@ export function condition750(source, context) {
 export function validateCockpitSteps748(steps) {
   const additions = steps.filter(step => key(step) === activity758.nativeStep.name)
   assert.equal(additions.length, 1, 'one exact #758 native addition')
-  assert.deepEqual(additions[0], activity758.nativeStep, '#758 native command, lane, environment and failure semantics are exact')
+  const nativeStep = structuredClone(activity758.nativeStep)
+  // #825 appends the reviewed native cases; retain the sealed #758 producer.
+  const oldRun = 'node scripts/run-tests.mjs .test-dist/tests/activity-platform-native-758.test.js\n'
+  assert.equal(nativeStep.run.split(oldRun).length, 2)
+  nativeStep.run = nativeStep.run.replace(oldRun, oldRun.trimEnd() + ' .test-dist/tests/activity-apps-825.test.js .test-dist/tests/activity-scope825-native.test.js\n')
+  assert.deepEqual(additions[0], nativeStep, '#758/#825 native command, lane, environment and failure semantics are exact')
   const compiled = steps.findIndex(step => step.name === 'Compile shared companion test inputs (#650)')
   assert.equal(steps.indexOf(additions[0]), compiled + 1, '#758 native consumes the just-compiled inputs')
   // Remove only this fully checked addition; all original pins remain intact.

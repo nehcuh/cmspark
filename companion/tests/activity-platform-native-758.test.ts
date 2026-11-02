@@ -57,7 +57,7 @@ test('#758 actual desktop foreground identity, passive pixels and local OCR; min
     if(win){
       // Raw first-party preflight keeps a native script/WinRT setup failure observable.
       const listed=JSON.parse(await runPs(resolveWinScript('activity-windows.ps1'),['-Mode','Apps']))
-      assert.equal(listed.ok,true);assert.ok(Array.isArray(listed.windows))
+      assert.equal(listed.ok,true);assert.ok(Array.isArray(listed.apps))
       const image=path.join(dir,'owned OCR 原生.png');fs.copyFileSync(path.resolve('tests/fixtures/activity-linux-758.png'),image)
       const ocr=JSON.parse(await observedOcrCall758(resolveWinScript('computer-ocr.ps1'),['-ImagePath',image,'-Language','en-US'],dir,runPs,line=>t.diagnostic(line)))
       assert.equal(ocr.ok,true);assert.ok(ocr.words.some((w:any)=>/PROJECT/i.test(w.text)))

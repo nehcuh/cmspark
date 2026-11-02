@@ -7,14 +7,15 @@ import { resolveHostBinary } from '../host-use/darwin/host-bin'
 import { spawnHostBin } from '../host-use/darwin/host-integrity'
 import { getConfig } from '../config'
 import { llmExtract } from '../llm/llm-extract'
-import { ActivityError, PROTECTED_APPS, type ActivityApp, type ActivityConfig, type ActivitySource, type TodoCandidate } from './types'
+import { ActivityError, PROTECTED_APPS, type ActivityApp, type ActivityConfig, type ActivitySource, type TodoCandidate, type ActivityRect } from './types'
 import { evidencedDeadline } from './deadline-evidence'
 import { languageOf, validatePng, withPendingImage, type LocalLanguage } from './image'
 import { submitWindowsReminder } from './notifications'
-export interface CapturedWindow { app_id: string; app_name: string; window_title: string; ocr_text: string; image: Buffer }
+export interface CapturedWindow { app_id: string; app_name: string; window_title: string; window_class?: string; conversation_title?: string; ocr_text: string; image: Buffer }
 export interface RecorderAdapter {
   capture(config: ActivityConfig, signal: AbortSignal): Promise<CapturedWindow | null>
   ocrImage?(image: Buffer, language: LocalLanguage, signal: AbortSignal): Promise<string>
+  ocrTitle?(image: Buffer, rect: ActivityRect, language: LocalLanguage, signal: AbortSignal): Promise<string>
   listApps?(signal: AbortSignal): Promise<ActivityApp[]>
 }
 const execFileAsync = promisify(execFile)

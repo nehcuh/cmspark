@@ -109,6 +109,13 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos', allow
           removeListener: (fn: any) => chromeListeners.delete(fn),
         },
         sendMessage: (message: any) => {
+          if (message.type === 'activity.state') {
+            const id = 'a'.repeat(32), sender = { id, url: `chrome-extension://${id}/tabs/workspace.html`, frameId: 0 }
+            const ack = load(at('../background/workspace-sender.ts')).forwardWorkspaceRequest(message, sender, id, {
+              getState: () => 'connected', send: (frame: any) => { Promise.resolve(fixture.handle(frame)).then(result => { for (const fn of [...chromeListeners]) fn(result) }); return true },
+            })
+            return Promise.resolve(ack)
+          }
           if (message.type === 'activity.apps') {
             Promise.resolve().then(() => { for (const fn of [...chromeListeners]) fn({ type: 'activity.result', id: message.id, ok: true, apps: activityApps }) })
             return Promise.resolve({ ok: true })
@@ -116,7 +123,7 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos', allow
           return unrelated()
         },
       }, tabs: { create: unrelated, query: unrelated } },
-      CustomEvent: CustomEventValue, URLSearchParams, AbortController, console, crypto: globalThis.crypto, setTimeout, clearTimeout,
+      CustomEvent: CustomEventValue, URL, URLSearchParams, AbortController, console, crypto: globalThis.crypto, setTimeout, clearTimeout,
     }, { timeout: 1000, filename: file })
     return exports
   }
@@ -377,6 +384,7 @@ test('796 running app picker reaches all 20 apps across pages and preserves cros
   let prevented = 0
   const form = ui.find(panel, node => node.type === 'form')
   form.props.onSubmit({ preventDefault() { prevented++ } })
+  await new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(prevented, 1)
   assert.equal(ui.configurationCalls.length, 1, 'actual form validation must reach the controlled service')
   const call = ui.configurationCalls[0], reply = await call.promise
@@ -422,6 +430,14 @@ test('822 actual model form separates image consent, clears it on mode changes, 
   panel = ui.render('activity').panel
   assert.equal(ui.text(panel).includes('changed while the form was open'), false)
   ui.find(panel, node => node.type === 'form').props.onSubmit({ preventDefault() {} })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(ui.configurationCalls.length, 0, 'changed target metadata cannot authorize the open form')
+  panel = ui.render('activity').panel
+  assert.ok(ui.text(panel).includes('设置或图像处理目标已变化'))
+  ui.controller.snapshot = snapshot
+  panel = ui.render('activity').panel
+  ui.find(panel, node => node.type === 'form').props.onSubmit({ preventDefault() {} })
+  await new Promise(resolve => setTimeout(resolve, 0))
   const call = ui.configurationCalls[0], reply = await call.promise
   assert.equal(call.payload.patch.extraction_mode, 'vision')
   assert.equal(call.payload.patch.image_ai_enabled, true)

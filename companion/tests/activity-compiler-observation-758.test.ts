@@ -45,6 +45,8 @@ test('#758 compiler failure observation handles cancellation and refuses hostile
 const wpfDiagnosticLine = "    if(win)try{const project=require(path.resolve('tests/helpers/activity-wpf-observation-758.cjs'));t.diagnostic('D758_WPF_PHASE '+JSON.stringify({at:'CLOSE',phases:project(dir)}))}catch{}\n"
 function restoreController(value: string, eol: string): string {
   const changes: [string, string][] = [
+    // #825 changes the real Apps DTO consumer; restore that explicit delta too.
+    ['Array.isArray(listed.apps)', 'Array.isArray(listed.windows)'],
     [wpfDiagnosticLine, ''],
     ["import { compilerFailureObservation758 } from './helpers/activity-compiler-observation-758'\n", ''],
     ["try{t.diagnostic('ACTIVITY758_COMPILER_FAILURE '+JSON.stringify(compilerFailureObservation758(error)))}catch{}", ''],

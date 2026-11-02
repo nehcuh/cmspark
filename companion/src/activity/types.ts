@@ -1,7 +1,22 @@
 /** Personal tasks are durable user-owned records, independent of Agent MissionBoard. */
 export type ActivityModelMode = "ocr" | "vision" | "dedicated" | "qwen"
 export interface ActivityVisionModel { base_url: string; model_name: string; api_key: string; protocol?: "openai" | "anthropic"; api_key_set?: boolean }
+export interface ActivityRect { x: number; y: number; width: number; height: number }
+export interface ActivityChatProfile {
+  window_class: string
+  width: number
+  height: number
+  content: ActivityRect
+  title: ActivityRect
+  allowed_titles: string[]
+}
+export interface ActivityChatScope { app_id: string; profiles: ActivityChatProfile[] }
+export interface ActivityPreview {
+  app_id: string; app_name: string; window_title: string; window_class: string
+  width: number; height: number; image_data_url: string
+}
 export interface ActivityConfig {
+  chat_scopes?: ActivityChatScope[]
   extraction_mode?: ActivityModelMode
   image_ai_enabled?: boolean
   /** Backend-owned binding to the exact processing target. */
@@ -15,13 +30,14 @@ export interface ActivityConfig {
   retention_days: number
   max_storage_mb: number
 }
-export interface ActivityApp { app_id: string; app_name: string }
+export interface ActivityApp { app_id: string; app_name: string; window_state?: 'visible' | 'minimized' | 'hidden' | 'none' }
 export interface ActivitySource {
   id: string
   captured_at: string
   app_id: string
   app_name: string
   window_title: string
+  conversation_title?: string
   ocr_text: string
   sha256: string
   bytes: number
@@ -85,6 +101,7 @@ export interface ActivityRuntime {
   last_success_at: string | null
   status: string
   error: string | null
+  scope_note?: string | null
   model_target_ids?: Record<string, string>
   model_targets?: Record<string, string>
   model_target?: string

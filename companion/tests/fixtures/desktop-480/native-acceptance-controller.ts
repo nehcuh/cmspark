@@ -1,5 +1,5 @@
 import { withSurface650, parseSurfaceBorrow650, type SurfaceBorrow650 } from "../native-surface-650"
-import {nativePhaseNames,recordNativePhaseResponse,type NativeNavigationObservation} from "./native-phase-observation"
+import {nativePhaseNames,recordNativePhaseResponse,recordBootstrapObservation773,type NativeNavigationObservation} from "./native-phase-observation"
 /* Owned #480 acceptance coordinator. Imported by tests only, never product runtime. */
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -63,16 +63,6 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
   const nativePhases=new Set<string>(),nativeNavigation:{value?:NativeNavigationObservation}={}
   // #773 observes only real responses on the current HMAC-owned channel. No receipt authority.
   const bootstrapRows773:number[][]=[],bootstrapSeen773=new Set<string>()
-  const bootstrapRecord773=(id:unknown)=>{
-    if(typeof id!=="string"||id.length>128||bootstrapRows773.length>=192)return
-    const match=/^D480A_BOOT_([1-9]\d?)_([1-8])_([0-2])_(0|[1-9]\d{0,2})_(0|[1-9]\d{0,9})_([0-2])$/.exec(id)
-    if(!match||match[0]!==id)return
-    const row=match.slice(1).map(Number),[point,ordinal,edge,bucket,code,present]=row
-    if(!row.every(Number.isSafeInteger)||point>30||bucket>361||code>0xffffffff)return
-    if(edge===0&&(code!==0||present!==2)||edge===1&&present!==2||edge===2&&(![6,8].includes(point)||present===2))return
-    const key=point+":"+ordinal+":"+edge;if(bootstrapSeen773.has(key))return
-    bootstrapSeen773.add(key);bootstrapRows773.push(row)
-  }
 
   let ready: { ws: WebSocket; proof: string } | undefined
   let current: { ws: WebSocket; host: string; capabilityId: string } | undefined
@@ -94,7 +84,7 @@ export function observeAcceptanceResponses(wss: WebSocketServer, owned: () => { 
       if (frame.type === "desktop.ready" && frame.protocol_version === 1 && ws.readyState === WebSocket.OPEN) ready = { ws, proof: candidateProof }
       else if (frame.type === "system.pong" && currentSocket() === ws) {
         try{recordNativePhaseResponse(args[0],nativePhases,nativeNavigation)}catch{/* Observation cannot replace original send behavior. */}
-        try{bootstrapRecord773(frame.id)}catch{/* Preserve original send, callback, return and throw. */}
+        try{recordBootstrapObservation773(frame.id,{rows:bootstrapRows773,seen:bootstrapSeen773})}catch{/* Preserve original send, callback, return and throw. */}
         const receipt = acceptanceReceipt(frame.id)
         if (receipt) record(receipt)
       }

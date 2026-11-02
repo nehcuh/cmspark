@@ -69,17 +69,17 @@ for(const eol of ["LF","CRLF"] as const)for(const diagnosticThrows of [false,tru
  const source=read("tests/desktop-native-mcp-476.test.ts"),body=actualNativeFinally(eol==="CRLF"?source.replace(/\r?\n/g,"\r\n"):source)
  const calls:string[]=[],writes:string[]=[],primary=new Error("owned-primary"),diagnostic=new Error("owned-diagnostic")
  const process={stdout:{write:(line:string)=>{calls.push("diagnostic");if(diagnosticThrows)throw diagnostic;writes.push(line)}},env:{CMSPARK_DATA_DIR:"owned-current"}}
- const ctx={process,primary,auth:false,windowRequested:false,postAuthRequestMask:5,receipts:new Set(),settled:true,exit:Promise.resolve(0),old:"owned-original",dir:"owned-current",
+ const ctx={nativePhaseNames:["ready_accepted"],nativePhases:new Set(["ready_accepted"]),nativeNavigation:{},bootstrapRows773:[[29,1,1,3,0x80070057,2]],process,primary,auth:false,windowRequested:false,postAuthRequestMask:5,receipts:new Set(),settled:true,exit:Promise.resolve(0),old:"owned-original",dir:"owned-current",
   surfaceLease:{retain:()=>calls.push("surfaceRetain"),settled:()=>calls.push("surfaceSettled")},
   manager:{rejectAll:()=>calls.push("rejectAll")},child:{terminate:()=>calls.push("terminate")},
   channel:{wss:{clients:[{terminate:()=>calls.push("socketTerminate")}],close:(cb:()=>void)=>{calls.push("channelClose");cb()}}},
   legacy:{close:(cb:()=>void)=>{calls.push("legacyClose");cb()}},server:{close:(cb:()=>void)=>{calls.push("serverClose");cb()}},fs:{rmSync:()=>calls.push("rmOwned")}}
- const script="async function execute(ctx:any){const {process,primary,auth,windowRequested,postAuthRequestMask,receipts,settled,exit,old,dir,manager,child,channel,legacy,server,fs,surfaceLease}=ctx;try{throw primary}finally{"+body+"}}"
+ const script="async function execute(ctx:any){const {nativePhaseNames,nativePhases,nativeNavigation,bootstrapRows773,process,primary,auth,windowRequested,postAuthRequestMask,receipts,settled,exit,old,dir,manager,child,channel,legacy,server,fs,surfaceLease}=ctx;try{throw primary}finally{"+body+"}}"
  const run=new Function("ctx",ts.transpileModule(script,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText+";return execute(ctx)")
  await assert.rejects(run(ctx),e=>e===primary,"passive diagnostics cannot replace the original test failure")
  assert.deepEqual(calls,["surfaceRetain","diagnostic","rejectAll","terminate","socketTerminate","channelClose","legacyClose","serverClose","rmOwned","surfaceSettled"])
  assert.equal(process.env.CMSPARK_DATA_DIR,"owned-original")
- if(!diagnosticThrows){assert.equal(writes.length,1);assert.match(writes[0],/^DESKTOP_476_PROGRESS /);const record=JSON.parse(writes[0].slice("DESKTOP_476_PROGRESS ".length));assert.deepEqual(Object.keys(record).sort(),["authenticated","windowRequested","postAuthRequestMask","exited","windows","approved","denied","done"].sort());assert.equal(record.postAuthRequestMask,5);assert.equal(writes[0].includes("owned-current"),false)}
+ if(!diagnosticThrows){assert.equal(writes.length,1);assert.match(writes[0],/^DESKTOP_476_PROGRESS /);const record=JSON.parse(writes[0].slice("DESKTOP_476_PROGRESS ".length));assert.deepEqual(Object.keys(record).sort(),["nativePhases","nativeNavigation","bootstrap773","authenticated","windowRequested","postAuthRequestMask","exited","windows","approved","denied","done"].sort());assert.equal(record.postAuthRequestMask,5);assert.deepEqual(record.bootstrap773,{clock:"native-first-hook-250ms",processInstanceAttributed:false,rows:[[29,1,1,3,0x80070057,2]]});assert.equal(writes[0].includes("owned-current"),false)}
 })
 test("#476 cleanup projection refuses a missing or ambiguous leased callback",()=>{
  const source=read("tests/desktop-native-mcp-476.test.ts")

@@ -30,8 +30,9 @@ function harness(platform: 'win32' | 'darwin' = 'win32', separated = false) {
     if (id === 'react') return react
     if (id === 'react/jsx-runtime') return jsx
     if (id === '../ContextPanelHost') return { CONTEXT_PANEL_TABS: [] }
+    if (id === './ChatScopeEditor') return { ChatScopeEditor: () => null }
     if (id === './RecentActivitySources') return { RecentActivitySources: () => null }
-    if (id === './activity-request') return { formatTaskTime: () => '—', requestActivity: async (type: string) => { assert.equal(type, 'activity.apps'); return { apps } } }
+    if (id === './activity-request') return { formatTaskTime: () => '—', requestActivity: async (type: string) => { if (type === 'activity.state') return { state: controller.snapshot }; assert.equal(type, 'activity.apps'); return { apps } } }
     throw Error('unexpected import: ' + id)
   }
   const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText
@@ -112,7 +113,7 @@ test('752 same-named identities can be independently selected and saved', async 
   h.nodes(labels[0]).find(n => n.type === 'input').props.onChange({ target: { checked: true } }); tree = h.render()
   labels = h.choices(tree); assert.equal(h.nodes(labels[0]).find(n => n.type === 'input').props.checked, true); assert.equal(h.nodes(labels[1]).find(n => n.type === 'input').props.checked, false)
   h.nodes(labels[1]).find(n => n.type === 'input').props.onChange({ target: { checked: true } }); tree = h.render()
-  const form = h.nodes(tree).find(n => n.type === 'form'); assert.ok(form); form.props.onSubmit({ preventDefault() {} }); await Promise.resolve()
+  const form = h.nodes(tree).find(n => n.type === 'form'); assert.ok(form); form.props.onSubmit({ preventDefault() {} }); await new Promise<void>(resolve => setImmediate(resolve))
   assert.equal(h.saves.length, 1); assert.equal(h.saves[0].type, 'activity.configure')
   assert.deepEqual(Array.from(h.saves[0].value.patch.allowed_apps), [h.appA, h.appB])
 })
@@ -135,6 +136,29 @@ test('752 same names across pages stay distinguishable and selections persist', 
   h.button(tree, '下一页').props.onClick(); tree = h.render()
   labels = h.choices(tree); assert.equal(labels.length, 1); assert.match(h.text(labels[0]), /com\.example\.chat\.two/)
   h.nodes(labels[0]).find(n => n.type === 'input').props.onChange({ target: { checked: true } }); tree = h.render()
-  const form = h.nodes(tree).find(n => n.type === 'form'); assert.ok(form); form.props.onSubmit({ preventDefault() {} }); await Promise.resolve()
+  const form = h.nodes(tree).find(n => n.type === 'form'); assert.ok(form); form.props.onSubmit({ preventDefault() {} }); await new Promise<void>(resolve => setImmediate(resolve))
   assert.deepEqual(Array.from(h.saves[0].value.patch.allowed_apps), [h.appA, h.appB])
+})
+
+test('825 process search recognizes chat aliases and preserves a hidden selection', async () => {
+  const h = harness('win32', true)
+  let tree = h.render(); h.button(tree, '设置应用与隐私').props.onClick()
+  tree = h.render(); h.button(tree, '选择正在运行的应用').props.onClick(); await new Promise<void>(resolve => setImmediate(resolve))
+  tree = h.render()
+  const search = () => h.nodes(tree).find(n => n.type === 'input' && n.props['aria-label'] === '搜索运行应用')
+  search().props.onChange({ target: { value: '微信' } }); tree = h.render()
+  assert.equal(h.choices(tree).length, 2)
+  const second = h.choices(tree)[1]; h.nodes(second).find(n => n.type === 'input').props.onChange({ target: { checked: true } }); tree = h.render()
+  search().props.onChange({ target: { value: 'no matching process' } }); tree = h.render()
+  assert.equal(h.choices(tree).length, 0); assert.match(h.text(tree), /已选择 1/)
+  search().props.onChange({ target: { value: '' } }); tree = h.render()
+  h.nodes(tree).find(n => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(Array.from(h.saves[0].value.patch.allowed_apps), [h.appB])
+})
+
+test('825 UI exposes the actual 3-second minimum and busy semantics', () => {
+  const h = harness(); let tree = h.render(); h.button(tree, '设置应用与隐私').props.onClick(); tree = h.render()
+  const interval = h.nodes(tree).find(n => n.type === 'input' && n.props.max === 600)
+  assert.equal(interval.props.min, 3); assert.match(h.text(tree), /上一轮采集或识别未完成时等待，不并发/)
 })

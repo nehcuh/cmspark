@@ -702,6 +702,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
     switch (message?.type) {
       case "activity.state":
       case "activity.apps":
+    case "activity.preview":
+    case "activity.preview_ocr":
       case "activity.configure":
       case "activity.import":
       case "activity.scan":

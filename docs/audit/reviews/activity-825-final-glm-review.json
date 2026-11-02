@@ -1,0 +1,56 @@
+{
+  "issue": 825,
+  "gate": "final_source_review_before_commit_and_hosted_ci",
+  "verdict": "APPROVE_WITH_NITS",
+  "reviewed_base": "ea7322800a2b65abd68134f1a0f7d853dc8ac5d5",
+  "reviewed_staged_path_count": 59,
+  "source_diff_sha256": "564a3c6b1a1e22586177cb2e3177bc192ebbcacb025d4a667b97a2d36946f154",
+  "product_text_diff_sha256": "351564405889ef727d65855ea5785fa4170dc4d2850025810bb716ea7238719f",
+  "prompt_sha256": "8bbe5be015beb752f023c0ee9bc8c625abec9078432a2a9ff1ad0bb2c06b1b05",
+  "prompt_bytes": 530637,
+  "api_started_at_utc": "2026-11-02T16:31:44.921869+00:00",
+  "recorded_at_utc": "2026-11-02T16:37:26.852645+00:00",
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 145382,
+      "outputTokens": 14574,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 1.0912600000000001,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "process_exit": 0,
+  "is_error": false,
+  "duration_ms": 254869,
+  "num_turns": 1,
+  "review_text_sha256": "765d9d44927042d38ac44637bd3e7fbceb192f045faedcd1c92f0ec161cb1a4c",
+  "frozen_index_unchanged_before_audit_staging": true,
+  "fixture_metadata_confirmed_synthetic_before_api": true,
+  "excluded_inputs": [
+    "JPG binary payload",
+    "duplicate audit diff bodies",
+    "unstaged local host-integrity pin",
+    "OMX metadata",
+    "live configuration",
+    "private Chrome restoration copy",
+    "raw host-wide test logs"
+  ],
+  "allowed_next_step": "commit frozen reviewed candidate and enter final hosted CI",
+  "not_approved_yet": [
+    "Windows native acceptance",
+    "final PR/main CI",
+    "three-platform release dry-run",
+    "tag publishing",
+    "local replacement"
+  ],
+  "nonblocking_lease_note_checked": {
+    "source": "companion/tests/fixtures/native-surface-650.ts",
+    "retain_is_boolean_not_counter": true
+  }
+}

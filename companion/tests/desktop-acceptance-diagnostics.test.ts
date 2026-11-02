@@ -8,7 +8,7 @@ import {createDesktopChannel} from "../src/desktop/channel"
 import fs from "node:fs"
 import path from "node:path"
 import vm from "node:vm"
-import {nativePhaseNames} from "./fixtures/desktop-480/native-phase-observation"
+import {nativePhaseNames,observeNativePhaseResponses} from "./fixtures/desktop-480/native-phase-observation"
 
 test("native acceptance diagnostics admit only fixed phases, names and bounded counts", () => {
   const counts = { auths: 1, issues: 1, launches: 1, exits: 0, listReads: 4 }
@@ -62,25 +62,48 @@ test('acceptance native lifetime phases use actual HMAC-owned pong responses and
 
 
 // #773: interpret only the actual unshipped record/format bodies, not a shadow producer.
-function actualBootstrapProducer773(cpp:string,emitSource:string,send:(frame:unknown)=>void,format:(value:number)=>string=String){
+function actualBootstrapProducer773(cpp:string,emitSource:string,send:(frame:unknown)=>void,format:(value:number)=>string=String,owner='D480Acceptance'){
  const between=(start:string,end:string)=>{assert.equal(cpp.split(start).length,2);const a=cpp.indexOf(start)+start.length,b=cpp.indexOf(end,a);assert.ok(b>a);return cpp.slice(a,b)}
  const replace=(text:string,old:string,next:string)=>{assert.equal(text.split(old).length,2);return text.replace(old,next)}
- let record=between('void D480Acceptance::obRecord773(unsigned point,unsigned ordinal,unsigned edge,unsigned code,unsigned present){','\n}\nvoid D480Acceptance::obFlush773')
+ let record=between(`void ${owner}::obRecord773(unsigned point,unsigned ordinal,unsigned edge,unsigned code,unsigned present){`,`\n}\nvoid ${owner}::obFlush773`)
  record=replace(record,'auto elapsed=GetTickCount64()-obStart773;','const elapsed=GetTickCount64()-obStart773;')
  record=replace(record,'unsigned bucket=elapsed<90000?static_cast<unsigned>(elapsed/250):361;','const bucket=elapsed<90000?Math.floor(elapsed/250):361;')
  record=replace(record,'ObRow773 row{point,ordinal,edge,bucket,code,present};','const row={point,ordinal,edge,bucket,code,present};')
  record=replace(record,'catch(...)','catch')
- let flush=between('void D480Acceptance::obFlush773(){','\n}\n')
+ let flush=between(`void ${owner}::obFlush773(){`,'\n}\n')
  flush=replace(flush,'auto const& row=','const row=');flush=replace(flush,'emit(*obHost773,','emit(')
  for(const field of ['point','ordinal','edge','bucket','code','present'])flush=replace(flush,'std::to_wstring(row.'+field+')','String(row.'+field+')')
  flush=replace(flush,'catch(...)','catch');flush=flush.replace(/\bL"/g,'"')
- const a=emitSource.indexOf('void D480Acceptance::emit(Desktop& h,std::wstring const& value){'),b=emitSource.indexOf('\nvoid D480Acceptance::script',a);assert.ok(a>=0&&b>a)
- let emit=emitSource.slice(a+'void D480Acceptance::emit(Desktop& h,std::wstring const& value){'.length,b).trimEnd();assert.ok(emit.endsWith('}'));emit=emit.slice(0,-1)
- emit=replace(emit,'JsonObject out;','const out={};');emit=replace(emit,'(void)h.send(out);','send(out);');emit=replace(emit,'catch(...)','catch');emit=emit.replace(/\bL"/g,'"')
+ let emit:string,rawEmit=''
+ if(owner==='D476Acceptance'){
+  const methodBody=(signature:string)=>{
+   assert.equal(emitSource.split(signature).length,2,'one actual C++ method')
+   const start=emitSource.indexOf(signature)+signature.length
+   let depth=1,quote='',line=false,block=false
+   for(let i=start;i<emitSource.length;i++){
+    const c=emitSource[i],next=emitSource[i+1]
+    if(line){if(c==='\n')line=false;continue}
+    if(block){if(c==='*'&&next==='/'){block=false;i++}continue}
+    if(quote){if(c==='\\'){i++;continue}if(c===quote)quote='';continue}
+    if(c==='/'&&next==='/'){line=true;i++;continue}
+    if(c==='/'&&next==='*'){block=true;i++;continue}
+    if(c==='"'||c==="'"){quote=c;continue}
+    if(c==='{')depth++
+    if(c==='}'&&--depth===0)return emitSource.slice(start,i)
+   }
+   assert.fail('actual C++ method closing brace is required')
+  }
+  emit=methodBody('void D476Acceptance::emit(Desktop& h,std::wstring const& value){');emit=replace(emit,'emit(h,','emitRaw(');emit=replace(emit,'.c_str()','');emit=emit.replace(/\bL"/g,'"')
+  rawEmit=methodBody('void D476Acceptance::emit(Desktop& h,wchar_t const* id){');rawEmit=replace(rawEmit,'JsonObject frame;','const frame={};');rawEmit=replace(rawEmit,'h.send(frame);','send(frame);');rawEmit=rawEmit.replace(/\bL"/g,'"')
+ }else{
+  const a=emitSource.indexOf('void D480Acceptance::emit(Desktop& h,std::wstring const& value){'),b=emitSource.indexOf('\nvoid D480Acceptance::script',a);assert.ok(a>=0&&b>a)
+  emit=emitSource.slice(a+'void D480Acceptance::emit(Desktop& h,std::wstring const& value){'.length,b).trimEnd();assert.ok(emit.endsWith('}'));emit=emit.slice(0,-1)
+  emit=replace(emit,'JsonObject out;','const out={};');emit=replace(emit,'(void)h.send(out);','send(out);');emit=replace(emit,'catch(...)','catch');emit=emit.replace(/\bL"/g,'"')
+ }
  for(const value of [record,flush,emit])assert.doesNotMatch(value,/std::|static_cast|JsonObject|\(void\)|auto const&|ObRow773/)
  let clock=1000
  const scope:any={String:format,obRows773:[],obSeen773:Array.from({length:31},()=>Array.from({length:9},()=>Array(3).fill(false))),obCount773:0,obSent773:0,obStarted773:false,obStart773:0,obHost773:false,GetTickCount64:()=>clock,put:(out:Record<string,unknown>,key:string,value:unknown)=>{out[key]=value},send}
- vm.createContext(scope);vm.runInContext('globalThis.emit=value=>{'+emit+'};globalThis.obFlush773=()=>{'+flush+'};globalThis.record=(point,ordinal,edge,code,present)=>{'+record+'}',scope)
+ vm.createContext(scope);vm.runInContext('globalThis.emitRaw=id=>{'+rawEmit+'};globalThis.emit=value=>{'+emit+'};globalThis.obFlush773=()=>{'+flush+'};globalThis.record=(point,ordinal,edge,code,present)=>{'+record+'}',scope)
  return{record:(point:number,ordinal:number,edge:number,code=0,present=2)=>scope.record(point,ordinal,edge,code,present),host:(value:boolean)=>{scope.obHost773=value;scope.obFlush773()},clock:(value:number)=>{clock=value},counts:()=>({stored:scope.obCount773,sent:scope.obSent773})}
 }
 
@@ -121,4 +144,59 @@ test('773 bootstrap observations use actual producer bodies and HMAC-owned respo
   const retired=observer.currentSocket();assert.ok(retired);good.ws.terminate();const renewed=open(owned);retired.send(JSON.stringify({type:'system.pong',id:id.replace('_8_1_0_','_10_1_0_')}));assert.deepEqual(observer.bootstrapObservation773(),first)
   registry.revoke(owned.capabilityId);renewed.emit(goodFrame);assert.deepEqual(observer.bootstrapObservation773(),first);assert.deepEqual(receipts,[]);assert.equal(proofs.length,2)
  }finally{registry.revokeAll();for(const ws of channel.wss.clients)ws.terminate();channel.wss.emit('close')}
+})
+
+test('825 actual MCP 773 recorder and both emit bodies feed only authenticated bounded pong observations',()=>{
+ const {desktopMcpFixture}=require(path.resolve('scripts/desktop-mcp-fixture.mjs')),{desktopMcpBootstrapObservationFixture773}=require(path.resolve('scripts/desktop-bootstrap-observation-fixture.mjs'))
+ const original=fs.readFileSync(path.resolve('src/desktop/native/DesktopHost.cpp'),'utf8'),fixture=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/native-acceptance.cpp'),'utf8'),form=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/native-form.js'),'utf8')
+ const base=desktopMcpFixture('cpp',original,fixture,form),generated=desktopMcpBootstrapObservationFixture773(base.source)
+ assert.equal(generated.inverse,base.source)
+ const registry=new DesktopIdentityRegistry(),owned=registry.issue('owned-mcp-bootstrap'),rows:number[][]=[],seen=new Set<string>(),phases=new Set<string>()
+ const channel=createDesktopChannel({registry,maxPayload:10240,services:{threads:{},skills:{},mcp:{}} as any})
+ const open=(boot?:typeof owned)=>{
+  const ws:any=new EventEmitter(),sent:any[]=[];ws.readyState=1;ws.send=(raw:string)=>{if(ws.sendError)throw ws.sendError;sent.push(JSON.parse(raw));return 'owned-send'};ws.close=ws.terminate=()=>{ws.readyState=3;ws.emit('close')}
+  const emit=(frame:unknown)=>ws.emit('message',Buffer.from(JSON.stringify(frame)))
+  channel.wss.emit('connection',ws);observeNativePhaseResponses(ws,phases,{}, {rows,seen});assert.equal(sent.shift().type,'desktop.challenge.request')
+  if(boot){emit({type:'desktop.hello',capability_id:boot.capabilityId,protocol_version:1});const challenge=sent.shift();emit({type:'desktop.authenticate',capability_id:boot.capabilityId,protocol_version:1,proof:createHmac('sha256',Buffer.from(boot.secret,'hex')).update(JSON.stringify(['cmspark.desktop.auth.v1',boot.capabilityId,challenge.connection_id,1,challenge.nonce])).digest('hex')});assert.equal(sent.shift().type,'desktop.ready')}
+  return{ws,emit,sent}
+ }
+ const frames:any[]=[],producer=actualBootstrapProducer773(generated.source,generated.source,frame=>frames.push(frame),String,'D476Acceptance')
+ try{
+  producer.record(8,1,0);assert.equal(frames.length,0);producer.host(true);producer.record(8,1,2,0,1);producer.clock(1251);producer.record(29,1,0);producer.record(29,1,1,0x80070057)
+  assert.equal(frames[0].type,'system.ping');assert.equal(frames[0].id,'D480A_BOOT_8_1_0_0_0_2')
+  const unauth=open();unauth.emit(frames[0]);assert.equal(unauth.ws.readyState,3);assert.deepEqual(rows,[])
+  const active=open(owned);for(const frame of frames)active.emit(frame)
+  assert.deepEqual(rows,[[8,1,0,0,0,2],[8,1,2,0,0,1],[29,1,0,1,0,2],[29,1,1,1,0x80070057,2]])
+  const before=JSON.stringify(rows),id=frames[0].id
+  for(const bad of [id.replace('_8_1_0_','_31_1_0_'),id.replace('_8_1_0_','_8_9_0_'),id.replace('_8_1_0_','_8_1_3_'),id.replace('_0_0_2','_362_0_2'),id.replace('_0_0_2','_0_4294967296_2'),id.replace('_0_0_2','_0_0_3'),id+'_PRIVATE',id+'\n'])active.emit({type:'system.ping',id:bad})
+  active.emit({...frames[0],extra:true});active.ws.send(JSON.stringify({type:'desktop.error',id}));active.ws.send(JSON.stringify({type:'system.pong',id,extra:true}));assert.equal(JSON.stringify(rows),before)
+  const failure=Error('owned-original-send-failure');active.ws.sendError=failure;assert.throws(()=>active.ws.send(JSON.stringify({type:'system.pong',id:id.replace('_8_1_0_','_9_1_0_')})),error=>error===failure);assert.equal(JSON.stringify(rows),before);active.ws.sendError=undefined
+  // Even after all eight old phases are seen, boot rows retain their own bound.
+  for(const phase of nativePhaseNames)phases.add(phase)
+  const fill=actualBootstrapProducer773(generated.source,generated.source,frame=>active.emit(frame),String,'D476Acceptance');fill.host(true)
+  for(let point=1;point<=30;point++)for(let ordinal=1;ordinal<=9;ordinal++)for(let edge=0;edge<2;edge++)fill.record(point,ordinal,edge)
+  assert.equal(fill.counts().stored,192);assert.equal(rows.length,192);assert.equal(seen.size,192)
+  let attempted=0;const sendFail=actualBootstrapProducer773(generated.source,generated.source,()=>{attempted++;throw Error('owned-diagnostic-send')},String,'D476Acceptance');sendFail.host(true);sendFail.record(9,1,0);sendFail.record(9,1,0);assert.equal(attempted,1)
+  let formatted=0,continued=0;const formatFail=actualBootstrapProducer773(generated.source,generated.source,()=>{throw Error('unreachable-send')},()=>{formatted++;throw Error('owned-diagnostic-format')},'D476Acceptance');formatFail.record(8,1,0);assert.doesNotThrow(()=>{formatFail.host(true);continued++});formatFail.host(true);assert.equal(formatted,1);assert.equal(continued,1)
+ }finally{registry.revokeAll();for(const ws of channel.wss.clients)ws.terminate();channel.wss.emit('close')}
+})
+
+for(const hostEol of ['\n','\r\n'])for(const fixtureEol of ['\n','\r\n'])test(`825 actual MCP consumer handles host ${hostEol==='\n'?'LF':'CRLF'} and fixture ${fixtureEol==='\n'?'LF':'CRLF'} without reading the next C++ method`,()=>{
+ const {desktopMcpFixture}=require(path.resolve('scripts/desktop-mcp-fixture.mjs')),{desktopMcpBootstrapObservationFixture773}=require(path.resolve('scripts/desktop-bootstrap-observation-fixture.mjs'))
+ const original=fs.readFileSync(path.resolve('src/desktop/native/DesktopHost.cpp'),'utf8'),fixture=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/native-acceptance.cpp'),'utf8'),form=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/native-form.js'),'utf8')
+ // Only derived inputs vary EOL; production and build evidence are never rewritten.
+ const base=desktopMcpFixture('cpp',original.replace(/\r?\n/g,hostEol),fixture.replace(/\r?\n/g,fixtureEol),form),generated=desktopMcpBootstrapObservationFixture773(base.source)
+ assert.equal(generated.inverse,base.source)
+ const frames:any[]=[],producer=actualBootstrapProducer773(generated.source,generated.source,frame=>frames.push(frame),String,'D476Acceptance')
+ producer.record(8,1,0);assert.equal(frames.length,0);producer.host(true);producer.record(8,1,2,0,1);producer.clock(1251);producer.record(29,1,0);producer.record(29,1,1,0x80070057)
+ assert.deepEqual(frames.map(frame=>[frame.type,frame.id]),[
+  ['system.ping','D480A_BOOT_8_1_0_0_0_2'],['system.ping','D480A_BOOT_8_1_2_0_0_1'],
+  ['system.ping','D480A_BOOT_29_1_0_1_0_2'],['system.ping','D480A_BOOT_29_1_1_1_2147942487_2'],
+ ])
+ for(const row of [[8,1,0],[31,1,0],[8,9,0],[8,1,3],[8,2,0,0,3]])producer.record(row[0],row[1],row[2],row[3],row[4])
+ assert.equal(frames.length,4);assert.deepEqual(producer.counts(),{stored:4,sent:4})
+ const raw='void D476Acceptance::emit(Desktop& h,wchar_t const* id){'
+ for(const changed of [generated.source.replace(raw,'void MissingRawEmit(){'),generated.source+'\n'+raw+'}\n'])assert.throws(()=>actualBootstrapProducer773(generated.source,changed,()=>{},String,'D476Acceptance'))
+ let sends=0;const failed=actualBootstrapProducer773(generated.source,generated.source,()=>{sends++;throw Error('owned-diagnostic-send')},String,'D476Acceptance')
+ failed.host(true);failed.record(8,1,0);failed.record(8,1,0);assert.equal(sends,1)
 })

@@ -19,7 +19,7 @@ export async function createActivityFixture() {
   function load(file: string): any {
     file = path.resolve(file)
     if (modules.has(file)) return modules.get(file)
-    assert.ok(['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence', 'model-config'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
+    assert.ok(file === path.resolve(root, '../llm/vision-reuse-inherit.ts') || ['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence', 'model-config', 'windows-apps', 'chat-scope'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
     const output: any = {}; modules.set(file, output)
     const requireValue = (id: string): any => {
       if (id === '../config') return { DATA_DIR: directory, getConfig: () => ({ llm: {}, computer: {} }) }

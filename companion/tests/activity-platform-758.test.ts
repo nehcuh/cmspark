@@ -95,7 +95,7 @@ function windowsDouble(dir:string, changes: { after?: any; desktop?: string; tar
   const calls:Array<{script:string;args:string[]}>=[];let probes=0
   const run:PsRunner=async(script,args)=>{
     calls.push({script,args})
-    if(script==='activity-windows.ps1')return JSON.stringify(args.includes('Apps')?{ok:true,windows:[win(),{...win(),exe:'c:\\1password.exe',app_name:'1password'}]}:{ok:true,window:probes++===0?win():changes.after===undefined?win():changes.after})
+    if(script==='activity-windows.ps1')return JSON.stringify(args.includes('Apps')?{ok:true,apps:[{app_id:id,app_name:'Owned Chat',window_state:'visible'},{app_id:'win.'+'b'.repeat(64),app_name:'1password',window_state:'none'}]}:{ok:true,window:probes++===0?win():changes.after===undefined?win():changes.after})
     if(script==='computer-probe.ps1')return JSON.stringify({desktop:changes.desktop||'Default',pid:100,ownIl:8192,targetIl:changes.targetIl??8192})
     if(script==='computer-capture.ps1'){fs.writeFileSync(args[args.indexOf('-OutPath')+1],png);changes.abort?.abort();return JSON.stringify({ok:true,restoredFromIconic:false,observation_quality:'ok',occludedBy:[]})}
     if(script==='computer-ocr.ps1')return JSON.stringify({ok:true,words:[{text:'OWNED TEXT'}]})
@@ -103,8 +103,8 @@ function windowsDouble(dir:string, changes: { after?: any; desktop?: string; tar
   }
   return {adapter:new WindowsPassiveRecorder(dir,run,name=>name),calls}
 }
-test('Windows app enumeration projects only app id/name, excluding sensitive paths and all titles', async () => {
-  const dir=fresh();try{const d=windowsDouble(dir),apps=await d.adapter.listApps(new AbortController().signal);assert.deepEqual(apps,[{app_id:id,app_name:'Owned Chat'}]);assert.equal(JSON.stringify(apps).includes('exe'),false);assert.equal(d.calls.length,1)}finally{fs.rmSync(dir,{recursive:true,force:true})}
+test('Windows process enumeration projects identity/name/state, excluding sensitive paths and all titles', async () => {
+  const dir=fresh();try{const d=windowsDouble(dir),apps=await d.adapter.listApps(new AbortController().signal);assert.deepEqual(apps,[{app_id:id,app_name:'Owned Chat',window_state:'visible'}]);assert.equal(JSON.stringify(apps).includes('exe'),false);assert.equal(d.calls.length,1)}finally{fs.rmSync(dir,{recursive:true,force:true})}
 })
 test('Windows real adapter requires Passive for pixel fallback, fixed local OCR and same identity after capture; pending files always removed', async () => {
   const dir=fresh();try{

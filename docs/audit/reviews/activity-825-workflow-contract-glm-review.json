@@ -1,0 +1,51 @@
+{
+  "issue": 825,
+  "gate": "incremental_750_exact_consumer_source_review_before_commit_and_ci",
+  "verdict": "APPROVE",
+  "verdict_basis": [
+    "通过。",
+    "无 blocker。",
+    "允许 commit 这两个脚本并重跑最终 CI。"
+  ],
+  "verdict_normalization": "Derived from explicit actual model approval and permission to commit; model omitted standardized final VERDICT line. Parent authorized recording the actual wording without another API call.",
+  "additional_formatting_api_calls": 0,
+  "reviewed_base": "d990d3986540dd38daa452449dadb50d744e0a18",
+  "reviewed_source_paths": [
+    "scripts/tests/windows-ci-feedback-750-contract.mjs",
+    "scripts/tests/windows-ci-feedback-750.test.mjs"
+  ],
+  "source_diff_sha256": "27bd8fd8116d80d79206c253c2b3ee274929562f0c6f5ce7ff9b8d76578dda12",
+  "source_diff_unchanged_after_review": true,
+  "audit_only_additions_excluded_from_source_digest": true,
+  "prompt_sha256": "490c015329b663422d0c30f7b768300aa6b1a431c087560c00effcd77f62cf86",
+  "prompt_bytes": 136216,
+  "api_started_at_utc": "2026-11-02T16:42:57.778034+00:00",
+  "recorded_at_utc": "2026-11-02T16:46:02.130574+00:00",
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 37846,
+      "outputTokens": 5382,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.32377999999999996,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "process_exit": 0,
+  "is_error": false,
+  "duration_ms": 74935,
+  "num_turns": 1,
+  "review_text_sha256": "aafd108affd685657713c73ca63a1268a693d13f91236767ff3792a303ea1062",
+  "allowed_next_step": "Commit the two reviewed consumer scripts and rerun final hosted CI",
+  "not_approved_yet": [
+    "Actual new Windows native test execution",
+    "final CI success",
+    "native acceptance",
+    "release publishing"
+  ]
+}
