@@ -1,5 +1,12 @@
 /** Personal tasks are durable user-owned records, independent of Agent MissionBoard. */
+export type ActivityModelMode = "ocr" | "vision" | "dedicated" | "qwen"
+export interface ActivityVisionModel { base_url: string; model_name: string; api_key: string; protocol?: "openai" | "anthropic"; api_key_set?: boolean }
 export interface ActivityConfig {
+  extraction_mode?: ActivityModelMode
+  image_ai_enabled?: boolean
+  /** Backend-owned binding to the exact processing target. */
+  image_ai_consent?: string
+  dedicated_vision?: ActivityVisionModel
   ocr_language?: 'zh-Hans' | 'zh-Hant' | 'en-US'
   enabled: boolean
   allowed_apps: string[]
@@ -78,6 +85,10 @@ export interface ActivityRuntime {
   last_success_at: string | null
   status: string
   error: string | null
+  model_target_ids?: Record<string, string>
+  model_targets?: Record<string, string>
+  model_target?: string
+  model_target_id?: string
   coverage: string
 }
 export type ActivityWireState = Omit<ActivityState, 'sources'> & { sources: Array<Omit<ActivitySource, 'ocr_text'>>; runtime: ActivityRuntime }

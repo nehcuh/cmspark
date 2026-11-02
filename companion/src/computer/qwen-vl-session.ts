@@ -54,7 +54,8 @@ export class QwenVlSession {
     this.runtime?.resetCircuitBreaker()
   }
 
-  async prepare(): Promise<void> {
+  async prepare(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
     const variant = this.deps.variant
     const dir = this.deps.modelDir ?? qwenModelDir(variant)
     const probe = probeQwenModelAt(dir, variant)
@@ -127,6 +128,7 @@ export class QwenVlSession {
       }
     }
 
+    signal?.throwIfAborted()
     const runtimeDeps: QwenVlRuntimeDeps = {
       variant,
       modelDir: dir,
@@ -153,6 +155,11 @@ export class QwenVlSession {
       if (e instanceof ModelRuntimeError) throw e
       throw new ModelRuntimeError("infer-error", e instanceof Error ? e.message : String(e))
     }
+  }
+
+  async analyze(imagePath: string, prompt: string): Promise<string> {
+    if (!this.runtime) throw new ModelRuntimeError("model-not-ready", "session not prepared")
+    return this.runtime.analyze(imagePath, prompt)
   }
 
   async dispose(): Promise<void> {

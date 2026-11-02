@@ -4,6 +4,8 @@ import { extractActivity, submitReminder, type RecorderAdapter, type ExtractedCa
 import { ActivityError, COVERAGE, type ActivityApp, type ActivityRuntime, type ActivitySource, type ActivityWireState, type PersonalTodo } from './types'
 import { createRecorder, platformSupport } from './platform'
 import { languageOf, validatePng } from './image'
+import { activityModelTarget, hasActivityImageConsent } from './model-config'
+import type { extractActivityImage } from './model-extract'
 import { validateActivityMessage } from './validation'
 export interface ActivityDependencies {
   dataDir: string
@@ -11,6 +13,7 @@ export interface ActivityDependencies {
   now?: () => number
   recorder?: RecorderAdapter
   extract?: (source: ActivitySource, signal: AbortSignal) => Promise<ExtractedCandidate[]>
+  extractImage?: typeof extractActivityImage
   notify?: (todo: PersonalTodo) => Promise<void>
 }
 export class ActivityService {
@@ -19,6 +22,7 @@ export class ActivityService {
   private now: () => number
   private recorder: RecorderAdapter
   private extract: NonNullable<ActivityDependencies['extract']>
+  private extractImage?: typeof extractActivityImage
   private notify: NonNullable<ActivityDependencies['notify']>
   private timer: NodeJS.Timeout | null = null
   private pending: Promise<void> | null = null
@@ -36,9 +40,37 @@ export class ActivityService {
     this.now = deps.now ?? Date.now
     this.recorder = deps.recorder ?? createRecorder(this.store.root, platform)
     this.extract = deps.extract ?? extractActivity
+    this.extractImage = deps.extractImage
     this.notify = deps.notify ?? submitReminder
   }
-  state(): ActivityWireState { return { ...this.store.stateMetadata(), runtime: { ...this.runtime } } }
+  state(): ActivityWireState {
+    const state = this.store.stateMetadata(), config = this.store.config(), target = activityModelTarget(config)
+    state.config.image_ai_enabled = hasActivityImageConsent(config)
+    const targets = (["ocr", "vision", "dedicated", "qwen"] as const).map(mode => [mode, activityModelTarget({ ...config, extraction_mode: mode })] as const)
+    return { ...state, runtime: { ...this.runtime, model_target: target.label, model_target_id: target.id, model_targets: Object.fromEntries(targets.map(([mode, value]) => [mode, value.label])), model_target_ids: Object.fromEntries(targets.map(([mode, value]) => [mode, value.id])) } }
+  }
+  private canExtract(): boolean {
+    const config = this.store.config()
+    return (config.extraction_mode || 'ocr') === 'ocr' ? config.ocr_ai_enabled : hasActivityImageConsent(config)
+  }
+  private async extractSource(source: ActivitySource, signal: AbortSignal, current: () => boolean): Promise<void> {
+    const config = this.store.config(), target = activityModelTarget(config).id
+    const imageMode = (config.extraction_mode || 'ocr') !== 'ocr'
+    if (!this.canExtract()) throw new ActivityError(imageMode ? 'IMAGE_CONSENT_REQUIRED' : 'SEMANTIC_CONSENT_REQUIRED', '请核对处理目标并允许所选模型处理聊天内容')
+    if (!imageMode) {
+      const entries = await this.extract(source, signal)
+      if (!current() || signal.aborted) throw new ActivityError('CANCELLED', '设置或来源已变化，此次抽取已取消')
+      this.store.addCandidates(source, entries)
+      return
+    }
+    const data = this.store.source(source.id).image_data_url
+    if (!data) throw new ActivityError('NOT_FOUND', '来源截图已清理')
+    const extract = this.extractImage ?? (await import('./model-extract')).extractActivityImage
+    const result = await extract(source, Buffer.from(data.slice(data.indexOf(',') + 1), 'base64'), config, this.store.root, signal)
+    if (!current() || signal.aborted || activityModelTarget(this.store.config()).id !== target || !this.canExtract()) throw new ActivityError('CANCELLED', '处理目标或来源已变化，此次抽取已取消')
+    const updated = this.store.saveVisualTranscript(source, result.transcript)
+    this.store.addCandidates(updated, result.entries)
+  }
   start(): void {
     if (this.timer) return
     this.stopping = false; this.runtime.running = true; this.runtime.status = 'idle'; this.lastMaintenance = null
@@ -93,10 +125,9 @@ export class ActivityService {
         if (!current()) return
         this.runtime.last_success_at = new Date(this.now()).toISOString()
         this.runtime.status = source ? 'captured' : 'unchanged'
-        if (source && config.ocr_ai_enabled && source.ocr_text.trim()) {
-          const entries = await this.extract(source, signal)
+        if (source && this.canExtract() && ((config.extraction_mode || 'ocr') !== 'ocr' || source.ocr_text.trim())) {
+          await this.extractSource(source, signal, current)
           if (!current()) return
-          this.store.addCandidates(source, entries)
           this.runtime.status = 'ready_for_review'
         }
         if (current()) this.store.prune(this.now())
@@ -108,27 +139,28 @@ export class ActivityService {
   }
   async analyze(sourceId: string, requestCurrent: () => boolean = () => true): Promise<void> {
     if (this.pending) throw new ActivityError('BUSY', '上一轮采集或抽取尚未完成')
-    if (!this.store.config().ocr_ai_enabled) throw new ActivityError('SEMANTIC_CONSENT_REQUIRED', '请先明确允许将 OCR 文本发送给已配置的语义模型')
+    if (!this.canExtract()) throw new ActivityError('SEMANTIC_CONSENT_REQUIRED', '请先允许所选模型处理聊天内容')
     const epoch = this.generation, signal = this.abort.signal
     const source = this.store.sourceMetadata(sourceId)
     this.pending = (async () => {
-      const entries = await this.extract(source, signal)
+      await this.extractSource(source, signal, () => epoch === this.generation && requestCurrent())
       if (epoch !== this.generation || signal.aborted || !requestCurrent()) throw new ActivityError('CANCELLED', '设置或来源已变化，此次抽取已取消')
-      this.store.addCandidates(source, entries)
     })().finally(() => { this.pending = null })
     await this.pending
   }
   async importImage(encoded: string, requestCurrent: () => boolean): Promise<void> {
     if (this.pending) throw new ActivityError('BUSY', '上一轮采集或 OCR 尚未完成')
-    if (!this.recorder.ocrImage) throw new ActivityError('OCR_UNAVAILABLE', '当前系统未提供本地截图 OCR')
+    const imageMode = (this.store.config().extraction_mode || 'ocr') !== 'ocr'
+    if (!imageMode && !this.recorder.ocrImage) throw new ActivityError('OCR_UNAVAILABLE', '当前系统未提供本地截图 OCR')
     const image = Buffer.from(encoded, 'base64'); if (image.toString('base64') !== encoded) throw new ActivityError('INVALID_IMAGE', '截图编码无效'); validatePng(image)
     const epoch = this.generation, signal = this.abort.signal
     this.pending = (async () => {
-      const text = await this.recorder.ocrImage!(image, languageOf(this.store.config()), signal)
+      const text = imageMode ? '' : await this.recorder.ocrImage!(image, languageOf(this.store.config()), signal)
       if (epoch !== this.generation || signal.aborted || !requestCurrent()) throw new ActivityError('CANCELLED', '页面或设置已变化，导入已取消')
       this.store.prune(this.now())
       // Explicit import is not proof of foreground app identity or message time.
-      this.store.addSource({ app_id: 'manual.screenshot', app_name: '用户导入截图（应用未核实）', window_title: '', origin: 'manual_import', captured_at: new Date(this.now()).toISOString(), ocr_text: text }, image)
+      const source = this.store.addSource({ app_id: 'manual.screenshot', app_name: '用户导入截图（应用未核实）', window_title: '', origin: 'manual_import', captured_at: new Date(this.now()).toISOString(), ocr_text: text }, image)
+      if (source && imageMode && this.canExtract()) await this.extractSource(source, signal, () => epoch === this.generation && requestCurrent())
       this.store.prune(this.now())
     })().finally(() => { this.pending = null })
     await this.pending
@@ -156,7 +188,19 @@ export class ActivityService {
           if (!current()) throw new ActivityError('SESSION_CLOSED', '原请求连接已关闭')
           return { type: 'activity.result', id, ok: true, apps }
         }
-        case 'activity.configure': this.store.configure(Number(message.expected_revision), message.patch); this.fence(); this.maintain(); break
+        case 'activity.configure': {
+          const patch = { ...(message.patch as Partial<import('./types').ActivityConfig>) }
+          const previous = this.store.config()
+          const next = { ...previous, ...patch, dedicated_vision: patch.dedicated_vision ? { ...previous.dedicated_vision, ...patch.dedicated_vision, api_key: patch.dedicated_vision.api_key || previous.dedicated_vision?.api_key || '' } : previous.dedicated_vision }
+          const changed = activityModelTarget(next).id !== activityModelTarget(previous).id
+          if (patch.image_ai_enabled === true) {
+            const target = activityModelTarget(next).id
+            if (next.extraction_mode !== 'dedicated' && message.expected_model_target !== target) throw new ActivityError('MODEL_TARGET_CHANGED', '图像处理目标已变化，请重新打开设置核对并授权')
+            patch.image_ai_consent = target
+          }
+          else if (changed || patch.image_ai_enabled === false) { patch.image_ai_enabled = false; patch.image_ai_consent = '' }
+          this.store.configure(Number(message.expected_revision), patch); this.fence(); this.maintain(); break
+        }
         case 'activity.import': await this.importImage(String(message.image_base64), current); break
         case 'activity.scan': await this.scan(current); break
         case 'activity.analyze': await this.analyze(String(message.source_id), current); break

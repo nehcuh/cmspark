@@ -399,3 +399,34 @@ test('796 running app picker reaches all 20 apps across pages and preserves cros
   assert.deepEqual(refreshed.state.config, persisted.config)
   assert.equal(ui.configurationCalls.length, 1, 'no automatic second save')
 }, { allowConfigure: true }))
+
+
+test('822 actual model form separates image consent, clears it on mode changes, and submits the displayed target', async () => withUI(async (fixture, ui) => {
+  let panel = ui.render('activity').panel
+  ui.button(panel, '设置应用与隐私').props.onClick()
+  panel = ui.render('activity').panel
+  const mode = () => ui.find(panel, node => node.type === 'select' && ui.rows(node).some(child => child.type === 'option' && child.props.value === 'qwen'))
+  const consent = () => ui.find(panel, node => node.type === 'input' && node.props.type === 'checkbox' && ui.rows(panel).some(label => label.type === 'label' && ui.text(label).includes('允许所选图像模型读取') && ui.rows(label).includes(node)))
+  assert.equal(mode().props.value, 'ocr')
+  mode().props.onChange({ target: { value: 'vision' } }); panel = ui.render('activity').panel
+  const shownTarget = ui.controller.snapshot.runtime.model_target_ids.vision
+  assert.equal(consent().props.checked, false)
+  consent().props.onChange({ target: { checked: true } }); panel = ui.render('activity').panel
+  assert.equal(consent().props.checked, true)
+  mode().props.onChange({ target: { value: 'qwen' } }); panel = ui.render('activity').panel
+  assert.equal(consent().props.checked, false, 'changing image mode requires a fresh decision')
+  mode().props.onChange({ target: { value: 'vision' } }); panel = ui.render('activity').panel
+  consent().props.onChange({ target: { checked: true } }); panel = ui.render('activity').panel
+  const snapshot = ui.controller.snapshot
+  ui.controller.snapshot = { ...snapshot, runtime: { ...snapshot.runtime, model_target_ids: { ...snapshot.runtime.model_target_ids, vision: '0'.repeat(64) }, model_targets: { ...snapshot.runtime.model_targets, vision: 'changed while the form was open' } } }
+  panel = ui.render('activity').panel
+  assert.equal(ui.text(panel).includes('changed while the form was open'), false)
+  ui.find(panel, node => node.type === 'form').props.onSubmit({ preventDefault() {} })
+  const call = ui.configurationCalls[0], reply = await call.promise
+  assert.equal(call.payload.patch.extraction_mode, 'vision')
+  assert.equal(call.payload.patch.image_ai_enabled, true)
+  assert.equal(call.payload.patch.ocr_ai_enabled, false)
+  assert.equal(call.payload.expected_model_target, shownTarget)
+  assert.equal(reply.ok, true)
+  assert.equal(fixture.state().config.extraction_mode, 'vision')
+}, { initialView: 'activity', allowConfigure: true }))

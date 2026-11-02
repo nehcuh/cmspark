@@ -16,10 +16,18 @@ export function iso(v: unknown): string | null {
   return new Date(v).toISOString()
 }
 export function validateConfig(patch: unknown): Record<string, unknown> {
-  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb', 'ocr_language'])
+  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb', 'ocr_language', 'extraction_mode', 'image_ai_enabled', 'image_ai_consent', 'dedicated_vision'])
   for (const [key, value] of Object.entries(patch)) {
-    if (key === 'ocr_language') { if (!['zh-Hans', 'zh-Hant', 'en-US'].includes(String(value))) throw new ActivityError('INVALID_REQUEST', 'OCR 语言无效') }
-    else if (key === 'enabled' || key === 'ocr_ai_enabled') { if (typeof value !== 'boolean') throw new ActivityError('INVALID_REQUEST', '开关必须是布尔值') }
+    if (key === 'extraction_mode') { if (!['ocr', 'vision', 'dedicated', 'qwen'].includes(String(value))) throw new ActivityError('INVALID_REQUEST', '图像处理方式无效') }
+    else if (key === 'image_ai_consent') { if (typeof value !== 'string' || value.length > 64) throw new ActivityError('INVALID_REQUEST', '图片授权无效') }
+    else if (key === 'dedicated_vision') {
+      checkObject(value, ['base_url', 'model_name', 'api_key', 'protocol'])
+      for (const name of ['base_url', 'model_name', 'api_key']) if (value[name] !== undefined) text(value[name], name === 'api_key' ? 4096 : 1000)
+      if (value.protocol !== undefined && !['openai', 'anthropic'].includes(String(value.protocol))) throw new ActivityError('INVALID_REQUEST', '图像模型协议无效')
+      if (value.base_url) { let url: URL; try { url = new URL(String(value.base_url)) } catch { throw new ActivityError('INVALID_REQUEST', '模型地址须为 HTTP(S) URL') }; if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new ActivityError('INVALID_REQUEST', '模型地址无效') }
+    }
+    else if (key === 'ocr_language') { if (!['zh-Hans', 'zh-Hant', 'en-US'].includes(String(value))) throw new ActivityError('INVALID_REQUEST', 'OCR 语言无效') }
+    else if (key === 'enabled' || key === 'ocr_ai_enabled' || key === 'image_ai_enabled') { if (typeof value !== 'boolean') throw new ActivityError('INVALID_REQUEST', '开关必须是布尔值') }
     else if (key === 'allowed_apps') {
       if (!Array.isArray(value) || value.length > 20 || value.some(app => typeof app !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]{2,199}$/.test(app) || /^(?:win|linux)\./.test(app) && !/^(?:win|linux)\.[a-f0-9]{64}$/.test(app) || PROTECTED_APPS.test(app))) throw new ActivityError('INVALID_REQUEST', '应用白名单无效或包含敏感应用')
     } else {
@@ -49,17 +57,18 @@ export function validateActivityMessage(message: unknown): boolean {
     if (!object(message) || typeof message.type !== 'string') return false
     const base = ['type', 'id']
     const extras: Record<string, string[]> = {
-      'activity.state': [], 'activity.apps': [], 'activity.configure': ['expected_revision', 'patch'], 'activity.scan': [],
+      'activity.state': [], 'activity.apps': [], 'activity.configure': ['expected_revision', 'expected_model_target', 'patch'], 'activity.scan': [],
       'activity.import': ['image_base64'], 'activity.analyze': ['source_id'], 'activity.source': ['source_id'], 'activity.delete': ['source_id'],
       'todo.create': ['source_id', 'expected_revision', 'task'], 'todo.confirm': ['candidate_id', 'expected_revision', 'task'], 'todo.update': ['todo_id', 'expected_revision', 'patch'], 'todo.dismiss': ['candidate_id', 'expected_revision'],
     }
     if (!Object.hasOwn(extras, message.type)) return false
     checkObject(message, [...base, ...extras[message.type]])
+    if (message.expected_model_target !== undefined && (typeof message.expected_model_target !== 'string' || !/^(?:ocr|[a-f0-9]{64})$/.test(message.expected_model_target))) return false
     if (message.id !== undefined) text(message.id, 128, true)
     if ('expected_revision' in message && (!Number.isSafeInteger(message.expected_revision) || Number(message.expected_revision) < 0)) return false
     if (['activity.configure', 'todo.create', 'todo.confirm', 'todo.update', 'todo.dismiss'].includes(message.type) && !('expected_revision' in message)) return false
     if (message.type === 'activity.import' && (typeof message.image_base64 !== 'string' || message.image_base64.length > 8_388_608 || message.image_base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(message.image_base64) || !message.image_base64.length)) return false
-    if (message.type === 'activity.configure') validateConfig(message.patch)
+    if (message.type === 'activity.configure') { validateConfig(message.patch); if ('image_ai_consent' in (message.patch as object)) return false }
     if ((message.type === 'todo.confirm' || message.type === 'todo.create')) validateTask(message.task, true)
     if (message.type === 'todo.update') validateTask(message.patch)
     for (const k of ['source_id', 'candidate_id', 'todo_id']) if (message[k] !== undefined && !/^[a-f0-9-]{36}$/.test(String(message[k]))) return false

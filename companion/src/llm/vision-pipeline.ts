@@ -1,6 +1,8 @@
 // Vision pipeline — local vision model integration for screenshot/image analysis
 
-import OpenAI from "openai"
+import { createProvider } from "./provider"
+import { getConfig, type LlmConfig } from "../config"
+import { endpointsMatch } from "./vision-reuse-inherit"
 import * as crypto from "crypto"
 import type { VisionConfig } from "../config"
 import { logger } from "../logger"
@@ -104,6 +106,28 @@ export function visionImageDataUrl(image: { base64: string }): string | null {
   return `data:${sniffed};base64,${image.base64}`
 }
 
+/** Resolve reusable gateway auth in Companion; secrets never need to enter the UI. */
+export function resolveVisionLlmConfig(config: VisionConfig): LlmConfig {
+  const main = config.use_main_auth ? getConfig().llm : undefined
+  const inherited = main && endpointsMatch(main, config) &&
+    (main.protocol ?? "openai") === (config.protocol ?? "openai") ? main : undefined
+  return {
+    ...inherited, ...config,
+    auth_style: inherited?.auth_style ?? config.auth_style,
+    client_header_profile: inherited?.client_header_profile ?? config.client_header_profile,
+    claude_code_compat_version: inherited?.claude_code_compat_version ?? config.claude_code_compat_version,
+    extra_headers: inherited?.extra_headers ?? config.extra_headers,
+    anthropic_version: inherited?.anthropic_version ?? config.anthropic_version,
+    base_url: config.protocol === "anthropic" ? config.base_url : normalizeVisionBaseUrl(config.base_url),
+    temperature: 0.3, context_window: 100_000,
+  }
+}
+
+export async function probeVisionConnection(config: VisionConfig): Promise<void> {
+  await analyzeImage({ base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", width: 1, height: 1, title: "connection probe", url: "" },
+    { ...config, fallback: "error", cache_ttl_seconds: 0, max_tokens: 32 }, "Briefly describe this image.")
+}
+
 export async function analyzeImage(
   image: ImageInput,
   config: VisionConfig,
@@ -113,7 +137,7 @@ export async function analyzeImage(
   // Scope the image hash to endpoint + model so two models (or the native
   // track vs the vision track) never share a cached description — and
   // model_used on a cache hit names the model that actually produced it.
-  const key = hashBase64(`${config.base_url} ${config.model_name} ${image.base64}`)
+  const key = hashBase64(JSON.stringify([resolveVisionLlmConfig(config), customPrompt || config.prompt || DEFAULT_VISION_PROMPT, config.max_tokens, image.base64]))
 
   // Check cache
   const cached = getCached(key, config.cache_ttl_seconds)
@@ -163,7 +187,7 @@ async function doAnalyze(
       return buildFallback(image, config, gate.reason || "Vision key missing for remote endpoint")
     }
 
-    const visionUrl = normalizeVisionBaseUrl(config.base_url)
+    const visionUrl = config.protocol === "anthropic" ? config.base_url : normalizeVisionBaseUrl(config.base_url)
     const { assertLlmEndpointAllowedAsync } = await import("../security")
     const blocked = await assertLlmEndpointAllowedAsync(visionUrl)
     if (blocked) {
@@ -174,57 +198,33 @@ async function doAnalyze(
       return buildFallback(image, config, blocked)
     }
 
-    const client = new OpenAI({
-      baseURL: visionUrl,
-      apiKey,
-      timeout: config.timeout_ms,
-      maxRetries: 0,
-    })
-
     const prompt = customPrompt || config.prompt || DEFAULT_VISION_PROMPT
     const dataUrl = visionImageDataUrl(image)
     if (!dataUrl) {
       return buildFallback(image, config, "Image is not a recognized raster")
     }
 
-    const response = await client.chat.completions.create(
-      {
-        model: config.model_name,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: dataUrl } },
-            ],
-          },
-        ],
-        max_tokens: config.max_tokens,
-        temperature: 0.3,
-      },
-      { signal },
-    )
-
-    // OpenAI-compatible servers can resolve with a non-standard body on engine
-    // errors (e.g. LM Studio: no `choices`, `error` as a double-encoded string).
-    // Never index `choices` blindly — surface the server's own message instead.
-    const raw = response as unknown as {
-      choices?: Array<{ message?: { content?: unknown } }>
-      error?: unknown
-    }
-    const content = Array.isArray(raw?.choices) ? raw.choices[0]?.message?.content : undefined
-    const description = typeof content === "string" ? content.trim() : ""
+    const timeout = AbortSignal.timeout(config.timeout_ms)
+    const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
+    const response = await createProvider(resolveVisionLlmConfig(config)).complete({
+      model: config.model_name,
+      messages: [{ role: "user", content: [
+        { type: "image_url", image_url: { url: dataUrl } },
+        { type: "text", text: prompt },
+      ] }],
+      max_tokens: config.max_tokens,
+      temperature: 0.3,
+      signal: requestSignal,
+    })
+    const description = response.content.trim()
     const latencyMs = Date.now() - startTime
 
     if (!description) {
-      const serverError = extractServerErrorMessage(raw?.error)
-      logger.warn("vision.empty_response", { model: config.model_name, server_error: serverError })
+      logger.warn("vision.empty_response", { model: config.model_name,  })
       return buildFallback(
         image,
         config,
-        serverError
-          ? `Vision endpoint returned an error: ${serverError}`
-          : "Vision model returned empty response",
+        "Vision model returned empty response",
       )
     }
 

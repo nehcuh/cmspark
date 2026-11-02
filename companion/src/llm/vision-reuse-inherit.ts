@@ -36,21 +36,20 @@ export function endpointsMatch(
  * copy llm.api_key into vision (when llm key is a real non-masked value).
  * Returns new vision.api_key or undefined if no change.
  *
- * Dual-review nit (Pi): do not inherit when main LLM protocol is Anthropic Messages —
- * vision-pipeline is OpenAI chat.completions only. OpenAI-compatible gateways that
- * use a claude-* *model name* with protocol=openai still inherit (intended).
+ * Wire protocols must match before credentials can be inherited.
  */
 export function resolveInheritedVisionApiKey(opts: {
   llmBaseUrl?: string
   llmModelName?: string
   llmApiKey?: string
-  /** When "anthropic", never inherit (vision rail cannot speak Messages protocol). */
+  /** Inherit only across matching wire protocols. */
   llmProtocol?: string
+  visionProtocol?: string
   visionBaseUrl?: string
   visionModelName?: string
   visionApiKey?: string
 }): string | undefined {
-  if ((opts.llmProtocol || "openai") === "anthropic") return undefined
+  if ((opts.llmProtocol || "openai") !== (opts.visionProtocol || "openai")) return undefined
 
   const llmKey = (opts.llmApiKey || "").trim()
   if (!llmKey || isPlaceholderVisionKey(llmKey)) return undefined

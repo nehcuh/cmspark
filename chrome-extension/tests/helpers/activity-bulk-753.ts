@@ -19,10 +19,10 @@ export async function createActivityFixture() {
   function load(file: string): any {
     file = path.resolve(file)
     if (modules.has(file)) return modules.get(file)
-    assert.ok(['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
+    assert.ok(['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence', 'model-config'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
     const output: any = {}; modules.set(file, output)
     const requireValue = (id: string): any => {
-      if (id === '../config') return { DATA_DIR: directory }
+      if (id === '../config') return { DATA_DIR: directory, getConfig: () => ({ llm: {}, computer: {} }) }
       if (id === './adapters') return { extractActivity: forbidden, submitReminder: forbidden, MacPassiveRecorder: class { constructor() { forbidden() } } }
       if (id === '../host-use/win/powershell') return { runPs: forbidden, resolveWinScript: forbidden }
       if (id === 'node:child_process') return { execFile: forbidden }

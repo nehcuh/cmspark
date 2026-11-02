@@ -1,12 +1,11 @@
 // Config / settings family WS handlers (C10-C mechanical extract from message-router).
 // Zero behavior change — cases config.* + settings.* only.
 
-import OpenAI from "openai"
 import { getConfig, getConfigSnapshot, getCommittedConfigRevision, saveConfig, saveConfigWithReceipt, isMaskedApiKey } from "../../config"
 import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
-import { normalizeVisionBaseUrl } from "../../llm/vision-pipeline"
+import { probeVisionConnection } from "../../llm/vision-pipeline"
 import { isPlaceholderVisionKey } from "../../llm/vision-reuse-inherit"
 import {
   findArmingSecurityFlags,
@@ -212,7 +211,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         }
       }
       // Vision config: normalize flat vision_* fields into nested vision object
-      const hasLegacyVisionFields = cfg.vision_enabled !== undefined || typeof cfg.vision_base_url === "string" || typeof cfg.vision_model_name === "string" || !!cfg.vision_api_key
+      const hasLegacyVisionFields = cfg.vision_protocol !== undefined || cfg.vision_use_main_auth !== undefined || cfg.vision_enabled !== undefined || typeof cfg.vision_base_url === "string" || typeof cfg.vision_model_name === "string" || !!cfg.vision_api_key
       const hasValidVisionTimeout = typeof cfg.vision_timeout_ms === "number" && Number.isFinite(cfg.vision_timeout_ms)
       const hasValidVisionFallback = cfg.vision_fallback === "metadata" || cfg.vision_fallback === "passthrough" || cfg.vision_fallback === "error"
       if (cfg.vision) {
@@ -223,6 +222,8 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       ) {
         // Submit only explicit fields: current vision credentials may be inherited.
         normalized.vision = {}
+        if (cfg.vision_protocol === "openai" || cfg.vision_protocol === "anthropic") normalized.vision.protocol = cfg.vision_protocol
+        if (typeof cfg.vision_use_main_auth === "boolean") normalized.vision.use_main_auth = cfg.vision_use_main_auth
         if (cfg.vision_enabled !== undefined) normalized.vision.enabled = !!cfg.vision_enabled
         if (cfg.vision_api_key && !isMaskedApiKey(cfg.vision_api_key)) normalized.vision.api_key = cfg.vision_api_key
         if (typeof cfg.vision_base_url === "string") normalized.vision.base_url = cfg.vision_base_url
@@ -467,19 +468,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         return { type: "config.testVisionResult", ok: false, error: "Vision not enabled" }
       }
       try {
-        const visionUrl = normalizeVisionBaseUrl(config.vision.base_url)
-        const { assertLlmEndpointAllowedAsync } = await import("../../security")
-        const blocked = await assertLlmEndpointAllowedAsync(visionUrl)
-        if (blocked) {
-          return { type: "config.testVisionResult", ok: false, error: blocked }
-        }
-        const client = new OpenAI({
-          baseURL: visionUrl,
-          apiKey: config.vision.api_key || "ollama",
-          timeout: 5000,
-          maxRetries: 0,
-        })
-        await client.models.list()
+        await probeVisionConnection(config.vision)
         return { type: "config.testVisionResult", ok: true, model: config.vision.model_name }
       } catch (e: any) {
         return { type: "config.testVisionResult", ok: false, error: e.message || String(e) }

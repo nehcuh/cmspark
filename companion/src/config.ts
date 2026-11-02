@@ -87,7 +87,8 @@ export interface SecurityConfig {
   companion_ui_exe_basenames: string[]
 }
 
-export interface VisionConfig {
+export interface VisionConfig extends Pick<LlmConfig, "protocol" | "auth_style" | "client_header_profile" | "claude_code_compat_version" | "extra_headers" | "anthropic_version"> {
+  use_main_auth?: boolean
   enabled: boolean
   base_url: string
   api_key: string
@@ -699,7 +700,7 @@ function refreshRuntimeCredentials(config: CompanionConfig): void {
       llmBaseUrl: config.llm.base_url, llmModelName: config.llm.model_name,
       llmApiKey: config.llm.api_key, llmProtocol: config.llm.protocol,
       visionBaseUrl: config.vision.base_url, visionModelName: config.vision.model_name,
-      visionApiKey: storedVisionKey,
+      visionApiKey: storedVisionKey, visionProtocol: config.vision.protocol,
     }) ?? storedVisionKey
   }
 }
@@ -910,7 +911,7 @@ export function getConfig(): CompanionConfig {
   }
   storedLlmKey = cachedConfig.llm.api_key && !isMaskedApiKey(cachedConfig.llm.api_key) ? cachedConfig.llm.api_key : ""
   storedVisionKey = cachedConfig.vision?.api_key && !isMaskedApiKey(cachedConfig.vision.api_key) ? cachedConfig.vision.api_key : ""
-  visionUsesLlm = !!cachedConfig.vision && storedVisionKey === "" && cachedConfig.llm.protocol !== "anthropic" &&
+  visionUsesLlm = !!cachedConfig.vision && storedVisionKey === "" && (cachedConfig.llm.protocol ?? "openai") === (cachedConfig.vision.protocol ?? "openai") &&
     endpointsMatch(cachedConfig.llm, cachedConfig.vision)
   refreshRuntimeCredentials(cachedConfig)
   // Ensure mcp config exists with sane defaults (older config.json may not have it)
@@ -1489,9 +1490,9 @@ function saveConfigInternal(config: Partial<CompanionConfig>, intent?: { llmKey?
       llmBaseUrl: updated.llm.base_url, llmModelName: updated.llm.model_name,
       llmApiKey: updated.llm.api_key, llmProtocol: updated.llm.protocol,
       visionBaseUrl: updated.vision.base_url, visionModelName: updated.vision.model_name,
-      visionApiKey: nextVisionKey,
+      visionApiKey: nextVisionKey, visionProtocol: updated.vision.protocol,
     })
-    if (isPlaceholderVisionKey(nextVisionKey) && updated.llm.protocol !== "anthropic" && endpointsMatch(updated.llm, updated.vision)) {
+    if (isPlaceholderVisionKey(nextVisionKey) && (updated.llm.protocol ?? "openai") === (updated.vision.protocol ?? "openai") && endpointsMatch(updated.llm, updated.vision)) {
       updated.vision.api_key = candidate ?? ""
       inherited = true
       // Inherited credentials are runtime-only, not a stored vision key.

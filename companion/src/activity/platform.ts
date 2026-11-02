@@ -59,7 +59,7 @@ export class WindowsPassiveRecorder implements RecorderAdapter {
       const stat = fs.lstatSync(file)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024) throw new ActivityError('CAPTURE_FAILED', '截图文件不可读取')
       const image = fs.readFileSync(file); validatePng(image)
-      return { app_id: window.app_id, app_name: window.app_name, window_title: window.title.slice(0, 500), image, ocr_text: await this.ocr(file, languageOf(config), signal) }
+      return { app_id: window.app_id, app_name: window.app_name, window_title: window.title.slice(0, 500), image, ocr_text: (config.extraction_mode || 'ocr') !== 'ocr' ? '' : await this.ocr(file, languageOf(config), signal) }
     })
   }
 }
@@ -107,7 +107,7 @@ export class LinuxPassiveRecorder implements RecorderAdapter {
       const stat = fs.lstatSync(file)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024) throw new ActivityError('CAPTURE_FAILED', 'Linux 截图不可读取')
       const image = fs.readFileSync(file); validatePng(image)
-      return { app_id: w.app_id, app_name: w.app_name.slice(0, 200), window_title: w.title.slice(0, 500), image, ocr_text: await this.ocr(file, languageOf(config), signal) }
+      return { app_id: w.app_id, app_name: w.app_name.slice(0, 200), window_title: w.title.slice(0, 500), image, ocr_text: (config.extraction_mode || 'ocr') !== 'ocr' ? '' : await this.ocr(file, languageOf(config), signal) }
     })
   }
 }

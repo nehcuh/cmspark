@@ -1,0 +1,12 @@
+{
+  "batch": "vision-activity-822",
+  "timestamp": "20261102-202619",
+  "pi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "exit_code": 0,
+    "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/docs/audit/reviews/vision-activity-822-pi-20261102-202619.md"
+  },
+  "approve": true,
+  "diff_path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/docs/audit/reviews/vision-activity-822-diff-20261102-202619.patch",
+  "diff_archive": "vision-activity-822-diff-20261102-202619.patch.gz"
+}
