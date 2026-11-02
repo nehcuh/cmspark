@@ -29,24 +29,25 @@ function parts(text: string) {
   const variable = (name: string) => { const rows = variables.filter(node => node.name.getText(file) === name); assert.equal(rows.length, 1); assert.ok(rows[0].initializer); return rows[0].initializer!.getText(file) }
   return { receipt: functions[0].getText(file), stages: variable('appsReceiptStages826'), launch: variable('launch') }
 }
-function receiptHarness(text = apps) {
+function receiptHarness(text = apps, pathApi = path) {
   const source = parts(text), events: string[] = [], timers: Array<() => void> = [], files = new Map<string, string>(), child: any = new EventEmitter(), controller = new AbortController()
+  const directory = pathApi.resolve('owned-826'), readyFile = pathApi.join(directory, 'ready.json'), failureFile = pathApi.join(directory, 'failure.json')
   child.pid = 42; child.stderr = new EventEmitter()
-  const context: any = { Promise, Error, Set, path, assert, directory: '/owned', binary: '/owned/fixture.exe', owned: { signal: controller.signal }, sequence: 0, ended: true,
+  const context: any = { Promise, Error, Set, path: pathApi, assert, directory, binary: pathApi.join(directory, 'fixture.exe'), owned: { signal: controller.signal }, sequence: 0, ended: true,
     lease: { retain() { events.push('retain') } },
-    spawn: (_binary: string, args: string[]) => { files.set(path.join(args[0], 'ready.json'), JSON.stringify({ pid: 42, hwnd: args[1] === 'gui' ? 17 : 0 })); return child },
+    spawn: (_binary: string, args: string[]) => { files.set(pathApi.join(args[0], 'ready.json'), JSON.stringify({ pid: 42, hwnd: args[1] === 'gui' ? 17 : 0 })); return child },
     fs: {
       existsSync: (file: string) => files.has(file), readFileSync: (file: string) => files.get(file),
       watch: () => ({ close() { events.push('watch.close') } }), mkdirSync() {},
       writeFileSync: (file: string, value: string) => files.set(file, value),
-      renameSync: (from: string, to: string) => { const value = files.get(from)!; files.delete(from); files.set(to, value); const control = JSON.parse(value); files.set(path.join(path.dirname(to), `response-${control.sequence}.json`), JSON.stringify({ pid: 42, command: control.command })) },
+      renameSync: (from: string, to: string) => { const value = files.get(from)!; files.delete(from); files.set(to, value); const control = JSON.parse(value); files.set(pathApi.join(pathApi.dirname(to), `response-${control.sequence}.json`), JSON.stringify({ pid: 42, command: control.command })) },
     },
     setTimeout: (callback: () => void, delay: number) => { assert.equal(delay, 10000); timers.push(callback); return timers.length },
     clearTimeout: () => events.push('clearTimeout'),
   }
   vm.createContext(context)
   vm.runInContext(transpile(`const appsReceiptStages826 = ${source.stages};${source.receipt};globalThis.launch = ${source.launch};`), context)
-  return { context, events, timers, files, child, controller, start: (stage: string) => context.receipt825('/owned/ready.json', child, controller.signal, stage) as Promise<any> }
+  return { context, events, timers, files, child, controller, directory, readyFile, failureFile, start: (stage: string) => context.receipt825(readyFile, child, controller.signal, stage) as Promise<any> }
 }
 
 test('826 actual receipt timeout projects only six closed stages with the original timer and final check', async () => {
@@ -58,13 +59,13 @@ test('826 actual receipt timeout projects only six closed stages with the origin
     assert.deepEqual(h.events, ['clearTimeout', 'watch.close']); assert.equal(h.child.listenerCount('close'), 0)
   }
   const h = receiptHarness(), promise = h.start('gui-ready')
-  h.files.set('/owned/ready.json', '{"pid":42}'); h.timers[0]()
+  h.files.set(h.readyFile, '{"pid":42}'); h.timers[0]()
   assert.deepEqual(JSON.parse(JSON.stringify(await promise)), { pid: 42 }, 'the original deadline check still accepts an existing ready receipt')
 })
 
 test('826 actual launch and response callsites feed the real receipt function with GUI/headless and fixed command stages', async () => {
-  for (const mode of ['gui', 'headless']) {
-    const h = receiptHarness(), stages: string[] = []
+  for (const pathApi of [path.posix, path.win32]) for (const mode of ['gui', 'headless']) {
+    const h = receiptHarness(apps, pathApi), stages: string[] = []
     const actual = h.context.receipt825
     h.context.receipt825 = (...args: any[]) => { stages.push(args[3]); return actual(...args) }
     const launched = await h.context.launch(mode)
@@ -76,12 +77,14 @@ test('826 actual launch and response callsites feed the real receipt function wi
 })
 
 test('826 actual receipt retains failure priority, parse/close/abort behavior and listener cleanup', async () => {
-  const fail = receiptHarness(); fail.files.set('/owned/failure.json', '{"type":"OWNED_ERROR"}'); fail.files.set('/owned/ready.json', '{"pid":42}')
-  await assert.rejects(fail.start('gui-ready'), /OWNED_APPS_FIXTURE_FAILED/)
-  const malformed = receiptHarness(); malformed.files.set('/owned/ready.json', '{'); await assert.rejects(malformed.start('gui-ready'), (error: any) => error.name === 'SyntaxError')
-  const closed = receiptHarness(), closedResult = closed.start('gui-ready'); closed.child.emit('close'); await assert.rejects(closedResult, /OWNED_APPS_FIXTURE_CLOSED/)
-  const aborted = receiptHarness(), primary = Error('owned-abort'), abortedResult = aborted.start('gui-ready'); aborted.controller.abort(primary); await assert.rejects(abortedResult, (error: unknown) => error === primary)
-  for (const h of [fail, malformed, closed, aborted]) { assert.deepEqual(h.events, ['clearTimeout', 'watch.close']); assert.equal(h.child.listenerCount('close'), 0) }
+  for (const pathApi of [path.posix, path.win32]) {
+    const fail = receiptHarness(apps, pathApi); fail.files.set(fail.failureFile, '{"type":"OWNED_ERROR"}'); fail.files.set(fail.readyFile, '{"pid":42}')
+    await assert.rejects(fail.start('gui-ready'), /OWNED_APPS_FIXTURE_FAILED/)
+    const malformed = receiptHarness(apps, pathApi); malformed.files.set(malformed.readyFile, '{'); await assert.rejects(malformed.start('gui-ready'), (error: any) => error.name === 'SyntaxError')
+    const closed = receiptHarness(apps, pathApi), closedResult = closed.start('gui-ready'); closed.child.emit('close'); await assert.rejects(closedResult, /OWNED_APPS_FIXTURE_CLOSED/)
+    const aborted = receiptHarness(apps, pathApi), primary = Error('owned-abort'), abortedResult = aborted.start('gui-ready'); aborted.controller.abort(primary); await assert.rejects(abortedResult, (error: unknown) => error === primary)
+    for (const h of [fail, malformed, closed, aborted]) { assert.deepEqual(h.events, ['clearTimeout', 'watch.close']); assert.equal(h.child.listenerCount('close'), 0) }
+  }
 })
 
 function observer(text = gui) {
@@ -127,17 +130,18 @@ test('826 actual Apps first-once producer feeds only its closed six-point reader
 
 test('826 actual Apps finally projects both fixed folders only after close and preserves primary errors through projection faults', async () => {
   const body = one(apps, /  \} finally \{(\r?\n    if \(child && !ended\) child.kill\(\)[\s\S]*?lease.settled\(\)\r?\n)  \}/g)
-  for (const throwing of [false, true]) {
+  for (const pathApi of [path.posix, path.win32]) for (const throwing of [false, true]) {
     const calls: string[] = [], primary = Error('owned-primary')
+    const directory = pathApi.resolve('owned-826'), guiPath = 'project:' + pathApi.join(directory, 'gui'), headlessPath = 'project:' + pathApi.join(directory, 'headless')
     const run = vm.runInNewContext('(async()=>{try{throw primary}finally{' + body + '}})', {
       primary, child: { kill: () => calls.push('kill') }, ended: false,
-      closed: { then: (resolve: () => void) => { calls.push('closed'); resolve() } }, directory: '/owned', path,
-      require: (file: string) => { assert.equal(file, path.resolve('tests/helpers/activity-apps825-observation.cjs')); return (folder: string) => { calls.push('project:' + folder); if (throwing) throw Error('owned-project-failed'); return { status: 'UNKNOWN', points: {} } } },
+      closed: { then: (resolve: () => void) => { calls.push('closed'); resolve() } }, directory, path: pathApi,
+      require: (file: string) => { assert.equal(file, pathApi.resolve('tests/helpers/activity-apps825-observation.cjs')); return (folder: string) => { calls.push('project:' + folder); if (throwing) throw Error('owned-project-failed'); return { status: 'UNKNOWN', points: {} } } },
       t: { diagnostic: (line: string) => { calls.push('diagnostic'); assert.match(line, /^D825_APPS_INITIAL /) } },
       fs: { rmSync: () => calls.push('remove') }, lease: { settled: () => calls.push('settled') },
     })
     await assert.rejects(run(), (error: unknown) => error === primary)
-    assert.deepEqual(calls, throwing ? ['kill', 'closed', 'project:/owned/gui', 'remove', 'settled'] : ['kill', 'closed', 'project:/owned/gui', 'project:/owned/headless', 'diagnostic', 'remove', 'settled'])
+    assert.deepEqual(calls, throwing ? ['kill', 'closed', guiPath, 'remove', 'settled'] : ['kill', 'closed', guiPath, headlessPath, 'diagnostic', 'remove', 'settled'])
   }
 })
 

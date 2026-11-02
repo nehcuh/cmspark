@@ -8,7 +8,7 @@
 |---|---|
 | 源码版本 | Companion 与扩展统一为 **0.8.0**；锁文件、CLI、协议声明和安装器默认值同步。 |
 | GitHub 正式发行包 | 发布准备时最新为 [v0.7.0](https://github.com/nehcuh/cmspark/releases/tag/v0.7.0)。0.8.0 须在主线 CI、三平台 dry-run 与 tag Release 成功后才算正式发布。 |
-| 本机应用 | 2026-11-03 已从本地候选包换装为 **0.8.0**，签名、主程序／宿主标识和 `127.0.0.1:23401` 监听已验证。实际加载目录的扩展文件已更新为 0.8.0；Mac 锁屏导致运行时重载待完成。 |
+| 本机应用 | 2026-11-03 已从本地候选包换装为 **0.8.0**，签名、主程序／宿主标识和 `127.0.0.1:23401` 监听已验证。实际加载目录的扩展已重载，Chrome 已显示 **0.8.0／已重新加载**，本地换装完成。 |
 | 本批动作 | 归档 0.7.0 后增量，准备 0.8.0；包含跨协议视觉、截图待办、Windows 稳定进程发现、指定聊天区域及最短 3 秒检查。采集功能已合并并通过独立验证与 GLM-Claude 复审；正式发布仍等待主线全平台原生与完整普查验收。 |
 
 ## 发布验收基线
@@ -17,13 +17,13 @@
 
 | 验收项 | 已核对事实 |
 |---|---|
-| 最新已完成 CI | `f3edcae6` 的[十项检查](https://github.com/nehcuh/cmspark/actions/runs/41538438219)为八项成功、两项 Windows 失败；两条 Windows 任务均在原 MCP 20 秒门超时，未进入 Apps／Scope。快照只约束采样时状态，唯一 SDK／OS 原因未知。见[独立 Windows 回执](audit/reviews/activity-826-windows-f3edcae6.md)。 |
+| 当前 CI | `8aa98dbb` 的[定向 Windows 任务](https://github.com/nehcuh/cmspark/actions/runs/41542987860)中，原有 **9 项活动用例全部通过**，新增 19 项源码控制中两项因测试路径表示不一致失败；完整 census 仍在运行。该运行不能视为全绿。见[独立 Windows 回执](audit/reviews/activity-826-windows-8aa98dbb.md)。 |
 | Windows 完整普查 | `d94d5db5` 的完整 census 为 **9555 leaf PASS、67 SKIP、0 FAIL**；同提交定向任务中 Apps 回执超时、Scope 初始 setup 拒绝，未达到全活动验收。普查成功不能抵消定向失败。见[完整回执](audit/reviews/activity-826-windows-d94d5db5.md)。 |
-| macOS 原生 | `f3edcae6` 全 lane 成功；MCP 在原 20 秒、Workspace 在原 45 秒内完成全部业务、完整关闭和清理。见[回执](audit/reviews/activity-826-macos-f3edcae6.md)。 |
+| macOS 原生 | `8aa98dbb` 全 lane 成功；MCP **10.833 秒**、Workspace **38.219 秒**，在原 20／45 秒内完成全部业务、完整关闭和清理。12 项交互及全部后续适用步骤通过。见[回执](audit/reviews/activity-826-macos-8aa98dbb.md)。 |
 | 三平台发布预演 | `d94d5db5` 的[正常 Release 预演](https://github.com/nehcuh/cmspark/actions/runs/41534866533)预检及 Windows／macOS／Linux 打包全部成功，发布按分支规则跳过。后续为测试调度、诊断和文档变更，生产源码及原有构建／打包步骤未变；移除临时入口逐字恢复已验证的原版 Release。最终标签工作流仍重建并验证全部发行资产。 |
 | 单次 MCP 反事实测量 | `6d42d79e` 的独立测量完整业务 **7.964 秒通过**，属于既定的非判别结果，不扩大原 20 秒、不替代 CI 或预演。临时入口和两脚本已退役，原 Release／Node 清单逐字恢复。[实际回执](audit/reviews/activity-826-mcp-probe-6d42d79e.md)归档保留。 |
 
-测试改动保留新 CPU 驱动的[明确构建／运行边界裁决](audit/reviews/activity-826-cpu-build-separation-coordinator-decision.md)：编译由新增测试的 20 秒移至标准构建原有 120 秒，30 秒 case 仅计运行，不称旧端到端预算不变。Scope 用一次命中自有只读文本框的 OS 点击替换旧激活／焦点 setup，成功围栏与原前台、键盘焦点、10／180 秒及业务／清理断言保持；其[独立源码验证](audit/reviews/activity-826-scope-input-independent-source.md)与 [GLM 源码门](audit/reviews/activity-826-scope-input-glm-source.md)已通过。闭集拒绝原因及等待阶段的 [19 项源码控制与复审](audit/reviews/activity-826-activity-failure-glm-source.md)也已完成，但尚需实际 Windows 活动运行。
+测试改动保留新 CPU 驱动的[明确构建／运行边界裁决](audit/reviews/activity-826-cpu-build-separation-coordinator-decision.md)：编译由新增测试的 20 秒移至标准构建原有 120 秒，30 秒 case 仅计运行，不称旧端到端预算不变。Scope 用一次命中自有只读文本框的 OS 点击替换旧激活／焦点 setup，成功围栏与原前台、键盘焦点、10／180 秒及业务／清理断言保持；其[独立源码验证](audit/reviews/activity-826-scope-input-independent-source.md)与 [GLM 源码门](audit/reviews/activity-826-scope-input-glm-source.md)已通过。闭集拒绝原因及等待阶段的 [19 项源码控制与复审](audit/reviews/activity-826-activity-failure-glm-source.md)也已完成；`8aa98dbb` 中原有 9 项 Windows 活动用例已全部通过。新增源码控制的 Windows 路径缺陷经[实际旧红／新绿复现](audit/reviews/activity-826-path-harness-independent-repro.md)定位，仅修测试路径；[非作者源码验证](audit/reviews/activity-826-path-harness-independent-source.md)确认双路径和原断言保持，19 项定向测试通过。[增量 GLM 源码门](audit/reviews/activity-826-path-harness-glm-source.md)也已通过；仍须修复后精确 head 的完整 CI。
 
 为完成当前需求的独立验证，活动步骤现在于自身准备完成后、MCP bootstrap 前执行；census 的实际 MCP 前缀不变，native lane 输入历史变化由[负责人明确裁决](audit/reviews/activity-826-activity-first-coordinator-decision.md)，[独立与 GLM 设计门](audit/reviews/activity-826-activity-first-glm-design.md)、[非作者源码核验](audit/reviews/activity-826-activity-first-independent-source.md)及 [GLM 源码门](audit/reviews/activity-826-activity-first-glm-source.md)均通过。原 MCP、interaction、census 与整体失败门禁继续生效；下个精确 head 的真实结果决定验收，不重置历史轮数或扩大 MCP 观测。
 
