@@ -10,6 +10,8 @@ MCP 测试宿主的初始化区间另外复用原 #773 WebView API 前后、HRES
 
 聊天范围的未分发 WPF 夹具以一次受限 OS 点击替换原 `Activate`／`Focus` setup，模拟用户先选中自己的聊天窗口。这是夹具输入契约的改变，不是真人批准，也不改变产品的被动采集。每个新主窗／独立窗只在渲染后派生只读文本框内点，核当前布局、实际 WPF 命中、native root HWND 与本进程 PID 后发送一个 move/down/up 批；遮挡或资格失败即零输入，不抬窗、不重试。只有完整插入后才开启成功围栏，ready 仍须满足原真实前台及键盘焦点条件；短输入后的迟到事件不能发布 ready。命中检查与系统输入并非原子 HWND 绑定；实际原生业务和清理仍须验收，原 10 秒收据和 180 秒用例门不变。
 
+`d94d5db5` 的真实 Windows 失败暴露了诊断丢失：Scope setup 将 12 类受控异常合并为单一类型，Apps 所有回执等待共用一个超时标签。现只在原失败中保留精确白名单原因（其它为 UNKNOWN）与六个固定调用阶段；Apps 沿原 GUI 生命周期最多记录六个 first-once 正历史点，并在原 child close 后投影固定 GUI／headless 目录。原类型、成功围栏、API、输入次数、10／90／180 秒及完整业务／清理保持；缺失点不证明事件未发生，不从相位或原因类推唯一 OS 根因。该有限改动已通过 19 项实际源码控制、[非作者复审](audit/reviews/activity-826-activity-failure-independent-source.md)与 [GLM 源码门](audit/reviews/activity-826-activity-failure-glm-source.md)，下一精确原生运行继续决定验收，不重置历史轮数或扩展观测框架。
+
 终端原生验收先拒绝不受支持或非 CI 宿主，再取得共享桌面租约，随后才读取并核验运行数据目录；前一用例若已 retain，未确认清理前不会主动释放该租约，具体 owner 和子进程的完成仍须按原回执核对。原路径、目录身份、环境过滤、45 秒及业务断言不变。受控并发反例证明旧检查顺序可能读取前一用例的临时目录，不证明某次实际拒绝的原因，也不解释更早的窗口无回执超时。
 
 Windows 打包的 PS1 资源以当前 `companion/src/host-use/win/scripts/` 为准；普通 TypeScript build 不会刷新旧 dist 副本。ZIP 打包及 NSIS 编译前须核完整文件集合与逐文件原始字节，不能用“目录非空”代替完整性。独立诊断包能枚举窗口不证明正在运行的 Companion 已加载同一资源；现场缺文件也不能单独归因于某次 CI 产物。

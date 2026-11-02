@@ -1,0 +1,115 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "**结论:APPROVE。** 确认B的独立SOURCE APPROVE。批准范围仅限本bounded测试-only诊断单元的六冻结文件提交及协调门后的下一次changed-head真实Windows运行;不构成原生验收、历史成因归因、合并或发布许可。\n\n一、冻结与基线一致性。六文件SHA256与manifest、lineage逐项相符;三个d94基线pin(scope `d92faa28…`、gui `af037de7…`、apps `95835e66…`)与lineage的base_sha256完全相等。测试6对现行全源做精确逆变换后哈希命中该pin,LF/CRLF两剖面字节等价,运行期不spawn Git、不依赖旧对象,浅checkout安全。native业务测试、setup适配器与产品文件均unchanged。\n\n二、Scope fixture。源中恰12条`OWNED_SCOPE825_INPUT_*` throw(含SHORT),与新switch的12个case一一对应,default唯一UNKNOWN;全串精确相等,无前缀/模糊匹配;payload仅追加封闭reason,原聚合type保留;除error.Message的精确枚举选择外无stack/HWND/PID/坐标/HRESULT/lasterror投影(测试断言PRIVATE串永不出现)。bare catch→catch(Exception)不改事件序:INPUT_REFUSED先于best-effort写,写失败仍吞,Shutdown(2)+return顺序在全部reason与UNKNOWN下保持。PRECONDITION/WINDOW/CLIENT等复合谓词仍单条成组不拆;SHORT仅源自`SendInput(3,…)!=3`,无UIPI/OS归因。setupComplete成功栅栏、128组合guard与查询计数、stale popup/resize、0/1/2部分插入与晚到合格事件用例全保留,仅补reason断言;adaptSetup与native helper未动,无input/守卫/native API变化。\n\n三、Apps控制器。仅原`OWNED_APPS_FIXTURE_NOT_READY`追加后缀;六封闭标签恰来自两个真实嵌套调用点:launch按既有gui/headless定界,control传实际固定command;越界串(含PRIVATE)→UNKNOWN,序列id不入错误。单一10_000定时器、到期最终check、failure优先、JSON解析、close、abort理由同一性与watch/close/abort监听清理经focused用例1–3实测保持;90_000/180000注册pin在案。\n\n四、Apps C#。MainThread捕获与首个MAIN_ENTER同语句且先于headless分支;SOURCE_INITIALIZED/LOADED为被动订阅,CONTENT_RENDERED在ready存在性检查之前、READY_WRITTEN在ready Record返回之后,语义正确;RUN_ENTER紧邻app.Run。复用既有Record与固定`apps-initial-`前缀;HashSet once-only,首试失败全吞、不重试、不解读为缺失;headless仅共享MAIN_ENTER。无新增ready/截图/时钟/worker/watcher/重试/输入/框架/API,预算未变。\n\n五、reader与finally。封闭reader仅读六固定名,要求phase精确等于名、sameSta为boolean、恰两键;缺/pending/畸形/外来/额外键/未知名→UNKNOWN,sameSta=false按历史保留;不import产品、不生成观察、非就绪权威。finally顺序kill→closed→双固定目录投影→remove→settled;投影抛错仍保主错并完成清理,前缀D825_APPS_INITIAL经断言。\n\n六、机器证据。A与B两份独立19/19(0 fail/0 skip)日志在案;strict类型检查据attest exit0;diff-check通过;13个scope用例=旧12+新mapper/catch用例,6个focused用例覆盖stage超时、真实receipt与launch/control集成、优先级/解析/close/abort、producer→reader、finally与三源全量逆变换。B另以git show对LF/CRLF比对全源逆结果,与pin一致。两处披露(cross-realm SyntaxError改断言name、B私有脚本arrow变量AST选择)均为测试/检查域修正,非产品缺陷,已透明说明,不构成阻塞。\n\n边界重申:不重开历史未知OS/SDK成因,UNKNOWN即不支持分类;本单元不预设也不阻塞下一次changed-head真实Windows证明;后续不得据此观察添加回退、延长deadline、扩大权限/预算或新增输入。若未来Windows失败,应按新的封闭reason/stage/事件事实继续记录,而非扩大投影面。",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 41727,
+      "outputTokens": 8690,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.425885,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 124571,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "sixfile-existing-failure-facts-source",
+  "reviewed_base": "d94d5db5ce30aee7d047baea53c0bc503f766461",
+  "source_files": [
+    {
+      "path": "companion/tests/fixtures/activity-scope825-windows.cs",
+      "sha256": "340e84b0ea3187a8dfa6236faaa6746e7b41d17a1dde5810b5efd20acd56ed6c"
+    },
+    {
+      "path": "companion/tests/fixtures/activity-apps-windows-825.cs",
+      "sha256": "95315e3494674acf4e019dc180137358543d31cbd7410ce16195c1e14fb3c486"
+    },
+    {
+      "path": "companion/tests/activity-apps-825.test.ts",
+      "sha256": "f2641290fc86aa1c36794c8c084e9da3e3030826e5351a009c275b6d73848cf1"
+    },
+    {
+      "path": "companion/tests/activity-scope825-readiness.test.ts",
+      "sha256": "2c5fc8e617160c0f437e42c67738354315938eb475d63382fe13e8701d9b30cf"
+    },
+    {
+      "path": "companion/tests/activity-failure-observation-826.test.ts",
+      "sha256": "068b43df32b4b89825e4b557ccac5b08c2f5440a9f6d3dfe86252b30d028254f"
+    },
+    {
+      "path": "companion/tests/helpers/activity-apps825-observation.cjs",
+      "sha256": "7da22c9394a8ce5eae13cb3320fcdc2f3e677f65da4338de5e8a128b87f840ff"
+    }
+  ],
+  "source_manifest_sha256": "158cfad645881f6a4ec89d381c6d70722955703669c8baf68cb5d61bfd1219a3",
+  "source_diff_sha256": "830441d10bde4b19d062990ad39dccaf7112024cc2a966fffe513d8072ef10b3",
+  "source_lineage": {
+    "companion/tests/fixtures/activity-scope825-windows.cs": {
+      "current_sha256": "340e84b0ea3187a8dfa6236faaa6746e7b41d17a1dde5810b5efd20acd56ed6c",
+      "current_bytes": 14900,
+      "base_sha256": "d92faa281083ee1b5805f080974017a094a3be717267b896142ec99ee1a96ae0"
+    },
+    "companion/tests/fixtures/activity-apps-windows-825.cs": {
+      "current_sha256": "95315e3494674acf4e019dc180137358543d31cbd7410ce16195c1e14fb3c486",
+      "current_bytes": 4905,
+      "base_sha256": "af037de7ba27b23e88312bcebdd5d7ff3cfe998f0c1d506533448ec8f821fd12"
+    },
+    "companion/tests/activity-apps-825.test.ts": {
+      "current_sha256": "f2641290fc86aa1c36794c8c084e9da3e3030826e5351a009c275b6d73848cf1",
+      "current_bytes": 14068,
+      "base_sha256": "95835e6694f4bdbe479a2cc473a4becd520d65f2f35a315a25947e59c7c24aad"
+    },
+    "companion/tests/activity-scope825-readiness.test.ts": {
+      "current_sha256": "2c5fc8e617160c0f437e42c67738354315938eb475d63382fe13e8701d9b30cf",
+      "current_bytes": 29017,
+      "base_sha256": "d734df4272e80102570586d4756558022bc0dd740b548f35b7f9d66fec79ae47"
+    },
+    "companion/tests/activity-failure-observation-826.test.ts": {
+      "current_sha256": "068b43df32b4b89825e4b557ccac5b08c2f5440a9f6d3dfe86252b30d028254f",
+      "current_bytes": 15538,
+      "base_sha256": null
+    },
+    "companion/tests/helpers/activity-apps825-observation.cjs": {
+      "current_sha256": "7da22c9394a8ce5eae13cb3320fcdc2f3e677f65da4338de5e8a128b87f840ff",
+      "current_bytes": 813,
+      "base_sha256": null
+    },
+    "companion/tests/activity-scope825-native.test.ts": {
+      "unchanged_from_d94": true,
+      "sha256": "b2cd16df16c98efa255179e75dfa961092d9982a5e4f79f3ebb97c247c348e3e"
+    },
+    "companion/tests/helpers/activity-scope825-native.ts": {
+      "unchanged_from_d94": true,
+      "sha256": "37ccea3fd906c988a3cf70516b089581e2da7e5d2a200c836450e5ec65e2afff"
+    },
+    "companion/tests/helpers/activity-scope825-input-control.cjs": {
+      "unchanged_from_d94": true,
+      "sha256": "1a087d9ef3e4e4779c287a37e066fcd37c25db04e92e1161e7e56781499f5d07"
+    }
+  },
+  "design34_not_implementation_evidence": true,
+  "prompt_sha256": "b315d01dffd453f8c42735a4f10b9227a0e8f232249a33aa1277f589914a008e",
+  "prompt_bytes": 160747,
+  "prepared_utc": "2026-11-02T22:31:27.388639+00:00",
+  "verdict": "APPROVE",
+  "verdict_basis": "Actual reviewer explicitly confirms B independent source approval, no blocker, based on frozen6source/full diff and actual19implementation tests with complete source inverse.",
+  "approval_scope": "Commit frozen sixfile diagnostic unit and next purposeful changed-head Windows canonical run after coordinator gates.",
+  "not_approved": [
+    "native/business acceptance",
+    "historical OS/SDK cause attribution",
+    "additional MCP probe",
+    "budget/permission/input expansion",
+    "merge",
+    "release"
+  ],
+  "review_text_sha256": "30f769239c8eac4711e4f1e3984192b56d62aa8729236f2f689be06fa315dc2f",
+  "recorded_utc": "2026-11-02T22:33:44.607295+00:00"
+}

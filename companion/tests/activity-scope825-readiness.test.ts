@@ -18,6 +18,7 @@ function one(pattern: RegExp): string {
   return matches[0][1]
 }
 const guard = one(/static bool IsReady\(Window window, TextBox focus, bool rendered\) \{([\s\S]*?)\n  \}/g)
+const inputReason = one(/static string SetupInputReason\(string message\) \{([\s\S]*?)\r?\n  \}/g)
 const finite = one(/static bool Finite\(double value\) \{([^\n]+)\}/g)
 const result = one(/static bool ReadyResult\(Window window, bool result, string reason\) \{([\s\S]*?)\n  \}/g)
 const observe = one(/static void Observe\(string phase\) \{([\s\S]*?)\n  \}/g)
@@ -34,7 +35,8 @@ for (const [before, after] of [
   ['Action check = delegate {', 'const check = () => {'], ['string name = PendingReceipt;', 'const name = PendingReceipt;'],
   ['window.ContentRendered += delegate {', 'window.onRendered = () => {'], ['window.Activated += delegate {', 'window.onActivated = () => {'],
   ['focus.GotKeyboardFocus += delegate {', 'focus.onKeyboardFocus = () => {'],
-  ['new { type = "OWNED_SCOPE825_INPUT_SETUP_FAILED" }', '({ type: "OWNED_SCOPE825_INPUT_SETUP_FAILED" })'],
+  ['catch (Exception error)', 'catch (error)'],
+  ['new { type = "OWNED_SCOPE825_INPUT_SETUP_FAILED", reason = SetupInputReason(error.Message) }', '({ type: "OWNED_SCOPE825_INPUT_SETUP_FAILED", reason: SetupInputReason(error.message) })'],
   ['window.SourceInitialized += delegate {', 'window.onSourceInitialized = () => {'], ['window.Loaded += delegate {', 'window.onLoaded = () => {'],
 ]) jsWire = port(before, after, jsWire)
 
@@ -76,7 +78,7 @@ function harness() {
     Snapshot: () => ({ hwnd: context.Current.hwnd, width: context.Current.Width }),
   }
   vm.createContext(context)
-  vm.runInContext('globalThis.Finite=(value)=>{' + finite + '};globalThis.SetupOwnedClick=(window,focus,rendered)=>{' + setup + '};globalThis.Observe=(phase)=>{' + jsObserve + '};globalThis.ReadyResult=(window,result,reason)=>{' + result + '};globalThis.IsReady=(window,focus,rendered)=>{' + guard + '};globalThis.mount=(window,focus,popup)=>{const content={},title={};' + jsWire + '};', context)
+  vm.runInContext('globalThis.SetupInputReason=(message)=>{' + inputReason + '};globalThis.Finite=(value)=>{' + finite + '};globalThis.SetupOwnedClick=(window,focus,rendered)=>{' + setup + '};globalThis.Observe=(phase)=>{' + jsObserve + '};globalThis.ReadyResult=(window,result,reason)=>{' + result + '};globalThis.IsReady=(window,focus,rendered)=>{' + guard + '};globalThis.mount=(window,focus,popup)=>{const content={},title={};' + jsWire + '};', context)
   const mount = (hwnd: number, popup = false) => {
     const window: any = { hwnd, Width: 100, IsVisible: true, IsEnabled: true, WindowState: 0, Dispatcher: { BeginInvoke: (_priority: any, callback: () => void) => queued.push(callback) }, UpdateLayout() { calls.push('layout:' + hwnd) }, PointFromScreen: (point: any) => point }
     const focus: any = { IsKeyboardFocused: false, IsVisible: true, IsEnabled: true, IsMeasureValid: true, IsArrangeValid: true, ActualWidth: 400, ActualHeight: 60, presentation: { Handle: hwnd },
@@ -239,7 +241,7 @@ test('826 actual success fence rejects late qualified events after short input o
     }
     window.onRendered()
     assert.deepEqual(h.shutdowns, [2], String(failure))
-    assert.deepEqual(h.writes, [{ name: 'failure.json', type: 'OWNED_SCOPE825_INPUT_SETUP_FAILED' }])
+    assert.deepEqual(h.writes, [{ name: 'failure.json', type: 'OWNED_SCOPE825_INPUT_SETUP_FAILED', reason: typeof failure === 'number' ? 'SHORT' : failure === 'covered' ? 'HIT' : 'ABI' }])
     h.context.foreground = 17; focus.IsKeyboardFocused = true
     assert.equal(h.context.IsReady(window, focus, true), true, 'all original qualification predicates now pass')
     window.onActivated(); focus.onKeyboardFocus(); h.flush(); h.context.CheckCurrentReceipt(); window.onRendered(); h.flush()
@@ -252,6 +254,31 @@ test('826 actual success fence rejects late qualified events after short input o
   window.onRendered(); h.context.foreground = 17; focus.IsKeyboardFocused = true
   window.onActivated(); focus.onKeyboardFocus(); h.flush()
   assert.deepEqual(h.shutdowns, [2]); assert.equal(h.inputs.length, 1); assert.equal(h.writes.length, 0)
+})
+
+test('826 actual scope mapper and catch project only twelve exact setup reasons or UNKNOWN without private exception text', () => {
+  const expected = ['PRECONDITION', 'WINDOW', 'LAYOUT', 'POINT', 'INTERIOR', 'TEXTBOX', 'CLIENT', 'SCREEN', 'ABI', 'HIT', 'OWNER', 'SHORT']
+  const actualThrows = [...source.matchAll(/throw new Exception\("(OWNED_SCOPE825_INPUT_[A-Z_]+)"\)/g)].map(row => row[1])
+  assert.deepEqual(actualThrows.sort(), expected.map(reason => 'OWNED_SCOPE825_INPUT_' + reason).sort())
+  for (const reason of expected) {
+    const h = harness(), { window } = h.mount(17), message = 'OWNED_SCOPE825_INPUT_' + reason
+    assert.equal(h.context.SetupInputReason(message), reason)
+    h.context.SetupOwnedClick = () => { throw Error(message) }
+    window.onRendered()
+    assert.deepEqual(h.writes, [{ name: 'failure.json', type: 'OWNED_SCOPE825_INPUT_SETUP_FAILED', reason }])
+    assert.deepEqual(h.shutdowns, [2]); assert.equal(h.inputs.length, 0)
+  }
+  for (const message of ['PRIVATE_NEVER_PROJECT', 'OWNED_SCOPE825_INPUT_SHORT PRIVATE_NEVER_PROJECT', 'owned_scope825_input_short', '', null, undefined]) {
+    const h = harness(), { window, focus } = h.mount(17)
+    assert.equal(h.context.SetupInputReason(message), 'UNKNOWN')
+    h.context.SetupOwnedClick = () => { throw { message, private: 'PRIVATE_NEVER_PROJECT' } }
+    window.onRendered()
+    assert.deepEqual(h.writes, [{ name: 'failure.json', type: 'OWNED_SCOPE825_INPUT_SETUP_FAILED', reason: 'UNKNOWN' }])
+    assert.doesNotMatch(JSON.stringify(h.writes), /PRIVATE_NEVER_PROJECT/)
+    h.context.foreground = 17; focus.IsKeyboardFocused = true; window.onActivated(); focus.onKeyboardFocus(); h.flush()
+    assert.equal(h.writes.length, 1, 'the same failure fence still blocks ready')
+    assert.deepEqual(h.shutdowns, [2])
+  }
 })
 
 test('826 observed real guard preserves all 128 qualification combinations and query counts', () => {

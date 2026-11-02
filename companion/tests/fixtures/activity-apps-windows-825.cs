@@ -17,6 +17,15 @@ static class ActivityApps825Fixture {
   static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
   static string Root;
   static Window Window;
+  static int MainThread;
+  static readonly HashSet<string> Observed = new HashSet<string>();
+  // Positive history only: a missing point is unknown, never readiness.
+  static void Observe(string phase) {
+    try {
+      if (!Observed.Add(phase)) return;
+      Record("apps-initial-" + phase + ".json", new { phase = phase, sameSta = Thread.CurrentThread.ManagedThreadId == MainThread });
+    } catch { }
+  }
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder text, int count);
   static void Record(string name, object value) {
@@ -42,6 +51,7 @@ static class ActivityApps825Fixture {
   [STAThread] static int Main(string[] args) {
     if (args.Length != 2) return 1;
     Root = args[0];
+    MainThread = Thread.CurrentThread.ManagedThreadId; Observe("MAIN_ENTER");
     try {
       if (args[1] == "headless") {
         Record("ready.json", new { pid = Process.GetCurrentProcess().Id, hwnd = 0 });
@@ -53,19 +63,23 @@ static class ActivityApps825Fixture {
       Window = new Window { Title = "CMspark Owned Apps 825", Width = 600, Height = 240, Left = 80, Top = 80 };
       var text = new TextBox { Text = "OWNED APPLICATION DISCOVERY", IsReadOnly = true, FontSize = 24 };
       Window.Content = text;
+      Window.SourceInitialized += delegate { Observe("SOURCE_INITIALIZED"); };
+      Window.Loaded += delegate { Observe("LOADED"); };
       Window.ContentRendered += delegate {
+        Observe("CONTENT_RENDERED");
         if (File.Exists(Path.Combine(Root, "ready.json"))) return;
         Window.Activate(); text.Focus();
         var hwnd = new WindowInteropHelper(Window).Handle;
         var windowClass = new StringBuilder(257);
         GetClassName(hwnd, windowClass, windowClass.Capacity);
         Record("ready.json", new { pid = Process.GetCurrentProcess().Id, hwnd = hwnd.ToInt64(), window_class = windowClass.ToString() });
+        Observe("READY_WRITTEN");
       };
       var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
       timer.Tick += delegate { try { if (!Control()) app.Shutdown(0); } catch (Exception error) { Failure(error); app.Shutdown(1); } };
       app.DispatcherUnhandledException += delegate(object sender, DispatcherUnhandledExceptionEventArgs value) { Failure(value.Exception); value.Handled = true; app.Shutdown(1); };
       timer.Start();
-      try { return app.Run(Window); } finally { timer.Stop(); }
+      try { Observe("RUN_ENTER"); return app.Run(Window); } finally { timer.Stop(); }
     } catch (Exception error) { Failure(error); return 1; }
   }
   static void Failure(Exception error) {

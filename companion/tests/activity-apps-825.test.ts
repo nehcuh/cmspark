@@ -124,7 +124,8 @@ ConvertTo-Json -Depth 4 -Compress -InputObject @($results)
   } finally { fs.rmSync(directory, { recursive: true, force: true }) }
 })
 
-function receipt825(file: string, child: ChildProcess, signal: AbortSignal): Promise<any> {
+const appsReceiptStages826 = new Set(['gui-ready', 'headless-ready', 'snapshot', 'minimize', 'hide', 'quit'])
+function receipt825(file: string, child: ChildProcess, signal: AbortSignal, stage: string): Promise<any> {
   return new Promise((resolve, reject) => {
     let finished = false
     const finish = (error?: unknown, value?: unknown) => { if (finished) return; finished = true; clearTimeout(timer); watcher.close(); child.off('close', closed); signal.removeEventListener('abort', aborted); error ? reject(error) : resolve(value) }
@@ -136,7 +137,7 @@ function receipt825(file: string, child: ChildProcess, signal: AbortSignal): Pro
     const closed = () => { check(); if (!finished) finish(Error('OWNED_APPS_FIXTURE_CLOSED')) }
     const aborted = () => finish(signal.reason)
     const watcher = fs.watch(path.dirname(file), check)
-    const timer = setTimeout(() => { check(); if (!finished) finish(Error('OWNED_APPS_FIXTURE_NOT_READY')) }, 10_000)
+    const timer = setTimeout(() => { check(); if (!finished) finish(Error('OWNED_APPS_FIXTURE_NOT_READY_' + (appsReceiptStages826.has(stage) ? stage : 'UNKNOWN'))) }, 10_000)
     child.once('close', closed); signal.addEventListener('abort', aborted, { once: true })
     if (signal.aborted) aborted(); else check()
   })
@@ -161,13 +162,13 @@ test('#825 Windows native process remains discoverable when minimized, hidden or
       lease.retain(); ended = false
       closed = new Promise<void>(resolve => child!.once('close', () => { ended = true; resolve() }))
       child.on('error', () => {})
-      const ready = await receipt825(path.join(root, 'ready.json'), child, owned.signal)
+      const ready = await receipt825(path.join(root, 'ready.json'), child, owned.signal, mode === 'gui' ? 'gui-ready' : 'headless-ready')
       assert.equal(ready.pid, child.pid)
       const control = async (command: string) => {
         const id = ++sequence, temporary = path.join(root, 'control.pending')
         fs.writeFileSync(temporary, JSON.stringify({ sequence: id, command }), { flag: 'wx' })
         fs.renameSync(temporary, path.join(root, 'control.json'))
-        const value = await receipt825(path.join(root, `response-${id}.json`), child!, owned.signal)
+        const value = await receipt825(path.join(root, `response-${id}.json`), child!, owned.signal, command)
         assert.equal(value.pid, child!.pid); assert.equal(value.command, command); return value
       }
       return { ready, control }
@@ -199,6 +200,7 @@ test('#825 Windows native process remains discoverable when minimized, hidden or
   } finally {
     if (child && !ended) child.kill()
     await closed
+    try { t.diagnostic('D825_APPS_INITIAL ' + JSON.stringify({ gui: require(path.resolve('tests/helpers/activity-apps825-observation.cjs'))(path.join(directory, 'gui')), headless: require(path.resolve('tests/helpers/activity-apps825-observation.cjs'))(path.join(directory, 'headless')) })) } catch { /* Passive projection cannot replace the primary error or cleanup. */ }
     fs.rmSync(directory, { recursive: true, force: true }); lease.settled()
   }
 }))

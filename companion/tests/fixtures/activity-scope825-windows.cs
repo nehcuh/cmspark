@@ -60,6 +60,23 @@ static class ActivityScope825Fixture {
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
   [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint count, Input[] inputs, int size);
   static bool Finite(double value) { return !Double.IsNaN(value) && !Double.IsInfinity(value); }
+  static string SetupInputReason(string message) {
+    switch (message) {
+      case "OWNED_SCOPE825_INPUT_PRECONDITION": return "PRECONDITION";
+      case "OWNED_SCOPE825_INPUT_WINDOW": return "WINDOW";
+      case "OWNED_SCOPE825_INPUT_LAYOUT": return "LAYOUT";
+      case "OWNED_SCOPE825_INPUT_POINT": return "POINT";
+      case "OWNED_SCOPE825_INPUT_INTERIOR": return "INTERIOR";
+      case "OWNED_SCOPE825_INPUT_TEXTBOX": return "TEXTBOX";
+      case "OWNED_SCOPE825_INPUT_CLIENT": return "CLIENT";
+      case "OWNED_SCOPE825_INPUT_SCREEN": return "SCREEN";
+      case "OWNED_SCOPE825_INPUT_ABI": return "ABI";
+      case "OWNED_SCOPE825_INPUT_HIT": return "HIT";
+      case "OWNED_SCOPE825_INPUT_OWNER": return "OWNER";
+      case "OWNED_SCOPE825_INPUT_SHORT": return "SHORT";
+      default: return "UNKNOWN";
+    }
+  }
   // Test setup models the user's selecting this inert chat. Capture stays passive.
   // Hit-test and SendInput are separate calls, not an atomic HWND-targeted input.
   static void SetupOwnedClick(Window window, TextBox focus, bool rendered) {
@@ -163,9 +180,9 @@ static class ActivityScope825Fixture {
         try {
           SetupOwnedClick(window, focus, rendered); setupComplete = true;
           if (window == InitialWindow) Observe("INPUT_COMPLETE");
-        } catch {
+        } catch (Exception error) {
           if (window == InitialWindow) Observe("INPUT_REFUSED");
-          try { Write("failure.json", new { type = "OWNED_SCOPE825_INPUT_SETUP_FAILED" }); } catch { }
+          try { Write("failure.json", new { type = "OWNED_SCOPE825_INPUT_SETUP_FAILED", reason = SetupInputReason(error.Message) }); } catch { }
           Application.Current.Shutdown(2); return;
         }
       }

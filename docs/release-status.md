@@ -33,6 +33,8 @@ PR #824 最终提交 `8fceac9f` 的[十项 CI 检查](https://github.com/nehcuh/
 
 新增测量 VM 后，`6d42d79e` 的 CI 在既有 Node 清单合同中实际失败：Release 的 setup-node 作业由 2 个变为 3 个。现只同步该固定数量，原 CI 四处与所有 22.23.4 版本断言保持；完整早期检查 151 项及 13 个独立缺失／重复／错版本反例通过，[独立核验](audit/reviews/activity-826-release-node-inventory-independent.md)与 [GLM 增量门](audit/reviews/activity-826-release-node-inventory-glm-source.md)均批准此消费者同步。下一精确 head 仍须通过完整 CI。
 
+`d94d5db5` 的[正常三平台预演](https://github.com/nehcuh/cmspark/actions/runs/41534866533)预检与全部打包成功，非验收测量和发布步骤按分支模式跳过。[macOS 完整 lane](audit/reviews/activity-826-macos-d94d5db5.md)也成功；Windows 定向任务在 Apps 原回执等待、Scope 初始 setup 拒绝处失败，未达到完整活动验收。现补回已丢失的闭集原因及固定等待阶段，通过[独立源码验证](audit/reviews/activity-826-activity-failure-independent-source.md)和 [GLM 复审](audit/reviews/activity-826-activity-failure-glm-source.md)，仍待新提交的原生结果。一次 [MCP 非验收测量](audit/reviews/activity-826-mcp-probe-6d42d79e.md)完整业务在 7.964 秒通过，属于既定的非判别结果；不扩大原 20 秒，也不追加测量。
+
 [#457 历史验收台账](audit/0.7.0-20260907/release-acceptance.md) 的企业双场景仍未完成；0.7.0 已发布这一事实不证明该验收通过。0.8.0 沿用现有公开发行范围，不将该企业验收列为本次已完成能力；用户本次明确授权发布，未授权扩大企业能力声明。
 
 ## 已合并与尚待验收的边界
