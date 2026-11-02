@@ -76,10 +76,25 @@ function actualBootstrapProducer773(cpp:string,emitSource:string,send:(frame:unk
  flush=replace(flush,'catch(...)','catch');flush=flush.replace(/\bL"/g,'"')
  let emit:string,rawEmit=''
  if(owner==='D476Acceptance'){
-  const prefix='void D476Acceptance::emit(Desktop& h,std::wstring const& value){',a=emitSource.indexOf(prefix),b=emitSource.indexOf('}\n',a);assert.ok(a>=0&&b>a)
-  emit=emitSource.slice(a+prefix.length,b);emit=replace(emit,'emit(h,','emitRaw(');emit=replace(emit,'.c_str()','');emit=emit.replace(/\bL"/g,'"')
-  const rawPrefix='void D476Acceptance::emit(Desktop& h,wchar_t const* id){',ra=emitSource.indexOf(rawPrefix),rb=emitSource.indexOf('}\n',ra);assert.ok(ra>=0&&rb>ra)
-  rawEmit=emitSource.slice(ra+rawPrefix.length,rb);rawEmit=replace(rawEmit,'JsonObject frame;','const frame={};');rawEmit=replace(rawEmit,'h.send(frame);','send(frame);');rawEmit=rawEmit.replace(/\bL"/g,'"')
+  const methodBody=(signature:string)=>{
+   assert.equal(emitSource.split(signature).length,2,'one actual C++ method')
+   const start=emitSource.indexOf(signature)+signature.length
+   let depth=1,quote='',line=false,block=false
+   for(let i=start;i<emitSource.length;i++){
+    const c=emitSource[i],next=emitSource[i+1]
+    if(line){if(c==='\n')line=false;continue}
+    if(block){if(c==='*'&&next==='/'){block=false;i++}continue}
+    if(quote){if(c==='\\'){i++;continue}if(c===quote)quote='';continue}
+    if(c==='/'&&next==='/'){line=true;i++;continue}
+    if(c==='/'&&next==='*'){block=true;i++;continue}
+    if(c==='"'||c==="'"){quote=c;continue}
+    if(c==='{')depth++
+    if(c==='}'&&--depth===0)return emitSource.slice(start,i)
+   }
+   assert.fail('actual C++ method closing brace is required')
+  }
+  emit=methodBody('void D476Acceptance::emit(Desktop& h,std::wstring const& value){');emit=replace(emit,'emit(h,','emitRaw(');emit=replace(emit,'.c_str()','');emit=emit.replace(/\bL"/g,'"')
+  rawEmit=methodBody('void D476Acceptance::emit(Desktop& h,wchar_t const* id){');rawEmit=replace(rawEmit,'JsonObject frame;','const frame={};');rawEmit=replace(rawEmit,'h.send(frame);','send(frame);');rawEmit=rawEmit.replace(/\bL"/g,'"')
  }else{
   const a=emitSource.indexOf('void D480Acceptance::emit(Desktop& h,std::wstring const& value){'),b=emitSource.indexOf('\nvoid D480Acceptance::script',a);assert.ok(a>=0&&b>a)
   emit=emitSource.slice(a+'void D480Acceptance::emit(Desktop& h,std::wstring const& value){'.length,b).trimEnd();assert.ok(emit.endsWith('}'));emit=emit.slice(0,-1)
@@ -164,4 +179,24 @@ test('825 actual MCP 773 recorder and both emit bodies feed only authenticated b
   let attempted=0;const sendFail=actualBootstrapProducer773(generated.source,generated.source,()=>{attempted++;throw Error('owned-diagnostic-send')},String,'D476Acceptance');sendFail.host(true);sendFail.record(9,1,0);sendFail.record(9,1,0);assert.equal(attempted,1)
   let formatted=0,continued=0;const formatFail=actualBootstrapProducer773(generated.source,generated.source,()=>{throw Error('unreachable-send')},()=>{formatted++;throw Error('owned-diagnostic-format')},'D476Acceptance');formatFail.record(8,1,0);assert.doesNotThrow(()=>{formatFail.host(true);continued++});formatFail.host(true);assert.equal(formatted,1);assert.equal(continued,1)
  }finally{registry.revokeAll();for(const ws of channel.wss.clients)ws.terminate();channel.wss.emit('close')}
+})
+
+for(const hostEol of ['\n','\r\n'])for(const fixtureEol of ['\n','\r\n'])test(`825 actual MCP consumer handles host ${hostEol==='\n'?'LF':'CRLF'} and fixture ${fixtureEol==='\n'?'LF':'CRLF'} without reading the next C++ method`,()=>{
+ const {desktopMcpFixture}=require(path.resolve('scripts/desktop-mcp-fixture.mjs')),{desktopMcpBootstrapObservationFixture773}=require(path.resolve('scripts/desktop-bootstrap-observation-fixture.mjs'))
+ const original=fs.readFileSync(path.resolve('src/desktop/native/DesktopHost.cpp'),'utf8'),fixture=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/native-acceptance.cpp'),'utf8'),form=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/native-form.js'),'utf8')
+ // Only derived inputs vary EOL; production and build evidence are never rewritten.
+ const base=desktopMcpFixture('cpp',original.replace(/\r?\n/g,hostEol),fixture.replace(/\r?\n/g,fixtureEol),form),generated=desktopMcpBootstrapObservationFixture773(base.source)
+ assert.equal(generated.inverse,base.source)
+ const frames:any[]=[],producer=actualBootstrapProducer773(generated.source,generated.source,frame=>frames.push(frame),String,'D476Acceptance')
+ producer.record(8,1,0);assert.equal(frames.length,0);producer.host(true);producer.record(8,1,2,0,1);producer.clock(1251);producer.record(29,1,0);producer.record(29,1,1,0x80070057)
+ assert.deepEqual(frames.map(frame=>[frame.type,frame.id]),[
+  ['system.ping','D480A_BOOT_8_1_0_0_0_2'],['system.ping','D480A_BOOT_8_1_2_0_0_1'],
+  ['system.ping','D480A_BOOT_29_1_0_1_0_2'],['system.ping','D480A_BOOT_29_1_1_1_2147942487_2'],
+ ])
+ for(const row of [[8,1,0],[31,1,0],[8,9,0],[8,1,3],[8,2,0,0,3]])producer.record(row[0],row[1],row[2],row[3],row[4])
+ assert.equal(frames.length,4);assert.deepEqual(producer.counts(),{stored:4,sent:4})
+ const raw='void D476Acceptance::emit(Desktop& h,wchar_t const* id){'
+ for(const changed of [generated.source.replace(raw,'void MissingRawEmit(){'),generated.source+'\n'+raw+'}\n'])assert.throws(()=>actualBootstrapProducer773(generated.source,changed,()=>{},String,'D476Acceptance'))
+ let sends=0;const failed=actualBootstrapProducer773(generated.source,generated.source,()=>{sends++;throw Error('owned-diagnostic-send')},String,'D476Acceptance')
+ failed.host(true);failed.record(8,1,0);failed.record(8,1,0);assert.equal(sends,1)
 })

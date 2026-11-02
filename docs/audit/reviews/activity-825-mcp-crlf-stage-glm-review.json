@@ -1,0 +1,48 @@
+{
+  "issue": 825,
+  "gate": "MCP_CRLF_consumer_and_scope_receipt_stage_test_units_before_commit_and_ci",
+  "verdict": "APPROVE",
+  "actual_model_approval_quote": "**VERDICT: 批准**（两个test-only增量均无blocker），允许冻结base上的三source按所示diff进入最终CI。",
+  "verdict_normalization": "APPROVE records the model explicit Chinese approval; no formatting follow-up API.",
+  "reviewed_base": "411956df76be5e534e7bd1f406c1ac2e80a859cb",
+  "reviewed_source_paths": [
+    "companion/tests/desktop-acceptance-diagnostics.test.ts",
+    "companion/tests/helpers/activity-scope825-native.ts",
+    "companion/tests/activity-scope825-native.test.ts"
+  ],
+  "source_diff_sha256": "5173599237b2befd6c61c08176036ca39c532bdc7af4c47663183f10437d5048",
+  "prompt_sha256": "d4dc1b41b991c78e287f65a4288989439c3720db9a7c821a9d829848d953b68a",
+  "prompt_bytes": 73235,
+  "api_started_at_utc": "2026-11-02T18:13:01.887044+00:00",
+  "recorded_at_utc": "2026-11-02T18:15:49.634116+00:00",
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 19797,
+      "outputTokens": 7150,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.27773499999999995,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "process_exit": 0,
+  "is_error": false,
+  "duration_ms": 107048,
+  "num_turns": 1,
+  "review_text_sha256": "8e0a22997a915045900af9c61dbabd39d1233285cd8ef8700e294f27c52ada8c",
+  "source_freeze_binding": "Three source path digest verified before API; coordinator holds source frozen with audit-only additions. Reviewer writes no source.",
+  "extra_formatting_api_calls": 0,
+  "allowed_next_step": "Commit these three reviewed test-source deltas and rerun final CI",
+  "scope_timeout_status": "Not fixed. Historical receipt stage and physical cause remain UNKNOWN. A future timeout suffix identifies only that run's expired stage; future success does not establish historical cause.",
+  "not_approved_yet": [
+    "corrected-head Windows census consumer execution",
+    "new stage evidence from actual scope native run",
+    "complete final CI",
+    "release publishing"
+  ]
+}

@@ -16,7 +16,7 @@ export async function buildScope825(root: string, signal: AbortSignal): Promise<
   if (!fs.statSync(output).isFile() || !fs.statSync(output).size) throw Error('OWNED_SCOPE825_BINARY_UNAVAILABLE')
   return output
 }
-export function scope825Receipt(file: string, child: ChildProcess, signal: AbortSignal): Promise<any> {
+export function scope825Receipt(file: string, child: ChildProcess, signal: AbortSignal, stage: 'initial' | 'resize' | 'popup'): Promise<any> {
   return new Promise((resolve, reject) => {
     let done = false
     const finish = (error?: unknown, value?: unknown) => { if (done) return; done = true; clearTimeout(timer); watch.close(); child.off('close', closed); signal.removeEventListener('abort', aborted); error ? reject(error) : resolve(value) }
@@ -26,7 +26,7 @@ export function scope825Receipt(file: string, child: ChildProcess, signal: Abort
       if (fs.existsSync(file)) finish(undefined, JSON.parse(fs.readFileSync(file, 'utf8')))
     } catch (error) { finish(error) } }
     const closed = () => finish(Error('OWNED_SCOPE825_CHILD_CLOSED')), aborted = () => finish(signal.reason)
-    const watch = fs.watch(path.dirname(file), check), timer = setTimeout(() => { check(); if (!done) finish(Error('OWNED_SCOPE825_RECEIPT_TIMEOUT')) }, 10000)
+    const watch = fs.watch(path.dirname(file), check), timer = setTimeout(() => { check(); if (!done) finish(Error('OWNED_SCOPE825_RECEIPT_TIMEOUT_' + stage.toUpperCase())) }, 10000)
     child.once('close', closed); signal.addEventListener('abort', aborted, { once: true }); if (signal.aborted) aborted(); else check()
   })
 }

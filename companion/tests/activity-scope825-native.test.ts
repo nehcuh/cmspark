@@ -22,7 +22,7 @@ test('scope825 real Windows two-column chat gates local title, crops sidebar, ke
     child = spawn(binary, [dir], { windowsHide: false, stdio: ['ignore', 'ignore', 'pipe'] })
     child.stderr!.resume(); child.on('error', () => {})
     closed = new Promise<void>(resolve => child!.once('close', () => { ended = true; resolve() })); lease.retain()
-    const ready = await scope825Receipt(path.join(dir, 'ready.json'), child, owned.signal)
+    const ready = await scope825Receipt(path.join(dir, 'ready.json'), child, owned.signal, 'initial')
     const probe = async () => JSON.parse(await runPs(resolveWinScript('activity-windows.ps1'), ['-Mode', 'Probe'])).window
     const before = await probe(); assert.equal(before.pid, child.pid); assert.equal(before.hwnd, ready.hwnd); assert.ok(before.window_class)
     fs.mkdirSync(root, { mode: 0o700 })
@@ -67,9 +67,9 @@ test('scope825 real Windows two-column chat gates local title, crops sidebar, ke
     const source = service.state().sources[0]; assert.equal(source.conversation_title, titleReply.recognized_title)
     const saved = service.store.source(source.id).image_data_url!; assert.equal(colored(Buffer.from(saved.split(',')[1], 'base64'), 'sidebar'), 0)
     assert.equal((await probe()).hwnd, ready.hwnd, 'passive capture never changes foreground identity')
-    async function control(command: string) {
+    async function control(command: 'resize' | 'popup') {
       const file = path.join(dir, 'control.json'); fs.writeFileSync(file + '.pending', JSON.stringify({ command }), { flag: 'wx' }); fs.renameSync(file + '.pending', file)
-      const ack = await scope825Receipt(path.join(dir, 'ack.json'), child!, owned.signal); fs.unlinkSync(path.join(dir, 'ack.json')); return ack
+      const ack = await scope825Receipt(path.join(dir, 'ack.json'), child!, owned.signal, command); fs.unlinkSync(path.join(dir, 'ack.json')); return ack
     }
     await control('resize')
     assert.equal((await service.handle({ type: 'activity.scan' })).ok, true); assert.equal(service.state().runtime.status, 'scope_layout_changed'); assert.equal(models, 1)
