@@ -1,6 +1,6 @@
 # #826 independent Windows acceptance — 8aa98dbb
 
-Current result: **NOT ACCEPTED: native job failed in two source controls; independent census remains in progress**. This report will be completed after the census terminates. No CI rerun/cancellation/dispatch, source edit or additional native probe by reviewer.
+Final result: **NOT ACCEPTED: both jobs failed only in the two identified source controls; the original native business9/9 passed in its directed lane**. No CI rerun/cancellation/dispatch, source edit or additional native probe by reviewer.
 
 Exact PR head `8aa98dbb2b65041b92c9d847c95dd616efaa3d8d`; canonical CI41542987860 attempt1. Directed-native125611508524; census125611508516. Metadata polled45s; each terminal job log downloaded only after its own completion.
 
@@ -52,6 +52,25 @@ Independent immutable8aa actual-callback reproduction confirms both RED under pa
 
 The step exits1. Native bootstrap/MCP20, post-build CPU runtime, interaction and later gates are skipped. Standard privateCPU compilation passed as part of build, but no native-lane actual CPU runtime or MCP success is claimed for this head. The earlier native input history is intentionally changed by Activity-first; no physical MCP-cause claim is made.
 
-## Census job — pending
+## Census125611508516 — terminal FAILURE, two actual source-control failures
 
-Current metadata shows bootstrap/interaction/shared compile/cockpit/registry succeeded and complete canonical census started. Actual directed MCP/CPU case details and complete canonical accounting await terminal log/artifact. Do not substitute this independent VM's progress or eventual result for the native source-control failure.
+Terminal log `/tmp/cmspark-826-windows-census-8aa98dbb.log`. Explicit post-build actual CPU runtime passed **1119.7245ms** and original MCP20 business passed **7630.6912ms**. Bootstrap and interaction succeeded; the full census then actually executed.
+
+Public artifact13188393393 was downloaded to `/tmp/cmspark-826-census-8aa98dbb-public.zip`. Only finite publicJSON was inspected, no sealed/raw-log decryption. Identityrun41542987860/attempt1 matches. GitHub checkout merge890126405996dce5e4e1e272c79e0eddbf2fef29 has tree4b7371043d4d1a940467d419d00f46a00073c3e3, independently equal to actual8aa head tree.
+
+Actual canonical leaf accounting: **9538PASS,67SKIP,2FAIL**,155 suite rows. Inclusive rows9693PASS/67SKIP/2FAIL. execution_complete=true, tests_exit1, outcomeFAIL; complete=false because the settings file did not run after main failed. File states:750 emitted_completed,1 failed,1 not_run_because_main_failed. These partial-after-main counts are not represented as complete passing coverage.
+
+The **only** two failed public case hashes were independently matched to exact immutable8aa source titles:
+
+- `826 actual receipt retains failure priority, parse/close/abort behavior and listener cleanup`:15.8796ms, namehashb444301bf9fbaefa066e1280f1af23ffb41e8ff8c6b25035b51ec90e8d31d8f8, compiled line88.
+- `826 actual Apps finally projects both fixed folders only after close and preserves primary errors through projection faults`:2.8136ms, namehash94b6439c77668c1cbd19670288af9550464bd9767a0b1e40f04a190a6ff8ca1e, compiled line163.
+
+Both are OBSERVED testCodeFailure/ERR_TEST_FAILURE in public accounting. They are the same two source-harness cases as the native-lane failure and independent win32/posix reproduction; no additional failure is invented from expectation. Raw error text is not publicly exposed or decrypted here.
+
+Current scope13 source controls allPASS; focused source group4PASS/2FAIL. Canonical CPU consumer and MCP case bothPASS/non-skip. Apps file6PASS/1 nativeGUI SKIP and scope native1SKIP reflect original complete-census native-activity enablement, so the real native scope proof comes from the directed9/9 result above, not a census skip.
+
+Sanitized actual accounting: `/tmp/cmspark-826-census-8aa98dbb-sanitized.json`.
+
+## Final interpretation
+
+8aa supplies full successful native Apps/scope/capture/producer business and positive history with original budgets/cleanup; it is nevertheless red because the two real source controls fail. The subsequent single-test-file path correction is independently reproduced/reviewed elsewhere and does not rewrite this historical outcome. The newer273 head has its own independent gates; no old lane or source model substitutes for them. No rerun, timeout change or probe is authorized by this receipt.
