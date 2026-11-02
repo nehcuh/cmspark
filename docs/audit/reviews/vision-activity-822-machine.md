@@ -21,8 +21,10 @@ Base: origin/main `5abfa911`。Node `22.23.4`，macOS arm64。所有测试使用
 
 使用已安装 Qwen3-VL 2B、既有独立 Python 环境和仓库合成图片 `companion/tests/fixtures/activity-linux-758.png`，调用实际 Qwen session → worker → 本机权重 → 图像结果解析链。权重校验和加载按生产代码执行，无自动下载，临时 DATA_DIR 与工作进程在结束时清理。
 
-验收要求：转录包含 `PROJECT ALPHA SEND REPORT FRIDAY`，返回提交报告的候选及来自转录的原文引用，正式待办仍需确认。最终提示词下的真实结果为 title=提交报告，owner=PROJECT ALPHA；后者是项目名归属误判，需要用户核对。烟测验证实际调用链与行动抽取，不把小模型的每个语义字段当作已验证事实，也不代替模型质量基准或 Windows 原生运行验收。
+验收要求：转录包含 `PROJECT ALPHA SEND REPORT FRIDAY`，返回提交报告的候选及来自转录的原文引用，正式待办仍需确认。本机烟测结果为 title=提交报告，owner=PROJECT ALPHA；后者是项目名归属误判，需要用户核对。烟测验证实际调用链与行动抽取，不把小模型的每个语义字段当作已验证事实，也不代替模型质量基准或 Windows 原生运行验收。
 
 ## 评审
 
 独立对抗报告：`vision-activity-822-adversary.md`，APPROVE。Pi 复审结果另存同目录；机器证据通过不替代独立放行。
+
+最终增量放行：独立对抗 APPROVE；Pi CLI 0.85.1，固定 deepseek/deepseek-v4-flash，APPROVE_WITH_NITS。最终机器增量为 Companion 8 pass、HTTP 22 pass、扩展 UI/vision 26 pass、Python unittest 1 pass；其余相关通过结果复用。Pi 复审报告见同目录 `vision-activity-822-final-pi-20261102-203831.md`。

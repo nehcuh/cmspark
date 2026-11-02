@@ -1,6 +1,6 @@
 # #822 独立对抗评审
 
-审查范围：`origin/main`（5abfa911）至本次工作区实现与新增文件；本轮为两项已确认发现的最终增量复审。独立审查未修改生产实现。
+审查范围：`origin/main`（5abfa911）至本次工作区实现与新增文件；本轮包含两项已确认发现的修复，以及 `91ed14c3..7eb1a5a0` 的最终小增量。独立审查未修改生产实现。
 
 ## 当前结论
 
@@ -32,17 +32,31 @@ Surface 为视觉设置、工作中心、activity 与 Qwen worker；无新增电
 - 本机分支使用 Qwen session 并在 finally 释放；worker 读图输出不走坐标解析，权重读取使用 local_files_only。
 - 服务 generation/AbortSignal 与提交前 target 检查拒绝已撤销请求结果。
 
+## 最终小增量复核
+
+已逐项检查 `git diff 91ed14c3..7eb1a5a0`，原批准保持：
+
+- 真实 UI 回归操作生产表单，验证 OCR/图片授权分开、切换模式清除授权，并验证展示目标及提交 identity 同时冻结。
+- CLI 复用提示已明确专用 Key 保持；GET 与 POST 的视觉配置统一使用既有 `settingsWebLlmResponse` / `settingsWebLlmUpdate`，额外请求头值被遮蔽，掩码不会替换后台原值。新测试通过真实配置保存 producer 验证视觉请求头保持。
+- `unittest.mock` 顶层导入支持 unittest 收集；worker 行协议注释包含 analyze；删除的 import 未改变 SSRF 调用门。
+- Anthropic HTTP 测试改用 loopback 假端点，仅隔离测试 DNS 前置；生产 DNS 与 IMDS 门未改动。
+- machine.md 如实记录最终提示词下本机权重仍将项目名识别为 owner；候选需人工核对的产品行为保持，未宣称字段质量基准通过。
+
+本增量无新增阻塞发现。
+
 ## 机器证据
 
 独立复审执行：
 
 ```text
 cd companion
-node scripts/run-tests.mjs .test-dist/tests/vision-activity-822.test.js .test-dist/tests/settings-web-draft-806.test.js
-exit 0 · 7 tests · 7 pass · 0 fail
+node scripts/run-tests.mjs .test-dist/tests/vision-activity-822.test.js .test-dist/tests/settings-web-draft-806.test.js .test-dist/tests/settings-web-redaction-806.test.js
+exit 0 · 8 tests · 8 pass · 0 fail
+uv run python -m unittest discover -s tests -p test_qwen_image_822.py
+exit 0 · 1 pass
 ```
 
-该 runner 在应用 import 前隔离 DATA_DIR；未读取或修改 live config。实现侧最终记录：扩展 1861 pass 与 build pass，Companion 最终 build pass；此前相关 225 项为 224 pass/1 Windows 平台 skip，额外相关 84 pass；Python worker 1 pass。增量未要求重跑输入未受影响的已通过测试。
+该 runner 在应用 import 前隔离 DATA_DIR；未读取或修改 live config。实现侧最终增量记录：扩展相关 26 pass 与 build pass（此前全量 1861 pass），Companion 最终 build pass；此前相关 225 项为 224 pass/1 Windows 平台 skip，额外相关 84 pass；Python worker 1 pass。增量未要求重跑输入未受影响的已通过测试。
 
 本审查不声称真实权重抽取质量或 Windows 原生采集已实测；相应平台和真实模型证据按已有交付范围报告。
 
