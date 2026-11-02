@@ -8,12 +8,16 @@
 |---|---|
 | 源码版本 | Companion 与扩展统一为 **0.8.0**；锁文件、CLI、协议声明和安装器默认值同步。 |
 | GitHub 正式发行包 | 发布准备时最新为 [v0.7.0](https://github.com/nehcuh/cmspark/releases/tag/v0.7.0)。0.8.0 须在主线 CI、三平台 dry-run 与 tag Release 成功后才算正式发布。 |
-| 本机应用 | 2026-11-02 换装前实际版本为 `0.7.1-preview.20261031.2`。源码合并和版本号更新不会自动替换本机应用或重载扩展。 |
-| 本批动作 | 归档 0.7.0 后增量，准备 0.8.0；包含跨协议视觉、截图待办、Windows 稳定进程发现、指定聊天区域及最短 3 秒检查。重要设计与实现分别经独立验证及 GLM-Claude 复审后推进，发布仍待精确最终提交门禁。 |
+| 本机应用 | 2026-11-03 已从本地候选包换装为 **0.8.0**，签名、主程序／宿主标识和 `127.0.0.1:23401` 监听已验证。实际加载目录的扩展文件已更新为 0.8.0；Mac 锁屏导致运行时重载待完成。 |
+| 本批动作 | 归档 0.7.0 后增量，准备 0.8.0；包含跨协议视觉、截图待办、Windows 稳定进程发现、指定聊天区域及最短 3 秒检查。采集功能已合并并通过独立验证与 GLM-Claude 复审；正式发布仍等待主线 Windows MCP 原生启动验收。 |
 
 ## 发布验收基线
 
-视觉功能 [PR #823](https://github.com/nehcuh/cmspark/pull/823) 已合入 `55152f741d06dc64158135cb0ca5e44e9b245ef2`；该提交的 [主线 CI](https://github.com/nehcuh/cmspark/actions/runs/41450565129)、会话恢复与两项 ARM 验收均成功。Linux 夹具观察 [PR #821](https://github.com/nehcuh/cmspark/pull/821) 旧 head 的 Windows 终端用例曾在 45 秒内未开始操作，观察记录前台属于其它进程；这不足以证明唯一根因。该 PR 集成最新 main 后十项检查均成功，已合入 `945860ee20c425eed6bf5e3492f53a49254bf810`。发布准备 PR #824 的前一版本也已全绿；加入 #825 后须重新核对最终提交，不放宽时限、跳过用例或将观察本身当作修复。
+视觉功能 [PR #823](https://github.com/nehcuh/cmspark/pull/823) 与 Windows 采集、版本同步及指南 [PR #824](https://github.com/nehcuh/cmspark/pull/824) 已合并，整合提交为 `b585eb6bc29baa2e2a0314dad2793de29a72209b`。
+
+PR #824 最终提交 `8fceac9f` 的[十项 CI 检查](https://github.com/nehcuh/cmspark/actions/runs/41499020576) 全部成功，Windows 定向活动采集 9 项实际通过、0 跳过；完整普查 9536 项通过、67 项按原平台条件跳过、0 失败。详见[独立集成回执](audit/reviews/activity-825-final-windows-integration-8fceac9f.md)。[三平台 Release 预演](https://github.com/nehcuh/cmspark/actions/runs/41492740191) 的预检及全部打包成功；其后改动仅为未分发测试及交付文档，发行包输入未改变。
+
+合并后的完整文件树与该受审提交相同；[主线 CI](https://github.com/nehcuh/cmspark/actions/runs/41503331363) 的其余检查通过，但原 Windows MCP 用例在 20 秒内未完成启动，Activity 定向步骤因此未执行。现有回执不能唯一定位其物理原因，正式发布暂缓。补充独立快照的设计与实现已通过独立实验、非作者源码核验及 GLM-Claude 复审（[源码回执](audit/reviews/activity-825-mcp-snapshot-glm-source.md)），下一步由 instrumented Windows CI 亲证；原时限、权限、业务断言与清理继续决定验收。
 
 正式发布前须完成版本一致性、相关测试、精确主线 CI 与 [Release 工作流](../.github/workflows/release.yml) 的三平台 dry-run，再对通过的提交打 `v0.8.0` 标签。发布前页面不预记发布成功；标签内页面保留准备时状态，发布后的回执另更新主线文档。
 

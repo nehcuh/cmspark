@@ -71,6 +71,10 @@ function actualBootstrapProducer773(cpp:string,emitSource:string,send:(frame:unk
  record=replace(record,'ObRow773 row{point,ordinal,edge,bucket,code,present};','const row={point,ordinal,edge,bucket,code,present};')
  record=replace(record,'catch(...)','catch')
  let flush=between(`void ${owner}::obFlush773(){`,'\n}\n')
+ const observation='D476Snapshot825::Observation observation825(2,row.point,row.edge);'
+ // Bind the actual MCP-only numeric hook without translating or shadowing its
+ // native state machine (the compiled C++ worker/reader test covers that).
+ if(flush.includes(observation))flush=replace(flush,observation,'observations825.push([2,row.point,row.edge]);')
  flush=replace(flush,'auto const& row=','const row=');flush=replace(flush,'emit(*obHost773,','emit(')
  for(const field of ['point','ordinal','edge','bucket','code','present'])flush=replace(flush,'std::to_wstring(row.'+field+')','String(row.'+field+')')
  flush=replace(flush,'catch(...)','catch');flush=flush.replace(/\bL"/g,'"')
@@ -102,9 +106,9 @@ function actualBootstrapProducer773(cpp:string,emitSource:string,send:(frame:unk
  }
  for(const value of [record,flush,emit])assert.doesNotMatch(value,/std::|static_cast|JsonObject|\(void\)|auto const&|ObRow773/)
  let clock=1000
- const scope:any={String:format,obRows773:[],obSeen773:Array.from({length:31},()=>Array.from({length:9},()=>Array(3).fill(false))),obCount773:0,obSent773:0,obStarted773:false,obStart773:0,obHost773:false,GetTickCount64:()=>clock,put:(out:Record<string,unknown>,key:string,value:unknown)=>{out[key]=value},send}
+ const scope:any={observations825:[],String:format,obRows773:[],obSeen773:Array.from({length:31},()=>Array.from({length:9},()=>Array(3).fill(false))),obCount773:0,obSent773:0,obStarted773:false,obStart773:0,obHost773:false,GetTickCount64:()=>clock,put:(out:Record<string,unknown>,key:string,value:unknown)=>{out[key]=value},send}
  vm.createContext(scope);vm.runInContext('globalThis.emitRaw=id=>{'+rawEmit+'};globalThis.emit=value=>{'+emit+'};globalThis.obFlush773=()=>{'+flush+'};globalThis.record=(point,ordinal,edge,code,present)=>{'+record+'}',scope)
- return{record:(point:number,ordinal:number,edge:number,code=0,present=2)=>scope.record(point,ordinal,edge,code,present),host:(value:boolean)=>{scope.obHost773=value;scope.obFlush773()},clock:(value:number)=>{clock=value},counts:()=>({stored:scope.obCount773,sent:scope.obSent773})}
+ return{record:(point:number,ordinal:number,edge:number,code=0,present=2)=>scope.record(point,ordinal,edge,code,present),host:(value:boolean)=>{scope.obHost773=value;scope.obFlush773()},clock:(value:number)=>{clock=value},counts:()=>({stored:scope.obCount773,sent:scope.obSent773}),observations:()=>JSON.parse(JSON.stringify(scope.observations825))}
 }
 
 test('773 bootstrap observations use actual producer bodies and HMAC-owned responses without manufacturing metadata',async()=>{
@@ -181,11 +185,12 @@ test('825 actual MCP 773 recorder and both emit bodies feed only authenticated b
  }finally{registry.revokeAll();for(const ws of channel.wss.clients)ws.terminate();channel.wss.emit('close')}
 })
 
-for(const hostEol of ['\n','\r\n'])for(const fixtureEol of ['\n','\r\n'])test(`825 actual MCP consumer handles host ${hostEol==='\n'?'LF':'CRLF'} and fixture ${fixtureEol==='\n'?'LF':'CRLF'} without reading the next C++ method`,()=>{
+for(const sampled of [false,true])for(const hostEol of ['\n','\r\n'])for(const fixtureEol of ['\n','\r\n'])test(`825 actual MCP consumer ${sampled?'with independent snapshot':'legacy'} handles host ${hostEol==='\n'?'LF':'CRLF'} and fixture ${fixtureEol==='\n'?'LF':'CRLF'} without reading the next C++ method`,()=>{
  const {desktopMcpFixture}=require(path.resolve('scripts/desktop-mcp-fixture.mjs')),{desktopMcpBootstrapObservationFixture773}=require(path.resolve('scripts/desktop-bootstrap-observation-fixture.mjs'))
  const original=fs.readFileSync(path.resolve('src/desktop/native/DesktopHost.cpp'),'utf8'),fixture=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/native-acceptance.cpp'),'utf8'),form=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/native-form.js'),'utf8')
  // Only derived inputs vary EOL; production and build evidence are never rewritten.
- const base=desktopMcpFixture('cpp',original.replace(/\r?\n/g,hostEol),fixture.replace(/\r?\n/g,fixtureEol),form),generated=desktopMcpBootstrapObservationFixture773(base.source)
+ const snapshot=sampled?fs.readFileSync(path.resolve('tests/fixtures/desktop-476/mcp-snapshot-825.h'),'utf8'):undefined
+ const base=desktopMcpFixture('cpp',original.replace(/\r?\n/g,hostEol),fixture.replace(/\r?\n/g,fixtureEol),form),generated=desktopMcpBootstrapObservationFixture773(base.source,snapshot)
  assert.equal(generated.inverse,base.source)
  const frames:any[]=[],producer=actualBootstrapProducer773(generated.source,generated.source,frame=>frames.push(frame),String,'D476Acceptance')
  producer.record(8,1,0);assert.equal(frames.length,0);producer.host(true);producer.record(8,1,2,0,1);producer.clock(1251);producer.record(29,1,0);producer.record(29,1,1,0x80070057)
@@ -193,6 +198,7 @@ for(const hostEol of ['\n','\r\n'])for(const fixtureEol of ['\n','\r\n'])test(`8
   ['system.ping','D480A_BOOT_8_1_0_0_0_2'],['system.ping','D480A_BOOT_8_1_2_0_0_1'],
   ['system.ping','D480A_BOOT_29_1_0_1_0_2'],['system.ping','D480A_BOOT_29_1_1_1_2147942487_2'],
  ])
+ assert.deepEqual(producer.observations(),sampled?[[2,8,0],[2,8,2],[2,29,0],[2,29,1]]:[])
  for(const row of [[8,1,0],[31,1,0],[8,9,0],[8,1,3],[8,2,0,0,3]])producer.record(row[0],row[1],row[2],row[3],row[4])
  assert.equal(frames.length,4);assert.deepEqual(producer.counts(),{stored:4,sent:4})
  const raw='void D476Acceptance::emit(Desktop& h,wchar_t const* id){'

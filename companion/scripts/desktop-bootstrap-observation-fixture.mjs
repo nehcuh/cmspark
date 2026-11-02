@@ -1,3 +1,4 @@
+import { desktopMcpSnapshotFixture825 } from './desktop-mcp-snapshot-fixture-825.mjs'
 // Unshipped #773 observations. Production source is never rewritten.
 export const bootstrapObservationSites773 = Object.freeze([
   'preConsume', 'parentCleared', 'sentinelChecker', 'descendantChecker',
@@ -79,8 +80,12 @@ function balanced(text, start, open, close) {
 export function desktopBootstrapObservationFixture773(original) {
   return bootstrapObservationFixture773(original, false)
 }
-export function desktopMcpBootstrapObservationFixture773(original) {
-  return bootstrapObservationFixture773(original, true)
+export function desktopMcpBootstrapObservationFixture773(original, snapshotControl) {
+  const base=bootstrapObservationFixture773(original, true)
+  if(snapshotControl===undefined)return base
+  const sampled=desktopMcpSnapshotFixture825(base.source,snapshotControl)
+  if(sampled.inverse!==base.source)throw Error('MCP825_SNAPSHOT_INVERSE')
+  return{...base,source:sampled.source}
 }
 function bootstrapObservationFixture773(original, mcp) {
   if(typeof original!=='string'||!original.length||original.length>2*1024*1024||original.includes('obRecord773'))throw Error('BOOT773_SOURCE')

@@ -1,0 +1,49 @@
+{
+  "base": "b585eb6bc29baa2e2a0314dad2793de29a72209b",
+  "files": [
+    {
+      "path": "companion/scripts/build-desktop-windows.mjs",
+      "sha256": "8648102b9989cd1bfec7de64bffb983abc6bf30cc173ac38ced8982505fc41e7"
+    },
+    {
+      "path": "companion/scripts/desktop-bootstrap-observation-fixture.mjs",
+      "sha256": "333be0bb2579d263f9ed0ef47e0bddb5d14bfc26f6087df56b819207422d5d88"
+    },
+    {
+      "path": "companion/scripts/desktop-mcp-snapshot-fixture-825.mjs",
+      "sha256": "cec54f48a1df2680b48fbf565251f907fe3710ecd451dd0b933ee7360a2f4b7c"
+    },
+    {
+      "path": "companion/scripts/tests/desktop-bootstrap-observation-773.test.mjs",
+      "sha256": "912b016b32adb94b5d9c4c80639bfe436f5ad75b00e466ee86340b0a376d6416"
+    },
+    {
+      "path": "companion/scripts/tests/desktop-mcp-snapshot-825.test.mjs",
+      "sha256": "58c7c0573e05abc0caedcbf8acf30687d320a1ac914a652c1fe5a5d8b9b23461"
+    },
+    {
+      "path": "companion/tests/desktop-acceptance-diagnostics.test.ts",
+      "sha256": "1668de3b71b94f31d52a9e5924f93a2b71ca5c8f63b86b1e38d15930bc0be81d"
+    },
+    {
+      "path": "companion/tests/desktop-native-mcp-476.test.ts",
+      "sha256": "113c2a7302f2a00af52fdc3299f33bccc1409201f95ba60c08333eb8c2c6bbd8"
+    },
+    {
+      "path": "companion/tests/desktop-native-receipts-476.test.ts",
+      "sha256": "73bbd5f5359b45fd577a6007ddaca3ae2ab17671a81cec8b42aaf51392bb18cd"
+    },
+    {
+      "path": "companion/tests/fixtures/desktop-476/mcp-snapshot-825-posix.h",
+      "sha256": "5056979229a33bd0abdb475e753d529766d5751a0b1343f79f456f7ae2639dc8"
+    },
+    {
+      "path": "companion/tests/fixtures/desktop-476/mcp-snapshot-825.h",
+      "sha256": "ab1793e662162a2357524bf4aaea2d9d09ccbc581ba1a85e72c900554457f544"
+    },
+    {
+      "path": "companion/tests/helpers/mcp-snapshot-825.ts",
+      "sha256": "5af69bdfd2cecd7a2fb10317426c83f021b84e05de99140e7e38be91e0661589"
+    }
+  ]
+}
