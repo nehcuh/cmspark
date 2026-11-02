@@ -1,7 +1,7 @@
 // Vision settings: multimodal heuristic + "reuse main LLM for vision side-pipeline".
 // Pure functions only (model-switch-logic precedent) — node:test, no React.
 //
-// Architecture note: vision-pipeline is OpenAI-compatible chat.completions + image_url.
+// Architecture note: vision-pipeline uses the protocol-aware LLM provider.
 // Main chat loop still receives text descriptions only (pre-analyze). Reuse copies
 // credentials into config.vision; it does NOT make the agent loop natively multimodal.
 
@@ -14,19 +14,16 @@ export const VISION_COPY = {
   sectionHelp:
     "本段只管工具截图 / analyze_image：先视觉轨转文字再进对话。输入框粘贴/选/拖的图另算——主模型能看图则直送主模型，否则才走本视觉轨。",
   railDifferentiator:
-    "本段是「看图描述」轨。桌面点击定位用的实验层 Qwen3-VL（设置 → 实验功能）与此无关，不能代替截图分析。",
+    "本段用于截图分析；工作中心可复用此配置，也可选择本机 Qwen3-VL 抽取待办。",
   bannerTitle: "主模型可能已支持图片理解",
   bannerBodyPrefix:
     "截图会先发给视觉端点转成文字，再进入主对话。可一键把视觉配置设为与主模型相同：",
-  bannerBodySuffix: "。请确认该端点接受 OpenAI 兼容的 image 请求。",
+  bannerBodySuffix: "。协议与必要鉴权将一同复用，请确认该模型支持图片。",
   useMain: "使用主模型",
   keepSeparate: "仍单独配置",
   reusedChip: "已复用主模型",
   expandAdvanced: "展开高级配置",
   collapseAdvanced: "收起高级配置",
-  anthropicBlocked:
-    "当前主对话为 Anthropic Messages 协议。视觉轨仅支持 OpenAI 兼容 /chat/completions，" +
-    "无法一键复用；请为视觉单独配置 OpenAI 兼容多模态端点（或网关）。",
   overwriteConfirm:
     "当前视觉配置与默认不同。使用主模型将覆盖 Base URL / Model；" +
     "Key 仅在视觉 Key 未配置/占位时由 Companion 继承主 Key（已有专用视觉 Key 不会被覆盖）。确定？",
@@ -48,6 +45,8 @@ export interface MainLlmFields {
 }
 
 export interface VisionFlatFields {
+  vision_protocol?: "openai" | "anthropic"
+  vision_use_main_auth?: boolean
   vision_enabled?: boolean
   vision_base_url?: string
   vision_model_name?: string
@@ -171,10 +170,9 @@ export function resolveNativeVision(opts: {
 
 /**
  * Whether to show the reuse banner / CTA.
- * Hard-blocks Anthropic Messages protocol (vision-pipeline is OpenAI-only).
+ * Supports either protocol when the main model is multimodal.
  */
 export function shouldOfferVisionReuse(main: MainLlmFields): boolean {
-  if ((main.protocol || "openai") === "anthropic") return false
   return likelyMultimodal(main.model_name)
 }
 
@@ -186,6 +184,7 @@ export function isVisionReusingMain(
   const visUrl = normalizeEndpointUrl(vision.vision_base_url)
   if (!mainUrl || !visUrl) return false
   if (mainUrl !== visUrl) return false
+  if ((main.protocol ?? "openai") !== (vision.vision_protocol ?? "openai")) return false
   const mainModel = (main.model_name || "").trim().toLowerCase()
   const visModel = (vision.vision_model_name || "").trim().toLowerCase()
   if (!mainModel || !visModel) return false
@@ -236,10 +235,11 @@ export function applyVisionReuseFromMain(main: MainLlmFields): ApplyReuseResult 
   return {
     patch: {
       vision_enabled: true,
+      vision_protocol: main.protocol === "anthropic" ? "anthropic" : "openai",
+      vision_use_main_auth: true,
       vision_base_url: main.base_url || "",
       vision_model_name: main.model_name || "",
-      // Only copy plaintext key from UI; empty/mask leaves companion inherit path
-      ...(apiKey ? { vision_api_key: apiKey } : {}),
+      // Keep a dedicated visual key; Companion inherits main credentials only when empty.
     },
     needsKeyPaste,
     destinationHost: extractHostname(main.base_url),

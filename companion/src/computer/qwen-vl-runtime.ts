@@ -53,6 +53,7 @@ export interface QwenVlTransport {
     width: number
     height: number
   }): Promise<{ x: number; y: number; raw?: string; rawComplete?: boolean }>
+  analyze?(imagePath: string, prompt: string): Promise<string>
   dispose(): Promise<void>
 }
 
@@ -266,10 +267,15 @@ class PythonLineTransport implements QwenVlTransport {
     }
   }
 
+  async analyze(imagePath: string, prompt: string): Promise<string> {
+    const msg = await this.request({ cmd: "analyze", image_path: imagePath, prompt }, 120_000)
+    if (typeof msg.text !== "string" || !msg.text.trim() || msg.text.length > 48000) throw new ModelRuntimeError("infer-error", "invalid image analysis response")
+    return msg.text
+  }
+
   async dispose(): Promise<void> {
     try {
       if (this.child && !this.child.killed) {
-        await this.request({ cmd: "shutdown" }, 5_000).catch(() => {})
         this.child.kill("SIGTERM")
       }
     } catch {
@@ -396,6 +402,15 @@ export class QwenVlRuntime {
     } finally {
       this.busy = false
     }
+  }
+
+  async analyze(imagePath: string, prompt: string): Promise<string> {
+    if (!this.prepared || this.status === "disabled") throw new ModelRuntimeError("model-not-ready", "qwen-vl not prepared")
+    if (this.busy) throw new ModelRuntimeError("qwen-vl-busy", "previous inference still running")
+    if (!this.transport.analyze) throw new ModelRuntimeError("infer-error", "image analysis is unavailable")
+    this.busy = true
+    try { return await this.transport.analyze(imagePath, prompt) }
+    finally { this.busy = false }
   }
 
   async dispose(): Promise<void> {

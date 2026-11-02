@@ -1259,20 +1259,6 @@ export function SettingsSlideout() {
             <div style={{ ...styles.helpText, marginTop: 4 }}>{VISION_COPY.railDifferentiator}</div>
           </div>
 
-          {config.vision_enabled && (config.protocol === "anthropic") && (
-            <div style={{
-              ...styles.field,
-              padding: "8px 10px",
-              borderRadius: 8,
-              background: tokens.warningSoft,
-              border: `1px solid ${tokens.warning}`,
-              fontSize: 12,
-              color: tokens.text,
-            }}>
-              {VISION_COPY.anthropicBlocked}
-            </div>
-          )}
-
           {config.vision_enabled && visionReuseBanner && (
             <div style={{
               ...styles.field,
@@ -1402,6 +1388,12 @@ export function SettingsSlideout() {
                 </div>
               </div>
 
+              <div style={styles.field}>
+                <label style={styles.label}>视觉协议</label>
+                <select style={styles.input} value={config.vision_protocol || "openai"} onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { vision_protocol: e.target.value as "openai" | "anthropic", vision_use_main_auth: false } })}>
+                  <option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic Messages</option>
+                </select>
+              </div>
               <div style={styles.field}>
                 <label style={styles.label}>服务地址（Base URL）</label>
                 <input

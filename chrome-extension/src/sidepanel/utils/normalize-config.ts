@@ -75,6 +75,8 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     const visionKeyMasked = isMaskedApiKey(vision.api_key)
     normalized.vision_api_key = visionKeyMasked ? "" : vision.api_key
     normalized.vision_api_key_set = visionKeyMasked ? true : (vision.api_key ? true : false)
+    normalized.vision_protocol = vision.protocol ?? "openai"
+    normalized.vision_use_main_auth = vision.use_main_auth === true
     normalized.vision_base_url = vision.base_url
     normalized.vision_model_name = vision.model_name
     normalized.vision_timeout_ms = vision.timeout_ms

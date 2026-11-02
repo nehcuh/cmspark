@@ -73,7 +73,7 @@ export class MacPassiveRecorder implements RecorderAdapter {
       if (securityAfter.secureInput !== false || after.foregroundWindowId !== id || !current || current.bundleId !== window.bundleId || current.pid !== window.pid || current.name !== window.name) return null
       const stat = fs.lstatSync(file)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0 || stat.size > 16 * 1024 * 1024) throw new ActivityError('CAPTURE_FAILED', '截图为空或超过大小限制')
-      const ocr = await run(['ocr', '--image', file, '--languages', languageOf(config) === 'en-US' ? 'en-US' : languageOf(config) + ',en-US'], 30000)
+      const ocr = (config.extraction_mode || 'ocr') !== 'ocr' ? { words: [] } : await run(['ocr', '--image', file, '--languages', languageOf(config) === 'en-US' ? 'en-US' : languageOf(config) + ',en-US'], 30000)
       if (!Array.isArray(ocr.words)) throw new ActivityError('OCR_FAILED', '原生 OCR 未返回文字')
       const ocr_text = ocr.words.filter((w: any) => typeof w.text === 'string').map((w: any) => w.text).join('\n').slice(0, 24000)
       return { app_id: window.bundleId, app_name: String(window.ownerName || window.bundleId).slice(0, 200), window_title: String(window.name || '').slice(0, 500), ocr_text, image: fs.readFileSync(file) }

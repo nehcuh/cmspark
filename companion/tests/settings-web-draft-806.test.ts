@@ -36,6 +36,15 @@ test("settings web keeps edits while saves and conflicts are in flight", async (
   pending[0].resolve({ config_revision: "epoch:1", llm: { model_name: "base" }, vision: {} })
   await flush()
   assert.equal(element("modelName").disabled, false)
+  element("apiKey").value = "changed-main-owned-key"
+  element("visionApiKey").value = "dedicated-vision-owned-key"
+  element("protocol").value = "anthropic"
+  element("useMainForVisionBtn").onclick()
+  assert.equal(element("visionApiKey").value, "dedicated-vision-owned-key", "reuse preserves a dedicated visual key")
+  assert.equal(element("visionProtocol").value, "anthropic")
+  element("visionApiKey").value = ""
+  element("useMainForVisionBtn").onclick()
+  assert.equal(element("visionApiKey").value, "", "empty visual key stays in the backend inheritance path")
   element("saveBtn").onclick()
   assert.equal(pending[1].body.config_revision, "epoch:1")
   pending[1].resolve({ ok: true, config_revision: "epoch:2" })
