@@ -1,0 +1,58 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "# GLM-Claude 设计复审（两单位独立判定）\n\n## UNIT1 Windows CPU 构建/运行分离 — **APPROVE**\n\n**判定依据（基于具体完整结构，非单纯加时限）：**\n\n1. **合同变更透明且经授权。** 新增 CPU 编译20秒门由本次未发布测试自设，非用户规定的产品/编译 SLA；协调裁决明确记录 20→120、30秒 case 变为不含编译的 runtime 测量、旧端到端总界限不保留，并如实不称用户逐字批准120秒、不认作历史根因。这符合 docs「收敛与交付边界」：三轮后负责人结构重想、改合同先述已证缺口与原 DoD、#723 已有同类先例且要求透明表述。无支持的原始用户需求使该结构选择不可执行。\n2. **结构完整可机验。** 独立探针实证：抽出的纯生成器与原 consumer 逐字节一致（16851字节）、模块顶层无 test 注册/无编译器导入；`checked()` 实际拒绝 nonzero、拒绝 error 即使 status0、timeout 恒120000；YAML 两 Windows lane 阶段序9→12→13→14 与 consumer 后置条件实测成立。迁移非影子实现。\n3. **交接与拒收闭环。** testFixtures-only 编译一次、失败不发布、缺/源漂移/错平台/错Node/digest 漂移在 spawn 前拒绝、无存在性放行、无现场重编译回退/可选模式/retry；builder120秒失败仍阻断且不再自动加预算。清单只证约定生成输入+受信构建绑定，不伪称数学证明编译——表述诚实。\n4. **覆盖保全。** 早期纯控制（source/inverse/EOL/AST）保留且不消费尚不存在产物；两 Windows lane 显式后置执行业务消费者并入 full census 非 skip；Mac/Linux 原真实编译+runtime 不变；全部9排程/UNKNOWN/BigInt/live-descendant 删除/latewrite 断言保留；MCP20秒、exe6秒、权限/清理不变。\n5. **750/760 保全方式正确。** 只允许经验证的单一新增 compiled operand，投影回 sealed 历史 oracle 前精确移除该增量，配缺失/重复/替换/错lane/跳过构建负控；sealed hash/fixture 不动——与现有 validateCockpitSteps748 同一纪律。\n\n**实施条件（非 blocker）：** Mac/Linux 上新入口按平台分支保留原 in-test 编译路径，不得因共享命令引入 macOS 消费 Windows manifest；826 原编译失败/cleanup 优先级负控须在 builder 端与消费端等效重建。批准仅为允许实施，其后机器、非作者源码、GLM 源码、精确 head/双 lane CI 及发行门全部保留；不构成 Windows 验收、根因或合并/发布许可。\n\n## UNIT2 Mac 有限 close/exit/query 观察 — **APPROVE**\n\n**判定依据：**\n\n1. **纯观察、不夺权。** 新增 exit 点只填观察字段；现有源码中 `xcodeClosed/xcodeCode` 仅由 close 回调更新，设计明确禁止 exit 写权威字段、额外 notify/settle/kill/wait。close 仍为完成权威；DoD 含 exit-before-close、非0 close、迟/缺 close、全 UI receipts 不得提前 settle 的负控——与 `:342–350` 的 canSettle/complete 现状一致。\n2. **有限、同域、first-once。** 复用单一 closeClock476 origin、250ms/240 饱和 bucket、闭合 exit 枚举；每点一次尝试，无效 clock/sink 为 UNKNOWN，重复 cancel 不得回填首次事件；无跨 Node/Swift 钟域相减。\n3. **post-close 复用无新等待。** 在既有失败投影与既有 observeXcodeCloseOnce 回调重投影已记录的有限 timeline；标注 cancel 是否已请求，防止取消后 exit0 被误记为原45秒内成功。\n4. **query 事实只取现成 capture 变量。** TESTS/DETAILS 闭集阶段、spawn/stream-error、code0..255/UNKNOWN、闭集 signal、EOF、饱和字节计数/overflow；原 TOOL_FAILURE/INVALID_RESULT 拒绝与两次调用 shared5s/CAP1MiB、输出上限逐字保留；无 raw stderr/path/nonce/环境，无重试、无新 SDK shape。原 45 秒、identity/quiescence/observer+xcode close/code0、cleanup/lease 不变。\n5. **证据真实。** 探针用 AST 提取的真实 producer 与真实 Node ChildProcess，四类边界三轮12/12 PASS；`{}` 仅作原 parser 分类负控，未手造有效 SDK 返回。原 family 经官方 runner 69 PASS/0/0；初次直跑环境拒绝被如实披露并以原 runner 修正，未升级为产品缺陷。12 控制只证当前 TOOL_FAILURE 诊断判别力丢失，不证 CI 内部实际原因——该边界表述正确。\n6. **决策价值成立。** 针对0666（observer close0、xcode 未 close、Cancel 已返回、剩744ms），constructor return/spawn 前后/native exit/xcode exit-close 区间确实区分 setup/UI 阶段与关闭区间消耗；明确拒绝向 FS 通知加 receipt 读取以免加重被调查预算。\n\n**条件：** 批准仅允许实施，随后机器核、独立 source、GLM 源码门与下一次目的明确的新 head Mac 实际45秒门；更丰富的失败只算诊断进展，非 Mac 通过、根因、验收或发布许可。任何缺失/无效观察保持 UNKNOWN。\n\n**总评：** 两单位均为边界清晰、负控完备、权威保全的最小结构方案；测量边界变更（UNIT1）已按仓规由负责人记录。均 APPROVE。",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 69268,
+      "outputTokens": 5074,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.47319,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 74238,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "two-unit-preimplementation-design",
+  "reviewed_base": "0666fc8d066ec6a0941c5edec865063a30692cf9",
+  "implementation_diff": null,
+  "source_baseline_hashes": {
+    "companion/scripts/build-desktop-windows.mjs": "8648102b9989cd1bfec7de64bffb983abc6bf30cc173ac38ced8982505fc41e7",
+    "companion/scripts/tests/desktop-mcp-snapshot-825.test.mjs": "2984a8c1cd5487e26de9d30e519d991d61ed1e6da04854e62e7be7470c4911d6",
+    "companion/scripts/tests/desktop-bootstrap-observation-773.test.mjs": "912b016b32adb94b5d9c4c80639bfe436f5ad75b00e466ee86340b0a376d6416",
+    "scripts/tests/native-ci-stages-760-contract.mjs": "ebd60befcf80bd932b9b969367320fbeb5ac6961cda30c6801f783ca9216ec4c",
+    "scripts/tests/windows-ci-feedback-750-contract.mjs": "66deba47883d02c8cbc98c20dd8631f648c1c8e6d8db3c163c876aee22ec01af",
+    "companion/tests/helpers/workspace-xctest-owned-705.ts": "8e5dad707a9c66cb98bb53bc03562d3cb1dd31e7bb5b2ac524c935d5788704c0",
+    ".github/workflows/ci.yml": "13cd03902f89db74859b7c8507b4cd83b46d92bc0ecea18cb70d446d46322421",
+    "companion/tests/desktop-native-thread-metadata-476.test.ts": "46d852529cfbb6016484b8680d534549303d9c88e0083ffa83d9071b18886e16"
+  },
+  "compiler_boundary_change": "Windows newCPU20s→existing testFixtures builder120s;30s runtime-only;old total bound changes;root owner decision under user standard autonomous scope, not literal user120s approval",
+  "prompt_sha256": "29137f435b1ae73b9f23a6973e346abac8e603aa858bcad94f6bb79ba604b9c0",
+  "prompt_bytes": 275119,
+  "prepared_utc": "2026-11-02T21:03:13.684902+00:00",
+  "verdict": "APPROVE",
+  "unit_verdicts": {
+    "windows_CPU_build_runtime_separation": "APPROVE",
+    "mac_finite_close_exit_query_observation": "APPROVE"
+  },
+  "verdict_basis": "Actual model explicitly approves each unit and accepts the transparently recorded owner-decided measurement-contract change.",
+  "approval_scope": "Implement both bounded test-only designs; machine/independent/source-GLM/exact-head platform gates remain.",
+  "not_approved": [
+    "historical physical root cause attribution",
+    "Windows120s build or runtime acceptance",
+    "macOS45s full-close acceptance",
+    "CI success",
+    "merge",
+    "release"
+  ],
+  "review_text_sha256": "d00bd88e96e2d234667a882f4fba57aa616295651e47ce5d66054db4d3c5e4da",
+  "recorded_utc": "2026-11-02T21:04:43.636328+00:00"
+}

@@ -50,6 +50,9 @@ const nativeCompile = 'Compile native desktop acceptance tests (#480)'
 const front = 'Install native-lane frontend dependencies (#750)'
 const headersMac = 'Pinned runtime header controls (macOS)'
 const mutations = [
+  ['CPU runtime operand missing before historical projection', d => { const s=find(d,'Native desktop bootstrap and process acceptance (#480)');s.run=s.run.replace(' .test-dist/tests/desktop-mcp-snapshot-cpu-825.test.js','') }],
+  ['CPU runtime operand duplicated', d => { const s=find(d,'Native desktop bootstrap and process acceptance (#480)');s.run=s.run.replace(' .test-dist/tests/desktop-mcp-snapshot-cpu-825.test.js',' .test-dist/tests/desktop-mcp-snapshot-cpu-825.test.js .test-dist/tests/desktop-mcp-snapshot-cpu-825.test.js') }],
+  ['CPU runtime operand substituted', d => { const s=find(d,'Native desktop bootstrap and process acceptance (#480)');s.run=s.run.replace('desktop-mcp-snapshot-cpu-825.test.js','foreign-cpu.test.js') }],
   ['#759 security contract omitted', d => { find(d, 'Pinned NSIS dependency transport and integrity (#633)').run = find(d, 'Pinned NSIS dependency transport and integrity (#633)').run.replace(' scripts/tests/node-security-runtime-759.test.mjs', '') }],
   ...['build', 'smoke-os', 'acp-history-restart', 'activity-linux-x11'].map(job => ['#759 vulnerable or floating Node in ' + job, d => { d.jobs[job].steps.find(s => s.uses?.startsWith('actions/setup-node@')).with['node-version'] = '22.23.2' }]),
   ['missing runtime header control', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== headersMac) }],

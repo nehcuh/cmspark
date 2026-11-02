@@ -10,12 +10,15 @@ export const NATIVE_STAGES760 = Object.freeze([
 ].map(Object.freeze))
 const prefix = 'set -euo pipefail\ncd companion\n'
 const ownership = '# The metadata key oracle owns the foreground; other native windows must exit first.\n'
+export const CPU825_OPERAND=' .test-dist/tests/desktop-mcp-snapshot-cpu-825.test.js'
 export function collapseNativeStages760(steps) {
   assert.equal(steps.filter(s => s.name === LEGACY_NATIVE760).length, 0)
   const positions = NATIVE_STAGES760.map(([name, command], index) => {
     const matches = steps.map((step, at) => ({step, at})).filter(v => v.step.name === name)
     assert.equal(matches.length, 1, 'one required native stage: ' + name)
-    assert.deepEqual(matches[0].step, {name, if: "matrix.os != 'ubuntu-latest'", shell: 'bash', run: prefix + (index === 3 ? ownership : '') + command + '\n'})
+    // Validate the entire new command before removing only its reviewed operand
+    // for the sealed historical oracle below. Both Windows lanes share it.
+    assert.deepEqual(matches[0].step, {name, if: "matrix.os != 'ubuntu-latest'", shell: 'bash', run: prefix + (index === 3 ? ownership : '') + command + (index===2?CPU825_OPERAND:'') + '\n'})
     return matches[0].at
   })
   assert.deepEqual(positions, positions.map((_, index) => positions[0] + index), 'native stages remain consecutive and ordered')

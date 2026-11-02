@@ -1,0 +1,46 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "## 增量评审(ROOT_REMOVED,8→9)—— **APPROVE**\n\n(仅裁本点增量;八点 Mac 设计与 Windows 构建设计不重开;live diff 只作上下文、不作源门。)\n\n**核查依据：**\n\n1. **记录位唯一可达。** 仅插于原 finally 中 `if(uiClosed){fs.rmSync(...);surfaceLease.settled()}` 的 rm 成功返回与 settled() 之间。rm 抛错或 cleanup 拒绝(uiClosed=false)时该位不可达，负控语义由结构自动成立;原始错误、租约保留与 settlement 顺序不变。\n2. **权威零变更。** first-once、best-effort try/catch、同一 closeClock476/250ms/min240 饱和；不参与 canSettle/cleanup/complete,不动 45s/5s/两查询/字节 CAP/拒绝路径；无 stat/read/exists/等待/快照拷贝/延迟清理/worker/timer/重试，与既有 note 模式同构。\n3. **发射侧封闭。** 在既有 D705_XCRESULT_DETAILS_CLOSED 回调取当前内存 timeline,候选超 1024 或观察/序列化异常一律回退精确原值；不发新槽。`send()` 的 sent-once 加上快照在发射时刻读取，构造上禁止对已发射结果回溯注入；单线程事件循环保证 note9 与快照读无撕裂竞态。\n4. **解释边界正确。** 点在只证 rm 已于最终投影前返回，不证查询 OS 读序、0666 因果、xcrun 内部或 45s 根因；缺失保持 UNKNOWN。双探针(作者与独立，独立版基绑 git0666,已消除活树依赖错配)各 6/6 证实合法 caller 清理可先于异步诊断叶读取并产 TOOL_FAILURE,该点确有判别价值。\n5. **源机验收负控齐备。** rm 成功仅记一次且后续查询输出可见；拒绝/抛错无点;note/clock/logger 故障保全主失败与 lease;重复 note 不改首值;先完成的查询不得报告未来移除；溢出/故障回退原值；输出上限不增大以容纳此点。\n\n**实施注意(非阻塞)：** 第 9 点无 code/signal,固定为“无事实”编码即可；插入处仍需独立 try/catch，确保 settlement 永不被观察跳过。\n\n**许可范围：** 本 APPROVE 仅允许实施，随后经机器核、独立 source 与 GLM 源码门；不构成运行时/CI/merge/发布成功、根因归因或 Mac 通过证明。无可达阻塞项。",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 20218,
+      "outputTokens": 3734,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.19444,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 55225,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "single-point-design-increment",
+  "reviewed_base": "0666fc8d066ec6a0941c5edec865063a30692cf9",
+  "review_scope": "ROOT_REMOVED positive fact plus current timeline in existing finalquery slot; cardinality8→9",
+  "source_gate_candidate": false,
+  "unfrozen_context_diff_sha256": "17cd728851655dcf857d3f8263ba65f1c7200ce8de53e72511adcd2e8ff4dff7",
+  "base_helper_sha256": "8e5dad707a9c66cb98bb53bc03562d3cb1dd31e7bb5b2ac524c935d5788704c0",
+  "base_native_callback_sha256": "46d852529cfbb6016484b8680d534549303d9c88e0083ffa83d9071b18886e16",
+  "prompt_sha256": "3e072decae0cd26cdf64d9bfaedc75a2cee09dc16087d3f6b0d2ad477e7b1259",
+  "prompt_bytes": 77182,
+  "prepared_utc": "2026-11-02T21:14:48.726929+00:00",
+  "verdict": "APPROVE",
+  "verdict_basis": "Actual model explicitly APPROVE for ROOT_REMOVED8→9 only, no reachable blocker.",
+  "approval_scope": "Implement this single-point refinement, then machine/independent/source-GLM gates.",
+  "not_approved": [
+    "unfrozen eight-point source implementation",
+    "historical cause attribution",
+    "Mac runtime/CI acceptance",
+    "merge",
+    "release"
+  ],
+  "review_text_sha256": "a16dfe6107266dac1b180ac0262f900542a42912aeb138773cf22e148fb3ab3b",
+  "recorded_utc": "2026-11-02T21:16:18.590043+00:00"
+}

@@ -1,6 +1,7 @@
 import { desktopBootstrapObservationFixture773, desktopMcpBootstrapObservationFixture773 } from './desktop-bootstrap-observation-fixture.mjs'
 import { desktopConfirmationObservationFixture } from './desktop-confirmation-observation-fixture.mjs'
 import { desktopTerminalFixture } from "./desktop-terminal-fixture.mjs"
+import { buildMcpSnapshotCpu825 } from './desktop-mcp-snapshot-cpu-artifact-825.mjs'
 import {copyDesktopAssets} from "./desktop-assets.mjs"
 // #480 build-only SDK acquisition. No production download, installer or PATH fallback.
 import fs from "node:fs"
@@ -208,6 +209,7 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
   const lib = path.join(output, "node.lib"); fs.writeFileSync(lib, nodeLib, { flag: "wx", mode: 0o600 })
   for (const [binary, args] of desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib: lib, testFixtures })) checked(binary, args, { env, cwd: output, buildDiagnostic: true })
   if (testFixtures) {
+    buildMcpSnapshotCpu825({root,dest:finalDest,output,cl,env,checked})
     checked(cl, ["/nologo", "/std:c11", "/W4", "/WX", path.join(root, "tests", "fixtures", "desktop-480", "synchronize-handle-probe.c"), "/link", `/OUT:${path.join(output, "desktop-synchronize-handle-probe.exe")}`], { env, cwd: output, buildDiagnostic: true })
     regular(path.join(output, "desktop-synchronize-handle-probe.exe"))
     publish(path.join(output, "desktop-synchronize-handle-probe.exe"), path.join(finalDest, "desktop-synchronize-handle-probe.exe"))

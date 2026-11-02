@@ -54,6 +54,7 @@ test('476 observation inverse restores complete sealed source without changing o
  for(const [file,digest]of sources){
   // This is source-only lineage; test both checkout EOLs below, never normalize runtime evidence.
   let value=fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')
+  if(file===helper||file.endsWith('desktop-native-thread-metadata-476.test.ts'))value=require(path.resolve('scripts/tests/observation-788-inverse.mjs')).restoreObservation826(file===helper?'helper':'native',value)
   const remove=(begin:string,end:string)=>{const count=value.split(begin).length-1;assert.ok(count>0);assert.equal(value.split(end).length-1,count);value=value.replace(new RegExp(begin.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[\\s\\S]*?'+end.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'),'')}
   if(file.endsWith('.swift')){remove('/*OBS476_BOUNDARY_BEGIN*/','/*OBS476_BOUNDARY_END*/');if(file.endsWith('OwnerObserver.swift')){assert.equal(value.split('app,change in').length,2);value=value.replace('app,change in','app,_ in')}}
   else{

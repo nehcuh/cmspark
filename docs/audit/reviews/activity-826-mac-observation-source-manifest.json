@@ -1,0 +1,30 @@
+{
+  "base": "0666fc8d066ec6a0941c5edec865063a30692cf9",
+  "unit": "macOS finite owner/query observations",
+  "files": [
+    {
+      "path": "companion/tests/helpers/workspace-xctest-owned-705.ts",
+      "sha256": "80b4d54471bb1007bb237c8236846b8bb84db86c88c96df4f163686cb215aa7e"
+    },
+    {
+      "path": "companion/tests/desktop-native-thread-metadata-476.test.ts",
+      "sha256": "46f4bb51b67c339ad605142b9ad9177b3c119d1a2bb67126ad3a52b515ba4c03"
+    },
+    {
+      "path": "companion/scripts/tests/observation-826-inverse.cjs",
+      "sha256": "70a751e70f9b31ab4785d036e0a262f790d4a1648f8ef8ed8332ecf95edd3d25"
+    },
+    {
+      "path": "companion/scripts/tests/observation-788-inverse.mjs",
+      "sha256": "7c8b78b90981b1d707ee65d29473bf36ae0fe9e0e7f5904cbba97958dde39078"
+    },
+    {
+      "path": "companion/tests/desktop-workspace-xctest-705.test.ts",
+      "sha256": "10ae76b3d14a01a57ec3f5cdafd19c04f1b5c63b752f43d7f679e6142d46dbe3"
+    },
+    {
+      "path": "companion/tests/desktop-close-observation-826.test.ts",
+      "sha256": "59b4c8947b4c7cb4096f036bf0b8f85d2fdde6f5b22e0bae9f94e805145d3778"
+    }
+  ]
+}

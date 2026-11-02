@@ -1,0 +1,95 @@
+{
+  "base": "0666fc8d066ec6a0941c5edec865063a30692cf9",
+  "windowsCompileBoundary": {
+    "oldCompileInCaseMs": 20000,
+    "compileBuildMs": 120000,
+    "runtimeOnlyCaseMs": 30000,
+    "totalBoundaryChanged": true
+  },
+  "files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "bytes": 43355,
+      "sha256": "78df6f357feb7d6c10197ff434bc4cc2e9f6894e5e7745bc185ceddf1eea928d"
+    },
+    {
+      "path": "companion/scripts/build-desktop-windows.mjs",
+      "bytes": 32649,
+      "sha256": "6cf265cf0f673abe5417a2ffdedc15a7222d91324974a165bf679b89df85624f"
+    },
+    {
+      "path": "companion/scripts/desktop-mcp-snapshot-cpu-driver-825.mjs",
+      "bytes": 8077,
+      "sha256": "91450fb81fa7b559b2348ca37418b9b88447cdae31189b76a0b542c24ab4252e"
+    },
+    {
+      "path": "companion/scripts/desktop-mcp-snapshot-cpu-artifact-825.mjs",
+      "bytes": 5582,
+      "sha256": "33ebe6ea89146dd4f40a7a2f01034866ec068bc317b502e31611ded392588241"
+    },
+    {
+      "path": "companion/scripts/desktop-mcp-snapshot-cpu-runtime-825.mjs",
+      "bytes": 13172,
+      "sha256": "7e02b1bacbab5cba250ac30b7c11b08974647bc6b816f2175cf4389d7f34c16e"
+    },
+    {
+      "path": "companion/scripts/tests/desktop-mcp-snapshot-825.test.mjs",
+      "bytes": 6442,
+      "sha256": "b0a9968e0fd07507ffad48cad96a93d70eb764ec205d40a864f3af0e638440a7"
+    },
+    {
+      "path": "companion/scripts/tests/desktop-mcp-snapshot-cpu-build-826.test.mjs",
+      "bytes": 15633,
+      "sha256": "c7a40a4d276df2767711e97123e38d7a157e121c98cbb3a6fcbd3680bf7aba46"
+    },
+    {
+      "path": "companion/scripts/tests/fixtures/mcp-snapshot-cpu-0666.json",
+      "bytes": 6919,
+      "sha256": "39f4eeafa730078eb0986c094c06f494d981b70bdf0142c26ffa382242a2096f"
+    },
+    {
+      "path": "companion/tests/desktop-mcp-snapshot-cpu-825.test.ts",
+      "bytes": 573,
+      "sha256": "f64def960b53d37d065fef5fb95587ade52bba4a2f20f84b45dbc6eb7f238a09"
+    },
+    {
+      "path": "scripts/tests/native-ci-stages-760-contract.mjs",
+      "bytes": 2353,
+      "sha256": "bbc7471fd1ac288b881057becd3b087c79f5d7be48497fcf66292e4926d5147b"
+    },
+    {
+      "path": "scripts/tests/native-ci-stages-760.test.mjs",
+      "bytes": 5021,
+      "sha256": "aa55dcbe0794672c0037177587f83132acdd28b6531e33139bb6cf9c0094039a"
+    },
+    {
+      "path": "scripts/tests/windows-ci-feedback-750.test.mjs",
+      "bytes": 17676,
+      "sha256": "6f607965983ab2506789d2c19b6d61e001f82a978508da2226b73207bd1eb27d"
+    },
+    {
+      "path": "companion/tests/helpers/workspace-xctest-owned-705.ts",
+      "sha256": "80b4d54471bb1007bb237c8236846b8bb84db86c88c96df4f163686cb215aa7e"
+    },
+    {
+      "path": "companion/tests/desktop-native-thread-metadata-476.test.ts",
+      "sha256": "46f4bb51b67c339ad605142b9ad9177b3c119d1a2bb67126ad3a52b515ba4c03"
+    },
+    {
+      "path": "companion/scripts/tests/observation-826-inverse.cjs",
+      "sha256": "70a751e70f9b31ab4785d036e0a262f790d4a1648f8ef8ed8332ecf95edd3d25"
+    },
+    {
+      "path": "companion/scripts/tests/observation-788-inverse.mjs",
+      "sha256": "7c8b78b90981b1d707ee65d29473bf36ae0fe9e0e7f5904cbba97958dde39078"
+    },
+    {
+      "path": "companion/tests/desktop-workspace-xctest-705.test.ts",
+      "sha256": "10ae76b3d14a01a57ec3f5cdafd19c04f1b5c63b752f43d7f679e6142d46dbe3"
+    },
+    {
+      "path": "companion/tests/desktop-close-observation-826.test.ts",
+      "sha256": "59b4c8947b4c7cb4096f036bf0b8f85d2fdde6f5b22e0bae9f94e805145d3778"
+    }
+  ]
+}

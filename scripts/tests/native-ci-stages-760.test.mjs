@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { NATIVE_STAGES760 } from './native-ci-stages-760-contract.mjs'
+import { NATIVE_STAGES760, CPU825_OPERAND } from './native-ci-stages-760-contract.mjs'
 import { validateWindowsCiFeedback750, parseWorkflow750, printWorkflow750, condition750, MATRIX750 } from './windows-ci-feedback-750-contract.mjs'
 const text = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
 const names = NATIVE_STAGES760.map(([name]) => name)
@@ -54,4 +54,13 @@ test('#760 refuses reordering or interleaving native desktop ownership', () => {
     else [steps[at+2],steps[at+3]]=[steps[at+3],steps[at+2]]
     assert.throws(()=>validateWindowsCiFeedback750(printWorkflow750(doc)))
   }
+})
+test('#826 exact post-build CPU operand is conserved in both Windows lanes before historical projection',()=>{
+ const doc=actual(),steps=doc.jobs['smoke-os'].steps,build=steps.find(s=>s.name===names[0]),compile=steps.find(s=>s.name===names[1]),consumer=steps.find(s=>s.name===names[2])
+ assert.equal(consumer.run.split(CPU825_OPERAND).length,2);assert.ok(steps.indexOf(build)<steps.indexOf(compile)&&steps.indexOf(compile)<steps.indexOf(consumer));assert.ok(build.run.endsWith('--test-fixtures\n'))
+ for(const matrix of MATRIX750.filter(m=>m.os==='windows-latest'))assert.equal(condition750(consumer.if,{success:true,cancelled:false,values:{'matrix.os':matrix.os,'matrix.lane':matrix.lane}}),true)
+ for(const change of [s=>{s.run=s.run.replace(CPU825_OPERAND,'')},s=>{s.run=s.run.replace(CPU825_OPERAND,CPU825_OPERAND+CPU825_OPERAND)},s=>{s.run=s.run.replace(CPU825_OPERAND,' .test-dist/tests/foreign-cpu.test.js')},s=>{s.if="matrix.os == 'windows-latest' && matrix.lane == 'native'"}]){
+  const changed=actual();change(changed.jobs['smoke-os'].steps.find(s=>s.name===names[2]));for(const input of [printWorkflow750(changed),printWorkflow750(changed).replaceAll('\n','\r\n')])assert.throws(()=>validateWindowsCiFeedback750(input))
+ }
+ const noFixtures=actual();noFixtures.jobs['smoke-os'].steps.find(s=>s.name===names[0]).run=noFixtures.jobs['smoke-os'].steps.find(s=>s.name===names[0]).run.replace(' --test-fixtures','');assert.throws(()=>validateWindowsCiFeedback750(printWorkflow750(noFixtures)))
 })
