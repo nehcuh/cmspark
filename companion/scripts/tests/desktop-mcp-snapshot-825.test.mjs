@@ -5,7 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import vm from 'node:vm'
 import {createRequire} from 'node:module'
-import {execFileSync,spawnSync} from 'node:child_process'
+import {execFileSync,spawnSync,spawn} from 'node:child_process'
+import {once} from 'node:events'
 import {desktopMcpFixture} from '../desktop-mcp-fixture.mjs'
 import {desktopMcpBootstrapObservationFixture773} from '../desktop-bootstrap-observation-fixture.mjs'
 import {desktopWindowsToolchain} from '../build-desktop-windows.mjs'
@@ -135,16 +136,51 @@ int main(int argc,char** argv){assert(argc==2);mode825=std::stoi(argv[1]);
 `
 }
 
-test('825 actual native worker/file reader distinguishes same-wire schedules, coherent publication, nested dispatch and UNKNOWNs', {timeout:30000}, async()=>{
+test('825 actual native worker/file reader distinguishes same-wire schedules, coherent publication, nested dispatch and UNKNOWNs', {timeout:30000}, async t=>{
  let clockValue=Date.now();class ControlledClock825 extends Date{static now(){return clockValue}}
  const helper=nodeHelper(ControlledClock825),dir=fs.mkdtempSync(path.join(os.tmpdir(),'mcp-snapshot-owned-825-'))
  let primary825
  try{
   const cpp=path.join(dir,'probe.cpp'),binary=path.join(dir,process.platform==='win32'?'probe.exe':'probe');fs.writeFileSync(cpp,cppDriver())
   let compiler,args,env
-  if(process.platform==='win32'){const tools=desktopWindowsToolchain();compiler=tools.cl;env=tools.env;args=['/nologo','/std:c++20','/EHsc','/DUNICODE','/D_UNICODE',cpp,'/link','/OUT:'+binary]}
+  if(process.platform==='win32'){const tools=desktopWindowsToolchain();compiler=tools.cl;env=tools.env;args=['/nologo','/std:c++20','/EHsc','/DUNICODE','/D_UNICODE','/Fo'+path.join(dir,'probe.obj'),'/Fd'+path.join(dir,'probe.pdb'),cpp,'/link','/OUT:'+binary]}
   else{compiler=process.platform==='darwin'?'/usr/bin/clang++':'/usr/bin/c++';args=['-std=c++20','-pthread',cpp,'-o',binary]}
-  const built=spawnSync(compiler,args,{cwd:dir,env,encoding:'utf8',timeout:20000});assert.equal(built.error,undefined);assert.equal(built.status,0,(built.stdout||'')+(built.stderr||''))
+  const compilerFds=[]
+  try{
+   for(const name of ['compiler.stdout','compiler.stderr'])compilerFds.push(fs.openSync(path.join(dir,name),'wx+',0o600))
+   // Regular files do not make this call (or the outer test runner) wait for
+   // a compiler descendant's inherited pipe EOF. Cwd stays outside the case.
+   const built=spawnSync(compiler,args,{cwd:root,env,encoding:'utf8',timeout:20000,stdio:['ignore',...compilerFds]})
+   let diagnostic=''
+   if(built.error||built.status!==0)for(const fd of compilerFds){try{const bytes=Buffer.alloc(64*1024),count=fs.readSync(fd,bytes,0,bytes.length,0);diagnostic+=bytes.subarray(0,count).toString()}catch{/* Finite diagnostics cannot replace the compiler failure. */}}
+   assert.equal(built.error,undefined,diagnostic);assert.equal(built.status,0,diagnostic)
+  }catch(error){primary825=error;throw error}finally{
+   let closeFailure;for(const fd of compilerFds)try{fs.closeSync(fd)}catch(error){closeFailure??=error}
+   if(primary825===undefined&&closeFailure!==undefined)throw closeFailure
+  }
+  // Run on Windows too: remove the whole owned output directory while an
+  // actual live descendant holds both file handles, then require a late write.
+  const liveDirectory=path.join(dir,'live-file-stdio');fs.mkdirSync(liveDirectory)
+  const liveFds=[];let liveChild,liveClosed=false,closed
+  try{
+   for(const name of ['compiler.stdout','compiler.stderr'])liveFds.push(fs.openSync(path.join(liveDirectory,name),'wx+',0o600))
+   const code="const fs=require('node:fs');fs.writeSync(1,'READY\\n');fs.writeSync(2,'READY_ERR\\n');process.on('message',value=>{if(value!=='write-after-rm')process.exit(2);fs.writeSync(1,'LATE\\n');fs.writeSync(2,'LATE_ERR\\n');process.send({phase:'written'});process.disconnect()});process.send({phase:'ready',cwd:process.cwd()});"
+   liveChild=spawn(process.execPath,['-e',code],{cwd:root,stdio:['ignore',...liveFds,'ipc'],signal:t.signal})
+   let childError;liveChild.on('error',error=>{childError=error})
+   closed=new Promise(resolve=>liveChild.once('close',(status,signal)=>{liveClosed=true;resolve({status,signal,error:childError})}))
+   const message=()=>Promise.race([once(liveChild,'message'),closed.then(result=>{throw result.error??Error('OWNED_FILE_STDIO_EARLY_CLOSE')})])
+   const [ready]=await message();assert.equal(ready.phase,'ready');assert.equal(fs.realpathSync(ready.cwd),fs.realpathSync(root))
+   fs.rmSync(liveDirectory,{recursive:true,force:true});assert.equal(fs.existsSync(liveDirectory),false);assert.equal(liveChild.exitCode,null)
+   const written=message();liveChild.send('write-after-rm');assert.equal((await written)[0].phase,'written')
+   const result=await closed;assert.equal(result.error,undefined);assert.equal(result.status,0);assert.equal(result.signal,null)
+   for(const [index,expected]of ['READY\nLATE\n','READY_ERR\nLATE_ERR\n'].entries()){
+    const bytes=Buffer.alloc(128),count=fs.readSync(liveFds[index],bytes,0,bytes.length,0);assert.equal(bytes.subarray(0,count).toString(),expected)
+   }
+  }catch(error){primary825=error;throw error}finally{
+   if(liveChild&&!liveClosed)liveChild.kill('SIGKILL');if(closed)await closed
+   let closeFailure;for(const fd of liveFds)try{fs.closeSync(fd)}catch(error){closeFailure??=error}
+   if(primary825===undefined&&closeFailure!==undefined)throw closeFailure
+  }
   const native=path.join(dir,'native'),source=path.join(native,'acceptance/mcp');fs.mkdirSync(path.join(source,'assets'),{recursive:true});fs.mkdirSync(path.join(native,'assets'))
   fs.writeFileSync(path.join(source,'cmspark-desktop.exe'),'owned-inert-binary')
   for(const name of helper.copier.OFFLINE_ACCEPTANCE_ASSETS_480){fs.writeFileSync(path.join(source,'assets',name),'owned '+name);fs.copyFileSync(path.join(source,'assets',name),path.join(native,'assets',name))}
@@ -209,11 +245,26 @@ test('826 actual CPU callback preserves compiler failure through cleanup failure
  const source=read('scripts/tests/desktop-mcp-snapshot-825.test.mjs'),ast=ts.createSourceFile('actual.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS)
  const cases=ast.statements.filter(node=>ts.isExpressionStatement(node)&&ts.isCallExpression(node.expression)&&node.expression.expression.getText(ast)==='test'&&node.expression.arguments[0]?.text?.startsWith('825 actual native worker'))
  assert.equal(cases.length,1);const callback=cases[0].expression.arguments[2],attempts=callback.body.statements.filter(ts.isTryStatement);assert.equal(attempts.length,1)
- const timeout=Object.assign(Error('owned-compiler-timeout'),{code:'ETIMEDOUT'}),cleanup=Object.assign(Error('owned-cleanup-busy'),{code:'EBUSY'})
- let removed=0
- const fsPort={mkdtempSync:()=> 'owned-case',writeFileSync(){},rmSync(){removed++;throw cleanup}}
- const run=vm.runInNewContext('('+callback.getText(ast)+')',{Date,fs:fsPort,nodeHelper:()=>({}),os,path,process,desktopWindowsToolchain:()=>({cl:'owned-compiler',env:{}}),cppDriver:()=> 'owned inert cpp',spawnSync:()=>({error:timeout,status:null,signal:'SIGTERM',stdout:'',stderr:''}),assert})
- await assert.rejects(run(),error=>error.code==='ERR_ASSERTION'&&error.actual===timeout);assert.equal(removed,1)
- const body=attempts[0].finallyBlock.getText(ast),finalize=new Function('fs','dir','primary825',body)
- assert.throws(()=>finalize(fsPort,'owned-case',undefined),error=>error===cleanup);assert.equal(removed,2)
+ for(const platform of new Set([process.platform,'win32']))for(const fault of ['timeout','firstOpen','secondOpen','spawn','nonzero','diagnosticRead','closeWithTimeout','closeOnly']){
+  const timeout=Object.assign(Error('owned-compiler-timeout'),{code:'ETIMEDOUT'}),cleanup=Object.assign(Error('owned-cleanup-busy'),{code:'EBUSY'}),openError=Error('owned-open-failure'),spawnError=Error('owned-spawn-failure'),closeError=Error('owned-close-failure')
+  const owned=path.join(os.tmpdir(),'owned-case-826'),closed=[],reads=[];let opens=0,removed=0,compiled=0
+  const fsPort={mkdtempSync:()=>owned,writeFileSync(){},existsSync:()=>true,
+   openSync(file,flags,mode){opens++;assert.equal(file,path.join(owned,opens===1?'compiler.stdout':'compiler.stderr'));assert.equal(flags,'wx+');assert.equal(mode,0o600);if(fault==='firstOpen'||fault==='secondOpen'&&opens===2)throw openError;return 10+opens},
+   closeSync(fd){closed.push(fd);if(fd===11&&['closeWithTimeout','closeOnly'].includes(fault))throw closeError},
+   readSync(fd,bytes,offset,length,position){reads.push(fd);assert.equal(length,64*1024);assert.equal(position,0);if(fault==='diagnosticRead')throw Error('owned-diagnostic-read');return Buffer.from('owned compiler output\n').copy(bytes,offset)},
+   rmSync(){removed++;throw cleanup}}
+  const compilerPort=(file,args,options)=>{
+   compiled++;assert.equal(options.cwd,root);assert.equal(options.timeout,20000);assert.deepEqual(Array.from(options.stdio),['ignore',11,12])
+   if(platform==='win32'){assert.ok(args.includes('/Fo'+path.join(owned,'probe.obj')));assert.ok(args.includes('/Fd'+path.join(owned,'probe.pdb')))}
+   if(fault==='spawn')throw spawnError
+   return{error:['nonzero','closeOnly'].includes(fault)?undefined:timeout,status:fault==='nonzero'?1:fault==='closeOnly'?0:null,signal:null}
+  }
+  const run=vm.runInNewContext('('+callback.getText(ast)+')',{Buffer,Date,root,fs:fsPort,nodeHelper:()=>({}),os,path,process:{platform},desktopWindowsToolchain:()=>({cl:'owned-compiler',env:{}}),cppDriver:()=> 'owned inert cpp',spawnSync:compilerPort,assert})
+  const expected=fault==='firstOpen'||fault==='secondOpen'?openError:fault==='spawn'?spawnError:fault==='closeOnly'?closeError:undefined
+  await assert.rejects(run(),error=>expected?error===expected:error.code==='ERR_ASSERTION'&&error.actual===(fault==='nonzero'?1:timeout))
+  assert.equal(compiled,['firstOpen','secondOpen'].includes(fault)?0:1);assert.equal(removed,1)
+  assert.deepEqual(closed,fault==='firstOpen'?[]:fault==='secondOpen'?[11]:[11,12]);assert.deepEqual(reads,['firstOpen','secondOpen','spawn','closeOnly'].includes(fault)?[]:[11,12])
+ }
+ const cleanup=Error('owned-cleanup-only'),body=attempts[0].finallyBlock.getText(ast),finalize=new Function('fs','dir','primary825',body)
+ assert.throws(()=>finalize({rmSync(){throw cleanup}},'owned-case',undefined),error=>error===cleanup)
 })

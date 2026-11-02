@@ -21,6 +21,8 @@ PR #824 最终提交 `8fceac9f` 的[十项 CI 检查](https://github.com/nehcuh/
 
 正式发布前须完成版本一致性、相关测试、精确主线 CI 与 [Release 工作流](../.github/workflows/release.yml) 的三平台 dry-run，再对通过的提交打 `v0.8.0` 标签。发布前页面不预记发布成功；标签内页面保留准备时状态，发布后的回执另更新主线文档。
 
+后续 [PR #826](https://github.com/nehcuh/cmspark/pull/826) 的 `64dbdaaf` [CI](https://github.com/nehcuh/cmspark/actions/runs/41516873187) 中，Windows MCP 业务用例实际通过，但普查前的测试编译门超时、聊天范围初始就绪回执超时，macOS 既有工作区取消路径也超时，仍未满足发布门禁。详见 [Windows 回执](audit/reviews/activity-826-windows-native-64dbdaaf.md)和 [macOS 回执](audit/reviews/activity-826-macos-64dbdaaf.md)。编译调用与聊天范围有限观察的设计及实现已通过独立实验、非作者核验和 [GLM-Claude 源码复审](audit/reviews/activity-826-stdio-scope-glm-source.md)；修正后的精确 head 与主线仍须重新实际验收，不由诊断或旧通过结果替代。
+
 [#457 历史验收台账](audit/0.7.0-20260907/release-acceptance.md) 的企业双场景仍未完成；0.7.0 已发布这一事实不证明该验收通过。0.8.0 沿用现有公开发行范围，不将该企业验收列为本次已完成能力；用户本次明确授权发布，未授权扩大企业能力声明。
 
 ## 已合并与尚待验收的边界

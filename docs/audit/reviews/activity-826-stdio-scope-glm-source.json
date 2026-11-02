@@ -1,0 +1,77 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "# GLM-Claude 独立源码复审 — #826 双单元（冻结5路径，base 64dbdaaf）\n\n结论：**UNIT1 APPROVE、UNIT2 APPROVE**，均确认 B 的源码 APPROVE；未发现可达缺陷，各附边界。\n\n## UNIT1 compiler filefd/stable-cwd：APPROVE（确认 B）\n\n- 冻结 mjs 全文与 diff 后态一致（compiler fd 段、live 控制、826 扩充均在）；worker/header/fixture/scope helper 四哈希与批准基相同，同线/BigInt/UNKNOWN 控制未动。\n- 原守卫保留：`built.error===undefined` 与 `built.status===0` 仍逐条断言，无二进制存在替代。stdio 为 `['ignore',fd,fd]`（两 wx+/0600 owned 文件），无 pipe/inherit；cwd=root，Windows `/Fo`/`/Fd` 显式 owned obj/PDB，cpp、`/OUT` 与 clang `-o` 仍 owned 绝对路径。\n- 有限诊断：仅失败时每 fd 一次、position0、64KiB；readSync 异常被吞，不替换主错（826 控制断言 length===64*1024、position===0 与 reads 列表）。\n- 局部 finally 关闭全部已开 fd，覆盖 first/second open、spawn throw、断言与 close 失败；`primary825===undefined` 才抛 closeFailure——主错优先、close-only 仍失败；外层 rmSync cleanup 优先级原样。\n- live 控制为同 30s case 内真实已知子进程：IPC ready 携 cwd 并 realpath 比对 root；父先整目录 `rmSync(recursive,force)` 并断言 existsSync false、exitCode null，再发 write-after-rm；子回执后 `disconnect()` 自然退出，父验 status0/signalnull 并从保留 fd 读精确 READY/LATE 字节。事件驱动（message/close），无轮询、无新时限、无树扫描；失败仅 kill 自有 child 并 await close。30s/20s/6s/native20s 未变，`signal:t.signal` 沿用原信号。\n- 826 AST 控制以实际 callback 体 × 两平台 × 8 故障运行：fsPort 显式 open/close/read 防提前 TypeError 伪通过；核 compiled 触达、cwd/timeout/stdio 数字 fd、Windows Fo/Fd、closed 全列表、读取上界、错误同一性、outer rmSync 一次；cleanup-only 断言保留。\n\n边界：Windows 删除/晚写与编译行为待该门实跑，失败按原样保留；status0 仅直接命令返回，不认后代回收。\n\n## UNIT2 scope INITIAL 有限观察：APPROVE（确认 B）\n\n- 四路径冻结全文与 diff 一致。C# 复用 #758 模式：`Observed.Add` 每名至多一次、CreateNew pending→File.Move、Observe 全 try/catch；payload 仅 phase/sameSta，匿名表达式被 readiness 精确单次抽取并实际执行。\n- IsReady 展开保序保惰性：Handle 取一次、Zero 比较不触发 GetForegroundWindow、focus getter 只在末位；128 组合对记录的原 guard 比返回值与 handle/foreground/focus 查询计数全等（正常+抛错 sink）。Activate/Focus 仍各一次原序，bool 编码为闭集名；requested/Dispatcher/50ms timer 不变。10s receipt helper 哈希未变；180s、业务断言、lease 原样。\n- initial-only：InitialWindow 只在非 popup 设置；popup 无 SourceInitialized/Loaded 观察，ContentRendered/ReadyResult 均判 InitialWindow；InitialReady 只停资格观察，READY_WRITTEN 在 Write 成功后记录（测试断言 alreadyWritten 先真）。\n- reader 闭集 18 名、恰 phase+bool 两键；missing/partial/foreign/`.pending`/字符串 sameSta 全省略为 UNKNOWN，非空才 OBSERVED，sameSta:false 保布尔。无产品改动、无放宽、无额外轮询。\n- native finally 仅在 child close 后、rm/lease 前投影，整段 try/catch；实际 body 验证主错保留与 stop→kill→closed→project→remove→settled 次序，投影抛错不盖主错、不跳清理。\n\n一条非阻断观察（源码可支持）：该测试 `replace(/\\r?\\n/g,eol).replace(/\\r\\n/g,'\\n')` 使 CRLF 迭代被归一回 LF，\"CRLF\" 名义未真正施加；因抽取正则 LF 锚定、语义与 EOL 无关，仅覆盖标签弱化且真 CRLF 会响亮失败，不构成可达缺陷，不阻断。\n\n## 共同边界\n\n观察/reason 均为正向历史，缺失=UNKNOWN，不作终态或负面推断；不授权截图/ready。本批准仅许可冻结 test-only commit 及协调门后一次有目的 Windows CI；不声称 Windows 已通过、历史物理根因或 merge/release。未重开历史未知项或无关范围。",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 49687,
+      "outputTokens": 12792,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.568235,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 185571,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "two-unit-source-gate",
+  "reviewed_base": "64dbdaafda240f06cac21955e2a4a8ee163c8740",
+  "source_files": [
+    {
+      "path": "companion/tests/fixtures/activity-scope825-windows.cs",
+      "sha256": "18db2181e7a68f225cc65c113c8a7e8a3b331c7efa7472e1e02a6fcfa6f501ca"
+    },
+    {
+      "path": "companion/tests/helpers/activity-scope825-observation.cjs",
+      "sha256": "7cd52c53d5225dae7d63d5ee59273ba00a0a5e2616c77129d2b98cabe268d5ba"
+    },
+    {
+      "path": "companion/tests/activity-scope825-readiness.test.ts",
+      "sha256": "9e6a089252925541e52febd03bcf618fb427d8a714c361b69436cf73a7267ff8"
+    },
+    {
+      "path": "companion/tests/activity-scope825-native.test.ts",
+      "sha256": "b2cd16df16c98efa255179e75dfa961092d9982a5e4f79f3ebb97c247c348e3e"
+    },
+    {
+      "path": "companion/scripts/tests/desktop-mcp-snapshot-825.test.mjs",
+      "sha256": "2984a8c1cd5487e26de9d30e519d991d61ed1e6da04854e62e7be7470c4911d6"
+    }
+  ],
+  "source_manifest_sha256": "00289155409eae6ef8b9376312e5429b9214c6e67f8a77ef2d083b765a2503b4",
+  "source_diff_sha256": "844b73ab49b031b7d3015bd8a64031a8a68d346e01b6227eb6151d582cab1f69",
+  "unchanged_source_hashes": {
+    "companion/tests/fixtures/desktop-476/mcp-snapshot-825.h": "ab1793e662162a2357524bf4aaea2d9d09ccbc581ba1a85e72c900554457f544",
+    "companion/tests/helpers/mcp-snapshot-825.ts": "5af69bdfd2cecd7a2fb10317426c83f021b84e05de99140e7e38be91e0661589",
+    "companion/scripts/desktop-mcp-snapshot-fixture-825.mjs": "cec54f48a1df2680b48fbf565251f907fe3710ecd451dd0b933ee7360a2f4b7c",
+    "companion/tests/helpers/activity-scope825-native.ts": "37ccea3fd906c988a3cf70516b089581e2da7e5d2a200c836450e5ec65e2afff"
+  },
+  "prompt_sha256": "a6ebdf9e41d66d015e1dac34b5450084e2ee180c7aede195753aa074d2c586d9",
+  "prompt_bytes": 194838,
+  "prepared_utc": "2026-11-02T20:34:17.499834+00:00",
+  "verdict": "APPROVE",
+  "unit_verdicts": {
+    "compiler_file_fd_stable_cwd": "APPROVE",
+    "scope_INITIAL_finite_observation": "APPROVE"
+  },
+  "verdict_basis": "Actual model explicitly says UNIT1 APPROVE and UNIT2 APPROVE, confirms both B source approvals, and identifies no reachable defect.",
+  "approval_scope": "Frozen five-path test-only commit and one purposeful Windows CI after coordinator gates.",
+  "not_approved": [
+    "Windows compiler/filesystem/scope acceptance",
+    "historical physical root cause attribution",
+    "merge",
+    "release"
+  ],
+  "nonblocking_notes": [
+    "Scope readiness finally-source control normalizes the nominal CRLF iteration back to LF; reviewer treats this as coverage-label weakness, not a reachable defect. Do not claim that iteration alone independently exercised raw CRLF extraction."
+  ],
+  "review_text_sha256": "c8fa36ee0fdbb4dd77b3cafb6887ed68251e0514854fdfc254c0a7fba7ba9720",
+  "recorded_utc": "2026-11-02T20:37:52.149019+00:00"
+}

@@ -87,6 +87,7 @@ test('scope825 real Windows two-column chat gates local title, crops sidebar, ke
     await service?.stop()
     if (child && !ended) child.kill()
     if (closed) await closed
+    try { t.diagnostic('D825_SCOPE_INITIAL ' + JSON.stringify(require(path.resolve('tests/helpers/activity-scope825-observation.cjs'))(dir))) } catch { /* Passive projection cannot skip cleanup or replace the primary failure. */ }
     fs.rmSync(dir, { recursive: true, force: true }); lease.settled()
   }
 }))

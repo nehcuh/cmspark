@@ -1,10 +1,12 @@
 // Owned two-column chat UI. All names, messages and image pixels are inert fixtures.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
@@ -22,11 +24,38 @@ static class ActivityScope825Fixture {
   static Window ReceiptWindow;
   static string PendingReceipt;
   static Action CheckCurrentReceipt;
+  static Window InitialWindow;
+  static int MainThread;
+  static bool InitialReady;
+  static readonly HashSet<string> Observed = new HashSet<string>();
+  // Test-only positive history, attempted once per fixed point. Never readiness.
+  static void Observe(string phase) {
+    try {
+      if (!Observed.Add(phase)) return;
+      RecordObservation(phase, new { phase = phase, sameSta = Thread.CurrentThread.ManagedThreadId == MainThread });
+    } catch { }
+  }
+  static void RecordObservation(string phase, object value) {
+    string file = Path.Combine(Root, "scope-initial-" + phase + ".json"), pending = file + ".pending";
+    using (var stream = new FileStream(pending, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+    using (var writer = new StreamWriter(stream, Encoding)) writer.Write(Json.Serialize(value));
+    File.Move(pending, file);
+  }
+  static bool ReadyResult(Window window, bool result, string reason) {
+    if (window == InitialWindow && !InitialReady) Observe(reason);
+    return result;
+  }
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   static bool IsReady(Window window, TextBox focus, bool rendered) {
-    if (!rendered || Current != window || ReceiptWindow != window || PendingReceipt == null) return false;
+    if (!rendered) return ReadyResult(window, false, "NOT_RENDERED");
+    if (Current != window) return ReadyResult(window, false, "NOT_CURRENT");
+    if (ReceiptWindow != window) return ReadyResult(window, false, "NOT_RECEIPT_WINDOW");
+    if (PendingReceipt == null) return ReadyResult(window, false, "NO_PENDING");
     var hwnd = new WindowInteropHelper(window).Handle;
-    return hwnd != IntPtr.Zero && GetForegroundWindow() == hwnd && focus.IsKeyboardFocused;
+    if (hwnd == IntPtr.Zero) return ReadyResult(window, false, "NO_HWND");
+    if (GetForegroundWindow() != hwnd) return ReadyResult(window, false, "NOT_FOREGROUND");
+    if (!focus.IsKeyboardFocused) return ReadyResult(window, false, "NO_KEYBOARD_FOCUS");
+    return ReadyResult(window, true, "QUALIFIED");
   }
   static void Write(string name, object data) {
     string file = Path.Combine(Root, name), pending = file + ".pending";
@@ -64,28 +93,42 @@ static class ActivityScope825Fixture {
     var image = EmbeddedImage(); Grid.SetRow(image, 2); content.Children.Add(image);
     layout.Children.Add(content); window.Content = layout;
     Current = window; ContentRegion = content; TitleRegion = title;
+    if (!popup) InitialWindow = window;
     ReceiptWindow = window; PendingReceipt = popup ? "ack.json" : "ready.json";
     bool rendered = false, requested = false;
     Action check = delegate {
       if (!IsReady(window, focus, rendered)) return;
       string name = PendingReceipt; PendingReceipt = null;
       Write(name, Snapshot());
+      if (window == InitialWindow && name == "ready.json") { Observe("READY_WRITTEN"); InitialReady = true; }
     };
     CheckCurrentReceipt = check;
     window.ContentRendered += delegate {
+      if (window == InitialWindow) Observe("CONTENT_RENDERED");
       if (Current != window) return;
       rendered = true;
-      if (!requested) { requested = true; window.Activate(); focus.Focus(); }
+      if (!requested) {
+        requested = true;
+        bool activated = window.Activate();
+        if (window == InitialWindow) Observe(activated ? "ACTIVATE_TRUE" : "ACTIVATE_FALSE");
+        bool focused = focus.Focus();
+        if (window == InitialWindow) Observe(focused ? "FOCUS_TRUE" : "FOCUS_FALSE");
+      }
       check();
     };
     // Recheck after WPF processes activation/focus; never request them again.
     window.Activated += delegate { window.Dispatcher.BeginInvoke(DispatcherPriority.Input, check); };
     focus.GotKeyboardFocus += delegate { window.Dispatcher.BeginInvoke(DispatcherPriority.Input, check); };
+    if (!popup) {
+      window.SourceInitialized += delegate { Observe("SOURCE_INITIALIZED"); };
+      window.Loaded += delegate { Observe("LOADED"); };
+    }
     return window;
   }
   [STAThread] static int Main(string[] args) {
     if (args.Length != 1) return 1;
-    Root = args[0]; var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+    Root = args[0]; MainThread = Thread.CurrentThread.ManagedThreadId;
+    var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
     try {
       var window = Build(false);
       var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
@@ -100,7 +143,7 @@ static class ActivityScope825Fixture {
           else throw new Exception("OWNED_UNKNOWN_CONTROL");
         } catch (Exception error) { try { Write("failure.json", new { type = error.GetType().Name, hresult = error.HResult }); } catch { } app.Shutdown(2); }
       };
-      timer.Start(); window.Show(); app.Run(); return 0;
+      timer.Start(); window.Show(); Observe("RUN_ENTER"); app.Run(); Observe("RUN_RETURN"); return 0;
     } catch (Exception error) { try { Write("failure.json", new { type = error.GetType().Name, hresult = error.HResult }); } catch { } return 3; }
   }
 }
