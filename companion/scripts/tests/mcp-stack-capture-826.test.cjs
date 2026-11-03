@@ -2,6 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { EventEmitter } = require('node:events')
+const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm')
 const c = require('../mcp-stack-capture-826.cjs')
 // Grammar/control model only. This is NOT a vendor recording or Windows CDB
 // evidence. The explicit Windows qualifier alone consumes actual CDB output.
@@ -20,7 +21,7 @@ function ports(overrides = {}) {
     env: { SystemRoot: 'C:\\Windows', 'ProgramFiles(x86)': 'C:\\Program Files (x86)', SECRET_TOKEN: 'private', _NT_SYMBOL_PATH: 'srv*https://private', TEMP: 'C:\\Temp' },
     tool: () => 'C:\\SDK\\cdb.exe', canonical(file) { state.canonical.push(file); return file },
     workspace: () => ({ directory: 'C:\\owned\\out\\work', symbols: 'C:\\owned\\out\\work\\symbols', close() { state.closed++ } }),
-    async run(file, args, opts) { calls.push({ file, args, opts }); return file.endsWith('powershell.exe') ? okay(JSON.stringify({ signed: true, rows: [native(), browser()] })) : okay() },
+    async run(file, args, opts) { calls.push({ file, args, opts }); return file.endsWith('powershell.exe') ? okay(JSON.stringify({ rows: [native(), browser()] })) : okay() },
     spawn() { state.spawn++; const child = new EventEmitter(); child.pid = 91; child.send = value => { assert.equal(value, 'ping'); queueMicrotask(() => child.emit('message', 'pong')) }; child.kill = () => { queueMicrotask(() => child.emit('close', 0, null)); return true }; queueMicrotask(() => child.emit('message', 'ready')); return child }, ...overrides }
   return { io, calls, state }
 }
@@ -32,7 +33,8 @@ function safe(value) {
 }
 test('actual PS producer DTO and bounded identity selector', () => {
   assert.deepEqual(fields, c.PROCESS_FIELDS)
-  assert.match(c.QUERY_PS_826, /Get-AuthenticodeSignature -LiteralPath/)
+  assert.doesNotMatch(c.QUERY_PS_826, /Get-AuthenticodeSignature|signed|SignerCertificate|cdb/)
+  assert.match(c.QUERY_PS_826, /ConvertTo-Json[^\n]+\[ordered\]@\{ rows=@\(\$rows\) \}/)
   assert.match(c.QUERY_PS_826, /Name = 'cmspark-desktop.exe'/)
   assert.match(c.QUERY_PS_826, /Select-Object -First 2/g)
   assert.doesNotMatch(c.QUERY_PS_826, /CommandLine|WindowTitle|Get-ChildItem|Invoke-WebRequest/)
@@ -70,7 +72,7 @@ test('actual collector calls one query and hybrid CDB with finite local environm
   assert.equal(result.status, 'OBSERVED'); assert.equal(state.closed, 1); assert.equal(calls.length, 3)
   assert.equal(calls[0].opts.timeoutMs, 3000)
   assert.equal(Buffer.from(calls[0].args.at(-1), 'base64').toString('utf16le'), c.QUERY_PS_826)
-  assert.deepEqual(JSON.parse(calls[0].opts.env.CMSPARK_STACK_BINDING_826), { cdb: 'C:\\SDK\\cdb.exe', binary: options.binary, parentPid: 42, createdAfterMs: 1000, createdBeforeMs: 2000 })
+  assert.deepEqual(JSON.parse(calls[0].opts.env.CMSPARK_STACK_BINDING_826), { binary: options.binary, parentPid: 42, createdAfterMs: 1000, createdBeforeMs: 2000 })
   assert.deepEqual(calls[1].args, ['-pv', '-p', '71', '-c', '~*kc 0n16;qd'])
   assert.deepEqual(calls[2].args, ['-pvr', '-p', '72', '-c', '~*kc 0n16;qd'])
   for (const call of calls) { assert.equal(call.opts.cwd, 'C:\\owned\\out\\work'); assert.equal(call.opts.env.SECRET_TOKEN, undefined); assert.equal(call.opts.env._NT_SYMBOL_PATH, 'C:\\owned\\out\\work\\symbols'); assert.doesNotMatch(JSON.stringify(call.opts.env), /https:|srv\*/); if (call.file.endsWith('cdb.exe')) assert.equal(call.opts.timeoutMs, 6000) }
@@ -86,9 +88,9 @@ test('native canonical domain handles supported short/long names and fails close
 })
 test('query/tool/ambiguity failures never attach unrelated targets or leak errors', async () => {
   for (const rows of [[], [native(), native()], [{ ...native(), live: false }], [{ ...native(), executablePath: 'C:\\other\\cmspark-desktop.exe' }]]) {
-    const p = ports(); p.io.run = async (...args) => { p.calls.push(args); return okay(JSON.stringify({ signed: true, rows })) }; assert.equal(safe(await c.collectMcpStacks826(options, p.io)).status, 'UNKNOWN'); assert.equal(p.calls.length, 1); assert.equal(p.state.closed, 1)
+    const p = ports(); p.io.run = async (...args) => { p.calls.push(args); return okay(JSON.stringify({ rows })) }; assert.equal(safe(await c.collectMcpStacks826(options, p.io)).status, 'UNKNOWN'); assert.equal(p.calls.length, 1); assert.equal(p.state.closed, 1)
   }
-  for (const response of [{ ok: false, stdout: Buffer.alloc(0), stderr: Buffer.from('private') }, okay('private malformed'), okay(JSON.stringify({ signed: false, rows: [] }))]) {
+  for (const response of [{ ok: false, stdout: Buffer.alloc(0), stderr: Buffer.from('private') }, okay('private malformed'), okay(JSON.stringify({ signed: false, rows: [native()] })), okay(JSON.stringify({ rows: [native()], extra: true })), okay(JSON.stringify({ rows: null }))]) {
     const p = ports({ run: async () => response }); assert.equal(safe(await c.collectMcpStacks826(options, p.io)).status, 'UNKNOWN'); assert.equal(p.state.closed, 1)
   }
   for (const response of [{ ok: false, stdout: Buffer.from('private'), stderr: Buffer.alloc(0) }, okay(Buffer.alloc(c.RAW_CAP + 1)), okay('unresolved')]) {
@@ -123,11 +125,11 @@ test('expired/overflowed actual runner holds its result and collector workspace 
 })
 test('qualifier controlled leaves prove actual parser wiring, detach ping and actual close fence', async () => {
   const p = ports(); const result = safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, p.io))
-  assert.deepEqual(result, { schema: 1, status: 'OBSERVED', parserPositive: true, actualDetached: true, dummyClosed: true })
-  assert.equal(p.state.closed, 1); assert.equal(p.state.spawn, 1); assert.equal(p.calls.length, 2)
-  assert.deepEqual(p.calls[1].args, ['-pv', '-p', '91', '-c', c.COMMAND]); assert.equal(p.calls[1].opts.timeoutMs, 6000)
+  assert.deepEqual(result, { schema: 1, status: 'OBSERVED', stoppedAt: 'COMPLETE', parserPositive: true, actualDetached: true, dummyClosed: true })
+  assert.equal(p.state.closed, 1); assert.equal(p.state.spawn, 1); assert.equal(p.calls.length, 1)
+  assert.deepEqual(p.calls[0].args, ['-pv', '-p', '91', '-c', c.COMMAND]); assert.equal(p.calls[0].opts.timeoutMs, 6000)
   const noParse = ports(); const base = noParse.io.run; noParse.io.run = (...args) => args[0].endsWith('cdb.exe') ? okay('private unknown format') : base(...args)
-  assert.deepEqual(safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, noParse.io)), { schema: 1, status: 'UNKNOWN', parserPositive: false, actualDetached: false, dummyClosed: true })
+  assert.deepEqual(safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, noParse.io)), { schema: 1, status: 'UNKNOWN', stoppedAt: 'PARSER', parserPositive: false, actualDetached: false, dummyClosed: true })
   const noTool = ports({ tool() { throw Error('private') } }); assert.equal((await c.qualifyCdb826({ outputRoot: options.outputRoot }, noTool.io)).status, 'UNKNOWN'); assert.equal(noTool.state.spawn, 0)
 })
 test('unsupported platform and absent explicit options perform zero tool/native work', async () => {
@@ -146,13 +148,13 @@ test('qualifier CDB failure awaits actual dummy close despite kill and actual-pr
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(kills, 1); assert.equal(settled, false); assert.equal(p.state.closed, 0)
   dummy.emit('close', 1, null)
-  assert.deepEqual(safe(await pending), { schema: 1, status: 'UNKNOWN', parserPositive: false, actualDetached: false, dummyClosed: true })
+  assert.deepEqual(safe(await pending), { schema: 1, status: 'UNKNOWN', stoppedAt: 'CDB', parserPositive: false, actualDetached: false, dummyClosed: true })
   assert.equal(p.state.closed, 1)
 })
 test('qualifier failed spawn without PID remains UNKNOWN and does not wait for nonexistent process', async () => {
   const p = ports(); p.io.spawn = () => { const dummy = new EventEmitter(); dummy.kill = () => {}; queueMicrotask(() => dummy.emit('error', Error('private spawn error'))); return dummy }
-  assert.deepEqual(safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, p.io)), { schema: 1, status: 'UNKNOWN', parserPositive: false, actualDetached: false, dummyClosed: false })
-  assert.equal(p.state.closed, 1); assert.equal(p.calls.length, 1)
+  assert.deepEqual(safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, p.io)), { schema: 1, status: 'UNKNOWN', stoppedAt: 'DUMMY_READY', parserPositive: false, actualDetached: false, dummyClosed: false })
+  assert.equal(p.state.closed, 1); assert.equal(p.calls.length, 0)
 })
 test('qualifier cannot return at the former 3s teardown race while dummy close is held', async () => {
   const p = ports(); const base = p.io.run; let dummy, settled = false
@@ -163,4 +165,42 @@ test('qualifier cannot return at the former 3s teardown race while dummy close i
   await new Promise(resolve => setTimeout(resolve, 3100))
   assert.equal(settled, false); assert.equal(p.state.closed, 0)
   dummy.emit('close', 1, null); assert.equal((await pending).dummyClosed, true); assert.equal(p.state.closed, 1)
+})
+test('actual fixed SDK resolver trusts a regular managed tool without PE or signature prerequisites', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../mcp-stack-capture-826.cjs'), 'utf8')
+  const module = { exports: {} }; let kind = 'regular', stats = 0, opens = 0
+  const fsPort = { realpathSync: { native() {} }, lstatSync(file) {
+    stats++; assert.equal(file, 'C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe')
+    if (kind === 'missing') throw Error('private missing tool')
+    return { isFile: () => kind !== 'directory', isSymbolicLink: () => kind === 'link' }
+  }, openSync() { opens++; throw Error('unexpected PE read') } }
+  vm.runInNewContext(source + '\nmodule.exports.resolveForControl826=resolveCdb826;', { module, exports: module.exports, require: name => name === 'node:fs' ? fsPort : require(name), process, Buffer, Set, Promise, Date, setTimeout, clearTimeout })
+  const p = ports({ tool: module.exports.resolveForControl826 }), run = p.io.run
+  p.io.run = (...args) => { assert.ok(!args[0].endsWith('powershell.exe'), 'no pre-dummy signature/OS prerequisite'); return run(...args) }
+  assert.equal(safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, p.io)).stoppedAt, 'COMPLETE')
+  assert.equal(stats, 1); assert.equal(opens, 0); assert.equal(p.calls.length, 1)
+  for (kind of ['missing', 'directory', 'link']) {
+    const refused = ports({ tool: module.exports.resolveForControl826 })
+    const result = safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, refused.io))
+    assert.equal(result.status, 'UNKNOWN'); assert.equal(result.stoppedAt, 'TOOL'); assert.equal(refused.state.spawn, 0); assert.equal(refused.calls.length, 0)
+  }
+})
+test('qualification returns only nine fixed stages and preserves the first failure through cleanup', async () => {
+  const seen = new Set(), observe = async io => { const result = safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, io)); seen.add(result.stoppedAt); return result }
+  assert.equal((await observe(ports({ platform: 'darwin' }).io)).stoppedAt, 'INPUT')
+  assert.equal((await observe(ports({ tool() { throw Error('private tool') } }).io)).stoppedAt, 'TOOL')
+  assert.equal((await observe(ports({ workspace() { throw Error('private workspace') } }).io)).stoppedAt, 'WORKSPACE')
+  assert.equal((await observe(ports({ spawn() { throw Error('private spawn') } }).io)).stoppedAt, 'DUMMY_READY')
+  for (const run of [async () => ({ ok: false }), async () => { throw Error('private CDB') }]) {
+    const p = ports({ run }); p.io.workspace = () => ({ directory: 'C:\\owned', symbols: 'C:\\owned\\symbols', close() { throw Error('private later cleanup') } })
+    const result = await observe(p.io); assert.equal(result.stoppedAt, 'CDB'); assert.equal(result.dummyClosed, true)
+  }
+  assert.equal((await observe(ports({ run: async () => okay('unknown private wire') }).io)).stoppedAt, 'PARSER')
+  const detached = ports(), spawn = detached.io.spawn
+  detached.io.spawn = (...args) => { const child = spawn(...args); child.send = () => queueMicrotask(() => child.emit('close', 0, null)); return child }
+  const noPong = await observe(detached.io); assert.equal(noPong.stoppedAt, 'DETACH'); assert.equal(noPong.actualDetached, false); assert.equal(noPong.dummyClosed, true)
+  const closing = ports(); closing.io.workspace = () => ({ directory: 'C:\\owned', symbols: 'C:\\owned\\symbols', close() { throw Error('private close') } })
+  const closeFailed = await observe(closing.io); assert.equal(closeFailed.stoppedAt, 'CLOSE'); assert.equal(closeFailed.status, 'UNKNOWN'); assert.equal(closeFailed.dummyClosed, true)
+  assert.equal((await observe(ports().io)).stoppedAt, 'COMPLETE')
+  assert.deepEqual([...seen].sort(), ['INPUT', 'TOOL', 'WORKSPACE', 'DUMMY_READY', 'CDB', 'PARSER', 'DETACH', 'CLOSE', 'COMPLETE'].sort())
 })

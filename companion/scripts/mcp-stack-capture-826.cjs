@@ -10,7 +10,7 @@ const MODULES = new Set(['ntdll', 'kernelbase', 'kernel32', 'user32', 'win32u', 
 const unknownStack = () => ({ status: 'UNKNOWN', threads: [] })
 const target = (kind, status = 'UNKNOWN') => ({ kind, status, threads: [] })
 const unknown = () => ({ schema: 1, status: 'UNKNOWN', targets: [target('native'), target('browser', 'SKIPPED')] })
-const qualification = () => ({ schema: 1, status: 'UNKNOWN', parserPositive: false, actualDetached: false, dummyClosed: false })
+const qualification = () => ({ schema: 1, status: 'UNKNOWN', stoppedAt: 'INPUT', parserPositive: false, actualDetached: false, dummyClosed: false })
 const integer = n => Number.isSafeInteger(n) && n > 0
 const windowsPath = value => typeof value === 'string' && value.length <= 32767 && !/[\0\r\n]/.test(value) && /^[a-z]:\\/i.test(value)
 const samePath = (a, b) => windowsPath(a) && windowsPath(b) && path.win32.normalize(a) === path.win32.normalize(b)
@@ -80,15 +80,13 @@ function selectOwnedTargets826(rows, binding) {
 // enumeration. The explicit DTO is consumed by the selector above.
 const QUERY_PS_826 = String.raw`$ErrorActionPreference='Stop'
 $x=ConvertFrom-Json -InputObject $env:CMSPARK_STACK_BINDING_826
-$s=Get-AuthenticodeSignature -LiteralPath $x.cdb
-$signed=($s.Status -eq 'Valid' -and $null -ne $s.SignerCertificate -and $s.SignerCertificate.Subject -match '(^|,\s*)O=Microsoft Corporation(,|$)')
 $rows=@()
 function Fact826($p) {
   $live=$false; $handle=$null
   try { $handle=Get-Process -Id ([int]$p.ProcessId) -ErrorAction Stop; $live=-not $handle.HasExited } catch {} finally { if($null -ne $handle){$handle.Dispose()} }
   [ordered]@{ pid=[int]$p.ProcessId; parentPid=[int]$p.ParentProcessId; executablePath=[string]$p.ExecutablePath; createdMs=([DateTimeOffset]$p.CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds(); live=[bool]$live }
 }
-if($signed -and $null -ne $x.binary) {
+if($null -ne $x.binary) {
   $native=@(Get-CimInstance -ClassName Win32_Process -Filter ('ParentProcessId = '+[int]$x.parentPid+" AND Name = 'cmspark-desktop.exe'") | Where-Object {
     ([DateTimeOffset]$_.CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds() -ge $x.createdAfterMs -and ([DateTimeOffset]$_.CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds() -le $x.createdBeforeMs
   } | Select-Object -First 2)
@@ -98,7 +96,7 @@ if($signed -and $null -ne $x.binary) {
     foreach($p in $browser){$rows+=Fact826 $p}
   }
 }
-ConvertTo-Json -Depth 4 -Compress -InputObject ([ordered]@{ signed=[bool]$signed; rows=@($rows) })`
+ConvertTo-Json -Depth 4 -Compress -InputObject ([ordered]@{ rows=@($rows) })`
 
 function runBounded826(file, args, options, spawnPort = spawn) {
   return new Promise(resolve => {
@@ -129,13 +127,6 @@ function resolveCdb826(env = process.env) {
   const file = path.win32.join(root, 'Windows Kits', '10', 'Debuggers', 'x64', 'cdb.exe')
   const stat = fs.lstatSync(file)
   if (!stat.isFile() || stat.isSymbolicLink()) throw Error('TOOL')
-  const fd = fs.openSync(file, 'r')
-  try {
-    const dos = Buffer.alloc(64)
-    if (fs.readSync(fd, dos, 0, 64, 0) !== 64 || dos.toString('ascii', 0, 2) !== 'MZ') throw Error('TOOL')
-    const offset = dos.readUInt32LE(60), pe = Buffer.alloc(6)
-    if (offset > 4096 || fs.readSync(fd, pe, 0, 6, offset) !== 6 || pe.readUInt32LE(0) !== 0x4550 || pe.readUInt16LE(4) !== 0x8664) throw Error('TOOL')
-  } finally { fs.closeSync(fd) }
   return file
 }
 
@@ -157,12 +148,12 @@ function toolEnvironment826(env, cdb, work, binding) {
 const defaults = { platform: process.platform, arch: process.arch, env: process.env, pid: process.pid, now: Date.now, run: runBounded826, tool: resolveCdb826, workspace: makeWorkspace826, canonical: fs.realpathSync.native, spawn }
 function queryOptions(io, cdb, work, binding) {
   const system = io.env.SystemRoot || io.env.SYSTEMROOT
-  return { file: path.win32.join(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(QUERY_PS_826, 'utf16le').toString('base64')], options: { timeoutMs: 3000, cwd: work.directory, env: toolEnvironment826(io.env, cdb, work, { cdb, ...binding }) } }
+  return { file: path.win32.join(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(QUERY_PS_826, 'utf16le').toString('base64')], options: { timeoutMs: 3000, cwd: work.directory, env: toolEnvironment826(io.env, cdb, work, binding) } }
 }
 async function query826(io, cdb, work, binding) {
   const q = queryOptions(io, cdb, work, binding), result = await io.run(q.file, q.args, q.options)
   if (!result.ok || result.stderr.length) return null
-  try { const value = JSON.parse(result.stdout.toString('utf8')); return value && !Array.isArray(value) && Object.keys(value).sort().join() === 'rows,signed' && value.signed === true && Array.isArray(value.rows) ? value : null } catch { return null }
+  try { const value = JSON.parse(result.stdout.toString('utf8')); return value && !Array.isArray(value) && Object.keys(value).join() === 'rows' && Array.isArray(value.rows) ? value : null } catch { return null }
 }
 async function debug826(io, cdb, work, kind, pid) {
   const result = await io.run(cdb, [kind === 'native' ? '-pv' : '-pvr', '-p', String(pid), '-c', COMMAND], { timeoutMs: 6000, cwd: work.directory, env: toolEnvironment826(io.env, cdb, work) })
@@ -200,22 +191,29 @@ function message826(child, wanted, timeoutMs) {
   })
 }
 async function qualifyCdb826({ outputRoot } = {}, io = defaults) {
-  const result = qualification(); let work, dummy, closed = false, closePromise
+  const result = qualification(); let work, dummy, closed = false, closePromise, cleanupComplete = false
   try {
     if (io.platform !== 'win32' || io.arch !== 'x64' || !windowsPath(outputRoot)) return result
-    const cdb = io.tool(io.env); work = io.workspace(outputRoot)
-    if (!await query826(io, cdb, work, {})) return result
+    result.stoppedAt = 'TOOL'
+    const cdb = io.tool(io.env)
+    result.stoppedAt = 'WORKSPACE'
+    work = io.workspace(outputRoot)
+    result.stoppedAt = 'DUMMY_READY'
     // CPU/IPC only; no WebView, window, user file, provider or output payload.
     dummy = io.spawn(process.execPath, ['-e', 'process.send("ready");process.on("message",x=>{if(x==="ping")process.send("pong")});setInterval(()=>{},1000)'], { cwd: work.directory, env: toolEnvironment826(io.env, cdb, work), windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
     closePromise = new Promise(resolve => { dummy.once('close', () => { closed = true; resolve() }); dummy.once('error', () => { if (!integer(dummy.pid)) resolve() }) })
     if (!await message826(dummy, 'ready', 2000) || !integer(dummy.pid)) return result
+    result.stoppedAt = 'CDB'
     const captured = await io.run(cdb, ['-pv', '-p', String(dummy.pid), '-c', COMMAND], { timeoutMs: 6000, cwd: work.directory, env: toolEnvironment826(io.env, cdb, work) })
-    result.parserPositive = captured.ok && qualifyProjection826(captured.stdout, captured.stderr)
-    if (result.parserPositive) {
-      const pong = message826(dummy, 'pong', 1000)
-      try { dummy.send('ping') } catch { /* The awaited bounded pong becomes false. */ }
-      result.actualDetached = await pong
-    }
+    if (!captured.ok) return result
+    result.stoppedAt = 'PARSER'
+    result.parserPositive = qualifyProjection826(captured.stdout, captured.stderr)
+    if (!result.parserPositive) return result
+    result.stoppedAt = 'DETACH'
+    const pong = message826(dummy, 'pong', 1000)
+    try { dummy.send('ping') } catch { /* The awaited bounded pong becomes false. */ }
+    result.actualDetached = await pong
+    if (result.actualDetached) result.stoppedAt = 'CLOSE'
   } catch { /* No raw debugger/process failure can escape this collector. */ }
   finally {
     if (dummy) {
@@ -223,9 +221,9 @@ async function qualifyCdb826({ outputRoot } = {}, io = defaults) {
       if (closePromise && !closed) await closePromise
       result.dummyClosed = closed
     }
-    try { work?.close() } catch {}
+    try { work?.close(); cleanupComplete = true } catch {}
   }
-  if (result.parserPositive && result.actualDetached && result.dummyClosed) result.status = 'OBSERVED'
+  if (result.parserPositive && result.actualDetached && result.dummyClosed && cleanupComplete) { result.status = 'OBSERVED'; result.stoppedAt = 'COMPLETE' }
   return result
 }
 
