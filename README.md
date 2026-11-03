@@ -3,7 +3,7 @@
 > 对着**已经登录的 Chrome** 干活的本机手：热键召唤开口，危险走**确认台**，Codex / Claude Code / Grok 可**租同一只手**（Outbound MCP）。家是 **已登录 Chrome + 硬闸**，不是 Side Panel。  
 > 能力叠加：**默认**网页问答与页内操控；**按需** Skills / Knowledge / MCP / 任务包；**opt-in** 桌面 Computer Use 与企业模块。产品句：[PRODUCT.md](PRODUCT.md)。
 
-源码开发版本 **0.8.0（尚未正式发布）**；正式安装包与源码进度请看[版本与交付状态](docs/release-status.md)和[变更记录](CHANGELOG.md)。
+源码版本 **0.8.0（已于 2026-11-03 正式发布）**；正式安装包与源码进度请看[版本与交付状态](docs/release-status.md)和[变更记录](CHANGELOG.md)。
 
 ---
 
@@ -54,7 +54,7 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 |------|------|------|------|
 | **Capture** | 召唤器 HTML 卡 | 默认 1040×760；紧凑 360×420；流式出字；永不审批 | 本页 [召唤器](#召唤器capture) · [PRODUCT.md](PRODUCT.md) |
 | **L0 · 主体** | 自然语言 · 多线程 · 历史 | Side Panel ChatShell（空态「要对这页做什么」/「弹出对话框」）；线程隔离；SQLite 操作史 | 本页 [使用指南](#使用指南) |
-| **个人工作中心 · 开发分支** | 来源待办、督办与语义设置 | 独立工作页；采集和模型默认关闭，macOS / Windows / Linux X11 前台窗口；Wayland 主动导入，验收范围见指南，未正式发布 | [personal-workspace](docs/personal-workspace.md) |
+| **个人工作中心** | 来源待办、督办与语义设置 | 0.8.0 已发布；采集和模型默认关闭，macOS / Windows / Linux X11 前台窗口；Wayland 主动导入。通用原生调用链已验收，五款聊天软件的具体版本与权限组合未逐一现场认证，范围见指南 | [personal-workspace](docs/personal-workspace.md) |
 | **L0 产品特性** | Obsidian 导出 · Mermaid · NotebookLM | 导出/渲染/导入（**非**组合原语） | [ADR-008](docs/adr/008-obsidian-export.md) · [009](docs/adr/009-mermaid-rendering.md) · [notebooklm-user-guide](docs/notebooklm-user-guide.md) |
 | **L0 输入** | 听写+ · 本机 STT · 会议记录 | classic/连续/按住热键；Whisper 渐进假设；场景「会议」工作台 | [meeting-and-dictation-user-guide](docs/meeting-and-dictation-user-guide.md) · [ADR-023](docs/adr/023-voice-local-stt-path-b.md) · [ADR-024](docs/adr/024-dictation-plus-asr-refiner-meeting.md) |
 | **L1 · 浅层** | 浏览器 CDP 操控 | 标签页、页面读写、点击/填表、截图、导航等 | 本页 [浏览器操作示例](#浏览器操作示例) |

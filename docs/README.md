@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 源码开发版本 **0.8.0（尚未正式发布）** · 入口 README：[仓库根 README.md](../README.md)
+> 源码版本 **0.8.0（已于 2026-11-03 正式发布）** · 入口 README：[仓库根 README.md](../README.md)
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
@@ -12,7 +12,7 @@
 | 文档 | 坐标（摘要） | 说明 |
 |------|----------------|------|
 | [release-status.md](release-status.md) | **交付状态** | 源码版本、正式发行包、已合并能力与待验收边界 |
-| [personal-workspace.md](personal-workspace.md) | **个人工作中心 · 开发分支** | 聊天来源待办、督办、持久提醒与语义设置；默认关闭，真实原生验收待完成 |
+| [personal-workspace.md](personal-workspace.md) | **个人工作中心** | 0.8.0 已发布；聊天来源待办、督办、持久提醒与语义设置默认关闭；通用原生调用链已验收，五款聊天软件具体版本与权限组合未逐一现场认证 |
 | [workspace-ui.md](workspace-ui.md) | **Operate** | 响应式对话工作区、导航、历史、输入和设置 |
 | [../README.md](../README.md) | 全景 | 家 = 已登录 Chrome；Capture / 租手 / 安装 |
 | [../PRODUCT.md](../PRODUCT.md) | 产品句 | 四面 Capture·Operate·Confirm·租手 |
