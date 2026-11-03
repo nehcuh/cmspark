@@ -5,15 +5,36 @@ import { promisify } from "node:util"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import nativeOs = require("node:os")
 import {
   buildWindowsFilePickScript,
   buildWindowsFolderPickScript,
   parsePickerStdout,
   resolveWindowsPowerShell,
   WORKSPACE_FOLDER_PROMPT,
+  pickFolderNative,
 } from "../src/obsidian/folder-picker"
 
 const execFileP = promisify(execFile)
+
+test("Linux workspace picker missing zenity offers installation recovery instead of an unusable manual bind", async t => {
+  const emptyPath = fs.mkdtempSync(path.join(os.tmpdir(), "picker-no-zenity-"))
+  const previousPath = process.env.PATH
+  t.mock.method(nativeOs, "platform", () => "linux")
+  process.env.PATH = emptyPath
+  try {
+    const result = await pickFolderNative(WORKSPACE_FOLDER_PROMPT)
+    assert.equal(result.path, undefined)
+    assert.match(result.error || "", /zenity/)
+    assert.match(result.error || "", /对话.*安装/)
+    assert.match(result.error || "", /安装.*重新选择工作区/)
+    assert.doesNotMatch(result.error || "", /手动输入路径/)
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    fs.rmSync(emptyPath, { recursive: true, force: true })
+  }
+})
 
 test("windows picker runner must not use CREATE_NO_WINDOW (windowsHide)", () => {
   const raw = fs.readFileSync(path.join("src", "obsidian", "folder-picker.ts"), "utf8")

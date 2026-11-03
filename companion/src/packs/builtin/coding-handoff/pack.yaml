@@ -2,7 +2,7 @@ schema_version: 1
 id: coding-handoff
 name: 编程接力
 description: 浏览器证据 → 本机终端编程助手任务包（Composition · 非第二 runtime）
-version: 0.1.1
+version: 0.1.2
 channel: community
 kind: mission
 min_capability: L1
@@ -26,9 +26,9 @@ tools:
     - acp_cancel_session
     - acp_get_status
     - acp_apply_diff
+    - shell_exec
   deny:
     - host_computer
-    - shell_exec
     - osascript_eval
 system_prompt_append: |
   你处于「编程接力」场景（Composition，不是中层 Agent / 第二 runtime）。
@@ -45,6 +45,8 @@ system_prompt_append: |
   勿把两者合成「统一 Agent 平台」话术。
 
   ## ACP（仅当 config.acp.enabled=true 且用户确认）
+  - `workspace_root required` 表示尚未绑定项目文件夹；引导用户在编程接力面板点「选择工作区」。开启 shell 不会自动绑定工作区。
+  - Linux 缺少 zenity 时，若用户已启用 shell，可用 `shell_exec` 检测系统包管理器、按现有确认流程安装并验证 zenity，成功后请用户重新选择工作区；不要只把安装工作交回用户。shell 仍受模块开关、命令策略与 L2 确认约束。
   - `acp_list_agents` → `acp_propose_session`（L2）→ `acp_start_session`（L2）→ 摘要 untrusted handback
   - 模式用语：**审查** / **起草**（任务意图）；**不**声称 OS 沙箱只读
   - 默认模式审查；起草后的 diff 须用户确认再 `acp_apply_diff`；禁止自动 spawn；Worker 禁止 ACP

@@ -23,6 +23,12 @@ export function buildCodingHandoffContext(
     `本线程当前可查询的 ACP 会话：${currentSessions.length
       ? JSON.stringify(currentSessions) : "无"}。此清单仅表示 ACP 后台记录，不表示交互终端进程仍在运行。`,
     "用户说『我们的网页终端 / 插件内终端 / 编程接力』时，指 CMspark 的编程助手接力入口。先走 acp_list_agents → acp_propose_session → acp_start_session（启动须确认台批准），把任务与线程工作区交给本机编程助手；修复/起草用 propose_diff，审查用 review_readonly。不要将它当成未知 localhost 网站，也不要扫端口寻找终端。",
+    "ACP 启动需要明确的 workspace_root；未绑定或遇到 workspace_root required 时，引导用户在编程接力面板点击「选择工作区」并选择项目文件夹，然后再创建会话。开启 shell 不会自动绑定工作区；不要凭空指定项目路径或反复提交空工作区。",
+    ...(platform === "linux" ? [
+      offeredTools.has("shell_exec") && config.modules?.shell?.available === true && config.modules?.shell?.enabled === true
+        ? "Linux 文件夹选择器依赖 zenity。缺少 zenity 且用户请求安装/继续接力时，可通过 shell_exec 执行依赖修复：先检测发行版、可用包管理器及 zenity，再用该系统的包管理器安装，遵守已有命令策略与确认流程，不要只让用户自行安装。尚未绑定工作区不妨碍 shell 安装依赖。需要提权时使用非交互 sudo -n；无提权权限时如实报告阻塞，不要收集密码或挂起等待密码输入。安装后用 command -v zenity 验证；安装成功后请用户重新点击「选择工作区」，绑定后继续 ACP。"
+        : "Linux 文件夹选择器依赖 zenity。缺少依赖时，需先在设置启用 shell，且当前场景工具列表允许 shell_exec，才能由助手按现有确认流程执行安装；请如实说明当前限制。",
+    ] : []),
     embedded
       ? `当前插件内网页终端已启用。${modeC
         ? "启动 ACP 后会记录终端任务意图。"

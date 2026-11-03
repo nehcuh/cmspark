@@ -268,7 +268,9 @@ async function pickLinux(prompt: string, initialPath?: string): Promise<PickResu
     return p ? { path: p } : { error: "cancelled" }
   } catch (e: any) {
     const msg = ((e.stderr || "") + " " + (e.message || "")).toString()
-    if (e.code === "ENOENT") return { error: "未安装 zenity,请手动输入路径(或安装 zenity)" }
+    if (e.code === "ENOENT") return { error: prompt === WORKSPACE_FOLDER_PROMPT
+      ? "未安装 zenity。可在对话中请求助手安装（需启用 shell 并按现有规则确认）；安装成功后重新选择工作区"
+      : "未安装 zenity,请手动输入路径(或在对话中请求助手安装 zenity)" }
     if (e.code === 1 || /cancel/i.test(msg)) return { error: "cancelled" }
     return { error: `zenity 失败: ${msg.slice(0, 160)}` }
   }

@@ -1310,6 +1310,30 @@ test("all four builtin packs report kind=mission in list output", () => {
   assert.ok(installed.length >= 4, "builtin install (force refresh) keeps installing all four")
 })
 
+test("coding-handoff permits dependency installation without enabling shell for the user", async () => {
+  const skillEngine = new SkillEngine()
+  packEngine.ensureBuiltinPacksInstalled(skillEngine)
+  const tm = new ThreadManager()
+  const { checkShellScope } = await import("../src/capability/shell")
+  const previousModules = getConfig().modules
+  try {
+    for (const enabled of [false, true]) {
+      saveConfig({ modules: { ...previousModules,
+        shell: { available: true, enabled, policy: "confirm_per_command", allowlist_commands: [] },
+      } } as any)
+      const thread = tm.create(`coding shell ${enabled}`)
+      const applied = packEngine.applyPack("coding-handoff", thread.id, tm, skillEngine)
+      assert.equal(applied.ok, true, "shell remains optional for coding handoff")
+      assert.equal(tm.isToolAllowed(thread.id, "shell_exec"), true,
+        "the scene must not hide shell after the user enables it")
+      assert.equal(getConfig().modules?.shell?.enabled, enabled, "applying the scene must not enable shell")
+      assert.equal(checkShellScope("command -v zenity").ok, enabled)
+    }
+  } finally {
+    saveConfig({ modules: previousModules } as any)
+  }
+})
+
 test("expert pack: kind survives install + rewrite, surfaces in list and pack.get", () => {
   const skillEngine = new SkillEngine()
   const src = fs.mkdtempSync(path.join(os.tmpdir(), "expert-pack-src-"))
