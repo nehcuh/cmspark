@@ -14,7 +14,8 @@ const fields = [...factBody.matchAll(/(?:\{|;)\s*(\w+)=/g)].map(m => m[1])
 const fact = values => Object.fromEntries(fields.map((name, i) => [name, values[i]]))
 const native = () => fact([71, 42, options.binary, 1500, true])
 const browser = () => fact([72, 71, 'C:\\WebView\\msedgewebview2.exe', 1600, true])
-const okay = (stdout = grammar, stderr = '') => ({ ok: true, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) })
+const okay = (stdout = grammar, stderr = '') => ({ ok: true, toolOutcome: 'OK', exitCode: 0, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) })
+const failure = (stdout = '', stderr = '') => ({ ok: false, toolOutcome: 'ERROR', exitCode: null, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) })
 function ports(overrides = {}) {
   const calls = [], state = { closed: 0, canonical: [], spawn: 0 }
   const io = { platform: 'win32', arch: 'x64', pid: 42, now: () => 3000,
@@ -90,10 +91,10 @@ test('query/tool/ambiguity failures never attach unrelated targets or leak error
   for (const rows of [[], [native(), native()], [{ ...native(), live: false }], [{ ...native(), executablePath: 'C:\\other\\cmspark-desktop.exe' }]]) {
     const p = ports(); p.io.run = async (...args) => { p.calls.push(args); return okay(JSON.stringify({ rows })) }; assert.equal(safe(await c.collectMcpStacks826(options, p.io)).status, 'UNKNOWN'); assert.equal(p.calls.length, 1); assert.equal(p.state.closed, 1)
   }
-  for (const response of [{ ok: false, stdout: Buffer.alloc(0), stderr: Buffer.from('private') }, okay('private malformed'), okay(JSON.stringify({ signed: false, rows: [native()] })), okay(JSON.stringify({ rows: [native()], extra: true })), okay(JSON.stringify({ rows: null }))]) {
+  for (const response of [failure('', 'private'), okay('private malformed'), okay(JSON.stringify({ signed: false, rows: [native()] })), okay(JSON.stringify({ rows: [native()], extra: true })), okay(JSON.stringify({ rows: null }))]) {
     const p = ports({ run: async () => response }); assert.equal(safe(await c.collectMcpStacks826(options, p.io)).status, 'UNKNOWN'); assert.equal(p.state.closed, 1)
   }
-  for (const response of [{ ok: false, stdout: Buffer.from('private'), stderr: Buffer.alloc(0) }, okay(Buffer.alloc(c.RAW_CAP + 1)), okay('unresolved')]) {
+  for (const response of [failure('private'), okay(Buffer.alloc(c.RAW_CAP + 1)), okay('unresolved')]) {
     const p = ports(); const base = p.io.run; p.io.run = (...args) => args[0].endsWith('cdb.exe') ? (p.calls.push({ args }), response) : base(...args)
     const result = safe(await c.collectMcpStacks826(options, p.io)); assert.equal(result.targets[1].status, 'SKIPPED'); assert.equal(p.calls.length, 2)
   }
@@ -118,18 +119,18 @@ test('expired/overflowed actual runner holds its result and collector workspace 
     child.emit('close', null, 'SIGTERM'); assert.equal((await promise).ok, false); assert.equal(resolved, true)
   }
   const p = ports(); const base = p.io.run; let release
-  p.io.run = (...args) => args[0].endsWith('cdb.exe') ? new Promise(resolve => { release = () => resolve({ ok: false, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }) }) : base(...args)
+  p.io.run = (...args) => args[0].endsWith('cdb.exe') ? new Promise(resolve => { release = () => resolve(failure()) }) : base(...args)
   const collected = c.collectMcpStacks826(options, p.io)
   await new Promise(resolve => setImmediate(resolve)); assert.equal(p.state.closed, 0)
   release(); const result = await collected; assert.equal(result.targets[1].status, 'SKIPPED'); assert.equal(p.state.closed, 1)
 })
 test('qualifier controlled leaves prove actual parser wiring, detach ping and actual close fence', async () => {
   const p = ports(); const result = safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, p.io))
-  assert.deepEqual(result, { schema: 1, status: 'OBSERVED', stoppedAt: 'COMPLETE', parserPositive: true, actualDetached: true, dummyClosed: true })
+  assert.deepEqual(result, { schema: 1, status: 'OBSERVED', stoppedAt: 'COMPLETE', toolOutcome: 'OK', exitCode: 0, parserPositive: true, actualDetached: true, dummyClosed: true })
   assert.equal(p.state.closed, 1); assert.equal(p.state.spawn, 1); assert.equal(p.calls.length, 1)
-  assert.deepEqual(p.calls[0].args, ['-pv', '-p', '91', '-c', c.COMMAND]); assert.equal(p.calls[0].opts.timeoutMs, 6000)
+  assert.deepEqual(p.calls[0].args, ['-pv', '-p', '91', '-c', c.COMMAND]); assert.equal(p.calls[0].opts.timeoutMs, 120000)
   const noParse = ports(); const base = noParse.io.run; noParse.io.run = (...args) => args[0].endsWith('cdb.exe') ? okay('private unknown format') : base(...args)
-  assert.deepEqual(safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, noParse.io)), { schema: 1, status: 'UNKNOWN', stoppedAt: 'PARSER', parserPositive: false, actualDetached: false, dummyClosed: true })
+  assert.deepEqual(safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, noParse.io)), { schema: 1, status: 'UNKNOWN', stoppedAt: 'PARSER', toolOutcome: 'OK', exitCode: 0, parserPositive: false, actualDetached: false, dummyClosed: true })
   const noTool = ports({ tool() { throw Error('private') } }); assert.equal((await c.qualifyCdb826({ outputRoot: options.outputRoot }, noTool.io)).status, 'UNKNOWN'); assert.equal(noTool.state.spawn, 0)
 })
 test('unsupported platform and absent explicit options perform zero tool/native work', async () => {
@@ -139,7 +140,7 @@ test('unsupported platform and absent explicit options perform zero tool/native 
 })
 test('qualifier CDB failure awaits actual dummy close despite kill and actual-process error', async () => {
   const p = ports(); const base = p.io.run; let dummy, kills = 0, settled = false
-  p.io.run = (...args) => args[0].endsWith('cdb.exe') ? { ok: false, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) } : base(...args)
+  p.io.run = (...args) => args[0].endsWith('cdb.exe') ? failure() : base(...args)
   p.io.spawn = () => {
     dummy = new EventEmitter(); dummy.pid = 91; dummy.kill = () => { kills++; queueMicrotask(() => dummy.emit('error', Error('private actual process error'))) }
     queueMicrotask(() => dummy.emit('message', 'ready')); return dummy
@@ -148,17 +149,17 @@ test('qualifier CDB failure awaits actual dummy close despite kill and actual-pr
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(kills, 1); assert.equal(settled, false); assert.equal(p.state.closed, 0)
   dummy.emit('close', 1, null)
-  assert.deepEqual(safe(await pending), { schema: 1, status: 'UNKNOWN', stoppedAt: 'CDB', parserPositive: false, actualDetached: false, dummyClosed: true })
+  assert.deepEqual(safe(await pending), { schema: 1, status: 'UNKNOWN', stoppedAt: 'CDB', toolOutcome: 'ERROR', exitCode: null, parserPositive: false, actualDetached: false, dummyClosed: true })
   assert.equal(p.state.closed, 1)
 })
 test('qualifier failed spawn without PID remains UNKNOWN and does not wait for nonexistent process', async () => {
   const p = ports(); p.io.spawn = () => { const dummy = new EventEmitter(); dummy.kill = () => {}; queueMicrotask(() => dummy.emit('error', Error('private spawn error'))); return dummy }
-  assert.deepEqual(safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, p.io)), { schema: 1, status: 'UNKNOWN', stoppedAt: 'DUMMY_READY', parserPositive: false, actualDetached: false, dummyClosed: false })
+  assert.deepEqual(safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, p.io)), { schema: 1, status: 'UNKNOWN', stoppedAt: 'DUMMY_READY', toolOutcome: 'NOT_RUN', exitCode: null, parserPositive: false, actualDetached: false, dummyClosed: false })
   assert.equal(p.state.closed, 1); assert.equal(p.calls.length, 0)
 })
 test('qualifier cannot return at the former 3s teardown race while dummy close is held', async () => {
   const p = ports(); const base = p.io.run; let dummy, settled = false
-  p.io.run = (...args) => args[0].endsWith('cdb.exe') ? { ok: false, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) } : base(...args)
+  p.io.run = (...args) => args[0].endsWith('cdb.exe') ? failure() : base(...args)
   p.io.spawn = () => { dummy = new EventEmitter(); dummy.pid = 91; dummy.kill = () => {}; queueMicrotask(() => dummy.emit('message', 'ready')); return dummy }
   const pending = c.qualifyCdb826({ outputRoot: options.outputRoot }, p.io).then(value => { settled = true; return value })
   // Exercise the former actual 3000ms race, not an invented shorter analogue.
@@ -191,7 +192,7 @@ test('qualification returns only nine fixed stages and preserves the first failu
   assert.equal((await observe(ports({ tool() { throw Error('private tool') } }).io)).stoppedAt, 'TOOL')
   assert.equal((await observe(ports({ workspace() { throw Error('private workspace') } }).io)).stoppedAt, 'WORKSPACE')
   assert.equal((await observe(ports({ spawn() { throw Error('private spawn') } }).io)).stoppedAt, 'DUMMY_READY')
-  for (const run of [async () => ({ ok: false }), async () => { throw Error('private CDB') }]) {
+  for (const run of [async () => failure(), async () => { throw Error('private CDB') }]) {
     const p = ports({ run }); p.io.workspace = () => ({ directory: 'C:\\owned', symbols: 'C:\\owned\\symbols', close() { throw Error('private later cleanup') } })
     const result = await observe(p.io); assert.equal(result.stoppedAt, 'CDB'); assert.equal(result.dummyClosed, true)
   }
@@ -203,4 +204,51 @@ test('qualification returns only nine fixed stages and preserves the first failu
   const closeFailed = await observe(closing.io); assert.equal(closeFailed.stoppedAt, 'CLOSE'); assert.equal(closeFailed.status, 'UNKNOWN'); assert.equal(closeFailed.dummyClosed, true)
   assert.equal((await observe(ports().io)).stoppedAt, 'COMPLETE')
   assert.deepEqual([...seen].sort(), ['INPUT', 'TOOL', 'WORKSPACE', 'DUMMY_READY', 'CDB', 'PARSER', 'DETACH', 'CLOSE', 'COMPLETE'].sort())
+})
+test('actual bounded producer reports six closed outcomes and only actual close exit codes', async () => {
+  async function produce(mode) {
+    return c.runBounded826('owned-tool', [], { timeoutMs: 8, cwd: 'owned', env: {} }, () => {
+      const child = new EventEmitter(); if (mode !== 'spawn-error') child.pid = 91
+      child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+      child.kill = () => queueMicrotask(() => { if (mode !== 'error') child.emit('error', Error('private later error')); child.emit('close', mode === 'error' ? 17 : 0, null) })
+      queueMicrotask(() => {
+        if (mode === 'timeout') return
+        if (mode === 'spawn-error' || mode === 'error') return child.emit('error', Object.assign(Error('private first error'), { code: 123 }))
+        if (mode === 'overflow') return child.stdout.emit('data', Buffer.alloc(c.RAW_CAP + 1))
+        child.stdout.emit('data', Buffer.from(grammar))
+        child.emit('close', mode === 'nonzero' ? 17 : mode === 'signal' ? null : mode === 'bad-code' ? 'private' : 0, mode === 'signal' ? 'PRIVATE_SIGNAL' : null)
+      }); return child
+    })
+  }
+  const positive = await produce('ok'); assert.deepEqual(positive, okay())
+  const spawnFailure = await produce('spawn-error'); assert.deepEqual(spawnFailure, failure())
+  for (const [mode, outcome, exitCode] of [['timeout', 'TIMEOUT', 0], ['overflow', 'OUTPUT_LIMIT', 0], ['error', 'ERROR', 17], ['nonzero', 'NONZERO_EXIT', 17], ['signal', 'SIGNALLED', null], ['bad-code', 'NONZERO_EXIT', null]]) {
+    const result = await produce(mode); assert.equal(result.ok, false); assert.equal(result.toolOutcome, outcome); assert.equal(result.exitCode, exitCode)
+    assert.deepEqual(Object.keys(result).sort(), Object.keys(positive).sort())
+    assert.doesNotMatch(JSON.stringify({ toolOutcome: result.toolOutcome, exitCode: result.exitCode }), /private|PRIVATE_SIGNAL|123/)
+  }
+})
+test('first timeout outcome and actual-close code survive later error without early resolution', async () => {
+  let child, settled = false, kills = 0
+  const pending = c.runBounded826('owned-tool', [], { timeoutMs: 8 }, () => {
+    child = new EventEmitter(); child.pid = 91; child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => { kills++ }; return child
+  }).then(result => { settled = true; return result })
+  await new Promise(resolve => setTimeout(resolve, 15)); child.emit('error', Error('private after-timeout'))
+  assert.equal(settled, false); assert.equal(kills, 1)
+  child.emit('close', 0, null); const result = await pending
+  assert.equal(result.ok, false); assert.equal(result.toolOutcome, 'TIMEOUT'); assert.equal(result.exitCode, 0)
+})
+test('CPU qualifier consumes actual producer metadata with only its new 120s preparation window', async () => {
+  const p = ports(); p.io.run = (file, args, opts) => {
+    p.calls.push({ file, args, opts }); assert.equal(opts.timeoutMs, 120000); assert.ok(file.endsWith('cdb.exe'))
+    return c.runBounded826(file, args, opts, () => {
+      const child = new EventEmitter(); child.pid = 92; child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {}
+      queueMicrotask(() => { child.stdout.emit('data', Buffer.from(grammar)); child.emit('close', 0, null) }); return child
+    }).then(result => ({ ...result, privateExtra: 'private unparsed body' }))
+  }
+  const result = safe(await c.qualifyCdb826({ outputRoot: options.outputRoot }, p.io))
+  assert.deepEqual(result, { schema: 1, status: 'OBSERVED', stoppedAt: 'COMPLETE', toolOutcome: 'OK', exitCode: 0, parserPositive: true, actualDetached: true, dummyClosed: true })
+  assert.equal(p.calls.length, 1)
+  const early = await c.qualifyCdb826(); assert.equal(early.toolOutcome, 'NOT_RUN'); assert.equal(early.exitCode, null)
+  assert.deepEqual(Object.keys(early).sort(), Object.keys(result).sort())
 })

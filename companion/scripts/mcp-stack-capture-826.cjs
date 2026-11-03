@@ -10,7 +10,7 @@ const MODULES = new Set(['ntdll', 'kernelbase', 'kernel32', 'user32', 'win32u', 
 const unknownStack = () => ({ status: 'UNKNOWN', threads: [] })
 const target = (kind, status = 'UNKNOWN') => ({ kind, status, threads: [] })
 const unknown = () => ({ schema: 1, status: 'UNKNOWN', targets: [target('native'), target('browser', 'SKIPPED')] })
-const qualification = () => ({ schema: 1, status: 'UNKNOWN', stoppedAt: 'INPUT', parserPositive: false, actualDetached: false, dummyClosed: false })
+const qualification = () => ({ schema: 1, status: 'UNKNOWN', stoppedAt: 'INPUT', toolOutcome: 'NOT_RUN', exitCode: null, parserPositive: false, actualDetached: false, dummyClosed: false })
 const integer = n => Number.isSafeInteger(n) && n > 0
 const windowsPath = value => typeof value === 'string' && value.length <= 32767 && !/[\0\r\n]/.test(value) && /^[a-z]:\\/i.test(value)
 const samePath = (a, b) => windowsPath(a) && windowsPath(b) && path.win32.normalize(a) === path.win32.normalize(b)
@@ -100,24 +100,24 @@ ConvertTo-Json -Depth 4 -Compress -InputObject ([ordered]@{ rows=@($rows) })`
 
 function runBounded826(file, args, options, spawnPort = spawn) {
   return new Promise(resolve => {
-    let child, timer, done = false, invalid = false, count = 0; const buffers = { stdout: [], stderr: [] }
-    const finish = (code = null, signal = null) => {
+    let child, timer, done = false, invalid = false, count = 0, toolOutcome; const buffers = { stdout: [], stderr: [] }
+    const finish = (code = null, signal = null, actualClose = false) => {
       if (done) return; done = true; clearTimeout(timer)
-      resolve({ ok: !invalid && code === 0 && signal == null, stdout: invalid ? Buffer.alloc(0) : Buffer.concat(buffers.stdout), stderr: invalid ? Buffer.alloc(0) : Buffer.concat(buffers.stderr) })
+      resolve({ ok: !invalid && code === 0 && signal == null, toolOutcome: toolOutcome || (signal != null ? 'SIGNALLED' : code === 0 ? 'OK' : 'NONZERO_EXIT'), exitCode: actualClose && Number.isSafeInteger(code) ? code : null, stdout: invalid ? Buffer.alloc(0) : Buffer.concat(buffers.stdout), stderr: invalid ? Buffer.alloc(0) : Buffer.concat(buffers.stderr) })
     }
     // Expiry bounds useful work. A kill request is not process closure: the
     // caller must not detach/clean its workspace until actual tool close.
-    const refuse = () => { if (invalid || done) return; invalid = true; clearTimeout(timer); try { child?.kill() } catch {} }
+    const refuse = outcome => { if (invalid || done) return; invalid = true; toolOutcome = outcome; clearTimeout(timer); try { child?.kill() } catch {} }
     try {
       child = spawnPort(file, args, { cwd: options.cwd, env: options.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
       for (const kind of ['stdout', 'stderr']) child[kind]?.on('data', value => {
         if (done) return
         const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value); count += bytes.length
-        if (count > RAW_CAP) refuse(); else buffers[kind].push(bytes)
+        if (count > RAW_CAP) refuse('OUTPUT_LIMIT'); else buffers[kind].push(bytes)
       })
-      child.once('error', () => { if (!child.pid) { invalid = true; finish() } else refuse() }); child.once('close', finish)
-      if (!done) timer = setTimeout(refuse, options.timeoutMs)
-    } catch { finish() }
+      child.once('error', () => { if (!child.pid) { invalid = true; toolOutcome ||= 'ERROR'; finish() } else refuse('ERROR') }); child.once('close', (code, signal) => finish(code, signal, true))
+      if (!done) timer = setTimeout(() => refuse('TIMEOUT'), options.timeoutMs)
+    } catch { invalid = true; toolOutcome ||= 'ERROR'; finish() }
   })
 }
 
@@ -204,7 +204,9 @@ async function qualifyCdb826({ outputRoot } = {}, io = defaults) {
     closePromise = new Promise(resolve => { dummy.once('close', () => { closed = true; resolve() }); dummy.once('error', () => { if (!integer(dummy.pid)) resolve() }) })
     if (!await message826(dummy, 'ready', 2000) || !integer(dummy.pid)) return result
     result.stoppedAt = 'CDB'
-    const captured = await io.run(cdb, ['-pv', '-p', String(dummy.pid), '-c', COMMAND], { timeoutMs: 6000, cwd: work.directory, env: toolEnvironment826(io.env, cdb, work) })
+    const captured = await io.run(cdb, ['-pv', '-p', String(dummy.pid), '-c', COMMAND], { timeoutMs: 120000, cwd: work.directory, env: toolEnvironment826(io.env, cdb, work) })
+    result.toolOutcome = ['OK', 'TIMEOUT', 'OUTPUT_LIMIT', 'ERROR', 'NONZERO_EXIT', 'SIGNALLED'].includes(captured.toolOutcome) ? captured.toolOutcome : 'ERROR'
+    result.exitCode = Number.isSafeInteger(captured.exitCode) ? captured.exitCode : null
     if (!captured.ok) return result
     result.stoppedAt = 'PARSER'
     result.parserPositive = qualifyProjection826(captured.stdout, captured.stderr)

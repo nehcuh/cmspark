@@ -12,6 +12,8 @@ MCP 测试宿主的初始化区间另外复用原 #773 WebView API 前后、HRES
 
 `8fa080c2` 的真实准备运行已通过 Linux 预检、CPU 载入及 Windows 18 项控制，但工具资格 UNKNOWN，原 MCP 未运行，也没有目标栈；该回执不能定位签名、工具缺失或 SDK 原因。诊断准备现按既有编译工具的托管安装信任，保留固定 SDK x64 普通文件路径，移除额外手工 PE／即时签名门；必须真实完成 CPU 调试、输出解析、分离后 IPC 和进程关闭才可执行 MCP。资格阶段仅投影九种固定 `stoppedAt`，清理保留首错；超时后的唯一进程查询只返回原精确事实。该简化已通过[独立设计](audit/reviews/activity-826-cdb-prep-independent-design.md)、[实际 GLM 设计门](audit/reviews/activity-826-cdb-prep-glm-design.md)、[非作者源码验证](audit/reviews/activity-826-cdb-prep-independent-source.md)与[实际 GLM 源码门](audit/reviews/activity-826-cdb-prep-glm-source.md)，没有改变产品信任、目标所有权、隐私或原 20 秒。
 
+`9329bfa2` 的真实资格检查已定位 CDB 执行阶段，但原结果合并了超时、执行错误和非零退出。现仅增加固定执行类别与实际 child close 的整数退出码／null，保留首个失效事件；CPU 工具资格的工作窗口从新增的 6 秒改为 120 秒，明确改变准备测量预算，并非 MCP 验收放宽或总关闭时限保证。原 MCP 20 秒、后置查询／采栈 3／6／6 秒及全部真实正门保持；[独立源码验证](audit/reviews/activity-826-cdb-execution-independent-source.md)与[实际 GLM 源码门](audit/reviews/activity-826-cdb-execution-glm-source.md)已通过。下一次实际结果后退役临时入口，不再扩准备窗口；工具不可用不能代替或豁免原产品 CI 验收。
+
 聊天范围的未分发 WPF 夹具以一次受限 OS 点击替换原 `Activate`／`Focus` setup，模拟用户先选中自己的聊天窗口。这是夹具输入契约的改变，不是真人批准，也不改变产品的被动采集。每个新主窗／独立窗只在渲染后派生只读文本框内点，核当前布局、实际 WPF 命中、native root HWND 与本进程 PID 后发送一个 move/down/up 批；遮挡或资格失败即零输入，不抬窗、不重试。只有完整插入后才开启成功围栏，ready 仍须满足原真实前台及键盘焦点条件；短输入后的迟到事件不能发布 ready。命中检查与系统输入并非原子 HWND 绑定；实际原生业务和清理仍须验收，原 10 秒收据和 180 秒用例门不变。
 
 `d94d5db5` 的真实 Windows 失败暴露了诊断丢失：Scope setup 将 12 类受控异常合并为单一类型，Apps 所有回执等待共用一个超时标签。现只在原失败中保留精确白名单原因（其它为 UNKNOWN）与六个固定调用阶段；Apps 沿原 GUI 生命周期最多记录六个 first-once 正历史点，并在原 child close 后投影固定 GUI／headless 目录。原类型、成功围栏、API、输入次数、10／90／180 秒及完整业务／清理保持；缺失点不证明事件未发生，不从相位或原因类推唯一 OS 根因。该有限改动已通过 19 项实际源码控制、[非作者复审](audit/reviews/activity-826-activity-failure-independent-source.md)与 [GLM 源码门](audit/reviews/activity-826-activity-failure-glm-source.md)，下一精确原生运行继续决定验收，不重置历史轮数或扩展观测框架。
