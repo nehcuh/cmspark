@@ -96,30 +96,36 @@ test('outcome classifier consumes real Node22 TAP; original20000 timeout remains
 })
 
 test('manual probe workflow conserves complete original normal/tag release and never packages in probe mode', () => {
-  const file = path.join(root, '../.github/workflows/release.yml'), text = fs.readFileSync(file, 'utf8')
-  const doc = yaml.load(text)
-  assert.deepEqual(doc.on.workflow_dispatch.inputs.mcp_stack_probe_826, { description: 'One post-timeout stack experiment; NOT acceptance or a release dry-run', type: 'boolean', required: false, default: false })
-  const job = doc.jobs['mcp-stack-probe-826']
-  assert.equal(job.needs, 'preflight'); assert.deepEqual(job.permissions, { contents: 'read' })
-  assert.deepEqual(job.steps[0].with, { 'persist-credentials': false })
-  assert.equal(doc.jobs.release.needs, 'package')
-  for (const event of ['push', 'workflow_dispatch']) for (const tag of [false, true]) for (const enabled of [undefined, false, true]) {
-    const ctx = { github: { event_name: event, ref: tag ? 'refs/tags/v0.8.0' : 'refs/heads/codex/probe' }, inputs: { mcp_stack_probe_826: enabled }, startsWith: (a, b) => a.startsWith(b) }
-    const probe = !!vm.runInNewContext(job.if, ctx), packages = !!vm.runInNewContext(doc.jobs.package.if, ctx)
-    const publish = packages && !!vm.runInNewContext(doc.jobs.release.if, ctx)
-    assert.equal(probe, event === 'workflow_dispatch' && enabled === true)
-    assert.equal(packages, !probe)
-    assert.equal(publish, !probe && tag)
+  const file = path.join(root, '../.github/workflows/release.yml'), actual = fs.readFileSync(file, 'utf8')
+  const inputs = new Set([actual, actual.replace(/\r\n/g, '\n'), actual.replace(/\r?\n/g, '\r\n')])
+  for (const text of inputs) {
+    const eol = text.includes('\r\n') ? '\r\n' : '\n'
+    const doc = yaml.load(text)
+    assert.deepEqual(doc.on.workflow_dispatch.inputs.mcp_stack_probe_826, { description: 'One post-timeout stack experiment; NOT acceptance or a release dry-run', type: 'boolean', required: false, default: false })
+    const job = doc.jobs['mcp-stack-probe-826']
+    assert.equal(job.needs, 'preflight'); assert.deepEqual(job.permissions, { contents: 'read' })
+    assert.deepEqual(job.steps[0].with, { 'persist-credentials': false })
+    assert.equal(doc.jobs.release.needs, 'package')
+    for (const event of ['push', 'workflow_dispatch']) for (const tag of [false, true]) for (const enabled of [undefined, false, true]) {
+      const ctx = { github: { event_name: event, ref: tag ? 'refs/tags/v0.8.0' : 'refs/heads/codex/probe' }, inputs: { mcp_stack_probe_826: enabled }, startsWith: (a, b) => a.startsWith(b) }
+      const probe = !!vm.runInNewContext(job.if, ctx), packages = !!vm.runInNewContext(doc.jobs.package.if, ctx)
+      const publish = packages && !!vm.runInNewContext(doc.jobs.release.if, ctx)
+      assert.equal(probe, event === 'workflow_dispatch' && enabled === true)
+      assert.equal(packages, !probe)
+      assert.equal(publish, !probe && tag)
+    }
+    const begin = text.indexOf('  mcp-stack-probe-826:' + eol), end = text.indexOf('  release:' + eol, begin)
+    assert.ok(begin > 0 && end > begin)
+    const restored = (text.slice(0, begin) + text.slice(end))
+      .replace(/  workflow_dispatch:\r?\n    inputs:\r?\n      mcp_stack_probe_826:[\s\S]*?        default: false\r?\n/, '  workflow_dispatch:' + eol)
+      .replace("    if: github.event_name != 'workflow_dispatch' || !inputs.mcp_stack_probe_826" + eol, '')
+    // Both seals derive from the actual original67 Git blob, with its declared LF/CRLF form.
+    const expected = eol === '\n' ? '484078da169a63dfbe5d4fe174568d597dfc48f38d57d05a1e86a67265244480' : 'ffff77300b98431c0541a7ce6f4f92722dfb9b444169fea62f917c79fef17c44'
+    assert.equal(sha(restored), expected, 'full original Release bytes in the input line-ending form')
+    const upload = job.steps.find(step => step.uses === 'actions/upload-artifact@v4')
+    assert.equal(upload.if, 'always()')
+    assert.equal(upload.with.path, '${{ runner.temp }}/mcp-stack-probe-826/*.json')
   }
-  const begin = text.indexOf('  mcp-stack-probe-826:\n'), end = text.indexOf('  release:\n', begin)
-  assert.ok(begin > 0 && end > begin)
-  const restored = (text.slice(0, begin) + text.slice(end))
-    .replace(/  workflow_dispatch:\n    inputs:\n      mcp_stack_probe_826:[\s\S]*?        default: false\n/, '  workflow_dispatch:\n')
-    .replace("    if: github.event_name != 'workflow_dispatch' || !inputs.mcp_stack_probe_826\n", '')
-  assert.equal(sha(restored), '484078da169a63dfbe5d4fe174568d597dfc48f38d57d05a1e86a67265244480', 'full raw original Release bytes, not just selected jobs')
-  const upload = job.steps.find(step => step.uses === 'actions/upload-artifact@v4')
-  assert.equal(upload.if, 'always()')
-  assert.equal(upload.with.path, '${{ runner.temp }}/mcp-stack-probe-826/*.json')
 })
 
 test('probe execution refuses without the explicit opt-in before touching files or tools', async () => {

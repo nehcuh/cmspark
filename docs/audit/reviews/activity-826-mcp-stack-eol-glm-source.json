@@ -1,0 +1,124 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "## VERDICT: APPROVE\n\nSingle-file review of `companion/scripts/tests/mcp-stack-probe-826.test.mjs` (SHA256 `eb33b8b2…`); the only semantic delta is the workflow-consumer test, confirmed byte-identical elsewhere by the supplied hunk.\n\n### Evidence against required checks\n\n1. **Source correctness / fixes the actual failure.** Old callback used literal-LF markers (`indexOf('  mcp-stack-probe-826:\\n')`) and LF-only restore patterns. New code derives `eol` from each input (`text.includes('\\r\\n') ? '\\r\\n' : '\\n'`) and suffixes both job markers, the `workflow_dispatch:` collapse (pattern now `\\r?\\n`, replacement `'  workflow_dispatch:' + eol`) and the package-`if:` deletion with that EOL. The independent control (AST-extracted actual callbacks, actual js-yaml, real assertions) reproduced old-LF GREEN / old-CRLF RED at exactly `assert.ok(begin > 0 && end > begin)` — matching run 41560307958's test-17 `ERR_ASSERTION` — and current callback GREEN in both forms. Marker collisions are impossible: the dispatch input uses `mcp_stack_probe_826` (underscore), and the artifact path occurrence lacks the two-space prefix; `begin > 0` still rejects `-1`.\n\n2. **Assertion strength preserved or strengthened, not weakened.** Every parsed assertion (input deepEqual incl. `default: false`, `needs: 'preflight'`, probe `contents: read`, `persist-credentials: false`, `release.needs: 'package'`, full push/dispatch × tag/branch × undefined/false/true truth table, upload `if: 'always()'` + `*.json` path) moved verbatim **inside** the loop and now executes for the untouched actual bytes plus both derived EOL forms — both forms must restore to pinned original67 bytes, so any content mutation fails in both branches (14/14 negative controls rejected with real `ERR_ASSERTION`).\n\n3. **Both EOL seals from the actual original67 blob, not normalized evidence.** Constants `484078da…` (LF) and `ffff7730…` (CRLF form) equal the control-recomputed `git show 67c5e209…` blob hashes, logged as `originalGitBlobSha`/`originalLfSha`/`originalCrlfSha`; the LF value is identical to the old test's pin. No normalization-before-acceptance: the actual working-tree bytes are the first Set element; current producer unchanged at `283b6c54…`, and restoration equals original67 + exactly (dispatch-inputs block, probe job span, package `if:` line), verified slice-wise against both embedded documents.\n\n4. **No new CI history dependency.** Seals are hardcoded constants; no `git` call exists in the unit (`spawnSync` remains only in the unchanged TAP-classifier test). No `.gitattributes`/compat framework added.\n\n5. **Boundedness.** Diff is a single test; the five experiment files are byte-unchanged per the manifest/base-equality proof, so the prior six-code GLM APPROVE legitimately covers them. Set-dedup semantics verified: exactly the two EOL forms always execute regardless of checkout form; mixed-EOL input would fail loudly at the marker/seal, not pass silently. The CRLF derivation `replace(/\\r?\\n/g,'\\r\\n')` is output-equivalent to test 1's two-step form (checked on lone-CR, CRLF, LF cases) — cosmetic asymmetry only, non-blocking.\n\n### Disposition\n\nApprove **committing this one test correction** and, **after the coordinator independently confirms the remaining gates**, one purposeful changed-source manual invocation toward the first actual CDB/MCP experiment. This correction only repairs the harness bootstrap gate; CDB qualification and native MCP20 remain **NOT_RUN** with zero physical samples, the inert TAP timeout classifier is not native/CDB proof, and original MCP20 timing, deadline/actual-close budget, one-outcome/retirement policy, and canonical acceptance/main/tag gates are untouched. No acceptance, merge, or release approval is granted or implied; no unknown historical physical root cause is asserted — the EOL consumer defect is source-supported and reproduced, nothing more.",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 23189,
+      "outputTokens": 8889,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.33816999999999997,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 179932,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "single-workflow-test-EOL-source",
+  "reviewed_base": "013d3484f862c14ddb5df2bb5a250ba8b987b2f2",
+  "source_path": "companion/scripts/tests/mcp-stack-probe-826.test.mjs",
+  "source_sha256": "eb33b8b2694b0dc637ba6324911dafb85bcc0a430f2cc57e147667d810985d66",
+  "old_source_sha256": "88885bdeba0433022aebe0bbeecd4fa701ccadd5cf4fb8f403af2586daa842c6",
+  "source_diff_sha256": "86a07e1431bda22f03667b3ea807dc1ebc166f7d004b1534c7b849d59683f078",
+  "unchanged_five_sources": {
+    ".github/workflows/release.yml": "283b6c543bf8229ff9f7d125a9836b383a00eb305f65040379bbc9ced1a3a989",
+    "scripts/tests/node-security-runtime-759.test.mjs": "22f9effe08620076c3a1893d0ffea0978e8f964bdd037d9616f636861a49b003",
+    "companion/scripts/mcp-stack-probe-826.mjs": "e6bd36fd7fd0ce9d90a477f063e0130e36a99e48030684067bfcd07b8ab4618b",
+    "companion/scripts/mcp-stack-capture-826.cjs": "f2c4508aadb57d08ba8cffab31cafac6e90d382e2f37a9b22587fca241fbaa9d",
+    "companion/scripts/tests/mcp-stack-capture-826.test.cjs": "a0a214091b1eeb118c47f0ed4942282a77044c003a79bbed347f6c01bd7df481"
+  },
+  "original_LF_workflow_sha256": "484078da169a63dfbe5d4fe174568d597dfc48f38d57d05a1e86a67265244480",
+  "original_CRLF_workflow_sha256": "ffff77300b98431c0541a7ce6f4f92722dfb9b444169fea62f917c79fef17c44",
+  "input_artifacts": [
+    {
+      "label": "COMPLETE CURRENT SINGLE SOURCE companion/scripts/tests/mcp-stack-probe-826.test.mjs",
+      "sha256": "eb33b8b2694b0dc637ba6324911dafb85bcc0a430f2cc57e147667d810985d66",
+      "bytes": 9136
+    },
+    {
+      "label": "COMPLETE OLD SOURCE git 013d3484f862c14ddb5df2bb5a250ba8b987b2f2:companion/scripts/tests/mcp-stack-probe-826.test.mjs",
+      "sha256": "88885bdeba0433022aebe0bbeecd4fa701ccadd5cf4fb8f403af2586daa842c6",
+      "bytes": 8664
+    },
+    {
+      "label": "FULL ACTUAL SINGLE-PATH DIFF",
+      "sha256": "86a07e1431bda22f03667b3ea807dc1ebc166f7d004b1534c7b849d59683f078",
+      "bytes": 5288
+    },
+    {
+      "label": "UNCHANGED FIVE SOURCE PROOF: current bytes == git show base and previous reviewed manifest",
+      "sha256": "b5334012c5a01ad9e95b1bde50fb6d757770871a176303c4d990bc454696fcc2",
+      "bytes": 587
+    },
+    {
+      "label": "COMPLETE CURRENT UNCHANGED WORKFLOW",
+      "sha256": "283b6c543bf8229ff9f7d125a9836b383a00eb305f65040379bbc9ced1a3a989",
+      "bytes": 19129
+    },
+    {
+      "label": "COMPLETE ACTUAL ORIGINAL67 GIT WORKFLOW BLOB; raw LF origin, explicit CRLF representation second seal",
+      "sha256": "484078da169a63dfbe5d4fe174568d597dfc48f38d57d05a1e86a67265244480",
+      "bytes": 17116
+    },
+    {
+      "label": "FULL REPORT / ACTUAL CONTROL / LOG / PRIOR REVIEW CONTEXT /tmp/cmspark-826-mcp-stack-eol-independent-source.md",
+      "sha256": "a1792876841144114a668d95b938a54411cc45ec70d4e9c88e8411cee718be61",
+      "bytes": 4804
+    },
+    {
+      "label": "FULL REPORT / ACTUAL CONTROL / LOG / PRIOR REVIEW CONTEXT /tmp/cmspark-826-mcp-workflow-eol-independent.mjs",
+      "sha256": "41771f5efd944b72efbff1746259f481953581165eef94a268692e86f04e559c",
+      "bytes": 5284
+    },
+    {
+      "label": "FULL REPORT / ACTUAL CONTROL / LOG / PRIOR REVIEW CONTEXT /tmp/cmspark-826-mcp-workflow-eol-independent.log",
+      "sha256": "0d9876d4b5a7637eadba3d4c0c9aaebc86f3807bdc53448fa9b1ce7ef5ca10b3",
+      "bytes": 2054
+    },
+    {
+      "label": "FULL REPORT / ACTUAL CONTROL / LOG / PRIOR REVIEW CONTEXT /tmp/cmspark-826-mcp-stack-eol-machine.log",
+      "sha256": "297caeb1fcd97c7f73a3c0275f0e2d9b8e33a4086bb12c573eb8d76d3b730459",
+      "bytes": 392
+    },
+    {
+      "label": "FULL REPORT / ACTUAL CONTROL / LOG / PRIOR REVIEW CONTEXT /tmp/cmspark-826-mcp-stack-eol-independent-machine.log",
+      "sha256": "c30b7ea03ff10e6f96e1dbe16cdbe1f15625a73942c78ea0ed38c265538b2cee",
+      "bytes": 390
+    },
+    {
+      "label": "FULL REPORT / ACTUAL CONTROL / LOG / PRIOR REVIEW CONTEXT /tmp/cmspark-826-mcp-stack-013d3484.md",
+      "sha256": "966f4614a672718e0f4dc45c0b02425c8dbd42065b44533809515238791893b7",
+      "bytes": 4444
+    },
+    {
+      "label": "FULL REPORT / ACTUAL CONTROL / LOG / PRIOR REVIEW CONTEXT /tmp/cmspark-826-mcp-stack-glm-source.md",
+      "sha256": "b134526c391466a2b9d925e9a20a749be73b22148f1154129fe1ad4c17a2a964",
+      "bytes": 6248
+    }
+  ],
+  "prompt_sha256": "ae9e80a2397ea894577d93b7bd0a0ff8d93102dae8da0f7efda081123a8e9cd6",
+  "prompt_bytes": 88394,
+  "prepared_utc": "2026-11-03T01:45:49.440269+00:00",
+  "prior_CDB_MCP_outcome": "NOT_RUN",
+  "normalized_verdict": "APPROVE",
+  "verdict_basis": "Explicit VERDICT APPROVE and disposition approving committing the one test correction, then one coordinator-gated changed-source invocation toward first real CDB/MCP experiment.",
+  "approval_scope": "Only single test-harness EOL correction; commit and one changed-source manual invocation after coordinator confirms remaining gates.",
+  "not_approved": [
+    "dispatch by this reviewer",
+    "canonical acceptance",
+    "merge",
+    "release",
+    "native/CDB success",
+    "additional physical sample"
+  ],
+  "completed_utc": "2026-11-03T01:49:28.027856+00:00",
+  "review_text_sha256": "5823fa2dd7a4c86763b66a76658ed525f9d273c97aae8865720b100da0b5d475",
+  "analytical_commentary_is_not_new_machine_evidence": true
+}
