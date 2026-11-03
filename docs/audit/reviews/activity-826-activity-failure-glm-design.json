@@ -1,0 +1,58 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "**结论:APPROVE(仅授权实现,不含运行时验收/合并/发布)。** 设计与三份现行源、d94实际失败及34控件逐项核对一致,未发现可达阻塞。\n\n**A Scope(无阻塞)。** SetupOwnedClick源中恰为12条 `OWNED_SCOPE825_INPUT_<名>` 常量,含SHORT且SHORT仅在 `SendInput(3,…) != 3` 时抛出,与\"12而非11、SHORT=插入数≠3\"要求逐条吻合;控件对12常量做Set去重断言,防回退到11。改动仅为 `catch(Exception error)` + 在既有聚合type旁追加reason,switch对完整串精确相等,非前缀/模糊;PRECONDITION/WINDOW/CLIENT等复合谓词保持成组不拆子条件。原Observe(INPUT_REFUSED)、best-effort写、Shutdown(2)、return顺序在每种reason及UNKNOWN、含写失败抛出下与旧catch事件序列deepEqual,已实测等价;私有串经断言永不进入payload,无stack/HWND/PID/坐标/HRESULT/lasterror投影。setupComplete成功栅栏、无新增native API均保持。\n\n**B Apps(无阻塞)。** 只改原NOT_READY超时错误为封闭后缀;派生receipt中 `10_000` 恰一次,六stage加UNKNOWN经真实定时器回调实测,clearTimeout/watch.close/close监听清理齐全;ready/failure/closed三条原路径前后实测相等,无新等待/重试/回退。两调用点封闭:launch由已有gui/headless定界mode,control传实际固定command,任意串仅映射UNKNOWN,永不反射原始输入;序列id不入错误。全源替换具备精确逆。\n\n**C Apps(无阻塞)。** 六点插入位与源核对:MAIN_ENTER在Root赋值后分支前、RUN_ENTER紧邻app.Run(Window)前、SOURCE_INITIALIZED/LOADED为新增passive订阅、CONTENT_RENDERED在既有handler入口(先于ready存在性检查,正确)、READY_WRITTEN仅在ready Record返回之后(Record抛出则不写,语义正确)。复用758实际Observe体证明once-only且写失败全吞;MAIN_ENTER对headless同样产生,构成\"仅共享main历史、不新增UI权威\"。真实finally顺序kill→closed→project→remove→settled实测保持,投影抛出仍保留主错与清理;reader沿用758/scope封闭校验(缺/畸形/外来→UNKNOWN/缺省)。\n\n**实现期必守(均为设计已述内容的落地条件,非新增范围):** ①派生receipt中的allowedStages在模型里由宿主注入,实现须在函数/模块内自带该六个封闭标签常量;②Apps源当前无MainThread/Observed/Observe/RecordObservation成员,实现须按758样式补齐,且MainThread捕获严格先于首个MAIN_ENTER观察;③生产者文件名前缀须为固定常量并与reader严格配对,位于gui/headless既有固定子目录,不得任意路径/字段;④按验收要求加LF/CRLF源消费控制并保留全部旧input/fence控件、10s/90s/180s预算、业务断言与surface lease。\n\n**边界确认:** 本单元不扩展诊断面、权限、预算或输入;不对历史OS/SDK成因作任何归因,UNKNOWN即不支持分类;34控件是源导出受控叶模型,不构成已实现生产者/reader或Windows原生证明,不得以此冒充原生证据。批准仅开启实现及随后的机器/独立/源GLM审查,下一次有目的的changed-head真实Windows结果才是决定性证据;MCP20与发布包不在本门内。",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 18300,
+      "outputTokens": 6721,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.259525,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 99599,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "finite-existing-failure-facts-design",
+  "reviewed_base": "d94d5db5ce30aee7d047baea53c0bc503f766461",
+  "implementation_diff": null,
+  "source_baseline_hashes": {
+    "companion/tests/fixtures/activity-scope825-windows.cs": "d92faa281083ee1b5805f080974017a094a3be717267b896142ec99ee1a96ae0",
+    "companion/tests/fixtures/activity-apps-windows-825.cs": "af037de7ba27b23e88312bcebdd5d7ff3cfe998f0c1d506533448ec8f821fd12",
+    "companion/tests/activity-apps-825.test.ts": "95835e6694f4bdbe479a2cc473a4becd520d65f2f35a315a25947e59c7c24aad",
+    "companion/tests/fixtures/activity-windows-758.cs": "34e6a2cf1e2b059de16cf654ed76f611a7a20c8a9ef940296bd600d430d82771",
+    "companion/tests/helpers/activity-wpf-observation-758.cjs": "e3fc7fa09c0339797145c589715255f6116a0e6cbf7e268e1c244f0eca624078",
+    "companion/tests/helpers/activity-scope825-observation.cjs": "21c61c5d4168f813265c3e705b9fc64ec35834b3b25b57172df45183fef7f58d"
+  },
+  "scope_exact_reason_count": 12,
+  "apps_fixed_timeout_stage_count": 6,
+  "apps_fixed_positive_point_count": 6,
+  "prompt_sha256": "486b58c9fdbc9547c7f539305cc6763de1c0a70f2dd35cf606711be15c6ea14d",
+  "prompt_bytes": 73754,
+  "prepared_utc": "2026-11-02T22:21:57.619583+00:00",
+  "verdict": "APPROVE",
+  "module_verdicts": {
+    "scope_exact12_reason_preservation": "APPROVE",
+    "apps_fixed6_timeout_stages": "APPROVE",
+    "apps_fixed6_positive_history": "APPROVE"
+  },
+  "verdict_basis": "Actual model explicitly APPROVE, each A/B/C no reachable blocker; implementation conditions repeat the bounded proposed design.",
+  "approval_scope": "Implement bounded existing-error/event preservation, then machine/independent/sourceGLM gates before purposeful changed-head Windows acceptance.",
+  "not_approved": [
+    "historical physical cause attribution",
+    "runtime/native acceptance",
+    "additional MCP probe",
+    "merge",
+    "release"
+  ],
+  "review_text_sha256": "a4c8d52eaeee3f3ace4b882c34da0f50c3c85ce0bfaceee3091e7d389dd66c67",
+  "recorded_utc": "2026-11-02T22:24:09.886739+00:00"
+}

@@ -1,0 +1,100 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "# GLM-Claude 独立源码复审 — #825 MCP 独立快照（冻结11路径，基 b585）\n\n**结论：确认 B 的 APPROVE。** 逐项核对冻结源码与全量 diff，未发现可达缺陷；B 唯一 blocker（全宽 receipt 身份）已实修为 BigInt 并有实机正/负控复验。以下为源码级证据。\n\n## 1. 独立采样\n`mcp-snapshot-825.h`：`start()` 用 `started.exchange(true)` 保证单次启动；worker detach、不 join。worker 仅 `GetModuleFileNameW` 自身模块目录拼固定 `mcp-startup-825.bin`，以 `OPEN_EXISTING|FILE_FLAG_OPEN_REPARSE_POINT|三共享标志` 打开（符合批准条件1）。头内 `sleep_for` 恰 1 处；`capture()` 为单次双版本稳定读、无自旋；测试断言 worker 体不含 `socket_lock|send(|PostMessage|DispatchMessage|while(`。UI 侧 `publish` 仅两次 `fetch_add`+原子写，无锁无等待。\n\n## 2. 奇偶发布先于可疑等待\n每个 hook 都是完整 `publish`（+1→change→+1），返回前版本必为偶。关键位点：`obApi773` 内 `api()` 在原 SDK 调用返回后、`wrapper()` 在 `obRecord773`（含 flush→emit→原 send）之后；`CallbackScope` 构造于 `DESKTOP_TEST_NOTE(controller_callback)` 之前；send 边界 stage2 在 `lock_guard` 之前、stage3 在持锁后、stage4 在 WinHTTP 调用前、stage5 携真实返回码——被测锁/send/SDK 等待期间版本恒为偶，可采样。`sendStage` 首行 `if(!kind)return;`，业务/认证 send（thread_local kind=0）零写入。\n\n## 3. 真实选定 send 边界区分\nCPU 驱动用实际生成的 `send/test_note/obApi/record/flush/两层 emit` 与实际 header。modes 0/1/2 线形状完全相同（`rows[0]==rows[1]==rows[2]`，8 串），receipt 分别为：stage6/resultKnown/无 ControllerEntry（wrapper 已离开、outer dispatch 已返回）；BOOT(kind2) stage4/无 WrapperLeave/resultKnown=false（末条 BOOT send 内）；phase(kind1) stage4/ControllerEntry=16（callback 已进入、最前 phase send 内）——三同线排程被真实区分。mode3 嵌套 COM pump 不锁 OuterDispatch（flags&32==0）；`outerDispatch()` 仅挂原 run() 循环 `DispatchMessageW` 之后且需 Armed 一次性。原调用计数逐项相等（WinHTTP/CreateEnvironment/CreateController/get_CoreWebView2/Navigate 的 split 计数断言），COM 操作数未动。\n\n## 4. 文件身份 / 完整 receipt\nhelper 所有 receipt stat 显式 `{bigint:true}`，比较 BigInt `dev/ino/birthtimeNs`，`nlink===1n`、`size===128n`。增量测试用真实 native 写出的有效 receipt、仅控文件系统身份 leaf：`9007199254740992n`（并断言 Number 折叠确实发生）同身份 OBSERVED；path/handle 侧 inode 或 birthtimeNs 各差 1n 均 UNKNOWN 且在任何 `readSync` 前拒绝；恢复后再次 OBSERVED（identityReads=4）。既有 canonical 目录身份/copier 原样复用未重设计，符合\"只修 receipt 身份\"的窄范围。coherence：worker 先写完整 128B payload+`FlushFileBuffers`，再写 word31 commit；decoder 校验 commit/magic/status/采样窗（≤250ms 且 <deadline）/偶版本≤65536/reserved 全零/闭集枚举；Node 两次等长读取须一致并在读后复核身份；路径替换、截短 127、短 seed、无 writer、晚采样、WriteFile 失败、采样中版本变化（mode4/6）全为 UNKNOWN。\n\n## 5. builder/wire/VM/finally 精确集成\nbuilder 仅 `family===\"mcp\"` 分支读取并传入 header；selector 测试补绑定 fs/path/root 验证 mcp/local/其余 family 选择。`snapshotControl===undefined` 时原样返回——legacy 调用者输出零变化（diagnostics 测试 sampled=false 四组 host/fixture EOL wire 与旧完全一致）。825 变换严格叠加在 773 之后（锚点即 773 生成体），host×fixture×header 三层 EOL 全逆变换通过。VM 消费者把生成 flush 体的 `Observation observation825(2,…)` 绑定为 `observations825.push([2,…])` 并断言新旧 producer 差异恰为四行——真实消费者验证，非 import/tsc 替代。finally：snapshotRead 在诊断 try 内、`snapshotClose` 在 server 关闭之后 env 恢复/rmSync 之前且 try/catch 包裹；receipts 测试精确断言 12 步调用序，LF/CRLF×throw 下主失败与全部清理保持。资产复用 canonical 9 项清单并逐字节核对 canonical 产物（漂移即拒绝），未自造列表。\n\n## 6. 原语义保留\n`timeout:20000` 不变；deadline=入口+20s、target=deadline−1500（helper `putNumber(seed,4,deadline-1500)`、native `deadline-target==1500`、`deadline-clock<=20000`），严格早于既有 abort，finally 不 join/不等待/不加预算。业务断言、receipts、配置持久化、权限、surface lease、成功 close/exit 段零改动；产品 `DesktopHost.cpp` 与 binding 不在 11 文件清单内。快照仅 win32 启用，macOS 原路径不变（snapshot825 undefined→投影 UNKNOWN），观察不构成业务通过或授权依据。\n\n## 语义边界（重申，非缺陷）\n快照只证其采样瞬间；UNKNOWN 不作负面证明，不归因 WebView/SDK 内部或历史根因。本批准范围=该冻结测试单元 commit + 协调门后一次有目的 instrumented Windows CI；非 merge/release、Windows 通过或根因认定。Windows 原生编译/执行仍属下一道门。\n\n**无 blocker，确认 APPROVE。**",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 96636,
+      "outputTokens": 11308,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.76588,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 151435,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "reviewed_base": "b585eb6bc29baa2e2a0314dad2793de29a72209b",
+  "source_manifest_sha256": "477e43a4b22a3c0067e609fd4bc04fa43051f5b989a8b1065a21ec26df4d32a9",
+  "source_paths": [
+    "companion/scripts/build-desktop-windows.mjs",
+    "companion/scripts/desktop-bootstrap-observation-fixture.mjs",
+    "companion/scripts/desktop-mcp-snapshot-fixture-825.mjs",
+    "companion/scripts/tests/desktop-bootstrap-observation-773.test.mjs",
+    "companion/scripts/tests/desktop-mcp-snapshot-825.test.mjs",
+    "companion/tests/desktop-acceptance-diagnostics.test.ts",
+    "companion/tests/desktop-native-mcp-476.test.ts",
+    "companion/tests/desktop-native-receipts-476.test.ts",
+    "companion/tests/fixtures/desktop-476/mcp-snapshot-825-posix.h",
+    "companion/tests/fixtures/desktop-476/mcp-snapshot-825.h",
+    "companion/tests/helpers/mcp-snapshot-825.ts"
+  ],
+  "source_files": [
+    {
+      "path": "companion/scripts/build-desktop-windows.mjs",
+      "sha256": "8648102b9989cd1bfec7de64bffb983abc6bf30cc173ac38ced8982505fc41e7"
+    },
+    {
+      "path": "companion/scripts/desktop-bootstrap-observation-fixture.mjs",
+      "sha256": "333be0bb2579d263f9ed0ef47e0bddb5d14bfc26f6087df56b819207422d5d88"
+    },
+    {
+      "path": "companion/scripts/desktop-mcp-snapshot-fixture-825.mjs",
+      "sha256": "cec54f48a1df2680b48fbf565251f907fe3710ecd451dd0b933ee7360a2f4b7c"
+    },
+    {
+      "path": "companion/scripts/tests/desktop-bootstrap-observation-773.test.mjs",
+      "sha256": "912b016b32adb94b5d9c4c80639bfe436f5ad75b00e466ee86340b0a376d6416"
+    },
+    {
+      "path": "companion/scripts/tests/desktop-mcp-snapshot-825.test.mjs",
+      "sha256": "58c7c0573e05abc0caedcbf8acf30687d320a1ac914a652c1fe5a5d8b9b23461"
+    },
+    {
+      "path": "companion/tests/desktop-acceptance-diagnostics.test.ts",
+      "sha256": "1668de3b71b94f31d52a9e5924f93a2b71ca5c8f63b86b1e38d15930bc0be81d"
+    },
+    {
+      "path": "companion/tests/desktop-native-mcp-476.test.ts",
+      "sha256": "113c2a7302f2a00af52fdc3299f33bccc1409201f95ba60c08333eb8c2c6bbd8"
+    },
+    {
+      "path": "companion/tests/desktop-native-receipts-476.test.ts",
+      "sha256": "73bbd5f5359b45fd577a6007ddaca3ae2ab17671a81cec8b42aaf51392bb18cd"
+    },
+    {
+      "path": "companion/tests/fixtures/desktop-476/mcp-snapshot-825-posix.h",
+      "sha256": "5056979229a33bd0abdb475e753d529766d5751a0b1343f79f456f7ae2639dc8"
+    },
+    {
+      "path": "companion/tests/fixtures/desktop-476/mcp-snapshot-825.h",
+      "sha256": "ab1793e662162a2357524bf4aaea2d9d09ccbc581ba1a85e72c900554457f544"
+    },
+    {
+      "path": "companion/tests/helpers/mcp-snapshot-825.ts",
+      "sha256": "5af69bdfd2cecd7a2fb10317426c83f021b84e05de99140e7e38be91e0661589"
+    }
+  ],
+  "base_relative_full_review_diff_sha256": "8d7b0073f6c6dfd83856d653db1a22207a1fe6f401e50704158be60f4181cd28",
+  "prompt_sha256": "150d047943fe09bdc47d3b22440c7e3cc8dcd307bf8f828476e410de9fbfb8b2",
+  "prompt_bytes": 367193,
+  "prepared_utc": "2026-11-02T19:45:58.068010+00:00",
+  "verdict": "APPROVE",
+  "verdict_basis": "Actual reviewer explicitly confirms B APPROVE, states no blocker, and permits frozen test unit commit plus one purposeful instrumented Windows CI after coordinator gates.",
+  "approval_scope": "Frozen11path test-only source commit and one purposeful instrumented Windows CI after coordinator gates.",
+  "not_approved": [
+    "historical physical root cause attribution",
+    "Windows native compilation/execution acceptance",
+    "merge",
+    "release"
+  ],
+  "review_text_sha256": "89f25388e31d131a83bbd78887720327668b46fcbfc4690f3518b311b5a40118",
+  "recorded_utc": "2026-11-02T19:49:06.348425+00:00"
+}

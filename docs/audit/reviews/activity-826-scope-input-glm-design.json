@@ -1,0 +1,54 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "**结论：APPROVE（仅授权实现，不含 CI/接受/合并/发布）。**\n\n**变更边界成立。** 唯一改动点是自有夹具 `activity-scope825-windows.cs` ContentRendered requested 块内的 Activate/Focus 一对调用，替换为每个新建主/独立窗各一次 SetupOwnedClick，属替换而非激活失败后的 fallback；产品 recorder/preview/capture、授权、consent、模型路径不动。spec 第26行本就要求真实用户先手动选中应用再做被动预览，测试 setup 由自有夹具点击自身惰性只读 TextBox 建模该前提，且点击发生在 ready.json 发布之前，被动探针断言（probe hwnd==ready.hwnd、采集不改前台）不受影响；输入桌面 lease 仍持有。\n\n**拒绝面与输入面自洽。** 22 项可执行控制覆盖可见/启用/非最小化/HWND/pending/receipt/当前布局/几何/虚拟屏范围/WPF 命中/无命中/外根窗口/外 PID/PID 查询失败及直接未渲染调用，均零输入零写入；WindowFromPoint→GA_ROOT 恰为自身根 HWND 且 GetWindowThreadProcessId 命中实际自有 PID，覆盖窗时拒绝且不提升/遮挡他窗。单批三 MOUSEINPUT（ABSOLUTE|VIRTUALDESK 移动+左按下+左抬起），负原点先减、端点归一 0..65535 已以 -1920 原点实测落界；requested 先置位使事件重放不重发；插入数≠3 抛错，经既有 Main catch→failure.json→receipt 立即失败，是可达的 fail-stop；ready 仍由原 IsReady 的真实 GetForegroundWindow==hwnd 且 IsKeyboardFocused 决定，SendInput 成功不替代；resize 不新建窗不再点击；旧窗事件因 Current!=window 先返回，不能点击也不能发布新 receipt；10s/180s 及全部裁剪/OCR/模型/嵌图/popup/子关闭/cleanup 语义保持。设计诚实声明检查→输入非原子、非 HWND 定向，仅受控测试桌面假设，未见过度声明。\n\n**实现附带必做项（非阻塞）：**\n1. C# 侧 INPUT 须为真实联合布局并实测 Marshal.SizeOf（x64 应为 40）随 cbSize 传入，新增结构体尺寸/联合/平台匹配控件；原型受控端口不构成该证明。\n2. 现有 8 个 readiness 控件与观察闭环对被替换文本强耦合：port 适配串（如 `bool activated = window.Activate();`）与 observation.cjs 的 names 及 `source.includes('\"ACTIVATE_TRUE\"')` 检查会因调用消失而在加载期失败。必须与夹具同批更新为消费真实新 helper/callsite，保留八案例判别语义（128 组合、旧窗反例、resize 同 gate），不得改造为自造替身。\n3. ACTIVATE_/FOCUS_ 相位消失后 D825 名称表需一致更新保持闭环；拒绝与插入失败应以可判别异常类型进入 failure.json（现仅记类型名），否则实际 Windows 首失败无法区分“前置拒绝”与“其它夹具失败”，削弱已声明的判别式验收。\n4. 单击背景窗时键盘焦点是否随首击落到 TextBox 属实际 Windows 经验问题，本设计不下结论：未合格即原案例失败、无 fallback，两分支均可判别；对历史 ACTIVATE_FALSE 的 OS 原因同样不做推测。\n\n门禁：批准仅到实现；随后独立与 GLM 源码复审，再在真实 Windows 跑一次原有全业务案例，通过方进入 CI/验收。",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 17085,
+      "outputTokens": 9019,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.31089999999999995,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 127985,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "owned-fixture-setup-design",
+  "reviewed_base": "67c5e209d239995b930fe1dfcc54f444005e44f8",
+  "implementation_diff": null,
+  "setup_contract_change": "Replace one Activate+Focus pair per new main/popup window with one guarded OS-click3eventbatch; no fallback/retry; product stayspassive; not humanapproval",
+  "source_baseline_hashes": {
+    "companion/tests/fixtures/activity-scope825-windows.cs": "18db2181e7a68f225cc65c113c8a7e8a3b331c7efa7472e1e02a6fcfa6f501ca",
+    "companion/tests/activity-scope825-native.test.ts": "b2cd16df16c98efa255179e75dfa961092d9982a5e4f79f3ebb97c247c348e3e",
+    "companion/tests/helpers/activity-scope825-native.ts": "37ccea3fd906c988a3cf70516b089581e2da7e5d2a200c836450e5ec65e2afff",
+    "companion/tests/activity-scope825-readiness.test.ts": "9e6a089252925541e52febd03bcf618fb427d8a714c361b69436cf73a7267ff8",
+    "docs/superpowers/specs/2026-11-02-activity-app-window-scope.md": "9fe1604bf02ee760103deed9ad545ec422b5c03def1e5b45a6e66f780e761ce1"
+  },
+  "receipt_deadline_ms": 10000,
+  "case_deadline_ms": 180000,
+  "prompt_sha256": "5b3e65e2deec3a0939e72e96c498528816287faeba2f3d1a95e03a13591d5122",
+  "prompt_bytes": 69303,
+  "prepared_utc": "2026-11-02T21:51:08.614370+00:00",
+  "verdict": "APPROVE",
+  "verdict_basis": "Actual model explicitly APPROVE for implementation only. Coordinator identified a concrete additional fail-stop requirement while API was running; approval does not establish original prototype late-event refusal.",
+  "approval_scope": "Implement the guarded replacement design with explicit local setupComplete success fence and actual late-qualified-event controls, followed by independent/sourceGLM and original Windows business gate.",
+  "not_approved": [
+    "claim original22prototype proved late-qualified-event fail-stop",
+    "Windows input/foreground acceptance",
+    "historical OS cause attribution",
+    "immediate CI",
+    "merge",
+    "release"
+  ],
+  "review_text_sha256": "74416705e7b91f2120c319cf43e7f9d0b8814dec2d084c8e975685e8b28b07aa",
+  "recorded_utc": "2026-11-02T21:53:42.616746+00:00",
+  "coordinator_fact_correction": "During the API, root identified a concrete prototype gap: after SendInput returns0/1/2 and throws, requested/rendered remain true; later queued qualified Activated/GotKeyboardFocus checks could publish ready in the prototype. Original22controls only replay render and do not prove this refusal. The model explanation relying on Main catch is not an independently established fail-stop guarantee. Implement a local setupComplete=false fence, set true only after exactly3 inserted events; check must require it. Actual source-derived late-qualified-event negative controls are mandatory. This strengthens the original explicitly submitted no-ready-after-short-insertion requirement, not an added input attempt or budget."
+}

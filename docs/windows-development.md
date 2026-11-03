@@ -4,6 +4,22 @@ MCP 原生表单用例复用 #480 已有的固定启动阶段与导航回执，�
 
 MCP 测试宿主的初始化区间另外复用原 #773 WebView API 前后、HRESULT 和 250ms native-first-hook 时钟；共用原固定站点、每站点前八次及总 192 行上限，只在原失败投影附加闭集 BOOT 行。未植入 #480 checker/auth/attach 行为，原 #480 输出不变；API 返回成功不等于导航或业务成功，缺失行不能直接认定某个 API 故障，也不与 Node 时钟相减。
 
+#826 的新增 Windows CPU 快照驱动按构建→运行验证分离：在既有 `testFixtures` 构建阶段使用当前源生成并编译私有产物，编译接受上限由新增测试原设的 20 秒移至构建命令已有的 120 秒；30 秒 case 改为只计运行验证，旧端到端总界限并非不变。负责人在三次实际编译门失败后作此结构裁决，见[裁决与原 DoD](audit/reviews/activity-826-cpu-build-separation-coordinator-decision.md)。两个 Windows lane 均须在构建后执行明确消费者，核当次生成源、输入、目标和完整二进制摘要；缺失、陈旧或损坏直接失败，不现场重编译或跳过。Mac/Linux 保留原测试内 20 秒编译路径；MCP 原生 20 秒、CPU 运行 30 秒、每 exe 6 秒、业务资格、权限与清理保持。该结构修正不认定 MSVC 历史超时的唯一原因。
+
+#826 曾在 `6d42d79e` 通过独立 Windows VM 进行一次明确的 NON_ACCEPTANCE 延迟测量，仅将派生测试的注册时限 20→60 秒，原快照仍按 20 秒截止取样。实际完整业务在 7.964 秒通过，属于非判别结果；未扩大原验收时限。该一次测量入口和脚本现已退役，Release 与 Node 清单逐字恢复原流程；[实际回执](audit/reviews/activity-826-mcp-probe-6d42d79e.md)及[当时源码复审](audit/reviews/activity-826-mcp-probe-glm-source.md)归档保留，不再追加测量。
+
+#826 的临时 CDB 取证入口与四个脚本现已退役。最终 `aad9d65e` 的真实 CPU 工具资格为 OBSERVED／COMPLETE、OK／实际退出码 0，真实解析、分离后 IPC 和 dummy 关闭均通过；随后原 MCP **20 秒**用例在 **10.747 秒**完成全部业务及清理。本次未触发超时、没有目标调用栈，不能据此认定历史 SDK 原因；前四次准备失败仍保留。见[实际回执](audit/reviews/activity-826-mcp-stack-aad9d65e.md)。诊断资格曾将 agent 新设的工具工作窗口 6→120 秒，未改变原 MCP 验收；该临时配置已随入口移除。正常 Release 恢复原流程，仅保留两处已验证的 CPU 安装配置；[独立退役核验](audit/reviews/activity-826-probe-retirement-independent-source.md)与[实际 GLM 源码门](audit/reviews/activity-826-probe-retirement-glm-source.md)已通过，仍须正常发行树 CI 全绿。工具成功或这次业务通过不能抵消原 canonical 失败。
+
+Apps 的 201／4096／4097 条批量边界夹具现用 `List[object].Add` 构造记录后一次转数组，避免 PowerShell 5.1 逐条数组追加的重复复制；所有输入字段、顺序、过滤、重复身份与真实生产者断言保持。仍只调用一次 PowerShell，原调用 15 秒、用例 30 秒及 MCP 20 秒不变。失败时仅保留原错误的整数退出码、killed 布尔值和固定 signal，再原样抛出；这些字段不单独证明历史超时原因。原完整源码 seal 只增加五处精确逆变换，原 d94 摘要与 LF／CRLF 字节契约保持。该测试修正已通过[非作者验证](audit/reviews/activity-826-apps-producer-independent-source.md)和[实际 GLM 源码门](audit/reviews/activity-826-apps-producer-glm-source.md)，`0805bca0` 的真实 Windows producer 已在原调用 15 秒／case 30 秒内以 9.973 秒通过，不将此前失败武断归因于单一物理原因。
+
+LOCAL／ARCHIVE／TERMINAL 的未分发 Windows 原生夹具现有显式的初始标题栏选择契约：Node 入口仅允许 GitHub 托管 Windows 环境，原启动前台汇合只增加至多一次自有标题栏 move/down/up。检查可见／非最小化／启用、当前 PID 与 root HWND、物理坐标和虚拟桌面边界、HTCAPTION 及实际命中；每线程 DPI 上下文必须恢复。尝试围栏在系统调用前设置，只有完整三项插入并恢复 DPI 才完成，短输入、拒绝和迟到激活不重试／不开表单；之后重核文档／连接／控制器身份与原实际前台条件。这明确改变夹具初始输入，不改变产品、macOS、键盘控制器、启动器环境或权限；命中检查与 SendInput 并非原子 HWND 绑定。原 20／45 秒及全部确认、PTY、业务和清理断言保持。Dialog 同批只在已有回执增加 terminalAttempted 布尔值、最多 6 的 openReplyAttempts 和最多 4 的 sendRequests；尝试不表示送达或业务接纳，第三次用户 ACK 丢弃路径保持。设计与[非作者源码核验](audit/reviews/activity-826-initial-owned-input-independent-source.md)、[实际 GLM 源码门](audit/reviews/activity-826-initial-owned-input-glm-source.md)通过；`a4ddaf13` 的实际 Windows SDK 编译、两路原 MCP 和 interaction12 已通过，完整普查 9572 PASS／67 SKIP／0 FAIL；见[实际回执](audit/reviews/activity-826-shipping-a4ddaf13-ci.md)。该轮旧 CI 消费者仍失败，下一精确提交完整检查继续决定合并。
+
+同批还须迁移真实 CI 消费者：根目录 `scripts/tests/native-join-observation-788.test.cjs` 的生成器密封先执行已审的显式初始输入行为逆变换，再执行原观察逆变换，历史摘要不变。其 VM 消费完整当前生成的 wrapper，补齐尝试／完成状态及受控系统输入叶，不能剥掉新分支或回退旧生成器来判绿。原 30 项（含 macOS 关闭和 ACP 检查）保留，另加短输入／DPI 恢复拒绝、重入、过期身份和不可重试控制；同一官方命令旧 23 PASS／7 FAIL，修复后 32 PASS／0 FAIL／0 SKIP，已通过[非作者](audit/reviews/activity-826-native-join-consumer-independent-source.md)与[实际 GLM 源码门](audit/reviews/activity-826-native-join-consumer-glm-source.md)。这些是源码控制结果，不能替代下一精确提交的平台验收。
+
+聊天范围的未分发 WPF 夹具以一次受限 OS 点击替换原 `Activate`／`Focus` setup，模拟用户先选中自己的聊天窗口。这是夹具输入契约的改变，不是真人批准，也不改变产品的被动采集。每个新主窗／独立窗只在渲染后派生只读文本框内点，核当前布局、实际 WPF 命中、native root HWND 与本进程 PID 后发送一个 move/down/up 批；遮挡或资格失败即零输入，不抬窗、不重试。只有完整插入后才开启成功围栏，ready 仍须满足原真实前台及键盘焦点条件；短输入后的迟到事件不能发布 ready。命中检查与系统输入并非原子 HWND 绑定；实际原生业务和清理仍须验收，原 10 秒收据和 180 秒用例门不变。
+
+`d94d5db5` 的真实 Windows 失败暴露了诊断丢失：Scope setup 将 12 类受控异常合并为单一类型，Apps 所有回执等待共用一个超时标签。现只在原失败中保留精确白名单原因（其它为 UNKNOWN）与六个固定调用阶段；Apps 沿原 GUI 生命周期最多记录六个 first-once 正历史点，并在原 child close 后投影固定 GUI／headless 目录。原类型、成功围栏、API、输入次数、10／90／180 秒及完整业务／清理保持；缺失点不证明事件未发生，不从相位或原因类推唯一 OS 根因。该有限改动已通过 19 项实际源码控制、[非作者复审](audit/reviews/activity-826-activity-failure-independent-source.md)与 [GLM 源码门](audit/reviews/activity-826-activity-failure-glm-source.md)，下一精确原生运行继续决定验收，不重置历史轮数或扩展观测框架。
+
 终端原生验收先拒绝不受支持或非 CI 宿主，再取得共享桌面租约，随后才读取并核验运行数据目录；前一用例若已 retain，未确认清理前不会主动释放该租约，具体 owner 和子进程的完成仍须按原回执核对。原路径、目录身份、环境过滤、45 秒及业务断言不变。受控并发反例证明旧检查顺序可能读取前一用例的临时目录，不证明某次实际拒绝的原因，也不解释更早的窗口无回执超时。
 
 Windows 打包的 PS1 资源以当前 `companion/src/host-use/win/scripts/` 为准；普通 TypeScript build 不会刷新旧 dist 副本。ZIP 打包及 NSIS 编译前须核完整文件集合与逐文件原始字节，不能用“目录非空”代替完整性。独立诊断包能枚举窗口不证明正在运行的 Companion 已加载同一资源；现场缺文件也不能单独归因于某次 CI 产物。
@@ -170,6 +186,8 @@ CI, Windows SEA packaging and native builds use exact Node 22.23.4, including ma
 ## CI 原生验收分层（#760）
 
 原先一个步骤包含的四组命令，现按原顺序分别显示：`Build native desktop fixtures (#480)`、`Compile native desktop acceptance tests (#480)`、`Native desktop bootstrap and process acceptance (#480)`、`Native desktop interaction acceptance (#476)`。每步保留相同 OS 条件与 bash 失败退出；任一步失败，后续正常步骤不运行，原 job/check 名和合并验收要求不变。阶段名用于区分构建、编译、进程/协议和桌面交互的失败，不代表每个混合测试文件已进一步拆成单一类别。
+
+#826 将当前需求的 Windows 活动验收前置于完整原生测试编译之后、MCP bootstrap 之前；保留原三个测试文件并明确追加两个源码控制文件。四组原生门保留相对顺序，原连续调度只允许这一个完整验证的步骤介入；750／760 与直接 NSIS 消费者须先严格核唯一位置、完整对象和五个精确参数，再投影至历史密封形状，当前源码不能以旧调度判绿。[负责人裁决](audit/reviews/activity-826-activity-first-coordinator-decision.md)明确承认 native lane 的 UI／输入历史改变，不作为 MCP 修复或原桌面上下文等价证明；census 条件过滤后的 MCP 前实际执行前缀保持逐对象相同。任一原 MCP 20 秒、interaction、census 或活动用例失败，整个任务仍失败。已完成的临时测量同时退役；独立设计与 [GLM 设计门](audit/reviews/activity-826-activity-first-glm-design.md)通过，[独立源码核验](audit/reviews/activity-826-activity-first-independent-source.md)和 [GLM 源码门](audit/reviews/activity-826-activity-first-glm-source.md)也已通过，精确平台结果继续决定交付。
 
 编译、协议、Windows HANDLE/进程与资源清理仍是必需验收。前台、键盘、原生确认等交互用例只有在证明当前环境不满足具体前提后，才考虑迁到经过验证的专用交互 runner，并保留同一提交/产物的必需结果。GitHub Windows 并非天然无法运行图形测试；[微软提供了 windows-latest UI 示例](https://learn.microsoft.com/en-us/windows/apps/develop/ai-assisted/testing#run-tests-in-ci)，但它不保证本项目所有 Win32 焦点前提。
 

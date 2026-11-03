@@ -1,7 +1,11 @@
+import observation826 from './observation-826-inverse.cjs'
+const { restoreObservation826, restoreInitialFixture826 } = observation826
+export { restoreObservation826 }
 /** Static lineage only: never transform runtime bytes, JSON, TAP or evidence. */
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
 export function restoreCloseObservation476(kind,raw){
+ raw=restoreObservation826(kind,raw)
  if(kind==='ui'||!raw.includes('/*OBS476_'))return raw
  const profiles={
   protocol:['a96609272104b705e3d970a42c48ba15f3cf62ee84ad8d2f9d7c82326e5e80e6','69b5fb718b3d0cd405f8285fd89db3c506872ef80e340360ab69d3f2a6feabe5',2,'BOUNDARY'],
@@ -24,6 +28,7 @@ export function restoreCloseObservation476(kind,raw){
 }
 export function restoreObservation788(source){
  if(typeof source!=='string')throw Error('OBS788_SOURCE_REQUIRED')
+ source=restoreInitialFixture826(source)
  if(source.includes('/*OBS476_BOUNDARY_BEGIN*/'))source=restoreCloseObservation476(source.includes('final class OwnedRunner705Observer')?'observer':'protocol',source)
  else if(source.includes('/*OBS476_CLOSE_VALUE_BEGIN*/'))source=restoreCloseObservation476('helper',source)
  else if(source.includes('/*OBS476_CLOSE_BEGIN*/'))source=restoreCloseObservation476('native',source)

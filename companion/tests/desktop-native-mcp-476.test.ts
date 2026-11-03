@@ -14,8 +14,10 @@ import { createDesktopChannel, attachDesktopUpgrade } from "../src/desktop/chann
 import { DesktopIdentityRegistry } from "../src/desktop/identity"
 import { SecurityConfirmationManager } from "../src/security-confirmation"
 import type { DesktopNativeBinding, DesktopNativeChild } from "../src/desktop/host-launcher"
+import { prepareMcpSnapshot825 } from './helpers/mcp-snapshot-825'
 const native=path.resolve(__dirname,"../../dist/desktop-native")
 test("#476 actual native MCP form + OS-only confirmation approves update/add and denies update",{skip:!["darwin","win32"].includes(process.platform),timeout:20000},async t=>{
+ const snapshotDeadline825=Date.now()+20000
  return withSurface650(t, async (t, surfaceLease) => {
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"cmspark-native-save-476-")),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
  const config=await import("../src/config");config.replaceMcpServers({owned_native_476:{transport:"stdio",command:"owned_original",args:[],enabled:false,trust_level:"manual",env:{OWNED_INERT:"OWNED_PRIVATE_476"}}})
@@ -24,13 +26,15 @@ test("#476 actual native MCP form + OS-only confirmation approves update/add and
  let complete!:()=>void,exited!:(n:number)=>void;const done=new Promise<void>(r=>complete=r),exit=new Promise<number>(r=>exited=r);let child:DesktopNativeChild|undefined,settled=false,auth=false,windowRequested=false,postAuthRequestMask=0,failed:string|undefined
  const nativePhases=new Set<string>(),nativeNavigation:{value?:NativeNavigationObservation}={}
  const bootstrapRows773:number[][]=[],bootstrapSeen773=new Set<string>()
+ let snapshot825:Awaited<ReturnType<typeof prepareMcpSnapshot825>>|undefined
  const channel=createDesktopChannel({registry,services,maxPayload:10*1024*1024,securityConfirmations:manager,onAuthenticated:host=>{auth=true;windowRequested=channel.window(host,"workspace")}}),legacy=new WebSocketServer({noServer:true}),server=http.createServer();attachDesktopUpgrade(server,legacy,channel.wss,()=>false)
  channel.wss.on("connection",ws=>observeNativePhaseResponses(ws,nativePhases,nativeNavigation,{rows:bootstrapRows773,seen:bootstrapSeen773}))
  channel.wss.on("connection",ws=>{ws.on("message",raw=>{let f:any;try{f=JSON.parse(String(raw))}catch{return}try{if(auth){if(f?.type==="mcp.list")postAuthRequestMask|=1;else if(f?.type==="desktop.mcp.edit")postAuthRequestMask|=2;else if(f?.type==="desktop.mcp.save")postAuthRequestMask|=4}}catch{/* Passive observation cannot affect the original message path. */}if(!auth||f.type!=="system.ping"||typeof f.id!=="string"||!f.id.startsWith("D476_"))return;if(f.id.startsWith("D476_FAIL_")){failed=f.id;complete();return}receipts.add(f.id);if(f.id==="D476_NATIVE_DONE")complete()})})
  server.listen(0,"127.0.0.1");await once(server,"listening")
  try{
-  const binding=require(path.join(native,"desktop-launcher.node")) as DesktopNativeBinding,binary=path.join(native,"acceptance/mcp",process.platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop")
+  const binding=require(path.join(native,"desktop-launcher.node")) as DesktopNativeBinding;let binary=path.join(native,"acceptance/mcp",process.platform==="win32"?"cmspark-desktop.exe":"cmspark-desktop")
   assert.equal(fs.existsSync(binary),true,"Actual native test host must be built")
+  if(process.platform==='win32'){snapshot825=await prepareMcpSnapshot825(native,dir,snapshotDeadline825);binary=snapshot825.binary}
   surfaceLease.checkpoint();
   child=binding.launch(binary,boot.capabilityId,boot.secret,`ws://127.0.0.1:${(server.address() as any).port}/desktop`,n=>{settled=true;exited(n)})
   await Promise.race([done,exit.then(n=>{throw Error(`OWNED_NATIVE_MCP_EXIT_${n}`)}),new Promise<never>((_,reject)=>t.signal.addEventListener("abort",()=>reject(Error("OWNED_NATIVE_MCP_DEADLINE")),{once:true}))])
@@ -41,8 +45,8 @@ test("#476 actual native MCP form + OS-only confirmation approves update/add and
   process.stdout.write("DESKTOP_476_NATIVE "+JSON.stringify({native:true,syntheticNativeButtonActivation:true,humanApprovalClaimed:false,windows:3,approved:2,denied:1,persisted:true,rendererPrivatePayload:false})+"\n")
  }finally{
   surfaceLease.retain()
-  try{process.stdout.write("DESKTOP_476_PROGRESS "+JSON.stringify({authenticated:auth,windowRequested,postAuthRequestMask,nativePhases:nativePhaseNames.filter(name=>nativePhases.has(name)),nativeNavigation:nativeNavigation.value??null,bootstrap773:{clock:"native-first-hook-250ms",processInstanceAttributed:false,rows:bootstrapRows773.map(row=>[...row])},exited:settled,windows:[1,2,3].filter(n=>receipts.has("D476_NATIVE_WINDOW_"+n)).length,approved:receipts.has("D476_SAVE_APPROVED"),denied:receipts.has("D476_SAVE_DENIED"),done:receipts.has("D476_NATIVE_DONE")})+"\n")}catch{/* Passive diagnostics must not skip cleanup or replace the primary test failure. */}
-  manager.rejectAll("disconnect");child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true})
+  try{process.stdout.write("DESKTOP_476_PROGRESS "+JSON.stringify({authenticated:auth,windowRequested,postAuthRequestMask,nativePhases:nativePhaseNames.filter(name=>nativePhases.has(name)),nativeNavigation:nativeNavigation.value??null,bootstrap773:{clock:"native-first-hook-250ms",processInstanceAttributed:false,rows:bootstrapRows773.map(row=>[...row])},snapshot825:snapshot825?.read()??{status:'UNKNOWN'},exited:settled,windows:[1,2,3].filter(n=>receipts.has("D476_NATIVE_WINDOW_"+n)).length,approved:receipts.has("D476_SAVE_APPROVED"),denied:receipts.has("D476_SAVE_DENIED"),done:receipts.has("D476_NATIVE_DONE")})+"\n")}catch{/* Passive diagnostics must not skip cleanup or replace the primary test failure. */}
+  manager.rejectAll("disconnect");child?.terminate();if(child&&!settled)await exit;for(const ws of channel.wss.clients)ws.terminate();await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));try{snapshot825?.close()}catch{/* Diagnostic FD cleanup cannot replace the primary result. */}if(old===undefined)delete process.env.CMSPARK_DATA_DIR;else process.env.CMSPARK_DATA_DIR=old;fs.rmSync(dir,{recursive:true,force:true})
  ;surfaceLease.settled()}
 
  })

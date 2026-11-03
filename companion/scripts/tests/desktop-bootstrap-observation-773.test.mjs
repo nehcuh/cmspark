@@ -5,6 +5,7 @@ import path from 'node:path'
 import {desktopAcceptanceVariant} from '../build-desktop-windows.mjs'
 import {desktopBootstrapObservationFixture773,desktopMcpBootstrapObservationFixture773,bootstrapObservationSites773} from '../desktop-bootstrap-observation-fixture.mjs'
 import {desktopMcpFixture} from '../desktop-mcp-fixture.mjs'
+import './desktop-mcp-snapshot-825.test.mjs'
 const root=path.resolve(import.meta.dirname,'../..')
 const read=p=>fs.readFileSync(path.join(root,p),'utf8')
 test('773 actual inheritance producer source keeps every original byte and operand in LF and CRLF',()=>{
@@ -104,7 +105,8 @@ test('825 actual MCP producer reuses only WebView 773 sites and restores every s
 test('825 actual builder selects extra bootstrap observation only for the unshipped MCP family',()=>{
  const builder=read('scripts/build-desktop-windows.mjs'),selection=/const mcpObserved=([^;]+);if\(mcpObserved&&mcpObserved\.inverse!==mcpVariant\.source\)/g
  const matches=[...builder.matchAll(selection)];assert.equal(matches.length,1)
- const select=new Function('family','mcpVariant','desktopMcpBootstrapObservationFixture773','desktopConfirmationObservationFixture','return '+matches[0][1])
+ const choose=new Function('family','mcpVariant','desktopMcpBootstrapObservationFixture773','desktopConfirmationObservationFixture','fs','path','root','return '+matches[0][1])
+ const select=(family,variant,mcp,local)=>choose(family,variant,mcp,local,fs,path,root)
  const variant={source:'owned-generated-source'},mcp=value=>({kind:'mcp',inverse:value}),local=(value,kind)=>({kind,inverse:value})
  assert.deepEqual(select('mcp',variant,mcp,local),{kind:'mcp',inverse:variant.source})
  assert.deepEqual(select('local',variant,mcp,local),{kind:'LOCAL',inverse:variant.source})

@@ -174,7 +174,37 @@ export function desktopArchiveFixture(language, original, fixture, form, metadat
   return desktopInitialActivation788(language,source,base.inverse,'ARCHIVE')
 }
 
-// Windows acceptance-only first-input readiness. Does not activate/focus or grant authority.
+// Windows test-only initial caption selection; the original foreground gate still applies.
+// Build-only initial OS selection. This explicitly changes fixture setup; it
+// neither confirms a tool nor promises an atomic HWND-targeted input batch.
+export function desktopOwnedCaptionSetup826(eol='\n'){
+ return `static bool d476_owned_caption826(HWND window){
+ const auto previous826=SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+ if(!previous826)return false;
+ const bool inserted826=[&]()->bool{
+  DWORD pid826=0,hitPid826=0;
+  if(!window||!IsWindow(window)||!IsWindowVisible(window)||IsIconic(window)||!IsWindowEnabled(window)||!GetWindowThreadProcessId(window,&pid826)||pid826!=GetCurrentProcessId())return false;
+  RECT rect826{};POINT client826{};
+  if(!GetWindowRect(window,&rect826)||!ClientToScreen(window,&client826)||rect826.right<=rect826.left||rect826.bottom<=rect826.top||client826.y<=rect826.top||client826.y>=rect826.bottom)return false;
+  const int64_t x826=((int64_t)rect826.left+rect826.right)/2,y826=((int64_t)rect826.top+client826.y)/2;
+  if(x826< -32768||x826>32767||y826< -32768||y826>32767)return false;
+  POINT point826{(LONG)x826,(LONG)y826};
+  const int left826=GetSystemMetrics(SM_XVIRTUALSCREEN),top826=GetSystemMetrics(SM_YVIRTUALSCREEN),width826=GetSystemMetrics(SM_CXVIRTUALSCREEN),height826=GetSystemMetrics(SM_CYVIRTUALSCREEN);
+  if(width826<=1||height826<=1||x826<left826||y826<top826||x826>=(int64_t)left826+width826||y826>=(int64_t)top826+height826)return false;
+  if(SendMessageW(window,WM_NCHITTEST,0,MAKELPARAM((short)x826,(short)y826))!=HTCAPTION)return false;
+  const HWND hit826=WindowFromPoint(point826);
+  if(!hit826||GetAncestor(hit826,GA_ROOT)!=window||!GetWindowThreadProcessId(hit826,&hitPid826)||hitPid826!=pid826)return false;
+  INPUT batch826[3]{};
+  batch826[0].type=INPUT_MOUSE;batch826[0].mi.dx=(LONG)(((x826-left826)*65535+(width826-1)/2)/(width826-1));batch826[0].mi.dy=(LONG)(((y826-top826)*65535+(height826-1)/2)/(height826-1));
+  batch826[0].mi.dwFlags=MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK;
+  batch826[1].type=INPUT_MOUSE;batch826[1].mi.dwFlags=MOUSEEVENTF_LEFTDOWN;batch826[2].type=INPUT_MOUSE;batch826[2].mi.dwFlags=MOUSEEVENTF_LEFTUP;
+  return SendInput(3,batch826,sizeof(INPUT))==3;
+ }();
+ const bool restored826=SetThreadDpiAwarenessContext(previous826)!=nullptr;
+ return inserted826&&restored826;
+}
+`.replace(/\n/g,eol)
+}
 function desktopInitialActivation788(language,source,inverse,kind){
  if(language!=='cpp')return{source,inverse}
  if(kind!=='LOCAL'&&kind!=='ARCHIVE')throw Error('DESKTOP_INITIAL_ACTIVATION_KIND')
@@ -188,12 +218,12 @@ function desktopInitialActivation788(language,source,inverse,kind){
  const eol=windows[0][1],lines=value=>value.replace(/\n/g,eol)
  const declaration=lines(`struct ${cls} {
  static Desktop* owner;static HWND window;static std::wstring document;static unsigned long epoch;
- static ComPtr<ICoreWebView2> web;static ComPtr<ICoreWebView2Controller> controller;static bool started,failed;
+ static ComPtr<ICoreWebView2> web;static ComPtr<ICoreWebView2Controller> controller;static bool started,failed,selectionAttempted826,selectionComplete826;
  static void documentReady(Desktop&);static void begin(Desktop&);static void fail(Desktop&,unsigned) noexcept;
 };
 `)
  const implementation=lines(`Desktop* ${cls}::owner=nullptr;HWND ${cls}::window=nullptr;std::wstring ${cls}::document;unsigned long ${cls}::epoch=0;
-ComPtr<ICoreWebView2> ${cls}::web;ComPtr<ICoreWebView2Controller> ${cls}::controller;bool ${cls}::started=false,${cls}::failed=false;
+ComPtr<ICoreWebView2> ${cls}::web;ComPtr<ICoreWebView2Controller> ${cls}::controller;bool ${cls}::started=false,${cls}::failed=false,${cls}::selectionAttempted826=false,${cls}::selectionComplete826=false;
 void ${cls}::fail(Desktop& h,unsigned reason) noexcept {if(failed)return;failed=true;try{${failure}}catch(...){}}
 void ${cls}::documentReady(Desktop& h){
  if(owner||failed){fail(h,1);return;}
@@ -202,13 +232,16 @@ void ${cls}::documentReady(Desktop& h){
 void ${cls}::begin(Desktop& h){
  if(!owner||owner!=&h||started||failed)return;
  if(h.closing||!h.ready||h.generation.empty()||h.generation!=document||h.epoch!=epoch||h.window!=window||!window||!IsWindow(window)||GetWindowLongPtrW(window,GWLP_USERDATA)!=(LONG_PTR)owner||!h.web||h.web.Get()!=web.Get()||!h.controller||h.controller.Get()!=controller.Get()){fail(h,2);return;}
+ if(!IsWindowVisible(window))return;
+ if(!selectionComplete826){if(selectionAttempted826)return;selectionAttempted826=true;if(!d476_owned_caption826(window)){fail(h,2);return;}selectionComplete826=true;}
+ if(h.closing||!h.ready||h.generation!=document||h.epoch!=epoch||h.window!=window||!IsWindow(window)||GetWindowLongPtrW(window,GWLP_USERDATA)!=(LONG_PTR)owner||!h.web||h.web.Get()!=web.Get()||!h.controller||h.controller.Get()!=controller.Get()){fail(h,2);return;}
  if(!IsWindowVisible(window)||GetForegroundWindow()!=window)return;
  started=true;
  ${start}
 }
 `)
  const proc=windows[0][0],active=`return 0;}if(message==WM_ACTIVATE){const auto result=DefWindowProcW(hwnd,message,w,l);if(LOWORD(w)!=WA_INACTIVE)${cls}::begin(*self);return result;}return DefWindowProcW(hwnd,message,w,l);${eol} }`
- const pairs=[['class Desktop {',declaration+`class Desktop {${eol} friend struct ${cls};`],[call,`${cls}::documentReady(*this);`],[proc,active],[suffix,implementation+suffix]]
+ const pairs=[['class Desktop {',desktopOwnedCaptionSetup826(eol)+declaration+`class Desktop {${eol} friend struct ${cls};`],[call,`${cls}::documentReady(*this);`],[proc,active],[suffix,implementation+suffix]]
  let value=source
  for(const[before,after]of pairs){if(value.split(before).length!==2)throw Error('DESKTOP_INITIAL_ACTIVATION_ANCHOR');value=value.replace(before,after)}
  let restored=value

@@ -1,10 +1,12 @@
 // Owned two-column chat UI. All names, messages and image pixels are inert fixtures.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
@@ -22,11 +24,105 @@ static class ActivityScope825Fixture {
   static Window ReceiptWindow;
   static string PendingReceipt;
   static Action CheckCurrentReceipt;
+  static Window InitialWindow;
+  static int MainThread;
+  static bool InitialReady;
+  static readonly HashSet<string> Observed = new HashSet<string>();
+  // Test-only positive history, attempted once per fixed point. Never readiness.
+  static void Observe(string phase) {
+    try {
+      if (!Observed.Add(phase)) return;
+      RecordObservation(phase, new { phase = phase, sameSta = Thread.CurrentThread.ManagedThreadId == MainThread });
+    } catch { }
+  }
+  static void RecordObservation(string phase, object value) {
+    string file = Path.Combine(Root, "scope-initial-" + phase + ".json"), pending = file + ".pending";
+    using (var stream = new FileStream(pending, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+    using (var writer = new StreamWriter(stream, Encoding)) writer.Write(Json.Serialize(value));
+    File.Move(pending, file);
+  }
+  static bool ReadyResult(Window window, bool result, string reason) {
+    if (window == InitialWindow && !InitialReady) Observe(reason);
+    return result;
+  }
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-  static bool IsReady(Window window, TextBox focus, bool rendered) {
-    if (!rendered || Current != window || ReceiptWindow != window || PendingReceipt == null) return false;
+  [StructLayout(LayoutKind.Sequential)] struct NativePoint { public int X, Y; }
+  [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
+  [StructLayout(LayoutKind.Sequential)] struct MouseInput { public int X, Y; public uint Data, Flags, Time; public IntPtr ExtraInfo; }
+  // INPUT's largest union member is MOUSEINPUT; native alignment adds the x64 padding.
+  [StructLayout(LayoutKind.Sequential)] struct Input { public uint Type; public MouseInput Mouse; }
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hwnd, out NativeRect rect);
+  [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr hwnd, ref NativePoint point);
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(NativePoint point);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+  [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint count, Input[] inputs, int size);
+  static bool Finite(double value) { return !Double.IsNaN(value) && !Double.IsInfinity(value); }
+  static string SetupInputReason(string message) {
+    switch (message) {
+      case "OWNED_SCOPE825_INPUT_PRECONDITION": return "PRECONDITION";
+      case "OWNED_SCOPE825_INPUT_WINDOW": return "WINDOW";
+      case "OWNED_SCOPE825_INPUT_LAYOUT": return "LAYOUT";
+      case "OWNED_SCOPE825_INPUT_POINT": return "POINT";
+      case "OWNED_SCOPE825_INPUT_INTERIOR": return "INTERIOR";
+      case "OWNED_SCOPE825_INPUT_TEXTBOX": return "TEXTBOX";
+      case "OWNED_SCOPE825_INPUT_CLIENT": return "CLIENT";
+      case "OWNED_SCOPE825_INPUT_SCREEN": return "SCREEN";
+      case "OWNED_SCOPE825_INPUT_ABI": return "ABI";
+      case "OWNED_SCOPE825_INPUT_HIT": return "HIT";
+      case "OWNED_SCOPE825_INPUT_OWNER": return "OWNER";
+      case "OWNED_SCOPE825_INPUT_SHORT": return "SHORT";
+      default: return "UNKNOWN";
+    }
+  }
+  // Test setup models the user's selecting this inert chat. Capture stays passive.
+  // Hit-test and SendInput are separate calls, not an atomic HWND-targeted input.
+  static void SetupOwnedClick(Window window, TextBox focus, bool rendered) {
+    if (!rendered || Current != window || ReceiptWindow != window || PendingReceipt == null ||
+        !window.IsVisible || !window.IsEnabled || window.WindowState == WindowState.Minimized ||
+        !focus.IsVisible || !focus.IsEnabled || !focus.IsMeasureValid || !focus.IsArrangeValid) throw new Exception("OWNED_SCOPE825_INPUT_PRECONDITION");
     var hwnd = new WindowInteropHelper(window).Handle;
-    return hwnd != IntPtr.Zero && GetForegroundWindow() == hwnd && focus.IsKeyboardFocused;
+    var presentation = PresentationSource.FromVisual(focus) as HwndSource;
+    if (hwnd == IntPtr.Zero || !IsWindowVisible(hwnd) || presentation == null || presentation.Handle != hwnd) throw new Exception("OWNED_SCOPE825_INPUT_WINDOW");
+    double width = focus.ActualWidth, height = focus.ActualHeight;
+    if (!Finite(width) || !Finite(height) || width <= 0 || height <= 0) throw new Exception("OWNED_SCOPE825_INPUT_LAYOUT");
+    var center = new Point(width / 2, height / 2);
+    Point screen = focus.PointToScreen(center);
+    if (!Finite(screen.X) || !Finite(screen.Y) || screen.X < Int32.MinValue || screen.X > Int32.MaxValue || screen.Y < Int32.MinValue || screen.Y > Int32.MaxValue) throw new Exception("OWNED_SCOPE825_INPUT_POINT");
+    var point = new NativePoint { X = (int)Math.Floor(screen.X), Y = (int)Math.Floor(screen.Y) };
+    Point local = focus.PointFromScreen(new Point(point.X, point.Y));
+    if (!Finite(local.X) || !Finite(local.Y) || local.X < 0 || local.X >= width || local.Y < 0 || local.Y >= height) throw new Exception("OWNED_SCOPE825_INPUT_INTERIOR");
+    var hitElement = window.InputHitTest(window.PointFromScreen(new Point(point.X, point.Y))) as DependencyObject;
+    if (hitElement == null || (hitElement != focus && !focus.IsAncestorOf(hitElement))) throw new Exception("OWNED_SCOPE825_INPUT_TEXTBOX");
+    NativeRect client; var clientPoint = point;
+    if (!GetClientRect(hwnd, out client) || !ScreenToClient(hwnd, ref clientPoint) || clientPoint.X < client.Left || clientPoint.X >= client.Right || clientPoint.Y < client.Top || clientPoint.Y >= client.Bottom) throw new Exception("OWNED_SCOPE825_INPUT_CLIENT");
+    int left = GetSystemMetrics(76), top = GetSystemMetrics(77), virtualWidth = GetSystemMetrics(78), virtualHeight = GetSystemMetrics(79);
+    if (virtualWidth <= 1 || virtualHeight <= 1 || point.X < left || point.Y < top || (long)point.X >= (long)left + virtualWidth || (long)point.Y >= (long)top + virtualHeight) throw new Exception("OWNED_SCOPE825_INPUT_SCREEN");
+    int inputSize = Marshal.SizeOf(typeof(Input));
+    if (inputSize != (IntPtr.Size == 8 ? 40 : 28)) throw new Exception("OWNED_SCOPE825_INPUT_ABI");
+    var hit = WindowFromPoint(point);
+    if (hit == IntPtr.Zero || GetAncestor(hit, 2) != hwnd) throw new Exception("OWNED_SCOPE825_INPUT_HIT");
+    uint pid;
+    if (GetWindowThreadProcessId(hwnd, out pid) == 0 || pid != (uint)Process.GetCurrentProcess().Id) throw new Exception("OWNED_SCOPE825_INPUT_OWNER");
+    var batch = new Input[3];
+    batch[0].Mouse.X = (int)Math.Round(((double)point.X - left) * 65535 / (virtualWidth - 1));
+    batch[0].Mouse.Y = (int)Math.Round(((double)point.Y - top) * 65535 / (virtualHeight - 1));
+    batch[0].Mouse.Flags = 0x0001 | 0x8000 | 0x4000; // MOVE | ABSOLUTE | VIRTUALDESK
+    batch[1].Mouse.Flags = 0x0002; batch[2].Mouse.Flags = 0x0004;
+    if (SendInput(3, batch, inputSize) != 3) throw new Exception("OWNED_SCOPE825_INPUT_SHORT");
+  }
+  static bool IsReady(Window window, TextBox focus, bool rendered) {
+    if (!rendered) return ReadyResult(window, false, "NOT_RENDERED");
+    if (Current != window) return ReadyResult(window, false, "NOT_CURRENT");
+    if (ReceiptWindow != window) return ReadyResult(window, false, "NOT_RECEIPT_WINDOW");
+    if (PendingReceipt == null) return ReadyResult(window, false, "NO_PENDING");
+    var hwnd = new WindowInteropHelper(window).Handle;
+    if (hwnd == IntPtr.Zero) return ReadyResult(window, false, "NO_HWND");
+    if (GetForegroundWindow() != hwnd) return ReadyResult(window, false, "NOT_FOREGROUND");
+    if (!focus.IsKeyboardFocused) return ReadyResult(window, false, "NO_KEYBOARD_FOCUS");
+    return ReadyResult(window, true, "QUALIFIED");
   }
   static void Write(string name, object data) {
     string file = Path.Combine(Root, name), pending = file + ".pending";
@@ -64,28 +160,47 @@ static class ActivityScope825Fixture {
     var image = EmbeddedImage(); Grid.SetRow(image, 2); content.Children.Add(image);
     layout.Children.Add(content); window.Content = layout;
     Current = window; ContentRegion = content; TitleRegion = title;
+    if (!popup) InitialWindow = window;
     ReceiptWindow = window; PendingReceipt = popup ? "ack.json" : "ready.json";
-    bool rendered = false, requested = false;
+    bool rendered = false, requested = false, setupComplete = false;
     Action check = delegate {
+      if (!setupComplete) return;
       if (!IsReady(window, focus, rendered)) return;
       string name = PendingReceipt; PendingReceipt = null;
       Write(name, Snapshot());
+      if (window == InitialWindow && name == "ready.json") { Observe("READY_WRITTEN"); InitialReady = true; }
     };
     CheckCurrentReceipt = check;
     window.ContentRendered += delegate {
+      if (window == InitialWindow) Observe("CONTENT_RENDERED");
       if (Current != window) return;
       rendered = true;
-      if (!requested) { requested = true; window.Activate(); focus.Focus(); }
+      if (!requested) {
+        requested = true;
+        try {
+          SetupOwnedClick(window, focus, rendered); setupComplete = true;
+          if (window == InitialWindow) Observe("INPUT_COMPLETE");
+        } catch (Exception error) {
+          if (window == InitialWindow) Observe("INPUT_REFUSED");
+          try { Write("failure.json", new { type = "OWNED_SCOPE825_INPUT_SETUP_FAILED", reason = SetupInputReason(error.Message) }); } catch { }
+          Application.Current.Shutdown(2); return;
+        }
+      }
       check();
     };
-    // Recheck after WPF processes activation/focus; never request them again.
+    // Recheck real activation/focus after the one setup click; never send again.
     window.Activated += delegate { window.Dispatcher.BeginInvoke(DispatcherPriority.Input, check); };
     focus.GotKeyboardFocus += delegate { window.Dispatcher.BeginInvoke(DispatcherPriority.Input, check); };
+    if (!popup) {
+      window.SourceInitialized += delegate { Observe("SOURCE_INITIALIZED"); };
+      window.Loaded += delegate { Observe("LOADED"); };
+    }
     return window;
   }
   [STAThread] static int Main(string[] args) {
     if (args.Length != 1) return 1;
-    Root = args[0]; var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+    Root = args[0]; MainThread = Thread.CurrentThread.ManagedThreadId;
+    var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
     try {
       var window = Build(false);
       var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
@@ -100,7 +215,7 @@ static class ActivityScope825Fixture {
           else throw new Exception("OWNED_UNKNOWN_CONTROL");
         } catch (Exception error) { try { Write("failure.json", new { type = error.GetType().Name, hresult = error.HResult }); } catch { } app.Shutdown(2); }
       };
-      timer.Start(); window.Show(); app.Run(); return 0;
+      timer.Start(); window.Show(); Observe("RUN_ENTER"); app.Run(); Observe("RUN_RETURN"); return 0;
     } catch (Exception error) { try { Write("failure.json", new { type = error.GetType().Name, hresult = error.HResult }); } catch { } return 3; }
   }
 }

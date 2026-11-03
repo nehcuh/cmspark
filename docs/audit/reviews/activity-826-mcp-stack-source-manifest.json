@@ -1,0 +1,61 @@
+{
+  "base": "c5776f1d54a7d4b920e6c5bfde45691496b947f8",
+  "code": [
+    {
+      "path": ".github/workflows/release.yml",
+      "before": "484078da169a63dfbe5d4fe174568d597dfc48f38d57d05a1e86a67265244480",
+      "after": "283b6c543bf8229ff9f7d125a9836b383a00eb305f65040379bbc9ced1a3a989"
+    },
+    {
+      "path": "scripts/tests/node-security-runtime-759.test.mjs",
+      "before": "468818a29eacbfabcabe4c90230d2697144eefe6fb8c5e1c5b7b9430cf438fd1",
+      "after": "22f9effe08620076c3a1893d0ffea0978e8f964bdd037d9616f636861a49b003"
+    },
+    {
+      "path": "companion/scripts/mcp-stack-probe-826.mjs",
+      "before": null,
+      "after": "e6bd36fd7fd0ce9d90a477f063e0130e36a99e48030684067bfcd07b8ab4618b"
+    },
+    {
+      "path": "companion/scripts/mcp-stack-capture-826.cjs",
+      "before": null,
+      "after": "f2c4508aadb57d08ba8cffab31cafac6e90d382e2f37a9b22587fca241fbaa9d"
+    },
+    {
+      "path": "companion/scripts/tests/mcp-stack-probe-826.test.mjs",
+      "before": null,
+      "after": "88885bdeba0433022aebe0bbeecd4fa701ccadd5cf4fb8f403af2586daa842c6"
+    },
+    {
+      "path": "companion/scripts/tests/mcp-stack-capture-826.test.cjs",
+      "before": null,
+      "after": "a0a214091b1eeb118c47f0ed4942282a77044c003a79bbed347f6c01bd7df481"
+    }
+  ],
+  "unchanged": [
+    {
+      "path": "companion/tests/desktop-native-mcp-476.test.ts",
+      "sha256": "113c2a7302f2a00af52fdc3299f33bccc1409201f95ba60c08333eb8c2c6bbd8"
+    },
+    {
+      "path": "companion/tests/helpers/mcp-snapshot-825.ts",
+      "sha256": "5af69bdfd2cecd7a2fb10317426c83f021b84e05de99140e7e38be91e0661589"
+    },
+    {
+      "path": "companion/tests/fixtures/native-surface-650.ts",
+      "sha256": "15b13cd023e6b95f53327bc6d18d89c1d72704177cb825d61dd2f6a42e11aee7"
+    },
+    {
+      "path": "companion/src/desktop/native/launcher.c",
+      "sha256": "f50de0950317878dd631e49886420c75f97cb77723f775cb56c6fa1ffca2b253"
+    },
+    {
+      "path": "companion/src/desktop/native/DesktopHost.cpp",
+      "sha256": "3a87d3c0f585b1db2bbb37408b27e46e61a205cf2f16e65769cc4ca388c2712c"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "5a45af1d4e302d8304ec065c23116bb73f9ab4fa6adeff0468d4c33dfdfcf0ad"
+    }
+  ]
+}

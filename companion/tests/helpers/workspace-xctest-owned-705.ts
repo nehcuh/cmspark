@@ -74,7 +74,8 @@ function xcode705Snapshot(scene:OwnedUI705Boundary,name:'xcode.stdout'|'xcode.st
 }
 // Two post-close, read-only test-result queries share 5s/1MiB per stream each.
 // This is not awaited by the case, cleanup, lease, complete(), or canSettle().
-type Result705Projection={schema:1;status:'UNKNOWN'|'OBSERVED';reason:'NOT_CLOSED'|'BUNDLE_UNAVAILABLE'|'SOURCE_UNAVAILABLE'|'TOOL_FAILURE'|'LIMIT'|'INVALID_RESULT'|'OBSERVED';testCaseID:1;testPresent:boolean|null;testResult:'Passed'|'Failed'|'Skipped'|'Expected Failure'|'unknown'|'UNKNOWN';failureNodeCount:number|null;sourceCoordinates:{sourceID:1|2;startingLineRaw:number;startingColumnRaw:number|null;coordinateBase:'UNKNOWN'}[];coordinatesMore:boolean;activities:'SCHEMA_NOT_ADMITTED';nativePassClaim:false}
+/*OBS826_BEGIN*/type QueryFacts826=[1|2,boolean,number,0|1|2|3,boolean,boolean,number,number,boolean]
+/*OBS826_END*/type Result705Projection={schema:1;status:'UNKNOWN'|'OBSERVED';reason:'NOT_CLOSED'|'BUNDLE_UNAVAILABLE'|'SOURCE_UNAVAILABLE'|'TOOL_FAILURE'|'LIMIT'|'INVALID_RESULT'|'OBSERVED';testCaseID:1;testPresent:boolean|null;testResult:'Passed'|'Failed'|'Skipped'|'Expected Failure'|'unknown'|'UNKNOWN';failureNodeCount:number|null;sourceCoordinates:{sourceID:1|2;startingLineRaw:number;startingColumnRaw:number|null;coordinateBase:'UNKNOWN'}[];coordinatesMore:boolean;activities:'SCHEMA_NOT_ADMITTED';nativePassClaim:false}
 const result705Unknown=(reason:Result705Projection['reason']):Result705Projection=>({schema:1,status:'UNKNOWN',reason,testCaseID:1,testPresent:null,testResult:'UNKNOWN',failureNodeCount:null,sourceCoordinates:[],coordinatesMore:false,activities:'SCHEMA_NOT_ADMITTED',nativePassClaim:false})
 const RESULT705_IDS=new Set(['WorkspacePicker705/testOwnedPanel','WorkspacePicker705/testOwnedPanel()','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel()'])
 const RESULT705_TYPES=new Set(['Test Plan','Unit test bundle','UI test bundle','Test Suite','Test Case','Device','Test Plan Configuration','Arguments','Repetition','Test Case Run','Failure Message','Source Code Reference','Attachment','Expression','Test Value','Runtime Warning'])
@@ -131,9 +132,15 @@ function result705Project(data:Buffer,sourceRoot:string,identifier:string):Resul
  const rows=[...coordinates.values()].sort((a,b)=>a.sourceID-b.sourceID||a.startingLineRaw-b.startingLineRaw||(a.startingColumnRaw??-1)-(b.startingColumnRaw??-1))
  return{schema:1,status:'OBSERVED',reason:'OBSERVED',testCaseID:1,testPresent:true,testResult:value.testResult,failureNodeCount:failures,sourceCoordinates:rows.slice(0,4),coordinatesMore:rows.length>4,activities:'SCHEMA_NOT_ADMITTED',nativePassClaim:false}
 }
-function result705AfterActualClose(scene:OwnedUI705Boundary,sourceRoot:string,emit:(value:Result705Projection)=>void){
- const CAP=1048576,expires=performance.now()+5000;let sent=false,limited=false,current:ChildProcess|undefined,timer:ReturnType<typeof setTimeout>|undefined
- const send=(v:Result705Projection)=>{if(sent)return;sent=true;if(timer)clearTimeout(timer);try{if(v.status==='OBSERVED'&&performance.now()>=expires)v=result705Unknown('LIMIT');emit(Buffer.byteLength(JSON.stringify(v),'utf8')<=1024?v:result705Unknown('LIMIT'))}catch{}}
+function result705AfterActualClose(scene:OwnedUI705Boundary,sourceRoot:string,emit:(value:Result705Projection/*OBS826_BEGIN*/,tool826?:QueryFacts826[]/*OBS826_END*/)=>void){
+ /*OBS826_BEGIN*/const facts826:QueryFacts826[]=[]
+ const record826=(stage:1|2,bad:boolean,code:number|null,signal:NodeJS.Signals|null,outEOF:boolean,errEOF:boolean,outBytes:number,errBytes:number,overflow:boolean)=>{try{
+  if(facts826.some(row=>row[0]===stage))return
+  const count=(n:number)=>Number.isSafeInteger(n)&&n>=0?Math.min(1048577,n):1048577
+  facts826.push([stage,bad,typeof code==='number'&&Number.isInteger(code)&&code>=0&&code<=255?code:-1,signal===null?0:signal==='SIGTERM'?1:signal==='SIGKILL'?2:3,outEOF,errEOF,count(outBytes),count(errBytes),overflow])
+ }catch{}}
+ /*OBS826_END*/const CAP=1048576,expires=performance.now()+5000;let sent=false,limited=false,current:ChildProcess|undefined,timer:ReturnType<typeof setTimeout>|undefined
+ const send=(v:Result705Projection)=>{if(sent)return;sent=true;if(timer)clearTimeout(timer);try{if(v.status==='OBSERVED'&&performance.now()>=expires)v=result705Unknown('LIMIT');emit(Buffer.byteLength(JSON.stringify(v),'utf8')<=1024?v:result705Unknown('LIMIT')/*OBS826_BEGIN*/,facts826.map(row=>[...row] as QueryFacts826)/*OBS826_END*/)}catch{}}
  let bundleStat:fs.Stats
  const bundle=path.join(scene.root,'Result.xcresult')
  const sameBundle=()=>{scene.check();const s=fs.lstatSync(bundle);return s.isDirectory()&&!s.isSymbolicLink()&&s.uid===process.getuid!()&&s.dev===bundleStat.dev&&s.ino===bundleStat.ino&&fs.realpathSync(bundle)===bundle}
@@ -142,7 +149,8 @@ function result705AfterActualClose(scene:OwnedUI705Boundary,sourceRoot:string,em
  try{sourcesCurrent()}catch{send(result705Unknown('SOURCE_UNAVAILABLE'));return}
  // Two distinct APIs, lookup then details, share this ONE deadline. No alias retry.
  timer=setTimeout(()=>{limited=true;try{if(current)current.kill('SIGKILL');else send(result705Unknown('LIMIT'))}catch{}},Math.max(0,expires-performance.now()))
- const capture=(args:string[],consume:(data:Buffer)=>void)=>{
+ const capture=(args:string[],consume:(data:Buffer)=>void)=>{/*OBS826_BEGIN*/
+  const stage826:1|2=args[0]==='tests'?1:2/*OBS826_END*/
   if(sent)return
   if(limited||performance.now()>=expires){send(result705Unknown('LIMIT'));return}
   let child:ChildProcess|undefined,spawnError=false,outEOF=false,errEOF=false,outBytes=0,errBytes=0
@@ -155,15 +163,16 @@ function result705AfterActualClose(scene:OwnedUI705Boundary,sourceRoot:string,em
    child.stdout!.on('end',()=>{outEOF=true});child.stderr!.on('end',()=>{errEOF=true})
    child.stdout!.on('error',()=>{spawnError=true});child.stderr!.on('error',()=>{spawnError=true})
    // Continuously drain refusal/flood; do not destroy a pipe to manufacture close.
-   child.once('close',(code,signal)=>{
+   child.once('close',(code,signal)=>{/*OBS826_BEGIN*/
+    record826(stage826,spawnError,code,signal,outEOF,errEOF,outBytes,errBytes,limited)/*OBS826_END*/
     if(current===child)current=undefined
     if(limited||performance.now()>=expires){chunks.length=0;send(result705Unknown('LIMIT'));return}
     if(spawnError||code!==0||signal!==null||!outEOF||!errEOF||errBytes!==0){chunks.length=0;send(result705Unknown('TOOL_FAILURE'));return}
     try{if(!sameBundle()){send(result705Unknown('BUNDLE_UNAVAILABLE'));return};sourcesCurrent();const data=Buffer.concat(chunks);chunks.length=0;consume(data)}catch{send(result705Unknown('INVALID_RESULT'))}finally{chunks.length=0}
    })
   }catch{
-   if(child){current=child;child.stdout?.resume();child.stderr?.resume();child.once('close',()=>{if(current===child)current=undefined;send(result705Unknown('TOOL_FAILURE'))});try{child.kill('SIGKILL')}catch{}}
-   else send(result705Unknown('TOOL_FAILURE'))
+   if(child){current=child;child.stdout?.resume();child.stderr?.resume();child.once('close',()=>{/*OBS826_BEGIN*/record826(stage826,true,child!.exitCode,child!.signalCode,outEOF,errEOF,outBytes,errBytes,limited);/*OBS826_END*/if(current===child)current=undefined;send(result705Unknown('TOOL_FAILURE'))});try{child.kill('SIGKILL')}catch{}}
+   else /*OBS826_BEGIN*/record826(stage826,true,null,null,outEOF,errEOF,outBytes,errBytes,limited),/*OBS826_END*/send(result705Unknown('TOOL_FAILURE'))
   }
  }
  capture(['tests','--schema-version','0.1.0','--path',bundle,'--compact'],data=>{
@@ -293,7 +302,24 @@ export class OwnedWorkspaceUI705 {
   this.close476[kind]={bucket:Math.min(240,Math.floor(elapsed/250)),exit}
  }
  closeObservation476(){return{schema:1,observer:this.close476.observer,xcode:this.close476.xcode}}
-/*OBS476_CLOSE_END*/ private xcodeResultObservationStarted=false
+/*OBS476_CLOSE_END*/ /*OBS826_BEGIN*/private timing826:Array<[number,number,boolean,0|1|2|3|4]|null>=Array(9).fill(null)
+ private seen826:boolean[]=Array(9).fill(false)
+ private cancelled826=false
+ private query826:QueryFacts826[]=[]
+ private note826(site:number,code:number|null= null,signal:NodeJS.Signals|null=null){try{
+  if(!Number.isInteger(site)||site<1||site>9||this.seen826[site-1])return
+  this.seen826[site-1]=true
+  if(site===6)this.cancelled826=true
+  const elapsed=performance.now()-this.closeClock476;if(!Number.isFinite(elapsed)||elapsed<0)return
+  const exit:0|1|2|3|4=signal!==null?3:code===null?0:code===0?1:Number.isInteger(code)&&code>0&&code<=255?2:4
+  this.timing826[site-1]=[site,Math.min(240,Math.floor(elapsed/250)),this.cancelled826,exit]
+ }catch{}}
+ observeNativeExit826(code:number){try{this.note826(4,code)}catch{}}
+ observeCompleteRejection826(){try{this.note826(5)}catch{}}
+ observeRootRemoval826(){try{this.note826(9)}catch{}}
+ timeline826(){return{schema:1,points:this.timing826.filter((row):row is NonNullable<typeof row>=>row!==null).map(row=>[...row])}}
+ toolFacts826(){return this.query826.map(row=>[...row] as QueryFacts826)}
+ /*OBS826_END*/private xcodeResultObservationStarted=false
  private readonly resultSourceRoot:string
  private xcodeCloseObservationRegistered=false
 /*OBS788_JOIN_BEGIN*/ private observerCloseObservationRegistered=false
@@ -303,16 +329,17 @@ export class OwnedWorkspaceUI705 {
   if(process.platform!=='darwin'||!Number.isSafeInteger(deadline)||deadline<=Date.now()||deadline>Date.now()+45000)throw refused()
   const nonce=randomBytes(32).toString('hex'),root=path.join(parent,'cmspark-workspace-ui-705-'+nonce);copyManifest(path.join(native,'acceptance/workspace-ui'),root);this.scene=new OwnedUI705Boundary(root,nonce);this.appExecutable=path.join(root,'OwnedPicker705.app/Contents/MacOS/cmspark-desktop');this.scene.write('input.json',{schema:1,nonce,deadline_ms:deadline})
   this.watcher=fs.watch(root,()=>this.notify());this.watcher.on('error',()=>{this.invalid=true;this.notify()})
-  signal.addEventListener('abort',()=>this.cancel(),{once:true})
+  signal.addEventListener('abort',()=>this.cancel(),{once:true})/*OBS826_BEGIN*/
+  try{this.note826(1)}catch{}/*OBS826_END*/
  }
  private notify(){for(const fn of this.changed)fn()}
  start(){if(this.begun||this.signal.aborted)throw refused();this.begun=true;this.scene.check();const env={PATH:'/usr/bin:/bin:/usr/sbin:/sbin',HOME:path.join(this.scene.root,'home'),TMPDIR:this.scene.root,LANG:'en_US.UTF-8',TEST_RUNNER_CMSPARK_UI_SCENE:this.scene.root};fs.mkdirSync(env.HOME,{mode:0o700})
-  const spawnOwned=(binary:string,args:string[],kind:'observer'|'xcode')=>{const out=fs.openSync(path.join(this.scene.root,kind+'.stdout'),'wx',0o600),err=fs.openSync(path.join(this.scene.root,kind+'.stderr'),'wx',0o600);try{const child=spawn(binary,args,{cwd:this.scene.root,env,stdio:['ignore',out,err]});child.on('error',()=>{this.invalid=true;this.notify()});child.on('close',/*OBS476_CLOSE_VALUE_BEGIN*/(code,signal)/*OBS476_CLOSE_VALUE_END*/=>{if(kind==='observer'){this.observerClosed=true;this.observerCode=code}else{this.xcodeClosed=true;this.xcodeCode=code};/*OBS476_CLOSE_BEGIN*/try{this.noteClose476(kind,code,signal)}catch{};/*OBS476_CLOSE_END*/this.notify()});return child}finally{fs.closeSync(out);fs.closeSync(err)}}
+  const spawnOwned=(binary:string,args:string[],kind:'observer'|'xcode')=>{const out=fs.openSync(path.join(this.scene.root,kind+'.stdout'),'wx',0o600),err=fs.openSync(path.join(this.scene.root,kind+'.stderr'),'wx',0o600);try{const child=spawn(binary,args,{cwd:this.scene.root,env,stdio:['ignore',out,err]});child.on('error',()=>{this.invalid=true;this.notify()});/*OBS826_BEGIN*/if(kind==='xcode')child.on('exit',(code,signal)=>{try{this.note826(7,code,signal)}catch{}});/*OBS826_END*/child.on('close',/*OBS476_CLOSE_VALUE_BEGIN*/(code,signal)/*OBS476_CLOSE_VALUE_END*/=>{if(kind==='observer'){this.observerClosed=true;this.observerCode=code}else{this.xcodeClosed=true;this.xcodeCode=code};/*OBS476_CLOSE_BEGIN*/try{this.noteClose476(kind,code,signal)}catch{};/*OBS826_BEGIN*/if(kind==='xcode')try{this.note826(8,code,signal)}catch{};/*OBS826_END*//*OBS476_CLOSE_END*/this.notify()});return child}finally{fs.closeSync(out);fs.closeSync(err)}}
   this.observer=spawnOwned(path.join(this.scene.root,'owner-observer'),[this.scene.root],'observer')
-  this.xcode=spawnOwned('/usr/bin/xcodebuild',['test-without-building','-xctestrun',path.join(this.scene.root,'Products/OwnedPickerUI.xctestrun'),'-destination','platform=macOS','-parallel-testing-enabled','NO','-maximum-parallel-testing-workers','1','-only-testing:OwnedPickerUITests/WorkspacePicker705/testOwnedPanel','-resultBundlePath',path.join(this.scene.root,'Result.xcresult')],'xcode')
+  /*OBS826_BEGIN*/try{this.note826(2)}catch{};/*OBS826_END*/this.xcode=spawnOwned('/usr/bin/xcodebuild',['test-without-building','-xctestrun',path.join(this.scene.root,'Products/OwnedPickerUI.xctestrun'),'-destination','platform=macOS','-parallel-testing-enabled','NO','-maximum-parallel-testing-workers','1','-only-testing:OwnedPickerUITests/WorkspacePicker705/testOwnedPanel','-resultBundlePath',path.join(this.scene.root,'Result.xcresult')],'xcode')/*OBS826_BEGIN*/;try{this.note826(3)}catch{}/*OBS826_END*/
  }
  ready(number:1|2){this.scene.write(number===1?'picker-first.json':'picker-second.json',{schema:1,nonce:this.scene.nonce,number})}
- cancel(){try{const v=this.scene.read('cancel.json');if(v)this.scene.fields(v,['schema','nonce']);else this.scene.write('cancel.json',{schema:1,nonce:this.scene.nonce})}catch{this.invalid=true};this.xcode?.kill('SIGTERM');this.notify()}
+ cancel(){/*OBS826_BEGIN*/try{this.note826(6)}catch{};/*OBS826_END*/try{const v=this.scene.read('cancel.json');if(v)this.scene.fields(v,['schema','nonce']);else this.scene.write('cancel.json',{schema:1,nonce:this.scene.nonce})}catch{this.invalid=true};this.xcode?.kill('SIGTERM');this.notify()}
  diagnostic(){const code=(value:number|null)=>typeof value==='number'&&Number.isInteger(value)&&value>=0&&value<=255?value:null;return{begun:this.begun,invalid:this.invalid,observerClosed:this.observerClosed,observerCode:code(this.observerCode),xcodeClosed:this.xcodeClosed,xcodeCode:code(this.xcodeCode)}}
  xcodeFailureObservation(){
   if(!this.xcodeClosed)return{schema:1,stdout:xcode705Unavailable('NOT_CLOSED'),stderr:xcode705Unavailable('NOT_CLOSED')}
@@ -334,7 +361,8 @@ export class OwnedWorkspaceUI705 {
   try{if(this.observerClosed)once();else this.observer?.once('close',once)}catch{}
  }
 /*OBS788_JOIN_END*/ // This reads only after this exact ChildProcess close; caller never supplies a flag/path.
- observeClosedXcodeResultOnce(emit:(value:Result705Projection)=>void){
+ observeClosedXcodeResultOnce(emit:(value:Result705Projection)=>void){/*OBS826_BEGIN*/
+  const original826=emit;emit=(value,tool826?:QueryFacts826[])=>{try{this.query826=(tool826??[]).map(row=>[...row] as QueryFacts826)}catch{};original826(value)}/*OBS826_END*/
   if(this.xcodeResultObservationStarted)return;this.xcodeResultObservationStarted=true
   if(!this.xcodeClosed){try{emit(result705Unknown('NOT_CLOSED'))}catch{};return}
   try{result705AfterActualClose(this.scene,this.resultSourceRoot,emit)}catch{try{emit(result705Unknown('INVALID_RESULT'))}catch{}}

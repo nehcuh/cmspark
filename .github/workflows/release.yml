@@ -52,6 +52,8 @@ jobs:
         run: bash scripts/release-guard.sh
 
       - name: Install companion deps
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: cd companion && npm ci
       # Companion's real Hint/MeetingPanel SSR fixtures load the locked frontend React runtime.
       - name: Install extension test dependencies
@@ -98,6 +100,8 @@ jobs:
       # The companion postinstall (verify-systray2 + build-swift-tray) is
       # cross-platform safe — Swift build no-ops off macOS.
       - name: Install companion deps
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: cd companion && npm ci
 
       - name: Install extension deps

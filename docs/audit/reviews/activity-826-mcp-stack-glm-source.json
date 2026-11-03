@@ -1,0 +1,255 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "## VERDICT: APPROVE (full independent source gate)\n\nI read all six frozen files and the complete patch end-to-end. **No concrete, supported, reachable source defect found.** After the coordinator verifies the remaining normal machine / non-author / source-gate controls, this code is suitable for **ONE explicit manual NON_ACCEPTANCE dispatch** — not dispatch now by this reviewer, and not canonical acceptance, merge, or release clearance.\n\n### Explicit budget truth — confirmed as implemented\n`mcp-stack-capture-826.cjs` `runBounded826`: `timeoutMs` (3000 query / 6000 native / 6000 browser, in `queryOptions`/`debug826`) triggers `refuse()` = one kill **request**; the promise resolves only on actual child `close` (`finish` is wired solely to `close`/no-PID spawn error). `qualifyCdb826` awaits `closePromise` before `work.close()` and sets `dummyClosed` from actual close; a live-PID `error` cannot resolve it. This is exactly \"useful-work deadlines + mandatory actual tool close,\" not a hard 15s wall clock, and there is no new cleanup deadline, retry, fallback, or kill=close claim. The probe's own log line states `toolTimeoutsMs=3000+6000+6000 actualToolCloseRequired=true`. Independent RED→GREEN (`dummy-close-*` logs: `kill.request → dummy.close → workspace.remove → qualifier.return`, 3100ms hold) matches the frozen code.\n\n### Normal/tag Release conservation — confirmed\n`release.yml`: `package.if` skips packaging only in explicit probe mode; `release.needs: package` + tag-only `if` means probe mode cannot publish; probe job is `contents: read`, `persist-credentials: false`, `needs: preflight`. `mcp-stack-probe-826.test.mjs` runs the full event×tag×absent/false/true truth table on the parsed `if`s and restores the complete raw original workflow bytes to SHA256 `484078da…`. The only other release.yml consumer change is the 759 inventory count 2→3 (three setup-node, all 22.23.4), with `ci.yml` hash unchanged.\n\n### Precise boolean manual opt-in — confirmed\nDefault-false `workflow_dispatch` input gates the job; `runMcpStackProbe826` independently requires win32 + `GITHUB_ACTIONS==='true'` + `CMSPARK_MCP_STACK_PROBE_826==='1'` before touching any file or tool, with an executed rejection control.\n\n### Other required invariants — confirmed in source\n- `debug826` uses `-pv` only for native, `-pvr` only for browser; `collectMcpStacks826` skips browser on native `UNKNOWN`; original owned-HANDLE `launcher.c`/`DesktopHost.cpp` unchanged by exact hash (terminate-on-suspended evidence reused).\n- Identity: one bounded PS query (`QUERY_PS_826`, no CommandLine/WindowTitle, `First 2` caps, Authenticode Microsoft-subject check), unique live native match in a canonicalized 8.3-safe path domain, unique direct `msedgewebview2.exe` child; ambiguity/invalid → `UNKNOWN`, no fallback.\n- Privacy: raw streams capped in memory, never printed/artifacted; `admitSymbol826` + finite `MODULES` (with the sole `winhttp` addition and its positive control) emit only module/function; local `_NT_SYMBOL_PATH`, no `srv*`/network, no `/Zi` or compile-flag change; artifact glob is `*.json` projections only.\n- Qualification must pass on real Windows CDB (actual capture through the real parser, detach pong IPC, actual dummy close) or the run records `NOT_RUN` and exits 1 **before** MCP; grammar tests are explicitly not vendor evidence.\n- `deriveMcpStackProbe826` binds full normalized source/compiled hashes, enforces unique anchors and byte-exact inverse; the derived sibling is `wx`-exclusive and removed after synchronous completion; canonical files are re-verified byte-identical in `finally`; the runner returns the real child exit (`result.status ?? 1`), so a captured stack can never turn the original 20000ms timeout into PASS, and `classifyMcpStackOutcome826` keys on actual TAP `testTimeoutFailure`/`test timed out after 20000ms`.\n\n### Evidence accounting — acceptable as declared\nThe 28-PASS baseline preceded two collector-only corrections; the final 12-case collector suite (author + B) plus 19 unchanged-input reused results is honestly stated as **not** a combined-31 run. The frozen manifest's final collector/test hashes match the 12-case target files reviewed here; the six changed and six critical unchanged hashes are internally consistent.\n\n**Final: APPROVE for this source and its explicit budget truth. Suitable for one explicit manual NON_ACCEPTANCE dispatch once the coordinator's remaining gates are verified; original failure/TAP exit, canonical-10/main/tag requirements, history, and one-outcome decision/retirement rules remain in force.**",
+  "num_turns": 1,
+  "modelUsage": {
+    "glm-5.3": {
+      "inputTokens": 71641,
+      "outputTokens": 12806,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.678355,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "duration_ms": 284842,
+  "cli_version": "2.1.153",
+  "endpoint_host": "open.bigmodel.cn",
+  "requested_model": "glm-5.3",
+  "process_exit": 0,
+  "review_kind": "posttimeout-physicalstack-sixcode-source",
+  "reviewed_base": "c5776f1d54a7d4b920e6c5bfde45691496b947f8",
+  "source_manifest_sha256": "86746c08f64b541d03126ddced14f24628fca559121cfb1ce7a84add68b3ff36",
+  "source_diff_sha256": "0fbc4504ae83e84bbe168372ef09007c08643aaa1da996074b42b64f8faef2c6",
+  "source_files": [
+    {
+      "path": ".github/workflows/release.yml",
+      "before": "484078da169a63dfbe5d4fe174568d597dfc48f38d57d05a1e86a67265244480",
+      "after": "283b6c543bf8229ff9f7d125a9836b383a00eb305f65040379bbc9ced1a3a989"
+    },
+    {
+      "path": "scripts/tests/node-security-runtime-759.test.mjs",
+      "before": "468818a29eacbfabcabe4c90230d2697144eefe6fb8c5e1c5b7b9430cf438fd1",
+      "after": "22f9effe08620076c3a1893d0ffea0978e8f964bdd037d9616f636861a49b003"
+    },
+    {
+      "path": "companion/scripts/mcp-stack-probe-826.mjs",
+      "before": null,
+      "after": "e6bd36fd7fd0ce9d90a477f063e0130e36a99e48030684067bfcd07b8ab4618b"
+    },
+    {
+      "path": "companion/scripts/mcp-stack-capture-826.cjs",
+      "before": null,
+      "after": "f2c4508aadb57d08ba8cffab31cafac6e90d382e2f37a9b22587fca241fbaa9d"
+    },
+    {
+      "path": "companion/scripts/tests/mcp-stack-probe-826.test.mjs",
+      "before": null,
+      "after": "88885bdeba0433022aebe0bbeecd4fa701ccadd5cf4fb8f403af2586daa842c6"
+    },
+    {
+      "path": "companion/scripts/tests/mcp-stack-capture-826.test.cjs",
+      "before": null,
+      "after": "a0a214091b1eeb118c47f0ed4942282a77044c003a79bbed347f6c01bd7df481"
+    }
+  ],
+  "unchanged_hash_bindings": [
+    {
+      "path": "companion/tests/desktop-native-mcp-476.test.ts",
+      "sha256": "113c2a7302f2a00af52fdc3299f33bccc1409201f95ba60c08333eb8c2c6bbd8"
+    },
+    {
+      "path": "companion/tests/helpers/mcp-snapshot-825.ts",
+      "sha256": "5af69bdfd2cecd7a2fb10317426c83f021b84e05de99140e7e38be91e0661589"
+    },
+    {
+      "path": "companion/tests/fixtures/native-surface-650.ts",
+      "sha256": "15b13cd023e6b95f53327bc6d18d89c1d72704177cb825d61dd2f6a42e11aee7"
+    },
+    {
+      "path": "companion/src/desktop/native/launcher.c",
+      "sha256": "f50de0950317878dd631e49886420c75f97cb77723f775cb56c6fa1ffca2b253"
+    },
+    {
+      "path": "companion/src/desktop/native/DesktopHost.cpp",
+      "sha256": "3a87d3c0f585b1db2bbb37408b27e46e61a205cf2f16e65769cc4ca388c2712c"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "5a45af1d4e302d8304ec065c23116bb73f9ab4fa6adeff0468d4c33dfdfcf0ad"
+    }
+  ],
+  "input_artifacts": [
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-source-manifest.json",
+      "sha256": "86746c08f64b541d03126ddced14f24628fca559121cfb1ce7a84add68b3ff36",
+      "bytes": 2221
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-source.patch",
+      "sha256": "0fbc4504ae83e84bbe168372ef09007c08643aaa1da996074b42b64f8faef2c6",
+      "bytes": 54339
+    },
+    {
+      "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/.github/workflows/release.yml",
+      "sha256": "283b6c543bf8229ff9f7d125a9836b383a00eb305f65040379bbc9ced1a3a989",
+      "bytes": 19129
+    },
+    {
+      "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/scripts/tests/node-security-runtime-759.test.mjs",
+      "sha256": "22f9effe08620076c3a1893d0ffea0978e8f964bdd037d9616f636861a49b003",
+      "bytes": 10246
+    },
+    {
+      "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/companion/scripts/mcp-stack-probe-826.mjs",
+      "sha256": "e6bd36fd7fd0ce9d90a477f063e0130e36a99e48030684067bfcd07b8ab4618b",
+      "bytes": 6110
+    },
+    {
+      "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/companion/scripts/mcp-stack-capture-826.cjs",
+      "sha256": "f2c4508aadb57d08ba8cffab31cafac6e90d382e2f37a9b22587fca241fbaa9d",
+      "bytes": 17206
+    },
+    {
+      "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/companion/scripts/tests/mcp-stack-probe-826.test.mjs",
+      "sha256": "88885bdeba0433022aebe0bbeecd4fa701ccadd5cf4fb8f403af2586daa842c6",
+      "bytes": 8664
+    },
+    {
+      "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/companion/scripts/tests/mcp-stack-capture-826.test.cjs",
+      "sha256": "a0a214091b1eeb118c47f0ed4942282a77044c003a79bbed347f6c01bd7df481",
+      "bytes": 17144
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-independent-source.md",
+      "sha256": "760ad7cd07e678b3c3dbce4c22735ae06f61fdcd029b95f6f8adf6a0f1a97975",
+      "bytes": 11535
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-collector-implementation.md",
+      "sha256": "a1b92713e73bacf7ef55a75e188ca953cd1656dc7c7e193d4aaaafa78c2b09ab",
+      "bytes": 5061
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-design.md",
+      "sha256": "307b5e312f9598e41797d83b3a966f4f595abb8d3d4a0769592db8bb11cfe884",
+      "bytes": 9051
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-glm-design.md",
+      "sha256": "ebd5533f2421ed3d5af33b2a67575c46a1bd05c60163568ebe8b6a2b1f7228a3",
+      "bytes": 6420
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-integration-machine.log",
+      "sha256": "c1f3dae5343c0d82e3c7f83ef7bb2dcf13695286a902288aeddf03e43bc218b6",
+      "bytes": 6776
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-independent-machine.log",
+      "sha256": "c5adc477179a1c1923fff17ec400f7a1f560f3bc340e26f3b1e460831537710e",
+      "bytes": 6777
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-collector-tests.log",
+      "sha256": "9e786ea3f848d74b642d9efd8ad5c45c4c3724b197607bdc604304d3fbb2034f",
+      "bytes": 2884
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-independent-collector-fixed.log",
+      "sha256": "97c087f3ede7822c6c887b2f1f05ea32240f13de8a4d41963677633affdb24fb",
+      "bytes": 2886
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-hook-independent.mjs",
+      "sha256": "e3c338d145f72666385627ff7fce84d55feb01a4ee307f2042b50f4bdfe1c952",
+      "bytes": 5050
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-hook-independent.log",
+      "sha256": "b023cc08a0559e5db7205e48ab0f60fd6742e0805e0e6d3844e77f5fce84174c",
+      "bytes": 927
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-dummy-close-independent.cjs",
+      "sha256": "fc43032c96573ef778a840267c9bbdb01a483debe358b5d0dc01ee939e5a6bdb",
+      "bytes": 1635
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-dummy-close-independent.log",
+      "sha256": "0cf0a6bdf0e5f649b7287b811b6381e11dddd16da3e4590a03595b64e5235766",
+      "bytes": 275
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-dummy-close-fixed-independent.cjs",
+      "sha256": "b7e6ceb338a2e8fdc20bb77be506ae312a47aa0ea66ff1d99f21828bff8dcf2e",
+      "bytes": 1692
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-dummy-close-fixed-independent.log",
+      "sha256": "cd04e5f69ceb0a85942c6c1e4d2d3255a2d747f7dc3c4aa99a2da94094b87554",
+      "bytes": 222
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-design-controls.log",
+      "sha256": "1ae07707782678a643e201d283c4a988468bac585e5769761c1e153fae44cfaa",
+      "bytes": 904
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-native-terminate-control.cjs",
+      "sha256": "cc6d6fb0881a9403c5b6adfe391d1e9e93419fe8adb182642bfc5a206c5f701f",
+      "bytes": 1390
+    },
+    {
+      "path": "/tmp/cmspark-826-mcp-stack-native-terminate-control.log",
+      "sha256": "a6272f5901b54ae9a74a4a7740106084dcea88afd5e3b7cf1d98ecdda1d736f6",
+      "bytes": 149
+    },
+    {
+      "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/companion/tests/desktop-native-mcp-476.test.ts",
+      "sha256": "113c2a7302f2a00af52fdc3299f33bccc1409201f95ba60c08333eb8c2c6bbd8",
+      "bytes": 7019
+    },
+    {
+      "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/docs/windows-development.md",
+      "sha256": "f4e4f327dc4805fd14e6f10e9d08f18bd0ef9ee7ec19f5f17bedc119f1b8de90",
+      "bytes": 46297
+    },
+    {
+      "path": "/Users/huchen/.codex/worktrees/vision-activity-models/cmspark/docs/release-status.md",
+      "sha256": "fb0919f0604676aef9dd6937c6a1dd6fedcdb479cc4b0278143eba4b28144424",
+      "bytes": 11191
+    }
+  ],
+  "prompt_sha256": "74c2f6b9a5331d6295f921cb1eee6f92f07f65772c66e03aaa566bc347e5c910",
+  "prompt_bytes": 272989,
+  "prepared_utc": "2026-11-03T01:25:49.158113+00:00",
+  "configured_termination_request_ms": [
+    3000,
+    6000,
+    6000
+  ],
+  "actual_tool_close_required": true,
+  "hard15s_claim": false,
+  "windows_debugger_executed": false,
+  "normalized_verdict": "APPROVE",
+  "verdict_basis": "Explicit VERDICT APPROVE full independent source gate, no concrete supported reachable defect; explicit permission for ONE coordinated manual NON_ACCEPTANCE dispatch after remaining gates.",
+  "approval_scope": "Frozen six-code implementation and explicit termination-request/actual-close timing contract; suitable for ONE explicit manual NON_ACCEPTANCE experiment after coordinator confirms remaining normal machine/non-author/source gates.",
+  "not_approved": [
+    "reviewer dispatch now",
+    "Windows/CDB runtime qualification already passed",
+    "canonical acceptance",
+    "main merge",
+    "release",
+    "historical SDK root cause",
+    "additional unchanged probe"
+  ],
+  "completed_utc": "2026-11-03T01:31:20.254000+00:00",
+  "review_text_sha256": "43a31b3b685c1344f840eb7db1aa29cd0165e2f5274cc7e561e3f880d8112eda",
+  "full_six_sources_and_complete_patch_embedded": true,
+  "evidence_accounting": "28 combined before collector-only corrections; final collector12 independently rerun; other19 unchanged reused, not a combined31 run."
+}

@@ -1,0 +1,21 @@
+{
+  "base": "64dbdaafda240f06cac21955e2a4a8ee163c8740",
+  "files": [
+    {
+      "path": "companion/tests/fixtures/activity-scope825-windows.cs",
+      "sha256": "18db2181e7a68f225cc65c113c8a7e8a3b331c7efa7472e1e02a6fcfa6f501ca"
+    },
+    {
+      "path": "companion/tests/helpers/activity-scope825-observation.cjs",
+      "sha256": "7cd52c53d5225dae7d63d5ee59273ba00a0a5e2616c77129d2b98cabe268d5ba"
+    },
+    {
+      "path": "companion/tests/activity-scope825-readiness.test.ts",
+      "sha256": "9e6a089252925541e52febd03bcf618fb427d8a714c361b69436cf73a7267ff8"
+    },
+    {
+      "path": "companion/tests/activity-scope825-native.test.ts",
+      "sha256": "b2cd16df16c98efa255179e75dfa961092d9982a5e4f79f3ebb97c247c348e3e"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import { desktopBootstrapObservationFixture773, desktopMcpBootstrapObservationFixture773 } from './desktop-bootstrap-observation-fixture.mjs'
 import { desktopConfirmationObservationFixture } from './desktop-confirmation-observation-fixture.mjs'
 import { desktopTerminalFixture } from "./desktop-terminal-fixture.mjs"
+import { buildMcpSnapshotCpu825 } from './desktop-mcp-snapshot-cpu-artifact-825.mjs'
 import {copyDesktopAssets} from "./desktop-assets.mjs"
 // #480 build-only SDK acquisition. No production download, installer or PATH fallback.
 import fs from "node:fs"
@@ -208,6 +209,7 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
   const lib = path.join(output, "node.lib"); fs.writeFileSync(lib, nodeLib, { flag: "wx", mode: 0o600 })
   for (const [binary, args] of desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib: lib, testFixtures })) checked(binary, args, { env, cwd: output, buildDiagnostic: true })
   if (testFixtures) {
+    buildMcpSnapshotCpu825({root,dest:finalDest,output,cl,env,checked})
     checked(cl, ["/nologo", "/std:c11", "/W4", "/WX", path.join(root, "tests", "fixtures", "desktop-480", "synchronize-handle-probe.c"), "/link", `/OUT:${path.join(output, "desktop-synchronize-handle-probe.exe")}`], { env, cwd: output, buildDiagnostic: true })
     regular(path.join(output, "desktop-synchronize-handle-probe.exe"))
     publish(path.join(output, "desktop-synchronize-handle-probe.exe"), path.join(finalDest, "desktop-synchronize-handle-probe.exe"))
@@ -236,7 +238,7 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
     copyDesktopAssets(root,mcpAssets)
     const mcpOriginal=fs.readFileSync(path.join(root,"src/desktop/native/DesktopHost.cpp"),"utf8"),mcpFixture=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/native-acceptance.cpp"),"utf8"),mcpForm=fs.readFileSync(path.join(root,"tests/fixtures/desktop-476",formName),"utf8"),mcpVariant=(family==="archive"?desktopArchiveFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/archive-acceptance.cpp"),"utf8")):family==="local"?desktopLocalFixture("cpp",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/local-acceptance.cpp"),"utf8"),mcpForm):family==="workspace"?desktopWorkspaceFixture("cpp",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/workspace-acceptance.cpp"),"utf8"),mcpForm):family==="resource"?desktopResourceFixture("cpp",mcpOriginal,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/resource-acceptance.cpp"),"utf8"),mcpForm):family==="dialog"?desktopDialogFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/dialog-acceptance.cpp"),"utf8")):family==="metadata"?desktopMetadataFixture("cpp",mcpOriginal,mcpFixture,mcpForm,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/metadata-acceptance.cpp"),"utf8")):desktopMcpFixture("cpp",mcpOriginal,mcpFixture,mcpForm))
     if(mcpVariant.inverse!==mcpOriginal)throw Error("DESKTOP_MCP_SOURCE_DRIFT")
-    const mcpObserved=family==="mcp"?desktopMcpBootstrapObservationFixture773(mcpVariant.source):family==="local"?desktopConfirmationObservationFixture(mcpVariant.source,"LOCAL"):null;if(mcpObserved&&mcpObserved.inverse!==mcpVariant.source)throw Error("DESKTOP_CONFIRMATION_OBSERVATION_DRIFT")
+    const mcpObserved=family==="mcp"?desktopMcpBootstrapObservationFixture773(mcpVariant.source,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/mcp-snapshot-825.h"),"utf8")):family==="local"?desktopConfirmationObservationFixture(mcpVariant.source,"LOCAL"):null;if(mcpObserved&&mcpObserved.inverse!==mcpVariant.source)throw Error("DESKTOP_CONFIRMATION_OBSERVATION_DRIFT")
     const mcpSource=path.join(output,`acceptance-${family}.cpp`),mcpBinary=path.join(output,`acceptance-${family}.exe`);fs.writeFileSync(mcpSource,mcpObserved?mcpObserved.source:mcpVariant.source,{flag:"wx"})
     checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE",...(family==="mcp"?["/DCMSPARK_DESKTOP_TEST_PHASES"]:[]),`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,mcpSource,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${mcpBinary}`],{env,cwd:output,buildDiagnostic:true})
     publish(mcpBinary,path.join(mcpDirectory,"cmspark-desktop.exe"))
