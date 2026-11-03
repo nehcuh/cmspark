@@ -14,6 +14,12 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      mcp_stack_probe_826:
+        description: 'One post-timeout stack experiment; NOT acceptance or a release dry-run'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write   # softprops/action-gh-release creates the release + uploads assets
@@ -67,6 +73,7 @@ jobs:
           cd chrome-extension && npm run build && npm test
 
   package:
+    if: github.event_name != 'workflow_dispatch' || !inputs.mcp_stack_probe_826
     name: Build (${{ matrix.platform }})
     needs: preflight
     permissions:
@@ -238,6 +245,52 @@ jobs:
           name: cmspark-windows-x64-setup
           path: dist-package/CMspark-Setup-v*.exe
           if-no-files-found: error
+
+  mcp-stack-probe-826:
+    name: MCP post-timeout stacks (NON-ACCEPTANCE)
+    needs: preflight
+    if: github.event_name == 'workflow_dispatch' && inputs.mcp_stack_probe_826
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: companion/package-lock.json
+      - name: Install locked companion and build current sources
+        working-directory: companion
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: |
+          npm ci
+          npm run build
+      - name: Build original native test fixtures and compile actual tests
+        working-directory: companion
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/build-desktop-native.mjs --test-fixtures
+          ./node_modules/.bin/tsc -p tsconfig.test.json
+      - name: Verify derived callback, collector and release controls
+        working-directory: companion
+        run: node --test scripts/tests/mcp-stack-probe-826.test.mjs scripts/tests/mcp-stack-capture-826.test.cjs
+      - name: Qualify CDB and run one original20 post-timeout experiment
+        working-directory: companion
+        env:
+          CMSPARK_MCP_STACK_PROBE_826: '1'
+        run: node scripts/mcp-stack-probe-826.mjs
+      - name: Upload safe finite stack and original-outcome projections only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-stack-probe-826
+          path: ${{ runner.temp }}/mcp-stack-probe-826/*.json
+          if-no-files-found: warn
 
   release:
     name: Publish GitHub Release
