@@ -1,0 +1,54 @@
+{
+  "base": "3e48f26190cc9e0f37edc9f70b54b2b36532606b",
+  "code": [
+    {
+      "path": ".github/workflows/release.yml",
+      "before": "283b6c543bf8229ff9f7d125a9836b383a00eb305f65040379bbc9ced1a3a989",
+      "after": "72d65b48351f16c5b381c8309e8d4c52f9fcffe498636d6e763ac43629efcc10"
+    },
+    {
+      "path": "companion/scripts/tests/mcp-stack-probe-826.test.mjs",
+      "before": "eb33b8b2694b0dc637ba6324911dafb85bcc0a430f2cc57e147667d810985d66",
+      "after": "63d72a4a10e938df67a4e50d2451b1d2754f5747f86247478628e41dbbcc697e"
+    },
+    {
+      "path": "companion/tests/release-cpu-install-826.test.ts",
+      "before": null,
+      "after": "ecee4f062a13bdedc0d26c0a51dd4c3288a2dd093b79e4b4f3d26dcf233f3e35"
+    }
+  ],
+  "unchanged": [
+    {
+      "path": "companion/src/desktop/native/DesktopHost.cpp",
+      "sha256": "3a87d3c0f585b1db2bbb37408b27e46e61a205cf2f16e65769cc4ca388c2712c"
+    },
+    {
+      "path": "companion/src/desktop/native/launcher.c",
+      "sha256": "f50de0950317878dd631e49886420c75f97cb77723f775cb56c6fa1ffca2b253"
+    },
+    {
+      "path": "companion/tests/desktop-native-mcp-476.test.ts",
+      "sha256": "113c2a7302f2a00af52fdc3299f33bccc1409201f95ba60c08333eb8c2c6bbd8"
+    },
+    {
+      "path": "companion/scripts/mcp-stack-probe-826.mjs",
+      "sha256": "e6bd36fd7fd0ce9d90a477f063e0130e36a99e48030684067bfcd07b8ab4618b"
+    },
+    {
+      "path": "companion/scripts/mcp-stack-capture-826.cjs",
+      "sha256": "f2c4508aadb57d08ba8cffab31cafac6e90d382e2f37a9b22587fca241fbaa9d"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "5a45af1d4e302d8304ec065c23116bb73f9ab4fa6adeff0468d4c33dfdfcf0ad"
+    },
+    {
+      "path": "scripts/package.sh",
+      "sha256": "e980a919da5c55eb8354822b07a4b4c99bf02ad7ba1914b91c8b961cd181999a"
+    },
+    {
+      "path": "companion/package-lock.json",
+      "sha256": "33f50bb23b3a5859ade357ed89802b7d2f8b1e62996b1438192888148f1d5537"
+    }
+  ]
+}

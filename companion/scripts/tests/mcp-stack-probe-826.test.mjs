@@ -101,6 +101,11 @@ test('manual probe workflow conserves complete original normal/tag release and n
   for (const text of inputs) {
     const eol = text.includes('\r\n') ? '\r\n' : '\n'
     const doc = yaml.load(text)
+    for (const name of ['preflight', 'package']) {
+      const install = doc.jobs[name].steps.filter(step => step.name === 'Install companion deps')
+      assert.equal(install.length, 1)
+      assert.deepEqual(install[0].env, { ONNXRUNTIME_NODE_INSTALL: 'skip' })
+    }
     assert.deepEqual(doc.on.workflow_dispatch.inputs.mcp_stack_probe_826, { description: 'One post-timeout stack experiment; NOT acceptance or a release dry-run', type: 'boolean', required: false, default: false })
     const job = doc.jobs['mcp-stack-probe-826']
     assert.equal(job.needs, 'preflight'); assert.deepEqual(job.permissions, { contents: 'read' })
@@ -116,9 +121,13 @@ test('manual probe workflow conserves complete original normal/tag release and n
     }
     const begin = text.indexOf('  mcp-stack-probe-826:' + eol), end = text.indexOf('  release:' + eol, begin)
     assert.ok(begin > 0 && end > begin)
-    const restored = (text.slice(0, begin) + text.slice(end))
+    const withoutProbe = (text.slice(0, begin) + text.slice(end))
       .replace(/  workflow_dispatch:\r?\n    inputs:\r?\n      mcp_stack_probe_826:[\s\S]*?        default: false\r?\n/, '  workflow_dispatch:' + eol)
       .replace("    if: github.event_name != 'workflow_dispatch' || !inputs.mcp_stack_probe_826" + eol, '')
+    // The intentional CPU-only install change is separate from the temporary probe.
+    const cpuInstall = ['      - name: Install companion deps', '        env:', '          ONNXRUNTIME_NODE_INSTALL: skip', '        run: cd companion && npm ci'].join(eol)
+    assert.equal(withoutProbe.split(cpuInstall).length, 3, 'exactly the two reviewed normal install steps')
+    const restored = withoutProbe.replaceAll(cpuInstall, ['      - name: Install companion deps', '        run: cd companion && npm ci'].join(eol))
     // Both seals derive from the actual original67 Git blob, with its declared LF/CRLF form.
     const expected = eol === '\n' ? '484078da169a63dfbe5d4fe174568d597dfc48f38d57d05a1e86a67265244480' : 'ffff77300b98431c0541a7ce6f4f92722dfb9b444169fea62f917c79fef17c44'
     assert.equal(sha(restored), expected, 'full original Release bytes in the input line-ending form')
