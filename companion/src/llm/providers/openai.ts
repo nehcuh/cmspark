@@ -131,7 +131,7 @@ export class OpenAIProvider implements LlmProvider {
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
     const support = reasoningSupport(this.config.protocol, this.config.base_url, model)
-    const effort = reasoningWireEffort(support, this.config.reasoning_effort)
+    const effort = params.reasoning_effort ?? reasoningWireEffort(support, this.config.reasoning_effort)
     const messages = toWireMessages(params.messages)
 
     const createParams: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {

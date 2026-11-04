@@ -5,6 +5,35 @@ import type { Message } from "../types"
 import { isFrameBudgetRefusal } from "../../background/ws-frame-budget"
 import { newTempUserMessageId } from "../../utils/temp-message-id"
 
+const PART_SIZE = 1024 * 1024
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+const MAX_WIRE_BYTES = Math.ceil(MAX_UPLOAD_BYTES / 3) * 4 + PART_SIZE
+
+/** Pass large batches through the service worker without one large Chrome IPC message. */
+export async function sendComposerUpload(
+  message: { type: "file.upload"; threadId: string; files: Array<{ content: string }> } & Record<string, unknown>,
+  send: (message: object) => Promise<{ ok?: boolean; unsupported?: boolean } | undefined>,
+): Promise<{ ok?: boolean } | undefined> {
+  const files = JSON.stringify(message.files)
+  const bytes = new Blob([files]).size
+  if (bytes <= 9 * PART_SIZE) return send(message)
+  if (bytes > MAX_WIRE_BYTES) throw new Error("附件合计不得超过 100 MiB")
+  const uploadId = crypto.randomUUID()
+  const partCount = Math.ceil(files.length / PART_SIZE)
+  for (let index = 0; index < partCount; index++) {
+    const response = await send({
+      type: "file.upload.part", thread_id: message.threadId, upload_id: uploadId,
+      index, data: files.slice(index * PART_SIZE, (index + 1) * PART_SIZE),
+    })
+    if (index === 0 && response?.unsupported) {
+      if (bytes < 9.5 * PART_SIZE) return send(message)
+      throw new Error("当前 Companion 版本不支持大附件，请更新后重试")
+    }
+    if (!response?.ok) throw new Error("附件传输中断，请重新选择后上传")
+  }
+  return send({ ...message, files: undefined, uploadId, partCount })
+}
+
 /**
  * Optimistic upload bubble (F2). The bubble id IS the clientMessageId sent on
  * file.upload: a new companion's chat.user echo adopts the bubble by exact id;

@@ -2,8 +2,33 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { buildOptimisticUploadBubble, nextComposerText, uploadSendFailureOps, uploadSendOutcome } from "../src/sidepanel/utils/upload-send"
+import { buildOptimisticUploadBubble, nextComposerText, sendComposerUpload, uploadSendFailureOps, uploadSendOutcome } from "../src/sidepanel/utils/upload-send"
 import { isTempUserMessageId } from "../src/sidepanel/store/agentStore"
+
+test("large composer attachments use bounded ordered parts and one final upload", async () => {
+  const files = [{ name: "中文报告.txt", content: "AAAA".repeat(Math.ceil(11 * 1024 * 1024 / 3)) }]
+  const sent: Array<Record<string, unknown>> = []
+  const message = { type: "file.upload" as const, threadId: "test-thread", files, clientMessageId: "test-message" }
+  assert.deepEqual(await sendComposerUpload(message, async part => {
+    sent.push(part as Record<string, unknown>)
+    return { ok: true }
+  }), { ok: true })
+  const commit = sent.pop()!
+  assert.equal(commit.type, "file.upload")
+  assert.equal(commit.files, undefined)
+  assert.equal(commit.clientMessageId, "test-message")
+  assert.equal(commit.partCount, sent.length)
+  sent.forEach((part, index) => {
+    assert.equal(part.type, "file.upload.part")
+    assert.equal(part.index, index)
+    assert.equal(part.upload_id, commit.uploadId)
+    assert.equal(part.thread_id, commit.threadId)
+    assert.ok((part.data as string).length <= 1024 * 1024)
+  })
+  assert.deepEqual(JSON.parse(sent.map(part => part.data).join("")), files)
+  const rejected = await sendComposerUpload(message, async () => ({ ok: false, unsupported: true })).catch(error => error)
+  assert.match(rejected.message, /当前 Companion 版本不支持大附件/)
+})
 
 test("buildOptimisticUploadBubble: bubble id IS the file.upload clientMessageId (F2/F1)", () => {
   const { clientMessageId, message } = buildOptimisticUploadBubble({

@@ -27,6 +27,7 @@ export interface QwenVlDepStatus {
   modelscope: boolean
   transformers: boolean
   torch: boolean
+  torchvision: boolean
   pillow: boolean
 }
 
@@ -150,6 +151,7 @@ print(json.dumps({
   "modelscope": has("modelscope"),
   "transformers": has("transformers"),
   "torch": has("torch"),
+  "torchvision": has("torchvision"),
   "pillow": has("PIL"),
 }))
 `
@@ -160,6 +162,7 @@ print(json.dumps({
       modelscope: false,
       transformers: false,
       torch: false,
+      torchvision: false,
       pillow: false,
     }
   }
@@ -172,6 +175,7 @@ print(json.dumps({
       modelscope: false,
       transformers: false,
       torch: false,
+      torchvision: false,
       pillow: false,
     }
   }
@@ -368,6 +372,7 @@ export async function runQwenVlPreflight(args: {
     modelscope: false,
     transformers: false,
     torch: false,
+    torchvision: false,
     pillow: false,
   }
   const deps: QwenVlDepStatus = {
@@ -404,7 +409,7 @@ export async function runQwenVlPreflight(args: {
 
   const needHub =
     src.source === "modelscope" ? !deps.modelscope : !deps.huggingface_hub
-  const needInfer = !deps.transformers || !deps.torch || !deps.pillow
+  const needInfer = !deps.transformers || !deps.torch || !deps.torchvision || !deps.pillow
   const diskTight =
     hardware.freeDiskGb != null && hardware.freeDiskGb < meta.downloadGb + 2
 
@@ -458,6 +463,7 @@ export async function runQwenVlPreflight(args: {
     const inferPkgs: string[] = []
     if (!deps.transformers) inferPkgs.push("transformers")
     if (!deps.torch) inferPkgs.push("torch")
+    if (!deps.torchvision) inferPkgs.push("torchvision")
     if (!deps.pillow) inferPkgs.push("pillow")
     const allPkgs = [...new Set([...downloadPkgs, ...inferPkgs])]
     if (allPkgs.length) {

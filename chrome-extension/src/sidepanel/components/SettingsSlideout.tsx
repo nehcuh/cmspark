@@ -3321,7 +3321,7 @@ export function SettingsSlideout() {
               onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { file_upload_max_size: parseInt(e.target.value) * 1024 * 1024 } })}
             />
             <div style={styles.helpText}>
-              上传文件的大小上限，范围 1–100 MB。此上限不提高图片预算（压缩后单张 ≤4MB，合计 ≤6MB）。
+              对话中单个文档的大小上限，范围 1–100 MiB。单次附件合计 ≤100 MiB。图片另有预算（压缩后单张 ≤4 MiB，合计 ≤6 MiB）。
             </div>
           </div>
 

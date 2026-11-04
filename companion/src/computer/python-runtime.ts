@@ -22,6 +22,7 @@ export const ALLOWED_PYTHON_PACKAGES = new Set([
   "huggingface_hub",
   "transformers",
   "torch",
+  "torchvision",
   "pillow",
   "accelerate",
   "safetensors",
@@ -30,13 +31,15 @@ export const ALLOWED_PYTHON_PACKAGES = new Set([
   "sentencepiece",
 ])
 
+const DEFAULT_QWEN_PACKAGES = ["modelscope", "huggingface_hub", "transformers", "torch", "torchvision", "pillow"]
+
 /**
  * Sanitize client-supplied package list: only bare allowlisted names.
  * Rejects flags (-*), URLs, paths, git refs.
  */
 export function sanitizePythonPackages(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
-    return ["modelscope", "huggingface_hub", "transformers", "torch", "pillow"]
+    return [...DEFAULT_QWEN_PACKAGES]
   }
   const out: string[] = []
   for (const item of raw) {
@@ -51,7 +54,7 @@ export function sanitizePythonPackages(raw: unknown): string[] {
   }
   return out.length > 0
     ? [...new Set(out)]
-    : ["modelscope", "huggingface_hub", "transformers", "torch", "pillow"]
+    : [...DEFAULT_QWEN_PACKAGES]
 }
 
 export interface PythonRuntimeInfo {

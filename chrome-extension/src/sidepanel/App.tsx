@@ -65,7 +65,7 @@ import { useComposerVoice } from "./hooks/useComposerVoice"
 import { useComposerIngest } from "./hooks/useComposerIngest"
 import { useComposerMentions } from "./hooks/useComposerMentions"
 import { extractHostname, resolveNativeVision } from "./components/vision-reuse-logic"
-import { buildOptimisticUploadBubble, nextComposerText, uploadSendFailureOps, uploadSendOutcome } from "./utils/upload-send"
+import { buildOptimisticUploadBubble, nextComposerText, sendComposerUpload, uploadSendFailureOps, uploadSendOutcome } from "./utils/upload-send"
 import { newTempUserMessageId } from "../utils/temp-message-id"
 import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
 import { useScopedRunBusy } from "./hooks/use-scoped-run-busy"
@@ -698,19 +698,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           composerText: userMessage,
         })
 
-        chrome.runtime.sendMessage(
-          {
-            type: "file.upload",
-            threadId: uploadThreadId,
-            message: userMessage,
-            files,
-            skillIds,
-            clientMessageId,
-          },
-          (response) => {
+        const onUploadResponse = (response: unknown, swErr?: string) => {
             // Companion down / SW failed — free the busy UI (file.upload_error path
             // only covers companion-side parse failures after WS delivers).
-            const swErr = chrome.runtime.lastError?.message
             console.info("[cmspark] file.upload panel_response", {
               thread_id: uploadThreadId,
               swErr: swErr || null,
@@ -722,8 +712,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                 phase: "panel_response",
                 thread_id: uploadThreadId,
                 sw_error: swErr || null,
-                ok: !!response?.ok,
-                diag: response?.diag || null,
+                ok: !!(response as { ok?: boolean } | undefined)?.ok,
+                diag: (response as { diag?: unknown } | undefined)?.diag || null,
               })
             } catch {
               /* ignore */
@@ -768,8 +758,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                 }
               }
             }
-          },
-        )
+        }
+        void sendComposerUpload(
+          { type: "file.upload", threadId: uploadThreadId!, message: userMessage, files, skillIds, clientMessageId },
+          (message) => chrome.runtime.sendMessage(message),
+        ).then(response => onUploadResponse(response), error => onUploadResponse(undefined, (error as Error).message))
       } else {
         // Same clientMessageId as SW `chat.user` echo so ADD_MESSAGE dedupes
         // when both optimistic local append and multi-surface broadcast land.

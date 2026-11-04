@@ -813,6 +813,13 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         return true
       }
 
+      case "file.upload.part": {
+        const extensionPage = sender?.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(""))
+        if (!extensionPage || wsClient?.getState() !== "connected") sendResponse({ ok: false })
+        else if (!wsClient.supportsFileUploadParts()) sendResponse({ ok: false, unsupported: true })
+        else sendResponse({ ok: wsClient.send(message) })
+        return false
+      }
       case "file.upload": {
         // Diagnostics: locate where uploads die (panel → SW → WS → companion).
         // Never log base64 content — only names/sizes/types/payload estimate.
@@ -846,6 +853,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
             type: "file.upload",
             thread_id: message.threadId,
             files: message.files,
+            ...(message.uploadId ? { upload_id: message.uploadId, part_count: message.partCount } : {}),
             message: message.message || "",
             skill_ids: message.skillIds || [],
             // F1/F2: companion echoes this as chat.user client_message_id so the

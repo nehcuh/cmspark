@@ -15,6 +15,45 @@ import { validateActivityMessage } from '../src/activity/validation'
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 const IMAGE = { base64: PNG, width: 1, height: 1, url: '', title: 'owned fixture' }
 
+test('local Gemma extraction disables reasoning and a truncated response keeps its screenshot accessible', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-gemma-'))
+  const fetchBefore = globalThis.fetch
+  const visionBefore = getConfig().vision!
+  const service = new ActivityService({ dataDir: directory, recorder: { capture: async () => null } })
+  const requests: Record<string, unknown>[] = []
+  globalThis.fetch = async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)))
+    const choice = requests.length === 1
+      ? { finish_reason: 'length', message: { content: '', reasoning_content: 'fixture reasoning' } }
+      : { finish_reason: 'stop', message: { content: '{"transcript":"请交报告","candidates":[{"title":"交报告","quote":"请交报告"}]}' } }
+    return new Response(JSON.stringify({ choices: [choice] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  try {
+    saveConfig({ vision: { ...visionBefore, base_url: 'http://127.0.0.1:1234', model_name: 'google/gemma-4-12b-qat', protocol: 'openai', max_tokens: 1024 } })
+    const configured = await service.handle({ type: 'activity.configure', expected_revision: 0,
+      expected_model_target: service.state().runtime.model_target_ids?.vision,
+      patch: { extraction_mode: 'vision', image_ai_enabled: true, interval_ms: 3000 },
+    })
+    assert.equal(configured.ok, true)
+    const failed = await service.handle({ type: 'activity.import', image_base64: PNG })
+    assert.equal(failed.error_code, 'VISION_OUTPUT_LIMIT')
+    assert.deepEqual(failed.state, service.state())
+    assert.equal(service.state().config.interval_ms, 3000)
+    const sourceId = service.state().sources[0].id
+    const source = await service.handle({ type: 'activity.source', source_id: sourceId })
+    assert.equal(source.ok, true)
+    assert.equal((source.source as { image_data_url: string }).image_data_url, 'data:image/png;base64,' + PNG)
+    assert.equal((await service.handle({ type: 'activity.analyze', source_id: sourceId })).ok, true)
+    assert.equal(service.state().candidates.length, 1)
+    assert.deepEqual(requests.map(body => [body.reasoning_effort, body.max_tokens]), [['none', 2048], ['none', 2048]])
+  } finally {
+    globalThis.fetch = fetchBefore
+    saveConfig({ vision: visionBefore })
+    await service.stop()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('Anthropic vision sends image blocks with its auth; prompt changes cannot reuse cached descriptions', async () => {
   const previous = globalThis.fetch
   const bodies: any[] = [], requests: any[] = []
