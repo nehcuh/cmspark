@@ -150,6 +150,11 @@ for (const platform of ["Darwin", "Linux"]) {
     fs.copyFileSync(path.join(repo, "scripts/uninstall-daemon.sh"), path.join(scripts, "uninstall-daemon.sh"))
     fs.copyFileSync(path.join(repo, "scripts/read-service-data.mjs"), path.join(scripts, "read-service-data.mjs"))
     fs.symlinkSync(process.execPath, path.join(bin, "node"))
+    // The no-Node leg isolates PATH. Keep the real tool the uninstaller needs
+    // to locate its own directory so the leg reaches the missing-Node guard.
+    const dirname = ["/usr/bin/dirname", "/bin/dirname"].find(candidate => fs.existsSync(candidate))
+    assert.ok(dirname, "POSIX dirname must be available to the fixture")
+    fs.symlinkSync(dirname, path.join(bin, "dirname"))
     for (const [name, body] of [["uname", `printf '${platform}\\n'`], ["launchctl", "exit 0"], ["systemctl", "exit 0"]]) fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
     fs.writeFileSync(entry, `require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify(process.argv.slice(2)));process.exit(process.env.OWNED_STOP_FAIL==='1'?1:0)`)
     const defaultData = path.join(home, ".cmspark-agent")

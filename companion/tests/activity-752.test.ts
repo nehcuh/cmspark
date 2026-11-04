@@ -131,7 +131,7 @@ test('disabling while capture awaits fences result and never stores snapshot', a
 })
 test('explicit analysis requires consent and deleting source during model call fences candidates', async () => {
   const f = fixture(); let finish!: (v: any) => void, calls = 0
-  const service = new ActivityService({ dataDir: f.dir, extract: () => { calls++; return new Promise(resolve => { finish = resolve }) } })
+  const service = new ActivityService({ dataDir: f.dir, now: () => NOW, extract: () => { calls++; return new Promise(resolve => { finish = resolve }) } })
   try {
     const source = addSource(service.store)
     assert.equal((await service.handle({ type: 'activity.analyze', source_id: source.id })).error_code, 'SEMANTIC_CONSENT_REQUIRED')
