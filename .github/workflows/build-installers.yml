@@ -18,9 +18,11 @@ jobs:
         include:
           - runner: macos-15
             platform: macos-arm64
+            arch: arm64
             family: macos
           - runner: macos-15-intel
             platform: macos-x64
+            arch: x64
             family: macos
           - runner: windows-2025
             platform: windows-x64
@@ -101,7 +103,7 @@ jobs:
           mkdir -p "${DEST}"
           cp "dist-package/cmspark-v"*"-${{ matrix.platform }}.zip" "${DEST}/"
           if [[ '${{ matrix.family }}' == 'macos' ]]; then
-            cp "dist-package/CMspark-v"*"-macOS-${{ matrix.platform#macos- }}.dmg" "${DEST}/"
+            cp "dist-package/CMspark-v"*"-macOS-${{ matrix.arch }}.dmg" "${DEST}/"
           elif [[ '${{ matrix.family }}' == 'windows' ]]; then
             cp "dist-package/CMspark-Setup-v"*"-${{ matrix.platform }}.exe" "${DEST}/"
           else
