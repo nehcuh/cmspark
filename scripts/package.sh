@@ -4,7 +4,7 @@
 # Version: companion/package.json (SoT). Align chrome-extension/package.json
 # before tagging so Side Panel + Companion report the same product version.
 #
-# Usage: scripts/package.sh [macos-arm64|macos-x64|windows-x64|linux-x64]
+# Usage: scripts/package.sh [macos-arm64|macos-x64|windows-x64|windows-arm64|linux-x64|linux-arm64]
 # Output: dist-package/cmspark-v{version}-{platform}.zip
 #   (lowercase "cmspark-v*" — cross-platform zip from this script)
 #   Windows SEA portable zip uses "CMspark-v*" via build-windows-exe.ps1;
@@ -543,6 +543,7 @@ case "${PLATFORM}" in
   macos-arm64) NODE_ARCH="darwin-arm64" ;;
   macos-x64)   NODE_ARCH="darwin-x64" ;;
   windows-x64) NODE_ARCH="win-x64" ;;
+  windows-arm64) NODE_ARCH="win-arm64" ;;
   linux-x64)   NODE_ARCH="linux-x64" ;;
   linux-arm64) NODE_ARCH="linux-arm64" ;;
   *) echo "ERROR: Unsupported platform: ${PLATFORM}"; exit 1 ;;
@@ -568,7 +569,7 @@ NODE_SHASUMS="${CACHE_DIR}/SHASUMS256-${NODE_VERSION}.txt"
 echo "  Fetching SHASUMS256.txt for Node ${NODE_VERSION} from ${NODE_SHASUMS_MIRROR}..."
 curl -fSL --retry 3 "${NODE_SHASUMS_MIRROR}/${NODE_VERSION}/SHASUMS256.txt" -o "${NODE_SHASUMS}"
 
-if [ "${PLATFORM}" = "windows-x64" ]; then
+if [[ "${PLATFORM}" == windows-* ]]; then
   CACHE_ZIP="${CACHE_DIR}/node-${NODE_VERSION}-${NODE_ARCH}.zip"
   if [ ! -f "${CACHE_ZIP}" ]; then
     echo "  Downloading..."
@@ -681,7 +682,7 @@ echo "  $(du -sh "${ZIP_NAME}" | cut -f1) compressed"
 if [[ "${PLATFORM}" == windows* ]]; then
   echo ""
   echo "[nsis] Building official CMspark-Setup-v${VERSION}.exe from staging..."
-  bash "${ROOT_DIR}/scripts/build-windows-installer.sh"
+  CMSPARK_PLATFORM="${PLATFORM}" bash "${ROOT_DIR}/scripts/build-windows-installer.sh"
 fi
 
 echo ""

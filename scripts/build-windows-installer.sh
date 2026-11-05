@@ -20,8 +20,14 @@ fi
 . "${ROOT_DIR}/scripts/win-vendor-bins.sh"
 
 VERSION="$(node -p "require('${ROOT_DIR}/companion/package.json').version")"
-STAGING="${CMSPARK_STAGING_DIR:-${ROOT_DIR}/dist-package/cmspark-windows-x64}"
-OUTFILE="${ROOT_DIR}/dist-package/CMspark-Setup-v${VERSION}.exe"
+PLATFORM="${CMSPARK_PLATFORM:-windows-x64}"
+case "${PLATFORM}" in
+  windows-x64) ARCH_SUFFIX="x64" ;;
+  windows-arm64) ARCH_SUFFIX="arm64" ;;
+  *) echo "ERROR: unsupported Windows installer platform: ${PLATFORM}" >&2; exit 1 ;;
+esac
+STAGING="${CMSPARK_STAGING_DIR:-${ROOT_DIR}/dist-package/cmspark-${PLATFORM}}"
+OUTFILE="${ROOT_DIR}/dist-package/CMspark-Setup-v${VERSION}-${PLATFORM}.exe"
 NSI="${ROOT_DIR}/scripts/installer.nsi"
 REQUIRE="${CMSPARK_REQUIRE_NSIS:-}"
 
@@ -70,12 +76,12 @@ if [ -z "${MAKENSIS}" ] || [ ! -f "${MAKENSIS}" ]; then
     echo "ERROR: makensis not found (CMSPARK_REQUIRE_NSIS=1). Install NSIS 3.12.0 (choco install nsis --version=3.12.0) and re-run." >&2
     exit 1
   fi
-  echo "WARNING: makensis not found — skipping CMspark-Setup-v${VERSION}.exe (zip is still valid)." >&2
+  echo "WARNING: makensis not found — skipping CMspark-Setup-v${VERSION}-${PLATFORM}.exe (zip is still valid)." >&2
   echo "         CI sets CMSPARK_REQUIRE_NSIS=1. Local: brew/choco install nsis, then re-run." >&2
   exit 0
 fi
 
-echo "=== CMspark Windows NSIS installer ==="
+echo "=== CMspark Windows ${ARCH_SUFFIX} NSIS installer ==="
 echo "  makensis: ${MAKENSIS}"
 echo "  staging:  ${STAGING}"
 echo "  output:   ${OUTFILE}"
@@ -109,7 +115,7 @@ rm -f "${OUTFILE}"
 # NSIS accepts -D on Windows and Unix.
 export MSYS_NO_PATHCONV=1
 set +e
-"${MAKENSIS}" "-DPRODUCT_VERSION=${VERSION}" "${NSI}"
+"${MAKENSIS}" "-DPRODUCT_VERSION=${VERSION}" "-DPRODUCT_ARCH=${ARCH_SUFFIX}" "${NSI}"
 nsis_rc=$?
 set -e
 if [ "${nsis_rc}" != "0" ]; then

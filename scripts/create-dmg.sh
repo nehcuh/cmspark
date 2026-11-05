@@ -2,7 +2,7 @@
 # Create macOS .dmg installer for CMspark
 #
 # Prerequisites: make package-macos (or make build build-tray) must have run first.
-# This script takes the staged macos-arm64 files and wraps them into a .app bundle + .dmg.
+# This script wraps a staged macOS architecture into a .app bundle + .dmg.
 #
 # The .app bundle uses a FLAT layout under Resources/ — same as the zip package.
 # cmspark-agent.js sits directly in Resources/ alongside assets/, builtin-skills/, etc.
@@ -15,8 +15,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(node -p "require('${ROOT_DIR}/companion/package.json').version")"
-STAGING="${ROOT_DIR}/dist-package/cmspark-macos-arm64"
-DMG_NAME="CMspark-v${VERSION}-macOS.dmg"
+MACOS_PLATFORM="${CMSPARK_MACOS_PLATFORM:-macos-arm64}"
+case "${MACOS_PLATFORM}" in
+  macos-arm64) MACOS_ARCH="arm64"; DMG_NAME="CMspark-v${VERSION}-macOS-arm64.dmg" ;;
+  macos-x64) MACOS_ARCH="x64"; DMG_NAME="CMspark-v${VERSION}-macOS-x64.dmg" ;;
+  *) echo "[create-dmg] ERROR: unsupported macOS platform ${MACOS_PLATFORM}" >&2; exit 1 ;;
+esac
+STAGING="${ROOT_DIR}/dist-package/cmspark-${MACOS_PLATFORM}"
 DMG_DIR="${ROOT_DIR}/dist-package/dmg-staging"
 APP_BUNDLE="${DMG_DIR}/CMspark.app"
 RESOURCES="${APP_BUNDLE}/Contents/Resources"
@@ -34,34 +39,34 @@ if [ ! -d "${STAGING}" ]; then
   exit 1
 fi
 
-# Rebuild the tray from the current source in a private directory, using the
-# same basename and working directory as the package build. No tray is run.
-(
-  tray_check_dir="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-tray-source-XXXXXX")"
-  trap 'rm -f "${tray_check_dir}/cmspark-tray"; rmdir "${tray_check_dir}"' EXIT
-  cd "${ROOT_DIR}/companion"
-  ./src/tray/build-tray.sh --output "${tray_check_dir}/cmspark-tray"
-  cmp -s "${tray_check_dir}/cmspark-tray" "${STAGING}/cmspark-tray" || { echo "[create-dmg] ERROR: staged tray differs from current source build" >&2; exit 1; }
-)
-# Rebuild the bundle into a private directory and compare to staging.
-node "${ROOT_DIR}/companion/scripts/run-esbuild-bundle.mjs" --verify-macos-arm64-tray
+if [ "${MACOS_ARCH}" = "arm64" ]; then
+  # Rebuild and compare the architecture-specific tray before packaging.
+  (
+    tray_check_dir="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-tray-source-XXXXXX")"
+    trap 'rm -f "${tray_check_dir}/cmspark-tray"; rmdir "${tray_check_dir}"' EXIT
+    cd "${ROOT_DIR}/companion"
+    ./src/tray/build-tray.sh --output "${tray_check_dir}/cmspark-tray"
+    cmp -s "${tray_check_dir}/cmspark-tray" "${STAGING}/cmspark-tray" || { echo "[create-dmg] ERROR: staged tray differs from source build" >&2; exit 1; }
+  )
+  node "${ROOT_DIR}/companion/scripts/run-esbuild-bundle.mjs" --verify-macos-arm64-tray
+fi
 
 # Standalone DMG creation may be pointed at old staging. Bind any staged
 # whisper helper and libraries to the selected generation and bundled pin.
-_WHISPER_CURRENT="${ROOT_DIR}/companion/dist/whisper-current-darwin-arm64"
+_WHISPER_CURRENT="${ROOT_DIR}/companion/dist/whisper-current-darwin-${MACOS_ARCH}"
 _WHISPER_STORE="${ROOT_DIR}/companion/dist/.whisper-generations"
-_WHISPER_BIN="${STAGING}/bin/cmspark-whisper-darwin-arm64"
+_WHISPER_BIN="${STAGING}/bin/cmspark-whisper-darwin-${MACOS_ARCH}"
 _WHISPER_PIN=""
 if [ -e "${_WHISPER_BIN}" ] || [ -L "${_WHISPER_BIN}" ] || [ -e "${_WHISPER_CURRENT}" ] || [ -L "${_WHISPER_CURRENT}" ]; then
-  if ! _WHISPER_PIN="$(cd "${ROOT_DIR}/companion" && node scripts/run-esbuild-bundle.mjs --verify-whisper-macos-arm64)"; then
+  if ! _WHISPER_PIN="$(cd "${ROOT_DIR}/companion" && node scripts/run-esbuild-bundle.mjs "--verify-whisper-macos-${MACOS_ARCH}")"; then
     echo "[create-dmg] ERROR: cannot verify the bundled whisper pin" >&2; exit 1
   fi
   if [[ ! "${_WHISPER_PIN}" =~ ^[0-9a-f]{64}$ ]]; then
     echo "[create-dmg] ERROR: invalid verified whisper pin" >&2; exit 1
   fi
   cmp -s "${STAGING}/cmspark-agent.js" "${ROOT_DIR}/companion/dist/cmspark-agent.js" || { echo "[create-dmg] ERROR: staged agent differs from verified bundle" >&2; exit 1; }
-  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" darwin-arm64 "${STAGING}" "${_WHISPER_PIN}"
-  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${STAGING}" cmspark-whisper-darwin-arm64
+  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH}" "${STAGING}" "${_WHISPER_PIN}"
+  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${STAGING}" "cmspark-whisper-darwin-${MACOS_ARCH}"
 fi
 
 if [ ! -d "${ICONSET}" ]; then
@@ -158,10 +163,12 @@ node "${ROOT_DIR}/companion/scripts/desktop-artifacts.mjs" verify "${RESOURCES}/
 
 # Deep signing must not change the pair checked by the package producer.
 cmp -s "${STAGING}/cmspark-agent.js" "${RESOURCES}/cmspark-agent.js" || { echo "[create-dmg] ERROR: signed agent differs from staging" >&2; exit 1; }
-cmp -s "${STAGING}/cmspark-tray" "${RESOURCES}/cmspark-tray" || { echo "[create-dmg] ERROR: signed tray differs from staging" >&2; exit 1; }
+if [ -f "${STAGING}/cmspark-tray" ]; then
+  cmp -s "${STAGING}/cmspark-tray" "${RESOURCES}/cmspark-tray" || { echo "[create-dmg] ERROR: signed tray differs from staging" >&2; exit 1; }
+fi
 if [ -n "${_WHISPER_PIN}" ]; then
-  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" darwin-arm64 "${RESOURCES}" "${_WHISPER_PIN}"
-  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${RESOURCES}" cmspark-whisper-darwin-arm64
+  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH}" "${RESOURCES}" "${_WHISPER_PIN}"
+  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${RESOURCES}" "cmspark-whisper-darwin-${MACOS_ARCH}"
 fi
 
 
@@ -216,15 +223,15 @@ if ! codesign --verify --verbose "${VOLUME}/CMspark.app"; then
   exit 1
 fi
 if ! cmp -s "${STAGING}/cmspark-agent.js" "${VOLUME}/CMspark.app/Contents/Resources/cmspark-agent.js" || \
-   ! cmp -s "${STAGING}/cmspark-tray" "${VOLUME}/CMspark.app/Contents/Resources/cmspark-tray"; then
+   { [ -f "${STAGING}/cmspark-tray" ] && ! cmp -s "${STAGING}/cmspark-tray" "${VOLUME}/CMspark.app/Contents/Resources/cmspark-tray"; }; then
   echo "[create-dmg] ERROR: DMG copy differs from checked staging pair" >&2
   hdiutil detach "${DEVICE}" -quiet 2>/dev/null || true
   exit 1
 fi
 if [ -n "${_WHISPER_PIN}" ]; then
   _DMG_RESOURCES="${VOLUME}/CMspark.app/Contents/Resources"
-  if ! node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" darwin-arm64 "${_DMG_RESOURCES}" "${_WHISPER_PIN}" || \
-     ! node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${_DMG_RESOURCES}" cmspark-whisper-darwin-arm64; then
+  if ! node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH}" "${_DMG_RESOURCES}" "${_WHISPER_PIN}" || \
+     ! node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${_DMG_RESOURCES}" "cmspark-whisper-darwin-${MACOS_ARCH}"; then
     echo "[create-dmg] ERROR: DMG whisper copy differs from the verified generation" >&2
     if ! hdiutil detach "${DEVICE}" -quiet; then echo "[create-dmg] ERROR: failed to detach DMG" >&2; fi
     exit 1
