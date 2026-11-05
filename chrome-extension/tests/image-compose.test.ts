@@ -47,6 +47,13 @@ test("Office format picker MIME fallback supports legacy and OpenDocument files"
   assert.equal(mimeForIncomingFile("photo.png", "IMAGE/PNG; charset=binary"), "image/png")
 })
 
+test("the picker sends .wps as a document candidate for server-side detection", () => {
+  assert.ok(IMAGE_ACCEPT.split(",").includes(".wps"))
+  for (const mime of ["", "application/wps-office.wps", "application/msword", "image/png"]) {
+    assert.equal(mimeForIncomingFile("report.WPS", mime), "application/octet-stream")
+  }
+})
+
 // --- isAllowlistedImageMime ---
 
 test("isAllowlistedImageMime: png/jpeg/jpg/gif/webp true", () => {

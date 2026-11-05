@@ -10,6 +10,24 @@
 
 白名单项通过无文件名的 `resolveDocumentMime("", item)` 比较，所以泛型 MIME 项不会推断 PDF、DOCX 等格式，也不是通配符。上传 `report.docx` 的泛型 MIME 可以被推断为 DOCX，但只有白名单允许 DOCX（或空白名单）才会进入解析。
 
+## 聊天附件 .wps（GitHub #829）
+
+聊天文件选择与拖放接受 `.wps`，Companion 将其视为 DOC 候选。现有文件大小限制与 `application/msword` 白名单照常执行。浏览器提供的 MIME 不决定 .wps 的格式。通过白名单的候选还必须有可读取的复合文件结构、根目录 `WordDocument` 流、未加密的 Word 文件头、所引用的表流，以及指向正文的有效文本片段索引。确认后以私有临时文件 `input.doc` 进入现有 DOC → DOCX → 正文解析链路，用户看到的仍是原附件名。格式不匹配时提示在 WPS 中另存为 DOCX。
+
+首版范围为聊天附件中的 Word 二进制兼容变体。Microsoft Works、无法识别的 WPS 容器、ET/DPS、知识库导入和会议参考附件另行验证。
+
+四份公开原件来自[中山市商务局附件 2、3](https://www.zs.gov.cn/swj/gggs/content/post_2485910.html)和[黄圃镇公告附件 1、3](https://www.zs.gov.cn/hpz/jlhd/yjzj/content/post_2633860.html)。可在 Companion 目录下用下列命令复跑。测试固定源文件 SHA-256，经实际聊天上传入口核对中文正文、正文中的数字、表格内容和空白总计单元格。样本中的两个文字附件没有表格，两个培训表是待填模板。
+
+```sh
+wps_sample_dir="$(mktemp -d)"
+for sample in 528/528971/2485910 528/528972/2485910 572/572127/2633860 572/572129/2633860; do
+  sample_id="${sample%/*}"
+  curl -fsSL "https://www.zs.gov.cn/attachment/0/$sample.wps" -o "$wps_sample_dir/${sample_id##*/}.wps"
+done
+./node_modules/.bin/tsc -p tsconfig.test.json
+CMSPARK_WPS_SAMPLE_DIR="$wps_sample_dir" node scripts/run-tests.mjs .test-dist/tests/office-import-entry.test.js
+```
+
 ## 临时路径与转换失败
 
 `safeUploadBasename` 使用宿主 `path.basename` 并移除 NUL，拒绝空值、`.`、`..`；它不是通用分隔符拒绝器。POSIX 主机的反斜杠通常保留在 basename 中。真正传给解析/转换引擎的路径由 `parseOfficeFile` 在自己创建的临时目录中生成：`input.<sourceExt>`、固定映射的 `normalized.<targetExt>`。原始上传名称不作为引擎路径。

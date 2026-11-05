@@ -66,7 +66,9 @@ export function effectiveUploadAllowedTypes(types: readonly string[]): readonly 
 }
 
 export function unsupportedWpsError(filename: string): string | undefined {
-  return ["wps", "et", "dps"].includes(documentExtension(filename))
+  const extension = documentExtension(filename)
+  if (extension === "wps") return `无法按标准 DOC 导入 "${filename}"，请在 WPS 中另存为 .docx 后重试。`
+  return ["et", "dps"].includes(extension)
     ? `暂不支持 WPS 专有格式 (${filename})，请用 WPS 另存为 .docx/.xlsx/.pptx 或 PDF 后导入。`
     : undefined
 }

@@ -4,9 +4,15 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { createRequire } from "node:module"
+import { createHash } from "node:crypto"
 import { DEFAULT_UPLOAD_MIMES, DOCUMENT_MIMES, LEGACY_UPLOAD_MIMES } from "../src/file-formats"
 import type { FileParseResponse } from "../src/file-parser"
+import { isWpsWithWordDocContent } from "../src/wps-doc"
 
+const siblingFixtures = path.join(__dirname, "fixtures", "office-611")
+const fixtureRoot = fs.existsSync(siblingFixtures)
+  ? siblingFixtures
+  : path.resolve(__dirname, "../../tests/fixtures/office-611")
 const testHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-office-entry-"))
 process.env.HOME = testHome
 process.env.CMSPARK_DATA_DIR = path.join(testHome, "data")
@@ -163,7 +169,7 @@ test("chat canonicalizes the WPS PDF alias before admission and keeps custom res
   assert.equal(reached, 3)
 })
 
-test("chat keeps unrestricted empty allowlist and rejects WPS with save-as guidance", async () => {
+test("chat keeps unrestricted empty allowlist and rejects ET/DPS with save-as guidance", async () => {
   saveUploadConfig([])
   let parses = 0
   router.__testSetFileParseImpl(async (_bytes, name, mime) => {
@@ -173,12 +179,115 @@ test("chat keeps unrestricted empty allowlist and rejects WPS with save-as guida
   const svc = services()
   const result = await router.handleMessage(upload(svc.thread.id), svc, session())
   assert.equal(result.error, "entry parser reached")
-  for (const ext of ["wps", "et", "dps"]) {
+  for (const ext of ["et", "dps"]) {
     const other = services()
     const refused = await router.handleMessage(upload(other.thread.id, `report.${ext}`, "application/msword"), other, session())
     assert.match(String(refused.error), /WPS.*另存为/)
   }
   assert.equal(parses, 1)
+})
+
+async function uploadWps(bytes: Buffer, name = "报告.WPS", mime = "application/wps-office.wps") {
+  const svc = services()
+  const request = upload(svc.thread.id, name, mime)
+  request.files[0].content = bytes.toString("base64")
+  const result = await router.handleMessage(request, svc, session())
+  const user = svc.threadManager.getMessages(svc.thread.id).find(message => message.role === "user")
+  return { result, user }
+}
+
+function stubDocumentChat() {
+  completionImpl = async () => (async function* () {
+    yield { choices: [{ delta: { content: "已读取文档" }, finish_reason: "stop" }] }
+  })()
+}
+
+test("chat accepts Word bytes in a .wps only under the DOC upload policy", async () => {
+  const bytes = fs.readFileSync(path.join(fixtureRoot, "one-page.doc"))
+  stubDocumentChat()
+  for (const types of [[DOCUMENT_MIMES.docx], [DOCUMENT_MIMES.pdf], ["application/octet-stream"], ["application/wps-office.wps"]]) {
+    saveUploadConfig(types)
+    const { result, user } = await uploadWps(bytes, "报告.WPS", "image/png")
+    assert.equal(result.type, "file.upload_error")
+    assert.match(String(result.error), /不支持的文件类型: application\/msword/)
+    assert.equal(user, undefined)
+  }
+
+  saveUploadConfig([DOCUMENT_MIMES.doc])
+  const { result, user } = await uploadWps(bytes)
+  assert.equal(result.type, "file.uploaded", JSON.stringify(result))
+  assert.deepEqual(result.files, ["报告.WPS"])
+  assert.match(String(user?.content), /Office preview 中文文档/)
+})
+
+test("chat refuses fake, encrypted, malformed, and non-Word .wps without sending a document turn", async () => {
+  saveUploadConfig([DOCUMENT_MIMES.doc])
+  const word = fs.readFileSync(path.join(fixtureRoot, "one-page.doc"))
+  const encrypted = Buffer.from(word)
+  const fib = word.indexOf(Buffer.from("eca50101", "hex"))
+  assert.ok(fib > 0)
+  encrypted.writeUInt16LE(word.readUInt16LE(fib + 10) | 0x0100, fib + 10)
+  const ignoredObfuscationFlag = Buffer.from(word)
+  ignoredObfuscationFlag.writeUInt16LE(word.readUInt16LE(fib + 10) | 0x8000, fib + 10)
+  assert.ok(isWpsWithWordDocContent(ignoredObfuscationFlag), "MS-DOC ignores fObfuscated when fEncrypted is clear")
+  const wrongTable = Buffer.from(word)
+  wrongTable.writeUInt16LE(word.readUInt16LE(fib + 10) ^ 0x0200, fib + 10)
+  const invalidClx = Buffer.from(word)
+  invalidClx.writeUInt32LE(0xffffffff, fib + 418)
+  const cyclicDirectory = Buffer.from(word)
+  const directorySector = word.readUInt32LE(48)
+  const fatSector = word.readUInt32LE(76)
+  cyclicDirectory.writeUInt32LE(directorySector, (fatSector + 1) * 512 + directorySector * 4)
+  for (const bytes of [
+    Buffer.from("{\\rtf1 wrong format}"),
+    fs.readFileSync(path.join(fixtureRoot, "one-sheet.xls")),
+    word.subarray(0, word.length - 1),
+    encrypted, wrongTable, invalidClx, cyclicDirectory,
+  ]) {
+    const { result, user } = await uploadWps(bytes, "报告.wps", DOCUMENT_MIMES.doc)
+    assert.equal(result.type, "file.upload_error")
+    assert.match(String(result.error), /WPS.*另存为.*docx/)
+    assert.equal(user, undefined)
+  }
+})
+
+const wpsSampleDir = process.env.CMSPARK_WPS_SAMPLE_DIR
+test("four hash-pinned WPS Office originals preserve the expected content through chat (#829)", {
+  skip: !wpsSampleDir,
+  timeout: 120_000,
+}, async t => {
+  saveUploadConfig(LEGACY_UPLOAD_MIMES)
+  stubDocumentChat()
+  const samples = [
+    {
+      id: "528971", hash: "8542ea1f2c981d313c5c99cc70b44986985702da063d87df649fc3c7ea3eef47",
+      expected: [/企业信息采集表填写须知/, /不超过100位/, /39：参加的活动名称/], table: false,
+    },
+    {
+      id: "528972", hash: "217e83ba6aeac92f706efbe9e0dfb88660799f3e5dbb64b6e2d9716ea0c99e73",
+      expected: [/企业报名承诺函/, /2025年中山市/, /不少于1种宣传物料/], table: false,
+    },
+    {
+      id: "572127", hash: "18eb9cca9ae16bceeae547762ba1c9813ad55ef33474559d99ec50a3ff4382bd",
+      expected: [/技能提升培训基本情况表/, /<td[^>]*><p>师资情况/, /<p>2.（教师总数/, /M<sup>2/], table: true,
+    },
+    {
+      id: "572129", hash: "175a0ae911b83bce2db6760bfa5b8d85ff47c458edc7d591deb0482d91f04e13",
+      expected: [/附件3/, /培训教学计划/, /<p>培训内容及要求/, /<p>总计<\/p><\/td>\s*<td><p><\/p>/], table: true,
+    },
+  ]
+  for (const { id, hash, expected, table } of samples) {
+    await t.test(id, async () => {
+      const bytes = fs.readFileSync(path.join(wpsSampleDir!, `${id}.wps`))
+      assert.equal(createHash("sha256").update(bytes).digest("hex"), hash)
+      const { result, user } = await uploadWps(bytes, `${id}.wps`)
+      assert.equal(result.type, "file.uploaded", JSON.stringify(result))
+      assert.deepEqual(result.files, [`${id}.wps`])
+      const content = String(user?.content)
+      for (const marker of expected) assert.match(content, marker)
+      assert.equal(content.includes("<table>"), table)
+    })
+  }
 })
 
 test("chat abort cancels its active parser and does not persist unread file content", async () => {
@@ -289,11 +398,6 @@ test("real legacy DOC reaches chat and regression ODP reaches native knowledge p
       yield { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
     })()
     : { choices: [{ message: { content: "Office 文档" } }] }
-  const fixtureDir = path.join(__dirname, "fixtures", "office-611")
-  // Compiled tests live in .test-dist/tests, while fixture bytes stay in tests/.
-  const fixtureRoot = fs.existsSync(fixtureDir)
-    ? fixtureDir
-    : path.join(__dirname, "..", "..", "tests", "fixtures", "office-611")
   const svc = services()
   const doc = fs.readFileSync(path.join(fixtureRoot, "one-page.doc"))
   const result = await router.handleMessage({ type: "file.upload", thread_id: svc.thread.id, message: "读取旧版 Word", files: [{ name: "legacy.doc", type: "application/octet-stream", content: doc.toString("base64") }] }, svc, session())

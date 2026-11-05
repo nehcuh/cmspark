@@ -7,7 +7,7 @@ export const IMAGE_MAX_COUNT = 4
 export const IMAGE_MAX_EDGE = 1568
 
 export const IMAGE_ACCEPT =
-  ".doc,.docx,.ppt,.pptx,.xls,.xlsx,.pdf,.odt,.ods,.odp,.rtf,.csv,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"
+  ".doc,.docx,.wps,.ppt,.pptx,.xls,.xlsx,.pdf,.odt,.ods,.odp,.rtf,.csv,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"
 
 export const IMAGE_PREFLIGHT_NO_VISION =
   "当前主模型不支持直接看图，且未启用视觉分析。请在设置中开启视觉分析，或改用支持图片的模型。"
@@ -135,6 +135,8 @@ export function mimeFromName(name: string): string {
 
 /** Normalize the verified WPS PDF alias; infer only absent/generic client types. */
 export function mimeForIncomingFile(name: string, providedMime: string): string {
+  // The Companion determines the document format from the actual .wps bytes.
+  if (/\.wps$/i.test(name)) return "application/octet-stream"
   const mime = String(providedMime || "").trim().toLowerCase().split(";")[0].trim()
   if (mime === "application/wps-office.pdf") return "application/pdf"
   return !mime || mime === "application/octet-stream" || mime === "binary/octet-stream"

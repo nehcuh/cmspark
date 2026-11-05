@@ -511,7 +511,7 @@ Side Panel 底栏 → **任务包**：启用模块、选择工作区、NetSec �
 Agent 可通过浏览器工具向页面 **file input** 提交本地文件（CDP `DOM.setFileInputFiles` 路径），覆盖常见网页上传框。
 
 - **截图待办**：工作中心可复用视觉配置、单独配置图像模型或使用本机 Qwen3-VL，授权后导入截图直接生成待确认候选。详见[个人工作中心](docs/personal-workspace.md)。
-- **聊天附件**：Side Panel 支持 PDF / Office / 文本。Office 包括 DOC/DOCX、XLS/XLSX、PPT/PPTX、ODT/ODS/ODP；WPS 请保存为这些标准格式，专有 WPS/ET/DPS 尚不支持。低文本 PDF 最多渲染前十页，须经实际视觉分析成功后才能进入聊天；只有页面图片的文档不能直接导入知识库。
+- **聊天附件**：Side Panel 支持 PDF / Office / 文本。Office 包括 DOC/DOCX、XLS/XLSX、PPT/PPTX、ODT/ODS/ODP；内部结构确认为未加密标准 DOC 的 .wps 可直接添加，使用 DOC 上传权限。其他 .wps 请在 WPS 中另存为 .docx，ET/DPS 请另存为相应的标准 Office 格式。低文本 PDF 最多渲染前十页，须经实际视觉分析成功后才能进入聊天；只有页面图片的文档不能直接导入知识库。
   ODF 导入有正文展开与图表数据预算；超预算、重复嵌入对象、ODS 图表范围引用，以及 ODF 内混合 OOXML 图表会明确拒绝，可拆分或另存为 DOCX/XLSX/PPTX 后导入。普通内嵌数据图表与空白表格尾行仍可读取。
   转换缺字体等提示显示在对应聊天附件或知识导入预览中，不写入提取正文。复杂多工作表文档仍需用实际文件核对；合成样例通过不代表所有业务表格都兼容。
   旧上传 MIME 默认集合会在放行判断时扩展为当前默认集合，不改写配置；手工配置恰好同集也按此约定处理。自定义子集/超集保留限制，`application/octet-stream` 或 `binary/octet-stream` 白名单项不是所有文档的通配符。详见 [Office 导入契约](docs/office-import-contract.md)。
