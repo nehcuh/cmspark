@@ -9,10 +9,11 @@ import { desktopWindowsToolchain } from "./build-desktop-windows.mjs"
 const basename = "computer-uia-no-focus.dll"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
-export function computerUiaNoFocusCompilePlan({ cl, root, output }) {
+export function computerUiaNoFocusCompilePlan({ cl, root, output, arch = "x64" }) {
+  if (arch !== "x64" && arch !== "arm64") throw new Error("UIA_NO_FOCUS_ARCHITECTURE")
   const p = path.win32
   return [cl, ["/nologo", "/std:c++20", "/EHsc", "/utf-8", "/W4", "/WX", "/MT", "/LD", "/DUNICODE", "/D_UNICODE",
-    p.join(root, "src/host-use/win/native/computer-uia-no-focus.cpp"), "/link", "/MACHINE:X64",
+    p.join(root, "src/host-use/win/native/computer-uia-no-focus.cpp"), "/link", `/MACHINE:${arch === "arm64" ? "ARM64" : "X64"}`,
     "ole32.lib", "oleaut32.lib", "user32.lib", "uiautomationcore.lib", `/OUT:${p.join(output, basename)}`]]
 }
 function regular(file) {
@@ -34,16 +35,17 @@ export function stageComputerUiaNoFocus(source, destination) {
   fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)
   regular(target)
 }
-export function buildComputerUiaNoFocus({ root: sourceRoot = root, toolchain } = {}) {
+export function buildComputerUiaNoFocus({ root: sourceRoot = root, toolchain, arch = process.arch } = {}) {
   // Deliberate reproducible-build pin: the desktop SDK/header inputs and CI use 22.23.4.
   // This is a build-tool policy, not a runtime UIA requirement for all Node22 patches.
-  if (process.platform !== "win32" || process.arch !== "x64" || process.version !== "v22.23.4") throw new Error("UIA_NO_FOCUS_BUILD_REQUIRES_WINDOWS_X64_NODE22_23_4")
+  if (process.platform !== "win32" || !["x64", "arm64"].includes(process.arch) || process.version !== "v22.23.4") throw new Error("UIA_NO_FOCUS_BUILD_REQUIRES_NATIVE_WINDOWS_NODE22_23_4")
+  if (arch !== process.arch) throw new Error("UIA_NO_FOCUS_BUILD_ARCH_MISMATCH")
   const source = path.join(sourceRoot, "src/host-use/win/native/computer-uia-no-focus.cpp")
   regular(source)
   const { cl, env } = toolchain ?? desktopWindowsToolchain()
   const output = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-uia-build-"))
   try {
-    const [binary, args] = computerUiaNoFocusCompilePlan({ cl, root: sourceRoot, output })
+    const [binary, args] = computerUiaNoFocusCompilePlan({ cl, root: sourceRoot, output, arch })
     const result = spawnSync(binary, args, { env, cwd: output, encoding: "utf8", timeout: 120_000, maxBuffer: 4 * 1024 * 1024 })
     if (result.error || result.status !== 0) {
       process.stderr.write(`${result.stdout || ""}${result.stderr || ""}`)
