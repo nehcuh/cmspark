@@ -53,12 +53,12 @@ fi
 
 # Standalone DMG creation may be pointed at old staging. Bind any staged
 # whisper helper and libraries to the selected generation and bundled pin.
-_WHISPER_CURRENT="${ROOT_DIR}/companion/dist/whisper-current-darwin-${MACOS_ARCH}"
+_WHISPER_CURRENT="${ROOT_DIR}/companion/dist/whisper-current-darwin-${MACOS_ARCH:-arm64}"
 _WHISPER_STORE="${ROOT_DIR}/companion/dist/.whisper-generations"
-_WHISPER_BIN="${STAGING}/bin/cmspark-whisper-darwin-${MACOS_ARCH}"
+_WHISPER_BIN="${STAGING}/bin/cmspark-whisper-darwin-${MACOS_ARCH:-arm64}"
 _WHISPER_PIN=""
 if [ -e "${_WHISPER_BIN}" ] || [ -L "${_WHISPER_BIN}" ] || [ -e "${_WHISPER_CURRENT}" ] || [ -L "${_WHISPER_CURRENT}" ]; then
-  if ! _WHISPER_PIN="$(cd "${ROOT_DIR}/companion" && node scripts/run-esbuild-bundle.mjs "--verify-whisper-macos-${MACOS_ARCH}")"; then
+  if ! _WHISPER_PIN="$(cd "${ROOT_DIR}/companion" && node scripts/run-esbuild-bundle.mjs "--verify-whisper-macos-${MACOS_ARCH:-arm64}")"; then
     echo "[create-dmg] ERROR: cannot verify the bundled whisper pin" >&2; exit 1
   fi
   if [[ ! "${_WHISPER_PIN}" =~ ^[0-9a-f]{64}$ ]]; then
