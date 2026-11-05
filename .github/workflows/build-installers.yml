@@ -101,7 +101,7 @@ jobs:
           mkdir -p "${DEST}"
           cp "dist-package/cmspark-v"*"-${{ matrix.platform }}.zip" "${DEST}/"
           if [[ '${{ matrix.family }}' == 'macos' ]]; then
-            cp "dist-package/CMspark-v"*"-${{ matrix.platform }}.dmg" "${DEST}/"
+            cp "dist-package/CMspark-v"*"-macOS-${{ matrix.platform#macos- }}.dmg" "${DEST}/"
           elif [[ '${{ matrix.family }}' == 'windows' ]]; then
             cp "dist-package/CMspark-Setup-v"*"-${{ matrix.platform }}.exe" "${DEST}/"
           else
