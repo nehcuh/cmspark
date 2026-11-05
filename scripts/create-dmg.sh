@@ -65,8 +65,8 @@ if [ -e "${_WHISPER_BIN}" ] || [ -L "${_WHISPER_BIN}" ] || [ -e "${_WHISPER_CURR
     echo "[create-dmg] ERROR: invalid verified whisper pin" >&2; exit 1
   fi
   cmp -s "${STAGING}/cmspark-agent.js" "${ROOT_DIR}/companion/dist/cmspark-agent.js" || { echo "[create-dmg] ERROR: staged agent differs from verified bundle" >&2; exit 1; }
-  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH}" "${STAGING}" "${_WHISPER_PIN}"
-  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${STAGING}" "cmspark-whisper-darwin-${MACOS_ARCH}"
+  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH:-arm64}" "${STAGING}" "${_WHISPER_PIN}"
+  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${STAGING}" "cmspark-whisper-darwin-${MACOS_ARCH:-arm64}"
 fi
 
 if [ ! -d "${ICONSET}" ]; then
@@ -167,8 +167,8 @@ if [ -f "${STAGING}/cmspark-tray" ]; then
   cmp -s "${STAGING}/cmspark-tray" "${RESOURCES}/cmspark-tray" || { echo "[create-dmg] ERROR: signed tray differs from staging" >&2; exit 1; }
 fi
 if [ -n "${_WHISPER_PIN}" ]; then
-  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH}" "${RESOURCES}" "${_WHISPER_PIN}"
-  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${RESOURCES}" "cmspark-whisper-darwin-${MACOS_ARCH}"
+  node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH:-arm64}" "${RESOURCES}" "${_WHISPER_PIN}"
+  node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${RESOURCES}" "cmspark-whisper-darwin-${MACOS_ARCH:-arm64}"
 fi
 
 
@@ -230,8 +230,8 @@ if ! cmp -s "${STAGING}/cmspark-agent.js" "${VOLUME}/CMspark.app/Contents/Resour
 fi
 if [ -n "${_WHISPER_PIN}" ]; then
   _DMG_RESOURCES="${VOLUME}/CMspark.app/Contents/Resources"
-  if ! node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH}" "${_DMG_RESOURCES}" "${_WHISPER_PIN}" || \
-     ! node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${_DMG_RESOURCES}" "cmspark-whisper-darwin-${MACOS_ARCH}"; then
+  if ! node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH:-arm64}" "${_DMG_RESOURCES}" "${_WHISPER_PIN}" || \
+     ! node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${_DMG_RESOURCES}" "cmspark-whisper-darwin-${MACOS_ARCH:-arm64}"; then
     echo "[create-dmg] ERROR: DMG whisper copy differs from the verified generation" >&2
     if ! hdiutil detach "${DEVICE}" -quiet; then echo "[create-dmg] ERROR: failed to detach DMG" >&2; fi
     exit 1
