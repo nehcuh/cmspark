@@ -4,12 +4,12 @@ GitHub: #833 / PR #834
 
 提供 x86_64（DEB amd64 / RPM x86_64）和 ARM64（DEB arm64 / RPM aarch64）安装包。
 从 `Build installers` 的对应 Linux artifact 下载，选择与机器架构一致的文件；
-Chrome 扩展另在 `cmspark-chrome-extension` artifact 中提供。该构建不移动 v0.8.1 tag。
+Chrome 扩展另在 `cmspark-chrome-extension` artifact 中提供。
 
 ## 安装和使用
 
-Debian / Ubuntu：`sudo apt install ./cmspark_0.8.1-1_amd64.deb`。
-Fedora / Red Hat 系：`sudo dnf install ./cmspark-0.8.1-1.x86_64.rpm`。
+Debian / Ubuntu：`sudo apt install ./cmspark_0.8.2-1_amd64.deb`。
+Fedora / Red Hat 系：`sudo dnf install ./cmspark-0.8.2-1.x86_64.rpm`。
 ARM64 分别选用文件名带 `arm64` 和 `aarch64` 的安装包。
 
 安装后在桌面环境的应用菜单中搜索 **CMspark**，点击图标启动 Companion 和托盘。
